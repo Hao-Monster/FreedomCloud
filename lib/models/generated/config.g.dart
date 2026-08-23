@@ -36,6 +36,36 @@ _$AppSettingPropsImpl _$$AppSettingPropsImplFromJson(
       recoveryStrategy: $enumDecodeNullable(
               _$RecoveryStrategyEnumMap, json['recoveryStrategy']) ??
           RecoveryStrategy.compatible,
+      connectionListMode: $enumDecodeNullable(
+              _$ConnectionListModeEnumMap, json['connectionListMode'],
+              unknownValue: ConnectionListMode.process) ??
+          ConnectionListMode.process,
+      connectionViewMode: $enumDecodeNullable(
+              _$ConnectionViewModeEnumMap, json['connectionViewMode'],
+              unknownValue: ConnectionViewMode.list) ??
+          ConnectionViewMode.list,
+      connectionSort: $enumDecodeNullable(
+              _$ConnectionSortEnumMap, json['connectionSort'],
+              unknownValue: ConnectionSort.time) ??
+          ConnectionSort.time,
+      connectionSortDirection: $enumDecodeNullable(
+              _$ConnectionSortDirectionEnumMap, json['connectionSortDirection'],
+              unknownValue: ConnectionSortDirection.descending) ??
+          ConnectionSortDirection.descending,
+      connectionShowIcon: json['connectionShowIcon'] as bool? ?? true,
+      connectionUseApplicationName:
+          json['connectionUseApplicationName'] as bool? ?? true,
+      connectionRefreshInterval:
+          (json['connectionRefreshInterval'] as num?)?.toInt() ?? 500,
+      connectionTableColumns: (json['connectionTableColumns'] as List<dynamic>?)
+              ?.map((e) => e as String)
+              .toList() ??
+          defaultConnectionTableColumns,
+      connectionTableColumnWidths:
+          (json['connectionTableColumnWidths'] as Map<String, dynamic>?)?.map(
+                (k, e) => MapEntry(k, (e as num).toDouble()),
+              ) ??
+              const {},
       newDashboard: json['newDashboard'] as bool?,
     );
 
@@ -65,12 +95,48 @@ Map<String, dynamic> _$$AppSettingPropsImplToJson(
       'overrideProviderSettings': instance.overrideProviderSettings,
       'overrideNetworkSettings': instance.overrideNetworkSettings,
       'recoveryStrategy': _$RecoveryStrategyEnumMap[instance.recoveryStrategy]!,
+      'connectionListMode':
+          _$ConnectionListModeEnumMap[instance.connectionListMode]!,
+      'connectionViewMode':
+          _$ConnectionViewModeEnumMap[instance.connectionViewMode]!,
+      'connectionSort': _$ConnectionSortEnumMap[instance.connectionSort]!,
+      'connectionSortDirection':
+          _$ConnectionSortDirectionEnumMap[instance.connectionSortDirection]!,
+      'connectionShowIcon': instance.connectionShowIcon,
+      'connectionUseApplicationName': instance.connectionUseApplicationName,
+      'connectionRefreshInterval': instance.connectionRefreshInterval,
+      'connectionTableColumns': instance.connectionTableColumns,
+      'connectionTableColumnWidths': instance.connectionTableColumnWidths,
       'newDashboard': instance.newDashboard,
     };
 
 const _$RecoveryStrategyEnumMap = {
   RecoveryStrategy.compatible: 'compatible',
   RecoveryStrategy.override: 'override',
+};
+
+const _$ConnectionListModeEnumMap = {
+  ConnectionListMode.process: 'process',
+  ConnectionListMode.classic: 'classic',
+};
+
+const _$ConnectionViewModeEnumMap = {
+  ConnectionViewMode.list: 'list',
+  ConnectionViewMode.table: 'table',
+};
+
+const _$ConnectionSortEnumMap = {
+  ConnectionSort.time: 'time',
+  ConnectionSort.upload: 'upload',
+  ConnectionSort.download: 'download',
+  ConnectionSort.uploadSpeed: 'uploadSpeed',
+  ConnectionSort.downloadSpeed: 'downloadSpeed',
+  ConnectionSort.process: 'process',
+};
+
+const _$ConnectionSortDirectionEnumMap = {
+  ConnectionSortDirection.ascending: 'ascending',
+  ConnectionSortDirection.descending: 'descending',
 };
 
 const _$DashboardWidgetEnumMap = {

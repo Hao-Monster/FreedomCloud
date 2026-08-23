@@ -1,25 +1,24 @@
 import 'dart:async';
 
-import 'package:flclashx/clash/clash.dart';
 import 'package:flclashx/common/common.dart';
 import 'package:flclashx/enum/enum.dart';
+import 'package:flclashx/manager/connection_manager.dart';
 import 'package:flclashx/models/models.dart';
 import 'package:flclashx/providers/providers.dart';
 import 'package:flclashx/views/zashboard.dart';
 import 'package:flclashx/widgets/widgets.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
+import 'detail.dart';
 import 'item.dart';
 import 'requests.dart';
+import 'settings.dart';
+import 'table.dart';
 
-enum _ConnTab { active, log }
+enum _ConnectionStatusTab { active, closed }
 
-/// The merged "Connections" page: one nav entry hosting an Active/Log segmented
-/// switch over an IndexedStack of the two bodies. Owns the shared app-bar (actions,
-/// search, keyword chips) and routes the close-all action to the Active tab only.
 class ConnectionsView extends ConsumerStatefulWidget {
   const ConnectionsView({super.key});
 
@@ -29,36 +28,26 @@ class ConnectionsView extends ConsumerStatefulWidget {
 
 class _ConnectionsViewState extends ConsumerState<ConnectionsView>
     with PageMixin {
-  _ConnTab _tab = _ConnTab.active;
+  final _queryController = TextEditingController();
   String _query = '';
-  List<String> _keywords = const [];
+  String? _selectedProcessKey;
+  _ConnectionStatusTab _status = _ConnectionStatusTab.active;
 
   @override
   List<Widget> get actions => [
-        if (_tab == _ConnTab.active)
-          IconButton(
-            onPressed: () {
-              clashCore.closeConnections();
-            },
-            icon: const Icon(Icons.delete_sweep_outlined),
-          ),
-        // Placed last so it sits to the right of the search button (default order).
+        IconButton(
+          tooltip: appLocalizations.connectionsRequestLog,
+          onPressed: _showRequestLog,
+          icon: const Icon(Icons.receipt_long_outlined),
+        ),
+        const _PauseButton(),
+        IconButton(
+          tooltip: appLocalizations.connectionsSettings,
+          onPressed: () => showConnectionSettings(context),
+          icon: const Icon(Icons.tune_rounded),
+        ),
         const _ZashboardButton(),
       ];
-
-  @override
-  Null Function(String value) get onSearch => (value) {
-        setState(() {
-          _query = value;
-        });
-      };
-
-  @override
-  Null Function(List<String> keywords) get onKeywordsUpdate => (keywords) {
-        setState(() {
-          _keywords = keywords;
-        });
-      };
 
   @override
   void initState() {
@@ -69,75 +58,482 @@ class _ConnectionsViewState extends ConsumerState<ConnectionsView>
         handler: (pageLabel, viewMode) =>
             pageLabel == PageLabel.tools && viewMode == ViewMode.mobile,
       ),
-      (prev, next) {
-        if (prev != next && next == true) {
-          initPageState();
-        }
+      (_, current) {
+        if (current) initPageState();
       },
       fireImmediately: true,
     );
   }
 
-  void _selectTab(_ConnTab tab) {
-    if (_tab == tab) return;
-    setState(() => _tab = tab);
-    // Re-push the app-bar so the close-all action appears/disappears with the tab.
-    initPageState();
+  @override
+  void dispose() {
+    _queryController.dispose();
+    super.dispose();
+  }
+
+  void _showRequestLog() {
+    unawaited(
+      showExtend(
+        context,
+        props: const ExtendProps(maxWidth: 520),
+        builder: (_, type) => AdaptiveSheetScaffold(
+          type: type,
+          title: appLocalizations.connectionsRequestLog,
+          body: const RequestLogView(),
+        ),
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      children: [
-        Padding(
-          padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
-          child: Center(
-            child: CommonTabBar<_ConnTab>(
-              groupValue: _tab,
-              thumbColor: context.colorScheme.surface,
-              backgroundColor: context.colorScheme.surfaceContainerHighest,
-              onValueChanged: (value) {
-                if (value != null) _selectTab(value);
-              },
-              children: {
-                _ConnTab.active: Padding(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-                  child: Text(appLocalizations.connectionsActive),
+    final settings = ref.watch(appSettingProvider);
+    return ListenableBuilder(
+      listenable: connectionManager,
+      builder: (_, __) {
+        final groups = _filteredGroups(connectionManager.processGroups, _query);
+        final selectedGroup = _selectedProcessKey == null
+            ? null
+            : connectionManager.processGroups
+                .where((group) => group.key == _selectedProcessKey)
+                .firstOrNull;
+        final showProcessOverview =
+            settings.connectionListMode == ConnectionListMode.process &&
+                selectedGroup == null;
+        final source = showProcessOverview
+            ? const <TrackedConnection>[]
+            : _connectionsFor(selectedGroup);
+        final filtered = sortTrackedConnections(
+          filterTrackedConnections(source, _query),
+          settings.connectionSort,
+          direction: settings.connectionSortDirection,
+        );
+        final closeable = showProcessOverview
+            ? filterTrackedConnections(
+                connectionManager.activeConnections,
+                _query,
+              )
+            : _status == _ConnectionStatusTab.active
+                ? filtered
+                : const <TrackedConnection>[];
+        return Column(
+          children: [
+            _SummaryHeader(
+              activeCount: connectionManager.activeConnections.length,
+              closedCount: connectionManager.closedConnections.length,
+              upload: connectionManager.uploadTotal,
+              download: connectionManager.downloadTotal,
+              uploadSpeed: connectionManager.activeConnections.fold(
+                0,
+                (total, item) => total + item.uploadSpeed,
+              ),
+              downloadSpeed: connectionManager.activeConnections.fold(
+                0,
+                (total, item) => total + item.downloadSpeed,
+              ),
+            ),
+            if (connectionManager.paused)
+              MaterialBanner(
+                content: Text(appLocalizations.connectionsPaused),
+                actions: [
+                  TextButton(
+                    onPressed: () => connectionManager.setPaused(paused: false),
+                    child: Text(appLocalizations.connectionsResume),
+                  ),
+                ],
+              ),
+            if (connectionManager.error != null)
+              MaterialBanner(
+                content: Text('${connectionManager.error}'),
+                actions: [
+                  TextButton(
+                    onPressed: () => unawaited(connectionManager.refresh()),
+                    child: Text(appLocalizations.update),
+                  ),
+                ],
+              ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 8, 12, 6),
+              child: Row(
+                children: [
+                  SegmentedButton<ConnectionListMode>(
+                    showSelectedIcon: false,
+                    segments: [
+                      ButtonSegment(
+                        value: ConnectionListMode.process,
+                        label: Text(appLocalizations.connectionsProcessMode),
+                      ),
+                      ButtonSegment(
+                        value: ConnectionListMode.classic,
+                        label: Text(appLocalizations.connectionsClassicMode),
+                      ),
+                    ],
+                    selected: {settings.connectionListMode},
+                    onSelectionChanged: (values) {
+                      setState(() => _selectedProcessKey = null);
+                      ref.read(appSettingProvider.notifier).updateState(
+                            (value) => value.copyWith(
+                              connectionListMode: values.first,
+                            ),
+                          );
+                    },
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(child: _searchField()),
+                  if (closeable.isNotEmpty) ...[
+                    const SizedBox(width: 6),
+                    IconButton(
+                      tooltip: appLocalizations.connectionsCloseFiltered,
+                      onPressed: () => unawaited(
+                        connectionManager.closeConnections(
+                          closeable.map((item) => item.connection.id),
+                        ),
+                      ),
+                      icon: const Icon(Icons.link_off_rounded),
+                    ),
+                  ],
+                  if (!showProcessOverview) ...[
+                    if (_status == _ConnectionStatusTab.closed &&
+                        connectionManager.closedConnections.isNotEmpty)
+                      IconButton(
+                        tooltip: appLocalizations.connectionsClearClosed,
+                        onPressed: connectionManager.clearClosed,
+                        icon: const Icon(Icons.delete_sweep_outlined),
+                      ),
+                  ],
+                ],
+              ),
+            ),
+            if (!showProcessOverview) _statusBar(selectedGroup),
+            if (selectedGroup != null)
+              _processBreadcrumb(selectedGroup, settings),
+            Expanded(
+              child: connectionManager.loading
+                  ? const Center(child: CircularProgressIndicator())
+                  : showProcessOverview
+                      ? _processList(groups, settings)
+                      : _connectionList(filtered, settings),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _searchField() => TextField(
+        controller: _queryController,
+        onChanged: (value) => setState(() => _query = value),
+        decoration: InputDecoration(
+          isDense: true,
+          prefixIcon: const Icon(Icons.search_rounded),
+          hintText: appLocalizations.connectionsFilterHint,
+          suffixIcon: _query.isEmpty
+              ? null
+              : IconButton(
+                  onPressed: () {
+                    _queryController.clear();
+                    setState(() => _query = '');
+                  },
+                  icon: const Icon(Icons.close_rounded),
                 ),
-                _ConnTab.log: Padding(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-                  child: Text(appLocalizations.connectionsLog),
-                ),
-              },
+          filled: true,
+          border: const OutlineInputBorder(
+            borderRadius: BorderRadius.all(Radius.circular(22)),
+            borderSide: BorderSide.none,
+          ),
+        ),
+      );
+
+  Widget _statusBar(ProcessConnectionGroup? selectedGroup) {
+    final activeCount = selectedGroup?.activeCount ??
+        connectionManager.activeConnections.length;
+    final closedCount = selectedGroup?.closedCount ??
+        connectionManager.closedConnections.length;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+      child: CommonTabBar<_ConnectionStatusTab>(
+        groupValue: _status,
+        thumbColor: context.colorScheme.surface,
+        backgroundColor: context.colorScheme.surfaceContainerHighest,
+        onValueChanged: (value) {
+          if (value != null) setState(() => _status = value);
+        },
+        children: {
+          _ConnectionStatusTab.active: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 5),
+            child: Text('${appLocalizations.connectionsActive}  $activeCount'),
+          ),
+          _ConnectionStatusTab.closed: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 5),
+            child: Text('${appLocalizations.connectionsClosed}  $closedCount'),
+          ),
+        },
+      ),
+    );
+  }
+
+  Widget _processBreadcrumb(
+    ProcessConnectionGroup group,
+    AppSettingProps settings,
+  ) {
+    final first = group.activeConnections.firstOrNull?.connection ??
+        group.closedConnections.first.connection;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+      child: Row(
+        children: [
+          IconButton(
+            tooltip: appLocalizations.connectionsAllProcesses,
+            onPressed: () => setState(() => _selectedProcessKey = null),
+            icon: const Icon(Icons.arrow_back_rounded),
+          ),
+          ProcessIcon(
+            process: group.name,
+            processPath: group.processPath,
+            connectionType: first.metadata.type,
+            enabled: settings.connectionShowIcon,
+            size: 32,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              connectionProcessName(
+                first.metadata,
+                applicationName: settings.connectionUseApplicationName,
+              ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: context.textTheme.titleMedium,
             ),
           ),
-        ),
-        Expanded(
-          child: IndexedStack(
-            index: _tab.index,
-            children: [
-              ActiveConnectionsBody(
-                query: _query,
-                keywords: _keywords,
-                active: _tab == _ConnTab.active,
-              ),
-              LogConnectionsBody(
-                query: _query,
-                keywords: _keywords,
-              ),
-            ],
-          ),
-        ),
-      ],
+        ],
+      ),
     );
+  }
+
+  Widget _processList(
+    List<ProcessConnectionGroup> groups,
+    AppSettingProps settings,
+  ) {
+    if (groups.isEmpty) {
+      return NullStatus(
+        label: appLocalizations.nullTip(appLocalizations.connectionsProcess),
+      );
+    }
+    return ListView.builder(
+      itemCount: groups.length,
+      itemBuilder: (_, index) {
+        final group = groups[index];
+        return ProcessConnectionCard(
+          key: ValueKey(group.key),
+          group: group,
+          showIcon: settings.connectionShowIcon,
+          useApplicationName: settings.connectionUseApplicationName,
+          onTap: () => setState(() {
+            _selectedProcessKey = group.key;
+            _status = group.activeCount > 0
+                ? _ConnectionStatusTab.active
+                : _ConnectionStatusTab.closed;
+          }),
+        );
+      },
+    );
+  }
+
+  Widget _connectionList(
+    List<TrackedConnection> items,
+    AppSettingProps settings,
+  ) {
+    if (items.isEmpty) {
+      return NullStatus(
+        label: appLocalizations.nullTip(
+          _status == _ConnectionStatusTab.active
+              ? appLocalizations.connectionsActive
+              : appLocalizations.connectionsClosed,
+        ),
+      );
+    }
+    if (settings.connectionViewMode == ConnectionViewMode.table) {
+      return ConnectionTable(
+        items: items,
+        columns: settings.connectionTableColumns,
+        columnWidths: settings.connectionTableColumnWidths,
+        onColumnWidthsChanged: (widths) {
+          ref.read(appSettingProvider.notifier).updateState(
+                (value) => value.copyWith(connectionTableColumnWidths: widths),
+              );
+        },
+        onTap: _showDetail,
+        onClose: _closeItem,
+      );
+    }
+    return ListView.builder(
+      itemExtent: kConnRowExtent,
+      itemCount: items.length,
+      itemBuilder: (_, index) {
+        final item = items[index];
+        return TrackedConnectionRow(
+          key: ValueKey(item.connection.id),
+          item: item,
+          showIcon: settings.connectionShowIcon,
+          useApplicationName: settings.connectionUseApplicationName,
+          onTap: () => _showDetail(item),
+          onClose: () => _closeItem(item),
+        );
+      },
+    );
+  }
+
+  void _showDetail(TrackedConnection item) {
+    showConnectionDetail(
+      context,
+      item,
+      onClose: item.isActive
+          ? () => unawaited(
+                connectionManager.closeConnection(item.connection.id),
+              )
+          : null,
+    );
+  }
+
+  void _closeItem(TrackedConnection item) {
+    if (item.isActive) {
+      unawaited(connectionManager.closeConnection(item.connection.id));
+    } else {
+      connectionManager.removeClosed(item.connection.id);
+    }
+  }
+
+  List<TrackedConnection> _connectionsFor(ProcessConnectionGroup? group) {
+    if (group == null) {
+      return _status == _ConnectionStatusTab.active
+          ? connectionManager.activeConnections
+          : connectionManager.closedConnections;
+    }
+    return _status == _ConnectionStatusTab.active
+        ? group.activeConnections
+        : group.closedConnections;
   }
 }
 
-/// Opens zashboard pointed at this client's external-controller — in the
-/// built-in webview or the external browser, per the zashboardInApp setting.
-/// URL building lives in [buildZashboardUrl].
+List<ProcessConnectionGroup> _filteredGroups(
+  List<ProcessConnectionGroup> groups,
+  String query,
+) {
+  final normalized = query.trim().toLowerCase();
+  if (normalized.isEmpty) return groups;
+  return groups.where((group) {
+    if (group.name.toLowerCase().contains(normalized) ||
+        group.processPath.toLowerCase().contains(normalized)) {
+      return true;
+    }
+    return filterTrackedConnections(
+      [...group.activeConnections, ...group.closedConnections],
+      normalized,
+    ).isNotEmpty;
+  }).toList(growable: false);
+}
+
+class _SummaryHeader extends StatelessWidget {
+  const _SummaryHeader({
+    required this.activeCount,
+    required this.closedCount,
+    required this.upload,
+    required this.download,
+    required this.uploadSpeed,
+    required this.downloadSpeed,
+  });
+
+  final int activeCount;
+  final int closedCount;
+  final num upload;
+  final num download;
+  final double uploadSpeed;
+  final double downloadSpeed;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 2),
+        child: Row(
+          children: [
+            _metric(
+              context,
+              Icons.hub_outlined,
+              '$activeCount / $closedCount',
+              '${appLocalizations.connectionsActive} / ${appLocalizations.connectionsClosed}',
+            ),
+            const SizedBox(width: 16),
+            _metric(
+              context,
+              Icons.arrow_upward_rounded,
+              connectionRate(uploadSpeed),
+              TrafficValue(value: upload.toInt()).show,
+            ),
+            const SizedBox(width: 16),
+            _metric(
+              context,
+              Icons.arrow_downward_rounded,
+              connectionRate(downloadSpeed),
+              TrafficValue(value: download.toInt()).show,
+            ),
+          ],
+        ),
+      );
+
+  Widget _metric(
+    BuildContext context,
+    IconData icon,
+    String value,
+    String caption,
+  ) =>
+      Expanded(
+        child: Row(
+          children: [
+            Icon(icon, size: 20, color: context.colorScheme.primary),
+            const SizedBox(width: 6),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(value, maxLines: 1, overflow: TextOverflow.ellipsis),
+                  Text(
+                    caption,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: context.textTheme.bodySmall?.copyWith(
+                      color: context.colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      );
+}
+
+class _PauseButton extends StatelessWidget {
+  const _PauseButton();
+
+  @override
+  Widget build(BuildContext context) => ListenableBuilder(
+        listenable: connectionManager,
+        builder: (_, __) => IconButton(
+          tooltip: connectionManager.paused
+              ? appLocalizations.connectionsResume
+              : appLocalizations.connectionsPause,
+          onPressed: () => connectionManager.setPaused(
+            paused: !connectionManager.paused,
+          ),
+          icon: Icon(
+            connectionManager.paused
+                ? Icons.play_arrow_rounded
+                : Icons.pause_rounded,
+          ),
+        ),
+      );
+}
+
 class _ZashboardButton extends ConsumerWidget {
   const _ZashboardButton();
 
@@ -153,7 +549,6 @@ class _ZashboardButton extends ConsumerWidget {
         'assets/images/icons/zashboard.svg',
         width: 20,
         height: 20,
-        // Match the other app-bar icons (muted) rather than render pure white.
         colorFilter: ColorFilter.mode(
           context.colorScheme.onSurfaceVariant,
           BlendMode.srcIn,
@@ -161,166 +556,4 @@ class _ZashboardButton extends ConsumerWidget {
       ),
     );
   }
-}
-
-/// The "Active" tab body: a 2s snapshot poll of live connections (gated on the page
-/// being current AND this tab selected), with per-row block. Plain body — the parent
-/// owns the app-bar; search/keywords arrive as [query]/[keywords].
-class ActiveConnectionsBody extends ConsumerStatefulWidget {
-  const ActiveConnectionsBody({
-    super.key,
-    required this.query,
-    required this.keywords,
-    required this.active,
-  });
-
-  final String query;
-  final List<String> keywords;
-  final bool active;
-
-  @override
-  ConsumerState<ActiveConnectionsBody> createState() =>
-      _ActiveConnectionsBodyState();
-}
-
-class _ActiveConnectionsBodyState extends ConsumerState<ActiveConnectionsBody>
-    with WidgetsBindingObserver {
-  final _connectionsStateNotifier = ValueNotifier<ConnectionsState>(
-    const ConnectionsState(),
-  );
-  final ScrollController _scrollController = ScrollController(
-    keepScrollOffset: false,
-  );
-
-  Timer? timer;
-  bool _isPageVisible = false;
-
-  bool get _shouldPoll => widget.active && _isPageVisible;
-
-  @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance.addObserver(this);
-    _connectionsStateNotifier.value = _connectionsStateNotifier.value.copyWith(
-      query: widget.query,
-      keywords: widget.keywords,
-    );
-    ref.listenManual(
-      isCurrentPageProvider(
-        PageLabel.connections,
-        handler: (pageLabel, viewMode) =>
-            pageLabel == PageLabel.tools && viewMode == ViewMode.mobile,
-      ),
-      (prev, next) {
-        _isPageVisible = next == true;
-        _syncPolling();
-      },
-      fireImmediately: true,
-    );
-  }
-
-  @override
-  void didUpdateWidget(ActiveConnectionsBody oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.query != widget.query ||
-        !listEquals(oldWidget.keywords, widget.keywords)) {
-      _connectionsStateNotifier.value = _connectionsStateNotifier.value.copyWith(
-        query: widget.query,
-        keywords: widget.keywords,
-      );
-    }
-    if (oldWidget.active != widget.active) {
-      _syncPolling();
-    }
-  }
-
-  void _syncPolling() {
-    timer?.cancel();
-    timer = null;
-    if (_shouldPoll) {
-      _updateConnections();
-    }
-  }
-
-  Future<void> _updateConnections() async {
-    WidgetsBinding.instance.addPostFrameCallback((_) async {
-      if (mounted && _shouldPoll) {
-        _connectionsStateNotifier.value =
-            _connectionsStateNotifier.value.copyWith(
-          connections: await clashCore.getConnections(),
-        );
-        timer = Timer(const Duration(seconds: 2), () async {
-          _updateConnections();
-        });
-      }
-    });
-  }
-
-  Future<void> _handleBlockConnection(String id) async {
-    clashCore.closeConnection(id);
-    if (!mounted) return;
-    _connectionsStateNotifier.value = _connectionsStateNotifier.value.copyWith(
-      connections: await clashCore.getConnections(),
-    );
-  }
-
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    // Don't keep polling getConnections() every 2s while the app is backgrounded.
-    if (state == AppLifecycleState.paused ||
-        state == AppLifecycleState.inactive) {
-      timer?.cancel();
-      timer = null;
-    } else if (state == AppLifecycleState.resumed) {
-      _syncPolling();
-    }
-  }
-
-  @override
-  void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
-    timer?.cancel();
-    _connectionsStateNotifier.dispose();
-    _scrollController.dispose();
-    timer = null;
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) =>
-      ValueListenableBuilder<ConnectionsState>(
-        valueListenable: _connectionsStateNotifier,
-        builder: (_, state, __) {
-          final connections = state.list;
-          if (connections.isEmpty) {
-            return NullStatus(
-              label: appLocalizations
-                  .nullTip(appLocalizations.connectionsActive),
-            );
-          }
-          return CommonScrollBar(
-            controller: _scrollController,
-            child: ListView.separated(
-              controller: _scrollController,
-              itemBuilder: (_, index) {
-                final connection = connections[index];
-                return ConnectionRow(
-                  key: Key(connection.id),
-                  connection: connection,
-                  onClickKeyword: (value) {
-                    context.commonScaffoldState?.addKeyword(value);
-                  },
-                  onBlock: () {
-                    _handleBlockConnection(connection.id);
-                  },
-                );
-              },
-              separatorBuilder: (context, index) => const Divider(
-                height: 0,
-              ),
-              itemCount: connections.length,
-            ),
-          );
-        },
-      );
 }

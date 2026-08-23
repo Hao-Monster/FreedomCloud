@@ -204,10 +204,120 @@ class MessageLookup extends MessageLookupByLibrary {
     "confirm": MessageLookupByLibrary.simpleMessage("Confirm"),
     "connections": MessageLookupByLibrary.simpleMessage("Connections"),
     "connectionsActive": MessageLookupByLibrary.simpleMessage("Active"),
+    "connectionsAllProcesses": MessageLookupByLibrary.simpleMessage(
+      "All processes",
+    ),
+    "connectionsAscending": MessageLookupByLibrary.simpleMessage("Ascending"),
+    "connectionsClassicMode": MessageLookupByLibrary.simpleMessage("Classic"),
+    "connectionsClearClosed": MessageLookupByLibrary.simpleMessage(
+      "Clear closed",
+    ),
+    "connectionsCloseFiltered": MessageLookupByLibrary.simpleMessage(
+      "Close filtered active connections",
+    ),
+    "connectionsClosed": MessageLookupByLibrary.simpleMessage("Closed"),
     "connectionsDesc": MessageLookupByLibrary.simpleMessage(
       "View current connections data",
     ),
+    "connectionsDescending": MessageLookupByLibrary.simpleMessage("Descending"),
+    "connectionsDestination": MessageLookupByLibrary.simpleMessage(
+      "Destination",
+    ),
+    "connectionsDestinationGeo": MessageLookupByLibrary.simpleMessage(
+      "Destination GeoIP",
+    ),
+    "connectionsDetail": MessageLookupByLibrary.simpleMessage(
+      "Connection details",
+    ),
+    "connectionsDnsMode": MessageLookupByLibrary.simpleMessage("DNS mode"),
+    "connectionsDownloadSpeed": MessageLookupByLibrary.simpleMessage(
+      "Download speed",
+    ),
+    "connectionsEstablished": MessageLookupByLibrary.simpleMessage(
+      "Established",
+    ),
+    "connectionsFilterHint": MessageLookupByLibrary.simpleMessage(
+      "Filter process, host, IP, proxy or rule",
+    ),
+    "connectionsHost": MessageLookupByLibrary.simpleMessage("Host"),
+    "connectionsInbound": MessageLookupByLibrary.simpleMessage("Inbound"),
+    "connectionsInboundName": MessageLookupByLibrary.simpleMessage(
+      "Inbound name",
+    ),
+    "connectionsInboundUser": MessageLookupByLibrary.simpleMessage(
+      "Inbound user",
+    ),
+    "connectionsListView": MessageLookupByLibrary.simpleMessage("List view"),
     "connectionsLog": MessageLookupByLibrary.simpleMessage("Log"),
+    "connectionsMemory": MessageLookupByLibrary.simpleMessage("Memory"),
+    "connectionsOther": MessageLookupByLibrary.simpleMessage("Other"),
+    "connectionsPause": MessageLookupByLibrary.simpleMessage("Pause updates"),
+    "connectionsPaused": MessageLookupByLibrary.simpleMessage(
+      "Connection list updates are paused",
+    ),
+    "connectionsProcess": MessageLookupByLibrary.simpleMessage("Process"),
+    "connectionsProcessMode": MessageLookupByLibrary.simpleMessage(
+      "By process",
+    ),
+    "connectionsProcessPath": MessageLookupByLibrary.simpleMessage(
+      "Process path",
+    ),
+    "connectionsProxyChain": MessageLookupByLibrary.simpleMessage(
+      "Proxy chain",
+    ),
+    "connectionsRefreshInterval": MessageLookupByLibrary.simpleMessage(
+      "Refresh interval",
+    ),
+    "connectionsRefreshIntervalDesc": MessageLookupByLibrary.simpleMessage(
+      "100–10000 ms; lower values use more CPU",
+    ),
+    "connectionsRemoteDestination": MessageLookupByLibrary.simpleMessage(
+      "Remote destination",
+    ),
+    "connectionsRequestLog": MessageLookupByLibrary.simpleMessage(
+      "Request records",
+    ),
+    "connectionsResetColumns": MessageLookupByLibrary.simpleMessage(
+      "Reset columns",
+    ),
+    "connectionsResume": MessageLookupByLibrary.simpleMessage("Resume updates"),
+    "connectionsRouting": MessageLookupByLibrary.simpleMessage("Routing"),
+    "connectionsRule": MessageLookupByLibrary.simpleMessage("Rule"),
+    "connectionsRulePayload": MessageLookupByLibrary.simpleMessage(
+      "Rule payload",
+    ),
+    "connectionsSettings": MessageLookupByLibrary.simpleMessage(
+      "Connection settings",
+    ),
+    "connectionsShowIcons": MessageLookupByLibrary.simpleMessage(
+      "Show application icons",
+    ),
+    "connectionsSniffHost": MessageLookupByLibrary.simpleMessage(
+      "Sniffed host",
+    ),
+    "connectionsSource": MessageLookupByLibrary.simpleMessage("Source"),
+    "connectionsSourceGeo": MessageLookupByLibrary.simpleMessage(
+      "Source GeoIP",
+    ),
+    "connectionsTableColumns": MessageLookupByLibrary.simpleMessage(
+      "Table columns",
+    ),
+    "connectionsTableView": MessageLookupByLibrary.simpleMessage("Table view"),
+    "connectionsTotalDownload": MessageLookupByLibrary.simpleMessage(
+      "Total download",
+    ),
+    "connectionsTotalUpload": MessageLookupByLibrary.simpleMessage(
+      "Total upload",
+    ),
+    "connectionsTraffic": MessageLookupByLibrary.simpleMessage("Traffic"),
+    "connectionsType": MessageLookupByLibrary.simpleMessage("Type"),
+    "connectionsUid": MessageLookupByLibrary.simpleMessage("UID"),
+    "connectionsUploadSpeed": MessageLookupByLibrary.simpleMessage(
+      "Upload speed",
+    ),
+    "connectionsUseApplicationName": MessageLookupByLibrary.simpleMessage(
+      "Prefer application name",
+    ),
     "connectivity": MessageLookupByLibrary.simpleMessage("Connectivity："),
     "contactMe": MessageLookupByLibrary.simpleMessage("Contact me"),
     "content": MessageLookupByLibrary.simpleMessage("Content"),

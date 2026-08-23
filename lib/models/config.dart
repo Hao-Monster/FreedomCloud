@@ -40,6 +40,21 @@ const defaultThemeProps = ThemeProps(
   primaryColor: defaultPrimaryColor,
 );
 
+const defaultConnectionTableColumns = [
+  'status',
+  'time',
+  'type',
+  'host',
+  'process',
+  'rule',
+  'chains',
+  'remoteDestination',
+  'uploadSpeed',
+  'downloadSpeed',
+  'upload',
+  'download',
+];
+
 const List<DashboardWidget> defaultDashboardWidgets = [
   DashboardWidget.announce,
   DashboardWidget.metainfo,
@@ -85,15 +100,31 @@ class AppSettingProps with _$AppSettingProps {
     @Default(false) bool overrideProviderSettings,
     @Default(false) bool overrideNetworkSettings,
     @Default(RecoveryStrategy.compatible) RecoveryStrategy recoveryStrategy,
+    @JsonKey(unknownEnumValue: ConnectionListMode.process)
+    @Default(ConnectionListMode.process)
+    ConnectionListMode connectionListMode,
+    @JsonKey(unknownEnumValue: ConnectionViewMode.list)
+    @Default(ConnectionViewMode.list)
+    ConnectionViewMode connectionViewMode,
+    @JsonKey(unknownEnumValue: ConnectionSort.time)
+    @Default(ConnectionSort.time)
+    ConnectionSort connectionSort,
+    @JsonKey(unknownEnumValue: ConnectionSortDirection.descending)
+    @Default(ConnectionSortDirection.descending)
+    ConnectionSortDirection connectionSortDirection,
+    @Default(true) bool connectionShowIcon,
+    @Default(true) bool connectionUseApplicationName,
+    @Default(500) int connectionRefreshInterval,
+    @Default(defaultConnectionTableColumns) List<String> connectionTableColumns,
+    @Default({}) Map<String, double> connectionTableColumnWidths,
     bool? newDashboard,
   }) = _AppSettingProps;
 
   factory AppSettingProps.fromJson(Map<String, Object?> json) =>
       _$AppSettingPropsFromJson(json);
 
-  factory AppSettingProps.safeFromJson(Map<String, Object?>? json) => json == null
-        ? defaultAppSettingProps
-        : AppSettingProps.fromJson(json);
+  factory AppSettingProps.safeFromJson(Map<String, Object?>? json) =>
+      json == null ? defaultAppSettingProps : AppSettingProps.fromJson(json);
 }
 
 @freezed

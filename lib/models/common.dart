@@ -43,13 +43,28 @@ class Metadata with _$Metadata {
   const factory Metadata({
     required int uid,
     required String network,
+    @Default("") String type,
     required String sourceIP,
     required String sourcePort,
     required String destinationIP,
     required String destinationPort,
+    @Default([]) List<String> sourceGeoIP,
+    @Default([]) List<String> destinationGeoIP,
+    @Default("") String sourceIPASN,
+    @Default("") String destinationIPASN,
+    @Default("") String inboundIP,
+    @Default("") String inboundPort,
+    @Default("") String inboundName,
+    @Default("") String inboundUser,
     required String host,
+    @Default("") String sniffHost,
+    @Default("") String dnsMode,
     required String process,
+    @Default("") String processPath,
+    @Default("") String specialProxy,
+    @Default("") String specialRules,
     required String remoteDestination,
+    @Default(0) int dscp,
   }) = _Metadata;
 
   factory Metadata.fromJson(Map<String, Object?> json) =>
@@ -65,6 +80,8 @@ class Connection with _$Connection {
     required DateTime start,
     required Metadata metadata,
     required List<String> chains,
+    @Default("") String rule,
+    @Default("") String rulePayload,
   }) = _Connection;
 
   factory Connection.fromJson(Map<String, Object?> json) =>
@@ -100,11 +117,12 @@ class Log with _$Log {
 
   factory Log.app(
     String payload,
-  ) => Log(
-      payload: payload,
-      dateTime: _logDateTime(null),
-      // id: _logId(null),
-    );
+  ) =>
+      Log(
+        payload: payload,
+        dateTime: _logDateTime(null),
+        // id: _logId(null),
+      );
 
   factory Log.fromJson(Map<String, Object?> json) => _$LogFromJson(json);
 }
@@ -147,19 +165,23 @@ extension ConnectionsStateExt on ConnectionsState {
   List<Connection> get list {
     final lowerQuery = query.toLowerCase().trim();
     return connections.where((connection) {
-      final chains = connection.chains;
-      final process = connection.metadata.process;
-      final networkText = connection.metadata.network.toLowerCase();
-      final hostText = connection.metadata.host.toLowerCase();
-      final destinationIPText = connection.metadata.destinationIP.toLowerCase();
-      final processText = connection.metadata.process.toLowerCase();
-      final chainsText = chains.join("").toLowerCase();
-      return {...chains, process}.containsAll(keywords) &&
-          (networkText.contains(lowerQuery) ||
-              hostText.contains(lowerQuery) ||
-              destinationIPText.contains(lowerQuery) ||
-              processText.contains(lowerQuery) ||
-              chainsText.contains(lowerQuery));
+      final metadata = connection.metadata;
+      final values = [
+        metadata.network,
+        metadata.type,
+        metadata.host,
+        metadata.sniffHost,
+        metadata.sourceIP,
+        metadata.destinationIP,
+        metadata.remoteDestination,
+        metadata.process,
+        metadata.processPath,
+        connection.chains.join(' '),
+        connection.rule,
+        connection.rulePayload,
+      ];
+      return {...connection.chains, metadata.process}.containsAll(keywords) &&
+          values.any((value) => value.toLowerCase().contains(lowerQuery));
     }).toList();
   }
 }
@@ -203,16 +225,15 @@ class VersionInfo with _$VersionInfo {
 }
 
 class Traffic {
-
   Traffic({int? up, int? down})
       : id = DateTime.now().millisecondsSinceEpoch,
         up = TrafficValue(value: up),
         down = TrafficValue(value: down);
 
   factory Traffic.fromMap(Map<String, dynamic> map) => Traffic(
-      up: map['up'],
-      down: map['down'],
-    );
+        up: map['up'],
+        down: map['down'],
+      );
   int id;
   TrafficValue up;
   TrafficValue down;
@@ -237,7 +258,6 @@ class Traffic {
 
 @immutable
 class TrafficValueShow {
-
   const TrafficValueShow({
     required this.value,
     required this.unit,
@@ -320,7 +340,6 @@ extension GroupExt on Group {
 
 @immutable
 class TrafficValue {
-
   const TrafficValue({int? value}) : _value = value ?? 0;
   final int _value;
 
@@ -417,7 +436,6 @@ extension ColorSchemesExt on ColorSchemes {
 }
 
 class IpInfo {
-
   const IpInfo({
     required this.ip,
     required this.countryCode,
@@ -426,64 +444,64 @@ class IpInfo {
   final String countryCode;
 
   static IpInfo fromIpInfoIoJson(Map<String, dynamic> json) => switch (json) {
-      {
-        "ip": final String ip,
-        "country": final String country,
-      } =>
-        IpInfo(
-          ip: ip,
-          countryCode: country,
-        ),
-      _ => throw const FormatException("invalid json"),
-    };
+        {
+          "ip": final String ip,
+          "country": final String country,
+        } =>
+          IpInfo(
+            ip: ip,
+            countryCode: country,
+          ),
+        _ => throw const FormatException("invalid json"),
+      };
 
   static IpInfo fromIpApiCoJson(Map<String, dynamic> json) => switch (json) {
-      {
-        "ip": final String ip,
-        "country_code": final String countryCode,
-      } =>
-        IpInfo(
-          ip: ip,
-          countryCode: countryCode,
-        ),
-      _ => throw const FormatException("invalid json"),
-    };
+        {
+          "ip": final String ip,
+          "country_code": final String countryCode,
+        } =>
+          IpInfo(
+            ip: ip,
+            countryCode: countryCode,
+          ),
+        _ => throw const FormatException("invalid json"),
+      };
 
   static IpInfo fromIpSbJson(Map<String, dynamic> json) => switch (json) {
-      {
-        "ip": final String ip,
-        "country_code": final String countryCode,
-      } =>
-        IpInfo(
-          ip: ip,
-          countryCode: countryCode,
-        ),
-      _ => throw const FormatException("invalid json"),
-    };
+        {
+          "ip": final String ip,
+          "country_code": final String countryCode,
+        } =>
+          IpInfo(
+            ip: ip,
+            countryCode: countryCode,
+          ),
+        _ => throw const FormatException("invalid json"),
+      };
 
   static IpInfo fromIpwhoIsJson(Map<String, dynamic> json) => switch (json) {
-      {
-        "ip": final String ip,
-        "country_code": final String countryCode,
-      } =>
-        IpInfo(
-          ip: ip,
-          countryCode: countryCode,
-        ),
-      _ => throw const FormatException("invalid json"),
-    };
+        {
+          "ip": final String ip,
+          "country_code": final String countryCode,
+        } =>
+          IpInfo(
+            ip: ip,
+            countryCode: countryCode,
+          ),
+        _ => throw const FormatException("invalid json"),
+      };
 
   static IpInfo fromIpApiComJson(Map<String, dynamic> json) => switch (json) {
-      {
-        "query": final String ip,
-        "countryCode": final String countryCode,
-      } =>
-        IpInfo(
-          ip: ip,
-          countryCode: countryCode,
-        ),
-      _ => throw const FormatException("invalid json"),
-    };
+        {
+          "query": final String ip,
+          "countryCode": final String countryCode,
+        } =>
+          IpInfo(
+            ip: ip,
+            countryCode: countryCode,
+          ),
+        _ => throw const FormatException("invalid json"),
+      };
 
   @override
   String toString() => 'IpInfo{ip: $ip, countryCode: $countryCode}';
@@ -585,11 +603,12 @@ class Script with _$Script {
   factory Script.create({
     required String label,
     required String content,
-  }) => Script(
-      id: utils.uuidV4,
-      label: label,
-      content: content,
-    );
+  }) =>
+      Script(
+        id: utils.uuidV4,
+        label: label,
+        content: content,
+      );
 
   factory Script.fromJson(Map<String, Object?> json) => _$ScriptFromJson(json);
 }

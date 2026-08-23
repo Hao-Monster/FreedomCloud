@@ -521,13 +521,28 @@ Metadata _$MetadataFromJson(Map<String, dynamic> json) {
 mixin _$Metadata {
   int get uid => throw _privateConstructorUsedError;
   String get network => throw _privateConstructorUsedError;
+  String get type => throw _privateConstructorUsedError;
   String get sourceIP => throw _privateConstructorUsedError;
   String get sourcePort => throw _privateConstructorUsedError;
   String get destinationIP => throw _privateConstructorUsedError;
   String get destinationPort => throw _privateConstructorUsedError;
+  List<String> get sourceGeoIP => throw _privateConstructorUsedError;
+  List<String> get destinationGeoIP => throw _privateConstructorUsedError;
+  String get sourceIPASN => throw _privateConstructorUsedError;
+  String get destinationIPASN => throw _privateConstructorUsedError;
+  String get inboundIP => throw _privateConstructorUsedError;
+  String get inboundPort => throw _privateConstructorUsedError;
+  String get inboundName => throw _privateConstructorUsedError;
+  String get inboundUser => throw _privateConstructorUsedError;
   String get host => throw _privateConstructorUsedError;
+  String get sniffHost => throw _privateConstructorUsedError;
+  String get dnsMode => throw _privateConstructorUsedError;
   String get process => throw _privateConstructorUsedError;
+  String get processPath => throw _privateConstructorUsedError;
+  String get specialProxy => throw _privateConstructorUsedError;
+  String get specialRules => throw _privateConstructorUsedError;
   String get remoteDestination => throw _privateConstructorUsedError;
+  int get dscp => throw _privateConstructorUsedError;
 
   /// Serializes this Metadata to a JSON map.
   Map<String, dynamic> toJson() => throw _privateConstructorUsedError;
@@ -547,13 +562,28 @@ abstract class $MetadataCopyWith<$Res> {
   $Res call(
       {int uid,
       String network,
+      String type,
       String sourceIP,
       String sourcePort,
       String destinationIP,
       String destinationPort,
+      List<String> sourceGeoIP,
+      List<String> destinationGeoIP,
+      String sourceIPASN,
+      String destinationIPASN,
+      String inboundIP,
+      String inboundPort,
+      String inboundName,
+      String inboundUser,
       String host,
+      String sniffHost,
+      String dnsMode,
       String process,
-      String remoteDestination});
+      String processPath,
+      String specialProxy,
+      String specialRules,
+      String remoteDestination,
+      int dscp});
 }
 
 /// @nodoc
@@ -573,13 +603,28 @@ class _$MetadataCopyWithImpl<$Res, $Val extends Metadata>
   $Res call({
     Object? uid = null,
     Object? network = null,
+    Object? type = null,
     Object? sourceIP = null,
     Object? sourcePort = null,
     Object? destinationIP = null,
     Object? destinationPort = null,
+    Object? sourceGeoIP = null,
+    Object? destinationGeoIP = null,
+    Object? sourceIPASN = null,
+    Object? destinationIPASN = null,
+    Object? inboundIP = null,
+    Object? inboundPort = null,
+    Object? inboundName = null,
+    Object? inboundUser = null,
     Object? host = null,
+    Object? sniffHost = null,
+    Object? dnsMode = null,
     Object? process = null,
+    Object? processPath = null,
+    Object? specialProxy = null,
+    Object? specialRules = null,
     Object? remoteDestination = null,
+    Object? dscp = null,
   }) {
     return _then(_value.copyWith(
       uid: null == uid
@@ -589,6 +634,10 @@ class _$MetadataCopyWithImpl<$Res, $Val extends Metadata>
       network: null == network
           ? _value.network
           : network // ignore: cast_nullable_to_non_nullable
+              as String,
+      type: null == type
+          ? _value.type
+          : type // ignore: cast_nullable_to_non_nullable
               as String,
       sourceIP: null == sourceIP
           ? _value.sourceIP
@@ -606,18 +655,74 @@ class _$MetadataCopyWithImpl<$Res, $Val extends Metadata>
           ? _value.destinationPort
           : destinationPort // ignore: cast_nullable_to_non_nullable
               as String,
+      sourceGeoIP: null == sourceGeoIP
+          ? _value.sourceGeoIP
+          : sourceGeoIP // ignore: cast_nullable_to_non_nullable
+              as List<String>,
+      destinationGeoIP: null == destinationGeoIP
+          ? _value.destinationGeoIP
+          : destinationGeoIP // ignore: cast_nullable_to_non_nullable
+              as List<String>,
+      sourceIPASN: null == sourceIPASN
+          ? _value.sourceIPASN
+          : sourceIPASN // ignore: cast_nullable_to_non_nullable
+              as String,
+      destinationIPASN: null == destinationIPASN
+          ? _value.destinationIPASN
+          : destinationIPASN // ignore: cast_nullable_to_non_nullable
+              as String,
+      inboundIP: null == inboundIP
+          ? _value.inboundIP
+          : inboundIP // ignore: cast_nullable_to_non_nullable
+              as String,
+      inboundPort: null == inboundPort
+          ? _value.inboundPort
+          : inboundPort // ignore: cast_nullable_to_non_nullable
+              as String,
+      inboundName: null == inboundName
+          ? _value.inboundName
+          : inboundName // ignore: cast_nullable_to_non_nullable
+              as String,
+      inboundUser: null == inboundUser
+          ? _value.inboundUser
+          : inboundUser // ignore: cast_nullable_to_non_nullable
+              as String,
       host: null == host
           ? _value.host
           : host // ignore: cast_nullable_to_non_nullable
+              as String,
+      sniffHost: null == sniffHost
+          ? _value.sniffHost
+          : sniffHost // ignore: cast_nullable_to_non_nullable
+              as String,
+      dnsMode: null == dnsMode
+          ? _value.dnsMode
+          : dnsMode // ignore: cast_nullable_to_non_nullable
               as String,
       process: null == process
           ? _value.process
           : process // ignore: cast_nullable_to_non_nullable
               as String,
+      processPath: null == processPath
+          ? _value.processPath
+          : processPath // ignore: cast_nullable_to_non_nullable
+              as String,
+      specialProxy: null == specialProxy
+          ? _value.specialProxy
+          : specialProxy // ignore: cast_nullable_to_non_nullable
+              as String,
+      specialRules: null == specialRules
+          ? _value.specialRules
+          : specialRules // ignore: cast_nullable_to_non_nullable
+              as String,
       remoteDestination: null == remoteDestination
           ? _value.remoteDestination
           : remoteDestination // ignore: cast_nullable_to_non_nullable
               as String,
+      dscp: null == dscp
+          ? _value.dscp
+          : dscp // ignore: cast_nullable_to_non_nullable
+              as int,
     ) as $Val);
   }
 }
@@ -633,13 +738,28 @@ abstract class _$$MetadataImplCopyWith<$Res>
   $Res call(
       {int uid,
       String network,
+      String type,
       String sourceIP,
       String sourcePort,
       String destinationIP,
       String destinationPort,
+      List<String> sourceGeoIP,
+      List<String> destinationGeoIP,
+      String sourceIPASN,
+      String destinationIPASN,
+      String inboundIP,
+      String inboundPort,
+      String inboundName,
+      String inboundUser,
       String host,
+      String sniffHost,
+      String dnsMode,
       String process,
-      String remoteDestination});
+      String processPath,
+      String specialProxy,
+      String specialRules,
+      String remoteDestination,
+      int dscp});
 }
 
 /// @nodoc
@@ -657,13 +777,28 @@ class __$$MetadataImplCopyWithImpl<$Res>
   $Res call({
     Object? uid = null,
     Object? network = null,
+    Object? type = null,
     Object? sourceIP = null,
     Object? sourcePort = null,
     Object? destinationIP = null,
     Object? destinationPort = null,
+    Object? sourceGeoIP = null,
+    Object? destinationGeoIP = null,
+    Object? sourceIPASN = null,
+    Object? destinationIPASN = null,
+    Object? inboundIP = null,
+    Object? inboundPort = null,
+    Object? inboundName = null,
+    Object? inboundUser = null,
     Object? host = null,
+    Object? sniffHost = null,
+    Object? dnsMode = null,
     Object? process = null,
+    Object? processPath = null,
+    Object? specialProxy = null,
+    Object? specialRules = null,
     Object? remoteDestination = null,
+    Object? dscp = null,
   }) {
     return _then(_$MetadataImpl(
       uid: null == uid
@@ -673,6 +808,10 @@ class __$$MetadataImplCopyWithImpl<$Res>
       network: null == network
           ? _value.network
           : network // ignore: cast_nullable_to_non_nullable
+              as String,
+      type: null == type
+          ? _value.type
+          : type // ignore: cast_nullable_to_non_nullable
               as String,
       sourceIP: null == sourceIP
           ? _value.sourceIP
@@ -690,18 +829,74 @@ class __$$MetadataImplCopyWithImpl<$Res>
           ? _value.destinationPort
           : destinationPort // ignore: cast_nullable_to_non_nullable
               as String,
+      sourceGeoIP: null == sourceGeoIP
+          ? _value._sourceGeoIP
+          : sourceGeoIP // ignore: cast_nullable_to_non_nullable
+              as List<String>,
+      destinationGeoIP: null == destinationGeoIP
+          ? _value._destinationGeoIP
+          : destinationGeoIP // ignore: cast_nullable_to_non_nullable
+              as List<String>,
+      sourceIPASN: null == sourceIPASN
+          ? _value.sourceIPASN
+          : sourceIPASN // ignore: cast_nullable_to_non_nullable
+              as String,
+      destinationIPASN: null == destinationIPASN
+          ? _value.destinationIPASN
+          : destinationIPASN // ignore: cast_nullable_to_non_nullable
+              as String,
+      inboundIP: null == inboundIP
+          ? _value.inboundIP
+          : inboundIP // ignore: cast_nullable_to_non_nullable
+              as String,
+      inboundPort: null == inboundPort
+          ? _value.inboundPort
+          : inboundPort // ignore: cast_nullable_to_non_nullable
+              as String,
+      inboundName: null == inboundName
+          ? _value.inboundName
+          : inboundName // ignore: cast_nullable_to_non_nullable
+              as String,
+      inboundUser: null == inboundUser
+          ? _value.inboundUser
+          : inboundUser // ignore: cast_nullable_to_non_nullable
+              as String,
       host: null == host
           ? _value.host
           : host // ignore: cast_nullable_to_non_nullable
+              as String,
+      sniffHost: null == sniffHost
+          ? _value.sniffHost
+          : sniffHost // ignore: cast_nullable_to_non_nullable
+              as String,
+      dnsMode: null == dnsMode
+          ? _value.dnsMode
+          : dnsMode // ignore: cast_nullable_to_non_nullable
               as String,
       process: null == process
           ? _value.process
           : process // ignore: cast_nullable_to_non_nullable
               as String,
+      processPath: null == processPath
+          ? _value.processPath
+          : processPath // ignore: cast_nullable_to_non_nullable
+              as String,
+      specialProxy: null == specialProxy
+          ? _value.specialProxy
+          : specialProxy // ignore: cast_nullable_to_non_nullable
+              as String,
+      specialRules: null == specialRules
+          ? _value.specialRules
+          : specialRules // ignore: cast_nullable_to_non_nullable
+              as String,
       remoteDestination: null == remoteDestination
           ? _value.remoteDestination
           : remoteDestination // ignore: cast_nullable_to_non_nullable
               as String,
+      dscp: null == dscp
+          ? _value.dscp
+          : dscp // ignore: cast_nullable_to_non_nullable
+              as int,
     ));
   }
 }
@@ -712,13 +907,30 @@ class _$MetadataImpl implements _Metadata {
   const _$MetadataImpl(
       {required this.uid,
       required this.network,
+      this.type = "",
       required this.sourceIP,
       required this.sourcePort,
       required this.destinationIP,
       required this.destinationPort,
+      final List<String> sourceGeoIP = const [],
+      final List<String> destinationGeoIP = const [],
+      this.sourceIPASN = "",
+      this.destinationIPASN = "",
+      this.inboundIP = "",
+      this.inboundPort = "",
+      this.inboundName = "",
+      this.inboundUser = "",
       required this.host,
+      this.sniffHost = "",
+      this.dnsMode = "",
       required this.process,
-      required this.remoteDestination});
+      this.processPath = "",
+      this.specialProxy = "",
+      this.specialRules = "",
+      required this.remoteDestination,
+      this.dscp = 0})
+      : _sourceGeoIP = sourceGeoIP,
+        _destinationGeoIP = destinationGeoIP;
 
   factory _$MetadataImpl.fromJson(Map<String, dynamic> json) =>
       _$$MetadataImplFromJson(json);
@@ -728,6 +940,9 @@ class _$MetadataImpl implements _Metadata {
   @override
   final String network;
   @override
+  @JsonKey()
+  final String type;
+  @override
   final String sourceIP;
   @override
   final String sourcePort;
@@ -735,16 +950,71 @@ class _$MetadataImpl implements _Metadata {
   final String destinationIP;
   @override
   final String destinationPort;
+  final List<String> _sourceGeoIP;
+  @override
+  @JsonKey()
+  List<String> get sourceGeoIP {
+    if (_sourceGeoIP is EqualUnmodifiableListView) return _sourceGeoIP;
+    // ignore: implicit_dynamic_type
+    return EqualUnmodifiableListView(_sourceGeoIP);
+  }
+
+  final List<String> _destinationGeoIP;
+  @override
+  @JsonKey()
+  List<String> get destinationGeoIP {
+    if (_destinationGeoIP is EqualUnmodifiableListView)
+      return _destinationGeoIP;
+    // ignore: implicit_dynamic_type
+    return EqualUnmodifiableListView(_destinationGeoIP);
+  }
+
+  @override
+  @JsonKey()
+  final String sourceIPASN;
+  @override
+  @JsonKey()
+  final String destinationIPASN;
+  @override
+  @JsonKey()
+  final String inboundIP;
+  @override
+  @JsonKey()
+  final String inboundPort;
+  @override
+  @JsonKey()
+  final String inboundName;
+  @override
+  @JsonKey()
+  final String inboundUser;
   @override
   final String host;
   @override
+  @JsonKey()
+  final String sniffHost;
+  @override
+  @JsonKey()
+  final String dnsMode;
+  @override
   final String process;
   @override
+  @JsonKey()
+  final String processPath;
+  @override
+  @JsonKey()
+  final String specialProxy;
+  @override
+  @JsonKey()
+  final String specialRules;
+  @override
   final String remoteDestination;
+  @override
+  @JsonKey()
+  final int dscp;
 
   @override
   String toString() {
-    return 'Metadata(uid: $uid, network: $network, sourceIP: $sourceIP, sourcePort: $sourcePort, destinationIP: $destinationIP, destinationPort: $destinationPort, host: $host, process: $process, remoteDestination: $remoteDestination)';
+    return 'Metadata(uid: $uid, network: $network, type: $type, sourceIP: $sourceIP, sourcePort: $sourcePort, destinationIP: $destinationIP, destinationPort: $destinationPort, sourceGeoIP: $sourceGeoIP, destinationGeoIP: $destinationGeoIP, sourceIPASN: $sourceIPASN, destinationIPASN: $destinationIPASN, inboundIP: $inboundIP, inboundPort: $inboundPort, inboundName: $inboundName, inboundUser: $inboundUser, host: $host, sniffHost: $sniffHost, dnsMode: $dnsMode, process: $process, processPath: $processPath, specialProxy: $specialProxy, specialRules: $specialRules, remoteDestination: $remoteDestination, dscp: $dscp)';
   }
 
   @override
@@ -754,6 +1024,7 @@ class _$MetadataImpl implements _Metadata {
             other is _$MetadataImpl &&
             (identical(other.uid, uid) || other.uid == uid) &&
             (identical(other.network, network) || other.network == network) &&
+            (identical(other.type, type) || other.type == type) &&
             (identical(other.sourceIP, sourceIP) ||
                 other.sourceIP == sourceIP) &&
             (identical(other.sourcePort, sourcePort) ||
@@ -762,25 +1033,67 @@ class _$MetadataImpl implements _Metadata {
                 other.destinationIP == destinationIP) &&
             (identical(other.destinationPort, destinationPort) ||
                 other.destinationPort == destinationPort) &&
+            const DeepCollectionEquality()
+                .equals(other._sourceGeoIP, _sourceGeoIP) &&
+            const DeepCollectionEquality()
+                .equals(other._destinationGeoIP, _destinationGeoIP) &&
+            (identical(other.sourceIPASN, sourceIPASN) ||
+                other.sourceIPASN == sourceIPASN) &&
+            (identical(other.destinationIPASN, destinationIPASN) ||
+                other.destinationIPASN == destinationIPASN) &&
+            (identical(other.inboundIP, inboundIP) ||
+                other.inboundIP == inboundIP) &&
+            (identical(other.inboundPort, inboundPort) ||
+                other.inboundPort == inboundPort) &&
+            (identical(other.inboundName, inboundName) ||
+                other.inboundName == inboundName) &&
+            (identical(other.inboundUser, inboundUser) ||
+                other.inboundUser == inboundUser) &&
             (identical(other.host, host) || other.host == host) &&
+            (identical(other.sniffHost, sniffHost) ||
+                other.sniffHost == sniffHost) &&
+            (identical(other.dnsMode, dnsMode) || other.dnsMode == dnsMode) &&
             (identical(other.process, process) || other.process == process) &&
+            (identical(other.processPath, processPath) ||
+                other.processPath == processPath) &&
+            (identical(other.specialProxy, specialProxy) ||
+                other.specialProxy == specialProxy) &&
+            (identical(other.specialRules, specialRules) ||
+                other.specialRules == specialRules) &&
             (identical(other.remoteDestination, remoteDestination) ||
-                other.remoteDestination == remoteDestination));
+                other.remoteDestination == remoteDestination) &&
+            (identical(other.dscp, dscp) || other.dscp == dscp));
   }
 
   @JsonKey(includeFromJson: false, includeToJson: false)
   @override
-  int get hashCode => Object.hash(
-      runtimeType,
-      uid,
-      network,
-      sourceIP,
-      sourcePort,
-      destinationIP,
-      destinationPort,
-      host,
-      process,
-      remoteDestination);
+  int get hashCode => Object.hashAll([
+        runtimeType,
+        uid,
+        network,
+        type,
+        sourceIP,
+        sourcePort,
+        destinationIP,
+        destinationPort,
+        const DeepCollectionEquality().hash(_sourceGeoIP),
+        const DeepCollectionEquality().hash(_destinationGeoIP),
+        sourceIPASN,
+        destinationIPASN,
+        inboundIP,
+        inboundPort,
+        inboundName,
+        inboundUser,
+        host,
+        sniffHost,
+        dnsMode,
+        process,
+        processPath,
+        specialProxy,
+        specialRules,
+        remoteDestination,
+        dscp
+      ]);
 
   /// Create a copy of Metadata
   /// with the given fields replaced by the non-null parameter values.
@@ -802,13 +1115,28 @@ abstract class _Metadata implements Metadata {
   const factory _Metadata(
       {required final int uid,
       required final String network,
+      final String type,
       required final String sourceIP,
       required final String sourcePort,
       required final String destinationIP,
       required final String destinationPort,
+      final List<String> sourceGeoIP,
+      final List<String> destinationGeoIP,
+      final String sourceIPASN,
+      final String destinationIPASN,
+      final String inboundIP,
+      final String inboundPort,
+      final String inboundName,
+      final String inboundUser,
       required final String host,
+      final String sniffHost,
+      final String dnsMode,
       required final String process,
-      required final String remoteDestination}) = _$MetadataImpl;
+      final String processPath,
+      final String specialProxy,
+      final String specialRules,
+      required final String remoteDestination,
+      final int dscp}) = _$MetadataImpl;
 
   factory _Metadata.fromJson(Map<String, dynamic> json) =
       _$MetadataImpl.fromJson;
@@ -818,6 +1146,8 @@ abstract class _Metadata implements Metadata {
   @override
   String get network;
   @override
+  String get type;
+  @override
   String get sourceIP;
   @override
   String get sourcePort;
@@ -826,11 +1156,39 @@ abstract class _Metadata implements Metadata {
   @override
   String get destinationPort;
   @override
+  List<String> get sourceGeoIP;
+  @override
+  List<String> get destinationGeoIP;
+  @override
+  String get sourceIPASN;
+  @override
+  String get destinationIPASN;
+  @override
+  String get inboundIP;
+  @override
+  String get inboundPort;
+  @override
+  String get inboundName;
+  @override
+  String get inboundUser;
+  @override
   String get host;
+  @override
+  String get sniffHost;
+  @override
+  String get dnsMode;
   @override
   String get process;
   @override
+  String get processPath;
+  @override
+  String get specialProxy;
+  @override
+  String get specialRules;
+  @override
   String get remoteDestination;
+  @override
+  int get dscp;
 
   /// Create a copy of Metadata
   /// with the given fields replaced by the non-null parameter values.
@@ -852,6 +1210,8 @@ mixin _$Connection {
   DateTime get start => throw _privateConstructorUsedError;
   Metadata get metadata => throw _privateConstructorUsedError;
   List<String> get chains => throw _privateConstructorUsedError;
+  String get rule => throw _privateConstructorUsedError;
+  String get rulePayload => throw _privateConstructorUsedError;
 
   /// Serializes this Connection to a JSON map.
   Map<String, dynamic> toJson() => throw _privateConstructorUsedError;
@@ -875,7 +1235,9 @@ abstract class $ConnectionCopyWith<$Res> {
       num? download,
       DateTime start,
       Metadata metadata,
-      List<String> chains});
+      List<String> chains,
+      String rule,
+      String rulePayload});
 
   $MetadataCopyWith<$Res> get metadata;
 }
@@ -901,6 +1263,8 @@ class _$ConnectionCopyWithImpl<$Res, $Val extends Connection>
     Object? start = null,
     Object? metadata = null,
     Object? chains = null,
+    Object? rule = null,
+    Object? rulePayload = null,
   }) {
     return _then(_value.copyWith(
       id: null == id
@@ -927,6 +1291,14 @@ class _$ConnectionCopyWithImpl<$Res, $Val extends Connection>
           ? _value.chains
           : chains // ignore: cast_nullable_to_non_nullable
               as List<String>,
+      rule: null == rule
+          ? _value.rule
+          : rule // ignore: cast_nullable_to_non_nullable
+              as String,
+      rulePayload: null == rulePayload
+          ? _value.rulePayload
+          : rulePayload // ignore: cast_nullable_to_non_nullable
+              as String,
     ) as $Val);
   }
 
@@ -955,7 +1327,9 @@ abstract class _$$ConnectionImplCopyWith<$Res>
       num? download,
       DateTime start,
       Metadata metadata,
-      List<String> chains});
+      List<String> chains,
+      String rule,
+      String rulePayload});
 
   @override
   $MetadataCopyWith<$Res> get metadata;
@@ -980,6 +1354,8 @@ class __$$ConnectionImplCopyWithImpl<$Res>
     Object? start = null,
     Object? metadata = null,
     Object? chains = null,
+    Object? rule = null,
+    Object? rulePayload = null,
   }) {
     return _then(_$ConnectionImpl(
       id: null == id
@@ -1006,6 +1382,14 @@ class __$$ConnectionImplCopyWithImpl<$Res>
           ? _value._chains
           : chains // ignore: cast_nullable_to_non_nullable
               as List<String>,
+      rule: null == rule
+          ? _value.rule
+          : rule // ignore: cast_nullable_to_non_nullable
+              as String,
+      rulePayload: null == rulePayload
+          ? _value.rulePayload
+          : rulePayload // ignore: cast_nullable_to_non_nullable
+              as String,
     ));
   }
 }
@@ -1019,7 +1403,9 @@ class _$ConnectionImpl implements _Connection {
       this.download,
       required this.start,
       required this.metadata,
-      required final List<String> chains})
+      required final List<String> chains,
+      this.rule = "",
+      this.rulePayload = ""})
       : _chains = chains;
 
   factory _$ConnectionImpl.fromJson(Map<String, dynamic> json) =>
@@ -1044,8 +1430,15 @@ class _$ConnectionImpl implements _Connection {
   }
 
   @override
+  @JsonKey()
+  final String rule;
+  @override
+  @JsonKey()
+  final String rulePayload;
+
+  @override
   String toString() {
-    return 'Connection(id: $id, upload: $upload, download: $download, start: $start, metadata: $metadata, chains: $chains)';
+    return 'Connection(id: $id, upload: $upload, download: $download, start: $start, metadata: $metadata, chains: $chains, rule: $rule, rulePayload: $rulePayload)';
   }
 
   @override
@@ -1060,13 +1453,24 @@ class _$ConnectionImpl implements _Connection {
             (identical(other.start, start) || other.start == start) &&
             (identical(other.metadata, metadata) ||
                 other.metadata == metadata) &&
-            const DeepCollectionEquality().equals(other._chains, _chains));
+            const DeepCollectionEquality().equals(other._chains, _chains) &&
+            (identical(other.rule, rule) || other.rule == rule) &&
+            (identical(other.rulePayload, rulePayload) ||
+                other.rulePayload == rulePayload));
   }
 
   @JsonKey(includeFromJson: false, includeToJson: false)
   @override
-  int get hashCode => Object.hash(runtimeType, id, upload, download, start,
-      metadata, const DeepCollectionEquality().hash(_chains));
+  int get hashCode => Object.hash(
+      runtimeType,
+      id,
+      upload,
+      download,
+      start,
+      metadata,
+      const DeepCollectionEquality().hash(_chains),
+      rule,
+      rulePayload);
 
   /// Create a copy of Connection
   /// with the given fields replaced by the non-null parameter values.
@@ -1091,7 +1495,9 @@ abstract class _Connection implements Connection {
       final num? download,
       required final DateTime start,
       required final Metadata metadata,
-      required final List<String> chains}) = _$ConnectionImpl;
+      required final List<String> chains,
+      final String rule,
+      final String rulePayload}) = _$ConnectionImpl;
 
   factory _Connection.fromJson(Map<String, dynamic> json) =
       _$ConnectionImpl.fromJson;
@@ -1108,6 +1514,10 @@ abstract class _Connection implements Connection {
   Metadata get metadata;
   @override
   List<String> get chains;
+  @override
+  String get rule;
+  @override
+  String get rulePayload;
 
   /// Create a copy of Connection
   /// with the given fields replaced by the non-null parameter values.

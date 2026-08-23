@@ -6,71 +6,270 @@ import 'package:flclashx/models/models.dart';
 import 'package:flclashx/plugins/app.dart';
 import 'package:flclashx/widgets/widgets.dart';
 import 'package:flutter/material.dart';
+import 'package:path/path.dart' as path;
 
-enum ConnectionRowMode { active, log }
+const double kConnRowExtent = 88;
 
-/// Fixed row height so the Active list and the Log's CacheItemExtentListView can
-/// both use a constant extent — cheap virtualization, no per-item text measuring.
-const double kConnRowExtent = 76;
+final Map<String, Future<ImageProvider?>?> _processIconCache = {};
 
-// App icons are stable per process; cache the load future so the 2s connections
-// re-poll doesn't recreate it on every rebuild — recreating reset the FutureBuilder
-// to its loading state, which is what made rows show the generic icon instead of
-// the app's.
-final Map<String, Future<ImageProvider?>?> _packageIconCache = {};
-
-Future<ImageProvider?>? _packageIconFuture(String process) =>
-    _packageIconCache.putIfAbsent(process, () => app?.getPackageIcon(process));
-
-// Short English connection age: now / 12s / 3m / 2h / 1d.
-String _shortAge(DateTime start) {
-  final s = DateTime.now().difference(start).inSeconds;
-  if (s < 5) return 'now';
-  if (s < 60) return '${s}s';
-  final m = s ~/ 60;
-  if (m < 60) return '${m}m';
-  final h = m ~/ 60;
-  if (h < 24) return '${h}h';
-  return '${h ~/ 24}d';
+String connectionProcessName(Metadata metadata, {bool applicationName = true}) {
+  if (metadata.type.toLowerCase() == 'inner') return 'mihomo';
+  if (metadata.process.isNotEmpty) {
+    return applicationName
+        ? path.basenameWithoutExtension(metadata.process)
+        : metadata.process;
+  }
+  if (metadata.processPath.isNotEmpty) {
+    final executable = path.basename(metadata.processPath);
+    return applicationName
+        ? path.basenameWithoutExtension(executable)
+        : executable;
+  }
+  return metadata.sourceIP.isNotEmpty
+      ? metadata.sourceIP
+      : appLocalizations.unknown;
 }
 
-/// One connection rendered as a dense, fixed-height 2-line row: the originating
-/// app's icon (with the destination country flag as a corner badge), host:port +
-/// down traffic on line 1, a row of badges (process · age · exit node) + up traffic
-/// on line 2, and (Active only) a disconnect button.
-class ConnectionRow extends StatelessWidget {
-  const ConnectionRow({
+String connectionDestination(Connection connection) {
+  final metadata = connection.metadata;
+  final host = metadata.host.isNotEmpty
+      ? metadata.host
+      : metadata.sniffHost.isNotEmpty
+          ? metadata.sniffHost
+          : metadata.destinationIP;
+  return metadata.destinationPort.isEmpty
+      ? host
+      : '$host:${metadata.destinationPort}';
+}
+
+String connectionRate(double value) =>
+    '${TrafficValue(value: value.round()).show}/s';
+
+class ProcessIcon extends StatelessWidget {
+  const ProcessIcon({
     super.key,
-    required this.connection,
-    this.mode = ConnectionRowMode.active,
-    this.onClickKeyword,
-    this.onBlock,
+    required this.process,
+    required this.processPath,
+    this.connectionType = '',
+    this.size = 44,
+    this.enabled = true,
   });
 
-  final Connection connection;
-  final ConnectionRowMode mode;
-  final Function(String)? onClickKeyword;
-  final VoidCallback? onBlock;
+  final String process;
+  final String processPath;
+  final String connectionType;
+  final double size;
+  final bool enabled;
 
   @override
   Widget build(BuildContext context) {
-    final m = connection.metadata;
-    final colorScheme = context.colorScheme;
-    final host = m.host.isNotEmpty ? m.host : m.destinationIP;
-    final hostLine =
-        m.destinationPort.isNotEmpty ? '$host:${m.destinationPort}' : host;
-    final down = TrafficValue(value: connection.download?.toInt()).show;
-    final up = TrafficValue(value: connection.upload?.toInt()).show;
+    if (!enabled) return _fallback(context);
+    final isInner =
+        connectionType.toLowerCase() == 'inner' || process == 'mihomo';
+    final resolvedPath = isInner ? Platform.resolvedExecutable : processPath;
+    final cacheKey = '${Platform.operatingSystem}|$resolvedPath|$process';
+    final future = _processIconCache.putIfAbsent(
+      cacheKey,
+      () {
+        if (Platform.isAndroid && process.isNotEmpty) {
+          return app?.getPackageIcon(process);
+        }
+        if (Platform.isWindows) return windowsProcessIcon(resolvedPath);
+        if (Platform.isLinux) return linuxProcessIcon(resolvedPath, process);
+        return null;
+      },
+    );
+    if (future == null) return _fallback(context);
+    return FutureBuilder<ImageProvider?>(
+      future: future,
+      builder: (_, snapshot) {
+        final image = snapshot.data;
+        if (image == null) return _fallback(context);
+        return ClipRRect(
+          borderRadius: BorderRadius.circular(size * 0.23),
+          child: Image(
+            image: image,
+            width: size,
+            height: size,
+            fit: BoxFit.cover,
+            gaplessPlayback: true,
+          ),
+        );
+      },
+    );
+  }
 
+  Widget _fallback(BuildContext context) => Container(
+        width: size,
+        height: size,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: context.colorScheme.surfaceContainerHighest,
+          borderRadius: BorderRadius.circular(size * 0.23),
+        ),
+        child: Icon(
+          Icons.apps_rounded,
+          size: size * 0.55,
+          color: context.colorScheme.onSurfaceVariant,
+        ),
+      );
+}
+
+class ProcessConnectionCard extends StatelessWidget {
+  const ProcessConnectionCard({
+    super.key,
+    required this.group,
+    required this.showIcon,
+    required this.useApplicationName,
+    required this.onTap,
+  });
+
+  final ProcessConnectionGroup group;
+  final bool showIcon;
+  final bool useApplicationName;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final first = group.activeConnections.firstOrNull?.connection ??
+        group.closedConnections.first.connection;
+    final name = connectionProcessName(
+      first.metadata,
+      applicationName: useApplicationName,
+    );
+    final muted = context.colorScheme.onSurfaceVariant;
+    return Card(
+      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          child: Row(
+            children: [
+              ProcessIcon(
+                process: group.name,
+                processPath: group.processPath,
+                connectionType: first.metadata.type,
+                enabled: showIcon,
+                size: 50,
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Flexible(
+                          child: Text(
+                            name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: context.textTheme.titleMedium?.copyWith(
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                        if (group.activeCount > 0) ...[
+                          const SizedBox(width: 8),
+                          _CountBadge(
+                              count: group.activeCount, color: Colors.green),
+                        ],
+                        if (group.closedCount > 0) ...[
+                          const SizedBox(width: 5),
+                          _CountBadge(count: group.closedCount, color: muted),
+                        ],
+                      ],
+                    ),
+                    const SizedBox(height: 5),
+                    Text(
+                      '↑ ${TrafficValue(value: group.upload.toInt()).show}  '
+                      '↓ ${TrafficValue(value: group.download.toInt()).show}',
+                      style:
+                          context.textTheme.bodySmall?.copyWith(color: muted),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      '↑ ${connectionRate(group.uploadSpeed)}  '
+                      '↓ ${connectionRate(group.downloadSpeed)}',
+                      style: context.textTheme.bodySmall?.copyWith(
+                        color: group.uploadSpeed + group.downloadSpeed > 0
+                            ? context.colorScheme.primary
+                            : muted,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Icon(Icons.chevron_right_rounded, color: muted),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _CountBadge extends StatelessWidget {
+  const _CountBadge({required this.count, required this.color});
+
+  final int count;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+        decoration: BoxDecoration(
+          color: color,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Text(
+          '$count',
+          style: context.textTheme.labelSmall?.copyWith(color: Colors.white),
+        ),
+      );
+}
+
+class TrackedConnectionRow extends StatelessWidget {
+  const TrackedConnectionRow({
+    super.key,
+    required this.item,
+    required this.showIcon,
+    required this.useApplicationName,
+    this.onTap,
+    this.onClose,
+  });
+
+  final TrackedConnection item;
+  final bool showIcon;
+  final bool useApplicationName;
+  final VoidCallback? onTap;
+  final VoidCallback? onClose;
+
+  @override
+  Widget build(BuildContext context) {
+    final connection = item.connection;
+    final metadata = connection.metadata;
+    final process = connectionProcessName(
+      metadata,
+      applicationName: useApplicationName,
+    );
+    final muted = context.colorScheme.onSurfaceVariant;
     return InkWell(
-      onTap: () {},
+      onTap: onTap,
       child: SizedBox(
         height: kConnRowExtent,
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
           child: Row(
             children: [
-              _leading(context),
+              ProcessIcon(
+                process: metadata.process,
+                processPath: metadata.processPath,
+                connectionType: metadata.type,
+                enabled: showIcon,
+              ),
               const SizedBox(width: 12),
               Expanded(
                 child: Column(
@@ -79,9 +278,9 @@ class ConnectionRow extends StatelessWidget {
                   children: [
                     Row(
                       children: [
-                        Expanded(
-                          child: EmojiText(
-                            hostLine,
+                        Flexible(
+                          child: Text(
+                            process,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: context.textTheme.bodyLarge?.copyWith(
@@ -89,196 +288,75 @@ class ConnectionRow extends StatelessWidget {
                             ),
                           ),
                         ),
-                        const SizedBox(width: 10),
-                        _traffic(context, Icons.south_rounded, down),
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 6),
+                          child: Text('→', style: TextStyle(color: muted)),
+                        ),
+                        Expanded(
+                          child: Text(
+                            connectionDestination(connection),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
                       ],
                     ),
-                    const SizedBox(height: 6),
-                    Row(
-                      children: [
-                        Expanded(child: _badges(context)),
-                        const SizedBox(width: 10),
-                        _traffic(context, Icons.north_rounded, up),
-                      ],
+                    const SizedBox(height: 5),
+                    Text(
+                      '↑ ${connectionRate(item.uploadSpeed)}  '
+                      '↓ ${connectionRate(item.downloadSpeed)}',
+                      style: context.textTheme.bodySmall?.copyWith(
+                        color: item.uploadSpeed + item.downloadSpeed > 0
+                            ? context.colorScheme.primary
+                            : muted,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      '${metadata.network.toUpperCase()}  ·  '
+                      '${connection.chains.join(' → ')}  ·  '
+                      '↑ ${TrafficValue(value: connection.upload?.toInt()).show}  '
+                      '↓ ${TrafficValue(value: connection.download?.toInt()).show}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style:
+                          context.textTheme.bodySmall?.copyWith(color: muted),
                     ),
                   ],
                 ),
               ),
-              if (mode == ConnectionRowMode.active && onBlock != null) ...[
-                const SizedBox(width: 10),
+              if (onClose != null)
                 IconButton(
-                  padding: EdgeInsets.zero,
-                  visualDensity: VisualDensity.compact,
-                  constraints: const BoxConstraints(),
-                  iconSize: 24,
-                  color: colorScheme.onSurfaceVariant,
-                  icon: const Icon(Icons.link_off_rounded),
-                  onPressed: onBlock,
+                  onPressed: onClose,
+                  icon: Icon(
+                    item.isActive
+                        ? Icons.link_off_rounded
+                        : Icons.delete_outline,
+                  ),
                 ),
-                const SizedBox(width: 4),
-              ],
             ],
           ),
         ),
       ),
     );
   }
+}
 
-  // App icon (or generic icon) with the destination country flag as a small corner
-  // badge. The badge renders only when a country is actually known.
-  Widget _leading(BuildContext context) => SizedBox(
-        width: 44,
-        height: 44,
-        child: Stack(
-          clipBehavior: Clip.none,
-          children: [
-            _icon(context),
-            Positioned(
-              right: -2,
-              bottom: -2,
-              child: ConnectionFlag(
-                connection: connection,
-                size: 20,
-                badge: true,
-              ),
-            ),
-          ],
+/// Request journal row retained separately from the sampled active/closed store.
+class ConnectionRow extends StatelessWidget {
+  const ConnectionRow({super.key, required this.connection});
+
+  final Connection connection;
+
+  @override
+  Widget build(BuildContext context) => TrackedConnectionRow(
+        item: TrackedConnection(
+          connection: connection,
+          isActive: false,
+          uploadSpeed: 0,
+          downloadSpeed: 0,
         ),
+        showIcon: true,
+        useApplicationName: false,
       );
-
-  // The originating app's icon (rounded square, tappable to filter by process).
-  // Falls back to a generic icon when the connection has no app process (system
-  // traffic), the platform exposes none (desktop), or the icon can't be loaded.
-  Widget _icon(BuildContext context) {
-    final process = connection.metadata.process;
-    Future<ImageProvider?>? future;
-    if (Platform.isAndroid && process.isNotEmpty) {
-      future = _packageIconFuture(process);
-    } else if (Platform.isWindows) {
-      future = windowsProcessIcon(connection.id);
-    } else if (Platform.isLinux) {
-      future = linuxProcessIcon(connection.id, process);
-    }
-    if (future == null) return _genericIcon(context);
-    return FutureBuilder<ImageProvider?>(
-      future: future,
-      builder: (_, snapshot) {
-        // Neutral placeholder while the icon loads (cached) — never the globe, so
-        // app rows don't flash the generic icon.
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          return _square(context, child: const SizedBox.shrink());
-        }
-        final icon = snapshot.data;
-        if (icon == null) return _genericIcon(context);
-        return GestureDetector(
-          onTap: process.isEmpty ? null : () => onClickKeyword?.call(process),
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(10),
-            child: Image(
-              image: icon,
-              width: 40,
-              height: 40,
-              gaplessPlayback: true,
-            ),
-          ),
-        );
-      },
-    );
-  }
-
-  Widget _genericIcon(BuildContext context) => _square(
-        context,
-        child: Icon(
-          Icons.public_rounded,
-          size: 22,
-          color: context.colorScheme.onSurfaceVariant,
-        ),
-      );
-
-  Widget _square(BuildContext context, {required Widget child}) => Container(
-        width: 40,
-        height: 40,
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(10),
-          color: context.colorScheme.surfaceContainerHighest,
-        ),
-        alignment: Alignment.center,
-        child: child,
-      );
-
-  Widget _traffic(BuildContext context, IconData icon, String value) {
-    final c = context.colorScheme.onSurfaceVariant;
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Icon(icon, size: 15, color: c),
-        const SizedBox(width: 2),
-        Text(
-          value,
-          style: context.textTheme.bodyMedium?.copyWith(color: c),
-        ),
-      ],
-    );
-  }
-
-  // Bottom line: process · age · exit node, each as a small badge.
-  Widget _badges(BuildContext context) {
-    final style = context.textTheme.bodySmall?.copyWith(
-      color: context.colorScheme.onSurfaceVariant,
-    );
-    final process = connection.metadata.process;
-    final exit = connection.chains.isNotEmpty ? connection.chains.last : '';
-    return Row(
-      children: [
-        if (process.isNotEmpty) ...[
-          Flexible(
-            child: _badge(
-              context,
-              Text(
-                process,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: style,
-              ),
-              onTap: () => onClickKeyword?.call(process),
-            ),
-          ),
-          const SizedBox(width: 5),
-        ],
-        _badge(context, Text(_shortAge(connection.start), style: style)),
-        if (exit.isNotEmpty) ...[
-          const SizedBox(width: 5),
-          Flexible(
-            child: _badge(
-              context,
-              EmojiText(
-                exit,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: style,
-              ),
-              onTap: () => onClickKeyword?.call(exit),
-            ),
-          ),
-        ],
-      ],
-    );
-  }
-
-  Widget _badge(BuildContext context, Widget child, {VoidCallback? onTap}) {
-    final box = Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-      decoration: BoxDecoration(
-        color: context.colorScheme.surfaceContainerHighest,
-        borderRadius: BorderRadius.circular(7),
-      ),
-      child: child,
-    );
-    if (onTap == null) return box;
-    return InkWell(
-      borderRadius: BorderRadius.circular(7),
-      onTap: onTap,
-      child: box,
-    );
-  }
 }

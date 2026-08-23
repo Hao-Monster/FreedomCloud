@@ -1774,6 +1774,481 @@ class AppLocalizations {
     return Intl.message('Log', name: 'connectionsLog', desc: '', args: []);
   }
 
+  /// `Closed`
+  String get connectionsClosed {
+    return Intl.message(
+      'Closed',
+      name: 'connectionsClosed',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `By process`
+  String get connectionsProcessMode {
+    return Intl.message(
+      'By process',
+      name: 'connectionsProcessMode',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Classic`
+  String get connectionsClassicMode {
+    return Intl.message(
+      'Classic',
+      name: 'connectionsClassicMode',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Request records`
+  String get connectionsRequestLog {
+    return Intl.message(
+      'Request records',
+      name: 'connectionsRequestLog',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Connection settings`
+  String get connectionsSettings {
+    return Intl.message(
+      'Connection settings',
+      name: 'connectionsSettings',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Filter process, host, IP, proxy or rule`
+  String get connectionsFilterHint {
+    return Intl.message(
+      'Filter process, host, IP, proxy or rule',
+      name: 'connectionsFilterHint',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Pause updates`
+  String get connectionsPause {
+    return Intl.message(
+      'Pause updates',
+      name: 'connectionsPause',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Resume updates`
+  String get connectionsResume {
+    return Intl.message(
+      'Resume updates',
+      name: 'connectionsResume',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Connection list updates are paused`
+  String get connectionsPaused {
+    return Intl.message(
+      'Connection list updates are paused',
+      name: 'connectionsPaused',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `List view`
+  String get connectionsListView {
+    return Intl.message(
+      'List view',
+      name: 'connectionsListView',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Table view`
+  String get connectionsTableView {
+    return Intl.message(
+      'Table view',
+      name: 'connectionsTableView',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Show application icons`
+  String get connectionsShowIcons {
+    return Intl.message(
+      'Show application icons',
+      name: 'connectionsShowIcons',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Prefer application name`
+  String get connectionsUseApplicationName {
+    return Intl.message(
+      'Prefer application name',
+      name: 'connectionsUseApplicationName',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Refresh interval`
+  String get connectionsRefreshInterval {
+    return Intl.message(
+      'Refresh interval',
+      name: 'connectionsRefreshInterval',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `100–10000 ms; lower values use more CPU`
+  String get connectionsRefreshIntervalDesc {
+    return Intl.message(
+      '100–10000 ms; lower values use more CPU',
+      name: 'connectionsRefreshIntervalDesc',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Ascending`
+  String get connectionsAscending {
+    return Intl.message(
+      'Ascending',
+      name: 'connectionsAscending',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Descending`
+  String get connectionsDescending {
+    return Intl.message(
+      'Descending',
+      name: 'connectionsDescending',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Clear closed`
+  String get connectionsClearClosed {
+    return Intl.message(
+      'Clear closed',
+      name: 'connectionsClearClosed',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Close filtered active connections`
+  String get connectionsCloseFiltered {
+    return Intl.message(
+      'Close filtered active connections',
+      name: 'connectionsCloseFiltered',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Table columns`
+  String get connectionsTableColumns {
+    return Intl.message(
+      'Table columns',
+      name: 'connectionsTableColumns',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Reset columns`
+  String get connectionsResetColumns {
+    return Intl.message(
+      'Reset columns',
+      name: 'connectionsResetColumns',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `All processes`
+  String get connectionsAllProcesses {
+    return Intl.message(
+      'All processes',
+      name: 'connectionsAllProcesses',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Connection details`
+  String get connectionsDetail {
+    return Intl.message(
+      'Connection details',
+      name: 'connectionsDetail',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Traffic`
+  String get connectionsTraffic {
+    return Intl.message(
+      'Traffic',
+      name: 'connectionsTraffic',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Routing`
+  String get connectionsRouting {
+    return Intl.message(
+      'Routing',
+      name: 'connectionsRouting',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Process`
+  String get connectionsProcess {
+    return Intl.message(
+      'Process',
+      name: 'connectionsProcess',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Inbound`
+  String get connectionsInbound {
+    return Intl.message(
+      'Inbound',
+      name: 'connectionsInbound',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Other`
+  String get connectionsOther {
+    return Intl.message('Other', name: 'connectionsOther', desc: '', args: []);
+  }
+
+  /// `Established`
+  String get connectionsEstablished {
+    return Intl.message(
+      'Established',
+      name: 'connectionsEstablished',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Type`
+  String get connectionsType {
+    return Intl.message('Type', name: 'connectionsType', desc: '', args: []);
+  }
+
+  /// `Host`
+  String get connectionsHost {
+    return Intl.message('Host', name: 'connectionsHost', desc: '', args: []);
+  }
+
+  /// `Sniffed host`
+  String get connectionsSniffHost {
+    return Intl.message(
+      'Sniffed host',
+      name: 'connectionsSniffHost',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Source`
+  String get connectionsSource {
+    return Intl.message(
+      'Source',
+      name: 'connectionsSource',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Destination`
+  String get connectionsDestination {
+    return Intl.message(
+      'Destination',
+      name: 'connectionsDestination',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Remote destination`
+  String get connectionsRemoteDestination {
+    return Intl.message(
+      'Remote destination',
+      name: 'connectionsRemoteDestination',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Proxy chain`
+  String get connectionsProxyChain {
+    return Intl.message(
+      'Proxy chain',
+      name: 'connectionsProxyChain',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Rule`
+  String get connectionsRule {
+    return Intl.message('Rule', name: 'connectionsRule', desc: '', args: []);
+  }
+
+  /// `Rule payload`
+  String get connectionsRulePayload {
+    return Intl.message(
+      'Rule payload',
+      name: 'connectionsRulePayload',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Upload speed`
+  String get connectionsUploadSpeed {
+    return Intl.message(
+      'Upload speed',
+      name: 'connectionsUploadSpeed',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Download speed`
+  String get connectionsDownloadSpeed {
+    return Intl.message(
+      'Download speed',
+      name: 'connectionsDownloadSpeed',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Total upload`
+  String get connectionsTotalUpload {
+    return Intl.message(
+      'Total upload',
+      name: 'connectionsTotalUpload',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Total download`
+  String get connectionsTotalDownload {
+    return Intl.message(
+      'Total download',
+      name: 'connectionsTotalDownload',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Process path`
+  String get connectionsProcessPath {
+    return Intl.message(
+      'Process path',
+      name: 'connectionsProcessPath',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `DNS mode`
+  String get connectionsDnsMode {
+    return Intl.message(
+      'DNS mode',
+      name: 'connectionsDnsMode',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `UID`
+  String get connectionsUid {
+    return Intl.message('UID', name: 'connectionsUid', desc: '', args: []);
+  }
+
+  /// `Inbound name`
+  String get connectionsInboundName {
+    return Intl.message(
+      'Inbound name',
+      name: 'connectionsInboundName',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Inbound user`
+  String get connectionsInboundUser {
+    return Intl.message(
+      'Inbound user',
+      name: 'connectionsInboundUser',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Memory`
+  String get connectionsMemory {
+    return Intl.message(
+      'Memory',
+      name: 'connectionsMemory',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Source GeoIP`
+  String get connectionsSourceGeo {
+    return Intl.message(
+      'Source GeoIP',
+      name: 'connectionsSourceGeo',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Destination GeoIP`
+  String get connectionsDestinationGeo {
+    return Intl.message(
+      'Destination GeoIP',
+      name: 'connectionsDestinationGeo',
+      desc: '',
+      args: [],
+    );
+  }
+
   /// `Intranet IP`
   String get intranetIP {
     return Intl.message('Intranet IP', name: 'intranetIP', desc: '', args: []);

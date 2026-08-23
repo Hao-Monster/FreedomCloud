@@ -9,20 +9,17 @@ import 'package:flutter/widgets.dart';
 import 'package:path/path.dart' as p;
 import 'package:win32/win32.dart';
 
-/// connectionId -> originating process exe path, captured from the raw getConnections
-/// JSON (mihomo sends `metadata.processPath`, which the Connection model drops). Used
-/// to extract the app icon on desktop. Rebuilt on every getConnections poll.
-final Map<String, String> connectionProcessPaths = {};
-
-// exePath -> decoded icon, cached so the 2s re-poll doesn't re-extract via Win32.
+// exePath -> decoded icon, cached so polling doesn't re-extract via Win32.
 final Map<String, Future<ImageProvider?>> _winIconCache = {};
 
-/// Icon of the process that owns [connectionId] on Windows (its exe icon), or null
-/// when the path is unknown / extraction fails. Cached per exe path.
-Future<ImageProvider?>? windowsProcessIcon(String connectionId) {
-  final path = connectionProcessPaths[connectionId];
-  if (path == null || path.isEmpty) return null;
-  return _winIconCache.putIfAbsent(path, () => _loadWindowsIcon(path));
+/// Icon embedded in [processPath] on Windows. No process path is persisted; only
+/// the decoded image future is cached for the lifetime of the application.
+Future<ImageProvider?>? windowsProcessIcon(String processPath) {
+  if (processPath.isEmpty) return null;
+  return _winIconCache.putIfAbsent(
+    processPath,
+    () => _loadWindowsIcon(processPath),
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -38,11 +35,11 @@ final Map<String, Future<ImageProvider?>?> _linuxIconCache = {};
 // applications dirs.
 Future<Map<String, String>>? _desktopIndex;
 
-Future<ImageProvider?>? linuxProcessIcon(String connectionId, String process) {
-  final path = connectionProcessPaths[connectionId] ?? '';
-  final base = path.isNotEmpty ? p.basename(path) : process;
+Future<ImageProvider?>? linuxProcessIcon(String processPath, String process) {
+  final base = processPath.isNotEmpty ? p.basename(processPath) : process;
   if (base.isEmpty) return null;
-  return _linuxIconCache.putIfAbsent(base, () => _resolveLinuxIcon(base, process));
+  return _linuxIconCache.putIfAbsent(
+      base, () => _resolveLinuxIcon(base, process));
 }
 
 Future<ImageProvider?> _resolveLinuxIcon(String binary, String process) async {
@@ -66,7 +63,8 @@ Future<Map<String, String>> _buildDesktopIndex() async {
   final home = Platform.environment['HOME'] ?? '';
   final dirs = <String>[
     if (home.isNotEmpty) '$home/.local/share/applications',
-    if (home.isNotEmpty) '$home/.local/share/flatpak/exports/share/applications',
+    if (home.isNotEmpty)
+      '$home/.local/share/flatpak/exports/share/applications',
     '/usr/local/share/applications',
     '/usr/share/applications',
     '/var/lib/flatpak/exports/share/applications',

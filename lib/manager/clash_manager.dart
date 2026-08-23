@@ -10,8 +10,9 @@ import 'package:flclashx/state.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-class ClashManager extends ConsumerStatefulWidget {
+import 'connection_manager.dart';
 
+class ClashManager extends ConsumerStatefulWidget {
   const ClashManager({
     super.key,
     required this.child,
@@ -57,6 +58,27 @@ class _ClashContainerState extends ConsumerState<ClashManager>
         }
       },
     );
+    ref.listenManual(
+      runTimeProvider.select((state) => state != null),
+      (_, running) {
+        connectionManager.configure(
+          running: running,
+          refreshIntervalMs:
+              ref.read(appSettingProvider).connectionRefreshInterval,
+        );
+      },
+      fireImmediately: true,
+    );
+    ref.listenManual(
+      appSettingProvider.select((state) => state.connectionRefreshInterval),
+      (_, refreshIntervalMs) {
+        connectionManager.configure(
+          running: ref.read(runTimeProvider) != null,
+          refreshIntervalMs: refreshIntervalMs,
+        );
+      },
+      fireImmediately: true,
+    );
   }
 
   @override
@@ -82,10 +104,10 @@ class _ClashContainerState extends ConsumerState<ClashManager>
   @override
   void onLog(Log log) {
     ref.read(logsProvider.notifier).addLog(log);
-    
+
     // Write core logs to file
     fileLogger.log("[${log.logLevel.name.toUpperCase()}] ${log.payload}");
-    
+
     if (log.logLevel == LogLevel.error) {
       globalState.showNotifier(log.payload);
     }

@@ -43,6 +43,23 @@ mixin _$AppSettingProps {
   bool get overrideProviderSettings => throw _privateConstructorUsedError;
   bool get overrideNetworkSettings => throw _privateConstructorUsedError;
   RecoveryStrategy get recoveryStrategy => throw _privateConstructorUsedError;
+  @JsonKey(unknownEnumValue: ConnectionListMode.process)
+  ConnectionListMode get connectionListMode =>
+      throw _privateConstructorUsedError;
+  @JsonKey(unknownEnumValue: ConnectionViewMode.list)
+  ConnectionViewMode get connectionViewMode =>
+      throw _privateConstructorUsedError;
+  @JsonKey(unknownEnumValue: ConnectionSort.time)
+  ConnectionSort get connectionSort => throw _privateConstructorUsedError;
+  @JsonKey(unknownEnumValue: ConnectionSortDirection.descending)
+  ConnectionSortDirection get connectionSortDirection =>
+      throw _privateConstructorUsedError;
+  bool get connectionShowIcon => throw _privateConstructorUsedError;
+  bool get connectionUseApplicationName => throw _privateConstructorUsedError;
+  int get connectionRefreshInterval => throw _privateConstructorUsedError;
+  List<String> get connectionTableColumns => throw _privateConstructorUsedError;
+  Map<String, double> get connectionTableColumnWidths =>
+      throw _privateConstructorUsedError;
   bool? get newDashboard => throw _privateConstructorUsedError;
 
   /// Serializes this AppSettingProps to a JSON map.
@@ -84,6 +101,19 @@ abstract class $AppSettingPropsCopyWith<$Res> {
       bool overrideProviderSettings,
       bool overrideNetworkSettings,
       RecoveryStrategy recoveryStrategy,
+      @JsonKey(unknownEnumValue: ConnectionListMode.process)
+      ConnectionListMode connectionListMode,
+      @JsonKey(unknownEnumValue: ConnectionViewMode.list)
+      ConnectionViewMode connectionViewMode,
+      @JsonKey(unknownEnumValue: ConnectionSort.time)
+      ConnectionSort connectionSort,
+      @JsonKey(unknownEnumValue: ConnectionSortDirection.descending)
+      ConnectionSortDirection connectionSortDirection,
+      bool connectionShowIcon,
+      bool connectionUseApplicationName,
+      int connectionRefreshInterval,
+      List<String> connectionTableColumns,
+      Map<String, double> connectionTableColumnWidths,
       bool? newDashboard});
 }
 
@@ -123,6 +153,15 @@ class _$AppSettingPropsCopyWithImpl<$Res, $Val extends AppSettingProps>
     Object? overrideProviderSettings = null,
     Object? overrideNetworkSettings = null,
     Object? recoveryStrategy = null,
+    Object? connectionListMode = null,
+    Object? connectionViewMode = null,
+    Object? connectionSort = null,
+    Object? connectionSortDirection = null,
+    Object? connectionShowIcon = null,
+    Object? connectionUseApplicationName = null,
+    Object? connectionRefreshInterval = null,
+    Object? connectionTableColumns = null,
+    Object? connectionTableColumnWidths = null,
     Object? newDashboard = freezed,
   }) {
     return _then(_value.copyWith(
@@ -210,6 +249,42 @@ class _$AppSettingPropsCopyWithImpl<$Res, $Val extends AppSettingProps>
           ? _value.recoveryStrategy
           : recoveryStrategy // ignore: cast_nullable_to_non_nullable
               as RecoveryStrategy,
+      connectionListMode: null == connectionListMode
+          ? _value.connectionListMode
+          : connectionListMode // ignore: cast_nullable_to_non_nullable
+              as ConnectionListMode,
+      connectionViewMode: null == connectionViewMode
+          ? _value.connectionViewMode
+          : connectionViewMode // ignore: cast_nullable_to_non_nullable
+              as ConnectionViewMode,
+      connectionSort: null == connectionSort
+          ? _value.connectionSort
+          : connectionSort // ignore: cast_nullable_to_non_nullable
+              as ConnectionSort,
+      connectionSortDirection: null == connectionSortDirection
+          ? _value.connectionSortDirection
+          : connectionSortDirection // ignore: cast_nullable_to_non_nullable
+              as ConnectionSortDirection,
+      connectionShowIcon: null == connectionShowIcon
+          ? _value.connectionShowIcon
+          : connectionShowIcon // ignore: cast_nullable_to_non_nullable
+              as bool,
+      connectionUseApplicationName: null == connectionUseApplicationName
+          ? _value.connectionUseApplicationName
+          : connectionUseApplicationName // ignore: cast_nullable_to_non_nullable
+              as bool,
+      connectionRefreshInterval: null == connectionRefreshInterval
+          ? _value.connectionRefreshInterval
+          : connectionRefreshInterval // ignore: cast_nullable_to_non_nullable
+              as int,
+      connectionTableColumns: null == connectionTableColumns
+          ? _value.connectionTableColumns
+          : connectionTableColumns // ignore: cast_nullable_to_non_nullable
+              as List<String>,
+      connectionTableColumnWidths: null == connectionTableColumnWidths
+          ? _value.connectionTableColumnWidths
+          : connectionTableColumnWidths // ignore: cast_nullable_to_non_nullable
+              as Map<String, double>,
       newDashboard: freezed == newDashboard
           ? _value.newDashboard
           : newDashboard // ignore: cast_nullable_to_non_nullable
@@ -249,6 +324,19 @@ abstract class _$$AppSettingPropsImplCopyWith<$Res>
       bool overrideProviderSettings,
       bool overrideNetworkSettings,
       RecoveryStrategy recoveryStrategy,
+      @JsonKey(unknownEnumValue: ConnectionListMode.process)
+      ConnectionListMode connectionListMode,
+      @JsonKey(unknownEnumValue: ConnectionViewMode.list)
+      ConnectionViewMode connectionViewMode,
+      @JsonKey(unknownEnumValue: ConnectionSort.time)
+      ConnectionSort connectionSort,
+      @JsonKey(unknownEnumValue: ConnectionSortDirection.descending)
+      ConnectionSortDirection connectionSortDirection,
+      bool connectionShowIcon,
+      bool connectionUseApplicationName,
+      int connectionRefreshInterval,
+      List<String> connectionTableColumns,
+      Map<String, double> connectionTableColumnWidths,
       bool? newDashboard});
 }
 
@@ -286,6 +374,15 @@ class __$$AppSettingPropsImplCopyWithImpl<$Res>
     Object? overrideProviderSettings = null,
     Object? overrideNetworkSettings = null,
     Object? recoveryStrategy = null,
+    Object? connectionListMode = null,
+    Object? connectionViewMode = null,
+    Object? connectionSort = null,
+    Object? connectionSortDirection = null,
+    Object? connectionShowIcon = null,
+    Object? connectionUseApplicationName = null,
+    Object? connectionRefreshInterval = null,
+    Object? connectionTableColumns = null,
+    Object? connectionTableColumnWidths = null,
     Object? newDashboard = freezed,
   }) {
     return _then(_$AppSettingPropsImpl(
@@ -373,6 +470,42 @@ class __$$AppSettingPropsImplCopyWithImpl<$Res>
           ? _value.recoveryStrategy
           : recoveryStrategy // ignore: cast_nullable_to_non_nullable
               as RecoveryStrategy,
+      connectionListMode: null == connectionListMode
+          ? _value.connectionListMode
+          : connectionListMode // ignore: cast_nullable_to_non_nullable
+              as ConnectionListMode,
+      connectionViewMode: null == connectionViewMode
+          ? _value.connectionViewMode
+          : connectionViewMode // ignore: cast_nullable_to_non_nullable
+              as ConnectionViewMode,
+      connectionSort: null == connectionSort
+          ? _value.connectionSort
+          : connectionSort // ignore: cast_nullable_to_non_nullable
+              as ConnectionSort,
+      connectionSortDirection: null == connectionSortDirection
+          ? _value.connectionSortDirection
+          : connectionSortDirection // ignore: cast_nullable_to_non_nullable
+              as ConnectionSortDirection,
+      connectionShowIcon: null == connectionShowIcon
+          ? _value.connectionShowIcon
+          : connectionShowIcon // ignore: cast_nullable_to_non_nullable
+              as bool,
+      connectionUseApplicationName: null == connectionUseApplicationName
+          ? _value.connectionUseApplicationName
+          : connectionUseApplicationName // ignore: cast_nullable_to_non_nullable
+              as bool,
+      connectionRefreshInterval: null == connectionRefreshInterval
+          ? _value.connectionRefreshInterval
+          : connectionRefreshInterval // ignore: cast_nullable_to_non_nullable
+              as int,
+      connectionTableColumns: null == connectionTableColumns
+          ? _value._connectionTableColumns
+          : connectionTableColumns // ignore: cast_nullable_to_non_nullable
+              as List<String>,
+      connectionTableColumnWidths: null == connectionTableColumnWidths
+          ? _value._connectionTableColumnWidths
+          : connectionTableColumnWidths // ignore: cast_nullable_to_non_nullable
+              as Map<String, double>,
       newDashboard: freezed == newDashboard
           ? _value.newDashboard
           : newDashboard // ignore: cast_nullable_to_non_nullable
@@ -407,8 +540,23 @@ class _$AppSettingPropsImpl implements _AppSettingProps {
       this.overrideProviderSettings = false,
       this.overrideNetworkSettings = false,
       this.recoveryStrategy = RecoveryStrategy.compatible,
+      @JsonKey(unknownEnumValue: ConnectionListMode.process)
+      this.connectionListMode = ConnectionListMode.process,
+      @JsonKey(unknownEnumValue: ConnectionViewMode.list)
+      this.connectionViewMode = ConnectionViewMode.list,
+      @JsonKey(unknownEnumValue: ConnectionSort.time)
+      this.connectionSort = ConnectionSort.time,
+      @JsonKey(unknownEnumValue: ConnectionSortDirection.descending)
+      this.connectionSortDirection = ConnectionSortDirection.descending,
+      this.connectionShowIcon = true,
+      this.connectionUseApplicationName = true,
+      this.connectionRefreshInterval = 500,
+      final List<String> connectionTableColumns = defaultConnectionTableColumns,
+      final Map<String, double> connectionTableColumnWidths = const {},
       this.newDashboard})
-      : _dashboardWidgets = dashboardWidgets;
+      : _dashboardWidgets = dashboardWidgets,
+        _connectionTableColumns = connectionTableColumns,
+        _connectionTableColumnWidths = connectionTableColumnWidths;
 
   factory _$AppSettingPropsImpl.fromJson(Map<String, dynamic> json) =>
       _$$AppSettingPropsImplFromJson(json);
@@ -483,11 +631,52 @@ class _$AppSettingPropsImpl implements _AppSettingProps {
   @JsonKey()
   final RecoveryStrategy recoveryStrategy;
   @override
+  @JsonKey(unknownEnumValue: ConnectionListMode.process)
+  final ConnectionListMode connectionListMode;
+  @override
+  @JsonKey(unknownEnumValue: ConnectionViewMode.list)
+  final ConnectionViewMode connectionViewMode;
+  @override
+  @JsonKey(unknownEnumValue: ConnectionSort.time)
+  final ConnectionSort connectionSort;
+  @override
+  @JsonKey(unknownEnumValue: ConnectionSortDirection.descending)
+  final ConnectionSortDirection connectionSortDirection;
+  @override
+  @JsonKey()
+  final bool connectionShowIcon;
+  @override
+  @JsonKey()
+  final bool connectionUseApplicationName;
+  @override
+  @JsonKey()
+  final int connectionRefreshInterval;
+  final List<String> _connectionTableColumns;
+  @override
+  @JsonKey()
+  List<String> get connectionTableColumns {
+    if (_connectionTableColumns is EqualUnmodifiableListView)
+      return _connectionTableColumns;
+    // ignore: implicit_dynamic_type
+    return EqualUnmodifiableListView(_connectionTableColumns);
+  }
+
+  final Map<String, double> _connectionTableColumnWidths;
+  @override
+  @JsonKey()
+  Map<String, double> get connectionTableColumnWidths {
+    if (_connectionTableColumnWidths is EqualUnmodifiableMapView)
+      return _connectionTableColumnWidths;
+    // ignore: implicit_dynamic_type
+    return EqualUnmodifiableMapView(_connectionTableColumnWidths);
+  }
+
+  @override
   final bool? newDashboard;
 
   @override
   String toString() {
-    return 'AppSettingProps(locale: $locale, dashboardWidgets: $dashboardWidgets, onlyStatisticsProxy: $onlyStatisticsProxy, autoLaunch: $autoLaunch, silentLaunch: $silentLaunch, autoRun: $autoRun, openLogs: $openLogs, closeConnections: $closeConnections, testUrl: $testUrl, isAnimateToPage: $isAnimateToPage, autoCheckUpdate: $autoCheckUpdate, showLabel: $showLabel, disclaimerAccepted: $disclaimerAccepted, minimizeOnExit: $minimizeOnExit, hidden: $hidden, developerMode: $developerMode, crashlytics: $crashlytics, zashboardInApp: $zashboardInApp, overrideProviderSettings: $overrideProviderSettings, overrideNetworkSettings: $overrideNetworkSettings, recoveryStrategy: $recoveryStrategy, newDashboard: $newDashboard)';
+    return 'AppSettingProps(locale: $locale, dashboardWidgets: $dashboardWidgets, onlyStatisticsProxy: $onlyStatisticsProxy, autoLaunch: $autoLaunch, silentLaunch: $silentLaunch, autoRun: $autoRun, openLogs: $openLogs, closeConnections: $closeConnections, testUrl: $testUrl, isAnimateToPage: $isAnimateToPage, autoCheckUpdate: $autoCheckUpdate, showLabel: $showLabel, disclaimerAccepted: $disclaimerAccepted, minimizeOnExit: $minimizeOnExit, hidden: $hidden, developerMode: $developerMode, crashlytics: $crashlytics, zashboardInApp: $zashboardInApp, overrideProviderSettings: $overrideProviderSettings, overrideNetworkSettings: $overrideNetworkSettings, recoveryStrategy: $recoveryStrategy, connectionListMode: $connectionListMode, connectionViewMode: $connectionViewMode, connectionSort: $connectionSort, connectionSortDirection: $connectionSortDirection, connectionShowIcon: $connectionShowIcon, connectionUseApplicationName: $connectionUseApplicationName, connectionRefreshInterval: $connectionRefreshInterval, connectionTableColumns: $connectionTableColumns, connectionTableColumnWidths: $connectionTableColumnWidths, newDashboard: $newDashboard)';
   }
 
   @override
@@ -530,11 +719,30 @@ class _$AppSettingPropsImpl implements _AppSettingProps {
             (identical(
                     other.overrideProviderSettings, overrideProviderSettings) ||
                 other.overrideProviderSettings == overrideProviderSettings) &&
-            (identical(
-                    other.overrideNetworkSettings, overrideNetworkSettings) ||
+            (identical(other.overrideNetworkSettings, overrideNetworkSettings) ||
                 other.overrideNetworkSettings == overrideNetworkSettings) &&
             (identical(other.recoveryStrategy, recoveryStrategy) ||
                 other.recoveryStrategy == recoveryStrategy) &&
+            (identical(other.connectionListMode, connectionListMode) ||
+                other.connectionListMode == connectionListMode) &&
+            (identical(other.connectionViewMode, connectionViewMode) ||
+                other.connectionViewMode == connectionViewMode) &&
+            (identical(other.connectionSort, connectionSort) ||
+                other.connectionSort == connectionSort) &&
+            (identical(other.connectionSortDirection, connectionSortDirection) ||
+                other.connectionSortDirection == connectionSortDirection) &&
+            (identical(other.connectionShowIcon, connectionShowIcon) ||
+                other.connectionShowIcon == connectionShowIcon) &&
+            (identical(other.connectionUseApplicationName, connectionUseApplicationName) ||
+                other.connectionUseApplicationName ==
+                    connectionUseApplicationName) &&
+            (identical(other.connectionRefreshInterval, connectionRefreshInterval) ||
+                other.connectionRefreshInterval == connectionRefreshInterval) &&
+            const DeepCollectionEquality().equals(
+                other._connectionTableColumns, _connectionTableColumns) &&
+            const DeepCollectionEquality().equals(
+                other._connectionTableColumnWidths,
+                _connectionTableColumnWidths) &&
             (identical(other.newDashboard, newDashboard) ||
                 other.newDashboard == newDashboard));
   }
@@ -564,6 +772,15 @@ class _$AppSettingPropsImpl implements _AppSettingProps {
         overrideProviderSettings,
         overrideNetworkSettings,
         recoveryStrategy,
+        connectionListMode,
+        connectionViewMode,
+        connectionSort,
+        connectionSortDirection,
+        connectionShowIcon,
+        connectionUseApplicationName,
+        connectionRefreshInterval,
+        const DeepCollectionEquality().hash(_connectionTableColumns),
+        const DeepCollectionEquality().hash(_connectionTableColumnWidths),
         newDashboard
       ]);
 
@@ -608,6 +825,19 @@ abstract class _AppSettingProps implements AppSettingProps {
       final bool overrideProviderSettings,
       final bool overrideNetworkSettings,
       final RecoveryStrategy recoveryStrategy,
+      @JsonKey(unknownEnumValue: ConnectionListMode.process)
+      final ConnectionListMode connectionListMode,
+      @JsonKey(unknownEnumValue: ConnectionViewMode.list)
+      final ConnectionViewMode connectionViewMode,
+      @JsonKey(unknownEnumValue: ConnectionSort.time)
+      final ConnectionSort connectionSort,
+      @JsonKey(unknownEnumValue: ConnectionSortDirection.descending)
+      final ConnectionSortDirection connectionSortDirection,
+      final bool connectionShowIcon,
+      final bool connectionUseApplicationName,
+      final int connectionRefreshInterval,
+      final List<String> connectionTableColumns,
+      final Map<String, double> connectionTableColumnWidths,
       final bool? newDashboard}) = _$AppSettingPropsImpl;
 
   factory _AppSettingProps.fromJson(Map<String, dynamic> json) =
@@ -656,6 +886,28 @@ abstract class _AppSettingProps implements AppSettingProps {
   bool get overrideNetworkSettings;
   @override
   RecoveryStrategy get recoveryStrategy;
+  @override
+  @JsonKey(unknownEnumValue: ConnectionListMode.process)
+  ConnectionListMode get connectionListMode;
+  @override
+  @JsonKey(unknownEnumValue: ConnectionViewMode.list)
+  ConnectionViewMode get connectionViewMode;
+  @override
+  @JsonKey(unknownEnumValue: ConnectionSort.time)
+  ConnectionSort get connectionSort;
+  @override
+  @JsonKey(unknownEnumValue: ConnectionSortDirection.descending)
+  ConnectionSortDirection get connectionSortDirection;
+  @override
+  bool get connectionShowIcon;
+  @override
+  bool get connectionUseApplicationName;
+  @override
+  int get connectionRefreshInterval;
+  @override
+  List<String> get connectionTableColumns;
+  @override
+  Map<String, double> get connectionTableColumnWidths;
   @override
   bool? get newDashboard;
 

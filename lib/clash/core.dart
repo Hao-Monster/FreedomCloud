@@ -6,7 +6,6 @@ import 'dart:isolate';
 import 'package:flclashx/clash/clash.dart';
 import 'package:flclashx/clash/interface.dart';
 import 'package:flclashx/common/common.dart';
-import 'package:flclashx/common/process_icon.dart';
 import 'package:flclashx/enum/enum.dart';
 import 'package:flclashx/models/models.dart';
 import 'package:flclashx/state.dart';
@@ -14,7 +13,6 @@ import 'package:flutter/services.dart';
 import 'package:path/path.dart';
 
 class ClashCore {
-
   factory ClashCore() {
     _instance ??= ClashCore._internal();
     return _instance!;
@@ -29,6 +27,7 @@ class ClashCore {
   }
   static ClashCore? _instance;
   late ClashHandlerInterface clashInterface;
+  final _connectionSnapshotDecoder = ConnectionSnapshotDecoder();
 
   Future<bool> preload() => clashInterface.preload();
 
@@ -89,11 +88,14 @@ class ClashCore {
 
   FutureOr<bool> get isInit => clashInterface.isInit;
 
-  FutureOr<String> validateConfig(String data) => clashInterface.validateConfig(data);
+  FutureOr<String> validateConfig(String data) =>
+      clashInterface.validateConfig(data);
 
-  Future<String> updateConfig(UpdateParams updateParams) => clashInterface.updateConfig(updateParams);
+  Future<String> updateConfig(UpdateParams updateParams) =>
+      clashInterface.updateConfig(updateParams);
 
-  Future<String> setupConfig(SetupParams setupParams) => clashInterface.setupConfig(setupParams);
+  Future<String> setupConfig(SetupParams setupParams) =>
+      clashInterface.setupConfig(setupParams);
 
   Future<List<Group>> getProxiesGroups() async {
     final proxies = await clashInterface.getProxies();
@@ -144,40 +146,38 @@ class ClashCore {
         .toList();
   }
 
-  FutureOr<String> changeProxy(ChangeProxyParams changeProxyParams) async => await clashInterface.changeProxy(changeProxyParams);
+  FutureOr<String> changeProxy(ChangeProxyParams changeProxyParams) async =>
+      await clashInterface.changeProxy(changeProxyParams);
 
-  Future<List<Connection>> getConnections() async {
+  Future<ConnectionSnapshot> getConnectionsSnapshot() async {
     final res = await clashInterface.getConnections();
-    final connectionsData = json.decode(res) as Map;
-    final connectionsRaw = connectionsData['connections'] as List? ?? [];
-    // Rebuild the id->processPath map from scratch each poll so it only holds
-    // live connection ids; it used to grow unbounded as ids were only appended.
-    final livePaths = <String, String>{};
-    final connections = connectionsRaw.map((e) {
-      final map = Map<String, dynamic>.from(e as Map);
-      // Capture processPath (dropped by the Connection model) so desktop can show the
-      // originating app's exe icon.
-      final meta = map['metadata'];
-      final id = map['id']?.toString();
-      if (meta is Map && id != null) {
-        final pp = meta['processPath']?.toString() ?? '';
-        if (pp.isNotEmpty) livePaths[id] = pp;
-      }
-      return Connection.fromJson(map);
-    }).toList();
-    connectionProcessPaths
-      ..clear()
-      ..addAll(livePaths);
-    return connections;
+    if (res.isEmpty) {
+      return const ConnectionSnapshot(
+        downloadTotal: 0,
+        uploadTotal: 0,
+        memory: 0,
+        connections: [],
+      );
+    }
+    return _connectionSnapshotDecoder.decode(res);
   }
 
+  Future<bool> closeConnectionAndWait(String id) =>
+      Future.value(clashInterface.closeConnection(id));
+
+  Future<bool> closeConnectionsAndWait() =>
+      Future.value(clashInterface.closeConnections());
+
   void closeConnection(String id) {
-    clashInterface.closeConnection(id);
+    unawaited(closeConnectionAndWait(id));
   }
 
   void closeConnections() {
-    clashInterface.closeConnections();
+    unawaited(closeConnectionsAndWait());
   }
+
+  Future<List<Connection>> getConnections() async =>
+      (await getConnectionsSnapshot()).connections;
 
   void resetConnections() {
     clashInterface.resetConnections();
@@ -212,17 +212,20 @@ class ClashCore {
     return ExternalProvider.fromJson(json.decode(externalProvidersRawString));
   }
 
-  Future<String> updateGeoData(UpdateGeoDataParams params) => clashInterface.updateGeoData(params);
+  Future<String> updateGeoData(UpdateGeoDataParams params) =>
+      clashInterface.updateGeoData(params);
 
   Future<String> sideLoadExternalProvider({
     required String providerName,
     required String data,
-  }) => clashInterface.sideLoadExternalProvider(
-        providerName: providerName, data: data);
+  }) =>
+      clashInterface.sideLoadExternalProvider(
+          providerName: providerName, data: data);
 
   Future<String> updateExternalProvider({
     required String providerName,
-  }) async => clashInterface.updateExternalProvider(providerName);
+  }) async =>
+      clashInterface.updateExternalProvider(providerName);
 
   Future<void> startListener() async {
     await clashInterface.startListener();
@@ -232,7 +235,8 @@ class ClashCore {
     await clashInterface.stopListener();
   }
 
-  Future<void> healthCheck([String groupName = '']) => clashInterface.healthCheck(groupName);
+  Future<void> healthCheck([String groupName = '']) =>
+      clashInterface.healthCheck(groupName);
 
   Future<Delay> getDelay(String url, String proxyName) async {
     final data = await clashInterface.asyncTestDelay(url, proxyName);
@@ -309,8 +313,90 @@ class ClashCore {
   }
 
   Future<void> destroy() async {
+    _connectionSnapshotDecoder.dispose();
     await clashInterface.destroy();
   }
 }
 
 final clashCore = ClashCore();
+
+/// A persistent worker isolate avoids doing JSON decoding and hundreds of
+/// generated model allocations on Flutter's UI isolate every refresh tick.
+class ConnectionSnapshotDecoder {
+  final ReceivePort _receivePort = ReceivePort();
+  final Map<int, Completer<ConnectionSnapshot>> _pending = {};
+  Future<SendPort>? _sendPortFuture;
+  StreamSubscription<dynamic>? _subscription;
+  Isolate? _isolate;
+  var _requestId = 0;
+  var _disposed = false;
+
+  Future<ConnectionSnapshot> decode(String source) async {
+    if (_disposed) throw StateError('Connection snapshot decoder is disposed');
+    final sendPort = await (_sendPortFuture ??= _start());
+    final id = _requestId++;
+    final completer = Completer<ConnectionSnapshot>();
+    _pending[id] = completer;
+    sendPort.send((id, source));
+    return completer.future;
+  }
+
+  Future<SendPort> _start() async {
+    final ready = Completer<SendPort>();
+    _subscription = _receivePort.listen((message) {
+      if (message is SendPort) {
+        if (!ready.isCompleted) ready.complete(message);
+        return;
+      }
+      if (message is! (int, bool, Object)) return;
+      final (id, success, payload) = message;
+      final completer = _pending.remove(id);
+      if (completer == null) return;
+      if (success && payload is ConnectionSnapshot) {
+        completer.complete(payload);
+      } else {
+        completer.completeError(FormatException('$payload'));
+      }
+    });
+    _isolate = await Isolate.spawn(_decodeLoop, _receivePort.sendPort);
+    return ready.future;
+  }
+
+  @pragma('vm:entry-point')
+  static void _decodeLoop(SendPort mainPort) {
+    final commands = ReceivePort();
+    mainPort.send(commands.sendPort);
+    commands.listen((message) {
+      if (message is! (int, String)) return;
+      final (id, source) = message;
+      try {
+        final decoded = json.decode(source);
+        if (decoded is! Map) {
+          throw const FormatException('Invalid connections snapshot');
+        }
+        final snapshot = ConnectionSnapshot.fromJson(
+          Map<String, dynamic>.from(decoded),
+        );
+        mainPort.send((id, true, snapshot));
+      } catch (error) {
+        mainPort.send((id, false, error.toString()));
+      }
+    });
+  }
+
+  void dispose() {
+    if (_disposed) return;
+    _disposed = true;
+    _isolate?.kill(priority: Isolate.immediate);
+    _isolate = null;
+    final subscription = _subscription;
+    if (subscription != null) unawaited(subscription.cancel());
+    _subscription = null;
+    _receivePort.close();
+    for (final completer in _pending.values) {
+      completer
+          .completeError(StateError('Connection snapshot decoder stopped'));
+    }
+    _pending.clear();
+  }
+}

@@ -28,26 +28,62 @@ _$MetadataImpl _$$MetadataImplFromJson(Map<String, dynamic> json) =>
     _$MetadataImpl(
       uid: (json['uid'] as num).toInt(),
       network: json['network'] as String,
+      type: json['type'] as String? ?? "",
       sourceIP: json['sourceIP'] as String,
       sourcePort: json['sourcePort'] as String,
       destinationIP: json['destinationIP'] as String,
       destinationPort: json['destinationPort'] as String,
+      sourceGeoIP: (json['sourceGeoIP'] as List<dynamic>?)
+              ?.map((e) => e as String)
+              .toList() ??
+          const [],
+      destinationGeoIP: (json['destinationGeoIP'] as List<dynamic>?)
+              ?.map((e) => e as String)
+              .toList() ??
+          const [],
+      sourceIPASN: json['sourceIPASN'] as String? ?? "",
+      destinationIPASN: json['destinationIPASN'] as String? ?? "",
+      inboundIP: json['inboundIP'] as String? ?? "",
+      inboundPort: json['inboundPort'] as String? ?? "",
+      inboundName: json['inboundName'] as String? ?? "",
+      inboundUser: json['inboundUser'] as String? ?? "",
       host: json['host'] as String,
+      sniffHost: json['sniffHost'] as String? ?? "",
+      dnsMode: json['dnsMode'] as String? ?? "",
       process: json['process'] as String,
+      processPath: json['processPath'] as String? ?? "",
+      specialProxy: json['specialProxy'] as String? ?? "",
+      specialRules: json['specialRules'] as String? ?? "",
       remoteDestination: json['remoteDestination'] as String,
+      dscp: (json['dscp'] as num?)?.toInt() ?? 0,
     );
 
 Map<String, dynamic> _$$MetadataImplToJson(_$MetadataImpl instance) =>
     <String, dynamic>{
       'uid': instance.uid,
       'network': instance.network,
+      'type': instance.type,
       'sourceIP': instance.sourceIP,
       'sourcePort': instance.sourcePort,
       'destinationIP': instance.destinationIP,
       'destinationPort': instance.destinationPort,
+      'sourceGeoIP': instance.sourceGeoIP,
+      'destinationGeoIP': instance.destinationGeoIP,
+      'sourceIPASN': instance.sourceIPASN,
+      'destinationIPASN': instance.destinationIPASN,
+      'inboundIP': instance.inboundIP,
+      'inboundPort': instance.inboundPort,
+      'inboundName': instance.inboundName,
+      'inboundUser': instance.inboundUser,
       'host': instance.host,
+      'sniffHost': instance.sniffHost,
+      'dnsMode': instance.dnsMode,
       'process': instance.process,
+      'processPath': instance.processPath,
+      'specialProxy': instance.specialProxy,
+      'specialRules': instance.specialRules,
       'remoteDestination': instance.remoteDestination,
+      'dscp': instance.dscp,
     };
 
 _$ConnectionImpl _$$ConnectionImplFromJson(Map<String, dynamic> json) =>
@@ -59,6 +95,8 @@ _$ConnectionImpl _$$ConnectionImplFromJson(Map<String, dynamic> json) =>
       metadata: Metadata.fromJson(json['metadata'] as Map<String, dynamic>),
       chains:
           (json['chains'] as List<dynamic>).map((e) => e as String).toList(),
+      rule: json['rule'] as String? ?? "",
+      rulePayload: json['rulePayload'] as String? ?? "",
     );
 
 Map<String, dynamic> _$$ConnectionImplToJson(_$ConnectionImpl instance) =>
@@ -69,6 +107,8 @@ Map<String, dynamic> _$$ConnectionImplToJson(_$ConnectionImpl instance) =>
       'start': instance.start.toIso8601String(),
       'metadata': instance.metadata,
       'chains': instance.chains,
+      'rule': instance.rule,
+      'rulePayload': instance.rulePayload,
     };
 
 _$LogImpl _$$LogImplFromJson(Map<String, dynamic> json) => _$LogImpl(
