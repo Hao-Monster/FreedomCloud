@@ -28,6 +28,10 @@ class ClashCore {
   static ClashCore? _instance;
   late ClashHandlerInterface clashInterface;
   final _connectionSnapshotDecoder = ConnectionSnapshotDecoder();
+  int _connectionSnapshotRequestCount = 0;
+  bool? _lastConnectionSnapshotWasEmpty;
+  DateTime? _lastConnectionSnapshotDiagnosticAt;
+  String? _lastConnectionSnapshotErrorType;
 
   Future<bool> preload() => clashInterface.preload();
 
@@ -150,16 +154,84 @@ class ClashCore {
       await clashInterface.changeProxy(changeProxyParams);
 
   Future<ConnectionSnapshot> getConnectionsSnapshot() async {
-    final res = await clashInterface.getConnections();
-    if (res.isEmpty) {
-      return const ConnectionSnapshot(
-        downloadTotal: 0,
-        uploadTotal: 0,
-        memory: 0,
-        connections: [],
+    final requestNumber = ++_connectionSnapshotRequestCount;
+    final stopwatch = Stopwatch()..start();
+    try {
+      final res = await clashInterface.getConnections();
+      if (res.isEmpty) {
+        _logConnectionSnapshotResult(
+          requestNumber: requestNumber,
+          responseLength: 0,
+          connectionCount: 0,
+          elapsedMilliseconds: stopwatch.elapsedMilliseconds,
+        );
+        return const ConnectionSnapshot(
+          downloadTotal: 0,
+          uploadTotal: 0,
+          memory: 0,
+          connections: [],
+        );
+      }
+      final snapshot = await _connectionSnapshotDecoder.decode(res);
+      _lastConnectionSnapshotErrorType = null;
+      _logConnectionSnapshotResult(
+        requestNumber: requestNumber,
+        responseLength: res.length,
+        connectionCount: snapshot.connections.length,
+        elapsedMilliseconds: stopwatch.elapsedMilliseconds,
       );
+      return snapshot;
+    } catch (error) {
+      _logConnectionSnapshotError(
+        requestNumber: requestNumber,
+        errorType: error.runtimeType.toString(),
+        elapsedMilliseconds: stopwatch.elapsedMilliseconds,
+      );
+      rethrow;
     }
-    return _connectionSnapshotDecoder.decode(res);
+  }
+
+  void _logConnectionSnapshotResult({
+    required int requestNumber,
+    required int responseLength,
+    required int connectionCount,
+    required int elapsedMilliseconds,
+  }) {
+    final now = DateTime.now();
+    final isEmpty = connectionCount == 0;
+    final shouldLog = requestNumber <= 3 ||
+        _lastConnectionSnapshotWasEmpty != isEmpty ||
+        _lastConnectionSnapshotDiagnosticAt == null ||
+        now.difference(_lastConnectionSnapshotDiagnosticAt!) >=
+            const Duration(seconds: 30);
+    _lastConnectionSnapshotWasEmpty = isEmpty;
+    if (!shouldLog) return;
+    _lastConnectionSnapshotDiagnosticAt = now;
+    connectionDiagnostics.log(
+      '[ConnectionsDiag] core.snapshot status=ok request=$requestNumber '
+      'durationMs=$elapsedMilliseconds responseLength=$responseLength '
+      'connections=$connectionCount',
+    );
+  }
+
+  void _logConnectionSnapshotError({
+    required int requestNumber,
+    required String errorType,
+    required int elapsedMilliseconds,
+  }) {
+    final now = DateTime.now();
+    final shouldLog = requestNumber <= 3 ||
+        _lastConnectionSnapshotErrorType != errorType ||
+        _lastConnectionSnapshotDiagnosticAt == null ||
+        now.difference(_lastConnectionSnapshotDiagnosticAt!) >=
+            const Duration(seconds: 30);
+    _lastConnectionSnapshotErrorType = errorType;
+    if (!shouldLog) return;
+    _lastConnectionSnapshotDiagnosticAt = now;
+    connectionDiagnostics.log(
+      '[ConnectionsDiag] core.snapshot status=error request=$requestNumber '
+      'durationMs=$elapsedMilliseconds errorType=$errorType',
+    );
   }
 
   Future<bool> closeConnectionAndWait(String id) =>

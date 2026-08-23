@@ -1,12 +1,14 @@
 import 'dart:async';
 
 import 'package:flclashx/clash/clash.dart';
+import 'package:flclashx/common/connection_diagnostics.dart';
 import 'package:flclashx/models/models.dart';
 import 'package:flutter/foundation.dart';
 
 typedef ConnectionSnapshotLoader = Future<ConnectionSnapshot> Function();
 typedef CloseConnectionCallback = Future<bool> Function(String id);
 typedef CloseConnectionsCallback = Future<bool> Function();
+typedef ConnectionDiagnosticLogger = void Function(String event);
 
 Future<ConnectionSnapshot> _defaultLoadSnapshot() =>
     clashCore.getConnectionsSnapshot();
@@ -22,17 +24,20 @@ class ConnectionManager extends ChangeNotifier {
     ConnectionSnapshotLoader? loadSnapshot,
     CloseConnectionCallback? closeConnection,
     CloseConnectionsCallback? closeConnections,
+    ConnectionDiagnosticLogger? diagnosticLog,
     DateTime Function()? now,
   })  : _tracker = tracker ?? ConnectionTracker(),
         _loadSnapshot = loadSnapshot ?? _defaultLoadSnapshot,
         _closeConnection = closeConnection ?? _defaultCloseConnection,
         _closeConnections = closeConnections ?? _defaultCloseConnections,
+        _diagnosticLog = diagnosticLog ?? connectionDiagnostics.log,
         _now = now ?? DateTime.now;
 
   final ConnectionTracker _tracker;
   final ConnectionSnapshotLoader _loadSnapshot;
   final CloseConnectionCallback _closeConnection;
   final CloseConnectionsCallback _closeConnections;
+  final ConnectionDiagnosticLogger _diagnosticLog;
   final DateTime Function() _now;
   Timer? _timer;
   ConnectionSnapshot? _pausedSnapshot;
@@ -48,6 +53,10 @@ class ConnectionManager extends ChangeNotifier {
   num _downloadTotal = 0;
   num _uploadTotal = 0;
   num _memory = 0;
+  int _pollCount = 0;
+  bool? _lastSnapshotWasEmpty;
+  DateTime? _lastDiagnosticAt;
+  String? _lastErrorType;
 
   bool get running => _running;
   bool get paused => _paused;
@@ -67,8 +76,16 @@ class ConnectionManager extends ChangeNotifier {
       milliseconds: refreshIntervalMs.clamp(100, 10000),
     );
     final intervalChanged = nextInterval != _interval;
+    final runningChanged = running != _running;
     _interval = nextInterval;
-    if (running != _running) {
+    if (runningChanged || intervalChanged) {
+      _diagnosticLog(
+        '[ConnectionsDiag] manager.configure '
+        'running=$running runningChanged=$runningChanged '
+        'intervalMs=${nextInterval.inMilliseconds}',
+      );
+    }
+    if (runningChanged) {
       _setRunning(running);
     } else if (running && intervalChanged) {
       _schedule(const Duration(milliseconds: 1));
@@ -78,6 +95,10 @@ class ConnectionManager extends ChangeNotifier {
   void setPaused({required bool paused}) {
     if (_paused == paused) return;
     _paused = paused;
+    _diagnosticLog(
+      '[ConnectionsDiag] manager.pause paused=$paused '
+      'active=${_tracker.activeConnections.length}',
+    );
     if (!paused && _pausedSnapshot != null) {
       _tracker.ingest(
         _pausedSnapshot!,
@@ -90,6 +111,10 @@ class ConnectionManager extends ChangeNotifier {
   }
 
   Future<void> refresh() async {
+    _diagnosticLog(
+      '[ConnectionsDiag] manager.manualRefresh '
+      'running=$_running polling=$_polling',
+    );
     if (!_running || _polling) return;
     _timer?.cancel();
     await _poll(_generation);
@@ -133,6 +158,10 @@ class ConnectionManager extends ChangeNotifier {
     _timer?.cancel();
     _timer = null;
     _pausedSnapshot = null;
+    _diagnosticLog(
+      '[ConnectionsDiag] manager.running value=$value '
+      'generation=$_generation activeBefore=${_tracker.activeConnections.length}',
+    );
     if (value) {
       _loading = _tracker.activeConnections.isEmpty;
       _schedule(Duration.zero);
@@ -154,6 +183,8 @@ class ConnectionManager extends ChangeNotifier {
   Future<void> _poll(int generation) async {
     if (!_running || _disposed || generation != _generation || _polling) return;
     _polling = true;
+    final pollNumber = ++_pollCount;
+    final stopwatch = Stopwatch()..start();
     try {
       final snapshot = await _loadSnapshot();
       if (!_running || _disposed || generation != _generation) return;
@@ -169,11 +200,22 @@ class ConnectionManager extends ChangeNotifier {
       _lastUpdatedAt = sampledAt;
       _loading = false;
       _error = null;
+      _lastErrorType = null;
+      _logSuccessfulPoll(
+        pollNumber: pollNumber,
+        snapshot: snapshot,
+        elapsedMilliseconds: stopwatch.elapsedMilliseconds,
+      );
       notifyListeners();
     } catch (error) {
       if (!_running || _disposed || generation != _generation) return;
       _loading = false;
       _error = error;
+      _logFailedPoll(
+        pollNumber: pollNumber,
+        errorType: error.runtimeType.toString(),
+        elapsedMilliseconds: stopwatch.elapsedMilliseconds,
+      );
       notifyListeners();
     } finally {
       _polling = false;
@@ -183,8 +225,53 @@ class ConnectionManager extends ChangeNotifier {
     }
   }
 
+  void _logSuccessfulPoll({
+    required int pollNumber,
+    required ConnectionSnapshot snapshot,
+    required int elapsedMilliseconds,
+  }) {
+    final now = DateTime.now();
+    final isEmpty = snapshot.connections.isEmpty;
+    final shouldLog = pollNumber <= 3 ||
+        _lastSnapshotWasEmpty != isEmpty ||
+        _lastDiagnosticAt == null ||
+        now.difference(_lastDiagnosticAt!) >= const Duration(seconds: 30);
+    _lastSnapshotWasEmpty = isEmpty;
+    if (!shouldLog) return;
+    _lastDiagnosticAt = now;
+    _diagnosticLog(
+      '[ConnectionsDiag] manager.poll status=ok poll=$pollNumber '
+      'durationMs=$elapsedMilliseconds sourceConnections=${snapshot.connections.length} '
+      'active=${_tracker.activeConnections.length} '
+      'groups=${_tracker.processGroups.length} paused=$_paused',
+    );
+  }
+
+  void _logFailedPoll({
+    required int pollNumber,
+    required String errorType,
+    required int elapsedMilliseconds,
+  }) {
+    final now = DateTime.now();
+    final shouldLog = pollNumber <= 3 ||
+        _lastErrorType != errorType ||
+        _lastDiagnosticAt == null ||
+        now.difference(_lastDiagnosticAt!) >= const Duration(seconds: 30);
+    _lastErrorType = errorType;
+    if (!shouldLog) return;
+    _lastDiagnosticAt = now;
+    _diagnosticLog(
+      '[ConnectionsDiag] manager.poll status=error poll=$pollNumber '
+      'durationMs=$elapsedMilliseconds errorType=$errorType',
+    );
+  }
+
   @override
   void dispose() {
+    _diagnosticLog(
+      '[ConnectionsDiag] manager.dispose running=$_running '
+      'polls=$_pollCount active=${_tracker.activeConnections.length}',
+    );
     _disposed = true;
     _running = false;
     _generation++;

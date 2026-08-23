@@ -62,6 +62,76 @@ void main() {
     expect(manager.activeConnections.single.connection.upload, 900);
     expect(manager.activeConnections.single.uploadSpeed, 300);
   });
+
+  test('diagnostics expose pipeline state without connection metadata',
+      () async {
+    final events = <String>[];
+    final manager = ConnectionManager(
+      loadSnapshot: () async => _snapshot(
+        connection: _connection(upload: 100),
+        uploadTotal: 100,
+      ),
+      diagnosticLog: events.add,
+    );
+    addTearDown(manager.dispose);
+
+    manager.configure(running: true, refreshIntervalMs: 10000);
+    await _waitUntil(() => manager.activeConnections.isNotEmpty);
+
+    expect(
+      events,
+      contains(
+        contains(
+          'sourceConnections=1 active=1 groups=1 paused=false',
+        ),
+      ),
+    );
+    final output = events.join('\n');
+    expect(output, isNot(contains('example.com')));
+    expect(output, isNot(contains('192.0.2.1')));
+    expect(output, isNot(contains('203.0.113.1')));
+  });
+
+  test('steady polling diagnostics are throttled after the first three polls',
+      () async {
+    final events = <String>[];
+    final manager = ConnectionManager(
+      loadSnapshot: () async => _snapshot(),
+      diagnosticLog: events.add,
+    );
+    addTearDown(manager.dispose);
+
+    manager.configure(running: true, refreshIntervalMs: 10000);
+    await _waitUntil(
+      () => events.any((event) => event.contains('manager.poll status=ok')),
+    );
+    for (var i = 0; i < 4; i++) {
+      await manager.refresh();
+    }
+
+    final pollEvents = events
+        .where((event) => event.contains('manager.poll status=ok'))
+        .toList();
+    expect(pollEvents, hasLength(3));
+  });
+
+  test('diagnostic errors include only the error type', () async {
+    final events = <String>[];
+    final manager = ConnectionManager(
+      loadSnapshot: () async =>
+          throw StateError('sensitive.example/path/to/application.exe'),
+      diagnosticLog: events.add,
+    );
+    addTearDown(manager.dispose);
+
+    manager.configure(running: true, refreshIntervalMs: 10000);
+    await _waitUntil(() => manager.error != null);
+
+    final output = events.join('\n');
+    expect(output, contains('errorType=StateError'));
+    expect(output, isNot(contains('sensitive.example')));
+    expect(output, isNot(contains('application.exe')));
+  });
 }
 
 Future<void> _waitUntil(bool Function() condition) async {

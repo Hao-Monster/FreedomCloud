@@ -1,6 +1,5 @@
 import 'package:flclashx/clash/clash.dart';
 import 'package:flclashx/common/common.dart';
-import 'package:flclashx/common/file_logger.dart';
 import 'package:flclashx/enum/enum.dart';
 import 'package:flclashx/models/models.dart';
 import 'package:flclashx/providers/app.dart';
@@ -32,6 +31,12 @@ class _ClashContainerState extends ConsumerState<ClashManager>
   void initState() {
     super.initState();
     clashMessage.addListener(this);
+    connectionDiagnostics.log(
+      '[ConnectionsDiag] clashManager.init '
+      'build=${ConnectionDiagnostics.buildId} '
+      'runtime=${ref.read(runTimeProvider) != null} '
+      'intervalMs=${ref.read(appSettingProvider).connectionRefreshInterval}',
+    );
     ref.listenManual(needSetupProvider, (prev, next) {
       if (prev != next) {
         globalState.appController.handleChangeProfile();
@@ -60,7 +65,11 @@ class _ClashContainerState extends ConsumerState<ClashManager>
     );
     ref.listenManual(
       runTimeProvider.select((state) => state != null),
-      (_, running) {
+      (previous, running) {
+        connectionDiagnostics.log(
+          '[ConnectionsDiag] runtime.changed '
+          'previous=$previous running=$running',
+        );
         connectionManager.configure(
           running: running,
           refreshIntervalMs:
@@ -71,7 +80,12 @@ class _ClashContainerState extends ConsumerState<ClashManager>
     );
     ref.listenManual(
       appSettingProvider.select((state) => state.connectionRefreshInterval),
-      (_, refreshIntervalMs) {
+      (previous, refreshIntervalMs) {
+        connectionDiagnostics.log(
+          '[ConnectionsDiag] interval.changed '
+          'previous=$previous intervalMs=$refreshIntervalMs '
+          'runtime=${ref.read(runTimeProvider) != null}',
+        );
         connectionManager.configure(
           running: ref.read(runTimeProvider) != null,
           refreshIntervalMs: refreshIntervalMs,
@@ -83,6 +97,10 @@ class _ClashContainerState extends ConsumerState<ClashManager>
 
   @override
   Future<void> dispose() async {
+    connectionDiagnostics.log(
+      '[ConnectionsDiag] clashManager.dispose '
+      'managerRunning=${connectionManager.running}',
+    );
     clashMessage.removeListener(this);
     super.dispose();
   }

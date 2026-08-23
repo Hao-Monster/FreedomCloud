@@ -52,6 +52,17 @@ class _ConnectionsViewState extends ConsumerState<ConnectionsView>
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      connectionDiagnostics.log(
+        '[ConnectionsDiag] page.open '
+        'runtime=${ref.read(runTimeProvider) != null} '
+        'managerRunning=${connectionManager.running} '
+        'loading=${connectionManager.loading} '
+        'active=${connectionManager.activeConnections.length} '
+        'groups=${connectionManager.processGroups.length}',
+      );
+    });
     ref.listenManual(
       isCurrentPageProvider(
         PageLabel.connections,
@@ -67,6 +78,12 @@ class _ConnectionsViewState extends ConsumerState<ConnectionsView>
 
   @override
   void dispose() {
+    connectionDiagnostics.log(
+      '[ConnectionsDiag] page.close '
+      'managerRunning=${connectionManager.running} '
+      'active=${connectionManager.activeConnections.length} '
+      'groups=${connectionManager.processGroups.length}',
+    );
     _queryController.dispose();
     super.dispose();
   }
