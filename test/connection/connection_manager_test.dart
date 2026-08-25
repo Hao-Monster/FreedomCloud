@@ -43,6 +43,7 @@ void main() {
     );
     addTearDown(manager.dispose);
 
+    manager.setViewVisible(visible: true);
     manager.configure(running: true, refreshIntervalMs: 10000);
     await _waitUntil(() => manager.activeConnections.isNotEmpty);
     expect(manager.activeConnections.single.connection.upload, 100);
@@ -76,6 +77,7 @@ void main() {
     );
     addTearDown(manager.dispose);
 
+    manager.setViewVisible(visible: true);
     manager.configure(running: true, refreshIntervalMs: 10000);
     await _waitUntil(() => manager.activeConnections.isNotEmpty);
 
@@ -102,6 +104,7 @@ void main() {
     );
     addTearDown(manager.dispose);
 
+    manager.setViewVisible(visible: true);
     manager.configure(running: true, refreshIntervalMs: 10000);
     await _waitUntil(
       () => events.any((event) => event.contains('manager.poll status=ok')),
@@ -125,6 +128,7 @@ void main() {
     );
     addTearDown(manager.dispose);
 
+    manager.setViewVisible(visible: true);
     manager.configure(running: true, refreshIntervalMs: 10000);
     await _waitUntil(() => manager.error != null);
 
@@ -134,7 +138,7 @@ void main() {
     expect(output, isNot(contains('application.exe')));
   });
 
-  test('hidden view uses a slow cadence and becoming visible refreshes now',
+  test('hidden view performs no polling and becoming visible refreshes now',
       () async {
     var requests = 0;
     final manager = ConnectionManager(
@@ -142,22 +146,21 @@ void main() {
         requests++;
         return _snapshot();
       },
-      backgroundRefreshInterval: const Duration(milliseconds: 200),
     );
     addTearDown(manager.dispose);
 
     manager.configure(running: true, refreshIntervalMs: 100);
-    await _waitUntil(() => requests == 1);
     expect(manager.viewVisible, isFalse);
-    expect(manager.effectiveInterval, const Duration(milliseconds: 200));
-
-    await Future<void>.delayed(const Duration(milliseconds: 120));
-    expect(requests, 1);
-    await _waitUntil(() => requests == 2);
+    await Future<void>.delayed(const Duration(milliseconds: 250));
+    expect(requests, 0);
 
     manager.setViewVisible(visible: true);
     expect(manager.effectiveInterval, const Duration(milliseconds: 100));
-    await _waitUntil(() => requests == 3);
+    await _waitUntil(() => requests == 1);
+
+    manager.setViewVisible(visible: false);
+    await Future<void>.delayed(const Duration(milliseconds: 250));
+    expect(requests, 1);
   });
 }
 

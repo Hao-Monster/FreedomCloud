@@ -26,17 +26,12 @@ class ConnectionManager extends ChangeNotifier {
     CloseConnectionsCallback? closeConnections,
     ConnectionDiagnosticLogger? diagnosticLog,
     DateTime Function()? now,
-    this.backgroundRefreshInterval = const Duration(seconds: 5),
   })  : _tracker = tracker ?? ConnectionTracker(),
         _loadSnapshot = loadSnapshot ?? _defaultLoadSnapshot,
         _closeConnection = closeConnection ?? _defaultCloseConnection,
         _closeConnections = closeConnections ?? _defaultCloseConnections,
         _diagnosticLog = diagnosticLog ?? connectionDiagnostics.log,
-        _now = now ?? DateTime.now,
-        assert(
-          backgroundRefreshInterval > Duration.zero,
-          'backgroundRefreshInterval must be positive',
-        );
+        _now = now ?? DateTime.now;
 
   final ConnectionTracker _tracker;
   final ConnectionSnapshotLoader _loadSnapshot;
@@ -44,7 +39,6 @@ class ConnectionManager extends ChangeNotifier {
   final CloseConnectionsCallback _closeConnections;
   final ConnectionDiagnosticLogger _diagnosticLog;
   final DateTime Function() _now;
-  final Duration backgroundRefreshInterval;
   Timer? _timer;
   ConnectionSnapshot? _pausedSnapshot;
   Duration _interval = const Duration(milliseconds: 500);
@@ -71,8 +65,7 @@ class ConnectionManager extends ChangeNotifier {
   Object? get error => _error;
   DateTime? get lastUpdatedAt => _lastUpdatedAt;
   Duration get interval => _interval;
-  Duration get effectiveInterval =>
-      _viewVisible ? _interval : backgroundRefreshInterval;
+  Duration get effectiveInterval => _interval;
   bool get viewVisible => _viewVisible;
   num get downloadTotal => _downloadTotal;
   num get uploadTotal => _uploadTotal;
@@ -107,10 +100,15 @@ class ConnectionManager extends ChangeNotifier {
     _viewVisible = visible;
     _diagnosticLog(
       '[ConnectionsDiag] manager.visibility visible=$visible '
-      'effectiveIntervalMs=${effectiveInterval.inMilliseconds}',
+      'polling=${visible ? 'enabled' : 'disabled'}',
     );
     if (_running) {
-      _schedule(visible ? Duration.zero : effectiveInterval);
+      if (visible) {
+        _schedule(Duration.zero);
+      } else {
+        _timer?.cancel();
+        _timer = null;
+      }
     }
   }
 
@@ -186,7 +184,7 @@ class ConnectionManager extends ChangeNotifier {
     );
     if (value) {
       _loading = _tracker.activeConnections.isEmpty;
-      _schedule(Duration.zero);
+      if (_viewVisible) _schedule(Duration.zero);
     } else {
       _loading = false;
       _error = null;
@@ -241,8 +239,8 @@ class ConnectionManager extends ChangeNotifier {
       notifyListeners();
     } finally {
       _polling = false;
-      if (_running && !_disposed && generation == _generation) {
-        _schedule(effectiveInterval);
+      if (_running && _viewVisible && !_disposed && generation == _generation) {
+        _schedule(_interval);
       }
     }
   }
