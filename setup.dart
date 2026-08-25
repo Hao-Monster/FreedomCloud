@@ -210,8 +210,10 @@ class Build {
     if (!await file.exists()) {
       throw "File not exists";
     }
-    final stream = file.openRead();
-    return sha256.convert(await stream.reduce((a, b) => a + b)).toString();
+    // Digest chunks as they arrive. Concatenating every chunk with `a + b`
+    // repeatedly copied the complete Core and made hashing O(n²): a 47 MiB
+    // Windows Core drove the build VM above 1.5 GiB before packaging began.
+    return (await sha256.bind(file.openRead()).first).toString();
   }
 
   /// Reads mihomo version from [core/go.mod] (single source of truth).
