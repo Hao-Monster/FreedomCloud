@@ -653,13 +653,19 @@ class BuildCommand extends Command {
 
       final issOut = File(join(Build.distPath, "setup.iss"));
       issOut.writeAsStringSync(processed);
-      await Build.exec(
-        name: "inno setup",
-        [r"C:\Program Files (x86)\Inno Setup 6\ISCC.exe", issOut.path],
-        runInShell: false,
-      );
+      const innoCompiler =
+          r"C:\Program Files (x86)\Inno Setup 6\ISCC.exe";
+      if (File(innoCompiler).existsSync()) {
+        await Build.exec(
+          name: "inno setup",
+          [innoCompiler, issOut.path],
+          runInShell: false,
+        );
+        print("✅ EXE installer created");
+      } else {
+        print("⚠️  Inno Setup not installed; portable ZIP is still complete");
+      }
       issOut.deleteSync();
-      print("✅ EXE installer created");
     }
 
     if (msix) {
