@@ -1,7 +1,9 @@
 // ignore_for_file: avoid_slow_async_io
 
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flclashx/common/path.dart';
 import 'package:path/path.dart';
@@ -24,6 +26,20 @@ class ConnectionDiagnostics {
     if (Platform.environment.containsKey('FLUTTER_TEST')) return;
     final singleLine = event.replaceAll(RegExp(r'[\r\n]+'), ' ');
     _pendingWrite = _pendingWrite.then((_) => _write(singleLine));
+  }
+
+  /// Returns only the privacy-safe connection pipeline log. It intentionally
+  /// excludes profiles, hosts, process paths and the general application log.
+  Future<Uint8List> exportBytes() async {
+    await _pendingWrite;
+    try {
+      final homeDir = await appPath.homeDirPath;
+      final file = File(join(homeDir, 'logs', fileName));
+      if (await file.exists()) return file.readAsBytes();
+    } catch (_) {
+      // Export remains useful even when the diagnostic directory is missing.
+    }
+    return Uint8List.fromList(utf8.encode('build=$buildId\nno-events\n'));
   }
 
   Future<void> _write(String event) async {

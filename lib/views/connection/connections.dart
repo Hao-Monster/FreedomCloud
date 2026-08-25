@@ -38,6 +38,11 @@ class _ConnectionsViewState extends ConsumerState<ConnectionsView>
   @override
   List<Widget> get actions => [
         IconButton(
+          tooltip: appLocalizations.exportLogs,
+          onPressed: () => unawaited(_exportDiagnostics()),
+          icon: const Icon(Icons.download_outlined),
+        ),
+        IconButton(
           tooltip: appLocalizations.connectionsRequestLog,
           onPressed: _showRequestLog,
           icon: const Icon(Icons.receipt_long_outlined),
@@ -50,6 +55,17 @@ class _ConnectionsViewState extends ConsumerState<ConnectionsView>
         ),
         const _ZashboardButton(),
       ];
+
+  Future<void> _exportDiagnostics() async {
+    final bytes = await connectionDiagnostics.exportBytes();
+    final path = await picker.saveFile(
+      ConnectionDiagnostics.fileName,
+      bytes,
+    );
+    if (path != null && mounted) {
+      context.showNotifier(appLocalizations.exportSuccess);
+    }
+  }
 
   @override
   void initState() {
