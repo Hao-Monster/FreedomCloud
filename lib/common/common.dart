@@ -21,6 +21,7 @@ export 'launch.dart';
 export 'link.dart';
 export 'lock.dart';
 export 'measure.dart';
+export 'memory_policy.dart';
 export 'mixin.dart';
 export 'navigation.dart';
 export 'navigator.dart';

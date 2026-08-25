@@ -74,27 +74,27 @@ var (
 // without spamming pings/UI updates.
 const backgroundHealthCheckInterval = 5 * time.Minute
 
+const (
+	runtimeGCPercent       = 100
+	runtimeMemoryLimitByte = 96 * 1024 * 1024
+)
+
+func configureRuntimeMemory() {
+	// GOGC=off retained every allocation until the soft limit, so the core sat
+	// close to its cap even while idle. Go's default proportional collector is a
+	// better throughput/RSS balance; the soft limit remains a last-resort bound
+	// for GEOIP/GEOSITE-heavy profiles.
+	debug.SetGCPercent(runtimeGCPercent)
+	debug.SetMemoryLimit(runtimeMemoryLimitByte)
+}
+
 func handleInitClash(paramsString string) bool {
 	var params = InitParams{}
 	err := json.Unmarshal([]byte(paramsString), &params)
 	if err != nil {
 		return false
 	}
-	// EXPERIMENT: GC disabled entirely (was SetGCPercent(50)) — collections now
-	// happen only when the heap reaches the soft memory limit below. This also
-	// silences the runtime's forced 2-minute GC, so an idle core never wakes for
-	// GC at all. Trade-off being evaluated: the heap floats up to the limit by
-	// design, and under sustained traffic it parks there with limit-triggered
-	// collections (the "GC wall"). If battery/CPU regresses, restore
-	// SetGCPercent(50).
-	debug.SetGCPercent(-1)
-	// 70 MB soft limit (experiment; was 128, and 60 before that). History: a 60 MB
-	// limit forced near-continuous GC — up to the runtime's 50%-CPU GC cap — when a
-	// GEOIP/GEOSITE-heavy config's live heap sat close to it. 70 is back near that
-	// regime on purpose, paired with GOGC=off: watch geo-heavy configs for the same
-	// burn. With GOGC off this is the ONLY GC trigger left — never remove it, or
-	// the heap grows unbounded until LMK/OOM.
-	debug.SetMemoryLimit(70 * 1024 * 1024)
+	configureRuntimeMemory()
 	version.Store(int32(params.Version))
 	constant.SetHomeDir(params.HomeDir)
 	// Default to "foreground": the main process drives setUiActive(false) when it

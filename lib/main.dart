@@ -21,6 +21,10 @@ import 'pages/editor_window.dart';
 
 Future<void> main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
+  configureDecodedImageCache(
+    PaintingBinding.instance.imageCache,
+    isDesktop: Platform.isWindows || Platform.isLinux || Platform.isMacOS,
+  );
 
   // desktop_multi_window re-launches this binary for each sub-window with
   // ['multi_window', <id>, <jsonArgs>]. On macOS we use one for the roomy
