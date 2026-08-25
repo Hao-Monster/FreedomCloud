@@ -151,17 +151,28 @@ end;
 procedure CurStepChanged(CurStep: TSetupStep);
 var
   ResultCode: Integer;
+  ServiceExe: String;
 begin
   if CurStep = ssPostInstall then
   begin
     // Refresh icon cache/associations
     SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, 0, 0);
     Sleep(500);
-    // Ensure helper service is started after install/upgrade, independent of app
-    try
+    // Configure the service during the already-elevated install. This prevents
+    // a second UAC prompt when the app first enables the virtual adapter. Keep
+    // upgrades idempotent: repair the binary path in place, create only when
+    // the service does not exist.
+    ServiceExe := ExpandConstant('{app}\FlClashHelperService.exe');
+    // A separately updated core may have left an override hash. The helper
+    // built into this installer already embeds the bundled core's hash.
+    DeleteFile(ExpandConstant('{app}\allowed_core.sha256'));
+    Exec('sc.exe', 'config "FlClashHelperService" binPath= "' + ServiceExe + '" start= auto',
+      '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+    if ResultCode <> 0 then
+      Exec('sc.exe', 'create "FlClashHelperService" binPath= "' + ServiceExe + '" start= auto',
+        '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+    if ResultCode = 0 then
       Exec('sc.exe', 'start "FlClashHelperService"', '', SW_HIDE, ewNoWait, ResultCode);
-    except
-    end;
   end;
 end;
 

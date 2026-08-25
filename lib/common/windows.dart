@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:ffi/ffi.dart';
 import 'package:flclashx/common/common.dart';
+import 'package:flclashx/common/windows_service_command.dart';
 import 'package:flclashx/enum/enum.dart';
 import 'package:path/path.dart';
 import 'package:win32/win32.dart';
@@ -194,33 +195,21 @@ class Windows {
     return true;
   }
 
-  Future<void> _killProcess(int port) async {
-    final result = await Process.run('netstat', ['-ano']);
-    final lines = result.stdout.toString().trim().split('\n');
-    for (final line in lines) {
-      if (!line.contains(":$port") || !line.contains("LISTENING")) {
-        continue;
-      }
-      final parts = line.trim().split(RegExp(r'\s+'));
-      final pid = int.tryParse(parts.last);
-      if (pid != null) {
-        await Process.run('taskkill', ['/PID', pid.toString(), '/F']);
-      }
-    }
-  }
-
   Future<WindowsHelperServiceStatus> checkService() async {
-    // final qcResult = await Process.run('sc', ['qc', appHelperService]);
-    // final qcOutput = qcResult.stdout.toString();
-    // if (qcResult.exitCode != 0 || !qcOutput.contains(appPath.helperPath)) {
-    //   return WindowsHelperServiceStatus.none;
-    // }
     final result = await Process.run('sc', ['query', appHelperService]);
     if (result.exitCode != 0) {
       return WindowsHelperServiceStatus.none;
     }
+    final configuration = await Process.run('sc', ['qc', appHelperService]);
+    if (configuration.exitCode != 0 ||
+        !windowsServiceConfigReferencesHelper(
+          configuration.stdout.toString(),
+          appPath.helperPath,
+        )) {
+      return WindowsHelperServiceStatus.presence;
+    }
     final output = result.stdout.toString();
-    if (output.contains("RUNNING") && await request.pingHelper()) {
+    if (windowsServiceQueryIsRunning(output) && await request.pingHelper()) {
       return WindowsHelperServiceStatus.running;
     }
     return WindowsHelperServiceStatus.presence;
@@ -237,43 +226,31 @@ class Windows {
       return true;
     }
 
-    await _killProcess(helperPort);
-
     final coreHash = await coreUpdater.calcCoreSha256();
-    final command = [
-      "/c",
-      if (status == WindowsHelperServiceStatus.presence) ...[
-        "sc",
-        "delete",
-        appHelperService,
-        "&&",
-      ],
-      "sc",
-      "create",
-      appHelperService,
-      'binPath= "${appPath.helperPath}"',
-      'start= auto',
-      "&&",
-      "sc",
-      "start",
-      appHelperService,
-      // Sync the helper's core allow-list while elevation is already granted,
-      // so a previously updated core isn't refused by a stale hash.
-      if (coreHash != null) ...[
-        "&&",
-        "echo",
-        '$coreHash>',
-        '"${appPath.allowedCoreHashPath}"',
-      ],
-    ].join(" ");
-
-    final res = runas("cmd.exe", command);
-
-    await Future.delayed(
-      const Duration(milliseconds: 300),
+    if (coreHash == null) {
+      commonPrint.log('helper install aborted: core hash unavailable');
+      return false;
+    }
+    final command = buildWindowsHelperRepairCommand(
+      serviceExists: status != WindowsHelperServiceStatus.none,
+      helperPath: appPath.helperPath,
+      allowedHashPath: appPath.allowedCoreHashPath,
+      coreHash: coreHash,
     );
+    final launched = runas('cmd.exe', '/d /s /c "$command"');
+    if (!launched) return false;
 
-    return res;
+    // ShellExecute returns after the elevated process launches, not after the
+    // service reaches RUNNING. Report success only after the helper responds
+    // with the hash of the actual core on disk.
+    for (var attempt = 0; attempt < 15; attempt++) {
+      await Future.delayed(const Duration(milliseconds: 300));
+      if (await checkService() == WindowsHelperServiceStatus.running) {
+        return true;
+      }
+    }
+    commonPrint.log('helper install/repair timed out before becoming healthy');
+    return false;
   }
 
   /// Try to start an existing service without UAC.
