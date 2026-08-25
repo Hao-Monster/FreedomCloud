@@ -656,6 +656,7 @@ class BuildCommand extends Command {
       await Build.exec(
         name: "inno setup",
         [r"C:\Program Files (x86)\Inno Setup 6\ISCC.exe", issOut.path],
+        runInShell: false,
       );
       issOut.deleteSync();
       print("✅ EXE installer created");
