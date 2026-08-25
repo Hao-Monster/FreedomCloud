@@ -89,4 +89,3 @@ integration, generic DLL hijacking or remote-thread injection, floating traffic
 window, Electron-style remote CSS, arbitrary core switching, multi-core support,
 running the entire UI elevated, stopping Core whenever the network disappears,
 and unbounded history/log/icon caches.
-

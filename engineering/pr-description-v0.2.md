@@ -20,10 +20,11 @@ bounded memory/polling policies and non-strict per-application PROCESS rules.
 - [x] Full Flutter tests pass locally.
 - [x] Go Core tests pass locally.
 - [x] Rust Helper tests pass locally.
-- [x] Targeted analyzer has no errors or warnings.
-- [ ] Clean Windows release build and artifact hashes recorded.
+- [x] Targeted runtime analyzer has no errors or warnings (style infos only).
+- [x] Clean Windows portable Release build and artifact hashes recorded.
 - [ ] Windows 11 VM checklist accepted by tester.
-- [ ] No unrelated Purchase/navigation/i18n working-tree files in the PR.
+- [x] Unrelated Purchase/navigation/i18n working-tree files are excluded from
+      every task commit and the clean build worktree.
 
 ## Explicitly deferred
 

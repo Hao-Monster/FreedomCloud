@@ -78,6 +78,10 @@ Implemented commits:
 - `bdada36 perf(connections): stop polling while view is hidden`
 - `76d4195 perf(runtime): bound decoded images and restore proportional GC`
 - `5e6ab91 security(helper): isolate privileged service binaries`
+- `342b665 docs(delivery): record v0.2 release candidate gates`
+- `43ac51d perf(build): stream release artifact hashing`
+- `53b85dd fix(build): launch Inno compiler without shell splitting`
+- `cb41855 fix(build): keep portable build independent of Inno`
 
 Only task files are staged. The pre-existing Purchase/QR/navigation/i18n working
 tree changes are explicitly excluded. No remote push, PR creation, merge, tag or
@@ -100,15 +104,19 @@ route, DNS, firewall, WFP or service installation was changed.
 
 | Command | Result | Evidence |
 |---|---|---|
-| `flutter test` | PASS | 37 tests, 0 failed. |
+| `flutter test --coverage` | PASS | 38 tests, 0 failed, 0 skipped; 22 seconds after dependency resolution. |
 | `go test ./...` in `core` | PASS | `core` passed; `core/state` has no tests. |
 | `cargo test --locked --features windows-service` | PASS | 3 tests, 0 failed. |
-| Targeted `dart analyze` | PASS with info | 0 errors, 0 warnings, 18 pre-existing style infos in inspected files. |
+| Targeted `dart analyze` (runtime changes) | PASS with info | 0 errors, 0 warnings, 18 style infos. Build tooling separately has 1 pre-existing Linux-only warning and style infos. |
+| `dart setup.dart windows --arch amd64 --out app` | PASS | Core, Helper, Flutter Windows x64 Release and portable ZIP built; exit code 0. |
+| Inno installer | NOT RUN | Optional compiler is not installed; portable ZIP is complete and is the requested artifact. |
 | Windows 11 proxy/TUN acceptance | NOT RUN locally | Deliberately reserved for the isolated VM. |
 | Signed WFP strict mode | NOT RUN | M3 needs signing identity, WDK and HLK release process. |
 | Signed macOS Network Extension | NOT RUN | M4 needs Apple entitlement, signing and notarization. |
 | 30-minute VM memory trend | NOT RUN | Requires the fixed Windows 11 VM scenario. |
 
-Coverage is not used as a repository quality gate. The release candidate still
-runs Flutter coverage where supported and records the artifact/result in the
-delivery report; coverage never substitutes for the VM acceptance cases.
+Flutter LCOV reports 1,435/22,693 lines (6.32%) for the complete application;
+branch coverage is not emitted by this runner. The selected connection/policy/
+service utility files report 576/1,489 lines (38.68%). Low view coverage is an
+explicit gap covered partly by widget tests and still requires VM acceptance;
+coverage never substitutes for those cases.

@@ -2,6 +2,24 @@
 
 Status: local release candidate; Windows 11 VM acceptance pending.
 
+## Artifact
+
+- Source commit: `cb418558334e7ce09cf6b3c33effba75b444d599`
+- File: `FlClashX-windows-amd64-v0.2-test.zip`
+- Size: 54,484,364 bytes
+- SHA-256: `CC388B51F04A44E677CE452FF2525E155ACF2D0D2B182D231979D4D0A0989BF5`
+- `FlClashX.exe`: `827162BC4280B4F45A22DAF0E3F749041B241CC4B9034FB594DE151FE5EE01FD`
+- `FlClashCore.exe`: `0014643ACFDF385C5F948A7685AC00441F2D41CBB9F4E5EAC9DABB5DD25C5BE5`
+- `FlClashHelperService.exe`: `7E0E34CE5B75AC219BDFBAA62A076E5954237EB6A083F06D8FF6300AEDEF3CAE`
+
+The archive was expanded and checked for the three executables, Flutter DLL,
+data bundle, build identity and VM checklist. No profile YAML, preferences,
+diagnostic log or writable Core allow-list file was present. The Helper contains
+exactly one embedded occurrence of the packaged Core SHA-256.
+
+The optional Inno installer was not built because its compiler is absent on the
+development host. This does not affect the requested install-free ZIP.
+
 ## Delivered scope
 
 - Process-centric and classic connection views share one bounded snapshot
