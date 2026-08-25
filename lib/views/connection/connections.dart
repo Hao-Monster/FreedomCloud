@@ -63,7 +63,7 @@ class _ConnectionsViewState extends ConsumerState<ConnectionsView>
       bytes,
     );
     if (path != null && mounted) {
-      context.showNotifier(appLocalizations.exportSuccess);
+      await context.showNotifier(appLocalizations.exportSuccess);
     }
   }
 
@@ -377,6 +377,12 @@ class _ConnectionsViewState extends ConsumerState<ConnectionsView>
           group: group,
           showIcon: settings.connectionShowIcon,
           useApplicationName: settings.connectionUseApplicationName,
+          policy: perAppPolicyStore.policyFor(group.processPath),
+          onPolicyChanged: group.processPath.isEmpty
+              ? null
+              : (policy) => unawaited(
+                    _setApplicationPolicy(group, policy),
+                  ),
           onTap: () => setState(() {
             _selectedProcessKey = group.key;
             _status = group.activeCount > 0
@@ -386,6 +392,32 @@ class _ConnectionsViewState extends ConsumerState<ConnectionsView>
         );
       },
     );
+  }
+
+  Future<void> _setApplicationPolicy(
+    ProcessConnectionGroup group,
+    ApplicationRoutingPolicy policy,
+  ) async {
+    try {
+      await perAppPolicyStore.setPolicy(
+        processPath: group.processPath,
+        name: group.name,
+        policy: policy,
+      );
+      await globalState.appController.applyProfile();
+      if (mounted) {
+        setState(() {});
+        await context.showNotifier(appLocalizations.successTitle);
+      }
+    } catch (error) {
+      connectionDiagnostics.log(
+        '[ConnectionsDiag] perApp.update status=error '
+        'errorType=${error.runtimeType}',
+      );
+      if (mounted) {
+        await context.showNotifier('ERROR: ${error.runtimeType}');
+      }
+    }
   }
 
   Widget _connectionList(

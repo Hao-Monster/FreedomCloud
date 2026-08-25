@@ -745,7 +745,11 @@ class GlobalState {
         rules = [...overrideData.runningRule, ...rules];
       }
     }
-    rawConfig["rule"] = rules;
+    await perAppPolicyStore.ensureLoaded();
+    rawConfig["rule"] = mergePerAppPolicyRules(
+      perAppPolicyStore.entries,
+      rules.cast<Object?>(),
+    );
     return rawConfig;
   }
 

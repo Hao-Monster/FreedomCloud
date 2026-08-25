@@ -1,12 +1,16 @@
 import 'dart:async';
+import 'dart:io';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flclashx/common/common.dart';
 import 'package:flclashx/models/models.dart';
 import 'package:flclashx/providers/providers.dart';
 import 'package:flclashx/state.dart';
+import 'package:flclashx/views/connection/item.dart';
 import 'package:flclashx/widgets/widgets.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:path/path.dart' as path;
 
 const allConnectionTableColumns = [
   'status',
@@ -233,6 +237,8 @@ class _ConnectionSettingsViewState
           ),
         ),
         const SizedBox(height: 20),
+        const _PerAppPolicySection(),
+        const SizedBox(height: 20),
         Row(
           children: [
             Expanded(
@@ -283,4 +289,164 @@ class _ConnectionSettingsViewState
           appLocalizations.connectionsDownloadSpeed,
         ConnectionSort.process => appLocalizations.connectionsProcess,
       };
+}
+
+class _PerAppPolicySection extends StatefulWidget {
+  const _PerAppPolicySection();
+
+  @override
+  State<_PerAppPolicySection> createState() => _PerAppPolicySectionState();
+}
+
+class _PerAppPolicySectionState extends State<_PerAppPolicySection> {
+  late final Future<void> _loaded = perAppPolicyStore.ensureLoaded();
+
+  @override
+  Widget build(BuildContext context) => FutureBuilder<void>(
+        future: _loaded,
+        builder: (_, snapshot) {
+          if (snapshot.connectionState != ConnectionState.done) {
+            return const Center(child: CircularProgressIndicator());
+          }
+          return ListenableBuilder(
+            listenable: perAppPolicyStore,
+            builder: (_, __) {
+              final entries = perAppPolicyStore.entries;
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              '${appLocalizations.connectionsProcessMode} · '
+                              'PROCESS-PATH',
+                              style: context.textTheme.titleMedium,
+                            ),
+                            Text(
+                              '${entries.length} / $maxPerAppPolicies · '
+                              'INHERIT / PROXY / DIRECT / BLOCK',
+                              style: context.textTheme.bodySmall,
+                            ),
+                          ],
+                        ),
+                      ),
+                      IconButton(
+                        tooltip: appLocalizations.add,
+                        onPressed: _pickApplication,
+                        icon: const Icon(Icons.add_rounded),
+                      ),
+                    ],
+                  ),
+                  for (final entry in entries)
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: ProcessIcon(
+                        process: entry.name,
+                        processPath: entry.path,
+                        size: 36,
+                      ),
+                      title: Text(
+                        entry.name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      subtitle: Text(
+                        '${applicationRoutingPolicyLabel(entry.policy)} · '
+                        '${entry.path}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      trailing: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          _policyMenu(entry),
+                          IconButton(
+                            tooltip: appLocalizations.delete,
+                            onPressed: () => _save(
+                              entry.path,
+                              entry.name,
+                              ApplicationRoutingPolicy.inherit,
+                            ),
+                            icon: const Icon(Icons.delete_outline_rounded),
+                          ),
+                        ],
+                      ),
+                    ),
+                ],
+              );
+            },
+          );
+        },
+      );
+
+  PopupMenuButton<ApplicationRoutingPolicy> _policyMenu(
+    PerAppPolicy entry,
+  ) =>
+      PopupMenuButton<ApplicationRoutingPolicy>(
+        initialValue: entry.policy,
+        tooltip: 'PROCESS-PATH',
+        onSelected: (policy) => _save(entry.path, entry.name, policy),
+        itemBuilder: (_) => ApplicationRoutingPolicy.values
+            .map(
+              (policy) => PopupMenuItem(
+                value: policy,
+                child: Text(applicationRoutingPolicyLabel(policy)),
+              ),
+            )
+            .toList(growable: false),
+      );
+
+  Future<void> _pickApplication() async {
+    final result = await FilePicker.platform.pickFiles(
+      type: Platform.isWindows ? FileType.custom : FileType.any,
+      allowedExtensions: Platform.isWindows ? const ['exe'] : null,
+      allowMultiple: false,
+      withData: false,
+    );
+    final processPath = result?.files.single.path;
+    if (processPath == null || !mounted) return;
+    final policy = await showDialog<ApplicationRoutingPolicy>(
+      context: context,
+      builder: (context) => SimpleDialog(
+        title: Text(path.basename(processPath)),
+        children: ApplicationRoutingPolicy.values
+            .where((value) => value != ApplicationRoutingPolicy.inherit)
+            .map(
+              (value) => SimpleDialogOption(
+                onPressed: () => Navigator.pop(context, value),
+                child: Text(applicationRoutingPolicyLabel(value)),
+              ),
+            )
+            .toList(growable: false),
+      ),
+    );
+    if (policy == null) return;
+    await _save(processPath, path.basename(processPath), policy);
+  }
+
+  Future<void> _save(
+    String processPath,
+    String name,
+    ApplicationRoutingPolicy policy,
+  ) async {
+    try {
+      await perAppPolicyStore.setPolicy(
+        processPath: processPath,
+        name: name,
+        policy: policy,
+      );
+      await globalState.appController.applyProfile();
+      if (mounted) await context.showNotifier(appLocalizations.successTitle);
+    } catch (error) {
+      connectionDiagnostics.log(
+        '[ConnectionsDiag] perApp.settings status=error '
+        'errorType=${error.runtimeType}',
+      );
+      if (mounted) await context.showNotifier('ERROR: ${error.runtimeType}');
+    }
+  }
 }

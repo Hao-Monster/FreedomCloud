@@ -120,12 +120,16 @@ class ProcessConnectionCard extends StatelessWidget {
     required this.showIcon,
     required this.useApplicationName,
     required this.onTap,
+    this.policy = ApplicationRoutingPolicy.inherit,
+    this.onPolicyChanged,
   });
 
   final ProcessConnectionGroup group;
   final bool showIcon;
   final bool useApplicationName;
   final VoidCallback onTap;
+  final ApplicationRoutingPolicy policy;
+  final ValueChanged<ApplicationRoutingPolicy>? onPolicyChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -200,6 +204,35 @@ class ProcessConnectionCard extends StatelessWidget {
                   ],
                 ),
               ),
+              if (onPolicyChanged != null)
+                PopupMenuButton<ApplicationRoutingPolicy>(
+                  initialValue: policy,
+                  tooltip: 'PROCESS-PATH',
+                  onSelected: onPolicyChanged,
+                  icon: Icon(
+                    Icons.route_outlined,
+                    color: policy == ApplicationRoutingPolicy.inherit
+                        ? muted
+                        : context.colorScheme.primary,
+                  ),
+                  itemBuilder: (_) => ApplicationRoutingPolicy.values
+                      .map(
+                        (value) => PopupMenuItem(
+                          value: value,
+                          child: Row(
+                            children: [
+                              if (value == policy)
+                                const Icon(Icons.check_rounded, size: 18)
+                              else
+                                const SizedBox(width: 18),
+                              const SizedBox(width: 8),
+                              Text(applicationRoutingPolicyLabel(value)),
+                            ],
+                          ),
+                        ),
+                      )
+                      .toList(growable: false),
+                ),
               Icon(Icons.chevron_right_rounded, color: muted),
             ],
           ),

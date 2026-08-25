@@ -1,3 +1,4 @@
+import 'package:flclashx/common/per_app_policy.dart';
 import 'package:flclashx/l10n/l10n.dart';
 import 'package:flclashx/models/models.dart';
 import 'package:flclashx/views/connection/item.dart';
@@ -77,6 +78,47 @@ void main() {
     );
     expect(renderedProcesses, findsWidgets);
     expect(renderedProcesses.evaluate().length, lessThan(items.length));
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('process card exposes per-application routing policies',
+      (tester) async {
+    await AppLocalizations.delegate.load(const Locale('en'));
+    ApplicationRoutingPolicy? selected;
+    final item = _tracked(id: 'browser', process: 'browser.exe');
+    final group = ProcessConnectionGroup(
+      key: r'C:\Browser\browser.exe',
+      name: 'browser.exe',
+      processPath: r'C:\Browser\browser.exe',
+      activeConnections: [item],
+      closedConnections: const [],
+      upload: 0,
+      download: 0,
+      uploadSpeed: 0,
+      downloadSpeed: 0,
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ProcessConnectionCard(
+            group: group,
+            showIcon: false,
+            useApplicationName: false,
+            policy: ApplicationRoutingPolicy.direct,
+            onPolicyChanged: (value) => selected = value,
+            onTap: () {},
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.byIcon(Icons.route_outlined));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('BLOCK'));
+    await tester.pumpAndSettle();
+
+    expect(selected, ApplicationRoutingPolicy.block);
     expect(tester.takeException(), isNull);
   });
 }
