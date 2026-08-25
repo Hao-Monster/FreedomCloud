@@ -462,6 +462,11 @@ class GlobalState {
     
     final realPatchConfig = patchConfig.copyWith(
       tun: patchConfig.tun.getRealTun(config.networkProps.routeMode),
+      findProcessMode: effectiveConnectionFindProcessMode(
+        configured: patchConfig.findProcessMode,
+        listMode: config.appSetting.connectionListMode,
+        supportsProcessLookup: platformSupportsProcessLookup,
+      ),
     );
     // Custom "description" field on proxy-groups — extracted here because
     // mihomo's /proxies API doesn't forward arbitrary YAML keys.
@@ -591,6 +596,13 @@ class GlobalState {
       if (rawConfig["mixed-port"] == null) {
         rawConfig["mixed-port"] = realPatchConfig.mixedPort;
       }
+    }
+    // Process-centric connection cards need metadata for every desktop
+    // connection. This narrow UI requirement overrides a profile-level
+    // `strict`/`off`; all other network settings still follow the provider.
+    if (platformSupportsProcessLookup &&
+        config.appSetting.connectionListMode == ConnectionListMode.process) {
+      rawConfig["find-process-mode"] = FindProcessMode.always.name;
     }
 
     // flclashx-androidsecure header: when set to "true" on Android, force

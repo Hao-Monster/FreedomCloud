@@ -3,6 +3,7 @@ export 'app_localizations.dart';
 export 'bounded_cache.dart';
 export 'color.dart';
 export 'connection_diagnostics.dart';
+export 'connection_process_mode.dart';
 export 'constant.dart';
 export 'context.dart';
 export 'converter.dart';

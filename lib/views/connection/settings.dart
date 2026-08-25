@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flclashx/common/common.dart';
 import 'package:flclashx/models/models.dart';
 import 'package:flclashx/providers/providers.dart';
+import 'package:flclashx/state.dart';
 import 'package:flclashx/widgets/widgets.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -139,9 +140,12 @@ class _ConnectionSettingsViewState
             ),
           ],
           selected: {settings.connectionListMode},
-          onSelectionChanged: (values) => _update(
-            (value) => value.copyWith(connectionListMode: values.first),
-          ),
+          onSelectionChanged: (values) {
+            _update(
+              (value) => value.copyWith(connectionListMode: values.first),
+            );
+            globalState.appController.updateClashConfigDebounce();
+          },
         ),
         const SizedBox(height: 12),
         SegmentedButton<ConnectionViewMode>(

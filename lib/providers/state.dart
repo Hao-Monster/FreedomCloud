@@ -124,12 +124,19 @@ UpdateParams updateParams(Ref ref) {
       (state) => state.routeMode,
     ),
   );
+  final connectionListMode = ref.watch(
+    appSettingProvider.select((state) => state.connectionListMode),
+  );
   return ref.watch(
     patchClashConfigProvider.select(
       (state) => UpdateParams(
         tun: state.tun.getRealTun(routeMode),
         allowLan: state.allowLan,
-        findProcessMode: state.findProcessMode,
+        findProcessMode: effectiveConnectionFindProcessMode(
+          configured: state.findProcessMode,
+          listMode: connectionListMode,
+          supportsProcessLookup: platformSupportsProcessLookup,
+        ),
         mode: state.mode,
         logLevel: state.logLevel,
         ipv6: state.ipv6,

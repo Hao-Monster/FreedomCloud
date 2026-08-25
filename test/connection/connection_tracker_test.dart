@@ -210,8 +210,43 @@ void main() {
         'mihomo',
       );
     });
+
+    test('keeps 1000 active plus 300 closed connections within budget', () {
+      final tracker = ConnectionTracker(maxClosed: 300);
+      final sampledAt = DateTime.utc(2026, 1, 1);
+      final all = List.generate(
+        1300,
+        (index) => _connection(
+          id: 'connection-$index',
+          process: 'process-${index % 50}.exe',
+          processPath: 'C:\\Apps\\process-${index % 50}.exe',
+        ),
+        growable: false,
+      );
+      tracker.ingest(_bulkSnapshot(all), sampledAt: sampledAt);
+
+      final stopwatch = Stopwatch()..start();
+      tracker.ingest(
+        _bulkSnapshot(all.take(1000)),
+        sampledAt: sampledAt.add(const Duration(seconds: 1)),
+      );
+      stopwatch.stop();
+
+      expect(tracker.activeConnections, hasLength(1000));
+      expect(tracker.closedConnections, hasLength(300));
+      expect(tracker.processGroups, hasLength(50));
+      expect(stopwatch.elapsed, lessThan(const Duration(seconds: 2)));
+    });
   });
 }
+
+ConnectionSnapshot _bulkSnapshot(Iterable<Connection> connections) =>
+    ConnectionSnapshot(
+      downloadTotal: 0,
+      uploadTotal: 0,
+      memory: 0,
+      connections: List.of(connections, growable: false),
+    );
 
 ConnectionSnapshot _snapshot([
   Connection? first,

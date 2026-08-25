@@ -5,6 +5,7 @@ import 'package:flclashx/enum/enum.dart';
 import 'package:flclashx/manager/connection_manager.dart';
 import 'package:flclashx/models/models.dart';
 import 'package:flclashx/providers/providers.dart';
+import 'package:flclashx/state.dart';
 import 'package:flclashx/views/zashboard.dart';
 import 'package:flclashx/widgets/widgets.dart';
 import 'package:flutter/material.dart';
@@ -206,6 +207,7 @@ class _ConnectionsViewState extends ConsumerState<ConnectionsView>
                               connectionListMode: values.first,
                             ),
                           );
+                      globalState.appController.updateClashConfigDebounce();
                     },
                   ),
                   const SizedBox(width: 10),
