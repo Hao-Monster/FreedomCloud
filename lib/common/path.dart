@@ -6,7 +6,6 @@ import 'package:path/path.dart';
 import 'package:path_provider/path_provider.dart';
 
 class AppPath {
-
   factory AppPath() {
     _instance ??= AppPath._internal();
     return _instance!;
@@ -55,12 +54,24 @@ class AppPath {
 
   String get corePendingPath => '$corePath.pending';
 
-  /// Allow-list consumed by the Windows helper service; lives next to the
-  /// helper exe so per-machine installs keep it admin-writable only.
-  String get allowedCoreHashPath =>
-      join(executableDirPath, "allowed_core.sha256");
+  String get helperPath =>
+      join(executableDirPath, "$appHelperService$executableExtension");
 
-  String get helperPath => join(executableDirPath, "$appHelperService$executableExtension");
+  String get windowsServiceDirectory {
+    final programFiles =
+        Platform.environment['ProgramFiles'] ?? r'C:\Program Files';
+    return join(programFiles, 'FlClashX Service');
+  }
+
+  String get windowsServiceHelperPath => join(
+        windowsServiceDirectory,
+        '$appHelperService$executableExtension',
+      );
+
+  String get windowsServiceCorePath => join(
+        windowsServiceDirectory,
+        'FlClashCore$executableExtension',
+      );
 
   Future<String> get downloadDirPath async {
     final directory = await downloadDir.future;

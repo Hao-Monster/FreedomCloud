@@ -3,35 +3,47 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   const helperPath = r'C:\Program Files\FlClashX\FlClashHelperService.exe';
-  const hashPath = r'C:\Program Files\FlClashX\allowed_core.sha256';
-  const hash =
-      '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+  const corePath = r'C:\Program Files\FlClashX\FlClashCore.exe';
+  const serviceDirectory = r'C:\Program Files\FlClashX Service';
+  const serviceHelperPath =
+      r'C:\Program Files\FlClashX Service\FlClashHelperService.exe';
+  const serviceCorePath = r'C:\Program Files\FlClashX Service\FlClashCore.exe';
 
   test('new helper installation creates and starts the service', () {
     final command = buildWindowsHelperRepairCommand(
       serviceExists: false,
       helperPath: helperPath,
-      allowedHashPath: hashPath,
-      coreHash: hash,
+      corePath: corePath,
+      serviceDirectory: serviceDirectory,
+      serviceHelperPath: serviceHelperPath,
+      serviceCorePath: serviceCorePath,
     );
 
     expect(command, contains('sc create FlClashHelperService'));
     expect(command, isNot(contains('sc delete')));
-    expect(command.indexOf(hash), lessThan(command.indexOf('sc start')));
+    expect(command, contains('copy /b /y "$helperPath" "$serviceHelperPath"'));
+    expect(command, contains('copy /b /y "$corePath" "$serviceCorePath"'));
+    expect(command, isNot(contains('allowed_core.sha256')));
+    expect(
+        command.indexOf('copy /b /y'), lessThan(command.indexOf('sc create')));
   });
 
   test('existing helper is repaired in place without deleting it', () {
     final command = buildWindowsHelperRepairCommand(
       serviceExists: true,
       helperPath: helperPath,
-      allowedHashPath: hashPath,
-      coreHash: hash,
+      corePath: corePath,
+      serviceDirectory: serviceDirectory,
+      serviceHelperPath: serviceHelperPath,
+      serviceCorePath: serviceCorePath,
     );
 
     expect(command, contains('sc config FlClashHelperService'));
     expect(command, isNot(contains('sc delete')));
     expect(command, isNot(contains('sc create')));
-    expect(command.indexOf(hash), lessThan(command.indexOf('sc start')));
+    expect(command, contains('sc stop FlClashHelperService'));
+    expect(
+        command.indexOf('copy /b /y'), lessThan(command.indexOf('sc config')));
   });
 
   test('command rejects values that could escape cmd quoting', () {
@@ -39,8 +51,10 @@ void main() {
       () => buildWindowsHelperRepairCommand(
         serviceExists: false,
         helperPath: '$helperPath" & whoami',
-        allowedHashPath: hashPath,
-        coreHash: hash,
+        corePath: corePath,
+        serviceDirectory: serviceDirectory,
+        serviceHelperPath: serviceHelperPath,
+        serviceCorePath: serviceCorePath,
       ),
       throwsArgumentError,
     );
@@ -48,8 +62,10 @@ void main() {
       () => buildWindowsHelperRepairCommand(
         serviceExists: false,
         helperPath: helperPath,
-        allowedHashPath: hashPath,
-        coreHash: 'not-a-sha256',
+        corePath: corePath,
+        serviceDirectory: serviceDirectory,
+        serviceHelperPath: '$serviceHelperPath" & whoami',
+        serviceCorePath: serviceCorePath,
       ),
       throwsArgumentError,
     );
@@ -57,16 +73,16 @@ void main() {
 
   test('service configuration must reference the current helper binary', () {
     const current =
-        r'BINARY_PATH_NAME   : "C:\Program Files\FlClashX\FlClashHelperService.exe"';
+        r'BINARY_PATH_NAME   : "C:\Program Files\FlClashX Service\FlClashHelperService.exe"';
     const moved =
         r'BINARY_PATH_NAME   : "D:\Old FlClashX\FlClashHelperService.exe"';
 
     expect(
-      windowsServiceConfigReferencesHelper(current, helperPath),
+      windowsServiceConfigReferencesHelper(current, serviceHelperPath),
       isTrue,
     );
     expect(
-      windowsServiceConfigReferencesHelper(moved, helperPath),
+      windowsServiceConfigReferencesHelper(moved, serviceHelperPath),
       isFalse,
     );
   });

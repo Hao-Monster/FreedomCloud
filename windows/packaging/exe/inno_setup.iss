@@ -162,10 +162,10 @@ begin
     // a second UAC prompt when the app first enables the virtual adapter. Keep
     // upgrades idempotent: repair the binary path in place, create only when
     // the service does not exist.
-    ServiceExe := ExpandConstant('{app}\FlClashHelperService.exe');
-    // A separately updated core may have left an override hash. The helper
-    // built into this installer already embeds the bundled core's hash.
-    DeleteFile(ExpandConstant('{app}\allowed_core.sha256'));
+    // The service and the SYSTEM-launched core live in a dedicated protected
+    // Program Files directory. Never point SCM at a portable/user-writable
+    // application directory.
+    ServiceExe := ExpandConstant('{commonpf}\FlClashX Service\FlClashHelperService.exe');
     Exec('sc.exe', 'config "FlClashHelperService" binPath= "' + ServiceExe + '" start= auto',
       '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
     if ResultCode <> 0 then
@@ -193,6 +193,7 @@ begin
       // Delete service
       Exec('sc.exe', 'delete "FlClashHelperService"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
       Sleep(500);
+      DelTree(ExpandConstant('{commonpf}\FlClashX Service'), True, True, True);
     end;
     
     usPostUninstall:
@@ -242,6 +243,8 @@ Name: "chineseSimplified"; MessagesFile: {% if locale.file %}{{ locale.file }}{%
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: checkedonce; Check: not IsUpgradeInstallation
 [Files]
 Source: "{{SOURCE_DIR}}\\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{{SOURCE_DIR}}\\FlClashHelperService.exe"; DestDir: "{commonpf}\FlClashX Service"; Flags: ignoreversion
+Source: "{{SOURCE_DIR}}\\FlClashCore.exe"; DestDir: "{commonpf}\FlClashX Service"; Flags: ignoreversion
 ; NOTE: Don't use "Flags: ignoreversion" on any shared system files
 
 [Icons]

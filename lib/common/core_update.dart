@@ -2,7 +2,6 @@ import 'dart:io';
 
 import 'package:crypto/crypto.dart';
 import 'package:flclashx/common/common.dart';
-import 'package:flclashx/enum/enum.dart';
 
 class CoreUpdater {
   factory CoreUpdater() {
@@ -48,88 +47,15 @@ class CoreUpdater {
     if (!await pending.exists()) {
       return;
     }
-    commonPrint.log("Applying pending core update...");
+    // Standalone core downloads are not signed yet. Executing them as SYSTEM
+    // (Windows helper) or setuid-root (macOS) turns a release-channel compromise
+    // into local privilege escalation. R-206 restores this only with a signed,
+    // rollback-capable update chain.
+    commonPrint.log("Discarding unsigned standalone core update");
     try {
-      // Windows service mode: the core lives under Program Files, which the
-      // unelevated app can't overwrite (rename -> access-denied). The SYSTEM
-      // helper does the swap (stop + move + refresh allow-list hash) for us.
-      if (Platform.isWindows) {
-        final status = await windows?.checkService();
-        if (status == WindowsHelperServiceStatus.running) {
-          final ok = await request.replaceCoreByHelper(
-            appPath.corePendingPath,
-            appPath.corePath,
-          );
-          if (ok) {
-            commonPrint.log("Pending core update applied via helper");
-            return;
-          }
-          commonPrint.log("Helper swap failed, falling back to local swap");
-        }
-        // A helper-started core survives app restarts and holds the exe lock.
-        await request.stopCoreByHelper();
-      }
-      // Read the setuid state BEFORE the old binary is deleted.
-      final wasAuthorized = Platform.isMacOS && await system.checkIsAdmin();
-      final target = File(appPath.corePath);
-      if (await target.exists()) {
-        for (var i = 0; i < 10; i++) {
-          try {
-            await target.delete();
-            break;
-          } catch (_) {
-            await Future.delayed(const Duration(milliseconds: 500));
-          }
-        }
-      }
-      await pending.rename(appPath.corePath);
-      if (!Platform.isWindows) {
-        await Process.run('chmod', ['+x', appPath.corePath]);
-      }
-      if (Platform.isWindows) {
-        final status = await windows?.checkService();
-        if (status != null && status != WindowsHelperServiceStatus.none) {
-          await syncHelperAllowedHash();
-        }
-      }
-      if (wasAuthorized) {
-        await _restoreMacSetuid();
-      }
-      commonPrint.log("Pending core update applied successfully");
+      await pending.delete();
     } catch (e) {
-      commonPrint.log("Failed to apply pending core update: $e");
-    }
-  }
-
-  /// The helper service only launches a core whose SHA-256 matches its
-  /// allow-list; keep that list in sync with the binary on disk. A plain write
-  /// covers per-user installs; Program Files needs one UAC prompt.
-  Future<void> syncHelperAllowedHash() async {
-    final hash = await calcCoreSha256();
-    if (hash == null) {
-      return;
-    }
-    final path = appPath.allowedCoreHashPath;
-    try {
-      await File(path).writeAsString(hash, flush: true);
-      commonPrint.log("helper allowed-hash updated");
-    } catch (_) {
-      final ok = windows?.runas("cmd.exe", '/c echo $hash> "$path"') ?? false;
-      commonPrint.log("helper allowed-hash elevated write: $ok");
-    }
-  }
-
-  /// TUN needs the core setuid-root (mirrors setCorePermissions in
-  /// AppDelegate.swift). The fresh binary loses the bit, so re-request it in
-  /// the update context; on cancel the Swift launch check prompts again later.
-  Future<void> _restoreMacSetuid() async {
-    final path = appPath.corePath.replaceAll("'", r"'\''");
-    final script =
-        'do shell script "chown root:admin \'$path\' && chmod +sx \'$path\'"'
-        ' with administrator privileges';
-    final res = await Process.run('osascript', ['-e', script]);
-    if (res.exitCode != 0) {
-      commonPrint.log("core setuid restore declined/failed: ${res.stderr}");
+      commonPrint.log("Failed to discard unsigned core update: $e");
     }
   }
 }

@@ -1,6 +1,5 @@
 const windowsHelperServiceName = 'FlClashHelperService';
 
-final _sha256Pattern = RegExp(r'^[0-9a-fA-F]{64}$');
 final _unsafeCmdValuePattern = RegExp(r'["\r\n&|<>%^!]');
 final _absoluteWindowsPathPattern = RegExp(r'^(?:[a-zA-Z]:\\|\\\\)');
 
@@ -11,24 +10,28 @@ final _absoluteWindowsPathPattern = RegExp(r'^(?:[a-zA-Z]:\\|\\\\)');
 String buildWindowsHelperRepairCommand({
   required bool serviceExists,
   required String helperPath,
-  required String allowedHashPath,
-  required String coreHash,
+  required String corePath,
+  required String serviceDirectory,
+  required String serviceHelperPath,
+  required String serviceCorePath,
 }) {
   _validateWindowsPath(helperPath, 'helperPath');
-  _validateWindowsPath(allowedHashPath, 'allowedHashPath');
-  if (!_sha256Pattern.hasMatch(coreHash)) {
-    throw ArgumentError.value(coreHash, 'coreHash', 'must be a SHA-256 digest');
-  }
+  _validateWindowsPath(corePath, 'corePath');
+  _validateWindowsPath(serviceDirectory, 'serviceDirectory');
+  _validateWindowsPath(serviceHelperPath, 'serviceHelperPath');
+  _validateWindowsPath(serviceCorePath, 'serviceCorePath');
 
   final configure = serviceExists
-      ? 'sc stop $windowsHelperServiceName >nul 2>&1 & '
-          'sc config $windowsHelperServiceName '
-          'binPath= "$helperPath" start= auto'
+      ? 'sc config $windowsHelperServiceName '
+          'binPath= "$serviceHelperPath" start= auto'
       : 'sc create $windowsHelperServiceName '
-          'binPath= "$helperPath" start= auto';
+          'binPath= "$serviceHelperPath" start= auto';
 
-  return '$configure && '
-      '> "$allowedHashPath" echo $coreHash && '
+  return 'sc stop $windowsHelperServiceName >nul 2>&1 & '
+      'if not exist "$serviceDirectory" mkdir "$serviceDirectory" && '
+      'copy /b /y "$helperPath" "$serviceHelperPath" >nul && '
+      'copy /b /y "$corePath" "$serviceCorePath" >nul && '
+      '$configure && '
       'sc start $windowsHelperServiceName';
 }
 

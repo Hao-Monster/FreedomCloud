@@ -35,7 +35,8 @@ class Windows {
         final valueNamePtr = valueName.toNativeUtf16(allocator: arena);
         final phkResult = arena<HKEY>();
 
-        var result = RegOpenKeyEx(HKEY_CURRENT_USER, keyPath, 0, KEY_READ, phkResult);
+        var result =
+            RegOpenKeyEx(HKEY_CURRENT_USER, keyPath, 0, KEY_READ, phkResult);
         if (result != ERROR_SUCCESS) return false;
 
         final hKey = phkResult.value;
@@ -43,7 +44,8 @@ class Windows {
         final dataSize = arena<DWORD>();
         dataSize.value = sizeOf<DWORD>();
 
-        result = RegQueryValueEx(hKey, valueNamePtr, nullptr, nullptr, data.cast(), dataSize);
+        result = RegQueryValueEx(
+            hKey, valueNamePtr, nullptr, nullptr, data.cast(), dataSize);
         RegCloseKey(hKey);
         if (result != ERROR_SUCCESS) return false;
 
@@ -118,8 +120,8 @@ class Windows {
           }
         }
       } catch (_) {
-      // FFI call may fail on unsupported Windows versions
-    }
+        // FFI call may fail on unsupported Windows versions
+      }
     } catch (_) {
       // FFI call may fail on unsupported Windows versions
     }
@@ -142,8 +144,8 @@ class Windows {
 
         setWindowTheme(hwnd, themeName, nullptr);
       } catch (_) {
-      // FFI call may fail on unsupported Windows versions
-    }
+        // FFI call may fail on unsupported Windows versions
+      }
 
       if (themeName != nullptr) {
         calloc.free(themeName);
@@ -204,7 +206,7 @@ class Windows {
     if (configuration.exitCode != 0 ||
         !windowsServiceConfigReferencesHelper(
           configuration.stdout.toString(),
-          appPath.helperPath,
+          appPath.windowsServiceHelperPath,
         )) {
       return WindowsHelperServiceStatus.presence;
     }
@@ -226,16 +228,13 @@ class Windows {
       return true;
     }
 
-    final coreHash = await coreUpdater.calcCoreSha256();
-    if (coreHash == null) {
-      commonPrint.log('helper install aborted: core hash unavailable');
-      return false;
-    }
     final command = buildWindowsHelperRepairCommand(
       serviceExists: status != WindowsHelperServiceStatus.none,
       helperPath: appPath.helperPath,
-      allowedHashPath: appPath.allowedCoreHashPath,
-      coreHash: coreHash,
+      corePath: appPath.corePath,
+      serviceDirectory: appPath.windowsServiceDirectory,
+      serviceHelperPath: appPath.windowsServiceHelperPath,
+      serviceCorePath: appPath.windowsServiceCorePath,
     );
     final launched = runas('cmd.exe', '/d /s /c "$command"');
     if (!launched) return false;

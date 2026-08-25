@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"os"
+	"path/filepath"
 	"runtime"
 	"runtime/debug"
 	"sort"
@@ -16,8 +18,8 @@ import (
 	"time"
 
 	"github.com/metacubex/mihomo/adapter"
-	"github.com/metacubex/mihomo/adapter/provider"
 	"github.com/metacubex/mihomo/adapter/outboundgroup"
+	"github.com/metacubex/mihomo/adapter/provider"
 	"github.com/metacubex/mihomo/common/observable"
 	"github.com/metacubex/mihomo/common/utils"
 	"github.com/metacubex/mihomo/component/mmdb"
@@ -33,17 +35,17 @@ import (
 )
 
 var (
-	isInit              atomic.Bool
-	externalProviders   = map[string]cp.Provider{}
-	logSubscriber       observable.Subscription[log.Event]
-	healthCheckStopCh   chan struct{}
-	healthCheckChMu     sync.Mutex
-	healthCheckMu       sync.Mutex
-	healthCheckSeen     = map[string]string{}
-	requestStopCh       chan struct{}
-	requestChMu         sync.Mutex
-	requestMu           sync.Mutex
-	requestSeen         = map[string]bool{}
+	isInit            atomic.Bool
+	externalProviders = map[string]cp.Provider{}
+	logSubscriber     observable.Subscription[log.Event]
+	healthCheckStopCh chan struct{}
+	healthCheckChMu   sync.Mutex
+	healthCheckMu     sync.Mutex
+	healthCheckSeen   = map[string]string{}
+	requestStopCh     chan struct{}
+	requestChMu       sync.Mutex
+	requestMu         sync.Mutex
+	requestSeen       = map[string]bool{}
 	// uiActive reflects whether the Flutter UI is in the foreground. When false
 	// (app backgrounded) the request forwarder is paused and the health-check
 	// forwarder slows to backgroundHealthCheckInterval, so the core stops pinging
@@ -94,6 +96,15 @@ func handleInitClash(paramsString string) bool {
 	if err != nil {
 		return false
 	}
+	// A desktop core started by the privileged helper receives its only allowed
+	// data root through SAFE_PATHS. Do not let an IPC peer replace that root
+	// after launch; otherwise a local process could turn the SYSTEM core into an
+	// arbitrary file reader/writer. Android does not set SAFE_PATHS and keeps its
+	// existing in-process initialization path.
+	if safePaths := os.Getenv("SAFE_PATHS"); safePaths != "" &&
+		!configuredHomeAllowed(params.HomeDir, safePaths) {
+		return false
+	}
 	configureRuntimeMemory()
 	version.Store(int32(params.Version))
 	constant.SetHomeDir(params.HomeDir)
@@ -105,6 +116,33 @@ func handleInitClash(paramsString string) bool {
 	screenActive.Store(true)
 	isInit.Store(true)
 	return true
+}
+
+func configuredHomeAllowed(requested string, safePaths string) bool {
+	requestedPath, err := filepath.Abs(requested)
+	if err != nil {
+		return false
+	}
+	requestedPath = filepath.Clean(requestedPath)
+	if resolved, resolveErr := filepath.EvalSymlinks(requestedPath); resolveErr == nil {
+		requestedPath = resolved
+	}
+
+	for _, allowed := range filepath.SplitList(safePaths) {
+		allowedPath, absErr := filepath.Abs(allowed)
+		if absErr != nil {
+			continue
+		}
+		allowedPath = filepath.Clean(allowedPath)
+		if resolved, resolveErr := filepath.EvalSymlinks(allowedPath); resolveErr == nil {
+			allowedPath = resolved
+		}
+		if requestedPath == allowedPath ||
+			(runtime.GOOS == "windows" && strings.EqualFold(requestedPath, allowedPath)) {
+			return true
+		}
+	}
+	return false
 }
 
 func handleStartListener() bool {
@@ -915,6 +953,9 @@ func handleSetState(params string) {
 }
 
 func handleGetConfig(path string) (*config.RawConfig, error) {
+	if !constant.Path.IsSafePath(path) {
+		return nil, constant.Path.ErrNotSafePath(path)
+	}
 	bytes, err := readFile(path)
 	if err != nil {
 		return nil, err

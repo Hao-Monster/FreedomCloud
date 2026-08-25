@@ -1,7 +1,6 @@
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::VecDeque;
 use std::fs::File;
 use std::io::{BufRead, Error, Read};
 use std::path::{Path, PathBuf};
@@ -17,28 +16,12 @@ const CORE_FILE_NAME: &str = if cfg!(windows) {
 } else {
     "FlClashCore"
 };
-const PENDING_CORE_FILE_NAME: &str = if cfg!(windows) {
-    "FlClashCore.exe.pending"
-} else {
-    "FlClashCore.pending"
-};
-const BACKUP_CORE_FILE_NAME: &str = if cfg!(windows) {
-    "FlClashCore.exe.backup"
-} else {
-    "FlClashCore.backup"
-};
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct StartParams {
     pub path: String,
     pub arg: String,
     pub home_dir: Option<String>,
-}
-
-#[derive(Debug, Deserialize, Serialize, Clone)]
-pub struct ReplaceParams {
-    pub pending: String,
-    pub target: String,
 }
 
 fn sha256_file(path: impl AsRef<Path>) -> Result<String, Error> {
@@ -68,10 +51,6 @@ fn service_directory() -> Result<PathBuf, String> {
         .map_err(|error| format!("unable to resolve helper directory: {error}"))
 }
 
-fn allowed_hash_path() -> Option<PathBuf> {
-    Some(service_directory().ok()?.join("allowed_core.sha256"))
-}
-
 fn validate_exact_existing_path(
     requested: &Path,
     expected: &Path,
@@ -95,21 +74,6 @@ fn validate_start_path_in(requested: &Path, install_dir: &Path) -> Result<PathBu
         &install_dir.join(CORE_FILE_NAME),
         "core executable",
     )
-}
-
-fn validate_replace_paths_in(
-    pending: &Path,
-    target: &Path,
-    install_dir: &Path,
-) -> Result<(PathBuf, PathBuf), String> {
-    let pending = validate_exact_existing_path(
-        pending,
-        &install_dir.join(PENDING_CORE_FILE_NAME),
-        "pending core",
-    )?;
-    let target =
-        validate_exact_existing_path(target, &install_dir.join(CORE_FILE_NAME), "core target")?;
-    Ok((pending, target))
 }
 
 fn validate_port(value: &str) -> Result<u16, String> {
@@ -145,22 +109,13 @@ fn validate_home_directory(value: Option<String>) -> Result<PathBuf, String> {
     Ok(canonical)
 }
 
-/// Core updates delivered by the app rewrite this file (admin-writable only in
-/// per-machine installs); the compiled-in TOKEN covers fresh installs.
 fn allowed_hash() -> String {
-    if let Some(path) = allowed_hash_path() {
-        if let Ok(content) = std::fs::read_to_string(&path) {
-            let hash = content.trim().to_lowercase();
-            if hash.len() == 64 && hash.chars().all(|c| c.is_ascii_hexdigit()) {
-                return hash;
-            }
-        }
-    }
+    // The allow-list is immutable for the lifetime of this helper build.
+    // Trusting a sibling file lets a portable, user-writable directory replace
+    // both the hash and core before the SYSTEM service starts.
     env!("TOKEN").to_string()
 }
 
-static LOGS: Lazy<Arc<Mutex<VecDeque<String>>>> =
-    Lazy::new(|| Arc::new(Mutex::new(VecDeque::with_capacity(100))));
 static PROCESS: Lazy<Arc<Mutex<Option<std::process::Child>>>> =
     Lazy::new(|| Arc::new(Mutex::new(None)));
 
@@ -223,59 +178,6 @@ fn start(start_params: StartParams) -> impl Reply {
     }
 }
 
-/// Swap in a downloaded core update. The service runs as SYSTEM, so it can
-/// write into Program Files where the unelevated app cannot (the app's own
-/// rename fails with access-denied for a per-machine install). Stops the core
-/// first to release the exe lock, moves pending->target, then refreshes the
-/// allow-list hash so the new binary passes the /start check — all as SYSTEM,
-/// no UAC prompt. Returns "" on success or an error string.
-fn replace_core(params: ReplaceParams) -> impl Reply {
-    let install_dir = match service_directory() {
-        Ok(value) => value,
-        Err(error) => return error,
-    };
-    let (pending, target) = match validate_replace_paths_in(
-        Path::new(&params.pending),
-        Path::new(&params.target),
-        &install_dir,
-    ) {
-        Ok(value) => value,
-        Err(error) => return error,
-    };
-    let pending_hash = match sha256_file(&pending) {
-        Ok(value) => value,
-        Err(error) => return format!("unable to hash pending core: {error}"),
-    };
-    let hash_path = match allowed_hash_path() {
-        Some(value) => value,
-        None => return "unable to resolve allowed-core hash path".to_string(),
-    };
-    let backup = install_dir.join(BACKUP_CORE_FILE_NAME);
-
-    stop();
-    if backup.exists() {
-        if let Err(error) = std::fs::remove_file(&backup) {
-            return format!("unable to remove stale core backup: {error}");
-        }
-    }
-    if let Err(error) = std::fs::rename(&target, &backup) {
-        return format!("unable to create core backup: {error}");
-    }
-    if let Err(error) = std::fs::rename(&pending, &target) {
-        let _ = std::fs::rename(&backup, &target);
-        return format!("unable to activate pending core: {error}");
-    }
-    if let Err(error) = std::fs::write(&hash_path, pending_hash) {
-        let _ = std::fs::remove_file(&target);
-        let _ = std::fs::rename(&backup, &target);
-        return format!("unable to update allowed-core hash: {error}");
-    }
-    if let Err(error) = std::fs::remove_file(&backup) {
-        log_message(format!("unable to remove core backup: {error}"));
-    }
-    String::new()
-}
-
 fn stop() -> impl Reply {
     let mut process = PROCESS.lock().unwrap();
     if let Some(mut child) = process.take() {
@@ -287,21 +189,7 @@ fn stop() -> impl Reply {
 }
 
 fn log_message(message: String) {
-    let mut log_buffer = LOGS.lock().unwrap();
-    if log_buffer.len() == 100 {
-        log_buffer.pop_front();
-    }
-    log_buffer.push_back(format!("{}\n", message));
-}
-
-fn get_logs() -> impl Reply {
-    let log_buffer = LOGS.lock().unwrap();
-    let value = log_buffer
-        .iter()
-        .cloned()
-        .collect::<Vec<String>>()
-        .join("\n");
-    warp::reply::with_header(value, "Content-Type", "text/plain")
+    eprintln!("{message}");
 }
 
 pub async fn run_service() -> anyhow::Result<()> {
@@ -322,27 +210,9 @@ pub async fn run_service() -> anyhow::Result<()> {
         .and(warp::path::end())
         .map(|| stop());
 
-    let api_replace = warp::post()
-        .and(warp::path("replace_core"))
-        .and(warp::path::end())
-        .and(warp::body::content_length_limit(MAX_REQUEST_BYTES))
-        .and(warp::body::json())
-        .map(|params: ReplaceParams| replace_core(params));
-
-    let api_logs = warp::get()
-        .and(warp::path("logs"))
-        .and(warp::path::end())
-        .map(|| get_logs());
-
-    warp::serve(
-        api_ping
-            .or(api_start)
-            .or(api_stop)
-            .or(api_replace)
-            .or(api_logs),
-    )
-    .run(([127, 0, 0, 1], LISTEN_PORT))
-    .await;
+    warp::serve(api_ping.or(api_start).or(api_stop))
+        .run(([127, 0, 0, 1], LISTEN_PORT))
+        .await;
 
     Ok(())
 }
@@ -392,30 +262,6 @@ mod tests {
 
         assert!(validate_start_path_in(&expected, install.path()).is_ok());
         assert!(validate_start_path_in(&untrusted, install.path()).is_err());
-    }
-
-    #[test]
-    fn replacement_accepts_only_the_fixed_pending_and_target_paths() {
-        let install = TempDir::new();
-        let outside = TempDir::new();
-        let pending = install.path().join(PENDING_CORE_FILE_NAME);
-        let target = install.path().join(CORE_FILE_NAME);
-        fs::write(&pending, b"update").expect("write pending core");
-        fs::write(&target, b"current").expect("write current core");
-
-        assert!(validate_replace_paths_in(&pending, &target, install.path()).is_ok());
-        assert!(validate_replace_paths_in(
-            &outside.path().join(PENDING_CORE_FILE_NAME),
-            &target,
-            install.path(),
-        )
-        .is_err());
-        assert!(validate_replace_paths_in(
-            &pending,
-            &outside.path().join(CORE_FILE_NAME),
-            install.path(),
-        )
-        .is_err());
     }
 
     #[test]
