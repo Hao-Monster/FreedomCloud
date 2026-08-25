@@ -15,7 +15,7 @@ Windows 11 VM or an authorized macOS test host.
 | R-003/R-004 process and classic connections | Tracker/query/widget tests with full Mihomo payloads and 1,000-row virtualization. | Open Edge, browse, inspect process card/detail, switch classic mode. |
 | R-005 attribution | Decode tests preserve `process` and `processPath`; diagnostics distinguish empty Core data from UI filtering. | Edge and Electron child-process cases on Windows 11. |
 | R-006/R-007 diagnostics | Redaction assertions, throttling and 1 MiB rotation/limit tests where injectable I/O permits. | Export package and inspect for secrets/paths/hosts. |
-| R-008 UAC/service | Unit tests for service-state decisions; installer script inspection; helper path-policy tests. | Fresh VM install, second start, moved portable package, repair and uninstall. |
+| R-008 UAC/service | Unit tests for service-state decisions, protected service-copy commands, immutable Core hash, safe Core home and installer script inspection. | Fresh VM install, second start, moved portable package, repair and uninstall. |
 | R-009 Zashboard | Static call-boundary test/review and existing panel build path. | Open in-app/external panel while connections refresh, pause and close rows. |
 | R-001/R-002 performance | Synthetic benchmarks, non-overlap tests, hidden cadence tests, bounded-cache tests and 30-minute allocation trend. | Task Manager/Performance Recorder comparison using fixed scenarios. |
 | R-109 normal application policy | Compiler unit tests and fake-Core integration tests. | Selected browser/app behavior under TUN. |
@@ -52,26 +52,32 @@ Windows 11 VM or an authorized macOS test host.
 8. Pause/resume, close one connection, close a filtered set, inspect closed
    history, clear history and open details.
 9. Open Zashboard and exercise its connections/proxies pages.
-10. Hide the UI for five minutes and record CPU/memory; reopen and verify refresh.
-11. Export `connections_diagnostic.log` and application logs before restoring the
+10. Hide the UI for five minutes and record CPU/memory; verify connection polling
+    stops, then reopen and verify an immediate refresh.
+11. Confirm SCM points to
+    `C:\Program Files\FlClashX Service\FlClashHelperService.exe`, not the
+    extracted portable directory.
+12. Export `connections_diagnostic.log` and application logs before restoring the
     VM snapshot.
 
 ## Git and pull-request plan
 
 Current branch: `codex/koala-connections`.
 
-Existing commits:
+Implemented commits:
 
 - `6890522 feat(connections): add process-centric connection manager`
 - `c50d548 chore(connections): add privacy-safe diagnostics`
-
-Planned M0 commits:
-
-1. `docs(connections): freeze v0.2 architecture and test plan`
-2. `perf(connections): bound icon caches and throttle hidden polling`
-3. `security(helper): restrict privileged core operations`
-4. `fix(windows): make helper registration and repair idempotent`
-5. `test(connections): add performance and packaging acceptance assets`
+- `260ea06 docs(connections): freeze v0.2 architecture and test plan`
+- `d78e118 perf(connections): bound icon caches and reduce hidden polling`
+- `8af6225 security(helper): constrain privileged core operations`
+- `3598148 fix(windows): make helper service setup idempotent`
+- `5bd9e2a fix(connections): require process metadata for process view`
+- `03fd6d7 feat(connections): export privacy-safe diagnostics`
+- `c727eda feat(routing): add bounded per-application policies`
+- `bdada36 perf(connections): stop polling while view is hidden`
+- `76d4195 perf(runtime): bound decoded images and restore proportional GC`
+- `5e6ab91 security(helper): isolate privileged service binaries`
 
 Only task files are staged. The pre-existing Purchase/QR/navigation/i18n working
 tree changes are explicitly excluded. No remote push, PR creation, merge, tag or
@@ -87,3 +93,22 @@ PR quality gates:
 - Remaining signed-driver, entitlement and real-network items are marked NOT RUN
   rather than reported as passed.
 
+## Local execution record
+
+Environment: Windows development host, Flutter 3.41.7. No system proxy, TUN,
+route, DNS, firewall, WFP or service installation was changed.
+
+| Command | Result | Evidence |
+|---|---|---|
+| `flutter test` | PASS | 37 tests, 0 failed. |
+| `go test ./...` in `core` | PASS | `core` passed; `core/state` has no tests. |
+| `cargo test --locked --features windows-service` | PASS | 3 tests, 0 failed. |
+| Targeted `dart analyze` | PASS with info | 0 errors, 0 warnings, 18 pre-existing style infos in inspected files. |
+| Windows 11 proxy/TUN acceptance | NOT RUN locally | Deliberately reserved for the isolated VM. |
+| Signed WFP strict mode | NOT RUN | M3 needs signing identity, WDK and HLK release process. |
+| Signed macOS Network Extension | NOT RUN | M4 needs Apple entitlement, signing and notarization. |
+| 30-minute VM memory trend | NOT RUN | Requires the fixed Windows 11 VM scenario. |
+
+Coverage is not used as a repository quality gate. The release candidate still
+runs Flutter coverage where supported and records the artifact/result in the
+delivery report; coverage never substitutes for the VM acceptance cases.

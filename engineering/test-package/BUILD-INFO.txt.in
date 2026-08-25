@@ -1,0 +1,10 @@
+FlClashX Windows x64 v0.2 test package
+Source branch: codex/koala-connections
+Source commit: {{GIT_COMMIT}}
+Build time (UTC): {{BUILD_TIME_UTC}}
+Flutter: 3.41.7
+Package type: unsigned local VM acceptance build
+
+Do not use as a production release. Run real proxy/TUN tests only in the
+isolated Windows 11 VM. Export connections_diagnostic.log from the Connections
+page after reproducing an issue.

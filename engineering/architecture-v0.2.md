@@ -4,10 +4,10 @@
 
 The approved roadmap is delivered as independently reviewable milestones:
 
-1. **M0 — Connections quality gate (current branch).** Finish P0, remove
+1. **M0 — Connections quality gate (implemented on current branch).** Finish P0, remove
    unbounded caches, make refresh visibility-aware, harden diagnostics/helper,
    prove Zashboard independence, and ship a portable Windows VM test package.
-2. **M1 — Non-strict application policy.** Add application identity, policy
+2. **M1 — Non-strict application policy (implemented on current branch).** Add application identity, policy
    storage, rule compiler, UI and diagnostics using Mihomo PROCESS rules.
 3. **M2 — Background Agent.** Move Core ownership and policy enforcement out of
    Flutter; implement attach/detach and the three exit actions.
@@ -66,7 +66,8 @@ path and caller validation.
 Refresh policy:
 
 - Visible Connections page: configured 100–10,000 ms, default 500 ms.
-- Hidden page/window in M0: bounded low-frequency collection only; no icon work.
+- Hidden page/window in M0: zero connection polling and zero icon extraction;
+  becoming visible triggers one immediate refresh.
 - Closed Flutter UI after M2: zero UI polling. Agent may keep a bounded journal.
 - Requests/diagnostics/history/icon caches always have explicit limits.
 
@@ -135,7 +136,14 @@ flows are explicit exclusions to prevent loops and double capture.
 
 - No target-process injection, DLL proxying or remote CSS.
 - Canonicalize and compare filesystem paths before privileged operations.
-- Verify update signatures before stopping or replacing Core.
+- Keep the SYSTEM Helper and its Core copy in the protected
+  `Program Files\FlClashX Service` directory, including portable deployments.
+- Use only the Core hash compiled into the Helper. A sibling hash file and the
+  privileged unsigned Core-replacement endpoint are forbidden.
+- Reject Core initialization or configuration reads outside the startup
+  `SAFE_PATHS` data root.
+- Disable standalone desktop Core updates until R-206 verifies signatures
+  before stopping or replacing Core and provides rollback.
 - Prefer OS-authenticated IPC (Windows named pipe ACL / macOS XPC) over an
   unauthenticated loopback HTTP control plane.
 - Redact process paths, domains, IPs and configuration values from shareable
@@ -151,4 +159,3 @@ Zashboard depends on the External Controller endpoint and secret. It does not
 depend on `ConnectionManager`, process grouping, Active/Closed UI state, request
 log presentation or icon caches. Changes to those projections therefore must
 not start, stop, reset or reconfigure the External Controller.
-
