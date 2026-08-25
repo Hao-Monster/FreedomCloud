@@ -7,6 +7,8 @@ import 'package:screen_retriever/screen_retriever.dart';
 import 'package:window_manager/window_manager.dart';
 
 class Window {
+  final ValueNotifier<bool> visible = ValueNotifier(true);
+
   Future<void> init(int version) async {
     final props = globalState.config.windowProps;
     final acquire = await singleInstanceLock.acquire();
@@ -75,6 +77,7 @@ class Window {
     await windowManager.show();
     await windowManager.focus();
     await windowManager.setSkipTaskbar(false);
+    visible.value = true;
   }
 
   Future<bool> get isVisible async {
@@ -95,6 +98,7 @@ class Window {
     render?.pause();
     await windowManager.hide();
     await windowManager.setSkipTaskbar(true);
+    visible.value = false;
   }
 }
 

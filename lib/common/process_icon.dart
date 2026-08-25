@@ -5,12 +5,18 @@ import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:ffi/ffi.dart';
+import 'package:flclashx/common/bounded_cache.dart';
 import 'package:flutter/widgets.dart';
 import 'package:path/path.dart' as p;
 import 'package:win32/win32.dart';
 
+const _maxProcessIconEntries = 64;
+
 // exePath -> decoded icon, cached so polling doesn't re-extract via Win32.
-final Map<String, Future<ImageProvider?>> _winIconCache = {};
+final _winIconCache = BoundedCache<String, Future<ImageProvider?>>(
+  maxEntries: _maxProcessIconEntries,
+  onEvict: _evictImageFuture,
+);
 
 /// Icon embedded in [processPath] on Windows. No process path is persisted; only
 /// the decoded image future is cached for the lifetime of the application.
@@ -30,10 +36,22 @@ Future<ImageProvider?>? windowsProcessIcon(String processPath) {
 // dirs to a PNG. SVG-only apps and sandboxed Flatpak/Snap paths won't resolve
 // and fall back to the generic icon (same as before) — so this only ever adds
 // icons, never removes them.
-final Map<String, Future<ImageProvider?>?> _linuxIconCache = {};
+final _linuxIconCache = BoundedCache<String, Future<ImageProvider?>?>(
+  maxEntries: _maxProcessIconEntries,
+  onEvict: _evictImageFuture,
+);
 // binary basename (and StartupWMClass) -> Icon= name, built once from the
 // applications dirs.
 Future<Map<String, String>>? _desktopIndex;
+
+void _evictImageFuture(String _, Future<ImageProvider?>? future) {
+  if (future == null) return;
+  unawaited(
+    future.then((provider) async {
+      if (provider != null) await provider.evict();
+    }),
+  );
+}
 
 Future<ImageProvider?>? linuxProcessIcon(String processPath, String process) {
   final base = processPath.isNotEmpty ? p.basename(processPath) : process;

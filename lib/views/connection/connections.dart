@@ -32,6 +32,7 @@ class _ConnectionsViewState extends ConsumerState<ConnectionsView>
   String _query = '';
   String? _selectedProcessKey;
   _ConnectionStatusTab _status = _ConnectionStatusTab.active;
+  bool _isCurrentPage = false;
 
   @override
   List<Widget> get actions => [
@@ -52,6 +53,7 @@ class _ConnectionsViewState extends ConsumerState<ConnectionsView>
   @override
   void initState() {
     super.initState();
+    window?.visible.addListener(_syncManagerVisibility);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       connectionDiagnostics.log(
@@ -70,6 +72,8 @@ class _ConnectionsViewState extends ConsumerState<ConnectionsView>
             pageLabel == PageLabel.tools && viewMode == ViewMode.mobile,
       ),
       (_, current) {
+        _isCurrentPage = current;
+        _syncManagerVisibility();
         if (current) initPageState();
       },
       fireImmediately: true,
@@ -78,6 +82,9 @@ class _ConnectionsViewState extends ConsumerState<ConnectionsView>
 
   @override
   void dispose() {
+    window?.visible.removeListener(_syncManagerVisibility);
+    _isCurrentPage = false;
+    _syncManagerVisibility();
     connectionDiagnostics.log(
       '[ConnectionsDiag] page.close '
       'managerRunning=${connectionManager.running} '
@@ -86,6 +93,12 @@ class _ConnectionsViewState extends ConsumerState<ConnectionsView>
     );
     _queryController.dispose();
     super.dispose();
+  }
+
+  void _syncManagerVisibility() {
+    connectionManager.setViewVisible(
+      visible: _isCurrentPage && (window?.visible.value ?? true),
+    );
   }
 
   void _showRequestLog() {

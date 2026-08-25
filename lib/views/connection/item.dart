@@ -10,7 +10,8 @@ import 'package:path/path.dart' as path;
 
 const double kConnRowExtent = 88;
 
-final Map<String, Future<ImageProvider?>?> _processIconCache = {};
+final _androidProcessIconCache =
+    BoundedCache<String, Future<ImageProvider?>?>(maxEntries: 64);
 
 String connectionProcessName(Metadata metadata, {bool applicationName = true}) {
   if (metadata.type.toLowerCase() == 'inner') return 'mihomo';
@@ -67,18 +68,15 @@ class ProcessIcon extends StatelessWidget {
     final isInner =
         connectionType.toLowerCase() == 'inner' || process == 'mihomo';
     final resolvedPath = isInner ? Platform.resolvedExecutable : processPath;
-    final cacheKey = '${Platform.operatingSystem}|$resolvedPath|$process';
-    final future = _processIconCache.putIfAbsent(
-      cacheKey,
-      () {
-        if (Platform.isAndroid && process.isNotEmpty) {
-          return app?.getPackageIcon(process);
-        }
-        if (Platform.isWindows) return windowsProcessIcon(resolvedPath);
-        if (Platform.isLinux) return linuxProcessIcon(resolvedPath, process);
-        return null;
-      },
-    );
+    final future = switch (Platform.operatingSystem) {
+      'android' when process.isNotEmpty => _androidProcessIconCache.putIfAbsent(
+          process,
+          () => app?.getPackageIcon(process),
+        ),
+      'windows' => windowsProcessIcon(resolvedPath),
+      'linux' => linuxProcessIcon(resolvedPath, process),
+      _ => null,
+    };
     if (future == null) return _fallback(context);
     return FutureBuilder<ImageProvider?>(
       future: future,

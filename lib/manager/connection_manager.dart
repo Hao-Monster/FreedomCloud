@@ -26,12 +26,17 @@ class ConnectionManager extends ChangeNotifier {
     CloseConnectionsCallback? closeConnections,
     ConnectionDiagnosticLogger? diagnosticLog,
     DateTime Function()? now,
+    this.backgroundRefreshInterval = const Duration(seconds: 5),
   })  : _tracker = tracker ?? ConnectionTracker(),
         _loadSnapshot = loadSnapshot ?? _defaultLoadSnapshot,
         _closeConnection = closeConnection ?? _defaultCloseConnection,
         _closeConnections = closeConnections ?? _defaultCloseConnections,
         _diagnosticLog = diagnosticLog ?? connectionDiagnostics.log,
-        _now = now ?? DateTime.now;
+        _now = now ?? DateTime.now,
+        assert(
+          backgroundRefreshInterval > Duration.zero,
+          'backgroundRefreshInterval must be positive',
+        );
 
   final ConnectionTracker _tracker;
   final ConnectionSnapshotLoader _loadSnapshot;
@@ -39,6 +44,7 @@ class ConnectionManager extends ChangeNotifier {
   final CloseConnectionsCallback _closeConnections;
   final ConnectionDiagnosticLogger _diagnosticLog;
   final DateTime Function() _now;
+  final Duration backgroundRefreshInterval;
   Timer? _timer;
   ConnectionSnapshot? _pausedSnapshot;
   Duration _interval = const Duration(milliseconds: 500);
@@ -46,6 +52,7 @@ class ConnectionManager extends ChangeNotifier {
   bool _paused = false;
   bool _polling = false;
   bool _disposed = false;
+  bool _viewVisible = false;
   bool _loading = false;
   int _generation = 0;
   Object? _error;
@@ -64,6 +71,9 @@ class ConnectionManager extends ChangeNotifier {
   Object? get error => _error;
   DateTime? get lastUpdatedAt => _lastUpdatedAt;
   Duration get interval => _interval;
+  Duration get effectiveInterval =>
+      _viewVisible ? _interval : backgroundRefreshInterval;
+  bool get viewVisible => _viewVisible;
   num get downloadTotal => _downloadTotal;
   num get uploadTotal => _uploadTotal;
   num get memory => _memory;
@@ -87,8 +97,20 @@ class ConnectionManager extends ChangeNotifier {
     }
     if (runningChanged) {
       _setRunning(running);
-    } else if (running && intervalChanged) {
+    } else if (running && intervalChanged && _viewVisible) {
       _schedule(const Duration(milliseconds: 1));
+    }
+  }
+
+  void setViewVisible({required bool visible}) {
+    if (_viewVisible == visible) return;
+    _viewVisible = visible;
+    _diagnosticLog(
+      '[ConnectionsDiag] manager.visibility visible=$visible '
+      'effectiveIntervalMs=${effectiveInterval.inMilliseconds}',
+    );
+    if (_running) {
+      _schedule(visible ? Duration.zero : effectiveInterval);
     }
   }
 
@@ -220,7 +242,7 @@ class ConnectionManager extends ChangeNotifier {
     } finally {
       _polling = false;
       if (_running && !_disposed && generation == _generation) {
-        _schedule(_interval);
+        _schedule(effectiveInterval);
       }
     }
   }

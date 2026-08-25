@@ -1,5 +1,6 @@
 export 'android.dart';
 export 'app_localizations.dart';
+export 'bounded_cache.dart';
 export 'color.dart';
 export 'connection_diagnostics.dart';
 export 'constant.dart';
