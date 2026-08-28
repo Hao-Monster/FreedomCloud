@@ -225,15 +225,20 @@ class ApplicationState extends ConsumerState<Application> {
       super.dispose();
       return;
     }
-    // Desktop teardown ends in system.exit(); run it detached so dispose() stays
-    // synchronous (no await before super.dispose()).
+    // An unexpected desktop UI teardown must detach from the background Agent,
+    // not stop the Core. Explicit Full Exit performs the bounded network/Core
+    // cleanup before the process reaches this point.
     unawaited(_desktopTeardown());
     super.dispose();
   }
 
   Future<void> _desktopTeardown() async {
-    await clashCore.destroy();
     await globalState.appController.savePreferences();
+    if (clashService?.usesAgent == true) {
+      await clashService?.detach();
+      return;
+    }
+    await clashCore.destroy();
     await globalState.appController.handleExit();
   }
 }

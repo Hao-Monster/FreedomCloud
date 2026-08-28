@@ -121,6 +121,8 @@ install(FILES "${FLUTTER_LIBRARY}" DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
 set(CLASH_DIR "../libclash/linux")
 install(PROGRAMS "${CLASH_DIR}/FlClashCore" DESTINATION "${BUILD_BUNDLE_DIR}"
   COMPONENT Runtime)
+install(PROGRAMS "${CLASH_DIR}/FlClashAgent" DESTINATION "${BUILD_BUNDLE_DIR}"
+  COMPONENT Runtime)
 
 foreach(bundled_library ${PLUGIN_BUNDLED_LIBRARIES})
   install(FILES "${bundled_library}"

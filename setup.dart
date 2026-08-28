@@ -143,6 +143,8 @@ class Build {
 
   static String get _servicesDir => join(current, "services", "helper");
 
+  static String get _agentDir => join(current, "services", "agent");
+
   static String get distPath => join(current, "dist");
 
   // Full release version for the User-Agent, taken from the CI tag
@@ -384,6 +386,32 @@ class Build {
       "FlClashHelperService${target.executableExtensionName}",
     );
     await File(outPath).copy(targetPath);
+  }
+
+  static Future<void> buildAgent(Target target, {Arch? arch}) async {
+    final buildArgs = <String>["cargo", "build", "--release", "--locked"];
+    if (arch == Arch.arm64 && target == Target.windows) {
+      buildArgs.addAll(["--target", "aarch64-pc-windows-msvc"]);
+    }
+    await exec(
+      buildArgs,
+      name: "build agent",
+      workingDirectory: _agentDir,
+    );
+
+    final releasePath = arch == Arch.arm64 && target == Target.windows
+        ? join(_agentDir, "target", "aarch64-pc-windows-msvc", "release")
+        : join(_agentDir, "target", "release");
+    final sourcePath = join(
+      releasePath,
+      "flclash-agent${target.executableExtensionName}",
+    );
+    final targetPath = join(
+      outDir,
+      target.name,
+      "FlClashAgent${target.executableExtensionName}",
+    );
+    await File(sourcePath).copy(targetPath);
   }
 
   static List<String> getExecutable(String command) => command.split(" ");
@@ -653,7 +681,7 @@ class BuildCommand extends Command {
 
       final issOut = File(join(Build.distPath, "setup.iss"));
       issOut.writeAsStringSync(processed);
-      const innoCompiler =
+      final innoCompiler = Platform.environment["INNO_ISCC"] ??
           r"C:\Program Files (x86)\Inno Setup 6\ISCC.exe";
       if (File(innoCompiler).existsSync()) {
         await Build.exec(
@@ -1004,6 +1032,7 @@ class BuildCommand extends Command {
       case Target.windows:
         final token = await Build.calcSha256(corePaths.first);
         final buildMsix = argResults?["msix"] == true;
+        await Build.buildAgent(target, arch: arch);
         await Build.buildHelper(target, token, arch: arch);
         await _buildWindowsApp(
           arch: arch!,
@@ -1014,6 +1043,7 @@ class BuildCommand extends Command {
         );
         return;
       case Target.linux:
+        await Build.buildAgent(target, arch: arch);
         await _getLinuxDependencies(arch!);
         await _buildLinuxApp(
           arch: arch!,
@@ -1028,6 +1058,7 @@ class BuildCommand extends Command {
         );
         return;
       case Target.macos:
+        await Build.buildAgent(target, arch: arch);
         await _getMacosDependencies();
         await _buildMacosApp(
           arch: arch!,

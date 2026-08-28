@@ -995,7 +995,23 @@ class AppController {
       }
       await system.back();
     } else {
+      await handleCloseUi();
+    }
+  }
+
+  /// Closes only the desktop UI. The per-user Agent remains the Core owner, so
+  /// the virtual network card, system proxy and application policies continue
+  /// without retaining a Flutter engine in memory.
+  Future<void> handleCloseUi() async {
+    if (!system.isDesktop || clashService?.usesAgent != true) {
       await handleExit();
+      return;
+    }
+    try {
+      await savePreferences();
+      await clashService?.detach();
+    } finally {
+      system.exit();
     }
   }
 
@@ -1043,24 +1059,31 @@ class AppController {
   Future<void> handleRestart() async {
     commonPrint.log("Starting application restart...");
 
-    // Stop the current core BEFORE relaunching so the new instance can connect
-    // cleanly: a core that survives the restart (notably the Windows helper-started
-    // process) keeps the socket/binary busy and blocks the fresh core from binding
-    // or replacing the updated .exe. Guarded by a timeout so the restart can't hang.
-    await Future.any([
-      Future(() async {
-        try {
-          await proxy?.stopProxy();
-        } catch (_) {}
-        try {
-          await clashCore.shutdown();
-        } catch (_) {}
-        try {
-          await clashService?.destroy();
-        } catch (_) {}
-      }),
-      Future.delayed(const Duration(seconds: 3)),
-    ]);
+    if (clashService?.usesAgent == true) {
+      // A UI restart is an Agent detach/reattach, not a proxy restart. This is
+      // the same path used by reopening after Close UI and does not interrupt
+      // existing connections.
+      try {
+        await savePreferences();
+        await clashService?.detach();
+      } catch (_) {}
+    } else {
+      // Compatibility path for source/debug bundles without FlClashAgent.
+      await Future.any([
+        Future(() async {
+          try {
+            await proxy?.stopProxy();
+          } catch (_) {}
+          try {
+            await clashCore.shutdown();
+          } catch (_) {}
+          try {
+            await clashService?.destroy();
+          } catch (_) {}
+        }),
+        Future.delayed(const Duration(seconds: 3)),
+      ]);
+    }
 
     if (Platform.isLinux || Platform.isMacOS || Platform.isWindows) {
       final executablePath = Platform.resolvedExecutable;
@@ -1221,8 +1244,8 @@ class AppController {
   }
 
   Future<void> _initCore() async {
-    final isInit = await clashCore.isInit;
-    if (!isInit) {
+    final wasInitialized = await clashCore.isInit;
+    if (!wasInitialized) {
       await clashCore.init();
       await clashCore.setState(
         globalState.getCoreState(),
@@ -1239,7 +1262,17 @@ class AppController {
     } else {
       clashCore.stopLog();
     }
-    await applyProfile();
+    if (wasInitialized && clashService?.usesAgent == true) {
+      // Reopening the UI attaches to the already-configured Core. Re-running
+      // setupConfig here rebuilds listeners/providers and can interrupt live
+      // flows, defeating R-121. Refresh only the UI projections; configuration
+      // remains owned by the Agent/Core journal until the user changes it.
+      await updateGroups();
+      await updateProviders();
+      initForegroundCache();
+    } else {
+      await applyProfile();
+    }
   }
 
   Future<void> _persistColdStartParams() async {
@@ -1310,9 +1343,13 @@ class AppController {
         return;
       }
     }
-    final status = globalState.isStart == true
-        ? true
-        : _ref.read(appSettingProvider).autoRun;
+    final agentStatus = clashService?.usesAgent == true
+        ? clashService?.agentProxyRunning
+        : null;
+    final status = agentStatus ??
+        (globalState.isStart == true
+            ? true
+            : _ref.read(appSettingProvider).autoRun);
 
     await updateStatus(status);
     if (!status) {

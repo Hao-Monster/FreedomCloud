@@ -26,4 +26,24 @@ void main() {
     expect(actual, expected);
     expect(stopwatch.elapsed, lessThan(const Duration(seconds: 5)));
   }, timeout: const Timeout(Duration(seconds: 10)));
+
+  test('desktop release packaging always carries the background Agent', () {
+    final root = Directory.current.path;
+    final setupSource = File('$root${Platform.pathSeparator}setup.dart')
+        .readAsStringSync();
+    final windowsCmake = File(
+      '$root${Platform.pathSeparator}windows${Platform.pathSeparator}CMakeLists.txt',
+    ).readAsStringSync();
+    final linuxCmake = File(
+      '$root${Platform.pathSeparator}linux${Platform.pathSeparator}CMakeLists.txt',
+    ).readAsStringSync();
+    final macProject = File(
+      '$root${Platform.pathSeparator}macos${Platform.pathSeparator}Runner.xcodeproj${Platform.pathSeparator}project.pbxproj',
+    ).readAsStringSync();
+
+    expect(setupSource, contains('Build.buildAgent(target, arch: arch)'));
+    expect(windowsCmake, contains('FlClashAgent.exe'));
+    expect(linuxCmake, contains('FlClashAgent'));
+    expect(macProject, contains('FlClashAgent in CopyFiles'));
+  });
 }

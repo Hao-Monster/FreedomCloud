@@ -2,27 +2,38 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flclashx/clash/agent_protocol.dart';
 import 'package:flclashx/clash/interface.dart';
 import 'package:flclashx/common/common.dart';
 import 'package:flclashx/models/core.dart';
 import 'package:flclashx/state.dart';
 
 class ClashService extends ClashHandlerInterface {
-
   factory ClashService() {
     _instance ??= ClashService._internal();
     return _instance!;
   }
 
   ClashService._internal() {
-    unawaited(_initServer());
-    reStart();
+    unawaited(_initialize());
   }
   static ClashService? _instance;
 
   Completer<ServerSocket> serverCompleter = Completer();
 
   Completer<Socket> socketCompleter = Completer();
+
+  final Completer<bool> _preloadCompleter = Completer();
+  Completer<void> _agentAttachedCompleter = Completer();
+  Completer<void> _coreReadyCompleter = Completer();
+  final Map<String, Completer<bool>> _agentCommandCompleters = {};
+  bool _agentMode = false;
+  bool _detaching = false;
+  bool _agentRecovering = false;
+  int? _agentPid;
+  AgentCoreState _agentCoreState = AgentCoreState.starting;
+  bool? _agentProxyRunning;
+  bool _agentUsingHelper = false;
 
   bool isStarting = false;
 
@@ -48,6 +59,239 @@ class ClashService extends ClashHandlerInterface {
   /// survives an AIDL rebind), so recovery must respawn AND re-init/re-apply — not
   /// just relaunch a blank core.
   Future<void> Function(String reason)? onCoreCrash;
+
+  bool get usesAgent => _agentMode;
+
+  bool? get agentProxyRunning => _agentProxyRunning;
+
+  Future<void> _initialize() async {
+    try {
+      _agentMode = await File(appPath.agentPath).exists();
+      if (_agentMode) {
+        await coreUpdater.applyPending();
+        final connected = await _connectOrLaunchAgent();
+        if (!_preloadCompleter.isCompleted) {
+          _preloadCompleter.complete(connected);
+        }
+        return;
+      }
+
+      // Developer/source checkouts built before M2 may not contain the Agent
+      // binary. Keep the old host as a compatibility path; release packaging
+      // installs FlClashAgent and therefore never takes this branch.
+      unawaited(_initServer());
+      unawaited(reStart());
+      try {
+        await serverCompleter.future;
+        if (!_preloadCompleter.isCompleted) {
+          _preloadCompleter.complete(true);
+        }
+      } catch (e) {
+        if (!_preloadCompleter.isCompleted) {
+          _preloadCompleter.complete(false);
+        }
+      }
+    } catch (e) {
+      commonPrint.log('ClashService initialization failed: $e');
+      if (!_preloadCompleter.isCompleted) {
+        _preloadCompleter.complete(false);
+      }
+    }
+  }
+
+  Future<bool> _connectOrLaunchAgent() async {
+    if (await _tryConnectAgent()) return _ensureAgentCoreReady();
+
+    final homeDirPath = await appPath.homeDirPath;
+    final arguments = <String>[
+      '--home',
+      homeDirPath,
+      '--core',
+      appPath.corePath,
+    ];
+    if (Platform.isWindows && await system.checkIsAdmin()) {
+      arguments.addAll([
+        '--service-core',
+        appPath.windowsServiceCorePath,
+        '--use-helper',
+      ]);
+    }
+    try {
+      await Process.start(
+        appPath.agentPath,
+        arguments,
+        mode: ProcessStartMode.detached,
+      );
+    } catch (e) {
+      commonPrint.log('unable to launch FlClashAgent: $e');
+      return false;
+    }
+
+    for (var attempt = 0; attempt < 80; attempt++) {
+      await Future.delayed(const Duration(milliseconds: 100));
+      if (await _tryConnectAgent()) return _ensureAgentCoreReady();
+    }
+    commonPrint.log('FlClashAgent did not publish a usable endpoint');
+    return false;
+  }
+
+  Future<bool> _tryConnectAgent() async {
+    try {
+      final endpointFile = File(await appPath.agentEndpointPath);
+      if (!await endpointFile.exists()) return false;
+      final endpoint = AgentEndpoint.fromJson(
+        json.decode(await endpointFile.readAsString()) as Map<String, dynamic>,
+      );
+      final socket = await Socket.connect(
+        InternetAddress.loopbackIPv4,
+        endpoint.port,
+        timeout: const Duration(milliseconds: 750),
+      );
+      await _socketSubscription?.cancel();
+      _socketSubscription = null;
+      if (socketCompleter.isCompleted) {
+        try {
+          (await socketCompleter.future).destroy();
+        } catch (_) {}
+      }
+      socketCompleter = Completer<Socket>()..complete(socket);
+      _agentAttachedCompleter = Completer<void>();
+      _detaching = false;
+      _socketSubscription = socket
+          .transform(uint8ListToListIntConverter)
+          .transform(utf8.decoder)
+          .transform(const LineSplitter())
+          .listen(
+            _handleAgentLine,
+            onError: (Object error) => _onAgentLost('socket error: $error'),
+            onDone: () => _onAgentLost('socket closed'),
+            cancelOnError: true,
+          );
+      socket.writeln(json.encode({
+        'token': endpoint.token,
+        'protocol': agentProtocolVersion,
+      }));
+      await _agentAttachedCompleter.future.timeout(
+        const Duration(seconds: 2),
+      );
+      _agentPid = endpoint.pid;
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  void _handleAgentLine(String line) {
+    try {
+      final value = json.decode(line.trim());
+      if (value is! Map<String, dynamic>) return;
+      final event = AgentEvent.tryParse(value);
+      if (event != null) {
+        _handleAgentEvent(event);
+        return;
+      }
+      unawaited(handleResult(ActionResult.fromJson(value)));
+    } catch (e) {
+      commonPrint.log('Agent socket parse error: $e');
+    }
+  }
+
+  void _handleAgentEvent(AgentEvent event) {
+    _agentCoreState = event.coreState;
+    if (event.type == AgentEventType.ready &&
+        !_agentAttachedCompleter.isCompleted) {
+      _agentAttachedCompleter.complete();
+    }
+    if (event.coreState == AgentCoreState.ready) {
+      _agentProxyRunning = event.proxyRunning;
+      _agentUsingHelper = event.privilegedBackend ?? _agentUsingHelper;
+      if (!_coreReadyCompleter.isCompleted) {
+        _coreReadyCompleter.complete();
+      }
+    } else if (_coreReadyCompleter.isCompleted) {
+      _coreReadyCompleter = Completer<void>();
+    }
+    if (event.type == AgentEventType.commandResult && event.id != null) {
+      final completer = _agentCommandCompleters.remove(event.id);
+      if (completer != null && !completer.isCompleted) {
+        completer.complete(event.ok ?? false);
+      }
+    } else if (event.type == AgentEventType.coreUnavailable &&
+        event.id != null) {
+      _completePendingWithDefault(event.id!, 'Agent Core unavailable');
+    }
+  }
+
+  Future<bool> _ensureAgentCoreReady() async {
+    if (_agentCoreState == AgentCoreState.starting) {
+      try {
+        await _coreReadyCompleter.future.timeout(const Duration(seconds: 20));
+        return true;
+      } catch (_) {
+        // A hung start is recovered through the explicit bounded restart below.
+      }
+    }
+    if (_agentCoreState != AgentCoreState.ready) {
+      final restarted = await _agentCommand(AgentCommand.restartCore);
+      if (!restarted) return false;
+    }
+    try {
+      await _coreReadyCompleter.future.timeout(const Duration(seconds: 20));
+      return true;
+    } catch (e) {
+      commonPrint.log('FlClashAgent Core readiness timed out: $e');
+      return false;
+    }
+  }
+
+  Future<bool> _agentCommand(AgentCommand command) async {
+    final id = 'agent-${command.name}-${utils.id}';
+    final completer = Completer<bool>();
+    _agentCommandCompleters[id] = completer;
+    try {
+      final socket = await socketCompleter.future;
+      socket.writeln(encodeAgentCommand(id: id, command: command));
+      return await completer.future.timeout(
+        const Duration(seconds: 10),
+        onTimeout: () => false,
+      );
+    } catch (_) {
+      return false;
+    } finally {
+      _agentCommandCompleters.remove(id);
+    }
+  }
+
+  void _onAgentLost(String reason) {
+    if (_detaching || _stopping || _agentRecovering) return;
+    _agentRecovering = true;
+    final previousAgentPid = _agentPid;
+    _flushPendingCompleters();
+    unawaited(() async {
+      commonPrint.log('FlClashAgent connection lost ($reason), reconnecting');
+      try {
+        for (var attempt = 0; attempt < _maxCrashRetries; attempt++) {
+          await Future.delayed(
+            Duration(milliseconds: 250 * (1 << attempt).clamp(1, 16)),
+          );
+          if (await _connectOrLaunchAgent()) {
+            // A transport interruption to the same Agent requires no Core
+            // restart: Agent still owns and has replayed its state. A new PID
+            // means the Agent journal was lost, so rebuild Core from Flutter's
+            // persisted state through the existing recovery callback.
+            if (_agentPid != previousAgentPid) {
+              final callback = onCoreCrash;
+              if (callback != null) await callback(reason);
+            }
+            return;
+          }
+        }
+        globalState.showNotifier('Background Agent stopped unexpectedly');
+      } finally {
+        _agentRecovering = false;
+      }
+    }());
+  }
 
   Future<void> _initServer() async {
     runZonedGuarded(() async {
@@ -116,6 +360,19 @@ class ClashService extends ClashHandlerInterface {
     }
     isStarting = true;
     try {
+      if (_agentMode) {
+        if (Platform.isWindows &&
+            await system.checkIsAdmin() != _agentUsingHelper) {
+          await _agentCommand(AgentCommand.shutdownAgent);
+          await detach();
+          await Future.delayed(const Duration(milliseconds: 250));
+          if (!await _connectOrLaunchAgent()) return;
+          return;
+        }
+        if (!await _agentCommand(AgentCommand.restartCore)) return;
+        await _coreReadyCompleter.future.timeout(const Duration(seconds: 20));
+        return;
+      }
       if (process != null) {
         await shutdown();
       }
@@ -171,6 +428,16 @@ class ClashService extends ClashHandlerInterface {
 
   @override
   Future<bool> destroy() async {
+    if (_agentMode) {
+      _stopping = true;
+      try {
+        final result = await _agentCommand(AgentCommand.shutdownAgent);
+        await detach();
+        return result;
+      } finally {
+        _stopping = false;
+      }
+    }
     // No reset: destroy() only runs on paths that end the process
     // (handleRestart/handleExit), so any trailing socket EOF stays suppressed.
     _stopping = true;
@@ -189,6 +456,9 @@ class ClashService extends ClashHandlerInterface {
   @override
   Future<void> sendMessage(String message) async {
     try {
+      if (_agentMode) {
+        await _coreReadyCompleter.future.timeout(const Duration(seconds: 20));
+      }
       final socket = await socketCompleter.future;
       socket.writeln(message);
     } catch (e) {
@@ -265,16 +535,20 @@ class ClashService extends ClashHandlerInterface {
       if (decoded is Map<String, dynamic>) {
         final id = decoded['id'] as String?;
         if (id != null) {
-          final completer = callbackCompleterMap.remove(id);
-          final def = callbackDefaultMap.remove(id);
-          if (completer != null && !completer.isCompleted) {
-            commonPrint.log('_failPendingCompleter: reason=$reason');
-            completer.complete(def);
-          }
+          _completePendingWithDefault(id, reason);
         }
       }
     } catch (e) {
       commonPrint.log('_failPendingCompleter parse error: $e');
+    }
+  }
+
+  void _completePendingWithDefault(String id, String reason) {
+    final completer = callbackCompleterMap.remove(id);
+    final def = callbackDefaultMap.remove(id);
+    if (completer != null && !completer.isCompleted) {
+      commonPrint.log('_completePendingWithDefault: reason=$reason');
+      completer.complete(def);
     }
   }
 
@@ -318,6 +592,9 @@ class ClashService extends ClashHandlerInterface {
     // crash-recovery path into a restart that races an intentional stop/restart.
     _stopping = true;
     try {
+      if (_agentMode) {
+        return _agentCommand(AgentCommand.stopCore);
+      }
       if (Platform.isWindows) {
         await request.stopCoreByHelper();
       }
@@ -335,16 +612,31 @@ class ClashService extends ClashHandlerInterface {
   }
 
   @override
-  Future<bool> preload() async {
+  Future<bool> preload() => _preloadCompleter.future;
+
+  /// Disconnects only the Flutter UI. The Agent and Core deliberately remain
+  /// alive so TUN/system-proxy operation survives a closed desktop window.
+  Future<bool> detach() async {
+    _detaching = true;
     try {
-      await serverCompleter.future;
-    } catch (e) {
-      // bind failed: resolve so main.dart's `await preload()` unblocks instead
-      // of hanging the launch.
-      commonPrint.log('preload: server unavailable: $e');
-      return false;
+      if (_agentMode && _agentCoreState == AgentCoreState.ready) {
+        try {
+          await setUiActive(false);
+        } catch (_) {}
+      }
+      await _socketSubscription?.cancel();
+      _socketSubscription = null;
+      if (socketCompleter.isCompleted) {
+        try {
+          (await socketCompleter.future).destroy();
+        } catch (_) {}
+      }
+      socketCompleter = Completer<Socket>();
+      _flushPendingCompleters();
+      return true;
+    } finally {
+      _detaching = false;
     }
-    return true;
   }
 }
 
