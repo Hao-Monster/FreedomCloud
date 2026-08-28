@@ -1,24 +1,30 @@
 # FlClashX v0.2 delivery report
 
-Status: local release candidate; Windows 11 VM acceptance pending.
+Status: M0/M1/M2 local release candidate; Windows 11 VM acceptance pending.
 
 ## Artifact
 
-- Source commit: `cb418558334e7ce09cf6b3c33effba75b444d599`
-- File: `FlClashX-windows-amd64-v0.2-test.zip`
-- Size: 54,484,364 bytes
-- SHA-256: `CC388B51F04A44E677CE452FF2525E155ACF2D0D2B182D231979D4D0A0989BF5`
-- `FlClashX.exe`: `827162BC4280B4F45A22DAF0E3F749041B241CC4B9034FB594DE151FE5EE01FD`
-- `FlClashCore.exe`: `0014643ACFDF385C5F948A7685AC00441F2D41CBB9F4E5EAC9DABB5DD25C5BE5`
-- `FlClashHelperService.exe`: `7E0E34CE5B75AC219BDFBAA62A076E5954237EB6A083F06D8FF6300AEDEF3CAE`
+- Runtime/package source commit:
+  `02cd7405aa4a0ef5bfdfc2964b9c20b5bff84e5f`
+- Installer: `FlClashX-windows-amd64-setup.exe`
+  - Size: 37,122,321 bytes
+  - SHA-256: `8A4B327C45C488CE0AAC57F18B1A8C434B1B1B9008A3AD90E70508CB42DA6F7A`
+  - Authenticode: `NotSigned` (local VM test build only)
+- Portable archive: `FlClashX-windows-amd64.zip`
+  - Size: 53,497,773 bytes
+  - SHA-256: `D48F23A08F8B357CEAC0561CD65EAF4C2D1FE824598F910C6AE42BF51B068FED`
+- Packaged executable SHA-256:
+  - `FlClashX.exe`: `0BB86AAEAF428448039974843C29246A964ABB2B8D0F6496CDD72ED8D47D50E6`
+  - `FlClashAgent.exe`: `C195F0BF44F011FE0B6887FC83BFCC6FE07DDB4D6ADAF43D2EFDB8FBAD025405`
+  - `FlClashCore.exe`: `784A0E8215142C8ADE616BB6E27004C013446BC0D115DE60B125A9D9D169F835`
+  - `FlClashHelperService.exe`: `D553EB5ADC3F1DDBAE051FC6588EEB4B3746EBEF2F74A3945C154B1FEDFB45AA`
 
-The archive was expanded and checked for the three executables, Flutter DLL,
-data bundle, build identity and VM checklist. No profile YAML, preferences,
-diagnostic log or writable Core allow-list file was present. The Helper contains
-exactly one embedded occurrence of the packaged Core SHA-256.
-
-The optional Inno installer was not built because its compiler is absent on the
-development host. This does not affect the requested install-free ZIP.
+The archive table was checked for UI, Agent, Core, Helper, Flutter data,
+`BUILD-INFO.txt` and `WINDOWS-VM-CHECKLIST.md`. The embedded build identity was
+read back and matches the source commit above. Inno Setup 6.7.3 compiled the
+installer and its log confirms those same files were compressed. The installer
+was not executed on the development host because installation changes service
+and network-related state; execution remains a VM acceptance item.
 
 ## Delivered scope
 
@@ -39,25 +45,34 @@ development host. This does not affect the requested install-free ZIP.
   Program Files service directory, the Core allow-list is immutable, arbitrary
   file/config roots are rejected and unsigned privileged Core updates are off.
 - Zashboard and Active/Log ownership are unchanged.
+- A persistent per-user Agent now owns Core lifecycle. UI close/restart detaches
+  without listener rebuild; stop proxy and full exit are distinct operations.
+- Agent/UI and Agent/Core use versioned authenticated bounded IPC. Only one UI
+  session is active, confirmed mutations enter a 128-entry journal, crash retry
+  is bounded and lifecycle results are not dropped under stream pressure.
+- Helper start and stop both require a separate per-user 256-bit credential;
+  requests, paths and the embedded Core digest remain bounded/restricted.
 
 ## Release boundary
 
-The current package contains M0 and M1. M2 background Agent, signed Windows WFP
-strict mode, signed macOS Network Extension and R-201–R-208 remain separate
-milestones. They are not represented as complete by UI switches or YAML-only
-promises.
+The current package contains M0, M1 and M2. Signed Windows WFP strict mode,
+signed macOS Network Extension and R-201–R-208 remain separate milestones. They
+are not represented as complete by UI switches or YAML-only promises.
 
 ## Known residual risks
 
-- Helper control is still loopback HTTP until the M2 OS-authenticated IPC
-  migration. Fixed commands, immutable hashes, protected binaries and Core data
-  roots remove the known arbitrary SYSTEM execution/file-access paths; a local
-  same-user process can still cause proxy interruption, so this is tracked as a
-  Medium local denial-of-service risk.
+- Agent and Helper control use random per-user capabilities over bounded
+  loopback IPC. Fixed commands, immutable hashes, protected binaries and Core
+  data roots remove the known arbitrary SYSTEM execution/file-access paths. A
+  malicious process already running as the same user can read the user's Helper
+  credential and interrupt the proxy, so this remains a Medium local
+  denial-of-service risk; ACL-restricted named pipe/XPC transport is future
+  defense in depth.
 - Real Windows process attribution, UAC lifecycle, TUN behavior, Zashboard
-  coexistence and memory deltas require the supplied Windows 11 VM checklist.
+  coexistence, UI detach traffic continuity, uninstall cleanup and memory deltas
+  require the supplied Windows 11 VM checklist.
 - Strict-mode protocol guarantees are not available before M3/M4.
 
-There are no known Critical or High issues in the delivered M0/M1 attack
+There are no known Critical or High issues in the delivered M0/M1/M2 attack
 surface after the local review. This statement is scoped to inspected code and
 executed tests, not a claim of absolute security.
