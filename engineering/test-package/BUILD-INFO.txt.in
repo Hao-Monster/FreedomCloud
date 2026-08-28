@@ -4,7 +4,9 @@ Source commit: {{GIT_COMMIT}}
 Build time (UTC): {{BUILD_TIME_UTC}}
 Flutter: 3.41.7
 Package type: unsigned local VM acceptance build
+Included milestones: M0 connections, M1 non-strict application policy,
+M2 authenticated background Agent and UI detach/reattach lifecycle
 
 Do not use as a production release. Run real proxy/TUN tests only in the
 isolated Windows 11 VM. Export connections_diagnostic.log from the Connections
-page after reproducing an issue.
+page after reproducing an issue. Do not share Agent/Helper token files.

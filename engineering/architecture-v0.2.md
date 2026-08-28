@@ -9,8 +9,9 @@ The approved roadmap is delivered as independently reviewable milestones:
    prove Zashboard independence, and ship a portable Windows VM test package.
 2. **M1 — Non-strict application policy (implemented on current branch).** Add application identity, policy
    storage, rule compiler, UI and diagnostics using Mihomo PROCESS rules.
-3. **M2 — Background Agent.** Move Core ownership and policy enforcement out of
-   Flutter; implement attach/detach and the three exit actions.
+3. **M2 — Background Agent (implemented on current branch).** Core ownership is
+   outside Flutter; authenticated attach/detach, bounded crash replay and the
+   three exit actions are implemented. Real-network VM acceptance is pending.
 4. **M3 — Windows strict mode.** Add the signed WFP package, broker, fail-closed
    state machine, DNS handling, upgrade/uninstall recovery and VM matrix.
 5. **M4 — macOS strict mode.** Add the signed Network Extension and equivalent
@@ -35,9 +36,9 @@ Flutter UI (low privilege)
                  │
 Per-user FlClash Agent (low privilege, persistent)
   ├─ owns desired state and Core lifecycle
-  ├─ compiles domain + application policies
-  ├─ exposes bounded connection snapshots
-  ├─ owns update verification and rollback state
+  ├─ replays only bounded, confirmed Core mutations
+  ├─ forwards the existing Core action/event protocol
+  ├─ authenticates one active UI and each Core generation
   └─ coordinates one capture owner per flow
           │                         │
 Mihomo Core                     Privileged broker
@@ -144,8 +145,10 @@ flows are explicit exclusions to prevent loops and double capture.
   `SAFE_PATHS` data root.
 - Disable standalone desktop Core updates until R-206 verifies signatures
   before stopping or replacing Core and provides rollback.
-- Prefer OS-authenticated IPC (Windows named pipe ACL / macOS XPC) over an
-  unauthenticated loopback HTTP control plane.
+- Agent UI IPC uses a per-launch 256-bit capability, bounded loopback frames and
+  one active per-user session. Helper start and stop both require a separate
+  per-user 256-bit capability. ACL-restricted named pipe/XPC transport remains
+  defense in depth against a same-user denial-of-service attacker.
 - Redact process paths, domains, IPs and configuration values from shareable
   diagnostics by default.
 - Treat application paths as identity hints, not trust anchors; strict identity
@@ -159,3 +162,12 @@ Zashboard depends on the External Controller endpoint and secret. It does not
 depend on `ConnectionManager`, process grouping, Active/Closed UI state, request
 log presentation or icon caches. Changes to those projections therefore must
 not start, stop, reset or reconfigure the External Controller.
+
+## M2 ownership boundary
+
+Closing or restarting Flutter now detaches from Agent and does not rebuild Core
+listeners. Stop proxy leaves Agent available. Full exit performs the existing
+proxy/DNS cleanup and then shuts down Agent/Core. A new UI authenticates and
+atomically revokes an older UI session, preventing two windows from controlling
+one Core. See `m2-agent-detailed-design.md` for protocol, recovery, security and
+test details.

@@ -38,6 +38,26 @@ Windows 11 VM or an authorized macOS test host.
 8. Review the final diff for unrelated files, secrets, debug output and cache or
    history structures without limits.
 
+## TDD sequence for M2
+
+1. Add failing Agent tests for singleton ownership, endpoint authentication,
+   bounded frames, active-session replacement and lifecycle controls.
+2. Implement the minimum per-user Agent protocol and make those tests green.
+3. Add failing journal tests for confirmation-only recording, coalescing,
+   ordering, capacity and replay failure; implement bounded replay.
+4. Add failing crash/backoff/interrupt tests; implement generation-specific
+   Core authentication and interruptible bounded recovery.
+5. Add Helper tests proving unauthenticated start and stop are rejected, then
+   require the per-user Helper credential and immutable Core hash.
+6. Add Flutter protocol/packaging tests, then implement Agent-first attach,
+   detach, UI restart and full-exit ownership.
+7. Run loopback-only lifecycle tests for same-PID reattach, crash generation,
+   old-session revocation, shutdown ACK and stop-during-start latency.
+8. Measure idle Agent resources without enabling listeners, TUN, DNS, routes or
+   system proxy; run static, unit, integration and release-build gates.
+9. Rebuild the installer, inspect its contents/hashes and reserve all real
+   networking/UAC/uninstall behavior for the Windows 11 VM.
+
 ## Windows VM checklist
 
 1. Snapshot a clean Windows 11 VM.
@@ -82,6 +102,9 @@ Implemented commits:
 - `43ac51d perf(build): stream release artifact hashing`
 - `53b85dd fix(build): launch Inno compiler without shell splitting`
 - `cb41855 fix(build): keep portable build independent of Inno`
+- `4eafd12 feat(runtime): add authenticated background agent`
+- `306c947 feat(desktop): detach UI from background agent`
+- `1b3a2ef fix(build): embed VM acceptance metadata`
 
 Only task files are staged. The pre-existing Purchase/QR/navigation/i18n working
 tree changes are explicitly excluded. No remote push, PR creation, merge, tag or
@@ -104,19 +127,26 @@ route, DNS, firewall, WFP or service installation was changed.
 
 | Command | Result | Evidence |
 |---|---|---|
-| `flutter test --coverage` | PASS | 38 tests, 0 failed, 0 skipped; 22 seconds after dependency resolution. |
+| `flutter test` | PASS | 42 tests, 0 failed, 0 skipped. |
 | `go test ./...` in `core` | PASS | `core` passed; `core/state` has no tests. |
-| `cargo test --locked --features windows-service` | PASS | 3 tests, 0 failed. |
-| Targeted `dart analyze` (runtime changes) | PASS with info | 0 errors, 0 warnings, 18 style infos. Build tooling separately has 1 pre-existing Linux-only warning and style infos. |
-| `dart setup.dart windows --arch amd64 --out app` | PASS | Core, Helper, Flutter Windows x64 Release and portable ZIP built; exit code 0. |
-| Inno installer | NOT RUN | Optional compiler is not installed; portable ZIP is complete and is the requested artifact. |
+| `cargo test --locked` in `services/agent` | PASS | 15 tests, 0 failed. |
+| `cargo test --locked --features windows-service` in `services/helper` | PASS | 5 tests, 0 failed. |
+| Agent/Helper `cargo clippy --all-targets ... -- -D warnings` | PASS | 0 Clippy warnings. |
+| Targeted `dart analyze` (M2 runtime changes) | PASS with info | Exit 0; 0 errors, 0 warnings and 82 style infos. Build tooling separately retains one pre-existing warning. |
+| Full `flutter analyze` | FAIL (baseline) | Exit 1; 699 repository issues. Four warnings are the removed-lint entry reported three times and the pre-existing `setup.dart` non-null assertion; the rest are infos. |
+| Agent `cargo fmt --all -- --check` | PASS | Agent sources are rustfmt-clean. |
+| Helper `cargo fmt --all -- --check` | FAIL (baseline) | Existing/user-unstaged `src/main.rs` import order and trailing blank lines in two untouched files; changed Helper hub passes Clippy/tests and was not reformatted over user work. |
+| Loopback Agent lifecycle/crash/session integration | PASS | Same-PID detach/reattach, generation 1→2 replay, old-session revocation, shutdown ACK/endpoint cleanup and 28 ms stop-during-start response. |
+| Idle Agent resource sample | PASS (diagnostic) | 6.74 MiB working set, 1.25 MiB private memory, six threads; loopback Core IPC only. |
+| `dart run setup.dart windows --arch amd64 --out app` | PASS | Core, Agent, Helper, Flutter Windows x64 Release, portable ZIP and local installer built. |
+| Installer execution on development host | NOT RUN | Deliberately reserved for the isolated VM because it changes service/network-related state. |
 | Windows 11 proxy/TUN acceptance | NOT RUN locally | Deliberately reserved for the isolated VM. |
 | Signed WFP strict mode | NOT RUN | M3 needs signing identity, WDK and HLK release process. |
 | Signed macOS Network Extension | NOT RUN | M4 needs Apple entitlement, signing and notarization. |
 | 30-minute VM memory trend | NOT RUN | Requires the fixed Windows 11 VM scenario. |
 
-Flutter LCOV reports 1,435/22,693 lines (6.32%) for the complete application;
-branch coverage is not emitted by this runner. The selected connection/policy/
-service utility files report 576/1,489 lines (38.68%). Low view coverage is an
-explicit gap covered partly by widget tests and still requires VM acceptance;
-coverage never substitutes for those cases.
+The most recent M2 run did not collect a new LCOV report. The prior M0/M1 LCOV
+baseline was 1,435/22,693 lines (6.32%) for the complete Flutter application;
+branch coverage is not emitted by this runner. Rust coverage tooling is not
+configured. Coverage remains an explicit gap and never substitutes for the VM
+lifecycle, UAC and real-network cases.
