@@ -127,7 +127,8 @@ route, DNS, firewall, WFP or service installation was changed.
 
 | Command | Result | Evidence |
 |---|---|---|
-| `flutter test` | PASS | 42 tests, 0 failed, 0 skipped. |
+| `flutter test` | PASS | 43 tests, 0 failed, 0 skipped; 19.2 seconds in the final run. |
+| Metadata packaging TDD | RED → GREEN | Before implementation, `flutter test test/setup_test.dart` failed because `Build.writeWindowsTestPackageMetadata` did not exist; after implementation, 3 tests passed. |
 | `go test ./...` in `core` | PASS | `core` passed; `core/state` has no tests. |
 | `cargo test --locked` in `services/agent` | PASS | 15 tests, 0 failed. |
 | `cargo test --locked --features windows-service` in `services/helper` | PASS | 5 tests, 0 failed. |
