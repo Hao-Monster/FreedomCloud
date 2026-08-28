@@ -218,6 +218,56 @@ class Build {
     return (await sha256.bind(file.openRead()).first).toString();
   }
 
+  static Future<String> _resolveSourceCommit() async {
+    final environmentCommit =
+        Platform.environment["GITHUB_SHA"]?.trim() ?? "";
+    if (RegExp(r'^[0-9a-fA-F]{40,64}$').hasMatch(environmentCommit)) {
+      return environmentCommit.toLowerCase();
+    }
+    final result = await Process.run(
+      "git",
+      ["rev-parse", "HEAD"],
+      workingDirectory: current,
+      runInShell: false,
+    );
+    final repositoryCommit = result.stdout.toString().trim();
+    if (result.exitCode != 0 ||
+        !RegExp(r'^[0-9a-fA-F]{40,64}$').hasMatch(repositoryCommit)) {
+      throw "Unable to resolve an immutable source commit for the test package";
+    }
+    return repositoryCommit.toLowerCase();
+  }
+
+  static Future<void> writeWindowsTestPackageMetadata(
+    String buildDir, {
+    String? commit,
+    DateTime? builtAt,
+  }) async {
+    final sourceCommit = commit ?? await _resolveSourceCommit();
+    if (!RegExp(r'^[0-9a-fA-F]{40,64}$').hasMatch(sourceCommit)) {
+      throw "Invalid source commit for the test package";
+    }
+    final templateDir = join(current, "engineering", "test-package");
+    final buildInfoTemplate = File(join(templateDir, "BUILD-INFO.txt.in"));
+    final vmChecklist = File(join(templateDir, "WINDOWS-VM-CHECKLIST.md"));
+    if (!buildInfoTemplate.existsSync() || !vmChecklist.existsSync()) {
+      throw "Windows test-package metadata is incomplete";
+    }
+
+    final buildTime = (builtAt ?? DateTime.now()).toUtc().toIso8601String();
+    final buildInfo = (await buildInfoTemplate.readAsString())
+        .replaceAll("{{GIT_COMMIT}}", sourceCommit.toLowerCase())
+        .replaceAll("{{BUILD_TIME_UTC}}", buildTime);
+    if (buildInfo.contains("{{")) {
+      throw "Windows test-package metadata contains unresolved placeholders";
+    }
+    await File(join(buildDir, "BUILD-INFO.txt")).writeAsString(
+      buildInfo,
+      flush: true,
+    );
+    await vmChecklist.copy(join(buildDir, "WINDOWS-VM-CHECKLIST.md"));
+  }
+
   /// Reads mihomo version from [core/go.mod] (single source of truth).
   static Future<String> extractCoreVersion() async {
     final goMod = File(join("core", "go.mod"));
@@ -629,6 +679,7 @@ class BuildCommand extends Command {
 
     final winArch = arch == Arch.arm64 ? "arm64" : "x64";
     final buildDir = join(current, "build", "windows", winArch, "runner", "Release");
+    await Build.writeWindowsTestPackageMetadata(buildDir);
 
     final version = Build.readVersion();
     final distDir = Directory(Build.distPath);

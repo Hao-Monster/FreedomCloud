@@ -46,4 +46,29 @@ void main() {
     expect(linuxCmake, contains('FlClashAgent'));
     expect(macProject, contains('FlClashAgent in CopyFiles'));
   });
+
+  test('Windows test package embeds immutable build identity and VM checklist',
+      () async {
+    final directory = await Directory.systemTemp.createTemp('flclashx-meta-');
+    addTearDown(() => directory.delete(recursive: true));
+    const commit = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+    final builtAt = DateTime.utc(2026, 8, 29, 1, 2, 3);
+
+    await setup.Build.writeWindowsTestPackageMetadata(
+      directory.path,
+      commit: commit,
+      builtAt: builtAt,
+    );
+
+    final buildInfo = File(
+      '${directory.path}${Platform.pathSeparator}BUILD-INFO.txt',
+    ).readAsStringSync();
+    final checklist = File(
+      '${directory.path}${Platform.pathSeparator}WINDOWS-VM-CHECKLIST.md',
+    );
+    expect(buildInfo, contains('Source commit: $commit'));
+    expect(buildInfo, contains('2026-08-29T01:02:03.000Z'));
+    expect(buildInfo, isNot(contains('{{')));
+    expect(await checklist.exists(), isTrue);
+  });
 }
