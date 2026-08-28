@@ -57,6 +57,17 @@ class AppPath {
   String get helperPath =>
       join(executableDirPath, "$appHelperService$executableExtension");
 
+  String get agentPath => join(
+        executableDirPath,
+        "FlClashAgent$executableExtension",
+      );
+
+  Future<String> get agentEndpointPath async =>
+      join(await homeDirPath, 'flclashx-agent-v1.json');
+
+  Future<String> get helperTokenPath async =>
+      join(await homeDirPath, 'flclashx-helper-v1.token');
+
   String get windowsServiceDirectory {
     final programFiles =
         Platform.environment['ProgramFiles'] ?? r'C:\Program Files';

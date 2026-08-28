@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/metacubex/mihomo/constant"
@@ -59,5 +60,20 @@ func TestConfiguredHomeAcceptsOneEntryFromSafePathList(t *testing.T) {
 
 	if !configuredHomeAllowed(second, filepath.Join(first)+string(os.PathListSeparator)+second) {
 		t.Fatal("a canonical entry in SAFE_PATHS must be accepted")
+	}
+}
+
+func TestConfiguredHomeAcceptsWindowsExtendedLengthEquivalent(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows extended-length paths are platform-specific")
+	}
+	root := t.TempDir()
+	home := filepath.Join(root, "home")
+	if err := os.MkdirAll(home, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	extended := `\\?\` + home
+	if !configuredHomeAllowed(home, extended) {
+		t.Fatal("extended-length and drive-letter paths must compare as the same directory")
 	}
 }

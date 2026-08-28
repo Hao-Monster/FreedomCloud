@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
@@ -205,6 +206,8 @@ class Request {
   Future<bool> startCoreByHelper(String arg) async {
     try {
       final homeDirPath = await appPath.homeDirPath;
+      final helperToken = await _loadOrCreateHelperToken();
+      if (helperToken == null) return false;
       final response = await _dio
           .post(
             "http://$localhost:$helperPort/start",
@@ -212,6 +215,7 @@ class Request {
               "path": appPath.windowsServiceCorePath,
               "arg": arg,
               "home_dir": homeDirPath,
+              "helper_token": helperToken,
             }),
             options: Options(
               responseType: ResponseType.plain,
@@ -234,9 +238,15 @@ class Request {
 
   Future<bool> stopCoreByHelper() async {
     try {
+      final helperToken = await _loadOrCreateHelperToken();
+      if (helperToken == null) return false;
       final response = await _dio
           .post(
             "http://$localhost:$helperPort/stop",
+            data: json.encode({
+              "home_dir": await appPath.homeDirPath,
+              "helper_token": helperToken,
+            }),
             options: Options(responseType: ResponseType.plain),
           )
           .timeout(const Duration(milliseconds: 2000));
@@ -246,6 +256,32 @@ class Request {
       return data.isEmpty;
     } catch (_) {
       return false;
+    }
+  }
+
+  Future<String?> _loadOrCreateHelperToken() async {
+    final file = File(await appPath.helperTokenPath);
+    if (await file.exists()) {
+      final token = await file.readAsString();
+      return RegExp(r'^[0-9a-fA-F]{64}$').hasMatch(token)
+          ? token.toLowerCase()
+          : null;
+    }
+    final random = Random.secure();
+    final token = List<int>.generate(32, (_) => random.nextInt(256))
+        .map((byte) => byte.toRadixString(16).padLeft(2, '0'))
+        .join();
+    try {
+      await file.writeAsString(token, flush: true);
+      return token;
+    } on FileSystemException {
+      // Another process may have won the create race. Accept only a complete,
+      // well-formed credential and never repair an untrusted partial file.
+      if (!await file.exists()) return null;
+      final existing = await file.readAsString();
+      return RegExp(r'^[0-9a-fA-F]{64}$').hasMatch(existing)
+          ? existing.toLowerCase()
+          : null;
     }
   }
 

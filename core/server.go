@@ -39,7 +39,7 @@ func send(data []byte) {
 	_, _ = conn.Write(append(data, []byte("\n")...))
 }
 
-func startServer(arg string) {
+func startServer(arg string, authToken string) {
 
 	_, numErr := strconv.Atoi(arg)
 
@@ -53,6 +53,19 @@ func startServer(arg string) {
 	if err != nil {
 		fmt.Printf("startServer: connection failed: %v\n", err)
 		return
+	}
+	if authToken != "" {
+		handshake, marshalErr := json.Marshal(map[string]any{
+			"_agentCore": map[string]string{"token": authToken},
+		})
+		if marshalErr != nil {
+			_ = c.Close()
+			return
+		}
+		if _, writeErr := c.Write(append(handshake, '\n')); writeErr != nil {
+			_ = c.Close()
+			return
+		}
 	}
 
 	connMu.Lock()

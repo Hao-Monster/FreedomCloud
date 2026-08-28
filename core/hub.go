@@ -127,6 +127,7 @@ func configuredHomeAllowed(requested string, safePaths string) bool {
 	if resolved, resolveErr := filepath.EvalSymlinks(requestedPath); resolveErr == nil {
 		requestedPath = resolved
 	}
+	requestedPath = normalizeComparablePath(requestedPath)
 
 	for _, allowed := range filepath.SplitList(safePaths) {
 		allowedPath, absErr := filepath.Abs(allowed)
@@ -137,12 +138,29 @@ func configuredHomeAllowed(requested string, safePaths string) bool {
 		if resolved, resolveErr := filepath.EvalSymlinks(allowedPath); resolveErr == nil {
 			allowedPath = resolved
 		}
+		allowedPath = normalizeComparablePath(allowedPath)
 		if requestedPath == allowedPath ||
 			(runtime.GOOS == "windows" && strings.EqualFold(requestedPath, allowedPath)) {
 			return true
 		}
 	}
 	return false
+}
+
+func normalizeComparablePath(path string) string {
+	path = filepath.Clean(path)
+	if runtime.GOOS != "windows" {
+		return path
+	}
+	const extendedPrefix = `\\?\`
+	const extendedUNCPrefix = `\\?\UNC\`
+	if strings.HasPrefix(strings.ToUpper(path), strings.ToUpper(extendedUNCPrefix)) {
+		return `\\` + path[len(extendedUNCPrefix):]
+	}
+	if strings.HasPrefix(path, extendedPrefix) {
+		return path[len(extendedPrefix):]
+	}
+	return path
 }
 
 func handleStartListener() bool {

@@ -1,7 +1,7 @@
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::fs::File;
+use std::fs::{self, File};
 use std::io::{BufRead, Error, Read};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -11,6 +11,7 @@ use warp::{Filter, Reply};
 
 const LISTEN_PORT: u16 = 47890;
 const MAX_REQUEST_BYTES: u64 = 16 * 1024;
+const HELPER_TOKEN_FILE_NAME: &str = "flclashx-helper-v1.token";
 const CORE_FILE_NAME: &str = if cfg!(windows) {
     "FlClashCore.exe"
 } else {
@@ -22,6 +23,14 @@ pub struct StartParams {
     pub path: String,
     pub arg: String,
     pub home_dir: Option<String>,
+    pub auth_token: Option<String>,
+    pub helper_token: String,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct StopParams {
+    pub home_dir: Option<String>,
+    pub helper_token: String,
 }
 
 fn sha256_file(path: impl AsRef<Path>) -> Result<String, Error> {
@@ -86,6 +95,16 @@ fn validate_port(value: &str) -> Result<u16, String> {
     Ok(port)
 }
 
+fn validate_auth_token(value: Option<String>) -> Result<Option<String>, String> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    if value.len() != 64 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err("core IPC authentication token must be 64 hexadecimal characters".to_string());
+    }
+    Ok(Some(value.to_ascii_lowercase()))
+}
+
 fn validate_home_directory(value: Option<String>) -> Result<PathBuf, String> {
     let value = value.ok_or_else(|| "core home directory is required".to_string())?;
     let canonical = Path::new(&value)
@@ -107,6 +126,39 @@ fn validate_home_directory(value: Option<String>) -> Result<PathBuf, String> {
         return Err("core home directory is outside the application data directory".to_string());
     }
     Ok(canonical)
+}
+
+fn constant_time_eq(left: &str, right: &str) -> bool {
+    let left = left.as_bytes();
+    let right = right.as_bytes();
+    let mut difference = left.len() ^ right.len();
+    let max_len = left.len().max(right.len());
+    for index in 0..max_len {
+        difference |= usize::from(
+            left.get(index).copied().unwrap_or_default()
+                ^ right.get(index).copied().unwrap_or_default(),
+        );
+    }
+    difference == 0
+}
+
+fn validate_helper_token(home_dir: &Path, provided: &str) -> Result<(), String> {
+    if provided.len() != 64 || !provided.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err("invalid Helper credential".to_string());
+    }
+    let path = home_dir.join(HELPER_TOKEN_FILE_NAME);
+    let metadata = fs::metadata(&path).map_err(|_| "invalid Helper credential".to_string())?;
+    if !metadata.is_file() || metadata.len() != 64 {
+        return Err("invalid Helper credential".to_string());
+    }
+    let expected = fs::read_to_string(path).map_err(|_| "invalid Helper credential".to_string())?;
+    if !constant_time_eq(
+        &provided.to_ascii_lowercase(),
+        &expected.to_ascii_lowercase(),
+    ) {
+        return Err("invalid Helper credential".to_string());
+    }
+    Ok(())
 }
 
 fn allowed_hash() -> String {
@@ -132,16 +184,23 @@ fn start(start_params: StartParams) -> impl Reply {
         Ok(value) => value,
         Err(error) => return error,
     };
+    let auth_token = match validate_auth_token(start_params.auth_token) {
+        Ok(value) => value,
+        Err(error) => return error,
+    };
     let home_dir = match validate_home_directory(start_params.home_dir) {
         Ok(value) => value,
         Err(error) => return error,
     };
+    if let Err(error) = validate_helper_token(&home_dir, &start_params.helper_token) {
+        return error;
+    }
     let sha256 = sha256_file(&core_path).unwrap_or_default();
     let allowed = allowed_hash();
     if sha256 != allowed {
         return format!("The SHA256 hash of the program requesting execution is: {}. The helper program only allows execution of applications with the SHA256 hash: {}.", sha256, allowed,);
     }
-    stop();
+    stop_process();
     let mut process = PROCESS.lock().unwrap();
     let mut command = Command::new(core_path);
     command
@@ -149,6 +208,9 @@ fn start(start_params: StartParams) -> impl Reply {
         .arg(port.to_string())
         // The core needs provider access before its SetHomeDir IPC call.
         .env("SAFE_PATHS", home_dir);
+    if let Some(auth_token) = auth_token {
+        command.arg(auth_token);
+    }
 
     match command.spawn() {
         Ok(child) => {
@@ -178,7 +240,7 @@ fn start(start_params: StartParams) -> impl Reply {
     }
 }
 
-fn stop() -> impl Reply {
+fn stop_process() -> String {
     let mut process = PROCESS.lock().unwrap();
     if let Some(mut child) = process.take() {
         let _ = child.kill();
@@ -186,6 +248,17 @@ fn stop() -> impl Reply {
     }
     *process = None;
     "".to_string()
+}
+
+fn stop(stop_params: StopParams) -> impl Reply {
+    let home_dir = match validate_home_directory(stop_params.home_dir) {
+        Ok(value) => value,
+        Err(error) => return error,
+    };
+    if let Err(error) = validate_helper_token(&home_dir, &stop_params.helper_token) {
+        return error;
+    }
+    stop_process()
 }
 
 fn log_message(message: String) {
@@ -208,7 +281,9 @@ pub async fn run_service() -> anyhow::Result<()> {
     let api_stop = warp::post()
         .and(warp::path("stop"))
         .and(warp::path::end())
-        .map(|| stop());
+        .and(warp::body::content_length_limit(MAX_REQUEST_BYTES))
+        .and(warp::body::json())
+        .map(|stop_params: StopParams| stop(stop_params));
 
     warp::serve(api_ping.or(api_start).or(api_stop))
         .run(([127, 0, 0, 1], LISTEN_PORT))
@@ -273,6 +348,17 @@ mod tests {
     }
 
     #[test]
+    fn optional_core_auth_token_is_strictly_bounded() {
+        assert!(validate_auth_token(None).unwrap().is_none());
+        assert_eq!(
+            validate_auth_token(Some("A".repeat(64))).unwrap(),
+            Some("a".repeat(64))
+        );
+        assert!(validate_auth_token(Some("a".repeat(63))).is_err());
+        assert!(validate_auth_token(Some("g".repeat(64))).is_err());
+    }
+
+    #[test]
     fn home_directory_requires_the_application_support_suffix() {
         let root = TempDir::new();
         let app_home = root
@@ -288,5 +374,23 @@ mod tests {
         assert!(validate_home_directory(Some(app_home.to_string_lossy().into())).is_ok());
         assert!(validate_home_directory(Some(arbitrary.to_string_lossy().into())).is_err());
         assert!(validate_home_directory(None).is_err());
+    }
+
+    #[test]
+    fn helper_control_requires_the_per_user_credential() {
+        let root = TempDir::new();
+        let app_home = root
+            .path()
+            .join("AppData")
+            .join("Roaming")
+            .join("com.follow")
+            .join("clashx");
+        fs::create_dir_all(&app_home).expect("create application home");
+        let token = "a".repeat(64);
+        fs::write(app_home.join(HELPER_TOKEN_FILE_NAME), &token).expect("write token");
+
+        assert!(validate_helper_token(&app_home, &token).is_ok());
+        assert!(validate_helper_token(&app_home, &"b".repeat(64)).is_err());
+        assert!(validate_helper_token(&app_home, "short").is_err());
     }
 }
