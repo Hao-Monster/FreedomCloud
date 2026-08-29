@@ -30,6 +30,7 @@ const BROKER_SERVICE_NAME: &str = "FlClashStrictBroker";
 const BROKER_FILE_NAME: &str = "FlClashStrictBroker.exe";
 const DRIVER_FILE_NAME: &str = "FlClashStrictCallout.sys";
 const AGENT_FILE_NAME: &str = "FlClashAgent.exe";
+const CORE_FILE_NAME: &str = "FlClashCore.exe";
 const RECOVERY_DIRECTORY_NAME: &str = "FlClashX.StrictBroker";
 const MAX_TRUSTED_PATH_UNITS: usize = 1024;
 const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0400;
@@ -79,6 +80,7 @@ pub struct WindowsStrictBrokerPaths {
     broker: PathBuf,
     driver: PathBuf,
     agent: PathBuf,
+    core: PathBuf,
     recovery: PathBuf,
 }
 
@@ -125,10 +127,12 @@ impl WindowsStrictBrokerPaths {
             .ok_or_else(|| anyhow::anyhow!("strict Broker install directory is missing"))?;
         let driver = install.join(DRIVER_FILE_NAME);
         let agent = install.join(AGENT_FILE_NAME);
+        let core = install.join(CORE_FILE_NAME);
         let recovery = program_data.join(RECOVERY_DIRECTORY_NAME);
         for (path, label) in [
             (&driver, "strict driver package path"),
             (&agent, "strict Agent package path"),
+            (&core, "strict Core package path"),
             (&recovery, "strict Broker recovery path"),
         ] {
             validate_trusted_path(path, label)?;
@@ -137,6 +141,7 @@ impl WindowsStrictBrokerPaths {
             broker,
             driver,
             agent,
+            core,
             recovery,
         })
     }
@@ -151,6 +156,10 @@ impl WindowsStrictBrokerPaths {
 
     pub fn agent(&self) -> &Path {
         &self.agent
+    }
+
+    pub fn core(&self) -> &Path {
+        &self.core
     }
 
     pub fn recovery(&self) -> &Path {
@@ -645,6 +654,10 @@ mod tests {
         assert_eq!(
             paths.agent(),
             Path::new(r"C:\Program Files\FlClashX\FlClashAgent.exe")
+        );
+        assert_eq!(
+            paths.core(),
+            Path::new(r"C:\Program Files\FlClashX\FlClashCore.exe")
         );
         assert_eq!(
             paths.recovery(),
