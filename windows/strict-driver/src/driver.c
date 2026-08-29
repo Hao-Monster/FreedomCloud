@@ -33,9 +33,32 @@ static const GUID FcxRedirectV4CalloutKey = {
 static const GUID FcxRedirectV6CalloutKey = {
     0x9ad04f4e, 0x3342, 0x46c0, {0xa1, 0xa2, 0xf1, 0x54, 0x4d, 0xc1, 0xaf, 0x42}
 };
+static const GUID FcxFlowV4CalloutKey = {
+    0x00d83eb9, 0x8749, 0x4b5d, {0xae, 0x3b, 0x55, 0x1a, 0x96, 0x2b, 0xa5, 0xf4}
+};
+static const GUID FcxFlowV6CalloutKey = {
+    0xd88a2c87, 0x510a, 0x4f61, {0xa9, 0xb1, 0x12, 0x9f, 0x2e, 0x5f, 0xb3, 0xf0}
+};
+static const GUID FcxDatagramV4CalloutKey = {
+    0xf17248e9, 0xfdd9, 0x4307, {0xb7, 0x6b, 0xcc, 0x8f, 0x21, 0x24, 0x62, 0xc5}
+};
+static const GUID FcxDatagramV6CalloutKey = {
+    0xa86c2426, 0x7a29, 0x4ad4, {0xae, 0xb3, 0x8d, 0x17, 0xa8, 0x7e, 0x2c, 0x05}
+};
 
 #define FCX_STRICT_LEASE_POOL_TAG 'LCXF'
 #define FCX_STRICT_REDIRECT_POOL_TAG 'RCXF'
+#define FCX_STRICT_UDP_FLOW_POOL_TAG 'UCXF'
+#define FCX_STRICT_MAX_UDP_FLOWS 1024
+
+#define FCX_CALLOUT_GUARD_V4 0u
+#define FCX_CALLOUT_GUARD_V6 1u
+#define FCX_CALLOUT_REDIRECT_V4 2u
+#define FCX_CALLOUT_REDIRECT_V6 3u
+#define FCX_CALLOUT_FLOW_V4 4u
+#define FCX_CALLOUT_FLOW_V6 5u
+#define FCX_CALLOUT_DATAGRAM_V4 6u
+#define FCX_CALLOUT_DATAGRAM_V6 7u
 
 typedef struct _FCX_STRICT_LEASE_STATE {
     PEPROCESS BrokerProcess;
@@ -50,6 +73,24 @@ typedef struct _FCX_STRICT_LEASE_STATE {
     FCX_STRICT_ENDPOINT UdpV6;
 } FCX_STRICT_LEASE_STATE;
 
+typedef struct _FCX_STRICT_UDP_FLOW_CONTEXT {
+    LIST_ENTRY Link;
+    volatile LONG ReferenceCount;
+    UINT64 FlowId;
+    UINT64 FlowToken;
+    UINT64 LeaseGeneration;
+    UINT64 Revision;
+    UINT8 PolicyDigest[32];
+    UINT8 LeaseNonce[16];
+    UINT16 TargetGroupIndex;
+    UINT16 LayerId;
+    UINT32 CalloutId;
+    UINT8 AddressFamily;
+    BOOLEAN Listed;
+    BOOLEAN Associated;
+    BOOLEAN RemovalRequested;
+} FCX_STRICT_UDP_FLOW_CONTEXT;
+
 static WDFDEVICE FcxControlDevice;
 static WDFQUEUE FcxDatagramReceiveQueue;
 static PEX_RUNDOWN_REF_CACHE_AWARE FcxPolicyRundown;
@@ -60,9 +101,15 @@ static volatile PVOID FcxLeaseState;
 static volatile LONG64 FcxLeaseGeneration;
 static FAST_MUTEX FcxLeaseMutationLock;
 static BOOLEAN FcxProcessNotifyRegistered;
-static UINT32 FcxCalloutIds[4];
+static UINT32 FcxCalloutIds[8];
 static UINT32 FcxRegisteredCallouts;
 static HANDLE FcxRedirectHandle;
+static volatile LONG FcxUdpFlowCount;
+static volatile LONG64 FcxUdpFlowToken;
+static volatile LONG FcxUdpStopping;
+static KSPIN_LOCK FcxUdpFlowLock;
+static LIST_ENTRY FcxUdpFlowList;
+static KEVENT FcxUdpFlowEmptyEvent;
 
 static
 VOID NTAPI
@@ -114,6 +161,62 @@ FcxRedirectClassifyV6(
 
 static
 VOID NTAPI
+FcxFlowClassifyV4(
+    _In_ const FWPS_INCOMING_VALUES0 *IncomingValues,
+    _In_ const FWPS_INCOMING_METADATA_VALUES0 *IncomingMetadata,
+    _Inout_opt_ VOID *LayerData,
+    _In_opt_ const VOID *ClassifyContext,
+    _In_ const FWPS_FILTER1 *Filter,
+    _In_ UINT64 FlowContext,
+    _Inout_ FWPS_CLASSIFY_OUT0 *ClassifyOut
+    );
+
+static
+VOID NTAPI
+FcxFlowClassifyV6(
+    _In_ const FWPS_INCOMING_VALUES0 *IncomingValues,
+    _In_ const FWPS_INCOMING_METADATA_VALUES0 *IncomingMetadata,
+    _Inout_opt_ VOID *LayerData,
+    _In_opt_ const VOID *ClassifyContext,
+    _In_ const FWPS_FILTER1 *Filter,
+    _In_ UINT64 FlowContext,
+    _Inout_ FWPS_CLASSIFY_OUT0 *ClassifyOut
+    );
+
+static
+VOID NTAPI
+FcxDatagramClassifyV4(
+    _In_ const FWPS_INCOMING_VALUES0 *IncomingValues,
+    _In_ const FWPS_INCOMING_METADATA_VALUES0 *IncomingMetadata,
+    _Inout_opt_ VOID *LayerData,
+    _In_opt_ const VOID *ClassifyContext,
+    _In_ const FWPS_FILTER1 *Filter,
+    _In_ UINT64 FlowContext,
+    _Inout_ FWPS_CLASSIFY_OUT0 *ClassifyOut
+    );
+
+static
+VOID NTAPI
+FcxDatagramClassifyV6(
+    _In_ const FWPS_INCOMING_VALUES0 *IncomingValues,
+    _In_ const FWPS_INCOMING_METADATA_VALUES0 *IncomingMetadata,
+    _Inout_opt_ VOID *LayerData,
+    _In_opt_ const VOID *ClassifyContext,
+    _In_ const FWPS_FILTER1 *Filter,
+    _In_ UINT64 FlowContext,
+    _Inout_ FWPS_CLASSIFY_OUT0 *ClassifyOut
+    );
+
+static
+VOID NTAPI
+FcxDatagramFlowDelete(
+    _In_ UINT16 LayerId,
+    _In_ UINT32 CalloutId,
+    _In_ UINT64 FlowContext
+    );
+
+static
+VOID NTAPI
 FcxProcessNotify(
     _Inout_ PEPROCESS Process,
     _In_ HANDLE ProcessId,
@@ -152,6 +255,17 @@ FcxPermitClassify(
 {
     ClassifyOut->actionType = FWP_ACTION_PERMIT;
     ClassifyOut->rights &= ~FWPS_RIGHT_ACTION_WRITE;
+}
+
+static
+VOID
+FcxContinueClassify(
+    _Inout_ FWPS_CLASSIFY_OUT0 *ClassifyOut
+    )
+{
+    if ((ClassifyOut->rights & FWPS_RIGHT_ACTION_WRITE) != 0) {
+        ClassifyOut->actionType = FWP_ACTION_CONTINUE;
+    }
 }
 
 static
@@ -667,6 +781,439 @@ FcxRedirectClassifyV6(
 
 static
 BOOLEAN
+FcxReserveUdpFlowSlot(
+    VOID
+    )
+{
+    LONG flowCount;
+
+    if (InterlockedCompareExchange(&FcxUdpStopping, 0, 0) != 0) {
+        return FALSE;
+    }
+    flowCount = InterlockedIncrement(&FcxUdpFlowCount);
+    if (flowCount == 1) {
+        KeClearEvent(&FcxUdpFlowEmptyEvent);
+    }
+    if (flowCount <= 0 || flowCount > FCX_STRICT_MAX_UDP_FLOWS) {
+        flowCount = InterlockedDecrement(&FcxUdpFlowCount);
+        if (flowCount == 0) {
+            KeSetEvent(&FcxUdpFlowEmptyEvent, IO_NO_INCREMENT, FALSE);
+        }
+        return FALSE;
+    }
+    return TRUE;
+}
+
+static
+VOID
+FcxReleaseUdpFlowSlot(
+    VOID
+    )
+{
+    LONG flowCount = InterlockedDecrement(&FcxUdpFlowCount);
+
+    if (flowCount == 0) {
+        KeSetEvent(&FcxUdpFlowEmptyEvent, IO_NO_INCREMENT, FALSE);
+    }
+}
+
+static
+BOOLEAN
+FcxLinkUdpFlowContext(
+    _Inout_ FCX_STRICT_UDP_FLOW_CONTEXT *Context
+    )
+{
+    KIRQL oldIrql;
+    BOOLEAN linked = FALSE;
+
+    KeAcquireSpinLock(&FcxUdpFlowLock, &oldIrql);
+    if (InterlockedCompareExchange(&FcxUdpStopping, 0, 0) == 0) {
+        InsertTailList(&FcxUdpFlowList, &Context->Link);
+        Context->Listed = TRUE;
+        linked = TRUE;
+    }
+    KeReleaseSpinLock(&FcxUdpFlowLock, oldIrql);
+    return linked;
+}
+
+static
+VOID
+FcxUnlinkUdpFlowContext(
+    _Inout_ FCX_STRICT_UDP_FLOW_CONTEXT *Context
+    )
+{
+    KIRQL oldIrql;
+
+    KeAcquireSpinLock(&FcxUdpFlowLock, &oldIrql);
+    if (Context->Listed) {
+        RemoveEntryList(&Context->Link);
+        Context->Listed = FALSE;
+    }
+    KeReleaseSpinLock(&FcxUdpFlowLock, oldIrql);
+}
+
+static
+VOID
+FcxReferenceUdpFlowContext(
+    _Inout_ FCX_STRICT_UDP_FLOW_CONTEXT *Context
+    )
+{
+    LONG referenceCount = InterlockedIncrement(&Context->ReferenceCount);
+
+    NT_ASSERT(referenceCount > 1);
+}
+
+static
+VOID
+FcxDereferenceUdpFlowContext(
+    _Inout_opt_ FCX_STRICT_UDP_FLOW_CONTEXT *Context
+    )
+{
+    LONG referenceCount;
+
+    if (Context == NULL) {
+        return;
+    }
+    referenceCount = InterlockedDecrement(&Context->ReferenceCount);
+    NT_ASSERT(referenceCount >= 0);
+    if (referenceCount == 0) {
+        NT_ASSERT(!Context->Listed);
+        RtlSecureZeroMemory(Context, sizeof(*Context));
+        ExFreePoolWithTag(Context, FCX_STRICT_UDP_FLOW_POOL_TAG);
+        FcxReleaseUdpFlowSlot();
+    }
+}
+
+static
+VOID
+FcxDrainUdpFlowContexts(
+    _In_ BOOLEAN ResumeAssociations
+    )
+{
+    FCX_STRICT_UDP_FLOW_CONTEXT *context;
+    PLIST_ENTRY entry;
+    UINT64 flowId;
+    UINT16 layerId;
+    UINT32 calloutId;
+    KIRQL oldIrql;
+    BOOLEAN found;
+
+    InterlockedExchange(&FcxUdpStopping, 1);
+    for (;;) {
+        found = FALSE;
+        flowId = 0;
+        layerId = 0;
+        calloutId = 0;
+        KeAcquireSpinLock(&FcxUdpFlowLock, &oldIrql);
+        for (entry = FcxUdpFlowList.Flink;
+             entry != &FcxUdpFlowList;
+             entry = entry->Flink) {
+            context = CONTAINING_RECORD(entry,
+                                        FCX_STRICT_UDP_FLOW_CONTEXT,
+                                        Link);
+            if (context->Associated && !context->RemovalRequested) {
+                context->RemovalRequested = TRUE;
+                flowId = context->FlowId;
+                layerId = context->LayerId;
+                calloutId = context->CalloutId;
+                found = TRUE;
+                break;
+            }
+        }
+        KeReleaseSpinLock(&FcxUdpFlowLock, oldIrql);
+        if (!found) {
+            break;
+        }
+        // Success invokes flowDelete synchronously; STATUS_PENDING invokes it
+        // after the active classify completes. Other statuses still race with
+        // a terminating flow, so the empty event remains the ownership fence.
+        (VOID)FwpsFlowRemoveContext0(flowId, layerId, calloutId);
+    }
+    if (InterlockedCompareExchange(&FcxUdpFlowCount, 0, 0) != 0) {
+        (VOID)KeWaitForSingleObject(&FcxUdpFlowEmptyEvent,
+                                    Executive,
+                                    KernelMode,
+                                    FALSE,
+                                    NULL);
+    }
+    if (ResumeAssociations) {
+        InterlockedExchange(&FcxUdpStopping, 0);
+    }
+}
+
+static
+VOID
+FcxClassifyUdpFlow(
+    _In_ const FWPS_INCOMING_VALUES0 *IncomingValues,
+    _In_ const FWPS_INCOMING_METADATA_VALUES0 *IncomingMetadata,
+    _In_ UINT32 AppIdField,
+    _In_ UINT32 ProtocolField,
+    _In_ UINT16 DatagramLayerId,
+    _In_ UINT32 DatagramCalloutId,
+    _In_ BOOLEAN Ipv6,
+    _Inout_ FWPS_CLASSIFY_OUT0 *ClassifyOut
+    )
+{
+    const FCX_STRICT_POLICY_SNAPSHOT *snapshot;
+    const FCX_STRICT_LEASE_STATE *lease;
+    const FCX_STRICT_RULE_RECORD *rule;
+    FCX_STRICT_UDP_FLOW_CONTEXT *context = NULL;
+    LONG64 flowToken;
+    NTSTATUS status;
+    KIRQL oldIrql;
+    BOOLEAN leaseAcquired = FALSE;
+    BOOLEAN associated = FALSE;
+    BOOLEAN removeAfterAssociate = FALSE;
+
+    if (DatagramCalloutId == 0 ||
+        InterlockedCompareExchange(&FcxUdpStopping, 0, 0) != 0 ||
+        !FWPS_IS_METADATA_FIELD_PRESENT(IncomingMetadata,
+                                        FWPS_METADATA_FIELD_FLOW_HANDLE) ||
+        FcxPolicyRundown == NULL || FcxLeaseRundown == NULL ||
+        !ExAcquireRundownProtectionCacheAware(FcxPolicyRundown)) {
+        if (FWPS_IS_METADATA_FIELD_PRESENT(IncomingMetadata,
+                                           FWPS_METADATA_FIELD_FLOW_HANDLE)) {
+            (VOID)FwpsFlowAbort0(IncomingMetadata->flowHandle);
+        }
+        FcxContinueClassify(ClassifyOut);
+        return;
+    }
+    snapshot = (const FCX_STRICT_POLICY_SNAPSHOT *)InterlockedCompareExchangePointer(
+        (PVOID volatile *)&FcxPolicySnapshot,
+        NULL,
+        NULL);
+    rule = FcxFindSelectedRule(snapshot, IncomingValues, AppIdField);
+    if (rule == NULL || rule->Action != FCX_STRICT_ACTION_PROXY ||
+        rule->TargetGroupIndex == FCX_STRICT_NO_TARGET_GROUP ||
+        rule->TargetGroupIndex >= snapshot->TargetGroupCount ||
+        ProtocolField >= IncomingValues->valueCount ||
+        IncomingValues->incomingValue[ProtocolField].value.type != FWP_UINT8 ||
+        IncomingValues->incomingValue[ProtocolField].value.uint8 != IPPROTO_UDP ||
+        !ExAcquireRundownProtectionCacheAware(FcxLeaseRundown)) {
+        goto Exit;
+    }
+    leaseAcquired = TRUE;
+    lease = (const FCX_STRICT_LEASE_STATE *)InterlockedCompareExchangePointer(
+        (PVOID volatile *)&FcxLeaseState,
+        NULL,
+        NULL);
+    if (!FcxLeaseMatchesSnapshot(lease, snapshot)) {
+        goto Exit;
+    }
+
+    if (!FcxReserveUdpFlowSlot()) {
+        goto Exit;
+    }
+    context = (FCX_STRICT_UDP_FLOW_CONTEXT *)ExAllocatePool2(
+        POOL_FLAG_NON_PAGED,
+        sizeof(*context),
+        FCX_STRICT_UDP_FLOW_POOL_TAG);
+    if (context == NULL) {
+        FcxReleaseUdpFlowSlot();
+        goto Exit;
+    }
+    RtlZeroMemory(context, sizeof(*context));
+    context->ReferenceCount = 1;
+    flowToken = InterlockedIncrement64(&FcxUdpFlowToken);
+    if (flowToken == 0) {
+        goto Exit;
+    }
+    context->FlowToken = (UINT64)flowToken;
+    context->LeaseGeneration = lease->Generation;
+    context->Revision = snapshot->Revision;
+    RtlCopyMemory(context->PolicyDigest,
+                  snapshot->PolicyDigest,
+                  sizeof(context->PolicyDigest));
+    RtlCopyMemory(context->LeaseNonce,
+                  lease->Nonce,
+                  sizeof(context->LeaseNonce));
+    context->TargetGroupIndex = rule->TargetGroupIndex;
+    context->FlowId = IncomingMetadata->flowHandle;
+    context->LayerId = DatagramLayerId;
+    context->CalloutId = DatagramCalloutId;
+    context->AddressFamily = Ipv6 ? FCX_STRICT_ADDRESS_FAMILY_V6 :
+                                    FCX_STRICT_ADDRESS_FAMILY_V4;
+    if (!FcxLinkUdpFlowContext(context)) {
+        goto Exit;
+    }
+    // Keep one reference for WFP before association. If WFP terminates the
+    // flow concurrently with this call, flowDelete can release its reference
+    // without invalidating the creator's post-association bookkeeping.
+    FcxReferenceUdpFlowContext(context);
+    status = FwpsFlowAssociateContext0(
+        IncomingMetadata->flowHandle,
+        DatagramLayerId,
+        DatagramCalloutId,
+        (UINT64)(ULONG_PTR)context);
+    if (!NT_SUCCESS(status)) {
+        FcxDereferenceUdpFlowContext(context);
+        goto Exit;
+    }
+    associated = TRUE;
+    KeAcquireSpinLock(&FcxUdpFlowLock, &oldIrql);
+    if (context->Listed) {
+        context->Associated = TRUE;
+        if (InterlockedCompareExchange(&FcxUdpStopping, 0, 0) != 0) {
+            context->RemovalRequested = TRUE;
+            removeAfterAssociate = TRUE;
+        }
+    }
+    KeReleaseSpinLock(&FcxUdpFlowLock, oldIrql);
+    if (removeAfterAssociate) {
+        (VOID)FwpsFlowRemoveContext0(IncomingMetadata->flowHandle,
+                                     DatagramLayerId,
+                                     DatagramCalloutId);
+    }
+
+Exit:
+    if (context != NULL) {
+        if (!associated) {
+            FcxUnlinkUdpFlowContext(context);
+        }
+        FcxDereferenceUdpFlowContext(context);
+    }
+    if (leaseAcquired) {
+        ExReleaseRundownProtectionCacheAware(FcxLeaseRundown);
+    }
+    ExReleaseRundownProtectionCacheAware(FcxPolicyRundown);
+    if (!associated &&
+        FWPS_IS_METADATA_FIELD_PRESENT(IncomingMetadata,
+                                       FWPS_METADATA_FIELD_FLOW_HANDLE)) {
+        (VOID)FwpsFlowAbort0(IncomingMetadata->flowHandle);
+    }
+    FcxContinueClassify(ClassifyOut);
+}
+
+static
+VOID NTAPI
+FcxFlowClassifyV4(
+    _In_ const FWPS_INCOMING_VALUES0 *IncomingValues,
+    _In_ const FWPS_INCOMING_METADATA_VALUES0 *IncomingMetadata,
+    _Inout_opt_ VOID *LayerData,
+    _In_opt_ const VOID *ClassifyContext,
+    _In_ const FWPS_FILTER1 *Filter,
+    _In_ UINT64 FlowContext,
+    _Inout_ FWPS_CLASSIFY_OUT0 *ClassifyOut
+    )
+{
+    UNREFERENCED_PARAMETER(LayerData);
+    UNREFERENCED_PARAMETER(ClassifyContext);
+    UNREFERENCED_PARAMETER(Filter);
+    UNREFERENCED_PARAMETER(FlowContext);
+    FcxClassifyUdpFlow(
+        IncomingValues,
+        IncomingMetadata,
+        FWPS_FIELD_ALE_FLOW_ESTABLISHED_V4_ALE_APP_ID,
+        FWPS_FIELD_ALE_FLOW_ESTABLISHED_V4_IP_PROTOCOL,
+        FWPS_LAYER_DATAGRAM_DATA_V4,
+        FcxCalloutIds[FCX_CALLOUT_DATAGRAM_V4],
+        FALSE,
+        ClassifyOut);
+}
+
+static
+VOID NTAPI
+FcxFlowClassifyV6(
+    _In_ const FWPS_INCOMING_VALUES0 *IncomingValues,
+    _In_ const FWPS_INCOMING_METADATA_VALUES0 *IncomingMetadata,
+    _Inout_opt_ VOID *LayerData,
+    _In_opt_ const VOID *ClassifyContext,
+    _In_ const FWPS_FILTER1 *Filter,
+    _In_ UINT64 FlowContext,
+    _Inout_ FWPS_CLASSIFY_OUT0 *ClassifyOut
+    )
+{
+    UNREFERENCED_PARAMETER(LayerData);
+    UNREFERENCED_PARAMETER(ClassifyContext);
+    UNREFERENCED_PARAMETER(Filter);
+    UNREFERENCED_PARAMETER(FlowContext);
+    FcxClassifyUdpFlow(
+        IncomingValues,
+        IncomingMetadata,
+        FWPS_FIELD_ALE_FLOW_ESTABLISHED_V6_ALE_APP_ID,
+        FWPS_FIELD_ALE_FLOW_ESTABLISHED_V6_IP_PROTOCOL,
+        FWPS_LAYER_DATAGRAM_DATA_V6,
+        FcxCalloutIds[FCX_CALLOUT_DATAGRAM_V6],
+        TRUE,
+        ClassifyOut);
+}
+
+static
+VOID
+FcxClassifyDatagramUnavailable(
+    _In_ UINT64 FlowContext,
+    _Inout_ FWPS_CLASSIFY_OUT0 *ClassifyOut
+    )
+{
+    NT_ASSERT(FlowContext != 0);
+    UNREFERENCED_PARAMETER(FlowContext);
+    if ((ClassifyOut->rights & FWPS_RIGHT_ACTION_WRITE) == 0) {
+        return;
+    }
+    // A context proves selection, but capture and reinjection are not complete.
+    // Keep selected traffic blocked instead of leaking it to the original path.
+    FcxBlockClassify(ClassifyOut);
+}
+
+static
+VOID NTAPI
+FcxDatagramClassifyV4(
+    _In_ const FWPS_INCOMING_VALUES0 *IncomingValues,
+    _In_ const FWPS_INCOMING_METADATA_VALUES0 *IncomingMetadata,
+    _Inout_opt_ VOID *LayerData,
+    _In_opt_ const VOID *ClassifyContext,
+    _In_ const FWPS_FILTER1 *Filter,
+    _In_ UINT64 FlowContext,
+    _Inout_ FWPS_CLASSIFY_OUT0 *ClassifyOut
+    )
+{
+    UNREFERENCED_PARAMETER(IncomingValues);
+    UNREFERENCED_PARAMETER(IncomingMetadata);
+    UNREFERENCED_PARAMETER(LayerData);
+    UNREFERENCED_PARAMETER(ClassifyContext);
+    UNREFERENCED_PARAMETER(Filter);
+    FcxClassifyDatagramUnavailable(FlowContext, ClassifyOut);
+}
+
+static
+VOID NTAPI
+FcxDatagramClassifyV6(
+    _In_ const FWPS_INCOMING_VALUES0 *IncomingValues,
+    _In_ const FWPS_INCOMING_METADATA_VALUES0 *IncomingMetadata,
+    _Inout_opt_ VOID *LayerData,
+    _In_opt_ const VOID *ClassifyContext,
+    _In_ const FWPS_FILTER1 *Filter,
+    _In_ UINT64 FlowContext,
+    _Inout_ FWPS_CLASSIFY_OUT0 *ClassifyOut
+    )
+{
+    UNREFERENCED_PARAMETER(IncomingValues);
+    UNREFERENCED_PARAMETER(IncomingMetadata);
+    UNREFERENCED_PARAMETER(LayerData);
+    UNREFERENCED_PARAMETER(ClassifyContext);
+    UNREFERENCED_PARAMETER(Filter);
+    FcxClassifyDatagramUnavailable(FlowContext, ClassifyOut);
+}
+
+static
+VOID NTAPI
+FcxDatagramFlowDelete(
+    _In_ UINT16 LayerId,
+    _In_ UINT32 CalloutId,
+    _In_ UINT64 FlowContext
+    )
+{
+    FCX_STRICT_UDP_FLOW_CONTEXT *context =
+        (FCX_STRICT_UDP_FLOW_CONTEXT *)(ULONG_PTR)FlowContext;
+
+    UNREFERENCED_PARAMETER(LayerId);
+    UNREFERENCED_PARAMETER(CalloutId);
+    FcxUnlinkUdpFlowContext(context);
+    FcxDereferenceUdpFlowContext(context);
+}
+
+static
+BOOLEAN
 FcxBytesAreZero(
     _In_reads_bytes_(Bytes) const UINT8 *Buffer,
     _In_ UINT32 Bytes
@@ -770,6 +1317,7 @@ FcxReleaseLeaseLocked(
         ExRundownCompletedCacheAware(FcxLeaseRundown);
         ExReInitializeRundownProtectionCacheAware(FcxLeaseRundown);
     }
+    FcxDrainUdpFlowContexts(FALSE);
 }
 
 static
@@ -792,6 +1340,7 @@ FcxReplaceLease(
     FCX_STRICT_LEASE_STATE *oldLease;
 
     ExAcquireFastMutex(&FcxLeaseMutationLock);
+    FcxDrainUdpFlowContexts(FALSE);
     oldLease = (FCX_STRICT_LEASE_STATE *)InterlockedExchangePointer(
         (PVOID volatile *)&FcxLeaseState,
         NewLease);
@@ -799,6 +1348,7 @@ FcxReplaceLease(
     FcxDestroyLease(oldLease);
     ExRundownCompletedCacheAware(FcxLeaseRundown);
     ExReInitializeRundownProtectionCacheAware(FcxLeaseRundown);
+    InterlockedExchange(&FcxUdpStopping, 0);
     ExReleaseFastMutex(&FcxLeaseMutationLock);
 }
 
@@ -1485,17 +2035,25 @@ FcxRegisterCallouts(
 {
     NTSTATUS status;
     FWPS_CALLOUT1 callout;
-    const GUID *keys[4] = {
+    const GUID *keys[8] = {
         &FcxGuardV4CalloutKey,
         &FcxGuardV6CalloutKey,
         &FcxRedirectV4CalloutKey,
-        &FcxRedirectV6CalloutKey
+        &FcxRedirectV6CalloutKey,
+        &FcxFlowV4CalloutKey,
+        &FcxFlowV6CalloutKey,
+        &FcxDatagramV4CalloutKey,
+        &FcxDatagramV6CalloutKey
     };
-    FWPS_CALLOUT_CLASSIFY_FN1 classifyFunctions[4] = {
+    FWPS_CALLOUT_CLASSIFY_FN1 classifyFunctions[8] = {
         FcxGuardClassifyV4,
         FcxGuardClassifyV6,
         FcxRedirectClassifyV4,
-        FcxRedirectClassifyV6
+        FcxRedirectClassifyV6,
+        FcxFlowClassifyV4,
+        FcxFlowClassifyV6,
+        FcxDatagramClassifyV4,
+        FcxDatagramClassifyV6
     };
     UINT32 index;
 
@@ -1507,6 +2065,11 @@ FcxRegisterCallouts(
         callout.calloutKey = *keys[index];
         callout.classifyFn = classifyFunctions[index];
         callout.notifyFn = FcxCalloutNotify;
+        if (index == FCX_CALLOUT_DATAGRAM_V4 ||
+            index == FCX_CALLOUT_DATAGRAM_V6) {
+            callout.flags = FWP_CALLOUT_FLAG_CONDITIONAL_ON_FLOW;
+            callout.flowDeleteFn = FcxDatagramFlowDelete;
+        }
         status = FwpsCalloutRegister1(DeviceObject,
                                       &callout,
                                       &FcxCalloutIds[index]);
@@ -1539,13 +2102,13 @@ FcxEvtDriverUnload(
     UNREFERENCED_PARAMETER(Driver);
     PAGED_CODE();
 
-    FcxUnregisterCallouts();
-    FcxDestroyRedirectHandle();
     if (FcxProcessNotifyRegistered) {
         (VOID)PsSetCreateProcessNotifyRoutineEx(FcxProcessNotify, TRUE);
         FcxProcessNotifyRegistered = FALSE;
     }
     FcxReleaseLease();
+    FcxUnregisterCallouts();
+    FcxDestroyRedirectHandle();
     FcxReleasePolicy();
     if (FcxLeaseRundown != NULL) {
         ExFreeCacheAwareRundownProtection(FcxLeaseRundown);
@@ -1588,6 +2151,9 @@ DriverEntry(
         return status;
     }
     ExInitializeFastMutex(&FcxLeaseMutationLock);
+    KeInitializeSpinLock(&FcxUdpFlowLock);
+    InitializeListHead(&FcxUdpFlowList);
+    KeInitializeEvent(&FcxUdpFlowEmptyEvent, NotificationEvent, TRUE);
 
     FcxPolicyRundown = ExAllocateCacheAwareRundownProtection(
         NonPagedPoolNx,

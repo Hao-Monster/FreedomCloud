@@ -1348,7 +1348,7 @@ mod tests {
             "_In_opt_ const VOID *ClassifyContext",
             "_In_ const FWPS_FILTER1 *Filter",
             "FWPS_CALLOUT1 callout",
-            "FWPS_CALLOUT_CLASSIFY_FN1 classifyFunctions[4]",
+            "FWPS_CALLOUT_CLASSIFY_FN1 classifyFunctions[8]",
             "FwpsCalloutRegister1(",
             "FwpsRedirectHandleCreate0(&FcxProviderKey",
             "FwpsRedirectHandleDestroy0(FcxRedirectHandle)",
@@ -1404,6 +1404,16 @@ mod tests {
                 "missing TCP redirect invariant: {invariant}"
             );
         }
+        let guard = driver
+            .split("FcxClassifyRedirectedTcpGuard(")
+            .nth(1)
+            .and_then(|body| body.split("FcxClassifyTcpRedirect(").next())
+            .expect("TCP guard classifier body is present");
+        assert!(guard.contains("value.uint8 == IPPROTO_TCP"));
+        assert!(
+            !guard.contains("IPPROTO_UDP"),
+            "an endpoint lease alone must never open UDP before atomic activation"
+        );
     }
 
     #[test]
@@ -1458,6 +1468,67 @@ mod tests {
         assert!(
             submit < snapshot,
             "Direct-I/O submission must precede snapshot output retrieval"
+        );
+    }
+
+    #[test]
+    fn kernel_udp_flow_contexts_are_bounded_conditional_and_fail_closed() {
+        let driver = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../windows/strict-driver/src/driver.c"
+        ));
+
+        for invariant in [
+            "static const GUID FcxFlowV4CalloutKey",
+            "static const GUID FcxFlowV6CalloutKey",
+            "static const GUID FcxDatagramV4CalloutKey",
+            "static const GUID FcxDatagramV6CalloutKey",
+            "0x00d83eb9, 0x8749, 0x4b5d, {0xae, 0x3b, 0x55, 0x1a, 0x96, 0x2b, 0xa5, 0xf4}",
+            "0xd88a2c87, 0x510a, 0x4f61, {0xa9, 0xb1, 0x12, 0x9f, 0x2e, 0x5f, 0xb3, 0xf0}",
+            "0xf17248e9, 0xfdd9, 0x4307, {0xb7, 0x6b, 0xcc, 0x8f, 0x21, 0x24, 0x62, 0xc5}",
+            "0xa86c2426, 0x7a29, 0x4ad4, {0xae, 0xb3, 0x8d, 0x17, 0xa8, 0x7e, 0x2c, 0x05}",
+            "static UINT32 FcxCalloutIds[8];",
+            "#define FCX_STRICT_MAX_UDP_FLOWS 1024",
+            "InterlockedIncrement(&FcxUdpFlowCount)",
+            "InterlockedIncrement(&Context->ReferenceCount)",
+            "InterlockedDecrement(&Context->ReferenceCount)",
+            "ExAllocatePool2(POOL_FLAG_NON_PAGED",
+            "FWPS_METADATA_FIELD_FLOW_HANDLE",
+            "FwpsFlowAssociateContext0(",
+            "FwpsFlowAbort0(IncomingMetadata->flowHandle)",
+            "FWPS_LAYER_DATAGRAM_DATA_V4",
+            "FWPS_LAYER_DATAGRAM_DATA_V6",
+            "FWP_CALLOUT_FLAG_CONDITIONAL_ON_FLOW",
+            "callout.flowDeleteFn = FcxDatagramFlowDelete;",
+            "FwpsFlowRemoveContext0(flowId, layerId, calloutId)",
+            "KeWaitForSingleObject(&FcxUdpFlowEmptyEvent",
+            "FcxDrainUdpFlowContexts(FALSE);",
+            "FcxLeaseMatchesSnapshot(lease, snapshot)",
+            "IncomingValues->incomingValue[ProtocolField].value.uint8 != IPPROTO_UDP",
+            "FcxDereferenceUdpFlowContext(",
+            "ClassifyOut->actionType = FWP_ACTION_CONTINUE;",
+        ] {
+            assert!(
+                driver.contains(invariant),
+                "missing UDP flow-context invariant: {invariant}"
+            );
+        }
+        let flow_classify = driver
+            .split("FcxClassifyUdpFlow(")
+            .nth(1)
+            .and_then(|body| body.split("FcxFlowClassifyV4(").next())
+            .expect("UDP flow classifier body is present");
+        assert!(!flow_classify.contains("FcxPermitClassify(ClassifyOut)"));
+        assert!(!flow_classify.contains("FcxBlockClassify(ClassifyOut)"));
+        let unload = driver
+            .split("FcxEvtDriverUnload(")
+            .nth(1)
+            .and_then(|body| body.split("DriverEntry(").next())
+            .expect("driver unload body is present");
+        assert!(
+            unload.find("FcxReleaseLease();").unwrap()
+                < unload.find("FcxUnregisterCallouts();").unwrap(),
+            "flow contexts must drain before callout unregister"
         );
     }
 }

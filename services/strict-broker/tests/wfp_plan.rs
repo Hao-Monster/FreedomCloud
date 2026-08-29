@@ -153,6 +153,21 @@ fn plan_indexes_app_filters_and_limits_global_filters_to_conditional_udp_capture
             .count(),
         2
     );
+    assert!(plan
+        .redirect_filters()
+        .iter()
+        .filter(|filter| {
+            matches!(
+                filter.layer(),
+                WfpLayer::FlowEstablishedV4 | WfpLayer::FlowEstablishedV6
+            )
+        })
+        .all(
+            |filter| filter.callout_action() == WfpFilterAction::FlowTracking
+                && filter.is_indexed()
+                && !filter.clears_action_right()
+                && !filter.permits_if_callout_unregistered()
+        ));
 }
 
 #[test]

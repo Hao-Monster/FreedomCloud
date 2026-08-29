@@ -84,6 +84,7 @@ pub enum WfpFilterLifetime {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WfpFilterAction {
     Terminating,
+    FlowTracking,
     ConditionalCapture,
 }
 
@@ -318,7 +319,7 @@ impl WfpPolicyPlan {
                         REDIRECT_V6_CALLOUT_KEY,
                         WfpFilterLifetime::Dynamic,
                     ),
-                    filter(
+                    flow_tracking_filter(
                         rule,
                         0x31,
                         WfpLayer::FlowEstablishedV4,
@@ -326,7 +327,7 @@ impl WfpPolicyPlan {
                         FLOW_V4_CALLOUT_KEY,
                         WfpFilterLifetime::Dynamic,
                     ),
-                    filter(
+                    flow_tracking_filter(
                         rule,
                         0x32,
                         WfpLayer::FlowEstablishedV6,
@@ -473,6 +474,20 @@ fn conditional_datagram_filter(
         callout_action: WfpFilterAction::ConditionalCapture,
         permit_if_callout_unregistered: true,
     }
+}
+
+fn flow_tracking_filter(
+    rule: &DriverIdentityRule,
+    key_namespace: u8,
+    layer: WfpLayer,
+    callout: WfpCallout,
+    callout_key: WfpObjectKey,
+    lifetime: WfpFilterLifetime,
+) -> WfpFilterSpec {
+    let mut spec = filter(rule, key_namespace, layer, callout, callout_key, lifetime);
+    spec.callout_action = WfpFilterAction::FlowTracking;
+    spec.clear_action_right = false;
+    spec
 }
 
 fn derived_filter_key(namespace: u8, app_id: &[u8]) -> WfpObjectKey {

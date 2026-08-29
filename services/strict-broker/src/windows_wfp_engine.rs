@@ -24,9 +24,10 @@ use windows_sys::Win32::NetworkManagement::WindowsFilteringPlatform::{
     FWPM_LAYER_ALE_FLOW_ESTABLISHED_V4, FWPM_LAYER_ALE_FLOW_ESTABLISHED_V6,
     FWPM_LAYER_DATAGRAM_DATA_V4, FWPM_LAYER_DATAGRAM_DATA_V6, FWPM_PROVIDER0,
     FWPM_PROVIDER_FLAG_PERSISTENT, FWPM_SESSION0, FWPM_SESSION_FLAG_DYNAMIC, FWPM_SUBLAYER0,
-    FWPM_SUBLAYER_FLAG_PERSISTENT, FWP_ACTION_CALLOUT_TERMINATING, FWP_ACTION_CALLOUT_UNKNOWN,
-    FWP_BYTE_BLOB, FWP_BYTE_BLOB_TYPE, FWP_CONDITION_VALUE0, FWP_CONDITION_VALUE0_0, FWP_EMPTY,
-    FWP_FILTER_ENUM_FULLY_CONTAINED, FWP_MATCH_EQUAL, FWP_VALUE0,
+    FWPM_SUBLAYER_FLAG_PERSISTENT, FWP_ACTION_CALLOUT_INSPECTION, FWP_ACTION_CALLOUT_TERMINATING,
+    FWP_ACTION_CALLOUT_UNKNOWN, FWP_BYTE_BLOB, FWP_BYTE_BLOB_TYPE, FWP_CONDITION_VALUE0,
+    FWP_CONDITION_VALUE0_0, FWP_EMPTY, FWP_FILTER_ENUM_FULLY_CONTAINED, FWP_MATCH_EQUAL,
+    FWP_VALUE0,
 };
 use windows_sys::Win32::System::Rpc::RPC_C_AUTHN_WINNT;
 
@@ -631,6 +632,17 @@ fn validate_filter_specs(class: FilterClass, filters: &[WfpFilterSpec]) -> Resul
                     && filter.app_id().len() <= MAX_VERIFIED_APP_ID_BYTES
                     && !filter.identity_id().is_empty()
                     && !is_conditional_capture_layer(filter.layer())
+                    && !is_flow_tracking_layer(filter.layer())
+            }
+            WfpFilterAction::FlowTracking => {
+                class == FilterClass::Redirect
+                    && is_flow_tracking_layer(filter.layer())
+                    && filter.is_indexed()
+                    && !filter.clears_action_right()
+                    && !filter.permits_if_callout_unregistered()
+                    && !filter.app_id().is_empty()
+                    && filter.app_id().len() <= MAX_VERIFIED_APP_ID_BYTES
+                    && !filter.identity_id().is_empty()
             }
             WfpFilterAction::ConditionalCapture => {
                 class == FilterClass::Guard
@@ -663,6 +675,13 @@ fn is_conditional_capture_layer(layer: WfpLayer) -> bool {
     matches!(layer, WfpLayer::DatagramDataV4 | WfpLayer::DatagramDataV6)
 }
 
+fn is_flow_tracking_layer(layer: WfpLayer) -> bool {
+    matches!(
+        layer,
+        WfpLayer::FlowEstablishedV4 | WfpLayer::FlowEstablishedV6
+    )
+}
+
 fn filter_flags(class: FilterClass, spec: &WfpFilterSpec) -> u32 {
     let mut flags = 0;
     if class == FilterClass::Guard {
@@ -688,6 +707,8 @@ fn enumerated_filter_flags(class: FilterClass, layer: WfpLayer) -> u32 {
     };
     if is_conditional_capture_layer(layer) {
         persistent | FWPM_FILTER_FLAG_PERMIT_IF_CALLOUT_UNREGISTERED
+    } else if is_flow_tracking_layer(layer) {
+        FWPM_FILTER_FLAG_INDEXED
     } else {
         persistent | FWPM_FILTER_FLAG_INDEXED | FWPM_FILTER_FLAG_CLEAR_ACTION_RIGHT
     }
@@ -723,6 +744,10 @@ fn add_filter(
         (FilterClass::Redirect, WfpFilterAction::Terminating) => {
             "FlClashX strict application redirect"
         }
+        (FilterClass::Redirect, WfpFilterAction::FlowTracking) => {
+            "FlClashX strict UDP flow tracking"
+        }
+        (FilterClass::Guard, WfpFilterAction::FlowTracking) => "FlClashX invalid UDP flow tracking",
         (FilterClass::Redirect, WfpFilterAction::ConditionalCapture) => {
             "FlClashX strict conditional UDP capture"
         }
@@ -734,6 +759,7 @@ fn add_filter(
     };
     let action_type = match spec.callout_action() {
         WfpFilterAction::Terminating => FWP_ACTION_CALLOUT_TERMINATING,
+        WfpFilterAction::FlowTracking => FWP_ACTION_CALLOUT_INSPECTION,
         WfpFilterAction::ConditionalCapture => FWP_ACTION_CALLOUT_UNKNOWN,
     };
     let filter = FWPM_FILTER0 {
@@ -915,6 +941,8 @@ fn validate_enumerated_filter(
     let expected_condition_count = u32::from(!conditional_capture);
     let expected_action = if conditional_capture {
         FWP_ACTION_CALLOUT_UNKNOWN
+    } else if is_flow_tracking_layer(layer) {
+        FWP_ACTION_CALLOUT_INSPECTION
     } else {
         FWP_ACTION_CALLOUT_TERMINATING
     };
@@ -1135,6 +1163,69 @@ mod tests {
             provider_key,
             sublayer_key,
             FilterClass::Guard,
+            layer,
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn enumerated_flow_tracking_filter_is_inspection_only() {
+        let provider_key = WfpObjectKey::from_bytes([1; 16]);
+        let sublayer_key = WfpObjectKey::from_bytes([2; 16]);
+        let layer = WfpLayer::FlowEstablishedV4;
+        let app_id = [4_u8, 3, 2, 1];
+        let mut blob = FWP_BYTE_BLOB {
+            size: app_id.len() as u32,
+            data: app_id.as_ptr().cast_mut(),
+        };
+        let mut condition = FWPM_FILTER_CONDITION0 {
+            fieldKey: FWPM_CONDITION_ALE_APP_ID,
+            matchType: FWP_MATCH_EQUAL,
+            conditionValue: FWP_CONDITION_VALUE0 {
+                r#type: FWP_BYTE_BLOB_TYPE,
+                Anonymous: FWP_CONDITION_VALUE0_0 {
+                    byteBlob: &mut blob,
+                },
+            },
+        };
+        let mut provider = object_key_to_guid(provider_key);
+        let mut filter = FWPM_FILTER0 {
+            filterKey: object_key_to_guid(expected_filter_key(layer, &app_id)),
+            flags: enumerated_filter_flags(FilterClass::Redirect, layer),
+            providerKey: &mut provider,
+            layerKey: layer_guid(layer),
+            subLayerKey: object_key_to_guid(sublayer_key),
+            weight: FWP_VALUE0 {
+                r#type: FWP_EMPTY,
+                ..FWP_VALUE0::default()
+            },
+            numFilterConditions: 1,
+            filterCondition: &mut condition,
+            action: FWPM_ACTION0 {
+                r#type: FWP_ACTION_CALLOUT_INSPECTION,
+                Anonymous: FWPM_ACTION0_0 {
+                    calloutKey: object_key_to_guid(expected_callout_key(layer)),
+                },
+            },
+            Anonymous: FWPM_FILTER0_0 { rawContext: 0 },
+            ..FWPM_FILTER0::default()
+        };
+
+        validate_enumerated_filter(
+            &filter,
+            provider_key,
+            sublayer_key,
+            FilterClass::Redirect,
+            layer,
+        )
+        .unwrap();
+
+        filter.action.r#type = FWP_ACTION_CALLOUT_TERMINATING;
+        assert!(validate_enumerated_filter(
+            &filter,
+            provider_key,
+            sublayer_key,
+            FilterClass::Redirect,
             layer,
         )
         .is_err());
