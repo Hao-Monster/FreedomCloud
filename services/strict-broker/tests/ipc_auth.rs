@@ -1,4 +1,5 @@
 use flclash_strict_broker::{BrokerAuthenticator, ClientPrincipal, ClientRole};
+use flclash_strict_contract::STRICT_PROTOCOL_VERSION;
 
 fn hex(character: char) -> String {
     std::iter::repeat_n(character, 64).collect()
@@ -6,7 +7,7 @@ fn hex(character: char) -> String {
 
 fn frame(capability: &str, command: &str) -> String {
     format!(
-        r#"{{"protocol":1,"requestId":"request-1","sessionCapability":"{capability}","command":{command}}}"#
+        r#"{{"protocol":{STRICT_PROTOCOL_VERSION},"requestId":"request-1","sessionCapability":"{capability}","command":{command}}}"#
     )
 }
 
@@ -50,8 +51,11 @@ fn recovery_administrator_cannot_prepare_or_commit_policy() {
             &frame(
                 &hex('1'),
                 &format!(
-                    r#"{{"type":"commitPolicy","revision":7,"policyDigest":"{}"}}"#,
-                    hex('a')
+                    r#"{{"type":"commitPolicy","revision":7,"policyDigest":"{}","ingress":{{"protocol":{},"generation":1,"entries":[{{"targetGroup":"GLOBAL","endpoint":"127.0.0.1:41001","username":"{}","password":"{}"}}]}}}}"#,
+                    hex('a'),
+                    STRICT_PROTOCOL_VERSION,
+                    hex('b'),
+                    hex('c')
                 ),
             ),
         )

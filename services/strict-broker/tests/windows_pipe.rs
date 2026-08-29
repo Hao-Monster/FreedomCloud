@@ -6,7 +6,9 @@ use flclash_strict_broker::{
     current_process_user_sid, exchange_windows_pipe_for_agent, BrokerAuthenticator, ClientRole,
     WindowsNamedPipeInstance,
 };
-use flclash_strict_contract::{BrokerErrorCode, BrokerResponse, BrokerResponseBody};
+use flclash_strict_contract::{
+    BrokerErrorCode, BrokerResponse, BrokerResponseBody, STRICT_PROTOCOL_VERSION,
+};
 
 #[test]
 fn named_pipe_uses_os_identity_and_capability_for_a_local_request() {
@@ -22,7 +24,8 @@ fn named_pipe_uses_os_identity_and_capability_for_a_local_request() {
     );
     let instance = WindowsNamedPipeInstance::create(&pipe_name, &owner_sid).unwrap();
     let frame = format!(
-        r#"{{"protocol":1,"requestId":"pipe-test","sessionCapability":"{}","command":{{"type":"status"}}}}"#,
+        r#"{{"protocol":{},"requestId":"pipe-test","sessionCapability":"{}","command":{{"type":"status"}}}}"#,
+        STRICT_PROTOCOL_VERSION,
         "11".repeat(32)
     );
     let client_pipe_name = pipe_name.clone();

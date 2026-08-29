@@ -98,7 +98,7 @@ fn agent_exit_forces_cleanup_before_bounded_pipe_session_shutdown() {
     assert!(registry.active().unwrap().is_alive().unwrap());
 
     let frame = format!(
-        r#"{{"protocol":1,"requestId":"session-status","sessionCapability":"{capability}","command":{{"type":"status"}}}}"#
+        r#"{{"protocol":{STRICT_PROTOCOL_VERSION},"requestId":"session-status","sessionCapability":"{capability}","command":{{"type":"status"}}}}"#
     );
     let response = exchange_windows_pipe_for_agent(&pipe_name, frame.as_bytes()).unwrap();
     assert!(matches!(

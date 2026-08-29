@@ -2,8 +2,8 @@ use std::collections::BTreeSet;
 
 use anyhow::{bail, Context, Result};
 use flclash_strict_contract::{
-    BrokerProof, StrictCapability, StrictPolicyBundle, MAX_STRICT_APPLICATIONS,
-    STRICT_PROTOCOL_VERSION,
+    BrokerProof, StrictAction, StrictCapability, StrictPolicyBundle, StrictProxyIngressSet,
+    MAX_STRICT_APPLICATIONS, STRICT_PROTOCOL_VERSION,
 };
 use serde::{Deserialize, Serialize};
 
@@ -583,6 +583,33 @@ where
         self.phase = BrokerPhase::Armed;
         self.forwarding_health = health;
         self.status_from_snapshot(snapshot)
+    }
+
+    pub(crate) fn validate_forwarding_ingress(
+        &self,
+        revision: u64,
+        policy_digest: &str,
+        ingress: &StrictProxyIngressSet,
+    ) -> Result<()> {
+        let marker = self.match_current(revision, policy_digest)?;
+        ingress.validate()?;
+
+        let expected_groups: BTreeSet<&str> = marker
+            .policy
+            .entries
+            .iter()
+            .filter(|entry| entry.action == StrictAction::Proxy)
+            .filter_map(|entry| entry.target_group.as_deref())
+            .collect();
+        if expected_groups.len() != ingress.entries.len()
+            || expected_groups
+                .iter()
+                .zip(&ingress.entries)
+                .any(|(expected, actual)| **expected != actual.target_group)
+        {
+            bail!("strict proxy ingresses do not match the prepared policy target groups");
+        }
+        Ok(())
     }
 
     pub fn status(&mut self) -> Result<BrokerStatus> {

@@ -8,7 +8,8 @@ use flclash_strict_broker::{
 };
 use flclash_strict_contract::{
     BrokerCommand, BrokerRequest, BrokerResponseBody, StrictCapability, StrictIdentity,
-    StrictPolicyBundle, StrictPolicyEntry, STRICT_PROTOCOL_VERSION,
+    StrictPolicyBundle, StrictPolicyEntry, StrictProxyIngressEntry, StrictProxyIngressSet,
+    STRICT_PROTOCOL_VERSION,
 };
 
 #[derive(Default)]
@@ -126,7 +127,10 @@ impl IdentityVerifier for FakeVerifier {
 struct FakeHealthProbe;
 
 impl ForwardingHealthProbe for FakeHealthProbe {
-    fn measure(&mut self) -> Result<ForwardingHealth> {
+    fn measure(&mut self, ingress: &StrictProxyIngressSet) -> Result<ForwardingHealth> {
+        if ingress.entries.is_empty() {
+            bail!("strict forwarding ingress is missing");
+        }
         Ok(ForwardingHealth {
             core_healthy: true,
             relay_healthy: true,
@@ -134,6 +138,20 @@ impl ForwardingHealthProbe for FakeHealthProbe {
             capabilities: StrictCapability::required_for_proxy(),
         })
     }
+}
+
+fn ingress(target_group: &str) -> StrictProxyIngressSet {
+    StrictProxyIngressSet::new(
+        1,
+        vec![StrictProxyIngressEntry::new(
+            target_group.into(),
+            "127.0.0.1:41001".parse().unwrap(),
+            "c".repeat(64),
+            "d".repeat(64),
+        )
+        .unwrap()],
+    )
+    .unwrap()
 }
 
 fn policy(revision: u64) -> StrictPolicyBundle {
@@ -197,6 +215,7 @@ fn dispatcher_uses_internal_health_and_force_blocking_removes_redirects() {
     let armed = dispatcher.dispatch(authorize(BrokerCommand::CommitPolicy {
         revision: 7,
         policy_digest: digest,
+        ingress: ingress("GLOBAL"),
     }));
     let armed = status_proof(armed.body);
     assert!(armed.relay_healthy);
@@ -232,7 +251,43 @@ fn dispatcher_returns_only_a_stable_error_code() {
 
 #[test]
 fn health_probe_contract_is_bounded_to_declared_capabilities() {
-    let health = FakeHealthProbe.measure().unwrap();
+    let health = FakeHealthProbe.measure(&ingress("GLOBAL")).unwrap();
     let declared: BTreeSet<_> = health.capabilities.iter().copied().collect();
     assert_eq!(declared, StrictCapability::required_for_proxy());
+}
+
+#[test]
+fn dispatcher_rejects_an_ingress_for_a_different_target_group() {
+    let engine = flclash_strict_broker::BrokerEngine::new(
+        FakeBackend::default(),
+        FakeStore::default(),
+        FakeVerifier,
+    );
+    let mut dispatcher = BrokerDispatcher::new(engine, FakeHealthProbe);
+    let selected_policy = policy(8);
+    let digest = selected_policy.canonical_digest().unwrap();
+    dispatcher.dispatch(authorize(BrokerCommand::PreparePolicy {
+        policy: selected_policy,
+    }));
+
+    let response = dispatcher.dispatch(authorize(BrokerCommand::CommitPolicy {
+        revision: 8,
+        policy_digest: digest,
+        ingress: ingress("WORK"),
+    }));
+
+    assert!(matches!(
+        response.body,
+        BrokerResponseBody::Error {
+            code: flclash_strict_contract::BrokerErrorCode::InvalidRequest
+        }
+    ));
+    assert!(
+        !dispatcher
+            .engine_mut()
+            .backend_mut()
+            .snapshot()
+            .unwrap()
+            .redirect_filters_installed
+    );
 }

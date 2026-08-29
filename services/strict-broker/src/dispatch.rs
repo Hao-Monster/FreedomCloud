@@ -1,5 +1,7 @@
 use anyhow::Result;
-use flclash_strict_contract::{BrokerCommand, BrokerErrorCode, BrokerResponse, BrokerResponseBody};
+use flclash_strict_contract::{
+    BrokerCommand, BrokerErrorCode, BrokerResponse, BrokerResponseBody, StrictProxyIngressSet,
+};
 
 use crate::{
     AuthorizedBrokerRequest, BrokerEngine, BrokerStatus, FilterBackend, ForwardingHealth,
@@ -8,7 +10,7 @@ use crate::{
 
 pub trait ForwardingHealthProbe {
     /// Health is measured by the privileged Broker; Agent-supplied booleans are never trusted.
-    fn measure(&mut self) -> Result<ForwardingHealth>;
+    fn measure(&mut self, ingress: &StrictProxyIngressSet) -> Result<ForwardingHealth>;
 }
 
 pub struct BrokerDispatcher<B, S, V: IdentityVerifier, H> {
@@ -51,17 +53,24 @@ where
             BrokerCommand::CommitPolicy {
                 revision,
                 policy_digest,
-            } => match self.health_probe.measure() {
-                Ok(health) => (
-                    self.engine.commit(revision, &policy_digest, health),
-                    BrokerErrorCode::Internal,
-                ),
-                Err(_) => (
-                    Err(anyhow::anyhow!(
-                        "strict forwarding health measurement failed"
-                    )),
-                    BrokerErrorCode::BackendUnavailable,
-                ),
+                ingress,
+            } => match self
+                .engine
+                .validate_forwarding_ingress(revision, &policy_digest, &ingress)
+            {
+                Err(error) => (Err(error), BrokerErrorCode::InvalidRequest),
+                Ok(()) => match self.health_probe.measure(&ingress) {
+                    Ok(health) => (
+                        self.engine.commit(revision, &policy_digest, health),
+                        BrokerErrorCode::Internal,
+                    ),
+                    Err(_) => (
+                        Err(anyhow::anyhow!(
+                            "strict forwarding health measurement failed"
+                        )),
+                        BrokerErrorCode::BackendUnavailable,
+                    ),
+                },
             },
             BrokerCommand::ForceBlocking { revision } => (
                 self.engine.force_blocking(revision),

@@ -1,16 +1,19 @@
 use std::collections::BTreeSet;
+use std::fmt;
+use std::net::{Ipv4Addr, SocketAddrV4};
 
 use anyhow::{bail, Result};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-pub const STRICT_PROTOCOL_VERSION: u32 = 1;
+pub const STRICT_PROTOCOL_VERSION: u32 = 2;
 pub const MAX_STRICT_APPLICATIONS: usize = 128;
 pub const MAX_STRICT_CHILDREN: usize = 32;
+pub const MAX_STRICT_TARGET_GROUPS: usize = 128;
 pub const MAX_BROKER_FRAME_BYTES: usize = 1024 * 1024;
 pub const MAX_BROKER_ACTIVATION_FRAME_BYTES: usize = 4 * 1024;
 pub const WINDOWS_STRICT_BROKER_ACTIVATION_PIPE_NAME: &str =
-    r"\\.\pipe\FlClashX.StrictBroker.Activation.v1";
+    r"\\.\pipe\FlClashX.StrictBroker.Activation.v2";
 const BROKER_PIPE_NAME_PREFIX: &str = r"\\.\pipe\FlClashX.StrictBroker.";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -412,6 +415,118 @@ fn validate_target_group(target: &str) -> Result<()> {
     Ok(())
 }
 
+#[derive(Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct StrictProxyIngressEntry {
+    pub target_group: String,
+    pub endpoint: SocketAddrV4,
+    pub username: String,
+    pub password: String,
+}
+
+impl StrictProxyIngressEntry {
+    pub fn new(
+        target_group: String,
+        endpoint: SocketAddrV4,
+        username: String,
+        password: String,
+    ) -> Result<Self> {
+        let entry = Self {
+            target_group,
+            endpoint,
+            username,
+            password,
+        };
+        entry.validate()?;
+        Ok(entry)
+    }
+
+    pub fn validate(&self) -> Result<()> {
+        validate_target_group(&self.target_group)?;
+        if self.endpoint.ip() != &Ipv4Addr::LOCALHOST || self.endpoint.port() == 0 {
+            bail!("strict proxy ingress endpoint must be exact IPv4 loopback");
+        }
+        validate_ingress_credential(&self.username)?;
+        validate_ingress_credential(&self.password)
+    }
+}
+
+impl fmt::Debug for StrictProxyIngressEntry {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("StrictProxyIngressEntry")
+            .field("target_group", &self.target_group)
+            .field("endpoint", &self.endpoint)
+            .field("username", &"[redacted]")
+            .field("password", &"[redacted]")
+            .finish()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct StrictProxyIngressSet {
+    pub protocol: u32,
+    pub generation: u64,
+    pub entries: Vec<StrictProxyIngressEntry>,
+}
+
+impl StrictProxyIngressSet {
+    pub fn new(generation: u64, entries: Vec<StrictProxyIngressEntry>) -> Result<Self> {
+        let ingress = Self {
+            protocol: STRICT_PROTOCOL_VERSION,
+            generation,
+            entries,
+        };
+        ingress.validate()?;
+        Ok(ingress)
+    }
+
+    pub fn empty() -> Self {
+        Self {
+            protocol: STRICT_PROTOCOL_VERSION,
+            generation: 0,
+            entries: Vec::new(),
+        }
+    }
+
+    pub fn validate(&self) -> Result<()> {
+        if self.protocol != STRICT_PROTOCOL_VERSION {
+            bail!("unsupported strict proxy ingress protocol");
+        }
+        if self.entries.is_empty() {
+            if self.generation != 0 {
+                bail!("empty strict proxy ingress set retained a generation");
+            }
+            return Ok(());
+        }
+        if self.generation == 0 || self.entries.len() > MAX_STRICT_TARGET_GROUPS {
+            bail!("strict proxy ingress generation or entry count is invalid");
+        }
+        let mut endpoints = BTreeSet::new();
+        let mut previous_group: Option<&str> = None;
+        for entry in &self.entries {
+            entry.validate()?;
+            if previous_group.is_some_and(|previous| previous >= entry.target_group.as_str()) {
+                bail!("strict proxy ingress target groups are not canonical");
+            }
+            if !endpoints.insert(entry.endpoint) {
+                bail!("strict proxy ingress endpoint is duplicated");
+            }
+            previous_group = Some(&entry.target_group);
+        }
+        Ok(())
+    }
+}
+
+fn validate_ingress_credential(value: &str) -> Result<()> {
+    validate_sha256(value, "strict proxy ingress credential")?;
+    if value.bytes().all(|byte| byte == b'0') {
+        bail!("strict proxy ingress credential cannot be zero");
+    }
+    Ok(())
+}
+
 fn validate_sha256(value: &str, label: &str) -> Result<()> {
     if !is_sha256(value) {
         bail!("{label} must be a 64-character SHA-256 value");
@@ -553,6 +668,7 @@ pub enum BrokerCommand {
     CommitPolicy {
         revision: u64,
         policy_digest: String,
+        ingress: StrictProxyIngressSet,
     },
     ForceBlocking {
         revision: u64,
@@ -647,11 +763,13 @@ pub fn parse_broker_request(line: &str) -> Result<BrokerRequest> {
         BrokerCommand::CommitPolicy {
             revision,
             policy_digest,
+            ingress,
         } => {
             if *revision == 0 {
                 bail!("strict policy revision must be positive");
             }
             validate_sha256(policy_digest, "strict policy digest")?;
+            ingress.validate()?;
         }
         BrokerCommand::ForceBlocking { revision } | BrokerCommand::DisablePolicy { revision } => {
             if *revision == 0 {
@@ -847,12 +965,12 @@ mod tests {
     #[test]
     fn broker_frames_require_protocol_capability_and_bounded_payloads() {
         let request = format!(
-            r#"{{"protocol":1,"requestId":"request-1","sessionCapability":"{}","command":{{"type":"status"}}}}"#,
+            r#"{{"protocol":2,"requestId":"request-1","sessionCapability":"{}","command":{{"type":"status"}}}}"#,
             hex('1')
         );
         assert!(parse_broker_request(&request).is_ok());
         assert!(
-            parse_broker_request(&request.replace("\"protocol\":1", "\"protocol\":2")).is_err()
+            parse_broker_request(&request.replace("\"protocol\":2", "\"protocol\":1")).is_err()
         );
         assert!(parse_broker_request(&request.replace(&hex('1'), "short")).is_err());
         assert!(parse_broker_request(&request.replace(
@@ -897,7 +1015,7 @@ mod tests {
     #[test]
     fn activation_frames_are_closed_bounded_and_pipe_scoped() {
         let request = format!(
-            r#"{{"protocol":1,"requestId":"activate-1","sessionCapability":"{}"}}"#,
+            r#"{{"protocol":2,"requestId":"activate-1","sessionCapability":"{}"}}"#,
             hex('1')
         );
         assert!(parse_broker_activation_request(request.as_bytes()).is_ok());
@@ -906,7 +1024,7 @@ mod tests {
                 .is_err()
         );
         let unknown = format!(
-            r#"{{"protocol":1,"requestId":"activate-1","sessionCapability":"{}","ownerSid":"S-1-5-18"}}"#,
+            r#"{{"protocol":2,"requestId":"activate-1","sessionCapability":"{}","ownerSid":"S-1-5-18"}}"#,
             hex('1')
         );
         assert!(parse_broker_activation_request(unknown.as_bytes()).is_err());
@@ -950,5 +1068,36 @@ mod tests {
         assert!(StrictPolicyEntry::proxy(app, "GLOBAL".into())
             .validate()
             .is_ok());
+    }
+
+    #[test]
+    fn strict_proxy_ingresses_are_canonical_bounded_and_debug_redacted() {
+        let global = StrictProxyIngressEntry::new(
+            "GLOBAL".into(),
+            "127.0.0.1:41001".parse().unwrap(),
+            hex('1'),
+            hex('2'),
+        )
+        .unwrap();
+        let work = StrictProxyIngressEntry::new(
+            "Work".into(),
+            "127.0.0.1:41002".parse().unwrap(),
+            hex('3'),
+            hex('4'),
+        )
+        .unwrap();
+        let ingress = StrictProxyIngressSet::new(9, vec![global.clone(), work.clone()]).unwrap();
+        assert_eq!(ingress.entries.len(), 2);
+        assert!(!format!("{ingress:?}").contains(&hex('1')));
+        assert!(StrictProxyIngressSet::new(9, vec![work, global.clone()]).is_err());
+        assert!(StrictProxyIngressSet::new(9, vec![global.clone(), global]).is_err());
+        assert!(StrictProxyIngressEntry::new(
+            "GLOBAL".into(),
+            "0.0.0.0:41001".parse().unwrap(),
+            hex('1'),
+            hex('2'),
+        )
+        .is_err());
+        assert!(StrictProxyIngressSet::empty().validate().is_ok());
     }
 }

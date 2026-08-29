@@ -8,7 +8,7 @@ use flclash_strict_broker::{
     current_process_user_sid, exchange_windows_pipe_for_agent, BrokerAuthenticator,
     WindowsNamedPipeWorkerPool, WindowsPipeDeadlines, WindowsPipeShutdown,
 };
-use flclash_strict_contract::{BrokerErrorCode, BrokerResponse};
+use flclash_strict_contract::{BrokerErrorCode, BrokerResponse, STRICT_PROTOCOL_VERSION};
 use windows_sys::Win32::Foundation::ERROR_PIPE_BUSY;
 
 fn pipe_name(label: &str) -> String {
@@ -25,7 +25,8 @@ fn pipe_name(label: &str) -> String {
 
 fn status_frame(request_id: &str) -> Vec<u8> {
     format!(
-        r#"{{"protocol":1,"requestId":"{request_id}","sessionCapability":"{}","command":{{"type":"status"}}}}"#,
+        r#"{{"protocol":{},"requestId":"{request_id}","sessionCapability":"{}","command":{{"type":"status"}}}}"#,
+        STRICT_PROTOCOL_VERSION,
         "11".repeat(32)
     )
     .into_bytes()

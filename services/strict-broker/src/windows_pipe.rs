@@ -1145,7 +1145,8 @@ mod tests {
         .unwrap();
         let server = WindowsBrokerActivationPipeInstance::create(&pipe_name, deadlines).unwrap();
         let frame = format!(
-            r#"{{"protocol":1,"requestId":"activation-test","sessionCapability":"{}"}}"#,
+            r#"{{"protocol":{},"requestId":"activation-test","sessionCapability":"{}"}}"#,
+            flclash_strict_contract::STRICT_PROTOCOL_VERSION,
             "11".repeat(32)
         )
         .into_bytes();
@@ -1184,7 +1185,8 @@ mod tests {
         .unwrap();
         let server = WindowsBrokerActivationPipeInstance::create(&pipe_name, deadlines).unwrap();
         let frame = format!(
-            r#"{{"protocol":1,"requestId":"rejected-activation","sessionCapability":"{}"}}"#,
+            r#"{{"protocol":{},"requestId":"rejected-activation","sessionCapability":"{}"}}"#,
+            flclash_strict_contract::STRICT_PROTOCOL_VERSION,
             "11".repeat(32)
         )
         .into_bytes();

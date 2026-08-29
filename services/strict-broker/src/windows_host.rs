@@ -10,7 +10,7 @@ use std::time::Duration;
 use anyhow::{bail, Context, Result};
 use flclash_strict_contract::{
     BrokerActivationErrorCode, BrokerActivationResponse, BrokerErrorCode, BrokerResponse,
-    WINDOWS_STRICT_BROKER_ACTIVATION_PIPE_NAME,
+    StrictProxyIngressSet, WINDOWS_STRICT_BROKER_ACTIVATION_PIPE_NAME,
 };
 use windows_sys::Win32::System::Com::CoTaskMemFree;
 use windows_sys::Win32::UI::Shell::{FOLDERID_ProgramData, SHGetKnownFolderPath};
@@ -171,7 +171,7 @@ impl WindowsStrictBrokerPaths {
 struct UnavailableForwardingHealth;
 
 impl ForwardingHealthProbe for UnavailableForwardingHealth {
-    fn measure(&mut self) -> Result<ForwardingHealth> {
+    fn measure(&mut self, _ingress: &StrictProxyIngressSet) -> Result<ForwardingHealth> {
         bail!("strict forwarding relay is not assembled")
     }
 }
@@ -680,7 +680,9 @@ mod tests {
 
     #[test]
     fn forwarding_health_stays_unavailable_until_the_real_relay_exists() {
-        assert!(UnavailableForwardingHealth.measure().is_err());
+        assert!(UnavailableForwardingHealth
+            .measure(&StrictProxyIngressSet::empty())
+            .is_err());
     }
 
     #[test]
