@@ -248,6 +248,18 @@ and the Agent remains `blocking`.
   recovery only; remote clients rejected.
 - Authentication: OS token/impersonation check plus a random Agent session
   capability. Both must succeed.
+- Bootstrap: a separate local-only activation pipe accepts a closed 4 KiB frame
+  containing only request ID and fresh 256-bit capability. SID and PID come
+  exclusively from the impersonated token and `GetNamedPipeClientProcessId`;
+  the interactive Session ID comes from `GetNamedPipeClientSessionId`.
+  LocalSystem and Session 0 activation are rejected. The Broker opens that PID,
+  requires the exact protected packaged Agent path, replacement-locks the image,
+  verifies embedded file/publisher digests, and retains the process handle for
+  exit detection.
+- Session: after verification, the Broker creates a CNG-random owner-only data
+  pipe with a fixed worker bound. A live Agent cannot be replaced. An exited
+  Agent can be reaped or replaced only after fail-closed backend cleanup
+  succeeds; cleanup failure preserves the prior recovery/session state.
 - Commands: `preparePolicy`, `commitPolicy`, `forceBlocking`, `disablePolicy`,
   `status`, `diagnostics`; no arbitrary command/path/registry/service API.
 - The Broker reopens and validates executable handles to prevent path-swap
