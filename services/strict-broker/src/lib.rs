@@ -7,6 +7,10 @@ use flclash_strict_contract::{
 };
 use serde::{Deserialize, Serialize};
 
+mod recovery_file;
+
+pub use recovery_file::FileRecoveryStore;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum BrokerPhase {
