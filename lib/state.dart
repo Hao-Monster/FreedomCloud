@@ -749,6 +749,10 @@ class GlobalState {
     rawConfig["rule"] = mergePerAppPolicyRules(
       perAppPolicyStore.entries,
       rules.cast<Object?>(),
+      availableTargetGroups: {
+        GroupName.GLOBAL.name,
+        ...parsedProxyGroupOrder,
+      },
     );
     return rawConfig;
   }

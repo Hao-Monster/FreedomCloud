@@ -26,11 +26,13 @@ class PerAppPolicy {
     required this.path,
     required this.name,
     required this.policy,
+    this.targetGroup,
   });
 
   final String path;
   final String name;
   final ApplicationRoutingPolicy policy;
+  final String? targetGroup;
 
   static String validatePath(String value) {
     final normalized = value.trim();
@@ -48,40 +50,78 @@ class PerAppPolicy {
     return normalized;
   }
 
+  static String validateTargetGroup(String value) {
+    final normalized = value.trim();
+    if (normalized.isEmpty ||
+        normalized.length > 256 ||
+        normalized.contains(',') ||
+        normalized.contains('\r') ||
+        normalized.contains('\n')) {
+      throw ArgumentError.value(
+        value,
+        'targetGroup',
+        'must be a non-empty policy group without commas or line breaks',
+      );
+    }
+    return normalized;
+  }
+
   Map<String, Object> toJson() => {
         'path': path,
         'name': name,
         'policy': policy.name,
+        if (policy == ApplicationRoutingPolicy.proxy)
+          'targetGroup': validateTargetGroup(targetGroup ?? 'GLOBAL'),
       };
 }
 
-List<String> compilePerAppPolicyRules(Iterable<PerAppPolicy> policies) =>
+List<String> compilePerAppPolicyRules(
+  Iterable<PerAppPolicy> policies, {
+  Set<String>? availableTargetGroups,
+}) =>
     policies
         .where((entry) => entry.policy != ApplicationRoutingPolicy.inherit)
         .map((entry) {
       final processPath = PerAppPolicy.validatePath(entry.path);
       final target = switch (entry.policy) {
-        ApplicationRoutingPolicy.proxy => 'GLOBAL',
+        ApplicationRoutingPolicy.proxy =>
+          PerAppPolicy.validateTargetGroup(entry.targetGroup ?? 'GLOBAL'),
         ApplicationRoutingPolicy.direct => 'DIRECT',
         ApplicationRoutingPolicy.block => 'REJECT',
         ApplicationRoutingPolicy.inherit => throw StateError('unreachable'),
       };
+      if (entry.policy == ApplicationRoutingPolicy.proxy &&
+          availableTargetGroups != null &&
+          !availableTargetGroups.contains(target)) {
+        throw ArgumentError.value(
+          target,
+          'targetGroup',
+          'is not present in the active profile',
+        );
+      }
       return 'PROCESS-PATH,$processPath,$target';
     }).toList(growable: false);
 
 List<Object?> mergePerAppPolicyRules(
   Iterable<PerAppPolicy> policies,
-  Iterable<Object?> profileRules,
-) =>
+  Iterable<Object?> profileRules, {
+  Set<String>? availableTargetGroups,
+}) =>
     [
-      ...compilePerAppPolicyRules(policies),
+      ...compilePerAppPolicyRules(
+        policies,
+        availableTargetGroups: availableTargetGroups,
+      ),
       ...profileRules,
     ];
 
 List<PerAppPolicy> decodePerAppPolicies(Object? value) {
-  if (value is! Map || value['version'] != 1 || value['entries'] is! List) {
+  if (value is! Map ||
+      (value['version'] != 1 && value['version'] != 2) ||
+      value['entries'] is! List) {
     return const [];
   }
+  final version = value['version'] as int;
   final decoded = <PerAppPolicy>[];
   for (final raw in value['entries'] as List) {
     if (raw is! Map) continue;
@@ -90,6 +130,11 @@ List<PerAppPolicy> decodePerAppPolicies(Object? value) {
       final policy = ApplicationRoutingPolicy.values.byName(
         raw['policy'] as String,
       );
+      final targetGroup = policy == ApplicationRoutingPolicy.proxy
+          ? version == 1
+              ? 'GLOBAL'
+              : PerAppPolicy.validateTargetGroup(raw['targetGroup'] as String)
+          : null;
       final rawName = raw['name'];
       final name = rawName is String && rawName.trim().isNotEmpty
           ? rawName.trim()
@@ -99,6 +144,7 @@ List<PerAppPolicy> decodePerAppPolicies(Object? value) {
           path: processPath,
           name: name.length > 256 ? name.substring(0, 256) : name,
           policy: policy,
+          targetGroup: targetGroup,
         ),
       );
     } catch (_) {
@@ -121,12 +167,15 @@ class PerAppPolicyStore extends ChangeNotifier {
   ApplicationRoutingPolicy policyFor(String processPath) =>
       _entries[_key(processPath)]?.policy ?? ApplicationRoutingPolicy.inherit;
 
+  PerAppPolicy? entryFor(String processPath) => _entries[_key(processPath)];
+
   Future<void> ensureLoaded() => _loading ??= _load();
 
   Future<void> setPolicy({
     required String processPath,
     required String name,
     required ApplicationRoutingPolicy policy,
+    String? targetGroup,
   }) async {
     await ensureLoaded();
     final validatedPath = PerAppPolicy.validatePath(processPath);
@@ -136,12 +185,16 @@ class PerAppPolicyStore extends ChangeNotifier {
     if (policy != ApplicationRoutingPolicy.inherit) {
       final candidateName =
           name.trim().isEmpty ? path.basename(validatedPath) : name.trim();
+      final validatedTarget = policy == ApplicationRoutingPolicy.proxy
+          ? PerAppPolicy.validateTargetGroup(targetGroup ?? 'GLOBAL')
+          : null;
       next[key] = PerAppPolicy(
         path: validatedPath,
         name: candidateName.length > 256
             ? candidateName.substring(0, 256)
             : candidateName,
         policy: policy,
+        targetGroup: validatedTarget,
       );
       while (next.length > maxPerAppPolicies) {
         next.remove(next.keys.first);
@@ -178,7 +231,7 @@ class PerAppPolicyStore extends ChangeNotifier {
     final file = await _policyFile();
     await file.parent.create(recursive: true);
     final content = jsonEncode({
-      'version': 1,
+      'version': 2,
       'entries': entries.map((entry) => entry.toJson()).toList(growable: false),
     });
     final pending = File('${file.path}.pending');
