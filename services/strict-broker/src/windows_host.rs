@@ -73,6 +73,7 @@ struct EngineActor {
 
 trait EngineRuntime {
     fn dispatch(&mut self, request: AuthorizedBrokerRequest) -> BrokerResponse;
+    fn verify_health(&mut self) -> Result<()>;
     fn force_fail_closed(&mut self) -> Result<()>;
 }
 
@@ -332,7 +333,12 @@ impl EngineRuntime for ProductionDispatcher {
         BrokerDispatcher::dispatch(self, request)
     }
 
+    fn verify_health(&mut self) -> Result<()> {
+        self.health_probe_mut().verify_active()
+    }
+
     fn force_fail_closed(&mut self) -> Result<()> {
+        let prepare = self.health_probe_mut().prepare_deactivation();
         let revoke = self
             .engine_mut()
             .backend_mut()
@@ -342,16 +348,20 @@ impl EngineRuntime for ProductionDispatcher {
             .map(|_| ());
         let deactivate = self.health_probe_mut().deactivate();
         let block = self.engine_mut().force_blocking_if_active().map(|_| ());
-        combine_fail_closed_results(revoke, deactivate, block)
+        combine_fail_closed_results(prepare, revoke, deactivate, block)
     }
 }
 
 fn combine_fail_closed_results(
+    prepare: Result<()>,
     revoke: Result<()>,
     deactivate: Result<()>,
     block: Result<()>,
 ) -> Result<()> {
     let mut failures = Vec::new();
+    if let Err(error) = prepare {
+        failures.push(format!("prepare forwarding teardown failed: {error:#}"));
+    }
     if let Err(error) = revoke {
         failures.push(format!("revoke endpoint lease failed: {error:#}"));
     }
@@ -482,6 +492,15 @@ fn run_engine_actor<R: EngineRuntime>(
     control: Receiver<EngineControl>,
 ) -> Result<()> {
     loop {
+        if let Err(health) = dispatcher.verify_health() {
+            let cleanup = dispatcher.force_fail_closed();
+            return match cleanup {
+                Ok(()) => Err(health).context("strict forwarding runtime became unhealthy"),
+                Err(cleanup) => Err(anyhow::anyhow!(
+                    "strict forwarding runtime became unhealthy: {health:#}; fail-closed cleanup failed: {cleanup:#}"
+                )),
+            };
+        }
         match control.try_recv() {
             Ok(EngineControl::ForceFailClosed(response)) => {
                 send_result(response, dispatcher.force_fail_closed());
@@ -615,6 +634,26 @@ mod tests {
         dispatches: usize,
     }
 
+    struct FailingHealthRuntime {
+        events: SyncSender<&'static str>,
+    }
+
+    impl EngineRuntime for FailingHealthRuntime {
+        fn dispatch(&mut self, _request: AuthorizedBrokerRequest) -> BrokerResponse {
+            panic!("an unhealthy runtime must fail closed before dispatch")
+        }
+
+        fn verify_health(&mut self) -> Result<()> {
+            self.events.send("health-failed").unwrap();
+            bail!("injected forwarding failure")
+        }
+
+        fn force_fail_closed(&mut self) -> Result<()> {
+            self.events.send("force-fail-closed").unwrap();
+            Ok(())
+        }
+    }
+
     impl EngineRuntime for FakeRuntime {
         fn dispatch(&mut self, request: AuthorizedBrokerRequest) -> BrokerResponse {
             self.dispatches += 1;
@@ -633,6 +672,10 @@ mod tests {
                 BrokerErrorCode::BackendUnavailable,
             )
             .unwrap()
+        }
+
+        fn verify_health(&mut self) -> Result<()> {
+            Ok(())
         }
 
         fn force_fail_closed(&mut self) -> Result<()> {
@@ -694,14 +737,16 @@ mod tests {
 
     #[test]
     fn fail_closed_combiner_preserves_every_cleanup_failure() {
-        assert!(combine_fail_closed_results(Ok(()), Ok(()), Ok(())).is_ok());
+        assert!(combine_fail_closed_results(Ok(()), Ok(()), Ok(()), Ok(())).is_ok());
         let error = combine_fail_closed_results(
+            Err(anyhow::anyhow!("prepare")),
             Err(anyhow::anyhow!("lease")),
             Err(anyhow::anyhow!("runtime")),
             Err(anyhow::anyhow!("filters")),
         )
         .unwrap_err()
         .to_string();
+        assert!(error.contains("prepare"));
         assert!(error.contains("lease"));
         assert!(error.contains("runtime"));
         assert!(error.contains("filters"));
@@ -754,5 +799,21 @@ mod tests {
             .unwrap();
         shutdown_rx.recv().unwrap().unwrap();
         worker.join().unwrap().unwrap();
+    }
+
+    #[test]
+    fn engine_health_failure_forces_blocking_before_the_actor_exits() {
+        let (_dispatch_tx, dispatch_rx) = mpsc::sync_channel(1);
+        let (_control_tx, control_rx) = mpsc::sync_channel(1);
+        let (event_tx, event_rx) = mpsc::sync_channel(2);
+        let mut runtime = FailingHealthRuntime { events: event_tx };
+
+        let error = run_engine_actor(&mut runtime, dispatch_rx, control_rx)
+            .unwrap_err()
+            .to_string();
+
+        assert!(error.contains("strict forwarding runtime became unhealthy"));
+        assert_eq!(event_rx.recv().unwrap(), "health-failed");
+        assert_eq!(event_rx.recv().unwrap(), "force-fail-closed");
     }
 }

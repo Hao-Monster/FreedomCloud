@@ -19,6 +19,18 @@ pub trait ForwardingHealthProbe {
         ingress: &StrictProxyIngressSet,
     ) -> Result<ForwardingHealth>;
 
+    /// Checks only already-owned runtime state. It must not perform network I/O
+    /// or allocate on the engine actor's periodic supervision path.
+    fn verify_active(&mut self) -> Result<()> {
+        Ok(())
+    }
+
+    /// Marks a pending teardown before an external gate/lease revocation can
+    /// complete a queued receive with a cancellation status.
+    fn prepare_deactivation(&mut self) -> Result<()> {
+        Ok(())
+    }
+
     /// Revokes forwarding admission before listener resources are released.
     /// Implementations must be bounded and idempotent.
     fn deactivate(&mut self) -> Result<()>;

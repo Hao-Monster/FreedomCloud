@@ -7,6 +7,8 @@ use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
 use std::path::Path;
 use std::ptr::{null, null_mut};
 use std::sync::atomic::{AtomicBool, Ordering};
+#[cfg(any(test, feature = "production-host"))]
+use std::sync::mpsc::SyncSender;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
@@ -244,6 +246,19 @@ impl WindowsEndpointLease {
         encode_v6_endpoint(&mut output[132..132 + ENDPOINT_BYTES], self.udp_v6);
         output
     }
+
+    #[cfg(feature = "production-host")]
+    pub(crate) fn datagram_identity(
+        &self,
+        lease_generation: u64,
+    ) -> Result<crate::StrictDriverDatagramLeaseIdentity> {
+        crate::StrictDriverDatagramLeaseIdentity::new(
+            lease_generation,
+            self.revision,
+            self.policy_digest,
+            self.nonce,
+        )
+    }
 }
 
 pub struct WindowsIoctlDriverChannel {
@@ -308,6 +323,7 @@ impl WindowsSharedIoctlDriverChannel {
         output: &mut [u8],
         deadline: WindowsDriverIoctlDeadline,
         cancellation: &WindowsDriverIoctlCancellation,
+        ready: Option<&SyncSender<()>>,
     ) -> Result<Option<usize>> {
         validate_datagram_receive_capacity(output.len())?;
         let result = run_overlapped_ioctl_until(
@@ -317,6 +333,7 @@ impl WindowsSharedIoctlDriverChannel {
             output,
             deadline.0,
             cancellation,
+            ready,
         );
         match result {
             Ok(transferred) => {
@@ -461,8 +478,8 @@ impl WindowsIoctlDriverChannel {
 
     pub fn revoke_endpoint_lease(&self) -> Result<WindowsDriverPolicySnapshot> {
         let snapshot = self.issue(IOCTL_REVOKE_LEASE, &[])?;
-        if snapshot.endpoint_lease.is_some() {
-            bail!("strict driver retained endpoint lease state after revocation");
+        if snapshot.endpoint_lease.is_some() || snapshot.datagram_path_active {
+            bail!("strict driver retained endpoint lease or datagram admission after revocation");
         }
         Ok(snapshot)
     }
@@ -828,6 +845,7 @@ fn run_overlapped_ioctl_until(
     output: &mut [u8],
     timeout: Duration,
     cancellation: &WindowsDriverIoctlCancellation,
+    ready: Option<&SyncSender<()>>,
 ) -> Result<u32> {
     WindowsDriverIoctlDeadline::new(timeout)?;
     if cancellation.is_requested() {
@@ -864,11 +882,17 @@ fn run_overlapped_ioctl_until(
         )
     };
     if result != 0 {
+        if let Some(ready) = ready {
+            let _ = ready.try_send(());
+        }
         return Ok(immediate_bytes);
     }
     let error = io::Error::last_os_error();
     if error.raw_os_error() != Some(ERROR_IO_PENDING as i32) {
         return Err(error).context("start strict driver IOCTL");
+    }
+    if let Some(ready) = ready {
+        let _ = ready.try_send(());
     }
 
     let handles = [
@@ -1583,6 +1607,45 @@ mod tests {
         assert!(
             submit < snapshot,
             "Direct-I/O submission must precede snapshot output retrieval"
+        );
+
+        let receive_body = driver
+            .split("FcxQueueDatagramReceive(")
+            .nth(1)
+            .and_then(|body| body.split("FcxValidateSubmittedDatagramRecord(").next())
+            .expect("datagram receive function is present");
+        assert!(
+            receive_body.contains("FcxLeaseOwnsRequest(Request, NULL)")
+                && !receive_body.contains("FcxDatagramPathOwnsRequest(Request, NULL)")
+                && receive_body
+                    .find("ExAcquireFastMutex(&FcxLeaseMutationLock)")
+                    .unwrap()
+                    < receive_body
+                        .find("FcxLeaseOwnsRequest(Request, NULL)")
+                        .unwrap()
+                && receive_body
+                    .find("WdfIoQueueStart(FcxDatagramReceiveQueue)")
+                    .unwrap()
+                    < receive_body
+                        .find("WdfRequestForwardToIoQueue(Request, FcxDatagramReceiveQueue)")
+                        .unwrap()
+                && receive_body
+                    .find("WdfRequestForwardToIoQueue(Request, FcxDatagramReceiveQueue)")
+                    .unwrap()
+                    < receive_body
+                        .find("ExReleaseFastMutex(&FcxLeaseMutationLock)")
+                        .unwrap(),
+            "the lease owner must be able to pre-arm one bounded receive while admission is closed"
+        );
+
+        let reply_body = driver
+            .split("FcxValidateSubmittedDatagramBatch(")
+            .nth(1)
+            .and_then(|body| body.split("FcxFillDriverSnapshot(").next())
+            .expect("datagram reply submission function is present");
+        assert!(
+            reply_body.contains("FcxDatagramPathOwnsRequest(Request, &batch)"),
+            "reply submission must remain impossible until datagram admission is open"
         );
 
         let activation = driver

@@ -2513,8 +2513,13 @@ FcxQueueDatagramReceive(
         OutputBufferLength != FCX_STRICT_DATAGRAM_MAX_BATCH_BYTES) {
         return STATUS_INVALID_BUFFER_SIZE;
     }
-    if (!FcxDatagramPathOwnsRequest(Request, NULL)) {
-        return STATUS_ACCESS_DENIED;
+    ExAcquireFastMutex(&FcxLeaseMutationLock);
+    /* One lease-owned request may be pinned before admission opens so the
+       Broker can prove its bounded receive path is ready first. Reply IOCTLs
+       continue to require FcxDatagramPathOwnsRequest. */
+    if (!FcxLeaseOwnsRequest(Request, NULL)) {
+        status = STATUS_ACCESS_DENIED;
+        goto Exit;
     }
     status = WdfRequestRetrieveOutputBuffer(
         Request,
@@ -2522,18 +2527,28 @@ FcxQueueDatagramReceive(
         &output,
         &outputBytes);
     if (!NT_SUCCESS(status)) {
-        return status;
+        goto Exit;
     }
     if (output == NULL || outputBytes != OutputBufferLength) {
-        return STATUS_INVALID_BUFFER_SIZE;
+        status = STATUS_INVALID_BUFFER_SIZE;
+        goto Exit;
     }
+    /* Deactivation purges and stops the manual queue. Re-start it while the
+       gate remains closed so a renewed lease can pre-arm the next bounded
+       request before admission is opened again. */
+    WdfIoQueueStart(FcxDatagramReceiveQueue);
     (VOID)WdfIoQueueGetState(FcxDatagramReceiveQueue,
                              &queuedRequests,
                              &driverRequests);
     if (queuedRequests != 0 || driverRequests != 0) {
-        return STATUS_DEVICE_BUSY;
+        status = STATUS_DEVICE_BUSY;
+        goto Exit;
     }
-    return WdfRequestForwardToIoQueue(Request, FcxDatagramReceiveQueue);
+    status = WdfRequestForwardToIoQueue(Request, FcxDatagramReceiveQueue);
+
+Exit:
+    ExReleaseFastMutex(&FcxLeaseMutationLock);
+    return status;
 }
 
 static

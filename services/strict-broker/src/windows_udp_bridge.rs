@@ -23,6 +23,7 @@ const DRIVER_BATCH_BUFFER_COUNT: usize = 2;
 const DRIVER_RECEIVE_DEADLINE: Duration = Duration::from_secs(300);
 const DRIVER_SUBMIT_DEADLINE: Duration = Duration::from_secs(1);
 const DRIVER_HEALTH_POLL_INTERVAL: Duration = Duration::from_millis(100);
+const DRIVER_RECEIVE_READY_TIMEOUT: Duration = Duration::from_secs(1);
 const BRIDGE_WAIT_SLICE: Duration = Duration::from_millis(100);
 const BRIDGE_THREAD_STACK_BYTES: usize = 512 * 1024;
 
@@ -268,6 +269,7 @@ pub trait StrictDriverDatagramIo: Send + Sync {
         output: &mut [u8],
         deadline: WindowsDriverIoctlDeadline,
         cancellation: &WindowsDriverIoctlCancellation,
+        ready: Option<&SyncSender<()>>,
     ) -> Result<Option<usize>>;
 
     fn submit_reply(&self, input: &mut [u8], deadline: WindowsDriverIoctlDeadline) -> Result<()>;
@@ -281,8 +283,9 @@ impl StrictDriverDatagramIo for WindowsSharedIoctlDriverChannel {
         output: &mut [u8],
         deadline: WindowsDriverIoctlDeadline,
         cancellation: &WindowsDriverIoctlCancellation,
+        ready: Option<&SyncSender<()>>,
     ) -> Result<Option<usize>> {
-        self.receive_datagram_batch_until(output, deadline, cancellation)
+        self.receive_datagram_batch_until(output, deadline, cancellation, ready)
     }
 
     fn submit_reply(&self, input: &mut [u8], deadline: WindowsDriverIoctlDeadline) -> Result<()> {
@@ -374,6 +377,13 @@ struct CapturedDriverBatch {
     bytes: usize,
 }
 
+struct DriverReceiverControl {
+    shutdown: WindowsPipeShutdown,
+    cancellation: WindowsDriverIoctlCancellation,
+    gate_revoking: Arc<AtomicBool>,
+    ready: SyncSender<()>,
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct WindowsUdpBridgeReport {
     pub captured_batches: u64,
@@ -386,6 +396,7 @@ pub struct WindowsUdpBridgeRuntime {
     shutdown: WindowsPipeShutdown,
     driver_cancellation: WindowsDriverIoctlCancellation,
     alive: Arc<AtomicBool>,
+    gate_revoking: Arc<AtomicBool>,
     receiver_worker: Option<JoinHandle<Result<()>>>,
     bridge_worker: Option<JoinHandle<Result<WindowsUdpBridgeReport>>>,
 }
@@ -395,7 +406,12 @@ impl WindowsUdpBridgeRuntime {
         self.alive.load(Ordering::Acquire)
     }
 
+    pub fn prepare_gate_revocation(&self) {
+        self.gate_revoking.store(true, Ordering::Release);
+    }
+
     pub fn stop(mut self) -> Result<WindowsUdpBridgeReport> {
+        self.prepare_gate_revocation();
         self.shutdown.request();
         let cancellation = self.driver_cancellation.request();
         let receiver = join_bridge_worker(self.receiver_worker.take(), "driver datagram receiver");
@@ -414,6 +430,7 @@ impl WindowsUdpBridgeRuntime {
 
 impl Drop for WindowsUdpBridgeRuntime {
     fn drop(&mut self) {
+        self.prepare_gate_revocation();
         self.shutdown.request();
         let _ = self.driver_cancellation.request();
         let _ = join_bridge_worker(self.receiver_worker.take(), "driver datagram receiver");
@@ -447,6 +464,7 @@ where
     let shutdown = WindowsPipeShutdown::new();
     let driver_cancellation = WindowsDriverIoctlCancellation::new()?;
     let alive = Arc::new(AtomicBool::new(true));
+    let gate_revoking = Arc::new(AtomicBool::new(false));
     let (free_sender, free_receiver) = mpsc::sync_channel(DRIVER_BATCH_BUFFER_COUNT);
     let (captured_sender, captured_receiver) = mpsc::sync_channel(DRIVER_BATCH_BUFFER_COUNT);
     for _ in 0..DRIVER_BATCH_BUFFER_COUNT {
@@ -460,6 +478,14 @@ where
     let receiver_driver = Arc::clone(&driver);
     let receiver_free_sender = free_sender.clone();
     let receiver_cancellation = driver_cancellation.clone();
+    let receiver_gate_revoking = Arc::clone(&gate_revoking);
+    let (receiver_ready_sender, receiver_ready) = mpsc::sync_channel(1);
+    let receiver_control = DriverReceiverControl {
+        shutdown: receiver_shutdown.clone(),
+        cancellation: receiver_cancellation.clone(),
+        gate_revoking: receiver_gate_revoking,
+        ready: receiver_ready_sender,
+    };
     let receiver_worker = thread::Builder::new()
         .name("flclash-strict-driver-udp".into())
         .stack_size(BRIDGE_THREAD_STACK_BYTES)
@@ -469,9 +495,8 @@ where
                 free_receiver,
                 receiver_free_sender,
                 captured_sender,
-                &receiver_shutdown,
                 receive_deadline,
-                &receiver_cancellation,
+                receiver_control,
             );
             if result.is_err() {
                 receiver_alive.store(false, Ordering::Release);
@@ -481,6 +506,24 @@ where
             result
         })
         .context("start strict driver datagram receiver")?;
+
+    if receiver_ready
+        .recv_timeout(DRIVER_RECEIVE_READY_TIMEOUT)
+        .is_err()
+    {
+        shutdown.request();
+        gate_revoking.store(true, Ordering::Release);
+        let _ = driver_cancellation.request();
+        let receiver = receiver_worker
+            .join()
+            .map_err(|_| anyhow::anyhow!("strict driver datagram receiver panicked"))?;
+        return match receiver {
+            Ok(()) => Err(anyhow::anyhow!(
+                "strict driver datagram receive was not pre-armed"
+            )),
+            Err(error) => Err(error).context("pre-arm strict driver datagram receive"),
+        };
+    }
 
     let bridge_shutdown = shutdown.clone();
     let bridge_alive = Arc::clone(&alive);
@@ -523,6 +566,7 @@ where
         shutdown,
         driver_cancellation,
         alive,
+        gate_revoking,
         receiver_worker: Some(receiver_worker),
         bridge_worker: Some(bridge_worker),
     })
@@ -533,23 +577,34 @@ fn run_driver_receiver<D: StrictDriverDatagramIo + 'static>(
     free_receiver: Receiver<Box<[u8]>>,
     free_sender: SyncSender<Box<[u8]>>,
     captured_sender: SyncSender<CapturedDriverBatch>,
-    shutdown: &WindowsPipeShutdown,
     deadline: WindowsDriverIoctlDeadline,
-    cancellation: &WindowsDriverIoctlCancellation,
+    control: DriverReceiverControl,
 ) -> Result<()> {
-    while !shutdown.is_requested() {
+    let mut ready = Some(control.ready);
+    while !control.shutdown.is_requested() {
         let mut storage = match free_receiver.recv_timeout(BRIDGE_WAIT_SLICE) {
             Ok(storage) => storage,
             Err(RecvTimeoutError::Timeout) => continue,
-            Err(RecvTimeoutError::Disconnected) if shutdown.is_requested() => return Ok(()),
+            Err(RecvTimeoutError::Disconnected) if control.shutdown.is_requested() => return Ok(()),
             Err(RecvTimeoutError::Disconnected) => {
                 bail!("strict driver datagram buffer pool disconnected")
             }
         };
-        let bytes = match driver.poll_captured(&mut storage, deadline, cancellation)? {
-            Some(bytes) => bytes,
-            None if cancellation.is_requested() || shutdown.is_requested() => return Ok(()),
-            None => {
+        let polled = driver.poll_captured(
+            &mut storage,
+            deadline,
+            &control.cancellation,
+            ready.as_ref(),
+        );
+        ready = None;
+        let bytes = match polled {
+            Err(_) if control.gate_revoking.load(Ordering::Acquire) => return Ok(()),
+            Err(error) => return Err(error),
+            Ok(Some(bytes)) => bytes,
+            Ok(None) if control.cancellation.is_requested() || control.shutdown.is_requested() => {
+                return Ok(())
+            }
+            Ok(None) => {
                 free_sender
                     .try_send(storage)
                     .map_err(|_| anyhow::anyhow!("return idle strict driver datagram buffer"))?;
@@ -561,7 +616,7 @@ fn run_driver_receiver<D: StrictDriverDatagramIo + 'static>(
             Err(TrySendError::Full(_)) => {
                 bail!("strict driver datagram bridge queue is saturated")
             }
-            Err(TrySendError::Disconnected(_)) if shutdown.is_requested() => return Ok(()),
+            Err(TrySendError::Disconnected(_)) if control.shutdown.is_requested() => return Ok(()),
             Err(TrySendError::Disconnected(_)) => {
                 bail!("strict driver datagram bridge disconnected")
             }
@@ -891,9 +946,13 @@ mod tests {
             output: &mut [u8],
             _deadline: WindowsDriverIoctlDeadline,
             cancellation: &WindowsDriverIoctlCancellation,
+            ready: Option<&SyncSender<()>>,
         ) -> Result<Option<usize>> {
             if cancellation.is_requested() {
                 return Ok(None);
+            }
+            if let Some(ready) = ready {
+                let _ = ready.try_send(());
             }
             match self
                 .captured
