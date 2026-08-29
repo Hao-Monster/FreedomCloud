@@ -16,6 +16,8 @@ mod wfp_plan;
 mod windows_identity;
 #[cfg(windows)]
 mod windows_pipe;
+#[cfg(windows)]
+mod windows_recovery_acl;
 
 pub use dispatch::{BrokerDispatcher, ForwardingHealthProbe};
 pub use ipc_auth::{AuthorizedBrokerRequest, BrokerAuthenticator, ClientPrincipal, ClientRole};
@@ -35,6 +37,8 @@ pub use windows_pipe::{
     current_process_user_sid, exchange_windows_pipe_for_agent, WindowsAuthenticatedRequest,
     WindowsNamedPipeInstance,
 };
+#[cfg(windows)]
+pub use windows_recovery_acl::WindowsRecoveryAclVerifier;
 
 pub const MAX_VERIFIED_APP_ID_BYTES: usize = 4 * 1024;
 const MAX_VERIFIED_POLICY_APP_ID_BYTES: usize = 2 * 1024 * 1024;
