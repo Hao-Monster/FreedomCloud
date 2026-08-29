@@ -17,13 +17,14 @@ use windows_sys::Win32::UI::Shell::{FOLDERID_ProgramData, SHGetKnownFolderPath};
 
 use crate::windows_pipe::is_connect_deadline;
 use crate::{
-    run_windows_scm_service, verify_windows_packaged_agent_image, AuthorizedBrokerRequest,
-    BrokerDispatcher, BrokerEngine, BrokerSessionRegistry, BrokerSessionResource,
-    FileRecoveryStore, ForwardingHealth, ForwardingHealthProbe, PlannedWfpBackend,
-    StrictPackageManifest, WfpPolicyPlan, WindowsAgentImageTrustLease,
-    WindowsBrokerActivationAttempt, WindowsBrokerActivationPipeInstance, WindowsBrokerPipeSession,
-    WindowsIdentityVerifier, WindowsIoctlDriverChannel, WindowsPipeDeadlines, WindowsPipeShutdown,
-    WindowsScmContext, WindowsWfpControl, WindowsWfpEngineStore,
+    run_windows_scm_service, verify_windows_packaged_agent_image,
+    verify_windows_packaged_core_image, AuthorizedBrokerRequest, BrokerDispatcher, BrokerEngine,
+    BrokerSessionRegistry, BrokerSessionResource, FileRecoveryStore, ForwardingHealth,
+    ForwardingHealthProbe, PlannedWfpBackend, StrictPackageManifest, WfpPolicyPlan,
+    WindowsAgentImageTrustLease, WindowsBrokerActivationAttempt,
+    WindowsBrokerActivationPipeInstance, WindowsBrokerPipeSession, WindowsIdentityVerifier,
+    WindowsIoctlDriverChannel, WindowsPipeDeadlines, WindowsPipeShutdown, WindowsScmContext,
+    WindowsWfpControl, WindowsWfpEngineStore,
 };
 
 const BROKER_SERVICE_NAME: &str = "FlClashStrictBroker";
@@ -204,6 +205,8 @@ fn run_service(
     )?;
     let agent_image = verify_windows_packaged_agent_image(paths.agent(), &package)
         .context("open and attest packaged strict Agent")?;
+    let _core_image = verify_windows_packaged_core_image(paths.core(), &package)
+        .context("open and attest packaged strict Core")?;
     let mut engine = EngineActor::start(paths.clone(), package.clone())?;
     if let Err(error) = context.report_running() {
         return combine_service_results(Err(error), engine.shutdown());

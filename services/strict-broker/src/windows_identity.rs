@@ -52,6 +52,7 @@ const MAX_CATALOG_HASH_BYTES: u32 = 128;
 const MAX_MATCHING_CATALOGS: usize = 32;
 const MAX_DRIVER_FILE_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_AGENT_FILE_BYTES: u64 = 256 * 1024 * 1024;
+const MAX_CORE_FILE_BYTES: u64 = 256 * 1024 * 1024;
 const MAX_PROCESS_IMAGE_PATH_UNITS: usize = 32_768;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -75,18 +76,34 @@ pub struct WindowsDriverTrustLease {
     _file: File,
 }
 
-pub struct WindowsAgentImageTrustLease {
+struct WindowsPackagedImageTrustLease {
     canonical_path: String,
     file_sha256: String,
     publisher_certificate_sha256: String,
     file: Arc<File>,
 }
 
-pub struct WindowsAgentProcessTrustLease {
+pub struct WindowsAgentImageTrustLease {
+    inner: WindowsPackagedImageTrustLease,
+}
+
+pub struct WindowsCoreImageTrustLease {
+    inner: WindowsPackagedImageTrustLease,
+}
+
+struct WindowsPackagedProcessTrustLease {
     process_id: u32,
     canonical_path: String,
     _process: OwnedHandle,
     _file: Arc<File>,
+}
+
+pub struct WindowsAgentProcessTrustLease {
+    inner: WindowsPackagedProcessTrustLease,
+}
+
+pub struct WindowsCoreProcessTrustLease {
+    inner: WindowsPackagedProcessTrustLease,
 }
 
 impl WindowsDriverTrustLease {
@@ -105,35 +122,70 @@ impl WindowsDriverTrustLease {
 
 impl WindowsAgentProcessTrustLease {
     pub fn process_id(&self) -> u32 {
-        self.process_id
+        self.inner.process_id
     }
 
     pub fn canonical_path(&self) -> &str {
-        &self.canonical_path
+        &self.inner.canonical_path
     }
 
     pub fn is_running(&self) -> Result<bool> {
+        self.inner.is_running("Agent")
+    }
+}
+
+impl WindowsCoreProcessTrustLease {
+    pub fn process_id(&self) -> u32 {
+        self.inner.process_id
+    }
+
+    pub fn canonical_path(&self) -> &str {
+        &self.inner.canonical_path
+    }
+
+    pub fn is_running(&self) -> Result<bool> {
+        self.inner.is_running("Core")
+    }
+}
+
+impl WindowsPackagedProcessTrustLease {
+    fn is_running(&self, label: &str) -> Result<bool> {
         // SAFETY: the process handle is live and has SYNCHRONIZE access.
         match unsafe { WaitForSingleObject(self._process.as_raw_handle(), 0) } {
             WAIT_TIMEOUT => Ok(true),
             WAIT_OBJECT_0 => Ok(false),
-            WAIT_FAILED => Err(io::Error::last_os_error()).context("query trusted Agent process"),
-            status => bail!("query trusted Agent process returned status 0x{status:08x}"),
+            WAIT_FAILED => Err(io::Error::last_os_error())
+                .with_context(|| format!("query trusted {label} process")),
+            status => bail!("query trusted {label} process returned status 0x{status:08x}"),
         }
     }
 }
 
 impl WindowsAgentImageTrustLease {
     pub fn canonical_path(&self) -> &str {
-        &self.canonical_path
+        &self.inner.canonical_path
     }
 
     pub fn publisher_certificate_sha256(&self) -> &str {
-        &self.publisher_certificate_sha256
+        &self.inner.publisher_certificate_sha256
     }
 
     pub fn file_sha256(&self) -> &str {
-        &self.file_sha256
+        &self.inner.file_sha256
+    }
+}
+
+impl WindowsCoreImageTrustLease {
+    pub fn canonical_path(&self) -> &str {
+        &self.inner.canonical_path
+    }
+
+    pub fn publisher_certificate_sha256(&self) -> &str {
+        &self.inner.publisher_certificate_sha256
+    }
+
+    pub fn file_sha256(&self) -> &str {
+        &self.inner.file_sha256
     }
 }
 
@@ -251,9 +303,6 @@ pub fn verify_windows_packaged_agent_process(
     expected_agent_path: impl AsRef<Path>,
     package: &StrictPackageManifest,
 ) -> Result<WindowsAgentProcessTrustLease> {
-    if process_id == 0 {
-        bail!("strict Agent process ID is invalid");
-    }
     let image = verify_windows_packaged_agent_image(expected_agent_path, package)?;
     verify_windows_packaged_agent_process_with_image(process_id, &image)
 }
@@ -262,33 +311,74 @@ pub fn verify_windows_packaged_agent_image(
     expected_agent_path: impl AsRef<Path>,
     package: &StrictPackageManifest,
 ) -> Result<WindowsAgentImageTrustLease> {
-    let (canonical_path, handle) =
-        open_and_lock_plain_file(expected_agent_path.as_ref(), "strict packaged Agent")?;
+    Ok(WindowsAgentImageTrustLease {
+        inner: verify_windows_packaged_image(
+            expected_agent_path.as_ref(),
+            package.agent_file_sha256(),
+            package.agent_publisher_certificate_sha256(),
+            "Agent",
+            MAX_AGENT_FILE_BYTES,
+        )?,
+    })
+}
+
+pub fn verify_windows_packaged_core_process(
+    process_id: u32,
+    expected_core_path: impl AsRef<Path>,
+    package: &StrictPackageManifest,
+) -> Result<WindowsCoreProcessTrustLease> {
+    let image = verify_windows_packaged_core_image(expected_core_path, package)?;
+    verify_windows_packaged_core_process_with_image(process_id, &image)
+}
+
+pub fn verify_windows_packaged_core_image(
+    expected_core_path: impl AsRef<Path>,
+    package: &StrictPackageManifest,
+) -> Result<WindowsCoreImageTrustLease> {
+    Ok(WindowsCoreImageTrustLease {
+        inner: verify_windows_packaged_image(
+            expected_core_path.as_ref(),
+            package.core_file_sha256(),
+            package.core_publisher_certificate_sha256(),
+            "Core",
+            MAX_CORE_FILE_BYTES,
+        )?,
+    })
+}
+
+fn verify_windows_packaged_image(
+    expected_path: &Path,
+    expected_file_sha256: &str,
+    expected_publisher_certificate_sha256: &str,
+    label: &str,
+    maximum_bytes: u64,
+) -> Result<WindowsPackagedImageTrustLease> {
+    let package_label = format!("strict packaged {label}");
+    let (canonical_path, handle) = open_and_lock_plain_file(expected_path, &package_label)?;
     if canonical_path.len() > 1024
         || !canonical_path.to_ascii_lowercase().ends_with(".exe")
         || canonical_path.contains(['\0', '\r', '\n', '/'])
     {
-        bail!("strict Agent package path is invalid");
+        bail!("strict {label} package path is invalid");
     }
     let mut file = File::from(handle);
-    let file_sha256 = hash_locked_file(&mut file, "strict Agent", MAX_AGENT_FILE_BYTES)?;
-    validate_sha256(package.agent_file_sha256(), "strict Agent file digest")?;
-    if !file_sha256.eq_ignore_ascii_case(package.agent_file_sha256()) {
-        bail!("strict Agent file digest does not match the package");
+    let strict_label = format!("strict {label}");
+    let file_sha256 = hash_locked_file(&mut file, &strict_label, maximum_bytes)?;
+    validate_sha256(expected_file_sha256, &format!("strict {label} file digest"))?;
+    if !file_sha256.eq_ignore_ascii_case(expected_file_sha256) {
+        bail!("strict {label} file digest does not match the package");
     }
     validate_sha256(
-        package.agent_publisher_certificate_sha256(),
-        "strict Agent publisher certificate digest",
+        expected_publisher_certificate_sha256,
+        &format!("strict {label} publisher certificate digest"),
     )?;
     let publisher_certificate_sha256 =
         authenticode_publisher_digest(file.as_raw_handle(), &canonical_path)
-            .context("verify strict Agent Authenticode signer")?;
-    if !publisher_certificate_sha256
-        .eq_ignore_ascii_case(package.agent_publisher_certificate_sha256())
-    {
-        bail!("strict Agent publisher does not match the package");
+            .with_context(|| format!("verify strict {label} Authenticode signer"))?;
+    if !publisher_certificate_sha256.eq_ignore_ascii_case(expected_publisher_certificate_sha256) {
+        bail!("strict {label} publisher does not match the package");
     }
-    Ok(WindowsAgentImageTrustLease {
+    Ok(WindowsPackagedImageTrustLease {
         canonical_path,
         file_sha256,
         publisher_certificate_sha256,
@@ -300,10 +390,29 @@ pub fn verify_windows_packaged_agent_process_with_image(
     process_id: u32,
     image: &WindowsAgentImageTrustLease,
 ) -> Result<WindowsAgentProcessTrustLease> {
+    Ok(WindowsAgentProcessTrustLease {
+        inner: verify_windows_packaged_process(process_id, &image.inner, "Agent")?,
+    })
+}
+
+pub fn verify_windows_packaged_core_process_with_image(
+    process_id: u32,
+    image: &WindowsCoreImageTrustLease,
+) -> Result<WindowsCoreProcessTrustLease> {
+    Ok(WindowsCoreProcessTrustLease {
+        inner: verify_windows_packaged_process(process_id, &image.inner, "Core")?,
+    })
+}
+
+fn verify_windows_packaged_process(
+    process_id: u32,
+    image: &WindowsPackagedImageTrustLease,
+    label: &str,
+) -> Result<WindowsPackagedProcessTrustLease> {
     if process_id == 0 {
-        bail!("strict Agent process ID is invalid");
+        bail!("strict {label} process ID is invalid");
     }
-    // SAFETY: the PID is supplied by the named-pipe kernel API, not by the request frame.
+    // SAFETY: the PID is supplied by a Windows kernel identity API, not by a request frame.
     let process = unsafe {
         OpenProcess(
             PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE,
@@ -312,41 +421,44 @@ pub fn verify_windows_packaged_agent_process_with_image(
         )
     };
     if process.is_null() {
-        return Err(io::Error::last_os_error()).context("open strict Agent client process");
+        return Err(io::Error::last_os_error())
+            .with_context(|| format!("open strict {label} process"));
     }
     // SAFETY: OpenProcess returned a unique owned process handle.
     let process = unsafe { OwnedHandle::from_raw_handle(process) };
-    let process_path = process_image_path(process.as_raw_handle())?;
+    let process_path = process_image_path(process.as_raw_handle(), label)?;
     if !image.canonical_path.eq_ignore_ascii_case(&process_path) {
-        bail!("strict Agent process image does not match the protected package path");
+        bail!("strict {label} process image does not match the protected package path");
     }
-    let lease = WindowsAgentProcessTrustLease {
+    let lease = WindowsPackagedProcessTrustLease {
         process_id,
         canonical_path: image.canonical_path.clone(),
         _process: process,
         _file: Arc::clone(&image.file),
     };
-    if !lease.is_running()? {
-        bail!("strict Agent process exited during verification");
+    if !lease.is_running(label)? {
+        bail!("strict {label} process exited during verification");
     }
     Ok(lease)
 }
 
-fn process_image_path(process: *mut c_void) -> Result<String> {
+fn process_image_path(process: *mut c_void, label: &str) -> Result<String> {
     let mut buffer = vec![0_u16; MAX_PROCESS_IMAGE_PATH_UNITS];
     let mut length = u32::try_from(buffer.len()).expect("bounded process image path size");
     // SAFETY: the process handle is live and buffer/length are valid outputs.
     if unsafe { QueryFullProcessImageNameW(process, 0, buffer.as_mut_ptr(), &mut length) } == 0 {
-        return Err(io::Error::last_os_error()).context("query strict Agent process image path");
+        return Err(io::Error::last_os_error())
+            .with_context(|| format!("query strict {label} process image path"));
     }
-    let length = usize::try_from(length).context("strict Agent process path length overflow")?;
+    let length = usize::try_from(length)
+        .with_context(|| format!("strict {label} process path length overflow"))?;
     if length == 0 || length >= buffer.len() {
-        bail!("strict Agent process image path length is invalid");
+        bail!("strict {label} process image path length is invalid");
     }
     let path = String::from_utf16(&buffer[..length])
-        .context("strict Agent process image path is not UTF-16")?;
+        .with_context(|| format!("strict {label} process image path is not UTF-16"))?;
     if !Path::new(&path).is_absolute() || path.contains(['\0', '\r', '\n', '/']) {
-        bail!("strict Agent process image path is invalid");
+        bail!("strict {label} process image path is invalid");
     }
     Ok(path)
 }

@@ -61,8 +61,10 @@ pub use windows_host::{run_windows_strict_broker_service, WindowsStrictBrokerPat
 pub use windows_identity::{
     inspect_windows_driver, inspect_windows_executable, verify_windows_driver,
     verify_windows_packaged_agent_image, verify_windows_packaged_agent_process,
-    verify_windows_packaged_agent_process_with_image, verify_windows_packaged_driver,
-    WindowsAgentImageTrustLease, WindowsAgentProcessTrustLease, WindowsDriverTrustLease,
+    verify_windows_packaged_agent_process_with_image, verify_windows_packaged_core_image,
+    verify_windows_packaged_core_process, verify_windows_packaged_core_process_with_image,
+    verify_windows_packaged_driver, WindowsAgentImageTrustLease, WindowsAgentProcessTrustLease,
+    WindowsCoreImageTrustLease, WindowsCoreProcessTrustLease, WindowsDriverTrustLease,
     WindowsIdentityLease, WindowsIdentityVerifier, WindowsVerifiedIdentity,
 };
 #[cfg(windows)]
@@ -84,7 +86,11 @@ pub use windows_scm::{run_windows_scm_service, WindowsScmContext};
 #[cfg(windows)]
 pub use windows_session::WindowsBrokerPipeSession;
 #[cfg(windows)]
-pub use windows_tcp_owner::windows_tcp_listener_owner_pid;
+pub use windows_tcp_owner::{
+    verify_windows_packaged_core_listener_owner,
+    verify_windows_packaged_core_listener_owner_with_image, windows_tcp_listener_owner_pid,
+    windows_tcp_listener_owner_pid_for_all,
+};
 #[cfg(windows)]
 pub use windows_wfp_control::{
     WindowsDriverEndpointLeaseSnapshot, WindowsDriverPolicyChannel, WindowsDriverPolicySnapshot,
