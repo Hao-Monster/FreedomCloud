@@ -211,10 +211,17 @@ exists behind the authenticated Windows Agent/Core channel. It accepts at most
 128 distinct real proxy groups, binds authenticated TCP-only SOCKS listeners to
 ephemeral `127.0.0.1` ports, rejects stale generations and removes the listeners
 on stop, configuration replacement or explicit revocation. UI-originated use of
-the reserved action is rejected by the Agent. Agent-owned orchestration, Core
-socket-owner proof, an authenticated SOCKS CONNECT health probe and Broker relay
-assembly are still design commitments rather than capability claims. Redirect
-capability bits remain off until the complete chain exists.
+the reserved action is rejected by the Agent. The Agent now also owns a private
+Broker activation/session client and a tested orchestration model that orders
+Broker prepare before Core ingress, Core ingress before Broker commit, Broker
+force-blocking before an explicit newer-generation Core revoke, and Broker
+disable before Core cleanup. An ambiguous Core response cannot collapse into a
+local `Unchanged` result, and cleanup is not reported disabled until the Core
+revoke is correlated. These are currently library/runtime primitives rather than
+a product trigger: no UI or background policy source invokes them yet. Core
+socket-owner/authentication proof and the bounded Broker TCP relay exist in
+source, but redirect capability bits remain off until production wiring and the
+driver/VM gates complete.
 
 This mapping is compatible with the normal per-application policy schema:
 version-1 persisted proxy entries migrate to `GLOBAL`, while version-2 entries

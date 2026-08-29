@@ -130,7 +130,7 @@ route, DNS, firewall, WFP or service installation was changed.
 | `flutter test` | PASS | 43 tests, 0 failed, 0 skipped; 19.2 seconds in the final run. |
 | Metadata packaging TDD | RED → GREEN | Before implementation, `flutter test test/setup_test.dart` failed because `Build.writeWindowsTestPackageMetadata` did not exist; after implementation, 3 tests passed. |
 | `go test ./...` in `core` | PASS | `core` passed; `core/state` has no tests. |
-| `cargo test --locked` in `services/agent` | PASS | 15 tests, 0 failed. |
+| M2 `cargo test --locked` in `services/agent` | PASS | 15 tests, 0 failed. |
 | `cargo test --locked --features windows-service` in `services/helper` | PASS | 5 tests, 0 failed. |
 | Agent/Helper `cargo clippy --all-targets ... -- -D warnings` | PASS | 0 Clippy warnings. |
 | Targeted `dart analyze` (M2 runtime changes) | PASS with info | Exit 0; 0 errors, 0 warnings and 82 style infos. Build tooling separately retains one pre-existing warning. |
@@ -144,6 +144,7 @@ route, DNS, firewall, WFP or service installation was changed.
 | Windows 11 proxy/TUN acceptance | NOT RUN locally | Deliberately reserved for the isolated VM. |
 | Signed WFP strict mode | NOT RUN | M3 needs signing identity, WDK and HLK release process. |
 | M3 Broker TCP runtime | PASS (local source/loopback) | 113 normal and 121 `production-host` Broker tests; normal/production Clippy and rustfmt; optimized production Broker build. No device, WFP, service, proxy, TUN, DNS, route or firewall state was changed. |
+| M3 Agent strict orchestration | PASS (local pure/IPC-contract tests) | 42 tests, 0 failed/skipped; `cargo clippy --all-targets -- -D warnings`, rustfmt and optimized `flclash-agent.exe` build pass. Covers private-session request binding, prepare/Core/commit ordering, early-arm rejection, complete persistent-guard proof, explicit revoke after ambiguity, Broker-before-Core force-block/disable order and revoke retry. Production trigger, LocalSystem activation and real WFP/Core traffic are `NOT RUN`. |
 | Signed macOS Network Extension | NOT RUN | M4 needs Apple entitlement, signing and notarization. |
 | 30-minute VM memory trend | NOT RUN | Requires the fixed Windows 11 VM scenario. |
 
