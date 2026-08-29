@@ -310,7 +310,9 @@ strict policy. DNS from selected applications must be redirected to Mihomo DNS;
 direct physical-interface port 53/853 is guarded.
 
 The shared Core UDP endpoint introduced by `ec6437c`/`939c98a` and extended by
-`231f10f` supports both health proof and a private data protocol. Data frames
+`231f10f` supports both health proof and a private data protocol. The Rust wire
+codec in `d833af0` shares a fixed Go/Rust HMAC vector, and `95e1096` adds the
+matching persistent Broker transport. Data frames
 use an 80-byte canonical header followed by a 1–16 KiB payload and a 32-byte
 HMAC-SHA256 tag. The header binds direction, generation, 128-bit credential ID,
 128-bit association ID, monotonic sequence, canonical IPv4/IPv6 endpoint and
@@ -331,9 +333,16 @@ generation-scoped service. Broker must allocate cryptographically random,
 generation-unique association IDs; a live collision across credentials fails
 closed.
 
-This is only the Core side of the data path. Broker currently proves the socket
-with health frames but does not encode/decode application data frames, and the
-driver does not capture or reinject datagrams. Therefore it cannot yet satisfy
+Broker owns one connected exact-loopback UDP socket per transport, fixed send
+and receive frame buffers, stable integer credential indexes and a hard limit
+of 1,024 live associations. Target-group/credential changes on an association,
+unknown keys, invalid HMACs, stale/replayed replies and oversized datagrams fail
+closed; a rejected datagram does not poison the following valid sequence. This
+per-datagram path has no heap allocation or atomic reference-count operation.
+
+The production Broker runtime does not yet feed captured driver datagrams into
+this transport, and the driver does not capture or reinject datagrams. Therefore
+the implemented userspace path cannot yet satisfy
 `udp4Redirect`, `udp6Redirect`, `dnsCaptured` or `quicCaptured`.
 
 Initial strict acceptance requires Mihomo Fake-IP/virtual-network-card mode so
