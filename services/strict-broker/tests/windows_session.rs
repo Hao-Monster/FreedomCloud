@@ -72,6 +72,7 @@ fn agent_exit_forces_cleanup_before_bounded_pipe_session_shutdown() {
             session_capability: capability.clone(),
         },
         client_sid: current_process_user_sid().unwrap(),
+        client_session_id: 1,
         agent,
     };
     let deadlines = WindowsPipeDeadlines::new(

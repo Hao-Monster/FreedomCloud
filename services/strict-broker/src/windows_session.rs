@@ -29,6 +29,9 @@ impl WindowsBrokerPipeSession {
     where
         H: Fn(AuthorizedBrokerRequest) -> BrokerResponse + Send + Sync + 'static,
     {
+        if activation.client_session_id == 0 {
+            bail!("session-zero clients cannot start an interactive Broker session");
+        }
         if !activation.agent.is_running()? {
             bail!("verified strict Agent exited before its Broker session started");
         }

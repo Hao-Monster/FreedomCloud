@@ -38,8 +38,8 @@ use windows_sys::Win32::Storage::FileSystem::{
 };
 use windows_sys::Win32::System::Pipes::{
     ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe, GetNamedPipeClientProcessId,
-    ImpersonateNamedPipeClient, PIPE_READMODE_MESSAGE, PIPE_REJECT_REMOTE_CLIENTS,
-    PIPE_TYPE_MESSAGE,
+    GetNamedPipeClientSessionId, ImpersonateNamedPipeClient, PIPE_READMODE_MESSAGE,
+    PIPE_REJECT_REMOTE_CLIENTS, PIPE_TYPE_MESSAGE,
 };
 use windows_sys::Win32::System::Threading::{
     CreateEventW, GetCurrentProcess, GetCurrentThread, OpenProcessToken, OpenThreadToken,
@@ -99,6 +99,7 @@ pub struct WindowsAuthenticatedRequest {
 pub struct WindowsVerifiedActivationRequest {
     pub request: BrokerActivationRequest,
     pub client_sid: String,
+    pub client_session_id: u32,
     pub agent: WindowsAgentProcessTrustLease,
 }
 
@@ -334,6 +335,9 @@ impl WindowsBrokerActivationPipeInstance {
         if identity.is_local_system {
             bail!("LocalSystem cannot activate an interactive Broker session");
         }
+        if identity.client_session_id == 0 {
+            bail!("session-zero clients cannot activate an interactive Broker session");
+        }
         let agent = verify_windows_packaged_agent_process(
             identity.client_process_id,
             expected_agent_path,
@@ -342,6 +346,7 @@ impl WindowsBrokerActivationPipeInstance {
         Ok(WindowsVerifiedActivationRequest {
             request: identity.request,
             client_sid: identity.client_sid,
+            client_session_id: identity.client_session_id,
             agent,
         })
     }
@@ -360,6 +365,7 @@ impl WindowsBrokerActivationPipeInstance {
             request,
             client_sid: identity.token.sid,
             client_process_id: identity.process_id,
+            client_session_id: identity.session_id,
             is_local_system: identity.token.is_local_system,
         })
     }
@@ -401,6 +407,7 @@ struct PendingActivationRequest {
     request: BrokerActivationRequest,
     client_sid: String,
     client_process_id: u32,
+    client_session_id: u32,
     is_local_system: bool,
 }
 
@@ -775,6 +782,7 @@ fn resolve_client_identity(handle: *mut c_void, owner_sid: &str) -> Result<Resol
 
 struct LocalClientIdentity {
     process_id: u32,
+    session_id: u32,
     token: TokenIdentity,
 }
 
@@ -783,6 +791,11 @@ fn resolve_local_client_identity(handle: *mut c_void) -> Result<LocalClientIdent
     // SAFETY: handle is a connected server-side named-pipe instance.
     if unsafe { GetNamedPipeClientProcessId(handle, &mut process_id) } == 0 || process_id == 0 {
         return Err(io::Error::last_os_error()).context("resolve Broker client process ID");
+    }
+    let mut session_id = 0_u32;
+    // SAFETY: handle is a connected server-side named-pipe instance.
+    if unsafe { GetNamedPipeClientSessionId(handle, &mut session_id) } == 0 {
+        return Err(io::Error::last_os_error()).context("resolve Broker client session ID");
     }
 
     let impersonation = ImpersonationGuard::begin(handle)?;
@@ -795,7 +808,11 @@ fn resolve_local_client_identity(handle: *mut c_void) -> Result<LocalClientIdent
     let token = unsafe { OwnedHandle::from_raw_handle(token) };
     let token = token_identity(raw_handle(&token))?;
     impersonation.revert()?;
-    Ok(LocalClientIdentity { process_id, token })
+    Ok(LocalClientIdentity {
+        process_id,
+        session_id,
+        token,
+    })
 }
 
 struct TokenIdentity {
@@ -1085,6 +1102,7 @@ mod tests {
         assert_eq!(request.request.request_id, "activation-test");
         assert_eq!(request.client_process_id, std::process::id());
         assert_eq!(request.client_sid, current_process_user_sid().unwrap());
+        assert!(request.client_session_id > 0);
         assert!(!request.is_local_system);
         let response = BrokerActivationResponse::activated(
             "activation-test",
