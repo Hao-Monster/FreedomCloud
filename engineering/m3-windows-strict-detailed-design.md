@@ -357,14 +357,30 @@ flags, unsafe endpoints, trailing bytes and nonzero reserved/padding bytes fail
 closed.
 
 The production lease-renewal path increments its generation while retaining the
-same activation nonce. A captured batch can therefore legitimately cross one or
-more renewal ticks. Reply admission must not compare only against the latest
-generation: it must require the same live Broker process, policy revision,
-policy digest and activation nonce, and accept only a generation that the driver
-still tracks as issued within that live activation. Revocation, expiry, policy
-change, Broker exit or nonce change invalidates all such generations. The exact
-bounded in-flight-generation representation remains part of the driver queue
-implementation; capability bits remain off until it exists and is VM-proven.
+same activation nonce. A receive completion can race one renewal, so Broker
+admits captured batches only for the current or immediately previous attested
+generation while requiring the same policy revision, policy digest and nonce.
+Older batches fail closed. Returned reply batches use the current identity; the
+driver must bind their flow tokens to state created within that same live Broker
+activation. Revocation, expiry, policy change, Broker exit or nonce change
+invalidates all flow and generation state. Capability bits remain off until the
+driver implementation exists and is VM-proven.
+
+`f9a8470` adds cancellable Direct-I/O calls on the already opened, attested
+overlapped device handle. A pending receive does not hold the control-plane
+mutex, so lease renewal and fail-closed policy commands cannot wait behind the
+data path. No second open is attempted against the exclusive control device.
+`METHOD_OUT_DIRECT` is used for driver-to-Broker captured batches and
+`METHOD_IN_DIRECT` for Broker-to-driver reply batches; both retain the 256 KiB
+hard boundary.
+
+`0f51dca` adds the Broker association state needed for asynchronous UDP rather
+than assuming one reply for each request. It preallocates two hash indexes and
+caps them at 1,024 flows. A flow token is bound once to one Core association,
+target-group index, flags and local/remote endpoint pair. Captured and reply
+directions each use a 64-packet replay window, and state expires after 90 idle
+seconds. Unknown associations, endpoint/group/flag drift, ID collisions and
+capacity overflow fail closed. Payloads are not retained in this table.
 
 Initial strict acceptance requires Mihomo Fake-IP/virtual-network-card mode so
 domain mappings remain available to existing domain rules. Real-IP domain
