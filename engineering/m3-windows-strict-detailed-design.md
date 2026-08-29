@@ -260,6 +260,17 @@ and the Agent remains `blocking`.
   pipe with a fixed worker bound. A live Agent cannot be replaced. An exited
   Agent can be reaped or replaced only after fail-closed backend cleanup
   succeeds; cleanup failure preserves the prior recovery/session state.
+- Runtime ownership: the SCM host derives only fixed package paths and a direct
+  Windows ProgramData Known-Folder recovery path. Recovery ACL verification
+  precedes persistent WFP provisioning. WFP, driver and recovery handles are
+  created and used by one Engine Actor; four active/four queued data requests
+  are bounded, while lease-revoke/block/shutdown commands use a separate
+  priority channel between transactions. Raw WFP handles are never marked
+  `Send` or shared across pipe threads.
+- Until real loopback listeners, relay probes and lease renewal exist, the
+  production health probe always reports unavailable. Proxy commit therefore
+  fails closed; block-only policy remains usable and no placeholder health is
+  advertised.
 - Commands: `preparePolicy`, `commitPolicy`, `forceBlocking`, `disablePolicy`,
   `status`, `diagnostics`; no arbitrary command/path/registry/service API.
 - The Broker reopens and validates executable handles to prevent path-swap
