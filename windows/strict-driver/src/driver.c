@@ -83,11 +83,20 @@ typedef struct _FCX_STRICT_UDP_FLOW_CONTEXT {
     UINT64 Revision;
     UINT8 PolicyDigest[32];
     UINT8 LeaseNonce[16];
+    UINT8 LocalAddress[16];
+    UINT8 RemoteAddress[16];
     UINT16 TargetGroupIndex;
+    UINT16 LocalPort;
+    UINT16 RemotePort;
+    UINT32 DatagramFlags;
+    COMPARTMENT_ID CompartmentId;
+    IF_INDEX InterfaceIndex;
+    IF_INDEX SubInterfaceIndex;
     volatile LONG64 NextCaptureSequence;
     UINT16 LayerId;
     UINT32 CalloutId;
     UINT8 AddressFamily;
+    BOOLEAN EndpointBound;
     BOOLEAN Listed;
     BOOLEAN Associated;
     BOOLEAN RemovalRequested;
@@ -115,6 +124,8 @@ static BOOLEAN FcxProcessNotifyRegistered;
 static UINT32 FcxCalloutIds[8];
 static UINT32 FcxRegisteredCallouts;
 static HANDLE FcxRedirectHandle;
+static HANDLE FcxTransportInjectionHandleV4;
+static HANDLE FcxTransportInjectionHandleV6;
 static volatile LONG FcxUdpFlowCount;
 static volatile LONG64 FcxUdpFlowToken;
 static volatile LONG FcxUdpStopping;
@@ -1182,17 +1193,24 @@ typedef struct _FCX_STRICT_DATAGRAM_ENDPOINTS {
     UINT16 LocalPort;
     UINT16 RemotePort;
     UINT32 Flags;
+    COMPARTMENT_ID CompartmentId;
+    IF_INDEX InterfaceIndex;
+    IF_INDEX SubInterfaceIndex;
 } FCX_STRICT_DATAGRAM_ENDPOINTS;
 
 static
 BOOLEAN
 FcxReadDatagramEndpoints(
     _In_ const FWPS_INCOMING_VALUES0 *IncomingValues,
+    _In_ const FWPS_INCOMING_METADATA_VALUES0 *IncomingMetadata,
     _In_ UINT32 LocalAddressField,
     _In_ UINT32 RemoteAddressField,
     _In_ UINT32 LocalPortField,
     _In_ UINT32 RemotePortField,
     _In_ UINT32 DirectionField,
+    _In_ UINT32 InterfaceIndexField,
+    _In_ UINT32 SubInterfaceIndexField,
+    _In_ UINT32 CompartmentIdField,
     _In_ BOOLEAN Ipv6,
     _Out_ FCX_STRICT_DATAGRAM_ENDPOINTS *Endpoints
     )
@@ -1202,6 +1220,9 @@ FcxReadDatagramEndpoints(
     const FWP_VALUE0 *localPort;
     const FWP_VALUE0 *remotePort;
     const FWP_VALUE0 *direction;
+    const FWP_VALUE0 *interfaceIndex;
+    const FWP_VALUE0 *subInterfaceIndex;
+    const FWP_VALUE0 *compartmentId;
     UINT32 address;
     UINT8 addressFamily = Ipv6 ? FCX_STRICT_ADDRESS_FAMILY_V6 :
                                 FCX_STRICT_ADDRESS_FAMILY_V4;
@@ -1211,7 +1232,10 @@ FcxReadDatagramEndpoints(
         RemoteAddressField >= IncomingValues->valueCount ||
         LocalPortField >= IncomingValues->valueCount ||
         RemotePortField >= IncomingValues->valueCount ||
-        DirectionField >= IncomingValues->valueCount) {
+        DirectionField >= IncomingValues->valueCount ||
+        InterfaceIndexField >= IncomingValues->valueCount ||
+        SubInterfaceIndexField >= IncomingValues->valueCount ||
+        CompartmentIdField >= IncomingValues->valueCount) {
         return FALSE;
     }
     localAddress = &IncomingValues->incomingValue[LocalAddressField].value;
@@ -1219,13 +1243,28 @@ FcxReadDatagramEndpoints(
     localPort = &IncomingValues->incomingValue[LocalPortField].value;
     remotePort = &IncomingValues->incomingValue[RemotePortField].value;
     direction = &IncomingValues->incomingValue[DirectionField].value;
+    interfaceIndex =
+        &IncomingValues->incomingValue[InterfaceIndexField].value;
+    subInterfaceIndex =
+        &IncomingValues->incomingValue[SubInterfaceIndexField].value;
+    compartmentId = &IncomingValues->incomingValue[CompartmentIdField].value;
     if (localPort->type != FWP_UINT16 || remotePort->type != FWP_UINT16 ||
         direction->type != FWP_UINT32 ||
-        direction->uint32 != FWP_DIRECTION_OUTBOUND) {
+        direction->uint32 != FWP_DIRECTION_OUTBOUND ||
+        interfaceIndex->type != FWP_UINT32 ||
+        subInterfaceIndex->type != FWP_UINT32 ||
+        compartmentId->type != FWP_UINT32 ||
+        !FWPS_IS_METADATA_FIELD_PRESENT(
+            IncomingMetadata,
+            FWPS_METADATA_FIELD_COMPARTMENT_ID) ||
+        compartmentId->uint32 != IncomingMetadata->compartmentId) {
         return FALSE;
     }
     Endpoints->LocalPort = localPort->uint16;
     Endpoints->RemotePort = remotePort->uint16;
+    Endpoints->InterfaceIndex = interfaceIndex->uint32;
+    Endpoints->SubInterfaceIndex = subInterfaceIndex->uint32;
+    Endpoints->CompartmentId = compartmentId->uint32;
     if (Ipv6) {
         if (localAddress->type != FWP_BYTE_ARRAY16_TYPE ||
             remoteAddress->type != FWP_BYTE_ARRAY16_TYPE ||
@@ -1294,9 +1333,57 @@ FcxLeaseMatchesUdpFlowContext(
 }
 
 static
+BOOLEAN
+FcxBindUdpFlowProvenance(
+    _Inout_ FCX_STRICT_UDP_FLOW_CONTEXT *Context,
+    _In_ const FCX_STRICT_DATAGRAM_ENDPOINTS *Endpoints
+    )
+{
+    KIRQL oldIrql;
+    BOOLEAN matches = FALSE;
+
+    KeAcquireSpinLock(&FcxUdpFlowLock, &oldIrql);
+    if (Context->Listed && Context->Associated &&
+        !Context->RemovalRequested) {
+        if (!Context->EndpointBound) {
+            RtlCopyMemory(Context->LocalAddress,
+                          Endpoints->LocalAddress,
+                          sizeof(Context->LocalAddress));
+            RtlCopyMemory(Context->RemoteAddress,
+                          Endpoints->RemoteAddress,
+                          sizeof(Context->RemoteAddress));
+            Context->LocalPort = Endpoints->LocalPort;
+            Context->RemotePort = Endpoints->RemotePort;
+            Context->DatagramFlags = Endpoints->Flags;
+            Context->CompartmentId = Endpoints->CompartmentId;
+            Context->InterfaceIndex = Endpoints->InterfaceIndex;
+            Context->SubInterfaceIndex = Endpoints->SubInterfaceIndex;
+            Context->EndpointBound = TRUE;
+            matches = TRUE;
+        } else if (Context->LocalPort == Endpoints->LocalPort &&
+                   Context->RemotePort == Endpoints->RemotePort &&
+                   Context->DatagramFlags == Endpoints->Flags &&
+                   Context->CompartmentId == Endpoints->CompartmentId &&
+                   Context->InterfaceIndex == Endpoints->InterfaceIndex &&
+                   Context->SubInterfaceIndex == Endpoints->SubInterfaceIndex &&
+                   RtlCompareMemory(Context->LocalAddress,
+                                    Endpoints->LocalAddress,
+                                    sizeof(Context->LocalAddress)) == sizeof(Context->LocalAddress) &&
+                   RtlCompareMemory(Context->RemoteAddress,
+                                    Endpoints->RemoteAddress,
+                                    sizeof(Context->RemoteAddress)) == sizeof(Context->RemoteAddress)) {
+            matches = TRUE;
+        }
+    }
+    KeReleaseSpinLock(&FcxUdpFlowLock, oldIrql);
+    return matches;
+}
+
+static
 VOID
 FcxCaptureOutboundDatagram(
     _In_ const FWPS_INCOMING_VALUES0 *IncomingValues,
+    _In_ const FWPS_INCOMING_METADATA_VALUES0 *IncomingMetadata,
     _Inout_opt_ VOID *LayerData,
     _In_ UINT64 FlowContext,
     _In_ UINT32 LocalAddressField,
@@ -1304,6 +1391,9 @@ FcxCaptureOutboundDatagram(
     _In_ UINT32 LocalPortField,
     _In_ UINT32 RemotePortField,
     _In_ UINT32 DirectionField,
+    _In_ UINT32 InterfaceIndexField,
+    _In_ UINT32 SubInterfaceIndexField,
+    _In_ UINT32 CompartmentIdField,
     _In_ BOOLEAN Ipv6,
     _Inout_ FWPS_CLASSIFY_OUT0 *ClassifyOut
     )
@@ -1330,21 +1420,56 @@ FcxCaptureOutboundDatagram(
     ULONG requestorProcessId;
     LONG64 sequence;
     NTSTATUS status;
+    HANDLE injectionHandle;
+    HANDLE injectionContext = NULL;
+    FWPS_PACKET_INJECTION_STATE injectionState;
     UINT8 addressFamily = Ipv6 ? FCX_STRICT_ADDRESS_FAMILY_V6 :
                                 FCX_STRICT_ADDRESS_FAMILY_V4;
 
     if ((ClassifyOut->rights & FWPS_RIGHT_ACTION_WRITE) == 0 ||
-        context == NULL || LayerData == NULL ||
+        LayerData == NULL) {
+        FcxBlockClassify(ClassifyOut);
+        return;
+    }
+    netBufferList = (NET_BUFFER_LIST *)LayerData;
+    injectionHandle = Ipv6 ? FcxTransportInjectionHandleV6 :
+                             FcxTransportInjectionHandleV4;
+    if (injectionHandle == NULL) {
+        FcxBlockClassify(ClassifyOut);
+        return;
+    }
+    injectionState = FwpsQueryPacketInjectionState0(
+        injectionHandle,
+        netBufferList,
+        &injectionContext);
+    if (injectionState == FWPS_PACKET_INJECTED_BY_SELF ||
+        injectionState == FWPS_PACKET_PREVIOUSLY_INJECTED_BY_SELF) {
+        if (context != NULL && injectionContext == (HANDLE)context &&
+            context->AddressFamily == addressFamily &&
+            InterlockedCompareExchange(&FcxDatagramActive, 0, 0) != 0 &&
+            InterlockedCompareExchange(&FcxUdpStopping, 0, 0) == 0) {
+            FcxPermitClassify(ClassifyOut);
+        } else {
+            FcxBlockClassify(ClassifyOut);
+        }
+        return;
+    }
+
+    if (context == NULL ||
         context->AddressFamily != addressFamily ||
         InterlockedCompareExchange(&FcxDatagramActive, 0, 0) == 0 ||
         InterlockedCompareExchange(&FcxUdpStopping, 0, 0) != 0 ||
         FcxLeaseRundown == NULL ||
         !FcxReadDatagramEndpoints(IncomingValues,
+                                  IncomingMetadata,
                                   LocalAddressField,
                                   RemoteAddressField,
                                   LocalPortField,
                                   RemotePortField,
                                   DirectionField,
+                                  InterfaceIndexField,
+                                  SubInterfaceIndexField,
+                                  CompartmentIdField,
                                   Ipv6,
                                   &endpoints) ||
         !ExAcquireRundownProtectionCacheAware(FcxLeaseRundown)) {
@@ -1361,7 +1486,6 @@ FcxCaptureOutboundDatagram(
         goto Exit;
     }
 
-    netBufferList = (NET_BUFFER_LIST *)LayerData;
     netBuffer = NET_BUFFER_LIST_FIRST_NB(netBufferList);
     if (NET_BUFFER_LIST_NEXT_NBL(netBufferList) != NULL ||
         netBuffer == NULL || NET_BUFFER_NEXT_NB(netBuffer) != NULL) {
@@ -1384,6 +1508,9 @@ FcxCaptureOutboundDatagram(
     if (RtlUshortByteSwap(udpHeader.SourcePort) != endpoints.LocalPort ||
         RtlUshortByteSwap(udpHeader.DestinationPort) != endpoints.RemotePort ||
         RtlUshortByteSwap(udpHeader.Length) != packetBytes) {
+        goto Exit;
+    }
+    if (!FcxBindUdpFlowProvenance(context, &endpoints)) {
         goto Exit;
     }
     payloadBytes = packetBytes - (ULONG)sizeof(udpHeader);
@@ -1495,11 +1622,11 @@ FcxDatagramClassifyV4(
     _Inout_ FWPS_CLASSIFY_OUT0 *ClassifyOut
     )
 {
-    UNREFERENCED_PARAMETER(IncomingMetadata);
     UNREFERENCED_PARAMETER(ClassifyContext);
     UNREFERENCED_PARAMETER(Filter);
     FcxCaptureOutboundDatagram(
         IncomingValues,
+        IncomingMetadata,
         LayerData,
         FlowContext,
         FWPS_FIELD_DATAGRAM_DATA_V4_IP_LOCAL_ADDRESS,
@@ -1507,6 +1634,9 @@ FcxDatagramClassifyV4(
         FWPS_FIELD_DATAGRAM_DATA_V4_IP_LOCAL_PORT,
         FWPS_FIELD_DATAGRAM_DATA_V4_IP_REMOTE_PORT,
         FWPS_FIELD_DATAGRAM_DATA_V4_DIRECTION,
+        FWPS_FIELD_DATAGRAM_DATA_V4_INTERFACE_INDEX,
+        FWPS_FIELD_DATAGRAM_DATA_V4_SUB_INTERFACE_INDEX,
+        FWPS_FIELD_DATAGRAM_DATA_V4_COMPARTMENT_ID,
         FALSE,
         ClassifyOut);
 }
@@ -1523,11 +1653,11 @@ FcxDatagramClassifyV6(
     _Inout_ FWPS_CLASSIFY_OUT0 *ClassifyOut
     )
 {
-    UNREFERENCED_PARAMETER(IncomingMetadata);
     UNREFERENCED_PARAMETER(ClassifyContext);
     UNREFERENCED_PARAMETER(Filter);
     FcxCaptureOutboundDatagram(
         IncomingValues,
+        IncomingMetadata,
         LayerData,
         FlowContext,
         FWPS_FIELD_DATAGRAM_DATA_V6_IP_LOCAL_ADDRESS,
@@ -1535,6 +1665,9 @@ FcxDatagramClassifyV6(
         FWPS_FIELD_DATAGRAM_DATA_V6_IP_LOCAL_PORT,
         FWPS_FIELD_DATAGRAM_DATA_V6_IP_REMOTE_PORT,
         FWPS_FIELD_DATAGRAM_DATA_V6_DIRECTION,
+        FWPS_FIELD_DATAGRAM_DATA_V6_INTERFACE_INDEX,
+        FWPS_FIELD_DATAGRAM_DATA_V6_SUB_INTERFACE_INDEX,
+        FWPS_FIELD_DATAGRAM_DATA_V6_COMPARTMENT_ID,
         TRUE,
         ClassifyOut);
 }
@@ -2465,6 +2598,52 @@ FcxDestroyRedirectHandle(
 
 static
 NTSTATUS
+FcxCreateTransportInjectionHandles(
+    VOID
+    )
+{
+    NTSTATUS status;
+
+    PAGED_CODE();
+    if (FcxTransportInjectionHandleV4 != NULL ||
+        FcxTransportInjectionHandleV6 != NULL) {
+        return STATUS_INVALID_DEVICE_STATE;
+    }
+    status = FwpsInjectionHandleCreate0(AF_INET,
+                                        FWPS_INJECTION_TYPE_TRANSPORT,
+                                        &FcxTransportInjectionHandleV4);
+    if (!NT_SUCCESS(status)) {
+        return status;
+    }
+    status = FwpsInjectionHandleCreate0(AF_INET6,
+                                        FWPS_INJECTION_TYPE_TRANSPORT,
+                                        &FcxTransportInjectionHandleV6);
+    if (!NT_SUCCESS(status)) {
+        FwpsInjectionHandleDestroy0(FcxTransportInjectionHandleV4);
+        FcxTransportInjectionHandleV4 = NULL;
+    }
+    return status;
+}
+
+static
+VOID
+FcxDestroyTransportInjectionHandles(
+    VOID
+    )
+{
+    PAGED_CODE();
+    if (FcxTransportInjectionHandleV6 != NULL) {
+        FwpsInjectionHandleDestroy0(FcxTransportInjectionHandleV6);
+        FcxTransportInjectionHandleV6 = NULL;
+    }
+    if (FcxTransportInjectionHandleV4 != NULL) {
+        FwpsInjectionHandleDestroy0(FcxTransportInjectionHandleV4);
+        FcxTransportInjectionHandleV4 = NULL;
+    }
+}
+
+static
+NTSTATUS
 FcxRegisterCallouts(
     _In_ PDEVICE_OBJECT DeviceObject
     )
@@ -2544,6 +2723,7 @@ FcxEvtDriverUnload(
     }
     FcxReleaseLease();
     FcxUnregisterCallouts();
+    FcxDestroyTransportInjectionHandles();
     FcxDestroyRedirectHandle();
     FcxReleasePolicy();
     if (FcxLeaseRundown != NULL) {
@@ -2663,6 +2843,10 @@ DriverEntry(
     if (!NT_SUCCESS(status)) {
         goto Failure;
     }
+    status = FcxCreateTransportInjectionHandles();
+    if (!NT_SUCCESS(status)) {
+        goto Failure;
+    }
     status = FcxRegisterCallouts(WdfDeviceWdmGetDeviceObject(FcxControlDevice));
     if (!NT_SUCCESS(status)) {
         goto Failure;
@@ -2675,6 +2859,7 @@ Failure:
         WdfDeviceInitFree(deviceInit);
     }
     FcxUnregisterCallouts();
+    FcxDestroyTransportInjectionHandles();
     FcxDestroyRedirectHandle();
     if (FcxProcessNotifyRegistered) {
         (VOID)PsSetCreateProcessNotifyRoutineEx(FcxProcessNotify, TRUE);
@@ -2700,5 +2885,7 @@ Failure:
 #pragma alloc_text(PAGE, FcxEvtIoDeviceControl)
 #pragma alloc_text(PAGE, FcxCreateRedirectHandle)
 #pragma alloc_text(PAGE, FcxDestroyRedirectHandle)
+#pragma alloc_text(PAGE, FcxCreateTransportInjectionHandles)
+#pragma alloc_text(PAGE, FcxDestroyTransportInjectionHandles)
 #pragma alloc_text(PAGE, FcxRegisterCallouts)
 #endif

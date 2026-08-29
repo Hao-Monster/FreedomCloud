@@ -1716,4 +1716,102 @@ mod tests {
             "the original datagram is absorbed only after its batch is delivered"
         );
     }
+
+    #[test]
+    fn kernel_datagram_injection_provenance_is_exact_and_self_bypass_is_owned() {
+        let driver = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../windows/strict-driver/src/driver.c"
+        ));
+
+        for invariant in [
+            "BOOLEAN EndpointBound;",
+            "COMPARTMENT_ID CompartmentId;",
+            "IF_INDEX InterfaceIndex;",
+            "IF_INDEX SubInterfaceIndex;",
+            "FcxBindUdpFlowProvenance(",
+            "FWPS_METADATA_FIELD_COMPARTMENT_ID",
+            "FWPS_FIELD_DATAGRAM_DATA_V4_INTERFACE_INDEX",
+            "FWPS_FIELD_DATAGRAM_DATA_V4_SUB_INTERFACE_INDEX",
+            "FWPS_FIELD_DATAGRAM_DATA_V6_INTERFACE_INDEX",
+            "FWPS_FIELD_DATAGRAM_DATA_V6_SUB_INTERFACE_INDEX",
+            "FwpsInjectionHandleCreate0(AF_INET,",
+            "FwpsInjectionHandleCreate0(AF_INET6,",
+            "FWPS_INJECTION_TYPE_TRANSPORT",
+            "FwpsQueryPacketInjectionState0(",
+            "FWPS_PACKET_INJECTED_BY_SELF",
+            "FWPS_PACKET_PREVIOUSLY_INJECTED_BY_SELF",
+            "injectionContext == (HANDLE)context",
+            "FcxDestroyTransportInjectionHandles();",
+        ] {
+            assert!(
+                driver.contains(invariant),
+                "missing UDP injection-provenance invariant: {invariant}"
+            );
+        }
+
+        let capture = driver
+            .split("FcxCaptureOutboundDatagram(")
+            .nth(1)
+            .and_then(|body| body.split("FcxDatagramClassifyV4(").next())
+            .expect("datagram capture function is present");
+        assert!(
+            capture.find("FwpsQueryPacketInjectionState0(").unwrap()
+                < capture.find("FcxReadDatagramEndpoints(").unwrap(),
+            "self-injected replies must bypass capture before endpoint parsing"
+        );
+        assert!(
+            capture.find("FcxBindUdpFlowProvenance(").unwrap()
+                < capture
+                    .find("WdfIoQueueRetrieveNextRequest(FcxDatagramReceiveQueue")
+                    .unwrap(),
+            "flow injection provenance must be bound before exposing a capture"
+        );
+
+        let bind = driver
+            .split("FcxBindUdpFlowProvenance(")
+            .nth(1)
+            .and_then(|body| body.split("FcxCaptureOutboundDatagram(").next())
+            .expect("flow provenance binding function is present");
+        for invariant in [
+            "KeAcquireSpinLock(&FcxUdpFlowLock",
+            "Context->LocalAddress",
+            "Context->RemoteAddress",
+            "Context->LocalPort",
+            "Context->RemotePort",
+            "Context->DatagramFlags",
+            "Context->CompartmentId",
+            "Context->InterfaceIndex",
+            "Context->SubInterfaceIndex",
+            "Context->EndpointBound = TRUE;",
+        ] {
+            assert!(
+                bind.contains(invariant),
+                "flow provenance does not bind exact injection field: {invariant}"
+            );
+        }
+
+        let entry = driver
+            .split("DriverEntry(")
+            .nth(1)
+            .expect("driver entry point is present");
+        assert!(
+            entry.find("FcxCreateTransportInjectionHandles();").unwrap()
+                < entry.find("FcxRegisterCallouts(").unwrap(),
+            "transport injection handles must exist before callouts can classify"
+        );
+
+        let unload = driver
+            .split("FcxEvtDriverUnload(")
+            .nth(1)
+            .and_then(|body| body.split("DriverEntry(").next())
+            .expect("driver unload callback is present");
+        assert!(
+            unload.find("FcxUnregisterCallouts();").unwrap()
+                < unload
+                    .find("FcxDestroyTransportInjectionHandles();")
+                    .unwrap(),
+            "callouts must stop classifying before injection handles are destroyed"
+        );
+    }
 }
