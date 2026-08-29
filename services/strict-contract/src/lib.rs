@@ -8,6 +8,8 @@ pub const STRICT_PROTOCOL_VERSION: u32 = 1;
 pub const MAX_STRICT_APPLICATIONS: usize = 128;
 pub const MAX_STRICT_CHILDREN: usize = 32;
 pub const MAX_BROKER_FRAME_BYTES: usize = 1024 * 1024;
+pub const MAX_BROKER_ACTIVATION_FRAME_BYTES: usize = 4 * 1024;
+const BROKER_PIPE_NAME_PREFIX: &str = r"\\.\pipe\FlClashX.StrictBroker.";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -440,6 +442,106 @@ pub struct BrokerRequest {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct BrokerActivationRequest {
+    pub protocol: u32,
+    pub request_id: String,
+    pub session_capability: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum BrokerActivationErrorCode {
+    Unauthorized,
+    Busy,
+    Internal,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct BrokerActivationResponse {
+    pub protocol: u32,
+    pub request_id: String,
+    pub body: BrokerActivationResponseBody,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(tag = "type", rename_all = "camelCase", deny_unknown_fields)]
+pub enum BrokerActivationResponseBody {
+    Activated { pipe_name: String },
+    Error { code: BrokerActivationErrorCode },
+}
+
+impl BrokerActivationResponse {
+    pub fn activated(request_id: impl Into<String>, pipe_name: impl Into<String>) -> Result<Self> {
+        let response = Self {
+            protocol: STRICT_PROTOCOL_VERSION,
+            request_id: request_id.into(),
+            body: BrokerActivationResponseBody::Activated {
+                pipe_name: pipe_name.into(),
+            },
+        };
+        response.validate()?;
+        Ok(response)
+    }
+
+    pub fn error(request_id: impl Into<String>, code: BrokerActivationErrorCode) -> Result<Self> {
+        let response = Self {
+            protocol: STRICT_PROTOCOL_VERSION,
+            request_id: request_id.into(),
+            body: BrokerActivationResponseBody::Error { code },
+        };
+        response.validate()?;
+        Ok(response)
+    }
+
+    pub fn to_bytes(&self) -> Result<Vec<u8>> {
+        self.validate()?;
+        let encoded = serde_json::to_vec(self)?;
+        if encoded.is_empty() || encoded.len() > MAX_BROKER_ACTIVATION_FRAME_BYTES {
+            bail!("Broker activation response frame size is invalid");
+        }
+        Ok(encoded)
+    }
+
+    pub fn validate(&self) -> Result<()> {
+        if self.protocol != STRICT_PROTOCOL_VERSION {
+            bail!("unsupported Broker activation response protocol");
+        }
+        validate_request_id(&self.request_id)?;
+        if let BrokerActivationResponseBody::Activated { pipe_name } = &self.body {
+            validate_broker_pipe_name(pipe_name)?;
+        }
+        Ok(())
+    }
+}
+
+pub fn parse_broker_activation_request(frame: &[u8]) -> Result<BrokerActivationRequest> {
+    if frame.is_empty() || frame.len() > MAX_BROKER_ACTIVATION_FRAME_BYTES {
+        bail!("Broker activation frame size is invalid");
+    }
+    let request: BrokerActivationRequest = serde_json::from_slice(frame)?;
+    if request.protocol != STRICT_PROTOCOL_VERSION {
+        bail!("unsupported Broker activation protocol");
+    }
+    validate_request_id(&request.request_id)?;
+    validate_sha256(&request.session_capability, "Broker session capability")?;
+    if request.session_capability.bytes().all(|byte| byte == b'0') {
+        bail!("Broker session capability cannot be zero");
+    }
+    Ok(request)
+}
+
+pub fn parse_broker_activation_response(frame: &[u8]) -> Result<BrokerActivationResponse> {
+    if frame.is_empty() || frame.len() > MAX_BROKER_ACTIVATION_FRAME_BYTES {
+        bail!("Broker activation response frame size is invalid");
+    }
+    let response: BrokerActivationResponse = serde_json::from_slice(frame)?;
+    response.validate()?;
+    Ok(response)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(tag = "type", rename_all = "camelCase", deny_unknown_fields)]
 pub enum BrokerCommand {
     Status {},
@@ -576,6 +678,21 @@ fn validate_request_id(value: &str) -> Result<()> {
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
     {
         bail!("Broker request ID is invalid");
+    }
+    Ok(())
+}
+
+fn validate_broker_pipe_name(value: &str) -> Result<()> {
+    let Some(suffix) = value.strip_prefix(BROKER_PIPE_NAME_PREFIX) else {
+        bail!("Broker activation pipe name has an invalid namespace");
+    };
+    if suffix.is_empty()
+        || value.len() > 240
+        || !suffix
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'_'))
+    {
+        bail!("Broker activation pipe name is invalid");
     }
     Ok(())
 }
@@ -773,6 +890,45 @@ mod tests {
         assert!(BrokerResponse::status("request-2", inconsistent).is_err());
         assert!(BrokerResponse::error("request-3", BrokerErrorCode::Unauthorized).is_ok());
         assert!(parse_broker_response(&vec![b'x'; MAX_BROKER_FRAME_BYTES + 1]).is_err());
+    }
+
+    #[test]
+    fn activation_frames_are_closed_bounded_and_pipe_scoped() {
+        let request = format!(
+            r#"{{"protocol":1,"requestId":"activate-1","sessionCapability":"{}"}}"#,
+            hex('1')
+        );
+        assert!(parse_broker_activation_request(request.as_bytes()).is_ok());
+        assert!(
+            parse_broker_activation_request(request.replace(&hex('1'), &hex('0')).as_bytes())
+                .is_err()
+        );
+        let unknown = format!(
+            r#"{{"protocol":1,"requestId":"activate-1","sessionCapability":"{}","ownerSid":"S-1-5-18"}}"#,
+            hex('1')
+        );
+        assert!(parse_broker_activation_request(unknown.as_bytes()).is_err());
+        assert!(parse_broker_activation_request(&vec![
+            b'x';
+            MAX_BROKER_ACTIVATION_FRAME_BYTES + 1
+        ])
+        .is_err());
+
+        let response = BrokerActivationResponse::activated(
+            "activate-1",
+            r"\\.\pipe\FlClashX.StrictBroker.1234.a1b2c3",
+        )
+        .unwrap();
+        assert_eq!(
+            parse_broker_activation_response(&response.to_bytes().unwrap()).unwrap(),
+            response
+        );
+        assert!(BrokerActivationResponse::activated("activate-1", r"\\.\pipe\arbitrary").is_err());
+        assert!(BrokerActivationResponse::error(
+            "activate-1",
+            BrokerActivationErrorCode::Unauthorized
+        )
+        .is_ok());
     }
 
     #[test]
