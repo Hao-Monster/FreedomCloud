@@ -7,9 +7,18 @@ use flclash_strict_contract::{
 };
 use serde::{Deserialize, Serialize};
 
+mod ipc_auth;
 mod recovery_file;
+#[cfg(windows)]
+mod windows_pipe;
 
+pub use ipc_auth::{AuthorizedBrokerRequest, BrokerAuthenticator, ClientPrincipal, ClientRole};
 pub use recovery_file::FileRecoveryStore;
+#[cfg(windows)]
+pub use windows_pipe::{
+    connect_windows_pipe_for_agent, current_process_user_sid, WindowsAuthenticatedRequest,
+    WindowsNamedPipeInstance,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
