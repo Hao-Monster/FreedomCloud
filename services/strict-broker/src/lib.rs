@@ -56,9 +56,10 @@ pub use windows_host::{run_windows_strict_broker_service, WindowsStrictBrokerPat
 #[cfg(windows)]
 pub use windows_identity::{
     inspect_windows_driver, inspect_windows_executable, verify_windows_driver,
-    verify_windows_packaged_agent_process, verify_windows_packaged_driver,
-    WindowsAgentProcessTrustLease, WindowsDriverTrustLease, WindowsIdentityLease,
-    WindowsIdentityVerifier, WindowsVerifiedIdentity,
+    verify_windows_packaged_agent_image, verify_windows_packaged_agent_process,
+    verify_windows_packaged_agent_process_with_image, verify_windows_packaged_driver,
+    WindowsAgentImageTrustLease, WindowsAgentProcessTrustLease, WindowsDriverTrustLease,
+    WindowsIdentityLease, WindowsIdentityVerifier, WindowsVerifiedIdentity,
 };
 #[cfg(windows)]
 pub use windows_pipe::{

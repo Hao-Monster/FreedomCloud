@@ -7,8 +7,9 @@ use std::process::{Child, Command};
 
 use flclash_strict_broker::{
     inspect_windows_driver, inspect_windows_executable, verify_windows_driver,
-    verify_windows_packaged_agent_process, verify_windows_packaged_driver, IdentityVerifier,
-    StrictPackageManifest, WindowsIdentityVerifier,
+    verify_windows_packaged_agent_image, verify_windows_packaged_agent_process,
+    verify_windows_packaged_agent_process_with_image, verify_windows_packaged_driver,
+    IdentityVerifier, StrictPackageManifest, WindowsIdentityVerifier,
 };
 use flclash_strict_contract::{StrictIdentity, StrictPolicyBundle, StrictPolicyEntry};
 use sha2::{Digest, Sha256};
@@ -117,9 +118,14 @@ fn packaged_agent_process_is_bound_to_pid_path_file_and_publisher() {
         .unwrap();
     let mut child = ChildGuard(child);
 
-    let lease =
-        verify_windows_packaged_agent_process(child.0.id(), &inspected.canonical_path, &manifest)
-            .unwrap();
+    let image = verify_windows_packaged_agent_image(&inspected.canonical_path, &manifest).unwrap();
+    assert_eq!(image.canonical_path(), inspected.canonical_path);
+    assert_eq!(image.file_sha256(), file_sha256);
+    assert_eq!(
+        image.publisher_certificate_sha256(),
+        inspected.publisher_certificate_sha256
+    );
+    let lease = verify_windows_packaged_agent_process_with_image(child.0.id(), &image).unwrap();
     assert_eq!(lease.process_id(), child.0.id());
     assert_eq!(lease.canonical_path(), inspected.canonical_path);
     assert!(lease.is_running().unwrap());

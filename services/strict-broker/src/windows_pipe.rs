@@ -49,8 +49,9 @@ use windows_sys::Win32::System::Threading::{
 use windows_sys::Win32::System::IO::{CancelIoEx, GetOverlappedResult, OVERLAPPED};
 
 use crate::{
-    verify_windows_packaged_agent_process, AuthorizedBrokerRequest, BrokerAuthenticator,
-    ClientPrincipal, ClientRole, StrictPackageManifest, WindowsAgentProcessTrustLease,
+    verify_windows_packaged_agent_process, verify_windows_packaged_agent_process_with_image,
+    AuthorizedBrokerRequest, BrokerAuthenticator, ClientPrincipal, ClientRole,
+    StrictPackageManifest, WindowsAgentImageTrustLease, WindowsAgentProcessTrustLease,
 };
 
 const PIPE_NAME_PREFIX: &str = r"\\.\pipe\FlClashX.StrictBroker.";
@@ -351,7 +352,6 @@ impl WindowsBrokerActivationPipeInstance {
         package: &StrictPackageManifest,
     ) -> Result<WindowsBrokerActivationAttempt> {
         let identity = self.connect_and_receive()?;
-        let request_id = identity.request.request_id.clone();
         let verification = (|| -> Result<WindowsAgentProcessTrustLease> {
             if identity.is_local_system {
                 bail!("LocalSystem cannot activate an interactive Broker session");
@@ -365,22 +365,24 @@ impl WindowsBrokerActivationPipeInstance {
                 package,
             )
         })();
-        match verification {
-            Ok(agent) => Ok(WindowsBrokerActivationAttempt::Verified(
-                WindowsVerifiedActivationRequest {
-                    request: identity.request,
-                    client_sid: identity.client_sid,
-                    client_session_id: identity.client_session_id,
-                    agent,
-                },
-            )),
-            Err(_) => Ok(WindowsBrokerActivationAttempt::Rejected(
-                BrokerActivationResponse::error(
-                    request_id,
-                    BrokerActivationErrorCode::Unauthorized,
-                )?,
-            )),
-        }
+        classify_activation(identity, verification)
+    }
+
+    pub fn connect_and_classify_with_image(
+        &self,
+        image: &WindowsAgentImageTrustLease,
+    ) -> Result<WindowsBrokerActivationAttempt> {
+        let identity = self.connect_and_receive()?;
+        let verification = (|| -> Result<WindowsAgentProcessTrustLease> {
+            if identity.is_local_system {
+                bail!("LocalSystem cannot activate an interactive Broker session");
+            }
+            if identity.client_session_id == 0 {
+                bail!("session-zero clients cannot activate an interactive Broker session");
+            }
+            verify_windows_packaged_agent_process_with_image(identity.client_process_id, image)
+        })();
+        classify_activation(identity, verification)
     }
 
     fn connect_and_receive(&self) -> Result<PendingActivationRequest> {
@@ -432,6 +434,26 @@ impl WindowsBrokerActivationPipeInstance {
                 bail!("strict Broker activation connect returned message data")
             }
         }
+    }
+}
+
+fn classify_activation(
+    identity: PendingActivationRequest,
+    verification: Result<WindowsAgentProcessTrustLease>,
+) -> Result<WindowsBrokerActivationAttempt> {
+    let request_id = identity.request.request_id.clone();
+    match verification {
+        Ok(agent) => Ok(WindowsBrokerActivationAttempt::Verified(
+            WindowsVerifiedActivationRequest {
+                request: identity.request,
+                client_sid: identity.client_sid,
+                client_session_id: identity.client_session_id,
+                agent,
+            },
+        )),
+        Err(_) => Ok(WindowsBrokerActivationAttempt::Rejected(
+            BrokerActivationResponse::error(request_id, BrokerActivationErrorCode::Unauthorized)?,
+        )),
     }
 }
 
@@ -1092,9 +1114,11 @@ fn raw_handle(handle: &OwnedHandle) -> *mut c_void {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use flclash_strict_contract::{BrokerActivationErrorCode, BrokerActivationResponseBody};
+    use sha2::{Digest, Sha256};
 
     use super::*;
 
@@ -1168,24 +1192,24 @@ mod tests {
         let client = std::thread::spawn(move || {
             exchange_windows_activation_for_agent(&client_name, &frame, deadlines).unwrap()
         });
+        let unexpected_path = Path::new(r"C:\Windows\System32\cmd.exe");
+        let inspected = crate::inspect_windows_executable(unexpected_path).unwrap();
+        let file_sha256 = format!("{:x}", Sha256::digest(fs::read(unexpected_path).unwrap()));
         let manifest = StrictPackageManifest::parse(
             format!(
                 r#"{{"protocol":1,"packageVersion":"rejection-test","driverBuildId":"{}","driverFileSha256":"{}","driverPublisherCertificateSha256":"{}","agentFileSha256":"{}","agentPublisherCertificateSha256":"{}"}}"#,
                 "12".repeat(16),
                 "23".repeat(32),
                 "34".repeat(32),
-                "45".repeat(32),
-                "56".repeat(32),
+                file_sha256,
+                inspected.publisher_certificate_sha256,
             )
             .as_bytes(),
         )
         .unwrap();
-        let unexpected_path = Path::new(r"C:\Windows\System32\cmd.exe");
+        let image = crate::verify_windows_packaged_agent_image(unexpected_path, &manifest).unwrap();
 
-        let response = match server
-            .connect_and_classify(unexpected_path, &manifest)
-            .unwrap()
-        {
+        let response = match server.connect_and_classify_with_image(&image).unwrap() {
             WindowsBrokerActivationAttempt::Verified(_) => panic!("identity must be rejected"),
             WindowsBrokerActivationAttempt::Rejected(response) => response,
         };

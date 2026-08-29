@@ -17,9 +17,10 @@ use windows_sys::Win32::UI::Shell::{FOLDERID_ProgramData, SHGetKnownFolderPath};
 
 use crate::windows_pipe::is_connect_deadline;
 use crate::{
-    run_windows_scm_service, AuthorizedBrokerRequest, BrokerDispatcher, BrokerEngine,
-    BrokerSessionRegistry, BrokerSessionResource, FileRecoveryStore, ForwardingHealth,
-    ForwardingHealthProbe, PlannedWfpBackend, StrictPackageManifest, WfpPolicyPlan,
+    run_windows_scm_service, verify_windows_packaged_agent_image, AuthorizedBrokerRequest,
+    BrokerDispatcher, BrokerEngine, BrokerSessionRegistry, BrokerSessionResource,
+    FileRecoveryStore, ForwardingHealth, ForwardingHealthProbe, PlannedWfpBackend,
+    StrictPackageManifest, WfpPolicyPlan, WindowsAgentImageTrustLease,
     WindowsBrokerActivationAttempt, WindowsBrokerActivationPipeInstance, WindowsBrokerPipeSession,
     WindowsIdentityVerifier, WindowsIoctlDriverChannel, WindowsPipeDeadlines, WindowsPipeShutdown,
     WindowsScmContext, WindowsWfpControl, WindowsWfpEngineStore,
@@ -192,6 +193,8 @@ fn run_service(
         WINDOWS_STRICT_BROKER_ACTIVATION_PIPE_NAME,
         activation_deadlines,
     )?;
+    let agent_image = verify_windows_packaged_agent_image(paths.agent(), &package)
+        .context("open and attest packaged strict Agent")?;
     let mut engine = EngineActor::start(paths.clone(), package.clone())?;
     if let Err(error) = context.report_running() {
         return combine_service_results(Err(error), engine.shutdown());
@@ -199,8 +202,7 @@ fn run_service(
     let service = run_activation_loop(
         activation,
         context.shutdown(),
-        &paths,
-        &package,
+        &agent_image,
         session_deadlines,
         engine.client(),
     );
@@ -239,15 +241,14 @@ fn build_dispatcher(
 fn run_activation_loop(
     activation: WindowsBrokerActivationPipeInstance,
     shutdown: WindowsPipeShutdown,
-    paths: &WindowsStrictBrokerPaths,
-    package: &StrictPackageManifest,
+    agent_image: &WindowsAgentImageTrustLease,
     session_deadlines: WindowsPipeDeadlines,
     engine: EngineActorClient,
 ) -> Result<()> {
     let mut sessions = BrokerSessionRegistry::<WindowsBrokerPipeSession>::default();
     while !shutdown.is_requested() {
         sessions.reap_exited(|| engine.force_fail_closed())?;
-        let attempt = match activation.connect_and_classify(paths.agent(), package) {
+        let attempt = match activation.connect_and_classify_with_image(agent_image) {
             Ok(attempt) => attempt,
             Err(error) if is_connect_deadline(&error) => continue,
             Err(_) => {
