@@ -524,7 +524,7 @@ status/counter consistency. `62d0c44` baselines those counters for each bridge
 and terminates on any new failure, partial batch, rollback or accounting drift.
 `959adb6` connects that termination to the production Engine Actor. The actor
 prepares cancellation, directly revokes and attests the endpoint lease/gate,
-deactivates forwarding and forces blocking before returning the runtime error.
+deactivates forwarding and forces blocking before any recovery action is allowed.
 Retrying an ambiguous batch is forbidden because accepted sequences may already
 be committed.
 
@@ -535,11 +535,22 @@ to the ABI limit. No UDP/DNS/QUIC capability is advertised until end-to-end WFP
 canaries, DNS/QUIC semantics, representative performance evidence and the
 WDK/Windows 11 VM gates pass.
 
-After this fail-closed cleanup the Engine Actor deliberately exits instead of
-silently reconstructing mutable kernel/userspace ownership in place. This is the
-safe current behavior, not a completed availability design: TD-027 requires a
-stable recovery marker and bounded in-process or SCM recovery proof, including
-no admission reopen before full guard, lease and runtime attestation.
+After successful fail-closed cleanup, `242e706` keeps the single-owner Engine
+Actor alive in a supervision-suspended state instead of terminating it or
+silently reconstructing mutable kernel/userspace ownership. The persisted policy
+is already Blocking. The Actor drains at most the four requests that could have
+been queued before the failure and returns `backendUnavailable`, preventing a
+stale pre-failure commit from reopening admission. Status, disable and new
+authenticated requests remain available; only a fresh `commitPolicy` attempt
+re-arms periodic health supervision. Persistent health failure therefore cannot
+create a 25 ms cleanup loop. If fail-closed cleanup itself is uncertain, the Actor
+still exits with the combined health and cleanup errors.
+
+This is a bounded recovery boundary, not completed automatic recovery. TD-027
+still requires an explicit automatic-retry policy or documented Agent retry,
+operator-visible diagnostics, SCM behavior and Windows 11 VM fault proof. No
+admission can reopen before the normal guard, lease, runtime and capability
+attestation path completes.
 
 The current exact first-endpoint binding deliberately fails closed if a WFP flow
 context later presents a different destination. Windows 11 VM acceptance must

@@ -39,9 +39,12 @@ lease owner while UDP admission remains closed; receive setup is serialized with
 lease mutation and restarts the manual queue after a prior purge. Reply batches
 still require the open gate. A 25 ms Engine Actor check translates bridge failure
 into prepared cancellation, verified lease/gate revocation, forwarding teardown
-and forced blocking before actor exit. This remains an inactive vertical slice:
-a multi-record batch can have an accepted prefix if a later initiation fails, and
-real WDK/driver fault execution is not proven. No UDP/DNS/QUIC capability is
+and forced blocking. Proven cleanup keeps the Actor available but suspends health
+polling; at most four pre-failure queued requests are rejected, and only a fresh
+authenticated commit attempt re-arms supervision. Cleanup uncertainty still
+terminates the Actor. This remains an inactive vertical slice: a multi-record
+batch can have an accepted prefix if a later initiation fails, and real
+WDK/driver fault execution is not proven. No UDP/DNS/QUIC capability is
 advertised until end-to-end canaries, signing, performance measurement and VM
 qualification are complete. Capture also rejects flows requiring ALE
 reclassification; enterprise IPsec
