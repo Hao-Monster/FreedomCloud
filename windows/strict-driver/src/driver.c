@@ -51,6 +51,7 @@ typedef struct _FCX_STRICT_LEASE_STATE {
 } FCX_STRICT_LEASE_STATE;
 
 static WDFDEVICE FcxControlDevice;
+static WDFQUEUE FcxDatagramReceiveQueue;
 static PEX_RUNDOWN_REF_CACHE_AWARE FcxPolicyRundown;
 static volatile PVOID FcxPolicySnapshot;
 static volatile LONG64 FcxPolicyGeneration;
@@ -948,6 +949,262 @@ FcxProcessNotify(
 }
 
 static
+BOOLEAN
+FcxDatagramAddressIsSafe(
+    _In_reads_bytes_(16) const UINT8 *Address,
+    _In_ UINT8 AddressFamily,
+    _In_ BOOLEAN Remote
+    )
+{
+    BOOLEAN ipv4Mapped;
+
+    if (AddressFamily == FCX_STRICT_ADDRESS_FAMILY_V4) {
+        if (!FcxBytesAreZero(Address + 4, 12) ||
+            (Address[0] == 0 && Address[1] == 0 &&
+             Address[2] == 0 && Address[3] == 0) ||
+            (Address[0] >= 224 && Address[0] <= 239) ||
+            (Address[0] == 255 && Address[1] == 255 &&
+             Address[2] == 255 && Address[3] == 255)) {
+            return FALSE;
+        }
+        if (Remote &&
+            (Address[0] == 127 ||
+             (Address[0] == 169 && Address[1] == 254))) {
+            return FALSE;
+        }
+        return TRUE;
+    }
+    if (AddressFamily != FCX_STRICT_ADDRESS_FAMILY_V6 ||
+        FcxBytesAreZero(Address, 16) ||
+        Address[0] == 0xff) {
+        return FALSE;
+    }
+    ipv4Mapped = FcxBytesAreZero(Address, 10) &&
+                 Address[10] == 0xff && Address[11] == 0xff;
+    if (ipv4Mapped) {
+        return FALSE;
+    }
+    if (Remote &&
+        ((FcxBytesAreZero(Address, 15) && Address[15] == 1) ||
+         (Address[0] == 0xfe && (Address[1] & 0xc0) == 0x80))) {
+        return FALSE;
+    }
+    return TRUE;
+}
+
+static
+BOOLEAN
+FcxLeaseOwnsRequest(
+    _In_ WDFREQUEST Request,
+    _In_opt_ const FCX_STRICT_DATAGRAM_BATCH_HEADER *Batch
+    )
+{
+    const FCX_STRICT_LEASE_STATE *lease;
+    ULONG requestorProcessId;
+    UINT64 leaseGeneration = 0;
+    UINT64 revision = 0;
+    BOOLEAN matches = FALSE;
+
+    requestorProcessId = WdfRequestGetRequestorProcessId(Request);
+    if (requestorProcessId == 0 || FcxLeaseRundown == NULL ||
+        !ExAcquireRundownProtectionCacheAware(FcxLeaseRundown)) {
+        return FALSE;
+    }
+    if (Batch != NULL) {
+        RtlCopyMemory(&leaseGeneration,
+                      &Batch->LeaseGeneration,
+                      sizeof(leaseGeneration));
+        RtlCopyMemory(&revision, &Batch->Revision, sizeof(revision));
+    }
+    lease = (const FCX_STRICT_LEASE_STATE *)InterlockedCompareExchangePointer(
+        (PVOID volatile *)&FcxLeaseState,
+        NULL,
+        NULL);
+    if (lease != NULL &&
+        lease->ExpiresAtInterruptTime > KeQueryInterruptTime() &&
+        PsGetProcessExitStatus(lease->BrokerProcess) == STATUS_PENDING &&
+        HandleToULong(PsGetProcessId(lease->BrokerProcess)) ==
+            requestorProcessId &&
+        (Batch == NULL ||
+         (lease->Generation == leaseGeneration &&
+          lease->Revision == revision &&
+          RtlCompareMemory(lease->PolicyDigest,
+                           Batch->PolicyDigest,
+                           sizeof(lease->PolicyDigest)) == sizeof(lease->PolicyDigest) &&
+          RtlCompareMemory(lease->Nonce,
+                           Batch->LeaseNonce,
+                           sizeof(lease->Nonce)) == sizeof(lease->Nonce)))) {
+        matches = TRUE;
+    }
+    ExReleaseRundownProtectionCacheAware(FcxLeaseRundown);
+    return matches;
+}
+
+static
+NTSTATUS
+FcxQueueDatagramReceive(
+    _In_ WDFREQUEST Request,
+    _In_ size_t OutputBufferLength,
+    _In_ size_t InputBufferLength
+    )
+{
+    NTSTATUS status;
+    PVOID output;
+    size_t outputBytes;
+    ULONG queuedRequests = 0;
+    ULONG driverRequests = 0;
+
+    if (FcxDatagramReceiveQueue == NULL) {
+        return STATUS_DEVICE_NOT_READY;
+    }
+    if (InputBufferLength != 0 ||
+        OutputBufferLength != FCX_STRICT_DATAGRAM_MAX_BATCH_BYTES) {
+        return STATUS_INVALID_BUFFER_SIZE;
+    }
+    if (!FcxLeaseOwnsRequest(Request, NULL)) {
+        return STATUS_ACCESS_DENIED;
+    }
+    status = WdfRequestRetrieveOutputBuffer(
+        Request,
+        FCX_STRICT_DATAGRAM_MAX_BATCH_BYTES,
+        &output,
+        &outputBytes);
+    if (!NT_SUCCESS(status)) {
+        return status;
+    }
+    if (output == NULL || outputBytes != OutputBufferLength) {
+        return STATUS_INVALID_BUFFER_SIZE;
+    }
+    (VOID)WdfIoQueueGetState(FcxDatagramReceiveQueue,
+                             &queuedRequests,
+                             &driverRequests);
+    if (queuedRequests != 0 || driverRequests != 0) {
+        return STATUS_DEVICE_BUSY;
+    }
+    return WdfRequestForwardToIoQueue(Request, FcxDatagramReceiveQueue);
+}
+
+static
+NTSTATUS
+FcxValidateSubmittedDatagramRecord(
+    _In_reads_bytes_(AvailableBytes) const UINT8 *Input,
+    _In_ UINT32 AvailableBytes,
+    _Out_ UINT32 *RecordBytes
+    )
+{
+    FCX_STRICT_DATAGRAM_RECORD_HEADER record;
+    UINT32 expectedBytes;
+    UINT32 unpaddedBytes;
+    UINT64 flowToken;
+    UINT64 sequence;
+
+    *RecordBytes = 0;
+    if (AvailableBytes < sizeof(record)) {
+        return STATUS_INVALID_BUFFER_SIZE;
+    }
+    RtlCopyMemory(&record, Input, sizeof(record));
+    RtlCopyMemory(&flowToken, &record.FlowToken, sizeof(flowToken));
+    RtlCopyMemory(&sequence, &record.Sequence, sizeof(sequence));
+    if (record.PayloadBytes == 0 ||
+        record.PayloadBytes > FCX_STRICT_DATAGRAM_MAX_PAYLOAD_BYTES ||
+        record.PayloadBytes > MAXULONG - FCX_STRICT_DATAGRAM_RECORD_HEADER_BYTES - 7u) {
+        return STATUS_INVALID_PARAMETER;
+    }
+    unpaddedBytes = FCX_STRICT_DATAGRAM_RECORD_HEADER_BYTES + record.PayloadBytes;
+    expectedBytes = (unpaddedBytes + 7u) & ~7u;
+    if (record.RecordBytes != expectedBytes ||
+        record.RecordBytes > AvailableBytes ||
+        flowToken == 0 || sequence == 0 ||
+        record.TargetGroupIndex >= 128 ||
+        record.IpProtocol != IPPROTO_UDP ||
+        (record.Flags & ~FCX_STRICT_DATAGRAM_KNOWN_FLAGS) != 0 ||
+        record.LocalPort == 0 || record.RemotePort == 0 ||
+        !FcxDatagramAddressIsSafe(record.LocalAddress,
+                                  record.AddressFamily,
+                                  FALSE) ||
+        !FcxDatagramAddressIsSafe(record.RemoteAddress,
+                                  record.AddressFamily,
+                                  TRUE) ||
+        !FcxBytesAreZero(record.Reserved, sizeof(record.Reserved)) ||
+        !FcxBytesAreZero(Input + unpaddedBytes,
+                         record.RecordBytes - unpaddedBytes)) {
+        return STATUS_INVALID_PARAMETER;
+    }
+    *RecordBytes = record.RecordBytes;
+    return STATUS_SUCCESS;
+}
+
+static
+NTSTATUS
+FcxValidateSubmittedDatagramBatch(
+    _In_ WDFREQUEST Request,
+    _In_ size_t OutputBufferLength,
+    _In_ size_t InputBufferLength
+    )
+{
+    NTSTATUS status;
+    PVOID output;
+    const UINT8 *input;
+    size_t inputBytes;
+    FCX_STRICT_DATAGRAM_BATCH_HEADER batch;
+    UINT32 recordIndex;
+    UINT32 cursor;
+    UINT32 recordBytes;
+
+    if (InputBufferLength != 0 ||
+        OutputBufferLength < FCX_STRICT_DATAGRAM_BATCH_HEADER_BYTES ||
+        OutputBufferLength > FCX_STRICT_DATAGRAM_MAX_BATCH_BYTES) {
+        return STATUS_INVALID_BUFFER_SIZE;
+    }
+    status = WdfRequestRetrieveOutputBuffer(
+        Request,
+        FCX_STRICT_DATAGRAM_BATCH_HEADER_BYTES,
+        &output,
+        &inputBytes);
+    if (!NT_SUCCESS(status)) {
+        return status;
+    }
+    if (output == NULL || inputBytes != OutputBufferLength) {
+        return STATUS_INVALID_BUFFER_SIZE;
+    }
+    input = (const UINT8 *)output;
+    RtlCopyMemory(&batch, input, sizeof(batch));
+    if (batch.Magic != FCX_STRICT_DATAGRAM_BATCH_MAGIC ||
+        batch.Protocol != FCX_STRICT_DATAGRAM_PROTOCOL ||
+        batch.HeaderBytes != FCX_STRICT_DATAGRAM_BATCH_HEADER_BYTES ||
+        batch.Kind != FCX_STRICT_DATAGRAM_KIND_REPLY ||
+        !FcxBytesAreZero(batch.Reserved0, sizeof(batch.Reserved0)) ||
+        batch.TotalBytes != (UINT32)inputBytes ||
+        batch.RecordCount == 0 ||
+        batch.RecordCount > FCX_STRICT_DATAGRAM_MAX_RECORDS ||
+        batch.Reserved1 != 0 ||
+        !FcxBytesAreZero(batch.Reserved2, sizeof(batch.Reserved2))) {
+        return STATUS_INVALID_PARAMETER;
+    }
+    if (!FcxLeaseOwnsRequest(Request, &batch)) {
+        return STATUS_ACCESS_DENIED;
+    }
+    cursor = FCX_STRICT_DATAGRAM_BATCH_HEADER_BYTES;
+    for (recordIndex = 0; recordIndex < batch.RecordCount; ++recordIndex) {
+        status = FcxValidateSubmittedDatagramRecord(
+            input + cursor,
+            batch.TotalBytes - cursor,
+            &recordBytes);
+        if (!NT_SUCCESS(status)) {
+            return status;
+        }
+        cursor += recordBytes;
+    }
+    if (cursor != batch.TotalBytes) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    // Reply injection is deliberately unavailable until the WFP injection
+    // handles and per-flow provenance path are implemented and VM-qualified.
+    return STATUS_NOT_SUPPORTED;
+}
+
+static
 VOID
 FcxReleasePolicy(
     VOID
@@ -1071,6 +1328,23 @@ FcxEvtIoDeviceControl(
 
     UNREFERENCED_PARAMETER(Queue);
     PAGED_CODE();
+
+    if (IoControlCode == IOCTL_FCX_STRICT_RECEIVE_DATAGRAM_BATCH) {
+        status = FcxQueueDatagramReceive(Request,
+                                         OutputBufferLength,
+                                         InputBufferLength);
+        if (!NT_SUCCESS(status)) {
+            WdfRequestComplete(Request, status);
+        }
+        return;
+    }
+    if (IoControlCode == IOCTL_FCX_STRICT_SUBMIT_DATAGRAM_BATCH) {
+        status = FcxValidateSubmittedDatagramBatch(Request,
+                                                   OutputBufferLength,
+                                                   InputBufferLength);
+        WdfRequestComplete(Request, status);
+        return;
+    }
 
     if (OutputBufferLength < sizeof(*output)) {
         WdfRequestComplete(Request, STATUS_BUFFER_TOO_SMALL);
@@ -1282,6 +1556,7 @@ FcxEvtDriverUnload(
         FcxPolicyRundown = NULL;
     }
     FcxControlDevice = NULL;
+    FcxDatagramReceiveQueue = NULL;
 }
 
 _Use_decl_annotations_
@@ -1355,6 +1630,19 @@ DriverEntry(
         goto Failure;
     }
 
+    WDF_IO_QUEUE_CONFIG_INIT(&queueConfig, WdfIoQueueDispatchManual);
+    queueConfig.PowerManaged = WdfFalse;
+    WDF_OBJECT_ATTRIBUTES_INIT(&attributes);
+    WDF_OBJECT_ATTRIBUTES_SET_EXECUTION_LEVEL(&attributes,
+                                               WdfExecutionLevelPassive);
+    status = WdfIoQueueCreate(FcxControlDevice,
+                              &queueConfig,
+                              &attributes,
+                              &FcxDatagramReceiveQueue);
+    if (!NT_SUCCESS(status)) {
+        goto Failure;
+    }
+
     WDF_IO_QUEUE_CONFIG_INIT_DEFAULT_QUEUE(&queueConfig,
                                             WdfIoQueueDispatchSequential);
     queueConfig.PowerManaged = WdfFalse;
@@ -1392,6 +1680,7 @@ Failure:
     }
     FcxReleaseLease();
     FcxControlDevice = NULL;
+    FcxDatagramReceiveQueue = NULL;
     if (FcxLeaseRundown != NULL) {
         ExFreeCacheAwareRundownProtection(FcxLeaseRundown);
         FcxLeaseRundown = NULL;

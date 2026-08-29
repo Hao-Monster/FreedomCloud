@@ -1405,4 +1405,59 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn kernel_datagram_ioctls_use_one_manual_receive_and_validate_replies() {
+        let driver = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../windows/strict-driver/src/driver.c"
+        ));
+
+        for invariant in [
+            "static WDFQUEUE FcxDatagramReceiveQueue;",
+            "WdfIoQueueDispatchManual",
+            "FcxQueueDatagramReceive(",
+            "OutputBufferLength != FCX_STRICT_DATAGRAM_MAX_BATCH_BYTES",
+            "WdfIoQueueGetState(FcxDatagramReceiveQueue",
+            "queuedRequests != 0 || driverRequests != 0",
+            "WdfRequestForwardToIoQueue(Request, FcxDatagramReceiveQueue)",
+            "FcxValidateSubmittedDatagramBatch(",
+            "batch.Kind != FCX_STRICT_DATAGRAM_KIND_REPLY",
+            "batch.RecordCount == 0",
+            "flowToken == 0 || sequence == 0",
+            "record.TargetGroupIndex >= 128",
+            "record.IpProtocol != IPPROTO_UDP",
+            "record.RecordBytes > AvailableBytes",
+            "!FcxBytesAreZero(Input + unpaddedBytes",
+            "FcxDatagramAddressIsSafe(record.LocalAddress",
+            "lease->ExpiresAtInterruptTime > KeQueryInterruptTime()",
+            "HandleToULong(PsGetProcessId(lease->BrokerProcess))",
+            "batch.TotalBytes != (UINT32)inputBytes",
+            "FcxLeaseOwnsRequest(Request, &batch)",
+            "return STATUS_NOT_SUPPORTED;",
+        ] {
+            assert!(
+                driver.contains(invariant),
+                "missing datagram queue invariant: {invariant}"
+            );
+        }
+
+        let receive = driver
+            .find("IoControlCode == IOCTL_FCX_STRICT_RECEIVE_DATAGRAM_BATCH")
+            .expect("receive IOCTL is dispatched explicitly");
+        let snapshot = driver
+            .find("if (OutputBufferLength < sizeof(*output))")
+            .expect("control IOCTLs retain their snapshot boundary");
+        assert!(
+            receive < snapshot,
+            "Direct-I/O dispatch must precede snapshot output retrieval"
+        );
+        let submit = driver
+            .find("IoControlCode == IOCTL_FCX_STRICT_SUBMIT_DATAGRAM_BATCH")
+            .expect("submit IOCTL is dispatched explicitly");
+        assert!(
+            submit < snapshot,
+            "Direct-I/O submission must precede snapshot output retrieval"
+        );
+    }
 }
