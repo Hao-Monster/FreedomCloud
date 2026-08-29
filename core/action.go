@@ -76,6 +76,19 @@ func handleAction(action *Action, result ActionResult) {
 		data := []byte(s)
 		result.success(handleUpdateConfig(data))
 		return
+	case configureStrictIngressMethod:
+		s, ok := action.Data.(string)
+		if !ok {
+			result.error("invalid data type")
+			return
+		}
+		data, err := handleConfigureStrictIngress(s)
+		if err != nil {
+			result.error("strict ingress configuration rejected")
+			return
+		}
+		result.success(data)
+		return
 	case setupConfigMethod:
 		s, ok := action.Data.(string)
 		if !ok {

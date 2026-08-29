@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 pub const PROTOCOL_VERSION: u32 = 1;
 pub const MAX_AUTH_LINE_BYTES: usize = 4096;
@@ -63,6 +64,10 @@ pub fn parse_control(_line: &str) -> Option<ControlRequest> {
         .map(|value| value.agent)
 }
 
+pub fn is_reserved_core_action(action: &Value) -> bool {
+    action.get("method").and_then(Value::as_str) == Some("configureStrictIngress")
+}
+
 pub(crate) fn constant_time_eq(left: &str, right: &str) -> bool {
     let left = left.as_bytes();
     let right = right.as_bytes();
@@ -105,5 +110,18 @@ mod tests {
         assert_eq!(control.id, "request-1");
         assert_eq!(control.command, AgentCommand::RestartCore);
         assert!(parse_control(r#"{"id":"core-1","method":"updateConfig","data":"{}"}"#).is_none());
+    }
+
+    #[test]
+    fn ui_cannot_invoke_agent_owned_core_actions() {
+        let reserved: Value = serde_json::from_str(
+            r#"{"id":"attack","method":"configureStrictIngress","data":"{}"}"#,
+        )
+        .unwrap();
+        let normal: Value =
+            serde_json::from_str(r#"{"id":"normal","method":"setupConfig","data":"{}"}"#).unwrap();
+        assert!(is_reserved_core_action(&reserved));
+        assert!(!is_reserved_core_action(&normal));
+        assert!(!is_reserved_core_action(&Value::Null));
     }
 }

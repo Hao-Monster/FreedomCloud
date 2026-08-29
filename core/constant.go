@@ -108,6 +108,7 @@ const (
 	getCoreVersionMethod           Method = "getCoreVersion"
 	healthCheckMethod              Method = "healthCheck"
 	healthProbeMethod              Method = "healthProbe"
+	configureStrictIngressMethod   Method = "configureStrictIngress"
 	setUiActiveMethod              Method = "setUiActive"
 	setScreenActiveMethod          Method = "setScreenActive"
 )

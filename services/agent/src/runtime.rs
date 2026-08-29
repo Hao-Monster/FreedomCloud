@@ -15,8 +15,8 @@ use crate::config::AgentConfig;
 use crate::endpoint::{load_or_create_helper_token, random_token, EndpointGuard};
 use crate::journal::ReplayJournal;
 use crate::protocol::{
-    authenticate, parse_control, AgentCommand, MAX_AUTH_LINE_BYTES, MAX_MESSAGE_LINE_BYTES,
-    PROTOCOL_VERSION,
+    authenticate, is_reserved_core_action, parse_control, AgentCommand, MAX_AUTH_LINE_BYTES,
+    MAX_MESSAGE_LINE_BYTES, PROTOCOL_VERSION,
 };
 use crate::strict::{StrictController, StrictReason};
 
@@ -348,6 +348,16 @@ async fn handle_ui(stream: TcpStream, token: String, shared: Arc<Shared>) -> Res
             || action.get("data").is_none()
         {
             bail!("invalid Core action envelope");
+        }
+        if is_reserved_core_action(&action) {
+            let response = json!({
+                "_agent": {
+                    "type": "reservedCoreAction",
+                    "id": action["id"],
+                }
+            });
+            output_tx.send(UiOutput::new(response.to_string())).await?;
+            continue;
         }
         let core = shared.core.lock().await.clone();
         if let Some(core) = core {
