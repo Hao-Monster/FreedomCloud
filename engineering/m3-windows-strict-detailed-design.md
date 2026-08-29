@@ -80,6 +80,13 @@ read-only IOCTL snapshot carrying the same package-injected 128-bit build ID.
 Any type, path or build mismatch prevents the channel from being constructed;
 no capability is inferred from the device name alone.
 
+The production Broker build embeds a bounded, closed-schema package manifest.
+The manifest pins the signed driver's SHA-256, publisher-certificate SHA-256
+and build ID; the driver hash is computed through the same replacement-locked
+handle used for signature verification. Enabling the production-host feature
+without an explicit absolute manifest build input is a build error. Runtime
+arguments cannot substitute a driver path, digest or publisher identity.
+
 ## 3. Application identity
 
 Policy input is not a raw path wildcard. Broker canonicalizes the file, obtains
