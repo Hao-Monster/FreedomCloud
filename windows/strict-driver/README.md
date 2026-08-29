@@ -19,6 +19,9 @@ interface and sub-interface tuple needed for future receive injection. Separate
 v4/v6 transport-injection handles are created before callout registration, and
 self-injected packets bypass recapture only when their opaque injection context
 is the exact live flow context. This is still preparation, not reply injection.
+Reply validation uses a fixed 256-bucket driver-token index and verifies the
+complete flow tuple plus lease identity before taking a reference; it never
+scans the full 1,024-flow lifecycle list.
 
 Reply reinjection and production bridge ownership are still unfinished. No UDP
 reply is accepted for injection and no UDP/DNS/QUIC capability is advertised

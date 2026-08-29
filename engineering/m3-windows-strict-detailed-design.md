@@ -455,6 +455,17 @@ prevents a foreign or stale injected packet from claiming the loop bypass. The
 handles and bypass are prerequisites only: reply packet construction, bounded
 in-flight ownership and asynchronous completion are not implemented yet.
 
+`0027f9c` adds a fixed 256-bucket token index beside the lifecycle list. Driver-
+generated monotonic nonzero tokens distribute the maximum 1,024 contexts across
+the buckets, while link/unlink of both lists remains atomic under the existing
+flow spin lock. A reply record is structurally validated first, then looks only
+inside its token bucket and must exactly match the target group, family, flags,
+ports, addresses, revision, policy digest and lease nonce before acquiring a
+flow reference. A collision miss returns no pointer; review caught and fixed a
+candidate/result aliasing error before commit. Token exhaustion fails closed.
+This removes a full-list scan from the future reply hot path without adding a
+second lock or an unbounded table.
+
 This remains an inactive vertical slice. Production ownership and health of the
 asynchronous Broker bridge are not wired, reply packet construction/injection
 and its asynchronous completion are unimplemented, and current capture completes
