@@ -21,6 +21,25 @@ const MAX_TCP_OWNER_TABLE_BYTES: u32 = 16 * 1024 * 1024;
 const MAX_TCP_OWNER_QUERY_ATTEMPTS: usize = 4;
 const MAX_STRICT_CORE_LISTENERS: usize = 128;
 
+pub struct WindowsCoreListenerTrustLease {
+    process: WindowsCoreProcessTrustLease,
+    endpoints: Vec<SocketAddrV4>,
+}
+
+impl WindowsCoreListenerTrustLease {
+    pub fn process_id(&self) -> u32 {
+        self.process.process_id()
+    }
+
+    pub fn endpoints(&self) -> &[SocketAddrV4] {
+        &self.endpoints
+    }
+
+    pub fn is_running(&self) -> Result<bool> {
+        self.process.is_running()
+    }
+}
+
 pub fn windows_tcp_listener_owner_pid(endpoint: SocketAddrV4) -> Result<u32> {
     windows_tcp_listener_owner_pid_for_all(std::slice::from_ref(&endpoint))
 }
@@ -94,6 +113,26 @@ pub fn verify_windows_packaged_core_listener_owner_with_image(
         bail!("strict Core listener ownership changed during verification");
     }
     Ok(lease)
+}
+
+pub fn verify_windows_packaged_core_listener_set(
+    endpoints: &[SocketAddrV4],
+    expected_core_path: impl AsRef<Path>,
+    package: &StrictPackageManifest,
+) -> Result<WindowsCoreListenerTrustLease> {
+    let image = verify_windows_packaged_core_image(expected_core_path, package)?;
+    verify_windows_packaged_core_listener_set_with_image(endpoints, &image)
+}
+
+pub fn verify_windows_packaged_core_listener_set_with_image(
+    endpoints: &[SocketAddrV4],
+    image: &WindowsCoreImageTrustLease,
+) -> Result<WindowsCoreListenerTrustLease> {
+    let process = verify_windows_packaged_core_listener_owner_with_image(endpoints, image)?;
+    Ok(WindowsCoreListenerTrustLease {
+        process,
+        endpoints: endpoints.to_vec(),
+    })
 }
 
 fn query_tcp_listener_rows() -> Result<Vec<MIB_TCPROW_OWNER_PID>> {
