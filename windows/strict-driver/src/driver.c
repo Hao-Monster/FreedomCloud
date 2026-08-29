@@ -35,6 +35,7 @@ static const GUID FcxRedirectV6CalloutKey = {
 };
 
 #define FCX_STRICT_LEASE_POOL_TAG 'LCXF'
+#define FCX_STRICT_REDIRECT_POOL_TAG 'RCXF'
 
 typedef struct _FCX_STRICT_LEASE_STATE {
     PEPROCESS BrokerProcess;
@@ -138,48 +139,429 @@ FcxBlockClassify(
     _Inout_ FWPS_CLASSIFY_OUT0 *ClassifyOut
     )
 {
-    if ((ClassifyOut->rights & FWPS_RIGHT_ACTION_WRITE) != 0) {
-        ClassifyOut->actionType = FWP_ACTION_BLOCK;
-        ClassifyOut->rights &= ~FWPS_RIGHT_ACTION_WRITE;
+    ClassifyOut->actionType = FWP_ACTION_BLOCK;
+    ClassifyOut->rights &= ~FWPS_RIGHT_ACTION_WRITE;
+}
+
+static
+VOID
+FcxPermitClassify(
+    _Inout_ FWPS_CLASSIFY_OUT0 *ClassifyOut
+    )
+{
+    ClassifyOut->actionType = FWP_ACTION_PERMIT;
+    ClassifyOut->rights &= ~FWPS_RIGHT_ACTION_WRITE;
+}
+
+static
+const FCX_STRICT_RULE_RECORD *
+FcxFindSelectedRule(
+    _In_ const FCX_STRICT_POLICY_SNAPSHOT *Snapshot,
+    _In_ const FWPS_INCOMING_VALUES0 *IncomingValues,
+    _In_ UINT32 AppIdField
+    )
+{
+    const FWP_BYTE_BLOB *appId;
+    const FWP_VALUE0 *value;
+
+    if (Snapshot == NULL || AppIdField >= IncomingValues->valueCount) {
+        return NULL;
+    }
+    value = &IncomingValues->incomingValue[AppIdField].value;
+    appId = value->type == FWP_BYTE_BLOB_TYPE ? value->byteBlob : NULL;
+    if (appId == NULL || appId->data == NULL || appId->size == 0 ||
+        appId->size > FCX_STRICT_MAX_APP_ID_BYTES) {
+        return NULL;
+    }
+    return FcxStrictPolicyFind(Snapshot, appId->data, appId->size);
+}
+
+static
+BOOLEAN
+FcxLeaseMatchesSnapshot(
+    _In_ const FCX_STRICT_LEASE_STATE *Lease,
+    _In_ const FCX_STRICT_POLICY_SNAPSHOT *Snapshot
+    )
+{
+    return Lease != NULL && Snapshot != NULL &&
+           Lease->ExpiresAtInterruptTime > KeQueryInterruptTime() &&
+           Lease->Revision == Snapshot->Revision &&
+           RtlCompareMemory(Lease->PolicyDigest,
+                            Snapshot->PolicyDigest,
+                            sizeof(Lease->PolicyDigest)) == sizeof(Lease->PolicyDigest);
+}
+
+static
+FWPS_CONNECTION_REDIRECT_STATE
+FcxQueryRedirectState(
+    _In_ const FWPS_INCOMING_METADATA_VALUES0 *IncomingMetadata,
+    _Outptr_result_maybenull_ VOID **RedirectContext
+    )
+{
+    *RedirectContext = NULL;
+    if (FcxRedirectHandle == NULL ||
+        !FWPS_IS_METADATA_FIELD_PRESENT(
+            IncomingMetadata,
+            FWPS_METADATA_FIELD_REDIRECT_RECORD_HANDLE)) {
+        return FWPS_CONNECTION_NOT_REDIRECTED;
+    }
+    return FwpsQueryConnectionRedirectState0(IncomingMetadata->redirectRecords,
+                                              FcxRedirectHandle,
+                                              RedirectContext);
+}
+
+static
+BOOLEAN
+FcxRedirectContextMatchesPolicy(
+    _In_opt_ const VOID *RedirectContext,
+    _In_ const FCX_STRICT_POLICY_SNAPSHOT *Snapshot,
+    _In_ const FCX_STRICT_RULE_RECORD *Rule
+    )
+{
+    const FCX_STRICT_REDIRECT_CONTEXT *context =
+        (const FCX_STRICT_REDIRECT_CONTEXT *)RedirectContext;
+
+    return context != NULL &&
+           context->Magic == FCX_STRICT_REDIRECT_CONTEXT_MAGIC &&
+           context->Protocol == FCX_STRICT_REDIRECT_CONTEXT_PROTOCOL &&
+           context->ContextBytes == FCX_STRICT_REDIRECT_CONTEXT_BYTES &&
+           context->Revision == Snapshot->Revision &&
+           context->TargetGroupIndex == Rule->TargetGroupIndex &&
+           context->IpProtocol == IPPROTO_TCP &&
+           RtlCompareMemory(context->PolicyDigest,
+                            Snapshot->PolicyDigest,
+                            sizeof(context->PolicyDigest)) == sizeof(context->PolicyDigest);
+}
+
+static
+BOOLEAN
+FcxOriginalDestinationIsSafe(
+    _In_ const FCX_STRICT_REDIRECT_CONTEXT *Context
+    )
+{
+    const UINT8 *address = Context->RemoteAddress;
+    UINT32 index;
+    BOOLEAN allZero = TRUE;
+
+    if (Context->RemotePort == 0) {
+        return FALSE;
+    }
+    if (Context->AddressFamily == FCX_STRICT_ADDRESS_FAMILY_V4) {
+        if (address[0] == 127 ||
+            (address[0] >= 224 && address[0] <= 239) ||
+            (address[0] == 255 && address[1] == 255 &&
+             address[2] == 255 && address[3] == 255)) {
+            return FALSE;
+        }
+        for (index = 0; index < 4; ++index) {
+            allZero = allZero && address[index] == 0;
+        }
+        for (index = 4; index < sizeof(Context->RemoteAddress); ++index) {
+            if (address[index] != 0) {
+                return FALSE;
+            }
+        }
+        return !allZero;
+    }
+    if (Context->AddressFamily != FCX_STRICT_ADDRESS_FAMILY_V6 ||
+        address[0] == 0xff) {
+        return FALSE;
+    }
+    for (index = 0; index < sizeof(Context->RemoteAddress); ++index) {
+        allZero = allZero && address[index] == 0;
+    }
+    if (allZero) {
+        return FALSE;
+    }
+    for (index = 0; index < sizeof(Context->RemoteAddress) - 1; ++index) {
+        if (address[index] != 0) {
+            return TRUE;
+        }
+    }
+    return address[sizeof(Context->RemoteAddress) - 1] != 1;
+}
+
+static
+BOOLEAN
+FcxPopulateRedirectContext(
+    _In_ const FWPS_CONNECT_REQUEST0 *ConnectRequest,
+    _In_ BOOLEAN Ipv6,
+    _In_ const FCX_STRICT_POLICY_SNAPSHOT *Snapshot,
+    _In_ const FCX_STRICT_RULE_RECORD *Rule,
+    _In_ const FCX_STRICT_LEASE_STATE *Lease,
+    _Out_ FCX_STRICT_REDIRECT_CONTEXT *Context
+    )
+{
+    RtlZeroMemory(Context, sizeof(*Context));
+    Context->Magic = FCX_STRICT_REDIRECT_CONTEXT_MAGIC;
+    Context->Protocol = FCX_STRICT_REDIRECT_CONTEXT_PROTOCOL;
+    Context->ContextBytes = FCX_STRICT_REDIRECT_CONTEXT_BYTES;
+    Context->LeaseGeneration = Lease->Generation;
+    Context->Revision = Snapshot->Revision;
+    RtlCopyMemory(Context->PolicyDigest,
+                  Snapshot->PolicyDigest,
+                  sizeof(Context->PolicyDigest));
+    RtlCopyMemory(Context->LeaseNonce,
+                  Lease->Nonce,
+                  sizeof(Context->LeaseNonce));
+    Context->TargetGroupIndex = Rule->TargetGroupIndex;
+    Context->IpProtocol = IPPROTO_TCP;
+
+    if (Ipv6) {
+        const SOCKADDR_IN6 *remote =
+            (const SOCKADDR_IN6 *)&ConnectRequest->remoteAddressAndPort;
+        if (remote->sin6_family != AF_INET6) {
+            return FALSE;
+        }
+        Context->AddressFamily = FCX_STRICT_ADDRESS_FAMILY_V6;
+        Context->RemotePort = RtlUshortByteSwap(remote->sin6_port);
+        RtlCopyMemory(Context->RemoteAddress,
+                      &remote->sin6_addr,
+                      sizeof(remote->sin6_addr));
+    } else {
+        const SOCKADDR_IN *remote =
+            (const SOCKADDR_IN *)&ConnectRequest->remoteAddressAndPort;
+        if (remote->sin_family != AF_INET) {
+            return FALSE;
+        }
+        Context->AddressFamily = FCX_STRICT_ADDRESS_FAMILY_V4;
+        Context->RemotePort = RtlUshortByteSwap(remote->sin_port);
+        RtlCopyMemory(Context->RemoteAddress,
+                      &remote->sin_addr,
+                      sizeof(remote->sin_addr));
+    }
+    return FcxOriginalDestinationIsSafe(Context);
+}
+
+static
+VOID
+FcxSetRedirectTarget(
+    _Inout_ FWPS_CONNECT_REQUEST0 *ConnectRequest,
+    _In_ BOOLEAN Ipv6,
+    _In_ const FCX_STRICT_ENDPOINT *Endpoint
+    )
+{
+    RtlZeroMemory(&ConnectRequest->remoteAddressAndPort,
+                  sizeof(ConnectRequest->remoteAddressAndPort));
+    if (Ipv6) {
+        SOCKADDR_IN6 *remote =
+            (SOCKADDR_IN6 *)&ConnectRequest->remoteAddressAndPort;
+        remote->sin6_family = AF_INET6;
+        remote->sin6_port = RtlUshortByteSwap(Endpoint->Port);
+        RtlCopyMemory(&remote->sin6_addr,
+                      Endpoint->Address,
+                      sizeof(remote->sin6_addr));
+    } else {
+        SOCKADDR_IN *remote =
+            (SOCKADDR_IN *)&ConnectRequest->remoteAddressAndPort;
+        remote->sin_family = AF_INET;
+        remote->sin_port = RtlUshortByteSwap(Endpoint->Port);
+        RtlCopyMemory(&remote->sin_addr,
+                      Endpoint->Address,
+                      sizeof(remote->sin_addr));
     }
 }
 
 static
 VOID
-FcxClassifySelectedApp(
+FcxClassifyRedirectedTcpGuard(
     _In_ const FWPS_INCOMING_VALUES0 *IncomingValues,
+    _In_ const FWPS_INCOMING_METADATA_VALUES0 *IncomingMetadata,
     _In_ UINT32 AppIdField,
+    _In_ UINT32 ProtocolField,
+    _In_ UINT32 FlagsField,
     _Inout_ FWPS_CLASSIFY_OUT0 *ClassifyOut
     )
 {
-    const FWP_BYTE_BLOB *appId;
     const FCX_STRICT_POLICY_SNAPSHOT *snapshot;
+    const FCX_STRICT_LEASE_STATE *lease;
+    const FCX_STRICT_RULE_RECORD *rule;
+    BOOLEAN permit = FALSE;
 
-    if ((ClassifyOut->rights & FWPS_RIGHT_ACTION_WRITE) == 0) {
-        return;
-    }
-    FcxBlockClassify(ClassifyOut);
-    if (FcxPolicyRundown == NULL ||
+    if ((ClassifyOut->rights & FWPS_RIGHT_ACTION_WRITE) == 0 ||
+        FcxPolicyRundown == NULL || FcxLeaseRundown == NULL ||
         !ExAcquireRundownProtectionCacheAware(FcxPolicyRundown)) {
+        FcxBlockClassify(ClassifyOut);
         return;
     }
-
     snapshot = (const FCX_STRICT_POLICY_SNAPSHOT *)InterlockedCompareExchangePointer(
         (PVOID volatile *)&FcxPolicySnapshot,
         NULL,
         NULL);
-    if (snapshot != NULL && AppIdField < IncomingValues->valueCount) {
-        const FWP_VALUE0 *value = &IncomingValues->incomingValue[AppIdField].value;
-        appId = value->type == FWP_BYTE_BLOB_TYPE ? value->byteBlob : NULL;
-        if (appId != NULL && appId->data != NULL && appId->size != 0 &&
-            appId->size <= FCX_STRICT_MAX_APP_ID_BYTES) {
-            // Lookup is intentionally performed even while proxy actions remain
-            // blocked. It proves the immutable O(1) identity path before redirect
-            // capabilities can be enabled by a later endpoint-lease milestone.
-            (VOID)FcxStrictPolicyFind(snapshot, appId->data, appId->size);
+    rule = FcxFindSelectedRule(snapshot, IncomingValues, AppIdField);
+    if (rule != NULL && rule->Action == FCX_STRICT_ACTION_PROXY &&
+        ProtocolField < IncomingValues->valueCount &&
+        FlagsField < IncomingValues->valueCount &&
+        IncomingValues->incomingValue[ProtocolField].value.type == FWP_UINT8 &&
+        IncomingValues->incomingValue[ProtocolField].value.uint8 == IPPROTO_TCP &&
+        IncomingValues->incomingValue[FlagsField].value.type == FWP_UINT32 &&
+        (IncomingValues->incomingValue[FlagsField].value.uint32 &
+         FWP_CONDITION_FLAG_IS_CONNECTION_REDIRECTED) != 0 &&
+        FWPS_IS_METADATA_FIELD_PRESENT(
+            IncomingMetadata,
+            FWPS_METADATA_FIELD_LOCAL_REDIRECT_TARGET_PID) &&
+        FWPS_IS_METADATA_FIELD_PRESENT(
+            IncomingMetadata,
+            FWPS_METADATA_FIELD_ORIGINAL_DESTINATION) &&
+        IncomingMetadata->originalDestination != NULL &&
+        ExAcquireRundownProtectionCacheAware(FcxLeaseRundown)) {
+        lease = (const FCX_STRICT_LEASE_STATE *)InterlockedCompareExchangePointer(
+            (PVOID volatile *)&FcxLeaseState,
+            NULL,
+            NULL);
+        if (FcxLeaseMatchesSnapshot(lease, snapshot) &&
+            IncomingMetadata->localRedirectTargetPID ==
+                HandleToULong(PsGetProcessId(lease->BrokerProcess))) {
+            permit = TRUE;
         }
+        ExReleaseRundownProtectionCacheAware(FcxLeaseRundown);
     }
     ExReleaseRundownProtectionCacheAware(FcxPolicyRundown);
+    if (permit) {
+        FcxPermitClassify(ClassifyOut);
+    } else {
+        FcxBlockClassify(ClassifyOut);
+    }
+}
+
+static
+VOID
+FcxClassifyTcpRedirect(
+    _In_ const FWPS_INCOMING_VALUES0 *IncomingValues,
+    _In_ const FWPS_INCOMING_METADATA_VALUES0 *IncomingMetadata,
+    _In_ const VOID *ClassifyContext,
+    _In_ const FWPS_FILTER1 *Filter,
+    _In_ UINT32 AppIdField,
+    _In_ UINT32 ProtocolField,
+    _In_ BOOLEAN Ipv6,
+    _Inout_ FWPS_CLASSIFY_OUT0 *ClassifyOut
+    )
+{
+    const FCX_STRICT_POLICY_SNAPSHOT *snapshot;
+    const FCX_STRICT_LEASE_STATE *lease;
+    const FCX_STRICT_RULE_RECORD *rule;
+    const FCX_STRICT_ENDPOINT *endpoint;
+    FCX_STRICT_REDIRECT_CONTEXT *redirectContext = NULL;
+    FWPS_CONNECT_REQUEST0 *connectRequest;
+    PVOID writableRequest = NULL;
+    VOID *priorRedirectContext;
+    FWPS_CONNECTION_REDIRECT_STATE redirectState;
+    UINT64 classifyHandle = 0;
+    NTSTATUS status;
+    BOOLEAN permit = FALSE;
+
+    if ((ClassifyOut->rights & FWPS_RIGHT_ACTION_WRITE) == 0 ||
+        ClassifyContext == NULL || Filter == NULL ||
+        FcxPolicyRundown == NULL || FcxLeaseRundown == NULL ||
+        !ExAcquireRundownProtectionCacheAware(FcxPolicyRundown)) {
+        FcxBlockClassify(ClassifyOut);
+        return;
+    }
+    snapshot = (const FCX_STRICT_POLICY_SNAPSHOT *)InterlockedCompareExchangePointer(
+        (PVOID volatile *)&FcxPolicySnapshot,
+        NULL,
+        NULL);
+    rule = FcxFindSelectedRule(snapshot, IncomingValues, AppIdField);
+    if (rule == NULL || rule->Action != FCX_STRICT_ACTION_PROXY ||
+        ProtocolField >= IncomingValues->valueCount ||
+        IncomingValues->incomingValue[ProtocolField].value.type != FWP_UINT8 ||
+        IncomingValues->incomingValue[ProtocolField].value.uint8 != IPPROTO_TCP ||
+        !ExAcquireRundownProtectionCacheAware(FcxLeaseRundown)) {
+        ExReleaseRundownProtectionCacheAware(FcxPolicyRundown);
+        FcxBlockClassify(ClassifyOut);
+        return;
+    }
+    lease = (const FCX_STRICT_LEASE_STATE *)InterlockedCompareExchangePointer(
+        (PVOID volatile *)&FcxLeaseState,
+        NULL,
+        NULL);
+    if (!FcxLeaseMatchesSnapshot(lease, snapshot)) {
+        goto Exit;
+    }
+
+    redirectState = FcxQueryRedirectState(IncomingMetadata,
+                                           &priorRedirectContext);
+    if (redirectState == FWPS_CONNECTION_REDIRECTED_BY_SELF) {
+        // Lease renewal changes generation and nonce. Reauthorization therefore
+        // binds an existing self-redirect to the stable policy, while the guard
+        // still requires the currently leased Broker PID.
+        permit = FcxRedirectContextMatchesPolicy(priorRedirectContext,
+                                                  snapshot,
+                                                  rule);
+        goto Exit;
+    }
+    if (redirectState == FWPS_CONNECTION_PREVIOUSLY_REDIRECTED_BY_SELF) {
+        permit = TRUE;
+        goto Exit;
+    }
+    if (redirectState != FWPS_CONNECTION_NOT_REDIRECTED) {
+        goto Exit;
+    }
+
+    status = FwpsAcquireClassifyHandle0((VOID *)ClassifyContext,
+                                         0,
+                                         &classifyHandle);
+    if (!NT_SUCCESS(status)) {
+        goto Exit;
+    }
+    status = FwpsAcquireWritableLayerDataPointer0(classifyHandle,
+                                                   Filter->filterId,
+                                                   0,
+                                                   &writableRequest,
+                                                   ClassifyOut);
+    if (!NT_SUCCESS(status)) {
+        goto Exit;
+    }
+    connectRequest = (FWPS_CONNECT_REQUEST0 *)writableRequest;
+    if (connectRequest->localRedirectHandle != NULL ||
+        connectRequest->localRedirectContext != NULL) {
+        goto Apply;
+    }
+    redirectContext = (FCX_STRICT_REDIRECT_CONTEXT *)ExAllocatePool2(POOL_FLAG_NON_PAGED,
+                                                                      sizeof(*redirectContext),
+                                                                      FCX_STRICT_REDIRECT_POOL_TAG);
+    if (redirectContext == NULL ||
+        !FcxPopulateRedirectContext(connectRequest,
+                                    Ipv6,
+                                    snapshot,
+                                    rule,
+                                    lease,
+                                    redirectContext)) {
+        goto Apply;
+    }
+
+    endpoint = Ipv6 ? &lease->TcpV6 : &lease->TcpV4;
+    FcxSetRedirectTarget(connectRequest, Ipv6, endpoint);
+    connectRequest->localRedirectTargetPID =
+        HandleToULong(PsGetProcessId(lease->BrokerProcess));
+    connectRequest->localRedirectHandle = FcxRedirectHandle;
+    connectRequest->localRedirectContext = redirectContext;
+    connectRequest->localRedirectContextSize = sizeof(*redirectContext);
+    ClassifyOut->actionType = FWP_ACTION_PERMIT;
+    ClassifyOut->rights |= FWPS_RIGHT_ACTION_WRITE;
+    permit = TRUE;
+
+Apply:
+    FwpsApplyModifiedLayerData0(classifyHandle, writableRequest, 0);
+    if (permit) {
+        redirectContext = NULL;
+    }
+
+Exit:
+    if (classifyHandle != 0) {
+        FwpsReleaseClassifyHandle0(classifyHandle);
+    }
+    if (redirectContext != NULL) {
+        RtlSecureZeroMemory(redirectContext, sizeof(*redirectContext));
+        ExFreePoolWithTag(redirectContext, FCX_STRICT_REDIRECT_POOL_TAG);
+    }
+    ExReleaseRundownProtectionCacheAware(FcxLeaseRundown);
+    ExReleaseRundownProtectionCacheAware(FcxPolicyRundown);
+    if (permit) {
+        FcxPermitClassify(ClassifyOut);
+    } else {
+        FcxBlockClassify(ClassifyOut);
+    }
 }
 
 static
@@ -194,14 +576,17 @@ FcxGuardClassifyV4(
     _Inout_ FWPS_CLASSIFY_OUT0 *ClassifyOut
     )
 {
-    UNREFERENCED_PARAMETER(IncomingMetadata);
     UNREFERENCED_PARAMETER(LayerData);
     UNREFERENCED_PARAMETER(ClassifyContext);
     UNREFERENCED_PARAMETER(Filter);
     UNREFERENCED_PARAMETER(FlowContext);
-    FcxClassifySelectedApp(IncomingValues,
-                           FWPS_FIELD_ALE_AUTH_CONNECT_V4_ALE_APP_ID,
-                           ClassifyOut);
+    FcxClassifyRedirectedTcpGuard(
+        IncomingValues,
+        IncomingMetadata,
+        FWPS_FIELD_ALE_AUTH_CONNECT_V4_ALE_APP_ID,
+        FWPS_FIELD_ALE_AUTH_CONNECT_V4_IP_PROTOCOL,
+        FWPS_FIELD_ALE_AUTH_CONNECT_V4_FLAGS,
+        ClassifyOut);
 }
 
 static
@@ -216,14 +601,17 @@ FcxGuardClassifyV6(
     _Inout_ FWPS_CLASSIFY_OUT0 *ClassifyOut
     )
 {
-    UNREFERENCED_PARAMETER(IncomingMetadata);
     UNREFERENCED_PARAMETER(LayerData);
     UNREFERENCED_PARAMETER(ClassifyContext);
     UNREFERENCED_PARAMETER(Filter);
     UNREFERENCED_PARAMETER(FlowContext);
-    FcxClassifySelectedApp(IncomingValues,
-                           FWPS_FIELD_ALE_AUTH_CONNECT_V6_ALE_APP_ID,
-                           ClassifyOut);
+    FcxClassifyRedirectedTcpGuard(
+        IncomingValues,
+        IncomingMetadata,
+        FWPS_FIELD_ALE_AUTH_CONNECT_V6_ALE_APP_ID,
+        FWPS_FIELD_ALE_AUTH_CONNECT_V6_IP_PROTOCOL,
+        FWPS_FIELD_ALE_AUTH_CONNECT_V6_FLAGS,
+        ClassifyOut);
 }
 
 static
@@ -238,14 +626,17 @@ FcxRedirectClassifyV4(
     _Inout_ FWPS_CLASSIFY_OUT0 *ClassifyOut
     )
 {
-    UNREFERENCED_PARAMETER(IncomingMetadata);
     UNREFERENCED_PARAMETER(LayerData);
-    UNREFERENCED_PARAMETER(ClassifyContext);
-    UNREFERENCED_PARAMETER(Filter);
     UNREFERENCED_PARAMETER(FlowContext);
-    FcxClassifySelectedApp(IncomingValues,
-                           FWPS_FIELD_ALE_CONNECT_REDIRECT_V4_ALE_APP_ID,
-                           ClassifyOut);
+    FcxClassifyTcpRedirect(
+        IncomingValues,
+        IncomingMetadata,
+        ClassifyContext,
+        Filter,
+        FWPS_FIELD_ALE_CONNECT_REDIRECT_V4_ALE_APP_ID,
+        FWPS_FIELD_ALE_CONNECT_REDIRECT_V4_IP_PROTOCOL,
+        FALSE,
+        ClassifyOut);
 }
 
 static
@@ -260,14 +651,17 @@ FcxRedirectClassifyV6(
     _Inout_ FWPS_CLASSIFY_OUT0 *ClassifyOut
     )
 {
-    UNREFERENCED_PARAMETER(IncomingMetadata);
     UNREFERENCED_PARAMETER(LayerData);
-    UNREFERENCED_PARAMETER(ClassifyContext);
-    UNREFERENCED_PARAMETER(Filter);
     UNREFERENCED_PARAMETER(FlowContext);
-    FcxClassifySelectedApp(IncomingValues,
-                           FWPS_FIELD_ALE_CONNECT_REDIRECT_V6_ALE_APP_ID,
-                           ClassifyOut);
+    FcxClassifyTcpRedirect(
+        IncomingValues,
+        IncomingMetadata,
+        ClassifyContext,
+        Filter,
+        FWPS_FIELD_ALE_CONNECT_REDIRECT_V6_ALE_APP_ID,
+        FWPS_FIELD_ALE_CONNECT_REDIRECT_V6_IP_PROTOCOL,
+        TRUE,
+        ClassifyOut);
 }
 
 static

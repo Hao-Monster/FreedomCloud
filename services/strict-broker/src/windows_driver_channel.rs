@@ -937,7 +937,7 @@ mod tests {
     }
 
     #[test]
-    fn kernel_sources_preserve_the_pre_redirect_safety_boundary() {
+    fn kernel_sources_preserve_the_fail_closed_capability_boundary() {
         let driver = include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/../../windows/strict-driver/src/driver.c"
@@ -1027,6 +1027,42 @@ mod tests {
             assert!(
                 !driver.contains(obsolete_api),
                 "obsolete callout API still present: {obsolete_api}"
+            );
+        }
+    }
+
+    #[test]
+    fn kernel_tcp_redirect_is_lease_bound_loop_safe_and_inline() {
+        let driver = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../windows/strict-driver/src/driver.c"
+        ));
+
+        for invariant in [
+            "FcxClassifyTcpRedirect(",
+            "FcxClassifyRedirectedTcpGuard(",
+            "FWP_CONDITION_FLAG_IS_CONNECTION_REDIRECTED",
+            "FWPS_METADATA_FIELD_LOCAL_REDIRECT_TARGET_PID",
+            "FWPS_METADATA_FIELD_ORIGINAL_DESTINATION",
+            "FwpsQueryConnectionRedirectState0(",
+            "FWPS_CONNECTION_REDIRECTED_BY_SELF",
+            "FWPS_CONNECTION_PREVIOUSLY_REDIRECTED_BY_SELF",
+            "FwpsAcquireClassifyHandle0(",
+            "FwpsAcquireWritableLayerDataPointer0(",
+            "FwpsApplyModifiedLayerData0(classifyHandle, writableRequest, 0)",
+            "FwpsReleaseClassifyHandle0(classifyHandle)",
+            "ExAllocatePool2(POOL_FLAG_NON_PAGED",
+            "connectRequest->localRedirectTargetPID",
+            "connectRequest->localRedirectHandle = FcxRedirectHandle",
+            "connectRequest->localRedirectContext = redirectContext",
+            "rule->Action == FCX_STRICT_ACTION_PROXY",
+            "Lease->ExpiresAtInterruptTime > KeQueryInterruptTime()",
+            "Context->TargetGroupIndex = Rule->TargetGroupIndex",
+            "Context->IpProtocol = IPPROTO_TCP",
+        ] {
+            assert!(
+                driver.contains(invariant),
+                "missing TCP redirect invariant: {invariant}"
             );
         }
     }
