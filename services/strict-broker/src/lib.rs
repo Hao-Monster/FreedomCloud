@@ -12,6 +12,7 @@ mod ipc_auth;
 mod package_manifest;
 mod planned_wfp_backend;
 mod recovery_file;
+mod session_registry;
 mod wfp_plan;
 #[cfg(windows)]
 mod windows_driver_channel;
@@ -28,6 +29,8 @@ mod windows_recovery_acl;
 #[cfg(windows)]
 mod windows_scm;
 #[cfg(windows)]
+mod windows_session;
+#[cfg(windows)]
 mod windows_wfp_control;
 #[cfg(windows)]
 mod windows_wfp_engine;
@@ -37,6 +40,7 @@ pub use ipc_auth::{AuthorizedBrokerRequest, BrokerAuthenticator, ClientPrincipal
 pub use package_manifest::StrictPackageManifest;
 pub use planned_wfp_backend::{PlannedWfpBackend, WfpControlPlane, WfpControlSnapshot};
 pub use recovery_file::FileRecoveryStore;
+pub use session_registry::{BrokerSessionRegistry, BrokerSessionResource};
 pub use wfp_plan::{
     DriverIdentityRule, PlanInstallStep, PlanRemoveStep, WfpCallout, WfpFilterLifetime,
     WfpFilterSpec, WfpLayer, WfpObjectKey, WfpPolicyPlan,
@@ -67,6 +71,8 @@ pub use windows_pipe_pool::{
 pub use windows_recovery_acl::WindowsRecoveryAclVerifier;
 #[cfg(windows)]
 pub use windows_scm::{run_windows_scm_service, WindowsScmContext};
+#[cfg(windows)]
+pub use windows_session::WindowsBrokerPipeSession;
 #[cfg(windows)]
 pub use windows_wfp_control::{
     WindowsDriverEndpointLeaseSnapshot, WindowsDriverPolicyChannel, WindowsDriverPolicySnapshot,
