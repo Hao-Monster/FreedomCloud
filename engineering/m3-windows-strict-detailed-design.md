@@ -192,6 +192,31 @@ an equivalent existing supported ingress. Broker and Core executables, Broker
 listeners, loopback, the TUN adapter and already redirected flows are explicit
 exclusions.
 
+The pinned Mihomo v1.19.28 source and its
+[official listener contract](https://wiki.metacubex.one/en/config/inbound/listeners/)
+support
+multiple SOCKS listeners with an independent `proxy` field. M3 therefore uses
+one reserved loopback-only, authenticated SOCKS ingress per distinct target
+policy group rather than reusing the public `mixed-port`. The Agent injects
+those reserved listeners into the Core configuration through a private
+Agent/Core control path, and Core reports the addresses it actually bound. The
+Broker accepts a target-group mapping only after an authenticated SOCKS probe
+and OS verification of the packaged Core process owning the endpoint. Neither
+an arbitrary Agent-supplied port nor a successful TCP connect is forwarding
+health. Listener names, credentials and ports are session-scoped, bounded and
+removed before the Broker endpoint lease is revoked.
+
+The reserved-listener injection, bound-address report, Core socket-owner proof
+and SOCKS health probe described above are design commitments, not current
+capability claims. Redirect capability bits remain off until all four exist.
+
+This mapping is compatible with the normal per-application policy schema:
+version-1 persisted proxy entries migrate to `GLOBAL`, while version-2 entries
+carry the explicit group. If that group is absent from the active profile, the
+normal rule compiler emits `REJECT` and a redacted aggregate diagnostic instead
+of silently falling back to `GLOBAL`, ordinary rules or a direct route. Strict
+mode remains `blocking` until the corresponding reserved ingress is proven.
+
 The persistent policy snapshot deliberately does not contain a listener PID or
 port. Those values are process-lifetime state and would become unsafe after a
 Broker crash or PID/port reuse. A separate endpoint lease is required:
