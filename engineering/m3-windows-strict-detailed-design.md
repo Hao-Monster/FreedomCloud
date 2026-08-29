@@ -256,6 +256,11 @@ and the Agent remains `blocking`.
   requires the exact protected packaged Agent path, replacement-locks the image,
   verifies embedded file/publisher digests, and retains the process handle for
   exit detection.
+- Package verification is startup-cached: the Agent image is hashed and
+  signature-checked once, then held replacement-locked by a shared trust lease.
+  Rejected activation attempts compare only the kernel-derived process image
+  path/liveness against that lease and never repeat file hashing or signing
+  work. Each accepted session retains the shared file lock independently.
 - Session: after verification, the Broker creates a CNG-random owner-only data
   pipe with a fixed worker bound. A live Agent cannot be replaced. An exited
   Agent can be reaped or replaced only after fail-closed backend cleanup
