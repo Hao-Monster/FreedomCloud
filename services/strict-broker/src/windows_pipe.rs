@@ -7,7 +7,9 @@ use std::path::Path;
 use std::ptr::{null, null_mut};
 
 use anyhow::{bail, Context, Result};
-use flclash_strict_contract::MAX_BROKER_FRAME_BYTES;
+use flclash_strict_contract::{
+    parse_broker_request, parse_broker_response, BrokerResponse, MAX_BROKER_FRAME_BYTES,
+};
 use windows_sys::Win32::Foundation::{
     LocalFree, ERROR_MORE_DATA, ERROR_PIPE_CONNECTED, INVALID_HANDLE_VALUE,
 };
@@ -107,6 +109,10 @@ impl WindowsNamedPipeInstance {
         })
     }
 
+    pub fn write_response(&self, response: &BrokerResponse) -> Result<()> {
+        write_message(raw_handle(&self.handle), &response.to_bytes()?, "response")
+    }
+
     fn connect(&self) -> Result<()> {
         // SAFETY: the handle is a live server-side named-pipe instance.
         if unsafe { ConnectNamedPipe(raw_handle(&self.handle), null_mut()) } != 0 {
@@ -121,41 +127,7 @@ impl WindowsNamedPipeInstance {
     }
 
     fn read_message(&self) -> Result<Vec<u8>> {
-        let mut message = Vec::with_capacity(PIPE_BUFFER_BYTES as usize);
-        loop {
-            let remaining = MAX_BROKER_FRAME_BYTES
-                .checked_add(1)
-                .and_then(|limit| limit.checked_sub(message.len()))
-                .ok_or_else(|| anyhow::anyhow!("Broker frame exceeds its size limit"))?;
-            let chunk_size = remaining.min(PIPE_BUFFER_BYTES as usize);
-            let start = message.len();
-            message.resize(start + chunk_size, 0);
-            let mut bytes_read = 0_u32;
-            // SAFETY: the writable slice is valid for chunk_size bytes and I/O is synchronous.
-            let result = unsafe {
-                ReadFile(
-                    raw_handle(&self.handle),
-                    message[start..].as_mut_ptr(),
-                    chunk_size as u32,
-                    &mut bytes_read,
-                    null_mut(),
-                )
-            };
-            message.truncate(start + bytes_read as usize);
-            if message.len() > MAX_BROKER_FRAME_BYTES {
-                bail!("Broker frame exceeds its size limit");
-            }
-            if result != 0 {
-                if message.is_empty() {
-                    bail!("Broker frame is empty");
-                }
-                return Ok(message);
-            }
-            let error = io::Error::last_os_error();
-            if error.raw_os_error() != Some(ERROR_MORE_DATA as i32) {
-                return Err(error).context("read strict Broker named-pipe request");
-            }
-        }
+        read_message(raw_handle(&self.handle), "request")
     }
 }
 
@@ -168,11 +140,10 @@ impl Drop for WindowsNamedPipeInstance {
     }
 }
 
-pub fn connect_windows_pipe_for_agent(pipe_name: &str, frame: &[u8]) -> Result<()> {
+pub fn exchange_windows_pipe_for_agent(pipe_name: &str, frame: &[u8]) -> Result<BrokerResponse> {
     validate_pipe_name(pipe_name)?;
-    if frame.is_empty() || frame.len() > MAX_BROKER_FRAME_BYTES {
-        bail!("Broker frame size is invalid");
-    }
+    let request_frame = std::str::from_utf8(frame).context("Broker request is not UTF-8")?;
+    let request = parse_broker_request(request_frame)?;
     let pipe_name = wide_null(pipe_name);
     // SECURITY_IDENTIFICATION lets the Broker inspect identity without obtaining delegation power.
     // SAFETY: the path pointer is NUL-terminated and all optional pointers are null.
@@ -192,11 +163,23 @@ pub fn connect_windows_pipe_for_agent(pipe_name: &str, frame: &[u8]) -> Result<(
     }
     // SAFETY: CreateFileW returned a unique, owned handle.
     let handle = unsafe { OwnedHandle::from_raw_handle(handle) };
+    write_message(raw_handle(&handle), frame, "request")?;
+    let response = parse_broker_response(&read_message(raw_handle(&handle), "response")?)?;
+    if response.request_id != request.request_id {
+        bail!("Broker response request ID does not match the request");
+    }
+    Ok(response)
+}
+
+fn write_message(handle: *mut c_void, frame: &[u8], label: &str) -> Result<()> {
+    if frame.is_empty() || frame.len() > MAX_BROKER_FRAME_BYTES {
+        bail!("Broker {label} frame size is invalid");
+    }
     let mut bytes_written = 0_u32;
     // SAFETY: frame is readable for its declared length and I/O is synchronous.
     let result = unsafe {
         WriteFile(
-            raw_handle(&handle),
+            handle,
             frame.as_ptr(),
             frame.len() as u32,
             &mut bytes_written,
@@ -204,12 +187,51 @@ pub fn connect_windows_pipe_for_agent(pipe_name: &str, frame: &[u8]) -> Result<(
         )
     };
     if result == 0 {
-        return Err(io::Error::last_os_error()).context("write strict Broker named-pipe request");
+        return Err(io::Error::last_os_error())
+            .with_context(|| format!("write strict Broker named-pipe {label}"));
     }
     if bytes_written as usize != frame.len() {
-        bail!("strict Broker named-pipe request was partially written");
+        bail!("strict Broker named-pipe {label} was partially written");
     }
     Ok(())
+}
+
+fn read_message(handle: *mut c_void, label: &str) -> Result<Vec<u8>> {
+    let mut message = Vec::with_capacity(PIPE_BUFFER_BYTES as usize);
+    loop {
+        let remaining = MAX_BROKER_FRAME_BYTES
+            .checked_add(1)
+            .and_then(|limit| limit.checked_sub(message.len()))
+            .ok_or_else(|| anyhow::anyhow!("Broker {label} frame exceeds its size limit"))?;
+        let chunk_size = remaining.min(PIPE_BUFFER_BYTES as usize);
+        let start = message.len();
+        message.resize(start + chunk_size, 0);
+        let mut bytes_read = 0_u32;
+        // SAFETY: the writable slice is valid for chunk_size bytes and I/O is synchronous.
+        let result = unsafe {
+            ReadFile(
+                handle,
+                message[start..].as_mut_ptr(),
+                chunk_size as u32,
+                &mut bytes_read,
+                null_mut(),
+            )
+        };
+        message.truncate(start + bytes_read as usize);
+        if message.len() > MAX_BROKER_FRAME_BYTES {
+            bail!("Broker {label} frame exceeds its size limit");
+        }
+        if result != 0 {
+            if message.is_empty() {
+                bail!("Broker {label} frame is empty");
+            }
+            return Ok(message);
+        }
+        let error = io::Error::last_os_error();
+        if error.raw_os_error() != Some(ERROR_MORE_DATA as i32) {
+            return Err(error).with_context(|| format!("read strict Broker named-pipe {label}"));
+        }
+    }
 }
 
 pub fn current_process_user_sid() -> Result<String> {

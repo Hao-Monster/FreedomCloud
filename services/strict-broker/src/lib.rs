@@ -7,6 +7,7 @@ use flclash_strict_contract::{
 };
 use serde::{Deserialize, Serialize};
 
+mod dispatch;
 mod ipc_auth;
 mod recovery_file;
 #[cfg(windows)]
@@ -14,6 +15,7 @@ mod windows_identity;
 #[cfg(windows)]
 mod windows_pipe;
 
+pub use dispatch::{BrokerDispatcher, ForwardingHealthProbe};
 pub use ipc_auth::{AuthorizedBrokerRequest, BrokerAuthenticator, ClientPrincipal, ClientRole};
 pub use recovery_file::FileRecoveryStore;
 #[cfg(windows)]
@@ -23,7 +25,7 @@ pub use windows_identity::{
 };
 #[cfg(windows)]
 pub use windows_pipe::{
-    connect_windows_pipe_for_agent, current_process_user_sid, WindowsAuthenticatedRequest,
+    current_process_user_sid, exchange_windows_pipe_for_agent, WindowsAuthenticatedRequest,
     WindowsNamedPipeInstance,
 };
 
@@ -356,6 +358,32 @@ where
         self.forwarding_health = ForwardingHealth::default();
 
         self.complete_disable(&disabling)
+    }
+
+    pub fn force_blocking(&mut self, revision: u64) -> Result<BrokerStatus> {
+        let marker = self
+            .current_marker
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("strict policy is not active"))?
+            .clone();
+        if marker.revision != revision {
+            bail!("strict force-blocking revision does not match the active policy");
+        }
+
+        self.backend.remove_redirects()?;
+        let snapshot = self.backend.snapshot()?;
+        validate_snapshot(&snapshot, &marker, true, false)?;
+        let next_phase = if has_proxy_entries(&marker.policy) {
+            BrokerPhase::Blocking
+        } else {
+            BrokerPhase::Armed
+        };
+        self.phase = next_phase;
+        self.forwarding_health = ForwardingHealth::default();
+        let blocking = marker.with_phase(next_phase, snapshot.filter_generation);
+        self.store.persist(&blocking)?;
+        self.current_marker = Some(blocking);
+        self.status_from_snapshot(snapshot)
     }
 
     pub fn recover(&mut self) -> Result<BrokerStatus> {

@@ -3,9 +3,10 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use flclash_strict_broker::{
-    connect_windows_pipe_for_agent, current_process_user_sid, BrokerAuthenticator, ClientRole,
+    current_process_user_sid, exchange_windows_pipe_for_agent, BrokerAuthenticator, ClientRole,
     WindowsNamedPipeInstance,
 };
+use flclash_strict_contract::{BrokerErrorCode, BrokerResponse, BrokerResponseBody};
 
 #[test]
 fn named_pipe_uses_os_identity_and_capability_for_a_local_request() {
@@ -26,16 +27,25 @@ fn named_pipe_uses_os_identity_and_capability_for_a_local_request() {
     );
     let client_pipe_name = pipe_name.clone();
     let client = std::thread::spawn(move || {
-        connect_windows_pipe_for_agent(&client_pipe_name, frame.as_bytes()).unwrap();
+        exchange_windows_pipe_for_agent(&client_pipe_name, frame.as_bytes()).unwrap()
     });
 
     let request = instance
         .connect_and_authenticate(&BrokerAuthenticator::new([0x11; 32]))
         .unwrap();
-    client.join().unwrap();
+    instance
+        .write_response(&BrokerResponse::error("pipe-test", BrokerErrorCode::Internal).unwrap())
+        .unwrap();
+    let response = client.join().unwrap();
 
     assert_eq!(request.authorized.principal().role(), ClientRole::Owner);
     assert_eq!(request.client_process_id, std::process::id());
     assert_eq!(request.client_sid, owner_sid);
     assert_eq!(request.authorized.request().request_id, "pipe-test");
+    assert!(matches!(
+        response.body,
+        BrokerResponseBody::Error {
+            code: BrokerErrorCode::Internal
+        }
+    ));
 }
