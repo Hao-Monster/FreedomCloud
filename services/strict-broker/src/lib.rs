@@ -19,6 +19,8 @@ mod socks_probe;
 mod strict_udp_frame;
 mod wfp_plan;
 #[cfg(all(windows, any(test, feature = "production-host")))]
+mod windows_core_udp_data;
+#[cfg(all(windows, any(test, feature = "production-host")))]
 mod windows_core_udp_health;
 #[cfg(windows)]
 mod windows_driver_channel;
@@ -71,13 +73,17 @@ pub use socks_probe::{
 };
 #[cfg(any(test, feature = "production-host"))]
 pub use strict_udp_frame::{
-    StrictUdpDataAuthenticator, StrictUdpDataDirection, StrictUdpDataFrame, StrictUdpReplayWindow,
-    STRICT_UDP_DATA_HEADER_BYTES, STRICT_UDP_DATA_MAX_FRAME_BYTES,
-    STRICT_UDP_DATA_MAX_PAYLOAD_BYTES,
+    strict_udp_data_frame_key_id, StrictUdpDataAuthenticator, StrictUdpDataDirection,
+    StrictUdpDataFrame, StrictUdpReplayWindow, STRICT_UDP_DATA_HEADER_BYTES,
+    STRICT_UDP_DATA_MAX_FRAME_BYTES, STRICT_UDP_DATA_MAX_PAYLOAD_BYTES,
 };
 pub use wfp_plan::{
     DriverIdentityRule, PlanInstallStep, PlanRemoveStep, WfpCallout, WfpFilterLifetime,
     WfpFilterSpec, WfpLayer, WfpObjectKey, WfpPolicyPlan,
+};
+#[cfg(all(windows, any(test, feature = "production-host")))]
+pub use windows_core_udp_data::{
+    StrictCoreUdpReply, StrictCoreUdpTransport, STRICT_CORE_UDP_MAX_ASSOCIATIONS,
 };
 #[cfg(windows)]
 pub use windows_driver_channel::{

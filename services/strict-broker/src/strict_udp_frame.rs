@@ -38,6 +38,21 @@ pub enum StrictUdpDataDirection {
     Inbound,
 }
 
+pub(crate) fn decode_strict_udp_credential(value: &str, label: &str) -> Result<[u8; 32]> {
+    if value.len() != 64 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        bail!("strict UDP {label} credential is invalid");
+    }
+    let mut decoded = [0_u8; 32];
+    for (index, byte) in decoded.iter_mut().enumerate() {
+        *byte = u8::from_str_radix(&value[index * 2..index * 2 + 2], 16)
+            .with_context(|| format!("strict UDP {label} credential is not hexadecimal"))?;
+    }
+    if decoded.iter().all(|byte| *byte == 0) {
+        bail!("strict UDP {label} credential cannot be zero");
+    }
+    Ok(decoded)
+}
+
 impl StrictUdpDataDirection {
     fn kind(self) -> u8 {
         match self {
@@ -172,6 +187,21 @@ impl StrictUdpDataAuthenticator {
             payload: &frame[STRICT_UDP_DATA_HEADER_BYTES..tag_offset],
         })
     }
+}
+
+pub fn strict_udp_data_frame_key_id(frame: &[u8]) -> Result<[u8; KEY_ID_BYTES]> {
+    if frame.len() < ASSOCIATION_ID_OFFSET
+        || &frame[..MAGIC.len()] != MAGIC
+        || frame[VERSION_OFFSET] != VERSION
+    {
+        bail!("strict UDP data frame identity is invalid");
+    }
+    let mut key_id = [0_u8; KEY_ID_BYTES];
+    key_id.copy_from_slice(&frame[KEY_ID_OFFSET..ASSOCIATION_ID_OFFSET]);
+    if key_id.iter().all(|byte| *byte == 0) {
+        bail!("strict UDP data frame identity is invalid");
+    }
+    Ok(key_id)
 }
 
 pub struct StrictUdpDataFrame<'a> {
@@ -516,6 +546,22 @@ mod tests {
         }
         for sequence in [0, 100, 37, 136] {
             assert!(!window.accept(sequence));
+        }
+    }
+
+    #[test]
+    fn credential_decoder_requires_nonzero_fixed_width_hex() {
+        assert_eq!(
+            decode_strict_udp_credential(&"11".repeat(32), "username").unwrap(),
+            [0x11; 32]
+        );
+        for value in [
+            "",
+            "11",
+            &"00".repeat(32),
+            &format!("{}g1", "11".repeat(31)),
+        ] {
+            assert!(decode_strict_udp_credential(value, "username").is_err());
         }
     }
 

@@ -5,6 +5,8 @@ use anyhow::{bail, Context, Result};
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
 
+use crate::strict_udp_frame::decode_strict_udp_credential;
+
 const FRAME_BYTES: usize = 80;
 const KEY_ID_BYTES: usize = 16;
 const TAG_OFFSET: usize = 48;
@@ -33,8 +35,8 @@ pub(crate) fn probe_core_udp_health(
     if nonce.iter().all(|byte| *byte == 0) {
         bail!("strict Core UDP health nonce is invalid");
     }
-    let username = decode_credential(username, "username")?;
-    let password = decode_credential(password, "password")?;
+    let username = decode_strict_udp_credential(username, "username")?;
+    let password = decode_strict_udp_credential(password, "password")?;
     let mut key_id = [0_u8; KEY_ID_BYTES];
     key_id.copy_from_slice(&username[..KEY_ID_BYTES]);
     let ping = build_frame(PING, generation, key_id, nonce, &password)?;
@@ -113,21 +115,6 @@ fn validate_pong(
     mac.update(&frame[..TAG_OFFSET]);
     mac.verify_slice(&frame[TAG_OFFSET..])
         .context("strict Core UDP health pong authentication failed")
-}
-
-fn decode_credential(value: &str, label: &str) -> Result<[u8; 32]> {
-    if value.len() != 64 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        bail!("strict Core UDP health {label} is invalid");
-    }
-    let mut decoded = [0_u8; 32];
-    for (index, byte) in decoded.iter_mut().enumerate() {
-        *byte = u8::from_str_radix(&value[index * 2..index * 2 + 2], 16)
-            .with_context(|| format!("strict Core UDP health {label} is not hexadecimal"))?;
-    }
-    if decoded.iter().all(|byte| *byte == 0) {
-        bail!("strict Core UDP health {label} cannot be zero");
-    }
-    Ok(decoded)
 }
 
 #[cfg(test)]
