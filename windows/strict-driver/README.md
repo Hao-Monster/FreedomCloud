@@ -1,12 +1,12 @@
 # FlClashX strict callout driver
 
 This directory is the Windows 11 x64 M3 kernel boundary. The current source
-implements a fail-closed policy snapshot and registers four WFP callouts. The
-redirect callouts intentionally block: no redirect capability is advertised
-until the separately revocable Broker endpoint lease and relay are complete.
-Protocol v2 includes the revocable lease and binds it to the IOCTL requestor's
-referenced kernel process identity, but relay and redirect mutation remain
-deliberately unavailable.
+implements a fail-closed policy snapshot, a revocable Broker endpoint lease,
+inline lease-bound TCP redirect mutation and four WFP callouts. It also exposes
+a capacity-one manual Direct-I/O receive queue and allocation-free reply-batch
+validation for the unfinished UDP path. No UDP reply is accepted for injection
+and no UDP/DNS/QUIC capability is advertised until flow provenance, capture,
+reinjection, signing and VM qualification are complete.
 
 ## Build contract
 

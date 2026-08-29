@@ -396,6 +396,18 @@ unknown reply association and submission failure stop the bridge fail closed.
 Production forwarding-runtime ownership and all kernel capture/reinjection work
 remain intentionally open, so this component cannot advertise UDP support.
 
+`4b2031e` adds the matching KMDF request boundary without pretending the data
+plane is complete. The default sequential queue performs only bounded validation
+and forwards one exact 256 KiB receive request to a manual queue, allowing lease
+renewal and fail-closed controls to continue while that request is pending. Both
+queued and driver-owned request counts must be zero before another receive is
+accepted, bounding locked receive memory to 256 KiB. Receive admission requires
+the live lease-owning Broker PID. Submitted reply batches are parsed without
+allocation and must match the current lease generation, revision, digest and
+nonce plus every ABI size, alignment, padding, UDP, endpoint and flag invariant.
+Until per-flow provenance and WFP injection are implemented, even a valid reply
+returns `STATUS_NOT_SUPPORTED`; UDP/DNS/QUIC capability bits remain off.
+
 Initial strict acceptance requires Mihomo Fake-IP/virtual-network-card mode so
 domain mappings remain available to existing domain rules. Real-IP domain
 restoration is a separate proof item and cannot be inferred from an IP-only WFP
