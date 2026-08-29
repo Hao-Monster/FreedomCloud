@@ -408,6 +408,26 @@ nonce plus every ABI size, alignment, padding, UDP, endpoint and flag invariant.
 Until per-flow provenance and WFP injection are implemented, even a valid reply
 returns `STATUS_NOT_SUPPORTED`; UDP/DNS/QUIC capability bits remain off.
 
+`c71e5d2`/`07d8933`/`94b9eb3` add the bounded flow-provenance foundation without
+opening UDP admission. Per-App-ID `ALE_FLOW_ESTABLISHED_V4/V6` filters use the
+inspection action and return only `CONTINUE`; they never permit or block at a
+layer whose contract forbids those actions. One persistent global filter per
+datagram family invokes a `CONDITIONAL_ON_FLOW` callout, so traffic without an
+associated context does not enter the packet hot path. The driver caps state at
+1,024 nonpaged contexts, binds each to the exact policy digest, lease nonce and
+target group, and uses reference counting so a concurrent flow-delete callback
+cannot free creator-owned bookkeeping. Lease replacement, revocation and unload
+stop new associations, remove existing contexts and drain them before callout
+unregistration.
+
+This remains intentionally inactive. Endpoint leases are established during
+pre-commit health measurement, so a lease alone is not proof that the dynamic
+flow filters and Broker bridge are active. The authorization guard therefore
+continues to permit only already redirected TCP and blocks UDP. A later change
+must add one atomic UDP activation proof covering authorization filters, flow
+filters, bridge ownership and teardown ordering before any packet is admitted
+or any UDP/DNS/QUIC capability is advertised.
+
 Initial strict acceptance requires Mihomo Fake-IP/virtual-network-card mode so
 domain mappings remain available to existing domain rules. Real-IP domain
 restoration is a separate proof item and cannot be inferred from an IP-only WFP
