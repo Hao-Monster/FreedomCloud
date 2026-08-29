@@ -1890,4 +1890,50 @@ mod tests {
             "validation-only lookup must release its flow reference"
         );
     }
+
+    #[test]
+    fn kernel_datagram_reply_replay_window_is_driver_owned_and_transactional() {
+        let driver = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../windows/strict-driver/src/driver.c"
+        ));
+
+        for invariant in [
+            "UINT64 ReplyHighestSequence;",
+            "UINT64 ReplySequenceBitmap;",
+            "FcxUdpReplySequenceAccepts(",
+            "_In_ BOOLEAN CommitSequence",
+            "sequenceDelta >= 64u",
+            "sequenceOffset >= 64u",
+            "Context->ReplySequenceBitmap & sequenceMask",
+            "if (CommitSequence)",
+            "Context->ReplyHighestSequence = nextHighest;",
+            "Context->ReplySequenceBitmap = nextBitmap;",
+            "FcxUdpReplySequenceAccepts(candidate, sequence, CommitSequence)",
+            "FcxReferenceUdpFlowForReply(&batch, &record, FALSE)",
+        ] {
+            assert!(
+                driver.contains(invariant),
+                "missing driver-owned reply replay invariant: {invariant}"
+            );
+        }
+
+        let replay = driver
+            .split("FcxUdpReplySequenceAccepts(")
+            .nth(1)
+            .and_then(|body| body.split("FcxReferenceUdpFlowForReply(").next())
+            .expect("driver reply replay window is present");
+        assert!(
+            replay.find("sequenceDelta >= 64u").unwrap()
+                < replay
+                    .find("Context->ReplySequenceBitmap << (ULONG)sequenceDelta")
+                    .unwrap(),
+            "large forward jumps must be bounded before shifting"
+        );
+        assert!(
+            replay.find("sequenceOffset >= 64u").unwrap()
+                < replay.find("1ull << sequenceOffset").unwrap(),
+            "stale offsets must be bounded before shifting"
+        );
+    }
 }

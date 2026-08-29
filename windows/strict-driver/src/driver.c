@@ -98,6 +98,8 @@ typedef struct _FCX_STRICT_UDP_FLOW_CONTEXT {
     IF_INDEX InterfaceIndex;
     IF_INDEX SubInterfaceIndex;
     volatile LONG64 NextCaptureSequence;
+    UINT64 ReplyHighestSequence;
+    UINT64 ReplySequenceBitmap;
     UINT16 LayerId;
     UINT32 CalloutId;
     UINT8 AddressFamily;
@@ -950,10 +952,55 @@ FcxDereferenceUdpFlowContext(
 }
 
 static
+BOOLEAN
+FcxUdpReplySequenceAccepts(
+    _Inout_ FCX_STRICT_UDP_FLOW_CONTEXT *Context,
+    _In_ UINT64 Sequence,
+    _In_ BOOLEAN CommitSequence
+    )
+{
+    UINT64 nextHighest = Context->ReplyHighestSequence;
+    UINT64 nextBitmap = Context->ReplySequenceBitmap;
+    UINT64 sequenceDelta;
+    UINT64 sequenceOffset;
+    UINT64 sequenceMask;
+
+    if (Sequence == 0) {
+        return FALSE;
+    }
+    if (nextHighest == 0) {
+        nextHighest = Sequence;
+        nextBitmap = 1u;
+    } else if (Sequence > nextHighest) {
+        sequenceDelta = Sequence - nextHighest;
+        nextBitmap = sequenceDelta >= 64u ?
+                         1u :
+                         (Context->ReplySequenceBitmap << (ULONG)sequenceDelta) | 1u;
+        nextHighest = Sequence;
+    } else {
+        sequenceOffset = nextHighest - Sequence;
+        if (sequenceOffset >= 64u) {
+            return FALSE;
+        }
+        sequenceMask = 1ull << sequenceOffset;
+        if ((Context->ReplySequenceBitmap & sequenceMask) != 0) {
+            return FALSE;
+        }
+        nextBitmap = Context->ReplySequenceBitmap | sequenceMask;
+    }
+    if (CommitSequence) {
+        Context->ReplyHighestSequence = nextHighest;
+        Context->ReplySequenceBitmap = nextBitmap;
+    }
+    return TRUE;
+}
+
+static
 FCX_STRICT_UDP_FLOW_CONTEXT *
 FcxReferenceUdpFlowForReply(
     _In_ const FCX_STRICT_DATAGRAM_BATCH_HEADER *Batch,
-    _In_ const FCX_STRICT_DATAGRAM_RECORD_HEADER *Record
+    _In_ const FCX_STRICT_DATAGRAM_RECORD_HEADER *Record,
+    _In_ BOOLEAN CommitSequence
     )
 {
     FCX_STRICT_UDP_FLOW_CONTEXT *context;
@@ -961,11 +1008,13 @@ FcxReferenceUdpFlowForReply(
     PLIST_ENTRY entry;
     UINT64 flowToken;
     UINT64 batchRevision;
+    UINT64 sequence;
     UINT32 bucketIndex;
     KIRQL oldIrql;
 
     RtlCopyMemory(&flowToken, &Record->FlowToken, sizeof(flowToken));
     RtlCopyMemory(&batchRevision, &Batch->Revision, sizeof(batchRevision));
+    RtlCopyMemory(&sequence, &Record->Sequence, sizeof(sequence));
     bucketIndex = FcxUdpFlowBucketIndex(flowToken);
     context = NULL;
 
@@ -998,7 +1047,8 @@ FcxReferenceUdpFlowForReply(
                              sizeof(candidate->LocalAddress)) == sizeof(candidate->LocalAddress) &&
             RtlCompareMemory(candidate->RemoteAddress,
                              Record->RemoteAddress,
-                             sizeof(candidate->RemoteAddress)) == sizeof(candidate->RemoteAddress)) {
+                             sizeof(candidate->RemoteAddress)) == sizeof(candidate->RemoteAddress) &&
+            FcxUdpReplySequenceAccepts(candidate, sequence, CommitSequence)) {
             FcxReferenceUdpFlowContext(candidate);
             context = candidate;
             break;
@@ -2385,7 +2435,7 @@ FcxValidateSubmittedDatagramBatch(
         if (!NT_SUCCESS(status)) {
             return status;
         }
-        context = FcxReferenceUdpFlowForReply(&batch, &record);
+        context = FcxReferenceUdpFlowForReply(&batch, &record, FALSE);
         if (context == NULL) {
             return STATUS_ACCESS_DENIED;
         }
