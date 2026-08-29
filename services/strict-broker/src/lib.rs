@@ -91,8 +91,9 @@ pub use windows_core_udp_data::{
 pub use windows_datagram_wire::{
     StrictDriverDatagramBatch, StrictDriverDatagramBatchBuilder, StrictDriverDatagramBatchKind,
     StrictDriverDatagramFlags, StrictDriverDatagramLeaseIdentity, StrictDriverDatagramRecord,
-    StrictDriverDatagramRecords, STRICT_DRIVER_DATAGRAM_MAX_BATCH_BYTES,
-    STRICT_DRIVER_DATAGRAM_MAX_PAYLOAD_BYTES, STRICT_DRIVER_DATAGRAM_MAX_RECORDS,
+    StrictDriverDatagramRecords, STRICT_DRIVER_DATAGRAM_BATCH_HEADER_BYTES,
+    STRICT_DRIVER_DATAGRAM_MAX_BATCH_BYTES, STRICT_DRIVER_DATAGRAM_MAX_PAYLOAD_BYTES,
+    STRICT_DRIVER_DATAGRAM_MAX_RECORDS, STRICT_DRIVER_DATAGRAM_RECORD_HEADER_BYTES,
 };
 #[cfg(windows)]
 pub use windows_driver_channel::{

@@ -21,6 +21,10 @@ use windows_sys::Win32::System::IO::{
     CancelIoEx, DeviceIoControl, GetOverlappedResult, OVERLAPPED,
 };
 
+#[cfg(any(test, feature = "production-host"))]
+use crate::windows_datagram_wire::{
+    STRICT_DRIVER_DATAGRAM_BATCH_HEADER_BYTES, STRICT_DRIVER_DATAGRAM_MAX_BATCH_BYTES,
+};
 use crate::windows_driver_service::{verify_windows_driver_service, WindowsDriverServiceLease};
 use crate::{
     verify_windows_packaged_driver, StrictPackageManifest, WfpPolicyPlan,
@@ -43,12 +47,20 @@ const MAX_IOCTL_DEADLINE: Duration = Duration::from_secs(300);
 
 const FILE_DEVICE_NETWORK: u32 = 0x12;
 const METHOD_BUFFERED: u32 = 0;
+#[cfg(any(test, feature = "production-host"))]
+const METHOD_IN_DIRECT: u32 = 1;
+#[cfg(any(test, feature = "production-host"))]
+const METHOD_OUT_DIRECT: u32 = 2;
 const FILE_READ_WRITE_ACCESS: u32 = 3;
 const IOCTL_UPLOAD_POLICY: u32 = ctl_code(0x900);
 const IOCTL_UNLOAD_POLICY: u32 = ctl_code(0x901);
 const IOCTL_QUERY_POLICY: u32 = ctl_code(0x902);
 const IOCTL_ACTIVATE_LEASE: u32 = ctl_code(0x903);
 const IOCTL_REVOKE_LEASE: u32 = ctl_code(0x904);
+#[cfg(any(test, feature = "production-host"))]
+const IOCTL_RECEIVE_DATAGRAM_BATCH: u32 = ctl_code_with_method(0x905, METHOD_OUT_DIRECT);
+#[cfg(any(test, feature = "production-host"))]
+const IOCTL_SUBMIT_DATAGRAM_BATCH: u32 = ctl_code_with_method(0x906, METHOD_IN_DIRECT);
 
 const SNAPSHOT_FLAG_LOADED: u32 = 1;
 const SNAPSHOT_FLAG_LEASE_ACTIVE: u32 = 1 << 1;
@@ -72,7 +84,11 @@ const KNOWN_CAPABILITIES: u64 = CAP_TCP4_REDIRECT
     | CAP_PERSISTENT_FAIL_CLOSED;
 
 const fn ctl_code(function: u32) -> u32 {
-    (FILE_DEVICE_NETWORK << 16) | (FILE_READ_WRITE_ACCESS << 14) | (function << 2) | METHOD_BUFFERED
+    ctl_code_with_method(function, METHOD_BUFFERED)
+}
+
+const fn ctl_code_with_method(function: u32, method: u32) -> u32 {
+    (FILE_DEVICE_NETWORK << 16) | (FILE_READ_WRITE_ACCESS << 14) | (function << 2) | method
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -163,7 +179,7 @@ impl WindowsEndpointLease {
 }
 
 pub struct WindowsIoctlDriverChannel {
-    device: OwnedHandle,
+    device: Arc<OwnedHandle>,
     _driver_trust: WindowsDriverTrustLease,
     _driver_service: WindowsDriverServiceLease,
     deadline: WindowsDriverIoctlDeadline,
@@ -173,15 +189,19 @@ pub struct WindowsIoctlDriverChannel {
 #[derive(Clone)]
 pub struct WindowsSharedIoctlDriverChannel {
     inner: Arc<Mutex<WindowsIoctlDriverChannel>>,
+    #[cfg(any(test, feature = "production-host"))]
+    device: Arc<OwnedHandle>,
 }
 
 impl WindowsSharedIoctlDriverChannel {
     pub fn open(driver_path: impl AsRef<Path>, package: &StrictPackageManifest) -> Result<Self> {
+        let inner = WindowsIoctlDriverChannel::open(driver_path, package)?;
+        #[cfg(any(test, feature = "production-host"))]
+        let device = Arc::clone(&inner.device);
         Ok(Self {
-            inner: Arc::new(Mutex::new(WindowsIoctlDriverChannel::open(
-                driver_path,
-                package,
-            )?)),
+            inner: Arc::new(Mutex::new(inner)),
+            #[cfg(any(test, feature = "production-host"))]
+            device,
         })
     }
 
@@ -200,6 +220,46 @@ impl WindowsSharedIoctlDriverChannel {
 
     pub fn revoke_endpoint_lease(&self) -> Result<WindowsDriverPolicySnapshot> {
         self.lock()?.revoke_endpoint_lease()
+    }
+
+    #[cfg(any(test, feature = "production-host"))]
+    pub fn receive_datagram_batch(
+        &self,
+        output: &mut [u8],
+        deadline: WindowsDriverIoctlDeadline,
+    ) -> Result<usize> {
+        validate_datagram_receive_capacity(output.len())?;
+        let transferred = run_overlapped_ioctl(
+            self.device.as_ref().as_raw_handle(),
+            IOCTL_RECEIVE_DATAGRAM_BATCH,
+            &[],
+            output,
+            deadline.0,
+        )? as usize;
+        if !(STRICT_DRIVER_DATAGRAM_BATCH_HEADER_BYTES..=output.len()).contains(&transferred) {
+            bail!("strict driver returned an invalid datagram batch length");
+        }
+        Ok(transferred)
+    }
+
+    #[cfg(any(test, feature = "production-host"))]
+    pub fn submit_datagram_batch(
+        &self,
+        input: &mut [u8],
+        deadline: WindowsDriverIoctlDeadline,
+    ) -> Result<()> {
+        validate_datagram_submit_size(input.len())?;
+        let transferred = run_overlapped_ioctl(
+            self.device.as_ref().as_raw_handle(),
+            IOCTL_SUBMIT_DATAGRAM_BATCH,
+            &[],
+            input,
+            deadline.0,
+        )?;
+        if transferred != 0 {
+            bail!("strict driver returned output for a datagram submission");
+        }
+        Ok(())
     }
 }
 
@@ -239,7 +299,7 @@ impl WindowsIoctlDriverChannel {
             return Err(io::Error::last_os_error()).context("open strict callout device");
         }
         // SAFETY: CreateFileW returned a unique owned handle.
-        let device = unsafe { OwnedHandle::from_raw_handle(device) };
+        let device = Arc::new(unsafe { OwnedHandle::from_raw_handle(device) });
         let channel = Self {
             device,
             _driver_trust: driver_trust,
@@ -259,7 +319,7 @@ impl WindowsIoctlDriverChannel {
         }
         let mut output = [0_u8; SNAPSHOT_BYTES];
         let transferred = run_overlapped_ioctl(
-            self.device.as_raw_handle(),
+            self.device.as_ref().as_raw_handle(),
             code,
             input,
             &mut output,
@@ -644,6 +704,24 @@ fn timeout_to_millis(timeout: Duration) -> Result<u32> {
     u32::try_from(rounded).context("strict driver IOCTL deadline exceeds Windows wait range")
 }
 
+#[cfg(any(test, feature = "production-host"))]
+fn validate_datagram_receive_capacity(capacity: usize) -> Result<()> {
+    if capacity != STRICT_DRIVER_DATAGRAM_MAX_BATCH_BYTES {
+        bail!("strict driver datagram receive buffer has an invalid capacity");
+    }
+    Ok(())
+}
+
+#[cfg(any(test, feature = "production-host"))]
+fn validate_datagram_submit_size(size: usize) -> Result<()> {
+    if !(STRICT_DRIVER_DATAGRAM_BATCH_HEADER_BYTES..=STRICT_DRIVER_DATAGRAM_MAX_BATCH_BYTES)
+        .contains(&size)
+    {
+        bail!("strict driver datagram submission has an invalid size");
+    }
+    Ok(())
+}
+
 fn decode_sha256(value: &str) -> Result<[u8; 32]> {
     if value.len() != 64 {
         bail!("strict driver policy digest is invalid");
@@ -950,6 +1028,26 @@ mod tests {
         assert!(WindowsDriverIoctlDeadline::new(Duration::ZERO).is_err());
         assert!(WindowsDriverIoctlDeadline::new(Duration::from_secs(301)).is_err());
         assert!(WindowsDriverIoctlDeadline::new(Duration::from_millis(1)).is_ok());
+    }
+
+    #[test]
+    fn datagram_ioctls_use_direct_buffers_and_fixed_resource_bounds() {
+        assert_eq!(IOCTL_RECEIVE_DATAGRAM_BATCH & 3, METHOD_OUT_DIRECT);
+        assert_eq!(IOCTL_SUBMIT_DATAGRAM_BATCH & 3, METHOD_IN_DIRECT);
+        assert_eq!(
+            IOCTL_RECEIVE_DATAGRAM_BATCH,
+            ctl_code_with_method(0x905, METHOD_OUT_DIRECT)
+        );
+        assert_eq!(
+            IOCTL_SUBMIT_DATAGRAM_BATCH,
+            ctl_code_with_method(0x906, METHOD_IN_DIRECT)
+        );
+        assert!(validate_datagram_receive_capacity(256 * 1024).is_ok());
+        assert!(validate_datagram_receive_capacity(256 * 1024 - 1).is_err());
+        assert!(validate_datagram_submit_size(96).is_ok());
+        assert!(validate_datagram_submit_size(256 * 1024).is_ok());
+        assert!(validate_datagram_submit_size(95).is_err());
+        assert!(validate_datagram_submit_size(256 * 1024 + 1).is_err());
     }
 
     #[test]
