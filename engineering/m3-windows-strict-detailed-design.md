@@ -443,12 +443,32 @@ gate deactivation first close admission, fence in-flight lease readers, purge
 the manual queue and drain flow contexts. The classifier deliberately does not
 call APC-only process-status APIs because WFP can invoke it at `DISPATCH_LEVEL`.
 
+`7e337bd` binds the receive-injection provenance before a capture can leave the
+driver. The first valid packet fixes the exact local/remote address and port,
+flags, compartment, interface and sub-interface under the flow lock; later
+packets on that context must match every field. Driver initialization creates
+separate v4/v6 transport injection handles before registering callouts and
+destroys them only after callout unregistration. The datagram classifier queries
+injection state before endpoint parsing and permits a self-injected packet only
+when its opaque injection context is the exact live flow-context pointer. This
+prevents a foreign or stale injected packet from claiming the loop bypass. The
+handles and bypass are prerequisites only: reply packet construction, bounded
+in-flight ownership and asynchronous completion are not implemented yet.
+
 This remains an inactive vertical slice. Production ownership and health of the
-asynchronous Broker bridge are not wired, reply injection and self-injection
-classification are unimplemented, and current capture completes one Direct-I/O
-request per datagram rather than coalescing up to the ABI limit. No UDP/DNS/QUIC
+asynchronous Broker bridge are not wired, reply packet construction/injection
+and its asynchronous completion are unimplemented, and current capture completes
+one Direct-I/O request per datagram rather than coalescing up to the ABI limit.
+No UDP/DNS/QUIC
 capability is advertised until those pieces, representative performance evidence
 and the WDK/Windows 11 VM gates pass.
+
+The current exact first-endpoint binding deliberately fails closed if a WFP flow
+context later presents a different destination. Windows 11 VM acceptance must
+prove whether one unconnected UDP socket alternating destinations receives one
+context per endpoint or reuses a context. Reuse requires a bounded child table
+keyed by flow token plus endpoint tuple; simply allowing endpoint drift is not
+acceptable because it could route a reply to the wrong socket destination.
 
 Initial strict acceptance requires Mihomo Fake-IP/virtual-network-card mode so
 domain mappings remain available to existing domain rules. Real-IP domain

@@ -14,10 +14,16 @@ lease- and flow-bound captured record into the pending Broker Direct-I/O request
 and absorbs the original only after successful delivery. Missing requests,
 malformed packets, stale leases and saturation remain blocked.
 
+The first valid packet also binds the exact address, port, flag, compartment,
+interface and sub-interface tuple needed for future receive injection. Separate
+v4/v6 transport-injection handles are created before callout registration, and
+self-injected packets bypass recapture only when their opaque injection context
+is the exact live flow context. This is still preparation, not reply injection.
+
 Reply reinjection and production bridge ownership are still unfinished. No UDP
 reply is accepted for injection and no UDP/DNS/QUIC capability is advertised
-until reinjection, self-injection protection, signing, performance measurement
-and VM qualification are complete.
+until reinjection, bounded asynchronous lifetime ownership, signing, performance
+measurement and VM qualification are complete.
 
 ## Build contract
 
