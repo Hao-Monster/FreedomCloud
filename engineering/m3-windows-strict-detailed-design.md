@@ -152,6 +152,15 @@ This uses WFP transactions for atomic groups. It never deletes another
 provider's objects and never treats “not found” as proof of successful cleanup
 without enumerating the FlClashX provider/sublayer.
 
+The management graph is also sealed: one persistent provider is bound to the
+`FlClashStrictCallout` kernel service, one maximum-weight persistent sublayer is
+bound to that provider, and four persistent management callouts are bound to
+their exact ALE layers. Startup creates only missing objects in one transaction.
+An existing key is accepted only when its provider, service, layer, flags,
+provider data and display identity are canonical. Filter cleanup performs the
+same complete structural validation before deleting anything; an unexpected
+same-provider object aborts and rolls back the whole transaction.
+
 ## 6. Data plane
 
 ### TCP IPv4/IPv6
