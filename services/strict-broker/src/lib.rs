@@ -35,7 +35,7 @@ pub use windows_identity::{
 #[cfg(windows)]
 pub use windows_pipe::{
     current_process_user_sid, exchange_windows_pipe_for_agent, WindowsAuthenticatedRequest,
-    WindowsNamedPipeInstance,
+    WindowsNamedPipeInstance, WindowsPipeDeadlines,
 };
 #[cfg(windows)]
 pub use windows_recovery_acl::WindowsRecoveryAclVerifier;

@@ -5,13 +5,15 @@ use std::os::windows::ffi::OsStrExt;
 use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
 use std::path::Path;
 use std::ptr::{null, null_mut};
+use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context, Result};
 use flclash_strict_contract::{
     parse_broker_request, parse_broker_response, BrokerResponse, MAX_BROKER_FRAME_BYTES,
 };
 use windows_sys::Win32::Foundation::{
-    LocalFree, ERROR_MORE_DATA, ERROR_PIPE_CONNECTED, INVALID_HANDLE_VALUE,
+    LocalFree, ERROR_IO_PENDING, ERROR_MORE_DATA, ERROR_NOT_FOUND, ERROR_OPERATION_ABORTED,
+    ERROR_PIPE_CONNECTED, INVALID_HANDLE_VALUE, WAIT_FAILED, WAIT_OBJECT_0, WAIT_TIMEOUT,
 };
 use windows_sys::Win32::Security::Authorization::{
     ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW,
@@ -23,9 +25,9 @@ use windows_sys::Win32::Security::{
     TOKEN_USER,
 };
 use windows_sys::Win32::Storage::FileSystem::{
-    CreateFileW, ReadFile, WriteFile, FILE_FLAG_FIRST_PIPE_INSTANCE, FILE_READ_ATTRIBUTES,
-    FILE_READ_DATA, FILE_READ_EA, FILE_WRITE_ATTRIBUTES, FILE_WRITE_DATA, FILE_WRITE_EA,
-    OPEN_EXISTING, PIPE_ACCESS_DUPLEX, READ_CONTROL, SECURITY_IDENTIFICATION,
+    CreateFileW, ReadFile, WriteFile, FILE_FLAG_FIRST_PIPE_INSTANCE, FILE_FLAG_OVERLAPPED,
+    FILE_READ_ATTRIBUTES, FILE_READ_DATA, FILE_READ_EA, FILE_WRITE_ATTRIBUTES, FILE_WRITE_DATA,
+    FILE_WRITE_EA, OPEN_EXISTING, PIPE_ACCESS_DUPLEX, READ_CONTROL, SECURITY_IDENTIFICATION,
     SECURITY_SQOS_PRESENT, SYNCHRONIZE,
 };
 use windows_sys::Win32::System::Pipes::{
@@ -34,13 +36,16 @@ use windows_sys::Win32::System::Pipes::{
     PIPE_TYPE_MESSAGE,
 };
 use windows_sys::Win32::System::Threading::{
-    GetCurrentProcess, GetCurrentThread, OpenProcessToken, OpenThreadToken,
+    CreateEventW, GetCurrentProcess, GetCurrentThread, OpenProcessToken, OpenThreadToken,
+    WaitForSingleObject,
 };
+use windows_sys::Win32::System::IO::{CancelIoEx, GetOverlappedResult, OVERLAPPED};
 
 use crate::{AuthorizedBrokerRequest, BrokerAuthenticator, ClientPrincipal, ClientRole};
 
 const PIPE_NAME_PREFIX: &str = r"\\.\pipe\FlClashX.StrictBroker.";
 const PIPE_BUFFER_BYTES: u32 = 64 * 1024;
+const MAX_PIPE_DEADLINE: Duration = Duration::from_secs(300);
 const CLIENT_PIPE_ACCESS: u32 = FILE_READ_DATA
     | FILE_READ_ATTRIBUTES
     | FILE_READ_EA
@@ -56,14 +61,56 @@ pub struct WindowsAuthenticatedRequest {
     pub client_sid: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WindowsPipeDeadlines {
+    connect: Duration,
+    read: Duration,
+    write: Duration,
+}
+
+impl WindowsPipeDeadlines {
+    pub fn new(connect: Duration, read: Duration, write: Duration) -> Result<Self> {
+        for (label, value) in [("connect", connect), ("read", read), ("write", write)] {
+            if value.is_zero() || value > MAX_PIPE_DEADLINE {
+                bail!("strict Broker pipe {label} deadline is invalid");
+            }
+        }
+        Ok(Self {
+            connect,
+            read,
+            write,
+        })
+    }
+}
+
+impl Default for WindowsPipeDeadlines {
+    fn default() -> Self {
+        Self {
+            connect: Duration::from_secs(30),
+            read: Duration::from_secs(5),
+            write: Duration::from_secs(5),
+        }
+    }
+}
+
 pub struct WindowsNamedPipeInstance {
     handle: OwnedHandle,
     owner_sid: String,
+    deadlines: WindowsPipeDeadlines,
 }
 
 impl WindowsNamedPipeInstance {
     pub fn create(pipe_name: &str, owner_sid: &str) -> Result<Self> {
+        Self::create_with_deadlines(pipe_name, owner_sid, WindowsPipeDeadlines::default())
+    }
+
+    pub fn create_with_deadlines(
+        pipe_name: &str,
+        owner_sid: &str,
+        deadlines: WindowsPipeDeadlines,
+    ) -> Result<Self> {
         validate_pipe_name(pipe_name)?;
+        WindowsPipeDeadlines::new(deadlines.connect, deadlines.read, deadlines.write)?;
         let owner_sid = canonical_sid(owner_sid)?;
         let security_descriptor = PipeSecurityDescriptor::new(&owner_sid)?;
         let attributes = SECURITY_ATTRIBUTES {
@@ -76,7 +123,7 @@ impl WindowsNamedPipeInstance {
         let handle = unsafe {
             CreateNamedPipeW(
                 pipe_name.as_ptr(),
-                PIPE_ACCESS_DUPLEX | FILE_FLAG_FIRST_PIPE_INSTANCE,
+                PIPE_ACCESS_DUPLEX | FILE_FLAG_FIRST_PIPE_INSTANCE | FILE_FLAG_OVERLAPPED,
                 PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_REJECT_REMOTE_CLIENTS,
                 1,
                 PIPE_BUFFER_BYTES,
@@ -90,7 +137,11 @@ impl WindowsNamedPipeInstance {
         }
         // SAFETY: CreateNamedPipeW returned a unique, owned handle.
         let handle = unsafe { OwnedHandle::from_raw_handle(handle) };
-        Ok(Self { handle, owner_sid })
+        Ok(Self {
+            handle,
+            owner_sid,
+            deadlines,
+        })
     }
 
     pub fn connect_and_authenticate(
@@ -110,24 +161,33 @@ impl WindowsNamedPipeInstance {
     }
 
     pub fn write_response(&self, response: &BrokerResponse) -> Result<()> {
-        write_message(raw_handle(&self.handle), &response.to_bytes()?, "response")
+        write_message(
+            raw_handle(&self.handle),
+            &response.to_bytes()?,
+            "response",
+            self.deadlines.write,
+        )
     }
 
     fn connect(&self) -> Result<()> {
-        // SAFETY: the handle is a live server-side named-pipe instance.
-        if unsafe { ConnectNamedPipe(raw_handle(&self.handle), null_mut()) } != 0 {
-            return Ok(());
-        }
-        let error = io::Error::last_os_error();
-        if error.raw_os_error() == Some(ERROR_PIPE_CONNECTED as i32) {
-            Ok(())
-        } else {
-            Err(error).context("connect strict Broker named-pipe client")
+        match run_overlapped(
+            raw_handle(&self.handle),
+            self.deadlines.connect,
+            "connect",
+            |overlapped, _| {
+                // SAFETY: the handle is a live server instance and overlapped remains live.
+                unsafe { ConnectNamedPipe(raw_handle(&self.handle), overlapped) }
+            },
+        )? {
+            IoCompletion::Complete(_) => Ok(()),
+            IoCompletion::MoreData(_) => {
+                bail!("strict Broker named-pipe connect returned message data")
+            }
         }
     }
 
     fn read_message(&self) -> Result<Vec<u8>> {
-        read_message(raw_handle(&self.handle), "request")
+        read_message(raw_handle(&self.handle), "request", self.deadlines.read)
     }
 }
 
@@ -154,7 +214,7 @@ pub fn exchange_windows_pipe_for_agent(pipe_name: &str, frame: &[u8]) -> Result<
             0,
             null(),
             OPEN_EXISTING,
-            SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION,
+            FILE_FLAG_OVERLAPPED | SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION,
             null_mut(),
         )
     };
@@ -163,41 +223,49 @@ pub fn exchange_windows_pipe_for_agent(pipe_name: &str, frame: &[u8]) -> Result<
     }
     // SAFETY: CreateFileW returned a unique, owned handle.
     let handle = unsafe { OwnedHandle::from_raw_handle(handle) };
-    write_message(raw_handle(&handle), frame, "request")?;
-    let response = parse_broker_response(&read_message(raw_handle(&handle), "response")?)?;
+    let deadlines = WindowsPipeDeadlines::default();
+    write_message(raw_handle(&handle), frame, "request", deadlines.write)?;
+    let response = parse_broker_response(&read_message(
+        raw_handle(&handle),
+        "response",
+        deadlines.read,
+    )?)?;
     if response.request_id != request.request_id {
         bail!("Broker response request ID does not match the request");
     }
     Ok(response)
 }
 
-fn write_message(handle: *mut c_void, frame: &[u8], label: &str) -> Result<()> {
+fn write_message(handle: *mut c_void, frame: &[u8], label: &str, timeout: Duration) -> Result<()> {
     if frame.is_empty() || frame.len() > MAX_BROKER_FRAME_BYTES {
         bail!("Broker {label} frame size is invalid");
     }
-    let mut bytes_written = 0_u32;
-    // SAFETY: frame is readable for its declared length and I/O is synchronous.
-    let result = unsafe {
-        WriteFile(
-            handle,
-            frame.as_ptr(),
-            frame.len() as u32,
-            &mut bytes_written,
-            null_mut(),
-        )
+    let completion = run_overlapped(handle, timeout, label, |overlapped, transferred| {
+        // SAFETY: frame remains readable and both output objects remain live until completion.
+        unsafe {
+            WriteFile(
+                handle,
+                frame.as_ptr(),
+                frame.len() as u32,
+                transferred,
+                overlapped,
+            )
+        }
+    })?;
+    let IoCompletion::Complete(bytes_written) = completion else {
+        bail!("strict Broker named-pipe {label} write returned message continuation");
     };
-    if result == 0 {
-        return Err(io::Error::last_os_error())
-            .with_context(|| format!("write strict Broker named-pipe {label}"));
-    }
     if bytes_written as usize != frame.len() {
         bail!("strict Broker named-pipe {label} was partially written");
     }
     Ok(())
 }
 
-fn read_message(handle: *mut c_void, label: &str) -> Result<Vec<u8>> {
+fn read_message(handle: *mut c_void, label: &str, timeout: Duration) -> Result<Vec<u8>> {
     let mut message = Vec::with_capacity(PIPE_BUFFER_BYTES as usize);
+    let deadline = Instant::now()
+        .checked_add(timeout)
+        .ok_or_else(|| anyhow::anyhow!("Broker {label} deadline is invalid"))?;
     loop {
         let remaining = MAX_BROKER_FRAME_BYTES
             .checked_add(1)
@@ -206,32 +274,163 @@ fn read_message(handle: *mut c_void, label: &str) -> Result<Vec<u8>> {
         let chunk_size = remaining.min(PIPE_BUFFER_BYTES as usize);
         let start = message.len();
         message.resize(start + chunk_size, 0);
-        let mut bytes_read = 0_u32;
-        // SAFETY: the writable slice is valid for chunk_size bytes and I/O is synchronous.
-        let result = unsafe {
-            ReadFile(
-                handle,
-                message[start..].as_mut_ptr(),
-                chunk_size as u32,
-                &mut bytes_read,
-                null_mut(),
-            )
+        let remaining_timeout = deadline
+            .checked_duration_since(Instant::now())
+            .ok_or_else(|| anyhow::anyhow!("strict Broker named-pipe {label} deadline exceeded"))?;
+        let completion = run_overlapped(
+            handle,
+            remaining_timeout,
+            label,
+            |overlapped, transferred| {
+                // SAFETY: the destination remains writable until the overlapped operation drains.
+                unsafe {
+                    ReadFile(
+                        handle,
+                        message[start..].as_mut_ptr(),
+                        chunk_size as u32,
+                        transferred,
+                        overlapped,
+                    )
+                }
+            },
+        )?;
+        let (bytes_read, more_data) = match completion {
+            IoCompletion::Complete(bytes) => (bytes, false),
+            IoCompletion::MoreData(bytes) => (bytes, true),
         };
         message.truncate(start + bytes_read as usize);
         if message.len() > MAX_BROKER_FRAME_BYTES {
             bail!("Broker {label} frame exceeds its size limit");
         }
-        if result != 0 {
+        if !more_data {
             if message.is_empty() {
                 bail!("Broker {label} frame is empty");
             }
             return Ok(message);
         }
-        let error = io::Error::last_os_error();
-        if error.raw_os_error() != Some(ERROR_MORE_DATA as i32) {
-            return Err(error).with_context(|| format!("read strict Broker named-pipe {label}"));
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum IoCompletion {
+    Complete(u32),
+    MoreData(u32),
+}
+
+fn run_overlapped(
+    handle: *mut c_void,
+    timeout: Duration,
+    label: &str,
+    operation: impl FnOnce(*mut OVERLAPPED, *mut u32) -> i32,
+) -> Result<IoCompletion> {
+    // SAFETY: no custom security descriptor or name is supplied.
+    let event = unsafe { CreateEventW(null(), 1, 0, null()) };
+    if event.is_null() {
+        return Err(io::Error::last_os_error()).context("create strict Broker I/O event");
+    }
+    // SAFETY: CreateEventW returned a unique owned handle.
+    let event = unsafe { OwnedHandle::from_raw_handle(event) };
+    let mut overlapped = OVERLAPPED {
+        hEvent: raw_handle(&event),
+        ..OVERLAPPED::default()
+    };
+    let mut immediate_bytes = 0_u32;
+    let result = operation(&mut overlapped, &mut immediate_bytes);
+    if result != 0 {
+        return Ok(IoCompletion::Complete(immediate_bytes));
+    }
+    let error = io::Error::last_os_error();
+    match error.raw_os_error().map(|value| value as u32) {
+        Some(ERROR_PIPE_CONNECTED) => return Ok(IoCompletion::Complete(0)),
+        Some(ERROR_MORE_DATA) => return Ok(IoCompletion::MoreData(immediate_bytes)),
+        Some(ERROR_IO_PENDING) => {}
+        _ => {
+            return Err(error).with_context(|| format!("start strict Broker named-pipe {label}"));
         }
     }
+
+    let wait_millis = timeout_to_millis(timeout)?;
+    // SAFETY: the event remains live while the operation is pending.
+    let wait_result = unsafe { WaitForSingleObject(raw_handle(&event), wait_millis) };
+    if wait_result == WAIT_TIMEOUT {
+        cancel_and_drain(handle, &overlapped)?;
+        bail!("strict Broker named-pipe {label} deadline exceeded");
+    }
+    if wait_result != WAIT_OBJECT_0 {
+        let wait_error = if wait_result == WAIT_FAILED {
+            io::Error::last_os_error()
+        } else {
+            io::Error::other(format!("unexpected wait result 0x{wait_result:08x}"))
+        };
+        cancel_and_drain(handle, &overlapped)?;
+        return Err(wait_error)
+            .with_context(|| format!("wait for strict Broker named-pipe {label}"));
+    }
+    overlapped_completion(handle, &overlapped, label)
+}
+
+fn overlapped_completion(
+    handle: *mut c_void,
+    overlapped: &OVERLAPPED,
+    label: &str,
+) -> Result<IoCompletion> {
+    let mut transferred = 0_u32;
+    // SAFETY: the event was signalled and the OVERLAPPED remains live.
+    if unsafe { GetOverlappedResult(handle, overlapped, &mut transferred, 0) } != 0 {
+        return Ok(IoCompletion::Complete(transferred));
+    }
+    let error = io::Error::last_os_error();
+    if error.raw_os_error() == Some(ERROR_MORE_DATA as i32) {
+        Ok(IoCompletion::MoreData(transferred))
+    } else {
+        Err(error).with_context(|| format!("complete strict Broker named-pipe {label}"))
+    }
+}
+
+fn cancel_and_drain(handle: *mut c_void, overlapped: &OVERLAPPED) -> Result<()> {
+    // SAFETY: the OVERLAPPED belongs to a pending operation on this handle.
+    let cancellation_error = if unsafe { CancelIoEx(handle, overlapped) } == 0 {
+        let error = io::Error::last_os_error();
+        if error.raw_os_error() != Some(ERROR_NOT_FOUND as i32) {
+            Some(error)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+    let mut transferred = 0_u32;
+    // SAFETY: waiting drains completion before the OVERLAPPED and caller buffer are released.
+    let drain_error =
+        if unsafe { GetOverlappedResult(handle, overlapped, &mut transferred, 1) } == 0 {
+            let error = io::Error::last_os_error();
+            if !matches!(
+                error.raw_os_error().map(|value| value as u32),
+                Some(ERROR_OPERATION_ABORTED) | Some(ERROR_MORE_DATA)
+            ) {
+                Some(error)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+    if let Some(error) = cancellation_error {
+        return Err(error).context("cancel strict Broker named-pipe I/O");
+    }
+    if let Some(error) = drain_error {
+        return Err(error).context("drain cancelled strict Broker named-pipe I/O");
+    }
+    Ok(())
+}
+
+fn timeout_to_millis(timeout: Duration) -> Result<u32> {
+    if timeout.is_zero() || timeout > MAX_PIPE_DEADLINE {
+        bail!("strict Broker pipe operation deadline is invalid");
+    }
+    let millis = timeout.as_millis();
+    let rounded = millis + u128::from(timeout.subsec_nanos() % 1_000_000 != 0);
+    u32::try_from(rounded).context("strict Broker pipe deadline exceeds Windows wait range")
 }
 
 pub fn current_process_user_sid() -> Result<String> {
