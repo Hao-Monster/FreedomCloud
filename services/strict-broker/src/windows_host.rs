@@ -9,8 +9,8 @@ use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
 use flclash_strict_contract::{
-    BrokerActivationErrorCode, BrokerActivationResponse, BrokerErrorCode, BrokerResponse,
-    WINDOWS_STRICT_BROKER_ACTIVATION_PIPE_NAME,
+    BrokerActivationErrorCode, BrokerActivationResponse, BrokerCommand, BrokerErrorCode,
+    BrokerResponse, WINDOWS_STRICT_BROKER_ACTIVATION_PIPE_NAME,
 };
 use windows_sys::Win32::System::Com::CoTaskMemFree;
 use windows_sys::Win32::UI::Shell::{FOLDERID_ProgramData, SHGetKnownFolderPath};
@@ -491,15 +491,26 @@ fn run_engine_actor<R: EngineRuntime>(
     dispatch: Receiver<EngineDispatch>,
     control: Receiver<EngineControl>,
 ) -> Result<()> {
+    let mut health_supervision_suspended = false;
     loop {
-        if let Err(health) = dispatcher.verify_health() {
-            let cleanup = dispatcher.force_fail_closed();
-            return match cleanup {
-                Ok(()) => Err(health).context("strict forwarding runtime became unhealthy"),
-                Err(cleanup) => Err(anyhow::anyhow!(
-                    "strict forwarding runtime became unhealthy: {health:#}; fail-closed cleanup failed: {cleanup:#}"
-                )),
-            };
+        if !health_supervision_suspended {
+            let health = dispatcher.verify_health();
+            if let Err(health) = health {
+                let cleanup = dispatcher.force_fail_closed();
+                if let Err(cleanup) = cleanup {
+                    return Err(anyhow::anyhow!(
+                        "strict forwarding runtime became unhealthy: {health:#}; fail-closed cleanup failed: {cleanup:#}"
+                    ));
+                }
+                // The persisted policy is now blocking and the forwarding runtime
+                // is inactive. Keep the single-owner actor available for status,
+                // disable and a fresh authenticated commit, but do not spin on a
+                // failed runtime. A fresh authenticated commit attempt is the only
+                // operation that can resume supervision.
+                reject_queued_dispatches_after_health_failure(&dispatch);
+                health_supervision_suspended = true;
+                continue;
+            }
         }
         match control.try_recv() {
             Ok(EngineControl::ForceFailClosed(response)) => {
@@ -525,7 +536,15 @@ fn run_engine_actor<R: EngineRuntime>(
 
         match dispatch.recv_timeout(ENGINE_POLL_INTERVAL) {
             Ok(command) => {
-                let _ = command.response.send(dispatcher.dispatch(command.request));
+                let may_resume_supervision = matches!(
+                    &command.request.request().command,
+                    BrokerCommand::CommitPolicy { .. }
+                );
+                let response = dispatcher.dispatch(command.request);
+                if health_supervision_suspended && may_resume_supervision {
+                    health_supervision_suspended = false;
+                }
+                let _ = command.response.send(response);
             }
             Err(RecvTimeoutError::Timeout) => {}
             Err(RecvTimeoutError::Disconnected) => {
@@ -534,6 +553,20 @@ fn run_engine_actor<R: EngineRuntime>(
                     .context("strict engine dispatch channel disconnected");
             }
         }
+    }
+}
+
+fn reject_queued_dispatches_after_health_failure(dispatch: &Receiver<EngineDispatch>) {
+    // At most one pre-failure item can exist per bounded queue slot. Do not let
+    // concurrent clients turn recovery cleanup into an unbounded drain loop.
+    for _ in 0..ENGINE_QUEUE_CAPACITY {
+        let Ok(command) = dispatch.try_recv() else {
+            break;
+        };
+        let request_id = command.request.request().request_id.clone();
+        let response = BrokerResponse::error(&request_id, BrokerErrorCode::BackendUnavailable)
+            .expect("an authenticated request ID always produces a bounded error response");
+        let _ = command.response.send(response);
     }
 }
 
@@ -623,7 +656,10 @@ impl Drop for CoTaskMemPath {
 
 #[cfg(test)]
 mod tests {
-    use flclash_strict_contract::{BrokerCommand, BrokerRequest, STRICT_PROTOCOL_VERSION};
+    use flclash_strict_contract::{
+        BrokerCommand, BrokerRequest, BrokerResponseBody, StrictProxyIngressSet,
+        STRICT_PROTOCOL_VERSION,
+    };
 
     use super::*;
     use crate::{BrokerAuthenticator, ClientPrincipal, ClientRole};
@@ -636,11 +672,17 @@ mod tests {
 
     struct FailingHealthRuntime {
         events: SyncSender<&'static str>,
+        fail_cleanup: bool,
     }
 
     impl EngineRuntime for FailingHealthRuntime {
-        fn dispatch(&mut self, _request: AuthorizedBrokerRequest) -> BrokerResponse {
-            panic!("an unhealthy runtime must fail closed before dispatch")
+        fn dispatch(&mut self, request: AuthorizedBrokerRequest) -> BrokerResponse {
+            self.events.send("dispatch-after-recovery").unwrap();
+            BrokerResponse::error(
+                request.request().request_id.clone(),
+                BrokerErrorCode::BackendUnavailable,
+            )
+            .unwrap()
         }
 
         fn verify_health(&mut self) -> Result<()> {
@@ -650,6 +692,9 @@ mod tests {
 
         fn force_fail_closed(&mut self) -> Result<()> {
             self.events.send("force-fail-closed").unwrap();
+            if self.fail_cleanup {
+                bail!("injected cleanup failure")
+            }
             Ok(())
         }
     }
@@ -685,12 +730,16 @@ mod tests {
     }
 
     fn authorized_request(request_id: &str) -> AuthorizedBrokerRequest {
+        authorized_command(request_id, BrokerCommand::Status {})
+    }
+
+    fn authorized_command(request_id: &str, command: BrokerCommand) -> AuthorizedBrokerRequest {
         let capability = [0x11; 32];
         let request = BrokerRequest {
             protocol: STRICT_PROTOCOL_VERSION,
             request_id: request_id.into(),
             session_capability: "11".repeat(32),
-            command: BrokerCommand::Status {},
+            command,
         };
         BrokerAuthenticator::new(capability)
             .authenticate(
@@ -802,17 +851,112 @@ mod tests {
     }
 
     #[test]
-    fn engine_health_failure_forces_blocking_before_the_actor_exits() {
+    fn engine_health_failure_forces_blocking_and_keeps_actor_recoverable() {
+        let (dispatch_tx, dispatch_rx) = mpsc::sync_channel(1);
+        let (control_tx, control_rx) = mpsc::sync_channel(1);
+        let (event_tx, event_rx) = mpsc::sync_channel(4);
+        let (stale_response_tx, stale_response_rx) = mpsc::sync_channel(1);
+        dispatch_tx
+            .send(EngineDispatch {
+                request: authorized_command(
+                    "actor-stale-commit",
+                    BrokerCommand::CommitPolicy {
+                        revision: 1,
+                        policy_digest: "a".repeat(64),
+                        ingress: StrictProxyIngressSet::empty(),
+                    },
+                ),
+                response: stale_response_tx,
+            })
+            .unwrap();
+        let worker = thread::spawn(move || {
+            let mut runtime = FailingHealthRuntime {
+                events: event_tx,
+                fail_cleanup: false,
+            };
+            run_engine_actor(&mut runtime, dispatch_rx, control_rx)
+        });
+
+        assert_eq!(event_rx.recv().unwrap(), "health-failed");
+        assert_eq!(event_rx.recv().unwrap(), "force-fail-closed");
+        let stale_response = stale_response_rx
+            .recv_timeout(Duration::from_secs(1))
+            .unwrap();
+        assert!(matches!(
+            stale_response.body,
+            BrokerResponseBody::Error {
+                code: BrokerErrorCode::BackendUnavailable
+            }
+        ));
+        assert!(matches!(
+            event_rx.recv_timeout(Duration::from_millis(100)),
+            Err(RecvTimeoutError::Timeout)
+        ));
+
+        let (dispatch_response_tx, dispatch_response_rx) = mpsc::sync_channel(1);
+        dispatch_tx
+            .send(EngineDispatch {
+                request: authorized_request("actor-recovery-status"),
+                response: dispatch_response_tx,
+            })
+            .unwrap();
+        dispatch_response_rx
+            .recv_timeout(Duration::from_secs(1))
+            .unwrap();
+        assert_eq!(event_rx.recv().unwrap(), "dispatch-after-recovery");
+        assert!(matches!(
+            event_rx.recv_timeout(Duration::from_millis(100)),
+            Err(RecvTimeoutError::Timeout)
+        ));
+
+        let (commit_response_tx, commit_response_rx) = mpsc::sync_channel(1);
+        dispatch_tx
+            .send(EngineDispatch {
+                request: authorized_command(
+                    "actor-recovery-commit",
+                    BrokerCommand::CommitPolicy {
+                        revision: 1,
+                        policy_digest: "a".repeat(64),
+                        ingress: StrictProxyIngressSet::empty(),
+                    },
+                ),
+                response: commit_response_tx,
+            })
+            .unwrap();
+        commit_response_rx
+            .recv_timeout(Duration::from_secs(1))
+            .unwrap();
+        assert_eq!(event_rx.recv().unwrap(), "dispatch-after-recovery");
+        assert_eq!(event_rx.recv().unwrap(), "health-failed");
+        assert_eq!(event_rx.recv().unwrap(), "force-fail-closed");
+
+        let (shutdown_tx, shutdown_rx) = mpsc::sync_channel(1);
+        control_tx
+            .send(EngineControl::Shutdown(shutdown_tx))
+            .unwrap();
+        assert_eq!(event_rx.recv().unwrap(), "force-fail-closed");
+        shutdown_rx.recv().unwrap().unwrap();
+        worker.join().unwrap().unwrap();
+    }
+
+    #[test]
+    fn engine_health_failure_exits_when_fail_closed_cleanup_is_unproven() {
         let (_dispatch_tx, dispatch_rx) = mpsc::sync_channel(1);
         let (_control_tx, control_rx) = mpsc::sync_channel(1);
         let (event_tx, event_rx) = mpsc::sync_channel(2);
-        let mut runtime = FailingHealthRuntime { events: event_tx };
+        let mut runtime = FailingHealthRuntime {
+            events: event_tx,
+            fail_cleanup: true,
+        };
 
         let error = run_engine_actor(&mut runtime, dispatch_rx, control_rx)
             .unwrap_err()
             .to_string();
 
         assert!(error.contains("strict forwarding runtime became unhealthy"));
+        assert!(error.contains("fail-closed cleanup failed"));
+        assert!(error.contains("injected forwarding failure"));
+        assert!(error.contains("injected cleanup failure"));
         assert_eq!(event_rx.recv().unwrap(), "health-failed");
         assert_eq!(event_rx.recv().unwrap(), "force-fail-closed");
     }
