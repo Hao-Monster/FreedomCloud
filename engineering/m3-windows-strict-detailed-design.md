@@ -168,6 +168,27 @@ an equivalent existing supported ingress. Broker and Core executables, Broker
 listeners, loopback, the TUN adapter and already redirected flows are explicit
 exclusions.
 
+The persistent policy snapshot deliberately does not contain a listener PID or
+port. Those values are process-lifetime state and would become unsafe after a
+Broker crash or PID/port reuse. A separate endpoint lease is required:
+
+```text
+StrictEndpointLease
+  protocol, revision, policyDigest
+  Broker process identity held by the driver (not an unverified numeric PID)
+  TCP v4/v6 and UDP v4/v6 loopback endpoints
+  random 128-bit lease nonce
+  monotonically increasing lease generation and bounded expiry
+```
+
+The LocalSystem Broker binds every listener first, then sends the lease over a
+System-only driver device. Redirect filters are installed only after the driver
+attests the same revision/digest and live lease generation. Missing, expired or
+revoked lease state always classifies selected proxy traffic as block. Teardown
+removes dynamic redirects first, revokes the lease, closes relay sockets and
+only then considers persistent guard removal. A process-exit callback revokes
+the held Broker process identity immediately; a numeric PID alone is forbidden.
+
 ### UDP, DNS and QUIC
 
 UDP is not declared complete by reusing the TCP relay. A separate association
@@ -180,6 +201,12 @@ Initial strict acceptance requires Mihomo Fake-IP/virtual-network-card mode so
 domain mappings remain available to existing domain rules. Real-IP domain
 restoration is a separate proof item and cannot be inferred from an IP-only WFP
 context.
+
+ALE connect redirection can cover connected UDP. Unconnected datagram send,
+DNS and QUIC coverage must be proven through the required bind/resource or
+datagram-layer path and VM bypass matrix before any UDP/DNS/QUIC capability bit
+is advertised. Until that proof exists, the driver returns no such capability
+and the Agent remains `blocking`.
 
 ## 7. Broker IPC and privileges
 
