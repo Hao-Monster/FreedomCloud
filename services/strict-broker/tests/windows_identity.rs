@@ -24,8 +24,9 @@ fn signed_windows_executable_is_reopened_and_matches_pinned_identity() {
         StrictPolicyBundle::new(1, vec![StrictPolicyEntry::block(identity.clone())]).unwrap();
     let mut verifier = WindowsIdentityVerifier;
 
-    let lease = verifier.verify(&policy).unwrap();
-    assert_eq!(lease.executable_count(), 1);
+    let verification = verifier.verify(&policy).unwrap();
+    assert_eq!(verification.lease().executable_count(), 1);
+    assert_eq!(verification.app_ids().app_id_count(), 1);
 
     let mut mismatched = identity;
     mismatched.wfp_app_id_sha256 = "00".repeat(32);

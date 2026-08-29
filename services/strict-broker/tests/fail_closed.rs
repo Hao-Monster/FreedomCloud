@@ -4,8 +4,9 @@ use std::sync::Arc;
 
 use anyhow::{bail, Result};
 use flclash_strict_broker::{
-    BackendSnapshot, BrokerEngine, BrokerPhase, FilterBackend, ForwardingHealth, IdentityVerifier,
-    RecoveryMarker, RecoveryRecord, RecoveryStore,
+    BackendSnapshot, BrokerEngine, BrokerPhase, FilterBackend, ForwardingHealth,
+    IdentityVerification, IdentityVerifier, RecoveryMarker, RecoveryRecord, RecoveryStore,
+    VerifiedApplicationAppIds, VerifiedPolicyAppIds,
 };
 use flclash_strict_contract::{
     StrictCapability, StrictIdentity, StrictPolicyBundle, StrictPolicyEntry,
@@ -20,7 +21,12 @@ struct FakeBackend {
 }
 
 impl FilterBackend for FakeBackend {
-    fn install_guards(&mut self, policy: &StrictPolicyBundle, digest: &str) -> Result<()> {
+    fn install_guards(
+        &mut self,
+        policy: &StrictPolicyBundle,
+        _verified_app_ids: &VerifiedPolicyAppIds,
+        digest: &str,
+    ) -> Result<()> {
         self.events.push("installGuards");
         self.snapshot.revision = Some(policy.revision);
         self.snapshot.policy_digest = Some(digest.to_owned());
@@ -35,7 +41,12 @@ impl FilterBackend for FakeBackend {
         Ok(())
     }
 
-    fn install_redirects(&mut self, _policy: &StrictPolicyBundle, _digest: &str) -> Result<()> {
+    fn install_redirects(
+        &mut self,
+        _policy: &StrictPolicyBundle,
+        _verified_app_ids: &VerifiedPolicyAppIds,
+        _digest: &str,
+    ) -> Result<()> {
         self.events.push("installRedirects");
         if self.fail_install_redirects {
             bail!("injected redirect failure");
@@ -112,12 +123,15 @@ struct FakeVerifier {
 impl IdentityVerifier for FakeVerifier {
     type VerificationLease = ();
 
-    fn verify(&mut self, _policy: &StrictPolicyBundle) -> Result<Self::VerificationLease> {
+    fn verify(
+        &mut self,
+        policy: &StrictPolicyBundle,
+    ) -> Result<IdentityVerification<Self::VerificationLease>> {
         self.events.push("verifyIdentity");
         if self.reject {
             bail!("injected identity rejection");
         }
-        Ok(())
+        Ok(IdentityVerification::new(fake_app_ids(policy)?, ()))
     }
 }
 
@@ -134,10 +148,36 @@ impl Drop for CountingLease {
 impl IdentityVerifier for CountingVerifier {
     type VerificationLease = CountingLease;
 
-    fn verify(&mut self, _policy: &StrictPolicyBundle) -> Result<Self::VerificationLease> {
+    fn verify(
+        &mut self,
+        policy: &StrictPolicyBundle,
+    ) -> Result<IdentityVerification<Self::VerificationLease>> {
         self.0.fetch_add(1, Ordering::SeqCst);
-        Ok(CountingLease(Arc::clone(&self.0)))
+        Ok(IdentityVerification::new(
+            fake_app_ids(policy)?,
+            CountingLease(Arc::clone(&self.0)),
+        ))
     }
+}
+
+fn fake_app_ids(policy: &StrictPolicyBundle) -> Result<VerifiedPolicyAppIds> {
+    let applications = policy
+        .entries
+        .iter()
+        .map(|entry| {
+            let app_ids = std::iter::once(entry.identity.canonical_path.as_bytes().to_vec())
+                .chain(
+                    entry
+                        .identity
+                        .verified_children
+                        .iter()
+                        .map(|child| child.canonical_path.as_bytes().to_vec()),
+                )
+                .collect();
+            VerifiedApplicationAppIds::new(&entry.identity.identity_id, app_ids)
+        })
+        .collect::<Result<Vec<_>>>()?;
+    VerifiedPolicyAppIds::new(policy, applications)
 }
 
 fn hex(character: char) -> String {

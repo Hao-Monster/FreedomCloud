@@ -29,6 +29,124 @@ pub use windows_pipe::{
     WindowsNamedPipeInstance,
 };
 
+pub const MAX_VERIFIED_APP_ID_BYTES: usize = 4 * 1024;
+const MAX_VERIFIED_POLICY_APP_ID_BYTES: usize = 2 * 1024 * 1024;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerifiedApplicationAppIds {
+    identity_id: String,
+    app_ids: Vec<Vec<u8>>,
+}
+
+impl VerifiedApplicationAppIds {
+    pub fn new(identity_id: impl Into<String>, app_ids: Vec<Vec<u8>>) -> Result<Self> {
+        let identity_id = identity_id.into();
+        if identity_id.is_empty() || identity_id.len() > 64 {
+            bail!("verified application identity ID is invalid");
+        }
+        if app_ids.is_empty()
+            || app_ids
+                .iter()
+                .any(|value| value.is_empty() || value.len() > MAX_VERIFIED_APP_ID_BYTES)
+        {
+            bail!("verified WFP application identity is empty or oversized");
+        }
+        Ok(Self {
+            identity_id,
+            app_ids,
+        })
+    }
+
+    pub fn identity_id(&self) -> &str {
+        &self.identity_id
+    }
+
+    pub fn app_ids(&self) -> &[Vec<u8>] {
+        &self.app_ids
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerifiedPolicyAppIds {
+    applications: Vec<VerifiedApplicationAppIds>,
+    app_id_count: usize,
+}
+
+impl VerifiedPolicyAppIds {
+    pub fn new(
+        policy: &StrictPolicyBundle,
+        applications: Vec<VerifiedApplicationAppIds>,
+    ) -> Result<Self> {
+        policy.validate()?;
+        if applications.len() != policy.entries.len() {
+            bail!("verified application identities do not cover the strict policy");
+        }
+        let mut app_id_count = 0_usize;
+        let mut total_bytes = 0_usize;
+        for (expected, verified) in policy.entries.iter().zip(&applications) {
+            if verified.identity_id != expected.identity.identity_id
+                || verified.app_ids.len() != 1 + expected.identity.verified_children.len()
+            {
+                bail!("verified application identities do not match the strict policy");
+            }
+            app_id_count = app_id_count
+                .checked_add(verified.app_ids.len())
+                .ok_or_else(|| anyhow::anyhow!("verified application identity count overflow"))?;
+            for app_id in &verified.app_ids {
+                total_bytes = total_bytes.checked_add(app_id.len()).ok_or_else(|| {
+                    anyhow::anyhow!("verified application identity size overflow")
+                })?;
+            }
+        }
+        if total_bytes > MAX_VERIFIED_POLICY_APP_ID_BYTES {
+            bail!("verified WFP application identities exceed their total size limit");
+        }
+        let mut sorted_ids: Vec<&[u8]> = applications
+            .iter()
+            .flat_map(|application| application.app_ids.iter().map(Vec::as_slice))
+            .collect();
+        sorted_ids.sort_unstable();
+        if sorted_ids.windows(2).any(|pair| pair[0] == pair[1]) {
+            bail!("verified WFP application identity is assigned more than once");
+        }
+        Ok(Self {
+            applications,
+            app_id_count,
+        })
+    }
+
+    pub fn applications(&self) -> &[VerifiedApplicationAppIds] {
+        &self.applications
+    }
+
+    pub fn application_count(&self) -> usize {
+        self.applications.len()
+    }
+
+    pub fn app_id_count(&self) -> usize {
+        self.app_id_count
+    }
+}
+
+pub struct IdentityVerification<L> {
+    app_ids: VerifiedPolicyAppIds,
+    lease: L,
+}
+
+impl<L> IdentityVerification<L> {
+    pub fn new(app_ids: VerifiedPolicyAppIds, lease: L) -> Self {
+        Self { app_ids, lease }
+    }
+
+    pub fn app_ids(&self) -> &VerifiedPolicyAppIds {
+        &self.app_ids
+    }
+
+    pub fn lease(&self) -> &L {
+        &self.lease
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum BrokerPhase {
@@ -151,8 +269,18 @@ pub struct BackendSnapshot {
 
 pub trait FilterBackend {
     /// Each mutation must be one atomic backend transaction owned by the FlClashX provider.
-    fn install_guards(&mut self, policy: &StrictPolicyBundle, digest: &str) -> Result<()>;
-    fn install_redirects(&mut self, policy: &StrictPolicyBundle, digest: &str) -> Result<()>;
+    fn install_guards(
+        &mut self,
+        policy: &StrictPolicyBundle,
+        verified_app_ids: &VerifiedPolicyAppIds,
+        digest: &str,
+    ) -> Result<()>;
+    fn install_redirects(
+        &mut self,
+        policy: &StrictPolicyBundle,
+        verified_app_ids: &VerifiedPolicyAppIds,
+        digest: &str,
+    ) -> Result<()>;
     fn remove_redirects(&mut self) -> Result<()>;
     fn remove_guards(&mut self) -> Result<()>;
     fn snapshot(&mut self) -> Result<BackendSnapshot>;
@@ -163,7 +291,10 @@ pub trait IdentityVerifier {
 
     /// Implementations must reopen the executable and independently verify App-ID and signer data.
     /// The returned lease must keep every verified executable replacement-locked.
-    fn verify(&mut self, policy: &StrictPolicyBundle) -> Result<Self::VerificationLease>;
+    fn verify(
+        &mut self,
+        policy: &StrictPolicyBundle,
+    ) -> Result<IdentityVerification<Self::VerificationLease>>;
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -199,7 +330,7 @@ pub struct BrokerEngine<B, S, V: IdentityVerifier> {
     store_loaded: bool,
     phase: BrokerPhase,
     forwarding_health: ForwardingHealth,
-    verification_lease: Option<V::VerificationLease>,
+    verification_lease: Option<IdentityVerification<V::VerificationLease>>,
 }
 
 impl<B, S, V> BrokerEngine<B, S, V>
@@ -247,18 +378,25 @@ where
             bail!("strict policy revision was already used");
         }
 
-        let verification_lease = self.verifier.verify(&policy)?;
+        let verification = self.verifier.verify(&policy)?;
         let digest = policy.canonical_digest()?;
         let preparing = RecoveryMarker::preparing(policy, digest);
         self.store.persist(&preparing)?;
-        self.verification_lease = Some(verification_lease);
+        self.verification_lease = Some(verification);
         self.high_watermark = preparing.revision;
         self.current_marker = Some(preparing.clone());
         self.phase = BrokerPhase::Preparing;
         self.forwarding_health = ForwardingHealth::default();
 
         self.backend
-            .install_guards(&preparing.policy, &preparing.policy_digest)
+            .install_guards(
+                &preparing.policy,
+                self.verification_lease
+                    .as_ref()
+                    .expect("verification is retained before filter installation")
+                    .app_ids(),
+                &preparing.policy_digest,
+            )
             .context("install strict guard filters")?;
         let snapshot = self.backend.snapshot()?;
         validate_snapshot(&snapshot, &preparing, true, false)?;
@@ -292,10 +430,14 @@ where
             bail!("strict forwarding capability proof is incomplete");
         }
 
-        if let Err(error) = self
-            .backend
-            .install_redirects(&marker.policy, &marker.policy_digest)
-        {
+        if let Err(error) = self.backend.install_redirects(
+            &marker.policy,
+            self.verification_lease
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("strict identity verification lease is missing"))?
+                .app_ids(),
+            &marker.policy_digest,
+        ) {
             if let Err(rollback_error) = self.rollback_redirects(&marker) {
                 bail!(
                     "install strict redirect filters failed: {error:#}; fail-closed rollback failed: {rollback_error:#}"
@@ -412,8 +554,8 @@ where
             return self.complete_disable(&marker);
         }
 
-        let verification_lease = self.verifier.verify(&marker.policy)?;
-        self.verification_lease = Some(verification_lease);
+        let verification = self.verifier.verify(&marker.policy)?;
+        self.verification_lease = Some(verification);
         if snapshot.redirect_filters_installed {
             self.backend.remove_redirects()?;
             snapshot = self.backend.snapshot()?;
@@ -422,8 +564,14 @@ where
             }
         }
         if !snapshot.guard_filters_installed {
-            self.backend
-                .install_guards(&marker.policy, &marker.policy_digest)?;
+            self.backend.install_guards(
+                &marker.policy,
+                self.verification_lease
+                    .as_ref()
+                    .expect("recovery retains verification before filter installation")
+                    .app_ids(),
+                &marker.policy_digest,
+            )?;
             snapshot = self.backend.snapshot()?;
         }
         validate_snapshot(&snapshot, &marker, true, false)?;

@@ -33,7 +33,9 @@ use windows_sys::Win32::Storage::FileSystem::{
     FILE_READ_ATTRIBUTES, FILE_READ_DATA, FILE_SHARE_READ, OPEN_EXISTING, READ_CONTROL,
 };
 
-use crate::IdentityVerifier;
+use crate::{
+    IdentityVerification, IdentityVerifier, VerifiedApplicationAppIds, VerifiedPolicyAppIds,
+};
 
 const MAX_WFP_APP_ID_BYTES: u32 = 64 * 1024;
 const MAX_CATALOG_HASH_BYTES: u32 = 128;
@@ -62,7 +64,10 @@ impl WindowsIdentityLease {
 impl IdentityVerifier for WindowsIdentityVerifier {
     type VerificationLease = WindowsIdentityLease;
 
-    fn verify(&mut self, policy: &StrictPolicyBundle) -> Result<Self::VerificationLease> {
+    fn verify(
+        &mut self,
+        policy: &StrictPolicyBundle,
+    ) -> Result<IdentityVerification<Self::VerificationLease>> {
         policy.validate()?;
         let expected_count = policy.entries.iter().try_fold(0_usize, |count, entry| {
             count
@@ -70,36 +75,49 @@ impl IdentityVerifier for WindowsIdentityVerifier {
                 .ok_or_else(|| anyhow::anyhow!("strict identity count overflow"))
         })?;
         let mut handles = Vec::with_capacity(expected_count);
+        let mut verified_applications = Vec::with_capacity(policy.entries.len());
         for entry in &policy.entries {
-            handles.push(verify_and_lock_primary(&entry.identity)?);
+            let (handle, primary_app_id) = verify_and_lock_primary(&entry.identity)?;
+            handles.push(handle);
+            let mut family_app_ids = Vec::with_capacity(1 + entry.identity.verified_children.len());
+            family_app_ids.push(primary_app_id);
             for child in &entry.identity.verified_children {
-                let (actual, handle) = inspect_and_lock(Path::new(&child.canonical_path))?;
+                let (actual, app_id, handle) = inspect_and_lock(Path::new(&child.canonical_path))?;
                 verify_pinned_values(
                     &child.canonical_path,
                     &child.wfp_app_id_sha256,
                     &child.publisher_certificate_sha256,
                     &actual,
                 )?;
+                family_app_ids.push(app_id);
                 handles.push(handle);
             }
+            verified_applications.push(VerifiedApplicationAppIds::new(
+                &entry.identity.identity_id,
+                family_app_ids,
+            )?);
         }
-        Ok(WindowsIdentityLease { handles })
+        let app_ids = VerifiedPolicyAppIds::new(policy, verified_applications)?;
+        Ok(IdentityVerification::new(
+            app_ids,
+            WindowsIdentityLease { handles },
+        ))
     }
 }
 
 pub fn inspect_windows_executable(path: impl AsRef<Path>) -> Result<WindowsVerifiedIdentity> {
-    inspect_and_lock(path.as_ref()).map(|(identity, _handle)| identity)
+    inspect_and_lock(path.as_ref()).map(|(identity, _app_id, _handle)| identity)
 }
 
-fn verify_and_lock_primary(identity: &StrictIdentity) -> Result<OwnedHandle> {
-    let (actual, handle) = inspect_and_lock(Path::new(&identity.canonical_path))?;
+fn verify_and_lock_primary(identity: &StrictIdentity) -> Result<(OwnedHandle, Vec<u8>)> {
+    let (actual, app_id, handle) = inspect_and_lock(Path::new(&identity.canonical_path))?;
     verify_pinned_values(
         &identity.canonical_path,
         &identity.wfp_app_id_sha256,
         &identity.publisher_certificate_sha256,
         &actual,
     )?;
-    Ok(handle)
+    Ok((handle, app_id))
 }
 
 fn verify_pinned_values(
@@ -126,7 +144,7 @@ fn verify_pinned_values(
     Ok(())
 }
 
-fn inspect_and_lock(path: &Path) -> Result<(WindowsVerifiedIdentity, OwnedHandle)> {
+fn inspect_and_lock(path: &Path) -> Result<(WindowsVerifiedIdentity, Vec<u8>, OwnedHandle)> {
     if !path.is_absolute() {
         bail!("strict executable path must be absolute");
     }
@@ -167,7 +185,7 @@ fn inspect_and_lock(path: &Path) -> Result<(WindowsVerifiedIdentity, OwnedHandle
     {
         bail!("strict executable canonical path is invalid");
     }
-    let wfp_app_id_sha256 = wfp_app_id_digest(&canonical_path)?;
+    let (wfp_app_id_sha256, wfp_app_id) = wfp_app_id(&canonical_path)?;
     let publisher_certificate_sha256 = authenticode_publisher_digest(raw_handle, &canonical_path)?;
     Ok((
         WindowsVerifiedIdentity {
@@ -175,6 +193,7 @@ fn inspect_and_lock(path: &Path) -> Result<(WindowsVerifiedIdentity, OwnedHandle
             wfp_app_id_sha256,
             publisher_certificate_sha256,
         },
+        wfp_app_id,
         handle,
     ))
 }
@@ -206,7 +225,7 @@ fn final_dos_path(handle: *mut c_void) -> Result<String> {
     Ok(path)
 }
 
-fn wfp_app_id_digest(path: &str) -> Result<String> {
+fn wfp_app_id(path: &str) -> Result<(String, Vec<u8>)> {
     let path = wide_null(path);
     let mut blob = null_mut();
     // SAFETY: path is NUL-terminated and blob is a valid output pointer.
@@ -225,7 +244,7 @@ fn wfp_app_id_digest(path: &str) -> Result<String> {
     }
     // SAFETY: the WFP allocation contains value.size readable bytes.
     let bytes = unsafe { std::slice::from_raw_parts(value.data, value.size as usize) };
-    Ok(format!("{:x}", Sha256::digest(bytes)))
+    Ok((format!("{:x}", Sha256::digest(bytes)), bytes.to_vec()))
 }
 
 fn authenticode_publisher_digest(handle: *mut c_void, path: &str) -> Result<String> {

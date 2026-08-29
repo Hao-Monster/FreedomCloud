@@ -3,8 +3,8 @@ use std::collections::BTreeSet;
 use anyhow::{bail, Result};
 use flclash_strict_broker::{
     BackendSnapshot, BrokerAuthenticator, BrokerDispatcher, ClientPrincipal, ClientRole,
-    FilterBackend, ForwardingHealth, ForwardingHealthProbe, IdentityVerifier, RecoveryMarker,
-    RecoveryRecord, RecoveryStore,
+    FilterBackend, ForwardingHealth, ForwardingHealthProbe, IdentityVerification, IdentityVerifier,
+    RecoveryMarker, RecoveryRecord, RecoveryStore, VerifiedApplicationAppIds, VerifiedPolicyAppIds,
 };
 use flclash_strict_contract::{
     BrokerCommand, BrokerRequest, BrokerResponseBody, StrictCapability, StrictIdentity,
@@ -18,7 +18,12 @@ struct FakeBackend {
 }
 
 impl FilterBackend for FakeBackend {
-    fn install_guards(&mut self, policy: &StrictPolicyBundle, digest: &str) -> Result<()> {
+    fn install_guards(
+        &mut self,
+        policy: &StrictPolicyBundle,
+        _verified_app_ids: &VerifiedPolicyAppIds,
+        digest: &str,
+    ) -> Result<()> {
         if self.fail_guards_with_secret {
             bail!("backend secret must never cross IPC");
         }
@@ -30,7 +35,12 @@ impl FilterBackend for FakeBackend {
         Ok(())
     }
 
-    fn install_redirects(&mut self, _policy: &StrictPolicyBundle, _digest: &str) -> Result<()> {
+    fn install_redirects(
+        &mut self,
+        _policy: &StrictPolicyBundle,
+        _verified_app_ids: &VerifiedPolicyAppIds,
+        _digest: &str,
+    ) -> Result<()> {
         self.snapshot.filter_generation += 1;
         self.snapshot.redirect_filters_installed = true;
         Ok(())
@@ -84,8 +94,32 @@ struct FakeVerifier;
 impl IdentityVerifier for FakeVerifier {
     type VerificationLease = ();
 
-    fn verify(&mut self, _policy: &StrictPolicyBundle) -> Result<Self::VerificationLease> {
-        Ok(())
+    fn verify(
+        &mut self,
+        policy: &StrictPolicyBundle,
+    ) -> Result<IdentityVerification<Self::VerificationLease>> {
+        let applications = policy
+            .entries
+            .iter()
+            .map(|entry| {
+                VerifiedApplicationAppIds::new(
+                    &entry.identity.identity_id,
+                    std::iter::once(entry.identity.canonical_path.as_bytes().to_vec())
+                        .chain(
+                            entry
+                                .identity
+                                .verified_children
+                                .iter()
+                                .map(|child| child.canonical_path.as_bytes().to_vec()),
+                        )
+                        .collect(),
+                )
+            })
+            .collect::<Result<Vec<_>>>()?;
+        Ok(IdentityVerification::new(
+            VerifiedPolicyAppIds::new(policy, applications)?,
+            (),
+        ))
     }
 }
 
