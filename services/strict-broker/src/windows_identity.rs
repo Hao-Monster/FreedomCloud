@@ -55,6 +55,22 @@ pub struct WindowsIdentityLease {
     handles: Vec<OwnedHandle>,
 }
 
+pub struct WindowsDriverTrustLease {
+    canonical_path: String,
+    publisher_certificate_sha256: String,
+    _handle: OwnedHandle,
+}
+
+impl WindowsDriverTrustLease {
+    pub fn canonical_path(&self) -> &str {
+        &self.canonical_path
+    }
+
+    pub fn publisher_certificate_sha256(&self) -> &str {
+        &self.publisher_certificate_sha256
+    }
+}
+
 impl WindowsIdentityLease {
     pub fn executable_count(&self) -> usize {
         self.handles.len()
@@ -109,6 +125,45 @@ pub fn inspect_windows_executable(path: impl AsRef<Path>) -> Result<WindowsVerif
     inspect_and_lock(path.as_ref()).map(|(identity, _app_id, _handle)| identity)
 }
 
+pub fn inspect_windows_driver(path: impl AsRef<Path>) -> Result<WindowsDriverTrustLease> {
+    let (canonical_path, handle) = open_and_lock_plain_file(path.as_ref(), "strict driver")?;
+    if canonical_path.len() > 1024
+        || !canonical_path.to_ascii_lowercase().ends_with(".sys")
+        || canonical_path.contains(['\0', '\r', '\n', '/'])
+    {
+        bail!("strict driver canonical path is invalid");
+    }
+    let publisher_certificate_sha256 =
+        authenticode_publisher_digest(handle.as_raw_handle(), &canonical_path)
+            .context("verify strict driver Authenticode signer")?;
+    Ok(WindowsDriverTrustLease {
+        canonical_path,
+        publisher_certificate_sha256,
+        _handle: handle,
+    })
+}
+
+pub fn verify_windows_driver(
+    path: impl AsRef<Path>,
+    expected_publisher_certificate_sha256: &str,
+) -> Result<WindowsDriverTrustLease> {
+    if expected_publisher_certificate_sha256.len() != 64
+        || !expected_publisher_certificate_sha256
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit())
+    {
+        bail!("strict driver publisher certificate digest is invalid");
+    }
+    let lease = inspect_windows_driver(path)?;
+    if !lease
+        .publisher_certificate_sha256
+        .eq_ignore_ascii_case(expected_publisher_certificate_sha256)
+    {
+        bail!("strict driver publisher certificate changed");
+    }
+    Ok(lease)
+}
+
 fn verify_and_lock_primary(identity: &StrictIdentity) -> Result<(OwnedHandle, Vec<u8>)> {
     let (actual, app_id, handle) = inspect_and_lock(Path::new(&identity.canonical_path))?;
     verify_pinned_values(
@@ -145,8 +200,30 @@ fn verify_pinned_values(
 }
 
 fn inspect_and_lock(path: &Path) -> Result<(WindowsVerifiedIdentity, Vec<u8>, OwnedHandle)> {
+    let (canonical_path, handle) = open_and_lock_plain_file(path, "strict executable identity")?;
+    if canonical_path.len() > 1024
+        || !canonical_path.to_ascii_lowercase().ends_with(".exe")
+        || canonical_path.contains(['\0', '\r', '\n', '/'])
+    {
+        bail!("strict executable canonical path is invalid");
+    }
+    let (wfp_app_id_sha256, wfp_app_id) = wfp_app_id(&canonical_path)?;
+    let publisher_certificate_sha256 =
+        authenticode_publisher_digest(handle.as_raw_handle(), &canonical_path)?;
+    Ok((
+        WindowsVerifiedIdentity {
+            canonical_path,
+            wfp_app_id_sha256,
+            publisher_certificate_sha256,
+        },
+        wfp_app_id,
+        handle,
+    ))
+}
+
+fn open_and_lock_plain_file(path: &Path, label: &str) -> Result<(String, OwnedHandle)> {
     if !path.is_absolute() {
-        bail!("strict executable path must be absolute");
+        bail!("{label} path must be absolute");
     }
     let path = wide_null(path);
     // The missing write/delete sharing is intentional: the lease prevents path replacement.
@@ -163,7 +240,7 @@ fn inspect_and_lock(path: &Path) -> Result<(WindowsVerifiedIdentity, Vec<u8>, Ow
         )
     };
     if handle == INVALID_HANDLE_VALUE {
-        return Err(io::Error::last_os_error()).context("open strict executable identity");
+        return Err(io::Error::last_os_error()).with_context(|| format!("open {label}"));
     }
     // SAFETY: CreateFileW returned a unique, owned handle.
     let handle = unsafe { OwnedHandle::from_raw_handle(handle) };
@@ -171,31 +248,15 @@ fn inspect_and_lock(path: &Path) -> Result<(WindowsVerifiedIdentity, Vec<u8>, Ow
     let mut information = BY_HANDLE_FILE_INFORMATION::default();
     // SAFETY: information is a valid output buffer and the handle is live.
     if unsafe { GetFileInformationByHandle(raw_handle, &mut information) } == 0 {
-        return Err(io::Error::last_os_error()).context("inspect strict executable handle");
+        return Err(io::Error::last_os_error()).with_context(|| format!("inspect {label} handle"));
     }
     if information.dwFileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT) != 0
     {
-        bail!("strict executable must be a plain file, not a directory or reparse point");
+        bail!("{label} must be a plain file, not a directory or reparse point");
     }
 
     let canonical_path = final_dos_path(raw_handle)?;
-    if canonical_path.len() > 1024
-        || !canonical_path.to_ascii_lowercase().ends_with(".exe")
-        || canonical_path.contains(['\0', '\r', '\n', '/'])
-    {
-        bail!("strict executable canonical path is invalid");
-    }
-    let (wfp_app_id_sha256, wfp_app_id) = wfp_app_id(&canonical_path)?;
-    let publisher_certificate_sha256 = authenticode_publisher_digest(raw_handle, &canonical_path)?;
-    Ok((
-        WindowsVerifiedIdentity {
-            canonical_path,
-            wfp_app_id_sha256,
-            publisher_certificate_sha256,
-        },
-        wfp_app_id,
-        handle,
-    ))
+    Ok((canonical_path, handle))
 }
 
 fn final_dos_path(handle: *mut c_void) -> Result<String> {

@@ -3,7 +3,8 @@
 use std::path::PathBuf;
 
 use flclash_strict_broker::{
-    inspect_windows_executable, IdentityVerifier, WindowsIdentityVerifier,
+    inspect_windows_driver, inspect_windows_executable, verify_windows_driver, IdentityVerifier,
+    WindowsIdentityVerifier,
 };
 use flclash_strict_contract::{StrictIdentity, StrictPolicyBundle, StrictPolicyEntry};
 
@@ -38,4 +39,21 @@ fn signed_windows_executable_is_reopened_and_matches_pinned_identity() {
 #[test]
 fn unsigned_test_binary_is_not_accepted_as_a_strict_identity() {
     assert!(inspect_windows_executable(std::env::current_exe().unwrap()).is_err());
+}
+
+#[test]
+fn signed_windows_driver_is_locked_and_publisher_pinned() {
+    let system_driver = PathBuf::from(std::env::var_os("WINDIR").unwrap())
+        .join("System32")
+        .join("drivers")
+        .join("null.sys");
+    let inspected = inspect_windows_driver(&system_driver).unwrap();
+    assert!(inspected
+        .canonical_path()
+        .to_ascii_lowercase()
+        .ends_with(r"\system32\drivers\null.sys"));
+    assert_eq!(inspected.publisher_certificate_sha256().len(), 64);
+
+    verify_windows_driver(&system_driver, inspected.publisher_certificate_sha256()).unwrap();
+    assert!(verify_windows_driver(&system_driver, &"00".repeat(32)).is_err());
 }

@@ -37,7 +37,8 @@ pub use wfp_plan::{
 };
 #[cfg(windows)]
 pub use windows_identity::{
-    inspect_windows_executable, WindowsIdentityLease, WindowsIdentityVerifier,
+    inspect_windows_driver, inspect_windows_executable, verify_windows_driver,
+    WindowsDriverTrustLease, WindowsIdentityLease, WindowsIdentityVerifier,
     WindowsVerifiedIdentity,
 };
 #[cfg(windows)]
