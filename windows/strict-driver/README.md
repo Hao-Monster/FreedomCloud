@@ -30,13 +30,17 @@ receive injection. Immediate failure and asynchronous completion both release
 every resource; lease/gate teardown drains in-flight injections before flow
 contexts and injection infrastructure.
 
-This is still an inactive vertical slice. Asynchronous completion status is not
-yet exported to the Broker, a multi-record batch can have an accepted prefix if
-a later initiation fails, and production bridge ownership is unfinished. No
-UDP/DNS/QUIC capability is advertised until completion health, fail-closed
-runtime integration, signing, performance measurement and VM qualification are
-complete. Capture also rejects flows requiring ALE reclassification; enterprise
-IPsec compatibility remains a separate VM gate because locally generated inbound
+The versioned 168-byte snapshot exports spin-lock-consistent attempted,
+succeeded, failed, in-flight and partial-batch counters plus the last completion
+status. Broker baselines and monitors them only while injection work is pending,
+at most once per 100 ms, and stops the reusable bridge on any new failure or
+accounting drift. This is still an inactive vertical slice: production bridge
+ownership and verified supervisor-to-gate revocation are unfinished, and a
+multi-record batch can have an accepted prefix if a later initiation fails. No
+UDP/DNS/QUIC capability is advertised until fail-closed runtime integration,
+signing, performance measurement and VM qualification are complete. Capture
+also rejects flows requiring ALE reclassification; enterprise IPsec
+compatibility remains a separate VM gate because locally generated inbound
 injection bypasses IPsec processing.
 
 ## Build contract

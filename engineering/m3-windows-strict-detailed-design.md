@@ -340,10 +340,11 @@ unknown keys, invalid HMACs, stale/replayed replies and oversized datagrams fail
 closed; a rejected datagram does not poison the following valid sequence. This
 per-datagram path has no heap allocation or atomic reference-count operation.
 
-The production Broker runtime does not yet feed captured driver datagrams into
-this transport. The driver source can now construct and initiate bounded reply
-injection, but completion health and VM behavior are not proven. Therefore the
-implemented path cannot yet satisfy
+The production Broker runtime does not yet own this reusable bridge or feed
+captured driver datagrams into this transport. The driver source can construct
+and initiate bounded reply injection, and the bridge can observe completion
+health, but production gate revocation and VM behavior are not proven. Therefore
+the implemented path cannot yet satisfy
 `udp4Redirect`, `udp6Redirect`, `dnsCaptured` or `quicCaptured`.
 
 `8134220` defines the driver/Broker datagram transfer boundary without enabling
@@ -394,8 +395,12 @@ one persistent authenticated UDP transport, and combines up to 64 asynchronous
 Core replies into one returned batch. A single captured datagram may produce
 zero, one or multiple replies. Saturation, malformed identity, route drift,
 unknown reply association and submission failure stop the bridge fail closed.
-Production forwarding-runtime ownership and kernel reply reinjection remain
-intentionally open, so this component cannot advertise UDP support.
+The bridge baselines the driver's monotonic injection-health snapshot at startup
+and, only while an injection is unresolved, samples it at most once per 100 ms.
+Any new completion failure, partial batch, counter rollback or accounting drift
+stops the bridge; an idle bridge issues no health IOCTL. Production forwarding-
+runtime ownership and supervisor-to-gate revocation remain intentionally open,
+so this component cannot advertise UDP support.
 
 `4b2031e` adds the matching KMDF request boundary without pretending the data
 plane is complete. The default sequential queue performs only bounded validation
@@ -496,17 +501,22 @@ per-record initiation. This prevents malformed trailing records from creating a
 partial side effect, but a runtime/resource failure during the second pass can
 still leave an accepted prefix in flight. Likewise WFP reports final asynchronous
 delivery status only through `NET_BUFFER_LIST_STATUS`, after the IOCTL has
-returned. Before capability activation, the driver snapshot and Broker runtime
-must gain monotonic submitted/completed/failed health counters, detect any
-partial or failed generation, and revoke the UDP gate. Retrying an ambiguous
-batch is forbidden because accepted sequences may already be committed.
+returned. `4ba9e71` extends the versioned driver snapshot from 128 to 168 bytes
+with spin-lock-consistent attempted, succeeded, failed, in-flight and partial-
+batch counters plus the last failure status. Broker validates
+`attempted = succeeded + failed + in-flight`, the 256-operation ceiling and
+status/counter consistency. `62d0c44` baselines those counters for each bridge
+and terminates on any new failure, partial batch, rollback or accounting drift.
+The production supervisor must still translate bridge termination into verified
+UDP-gate revocation before capability activation. Retrying an ambiguous batch is
+forbidden because accepted sequences may already be committed.
 
 This remains an inactive vertical slice. Production ownership and health of the
-asynchronous Broker bridge are not wired, asynchronous completion failures are
-not yet exported, and current capture completes one Direct-I/O request per
-datagram rather than coalescing up to the ABI limit. No UDP/DNS/QUIC capability
-is advertised until those pieces, representative performance evidence and the
-WDK/Windows 11 VM gates pass.
+asynchronous Broker bridge are not wired to the admission supervisor, and current
+capture completes one Direct-I/O request per datagram rather than coalescing up
+to the ABI limit. No UDP/DNS/QUIC capability is advertised until production
+ownership and verified gate revocation, representative performance evidence and
+the WDK/Windows 11 VM gates pass.
 
 The current exact first-endpoint binding deliberately fails closed if a WFP flow
 context later presents a different destination. Windows 11 VM acceptance must
