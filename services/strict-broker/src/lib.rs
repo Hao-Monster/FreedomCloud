@@ -20,6 +20,8 @@ mod windows_pipe;
 mod windows_pipe_pool;
 #[cfg(windows)]
 mod windows_recovery_acl;
+#[cfg(windows)]
+mod windows_scm;
 
 pub use dispatch::{BrokerDispatcher, ForwardingHealthProbe};
 pub use ipc_auth::{AuthorizedBrokerRequest, BrokerAuthenticator, ClientPrincipal, ClientRole};
@@ -45,6 +47,8 @@ pub use windows_pipe_pool::{
 };
 #[cfg(windows)]
 pub use windows_recovery_acl::WindowsRecoveryAclVerifier;
+#[cfg(windows)]
+pub use windows_scm::{run_windows_scm_service, WindowsScmContext};
 
 pub const MAX_VERIFIED_APP_ID_BYTES: usize = 4 * 1024;
 const MAX_VERIFIED_POLICY_APP_ID_BYTES: usize = 2 * 1024 * 1024;
