@@ -38,6 +38,15 @@ impl WindowsCoreListenerTrustLease {
     pub fn is_running(&self) -> Result<bool> {
         self.process.is_running()
     }
+
+    pub fn verify_listener_ownership(&self) -> Result<()> {
+        if !self.is_running()?
+            || windows_tcp_listener_owner_pid_for_all(&self.endpoints)? != self.process_id()
+        {
+            bail!("strict Core listener ownership lease is no longer valid");
+        }
+        Ok(())
+    }
 }
 
 pub fn windows_tcp_listener_owner_pid(endpoint: SocketAddrV4) -> Result<u32> {

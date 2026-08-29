@@ -132,11 +132,18 @@ impl IdentityVerifier for FakeVerifier {
 struct FakeHealthProbe {
     measurements: usize,
     deactivations: usize,
+    measured_policy: Option<(u64, String)>,
 }
 
 impl ForwardingHealthProbe for FakeHealthProbe {
-    fn measure(&mut self, ingress: &StrictProxyIngressSet) -> Result<ForwardingHealth> {
+    fn measure(
+        &mut self,
+        revision: u64,
+        policy_digest: &str,
+        ingress: &StrictProxyIngressSet,
+    ) -> Result<ForwardingHealth> {
         self.measurements += 1;
+        self.measured_policy = Some((revision, policy_digest.to_owned()));
         if ingress.entries.is_empty() {
             bail!("strict forwarding ingress is missing");
         }
@@ -247,6 +254,10 @@ fn dispatcher_uses_internal_health_and_force_blocking_removes_redirects() {
         }
     ));
     assert_eq!(dispatcher.health_probe().measurements, 1);
+    assert_eq!(
+        dispatcher.health_probe().measured_policy,
+        Some((7, policy(7).canonical_digest().unwrap()))
+    );
     assert_eq!(dispatcher.health_probe().deactivations, 0);
     assert!(
         dispatcher
@@ -290,7 +301,11 @@ fn dispatcher_returns_only_a_stable_error_code() {
 #[test]
 fn health_probe_contract_is_bounded_to_declared_capabilities() {
     let health = FakeHealthProbe::default()
-        .measure(&ingress("GLOBAL"))
+        .measure(
+            7,
+            &policy(7).canonical_digest().unwrap(),
+            &ingress("GLOBAL"),
+        )
         .unwrap();
     let declared: BTreeSet<_> = health.capabilities.iter().copied().collect();
     assert_eq!(declared, StrictCapability::required_for_proxy());

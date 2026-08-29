@@ -1,5 +1,6 @@
 use std::collections::BTreeSet;
 use std::net::{SocketAddrV4, TcpStream};
+use std::sync::RwLock;
 use std::time::Duration;
 
 use anyhow::{bail, Result};
@@ -16,7 +17,7 @@ const MAX_SESSION_TIMEOUT: Duration = Duration::from_secs(30);
 
 pub struct WindowsStrictTcpSessionPlan {
     core_owner: CoreOwnership,
-    binding: StrictRedirectLeaseBinding,
+    binding: RwLock<StrictRedirectLeaseBinding>,
     ingresses: Vec<Socks5ProxyIngress>,
     connect_timeout: Duration,
     handshake_timeout: Duration,
@@ -93,7 +94,7 @@ impl WindowsStrictTcpSessionPlan {
         )?;
         Ok(Self {
             core_owner,
-            binding,
+            binding: RwLock::new(binding),
             ingresses,
             connect_timeout,
             handshake_timeout,
@@ -112,10 +113,37 @@ impl WindowsStrictTcpSessionPlan {
             .collect()
     }
 
+    /// Publishes an attested renewal immediately after the driver commits it.
+    /// The binding retains one prior generation to close that handoff race;
+    /// existing relays retain their already-validated context.
+    pub fn advance_lease_generation(&self, generation: u64) -> Result<()> {
+        let mut binding = self
+            .binding
+            .write()
+            .map_err(|_| anyhow::anyhow!("strict TCP lease binding lock is poisoned"))?;
+        *binding = binding.renewed(generation)?;
+        Ok(())
+    }
+
+    fn current_binding(&self) -> Result<StrictRedirectLeaseBinding> {
+        self.binding
+            .read()
+            .map(|binding| binding.clone())
+            .map_err(|_| anyhow::anyhow!("strict TCP lease binding lock is poisoned"))
+    }
+
     fn ensure_core_running(&self) -> Result<()> {
         match &self.core_owner {
             CoreOwnership::Verified(owner) if owner.is_running()? => Ok(()),
             CoreOwnership::Verified(_) => bail!("strict TCP session Core owner exited"),
+            #[cfg(test)]
+            CoreOwnership::TestOnly => Ok(()),
+        }
+    }
+
+    pub fn verify_core_listener_ownership(&self) -> Result<()> {
+        match &self.core_owner {
+            CoreOwnership::Verified(owner) => owner.verify_listener_ownership(),
             #[cfg(test)]
             CoreOwnership::TestOnly => Ok(()),
         }
@@ -156,8 +184,8 @@ pub fn handle_windows_strict_tcp_connection(
         bail!("strict TCP session was cancelled before metadata validation");
     }
     plan.ensure_core_running()?;
-    let metadata =
-        query_windows_redirect_socket(&client, &plan.binding, StrictRedirectTransport::Tcp)?;
+    let binding = plan.current_binding()?;
+    let metadata = query_windows_redirect_socket(&client, &binding, StrictRedirectTransport::Tcp)?;
     connect_and_relay_with(
         client,
         plan,
@@ -241,7 +269,12 @@ mod tests {
         bytes[75] = 6;
         put_u16(&mut bytes, 76, 443);
         bytes[80..84].copy_from_slice(&[203, 0, 113, 10]);
-        parse_strict_redirect_context(&bytes, &plan.binding, StrictRedirectTransport::Tcp).unwrap()
+        parse_strict_redirect_context(
+            &bytes,
+            &plan.current_binding().unwrap(),
+            StrictRedirectTransport::Tcp,
+        )
+        .unwrap()
     }
 
     fn credential(character: char) -> String {
@@ -307,6 +340,59 @@ mod tests {
             Duration::from_secs(2),
             Duration::from_secs(2),
             limits,
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn session_plan_publishes_only_monotonic_attested_lease_generations() {
+        let plan = WindowsStrictTcpSessionPlan::new_for_test(
+            3,
+            7,
+            &"ab".repeat(32),
+            [0x11; 16],
+            vec![ingress(41001, '1')],
+            Duration::from_secs(2),
+            Duration::from_secs(2),
+            WindowsTcpRelayLimits::new(Duration::from_secs(60)).unwrap(),
+        )
+        .unwrap();
+
+        assert!(plan.advance_lease_generation(3).is_err());
+        plan.advance_lease_generation(4).unwrap();
+        assert!(plan.advance_lease_generation(3).is_err());
+
+        let mut bytes = vec![0_u8; CONTEXT_BYTES];
+        put_u32(&mut bytes, 0, 0x4358_4346);
+        put_u16(&mut bytes, 4, 1);
+        put_u16(&mut bytes, 6, CONTEXT_BYTES as u16);
+        put_u64(&mut bytes, 8, 4);
+        put_u64(&mut bytes, 16, 7);
+        bytes[24..56].copy_from_slice(&[0xab; 32]);
+        bytes[56..72].copy_from_slice(&[0x11; 16]);
+        bytes[74] = 4;
+        bytes[75] = 6;
+        put_u16(&mut bytes, 76, 443);
+        bytes[80..84].copy_from_slice(&[203, 0, 113, 10]);
+        assert!(parse_strict_redirect_context(
+            &bytes,
+            &plan.current_binding().unwrap(),
+            StrictRedirectTransport::Tcp,
+        )
+        .is_ok());
+
+        put_u64(&mut bytes, 8, 3);
+        assert!(parse_strict_redirect_context(
+            &bytes,
+            &plan.current_binding().unwrap(),
+            StrictRedirectTransport::Tcp,
+        )
+        .is_ok());
+        plan.advance_lease_generation(5).unwrap();
+        assert!(parse_strict_redirect_context(
+            &bytes,
+            &plan.current_binding().unwrap(),
+            StrictRedirectTransport::Tcp,
         )
         .is_err());
     }

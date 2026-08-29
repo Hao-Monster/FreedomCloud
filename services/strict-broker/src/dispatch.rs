@@ -10,7 +10,14 @@ use crate::{
 
 pub trait ForwardingHealthProbe {
     /// Health is measured by the privileged Broker; Agent-supplied booleans are never trusted.
-    fn measure(&mut self, ingress: &StrictProxyIngressSet) -> Result<ForwardingHealth>;
+    /// The immutable prepared-policy identity is supplied so every forwarding
+    /// resource can be bound to exactly the transaction being committed.
+    fn measure(
+        &mut self,
+        revision: u64,
+        policy_digest: &str,
+        ingress: &StrictProxyIngressSet,
+    ) -> Result<ForwardingHealth>;
 
     /// Revokes forwarding admission before listener resources are released.
     /// Implementations must be bounded and idempotent.
@@ -71,7 +78,10 @@ where
                 .validate_forwarding_ingress(revision, &policy_digest, &ingress)
             {
                 Err(error) => (Err(error), BrokerErrorCode::InvalidRequest),
-                Ok(()) => match self.health_probe.measure(&ingress) {
+                Ok(()) => match self
+                    .health_probe
+                    .measure(revision, &policy_digest, &ingress)
+                {
                     Ok(health) => {
                         let commit = self.engine.commit(revision, &policy_digest, health);
                         let result = match commit {

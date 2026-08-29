@@ -5,6 +5,7 @@ use std::net::{Ipv4Addr, Ipv6Addr, SocketAddrV4, SocketAddrV6};
 use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
 use std::path::Path;
 use std::ptr::{null, null_mut};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
@@ -169,6 +170,39 @@ pub struct WindowsIoctlDriverChannel {
     expected_driver_build_id: String,
 }
 
+#[derive(Clone)]
+pub struct WindowsSharedIoctlDriverChannel {
+    inner: Arc<Mutex<WindowsIoctlDriverChannel>>,
+}
+
+impl WindowsSharedIoctlDriverChannel {
+    pub fn open(driver_path: impl AsRef<Path>, package: &StrictPackageManifest) -> Result<Self> {
+        Ok(Self {
+            inner: Arc::new(Mutex::new(WindowsIoctlDriverChannel::open(
+                driver_path,
+                package,
+            )?)),
+        })
+    }
+
+    fn lock(&self) -> Result<MutexGuard<'_, WindowsIoctlDriverChannel>> {
+        self.inner
+            .lock()
+            .map_err(|_| anyhow::anyhow!("strict driver channel lock is poisoned"))
+    }
+
+    pub fn activate_endpoint_lease(
+        &self,
+        lease: &WindowsEndpointLease,
+    ) -> Result<WindowsDriverPolicySnapshot> {
+        self.lock()?.activate_endpoint_lease(lease)
+    }
+
+    pub fn revoke_endpoint_lease(&self) -> Result<WindowsDriverPolicySnapshot> {
+        self.lock()?.revoke_endpoint_lease()
+    }
+}
+
 impl WindowsIoctlDriverChannel {
     pub fn open(driver_path: impl AsRef<Path>, package: &StrictPackageManifest) -> Result<Self> {
         Self::open_with_deadline(driver_path, package, WindowsDriverIoctlDeadline::default())
@@ -291,6 +325,20 @@ impl WindowsDriverPolicyChannel for WindowsIoctlDriverChannel {
 
     fn snapshot(&mut self) -> Result<WindowsDriverPolicySnapshot> {
         self.issue(IOCTL_QUERY_POLICY, &[])
+    }
+}
+
+impl WindowsDriverPolicyChannel for WindowsSharedIoctlDriverChannel {
+    fn upload(&mut self, plan: &WfpPolicyPlan) -> Result<()> {
+        self.lock()?.upload(plan)
+    }
+
+    fn unload(&mut self) -> Result<()> {
+        self.lock()?.unload()
+    }
+
+    fn snapshot(&mut self) -> Result<WindowsDriverPolicySnapshot> {
+        self.lock()?.snapshot()
     }
 }
 
@@ -687,6 +735,13 @@ fn wide(value: &str) -> Vec<u16> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn assert_send_sync<T: Send + Sync>() {}
+
+    #[test]
+    fn shared_driver_channel_is_safe_to_serialize_across_runtime_threads() {
+        assert_send_sync::<WindowsSharedIoctlDriverChannel>();
+    }
     use crate::{VerifiedApplicationAppIds, VerifiedPolicyAppIds};
     use flclash_strict_contract::{StrictIdentity, StrictPolicyBundle, StrictPolicyEntry};
 

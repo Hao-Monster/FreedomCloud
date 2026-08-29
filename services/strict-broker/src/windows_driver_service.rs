@@ -188,6 +188,11 @@ fn validate_service_name(value: &str) -> Result<Vec<u16>> {
 
 struct OwnedScHandle(SC_HANDLE);
 
+// SCM handles are process-scoped kernel handles with no thread affinity. This
+// wrapper has unique ownership and is only moved so its eventual close can run
+// on the Broker's bounded lease-renewal worker.
+unsafe impl Send for OwnedScHandle {}
+
 impl OwnedScHandle {
     fn new(handle: SC_HANDLE) -> Result<Self> {
         if handle.is_null() {

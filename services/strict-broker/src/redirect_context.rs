@@ -25,6 +25,7 @@ impl StrictRedirectTransport {
 #[derive(Clone, PartialEq, Eq)]
 pub struct StrictRedirectLeaseBinding {
     generation: u64,
+    previous_generation: Option<u64>,
     revision: u64,
     policy_digest: [u8; 32],
     nonce: [u8; 16],
@@ -51,11 +52,22 @@ impl StrictRedirectLeaseBinding {
         }
         Ok(Self {
             generation,
+            previous_generation: None,
             revision,
             policy_digest,
             nonce,
             target_group_count: target_group_count as u16,
         })
+    }
+
+    pub(crate) fn renewed(&self, generation: u64) -> Result<Self> {
+        if generation <= self.generation {
+            bail!("strict redirect lease generation did not advance");
+        }
+        let mut renewed = self.clone();
+        renewed.previous_generation = Some(self.generation);
+        renewed.generation = generation;
+        Ok(renewed)
     }
 }
 
@@ -89,7 +101,10 @@ pub fn parse_strict_redirect_context(
         || read_u32(bytes, 0)? != REDIRECT_CONTEXT_MAGIC
         || read_u16(bytes, 4)? != REDIRECT_CONTEXT_PROTOCOL
         || read_u16(bytes, 6)? as usize != REDIRECT_CONTEXT_BYTES
-        || read_u64(bytes, 8)? != binding.generation
+        || {
+            let generation = read_u64(bytes, 8)?;
+            generation != binding.generation && binding.previous_generation != Some(generation)
+        }
         || read_u64(bytes, 16)? != binding.revision
         || !constant_time_eq(&bytes[24..56], &binding.policy_digest)
         || !constant_time_eq(&bytes[56..72], &binding.nonce)

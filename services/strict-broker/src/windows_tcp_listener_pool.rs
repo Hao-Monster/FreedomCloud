@@ -80,14 +80,13 @@ pub struct WindowsTcpListenerPool<H> {
     handler: Arc<H>,
 }
 
-impl<H> WindowsTcpListenerPool<H>
-where
-    H: Fn(TcpStream, &WindowsPipeShutdown) -> Result<()> + Send + Sync + 'static,
-{
-    pub fn bind(worker_count: usize, handler: H) -> Result<Self> {
-        if worker_count == 0 || worker_count > MAX_LISTENER_WORKERS {
-            bail!("strict TCP listener worker count is invalid");
-        }
+pub struct WindowsTcpListenerBinding {
+    listeners: [TcpListener; 2],
+    endpoints: WindowsTcpListenerEndpoints,
+}
+
+impl WindowsTcpListenerBinding {
+    pub fn bind() -> Result<Self> {
         let v4 = TcpListener::bind(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0))
             .context("bind strict TCP IPv4 listener")?;
         let v6 = TcpListener::bind(SocketAddrV6::new(Ipv6Addr::LOCALHOST, 0, 0, 0))
@@ -118,9 +117,49 @@ where
                 v4: v4_endpoint,
                 v6: v6_endpoint,
             },
+        })
+    }
+
+    pub fn endpoints(&self) -> WindowsTcpListenerEndpoints {
+        self.endpoints
+    }
+
+    /// Duplicates the bound socket handles so a supervisor can keep both
+    /// endpoints alive until forwarding admission has been revoked, even if
+    /// the accept loop exits unexpectedly.
+    pub fn retention_handles(&self) -> Result<[TcpListener; 2]> {
+        Ok([
+            self.listeners[0]
+                .try_clone()
+                .context("retain strict TCP IPv4 listener endpoint")?,
+            self.listeners[1]
+                .try_clone()
+                .context("retain strict TCP IPv6 listener endpoint")?,
+        ])
+    }
+
+    pub fn into_pool<H>(self, worker_count: usize, handler: H) -> Result<WindowsTcpListenerPool<H>>
+    where
+        H: Fn(TcpStream, &WindowsPipeShutdown) -> Result<()> + Send + Sync + 'static,
+    {
+        if worker_count == 0 || worker_count > MAX_LISTENER_WORKERS {
+            bail!("strict TCP listener worker count is invalid");
+        }
+        Ok(WindowsTcpListenerPool {
+            listeners: self.listeners,
+            endpoints: self.endpoints,
             worker_count,
             handler: Arc::new(handler),
         })
+    }
+}
+
+impl<H> WindowsTcpListenerPool<H>
+where
+    H: Fn(TcpStream, &WindowsPipeShutdown) -> Result<()> + Send + Sync + 'static,
+{
+    pub fn bind(worker_count: usize, handler: H) -> Result<Self> {
+        WindowsTcpListenerBinding::bind()?.into_pool(worker_count, handler)
     }
 
     pub fn endpoints(&self) -> WindowsTcpListenerEndpoints {
@@ -339,5 +378,21 @@ mod tests {
         ));
         assert!(first_rx.try_recv().is_ok());
         assert!(second_rx.try_recv().is_ok());
+    }
+
+    #[test]
+    fn listener_binding_preserves_exact_endpoints_until_handler_installation() {
+        let binding = WindowsTcpListenerBinding::bind().unwrap();
+        let endpoints = binding.endpoints();
+        let retained = binding.retention_handles().unwrap();
+        let pool = binding.into_pool(2, |_, _| Ok(())).unwrap();
+
+        assert_eq!(pool.endpoints(), endpoints);
+        drop(pool);
+        assert!(TcpStream::connect(endpoints.v4()).is_ok());
+        assert!(TcpStream::connect(endpoints.v6()).is_ok());
+        drop(retained);
+        assert_eq!(endpoints.v4().ip(), &Ipv4Addr::LOCALHOST);
+        assert_eq!(endpoints.v6().ip(), &Ipv6Addr::LOCALHOST);
     }
 }

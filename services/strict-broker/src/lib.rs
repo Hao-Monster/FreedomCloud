@@ -42,6 +42,8 @@ mod windows_tcp_listener_pool;
 mod windows_tcp_owner;
 #[cfg(windows)]
 mod windows_tcp_relay;
+#[cfg(all(windows, feature = "production-host"))]
+mod windows_tcp_runtime;
 #[cfg(windows)]
 mod windows_tcp_session;
 #[cfg(windows)]
@@ -60,7 +62,8 @@ pub use redirect_context::{
 };
 pub use session_registry::{BrokerSessionRegistry, BrokerSessionResource};
 pub use socks_probe::{
-    establish_socks5_connect, probe_socks5_connect, Socks5ConnectTarget, Socks5ProxyIngress,
+    establish_socks5_connect, probe_socks5_authentication, probe_socks5_connect,
+    Socks5ConnectTarget, Socks5ProxyIngress,
 };
 pub use wfp_plan::{
     DriverIdentityRule, PlanInstallStep, PlanRemoveStep, WfpCallout, WfpFilterLifetime,
@@ -69,6 +72,7 @@ pub use wfp_plan::{
 #[cfg(windows)]
 pub use windows_driver_channel::{
     WindowsDriverIoctlDeadline, WindowsEndpointLease, WindowsIoctlDriverChannel,
+    WindowsSharedIoctlDriverChannel,
 };
 #[cfg(all(windows, feature = "production-host"))]
 pub use windows_host::{run_windows_strict_broker_service, WindowsStrictBrokerPaths};
@@ -107,7 +111,8 @@ pub use windows_scm::{run_windows_scm_service, WindowsScmContext};
 pub use windows_session::WindowsBrokerPipeSession;
 #[cfg(windows)]
 pub use windows_tcp_listener_pool::{
-    WindowsTcpListenerEndpoints, WindowsTcpListenerPool, WindowsTcpListenerReport,
+    WindowsTcpListenerBinding, WindowsTcpListenerEndpoints, WindowsTcpListenerPool,
+    WindowsTcpListenerReport,
 };
 #[cfg(windows)]
 pub use windows_tcp_owner::{

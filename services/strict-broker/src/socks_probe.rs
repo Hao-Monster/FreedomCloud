@@ -70,6 +70,16 @@ pub fn probe_socks5_connect(
     perform_socks5_connect(&mut stream, ingress, target, deadline)
 }
 
+/// Proves that the local Core ingress is live and enforces the Broker-provided
+/// credentials without issuing a CONNECT to any external destination.
+pub fn probe_socks5_authentication(ingress: &Socks5ProxyIngress, timeout: Duration) -> Result<()> {
+    validate_timeout(timeout)?;
+    let deadline = Instant::now() + timeout;
+    let mut stream = TcpStream::connect_timeout(&SocketAddr::V4(ingress.endpoint), timeout)
+        .context("connect SOCKS authentication ingress")?;
+    perform_socks5_authentication(&mut stream, ingress, deadline)
+}
+
 pub fn establish_socks5_connect(
     mut stream: TcpStream,
     ingress: &Socks5ProxyIngress,
@@ -102,6 +112,27 @@ fn perform_socks5_connect(
     target: &Socks5ConnectTarget,
     deadline: Instant,
 ) -> Result<()> {
+    perform_socks5_authentication(stream, ingress, deadline)?;
+
+    let connect = encode_connect_request(target);
+    write_deadline(stream, &connect, deadline)?;
+    let mut reply = [0_u8; 4];
+    read_deadline(stream, &mut reply, deadline)?;
+    if reply[0] != SOCKS_VERSION || reply[2] != 0x00 {
+        bail!("SOCKS ingress returned an invalid CONNECT response");
+    }
+    if reply[1] != 0x00 {
+        bail!("SOCKS ingress rejected CONNECT");
+    }
+    consume_bound_address(stream, reply[3], deadline)?;
+    Ok(())
+}
+
+fn perform_socks5_authentication(
+    stream: &mut TcpStream,
+    ingress: &Socks5ProxyIngress,
+    deadline: Instant,
+) -> Result<()> {
     write_deadline(
         stream,
         &[SOCKS_VERSION, 0x01, USERNAME_PASSWORD_METHOD],
@@ -126,18 +157,6 @@ fn perform_socks5_connect(
     if authentication_result != [USERNAME_PASSWORD_VERSION, 0x00] {
         bail!("SOCKS ingress rejected authentication");
     }
-
-    let connect = encode_connect_request(target);
-    write_deadline(stream, &connect, deadline)?;
-    let mut reply = [0_u8; 4];
-    read_deadline(stream, &mut reply, deadline)?;
-    if reply[0] != SOCKS_VERSION || reply[2] != 0x00 {
-        bail!("SOCKS ingress returned an invalid CONNECT response");
-    }
-    if reply[1] != 0x00 {
-        bail!("SOCKS ingress rejected CONNECT");
-    }
-    consume_bound_address(stream, reply[3], deadline)?;
     Ok(())
 }
 
@@ -327,6 +346,45 @@ mod tests {
         let request = worker.join().unwrap();
         assert_eq!(&request[..14], b"health.example");
         assert_eq!(&request[14..], &443_u16.to_be_bytes());
+    }
+
+    #[test]
+    fn authentication_probe_never_issues_an_external_connect() {
+        let username = credential('7');
+        let password = credential('8');
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let endpoint = match listener.local_addr().unwrap() {
+            SocketAddr::V4(endpoint) => endpoint,
+            _ => unreachable!(),
+        };
+        let expected_username = username.clone();
+        let expected_password = password.clone();
+        let worker = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut greeting = [0_u8; 3];
+            stream.read_exact(&mut greeting).unwrap();
+            assert_eq!(greeting, [0x05, 0x01, 0x02]);
+            stream.write_all(&[0x05, 0x02]).unwrap();
+
+            let mut header = [0_u8; 2];
+            stream.read_exact(&mut header).unwrap();
+            let mut actual_username = vec![0_u8; usize::from(header[1])];
+            stream.read_exact(&mut actual_username).unwrap();
+            let mut password_length = [0_u8; 1];
+            stream.read_exact(&mut password_length).unwrap();
+            let mut actual_password = vec![0_u8; usize::from(password_length[0])];
+            stream.read_exact(&mut actual_password).unwrap();
+            assert_eq!(actual_username, expected_username.as_bytes());
+            assert_eq!(actual_password, expected_password.as_bytes());
+            stream.write_all(&[0x01, 0x00]).unwrap();
+
+            let mut unexpected_connect = [0_u8; 1];
+            assert_eq!(stream.read(&mut unexpected_connect).unwrap(), 0);
+        });
+        let ingress = Socks5ProxyIngress::new(endpoint, username, password).unwrap();
+
+        probe_socks5_authentication(&ingress, Duration::from_secs(1)).unwrap();
+        worker.join().unwrap();
     }
 
     #[test]

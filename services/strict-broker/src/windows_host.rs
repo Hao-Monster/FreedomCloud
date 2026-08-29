@@ -10,21 +10,21 @@ use std::time::Duration;
 use anyhow::{bail, Context, Result};
 use flclash_strict_contract::{
     BrokerActivationErrorCode, BrokerActivationResponse, BrokerErrorCode, BrokerResponse,
-    StrictProxyIngressSet, WINDOWS_STRICT_BROKER_ACTIVATION_PIPE_NAME,
+    WINDOWS_STRICT_BROKER_ACTIVATION_PIPE_NAME,
 };
 use windows_sys::Win32::System::Com::CoTaskMemFree;
 use windows_sys::Win32::UI::Shell::{FOLDERID_ProgramData, SHGetKnownFolderPath};
 
 use crate::windows_pipe::is_connect_deadline;
+use crate::windows_tcp_runtime::WindowsTcpForwardingHealth;
 use crate::{
     run_windows_scm_service, verify_windows_packaged_agent_image,
     verify_windows_packaged_core_image, AuthorizedBrokerRequest, BrokerDispatcher, BrokerEngine,
-    BrokerSessionRegistry, BrokerSessionResource, FileRecoveryStore, ForwardingHealth,
-    ForwardingHealthProbe, PlannedWfpBackend, StrictPackageManifest, WfpPolicyPlan,
-    WindowsAgentImageTrustLease, WindowsBrokerActivationAttempt,
-    WindowsBrokerActivationPipeInstance, WindowsBrokerPipeSession, WindowsIdentityVerifier,
-    WindowsIoctlDriverChannel, WindowsPipeDeadlines, WindowsPipeShutdown, WindowsScmContext,
-    WindowsWfpControl, WindowsWfpEngineStore,
+    BrokerSessionRegistry, BrokerSessionResource, FileRecoveryStore, ForwardingHealthProbe,
+    PlannedWfpBackend, StrictPackageManifest, WfpPolicyPlan, WindowsAgentImageTrustLease,
+    WindowsBrokerActivationAttempt, WindowsBrokerActivationPipeInstance, WindowsBrokerPipeSession,
+    WindowsIdentityVerifier, WindowsPipeDeadlines, WindowsPipeShutdown, WindowsScmContext,
+    WindowsSharedIoctlDriverChannel, WindowsWfpControl, WindowsWfpEngineStore,
 };
 
 const BROKER_SERVICE_NAME: &str = "FlClashStrictBroker";
@@ -41,13 +41,13 @@ const ENGINE_POLL_INTERVAL: Duration = Duration::from_millis(25);
 const ENGINE_STARTUP_DEADLINE: Duration = Duration::from_secs(30);
 const ENGINE_REQUEST_DEADLINE: Duration = Duration::from_secs(20);
 
-type ProductionControl = WindowsWfpControl<WindowsWfpEngineStore, WindowsIoctlDriverChannel>;
+type ProductionControl = WindowsWfpControl<WindowsWfpEngineStore, WindowsSharedIoctlDriverChannel>;
 type ProductionBackend = PlannedWfpBackend<ProductionControl>;
 type ProductionDispatcher = BrokerDispatcher<
     ProductionBackend,
     FileRecoveryStore,
     WindowsIdentityVerifier,
-    UnavailableForwardingHealth,
+    WindowsTcpForwardingHealth,
 >;
 
 struct EngineDispatch {
@@ -168,18 +168,6 @@ impl WindowsStrictBrokerPaths {
     }
 }
 
-struct UnavailableForwardingHealth;
-
-impl ForwardingHealthProbe for UnavailableForwardingHealth {
-    fn measure(&mut self, _ingress: &StrictProxyIngressSet) -> Result<ForwardingHealth> {
-        bail!("strict forwarding relay is not assembled")
-    }
-
-    fn deactivate(&mut self) -> Result<()> {
-        Ok(())
-    }
-}
-
 pub fn run_windows_strict_broker_service() -> Result<()> {
     run_windows_scm_service(BROKER_SERVICE_NAME, |context| {
         let paths = WindowsStrictBrokerPaths::discover()?;
@@ -233,7 +221,7 @@ fn build_dispatcher(
     // No persistent WFP object is touched before the recovery location proves
     // that the installer established its exact protected ACL.
     let store = FileRecoveryStore::from_presecured_directory(paths.recovery())?;
-    let driver = WindowsIoctlDriverChannel::open(paths.driver(), package)
+    let driver = WindowsSharedIoctlDriverChannel::open(paths.driver(), package)
         .context("open and attest strict callout driver")?;
     let mut filters = WindowsWfpEngineStore::open(
         WfpPolicyPlan::canonical_provider_key(),
@@ -245,13 +233,16 @@ fn build_dispatcher(
     filters
         .verify_management_objects()
         .context("attest strict WFP management objects")?;
-    let control = WindowsWfpControl::new(filters, driver);
+    let control = WindowsWfpControl::new(filters, driver.clone());
     let backend = PlannedWfpBackend::new(control);
     let mut engine = BrokerEngine::new(backend, store, WindowsIdentityVerifier);
     engine
         .recover()
         .context("recover strict policy into a fail-closed state at service startup")?;
-    Ok(BrokerDispatcher::new(engine, UnavailableForwardingHealth))
+    Ok(BrokerDispatcher::new(
+        engine,
+        WindowsTcpForwardingHealth::new(driver, paths.core(), package.clone()),
+    ))
 }
 
 fn run_activation_loop(
@@ -699,13 +690,6 @@ mod tests {
             r"C:\ProgramData\..\Temp"
         )
         .is_err());
-    }
-
-    #[test]
-    fn forwarding_health_stays_unavailable_until_the_real_relay_exists() {
-        assert!(UnavailableForwardingHealth
-            .measure(&StrictProxyIngressSet::empty())
-            .is_err());
     }
 
     #[test]
