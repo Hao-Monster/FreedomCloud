@@ -2,6 +2,7 @@ use std::collections::HashSet;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 
 use anyhow::{bail, Context, Result};
+use flclash_strict_contract::{StrictProxyIngressEntry, StrictProxyIngressSet};
 use serde::{Deserialize, Serialize};
 
 use crate::endpoint::random_token;
@@ -137,6 +138,22 @@ impl StrictIngressDescriptor {
 
     pub fn entries(&self) -> &[StrictIngressEndpoint] {
         &self.entries
+    }
+
+    pub fn broker_ingress_set(&self) -> Result<StrictProxyIngressSet> {
+        let entries = self
+            .entries
+            .iter()
+            .map(|entry| {
+                StrictProxyIngressEntry::new(
+                    entry.target_group.clone(),
+                    entry.endpoint,
+                    entry.username.clone(),
+                    entry.password.clone(),
+                )
+            })
+            .collect::<Result<Vec<_>>>()?;
+        StrictProxyIngressSet::new(self.generation, entries)
     }
 }
 
@@ -406,6 +423,17 @@ mod tests {
         assert_eq!(descriptor.entries()[1].endpoint().port(), 41002);
         assert_eq!(descriptor.entries()[0].username().len(), 64);
         assert_eq!(descriptor.entries()[0].password().len(), 64);
+
+        let broker_ingress = descriptor.broker_ingress_set().unwrap();
+        assert_eq!(broker_ingress.generation, 1);
+        assert_eq!(broker_ingress.entries.len(), 2);
+        assert_eq!(broker_ingress.entries[0].target_group, "GLOBAL");
+        assert_eq!(broker_ingress.entries[1].endpoint.port(), 41002);
+        assert_eq!(
+            broker_ingress.entries[0].username,
+            descriptor.entries()[0].username()
+        );
+        assert!(!format!("{broker_ingress:?}").contains(descriptor.entries()[0].password()));
     }
 
     #[test]
