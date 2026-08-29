@@ -15,6 +15,8 @@ mod wfp_plan;
 #[cfg(windows)]
 mod windows_driver_channel;
 #[cfg(windows)]
+mod windows_driver_service;
+#[cfg(windows)]
 mod windows_identity;
 #[cfg(windows)]
 mod windows_pipe;

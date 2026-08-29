@@ -20,12 +20,14 @@ use windows_sys::Win32::System::IO::{
     CancelIoEx, DeviceIoControl, GetOverlappedResult, OVERLAPPED,
 };
 
+use crate::windows_driver_service::{verify_windows_driver_service, WindowsDriverServiceLease};
 use crate::{
     verify_windows_driver, WfpPolicyPlan, WindowsDriverEndpointLeaseSnapshot,
     WindowsDriverPolicyChannel, WindowsDriverPolicySnapshot, WindowsDriverTrustLease,
 };
 
 const DEVICE_PATH: &str = r"\\.\FlClashStrict";
+const DRIVER_SERVICE_NAME: &str = "FlClashStrictCallout";
 const WIRE_MAGIC: u32 = u32::from_le_bytes(*b"FCXS");
 const WIRE_PROTOCOL: u16 = 2;
 const POLICY_HEADER_BYTES: usize = 112;
@@ -161,6 +163,7 @@ impl WindowsEndpointLease {
 pub struct WindowsIoctlDriverChannel {
     device: OwnedHandle,
     _driver_trust: WindowsDriverTrustLease,
+    _driver_service: WindowsDriverServiceLease,
     deadline: WindowsDriverIoctlDeadline,
     expected_driver_build_id: String,
 }
@@ -188,6 +191,8 @@ impl WindowsIoctlDriverChannel {
         WindowsDriverIoctlDeadline::new(deadline.0)?;
         let driver_trust =
             verify_windows_driver(driver_path, expected_publisher_certificate_sha256)?;
+        let driver_service =
+            verify_windows_driver_service(DRIVER_SERVICE_NAME, driver_trust.canonical_path())?;
         let expected_driver_build_id = canonical_build_id(expected_driver_build_id)?;
         let path = wide(DEVICE_PATH);
         // SAFETY: path is NUL-terminated and no optional pointers are supplied.
@@ -207,12 +212,17 @@ impl WindowsIoctlDriverChannel {
         }
         // SAFETY: CreateFileW returned a unique owned handle.
         let device = unsafe { OwnedHandle::from_raw_handle(device) };
-        Ok(Self {
+        let channel = Self {
             device,
             _driver_trust: driver_trust,
+            _driver_service: driver_service,
             deadline,
             expected_driver_build_id,
-        })
+        };
+        channel
+            .issue(IOCTL_QUERY_POLICY, &[])
+            .context("attest strict callout device at open")?;
+        Ok(channel)
     }
 
     fn issue(&self, code: u32, input: &[u8]) -> Result<WindowsDriverPolicySnapshot> {
