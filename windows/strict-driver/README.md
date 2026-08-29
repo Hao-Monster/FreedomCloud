@@ -22,6 +22,9 @@ is the exact live flow context. This is still preparation, not reply injection.
 Reply validation uses a fixed 256-bucket driver-token index and verifies the
 complete flow tuple plus lease identity before taking a reference; it never
 scans the full 1,024-flow lifecycle list.
+Each flow also owns a 64-packet reply replay window. Current validation is
+non-mutating; sequence state will be committed only by a future injection
+transaction after it owns every bounded resource.
 
 Reply reinjection and production bridge ownership are still unfinished. No UDP
 reply is accepted for injection and no UDP/DNS/QUIC capability is advertised

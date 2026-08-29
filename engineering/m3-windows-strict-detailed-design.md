@@ -466,6 +466,15 @@ candidate/result aliasing error before commit. Token exhaustion fails closed.
 This removes a full-list scan from the future reply hot path without adding a
 second lock or an unbounded table.
 
+`ceee929` adds an independent 64-packet reply replay window to each flow. Under
+the same flow lock it accepts monotonic progress and one copy of an out-of-order
+sequence inside the previous 63 positions, rejects zero/duplicate/stale values,
+and guards both shift operations before evaluating them. Prevalidation evaluates
+the window without mutation; the eventual injection transaction must commit the
+sequence only after it owns the exact flow reference, in-flight slot and packet
+resources. This prevents a structurally valid request that later fails resource
+admission from consuming a reply sequence.
+
 This remains an inactive vertical slice. Production ownership and health of the
 asynchronous Broker bridge are not wired, reply packet construction/injection
 and its asynchronous completion are unimplemented, and current capture completes
