@@ -1,4 +1,5 @@
 use std::ffi::c_void;
+use std::fs::File;
 use std::io;
 use std::mem::size_of;
 use std::os::windows::ffi::OsStrExt;
@@ -50,41 +51,54 @@ impl WindowsRecoveryAclVerifier {
         }
         // SAFETY: CreateFileW returned a unique owned handle.
         let handle = unsafe { OwnedHandle::from_raw_handle(handle) };
-        let mut information = BY_HANDLE_FILE_INFORMATION::default();
-        // SAFETY: the handle is live and information is a valid output buffer.
-        if unsafe { GetFileInformationByHandle(handle.as_raw_handle(), &mut information) } == 0 {
-            return Err(io::Error::last_os_error())
-                .context("inspect strict recovery directory handle");
-        }
-        if information.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY == 0
-            || information.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT != 0
-        {
-            bail!("strict recovery path is not a plain directory");
-        }
+        verify_handle(handle.as_raw_handle(), AclTarget::Directory)
+    }
 
-        let mut descriptor = null_mut();
-        // SAFETY: the handle is live and descriptor is a valid output pointer.
-        let status = unsafe {
-            GetSecurityInfo(
-                handle.as_raw_handle(),
-                SE_FILE_OBJECT,
-                OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
-                null_mut(),
-                null_mut(),
-                null_mut(),
-                null_mut(),
-                &mut descriptor,
-            )
-        };
-        if status != 0 {
-            bail!("read strict recovery directory ACL failed with status 0x{status:08x}");
-        }
-        let descriptor = OwnedSecurityDescriptor(descriptor);
-        validate_descriptor(descriptor.0)
+    pub(crate) fn verify_file_handle(file: &File) -> Result<()> {
+        verify_handle(file.as_raw_handle(), AclTarget::File)
     }
 }
 
-fn validate_descriptor(descriptor: PSECURITY_DESCRIPTOR) -> Result<()> {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AclTarget {
+    Directory,
+    File,
+}
+
+fn verify_handle(handle: *mut c_void, target: AclTarget) -> Result<()> {
+    let mut information = BY_HANDLE_FILE_INFORMATION::default();
+    // SAFETY: the handle is live and information is a valid output buffer.
+    if unsafe { GetFileInformationByHandle(handle, &mut information) } == 0 {
+        return Err(io::Error::last_os_error()).context("inspect strict recovery object handle");
+    }
+    let is_directory = information.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY != 0;
+    if information.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT != 0
+        || is_directory != (target == AclTarget::Directory)
+    {
+        bail!("strict recovery object type is invalid");
+    }
+    let mut descriptor = null_mut();
+    // SAFETY: the handle is live and descriptor is a valid output pointer.
+    let status = unsafe {
+        GetSecurityInfo(
+            handle,
+            SE_FILE_OBJECT,
+            OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
+            null_mut(),
+            null_mut(),
+            null_mut(),
+            null_mut(),
+            &mut descriptor,
+        )
+    };
+    if status != 0 {
+        bail!("read strict recovery ACL failed with status 0x{status:08x}");
+    }
+    let descriptor = OwnedSecurityDescriptor(descriptor);
+    validate_descriptor(descriptor.0, target)
+}
+
+fn validate_descriptor(descriptor: PSECURITY_DESCRIPTOR, target: AclTarget) -> Result<()> {
     if descriptor.is_null() {
         bail!("strict recovery security descriptor is missing");
     }
@@ -98,7 +112,7 @@ fn validate_descriptor(descriptor: PSECURITY_DESCRIPTOR) -> Result<()> {
         return Err(io::Error::last_os_error())
             .context("read strict recovery security descriptor control");
     }
-    if control & SE_DACL_PROTECTED == 0 {
+    if target == AclTarget::Directory && control & SE_DACL_PROTECTED == 0 {
         bail!("strict recovery DACL must be protected from inheritance");
     }
 
@@ -151,10 +165,17 @@ fn validate_descriptor(descriptor: PSECURITY_DESCRIPTOR) -> Result<()> {
         let ace = ace_pointer.cast::<ACCESS_ALLOWED_ACE>();
         // SAFETY: GetAce returned an ACE whose header can be inspected.
         let header = unsafe { (*ace).Header };
+        let ace_flags = header.AceFlags as u32;
+        let flags_are_canonical = match target {
+            AclTarget::Directory => {
+                ace_flags == OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE
+                    && ace_flags & INHERITED_ACE == 0
+            }
+            AclTarget::File => ace_flags == 0 || ace_flags == INHERITED_ACE,
+        };
         if header.AceType != ACCESS_ALLOWED_ACE_TYPE as u8
             || (header.AceSize as usize) < size_of::<ACCESS_ALLOWED_ACE>()
-            || header.AceFlags as u32 != OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE
-            || header.AceFlags as u32 & INHERITED_ACE != 0
+            || !flags_are_canonical
         {
             bail!("strict recovery DACL contains a non-canonical access entry");
         }
@@ -265,13 +286,28 @@ mod tests {
     #[test]
     fn only_protected_system_and_administrator_full_control_is_accepted() {
         let valid = descriptor("O:SYG:SYD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)");
-        assert!(validate_descriptor(valid.0).is_ok());
+        assert!(validate_descriptor(valid.0, AclTarget::Directory).is_ok());
 
         let inherited = descriptor("O:SYG:SYD:(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)");
-        assert!(validate_descriptor(inherited.0).is_err());
+        assert!(validate_descriptor(inherited.0, AclTarget::Directory).is_err());
 
         let user_writable =
             descriptor("O:SYG:SYD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FW;;;BU)");
-        assert!(validate_descriptor(user_writable.0).is_err());
+        assert!(validate_descriptor(user_writable.0, AclTarget::Directory).is_err());
+    }
+
+    #[test]
+    fn state_files_accept_only_effective_system_and_administrator_entries() {
+        let explicit = descriptor("O:SYG:SYD:P(A;;FA;;;SY)(A;;FA;;;BA)");
+        assert!(validate_descriptor(explicit.0, AclTarget::File).is_ok());
+
+        let inherited = descriptor("O:SYG:SYD:(A;ID;FA;;;SY)(A;ID;FA;;;BA)");
+        assert!(validate_descriptor(inherited.0, AclTarget::File).is_ok());
+
+        let inheritable = descriptor("O:SYG:SYD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)");
+        assert!(validate_descriptor(inheritable.0, AclTarget::File).is_err());
+
+        let user_writable = descriptor("O:SYG:SYD:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FW;;;BU)");
+        assert!(validate_descriptor(user_writable.0, AclTarget::File).is_err());
     }
 }

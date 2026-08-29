@@ -48,24 +48,30 @@ impl StoredRecoveryRecord {
 pub struct FileRecoveryStore {
     root: PathBuf,
     state_path: PathBuf,
+    #[cfg(windows)]
+    verify_file_acl: bool,
 }
 
 impl FileRecoveryStore {
     pub fn from_presecured_directory(path: impl AsRef<Path>) -> Result<Self> {
         #[cfg(windows)]
         crate::WindowsRecoveryAclVerifier::verify_directory(path.as_ref())?;
-        Self::from_verified_topology(path)
+        Self::from_verified_topology(path, cfg!(windows))
     }
 
-    fn from_verified_topology(path: impl AsRef<Path>) -> Result<Self> {
+    fn from_verified_topology(path: impl AsRef<Path>, verify_file_acl: bool) -> Result<Self> {
         let root = path.as_ref();
         if !root.is_absolute() {
             bail!("strict recovery directory must be absolute");
         }
         validate_directory(root)?;
+        #[cfg(not(windows))]
+        let _ = verify_file_acl;
         Ok(Self {
             root: root.to_path_buf(),
             state_path: root.join(STATE_FILE_NAME),
+            #[cfg(windows)]
+            verify_file_acl,
         })
     }
 
@@ -80,6 +86,10 @@ impl FileRecoveryStore {
         };
         let metadata = file.metadata().context("inspect strict recovery state")?;
         validate_regular_file_metadata(&metadata)?;
+        #[cfg(windows)]
+        if self.verify_file_acl {
+            crate::WindowsRecoveryAclVerifier::verify_file_handle(&file)?;
+        }
         if metadata.len() > MAX_STATE_BYTES {
             bail!("strict recovery state exceeds its size limit");
         }
@@ -140,7 +150,20 @@ impl FileRecoveryStore {
                 std::process::id()
             ));
             match OpenOptions::new().write(true).create_new(true).open(&path) {
-                Ok(file) => return Ok((path, file)),
+                Ok(file) => {
+                    #[cfg(windows)]
+                    if self.verify_file_acl {
+                        if let Err(error) =
+                            crate::WindowsRecoveryAclVerifier::verify_file_handle(&file)
+                        {
+                            drop(file);
+                            let _ = fs::remove_file(&path);
+                            return Err(error)
+                                .context("verify strict recovery temporary state ACL");
+                        }
+                    }
+                    return Ok((path, file));
+                }
                 Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
                 Err(error) => {
                     return Err(error).context("create strict recovery temporary state");
@@ -317,7 +340,7 @@ mod tests {
     }
 
     fn test_store(directory: &TestDirectory) -> FileRecoveryStore {
-        FileRecoveryStore::from_verified_topology(directory.path()).unwrap()
+        FileRecoveryStore::from_verified_topology(directory.path(), false).unwrap()
     }
 
     #[test]
@@ -360,7 +383,7 @@ mod tests {
 
     #[test]
     fn relative_directory_and_oversized_state_are_rejected() {
-        assert!(FileRecoveryStore::from_verified_topology("relative-state").is_err());
+        assert!(FileRecoveryStore::from_verified_topology("relative-state", false).is_err());
 
         let directory = TestDirectory::new("oversized");
         let state_path = directory.path().join("strict-recovery-v1.json");
