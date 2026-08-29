@@ -250,8 +250,27 @@ requestor PID from the KMDF request itself, immediately resolves and references
 the corresponding `PEPROCESS`, and never accepts a user-supplied PID. The image
 uses the force-integrity linker flag required for process callbacks. Policy
 replacement/unload revokes the lease first; expiry, explicit revocation and the
-referenced process exit use the same rundown-protected destruction path. This
-milestone does not enable redirect capability bits or mutate connect requests.
+referenced process exit use the same rundown-protected destruction path.
+
+The TCP source path now registers `classifyFn1` callouts, caches one
+provider-bound redirect handle, and mutates v4/v6 connect requests inline only
+after an exact App-ID policy hit, proxy action, TCP protocol, safe non-loopback
+original destination and current revision/digest/TTL lease all agree. The
+112-byte context binds the original destination and target group to the lease
+generation, nonce and policy digest. Self-redirection state is queried only at
+the redirect layer; the authorization guard follows the layer contract by
+requiring the redirected flag, original-destination metadata and current
+leased Broker PID. Missing metadata, another redirect provider, stale policy,
+unsupported transport or any allocation/API error remains block. Lease renewal
+may change generation/nonce without terminating an already-authorized flow, so
+redirect reauthorization binds the existing context to the stable policy while
+the guard still binds the current Broker PID. Broker accepted-socket validation
+continues to require the exact live generation and nonce for every new session.
+
+These are source-level invariants only. TCP redirect and loop-protection
+capability bits remain disabled until the driver compiles under the pinned WDK,
+passes static analysis and Driver Verifier, and completes the Windows 11 VM
+matrix with the production Broker runtime.
 
 ### UDP, DNS and QUIC
 
@@ -316,8 +335,11 @@ and the Agent remains `blocking`.
 
 ## 8. Performance and resource limits
 
-- Driver classify path performs no heap allocation, blocking I/O, payload log,
-  registry access or user-mode round trip.
+- Driver misses, block decisions and expired-lease paths perform no heap
+  allocation, blocking I/O, payload log, registry access or user-mode round
+  trip. A successful local TCP redirect necessarily allocates one fixed
+  112-byte nonpaged context and transfers its lifetime to WFP so user mode can
+  recover the original destination.
 - Policy snapshots are immutable and swapped atomically; maximum 128 families
   and 32 child identities per family.
 - App-ID lookup is hash-indexed; expected classify complexity is O(1).
@@ -326,8 +348,9 @@ and the Agent remains `blocking`.
   never direct.
 - Heartbeats are low frequency and independent of the Flutter window.
 - Benchmarks record classify latency, relay throughput, CPU, working set,
-  allocation trend and overload rejection without enabling WFP on the
-  development host.
+  allocation trend, redirect-context pool-tag growth and overload rejection.
+  Driver Verifier exercises cancelled-connect, burst and sustained-flow cases
+  in the isolated VM; WFP is never enabled on the development host.
 
 ## 9. Test and release gates
 

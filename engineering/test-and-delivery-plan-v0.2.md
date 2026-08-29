@@ -19,7 +19,7 @@ Windows 11 VM or an authorized macOS test host.
 | R-009 Zashboard | Static call-boundary test/review and existing panel build path. | Open in-app/external panel while connections refresh, pause and close rows. |
 | R-001/R-002 performance | Synthetic benchmarks, non-overlap tests, hidden cadence tests, bounded-cache tests and 30-minute allocation trend. | Task Manager/Performance Recorder comparison using fixed scenarios. |
 | R-109 normal application policy | Compiler unit tests and fake-Core integration tests. | Selected browser/app behavior under TUN. |
-| R-108/R-110 strict Windows | State-machine, policy, rollback and broker contract tests; driver static analysis. | Signed WFP tests for TCP/UDP v4/v6, DNS, QUIC, crash, sleep, upgrade and uninstall. |
+| R-108/R-110 strict Windows | State-machine, policy, rollback and broker contract tests; driver source invariants, pinned-WDK compile and static analysis. | Signed WFP tests for TCP/UDP v4/v6, DNS, QUIC, crash, sleep, upgrade and uninstall; Driver Verifier plus pool-tag measurements for cancelled, burst and sustained redirected TCP flows. |
 | R-111 strict macOS | Shared policy contract tests and XPC/extension integration tests. | Signed/notarized Network Extension tests on supported macOS versions. |
 | R-120–R-124 Agent | IPC/state-machine/reconnect tests and process lifecycle integration. | Close/reopen UI without interrupting traffic; verify UI memory is released. |
 | R-201–R-208 | Per-feature unit/component/integration tests in separate PRs. | Feature-specific smoke and rollback tests. |
