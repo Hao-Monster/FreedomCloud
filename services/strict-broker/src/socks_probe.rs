@@ -33,6 +33,16 @@ impl Socks5ProxyIngress {
     pub fn endpoint(&self) -> SocketAddrV4 {
         self.endpoint
     }
+
+    #[cfg(feature = "production-host")]
+    pub(crate) fn username(&self) -> &str {
+        &self.username
+    }
+
+    #[cfg(feature = "production-host")]
+    pub(crate) fn password(&self) -> &str {
+        &self.password
+    }
 }
 
 pub enum Socks5ConnectTarget {

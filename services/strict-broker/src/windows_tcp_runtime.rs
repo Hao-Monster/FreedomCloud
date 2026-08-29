@@ -14,9 +14,10 @@ use windows_sys::Win32::Security::Cryptography::{
     BCryptGenRandom, BCRYPT_USE_SYSTEM_PREFERRED_RNG,
 };
 
+use crate::windows_core_udp_health::probe_core_udp_health;
 use crate::{
     handle_windows_strict_tcp_connection, probe_socks5_authentication,
-    verify_windows_packaged_core_listener_set, ForwardingHealth, ForwardingHealthProbe,
+    verify_windows_packaged_core_ingress_set, ForwardingHealth, ForwardingHealthProbe,
     Socks5ProxyIngress, StrictPackageManifest, WindowsDriverPolicySnapshot, WindowsEndpointLease,
     WindowsPipeShutdown, WindowsSharedIoctlDriverChannel, WindowsStrictTcpSessionPlan,
     WindowsTcpListenerBinding, WindowsTcpListenerReport, WindowsTcpRelayLimits,
@@ -101,13 +102,17 @@ impl WindowsTcpForwardingHealth {
             .iter()
             .map(Socks5ProxyIngress::endpoint)
             .collect::<Vec<_>>();
-        let core_owner = verify_windows_packaged_core_listener_set(
+        let core_udp_endpoint = ingress
+            .udp_endpoint
+            .context("strict Core UDP health endpoint is missing")?;
+        let core_owner = verify_windows_packaged_core_ingress_set(
             &core_endpoints,
+            std::slice::from_ref(&core_udp_endpoint),
             &self.core_path,
             &self.package,
         )
         .context("attest strict Core ingress ownership")?;
-        probe_all_core_ingresses(&ingresses)?;
+        probe_all_core_ingresses(&ingresses, core_udp_endpoint, ingress.generation)?;
 
         let plan_slot = Arc::new(OnceLock::<Arc<WindowsStrictTcpSessionPlan>>::new());
         let handler_slot = Arc::clone(&plan_slot);
@@ -301,7 +306,11 @@ fn udp_endpoint_v6(socket: &UdpSocket) -> Result<SocketAddrV6> {
     }
 }
 
-fn probe_all_core_ingresses(ingresses: &[Socks5ProxyIngress]) -> Result<()> {
+fn probe_all_core_ingresses(
+    ingresses: &[Socks5ProxyIngress],
+    udp_endpoint: SocketAddrV4,
+    generation: u64,
+) -> Result<()> {
     let next = AtomicUsize::new(0);
     let failed = AtomicBool::new(false);
     let failure = Mutex::new(None::<String>);
@@ -321,8 +330,18 @@ fn probe_all_core_ingresses(ingresses: &[Socks5ProxyIngress]) -> Result<()> {
                         let Some(ingress) = ingresses.get(index) else {
                             break;
                         };
-                        if let Err(error) = probe_socks5_authentication(ingress, CORE_PROBE_TIMEOUT)
-                        {
+                        let probe = (|| {
+                            probe_socks5_authentication(ingress, CORE_PROBE_TIMEOUT)?;
+                            probe_core_udp_health(
+                                udp_endpoint,
+                                generation,
+                                ingress.username(),
+                                ingress.password(),
+                                random_nonce()?,
+                                CORE_PROBE_TIMEOUT,
+                            )
+                        })();
+                        if let Err(error) = probe {
                             failed.store(true, Ordering::Release);
                             if let Ok(mut slot) = failure.lock() {
                                 *slot = Some(format!("{error:#}"));

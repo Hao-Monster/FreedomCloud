@@ -16,6 +16,8 @@ mod redirect_context;
 mod session_registry;
 mod socks_probe;
 mod wfp_plan;
+#[cfg(all(windows, any(test, feature = "production-host")))]
+mod windows_core_udp_health;
 #[cfg(windows)]
 mod windows_driver_channel;
 #[cfg(windows)]
@@ -116,11 +118,13 @@ pub use windows_tcp_listener_pool::{
 };
 #[cfg(windows)]
 pub use windows_tcp_owner::{
+    verify_windows_packaged_core_ingress_set, verify_windows_packaged_core_ingress_set_with_image,
     verify_windows_packaged_core_listener_owner,
     verify_windows_packaged_core_listener_owner_with_image,
     verify_windows_packaged_core_listener_set,
     verify_windows_packaged_core_listener_set_with_image, windows_tcp_listener_owner_pid,
-    windows_tcp_listener_owner_pid_for_all, WindowsCoreListenerTrustLease,
+    windows_tcp_listener_owner_pid_for_all, windows_udp_listener_owner_pid,
+    windows_udp_listener_owner_pid_for_all, WindowsCoreListenerTrustLease,
 };
 #[cfg(windows)]
 pub use windows_tcp_relay::{
