@@ -382,6 +382,20 @@ directions each use a 64-packet replay window, and state expires after 90 idle
 seconds. Unknown associations, endpoint/group/flag drift, ID collisions and
 capacity overflow fail closed. Payloads are not retained in this table.
 
+`b99a668` composes those pieces into a reusable Broker bridge without enabling
+the production capability. One dedicated receive worker waits on the pending
+Direct-I/O request and a manual-reset cancellation event, so shutdown can use
+one exact `CancelIoEx` instead of cancelling and reissuing an IOCTL on a short
+polling cadence. The bridge owns exactly two reusable 256 KiB capture buffers;
+the receiver and Core owner each use a 512 KiB stack. The Core owner validates
+the complete borrowed batch, updates the bounded association table, sends over
+one persistent authenticated UDP transport, and combines up to 64 asynchronous
+Core replies into one returned batch. A single captured datagram may produce
+zero, one or multiple replies. Saturation, malformed identity, route drift,
+unknown reply association and submission failure stop the bridge fail closed.
+Production forwarding-runtime ownership and all kernel capture/reinjection work
+remain intentionally open, so this component cannot advertise UDP support.
+
 Initial strict acceptance requires Mihomo Fake-IP/virtual-network-card mode so
 domain mappings remain available to existing domain rules. Real-IP domain
 restoration is a separate proof item and cannot be inferred from an IP-only WFP
