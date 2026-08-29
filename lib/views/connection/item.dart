@@ -4,6 +4,7 @@ import 'package:flclashx/common/common.dart';
 import 'package:flclashx/common/process_icon.dart';
 import 'package:flclashx/models/models.dart';
 import 'package:flclashx/plugins/app.dart';
+import 'package:flclashx/state.dart';
 import 'package:flclashx/widgets/widgets.dart';
 import 'package:flutter/material.dart';
 import 'package:path/path.dart' as path;
@@ -12,6 +13,44 @@ const double kConnRowExtent = 88;
 
 final _androidProcessIconCache =
     BoundedCache<String, Future<ImageProvider?>?>(maxEntries: 64);
+
+Future<String?> showApplicationProxyGroupDialog(
+  BuildContext context, {
+  String? selectedGroup,
+}) async {
+  final groups = availablePerAppTargetGroups(
+    globalState.proxyGroupOrder.value,
+  );
+  if (groups.length == 1) return groups.single;
+  return showDialog<String>(
+    context: context,
+    builder: (context) => SimpleDialog(
+      title: Text(appLocalizations.proxyGroup),
+      children: [
+        for (final group in groups)
+          SimpleDialogOption(
+            onPressed: () => Navigator.pop(context, group),
+            child: Row(
+              children: [
+                if (group == selectedGroup)
+                  const Icon(Icons.check_rounded, size: 18)
+                else
+                  const SizedBox(width: 18),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    group,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ],
+            ),
+          ),
+      ],
+    ),
+  );
+}
 
 String connectionProcessName(Metadata metadata, {bool applicationName = true}) {
   if (metadata.type.toLowerCase() == 'inner') return 'mihomo';
@@ -121,6 +160,7 @@ class ProcessConnectionCard extends StatelessWidget {
     required this.useApplicationName,
     required this.onTap,
     this.policy = ApplicationRoutingPolicy.inherit,
+    this.policyTargetGroup,
     this.onPolicyChanged,
   });
 
@@ -129,6 +169,7 @@ class ProcessConnectionCard extends StatelessWidget {
   final bool useApplicationName;
   final VoidCallback onTap;
   final ApplicationRoutingPolicy policy;
+  final String? policyTargetGroup;
   final ValueChanged<ApplicationRoutingPolicy>? onPolicyChanged;
 
   @override
@@ -207,7 +248,9 @@ class ProcessConnectionCard extends StatelessWidget {
               if (onPolicyChanged != null)
                 PopupMenuButton<ApplicationRoutingPolicy>(
                   initialValue: policy,
-                  tooltip: 'PROCESS-PATH',
+                  tooltip: policy == ApplicationRoutingPolicy.proxy
+                      ? 'PROCESS-PATH · ${policyTargetGroup ?? 'GLOBAL'}'
+                      : 'PROCESS-PATH',
                   onSelected: onPolicyChanged,
                   icon: Icon(
                     Icons.route_outlined,
@@ -226,7 +269,11 @@ class ProcessConnectionCard extends StatelessWidget {
                               else
                                 const SizedBox(width: 18),
                               const SizedBox(width: 8),
-                              Text(applicationRoutingPolicyLabel(value)),
+                              Text(
+                                value == ApplicationRoutingPolicy.proxy
+                                    ? 'PROXY · ${policyTargetGroup ?? 'GLOBAL'}'
+                                    : applicationRoutingPolicyLabel(value),
+                              ),
                             ],
                           ),
                         ),

@@ -105,7 +105,8 @@ void main() {
             group: group,
             showIcon: false,
             useApplicationName: false,
-            policy: ApplicationRoutingPolicy.direct,
+            policy: ApplicationRoutingPolicy.proxy,
+            policyTargetGroup: 'Work',
             onPolicyChanged: (value) => selected = value,
             onTap: () {},
           ),
@@ -115,6 +116,7 @@ void main() {
 
     await tester.tap(find.byIcon(Icons.route_outlined));
     await tester.pumpAndSettle();
+    expect(find.text('PROXY · Work'), findsOneWidget);
     await tester.tap(find.text('BLOCK'));
     await tester.pumpAndSettle();
 

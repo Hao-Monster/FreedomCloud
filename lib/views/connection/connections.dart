@@ -372,12 +372,14 @@ class _ConnectionsViewState extends ConsumerState<ConnectionsView>
       itemCount: groups.length,
       itemBuilder: (_, index) {
         final group = groups[index];
+        final policy = perAppPolicyStore.entryFor(group.processPath);
         return ProcessConnectionCard(
           key: ValueKey(group.key),
           group: group,
           showIcon: settings.connectionShowIcon,
           useApplicationName: settings.connectionUseApplicationName,
-          policy: perAppPolicyStore.policyFor(group.processPath),
+          policy: policy?.policy ?? ApplicationRoutingPolicy.inherit,
+          policyTargetGroup: policy?.targetGroup,
           onPolicyChanged: group.processPath.isEmpty
               ? null
               : (policy) => unawaited(
@@ -399,10 +401,21 @@ class _ConnectionsViewState extends ConsumerState<ConnectionsView>
     ApplicationRoutingPolicy policy,
   ) async {
     try {
+      final targetGroup = policy == ApplicationRoutingPolicy.proxy
+          ? await showApplicationProxyGroupDialog(
+              context,
+              selectedGroup:
+                  perAppPolicyStore.entryFor(group.processPath)?.targetGroup,
+            )
+          : null;
+      if (policy == ApplicationRoutingPolicy.proxy && targetGroup == null) {
+        return;
+      }
       await perAppPolicyStore.setPolicy(
         processPath: group.processPath,
         name: group.name,
         policy: policy,
+        targetGroup: targetGroup,
       );
       await globalState.appController.applyProfile();
       if (mounted) {
