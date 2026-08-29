@@ -14,6 +14,7 @@
     <ProjectGuid>{8393A15E-CFA4-47CC-916F-6C6CDDB1C732}</ProjectGuid>
     <RootNamespace>FlClashStrictCallout</RootNamespace>
     <KMDF_VERSION_MAJOR>1</KMDF_VERSION_MAJOR>
+    <KMDF_VERSION_MINOR>21</KMDF_VERSION_MINOR>
     <Configuration Condition="'$(Configuration)' == ''">Debug</Configuration>
     <Platform Condition="'$(Platform)' == ''">x64</Platform>
   </PropertyGroup>
@@ -52,6 +53,7 @@ powershell.exe -NoLogo -NoProfile -NonInteractive -File "$(ProjectDir)tools\New-
     </ClCompile>
     <Link>
       <AdditionalDependencies>Fwpkclnt.lib;cng.lib;wdmsec.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalOptions>/INTEGRITYCHECK %(AdditionalOptions)</AdditionalOptions>
     </Link>
     <DriverSign>
       <FileDigestAlgorithm>sha256</FileDigestAlgorithm>

@@ -6,6 +6,13 @@ use flclash_strict_contract::StrictCapability;
 use crate::{WfpControlPlane, WfpControlSnapshot, WfpFilterSpec, WfpObjectKey, WfpPolicyPlan};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct WindowsDriverEndpointLeaseSnapshot {
+    pub generation: u64,
+    pub remaining_millis: u32,
+    pub nonce: [u8; 16],
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct WindowsDriverPolicySnapshot {
     pub driver_build_id: Option<String>,
     pub revision: Option<u64>,
@@ -14,6 +21,7 @@ pub struct WindowsDriverPolicySnapshot {
     pub generation: u64,
     pub loaded: bool,
     pub capabilities: BTreeSet<StrictCapability>,
+    pub endpoint_lease: Option<WindowsDriverEndpointLeaseSnapshot>,
 }
 
 pub trait WindowsDriverPolicyChannel {
@@ -181,6 +189,32 @@ fn validate_driver_snapshot_shape(snapshot: &WindowsDriverPolicySnapshot) -> Res
     }
     if !snapshot.loaded && !snapshot.capabilities.is_empty() {
         bail!("unloaded strict driver advertises active capabilities");
+    }
+    if !snapshot.loaded && snapshot.endpoint_lease.is_some() {
+        bail!("unloaded strict driver retains an endpoint lease");
+    }
+    if let Some(lease) = &snapshot.endpoint_lease {
+        if lease.generation == 0
+            || lease.remaining_millis == 0
+            || lease.remaining_millis > 30_000
+            || lease.nonce.iter().all(|byte| *byte == 0)
+        {
+            bail!("strict driver endpoint lease metadata is invalid");
+        }
+    }
+    let advertises_redirect = [
+        StrictCapability::Tcp4Redirect,
+        StrictCapability::Tcp6Redirect,
+        StrictCapability::Udp4Redirect,
+        StrictCapability::Udp6Redirect,
+        StrictCapability::DnsCaptured,
+        StrictCapability::QuicCaptured,
+        StrictCapability::RedirectLoopProtected,
+    ]
+    .into_iter()
+    .any(|capability| snapshot.capabilities.contains(&capability));
+    if advertises_redirect && snapshot.endpoint_lease.is_none() {
+        bail!("strict driver advertises redirect without a live endpoint lease");
     }
     if !snapshot.loaded && snapshot.rule_count != 0 {
         bail!("unloaded strict driver retains a policy rule count");

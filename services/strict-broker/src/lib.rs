@@ -38,7 +38,9 @@ pub use wfp_plan::{
     WfpFilterSpec, WfpLayer, WfpObjectKey, WfpPolicyPlan,
 };
 #[cfg(windows)]
-pub use windows_driver_channel::{WindowsDriverIoctlDeadline, WindowsIoctlDriverChannel};
+pub use windows_driver_channel::{
+    WindowsDriverIoctlDeadline, WindowsEndpointLease, WindowsIoctlDriverChannel,
+};
 #[cfg(windows)]
 pub use windows_identity::{
     inspect_windows_driver, inspect_windows_executable, verify_windows_driver,
@@ -60,8 +62,8 @@ pub use windows_recovery_acl::WindowsRecoveryAclVerifier;
 pub use windows_scm::{run_windows_scm_service, WindowsScmContext};
 #[cfg(windows)]
 pub use windows_wfp_control::{
-    WindowsDriverPolicyChannel, WindowsDriverPolicySnapshot, WindowsWfpControl,
-    WindowsWfpFilterInventory, WindowsWfpFilterStore,
+    WindowsDriverEndpointLeaseSnapshot, WindowsDriverPolicyChannel, WindowsDriverPolicySnapshot,
+    WindowsWfpControl, WindowsWfpFilterInventory, WindowsWfpFilterStore,
 };
 #[cfg(windows)]
 pub use windows_wfp_engine::WindowsWfpEngineStore;

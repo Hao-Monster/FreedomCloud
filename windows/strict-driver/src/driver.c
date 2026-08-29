@@ -31,10 +31,30 @@ static const GUID FcxRedirectV6CalloutKey = {
     0x9ad04f4e, 0x3342, 0x46c0, {0xa1, 0xa2, 0xf1, 0x54, 0x4d, 0xc1, 0xaf, 0x42}
 };
 
+#define FCX_STRICT_LEASE_POOL_TAG 'LCXF'
+
+typedef struct _FCX_STRICT_LEASE_STATE {
+    PEPROCESS BrokerProcess;
+    UINT64 Generation;
+    UINT64 ExpiresAtInterruptTime;
+    UINT64 Revision;
+    UINT8 PolicyDigest[32];
+    UINT8 Nonce[16];
+    FCX_STRICT_ENDPOINT TcpV4;
+    FCX_STRICT_ENDPOINT TcpV6;
+    FCX_STRICT_ENDPOINT UdpV4;
+    FCX_STRICT_ENDPOINT UdpV6;
+} FCX_STRICT_LEASE_STATE;
+
 static WDFDEVICE FcxControlDevice;
 static PEX_RUNDOWN_REF_CACHE_AWARE FcxPolicyRundown;
 static volatile PVOID FcxPolicySnapshot;
 static volatile LONG64 FcxPolicyGeneration;
+static PEX_RUNDOWN_REF_CACHE_AWARE FcxLeaseRundown;
+static volatile PVOID FcxLeaseState;
+static volatile LONG64 FcxLeaseGeneration;
+static FAST_MUTEX FcxLeaseMutationLock;
+static BOOLEAN FcxProcessNotifyRegistered;
 static UINT32 FcxCalloutIds[4];
 static UINT32 FcxRegisteredCallouts;
 
@@ -80,6 +100,14 @@ FcxRedirectClassifyV6(
     _In_ const FWPS_FILTER0 *Filter,
     _In_ UINT64 FlowContext,
     _Inout_ FWPS_CLASSIFY_OUT0 *ClassifyOut
+    );
+
+static
+VOID NTAPI
+FcxProcessNotify(
+    _Inout_ PEPROCESS Process,
+    _In_ HANDLE ProcessId,
+    _Inout_opt_ PPS_CREATE_NOTIFY_INFO CreateInfo
     );
 
 static
@@ -227,6 +255,289 @@ FcxRedirectClassifyV6(
 }
 
 static
+BOOLEAN
+FcxBytesAreZero(
+    _In_reads_bytes_(Bytes) const UINT8 *Buffer,
+    _In_ UINT32 Bytes
+    )
+{
+    UINT32 index;
+
+    for (index = 0; index < Bytes; ++index) {
+        if (Buffer[index] != 0) {
+            return FALSE;
+        }
+    }
+    return TRUE;
+}
+
+static
+BOOLEAN
+FcxValidateEndpoint(
+    _In_ const FCX_STRICT_ENDPOINT *Endpoint,
+    _In_ BOOLEAN Ipv6
+    )
+{
+    static const UINT8 LoopbackV4[16] = {
+        127, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+    };
+    static const UINT8 LoopbackV6[16] = {
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1
+    };
+    const UINT8 *expected = Ipv6 ? LoopbackV6 : LoopbackV4;
+
+    return Endpoint->Port != 0 &&
+           Endpoint->Reserved == 0 &&
+           RtlCompareMemory(Endpoint->Address,
+                            expected,
+                            sizeof(Endpoint->Address)) == sizeof(Endpoint->Address);
+}
+
+static
+BOOLEAN
+FcxLeaseMatchesPolicy(
+    _In_ const FCX_STRICT_ENDPOINT_LEASE *Lease
+    )
+{
+    const FCX_STRICT_POLICY_SNAPSHOT *snapshot;
+    BOOLEAN matches = FALSE;
+
+    if (FcxPolicyRundown == NULL ||
+        !ExAcquireRundownProtectionCacheAware(FcxPolicyRundown)) {
+        return FALSE;
+    }
+    snapshot = (const FCX_STRICT_POLICY_SNAPSHOT *)InterlockedCompareExchangePointer(
+        (PVOID volatile *)&FcxPolicySnapshot,
+        NULL,
+        NULL);
+    if (snapshot != NULL &&
+        snapshot->Revision == Lease->Revision &&
+        RtlCompareMemory(snapshot->PolicyDigest,
+                         Lease->PolicyDigest,
+                         sizeof(snapshot->PolicyDigest)) == sizeof(snapshot->PolicyDigest)) {
+        matches = TRUE;
+    }
+    ExReleaseRundownProtectionCacheAware(FcxPolicyRundown);
+    return matches;
+}
+
+static
+VOID
+FcxDestroyLease(
+    _Frees_ptr_opt_ FCX_STRICT_LEASE_STATE *Lease
+    )
+{
+    PEPROCESS process;
+
+    if (Lease == NULL) {
+        return;
+    }
+    process = Lease->BrokerProcess;
+    RtlSecureZeroMemory(Lease, sizeof(*Lease));
+    ExFreePoolWithTag(Lease, FCX_STRICT_LEASE_POOL_TAG);
+    if (process != NULL) {
+        ObDereferenceObject(process);
+    }
+}
+
+static
+VOID
+FcxReleaseLeaseLocked(
+    VOID
+    )
+{
+    FCX_STRICT_LEASE_STATE *oldLease;
+
+    oldLease = (FCX_STRICT_LEASE_STATE *)InterlockedExchangePointer(
+        (PVOID volatile *)&FcxLeaseState,
+        NULL);
+    if (FcxLeaseRundown != NULL) {
+        ExWaitForRundownProtectionReleaseCacheAware(FcxLeaseRundown);
+    }
+    FcxDestroyLease(oldLease);
+    if (FcxLeaseRundown != NULL) {
+        ExRundownCompletedCacheAware(FcxLeaseRundown);
+        ExReInitializeRundownProtectionCacheAware(FcxLeaseRundown);
+    }
+}
+
+static
+VOID
+FcxReleaseLease(
+    VOID
+    )
+{
+    ExAcquireFastMutex(&FcxLeaseMutationLock);
+    FcxReleaseLeaseLocked();
+    ExReleaseFastMutex(&FcxLeaseMutationLock);
+}
+
+static
+VOID
+FcxReplaceLease(
+    _In_ FCX_STRICT_LEASE_STATE *NewLease
+    )
+{
+    FCX_STRICT_LEASE_STATE *oldLease;
+
+    ExAcquireFastMutex(&FcxLeaseMutationLock);
+    oldLease = (FCX_STRICT_LEASE_STATE *)InterlockedExchangePointer(
+        (PVOID volatile *)&FcxLeaseState,
+        NewLease);
+    ExWaitForRundownProtectionReleaseCacheAware(FcxLeaseRundown);
+    FcxDestroyLease(oldLease);
+    ExRundownCompletedCacheAware(FcxLeaseRundown);
+    ExReInitializeRundownProtectionCacheAware(FcxLeaseRundown);
+    ExReleaseFastMutex(&FcxLeaseMutationLock);
+}
+
+static
+NTSTATUS
+FcxBuildLease(
+    _In_ WDFREQUEST Request,
+    _In_reads_bytes_(InputBytes) const VOID *Input,
+    _In_ size_t InputBytes,
+    _Outptr_ FCX_STRICT_LEASE_STATE **LeaseState
+    )
+{
+    NTSTATUS status;
+    FCX_STRICT_ENDPOINT_LEASE lease;
+    FCX_STRICT_LEASE_STATE *state;
+    PEPROCESS process;
+    ULONG processId;
+    LONG64 generation;
+    UINT64 now;
+    UINT64 duration;
+
+    *LeaseState = NULL;
+    if (InputBytes != sizeof(lease)) {
+        return STATUS_INVALID_BUFFER_SIZE;
+    }
+    RtlCopyMemory(&lease, Input, sizeof(lease));
+    if (lease.Magic != FCX_STRICT_WIRE_MAGIC ||
+        lease.Protocol != FCX_STRICT_WIRE_PROTOCOL ||
+        lease.LeaseBytes != FCX_STRICT_ENDPOINT_LEASE_BYTES ||
+        lease.TtlMillis < FCX_STRICT_MIN_LEASE_MILLIS ||
+        lease.TtlMillis > FCX_STRICT_MAX_LEASE_MILLIS ||
+        lease.Reserved0 != 0 ||
+        lease.Revision == 0 ||
+        FcxBytesAreZero(lease.PolicyDigest, sizeof(lease.PolicyDigest)) ||
+        FcxBytesAreZero(lease.Nonce, sizeof(lease.Nonce)) ||
+        !FcxValidateEndpoint(&lease.TcpV4, FALSE) ||
+        !FcxValidateEndpoint(&lease.TcpV6, TRUE) ||
+        !FcxValidateEndpoint(&lease.UdpV4, FALSE) ||
+        !FcxValidateEndpoint(&lease.UdpV6, TRUE) ||
+        !FcxBytesAreZero(lease.Reserved1, sizeof(lease.Reserved1)) ||
+        !FcxLeaseMatchesPolicy(&lease)) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    processId = WdfRequestGetRequestorProcessId(Request);
+    if (processId == 0) {
+        return STATUS_ACCESS_DENIED;
+    }
+    process = NULL;
+    status = PsLookupProcessByProcessId(ULongToHandle(processId), &process);
+    if (!NT_SUCCESS(status)) {
+        return status;
+    }
+    if (PsGetProcessExitStatus(process) != STATUS_PENDING) {
+        ObDereferenceObject(process);
+        return STATUS_PROCESS_IS_TERMINATING;
+    }
+
+    state = (FCX_STRICT_LEASE_STATE *)ExAllocatePool2(
+        POOL_FLAG_NON_PAGED,
+        sizeof(*state),
+        FCX_STRICT_LEASE_POOL_TAG);
+    if (state == NULL) {
+        ObDereferenceObject(process);
+        return STATUS_INSUFFICIENT_RESOURCES;
+    }
+    RtlZeroMemory(state, sizeof(*state));
+    state->BrokerProcess = process;
+    generation = InterlockedIncrement64(&FcxLeaseGeneration);
+    if (generation <= 0) {
+        InterlockedDecrement64(&FcxLeaseGeneration);
+        FcxDestroyLease(state);
+        return STATUS_INTEGER_OVERFLOW;
+    }
+    now = KeQueryInterruptTime();
+    duration = (UINT64)lease.TtlMillis * 10000ull;
+    if (now > MAXULONGLONG - duration) {
+        InterlockedDecrement64(&FcxLeaseGeneration);
+        FcxDestroyLease(state);
+        return STATUS_INTEGER_OVERFLOW;
+    }
+    state->Generation = (UINT64)generation;
+    state->ExpiresAtInterruptTime = now + duration;
+    state->Revision = lease.Revision;
+    RtlCopyMemory(state->PolicyDigest,
+                  lease.PolicyDigest,
+                  sizeof(state->PolicyDigest));
+    RtlCopyMemory(state->Nonce, lease.Nonce, sizeof(state->Nonce));
+    state->TcpV4 = lease.TcpV4;
+    state->TcpV6 = lease.TcpV6;
+    state->UdpV4 = lease.UdpV4;
+    state->UdpV6 = lease.UdpV6;
+    *LeaseState = state;
+    return STATUS_SUCCESS;
+}
+
+static
+VOID
+FcxExpireLeaseIfNeeded(
+    VOID
+    )
+{
+    FCX_STRICT_LEASE_STATE *lease;
+
+    ExAcquireFastMutex(&FcxLeaseMutationLock);
+    lease = (FCX_STRICT_LEASE_STATE *)InterlockedCompareExchangePointer(
+        (PVOID volatile *)&FcxLeaseState,
+        NULL,
+        NULL);
+    if (lease != NULL &&
+        (lease->ExpiresAtInterruptTime <= KeQueryInterruptTime() ||
+         PsGetProcessExitStatus(lease->BrokerProcess) != STATUS_PENDING)) {
+        FcxReleaseLeaseLocked();
+    }
+    ExReleaseFastMutex(&FcxLeaseMutationLock);
+}
+
+static
+VOID NTAPI
+FcxProcessNotify(
+    _Inout_ PEPROCESS Process,
+    _In_ HANDLE ProcessId,
+    _Inout_opt_ PPS_CREATE_NOTIFY_INFO CreateInfo
+    )
+{
+    FCX_STRICT_LEASE_STATE *lease;
+
+    UNREFERENCED_PARAMETER(ProcessId);
+    if (CreateInfo != NULL) {
+        return;
+    }
+    lease = (FCX_STRICT_LEASE_STATE *)InterlockedCompareExchangePointer(
+        (PVOID volatile *)&FcxLeaseState,
+        NULL,
+        NULL);
+    if (lease == NULL) {
+        return;
+    }
+    ExAcquireFastMutex(&FcxLeaseMutationLock);
+    lease = (FCX_STRICT_LEASE_STATE *)InterlockedCompareExchangePointer(
+        (PVOID volatile *)&FcxLeaseState,
+        NULL,
+        NULL);
+    if (lease != NULL && lease->BrokerProcess == Process) {
+        FcxReleaseLeaseLocked();
+    }
+    ExReleaseFastMutex(&FcxLeaseMutationLock);
+}
+
+static
 VOID
 FcxReleasePolicy(
     VOID
@@ -271,6 +582,9 @@ FcxFillDriverSnapshot(
     )
 {
     const FCX_STRICT_POLICY_SNAPSHOT *snapshot;
+    const FCX_STRICT_LEASE_STATE *lease;
+    UINT64 now;
+    UINT64 remaining;
 
     RtlZeroMemory(Output, sizeof(*Output));
     Output->Magic = FCX_STRICT_WIRE_MAGIC;
@@ -303,6 +617,32 @@ FcxFillDriverSnapshot(
         }
     }
     ExReleaseRundownProtectionCacheAware(FcxPolicyRundown);
+
+    FcxExpireLeaseIfNeeded();
+    if ((Output->Flags & FCX_STRICT_SNAPSHOT_FLAG_LOADED) == 0 ||
+        !ExAcquireRundownProtectionCacheAware(FcxLeaseRundown)) {
+        return;
+    }
+    lease = (const FCX_STRICT_LEASE_STATE *)InterlockedCompareExchangePointer(
+        (PVOID volatile *)&FcxLeaseState,
+        NULL,
+        NULL);
+    now = KeQueryInterruptTime();
+    if (lease != NULL &&
+        lease->ExpiresAtInterruptTime > now &&
+        lease->Revision == Output->Revision &&
+        RtlCompareMemory(lease->PolicyDigest,
+                         Output->PolicyDigest,
+                         sizeof(Output->PolicyDigest)) == sizeof(Output->PolicyDigest)) {
+        remaining = lease->ExpiresAtInterruptTime - now;
+        Output->Flags |= FCX_STRICT_SNAPSHOT_FLAG_LEASE_ACTIVE;
+        Output->LeaseGeneration = lease->Generation;
+        Output->LeaseRemainingMillis = (UINT32)((remaining + 9999ull) / 10000ull);
+        RtlCopyMemory(Output->LeaseNonce,
+                      lease->Nonce,
+                      sizeof(Output->LeaseNonce));
+    }
+    ExReleaseRundownProtectionCacheAware(FcxLeaseRundown);
 }
 
 VOID
@@ -360,6 +700,7 @@ FcxEvtIoDeviceControl(
         if (!NT_SUCCESS(status)) {
             break;
         }
+        FcxReleaseLease();
         FcxReplacePolicy(newSnapshot);
         InterlockedIncrement64(&FcxPolicyGeneration);
         status = STATUS_SUCCESS;
@@ -370,6 +711,7 @@ FcxEvtIoDeviceControl(
             status = STATUS_INVALID_BUFFER_SIZE;
             break;
         }
+        FcxReleaseLease();
         FcxReleasePolicy();
         InterlockedIncrement64(&FcxPolicyGeneration);
         status = STATUS_SUCCESS;
@@ -377,6 +719,39 @@ FcxEvtIoDeviceControl(
     case IOCTL_FCX_STRICT_QUERY_POLICY:
         status = InputBufferLength == 0 ? STATUS_SUCCESS :
                                           STATUS_INVALID_BUFFER_SIZE;
+        break;
+    case IOCTL_FCX_STRICT_ACTIVATE_LEASE:
+    {
+        const VOID *input;
+        size_t inputBytes;
+        FCX_STRICT_LEASE_STATE *newLease = NULL;
+
+        if (InputBufferLength != sizeof(FCX_STRICT_ENDPOINT_LEASE)) {
+            status = STATUS_INVALID_BUFFER_SIZE;
+            break;
+        }
+        status = WdfRequestRetrieveInputBuffer(Request,
+                                                sizeof(FCX_STRICT_ENDPOINT_LEASE),
+                                                (PVOID *)&input,
+                                                &inputBytes);
+        if (!NT_SUCCESS(status) || inputBytes != InputBufferLength) {
+            break;
+        }
+        status = FcxBuildLease(Request, input, inputBytes, &newLease);
+        if (!NT_SUCCESS(status)) {
+            break;
+        }
+        FcxReplaceLease(newLease);
+        status = STATUS_SUCCESS;
+        break;
+    }
+    case IOCTL_FCX_STRICT_REVOKE_LEASE:
+        if (InputBufferLength != 0) {
+            status = STATUS_INVALID_BUFFER_SIZE;
+            break;
+        }
+        FcxReleaseLease();
+        status = STATUS_SUCCESS;
         break;
     default:
         status = STATUS_INVALID_DEVICE_REQUEST;
@@ -453,7 +828,16 @@ FcxEvtDriverUnload(
     PAGED_CODE();
 
     FcxUnregisterCallouts();
+    if (FcxProcessNotifyRegistered) {
+        (VOID)PsSetCreateProcessNotifyRoutineEx(FcxProcessNotify, TRUE);
+        FcxProcessNotifyRegistered = FALSE;
+    }
+    FcxReleaseLease();
     FcxReleasePolicy();
+    if (FcxLeaseRundown != NULL) {
+        ExFreeCacheAwareRundownProtection(FcxLeaseRundown);
+        FcxLeaseRundown = NULL;
+    }
     if (FcxPolicyRundown != NULL) {
         ExFreeCacheAwareRundownProtection(FcxPolicyRundown);
         FcxPolicyRundown = NULL;
@@ -489,6 +873,7 @@ DriverEntry(
     if (!NT_SUCCESS(status)) {
         return status;
     }
+    ExInitializeFastMutex(&FcxLeaseMutationLock);
 
     FcxPolicyRundown = ExAllocateCacheAwareRundownProtection(
         NonPagedPoolNx,
@@ -497,6 +882,18 @@ DriverEntry(
         status = STATUS_INSUFFICIENT_RESOURCES;
         goto Failure;
     }
+    FcxLeaseRundown = ExAllocateCacheAwareRundownProtection(
+        NonPagedPoolNx,
+        FCX_STRICT_LEASE_POOL_TAG);
+    if (FcxLeaseRundown == NULL) {
+        status = STATUS_INSUFFICIENT_RESOURCES;
+        goto Failure;
+    }
+    status = PsSetCreateProcessNotifyRoutineEx(FcxProcessNotify, FALSE);
+    if (!NT_SUCCESS(status)) {
+        goto Failure;
+    }
+    FcxProcessNotifyRegistered = TRUE;
 
     deviceInit = WdfControlDeviceInitAllocate(driver, &deviceSddl);
     if (deviceInit == NULL) {
@@ -545,7 +942,16 @@ Failure:
         WdfDeviceInitFree(deviceInit);
     }
     FcxUnregisterCallouts();
+    if (FcxProcessNotifyRegistered) {
+        (VOID)PsSetCreateProcessNotifyRoutineEx(FcxProcessNotify, TRUE);
+        FcxProcessNotifyRegistered = FALSE;
+    }
+    FcxReleaseLease();
     FcxControlDevice = NULL;
+    if (FcxLeaseRundown != NULL) {
+        ExFreeCacheAwareRundownProtection(FcxLeaseRundown);
+        FcxLeaseRundown = NULL;
+    }
     if (FcxPolicyRundown != NULL) {
         ExFreeCacheAwareRundownProtection(FcxPolicyRundown);
         FcxPolicyRundown = NULL;

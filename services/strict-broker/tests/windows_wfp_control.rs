@@ -5,8 +5,8 @@ use std::collections::BTreeSet;
 use anyhow::Result;
 use flclash_strict_broker::{
     VerifiedApplicationAppIds, VerifiedPolicyAppIds, WfpControlPlane, WfpFilterSpec, WfpPolicyPlan,
-    WindowsDriverPolicyChannel, WindowsDriverPolicySnapshot, WindowsWfpControl,
-    WindowsWfpFilterInventory, WindowsWfpFilterStore,
+    WindowsDriverEndpointLeaseSnapshot, WindowsDriverPolicyChannel, WindowsDriverPolicySnapshot,
+    WindowsWfpControl, WindowsWfpFilterInventory, WindowsWfpFilterStore,
 };
 use flclash_strict_contract::{
     StrictCapability, StrictIdentity, StrictPolicyBundle, StrictPolicyEntry,
@@ -58,6 +58,11 @@ impl WindowsDriverPolicyChannel for FakeDriver {
             generation: self.snapshot.generation + 1,
             loaded: true,
             capabilities: StrictCapability::required_for_proxy(),
+            endpoint_lease: Some(WindowsDriverEndpointLeaseSnapshot {
+                generation: 1,
+                remaining_millis: 5_000,
+                nonce: [1; 16],
+            }),
         };
         Ok(())
     }
@@ -69,6 +74,7 @@ impl WindowsDriverPolicyChannel for FakeDriver {
         self.snapshot.policy_digest = None;
         self.snapshot.rule_count = 0;
         self.snapshot.capabilities.clear();
+        self.snapshot.endpoint_lease = None;
         Ok(())
     }
 
@@ -157,5 +163,15 @@ fn unloaded_driver_cannot_advertise_capabilities() {
         },
     };
     let mut control = WindowsWfpControl::new(FakeFilters::default(), driver);
+    assert!(control.snapshot().is_err());
+}
+
+#[test]
+fn redirect_capabilities_require_a_live_endpoint_lease() {
+    let plan = plan();
+    let mut control = WindowsWfpControl::new(FakeFilters::default(), FakeDriver::default());
+    control.upload_immutable_snapshot(&plan).unwrap();
+    control.driver_mut().snapshot.endpoint_lease = None;
+
     assert!(control.snapshot().is_err());
 }
