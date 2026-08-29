@@ -34,6 +34,8 @@ mod windows_scm;
 #[cfg(windows)]
 mod windows_session;
 #[cfg(windows)]
+mod windows_tcp_owner;
+#[cfg(windows)]
 mod windows_wfp_control;
 #[cfg(windows)]
 mod windows_wfp_engine;
@@ -81,6 +83,8 @@ pub use windows_recovery_acl::WindowsRecoveryAclVerifier;
 pub use windows_scm::{run_windows_scm_service, WindowsScmContext};
 #[cfg(windows)]
 pub use windows_session::WindowsBrokerPipeSession;
+#[cfg(windows)]
+pub use windows_tcp_owner::windows_tcp_listener_owner_pid;
 #[cfg(windows)]
 pub use windows_wfp_control::{
     WindowsDriverEndpointLeaseSnapshot, WindowsDriverPolicyChannel, WindowsDriverPolicySnapshot,
