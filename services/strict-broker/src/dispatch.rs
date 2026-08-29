@@ -34,6 +34,10 @@ where
         &self.engine
     }
 
+    pub fn engine_mut(&mut self) -> &mut BrokerEngine<B, S, V> {
+        &mut self.engine
+    }
+
     pub fn dispatch(&mut self, authorized: AuthorizedBrokerRequest) -> BrokerResponse {
         let request = authorized.into_request();
         let request_id = request.request_id;

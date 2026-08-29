@@ -9,6 +9,8 @@ pub const MAX_STRICT_APPLICATIONS: usize = 128;
 pub const MAX_STRICT_CHILDREN: usize = 32;
 pub const MAX_BROKER_FRAME_BYTES: usize = 1024 * 1024;
 pub const MAX_BROKER_ACTIVATION_FRAME_BYTES: usize = 4 * 1024;
+pub const WINDOWS_STRICT_BROKER_ACTIVATION_PIPE_NAME: &str =
+    r"\\.\pipe\FlClashX.StrictBroker.Activation.v1";
 const BROKER_PIPE_NAME_PREFIX: &str = r"\\.\pipe\FlClashX.StrictBroker.";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]

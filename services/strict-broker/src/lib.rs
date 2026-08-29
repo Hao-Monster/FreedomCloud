@@ -18,6 +18,8 @@ mod wfp_plan;
 mod windows_driver_channel;
 #[cfg(windows)]
 mod windows_driver_service;
+#[cfg(all(windows, feature = "production-host"))]
+mod windows_host;
 #[cfg(windows)]
 mod windows_identity;
 #[cfg(windows)]
@@ -49,6 +51,8 @@ pub use wfp_plan::{
 pub use windows_driver_channel::{
     WindowsDriverIoctlDeadline, WindowsEndpointLease, WindowsIoctlDriverChannel,
 };
+#[cfg(all(windows, feature = "production-host"))]
+pub use windows_host::{run_windows_strict_broker_service, WindowsStrictBrokerPaths};
 #[cfg(windows)]
 pub use windows_identity::{
     inspect_windows_driver, inspect_windows_executable, verify_windows_driver,
@@ -60,8 +64,9 @@ pub use windows_identity::{
 pub use windows_pipe::{
     current_process_user_sid, exchange_windows_activation_for_agent,
     exchange_windows_pipe_for_agent, generate_windows_broker_session_pipe_name,
-    WindowsAuthenticatedRequest, WindowsBrokerActivationPipeInstance, WindowsNamedPipeInstance,
-    WindowsPipeDeadlines, WindowsVerifiedActivationRequest,
+    WindowsAuthenticatedRequest, WindowsBrokerActivationAttempt,
+    WindowsBrokerActivationPipeInstance, WindowsNamedPipeInstance, WindowsPipeDeadlines,
+    WindowsVerifiedActivationRequest,
 };
 #[cfg(windows)]
 pub use windows_pipe_pool::{
@@ -409,6 +414,10 @@ where
         &self.backend
     }
 
+    pub fn backend_mut(&mut self) -> &mut B {
+        &mut self.backend
+    }
+
     pub fn store(&self) -> &S {
         &self.store
     }
@@ -580,6 +589,16 @@ where
         self.status_from_snapshot(snapshot)
     }
 
+    /// Runtime/session teardown uses the active recovery marker rather than an
+    /// Agent-supplied revision. With no active policy this remains a read-only
+    /// status check, which makes repeated shutdown cleanup idempotent.
+    pub fn force_blocking_if_active(&mut self) -> Result<BrokerStatus> {
+        let Some(revision) = self.current_marker.as_ref().map(|marker| marker.revision) else {
+            return self.status();
+        };
+        self.force_blocking(revision)
+    }
+
     pub fn recover(&mut self) -> Result<BrokerStatus> {
         let record = self.store.load()?;
         self.store_loaded = true;
@@ -587,8 +606,12 @@ where
         let mut snapshot = self.backend.snapshot()?;
 
         let Some(marker) = record.marker else {
-            if snapshot.guard_filters_installed || snapshot.redirect_filters_installed {
-                bail!("orphaned strict filters require operator recovery");
+            if snapshot.guard_filters_installed
+                || snapshot.redirect_filters_installed
+                || snapshot.revision.is_some()
+                || snapshot.policy_digest.is_some()
+            {
+                bail!("orphaned strict backend state requires operator recovery");
             }
             self.current_marker = None;
             self.phase = BrokerPhase::Disabled;

@@ -11,8 +11,9 @@ use std::time::{Duration, Instant};
 use anyhow::{bail, Context, Result};
 use flclash_strict_contract::{
     parse_broker_activation_request, parse_broker_activation_response, parse_broker_request,
-    parse_broker_response, BrokerActivationRequest, BrokerActivationResponse, BrokerResponse,
-    MAX_BROKER_ACTIVATION_FRAME_BYTES, MAX_BROKER_FRAME_BYTES,
+    parse_broker_response, BrokerActivationErrorCode, BrokerActivationRequest,
+    BrokerActivationResponse, BrokerResponse, MAX_BROKER_ACTIVATION_FRAME_BYTES,
+    MAX_BROKER_FRAME_BYTES,
 };
 use windows_sys::Win32::Foundation::{
     LocalFree, ERROR_IO_PENDING, ERROR_MORE_DATA, ERROR_NOT_FOUND, ERROR_OPERATION_ABORTED,
@@ -101,6 +102,11 @@ pub struct WindowsVerifiedActivationRequest {
     pub client_sid: String,
     pub client_session_id: u32,
     pub agent: WindowsAgentProcessTrustLease,
+}
+
+pub enum WindowsBrokerActivationAttempt {
+    Verified(WindowsVerifiedActivationRequest),
+    Rejected(BrokerActivationResponse),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -331,24 +337,50 @@ impl WindowsBrokerActivationPipeInstance {
         expected_agent_path: impl AsRef<Path>,
         package: &StrictPackageManifest,
     ) -> Result<WindowsVerifiedActivationRequest> {
+        match self.connect_and_classify(expected_agent_path, package)? {
+            WindowsBrokerActivationAttempt::Verified(activation) => Ok(activation),
+            WindowsBrokerActivationAttempt::Rejected(_) => {
+                bail!("strict Broker activation identity was rejected")
+            }
+        }
+    }
+
+    pub fn connect_and_classify(
+        &self,
+        expected_agent_path: impl AsRef<Path>,
+        package: &StrictPackageManifest,
+    ) -> Result<WindowsBrokerActivationAttempt> {
         let identity = self.connect_and_receive()?;
-        if identity.is_local_system {
-            bail!("LocalSystem cannot activate an interactive Broker session");
+        let request_id = identity.request.request_id.clone();
+        let verification = (|| -> Result<WindowsAgentProcessTrustLease> {
+            if identity.is_local_system {
+                bail!("LocalSystem cannot activate an interactive Broker session");
+            }
+            if identity.client_session_id == 0 {
+                bail!("session-zero clients cannot activate an interactive Broker session");
+            }
+            verify_windows_packaged_agent_process(
+                identity.client_process_id,
+                expected_agent_path,
+                package,
+            )
+        })();
+        match verification {
+            Ok(agent) => Ok(WindowsBrokerActivationAttempt::Verified(
+                WindowsVerifiedActivationRequest {
+                    request: identity.request,
+                    client_sid: identity.client_sid,
+                    client_session_id: identity.client_session_id,
+                    agent,
+                },
+            )),
+            Err(_) => Ok(WindowsBrokerActivationAttempt::Rejected(
+                BrokerActivationResponse::error(
+                    request_id,
+                    BrokerActivationErrorCode::Unauthorized,
+                )?,
+            )),
         }
-        if identity.client_session_id == 0 {
-            bail!("session-zero clients cannot activate an interactive Broker session");
-        }
-        let agent = verify_windows_packaged_agent_process(
-            identity.client_process_id,
-            expected_agent_path,
-            package,
-        )?;
-        Ok(WindowsVerifiedActivationRequest {
-            request: identity.request,
-            client_sid: identity.client_sid,
-            client_session_id: identity.client_session_id,
-            agent,
-        })
     }
 
     fn connect_and_receive(&self) -> Result<PendingActivationRequest> {
@@ -1062,7 +1094,7 @@ fn raw_handle(handle: &OwnedHandle) -> *mut c_void {
 mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use flclash_strict_contract::BrokerActivationResponseBody;
+    use flclash_strict_contract::{BrokerActivationErrorCode, BrokerActivationResponseBody};
 
     use super::*;
 
@@ -1114,6 +1146,56 @@ mod tests {
         assert!(matches!(
             client.join().unwrap().body,
             BrokerActivationResponseBody::Activated { .. }
+        ));
+    }
+
+    #[test]
+    fn activation_identity_rejection_returns_only_the_stable_unauthorized_code() {
+        let pipe_name = activation_pipe_name();
+        let deadlines = WindowsPipeDeadlines::new(
+            Duration::from_secs(2),
+            Duration::from_secs(2),
+            Duration::from_secs(2),
+        )
+        .unwrap();
+        let server = WindowsBrokerActivationPipeInstance::create(&pipe_name, deadlines).unwrap();
+        let frame = format!(
+            r#"{{"protocol":1,"requestId":"rejected-activation","sessionCapability":"{}"}}"#,
+            "11".repeat(32)
+        )
+        .into_bytes();
+        let client_name = pipe_name.clone();
+        let client = std::thread::spawn(move || {
+            exchange_windows_activation_for_agent(&client_name, &frame, deadlines).unwrap()
+        });
+        let manifest = StrictPackageManifest::parse(
+            format!(
+                r#"{{"protocol":1,"packageVersion":"rejection-test","driverBuildId":"{}","driverFileSha256":"{}","driverPublisherCertificateSha256":"{}","agentFileSha256":"{}","agentPublisherCertificateSha256":"{}"}}"#,
+                "12".repeat(16),
+                "23".repeat(32),
+                "34".repeat(32),
+                "45".repeat(32),
+                "56".repeat(32),
+            )
+            .as_bytes(),
+        )
+        .unwrap();
+        let unexpected_path = Path::new(r"C:\Windows\System32\cmd.exe");
+
+        let response = match server
+            .connect_and_classify(unexpected_path, &manifest)
+            .unwrap()
+        {
+            WindowsBrokerActivationAttempt::Verified(_) => panic!("identity must be rejected"),
+            WindowsBrokerActivationAttempt::Rejected(response) => response,
+        };
+        server.write_response(&response).unwrap();
+
+        assert!(matches!(
+            client.join().unwrap().body,
+            BrokerActivationResponseBody::Error {
+                code: BrokerActivationErrorCode::Unauthorized
+            }
         ));
     }
 

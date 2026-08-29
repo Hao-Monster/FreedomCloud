@@ -246,6 +246,34 @@ fn prepare_persists_recovery_intent_before_installing_guards() {
 }
 
 #[test]
+fn runtime_cleanup_forces_an_active_policy_to_blocking_and_is_safe_when_disabled() {
+    let mut engine = BrokerEngine::new(
+        FakeBackend::default(),
+        FakeStore::default(),
+        FakeVerifier::default(),
+    );
+
+    let disabled = engine.force_blocking_if_active().unwrap();
+    assert_eq!(disabled.phase, BrokerPhase::Disabled);
+    assert!(!disabled.proof.guard_filters_installed);
+    assert_eq!(engine.backend().events, ["snapshot"]);
+
+    let selected = policy(1);
+    let digest = selected.canonical_digest().unwrap();
+    engine.prepare(selected).unwrap();
+    engine.commit(1, &digest, complete_health()).unwrap();
+
+    let blocked = engine.force_blocking_if_active().unwrap();
+    assert_eq!(blocked.phase, BrokerPhase::Blocking);
+    assert!(blocked.proof.guard_filters_installed);
+    assert!(!engine.backend().snapshot.redirect_filters_installed);
+    assert_eq!(
+        engine.store().marker.as_ref().unwrap().phase,
+        BrokerPhase::Blocking
+    );
+}
+
+#[test]
 fn redirect_failure_stays_persistently_blocking() {
     let backend = FakeBackend {
         fail_install_redirects: true,
@@ -374,6 +402,24 @@ fn startup_downgrades_dynamic_redirect_state_to_blocking() {
     assert!(status.proof.guard_filters_installed);
     assert!(!engine.backend().snapshot.redirect_filters_installed);
     assert!(engine.store().marker.is_some());
+}
+
+#[test]
+fn startup_rejects_an_orphaned_driver_snapshot_without_a_recovery_marker() {
+    let backend = FakeBackend {
+        snapshot: BackendSnapshot {
+            revision: Some(99),
+            policy_digest: Some(hex('a')),
+            filter_generation: 1,
+            ..BackendSnapshot::default()
+        },
+        ..FakeBackend::default()
+    };
+    let mut engine = BrokerEngine::new(backend, FakeStore::default(), FakeVerifier::default());
+
+    assert!(engine.recover().is_err());
+    assert!(engine.store().marker.is_none());
+    assert_eq!(engine.backend().events, ["snapshot"]);
 }
 
 #[test]

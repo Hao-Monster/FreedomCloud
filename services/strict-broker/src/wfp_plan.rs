@@ -179,6 +179,14 @@ pub struct WfpPolicyPlan {
 }
 
 impl WfpPolicyPlan {
+    pub const fn canonical_provider_key() -> WfpObjectKey {
+        PROVIDER_KEY
+    }
+
+    pub const fn canonical_sublayer_key() -> WfpObjectKey {
+        SUBLAYER_KEY
+    }
+
     pub fn new(policy: &StrictPolicyBundle, verified: &VerifiedPolicyAppIds) -> Result<Self> {
         policy.validate()?;
         if verified.application_count() != policy.entries.len() {
