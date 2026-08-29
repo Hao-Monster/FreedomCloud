@@ -53,6 +53,7 @@ impl WindowsDriverPolicyChannel for FakeDriver {
         self.snapshot = WindowsDriverPolicySnapshot {
             revision: Some(plan.revision()),
             policy_digest: Some(plan.policy_digest().into()),
+            rule_count: plan.rules().len(),
             generation: self.snapshot.generation + 1,
             loaded: true,
             capabilities: StrictCapability::required_for_proxy(),
@@ -65,6 +66,7 @@ impl WindowsDriverPolicyChannel for FakeDriver {
         self.snapshot.loaded = false;
         self.snapshot.revision = None;
         self.snapshot.policy_digest = None;
+        self.snapshot.rule_count = 0;
         self.snapshot.capabilities.clear();
         Ok(())
     }

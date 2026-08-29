@@ -9,6 +9,7 @@ use crate::{WfpControlPlane, WfpControlSnapshot, WfpFilterSpec, WfpObjectKey, Wf
 pub struct WindowsDriverPolicySnapshot {
     pub revision: Option<u64>,
     pub policy_digest: Option<String>,
+    pub rule_count: usize,
     pub generation: u64,
     pub loaded: bool,
     pub capabilities: BTreeSet<StrictCapability>,
@@ -155,6 +156,7 @@ fn validate_loaded_driver_snapshot(
     validate_driver_snapshot_shape(snapshot)?;
     if !snapshot.loaded
         || snapshot.revision != Some(plan.revision())
+        || snapshot.rule_count != plan.rules().len()
         || snapshot
             .policy_digest
             .as_deref()
@@ -166,12 +168,17 @@ fn validate_loaded_driver_snapshot(
 }
 
 fn validate_driver_snapshot_shape(snapshot: &WindowsDriverPolicySnapshot) -> Result<()> {
-    let has_metadata = snapshot.revision.is_some() && snapshot.policy_digest.is_some();
+    let has_metadata = snapshot.revision.is_some()
+        && snapshot.policy_digest.is_some()
+        && snapshot.rule_count != 0;
     if snapshot.loaded != has_metadata {
         bail!("strict driver snapshot metadata is inconsistent");
     }
     if !snapshot.loaded && !snapshot.capabilities.is_empty() {
         bail!("unloaded strict driver advertises active capabilities");
+    }
+    if !snapshot.loaded && snapshot.rule_count != 0 {
+        bail!("unloaded strict driver retains a policy rule count");
     }
     if let Some(digest) = &snapshot.policy_digest {
         if digest.len() != 64 || !digest.bytes().all(|byte| byte.is_ascii_hexdigit()) {

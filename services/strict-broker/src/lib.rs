@@ -13,6 +13,8 @@ mod planned_wfp_backend;
 mod recovery_file;
 mod wfp_plan;
 #[cfg(windows)]
+mod windows_driver_channel;
+#[cfg(windows)]
 mod windows_identity;
 #[cfg(windows)]
 mod windows_pipe;
@@ -35,6 +37,8 @@ pub use wfp_plan::{
     DriverIdentityRule, PlanInstallStep, PlanRemoveStep, WfpCallout, WfpFilterLifetime,
     WfpFilterSpec, WfpLayer, WfpObjectKey, WfpPolicyPlan,
 };
+#[cfg(windows)]
+pub use windows_driver_channel::{WindowsDriverIoctlDeadline, WindowsIoctlDriverChannel};
 #[cfg(windows)]
 pub use windows_identity::{
     inspect_windows_driver, inspect_windows_executable, verify_windows_driver,
