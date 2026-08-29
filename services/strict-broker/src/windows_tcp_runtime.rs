@@ -588,6 +588,7 @@ mod tests {
                     nonce: [0x11; 16],
                 }),
                 datagram_path_active: false,
+                datagram_health: Default::default(),
             })
         }
 

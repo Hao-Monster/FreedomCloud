@@ -168,8 +168,9 @@ pub use windows_udp_bridge::{
 };
 #[cfg(windows)]
 pub use windows_wfp_control::{
-    WindowsDriverEndpointLeaseSnapshot, WindowsDriverPolicyChannel, WindowsDriverPolicySnapshot,
-    WindowsWfpControl, WindowsWfpFilterInventory, WindowsWfpFilterStore,
+    WindowsDriverDatagramHealthSnapshot, WindowsDriverEndpointLeaseSnapshot,
+    WindowsDriverPolicyChannel, WindowsDriverPolicySnapshot, WindowsWfpControl,
+    WindowsWfpFilterInventory, WindowsWfpFilterStore,
 };
 #[cfg(windows)]
 pub use windows_wfp_engine::WindowsWfpEngineStore;

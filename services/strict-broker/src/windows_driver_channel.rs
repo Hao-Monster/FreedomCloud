@@ -32,8 +32,8 @@ use crate::windows_datagram_wire::{
 use crate::windows_driver_service::{verify_windows_driver_service, WindowsDriverServiceLease};
 use crate::{
     verify_windows_packaged_driver, StrictPackageManifest, WfpPolicyPlan,
-    WindowsDriverEndpointLeaseSnapshot, WindowsDriverPolicyChannel, WindowsDriverPolicySnapshot,
-    WindowsDriverTrustLease,
+    WindowsDriverDatagramHealthSnapshot, WindowsDriverEndpointLeaseSnapshot,
+    WindowsDriverPolicyChannel, WindowsDriverPolicySnapshot, WindowsDriverTrustLease,
 };
 
 const DEVICE_PATH: &str = r"\\.\FlClashStrict";
@@ -44,7 +44,7 @@ const POLICY_HEADER_BYTES: usize = 112;
 const POLICY_RULE_BYTES: usize = 16;
 const ENDPOINT_LEASE_BYTES: usize = 160;
 const ENDPOINT_BYTES: usize = 20;
-const SNAPSHOT_BYTES: usize = 128;
+const SNAPSHOT_BYTES: usize = 168;
 const MAX_DRIVER_POLICY_WIRE_BYTES: usize = 3 * 1024 * 1024;
 const MAX_DRIVER_RULES: usize = MAX_STRICT_APPLICATIONS * 33;
 const MAX_IOCTL_DEADLINE: Duration = Duration::from_secs(300);
@@ -618,13 +618,22 @@ fn decode_snapshot(bytes: &[u8]) -> Result<WindowsDriverPolicySnapshot> {
     let lease_generation = read_u64(bytes, 88)?;
     let lease_remaining_millis = read_u32(bytes, 96)?;
     let lease_nonce: [u8; 16] = bytes[104..120].try_into().expect("lease nonce slice");
+    let datagram_health = WindowsDriverDatagramHealthSnapshot {
+        injection_attempts: read_u64(bytes, 120)?,
+        injection_succeeded: read_u64(bytes, 128)?,
+        injection_failed: read_u64(bytes, 136)?,
+        partial_batch_failures: read_u64(bytes, 144)?,
+        injection_in_flight: read_u32(bytes, 152)?,
+        last_failure_status: read_u32(bytes, 156)?,
+    };
     if capability_mask & !KNOWN_CAPABILITIES != 0
         || driver_build_id.iter().all(|value| *value == 0)
         || bytes[100..104].iter().any(|value| *value != 0)
-        || bytes[120..].iter().any(|value| *value != 0)
+        || bytes[160..].iter().any(|value| *value != 0)
     {
         bail!("strict driver snapshot contains unknown capability or reserved bits");
     }
+    datagram_health.validate()?;
 
     let loaded = flags & SNAPSHOT_FLAG_LOADED != 0;
     let lease_active = flags & SNAPSHOT_FLAG_LEASE_ACTIVE != 0;
@@ -681,6 +690,7 @@ fn decode_snapshot(bytes: &[u8]) -> Result<WindowsDriverPolicySnapshot> {
         capabilities: decode_capabilities(capability_mask),
         endpoint_lease,
         datagram_path_active,
+        datagram_health,
     })
 }
 
@@ -1155,6 +1165,39 @@ mod tests {
     }
 
     #[test]
+    fn driver_snapshot_validates_bounded_datagram_injection_health() {
+        let mut snapshot = [0_u8; SNAPSHOT_BYTES];
+        write_u32(&mut snapshot, 0, WIRE_MAGIC);
+        write_u16(&mut snapshot, 4, WIRE_PROTOCOL);
+        write_u16(&mut snapshot, 6, SNAPSHOT_BYTES as u16);
+        write_u64(&mut snapshot, 16, 7);
+        snapshot[72..88].copy_from_slice(&[0xcd; 16]);
+        write_u64(&mut snapshot, 120, 9);
+        write_u64(&mut snapshot, 128, 7);
+        write_u64(&mut snapshot, 136, 1);
+        write_u64(&mut snapshot, 144, 1);
+        write_u32(&mut snapshot, 152, 1);
+        write_u32(&mut snapshot, 156, 0xc000_0001);
+
+        let decoded = decode_snapshot(&snapshot).unwrap();
+        assert_eq!(decoded.datagram_health.injection_attempts, 9);
+        assert_eq!(decoded.datagram_health.injection_succeeded, 7);
+        assert_eq!(decoded.datagram_health.injection_failed, 1);
+        assert_eq!(decoded.datagram_health.partial_batch_failures, 1);
+        assert_eq!(decoded.datagram_health.injection_in_flight, 1);
+        assert_eq!(decoded.datagram_health.last_failure_status, 0xc000_0001);
+
+        write_u32(&mut snapshot, 152, 257);
+        assert!(decode_snapshot(&snapshot).is_err());
+        write_u32(&mut snapshot, 152, 1);
+        write_u64(&mut snapshot, 120, 8);
+        assert!(decode_snapshot(&snapshot).is_err());
+        write_u64(&mut snapshot, 120, 9);
+        write_u32(&mut snapshot, 156, 0);
+        assert!(decode_snapshot(&snapshot).is_err());
+    }
+
+    #[test]
     fn endpoint_lease_wire_is_loopback_only_and_snapshot_bound() {
         let digest = "ab".repeat(32);
         let lease = WindowsEndpointLease::new(
@@ -1306,7 +1349,7 @@ mod tests {
             "FCX_STRICT_POLICY_RULE_BYTES ((UINT16)16u)",
             "FCX_STRICT_ENDPOINT_LEASE_BYTES ((UINT16)160u)",
             "FCX_STRICT_ENDPOINT_BYTES ((UINT16)20u)",
-            "FCX_STRICT_SNAPSHOT_BYTES ((UINT16)128u)",
+            "FCX_STRICT_SNAPSHOT_BYTES ((UINT16)168u)",
             "UINT8 DriverBuildId[16]",
             "UINT64 LeaseGeneration",
             "IOCTL_FCX_STRICT_UPLOAD_POLICY",
@@ -1322,6 +1365,7 @@ mod tests {
             "FCX_STRICT_DATAGRAM_MAX_BATCH_BYTES ((UINT32)(256u * 1024u))",
             "FCX_STRICT_DATAGRAM_MAX_RECORDS ((UINT32)64u)",
             "FCX_STRICT_DATAGRAM_MAX_PAYLOAD_BYTES ((UINT32)(16u * 1024u))",
+            "FCX_STRICT_DATAGRAM_MAX_IN_FLIGHT ((UINT32)256u)",
             "IOCTL_FCX_STRICT_RECEIVE_DATAGRAM_BATCH",
             "IOCTL_FCX_STRICT_SUBMIT_DATAGRAM_BATCH",
             "IOCTL_FCX_STRICT_ACTIVATE_DATAGRAM_PATH",
@@ -1945,7 +1989,7 @@ mod tests {
         ));
 
         for invariant in [
-            "#define FCX_STRICT_MAX_UDP_INJECTIONS 256",
+            "FCX_STRICT_DATAGRAM_MAX_IN_FLIGHT",
             "typedef struct _FCX_STRICT_UDP_INJECTION_CONTEXT",
             "NET_BUFFER_LIST *NetBufferList;",
             "PMDL Mdl;",
@@ -1957,7 +2001,7 @@ mod tests {
             "static KSPIN_LOCK FcxUdpInjectionLock;",
             "static KEVENT FcxUdpInjectionEmptyEvent;",
             "FcxReserveUdpInjectionSlot(",
-            "FcxReleaseUdpInjectionSlot(",
+            "FcxFinishUdpInjectionSlot(",
             "FcxWaitForUdpInjections(",
             "FcxCreateDatagramNblPool(",
             "NdisAllocateGenericObject(",
@@ -1981,7 +2025,7 @@ mod tests {
             "SIZE_T allocationBytes = Context->AllocationBytes;",
             "RtlSecureZeroMemory(Context, allocationBytes);",
             "FcxDereferenceUdpFlowContext(flowContext);",
-            "FcxReleaseUdpInjectionSlot();",
+            "FcxFinishUdpInjectionSlot(attempted, CompletionStatus);",
         ] {
             assert!(
                 driver.contains(invariant),
@@ -2024,5 +2068,50 @@ mod tests {
             !submit.contains("return STATUS_NOT_SUPPORTED;"),
             "valid replies must no longer use the placeholder result"
         );
+    }
+
+    #[test]
+    fn kernel_datagram_injection_health_is_bounded_and_snapshot_owned() {
+        let header = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../windows/strict-driver/include/flclash_strict_wire.h"
+        ));
+        let driver = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../windows/strict-driver/src/driver.c"
+        ));
+
+        for declaration in [
+            "FCX_STRICT_DATAGRAM_MAX_IN_FLIGHT ((UINT32)256u)",
+            "UINT64 DatagramInjectionAttempts;",
+            "UINT64 DatagramInjectionSucceeded;",
+            "UINT64 DatagramInjectionFailed;",
+            "UINT64 DatagramPartialBatchFailures;",
+            "UINT32 DatagramInjectionInFlight;",
+            "UINT32 DatagramLastFailureStatus;",
+        ] {
+            assert!(
+                header.contains(declaration),
+                "missing UDP injection-health ABI field: {declaration}"
+            );
+        }
+        for invariant in [
+            "FcxRecordUdpInjectionAttempt(",
+            "FcxFinishUdpInjectionSlot(",
+            "NET_BUFFER_LIST_STATUS(NetBufferList)",
+            "FcxRecordUdpPartialBatchFailure(status);",
+            "FcxFillUdpInjectionHealth(Output);",
+            "Output->DatagramInjectionAttempts",
+            "Output->DatagramInjectionSucceeded",
+            "Output->DatagramInjectionFailed",
+            "Output->DatagramPartialBatchFailures",
+            "Output->DatagramInjectionInFlight",
+            "Output->DatagramLastFailureStatus",
+        ] {
+            assert!(
+                driver.contains(invariant),
+                "missing UDP injection-health invariant: {invariant}"
+            );
+        }
     }
 }

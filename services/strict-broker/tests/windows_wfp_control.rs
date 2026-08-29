@@ -64,6 +64,7 @@ impl WindowsDriverPolicyChannel for FakeDriver {
                 nonce: [1; 16],
             }),
             datagram_path_active: false,
+            datagram_health: Default::default(),
         };
         Ok(())
     }

@@ -53,13 +53,12 @@ static const GUID FcxDatagramV6CalloutKey = {
 #define FCX_STRICT_UDP_INJECTION_POOL_TAG 'ICXF'
 #define FCX_STRICT_MAX_UDP_FLOWS 1024
 #define FCX_STRICT_UDP_FLOW_BUCKETS 256
-#define FCX_STRICT_MAX_UDP_INJECTIONS 256
 #define FCX_IPV4_HEADER_BYTES 20u
 #define FCX_IPV6_HEADER_BYTES 40u
 
 C_ASSERT((FCX_STRICT_UDP_FLOW_BUCKETS &
           (FCX_STRICT_UDP_FLOW_BUCKETS - 1u)) == 0u);
-C_ASSERT(FCX_STRICT_MAX_UDP_INJECTIONS >=
+C_ASSERT(FCX_STRICT_DATAGRAM_MAX_IN_FLIGHT >=
          FCX_STRICT_DATAGRAM_MAX_RECORDS);
 
 #define FCX_CALLOUT_GUARD_V4 0u
@@ -130,6 +129,7 @@ typedef struct _FCX_STRICT_UDP_INJECTION_CONTEXT {
     PMDL Mdl;
     FCX_STRICT_UDP_FLOW_CONTEXT *FlowContext;
     SIZE_T AllocationBytes;
+    BOOLEAN Attempted;
     UINT8 Packet[ANYSIZE_ARRAY];
 } FCX_STRICT_UDP_INJECTION_CONTEXT;
 
@@ -161,6 +161,11 @@ static KEVENT FcxUdpFlowEmptyEvent;
 static KSPIN_LOCK FcxUdpInjectionLock;
 static LONG FcxUdpInjectionCount;
 static KEVENT FcxUdpInjectionEmptyEvent;
+static UINT64 FcxUdpInjectionAttempts;
+static UINT64 FcxUdpInjectionSucceeded;
+static UINT64 FcxUdpInjectionFailed;
+static UINT64 FcxUdpPartialBatchFailures;
+static NTSTATUS FcxUdpInjectionLastFailureStatus;
 
 static
 VOID NTAPI
@@ -980,7 +985,7 @@ FcxReserveUdpInjectionSlot(
     BOOLEAN reserved = FALSE;
 
     KeAcquireSpinLock(&FcxUdpInjectionLock, &oldIrql);
-    if (FcxUdpInjectionCount < FCX_STRICT_MAX_UDP_INJECTIONS &&
+    if (FcxUdpInjectionCount < FCX_STRICT_DATAGRAM_MAX_IN_FLIGHT &&
         InterlockedCompareExchange(&FcxDatagramActive, 0, 0) != 0 &&
         InterlockedCompareExchange(&FcxUdpStopping, 0, 0) == 0) {
         if (FcxUdpInjectionCount == 0) {
@@ -994,19 +999,87 @@ FcxReserveUdpInjectionSlot(
 }
 
 static
+BOOLEAN
+FcxRecordUdpInjectionAttempt(
+    _Inout_ FCX_STRICT_UDP_INJECTION_CONTEXT *Context
+    )
+{
+    KIRQL oldIrql;
+    BOOLEAN recorded = FALSE;
+
+    KeAcquireSpinLock(&FcxUdpInjectionLock, &oldIrql);
+    NT_ASSERT(FcxUdpInjectionCount > 0);
+    if (FcxUdpInjectionAttempts != MAXULONGLONG) {
+        ++FcxUdpInjectionAttempts;
+        Context->Attempted = TRUE;
+        recorded = TRUE;
+    } else {
+        FcxUdpInjectionLastFailureStatus = STATUS_INTEGER_OVERFLOW;
+    }
+    KeReleaseSpinLock(&FcxUdpInjectionLock, oldIrql);
+    return recorded;
+}
+
+static
 VOID
-FcxReleaseUdpInjectionSlot(
-    VOID
+FcxFinishUdpInjectionSlot(
+    _In_ BOOLEAN Attempted,
+    _In_ NTSTATUS CompletionStatus
     )
 {
     KIRQL oldIrql;
 
     KeAcquireSpinLock(&FcxUdpInjectionLock, &oldIrql);
     NT_ASSERT(FcxUdpInjectionCount > 0);
+    if (Attempted) {
+        if (NT_SUCCESS(CompletionStatus)) {
+            NT_ASSERT(FcxUdpInjectionSucceeded < MAXULONGLONG);
+            ++FcxUdpInjectionSucceeded;
+        } else {
+            NT_ASSERT(FcxUdpInjectionFailed < MAXULONGLONG);
+            ++FcxUdpInjectionFailed;
+            FcxUdpInjectionLastFailureStatus = CompletionStatus;
+        }
+    }
     --FcxUdpInjectionCount;
     if (FcxUdpInjectionCount == 0) {
         KeSetEvent(&FcxUdpInjectionEmptyEvent, IO_NO_INCREMENT, FALSE);
     }
+    KeReleaseSpinLock(&FcxUdpInjectionLock, oldIrql);
+}
+
+static
+VOID
+FcxRecordUdpPartialBatchFailure(
+    _In_ NTSTATUS Status
+    )
+{
+    KIRQL oldIrql;
+
+    KeAcquireSpinLock(&FcxUdpInjectionLock, &oldIrql);
+    if (FcxUdpPartialBatchFailures != MAXULONGLONG) {
+        ++FcxUdpPartialBatchFailures;
+    }
+    FcxUdpInjectionLastFailureStatus = Status;
+    KeReleaseSpinLock(&FcxUdpInjectionLock, oldIrql);
+}
+
+static
+VOID
+FcxFillUdpInjectionHealth(
+    _Out_ FCX_STRICT_DRIVER_SNAPSHOT *Output
+    )
+{
+    KIRQL oldIrql;
+
+    KeAcquireSpinLock(&FcxUdpInjectionLock, &oldIrql);
+    Output->DatagramInjectionAttempts = FcxUdpInjectionAttempts;
+    Output->DatagramInjectionSucceeded = FcxUdpInjectionSucceeded;
+    Output->DatagramInjectionFailed = FcxUdpInjectionFailed;
+    Output->DatagramPartialBatchFailures = FcxUdpPartialBatchFailures;
+    Output->DatagramInjectionInFlight = (UINT32)FcxUdpInjectionCount;
+    Output->DatagramLastFailureStatus =
+        (UINT32)FcxUdpInjectionLastFailureStatus;
     KeReleaseSpinLock(&FcxUdpInjectionLock, oldIrql);
 }
 
@@ -1026,11 +1099,13 @@ FcxWaitForUdpInjections(
 static
 VOID
 FcxDestroyUdpInjectionContext(
-    _Inout_ FCX_STRICT_UDP_INJECTION_CONTEXT *Context
+    _Inout_ FCX_STRICT_UDP_INJECTION_CONTEXT *Context,
+    _In_ NTSTATUS CompletionStatus
     )
 {
     FCX_STRICT_UDP_FLOW_CONTEXT *flowContext = Context->FlowContext;
     SIZE_T allocationBytes = Context->AllocationBytes;
+    BOOLEAN attempted = Context->Attempted;
 
     if (Context->NetBufferList != NULL) {
         FwpsFreeNetBufferList0(Context->NetBufferList);
@@ -1043,7 +1118,7 @@ FcxDestroyUdpInjectionContext(
     RtlSecureZeroMemory(Context, allocationBytes);
     ExFreePoolWithTag(Context, FCX_STRICT_UDP_INJECTION_POOL_TAG);
     FcxDereferenceUdpFlowContext(flowContext);
-    FcxReleaseUdpInjectionSlot();
+    FcxFinishUdpInjectionSlot(attempted, CompletionStatus);
 }
 
 static
@@ -1060,7 +1135,9 @@ FcxCompleteUdpReplyInjection(
     UNREFERENCED_PARAMETER(DispatchLevel);
     NT_ASSERT(context != NULL);
     NT_ASSERT(context->NetBufferList == NetBufferList);
-    FcxDestroyUdpInjectionContext(context);
+    FcxDestroyUdpInjectionContext(
+        context,
+        (NTSTATUS)NET_BUFFER_LIST_STATUS(NetBufferList));
 }
 
 static
@@ -2627,6 +2704,10 @@ FcxInjectSubmittedDatagram(
     if (!NT_SUCCESS(status)) {
         goto Exit;
     }
+    if (!FcxRecordUdpInjectionAttempt(context)) {
+        status = STATUS_INTEGER_OVERFLOW;
+        goto Exit;
+    }
     RtlCopyMemory(&sequence, &Record->Sequence, sizeof(sequence));
     if (!FcxCommitUdpReplySequence(context->FlowContext, sequence)) {
         status = STATUS_ACCESS_DENIED;
@@ -2649,12 +2730,12 @@ FcxInjectSubmittedDatagram(
     }
 
 Exit:
-    FcxDestroyUdpInjectionContext(context);
+    FcxDestroyUdpInjectionContext(context, status);
     return status;
 
 ExitWithoutContext:
     FcxDereferenceUdpFlowContext(flowContext);
-    FcxReleaseUdpInjectionSlot();
+    FcxFinishUdpInjectionSlot(FALSE, status);
     return status;
 }
 
@@ -2739,6 +2820,9 @@ FcxValidateSubmittedDatagramBatch(
             &recordBytes,
             &record);
         if (!NT_SUCCESS(status)) {
+            if (recordIndex != 0) {
+                FcxRecordUdpPartialBatchFailure(status);
+            }
             return status;
         }
         status = FcxInjectSubmittedDatagram(
@@ -2746,11 +2830,15 @@ FcxValidateSubmittedDatagramBatch(
             &record,
             input + cursor + FCX_STRICT_DATAGRAM_RECORD_HEADER_BYTES);
         if (!NT_SUCCESS(status)) {
+            if (recordIndex != 0) {
+                FcxRecordUdpPartialBatchFailure(status);
+            }
             return status;
         }
         cursor += recordBytes;
     }
     if (cursor != batch.TotalBytes) {
+        FcxRecordUdpPartialBatchFailure(STATUS_INVALID_PARAMETER);
         return STATUS_INVALID_PARAMETER;
     }
     return STATUS_SUCCESS;
@@ -2816,6 +2904,7 @@ FcxFillDriverSnapshot(
     RtlCopyMemory(Output->DriverBuildId,
                   FcxDriverBuildId,
                   sizeof(Output->DriverBuildId));
+    FcxFillUdpInjectionHealth(Output);
 
     if (!ExAcquireRundownProtectionCacheAware(FcxPolicyRundown)) {
         return;
@@ -3286,6 +3375,11 @@ DriverEntry(
     KeInitializeSpinLock(&FcxUdpInjectionLock);
     FcxUdpInjectionCount = 0;
     KeInitializeEvent(&FcxUdpInjectionEmptyEvent, NotificationEvent, TRUE);
+    FcxUdpInjectionAttempts = 0;
+    FcxUdpInjectionSucceeded = 0;
+    FcxUdpInjectionFailed = 0;
+    FcxUdpPartialBatchFailures = 0;
+    FcxUdpInjectionLastFailureStatus = STATUS_SUCCESS;
 
     FcxPolicyRundown = ExAllocateCacheAwareRundownProtection(
         NonPagedPoolNx,

@@ -12,6 +12,37 @@ pub struct WindowsDriverEndpointLeaseSnapshot {
     pub nonce: [u8; 16],
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct WindowsDriverDatagramHealthSnapshot {
+    pub injection_attempts: u64,
+    pub injection_succeeded: u64,
+    pub injection_failed: u64,
+    pub partial_batch_failures: u64,
+    pub injection_in_flight: u32,
+    pub last_failure_status: u32,
+}
+
+impl WindowsDriverDatagramHealthSnapshot {
+    pub fn validate(&self) -> Result<()> {
+        if self.injection_in_flight > 256 {
+            bail!("strict driver datagram in-flight count exceeds its hard limit");
+        }
+        let finished = self
+            .injection_succeeded
+            .checked_add(self.injection_failed)
+            .and_then(|count| count.checked_add(u64::from(self.injection_in_flight)))
+            .ok_or_else(|| anyhow::anyhow!("strict driver datagram health counters overflow"))?;
+        if finished != self.injection_attempts {
+            bail!("strict driver datagram health counters are inconsistent");
+        }
+        let has_failure = self.injection_failed != 0 || self.partial_batch_failures != 0;
+        if has_failure != (self.last_failure_status != 0) {
+            bail!("strict driver datagram failure status is inconsistent");
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct WindowsDriverPolicySnapshot {
     pub driver_build_id: Option<String>,
@@ -23,6 +54,7 @@ pub struct WindowsDriverPolicySnapshot {
     pub capabilities: BTreeSet<StrictCapability>,
     pub endpoint_lease: Option<WindowsDriverEndpointLeaseSnapshot>,
     pub datagram_path_active: bool,
+    pub datagram_health: WindowsDriverDatagramHealthSnapshot,
 }
 
 pub trait WindowsDriverPolicyChannel {
@@ -222,6 +254,7 @@ fn validate_driver_snapshot_shape(snapshot: &WindowsDriverPolicySnapshot) -> Res
     if snapshot.datagram_path_active && (!snapshot.loaded || snapshot.endpoint_lease.is_none()) {
         bail!("strict driver retains datagram activation without policy and lease");
     }
+    snapshot.datagram_health.validate()?;
     if let Some(lease) = &snapshot.endpoint_lease {
         if lease.generation == 0
             || lease.remaining_millis == 0
