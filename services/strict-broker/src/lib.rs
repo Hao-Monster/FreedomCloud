@@ -13,6 +13,7 @@ mod package_manifest;
 mod planned_wfp_backend;
 mod recovery_file;
 mod session_registry;
+mod socks_probe;
 mod wfp_plan;
 #[cfg(windows)]
 mod windows_driver_channel;
@@ -43,6 +44,7 @@ pub use package_manifest::StrictPackageManifest;
 pub use planned_wfp_backend::{PlannedWfpBackend, WfpControlPlane, WfpControlSnapshot};
 pub use recovery_file::FileRecoveryStore;
 pub use session_registry::{BrokerSessionRegistry, BrokerSessionResource};
+pub use socks_probe::{probe_socks5_connect, Socks5ConnectTarget, Socks5ProxyIngress};
 pub use wfp_plan::{
     DriverIdentityRule, PlanInstallStep, PlanRemoveStep, WfpCallout, WfpFilterLifetime,
     WfpFilterSpec, WfpLayer, WfpObjectKey, WfpPolicyPlan,
