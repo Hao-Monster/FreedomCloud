@@ -58,6 +58,14 @@ impl BrokerAuthenticator {
         }
     }
 
+    pub fn from_hex(expected_capability: &str) -> Result<Self> {
+        let decoded = decode_sha256(expected_capability)?;
+        if decoded.iter().all(|byte| *byte == 0) {
+            bail!("Broker session capability cannot be zero");
+        }
+        Ok(Self::new(decoded))
+    }
+
     pub fn authenticate(
         &self,
         principal: &ClientPrincipal,
@@ -136,5 +144,12 @@ mod tests {
         let mut different = [1; 32];
         different[31] = 2;
         assert!(!constant_time_equal(&[1; 32], &different));
+    }
+
+    #[test]
+    fn activation_capabilities_are_nonzero_and_exact() {
+        assert!(BrokerAuthenticator::from_hex(&"11".repeat(32)).is_ok());
+        assert!(BrokerAuthenticator::from_hex(&"00".repeat(32)).is_err());
+        assert!(BrokerAuthenticator::from_hex("short").is_err());
     }
 }

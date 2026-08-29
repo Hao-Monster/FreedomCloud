@@ -10,7 +10,9 @@ use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context, Result};
 use flclash_strict_contract::{
-    parse_broker_request, parse_broker_response, BrokerResponse, MAX_BROKER_FRAME_BYTES,
+    parse_broker_activation_request, parse_broker_activation_response, parse_broker_request,
+    parse_broker_response, BrokerActivationRequest, BrokerActivationResponse, BrokerResponse,
+    MAX_BROKER_ACTIVATION_FRAME_BYTES, MAX_BROKER_FRAME_BYTES,
 };
 use windows_sys::Win32::Foundation::{
     LocalFree, ERROR_IO_PENDING, ERROR_MORE_DATA, ERROR_NOT_FOUND, ERROR_OPERATION_ABORTED,
@@ -19,6 +21,9 @@ use windows_sys::Win32::Foundation::{
 use windows_sys::Win32::Security::Authorization::{
     ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW,
     ConvertStringSidToSidW, SDDL_REVISION_1,
+};
+use windows_sys::Win32::Security::Cryptography::{
+    BCryptGenRandom, BCRYPT_USE_SYSTEM_PREFERRED_RNG,
 };
 use windows_sys::Win32::Security::{
     CheckTokenMembership, CreateWellKnownSid, GetTokenInformation, RevertToSelf, TokenUser,
@@ -42,9 +47,13 @@ use windows_sys::Win32::System::Threading::{
 };
 use windows_sys::Win32::System::IO::{CancelIoEx, GetOverlappedResult, OVERLAPPED};
 
-use crate::{AuthorizedBrokerRequest, BrokerAuthenticator, ClientPrincipal, ClientRole};
+use crate::{
+    verify_windows_packaged_agent_process, AuthorizedBrokerRequest, BrokerAuthenticator,
+    ClientPrincipal, ClientRole, StrictPackageManifest, WindowsAgentProcessTrustLease,
+};
 
 const PIPE_NAME_PREFIX: &str = r"\\.\pipe\FlClashX.StrictBroker.";
+const ACTIVATION_PIPE_NAME_PREFIX: &str = r"\\.\pipe\FlClashX.StrictBroker.Activation.";
 const PIPE_BUFFER_BYTES: u32 = 64 * 1024;
 const MAX_PIPE_DEADLINE: Duration = Duration::from_secs(300);
 const CLIENT_PIPE_ACCESS: u32 = FILE_READ_DATA
@@ -56,10 +65,41 @@ const CLIENT_PIPE_ACCESS: u32 = FILE_READ_DATA
     | READ_CONTROL
     | SYNCHRONIZE;
 
+pub fn generate_windows_broker_session_pipe_name() -> Result<String> {
+    let mut nonce = [0_u8; 16];
+    // SAFETY: a null algorithm handle with the system-preferred flag is documented,
+    // and nonce is a valid writable buffer for the supplied length.
+    let status = unsafe {
+        BCryptGenRandom(
+            null_mut(),
+            nonce.as_mut_ptr(),
+            nonce.len() as u32,
+            BCRYPT_USE_SYSTEM_PREFERRED_RNG,
+        )
+    };
+    if status != 0 || nonce.iter().all(|byte| *byte == 0) {
+        bail!("generate strict Broker session pipe identity failed with status 0x{status:08x}");
+    }
+    let mut suffix = String::with_capacity(nonce.len() * 2);
+    use std::fmt::Write as _;
+    for byte in nonce {
+        write!(suffix, "{byte:02x}").expect("writing to a String cannot fail");
+    }
+    let pipe_name = format!(r"{PIPE_NAME_PREFIX}Session.{suffix}");
+    validate_pipe_name(&pipe_name)?;
+    Ok(pipe_name)
+}
+
 pub struct WindowsAuthenticatedRequest {
     pub authorized: AuthorizedBrokerRequest,
     pub client_process_id: u32,
     pub client_sid: String,
+}
+
+pub struct WindowsVerifiedActivationRequest {
+    pub request: BrokerActivationRequest,
+    pub client_sid: String,
+    pub agent: WindowsAgentProcessTrustLease,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -248,6 +288,129 @@ impl Drop for WindowsNamedPipeInstance {
     }
 }
 
+pub struct WindowsBrokerActivationPipeInstance {
+    handle: OwnedHandle,
+    deadlines: WindowsPipeDeadlines,
+}
+
+impl WindowsBrokerActivationPipeInstance {
+    pub fn create(pipe_name: &str, deadlines: WindowsPipeDeadlines) -> Result<Self> {
+        validate_activation_pipe_name(pipe_name)?;
+        WindowsPipeDeadlines::new(deadlines.connect, deadlines.read, deadlines.write)?;
+        let security_descriptor = PipeSecurityDescriptor::new_activation()?;
+        let attributes = SECURITY_ATTRIBUTES {
+            nLength: size_of::<SECURITY_ATTRIBUTES>() as u32,
+            lpSecurityDescriptor: security_descriptor.0,
+            bInheritHandle: 0,
+        };
+        let pipe_name = wide_null(pipe_name);
+        // SAFETY: all pointers reference initialized values for the duration of the call.
+        let handle = unsafe {
+            CreateNamedPipeW(
+                pipe_name.as_ptr(),
+                PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED | FILE_FLAG_FIRST_PIPE_INSTANCE,
+                PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_REJECT_REMOTE_CLIENTS,
+                1,
+                MAX_BROKER_ACTIVATION_FRAME_BYTES as u32,
+                MAX_BROKER_ACTIVATION_FRAME_BYTES as u32,
+                0,
+                &attributes,
+            )
+        };
+        if handle == INVALID_HANDLE_VALUE {
+            return Err(io::Error::last_os_error()).context("create strict Broker activation pipe");
+        }
+        // SAFETY: CreateNamedPipeW returned a unique, owned handle.
+        let handle = unsafe { OwnedHandle::from_raw_handle(handle) };
+        Ok(Self { handle, deadlines })
+    }
+
+    pub fn connect_and_verify(
+        &self,
+        expected_agent_path: impl AsRef<Path>,
+        package: &StrictPackageManifest,
+    ) -> Result<WindowsVerifiedActivationRequest> {
+        let identity = self.connect_and_receive()?;
+        if identity.is_local_system {
+            bail!("LocalSystem cannot activate an interactive Broker session");
+        }
+        let agent = verify_windows_packaged_agent_process(
+            identity.client_process_id,
+            expected_agent_path,
+            package,
+        )?;
+        Ok(WindowsVerifiedActivationRequest {
+            request: identity.request,
+            client_sid: identity.client_sid,
+            agent,
+        })
+    }
+
+    fn connect_and_receive(&self) -> Result<PendingActivationRequest> {
+        self.connect()?;
+        let frame = read_message_bounded(
+            raw_handle(&self.handle),
+            "activation request",
+            self.deadlines.read,
+            MAX_BROKER_ACTIVATION_FRAME_BYTES,
+        )?;
+        let request = parse_broker_activation_request(&frame)?;
+        let identity = resolve_local_client_identity(raw_handle(&self.handle))?;
+        Ok(PendingActivationRequest {
+            request,
+            client_sid: identity.token.sid,
+            client_process_id: identity.process_id,
+            is_local_system: identity.token.is_local_system,
+        })
+    }
+
+    pub fn write_response(&self, response: &BrokerActivationResponse) -> Result<()> {
+        write_message_bounded(
+            raw_handle(&self.handle),
+            &response.to_bytes()?,
+            "activation response",
+            self.deadlines.write,
+            MAX_BROKER_ACTIVATION_FRAME_BYTES,
+        )
+    }
+
+    pub fn disconnect_for_reuse(&self) {
+        // SAFETY: this is a live server pipe. An idle/cancelled instance may already be detached.
+        unsafe { DisconnectNamedPipe(raw_handle(&self.handle)) };
+    }
+
+    fn connect(&self) -> Result<()> {
+        match run_overlapped(
+            raw_handle(&self.handle),
+            self.deadlines.connect,
+            "activation connect",
+            |overlapped, _| {
+                // SAFETY: the handle is live and overlapped remains live until completion.
+                unsafe { ConnectNamedPipe(raw_handle(&self.handle), overlapped) }
+            },
+        )? {
+            IoCompletion::Complete(_) => Ok(()),
+            IoCompletion::MoreData(_) => {
+                bail!("strict Broker activation connect returned message data")
+            }
+        }
+    }
+}
+
+struct PendingActivationRequest {
+    request: BrokerActivationRequest,
+    client_sid: String,
+    client_process_id: u32,
+    is_local_system: bool,
+}
+
+impl Drop for WindowsBrokerActivationPipeInstance {
+    fn drop(&mut self) {
+        // SAFETY: disconnecting an unconnected live pipe is harmless.
+        unsafe { DisconnectNamedPipe(raw_handle(&self.handle)) };
+    }
+}
+
 pub fn exchange_windows_pipe_for_agent(pipe_name: &str, frame: &[u8]) -> Result<BrokerResponse> {
     validate_pipe_name(pipe_name)?;
     let request_frame = std::str::from_utf8(frame).context("Broker request is not UTF-8")?;
@@ -284,8 +447,63 @@ pub fn exchange_windows_pipe_for_agent(pipe_name: &str, frame: &[u8]) -> Result<
     Ok(response)
 }
 
+pub fn exchange_windows_activation_for_agent(
+    pipe_name: &str,
+    frame: &[u8],
+    deadlines: WindowsPipeDeadlines,
+) -> Result<BrokerActivationResponse> {
+    validate_activation_pipe_name(pipe_name)?;
+    WindowsPipeDeadlines::new(deadlines.connect, deadlines.read, deadlines.write)?;
+    let request = parse_broker_activation_request(frame)?;
+    let pipe_name = wide_null(pipe_name);
+    // SAFETY: the path pointer is NUL-terminated and optional pointers are null.
+    let handle = unsafe {
+        CreateFileW(
+            pipe_name.as_ptr(),
+            CLIENT_PIPE_ACCESS,
+            0,
+            null(),
+            OPEN_EXISTING,
+            FILE_FLAG_OVERLAPPED | SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION,
+            null_mut(),
+        )
+    };
+    if handle == INVALID_HANDLE_VALUE {
+        return Err(io::Error::last_os_error()).context("open strict Broker activation pipe");
+    }
+    // SAFETY: CreateFileW returned a unique, owned handle.
+    let handle = unsafe { OwnedHandle::from_raw_handle(handle) };
+    write_message_bounded(
+        raw_handle(&handle),
+        frame,
+        "activation request",
+        deadlines.write,
+        MAX_BROKER_ACTIVATION_FRAME_BYTES,
+    )?;
+    let response = parse_broker_activation_response(&read_message_bounded(
+        raw_handle(&handle),
+        "activation response",
+        deadlines.read,
+        MAX_BROKER_ACTIVATION_FRAME_BYTES,
+    )?)?;
+    if response.request_id != request.request_id {
+        bail!("Broker activation response request ID does not match the request");
+    }
+    Ok(response)
+}
+
 fn write_message(handle: *mut c_void, frame: &[u8], label: &str, timeout: Duration) -> Result<()> {
-    if frame.is_empty() || frame.len() > MAX_BROKER_FRAME_BYTES {
+    write_message_bounded(handle, frame, label, timeout, MAX_BROKER_FRAME_BYTES)
+}
+
+fn write_message_bounded(
+    handle: *mut c_void,
+    frame: &[u8],
+    label: &str,
+    timeout: Duration,
+    maximum_bytes: usize,
+) -> Result<()> {
+    if frame.is_empty() || frame.len() > maximum_bytes {
         bail!("Broker {label} frame size is invalid");
     }
     let completion = run_overlapped(handle, timeout, label, |overlapped, transferred| {
@@ -310,12 +528,21 @@ fn write_message(handle: *mut c_void, frame: &[u8], label: &str, timeout: Durati
 }
 
 fn read_message(handle: *mut c_void, label: &str, timeout: Duration) -> Result<Vec<u8>> {
-    let mut message = Vec::with_capacity(PIPE_BUFFER_BYTES as usize);
+    read_message_bounded(handle, label, timeout, MAX_BROKER_FRAME_BYTES)
+}
+
+fn read_message_bounded(
+    handle: *mut c_void,
+    label: &str,
+    timeout: Duration,
+    maximum_bytes: usize,
+) -> Result<Vec<u8>> {
+    let mut message = Vec::with_capacity(maximum_bytes.min(PIPE_BUFFER_BYTES as usize));
     let deadline = Instant::now()
         .checked_add(timeout)
         .ok_or_else(|| anyhow::anyhow!("Broker {label} deadline is invalid"))?;
     loop {
-        let remaining = MAX_BROKER_FRAME_BYTES
+        let remaining = maximum_bytes
             .checked_add(1)
             .and_then(|limit| limit.checked_sub(message.len()))
             .ok_or_else(|| anyhow::anyhow!("Broker {label} frame exceeds its size limit"))?;
@@ -347,7 +574,7 @@ fn read_message(handle: *mut c_void, label: &str, timeout: Duration) -> Result<V
             IoCompletion::MoreData(bytes) => (bytes, true),
         };
         message.truncate(start + bytes_read as usize);
-        if message.len() > MAX_BROKER_FRAME_BYTES {
+        if message.len() > maximum_bytes {
             bail!("Broker {label} frame exceeds its size limit");
         }
         if !more_data {
@@ -530,6 +757,28 @@ struct ResolvedClientIdentity {
 }
 
 fn resolve_client_identity(handle: *mut c_void, owner_sid: &str) -> Result<ResolvedClientIdentity> {
+    let identity = resolve_local_client_identity(handle)?;
+    let token = identity.token;
+    let role = if token.sid == owner_sid {
+        ClientRole::Owner
+    } else if token.is_administrator || token.is_local_system {
+        ClientRole::RecoveryAdministrator
+    } else {
+        bail!("Broker client token is not an authorized owner or recovery administrator");
+    };
+    Ok(ResolvedClientIdentity {
+        principal: ClientPrincipal::new(true, role),
+        process_id: identity.process_id,
+        sid: token.sid,
+    })
+}
+
+struct LocalClientIdentity {
+    process_id: u32,
+    token: TokenIdentity,
+}
+
+fn resolve_local_client_identity(handle: *mut c_void) -> Result<LocalClientIdentity> {
     let mut process_id = 0_u32;
     // SAFETY: handle is a connected server-side named-pipe instance.
     if unsafe { GetNamedPipeClientProcessId(handle, &mut process_id) } == 0 || process_id == 0 {
@@ -544,21 +793,9 @@ fn resolve_client_identity(handle: *mut c_void, owner_sid: &str) -> Result<Resol
     }
     // SAFETY: OpenThreadToken returned a unique, owned handle.
     let token = unsafe { OwnedHandle::from_raw_handle(token) };
-    let identity = token_identity(raw_handle(&token))?;
+    let token = token_identity(raw_handle(&token))?;
     impersonation.revert()?;
-
-    let role = if identity.sid == owner_sid {
-        ClientRole::Owner
-    } else if identity.is_administrator || identity.is_local_system {
-        ClientRole::RecoveryAdministrator
-    } else {
-        bail!("Broker client token is not an authorized owner or recovery administrator");
-    };
-    Ok(ResolvedClientIdentity {
-        principal: ClientPrincipal::new(true, role),
-        process_id,
-        sid: identity.sid,
-    })
+    Ok(LocalClientIdentity { process_id, token })
 }
 
 struct TokenIdentity {
@@ -668,7 +905,16 @@ impl PipeSecurityDescriptor {
     fn new(owner_sid: &str) -> Result<Self> {
         let sddl =
             format!("D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;0x{CLIENT_PIPE_ACCESS:x};;;{owner_sid})");
-        let sddl = wide_null(&sddl);
+        Self::from_sddl(&sddl)
+    }
+
+    fn new_activation() -> Result<Self> {
+        let sddl = format!("D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;0x{CLIENT_PIPE_ACCESS:x};;;AU)");
+        Self::from_sddl(&sddl)
+    }
+
+    fn from_sddl(sddl: &str) -> Result<Self> {
+        let sddl = wide_null(sddl);
         let mut descriptor = null_mut();
         // SAFETY: sddl is NUL-terminated and descriptor is a valid output pointer.
         if unsafe {
@@ -767,6 +1013,21 @@ fn validate_pipe_name(value: &str) -> Result<()> {
     Ok(())
 }
 
+fn validate_activation_pipe_name(value: &str) -> Result<()> {
+    let Some(suffix) = value.strip_prefix(ACTIVATION_PIPE_NAME_PREFIX) else {
+        bail!("strict Broker activation pipe name has an invalid namespace");
+    };
+    if suffix.is_empty()
+        || value.len() > 240
+        || !suffix
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'_'))
+    {
+        bail!("strict Broker activation pipe name is invalid");
+    }
+    Ok(())
+}
+
 fn wide_null(value: impl AsRef<Path>) -> Vec<u16> {
     value
         .as_ref()
@@ -778,4 +1039,73 @@ fn wide_null(value: impl AsRef<Path>) -> Vec<u16> {
 
 fn raw_handle(handle: &OwnedHandle) -> *mut c_void {
     handle.as_raw_handle()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    use flclash_strict_contract::BrokerActivationResponseBody;
+
+    use super::*;
+
+    fn activation_pipe_name() -> String {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time")
+            .as_nanos();
+        format!(
+            r"\\.\pipe\FlClashX.StrictBroker.Activation.Test.{}.{}",
+            std::process::id(),
+            nonce
+        )
+    }
+
+    #[test]
+    fn activation_pipe_uses_kernel_client_identity_and_correlated_frames() {
+        let pipe_name = activation_pipe_name();
+        let deadlines = WindowsPipeDeadlines::new(
+            Duration::from_secs(2),
+            Duration::from_secs(2),
+            Duration::from_secs(2),
+        )
+        .unwrap();
+        let server = WindowsBrokerActivationPipeInstance::create(&pipe_name, deadlines).unwrap();
+        let frame = format!(
+            r#"{{"protocol":1,"requestId":"activation-test","sessionCapability":"{}"}}"#,
+            "11".repeat(32)
+        )
+        .into_bytes();
+        let client_name = pipe_name.clone();
+        let client = std::thread::spawn(move || {
+            exchange_windows_activation_for_agent(&client_name, &frame, deadlines).unwrap()
+        });
+
+        let request = server.connect_and_receive().unwrap();
+        assert_eq!(request.request.request_id, "activation-test");
+        assert_eq!(request.client_process_id, std::process::id());
+        assert_eq!(request.client_sid, current_process_user_sid().unwrap());
+        assert!(!request.is_local_system);
+        let response = BrokerActivationResponse::activated(
+            "activation-test",
+            r"\\.\pipe\FlClashX.StrictBroker.Session.test",
+        )
+        .unwrap();
+        server.write_response(&response).unwrap();
+
+        assert!(matches!(
+            client.join().unwrap().body,
+            BrokerActivationResponseBody::Activated { .. }
+        ));
+    }
+
+    #[test]
+    fn session_pipe_names_use_fresh_system_randomness() {
+        let first = generate_windows_broker_session_pipe_name().unwrap();
+        let second = generate_windows_broker_session_pipe_name().unwrap();
+        validate_pipe_name(&first).unwrap();
+        validate_pipe_name(&second).unwrap();
+        assert_ne!(first, second);
+        assert!(first.starts_with(r"\\.\pipe\FlClashX.StrictBroker.Session."));
+    }
 }

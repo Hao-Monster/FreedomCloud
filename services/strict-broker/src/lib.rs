@@ -54,8 +54,10 @@ pub use windows_identity::{
 };
 #[cfg(windows)]
 pub use windows_pipe::{
-    current_process_user_sid, exchange_windows_pipe_for_agent, WindowsAuthenticatedRequest,
-    WindowsNamedPipeInstance, WindowsPipeDeadlines,
+    current_process_user_sid, exchange_windows_activation_for_agent,
+    exchange_windows_pipe_for_agent, generate_windows_broker_session_pipe_name,
+    WindowsAuthenticatedRequest, WindowsBrokerActivationPipeInstance, WindowsNamedPipeInstance,
+    WindowsPipeDeadlines, WindowsVerifiedActivationRequest,
 };
 #[cfg(windows)]
 pub use windows_pipe_pool::{
