@@ -50,11 +50,17 @@ static const GUID FcxDatagramV6CalloutKey = {
 #define FCX_STRICT_LEASE_POOL_TAG 'LCXF'
 #define FCX_STRICT_REDIRECT_POOL_TAG 'RCXF'
 #define FCX_STRICT_UDP_FLOW_POOL_TAG 'UCXF'
+#define FCX_STRICT_UDP_INJECTION_POOL_TAG 'ICXF'
 #define FCX_STRICT_MAX_UDP_FLOWS 1024
 #define FCX_STRICT_UDP_FLOW_BUCKETS 256
+#define FCX_STRICT_MAX_UDP_INJECTIONS 256
+#define FCX_IPV4_HEADER_BYTES 20u
+#define FCX_IPV6_HEADER_BYTES 40u
 
 C_ASSERT((FCX_STRICT_UDP_FLOW_BUCKETS &
           (FCX_STRICT_UDP_FLOW_BUCKETS - 1u)) == 0u);
+C_ASSERT(FCX_STRICT_MAX_UDP_INJECTIONS >=
+         FCX_STRICT_DATAGRAM_MAX_RECORDS);
 
 #define FCX_CALLOUT_GUARD_V4 0u
 #define FCX_CALLOUT_GUARD_V6 1u
@@ -119,6 +125,14 @@ typedef struct _FCX_UDP_HEADER {
 
 C_ASSERT(sizeof(FCX_UDP_HEADER) == 8u);
 
+typedef struct _FCX_STRICT_UDP_INJECTION_CONTEXT {
+    NET_BUFFER_LIST *NetBufferList;
+    PMDL Mdl;
+    FCX_STRICT_UDP_FLOW_CONTEXT *FlowContext;
+    SIZE_T AllocationBytes;
+    UINT8 Packet[ANYSIZE_ARRAY];
+} FCX_STRICT_UDP_INJECTION_CONTEXT;
+
 static WDFDEVICE FcxControlDevice;
 static WDFQUEUE FcxDatagramReceiveQueue;
 static PEX_RUNDOWN_REF_CACHE_AWARE FcxPolicyRundown;
@@ -134,6 +148,8 @@ static UINT32 FcxRegisteredCallouts;
 static HANDLE FcxRedirectHandle;
 static HANDLE FcxTransportInjectionHandleV4;
 static HANDLE FcxTransportInjectionHandleV6;
+static PNDIS_GENERIC_OBJECT FcxNdisGenericObject;
+static NDIS_HANDLE FcxDatagramNblPool;
 static volatile LONG FcxUdpFlowCount;
 static volatile LONG64 FcxUdpFlowToken;
 static volatile LONG FcxUdpStopping;
@@ -142,6 +158,9 @@ static KSPIN_LOCK FcxUdpFlowLock;
 static LIST_ENTRY FcxUdpFlowList;
 static LIST_ENTRY FcxUdpFlowBuckets[FCX_STRICT_UDP_FLOW_BUCKETS];
 static KEVENT FcxUdpFlowEmptyEvent;
+static KSPIN_LOCK FcxUdpInjectionLock;
+static LONG FcxUdpInjectionCount;
+static KEVENT FcxUdpInjectionEmptyEvent;
 
 static
 VOID NTAPI
@@ -953,6 +972,99 @@ FcxDereferenceUdpFlowContext(
 
 static
 BOOLEAN
+FcxReserveUdpInjectionSlot(
+    VOID
+    )
+{
+    KIRQL oldIrql;
+    BOOLEAN reserved = FALSE;
+
+    KeAcquireSpinLock(&FcxUdpInjectionLock, &oldIrql);
+    if (FcxUdpInjectionCount < FCX_STRICT_MAX_UDP_INJECTIONS &&
+        InterlockedCompareExchange(&FcxDatagramActive, 0, 0) != 0 &&
+        InterlockedCompareExchange(&FcxUdpStopping, 0, 0) == 0) {
+        if (FcxUdpInjectionCount == 0) {
+            KeClearEvent(&FcxUdpInjectionEmptyEvent);
+        }
+        ++FcxUdpInjectionCount;
+        reserved = TRUE;
+    }
+    KeReleaseSpinLock(&FcxUdpInjectionLock, oldIrql);
+    return reserved;
+}
+
+static
+VOID
+FcxReleaseUdpInjectionSlot(
+    VOID
+    )
+{
+    KIRQL oldIrql;
+
+    KeAcquireSpinLock(&FcxUdpInjectionLock, &oldIrql);
+    NT_ASSERT(FcxUdpInjectionCount > 0);
+    --FcxUdpInjectionCount;
+    if (FcxUdpInjectionCount == 0) {
+        KeSetEvent(&FcxUdpInjectionEmptyEvent, IO_NO_INCREMENT, FALSE);
+    }
+    KeReleaseSpinLock(&FcxUdpInjectionLock, oldIrql);
+}
+
+static
+VOID
+FcxWaitForUdpInjections(
+    VOID
+    )
+{
+    (VOID)KeWaitForSingleObject(&FcxUdpInjectionEmptyEvent,
+                                Executive,
+                                KernelMode,
+                                FALSE,
+                                NULL);
+}
+
+static
+VOID
+FcxDestroyUdpInjectionContext(
+    _Inout_ FCX_STRICT_UDP_INJECTION_CONTEXT *Context
+    )
+{
+    FCX_STRICT_UDP_FLOW_CONTEXT *flowContext = Context->FlowContext;
+    SIZE_T allocationBytes = Context->AllocationBytes;
+
+    if (Context->NetBufferList != NULL) {
+        FwpsFreeNetBufferList0(Context->NetBufferList);
+        Context->NetBufferList = NULL;
+    }
+    if (Context->Mdl != NULL) {
+        IoFreeMdl(Context->Mdl);
+        Context->Mdl = NULL;
+    }
+    RtlSecureZeroMemory(Context, allocationBytes);
+    ExFreePoolWithTag(Context, FCX_STRICT_UDP_INJECTION_POOL_TAG);
+    FcxDereferenceUdpFlowContext(flowContext);
+    FcxReleaseUdpInjectionSlot();
+}
+
+static
+VOID NTAPI
+FcxCompleteUdpReplyInjection(
+    _In_ VOID *CompletionContext,
+    _Inout_ NET_BUFFER_LIST *NetBufferList,
+    _In_ BOOLEAN DispatchLevel
+    )
+{
+    FCX_STRICT_UDP_INJECTION_CONTEXT *context =
+        (FCX_STRICT_UDP_INJECTION_CONTEXT *)CompletionContext;
+
+    UNREFERENCED_PARAMETER(DispatchLevel);
+    NT_ASSERT(context != NULL);
+    NT_ASSERT(context->NetBufferList == NetBufferList);
+    FcxDestroyUdpInjectionContext(context);
+}
+
+static
+BOOLEAN
 FcxUdpReplySequenceAccepts(
     _Inout_ FCX_STRICT_UDP_FLOW_CONTEXT *Context,
     _In_ UINT64 Sequence,
@@ -993,6 +1105,27 @@ FcxUdpReplySequenceAccepts(
         Context->ReplySequenceBitmap = nextBitmap;
     }
     return TRUE;
+}
+
+static
+BOOLEAN
+FcxCommitUdpReplySequence(
+    _Inout_ FCX_STRICT_UDP_FLOW_CONTEXT *Context,
+    _In_ UINT64 Sequence
+    )
+{
+    KIRQL oldIrql;
+    BOOLEAN committed = FALSE;
+
+    KeAcquireSpinLock(&FcxUdpFlowLock, &oldIrql);
+    if (Context->Listed && Context->TokenLinked && Context->Associated &&
+        Context->EndpointBound && !Context->RemovalRequested &&
+        InterlockedCompareExchange(&FcxDatagramActive, 0, 0) != 0 &&
+        InterlockedCompareExchange(&FcxUdpStopping, 0, 0) == 0) {
+        committed = FcxUdpReplySequenceAccepts(Context, Sequence, TRUE);
+    }
+    KeReleaseSpinLock(&FcxUdpFlowLock, oldIrql);
+    return committed;
 }
 
 static
@@ -1388,6 +1521,9 @@ FcxReadDatagramEndpoints(
         interfaceIndex->type != FWP_UINT32 ||
         subInterfaceIndex->type != FWP_UINT32 ||
         compartmentId->type != FWP_UINT32 ||
+        FWPS_IS_METADATA_FIELD_PRESENT(
+            IncomingMetadata,
+            FWPS_METADATA_FIELD_ALE_CLASSIFY_REQUIRED) ||
         !FWPS_IS_METADATA_FIELD_PRESENT(
             IncomingMetadata,
             FWPS_METADATA_FIELD_COMPARTMENT_ID) ||
@@ -1932,6 +2068,7 @@ FcxReleaseLeaseLocked(
         ExRundownCompletedCacheAware(FcxLeaseRundown);
         ExReInitializeRundownProtectionCacheAware(FcxLeaseRundown);
     }
+    FcxWaitForUdpInjections();
     FcxDrainUdpFlowContexts(FALSE);
 }
 
@@ -1976,6 +2113,7 @@ FcxReplaceLease(
         if (FcxDatagramReceiveQueue != NULL) {
             WdfIoQueuePurgeSynchronously(FcxDatagramReceiveQueue);
         }
+        FcxWaitForUdpInjections();
         FcxDrainUdpFlowContexts(FALSE);
     }
     oldLease = (FCX_STRICT_LEASE_STATE *)InterlockedExchangePointer(
@@ -2266,6 +2404,7 @@ FcxSetDatagramPathActive(
         if (FcxDatagramReceiveQueue != NULL) {
             WdfIoQueuePurgeSynchronously(FcxDatagramReceiveQueue);
         }
+        FcxWaitForUdpInjections();
         FcxDrainUdpFlowContexts(FALSE);
         if (FcxLeaseRundown != NULL) {
             ExRundownCompletedCacheAware(FcxLeaseRundown);
@@ -2375,6 +2514,152 @@ FcxValidateSubmittedDatagramRecord(
 
 static
 NTSTATUS
+FcxInjectSubmittedDatagram(
+    _In_ const FCX_STRICT_DATAGRAM_BATCH_HEADER *Batch,
+    _In_ const FCX_STRICT_DATAGRAM_RECORD_HEADER *Record,
+    _In_reads_bytes_(Record->PayloadBytes) const UINT8 *Payload
+    )
+{
+    FCX_STRICT_UDP_FLOW_CONTEXT *flowContext;
+    FCX_STRICT_UDP_INJECTION_CONTEXT *context = NULL;
+    FCX_UDP_HEADER *udpHeader;
+    HANDLE injectionHandle;
+    ADDRESS_FAMILY addressFamily;
+    ULONG ipHeaderBytes;
+    ULONG udpBytes;
+    ULONG packetBytes;
+    SIZE_T allocationBytes;
+    UINT64 sequence;
+    NTSTATUS status;
+
+    flowContext = FcxReferenceUdpFlowForReply(Batch, Record, FALSE);
+    if (flowContext == NULL) {
+        return STATUS_ACCESS_DENIED;
+    }
+    if (!FcxReserveUdpInjectionSlot()) {
+        FcxDereferenceUdpFlowContext(flowContext);
+        return STATUS_DEVICE_BUSY;
+    }
+    if (FcxDatagramNblPool == NULL) {
+        status = STATUS_DEVICE_NOT_READY;
+        goto ExitWithoutContext;
+    }
+    if (Record->AddressFamily == FCX_STRICT_ADDRESS_FAMILY_V4) {
+        addressFamily = AF_INET;
+        ipHeaderBytes = FCX_IPV4_HEADER_BYTES;
+        injectionHandle = FcxTransportInjectionHandleV4;
+    } else if (Record->AddressFamily == FCX_STRICT_ADDRESS_FAMILY_V6) {
+        addressFamily = AF_INET6;
+        ipHeaderBytes = FCX_IPV6_HEADER_BYTES;
+        injectionHandle = FcxTransportInjectionHandleV6;
+    } else {
+        status = STATUS_INVALID_PARAMETER;
+        goto ExitWithoutContext;
+    }
+    if (injectionHandle == NULL) {
+        status = STATUS_DEVICE_NOT_READY;
+        goto ExitWithoutContext;
+    }
+    udpBytes = (ULONG)sizeof(*udpHeader) + Record->PayloadBytes;
+    packetBytes = ipHeaderBytes + udpBytes;
+    allocationBytes = FIELD_OFFSET(FCX_STRICT_UDP_INJECTION_CONTEXT, Packet) +
+                      (SIZE_T)packetBytes;
+    if (allocationBytes < packetBytes) {
+        status = STATUS_INTEGER_OVERFLOW;
+        goto ExitWithoutContext;
+    }
+    context = (FCX_STRICT_UDP_INJECTION_CONTEXT *)ExAllocatePool2(POOL_FLAG_NON_PAGED,
+                                                                  allocationBytes,
+                                                                  FCX_STRICT_UDP_INJECTION_POOL_TAG);
+    if (context == NULL) {
+        status = STATUS_INSUFFICIENT_RESOURCES;
+        goto ExitWithoutContext;
+    }
+    RtlZeroMemory(context, allocationBytes);
+    context->FlowContext = flowContext;
+    context->AllocationBytes = allocationBytes;
+    flowContext = NULL;
+
+    udpHeader = (FCX_UDP_HEADER *)(context->Packet + ipHeaderBytes);
+    udpHeader->SourcePort = RtlUshortByteSwap(Record->RemotePort);
+    udpHeader->DestinationPort = RtlUshortByteSwap(Record->LocalPort);
+    udpHeader->Length = RtlUshortByteSwap((UINT16)udpBytes);
+    udpHeader->Checksum = 0;
+    RtlCopyMemory((UINT8 *)udpHeader + sizeof(*udpHeader),
+                  Payload,
+                  Record->PayloadBytes);
+
+    context->Mdl = IoAllocateMdl(context->Packet,
+                                 packetBytes,
+                                 FALSE,
+                                 FALSE,
+                                 NULL);
+    if (context->Mdl == NULL) {
+        status = STATUS_INSUFFICIENT_RESOURCES;
+        goto Exit;
+    }
+    MmBuildMdlForNonPagedPool(context->Mdl);
+    status = FwpsAllocateNetBufferAndNetBufferList0(
+        FcxDatagramNblPool,
+        0,
+        0,
+        context->Mdl,
+        ipHeaderBytes,
+        udpBytes,
+        &context->NetBufferList);
+    if (!NT_SUCCESS(status)) {
+        goto Exit;
+    }
+    status = FwpsConstructIpHeaderForTransportPacket0(
+        context->NetBufferList,
+        0,
+        addressFamily,
+        context->FlowContext->RemoteAddress,
+        context->FlowContext->LocalAddress,
+        IPPROTO_UDP,
+        0,
+        NULL,
+        0,
+        0,
+        NULL,
+        context->FlowContext->InterfaceIndex,
+        context->FlowContext->SubInterfaceIndex);
+    if (!NT_SUCCESS(status)) {
+        goto Exit;
+    }
+    RtlCopyMemory(&sequence, &Record->Sequence, sizeof(sequence));
+    if (!FcxCommitUdpReplySequence(context->FlowContext, sequence)) {
+        status = STATUS_ACCESS_DENIED;
+        goto Exit;
+    }
+    status = FwpsInjectTransportReceiveAsync0(
+        injectionHandle,
+        (HANDLE)context->FlowContext,
+        0,
+        0,
+        addressFamily,
+        context->FlowContext->CompartmentId,
+        context->FlowContext->InterfaceIndex,
+        context->FlowContext->SubInterfaceIndex,
+        context->NetBufferList,
+        FcxCompleteUdpReplyInjection,
+        context);
+    if (NT_SUCCESS(status)) {
+        return STATUS_SUCCESS;
+    }
+
+Exit:
+    FcxDestroyUdpInjectionContext(context);
+    return status;
+
+ExitWithoutContext:
+    FcxDereferenceUdpFlowContext(flowContext);
+    FcxReleaseUdpInjectionSlot();
+    return status;
+}
+
+static
+NTSTATUS
 FcxValidateSubmittedDatagramBatch(
     _In_ WDFREQUEST Request,
     _In_ size_t OutputBufferLength,
@@ -2446,9 +2731,29 @@ FcxValidateSubmittedDatagramBatch(
         return STATUS_INVALID_PARAMETER;
     }
 
-    // Reply injection is deliberately unavailable until the WFP injection
-    // handles and per-flow provenance path are implemented and VM-qualified.
-    return STATUS_NOT_SUPPORTED;
+    cursor = FCX_STRICT_DATAGRAM_BATCH_HEADER_BYTES;
+    for (recordIndex = 0; recordIndex < batch.RecordCount; ++recordIndex) {
+        status = FcxValidateSubmittedDatagramRecord(
+            input + cursor,
+            batch.TotalBytes - cursor,
+            &recordBytes,
+            &record);
+        if (!NT_SUCCESS(status)) {
+            return status;
+        }
+        status = FcxInjectSubmittedDatagram(
+            &batch,
+            &record,
+            input + cursor + FCX_STRICT_DATAGRAM_RECORD_HEADER_BYTES);
+        if (!NT_SUCCESS(status)) {
+            return status;
+        }
+        cursor += recordBytes;
+    }
+    if (cursor != batch.TotalBytes) {
+        return STATUS_INVALID_PARAMETER;
+    }
+    return STATUS_SUCCESS;
 }
 
 static
@@ -2743,6 +3048,62 @@ FcxDestroyRedirectHandle(
 
 static
 NTSTATUS
+FcxCreateDatagramNblPool(
+    _In_ PDRIVER_OBJECT DriverObject
+    )
+{
+    NET_BUFFER_LIST_POOL_PARAMETERS nblParameters;
+
+    PAGED_CODE();
+    if (FcxNdisGenericObject != NULL || FcxDatagramNblPool != NULL) {
+        return STATUS_INVALID_DEVICE_STATE;
+    }
+    FcxNdisGenericObject = NdisAllocateGenericObject(
+        DriverObject,
+        FCX_STRICT_UDP_INJECTION_POOL_TAG,
+        0);
+    if (FcxNdisGenericObject == NULL) {
+        return STATUS_INSUFFICIENT_RESOURCES;
+    }
+    RtlZeroMemory(&nblParameters, sizeof(nblParameters));
+    nblParameters.Header.Type = NDIS_OBJECT_TYPE_DEFAULT;
+    nblParameters.Header.Revision =
+        NET_BUFFER_LIST_POOL_PARAMETERS_REVISION_1;
+    nblParameters.Header.Size =
+        NDIS_SIZEOF_NET_BUFFER_LIST_POOL_PARAMETERS_REVISION_1;
+    nblParameters.fAllocateNetBuffer = TRUE;
+    nblParameters.DataSize = 0;
+    nblParameters.PoolTag = FCX_STRICT_UDP_INJECTION_POOL_TAG;
+    FcxDatagramNblPool = NdisAllocateNetBufferListPool(
+        FcxNdisGenericObject,
+        &nblParameters);
+    if (FcxDatagramNblPool == NULL) {
+        NdisFreeGenericObject(FcxNdisGenericObject);
+        FcxNdisGenericObject = NULL;
+        return STATUS_INSUFFICIENT_RESOURCES;
+    }
+    return STATUS_SUCCESS;
+}
+
+static
+VOID
+FcxDestroyDatagramNblPool(
+    VOID
+    )
+{
+    PAGED_CODE();
+    if (FcxDatagramNblPool != NULL) {
+        NdisFreeNetBufferListPool(FcxDatagramNblPool);
+        FcxDatagramNblPool = NULL;
+    }
+    if (FcxNdisGenericObject != NULL) {
+        NdisFreeGenericObject(FcxNdisGenericObject);
+        FcxNdisGenericObject = NULL;
+    }
+}
+
+static
+NTSTATUS
 FcxCreateTransportInjectionHandles(
     VOID
     )
@@ -2869,6 +3230,7 @@ FcxEvtDriverUnload(
     FcxReleaseLease();
     FcxUnregisterCallouts();
     FcxDestroyTransportInjectionHandles();
+    FcxDestroyDatagramNblPool();
     FcxDestroyRedirectHandle();
     FcxReleasePolicy();
     if (FcxLeaseRundown != NULL) {
@@ -2921,6 +3283,9 @@ DriverEntry(
         InitializeListHead(&FcxUdpFlowBuckets[bucketIndex]);
     }
     KeInitializeEvent(&FcxUdpFlowEmptyEvent, NotificationEvent, TRUE);
+    KeInitializeSpinLock(&FcxUdpInjectionLock);
+    FcxUdpInjectionCount = 0;
+    KeInitializeEvent(&FcxUdpInjectionEmptyEvent, NotificationEvent, TRUE);
 
     FcxPolicyRundown = ExAllocateCacheAwareRundownProtection(
         NonPagedPoolNx,
@@ -2994,6 +3359,10 @@ DriverEntry(
     if (!NT_SUCCESS(status)) {
         goto Failure;
     }
+    status = FcxCreateDatagramNblPool(DriverObject);
+    if (!NT_SUCCESS(status)) {
+        goto Failure;
+    }
     status = FcxCreateTransportInjectionHandles();
     if (!NT_SUCCESS(status)) {
         goto Failure;
@@ -3011,6 +3380,7 @@ Failure:
     }
     FcxUnregisterCallouts();
     FcxDestroyTransportInjectionHandles();
+    FcxDestroyDatagramNblPool();
     FcxDestroyRedirectHandle();
     if (FcxProcessNotifyRegistered) {
         (VOID)PsSetCreateProcessNotifyRoutineEx(FcxProcessNotify, TRUE);
@@ -3036,6 +3406,8 @@ Failure:
 #pragma alloc_text(PAGE, FcxEvtIoDeviceControl)
 #pragma alloc_text(PAGE, FcxCreateRedirectHandle)
 #pragma alloc_text(PAGE, FcxDestroyRedirectHandle)
+#pragma alloc_text(PAGE, FcxCreateDatagramNblPool)
+#pragma alloc_text(PAGE, FcxDestroyDatagramNblPool)
 #pragma alloc_text(PAGE, FcxCreateTransportInjectionHandles)
 #pragma alloc_text(PAGE, FcxDestroyTransportInjectionHandles)
 #pragma alloc_text(PAGE, FcxRegisterCallouts)

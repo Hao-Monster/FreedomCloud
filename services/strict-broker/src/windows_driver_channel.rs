@@ -1511,7 +1511,7 @@ mod tests {
             "HandleToULong(PsGetProcessId(lease->BrokerProcess))",
             "batch.TotalBytes != (UINT32)inputBytes",
             "FcxDatagramPathOwnsRequest(Request, &batch)",
-            "return STATUS_NOT_SUPPORTED;",
+            "FcxInjectSubmittedDatagram(",
         ] {
             assert!(
                 driver.contains(invariant),
@@ -1886,7 +1886,7 @@ mod tests {
             validation
                 .find("FcxDereferenceUdpFlowContext(context);")
                 .unwrap()
-                < validation.find("return STATUS_NOT_SUPPORTED;").unwrap(),
+                < validation.find("cursor += recordBytes;").unwrap(),
             "validation-only lookup must release its flow reference"
         );
     }
@@ -1934,6 +1934,95 @@ mod tests {
             replay.find("sequenceOffset >= 64u").unwrap()
                 < replay.find("1ull << sequenceOffset").unwrap(),
             "stale offsets must be bounded before shifting"
+        );
+    }
+
+    #[test]
+    fn kernel_datagram_reply_injection_is_bounded_owned_and_drained() {
+        let driver = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../windows/strict-driver/src/driver.c"
+        ));
+
+        for invariant in [
+            "#define FCX_STRICT_MAX_UDP_INJECTIONS 256",
+            "typedef struct _FCX_STRICT_UDP_INJECTION_CONTEXT",
+            "NET_BUFFER_LIST *NetBufferList;",
+            "PMDL Mdl;",
+            "FCX_STRICT_UDP_FLOW_CONTEXT *FlowContext;",
+            "SIZE_T AllocationBytes;",
+            "UINT8 Packet[ANYSIZE_ARRAY];",
+            "static PNDIS_GENERIC_OBJECT FcxNdisGenericObject;",
+            "static NDIS_HANDLE FcxDatagramNblPool;",
+            "static KSPIN_LOCK FcxUdpInjectionLock;",
+            "static KEVENT FcxUdpInjectionEmptyEvent;",
+            "FcxReserveUdpInjectionSlot(",
+            "FcxReleaseUdpInjectionSlot(",
+            "FcxWaitForUdpInjections(",
+            "FcxCreateDatagramNblPool(",
+            "NdisAllocateGenericObject(",
+            "NdisAllocateNetBufferListPool(",
+            "nblParameters.fAllocateNetBuffer = TRUE;",
+            "FcxDestroyDatagramNblPool();",
+            "ExAllocatePool2(POOL_FLAG_NON_PAGED",
+            "IoAllocateMdl(",
+            "MmBuildMdlForNonPagedPool(",
+            "FwpsAllocateNetBufferAndNetBufferList0(",
+            "udpHeader->SourcePort = RtlUshortByteSwap(Record->RemotePort);",
+            "udpHeader->DestinationPort = RtlUshortByteSwap(Record->LocalPort);",
+            "FwpsConstructIpHeaderForTransportPacket0(",
+            "FWPS_METADATA_FIELD_ALE_CLASSIFY_REQUIRED",
+            "FcxCommitUdpReplySequence(",
+            "FwpsInjectTransportReceiveAsync0(",
+            "(HANDLE)context->FlowContext",
+            "FcxCompleteUdpReplyInjection",
+            "FwpsFreeNetBufferList0(",
+            "IoFreeMdl(",
+            "SIZE_T allocationBytes = Context->AllocationBytes;",
+            "RtlSecureZeroMemory(Context, allocationBytes);",
+            "FcxDereferenceUdpFlowContext(flowContext);",
+            "FcxReleaseUdpInjectionSlot();",
+        ] {
+            assert!(
+                driver.contains(invariant),
+                "missing bounded UDP reply-injection invariant: {invariant}"
+            );
+        }
+
+        let release = driver
+            .split("FcxReleaseLeaseLocked(")
+            .nth(1)
+            .and_then(|body| body.split("FcxReleaseLease(").next())
+            .expect("lease release path is present");
+        assert!(
+            release.find("FcxWaitForUdpInjections();").unwrap()
+                < release.find("FcxDrainUdpFlowContexts(FALSE);").unwrap(),
+            "lease teardown must drain injections before flow contexts"
+        );
+
+        let submit = driver
+            .split("FcxValidateSubmittedDatagramBatch(")
+            .nth(1)
+            .and_then(|body| body.split("FcxReleasePolicy(").next())
+            .expect("reply submission path is present");
+        assert!(
+            submit.find("FcxValidateSubmittedDatagramRecord(").unwrap()
+                < submit.find("FcxInjectSubmittedDatagram(").unwrap(),
+            "every record must be revalidated before its payload is injected"
+        );
+        assert!(
+            submit.find("FcxInjectSubmittedDatagram(").unwrap()
+                < submit.rfind("return STATUS_SUCCESS;").unwrap(),
+            "submission succeeds only after every asynchronous injection is queued"
+        );
+        assert!(
+            submit.rfind("cursor != batch.TotalBytes").unwrap()
+                < submit.rfind("return STATUS_SUCCESS;").unwrap(),
+            "the revalidated submission pass must consume the exact batch"
+        );
+        assert!(
+            !submit.contains("return STATUS_NOT_SUPPORTED;"),
+            "valid replies must no longer use the placeholder result"
         );
     }
 }
