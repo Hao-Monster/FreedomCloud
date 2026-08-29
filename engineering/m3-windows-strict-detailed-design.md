@@ -72,6 +72,14 @@ Signed FlClashStrictCallout.sys
 The existing Helper remains responsible only for its fixed Core service
 operations. Expanding it into a generic driver/Broker executor is forbidden.
 
+Before opening the fixed callout device, the Broker replacement-locks and
+verifies the packaged `.sys`, queries SCM with read-only rights, and accepts
+only an exact `SERVICE_KERNEL_DRIVER` whose non-expandable canonical image path
+matches that locked file. It then opens the device and immediately requires a
+read-only IOCTL snapshot carrying the same package-injected 128-bit build ID.
+Any type, path or build mismatch prevents the channel from being constructed;
+no capability is inferred from the device name alone.
+
 ## 3. Application identity
 
 Policy input is not a raw path wildcard. Broker canonicalizes the file, obtains
