@@ -1,0 +1,104 @@
+#pragma once
+
+// This ABI is shared by the signed callout driver and the LocalSystem Broker.
+// Every multibyte field is little-endian. Structures are byte-packed so the
+// kernel must copy fields into aligned locals before using 64-bit values.
+
+#if defined(_KERNEL_MODE)
+#include <ntddk.h>
+#else
+#include <Windows.h>
+#include <winioctl.h>
+#endif
+
+#define FCX_STRICT_WIRE_MAGIC ((UINT32)0x53584346u) /* "FCXS" */
+#define FCX_STRICT_WIRE_PROTOCOL ((UINT16)1u)
+
+#define FCX_STRICT_POLICY_HEADER_BYTES ((UINT16)112u)
+#define FCX_STRICT_POLICY_RULE_BYTES ((UINT16)16u)
+#define FCX_STRICT_SNAPSHOT_BYTES ((UINT16)96u)
+#define FCX_STRICT_MAX_RULES ((UINT32)(128u * 33u))
+#define FCX_STRICT_MAX_APP_ID_BYTES ((UINT32)4096u)
+#define FCX_STRICT_MAX_POLICY_BYTES ((UINT32)(3u * 1024u * 1024u))
+
+#define FCX_STRICT_ACTION_PROXY ((UINT8)1u)
+#define FCX_STRICT_ACTION_BLOCK ((UINT8)2u)
+#define FCX_STRICT_NO_TARGET_GROUP ((UINT16)0xffffu)
+
+#define FCX_STRICT_SNAPSHOT_FLAG_LOADED ((UINT32)0x00000001u)
+
+#define FCX_STRICT_CAP_TCP4_REDIRECT (1ull << 0)
+#define FCX_STRICT_CAP_TCP6_REDIRECT (1ull << 1)
+#define FCX_STRICT_CAP_UDP4_REDIRECT (1ull << 2)
+#define FCX_STRICT_CAP_UDP6_REDIRECT (1ull << 3)
+#define FCX_STRICT_CAP_DNS_CAPTURED (1ull << 4)
+#define FCX_STRICT_CAP_QUIC_CAPTURED (1ull << 5)
+#define FCX_STRICT_CAP_REDIRECT_LOOP_PROTECTED (1ull << 6)
+#define FCX_STRICT_CAP_PERSISTENT_FAIL_CLOSED (1ull << 7)
+#define FCX_STRICT_KNOWN_CAPABILITIES                                          \
+    (FCX_STRICT_CAP_TCP4_REDIRECT | FCX_STRICT_CAP_TCP6_REDIRECT |             \
+     FCX_STRICT_CAP_UDP4_REDIRECT | FCX_STRICT_CAP_UDP6_REDIRECT |             \
+     FCX_STRICT_CAP_DNS_CAPTURED | FCX_STRICT_CAP_QUIC_CAPTURED |              \
+     FCX_STRICT_CAP_REDIRECT_LOOP_PROTECTED |                                  \
+     FCX_STRICT_CAP_PERSISTENT_FAIL_CLOSED)
+
+#define FCX_STRICT_DEVICE_TYPE FILE_DEVICE_NETWORK
+#define FCX_STRICT_IOCTL_ACCESS (FILE_READ_DATA | FILE_WRITE_DATA)
+#define IOCTL_FCX_STRICT_UPLOAD_POLICY                                         \
+    CTL_CODE(FCX_STRICT_DEVICE_TYPE, 0x900u, METHOD_BUFFERED,                  \
+             FCX_STRICT_IOCTL_ACCESS)
+#define IOCTL_FCX_STRICT_UNLOAD_POLICY                                         \
+    CTL_CODE(FCX_STRICT_DEVICE_TYPE, 0x901u, METHOD_BUFFERED,                  \
+             FCX_STRICT_IOCTL_ACCESS)
+#define IOCTL_FCX_STRICT_QUERY_POLICY                                          \
+    CTL_CODE(FCX_STRICT_DEVICE_TYPE, 0x902u, METHOD_BUFFERED,                  \
+             FCX_STRICT_IOCTL_ACCESS)
+
+#pragma pack(push, 1)
+
+typedef struct _FCX_STRICT_POLICY_HEADER {
+    UINT32 Magic;
+    UINT16 Protocol;
+    UINT16 HeaderBytes;
+    UINT32 TotalBytes;
+    UINT32 RuleCount;
+    UINT32 TargetGroupCount;
+    UINT32 Reserved0;
+    UINT64 Revision;
+    UINT8 PolicyDigest[32];
+    UINT8 PayloadDigest[32];
+    UINT32 RulesOffset;
+    UINT32 AppIdsOffset;
+    UINT32 AppIdsBytes;
+    UINT32 Reserved1;
+} FCX_STRICT_POLICY_HEADER;
+
+typedef struct _FCX_STRICT_POLICY_RULE {
+    UINT16 FamilyIndex;
+    UINT8 MemberIndex;
+    UINT8 Action;
+    UINT16 TargetGroupIndex;
+    UINT16 Reserved;
+    UINT32 AppIdOffset;
+    UINT32 AppIdBytes;
+} FCX_STRICT_POLICY_RULE;
+
+typedef struct _FCX_STRICT_DRIVER_SNAPSHOT {
+    UINT32 Magic;
+    UINT16 Protocol;
+    UINT16 SnapshotBytes;
+    UINT32 Flags;
+    UINT32 RuleCount;
+    UINT64 Generation;
+    UINT64 Revision;
+    UINT8 PolicyDigest[32];
+    UINT64 Capabilities;
+    UINT8 DriverBuildId[16];
+    UINT8 Reserved[8];
+} FCX_STRICT_DRIVER_SNAPSHOT;
+
+#pragma pack(pop)
+
+C_ASSERT(sizeof(FCX_STRICT_POLICY_HEADER) == FCX_STRICT_POLICY_HEADER_BYTES);
+C_ASSERT(sizeof(FCX_STRICT_POLICY_RULE) == FCX_STRICT_POLICY_RULE_BYTES);
+C_ASSERT(sizeof(FCX_STRICT_DRIVER_SNAPSHOT) == FCX_STRICT_SNAPSHOT_BYTES);

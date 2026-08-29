@@ -7,6 +7,7 @@ use crate::{WfpControlPlane, WfpControlSnapshot, WfpFilterSpec, WfpObjectKey, Wf
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct WindowsDriverPolicySnapshot {
+    pub driver_build_id: Option<String>,
     pub revision: Option<u64>,
     pub policy_digest: Option<String>,
     pub rule_count: usize,
@@ -168,9 +169,13 @@ fn validate_loaded_driver_snapshot(
 }
 
 fn validate_driver_snapshot_shape(snapshot: &WindowsDriverPolicySnapshot) -> Result<()> {
-    let has_metadata = snapshot.revision.is_some()
-        && snapshot.policy_digest.is_some()
-        && snapshot.rule_count != 0;
+    if snapshot.driver_build_id.as_deref().is_none_or(|build_id| {
+        build_id.len() != 32 || !build_id.bytes().all(|byte| byte.is_ascii_hexdigit())
+    }) {
+        bail!("strict driver build identity is invalid");
+    }
+    let has_metadata =
+        snapshot.revision.is_some() && snapshot.policy_digest.is_some() && snapshot.rule_count != 0;
     if snapshot.loaded != has_metadata {
         bail!("strict driver snapshot metadata is inconsistent");
     }

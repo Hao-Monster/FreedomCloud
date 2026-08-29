@@ -29,7 +29,7 @@ const WIRE_MAGIC: u32 = u32::from_le_bytes(*b"FCXS");
 const WIRE_PROTOCOL: u16 = 1;
 const POLICY_HEADER_BYTES: usize = 112;
 const POLICY_RULE_BYTES: usize = 16;
-const SNAPSHOT_BYTES: usize = 80;
+const SNAPSHOT_BYTES: usize = 96;
 const MAX_DRIVER_POLICY_WIRE_BYTES: usize = 3 * 1024 * 1024;
 const MAX_DRIVER_RULES: usize = MAX_STRICT_APPLICATIONS * 33;
 const MAX_IOCTL_DEADLINE: Duration = Duration::from_secs(300);
@@ -85,16 +85,19 @@ pub struct WindowsIoctlDriverChannel {
     device: OwnedHandle,
     _driver_trust: WindowsDriverTrustLease,
     deadline: WindowsDriverIoctlDeadline,
+    expected_driver_build_id: String,
 }
 
 impl WindowsIoctlDriverChannel {
     pub fn open(
         driver_path: impl AsRef<Path>,
         expected_publisher_certificate_sha256: &str,
+        expected_driver_build_id: &str,
     ) -> Result<Self> {
         Self::open_with_deadline(
             driver_path,
             expected_publisher_certificate_sha256,
+            expected_driver_build_id,
             WindowsDriverIoctlDeadline::default(),
         )
     }
@@ -102,11 +105,13 @@ impl WindowsIoctlDriverChannel {
     pub fn open_with_deadline(
         driver_path: impl AsRef<Path>,
         expected_publisher_certificate_sha256: &str,
+        expected_driver_build_id: &str,
         deadline: WindowsDriverIoctlDeadline,
     ) -> Result<Self> {
         WindowsDriverIoctlDeadline::new(deadline.0)?;
         let driver_trust =
             verify_windows_driver(driver_path, expected_publisher_certificate_sha256)?;
+        let expected_driver_build_id = canonical_build_id(expected_driver_build_id)?;
         let path = wide(DEVICE_PATH);
         // SAFETY: path is NUL-terminated and no optional pointers are supplied.
         let device = unsafe {
@@ -129,6 +134,7 @@ impl WindowsIoctlDriverChannel {
             device,
             _driver_trust: driver_trust,
             deadline,
+            expected_driver_build_id,
         })
     }
 
@@ -148,6 +154,9 @@ impl WindowsIoctlDriverChannel {
             bail!("strict driver returned a truncated policy snapshot");
         }
         let mut snapshot = decode_snapshot(&output)?;
+        if snapshot.driver_build_id.as_deref() != Some(self.expected_driver_build_id.as_str()) {
+            bail!("strict driver device build identity does not match the signed package");
+        }
         if snapshot.loaded {
             snapshot.capabilities.insert(StrictCapability::DriverSigned);
         }
@@ -257,7 +266,11 @@ fn decode_snapshot(bytes: &[u8]) -> Result<WindowsDriverPolicySnapshot> {
     let revision = read_u64(bytes, 24)?;
     let digest = &bytes[32..64];
     let capability_mask = read_u64(bytes, 64)?;
-    if capability_mask & !KNOWN_CAPABILITIES != 0 || bytes[72..].iter().any(|value| *value != 0) {
+    let driver_build_id = &bytes[72..88];
+    if capability_mask & !KNOWN_CAPABILITIES != 0
+        || driver_build_id.iter().all(|value| *value == 0)
+        || bytes[88..].iter().any(|value| *value != 0)
+    {
         bail!("strict driver snapshot contains unknown capability or reserved bits");
     }
 
@@ -279,6 +292,7 @@ fn decode_snapshot(bytes: &[u8]) -> Result<WindowsDriverPolicySnapshot> {
     }
 
     Ok(WindowsDriverPolicySnapshot {
+        driver_build_id: Some(hex(driver_build_id)),
         revision: loaded.then_some(revision),
         policy_digest: loaded.then(|| hex(digest)),
         rule_count: rule_count as usize,
@@ -442,6 +456,13 @@ fn decode_sha256(value: &str) -> Result<[u8; 32]> {
     Ok(output)
 }
 
+fn canonical_build_id(value: &str) -> Result<String> {
+    if value.len() != 32 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        bail!("strict driver build identity is invalid");
+    }
+    Ok(value.to_ascii_lowercase())
+}
+
 fn hex_nibble(value: u8) -> Result<u8> {
     match value {
         b'0'..=b'9' => Ok(value - b'0'),
@@ -571,6 +592,7 @@ mod tests {
         write_u16(&mut snapshot, 4, WIRE_PROTOCOL);
         write_u16(&mut snapshot, 6, SNAPSHOT_BYTES as u16);
         write_u64(&mut snapshot, 16, 4);
+        snapshot[72..88].copy_from_slice(&[0xcd; 16]);
         assert_eq!(decode_snapshot(&snapshot).unwrap().generation, 4);
 
         write_u64(&mut snapshot, 64, 1 << 63);
@@ -591,6 +613,7 @@ mod tests {
         write_u64(&mut snapshot, 16, 7);
         write_u64(&mut snapshot, 24, 91);
         snapshot[32..64].copy_from_slice(&[0xab; 32]);
+        snapshot[72..88].copy_from_slice(&[0xcd; 16]);
         write_u64(
             &mut snapshot,
             64,
@@ -598,6 +621,11 @@ mod tests {
         );
 
         let decoded = decode_snapshot(&snapshot).unwrap();
+        let expected_build_id = "cd".repeat(16);
+        assert_eq!(
+            decoded.driver_build_id.as_deref(),
+            Some(expected_build_id.as_str())
+        );
         assert_eq!(decoded.revision, Some(91));
         let expected_digest = "ab".repeat(32);
         assert_eq!(
@@ -624,5 +652,39 @@ mod tests {
         assert!(WindowsDriverIoctlDeadline::new(Duration::ZERO).is_err());
         assert!(WindowsDriverIoctlDeadline::new(Duration::from_secs(301)).is_err());
         assert!(WindowsDriverIoctlDeadline::new(Duration::from_millis(1)).is_ok());
+    }
+
+    #[test]
+    fn package_build_identity_is_exact_and_case_normalized() {
+        assert_eq!(
+            canonical_build_id("ABCDEF0123456789ABCDEF0123456789").unwrap(),
+            "abcdef0123456789abcdef0123456789"
+        );
+        assert!(canonical_build_id("00").is_err());
+        assert!(canonical_build_id("g0000000000000000000000000000000").is_err());
+    }
+
+    #[test]
+    fn kernel_header_tracks_the_rust_wire_contract() {
+        let header = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../windows/strict-driver/include/flclash_strict_wire.h"
+        ));
+        for declaration in [
+            "0x53584346u",
+            "FCX_STRICT_WIRE_PROTOCOL ((UINT16)1u)",
+            "FCX_STRICT_POLICY_HEADER_BYTES ((UINT16)112u)",
+            "FCX_STRICT_POLICY_RULE_BYTES ((UINT16)16u)",
+            "FCX_STRICT_SNAPSHOT_BYTES ((UINT16)96u)",
+            "UINT8 DriverBuildId[16]",
+            "IOCTL_FCX_STRICT_UPLOAD_POLICY",
+            "IOCTL_FCX_STRICT_UNLOAD_POLICY",
+            "IOCTL_FCX_STRICT_QUERY_POLICY",
+        ] {
+            assert!(
+                header.contains(declaration),
+                "missing ABI declaration: {declaration}"
+            );
+        }
     }
 }

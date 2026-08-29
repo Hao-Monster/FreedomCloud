@@ -51,6 +51,7 @@ struct FakeDriver {
 impl WindowsDriverPolicyChannel for FakeDriver {
     fn upload(&mut self, plan: &WfpPolicyPlan) -> Result<()> {
         self.snapshot = WindowsDriverPolicySnapshot {
+            driver_build_id: Some("c".repeat(32)),
             revision: Some(plan.revision()),
             policy_digest: Some(plan.policy_digest().into()),
             rule_count: plan.rules().len(),
