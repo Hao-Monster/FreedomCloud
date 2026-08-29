@@ -51,6 +51,10 @@ static const GUID FcxDatagramV6CalloutKey = {
 #define FCX_STRICT_REDIRECT_POOL_TAG 'RCXF'
 #define FCX_STRICT_UDP_FLOW_POOL_TAG 'UCXF'
 #define FCX_STRICT_MAX_UDP_FLOWS 1024
+#define FCX_STRICT_UDP_FLOW_BUCKETS 256
+
+C_ASSERT((FCX_STRICT_UDP_FLOW_BUCKETS &
+          (FCX_STRICT_UDP_FLOW_BUCKETS - 1u)) == 0u);
 
 #define FCX_CALLOUT_GUARD_V4 0u
 #define FCX_CALLOUT_GUARD_V6 1u
@@ -76,6 +80,7 @@ typedef struct _FCX_STRICT_LEASE_STATE {
 
 typedef struct _FCX_STRICT_UDP_FLOW_CONTEXT {
     LIST_ENTRY Link;
+    LIST_ENTRY TokenLink;
     volatile LONG ReferenceCount;
     UINT64 FlowId;
     UINT64 FlowToken;
@@ -97,6 +102,7 @@ typedef struct _FCX_STRICT_UDP_FLOW_CONTEXT {
     UINT32 CalloutId;
     UINT8 AddressFamily;
     BOOLEAN EndpointBound;
+    BOOLEAN TokenLinked;
     BOOLEAN Listed;
     BOOLEAN Associated;
     BOOLEAN RemovalRequested;
@@ -132,6 +138,7 @@ static volatile LONG FcxUdpStopping;
 static volatile LONG FcxDatagramActive;
 static KSPIN_LOCK FcxUdpFlowLock;
 static LIST_ENTRY FcxUdpFlowList;
+static LIST_ENTRY FcxUdpFlowBuckets[FCX_STRICT_UDP_FLOW_BUCKETS];
 static KEVENT FcxUdpFlowEmptyEvent;
 
 static
@@ -858,17 +865,30 @@ FcxReleaseUdpFlowSlot(
 }
 
 static
+UINT32
+FcxUdpFlowBucketIndex(
+    _In_ UINT64 FlowToken
+    )
+{
+    return ((UINT32)FlowToken ^ (UINT32)(FlowToken >> 32)) &
+           (FCX_STRICT_UDP_FLOW_BUCKETS - 1u);
+}
+
+static
 BOOLEAN
 FcxLinkUdpFlowContext(
     _Inout_ FCX_STRICT_UDP_FLOW_CONTEXT *Context
     )
 {
     KIRQL oldIrql;
+    UINT32 bucketIndex = FcxUdpFlowBucketIndex(Context->FlowToken);
     BOOLEAN linked = FALSE;
 
     KeAcquireSpinLock(&FcxUdpFlowLock, &oldIrql);
     if (InterlockedCompareExchange(&FcxUdpStopping, 0, 0) == 0) {
         InsertTailList(&FcxUdpFlowList, &Context->Link);
+        InsertTailList(&FcxUdpFlowBuckets[bucketIndex], &Context->TokenLink);
+        Context->TokenLinked = TRUE;
         Context->Listed = TRUE;
         linked = TRUE;
     }
@@ -885,6 +905,10 @@ FcxUnlinkUdpFlowContext(
     KIRQL oldIrql;
 
     KeAcquireSpinLock(&FcxUdpFlowLock, &oldIrql);
+    if (Context->TokenLinked) {
+        RemoveEntryList(&Context->TokenLink);
+        Context->TokenLinked = FALSE;
+    }
     if (Context->Listed) {
         RemoveEntryList(&Context->Link);
         Context->Listed = FALSE;
@@ -918,10 +942,70 @@ FcxDereferenceUdpFlowContext(
     NT_ASSERT(referenceCount >= 0);
     if (referenceCount == 0) {
         NT_ASSERT(!Context->Listed);
+        NT_ASSERT(!Context->TokenLinked);
         RtlSecureZeroMemory(Context, sizeof(*Context));
         ExFreePoolWithTag(Context, FCX_STRICT_UDP_FLOW_POOL_TAG);
         FcxReleaseUdpFlowSlot();
     }
+}
+
+static
+FCX_STRICT_UDP_FLOW_CONTEXT *
+FcxReferenceUdpFlowForReply(
+    _In_ const FCX_STRICT_DATAGRAM_BATCH_HEADER *Batch,
+    _In_ const FCX_STRICT_DATAGRAM_RECORD_HEADER *Record
+    )
+{
+    FCX_STRICT_UDP_FLOW_CONTEXT *context;
+    FCX_STRICT_UDP_FLOW_CONTEXT *candidate;
+    PLIST_ENTRY entry;
+    UINT64 flowToken;
+    UINT64 batchRevision;
+    UINT32 bucketIndex;
+    KIRQL oldIrql;
+
+    RtlCopyMemory(&flowToken, &Record->FlowToken, sizeof(flowToken));
+    RtlCopyMemory(&batchRevision, &Batch->Revision, sizeof(batchRevision));
+    bucketIndex = FcxUdpFlowBucketIndex(flowToken);
+    context = NULL;
+
+    KeAcquireSpinLock(&FcxUdpFlowLock, &oldIrql);
+    for (entry = FcxUdpFlowBuckets[bucketIndex].Flink;
+         entry != &FcxUdpFlowBuckets[bucketIndex];
+         entry = entry->Flink) {
+        candidate = CONTAINING_RECORD(entry,
+                                      FCX_STRICT_UDP_FLOW_CONTEXT,
+                                      TokenLink);
+        if (candidate->FlowToken == flowToken &&
+            candidate->Listed && candidate->TokenLinked && candidate->Associated &&
+            candidate->EndpointBound && !candidate->RemovalRequested &&
+            InterlockedCompareExchange(&FcxDatagramActive, 0, 0) != 0 &&
+            InterlockedCompareExchange(&FcxUdpStopping, 0, 0) == 0 &&
+            candidate->TargetGroupIndex == Record->TargetGroupIndex &&
+            candidate->AddressFamily == Record->AddressFamily &&
+            candidate->DatagramFlags == Record->Flags &&
+            candidate->LocalPort == Record->LocalPort &&
+            candidate->RemotePort == Record->RemotePort &&
+            candidate->Revision == batchRevision &&
+            RtlCompareMemory(candidate->PolicyDigest,
+                             Batch->PolicyDigest,
+                             sizeof(candidate->PolicyDigest)) == sizeof(candidate->PolicyDigest) &&
+            RtlCompareMemory(candidate->LeaseNonce,
+                             Batch->LeaseNonce,
+                             sizeof(candidate->LeaseNonce)) == sizeof(candidate->LeaseNonce) &&
+            RtlCompareMemory(candidate->LocalAddress,
+                             Record->LocalAddress,
+                             sizeof(candidate->LocalAddress)) == sizeof(candidate->LocalAddress) &&
+            RtlCompareMemory(candidate->RemoteAddress,
+                             Record->RemoteAddress,
+                             sizeof(candidate->RemoteAddress)) == sizeof(candidate->RemoteAddress)) {
+            FcxReferenceUdpFlowContext(candidate);
+            context = candidate;
+            break;
+        }
+    }
+    KeReleaseSpinLock(&FcxUdpFlowLock, oldIrql);
+    return context;
 }
 
 static
@@ -1056,7 +1140,7 @@ FcxClassifyUdpFlow(
     RtlZeroMemory(context, sizeof(*context));
     context->ReferenceCount = 1;
     flowToken = InterlockedIncrement64(&FcxUdpFlowToken);
-    if (flowToken == 0) {
+    if (flowToken <= 0) {
         goto Exit;
     }
     context->FlowToken = (UINT64)flowToken;
@@ -2191,7 +2275,8 @@ NTSTATUS
 FcxValidateSubmittedDatagramRecord(
     _In_reads_bytes_(AvailableBytes) const UINT8 *Input,
     _In_ UINT32 AvailableBytes,
-    _Out_ UINT32 *RecordBytes
+    _Out_ UINT32 *RecordBytes,
+    _Out_ FCX_STRICT_DATAGRAM_RECORD_HEADER *ValidatedRecord
     )
 {
     FCX_STRICT_DATAGRAM_RECORD_HEADER record;
@@ -2201,6 +2286,7 @@ FcxValidateSubmittedDatagramRecord(
     UINT64 sequence;
 
     *RecordBytes = 0;
+    RtlZeroMemory(ValidatedRecord, sizeof(*ValidatedRecord));
     if (AvailableBytes < sizeof(record)) {
         return STATUS_INVALID_BUFFER_SIZE;
     }
@@ -2233,6 +2319,7 @@ FcxValidateSubmittedDatagramRecord(
         return STATUS_INVALID_PARAMETER;
     }
     *RecordBytes = record.RecordBytes;
+    RtlCopyMemory(ValidatedRecord, &record, sizeof(record));
     return STATUS_SUCCESS;
 }
 
@@ -2252,6 +2339,8 @@ FcxValidateSubmittedDatagramBatch(
     UINT32 recordIndex;
     UINT32 cursor;
     UINT32 recordBytes;
+    FCX_STRICT_DATAGRAM_RECORD_HEADER record;
+    FCX_STRICT_UDP_FLOW_CONTEXT *context;
 
     if (InputBufferLength != 0 ||
         OutputBufferLength < FCX_STRICT_DATAGRAM_BATCH_HEADER_BYTES ||
@@ -2291,10 +2380,16 @@ FcxValidateSubmittedDatagramBatch(
         status = FcxValidateSubmittedDatagramRecord(
             input + cursor,
             batch.TotalBytes - cursor,
-            &recordBytes);
+            &recordBytes,
+            &record);
         if (!NT_SUCCESS(status)) {
             return status;
         }
+        context = FcxReferenceUdpFlowForReply(&batch, &record);
+        if (context == NULL) {
+            return STATUS_ACCESS_DENIED;
+        }
+        FcxDereferenceUdpFlowContext(context);
         cursor += recordBytes;
     }
     if (cursor != batch.TotalBytes) {
@@ -2751,6 +2846,7 @@ DriverEntry(
     PWDFDEVICE_INIT deviceInit = NULL;
     WDF_IO_QUEUE_CONFIG queueConfig;
     WDF_OBJECT_ATTRIBUTES attributes;
+    UINT32 bucketIndex;
     DECLARE_CONST_UNICODE_STRING(deviceSddl, L"D:P(A;;GA;;;SY)");
 
     PAGED_CODE();
@@ -2769,6 +2865,11 @@ DriverEntry(
     ExInitializeFastMutex(&FcxLeaseMutationLock);
     KeInitializeSpinLock(&FcxUdpFlowLock);
     InitializeListHead(&FcxUdpFlowList);
+    for (bucketIndex = 0;
+         bucketIndex < RTL_NUMBER_OF(FcxUdpFlowBuckets);
+         ++bucketIndex) {
+        InitializeListHead(&FcxUdpFlowBuckets[bucketIndex]);
+    }
     KeInitializeEvent(&FcxUdpFlowEmptyEvent, NotificationEvent, TRUE);
 
     FcxPolicyRundown = ExAllocateCacheAwareRundownProtection(

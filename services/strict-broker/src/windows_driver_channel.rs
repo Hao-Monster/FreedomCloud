@@ -1814,4 +1814,80 @@ mod tests {
             "callouts must stop classifying before injection handles are destroyed"
         );
     }
+
+    #[test]
+    fn kernel_datagram_reply_lookup_is_bounded_and_exact() {
+        let driver = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../windows/strict-driver/src/driver.c"
+        ));
+
+        for invariant in [
+            "#define FCX_STRICT_UDP_FLOW_BUCKETS 256",
+            "LIST_ENTRY TokenLink;",
+            "BOOLEAN TokenLinked;",
+            "static LIST_ENTRY FcxUdpFlowBuckets[FCX_STRICT_UDP_FLOW_BUCKETS];",
+            "FcxUdpFlowBucketIndex(",
+            "FcxReferenceUdpFlowForReply(",
+            "candidate = CONTAINING_RECORD(",
+            "context = candidate;",
+            "candidate->FlowToken == flowToken",
+            "candidate->TargetGroupIndex == Record->TargetGroupIndex",
+            "candidate->AddressFamily == Record->AddressFamily",
+            "candidate->DatagramFlags == Record->Flags",
+            "candidate->LocalPort == Record->LocalPort",
+            "candidate->RemotePort == Record->RemotePort",
+            "candidate->Revision == batchRevision",
+            "candidate->PolicyDigest",
+            "candidate->LeaseNonce",
+            "FcxDereferenceUdpFlowContext(context);",
+            "flowToken <= 0",
+        ] {
+            assert!(
+                driver.contains(invariant),
+                "missing bounded reply-lookup invariant: {invariant}"
+            );
+        }
+
+        let lookup = driver
+            .split("FcxReferenceUdpFlowForReply(")
+            .nth(1)
+            .and_then(|body| body.split("FcxDrainUdpFlowContexts(").next())
+            .expect("reply lookup is present");
+        assert!(
+            lookup.contains("FcxUdpFlowBuckets[bucketIndex].Flink"),
+            "reply lookup must scan only its token bucket"
+        );
+        assert!(
+            !lookup.contains("FcxUdpFlowList.Flink"),
+            "reply lookup must not linearly scan every active flow"
+        );
+        assert!(
+            lookup
+                .find("FcxReferenceUdpFlowContext(candidate);")
+                .unwrap()
+                < lookup.find("context = candidate;").unwrap(),
+            "a bucket collision must never return an unreferenced candidate"
+        );
+
+        let validation = driver
+            .split("FcxValidateSubmittedDatagramBatch(")
+            .nth(1)
+            .and_then(|body| body.split("FcxReleasePolicy(").next())
+            .expect("reply-batch validation is present");
+        assert!(
+            validation
+                .find("FcxValidateSubmittedDatagramRecord(")
+                .unwrap()
+                < validation.find("FcxReferenceUdpFlowForReply(").unwrap(),
+            "untrusted records must pass structural validation before flow lookup"
+        );
+        assert!(
+            validation
+                .find("FcxDereferenceUdpFlowContext(context);")
+                .unwrap()
+                < validation.find("return STATUS_NOT_SUPPORTED;").unwrap(),
+            "validation-only lookup must release its flow reference"
+        );
+    }
 }
