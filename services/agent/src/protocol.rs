@@ -66,6 +66,10 @@ pub fn parse_control(_line: &str) -> Option<ControlRequest> {
 
 pub fn is_reserved_core_action(action: &Value) -> bool {
     action.get("method").and_then(Value::as_str) == Some("configureStrictIngress")
+        || action
+            .get("id")
+            .and_then(Value::as_str)
+            .is_some_and(|id| id.starts_with("_agent-"))
 }
 
 pub(crate) fn constant_time_eq(left: &str, right: &str) -> bool {
@@ -120,7 +124,12 @@ mod tests {
         .unwrap();
         let normal: Value =
             serde_json::from_str(r#"{"id":"normal","method":"setupConfig","data":"{}"}"#).unwrap();
+        let reserved_id: Value = serde_json::from_str(
+            r#"{"id":"_agent-internal-collision","method":"setupConfig","data":"{}"}"#,
+        )
+        .unwrap();
         assert!(is_reserved_core_action(&reserved));
+        assert!(is_reserved_core_action(&reserved_id));
         assert!(!is_reserved_core_action(&normal));
         assert!(!is_reserved_core_action(&Value::Null));
     }

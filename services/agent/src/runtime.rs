@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
@@ -9,7 +10,7 @@ use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufR
 use tokio::net::{TcpListener, TcpStream};
 use tokio::process::{Child, Command};
 use tokio::sync::{mpsc, oneshot, Mutex, Notify, RwLock};
-use tokio::time::{timeout, Instant};
+use tokio::time::{timeout, timeout_at, Instant};
 
 use crate::config::AgentConfig;
 use crate::endpoint::{load_or_create_helper_token, random_token, EndpointGuard};
@@ -25,6 +26,8 @@ const CORE_CONNECT_TIMEOUT: Duration = Duration::from_secs(8);
 const CORE_REPLAY_TIMEOUT: Duration = Duration::from_secs(30);
 const HELPER_RESPONSE_LIMIT: usize = 64 * 1024;
 const MAX_CRASH_RETRIES: u32 = 5;
+const MAX_PENDING_INTERNAL_CORE_REQUESTS: usize = 32;
+const INTERNAL_CORE_RESPONSE_TIMEOUT: Duration = Duration::from_secs(2);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CoreStatus {
@@ -77,14 +80,124 @@ impl UiOutput {
     }
 }
 
+#[derive(Clone)]
+struct CoreLink {
+    input: mpsc::Sender<String>,
+    pending: Arc<Mutex<HashMap<String, oneshot::Sender<String>>>>,
+}
+
+impl CoreLink {
+    fn new(input: mpsc::Sender<String>) -> Self {
+        Self {
+            input,
+            pending: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+
+    async fn send(&self, line: String) -> Result<()> {
+        self.input
+            .send(line)
+            .await
+            .map_err(|_| anyhow!("Core command channel is closed"))
+    }
+
+    async fn request(&self, id: &str, line: &str, deadline: Duration) -> Result<String> {
+        if id.len() > 128
+            || !id.starts_with("_agent-")
+            || !id
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+        {
+            bail!("internal Core request ID is invalid");
+        }
+        if line.is_empty() || line.len() > MAX_MESSAGE_LINE_BYTES {
+            bail!("internal Core request size is invalid");
+        }
+        let envelope: Value = serde_json::from_str(line).context("invalid internal Core action")?;
+        if envelope.get("id").and_then(Value::as_str) != Some(id) {
+            bail!("internal Core action ID does not match its correlation ID");
+        }
+
+        let (response_tx, response_rx) = oneshot::channel();
+        {
+            let mut pending = self.pending.lock().await;
+            if pending.len() >= MAX_PENDING_INTERNAL_CORE_REQUESTS {
+                bail!("too many internal Core requests are pending");
+            }
+            if pending.contains_key(id) {
+                bail!("internal Core request ID is already pending");
+            }
+            pending.insert(id.to_owned(), response_tx);
+        }
+        let expires = Instant::now() + deadline;
+        match timeout_at(expires, self.input.send(line.to_owned())).await {
+            Ok(Ok(())) => {}
+            Ok(Err(_)) => {
+                self.pending.lock().await.remove(id);
+                bail!("Core command channel is closed");
+            }
+            Err(_) => {
+                self.pending.lock().await.remove(id);
+                bail!("internal Core request enqueue timed out");
+            }
+        }
+
+        match timeout_at(expires, response_rx).await {
+            Ok(Ok(response)) => Ok(response),
+            Ok(Err(_)) => {
+                self.pending.lock().await.remove(id);
+                bail!("Core disconnected before the internal response")
+            }
+            Err(_) => {
+                self.pending.lock().await.remove(id);
+                bail!("internal Core request timed out")
+            }
+        }
+    }
+
+    async fn route_response(&self, line: &str) -> bool {
+        // Core uses compact JSON. This cheap prefix avoids parsing high-rate
+        // unsolicited connection/log/traffic messages in the internal RPC path.
+        if !line.contains(r#""id":"_agent-"#) {
+            return false;
+        }
+        let Some(id) = serde_json::from_str::<Value>(line)
+            .ok()
+            .and_then(|value| value.get("id")?.as_str().map(str::to_owned))
+        else {
+            return true;
+        };
+        if !id.starts_with("_agent-") {
+            return false;
+        }
+        let response = self.pending.lock().await.remove(&id);
+        if let Some(response) = response {
+            let _ = response.send(line.to_owned());
+        }
+        // A timed-out Agent-owned response is still private and must never be
+        // forwarded to the UI merely because its waiter has already gone away.
+        true
+    }
+
+    async fn cancel_pending(&self) {
+        self.pending.lock().await.clear();
+    }
+
+    #[cfg(test)]
+    async fn pending_len(&self) -> usize {
+        self.pending.lock().await.len()
+    }
+}
+
 struct Shared {
     ui: Mutex<Option<UiSession>>,
-    core: Mutex<Option<mpsc::Sender<String>>>,
+    core: Mutex<Option<CoreLink>>,
     journal: Mutex<ReplayJournal>,
     status: RwLock<CoreStatus>,
     strict: RwLock<StrictController>,
     generation: AtomicU64,
     next_session: AtomicU64,
+    next_internal: AtomicU64,
     shutting_down: AtomicBool,
     shutdown: Notify,
     supervisor: mpsc::Sender<SupervisorCommand>,
@@ -191,6 +304,7 @@ pub async fn run(config: AgentConfig) -> Result<()> {
         strict: RwLock::new(StrictController::default()),
         generation: AtomicU64::new(0),
         next_session: AtomicU64::new(1),
+        next_internal: AtomicU64::new(1),
         shutting_down: AtomicBool::new(false),
         shutdown: Notify::new(),
         supervisor: supervisor_tx,
@@ -537,7 +651,8 @@ async fn supervise_core(
 
         let (read_half, mut write_half) = stream.into_split();
         let (core_tx, mut core_rx) = mpsc::channel::<String>(CHANNEL_CAPACITY);
-        *shared.core.lock().await = Some(core_tx);
+        let core_link = CoreLink::new(core_tx);
+        *shared.core.lock().await = Some(core_link.clone());
         shared.generation.fetch_add(1, Ordering::AcqRel);
         set_status(&shared, CoreStatus::Ready).await;
         let ready_at = Instant::now();
@@ -556,6 +671,9 @@ async fn supervise_core(
                     match line {
                         Ok(Some(line)) => {
                             let line = line.trim_end().to_owned();
+                            if core_link.route_response(&line).await {
+                                continue;
+                            }
                             shared.journal.lock().await.commit_response(&line);
                             forward_to_ui(&shared, line).await;
                         }
@@ -573,6 +691,7 @@ async fn supervise_core(
         };
 
         *shared.core.lock().await = None;
+        core_link.cancel_pending().await;
         shared.journal.lock().await.discard_pending();
         writer.abort();
         stop_backend(&config, helper_token.as_deref(), &mut child).await;
@@ -824,13 +943,19 @@ where
 }
 
 async fn send_ui_activity(shared: &Arc<Shared>, active: bool) {
+    let sequence = shared.next_internal.fetch_add(1, Ordering::Relaxed);
+    let id = format!("_agent-internal-ui-{sequence}");
     let action = json!({
-        "id": format!("_agent-ui-{}", shared.next_session.load(Ordering::Relaxed)),
+        "id": id,
         "method": "setUiActive",
         "data": active,
     });
     if let Some(core) = shared.core.lock().await.clone() {
-        let _ = core.send(action.to_string()).await;
+        tokio::spawn(async move {
+            let _ = core
+                .request(&id, &action.to_string(), INTERNAL_CORE_RESPONSE_TIMEOUT)
+                .await;
+        });
     }
 }
 
@@ -957,5 +1082,73 @@ mod tests {
             r#"{"_agent":{"type":"coreState","coreState":"ready"}}"#
         ));
         assert!(!is_unsolicited_message("not-json"));
+    }
+
+    #[tokio::test]
+    async fn agent_owned_core_responses_are_correlated_and_not_forwarded() {
+        let (core_tx, mut core_rx) = mpsc::channel(4);
+        let link = CoreLink::new(core_tx);
+        let waiting_link = link.clone();
+        let waiter = tokio::spawn(async move {
+            waiting_link
+                .request(
+                    "_agent-internal-test-1",
+                    r#"{"id":"_agent-internal-test-1","method":"setUiActive","data":true}"#,
+                    Duration::from_secs(1),
+                )
+                .await
+        });
+
+        assert_eq!(
+            core_rx.recv().await.unwrap(),
+            r#"{"id":"_agent-internal-test-1","method":"setUiActive","data":true}"#
+        );
+        let response =
+            r#"{"id":"_agent-internal-test-1","method":"setUiActive","code":0,"data":true}"#;
+        assert!(link.route_response(response).await);
+        assert_eq!(waiter.await.unwrap().unwrap(), response);
+        assert!(link.route_response(response).await);
+        assert!(
+            !link
+                .route_response(r#"{"id":"ui-1","method":"getConfig","code":0,"data":{}}"#)
+                .await
+        );
+    }
+
+    #[tokio::test]
+    async fn timed_out_internal_core_requests_release_the_pending_slot() {
+        let (core_tx, mut core_rx) = mpsc::channel(1);
+        let link = CoreLink::new(core_tx);
+        let request = link.request(
+            "_agent-internal-timeout-1",
+            r#"{"id":"_agent-internal-timeout-1","method":"setUiActive","data":true}"#,
+            Duration::from_millis(1),
+        );
+        tokio::pin!(request);
+        tokio::select! {
+            result = &mut request => assert!(result.is_err()),
+            line = core_rx.recv() => {
+                assert!(line.is_some());
+                assert!(request.await.is_err());
+            }
+        }
+        assert_eq!(link.pending_len().await, 0);
+    }
+
+    #[tokio::test]
+    async fn saturated_internal_core_queue_obeys_the_total_deadline() {
+        let (core_tx, _core_rx) = mpsc::channel(1);
+        let link = CoreLink::new(core_tx.clone());
+        core_tx.send("occupied".into()).await.unwrap();
+
+        assert!(link
+            .request(
+                "_agent-internal-saturated-1",
+                r#"{"id":"_agent-internal-saturated-1","method":"setUiActive","data":true}"#,
+                Duration::from_millis(1),
+            )
+            .await
+            .is_err());
+        assert_eq!(link.pending_len().await, 0);
     }
 }
