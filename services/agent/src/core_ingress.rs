@@ -248,6 +248,42 @@ impl StrictIngressCoordinator {
         }))
     }
 
+    /// Emits an explicit empty generation even when the local state appears
+    /// empty. This is required after an ambiguous Core response: the Core may
+    /// have committed credentials that the Agent could not safely correlate.
+    pub fn force_revoke(&mut self) -> Result<StrictIngressCoreAction> {
+        self.pending = None;
+        let generation = self
+            .generation
+            .checked_add(1)
+            .context("strict ingress generation overflow")?;
+        let id = format!("_agent-strict-ingress-{generation}");
+        let data = serde_json::to_string(&CoreStrictIngressRequest {
+            protocol: STRICT_INGRESS_PROTOCOL,
+            generation,
+            entries: Vec::new(),
+        })?;
+        let line = serde_json::to_string(&CoreActionRequest {
+            id: &id,
+            method: CONFIGURE_STRICT_INGRESS_METHOD,
+            data,
+        })?;
+        if line.len() > MAX_MESSAGE_LINE_BYTES {
+            bail!("strict ingress Core revoke action exceeds the message bound");
+        }
+        self.generation = generation;
+        self.pending = Some(PendingStrictIngress {
+            generation,
+            id: id.clone(),
+            entries: Vec::new(),
+        });
+        Ok(StrictIngressCoreAction {
+            generation,
+            id,
+            line,
+        })
+    }
+
     pub fn complete(&mut self, response_line: &str) -> Result<Option<StrictIngressDescriptor>> {
         let pending = self
             .pending
@@ -521,5 +557,26 @@ mod tests {
             coordinator.begin(std::iter::empty::<&str>()).unwrap(),
             StrictIngressChange::Unchanged
         ));
+    }
+
+    #[test]
+    fn ambiguous_core_response_can_always_be_followed_by_an_explicit_revoke() {
+        let mut coordinator = StrictIngressCoordinator::default();
+        let StrictIngressChange::Request(configure) = coordinator.begin(["GLOBAL"]).unwrap() else {
+            panic!("expected configure action");
+        };
+        assert!(coordinator.complete(r#"{"id":"wrong"}"#).is_err());
+
+        let revoke = coordinator.force_revoke().unwrap();
+        assert!(revoke.generation() > configure.generation());
+        let line: Value = serde_json::from_str(revoke.line()).unwrap();
+        let data: Value = serde_json::from_str(line["data"].as_str().unwrap()).unwrap();
+        assert_eq!(data["entries"], json!([]));
+        assert!(coordinator
+            .complete(&successful_response(&revoke, &[]))
+            .unwrap()
+            .is_none());
+        assert!(coordinator.active().is_none());
+        assert!(!coordinator.has_pending());
     }
 }
