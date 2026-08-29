@@ -237,12 +237,16 @@ StrictEndpointLease
 ```
 
 The LocalSystem Broker binds every listener first, then sends the lease over a
-System-only driver device. Redirect filters are installed only after the driver
+System-only driver device. The production runtime shares the driver's one
+exclusive authenticated device handle with the control plane and serializes all
+policy and lease IOCTLs. Redirect filters are installed only after the driver
 attests the same revision/digest and live lease generation. Missing, expired or
-revoked lease state always classifies selected proxy traffic as block. Teardown
-removes dynamic redirects first, revokes the lease, closes relay sockets and
-only then considers persistent guard removal. A process-exit callback revokes
-the held Broker process identity immediately; a numeric PID alone is forbidden.
+revoked lease state always classifies selected proxy traffic as block. Runtime
+teardown revokes admission (or conservatively waits for the six-second TTL to
+expire) before closing relay endpoints; the policy transition then removes
+dynamic redirects while persistent guards continue blocking. A process-exit
+callback revokes the held Broker process identity immediately; a numeric PID
+alone is forbidden.
 
 The protocol-v2 implementation constrains lease TTL to 1–30 seconds and accepts
 only exact `127.0.0.1`/`::1` addresses with nonzero ports. The driver obtains the
@@ -262,10 +266,23 @@ the redirect layer; the authorization guard follows the layer contract by
 requiring the redirected flag, original-destination metadata and current
 leased Broker PID. Missing metadata, another redirect provider, stale policy,
 unsupported transport or any allocation/API error remains block. Lease renewal
-may change generation/nonce without terminating an already-authorized flow, so
+changes generation without terminating an already-authorized flow, so
 redirect reauthorization binds the existing context to the stable policy while
 the guard still binds the current Broker PID. Broker accepted-socket validation
-continues to require the exact live generation and nonce for every new session.
+accepts only the current or immediately previous attested generation with the
+same nonce; this bounded window closes the driver-to-Broker renewal handoff and
+older queued contexts fail closed.
+
+The production TCP runtime now binds exact dual-stack listeners plus reserved
+UDP loopback sockets, verifies that every declared Core SOCKS ingress belongs to
+one pinned live Core process, and authenticates every ingress through at most
+eight 256 KiB-stack probe workers without issuing an external CONNECT. It then
+starts a 2–16 worker TCP pool, activates a CNG-random six-second lease and renews
+it every two seconds while rechecking Core listener ownership. A duplicate pair
+of TCP socket handles keeps endpoints bound if the accept loop exits before the
+renewal worker can revoke admission. Successful revocation is immediate; a
+failed or ambiguous IOCTL waits through the conservatively tracked TTL before
+endpoint handles are released.
 
 These are source-level invariants only. TCP redirect and loop-protection
 capability bits remain disabled until the driver compiles under the pinned WDK,
@@ -322,10 +339,11 @@ and the Agent remains `blocking`.
   are bounded, while lease-revoke/block/shutdown commands use a separate
   priority channel between transactions. Raw WFP handles are never marked
   `Send` or shared across pipe threads.
-- Until real loopback listeners, relay probes and lease renewal exist, the
-  production health probe always reports unavailable. Proxy commit therefore
-  fails closed; block-only policy remains usable and no placeholder health is
-  advertised.
+- Real loopback TCP listeners, authenticated Core ingress probes, fixed session
+  workers and lease renewal now exist in the production host. The probe still
+  reports relay and DNS health as false until an end-to-end WFP redirect canary
+  and UDP/DNS/QUIC runtime exist. Proxy commit therefore remains fail-closed;
+  block-only policy remains usable and no placeholder capability is advertised.
 - Commands: `preparePolicy`, `commitPolicy`, `forceBlocking`, `disablePolicy`,
   `status`, `diagnostics`; no arbitrary command/path/registry/service API.
 - The Broker reopens and validates executable handles to prevent path-swap
@@ -346,6 +364,9 @@ and the Agent remains `blocking`.
 - Broker has bounded concurrent TCP sessions, UDP associations, per-flow buffers
   and diagnostic ring. Overload transitions the affected selected flow to block,
   never direct.
+- Production TCP worker count follows available CPUs but is clamped to 2–16,
+  with one queued connection per worker and 512 KiB worker stacks. Core ingress
+  authentication uses at most eight transient 256 KiB-stack workers.
 - Heartbeats are low frequency and independent of the Flutter window.
 - Benchmarks record classify latency, relay throughput, CPU, working set,
   allocation trend, redirect-context pool-tag growth and overload rejection.
