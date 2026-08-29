@@ -39,6 +39,8 @@ mod windows_session;
 #[cfg(windows)]
 mod windows_tcp_owner;
 #[cfg(windows)]
+mod windows_tcp_relay;
+#[cfg(windows)]
 mod windows_wfp_control;
 #[cfg(windows)]
 mod windows_wfp_engine;
@@ -104,6 +106,10 @@ pub use windows_tcp_owner::{
     verify_windows_packaged_core_listener_owner,
     verify_windows_packaged_core_listener_owner_with_image, windows_tcp_listener_owner_pid,
     windows_tcp_listener_owner_pid_for_all,
+};
+#[cfg(windows)]
+pub use windows_tcp_relay::{
+    relay_windows_tcp_bidirectional, WindowsTcpRelayLimits, WindowsTcpRelayReport,
 };
 #[cfg(windows)]
 pub use windows_wfp_control::{
