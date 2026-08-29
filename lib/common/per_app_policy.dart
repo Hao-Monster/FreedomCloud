@@ -52,11 +52,7 @@ class PerAppPolicy {
 
   static String validateTargetGroup(String value) {
     final normalized = value.trim();
-    if (normalized.isEmpty ||
-        normalized.length > 256 ||
-        normalized.contains(',') ||
-        normalized.contains('\r') ||
-        normalized.contains('\n')) {
+    if (!isValidTargetGroup(normalized)) {
       throw ArgumentError.value(
         value,
         'targetGroup',
@@ -64,6 +60,15 @@ class PerAppPolicy {
       );
     }
     return normalized;
+  }
+
+  static bool isValidTargetGroup(String value) {
+    final normalized = value.trim();
+    return normalized.isNotEmpty &&
+        normalized.length <= 256 &&
+        !normalized.contains(',') &&
+        !normalized.contains('\r') &&
+        !normalized.contains('\n');
   }
 
   Map<String, Object> toJson() => {
@@ -78,12 +83,13 @@ class PerAppPolicy {
 List<String> compilePerAppPolicyRules(
   Iterable<PerAppPolicy> policies, {
   Set<String>? availableTargetGroups,
+  ValueChanged<String>? onUnavailableTarget,
 }) =>
     policies
         .where((entry) => entry.policy != ApplicationRoutingPolicy.inherit)
         .map((entry) {
       final processPath = PerAppPolicy.validatePath(entry.path);
-      final target = switch (entry.policy) {
+      var target = switch (entry.policy) {
         ApplicationRoutingPolicy.proxy =>
           PerAppPolicy.validateTargetGroup(entry.targetGroup ?? 'GLOBAL'),
         ApplicationRoutingPolicy.direct => 'DIRECT',
@@ -93,11 +99,8 @@ List<String> compilePerAppPolicyRules(
       if (entry.policy == ApplicationRoutingPolicy.proxy &&
           availableTargetGroups != null &&
           !availableTargetGroups.contains(target)) {
-        throw ArgumentError.value(
-          target,
-          'targetGroup',
-          'is not present in the active profile',
-        );
+        onUnavailableTarget?.call(target);
+        target = 'REJECT';
       }
       return 'PROCESS-PATH,$processPath,$target';
     }).toList(growable: false);
@@ -106,14 +109,26 @@ List<Object?> mergePerAppPolicyRules(
   Iterable<PerAppPolicy> policies,
   Iterable<Object?> profileRules, {
   Set<String>? availableTargetGroups,
+  ValueChanged<String>? onUnavailableTarget,
 }) =>
     [
       ...compilePerAppPolicyRules(
         policies,
         availableTargetGroups: availableTargetGroups,
+        onUnavailableTarget: onUnavailableTarget,
       ),
       ...profileRules,
     ];
+
+List<String> availablePerAppTargetGroups(Iterable<String> declaredGroups) {
+  final groups = <String>['GLOBAL'];
+  for (final value in declaredGroups) {
+    if (!PerAppPolicy.isValidTargetGroup(value)) continue;
+    final group = value.trim();
+    if (!groups.contains(group)) groups.add(group);
+  }
+  return List.unmodifiable(groups);
+}
 
 List<PerAppPolicy> decodePerAppPolicies(Object? value) {
   if (value is! Map ||

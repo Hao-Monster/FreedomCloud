@@ -113,7 +113,8 @@ void main() {
     );
   });
 
-  test('proxy target is bounded and must exist in the active profile', () {
+  test('missing proxy target blocks safely instead of breaking Core startup',
+      () {
     const policy = PerAppPolicy(
       path: r'C:\Apps\browser.exe',
       name: 'browser.exe',
@@ -121,13 +122,16 @@ void main() {
       targetGroup: 'Missing',
     );
 
+    final unavailable = <String>[];
     expect(
-      () => compilePerAppPolicyRules(
+      compilePerAppPolicyRules(
         [policy],
         availableTargetGroups: const {'GLOBAL', 'Work'},
+        onUnavailableTarget: unavailable.add,
       ),
-      throwsArgumentError,
+      [r'PROCESS-PATH,C:\Apps\browser.exe,REJECT'],
     );
+    expect(unavailable, ['Missing']);
     expect(
       () => PerAppPolicy.validateTargetGroup('bad,group'),
       throwsArgumentError,
@@ -135,6 +139,16 @@ void main() {
     expect(
       () => PerAppPolicy.validateTargetGroup('bad\ngroup'),
       throwsArgumentError,
+    );
+  });
+
+  test('target group choices preserve profile order and reject rule injection',
+      () {
+    expect(
+      availablePerAppTargetGroups(
+        const ['Work', 'GLOBAL', 'Work', 'bad,group', 'Streaming'],
+      ),
+      const ['GLOBAL', 'Work', 'Streaming'],
     );
   });
 }

@@ -746,6 +746,7 @@ class GlobalState {
       }
     }
     await perAppPolicyStore.ensureLoaded();
+    var unavailablePerAppTargets = 0;
     rawConfig["rule"] = mergePerAppPolicyRules(
       perAppPolicyStore.entries,
       rules.cast<Object?>(),
@@ -753,7 +754,14 @@ class GlobalState {
         GroupName.GLOBAL.name,
         ...parsedProxyGroupOrder,
       },
+      onUnavailableTarget: (_) => unavailablePerAppTargets++,
     );
+    if (unavailablePerAppTargets > 0) {
+      connectionDiagnostics.log(
+        '[ConnectionsDiag] perApp.compile status=blocked '
+        'unavailableTargets=$unavailablePerAppTargets',
+      );
+    }
     return rawConfig;
   }
 
