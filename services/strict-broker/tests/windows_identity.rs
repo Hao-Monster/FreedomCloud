@@ -1,12 +1,27 @@
 #![cfg(windows)]
 
+use std::fs;
+use std::os::windows::process::CommandExt;
 use std::path::PathBuf;
+use std::process::{Child, Command};
 
 use flclash_strict_broker::{
     inspect_windows_driver, inspect_windows_executable, verify_windows_driver,
-    verify_windows_packaged_driver, IdentityVerifier, WindowsIdentityVerifier,
+    verify_windows_packaged_agent_process, verify_windows_packaged_driver, IdentityVerifier,
+    StrictPackageManifest, WindowsIdentityVerifier,
 };
 use flclash_strict_contract::{StrictIdentity, StrictPolicyBundle, StrictPolicyEntry};
+use sha2::{Digest, Sha256};
+use windows_sys::Win32::System::Threading::CREATE_NO_WINDOW;
+
+struct ChildGuard(Child);
+
+impl Drop for ChildGuard {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
 
 #[test]
 fn signed_windows_executable_is_reopened_and_matches_pinned_identity() {
@@ -69,4 +84,47 @@ fn signed_windows_driver_is_locked_and_publisher_pinned() {
         inspected.publisher_certificate_sha256(),
     )
     .is_err());
+}
+
+#[test]
+fn packaged_agent_process_is_bound_to_pid_path_file_and_publisher() {
+    let system_binary = PathBuf::from(std::env::var_os("WINDIR").unwrap())
+        .join("System32")
+        .join("cmd.exe");
+    let inspected = inspect_windows_executable(&system_binary).unwrap();
+    let file_sha256 = format!("{:x}", Sha256::digest(fs::read(&system_binary).unwrap()));
+    let manifest = StrictPackageManifest::parse(
+        format!(
+            r#"{{"protocol":1,"packageVersion":"agent-process-test","driverBuildId":"{}","driverFileSha256":"{}","driverPublisherCertificateSha256":"{}","agentFileSha256":"{file_sha256}","agentPublisherCertificateSha256":"{}"}}"#,
+            "12".repeat(16),
+            "23".repeat(32),
+            "34".repeat(32),
+            inspected.publisher_certificate_sha256,
+        )
+        .as_bytes(),
+    )
+    .unwrap();
+    assert!(verify_windows_packaged_agent_process(
+        std::process::id(),
+        &inspected.canonical_path,
+        &manifest,
+    )
+    .is_err());
+    let child = Command::new(&system_binary)
+        .args(["/d", "/c", "ping -n 10 127.0.0.1 >nul"])
+        .creation_flags(CREATE_NO_WINDOW)
+        .spawn()
+        .unwrap();
+    let mut child = ChildGuard(child);
+
+    let lease =
+        verify_windows_packaged_agent_process(child.0.id(), &inspected.canonical_path, &manifest)
+            .unwrap();
+    assert_eq!(lease.process_id(), child.0.id());
+    assert_eq!(lease.canonical_path(), inspected.canonical_path);
+    assert!(lease.is_running().unwrap());
+
+    child.0.kill().unwrap();
+    child.0.wait().unwrap();
+    assert!(!lease.is_running().unwrap());
 }

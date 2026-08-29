@@ -48,7 +48,8 @@ pub use windows_driver_channel::{
 #[cfg(windows)]
 pub use windows_identity::{
     inspect_windows_driver, inspect_windows_executable, verify_windows_driver,
-    verify_windows_packaged_driver, WindowsDriverTrustLease, WindowsIdentityLease,
+    verify_windows_packaged_agent_process, verify_windows_packaged_driver,
+    WindowsAgentProcessTrustLease, WindowsDriverTrustLease, WindowsIdentityLease,
     WindowsIdentityVerifier, WindowsVerifiedIdentity,
 };
 #[cfg(windows)]

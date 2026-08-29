@@ -12,6 +12,7 @@ pub struct StrictPackageManifest {
     driver_build_id: String,
     driver_file_sha256: String,
     driver_publisher_certificate_sha256: String,
+    agent_file_sha256: String,
     agent_publisher_certificate_sha256: String,
 }
 
@@ -54,6 +55,10 @@ impl StrictPackageManifest {
         &self.agent_publisher_certificate_sha256
     }
 
+    pub fn agent_file_sha256(&self) -> &str {
+        &self.agent_file_sha256
+    }
+
     fn validate(&self) -> Result<()> {
         if self.protocol != PACKAGE_MANIFEST_PROTOCOL {
             bail!("unsupported strict package manifest protocol");
@@ -75,6 +80,7 @@ impl StrictPackageManifest {
             64,
             "driver publisher certificate digest",
         )?;
+        validate_hex(&self.agent_file_sha256, 64, "Agent file digest")?;
         validate_hex(
             &self.agent_publisher_certificate_sha256,
             64,
@@ -100,11 +106,12 @@ mod tests {
 
     fn manifest() -> Vec<u8> {
         format!(
-            r#"{{"protocol":1,"packageVersion":"1.2.3-m3","driverBuildId":"{}","driverFileSha256":"{}","driverPublisherCertificateSha256":"{}","agentPublisherCertificateSha256":"{}"}}"#,
+            r#"{{"protocol":1,"packageVersion":"1.2.3-m3","driverBuildId":"{}","driverFileSha256":"{}","driverPublisherCertificateSha256":"{}","agentFileSha256":"{}","agentPublisherCertificateSha256":"{}"}}"#,
             "12".repeat(16),
             "23".repeat(32),
             "34".repeat(32),
             "45".repeat(32),
+            "56".repeat(32),
         )
         .into_bytes()
     }
@@ -119,7 +126,8 @@ mod tests {
             parsed.driver_publisher_certificate_sha256(),
             "34".repeat(32)
         );
-        assert_eq!(parsed.agent_publisher_certificate_sha256(), "45".repeat(32));
+        assert_eq!(parsed.agent_file_sha256(), "45".repeat(32));
+        assert_eq!(parsed.agent_publisher_certificate_sha256(), "56".repeat(32));
     }
 
     #[test]
@@ -140,5 +148,6 @@ mod tests {
         let embedded = StrictPackageManifest::embedded().unwrap();
         assert_eq!(embedded.driver_build_id().len(), 32);
         assert_eq!(embedded.driver_file_sha256().len(), 64);
+        assert_eq!(embedded.agent_file_sha256().len(), 64);
     }
 }

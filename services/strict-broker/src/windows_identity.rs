@@ -12,7 +12,9 @@ use std::ptr::{null, null_mut};
 use anyhow::{bail, Context, Result};
 use flclash_strict_contract::{StrictIdentity, StrictPolicyBundle};
 use sha2::{Digest, Sha256};
-use windows_sys::Win32::Foundation::{INVALID_HANDLE_VALUE, TRUST_E_NOSIGNATURE};
+use windows_sys::Win32::Foundation::{
+    INVALID_HANDLE_VALUE, TRUST_E_NOSIGNATURE, WAIT_FAILED, WAIT_OBJECT_0, WAIT_TIMEOUT,
+};
 use windows_sys::Win32::NetworkManagement::WindowsFilteringPlatform::{
     FwpmFreeMemory0, FwpmGetAppIdFromFileName0, FWP_BYTE_BLOB,
 };
@@ -33,16 +35,23 @@ use windows_sys::Win32::Storage::FileSystem::{
     CreateFileW, GetFileInformationByHandle, GetFinalPathNameByHandleW, BY_HANDLE_FILE_INFORMATION,
     FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT, FILE_FLAG_OPEN_REPARSE_POINT,
     FILE_READ_ATTRIBUTES, FILE_READ_DATA, FILE_SHARE_READ, OPEN_EXISTING, READ_CONTROL,
+    SYNCHRONIZE,
+};
+use windows_sys::Win32::System::Threading::{
+    OpenProcess, QueryFullProcessImageNameW, WaitForSingleObject, PROCESS_QUERY_LIMITED_INFORMATION,
 };
 
 use crate::{
-    IdentityVerification, IdentityVerifier, VerifiedApplicationAppIds, VerifiedPolicyAppIds,
+    IdentityVerification, IdentityVerifier, StrictPackageManifest, VerifiedApplicationAppIds,
+    VerifiedPolicyAppIds,
 };
 
 const MAX_WFP_APP_ID_BYTES: u32 = 64 * 1024;
 const MAX_CATALOG_HASH_BYTES: u32 = 128;
 const MAX_MATCHING_CATALOGS: usize = 32;
 const MAX_DRIVER_FILE_BYTES: u64 = 64 * 1024 * 1024;
+const MAX_AGENT_FILE_BYTES: u64 = 256 * 1024 * 1024;
+const MAX_PROCESS_IMAGE_PATH_UNITS: usize = 32_768;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WindowsVerifiedIdentity {
@@ -65,6 +74,13 @@ pub struct WindowsDriverTrustLease {
     _file: File,
 }
 
+pub struct WindowsAgentProcessTrustLease {
+    process_id: u32,
+    canonical_path: String,
+    _process: OwnedHandle,
+    _file: File,
+}
+
 impl WindowsDriverTrustLease {
     pub fn canonical_path(&self) -> &str {
         &self.canonical_path
@@ -76,6 +92,26 @@ impl WindowsDriverTrustLease {
 
     pub fn file_sha256(&self) -> &str {
         &self.file_sha256
+    }
+}
+
+impl WindowsAgentProcessTrustLease {
+    pub fn process_id(&self) -> u32 {
+        self.process_id
+    }
+
+    pub fn canonical_path(&self) -> &str {
+        &self.canonical_path
+    }
+
+    pub fn is_running(&self) -> Result<bool> {
+        // SAFETY: the process handle is live and has SYNCHRONIZE access.
+        match unsafe { WaitForSingleObject(self._process.as_raw_handle(), 0) } {
+            WAIT_TIMEOUT => Ok(true),
+            WAIT_OBJECT_0 => Ok(false),
+            WAIT_FAILED => Err(io::Error::last_os_error()).context("query trusted Agent process"),
+            status => bail!("query trusted Agent process returned status 0x{status:08x}"),
+        }
     }
 }
 
@@ -142,7 +178,7 @@ pub fn inspect_windows_driver(path: impl AsRef<Path>) -> Result<WindowsDriverTru
         bail!("strict driver canonical path is invalid");
     }
     let mut file = File::from(handle);
-    let file_sha256 = hash_driver_file(&mut file)?;
+    let file_sha256 = hash_locked_file(&mut file, "strict driver", MAX_DRIVER_FILE_BYTES)?;
     let publisher_certificate_sha256 =
         authenticode_publisher_digest(file.as_raw_handle(), &canonical_path)
             .context("verify strict driver Authenticode signer")?;
@@ -188,34 +224,113 @@ pub fn verify_windows_packaged_driver(
     Ok(lease)
 }
 
-fn hash_driver_file(file: &mut File) -> Result<String> {
+pub fn verify_windows_packaged_agent_process(
+    process_id: u32,
+    expected_agent_path: impl AsRef<Path>,
+    package: &StrictPackageManifest,
+) -> Result<WindowsAgentProcessTrustLease> {
+    if process_id == 0 {
+        bail!("strict Agent process ID is invalid");
+    }
+    // SAFETY: the PID is supplied by the named-pipe kernel API, not by the request frame.
+    let process = unsafe {
+        OpenProcess(
+            PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE,
+            0,
+            process_id,
+        )
+    };
+    if process.is_null() {
+        return Err(io::Error::last_os_error()).context("open strict Agent client process");
+    }
+    // SAFETY: OpenProcess returned a unique owned process handle.
+    let process = unsafe { OwnedHandle::from_raw_handle(process) };
+    let process_path = process_image_path(process.as_raw_handle())?;
+    let (canonical_path, handle) =
+        open_and_lock_plain_file(expected_agent_path.as_ref(), "strict packaged Agent")?;
+    if canonical_path.len() > 1024
+        || !canonical_path.to_ascii_lowercase().ends_with(".exe")
+        || canonical_path.contains(['\0', '\r', '\n', '/'])
+        || !canonical_path.eq_ignore_ascii_case(&process_path)
+    {
+        bail!("strict Agent process image does not match the protected package path");
+    }
+    let mut file = File::from(handle);
+    let file_sha256 = hash_locked_file(&mut file, "strict Agent", MAX_AGENT_FILE_BYTES)?;
+    validate_sha256(package.agent_file_sha256(), "strict Agent file digest")?;
+    if !file_sha256.eq_ignore_ascii_case(package.agent_file_sha256()) {
+        bail!("strict Agent process file digest does not match the package");
+    }
+    validate_sha256(
+        package.agent_publisher_certificate_sha256(),
+        "strict Agent publisher certificate digest",
+    )?;
+    let publisher = authenticode_publisher_digest(file.as_raw_handle(), &canonical_path)
+        .context("verify strict Agent Authenticode signer")?;
+    if !publisher.eq_ignore_ascii_case(package.agent_publisher_certificate_sha256()) {
+        bail!("strict Agent process publisher does not match the package");
+    }
+    let lease = WindowsAgentProcessTrustLease {
+        process_id,
+        canonical_path,
+        _process: process,
+        _file: file,
+    };
+    if !lease.is_running()? {
+        bail!("strict Agent process exited during verification");
+    }
+    Ok(lease)
+}
+
+fn process_image_path(process: *mut c_void) -> Result<String> {
+    let mut buffer = vec![0_u16; MAX_PROCESS_IMAGE_PATH_UNITS];
+    let mut length = u32::try_from(buffer.len()).expect("bounded process image path size");
+    // SAFETY: the process handle is live and buffer/length are valid outputs.
+    if unsafe { QueryFullProcessImageNameW(process, 0, buffer.as_mut_ptr(), &mut length) } == 0 {
+        return Err(io::Error::last_os_error()).context("query strict Agent process image path");
+    }
+    let length = usize::try_from(length).context("strict Agent process path length overflow")?;
+    if length == 0 || length >= buffer.len() {
+        bail!("strict Agent process image path length is invalid");
+    }
+    let path = String::from_utf16(&buffer[..length])
+        .context("strict Agent process image path is not UTF-16")?;
+    if !Path::new(&path).is_absolute() || path.contains(['\0', '\r', '\n', '/']) {
+        bail!("strict Agent process image path is invalid");
+    }
+    Ok(path)
+}
+
+fn hash_locked_file(file: &mut File, label: &str, maximum_bytes: u64) -> Result<String> {
     let length = file
         .metadata()
-        .context("inspect strict driver file size")?
+        .with_context(|| format!("inspect {label} file size"))?
         .len();
-    if length == 0 || length > MAX_DRIVER_FILE_BYTES {
-        bail!("strict driver file size is invalid");
+    if length == 0 || length > maximum_bytes {
+        bail!("{label} file size is invalid");
     }
     file.seek(SeekFrom::Start(0))
-        .context("rewind strict driver file before hashing")?;
+        .with_context(|| format!("rewind {label} file before hashing"))?;
     let mut digest = Sha256::new();
     let mut buffer = [0_u8; 64 * 1024];
     let mut total = 0_u64;
     loop {
-        let read = file.read(&mut buffer).context("hash strict driver file")?;
+        let read = file
+            .read(&mut buffer)
+            .with_context(|| format!("hash {label} file"))?;
         if read == 0 {
             break;
         }
         total = total
             .checked_add(read as u64)
-            .ok_or_else(|| anyhow::anyhow!("strict driver file size overflow"))?;
+            .ok_or_else(|| anyhow::anyhow!("{label} file size overflow"))?;
         digest.update(&buffer[..read]);
     }
     if total != length {
-        bail!("strict driver file changed while hashing");
+        bail!("{label} file changed while hashing");
     }
     file.seek(SeekFrom::Start(0))
-        .context("rewind strict driver file after hashing")?;
+        .with_context(|| format!("rewind {label} file after hashing"))?;
     Ok(format!("{:x}", digest.finalize()))
 }
 
