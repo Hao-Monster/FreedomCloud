@@ -272,13 +272,12 @@ impl WfpPolicyPlan {
             .entries
             .iter()
             .any(|entry| entry.action == StrictAction::Proxy);
-        let mut guard_filters = Vec::with_capacity(rules.len() * 2);
+        let mut guard_filters = Vec::with_capacity(rules.len() * 2 + usize::from(has_proxy) * 2);
         let proxy_rule_count = rules
             .iter()
             .filter(|rule| rule.action == StrictAction::Proxy)
             .count();
-        let mut redirect_filters =
-            Vec::with_capacity(proxy_rule_count * 4 + usize::from(has_proxy) * 2);
+        let mut redirect_filters = Vec::with_capacity(proxy_rule_count * 4);
         // These filters intentionally carry exact App-ID conditions. Windows treats an
         // unavailable terminating callout as block; a global filter could therefore
         // block the whole host while per-identity filters fail closed only for selected apps.
@@ -340,9 +339,9 @@ impl WfpPolicyPlan {
         }
         if has_proxy {
             // Datagram layers do not expose ALE App-ID. A single non-terminating filter per
-            // family is paired with a conditional-on-flow driver callout, so only flows that
-            // received context at ALE_FLOW_ESTABLISHED enter the per-packet hot path.
-            redirect_filters.extend([
+            // family remains with the fail-closed guards during rollback. The driver callout
+            // is conditional-on-flow, so unselected traffic never enters its packet hot path.
+            guard_filters.extend([
                 conditional_datagram_filter(
                     0x41,
                     WfpLayer::DatagramDataV4,
@@ -465,7 +464,7 @@ fn conditional_datagram_filter(
         layer,
         callout,
         callout_key,
-        lifetime: WfpFilterLifetime::Dynamic,
+        lifetime: WfpFilterLifetime::Persistent,
         identity_id: String::new(),
         app_id: Arc::from([]),
         action: StrictAction::Proxy,

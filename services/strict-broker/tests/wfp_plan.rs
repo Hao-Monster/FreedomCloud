@@ -65,11 +65,17 @@ fn plan_indexes_app_filters_and_limits_global_filters_to_conditional_udp_capture
     let plan = WfpPolicyPlan::new(&policy, &app_ids).unwrap();
 
     assert_eq!(plan.rules().len(), 3);
-    assert_eq!(plan.guard_filters().len(), 6);
-    assert_eq!(plan.redirect_filters().len(), 10);
+    assert_eq!(plan.guard_filters().len(), 8);
+    assert_eq!(plan.redirect_filters().len(), 8);
     assert!(plan
         .guard_filters()
         .iter()
+        .filter(|filter| {
+            matches!(
+                filter.layer(),
+                WfpLayer::AuthConnectV4 | WfpLayer::AuthConnectV6
+            )
+        })
         .all(|filter| filter.lifetime() == WfpFilterLifetime::Persistent
             && filter.is_indexed()
             && !filter.app_id().is_empty()));
@@ -89,6 +95,8 @@ fn plan_indexes_app_filters_and_limits_global_filters_to_conditional_udp_capture
             WfpLayer::AuthConnectV6,
             WfpLayer::AuthConnectV4,
             WfpLayer::AuthConnectV6,
+            WfpLayer::DatagramDataV4,
+            WfpLayer::DatagramDataV6,
         ]
     );
     assert_eq!(plan.rules()[0].app_id(), &[1, 1]);
@@ -109,7 +117,7 @@ fn plan_indexes_app_filters_and_limits_global_filters_to_conditional_udp_capture
         .all(|filter| filter.action() == StrictAction::Proxy));
 
     let datagram_filters: Vec<_> = plan
-        .redirect_filters()
+        .guard_filters()
         .iter()
         .filter(|filter| {
             matches!(
@@ -120,12 +128,17 @@ fn plan_indexes_app_filters_and_limits_global_filters_to_conditional_udp_capture
         .collect();
     assert_eq!(datagram_filters.len(), 2);
     assert!(datagram_filters.iter().all(|filter| {
-        filter.app_id().is_empty()
+        filter.lifetime() == WfpFilterLifetime::Persistent
+            && filter.app_id().is_empty()
             && !filter.is_indexed()
             && !filter.clears_action_right()
             && filter.permits_if_callout_unregistered()
             && filter.callout_action() == WfpFilterAction::ConditionalCapture
     }));
+    assert!(plan.redirect_filters().iter().all(|filter| !matches!(
+        filter.layer(),
+        WfpLayer::DatagramDataV4 | WfpLayer::DatagramDataV6
+    )));
     assert_eq!(
         plan.redirect_filters()
             .iter()

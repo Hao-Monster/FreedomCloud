@@ -51,11 +51,13 @@ enum FilterClass {
 
 impl FilterClass {
     fn layers(self) -> &'static [(WfpLayer, GUID)] {
-        const GUARD_LAYERS: [(WfpLayer, GUID); 2] = [
+        const GUARD_LAYERS: [(WfpLayer, GUID); 4] = [
             (WfpLayer::AuthConnectV4, FWPM_LAYER_ALE_AUTH_CONNECT_V4),
             (WfpLayer::AuthConnectV6, FWPM_LAYER_ALE_AUTH_CONNECT_V6),
+            (WfpLayer::DatagramDataV4, FWPM_LAYER_DATAGRAM_DATA_V4),
+            (WfpLayer::DatagramDataV6, FWPM_LAYER_DATAGRAM_DATA_V6),
         ];
-        const REDIRECT_LAYERS: [(WfpLayer, GUID); 6] = [
+        const REDIRECT_LAYERS: [(WfpLayer, GUID); 4] = [
             (
                 WfpLayer::ConnectRedirectV4,
                 FWPM_LAYER_ALE_CONNECT_REDIRECT_V4,
@@ -72,8 +74,6 @@ impl FilterClass {
                 WfpLayer::FlowEstablishedV6,
                 FWPM_LAYER_ALE_FLOW_ESTABLISHED_V6,
             ),
-            (WfpLayer::DatagramDataV4, FWPM_LAYER_DATAGRAM_DATA_V4),
-            (WfpLayer::DatagramDataV6, FWPM_LAYER_DATAGRAM_DATA_V6),
         ];
         match self {
             Self::Guard => &GUARD_LAYERS,
@@ -93,15 +93,16 @@ impl FilterClass {
             (self, layer),
             (
                 Self::Guard,
-                WfpLayer::AuthConnectV4 | WfpLayer::AuthConnectV6
+                WfpLayer::AuthConnectV4
+                    | WfpLayer::AuthConnectV6
+                    | WfpLayer::DatagramDataV4
+                    | WfpLayer::DatagramDataV6
             ) | (
                 Self::Redirect,
                 WfpLayer::ConnectRedirectV4
                     | WfpLayer::ConnectRedirectV6
                     | WfpLayer::FlowEstablishedV4
                     | WfpLayer::FlowEstablishedV6
-                    | WfpLayer::DatagramDataV4
-                    | WfpLayer::DatagramDataV6
             )
         )
     }
@@ -632,7 +633,7 @@ fn validate_filter_specs(class: FilterClass, filters: &[WfpFilterSpec]) -> Resul
                     && !is_conditional_capture_layer(filter.layer())
             }
             WfpFilterAction::ConditionalCapture => {
-                class == FilterClass::Redirect
+                class == FilterClass::Guard
                     && is_conditional_capture_layer(filter.layer())
                     && !filter.is_indexed()
                     && !filter.clears_action_right()
@@ -680,14 +681,14 @@ fn filter_flags(class: FilterClass, spec: &WfpFilterSpec) -> u32 {
 }
 
 fn enumerated_filter_flags(class: FilterClass, layer: WfpLayer) -> u32 {
-    if is_conditional_capture_layer(layer) {
-        FWPM_FILTER_FLAG_PERMIT_IF_CALLOUT_UNREGISTERED
+    let persistent = if class == FilterClass::Guard {
+        FWPM_FILTER_FLAG_PERSISTENT
     } else {
-        let persistent = if class == FilterClass::Guard {
-            FWPM_FILTER_FLAG_PERSISTENT
-        } else {
-            0
-        };
+        0
+    };
+    if is_conditional_capture_layer(layer) {
+        persistent | FWPM_FILTER_FLAG_PERMIT_IF_CALLOUT_UNREGISTERED
+    } else {
         persistent | FWPM_FILTER_FLAG_INDEXED | FWPM_FILTER_FLAG_CLEAR_ACTION_RIGHT
     }
 }
@@ -715,7 +716,10 @@ fn add_filter(
         },
     };
     let name = wide(match (class, spec.callout_action()) {
-        (FilterClass::Guard, _) => "FlClashX strict fail-closed guard",
+        (FilterClass::Guard, WfpFilterAction::Terminating) => "FlClashX strict fail-closed guard",
+        (FilterClass::Guard, WfpFilterAction::ConditionalCapture) => {
+            "FlClashX strict fail-closed UDP capture"
+        }
         (FilterClass::Redirect, WfpFilterAction::Terminating) => {
             "FlClashX strict application redirect"
         }
@@ -1068,8 +1072,8 @@ mod tests {
             0
         );
         assert_eq!(
-            enumerated_filter_flags(FilterClass::Redirect, WfpLayer::DatagramDataV4),
-            FWPM_FILTER_FLAG_PERMIT_IF_CALLOUT_UNREGISTERED
+            enumerated_filter_flags(FilterClass::Guard, WfpLayer::DatagramDataV4),
+            FWPM_FILTER_FLAG_PERSISTENT | FWPM_FILTER_FLAG_PERMIT_IF_CALLOUT_UNREGISTERED
         );
     }
 
@@ -1144,7 +1148,7 @@ mod tests {
         let mut provider = object_key_to_guid(provider_key);
         let mut filter = FWPM_FILTER0 {
             filterKey: object_key_to_guid(expected_filter_key(layer, &[])),
-            flags: enumerated_filter_flags(FilterClass::Redirect, layer),
+            flags: enumerated_filter_flags(FilterClass::Guard, layer),
             providerKey: &mut provider,
             layerKey: layer_guid(layer),
             subLayerKey: object_key_to_guid(sublayer_key),
@@ -1168,7 +1172,7 @@ mod tests {
             &filter,
             provider_key,
             sublayer_key,
-            FilterClass::Redirect,
+            FilterClass::Guard,
             layer,
         )
         .unwrap();
@@ -1178,7 +1182,7 @@ mod tests {
             &filter,
             provider_key,
             sublayer_key,
-            FilterClass::Redirect,
+            FilterClass::Guard,
             layer,
         )
         .is_err());
