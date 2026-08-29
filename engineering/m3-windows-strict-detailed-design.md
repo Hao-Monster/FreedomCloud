@@ -281,12 +281,12 @@ same nonce; this bounded window closes the driver-to-Broker renewal handoff and
 older queued contexts fail closed.
 
 The production TCP runtime now binds exact dual-stack listeners plus reserved
-UDP loopback sockets. Core additionally binds one shared UDP health socket per
-strict generation, independent of target-group count; its fixed 80-byte frames
-carry protocol/kind, generation, a 128-bit key identifier, a random 128-bit
-nonce and HMAC-SHA256. Invalid, oversized, stale or unauthenticated frames are
-silently discarded. Broker proves every TCP SOCKS ingress and the shared UDP
-health socket belong to one pinned live Core process, then authenticates every
+UDP loopback sockets. Core additionally binds one shared UDP ingress socket per
+strict generation, independent of target-group count. Broker health frames are
+fixed at 80 bytes and carry protocol/kind, generation, a 128-bit key identifier,
+a random 128-bit nonce and HMAC-SHA256. Invalid, oversized, stale or
+unauthenticated frames are silently discarded. Broker proves every TCP SOCKS
+ingress and the shared UDP socket belong to one pinned live Core process, then authenticates every
 per-group key through at most eight 256 KiB-stack probe workers without issuing
 an external CONNECT. It then
 starts a 2–16 worker TCP pool, activates a CNG-random six-second lease and renews
@@ -309,11 +309,32 @@ equivalent Mihomo ingress is required. UDP/443 is QUIC and must pass the same
 strict policy. DNS from selected applications must be redirected to Mihomo DNS;
 direct physical-interface port 53/853 is guarded.
 
-The shared Core UDP endpoint implemented in `ec6437c`/`939c98a` is deliberately
-health-only. It proves endpoint ownership, generation freshness and every
-per-group credential with one socket/goroutine, but accepts no application
-payload and cannot satisfy `udp4Redirect`, `udp6Redirect`, `dnsCaptured` or
-`quicCaptured`.
+The shared Core UDP endpoint introduced by `ec6437c`/`939c98a` and extended by
+`231f10f` supports both health proof and a private data protocol. Data frames
+use an 80-byte canonical header followed by a 1–16 KiB payload and a 32-byte
+HMAC-SHA256 tag. The header binds direction, generation, 128-bit credential ID,
+128-bit association ID, monotonic sequence, canonical IPv4/IPv6 endpoint and
+payload length. Outbound and reply directions use distinct kinds. Reserved
+bytes, zero IDs/sequences/ports, non-canonical mapped addresses, loopback,
+link-local, multicast, broadcast, unsafe reply sources, wrong generation,
+wrong source socket, replayed sequence and invalid tags are rejected before the
+payload enters Mihomo.
+
+Core owns one receive goroutine, at most 1,024 associations and at most 256
+in-flight payload buffers (4 MiB at the 16 KiB maximum). Associations expire
+after 90 idle seconds and use a 64-packet sliding replay window. Their Mihomo
+NAT keys are precomputed once and include generation, credential and association
+identity; valid payloads are routed with the exact prepared `SpecialProxy`
+group. HMAC states and payload buffers are pooled. Oversized Windows datagrams
+that return `WSAEMSGSIZE` are consumed and discarded without terminating the
+generation-scoped service. Broker must allocate cryptographically random,
+generation-unique association IDs; a live collision across credentials fails
+closed.
+
+This is only the Core side of the data path. Broker currently proves the socket
+with health frames but does not encode/decode application data frames, and the
+driver does not capture or reinject datagrams. Therefore it cannot yet satisfy
+`udp4Redirect`, `udp6Redirect`, `dnsCaptured` or `quicCaptured`.
 
 Initial strict acceptance requires Mihomo Fake-IP/virtual-network-card mode so
 domain mappings remain available to existing domain rules. Real-IP domain
