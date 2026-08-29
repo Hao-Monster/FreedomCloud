@@ -340,10 +340,11 @@ unknown keys, invalid HMACs, stale/replayed replies and oversized datagrams fail
 closed; a rejected datagram does not poison the following valid sequence. This
 per-datagram path has no heap allocation or atomic reference-count operation.
 
-The production Broker runtime does not yet own this reusable bridge or feed
-captured driver datagrams into this transport. The driver source can construct
-and initiate bounded reply injection, and the bridge can observe completion
-health, but production gate revocation and VM behavior are not proven. Therefore
+The production Broker runtime owns this reusable bridge and feeds captured
+driver datagrams into this transport. It pre-arms one lease-owner Direct-I/O
+receive before opening UDP admission, owns the bridge for the forwarding-runtime
+lifetime and propagates worker failure into verified lease/gate revocation before
+teardown. Driver execution and end-to-end VM behavior are not proven. Therefore
 the implemented path cannot yet satisfy
 `udp4Redirect`, `udp6Redirect`, `dnsCaptured` or `quicCaptured`.
 
@@ -367,6 +368,12 @@ driver must bind their flow tokens to state created within that same live Broker
 activation. Revocation, expiry, policy change, Broker exit or nonce change
 invalidates all flow and generation state. Capability bits remain off until the
 complete capture/reinjection implementation exists and is VM-proven.
+
+The production runtime stores that two-generation window behind one read/write
+lock. Renewal retains the write guard across the driver lease mutation and the
+window update, so bridge decode cannot observe a newly accepted driver generation
+with stale userspace admission state. This lock is a renewal/control-plane
+boundary, not a classifier or per-packet kernel lock.
 
 `f9a8470` adds cancellable Direct-I/O calls on the already opened, attested
 overlapped device handle. A pending receive does not hold the control-plane
@@ -399,8 +406,12 @@ The bridge baselines the driver's monotonic injection-health snapshot at startup
 and, only while an injection is unresolved, samples it at most once per 100 ms.
 Any new completion failure, partial batch, counter rollback or accounting drift
 stops the bridge; an idle bridge issues no health IOCTL. Production forwarding-
-runtime ownership and supervisor-to-gate revocation remain intentionally open,
-so this component cannot advertise UDP support.
+runtime ownership now pre-arms and owns this bridge. The Engine Actor checks
+worker liveness every 25 ms without network I/O or allocation; on failure it
+marks pending receive cancellation as expected, revokes and verifies the
+endpoint lease/gate, stops renewal and bridge workers, stops TCP listeners and
+forces blocking. This source/loopback proof is not a substitute for WDK and VM
+fault testing, so this component cannot advertise UDP support.
 
 `4b2031e` adds the matching KMDF request boundary without pretending the data
 plane is complete. The default sequential queue performs only bounded validation
@@ -408,12 +419,16 @@ and forwards one exact 256 KiB receive request to a manual queue, allowing lease
 renewal and fail-closed controls to continue while that request is pending. Both
 queued and driver-owned request counts must be zero before another receive is
 accepted, bounding locked receive memory to 256 KiB. Receive admission requires
-the live lease-owning Broker PID. Submitted reply batches are parsed without
+the live lease-owning Broker PID. Production pre-arm is admitted for that exact
+lease owner while the gate remains closed, serialized with lease mutation and
+followed by a manual-queue restart after a prior purge; reply submission still
+requires active UDP admission. Submitted reply batches are parsed without
 allocation and must match the current lease generation, revision, digest and
 nonce plus every ABI size, alignment, padding, UDP, endpoint and flag invariant.
 Valid replies now continue through exact flow lookup, resource admission and WFP
 injection initiation. UDP/DNS/QUIC capability bits nevertheless remain off until
-completion health, production ownership and VM qualification are proven.
+end-to-end driver execution, completion fault handling, DNS/QUIC behavior and VM
+qualification are proven.
 
 `c71e5d2`/`07d8933`/`94b9eb3` add the bounded flow-provenance foundation.
 Per-App-ID `ALE_FLOW_ESTABLISHED_V4/V6` filters use the inspection action and
@@ -507,16 +522,24 @@ batch counters plus the last failure status. Broker validates
 `attempted = succeeded + failed + in-flight`, the 256-operation ceiling and
 status/counter consistency. `62d0c44` baselines those counters for each bridge
 and terminates on any new failure, partial batch, rollback or accounting drift.
-The production supervisor must still translate bridge termination into verified
-UDP-gate revocation before capability activation. Retrying an ambiguous batch is
-forbidden because accepted sequences may already be committed.
+`959adb6` connects that termination to the production Engine Actor. The actor
+prepares cancellation, directly revokes and attests the endpoint lease/gate,
+deactivates forwarding and forces blocking before returning the runtime error.
+Retrying an ambiguous batch is forbidden because accepted sequences may already
+be committed.
 
 This remains an inactive vertical slice. Production ownership and health of the
-asynchronous Broker bridge are not wired to the admission supervisor, and current
+asynchronous Broker bridge are wired to the admission supervisor, but current
 capture completes one Direct-I/O request per datagram rather than coalescing up
-to the ABI limit. No UDP/DNS/QUIC capability is advertised until production
-ownership and verified gate revocation, representative performance evidence and
-the WDK/Windows 11 VM gates pass.
+to the ABI limit. No UDP/DNS/QUIC capability is advertised until end-to-end WFP
+canaries, DNS/QUIC semantics, representative performance evidence and the
+WDK/Windows 11 VM gates pass.
+
+After this fail-closed cleanup the Engine Actor deliberately exits instead of
+silently reconstructing mutable kernel/userspace ownership in place. This is the
+safe current behavior, not a completed availability design: TD-027 requires a
+stable recovery marker and bounded in-process or SCM recovery proof, including
+no admission reopen before full guard, lease and runtime attestation.
 
 The current exact first-endpoint binding deliberately fails closed if a WFP flow
 context later presents a different destination. Windows 11 VM acceptance must
@@ -586,10 +609,11 @@ and [Microsoft non-TCP redirect-record contract](https://learn.microsoft.com/en-
   priority channel between transactions. Raw WFP handles are never marked
   `Send` or shared across pipe threads.
 - Real loopback TCP listeners, authenticated Core ingress probes, fixed session
-  workers and lease renewal now exist in the production host. The probe still
-  reports relay and DNS health as false until an end-to-end WFP redirect canary
-  and UDP/DNS/QUIC runtime exist. Proxy commit therefore remains fail-closed;
-  block-only policy remains usable and no placeholder capability is advertised.
+  workers, lease renewal and a pre-armed production UDP bridge now exist in the
+  production host. The probe still reports relay and DNS health as false until
+  end-to-end WFP redirect/capture/injection and DNS/QUIC canaries pass. Proxy
+  commit therefore remains fail-closed; block-only policy remains usable and no
+  placeholder capability is advertised.
 - Commands: `preparePolicy`, `commitPolicy`, `forceBlocking`, `disablePolicy`,
   `status`, `diagnostics`; no arbitrary command/path/registry/service API.
 - The Broker reopens and validates executable handles to prevent path-swap

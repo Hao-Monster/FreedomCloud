@@ -34,12 +34,17 @@ The versioned 168-byte snapshot exports spin-lock-consistent attempted,
 succeeded, failed, in-flight and partial-batch counters plus the last completion
 status. Broker baselines and monitors them only while injection work is pending,
 at most once per 100 ms, and stops the reusable bridge on any new failure or
-accounting drift. This is still an inactive vertical slice: production bridge
-ownership and verified supervisor-to-gate revocation are unfinished, and a
-multi-record batch can have an accepted prefix if a later initiation fails. No
-UDP/DNS/QUIC capability is advertised until fail-closed runtime integration,
-signing, performance measurement and VM qualification are complete. Capture
-also rejects flows requiring ALE reclassification; enterprise IPsec
+accounting drift. The production runtime pre-arms exactly one receive for the
+lease owner while UDP admission remains closed; receive setup is serialized with
+lease mutation and restarts the manual queue after a prior purge. Reply batches
+still require the open gate. A 25 ms Engine Actor check translates bridge failure
+into prepared cancellation, verified lease/gate revocation, forwarding teardown
+and forced blocking before actor exit. This remains an inactive vertical slice:
+a multi-record batch can have an accepted prefix if a later initiation fails, and
+real WDK/driver fault execution is not proven. No UDP/DNS/QUIC capability is
+advertised until end-to-end canaries, signing, performance measurement and VM
+qualification are complete. Capture also rejects flows requiring ALE
+reclassification; enterprise IPsec
 compatibility remains a separate VM gate because locally generated inbound
 injection bypasses IPsec processing.
 
