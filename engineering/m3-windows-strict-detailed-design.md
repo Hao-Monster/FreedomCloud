@@ -281,9 +281,14 @@ same nonce; this bounded window closes the driver-to-Broker renewal handoff and
 older queued contexts fail closed.
 
 The production TCP runtime now binds exact dual-stack listeners plus reserved
-UDP loopback sockets, verifies that every declared Core SOCKS ingress belongs to
-one pinned live Core process, and authenticates every ingress through at most
-eight 256 KiB-stack probe workers without issuing an external CONNECT. It then
+UDP loopback sockets. Core additionally binds one shared UDP health socket per
+strict generation, independent of target-group count; its fixed 80-byte frames
+carry protocol/kind, generation, a 128-bit key identifier, a random 128-bit
+nonce and HMAC-SHA256. Invalid, oversized, stale or unauthenticated frames are
+silently discarded. Broker proves every TCP SOCKS ingress and the shared UDP
+health socket belong to one pinned live Core process, then authenticates every
+per-group key through at most eight 256 KiB-stack probe workers without issuing
+an external CONNECT. It then
 starts a 2–16 worker TCP pool, activates a CNG-random six-second lease and renews
 it every two seconds while rechecking Core listener ownership. A duplicate pair
 of TCP socket handles keeps endpoints bound if the accept loop exits before the
@@ -304,16 +309,30 @@ equivalent Mihomo ingress is required. UDP/443 is QUIC and must pass the same
 strict policy. DNS from selected applications must be redirected to Mihomo DNS;
 direct physical-interface port 53/853 is guarded.
 
+The shared Core UDP endpoint implemented in `ec6437c`/`939c98a` is deliberately
+health-only. It proves endpoint ownership, generation freshness and every
+per-group credential with one socket/goroutine, but accepts no application
+payload and cannot satisfy `udp4Redirect`, `udp6Redirect`, `dnsCaptured` or
+`quicCaptured`.
+
 Initial strict acceptance requires Mihomo Fake-IP/virtual-network-card mode so
 domain mappings remain available to existing domain rules. Real-IP domain
 restoration is a separate proof item and cannot be inferred from an IP-only WFP
 context.
 
-ALE connect redirection can cover connected UDP. Unconnected datagram send,
-DNS and QUIC coverage must be proven through the required bind/resource or
-datagram-layer path and VM bypass matrix before any UDP/DNS/QUIC capability bit
-is advertised. Until that proof exists, the driver returns no such capability
-and the Agent remains `blocking`.
+ALE connect redirection cannot be the sole strict UDP mechanism. Microsoft
+documents that connected UDP using `connect`/`send` can be dropped when locally
+redirected, while non-TCP redirect records are delivered through `WSARecvMsg`
+and only the flow-creating packet carries the record. The production design
+therefore requires a bounded datagram-layer v4/v6 path with flow identity,
+first-packet provenance, authenticated Core associations, idle expiry and reply
+reinjection. It must prove both connected `connect`/`send` and unconnected
+`sendto`, DNS and QUIC in the VM bypass matrix before any UDP/DNS/QUIC
+capability bit is advertised. Until that proof exists, the driver returns no
+such capability and the Agent remains `blocking`.
+
+Primary constraints: [Microsoft connected-UDP local-proxy limitation](https://learn.microsoft.com/en-us/troubleshoot/windows-hardware/drivers/redirection-connected-udp-traffic-local-proxy-fail)
+and [Microsoft non-TCP redirect-record contract](https://learn.microsoft.com/en-us/windows/win32/winsock/sio-query-wfp-connection-redirect-records).
 
 ## 7. Broker IPC and privileges
 
