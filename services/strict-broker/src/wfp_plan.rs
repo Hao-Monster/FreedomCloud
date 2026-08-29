@@ -385,3 +385,22 @@ fn derived_filter_key(namespace: u8, app_id: &[u8]) -> WfpObjectKey {
     bytes[8] = (bytes[8] & 0x3f) | 0x80;
     WfpObjectKey(bytes)
 }
+
+pub(crate) fn expected_filter_key(layer: WfpLayer, app_id: &[u8]) -> WfpObjectKey {
+    let namespace = match layer {
+        WfpLayer::AuthConnectV4 => 0x11,
+        WfpLayer::AuthConnectV6 => 0x12,
+        WfpLayer::ConnectRedirectV4 => 0x21,
+        WfpLayer::ConnectRedirectV6 => 0x22,
+    };
+    derived_filter_key(namespace, app_id)
+}
+
+pub(crate) fn expected_callout_key(layer: WfpLayer) -> WfpObjectKey {
+    match layer {
+        WfpLayer::AuthConnectV4 => GUARD_V4_CALLOUT_KEY,
+        WfpLayer::AuthConnectV6 => GUARD_V6_CALLOUT_KEY,
+        WfpLayer::ConnectRedirectV4 => REDIRECT_V4_CALLOUT_KEY,
+        WfpLayer::ConnectRedirectV6 => REDIRECT_V6_CALLOUT_KEY,
+    }
+}

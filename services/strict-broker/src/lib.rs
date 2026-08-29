@@ -24,6 +24,8 @@ mod windows_recovery_acl;
 mod windows_scm;
 #[cfg(windows)]
 mod windows_wfp_control;
+#[cfg(windows)]
+mod windows_wfp_engine;
 
 pub use dispatch::{BrokerDispatcher, ForwardingHealthProbe};
 pub use ipc_auth::{AuthorizedBrokerRequest, BrokerAuthenticator, ClientPrincipal, ClientRole};
@@ -56,6 +58,8 @@ pub use windows_wfp_control::{
     WindowsDriverPolicyChannel, WindowsDriverPolicySnapshot, WindowsWfpControl,
     WindowsWfpFilterInventory, WindowsWfpFilterStore,
 };
+#[cfg(windows)]
+pub use windows_wfp_engine::WindowsWfpEngineStore;
 
 pub const MAX_VERIFIED_APP_ID_BYTES: usize = 4 * 1024;
 const MAX_VERIFIED_POLICY_APP_ID_BYTES: usize = 2 * 1024 * 1024;
