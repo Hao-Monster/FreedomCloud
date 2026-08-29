@@ -341,7 +341,8 @@ closed; a rejected datagram does not poison the following valid sequence. This
 per-datagram path has no heap allocation or atomic reference-count operation.
 
 The production Broker runtime does not yet feed captured driver datagrams into
-this transport, and the driver does not reinject replies. Therefore the
+this transport. The driver source can now construct and initiate bounded reply
+injection, but completion health and VM behavior are not proven. Therefore the
 implemented path cannot yet satisfy
 `udp4Redirect`, `udp6Redirect`, `dnsCaptured` or `quicCaptured`.
 
@@ -405,8 +406,9 @@ accepted, bounding locked receive memory to 256 KiB. Receive admission requires
 the live lease-owning Broker PID. Submitted reply batches are parsed without
 allocation and must match the current lease generation, revision, digest and
 nonce plus every ABI size, alignment, padding, UDP, endpoint and flag invariant.
-Until per-flow provenance and WFP injection are implemented, even a valid reply
-returns `STATUS_NOT_SUPPORTED`; UDP/DNS/QUIC capability bits remain off.
+Valid replies now continue through exact flow lookup, resource admission and WFP
+injection initiation. UDP/DNS/QUIC capability bits nevertheless remain off until
+completion health, production ownership and VM qualification are proven.
 
 `c71e5d2`/`07d8933`/`94b9eb3` add the bounded flow-provenance foundation.
 Per-App-ID `ALE_FLOW_ESTABLISHED_V4/V6` filters use the inspection action and
@@ -451,9 +453,7 @@ separate v4/v6 transport injection handles before registering callouts and
 destroys them only after callout unregistration. The datagram classifier queries
 injection state before endpoint parsing and permits a self-injected packet only
 when its opaque injection context is the exact live flow-context pointer. This
-prevents a foreign or stale injected packet from claiming the loop bypass. The
-handles and bypass are prerequisites only: reply packet construction, bounded
-in-flight ownership and asynchronous completion are not implemented yet.
+prevents a foreign or stale injected packet from claiming the loop bypass.
 
 `0027f9c` adds a fixed 256-bucket token index beside the lifecycle list. Driver-
 generated monotonic nonzero tokens distribute the maximum 1,024 contexts across
@@ -470,18 +470,43 @@ second lock or an unbounded table.
 the same flow lock it accepts monotonic progress and one copy of an out-of-order
 sequence inside the previous 63 positions, rejects zero/duplicate/stale values,
 and guards both shift operations before evaluating them. Prevalidation evaluates
-the window without mutation; the eventual injection transaction must commit the
-sequence only after it owns the exact flow reference, in-flight slot and packet
+the window without mutation; the injection transaction commits the sequence
+only after it owns the exact flow reference, in-flight slot and packet
 resources. This prevents a structurally valid request that later fails resource
 admission from consuming a reply sequence.
 
+`dd2e9b2` completes the inactive kernel reply-initiation slice. A valid record
+first reacquires the exact indexed flow and one of 256 global in-flight slots,
+then allocates one bounded nonpaged context containing IP-header backfill, the
+UDP header and at most 16 KiB of payload. A driver-owned NBL pool supplies the
+NBL/NET_BUFFER; one MDL describes the context packet storage. The driver reverses
+the recorded endpoints, asks WFP to construct the v4/v6 IP header and complete
+the UDP/IP checksums, commits the per-flow replay sequence, and initiates
+transport-receive injection using the exact compartment, interface,
+sub-interface and flow pointer as opaque self-injection provenance. Immediate
+failure frees the NBL, MDL, packet context, flow reference and admission slot;
+successful initiation transfers that ownership to the completion callback.
+Lease loss, incompatible renewal, gate deactivation and unload wait for every
+in-flight completion before draining flow contexts or destroying injection
+handles and the NBL pool. Flows that require ALE reclassification are rejected
+before capture because this injection API is not valid for that case.
+
+The batch has an exact validation-only first pass, followed by revalidation and
+per-record initiation. This prevents malformed trailing records from creating a
+partial side effect, but a runtime/resource failure during the second pass can
+still leave an accepted prefix in flight. Likewise WFP reports final asynchronous
+delivery status only through `NET_BUFFER_LIST_STATUS`, after the IOCTL has
+returned. Before capability activation, the driver snapshot and Broker runtime
+must gain monotonic submitted/completed/failed health counters, detect any
+partial or failed generation, and revoke the UDP gate. Retrying an ambiguous
+batch is forbidden because accepted sequences may already be committed.
+
 This remains an inactive vertical slice. Production ownership and health of the
-asynchronous Broker bridge are not wired, reply packet construction/injection
-and its asynchronous completion are unimplemented, and current capture completes
-one Direct-I/O request per datagram rather than coalescing up to the ABI limit.
-No UDP/DNS/QUIC
-capability is advertised until those pieces, representative performance evidence
-and the WDK/Windows 11 VM gates pass.
+asynchronous Broker bridge are not wired, asynchronous completion failures are
+not yet exported, and current capture completes one Direct-I/O request per
+datagram rather than coalescing up to the ABI limit. No UDP/DNS/QUIC capability
+is advertised until those pieces, representative performance evidence and the
+WDK/Windows 11 VM gates pass.
 
 The current exact first-endpoint binding deliberately fails closed if a WFP flow
 context later presents a different destination. Windows 11 VM acceptance must

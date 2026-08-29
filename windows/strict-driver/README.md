@@ -15,21 +15,29 @@ and absorbs the original only after successful delivery. Missing requests,
 malformed packets, stale leases and saturation remain blocked.
 
 The first valid packet also binds the exact address, port, flag, compartment,
-interface and sub-interface tuple needed for future receive injection. Separate
-v4/v6 transport-injection handles are created before callout registration, and
+interface and sub-interface tuple used for receive injection. Separate v4/v6
+transport-injection handles are created before callout registration, and
 self-injected packets bypass recapture only when their opaque injection context
-is the exact live flow context. This is still preparation, not reply injection.
+is the exact live flow context.
 Reply validation uses a fixed 256-bucket driver-token index and verifies the
 complete flow tuple plus lease identity before taking a reference; it never
 scans the full 1,024-flow lifecycle list.
-Each flow also owns a 64-packet reply replay window. Current validation is
-non-mutating; sequence state will be committed only by a future injection
-transaction after it owns every bounded resource.
+Each flow also owns a 64-packet reply replay window. Prevalidation is
+non-mutating; an injection transaction commits the sequence only after it owns
+the exact flow reference, one of 256 global in-flight slots, packet storage, MDL
+and NBL. WFP constructs the v4/v6 IP header and UDP checksum before transport-
+receive injection. Immediate failure and asynchronous completion both release
+every resource; lease/gate teardown drains in-flight injections before flow
+contexts and injection infrastructure.
 
-Reply reinjection and production bridge ownership are still unfinished. No UDP
-reply is accepted for injection and no UDP/DNS/QUIC capability is advertised
-until reinjection, bounded asynchronous lifetime ownership, signing, performance
-measurement and VM qualification are complete.
+This is still an inactive vertical slice. Asynchronous completion status is not
+yet exported to the Broker, a multi-record batch can have an accepted prefix if
+a later initiation fails, and production bridge ownership is unfinished. No
+UDP/DNS/QUIC capability is advertised until completion health, fail-closed
+runtime integration, signing, performance measurement and VM qualification are
+complete. Capture also rejects flows requiring ALE reclassification; enterprise
+IPsec compatibility remains a separate VM gate because locally generated inbound
+injection bypasses IPsec processing.
 
 ## Build contract
 
