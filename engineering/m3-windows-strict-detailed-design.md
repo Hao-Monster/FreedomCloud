@@ -198,6 +198,15 @@ removes dynamic redirects first, revokes the lease, closes relay sockets and
 only then considers persistent guard removal. A process-exit callback revokes
 the held Broker process identity immediately; a numeric PID alone is forbidden.
 
+The protocol-v2 implementation constrains lease TTL to 1–30 seconds and accepts
+only exact `127.0.0.1`/`::1` addresses with nonzero ports. The driver obtains the
+requestor PID from the KMDF request itself, immediately resolves and references
+the corresponding `PEPROCESS`, and never accepts a user-supplied PID. The image
+uses the force-integrity linker flag required for process callbacks. Policy
+replacement/unload revokes the lease first; expiry, explicit revocation and the
+referenced process exit use the same rundown-protected destruction path. This
+milestone does not enable redirect capability bits or mutate connect requests.
+
 ### UDP, DNS and QUIC
 
 UDP is not declared complete by reusing the TCP relay. A separate association

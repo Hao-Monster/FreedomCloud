@@ -4,6 +4,9 @@ This directory is the Windows 11 x64 M3 kernel boundary. The current source
 implements a fail-closed policy snapshot and registers four WFP callouts. The
 redirect callouts intentionally block: no redirect capability is advertised
 until the separately revocable Broker endpoint lease and relay are complete.
+Protocol v2 includes the revocable lease and binds it to the IOCTL requestor's
+referenced kernel process identity, but relay and redirect mutation remain
+deliberately unavailable.
 
 ## Build contract
 
