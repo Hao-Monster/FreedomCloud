@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 
 mod dispatch;
 mod ipc_auth;
+mod planned_wfp_backend;
 mod recovery_file;
 mod wfp_plan;
 #[cfg(windows)]
@@ -18,6 +19,7 @@ mod windows_pipe;
 
 pub use dispatch::{BrokerDispatcher, ForwardingHealthProbe};
 pub use ipc_auth::{AuthorizedBrokerRequest, BrokerAuthenticator, ClientPrincipal, ClientRole};
+pub use planned_wfp_backend::{PlannedWfpBackend, WfpControlPlane, WfpControlSnapshot};
 pub use recovery_file::FileRecoveryStore;
 pub use wfp_plan::{
     DriverIdentityRule, PlanInstallStep, PlanRemoveStep, WfpCallout, WfpFilterLifetime,
@@ -568,17 +570,17 @@ where
                 bail!("strict redirect filters survived recovery removal");
             }
         }
-        if !snapshot.guard_filters_installed {
-            self.backend.install_guards(
-                &marker.policy,
-                self.verification_lease
-                    .as_ref()
-                    .expect("recovery retains verification before filter installation")
-                    .app_ids(),
-                &marker.policy_digest,
-            )?;
-            snapshot = self.backend.snapshot()?;
-        }
+        // Replacing guards is intentionally idempotent. It rebinds an enumerated persistent
+        // filter set to the freshly verified App-IDs and re-uploads the immutable driver snapshot.
+        self.backend.install_guards(
+            &marker.policy,
+            self.verification_lease
+                .as_ref()
+                .expect("recovery retains verification before filter installation")
+                .app_ids(),
+            &marker.policy_digest,
+        )?;
+        snapshot = self.backend.snapshot()?;
         validate_snapshot(&snapshot, &marker, true, false)?;
 
         let recovered_phase = if has_proxy_entries(&marker.policy) {
