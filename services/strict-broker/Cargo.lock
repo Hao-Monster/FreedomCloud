@@ -60,6 +60,7 @@ dependencies = [
  "flclash-strict-contract",
  "serde",
  "serde_json",
+ "sha2",
  "windows-sys",
 ]
 

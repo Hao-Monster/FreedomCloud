@@ -10,10 +10,17 @@ use serde::{Deserialize, Serialize};
 mod ipc_auth;
 mod recovery_file;
 #[cfg(windows)]
+mod windows_identity;
+#[cfg(windows)]
 mod windows_pipe;
 
 pub use ipc_auth::{AuthorizedBrokerRequest, BrokerAuthenticator, ClientPrincipal, ClientRole};
 pub use recovery_file::FileRecoveryStore;
+#[cfg(windows)]
+pub use windows_identity::{
+    inspect_windows_executable, WindowsIdentityLease, WindowsIdentityVerifier,
+    WindowsVerifiedIdentity,
+};
 #[cfg(windows)]
 pub use windows_pipe::{
     connect_windows_pipe_for_agent, current_process_user_sid, WindowsAuthenticatedRequest,
@@ -150,8 +157,11 @@ pub trait FilterBackend {
 }
 
 pub trait IdentityVerifier {
+    type VerificationLease;
+
     /// Implementations must reopen the executable and independently verify App-ID and signer data.
-    fn verify(&mut self, policy: &StrictPolicyBundle) -> Result<()>;
+    /// The returned lease must keep every verified executable replacement-locked.
+    fn verify(&mut self, policy: &StrictPolicyBundle) -> Result<Self::VerificationLease>;
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -178,7 +188,7 @@ pub struct BrokerStatus {
     pub proof: BrokerProof,
 }
 
-pub struct BrokerEngine<B, S, V> {
+pub struct BrokerEngine<B, S, V: IdentityVerifier> {
     backend: B,
     store: S,
     verifier: V,
@@ -187,6 +197,7 @@ pub struct BrokerEngine<B, S, V> {
     store_loaded: bool,
     phase: BrokerPhase,
     forwarding_health: ForwardingHealth,
+    verification_lease: Option<V::VerificationLease>,
 }
 
 impl<B, S, V> BrokerEngine<B, S, V>
@@ -205,6 +216,7 @@ where
             store_loaded: false,
             phase: BrokerPhase::Disabled,
             forwarding_health: ForwardingHealth::default(),
+            verification_lease: None,
         }
     }
 
@@ -233,10 +245,11 @@ where
             bail!("strict policy revision was already used");
         }
 
-        self.verifier.verify(&policy)?;
+        let verification_lease = self.verifier.verify(&policy)?;
         let digest = policy.canonical_digest()?;
         let preparing = RecoveryMarker::preparing(policy, digest);
         self.store.persist(&preparing)?;
+        self.verification_lease = Some(verification_lease);
         self.high_watermark = preparing.revision;
         self.current_marker = Some(preparing.clone());
         self.phase = BrokerPhase::Preparing;
@@ -371,7 +384,8 @@ where
             return self.complete_disable(&marker);
         }
 
-        self.verifier.verify(&marker.policy)?;
+        let verification_lease = self.verifier.verify(&marker.policy)?;
+        self.verification_lease = Some(verification_lease);
         if snapshot.redirect_filters_installed {
             self.backend.remove_redirects()?;
             snapshot = self.backend.snapshot()?;
@@ -440,6 +454,7 @@ where
         }
         self.store.clear_marker()?;
         self.current_marker = None;
+        self.verification_lease = None;
         self.phase = BrokerPhase::Disabled;
         self.forwarding_health = ForwardingHealth::default();
         self.status_from_snapshot(snapshot)

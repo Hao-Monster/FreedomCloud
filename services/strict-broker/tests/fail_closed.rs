@@ -1,4 +1,6 @@
 use std::collections::BTreeSet;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 
 use anyhow::{bail, Result};
 use flclash_strict_broker::{
@@ -108,12 +110,33 @@ struct FakeVerifier {
 }
 
 impl IdentityVerifier for FakeVerifier {
-    fn verify(&mut self, _policy: &StrictPolicyBundle) -> Result<()> {
+    type VerificationLease = ();
+
+    fn verify(&mut self, _policy: &StrictPolicyBundle) -> Result<Self::VerificationLease> {
         self.events.push("verifyIdentity");
         if self.reject {
             bail!("injected identity rejection");
         }
         Ok(())
+    }
+}
+
+struct CountingVerifier(Arc<AtomicUsize>);
+
+struct CountingLease(Arc<AtomicUsize>);
+
+impl Drop for CountingLease {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+impl IdentityVerifier for CountingVerifier {
+    type VerificationLease = CountingLease;
+
+    fn verify(&mut self, _policy: &StrictPolicyBundle) -> Result<Self::VerificationLease> {
+        self.0.fetch_add(1, Ordering::SeqCst);
+        Ok(CountingLease(Arc::clone(&self.0)))
     }
 }
 
@@ -393,4 +416,24 @@ fn tampered_recovery_digest_is_rejected_without_mutating_filters() {
 
     assert_eq!(engine.backend().events, ["snapshot"]);
     assert!(engine.backend().snapshot.guard_filters_installed);
+}
+
+#[test]
+fn executable_verification_lease_lives_until_filter_cleanup_completes() {
+    let active_leases = Arc::new(AtomicUsize::new(0));
+    let mut engine = BrokerEngine::new(
+        FakeBackend::default(),
+        FakeStore::default(),
+        CountingVerifier(Arc::clone(&active_leases)),
+    );
+
+    let prepared = engine.prepare(policy(11)).unwrap();
+    assert_eq!(active_leases.load(Ordering::SeqCst), 1);
+    engine
+        .commit(11, &prepared.proof.policy_digest, complete_health())
+        .unwrap();
+    assert_eq!(active_leases.load(Ordering::SeqCst), 1);
+
+    engine.disable(11).unwrap();
+    assert_eq!(active_leases.load(Ordering::SeqCst), 0);
 }
