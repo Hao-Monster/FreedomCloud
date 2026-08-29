@@ -2,14 +2,20 @@ package main
 
 import (
 	"bytes"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/netip"
 	"reflect"
 	"runtime"
 	"sort"
+	"sync"
 	"sync/atomic"
 
 	"github.com/metacubex/mihomo/adapter/outboundgroup"
@@ -20,11 +26,26 @@ import (
 )
 
 const (
-	strictIngressProtocol        uint32 = 1
-	maxStrictIngressEntries             = 128
-	maxStrictIngressRequestBytes        = 128 * 1024
-	strictIngressNamePrefix             = "flclashx-strict-"
+	strictIngressProtocol           uint32 = 2
+	maxStrictIngressEntries                = 128
+	maxStrictIngressRequestBytes           = 128 * 1024
+	strictIngressNamePrefix                = "flclashx-strict-"
+	strictUDPHealthFrameBytes              = 80
+	strictUDPHealthKeyIDBytes              = 16
+	strictUDPHealthMagicOffset             = 0
+	strictUDPHealthVersionOffset           = 4
+	strictUDPHealthKindOffset              = 5
+	strictUDPHealthReservedOffset          = 6
+	strictUDPHealthGenerationOffset        = 8
+	strictUDPHealthKeyIDOffset             = 16
+	strictUDPHealthNonceOffset             = 32
+	strictUDPHealthTagOffset               = 48
+	strictUDPHealthVersion          byte   = 1
+	strictUDPHealthPing             byte   = 1
+	strictUDPHealthPong             byte   = 2
 )
+
+var strictUDPHealthMagic = []byte{'F', 'C', 'X', 'U'}
 
 type StrictIngressRequest struct {
 	Protocol   uint32                      `json:"protocol"`
@@ -39,9 +60,10 @@ type StrictIngressRequestEntry struct {
 }
 
 type StrictIngressResult struct {
-	Protocol   uint32                     `json:"protocol"`
-	Generation uint64                     `json:"generation"`
-	Entries    []StrictIngressResultEntry `json:"entries"`
+	Protocol    uint32                     `json:"protocol"`
+	Generation  uint64                     `json:"generation"`
+	UDPEndpoint string                     `json:"udpEndpoint,omitempty"`
+	Entries     []StrictIngressResultEntry `json:"entries"`
 }
 
 type StrictIngressResultEntry struct {
@@ -55,8 +77,19 @@ type strictIngressBuildEntry struct {
 }
 
 type strictIngressSession struct {
-	request StrictIngressRequest
-	result  StrictIngressResult
+	request   StrictIngressRequest
+	result    StrictIngressResult
+	listeners map[string]C.InboundListener
+	udpHealth *strictUDPHealthService
+}
+
+type strictUDPHealthService struct {
+	connection *net.UDPConn
+	endpoint   string
+	generation uint64
+	keys       map[[strictUDPHealthKeyIDBytes]byte][sha256.Size]byte
+	done       chan struct{}
+	closeOnce  sync.Once
 }
 
 var (
@@ -165,6 +198,106 @@ func buildStrictIngressListeners(
 	return listeners, ordered, nil
 }
 
+func startStrictUDPHealthService(request *StrictIngressRequest) (*strictUDPHealthService, error) {
+	if err := validateStrictIngressRequestShape(request); err != nil {
+		return nil, err
+	}
+	if len(request.Entries) == 0 {
+		return nil, errors.New("strict UDP health service requires an active ingress")
+	}
+	keys := make(map[[strictUDPHealthKeyIDBytes]byte][sha256.Size]byte, len(request.Entries))
+	for _, entry := range request.Entries {
+		username, err := hex.DecodeString(entry.Username)
+		if err != nil || len(username) != sha256.Size {
+			return nil, errors.New("strict UDP health username is invalid")
+		}
+		password, err := hex.DecodeString(entry.Password)
+		if err != nil || len(password) != sha256.Size {
+			return nil, errors.New("strict UDP health password is invalid")
+		}
+		var keyID [strictUDPHealthKeyIDBytes]byte
+		copy(keyID[:], username[:strictUDPHealthKeyIDBytes])
+		var key [sha256.Size]byte
+		copy(key[:], password)
+		if _, duplicate := keys[keyID]; duplicate {
+			return nil, errors.New("strict UDP health key identifier is duplicated")
+		}
+		keys[keyID] = key
+	}
+	connection, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		return nil, errors.New("strict UDP health endpoint failed to bind")
+	}
+	if err := connection.SetReadBuffer(64 * 1024); err != nil {
+		_ = connection.Close()
+		return nil, errors.New("strict UDP health receive buffer setup failed")
+	}
+	endpoint, err := netip.ParseAddrPort(connection.LocalAddr().String())
+	if err != nil || endpoint.Addr() != netip.MustParseAddr("127.0.0.1") || endpoint.Port() == 0 {
+		_ = connection.Close()
+		return nil, errors.New("strict UDP health endpoint is not exact IPv4 loopback")
+	}
+	service := &strictUDPHealthService{
+		connection: connection,
+		endpoint:   endpoint.String(),
+		generation: request.Generation,
+		keys:       keys,
+		done:       make(chan struct{}),
+	}
+	go service.serve()
+	return service, nil
+}
+
+func (service *strictUDPHealthService) serve() {
+	defer close(service.done)
+	// One extra byte makes oversized datagrams observable instead of accepting
+	// a valid authenticated prefix after UDP truncation.
+	var packet [strictUDPHealthFrameBytes + 1]byte
+	for {
+		count, source, err := service.connection.ReadFromUDP(packet[:])
+		if err != nil {
+			return
+		}
+		if count != strictUDPHealthFrameBytes || source == nil || !source.IP.Equal(net.IPv4(127, 0, 0, 1)) {
+			continue
+		}
+		frame := packet[:strictUDPHealthFrameBytes]
+		if !bytes.Equal(frame[strictUDPHealthMagicOffset:strictUDPHealthVersionOffset], strictUDPHealthMagic) ||
+			frame[strictUDPHealthVersionOffset] != strictUDPHealthVersion ||
+			frame[strictUDPHealthKindOffset] != strictUDPHealthPing ||
+			frame[strictUDPHealthReservedOffset] != 0 || frame[strictUDPHealthReservedOffset+1] != 0 ||
+			binary.BigEndian.Uint64(frame[strictUDPHealthGenerationOffset:strictUDPHealthKeyIDOffset]) != service.generation {
+			continue
+		}
+		var keyID [strictUDPHealthKeyIDBytes]byte
+		copy(keyID[:], frame[strictUDPHealthKeyIDOffset:strictUDPHealthNonceOffset])
+		key, exists := service.keys[keyID]
+		if !exists {
+			continue
+		}
+		mac := hmac.New(sha256.New, key[:])
+		_, _ = mac.Write(frame[:strictUDPHealthTagOffset])
+		if !hmac.Equal(frame[strictUDPHealthTagOffset:], mac.Sum(nil)) {
+			continue
+		}
+		frame[strictUDPHealthKindOffset] = strictUDPHealthPong
+		mac = hmac.New(sha256.New, key[:])
+		_, _ = mac.Write(frame[:strictUDPHealthTagOffset])
+		copy(frame[strictUDPHealthTagOffset:], mac.Sum(nil))
+		_, _ = service.connection.WriteToUDP(frame[:], source)
+	}
+}
+
+func (service *strictUDPHealthService) close() {
+	if service == nil {
+		return
+	}
+	service.closeOnce.Do(func() {
+		_ = service.connection.Close()
+		<-service.done
+	})
+}
+
 func handleConfigureStrictIngress(data string) (StrictIngressResult, error) {
 	if runtime.GOOS != "windows" || !agentCoreAuthenticated.Load() {
 		return StrictIngressResult{}, errors.New("strict ingress requires an authenticated Windows Agent channel")
@@ -206,6 +339,10 @@ func handleConfigureStrictIngress(data string) (StrictIngressResult, error) {
 	if err != nil {
 		return StrictIngressResult{}, err
 	}
+	udpHealth, err := startStrictUDPHealthService(request)
+	if err != nil {
+		return StrictIngressResult{}, err
+	}
 	merged := normalInboundListenersLocked()
 	for name, inbound := range strictListeners {
 		merged[name] = inbound
@@ -213,14 +350,16 @@ func handleConfigureStrictIngress(data string) (StrictIngressResult, error) {
 	listener.PatchInboundListeners(merged, tunnel.Tunnel, true)
 
 	result := StrictIngressResult{
-		Protocol:   strictIngressProtocol,
-		Generation: request.Generation,
-		Entries:    make([]StrictIngressResultEntry, 0, len(ordered)),
+		Protocol:    strictIngressProtocol,
+		Generation:  request.Generation,
+		UDPEndpoint: udpHealth.endpoint,
+		Entries:     make([]StrictIngressResultEntry, 0, len(ordered)),
 	}
 	for _, entry := range ordered {
 		endpoint := strictListeners[entry.ListenerName].Address()
 		address, parseErr := netip.ParseAddrPort(endpoint)
 		if parseErr != nil || address.Addr() != netip.MustParseAddr("127.0.0.1") || address.Port() == 0 {
+			udpHealth.close()
 			removeStrictIngressListenersLocked()
 			return StrictIngressResult{}, errors.New("strict ingress listener failed to bind")
 		}
@@ -229,7 +368,16 @@ func handleConfigureStrictIngress(data string) (StrictIngressResult, error) {
 			Endpoint:    endpoint,
 		})
 	}
-	activeStrictIngress = &strictIngressSession{request: *request, result: result}
+	previous := activeStrictIngress
+	activeStrictIngress = &strictIngressSession{
+		request:   *request,
+		result:    result,
+		listeners: strictListeners,
+		udpHealth: udpHealth,
+	}
+	if previous != nil {
+		previous.udpHealth.close()
+	}
 	return result, nil
 }
 
@@ -238,15 +386,7 @@ func inboundListenersWithStrictLocked() map[string]C.InboundListener {
 	if activeStrictIngress == nil {
 		return merged
 	}
-	strictListeners, _, err := buildStrictIngressListeners(
-		&activeStrictIngress.request,
-		currentConfig,
-	)
-	if err != nil {
-		activeStrictIngress = nil
-		return merged
-	}
-	for name, inbound := range strictListeners {
+	for name, inbound := range activeStrictIngress.listeners {
 		merged[name] = inbound
 	}
 	return merged
@@ -264,15 +404,22 @@ func normalInboundListenersLocked() map[string]C.InboundListener {
 }
 
 func removeStrictIngressListenersLocked() {
+	previous := activeStrictIngress
 	activeStrictIngress = nil
-	if !isRunning {
-		return
+	if isRunning {
+		listener.PatchInboundListeners(normalInboundListenersLocked(), tunnel.Tunnel, true)
 	}
-	listener.PatchInboundListeners(normalInboundListenersLocked(), tunnel.Tunnel, true)
+	if previous != nil {
+		previous.udpHealth.close()
+	}
 }
 
 func clearStrictIngressForConfigChangeLocked() {
+	previous := activeStrictIngress
 	activeStrictIngress = nil
+	if previous != nil {
+		previous.udpHealth.close()
+	}
 }
 
 func validStrictTargetGroup(value string) bool {

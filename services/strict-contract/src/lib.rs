@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 pub const STRICT_PROTOCOL_VERSION: u32 = 2;
+pub const STRICT_PROXY_INGRESS_PROTOCOL_VERSION: u32 = 2;
 pub const MAX_STRICT_APPLICATIONS: usize = 128;
 pub const MAX_STRICT_CHILDREN: usize = 32;
 pub const MAX_STRICT_TARGET_GROUPS: usize = 128;
@@ -468,14 +469,20 @@ impl fmt::Debug for StrictProxyIngressEntry {
 pub struct StrictProxyIngressSet {
     pub protocol: u32,
     pub generation: u64,
+    pub udp_endpoint: Option<SocketAddrV4>,
     pub entries: Vec<StrictProxyIngressEntry>,
 }
 
 impl StrictProxyIngressSet {
-    pub fn new(generation: u64, entries: Vec<StrictProxyIngressEntry>) -> Result<Self> {
+    pub fn new(
+        generation: u64,
+        udp_endpoint: SocketAddrV4,
+        entries: Vec<StrictProxyIngressEntry>,
+    ) -> Result<Self> {
         let ingress = Self {
-            protocol: STRICT_PROTOCOL_VERSION,
+            protocol: STRICT_PROXY_INGRESS_PROTOCOL_VERSION,
             generation,
+            udp_endpoint: Some(udp_endpoint),
             entries,
         };
         ingress.validate()?;
@@ -484,24 +491,31 @@ impl StrictProxyIngressSet {
 
     pub fn empty() -> Self {
         Self {
-            protocol: STRICT_PROTOCOL_VERSION,
+            protocol: STRICT_PROXY_INGRESS_PROTOCOL_VERSION,
             generation: 0,
+            udp_endpoint: None,
             entries: Vec::new(),
         }
     }
 
     pub fn validate(&self) -> Result<()> {
-        if self.protocol != STRICT_PROTOCOL_VERSION {
+        if self.protocol != STRICT_PROXY_INGRESS_PROTOCOL_VERSION {
             bail!("unsupported strict proxy ingress protocol");
         }
         if self.entries.is_empty() {
-            if self.generation != 0 {
-                bail!("empty strict proxy ingress set retained a generation");
+            if self.generation != 0 || self.udp_endpoint.is_some() {
+                bail!("empty strict proxy ingress set retained active state");
             }
             return Ok(());
         }
         if self.generation == 0 || self.entries.len() > MAX_STRICT_TARGET_GROUPS {
             bail!("strict proxy ingress generation or entry count is invalid");
+        }
+        let udp_endpoint = self
+            .udp_endpoint
+            .ok_or_else(|| anyhow::anyhow!("strict proxy UDP health endpoint is missing"))?;
+        if udp_endpoint.ip() != &Ipv4Addr::LOCALHOST || udp_endpoint.port() == 0 {
+            bail!("strict proxy UDP health endpoint must be exact IPv4 loopback");
         }
         let mut endpoints = BTreeSet::new();
         let mut previous_group: Option<&str> = None;
@@ -1086,11 +1100,38 @@ mod tests {
             hex('4'),
         )
         .unwrap();
-        let ingress = StrictProxyIngressSet::new(9, vec![global.clone(), work.clone()]).unwrap();
+        let ingress = StrictProxyIngressSet::new(
+            9,
+            "127.0.0.1:42001".parse().unwrap(),
+            vec![global.clone(), work.clone()],
+        )
+        .unwrap();
         assert_eq!(ingress.entries.len(), 2);
         assert!(!format!("{ingress:?}").contains(&hex('1')));
-        assert!(StrictProxyIngressSet::new(9, vec![work, global.clone()]).is_err());
-        assert!(StrictProxyIngressSet::new(9, vec![global.clone(), global]).is_err());
+        let mut missing_udp = ingress.clone();
+        missing_udp.udp_endpoint = None;
+        assert!(missing_udp.validate().is_err());
+        let mut stale_empty = StrictProxyIngressSet::empty();
+        stale_empty.udp_endpoint = Some("127.0.0.1:42001".parse().unwrap());
+        assert!(stale_empty.validate().is_err());
+        assert!(StrictProxyIngressSet::new(
+            9,
+            "127.0.0.1:42001".parse().unwrap(),
+            vec![work, global.clone()]
+        )
+        .is_err());
+        assert!(StrictProxyIngressSet::new(
+            9,
+            "127.0.0.1:42001".parse().unwrap(),
+            vec![global.clone(), global.clone()]
+        )
+        .is_err());
+        assert!(StrictProxyIngressSet::new(
+            9,
+            "0.0.0.0:42001".parse().unwrap(),
+            vec![global.clone()]
+        )
+        .is_err());
         assert!(StrictProxyIngressEntry::new(
             "GLOBAL".into(),
             "0.0.0.0:41001".parse().unwrap(),

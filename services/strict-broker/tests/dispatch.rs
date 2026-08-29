@@ -164,6 +164,7 @@ impl ForwardingHealthProbe for FakeHealthProbe {
 fn ingress(target_group: &str) -> StrictProxyIngressSet {
     StrictProxyIngressSet::new(
         1,
+        "127.0.0.1:42001".parse().unwrap(),
         vec![StrictProxyIngressEntry::new(
             target_group.into(),
             "127.0.0.1:41001".parse().unwrap(),

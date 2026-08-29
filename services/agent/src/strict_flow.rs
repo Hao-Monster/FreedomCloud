@@ -459,8 +459,13 @@ mod tests {
             "method": "configureStrictIngress",
             "code": 0,
             "data": {
-                "protocol": 1,
+                "protocol": 2,
                 "generation": action.generation(),
+                "udpEndpoint": if entries.is_empty() {
+                    Value::Null
+                } else {
+                    Value::String("127.0.0.1:40001".into())
+                },
                 "entries": entries,
             }
         })

@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use crate::endpoint::random_token;
 use crate::protocol::MAX_MESSAGE_LINE_BYTES;
 
-const STRICT_INGRESS_PROTOCOL: u32 = 1;
+const STRICT_INGRESS_PROTOCOL: u32 = 2;
 const MAX_STRICT_INGRESS_ENTRIES: usize = 128;
 const MAX_TARGET_GROUP_BYTES: usize = 256;
 const CONFIGURE_STRICT_INGRESS_METHOD: &str = "configureStrictIngress";
@@ -50,6 +50,7 @@ struct CoreActionResponse {
 struct CoreStrictIngressResult {
     protocol: u32,
     generation: u64,
+    udp_endpoint: Option<String>,
     entries: Vec<CoreStrictIngressResultEntry>,
 }
 
@@ -128,6 +129,7 @@ impl StrictIngressEndpoint {
 #[derive(Clone)]
 pub struct StrictIngressDescriptor {
     generation: u64,
+    udp_endpoint: SocketAddrV4,
     entries: Vec<StrictIngressEndpoint>,
 }
 
@@ -138,6 +140,10 @@ impl StrictIngressDescriptor {
 
     pub fn entries(&self) -> &[StrictIngressEndpoint] {
         &self.entries
+    }
+
+    pub fn udp_endpoint(&self) -> SocketAddrV4 {
+        self.udp_endpoint
     }
 
     pub fn broker_ingress_set(&self) -> Result<StrictProxyIngressSet> {
@@ -153,7 +159,7 @@ impl StrictIngressDescriptor {
                 )
             })
             .collect::<Result<Vec<_>>>()?;
-        StrictProxyIngressSet::new(self.generation, entries)
+        StrictProxyIngressSet::new(self.generation, self.udp_endpoint, entries)
     }
 }
 
@@ -306,22 +312,23 @@ impl StrictIngressCoordinator {
             bail!("strict ingress Core response shape does not match the request");
         }
 
+        let udp_endpoint = match (pending.entries.is_empty(), response.data.udp_endpoint) {
+            (true, None) => None,
+            (false, Some(endpoint)) => Some(parse_loopback_endpoint(
+                &endpoint,
+                "strict ingress Core UDP health endpoint",
+            )?),
+            _ => bail!("strict ingress Core UDP health endpoint does not match the request"),
+        };
+
         let mut endpoints = HashSet::with_capacity(pending.entries.len());
         let mut committed = Vec::with_capacity(pending.entries.len());
         for (expected, actual) in pending.entries.into_iter().zip(response.data.entries) {
             if actual.target_group != expected.target_group {
                 bail!("strict ingress Core response target order is invalid");
             }
-            let endpoint: SocketAddr = actual
-                .endpoint
-                .parse()
-                .context("strict ingress Core endpoint is invalid")?;
-            let SocketAddr::V4(endpoint) = endpoint else {
-                bail!("strict ingress Core endpoint is not IPv4 loopback");
-            };
-            if endpoint.ip() != &Ipv4Addr::LOCALHOST || endpoint.port() == 0 {
-                bail!("strict ingress Core endpoint is not exact loopback");
-            }
+            let endpoint =
+                parse_loopback_endpoint(&actual.endpoint, "strict ingress Core TCP endpoint")?;
             if !endpoints.insert(endpoint) {
                 bail!("strict ingress Core endpoint is duplicated");
             }
@@ -338,6 +345,8 @@ impl StrictIngressCoordinator {
         } else {
             self.active = Some(StrictIngressDescriptor {
                 generation: pending.generation,
+                udp_endpoint: udp_endpoint
+                    .expect("a non-empty strict ingress response has a UDP endpoint"),
                 entries: committed,
             });
         }
@@ -360,6 +369,19 @@ impl StrictIngressCoordinator {
     pub fn active(&self) -> Option<&StrictIngressDescriptor> {
         self.active.as_ref()
     }
+}
+
+fn parse_loopback_endpoint(value: &str, label: &str) -> Result<SocketAddrV4> {
+    let endpoint: SocketAddr = value
+        .parse()
+        .with_context(|| format!("{label} is invalid"))?;
+    let SocketAddr::V4(endpoint) = endpoint else {
+        bail!("{label} is not IPv4 loopback");
+    };
+    if endpoint.ip() != &Ipv4Addr::LOCALHOST || endpoint.port() == 0 {
+        bail!("{label} is not exact loopback");
+    }
+    Ok(endpoint)
 }
 
 fn validate_target_group(target: &str) -> Result<()> {
@@ -399,8 +421,13 @@ mod tests {
             "method": "configureStrictIngress",
             "code": 0,
             "data": {
-                "protocol": 1,
+                "protocol": 2,
                 "generation": request["generation"],
+                "udpEndpoint": if entries.is_empty() {
+                    Value::Null
+                } else {
+                    Value::String("127.0.0.1:40001".into())
+                },
                 "entries": entries,
             }
         })
@@ -452,6 +479,7 @@ mod tests {
             .expect("active descriptor");
 
         assert_eq!(descriptor.generation(), 1);
+        assert_eq!(descriptor.udp_endpoint().port(), 40001);
         assert_eq!(descriptor.entries().len(), 2);
         assert_eq!(descriptor.entries()[0].target_group(), "GLOBAL");
         assert_eq!(descriptor.entries()[0].endpoint().port(), 41001);
@@ -462,6 +490,7 @@ mod tests {
 
         let broker_ingress = descriptor.broker_ingress_set().unwrap();
         assert_eq!(broker_ingress.generation, 1);
+        assert_eq!(broker_ingress.udp_endpoint.unwrap().port(), 40001);
         assert_eq!(broker_ingress.entries.len(), 2);
         assert_eq!(broker_ingress.entries[0].target_group, "GLOBAL");
         assert_eq!(broker_ingress.entries[1].endpoint.port(), 41002);
@@ -501,6 +530,18 @@ mod tests {
         let unknown = successful_response(&third, &[42003])
             .replace("\"code\":0", "\"unknown\":true,\"code\":0");
         assert!(coordinator.complete(&unknown).is_err());
+        assert_eq!(coordinator.active().unwrap().generation(), 1);
+
+        let StrictIngressChange::Request(fourth) = coordinator.begin(["Work"]).unwrap() else {
+            panic!("missing retry after unknown response");
+        };
+        let mut missing_udp: Value =
+            serde_json::from_str(&successful_response(&fourth, &[42004])).unwrap();
+        missing_udp["data"]
+            .as_object_mut()
+            .unwrap()
+            .remove("udpEndpoint");
+        assert!(coordinator.complete(&missing_udp.to_string()).is_err());
         assert_eq!(coordinator.active().unwrap().generation(), 1);
     }
 
