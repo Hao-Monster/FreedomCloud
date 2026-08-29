@@ -63,6 +63,7 @@ impl WindowsDriverPolicyChannel for FakeDriver {
                 remaining_millis: 5_000,
                 nonce: [1; 16],
             }),
+            datagram_path_active: false,
         };
         Ok(())
     }
@@ -75,6 +76,20 @@ impl WindowsDriverPolicyChannel for FakeDriver {
         self.snapshot.rule_count = 0;
         self.snapshot.capabilities.clear();
         self.snapshot.endpoint_lease = None;
+        self.snapshot.datagram_path_active = false;
+        Ok(())
+    }
+
+    fn activate_datagram_path(&mut self) -> Result<()> {
+        if !self.snapshot.loaded || self.snapshot.endpoint_lease.is_none() {
+            anyhow::bail!("fake driver has no active policy lease");
+        }
+        self.snapshot.datagram_path_active = true;
+        Ok(())
+    }
+
+    fn deactivate_datagram_path(&mut self) -> Result<()> {
+        self.snapshot.datagram_path_active = false;
         Ok(())
     }
 
@@ -120,6 +135,7 @@ fn driver_attestation_and_enumerated_filters_form_one_snapshot() {
     control
         .replace_redirect_filters(plan.redirect_filters())
         .unwrap();
+    control.activate_datagram_path().unwrap();
     let snapshot = control.snapshot().unwrap();
 
     assert_eq!(snapshot.revision, Some(77));
@@ -142,6 +158,7 @@ fn driver_attestation_and_enumerated_filters_form_one_snapshot() {
             .collect()
     );
     assert!(snapshot.filter_generation >= 3);
+    assert!(snapshot.datagram_path_active);
 }
 
 #[test]
@@ -174,4 +191,20 @@ fn redirect_capabilities_require_a_live_endpoint_lease() {
     control.driver_mut().snapshot.endpoint_lease = None;
 
     assert!(control.snapshot().is_err());
+}
+
+#[test]
+fn active_datagram_path_requires_a_live_endpoint_lease() {
+    let plan = plan();
+    let mut control = WindowsWfpControl::new(FakeFilters::default(), FakeDriver::default());
+    control.upload_immutable_snapshot(&plan).unwrap();
+    control.driver_mut().snapshot.capabilities =
+        BTreeSet::from([StrictCapability::PersistentFailClosed]);
+    control.driver_mut().snapshot.endpoint_lease = None;
+    control.driver_mut().snapshot.datagram_path_active = true;
+
+    let error = control.snapshot().unwrap_err();
+    assert!(error
+        .to_string()
+        .contains("datagram activation without policy and lease"));
 }

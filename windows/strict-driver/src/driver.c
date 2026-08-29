@@ -107,6 +107,7 @@ static HANDLE FcxRedirectHandle;
 static volatile LONG FcxUdpFlowCount;
 static volatile LONG64 FcxUdpFlowToken;
 static volatile LONG FcxUdpStopping;
+static volatile LONG FcxDatagramActive;
 static KSPIN_LOCK FcxUdpFlowLock;
 static LIST_ENTRY FcxUdpFlowList;
 static KEVENT FcxUdpFlowEmptyEvent;
@@ -479,7 +480,7 @@ FcxSetRedirectTarget(
 
 static
 VOID
-FcxClassifyRedirectedTcpGuard(
+FcxClassifyAuthorizationGuard(
     _In_ const FWPS_INCOMING_VALUES0 *IncomingValues,
     _In_ const FWPS_INCOMING_METADATA_VALUES0 *IncomingMetadata,
     _In_ UINT32 AppIdField,
@@ -491,6 +492,7 @@ FcxClassifyRedirectedTcpGuard(
     const FCX_STRICT_POLICY_SNAPSHOT *snapshot;
     const FCX_STRICT_LEASE_STATE *lease;
     const FCX_STRICT_RULE_RECORD *rule;
+    UINT8 protocol = 0;
     BOOLEAN permit = FALSE;
 
     if ((ClassifyOut->rights & FWPS_RIGHT_ACTION_WRITE) == 0 ||
@@ -506,27 +508,32 @@ FcxClassifyRedirectedTcpGuard(
     rule = FcxFindSelectedRule(snapshot, IncomingValues, AppIdField);
     if (rule != NULL && rule->Action == FCX_STRICT_ACTION_PROXY &&
         ProtocolField < IncomingValues->valueCount &&
-        FlagsField < IncomingValues->valueCount &&
-        IncomingValues->incomingValue[ProtocolField].value.type == FWP_UINT8 &&
-        IncomingValues->incomingValue[ProtocolField].value.uint8 == IPPROTO_TCP &&
-        IncomingValues->incomingValue[FlagsField].value.type == FWP_UINT32 &&
-        (IncomingValues->incomingValue[FlagsField].value.uint32 &
-         FWP_CONDITION_FLAG_IS_CONNECTION_REDIRECTED) != 0 &&
-        FWPS_IS_METADATA_FIELD_PRESENT(
-            IncomingMetadata,
-            FWPS_METADATA_FIELD_LOCAL_REDIRECT_TARGET_PID) &&
-        FWPS_IS_METADATA_FIELD_PRESENT(
-            IncomingMetadata,
-            FWPS_METADATA_FIELD_ORIGINAL_DESTINATION) &&
-        IncomingMetadata->originalDestination != NULL &&
+        IncomingValues->incomingValue[ProtocolField].value.type == FWP_UINT8) {
+        protocol = IncomingValues->incomingValue[ProtocolField].value.uint8;
+    }
+    if (((protocol == IPPROTO_UDP &&
+          InterlockedCompareExchange(&FcxDatagramActive, 0, 0) != 0) ||
+         (protocol == IPPROTO_TCP &&
+          FlagsField < IncomingValues->valueCount &&
+          IncomingValues->incomingValue[FlagsField].value.type == FWP_UINT32 &&
+          (IncomingValues->incomingValue[FlagsField].value.uint32 &
+           FWP_CONDITION_FLAG_IS_CONNECTION_REDIRECTED) != 0 &&
+          FWPS_IS_METADATA_FIELD_PRESENT(
+              IncomingMetadata,
+              FWPS_METADATA_FIELD_LOCAL_REDIRECT_TARGET_PID) &&
+          FWPS_IS_METADATA_FIELD_PRESENT(
+              IncomingMetadata,
+              FWPS_METADATA_FIELD_ORIGINAL_DESTINATION) &&
+          IncomingMetadata->originalDestination != NULL)) &&
         ExAcquireRundownProtectionCacheAware(FcxLeaseRundown)) {
         lease = (const FCX_STRICT_LEASE_STATE *)InterlockedCompareExchangePointer(
             (PVOID volatile *)&FcxLeaseState,
             NULL,
             NULL);
         if (FcxLeaseMatchesSnapshot(lease, snapshot) &&
-            IncomingMetadata->localRedirectTargetPID ==
-                HandleToULong(PsGetProcessId(lease->BrokerProcess))) {
+            (protocol == IPPROTO_UDP ||
+             IncomingMetadata->localRedirectTargetPID ==
+                 HandleToULong(PsGetProcessId(lease->BrokerProcess)))) {
             permit = TRUE;
         }
         ExReleaseRundownProtectionCacheAware(FcxLeaseRundown);
@@ -695,7 +702,7 @@ FcxGuardClassifyV4(
     UNREFERENCED_PARAMETER(ClassifyContext);
     UNREFERENCED_PARAMETER(Filter);
     UNREFERENCED_PARAMETER(FlowContext);
-    FcxClassifyRedirectedTcpGuard(
+    FcxClassifyAuthorizationGuard(
         IncomingValues,
         IncomingMetadata,
         FWPS_FIELD_ALE_AUTH_CONNECT_V4_ALE_APP_ID,
@@ -720,7 +727,7 @@ FcxGuardClassifyV6(
     UNREFERENCED_PARAMETER(ClassifyContext);
     UNREFERENCED_PARAMETER(Filter);
     UNREFERENCED_PARAMETER(FlowContext);
-    FcxClassifyRedirectedTcpGuard(
+    FcxClassifyAuthorizationGuard(
         IncomingValues,
         IncomingMetadata,
         FWPS_FIELD_ALE_AUTH_CONNECT_V6_ALE_APP_ID,
@@ -966,6 +973,7 @@ FcxClassifyUdpFlow(
     BOOLEAN removeAfterAssociate = FALSE;
 
     if (DatagramCalloutId == 0 ||
+        InterlockedCompareExchange(&FcxDatagramActive, 0, 0) == 0 ||
         InterlockedCompareExchange(&FcxUdpStopping, 0, 0) != 0 ||
         !FWPS_IS_METADATA_FIELD_PRESENT(IncomingMetadata,
                                         FWPS_METADATA_FIELD_FLOW_HANDLE) ||
@@ -1306,6 +1314,7 @@ FcxReleaseLeaseLocked(
 {
     FCX_STRICT_LEASE_STATE *oldLease;
 
+    InterlockedExchange(&FcxDatagramActive, 0);
     oldLease = (FCX_STRICT_LEASE_STATE *)InterlockedExchangePointer(
         (PVOID volatile *)&FcxLeaseState,
         NULL);
@@ -1338,9 +1347,28 @@ FcxReplaceLease(
     )
 {
     FCX_STRICT_LEASE_STATE *oldLease;
+    BOOLEAN preserveDatagramActivation;
 
     ExAcquireFastMutex(&FcxLeaseMutationLock);
-    FcxDrainUdpFlowContexts(FALSE);
+    oldLease = (FCX_STRICT_LEASE_STATE *)InterlockedCompareExchangePointer(
+        (PVOID volatile *)&FcxLeaseState,
+        NULL,
+        NULL);
+    preserveDatagramActivation =
+        InterlockedCompareExchange(&FcxDatagramActive, 0, 0) != 0 &&
+        oldLease != NULL &&
+        oldLease->BrokerProcess == NewLease->BrokerProcess &&
+        oldLease->Revision == NewLease->Revision &&
+        RtlCompareMemory(oldLease->PolicyDigest,
+                         NewLease->PolicyDigest,
+                         sizeof(oldLease->PolicyDigest)) == sizeof(oldLease->PolicyDigest) &&
+        RtlCompareMemory(oldLease->Nonce,
+                         NewLease->Nonce,
+                         sizeof(oldLease->Nonce)) == sizeof(oldLease->Nonce);
+    if (!preserveDatagramActivation) {
+        InterlockedExchange(&FcxDatagramActive, 0);
+        FcxDrainUdpFlowContexts(FALSE);
+    }
     oldLease = (FCX_STRICT_LEASE_STATE *)InterlockedExchangePointer(
         (PVOID volatile *)&FcxLeaseState,
         NewLease);
@@ -1348,7 +1376,9 @@ FcxReplaceLease(
     FcxDestroyLease(oldLease);
     ExRundownCompletedCacheAware(FcxLeaseRundown);
     ExReInitializeRundownProtectionCacheAware(FcxLeaseRundown);
-    InterlockedExchange(&FcxUdpStopping, 0);
+    if (!preserveDatagramActivation) {
+        InterlockedExchange(&FcxUdpStopping, 0);
+    }
     ExReleaseFastMutex(&FcxLeaseMutationLock);
 }
 
@@ -1591,6 +1621,42 @@ FcxLeaseOwnsRequest(
 }
 
 static
+BOOLEAN
+FcxDatagramPathOwnsRequest(
+    _In_ WDFREQUEST Request,
+    _In_opt_ const FCX_STRICT_DATAGRAM_BATCH_HEADER *Batch
+    )
+{
+    return InterlockedCompareExchange(&FcxDatagramActive, 0, 0) != 0 &&
+           FcxLeaseOwnsRequest(Request, Batch);
+}
+
+static
+NTSTATUS
+FcxSetDatagramPathActive(
+    _In_ WDFREQUEST Request,
+    _In_ BOOLEAN Active
+    )
+{
+    NTSTATUS status = STATUS_SUCCESS;
+
+    ExAcquireFastMutex(&FcxLeaseMutationLock);
+    if (Active) {
+        if (!FcxLeaseOwnsRequest(Request, NULL)) {
+            status = STATUS_ACCESS_DENIED;
+        } else {
+            InterlockedExchange(&FcxUdpStopping, 0);
+            InterlockedExchange(&FcxDatagramActive, 1);
+        }
+    } else {
+        InterlockedExchange(&FcxDatagramActive, 0);
+        FcxDrainUdpFlowContexts(FALSE);
+    }
+    ExReleaseFastMutex(&FcxLeaseMutationLock);
+    return status;
+}
+
+static
 NTSTATUS
 FcxQueueDatagramReceive(
     _In_ WDFREQUEST Request,
@@ -1611,7 +1677,7 @@ FcxQueueDatagramReceive(
         OutputBufferLength != FCX_STRICT_DATAGRAM_MAX_BATCH_BYTES) {
         return STATUS_INVALID_BUFFER_SIZE;
     }
-    if (!FcxLeaseOwnsRequest(Request, NULL)) {
+    if (!FcxDatagramPathOwnsRequest(Request, NULL)) {
         return STATUS_ACCESS_DENIED;
     }
     status = WdfRequestRetrieveOutputBuffer(
@@ -1731,7 +1797,7 @@ FcxValidateSubmittedDatagramBatch(
         !FcxBytesAreZero(batch.Reserved2, sizeof(batch.Reserved2))) {
         return STATUS_INVALID_PARAMETER;
     }
-    if (!FcxLeaseOwnsRequest(Request, &batch)) {
+    if (!FcxDatagramPathOwnsRequest(Request, &batch)) {
         return STATUS_ACCESS_DENIED;
     }
     cursor = FCX_STRICT_DATAGRAM_BATCH_HEADER_BYTES;
@@ -1858,6 +1924,9 @@ FcxFillDriverSnapshot(
         RtlCopyMemory(Output->LeaseNonce,
                       lease->Nonce,
                       sizeof(Output->LeaseNonce));
+        if (InterlockedCompareExchange(&FcxDatagramActive, 0, 0) != 0) {
+            Output->Flags |= FCX_STRICT_SNAPSHOT_FLAG_DATAGRAM_ACTIVE;
+        }
     }
     ExReleaseRundownProtectionCacheAware(FcxLeaseRundown);
 }
@@ -1986,6 +2055,20 @@ FcxEvtIoDeviceControl(
         }
         FcxReleaseLease();
         status = STATUS_SUCCESS;
+        break;
+    case IOCTL_FCX_STRICT_ACTIVATE_DATAGRAM_PATH:
+        if (InputBufferLength != 0) {
+            status = STATUS_INVALID_BUFFER_SIZE;
+            break;
+        }
+        status = FcxSetDatagramPathActive(Request, TRUE);
+        break;
+    case IOCTL_FCX_STRICT_DEACTIVATE_DATAGRAM_PATH:
+        if (InputBufferLength != 0) {
+            status = STATUS_INVALID_BUFFER_SIZE;
+            break;
+        }
+        status = FcxSetDatagramPathActive(Request, FALSE);
         break;
     default:
         status = STATUS_INVALID_DEVICE_REQUEST;

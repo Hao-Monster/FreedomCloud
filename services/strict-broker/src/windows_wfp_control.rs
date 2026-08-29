@@ -22,11 +22,14 @@ pub struct WindowsDriverPolicySnapshot {
     pub loaded: bool,
     pub capabilities: BTreeSet<StrictCapability>,
     pub endpoint_lease: Option<WindowsDriverEndpointLeaseSnapshot>,
+    pub datagram_path_active: bool,
 }
 
 pub trait WindowsDriverPolicyChannel {
     fn upload(&mut self, plan: &WfpPolicyPlan) -> Result<()>;
     fn unload(&mut self) -> Result<()>;
+    fn activate_datagram_path(&mut self) -> Result<()>;
+    fn deactivate_datagram_path(&mut self) -> Result<()>;
     fn snapshot(&mut self) -> Result<WindowsDriverPolicySnapshot>;
 }
 
@@ -121,6 +124,28 @@ where
         self.record_mutation()
     }
 
+    fn activate_datagram_path(&mut self) -> Result<()> {
+        self.driver.activate_datagram_path()?;
+        let snapshot = self.driver.snapshot()?;
+        validate_driver_snapshot_shape(&snapshot)?;
+        if !snapshot.datagram_path_active {
+            bail!("strict driver did not attest datagram activation");
+        }
+        self.observe_driver_generation(snapshot.generation)?;
+        self.record_mutation()
+    }
+
+    fn deactivate_datagram_path(&mut self) -> Result<()> {
+        self.driver.deactivate_datagram_path()?;
+        let snapshot = self.driver.snapshot()?;
+        validate_driver_snapshot_shape(&snapshot)?;
+        if snapshot.datagram_path_active {
+            bail!("strict driver retained datagram activation after revocation");
+        }
+        self.observe_driver_generation(snapshot.generation)?;
+        self.record_mutation()
+    }
+
     fn remove_redirect_filters(&mut self) -> Result<()> {
         self.filters.remove_redirects()?;
         self.record_mutation()
@@ -143,6 +168,7 @@ where
             driver_snapshot_loaded: driver.loaded,
             guard_filter_keys: inventory.guard_filter_keys,
             redirect_filter_keys: inventory.redirect_filter_keys,
+            datagram_path_active: driver.datagram_path_active,
             capabilities: driver.capabilities,
         })
     }
@@ -192,6 +218,9 @@ fn validate_driver_snapshot_shape(snapshot: &WindowsDriverPolicySnapshot) -> Res
     }
     if !snapshot.loaded && snapshot.endpoint_lease.is_some() {
         bail!("unloaded strict driver retains an endpoint lease");
+    }
+    if snapshot.datagram_path_active && (!snapshot.loaded || snapshot.endpoint_lease.is_none()) {
+        bail!("strict driver retains datagram activation without policy and lease");
     }
     if let Some(lease) = &snapshot.endpoint_lease {
         if lease.generation == 0

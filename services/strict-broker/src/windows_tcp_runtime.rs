@@ -587,6 +587,7 @@ mod tests {
                     remaining_millis: ENDPOINT_LEASE_TTL.as_millis() as u32,
                     nonce: [0x11; 16],
                 }),
+                datagram_path_active: false,
             })
         }
 

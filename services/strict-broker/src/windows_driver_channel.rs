@@ -65,9 +65,12 @@ const IOCTL_REVOKE_LEASE: u32 = ctl_code(0x904);
 const IOCTL_RECEIVE_DATAGRAM_BATCH: u32 = ctl_code_with_method(0x905, METHOD_OUT_DIRECT);
 #[cfg(any(test, feature = "production-host"))]
 const IOCTL_SUBMIT_DATAGRAM_BATCH: u32 = ctl_code_with_method(0x906, METHOD_IN_DIRECT);
+const IOCTL_ACTIVATE_DATAGRAM_PATH: u32 = ctl_code(0x907);
+const IOCTL_DEACTIVATE_DATAGRAM_PATH: u32 = ctl_code(0x908);
 
 const SNAPSHOT_FLAG_LOADED: u32 = 1;
 const SNAPSHOT_FLAG_LEASE_ACTIVE: u32 = 1 << 1;
+const SNAPSHOT_FLAG_DATAGRAM_ACTIVE: u32 = 1 << 2;
 const MIN_LEASE_MILLIS: u32 = 1_000;
 const MAX_LEASE_MILLIS: u32 = 30_000;
 const CAP_TCP4_REDIRECT: u64 = 1 << 0;
@@ -287,6 +290,14 @@ impl WindowsSharedIoctlDriverChannel {
         self.lock()?.revoke_endpoint_lease()
     }
 
+    pub fn activate_datagram_path(&self) -> Result<WindowsDriverPolicySnapshot> {
+        self.lock()?.activate_datagram_path()
+    }
+
+    pub fn deactivate_datagram_path(&self) -> Result<WindowsDriverPolicySnapshot> {
+        self.lock()?.deactivate_datagram_path()
+    }
+
     #[cfg(any(test, feature = "production-host"))]
     pub fn receive_datagram_batch_until(
         &self,
@@ -451,6 +462,22 @@ impl WindowsIoctlDriverChannel {
         }
         Ok(snapshot)
     }
+
+    pub fn activate_datagram_path(&self) -> Result<WindowsDriverPolicySnapshot> {
+        let snapshot = self.issue(IOCTL_ACTIVATE_DATAGRAM_PATH, &[])?;
+        if !snapshot.datagram_path_active || snapshot.endpoint_lease.is_none() {
+            bail!("strict driver did not attest datagram activation");
+        }
+        Ok(snapshot)
+    }
+
+    pub fn deactivate_datagram_path(&self) -> Result<WindowsDriverPolicySnapshot> {
+        let snapshot = self.issue(IOCTL_DEACTIVATE_DATAGRAM_PATH, &[])?;
+        if snapshot.datagram_path_active {
+            bail!("strict driver retained datagram activation after revocation");
+        }
+        Ok(snapshot)
+    }
 }
 
 impl WindowsDriverPolicyChannel for WindowsIoctlDriverChannel {
@@ -468,6 +495,14 @@ impl WindowsDriverPolicyChannel for WindowsIoctlDriverChannel {
         Ok(())
     }
 
+    fn activate_datagram_path(&mut self) -> Result<()> {
+        WindowsIoctlDriverChannel::activate_datagram_path(self).map(|_| ())
+    }
+
+    fn deactivate_datagram_path(&mut self) -> Result<()> {
+        WindowsIoctlDriverChannel::deactivate_datagram_path(self).map(|_| ())
+    }
+
     fn snapshot(&mut self) -> Result<WindowsDriverPolicySnapshot> {
         self.issue(IOCTL_QUERY_POLICY, &[])
     }
@@ -480,6 +515,14 @@ impl WindowsDriverPolicyChannel for WindowsSharedIoctlDriverChannel {
 
     fn unload(&mut self) -> Result<()> {
         self.lock()?.unload()
+    }
+
+    fn activate_datagram_path(&mut self) -> Result<()> {
+        WindowsSharedIoctlDriverChannel::activate_datagram_path(self).map(|_| ())
+    }
+
+    fn deactivate_datagram_path(&mut self) -> Result<()> {
+        WindowsSharedIoctlDriverChannel::deactivate_datagram_path(self).map(|_| ())
     }
 
     fn snapshot(&mut self) -> Result<WindowsDriverPolicySnapshot> {
@@ -561,7 +604,9 @@ fn decode_snapshot(bytes: &[u8]) -> Result<WindowsDriverPolicySnapshot> {
         bail!("strict driver snapshot header is invalid");
     }
     let flags = read_u32(bytes, 8)?;
-    if flags & !(SNAPSHOT_FLAG_LOADED | SNAPSHOT_FLAG_LEASE_ACTIVE) != 0 {
+    if flags & !(SNAPSHOT_FLAG_LOADED | SNAPSHOT_FLAG_LEASE_ACTIVE | SNAPSHOT_FLAG_DATAGRAM_ACTIVE)
+        != 0
+    {
         bail!("strict driver snapshot contains unknown flags");
     }
     let rule_count = read_u32(bytes, 12)?;
@@ -583,6 +628,7 @@ fn decode_snapshot(bytes: &[u8]) -> Result<WindowsDriverPolicySnapshot> {
 
     let loaded = flags & SNAPSHOT_FLAG_LOADED != 0;
     let lease_active = flags & SNAPSHOT_FLAG_LEASE_ACTIVE != 0;
+    let datagram_path_active = flags & SNAPSHOT_FLAG_DATAGRAM_ACTIVE != 0;
     if loaded {
         if revision == 0
             || generation == 0
@@ -621,6 +667,9 @@ fn decode_snapshot(bytes: &[u8]) -> Result<WindowsDriverPolicySnapshot> {
         }
         None
     };
+    if datagram_path_active && endpoint_lease.is_none() {
+        bail!("active strict datagram path has no endpoint lease");
+    }
 
     Ok(WindowsDriverPolicySnapshot {
         driver_build_id: Some(hex(driver_build_id)),
@@ -631,6 +680,7 @@ fn decode_snapshot(bytes: &[u8]) -> Result<WindowsDriverPolicySnapshot> {
         loaded,
         capabilities: decode_capabilities(capability_mask),
         endpoint_lease,
+        datagram_path_active,
     })
 }
 
@@ -1053,6 +1103,9 @@ mod tests {
         write_u64(&mut snapshot, 64, 0);
         write_u64(&mut snapshot, 24, 9);
         assert!(decode_snapshot(&snapshot).is_err());
+        write_u64(&mut snapshot, 24, 0);
+        write_u32(&mut snapshot, 8, SNAPSHOT_FLAG_DATAGRAM_ACTIVE);
+        assert!(decode_snapshot(&snapshot).is_err());
     }
 
     #[test]
@@ -1137,7 +1190,7 @@ mod tests {
         write_u32(
             &mut snapshot,
             8,
-            SNAPSHOT_FLAG_LOADED | SNAPSHOT_FLAG_LEASE_ACTIVE,
+            SNAPSHOT_FLAG_LOADED | SNAPSHOT_FLAG_LEASE_ACTIVE | SNAPSHOT_FLAG_DATAGRAM_ACTIVE,
         );
         write_u32(&mut snapshot, 12, 1);
         write_u64(&mut snapshot, 16, 7);
@@ -1156,6 +1209,7 @@ mod tests {
                 nonce: [0x5a; 16],
             })
         );
+        assert!(decoded.datagram_path_active);
 
         assert!(WindowsEndpointLease::new(
             91,
@@ -1203,6 +1257,8 @@ mod tests {
     fn datagram_ioctls_use_direct_buffers_and_fixed_resource_bounds() {
         assert_eq!(IOCTL_RECEIVE_DATAGRAM_BATCH & 3, METHOD_OUT_DIRECT);
         assert_eq!(IOCTL_SUBMIT_DATAGRAM_BATCH & 3, METHOD_IN_DIRECT);
+        assert_eq!(IOCTL_ACTIVATE_DATAGRAM_PATH, ctl_code(0x907));
+        assert_eq!(IOCTL_DEACTIVATE_DATAGRAM_PATH, ctl_code(0x908));
         assert_eq!(
             IOCTL_RECEIVE_DATAGRAM_BATCH,
             ctl_code_with_method(0x905, METHOD_OUT_DIRECT)
@@ -1258,6 +1314,7 @@ mod tests {
             "IOCTL_FCX_STRICT_QUERY_POLICY",
             "IOCTL_FCX_STRICT_ACTIVATE_LEASE",
             "IOCTL_FCX_STRICT_REVOKE_LEASE",
+            "FCX_STRICT_SNAPSHOT_FLAG_DATAGRAM_ACTIVE",
             "FCX_STRICT_DATAGRAM_BATCH_MAGIC ((UINT32)0x42584346u)",
             "FCX_STRICT_DATAGRAM_PROTOCOL ((UINT16)1u)",
             "FCX_STRICT_DATAGRAM_BATCH_HEADER_BYTES ((UINT16)96u)",
@@ -1267,6 +1324,8 @@ mod tests {
             "FCX_STRICT_DATAGRAM_MAX_PAYLOAD_BYTES ((UINT32)(16u * 1024u))",
             "IOCTL_FCX_STRICT_RECEIVE_DATAGRAM_BATCH",
             "IOCTL_FCX_STRICT_SUBMIT_DATAGRAM_BATCH",
+            "IOCTL_FCX_STRICT_ACTIVATE_DATAGRAM_PATH",
+            "IOCTL_FCX_STRICT_DEACTIVATE_DATAGRAM_PATH",
         ] {
             assert!(
                 header.contains(declaration),
@@ -1379,7 +1438,7 @@ mod tests {
 
         for invariant in [
             "FcxClassifyTcpRedirect(",
-            "FcxClassifyRedirectedTcpGuard(",
+            "FcxClassifyAuthorizationGuard(",
             "FWP_CONDITION_FLAG_IS_CONNECTION_REDIRECTED",
             "FWPS_METADATA_FIELD_LOCAL_REDIRECT_TARGET_PID",
             "FWPS_METADATA_FIELD_ORIGINAL_DESTINATION",
@@ -1405,15 +1464,14 @@ mod tests {
             );
         }
         let guard = driver
-            .split("FcxClassifyRedirectedTcpGuard(")
+            .split("FcxClassifyAuthorizationGuard(")
             .nth(1)
             .and_then(|body| body.split("FcxClassifyTcpRedirect(").next())
             .expect("TCP guard classifier body is present");
-        assert!(guard.contains("value.uint8 == IPPROTO_TCP"));
-        assert!(
-            !guard.contains("IPPROTO_UDP"),
-            "an endpoint lease alone must never open UDP before atomic activation"
-        );
+        assert!(guard.contains("protocol == IPPROTO_TCP"));
+        assert!(guard.contains("protocol == IPPROTO_UDP"));
+        assert!(guard.contains("InterlockedCompareExchange(&FcxDatagramActive, 0, 0) != 0"));
+        assert!(!driver.contains("FcxClassifyRedirectedTcpGuard"));
     }
 
     #[test]
@@ -1425,8 +1483,14 @@ mod tests {
 
         for invariant in [
             "static WDFQUEUE FcxDatagramReceiveQueue;",
+            "static volatile LONG FcxDatagramActive;",
             "WdfIoQueueDispatchManual",
             "FcxQueueDatagramReceive(",
+            "IOCTL_FCX_STRICT_ACTIVATE_DATAGRAM_PATH",
+            "IOCTL_FCX_STRICT_DEACTIVATE_DATAGRAM_PATH",
+            "FcxSetDatagramPathActive(Request, TRUE)",
+            "FcxSetDatagramPathActive(Request, FALSE)",
+            "FCX_STRICT_SNAPSHOT_FLAG_DATAGRAM_ACTIVE",
             "OutputBufferLength != FCX_STRICT_DATAGRAM_MAX_BATCH_BYTES",
             "WdfIoQueueGetState(FcxDatagramReceiveQueue",
             "queuedRequests != 0 || driverRequests != 0",
@@ -1443,7 +1507,7 @@ mod tests {
             "lease->ExpiresAtInterruptTime > KeQueryInterruptTime()",
             "HandleToULong(PsGetProcessId(lease->BrokerProcess))",
             "batch.TotalBytes != (UINT32)inputBytes",
-            "FcxLeaseOwnsRequest(Request, &batch)",
+            "FcxDatagramPathOwnsRequest(Request, &batch)",
             "return STATUS_NOT_SUPPORTED;",
         ] {
             assert!(
@@ -1469,6 +1533,52 @@ mod tests {
             submit < snapshot,
             "Direct-I/O submission must precede snapshot output retrieval"
         );
+
+        let activation = driver
+            .split("FcxSetDatagramPathActive(")
+            .nth(1)
+            .and_then(|body| body.split("FcxQueueDatagramReceive(").next())
+            .expect("datagram activation function is present");
+        assert!(
+            activation
+                .find("FcxLeaseOwnsRequest(Request, NULL)")
+                .unwrap()
+                < activation
+                    .find("InterlockedExchange(&FcxDatagramActive, 1)")
+                    .unwrap(),
+            "activation must verify the live Broker lease before opening admission"
+        );
+
+        let release = driver
+            .split("FcxReleaseLeaseLocked(")
+            .nth(1)
+            .and_then(|body| body.split("FcxReleaseLease(").next())
+            .expect("lease release function is present");
+        assert!(
+            release
+                .find("InterlockedExchange(&FcxDatagramActive, 0)")
+                .unwrap()
+                < release.find("FcxDrainUdpFlowContexts(FALSE)").unwrap(),
+            "lease release must close admission before draining UDP contexts"
+        );
+
+        let replace = driver
+            .split("FcxReplaceLease(")
+            .nth(1)
+            .and_then(|body| body.split("FcxBuildLease(").next())
+            .expect("lease replacement function is present");
+        for invariant in [
+            "preserveDatagramActivation",
+            "oldLease->BrokerProcess == NewLease->BrokerProcess",
+            "oldLease->Revision == NewLease->Revision",
+            "oldLease->PolicyDigest",
+            "oldLease->Nonce",
+        ] {
+            assert!(
+                replace.contains(invariant),
+                "lease renewal lost datagram gate invariant: {invariant}"
+            );
+        }
     }
 
     #[test]

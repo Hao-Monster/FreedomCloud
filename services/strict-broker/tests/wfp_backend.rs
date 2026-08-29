@@ -14,6 +14,9 @@ struct FakeControl {
     events: Vec<&'static str>,
     snapshot: WfpControlSnapshot,
     fail_guards: bool,
+    fail_datagram_activation: bool,
+    fail_datagram_deactivation: bool,
+    fail_active_snapshot: bool,
 }
 
 impl WfpControlPlane for FakeControl {
@@ -49,6 +52,24 @@ impl WfpControlPlane for FakeControl {
         Ok(())
     }
 
+    fn activate_datagram_path(&mut self) -> Result<()> {
+        self.events.push("activateDatagram");
+        self.snapshot.datagram_path_active = true;
+        if self.fail_datagram_activation {
+            bail!("injected uncertain datagram activation failure");
+        }
+        Ok(())
+    }
+
+    fn deactivate_datagram_path(&mut self) -> Result<()> {
+        self.events.push("deactivateDatagram");
+        if self.fail_datagram_deactivation {
+            bail!("injected uncertain datagram deactivation failure");
+        }
+        self.snapshot.datagram_path_active = false;
+        Ok(())
+    }
+
     fn remove_redirect_filters(&mut self) -> Result<()> {
         self.events.push("removeRedirects");
         self.snapshot.redirect_filter_keys.clear();
@@ -65,6 +86,9 @@ impl WfpControlPlane for FakeControl {
 
     fn snapshot(&mut self) -> Result<WfpControlSnapshot> {
         self.events.push("snapshot");
+        if self.fail_active_snapshot && self.snapshot.datagram_path_active {
+            bail!("injected active datagram attestation failure");
+        }
         Ok(self.snapshot.clone())
     }
 }
@@ -151,10 +175,12 @@ fn redirects_are_removed_before_guards_and_snapshot_unloads_last() {
     backend.remove_redirects().unwrap();
     backend.remove_guards().unwrap();
 
-    let tail = &backend.control().events[backend.control().events.len() - 7..];
+    let tail = &backend.control().events[backend.control().events.len() - 9..];
     assert_eq!(
         tail,
         [
+            "deactivateDatagram",
+            "snapshot",
             "removeRedirects",
             "snapshot",
             "snapshot",
@@ -171,6 +197,119 @@ fn redirects_are_removed_before_guards_and_snapshot_unloads_last() {
 }
 
 #[test]
+fn datagram_admission_is_armed_after_filter_attestation_and_revoked_before_removal() {
+    let desired = policy();
+    let digest = desired.canonical_digest().unwrap();
+    let mut backend = PlannedWfpBackend::new(FakeControl::default());
+    let app_ids = verified(&desired);
+    backend.install_guards(&desired, &app_ids, &digest).unwrap();
+    backend
+        .install_redirects(&desired, &app_ids, &digest)
+        .unwrap();
+
+    let events = &backend.control().events;
+    let replace = events
+        .iter()
+        .position(|event| *event == "replaceRedirects")
+        .unwrap();
+    let activate = events
+        .iter()
+        .position(|event| *event == "activateDatagram")
+        .unwrap();
+    assert_eq!(events[replace + 1], "snapshot");
+    assert!(replace < activate);
+    assert!(backend.control().snapshot.datagram_path_active);
+
+    backend.remove_redirects().unwrap();
+    let deactivate = backend
+        .control()
+        .events
+        .iter()
+        .rposition(|event| *event == "deactivateDatagram")
+        .unwrap();
+    let remove = backend
+        .control()
+        .events
+        .iter()
+        .rposition(|event| *event == "removeRedirects")
+        .unwrap();
+    assert!(deactivate < remove);
+    assert!(!backend.control().snapshot.datagram_path_active);
+}
+
+#[test]
+fn uncertain_datagram_activation_is_revoked_before_filters_roll_back() {
+    let desired = policy();
+    let digest = desired.canonical_digest().unwrap();
+    let mut backend = PlannedWfpBackend::new(FakeControl {
+        fail_datagram_activation: true,
+        ..FakeControl::default()
+    });
+    let app_ids = verified(&desired);
+    backend.install_guards(&desired, &app_ids, &digest).unwrap();
+
+    assert!(backend
+        .install_redirects(&desired, &app_ids, &digest)
+        .is_err());
+    let tail = &backend.control().events[backend.control().events.len() - 3..];
+    assert_eq!(
+        tail,
+        ["activateDatagram", "deactivateDatagram", "removeRedirects"]
+    );
+    assert!(!backend.control().snapshot.datagram_path_active);
+    assert!(backend.control().snapshot.redirect_filter_keys.is_empty());
+}
+
+#[test]
+fn active_attestation_failure_is_revoked_before_filters_roll_back() {
+    let desired = policy();
+    let digest = desired.canonical_digest().unwrap();
+    let mut backend = PlannedWfpBackend::new(FakeControl {
+        fail_active_snapshot: true,
+        ..FakeControl::default()
+    });
+    let app_ids = verified(&desired);
+    backend.install_guards(&desired, &app_ids, &digest).unwrap();
+
+    assert!(backend
+        .install_redirects(&desired, &app_ids, &digest)
+        .is_err());
+    let tail = &backend.control().events[backend.control().events.len() - 4..];
+    assert_eq!(
+        tail,
+        [
+            "activateDatagram",
+            "snapshot",
+            "deactivateDatagram",
+            "removeRedirects"
+        ]
+    );
+    assert!(!backend.control().snapshot.datagram_path_active);
+    assert!(backend.control().snapshot.redirect_filter_keys.is_empty());
+}
+
+#[test]
+fn uncertain_datagram_deactivation_keeps_filters_fail_closed() {
+    let desired = policy();
+    let digest = desired.canonical_digest().unwrap();
+    let mut backend = PlannedWfpBackend::new(FakeControl {
+        fail_datagram_activation: true,
+        fail_datagram_deactivation: true,
+        ..FakeControl::default()
+    });
+    let app_ids = verified(&desired);
+    backend.install_guards(&desired, &app_ids, &digest).unwrap();
+
+    assert!(backend
+        .install_redirects(&desired, &app_ids, &digest)
+        .is_err());
+    let tail = &backend.control().events[backend.control().events.len() - 2..];
+    assert_eq!(tail, ["activateDatagram", "deactivateDatagram"]);
+    assert!(backend.control().snapshot.datagram_path_active);
+    assert!(!backend.control().snapshot.redirect_filter_keys.is_empty());
+}
+
+#[test]
 fn unknown_filter_keys_are_never_treated_as_a_complete_plan() {
     let desired = policy();
     let digest = desired.canonical_digest().unwrap();
@@ -183,6 +322,21 @@ fn unknown_filter_keys_are_never_treated_as_a_complete_plan() {
         .snapshot
         .guard_filter_keys
         .insert(WfpObjectKey::from_bytes([0xee; 16]));
+
+    assert!(backend.snapshot().is_err());
+}
+
+#[test]
+fn redirects_without_persistent_guards_are_never_treated_as_complete() {
+    let desired = policy();
+    let digest = desired.canonical_digest().unwrap();
+    let mut backend = PlannedWfpBackend::new(FakeControl::default());
+    let app_ids = verified(&desired);
+    backend.install_guards(&desired, &app_ids, &digest).unwrap();
+    backend
+        .install_redirects(&desired, &app_ids, &digest)
+        .unwrap();
+    backend.control_mut().snapshot.guard_filter_keys.clear();
 
     assert!(backend.snapshot().is_err());
 }
