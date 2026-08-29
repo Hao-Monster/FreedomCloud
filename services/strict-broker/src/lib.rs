@@ -12,6 +12,7 @@ mod ipc_auth;
 mod package_manifest;
 mod planned_wfp_backend;
 mod recovery_file;
+mod redirect_context;
 mod session_registry;
 mod socks_probe;
 mod wfp_plan;
@@ -30,6 +31,8 @@ mod windows_pipe_pool;
 #[cfg(windows)]
 mod windows_recovery_acl;
 #[cfg(windows)]
+mod windows_redirect_socket;
+#[cfg(windows)]
 mod windows_scm;
 #[cfg(windows)]
 mod windows_session;
@@ -45,8 +48,14 @@ pub use ipc_auth::{AuthorizedBrokerRequest, BrokerAuthenticator, ClientPrincipal
 pub use package_manifest::StrictPackageManifest;
 pub use planned_wfp_backend::{PlannedWfpBackend, WfpControlPlane, WfpControlSnapshot};
 pub use recovery_file::FileRecoveryStore;
+pub use redirect_context::{
+    parse_strict_redirect_context, StrictRedirectContext, StrictRedirectLeaseBinding,
+    StrictRedirectTransport,
+};
 pub use session_registry::{BrokerSessionRegistry, BrokerSessionResource};
-pub use socks_probe::{probe_socks5_connect, Socks5ConnectTarget, Socks5ProxyIngress};
+pub use socks_probe::{
+    establish_socks5_connect, probe_socks5_connect, Socks5ConnectTarget, Socks5ProxyIngress,
+};
 pub use wfp_plan::{
     DriverIdentityRule, PlanInstallStep, PlanRemoveStep, WfpCallout, WfpFilterLifetime,
     WfpFilterSpec, WfpLayer, WfpObjectKey, WfpPolicyPlan,
@@ -81,6 +90,11 @@ pub use windows_pipe_pool::{
 };
 #[cfg(windows)]
 pub use windows_recovery_acl::WindowsRecoveryAclVerifier;
+#[cfg(windows)]
+pub use windows_redirect_socket::{
+    connect_windows_redirected_outbound, query_windows_redirect_socket,
+    WindowsRedirectSocketMetadata,
+};
 #[cfg(windows)]
 pub use windows_scm::{run_windows_scm_service, WindowsScmContext};
 #[cfg(windows)]

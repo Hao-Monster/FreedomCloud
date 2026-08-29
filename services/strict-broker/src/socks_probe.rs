@@ -19,7 +19,7 @@ pub struct Socks5ProxyIngress {
 impl Socks5ProxyIngress {
     pub fn new(endpoint: SocketAddrV4, username: String, password: String) -> Result<Self> {
         if endpoint.ip() != &Ipv4Addr::LOCALHOST || endpoint.port() == 0 {
-            bail!("SOCKS health ingress must be exact IPv4 loopback");
+            bail!("SOCKS ingress must be exact IPv4 loopback");
         }
         validate_credential(&username)?;
         validate_credential(&password)?;
@@ -45,14 +45,14 @@ impl Socks5ConnectTarget {
         let host = host.into();
         validate_domain(&host)?;
         if port == 0 {
-            bail!("SOCKS health target port is invalid");
+            bail!("SOCKS target port is invalid");
         }
         Ok(Self::Domain { host, port })
     }
 
     pub fn ip(endpoint: SocketAddr) -> Result<Self> {
         if endpoint.port() == 0 {
-            bail!("SOCKS health target port is invalid");
+            bail!("SOCKS target port is invalid");
         }
         Ok(Self::Ip(endpoint))
     }
@@ -63,22 +63,54 @@ pub fn probe_socks5_connect(
     target: &Socks5ConnectTarget,
     timeout: Duration,
 ) -> Result<()> {
-    if timeout.is_zero() || timeout > MAX_PROBE_TIMEOUT {
-        bail!("SOCKS health probe timeout is invalid");
-    }
+    validate_timeout(timeout)?;
     let deadline = Instant::now() + timeout;
     let mut stream = TcpStream::connect_timeout(&SocketAddr::V4(ingress.endpoint), timeout)
         .context("connect SOCKS health ingress")?;
+    perform_socks5_connect(&mut stream, ingress, target, deadline)
+}
 
+pub fn establish_socks5_connect(
+    mut stream: TcpStream,
+    ingress: &Socks5ProxyIngress,
+    target: &Socks5ConnectTarget,
+    timeout: Duration,
+) -> Result<TcpStream> {
+    validate_timeout(timeout)?;
+    let peer = stream
+        .peer_addr()
+        .context("read SOCKS ingress peer address")?;
+    if peer != SocketAddr::V4(ingress.endpoint) {
+        bail!("SOCKS stream peer does not match the authenticated ingress");
+    }
+    perform_socks5_connect(&mut stream, ingress, target, Instant::now() + timeout)?;
+    stream
+        .set_read_timeout(None)
+        .context("clear SOCKS tunnel read timeout")?;
+    stream
+        .set_write_timeout(None)
+        .context("clear SOCKS tunnel write timeout")?;
+    stream
+        .set_nodelay(true)
+        .context("enable SOCKS tunnel TCP no-delay")?;
+    Ok(stream)
+}
+
+fn perform_socks5_connect(
+    stream: &mut TcpStream,
+    ingress: &Socks5ProxyIngress,
+    target: &Socks5ConnectTarget,
+    deadline: Instant,
+) -> Result<()> {
     write_deadline(
-        &mut stream,
+        stream,
         &[SOCKS_VERSION, 0x01, USERNAME_PASSWORD_METHOD],
         deadline,
     )?;
     let mut method = [0_u8; 2];
-    read_deadline(&mut stream, &mut method, deadline)?;
+    read_deadline(stream, &mut method, deadline)?;
     if method != [SOCKS_VERSION, USERNAME_PASSWORD_METHOD] {
-        bail!("SOCKS health ingress did not require the configured authentication");
+        bail!("SOCKS ingress did not require the configured authentication");
     }
 
     let mut authentication =
@@ -88,24 +120,31 @@ pub fn probe_socks5_connect(
     authentication.extend_from_slice(ingress.username.as_bytes());
     authentication.push(ingress.password.len() as u8);
     authentication.extend_from_slice(ingress.password.as_bytes());
-    write_deadline(&mut stream, &authentication, deadline)?;
+    write_deadline(stream, &authentication, deadline)?;
     let mut authentication_result = [0_u8; 2];
-    read_deadline(&mut stream, &mut authentication_result, deadline)?;
+    read_deadline(stream, &mut authentication_result, deadline)?;
     if authentication_result != [USERNAME_PASSWORD_VERSION, 0x00] {
-        bail!("SOCKS health ingress rejected authentication");
+        bail!("SOCKS ingress rejected authentication");
     }
 
     let connect = encode_connect_request(target);
-    write_deadline(&mut stream, &connect, deadline)?;
+    write_deadline(stream, &connect, deadline)?;
     let mut reply = [0_u8; 4];
-    read_deadline(&mut stream, &mut reply, deadline)?;
+    read_deadline(stream, &mut reply, deadline)?;
     if reply[0] != SOCKS_VERSION || reply[2] != 0x00 {
-        bail!("SOCKS health ingress returned an invalid CONNECT response");
+        bail!("SOCKS ingress returned an invalid CONNECT response");
     }
     if reply[1] != 0x00 {
-        bail!("SOCKS health ingress rejected CONNECT");
+        bail!("SOCKS ingress rejected CONNECT");
     }
-    consume_bound_address(&mut stream, reply[3], deadline)?;
+    consume_bound_address(stream, reply[3], deadline)?;
+    Ok(())
+}
+
+fn validate_timeout(timeout: Duration) -> Result<()> {
+    if timeout.is_zero() || timeout > MAX_PROBE_TIMEOUT {
+        bail!("SOCKS timeout is invalid");
+    }
     Ok(())
 }
 
@@ -144,11 +183,11 @@ fn consume_bound_address(
             let mut length = [0_u8; 1];
             read_deadline(stream, &mut length, deadline)?;
             if length[0] == 0 {
-                bail!("SOCKS health ingress returned an empty bound domain");
+                bail!("SOCKS ingress returned an empty bound domain");
             }
             usize::from(length[0])
         }
-        _ => bail!("SOCKS health ingress returned an invalid address type"),
+        _ => bail!("SOCKS ingress returned an invalid address type"),
     };
     let mut remainder = vec![0_u8; address_bytes + 2];
     read_deadline(stream, &mut remainder, deadline)
@@ -157,26 +196,26 @@ fn consume_bound_address(
 fn write_deadline(stream: &mut TcpStream, bytes: &[u8], deadline: Instant) -> Result<()> {
     let remaining = remaining(deadline)?;
     stream.set_write_timeout(Some(remaining))?;
-    stream.write_all(bytes).context("write SOCKS health frame")
+    stream.write_all(bytes).context("write SOCKS frame")
 }
 
 fn read_deadline(stream: &mut TcpStream, bytes: &mut [u8], deadline: Instant) -> Result<()> {
     let remaining = remaining(deadline)?;
     stream.set_read_timeout(Some(remaining))?;
-    stream.read_exact(bytes).context("read SOCKS health frame")
+    stream.read_exact(bytes).context("read SOCKS frame")
 }
 
 fn remaining(deadline: Instant) -> Result<Duration> {
     let remaining = deadline.saturating_duration_since(Instant::now());
     if remaining.is_zero() {
-        bail!("SOCKS health probe exceeded its deadline");
+        bail!("SOCKS operation exceeded its deadline");
     }
     Ok(remaining)
 }
 
 fn validate_credential(value: &str) -> Result<()> {
     if value.len() != 64 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        bail!("SOCKS health credential is invalid");
+        bail!("SOCKS credential is invalid");
     }
     Ok(())
 }
@@ -197,7 +236,7 @@ fn validate_domain(host: &str) -> Result<()> {
                     .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
         })
     {
-        bail!("SOCKS health target domain is invalid");
+        bail!("SOCKS target domain is invalid");
     }
     Ok(())
 }
@@ -219,6 +258,7 @@ mod tests {
         username: String,
         password: String,
         reply_code: u8,
+        exchange: Option<(Vec<u8>, Vec<u8>)>,
     ) -> (SocketAddrV4, thread::JoinHandle<Vec<u8>>) {
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
         let endpoint = match listener.local_addr().unwrap() {
@@ -257,6 +297,14 @@ mod tests {
             stream
                 .write_all(&[0x05, reply_code, 0x00, 0x01, 127, 0, 0, 1, 0, 1])
                 .unwrap();
+            if reply_code == 0 {
+                if let Some((request, response)) = exchange {
+                    let mut payload = vec![0_u8; request.len()];
+                    stream.read_exact(&mut payload).unwrap();
+                    assert_eq!(payload, request);
+                    stream.write_all(&response).unwrap();
+                }
+            }
             [host, port.to_vec()].concat()
         });
         (endpoint, worker)
@@ -266,7 +314,7 @@ mod tests {
     fn authenticated_connect_proves_more_than_a_tcp_accept() {
         let username = credential('a');
         let password = credential('b');
-        let (endpoint, worker) = spawn_fake_socks(username.clone(), password.clone(), 0x00);
+        let (endpoint, worker) = spawn_fake_socks(username.clone(), password.clone(), 0x00, None);
         let ingress = Socks5ProxyIngress::new(endpoint, username, password).unwrap();
 
         probe_socks5_connect(
@@ -285,7 +333,7 @@ mod tests {
     fn socks_connect_rejection_fails_health() {
         let username = credential('c');
         let password = credential('d');
-        let (endpoint, worker) = spawn_fake_socks(username.clone(), password.clone(), 0x05);
+        let (endpoint, worker) = spawn_fake_socks(username.clone(), password.clone(), 0x05, None);
         let ingress = Socks5ProxyIngress::new(endpoint, username, password).unwrap();
 
         assert!(probe_socks5_connect(
@@ -295,6 +343,55 @@ mod tests {
         )
         .is_err());
         worker.join().unwrap();
+    }
+
+    #[test]
+    fn established_socks_tunnel_remains_usable_for_relay_payload() {
+        let username = credential('1');
+        let password = credential('2');
+        let (endpoint, worker) = spawn_fake_socks(
+            username.clone(),
+            password.clone(),
+            0x00,
+            Some((b"ping".to_vec(), b"pong".to_vec())),
+        );
+        let ingress = Socks5ProxyIngress::new(endpoint, username, password).unwrap();
+        let stream = TcpStream::connect(endpoint).unwrap();
+        let mut tunnel = establish_socks5_connect(
+            stream,
+            &ingress,
+            &Socks5ConnectTarget::domain("relay.example", 443).unwrap(),
+            Duration::from_secs(1),
+        )
+        .unwrap();
+
+        tunnel.write_all(b"ping").unwrap();
+        let mut response = [0_u8; 4];
+        tunnel.read_exact(&mut response).unwrap();
+        assert_eq!(&response, b"pong");
+        worker.join().unwrap();
+    }
+
+    #[test]
+    fn established_tunnel_never_sends_credentials_to_a_different_peer() {
+        let expected_listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let expected_endpoint = match expected_listener.local_addr().unwrap() {
+            std::net::SocketAddr::V4(endpoint) => endpoint,
+            _ => unreachable!(),
+        };
+        let other_listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let other_endpoint = other_listener.local_addr().unwrap();
+        let stream = TcpStream::connect(other_endpoint).unwrap();
+        let ingress =
+            Socks5ProxyIngress::new(expected_endpoint, credential('3'), credential('4')).unwrap();
+
+        assert!(establish_socks5_connect(
+            stream,
+            &ingress,
+            &Socks5ConnectTarget::domain("relay.example", 443).unwrap(),
+            Duration::from_secs(1),
+        )
+        .is_err());
     }
 
     #[test]
