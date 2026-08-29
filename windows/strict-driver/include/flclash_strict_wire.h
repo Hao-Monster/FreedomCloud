@@ -29,6 +29,20 @@
 #define FCX_STRICT_ADDRESS_FAMILY_V4 ((UINT8)4u)
 #define FCX_STRICT_ADDRESS_FAMILY_V6 ((UINT8)6u)
 
+#define FCX_STRICT_DATAGRAM_BATCH_MAGIC ((UINT32)0x42584346u) /* "FCXB" */
+#define FCX_STRICT_DATAGRAM_PROTOCOL ((UINT16)1u)
+#define FCX_STRICT_DATAGRAM_BATCH_HEADER_BYTES ((UINT16)96u)
+#define FCX_STRICT_DATAGRAM_RECORD_HEADER_BYTES ((UINT16)80u)
+#define FCX_STRICT_DATAGRAM_MAX_BATCH_BYTES ((UINT32)(256u * 1024u))
+#define FCX_STRICT_DATAGRAM_MAX_RECORDS ((UINT32)64u)
+#define FCX_STRICT_DATAGRAM_MAX_PAYLOAD_BYTES ((UINT32)(16u * 1024u))
+#define FCX_STRICT_DATAGRAM_KIND_CAPTURED ((UINT8)1u)
+#define FCX_STRICT_DATAGRAM_KIND_REPLY ((UINT8)2u)
+#define FCX_STRICT_DATAGRAM_FLAG_DNS ((UINT32)(1u << 0))
+#define FCX_STRICT_DATAGRAM_FLAG_QUIC ((UINT32)(1u << 1))
+#define FCX_STRICT_DATAGRAM_KNOWN_FLAGS                                      \
+    (FCX_STRICT_DATAGRAM_FLAG_DNS | FCX_STRICT_DATAGRAM_FLAG_QUIC)
+
 #define FCX_STRICT_ACTION_PROXY ((UINT8)1u)
 #define FCX_STRICT_ACTION_BLOCK ((UINT8)2u)
 #define FCX_STRICT_NO_TARGET_GROUP ((UINT16)0xffffu)
@@ -70,6 +84,12 @@
              FCX_STRICT_IOCTL_ACCESS)
 #define IOCTL_FCX_STRICT_REVOKE_LEASE                                         \
     CTL_CODE(FCX_STRICT_DEVICE_TYPE, 0x904u, METHOD_BUFFERED,                  \
+             FCX_STRICT_IOCTL_ACCESS)
+#define IOCTL_FCX_STRICT_RECEIVE_DATAGRAM_BATCH                               \
+    CTL_CODE(FCX_STRICT_DEVICE_TYPE, 0x905u, METHOD_OUT_DIRECT,                \
+             FCX_STRICT_IOCTL_ACCESS)
+#define IOCTL_FCX_STRICT_SUBMIT_DATAGRAM_BATCH                                \
+    CTL_CODE(FCX_STRICT_DEVICE_TYPE, 0x906u, METHOD_IN_DIRECT,                 \
              FCX_STRICT_IOCTL_ACCESS)
 
 #pragma pack(push, 1)
@@ -162,6 +182,42 @@ typedef struct _FCX_STRICT_DRIVER_SNAPSHOT {
     UINT8 Reserved[8];
 } FCX_STRICT_DRIVER_SNAPSHOT;
 
+// Batch and record integers are little-endian. Address bytes are in network
+// order. Each RecordBytes value is an 8-byte aligned span containing its fixed
+// header, PayloadBytes bytes and zero padding. The batch and every record are
+// bound to one live endpoint lease before any datagram may cross the device.
+typedef struct _FCX_STRICT_DATAGRAM_BATCH_HEADER {
+    UINT32 Magic;
+    UINT16 Protocol;
+    UINT16 HeaderBytes;
+    UINT8 Kind;
+    UINT8 Reserved0[3];
+    UINT32 TotalBytes;
+    UINT32 RecordCount;
+    UINT32 Reserved1;
+    UINT64 LeaseGeneration;
+    UINT64 Revision;
+    UINT8 PolicyDigest[32];
+    UINT8 LeaseNonce[16];
+    UINT8 Reserved2[8];
+} FCX_STRICT_DATAGRAM_BATCH_HEADER;
+
+typedef struct _FCX_STRICT_DATAGRAM_RECORD_HEADER {
+    UINT32 RecordBytes;
+    UINT32 PayloadBytes;
+    UINT64 FlowToken;
+    UINT64 Sequence;
+    UINT16 TargetGroupIndex;
+    UINT8 AddressFamily;
+    UINT8 IpProtocol;
+    UINT32 Flags;
+    UINT16 LocalPort;
+    UINT16 RemotePort;
+    UINT8 LocalAddress[16];
+    UINT8 RemoteAddress[16];
+    UINT8 Reserved[12];
+} FCX_STRICT_DATAGRAM_RECORD_HEADER;
+
 #pragma pack(pop)
 
 C_ASSERT(sizeof(FCX_STRICT_POLICY_HEADER) == FCX_STRICT_POLICY_HEADER_BYTES);
@@ -170,3 +226,7 @@ C_ASSERT(sizeof(FCX_STRICT_ENDPOINT) == FCX_STRICT_ENDPOINT_BYTES);
 C_ASSERT(sizeof(FCX_STRICT_ENDPOINT_LEASE) == FCX_STRICT_ENDPOINT_LEASE_BYTES);
 C_ASSERT(sizeof(FCX_STRICT_REDIRECT_CONTEXT) == FCX_STRICT_REDIRECT_CONTEXT_BYTES);
 C_ASSERT(sizeof(FCX_STRICT_DRIVER_SNAPSHOT) == FCX_STRICT_SNAPSHOT_BYTES);
+C_ASSERT(sizeof(FCX_STRICT_DATAGRAM_BATCH_HEADER) ==
+         FCX_STRICT_DATAGRAM_BATCH_HEADER_BYTES);
+C_ASSERT(sizeof(FCX_STRICT_DATAGRAM_RECORD_HEADER) ==
+         FCX_STRICT_DATAGRAM_RECORD_HEADER_BYTES);

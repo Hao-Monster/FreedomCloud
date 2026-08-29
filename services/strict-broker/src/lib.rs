@@ -22,6 +22,8 @@ mod wfp_plan;
 mod windows_core_udp_data;
 #[cfg(all(windows, any(test, feature = "production-host")))]
 mod windows_core_udp_health;
+#[cfg(all(windows, any(test, feature = "production-host")))]
+mod windows_datagram_wire;
 #[cfg(windows)]
 mod windows_driver_channel;
 #[cfg(windows)]
@@ -84,6 +86,13 @@ pub use wfp_plan::{
 #[cfg(all(windows, any(test, feature = "production-host")))]
 pub use windows_core_udp_data::{
     StrictCoreUdpReply, StrictCoreUdpTransport, STRICT_CORE_UDP_MAX_ASSOCIATIONS,
+};
+#[cfg(all(windows, any(test, feature = "production-host")))]
+pub use windows_datagram_wire::{
+    StrictDriverDatagramBatch, StrictDriverDatagramBatchBuilder, StrictDriverDatagramBatchKind,
+    StrictDriverDatagramFlags, StrictDriverDatagramLeaseIdentity, StrictDriverDatagramRecord,
+    StrictDriverDatagramRecords, STRICT_DRIVER_DATAGRAM_MAX_BATCH_BYTES,
+    STRICT_DRIVER_DATAGRAM_MAX_PAYLOAD_BYTES, STRICT_DRIVER_DATAGRAM_MAX_RECORDS,
 };
 #[cfg(windows)]
 pub use windows_driver_channel::{
