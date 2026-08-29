@@ -52,7 +52,7 @@ powershell.exe -NoLogo -NoProfile -NonInteractive -File "$(ProjectDir)tools\New-
       <ExceptionHandling>false</ExceptionHandling>
     </ClCompile>
     <Link>
-      <AdditionalDependencies>Fwpkclnt.lib;cng.lib;wdmsec.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>Fwpkclnt.lib;ndis.lib;cng.lib;wdmsec.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <AdditionalOptions>/INTEGRITYCHECK %(AdditionalOptions)</AdditionalOptions>
     </Link>
     <DriverSign>

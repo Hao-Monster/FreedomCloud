@@ -1,6 +1,7 @@
 #include <ntddk.h>
 #include <wdf.h>
 #include <fwpsk.h>
+#include <ndis.h>
 #include <wdmsec.h>
 
 #include "../include/flclash_strict_build.h"
@@ -83,6 +84,7 @@ typedef struct _FCX_STRICT_UDP_FLOW_CONTEXT {
     UINT8 PolicyDigest[32];
     UINT8 LeaseNonce[16];
     UINT16 TargetGroupIndex;
+    volatile LONG64 NextCaptureSequence;
     UINT16 LayerId;
     UINT32 CalloutId;
     UINT8 AddressFamily;
@@ -90,6 +92,15 @@ typedef struct _FCX_STRICT_UDP_FLOW_CONTEXT {
     BOOLEAN Associated;
     BOOLEAN RemovalRequested;
 } FCX_STRICT_UDP_FLOW_CONTEXT;
+
+typedef struct _FCX_UDP_HEADER {
+    UINT16 SourcePort;
+    UINT16 DestinationPort;
+    UINT16 Length;
+    UINT16 Checksum;
+} FCX_UDP_HEADER;
+
+C_ASSERT(sizeof(FCX_UDP_HEADER) == 8u);
 
 static WDFDEVICE FcxControlDevice;
 static WDFQUEUE FcxDatagramReceiveQueue;
@@ -245,6 +256,17 @@ FcxBlockClassify(
     )
 {
     ClassifyOut->actionType = FWP_ACTION_BLOCK;
+    ClassifyOut->rights &= ~FWPS_RIGHT_ACTION_WRITE;
+}
+
+static
+VOID
+FcxAbsorbClassify(
+    _Inout_ FWPS_CLASSIFY_OUT0 *ClassifyOut
+    )
+{
+    ClassifyOut->actionType = FWP_ACTION_BLOCK;
+    ClassifyOut->flags |= FWPS_CLASSIFY_OUT_FLAG_ABSORB;
     ClassifyOut->rights &= ~FWPS_RIGHT_ACTION_WRITE;
 }
 
@@ -1147,19 +1169,317 @@ FcxFlowClassifyV6(
 }
 
 static
+BOOLEAN
+FcxDatagramAddressIsSafe(
+    _In_reads_bytes_(16) const UINT8 *Address,
+    _In_ UINT8 AddressFamily,
+    _In_ BOOLEAN Remote
+    );
+
+typedef struct _FCX_STRICT_DATAGRAM_ENDPOINTS {
+    UINT8 LocalAddress[16];
+    UINT8 RemoteAddress[16];
+    UINT16 LocalPort;
+    UINT16 RemotePort;
+    UINT32 Flags;
+} FCX_STRICT_DATAGRAM_ENDPOINTS;
+
+static
+BOOLEAN
+FcxReadDatagramEndpoints(
+    _In_ const FWPS_INCOMING_VALUES0 *IncomingValues,
+    _In_ UINT32 LocalAddressField,
+    _In_ UINT32 RemoteAddressField,
+    _In_ UINT32 LocalPortField,
+    _In_ UINT32 RemotePortField,
+    _In_ UINT32 DirectionField,
+    _In_ BOOLEAN Ipv6,
+    _Out_ FCX_STRICT_DATAGRAM_ENDPOINTS *Endpoints
+    )
+{
+    const FWP_VALUE0 *localAddress;
+    const FWP_VALUE0 *remoteAddress;
+    const FWP_VALUE0 *localPort;
+    const FWP_VALUE0 *remotePort;
+    const FWP_VALUE0 *direction;
+    UINT32 address;
+    UINT8 addressFamily = Ipv6 ? FCX_STRICT_ADDRESS_FAMILY_V6 :
+                                FCX_STRICT_ADDRESS_FAMILY_V4;
+
+    RtlZeroMemory(Endpoints, sizeof(*Endpoints));
+    if (LocalAddressField >= IncomingValues->valueCount ||
+        RemoteAddressField >= IncomingValues->valueCount ||
+        LocalPortField >= IncomingValues->valueCount ||
+        RemotePortField >= IncomingValues->valueCount ||
+        DirectionField >= IncomingValues->valueCount) {
+        return FALSE;
+    }
+    localAddress = &IncomingValues->incomingValue[LocalAddressField].value;
+    remoteAddress = &IncomingValues->incomingValue[RemoteAddressField].value;
+    localPort = &IncomingValues->incomingValue[LocalPortField].value;
+    remotePort = &IncomingValues->incomingValue[RemotePortField].value;
+    direction = &IncomingValues->incomingValue[DirectionField].value;
+    if (localPort->type != FWP_UINT16 || remotePort->type != FWP_UINT16 ||
+        direction->type != FWP_UINT32 ||
+        direction->uint32 != FWP_DIRECTION_OUTBOUND) {
+        return FALSE;
+    }
+    Endpoints->LocalPort = localPort->uint16;
+    Endpoints->RemotePort = remotePort->uint16;
+    if (Ipv6) {
+        if (localAddress->type != FWP_BYTE_ARRAY16_TYPE ||
+            remoteAddress->type != FWP_BYTE_ARRAY16_TYPE ||
+            localAddress->byteArray16 == NULL ||
+            remoteAddress->byteArray16 == NULL) {
+            return FALSE;
+        }
+        RtlCopyMemory(Endpoints->LocalAddress,
+                      localAddress->byteArray16->byteArray16,
+                      sizeof(Endpoints->LocalAddress));
+        RtlCopyMemory(Endpoints->RemoteAddress,
+                      remoteAddress->byteArray16->byteArray16,
+                      sizeof(Endpoints->RemoteAddress));
+    } else {
+        if (localAddress->type != FWP_UINT32 ||
+            remoteAddress->type != FWP_UINT32) {
+            return FALSE;
+        }
+        address = localAddress->uint32;
+        Endpoints->LocalAddress[0] = (UINT8)(address >> 24);
+        Endpoints->LocalAddress[1] = (UINT8)(address >> 16);
+        Endpoints->LocalAddress[2] = (UINT8)(address >> 8);
+        Endpoints->LocalAddress[3] = (UINT8)address;
+        address = remoteAddress->uint32;
+        Endpoints->RemoteAddress[0] = (UINT8)(address >> 24);
+        Endpoints->RemoteAddress[1] = (UINT8)(address >> 16);
+        Endpoints->RemoteAddress[2] = (UINT8)(address >> 8);
+        Endpoints->RemoteAddress[3] = (UINT8)address;
+    }
+    if (Endpoints->LocalPort == 0 || Endpoints->RemotePort == 0 ||
+        !FcxDatagramAddressIsSafe(Endpoints->LocalAddress,
+                                  addressFamily,
+                                  FALSE) ||
+        !FcxDatagramAddressIsSafe(Endpoints->RemoteAddress,
+                                  addressFamily,
+                                  TRUE)) {
+        return FALSE;
+    }
+    if (Endpoints->RemotePort == 53) {
+        Endpoints->Flags |= FCX_STRICT_DATAGRAM_FLAG_DNS;
+    }
+    if (Endpoints->RemotePort == 443) {
+        Endpoints->Flags |= FCX_STRICT_DATAGRAM_FLAG_QUIC;
+    }
+    return TRUE;
+}
+
+static
+BOOLEAN
+FcxLeaseMatchesUdpFlowContext(
+    _In_opt_ const FCX_STRICT_LEASE_STATE *Lease,
+    _In_ const FCX_STRICT_UDP_FLOW_CONTEXT *Context
+    )
+{
+    // DATAGRAM_DATA can classify at DISPATCH_LEVEL. Broker liveness teardown is
+    // owned by the process-exit callback; PsGetProcessExitStatus is APC-only.
+    return Lease != NULL &&
+           Lease->ExpiresAtInterruptTime > KeQueryInterruptTime() &&
+           Lease->Revision == Context->Revision &&
+           RtlCompareMemory(Lease->PolicyDigest,
+                            Context->PolicyDigest,
+                            sizeof(Lease->PolicyDigest)) == sizeof(Lease->PolicyDigest) &&
+           RtlCompareMemory(Lease->Nonce,
+                            Context->LeaseNonce,
+                            sizeof(Lease->Nonce)) == sizeof(Lease->Nonce);
+}
+
+static
 VOID
-FcxClassifyDatagramUnavailable(
+FcxCaptureOutboundDatagram(
+    _In_ const FWPS_INCOMING_VALUES0 *IncomingValues,
+    _Inout_opt_ VOID *LayerData,
     _In_ UINT64 FlowContext,
+    _In_ UINT32 LocalAddressField,
+    _In_ UINT32 RemoteAddressField,
+    _In_ UINT32 LocalPortField,
+    _In_ UINT32 RemotePortField,
+    _In_ UINT32 DirectionField,
+    _In_ BOOLEAN Ipv6,
     _Inout_ FWPS_CLASSIFY_OUT0 *ClassifyOut
     )
 {
-    NT_ASSERT(FlowContext != 0);
-    UNREFERENCED_PARAMETER(FlowContext);
-    if ((ClassifyOut->rights & FWPS_RIGHT_ACTION_WRITE) == 0) {
+    FCX_STRICT_UDP_FLOW_CONTEXT *context =
+        (FCX_STRICT_UDP_FLOW_CONTEXT *)(ULONG_PTR)FlowContext;
+    const FCX_STRICT_LEASE_STATE *lease;
+    FCX_STRICT_DATAGRAM_ENDPOINTS endpoints;
+    FCX_STRICT_DATAGRAM_BATCH_HEADER *batch;
+    FCX_STRICT_DATAGRAM_RECORD_HEADER *record;
+    FCX_UDP_HEADER udpHeader;
+    NET_BUFFER_LIST *netBufferList;
+    NET_BUFFER *netBuffer;
+    WDFREQUEST request = NULL;
+    PVOID output;
+    PVOID packet;
+    size_t outputBytes;
+    UINT8 *recordBytes;
+    ULONG packetBytes;
+    UINT32 payloadBytes;
+    UINT32 unpaddedBytes;
+    UINT32 encodedRecordBytes;
+    UINT32 totalBytes;
+    ULONG requestorProcessId;
+    LONG64 sequence;
+    NTSTATUS status;
+    UINT8 addressFamily = Ipv6 ? FCX_STRICT_ADDRESS_FAMILY_V6 :
+                                FCX_STRICT_ADDRESS_FAMILY_V4;
+
+    if ((ClassifyOut->rights & FWPS_RIGHT_ACTION_WRITE) == 0 ||
+        context == NULL || LayerData == NULL ||
+        context->AddressFamily != addressFamily ||
+        InterlockedCompareExchange(&FcxDatagramActive, 0, 0) == 0 ||
+        InterlockedCompareExchange(&FcxUdpStopping, 0, 0) != 0 ||
+        FcxLeaseRundown == NULL ||
+        !FcxReadDatagramEndpoints(IncomingValues,
+                                  LocalAddressField,
+                                  RemoteAddressField,
+                                  LocalPortField,
+                                  RemotePortField,
+                                  DirectionField,
+                                  Ipv6,
+                                  &endpoints) ||
+        !ExAcquireRundownProtectionCacheAware(FcxLeaseRundown)) {
+        FcxBlockClassify(ClassifyOut);
         return;
     }
-    // A context proves selection, but capture and reinjection are not complete.
-    // Keep selected traffic blocked instead of leaking it to the original path.
+    lease = (const FCX_STRICT_LEASE_STATE *)InterlockedCompareExchangePointer(
+        (PVOID volatile *)&FcxLeaseState,
+        NULL,
+        NULL);
+    if (!FcxLeaseMatchesUdpFlowContext(lease, context) ||
+        InterlockedCompareExchange(&FcxDatagramActive, 0, 0) == 0 ||
+        InterlockedCompareExchange(&FcxUdpStopping, 0, 0) != 0) {
+        goto Exit;
+    }
+
+    netBufferList = (NET_BUFFER_LIST *)LayerData;
+    netBuffer = NET_BUFFER_LIST_FIRST_NB(netBufferList);
+    if (NET_BUFFER_LIST_NEXT_NBL(netBufferList) != NULL ||
+        netBuffer == NULL || NET_BUFFER_NEXT_NB(netBuffer) != NULL) {
+        goto Exit;
+    }
+    packetBytes = NET_BUFFER_DATA_LENGTH(netBuffer);
+    if (packetBytes <= sizeof(udpHeader) ||
+        packetBytes > sizeof(udpHeader) + FCX_STRICT_DATAGRAM_MAX_PAYLOAD_BYTES) {
+        goto Exit;
+    }
+    packet = NdisGetDataBuffer(netBuffer,
+                               sizeof(udpHeader),
+                               &udpHeader,
+                               1,
+                               0);
+    if (packet == NULL) {
+        goto Exit;
+    }
+    RtlCopyMemory(&udpHeader, packet, sizeof(udpHeader));
+    if (RtlUshortByteSwap(udpHeader.SourcePort) != endpoints.LocalPort ||
+        RtlUshortByteSwap(udpHeader.DestinationPort) != endpoints.RemotePort ||
+        RtlUshortByteSwap(udpHeader.Length) != packetBytes) {
+        goto Exit;
+    }
+    payloadBytes = packetBytes - (ULONG)sizeof(udpHeader);
+    unpaddedBytes = FCX_STRICT_DATAGRAM_RECORD_HEADER_BYTES + payloadBytes;
+    encodedRecordBytes = (unpaddedBytes + 7u) & ~7u;
+    totalBytes = FCX_STRICT_DATAGRAM_BATCH_HEADER_BYTES + encodedRecordBytes;
+    if (totalBytes > FCX_STRICT_DATAGRAM_MAX_BATCH_BYTES ||
+        FcxDatagramReceiveQueue == NULL) {
+        goto Exit;
+    }
+
+    status = WdfIoQueueRetrieveNextRequest(FcxDatagramReceiveQueue, &request);
+    if (!NT_SUCCESS(status)) {
+        goto Exit;
+    }
+    requestorProcessId = WdfRequestGetRequestorProcessId(request);
+    if (requestorProcessId == 0 ||
+        HandleToULong(PsGetProcessId(lease->BrokerProcess)) != requestorProcessId) {
+        status = STATUS_ACCESS_DENIED;
+        goto CompleteFailure;
+    }
+    status = WdfRequestRetrieveOutputBuffer(
+        request,
+        FCX_STRICT_DATAGRAM_MAX_BATCH_BYTES,
+        &output,
+        &outputBytes);
+    if (!NT_SUCCESS(status) || output == NULL ||
+        outputBytes != FCX_STRICT_DATAGRAM_MAX_BATCH_BYTES) {
+        status = STATUS_INVALID_BUFFER_SIZE;
+        goto CompleteFailure;
+    }
+
+    RtlZeroMemory(output, totalBytes);
+    recordBytes = (UINT8 *)output + FCX_STRICT_DATAGRAM_BATCH_HEADER_BYTES;
+    packet = NdisGetDataBuffer(netBuffer,
+                               packetBytes,
+                               recordBytes,
+                               1,
+                               0);
+    if (packet == NULL) {
+        status = STATUS_DATA_ERROR;
+        goto CompleteFailure;
+    }
+    RtlMoveMemory(recordBytes + FCX_STRICT_DATAGRAM_RECORD_HEADER_BYTES,
+                  (const UINT8 *)packet + sizeof(udpHeader),
+                  payloadBytes);
+    RtlZeroMemory(recordBytes, FCX_STRICT_DATAGRAM_RECORD_HEADER_BYTES);
+
+    sequence = InterlockedIncrement64(&context->NextCaptureSequence);
+    if (sequence <= 0) {
+        status = STATUS_INTEGER_OVERFLOW;
+        goto CompleteFailure;
+    }
+    batch = (FCX_STRICT_DATAGRAM_BATCH_HEADER *)output;
+    batch->Magic = FCX_STRICT_DATAGRAM_BATCH_MAGIC;
+    batch->Protocol = FCX_STRICT_DATAGRAM_PROTOCOL;
+    batch->HeaderBytes = FCX_STRICT_DATAGRAM_BATCH_HEADER_BYTES;
+    batch->Kind = FCX_STRICT_DATAGRAM_KIND_CAPTURED;
+    batch->TotalBytes = totalBytes;
+    batch->RecordCount = 1;
+    batch->LeaseGeneration = lease->Generation;
+    batch->Revision = lease->Revision;
+    RtlCopyMemory(batch->PolicyDigest,
+                  lease->PolicyDigest,
+                  sizeof(batch->PolicyDigest));
+    RtlCopyMemory(batch->LeaseNonce,
+                  lease->Nonce,
+                  sizeof(batch->LeaseNonce));
+
+    record = (FCX_STRICT_DATAGRAM_RECORD_HEADER *)recordBytes;
+    record->RecordBytes = encodedRecordBytes;
+    record->PayloadBytes = payloadBytes;
+    record->FlowToken = context->FlowToken;
+    record->Sequence = (UINT64)sequence;
+    record->TargetGroupIndex = context->TargetGroupIndex;
+    record->AddressFamily = addressFamily;
+    record->IpProtocol = IPPROTO_UDP;
+    record->Flags = endpoints.Flags;
+    record->LocalPort = endpoints.LocalPort;
+    record->RemotePort = endpoints.RemotePort;
+    RtlCopyMemory(record->LocalAddress,
+                  endpoints.LocalAddress,
+                  sizeof(record->LocalAddress));
+    RtlCopyMemory(record->RemoteAddress,
+                  endpoints.RemoteAddress,
+                  sizeof(record->RemoteAddress));
+
+    WdfRequestCompleteWithInformation(request, STATUS_SUCCESS, totalBytes);
+    ExReleaseRundownProtectionCacheAware(FcxLeaseRundown);
+    FcxAbsorbClassify(ClassifyOut);
+    return;
+
+CompleteFailure:
+    WdfRequestComplete(request, status);
+Exit:
+    ExReleaseRundownProtectionCacheAware(FcxLeaseRundown);
     FcxBlockClassify(ClassifyOut);
 }
 
@@ -1175,12 +1495,20 @@ FcxDatagramClassifyV4(
     _Inout_ FWPS_CLASSIFY_OUT0 *ClassifyOut
     )
 {
-    UNREFERENCED_PARAMETER(IncomingValues);
     UNREFERENCED_PARAMETER(IncomingMetadata);
-    UNREFERENCED_PARAMETER(LayerData);
     UNREFERENCED_PARAMETER(ClassifyContext);
     UNREFERENCED_PARAMETER(Filter);
-    FcxClassifyDatagramUnavailable(FlowContext, ClassifyOut);
+    FcxCaptureOutboundDatagram(
+        IncomingValues,
+        LayerData,
+        FlowContext,
+        FWPS_FIELD_DATAGRAM_DATA_V4_IP_LOCAL_ADDRESS,
+        FWPS_FIELD_DATAGRAM_DATA_V4_IP_REMOTE_ADDRESS,
+        FWPS_FIELD_DATAGRAM_DATA_V4_IP_LOCAL_PORT,
+        FWPS_FIELD_DATAGRAM_DATA_V4_IP_REMOTE_PORT,
+        FWPS_FIELD_DATAGRAM_DATA_V4_DIRECTION,
+        FALSE,
+        ClassifyOut);
 }
 
 static
@@ -1195,12 +1523,20 @@ FcxDatagramClassifyV6(
     _Inout_ FWPS_CLASSIFY_OUT0 *ClassifyOut
     )
 {
-    UNREFERENCED_PARAMETER(IncomingValues);
     UNREFERENCED_PARAMETER(IncomingMetadata);
-    UNREFERENCED_PARAMETER(LayerData);
     UNREFERENCED_PARAMETER(ClassifyContext);
     UNREFERENCED_PARAMETER(Filter);
-    FcxClassifyDatagramUnavailable(FlowContext, ClassifyOut);
+    FcxCaptureOutboundDatagram(
+        IncomingValues,
+        LayerData,
+        FlowContext,
+        FWPS_FIELD_DATAGRAM_DATA_V6_IP_LOCAL_ADDRESS,
+        FWPS_FIELD_DATAGRAM_DATA_V6_IP_REMOTE_ADDRESS,
+        FWPS_FIELD_DATAGRAM_DATA_V6_IP_LOCAL_PORT,
+        FWPS_FIELD_DATAGRAM_DATA_V6_IP_REMOTE_PORT,
+        FWPS_FIELD_DATAGRAM_DATA_V6_DIRECTION,
+        TRUE,
+        ClassifyOut);
 }
 
 static
@@ -1315,6 +1651,9 @@ FcxReleaseLeaseLocked(
     FCX_STRICT_LEASE_STATE *oldLease;
 
     InterlockedExchange(&FcxDatagramActive, 0);
+    if (FcxDatagramReceiveQueue != NULL) {
+        WdfIoQueuePurgeSynchronously(FcxDatagramReceiveQueue);
+    }
     oldLease = (FCX_STRICT_LEASE_STATE *)InterlockedExchangePointer(
         (PVOID volatile *)&FcxLeaseState,
         NULL);
@@ -1367,6 +1706,9 @@ FcxReplaceLease(
                          sizeof(oldLease->Nonce)) == sizeof(oldLease->Nonce);
     if (!preserveDatagramActivation) {
         InterlockedExchange(&FcxDatagramActive, 0);
+        if (FcxDatagramReceiveQueue != NULL) {
+            WdfIoQueuePurgeSynchronously(FcxDatagramReceiveQueue);
+        }
         FcxDrainUdpFlowContexts(FALSE);
     }
     oldLease = (FCX_STRICT_LEASE_STATE *)InterlockedExchangePointer(
@@ -1645,12 +1987,23 @@ FcxSetDatagramPathActive(
         if (!FcxLeaseOwnsRequest(Request, NULL)) {
             status = STATUS_ACCESS_DENIED;
         } else {
+            WdfIoQueueStart(FcxDatagramReceiveQueue);
             InterlockedExchange(&FcxUdpStopping, 0);
             InterlockedExchange(&FcxDatagramActive, 1);
         }
     } else {
         InterlockedExchange(&FcxDatagramActive, 0);
+        if (FcxLeaseRundown != NULL) {
+            ExWaitForRundownProtectionReleaseCacheAware(FcxLeaseRundown);
+        }
+        if (FcxDatagramReceiveQueue != NULL) {
+            WdfIoQueuePurgeSynchronously(FcxDatagramReceiveQueue);
+        }
         FcxDrainUdpFlowContexts(FALSE);
+        if (FcxLeaseRundown != NULL) {
+            ExRundownCompletedCacheAware(FcxLeaseRundown);
+            ExReInitializeRundownProtectionCacheAware(FcxLeaseRundown);
+        }
     }
     ExReleaseFastMutex(&FcxLeaseMutationLock);
     return status;

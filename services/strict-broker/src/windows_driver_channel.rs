@@ -1390,6 +1390,7 @@ mod tests {
         assert!(!driver.contains("WdfObjectDelete("));
         assert!(project.contains("/INTEGRITYCHECK"));
         assert!(project.contains("<KMDF_VERSION_MINOR>21</KMDF_VERSION_MINOR>"));
+        assert!(project.contains("Fwpkclnt.lib;ndis.lib"));
         assert!(policy.contains("ExAllocatePool2("));
         assert!(policy.contains("POOL_FLAG_NON_PAGED"));
     }
@@ -1491,6 +1492,8 @@ mod tests {
             "FcxSetDatagramPathActive(Request, TRUE)",
             "FcxSetDatagramPathActive(Request, FALSE)",
             "FCX_STRICT_SNAPSHOT_FLAG_DATAGRAM_ACTIVE",
+            "WdfIoQueueStart(FcxDatagramReceiveQueue)",
+            "WdfIoQueuePurgeSynchronously(FcxDatagramReceiveQueue)",
             "OutputBufferLength != FCX_STRICT_DATAGRAM_MAX_BATCH_BYTES",
             "WdfIoQueueGetState(FcxDatagramReceiveQueue",
             "queuedRequests != 0 || driverRequests != 0",
@@ -1547,6 +1550,25 @@ mod tests {
                     .find("InterlockedExchange(&FcxDatagramActive, 1)")
                     .unwrap(),
             "activation must verify the live Broker lease before opening admission"
+        );
+        assert!(
+            activation
+                .find("InterlockedExchange(&FcxDatagramActive, 0)")
+                .unwrap()
+                < activation
+                    .find("ExWaitForRundownProtectionReleaseCacheAware(FcxLeaseRundown)")
+                    .unwrap()
+                && activation
+                    .find("ExWaitForRundownProtectionReleaseCacheAware(FcxLeaseRundown)")
+                    .unwrap()
+                    < activation
+                        .find("WdfIoQueuePurgeSynchronously(FcxDatagramReceiveQueue)")
+                        .unwrap()
+                && activation
+                    .find("WdfIoQueuePurgeSynchronously(FcxDatagramReceiveQueue)")
+                    .unwrap()
+                    < activation.find("FcxDrainUdpFlowContexts(FALSE)").unwrap(),
+            "deactivation must close admission, drain in-flight capture, cancel receive and then drain flows"
         );
 
         let release = driver
@@ -1639,6 +1661,59 @@ mod tests {
             unload.find("FcxReleaseLease();").unwrap()
                 < unload.find("FcxUnregisterCallouts();").unwrap(),
             "flow contexts must drain before callout unregister"
+        );
+    }
+
+    #[test]
+    fn kernel_datagram_capture_is_bounded_lease_bound_and_absorbs_only_after_delivery() {
+        let driver = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../windows/strict-driver/src/driver.c"
+        ));
+
+        for invariant in [
+            "typedef struct _FCX_UDP_HEADER",
+            "volatile LONG64 NextCaptureSequence;",
+            "FcxCaptureOutboundDatagram(",
+            "FWP_DIRECTION_OUTBOUND",
+            "FWPS_FIELD_DATAGRAM_DATA_V4_IP_LOCAL_ADDRESS",
+            "FWPS_FIELD_DATAGRAM_DATA_V4_IP_REMOTE_ADDRESS",
+            "FWPS_FIELD_DATAGRAM_DATA_V4_IP_LOCAL_PORT",
+            "FWPS_FIELD_DATAGRAM_DATA_V4_IP_REMOTE_PORT",
+            "FWPS_FIELD_DATAGRAM_DATA_V6_IP_LOCAL_ADDRESS",
+            "FWPS_FIELD_DATAGRAM_DATA_V6_IP_REMOTE_ADDRESS",
+            "NET_BUFFER_DATA_LENGTH(netBuffer)",
+            "NET_BUFFER_NEXT_NB(netBuffer) != NULL",
+            "NdisGetDataBuffer(",
+            "FcxLeaseMatchesUdpFlowContext(lease, context)",
+            "WdfIoQueueRetrieveNextRequest(FcxDatagramReceiveQueue",
+            "WdfRequestGetRequestorProcessId(request)",
+            "queueConfig.PowerManaged = WdfFalse",
+            "FCX_STRICT_DATAGRAM_KIND_CAPTURED",
+            "InterlockedIncrement64(&context->NextCaptureSequence)",
+            "WdfRequestCompleteWithInformation(request, STATUS_SUCCESS, totalBytes)",
+            "FWPS_CLASSIFY_OUT_FLAG_ABSORB",
+        ] {
+            assert!(
+                driver.contains(invariant),
+                "missing datagram capture invariant: {invariant}"
+            );
+        }
+
+        let capture = driver
+            .split("FcxCaptureOutboundDatagram(")
+            .nth(1)
+            .and_then(|body| body.split("FcxDatagramClassifyV4(").next())
+            .expect("datagram capture function is present");
+        assert!(!capture.contains("ExAllocatePool"));
+        assert!(!capture.contains("WdfWaitLock"));
+        assert!(!capture.contains("PsGetProcessExitStatus"));
+        assert!(
+            capture
+                .find("WdfRequestCompleteWithInformation(request, STATUS_SUCCESS, totalBytes)")
+                .unwrap()
+                < capture.find("FcxAbsorbClassify(ClassifyOut)").unwrap(),
+            "the original datagram is absorbed only after its batch is delivered"
         );
     }
 }
