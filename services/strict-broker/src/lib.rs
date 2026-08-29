@@ -17,6 +17,8 @@ mod windows_identity;
 #[cfg(windows)]
 mod windows_pipe;
 #[cfg(windows)]
+mod windows_pipe_pool;
+#[cfg(windows)]
 mod windows_recovery_acl;
 
 pub use dispatch::{BrokerDispatcher, ForwardingHealthProbe};
@@ -36,6 +38,10 @@ pub use windows_identity::{
 pub use windows_pipe::{
     current_process_user_sid, exchange_windows_pipe_for_agent, WindowsAuthenticatedRequest,
     WindowsNamedPipeInstance, WindowsPipeDeadlines,
+};
+#[cfg(windows)]
+pub use windows_pipe_pool::{
+    WindowsNamedPipeWorkerPool, WindowsPipeServiceReport, WindowsPipeShutdown,
 };
 #[cfg(windows)]
 pub use windows_recovery_acl::WindowsRecoveryAclVerifier;

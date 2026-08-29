@@ -1,4 +1,5 @@
 use std::ffi::c_void;
+use std::fmt;
 use std::io;
 use std::mem::size_of;
 use std::os::windows::ffi::OsStrExt;
@@ -81,6 +82,10 @@ impl WindowsPipeDeadlines {
             write,
         })
     }
+
+    pub(crate) fn connect_timeout(self) -> Duration {
+        self.connect
+    }
 }
 
 impl Default for WindowsPipeDeadlines {
@@ -109,8 +114,37 @@ impl WindowsNamedPipeInstance {
         owner_sid: &str,
         deadlines: WindowsPipeDeadlines,
     ) -> Result<Self> {
+        Self::create_internal(pipe_name, owner_sid, deadlines, true, 1)
+    }
+
+    pub(crate) fn create_pool_instance(
+        pipe_name: &str,
+        owner_sid: &str,
+        deadlines: WindowsPipeDeadlines,
+        first_instance: bool,
+        maximum_instances: u32,
+    ) -> Result<Self> {
+        Self::create_internal(
+            pipe_name,
+            owner_sid,
+            deadlines,
+            first_instance,
+            maximum_instances,
+        )
+    }
+
+    fn create_internal(
+        pipe_name: &str,
+        owner_sid: &str,
+        deadlines: WindowsPipeDeadlines,
+        first_instance: bool,
+        maximum_instances: u32,
+    ) -> Result<Self> {
         validate_pipe_name(pipe_name)?;
         WindowsPipeDeadlines::new(deadlines.connect, deadlines.read, deadlines.write)?;
+        if maximum_instances == 0 || maximum_instances > 255 {
+            bail!("strict Broker pipe instance count is invalid");
+        }
         let owner_sid = canonical_sid(owner_sid)?;
         let security_descriptor = PipeSecurityDescriptor::new(&owner_sid)?;
         let attributes = SECURITY_ATTRIBUTES {
@@ -119,13 +153,20 @@ impl WindowsNamedPipeInstance {
             bInheritHandle: 0,
         };
         let pipe_name = wide_null(pipe_name);
+        let open_mode = PIPE_ACCESS_DUPLEX
+            | FILE_FLAG_OVERLAPPED
+            | if first_instance {
+                FILE_FLAG_FIRST_PIPE_INSTANCE
+            } else {
+                0
+            };
         // SAFETY: all pointers reference initialized values for the duration of the call.
         let handle = unsafe {
             CreateNamedPipeW(
                 pipe_name.as_ptr(),
-                PIPE_ACCESS_DUPLEX | FILE_FLAG_FIRST_PIPE_INSTANCE | FILE_FLAG_OVERLAPPED,
+                open_mode,
                 PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_REJECT_REMOTE_CLIENTS,
-                1,
+                maximum_instances,
                 PIPE_BUFFER_BYTES,
                 PIPE_BUFFER_BYTES,
                 0,
@@ -188,6 +229,13 @@ impl WindowsNamedPipeInstance {
 
     fn read_message(&self) -> Result<Vec<u8>> {
         read_message(raw_handle(&self.handle), "request", self.deadlines.read)
+    }
+
+    pub(crate) fn disconnect_for_reuse(&self) {
+        // SAFETY: this is a live server pipe. An idle/cancelled instance may already be detached.
+        unsafe {
+            DisconnectNamedPipe(raw_handle(&self.handle));
+        }
     }
 }
 
@@ -354,7 +402,7 @@ fn run_overlapped(
     let wait_result = unsafe { WaitForSingleObject(raw_handle(&event), wait_millis) };
     if wait_result == WAIT_TIMEOUT {
         cancel_and_drain(handle, &overlapped)?;
-        bail!("strict Broker named-pipe {label} deadline exceeded");
+        return Err(PipeDeadlineExceeded::new(label).into());
     }
     if wait_result != WAIT_OBJECT_0 {
         let wait_error = if wait_result == WAIT_FAILED {
@@ -367,6 +415,37 @@ fn run_overlapped(
             .with_context(|| format!("wait for strict Broker named-pipe {label}"));
     }
     overlapped_completion(handle, &overlapped, label)
+}
+
+#[derive(Debug)]
+struct PipeDeadlineExceeded {
+    operation: String,
+}
+
+impl PipeDeadlineExceeded {
+    fn new(operation: &str) -> Self {
+        Self {
+            operation: operation.to_owned(),
+        }
+    }
+}
+
+impl fmt::Display for PipeDeadlineExceeded {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "strict Broker named-pipe {} deadline exceeded",
+            self.operation
+        )
+    }
+}
+
+impl std::error::Error for PipeDeadlineExceeded {}
+
+pub(crate) fn is_connect_deadline(error: &anyhow::Error) -> bool {
+    error
+        .downcast_ref::<PipeDeadlineExceeded>()
+        .is_some_and(|deadline| deadline.operation == "connect")
 }
 
 fn overlapped_completion(
