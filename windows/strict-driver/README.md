@@ -8,11 +8,16 @@ validation for the unfinished UDP path. UDP flow provenance is capped at 1,024
 reference-counted contexts and datagram classification is conditional on that
 context. A separate lease-owner gate lets the authorization layer pass UDP to
 conditional capture only after Broker has attested the exact dynamic WFP graph,
-and closes before filter removal or lease teardown.
-The packet classifier still blocks selected UDP because capture and reinjection
-are unfinished. No UDP reply is accepted for injection and no UDP/DNS/QUIC
-capability is advertised until production bridge ownership, capture,
-reinjection, signing and VM qualification are complete.
+and closes before filter removal or lease teardown. The outbound v4/v6 packet
+classifier now validates one bounded UDP packet without allocation, emits one
+lease- and flow-bound captured record into the pending Broker Direct-I/O request,
+and absorbs the original only after successful delivery. Missing requests,
+malformed packets, stale leases and saturation remain blocked.
+
+Reply reinjection and production bridge ownership are still unfinished. No UDP
+reply is accepted for injection and no UDP/DNS/QUIC capability is advertised
+until reinjection, self-injection protection, signing, performance measurement
+and VM qualification are complete.
 
 ## Build contract
 

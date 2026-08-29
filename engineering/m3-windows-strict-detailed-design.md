@@ -341,8 +341,8 @@ closed; a rejected datagram does not poison the following valid sequence. This
 per-datagram path has no heap allocation or atomic reference-count operation.
 
 The production Broker runtime does not yet feed captured driver datagrams into
-this transport, and the driver does not capture or reinject datagrams. Therefore
-the implemented userspace path cannot yet satisfy
+this transport, and the driver does not reinject replies. Therefore the
+implemented path cannot yet satisfy
 `udp4Redirect`, `udp6Redirect`, `dnsCaptured` or `quicCaptured`.
 
 `8134220` defines the driver/Broker datagram transfer boundary without enabling
@@ -364,7 +364,7 @@ Older batches fail closed. Returned reply batches use the current identity; the
 driver must bind their flow tokens to state created within that same live Broker
 activation. Revocation, expiry, policy change, Broker exit or nonce change
 invalidates all flow and generation state. Capability bits remain off until the
-driver implementation exists and is VM-proven.
+complete capture/reinjection implementation exists and is VM-proven.
 
 `f9a8470` adds cancellable Direct-I/O calls on the already opened, attested
 overlapped device handle. A pending receive does not hold the control-plane
@@ -393,8 +393,8 @@ one persistent authenticated UDP transport, and combines up to 64 asynchronous
 Core replies into one returned batch. A single captured datagram may produce
 zero, one or multiple replies. Saturation, malformed identity, route drift,
 unknown reply association and submission failure stop the bridge fail closed.
-Production forwarding-runtime ownership and all kernel capture/reinjection work
-remain intentionally open, so this component cannot advertise UDP support.
+Production forwarding-runtime ownership and kernel reply reinjection remain
+intentionally open, so this component cannot advertise UDP support.
 
 `4b2031e` adds the matching KMDF request boundary without pretending the data
 plane is complete. The default sequential queue performs only bounded validation
@@ -430,11 +430,25 @@ filters remain installed fail closed. Lease loss closes admission before flow
 contexts drain, while a renewal by the same process with unchanged revision,
 policy digest and nonce preserves the gate and existing contexts.
 
-This is only the WFP/lease half of activation. Production ownership and health
-of the asynchronous Broker bridge are not wired yet, driver capture and reply
-injection remain unimplemented, and the datagram classifier therefore continues
-to block selected packets. No UDP/DNS/QUIC capability is advertised until those
-pieces and the WDK/Windows 11 VM gates pass.
+`0ae10d9` adds the first bounded outbound v4/v6 capture implementation. The
+conditional `DATAGRAM_DATA` classifier accepts exactly one NBL and one NET_BUFFER,
+validates the WFP endpoints against the UDP header and the live policy/nonce-bound
+flow context, copies at most 16 KiB into the already pinned 256 KiB Direct-I/O
+buffer, and completes one canonical captured record. It performs no packet-path
+allocation or wait-lock acquisition. Only after the Broker request completes is
+the original packet blocked with `ABSORB`; every missing request, malformed
+packet, expired/mismatched lease, sequence overflow or resource failure is
+blocked without absorption. Broker exit, incompatible lease replacement and
+gate deactivation first close admission, fence in-flight lease readers, purge
+the manual queue and drain flow contexts. The classifier deliberately does not
+call APC-only process-status APIs because WFP can invoke it at `DISPATCH_LEVEL`.
+
+This remains an inactive vertical slice. Production ownership and health of the
+asynchronous Broker bridge are not wired, reply injection and self-injection
+classification are unimplemented, and current capture completes one Direct-I/O
+request per datagram rather than coalescing up to the ABI limit. No UDP/DNS/QUIC
+capability is advertised until those pieces, representative performance evidence
+and the WDK/Windows 11 VM gates pass.
 
 Initial strict acceptance requires Mihomo Fake-IP/virtual-network-card mode so
 domain mappings remain available to existing domain rules. Real-IP domain
