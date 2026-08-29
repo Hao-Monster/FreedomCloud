@@ -127,6 +127,26 @@ func TestStrictUDPHealthWireVectorMatchesBroker(t *testing.T) {
 	}
 }
 
+func TestStrictUDPDataWireVectorMatchesBroker(t *testing.T) {
+	var association [16]byte
+	for index := range association {
+		association[index] = 0x44
+	}
+	frame := strictIngressUDPDataFrame(
+		t,
+		7,
+		strictIngressCredential('1'),
+		strictIngressCredential('3'),
+		association,
+		9,
+		netip.MustParseAddrPort("8.8.8.8:443"),
+		[]byte("strict-udp-vector"),
+	)
+	if tag := hex.EncodeToString(frame[len(frame)-sha256.Size:]); tag != "8715701d2e9a6cdaf7713968a7a55a1e91b0cea2d9cf447a2a8014f6f35079a9" {
+		t.Fatalf("strict UDP data wire vector drifted: %s", tag)
+	}
+}
+
 func TestStrictUDPCredentialMACIsConcurrentAndIsolated(t *testing.T) {
 	var key [sha256.Size]byte
 	for index := range key {

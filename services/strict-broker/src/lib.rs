@@ -15,6 +15,8 @@ mod recovery_file;
 mod redirect_context;
 mod session_registry;
 mod socks_probe;
+#[cfg(any(test, feature = "production-host"))]
+mod strict_udp_frame;
 mod wfp_plan;
 #[cfg(all(windows, any(test, feature = "production-host")))]
 mod windows_core_udp_health;
@@ -66,6 +68,12 @@ pub use session_registry::{BrokerSessionRegistry, BrokerSessionResource};
 pub use socks_probe::{
     establish_socks5_connect, probe_socks5_authentication, probe_socks5_connect,
     Socks5ConnectTarget, Socks5ProxyIngress,
+};
+#[cfg(any(test, feature = "production-host"))]
+pub use strict_udp_frame::{
+    StrictUdpDataAuthenticator, StrictUdpDataDirection, StrictUdpDataFrame, StrictUdpReplayWindow,
+    STRICT_UDP_DATA_HEADER_BYTES, STRICT_UDP_DATA_MAX_FRAME_BYTES,
+    STRICT_UDP_DATA_MAX_PAYLOAD_BYTES,
 };
 pub use wfp_plan::{
     DriverIdentityRule, PlanInstallStep, PlanRemoveStep, WfpCallout, WfpFilterLifetime,
