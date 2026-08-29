@@ -547,10 +547,20 @@ create a 25 ms cleanup loop. If fail-closed cleanup itself is uncertain, the Act
 still exits with the combined health and cleanup errors.
 
 This is a bounded recovery boundary, not completed automatic recovery. TD-027
-still requires an explicit automatic-retry policy or documented Agent retry,
-operator-visible diagnostics, SCM behavior and Windows 11 VM fault proof. No
-admission can reopen before the normal guard, lease, runtime and capability
-attestation path completes.
+still requires production trigger/backoff wiring, operator-visible diagnostics,
+SCM behavior and Windows 11 VM fault proof. No admission can reopen before the
+normal guard, lease, runtime and capability attestation path completes.
+
+`ce2da22` adds the corresponding single-retry transition to the Agent model. If
+an already Armed policy later receives the Broker's canonical same-revision,
+same-digest Blocking proof with persistent guards and no claimed forwarding
+health, the Agent enters `recovering` and issues one `commitPolicy` using the
+retained exact Core ingress descriptor. It does not regenerate credentials,
+change target groups or reconfigure Core. A successful proof returns to Armed;
+a second Blocking proof moves to the existing force-block-before-Core-revoke
+path and cannot generate another recommit. Production status scheduling and
+backoff remain deliberately open, so this pure state transition is not yet a
+claim of unattended recovery.
 
 The current exact first-endpoint binding deliberately fails closed if a WFP flow
 context later presents a different destination. Windows 11 VM acceptance must
