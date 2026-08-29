@@ -37,6 +37,8 @@ mod windows_scm;
 #[cfg(windows)]
 mod windows_session;
 #[cfg(windows)]
+mod windows_tcp_listener_pool;
+#[cfg(windows)]
 mod windows_tcp_owner;
 #[cfg(windows)]
 mod windows_tcp_relay;
@@ -101,6 +103,10 @@ pub use windows_redirect_socket::{
 pub use windows_scm::{run_windows_scm_service, WindowsScmContext};
 #[cfg(windows)]
 pub use windows_session::WindowsBrokerPipeSession;
+#[cfg(windows)]
+pub use windows_tcp_listener_pool::{
+    WindowsTcpListenerEndpoints, WindowsTcpListenerPool, WindowsTcpListenerReport,
+};
 #[cfg(windows)]
 pub use windows_tcp_owner::{
     verify_windows_packaged_core_listener_owner,
