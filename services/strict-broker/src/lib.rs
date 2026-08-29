@@ -100,8 +100,8 @@ pub use windows_datagram_wire::{
 };
 #[cfg(windows)]
 pub use windows_driver_channel::{
-    WindowsDriverIoctlDeadline, WindowsEndpointLease, WindowsIoctlDriverChannel,
-    WindowsSharedIoctlDriverChannel,
+    WindowsDriverIoctlCancellation, WindowsDriverIoctlDeadline, WindowsEndpointLease,
+    WindowsIoctlDriverChannel, WindowsSharedIoctlDriverChannel,
 };
 #[cfg(all(windows, feature = "production-host"))]
 pub use windows_host::{run_windows_strict_broker_service, WindowsStrictBrokerPaths};
@@ -161,8 +161,10 @@ pub use windows_tcp_relay::{
 pub use windows_tcp_session::{handle_windows_strict_tcp_connection, WindowsStrictTcpSessionPlan};
 #[cfg(all(windows, any(test, feature = "production-host")))]
 pub use windows_udp_bridge::{
-    StrictDriverUdpAssociations, StrictDriverUdpOutbound, StrictDriverUdpReplyRoute,
-    STRICT_DRIVER_UDP_ASSOCIATION_IDLE, STRICT_DRIVER_UDP_MAX_ASSOCIATIONS,
+    spawn_windows_udp_bridge_runtime, StrictDriverDatagramIo, StrictDriverUdpAssociations,
+    StrictDriverUdpOutbound, StrictDriverUdpReplyRoute, WindowsUdpBridgeReport,
+    WindowsUdpBridgeRuntime, STRICT_DRIVER_UDP_ASSOCIATION_IDLE,
+    STRICT_DRIVER_UDP_MAX_ASSOCIATIONS,
 };
 #[cfg(windows)]
 pub use windows_wfp_control::{

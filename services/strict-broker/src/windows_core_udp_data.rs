@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::io::ErrorKind;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, UdpSocket};
 use std::time::{Duration, Instant};
 
@@ -206,11 +207,19 @@ impl StrictCoreUdpTransport {
     }
 
     pub fn receive_into(&mut self, output: &mut [u8]) -> Result<StrictCoreUdpReply> {
+        self.poll_receive_into(output)?
+            .context("strict Core UDP data receive deadline exceeded")
+    }
+
+    pub fn poll_receive_into(&mut self, output: &mut [u8]) -> Result<Option<StrictCoreUdpReply>> {
         self.sweep_if_due(Instant::now());
-        let count = self
-            .socket
-            .recv(self.receive_buffer.as_mut_slice())
-            .context("receive strict Core UDP data frame")?;
+        let count = match self.socket.recv(self.receive_buffer.as_mut_slice()) {
+            Ok(count) => count,
+            Err(error) if matches!(error.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {
+                return Ok(None);
+            }
+            Err(error) => return Err(error).context("receive strict Core UDP data frame"),
+        };
         if count > STRICT_UDP_DATA_MAX_FRAME_BYTES {
             bail!("strict Core UDP data frame is oversized");
         }
@@ -242,12 +251,12 @@ impl StrictCoreUdpTransport {
         }
         association.last_seen = now;
         output[..payload_bytes].copy_from_slice(decoded.payload());
-        Ok(StrictCoreUdpReply {
+        Ok(Some(StrictCoreUdpReply {
             association_id,
             sequence,
             endpoint,
             payload_bytes,
-        })
+        }))
     }
 
     fn sweep_if_due(&mut self, now: Instant) {
@@ -535,6 +544,53 @@ mod tests {
         assert!(transport.receive_into(&mut payload).is_err());
         let reply = transport.receive_into(&mut payload).unwrap();
         assert_eq!(&payload[..reply.payload_bytes()], b"valid");
+        worker.join().unwrap();
+    }
+
+    #[test]
+    fn polling_timeout_is_not_a_transport_failure_and_preserves_the_next_reply() {
+        let core = UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0)).unwrap();
+        core.set_read_timeout(Some(Duration::from_secs(1))).unwrap();
+        let core_endpoint = v4_endpoint(&core);
+        let ingress = ingress(core_endpoint, 61, "GLOBAL", '1', '3');
+        let (request_seen_tx, request_seen_rx) = std::sync::mpsc::sync_channel(1);
+        let (reply_now_tx, reply_now_rx) = std::sync::mpsc::sync_channel(1);
+        let worker = thread::spawn(move || {
+            let authenticator =
+                StrictUdpDataAuthenticator::new(61, [0x11; 16], [0x33; 32]).unwrap();
+            let mut request = [0_u8; STRICT_UDP_DATA_MAX_FRAME_BYTES + 1];
+            let (count, source) = core.recv_from(&mut request).unwrap();
+            let decoded = authenticator
+                .decode(&request[..count], StrictUdpDataDirection::Outbound)
+                .unwrap();
+            request_seen_tx.send(()).unwrap();
+            reply_now_rx.recv().unwrap();
+            let mut response = [0_u8; STRICT_UDP_DATA_MAX_FRAME_BYTES];
+            let count = authenticator
+                .encode(
+                    &mut response,
+                    StrictUdpDataDirection::Inbound,
+                    decoded.association_id(),
+                    1,
+                    decoded.endpoint(),
+                    b"response",
+                )
+                .unwrap();
+            core.send_to(&response[..count], source).unwrap();
+        });
+
+        let mut transport =
+            StrictCoreUdpTransport::connect(&ingress, Duration::from_millis(20)).unwrap();
+        let destination = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(8, 8, 8, 8), 443));
+        transport
+            .send([0x44; 16], "GLOBAL", destination, b"request")
+            .unwrap();
+        request_seen_rx.recv().unwrap();
+        let mut payload = [0_u8; 64];
+        assert!(transport.poll_receive_into(&mut payload).unwrap().is_none());
+        reply_now_tx.send(()).unwrap();
+        let reply = transport.poll_receive_into(&mut payload).unwrap().unwrap();
+        assert_eq!(&payload[..reply.payload_bytes()], b"response");
         worker.join().unwrap();
     }
 

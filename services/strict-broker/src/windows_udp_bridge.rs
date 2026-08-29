@@ -1,13 +1,29 @@
 use std::collections::HashMap;
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, SyncSender, TryRecvError, TrySendError};
+use std::sync::{Arc, RwLock};
+use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context, Result};
 
-use crate::{StrictDriverDatagramFlags, StrictDriverDatagramRecord, StrictUdpReplayWindow};
+use crate::{
+    StrictCoreUdpTransport, StrictDriverDatagramBatch, StrictDriverDatagramBatchBuilder,
+    StrictDriverDatagramBatchKind, StrictDriverDatagramFlags, StrictDriverDatagramLeaseWindow,
+    StrictDriverDatagramRecord, StrictUdpReplayWindow, WindowsDriverIoctlCancellation,
+    WindowsDriverIoctlDeadline, WindowsPipeShutdown, WindowsSharedIoctlDriverChannel,
+    STRICT_DRIVER_DATAGRAM_MAX_BATCH_BYTES, STRICT_DRIVER_DATAGRAM_MAX_PAYLOAD_BYTES,
+    STRICT_DRIVER_DATAGRAM_MAX_RECORDS,
+};
 
 pub const STRICT_DRIVER_UDP_MAX_ASSOCIATIONS: usize = 1024;
 pub const STRICT_DRIVER_UDP_ASSOCIATION_IDLE: Duration = Duration::from_secs(90);
+const DRIVER_BATCH_BUFFER_COUNT: usize = 2;
+const DRIVER_RECEIVE_DEADLINE: Duration = Duration::from_secs(300);
+const DRIVER_SUBMIT_DEADLINE: Duration = Duration::from_secs(1);
+const BRIDGE_WAIT_SLICE: Duration = Duration::from_millis(100);
+const BRIDGE_THREAD_STACK_BYTES: usize = 512 * 1024;
 
 pub struct StrictDriverUdpAssociations {
     by_flow: HashMap<u64, DriverUdpAssociation>,
@@ -245,12 +261,377 @@ impl StrictDriverUdpAssociations {
     }
 }
 
+pub trait StrictDriverDatagramIo: Send + Sync {
+    fn poll_captured(
+        &self,
+        output: &mut [u8],
+        deadline: WindowsDriverIoctlDeadline,
+        cancellation: &WindowsDriverIoctlCancellation,
+    ) -> Result<Option<usize>>;
+
+    fn submit_reply(&self, input: &mut [u8], deadline: WindowsDriverIoctlDeadline) -> Result<()>;
+}
+
+impl StrictDriverDatagramIo for WindowsSharedIoctlDriverChannel {
+    fn poll_captured(
+        &self,
+        output: &mut [u8],
+        deadline: WindowsDriverIoctlDeadline,
+        cancellation: &WindowsDriverIoctlCancellation,
+    ) -> Result<Option<usize>> {
+        self.receive_datagram_batch_until(output, deadline, cancellation)
+    }
+
+    fn submit_reply(&self, input: &mut [u8], deadline: WindowsDriverIoctlDeadline) -> Result<()> {
+        self.submit_datagram_batch(input, deadline)
+    }
+}
+
+struct CapturedDriverBatch {
+    storage: Box<[u8]>,
+    bytes: usize,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct WindowsUdpBridgeReport {
+    pub captured_batches: u64,
+    pub captured_datagrams: u64,
+    pub reply_batches: u64,
+    pub reply_datagrams: u64,
+}
+
+pub struct WindowsUdpBridgeRuntime {
+    shutdown: WindowsPipeShutdown,
+    driver_cancellation: WindowsDriverIoctlCancellation,
+    alive: Arc<AtomicBool>,
+    receiver_worker: Option<JoinHandle<Result<()>>>,
+    bridge_worker: Option<JoinHandle<Result<WindowsUdpBridgeReport>>>,
+}
+
+impl WindowsUdpBridgeRuntime {
+    pub fn is_alive(&self) -> bool {
+        self.alive.load(Ordering::Acquire)
+    }
+
+    pub fn stop(mut self) -> Result<WindowsUdpBridgeReport> {
+        self.shutdown.request();
+        let cancellation = self.driver_cancellation.request();
+        let receiver = join_bridge_worker(self.receiver_worker.take(), "driver datagram receiver");
+        let bridge = join_bridge_worker(self.bridge_worker.take(), "Core UDP bridge");
+        cancellation.context("cancel strict driver datagram receive")?;
+        match (receiver, bridge) {
+            (Ok(()), Ok(report)) => Ok(report),
+            (Err(receiver), Ok(_)) => Err(receiver),
+            (Ok(()), Err(bridge)) => Err(bridge),
+            (Err(receiver), Err(bridge)) => Err(anyhow::anyhow!(
+                "strict driver datagram receiver failed: {receiver:#}; Core UDP bridge failed: {bridge:#}"
+            )),
+        }
+    }
+}
+
+impl Drop for WindowsUdpBridgeRuntime {
+    fn drop(&mut self) {
+        self.shutdown.request();
+        let _ = self.driver_cancellation.request();
+        let _ = join_bridge_worker(self.receiver_worker.take(), "driver datagram receiver");
+        let _ = join_bridge_worker(self.bridge_worker.take(), "Core UDP bridge");
+    }
+}
+
+pub fn spawn_windows_udp_bridge_runtime<D, A>(
+    driver: Arc<D>,
+    core: StrictCoreUdpTransport,
+    target_groups: Vec<String>,
+    lease_window: Arc<RwLock<StrictDriverDatagramLeaseWindow>>,
+    new_association_id: A,
+) -> Result<WindowsUdpBridgeRuntime>
+where
+    D: StrictDriverDatagramIo + 'static,
+    A: Fn() -> Result<[u8; 16]> + Send + Sync + 'static,
+{
+    if target_groups.is_empty()
+        || target_groups.len() > 128
+        || target_groups.iter().any(String::is_empty)
+        || target_groups
+            .windows(2)
+            .any(|pair| pair[0].as_str() >= pair[1].as_str())
+    {
+        bail!("strict UDP bridge target groups are invalid");
+    }
+    let receive_deadline = WindowsDriverIoctlDeadline::new(DRIVER_RECEIVE_DEADLINE)?;
+    let submit_deadline = WindowsDriverIoctlDeadline::new(DRIVER_SUBMIT_DEADLINE)?;
+    let shutdown = WindowsPipeShutdown::new();
+    let driver_cancellation = WindowsDriverIoctlCancellation::new()?;
+    let alive = Arc::new(AtomicBool::new(true));
+    let (free_sender, free_receiver) = mpsc::sync_channel(DRIVER_BATCH_BUFFER_COUNT);
+    let (captured_sender, captured_receiver) = mpsc::sync_channel(DRIVER_BATCH_BUFFER_COUNT);
+    for _ in 0..DRIVER_BATCH_BUFFER_COUNT {
+        free_sender
+            .send(vec![0_u8; STRICT_DRIVER_DATAGRAM_MAX_BATCH_BYTES].into_boxed_slice())
+            .map_err(|_| anyhow::anyhow!("initialize strict driver datagram buffer pool"))?;
+    }
+
+    let receiver_shutdown = shutdown.clone();
+    let receiver_alive = Arc::clone(&alive);
+    let receiver_driver = Arc::clone(&driver);
+    let receiver_free_sender = free_sender.clone();
+    let receiver_cancellation = driver_cancellation.clone();
+    let receiver_worker = thread::Builder::new()
+        .name("flclash-strict-driver-udp".into())
+        .stack_size(BRIDGE_THREAD_STACK_BYTES)
+        .spawn(move || {
+            let result = run_driver_receiver(
+                receiver_driver,
+                free_receiver,
+                receiver_free_sender,
+                captured_sender,
+                &receiver_shutdown,
+                receive_deadline,
+                &receiver_cancellation,
+            );
+            if result.is_err() {
+                receiver_alive.store(false, Ordering::Release);
+                receiver_shutdown.request();
+                let _ = receiver_cancellation.request();
+            }
+            result
+        })
+        .context("start strict driver datagram receiver")?;
+
+    let bridge_shutdown = shutdown.clone();
+    let bridge_alive = Arc::clone(&alive);
+    let bridge_driver = driver;
+    let bridge_cancellation = driver_cancellation.clone();
+    let association_ids = Arc::new(new_association_id);
+    let bridge_worker = match thread::Builder::new()
+        .name("flclash-strict-core-udp".into())
+        .stack_size(BRIDGE_THREAD_STACK_BYTES)
+        .spawn(move || {
+            let result = run_udp_bridge(
+                bridge_driver,
+                core,
+                target_groups,
+                lease_window,
+                association_ids,
+                captured_receiver,
+                free_sender,
+                &bridge_shutdown,
+                submit_deadline,
+            );
+            bridge_alive.store(false, Ordering::Release);
+            if result.is_err() {
+                bridge_shutdown.request();
+                let _ = bridge_cancellation.request();
+            }
+            result
+        }) {
+        Ok(worker) => worker,
+        Err(error) => {
+            shutdown.request();
+            let _ = driver_cancellation.request();
+            let _ = receiver_worker.join();
+            return Err(error).context("start strict Core UDP bridge");
+        }
+    };
+
+    Ok(WindowsUdpBridgeRuntime {
+        shutdown,
+        driver_cancellation,
+        alive,
+        receiver_worker: Some(receiver_worker),
+        bridge_worker: Some(bridge_worker),
+    })
+}
+
+fn run_driver_receiver<D: StrictDriverDatagramIo + 'static>(
+    driver: Arc<D>,
+    free_receiver: Receiver<Box<[u8]>>,
+    free_sender: SyncSender<Box<[u8]>>,
+    captured_sender: SyncSender<CapturedDriverBatch>,
+    shutdown: &WindowsPipeShutdown,
+    deadline: WindowsDriverIoctlDeadline,
+    cancellation: &WindowsDriverIoctlCancellation,
+) -> Result<()> {
+    while !shutdown.is_requested() {
+        let mut storage = match free_receiver.recv_timeout(BRIDGE_WAIT_SLICE) {
+            Ok(storage) => storage,
+            Err(RecvTimeoutError::Timeout) => continue,
+            Err(RecvTimeoutError::Disconnected) if shutdown.is_requested() => return Ok(()),
+            Err(RecvTimeoutError::Disconnected) => {
+                bail!("strict driver datagram buffer pool disconnected")
+            }
+        };
+        let bytes = match driver.poll_captured(&mut storage, deadline, cancellation)? {
+            Some(bytes) => bytes,
+            None if cancellation.is_requested() || shutdown.is_requested() => return Ok(()),
+            None => {
+                free_sender
+                    .try_send(storage)
+                    .map_err(|_| anyhow::anyhow!("return idle strict driver datagram buffer"))?;
+                continue;
+            }
+        };
+        match captured_sender.try_send(CapturedDriverBatch { storage, bytes }) {
+            Ok(()) => {}
+            Err(TrySendError::Full(_)) => {
+                bail!("strict driver datagram bridge queue is saturated")
+            }
+            Err(TrySendError::Disconnected(_)) if shutdown.is_requested() => return Ok(()),
+            Err(TrySendError::Disconnected(_)) => {
+                bail!("strict driver datagram bridge disconnected")
+            }
+        }
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_udp_bridge<D, A>(
+    driver: Arc<D>,
+    mut core: StrictCoreUdpTransport,
+    target_groups: Vec<String>,
+    lease_window: Arc<RwLock<StrictDriverDatagramLeaseWindow>>,
+    association_ids: Arc<A>,
+    captured_receiver: Receiver<CapturedDriverBatch>,
+    free_sender: SyncSender<Box<[u8]>>,
+    shutdown: &WindowsPipeShutdown,
+    submit_deadline: WindowsDriverIoctlDeadline,
+) -> Result<WindowsUdpBridgeReport>
+where
+    D: StrictDriverDatagramIo + 'static,
+    A: Fn() -> Result<[u8; 16]> + Send + Sync + 'static,
+{
+    let mut report = WindowsUdpBridgeReport::default();
+    let mut associations = StrictDriverUdpAssociations::new();
+    let mut reply_payload = vec![0_u8; STRICT_DRIVER_DATAGRAM_MAX_PAYLOAD_BYTES].into_boxed_slice();
+    let mut reply_batch = vec![0_u8; STRICT_DRIVER_DATAGRAM_MAX_BATCH_BYTES].into_boxed_slice();
+
+    while !shutdown.is_requested() {
+        loop {
+            match captured_receiver.try_recv() {
+                Ok(batch) => {
+                    process_captured_batch(
+                        &batch.storage[..batch.bytes],
+                        &lease_window,
+                        &target_groups,
+                        association_ids.as_ref(),
+                        &mut associations,
+                        &mut core,
+                        &mut report,
+                    )?;
+                    free_sender
+                        .try_send(batch.storage)
+                        .map_err(|_| anyhow::anyhow!("return strict driver datagram buffer"))?;
+                }
+                Err(TryRecvError::Empty) => break,
+                Err(TryRecvError::Disconnected) if shutdown.is_requested() => break,
+                Err(TryRecvError::Disconnected) => {
+                    bail!("strict driver datagram receiver exited unexpectedly")
+                }
+            }
+        }
+
+        let identity = lease_window
+            .read()
+            .map_err(|_| anyhow::anyhow!("strict UDP lease window lock is poisoned"))?
+            .current();
+        let mut builder = StrictDriverDatagramBatchBuilder::new(
+            &mut reply_batch,
+            StrictDriverDatagramBatchKind::Reply,
+            identity,
+        )?;
+        let mut reply_count = 0_usize;
+        for _ in 0..STRICT_DRIVER_DATAGRAM_MAX_RECORDS {
+            let Some(reply) = core.poll_receive_into(&mut reply_payload)? else {
+                break;
+            };
+            let route = associations.route_reply(
+                reply.association_id(),
+                reply.sequence(),
+                reply.endpoint(),
+            )?;
+            builder.push(
+                route.flow_token(),
+                route.sequence(),
+                route.target_group_index(),
+                route.flags(),
+                route.local_endpoint(),
+                route.remote_endpoint(),
+                &reply_payload[..reply.payload_bytes()],
+            )?;
+            reply_count += 1;
+        }
+        if reply_count != 0 {
+            let bytes = builder.finish()?.len();
+            driver.submit_reply(&mut reply_batch[..bytes], submit_deadline)?;
+            report.reply_batches = report.reply_batches.saturating_add(1);
+            report.reply_datagrams = report.reply_datagrams.saturating_add(reply_count as u64);
+        }
+        associations.sweep_expired(|association_id| {
+            core.remove_association(association_id);
+        });
+    }
+    Ok(report)
+}
+
+fn process_captured_batch<A>(
+    input: &[u8],
+    lease_window: &RwLock<StrictDriverDatagramLeaseWindow>,
+    target_groups: &[String],
+    association_ids: &A,
+    associations: &mut StrictDriverUdpAssociations,
+    core: &mut StrictCoreUdpTransport,
+    report: &mut WindowsUdpBridgeReport,
+) -> Result<()>
+where
+    A: Fn() -> Result<[u8; 16]>,
+{
+    let window = *lease_window
+        .read()
+        .map_err(|_| anyhow::anyhow!("strict UDP lease window lock is poisoned"))?;
+    let batch = StrictDriverDatagramBatch::decode_with_window(
+        input,
+        StrictDriverDatagramBatchKind::Captured,
+        window,
+    )?;
+    for record in batch.records() {
+        let route = associations.route_captured(&record, association_ids)?;
+        let target_group = target_groups
+            .get(usize::from(route.target_group_index()))
+            .context("strict driver UDP target-group index is unavailable")?;
+        core.send(
+            route.association_id(),
+            target_group,
+            route.destination(),
+            record.payload(),
+        )?;
+        report.captured_datagrams = report.captured_datagrams.saturating_add(1);
+    }
+    report.captured_batches = report.captured_batches.saturating_add(1);
+    Ok(())
+}
+
+fn join_bridge_worker<T>(worker: Option<JoinHandle<Result<T>>>, label: &str) -> Result<T> {
+    let worker = worker.with_context(|| format!("strict {label} worker is missing"))?;
+    worker
+        .join()
+        .map_err(|_| anyhow::anyhow!("strict {label} worker panicked"))?
+        .with_context(|| format!("strict {label} worker failed"))
+}
+
 #[cfg(test)]
 mod tests {
+    use std::net::{Ipv4Addr, SocketAddrV4, UdpSocket};
+    use std::sync::Mutex;
+
+    use flclash_strict_contract::{StrictProxyIngressEntry, StrictProxyIngressSet};
+
     use super::*;
     use crate::{
         StrictDriverDatagramBatch, StrictDriverDatagramBatchBuilder, StrictDriverDatagramBatchKind,
-        StrictDriverDatagramLeaseIdentity, STRICT_DRIVER_DATAGRAM_MAX_BATCH_BYTES,
+        StrictDriverDatagramLeaseIdentity, StrictUdpDataAuthenticator, StrictUdpDataDirection,
+        STRICT_DRIVER_DATAGRAM_MAX_BATCH_BYTES, STRICT_UDP_DATA_MAX_FRAME_BYTES,
     };
 
     const LOCAL: &str = "10.0.0.2:53000";
@@ -399,5 +780,147 @@ mod tests {
         );
         assert_eq!(expired.len(), STRICT_DRIVER_UDP_MAX_ASSOCIATIONS);
         assert!(table.is_empty());
+    }
+
+    struct FakeDriverDatagramIo {
+        captured: Mutex<Receiver<Vec<u8>>>,
+        replies: SyncSender<Vec<u8>>,
+    }
+
+    impl StrictDriverDatagramIo for FakeDriverDatagramIo {
+        fn poll_captured(
+            &self,
+            output: &mut [u8],
+            _deadline: WindowsDriverIoctlDeadline,
+            cancellation: &WindowsDriverIoctlCancellation,
+        ) -> Result<Option<usize>> {
+            if cancellation.is_requested() {
+                return Ok(None);
+            }
+            match self
+                .captured
+                .lock()
+                .map_err(|_| anyhow::anyhow!("fake captured queue lock is poisoned"))?
+                .recv_timeout(Duration::from_millis(20))
+            {
+                Ok(batch) => {
+                    if batch.len() > output.len() {
+                        bail!("fake captured batch is oversized");
+                    }
+                    output[..batch.len()].copy_from_slice(&batch);
+                    Ok(Some(batch.len()))
+                }
+                Err(RecvTimeoutError::Timeout) => Ok(None),
+                Err(RecvTimeoutError::Disconnected) => {
+                    bail!("fake captured batch queue disconnected")
+                }
+            }
+        }
+
+        fn submit_reply(
+            &self,
+            input: &mut [u8],
+            _deadline: WindowsDriverIoctlDeadline,
+        ) -> Result<()> {
+            self.replies
+                .send(input.to_vec())
+                .map_err(|_| anyhow::anyhow!("fake reply queue disconnected"))
+        }
+    }
+
+    #[test]
+    fn bridge_preserves_multiple_async_replies_for_one_captured_datagram() {
+        let core = UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0)).unwrap();
+        core.set_read_timeout(Some(Duration::from_secs(1))).unwrap();
+        let core_endpoint = match core.local_addr().unwrap() {
+            SocketAddr::V4(endpoint) => endpoint,
+            SocketAddr::V6(_) => unreachable!(),
+        };
+        let ingress = StrictProxyIngressSet::new(
+            41,
+            core_endpoint,
+            vec![StrictProxyIngressEntry::new(
+                "GLOBAL".into(),
+                SocketAddrV4::new(Ipv4Addr::LOCALHOST, 41001),
+                format!("{}{}", "11".repeat(16), "22".repeat(16)),
+                "33".repeat(32),
+            )
+            .unwrap()],
+        )
+        .unwrap();
+        let core_worker = thread::spawn(move || {
+            let authenticator =
+                StrictUdpDataAuthenticator::new(41, [0x11; 16], [0x33; 32]).unwrap();
+            let mut request = [0_u8; STRICT_UDP_DATA_MAX_FRAME_BYTES + 1];
+            let (bytes, source) = core.recv_from(&mut request).unwrap();
+            let decoded = authenticator
+                .decode(&request[..bytes], StrictUdpDataDirection::Outbound)
+                .unwrap();
+            assert_eq!(decoded.payload(), b"payload");
+            for (sequence, payload) in [(1, b"reply-one".as_slice()), (2, b"reply-two".as_slice())]
+            {
+                let mut response = [0_u8; STRICT_UDP_DATA_MAX_FRAME_BYTES];
+                let bytes = authenticator
+                    .encode(
+                        &mut response,
+                        StrictUdpDataDirection::Inbound,
+                        decoded.association_id(),
+                        sequence,
+                        decoded.endpoint(),
+                        payload,
+                    )
+                    .unwrap();
+                core.send_to(&response[..bytes], source).unwrap();
+            }
+        });
+
+        let transport =
+            StrictCoreUdpTransport::connect(&ingress, Duration::from_millis(20)).unwrap();
+        let identity =
+            StrictDriverDatagramLeaseIdentity::new(7, 91, [0xab; 32], [0x5a; 16]).unwrap();
+        let window = Arc::new(RwLock::new(StrictDriverDatagramLeaseWindow::new(identity)));
+        let (captured_sender, captured_receiver) = mpsc::sync_channel(1);
+        let (reply_sender, reply_receiver) = mpsc::sync_channel(4);
+        let driver = Arc::new(FakeDriverDatagramIo {
+            captured: Mutex::new(captured_receiver),
+            replies: reply_sender,
+        });
+        let runtime = spawn_windows_udp_bridge_runtime(
+            driver,
+            transport,
+            vec!["GLOBAL".into()],
+            window,
+            || Ok([0x44; 16]),
+        )
+        .unwrap();
+        assert!(runtime.is_alive());
+        captured_sender
+            .send(encoded_record(11, 1, 0, REMOTE))
+            .unwrap();
+
+        let mut replies = Vec::new();
+        while replies.len() < 2 {
+            let encoded = reply_receiver.recv_timeout(Duration::from_secs(2)).unwrap();
+            let batch = StrictDriverDatagramBatch::decode(
+                &encoded,
+                StrictDriverDatagramBatchKind::Reply,
+                identity,
+            )
+            .unwrap();
+            for reply in batch.records() {
+                assert_eq!(reply.flow_token(), 11);
+                assert_eq!(reply.remote_endpoint(), REMOTE.parse().unwrap());
+                replies.push((reply.sequence(), reply.payload().to_vec()));
+            }
+        }
+        replies.sort_by_key(|reply| reply.0);
+        assert_eq!(replies[0], (1, b"reply-one".to_vec()));
+        assert_eq!(replies[1], (2, b"reply-two".to_vec()));
+        let report = runtime.stop().unwrap();
+        assert_eq!(report.captured_batches, 1);
+        assert_eq!(report.captured_datagrams, 1);
+        assert_eq!(report.reply_datagrams, 2);
+        assert!((1..=2).contains(&report.reply_batches));
+        core_worker.join().unwrap();
     }
 }

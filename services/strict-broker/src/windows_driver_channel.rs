@@ -1,10 +1,12 @@
 use std::collections::BTreeSet;
 use std::ffi::c_void;
+use std::fmt;
 use std::io;
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddrV4, SocketAddrV6};
 use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
 use std::path::Path;
 use std::ptr::{null, null_mut};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
@@ -16,7 +18,9 @@ use windows_sys::Win32::Foundation::{
     INVALID_HANDLE_VALUE, WAIT_FAILED, WAIT_OBJECT_0, WAIT_TIMEOUT,
 };
 use windows_sys::Win32::Storage::FileSystem::{CreateFileW, FILE_FLAG_OVERLAPPED, OPEN_EXISTING};
-use windows_sys::Win32::System::Threading::{CreateEventW, WaitForSingleObject};
+#[cfg(any(test, feature = "production-host"))]
+use windows_sys::Win32::System::Threading::WaitForMultipleObjects;
+use windows_sys::Win32::System::Threading::{CreateEventW, SetEvent, WaitForSingleObject};
 use windows_sys::Win32::System::IO::{
     CancelIoEx, DeviceIoControl, GetOverlappedResult, OVERLAPPED,
 };
@@ -93,6 +97,67 @@ const fn ctl_code_with_method(function: u32, method: u32) -> u32 {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WindowsDriverIoctlDeadline(Duration);
+
+#[derive(Debug)]
+struct WindowsDriverIoctlDeadlineExceeded;
+
+#[derive(Debug)]
+#[cfg(any(test, feature = "production-host"))]
+struct WindowsDriverIoctlCancelled;
+
+impl fmt::Display for WindowsDriverIoctlDeadlineExceeded {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("strict driver IOCTL deadline exceeded")
+    }
+}
+
+impl std::error::Error for WindowsDriverIoctlDeadlineExceeded {}
+
+#[cfg(any(test, feature = "production-host"))]
+impl fmt::Display for WindowsDriverIoctlCancelled {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("strict driver IOCTL was cancelled")
+    }
+}
+
+#[cfg(any(test, feature = "production-host"))]
+impl std::error::Error for WindowsDriverIoctlCancelled {}
+
+#[derive(Clone)]
+pub struct WindowsDriverIoctlCancellation {
+    event: Arc<OwnedHandle>,
+    requested: Arc<AtomicBool>,
+}
+
+impl WindowsDriverIoctlCancellation {
+    pub fn new() -> Result<Self> {
+        // SAFETY: no custom security descriptor or name is supplied.
+        let event = unsafe { CreateEventW(null(), 1, 0, null()) };
+        if event.is_null() {
+            return Err(io::Error::last_os_error())
+                .context("create strict driver cancellation event");
+        }
+        // SAFETY: CreateEventW returned a unique owned handle.
+        let event = Arc::new(unsafe { OwnedHandle::from_raw_handle(event) });
+        Ok(Self {
+            event,
+            requested: Arc::new(AtomicBool::new(false)),
+        })
+    }
+
+    pub fn request(&self) -> Result<()> {
+        self.requested.store(true, Ordering::Release);
+        // SAFETY: event is a live manual-reset event owned by this token.
+        if unsafe { SetEvent(self.event.as_ref().as_raw_handle()) } == 0 {
+            return Err(io::Error::last_os_error()).context("signal strict driver cancellation");
+        }
+        Ok(())
+    }
+
+    pub fn is_requested(&self) -> bool {
+        self.requested.load(Ordering::Acquire)
+    }
+}
 
 impl WindowsDriverIoctlDeadline {
     pub fn new(value: Duration) -> Result<Self> {
@@ -223,23 +288,43 @@ impl WindowsSharedIoctlDriverChannel {
     }
 
     #[cfg(any(test, feature = "production-host"))]
-    pub fn receive_datagram_batch(
+    pub fn receive_datagram_batch_until(
         &self,
         output: &mut [u8],
         deadline: WindowsDriverIoctlDeadline,
-    ) -> Result<usize> {
+        cancellation: &WindowsDriverIoctlCancellation,
+    ) -> Result<Option<usize>> {
         validate_datagram_receive_capacity(output.len())?;
-        let transferred = run_overlapped_ioctl(
+        let result = run_overlapped_ioctl_until(
             self.device.as_ref().as_raw_handle(),
             IOCTL_RECEIVE_DATAGRAM_BATCH,
             &[],
             output,
             deadline.0,
-        )? as usize;
-        if !(STRICT_DRIVER_DATAGRAM_BATCH_HEADER_BYTES..=output.len()).contains(&transferred) {
-            bail!("strict driver returned an invalid datagram batch length");
+            cancellation,
+        );
+        match result {
+            Ok(transferred) => {
+                let transferred = transferred as usize;
+                if !(STRICT_DRIVER_DATAGRAM_BATCH_HEADER_BYTES..=output.len())
+                    .contains(&transferred)
+                {
+                    bail!("strict driver returned an invalid datagram batch length");
+                }
+                Ok(Some(transferred))
+            }
+            Err(error)
+                if error
+                    .downcast_ref::<WindowsDriverIoctlDeadlineExceeded>()
+                    .is_some()
+                    || error
+                        .downcast_ref::<WindowsDriverIoctlCancelled>()
+                        .is_some() =>
+            {
+                Ok(None)
+            }
+            Err(error) => Err(error),
         }
-        Ok(transferred)
     }
 
     #[cfg(any(test, feature = "production-host"))]
@@ -652,7 +737,7 @@ fn run_overlapped_ioctl(
     let wait = unsafe { WaitForSingleObject(event.as_raw_handle(), wait_millis) };
     if wait == WAIT_TIMEOUT {
         cancel_and_drain(handle, &overlapped)?;
-        bail!("strict driver IOCTL deadline exceeded");
+        return Err(WindowsDriverIoctlDeadlineExceeded.into());
     }
     if wait != WAIT_OBJECT_0 {
         let wait_error = if wait == WAIT_FAILED {
@@ -665,6 +750,90 @@ fn run_overlapped_ioctl(
     }
     let mut transferred = 0;
     // SAFETY: the event is signalled and OVERLAPPED remains live.
+    if unsafe { GetOverlappedResult(handle, &overlapped, &mut transferred, 0) } == 0 {
+        return Err(io::Error::last_os_error()).context("complete strict driver IOCTL");
+    }
+    Ok(transferred)
+}
+
+#[cfg(any(test, feature = "production-host"))]
+fn run_overlapped_ioctl_until(
+    handle: *mut c_void,
+    code: u32,
+    input: &[u8],
+    output: &mut [u8],
+    timeout: Duration,
+    cancellation: &WindowsDriverIoctlCancellation,
+) -> Result<u32> {
+    WindowsDriverIoctlDeadline::new(timeout)?;
+    if cancellation.is_requested() {
+        return Err(WindowsDriverIoctlCancelled.into());
+    }
+    // SAFETY: no custom security descriptor or name is supplied.
+    let event = unsafe { CreateEventW(null(), 1, 0, null()) };
+    if event.is_null() {
+        return Err(io::Error::last_os_error()).context("create strict driver IOCTL event");
+    }
+    // SAFETY: CreateEventW returned a unique owned handle.
+    let event = unsafe { OwnedHandle::from_raw_handle(event) };
+    let mut overlapped = OVERLAPPED {
+        hEvent: event.as_raw_handle(),
+        ..OVERLAPPED::default()
+    };
+    let mut immediate_bytes = 0;
+    let input_pointer = if input.is_empty() {
+        null()
+    } else {
+        input.as_ptr().cast()
+    };
+    // SAFETY: all buffers and OVERLAPPED remain live until completion is drained.
+    let result = unsafe {
+        DeviceIoControl(
+            handle,
+            code,
+            input_pointer,
+            input.len() as u32,
+            output.as_mut_ptr().cast(),
+            output.len() as u32,
+            &mut immediate_bytes,
+            &mut overlapped,
+        )
+    };
+    if result != 0 {
+        return Ok(immediate_bytes);
+    }
+    let error = io::Error::last_os_error();
+    if error.raw_os_error() != Some(ERROR_IO_PENDING as i32) {
+        return Err(error).context("start strict driver IOCTL");
+    }
+
+    let handles = [
+        event.as_raw_handle(),
+        cancellation.event.as_ref().as_raw_handle(),
+    ];
+    let wait_millis = timeout_to_millis(timeout)?;
+    // SAFETY: both event handles remain live for the complete wait.
+    let wait =
+        unsafe { WaitForMultipleObjects(handles.len() as u32, handles.as_ptr(), 0, wait_millis) };
+    if wait == WAIT_TIMEOUT {
+        cancel_and_drain(handle, &overlapped)?;
+        return Err(WindowsDriverIoctlDeadlineExceeded.into());
+    }
+    if wait == WAIT_OBJECT_0 + 1 {
+        cancel_and_drain(handle, &overlapped)?;
+        return Err(WindowsDriverIoctlCancelled.into());
+    }
+    if wait != WAIT_OBJECT_0 {
+        let wait_error = if wait == WAIT_FAILED {
+            io::Error::last_os_error()
+        } else {
+            io::Error::other(format!("unexpected wait result 0x{wait:08x}"))
+        };
+        cancel_and_drain(handle, &overlapped)?;
+        return Err(wait_error).context("wait for strict driver IOCTL or cancellation");
+    }
+    let mut transferred = 0;
+    // SAFETY: the I/O event is signalled and OVERLAPPED remains live.
     if unsafe { GetOverlappedResult(handle, &overlapped, &mut transferred, 0) } == 0 {
         return Err(io::Error::last_os_error()).context("complete strict driver IOCTL");
     }
@@ -1048,6 +1217,14 @@ mod tests {
         assert!(validate_datagram_submit_size(256 * 1024).is_ok());
         assert!(validate_datagram_submit_size(95).is_err());
         assert!(validate_datagram_submit_size(256 * 1024 + 1).is_err());
+        let timeout = anyhow::Error::new(WindowsDriverIoctlDeadlineExceeded);
+        assert!(timeout
+            .downcast_ref::<WindowsDriverIoctlDeadlineExceeded>()
+            .is_some());
+        let cancellation = WindowsDriverIoctlCancellation::new().unwrap();
+        assert!(!cancellation.is_requested());
+        cancellation.request().unwrap();
+        assert!(cancellation.is_requested());
     }
 
     #[test]
