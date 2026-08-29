@@ -54,6 +54,8 @@ mod windows_tcp_relay;
 mod windows_tcp_runtime;
 #[cfg(windows)]
 mod windows_tcp_session;
+#[cfg(all(windows, any(test, feature = "production-host")))]
+mod windows_udp_bridge;
 #[cfg(windows)]
 mod windows_wfp_control;
 #[cfg(windows)]
@@ -90,10 +92,11 @@ pub use windows_core_udp_data::{
 #[cfg(all(windows, any(test, feature = "production-host")))]
 pub use windows_datagram_wire::{
     StrictDriverDatagramBatch, StrictDriverDatagramBatchBuilder, StrictDriverDatagramBatchKind,
-    StrictDriverDatagramFlags, StrictDriverDatagramLeaseIdentity, StrictDriverDatagramRecord,
-    StrictDriverDatagramRecords, STRICT_DRIVER_DATAGRAM_BATCH_HEADER_BYTES,
-    STRICT_DRIVER_DATAGRAM_MAX_BATCH_BYTES, STRICT_DRIVER_DATAGRAM_MAX_PAYLOAD_BYTES,
-    STRICT_DRIVER_DATAGRAM_MAX_RECORDS, STRICT_DRIVER_DATAGRAM_RECORD_HEADER_BYTES,
+    StrictDriverDatagramFlags, StrictDriverDatagramLeaseIdentity, StrictDriverDatagramLeaseWindow,
+    StrictDriverDatagramRecord, StrictDriverDatagramRecords,
+    STRICT_DRIVER_DATAGRAM_BATCH_HEADER_BYTES, STRICT_DRIVER_DATAGRAM_MAX_BATCH_BYTES,
+    STRICT_DRIVER_DATAGRAM_MAX_PAYLOAD_BYTES, STRICT_DRIVER_DATAGRAM_MAX_RECORDS,
+    STRICT_DRIVER_DATAGRAM_RECORD_HEADER_BYTES,
 };
 #[cfg(windows)]
 pub use windows_driver_channel::{
@@ -156,6 +159,11 @@ pub use windows_tcp_relay::{
 };
 #[cfg(windows)]
 pub use windows_tcp_session::{handle_windows_strict_tcp_connection, WindowsStrictTcpSessionPlan};
+#[cfg(all(windows, any(test, feature = "production-host")))]
+pub use windows_udp_bridge::{
+    StrictDriverUdpAssociations, StrictDriverUdpOutbound, StrictDriverUdpReplyRoute,
+    STRICT_DRIVER_UDP_ASSOCIATION_IDLE, STRICT_DRIVER_UDP_MAX_ASSOCIATIONS,
+};
 #[cfg(windows)]
 pub use windows_wfp_control::{
     WindowsDriverEndpointLeaseSnapshot, WindowsDriverPolicyChannel, WindowsDriverPolicySnapshot,

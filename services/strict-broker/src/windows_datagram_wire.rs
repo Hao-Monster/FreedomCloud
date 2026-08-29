@@ -71,6 +71,43 @@ impl StrictDriverDatagramLeaseIdentity {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct StrictDriverDatagramLeaseWindow {
+    current: StrictDriverDatagramLeaseIdentity,
+    previous: Option<StrictDriverDatagramLeaseIdentity>,
+}
+
+impl StrictDriverDatagramLeaseWindow {
+    pub fn new(current: StrictDriverDatagramLeaseIdentity) -> Self {
+        Self {
+            current,
+            previous: None,
+        }
+    }
+
+    pub fn renewed(self, next: StrictDriverDatagramLeaseIdentity) -> Result<Self> {
+        if next.lease_generation <= self.current.lease_generation
+            || next.revision != self.current.revision
+            || next.policy_digest != self.current.policy_digest
+            || next.lease_nonce != self.current.lease_nonce
+        {
+            bail!("strict driver datagram lease renewal identity is invalid");
+        }
+        Ok(Self {
+            current: next,
+            previous: Some(self.current),
+        })
+    }
+
+    pub fn current(&self) -> StrictDriverDatagramLeaseIdentity {
+        self.current
+    }
+
+    pub fn accepts(&self, identity: StrictDriverDatagramLeaseIdentity) -> bool {
+        identity == self.current || self.previous == Some(identity)
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct StrictDriverDatagramFlags(u32);
 
@@ -187,6 +224,26 @@ impl<'a> StrictDriverDatagramBatch<'a> {
         expected_kind: StrictDriverDatagramBatchKind,
         expected_identity: StrictDriverDatagramLeaseIdentity,
     ) -> Result<Self> {
+        Self::decode_where(input, expected_kind, |identity| {
+            identity == expected_identity
+        })
+    }
+
+    pub fn decode_with_window(
+        input: &'a [u8],
+        expected_kind: StrictDriverDatagramBatchKind,
+        expected_window: StrictDriverDatagramLeaseWindow,
+    ) -> Result<Self> {
+        Self::decode_where(input, expected_kind, |identity| {
+            expected_window.accepts(identity)
+        })
+    }
+
+    fn decode_where(
+        input: &'a [u8],
+        expected_kind: StrictDriverDatagramBatchKind,
+        identity_is_accepted: impl FnOnce(StrictDriverDatagramLeaseIdentity) -> bool,
+    ) -> Result<Self> {
         if input.len() < BATCH_HEADER_BYTES
             || input.len() > STRICT_DRIVER_DATAGRAM_MAX_BATCH_BYTES
             || &input[..MAGIC.len()] != MAGIC
@@ -204,11 +261,17 @@ impl<'a> StrictDriverDatagramBatch<'a> {
         if record_count == 0 || record_count > STRICT_DRIVER_DATAGRAM_MAX_RECORDS {
             bail!("strict driver datagram batch record count is invalid");
         }
-        if read_u64(input, 24)? != expected_identity.lease_generation
-            || read_u64(input, 32)? != expected_identity.revision
-            || input[40..72] != expected_identity.policy_digest
-            || input[72..88] != expected_identity.lease_nonce
-        {
+        let identity = StrictDriverDatagramLeaseIdentity::new(
+            read_u64(input, 24)?,
+            read_u64(input, 32)?,
+            input[40..72]
+                .try_into()
+                .expect("strict driver policy digest has a fixed width"),
+            input[72..88]
+                .try_into()
+                .expect("strict driver lease nonce has a fixed width"),
+        )?;
+        if !identity_is_accepted(identity) {
             bail!("strict driver datagram batch lease identity is stale or mismatched");
         }
 
@@ -746,6 +809,74 @@ mod tests {
             .unwrap()
             .record_count(),
             STRICT_DRIVER_DATAGRAM_MAX_RECORDS
+        );
+    }
+
+    #[test]
+    fn lease_window_accepts_only_current_and_previous_attested_generation() {
+        let identity7 =
+            StrictDriverDatagramLeaseIdentity::new(7, 91, [0xab; 32], [0x5a; 16]).unwrap();
+        let identity8 =
+            StrictDriverDatagramLeaseIdentity::new(8, 91, [0xab; 32], [0x5a; 16]).unwrap();
+        let identity9 =
+            StrictDriverDatagramLeaseIdentity::new(9, 91, [0xab; 32], [0x5a; 16]).unwrap();
+
+        let window = StrictDriverDatagramLeaseWindow::new(identity7)
+            .renewed(identity8)
+            .unwrap();
+        assert!(window.accepts(identity7));
+        assert!(window.accepts(identity8));
+        assert!(!window.accepts(identity9));
+        let window = window.renewed(identity9).unwrap();
+        assert!(!window.accepts(identity7));
+        assert!(window.accepts(identity8));
+        assert!(window.accepts(identity9));
+
+        assert!(window
+            .renewed(
+                StrictDriverDatagramLeaseIdentity::new(10, 92, [0xab; 32], [0x5a; 16]).unwrap()
+            )
+            .is_err());
+        assert!(window
+            .renewed(
+                StrictDriverDatagramLeaseIdentity::new(10, 91, [0xac; 32], [0x5a; 16]).unwrap()
+            )
+            .is_err());
+        assert!(window
+            .renewed(
+                StrictDriverDatagramLeaseIdentity::new(10, 91, [0xab; 32], [0x5b; 16]).unwrap()
+            )
+            .is_err());
+        assert!(window.renewed(identity9).is_err());
+
+        let mut storage = [0_u8; 512];
+        let mut builder = StrictDriverDatagramBatchBuilder::new(
+            &mut storage,
+            StrictDriverDatagramBatchKind::Captured,
+            identity8,
+        )
+        .unwrap();
+        builder
+            .push(
+                1,
+                1,
+                0,
+                StrictDriverDatagramFlags::NONE,
+                "10.0.0.2:53000".parse().unwrap(),
+                "1.1.1.1:443".parse().unwrap(),
+                b"payload",
+            )
+            .unwrap();
+        let encoded = builder.finish().unwrap();
+        assert_eq!(
+            StrictDriverDatagramBatch::decode_with_window(
+                encoded,
+                StrictDriverDatagramBatchKind::Captured,
+                window,
+            )
+            .unwrap()
+            .record_count(),
+            1
         );
     }
 }
