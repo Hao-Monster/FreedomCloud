@@ -16,6 +16,7 @@ use flclash_strict_contract::{
 struct FakeBackend {
     snapshot: BackendSnapshot,
     fail_guards_with_secret: bool,
+    fail_redirects: bool,
 }
 
 impl FilterBackend for FakeBackend {
@@ -42,6 +43,9 @@ impl FilterBackend for FakeBackend {
         _verified_app_ids: &VerifiedPolicyAppIds,
         _digest: &str,
     ) -> Result<()> {
+        if self.fail_redirects {
+            bail!("redirect install failed");
+        }
         self.snapshot.filter_generation += 1;
         self.snapshot.redirect_filters_installed = true;
         Ok(())
@@ -124,10 +128,15 @@ impl IdentityVerifier for FakeVerifier {
     }
 }
 
-struct FakeHealthProbe;
+#[derive(Default)]
+struct FakeHealthProbe {
+    measurements: usize,
+    deactivations: usize,
+}
 
 impl ForwardingHealthProbe for FakeHealthProbe {
     fn measure(&mut self, ingress: &StrictProxyIngressSet) -> Result<ForwardingHealth> {
+        self.measurements += 1;
         if ingress.entries.is_empty() {
             bail!("strict forwarding ingress is missing");
         }
@@ -137,6 +146,11 @@ impl ForwardingHealthProbe for FakeHealthProbe {
             dns_healthy: true,
             capabilities: StrictCapability::required_for_proxy(),
         })
+    }
+
+    fn deactivate(&mut self) -> Result<()> {
+        self.deactivations += 1;
+        Ok(())
     }
 }
 
@@ -201,7 +215,7 @@ fn dispatcher_uses_internal_health_and_force_blocking_removes_redirects() {
         FakeStore::default(),
         FakeVerifier,
     );
-    let mut dispatcher = BrokerDispatcher::new(engine, FakeHealthProbe);
+    let mut dispatcher = BrokerDispatcher::new(engine, FakeHealthProbe::default());
     let selected_policy = policy(7);
     let digest = selected_policy.canonical_digest().unwrap();
 
@@ -221,6 +235,28 @@ fn dispatcher_uses_internal_health_and_force_blocking_removes_redirects() {
     assert!(armed.relay_healthy);
     assert!(armed.capabilities.contains(&StrictCapability::Tcp4Redirect));
 
+    let duplicate = dispatcher.dispatch(authorize(BrokerCommand::CommitPolicy {
+        revision: 7,
+        policy_digest: policy(7).canonical_digest().unwrap(),
+        ingress: ingress("GLOBAL"),
+    }));
+    assert!(matches!(
+        duplicate.body,
+        BrokerResponseBody::Error {
+            code: flclash_strict_contract::BrokerErrorCode::InvalidRequest
+        }
+    ));
+    assert_eq!(dispatcher.health_probe().measurements, 1);
+    assert_eq!(dispatcher.health_probe().deactivations, 0);
+    assert!(
+        dispatcher
+            .engine_mut()
+            .backend_mut()
+            .snapshot()
+            .unwrap()
+            .redirect_filters_installed
+    );
+
     let blocked = dispatcher.dispatch(authorize(BrokerCommand::ForceBlocking { revision: 7 }));
     let blocked = status_proof(blocked.body);
     assert!(!blocked.relay_healthy);
@@ -228,6 +264,8 @@ fn dispatcher_uses_internal_health_and_force_blocking_removes_redirects() {
         blocked.capabilities,
         StrictCapability::required_for_block_only()
     );
+    assert_eq!(dispatcher.health_probe().measurements, 1);
+    assert_eq!(dispatcher.health_probe().deactivations, 1);
 }
 
 #[test]
@@ -240,7 +278,7 @@ fn dispatcher_returns_only_a_stable_error_code() {
         FakeStore::default(),
         FakeVerifier,
     );
-    let mut dispatcher = BrokerDispatcher::new(engine, FakeHealthProbe);
+    let mut dispatcher = BrokerDispatcher::new(engine, FakeHealthProbe::default());
     let response = dispatcher.dispatch(authorize(BrokerCommand::PreparePolicy {
         policy: policy(1),
     }));
@@ -251,7 +289,9 @@ fn dispatcher_returns_only_a_stable_error_code() {
 
 #[test]
 fn health_probe_contract_is_bounded_to_declared_capabilities() {
-    let health = FakeHealthProbe.measure(&ingress("GLOBAL")).unwrap();
+    let health = FakeHealthProbe::default()
+        .measure(&ingress("GLOBAL"))
+        .unwrap();
     let declared: BTreeSet<_> = health.capabilities.iter().copied().collect();
     assert_eq!(declared, StrictCapability::required_for_proxy());
 }
@@ -263,7 +303,7 @@ fn dispatcher_rejects_an_ingress_for_a_different_target_group() {
         FakeStore::default(),
         FakeVerifier,
     );
-    let mut dispatcher = BrokerDispatcher::new(engine, FakeHealthProbe);
+    let mut dispatcher = BrokerDispatcher::new(engine, FakeHealthProbe::default());
     let selected_policy = policy(8);
     let digest = selected_policy.canonical_digest().unwrap();
     dispatcher.dispatch(authorize(BrokerCommand::PreparePolicy {
@@ -290,4 +330,34 @@ fn dispatcher_rejects_an_ingress_for_a_different_target_group() {
             .unwrap()
             .redirect_filters_installed
     );
+    assert_eq!(dispatcher.health_probe().measurements, 0);
+    assert_eq!(dispatcher.health_probe().deactivations, 0);
+}
+
+#[test]
+fn dispatcher_deactivates_forwarding_when_redirect_commit_fails() {
+    let engine = flclash_strict_broker::BrokerEngine::new(
+        FakeBackend {
+            fail_redirects: true,
+            ..FakeBackend::default()
+        },
+        FakeStore::default(),
+        FakeVerifier,
+    );
+    let mut dispatcher = BrokerDispatcher::new(engine, FakeHealthProbe::default());
+    let selected_policy = policy(9);
+    let digest = selected_policy.canonical_digest().unwrap();
+    dispatcher.dispatch(authorize(BrokerCommand::PreparePolicy {
+        policy: selected_policy,
+    }));
+
+    let response = dispatcher.dispatch(authorize(BrokerCommand::CommitPolicy {
+        revision: 9,
+        policy_digest: digest,
+        ingress: ingress("GLOBAL"),
+    }));
+
+    assert!(matches!(response.body, BrokerResponseBody::Error { .. }));
+    assert_eq!(dispatcher.health_probe().measurements, 1);
+    assert_eq!(dispatcher.health_probe().deactivations, 1);
 }

@@ -174,6 +174,10 @@ impl ForwardingHealthProbe for UnavailableForwardingHealth {
     fn measure(&mut self, _ingress: &StrictProxyIngressSet) -> Result<ForwardingHealth> {
         bail!("strict forwarding relay is not assembled")
     }
+
+    fn deactivate(&mut self) -> Result<()> {
+        Ok(())
+    }
 }
 
 pub fn run_windows_strict_broker_service() -> Result<()> {
@@ -345,15 +349,34 @@ impl EngineRuntime for ProductionDispatcher {
             .driver_mut()
             .revoke_endpoint_lease()
             .map(|_| ());
+        let deactivate = self.health_probe_mut().deactivate();
         let block = self.engine_mut().force_blocking_if_active().map(|_| ());
-        match (revoke, block) {
-            (Ok(()), Ok(())) => Ok(()),
-            (Err(revoke), Ok(())) => Err(revoke).context("revoke strict endpoint lease"),
-            (Ok(()), Err(block)) => Err(block).context("force strict policy to blocking"),
-            (Err(revoke), Err(block)) => bail!(
-                "revoke strict endpoint lease failed: {revoke:#}; force blocking failed: {block:#}"
-            ),
-        }
+        combine_fail_closed_results(revoke, deactivate, block)
+    }
+}
+
+fn combine_fail_closed_results(
+    revoke: Result<()>,
+    deactivate: Result<()>,
+    block: Result<()>,
+) -> Result<()> {
+    let mut failures = Vec::new();
+    if let Err(error) = revoke {
+        failures.push(format!("revoke endpoint lease failed: {error:#}"));
+    }
+    if let Err(error) = deactivate {
+        failures.push(format!("deactivate forwarding runtime failed: {error:#}"));
+    }
+    if let Err(error) = block {
+        failures.push(format!("force policy blocking failed: {error:#}"));
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        bail!(
+            "strict fail-closed transition failed: {}",
+            failures.join("; ")
+        )
     }
 }
 
@@ -683,6 +706,21 @@ mod tests {
         assert!(UnavailableForwardingHealth
             .measure(&StrictProxyIngressSet::empty())
             .is_err());
+    }
+
+    #[test]
+    fn fail_closed_combiner_preserves_every_cleanup_failure() {
+        assert!(combine_fail_closed_results(Ok(()), Ok(()), Ok(())).is_ok());
+        let error = combine_fail_closed_results(
+            Err(anyhow::anyhow!("lease")),
+            Err(anyhow::anyhow!("runtime")),
+            Err(anyhow::anyhow!("filters")),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("lease"));
+        assert!(error.contains("runtime"));
+        assert!(error.contains("filters"));
     }
 
     #[test]

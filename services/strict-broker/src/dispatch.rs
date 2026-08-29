@@ -11,6 +11,10 @@ use crate::{
 pub trait ForwardingHealthProbe {
     /// Health is measured by the privileged Broker; Agent-supplied booleans are never trusted.
     fn measure(&mut self, ingress: &StrictProxyIngressSet) -> Result<ForwardingHealth>;
+
+    /// Revokes forwarding admission before listener resources are released.
+    /// Implementations must be bounded and idempotent.
+    fn deactivate(&mut self) -> Result<()>;
 }
 
 pub struct BrokerDispatcher<B, S, V: IdentityVerifier, H> {
@@ -40,6 +44,14 @@ where
         &mut self.engine
     }
 
+    pub fn health_probe(&self) -> &H {
+        &self.health_probe
+    }
+
+    pub fn health_probe_mut(&mut self) -> &mut H {
+        &mut self.health_probe
+    }
+
     pub fn dispatch(&mut self, authorized: AuthorizedBrokerRequest) -> BrokerResponse {
         let request = authorized.into_request();
         let request_id = request.request_id;
@@ -60,27 +72,66 @@ where
             {
                 Err(error) => (Err(error), BrokerErrorCode::InvalidRequest),
                 Ok(()) => match self.health_probe.measure(&ingress) {
-                    Ok(health) => (
-                        self.engine.commit(revision, &policy_digest, health),
-                        BrokerErrorCode::Internal,
-                    ),
-                    Err(_) => (
-                        Err(anyhow::anyhow!(
-                            "strict forwarding health measurement failed"
-                        )),
-                        BrokerErrorCode::BackendUnavailable,
-                    ),
+                    Ok(health) => {
+                        let commit = self.engine.commit(revision, &policy_digest, health);
+                        let result = match commit {
+                            Ok(status) => Ok(status),
+                            Err(error) => {
+                                fail_after_deactivation(error, self.health_probe.deactivate())
+                            }
+                        };
+                        (result, BrokerErrorCode::Internal)
+                    }
+                    Err(_) => {
+                        let result = fail_after_deactivation(
+                            anyhow::anyhow!("strict forwarding health measurement failed"),
+                            self.health_probe.deactivate(),
+                        );
+                        (result, BrokerErrorCode::BackendUnavailable)
+                    }
                 },
             },
-            BrokerCommand::ForceBlocking { revision } => (
-                self.engine.force_blocking(revision),
-                BrokerErrorCode::Internal,
-            ),
+            BrokerCommand::ForceBlocking { revision } => {
+                let deactivate = self.health_probe.deactivate();
+                let block = self.engine.force_blocking(revision);
+                (
+                    combine_deactivation_with_transition(deactivate, block),
+                    BrokerErrorCode::Internal,
+                )
+            }
             BrokerCommand::DisablePolicy { revision } => {
-                (self.engine.disable(revision), BrokerErrorCode::Internal)
+                let deactivate = self.health_probe.deactivate();
+                let disable = self.engine.disable(revision);
+                (
+                    combine_deactivation_with_transition(deactivate, disable),
+                    BrokerErrorCode::Internal,
+                )
             }
         };
         response_for_result(request_id, result, failure_code)
+    }
+}
+
+fn fail_after_deactivation<T>(failure: anyhow::Error, deactivate: Result<()>) -> Result<T> {
+    match deactivate {
+        Ok(()) => Err(failure),
+        Err(cleanup) => Err(anyhow::anyhow!(
+            "strict forwarding transition failed: {failure:#}; deactivation failed: {cleanup:#}"
+        )),
+    }
+}
+
+fn combine_deactivation_with_transition<T>(
+    deactivate: Result<()>,
+    transition: Result<T>,
+) -> Result<T> {
+    match (deactivate, transition) {
+        (Ok(()), Ok(value)) => Ok(value),
+        (Ok(()), Err(transition)) => Err(transition),
+        (Err(deactivate), Ok(_)) => Err(deactivate),
+        (Err(deactivate), Err(transition)) => Err(anyhow::anyhow!(
+            "strict forwarding deactivation failed: {deactivate:#}; state transition failed: {transition:#}"
+        )),
     }
 }
 

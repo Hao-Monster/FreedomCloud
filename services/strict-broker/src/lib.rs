@@ -592,6 +592,9 @@ where
         ingress: &StrictProxyIngressSet,
     ) -> Result<()> {
         let marker = self.match_current(revision, policy_digest)?;
+        if self.phase != BrokerPhase::Blocking {
+            bail!("strict policy is not accepting a forwarding commit");
+        }
         ingress.validate()?;
 
         let expected_groups: BTreeSet<&str> = marker
