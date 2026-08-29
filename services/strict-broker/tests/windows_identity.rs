@@ -3,8 +3,8 @@
 use std::path::PathBuf;
 
 use flclash_strict_broker::{
-    inspect_windows_driver, inspect_windows_executable, verify_windows_driver, IdentityVerifier,
-    WindowsIdentityVerifier,
+    inspect_windows_driver, inspect_windows_executable, verify_windows_driver,
+    verify_windows_packaged_driver, IdentityVerifier, WindowsIdentityVerifier,
 };
 use flclash_strict_contract::{StrictIdentity, StrictPolicyBundle, StrictPolicyEntry};
 
@@ -53,7 +53,20 @@ fn signed_windows_driver_is_locked_and_publisher_pinned() {
         .to_ascii_lowercase()
         .ends_with(r"\system32\drivers\null.sys"));
     assert_eq!(inspected.publisher_certificate_sha256().len(), 64);
+    assert_eq!(inspected.file_sha256().len(), 64);
 
     verify_windows_driver(&system_driver, inspected.publisher_certificate_sha256()).unwrap();
+    verify_windows_packaged_driver(
+        &system_driver,
+        inspected.file_sha256(),
+        inspected.publisher_certificate_sha256(),
+    )
+    .unwrap();
     assert!(verify_windows_driver(&system_driver, &"00".repeat(32)).is_err());
+    assert!(verify_windows_packaged_driver(
+        &system_driver,
+        &"00".repeat(32),
+        inspected.publisher_certificate_sha256(),
+    )
+    .is_err());
 }

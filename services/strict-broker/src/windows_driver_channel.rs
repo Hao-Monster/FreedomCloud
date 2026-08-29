@@ -22,8 +22,9 @@ use windows_sys::Win32::System::IO::{
 
 use crate::windows_driver_service::{verify_windows_driver_service, WindowsDriverServiceLease};
 use crate::{
-    verify_windows_driver, WfpPolicyPlan, WindowsDriverEndpointLeaseSnapshot,
-    WindowsDriverPolicyChannel, WindowsDriverPolicySnapshot, WindowsDriverTrustLease,
+    verify_windows_packaged_driver, StrictPackageManifest, WfpPolicyPlan,
+    WindowsDriverEndpointLeaseSnapshot, WindowsDriverPolicyChannel, WindowsDriverPolicySnapshot,
+    WindowsDriverTrustLease,
 };
 
 const DEVICE_PATH: &str = r"\\.\FlClashStrict";
@@ -169,31 +170,24 @@ pub struct WindowsIoctlDriverChannel {
 }
 
 impl WindowsIoctlDriverChannel {
-    pub fn open(
-        driver_path: impl AsRef<Path>,
-        expected_publisher_certificate_sha256: &str,
-        expected_driver_build_id: &str,
-    ) -> Result<Self> {
-        Self::open_with_deadline(
-            driver_path,
-            expected_publisher_certificate_sha256,
-            expected_driver_build_id,
-            WindowsDriverIoctlDeadline::default(),
-        )
+    pub fn open(driver_path: impl AsRef<Path>, package: &StrictPackageManifest) -> Result<Self> {
+        Self::open_with_deadline(driver_path, package, WindowsDriverIoctlDeadline::default())
     }
 
     pub fn open_with_deadline(
         driver_path: impl AsRef<Path>,
-        expected_publisher_certificate_sha256: &str,
-        expected_driver_build_id: &str,
+        package: &StrictPackageManifest,
         deadline: WindowsDriverIoctlDeadline,
     ) -> Result<Self> {
         WindowsDriverIoctlDeadline::new(deadline.0)?;
-        let driver_trust =
-            verify_windows_driver(driver_path, expected_publisher_certificate_sha256)?;
+        let driver_trust = verify_windows_packaged_driver(
+            driver_path,
+            package.driver_file_sha256(),
+            package.driver_publisher_certificate_sha256(),
+        )?;
         let driver_service =
             verify_windows_driver_service(DRIVER_SERVICE_NAME, driver_trust.canonical_path())?;
-        let expected_driver_build_id = canonical_build_id(expected_driver_build_id)?;
+        let expected_driver_build_id = canonical_build_id(package.driver_build_id())?;
         let path = wide(DEVICE_PATH);
         // SAFETY: path is NUL-terminated and no optional pointers are supplied.
         let device = unsafe {

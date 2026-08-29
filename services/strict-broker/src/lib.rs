@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 
 mod dispatch;
 mod ipc_auth;
+mod package_manifest;
 mod planned_wfp_backend;
 mod recovery_file;
 mod wfp_plan;
@@ -33,6 +34,7 @@ mod windows_wfp_engine;
 
 pub use dispatch::{BrokerDispatcher, ForwardingHealthProbe};
 pub use ipc_auth::{AuthorizedBrokerRequest, BrokerAuthenticator, ClientPrincipal, ClientRole};
+pub use package_manifest::StrictPackageManifest;
 pub use planned_wfp_backend::{PlannedWfpBackend, WfpControlPlane, WfpControlSnapshot};
 pub use recovery_file::FileRecoveryStore;
 pub use wfp_plan::{
@@ -46,8 +48,8 @@ pub use windows_driver_channel::{
 #[cfg(windows)]
 pub use windows_identity::{
     inspect_windows_driver, inspect_windows_executable, verify_windows_driver,
-    WindowsDriverTrustLease, WindowsIdentityLease, WindowsIdentityVerifier,
-    WindowsVerifiedIdentity,
+    verify_windows_packaged_driver, WindowsDriverTrustLease, WindowsIdentityLease,
+    WindowsIdentityVerifier, WindowsVerifiedIdentity,
 };
 #[cfg(windows)]
 pub use windows_pipe::{

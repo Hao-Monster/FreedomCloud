@@ -1,6 +1,8 @@
 use std::ffi::c_void;
 use std::fmt::Write;
+use std::fs::File;
 use std::io;
+use std::io::{Read, Seek, SeekFrom};
 use std::mem::size_of;
 use std::os::windows::ffi::OsStrExt;
 use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
@@ -40,6 +42,7 @@ use crate::{
 const MAX_WFP_APP_ID_BYTES: u32 = 64 * 1024;
 const MAX_CATALOG_HASH_BYTES: u32 = 128;
 const MAX_MATCHING_CATALOGS: usize = 32;
+const MAX_DRIVER_FILE_BYTES: u64 = 64 * 1024 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WindowsVerifiedIdentity {
@@ -57,8 +60,9 @@ pub struct WindowsIdentityLease {
 
 pub struct WindowsDriverTrustLease {
     canonical_path: String,
+    file_sha256: String,
     publisher_certificate_sha256: String,
-    _handle: OwnedHandle,
+    _file: File,
 }
 
 impl WindowsDriverTrustLease {
@@ -68,6 +72,10 @@ impl WindowsDriverTrustLease {
 
     pub fn publisher_certificate_sha256(&self) -> &str {
         &self.publisher_certificate_sha256
+    }
+
+    pub fn file_sha256(&self) -> &str {
+        &self.file_sha256
     }
 }
 
@@ -133,13 +141,16 @@ pub fn inspect_windows_driver(path: impl AsRef<Path>) -> Result<WindowsDriverTru
     {
         bail!("strict driver canonical path is invalid");
     }
+    let mut file = File::from(handle);
+    let file_sha256 = hash_driver_file(&mut file)?;
     let publisher_certificate_sha256 =
-        authenticode_publisher_digest(handle.as_raw_handle(), &canonical_path)
+        authenticode_publisher_digest(file.as_raw_handle(), &canonical_path)
             .context("verify strict driver Authenticode signer")?;
     Ok(WindowsDriverTrustLease {
         canonical_path,
+        file_sha256,
         publisher_certificate_sha256,
-        _handle: handle,
+        _file: file,
     })
 }
 
@@ -162,6 +173,57 @@ pub fn verify_windows_driver(
         bail!("strict driver publisher certificate changed");
     }
     Ok(lease)
+}
+
+pub fn verify_windows_packaged_driver(
+    path: impl AsRef<Path>,
+    expected_file_sha256: &str,
+    expected_publisher_certificate_sha256: &str,
+) -> Result<WindowsDriverTrustLease> {
+    validate_sha256(expected_file_sha256, "strict driver file digest")?;
+    let lease = verify_windows_driver(path, expected_publisher_certificate_sha256)?;
+    if !lease.file_sha256.eq_ignore_ascii_case(expected_file_sha256) {
+        bail!("strict driver file digest changed");
+    }
+    Ok(lease)
+}
+
+fn hash_driver_file(file: &mut File) -> Result<String> {
+    let length = file
+        .metadata()
+        .context("inspect strict driver file size")?
+        .len();
+    if length == 0 || length > MAX_DRIVER_FILE_BYTES {
+        bail!("strict driver file size is invalid");
+    }
+    file.seek(SeekFrom::Start(0))
+        .context("rewind strict driver file before hashing")?;
+    let mut digest = Sha256::new();
+    let mut buffer = [0_u8; 64 * 1024];
+    let mut total = 0_u64;
+    loop {
+        let read = file.read(&mut buffer).context("hash strict driver file")?;
+        if read == 0 {
+            break;
+        }
+        total = total
+            .checked_add(read as u64)
+            .ok_or_else(|| anyhow::anyhow!("strict driver file size overflow"))?;
+        digest.update(&buffer[..read]);
+    }
+    if total != length {
+        bail!("strict driver file changed while hashing");
+    }
+    file.seek(SeekFrom::Start(0))
+        .context("rewind strict driver file after hashing")?;
+    Ok(format!("{:x}", digest.finalize()))
+}
+
+fn validate_sha256(value: &str, label: &str) -> Result<()> {
+    if value.len() != 64 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        bail!("{label} is invalid");
+    }
+    Ok(())
 }
 
 fn verify_and_lock_primary(identity: &StrictIdentity) -> Result<(OwnedHandle, Vec<u8>)> {
