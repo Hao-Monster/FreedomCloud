@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 mod dispatch;
 mod ipc_auth;
 mod recovery_file;
+mod wfp_plan;
 #[cfg(windows)]
 mod windows_identity;
 #[cfg(windows)]
@@ -18,6 +19,10 @@ mod windows_pipe;
 pub use dispatch::{BrokerDispatcher, ForwardingHealthProbe};
 pub use ipc_auth::{AuthorizedBrokerRequest, BrokerAuthenticator, ClientPrincipal, ClientRole};
 pub use recovery_file::FileRecoveryStore;
+pub use wfp_plan::{
+    DriverIdentityRule, PlanInstallStep, PlanRemoveStep, WfpCallout, WfpFilterLifetime,
+    WfpFilterSpec, WfpLayer, WfpObjectKey, WfpPolicyPlan,
+};
 #[cfg(windows)]
 pub use windows_identity::{
     inspect_windows_executable, WindowsIdentityLease, WindowsIdentityVerifier,
