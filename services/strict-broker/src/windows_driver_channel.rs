@@ -687,4 +687,54 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn kernel_sources_preserve_the_pre_redirect_safety_boundary() {
+        let driver = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../windows/strict-driver/src/driver.c"
+        ));
+        let policy = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../windows/strict-driver/src/policy.c"
+        ));
+
+        for declaration in [
+            "D:P(A;;GA;;;SY)",
+            "WdfIoQueueDispatchSequential",
+            "WdfExecutionLevelPassive",
+            "ExAcquireRundownProtectionCacheAware",
+            "FcxStrictPolicyFind",
+            "ClassifyOut->actionType = FWP_ACTION_BLOCK",
+            "Output->Capabilities = FCX_STRICT_CAP_PERSISTENT_FAIL_CLOSED;",
+        ] {
+            assert!(
+                driver.contains(declaration),
+                "missing kernel safety invariant: {declaration}"
+            );
+        }
+        for unavailable_capability in [
+            "FCX_STRICT_CAP_TCP4_REDIRECT",
+            "FCX_STRICT_CAP_TCP6_REDIRECT",
+            "FCX_STRICT_CAP_UDP4_REDIRECT",
+            "FCX_STRICT_CAP_UDP6_REDIRECT",
+            "FCX_STRICT_CAP_DNS_CAPTURED",
+            "FCX_STRICT_CAP_QUIC_CAPTURED",
+            "FCX_STRICT_CAP_REDIRECT_LOOP_PROTECTED",
+        ] {
+            assert!(
+                !driver.contains(unavailable_capability),
+                "driver advertised an unavailable capability: {unavailable_capability}"
+            );
+        }
+        for deprecated_allocator in ["ExAllocatePool(", "ExAllocatePoolWithTag("] {
+            assert!(
+                !policy.contains(deprecated_allocator),
+                "deprecated kernel allocator used: {deprecated_allocator}"
+            );
+        }
+        assert!(!driver.contains("WdfObjectDelete("));
+        assert!(policy.contains("ExAllocatePool2("));
+        assert!(policy.contains("POOL_FLAG_NON_PAGED"));
+    }
 }
