@@ -55,6 +55,10 @@ void main() {
         'generation': 3,
         'proxyRunning': true,
         'privilegedBackend': true,
+        'strictState': 'blocking',
+        'strictReason': 'missingCapability',
+        'strictRevision': 9,
+        'strictFilterGeneration': 4,
       },
     });
     expect(event, isNotNull);
@@ -63,6 +67,10 @@ void main() {
     expect(event.generation, 3);
     expect(event.proxyRunning, isTrue);
     expect(event.privilegedBackend, isTrue);
+    expect(event.strictState, AgentStrictState.blocking);
+    expect(event.strictReason, AgentStrictReason.missingCapability);
+    expect(event.strictRevision, 9);
+    expect(event.strictFilterGeneration, 4);
     final undecided = AgentEvent.tryParse({
       '_agent': {
         'type': 'ready',
@@ -72,6 +80,8 @@ void main() {
       },
     });
     expect(undecided?.proxyRunning, isNull);
+    expect(undecided?.strictState, AgentStrictState.disabled);
+    expect(undecided?.strictReason, AgentStrictReason.none);
     expect(AgentEvent.tryParse({'method': 'getIsInit'}), isNull);
   });
 }

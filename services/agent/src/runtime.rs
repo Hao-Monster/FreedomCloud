@@ -18,6 +18,7 @@ use crate::protocol::{
     authenticate, parse_control, AgentCommand, MAX_AUTH_LINE_BYTES, MAX_MESSAGE_LINE_BYTES,
     PROTOCOL_VERSION,
 };
+use crate::strict::{StrictController, StrictReason};
 
 const CHANNEL_CAPACITY: usize = 256;
 const CORE_CONNECT_TIMEOUT: Duration = Duration::from_secs(8);
@@ -81,6 +82,7 @@ struct Shared {
     core: Mutex<Option<mpsc::Sender<String>>>,
     journal: Mutex<ReplayJournal>,
     status: RwLock<CoreStatus>,
+    strict: RwLock<StrictController>,
     generation: AtomicU64,
     next_session: AtomicU64,
     shutting_down: AtomicBool,
@@ -186,6 +188,7 @@ pub async fn run(config: AgentConfig) -> Result<()> {
         core: Mutex::new(None),
         journal: Mutex::new(ReplayJournal::default()),
         status: RwLock::new(CoreStatus::Starting),
+        strict: RwLock::new(StrictController::default()),
         generation: AtomicU64::new(0),
         next_session: AtomicU64::new(1),
         shutting_down: AtomicBool::new(false),
@@ -823,6 +826,13 @@ async fn send_ui_activity(shared: &Arc<Shared>, active: bool) {
 
 async fn set_status(shared: &Arc<Shared>, status: CoreStatus) {
     *shared.status.write().await = status;
+    if status != CoreStatus::Ready {
+        shared
+            .strict
+            .write()
+            .await
+            .backend_lost(StrictReason::CoreUnavailable);
+    }
     // `null` means no explicit listener decision has been observed yet, so a
     // first UI launch may still apply its auto-run preference. `false` is
     // reserved for an explicit stopListener action and must survive reattach.
@@ -831,6 +841,7 @@ async fn set_status(shared: &Arc<Shared>, status: CoreStatus) {
     } else {
         None
     };
+    let strict = shared.strict.read().await.status();
     let envelope = json!({
         "_agent": {
             "type": "coreState",
@@ -839,6 +850,10 @@ async fn set_status(shared: &Arc<Shared>, status: CoreStatus) {
             "generation": shared.generation.load(Ordering::Acquire),
             "proxyRunning": proxy_running,
             "privilegedBackend": shared.privileged_backend,
+            "strictState": strict.state.as_str(),
+            "strictReason": strict.reason.as_str(),
+            "strictRevision": strict.revision,
+            "strictFilterGeneration": strict.filter_generation,
         }
     });
     forward_to_ui(shared, envelope.to_string()).await;
@@ -851,6 +866,7 @@ async fn ready_envelope(shared: &Arc<Shared>) -> String {
     } else {
         None
     };
+    let strict = shared.strict.read().await.status();
     json!({
         "_agent": {
             "type": "ready",
@@ -859,6 +875,10 @@ async fn ready_envelope(shared: &Arc<Shared>) -> String {
             "generation": shared.generation.load(Ordering::Acquire),
             "proxyRunning": proxy_running,
             "privilegedBackend": shared.privileged_backend,
+            "strictState": strict.state.as_str(),
+            "strictReason": strict.reason.as_str(),
+            "strictRevision": strict.revision,
+            "strictFilterGeneration": strict.filter_generation,
         }
     })
     .to_string()

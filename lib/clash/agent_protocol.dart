@@ -9,6 +9,20 @@ enum AgentCoreState { starting, ready, stopped, failed }
 
 enum AgentEventType { ready, coreState, commandResult, coreUnavailable }
 
+enum AgentStrictState { disabled, preparing, blocking, armed, recovering }
+
+enum AgentStrictReason {
+  none,
+  preparing,
+  guardNotInstalled,
+  missingCapability,
+  coreUnavailable,
+  relayUnavailable,
+  dnsUnavailable,
+  backendUnavailable,
+  cleanupPending,
+}
+
 class AgentEndpoint {
   const AgentEndpoint({
     required this.port,
@@ -48,6 +62,10 @@ class AgentEvent {
     this.ok,
     this.proxyRunning,
     this.privilegedBackend,
+    this.strictState = AgentStrictState.disabled,
+    this.strictReason = AgentStrictReason.none,
+    this.strictRevision,
+    this.strictFilterGeneration,
   });
 
   static AgentEvent? tryParse(Map<String, dynamic> json) {
@@ -58,6 +76,12 @@ class AgentEvent {
       final state = AgentCoreState.values.byName(
         envelope['coreState'] as String? ?? AgentCoreState.failed.name,
       );
+      final strictState = AgentStrictState.values.byName(
+        envelope['strictState'] as String? ?? AgentStrictState.disabled.name,
+      );
+      final strictReason = AgentStrictReason.values.byName(
+        envelope['strictReason'] as String? ?? AgentStrictReason.none.name,
+      );
       return AgentEvent(
         type: type,
         coreState: state,
@@ -66,6 +90,10 @@ class AgentEvent {
         ok: envelope['ok'] as bool?,
         proxyRunning: envelope['proxyRunning'] as bool?,
         privilegedBackend: envelope['privilegedBackend'] as bool?,
+        strictState: strictState,
+        strictReason: strictReason,
+        strictRevision: envelope['strictRevision'] as int?,
+        strictFilterGeneration: envelope['strictFilterGeneration'] as int?,
       );
     } catch (_) {
       return null;
@@ -79,6 +107,10 @@ class AgentEvent {
   final bool? ok;
   final bool? proxyRunning;
   final bool? privilegedBackend;
+  final AgentStrictState strictState;
+  final AgentStrictReason strictReason;
+  final int? strictRevision;
+  final int? strictFilterGeneration;
 }
 
 String encodeAgentCommand({
