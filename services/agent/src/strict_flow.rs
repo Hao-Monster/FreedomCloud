@@ -201,6 +201,49 @@ impl StrictPolicyOrchestrator {
                 self.phase = Phase::Active { revision };
                 Ok(StrictOrchestrationAction::Settled(self.status()))
             }
+            Phase::Active { revision } => {
+                if let Err(error) = self.controller.apply_broker_proof(proof.clone()) {
+                    self.phase = Phase::Active { revision };
+                    return Err(error);
+                }
+                if self.controller.status().state == StrictState::Armed {
+                    self.phase = Phase::Active { revision };
+                    return Ok(StrictOrchestrationAction::Settled(self.status()));
+                }
+                if !proves_persistent_blocking_guard(&proof)
+                    || proof.core_healthy
+                    || proof.relay_healthy
+                    || proof.dns_healthy
+                {
+                    self.controller
+                        .backend_lost(StrictReason::BackendUnavailable);
+                    self.phase = Phase::AwaitBlocking { revision };
+                    bail!("strict Broker did not prove a recoverable blocking state");
+                }
+                let ingress = match self
+                    .ingress
+                    .active()
+                    .context("strict Core ingress descriptor is missing")
+                    .and_then(|descriptor| descriptor.broker_ingress_set())
+                {
+                    Ok(ingress) => ingress,
+                    Err(error) => {
+                        self.controller
+                            .backend_lost(StrictReason::BackendUnavailable);
+                        self.phase = Phase::AwaitBlocking { revision };
+                        return Err(error.context("build strict Broker recovery ingress set"));
+                    }
+                };
+                self.controller.begin_recovery();
+                self.phase = Phase::AwaitCommit { revision };
+                Ok(StrictOrchestrationAction::Broker(
+                    BrokerCommand::CommitPolicy {
+                        revision,
+                        policy_digest: proof.policy_digest,
+                        ingress,
+                    },
+                ))
+            }
             Phase::AwaitBlocking { revision } => {
                 if let Err(error) = self.controller.apply_broker_proof(proof.clone()) {
                     self.phase = Phase::AwaitBlocking { revision };
@@ -498,6 +541,72 @@ mod tests {
                 state: StrictState::Armed,
                 ..
             })
+        ));
+    }
+
+    #[test]
+    fn supervised_broker_blocking_proof_retries_the_active_ingress_once() {
+        let policy = policy();
+        let digest = policy.canonical_digest().unwrap();
+        let mut flow = StrictPolicyOrchestrator::default();
+        flow.begin(policy.clone()).unwrap();
+        let StrictOrchestrationAction::Core(core) =
+            flow.accept_broker_proof(blocking_proof(&policy)).unwrap()
+        else {
+            panic!("expected Core ingress action");
+        };
+        flow.accept_core_response(&core_response(&core, &[41001]))
+            .unwrap();
+        flow.accept_broker_proof(armed_proof(&policy)).unwrap();
+
+        let retry = flow.accept_broker_proof(blocking_proof(&policy)).unwrap();
+        assert_eq!(flow.status().state, StrictState::Recovering);
+        assert_eq!(flow.status().reason, StrictReason::BackendUnavailable);
+        let StrictOrchestrationAction::Broker(BrokerCommand::CommitPolicy {
+            revision,
+            policy_digest,
+            ingress,
+        }) = retry
+        else {
+            panic!("expected one forwarding recommit");
+        };
+        assert_eq!(revision, policy.revision);
+        assert_eq!(policy_digest, digest);
+        assert_eq!(ingress.generation, 1);
+        assert_eq!(ingress.entries.len(), 1);
+        assert_eq!(ingress.entries[0].target_group, "GLOBAL");
+
+        assert!(matches!(
+            flow.accept_broker_proof(armed_proof(&policy)).unwrap(),
+            StrictOrchestrationAction::Settled(StrictStatus {
+                state: StrictState::Armed,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn failed_supervised_recommit_falls_back_without_retrying_again() {
+        let policy = policy();
+        let mut flow = StrictPolicyOrchestrator::default();
+        flow.begin(policy.clone()).unwrap();
+        let StrictOrchestrationAction::Core(core) =
+            flow.accept_broker_proof(blocking_proof(&policy)).unwrap()
+        else {
+            panic!("expected Core ingress action");
+        };
+        flow.accept_core_response(&core_response(&core, &[41001]))
+            .unwrap();
+        flow.accept_broker_proof(armed_proof(&policy)).unwrap();
+
+        assert!(matches!(
+            flow.accept_broker_proof(blocking_proof(&policy)).unwrap(),
+            StrictOrchestrationAction::Broker(BrokerCommand::CommitPolicy { .. })
+        ));
+        assert!(flow.accept_broker_proof(blocking_proof(&policy)).is_err());
+        assert!(matches!(
+            flow.force_blocking().unwrap(),
+            StrictOrchestrationAction::Broker(BrokerCommand::ForceBlocking { revision: 7 })
         ));
     }
 
