@@ -82,8 +82,8 @@ pub use strict_udp_frame::{
     STRICT_UDP_DATA_MAX_FRAME_BYTES, STRICT_UDP_DATA_MAX_PAYLOAD_BYTES,
 };
 pub use wfp_plan::{
-    DriverIdentityRule, PlanInstallStep, PlanRemoveStep, WfpCallout, WfpFilterLifetime,
-    WfpFilterSpec, WfpLayer, WfpObjectKey, WfpPolicyPlan,
+    DriverIdentityRule, PlanInstallStep, PlanRemoveStep, WfpCallout, WfpFilterAction,
+    WfpFilterLifetime, WfpFilterSpec, WfpLayer, WfpObjectKey, WfpPolicyPlan,
 };
 #[cfg(all(windows, any(test, feature = "production-host")))]
 pub use windows_core_udp_data::{

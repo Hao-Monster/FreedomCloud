@@ -17,19 +17,22 @@ use windows_sys::Win32::NetworkManagement::WindowsFilteringPlatform::{
     FWPM_ACTION0, FWPM_ACTION0_0, FWPM_CALLOUT0, FWPM_CALLOUT_FLAG_PERSISTENT,
     FWPM_CALLOUT_FLAG_REGISTERED, FWPM_CONDITION_ALE_APP_ID, FWPM_DISPLAY_DATA0, FWPM_FILTER0,
     FWPM_FILTER0_0, FWPM_FILTER_CONDITION0, FWPM_FILTER_ENUM_TEMPLATE0,
-    FWPM_FILTER_FLAG_CLEAR_ACTION_RIGHT, FWPM_FILTER_FLAG_INDEXED, FWPM_FILTER_FLAG_PERSISTENT,
+    FWPM_FILTER_FLAG_CLEAR_ACTION_RIGHT, FWPM_FILTER_FLAG_INDEXED,
+    FWPM_FILTER_FLAG_PERMIT_IF_CALLOUT_UNREGISTERED, FWPM_FILTER_FLAG_PERSISTENT,
     FWPM_LAYER_ALE_AUTH_CONNECT_V4, FWPM_LAYER_ALE_AUTH_CONNECT_V6,
-    FWPM_LAYER_ALE_CONNECT_REDIRECT_V4, FWPM_LAYER_ALE_CONNECT_REDIRECT_V6, FWPM_PROVIDER0,
+    FWPM_LAYER_ALE_CONNECT_REDIRECT_V4, FWPM_LAYER_ALE_CONNECT_REDIRECT_V6,
+    FWPM_LAYER_ALE_FLOW_ESTABLISHED_V4, FWPM_LAYER_ALE_FLOW_ESTABLISHED_V6,
+    FWPM_LAYER_DATAGRAM_DATA_V4, FWPM_LAYER_DATAGRAM_DATA_V6, FWPM_PROVIDER0,
     FWPM_PROVIDER_FLAG_PERSISTENT, FWPM_SESSION0, FWPM_SESSION_FLAG_DYNAMIC, FWPM_SUBLAYER0,
-    FWPM_SUBLAYER_FLAG_PERSISTENT, FWP_ACTION_CALLOUT_TERMINATING, FWP_BYTE_BLOB,
-    FWP_BYTE_BLOB_TYPE, FWP_CONDITION_VALUE0, FWP_CONDITION_VALUE0_0, FWP_EMPTY,
+    FWPM_SUBLAYER_FLAG_PERSISTENT, FWP_ACTION_CALLOUT_TERMINATING, FWP_ACTION_CALLOUT_UNKNOWN,
+    FWP_BYTE_BLOB, FWP_BYTE_BLOB_TYPE, FWP_CONDITION_VALUE0, FWP_CONDITION_VALUE0_0, FWP_EMPTY,
     FWP_FILTER_ENUM_FULLY_CONTAINED, FWP_MATCH_EQUAL, FWP_VALUE0,
 };
 use windows_sys::Win32::System::Rpc::RPC_C_AUTHN_WINNT;
 
 use crate::wfp_plan::{expected_callout_key, expected_filter_key};
 use crate::{
-    WfpCallout, WfpFilterLifetime, WfpFilterSpec, WfpLayer, WfpObjectKey,
+    WfpCallout, WfpFilterAction, WfpFilterLifetime, WfpFilterSpec, WfpLayer, WfpObjectKey,
     WindowsWfpFilterInventory, WindowsWfpFilterStore, MAX_VERIFIED_APP_ID_BYTES,
 };
 
@@ -47,22 +50,34 @@ enum FilterClass {
 }
 
 impl FilterClass {
-    fn layers(self) -> [(WfpLayer, GUID); 2] {
+    fn layers(self) -> &'static [(WfpLayer, GUID)] {
+        const GUARD_LAYERS: [(WfpLayer, GUID); 2] = [
+            (WfpLayer::AuthConnectV4, FWPM_LAYER_ALE_AUTH_CONNECT_V4),
+            (WfpLayer::AuthConnectV6, FWPM_LAYER_ALE_AUTH_CONNECT_V6),
+        ];
+        const REDIRECT_LAYERS: [(WfpLayer, GUID); 6] = [
+            (
+                WfpLayer::ConnectRedirectV4,
+                FWPM_LAYER_ALE_CONNECT_REDIRECT_V4,
+            ),
+            (
+                WfpLayer::ConnectRedirectV6,
+                FWPM_LAYER_ALE_CONNECT_REDIRECT_V6,
+            ),
+            (
+                WfpLayer::FlowEstablishedV4,
+                FWPM_LAYER_ALE_FLOW_ESTABLISHED_V4,
+            ),
+            (
+                WfpLayer::FlowEstablishedV6,
+                FWPM_LAYER_ALE_FLOW_ESTABLISHED_V6,
+            ),
+            (WfpLayer::DatagramDataV4, FWPM_LAYER_DATAGRAM_DATA_V4),
+            (WfpLayer::DatagramDataV6, FWPM_LAYER_DATAGRAM_DATA_V6),
+        ];
         match self {
-            Self::Guard => [
-                (WfpLayer::AuthConnectV4, FWPM_LAYER_ALE_AUTH_CONNECT_V4),
-                (WfpLayer::AuthConnectV6, FWPM_LAYER_ALE_AUTH_CONNECT_V6),
-            ],
-            Self::Redirect => [
-                (
-                    WfpLayer::ConnectRedirectV4,
-                    FWPM_LAYER_ALE_CONNECT_REDIRECT_V4,
-                ),
-                (
-                    WfpLayer::ConnectRedirectV6,
-                    FWPM_LAYER_ALE_CONNECT_REDIRECT_V6,
-                ),
-            ],
+            Self::Guard => &GUARD_LAYERS,
+            Self::Redirect => &REDIRECT_LAYERS,
         }
     }
 
@@ -70,14 +85,6 @@ impl FilterClass {
         match self {
             Self::Guard => WfpFilterLifetime::Persistent,
             Self::Redirect => WfpFilterLifetime::Dynamic,
-        }
-    }
-
-    fn flags(self) -> u32 {
-        let common = FWPM_FILTER_FLAG_INDEXED | FWPM_FILTER_FLAG_CLEAR_ACTION_RIGHT;
-        match self {
-            Self::Guard => common | FWPM_FILTER_FLAG_PERSISTENT,
-            Self::Redirect => common,
         }
     }
 
@@ -89,7 +96,12 @@ impl FilterClass {
                 WfpLayer::AuthConnectV4 | WfpLayer::AuthConnectV6
             ) | (
                 Self::Redirect,
-                WfpLayer::ConnectRedirectV4 | WfpLayer::ConnectRedirectV6
+                WfpLayer::ConnectRedirectV4
+                    | WfpLayer::ConnectRedirectV6
+                    | WfpLayer::FlowEstablishedV4
+                    | WfpLayer::FlowEstablishedV6
+                    | WfpLayer::DatagramDataV4
+                    | WfpLayer::DatagramDataV6
             )
         )
     }
@@ -176,7 +188,7 @@ impl WindowsWfpEngineStore {
     }
 }
 
-fn managed_callout_layers() -> [(WfpLayer, GUID); 4] {
+fn managed_callout_layers() -> [(WfpLayer, GUID); 8] {
     [
         (WfpLayer::AuthConnectV4, FWPM_LAYER_ALE_AUTH_CONNECT_V4),
         (WfpLayer::AuthConnectV6, FWPM_LAYER_ALE_AUTH_CONNECT_V6),
@@ -188,6 +200,16 @@ fn managed_callout_layers() -> [(WfpLayer, GUID); 4] {
             WfpLayer::ConnectRedirectV6,
             FWPM_LAYER_ALE_CONNECT_REDIRECT_V6,
         ),
+        (
+            WfpLayer::FlowEstablishedV4,
+            FWPM_LAYER_ALE_FLOW_ESTABLISHED_V4,
+        ),
+        (
+            WfpLayer::FlowEstablishedV6,
+            FWPM_LAYER_ALE_FLOW_ESTABLISHED_V6,
+        ),
+        (WfpLayer::DatagramDataV4, FWPM_LAYER_DATAGRAM_DATA_V4),
+        (WfpLayer::DatagramDataV6, FWPM_LAYER_DATAGRAM_DATA_V6),
     ]
 }
 
@@ -460,6 +482,10 @@ fn callout_name(layer: WfpLayer) -> &'static str {
         WfpLayer::AuthConnectV6 => "FlClashX strict guard IPv6",
         WfpLayer::ConnectRedirectV4 => "FlClashX strict redirect IPv4",
         WfpLayer::ConnectRedirectV6 => "FlClashX strict redirect IPv6",
+        WfpLayer::FlowEstablishedV4 => "FlClashX strict UDP flow IPv4",
+        WfpLayer::FlowEstablishedV6 => "FlClashX strict UDP flow IPv6",
+        WfpLayer::DatagramDataV4 => "FlClashX strict UDP capture IPv4",
+        WfpLayer::DatagramDataV6 => "FlClashX strict UDP capture IPv6",
     }
 }
 
@@ -595,14 +621,31 @@ impl Drop for WfpEngineHandle {
 fn validate_filter_specs(class: FilterClass, filters: &[WfpFilterSpec]) -> Result<()> {
     let mut keys = BTreeSet::new();
     for filter in filters {
-        if !class.accepts_layer(filter.layer())
+        let shape_is_canonical = match filter.callout_action() {
+            WfpFilterAction::Terminating => {
+                filter.is_indexed()
+                    && filter.clears_action_right()
+                    && !filter.permits_if_callout_unregistered()
+                    && !filter.app_id().is_empty()
+                    && filter.app_id().len() <= MAX_VERIFIED_APP_ID_BYTES
+                    && !filter.identity_id().is_empty()
+                    && !is_conditional_capture_layer(filter.layer())
+            }
+            WfpFilterAction::ConditionalCapture => {
+                class == FilterClass::Redirect
+                    && is_conditional_capture_layer(filter.layer())
+                    && !filter.is_indexed()
+                    && !filter.clears_action_right()
+                    && filter.permits_if_callout_unregistered()
+                    && filter.app_id().is_empty()
+                    && filter.identity_id().is_empty()
+            }
+        };
+        if !shape_is_canonical
+            || !class.accepts_layer(filter.layer())
             || filter.lifetime() != class.lifetime()
             || filter.callout() != callout_for_layer(filter.layer())
             || filter.callout_key() != expected_callout_key(filter.layer())
-            || !filter.is_indexed()
-            || !filter.clears_action_right()
-            || filter.app_id().is_empty()
-            || filter.app_id().len() > MAX_VERIFIED_APP_ID_BYTES
             || filter.key() != expected_filter_key(filter.layer(), filter.app_id())
             || (class == FilterClass::Redirect && filter.action() != StrictAction::Proxy)
         {
@@ -613,6 +656,40 @@ fn validate_filter_specs(class: FilterClass, filters: &[WfpFilterSpec]) -> Resul
         }
     }
     Ok(())
+}
+
+fn is_conditional_capture_layer(layer: WfpLayer) -> bool {
+    matches!(layer, WfpLayer::DatagramDataV4 | WfpLayer::DatagramDataV6)
+}
+
+fn filter_flags(class: FilterClass, spec: &WfpFilterSpec) -> u32 {
+    let mut flags = 0;
+    if class == FilterClass::Guard {
+        flags |= FWPM_FILTER_FLAG_PERSISTENT;
+    }
+    if spec.is_indexed() {
+        flags |= FWPM_FILTER_FLAG_INDEXED;
+    }
+    if spec.clears_action_right() {
+        flags |= FWPM_FILTER_FLAG_CLEAR_ACTION_RIGHT;
+    }
+    if spec.permits_if_callout_unregistered() {
+        flags |= FWPM_FILTER_FLAG_PERMIT_IF_CALLOUT_UNREGISTERED;
+    }
+    flags
+}
+
+fn enumerated_filter_flags(class: FilterClass, layer: WfpLayer) -> u32 {
+    if is_conditional_capture_layer(layer) {
+        FWPM_FILTER_FLAG_PERMIT_IF_CALLOUT_UNREGISTERED
+    } else {
+        let persistent = if class == FilterClass::Guard {
+            FWPM_FILTER_FLAG_PERSISTENT
+        } else {
+            0
+        };
+        persistent | FWPM_FILTER_FLAG_INDEXED | FWPM_FILTER_FLAG_CLEAR_ACTION_RIGHT
+    }
 }
 
 fn add_filter(
@@ -637,17 +714,31 @@ fn add_filter(
             },
         },
     };
-    let name = wide(match class {
-        FilterClass::Guard => "FlClashX strict fail-closed guard",
-        FilterClass::Redirect => "FlClashX strict application redirect",
+    let name = wide(match (class, spec.callout_action()) {
+        (FilterClass::Guard, _) => "FlClashX strict fail-closed guard",
+        (FilterClass::Redirect, WfpFilterAction::Terminating) => {
+            "FlClashX strict application redirect"
+        }
+        (FilterClass::Redirect, WfpFilterAction::ConditionalCapture) => {
+            "FlClashX strict conditional UDP capture"
+        }
     });
+    let (condition_count, condition_pointer) = if spec.app_id().is_empty() {
+        (0, null_mut())
+    } else {
+        (1, &mut condition as *mut FWPM_FILTER_CONDITION0)
+    };
+    let action_type = match spec.callout_action() {
+        WfpFilterAction::Terminating => FWP_ACTION_CALLOUT_TERMINATING,
+        WfpFilterAction::ConditionalCapture => FWP_ACTION_CALLOUT_UNKNOWN,
+    };
     let filter = FWPM_FILTER0 {
         filterKey: object_key_to_guid(spec.key()),
         displayData: FWPM_DISPLAY_DATA0 {
             name: name.as_ptr().cast_mut(),
             description: null_mut(),
         },
-        flags: class.flags(),
+        flags: filter_flags(class, spec),
         providerKey: &mut provider,
         layerKey: layer_guid(spec.layer()),
         subLayerKey: object_key_to_guid(sublayer_key),
@@ -655,10 +746,10 @@ fn add_filter(
             r#type: FWP_EMPTY,
             ..FWP_VALUE0::default()
         },
-        numFilterConditions: 1,
-        filterCondition: &mut condition,
+        numFilterConditions: condition_count,
+        filterCondition: condition_pointer,
         action: FWPM_ACTION0 {
-            r#type: FWP_ACTION_CALLOUT_TERMINATING,
+            r#type: action_type,
             Anonymous: FWPM_ACTION0_0 {
                 calloutKey: object_key_to_guid(spec.callout_key()),
             },
@@ -699,7 +790,7 @@ fn enumerate_owned_filters(
     class: FilterClass,
 ) -> Result<BTreeSet<WfpObjectKey>> {
     let mut keys = BTreeSet::new();
-    for (layer, layer_key) in class.layers() {
+    for &(layer, layer_key) in class.layers() {
         let mut provider = object_key_to_guid(provider_key);
         let template = FWPM_FILTER_ENUM_TEMPLATE0 {
             providerKey: &mut provider,
@@ -816,6 +907,13 @@ fn validate_enumerated_filter(
     class: FilterClass,
     layer: WfpLayer,
 ) -> Result<()> {
+    let conditional_capture = is_conditional_capture_layer(layer);
+    let expected_condition_count = u32::from(!conditional_capture);
+    let expected_action = if conditional_capture {
+        FWP_ACTION_CALLOUT_UNKNOWN
+    } else {
+        FWP_ACTION_CALLOUT_TERMINATING
+    };
     if filter.providerKey.is_null()
         || !guid_eq(
             unsafe { &*filter.providerKey },
@@ -823,13 +921,15 @@ fn validate_enumerated_filter(
         )
         || !guid_eq(&filter.layerKey, &layer_guid(layer))
         || !guid_eq(&filter.subLayerKey, &object_key_to_guid(sublayer_key))
-        || filter.flags != class.flags()
+        || !class.accepts_layer(layer)
+        || filter.flags != enumerated_filter_flags(class, layer)
         || filter.providerData.size != 0
         || !filter.providerData.data.is_null()
         || filter.weight.r#type != FWP_EMPTY
-        || filter.numFilterConditions != 1
-        || filter.filterCondition.is_null()
-        || filter.action.r#type != FWP_ACTION_CALLOUT_TERMINATING
+        || filter.numFilterConditions != expected_condition_count
+        || (conditional_capture && !filter.filterCondition.is_null())
+        || (!conditional_capture && filter.filterCondition.is_null())
+        || filter.action.r#type != expected_action
         || !filter.reserved.is_null()
     {
         bail!("strict WFP filter metadata is not canonical");
@@ -847,6 +947,13 @@ fn validate_enumerated_filter(
         &object_key_to_guid(expected_callout_key(layer)),
     ) {
         bail!("strict WFP filter references an unexpected callout");
+    }
+
+    if conditional_capture {
+        if guid_to_object_key(filter.filterKey) != expected_filter_key(layer, &[]) {
+            bail!("strict WFP conditional capture filter key is not canonical");
+        }
+        return Ok(());
     }
 
     // SAFETY: exactly one condition is present and its pointer was checked.
@@ -881,6 +988,10 @@ fn layer_guid(layer: WfpLayer) -> GUID {
         WfpLayer::AuthConnectV6 => FWPM_LAYER_ALE_AUTH_CONNECT_V6,
         WfpLayer::ConnectRedirectV4 => FWPM_LAYER_ALE_CONNECT_REDIRECT_V4,
         WfpLayer::ConnectRedirectV6 => FWPM_LAYER_ALE_CONNECT_REDIRECT_V6,
+        WfpLayer::FlowEstablishedV4 => FWPM_LAYER_ALE_FLOW_ESTABLISHED_V4,
+        WfpLayer::FlowEstablishedV6 => FWPM_LAYER_ALE_FLOW_ESTABLISHED_V6,
+        WfpLayer::DatagramDataV4 => FWPM_LAYER_DATAGRAM_DATA_V4,
+        WfpLayer::DatagramDataV6 => FWPM_LAYER_DATAGRAM_DATA_V6,
     }
 }
 
@@ -890,6 +1001,10 @@ fn callout_for_layer(layer: WfpLayer) -> WfpCallout {
         WfpLayer::AuthConnectV6 => WfpCallout::FailClosedGuardV6,
         WfpLayer::ConnectRedirectV4 => WfpCallout::ConnectRedirectV4,
         WfpLayer::ConnectRedirectV6 => WfpCallout::ConnectRedirectV6,
+        WfpLayer::FlowEstablishedV4 => WfpCallout::FlowEstablishedV4,
+        WfpLayer::FlowEstablishedV6 => WfpCallout::FlowEstablishedV6,
+        WfpLayer::DatagramDataV4 => WfpCallout::DatagramDataV4,
+        WfpLayer::DatagramDataV6 => WfpCallout::DatagramDataV6,
     }
 }
 
@@ -942,10 +1057,19 @@ mod tests {
     fn filter_classes_separate_persistent_guards_from_dynamic_redirects() {
         assert_eq!(FilterClass::Guard.lifetime(), WfpFilterLifetime::Persistent);
         assert_eq!(FilterClass::Redirect.lifetime(), WfpFilterLifetime::Dynamic);
-        assert_ne!(FilterClass::Guard.flags() & FWPM_FILTER_FLAG_PERSISTENT, 0);
-        assert_eq!(
-            FilterClass::Redirect.flags() & FWPM_FILTER_FLAG_PERSISTENT,
+        assert_ne!(
+            enumerated_filter_flags(FilterClass::Guard, WfpLayer::AuthConnectV4)
+                & FWPM_FILTER_FLAG_PERSISTENT,
             0
+        );
+        assert_eq!(
+            enumerated_filter_flags(FilterClass::Redirect, WfpLayer::ConnectRedirectV4)
+                & FWPM_FILTER_FLAG_PERSISTENT,
+            0
+        );
+        assert_eq!(
+            enumerated_filter_flags(FilterClass::Redirect, WfpLayer::DatagramDataV4),
+            FWPM_FILTER_FLAG_PERMIT_IF_CALLOUT_UNREGISTERED
         );
     }
 
@@ -972,7 +1096,7 @@ mod tests {
         let mut provider = object_key_to_guid(provider_key);
         let mut filter = FWPM_FILTER0 {
             filterKey: object_key_to_guid(expected_filter_key(layer, &app_id)),
-            flags: FilterClass::Guard.flags(),
+            flags: enumerated_filter_flags(FilterClass::Guard, layer),
             providerKey: &mut provider,
             layerKey: layer_guid(layer),
             subLayerKey: object_key_to_guid(sublayer_key),
@@ -1007,6 +1131,54 @@ mod tests {
             provider_key,
             sublayer_key,
             FilterClass::Guard,
+            layer,
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn enumerated_conditional_capture_filter_has_no_global_terminating_effect() {
+        let provider_key = WfpObjectKey::from_bytes([1; 16]);
+        let sublayer_key = WfpObjectKey::from_bytes([2; 16]);
+        let layer = WfpLayer::DatagramDataV4;
+        let mut provider = object_key_to_guid(provider_key);
+        let mut filter = FWPM_FILTER0 {
+            filterKey: object_key_to_guid(expected_filter_key(layer, &[])),
+            flags: enumerated_filter_flags(FilterClass::Redirect, layer),
+            providerKey: &mut provider,
+            layerKey: layer_guid(layer),
+            subLayerKey: object_key_to_guid(sublayer_key),
+            weight: FWP_VALUE0 {
+                r#type: FWP_EMPTY,
+                ..FWP_VALUE0::default()
+            },
+            numFilterConditions: 0,
+            filterCondition: null_mut(),
+            action: FWPM_ACTION0 {
+                r#type: FWP_ACTION_CALLOUT_UNKNOWN,
+                Anonymous: FWPM_ACTION0_0 {
+                    calloutKey: object_key_to_guid(expected_callout_key(layer)),
+                },
+            },
+            Anonymous: FWPM_FILTER0_0 { rawContext: 0 },
+            ..FWPM_FILTER0::default()
+        };
+
+        validate_enumerated_filter(
+            &filter,
+            provider_key,
+            sublayer_key,
+            FilterClass::Redirect,
+            layer,
+        )
+        .unwrap();
+
+        filter.action.r#type = FWP_ACTION_CALLOUT_TERMINATING;
+        assert!(validate_enumerated_filter(
+            &filter,
+            provider_key,
+            sublayer_key,
+            FilterClass::Redirect,
             layer,
         )
         .is_err());

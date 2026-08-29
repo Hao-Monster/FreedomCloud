@@ -25,6 +25,18 @@ const REDIRECT_V4_CALLOUT_KEY: WfpObjectKey = WfpObjectKey::from_bytes([
 const REDIRECT_V6_CALLOUT_KEY: WfpObjectKey = WfpObjectKey::from_bytes([
     0x9a, 0xd0, 0x4f, 0x4e, 0x33, 0x42, 0x46, 0xc0, 0xa1, 0xa2, 0xf1, 0x54, 0x4d, 0xc1, 0xaf, 0x42,
 ]);
+const FLOW_V4_CALLOUT_KEY: WfpObjectKey = WfpObjectKey::from_bytes([
+    0x00, 0xd8, 0x3e, 0xb9, 0x87, 0x49, 0x4b, 0x5d, 0xae, 0x3b, 0x55, 0x1a, 0x96, 0x2b, 0xa5, 0xf4,
+]);
+const FLOW_V6_CALLOUT_KEY: WfpObjectKey = WfpObjectKey::from_bytes([
+    0xd8, 0x8a, 0x2c, 0x87, 0x51, 0x0a, 0x4f, 0x61, 0xa9, 0xb1, 0x12, 0x9f, 0x2e, 0x5f, 0xb3, 0xf0,
+]);
+const DATAGRAM_V4_CALLOUT_KEY: WfpObjectKey = WfpObjectKey::from_bytes([
+    0xf1, 0x72, 0x48, 0xe9, 0xfd, 0xd9, 0x43, 0x07, 0xb7, 0x6b, 0xcc, 0x8f, 0x21, 0x24, 0x62, 0xc5,
+]);
+const DATAGRAM_V6_CALLOUT_KEY: WfpObjectKey = WfpObjectKey::from_bytes([
+    0xa8, 0x6c, 0x24, 0x26, 0x7a, 0x29, 0x4a, 0xd4, 0xae, 0xb3, 0x8d, 0x17, 0xa8, 0x7e, 0x2c, 0x05,
+]);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct WfpObjectKey([u8; 16]);
@@ -45,6 +57,10 @@ pub enum WfpLayer {
     AuthConnectV6,
     ConnectRedirectV4,
     ConnectRedirectV6,
+    FlowEstablishedV4,
+    FlowEstablishedV6,
+    DatagramDataV4,
+    DatagramDataV6,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -53,12 +69,22 @@ pub enum WfpCallout {
     FailClosedGuardV6,
     ConnectRedirectV4,
     ConnectRedirectV6,
+    FlowEstablishedV4,
+    FlowEstablishedV6,
+    DatagramDataV4,
+    DatagramDataV6,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WfpFilterLifetime {
     Persistent,
     Dynamic,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WfpFilterAction {
+    Terminating,
+    ConditionalCapture,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -73,6 +99,8 @@ pub struct WfpFilterSpec {
     action: StrictAction,
     indexed: bool,
     clear_action_right: bool,
+    callout_action: WfpFilterAction,
+    permit_if_callout_unregistered: bool,
 }
 
 impl WfpFilterSpec {
@@ -114,6 +142,14 @@ impl WfpFilterSpec {
 
     pub fn clears_action_right(&self) -> bool {
         self.clear_action_right
+    }
+
+    pub fn callout_action(&self) -> WfpFilterAction {
+        self.callout_action
+    }
+
+    pub fn permits_if_callout_unregistered(&self) -> bool {
+        self.permit_if_callout_unregistered
     }
 }
 
@@ -241,7 +277,8 @@ impl WfpPolicyPlan {
             .iter()
             .filter(|rule| rule.action == StrictAction::Proxy)
             .count();
-        let mut redirect_filters = Vec::with_capacity(proxy_rule_count * 2);
+        let mut redirect_filters =
+            Vec::with_capacity(proxy_rule_count * 4 + usize::from(has_proxy) * 2);
         // These filters intentionally carry exact App-ID conditions. Windows treats an
         // unavailable terminating callout as block; a global filter could therefore
         // block the whole host while per-identity filters fail closed only for selected apps.
@@ -282,8 +319,43 @@ impl WfpPolicyPlan {
                         REDIRECT_V6_CALLOUT_KEY,
                         WfpFilterLifetime::Dynamic,
                     ),
+                    filter(
+                        rule,
+                        0x31,
+                        WfpLayer::FlowEstablishedV4,
+                        WfpCallout::FlowEstablishedV4,
+                        FLOW_V4_CALLOUT_KEY,
+                        WfpFilterLifetime::Dynamic,
+                    ),
+                    filter(
+                        rule,
+                        0x32,
+                        WfpLayer::FlowEstablishedV6,
+                        WfpCallout::FlowEstablishedV6,
+                        FLOW_V6_CALLOUT_KEY,
+                        WfpFilterLifetime::Dynamic,
+                    ),
                 ]);
             }
+        }
+        if has_proxy {
+            // Datagram layers do not expose ALE App-ID. A single non-terminating filter per
+            // family is paired with a conditional-on-flow driver callout, so only flows that
+            // received context at ALE_FLOW_ESTABLISHED enter the per-packet hot path.
+            redirect_filters.extend([
+                conditional_datagram_filter(
+                    0x41,
+                    WfpLayer::DatagramDataV4,
+                    WfpCallout::DatagramDataV4,
+                    DATAGRAM_V4_CALLOUT_KEY,
+                ),
+                conditional_datagram_filter(
+                    0x42,
+                    WfpLayer::DatagramDataV6,
+                    WfpCallout::DatagramDataV6,
+                    DATAGRAM_V6_CALLOUT_KEY,
+                ),
+            ]);
         }
         let mut install_steps = vec![
             PlanInstallStep::UploadImmutableSnapshot,
@@ -377,6 +449,30 @@ fn filter(
         action: rule.action,
         indexed: true,
         clear_action_right: true,
+        callout_action: WfpFilterAction::Terminating,
+        permit_if_callout_unregistered: false,
+    }
+}
+
+fn conditional_datagram_filter(
+    key_namespace: u8,
+    layer: WfpLayer,
+    callout: WfpCallout,
+    callout_key: WfpObjectKey,
+) -> WfpFilterSpec {
+    WfpFilterSpec {
+        key: derived_filter_key(key_namespace, &[]),
+        layer,
+        callout,
+        callout_key,
+        lifetime: WfpFilterLifetime::Dynamic,
+        identity_id: String::new(),
+        app_id: Arc::from([]),
+        action: StrictAction::Proxy,
+        indexed: false,
+        clear_action_right: false,
+        callout_action: WfpFilterAction::ConditionalCapture,
+        permit_if_callout_unregistered: true,
     }
 }
 
@@ -400,6 +496,10 @@ pub(crate) fn expected_filter_key(layer: WfpLayer, app_id: &[u8]) -> WfpObjectKe
         WfpLayer::AuthConnectV6 => 0x12,
         WfpLayer::ConnectRedirectV4 => 0x21,
         WfpLayer::ConnectRedirectV6 => 0x22,
+        WfpLayer::FlowEstablishedV4 => 0x31,
+        WfpLayer::FlowEstablishedV6 => 0x32,
+        WfpLayer::DatagramDataV4 => 0x41,
+        WfpLayer::DatagramDataV6 => 0x42,
     };
     derived_filter_key(namespace, app_id)
 }
@@ -410,5 +510,9 @@ pub(crate) fn expected_callout_key(layer: WfpLayer) -> WfpObjectKey {
         WfpLayer::AuthConnectV6 => GUARD_V6_CALLOUT_KEY,
         WfpLayer::ConnectRedirectV4 => REDIRECT_V4_CALLOUT_KEY,
         WfpLayer::ConnectRedirectV6 => REDIRECT_V6_CALLOUT_KEY,
+        WfpLayer::FlowEstablishedV4 => FLOW_V4_CALLOUT_KEY,
+        WfpLayer::FlowEstablishedV6 => FLOW_V6_CALLOUT_KEY,
+        WfpLayer::DatagramDataV4 => DATAGRAM_V4_CALLOUT_KEY,
+        WfpLayer::DatagramDataV6 => DATAGRAM_V6_CALLOUT_KEY,
     }
 }

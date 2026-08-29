@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 
 use flclash_strict_broker::{
     PlanInstallStep, PlanRemoveStep, VerifiedApplicationAppIds, VerifiedPolicyAppIds,
-    WfpFilterLifetime, WfpLayer, WfpObjectKey, WfpPolicyPlan,
+    WfpFilterAction, WfpFilterLifetime, WfpLayer, WfpObjectKey, WfpPolicyPlan,
 };
 use flclash_strict_contract::{
     StrictAction, StrictChildIdentity, StrictIdentity, StrictPolicyBundle, StrictPolicyEntry,
@@ -59,14 +59,14 @@ fn verified(policy: &StrictPolicyBundle) -> VerifiedPolicyAppIds {
 }
 
 #[test]
-fn plan_indexes_every_verified_app_id_without_global_network_filters() {
+fn plan_indexes_app_filters_and_limits_global_filters_to_conditional_udp_capture() {
     let policy = proxy_policy(7);
     let app_ids = verified(&policy);
     let plan = WfpPolicyPlan::new(&policy, &app_ids).unwrap();
 
     assert_eq!(plan.rules().len(), 3);
     assert_eq!(plan.guard_filters().len(), 6);
-    assert_eq!(plan.redirect_filters().len(), 4);
+    assert_eq!(plan.redirect_filters().len(), 10);
     assert!(plan
         .guard_filters()
         .iter()
@@ -76,9 +76,7 @@ fn plan_indexes_every_verified_app_id_without_global_network_filters() {
     assert!(plan
         .redirect_filters()
         .iter()
-        .all(|filter| filter.lifetime() == WfpFilterLifetime::Dynamic
-            && filter.is_indexed()
-            && !filter.app_id().is_empty()));
+        .all(|filter| filter.lifetime() == WfpFilterLifetime::Dynamic));
     assert_eq!(
         plan.guard_filters()
             .iter()
@@ -103,12 +101,45 @@ fn plan_indexes_every_verified_app_id_without_global_network_filters() {
         .chain(plan.redirect_filters())
         .map(|filter| filter.key())
         .collect();
-    assert_eq!(filter_keys.len(), 10);
+    assert_eq!(filter_keys.len(), 16);
     assert!(plan
         .guard_filters()
         .iter()
         .filter(|filter| filter.app_id() == [1, 1])
         .all(|filter| filter.action() == StrictAction::Proxy));
+
+    let datagram_filters: Vec<_> = plan
+        .redirect_filters()
+        .iter()
+        .filter(|filter| {
+            matches!(
+                filter.layer(),
+                WfpLayer::DatagramDataV4 | WfpLayer::DatagramDataV6
+            )
+        })
+        .collect();
+    assert_eq!(datagram_filters.len(), 2);
+    assert!(datagram_filters.iter().all(|filter| {
+        filter.app_id().is_empty()
+            && !filter.is_indexed()
+            && !filter.clears_action_right()
+            && filter.permits_if_callout_unregistered()
+            && filter.callout_action() == WfpFilterAction::ConditionalCapture
+    }));
+    assert_eq!(
+        plan.redirect_filters()
+            .iter()
+            .filter(|filter| matches!(filter.layer(), WfpLayer::FlowEstablishedV4))
+            .count(),
+        2
+    );
+    assert_eq!(
+        plan.redirect_filters()
+            .iter()
+            .filter(|filter| matches!(filter.layer(), WfpLayer::FlowEstablishedV6))
+            .count(),
+        2
+    );
 }
 
 #[test]
