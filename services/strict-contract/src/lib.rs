@@ -153,7 +153,7 @@ impl StrictIntent {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct BrokerProof {
     pub revision: u64,
     pub policy_digest: String,
@@ -459,6 +459,75 @@ pub enum BrokerCommand {
     Diagnostics {},
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum BrokerErrorCode {
+    InvalidRequest,
+    Unauthorized,
+    InvalidState,
+    IdentityRejected,
+    BackendUnavailable,
+    PersistenceFailure,
+    Internal,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct BrokerResponse {
+    pub protocol: u32,
+    pub request_id: String,
+    pub body: BrokerResponseBody,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(tag = "type", rename_all = "camelCase", deny_unknown_fields)]
+pub enum BrokerResponseBody {
+    Status { proof: BrokerProof },
+    Error { code: BrokerErrorCode },
+}
+
+impl BrokerResponse {
+    pub fn status(request_id: impl Into<String>, proof: BrokerProof) -> Result<Self> {
+        let response = Self {
+            protocol: STRICT_PROTOCOL_VERSION,
+            request_id: request_id.into(),
+            body: BrokerResponseBody::Status { proof },
+        };
+        response.validate()?;
+        Ok(response)
+    }
+
+    pub fn error(request_id: impl Into<String>, code: BrokerErrorCode) -> Result<Self> {
+        let response = Self {
+            protocol: STRICT_PROTOCOL_VERSION,
+            request_id: request_id.into(),
+            body: BrokerResponseBody::Error { code },
+        };
+        response.validate()?;
+        Ok(response)
+    }
+
+    pub fn to_bytes(&self) -> Result<Vec<u8>> {
+        self.validate()?;
+        let encoded = serde_json::to_vec(self)?;
+        if encoded.is_empty() || encoded.len() > MAX_BROKER_FRAME_BYTES {
+            bail!("Broker response frame size is invalid");
+        }
+        Ok(encoded)
+    }
+
+    pub fn validate(&self) -> Result<()> {
+        if self.protocol != STRICT_PROTOCOL_VERSION {
+            bail!("unsupported Broker response protocol");
+        }
+        validate_request_id(&self.request_id)?;
+        if let BrokerResponseBody::Status { proof } = &self.body {
+            validate_broker_proof(proof)?;
+        }
+        Ok(())
+    }
+}
+
 pub fn parse_broker_request(line: &str) -> Result<BrokerRequest> {
     if line.is_empty() || line.len() > MAX_BROKER_FRAME_BYTES {
         bail!("Broker frame size is invalid");
@@ -467,15 +536,7 @@ pub fn parse_broker_request(line: &str) -> Result<BrokerRequest> {
     if request.protocol != STRICT_PROTOCOL_VERSION {
         bail!("unsupported Broker protocol");
     }
-    if request.request_id.is_empty()
-        || request.request_id.len() > 64
-        || !request
-            .request_id
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
-    {
-        bail!("Broker request ID is invalid");
-    }
+    validate_request_id(&request.request_id)?;
     validate_sha256(&request.session_capability, "Broker session capability")?;
     match &request.command {
         BrokerCommand::PreparePolicy { policy } => policy.validate()?,
@@ -496,6 +557,62 @@ pub fn parse_broker_request(line: &str) -> Result<BrokerRequest> {
         BrokerCommand::Status {} | BrokerCommand::Diagnostics {} => {}
     }
     Ok(request)
+}
+
+pub fn parse_broker_response(frame: &[u8]) -> Result<BrokerResponse> {
+    if frame.is_empty() || frame.len() > MAX_BROKER_FRAME_BYTES {
+        bail!("Broker response frame size is invalid");
+    }
+    let response: BrokerResponse = serde_json::from_slice(frame)?;
+    response.validate()?;
+    Ok(response)
+}
+
+fn validate_request_id(value: &str) -> Result<()> {
+    if value.is_empty()
+        || value.len() > 64
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+    {
+        bail!("Broker request ID is invalid");
+    }
+    Ok(())
+}
+
+fn validate_broker_proof(proof: &BrokerProof) -> Result<()> {
+    validate_sha256(&proof.policy_digest, "Broker proof policy digest")?;
+    if proof.revision == 0 {
+        if proof.policy_digest != "0".repeat(64)
+            || proof.filter_generation != 0
+            || !proof.capabilities.is_empty()
+            || proof.guard_filters_installed
+            || proof.recovery_marker_present
+            || proof.core_healthy
+            || proof.relay_healthy
+            || proof.dns_healthy
+        {
+            bail!("disabled Broker proof contains active strict state");
+        }
+        return Ok(());
+    }
+    if !proof.recovery_marker_present {
+        bail!("active Broker proof is missing its recovery marker");
+    }
+    if proof.guard_filters_installed && proof.filter_generation == 0 {
+        bail!("active Broker guard proof is missing its filter generation");
+    }
+    if (proof
+        .capabilities
+        .contains(&StrictCapability::PersistentFailClosed)
+        || proof
+            .capabilities
+            .contains(&StrictCapability::RecoveryVerified))
+        && !proof.guard_filters_installed
+    {
+        bail!("Broker fail-closed capability has no installed guard proof");
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -625,6 +742,37 @@ mod tests {
         ))
         .is_err());
         assert!(parse_broker_request(&"x".repeat(MAX_BROKER_FRAME_BYTES + 1)).is_err());
+    }
+
+    #[test]
+    fn broker_responses_are_correlated_bounded_and_fail_closed() {
+        let proof = BrokerProof {
+            revision: 7,
+            policy_digest: hex('a'),
+            filter_generation: 9,
+            capabilities: StrictCapability::required_for_block_only(),
+            guard_filters_installed: true,
+            recovery_marker_present: true,
+            core_healthy: false,
+            relay_healthy: false,
+            dns_healthy: false,
+        };
+        let response = BrokerResponse::status("request-1", proof.clone()).unwrap();
+        let encoded = response.to_bytes().unwrap();
+        assert_eq!(parse_broker_response(&encoded).unwrap(), response);
+        assert!(parse_broker_response(
+            &String::from_utf8(encoded)
+                .unwrap()
+                .replace(r#""proof":{"#, r#""extra":true,"proof":{"#)
+                .into_bytes(),
+        )
+        .is_err());
+
+        let mut inconsistent = proof;
+        inconsistent.guard_filters_installed = false;
+        assert!(BrokerResponse::status("request-2", inconsistent).is_err());
+        assert!(BrokerResponse::error("request-3", BrokerErrorCode::Unauthorized).is_ok());
+        assert!(parse_broker_response(&vec![b'x'; MAX_BROKER_FRAME_BYTES + 1]).is_err());
     }
 
     #[test]
