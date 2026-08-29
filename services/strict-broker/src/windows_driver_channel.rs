@@ -298,6 +298,10 @@ impl WindowsSharedIoctlDriverChannel {
         self.lock()?.deactivate_datagram_path()
     }
 
+    pub fn query_policy_snapshot(&self) -> Result<WindowsDriverPolicySnapshot> {
+        self.lock()?.issue(IOCTL_QUERY_POLICY, &[])
+    }
+
     #[cfg(any(test, feature = "production-host"))]
     pub fn receive_datagram_batch_until(
         &self,

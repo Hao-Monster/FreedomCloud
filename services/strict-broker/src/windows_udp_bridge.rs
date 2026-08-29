@@ -11,10 +11,10 @@ use anyhow::{bail, Context, Result};
 use crate::{
     StrictCoreUdpTransport, StrictDriverDatagramBatch, StrictDriverDatagramBatchBuilder,
     StrictDriverDatagramBatchKind, StrictDriverDatagramFlags, StrictDriverDatagramLeaseWindow,
-    StrictDriverDatagramRecord, StrictUdpReplayWindow, WindowsDriverIoctlCancellation,
-    WindowsDriverIoctlDeadline, WindowsPipeShutdown, WindowsSharedIoctlDriverChannel,
-    STRICT_DRIVER_DATAGRAM_MAX_BATCH_BYTES, STRICT_DRIVER_DATAGRAM_MAX_PAYLOAD_BYTES,
-    STRICT_DRIVER_DATAGRAM_MAX_RECORDS,
+    StrictDriverDatagramRecord, StrictUdpReplayWindow, WindowsDriverDatagramHealthSnapshot,
+    WindowsDriverIoctlCancellation, WindowsDriverIoctlDeadline, WindowsPipeShutdown,
+    WindowsSharedIoctlDriverChannel, STRICT_DRIVER_DATAGRAM_MAX_BATCH_BYTES,
+    STRICT_DRIVER_DATAGRAM_MAX_PAYLOAD_BYTES, STRICT_DRIVER_DATAGRAM_MAX_RECORDS,
 };
 
 pub const STRICT_DRIVER_UDP_MAX_ASSOCIATIONS: usize = 1024;
@@ -22,6 +22,7 @@ pub const STRICT_DRIVER_UDP_ASSOCIATION_IDLE: Duration = Duration::from_secs(90)
 const DRIVER_BATCH_BUFFER_COUNT: usize = 2;
 const DRIVER_RECEIVE_DEADLINE: Duration = Duration::from_secs(300);
 const DRIVER_SUBMIT_DEADLINE: Duration = Duration::from_secs(1);
+const DRIVER_HEALTH_POLL_INTERVAL: Duration = Duration::from_millis(100);
 const BRIDGE_WAIT_SLICE: Duration = Duration::from_millis(100);
 const BRIDGE_THREAD_STACK_BYTES: usize = 512 * 1024;
 
@@ -270,6 +271,8 @@ pub trait StrictDriverDatagramIo: Send + Sync {
     ) -> Result<Option<usize>>;
 
     fn submit_reply(&self, input: &mut [u8], deadline: WindowsDriverIoctlDeadline) -> Result<()>;
+
+    fn datagram_health(&self) -> Result<WindowsDriverDatagramHealthSnapshot>;
 }
 
 impl StrictDriverDatagramIo for WindowsSharedIoctlDriverChannel {
@@ -284,6 +287,85 @@ impl StrictDriverDatagramIo for WindowsSharedIoctlDriverChannel {
 
     fn submit_reply(&self, input: &mut [u8], deadline: WindowsDriverIoctlDeadline) -> Result<()> {
         self.submit_datagram_batch(input, deadline)
+    }
+
+    fn datagram_health(&self) -> Result<WindowsDriverDatagramHealthSnapshot> {
+        Ok(self.query_policy_snapshot()?.datagram_health)
+    }
+}
+
+struct StrictDriverDatagramHealthMonitor {
+    baseline: WindowsDriverDatagramHealthSnapshot,
+    submitted: u64,
+}
+
+impl StrictDriverDatagramHealthMonitor {
+    fn new(baseline: WindowsDriverDatagramHealthSnapshot) -> Result<Self> {
+        baseline.validate()?;
+        if baseline.injection_in_flight != 0 {
+            bail!("strict driver retained UDP injections before bridge startup");
+        }
+        Ok(Self {
+            baseline,
+            submitted: 0,
+        })
+    }
+
+    fn record_submission(&mut self, datagrams: usize) -> Result<()> {
+        if datagrams == 0 || datagrams > STRICT_DRIVER_DATAGRAM_MAX_RECORDS {
+            bail!("strict driver UDP submission count is invalid");
+        }
+        self.submitted = self
+            .submitted
+            .checked_add(datagrams as u64)
+            .ok_or_else(|| anyhow::anyhow!("strict driver UDP submission count overflow"))?;
+        Ok(())
+    }
+
+    fn observe(&self, current: WindowsDriverDatagramHealthSnapshot) -> Result<bool> {
+        current.validate()?;
+        if current.injection_failed != self.baseline.injection_failed {
+            bail!(
+                "strict driver UDP injection failure changed from {} to {} (last status 0x{:08x})",
+                self.baseline.injection_failed,
+                current.injection_failed,
+                current.last_failure_status
+            );
+        }
+        if current.partial_batch_failures != self.baseline.partial_batch_failures {
+            bail!(
+                "strict driver UDP partial-batch failure changed from {} to {} (last status 0x{:08x})",
+                self.baseline.partial_batch_failures,
+                current.partial_batch_failures,
+                current.last_failure_status
+            );
+        }
+        if current.last_failure_status != self.baseline.last_failure_status {
+            bail!("strict driver UDP last-failure status changed without a matching counter");
+        }
+        let expected_attempts = self
+            .baseline
+            .injection_attempts
+            .checked_add(self.submitted)
+            .ok_or_else(|| anyhow::anyhow!("strict driver UDP attempt expectation overflow"))?;
+        if current.injection_attempts != expected_attempts {
+            bail!(
+                "strict driver UDP attempt counter is {}, expected {}",
+                current.injection_attempts,
+                expected_attempts
+            );
+        }
+        let succeeded = current
+            .injection_succeeded
+            .checked_sub(self.baseline.injection_succeeded)
+            .ok_or_else(|| anyhow::anyhow!("strict driver UDP success counter rolled back"))?;
+        let accounted = succeeded
+            .checked_add(u64::from(current.injection_in_flight))
+            .ok_or_else(|| anyhow::anyhow!("strict driver UDP completion accounting overflow"))?;
+        if accounted != self.submitted {
+            bail!("strict driver UDP completion accounting drifted from Broker submissions");
+        }
+        Ok(current.injection_in_flight != 0)
     }
 }
 
@@ -361,6 +443,7 @@ where
     }
     let receive_deadline = WindowsDriverIoctlDeadline::new(DRIVER_RECEIVE_DEADLINE)?;
     let submit_deadline = WindowsDriverIoctlDeadline::new(DRIVER_SUBMIT_DEADLINE)?;
+    let health_monitor = StrictDriverDatagramHealthMonitor::new(driver.datagram_health()?)?;
     let shutdown = WindowsPipeShutdown::new();
     let driver_cancellation = WindowsDriverIoctlCancellation::new()?;
     let alive = Arc::new(AtomicBool::new(true));
@@ -418,6 +501,7 @@ where
                 free_sender,
                 &bridge_shutdown,
                 submit_deadline,
+                health_monitor,
             );
             bridge_alive.store(false, Ordering::Release);
             if result.is_err() {
@@ -497,6 +581,7 @@ fn run_udp_bridge<D, A>(
     free_sender: SyncSender<Box<[u8]>>,
     shutdown: &WindowsPipeShutdown,
     submit_deadline: WindowsDriverIoctlDeadline,
+    mut health_monitor: StrictDriverDatagramHealthMonitor,
 ) -> Result<WindowsUdpBridgeReport>
 where
     D: StrictDriverDatagramIo + 'static,
@@ -506,8 +591,14 @@ where
     let mut associations = StrictDriverUdpAssociations::new();
     let mut reply_payload = vec![0_u8; STRICT_DRIVER_DATAGRAM_MAX_PAYLOAD_BYTES].into_boxed_slice();
     let mut reply_batch = vec![0_u8; STRICT_DRIVER_DATAGRAM_MAX_BATCH_BYTES].into_boxed_slice();
+    let mut health_pending = false;
+    let mut next_health_check = Instant::now() + DRIVER_HEALTH_POLL_INTERVAL;
 
     while !shutdown.is_requested() {
+        if health_pending && Instant::now() >= next_health_check {
+            health_pending = health_monitor.observe(driver.datagram_health()?)?;
+            next_health_check = Instant::now() + DRIVER_HEALTH_POLL_INTERVAL;
+        }
         loop {
             match captured_receiver.try_recv() {
                 Ok(batch) => {
@@ -565,6 +656,11 @@ where
         if reply_count != 0 {
             let bytes = builder.finish()?.len();
             driver.submit_reply(&mut reply_batch[..bytes], submit_deadline)?;
+            health_monitor.record_submission(reply_count)?;
+            if !health_pending {
+                health_pending = true;
+                next_health_check = Instant::now() + DRIVER_HEALTH_POLL_INTERVAL;
+            }
             report.reply_batches = report.reply_batches.saturating_add(1);
             report.reply_datagrams = report.reply_datagrams.saturating_add(reply_count as u64);
         }
@@ -785,6 +881,8 @@ mod tests {
     struct FakeDriverDatagramIo {
         captured: Mutex<Receiver<Vec<u8>>>,
         replies: SyncSender<Vec<u8>>,
+        health: Mutex<WindowsDriverDatagramHealthSnapshot>,
+        fail_completion: bool,
     }
 
     impl StrictDriverDatagramIo for FakeDriverDatagramIo {
@@ -822,9 +920,47 @@ mod tests {
             input: &mut [u8],
             _deadline: WindowsDriverIoctlDeadline,
         ) -> Result<()> {
+            let record_count = u32::from_le_bytes(
+                input
+                    .get(16..20)
+                    .context("fake reply batch header is truncated")?
+                    .try_into()
+                    .map_err(|_| anyhow::anyhow!("fake reply batch header is truncated"))?,
+            );
+            let mut health = self
+                .health
+                .lock()
+                .map_err(|_| anyhow::anyhow!("fake driver health lock is poisoned"))?;
+            health.injection_attempts = health
+                .injection_attempts
+                .checked_add(u64::from(record_count))
+                .ok_or_else(|| anyhow::anyhow!("fake driver attempt counter overflow"))?;
+            if self.fail_completion {
+                health.injection_failed = health
+                    .injection_failed
+                    .checked_add(1)
+                    .ok_or_else(|| anyhow::anyhow!("fake driver failure counter overflow"))?;
+                health.injection_succeeded = health
+                    .injection_succeeded
+                    .checked_add(u64::from(record_count.saturating_sub(1)))
+                    .ok_or_else(|| anyhow::anyhow!("fake driver success counter overflow"))?;
+                health.last_failure_status = 0xc000_0001;
+            } else {
+                health.injection_succeeded = health
+                    .injection_succeeded
+                    .checked_add(u64::from(record_count))
+                    .ok_or_else(|| anyhow::anyhow!("fake driver success counter overflow"))?;
+            }
             self.replies
                 .send(input.to_vec())
                 .map_err(|_| anyhow::anyhow!("fake reply queue disconnected"))
+        }
+
+        fn datagram_health(&self) -> Result<WindowsDriverDatagramHealthSnapshot> {
+            self.health
+                .lock()
+                .map(|health| *health)
+                .map_err(|_| anyhow::anyhow!("fake driver health lock is poisoned"))
         }
     }
 
@@ -884,6 +1020,8 @@ mod tests {
         let driver = Arc::new(FakeDriverDatagramIo {
             captured: Mutex::new(captured_receiver),
             replies: reply_sender,
+            health: Mutex::new(WindowsDriverDatagramHealthSnapshot::default()),
+            fail_completion: false,
         });
         let runtime = spawn_windows_udp_bridge_runtime(
             driver,
@@ -922,5 +1060,124 @@ mod tests {
         assert_eq!(report.reply_datagrams, 2);
         assert!((1..=2).contains(&report.reply_batches));
         core_worker.join().unwrap();
+    }
+
+    #[test]
+    fn bridge_stops_on_async_driver_injection_failure() {
+        let core = UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0)).unwrap();
+        core.set_read_timeout(Some(Duration::from_secs(1))).unwrap();
+        let core_endpoint = match core.local_addr().unwrap() {
+            SocketAddr::V4(endpoint) => endpoint,
+            SocketAddr::V6(_) => unreachable!(),
+        };
+        let ingress = StrictProxyIngressSet::new(
+            41,
+            core_endpoint,
+            vec![StrictProxyIngressEntry::new(
+                "GLOBAL".into(),
+                SocketAddrV4::new(Ipv4Addr::LOCALHOST, 41001),
+                format!("{}{}", "11".repeat(16), "22".repeat(16)),
+                "33".repeat(32),
+            )
+            .unwrap()],
+        )
+        .unwrap();
+        let core_worker = thread::spawn(move || {
+            let authenticator =
+                StrictUdpDataAuthenticator::new(41, [0x11; 16], [0x33; 32]).unwrap();
+            let mut request = [0_u8; STRICT_UDP_DATA_MAX_FRAME_BYTES + 1];
+            let (bytes, source) = core.recv_from(&mut request).unwrap();
+            let decoded = authenticator
+                .decode(&request[..bytes], StrictUdpDataDirection::Outbound)
+                .unwrap();
+            let mut response = [0_u8; STRICT_UDP_DATA_MAX_FRAME_BYTES];
+            let bytes = authenticator
+                .encode(
+                    &mut response,
+                    StrictUdpDataDirection::Inbound,
+                    decoded.association_id(),
+                    1,
+                    decoded.endpoint(),
+                    b"reply",
+                )
+                .unwrap();
+            core.send_to(&response[..bytes], source).unwrap();
+        });
+
+        let transport =
+            StrictCoreUdpTransport::connect(&ingress, Duration::from_millis(20)).unwrap();
+        let identity =
+            StrictDriverDatagramLeaseIdentity::new(7, 91, [0xab; 32], [0x5a; 16]).unwrap();
+        let window = Arc::new(RwLock::new(StrictDriverDatagramLeaseWindow::new(identity)));
+        let (captured_sender, captured_receiver) = mpsc::sync_channel(1);
+        let (reply_sender, reply_receiver) = mpsc::sync_channel(1);
+        let driver = Arc::new(FakeDriverDatagramIo {
+            captured: Mutex::new(captured_receiver),
+            replies: reply_sender,
+            health: Mutex::new(WindowsDriverDatagramHealthSnapshot::default()),
+            fail_completion: true,
+        });
+        let runtime = spawn_windows_udp_bridge_runtime(
+            driver,
+            transport,
+            vec!["GLOBAL".into()],
+            window,
+            || Ok([0x44; 16]),
+        )
+        .unwrap();
+        captured_sender
+            .send(encoded_record(11, 1, 0, REMOTE))
+            .unwrap();
+        reply_receiver.recv_timeout(Duration::from_secs(2)).unwrap();
+
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while runtime.is_alive() && Instant::now() < deadline {
+            thread::yield_now();
+        }
+        assert!(!runtime.is_alive());
+        let error = runtime.stop().unwrap_err();
+        assert!(format!("{error:#}").contains("injection failure"));
+        core_worker.join().unwrap();
+    }
+
+    #[test]
+    fn injection_health_monitor_rejects_failure_and_counter_drift() {
+        let baseline = WindowsDriverDatagramHealthSnapshot::default();
+        let mut monitor = StrictDriverDatagramHealthMonitor::new(baseline).unwrap();
+        monitor.record_submission(2).unwrap();
+        assert!(monitor
+            .observe(WindowsDriverDatagramHealthSnapshot {
+                injection_attempts: 2,
+                injection_succeeded: 1,
+                injection_in_flight: 1,
+                ..Default::default()
+            })
+            .unwrap());
+        assert!(!monitor
+            .observe(WindowsDriverDatagramHealthSnapshot {
+                injection_attempts: 2,
+                injection_succeeded: 2,
+                ..Default::default()
+            })
+            .unwrap());
+
+        let error = monitor
+            .observe(WindowsDriverDatagramHealthSnapshot {
+                injection_attempts: 3,
+                injection_succeeded: 2,
+                injection_failed: 1,
+                last_failure_status: 0xc000_0001,
+                ..Default::default()
+            })
+            .unwrap_err();
+        assert!(error.to_string().contains("injection failure"));
+
+        let mut drift = StrictDriverDatagramHealthMonitor::new(baseline).unwrap();
+        drift.record_submission(1).unwrap();
+        assert!(drift
+            .observe(WindowsDriverDatagramHealthSnapshot::default())
+            .unwrap_err()
+            .to_string()
+            .contains("attempt counter"));
     }
 }
