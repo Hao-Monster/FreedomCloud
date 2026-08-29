@@ -408,9 +408,9 @@ nonce plus every ABI size, alignment, padding, UDP, endpoint and flag invariant.
 Until per-flow provenance and WFP injection are implemented, even a valid reply
 returns `STATUS_NOT_SUPPORTED`; UDP/DNS/QUIC capability bits remain off.
 
-`c71e5d2`/`07d8933`/`94b9eb3` add the bounded flow-provenance foundation without
-opening UDP admission. Per-App-ID `ALE_FLOW_ESTABLISHED_V4/V6` filters use the
-inspection action and return only `CONTINUE`; they never permit or block at a
+`c71e5d2`/`07d8933`/`94b9eb3` add the bounded flow-provenance foundation.
+Per-App-ID `ALE_FLOW_ESTABLISHED_V4/V6` filters use the inspection action and
+return only `CONTINUE`; they never permit or block at a
 layer whose contract forbids those actions. One persistent global filter per
 datagram family invokes a `CONDITIONAL_ON_FLOW` callout, so traffic without an
 associated context does not enter the packet hot path. The driver caps state at
@@ -420,13 +420,21 @@ cannot free creator-owned bookkeeping. Lease replacement, revocation and unload
 stop new associations, remove existing contexts and drain them before callout
 unregistration.
 
-This remains intentionally inactive. Endpoint leases are established during
-pre-commit health measurement, so a lease alone is not proof that the dynamic
-flow filters and Broker bridge are active. The authorization guard therefore
-continues to permit only already redirected TCP and blocks UDP. A later change
-must add one atomic UDP activation proof covering authorization filters, flow
-filters, bridge ownership and teardown ordering before any packet is admitted
-or any UDP/DNS/QUIC capability is advertised.
+`56b6a05` adds a separate two-phase UDP admission gate; an endpoint lease alone
+still cannot open UDP. Broker first installs and exactly enumerates the complete
+dynamic flow-filter graph while the gate is closed, then asks the lease-owning
+driver handle to open the gate and re-attests that state. Teardown closes and
+re-attests the gate before removing dynamic filters. Activation or post-open
+attestation failure revokes before rollback; if revocation is uncertain, the
+filters remain installed fail closed. Lease loss closes admission before flow
+contexts drain, while a renewal by the same process with unchanged revision,
+policy digest and nonce preserves the gate and existing contexts.
+
+This is only the WFP/lease half of activation. Production ownership and health
+of the asynchronous Broker bridge are not wired yet, driver capture and reply
+injection remain unimplemented, and the datagram classifier therefore continues
+to block selected packets. No UDP/DNS/QUIC capability is advertised until those
+pieces and the WDK/Windows 11 VM gates pass.
 
 Initial strict acceptance requires Mihomo Fake-IP/virtual-network-card mode so
 domain mappings remain available to existing domain rules. Real-IP domain

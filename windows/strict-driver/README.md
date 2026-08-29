@@ -6,10 +6,13 @@ inline lease-bound TCP redirect mutation and eight WFP callouts. It also exposes
 a capacity-one manual Direct-I/O receive queue and allocation-free reply-batch
 validation for the unfinished UDP path. UDP flow provenance is capped at 1,024
 reference-counted contexts and datagram classification is conditional on that
-context, but the TCP-only authorization guard keeps this path inactive. No UDP
-reply is accepted for injection and no UDP/DNS/QUIC capability is advertised
-until atomic activation, capture, reinjection, signing and VM qualification are
-complete.
+context. A separate lease-owner gate lets the authorization layer pass UDP to
+conditional capture only after Broker has attested the exact dynamic WFP graph,
+and closes before filter removal or lease teardown.
+The packet classifier still blocks selected UDP because capture and reinjection
+are unfinished. No UDP reply is accepted for injection and no UDP/DNS/QUIC
+capability is advertised until production bridge ownership, capture,
+reinjection, signing and VM qualification are complete.
 
 ## Build contract
 
