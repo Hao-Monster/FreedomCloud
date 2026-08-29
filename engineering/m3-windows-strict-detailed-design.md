@@ -206,9 +206,15 @@ an arbitrary Agent-supplied port nor a successful TCP connect is forwarding
 health. Listener names, credentials and ports are session-scoped, bounded and
 removed before the Broker endpoint lease is revoked.
 
-The reserved-listener injection, bound-address report, Core socket-owner proof
-and SOCKS health probe described above are design commitments, not current
-capability claims. Redirect capability bits remain off until all four exist.
+The Core half of reserved-listener injection and bound-address reporting now
+exists behind the authenticated Windows Agent/Core channel. It accepts at most
+128 distinct real proxy groups, binds authenticated TCP-only SOCKS listeners to
+ephemeral `127.0.0.1` ports, rejects stale generations and removes the listeners
+on stop, configuration replacement or explicit revocation. UI-originated use of
+the reserved action is rejected by the Agent. Agent-owned orchestration, Core
+socket-owner proof, an authenticated SOCKS CONNECT health probe and Broker relay
+assembly are still design commitments rather than capability claims. Redirect
+capability bits remain off until the complete chain exists.
 
 This mapping is compatible with the normal per-application policy schema:
 version-1 persisted proxy entries migrate to `GLOBAL`, while version-2 entries
