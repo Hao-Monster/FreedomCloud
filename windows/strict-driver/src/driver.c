@@ -18,6 +18,9 @@ static const UNICODE_STRING FcxDosDeviceName =
 static const UINT8 FcxDriverBuildId[16] =
     FCX_STRICT_DRIVER_BUILD_ID_BYTES;
 
+static const GUID FcxProviderKey = {
+    0x8fcc2c06, 0x8ea4, 0x489d, {0x9d, 0x7c, 0x84, 0x20, 0x67, 0x67, 0x44, 0x01}
+};
 static const GUID FcxGuardV4CalloutKey = {
     0x4e5d3f4c, 0x0ef1, 0x4536, {0xac, 0xf0, 0x21, 0x18, 0xce, 0x60, 0x40, 0x31}
 };
@@ -57,6 +60,7 @@ static FAST_MUTEX FcxLeaseMutationLock;
 static BOOLEAN FcxProcessNotifyRegistered;
 static UINT32 FcxCalloutIds[4];
 static UINT32 FcxRegisteredCallouts;
+static HANDLE FcxRedirectHandle;
 
 static
 VOID NTAPI
@@ -64,7 +68,8 @@ FcxGuardClassifyV4(
     _In_ const FWPS_INCOMING_VALUES0 *IncomingValues,
     _In_ const FWPS_INCOMING_METADATA_VALUES0 *IncomingMetadata,
     _Inout_opt_ VOID *LayerData,
-    _In_ const FWPS_FILTER0 *Filter,
+    _In_opt_ const VOID *ClassifyContext,
+    _In_ const FWPS_FILTER1 *Filter,
     _In_ UINT64 FlowContext,
     _Inout_ FWPS_CLASSIFY_OUT0 *ClassifyOut
     );
@@ -75,7 +80,8 @@ FcxGuardClassifyV6(
     _In_ const FWPS_INCOMING_VALUES0 *IncomingValues,
     _In_ const FWPS_INCOMING_METADATA_VALUES0 *IncomingMetadata,
     _Inout_opt_ VOID *LayerData,
-    _In_ const FWPS_FILTER0 *Filter,
+    _In_opt_ const VOID *ClassifyContext,
+    _In_ const FWPS_FILTER1 *Filter,
     _In_ UINT64 FlowContext,
     _Inout_ FWPS_CLASSIFY_OUT0 *ClassifyOut
     );
@@ -86,7 +92,8 @@ FcxRedirectClassifyV4(
     _In_ const FWPS_INCOMING_VALUES0 *IncomingValues,
     _In_ const FWPS_INCOMING_METADATA_VALUES0 *IncomingMetadata,
     _Inout_opt_ VOID *LayerData,
-    _In_ const FWPS_FILTER0 *Filter,
+    _In_opt_ const VOID *ClassifyContext,
+    _In_ const FWPS_FILTER1 *Filter,
     _In_ UINT64 FlowContext,
     _Inout_ FWPS_CLASSIFY_OUT0 *ClassifyOut
     );
@@ -97,7 +104,8 @@ FcxRedirectClassifyV6(
     _In_ const FWPS_INCOMING_VALUES0 *IncomingValues,
     _In_ const FWPS_INCOMING_METADATA_VALUES0 *IncomingMetadata,
     _Inout_opt_ VOID *LayerData,
-    _In_ const FWPS_FILTER0 *Filter,
+    _In_opt_ const VOID *ClassifyContext,
+    _In_ const FWPS_FILTER1 *Filter,
     _In_ UINT64 FlowContext,
     _Inout_ FWPS_CLASSIFY_OUT0 *ClassifyOut
     );
@@ -115,7 +123,7 @@ NTSTATUS NTAPI
 FcxCalloutNotify(
     _In_ FWPS_CALLOUT_NOTIFY_TYPE NotifyType,
     _In_ const GUID *FilterKey,
-    _Inout_ FWPS_FILTER0 *Filter
+    _Inout_ FWPS_FILTER1 *Filter
     )
 {
     UNREFERENCED_PARAMETER(NotifyType);
@@ -180,13 +188,15 @@ FcxGuardClassifyV4(
     _In_ const FWPS_INCOMING_VALUES0 *IncomingValues,
     _In_ const FWPS_INCOMING_METADATA_VALUES0 *IncomingMetadata,
     _Inout_opt_ VOID *LayerData,
-    _In_ const FWPS_FILTER0 *Filter,
+    _In_opt_ const VOID *ClassifyContext,
+    _In_ const FWPS_FILTER1 *Filter,
     _In_ UINT64 FlowContext,
     _Inout_ FWPS_CLASSIFY_OUT0 *ClassifyOut
     )
 {
     UNREFERENCED_PARAMETER(IncomingMetadata);
     UNREFERENCED_PARAMETER(LayerData);
+    UNREFERENCED_PARAMETER(ClassifyContext);
     UNREFERENCED_PARAMETER(Filter);
     UNREFERENCED_PARAMETER(FlowContext);
     FcxClassifySelectedApp(IncomingValues,
@@ -200,13 +210,15 @@ FcxGuardClassifyV6(
     _In_ const FWPS_INCOMING_VALUES0 *IncomingValues,
     _In_ const FWPS_INCOMING_METADATA_VALUES0 *IncomingMetadata,
     _Inout_opt_ VOID *LayerData,
-    _In_ const FWPS_FILTER0 *Filter,
+    _In_opt_ const VOID *ClassifyContext,
+    _In_ const FWPS_FILTER1 *Filter,
     _In_ UINT64 FlowContext,
     _Inout_ FWPS_CLASSIFY_OUT0 *ClassifyOut
     )
 {
     UNREFERENCED_PARAMETER(IncomingMetadata);
     UNREFERENCED_PARAMETER(LayerData);
+    UNREFERENCED_PARAMETER(ClassifyContext);
     UNREFERENCED_PARAMETER(Filter);
     UNREFERENCED_PARAMETER(FlowContext);
     FcxClassifySelectedApp(IncomingValues,
@@ -220,13 +232,15 @@ FcxRedirectClassifyV4(
     _In_ const FWPS_INCOMING_VALUES0 *IncomingValues,
     _In_ const FWPS_INCOMING_METADATA_VALUES0 *IncomingMetadata,
     _Inout_opt_ VOID *LayerData,
-    _In_ const FWPS_FILTER0 *Filter,
+    _In_opt_ const VOID *ClassifyContext,
+    _In_ const FWPS_FILTER1 *Filter,
     _In_ UINT64 FlowContext,
     _Inout_ FWPS_CLASSIFY_OUT0 *ClassifyOut
     )
 {
     UNREFERENCED_PARAMETER(IncomingMetadata);
     UNREFERENCED_PARAMETER(LayerData);
+    UNREFERENCED_PARAMETER(ClassifyContext);
     UNREFERENCED_PARAMETER(Filter);
     UNREFERENCED_PARAMETER(FlowContext);
     FcxClassifySelectedApp(IncomingValues,
@@ -240,13 +254,15 @@ FcxRedirectClassifyV6(
     _In_ const FWPS_INCOMING_VALUES0 *IncomingValues,
     _In_ const FWPS_INCOMING_METADATA_VALUES0 *IncomingMetadata,
     _Inout_opt_ VOID *LayerData,
-    _In_ const FWPS_FILTER0 *Filter,
+    _In_opt_ const VOID *ClassifyContext,
+    _In_ const FWPS_FILTER1 *Filter,
     _In_ UINT64 FlowContext,
     _Inout_ FWPS_CLASSIFY_OUT0 *ClassifyOut
     )
 {
     UNREFERENCED_PARAMETER(IncomingMetadata);
     UNREFERENCED_PARAMETER(LayerData);
+    UNREFERENCED_PARAMETER(ClassifyContext);
     UNREFERENCED_PARAMETER(Filter);
     UNREFERENCED_PARAMETER(FlowContext);
     FcxClassifySelectedApp(IncomingValues,
@@ -767,19 +783,47 @@ FcxEvtIoDeviceControl(
 
 static
 NTSTATUS
+FcxCreateRedirectHandle(
+    VOID
+    )
+{
+    PAGED_CODE();
+    if (FcxRedirectHandle != NULL) {
+        return STATUS_INVALID_DEVICE_STATE;
+    }
+    return FwpsRedirectHandleCreate0(&FcxProviderKey,
+                                     0,
+                                     &FcxRedirectHandle);
+}
+
+static
+VOID
+FcxDestroyRedirectHandle(
+    VOID
+    )
+{
+    PAGED_CODE();
+    if (FcxRedirectHandle != NULL) {
+        FwpsRedirectHandleDestroy0(FcxRedirectHandle);
+        FcxRedirectHandle = NULL;
+    }
+}
+
+static
+NTSTATUS
 FcxRegisterCallouts(
     _In_ PDEVICE_OBJECT DeviceObject
     )
 {
     NTSTATUS status;
-    FWPS_CALLOUT0 callout;
+    FWPS_CALLOUT1 callout;
     const GUID *keys[4] = {
         &FcxGuardV4CalloutKey,
         &FcxGuardV6CalloutKey,
         &FcxRedirectV4CalloutKey,
         &FcxRedirectV6CalloutKey
     };
-    FWPS_CALLOUT_CLASSIFY_FN0 classifyFunctions[4] = {
+    FWPS_CALLOUT_CLASSIFY_FN1 classifyFunctions[4] = {
         FcxGuardClassifyV4,
         FcxGuardClassifyV6,
         FcxRedirectClassifyV4,
@@ -795,7 +839,7 @@ FcxRegisterCallouts(
         callout.calloutKey = *keys[index];
         callout.classifyFn = classifyFunctions[index];
         callout.notifyFn = FcxCalloutNotify;
-        status = FwpsCalloutRegister0(DeviceObject,
+        status = FwpsCalloutRegister1(DeviceObject,
                                       &callout,
                                       &FcxCalloutIds[index]);
         if (!NT_SUCCESS(status)) {
@@ -828,6 +872,7 @@ FcxEvtDriverUnload(
     PAGED_CODE();
 
     FcxUnregisterCallouts();
+    FcxDestroyRedirectHandle();
     if (FcxProcessNotifyRegistered) {
         (VOID)PsSetCreateProcessNotifyRoutineEx(FcxProcessNotify, TRUE);
         FcxProcessNotifyRegistered = FALSE;
@@ -930,6 +975,10 @@ DriverEntry(
     if (!NT_SUCCESS(status)) {
         goto Failure;
     }
+    status = FcxCreateRedirectHandle();
+    if (!NT_SUCCESS(status)) {
+        goto Failure;
+    }
     status = FcxRegisterCallouts(WdfDeviceWdmGetDeviceObject(FcxControlDevice));
     if (!NT_SUCCESS(status)) {
         goto Failure;
@@ -942,6 +991,7 @@ Failure:
         WdfDeviceInitFree(deviceInit);
     }
     FcxUnregisterCallouts();
+    FcxDestroyRedirectHandle();
     if (FcxProcessNotifyRegistered) {
         (VOID)PsSetCreateProcessNotifyRoutineEx(FcxProcessNotify, TRUE);
         FcxProcessNotifyRegistered = FALSE;
@@ -963,5 +1013,7 @@ Failure:
 #pragma alloc_text(INIT, DriverEntry)
 #pragma alloc_text(PAGE, FcxEvtDriverUnload)
 #pragma alloc_text(PAGE, FcxEvtIoDeviceControl)
+#pragma alloc_text(PAGE, FcxCreateRedirectHandle)
+#pragma alloc_text(PAGE, FcxDestroyRedirectHandle)
 #pragma alloc_text(PAGE, FcxRegisterCallouts)
 #endif

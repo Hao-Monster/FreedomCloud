@@ -995,4 +995,39 @@ mod tests {
         assert!(policy.contains("ExAllocatePool2("));
         assert!(policy.contains("POOL_FLAG_NON_PAGED"));
     }
+
+    #[test]
+    fn kernel_callouts_expose_redirect_context_and_own_the_redirect_handle() {
+        let driver = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../windows/strict-driver/src/driver.c"
+        ));
+
+        for declaration in [
+            "static const GUID FcxProviderKey",
+            "static HANDLE FcxRedirectHandle",
+            "_In_opt_ const VOID *ClassifyContext",
+            "_In_ const FWPS_FILTER1 *Filter",
+            "FWPS_CALLOUT1 callout",
+            "FWPS_CALLOUT_CLASSIFY_FN1 classifyFunctions[4]",
+            "FwpsCalloutRegister1(",
+            "FwpsRedirectHandleCreate0(&FcxProviderKey",
+            "FwpsRedirectHandleDestroy0(FcxRedirectHandle)",
+        ] {
+            assert!(
+                driver.contains(declaration),
+                "missing redirect lifecycle invariant: {declaration}"
+            );
+        }
+        for obsolete_api in [
+            "FWPS_CALLOUT0 callout",
+            "FWPS_CALLOUT_CLASSIFY_FN0",
+            "FwpsCalloutRegister0(",
+        ] {
+            assert!(
+                !driver.contains(obsolete_api),
+                "obsolete callout API still present: {obsolete_api}"
+            );
+        }
+    }
 }
