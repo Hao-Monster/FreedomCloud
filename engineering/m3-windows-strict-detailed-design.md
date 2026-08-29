@@ -345,6 +345,27 @@ this transport, and the driver does not capture or reinject datagrams. Therefore
 the implemented userspace path cannot yet satisfy
 `udp4Redirect`, `udp6Redirect`, `dnsCaptured` or `quicCaptured`.
 
+`8134220` defines the driver/Broker datagram transfer boundary without enabling
+it. One direct-I/O batch is capped at 256 KiB and 64 records; every payload is
+1–16 KiB. The fixed 96-byte batch header binds direction, lease generation,
+policy revision, policy digest and lease nonce. Each 80-byte record header binds
+a nonzero flow token and sequence, target-group index, flags and canonical
+same-family local/remote endpoints. Records are eight-byte aligned with required
+zero padding. The Rust decoder validates the complete batch once and then yields
+borrowed payload slices, avoiding one heap allocation per datagram. Unknown
+flags, unsafe endpoints, trailing bytes and nonzero reserved/padding bytes fail
+closed.
+
+The production lease-renewal path increments its generation while retaining the
+same activation nonce. A captured batch can therefore legitimately cross one or
+more renewal ticks. Reply admission must not compare only against the latest
+generation: it must require the same live Broker process, policy revision,
+policy digest and activation nonce, and accept only a generation that the driver
+still tracks as issued within that live activation. Revocation, expiry, policy
+change, Broker exit or nonce change invalidates all such generations. The exact
+bounded in-flight-generation representation remains part of the driver queue
+implementation; capability bits remain off until it exists and is VM-proven.
+
 Initial strict acceptance requires Mihomo Fake-IP/virtual-network-card mode so
 domain mappings remain available to existing domain rules. Real-IP domain
 restoration is a separate proof item and cannot be inferred from an IP-only WFP
@@ -360,6 +381,16 @@ reinjection. It must prove both connected `connect`/`send` and unconnected
 `sendto`, DNS and QUIC in the VM bypass matrix before any UDP/DNS/QUIC
 capability bit is advertised. Until that proof exists, the driver returns no
 such capability and the Agent remains `blocking`.
+
+At `FWPM_LAYER_ALE_FLOW_ESTABLISHED_V4/V6`, where App-ID is available, the
+driver must associate a compact referenced flow context using
+`FwpsFlowAssociateContext0`. `DATAGRAM_DATA_V4/V6` has no App-ID field, so it
+must consume that context rather than re-identify the process. The classify path
+must never synchronously wait for Broker: selected outbound packets are cloned
+into a bounded nonpaged queue, the originals are blocked/absorbed, and Broker
+later returns authenticated reply batches for injection. Packets identified as
+self-injected are permitted to prevent loops. Queue overflow, absent/stale lease,
+missing flow context and Broker failure remain fail-closed.
 
 Primary constraints: [Microsoft connected-UDP local-proxy limitation](https://learn.microsoft.com/en-us/troubleshoot/windows-hardware/drivers/redirection-connected-udp-traffic-local-proxy-fail)
 and [Microsoft non-TCP redirect-record contract](https://learn.microsoft.com/en-us/windows/win32/winsock/sio-query-wfp-connection-redirect-records).
