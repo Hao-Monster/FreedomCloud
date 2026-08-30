@@ -1776,6 +1776,40 @@ mod tests {
     }
 
     #[test]
+    fn kernel_callout_unregister_preserves_ids_until_success_and_reports_failures() {
+        let driver = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../windows/strict-driver/src/driver.c"
+        ));
+        let unregister = driver
+            .split("FcxUnregisterCallouts(")
+            .nth(1)
+            .and_then(|body| body.split("FcxEvtDriverUnload(").next())
+            .expect("callout unregister function is present");
+
+        for invariant in [
+            "NTSTATUS status;",
+            "status = FwpsCalloutUnregisterById0(FcxCalloutIds[index]);",
+            "if (NT_SUCCESS(status) || status == STATUS_FWP_CALLOUT_NOT_FOUND)",
+            "FcxCalloutIds[index] = 0;",
+            "--FcxRegisteredCallouts;",
+            "FcxReportCalloutUnregisterFailure(",
+            "KeDelayExecutionThread(KernelMode, FALSE, &retryDelay)",
+        ] {
+            assert!(
+                unregister.contains(invariant),
+                "missing safe unregister invariant: {invariant}"
+            );
+        }
+        assert!(
+            unregister.find("FwpsCalloutUnregisterById0").unwrap()
+                < unregister.find("FcxCalloutIds[index] = 0;").unwrap(),
+            "a callout ID must remain live until WFP confirms unregister"
+        );
+        assert!(!unregister.contains("(VOID)FwpsCalloutUnregisterById0"));
+    }
+
+    #[test]
     fn kernel_datagram_capture_is_bounded_lease_bound_and_absorbs_only_after_delivery() {
         let driver = include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),

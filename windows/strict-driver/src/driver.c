@@ -3344,15 +3344,62 @@ FcxRegisterCallouts(
 
 static
 VOID
+FcxReportCalloutUnregisterFailure(
+    _In_ UINT32 Index,
+    _In_ UINT32 CalloutId,
+    _In_ NTSTATUS Status,
+    _In_ ULONG RetryCount
+    )
+{
+    // Emit the first failure and then powers of two so a stuck unload remains
+    // observable without creating an unbounded kernel log stream.
+    if (RetryCount == 1 || (RetryCount & (RetryCount - 1)) == 0) {
+        (VOID)DbgPrintEx(DPFLTR_IHVNETWORK_ID,
+                         DPFLTR_ERROR_LEVEL,
+                         "FlClashStrict: callout unregister retry index=%lu id=%lu status=0x%08lx attempt=%lu\n",
+                         (ULONG)Index,
+                         (ULONG)CalloutId,
+                         (ULONG)Status,
+                         RetryCount);
+    }
+}
+
+static
+NTSTATUS
 FcxUnregisterCallouts(
     VOID
     )
 {
+    NTSTATUS status;
+    LARGE_INTEGER retryDelay;
+    ULONG retryCount = 0;
+
+    // WFP forbids a callout driver from returning from unload while a callout
+    // remains registered. A bounded sleep prevents a transient busy/in-use
+    // status from becoming a CPU or log hot loop; IDs remain authoritative
+    // until WFP confirms removal.
+    retryDelay.QuadPart = -100000ll; // 10 ms, expressed in 100 ns units.
     while (FcxRegisteredCallouts != 0) {
-        UINT32 index = --FcxRegisteredCallouts;
-        (VOID)FwpsCalloutUnregisterById0(FcxCalloutIds[index]);
-        FcxCalloutIds[index] = 0;
+        UINT32 index = FcxRegisteredCallouts - 1;
+        status = FwpsCalloutUnregisterById0(FcxCalloutIds[index]);
+        if (NT_SUCCESS(status) || status == STATUS_FWP_CALLOUT_NOT_FOUND) {
+            FcxCalloutIds[index] = 0;
+            --FcxRegisteredCallouts;
+            retryCount = 0;
+            continue;
+        }
+
+        ++retryCount;
+        FcxReportCalloutUnregisterFailure(index,
+                                          FcxCalloutIds[index],
+                                          status,
+                                          retryCount);
+        if (status == STATUS_DEVICE_BUSY) {
+            FcxDrainUdpFlowContexts(FALSE);
+        }
+        (VOID)KeDelayExecutionThread(KernelMode, FALSE, &retryDelay);
     }
+    return STATUS_SUCCESS;
 }
 
 VOID
@@ -3368,7 +3415,7 @@ FcxEvtDriverUnload(
         FcxProcessNotifyRegistered = FALSE;
     }
     FcxReleaseLease();
-    FcxUnregisterCallouts();
+    (VOID)FcxUnregisterCallouts();
     FcxDestroyTransportInjectionHandles();
     FcxDestroyDatagramNblPool();
     FcxDestroyRedirectHandle();
@@ -3525,7 +3572,7 @@ Failure:
     if (deviceInit != NULL) {
         WdfDeviceInitFree(deviceInit);
     }
-    FcxUnregisterCallouts();
+    (VOID)FcxUnregisterCallouts();
     FcxDestroyTransportInjectionHandles();
     FcxDestroyDatagramNblPool();
     FcxDestroyRedirectHandle();
