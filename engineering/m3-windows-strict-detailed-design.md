@@ -442,6 +442,18 @@ cannot free creator-owned bookkeeping. Lease replacement, revocation and unload
 stop new associations, remove existing contexts and drain them before callout
 unregistration.
 
+`29aef8c`/`8d7da73` make the final unregister boundary fail-safe and
+observable. The driver keeps each runtime callout ID authoritative until WFP
+reports success or that the callout is already absent. `STATUS_DEVICE_BUSY`
+triggers another flow-
+context drain; all unconfirmed outcomes retry after 10 ms instead of allowing
+dependent injection handles or pools to be freed. Kernel diagnostics are emitted
+on the first failure and then only at power-of-two attempts; the attempt counter
+saturates rather than wrapping, bounding log volume without hiding a stuck
+unload. This deliberately favors memory safety over a false successful stop;
+Driver Verifier fault/race execution and a measured VM service-stop bound remain
+required before release.
+
 `56b6a05` adds a separate two-phase UDP admission gate; an endpoint lease alone
 still cannot open UDP. Broker first installs and exactly enumerates the complete
 dynamic flow-filter graph while the gate is closed, then asks the lease-owning
