@@ -3389,7 +3389,9 @@ FcxUnregisterCallouts(
             continue;
         }
 
-        ++retryCount;
+        if (retryCount != MAXULONG) {
+            ++retryCount;
+        }
         FcxReportCalloutUnregisterFailure(index,
                                           FcxCalloutIds[index],
                                           status,

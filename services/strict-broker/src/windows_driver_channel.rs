@@ -1794,6 +1794,7 @@ mod tests {
             "FcxCalloutIds[index] = 0;",
             "--FcxRegisteredCallouts;",
             "FcxReportCalloutUnregisterFailure(",
+            "if (retryCount != MAXULONG)",
             "KeDelayExecutionThread(KernelMode, FALSE, &retryDelay)",
         ] {
             assert!(
