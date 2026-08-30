@@ -27,6 +27,8 @@
     <ConfigurationType>Driver</ConfigurationType>
     <UseDebugLibraries Condition="'$(Configuration)' == 'Debug'">true</UseDebugLibraries>
     <UseDebugLibraries Condition="'$(Configuration)' == 'Release'">false</UseDebugLibraries>
+    <RunCodeAnalysis Condition="'$(Configuration)' == 'Release'">true</RunCodeAnalysis>
+    <CodeAnalysisTreatWarningsAsErrors Condition="'$(Configuration)' == 'Release'">true</CodeAnalysisTreatWarningsAsErrors>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
   <ImportGroup Label="PropertySheets">
@@ -36,6 +38,10 @@
     <TargetName>FlClashStrictCallout</TargetName>
     <OutDir>$(ProjectDir)x64\$(Configuration)\</OutDir>
     <IntDir>$(ProjectDir)x64\$(Configuration)\obj\</IntDir>
+    <!-- Signing is a release-pipeline responsibility. Local builds must never
+         create or trust an implicit WDK test certificate. -->
+    <EnableTestSign>false</EnableTestSign>
+    <SignMode>Off</SignMode>
   </PropertyGroup>
   <ItemDefinitionGroup>
     <PreBuildEvent>
@@ -44,7 +50,7 @@ powershell.exe -NoLogo -NoProfile -NonInteractive -File "$(ProjectDir)tools\New-
     </PreBuildEvent>
     <ClCompile>
       <AdditionalIncludeDirectories>$(ProjectDir)include;$(ProjectDir)src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <PreprocessorDefinitions>NTDDI_VERSION=NTDDI_WIN10_VB;WINVER=0x0A00;_WIN32_WINNT=0x0A00;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>NTDDI_VERSION=NTDDI_WIN10_VB;WINVER=0x0A00;_WIN32_WINNT=0x0A00;NDIS689=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <WarningLevel>Level4</WarningLevel>
       <TreatWarningAsError>true</TreatWarningAsError>
       <SDLCheck>true</SDLCheck>
@@ -57,7 +63,6 @@ powershell.exe -NoLogo -NoProfile -NonInteractive -File "$(ProjectDir)tools\New-
     </Link>
     <DriverSign>
       <FileDigestAlgorithm>sha256</FileDigestAlgorithm>
-      <SignMode>Off</SignMode>
     </DriverSign>
   </ItemDefinitionGroup>
   <ItemGroup>

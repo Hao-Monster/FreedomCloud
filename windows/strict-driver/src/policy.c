@@ -99,15 +99,15 @@ FcxValidateWireHeader(
         return STATUS_INVALID_PARAMETER;
     }
 
-    status = RtlULongMult(Header->RuleCount,
-                          FCX_STRICT_POLICY_RULE_BYTES,
-                          &wireRuleBytes);
+    status = RtlUInt32Mult(Header->RuleCount,
+                           FCX_STRICT_POLICY_RULE_BYTES,
+                           &wireRuleBytes);
     if (!NT_SUCCESS(status)) {
         return STATUS_INTEGER_OVERFLOW;
     }
-    status = RtlULongAdd(Header->RulesOffset,
-                         wireRuleBytes,
-                         &expectedAppIdsOffset);
+    status = RtlUInt32Add(Header->RulesOffset,
+                          wireRuleBytes,
+                          &expectedAppIdsOffset);
     if (!NT_SUCCESS(status) ||
         Header->AppIdsOffset != expectedAppIdsOffset ||
         Header->AppIdsOffset > InputBytes ||
@@ -115,7 +115,7 @@ FcxValidateWireHeader(
         return STATUS_INVALID_PARAMETER;
     }
 
-    status = RtlULongMult(Header->RuleCount, 2, &doubledRules);
+    status = RtlUInt32Mult(Header->RuleCount, 2, &doubledRules);
     if (!NT_SUCCESS(status)) {
         return STATUS_INTEGER_OVERFLOW;
     }
@@ -125,27 +125,28 @@ FcxValidateWireHeader(
         }
         buckets <<= 1;
     }
-    status = RtlULongMult(Header->RuleCount,
-                          (UINT32)sizeof(FCX_STRICT_RULE_RECORD),
-                          InternalRuleBytes);
+    status = RtlUInt32Mult(Header->RuleCount,
+                           (UINT32)sizeof(FCX_STRICT_RULE_RECORD),
+                           InternalRuleBytes);
     if (!NT_SUCCESS(status)) {
         return STATUS_INTEGER_OVERFLOW;
     }
-    status = RtlULongMult(buckets, (UINT32)sizeof(UINT32), &bucketBytes);
+    status = RtlUInt32Mult(buckets, (UINT32)sizeof(UINT32), &bucketBytes);
     if (!NT_SUCCESS(status)) {
         return STATUS_INTEGER_OVERFLOW;
     }
-    status = RtlULongAdd(*InternalRuleBytes, bucketBytes, &dataBytes);
+    status = RtlUInt32Add(*InternalRuleBytes, bucketBytes, &dataBytes);
     if (!NT_SUCCESS(status)) {
         return STATUS_INTEGER_OVERFLOW;
     }
-    status = RtlULongAdd(dataBytes, Header->AppIdsBytes, &dataBytes);
+    status = RtlUInt32Add(dataBytes, Header->AppIdsBytes, &dataBytes);
     if (!NT_SUCCESS(status)) {
         return STATUS_INTEGER_OVERFLOW;
     }
-    status = RtlULongAdd(FIELD_OFFSET(FCX_STRICT_POLICY_SNAPSHOT, Data),
-                         dataBytes,
-                         &allocation);
+    status = RtlUInt32Add(
+        (UINT32)FIELD_OFFSET(FCX_STRICT_POLICY_SNAPSHOT, Data),
+        dataBytes,
+        &allocation);
     if (!NT_SUCCESS(status)) {
         return STATUS_INTEGER_OVERFLOW;
     }
@@ -274,7 +275,7 @@ FcxStrictPolicyBuild(
         RtlCopyMemory(&rule,
                       wireRules + (index * FCX_STRICT_POLICY_RULE_BYTES),
                       sizeof(rule));
-        status = RtlULongAdd(rule.AppIdOffset, rule.AppIdBytes, &appEnd);
+        status = RtlUInt32Add(rule.AppIdOffset, rule.AppIdBytes, &appEnd);
         if (!NT_SUCCESS(status) ||
             rule.Reserved != 0 ||
             rule.FamilyIndex >= 128 ||
@@ -352,14 +353,16 @@ Failure:
 
 VOID
 FcxStrictPolicyDestroy(
-    _Frees_ptr_opt_ FCX_STRICT_POLICY_SNAPSHOT *Snapshot
+    _Pre_opt_valid_ _Frees_ptr_opt_ FCX_STRICT_POLICY_SNAPSHOT *Snapshot
     )
 {
     if (Snapshot != NULL) {
+        const UINT32 snapshotHeaderBytes =
+            (UINT32)FIELD_OFFSET(FCX_STRICT_POLICY_SNAPSHOT, Data);
         UINT32 bytes = Snapshot->AllocationBytes;
-        if (bytes >= FIELD_OFFSET(FCX_STRICT_POLICY_SNAPSHOT, Data) &&
+        if (bytes >= snapshotHeaderBytes &&
             bytes <= FCX_STRICT_MAX_POLICY_BYTES +
-                     FIELD_OFFSET(FCX_STRICT_POLICY_SNAPSHOT, Data) +
+                     snapshotHeaderBytes +
                      (FCX_STRICT_MAX_RULES * sizeof(FCX_STRICT_RULE_RECORD)) +
                      (16384u * sizeof(UINT32))) {
             RtlSecureZeroMemory(Snapshot, bytes);

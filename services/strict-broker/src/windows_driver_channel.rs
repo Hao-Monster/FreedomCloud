@@ -1618,7 +1618,7 @@ mod tests {
             receive_body.contains("FcxLeaseOwnsRequest(Request, NULL)")
                 && !receive_body.contains("FcxDatagramPathOwnsRequest(Request, NULL)")
                 && receive_body
-                    .find("ExAcquireFastMutex(&FcxLeaseMutationLock)")
+                    .find("WdfWaitLockAcquire(FcxLeaseMutationLock, NULL)")
                     .unwrap()
                     < receive_body
                         .find("FcxLeaseOwnsRequest(Request, NULL)")
@@ -1633,7 +1633,7 @@ mod tests {
                     .find("WdfRequestForwardToIoQueue(Request, FcxDatagramReceiveQueue)")
                     .unwrap()
                     < receive_body
-                        .find("ExReleaseFastMutex(&FcxLeaseMutationLock)")
+                        .find("WdfWaitLockRelease(FcxLeaseMutationLock)")
                         .unwrap(),
             "the lease owner must be able to pre-arm one bounded receive while admission is closed"
         );

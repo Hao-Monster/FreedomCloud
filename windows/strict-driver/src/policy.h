@@ -44,7 +44,7 @@ FcxStrictPolicyBuild(
 
 VOID
 FcxStrictPolicyDestroy(
-    _Frees_ptr_opt_ FCX_STRICT_POLICY_SNAPSHOT *Snapshot
+    _Pre_opt_valid_ _Frees_ptr_opt_ FCX_STRICT_POLICY_SNAPSHOT *Snapshot
     );
 
 _Must_inspect_result_

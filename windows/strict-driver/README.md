@@ -53,13 +53,30 @@ injection bypasses IPsec processing.
 
 ## Build contract
 
-Use a Visual Studio + WDK host with the x64 KMDF toolset. A 128-bit build ID
+The build is pinned to WDK/SDK `10.0.28000.2526` through `packages.config` and
+`Directory.Build.props`. Restore those packages with an official NuGet client
+before building:
+
+```powershell
+nuget.exe restore .\packages.config -PackagesDirectory .\packages `
+  -Source https://api.nuget.org/v3/index.json -NonInteractive
+```
+
+Use the 64-bit Visual Studio 2026 MSBuild executable with the x64 KMDF toolset.
+The x64 WDK package contains the x64 ApiValidator, so invoking 32-bit MSBuild
+would incorrectly search for an unavailable x86 validator. A 128-bit build ID
 from the signed package manifest is mandatory:
 
 ```powershell
-msbuild .\FlClashStrictCallout.vcxproj /m /p:Configuration=Release `
+& '<VisualStudio>\MSBuild\Current\Bin\amd64\MSBuild.exe' `
+  .\FlClashStrictCallout.vcxproj /t:Rebuild /m /p:Configuration=Release `
   /p:Platform=x64 /p:FlClashDriverBuildId=0123456789abcdef0123456789abcdef
 ```
+
+The Release configuration treats compiler and WDK code-analysis warnings as
+errors and runs DriverMinimumRules plus ApiValidator. A successful local build
+therefore proves the pinned compiler/static-analysis gate, but not driver load,
+runtime behavior, signing or Windows Hardware Lab Kit qualification.
 
 The project deliberately disables automatic signing. Release packaging must
 inject the authorized signing identity, emit a SHA-256 signed artifact and use
@@ -71,6 +88,7 @@ test certificate for a release artifact.
 Compilation and static analysis are allowed on a development host. Driver
 loading, service creation, WFP object installation, test-signing mode and
 network classification tests run only in the isolated Windows 11 VM matrix.
-The current repository host has a Visual Studio compiler installation but no
-complete WDK kernel headers or driver tools, so the driver build gate remains
-`NOT RUN` rather than being reported as successful.
+The current repository host completed the pinned Release compile,
+DriverMinimumRules and ApiValidator gates without loading the resulting unsigned
+driver. Release signing, Driver Verifier, real IOCTL/WFP execution and network
+qualification remain VM/release-pipeline gates.

@@ -1,7 +1,14 @@
-#include <ntddk.h>
+#include <ntifs.h>
 #include <wdf.h>
+
+// WDK networking headers intentionally expose anonymous unions. Keep the
+// narrow toolchain exception around Microsoft headers so project code remains
+// warning-clean under /W4 and /WX.
+#pragma warning(push)
+#pragma warning(disable:4201)
 #include <fwpsk.h>
-#include <ndis.h>
+#pragma warning(pop)
+
 #include <wdmsec.h>
 
 #include "../include/flclash_strict_build.h"
@@ -11,6 +18,31 @@
 DRIVER_INITIALIZE DriverEntry;
 EVT_WDF_DRIVER_UNLOAD FcxEvtDriverUnload;
 EVT_WDF_IO_QUEUE_IO_DEVICE_CONTROL FcxEvtIoDeviceControl;
+
+static NTSTATUS FcxCreateRedirectHandle(VOID);
+static VOID FcxDestroyRedirectHandle(VOID);
+static NTSTATUS FcxCreateDatagramNblPool(
+    _In_ PDRIVER_OBJECT DriverObject
+    );
+static VOID FcxDestroyDatagramNblPool(VOID);
+static NTSTATUS FcxCreateTransportInjectionHandles(VOID);
+static VOID FcxDestroyTransportInjectionHandles(VOID);
+static NTSTATUS FcxRegisterCallouts(
+    _In_ PDEVICE_OBJECT DeviceObject
+    );
+
+#ifdef ALLOC_PRAGMA
+#pragma alloc_text(INIT, DriverEntry)
+#pragma alloc_text(PAGE, FcxEvtDriverUnload)
+#pragma alloc_text(PAGE, FcxEvtIoDeviceControl)
+#pragma alloc_text(PAGE, FcxCreateRedirectHandle)
+#pragma alloc_text(PAGE, FcxDestroyRedirectHandle)
+#pragma alloc_text(PAGE, FcxCreateDatagramNblPool)
+#pragma alloc_text(PAGE, FcxDestroyDatagramNblPool)
+#pragma alloc_text(PAGE, FcxCreateTransportInjectionHandles)
+#pragma alloc_text(PAGE, FcxDestroyTransportInjectionHandles)
+#pragma alloc_text(PAGE, FcxRegisterCallouts)
+#endif
 
 static const UNICODE_STRING FcxDeviceName =
     RTL_CONSTANT_STRING(L"\\Device\\FlClashStrict");
@@ -141,7 +173,7 @@ static volatile LONG64 FcxPolicyGeneration;
 static PEX_RUNDOWN_REF_CACHE_AWARE FcxLeaseRundown;
 static volatile PVOID FcxLeaseState;
 static volatile LONG64 FcxLeaseGeneration;
-static FAST_MUTEX FcxLeaseMutationLock;
+static WDFWAITLOCK FcxLeaseMutationLock;
 static BOOLEAN FcxProcessNotifyRegistered;
 static UINT32 FcxCalloutIds[8];
 static UINT32 FcxRegisteredCallouts;
@@ -617,7 +649,7 @@ VOID
 FcxClassifyTcpRedirect(
     _In_ const FWPS_INCOMING_VALUES0 *IncomingValues,
     _In_ const FWPS_INCOMING_METADATA_VALUES0 *IncomingMetadata,
-    _In_ const VOID *ClassifyContext,
+    _In_opt_ const VOID *ClassifyContext,
     _In_ const FWPS_FILTER1 *Filter,
     _In_ UINT32 AppIdField,
     _In_ UINT32 ProtocolField,
@@ -951,6 +983,7 @@ FcxReferenceUdpFlowContext(
     LONG referenceCount = InterlockedIncrement(&Context->ReferenceCount);
 
     NT_ASSERT(referenceCount > 1);
+    UNREFERENCED_PARAMETER(referenceCount);
 }
 
 static
@@ -2106,7 +2139,7 @@ FcxLeaseMatchesPolicy(
 static
 VOID
 FcxDestroyLease(
-    _Frees_ptr_opt_ FCX_STRICT_LEASE_STATE *Lease
+    _Pre_opt_valid_ _Frees_ptr_opt_ FCX_STRICT_LEASE_STATE *Lease
     )
 {
     PEPROCESS process;
@@ -2155,9 +2188,9 @@ FcxReleaseLease(
     VOID
     )
 {
-    ExAcquireFastMutex(&FcxLeaseMutationLock);
+    (VOID)WdfWaitLockAcquire(FcxLeaseMutationLock, NULL);
     FcxReleaseLeaseLocked();
-    ExReleaseFastMutex(&FcxLeaseMutationLock);
+    WdfWaitLockRelease(FcxLeaseMutationLock);
 }
 
 static
@@ -2169,7 +2202,7 @@ FcxReplaceLease(
     FCX_STRICT_LEASE_STATE *oldLease;
     BOOLEAN preserveDatagramActivation;
 
-    ExAcquireFastMutex(&FcxLeaseMutationLock);
+    (VOID)WdfWaitLockAcquire(FcxLeaseMutationLock, NULL);
     oldLease = (FCX_STRICT_LEASE_STATE *)InterlockedCompareExchangePointer(
         (PVOID volatile *)&FcxLeaseState,
         NULL,
@@ -2203,7 +2236,7 @@ FcxReplaceLease(
     if (!preserveDatagramActivation) {
         InterlockedExchange(&FcxUdpStopping, 0);
     }
-    ExReleaseFastMutex(&FcxLeaseMutationLock);
+    WdfWaitLockRelease(FcxLeaseMutationLock);
 }
 
 static
@@ -2307,7 +2340,7 @@ FcxExpireLeaseIfNeeded(
 {
     FCX_STRICT_LEASE_STATE *lease;
 
-    ExAcquireFastMutex(&FcxLeaseMutationLock);
+    (VOID)WdfWaitLockAcquire(FcxLeaseMutationLock, NULL);
     lease = (FCX_STRICT_LEASE_STATE *)InterlockedCompareExchangePointer(
         (PVOID volatile *)&FcxLeaseState,
         NULL,
@@ -2317,7 +2350,7 @@ FcxExpireLeaseIfNeeded(
          PsGetProcessExitStatus(lease->BrokerProcess) != STATUS_PENDING)) {
         FcxReleaseLeaseLocked();
     }
-    ExReleaseFastMutex(&FcxLeaseMutationLock);
+    WdfWaitLockRelease(FcxLeaseMutationLock);
 }
 
 static
@@ -2341,7 +2374,7 @@ FcxProcessNotify(
     if (lease == NULL) {
         return;
     }
-    ExAcquireFastMutex(&FcxLeaseMutationLock);
+    (VOID)WdfWaitLockAcquire(FcxLeaseMutationLock, NULL);
     lease = (FCX_STRICT_LEASE_STATE *)InterlockedCompareExchangePointer(
         (PVOID volatile *)&FcxLeaseState,
         NULL,
@@ -2349,7 +2382,7 @@ FcxProcessNotify(
     if (lease != NULL && lease->BrokerProcess == Process) {
         FcxReleaseLeaseLocked();
     }
-    ExReleaseFastMutex(&FcxLeaseMutationLock);
+    WdfWaitLockRelease(FcxLeaseMutationLock);
 }
 
 static
@@ -2464,7 +2497,7 @@ FcxSetDatagramPathActive(
 {
     NTSTATUS status = STATUS_SUCCESS;
 
-    ExAcquireFastMutex(&FcxLeaseMutationLock);
+    (VOID)WdfWaitLockAcquire(FcxLeaseMutationLock, NULL);
     if (Active) {
         if (!FcxLeaseOwnsRequest(Request, NULL)) {
             status = STATUS_ACCESS_DENIED;
@@ -2488,7 +2521,7 @@ FcxSetDatagramPathActive(
             ExReInitializeRundownProtectionCacheAware(FcxLeaseRundown);
         }
     }
-    ExReleaseFastMutex(&FcxLeaseMutationLock);
+    WdfWaitLockRelease(FcxLeaseMutationLock);
     return status;
 }
 
@@ -2513,7 +2546,7 @@ FcxQueueDatagramReceive(
         OutputBufferLength != FCX_STRICT_DATAGRAM_MAX_BATCH_BYTES) {
         return STATUS_INVALID_BUFFER_SIZE;
     }
-    ExAcquireFastMutex(&FcxLeaseMutationLock);
+    (VOID)WdfWaitLockAcquire(FcxLeaseMutationLock, NULL);
     /* One lease-owned request may be pinned before admission opens so the
        Broker can prove its bounded receive path is ready first. Reply IOCTLs
        continue to require FcxDatagramPathOwnsRequest. */
@@ -2547,7 +2580,7 @@ FcxQueueDatagramReceive(
     status = WdfRequestForwardToIoQueue(Request, FcxDatagramReceiveQueue);
 
 Exit:
-    ExReleaseFastMutex(&FcxLeaseMutationLock);
+    WdfWaitLockRelease(FcxLeaseMutationLock);
     return status;
 }
 
@@ -3013,7 +3046,10 @@ FcxEvtIoDeviceControl(
                                              sizeof(*output),
                                              (PVOID *)&output,
                                              &outputBytes);
-    if (!NT_SUCCESS(status)) {
+    if (!NT_SUCCESS(status) || outputBytes < sizeof(*output)) {
+        if (NT_SUCCESS(status)) {
+            status = STATUS_BUFFER_TOO_SMALL;
+        }
         WdfRequestComplete(Request, status);
         return;
     }
@@ -3378,7 +3414,11 @@ DriverEntry(
     if (!NT_SUCCESS(status)) {
         return status;
     }
-    ExInitializeFastMutex(&FcxLeaseMutationLock);
+    status = WdfWaitLockCreate(WDF_NO_OBJECT_ATTRIBUTES,
+                               &FcxLeaseMutationLock);
+    if (!NT_SUCCESS(status)) {
+        return status;
+    }
     KeInitializeSpinLock(&FcxUdpFlowLock);
     InitializeListHead(&FcxUdpFlowList);
     for (bucketIndex = 0;
@@ -3440,8 +3480,7 @@ DriverEntry(
     WDF_IO_QUEUE_CONFIG_INIT(&queueConfig, WdfIoQueueDispatchManual);
     queueConfig.PowerManaged = WdfFalse;
     WDF_OBJECT_ATTRIBUTES_INIT(&attributes);
-    WDF_OBJECT_ATTRIBUTES_SET_EXECUTION_LEVEL(&attributes,
-                                               WdfExecutionLevelPassive);
+    attributes.ExecutionLevel = WdfExecutionLevelPassive;
     status = WdfIoQueueCreate(FcxControlDevice,
                               &queueConfig,
                               &attributes,
@@ -3455,8 +3494,7 @@ DriverEntry(
     queueConfig.PowerManaged = WdfFalse;
     queueConfig.EvtIoDeviceControl = FcxEvtIoDeviceControl;
     WDF_OBJECT_ATTRIBUTES_INIT(&attributes);
-    WDF_OBJECT_ATTRIBUTES_SET_EXECUTION_LEVEL(&attributes,
-                                               WdfExecutionLevelPassive);
+    attributes.ExecutionLevel = WdfExecutionLevelPassive;
     status = WdfIoQueueCreate(FcxControlDevice,
                               &queueConfig,
                               &attributes,
@@ -3508,16 +3546,3 @@ Failure:
     }
     return status;
 }
-
-#ifdef ALLOC_PRAGMA
-#pragma alloc_text(INIT, DriverEntry)
-#pragma alloc_text(PAGE, FcxEvtDriverUnload)
-#pragma alloc_text(PAGE, FcxEvtIoDeviceControl)
-#pragma alloc_text(PAGE, FcxCreateRedirectHandle)
-#pragma alloc_text(PAGE, FcxDestroyRedirectHandle)
-#pragma alloc_text(PAGE, FcxCreateDatagramNblPool)
-#pragma alloc_text(PAGE, FcxDestroyDatagramNblPool)
-#pragma alloc_text(PAGE, FcxCreateTransportInjectionHandles)
-#pragma alloc_text(PAGE, FcxDestroyTransportInjectionHandles)
-#pragma alloc_text(PAGE, FcxRegisterCallouts)
-#endif
