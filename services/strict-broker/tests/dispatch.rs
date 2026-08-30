@@ -37,7 +37,7 @@ impl FilterBackend for FakeBackend {
         Ok(())
     }
 
-    fn install_redirects(
+    fn install_data_plane(
         &mut self,
         _policy: &StrictPolicyBundle,
         _verified_app_ids: &VerifiedPolicyAppIds,
@@ -47,13 +47,13 @@ impl FilterBackend for FakeBackend {
             bail!("redirect install failed");
         }
         self.snapshot.filter_generation += 1;
-        self.snapshot.redirect_filters_installed = true;
+        self.snapshot.data_plane_filters_installed = true;
         Ok(())
     }
 
-    fn remove_redirects(&mut self) -> Result<()> {
+    fn remove_data_plane(&mut self) -> Result<()> {
         self.snapshot.filter_generation += 1;
-        self.snapshot.redirect_filters_installed = false;
+        self.snapshot.data_plane_filters_installed = false;
         Ok(())
     }
 
@@ -266,7 +266,7 @@ fn dispatcher_uses_internal_health_and_force_blocking_removes_redirects() {
             .backend_mut()
             .snapshot()
             .unwrap()
-            .redirect_filters_installed
+            .data_plane_filters_installed
     );
 
     let blocked = dispatcher.dispatch(authorize(BrokerCommand::ForceBlocking { revision: 7 }));
@@ -344,7 +344,7 @@ fn dispatcher_rejects_an_ingress_for_a_different_target_group() {
             .backend_mut()
             .snapshot()
             .unwrap()
-            .redirect_filters_installed
+            .data_plane_filters_installed
     );
     assert_eq!(dispatcher.health_probe().measurements, 0);
     assert_eq!(dispatcher.health_probe().deactivations, 0);

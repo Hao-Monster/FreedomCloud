@@ -66,7 +66,7 @@ fn plan_indexes_app_filters_and_limits_global_filters_to_conditional_udp_capture
 
     assert_eq!(plan.rules().len(), 3);
     assert_eq!(plan.guard_filters().len(), 8);
-    assert_eq!(plan.redirect_filters().len(), 8);
+    assert_eq!(plan.data_plane_filters().len(), 8);
     assert!(plan
         .guard_filters()
         .iter()
@@ -80,7 +80,7 @@ fn plan_indexes_app_filters_and_limits_global_filters_to_conditional_udp_capture
             && filter.is_indexed()
             && !filter.app_id().is_empty()));
     assert!(plan
-        .redirect_filters()
+        .data_plane_filters()
         .iter()
         .all(|filter| filter.lifetime() == WfpFilterLifetime::Dynamic));
     assert_eq!(
@@ -106,7 +106,7 @@ fn plan_indexes_app_filters_and_limits_global_filters_to_conditional_udp_capture
     let filter_keys: BTreeSet<_> = plan
         .guard_filters()
         .iter()
-        .chain(plan.redirect_filters())
+        .chain(plan.data_plane_filters())
         .map(|filter| filter.key())
         .collect();
     assert_eq!(filter_keys.len(), 16);
@@ -135,26 +135,26 @@ fn plan_indexes_app_filters_and_limits_global_filters_to_conditional_udp_capture
             && filter.permits_if_callout_unregistered()
             && filter.callout_action() == WfpFilterAction::ConditionalCapture
     }));
-    assert!(plan.redirect_filters().iter().all(|filter| !matches!(
+    assert!(plan.data_plane_filters().iter().all(|filter| !matches!(
         filter.layer(),
         WfpLayer::DatagramDataV4 | WfpLayer::DatagramDataV6
     )));
     assert_eq!(
-        plan.redirect_filters()
+        plan.data_plane_filters()
             .iter()
             .filter(|filter| matches!(filter.layer(), WfpLayer::FlowEstablishedV4))
             .count(),
         2
     );
     assert_eq!(
-        plan.redirect_filters()
+        plan.data_plane_filters()
             .iter()
             .filter(|filter| matches!(filter.layer(), WfpLayer::FlowEstablishedV6))
             .count(),
         2
     );
     assert!(plan
-        .redirect_filters()
+        .data_plane_filters()
         .iter()
         .filter(|filter| {
             matches!(
@@ -179,25 +179,25 @@ fn plan_order_is_fail_closed_and_object_deletion_is_allowlisted() {
         &[
             PlanInstallStep::UploadImmutableSnapshot,
             PlanInstallStep::InstallPersistentGuards,
-            PlanInstallStep::InstallDynamicRedirects,
+            PlanInstallStep::InstallDynamicDataPlane,
         ]
     );
     assert_eq!(
         plan.remove_steps(),
         &[
-            PlanRemoveStep::RemoveDynamicRedirects,
+            PlanRemoveStep::RemoveDynamicDataPlane,
             PlanRemoveStep::RemovePersistentGuards,
             PlanRemoveStep::UnloadImmutableSnapshot,
         ]
     );
-    for filter in plan.guard_filters().iter().chain(plan.redirect_filters()) {
+    for filter in plan.guard_filters().iter().chain(plan.data_plane_filters()) {
         assert!(plan.owns_filter_key(filter.key()));
     }
     assert!(!plan.owns_filter_key(WfpObjectKey::from_bytes([0xff; 16])));
 }
 
 #[test]
-fn block_only_plan_never_installs_redirect_filters() {
+fn block_only_plan_never_installs_data_plane_filters() {
     let policy = StrictPolicyBundle::new(
         9,
         vec![StrictPolicyEntry::block(identity(
@@ -208,7 +208,7 @@ fn block_only_plan_never_installs_redirect_filters() {
     )
     .unwrap();
     let plan = WfpPolicyPlan::new(&policy, &verified(&policy)).unwrap();
-    assert!(plan.redirect_filters().is_empty());
+    assert!(plan.data_plane_filters().is_empty());
     assert_eq!(plan.guard_filters().len(), 2);
     assert_eq!(
         plan.install_steps(),

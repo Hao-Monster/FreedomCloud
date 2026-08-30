@@ -45,9 +45,9 @@ impl WfpControlPlane for FakeControl {
         Ok(())
     }
 
-    fn replace_redirect_filters(&mut self, filters: &[WfpFilterSpec]) -> Result<()> {
+    fn replace_data_plane_filters(&mut self, filters: &[WfpFilterSpec]) -> Result<()> {
         self.events.push("replaceRedirects");
-        self.snapshot.redirect_filter_keys = filters.iter().map(WfpFilterSpec::key).collect();
+        self.snapshot.data_plane_filter_keys = filters.iter().map(WfpFilterSpec::key).collect();
         self.snapshot.filter_generation += 1;
         Ok(())
     }
@@ -70,9 +70,9 @@ impl WfpControlPlane for FakeControl {
         Ok(())
     }
 
-    fn remove_redirect_filters(&mut self) -> Result<()> {
+    fn remove_data_plane_filters(&mut self) -> Result<()> {
         self.events.push("removeRedirects");
-        self.snapshot.redirect_filter_keys.clear();
+        self.snapshot.data_plane_filter_keys.clear();
         self.snapshot.filter_generation += 1;
         Ok(())
     }
@@ -134,7 +134,7 @@ fn guards_upload_snapshot_before_atomic_filter_install() {
     let state = backend.snapshot().unwrap();
 
     assert!(state.guard_filters_installed);
-    assert!(!state.redirect_filters_installed);
+    assert!(!state.data_plane_filters_installed);
     assert_eq!(
         backend.control().events,
         ["uploadSnapshot", "replaceGuards", "snapshot", "snapshot"]
@@ -169,10 +169,10 @@ fn redirects_are_removed_before_guards_and_snapshot_unloads_last() {
     let app_ids = verified(&desired);
     backend.install_guards(&desired, &app_ids, &digest).unwrap();
     backend
-        .install_redirects(&desired, &app_ids, &digest)
+        .install_data_plane(&desired, &app_ids, &digest)
         .unwrap();
 
-    backend.remove_redirects().unwrap();
+    backend.remove_data_plane().unwrap();
     backend.remove_guards().unwrap();
 
     let tail = &backend.control().events[backend.control().events.len() - 9..];
@@ -204,7 +204,7 @@ fn datagram_admission_is_armed_after_filter_attestation_and_revoked_before_remov
     let app_ids = verified(&desired);
     backend.install_guards(&desired, &app_ids, &digest).unwrap();
     backend
-        .install_redirects(&desired, &app_ids, &digest)
+        .install_data_plane(&desired, &app_ids, &digest)
         .unwrap();
 
     let events = &backend.control().events;
@@ -220,7 +220,7 @@ fn datagram_admission_is_armed_after_filter_attestation_and_revoked_before_remov
     assert!(replace < activate);
     assert!(backend.control().snapshot.datagram_path_active);
 
-    backend.remove_redirects().unwrap();
+    backend.remove_data_plane().unwrap();
     let deactivate = backend
         .control()
         .events
@@ -249,7 +249,7 @@ fn uncertain_datagram_activation_is_revoked_before_filters_roll_back() {
     backend.install_guards(&desired, &app_ids, &digest).unwrap();
 
     assert!(backend
-        .install_redirects(&desired, &app_ids, &digest)
+        .install_data_plane(&desired, &app_ids, &digest)
         .is_err());
     let tail = &backend.control().events[backend.control().events.len() - 3..];
     assert_eq!(
@@ -257,7 +257,7 @@ fn uncertain_datagram_activation_is_revoked_before_filters_roll_back() {
         ["activateDatagram", "deactivateDatagram", "removeRedirects"]
     );
     assert!(!backend.control().snapshot.datagram_path_active);
-    assert!(backend.control().snapshot.redirect_filter_keys.is_empty());
+    assert!(backend.control().snapshot.data_plane_filter_keys.is_empty());
 }
 
 #[test]
@@ -272,7 +272,7 @@ fn active_attestation_failure_is_revoked_before_filters_roll_back() {
     backend.install_guards(&desired, &app_ids, &digest).unwrap();
 
     assert!(backend
-        .install_redirects(&desired, &app_ids, &digest)
+        .install_data_plane(&desired, &app_ids, &digest)
         .is_err());
     let tail = &backend.control().events[backend.control().events.len() - 4..];
     assert_eq!(
@@ -285,7 +285,7 @@ fn active_attestation_failure_is_revoked_before_filters_roll_back() {
         ]
     );
     assert!(!backend.control().snapshot.datagram_path_active);
-    assert!(backend.control().snapshot.redirect_filter_keys.is_empty());
+    assert!(backend.control().snapshot.data_plane_filter_keys.is_empty());
 }
 
 #[test]
@@ -301,12 +301,12 @@ fn uncertain_datagram_deactivation_keeps_filters_fail_closed() {
     backend.install_guards(&desired, &app_ids, &digest).unwrap();
 
     assert!(backend
-        .install_redirects(&desired, &app_ids, &digest)
+        .install_data_plane(&desired, &app_ids, &digest)
         .is_err());
     let tail = &backend.control().events[backend.control().events.len() - 2..];
     assert_eq!(tail, ["activateDatagram", "deactivateDatagram"]);
     assert!(backend.control().snapshot.datagram_path_active);
-    assert!(!backend.control().snapshot.redirect_filter_keys.is_empty());
+    assert!(!backend.control().snapshot.data_plane_filter_keys.is_empty());
 }
 
 #[test]
@@ -334,7 +334,7 @@ fn redirects_without_persistent_guards_are_never_treated_as_complete() {
     let app_ids = verified(&desired);
     backend.install_guards(&desired, &app_ids, &digest).unwrap();
     backend
-        .install_redirects(&desired, &app_ids, &digest)
+        .install_data_plane(&desired, &app_ids, &digest)
         .unwrap();
     backend.control_mut().snapshot.guard_filter_keys.clear();
 

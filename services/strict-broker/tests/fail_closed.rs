@@ -16,7 +16,7 @@ use flclash_strict_contract::{
 struct FakeBackend {
     events: Vec<&'static str>,
     snapshot: BackendSnapshot,
-    fail_install_redirects: bool,
+    fail_install_data_plane: bool,
     fail_remove_guards: bool,
 }
 
@@ -41,17 +41,17 @@ impl FilterBackend for FakeBackend {
         Ok(())
     }
 
-    fn install_redirects(
+    fn install_data_plane(
         &mut self,
         _policy: &StrictPolicyBundle,
         _verified_app_ids: &VerifiedPolicyAppIds,
         _digest: &str,
     ) -> Result<()> {
         self.events.push("installRedirects");
-        if self.fail_install_redirects {
+        if self.fail_install_data_plane {
             bail!("injected redirect failure");
         }
-        self.snapshot.redirect_filters_installed = true;
+        self.snapshot.data_plane_filters_installed = true;
         self.snapshot.filter_generation += 1;
         self.snapshot
             .capabilities
@@ -59,9 +59,9 @@ impl FilterBackend for FakeBackend {
         Ok(())
     }
 
-    fn remove_redirects(&mut self) -> Result<()> {
+    fn remove_data_plane(&mut self) -> Result<()> {
         self.events.push("removeRedirects");
-        self.snapshot.redirect_filters_installed = false;
+        self.snapshot.data_plane_filters_installed = false;
         self.snapshot.filter_generation += 1;
         Ok(())
     }
@@ -266,7 +266,7 @@ fn runtime_cleanup_forces_an_active_policy_to_blocking_and_is_safe_when_disabled
     let blocked = engine.force_blocking_if_active().unwrap();
     assert_eq!(blocked.phase, BrokerPhase::Blocking);
     assert!(blocked.proof.guard_filters_installed);
-    assert!(!engine.backend().snapshot.redirect_filters_installed);
+    assert!(!engine.backend().snapshot.data_plane_filters_installed);
     assert_eq!(
         engine.store().marker.as_ref().unwrap().phase,
         BrokerPhase::Blocking
@@ -276,7 +276,7 @@ fn runtime_cleanup_forces_an_active_policy_to_blocking_and_is_safe_when_disabled
 #[test]
 fn redirect_failure_stays_persistently_blocking() {
     let backend = FakeBackend {
-        fail_install_redirects: true,
+        fail_install_data_plane: true,
         ..FakeBackend::default()
     };
     let mut engine = BrokerEngine::new(backend, FakeStore::default(), FakeVerifier::default());
@@ -371,7 +371,7 @@ fn failed_guard_cleanup_keeps_recovery_marker() {
     assert!(engine.disable(5).is_err());
     assert!(engine.store().marker.is_some());
     assert!(engine.backend().snapshot.guard_filters_installed);
-    assert!(!engine.backend().snapshot.redirect_filters_installed);
+    assert!(!engine.backend().snapshot.data_plane_filters_installed);
 }
 
 #[test]
@@ -384,7 +384,7 @@ fn startup_downgrades_dynamic_redirect_state_to_blocking() {
             policy_digest: Some(digest.clone()),
             filter_generation: 9,
             guard_filters_installed: true,
-            redirect_filters_installed: true,
+            data_plane_filters_installed: true,
             capabilities: BTreeSet::new(),
         },
         ..FakeBackend::default()
@@ -400,7 +400,7 @@ fn startup_downgrades_dynamic_redirect_state_to_blocking() {
 
     assert_eq!(status.phase, BrokerPhase::Blocking);
     assert!(status.proof.guard_filters_installed);
-    assert!(!engine.backend().snapshot.redirect_filters_installed);
+    assert!(!engine.backend().snapshot.data_plane_filters_installed);
     assert!(engine.store().marker.is_some());
 }
 
@@ -440,7 +440,7 @@ fn block_only_policy_arms_without_claiming_forwarding_health() {
     assert!(!status.proof.core_healthy);
     assert!(!status.proof.relay_healthy);
     assert!(!status.proof.dns_healthy);
-    assert!(!engine.backend().snapshot.redirect_filters_installed);
+    assert!(!engine.backend().snapshot.data_plane_filters_installed);
 }
 
 #[test]

@@ -409,7 +409,7 @@ pub struct BackendSnapshot {
     pub policy_digest: Option<String>,
     pub filter_generation: u64,
     pub guard_filters_installed: bool,
-    pub redirect_filters_installed: bool,
+    pub data_plane_filters_installed: bool,
     pub capabilities: BTreeSet<StrictCapability>,
 }
 
@@ -421,13 +421,13 @@ pub trait FilterBackend {
         verified_app_ids: &VerifiedPolicyAppIds,
         digest: &str,
     ) -> Result<()>;
-    fn install_redirects(
+    fn install_data_plane(
         &mut self,
         policy: &StrictPolicyBundle,
         verified_app_ids: &VerifiedPolicyAppIds,
         digest: &str,
     ) -> Result<()>;
-    fn remove_redirects(&mut self) -> Result<()>;
+    fn remove_data_plane(&mut self) -> Result<()>;
     fn remove_guards(&mut self) -> Result<()>;
     fn snapshot(&mut self) -> Result<BackendSnapshot>;
 }
@@ -580,7 +580,7 @@ where
             bail!("strict forwarding capability proof is incomplete");
         }
 
-        if let Err(error) = self.backend.install_redirects(
+        if let Err(error) = self.backend.install_data_plane(
             &marker.policy,
             self.verification_lease
                 .as_ref()
@@ -692,7 +692,7 @@ where
             bail!("strict force-blocking revision does not match the active policy");
         }
 
-        self.backend.remove_redirects()?;
+        self.backend.remove_data_plane()?;
         let snapshot = self.backend.snapshot()?;
         validate_snapshot(&snapshot, &marker, true, false)?;
         let next_phase = if has_proxy_entries(&marker.policy) {
@@ -726,7 +726,7 @@ where
 
         let Some(marker) = record.marker else {
             if snapshot.guard_filters_installed
-                || snapshot.redirect_filters_installed
+                || snapshot.data_plane_filters_installed
                 || snapshot.revision.is_some()
                 || snapshot.policy_digest.is_some()
             {
@@ -750,11 +750,11 @@ where
 
         let verification = self.verifier.verify(&marker.policy)?;
         self.verification_lease = Some(verification);
-        if snapshot.redirect_filters_installed {
-            self.backend.remove_redirects()?;
+        if snapshot.data_plane_filters_installed {
+            self.backend.remove_data_plane()?;
             snapshot = self.backend.snapshot()?;
-            if snapshot.redirect_filters_installed {
-                bail!("strict redirect filters survived recovery removal");
+            if snapshot.data_plane_filters_installed {
+                bail!("strict data-plane filters survived recovery removal");
             }
         }
         // Replacing guards is intentionally idempotent. It rebinds an enumerated persistent
@@ -808,10 +808,10 @@ where
     }
 
     fn complete_disable(&mut self, marker: &RecoveryMarker) -> Result<BrokerStatus> {
-        self.backend.remove_redirects()?;
+        self.backend.remove_data_plane()?;
         let mut snapshot = self.backend.snapshot()?;
-        if snapshot.redirect_filters_installed {
-            bail!("strict redirect filters remain during disable");
+        if snapshot.data_plane_filters_installed {
+            bail!("strict data-plane filters remain during disable");
         }
 
         if snapshot.guard_filters_installed {
@@ -819,7 +819,7 @@ where
             self.backend.remove_guards()?;
             snapshot = self.backend.snapshot()?;
         }
-        if snapshot.guard_filters_installed || snapshot.redirect_filters_installed {
+        if snapshot.guard_filters_installed || snapshot.data_plane_filters_installed {
             bail!("strict filters remain after disable");
         }
         self.store.clear_marker()?;
@@ -834,7 +834,7 @@ where
         self.phase = BrokerPhase::Blocking;
         self.forwarding_health = ForwardingHealth::default();
         self.backend
-            .remove_redirects()
+            .remove_data_plane()
             .context("remove redirects during fail-closed rollback")?;
         let snapshot = self.backend.snapshot()?;
         validate_snapshot(&snapshot, marker, true, false)?;
@@ -856,7 +856,7 @@ where
             .unwrap_or_else(|| "0".repeat(64));
 
         let capabilities =
-            if self.phase == BrokerPhase::Armed && snapshot.redirect_filters_installed {
+            if self.phase == BrokerPhase::Armed && snapshot.data_plane_filters_installed {
                 snapshot
                     .capabilities
                     .intersection(&self.forwarding_health.capabilities)
@@ -920,7 +920,7 @@ fn validate_snapshot(
     if snapshot.guard_filters_installed != expect_guards {
         bail!("strict backend guard state does not match the requested phase");
     }
-    if snapshot.redirect_filters_installed != expect_redirects {
+    if snapshot.data_plane_filters_installed != expect_redirects {
         bail!("strict backend redirect state does not match the requested phase");
     }
     Ok(())

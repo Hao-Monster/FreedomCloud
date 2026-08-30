@@ -194,12 +194,12 @@ impl DriverIdentityRule {
 pub enum PlanInstallStep {
     UploadImmutableSnapshot,
     InstallPersistentGuards,
-    InstallDynamicRedirects,
+    InstallDynamicDataPlane,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PlanRemoveStep {
-    RemoveDynamicRedirects,
+    RemoveDynamicDataPlane,
     RemovePersistentGuards,
     UnloadImmutableSnapshot,
 }
@@ -210,7 +210,7 @@ pub struct WfpPolicyPlan {
     rules: Vec<DriverIdentityRule>,
     target_groups: Vec<String>,
     guard_filters: Vec<WfpFilterSpec>,
-    redirect_filters: Vec<WfpFilterSpec>,
+    data_plane_filters: Vec<WfpFilterSpec>,
     install_steps: Vec<PlanInstallStep>,
     remove_steps: Vec<PlanRemoveStep>,
 }
@@ -278,7 +278,7 @@ impl WfpPolicyPlan {
             .iter()
             .filter(|rule| rule.action == StrictAction::Proxy)
             .count();
-        let mut redirect_filters = Vec::with_capacity(proxy_rule_count * 4);
+        let mut data_plane_filters = Vec::with_capacity(proxy_rule_count * 4);
         // These filters intentionally carry exact App-ID conditions. Windows treats an
         // unavailable terminating callout as block; a global filter could therefore
         // block the whole host while per-identity filters fail closed only for selected apps.
@@ -302,7 +302,7 @@ impl WfpPolicyPlan {
                 ),
             ]);
             if rule.action == StrictAction::Proxy {
-                redirect_filters.extend([
+                data_plane_filters.extend([
                     filter(
                         rule,
                         0x21,
@@ -363,8 +363,8 @@ impl WfpPolicyPlan {
         ];
         let mut remove_steps = Vec::new();
         if has_proxy {
-            install_steps.push(PlanInstallStep::InstallDynamicRedirects);
-            remove_steps.push(PlanRemoveStep::RemoveDynamicRedirects);
+            install_steps.push(PlanInstallStep::InstallDynamicDataPlane);
+            remove_steps.push(PlanRemoveStep::RemoveDynamicDataPlane);
         }
         remove_steps.extend([
             PlanRemoveStep::RemovePersistentGuards,
@@ -376,7 +376,7 @@ impl WfpPolicyPlan {
             rules,
             target_groups,
             guard_filters,
-            redirect_filters,
+            data_plane_filters,
             install_steps,
             remove_steps,
         })
@@ -410,8 +410,8 @@ impl WfpPolicyPlan {
         &self.guard_filters
     }
 
-    pub fn redirect_filters(&self) -> &[WfpFilterSpec] {
-        &self.redirect_filters
+    pub fn data_plane_filters(&self) -> &[WfpFilterSpec] {
+        &self.data_plane_filters
     }
 
     pub fn install_steps(&self) -> &[PlanInstallStep] {
@@ -425,7 +425,7 @@ impl WfpPolicyPlan {
     pub fn owns_filter_key(&self, key: WfpObjectKey) -> bool {
         self.guard_filters
             .iter()
-            .chain(&self.redirect_filters)
+            .chain(&self.data_plane_filters)
             .any(|filter| filter.key == key)
     }
 }

@@ -47,7 +47,7 @@ const STRICT_SUBLAYER_WEIGHT: u16 = u16::MAX;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum FilterClass {
     Guard,
-    Redirect,
+    DataPlane,
 }
 
 impl FilterClass {
@@ -78,14 +78,14 @@ impl FilterClass {
         ];
         match self {
             Self::Guard => &GUARD_LAYERS,
-            Self::Redirect => &REDIRECT_LAYERS,
+            Self::DataPlane => &REDIRECT_LAYERS,
         }
     }
 
     fn lifetime(self) -> WfpFilterLifetime {
         match self {
             Self::Guard => WfpFilterLifetime::Persistent,
-            Self::Redirect => WfpFilterLifetime::Dynamic,
+            Self::DataPlane => WfpFilterLifetime::Dynamic,
         }
     }
 
@@ -99,7 +99,7 @@ impl FilterClass {
                     | WfpLayer::DatagramDataV4
                     | WfpLayer::DatagramDataV6
             ) | (
-                Self::Redirect,
+                Self::DataPlane,
                 WfpLayer::ConnectRedirectV4
                     | WfpLayer::ConnectRedirectV6
                     | WfpLayer::FlowEstablishedV4
@@ -110,7 +110,7 @@ impl FilterClass {
 }
 
 /// Owns one persistent BFE session for fail-closed guards and one dynamic BFE
-/// session for redirect filters. Construction opens the sessions but does not
+/// session for dynamic data-plane filters. Construction opens the sessions but does not
 /// install, remove, or otherwise mutate any WFP object.
 pub struct WindowsWfpEngineStore {
     persistent: WfpEngineHandle,
@@ -177,14 +177,14 @@ impl WindowsWfpEngineStore {
     fn engine(&mut self, class: FilterClass) -> &mut WfpEngineHandle {
         match class {
             FilterClass::Guard => &mut self.persistent,
-            FilterClass::Redirect => &mut self.dynamic,
+            FilterClass::DataPlane => &mut self.dynamic,
         }
     }
 
     fn enumerate(&self, class: FilterClass) -> Result<BTreeSet<WfpObjectKey>> {
         let engine = match class {
             FilterClass::Guard => &self.persistent,
-            FilterClass::Redirect => &self.dynamic,
+            FilterClass::DataPlane => &self.dynamic,
         };
         enumerate_owned_filters(engine.raw, self.provider_key, self.sublayer_key, class)
     }
@@ -518,12 +518,12 @@ impl WindowsWfpFilterStore for WindowsWfpEngineStore {
         self.replace(FilterClass::Guard, filters)
     }
 
-    fn replace_redirects(&mut self, filters: &[WfpFilterSpec]) -> Result<()> {
-        self.replace(FilterClass::Redirect, filters)
+    fn replace_data_plane(&mut self, filters: &[WfpFilterSpec]) -> Result<()> {
+        self.replace(FilterClass::DataPlane, filters)
     }
 
-    fn remove_redirects(&mut self) -> Result<()> {
-        self.remove(FilterClass::Redirect)
+    fn remove_data_plane(&mut self) -> Result<()> {
+        self.remove(FilterClass::DataPlane)
     }
 
     fn remove_guards(&mut self) -> Result<()> {
@@ -534,7 +534,7 @@ impl WindowsWfpFilterStore for WindowsWfpEngineStore {
         self.verify_management_objects()?;
         Ok(WindowsWfpFilterInventory {
             guard_filter_keys: self.enumerate(FilterClass::Guard)?,
-            redirect_filter_keys: self.enumerate(FilterClass::Redirect)?,
+            data_plane_filter_keys: self.enumerate(FilterClass::DataPlane)?,
         })
     }
 }
@@ -635,7 +635,7 @@ fn validate_filter_specs(class: FilterClass, filters: &[WfpFilterSpec]) -> Resul
                     && !is_flow_tracking_layer(filter.layer())
             }
             WfpFilterAction::FlowTracking => {
-                class == FilterClass::Redirect
+                class == FilterClass::DataPlane
                     && is_flow_tracking_layer(filter.layer())
                     && filter.is_indexed()
                     && !filter.clears_action_right()
@@ -660,7 +660,7 @@ fn validate_filter_specs(class: FilterClass, filters: &[WfpFilterSpec]) -> Resul
             || filter.callout() != callout_for_layer(filter.layer())
             || filter.callout_key() != expected_callout_key(filter.layer())
             || filter.key() != expected_filter_key(filter.layer(), filter.app_id())
-            || (class == FilterClass::Redirect && filter.action() != StrictAction::Proxy)
+            || (class == FilterClass::DataPlane && filter.action() != StrictAction::Proxy)
         {
             bail!("strict WFP filter specification violates its sealed plan");
         }
@@ -741,14 +741,14 @@ fn add_filter(
         (FilterClass::Guard, WfpFilterAction::ConditionalCapture) => {
             "FlClashX strict fail-closed UDP capture"
         }
-        (FilterClass::Redirect, WfpFilterAction::Terminating) => {
+        (FilterClass::DataPlane, WfpFilterAction::Terminating) => {
             "FlClashX strict application redirect"
         }
-        (FilterClass::Redirect, WfpFilterAction::FlowTracking) => {
+        (FilterClass::DataPlane, WfpFilterAction::FlowTracking) => {
             "FlClashX strict UDP flow tracking"
         }
         (FilterClass::Guard, WfpFilterAction::FlowTracking) => "FlClashX invalid UDP flow tracking",
-        (FilterClass::Redirect, WfpFilterAction::ConditionalCapture) => {
+        (FilterClass::DataPlane, WfpFilterAction::ConditionalCapture) => {
             "FlClashX strict conditional UDP capture"
         }
     });
@@ -1088,14 +1088,17 @@ mod tests {
     #[test]
     fn filter_classes_separate_persistent_guards_from_dynamic_redirects() {
         assert_eq!(FilterClass::Guard.lifetime(), WfpFilterLifetime::Persistent);
-        assert_eq!(FilterClass::Redirect.lifetime(), WfpFilterLifetime::Dynamic);
+        assert_eq!(
+            FilterClass::DataPlane.lifetime(),
+            WfpFilterLifetime::Dynamic
+        );
         assert_ne!(
             enumerated_filter_flags(FilterClass::Guard, WfpLayer::AuthConnectV4)
                 & FWPM_FILTER_FLAG_PERSISTENT,
             0
         );
         assert_eq!(
-            enumerated_filter_flags(FilterClass::Redirect, WfpLayer::ConnectRedirectV4)
+            enumerated_filter_flags(FilterClass::DataPlane, WfpLayer::ConnectRedirectV4)
                 & FWPM_FILTER_FLAG_PERSISTENT,
             0
         );
@@ -1191,7 +1194,7 @@ mod tests {
         let mut provider = object_key_to_guid(provider_key);
         let mut filter = FWPM_FILTER0 {
             filterKey: object_key_to_guid(expected_filter_key(layer, &app_id)),
-            flags: enumerated_filter_flags(FilterClass::Redirect, layer),
+            flags: enumerated_filter_flags(FilterClass::DataPlane, layer),
             providerKey: &mut provider,
             layerKey: layer_guid(layer),
             subLayerKey: object_key_to_guid(sublayer_key),
@@ -1215,7 +1218,7 @@ mod tests {
             &filter,
             provider_key,
             sublayer_key,
-            FilterClass::Redirect,
+            FilterClass::DataPlane,
             layer,
         )
         .unwrap();
@@ -1225,7 +1228,7 @@ mod tests {
             &filter,
             provider_key,
             sublayer_key,
-            FilterClass::Redirect,
+            FilterClass::DataPlane,
             layer,
         )
         .is_err());

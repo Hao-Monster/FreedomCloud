@@ -68,13 +68,13 @@ pub trait WindowsDriverPolicyChannel {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct WindowsWfpFilterInventory {
     pub guard_filter_keys: BTreeSet<WfpObjectKey>,
-    pub redirect_filter_keys: BTreeSet<WfpObjectKey>,
+    pub data_plane_filter_keys: BTreeSet<WfpObjectKey>,
 }
 
 pub trait WindowsWfpFilterStore {
     fn replace_guards(&mut self, filters: &[WfpFilterSpec]) -> Result<()>;
-    fn replace_redirects(&mut self, filters: &[WfpFilterSpec]) -> Result<()>;
-    fn remove_redirects(&mut self) -> Result<()>;
+    fn replace_data_plane(&mut self, filters: &[WfpFilterSpec]) -> Result<()>;
+    fn remove_data_plane(&mut self) -> Result<()>;
     fn remove_guards(&mut self) -> Result<()>;
     fn inventory(&mut self) -> Result<WindowsWfpFilterInventory>;
 }
@@ -151,8 +151,8 @@ where
         self.record_mutation()
     }
 
-    fn replace_redirect_filters(&mut self, filters: &[WfpFilterSpec]) -> Result<()> {
-        self.filters.replace_redirects(filters)?;
+    fn replace_data_plane_filters(&mut self, filters: &[WfpFilterSpec]) -> Result<()> {
+        self.filters.replace_data_plane(filters)?;
         self.record_mutation()
     }
 
@@ -178,8 +178,8 @@ where
         self.record_mutation()
     }
 
-    fn remove_redirect_filters(&mut self) -> Result<()> {
-        self.filters.remove_redirects()?;
+    fn remove_data_plane_filters(&mut self) -> Result<()> {
+        self.filters.remove_data_plane()?;
         self.record_mutation()
     }
 
@@ -199,7 +199,7 @@ where
             filter_generation: self.filter_generation.max(self.observed_driver_generation),
             driver_snapshot_loaded: driver.loaded,
             guard_filter_keys: inventory.guard_filter_keys,
-            redirect_filter_keys: inventory.redirect_filter_keys,
+            data_plane_filter_keys: inventory.data_plane_filter_keys,
             datagram_path_active: driver.datagram_path_active,
             capabilities: driver.capabilities,
         })

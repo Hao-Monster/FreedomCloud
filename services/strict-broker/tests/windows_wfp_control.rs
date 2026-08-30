@@ -23,13 +23,13 @@ impl WindowsWfpFilterStore for FakeFilters {
         Ok(())
     }
 
-    fn replace_redirects(&mut self, filters: &[WfpFilterSpec]) -> Result<()> {
-        self.inventory.redirect_filter_keys = filters.iter().map(WfpFilterSpec::key).collect();
+    fn replace_data_plane(&mut self, filters: &[WfpFilterSpec]) -> Result<()> {
+        self.inventory.data_plane_filter_keys = filters.iter().map(WfpFilterSpec::key).collect();
         Ok(())
     }
 
-    fn remove_redirects(&mut self) -> Result<()> {
-        self.inventory.redirect_filter_keys.clear();
+    fn remove_data_plane(&mut self) -> Result<()> {
+        self.inventory.data_plane_filter_keys.clear();
         Ok(())
     }
 
@@ -134,7 +134,7 @@ fn driver_attestation_and_enumerated_filters_form_one_snapshot() {
     control.upload_immutable_snapshot(&plan).unwrap();
     control.replace_guard_filters(plan.guard_filters()).unwrap();
     control
-        .replace_redirect_filters(plan.redirect_filters())
+        .replace_data_plane_filters(plan.data_plane_filters())
         .unwrap();
     control.activate_datagram_path().unwrap();
     let snapshot = control.snapshot().unwrap();
@@ -152,8 +152,8 @@ fn driver_attestation_and_enumerated_filters_form_one_snapshot() {
             .collect()
     );
     assert_eq!(
-        snapshot.redirect_filter_keys,
-        plan.redirect_filters()
+        snapshot.data_plane_filter_keys,
+        plan.data_plane_filters()
             .iter()
             .map(WfpFilterSpec::key)
             .collect()

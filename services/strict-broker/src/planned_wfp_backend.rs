@@ -15,7 +15,7 @@ pub struct WfpControlSnapshot {
     pub filter_generation: u64,
     pub driver_snapshot_loaded: bool,
     pub guard_filter_keys: BTreeSet<WfpObjectKey>,
-    pub redirect_filter_keys: BTreeSet<WfpObjectKey>,
+    pub data_plane_filter_keys: BTreeSet<WfpObjectKey>,
     pub datagram_path_active: bool,
     pub capabilities: BTreeSet<StrictCapability>,
 }
@@ -27,10 +27,10 @@ pub trait WfpControlPlane {
 
     /// Each replace/remove method must be one WFP transaction scoped to our provider/sublayer.
     fn replace_guard_filters(&mut self, filters: &[WfpFilterSpec]) -> Result<()>;
-    fn replace_redirect_filters(&mut self, filters: &[WfpFilterSpec]) -> Result<()>;
+    fn replace_data_plane_filters(&mut self, filters: &[WfpFilterSpec]) -> Result<()>;
     fn activate_datagram_path(&mut self) -> Result<()>;
     fn deactivate_datagram_path(&mut self) -> Result<()>;
-    fn remove_redirect_filters(&mut self) -> Result<()>;
+    fn remove_data_plane_filters(&mut self) -> Result<()>;
     fn remove_guard_filters(&mut self) -> Result<()>;
 
     /// Must enumerate actual provider-owned objects; cached intended state is insufficient.
@@ -90,7 +90,7 @@ impl<C: WfpControlPlane> FilterBackend for PlannedWfpBackend<C> {
         Ok(())
     }
 
-    fn install_redirects(
+    fn install_data_plane(
         &mut self,
         policy: &StrictPolicyBundle,
         verified_app_ids: &VerifiedPolicyAppIds,
@@ -100,8 +100,8 @@ impl<C: WfpControlPlane> FilterBackend for PlannedWfpBackend<C> {
         let before = self.control.snapshot()?;
         validate_inventory(&before, &plan, true, false, false)?;
         self.control
-            .replace_redirect_filters(plan.redirect_filters())
-            .context("replace strict redirect filters transactionally")?;
+            .replace_data_plane_filters(plan.data_plane_filters())
+            .context("replace strict data-plane filters transactionally")?;
         self.active_plan = Some(plan);
         let after = self.control.snapshot()?;
         validate_inventory(
@@ -141,7 +141,7 @@ impl<C: WfpControlPlane> FilterBackend for PlannedWfpBackend<C> {
         Ok(())
     }
 
-    fn remove_redirects(&mut self) -> Result<()> {
+    fn remove_data_plane(&mut self) -> Result<()> {
         self.control
             .deactivate_datagram_path()
             .context("deactivate strict datagram path before filter removal")?;
@@ -150,19 +150,19 @@ impl<C: WfpControlPlane> FilterBackend for PlannedWfpBackend<C> {
             bail!("strict datagram path remains active before filter removal");
         }
         self.control
-            .remove_redirect_filters()
-            .context("remove strict redirect filters transactionally")?;
+            .remove_data_plane_filters()
+            .context("remove strict data-plane filters transactionally")?;
         let snapshot = self.control.snapshot()?;
-        if !snapshot.redirect_filter_keys.is_empty() {
-            bail!("strict redirect filters remain after transactional removal");
+        if !snapshot.data_plane_filter_keys.is_empty() {
+            bail!("strict data-plane filters remain after transactional removal");
         }
         Ok(())
     }
 
     fn remove_guards(&mut self) -> Result<()> {
         let before = self.control.snapshot()?;
-        if !before.redirect_filter_keys.is_empty() {
-            bail!("strict guards cannot be removed while redirect filters remain");
+        if !before.data_plane_filter_keys.is_empty() {
+            bail!("strict guards cannot be removed while data-plane filters remain");
         }
         self.control
             .remove_guard_filters()
@@ -195,7 +195,7 @@ impl<C: WfpControlPlane> FilterBackend for PlannedWfpBackend<C> {
             policy_digest: snapshot.policy_digest,
             filter_generation: snapshot.filter_generation,
             guard_filters_installed: !snapshot.guard_filter_keys.is_empty(),
-            redirect_filters_installed: !snapshot.redirect_filter_keys.is_empty(),
+            data_plane_filters_installed: !snapshot.data_plane_filter_keys.is_empty(),
             capabilities,
         })
     }
@@ -222,9 +222,9 @@ fn validate_inventory(
 ) -> Result<()> {
     validate_plan_metadata(snapshot, plan)?;
     let expected_guards = expected_keys(plan.guard_filters(), expect_guards);
-    let expected_redirects = expected_keys(plan.redirect_filters(), expect_redirects);
+    let expected_data_plane = expected_keys(plan.data_plane_filters(), expect_redirects);
     if snapshot.guard_filter_keys != expected_guards
-        || snapshot.redirect_filter_keys != expected_redirects
+        || snapshot.data_plane_filter_keys != expected_data_plane
         || snapshot.datagram_path_active != expect_datagram_active
     {
         bail!("enumerated WFP filters do not exactly match the strict policy plan");
@@ -233,7 +233,7 @@ fn validate_inventory(
 }
 
 fn validate_present_inventory(snapshot: &WfpControlSnapshot, plan: &WfpPolicyPlan) -> Result<()> {
-    if snapshot.guard_filter_keys.is_empty() && snapshot.redirect_filter_keys.is_empty() {
+    if snapshot.guard_filter_keys.is_empty() && snapshot.data_plane_filter_keys.is_empty() {
         if snapshot.datagram_path_active {
             bail!("strict datagram path is active without filters");
         }
@@ -241,11 +241,11 @@ fn validate_present_inventory(snapshot: &WfpControlSnapshot, plan: &WfpPolicyPla
     }
     validate_plan_metadata(snapshot, plan)?;
     let expected_guards = expected_keys(plan.guard_filters(), true);
-    let expected_redirects = expected_keys(plan.redirect_filters(), true);
+    let expected_data_plane = expected_keys(plan.data_plane_filters(), true);
     if snapshot.guard_filter_keys != expected_guards
-        || (!snapshot.redirect_filter_keys.is_empty()
-            && snapshot.redirect_filter_keys != expected_redirects)
-        || snapshot.datagram_path_active == snapshot.redirect_filter_keys.is_empty()
+        || (!snapshot.data_plane_filter_keys.is_empty()
+            && snapshot.data_plane_filter_keys != expected_data_plane)
+        || snapshot.datagram_path_active == snapshot.data_plane_filter_keys.is_empty()
     {
         bail!("enumerated WFP filters contain missing or unknown strict objects");
     }
@@ -257,7 +257,7 @@ fn cleanup_failed_datagram_activation<C: WfpControlPlane>(control: &mut C) -> Re
         .deactivate_datagram_path()
         .context("deactivate uncertain datagram path")?;
     control
-        .remove_redirect_filters()
+        .remove_data_plane_filters()
         .context("remove filters after datagram activation")
 }
 
