@@ -1,6 +1,6 @@
 # FlClashX branch and technical-debt register v0.2
 
-Status date: 2026-08-31
+Status date: 2026-09-12
 
 ## Branch dependency ledger
 
@@ -13,7 +13,7 @@ Latest M3 implementation evidence at this review point: `0251fe7`. M2 remains at
 its original worktree; no cross-branch fix has been required. The M2 worktree currently contains
 uncommitted acceptance-time changes, so M3 treats that entire worktree as read-only and does not
 stage, normalize or otherwise modify it. The verified merge base is exactly `45ec3b3`; the
-branch range through `8d7da73` is 127 commits ahead with zero committed M2-only
+branch range through `328131c` is 130 commits ahead with zero committed M2-only
 divergence. Documentation-only ledger commits may follow that implementation range.
 
 M2 fixes discovered during VM acceptance are committed first on
