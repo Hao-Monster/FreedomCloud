@@ -8,3 +8,4 @@ pub mod protocol;
 pub mod runtime;
 pub mod strict;
 pub mod strict_flow;
+pub mod strict_retry;
