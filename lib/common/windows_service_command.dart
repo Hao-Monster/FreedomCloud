@@ -33,9 +33,17 @@ String buildWindowsHelperRepairCommand({
   _validateWindowsPath(serviceCorePath, 'serviceCorePath');
 
   final sourceDirectory = helperPath.substring(0, helperPath.lastIndexOf(r'\'));
+  const installLog = r'%ProgramData%\FlClashX\logs\helper-install.log';
+  const logRedirect = '>> "$installLog" 2>&1';
+  // Keep LocalSystem and Administrators full control while allowing the
+  // interactive user to query, start and stop the service without another UAC
+  // prompt. Users are not granted change-config, delete, or security rights.
+  const serviceSecurity =
+      'D:(A;;CCLCSWRPWPDTLOCRRC;;;SY)(A;;CCLCSWRPWPDTLOCRRC;;;BA)'
+      '(A;;CCLCRPWP;;;BU)';
   final runtimeCopies = _msvcRuntimeFiles
       .map((name) => 'copy /b /y "$sourceDirectory\\$name" '
-          '"$serviceDirectory\\$name" >nul')
+          '"$serviceDirectory\\$name" $logRedirect')
       .join(' && ');
 
   final configure = serviceExists
@@ -44,13 +52,17 @@ String buildWindowsHelperRepairCommand({
       : 'sc create $windowsHelperServiceName '
           'binPath= "$serviceHelperPath" start= auto';
 
-  return 'sc stop $windowsHelperServiceName >nul 2>&1 & '
-      'if not exist "$serviceDirectory" mkdir "$serviceDirectory" && '
-      'copy /b /y "$helperPath" "$serviceHelperPath" >nul && '
-      'copy /b /y "$corePath" "$serviceCorePath" >nul && '
-      '$runtimeCopies && '
-      '$configure && '
-      'sc start $windowsHelperServiceName';
+  return 'if not exist "%ProgramData%\\FlClashX\\logs" mkdir '
+      '"%ProgramData%\\FlClashX\\logs" >nul 2>&1 & '
+      'sc stop $windowsHelperServiceName $logRedirect & '
+      'if not exist "$serviceDirectory" mkdir "$serviceDirectory" $logRedirect && '
+      'copy /b /y "$helperPath" "$serviceHelperPath" $logRedirect && '
+      'copy /b /y "$corePath" "$serviceCorePath" $logRedirect && '
+      '$runtimeCopies $logRedirect && '
+      '$configure $logRedirect && '
+      'sc sdset $windowsHelperServiceName "$serviceSecurity" $logRedirect && '
+      'sc start $windowsHelperServiceName $logRedirect & '
+      'sc query $windowsHelperServiceName $logRedirect';
 }
 
 void _validateWindowsPath(String value, String name) {

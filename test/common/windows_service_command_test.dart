@@ -27,6 +27,11 @@ void main() {
         contains('copy /b /y "C:\\Program Files\\FlClashX\\msvcp140.dll"'));
     expect(command,
         contains('copy /b /y "C:\\Program Files\\FlClashX\\vcruntime140.dll"'));
+    expect(
+        command, contains(r'%ProgramData%\FlClashX\logs\helper-install.log'));
+    expect(command, contains('sc sdset FlClashHelperService'));
+    expect(command, contains('(A;;CCLCRPWP;;;BU)'));
+    expect(command, contains('sc query FlClashHelperService'));
     expect(command, isNot(contains('allowed_core.sha256')));
     expect(
         command.indexOf('copy /b /y'), lessThan(command.indexOf('sc create')));
