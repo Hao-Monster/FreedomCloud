@@ -1,4 +1,5 @@
 use crate::service::hub::run_service;
+use crate::service::logging::ServiceLogger;
 
 use std::ffi::OsString;
 
@@ -25,16 +26,27 @@ pub fn main() -> Result<()> {
 }
 
 pub fn start_service() -> Result<()> {
-    service_dispatcher::start(SERVICE_NAME, serveice)
+    match service_dispatcher::start(SERVICE_NAME, serveice) {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            ServiceLogger::new_default().log(format!("service dispatcher failed: {error}"));
+            Err(error)
+        }
+    }
 }
 
 define_windows_service!(serveice, service_main);
 
 pub fn service_main(_arguments: Vec<OsString>) {
-    if let Ok(rt) = Runtime::new() {
-        rt.block_on(async {
-            let _ = run_windows_service().await;
-        });
+    match Runtime::new() {
+        Ok(rt) => {
+            if let Err(error) = rt.block_on(run_windows_service()) {
+                ServiceLogger::new_default().log(format!("service main failed: {error:#}"));
+            }
+        }
+        Err(error) => {
+            ServiceLogger::new_default().log(format!("service runtime creation failed: {error}"));
+        }
     }
 }
 async fn run_windows_service() -> anyhow::Result<()> {
@@ -61,7 +73,3 @@ async fn run_windows_service() -> anyhow::Result<()> {
 
     run_service().await
 }
-
-
-
-

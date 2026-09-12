@@ -59,17 +59,19 @@ installation and do not copy subscription/profile files into the return bundle.
     CPU and private working set at 0, 1 and 5 minutes. Reopen and record Flutter
     memory separately. There must be no monotonic Agent growth attributable to
     connection/icon snapshots.
-17. Export `connections_diagnostic.log` and the application log after the Edge
-    test. Check that exported diagnostics contain no username, process path,
-    host, IP, subscription URL, secret or authorization header.
+17. Run `Collect-FlClashXLogs.ps1 -OutputDirectory <evidence-directory>` after
+    the Edge test. It copies the bounded Flutter, Agent, Helper and Strict
+    Broker logs plus recent Service Control Manager events. Check that the
+    privacy-safe `connections_diagnostic.log` contains no username, process
+    path, host, IP, subscription URL, secret or authorization header.
 18. Run the same installer over the installed build. Confirm upgrade can stop
     Agent/Core cleanly and restart without duplicate Agent/Helper processes.
 19. Uninstall. Confirm FlClashX, Agent and Core are gone, service cleanup is
     correct, no system proxy/DNS/TUN state is left active and ordinary networking
     still works.
 20. If any lifecycle/network step fails, collect screenshots, Task Manager
-    process details, `connections_diagnostic.log`, application logs, installer
-    version/hash and the step number. Restore the VM snapshot after collection.
+    process details, the evidence directory, installer version/hash and the
+    step number. Restore the VM snapshot after collection.
 
 Return one ZIP containing the completed checklist, screenshots and redacted
 logs. Do not include profile YAML, subscriptions, credentials or the per-user

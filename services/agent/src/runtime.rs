@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use anyhow::{anyhow, bail, Context, Result};
 use serde_json::{json, Value};
-use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::process::{Child, Command};
 use tokio::sync::{mpsc, oneshot, Mutex, Notify, RwLock};
@@ -14,6 +14,7 @@ use tokio::time::{timeout, Instant};
 use crate::config::AgentConfig;
 use crate::endpoint::{load_or_create_helper_token, random_token, EndpointGuard};
 use crate::journal::ReplayJournal;
+use crate::logging::AgentLogger;
 use crate::protocol::{
     authenticate, parse_control, AgentCommand, MAX_AUTH_LINE_BYTES, MAX_MESSAGE_LINE_BYTES,
     PROTOCOL_VERSION,
@@ -80,6 +81,7 @@ struct Shared {
     ui: Mutex<Option<UiSession>>,
     core: Mutex<Option<mpsc::Sender<String>>>,
     journal: Mutex<ReplayJournal>,
+    logger: Arc<AgentLogger>,
     status: RwLock<CoreStatus>,
     generation: AtomicU64,
     next_session: AtomicU64,
@@ -165,18 +167,55 @@ async fn retry_or_command(
 }
 
 pub async fn run(config: AgentConfig) -> Result<()> {
-    let ui_listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+    let logger = AgentLogger::new(&config.home);
+    logger.log(format!(
+        "agent starting use_helper={} helper_port={}",
+        config.use_helper, config.helper_port
+    ));
+    let ui_listener = match TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
         .await
-        .context("unable to bind UI IPC listener")?;
-    let core_listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+        .context("unable to bind UI IPC listener")
+    {
+        Ok(listener) => listener,
+        Err(error) => {
+            logger.log(format!("agent startup failed: {error:#}"));
+            return Err(error);
+        }
+    };
+    let core_listener = match TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
         .await
-        .context("unable to bind Core IPC listener")?;
-    let (_endpoint_guard, endpoint) =
-        EndpointGuard::acquire(&config.home, ui_listener.local_addr()?)?;
+        .context("unable to bind Core IPC listener")
+    {
+        Ok(listener) => listener,
+        Err(error) => {
+            logger.log(format!("agent startup failed: {error:#}"));
+            return Err(error);
+        }
+    };
+    let ui_address = match ui_listener.local_addr() {
+        Ok(address) => address,
+        Err(error) => {
+            logger.log(format!("resolve UI IPC address failed: {error}"));
+            return Err(error.into());
+        }
+    };
+    let (_endpoint_guard, endpoint) = match EndpointGuard::acquire(&config.home, ui_address) {
+        Ok(endpoint) => endpoint,
+        Err(error) => {
+            logger.log(format!("create Agent endpoint failed: {error:#}"));
+            return Err(error);
+        }
+    };
     let endpoint_token = endpoint.token;
     let core_token = random_token();
     let helper_token = if config.use_helper {
-        Some(load_or_create_helper_token(&config.home)?)
+        match load_or_create_helper_token(&config.home) {
+            Ok(token) => Some(token),
+            Err(error) => {
+                logger.log(format!("load Helper credential failed: {error:#}"));
+                return Err(error);
+            }
+        }
     } else {
         None
     };
@@ -185,6 +224,7 @@ pub async fn run(config: AgentConfig) -> Result<()> {
         ui: Mutex::new(None),
         core: Mutex::new(None),
         journal: Mutex::new(ReplayJournal::default()),
+        logger: logger.clone(),
         status: RwLock::new(CoreStatus::Starting),
         generation: AtomicU64::new(0),
         next_session: AtomicU64::new(1),
@@ -210,15 +250,22 @@ pub async fn run(config: AgentConfig) -> Result<()> {
     loop {
         tokio::select! {
             accepted = ui_listener.accept() => {
-                let (stream, address) = accepted?;
+                let (stream, address) = match accepted {
+                    Ok(value) => value,
+                    Err(error) => {
+                        logger.log(format!("UI IPC accept failed: {error}"));
+                        return Err(error.into());
+                    }
+                };
                 if !address.ip().is_loopback() {
                     continue;
                 }
                 let handler_shared = shared.clone();
+                let handler_logger = shared.logger.clone();
                 let token = endpoint_token.clone();
                 tokio::spawn(async move {
                     if let Err(error) = handle_ui(stream, token, handler_shared).await {
-                        eprintln!("FlClashAgent UI session: {error:#}");
+                        handler_logger.log(format!("UI session error: {error:#}"));
                     }
                 });
             }
@@ -229,7 +276,11 @@ pub async fn run(config: AgentConfig) -> Result<()> {
         }
     }
 
-    supervisor.await.context("Core supervisor task failed")?
+    let result = supervisor.await.context("Core supervisor task failed")?;
+    if let Err(error) = &result {
+        logger.log(format!("Core supervisor failed: {error:#}"));
+    }
+    result
 }
 
 async fn handle_ui(stream: TcpStream, token: String, shared: Arc<Shared>) -> Result<()> {
@@ -396,19 +447,33 @@ async fn issue_supervisor_command(
     shared: &Arc<Shared>,
     command: SupervisorCommandKind,
 ) -> (bool, CoreStatus) {
+    let command_name = match command {
+        SupervisorCommandKind::Restart => "restart",
+        SupervisorCommandKind::Stop => "stop",
+        SupervisorCommandKind::Shutdown => "shutdown",
+    };
     let (tx, rx) = oneshot::channel();
     let message = match command {
         SupervisorCommandKind::Restart => SupervisorCommand::Restart(tx),
         SupervisorCommandKind::Stop => SupervisorCommand::Stop(tx),
         SupervisorCommandKind::Shutdown => SupervisorCommand::Shutdown(tx),
     };
-    let ok = shared.supervisor.send(message).await.is_ok()
-        && timeout(Duration::from_secs(10), rx)
+    let sent = shared.supervisor.send(message).await.is_ok();
+    let acknowledged = if sent {
+        timeout(Duration::from_secs(10), rx)
             .await
             .ok()
             .and_then(Result::ok)
-            .unwrap_or(false);
-    (ok, *shared.status.read().await)
+            .unwrap_or(false)
+    } else {
+        false
+    };
+    if !sent || !acknowledged {
+        shared
+            .logger
+            .log(format!("supervisor command failed command={command_name}"));
+    }
+    (sent && acknowledged, *shared.status.read().await)
 }
 
 async fn supervise_core(
@@ -440,11 +505,12 @@ async fn supervise_core(
             core_port,
             &core_token,
             helper_token.as_deref(),
+            &shared.logger,
             &mut child,
         )
         .await
         {
-            eprintln!("FlClashAgent Core start: {error:#}");
+            shared.logger.log(format!("Core start error: {error:#}"));
             crashes += 1;
             if crashes > MAX_CRASH_RETRIES {
                 set_status(&shared, CoreStatus::Failed).await;
@@ -463,7 +529,13 @@ async fn supervise_core(
             result = accept_core(&core_listener, &core_token) => Some(result),
             command = commands.recv() => {
                 let end = resolve_supervisor_command(command);
-                stop_backend(&config, helper_token.as_deref(), &mut child).await;
+                stop_backend(
+                    &config,
+                    helper_token.as_deref(),
+                    &shared.logger,
+                    &mut child,
+                )
+                .await;
                 if apply_supervisor_end(end, &mut should_start, &shared).await {
                     return Ok(());
                 }
@@ -476,8 +548,8 @@ async fn supervise_core(
         let mut stream = match attach {
             Ok(stream) => stream,
             Err(error) => {
-                eprintln!("FlClashAgent Core attach: {error:#}");
-                stop_backend(&config, helper_token.as_deref(), &mut child).await;
+                shared.logger.log(format!("Core attach error: {error:#}"));
+                stop_backend(&config, helper_token.as_deref(), &shared.logger, &mut child).await;
                 crashes += 1;
                 if crashes > MAX_CRASH_RETRIES {
                     set_status(&shared, CoreStatus::Failed).await;
@@ -497,7 +569,13 @@ async fn supervise_core(
             result = replay_journal(&mut stream, &shared) => Some(result),
             command = commands.recv() => {
                 let end = resolve_supervisor_command(command);
-                stop_backend(&config, helper_token.as_deref(), &mut child).await;
+                stop_backend(
+                    &config,
+                    helper_token.as_deref(),
+                    &shared.logger,
+                    &mut child,
+                )
+                .await;
                 if apply_supervisor_end(end, &mut should_start, &shared).await {
                     return Ok(());
                 }
@@ -508,8 +586,8 @@ async fn supervise_core(
             continue;
         };
         if let Err(error) = replay {
-            eprintln!("FlClashAgent Core replay: {error:#}");
-            stop_backend(&config, helper_token.as_deref(), &mut child).await;
+            shared.logger.log(format!("Core replay error: {error:#}"));
+            stop_backend(&config, helper_token.as_deref(), &shared.logger, &mut child).await;
             crashes += 1;
             if crashes > MAX_CRASH_RETRIES {
                 set_status(&shared, CoreStatus::Failed).await;
@@ -548,7 +626,7 @@ async fn supervise_core(
                         }
                         Ok(None) => break SessionEnd::Crashed,
                         Err(error) => {
-                            eprintln!("FlClashAgent Core read: {error:#}");
+                            shared.logger.log(format!("Core read error: {error:#}"));
                             break SessionEnd::Crashed;
                         }
                     }
@@ -562,7 +640,7 @@ async fn supervise_core(
         *shared.core.lock().await = None;
         shared.journal.lock().await.discard_pending();
         writer.abort();
-        stop_backend(&config, helper_token.as_deref(), &mut child).await;
+        stop_backend(&config, helper_token.as_deref(), &shared.logger, &mut child).await;
         match session_end {
             SessionEnd::Restart => should_start = true,
             SessionEnd::Stopped => should_start = false,
@@ -597,6 +675,7 @@ async fn start_backend(
     core_port: u16,
     token: &str,
     helper_token: Option<&str>,
+    logger: &Arc<AgentLogger>,
     child: &mut Option<Child>,
 ) -> Result<()> {
     if config.use_helper {
@@ -604,6 +683,7 @@ async fn start_backend(
             .service_core
             .as_ref()
             .context("service Core is unavailable")?;
+        logger.log(format!("starting Core through Helper on port={core_port}"));
         helper_request(
             config.helper_port,
             "/start",
@@ -625,16 +705,30 @@ async fn start_backend(
         .arg(token)
         .env("SAFE_PATHS", &config.home)
         .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
         .kill_on_drop(true);
-    *child = Some(command.spawn().context("unable to spawn local Core")?);
+    let mut process = command.spawn().context("unable to spawn local Core")?;
+    if let Some(stdout) = process.stdout.take() {
+        spawn_core_output_logger(stdout, logger.clone(), "stdout");
+    }
+    if let Some(stderr) = process.stderr.take() {
+        spawn_core_output_logger(stderr, logger.clone(), "stderr");
+    }
+    logger.log(format!("local Core spawned on port={core_port}"));
+    *child = Some(process);
     Ok(())
 }
 
-async fn stop_backend(config: &AgentConfig, helper_token: Option<&str>, child: &mut Option<Child>) {
+async fn stop_backend(
+    config: &AgentConfig,
+    helper_token: Option<&str>,
+    logger: &Arc<AgentLogger>,
+    child: &mut Option<Child>,
+) {
     if config.use_helper {
         if let Some(helper_token) = helper_token {
+            logger.log("stopping Core through Helper");
             let _ = helper_request(
                 config.helper_port,
                 "/stop",
@@ -647,9 +741,31 @@ async fn stop_backend(config: &AgentConfig, helper_token: Option<&str>, child: &
         }
     }
     if let Some(mut process) = child.take() {
+        logger.log("stopping local Core");
         let _ = process.kill().await;
         let _ = process.wait().await;
     }
+}
+
+fn spawn_core_output_logger<R>(stream: R, logger: Arc<AgentLogger>, channel: &'static str)
+where
+    R: AsyncRead + Unpin + Send + 'static,
+{
+    tokio::spawn(async move {
+        let mut reader = BufReader::new(stream);
+        let mut line = String::new();
+        loop {
+            line.clear();
+            match reader.read_line(&mut line).await {
+                Ok(0) => break,
+                Ok(_) => logger.log(format!("Core {channel}: {}", line.trim_end())),
+                Err(error) => {
+                    logger.log(format!("Core {channel} read error: {error}"));
+                    break;
+                }
+            }
+        }
+    });
 }
 
 async fn helper_request(port: u16, path: &str, body: Option<Value>) -> Result<()> {

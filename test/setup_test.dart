@@ -66,9 +66,14 @@ void main() {
     final checklist = File(
       '${directory.path}${Platform.pathSeparator}WINDOWS-VM-CHECKLIST.md',
     );
+    final collector = File(
+      '${directory.path}${Platform.pathSeparator}Collect-FlClashXLogs.ps1',
+    );
     expect(buildInfo, contains('Source commit: $commit'));
     expect(buildInfo, contains('2026-08-29T01:02:03.000Z'));
     expect(buildInfo, isNot(contains('{{')));
     expect(await checklist.exists(), isTrue);
+    expect(await collector.exists(), isTrue);
+    expect(collector.readAsStringSync(), contains('log-inventory.json'));
   });
 }

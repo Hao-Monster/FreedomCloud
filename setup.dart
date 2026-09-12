@@ -250,7 +250,10 @@ class Build {
     final templateDir = join(current, "engineering", "test-package");
     final buildInfoTemplate = File(join(templateDir, "BUILD-INFO.txt.in"));
     final vmChecklist = File(join(templateDir, "WINDOWS-VM-CHECKLIST.md"));
-    if (!buildInfoTemplate.existsSync() || !vmChecklist.existsSync()) {
+    final logCollector = File(join(templateDir, "Collect-FlClashXLogs.ps1"));
+    if (!buildInfoTemplate.existsSync() ||
+        !vmChecklist.existsSync() ||
+        !logCollector.existsSync()) {
       throw "Windows test-package metadata is incomplete";
     }
 
@@ -266,6 +269,7 @@ class Build {
       flush: true,
     );
     await vmChecklist.copy(join(buildDir, "WINDOWS-VM-CHECKLIST.md"));
+    await logCollector.copy(join(buildDir, "Collect-FlClashXLogs.ps1"));
   }
 
   /// Reads mihomo version from [core/go.mod] (single source of truth).

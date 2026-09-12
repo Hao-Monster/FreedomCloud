@@ -77,8 +77,10 @@ Windows 11 VM or an authorized macOS test host.
 11. Confirm SCM points to
     `C:\Program Files\FlClashX Service\FlClashHelperService.exe`, not the
     extracted portable directory.
-12. Export `connections_diagnostic.log` and application logs before restoring the
-    VM snapshot.
+12. Run `Collect-FlClashXLogs.ps1` (or the M3 collector in a signed bundle) to
+    export the bounded application logs and recent Service Control Manager
+    events before restoring the VM snapshot. The collector allow-lists log
+    filenames and never copies profile, subscription or credential files.
 
 ## Git and pull-request plan
 

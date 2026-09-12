@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:collection';
 import 'dart:io';
 
 import 'package:flclashx/common/path.dart';
@@ -17,11 +18,14 @@ class FileLogger {
 
   static const int maxFileSizeBytes = 10 * 1024 * 1024; // 10 MB
   static const int maxLogFiles = 7; // Keep 7 days of logs
+  static const int maxPendingMessages = 2048;
+  static const int maxMessageLength = 16 * 1024;
 
   IOSink? _currentSink;
   String? _currentLogFilePath;
   String? _currentDate;
-  final _writeQueue = <String>[];
+  final Queue<String> _writeQueue = Queue<String>();
+  int _droppedMessages = 0;
   bool _isWriting = false;
   bool _isBindingInitialized = false;
 
@@ -169,8 +173,17 @@ class FileLogger {
     try {
       await _ensureSink();
 
+      if (_droppedMessages > 0) {
+        final timestamp =
+            DateFormat('yyyy-MM-dd HH:mm:ss.SSS').format(DateTime.now());
+        _currentSink?.writeln(
+          '[$timestamp] [FileLogger] dropped=$_droppedMessages messages because the write queue was full',
+        );
+        _droppedMessages = 0;
+      }
+
       while (_writeQueue.isNotEmpty) {
-        final message = _writeQueue.removeAt(0);
+        final message = _writeQueue.removeFirst();
         final timestamp =
             DateFormat('yyyy-MM-dd HH:mm:ss.SSS').format(DateTime.now());
         _currentSink?.writeln('[$timestamp] $message');
@@ -190,7 +203,14 @@ class FileLogger {
   }
 
   void log(String message) {
-    _writeQueue.add(message);
+    final boundedMessage = message.length > maxMessageLength
+        ? '${message.substring(0, maxMessageLength)}…'
+        : message;
+    if (_writeQueue.length >= maxPendingMessages) {
+      _writeQueue.removeFirst();
+      _droppedMessages++;
+    }
+    _writeQueue.addLast(boundedMessage);
     unawaited(_processQueue());
   }
 
@@ -205,6 +225,7 @@ class FileLogger {
   Future<void> dispose() async {
     await _closeSink();
     _writeQueue.clear();
+    _droppedMessages = 0;
   }
 }
 
