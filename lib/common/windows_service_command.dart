@@ -2,6 +2,17 @@ const windowsHelperServiceName = 'FlClashHelperService';
 
 final _unsafeCmdValuePattern = RegExp(r'["\r\n&|<>%^!]');
 final _absoluteWindowsPathPattern = RegExp(r'^(?:[a-zA-Z]:\\|\\\\)');
+const _msvcRuntimeFiles = [
+  'concrt140.dll',
+  'msvcp140.dll',
+  'msvcp140_1.dll',
+  'msvcp140_2.dll',
+  'msvcp140_atomic_wait.dll',
+  'msvcp140_codecvt_ids.dll',
+  'vcruntime140.dll',
+  'vcruntime140_1.dll',
+  'vcruntime140_threads.dll',
+];
 
 /// Builds the elevated service repair command from values that cannot escape
 /// cmd.exe quoting. The service is configured in place when it already exists;
@@ -21,6 +32,12 @@ String buildWindowsHelperRepairCommand({
   _validateWindowsPath(serviceHelperPath, 'serviceHelperPath');
   _validateWindowsPath(serviceCorePath, 'serviceCorePath');
 
+  final sourceDirectory = helperPath.substring(0, helperPath.lastIndexOf(r'\'));
+  final runtimeCopies = _msvcRuntimeFiles
+      .map((name) => 'copy /b /y "$sourceDirectory\\$name" '
+          '"$serviceDirectory\\$name" >nul')
+      .join(' && ');
+
   final configure = serviceExists
       ? 'sc config $windowsHelperServiceName '
           'binPath= "$serviceHelperPath" start= auto'
@@ -31,6 +48,7 @@ String buildWindowsHelperRepairCommand({
       'if not exist "$serviceDirectory" mkdir "$serviceDirectory" && '
       'copy /b /y "$helperPath" "$serviceHelperPath" >nul && '
       'copy /b /y "$corePath" "$serviceCorePath" >nul && '
+      '$runtimeCopies && '
       '$configure && '
       'sc start $windowsHelperServiceName';
 }

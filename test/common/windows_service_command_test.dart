@@ -23,6 +23,10 @@ void main() {
     expect(command, isNot(contains('sc delete')));
     expect(command, contains('copy /b /y "$helperPath" "$serviceHelperPath"'));
     expect(command, contains('copy /b /y "$corePath" "$serviceCorePath"'));
+    expect(command,
+        contains('copy /b /y "C:\\Program Files\\FlClashX\\msvcp140.dll"'));
+    expect(command,
+        contains('copy /b /y "C:\\Program Files\\FlClashX\\vcruntime140.dll"'));
     expect(command, isNot(contains('allowed_core.sha256')));
     expect(
         command.indexOf('copy /b /y'), lessThan(command.indexOf('sc create')));
