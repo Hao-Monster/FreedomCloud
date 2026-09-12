@@ -38,7 +38,7 @@ function Copy-ApplicationLogs {
     if (-not (Test-Path -LiteralPath $destination)) {
         New-Item -ItemType Directory -Path $destination | Out-Null
     }
-    $allowed = '^(FlClashX_\d{4}-\d{2}-\d{2}(?:_\d+)?|connections_diagnostic|FlClashAgent(?:\.bootstrap)?|FlClashHelperService|FlClashStrictBroker)\.log(?:\.\d+)?$'
+    $allowed = '^(FlClashX_\d{4}-\d{2}-\d{2}(?:_\d+)?|connections_diagnostic|FlClashAgent(?:\.bootstrap)?|FlClashHelperService|helper-install|FlClashStrictBroker)\.log(?:\.\d+)?$'
     $copied = New-Object Collections.Generic.List[object]
     foreach ($file in Get-ChildItem -LiteralPath $SourceRoot -File -ErrorAction SilentlyContinue) {
         if ($file.Name -notmatch $allowed) {
