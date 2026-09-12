@@ -182,7 +182,7 @@ class Windows {
       commandPtr,
       argumentsPtr,
       nullptr,
-      1,
+      0,
     );
 
     calloc.free(commandPtr);
