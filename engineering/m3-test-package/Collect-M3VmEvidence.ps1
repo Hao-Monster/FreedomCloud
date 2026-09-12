@@ -23,6 +23,67 @@ if (-not $outputItem.PSIsContainer -or (($outputItem.Attributes -band [IO.FileAt
     throw 'OutputDirectory must be a plain directory'
 }
 
+function Copy-ApplicationLogs {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$SourceRoot,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Label,
+
+        [Parameter(Mandatory = $true)]
+        [string]$DestinationRoot
+    )
+
+    if (-not (Test-Path -LiteralPath $SourceRoot -PathType Container)) {
+        return @()
+    }
+    $destination = Join-Path $DestinationRoot $Label
+    if (-not (Test-Path -LiteralPath $destination)) {
+        New-Item -ItemType Directory -Path $destination | Out-Null
+    }
+    $allowed = '^(FlClashX_\d{4}-\d{2}-\d{2}(?:_\d+)?|connections_diagnostic|FlClashAgent(?:\.bootstrap)?|FlClashHelperService|FlClashStrictBroker)\.log(?:\.\d+)?$'
+    $copied = New-Object Collections.Generic.List[object]
+    foreach ($file in Get-ChildItem -LiteralPath $SourceRoot -File -ErrorAction SilentlyContinue) {
+        if ($file.Name -notmatch $allowed) {
+            continue
+        }
+        $target = Join-Path $destination $file.Name
+        Copy-Item -LiteralPath $file.FullName -Destination $target -Force
+        $copied.Add([pscustomobject]@{
+            source = "$Label/$($file.Name)"
+            copied = "logs/$Label/$($file.Name)"
+            bytes = $file.Length
+        })
+    }
+    return $copied
+}
+
+$logRoot = Join-Path $output 'logs'
+if (-not (Test-Path -LiteralPath $logRoot)) {
+    New-Item -ItemType Directory -Path $logRoot | Out-Null
+}
+$logInventory = New-Object Collections.Generic.List[object]
+$appDataRoot = if ($env:APPDATA) { Join-Path $env:APPDATA 'com.follow\clashx\logs' } else { $null }
+$localAppDataRoot = if ($env:LOCALAPPDATA) { Join-Path $env:LOCALAPPDATA 'FlClashX\logs' } else { $null }
+$programDataRoot = if ($env:ProgramData) { Join-Path $env:ProgramData 'FlClashX\logs' } else { $null }
+$strictBrokerLogRoot = if ($env:ProgramData) { Join-Path $env:ProgramData 'FlClashX.StrictBroker\logs' } else { $null }
+$serviceLogRoot = if ($env:ProgramFiles) { Join-Path $env:ProgramFiles 'FlClashX Service\logs' } else { $null }
+foreach ($source in @(
+        @{ root = $appDataRoot; label = 'appdata' },
+        @{ root = $localAppDataRoot; label = 'localappdata' },
+        @{ root = $programDataRoot; label = 'programdata' },
+        @{ root = $strictBrokerLogRoot; label = 'strict-broker' },
+        @{ root = $serviceLogRoot; label = 'helper-service' }
+    )) {
+    if ($null -ne $source.root) {
+        foreach ($entry in @(Copy-ApplicationLogs -SourceRoot $source.root -Label $source.label -DestinationRoot $logRoot)) {
+            $logInventory.Add($entry)
+        }
+    }
+}
+$logInventory | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $output 'log-inventory.json') -Encoding UTF8
+
 $processNames = @('FlClashX', 'FlClashAgent', 'FlClashCore', 'FlClashStrictBroker', 'FlClashHelperService')
 $sampleLimit = [Math]::Ceiling(($DurationMinutes * 60) / $SampleIntervalSeconds) + 1
 $samples = New-Object Collections.Generic.List[object]
@@ -74,10 +135,33 @@ $utf8 = New-Object Text.UTF8Encoding($false)
 
 $verifier = & verifier.exe /querysettings 2>&1 | Out-String
 [IO.File]::WriteAllText((Join-Path $output 'driver-verifier.txt'), $verifier, $utf8)
-$hashLines = Get-ChildItem -LiteralPath $output -File |
-    Where-Object Name -ne 'SHA256SUMS.txt' |
-    Sort-Object Name |
-    ForEach-Object { '{0} *{1}' -f (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash, $_.Name }
+$eventStart = [DateTime]::Now.AddMinutes(-[Math]::Max(60, $DurationMinutes + 10))
+$serviceEvents = Get-WinEvent -FilterHashtable @{
+    LogName = 'System'
+    ProviderName = 'Service Control Manager'
+    StartTime = $eventStart
+} -MaxEvents 200 -ErrorAction SilentlyContinue |
+    Select-Object TimeCreated, Id, LevelDisplayName, Message |
+    Format-List | Out-String
+[IO.File]::WriteAllText((Join-Path $output 'service-control-events.txt'), $serviceEvents, $utf8)
+[IO.File]::WriteAllText(
+    (Join-Path $output 'driver-debug-instructions.txt'),
+    @"
+Kernel driver diagnostics use DbgPrintEx and are not written from the driver to disk.
+For a driver-focused run, start an approved DebugView/ETW capture before the test,
+save the capture as driver-debug.txt, and place it beside this evidence directory.
+Do not include packet payloads, profile data, credentials, or command-line secrets.
+"@,
+    $utf8
+)
+$hashLines = Get-ChildItem -LiteralPath $output -File -Recurse |
+    ForEach-Object {
+        $relative = [IO.Path]::GetRelativePath($output, $_.FullName) -replace '\\', '/'
+        if ($relative -ne 'SHA256SUMS.txt') {
+            '{0} *{1}' -f (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash, $relative
+        }
+    } |
+    Sort-Object
 [IO.File]::WriteAllText((Join-Path $output 'SHA256SUMS.txt'), ($hashLines -join [Environment]::NewLine) + [Environment]::NewLine, $utf8)
 
 Write-Output $output

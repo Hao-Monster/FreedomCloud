@@ -19,6 +19,11 @@ change network state by themselves.
    Agent or Core hash/publisher mismatch before producing the ZIP.
 6. Transfer the ZIP to a snapshotted Windows 11 VM, extract it, run
    `Invoke-M3VmPreflight.ps1`, and follow `M3-WINDOWS-VM-CHECKLIST.md`.
+7. Before restoring the VM snapshot, run
+   `Collect-M3VmEvidence.ps1 -OutputDirectory <evidence-directory>`. The
+   collector copies the bounded Flutter, Agent, Helper and Strict Broker logs,
+   recent Service Control Manager events and the driver-capture instructions.
+   It never copies profile YAML, subscriptions or credential files.
 
 The manifest generator hashes the exact leaf publisher certificate bytes, which
 matches the Broker trust contract; it does not use the certificate's SHA-1

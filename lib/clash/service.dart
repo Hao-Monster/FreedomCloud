@@ -413,7 +413,12 @@ class ClashService extends ClashHandlerInterface {
         environment: environment,
       );
       process = started;
-      _stdoutSubscription = started.stdout.listen((_) {});
+      _stdoutSubscription = started.stdout
+          .transform(utf8.decoder)
+          .transform(const LineSplitter())
+          .listen((line) {
+            fileLogger.log('[FlClashCore stdout] $line');
+          });
       _stderrSubscription = started.stderr.listen((e) {
         final error = utf8.decode(e);
         if (error.isNotEmpty) {

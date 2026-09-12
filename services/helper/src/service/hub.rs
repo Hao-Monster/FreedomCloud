@@ -9,6 +9,8 @@ use std::sync::{Arc, Mutex};
 use std::{io, thread};
 use warp::{Filter, Reply};
 
+use super::logging::ServiceLogger;
+
 const LISTEN_PORT: u16 = 47890;
 const MAX_REQUEST_BYTES: u64 = 16 * 1024;
 const HELPER_TOKEN_FILE_NAME: &str = "flclashx-helper-v1.token";
@@ -171,39 +173,61 @@ fn allowed_hash() -> String {
 static PROCESS: Lazy<Arc<Mutex<Option<std::process::Child>>>> =
     Lazy::new(|| Arc::new(Mutex::new(None)));
 
-fn start(start_params: StartParams) -> impl Reply {
+fn start(start_params: StartParams, logger: Arc<ServiceLogger>) -> impl Reply {
+    logger.log(format!(
+        "start request received port={} helper credential validated",
+        start_params.arg
+    ));
     let install_dir = match service_directory() {
         Ok(value) => value,
-        Err(error) => return error,
+        Err(error) => {
+            logger.log(format!("resolve service directory failed: {error}"));
+            return error;
+        }
     };
     let core_path = match validate_start_path_in(Path::new(&start_params.path), &install_dir) {
         Ok(value) => value,
-        Err(error) => return error,
+        Err(error) => {
+            logger.log(format!("Core path rejected: {error}"));
+            return error;
+        }
     };
     let port = match validate_port(&start_params.arg) {
         Ok(value) => value,
-        Err(error) => return error,
+        Err(error) => {
+            logger.log(format!("Core port rejected: {error}"));
+            return error;
+        }
     };
     let auth_token = match validate_auth_token(start_params.auth_token) {
         Ok(value) => value,
-        Err(error) => return error,
+        Err(error) => {
+            logger.log(format!("Core authentication rejected: {error}"));
+            return error;
+        }
     };
     let home_dir = match validate_home_directory(start_params.home_dir) {
         Ok(value) => value,
-        Err(error) => return error,
+        Err(error) => {
+            logger.log(format!("Core home directory rejected: {error}"));
+            return error;
+        }
     };
     if let Err(error) = validate_helper_token(&home_dir, &start_params.helper_token) {
+        logger.log(format!("Helper credential rejected: {error}"));
         return error;
     }
     let sha256 = sha256_file(&core_path).unwrap_or_default();
     let allowed = allowed_hash();
     if sha256 != allowed {
+        logger.log("Core image hash rejected");
         return format!("The SHA256 hash of the program requesting execution is: {}. The helper program only allows execution of applications with the SHA256 hash: {}.", sha256, allowed,);
     }
-    stop_process();
+    stop_process(&logger);
     let mut process = PROCESS.lock().unwrap();
     let mut command = Command::new(core_path);
     command
+        .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .arg(port.to_string())
         // The core needs provider access before its SetHomeDir IPC call.
@@ -216,79 +240,98 @@ fn start(start_params: StartParams) -> impl Reply {
         Ok(child) => {
             *process = Some(child);
             if let Some(ref mut child) = *process {
+                let stdout = child.stdout.take().unwrap();
                 let stderr = child.stderr.take().unwrap();
-                let reader = io::BufReader::new(stderr);
-                thread::spawn(move || {
-                    for line in reader.lines() {
-                        match line {
-                            Ok(output) => {
-                                log_message(output);
-                            }
-                            Err(_) => {
-                                break;
-                            }
-                        }
-                    }
-                });
+                spawn_core_output_logger(stdout, logger.clone(), "stdout");
+                spawn_core_output_logger(stderr, logger.clone(), "stderr");
             }
+            logger.log("Core process started through Helper");
             "".to_string()
         }
         Err(e) => {
-            log_message(e.to_string());
+            logger.log(format!("Core process start failed: {e}"));
             e.to_string()
         }
     }
 }
 
-fn stop_process() -> String {
+fn stop_process(logger: &Arc<ServiceLogger>) -> String {
     let mut process = PROCESS.lock().unwrap();
     if let Some(mut child) = process.take() {
-        let _ = child.kill();
-        let _ = child.wait();
+        logger.log("stopping Core process");
+        if let Err(error) = child.kill() {
+            logger.log(format!("Core kill failed: {error}"));
+        }
+        if let Err(error) = child.wait() {
+            logger.log(format!("Core wait failed: {error}"));
+        }
     }
     *process = None;
     "".to_string()
 }
 
-fn stop(stop_params: StopParams) -> impl Reply {
-    let home_dir = match validate_home_directory(stop_params.home_dir) {
-        Ok(value) => value,
-        Err(error) => return error,
-    };
-    if let Err(error) = validate_helper_token(&home_dir, &stop_params.helper_token) {
-        return error;
-    }
-    stop_process()
+fn spawn_core_output_logger<R>(reader: R, logger: Arc<ServiceLogger>, channel: &'static str)
+where
+    R: Read + Send + 'static,
+{
+    thread::spawn(move || {
+        let reader = io::BufReader::new(reader);
+        for line in reader.lines() {
+            match line {
+                Ok(output) => logger.log(format!("Core {channel}: {output}")),
+                Err(error) => {
+                    logger.log(format!("Core {channel} read error: {error}"));
+                    break;
+                }
+            }
+        }
+    });
 }
 
-fn log_message(message: String) {
-    eprintln!("{message}");
+fn stop(stop_params: StopParams, logger: Arc<ServiceLogger>) -> impl Reply {
+    let home_dir = match validate_home_directory(stop_params.home_dir) {
+        Ok(value) => value,
+        Err(error) => {
+            logger.log(format!("stop request home directory rejected: {error}"));
+            return error;
+        }
+    };
+    if let Err(error) = validate_helper_token(&home_dir, &stop_params.helper_token) {
+        logger.log(format!("stop request credential rejected: {error}"));
+        return error;
+    }
+    stop_process(&logger)
 }
 
 pub async fn run_service() -> anyhow::Result<()> {
+    let logger = ServiceLogger::new_default();
+    logger.log("Helper service starting");
     let api_ping = warp::get()
         .and(warp::path("ping"))
         .and(warp::path::end())
         .map(allowed_hash);
 
+    let start_logger = logger.clone();
     let api_start = warp::post()
         .and(warp::path("start"))
         .and(warp::path::end())
         .and(warp::body::content_length_limit(MAX_REQUEST_BYTES))
         .and(warp::body::json())
-        .map(|start_params: StartParams| start(start_params));
+        .map(move |start_params: StartParams| start(start_params, start_logger.clone()));
 
+    let stop_logger = logger.clone();
     let api_stop = warp::post()
         .and(warp::path("stop"))
         .and(warp::path::end())
         .and(warp::body::content_length_limit(MAX_REQUEST_BYTES))
         .and(warp::body::json())
-        .map(|stop_params: StopParams| stop(stop_params));
+        .map(move |stop_params: StopParams| stop(stop_params, stop_logger.clone()));
 
     warp::serve(api_ping.or(api_start).or(api_stop))
         .run(([127, 0, 0, 1], LISTEN_PORT))
         .await;
 
+    logger.log("Helper service stopped");
     Ok(())
 }
 

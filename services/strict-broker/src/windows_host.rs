@@ -4,6 +4,7 @@ use std::os::windows::fs::MetadataExt;
 use std::path::{Component, Path, PathBuf};
 use std::ptr::null_mut;
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, SyncSender, TryRecvError, TrySendError};
+use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
@@ -15,6 +16,7 @@ use flclash_strict_contract::{
 use windows_sys::Win32::System::Com::CoTaskMemFree;
 use windows_sys::Win32::UI::Shell::{FOLDERID_ProgramData, SHGetKnownFolderPath};
 
+use crate::logging::StrictBrokerLogger;
 use crate::windows_pipe::is_connect_deadline;
 use crate::windows_tcp_runtime::WindowsTcpForwardingHealth;
 use crate::{
@@ -64,6 +66,7 @@ enum EngineControl {
 struct EngineActorClient {
     dispatch: SyncSender<EngineDispatch>,
     control: SyncSender<EngineControl>,
+    logger: Arc<StrictBrokerLogger>,
 }
 
 struct EngineActor {
@@ -170,10 +173,25 @@ impl WindowsStrictBrokerPaths {
 }
 
 pub fn run_windows_strict_broker_service() -> Result<()> {
-    run_windows_scm_service(BROKER_SERVICE_NAME, |context| {
-        let paths = WindowsStrictBrokerPaths::discover()?;
-        let package = StrictPackageManifest::embedded()?;
-        run_service(context, paths, package)
+    let logger = StrictBrokerLogger::new_default();
+    logger.log("SCM dispatcher starting");
+    run_windows_scm_service(BROKER_SERVICE_NAME, move |context| {
+        logger.log("SCM service callback entered");
+        let paths = match WindowsStrictBrokerPaths::discover() {
+            Ok(paths) => paths,
+            Err(error) => {
+                logger.log(format!("discover trusted package paths failed: {error:#}"));
+                return Err(error);
+            }
+        };
+        let package = match StrictPackageManifest::embedded() {
+            Ok(package) => package,
+            Err(error) => {
+                logger.log(format!("load embedded package manifest failed: {error:#}"));
+                return Err(error);
+            }
+        };
+        run_service(context, paths, package, logger.clone())
     })
 }
 
@@ -181,7 +199,9 @@ fn run_service(
     context: WindowsScmContext,
     paths: WindowsStrictBrokerPaths,
     package: StrictPackageManifest,
+    logger: Arc<StrictBrokerLogger>,
 ) -> Result<()> {
+    logger.log("strict Broker service initializing");
     let activation_deadlines = WindowsPipeDeadlines::new(
         Duration::from_secs(1),
         Duration::from_secs(2),
@@ -200,19 +220,29 @@ fn run_service(
         .context("open and attest packaged strict Agent")?;
     let _core_image = verify_windows_packaged_core_image(paths.core(), &package)
         .context("open and attest packaged strict Core")?;
-    let mut engine = EngineActor::start(paths.clone(), package.clone())?;
+    let mut engine = EngineActor::start(paths.clone(), package.clone(), logger.clone())?;
     if let Err(error) = context.report_running() {
+        logger.log(format!("report service running failed: {error:#}"));
         return combine_service_results(Err(error), engine.shutdown());
     }
+    logger.log("strict Broker service running");
     let service = run_activation_loop(
         activation,
         context.shutdown(),
         &agent_image,
         session_deadlines,
         engine.client(),
+        logger.clone(),
     );
     let engine_shutdown = engine.shutdown();
-    combine_service_results(service, engine_shutdown)
+    let result = combine_service_results(service, engine_shutdown);
+    match &result {
+        Ok(()) => logger.log("strict Broker service stopped cleanly"),
+        Err(error) => logger.log(format!(
+            "strict Broker service stopped with error: {error:#}"
+        )),
+    }
+    result
 }
 
 fn build_dispatcher(
@@ -252,6 +282,7 @@ fn run_activation_loop(
     agent_image: &WindowsAgentImageTrustLease,
     session_deadlines: WindowsPipeDeadlines,
     engine: EngineActorClient,
+    logger: Arc<StrictBrokerLogger>,
 ) -> Result<()> {
     let mut sessions = BrokerSessionRegistry::<WindowsBrokerPipeSession>::default();
     while !shutdown.is_requested() {
@@ -259,15 +290,20 @@ fn run_activation_loop(
         let attempt = match activation.connect_and_classify_with_image(agent_image) {
             Ok(attempt) => attempt,
             Err(error) if is_connect_deadline(&error) => continue,
-            Err(_) => {
+            Err(error) => {
+                logger.log(format!("activation pipe classification failed: {error:#}"));
                 activation.disconnect_for_reuse();
                 continue;
             }
         };
 
         let (response, installed) = match attempt {
-            WindowsBrokerActivationAttempt::Rejected(response) => (response, false),
+            WindowsBrokerActivationAttempt::Rejected(response) => {
+                logger.log("activation rejected");
+                (response, false)
+            }
             WindowsBrokerActivationAttempt::Verified(verified) => {
+                logger.log("activation verified");
                 let request_id = verified.request.request_id.clone();
                 let handler_engine = engine.clone();
                 match WindowsBrokerPipeSession::start(
@@ -284,6 +320,7 @@ fn run_activation_loop(
                             .transpose()?
                             .unwrap_or(false);
                         if active_is_live {
+                            logger.log("activation rejected because another session is active");
                             drop(candidate);
                             (
                                 BrokerActivationResponse::error(
@@ -296,8 +333,10 @@ fn run_activation_loop(
                             .activate(candidate, || engine.force_fail_closed())
                             .is_ok()
                         {
+                            logger.log("activation session installed");
                             (response, true)
                         } else {
+                            logger.log("activation session install failed");
                             (
                                 BrokerActivationResponse::error(
                                     request_id,
@@ -307,13 +346,16 @@ fn run_activation_loop(
                             )
                         }
                     }
-                    Err(_) => (
-                        BrokerActivationResponse::error(
-                            request_id,
-                            BrokerActivationErrorCode::Internal,
-                        )?,
-                        false,
-                    ),
+                    Err(error) => {
+                        logger.log(format!("activation session start failed: {error:#}"));
+                        (
+                            BrokerActivationResponse::error(
+                                request_id,
+                                BrokerActivationErrorCode::Internal,
+                            )?,
+                            false,
+                        )
+                    }
                 }
             }
         };
@@ -321,9 +363,11 @@ fn run_activation_loop(
         let write_result = activation.write_response(&response);
         activation.disconnect_for_reuse();
         if installed && write_result.is_err() {
+            logger.log("activation response write failed; forcing fail-closed");
             sessions.shutdown(|| engine.force_fail_closed())?;
         }
     }
+    logger.log("activation loop observed shutdown");
     sessions.shutdown(|| engine.force_fail_closed())?;
     Ok(())
 }
@@ -382,26 +426,39 @@ fn combine_fail_closed_results(
 }
 
 impl EngineActor {
-    fn start(paths: WindowsStrictBrokerPaths, package: StrictPackageManifest) -> Result<Self> {
+    fn start(
+        paths: WindowsStrictBrokerPaths,
+        package: StrictPackageManifest,
+        logger: Arc<StrictBrokerLogger>,
+    ) -> Result<Self> {
         let (dispatch_tx, dispatch_rx) = mpsc::sync_channel(ENGINE_QUEUE_CAPACITY);
         let (control_tx, control_rx) = mpsc::sync_channel(1);
         let (ready_tx, ready_rx) = mpsc::sync_channel(1);
+        let worker_logger = logger.clone();
         let worker = thread::Builder::new()
             .name("flclash-strict-engine".into())
             .spawn(move || {
                 let mut dispatcher = match build_dispatcher(&paths, &package) {
                     Ok(dispatcher) => dispatcher,
                     Err(error) => {
+                        worker_logger
+                            .log(format!("strict engine initialization failed: {error:#}"));
                         let _ = ready_tx.send(Err(anyhow::anyhow!(format!("{error:#}"))));
                         return Err(error);
                     }
                 };
+                worker_logger.log("strict engine initialized");
                 if ready_tx.send(Ok(())).is_err() {
+                    worker_logger.log("strict engine readiness receiver closed");
                     return dispatcher
                         .force_fail_closed()
                         .context("startup listener left before strict engine became ready");
                 }
-                run_engine_actor(&mut dispatcher, dispatch_rx, control_rx)
+                let result = run_engine_actor(&mut dispatcher, dispatch_rx, control_rx);
+                if let Err(error) = &result {
+                    worker_logger.log(format!("strict engine actor failed: {error:#}"));
+                }
+                result
             })
             .context("start strict Broker engine actor")?;
         match ready_rx.recv_timeout(ENGINE_STARTUP_DEADLINE) {
@@ -409,14 +466,19 @@ impl EngineActor {
                 client: EngineActorClient {
                     dispatch: dispatch_tx,
                     control: control_tx,
+                    logger,
                 },
                 worker: Some(worker),
             }),
             Ok(Err(error)) => {
+                logger.log(format!("strict engine startup rejected: {error:#}"));
                 let _ = worker.join();
                 Err(error).context("initialize strict Broker engine actor")
             }
-            Err(_) => bail!("strict Broker engine startup exceeded its deadline"),
+            Err(_) => {
+                logger.log("strict engine startup exceeded its deadline");
+                bail!("strict Broker engine startup exceeded its deadline")
+            }
         }
     }
 
@@ -425,6 +487,7 @@ impl EngineActor {
     }
 
     fn shutdown(&mut self) -> Result<()> {
+        self.client.logger.log("strict engine shutdown requested");
         let control = self.client.request_control(EngineControl::Shutdown)?;
         let worker = self
             .worker
@@ -434,10 +497,26 @@ impl EngineActor {
             .join()
             .map_err(|_| anyhow::anyhow!("strict Broker engine actor panicked"))?;
         match (control, joined) {
-            (Ok(()), Ok(())) => Ok(()),
-            (Err(control), Ok(())) => Err(control),
-            (Ok(()), Err(worker)) => Err(worker),
+            (Ok(()), Ok(())) => {
+                self.client.logger.log("strict engine shutdown completed");
+                Ok(())
+            }
+            (Err(control), Ok(())) => {
+                self.client.logger.log(format!(
+                    "strict engine control shutdown failed: {control:#}"
+                ));
+                Err(control)
+            }
+            (Ok(()), Err(worker)) => {
+                self.client
+                    .logger
+                    .log(format!("strict engine worker shutdown failed: {worker:#}"));
+                Err(worker)
+            }
             (Err(control), Err(worker)) => {
+                self.client.logger.log(format!(
+                    "strict engine shutdown failed: control={control:#}; worker={worker:#}"
+                ));
                 bail!("strict engine shutdown failed: {control:#}; engine actor failed: {worker:#}")
             }
         }
@@ -456,10 +535,23 @@ impl EngineActorClient {
             request,
             response: response_tx,
         }) {
-            Ok(()) => response_rx
-                .recv_timeout(ENGINE_REQUEST_DEADLINE)
-                .unwrap_or_else(|_| fallback()),
-            Err(TrySendError::Full(_)) | Err(TrySendError::Disconnected(_)) => fallback(),
+            Ok(()) => match response_rx.recv_timeout(ENGINE_REQUEST_DEADLINE) {
+                Ok(response) => response,
+                Err(error) => {
+                    self.logger
+                        .log(format!("strict engine request timed out: {error}"));
+                    fallback()
+                }
+            },
+            Err(TrySendError::Full(_)) => {
+                self.logger.log("strict engine request queue is full");
+                fallback()
+            }
+            Err(TrySendError::Disconnected(_)) => {
+                self.logger
+                    .log("strict engine request queue is disconnected");
+                fallback()
+            }
         }
     }
 

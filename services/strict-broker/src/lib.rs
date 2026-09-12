@@ -9,6 +9,8 @@ use serde::{Deserialize, Serialize};
 
 mod dispatch;
 mod ipc_auth;
+#[cfg(all(windows, feature = "production-host"))]
+pub mod logging;
 mod package_manifest;
 mod planned_wfp_backend;
 mod recovery_file;

@@ -52,6 +52,12 @@ Take a clean VM snapshot before starting and restore it after evidence export.
     association, flow and in-flight injection limits, with selected traffic
     failing closed rather than consuming unbounded memory.
 
+16. Before restoring the VM snapshot, run
+    `Collect-M3VmEvidence.ps1 -OutputDirectory <evidence-directory>`. It copies
+    only allow-listed application logs from the per-user AppData and ProgramData
+    locations, records Service Control Manager events, and writes the
+    driver-capture instructions.
+
 Return the completed checklist, preflight JSON, process samples, verifier output,
 crash dumps and performance report. Do not return profiles, subscription URLs,
 tokens, packet payloads, host/IP histories, user names or command lines.

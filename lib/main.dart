@@ -21,6 +21,17 @@ import 'pages/editor_window.dart';
 
 Future<void> main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
+  fileLogger.flushPendingLogs();
+  FlutterError.onError = (details) {
+    FlutterError.presentError(details);
+    commonPrint.log(
+      'Flutter framework error: ${details.exception}\n${details.stack}',
+    );
+  };
+  PlatformDispatcher.instance.onError = (error, stack) {
+    commonPrint.log('Unhandled platform error: $error\n$stack');
+    return false;
+  };
   configureDecodedImageCache(
     PaintingBinding.instance.imageCache,
     isDesktop: Platform.isWindows || Platform.isLinux || Platform.isMacOS,
