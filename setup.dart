@@ -219,8 +219,7 @@ class Build {
   }
 
   static Future<String> _resolveSourceCommit() async {
-    final environmentCommit =
-        Platform.environment["GITHUB_SHA"]?.trim() ?? "";
+    final environmentCommit = Platform.environment["GITHUB_SHA"]?.trim() ?? "";
     if (RegExp(r'^[0-9a-fA-F]{40,64}$').hasMatch(environmentCommit)) {
       return environmentCommit.toLowerCase();
     }
@@ -272,6 +271,51 @@ class Build {
     await logCollector.copy(join(buildDir, "Collect-FlClashXLogs.ps1"));
   }
 
+  static void bundleWindowsMsvcRuntime(String buildDir, String winArch) {
+    final roots = [
+      r'C:\Program Files\Microsoft Visual Studio',
+      r'C:\Program Files (x86)\Microsoft Visual Studio',
+    ];
+    final candidates = <Directory>[];
+    for (final root in roots) {
+      final directory = Directory(root);
+      if (!directory.existsSync()) continue;
+      for (final entity
+          in directory.listSync(recursive: true, followLinks: false)) {
+        if (entity is Directory &&
+            entity.path.toLowerCase().contains('\\vc\\redist\\msvc\\') &&
+            RegExp(r'\\' + RegExp.escape(winArch) + r'\\microsoft\.vc\d+\.crt$')
+                .hasMatch(entity.path.toLowerCase())) {
+          candidates.add(entity);
+        }
+      }
+    }
+    candidates.sort((a, b) => b.path.compareTo(a.path));
+    final source = candidates.cast<Directory?>().firstWhere(
+          (directory) => directory!.listSync().any(
+                (entity) =>
+                    entity is File &&
+                    entity.path.toLowerCase().endsWith('\\msvcp140.dll'),
+              ),
+          orElse: () => null,
+        );
+    if (source == null) {
+      throw '官方 MSVC $winArch 运行库未找到，已停止生成不完整的 Windows 包';
+    }
+    final runtimeFiles = source.listSync().whereType<File>().where((file) {
+      final name = basename(file.path).toLowerCase();
+      return name.endsWith('.dll') &&
+          (name.startsWith('msvcp140') ||
+              name.startsWith('vcruntime140') ||
+              name == 'concrt140.dll');
+    });
+    for (final file in runtimeFiles) {
+      File(join(buildDir, basename(file.path)))
+          .writeAsBytesSync(file.readAsBytesSync());
+    }
+    print('✅ Bundled MSVC runtime from ${source.path}');
+  }
+
   /// Reads mihomo version from [core/go.mod] (single source of truth).
   static Future<String> extractCoreVersion() async {
     final goMod = File(join("core", "go.mod"));
@@ -279,7 +323,8 @@ class Build {
       throw "core/go.mod file not found";
     }
     final content = await goMod.readAsString();
-    final match = RegExp(r'github\.com/metacubex/mihomo\s+(v[\d.]+)').firstMatch(content);
+    final match =
+        RegExp(r'github\.com/metacubex/mihomo\s+(v[\d.]+)').firstMatch(content);
     if (match == null) {
       throw "Could not extract mihomo version from core/go.mod";
     }
@@ -307,11 +352,13 @@ class Build {
   }) async {
     final isLib = mode == Mode.lib;
 
-    final items = buildItems.where(
-      (element) =>
-          element.target == target &&
-          (arch == null ? true : element.arch == arch),
-    ).toList();
+    final items = buildItems
+        .where(
+          (element) =>
+              element.target == target &&
+              (arch == null ? true : element.arch == arch),
+        )
+        .toList();
 
     final List<String> corePaths = [];
 
@@ -407,12 +454,12 @@ class Build {
       "--features",
       "windows-service",
     ];
-    
+
     // Add target for cross-compilation
     if (arch == Arch.arm64 && target == Target.windows) {
       buildArgs.addAll(["--target", "aarch64-pc-windows-msvc"]);
     }
-    
+
     await exec(
       buildArgs,
       environment: {
@@ -421,15 +468,16 @@ class Build {
       name: "build helper",
       workingDirectory: _servicesDir,
     );
-    
+
     // Determine output path based on architecture
     final String releasePath;
     if (arch == Arch.arm64 && target == Target.windows) {
-      releasePath = join(_servicesDir, "target", "aarch64-pc-windows-msvc", "release");
+      releasePath =
+          join(_servicesDir, "target", "aarch64-pc-windows-msvc", "release");
     } else {
       releasePath = join(_servicesDir, "target", "release");
     }
-    
+
     final outPath = join(
       releasePath,
       "helper${target.executableExtensionName}",
@@ -673,7 +721,10 @@ class BuildCommand extends Command {
     await Build.exec(
       name: "flutter build windows",
       [
-        "flutter", "build", "windows", "--release",
+        "flutter",
+        "build",
+        "windows",
+        "--release",
         "--dart-define=APP_ENV=$env",
         "--dart-define=CORE_SHA256=$token",
         "--dart-define=CORE_VERSION=$coreVersion",
@@ -682,7 +733,9 @@ class BuildCommand extends Command {
     );
 
     final winArch = arch == Arch.arm64 ? "arm64" : "x64";
-    final buildDir = join(current, "build", "windows", winArch, "runner", "Release");
+    final buildDir =
+        join(current, "build", "windows", winArch, "runner", "Release");
+    Build.bundleWindowsMsvcRuntime(buildDir, winArch);
     await Build.writeWindowsTestPackageMetadata(buildDir);
 
     final version = Build.readVersion();
@@ -694,23 +747,37 @@ class BuildCommand extends Command {
     final zipPath = join(Build.distPath, zipName);
     await Build.exec(
       name: "create zip",
-      ["powershell", "Compress-Archive", "-Path", "$buildDir\\*", "-DestinationPath", zipPath, "-Force"],
+      [
+        "powershell",
+        "Compress-Archive",
+        "-Path",
+        "$buildDir\\*",
+        "-DestinationPath",
+        zipPath,
+        "-Force"
+      ],
     );
     print("✅ ZIP created: $zipPath");
 
-    final issTemplate = File(join(current, "windows", "packaging", "exe", "inno_setup.iss"));
+    final issTemplate =
+        File(join(current, "windows", "packaging", "exe", "inno_setup.iss"));
     if (issTemplate.existsSync()) {
-      final issContent = issTemplate.readAsStringSync()
+      final issContent = issTemplate
+          .readAsStringSync()
           .replaceAll("{{APP_ID}}", "728B3532-C74B-4870-9068-BE70FE12A3E6")
           .replaceAll("{{APP_VERSION}}", version)
           .replaceAll("{{DISPLAY_NAME}}", Build.appName)
           .replaceAll("{{PUBLISHER_NAME}}", "pluralplay")
-          .replaceAll("{{PUBLISHER_URL}}", "https://github.com/pluralplay/FlClashX")
+          .replaceAll(
+              "{{PUBLISHER_URL}}", "https://github.com/pluralplay/FlClashX")
           .replaceAll("{{INSTALL_DIR_NAME}}", "{autopf}\\${Build.appName}")
-          .replaceAll("{{OUTPUT_BASE_FILENAME}}", "${Build.appName}-windows-$archName-setup")
-          .replaceAll("{{SETUP_ICON_FILE}}", join(current, "windows", "runner", "resources", "app_icon.ico"))
+          .replaceAll("{{OUTPUT_BASE_FILENAME}}",
+              "${Build.appName}-windows-$archName-setup")
+          .replaceAll("{{SETUP_ICON_FILE}}",
+              join(current, "windows", "runner", "resources", "app_icon.ico"))
           .replaceAll("{{PRIVILEGES_REQUIRED}}", "admin")
-          .replaceAll("{{ARCH}}", archName == "amd64" ? "x64compatible" : "arm64")
+          .replaceAll(
+              "{{ARCH}}", archName == "amd64" ? "x64compatible" : "arm64")
           .replaceAll("{{SOURCE_DIR}}", buildDir)
           .replaceAll("{{EXECUTABLE_NAME}}", "${Build.appName}.exe");
 
@@ -722,15 +789,21 @@ class BuildCommand extends Command {
       final langLines = <String>[];
       for (final locale in locales) {
         final lang = locale["lang"]!;
-        if (lang == "en") langLines.add('Name: "english"; MessagesFile: "compiler:Default.isl"');
-        if (lang == "ru") langLines.add('Name: "russian"; MessagesFile: "compiler:Languages\\Russian.isl"');
+        if (lang == "en")
+          langLines
+              .add('Name: "english"; MessagesFile: "compiler:Default.isl"');
+        if (lang == "ru")
+          langLines.add(
+              'Name: "russian"; MessagesFile: "compiler:Languages\\Russian.isl"');
       }
       processed = processed.replaceAll(
         RegExp(r'\{% for locale in LOCALES %\}.*?\{% endfor %\}', dotAll: true),
         langLines.join('\n'),
       );
       processed = processed.replaceAllMapped(
-        RegExp(r"\{%\s*if\s+PRIVILEGES_REQUIRED\s*==\s*'admin'\s*%\}(.*?)\{%\s*endif\s*%\}", dotAll: true),
+        RegExp(
+            r"\{%\s*if\s+PRIVILEGES_REQUIRED\s*==\s*'admin'\s*%\}(.*?)\{%\s*endif\s*%\}",
+            dotAll: true),
         (m) => m.group(1)!,
       );
 
@@ -757,10 +830,13 @@ class BuildCommand extends Command {
         ["dart", "run", "msix:create"],
       );
       final winArch2 = arch == Arch.arm64 ? "arm64" : "x64";
-      final msixDir = join(current, "build", "windows", winArch2, "runner", "Release");
-      final msixFiles = Directory(msixDir).listSync().where((f) => f.path.endsWith(".msix"));
+      final msixDir =
+          join(current, "build", "windows", winArch2, "runner", "Release");
+      final msixFiles =
+          Directory(msixDir).listSync().where((f) => f.path.endsWith(".msix"));
       if (msixFiles.isNotEmpty) {
-        final msixOutPath = join(Build.distPath, "${Build.appName}-windows-${arch.name}.msix");
+        final msixOutPath =
+            join(Build.distPath, "${Build.appName}-windows-${arch.name}.msix");
         Build.copyFile(msixFiles.first.path, msixOutPath);
         print("✅ MSIX created: $msixOutPath");
       }
@@ -779,7 +855,10 @@ class BuildCommand extends Command {
     await Build.exec(
       name: "flutter build linux",
       [
-        "flutter", "build", "linux", "--release",
+        "flutter",
+        "build",
+        "linux",
+        "--release",
         "--target-platform=${targetMap[arch]}",
         "--dart-define=APP_ENV=$env",
         "--dart-define=CORE_VERSION=$coreVersion",
@@ -790,7 +869,8 @@ class BuildCommand extends Command {
     final version = Build.readVersion();
     final appName = Build.appName;
     final archName = arch.name;
-    final bundleDir = join(current, "build", "linux", targetMap[arch]!.replaceAll("linux-", ""), "release", "bundle");
+    final bundleDir = join(current, "build", "linux",
+        targetMap[arch]!.replaceAll("linux-", ""), "release", "bundle");
     final distDir = Directory(Build.distPath);
     if (!distDir.existsSync()) distDir.createSync(recursive: true);
 
@@ -802,14 +882,16 @@ class BuildCommand extends Command {
     final debRoot = join(current, "build", "deb_root");
     final debInstallDir = join(debRoot, "opt", appName);
     final debDesktopDir = join(debRoot, "usr", "share", "applications");
-    final debIconDir = join(debRoot, "usr", "share", "icons", "hicolor", "256x256", "apps");
+    final debIconDir =
+        join(debRoot, "usr", "share", "icons", "hicolor", "256x256", "apps");
     final debControlDir = join(debRoot, "DEBIAN");
 
     for (final d in [debInstallDir, debDesktopDir, debIconDir, debControlDir]) {
       await Directory(d).create(recursive: true);
     }
     await Build.exec(["cp", "-r", "$bundleDir/.", debInstallDir]);
-    File(join(debIconDir, "$appName.png")).writeAsBytesSync(File(iconPath).readAsBytesSync());
+    File(join(debIconDir, "$appName.png"))
+        .writeAsBytesSync(File(iconPath).readAsBytesSync());
     File(join(debDesktopDir, "com.follow.clashx.desktop")).writeAsStringSync(
       "[Desktop Entry]\n"
       "Type=Application\n"
@@ -834,7 +916,8 @@ class BuildCommand extends Command {
       "Description: $appName\n",
     );
     final debPath = join(Build.distPath, "$appName-linux-$archName.deb");
-    await Build.exec(name: "build deb", ["dpkg-deb", "--build", debRoot, debPath]);
+    await Build.exec(
+        name: "build deb", ["dpkg-deb", "--build", debRoot, debPath]);
     await Directory(debRoot).delete(recursive: true);
     print("✅ DEB created: $debPath");
 
@@ -843,12 +926,14 @@ class BuildCommand extends Command {
       final rpmBuildRoot = join(current, "build", "rpm_root");
       final rpmInstallDir = join(rpmBuildRoot, "opt", appName);
       final rpmDesktopDir = join(rpmBuildRoot, "usr", "share", "applications");
-      final rpmIconDir = join(rpmBuildRoot, "usr", "share", "icons", "hicolor", "256x256", "apps");
+      final rpmIconDir = join(
+          rpmBuildRoot, "usr", "share", "icons", "hicolor", "256x256", "apps");
       for (final d in [rpmInstallDir, rpmDesktopDir, rpmIconDir]) {
         await Directory(d).create(recursive: true);
       }
       await Build.exec(["cp", "-r", "$bundleDir/.", rpmInstallDir]);
-      File(join(rpmIconDir, "$appName.png")).writeAsBytesSync(File(iconPath).readAsBytesSync());
+      File(join(rpmIconDir, "$appName.png"))
+          .writeAsBytesSync(File(iconPath).readAsBytesSync());
       File(join(rpmDesktopDir, "com.follow.clashx.desktop")).writeAsStringSync(
         "[Desktop Entry]\n"
         "Type=Application\n"
@@ -887,17 +972,26 @@ class BuildCommand extends Command {
       );
 
       final rpmBuildDir = join(current, "build", "rpmbuild");
-      await Directory(join(rpmBuildDir, "BUILD", "root")).create(recursive: true);
-      await Build.exec(["cp", "-r", "$rpmBuildRoot/.", join(rpmBuildDir, "BUILD", "root")]);
+      await Directory(join(rpmBuildDir, "BUILD", "root"))
+          .create(recursive: true);
+      await Build.exec(
+          ["cp", "-r", "$rpmBuildRoot/.", join(rpmBuildDir, "BUILD", "root")]);
       await Build.exec(name: "build rpm", [
-        "rpmbuild", "-bb", specPath,
-        "--define", "_topdir $rpmBuildDir",
-        "--define", "_builddir ${join(rpmBuildDir, "BUILD")}",
-        "--target", rpmArch,
+        "rpmbuild",
+        "-bb",
+        specPath,
+        "--define",
+        "_topdir $rpmBuildDir",
+        "--define",
+        "_builddir ${join(rpmBuildDir, "BUILD")}",
+        "--target",
+        rpmArch,
       ]);
 
       final rpmOutputDir = join(rpmBuildDir, "RPMS", rpmArch);
-      final rpmFiles = Directory(rpmOutputDir).listSync().where((f) => f.path.endsWith(".rpm"));
+      final rpmFiles = Directory(rpmOutputDir)
+          .listSync()
+          .where((f) => f.path.endsWith(".rpm"));
       if (rpmFiles.isNotEmpty) {
         final rpmOutPath = join(Build.distPath, "$appName-linux-$archName.rpm");
         Build.copyFile(rpmFiles.first.path, rpmOutPath);
@@ -914,7 +1008,8 @@ class BuildCommand extends Command {
       final appBinDir = join(appDir, "usr", "bin");
       final appLibDir = join(appDir, "usr", "lib");
       final appShareDesktop = join(appDir, "usr", "share", "applications");
-      final appShareIcon = join(appDir, "usr", "share", "icons", "hicolor", "256x256", "apps");
+      final appShareIcon =
+          join(appDir, "usr", "share", "icons", "hicolor", "256x256", "apps");
       for (final d in [appBinDir, appLibDir, appShareDesktop, appShareIcon]) {
         await Directory(d).create(recursive: true);
       }
@@ -954,15 +1049,23 @@ class BuildCommand extends Command {
       }
       if (keybinderSrc.isNotEmpty) {
         // -L resolves the symlink so the real .so.0 file is copied into the AppDir.
-        await Build.exec(["cp", "-L", keybinderSrc, join(appLibDir, "libkeybinder-3.0.so.0")]);
+        await Build.exec([
+          "cp",
+          "-L",
+          keybinderSrc,
+          join(appLibDir, "libkeybinder-3.0.so.0")
+        ]);
         print("✅ bundled libkeybinder from $keybinderSrc");
       } else {
-        print("⚠️  libkeybinder-3.0.so.0 not found; AppImage may fail on hosts without it");
+        print(
+            "⚠️  libkeybinder-3.0.so.0 not found; AppImage may fail on hosts without it");
       }
 
-      File(join(appShareIcon, "$appName.png")).writeAsBytesSync(File(iconPath).readAsBytesSync());
+      File(join(appShareIcon, "$appName.png"))
+          .writeAsBytesSync(File(iconPath).readAsBytesSync());
       Build.copyFile(iconPath, join(appDir, "$appName.png"));
-      File(join(appShareDesktop, "com.follow.clashx.desktop")).writeAsStringSync(
+      File(join(appShareDesktop, "com.follow.clashx.desktop"))
+          .writeAsStringSync(
         "[Desktop Entry]\n"
         "Type=Application\n"
         "Name=$appName\n"
@@ -975,7 +1078,8 @@ class BuildCommand extends Command {
         "Keywords=FlClashX;Clash;Proxy;\n"
         "StartupNotify=true\n",
       );
-      Build.copyFile(join(appShareDesktop, "com.follow.clashx.desktop"), join(appDir, "com.follow.clashx.desktop"));
+      Build.copyFile(join(appShareDesktop, "com.follow.clashx.desktop"),
+          join(appDir, "com.follow.clashx.desktop"));
       File(join(appDir, "AppRun")).writeAsStringSync(
         "#!/bin/bash\n"
         'SELF=\$(readlink -f "\$0")\n'
@@ -987,7 +1091,8 @@ class BuildCommand extends Command {
       await Build.exec(["chmod", "+x", join(appDir, "AppRun")]);
       await Build.exec(["chmod", "+x", join(appBinDir, appName)]);
 
-      final appImagePath = join(Build.distPath, "$appName-linux-$archName.AppImage");
+      final appImagePath =
+          join(Build.distPath, "$appName-linux-$archName.AppImage");
       await Build.exec(
         name: "build AppImage",
         ["appimagetool", appDir, appImagePath],
@@ -1008,7 +1113,10 @@ class BuildCommand extends Command {
     await Build.exec(
       name: "flutter build apk (split)",
       [
-        "flutter", "build", "apk", "--release",
+        "flutter",
+        "build",
+        "apk",
+        "--release",
         "--split-per-abi",
         "--dart-define=APP_ENV=$env",
         "--dart-define=CORE_VERSION=$coreVersion",
@@ -1032,7 +1140,10 @@ class BuildCommand extends Command {
     await Build.exec(
       name: "flutter build apk (universal)",
       [
-        "flutter", "build", "apk", "--release",
+        "flutter",
+        "build",
+        "apk",
+        "--release",
         "--dart-define=APP_ENV=$env",
         "--dart-define=CORE_VERSION=$coreVersion",
         "--dart-define=APP_VERSION=${Build.appVersion}",
