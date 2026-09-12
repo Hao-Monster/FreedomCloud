@@ -35,6 +35,7 @@ String buildWindowsHelperRepairCommand({
   final sourceDirectory = helperPath.substring(0, helperPath.lastIndexOf(r'\'));
   const installLog = r'%ProgramData%\FlClashX\logs\helper-install.log';
   const logRedirect = '>> "$installLog" 2>&1';
+  const logMarker = 'echo [helper-install] [%date% %time%]';
   // Keep LocalSystem and Administrators full control while allowing the
   // interactive user to query, start and stop the service without another UAC
   // prompt. Users are not granted change-config, delete, or security rights.
@@ -54,15 +55,26 @@ String buildWindowsHelperRepairCommand({
 
   return 'if not exist "%ProgramData%\\FlClashX\\logs" mkdir '
       '"%ProgramData%\\FlClashX\\logs" >nul 2>&1 & '
+      '$logMarker begin >> "$installLog" 2>&1 & '
       'sc stop $windowsHelperServiceName $logRedirect & '
-      'if not exist "$serviceDirectory" mkdir "$serviceDirectory" $logRedirect && '
-      'copy /b /y "$helperPath" "$serviceHelperPath" $logRedirect && '
-      'copy /b /y "$corePath" "$serviceCorePath" $logRedirect && '
-      '$runtimeCopies $logRedirect && '
-      '$configure $logRedirect && '
-      'sc sdset $windowsHelperServiceName "$serviceSecurity" $logRedirect && '
+      '$logMarker sc-stop exit=!errorlevel! >> "$installLog" 2>&1 & '
+      'if not exist "$serviceDirectory" mkdir "$serviceDirectory" $logRedirect & '
+      '$logMarker mkdir-service exit=!errorlevel! >> "$installLog" 2>&1 & '
+      'copy /b /y "$helperPath" "$serviceHelperPath" $logRedirect & '
+      '$logMarker copy-helper exit=!errorlevel! >> "$installLog" 2>&1 & '
+      'copy /b /y "$corePath" "$serviceCorePath" $logRedirect & '
+      '$logMarker copy-core exit=!errorlevel! >> "$installLog" 2>&1 & '
+      '$runtimeCopies & '
+      '$logMarker copy-runtime exit=!errorlevel! >> "$installLog" 2>&1 & '
+      '$configure $logRedirect & '
+      '$logMarker configure-service exit=!errorlevel! >> "$installLog" 2>&1 & '
+      'sc sdset $windowsHelperServiceName "$serviceSecurity" $logRedirect & '
+      '$logMarker set-service-acl exit=!errorlevel! >> "$installLog" 2>&1 & '
       'sc start $windowsHelperServiceName $logRedirect & '
-      'sc query $windowsHelperServiceName $logRedirect';
+      '$logMarker start-service exit=!errorlevel! >> "$installLog" 2>&1 & '
+      'sc queryex $windowsHelperServiceName $logRedirect & '
+      '$logMarker query-service exit=!errorlevel! >> "$installLog" 2>&1 & '
+      '$logMarker end >> "$installLog" 2>&1';
 }
 
 void _validateWindowsPath(String value, String name) {

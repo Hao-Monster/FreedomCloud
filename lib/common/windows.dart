@@ -236,7 +236,10 @@ class Windows {
       serviceHelperPath: appPath.windowsServiceHelperPath,
       serviceCorePath: appPath.windowsServiceCorePath,
     );
-    final launched = runas('cmd.exe', '/d /s /c "$command"');
+    // Delayed expansion lets the elevated command log the real ERRORLEVEL
+    // after each copy/SCM operation instead of only ShellExecuteW's launch
+    // result.
+    final launched = runas('cmd.exe', '/d /v:on /s /c "$command"');
     if (!launched) return false;
 
     // ShellExecute returns after the elevated process launches, not after the
