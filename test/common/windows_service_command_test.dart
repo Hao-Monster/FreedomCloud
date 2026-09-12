@@ -30,7 +30,7 @@ void main() {
     expect(
         command, contains(r'%ProgramData%\FlClashX\logs\helper-install.log'));
     expect(command, contains('sc sdset FlClashHelperService'));
-    expect(command, contains('(A;;CCLCRPWP;;;BU)'));
+    expect(command, contains('(A;;CCLCSWRPWPLOCRRC;;;IU)'));
     expect(command, contains('sc query FlClashHelperService'));
     expect(command, isNot(contains('allowed_core.sha256')));
     expect(

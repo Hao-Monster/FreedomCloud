@@ -172,6 +172,9 @@ begin
       Exec('sc.exe', 'create "FlClashHelperService" binPath= "' + ServiceExe + '" start= auto',
         '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
     if ResultCode = 0 then
+      Exec('sc.exe', 'sdset "FlClashHelperService" "D:(A;;CCLCSWRPWPDTLOCRRC;;;SY)(A;;CCLCSWRPWPDTLOCRRC;;;BA)(A;;CCLCSWRPWPLOCRRC;;;IU)(A;;CCLCSWLOCRRC;;;SU)"',
+        '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+    if ResultCode = 0 then
       Exec('sc.exe', 'start "FlClashHelperService"', '', SW_HIDE, ewNoWait, ResultCode);
   end;
 end;
@@ -245,6 +248,15 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 Source: "{{SOURCE_DIR}}\\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "{{SOURCE_DIR}}\\FlClashHelperService.exe"; DestDir: "{commonpf}\FlClashX Service"; Flags: ignoreversion
 Source: "{{SOURCE_DIR}}\\FlClashCore.exe"; DestDir: "{commonpf}\FlClashX Service"; Flags: ignoreversion
+Source: "{{SOURCE_DIR}}\\concrt140.dll"; DestDir: "{commonpf}\FlClashX Service"; Flags: ignoreversion
+Source: "{{SOURCE_DIR}}\\msvcp140.dll"; DestDir: "{commonpf}\FlClashX Service"; Flags: ignoreversion
+Source: "{{SOURCE_DIR}}\\msvcp140_1.dll"; DestDir: "{commonpf}\FlClashX Service"; Flags: ignoreversion
+Source: "{{SOURCE_DIR}}\\msvcp140_2.dll"; DestDir: "{commonpf}\FlClashX Service"; Flags: ignoreversion
+Source: "{{SOURCE_DIR}}\\msvcp140_atomic_wait.dll"; DestDir: "{commonpf}\FlClashX Service"; Flags: ignoreversion
+Source: "{{SOURCE_DIR}}\\msvcp140_codecvt_ids.dll"; DestDir: "{commonpf}\FlClashX Service"; Flags: ignoreversion
+Source: "{{SOURCE_DIR}}\\vcruntime140.dll"; DestDir: "{commonpf}\FlClashX Service"; Flags: ignoreversion
+Source: "{{SOURCE_DIR}}\\vcruntime140_1.dll"; DestDir: "{commonpf}\FlClashX Service"; Flags: ignoreversion
+Source: "{{SOURCE_DIR}}\\vcruntime140_threads.dll"; DestDir: "{commonpf}\FlClashX Service"; Flags: ignoreversion
 ; NOTE: Don't use "Flags: ignoreversion" on any shared system files
 
 [Icons]

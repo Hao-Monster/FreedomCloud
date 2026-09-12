@@ -40,7 +40,7 @@ String buildWindowsHelperRepairCommand({
   // prompt. Users are not granted change-config, delete, or security rights.
   const serviceSecurity =
       'D:(A;;CCLCSWRPWPDTLOCRRC;;;SY)(A;;CCLCSWRPWPDTLOCRRC;;;BA)'
-      '(A;;CCLCRPWP;;;BU)';
+      '(A;;CCLCSWRPWPLOCRRC;;;IU)(A;;CCLCSWLOCRRC;;;SU)';
   final runtimeCopies = _msvcRuntimeFiles
       .map((name) => 'copy /b /y "$sourceDirectory\\$name" '
           '"$serviceDirectory\\$name" $logRedirect')
