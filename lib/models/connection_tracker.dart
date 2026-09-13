@@ -107,6 +107,57 @@ class ProcessConnectionGroup {
   int get totalCount => activeCount + closedCount;
 }
 
+/// Returns the stable in-memory identity used to aggregate connection rows by
+/// application. Mihomo can report the same Windows executable with different
+/// casing or path separators, and Electron helper processes often use generic
+/// names (Renderer/Node/GPU/Crashpad) beside the app executable. Normalising
+/// these values keeps one application card without persisting any path.
+String connectionProcessIdentity(Metadata metadata) {
+  if (metadata.type.toLowerCase() == 'inner') return 'mihomo';
+
+  final normalizedPath = _normalizeProcessPath(metadata.processPath);
+  final process = metadata.process.trim().toLowerCase();
+  if (normalizedPath.isEmpty) return process.isEmpty ? 'unknown' : process;
+
+  final separator = normalizedPath.lastIndexOf('/');
+  if (separator <= 0) return normalizedPath;
+  final parent = normalizedPath.substring(0, separator);
+  final executable = normalizedPath.substring(separator + 1);
+  final stem = executable.endsWith('.exe')
+      ? executable.substring(0, executable.length - 4)
+      : executable;
+  final parentName = parent.substring(parent.lastIndexOf('/') + 1);
+  final genericElectronChild = _electronChildNames.contains(stem) ||
+      stem.endsWith(' helper') ||
+      stem.endsWith(' renderer') ||
+      stem.endsWith(' gpu process') ||
+      stem.endsWith(' utility');
+
+  // Apps that name their main executable after the install directory (the
+  // common Electron layout) and their generic children share the directory
+  // identity. Other applications retain the full executable path to avoid
+  // accidentally merging unrelated binaries.
+  if (genericElectronChild || stem == parentName) return parent;
+  return normalizedPath;
+}
+
+const _electronChildNames = <String>{
+  'electron',
+  'node',
+  'renderer',
+  'utility',
+  'gpu-process',
+  'crashpad_handler',
+  'chrome_crashpad_handler',
+};
+
+String _normalizeProcessPath(String value) => value
+    .trim()
+    .replaceAll('\\', '/')
+    .replaceAll(RegExp(r'/+'), '/')
+    .replaceFirst(RegExp(r'/$'), '')
+    .toLowerCase();
+
 class ConnectionTracker {
   ConnectionTracker({this.maxClosed = 300})
       : assert(maxClosed >= 0, 'maxClosed must not be negative');
@@ -318,12 +369,9 @@ List<ProcessConnectionGroup> _buildProcessGroups(
     final isInner = metadata.type.toLowerCase() == 'inner';
     final key = isInner
         ? 'mihomo'
-        : _firstNotEmpty([
-            metadata.processPath,
-            metadata.process,
-            metadata.sourceIP,
-            'unknown',
-          ]);
+        : metadata.processPath.isNotEmpty || metadata.process.isNotEmpty
+            ? connectionProcessIdentity(metadata)
+            : _firstNotEmpty([metadata.sourceIP, 'unknown']);
     final name = isInner
         ? 'mihomo'
         : _firstNotEmpty([metadata.process, metadata.sourceIP, 'unknown']);
@@ -398,7 +446,8 @@ bool trackedConnectionMatchesNormalizedQuery(
       _containsQuery(metadata.type, normalizedQuery)) {
     return true;
   }
-  if (applicationNameForPath != null && metadata.processPath.isNotEmpty &&
+  if (applicationNameForPath != null &&
+      metadata.processPath.isNotEmpty &&
       _containsQuery(
         applicationNameForPath(metadata.processPath),
         normalizedQuery,

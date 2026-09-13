@@ -151,6 +151,35 @@ void main() {
   });
 
   group('ConnectionTracker process aggregation', () {
+    test('normalizes Windows paths and groups Electron helper children', () {
+      final tracker = ConnectionTracker();
+      final sampledAt = DateTime.utc(2026, 1, 1);
+      tracker.ingest(
+        _snapshot(
+          _connection(
+            id: 'main',
+            process: 'Antigravity.exe',
+            processPath: r'C:\Apps\Antigravity\Antigravity.exe',
+          ),
+          _connection(
+            id: 'renderer',
+            process: 'Renderer',
+            processPath: r'c:/apps/antigravity/renderer.exe',
+          ),
+          _connection(
+            id: 'node',
+            process: 'node.exe',
+            processPath: r'C:\Apps\Antigravity\node.exe',
+          ),
+        ),
+        sampledAt: sampledAt,
+      );
+
+      expect(tracker.processGroups, hasLength(1));
+      expect(tracker.processGroups.single.activeCount, 3);
+      expect(tracker.processGroups.single.key, r'c:/apps/antigravity');
+    });
+
     test('groups once by path and aggregates counts, totals and rates', () {
       final tracker = ConnectionTracker();
       final startedAt = DateTime.utc(2026, 1, 1);
@@ -184,7 +213,9 @@ void main() {
       );
 
       final group = tracker.processGroups.single;
-      expect(group.key, path);
+      // Identity keys are canonicalised so casing/separator differences from
+      // Windows process lookup cannot split one application into two cards.
+      expect(group.key, 'c:/program files/browser');
       expect(group.name, 'browser.exe');
       expect(group.activeCount, 2);
       expect(group.closedCount, 0);

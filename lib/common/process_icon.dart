@@ -22,9 +22,14 @@ final _winIconCache = BoundedCache<String, Future<ImageProvider?>>(
 /// the decoded image future is cached for the lifetime of the application.
 Future<ImageProvider?>? windowsProcessIcon(String processPath) {
   if (processPath.isEmpty) return null;
+  final cacheKey = processPath
+      .trim()
+      .replaceAll('\\', '/')
+      .replaceAll(RegExp(r'/+'), '/')
+      .toLowerCase();
   return _winIconCache.putIfAbsent(
-    processPath,
-    () => _loadWindowsIcon(processPath),
+    cacheKey,
+    () => _loadWindowsIcon(processPath.trim()),
   );
 }
 
