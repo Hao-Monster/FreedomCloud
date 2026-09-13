@@ -29,8 +29,8 @@ void main() {
 
   test('desktop release packaging always carries the background Agent', () {
     final root = Directory.current.path;
-    final setupSource = File('$root${Platform.pathSeparator}setup.dart')
-        .readAsStringSync();
+    final setupSource =
+        File('$root${Platform.pathSeparator}setup.dart').readAsStringSync();
     final windowsCmake = File(
       '$root${Platform.pathSeparator}windows${Platform.pathSeparator}CMakeLists.txt',
     ).readAsStringSync();
@@ -58,6 +58,7 @@ void main() {
       directory.path,
       commit: commit,
       builtAt: builtAt,
+      flutterVersion: '3.47.4',
     );
 
     final buildInfo = File(
@@ -71,9 +72,33 @@ void main() {
     );
     expect(buildInfo, contains('Source commit: $commit'));
     expect(buildInfo, contains('2026-08-29T01:02:03.000Z'));
+    expect(buildInfo, contains('Flutter: 3.47.4'));
     expect(buildInfo, isNot(contains('{{')));
     expect(await checklist.exists(), isTrue);
     expect(await collector.exists(), isTrue);
     expect(collector.readAsStringSync(), contains('log-inventory.json'));
+  });
+
+  test('Windows portable package manifest is sorted and excludes itself',
+      () async {
+    final directory = await Directory.systemTemp.createTemp('flclashx-sums-');
+    addTearDown(() => directory.delete(recursive: true));
+    await File('${directory.path}${Platform.pathSeparator}z.txt')
+        .writeAsString('z', flush: true);
+    final nested = Directory(
+      '${directory.path}${Platform.pathSeparator}data',
+    )..createSync();
+    await File('${nested.path}${Platform.pathSeparator}a.txt')
+        .writeAsString('a', flush: true);
+
+    await setup.Build.writeWindowsPackageChecksums(directory.path);
+
+    final manifest = File(
+      '${directory.path}${Platform.pathSeparator}SHA256SUMS.txt',
+    ).readAsLinesSync();
+    expect(manifest, hasLength(2));
+    expect(manifest[0], endsWith('data/a.txt'));
+    expect(manifest[1], endsWith('z.txt'));
+    expect(manifest.join('\n'), isNot(contains('SHA256SUMS.txt')));
   });
 }

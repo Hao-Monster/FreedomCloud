@@ -156,6 +156,72 @@ class Build {
     return RegExp(r'^v\d').hasMatch(ref) ? ref : "";
   }
 
+  /// Resolve the Flutter executable used by all desktop build steps.
+  ///
+  /// CI normally exposes `flutter` on PATH.  Local Windows checkouts often
+  /// have an SDK installed without modifying PATH, so honour an explicit
+  /// executable/root first and then check a small set of conventional SDK
+  /// locations before falling back to PATH resolution.
+  static String get flutterExecutable {
+    final environment = Platform.environment;
+    final override = environment["FLUTTER_EXECUTABLE"]?.trim();
+    if (override != null && override.isNotEmpty) return override;
+
+    final root = environment["FLUTTER_ROOT"]?.trim();
+    if (root != null && root.isNotEmpty) {
+      final candidate = join(
+        root,
+        "bin",
+        Platform.isWindows ? "flutter.bat" : "flutter",
+      );
+      if (File(candidate).existsSync()) return candidate;
+    }
+
+    if (Platform.isWindows) {
+      final candidates = <String>[
+        join(
+            environment["LOCALAPPDATA"] ?? "", "flutter", "bin", "flutter.bat"),
+        join(environment["USERPROFILE"] ?? "", "develop", "flutter", "bin",
+            "flutter.bat"),
+        r"C:\src\flutter\bin\flutter.bat",
+      ];
+      for (final candidate in candidates) {
+        if (File(candidate).existsSync()) return candidate;
+      }
+    }
+
+    return Platform.isWindows ? "flutter.bat" : "flutter";
+  }
+
+  /// Return the framework version embedded in the SDK, without making a
+  /// successful build depend on a particular output format.
+  static Future<String> resolveFlutterVersion() async {
+    final override = Platform.environment["FLUTTER_VERSION"]?.trim();
+    if (override != null && override.isNotEmpty) return override;
+    try {
+      final result = await Process.run(
+        flutterExecutable,
+        ["--version", "--machine"],
+        runInShell: true,
+      );
+      if (result.exitCode == 0) {
+        try {
+          final decoded = jsonDecode(result.stdout.toString());
+          if (decoded is Map && decoded["frameworkVersion"] is String) {
+            return decoded["frameworkVersion"] as String;
+          }
+        } catch (_) {
+          final match = RegExp(r"Flutter\s+([0-9][^\s]*)")
+              .firstMatch(result.stdout.toString());
+          if (match != null) return match.group(1)!;
+        }
+      }
+    } catch (_) {
+      // Metadata must never turn a completed binary build into a failed one.
+    }
+    return "unavailable";
+  }
+
   static String _getCc(BuildItem buildItem) {
     final environment = Platform.environment;
     if (buildItem.target == Target.android) {
@@ -241,6 +307,7 @@ class Build {
     String buildDir, {
     String? commit,
     DateTime? builtAt,
+    String? flutterVersion,
   }) async {
     final sourceCommit = commit ?? await _resolveSourceCommit();
     if (!RegExp(r'^[0-9a-fA-F]{40,64}$').hasMatch(sourceCommit)) {
@@ -259,7 +326,8 @@ class Build {
     final buildTime = (builtAt ?? DateTime.now()).toUtc().toIso8601String();
     final buildInfo = (await buildInfoTemplate.readAsString())
         .replaceAll("{{GIT_COMMIT}}", sourceCommit.toLowerCase())
-        .replaceAll("{{BUILD_TIME_UTC}}", buildTime);
+        .replaceAll("{{BUILD_TIME_UTC}}", buildTime)
+        .replaceAll("{{FLUTTER_VERSION}}", flutterVersion ?? "unavailable");
     if (buildInfo.contains("{{")) {
       throw "Windows test-package metadata contains unresolved placeholders";
     }
@@ -269,6 +337,34 @@ class Build {
     );
     await vmChecklist.copy(join(buildDir, "WINDOWS-VM-CHECKLIST.md"));
     await logCollector.copy(join(buildDir, "Collect-FlClashXLogs.ps1"));
+  }
+
+  /// Write a sorted, privacy-safe manifest for every file in the portable
+  /// package. The manifest deliberately excludes itself to avoid a recursive
+  /// hash and uses forward-slash paths so Windows and CI produce the same
+  /// verification format.
+  static Future<void> writeWindowsPackageChecksums(String buildDir) async {
+    final root = Directory(buildDir);
+    if (!root.existsSync()) throw "Windows package directory does not exist";
+    final files = <File>[];
+    await for (final entity in root.list(recursive: true, followLinks: false)) {
+      if (entity is File && basename(entity.path) != "SHA256SUMS.txt") {
+        files.add(entity);
+      }
+    }
+    files.sort((a, b) => relative(a.path, from: buildDir)
+        .replaceAll('\\', '/')
+        .toLowerCase()
+        .compareTo(relative(b.path, from: buildDir)
+            .replaceAll('\\', '/')
+            .toLowerCase()));
+    final manifest = StringBuffer();
+    for (final file in files) {
+      final path = relative(file.path, from: buildDir).replaceAll('\\', '/');
+      manifest.writeln("${await calcSha256(file.path)}  $path");
+    }
+    await File(join(buildDir, "SHA256SUMS.txt"))
+        .writeAsString(manifest.toString(), flush: true);
   }
 
   static void bundleWindowsMsvcRuntime(String buildDir, String winArch) {
@@ -654,7 +750,7 @@ class BuildCommand extends Command {
     await Build.exec(
       name: "flutter build macos",
       [
-        "flutter",
+        Build.flutterExecutable,
         "build",
         "macos",
         "--release",
@@ -721,7 +817,7 @@ class BuildCommand extends Command {
     await Build.exec(
       name: "flutter build windows",
       [
-        "flutter",
+        Build.flutterExecutable,
         "build",
         "windows",
         "--release",
@@ -736,7 +832,11 @@ class BuildCommand extends Command {
     final buildDir =
         join(current, "build", "windows", winArch, "runner", "Release");
     Build.bundleWindowsMsvcRuntime(buildDir, winArch);
-    await Build.writeWindowsTestPackageMetadata(buildDir);
+    await Build.writeWindowsTestPackageMetadata(
+      buildDir,
+      flutterVersion: await Build.resolveFlutterVersion(),
+    );
+    await Build.writeWindowsPackageChecksums(buildDir);
 
     final version = Build.readVersion();
     final distDir = Directory(Build.distPath);
@@ -758,6 +858,12 @@ class BuildCommand extends Command {
       ],
     );
     print("✅ ZIP created: $zipPath");
+    final zipSha256 = await Build.calcSha256(zipPath);
+    await File("$zipPath.sha256").writeAsString(
+      "$zipSha256  ${basename(zipPath)}\n",
+      flush: true,
+    );
+    print("✅ ZIP checksum created: $zipPath.sha256");
 
     final issTemplate =
         File(join(current, "windows", "packaging", "exe", "inno_setup.iss"));
@@ -855,7 +961,7 @@ class BuildCommand extends Command {
     await Build.exec(
       name: "flutter build linux",
       [
-        "flutter",
+        Build.flutterExecutable,
         "build",
         "linux",
         "--release",
@@ -1113,7 +1219,7 @@ class BuildCommand extends Command {
     await Build.exec(
       name: "flutter build apk (split)",
       [
-        "flutter",
+        Build.flutterExecutable,
         "build",
         "apk",
         "--release",
@@ -1140,7 +1246,7 @@ class BuildCommand extends Command {
     await Build.exec(
       name: "flutter build apk (universal)",
       [
-        "flutter",
+        Build.flutterExecutable,
         "build",
         "apk",
         "--release",

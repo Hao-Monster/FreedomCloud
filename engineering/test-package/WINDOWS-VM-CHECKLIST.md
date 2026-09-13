@@ -1,15 +1,18 @@
 # Windows 11 VM acceptance checklist
 
-Test artifact: `FlClashX-windows-amd64-setup.exe` (unsigned local acceptance
-build). Do not use it as a production release.
+Test artifact: `FlClashX-windows-amd64.zip` (unsigned portable local acceptance
+build). If a matching `FlClashX-windows-amd64-setup.exe` is present, verify its
+adjacent `.sha256` file before using it. Do not use either artifact as a
+production release.
 
 Record PASS/FAIL and evidence for every numbered step. Take a VM snapshot before
 installation and do not copy subscription/profile files into the return bundle.
 
 ## A. Install, privilege and process ownership
 
-1. Verify the installer SHA-256 against `SHA256SUMS.txt`, then run it in the
-   clean Windows 11 VM.
+1. Verify the ZIP SHA-256 against the adjacent `.sha256` file, extract it in the
+   clean Windows 11 VM, and verify extracted files against `SHA256SUMS.txt`.
+   If testing an installer, verify its own adjacent `.sha256` file first.
 2. Start FlClashX normally. Do not run the UI as Administrator. Approve the
    one-time Helper registration only when the virtual network card requires it;
    capture the exact UAC command if a prompt appears.
