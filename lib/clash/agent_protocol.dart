@@ -188,6 +188,16 @@ class StrictIdentityResolution {
   final String canonicalPath;
   final String wfpAppIdSha256;
   final String publisherCertificateSha256;
+
+  /// Stable UUID-shaped identity key derived solely from Helper evidence.
+  /// The Broker treats this as an opaque grouping key; the executable path
+  /// and both digests remain the authoritative values it verifies again.
+  String get identityId {
+    final hex = wfpAppIdSha256.toLowerCase();
+    return '${hex.substring(0, 8)}-${hex.substring(8, 12)}-'
+        '${hex.substring(12, 16)}-${hex.substring(16, 20)}-'
+        '${hex.substring(20, 32)}';
+  }
 }
 
 @immutable

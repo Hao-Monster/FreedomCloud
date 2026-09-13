@@ -2,7 +2,10 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
+import 'package:flclashx/clash/agent_protocol.dart';
+import 'package:flclashx/clash/service.dart';
 import 'package:flclashx/common/common.dart';
+import 'package:flclashx/common/strict_policy.dart';
 import 'package:flclashx/models/models.dart';
 import 'package:flclashx/providers/providers.dart';
 import 'package:flclashx/state.dart';
@@ -352,22 +355,105 @@ class _ConnectionSettingsViewState
       };
 }
 
-class _PerAppPolicySection extends StatefulWidget {
+class _PerAppPolicySection extends ConsumerStatefulWidget {
   const _PerAppPolicySection();
 
   @override
   State<_PerAppPolicySection> createState() => _PerAppPolicySectionState();
 }
 
-class _PerAppPolicySectionState extends State<_PerAppPolicySection> {
+class _PerAppPolicySectionState extends ConsumerState<_PerAppPolicySection> {
   late final Future<void> _loaded = perAppPolicyStore.ensureLoaded();
   final TextEditingController _searchController = TextEditingController();
+  StreamSubscription<AgentStrictPolicyStatus>? _strictStatusSubscription;
   String _searchQuery = '';
 
   @override
+  void initState() {
+    super.initState();
+    _strictStatusSubscription = clashService?.strictPolicyStatusChanges.listen(
+      (_) {
+        if (mounted) setState(() {});
+      },
+    );
+  }
+
+  @override
   void dispose() {
+    unawaited(_strictStatusSubscription?.cancel());
+    _strictStatusSubscription = null;
     _searchController.dispose();
     super.dispose();
+  }
+
+  bool get _strictMode => Platform.isWindows && clashService?.usesAgent == true;
+
+  Future<bool> _prepareStrictEvidence(Iterable<PerAppPolicy> entries) async {
+    if (!_strictMode) return true;
+    final service = clashService;
+    if (service == null) return false;
+    final active = entries
+        .where((entry) => entry.policy != ApplicationRoutingPolicy.inherit)
+        .toList(growable: false);
+    if (active.isEmpty) {
+      return service.clearStrictPolicy();
+    }
+    final identities = <String, StrictIdentityResolution>{};
+    for (final entry in active) {
+      // Reinspect on every arm.  A path-only cache could reuse evidence after
+      // an executable is replaced in place, which would violate the Broker's
+      // locked-file identity guarantee.
+      final identity = await service.inspectStrictIdentity(entry.path);
+      if (identity == null || !strictIdentityMatchesPath(entry, identity)) {
+        connectionDiagnostics.log(
+          '[ConnectionsDiag] strict.identity status=unavailable '
+          'reason=helperEvidence pathLength=${entry.path.length}',
+        );
+        return false;
+      }
+      identities[path.normalize(entry.path).toLowerCase()] = identity;
+    }
+    try {
+      final policy = buildStrictPolicyBundle(
+        entries: active,
+        identities: identities,
+        revision: DateTime.now().microsecondsSinceEpoch,
+      );
+      final applied = await service.applyStrictPolicy(policy);
+      if (!applied) {
+        connectionDiagnostics.log(
+          '[ConnectionsDiag] strict.apply status=failed '
+          'reason=agentRejected entries=${active.length}',
+        );
+      }
+      return applied;
+    } catch (error) {
+      connectionDiagnostics.log(
+        '[ConnectionsDiag] strict.apply status=invalid '
+        'errorType=${error.runtimeType}',
+      );
+      return false;
+    }
+  }
+
+  Future<void> _toggleStrictCapture() async {
+    final service = clashService;
+    if (service == null || !_strictMode) return;
+    if (service.strictPolicyStatus.state != AgentStrictPolicyState.disabled) {
+      final cleared = await service.clearStrictPolicy();
+      if (mounted) {
+        await context.showNotifier(
+          cleared ? appLocalizations.successTitle : 'Strict mode is still active',
+        );
+      }
+      return;
+    }
+    final armed = await _prepareStrictEvidence(perAppPolicyStore.entries);
+    if (mounted) {
+      await context.showNotifier(
+        armed ? appLocalizations.successTitle : 'Strict mode unavailable',
+      );
+    }
   }
 
   @override
@@ -410,6 +496,17 @@ class _PerAppPolicySectionState extends State<_PerAppPolicySection> {
                         onPressed: _pickApplication,
                         icon: const Icon(Icons.add_rounded),
                       ),
+                      if (_strictMode)
+                        IconButton(
+                          tooltip: 'Toggle strict application capture',
+                          onPressed: _toggleStrictCapture,
+                          icon: Icon(
+                            clashService?.strictPolicyStatus.state ==
+                                    AgentStrictPolicyState.armed
+                                ? Icons.shield_rounded
+                                : Icons.shield_outlined,
+                          ),
+                        ),
                     ],
                   ),
                   if (entries.isNotEmpty) ...[
