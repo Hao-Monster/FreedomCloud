@@ -36,6 +36,25 @@ const allConnectionTableColumns = [
   'id',
 ];
 
+/// Returns a stable, valid column order for settings loaded from disk.
+///
+/// Older builds did not validate this list, so a profile can contain unknown
+/// or duplicate column ids. Keeping that data out of the table prevents
+/// malformed layouts while preserving the user's configured order.
+List<String> normalizeConnectionTableColumns(Iterable<String> columns) {
+  final seen = <String>{};
+  final normalized = <String>[];
+  for (final column in columns) {
+    if (allConnectionTableColumns.contains(column) && seen.add(column)) {
+      normalized.add(column);
+    }
+  }
+  if (normalized.isEmpty) {
+    normalized.addAll(defaultConnectionTableColumns);
+  }
+  return normalized;
+}
+
 String connectionColumnLabel(String column) => switch (column) {
       'status' => appLocalizations.status,
       'time' => appLocalizations.connectionsEstablished,
@@ -127,6 +146,11 @@ class _ConnectionSettingsViewState
   @override
   Widget build(BuildContext context) {
     final settings = ref.watch(appSettingProvider);
+    final selectedColumns =
+        normalizeConnectionTableColumns(settings.connectionTableColumns);
+    final hiddenColumns = allConnectionTableColumns
+        .where((column) => !selectedColumns.contains(column))
+        .toList(growable: false);
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
       children: [
@@ -258,22 +282,59 @@ class _ConnectionSettingsViewState
             ),
           ],
         ),
-        for (final column in allConnectionTableColumns)
+        ReorderableListView.builder(
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          itemCount: selectedColumns.length,
+          onReorder: (oldIndex, newIndex) {
+            if (newIndex > oldIndex) newIndex -= 1;
+            final columns = List<String>.of(selectedColumns);
+            final column = columns.removeAt(oldIndex);
+            columns.insert(newIndex, column);
+            _update(
+              (value) => value.copyWith(connectionTableColumns: columns),
+            );
+          },
+          itemBuilder: (_, index) {
+            final column = selectedColumns[index];
+            return CheckboxListTile(
+              key: ValueKey(column),
+              dense: true,
+              contentPadding: EdgeInsets.zero,
+              title: Text(connectionColumnLabel(column)),
+              value: true,
+              onChanged: selectedColumns.length > 1
+                  ? (selected) {
+                      if (selected ?? true) return;
+                      final columns = List<String>.of(selectedColumns)
+                        ..remove(column);
+                      _update(
+                        (value) =>
+                            value.copyWith(connectionTableColumns: columns),
+                      );
+                    }
+                  : null,
+              secondary: const Icon(Icons.drag_handle_rounded),
+            );
+          },
+        ),
+        for (final column in hiddenColumns)
           CheckboxListTile(
             dense: true,
             contentPadding: EdgeInsets.zero,
             title: Text(connectionColumnLabel(column)),
-            value: settings.connectionTableColumns.contains(column),
+            value: false,
             onChanged: (selected) {
-              final columns = List<String>.of(settings.connectionTableColumns);
               if (selected ?? false) {
-                if (!columns.contains(column)) columns.add(column);
-              } else if (columns.length > 1) {
-                columns.remove(column);
+                _update(
+                  (value) => value.copyWith(
+                    connectionTableColumns: [
+                      ...selectedColumns,
+                      column,
+                    ],
+                  ),
+                );
               }
-              _update(
-                (value) => value.copyWith(connectionTableColumns: columns),
-              );
             },
           ),
       ],
