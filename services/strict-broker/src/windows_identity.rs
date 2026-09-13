@@ -279,6 +279,7 @@ pub fn inspect_windows_process_family(path: impl AsRef<Path>) -> Result<Vec<Stri
         return Ok(Vec::new());
     }
 
+    roots.sort_unstable();
     let mut queue = roots;
     let mut visited = BTreeSet::new();
     let mut paths = BTreeSet::new();
