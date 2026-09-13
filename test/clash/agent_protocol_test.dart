@@ -111,6 +111,31 @@ void main() {
     );
   });
 
+  test(
+      'missing strict status inherits event generation for fail-closed reconnects',
+      () {
+    final event = AgentEvent.tryParse({
+      '_agent': {
+        'type': 'ready',
+        'coreState': 'ready',
+        'generation': 9,
+      },
+    });
+    expect(event, isNotNull);
+    expect(event!.strictPolicyStatus.state, AgentStrictPolicyState.disabled);
+    expect(event.strictPolicyStatus.generation, 9);
+
+    final cache = AgentStrictPolicyStatusCache(
+      initial: const AgentStrictPolicyStatus(
+        state: AgentStrictPolicyState.armed,
+        generation: 8,
+      ),
+    );
+    expect(cache.update(event.strictPolicyStatus), isTrue);
+    expect(cache.value.state, AgentStrictPolicyState.disabled);
+    expect(cache.value.generation, 9);
+  });
+
   test('endpoint requires v1, a loopback port and a 256-bit token', () {
     final endpoint = AgentEndpoint.fromJson({
       'protocol': 1,
@@ -172,6 +197,7 @@ void main() {
     expect(event.privilegedBackend, isTrue);
     expect(event.strictPolicyStatus.state, AgentStrictPolicyState.disabled);
     expect(event.strictPolicyStatus.failClosed, isTrue);
+    expect(event.strictPolicyStatus.generation, 3);
     final strictEvent = AgentEvent.tryParse({
       '_agent': {
         'type': 'coreState',

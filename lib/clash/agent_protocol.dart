@@ -118,9 +118,16 @@ class AgentEvent {
   ) {
     final raw = envelope['strictPolicy'];
     if (raw == null) {
-      return const AgentStrictPolicyStatus(
+      // Older Agents omit strictPolicy entirely.  Carry the event generation
+      // into the fail-closed placeholder so a stale event cannot be rejected
+      // by the cache and leave a newer armed snapshot visible after a
+      // reconnect.  Invalid generations remain conservative at zero.
+      final rawGeneration = envelope['generation'];
+      final generation =
+          rawGeneration is int && rawGeneration >= 0 ? rawGeneration : 0;
+      return AgentStrictPolicyStatus(
         state: AgentStrictPolicyState.disabled,
-        generation: 0,
+        generation: generation,
       );
     }
     if (raw is! Map<String, dynamic>) {
