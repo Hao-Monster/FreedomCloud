@@ -166,6 +166,7 @@ class StrictIdentityResolution {
     required this.canonicalPath,
     required this.wfpAppIdSha256,
     required this.publisherCertificateSha256,
+    this.verifiedChildren = const <StrictChildIdentityResolution>[],
   });
 
   factory StrictIdentityResolution.fromJson(Map<String, dynamic> json) {
@@ -178,16 +179,35 @@ class StrictIdentityResolution {
         !RegExp(r'^[0-9a-fA-F]{64}$').hasMatch(publisher)) {
       throw const FormatException('Invalid strict identity response');
     }
+    final rawChildren = json['verifiedChildren'];
+    if (rawChildren != null && rawChildren is! List) {
+      throw const FormatException('Invalid strict identity children');
+    }
+    final children = (rawChildren ?? const <dynamic>[])
+        .map((child) {
+          if (child is! Map) {
+            throw const FormatException('Invalid strict identity child');
+          }
+          return StrictChildIdentityResolution.fromJson(
+            Map<String, dynamic>.from(child),
+          );
+        })
+        .toList(growable: false);
+    if (children.length > 32) {
+      throw const FormatException('Too many strict identity children');
+    }
     return StrictIdentityResolution(
       canonicalPath: path,
       wfpAppIdSha256: appId.toLowerCase(),
       publisherCertificateSha256: publisher.toLowerCase(),
+      verifiedChildren: children,
     );
   }
 
   final String canonicalPath;
   final String wfpAppIdSha256;
   final String publisherCertificateSha256;
+  final List<StrictChildIdentityResolution> verifiedChildren;
 
   /// Stable UUID-shaped identity key derived solely from Helper evidence.
   /// The Broker treats this as an opaque grouping key; the executable path
@@ -198,6 +218,36 @@ class StrictIdentityResolution {
         '${hex.substring(12, 16)}-${hex.substring(16, 20)}-'
         '${hex.substring(20, 32)}';
   }
+}
+
+@immutable
+class StrictChildIdentityResolution {
+  const StrictChildIdentityResolution({
+    required this.canonicalPath,
+    required this.wfpAppIdSha256,
+    required this.publisherCertificateSha256,
+  });
+
+  factory StrictChildIdentityResolution.fromJson(Map<String, dynamic> json) {
+    final path = json['canonicalPath'];
+    final appId = json['wfpAppIdSha256'];
+    final publisher = json['publisherCertificateSha256'];
+    if (path is! String || path.isEmpty || path.length > 1024 ||
+        appId is! String || !RegExp(r'^[0-9a-fA-F]{64}$').hasMatch(appId) ||
+        publisher is! String ||
+        !RegExp(r'^[0-9a-fA-F]{64}$').hasMatch(publisher)) {
+      throw const FormatException('Invalid strict identity child response');
+    }
+    return StrictChildIdentityResolution(
+      canonicalPath: path,
+      wfpAppIdSha256: appId.toLowerCase(),
+      publisherCertificateSha256: publisher.toLowerCase(),
+    );
+  }
+
+  final String canonicalPath;
+  final String wfpAppIdSha256;
+  final String publisherCertificateSha256;
 }
 
 @immutable

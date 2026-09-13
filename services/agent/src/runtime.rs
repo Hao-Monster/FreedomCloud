@@ -26,7 +26,7 @@ use crate::protocol::{
 #[cfg(windows)]
 use crate::strict_flow::{StrictOrchestrationAction, StrictPolicyOrchestrator};
 #[cfg(windows)]
-use flclash_strict_contract::{StrictPolicyBundle, StrictState};
+use flclash_strict_contract::{StrictPolicyBundle, StrictState, MAX_STRICT_CHILDREN};
 
 const CHANNEL_CAPACITY: usize = 256;
 const CORE_CONNECT_TIMEOUT: Duration = Duration::from_secs(8);
@@ -376,6 +376,44 @@ async fn inspect_strict_identity(shared: &Arc<Shared>, path: Option<String>) -> 
             .with_context(|| format!("Helper identity field {field} is missing"))?;
         if value.len() > 1024 {
             bail!("Helper identity field {field} is oversized")
+        }
+    }
+    let publisher = object
+        .get("publisherCertificateSha256")
+        .and_then(Value::as_str)
+        .context("Helper identity publisher is missing")?;
+    let children = object
+        .get("verifiedChildren")
+        .and_then(Value::as_array)
+        .context("Helper identity children are missing")?;
+    if children.len() > MAX_STRICT_CHILDREN {
+        bail!("Helper identity children exceed the strict family limit")
+    }
+    for child in children {
+        let child = child
+            .as_object()
+            .context("Helper returned an invalid strict identity child")?;
+        let child_path = child
+            .get("canonicalPath")
+            .and_then(Value::as_str)
+            .filter(|value| !value.is_empty() && value.len() <= 1024)
+            .context("Helper strict child path is invalid")?;
+        let child_app_id = child
+            .get("wfpAppIdSha256")
+            .and_then(Value::as_str)
+            .context("Helper strict child app identity is missing")?;
+        let child_publisher = child
+            .get("publisherCertificateSha256")
+            .and_then(Value::as_str)
+            .context("Helper strict child publisher is missing")?;
+        if child_path.contains(['\0', '\r', '\n'])
+            || child_app_id.len() != 64
+            || !child_app_id.bytes().all(|byte| byte.is_ascii_hexdigit())
+            || child_publisher.len() != 64
+            || !child_publisher.bytes().all(|byte| byte.is_ascii_hexdigit())
+            || !child_publisher.eq_ignore_ascii_case(publisher)
+        {
+            bail!("Helper returned an unverified strict identity child")
         }
     }
     Ok(response)
@@ -865,15 +903,18 @@ async fn handle_ui(stream: TcpStream, token: String, shared: Arc<Shared>) -> Res
             let (ok, state, identity) = match control.command {
                 AgentCommand::Status => (true, *shared.status.read().await, None),
                 AgentCommand::RestartCore => {
-                    let (ok, state) = issue_supervisor_command(&shared, SupervisorCommandKind::Restart).await;
+                    let (ok, state) =
+                        issue_supervisor_command(&shared, SupervisorCommandKind::Restart).await;
                     (ok, state, None)
                 }
                 AgentCommand::StopCore => {
-                    let (ok, state) = issue_supervisor_command(&shared, SupervisorCommandKind::Stop).await;
+                    let (ok, state) =
+                        issue_supervisor_command(&shared, SupervisorCommandKind::Stop).await;
                     (ok, state, None)
                 }
                 AgentCommand::ShutdownAgent => {
-                    let (ok, state) = issue_supervisor_command(&shared, SupervisorCommandKind::Shutdown).await;
+                    let (ok, state) =
+                        issue_supervisor_command(&shared, SupervisorCommandKind::Shutdown).await;
                     (ok, state, None)
                 }
                 AgentCommand::ApplyStrictBlock => (
@@ -896,13 +937,17 @@ async fn handle_ui(stream: TcpStream, token: String, shared: Arc<Shared>) -> Res
                     *shared.status.read().await,
                     None,
                 ),
-                AgentCommand::InspectStrictIdentity => match inspect_strict_identity(&shared, control.path.clone()).await {
-                    Ok(identity) => (true, *shared.status.read().await, Some(identity)),
-                    Err(error) => {
-                        shared.logger.log(format!("strict identity inspection failed: {error:#}"));
-                        (false, *shared.status.read().await, None)
+                AgentCommand::InspectStrictIdentity => {
+                    match inspect_strict_identity(&shared, control.path.clone()).await {
+                        Ok(identity) => (true, *shared.status.read().await, Some(identity)),
+                        Err(error) => {
+                            shared
+                                .logger
+                                .log(format!("strict identity inspection failed: {error:#}"));
+                            (false, *shared.status.read().await, None)
+                        }
                     }
-                },
+                }
             };
             let response = json!({
                 "_agent": {

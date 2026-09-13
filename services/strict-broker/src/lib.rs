@@ -109,13 +109,14 @@ pub use windows_driver_channel::{
 pub use windows_host::{run_windows_strict_broker_service, WindowsStrictBrokerPaths};
 #[cfg(windows)]
 pub use windows_identity::{
-    inspect_windows_driver, inspect_windows_executable, verify_windows_driver,
-    verify_windows_packaged_agent_image, verify_windows_packaged_agent_process,
-    verify_windows_packaged_agent_process_with_image, verify_windows_packaged_core_image,
-    verify_windows_packaged_core_process, verify_windows_packaged_core_process_with_image,
-    verify_windows_packaged_driver, WindowsAgentImageTrustLease, WindowsAgentProcessTrustLease,
-    WindowsCoreImageTrustLease, WindowsCoreProcessTrustLease, WindowsDriverTrustLease,
-    WindowsIdentityLease, WindowsIdentityVerifier, WindowsVerifiedIdentity,
+    inspect_windows_driver, inspect_windows_executable, inspect_windows_process_family,
+    verify_windows_driver, verify_windows_packaged_agent_image,
+    verify_windows_packaged_agent_process, verify_windows_packaged_agent_process_with_image,
+    verify_windows_packaged_core_image, verify_windows_packaged_core_process,
+    verify_windows_packaged_core_process_with_image, verify_windows_packaged_driver,
+    WindowsAgentImageTrustLease, WindowsAgentProcessTrustLease, WindowsCoreImageTrustLease,
+    WindowsCoreProcessTrustLease, WindowsDriverTrustLease, WindowsIdentityLease,
+    WindowsIdentityVerifier, WindowsVerifiedIdentity,
 };
 #[cfg(windows)]
 pub use windows_pipe::{

@@ -8,6 +8,14 @@
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ResolvedStrictChildIdentity {
+    pub canonical_path: String,
+    pub wfp_app_id_sha256: String,
+    pub publisher_certificate_sha256: String,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct InspectStrictIdentityParams {
@@ -22,6 +30,7 @@ pub struct ResolvedStrictIdentity {
     pub canonical_path: String,
     pub wfp_app_id_sha256: String,
     pub publisher_certificate_sha256: String,
+    pub verified_children: Vec<ResolvedStrictChildIdentity>,
 }
 
 #[cfg(windows)]
@@ -30,10 +39,21 @@ pub fn inspect(params: InspectStrictIdentityParams) -> Result<ResolvedStrictIden
     super::hub::validate_helper_token(&home_dir, &params.helper_token)?;
     let identity = flclash_strict_broker::inspect_windows_executable(Path::new(&params.path))
         .map_err(|error| format!("strict identity inspection failed: {error:#}"))?;
+    let verified_children =
+        flclash_strict_broker::inspect_windows_process_family(Path::new(&identity.canonical_path))
+            .map_err(|error| format!("strict application family inspection failed: {error:#}"))?;
     Ok(ResolvedStrictIdentity {
         canonical_path: identity.canonical_path,
         wfp_app_id_sha256: identity.wfp_app_id_sha256,
         publisher_certificate_sha256: identity.publisher_certificate_sha256,
+        verified_children: verified_children
+            .into_iter()
+            .map(|child| ResolvedStrictChildIdentity {
+                canonical_path: child.canonical_path,
+                wfp_app_id_sha256: child.wfp_app_id_sha256,
+                publisher_certificate_sha256: child.publisher_certificate_sha256,
+            })
+            .collect(),
     })
 }
 
@@ -65,6 +85,7 @@ mod tests {
             canonical_path: r#"C:\Apps\edge.exe"#.into(),
             wfp_app_id_sha256: "a".repeat(64),
             publisher_certificate_sha256: "b".repeat(64),
+            verified_children: Vec::new(),
         };
         let json = serde_json::to_value(response).expect("serialize response");
         assert_eq!(json["canonicalPath"], r#"C:\Apps\edge.exe"#);

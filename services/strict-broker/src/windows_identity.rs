@@ -1,3 +1,4 @@
+use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::c_void;
 use std::fmt::Write;
 use std::fs::File;
@@ -11,7 +12,9 @@ use std::ptr::{null, null_mut};
 use std::sync::Arc;
 
 use anyhow::{bail, Context, Result};
-use flclash_strict_contract::{StrictIdentity, StrictPolicyBundle};
+use flclash_strict_contract::{
+    StrictChildIdentity, StrictIdentity, StrictPolicyBundle, MAX_STRICT_CHILDREN,
+};
 use sha2::{Digest, Sha256};
 use windows_sys::Win32::Foundation::{
     INVALID_HANDLE_VALUE, TRUST_E_NOSIGNATURE, WAIT_FAILED, WAIT_OBJECT_0, WAIT_TIMEOUT,
@@ -38,6 +41,9 @@ use windows_sys::Win32::Storage::FileSystem::{
     FILE_READ_ATTRIBUTES, FILE_READ_DATA, FILE_SHARE_READ, OPEN_EXISTING, READ_CONTROL,
     SYNCHRONIZE,
 };
+use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+    CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS,
+};
 use windows_sys::Win32::System::Threading::{
     OpenProcess, QueryFullProcessImageNameW, WaitForSingleObject, PROCESS_QUERY_LIMITED_INFORMATION,
 };
@@ -54,6 +60,7 @@ const MAX_DRIVER_FILE_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_AGENT_FILE_BYTES: u64 = 256 * 1024 * 1024;
 const MAX_CORE_FILE_BYTES: u64 = 256 * 1024 * 1024;
 const MAX_PROCESS_IMAGE_PATH_UNITS: usize = 32_768;
+const MAX_PROCESS_SNAPSHOT_ENTRIES: usize = 4_096;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WindowsVerifiedIdentity {
@@ -241,6 +248,142 @@ impl IdentityVerifier for WindowsIdentityVerifier {
 
 pub fn inspect_windows_executable(path: impl AsRef<Path>) -> Result<WindowsVerifiedIdentity> {
     inspect_and_lock(path.as_ref()).map(|(identity, _app_id, _handle)| identity)
+}
+
+/// Resolve the currently running executable descendants of `path` into a
+/// bounded, publisher-pinned application family.
+///
+/// A publisher match alone is deliberately insufficient: only processes that
+/// are descendants of a currently running instance of the selected executable
+/// are considered.  The snapshot is bounded and identities are re-opened and
+/// re-verified before being returned, so a caller cannot turn this endpoint
+/// into a global "allow every executable signed by X" rule.
+pub fn inspect_windows_process_family(path: impl AsRef<Path>) -> Result<Vec<StrictChildIdentity>> {
+    let primary = inspect_windows_executable(path.as_ref())?;
+    let records = process_snapshot()?;
+    let mut children_by_parent: BTreeMap<u32, Vec<ProcessRecord>> = BTreeMap::new();
+    let mut roots = Vec::new();
+    for record in records {
+        if record
+            .image_path
+            .eq_ignore_ascii_case(&primary.canonical_path)
+        {
+            roots.push(record.pid);
+        }
+        children_by_parent
+            .entry(record.parent_pid)
+            .or_default()
+            .push(record);
+    }
+    if roots.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut queue = roots;
+    let mut visited = BTreeSet::new();
+    let mut paths = BTreeSet::new();
+    let mut verified = Vec::new();
+    while let Some(parent_pid) = queue.pop() {
+        if !visited.insert(parent_pid) {
+            continue;
+        }
+        let Some(mut descendants) = children_by_parent.remove(&parent_pid) else {
+            continue;
+        };
+        descendants.sort_by_key(|record| record.pid);
+        for record in descendants {
+            queue.push(record.pid);
+            if record
+                .image_path
+                .eq_ignore_ascii_case(&primary.canonical_path)
+            {
+                continue;
+            }
+            if verified.len() >= MAX_STRICT_CHILDREN {
+                break;
+            }
+            let Ok(identity) = inspect_windows_executable(&record.image_path) else {
+                continue;
+            };
+            if !identity
+                .publisher_certificate_sha256
+                .eq_ignore_ascii_case(&primary.publisher_certificate_sha256)
+            {
+                continue;
+            }
+            if paths.insert(identity.canonical_path.to_ascii_lowercase()) {
+                verified.push(StrictChildIdentity {
+                    canonical_path: identity.canonical_path,
+                    wfp_app_id_sha256: identity.wfp_app_id_sha256,
+                    publisher_certificate_sha256: identity.publisher_certificate_sha256,
+                });
+            }
+        }
+        if verified.len() >= MAX_STRICT_CHILDREN {
+            break;
+        }
+    }
+    verified.sort_by(|left, right| {
+        left.canonical_path
+            .to_ascii_lowercase()
+            .cmp(&right.canonical_path.to_ascii_lowercase())
+    });
+    Ok(verified)
+}
+
+#[derive(Debug)]
+struct ProcessRecord {
+    pid: u32,
+    parent_pid: u32,
+    image_path: String,
+}
+
+fn process_snapshot() -> Result<Vec<ProcessRecord>> {
+    // SAFETY: the snapshot flags are constant and no process ID is required.
+    let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) };
+    if snapshot == INVALID_HANDLE_VALUE {
+        return Err(io::Error::last_os_error()).context("create strict process snapshot");
+    }
+    // SAFETY: CreateToolhelp32Snapshot returned an owned snapshot handle.
+    let snapshot = unsafe { OwnedHandle::from_raw_handle(snapshot) };
+    let mut entry = PROCESSENTRY32W {
+        dwSize: size_of::<PROCESSENTRY32W>() as u32,
+        ..Default::default()
+    };
+    let mut records = Vec::new();
+    // SAFETY: entry points to a valid, correctly sized output buffer.
+    let mut has_entry = unsafe { Process32FirstW(snapshot.as_raw_handle(), &mut entry) } != 0;
+    while has_entry {
+        if records.len() >= MAX_PROCESS_SNAPSHOT_ENTRIES {
+            bail!("strict process snapshot exceeds {MAX_PROCESS_SNAPSHOT_ENTRIES} entries");
+        }
+        let pid = entry.th32ProcessID;
+        if pid != 0 {
+            if let Ok(process) = open_process_for_identity(pid) {
+                if let Ok(image_path) = process_image_path(process.as_raw_handle(), "family") {
+                    records.push(ProcessRecord {
+                        pid,
+                        parent_pid: entry.th32ParentProcessID,
+                        image_path,
+                    });
+                }
+            }
+        }
+        // SAFETY: entry remains a valid output buffer for the next item.
+        has_entry = unsafe { Process32NextW(snapshot.as_raw_handle(), &mut entry) } != 0;
+    }
+    Ok(records)
+}
+
+fn open_process_for_identity(pid: u32) -> Result<OwnedHandle> {
+    // SAFETY: the PID comes from the kernel process snapshot and only limited
+    // query access is requested.
+    let process = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+    if process.is_null() {
+        return Err(io::Error::last_os_error()).context("open strict family process");
+    }
+    // SAFETY: OpenProcess returned a unique owned handle.
+    Ok(unsafe { OwnedHandle::from_raw_handle(process) })
 }
 
 pub fn inspect_windows_driver(path: impl AsRef<Path>) -> Result<WindowsDriverTrustLease> {

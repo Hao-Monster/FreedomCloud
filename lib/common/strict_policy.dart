@@ -39,7 +39,15 @@ Map<String, dynamic> buildStrictPolicyBundle({
       'canonicalPath': identity.canonicalPath,
       'wfpAppIdSha256': identity.wfpAppIdSha256,
       'publisherCertificateSha256': identity.publisherCertificateSha256,
-      'verifiedChildren': const <Map<String, dynamic>>[],
+      'verifiedChildren': identity.verifiedChildren
+          .map(
+            (child) => <String, dynamic>{
+              'canonicalPath': child.canonicalPath,
+              'wfpAppIdSha256': child.wfpAppIdSha256,
+              'publisherCertificateSha256': child.publisherCertificateSha256,
+            },
+          )
+          .toList(growable: false),
     };
     policyEntries.add({
       'identity': identityJson,
