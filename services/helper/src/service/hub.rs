@@ -121,7 +121,7 @@ fn validate_auth_token(value: Option<String>) -> Result<Option<String>, String> 
     Ok(Some(value.to_ascii_lowercase()))
 }
 
-fn validate_home_directory(value: Option<String>) -> Result<PathBuf, String> {
+pub(crate) fn validate_home_directory(value: Option<String>) -> Result<PathBuf, String> {
     let value = value.ok_or_else(|| "core home directory is required".to_string())?;
     let canonical = Path::new(&value)
         .canonicalize()
@@ -158,7 +158,7 @@ fn constant_time_eq(left: &str, right: &str) -> bool {
     difference == 0
 }
 
-fn validate_helper_token(home_dir: &Path, provided: &str) -> Result<(), String> {
+pub(crate) fn validate_helper_token(home_dir: &Path, provided: &str) -> Result<(), String> {
     if provided.len() != 64 || !provided.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         return Err("invalid Helper credential".to_string());
     }
@@ -203,39 +203,51 @@ fn start(start_params: StartParams, logger: Arc<ServiceLogger>) -> impl Reply {
     let core_path = match validate_start_path_in(Path::new(&start_params.path), &install_dir) {
         Ok(value) => value,
         Err(error) => {
-            logger.log(format!("event=core_start.reject request_id={request_id} stage=core_path error={error}"));
+            logger.log(format!(
+                "event=core_start.reject request_id={request_id} stage=core_path error={error}"
+            ));
             return error;
         }
     };
     let port = match validate_port(&start_params.arg) {
         Ok(value) => value,
         Err(error) => {
-            logger.log(format!("event=core_start.reject request_id={request_id} stage=core_port error={error}"));
+            logger.log(format!(
+                "event=core_start.reject request_id={request_id} stage=core_port error={error}"
+            ));
             return error;
         }
     };
     let auth_token = match validate_auth_token(start_params.auth_token) {
         Ok(value) => value,
         Err(error) => {
-            logger.log(format!("event=core_start.reject request_id={request_id} stage=core_auth error={error}"));
+            logger.log(format!(
+                "event=core_start.reject request_id={request_id} stage=core_auth error={error}"
+            ));
             return error;
         }
     };
     let home_dir = match validate_home_directory(start_params.home_dir) {
         Ok(value) => value,
         Err(error) => {
-            logger.log(format!("event=core_start.reject request_id={request_id} stage=home_dir error={error}"));
+            logger.log(format!(
+                "event=core_start.reject request_id={request_id} stage=home_dir error={error}"
+            ));
             return error;
         }
     };
     if let Err(error) = validate_helper_token(&home_dir, &start_params.helper_token) {
-        logger.log(format!("event=core_start.reject request_id={request_id} stage=helper_auth error={error}"));
+        logger.log(format!(
+            "event=core_start.reject request_id={request_id} stage=helper_auth error={error}"
+        ));
         return error;
     }
     let sha256 = sha256_file(&core_path).unwrap_or_default();
     let allowed = allowed_hash();
     if sha256 != allowed {
-        logger.log(format!("event=core_start.reject request_id={request_id} stage=core_hash"));
+        logger.log(format!(
+            "event=core_start.reject request_id={request_id} stage=core_hash"
+        ));
         return format!("The SHA256 hash of the program requesting execution is: {}. The helper program only allows execution of applications with the SHA256 hash: {}.", sha256, allowed,);
     }
     stop_process(&logger);
@@ -264,7 +276,9 @@ fn start(start_params: StartParams, logger: Arc<ServiceLogger>) -> impl Reply {
             "".to_string()
         }
         Err(e) => {
-            logger.log(format!("event=core_start.failure request_id={request_id} stage=spawn error={e}"));
+            logger.log(format!(
+                "event=core_start.failure request_id={request_id} stage=spawn error={e}"
+            ));
             e.to_string()
         }
     }
@@ -308,12 +322,16 @@ fn stop(stop_params: StopParams, logger: Arc<ServiceLogger>) -> impl Reply {
     let home_dir = match validate_home_directory(stop_params.home_dir) {
         Ok(value) => value,
         Err(error) => {
-            logger.log(format!("event=core_stop.reject request_id={request_id} stage=home_dir error={error}"));
+            logger.log(format!(
+                "event=core_stop.reject request_id={request_id} stage=home_dir error={error}"
+            ));
             return error;
         }
     };
     if let Err(error) = validate_helper_token(&home_dir, &stop_params.helper_token) {
-        logger.log(format!("event=core_stop.reject request_id={request_id} stage=helper_auth error={error}"));
+        logger.log(format!(
+            "event=core_stop.reject request_id={request_id} stage=helper_auth error={error}"
+        ));
         return error;
     }
     let result = stop_process(&logger);
@@ -391,6 +409,50 @@ fn strict_clear(params: StrictBlockParams, logger: Arc<ServiceLogger>) -> impl R
     }
 }
 
+#[cfg(target_os = "windows")]
+fn strict_inspect(
+    params: crate::service::identity::InspectStrictIdentityParams,
+    logger: Arc<ServiceLogger>,
+) -> warp::reply::Response {
+    let request_id = request_id();
+    logger.log(format!(
+        "event=strict_identity.inspect.begin request_id={request_id}"
+    ));
+    match crate::service::identity::inspect(params) {
+        Ok(identity) => {
+            logger.log(format!(
+                "event=strict_identity.inspect.success request_id={request_id} evidence=verified"
+            ));
+            warp::reply::with_status(warp::reply::json(&identity), warp::http::StatusCode::OK)
+                .into_response()
+        }
+        Err(error) => {
+            logger.log(format!(
+                "event=strict_identity.inspect.reject request_id={request_id} reason=identityUnavailable detail={}",
+                redact_error(&error)
+            ));
+            warp::reply::with_status(
+                warp::reply::json(&serde_json::json!({"error": "identityUnavailable"})),
+                warp::http::StatusCode::BAD_REQUEST,
+            )
+            .into_response()
+        }
+    }
+}
+
+/// Keep privileged identity errors useful for diagnostics without allowing
+/// user-selected paths or certificate details to leak into the service log.
+/// The underlying error is intentionally reduced to a stable, bounded reason.
+fn redact_error(error: &str) -> &'static str {
+    if error.contains("credential") || error.contains("home directory") {
+        "authorizationRejected"
+    } else if error.contains("identity inspection") || error.contains("executable") {
+        "identityUnavailable"
+    } else {
+        "requestRejected"
+    }
+}
+
 pub async fn run_service() -> anyhow::Result<()> {
     let logger = ServiceLogger::new_default();
     logger.log("event=helper.starting");
@@ -424,6 +486,18 @@ pub async fn run_service() -> anyhow::Result<()> {
 
     #[cfg(target_os = "windows")]
     let routes = {
+        let inspect_logger = logger.clone();
+        let api_inspect = warp::post()
+            .and(warp::path("strict"))
+            .and(warp::path("inspect"))
+            .and(warp::path::end())
+            .and(warp::body::content_length_limit(MAX_REQUEST_BYTES))
+            .and(warp::body::json())
+            .map(
+                move |params: crate::service::identity::InspectStrictIdentityParams| {
+                    strict_inspect(params, inspect_logger.clone())
+                },
+            );
         let block_logger = logger.clone();
         let api_block = warp::post()
             .and(warp::path("strict"))
@@ -443,6 +517,7 @@ pub async fn run_service() -> anyhow::Result<()> {
         api_ping
             .or(api_start)
             .or(api_stop)
+            .or(api_inspect)
             .or(api_block)
             .or(api_clear)
     };
