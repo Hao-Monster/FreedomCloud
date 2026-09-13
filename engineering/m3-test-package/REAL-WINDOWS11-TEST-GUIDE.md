@@ -27,7 +27,7 @@
 ## 1. 包完整性和 preflight
 
 将 ZIP 解压到普通目录，例如 `D:\FlClashX-M3-<version>`，不要放在符号链接、
-网络盘或会自动同步的目录。使用管理员 PowerShell 7（`pwsh`）执行：
+网络盘或会自动同步的目录。优先使用管理员 PowerShell 7（`pwsh`）执行：
 
 ```powershell
 Set-Location 'D:\FlClashX-M3-<version>'
@@ -51,10 +51,11 @@ pwsh -NoProfile -File '.\Invoke-M3VmPreflight.ps1' `
 `driverBuildId` 与 manifest、驱动和 Broker 的构建标识一致。任一项失败都标记
 为 **FAIL**，不进入严格代理测试。
 
-> Windows 11 自带的 Windows PowerShell 5.1 不应被当作脚本兼容性保证。当前
-> 证据脚本使用较新的 `System.IO.Path` API；有 `pwsh` 时优先使用 PowerShell 7。
-> 如果机器只有 5.1，不要修改脚本后继续测试，应保留 preflight 未运行证据并
-> 手工执行下方日志收集或安装 PowerShell 7 到测试机。
+> 当前 M3 工具已覆盖 Windows PowerShell 5.1：已将路径校验改为兼容实现，且
+> 打包、preflight 和证据采集脚本均不得再依赖 PowerShell 7 专属 API。5.1 仍
+> 建议在隔离测试机中使用；若同时安装了 `pwsh`，优先使用 PowerShell 7，便于
+> 获得一致的 JSON/编码行为。只有脚本实际报错或命令不可用时，才将对应步骤
+> 标记为 `NOT RUN`，不要因为没有 `pwsh` 自动判定失败。
 
 ## 2. 严格代理业务验收顺序
 
@@ -119,7 +120,8 @@ working set/private bytes、句柄、线程和驱动 nonpaged-pool。至少持�
 和 `FlClashStrictBroker*.log`。不要提交配置 YAML、订阅地址、token、认证头、
 完整主机/IP 历史、用户名、进程命令行或数据包内容。
 
-完成业务和性能步骤后，在证据目录执行（优先 PowerShell 7）：
+完成业务和性能步骤后，在证据目录执行（优先 PowerShell 7；只有 Windows
+PowerShell 5.1 时使用下面的等价命令）：
 
 ```powershell
 pwsh -NoProfile -File '.\Collect-M3VmEvidence.ps1' `
@@ -128,9 +130,17 @@ pwsh -NoProfile -File '.\Collect-M3VmEvidence.ps1' `
   -SampleIntervalSeconds 5
 ```
 
-如果收集脚本因 PowerShell 版本失败，不要删除或修改失败输出；把错误文本、
-上述五个日志目录中允许的文件、服务状态和事件导出一并交付，标记为
-`collector NOT RUN`。手工服务/进程信息可用：
+```powershell
+powershell.exe -NoLogo -NoProfile -NonInteractive `
+  -ExecutionPolicy Bypass -File '.\Collect-M3VmEvidence.ps1' `
+  -OutputDirectory 'D:\FlClashX-M3-evidence\run-<date>' `
+  -DurationMinutes 30 `
+  -SampleIntervalSeconds 5
+```
+
+如果收集脚本实际失败，不要删除或修改失败输出；把错误文本、上述五个日志目录
+中允许的文件、服务状态和事件导出一并交付，标记为 `collector NOT RUN`。
+手工服务/进程信息可用：
 
 ```powershell
 Get-Service FlClashStrictCallout,FlClashStrictBroker,FlClashHelperService -ErrorAction SilentlyContinue
@@ -153,7 +163,8 @@ Get-WinEvent -FilterHashtable @{LogName='System'; ProviderName='Service Control 
 - **FAIL**：出现任意静默直连、未授权应用被捕获、状态虚报 `armed`、签名或构建
   标识不匹配、驱动/过滤器卸载不完整、崩溃/Verifier/bugcheck、无界内存增长。
 - **NOT RUN**：缺少受信任签名、WDK/HLK 结果、真实驱动执行、QUIC/DNS 证据、
-  PowerShell 7 收集环境或目标应用；不得用静态分析和模拟结果替代。
+  目标应用，或证据脚本在可用的 PowerShell 5.1/7 环境中实际失败；不得用
+  静态分析和模拟结果替代。
 
 测试结束后请提供：测试包版本和 SHA-256、`M3-PREFLIGHT.json`、上述证据目录、
 每个步骤的 PASS/FAIL/NOT RUN 表及失败发生前后的时间点。不要只提供截图。
