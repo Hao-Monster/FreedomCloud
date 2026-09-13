@@ -14,6 +14,7 @@ enum AgentCommand {
   clearStrictBlock,
   applyStrictPolicy,
   clearStrictPolicy,
+  inspectStrictIdentity,
 }
 
 enum AgentCoreState { starting, ready, stopped, failed }
@@ -85,6 +86,7 @@ class AgentEvent {
       state: AgentStrictPolicyState.disabled,
       generation: 0,
     ),
+    this.identity,
   });
 
   static AgentEvent? tryParse(Map<String, dynamic> json) {
@@ -104,6 +106,7 @@ class AgentEvent {
         proxyRunning: envelope['proxyRunning'] as bool?,
         privilegedBackend: envelope['privilegedBackend'] as bool?,
         strictPolicyStatus: _parseStrictPolicyStatus(envelope),
+        identity: _parseIdentity(envelope['identity']),
       );
     } catch (_) {
       return null;
@@ -121,6 +124,15 @@ class AgentEvent {
   /// Strict capture state reported by Agent. Missing status is treated as
   /// disabled so older Agents remain fail-closed to strict-policy consumers.
   final AgentStrictPolicyStatus strictPolicyStatus;
+  final StrictIdentityResolution? identity;
+
+  static StrictIdentityResolution? _parseIdentity(Object? raw) {
+    if (raw == null) return null;
+    if (raw is! Map<String, dynamic>) {
+      throw const FormatException('Invalid strict identity response');
+    }
+    return StrictIdentityResolution.fromJson(raw);
+  }
 
   static AgentStrictPolicyStatus _parseStrictPolicyStatus(
     Map<String, dynamic> envelope,
@@ -144,6 +156,38 @@ class AgentEvent {
     }
     return AgentStrictPolicyStatus.fromJson(raw);
   }
+}
+
+/// Identity evidence returned by the elevated Helper. Digest fields are
+/// output-only: the UI must never send them as trusted input.
+@immutable
+class StrictIdentityResolution {
+  const StrictIdentityResolution({
+    required this.canonicalPath,
+    required this.wfpAppIdSha256,
+    required this.publisherCertificateSha256,
+  });
+
+  factory StrictIdentityResolution.fromJson(Map<String, dynamic> json) {
+    final path = json['canonicalPath'];
+    final appId = json['wfpAppIdSha256'];
+    final publisher = json['publisherCertificateSha256'];
+    if (path is! String || path.isEmpty || path.length > 1024 ||
+        appId is! String || !RegExp(r'^[0-9a-fA-F]{64}$').hasMatch(appId) ||
+        publisher is! String ||
+        !RegExp(r'^[0-9a-fA-F]{64}$').hasMatch(publisher)) {
+      throw const FormatException('Invalid strict identity response');
+    }
+    return StrictIdentityResolution(
+      canonicalPath: path,
+      wfpAppIdSha256: appId.toLowerCase(),
+      publisherCertificateSha256: publisher.toLowerCase(),
+    );
+  }
+
+  final String canonicalPath;
+  final String wfpAppIdSha256;
+  final String publisherCertificateSha256;
 }
 
 @immutable

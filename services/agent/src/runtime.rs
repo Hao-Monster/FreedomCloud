@@ -340,6 +340,52 @@ async fn clear_strict_block(shared: &Arc<Shared>, path: Option<String>) -> bool 
     }
 }
 
+#[cfg(windows)]
+async fn inspect_strict_identity(shared: &Arc<Shared>, path: Option<String>) -> Result<Value> {
+    let path = path.context("strict identity target path is missing")?;
+    let (Some(helper_port), Some(helper_token)) =
+        (shared.helper_port, shared.helper_token.as_deref())
+    else {
+        bail!("privileged Helper is unavailable")
+    };
+    if path.len() > 1024 || path.is_empty() {
+        bail!("strict identity target path is invalid")
+    }
+    let response = helper_request_json(
+        helper_port,
+        "/strict/inspect",
+        json!({
+            "path": path,
+            "home_dir": shared.home_dir.to_string_lossy(),
+            "helper_token": helper_token,
+        }),
+    )
+    .await?;
+    let object = response
+        .as_object()
+        .context("Helper returned a non-object identity")?;
+    for field in [
+        "canonicalPath",
+        "wfpAppIdSha256",
+        "publisherCertificateSha256",
+    ] {
+        let value = object
+            .get(field)
+            .and_then(Value::as_str)
+            .filter(|value| !value.is_empty())
+            .with_context(|| format!("Helper identity field {field} is missing"))?;
+        if value.len() > 1024 {
+            bail!("Helper identity field {field} is oversized")
+        }
+    }
+    Ok(response)
+}
+
+#[cfg(not(windows))]
+async fn inspect_strict_identity(_shared: &Arc<Shared>, _path: Option<String>) -> Result<Value> {
+    bail!("strict identity inspection is unavailable on this platform")
+}
+
 /// Starts the complete strict policy transaction.  The operation is
 /// deliberately asynchronous at the Agent boundary: Broker pipe I/O runs on
 /// a blocking worker while Core ingress responses are consumed by the Core
@@ -816,33 +862,47 @@ async fn handle_ui(stream: TcpStream, token: String, shared: Arc<Shared>) -> Res
         }
         if let Some(control) = parse_control(line) {
             let shutdown = matches!(control.command, AgentCommand::ShutdownAgent);
-            let (ok, state) = match control.command {
-                AgentCommand::Status => (true, *shared.status.read().await),
+            let (ok, state, identity) = match control.command {
+                AgentCommand::Status => (true, *shared.status.read().await, None),
                 AgentCommand::RestartCore => {
-                    issue_supervisor_command(&shared, SupervisorCommandKind::Restart).await
+                    let (ok, state) = issue_supervisor_command(&shared, SupervisorCommandKind::Restart).await;
+                    (ok, state, None)
                 }
                 AgentCommand::StopCore => {
-                    issue_supervisor_command(&shared, SupervisorCommandKind::Stop).await
+                    let (ok, state) = issue_supervisor_command(&shared, SupervisorCommandKind::Stop).await;
+                    (ok, state, None)
                 }
                 AgentCommand::ShutdownAgent => {
-                    issue_supervisor_command(&shared, SupervisorCommandKind::Shutdown).await
+                    let (ok, state) = issue_supervisor_command(&shared, SupervisorCommandKind::Shutdown).await;
+                    (ok, state, None)
                 }
                 AgentCommand::ApplyStrictBlock => (
                     apply_strict_block(&shared, control.path.clone()).await,
                     *shared.status.read().await,
+                    None,
                 ),
                 AgentCommand::ClearStrictBlock => (
                     clear_strict_block(&shared, control.path.clone()).await,
                     *shared.status.read().await,
+                    None,
                 ),
                 AgentCommand::ApplyStrictPolicy => (
                     apply_strict_policy(&shared, control.policy.clone()).await,
                     *shared.status.read().await,
+                    None,
                 ),
                 AgentCommand::ClearStrictPolicy => (
                     clear_strict_policy(&shared).await,
                     *shared.status.read().await,
+                    None,
                 ),
+                AgentCommand::InspectStrictIdentity => match inspect_strict_identity(&shared, control.path.clone()).await {
+                    Ok(identity) => (true, *shared.status.read().await, Some(identity)),
+                    Err(error) => {
+                        shared.logger.log(format!("strict identity inspection failed: {error:#}"));
+                        (false, *shared.status.read().await, None)
+                    }
+                },
             };
             let response = json!({
                 "_agent": {
@@ -852,6 +912,7 @@ async fn handle_ui(stream: TcpStream, token: String, shared: Arc<Shared>) -> Res
                     "coreState": state.as_str(),
                     "generation": shared.generation.load(Ordering::Acquire),
                     "strictPolicy": strict_policy_json(&shared).await,
+                    "identity": identity,
                 }
             });
             let delivered = if shutdown {
@@ -1343,6 +1404,16 @@ where
 }
 
 async fn helper_request(port: u16, path: &str, body: Option<Value>) -> Result<()> {
+    let _ = helper_request_raw(port, path, body).await?;
+    Ok(())
+}
+
+async fn helper_request_json(port: u16, path: &str, body: Value) -> Result<Value> {
+    let response = helper_request_raw(port, path, Some(body)).await?;
+    serde_json::from_str(&response).context("Helper returned invalid JSON")
+}
+
+async fn helper_request_raw(port: u16, path: &str, body: Option<Value>) -> Result<String> {
     let body = body.map(|value| value.to_string()).unwrap_or_default();
     let mut stream = timeout(
         Duration::from_secs(2),
@@ -1378,10 +1449,7 @@ async fn helper_request(port: u16, path: &str, body: Option<Value>) -> Result<()
     {
         bail!("Helper rejected the request");
     }
-    if !body.is_empty() {
-        bail!("Helper rejected Core operation: {body}");
-    }
-    Ok(())
+    Ok(body.to_owned())
 }
 
 async fn accept_core(listener: &TcpListener, expected_token: &str) -> Result<TcpStream> {

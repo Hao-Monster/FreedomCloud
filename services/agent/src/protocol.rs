@@ -75,6 +75,10 @@ pub enum AgentCommand {
     /// Disables the currently armed strict-capture policy and revokes Core
     /// ingress before the Broker removes its filters.
     ClearStrictPolicy,
+    /// Resolves a user-selected executable in the privileged Helper.  The
+    /// caller supplies only a path; App-ID and signer digests are returned by
+    /// the trusted boundary and cannot be supplied by the UI.
+    InspectStrictIdentity,
 }
 
 #[derive(Debug, Deserialize, PartialEq, Eq)]

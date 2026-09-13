@@ -1,4 +1,5 @@
 pub mod broker;
+pub mod identity;
 #[cfg(target_os = "windows")]
 pub mod driver_bridge;
 pub mod hub;
