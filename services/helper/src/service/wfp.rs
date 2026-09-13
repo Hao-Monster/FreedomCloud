@@ -301,14 +301,40 @@ mod platform {
             first_error.map_or(Ok(()), Err)
         }
     }
+
+    /// Removes the deterministic filters for a target, including filters that
+    /// survived a Helper restart. `FWP_E_FILTER_NOT_FOUND` is treated as an
+    /// idempotent success so recovery and uninstall can safely be retried.
+    pub fn remove(plan: &BlockFilterPlan) -> Result<(), String> {
+        const FWP_E_FILTER_NOT_FOUND: u32 = 0x8032_0003;
+        let engine = open_engine()?;
+        let keys = [
+            filter_key(&plan.executable, false),
+            filter_key(&plan.executable, true),
+        ];
+        let mut first_error = None;
+        for key in keys {
+            let code = unsafe { FwpmFilterDeleteByKey0(engine, &key) };
+            if code != 0 && code != FWP_E_FILTER_NOT_FOUND && first_error.is_none() {
+                first_error = Some(status("FwpmFilterDeleteByKey0", code));
+            }
+        }
+        close_engine(engine);
+        first_error.map_or(Ok(()), Err)
+    }
 }
 
 #[cfg(windows)]
 #[allow(unused_imports)]
-pub use platform::{install, InstalledBlockFilters};
+pub use platform::{install, remove, InstalledBlockFilters};
 
 #[cfg(not(windows))]
 pub fn install(_plan: &BlockFilterPlan) -> Result<(), String> {
+    Err("Windows WFP backend is unavailable on this platform".to_owned())
+}
+
+#[cfg(not(windows))]
+pub fn remove(_plan: &BlockFilterPlan) -> Result<(), String> {
     Err("Windows WFP backend is unavailable on this platform".to_owned())
 }
 

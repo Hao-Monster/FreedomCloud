@@ -5,7 +5,14 @@ import 'package:flutter/foundation.dart';
 const agentProtocolVersion = 1;
 const agentEndpointFileName = 'flclashx-agent-v1.json';
 
-enum AgentCommand { restartCore, stopCore, shutdownAgent, status }
+enum AgentCommand {
+  restartCore,
+  stopCore,
+  shutdownAgent,
+  status,
+  applyStrictBlock,
+  clearStrictBlock,
+}
 
 enum AgentCoreState { starting, ready, stopped, failed }
 
@@ -229,10 +236,16 @@ AgentStrictPolicyStatus strictPolicyStatusForCore({
 String encodeAgentCommand({
   required String id,
   required AgentCommand command,
-}) =>
-    json.encode({
-      '_agent': {
-        'id': id,
-        'command': command.name,
-      },
-    });
+  String? path,
+}) {
+  if (path != null && (path.isEmpty || path.length > 1024)) {
+    throw ArgumentError.value(path, 'path', 'must be 1-1024 characters');
+  }
+  return json.encode({
+    '_agent': {
+      'id': id,
+      'command': command.name,
+      if (path != null) 'path': path,
+    },
+  });
+}

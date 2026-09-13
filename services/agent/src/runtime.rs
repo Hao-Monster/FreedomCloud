@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
@@ -93,6 +95,10 @@ struct Shared {
     shutdown: Notify,
     supervisor: mpsc::Sender<SupervisorCommand>,
     privileged_backend: bool,
+    helper_port: Option<u16>,
+    helper_token: Option<String>,
+    home_dir: PathBuf,
+    strict_blocks: Mutex<HashSet<String>>,
 }
 
 enum SupervisorCommand {
@@ -160,6 +166,142 @@ fn signal_shutdown(shared: &Shared) {
     shared.shutdown.notify_waiters();
 }
 
+async fn set_strict_policy(
+    shared: &Arc<Shared>,
+    state: crate::protocol::StrictPolicyState,
+    failure_reason: Option<crate::protocol::StrictPolicyFailureReason>,
+) {
+    let mut status = shared.strict_policy.write().await;
+    status.generation = status.generation.saturating_add(1);
+    status.state = state;
+    status.failure_reason = failure_reason;
+}
+
+async fn apply_strict_block(shared: &Arc<Shared>, path: Option<String>) -> bool {
+    let Some(path) = path else {
+        set_strict_policy(
+            shared,
+            crate::protocol::StrictPolicyState::Blocking,
+            Some(crate::protocol::StrictPolicyFailureReason::InvalidPolicy),
+        )
+        .await;
+        shared.logger.log("strict block rejected: target path is missing");
+        return false;
+    };
+    let (Some(helper_port), Some(helper_token)) = (shared.helper_port, shared.helper_token.as_deref()) else {
+        set_strict_policy(
+            shared,
+            crate::protocol::StrictPolicyState::Blocking,
+            Some(crate::protocol::StrictPolicyFailureReason::BrokerUnavailable),
+        )
+        .await;
+        shared
+            .logger
+            .log("strict block rejected: privileged Helper is unavailable");
+        return false;
+    };
+    set_strict_policy(
+        shared,
+        crate::protocol::StrictPolicyState::Preparing,
+        None,
+    )
+    .await;
+    let target_key = strict_target_key(&path);
+    let result = helper_request(
+        helper_port,
+        "/strict/block",
+        Some(json!({
+            "path": path,
+            "home_dir": shared.home_dir.to_string_lossy().to_string(),
+            "helper_token": helper_token,
+        })),
+    )
+    .await;
+    match result {
+        Ok(()) => {
+            // This command deliberately requests the fail-closed route. It is
+            // not an armed proxy redirect and must remain visible as blocking.
+            set_strict_policy(shared, crate::protocol::StrictPolicyState::Blocking, None).await;
+            shared.strict_blocks.lock().await.insert(target_key);
+            shared.logger.log("strict block installed through Helper");
+            true
+        }
+        Err(error) => {
+            set_strict_policy(
+                shared,
+                crate::protocol::StrictPolicyState::Blocking,
+                Some(crate::protocol::StrictPolicyFailureReason::BrokerUnavailable),
+            )
+            .await;
+            shared
+                .logger
+                .log(format!("strict block install failed: {error:#}"));
+            false
+        }
+    }
+}
+
+async fn clear_strict_block(shared: &Arc<Shared>, path: Option<String>) -> bool {
+    let Some(path) = path else {
+        shared.logger.log("strict clear rejected: target path is missing");
+        return false;
+    };
+    let (Some(helper_port), Some(helper_token)) = (shared.helper_port, shared.helper_token.as_deref()) else {
+        shared
+            .logger
+            .log("strict clear rejected: privileged Helper is unavailable");
+        return false;
+    };
+    let target_key = strict_target_key(&path);
+    let result = helper_request(
+        helper_port,
+        "/strict/clear",
+        Some(json!({
+            "path": path,
+            "home_dir": shared.home_dir.to_string_lossy().to_string(),
+            "helper_token": helper_token,
+        })),
+    )
+    .await;
+    match result {
+        Ok(()) => {
+            let no_remaining_blocks = {
+                let mut blocks = shared.strict_blocks.lock().await;
+                blocks.remove(&target_key);
+                blocks.is_empty()
+            };
+            let state = if no_remaining_blocks {
+                crate::protocol::StrictPolicyState::Disabled
+            } else {
+                crate::protocol::StrictPolicyState::Blocking
+            };
+            set_strict_policy(shared, state, None).await;
+            shared.logger.log("strict block removed through Helper");
+            true
+        }
+        Err(error) => {
+            set_strict_policy(
+                shared,
+                crate::protocol::StrictPolicyState::Blocking,
+                Some(crate::protocol::StrictPolicyFailureReason::BrokerUnavailable),
+            )
+            .await;
+            shared
+                .logger
+                .log(format!("strict block removal failed: {error:#}"));
+            false
+        }
+    }
+}
+
+fn strict_target_key(path: &str) -> String {
+    if cfg!(windows) {
+        path.to_ascii_lowercase()
+    } else {
+        path.to_owned()
+    }
+}
+
 async fn retry_or_command(
     delay: Duration,
     commands: &mut mpsc::Receiver<SupervisorCommand>,
@@ -223,6 +365,9 @@ pub async fn run(config: AgentConfig) -> Result<()> {
     } else {
         None
     };
+    let shared_helper_port = config.use_helper.then_some(config.helper_port);
+    let shared_helper_token = helper_token.clone();
+    let shared_home_dir = config.home.clone();
     let (supervisor_tx, supervisor_rx) = mpsc::channel(16);
     let shared = Arc::new(Shared {
         ui: Mutex::new(None),
@@ -237,6 +382,10 @@ pub async fn run(config: AgentConfig) -> Result<()> {
         shutdown: Notify::new(),
         supervisor: supervisor_tx,
         privileged_backend: config.use_helper,
+        helper_port: shared_helper_port,
+        helper_token: shared_helper_token,
+        home_dir: shared_home_dir,
+        strict_blocks: Mutex::new(HashSet::new()),
     });
 
     let supervisor_shared = shared.clone();
@@ -362,6 +511,14 @@ async fn handle_ui(stream: TcpStream, token: String, shared: Arc<Shared>) -> Res
                 AgentCommand::ShutdownAgent => {
                     issue_supervisor_command(&shared, SupervisorCommandKind::Shutdown).await
                 }
+                AgentCommand::ApplyStrictBlock => (
+                    apply_strict_block(&shared, control.path.clone()).await,
+                    *shared.status.read().await,
+                ),
+                AgentCommand::ClearStrictBlock => (
+                    clear_strict_block(&shared, control.path.clone()).await,
+                    *shared.status.read().await,
+                ),
             };
             let response = json!({
                 "_agent": {

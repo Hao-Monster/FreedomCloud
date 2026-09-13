@@ -271,13 +271,15 @@ class ClashService extends ClashHandlerInterface {
     }
   }
 
-  Future<bool> _agentCommand(AgentCommand command) async {
+  Future<bool> _agentCommand(AgentCommand command, {String? path}) async {
     final id = 'agent-${command.name}-${utils.id}';
     final completer = Completer<bool>();
     _agentCommandCompleters[id] = completer;
     try {
       final socket = await socketCompleter.future;
-      socket.writeln(encodeAgentCommand(id: id, command: command));
+      socket.writeln(
+        encodeAgentCommand(id: id, command: command, path: path),
+      );
       return await completer.future.timeout(
         const Duration(seconds: 10),
         onTimeout: () => false,
@@ -288,6 +290,20 @@ class ClashService extends ClashHandlerInterface {
       _agentCommandCompleters.remove(id);
     }
   }
+
+  /// Requests the privileged Windows backend to block a selected executable.
+  /// The result is reported as a fail-closed `blocking` strict state; this is
+  /// intentionally separate from the future signed redirect backend.
+  Future<bool> applyStrictBlock(String executablePath) => _agentCommand(
+        AgentCommand.applyStrictBlock,
+        path: executablePath,
+      );
+
+  /// Removes the deterministic strict block for a selected executable.
+  Future<bool> clearStrictBlock(String executablePath) => _agentCommand(
+        AgentCommand.clearStrictBlock,
+        path: executablePath,
+      );
 
   void _onAgentLost(String reason) {
     // Socket loss invalidates any previously armed claim.  Keep the status

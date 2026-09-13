@@ -177,6 +177,25 @@ void main() {
     expect(value['_agent']['command'], 'restartCore');
   });
 
+  test('strict control messages carry a bounded executable target', () {
+    final line = encodeAgentCommand(
+      id: 'control-2',
+      command: AgentCommand.applyStrictBlock,
+      path: r'C:\Apps\edge.exe',
+    );
+    final value = json.decode(line) as Map<String, dynamic>;
+    expect(value['_agent']['command'], 'applyStrictBlock');
+    expect(value['_agent']['path'], r'C:\Apps\edge.exe');
+    expect(
+      () => encodeAgentCommand(
+        id: 'control-3',
+        command: AgentCommand.clearStrictBlock,
+        path: 'x' * 1025,
+      ),
+      throwsArgumentError,
+    );
+  });
+
   test('agent events expose readiness without pretending to be Core results',
       () {
     final event = AgentEvent.tryParse({

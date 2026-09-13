@@ -66,12 +66,15 @@ pub enum AgentCommand {
     StopCore,
     ShutdownAgent,
     Status,
+    ApplyStrictBlock,
+    ClearStrictBlock,
 }
 
 #[derive(Debug, Deserialize, PartialEq, Eq)]
 pub struct ControlRequest {
     pub id: String,
     pub command: AgentCommand,
+    pub path: Option<String>,
 }
 
 #[derive(Debug, Serialize, PartialEq, Eq)]
@@ -153,7 +156,18 @@ mod tests {
             .expect("agent control");
         assert_eq!(control.id, "request-1");
         assert_eq!(control.command, AgentCommand::RestartCore);
+        assert_eq!(control.path, None);
         assert!(parse_control(r#"{"id":"core-1","method":"updateConfig","data":"{}"}"#).is_none());
+    }
+
+    #[test]
+    fn strict_control_carries_only_the_explicit_target_path() {
+        let control = parse_control(
+            r#"{"_agent":{"id":"request-2","command":"applyStrictBlock","path":"C:\\Apps\\edge.exe"}}"#,
+        )
+        .expect("strict control");
+        assert_eq!(control.command, AgentCommand::ApplyStrictBlock);
+        assert_eq!(control.path.as_deref(), Some(r#"C:\Apps\edge.exe"#));
     }
 
     #[test]

@@ -35,6 +35,14 @@ pub struct StopParams {
     pub helper_token: String,
 }
 
+#[cfg(target_os = "windows")]
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct StrictBlockParams {
+    pub path: String,
+    pub home_dir: Option<String>,
+    pub helper_token: String,
+}
+
 fn sha256_file(path: impl AsRef<Path>) -> Result<String, Error> {
     let mut file = File::open(path)?;
     let mut hasher = Sha256::new();
@@ -303,6 +311,64 @@ fn stop(stop_params: StopParams, logger: Arc<ServiceLogger>) -> impl Reply {
     stop_process(&logger)
 }
 
+#[cfg(target_os = "windows")]
+fn strict_block_authorize(
+    params: &StrictBlockParams,
+) -> Result<(PathBuf, crate::service::wfp::BlockFilterPlan), String> {
+    let home_dir = validate_home_directory(params.home_dir.clone())?;
+    validate_helper_token(&home_dir, &params.helper_token)?;
+    let plan = crate::service::wfp::build_block_filter_plan(&params.path)?;
+    Ok((home_dir, plan))
+}
+
+#[cfg(target_os = "windows")]
+fn strict_block(params: StrictBlockParams, logger: Arc<ServiceLogger>) -> impl Reply {
+    let (_, plan) = match strict_block_authorize(&params) {
+        Ok(value) => value,
+        Err(error) => {
+            logger.log(format!("strict block request rejected: {error}"));
+            return error;
+        }
+    };
+    match crate::service::wfp::install(&plan) {
+        Ok(_) => {
+            logger.log(format!(
+                "strict block installed target={}",
+                plan.executable.display()
+            ));
+            String::new()
+        }
+        Err(error) => {
+            logger.log(format!("strict block install failed: {error}"));
+            error
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn strict_clear(params: StrictBlockParams, logger: Arc<ServiceLogger>) -> impl Reply {
+    let (_, plan) = match strict_block_authorize(&params) {
+        Ok(value) => value,
+        Err(error) => {
+            logger.log(format!("strict clear request rejected: {error}"));
+            return error;
+        }
+    };
+    match crate::service::wfp::remove(&plan) {
+        Ok(()) => {
+            logger.log(format!(
+                "strict block removed target={}",
+                plan.executable.display()
+            ));
+            String::new()
+        }
+        Err(error) => {
+            logger.log(format!("strict block removal failed: {error}"));
+            error
+        }
+    }
+}
+
 pub async fn run_service() -> anyhow::Result<()> {
     let logger = ServiceLogger::new_default();
     logger.log("Helper service starting");
@@ -327,7 +393,31 @@ pub async fn run_service() -> anyhow::Result<()> {
         .and(warp::body::json())
         .map(move |stop_params: StopParams| stop(stop_params, stop_logger.clone()));
 
-    warp::serve(api_ping.or(api_start).or(api_stop))
+    #[cfg(target_os = "windows")]
+    let routes = {
+        let block_logger = logger.clone();
+        let api_block = warp::post()
+            .and(warp::path("strict"))
+            .and(warp::path("block"))
+            .and(warp::path::end())
+            .and(warp::body::content_length_limit(MAX_REQUEST_BYTES))
+            .and(warp::body::json())
+            .map(move |params: StrictBlockParams| strict_block(params, block_logger.clone()));
+        let clear_logger = logger.clone();
+        let api_clear = warp::post()
+            .and(warp::path("strict"))
+            .and(warp::path("clear"))
+            .and(warp::path::end())
+            .and(warp::body::content_length_limit(MAX_REQUEST_BYTES))
+            .and(warp::body::json())
+            .map(move |params: StrictBlockParams| strict_clear(params, clear_logger.clone()));
+        api_ping.or(api_start).or(api_stop).or(api_block).or(api_clear)
+    };
+
+    #[cfg(not(target_os = "windows"))]
+    let routes = api_ping.or(api_start).or(api_stop);
+
+    warp::serve(routes)
         .run(([127, 0, 0, 1], LISTEN_PORT))
         .await;
 
