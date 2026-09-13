@@ -61,6 +61,7 @@ function Copy-ApplicationLogs {
 
 $logRoot = Join-Path $output 'logs'
 New-Item -ItemType Directory -Path $logRoot -Force | Out-Null
+$utf8 = New-Object Text.UTF8Encoding($false)
 $inventory = New-Object Collections.Generic.List[object]
 $sources = @(
     @{ root = if ($env:APPDATA) { Join-Path $env:APPDATA 'com.follow\clashx\logs' } else { $null }; label = 'appdata' },
@@ -77,7 +78,35 @@ foreach ($source in $sources) {
     }
 }
 
-$utf8 = New-Object Text.UTF8Encoding($false)
+# Capture lifecycle state without copying the recovery marker's executable
+# paths. The marker is intentionally privacy-sensitive; a count and digest are
+# enough to correlate recovery behavior while keeping evidence shareable.
+$strictState = New-Object Text.StringBuilder
+[void]$strictState.AppendLine("captured_at=$([DateTime]::UtcNow.ToString('o'))")
+foreach ($serviceName in @('FlClashHelperService', 'FlClashXStrictCapture')) {
+    [void]$strictState.AppendLine("service=$serviceName")
+    $query = (& sc.exe query $serviceName 2>&1 | Out-String).Trim()
+    [void]$strictState.AppendLine($query)
+    $config = (& sc.exe qc $serviceName 2>&1 | Out-String).Trim()
+    [void]$strictState.AppendLine($config)
+}
+$marker = if ($env:ProgramData) { Join-Path $env:ProgramData 'FlClashX\strict-recovery.json' } else { $null }
+if ($null -ne $marker -and (Test-Path -LiteralPath $marker -PathType Leaf)) {
+    $markerHash = (Get-FileHash -LiteralPath $marker -Algorithm SHA256).Hash
+    try {
+        $markerObject = Get-Content -LiteralPath $marker -Raw | ConvertFrom-Json
+        $targetCount = @($markerObject.targets).Count
+    } catch {
+        $targetCount = 'invalid-json'
+    }
+    [void]$strictState.AppendLine("recovery_marker_present=true")
+    [void]$strictState.AppendLine("recovery_marker_targets=$targetCount")
+    [void]$strictState.AppendLine("recovery_marker_sha256=$markerHash")
+} else {
+    [void]$strictState.AppendLine('recovery_marker_present=false')
+}
+[IO.File]::WriteAllText((Join-Path $output 'strict-state.txt'), $strictState.ToString(), $utf8)
+
 [IO.File]::WriteAllText(
     (Join-Path $output 'log-inventory.json'),
     ($inventory | ConvertTo-Json -Depth 4) + [Environment]::NewLine,
@@ -96,8 +125,10 @@ $serviceEvents = Get-WinEvent -FilterHashtable @{
     (Join-Path $output 'driver-debug-instructions.txt'),
     @"
 Kernel driver diagnostics use DbgPrintEx and are not written from the driver to disk.
-For a driver-focused run, start an approved DebugView/ETW capture before the test,
-save the capture as driver-debug.txt, and place it beside this evidence directory.
+For a driver-focused run, start an approved DebugView or WFP ETW capture before the
+test, save the capture as driver-debug.txt, and place it beside this evidence
+directory. Include the capture start/stop time and the Windows build number.
+The driver must never write arbitrary files from kernel mode.
 Do not include packet payloads, profile data, credentials, or command-line secrets.
 "@,
     $utf8

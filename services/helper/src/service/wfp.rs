@@ -5,10 +5,13 @@
 //! proxy redirect and must not be reported as an armed redirect backend.
 
 use sha2::{Digest, Sha256};
+use std::fs;
 use std::path::{Path, PathBuf};
 
 const MAX_EXECUTABLE_PATH_BYTES: usize = 1024;
 const MAX_DISPLAY_NAME_CHARS: usize = 96;
+const RECOVERY_MARKER_FILE_NAME: &str = "strict-recovery.json";
+const MAX_RECOVERY_TARGETS: usize = 128;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StrictAppTarget {
@@ -105,9 +108,93 @@ mod platform {
     use super::*;
     use std::ffi::c_void;
     use std::ptr::{null, null_mut};
+    use serde::{Deserialize, Serialize};
     use windows_sys::core::{GUID, PCWSTR};
     use windows_sys::Win32::Foundation::HANDLE;
     use windows_sys::Win32::NetworkManagement::WindowsFilteringPlatform::*;
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    struct RecoveryMarker {
+        version: u32,
+        targets: Vec<String>,
+    }
+
+    fn recovery_marker_path() -> PathBuf {
+        let root = std::env::var_os("ProgramData")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from(r"C:\ProgramData"));
+        root.join("FlClashX").join(RECOVERY_MARKER_FILE_NAME)
+    }
+
+    fn load_recovery_marker() -> Result<RecoveryMarker, String> {
+        let path = recovery_marker_path();
+        if !path.exists() {
+            return Ok(RecoveryMarker {
+                version: 1,
+                targets: Vec::new(),
+            });
+        }
+        let text = fs::read_to_string(&path)
+            .map_err(|error| format!("read strict recovery marker failed: {error}"))?;
+        let marker: RecoveryMarker = serde_json::from_str(&text)
+            .map_err(|error| format!("parse strict recovery marker failed: {error}"))?;
+        if marker.version != 1 || marker.targets.len() > MAX_RECOVERY_TARGETS {
+            return Err("strict recovery marker has an unsupported version or size".to_owned());
+        }
+        Ok(marker)
+    }
+
+    fn store_recovery_marker(marker: &RecoveryMarker) -> Result<(), String> {
+        if marker.targets.len() > MAX_RECOVERY_TARGETS {
+            return Err("strict recovery marker target limit reached".to_owned());
+        }
+        let path = recovery_marker_path();
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).map_err(|error| {
+                format!("create strict recovery marker directory failed: {error}")
+            })?;
+        }
+        let temporary = path.with_extension(format!("json.{}.tmp", std::process::id()));
+        let payload = serde_json::to_vec(marker)
+            .map_err(|error| format!("serialize strict recovery marker failed: {error}"))?;
+        fs::write(&temporary, payload)
+            .map_err(|error| format!("write strict recovery marker failed: {error}"))?;
+        fs::rename(&temporary, &path)
+            .map_err(|error| format!("commit strict recovery marker failed: {error}"))
+    }
+
+    fn record_recovery_target(path: &Path) -> Result<(), String> {
+        let mut marker = load_recovery_marker()?;
+        let value = path.to_string_lossy().to_string();
+        if !marker
+            .targets
+            .iter()
+            .any(|target| target.eq_ignore_ascii_case(&value))
+        {
+            marker.targets.push(value);
+            store_recovery_marker(&marker)?;
+        }
+        Ok(())
+    }
+
+    fn clear_recovery_target(path: &Path) -> Result<(), String> {
+        let mut marker = load_recovery_marker()?;
+        let value = path.to_string_lossy();
+        marker
+            .targets
+            .retain(|target| !target.eq_ignore_ascii_case(&value));
+        if marker.targets.is_empty() {
+            let marker_path = recovery_marker_path();
+            match fs::remove_file(marker_path) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(format!("remove strict recovery marker failed: {error}")),
+            }
+            Ok(())
+        } else {
+            store_recovery_marker(&marker)
+        }
+    }
 
     pub struct InstalledBlockFilters {
         keys: [GUID; 2],
@@ -231,10 +318,10 @@ mod platform {
             numFilterConditions: 1,
             filterCondition: &mut condition,
             action: FWPM_ACTION0 {
-                    r#type: action_type,
-                    Anonymous: FWPM_ACTION0_0 {
-                        calloutKey: callout_key,
-                    },
+                r#type: action_type,
+                Anonymous: FWPM_ACTION0_0 {
+                    calloutKey: callout_key,
+                },
             },
             Anonymous: FWPM_FILTER0_0 { rawContext: 0 },
             reserved: null_mut(),
@@ -277,6 +364,10 @@ mod platform {
     }
 
     pub fn install(plan: &BlockFilterPlan) -> Result<InstalledBlockFilters, String> {
+        // Persist the intent before touching WFP. If the Helper or machine
+        // dies after either filter is added, the next service start can remove
+        // the deterministic keys instead of leaving an orphaned block.
+        record_recovery_target(&plan.executable)?;
         let app_id = app_id(&plan.executable)?;
         let display = plan
             .display_name
@@ -308,11 +399,15 @@ mod platform {
                 unsafe {
                     let _ = FwpmFilterDeleteByKey0(engine, &keys[0]);
                 }
+                let _ = clear_recovery_target(&plan.executable);
                 return Err(error);
             }
             Ok(InstalledBlockFilters { keys })
         })();
         close_engine(engine);
+        if result.is_err() {
+            let _ = clear_recovery_target(&plan.executable);
+        }
         result
     }
 
@@ -324,6 +419,7 @@ mod platform {
         callout_v4: GUID,
         callout_v6: GUID,
     ) -> Result<InstalledBlockFilters, String> {
+        record_recovery_target(&plan.executable)?;
         let app_id = app_id(&plan.executable)?;
         let display = plan
             .display_name
@@ -359,11 +455,15 @@ mod platform {
                 unsafe {
                     let _ = FwpmFilterDeleteByKey0(engine, &keys[0]);
                 }
+                let _ = clear_recovery_target(&plan.executable);
                 return Err(error);
             }
             Ok(InstalledBlockFilters { keys })
         })();
         close_engine(engine);
+        if result.is_err() {
+            let _ = clear_recovery_target(&plan.executable);
+        }
         result
     }
 
@@ -400,7 +500,13 @@ mod platform {
             }
         }
         close_engine(engine);
-        first_error.map_or(Ok(()), Err)
+        match first_error {
+            Some(error) => Err(error),
+            None => {
+                clear_recovery_target(&plan.executable)?;
+                Ok(())
+            }
+        }
     }
 
     /// Removes deterministic callout filters created by
@@ -420,13 +526,66 @@ mod platform {
             }
         }
         close_engine(engine);
-        first_error.map_or(Ok(()), Err)
+        match first_error {
+            Some(error) => Err(error),
+            None => {
+                clear_recovery_target(&plan.executable)?;
+                Ok(())
+            }
+        }
+    }
+
+    /// Remove any deterministic strict filters left by a prior Helper crash,
+    /// upgrade or interrupted uninstall. This function is intentionally
+    /// fail-closed: a malformed marker is reported and left in place for the
+    /// next recovery attempt instead of being silently discarded.
+    pub fn recover_persistent_filters() -> Result<usize, String> {
+        let marker = load_recovery_marker()?;
+        let mut recovered = 0usize;
+        let mut remaining = Vec::new();
+        for raw_path in marker.targets {
+            let path = PathBuf::from(&raw_path);
+            let engine = match open_engine() {
+                Ok(value) => value,
+                Err(error) => {
+                    remaining.push(raw_path);
+                    return Err(error);
+                }
+            };
+            let keys = [
+                filter_key(&path, false),
+                filter_key(&path, true),
+                callout_filter_key(&path, false),
+                callout_filter_key(&path, true),
+            ];
+            let mut failed = None;
+            for key in keys {
+                let code = unsafe { FwpmFilterDeleteByKey0(engine, &key) };
+                if code != 0 && code != 0x8032_0003 && failed.is_none() {
+                    failed = Some(status("FwpmFilterDeleteByKey0", code));
+                }
+            }
+            close_engine(engine);
+            if let Some(error) = failed {
+                remaining.push(raw_path);
+                return Err(error);
+            }
+            recovered = recovered.saturating_add(1);
+        }
+        if remaining.is_empty() {
+            let marker_path = recovery_marker_path();
+            let _ = fs::remove_file(marker_path);
+        }
+        Ok(recovered)
     }
 }
 
 #[cfg(windows)]
 #[allow(unused_imports)]
-pub use platform::{install, install_callout_filters, remove, remove_callout_filters, InstalledBlockFilters};
+pub use platform::{
+    install, install_callout_filters, recover_persistent_filters, remove, remove_callout_filters,
+    InstalledBlockFilters,
+};
 
 #[cfg(not(windows))]
 pub fn install(_plan: &BlockFilterPlan) -> Result<(), String> {
@@ -436,6 +595,11 @@ pub fn install(_plan: &BlockFilterPlan) -> Result<(), String> {
 #[cfg(not(windows))]
 pub fn remove(_plan: &BlockFilterPlan) -> Result<(), String> {
     Err("Windows WFP backend is unavailable on this platform".to_owned())
+}
+
+#[cfg(not(windows))]
+pub fn recover_persistent_filters() -> Result<usize, String> {
+    Ok(0)
 }
 
 #[cfg(test)]

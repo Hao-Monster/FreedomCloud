@@ -5,6 +5,7 @@ use std::fs::{self, File};
 use std::io::{BufRead, Error, Read};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::{io, thread};
 use warp::{Filter, Reply};
@@ -19,6 +20,11 @@ const CORE_FILE_NAME: &str = if cfg!(windows) {
 } else {
     "FlClashCore"
 };
+static NEXT_REQUEST_ID: AtomicU64 = AtomicU64::new(1);
+
+fn request_id() -> u64 {
+    NEXT_REQUEST_ID.fetch_add(1, Ordering::Relaxed)
+}
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct StartParams {
@@ -182,53 +188,54 @@ static PROCESS: Lazy<Arc<Mutex<Option<std::process::Child>>>> =
     Lazy::new(|| Arc::new(Mutex::new(None)));
 
 fn start(start_params: StartParams, logger: Arc<ServiceLogger>) -> impl Reply {
+    let request_id = request_id();
     logger.log(format!(
-        "start request received port={} helper credential validated",
-        start_params.arg
+        "event=core_start.begin request_id={request_id} port={} helper_credential=present",
+        start_params.arg,
     ));
     let install_dir = match service_directory() {
         Ok(value) => value,
         Err(error) => {
-            logger.log(format!("resolve service directory failed: {error}"));
+            logger.log(format!("event=core_start.failure request_id={request_id} stage=service_directory error={error}"));
             return error;
         }
     };
     let core_path = match validate_start_path_in(Path::new(&start_params.path), &install_dir) {
         Ok(value) => value,
         Err(error) => {
-            logger.log(format!("Core path rejected: {error}"));
+            logger.log(format!("event=core_start.reject request_id={request_id} stage=core_path error={error}"));
             return error;
         }
     };
     let port = match validate_port(&start_params.arg) {
         Ok(value) => value,
         Err(error) => {
-            logger.log(format!("Core port rejected: {error}"));
+            logger.log(format!("event=core_start.reject request_id={request_id} stage=core_port error={error}"));
             return error;
         }
     };
     let auth_token = match validate_auth_token(start_params.auth_token) {
         Ok(value) => value,
         Err(error) => {
-            logger.log(format!("Core authentication rejected: {error}"));
+            logger.log(format!("event=core_start.reject request_id={request_id} stage=core_auth error={error}"));
             return error;
         }
     };
     let home_dir = match validate_home_directory(start_params.home_dir) {
         Ok(value) => value,
         Err(error) => {
-            logger.log(format!("Core home directory rejected: {error}"));
+            logger.log(format!("event=core_start.reject request_id={request_id} stage=home_dir error={error}"));
             return error;
         }
     };
     if let Err(error) = validate_helper_token(&home_dir, &start_params.helper_token) {
-        logger.log(format!("Helper credential rejected: {error}"));
+        logger.log(format!("event=core_start.reject request_id={request_id} stage=helper_auth error={error}"));
         return error;
     }
     let sha256 = sha256_file(&core_path).unwrap_or_default();
     let allowed = allowed_hash();
     if sha256 != allowed {
-        logger.log("Core image hash rejected");
+        logger.log(format!("event=core_start.reject request_id={request_id} stage=core_hash"));
         return format!("The SHA256 hash of the program requesting execution is: {}. The helper program only allows execution of applications with the SHA256 hash: {}.", sha256, allowed,);
     }
     stop_process(&logger);
@@ -253,11 +260,11 @@ fn start(start_params: StartParams, logger: Arc<ServiceLogger>) -> impl Reply {
                 spawn_core_output_logger(stdout, logger.clone(), "stdout");
                 spawn_core_output_logger(stderr, logger.clone(), "stderr");
             }
-            logger.log("Core process started through Helper");
+            logger.log(format!("event=core_start.success request_id={request_id}"));
             "".to_string()
         }
         Err(e) => {
-            logger.log(format!("Core process start failed: {e}"));
+            logger.log(format!("event=core_start.failure request_id={request_id} stage=spawn error={e}"));
             e.to_string()
         }
     }
@@ -297,18 +304,21 @@ where
 }
 
 fn stop(stop_params: StopParams, logger: Arc<ServiceLogger>) -> impl Reply {
+    let request_id = request_id();
     let home_dir = match validate_home_directory(stop_params.home_dir) {
         Ok(value) => value,
         Err(error) => {
-            logger.log(format!("stop request home directory rejected: {error}"));
+            logger.log(format!("event=core_stop.reject request_id={request_id} stage=home_dir error={error}"));
             return error;
         }
     };
     if let Err(error) = validate_helper_token(&home_dir, &stop_params.helper_token) {
-        logger.log(format!("stop request credential rejected: {error}"));
+        logger.log(format!("event=core_stop.reject request_id={request_id} stage=helper_auth error={error}"));
         return error;
     }
-    stop_process(&logger)
+    let result = stop_process(&logger);
+    logger.log(format!("event=core_stop.success request_id={request_id}"));
+    result
 }
 
 #[cfg(target_os = "windows")]
@@ -323,23 +333,29 @@ fn strict_block_authorize(
 
 #[cfg(target_os = "windows")]
 fn strict_block(params: StrictBlockParams, logger: Arc<ServiceLogger>) -> impl Reply {
+    let request_id = request_id();
+    logger.log(format!("event=strict_block.begin request_id={request_id}"));
     let (_, plan) = match strict_block_authorize(&params) {
         Ok(value) => value,
         Err(error) => {
-            logger.log(format!("strict block request rejected: {error}"));
+            logger.log(format!(
+                "event=strict_block.reject request_id={request_id} error={error}"
+            ));
             return error;
         }
     };
     match crate::service::wfp::install(&plan) {
         Ok(_) => {
             logger.log(format!(
-                "strict block installed target={}",
-                plan.executable.display()
+                "event=strict_block.success request_id={request_id} target={}",
+                plan.executable.display(),
             ));
             String::new()
         }
         Err(error) => {
-            logger.log(format!("strict block install failed: {error}"));
+            logger.log(format!(
+                "event=strict_block.failure request_id={request_id} error={error}"
+            ));
             error
         }
     }
@@ -347,23 +363,29 @@ fn strict_block(params: StrictBlockParams, logger: Arc<ServiceLogger>) -> impl R
 
 #[cfg(target_os = "windows")]
 fn strict_clear(params: StrictBlockParams, logger: Arc<ServiceLogger>) -> impl Reply {
+    let request_id = request_id();
+    logger.log(format!("event=strict_clear.begin request_id={request_id}"));
     let (_, plan) = match strict_block_authorize(&params) {
         Ok(value) => value,
         Err(error) => {
-            logger.log(format!("strict clear request rejected: {error}"));
+            logger.log(format!(
+                "event=strict_clear.reject request_id={request_id} error={error}"
+            ));
             return error;
         }
     };
     match crate::service::wfp::remove(&plan) {
         Ok(()) => {
             logger.log(format!(
-                "strict block removed target={}",
-                plan.executable.display()
+                "event=strict_clear.success request_id={request_id} target={}",
+                plan.executable.display(),
             ));
             String::new()
         }
         Err(error) => {
-            logger.log(format!("strict block removal failed: {error}"));
+            logger.log(format!(
+                "event=strict_clear.failure request_id={request_id} error={error}"
+            ));
             error
         }
     }
@@ -371,7 +393,14 @@ fn strict_clear(params: StrictBlockParams, logger: Arc<ServiceLogger>) -> impl R
 
 pub async fn run_service() -> anyhow::Result<()> {
     let logger = ServiceLogger::new_default();
-    logger.log("Helper service starting");
+    logger.log("event=helper.starting");
+    #[cfg(target_os = "windows")]
+    match crate::service::wfp::recover_persistent_filters() {
+        Ok(count) => logger.log(format!(
+            "event=strict_recovery.complete recovered_targets={count}"
+        )),
+        Err(error) => logger.log(format!("event=strict_recovery.failure error={error}")),
+    }
     let api_ping = warp::get()
         .and(warp::path("ping"))
         .and(warp::path::end())
@@ -411,17 +440,19 @@ pub async fn run_service() -> anyhow::Result<()> {
             .and(warp::body::content_length_limit(MAX_REQUEST_BYTES))
             .and(warp::body::json())
             .map(move |params: StrictBlockParams| strict_clear(params, clear_logger.clone()));
-        api_ping.or(api_start).or(api_stop).or(api_block).or(api_clear)
+        api_ping
+            .or(api_start)
+            .or(api_stop)
+            .or(api_block)
+            .or(api_clear)
     };
 
     #[cfg(not(target_os = "windows"))]
     let routes = api_ping.or(api_start).or(api_stop);
 
-    warp::serve(routes)
-        .run(([127, 0, 0, 1], LISTEN_PORT))
-        .await;
+    warp::serve(routes).run(([127, 0, 0, 1], LISTEN_PORT)).await;
 
-    logger.log("Helper service stopped");
+    logger.log("event=helper.stopped");
     Ok(())
 }
 
