@@ -27,6 +27,8 @@ class ClashService extends ClashHandlerInterface {
   Completer<void> _agentAttachedCompleter = Completer();
   Completer<void> _coreReadyCompleter = Completer();
   final Map<String, Completer<bool>> _agentCommandCompleters = {};
+  final Map<String, Completer<StrictIdentityResolution?>>
+      _strictIdentityCompleters = {};
   final AgentStrictPolicyStatusCache _strictPolicyStatusCache =
       AgentStrictPolicyStatusCache();
   final StreamController<AgentStrictPolicyStatus>
@@ -243,6 +245,10 @@ class ClashService extends ClashHandlerInterface {
       if (completer != null && !completer.isCompleted) {
         completer.complete(event.ok ?? false);
       }
+      final identityCompleter = _strictIdentityCompleters.remove(event.id);
+      if (identityCompleter != null && !identityCompleter.isCompleted) {
+        identityCompleter.complete(event.ok == true ? event.identity : null);
+      }
     } else if (event.type == AgentEventType.coreUnavailable &&
         event.id != null) {
       _completePendingWithDefault(event.id!, 'Agent Core unavailable');
@@ -324,6 +330,32 @@ class ClashService extends ClashHandlerInterface {
   /// Disables strict capture and revokes Core ingress before filter cleanup.
   Future<bool> clearStrictPolicy() =>
       _agentCommand(AgentCommand.clearStrictPolicy);
+
+  /// Resolves a selected executable through the elevated Helper. The returned
+  /// digest evidence is produced by the trusted boundary; this method never
+  /// accepts caller-provided App-ID or publisher hashes.
+  Future<StrictIdentityResolution?> inspectStrictIdentity(
+    String executablePath,
+  ) async {
+    final id = 'agent-${AgentCommand.inspectStrictIdentity.name}-${utils.id}';
+    final completer = Completer<StrictIdentityResolution?>();
+    _strictIdentityCompleters[id] = completer;
+    try {
+      final socket = await socketCompleter.future;
+      socket.writeln(
+        encodeAgentCommand(
+          id: id,
+          command: AgentCommand.inspectStrictIdentity,
+          path: executablePath,
+        ),
+      );
+      return await completer.future.timeout(const Duration(seconds: 10));
+    } catch (_) {
+      return null;
+    } finally {
+      _strictIdentityCompleters.remove(id);
+    }
+  }
 
   void _onAgentLost(String reason) {
     // Socket loss invalidates any previously armed claim.  Keep the status
@@ -652,6 +684,10 @@ class ClashService extends ClashHandlerInterface {
   }
 
   void _flushPendingCompleters() {
+    for (final completer in _strictIdentityCompleters.values) {
+      if (!completer.isCompleted) completer.complete(null);
+    }
+    _strictIdentityCompleters.clear();
     for (final entry in callbackCompleterMap.entries.toList()) {
       if (!entry.value.isCompleted) {
         // Mirror _failPendingCompleter / handleResult: settle with the typed
