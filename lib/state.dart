@@ -746,6 +746,7 @@ class GlobalState {
       }
     }
     await perAppPolicyStore.ensureLoaded();
+    var unavailablePerAppTargets = 0;
     // PROCESS-PATH rules are meaningful only when the core resolves process
     // metadata. Process view already forces this above; keep classic view
     // policies functional as well without changing profiles that have no
@@ -757,7 +758,18 @@ class GlobalState {
     rawConfig["rule"] = mergePerAppPolicyRules(
       perAppPolicyStore.entries,
       rules.cast<Object?>(),
+      availableTargetGroups: {
+        GroupName.GLOBAL.name,
+        ...parsedProxyGroupOrder,
+      },
+      onUnavailableTarget: (_) => unavailablePerAppTargets++,
     );
+    if (unavailablePerAppTargets > 0) {
+      connectionDiagnostics.log(
+        '[ConnectionsDiag] perApp.compile status=blocked '
+        'unavailableTargets=$unavailablePerAppTargets',
+      );
+    }
     return rawConfig;
   }
 

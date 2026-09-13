@@ -78,6 +78,7 @@ void main() {
         path: r'C:\Apps\browser.exe',
         name: 'browser.exe',
         policy: ApplicationRoutingPolicy.proxy,
+        targetGroup: 'Work',
       ),
       const PerAppPolicy(
         path: r'C:\Apps\updater.exe',
@@ -92,17 +93,24 @@ void main() {
     ];
 
     expect(
-      compilePerAppPolicyRules(policies),
+      compilePerAppPolicyRules(
+        policies,
+        availableTargetGroups: const {'GLOBAL', 'Work'},
+      ),
       [
-        r'PROCESS-PATH,C:\Apps\browser.exe,GLOBAL',
+        r'PROCESS-PATH,C:\Apps\browser.exe,Work',
         r'PROCESS-PATH,C:\Apps\updater.exe,DIRECT',
         r'PROCESS-PATH,C:\Apps\blocked.exe,REJECT',
       ],
     );
     expect(
-      mergePerAppPolicyRules(policies, ['DOMAIN,example.com,DIRECT']),
+      mergePerAppPolicyRules(
+        policies,
+        ['DOMAIN,example.com,DIRECT'],
+        availableTargetGroups: const {'GLOBAL', 'Work'},
+      ),
       [
-        r'PROCESS-PATH,C:\Apps\browser.exe,GLOBAL',
+        r'PROCESS-PATH,C:\Apps\browser.exe,Work',
         r'PROCESS-PATH,C:\Apps\updater.exe,DIRECT',
         r'PROCESS-PATH,C:\Apps\blocked.exe,REJECT',
         'DOMAIN,example.com,DIRECT',
@@ -173,6 +181,68 @@ void main() {
     expect(decoded, hasLength(maxPerAppPolicies));
     expect(decoded.first.name, 'app-12.exe');
     expect(decoded.last.name, 'app-139.exe');
+  });
+
+  test('version 1 proxy entries migrate to GLOBAL without changing behavior',
+      () {
+    final decoded = decodePerAppPolicies({
+      'version': 1,
+      'entries': [
+        {
+          'path': r'C:\Apps\legacy.exe',
+          'name': 'legacy.exe',
+          'policy': 'proxy',
+        },
+      ],
+    });
+
+    expect(decoded.single.targetGroup, 'GLOBAL');
+    expect(
+      compilePerAppPolicyRules(
+        decoded,
+        availableTargetGroups: const {'GLOBAL'},
+      ),
+      [r'PROCESS-PATH,C:\Apps\legacy.exe,GLOBAL'],
+    );
+  });
+
+  test('missing proxy target blocks safely instead of breaking Core startup',
+      () {
+    const policy = PerAppPolicy(
+      path: r'C:\Apps\browser.exe',
+      name: 'browser.exe',
+      policy: ApplicationRoutingPolicy.proxy,
+      targetGroup: 'Missing',
+    );
+
+    final unavailable = <String>[];
+    expect(
+      compilePerAppPolicyRules(
+        [policy],
+        availableTargetGroups: const {'GLOBAL', 'Work'},
+        onUnavailableTarget: unavailable.add,
+      ),
+      [r'PROCESS-PATH,C:\Apps\browser.exe,REJECT'],
+    );
+    expect(unavailable, ['Missing']);
+    expect(
+      () => PerAppPolicy.validateTargetGroup('bad,group'),
+      throwsArgumentError,
+    );
+    expect(
+      () => PerAppPolicy.validateTargetGroup('bad\ngroup'),
+      throwsArgumentError,
+    );
+  });
+
+  test('target group choices preserve profile order and reject rule injection',
+      () {
+    expect(
+      availablePerAppTargetGroups(
+        const ['Work', 'GLOBAL', 'Work', 'bad,group', 'Streaming'],
+      ),
+      const ['GLOBAL', 'Work', 'Streaming'],
+    );
   });
 
   test('JSON decoding collapses duplicate canonical paths deterministically',
