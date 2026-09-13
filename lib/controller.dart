@@ -697,15 +697,24 @@ class AppController {
         }
       }
 
-      final code = await _adminAuthorization.request(() async {
-        final authorization = await system.authorizeCore();
-        if (authorization == AuthorizeCode.success) {
-          // Restart is part of the shared operation.  Otherwise concurrent
-          // callers would each restart the core after sharing one UAC prompt.
-          await restartCore();
-        }
-        return authorization;
-      });
+      late final AuthorizeCode code;
+      try {
+        code = await _adminAuthorization.request(() async {
+          final authorization = await system.authorizeCore();
+          if (authorization == AuthorizeCode.success) {
+            // Restart is part of the shared operation.  Otherwise concurrent
+            // callers would each restart the core after sharing one UAC prompt.
+            await restartCore();
+          }
+          return authorization;
+        });
+      } catch (error, stackTrace) {
+        commonPrint.log('[admin] authorization operation failed: $error');
+        commonPrint.log('[admin] authorization stack: $stackTrace');
+        _ref.read(realTunEnableProvider.notifier).value = false;
+        return Result.success(false);
+      }
+      commonPrint.log('[admin] authorization result=${code.name}');
       switch (code) {
         case AuthorizeCode.success:
           return Result.error("");
