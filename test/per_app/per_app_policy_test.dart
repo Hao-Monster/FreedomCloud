@@ -174,4 +174,42 @@ void main() {
     expect(decoded.first.name, 'app-12.exe');
     expect(decoded.last.name, 'app-139.exe');
   });
+
+  test('JSON decoding collapses duplicate canonical paths deterministically',
+      () {
+    final decoded = decodePerAppPolicies({
+      'version': 1,
+      'entries': [
+        {
+          'path': r'C:\Apps\browser.exe',
+          'name': 'old label',
+          'policy': 'direct',
+        },
+        {
+          'path': r'C:\Apps\browser.exe',
+          'name': 'new label',
+          'policy': 'proxy',
+        },
+      ],
+    });
+
+    expect(decoded, hasLength(1));
+    expect(decoded.single.name, 'new label');
+    expect(decoded.single.policy, ApplicationRoutingPolicy.proxy);
+  });
+
+  test('blank application names fall back to the executable name', () {
+    final decoded = decodePerAppPolicies({
+      'version': 1,
+      'entries': [
+        {
+          'path': r'C:\Apps\browser.exe',
+          'name': '  ',
+          'policy': 'direct',
+        },
+      ],
+    });
+
+    expect(decoded.single.name, 'browser.exe');
+  });
 }

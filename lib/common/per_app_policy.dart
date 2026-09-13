@@ -193,7 +193,10 @@ List<PerAppPolicy> decodePerAppPolicies(Object? value) {
   if (value is! Map || value['version'] != 1 || value['entries'] is! List) {
     return const [];
   }
-  final decoded = <PerAppPolicy>[];
+  // Keep the last occurrence for a canonical path.  This makes imports and
+  // upgrades deterministic even when an older build wrote duplicate entries
+  // with different casing on Windows.
+  final decodedByPath = <String, PerAppPolicy>{};
   for (final raw in value['entries'] as List) {
     if (raw is! Map) continue;
     try {
@@ -205,21 +208,27 @@ List<PerAppPolicy> decodePerAppPolicies(Object? value) {
       final name = rawName is String && rawName.trim().isNotEmpty
           ? rawName.trim()
           : path.basename(processPath);
-      decoded.add(
-        PerAppPolicy(
-          path: processPath,
-          name: name.length > 256 ? name.substring(0, 256) : name,
-          policy: policy,
-        ),
+      final entry = PerAppPolicy(
+        path: processPath,
+        name: name.length > 256 ? name.substring(0, 256) : name,
+        policy: policy,
       );
+      final key = Platform.isWindows
+          ? path.normalize(processPath).toLowerCase()
+          : path.normalize(processPath);
+      decodedByPath[key] = entry;
     } catch (_) {
       // A malformed entry must not disable all valid application policies.
     }
   }
+  final decoded = decodedByPath.values.toList(growable: false);
   return decoded.length <= maxPerAppPolicies
       ? List.unmodifiable(decoded)
       : List.unmodifiable(decoded.sublist(decoded.length - maxPerAppPolicies));
 }
+
+bool _isValidPolicySnapshot(Object? value) =>
+    value is Map && value['version'] == 1 && value['entries'] is List;
 
 class PerAppPolicyStore extends ChangeNotifier {
   static const _fileName = 'per_app_policies.json';
@@ -289,18 +298,21 @@ class PerAppPolicyStore extends ChangeNotifier {
   }
 
   Future<void> _load() async {
+    final file = await _policyFile();
+    final backup = File('${file.path}.backup');
     try {
-      final file = await _policyFile();
       // A process crash can occur after the previous file was moved to the
       // backup but before the pending file was renamed into place. Recover the
       // last known-good snapshot before decoding instead of silently starting
       // with an empty policy set.
-      final backup = File('${file.path}.backup');
       if (!await file.exists() && await backup.exists()) {
         await backup.rename(file.path);
       }
       if (!await file.exists()) return;
       final raw = jsonDecode(await file.readAsString());
+      if (!_isValidPolicySnapshot(raw)) {
+        throw const FormatException('invalid policy snapshot');
+      }
       final decoded = decodePerAppPolicies(raw);
       _entries
         ..clear()
@@ -309,6 +321,29 @@ class PerAppPolicyStore extends ChangeNotifier {
         '[ConnectionsDiag] perApp.load status=ok count=${_entries.length}',
       );
     } catch (error) {
+      // If the primary file is truncated or malformed, recover the last
+      // known-good backup rather than silently disabling every app rule.
+      if (await backup.exists()) {
+        try {
+          final backupRaw = jsonDecode(await backup.readAsString());
+          if (_isValidPolicySnapshot(backupRaw)) {
+            final decoded = decodePerAppPolicies(backupRaw);
+            await file.writeAsString(await backup.readAsString(), flush: true);
+            _entries
+              ..clear()
+              ..addEntries(
+                decoded.map((entry) => MapEntry(_key(entry.path), entry)),
+              );
+            connectionDiagnostics.log(
+              '[ConnectionsDiag] perApp.load status=recovered '
+              'count=${_entries.length}',
+            );
+            return;
+          }
+        } catch (_) {
+          // Preserve the original error type in diagnostics below.
+        }
+      }
       connectionDiagnostics.log(
         '[ConnectionsDiag] perApp.load status=error '
         'errorType=${error.runtimeType}',
