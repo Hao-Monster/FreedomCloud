@@ -612,6 +612,85 @@ class Build {
     await File(sourcePath).copy(targetPath);
   }
 
+  /// Strict mode artifacts are deliberately opt-in.  Release driver signing
+  /// and the package manifest are external inputs; a normal desktop build
+  /// must never silently ship the old `strict_capture` skeleton or an
+  /// unsigned substitute.  Set FLCLASH_STRICT_PACKAGE=1 and provide the
+  /// signed driver/manifest paths to assemble the strict package.
+  static bool get strictPackageEnabled {
+    final value = Platform.environment["FLCLASH_STRICT_PACKAGE"]
+        ?.trim()
+        .toLowerCase();
+    return value == "1" || value == "true" || value == "yes";
+  }
+
+  static String _requiredStrictInput(String name) {
+    final value = Platform.environment[name]?.trim();
+    if (value == null || value.isEmpty) {
+      throw "$name is required when FLCLASH_STRICT_PACKAGE is enabled";
+    }
+    final file = File(value);
+    if (FileSystemEntity.typeSync(value, followLinks: false) !=
+        FileSystemEntityType.file) {
+      throw "$name does not point to a regular file";
+    }
+    return file.absolute.path;
+  }
+
+  /// Build the production-host Broker only when a caller explicitly opts in.
+  /// A prebuilt path is preferred because release manifests pin the exact
+  /// signed Broker/driver set.  Local compilation remains useful for VM
+  /// qualification and embeds the supplied manifest through Cargo.
+  static Future<String> buildStrictBroker(Target target, {Arch? arch}) async {
+    final prebuilt = Platform.environment["FLCLASH_STRICT_BROKER_PATH"]?.trim();
+    if (prebuilt != null && prebuilt.isNotEmpty) {
+      final file = File(prebuilt);
+      if (FileSystemEntity.typeSync(prebuilt, followLinks: false) !=
+          FileSystemEntityType.file) {
+        throw "FLCLASH_STRICT_BROKER_PATH does not point to a regular file";
+      }
+      return file.absolute.path;
+    }
+
+    final manifest = _requiredStrictInput("FLCLASH_STRICT_PACKAGE_MANIFEST");
+    final args = <String>["cargo", "build", "--release", "--locked", "--features", "production-host"];
+    if (target == Target.windows && arch == Arch.arm64) {
+      args.addAll(["--target", "aarch64-pc-windows-msvc"]);
+    }
+    await exec(
+      args,
+      name: "build strict broker",
+      environment: {"FLCLASH_STRICT_PACKAGE_MANIFEST": manifest},
+      workingDirectory: join(current, "services", "strict-broker"),
+    );
+    final releasePath = target == Target.windows && arch == Arch.arm64
+        ? join(current, "services", "strict-broker", "target", "aarch64-pc-windows-msvc", "release")
+        : join(current, "services", "strict-broker", "target", "release");
+    final output = join(releasePath, "FlClashStrictBroker.exe");
+    if (!File(output).existsSync()) throw "strict Broker build output is missing";
+    return File(output).absolute.path;
+  }
+
+  /// Copy signed strict artifacts into the portable root.  The installer
+  /// consumes these same root names, while the service entries below place
+  /// the Broker/driver/manifest under the protected service directory.
+  static Future<void> bundleWindowsStrictArtifacts(
+    String buildDir, {
+    required String brokerPath,
+  }) async {
+    if (!strictPackageEnabled) return;
+    final driver = _requiredStrictInput("FLCLASH_STRICT_DRIVER_PATH");
+    final manifest = _requiredStrictInput("FLCLASH_STRICT_PACKAGE_MANIFEST");
+    final files = <String, String>{
+      driver: "FlClashStrictCallout.sys",
+      brokerPath: "FlClashStrictBroker.exe",
+      manifest: "strict-package-manifest.json",
+    };
+    for (final entry in files.entries) {
+      await File(entry.key).copy(join(buildDir, entry.value));
+    }
+  }
+
   static List<String> getExecutable(String command) => command.split(" ");
 
   static String readVersion() {
@@ -812,6 +891,7 @@ class BuildCommand extends Command {
     required String env,
     required String coreVersion,
     required String token,
+    String? strictBrokerPath,
     bool msix = false,
   }) async {
     await Build.exec(
@@ -832,6 +912,11 @@ class BuildCommand extends Command {
     final buildDir =
         join(current, "build", "windows", winArch, "runner", "Release");
     Build.bundleWindowsMsvcRuntime(buildDir, winArch);
+    if (Build.strictPackageEnabled) {
+      final broker = strictBrokerPath;
+      if (broker == null) throw "strict Broker path was not prepared";
+      await Build.bundleWindowsStrictArtifacts(buildDir, brokerPath: broker);
+    }
     await Build.writeWindowsTestPackageMetadata(
       buildDir,
       flutterVersion: await Build.resolveFlutterVersion(),
@@ -885,7 +970,34 @@ class BuildCommand extends Command {
           .replaceAll(
               "{{ARCH}}", archName == "amd64" ? "x64compatible" : "arm64")
           .replaceAll("{{SOURCE_DIR}}", buildDir)
-          .replaceAll("{{EXECUTABLE_NAME}}", "${Build.appName}.exe");
+          .replaceAll("{{EXECUTABLE_NAME}}", "${Build.appName}.exe")
+          .replaceAll(
+            "{{STRICT_PACKAGE_FILES}}",
+            Build.strictPackageEnabled
+                ? '''Source: "{{SOURCE_DIR}}\\FlClashStrictCallout.sys"; DestDir: "{commonpf}\\FlClashX Service"; Flags: ignoreversion\nSource: "{{SOURCE_DIR}}\\FlClashStrictBroker.exe"; DestDir: "{commonpf}\\FlClashX Service"; Flags: ignoreversion\nSource: "{{SOURCE_DIR}}\\strict-package-manifest.json"; DestDir: "{commonpf}\\FlClashX Service"; Flags: ignoreversion'''
+                : "",
+          )
+          .replaceAll(
+            "{{STRICT_SERVICE_BLOCK}}",
+            Build.strictPackageEnabled
+                ? '''    StrictBrokerExe := ExpandConstant('{commonpf}\\FlClashX Service\\FlClashStrictBroker.exe');
+    Exec('sc.exe', 'config "FlClashStrictBroker" binPath= "' + StrictBrokerExe + '" start= auto', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+    if ResultCode <> 0 then
+      Exec('sc.exe', 'create "FlClashStrictBroker" binPath= "' + StrictBrokerExe + '" start= auto', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+    if ResultCode = 0 then
+      Exec('sc.exe', 'start "FlClashStrictBroker"', '', SW_HIDE, ewNoWait, ResultCode);'''
+                : "",
+          )
+          .replaceAll(
+            "{{STRICT_UNINSTALL_BLOCK}}",
+            Build.strictPackageEnabled
+                ? '''      Exec('sc.exe', 'stop "FlClashStrictBroker"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+      Exec('sc.exe', 'delete "FlClashStrictBroker"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);'''
+                : "",
+          )
+          // The strict file block is injected after the normal source-dir
+          // substitution, so expand its intentionally repeated placeholder.
+          .replaceAll("{{SOURCE_DIR}}", buildDir);
 
       var processed = issContent;
       final locales = [
@@ -1306,11 +1418,15 @@ class BuildCommand extends Command {
         final buildMsix = argResults?["msix"] == true;
         await Build.buildAgent(target, arch: arch);
         await Build.buildHelper(target, token, arch: arch);
+        final strictBrokerPath = Build.strictPackageEnabled
+            ? await Build.buildStrictBroker(target, arch: arch)
+            : null;
         await _buildWindowsApp(
           arch: arch!,
           env: env,
           coreVersion: coreVersion,
           token: token,
+          strictBrokerPath: strictBrokerPath,
           msix: buildMsix,
         );
         return;

@@ -684,4 +684,23 @@ mod tests {
         assert!(parse_destination("2001:db8::1:443").is_none());
         assert!(parse_destination("example.com:0").is_none());
     }
+
+    #[test]
+    fn udp_datagram_codec_keeps_socks_header_bounded() {
+        let packet = encode_udp_datagram("8.8.8.8:53", b"dns").expect("encode IPv4");
+        assert_eq!(&packet[..3], &[0, 0, 0]);
+        assert_eq!(packet[3], 1);
+        assert_eq!(&packet[4..8], &[8, 8, 8, 8]);
+        assert_eq!(&packet[8..10], &53u16.to_be_bytes());
+        assert_eq!(&packet[10..], b"dns");
+
+        let domain = encode_udp_datagram("dns.google:53", b"query").expect("encode domain");
+        assert_eq!(domain[3], 3);
+        assert_eq!(domain[4], 10);
+        assert_eq!(&domain[5..15], b"dns.google");
+        assert_eq!(
+            encode_udp_datagram("8.8.8.8:53", &vec![0; MAX_PAYLOAD_BYTES + 1]),
+            Err(BrokerErrorCode::InvalidRequest)
+        );
+    }
 }

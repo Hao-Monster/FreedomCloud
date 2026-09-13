@@ -83,6 +83,20 @@ inject the authorized signing identity, emit a SHA-256 signed artifact and use
 the same build ID in the Broker package manifest. Do not substitute a generated
 test certificate for a release artifact.
 
+## FlClashX setup packaging
+
+The Flutter setup script keeps strict artifacts opt-in so ordinary builds cannot
+ship this driver accidentally. To assemble an explicitly signed strict package,
+set `FLCLASH_STRICT_PACKAGE=1` and provide absolute paths for
+`FLCLASH_STRICT_DRIVER_PATH` and `FLCLASH_STRICT_PACKAGE_MANIFEST`. A prebuilt,
+signed Broker can be selected with `FLCLASH_STRICT_BROKER_PATH`; otherwise
+`setup.dart` builds `services/strict-broker` with the supplied manifest embedded.
+The generated portable root contains `FlClashStrictCallout.sys`,
+`FlClashStrictBroker.exe` and `strict-package-manifest.json`; the Inno installer
+also installs them under the protected `FlClashX Service` directory and manages
+the `FlClashStrictBroker` SCM service. The legacy `windows/strict_capture`
+artifact is never selected by this path.
+
 ## Local safety boundary
 
 Compilation and static analysis are allowed on a development host. Driver

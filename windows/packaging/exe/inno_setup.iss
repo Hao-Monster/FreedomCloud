@@ -32,6 +32,7 @@ const
 var
   IsUpgrade: Boolean;
   PreviousVersion: String;
+  StrictBrokerExe: String;
 
 procedure SHChangeNotify(wEventId: Integer; uFlags: Integer; dwItem1: Integer; dwItem2: Integer); external 'SHChangeNotify@shell32.dll stdcall';
 
@@ -41,7 +42,7 @@ var
   i: Integer;
   ResultCode: Integer;
 begin
-  Processes := ['FlClashX.exe', 'FlClashAgent.exe', 'FlClashCore.exe', 'FlClashHelperService.exe'];
+  Processes := ['FlClashX.exe', 'FlClashAgent.exe', 'FlClashCore.exe', 'FlClashHelperService.exe', 'FlClashStrictBroker.exe'];
 
   // First try graceful shutdown
   for i := 0 to GetArrayLength(Processes)-1 do
@@ -101,6 +102,7 @@ begin
   
   // Stop service if running
   Exec('sc.exe', 'stop "FlClashHelperService"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Exec('sc.exe', 'stop "FlClashStrictBroker"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   Sleep(1000);
   
   // Kill all processes
@@ -176,6 +178,7 @@ begin
         '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
     if ResultCode = 0 then
       Exec('sc.exe', 'start "FlClashHelperService"', '', SW_HIDE, ewNoWait, ResultCode);
+{{STRICT_SERVICE_BLOCK}}
   end;
 end;
 
@@ -195,6 +198,7 @@ begin
       
       // Delete service
       Exec('sc.exe', 'delete "FlClashHelperService"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+{{STRICT_UNINSTALL_BLOCK}}
       Sleep(500);
       DelTree(ExpandConstant('{commonpf}\FlClashX Service'), True, True, True);
     end;
@@ -257,6 +261,7 @@ Source: "{{SOURCE_DIR}}\\msvcp140_codecvt_ids.dll"; DestDir: "{commonpf}\FlClash
 Source: "{{SOURCE_DIR}}\\vcruntime140.dll"; DestDir: "{commonpf}\FlClashX Service"; Flags: ignoreversion
 Source: "{{SOURCE_DIR}}\\vcruntime140_1.dll"; DestDir: "{commonpf}\FlClashX Service"; Flags: ignoreversion
 Source: "{{SOURCE_DIR}}\\vcruntime140_threads.dll"; DestDir: "{commonpf}\FlClashX Service"; Flags: ignoreversion
+{{STRICT_PACKAGE_FILES}}
 ; NOTE: Don't use "Flags: ignoreversion" on any shared system files
 
 [Icons]

@@ -92,6 +92,38 @@ foreach ($source in @(
 }
 $logInventory | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $output 'log-inventory.json') -Encoding UTF8
 
+# Keep the recovery marker out of shared evidence because it may contain full
+# executable paths. Record only presence, bounded target count and a digest so
+# crash/upgrade/uninstall recovery can still be correlated safely.
+$strictState = New-Object Text.StringBuilder
+[void]$strictState.AppendLine("capturedUtc=$([DateTime]::UtcNow.ToString('o'))")
+foreach ($serviceName in @('FlClashHelperService', 'FlClashStrictCallout', 'FlClashStrictBroker')) {
+    [void]$strictState.AppendLine("service=$serviceName")
+    [void]$strictState.AppendLine((& sc.exe query $serviceName 2>&1 | Out-String).Trim())
+    [void]$strictState.AppendLine((& sc.exe qc $serviceName 2>&1 | Out-String).Trim())
+}
+foreach ($marker in @(
+        @{ path = if ($env:ProgramData) { Join-Path $env:ProgramData 'FlClashX\strict-recovery.json' } else { $null }; label = 'helper' },
+        @{ path = if ($env:ProgramData) { Join-Path $env:ProgramData 'FlClashX.StrictBroker\strict-recovery-v1.json' } else { $null }; label = 'broker' }
+    )) {
+    if ($null -ne $marker.path -and (Test-Path -LiteralPath $marker.path -PathType Leaf)) {
+        $markerHash = (Get-FileHash -LiteralPath $marker.path -Algorithm SHA256).Hash
+        try {
+            $markerJson = Get-Content -LiteralPath $marker.path -Raw | ConvertFrom-Json
+            $markerTargets = if ($null -ne $markerJson.targets) { @($markerJson.targets).Count } elseif ($null -ne $markerJson.marker) { 1 } else { 0 }
+        } catch {
+            $markerTargets = 'invalid-json'
+        }
+        [void]$strictState.AppendLine("recoveryMarker.$($marker.label).present=true")
+        [void]$strictState.AppendLine("recoveryMarker.$($marker.label).targets=$markerTargets")
+        [void]$strictState.AppendLine("recoveryMarker.$($marker.label).sha256=$markerHash")
+    } else {
+        [void]$strictState.AppendLine("recoveryMarker.$($marker.label).present=false")
+    }
+}
+$utf8 = New-Object Text.UTF8Encoding($false)
+[IO.File]::WriteAllText((Join-Path $output 'strict-state.txt'), $strictState.ToString(), $utf8)
+
 $processNames = @('FlClashX', 'FlClashAgent', 'FlClashCore', 'FlClashStrictBroker', 'FlClashHelperService')
 $sampleLimit = [Math]::Ceiling(($DurationMinutes * 60) / $SampleIntervalSeconds) + 1
 $samples = New-Object Collections.Generic.List[object]
@@ -156,8 +188,10 @@ $serviceEvents = Get-WinEvent -FilterHashtable @{
     (Join-Path $output 'driver-debug-instructions.txt'),
     @"
 Kernel driver diagnostics use DbgPrintEx and are not written from the driver to disk.
-For a driver-focused run, start an approved DebugView/ETW capture before the test,
-save the capture as driver-debug.txt, and place it beside this evidence directory.
+For a driver-focused run, start an approved DebugView or WFP ETW capture before the
+test, save it as driver-debug.txt, and place it beside this evidence directory.
+Record capture start/stop time and Windows build number.
+The driver must never write arbitrary files from kernel mode.
 Do not include packet payloads, profile data, credentials, or command-line secrets.
 "@,
     $utf8

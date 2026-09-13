@@ -1,4 +1,10 @@
-# FlClashX strict capture (WFP callout)
+# FlClashX strict capture (legacy WFP callout)
+
+> **Packaging warning:** `strict_capture` is a legacy development skeleton. It
+> is not the production strict driver and must never be copied into a release
+> or VM qualification package. The packaging entry point is
+> `windows/strict-driver/FlClashStrictCallout.vcxproj`, whose signed output is
+> named `FlClashStrictCallout.sys`.
 
 This directory contains the Windows kernel-mode callout boundary used by the
 strict per-application mode.  It is deliberately a small, auditable WDM
