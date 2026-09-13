@@ -390,6 +390,125 @@ pub async fn connect_tcp_via_mihomo(
     Ok(stream)
 }
 
+/// A SOCKS5 UDP association.  The TCP control stream must stay alive for the
+/// lifetime of the association; dropping it causes Mihomo to release the
+/// relay.  QUIC and DNS datagrams use the same bounded packet codec below.
+pub struct UdpAssociation {
+    pub control: TcpStream,
+    pub relay: SocketAddr,
+}
+
+pub async fn open_udp_association_via_mihomo(
+    mihomo: SocketAddr,
+) -> Result<UdpAssociation, BrokerErrorCode> {
+    if !mihomo.ip().is_loopback() || mihomo.port() == 0 {
+        return Err(BrokerErrorCode::ProxyUnavailable);
+    }
+    let mut control = timeout(MIHOMO_CONNECT_TIMEOUT, TcpStream::connect(mihomo))
+        .await
+        .map_err(|_| BrokerErrorCode::Timeout)?
+        .map_err(|_| BrokerErrorCode::ProxyUnavailable)?;
+    let relay = timeout(MIHOMO_CONNECT_TIMEOUT, async {
+        control.write_all(&[0x05, 0x01, 0x00]).await?;
+        let mut greeting = [0u8; 2];
+        control.read_exact(&mut greeting).await?;
+        if greeting != [0x05, 0x00] {
+            return Err(std::io::Error::other(
+                "Mihomo SOCKS5 authentication rejected",
+            ));
+        }
+        // Request an IPv4 wildcard relay. Mihomo returns the actual relay
+        // address in the response; a wildcard response is normalized to the
+        // already validated loopback proxy address.
+        control
+            .write_all(&[0x05, 0x03, 0x00, 0x01, 0, 0, 0, 0, 0, 0])
+            .await?;
+        let mut response = [0u8; 4];
+        control.read_exact(&mut response).await?;
+        if response[0] != 0x05 || response[1] != 0x00 {
+            return Err(std::io::Error::other("Mihomo SOCKS5 UDP ASSOCIATE failed"));
+        }
+        let address = read_socks_address(&mut control, response[3]).await?;
+        Ok::<SocketAddr, std::io::Error>(address)
+    })
+    .await
+    .map_err(|_| BrokerErrorCode::Timeout)?
+    .map_err(|_| BrokerErrorCode::ProxyUnavailable)?;
+    let relay = if relay.ip().is_unspecified() || relay.port() == 0 {
+        SocketAddr::new(
+            mihomo.ip(),
+            if relay.port() == 0 {
+                mihomo.port()
+            } else {
+                relay.port()
+            },
+        )
+    } else {
+        relay
+    };
+    Ok(UdpAssociation { control, relay })
+}
+
+pub fn encode_udp_datagram(destination: &str, payload: &[u8]) -> Result<Vec<u8>, BrokerErrorCode> {
+    if payload.len() > MAX_PAYLOAD_BYTES {
+        return Err(BrokerErrorCode::InvalidRequest);
+    }
+    let (host, port) = parse_destination(destination).ok_or(BrokerErrorCode::InvalidRequest)?;
+    let mut packet = vec![0, 0, 0];
+    if let Ok(address) = host.parse::<std::net::IpAddr>() {
+        match address {
+            std::net::IpAddr::V4(value) => {
+                packet.push(0x01);
+                packet.extend_from_slice(&value.octets());
+            }
+            std::net::IpAddr::V6(value) => {
+                packet.push(0x04);
+                packet.extend_from_slice(&value.octets());
+            }
+        }
+    } else {
+        let bytes = host.as_bytes();
+        if bytes.is_empty() || bytes.len() > 255 {
+            return Err(BrokerErrorCode::InvalidRequest);
+        }
+        packet.push(0x03);
+        packet.push(bytes.len() as u8);
+        packet.extend_from_slice(bytes);
+    }
+    packet.extend_from_slice(&port.to_be_bytes());
+    packet.extend_from_slice(payload);
+    Ok(packet)
+}
+
+async fn read_socks_address(
+    stream: &mut TcpStream,
+    atyp: u8,
+) -> Result<SocketAddr, std::io::Error> {
+    let ip = match atyp {
+        0x01 => {
+            let mut bytes = [0u8; 4];
+            stream.read_exact(&mut bytes).await?;
+            std::net::IpAddr::V4(bytes.into())
+        }
+        0x04 => {
+            let mut bytes = [0u8; 16];
+            stream.read_exact(&mut bytes).await?;
+            std::net::IpAddr::V6(bytes.into())
+        }
+        0x03 => {
+            let mut length = [0u8; 1];
+            stream.read_exact(&mut length).await?;
+            let mut bytes = vec![0u8; usize::from(length[0])];
+            stream.read_exact(&mut bytes).await?;
+            std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED)
+        }
+        _ => return Err(std::io::Error::other("invalid SOCKS5 address type")),
+    };
+    let mut port = [0u8; 2];
+    stream.read_exact(&mut port).await?;
+    Ok(SocketAddr::new(ip, u16::from_be_bytes(port)))
+}
+
 fn parse_destination(destination: &str) -> Option<(String, u16)> {
     if let Some(rest) = destination.strip_prefix('[') {
         let (host, port) = rest.split_once("]:")?;
