@@ -62,10 +62,6 @@ impl StrictAppTarget {
         Ok(Self { executable })
     }
 
-    pub fn executable(&self) -> &Path {
-        &self.executable
-    }
-
     pub fn display_name(&self) -> String {
         let filename = self
             .executable
@@ -366,7 +362,7 @@ mod tests {
     fn plan_covers_both_ip_versions_and_is_bounded() {
         let path = temp_executable("edge");
         let target = StrictAppTarget::new(&path).expect("valid target");
-        assert_eq!(target.executable(), path.canonicalize().unwrap());
+        assert_eq!(target.executable, path.canonicalize().unwrap());
         let plan = build_block_filter_plan(&path).expect("valid plan");
         assert_eq!(plan.layers, ["ALE_AUTH_CONNECT_V4", "ALE_AUTH_CONNECT_V6"]);
         assert!(plan.display_name.len() <= MAX_DISPLAY_NAME_CHARS);

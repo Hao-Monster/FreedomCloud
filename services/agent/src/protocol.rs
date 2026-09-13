@@ -4,9 +4,10 @@ pub const PROTOCOL_VERSION: u32 = 1;
 pub const MAX_AUTH_LINE_BYTES: usize = 4096;
 pub const MAX_MESSAGE_LINE_BYTES: usize = 1024 * 1024;
 
-/// Strict-capture status is a data contract only. Platform capture backends
-/// must publish `armed` before selected flows are allowed to leave the host;
-/// the Agent itself does not pretend to implement WFP or Network Extension.
+/// Strict-capture status is a data contract shared with the UI. Platform
+/// capture backends must publish `armed` before selected flows are allowed to
+/// leave the host; the Agent may coordinate an explicit fail-closed block via
+/// the privileged Helper but does not pretend that this is proxy redirect.
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum StrictPolicyState {
