@@ -82,3 +82,6 @@ docs/
 
 # Landing page (deployed separately)
 docs/
+# Local WDK driver build outputs (never ship unsigned/test artifacts)
+windows/strict_capture/obj/
+windows/strict_capture/x64/

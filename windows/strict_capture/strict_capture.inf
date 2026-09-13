@@ -1,0 +1,39 @@
+[Version]
+Signature   = "$WINDOWS NT$"
+Class       = NetService
+ClassGuid   = {4D36E974-E325-11CE-BFC1-08002BE10318}
+Provider    = %ManufacturerName%
+DriverVer   = 09/14/2026,0.1.0.0
+CatalogFile = strict_capture.cat
+
+[DefaultInstall.NTamd64]
+CopyFiles   = DriverCopyFiles
+AddService  = FlClashXStrictCapture,0x00000002,ServiceInstall
+
+[DefaultUninstall.NTamd64]
+DelFiles    = DriverCopyFiles
+DelService  = FlClashXStrictCapture,0x00000002
+
+[SourceDisksFiles]
+strict_capture.sys = 1
+
+[SourceDisksNames]
+1 = %DiskName%,,
+
+[DestinationDirs]
+DriverCopyFiles = 12
+
+[DriverCopyFiles]
+strict_capture.sys
+
+[ServiceInstall]
+DisplayName   = %ServiceName%
+ServiceType   = 1
+StartType     = 3
+ErrorControl  = 1
+ServiceBinary = %12%\strict_capture.sys
+
+[Strings]
+ManufacturerName = "FlClashX"
+DiskName         = "FlClashX strict capture"
+ServiceName      = "FlClashX Strict Capture"
