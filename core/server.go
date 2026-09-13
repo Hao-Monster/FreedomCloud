@@ -40,6 +40,7 @@ func send(data []byte) {
 }
 
 func startServer(arg string, authToken string) {
+	agentCoreAuthenticated.Store(false)
 
 	_, numErr := strconv.Atoi(arg)
 
@@ -66,6 +67,7 @@ func startServer(arg string, authToken string) {
 			_ = c.Close()
 			return
 		}
+		agentCoreAuthenticated.Store(true)
 	}
 
 	connMu.Lock()
@@ -73,6 +75,7 @@ func startServer(arg string, authToken string) {
 	connMu.Unlock()
 
 	defer func() {
+		agentCoreAuthenticated.Store(false)
 		connMu.Lock()
 		if conn != nil {
 			_ = conn.Close()

@@ -227,7 +227,7 @@ func updateListeners() {
 	if currentConfig == nil {
 		return
 	}
-	listeners := currentConfig.Listeners
+	listeners := inboundListenersWithStrictLocked()
 	general := currentConfig.General
 	listener.PatchInboundListeners(listeners, tunnel.Tunnel, true)
 	listener.SetAllowLan(general.AllowLan)
@@ -251,6 +251,7 @@ func updateListeners() {
 
 // stopListeners stops all active listeners
 func stopListeners() {
+	clearStrictIngressForConfigChangeLocked()
 	listener.ReCreateHTTP(0, tunnel.Tunnel)
 	listener.ReCreateSocks(0, tunnel.Tunnel)
 	listener.ReCreateRedir(0, tunnel.Tunnel)
@@ -384,6 +385,7 @@ func updateConfig(params *UpdateParams) {
 func setupConfig(params *SetupParams) error {
 	runLock.Lock()
 	defer runLock.Unlock()
+	clearStrictIngressForConfigChangeLocked()
 	var err error
 
 	extractProxyDescriptionsFromRaw(params.Config)

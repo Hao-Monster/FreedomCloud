@@ -106,12 +106,16 @@ pub fn build_block_filter_plan(path: impl AsRef<Path>) -> Result<BlockFilterPlan
 #[allow(dead_code)]
 mod platform {
     use super::*;
-    use std::ffi::c_void;
-    use std::ptr::{null, null_mut};
     use serde::{Deserialize, Serialize};
+    use std::ffi::c_void;
+    use std::os::windows::ffi::OsStrExt;
+    use std::ptr::{null, null_mut};
     use windows_sys::core::{GUID, PCWSTR};
     use windows_sys::Win32::Foundation::HANDLE;
     use windows_sys::Win32::NetworkManagement::WindowsFilteringPlatform::*;
+    use windows_sys::Win32::Storage::FileSystem::{
+        MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
+    };
 
     #[derive(Debug, Clone, Serialize, Deserialize)]
     struct RecoveryMarker {
@@ -159,8 +163,31 @@ mod platform {
             .map_err(|error| format!("serialize strict recovery marker failed: {error}"))?;
         fs::write(&temporary, payload)
             .map_err(|error| format!("write strict recovery marker failed: {error}"))?;
-        fs::rename(&temporary, &path)
-            .map_err(|error| format!("commit strict recovery marker failed: {error}"))
+        let source = temporary
+            .as_os_str()
+            .encode_wide()
+            .chain(Some(0))
+            .collect::<Vec<_>>();
+        let destination = path
+            .as_os_str()
+            .encode_wide()
+            .chain(Some(0))
+            .collect::<Vec<_>>();
+        let moved = unsafe {
+            MoveFileExW(
+                source.as_ptr(),
+                destination.as_ptr(),
+                MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+            )
+        };
+        if moved == 0 {
+            Err(format!(
+                "commit strict recovery marker failed: {}",
+                std::io::Error::last_os_error()
+            ))
+        } else {
+            Ok(())
+        }
     }
 
     fn record_recovery_target(path: &Path) -> Result<(), String> {

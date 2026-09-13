@@ -456,7 +456,7 @@ class _PerAppPolicySectionState extends State<_PerAppPolicySection> {
                         overflow: TextOverflow.ellipsis,
                       ),
                       subtitle: Text(
-                        '${applicationRoutingPolicyLabel(entry.policy)} · '
+                        '${entry.policy == ApplicationRoutingPolicy.proxy ? 'PROXY · ${entry.targetGroup ?? 'GLOBAL'}' : applicationRoutingPolicyLabel(entry.policy)} · '
                         '${entry.path}',
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
@@ -535,10 +535,21 @@ class _PerAppPolicySectionState extends State<_PerAppPolicySection> {
     ApplicationRoutingPolicy policy,
   ) async {
     try {
+      final targetGroup = policy == ApplicationRoutingPolicy.proxy
+          ? await showApplicationProxyGroupDialog(
+              context,
+              selectedGroup:
+                  perAppPolicyStore.entryFor(processPath)?.targetGroup,
+            )
+          : null;
+      if (policy == ApplicationRoutingPolicy.proxy && targetGroup == null) {
+        return;
+      }
       await perAppPolicyStore.setPolicy(
         processPath: processPath,
         name: name,
         policy: policy,
+        targetGroup: targetGroup,
       );
       await globalState.appController.applyProfile();
       if (mounted) await context.showNotifier(appLocalizations.successTitle);
