@@ -62,6 +62,29 @@ void main() {
     );
   });
 
+  test('active application policies require process lookup', () {
+    expect(
+      perAppPoliciesRequireProcessLookup(const [
+        PerAppPolicy(
+          path: r'C:\Apps\edge.exe',
+          name: 'edge.exe',
+          policy: ApplicationRoutingPolicy.inherit,
+        ),
+      ]),
+      isFalse,
+    );
+    expect(
+      perAppPoliciesRequireProcessLookup(const [
+        PerAppPolicy(
+          path: r'C:\Apps\edge.exe',
+          name: 'edge.exe',
+          policy: ApplicationRoutingPolicy.proxy,
+        ),
+      ]),
+      isTrue,
+    );
+  });
+
   test('JSON decoding ignores malformed entries and enforces the bound', () {
     final decoded = decodePerAppPolicies({
       'version': 1,

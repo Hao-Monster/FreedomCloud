@@ -69,6 +69,11 @@ List<String> compilePerAppPolicyRules(Iterable<PerAppPolicy> policies) =>
       return 'PROCESS-PATH,$processPath,$target';
     }).toList(growable: false);
 
+/// PROCESS-PATH rules require Mihomo to resolve the originating process even
+/// when the connection page is in classic (non-process) mode.
+bool perAppPoliciesRequireProcessLookup(Iterable<PerAppPolicy> policies) =>
+    policies.any((entry) => entry.policy != ApplicationRoutingPolicy.inherit);
+
 List<Object?> mergePerAppPolicyRules(
   Iterable<PerAppPolicy> policies,
   Iterable<Object?> profileRules,

@@ -746,6 +746,14 @@ class GlobalState {
       }
     }
     await perAppPolicyStore.ensureLoaded();
+    // PROCESS-PATH rules are meaningful only when the core resolves process
+    // metadata. Process view already forces this above; keep classic view
+    // policies functional as well without changing profiles that have no
+    // active per-application rules.
+    if (platformSupportsProcessLookup &&
+        perAppPoliciesRequireProcessLookup(perAppPolicyStore.entries)) {
+      rawConfig["find-process-mode"] = FindProcessMode.always.name;
+    }
     rawConfig["rule"] = mergePerAppPolicyRules(
       perAppPolicyStore.entries,
       rules.cast<Object?>(),
