@@ -271,16 +271,15 @@ class Windows {
 
     // Service exists but not running - try to start it without elevation
     final result = await Process.run('sc', ['start', appHelperService]);
-
-    if (result.exitCode == 0) {
-      // Wait for service to fully start
-      await Future.delayed(const Duration(milliseconds: 500));
-      // Verify it's actually running and responding
-      final newStatus = await checkService();
-      return newStatus == WindowsHelperServiceStatus.running;
+    final output = '${result.stdout}\n${result.stderr}';
+    // 1056 means a concurrent caller won the start race. Treat it as a
+    // success candidate and verify the service endpoint below instead of
+    // falling through to installService (which would show another UAC prompt).
+    if (result.exitCode != 0 && !RegExp(r'\b1056\b').hasMatch(output)) {
+      return false;
     }
-
-    return false;
+    if (!await _waitForServiceState(running: true)) return false;
+    return await checkService() == WindowsHelperServiceStatus.running;
   }
 
   /// Register the service - will request UAC only if service is not installed.
