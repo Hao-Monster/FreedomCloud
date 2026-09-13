@@ -73,7 +73,7 @@ class Request {
         throw Exception('Redirect detected, but no location header was found.');
       }
 
-      print('↪️ Redirecting to: $newUrl');
+      commonPrint.log('↪️ Redirecting to: $newUrl');
       final finalResponse = await dio.get<Uint8List>(
         newUrl,
         options: Options(

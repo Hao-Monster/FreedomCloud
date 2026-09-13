@@ -4,6 +4,41 @@ import 'package:flclashx/models/models.dart';
 import 'package:flclashx/state.dart';
 import 'package:flutter/cupertino.dart';
 
+final RegExp _logUrlPattern = RegExp(
+  r'''\bhttps?://[^\s<>"']+''',
+  caseSensitive: false,
+);
+final RegExp _logCredentialPattern = RegExp(
+  r'''((?:authorization|proxy-authorization|password|passwd|secret|token|api[_-]?key|access[_-]?token|refresh[_-]?token)\s*[:=]\s*)([^\s,;&]+)''',
+  caseSensitive: false,
+);
+final RegExp _logBearerPattern = RegExp(
+  r'''\b(?:Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+''',
+  caseSensitive: false,
+);
+
+/// Removes credentials and remotely identifying URLs before they reach any
+/// application log sink.  Log files are routinely exported for diagnostics,
+/// so redaction belongs at the shared logger boundary rather than at individual
+/// call sites.  Loopback URLs are intentionally redacted too: they can carry
+/// controller secrets in query strings.
+String redactSensitiveLogData(String? text) {
+  if (text == null || text.isEmpty) return text ?? '';
+
+  var redacted = text.replaceAllMapped(_logUrlPattern, (_) => '<redacted-url>');
+  // Remove scheme credentials first so the generic field matcher cannot leave
+  // the token following `Bearer`/`Basic` in the log.
+  redacted = redacted.replaceAllMapped(
+    _logBearerPattern,
+    (_) => '<redacted-authorization>',
+  );
+  redacted = redacted.replaceAllMapped(
+    _logCredentialPattern,
+    (match) => '${match.group(1)}<redacted>',
+  );
+  return redacted;
+}
+
 class CommonPrint {
 
   factory CommonPrint() {
@@ -24,7 +59,7 @@ class CommonPrint {
   };
 
   void log(String? text) {
-    final payload = "[FlClashX] $text";
+    final payload = '[FlClashX] ${redactSensitiveLogData(text)}';
     debugPrint(payload);
 
     fileLogger.log(payload);

@@ -7,7 +7,11 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-if (-not [IO.Path]::IsPathFullyQualified($OutputDirectory)) {
+# Windows PowerShell 5.1 does not expose IsPathFullyQualified (or the newer
+# GetRelativePath API used below).  Check the drive/UNC prefix explicitly so a
+# drive-relative path such as `C:logs` cannot be silently resolved elsewhere.
+if (-not [IO.Path]::IsPathRooted($OutputDirectory) -or
+    $OutputDirectory -notmatch '^(?:[A-Za-z]:[\\/]|\\\\)') {
     throw 'OutputDirectory must be an absolute path'
 }
 $output = [IO.Path]::GetFullPath($OutputDirectory)
@@ -99,9 +103,13 @@ Do not include packet payloads, profile data, credentials, or command-line secre
     $utf8
 )
 
+$outputPrefix = $output.TrimEnd('\', '/') + '\'
 $hashLines = Get-ChildItem -LiteralPath $output -File -Recurse |
     ForEach-Object {
-        $relative = [IO.Path]::GetRelativePath($output, $_.FullName) -replace '\\', '/'
+        # Derive the relative path with String.Substring for PS 5.1
+        # compatibility. All files come from Get-ChildItem rooted at $output,
+        # so this does not evaluate or join untrusted path segments.
+        $relative = $_.FullName.Substring($outputPrefix.Length) -replace '\\', '/'
         if ($relative -ne 'SHA256SUMS.txt') {
             '{0} *{1}' -f (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash, $relative
         }
