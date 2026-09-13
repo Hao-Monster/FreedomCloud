@@ -97,3 +97,15 @@ bool windowsServiceConfigReferencesHelper(String output, String helperPath) {
 
 bool windowsServiceQueryIsRunning(String output) =>
     RegExp(r':\s*4(?:\s|$)').hasMatch(output);
+
+/// Parses the locale-independent numeric SCM state from `sc query` output.
+/// Windows emits the same numeric state codes even when labels are localized.
+int? windowsServiceQueryStateCode(String output) {
+  final match = RegExp(r':\s*([1-7])(?:\s|$)').firstMatch(output);
+  return match == null ? null : int.tryParse(match.group(1)!);
+}
+
+/// SCM reports 1062 when stopping a service that is already stopped. Treat it
+/// as an idempotent success so repeated UI shutdowns do not show an error.
+bool windowsServiceStopAlreadyStopped(String output) =>
+    RegExp(r'\b1062\b').hasMatch(output);

@@ -297,39 +297,42 @@ class Windows {
 
   Future<bool> startService() async {
     final status = await checkService();
-
-    if (status == WindowsHelperServiceStatus.running) {
-      return true;
-    }
-
-    if (status == WindowsHelperServiceStatus.none) {
-      return false;
-    }
+    if (status == WindowsHelperServiceStatus.running) return true;
+    if (status == WindowsHelperServiceStatus.none) return false;
 
     final result = await Process.run('sc', ['start', appHelperService]);
-
-    if (result.exitCode == 0) {
-      await Future.delayed(const Duration(milliseconds: 500));
-      return true;
+    final output = '${result.stdout}\n${result.stderr}';
+    // 1056 means the service is already running (a concurrent start won).
+    // In either case, wait for the actual SCM state rather than trusting the
+    // command exit code, which can precede service initialization.
+    if (result.exitCode != 0 && !RegExp(r'\b1056\b').hasMatch(output)) {
+      return false;
     }
-
-    return false;
+    return _waitForServiceState(running: true);
   }
 
   Future<bool> stopService() async {
     final status = await checkService();
-
-    if (status == WindowsHelperServiceStatus.none) {
-      return true;
-    }
+    if (status == WindowsHelperServiceStatus.none) return true;
 
     final result = await Process.run('sc', ['stop', appHelperService]);
-
-    if (result.exitCode == 0) {
-      await Future.delayed(const Duration(milliseconds: 500));
-      return true;
+    final output = '${result.stdout}\n${result.stderr}';
+    // 1062 means it was already stopped; shutdown is idempotent.
+    if (result.exitCode != 0 && !windowsServiceStopAlreadyStopped(output)) {
+      return false;
     }
+    return _waitForServiceState(running: false);
+  }
 
+  Future<bool> _waitForServiceState({required bool running}) async {
+    for (var attempt = 0; attempt < 10; attempt++) {
+      final result = await Process.run('sc', ['query', appHelperService]);
+      if (result.exitCode != 0) return !running;
+      final state = windowsServiceQueryStateCode(result.stdout.toString());
+      if (running && state == 4) return true;
+      if (!running && state != 4 && state != 3) return true;
+      await Future.delayed(const Duration(milliseconds: 200));
+    }
     return false;
   }
 

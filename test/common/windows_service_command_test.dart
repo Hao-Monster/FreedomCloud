@@ -102,4 +102,19 @@ void main() {
     expect(windowsServiceQueryIsRunning('状态 : 4  正在运行'), isTrue);
     expect(windowsServiceQueryIsRunning('STATE : 1  STOPPED'), isFalse);
   });
+
+  test('SCM state parser is locale independent and handles pending states', () {
+    expect(windowsServiceQueryStateCode('STATE : 1  STOPPED'), 1);
+    expect(windowsServiceQueryStateCode('状态 : 3  STOP_PENDING'), 3);
+    expect(windowsServiceQueryStateCode('STATE : 4  RUNNING'), 4);
+    expect(windowsServiceQueryStateCode('unrelated output'), isNull);
+  });
+
+  test('already-stopped SCM error is treated as an idempotent stop', () {
+    expect(
+      windowsServiceStopAlreadyStopped('[SC] ControlService FAILED 1062'),
+      isTrue,
+    );
+    expect(windowsServiceStopAlreadyStopped('error 5 access denied'), isFalse);
+  });
 }
