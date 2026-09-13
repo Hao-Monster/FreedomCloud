@@ -151,12 +151,18 @@ const _electronChildNames = <String>{
   'chrome_crashpad_handler',
 };
 
-String _normalizeProcessPath(String value) => value
-    .trim()
-    .replaceAll('\\', '/')
-    .replaceAll(RegExp(r'/+'), '/')
-    .replaceFirst(RegExp(r'/$'), '')
-    .toLowerCase();
+String _normalizeProcessPath(String value) {
+  final trimmed = value.trim();
+  final normalized = trimmed
+      .replaceAll('\\', '/')
+      .replaceAll(RegExp(r'/+'), '/')
+      .replaceFirst(RegExp(r'/$'), '');
+  // Windows process paths are case-insensitive. Keep Unix paths case-sensitive
+  // so two distinct applications such as /opt/Foo and /opt/foo do not merge.
+  final isWindows =
+      RegExp(r'^[a-zA-Z]:/').hasMatch(normalized) || trimmed.contains('\\');
+  return isWindows ? normalized.toLowerCase() : normalized;
+}
 
 class ConnectionTracker {
   ConnectionTracker({this.maxClosed = 300})
