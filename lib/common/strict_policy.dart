@@ -73,4 +73,3 @@ bool strictIdentityMatchesPath(
   StrictIdentityResolution identity,
 ) =>
     _strictPathKey(entry.path) == _strictPathKey(identity.canonicalPath);
-
