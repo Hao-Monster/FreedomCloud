@@ -6,8 +6,8 @@ Status date: 2026-09-12
 
 | Branch | Base | Purpose | State | Merge rule |
 |---|---|---|---|---|
-| `codex/koala-connections` | project baseline | M0/M1/M2 | Code complete; Windows 11 VM acceptance open. | Do not close or merge until VM evidence is reviewed. |
-| `codex/windows-strict-mode` | `45ec3b3` from M2 | M3 Windows strict capture | Active development in `E:\CodeWorkstation\FlClashX-m3`. | Stacked on M2; no M3 commit is added to the M2 branch. |
+| `codex/koala-connections` | project baseline | M0/M1/M2 + integrated M3 implementation | M3 code is integrated; Windows 11 VM acceptance and release signing remain open. | Do not advertise strict proxy capability until signed-driver, runtime and VM gates pass. |
+| `codex/windows-strict-mode` | `45ec3b3` from M2 | M3 source branch (historical integration source) | Source retained in `E:\CodeWorkstation\FlClashX-m3`; changes are integrated through merge commit `0e9f83a`. | Treat as read-only reference; future fixes must land on current branch and be backported deliberately. |
 
 Latest M3 implementation evidence at this review point: `0251fe7`. M2 remains at `45ec3b3` in
 its original worktree; no cross-branch fix has been required. The M2 worktree currently contains
