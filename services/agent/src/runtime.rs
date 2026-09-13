@@ -27,6 +27,7 @@ const CORE_CONNECT_TIMEOUT: Duration = Duration::from_secs(8);
 const CORE_REPLAY_TIMEOUT: Duration = Duration::from_secs(30);
 const HELPER_RESPONSE_LIMIT: usize = 64 * 1024;
 const MAX_CRASH_RETRIES: u32 = 5;
+const MAX_STRICT_BLOCKS: usize = 128;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CoreStatus {
@@ -207,6 +208,22 @@ async fn apply_strict_block(shared: &Arc<Shared>, path: Option<String>) -> bool 
     )
     .await;
     let target_key = strict_target_key(&path);
+    let target_limit_reached = {
+        let blocks = shared.strict_blocks.lock().await;
+        !blocks.contains(&target_key) && blocks.len() >= MAX_STRICT_BLOCKS
+    };
+    if target_limit_reached {
+        set_strict_policy(
+            shared,
+            crate::protocol::StrictPolicyState::Blocking,
+            Some(crate::protocol::StrictPolicyFailureReason::InvalidPolicy),
+        )
+        .await;
+        shared
+            .logger
+            .log("strict block rejected: target limit reached");
+        return false;
+    }
     let result = helper_request(
         helper_port,
         "/strict/block",
