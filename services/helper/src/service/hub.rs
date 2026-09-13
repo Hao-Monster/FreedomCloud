@@ -255,7 +255,7 @@ fn start(start_params: StartParams, logger: Arc<ServiceLogger>) -> impl Reply {
     }
 }
 
-fn stop_process(logger: &Arc<ServiceLogger>) -> String {
+pub(crate) fn stop_process(logger: &Arc<ServiceLogger>) -> String {
     let mut process = PROCESS.lock().unwrap();
     if let Some(mut child) = process.take() {
         logger.log("stopping Core process");

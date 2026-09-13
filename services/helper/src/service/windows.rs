@@ -50,12 +50,19 @@ pub fn service_main(_arguments: Vec<OsString>) {
     }
 }
 async fn run_windows_service() -> anyhow::Result<()> {
+    // The SCM Stop callback runs outside the Warp task. Clean up the elevated
+    // Core child before terminating the service process; otherwise a direct
+    // `std::process::exit` leaves Core orphaned and the next start races it.
+    let stop_logger = ServiceLogger::new_default();
     let status_handle = service_control_handler::register(
         SERVICE_NAME,
         move |event| -> ServiceControlHandlerResult {
             match event {
                 ServiceControl::Interrogate => ServiceControlHandlerResult::NoError,
-                ServiceControl::Stop => std::process::exit(0),
+                ServiceControl::Stop => {
+                    crate::service::hub::stop_process(&stop_logger);
+                    std::process::exit(0)
+                }
                 _ => ServiceControlHandlerResult::NotImplemented,
             }
         },
