@@ -386,10 +386,23 @@ class _PerAppPolicySectionState extends ConsumerState<_PerAppPolicySection> {
     super.dispose();
   }
 
-  bool get _strictMode => Platform.isWindows && clashService?.usesAgent == true;
+  /// The strict capture control is available only on Windows Agent sessions.
+  /// It is intentionally separate from whether a strict policy is currently
+  /// armed: ordinary PROCESS-PATH edits must not unexpectedly activate the
+  /// privileged data plane.
+  bool get _strictAvailable =>
+      Platform.isWindows && clashService?.usesAgent == true;
 
-  Future<bool> _prepareStrictEvidence(Iterable<PerAppPolicy> entries) async {
-    if (!_strictMode) return true;
+  bool get _strictCaptureActive =>
+      _strictAvailable &&
+      clashService?.strictPolicyStatus.state !=
+          AgentStrictPolicyState.disabled;
+
+  Future<bool> _prepareStrictEvidence(
+    Iterable<PerAppPolicy> entries, {
+    bool force = false,
+  }) async {
+    if (!_strictCaptureActive && !force) return true;
     final service = clashService;
     if (service == null) return false;
     final active = entries
@@ -438,7 +451,7 @@ class _PerAppPolicySectionState extends ConsumerState<_PerAppPolicySection> {
 
   Future<void> _toggleStrictCapture() async {
     final service = clashService;
-    if (service == null || !_strictMode) return;
+    if (service == null || !_strictAvailable) return;
     if (service.strictPolicyStatus.state != AgentStrictPolicyState.disabled) {
       final cleared = await service.clearStrictPolicy();
       if (mounted) {
@@ -448,7 +461,10 @@ class _PerAppPolicySectionState extends ConsumerState<_PerAppPolicySection> {
       }
       return;
     }
-    final armed = await _prepareStrictEvidence(perAppPolicyStore.entries);
+    final armed = await _prepareStrictEvidence(
+      perAppPolicyStore.entries,
+      force: true,
+    );
     if (mounted) {
       await context.showNotifier(
         armed ? appLocalizations.successTitle : 'Strict mode unavailable',
@@ -496,7 +512,7 @@ class _PerAppPolicySectionState extends ConsumerState<_PerAppPolicySection> {
                         onPressed: _pickApplication,
                         icon: const Icon(Icons.add_rounded),
                       ),
-                      if (_strictMode)
+                      if (_strictAvailable)
                         IconButton(
                           tooltip: 'Toggle strict application capture',
                           onPressed: _toggleStrictCapture,
