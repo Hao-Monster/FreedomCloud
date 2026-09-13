@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flclashx/enum/enum.dart';
 
 typedef AdminAuthorizationOperation = Future<AuthorizeCode> Function();
@@ -36,10 +38,10 @@ class AdminAuthorizationGate {
     // Attach cleanup handlers without creating an unobserved error future.
     // The original future is returned to the caller, which owns error
     // handling; this side-effect must never report the same error twice.
-    future.then<void>(
+    unawaited(future.then<void>(
       (_) => _clearInFlight(future),
       onError: (Object _, StackTrace __) => _clearInFlight(future),
-    );
+    ));
     return future;
   }
 
