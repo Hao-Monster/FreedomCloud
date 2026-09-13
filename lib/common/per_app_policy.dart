@@ -115,6 +115,11 @@ class PerAppPolicyStore extends ChangeNotifier {
 
   final Map<String, PerAppPolicy> _entries = {};
   Future<void>? _loading;
+  // UI actions can arrive back-to-back (for example, changing two process
+  // policies before the first profile apply completes). Serialize mutations so
+  // each update is based on the latest committed set instead of losing a
+  // concurrent write.
+  Future<void> _mutationTail = Future<void>.value();
 
   List<PerAppPolicy> get entries => List.unmodifiable(_entries.values);
 
@@ -124,6 +129,24 @@ class PerAppPolicyStore extends ChangeNotifier {
   Future<void> ensureLoaded() => _loading ??= _load();
 
   Future<void> setPolicy({
+    required String processPath,
+    required String name,
+    required ApplicationRoutingPolicy policy,
+  }) {
+    final operation = _mutationTail.then<void>(
+      (_) => _setPolicy(
+        processPath: processPath,
+        name: name,
+        policy: policy,
+      ),
+    );
+    // Keep the queue usable after a failed write while preserving the error
+    // for the caller that initiated this operation.
+    _mutationTail = operation.then<void>((_) {}, onError: (_, __) {});
+    return operation;
+  }
+
+  Future<void> _setPolicy({
     required String processPath,
     required String name,
     required ApplicationRoutingPolicy policy,
