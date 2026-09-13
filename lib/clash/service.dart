@@ -271,14 +271,23 @@ class ClashService extends ClashHandlerInterface {
     }
   }
 
-  Future<bool> _agentCommand(AgentCommand command, {String? path}) async {
+  Future<bool> _agentCommand(
+    AgentCommand command, {
+    String? path,
+    Map<String, dynamic>? policy,
+  }) async {
     final id = 'agent-${command.name}-${utils.id}';
     final completer = Completer<bool>();
     _agentCommandCompleters[id] = completer;
     try {
       final socket = await socketCompleter.future;
       socket.writeln(
-        encodeAgentCommand(id: id, command: command, path: path),
+        encodeAgentCommand(
+          id: id,
+          command: command,
+          path: path,
+          policy: policy,
+        ),
       );
       return await completer.future.timeout(
         const Duration(seconds: 10),
@@ -304,6 +313,17 @@ class ClashService extends ClashHandlerInterface {
         AgentCommand.clearStrictBlock,
         path: executablePath,
       );
+
+  /// Arms the complete signed Windows strict-capture policy transaction.
+  /// The policy map must match the versioned strict-contract JSON shape.
+  Future<bool> applyStrictPolicy(Map<String, dynamic> policy) => _agentCommand(
+        AgentCommand.applyStrictPolicy,
+        policy: policy,
+      );
+
+  /// Disables strict capture and revokes Core ingress before filter cleanup.
+  Future<bool> clearStrictPolicy() =>
+      _agentCommand(AgentCommand.clearStrictPolicy);
 
   void _onAgentLost(String reason) {
     // Socket loss invalidates any previously armed claim.  Keep the status

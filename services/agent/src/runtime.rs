@@ -21,6 +21,12 @@ use crate::protocol::{
     authenticate, parse_control, AgentCommand, MAX_AUTH_LINE_BYTES, MAX_MESSAGE_LINE_BYTES,
     StrictPolicyStatus, PROTOCOL_VERSION,
 };
+#[cfg(windows)]
+use crate::broker::WindowsStrictBrokerSession;
+#[cfg(windows)]
+use crate::strict_flow::{StrictOrchestrationAction, StrictPolicyOrchestrator};
+#[cfg(windows)]
+use flclash_strict_contract::{StrictPolicyBundle, StrictState};
 
 const CHANNEL_CAPACITY: usize = 256;
 const CORE_CONNECT_TIMEOUT: Duration = Duration::from_secs(8);
@@ -28,6 +34,24 @@ const CORE_REPLAY_TIMEOUT: Duration = Duration::from_secs(30);
 const HELPER_RESPONSE_LIMIT: usize = 64 * 1024;
 const MAX_CRASH_RETRIES: u32 = 5;
 const MAX_STRICT_BLOCKS: usize = 128;
+
+#[cfg(windows)]
+struct StrictRuntime {
+    orchestrator: Mutex<StrictPolicyOrchestrator>,
+    broker: std::sync::Mutex<WindowsStrictBrokerSession>,
+    pending_core_id: Mutex<Option<String>>,
+}
+
+#[cfg(windows)]
+impl StrictRuntime {
+    fn new(broker: WindowsStrictBrokerSession) -> Self {
+        Self {
+            orchestrator: Mutex::new(StrictPolicyOrchestrator::default()),
+            broker: std::sync::Mutex::new(broker),
+            pending_core_id: Mutex::new(None),
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CoreStatus {
@@ -100,6 +124,8 @@ struct Shared {
     helper_token: Option<String>,
     home_dir: PathBuf,
     strict_blocks: Mutex<HashSet<String>>,
+    #[cfg(windows)]
+    strict_runtime: Mutex<Option<Arc<StrictRuntime>>>,
 }
 
 enum SupervisorCommand {
@@ -311,6 +337,232 @@ async fn clear_strict_block(shared: &Arc<Shared>, path: Option<String>) -> bool 
     }
 }
 
+/// Starts the complete strict policy transaction.  The operation is
+/// deliberately asynchronous at the Agent boundary: Broker pipe I/O runs on
+/// a blocking worker while Core ingress responses are consumed by the Core
+/// supervisor loop below.  This keeps connection/log streaming responsive.
+#[cfg(windows)]
+async fn apply_strict_policy(shared: &Arc<Shared>, raw: Option<Value>) -> bool {
+    let Some(raw) = raw else {
+        set_strict_policy(
+            shared,
+            crate::protocol::StrictPolicyState::Blocking,
+            Some(crate::protocol::StrictPolicyFailureReason::InvalidPolicy),
+        )
+        .await;
+        shared.logger.log("strict policy rejected: payload missing");
+        return false;
+    };
+    let policy: StrictPolicyBundle = match serde_json::from_value(raw) {
+        Ok(policy) => policy,
+        Err(error) => {
+            set_strict_policy(
+                shared,
+                crate::protocol::StrictPolicyState::Blocking,
+                Some(crate::protocol::StrictPolicyFailureReason::InvalidPolicy),
+            )
+            .await;
+            shared
+                .logger
+                .log(format!("strict policy rejected: invalid payload ({error})"));
+            return false;
+        }
+    };
+    if let Err(error) = policy.validate() {
+        set_strict_policy(
+            shared,
+            crate::protocol::StrictPolicyState::Blocking,
+            Some(crate::protocol::StrictPolicyFailureReason::InvalidPolicy),
+        )
+        .await;
+        shared
+            .logger
+            .log(format!("strict policy rejected: validation failed ({error})"));
+        return false;
+    }
+    if !shared.privileged_backend {
+        set_strict_policy(
+            shared,
+            crate::protocol::StrictPolicyState::Blocking,
+            Some(crate::protocol::StrictPolicyFailureReason::BrokerUnavailable),
+        )
+        .await;
+        shared
+            .logger
+            .log("strict policy rejected: privileged backend is disabled");
+        return false;
+    }
+
+    let broker = match tokio::task::spawn_blocking(WindowsStrictBrokerSession::activate).await {
+        Ok(Ok(broker)) => broker,
+        Ok(Err(error)) => {
+            set_strict_policy(
+                shared,
+                crate::protocol::StrictPolicyState::Blocking,
+                Some(crate::protocol::StrictPolicyFailureReason::BrokerUnavailable),
+            )
+            .await;
+            shared
+                .logger
+                .log(format!("strict Broker activation failed: {error:#}"));
+            return false;
+        }
+        Err(error) => {
+            set_strict_policy(
+                shared,
+                crate::protocol::StrictPolicyState::Blocking,
+                Some(crate::protocol::StrictPolicyFailureReason::BrokerUnavailable),
+            )
+            .await;
+            shared
+                .logger
+                .log(format!("strict Broker activation worker failed: {error}"));
+            return false;
+        }
+    };
+
+    let runtime = Arc::new(StrictRuntime::new(broker));
+    let action = {
+        let mut orchestrator = runtime.orchestrator.lock().await;
+        match orchestrator.begin(policy) {
+            Ok(action) => action,
+            Err(error) => {
+                shared
+                    .logger
+                    .log(format!("strict policy begin failed: {error:#}"));
+                return false;
+            }
+        }
+    };
+    {
+        let mut current = shared.strict_runtime.lock().await;
+        if current.is_some() {
+            shared.logger.log("strict policy rejected: transition already active");
+            return false;
+        }
+        *current = Some(runtime.clone());
+    }
+    set_strict_policy(shared, crate::protocol::StrictPolicyState::Preparing, None).await;
+    drive_strict_action(shared, runtime, action).await
+}
+
+#[cfg(not(windows))]
+async fn apply_strict_policy(
+    shared: &Arc<Shared>,
+    _raw: Option<Value>,
+) -> bool {
+    set_strict_policy(
+        shared,
+        crate::protocol::StrictPolicyState::Blocking,
+        Some(crate::protocol::StrictPolicyFailureReason::BrokerUnavailable),
+    )
+    .await;
+    shared
+        .logger
+        .log("strict policy unavailable: Windows Broker is not supported on this platform");
+    false
+}
+
+#[cfg(windows)]
+async fn clear_strict_policy(shared: &Arc<Shared>) -> bool {
+    let Some(runtime) = shared.strict_runtime.lock().await.clone() else {
+        return false;
+    };
+    let action = {
+        let mut orchestrator = runtime.orchestrator.lock().await;
+        match orchestrator.disable() {
+            Ok(action) => action,
+            Err(error) => {
+                shared.logger.log(format!("strict policy disable rejected: {error:#}"));
+                return false;
+            }
+        }
+    };
+    set_strict_policy(shared, crate::protocol::StrictPolicyState::Preparing, None).await;
+    drive_strict_action(shared, runtime, action).await
+}
+
+#[cfg(not(windows))]
+async fn clear_strict_policy(shared: &Arc<Shared>) -> bool {
+    shared.logger.log("strict policy disable unavailable on this platform");
+    false
+}
+
+#[cfg(windows)]
+async fn drive_strict_action(
+    shared: &Arc<Shared>,
+    runtime: Arc<StrictRuntime>,
+    action: StrictOrchestrationAction,
+) -> bool {
+    match action {
+        StrictOrchestrationAction::Settled(status) => {
+            let state = match status.state {
+                StrictState::Disabled => crate::protocol::StrictPolicyState::Disabled,
+                StrictState::Preparing => crate::protocol::StrictPolicyState::Preparing,
+                StrictState::Blocking => crate::protocol::StrictPolicyState::Blocking,
+                StrictState::Armed => crate::protocol::StrictPolicyState::Armed,
+                StrictState::Recovering => crate::protocol::StrictPolicyState::Recovering,
+            };
+            set_strict_policy(shared, state, None).await;
+            if status.state == StrictState::Disabled {
+                *shared.strict_runtime.lock().await = None;
+            }
+            true
+        }
+        StrictOrchestrationAction::Core(core_action) => {
+            let Some(core) = shared.core.lock().await.clone() else {
+                shared.logger.log("strict policy Core ingress unavailable");
+                return false;
+            };
+            *runtime.pending_core_id.lock().await = Some(core_action.id().to_owned());
+            if core.send(core_action.line().to_owned()).await.is_err() {
+                *runtime.pending_core_id.lock().await = None;
+                shared.logger.log("strict policy Core ingress send failed");
+                return false;
+            }
+            true
+        }
+        StrictOrchestrationAction::Broker(command) => {
+            let runtime_for_worker = runtime.clone();
+            let result = tokio::task::spawn_blocking(move || {
+                let mut broker = runtime_for_worker
+                    .broker
+                    .lock()
+                    .map_err(|_| anyhow!("strict Broker session lock poisoned"))?;
+                broker.request(command)
+            })
+            .await;
+            let proof = match result {
+                Ok(Ok(proof)) => proof,
+                Ok(Err(error)) => {
+                    shared.logger.log(format!("strict Broker request failed: {error:#}"));
+                    let mut orchestrator = runtime.orchestrator.lock().await;
+                    if let Ok(fallback) = orchestrator.force_blocking() {
+                        drop(orchestrator);
+                        return Box::pin(drive_strict_action(shared, runtime, fallback)).await;
+                    }
+                    return false;
+                }
+                Err(error) => {
+                    shared.logger.log(format!("strict Broker worker failed: {error}"));
+                    return false;
+                }
+            };
+            let next = {
+                let mut orchestrator = runtime.orchestrator.lock().await;
+                match orchestrator.accept_broker_proof(proof) {
+                    Ok(action) => action,
+                    Err(error) => {
+                        shared.logger.log(format!("strict Broker proof rejected: {error:#}"));
+                        return false;
+                    }
+                }
+            };
+            Box::pin(drive_strict_action(shared, runtime, next)).await
+        }
+    }
+}
+
 fn strict_target_key(path: &str) -> String {
     if cfg!(windows) {
         path.to_ascii_lowercase()
@@ -403,6 +655,8 @@ pub async fn run(config: AgentConfig) -> Result<()> {
         helper_token: shared_helper_token,
         home_dir: shared_home_dir,
         strict_blocks: Mutex::new(HashSet::new()),
+        #[cfg(windows)]
+        strict_runtime: Mutex::new(None),
     });
 
     let supervisor_shared = shared.clone();
@@ -534,6 +788,14 @@ async fn handle_ui(stream: TcpStream, token: String, shared: Arc<Shared>) -> Res
                 ),
                 AgentCommand::ClearStrictBlock => (
                     clear_strict_block(&shared, control.path.clone()).await,
+                    *shared.status.read().await,
+                ),
+                AgentCommand::ApplyStrictPolicy => (
+                    apply_strict_policy(&shared, control.policy.clone()).await,
+                    *shared.status.read().await,
+                ),
+                AgentCommand::ClearStrictPolicy => (
+                    clear_strict_policy(&shared).await,
                     *shared.status.read().await,
                 ),
             };
@@ -801,6 +1063,10 @@ async fn supervise_core(
                     match line {
                         Ok(Some(line)) => {
                             let line = line.trim_end().to_owned();
+                            #[cfg(windows)]
+                            if handle_strict_core_line(&shared, &line).await {
+                                continue;
+                            }
                             shared.journal.lock().await.commit_response(&line);
                             forward_to_ui(&shared, line).await;
                         }
@@ -848,6 +1114,42 @@ async fn supervise_core(
             }
         }
     }
+}
+
+#[cfg(windows)]
+async fn handle_strict_core_line(shared: &Arc<Shared>, line: &str) -> bool {
+    let Ok(value) = serde_json::from_str::<Value>(line) else {
+        return false;
+    };
+    let Some(id) = value.get("id").and_then(Value::as_str) else {
+        return false;
+    };
+    let Some(runtime) = shared.strict_runtime.lock().await.clone() else {
+        return false;
+    };
+    let pending = runtime.pending_core_id.lock().await.clone();
+    if pending.as_deref() != Some(id) {
+        return false;
+    }
+    *runtime.pending_core_id.lock().await = None;
+    let action = {
+        let mut orchestrator = runtime.orchestrator.lock().await;
+        match orchestrator.accept_core_response(line) {
+            Ok(action) => action,
+            Err(error) => {
+                shared
+                    .logger
+                    .log(format!("strict Core response rejected: {error:#}"));
+                if let Ok(fallback) = orchestrator.force_blocking() {
+                    drop(orchestrator);
+                    let _ = drive_strict_action(shared, runtime, fallback).await;
+                }
+                return true;
+            }
+        }
+    };
+    let _ = drive_strict_action(shared, runtime, action).await;
+    true
 }
 
 async fn start_backend(

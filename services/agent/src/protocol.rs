@@ -69,6 +69,12 @@ pub enum AgentCommand {
     Status,
     ApplyStrictBlock,
     ClearStrictBlock,
+    /// Atomically arms a signed strict-capture policy through the privileged
+    /// Windows Broker. The policy is carried as a validated contract object.
+    ApplyStrictPolicy,
+    /// Disables the currently armed strict-capture policy and revokes Core
+    /// ingress before the Broker removes its filters.
+    ClearStrictPolicy,
 }
 
 #[derive(Debug, Deserialize, PartialEq, Eq)]
@@ -76,6 +82,9 @@ pub struct ControlRequest {
     pub id: String,
     pub command: AgentCommand,
     pub path: Option<String>,
+    /// Strict policy payload. Kept optional so legacy controls remain wire
+    /// compatible and continue to use the block-only path.
+    pub policy: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Serialize, PartialEq, Eq)]

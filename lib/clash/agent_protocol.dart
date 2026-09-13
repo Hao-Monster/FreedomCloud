@@ -12,6 +12,8 @@ enum AgentCommand {
   status,
   applyStrictBlock,
   clearStrictBlock,
+  applyStrictPolicy,
+  clearStrictPolicy,
 }
 
 enum AgentCoreState { starting, ready, stopped, failed }
@@ -237,6 +239,7 @@ String encodeAgentCommand({
   required String id,
   required AgentCommand command,
   String? path,
+  Map<String, dynamic>? policy,
 }) {
   if (path != null && (path.isEmpty || path.length > 1024)) {
     throw ArgumentError.value(path, 'path', 'must be 1-1024 characters');
@@ -246,6 +249,7 @@ String encodeAgentCommand({
       'id': id,
       'command': command.name,
       if (path != null) 'path': path,
+      if (policy != null) 'policy': policy,
     },
   });
 }
