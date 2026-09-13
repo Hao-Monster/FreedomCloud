@@ -21,6 +21,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import 'common/common.dart';
+import 'common/admin_authorization.dart';
 import 'models/models.dart';
 import 'plugins/vpn.dart';
 import 'views/profiles/override_profile.dart';
@@ -30,6 +31,11 @@ class AppController {
   int? lastProfileModified;
   final BuildContext context;
   final WidgetRef _ref;
+  // A configuration update can race with profile recovery or another UI
+  // setting.  Keep one privileged operation in flight and latch a failed
+  // attempt so an unavailable/denied service cannot trigger UAC repeatedly.
+  final AdminAuthorizationGate _adminAuthorization =
+      AdminAuthorizationGate();
 
   void setupClashConfigDebounce() {
     debouncer.call(FunctionTag.setupClashConfig, () async {
@@ -662,11 +668,46 @@ class AppController {
 
   Future<Result<bool>> _requestAdmin(bool enableTun) async {
     final realTunEnable = _ref.read(realTunEnableProvider);
+    // Disabling TUN is an explicit user retry boundary.  It also makes a
+    // failed enable -> disable -> enable sequence predictable without adding
+    // another button or changing Zashboard's config/update path.
+    if (!enableTun) {
+      _adminAuthorization.clearFailure();
+    }
     if (enableTun != realTunEnable && realTunEnable == false) {
-      final code = await system.authorizeCore();
+      if (_adminAuthorization.isFailureLatched) {
+        // Service state can change outside this process (for example, an
+        // administrator starts it from Services).  This check is read-only
+        // and never invokes UAC; if it is healthy, allow the normal path to
+        // observe AuthorizeCode.none and continue.
+        try {
+          if (await system.checkIsAdmin()) {
+            _adminAuthorization.clearFailure();
+          } else {
+            commonPrint.log(
+              '[admin] authorization failure latched; skipping repeated UAC',
+            );
+            _ref.read(realTunEnableProvider.notifier).value = false;
+            return Result.success(false);
+          }
+        } catch (error) {
+          commonPrint.log('[admin] service state check failed: $error');
+          _ref.read(realTunEnableProvider.notifier).value = false;
+          return Result.success(false);
+        }
+      }
+
+      final code = await _adminAuthorization.request(() async {
+        final authorization = await system.authorizeCore();
+        if (authorization == AuthorizeCode.success) {
+          // Restart is part of the shared operation.  Otherwise concurrent
+          // callers would each restart the core after sharing one UAC prompt.
+          await restartCore();
+        }
+        return authorization;
+      });
       switch (code) {
         case AuthorizeCode.success:
-          await restartCore();
           return Result.error("");
         case AuthorizeCode.none:
           break;
