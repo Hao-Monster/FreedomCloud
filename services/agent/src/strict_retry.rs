@@ -159,4 +159,38 @@ mod tests {
             Duration::from_secs(7)
         );
     }
+
+    #[test]
+    fn every_scheduled_retry_is_monotonic_and_within_the_configured_budget() {
+        let mut retry = StrictRecoveryRetry::new(4, Duration::from_secs(3), Duration::from_secs(5));
+        let decisions = (0..4)
+            .map(|_| retry.schedule_failure().expect("retry budget"))
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            decisions
+                .iter()
+                .map(|decision| decision.attempt)
+                .collect::<Vec<_>>(),
+            vec![1, 2, 3, 4]
+        );
+        assert_eq!(
+            decisions
+                .iter()
+                .map(|decision| decision.delay)
+                .collect::<Vec<_>>(),
+            vec![
+                Duration::from_secs(3),
+                Duration::from_secs(5),
+                Duration::from_secs(5),
+                Duration::from_secs(5),
+            ]
+        );
+        assert!(decisions
+            .windows(2)
+            .all(|window| window[1].delay >= window[0].delay));
+        assert_eq!(retry.diagnostics().attempts, 4);
+        assert_eq!(retry.diagnostics().next_delay, Some(Duration::from_secs(5)));
+        assert!(retry.schedule_failure().is_none());
+    }
 }
