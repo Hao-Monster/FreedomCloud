@@ -126,6 +126,29 @@ String applicationRoutingPolicyLabel(ApplicationRoutingPolicy policy) =>
       ApplicationRoutingPolicy.block => 'BLOCK',
     };
 
+/// Returns application policies matching a user-entered search query.
+///
+/// Matching is intentionally case-insensitive and covers both the friendly
+/// executable name and its canonical path.  Keeping this operation pure makes
+/// the settings UI cheap to rebuild and gives imports/other clients the same
+/// filtering semantics without mutating the persisted store.
+List<PerAppPolicy> filterPerAppPolicies(
+  Iterable<PerAppPolicy> policies,
+  String query,
+) {
+  final normalizedQuery = query.trim().toLowerCase();
+  if (normalizedQuery.isEmpty) return List.unmodifiable(policies);
+  return List.unmodifiable(
+    policies.where((entry) {
+      return entry.name.toLowerCase().contains(normalizedQuery) ||
+          entry.path.toLowerCase().contains(normalizedQuery) ||
+          applicationRoutingPolicyLabel(entry.policy)
+              .toLowerCase()
+              .contains(normalizedQuery);
+    }),
+  );
+}
+
 @immutable
 class PerAppPolicy {
   const PerAppPolicy({

@@ -212,4 +212,30 @@ void main() {
 
     expect(decoded.single.name, 'browser.exe');
   });
+
+  test('application policy filtering matches name, path and policy', () {
+    const policies = [
+      PerAppPolicy(
+        path: r'C:\Apps\Microsoft\msedge.exe',
+        name: 'msedge.exe',
+        policy: ApplicationRoutingPolicy.proxy,
+      ),
+      PerAppPolicy(
+        path: r'C:\Tools\sync.exe',
+        name: 'sync.exe',
+        policy: ApplicationRoutingPolicy.direct,
+      ),
+      PerAppPolicy(
+        path: r'C:\Games\blocked.exe',
+        name: 'blocked.exe',
+        policy: ApplicationRoutingPolicy.block,
+      ),
+    ];
+
+    expect(filterPerAppPolicies(policies, 'EDGE').single.name, 'msedge.exe');
+    expect(filterPerAppPolicies(policies, 'tools').single.name, 'sync.exe');
+    expect(filterPerAppPolicies(policies, 'block').single.name, 'blocked.exe');
+    expect(filterPerAppPolicies(policies, 'missing'), isEmpty);
+    expect(filterPerAppPolicies(policies, '  '), hasLength(3));
+  });
 }

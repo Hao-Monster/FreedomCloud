@@ -361,6 +361,14 @@ class _PerAppPolicySection extends StatefulWidget {
 
 class _PerAppPolicySectionState extends State<_PerAppPolicySection> {
   late final Future<void> _loaded = perAppPolicyStore.ensureLoaded();
+  final TextEditingController _searchController = TextEditingController();
+  String _searchQuery = '';
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) => FutureBuilder<void>(
@@ -373,6 +381,8 @@ class _PerAppPolicySectionState extends State<_PerAppPolicySection> {
             listenable: perAppPolicyStore,
             builder: (_, __) {
               final entries = perAppPolicyStore.entries;
+              final filteredEntries =
+                  filterPerAppPolicies(entries, _searchQuery);
               return Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -402,7 +412,37 @@ class _PerAppPolicySectionState extends State<_PerAppPolicySection> {
                       ),
                     ],
                   ),
-                  for (final entry in entries)
+                  if (entries.isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    TextField(
+                      controller: _searchController,
+                      onChanged: (value) =>
+                          setState(() => _searchQuery = value),
+                      decoration: InputDecoration(
+                        prefixIcon: const Icon(Icons.search_rounded),
+                        hintText: appLocalizations.connectionsFilterHint,
+                        suffixIcon: _searchQuery.isEmpty
+                            ? null
+                            : IconButton(
+                                tooltip: appLocalizations.cancel,
+                                onPressed: () {
+                                  _searchController.clear();
+                                  setState(() => _searchQuery = '');
+                                },
+                                icon: const Icon(Icons.clear_rounded),
+                              ),
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                  ],
+                  if (filteredEntries.isEmpty && entries.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      child: Center(
+                        child: Text(appLocalizations.noData),
+                      ),
+                    ),
+                  for (final entry in filteredEntries)
                     ListTile(
                       contentPadding: EdgeInsets.zero,
                       leading: ProcessIcon(
