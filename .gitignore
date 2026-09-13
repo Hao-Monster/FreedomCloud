@@ -86,3 +86,7 @@ docs/
 windows/strict_capture/obj/
 windows/strict_capture/x64/
 target-check-windows/
+# Local Go cache directories used for offline/isolated verification
+.gocache-temp/
+.gomodcache-temp/
+.gopath-temp/
