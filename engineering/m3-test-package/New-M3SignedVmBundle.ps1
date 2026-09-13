@@ -122,7 +122,12 @@ try {
     Copy-Item -LiteralPath $agent -Destination (Join-Path $staging 'FlClashAgent.exe')
     Copy-Item -LiteralPath $core -Destination (Join-Path $staging 'FlClashCore.exe')
     Copy-Item -LiteralPath $manifestFile -Destination (Join-Path $staging 'strict-package-manifest.json')
-    foreach ($support in @('Invoke-M3VmPreflight.ps1', 'Collect-M3VmEvidence.ps1', 'M3-WINDOWS-VM-CHECKLIST.md')) {
+    foreach ($support in @(
+        'Invoke-M3VmPreflight.ps1'
+        'Collect-M3VmEvidence.ps1'
+        'M3-WINDOWS-VM-CHECKLIST.md'
+        'REAL-WINDOWS11-TEST-GUIDE.md'
+    )) {
         Copy-Item -LiteralPath (Join-Path $PSScriptRoot $support) -Destination (Join-Path $staging $support)
     }
 

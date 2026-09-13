@@ -19,6 +19,27 @@ try {
         if ($errors.Count -ne 0) { throw "PowerShell parse failure: $($script.Name)" }
     }
 
+    $bundleSource = Get-Content -LiteralPath $bundleTool -Raw
+    $requiredBundleSupportFiles = @(
+        'Invoke-M3VmPreflight.ps1'
+        'Collect-M3VmEvidence.ps1'
+        'M3-WINDOWS-VM-CHECKLIST.md'
+        'REAL-WINDOWS11-TEST-GUIDE.md'
+    )
+    foreach ($support in $requiredBundleSupportFiles) {
+        if (-not (Test-Path -LiteralPath (Join-Path $toolRoot $support) -PathType Leaf)) {
+            throw "bundle support file is missing: $support"
+        }
+        if ($bundleSource -notmatch [regex]::Escape("'$support'")) {
+            throw "bundle script does not include support file: $support"
+        }
+    }
+    if ($bundleSource -notmatch 'Get-SignedIdentity' -or
+        $bundleSource -notmatch 'Test-ContainsByteSequence' -or
+        $bundleSource -notmatch 'refusing to clean an unexpected staging path') {
+        throw 'bundle trust or staging path-safety guards are missing'
+    }
+
     $manifest = Join-Path $testRoot 'strict-package-manifest.json'
     & $manifestTool `
         -DriverBuildId '0123456789abcdef0123456789abcdef' `
