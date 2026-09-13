@@ -138,7 +138,11 @@ class _ConnectionsViewState extends ConsumerState<ConnectionsView>
     return ListenableBuilder(
       listenable: connectionManager,
       builder: (_, __) {
-        final groups = _filteredGroups(connectionManager.processGroups, _query);
+        final groups = sortProcessConnectionGroups(
+          _filteredGroups(connectionManager.processGroups, _query),
+          settings.connectionSort,
+          direction: settings.connectionSortDirection,
+        );
         final selectedGroup = _selectedProcessKey == null
             ? null
             : connectionManager.processGroups

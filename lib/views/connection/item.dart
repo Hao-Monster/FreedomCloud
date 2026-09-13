@@ -58,6 +58,74 @@ String formatConnectionAddress(String host, String port) {
 String connectionRate(double value) =>
     '${TrafficValue(value: value.round()).show}/s';
 
+/// Sorts process overview cards using the same setting as the classic list.
+///
+/// The tracker keeps groups in its own activity order, which is useful as a
+/// fallback but made the connection sort setting appear ineffective while in
+/// process mode. Values are materialized once per group so rebuilds do not
+/// repeatedly walk every connection during comparator calls.
+List<ProcessConnectionGroup> sortProcessConnectionGroups(
+  Iterable<ProcessConnectionGroup> groups,
+  ConnectionSort sort, {
+  ConnectionSortDirection? direction,
+}) {
+  final resolvedDirection = direction ??
+      (sort == ConnectionSort.process
+          ? ConnectionSortDirection.ascending
+          : ConnectionSortDirection.descending);
+  final entries = groups
+      .map(
+        (group) => MapEntry<ProcessConnectionGroup, Object>(
+          group,
+          _processGroupSortValue(group, sort),
+        ),
+      )
+      .toList(growable: false);
+  final sorted = List<MapEntry<ProcessConnectionGroup, Object>>.of(entries)
+    ..sort((left, right) {
+      final comparison = _compareSortValues(left.value, right.value);
+      final directed = resolvedDirection == ConnectionSortDirection.ascending
+          ? comparison
+          : -comparison;
+      if (directed != 0) return directed;
+      return left.key.key.toLowerCase().compareTo(right.key.key.toLowerCase());
+    });
+  return sorted.map((entry) => entry.key).toList(growable: false);
+}
+
+Object _processGroupSortValue(
+    ProcessConnectionGroup group, ConnectionSort sort) {
+  return switch (sort) {
+    ConnectionSort.time => _latestProcessConnectionStart(group),
+    ConnectionSort.upload => group.upload,
+    ConnectionSort.download => group.download,
+    ConnectionSort.uploadSpeed => group.uploadSpeed,
+    ConnectionSort.downloadSpeed => group.downloadSpeed,
+    ConnectionSort.process => connectionProcessName(
+        (group.activeConnections.firstOrNull?.connection ??
+                group.closedConnections.first.connection)
+            .metadata,
+      ).toLowerCase(),
+  };
+}
+
+DateTime _latestProcessConnectionStart(ProcessConnectionGroup group) {
+  var latest = DateTime.fromMicrosecondsSinceEpoch(0, isUtc: true);
+  for (final item in group.activeConnections) {
+    if (item.connection.start.isAfter(latest)) latest = item.connection.start;
+  }
+  for (final item in group.closedConnections) {
+    if (item.connection.start.isAfter(latest)) latest = item.connection.start;
+  }
+  return latest;
+}
+
+int _compareSortValues(Object left, Object right) {
+  if (left is num && right is num) return left.compareTo(right);
+  if (left is DateTime && right is DateTime) return left.compareTo(right);
+  return left.toString().compareTo(right.toString());
+}
+
 class ProcessIcon extends StatelessWidget {
   const ProcessIcon({
     super.key,
