@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:collection';
 import 'dart:io';
 
+import 'package:flclashx/common/log_redaction.dart';
 import 'package:flclashx/common/path.dart';
 import 'package:flutter/widgets.dart';
 import 'package:intl/intl.dart';
@@ -13,7 +14,9 @@ class FileLogger {
     return _instance!;
   }
 
-  FileLogger._internal();
+  FileLogger._internal() : _logsDirOverride = null;
+  @visibleForTesting
+  FileLogger.forTesting(this._logsDirOverride);
   static FileLogger? _instance;
 
   static const int maxFileSizeBytes = 10 * 1024 * 1024; // 10 MB
@@ -28,6 +31,15 @@ class FileLogger {
   int _droppedMessages = 0;
   bool _isWriting = false;
   bool _isBindingInitialized = false;
+  Timer? _retryTimer;
+  Duration _retryDelay = const Duration(seconds: 1);
+  final Future<String> Function()? _logsDirOverride;
+
+  @visibleForTesting
+  int get pendingMessageCount => _writeQueue.length;
+
+  @visibleForTesting
+  bool get retryScheduled => _retryTimer != null;
 
   /// Check if Flutter bindings are initialized
   bool _checkBindingInitialized() {
@@ -44,6 +56,8 @@ class FileLogger {
   }
 
   Future<String> _getLogsDir() async {
+    final override = _logsDirOverride;
+    if (override != null) return override();
     final homeDir = await appPath.homeDirPath;
     final logsDir = join(homeDir, 'logs');
     final dir = Directory(logsDir);
@@ -158,7 +172,7 @@ class FileLogger {
   }
 
   Future<void> _processQueue() async {
-    if (_isWriting || _writeQueue.isEmpty) {
+    if (_isWriting || _writeQueue.isEmpty || _retryTimer != null) {
       return;
     }
 
@@ -190,8 +204,18 @@ class FileLogger {
       }
 
       await _currentSink?.flush();
+      _retryDelay = const Duration(seconds: 1);
     } catch (e) {
-      // Silently fail write
+      // Do not spin when the profile directory is temporarily unavailable.
+      // Keep the bounded queue and retry with backoff so logging cannot consume
+      // a core of CPU while the proxy is starting or the disk is unavailable.
+      _retryTimer ??= Timer(_retryDelay, () {
+        _retryTimer = null;
+        unawaited(_processQueue());
+      });
+      _retryDelay = Duration(
+        milliseconds: (_retryDelay.inMilliseconds * 2).clamp(1000, 30000),
+      );
     } finally {
       _isWriting = false;
     }
@@ -203,9 +227,10 @@ class FileLogger {
   }
 
   void log(String message) {
-    final boundedMessage = message.length > maxMessageLength
-        ? '${message.substring(0, maxMessageLength)}…'
-        : message;
+    final redactedMessage = redactSensitiveLogData(message);
+    final boundedMessage = redactedMessage.length > maxMessageLength
+        ? '${redactedMessage.substring(0, maxMessageLength)}…'
+        : redactedMessage;
     if (_writeQueue.length >= maxPendingMessages) {
       _writeQueue.removeFirst();
       _droppedMessages++;
@@ -223,6 +248,8 @@ class FileLogger {
   }
 
   Future<void> dispose() async {
+    _retryTimer?.cancel();
+    _retryTimer = null;
     await _closeSink();
     _writeQueue.clear();
     _droppedMessages = 0;
