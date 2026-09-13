@@ -72,6 +72,10 @@ class AgentEvent {
     this.ok,
     this.proxyRunning,
     this.privilegedBackend,
+    this.strictPolicyStatus = const AgentStrictPolicyStatus(
+      state: AgentStrictPolicyState.disabled,
+      generation: 0,
+    ),
   });
 
   static AgentEvent? tryParse(Map<String, dynamic> json) {
@@ -90,6 +94,7 @@ class AgentEvent {
         ok: envelope['ok'] as bool?,
         proxyRunning: envelope['proxyRunning'] as bool?,
         privilegedBackend: envelope['privilegedBackend'] as bool?,
+        strictPolicyStatus: _parseStrictPolicyStatus(envelope),
       );
     } catch (_) {
       return null;
@@ -103,6 +108,25 @@ class AgentEvent {
   final bool? ok;
   final bool? proxyRunning;
   final bool? privilegedBackend;
+  /// Strict capture state reported by Agent. Missing status is treated as
+  /// disabled so older Agents remain fail-closed to strict-policy consumers.
+  final AgentStrictPolicyStatus strictPolicyStatus;
+
+  static AgentStrictPolicyStatus _parseStrictPolicyStatus(
+    Map<String, dynamic> envelope,
+  ) {
+    final raw = envelope['strictPolicy'];
+    if (raw == null) {
+      return const AgentStrictPolicyStatus(
+        state: AgentStrictPolicyState.disabled,
+        generation: 0,
+      );
+    }
+    if (raw is! Map<String, dynamic>) {
+      throw const FormatException('Invalid strict policy status');
+    }
+    return AgentStrictPolicyStatus.fromJson(raw);
+  }
 }
 
 @immutable

@@ -17,7 +17,7 @@ use crate::journal::ReplayJournal;
 use crate::logging::AgentLogger;
 use crate::protocol::{
     authenticate, parse_control, AgentCommand, MAX_AUTH_LINE_BYTES, MAX_MESSAGE_LINE_BYTES,
-    PROTOCOL_VERSION,
+    StrictPolicyStatus, PROTOCOL_VERSION,
 };
 
 const CHANNEL_CAPACITY: usize = 256;
@@ -83,6 +83,10 @@ struct Shared {
     journal: Mutex<ReplayJournal>,
     logger: Arc<AgentLogger>,
     status: RwLock<CoreStatus>,
+    // The Agent does not implement a platform capture backend. Keeping an
+    // explicit disabled status in every lifecycle envelope prevents consumers
+    // from interpreting a healthy Core as proof that strict capture is armed.
+    strict_policy: RwLock<StrictPolicyStatus>,
     generation: AtomicU64,
     next_session: AtomicU64,
     shutting_down: AtomicBool,
@@ -226,6 +230,7 @@ pub async fn run(config: AgentConfig) -> Result<()> {
         journal: Mutex::new(ReplayJournal::default()),
         logger: logger.clone(),
         status: RwLock::new(CoreStatus::Starting),
+        strict_policy: RwLock::new(StrictPolicyStatus::disabled()),
         generation: AtomicU64::new(0),
         next_session: AtomicU64::new(1),
         shutting_down: AtomicBool::new(false),
@@ -365,6 +370,7 @@ async fn handle_ui(stream: TcpStream, token: String, shared: Arc<Shared>) -> Res
                     "ok": ok,
                     "coreState": state.as_str(),
                     "generation": shared.generation.load(Ordering::Acquire),
+                    "strictPolicy": strict_policy_json(&shared).await,
                 }
             });
             let delivered = if shutdown {
@@ -955,6 +961,7 @@ async fn set_status(shared: &Arc<Shared>, status: CoreStatus) {
             "generation": shared.generation.load(Ordering::Acquire),
             "proxyRunning": proxy_running,
             "privilegedBackend": shared.privileged_backend,
+            "strictPolicy": strict_policy_json(shared).await,
         }
     });
     forward_to_ui(shared, envelope.to_string()).await;
@@ -975,9 +982,21 @@ async fn ready_envelope(shared: &Arc<Shared>) -> String {
             "generation": shared.generation.load(Ordering::Acquire),
             "proxyRunning": proxy_running,
             "privilegedBackend": shared.privileged_backend,
+            "strictPolicy": strict_policy_json(shared).await,
         }
     })
     .to_string()
+}
+
+async fn strict_policy_json(shared: &Arc<Shared>) -> Value {
+    // StrictPolicyStatus contains only infallible serde primitives. The
+    // explicit match keeps this boundary defensive if that ever changes.
+    serde_json::to_value(&*shared.strict_policy.read().await)
+        .unwrap_or_else(|_| json!({
+            "state": "blocking",
+            "generation": 0,
+            "failureReason": "invalidPolicy",
+        }))
 }
 
 async fn forward_to_ui(shared: &Arc<Shared>, line: String) {

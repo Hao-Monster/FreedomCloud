@@ -40,6 +40,14 @@ pub struct StrictPolicyStatus {
 }
 
 impl StrictPolicyStatus {
+    pub const fn disabled() -> Self {
+        Self {
+            state: StrictPolicyState::Disabled,
+            generation: 0,
+            failure_reason: None,
+        }
+    }
+
     pub fn fail_closed(&self) -> bool {
         self.state != StrictPolicyState::Armed
     }

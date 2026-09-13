@@ -109,6 +109,23 @@ void main() {
     expect(event.generation, 3);
     expect(event.proxyRunning, isTrue);
     expect(event.privilegedBackend, isTrue);
+    expect(event.strictPolicyStatus.state, AgentStrictPolicyState.disabled);
+    expect(event.strictPolicyStatus.failClosed, isTrue);
+    final strictEvent = AgentEvent.tryParse({
+      '_agent': {
+        'type': 'coreState',
+        'coreState': 'ready',
+        'generation': 4,
+        'strictPolicy': {
+          'state': 'blocking',
+          'generation': 9,
+          'failureReason': 'captureUnavailable',
+        },
+      },
+    });
+    expect(strictEvent?.strictPolicyStatus.state,
+        AgentStrictPolicyState.blocking);
+    expect(strictEvent?.strictPolicyStatus.failClosed, isTrue);
     final undecided = AgentEvent.tryParse({
       '_agent': {
         'type': 'ready',
