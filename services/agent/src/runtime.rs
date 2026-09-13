@@ -13,16 +13,16 @@ use tokio::process::{Child, Command};
 use tokio::sync::{mpsc, oneshot, Mutex, Notify, RwLock};
 use tokio::time::{timeout, Instant};
 
+#[cfg(windows)]
+use crate::broker::WindowsStrictBrokerSession;
 use crate::config::AgentConfig;
 use crate::endpoint::{load_or_create_helper_token, random_token, EndpointGuard};
 use crate::journal::ReplayJournal;
 use crate::logging::AgentLogger;
 use crate::protocol::{
-    authenticate, parse_control, AgentCommand, MAX_AUTH_LINE_BYTES, MAX_MESSAGE_LINE_BYTES,
-    StrictPolicyStatus, PROTOCOL_VERSION,
+    authenticate, parse_control, AgentCommand, StrictPolicyStatus, MAX_AUTH_LINE_BYTES,
+    MAX_MESSAGE_LINE_BYTES, PROTOCOL_VERSION,
 };
-#[cfg(windows)]
-use crate::broker::WindowsStrictBrokerSession;
 #[cfg(windows)]
 use crate::strict_flow::{StrictOrchestrationAction, StrictPolicyOrchestrator};
 #[cfg(windows)]
@@ -212,10 +212,14 @@ async fn apply_strict_block(shared: &Arc<Shared>, path: Option<String>) -> bool 
             Some(crate::protocol::StrictPolicyFailureReason::InvalidPolicy),
         )
         .await;
-        shared.logger.log("strict block rejected: target path is missing");
+        shared
+            .logger
+            .log("strict block rejected: target path is missing");
         return false;
     };
-    let (Some(helper_port), Some(helper_token)) = (shared.helper_port, shared.helper_token.as_deref()) else {
+    let (Some(helper_port), Some(helper_token)) =
+        (shared.helper_port, shared.helper_token.as_deref())
+    else {
         set_strict_policy(
             shared,
             crate::protocol::StrictPolicyState::Blocking,
@@ -227,12 +231,7 @@ async fn apply_strict_block(shared: &Arc<Shared>, path: Option<String>) -> bool 
             .log("strict block rejected: privileged Helper is unavailable");
         return false;
     };
-    set_strict_policy(
-        shared,
-        crate::protocol::StrictPolicyState::Preparing,
-        None,
-    )
-    .await;
+    set_strict_policy(shared, crate::protocol::StrictPolicyState::Preparing, None).await;
     let target_key = strict_target_key(&path);
     let target_limit_reached = {
         let blocks = shared.strict_blocks.lock().await;
@@ -286,10 +285,14 @@ async fn apply_strict_block(shared: &Arc<Shared>, path: Option<String>) -> bool 
 
 async fn clear_strict_block(shared: &Arc<Shared>, path: Option<String>) -> bool {
     let Some(path) = path else {
-        shared.logger.log("strict clear rejected: target path is missing");
+        shared
+            .logger
+            .log("strict clear rejected: target path is missing");
         return false;
     };
-    let (Some(helper_port), Some(helper_token)) = (shared.helper_port, shared.helper_token.as_deref()) else {
+    let (Some(helper_port), Some(helper_token)) =
+        (shared.helper_port, shared.helper_token.as_deref())
+    else {
         shared
             .logger
             .log("strict clear rejected: privileged Helper is unavailable");
@@ -375,9 +378,9 @@ async fn apply_strict_policy(shared: &Arc<Shared>, raw: Option<Value>) -> bool {
             Some(crate::protocol::StrictPolicyFailureReason::InvalidPolicy),
         )
         .await;
-        shared
-            .logger
-            .log(format!("strict policy rejected: validation failed ({error})"));
+        shared.logger.log(format!(
+            "strict policy rejected: validation failed ({error})"
+        ));
         return false;
     }
     if !shared.privileged_backend {
@@ -437,7 +440,9 @@ async fn apply_strict_policy(shared: &Arc<Shared>, raw: Option<Value>) -> bool {
     {
         let mut current = shared.strict_runtime.lock().await;
         if current.is_some() {
-            shared.logger.log("strict policy rejected: transition already active");
+            shared
+                .logger
+                .log("strict policy rejected: transition already active");
             return false;
         }
         *current = Some(runtime.clone());
@@ -447,10 +452,7 @@ async fn apply_strict_policy(shared: &Arc<Shared>, raw: Option<Value>) -> bool {
 }
 
 #[cfg(not(windows))]
-async fn apply_strict_policy(
-    shared: &Arc<Shared>,
-    _raw: Option<Value>,
-) -> bool {
+async fn apply_strict_policy(shared: &Arc<Shared>, _raw: Option<Value>) -> bool {
     set_strict_policy(
         shared,
         crate::protocol::StrictPolicyState::Blocking,
@@ -473,7 +475,9 @@ async fn clear_strict_policy(shared: &Arc<Shared>) -> bool {
         match orchestrator.disable() {
             Ok(action) => action,
             Err(error) => {
-                shared.logger.log(format!("strict policy disable rejected: {error:#}"));
+                shared
+                    .logger
+                    .log(format!("strict policy disable rejected: {error:#}"));
                 return false;
             }
         }
@@ -484,7 +488,9 @@ async fn clear_strict_policy(shared: &Arc<Shared>) -> bool {
 
 #[cfg(not(windows))]
 async fn clear_strict_policy(shared: &Arc<Shared>) -> bool {
-    shared.logger.log("strict policy disable unavailable on this platform");
+    shared
+        .logger
+        .log("strict policy disable unavailable on this platform");
     false
 }
 
@@ -512,12 +518,24 @@ async fn drive_strict_action(
         StrictOrchestrationAction::Core(core_action) => {
             let Some(core) = shared.core.lock().await.clone() else {
                 shared.logger.log("strict policy Core ingress unavailable");
+                set_strict_policy(
+                    shared,
+                    crate::protocol::StrictPolicyState::Blocking,
+                    Some(crate::protocol::StrictPolicyFailureReason::CoreUnavailable),
+                )
+                .await;
                 return false;
             };
             *runtime.pending_core_id.lock().await = Some(core_action.id().to_owned());
             if core.send(core_action.line().to_owned()).await.is_err() {
                 *runtime.pending_core_id.lock().await = None;
                 shared.logger.log("strict policy Core ingress send failed");
+                set_strict_policy(
+                    shared,
+                    crate::protocol::StrictPolicyState::Blocking,
+                    Some(crate::protocol::StrictPolicyFailureReason::CoreUnavailable),
+                )
+                .await;
                 return false;
             }
             true
@@ -535,16 +553,34 @@ async fn drive_strict_action(
             let proof = match result {
                 Ok(Ok(proof)) => proof,
                 Ok(Err(error)) => {
-                    shared.logger.log(format!("strict Broker request failed: {error:#}"));
+                    shared
+                        .logger
+                        .log(format!("strict Broker request failed: {error:#}"));
                     let mut orchestrator = runtime.orchestrator.lock().await;
                     if let Ok(fallback) = orchestrator.force_blocking() {
                         drop(orchestrator);
                         return Box::pin(drive_strict_action(shared, runtime, fallback)).await;
                     }
+                    *shared.strict_runtime.lock().await = None;
+                    set_strict_policy(
+                        shared,
+                        crate::protocol::StrictPolicyState::Blocking,
+                        Some(crate::protocol::StrictPolicyFailureReason::BrokerUnavailable),
+                    )
+                    .await;
                     return false;
                 }
                 Err(error) => {
-                    shared.logger.log(format!("strict Broker worker failed: {error}"));
+                    shared
+                        .logger
+                        .log(format!("strict Broker worker failed: {error}"));
+                    *shared.strict_runtime.lock().await = None;
+                    set_strict_policy(
+                        shared,
+                        crate::protocol::StrictPolicyState::Blocking,
+                        Some(crate::protocol::StrictPolicyFailureReason::BrokerUnavailable),
+                    )
+                    .await;
                     return false;
                 }
             };
@@ -553,7 +589,16 @@ async fn drive_strict_action(
                 match orchestrator.accept_broker_proof(proof) {
                     Ok(action) => action,
                     Err(error) => {
-                        shared.logger.log(format!("strict Broker proof rejected: {error:#}"));
+                        shared
+                            .logger
+                            .log(format!("strict Broker proof rejected: {error:#}"));
+                        *shared.strict_runtime.lock().await = None;
+                        set_strict_policy(
+                            shared,
+                            crate::protocol::StrictPolicyState::Blocking,
+                            Some(crate::protocol::StrictPolicyFailureReason::BrokerUnavailable),
+                        )
+                        .await;
                         return false;
                     }
                 }
@@ -1138,9 +1183,9 @@ async fn fail_closed_strict_core_loss(shared: &Arc<Shared>) {
     let action = match action {
         Ok(action) => action,
         Err(error) => {
-            shared
-                .logger
-                .log(format!("strict Core loss could not enter blocking phase: {error:#}"));
+            shared.logger.log(format!(
+                "strict Core loss could not enter blocking phase: {error:#}"
+            ));
             set_strict_policy(
                 shared,
                 crate::protocol::StrictPolicyState::Blocking,
@@ -1514,12 +1559,13 @@ async fn ready_envelope(shared: &Arc<Shared>) -> String {
 async fn strict_policy_json(shared: &Arc<Shared>) -> Value {
     // StrictPolicyStatus contains only infallible serde primitives. The
     // explicit match keeps this boundary defensive if that ever changes.
-    serde_json::to_value(&*shared.strict_policy.read().await)
-        .unwrap_or_else(|_| json!({
+    serde_json::to_value(&*shared.strict_policy.read().await).unwrap_or_else(|_| {
+        json!({
             "state": "blocking",
             "generation": 0,
             "failureReason": "invalidPolicy",
-        }))
+        })
+    })
 }
 
 async fn forward_to_ui(shared: &Arc<Shared>, line: String) {
