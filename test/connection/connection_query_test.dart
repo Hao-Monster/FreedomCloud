@@ -35,6 +35,11 @@ void main() {
       expect(filterTrackedConnections([item], 'does-not-exist'), isEmpty);
     });
 
+    test('preserves matching across multiple chain labels', () {
+      final chained = _tracked(chains: const ['Proxy', 'Edge']);
+      expect(filterTrackedConnections([chained], 'proxy edge'), [chained]);
+    });
+
     test('matches resolved application names without mutating connection data',
         () {
       expect(

@@ -50,8 +50,11 @@ void main() {
 
     manager.setPaused(paused: true);
     now = now.add(const Duration(seconds: 1));
-    await manager.refresh();
-    expect(manager.uploadTotal, 600);
+      await manager.refresh();
+      expect(manager.uploadTotal, 600);
+      // Paused snapshots stay out of the tracker, so visible rates remain
+      // frozen at the last ingested sample.
+      expect(manager.activeUploadSpeed, 0);
     expect(manager.activeConnections.single.connection.upload, 100);
 
     now = now.add(const Duration(seconds: 1));

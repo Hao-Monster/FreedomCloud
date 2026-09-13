@@ -119,6 +119,8 @@ class ConnectionTracker {
   num _downloadTotal = 0;
   num _uploadTotal = 0;
   num _memory = 0;
+  double _activeUploadSpeed = 0;
+  double _activeDownloadSpeed = 0;
   List<TrackedConnection> _activeConnections = const [];
   List<TrackedConnection> _closedConnections = const [];
   List<ProcessConnectionGroup> _processGroups = const [];
@@ -126,6 +128,8 @@ class ConnectionTracker {
   num get downloadTotal => _downloadTotal;
   num get uploadTotal => _uploadTotal;
   num get memory => _memory;
+  double get activeUploadSpeed => _activeUploadSpeed;
+  double get activeDownloadSpeed => _activeDownloadSpeed;
   List<TrackedConnection> get activeConnections => _activeConnections;
   List<TrackedConnection> get closedConnections => _closedConnections;
   List<ProcessConnectionGroup> get processGroups => _processGroups;
@@ -142,6 +146,8 @@ class ConnectionTracker {
             Duration.microsecondsPerSecond;
     final canCalculateSpeed = calculateSpeed && elapsedSeconds > 0;
     final nextActive = <String, TrackedConnection>{};
+    var activeUploadSpeed = 0.0;
+    var activeDownloadSpeed = 0.0;
 
     for (final connection in snapshot.connections) {
       final previous = _activeById[connection.id];
@@ -165,6 +171,8 @@ class ConnectionTracker {
         uploadSpeed: uploadSpeed,
         downloadSpeed: downloadSpeed,
       );
+      activeUploadSpeed += uploadSpeed;
+      activeDownloadSpeed += downloadSpeed;
       _closedById.remove(connection.id);
     }
 
@@ -185,6 +193,8 @@ class ConnectionTracker {
     _downloadTotal = snapshot.downloadTotal;
     _uploadTotal = snapshot.uploadTotal;
     _memory = snapshot.memory;
+    _activeUploadSpeed = activeUploadSpeed;
+    _activeDownloadSpeed = activeDownloadSpeed;
     _lastSampleAt = sampledAt;
     _rebuildViews();
   }
@@ -199,6 +209,8 @@ class ConnectionTracker {
       );
     }
     _activeById.clear();
+    _activeUploadSpeed = 0;
+    _activeDownloadSpeed = 0;
     _lastSampleAt = null;
     _trimClosedConnections();
     _rebuildViews();
@@ -222,6 +234,8 @@ class ConnectionTracker {
     _downloadTotal = 0;
     _uploadTotal = 0;
     _memory = 0;
+    _activeUploadSpeed = 0;
+    _activeDownloadSpeed = 0;
     _rebuildViews();
   }
 
@@ -348,31 +362,60 @@ List<TrackedConnection> filterTrackedConnections(
   final normalizedQuery = query.trim().toLowerCase();
   if (normalizedQuery.isEmpty) return List.of(connections, growable: false);
 
-  return connections.where((item) {
-    final connection = item.connection;
-    final metadata = connection.metadata;
-    final applicationName =
-        metadata.processPath.isEmpty || applicationNameForPath == null
-            ? ''
-            : applicationNameForPath(metadata.processPath);
-    final values = [
-      metadata.process,
-      metadata.processPath,
-      applicationName,
-      metadata.host,
-      metadata.sniffHost,
-      metadata.destinationIP,
-      metadata.remoteDestination,
-      metadata.sourceIP,
-      connection.chains.join(' '),
-      connection.rule,
-      connection.rulePayload,
-      metadata.network,
-      metadata.type,
-    ];
-    return values.any((value) => value.toLowerCase().contains(normalizedQuery));
-  }).toList(growable: false);
+  return connections
+      .where(
+        (item) => trackedConnectionMatchesNormalizedQuery(
+          item,
+          normalizedQuery,
+          applicationNameForPath: applicationNameForPath,
+        ),
+      )
+      .toList(growable: false);
 }
+
+/// Matches a query that has already been trimmed and lower-cased.
+///
+/// This hot path is called for every connection during visible list rebuilds;
+/// checking fields directly avoids allocating a temporary list per row.
+bool trackedConnectionMatchesNormalizedQuery(
+  TrackedConnection item,
+  String normalizedQuery, {
+  String Function(String path)? applicationNameForPath,
+}) {
+  final connection = item.connection;
+  final metadata = connection.metadata;
+
+  if (_containsQuery(metadata.process, normalizedQuery) ||
+      _containsQuery(metadata.processPath, normalizedQuery) ||
+      _containsQuery(metadata.host, normalizedQuery) ||
+      _containsQuery(metadata.sniffHost, normalizedQuery) ||
+      _containsQuery(metadata.destinationIP, normalizedQuery) ||
+      _containsQuery(metadata.remoteDestination, normalizedQuery) ||
+      _containsQuery(metadata.sourceIP, normalizedQuery) ||
+      _containsQuery(connection.rule, normalizedQuery) ||
+      _containsQuery(connection.rulePayload, normalizedQuery) ||
+      _containsQuery(metadata.network, normalizedQuery) ||
+      _containsQuery(metadata.type, normalizedQuery)) {
+    return true;
+  }
+  if (applicationNameForPath != null && metadata.processPath.isNotEmpty &&
+      _containsQuery(
+        applicationNameForPath(metadata.processPath),
+        normalizedQuery,
+      )) {
+    return true;
+  }
+  for (final chain in connection.chains) {
+    if (_containsQuery(chain, normalizedQuery)) return true;
+  }
+  // Preserve the legacy joined-chain search for queries spanning two chain
+  // labels; only allocate the joined string on this uncommon fallback path.
+  return connection.chains.length > 1 &&
+      _containsQuery(connection.chains.join(' '), normalizedQuery);
+}
+
+bool _containsQuery(String value, String normalizedQuery) =>
+    value.toLowerCase().contains(normalizedQuery);
 
 List<TrackedConnection> sortTrackedConnections(
   Iterable<TrackedConnection> connections,

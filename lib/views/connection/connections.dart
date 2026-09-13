@@ -170,14 +170,8 @@ class _ConnectionsViewState extends ConsumerState<ConnectionsView>
               closedCount: connectionManager.closedConnections.length,
               upload: connectionManager.uploadTotal,
               download: connectionManager.downloadTotal,
-              uploadSpeed: connectionManager.activeConnections.fold(
-                0,
-                (total, item) => total + item.uploadSpeed,
-              ),
-              downloadSpeed: connectionManager.activeConnections.fold(
-                0,
-                (total, item) => total + item.downloadSpeed,
-              ),
+              uploadSpeed: connectionManager.activeUploadSpeed,
+              downloadSpeed: connectionManager.activeDownloadSpeed,
             ),
             if (connectionManager.paused)
               MaterialBanner(
@@ -507,10 +501,12 @@ List<ProcessConnectionGroup> _filteredGroups(
         group.processPath.toLowerCase().contains(normalized)) {
       return true;
     }
-    return filterTrackedConnections(
-      [...group.activeConnections, ...group.closedConnections],
-      normalized,
-    ).isNotEmpty;
+    return group.activeConnections.any(
+          (item) => trackedConnectionMatchesNormalizedQuery(item, normalized),
+        ) ||
+        group.closedConnections.any(
+          (item) => trackedConnectionMatchesNormalizedQuery(item, normalized),
+        );
   }).toList(growable: false);
 }
 

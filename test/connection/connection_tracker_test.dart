@@ -82,6 +82,8 @@ void main() {
 
       expect(tracker.activeConnections.single.uploadSpeed, 1000);
       expect(tracker.activeConnections.single.downloadSpeed, 2000);
+      expect(tracker.activeUploadSpeed, 1000);
+      expect(tracker.activeDownloadSpeed, 2000);
     });
 
     test('clamps counter resets instead of reporting negative rates', () {
@@ -99,6 +101,8 @@ void main() {
 
       expect(tracker.activeConnections.single.uploadSpeed, 0);
       expect(tracker.activeConnections.single.downloadSpeed, 0);
+      expect(tracker.activeUploadSpeed, 0);
+      expect(tracker.activeDownloadSpeed, 0);
     });
 
     test('moves disappeared connections to history once with final counters',
@@ -116,6 +120,8 @@ void main() {
           sampledAt: startedAt.add(const Duration(seconds: 2)));
 
       expect(tracker.activeConnections, isEmpty);
+      expect(tracker.activeUploadSpeed, 0);
+      expect(tracker.activeDownloadSpeed, 0);
       expect(tracker.closedConnections, hasLength(1));
       expect(tracker.closedConnections.single.connection.upload, 321);
       expect(tracker.closedConnections.single.connection.download, 654);

@@ -70,6 +70,8 @@ class ConnectionManager extends ChangeNotifier {
   num get downloadTotal => _downloadTotal;
   num get uploadTotal => _uploadTotal;
   num get memory => _memory;
+  double get activeUploadSpeed => _tracker.activeUploadSpeed;
+  double get activeDownloadSpeed => _tracker.activeDownloadSpeed;
   List<TrackedConnection> get activeConnections => _tracker.activeConnections;
   List<TrackedConnection> get closedConnections => _tracker.closedConnections;
   List<ProcessConnectionGroup> get processGroups => _tracker.processGroups;
