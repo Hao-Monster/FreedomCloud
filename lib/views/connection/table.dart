@@ -285,7 +285,7 @@ String _columnValue(TrackedConnection item, String column) {
   };
 }
 
-String _address(String ip, String port) => port.isEmpty ? ip : '$ip:$port';
+String _address(String ip, String port) => formatConnectionAddress(ip, port);
 
 List<TrackedConnection> _sortItems(
   List<TrackedConnection> source,

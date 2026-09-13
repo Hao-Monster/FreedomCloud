@@ -38,9 +38,21 @@ String connectionDestination(Connection connection) {
       : metadata.sniffHost.isNotEmpty
           ? metadata.sniffHost
           : metadata.destinationIP;
-  return metadata.destinationPort.isEmpty
-      ? host
-      : '$host:${metadata.destinationPort}';
+  return formatConnectionAddress(host, metadata.destinationPort);
+}
+
+/// Formats an endpoint without making IPv6 addresses ambiguous.
+///
+/// Mihomo may return either a host name, an IPv4 address, or an IPv6 literal
+/// for the same metadata field. Bracketing IPv6 literals is required whenever
+/// a port is appended, otherwise `2001:db8::1:443` cannot be parsed back into
+/// an address and port by users or diagnostics tooling.
+String formatConnectionAddress(String host, String port) {
+  if (host.isEmpty) return '';
+  if (port.isEmpty) return host;
+  final isBracketed = host.startsWith('[') && host.endsWith(']');
+  final isIpv6 = host.contains(':') && !isBracketed;
+  return isIpv6 ? '[$host]:$port' : '$host:$port';
 }
 
 String connectionRate(double value) =>

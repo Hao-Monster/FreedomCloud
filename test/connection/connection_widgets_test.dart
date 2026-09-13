@@ -7,6 +7,17 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('formats IPv6 endpoint addresses with port brackets', () {
+    expect(
+      formatConnectionAddress('2001:db8::1', '443'),
+      '[2001:db8::1]:443',
+    );
+    expect(
+        formatConnectionAddress('[2001:db8::1]', '443'), '[2001:db8::1]:443');
+    expect(formatConnectionAddress('192.0.2.1', '443'), '192.0.2.1:443');
+    expect(formatConnectionAddress('example.com', ''), 'example.com');
+  });
+
   testWidgets('process card keeps name, counts and rates visible',
       (tester) async {
     await AppLocalizations.delegate.load(const Locale('en'));

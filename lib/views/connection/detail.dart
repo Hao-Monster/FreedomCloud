@@ -142,16 +142,74 @@ class _ConnectionDetailBody extends StatelessWidget {
     ];
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-      children: sections
-          .where((section) => section.values.any((value) => value.visible))
-          .map((section) => _SectionCard(section: section))
-          .toList(growable: false),
+      children: [
+        _DetailHeader(item: item),
+        ...sections
+            .where((section) => section.values.any((value) => value.visible))
+            .map((section) => _SectionCard(section: section)),
+      ],
     );
   }
 
-  static String _address(String ip, String port) {
-    if (ip.isEmpty) return '';
-    return port.isEmpty ? ip : '$ip:$port';
+  static String _address(String ip, String port) =>
+      formatConnectionAddress(ip, port);
+}
+
+class _DetailHeader extends StatelessWidget {
+  const _DetailHeader({required this.item});
+
+  final TrackedConnection item;
+
+  @override
+  Widget build(BuildContext context) {
+    final connection = item.connection;
+    final metadata = connection.metadata;
+    final muted = context.colorScheme.onSurfaceVariant;
+    return Card(
+      margin: const EdgeInsets.only(bottom: 12),
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Row(
+          children: [
+            ProcessIcon(
+              process: metadata.process,
+              processPath: metadata.processPath,
+              connectionType: metadata.type,
+              size: 44,
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    connectionProcessName(metadata),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: context.textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    connectionDestination(connection),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: context.textTheme.bodySmall?.copyWith(color: muted),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            Icon(
+              item.isActive ? Icons.circle : Icons.circle_outlined,
+              size: 13,
+              color: item.isActive ? Colors.green : muted,
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }
 
@@ -168,7 +226,7 @@ class _DetailValue {
   final String label;
   final String value;
 
-  bool get visible => value.isNotEmpty && value != '0';
+  bool get visible => value.isNotEmpty;
 }
 
 class _SectionCard extends StatelessWidget {
