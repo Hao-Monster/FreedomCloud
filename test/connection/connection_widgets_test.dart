@@ -1,4 +1,5 @@
 import 'package:flclashx/common/per_app_policy.dart';
+import 'package:flclashx/clash/agent_protocol.dart';
 import 'package:flclashx/l10n/l10n.dart';
 import 'package:flclashx/models/models.dart';
 import 'package:flclashx/views/connection/item.dart';
@@ -172,6 +173,63 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(selected, ApplicationRoutingPolicy.block);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('strict policy status exposes blocking reason and generation',
+      (tester) async {
+    final status = const AgentStrictPolicyStatus(
+      state: AgentStrictPolicyState.blocking,
+      generation: 7,
+      failureReason: AgentStrictPolicyFailureReason.brokerUnavailable,
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: StrictPolicyStatusIndicator(status: status),
+        ),
+      ),
+    );
+
+    expect(find.textContaining('BLOCKING'), findsOneWidget);
+    expect(find.textContaining('BROKER UNAVAILABLE'), findsOneWidget);
+    final tooltip = tester.widget<Tooltip>(find.byType(Tooltip));
+    expect(tooltip.message, contains('generation 7'));
+    expect(tooltip.message, contains('fail-closed'));
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('selected policy reports unreported strict status honestly',
+      (tester) async {
+    final item = _tracked(id: 'browser', process: 'browser.exe');
+    final group = ProcessConnectionGroup(
+      key: r'C:\Browser\browser.exe',
+      name: 'browser.exe',
+      processPath: r'C:\Browser\browser.exe',
+      activeConnections: [item],
+      closedConnections: const [],
+      upload: 0,
+      download: 0,
+      uploadSpeed: 0,
+      downloadSpeed: 0,
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ProcessConnectionCard(
+            group: group,
+            showIcon: false,
+            useApplicationName: false,
+            policy: ApplicationRoutingPolicy.proxy,
+            onTap: () {},
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('STRICT STATUS UNREPORTED'), findsOneWidget);
+    expect(find.byIcon(Icons.help_outline_rounded), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 }

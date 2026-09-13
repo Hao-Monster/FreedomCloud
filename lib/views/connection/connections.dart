@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import 'package:flclashx/clash/agent_protocol.dart';
+import 'package:flclashx/clash/service.dart';
 import 'package:flclashx/common/common.dart';
 import 'package:flclashx/enum/enum.dart';
 import 'package:flclashx/manager/connection_manager.dart';
@@ -34,6 +36,8 @@ class _ConnectionsViewState extends ConsumerState<ConnectionsView>
   String? _selectedProcessKey;
   _ConnectionStatusTab _status = _ConnectionStatusTab.active;
   bool _isCurrentPage = false;
+  AgentStrictPolicyStatus? _strictPolicyStatus;
+  StreamSubscription<AgentStrictPolicyStatus>? _strictPolicySubscription;
 
   @override
   List<Widget> get actions => [
@@ -71,6 +75,19 @@ class _ConnectionsViewState extends ConsumerState<ConnectionsView>
   void initState() {
     super.initState();
     window?.visible.addListener(_syncManagerVisibility);
+    final service = clashService;
+    if (service != null) {
+      // Keep the page honest about strict capture readiness.  The service
+      // starts fail-closed and only publishes statuses received from Agent;
+      // no UI state is inferred from proxy/core readiness.
+      _strictPolicyStatus = service.strictPolicyStatus;
+      _strictPolicySubscription = service.strictPolicyStatusChanges.listen(
+        (status) {
+          if (!mounted) return;
+          setState(() => _strictPolicyStatus = status);
+        },
+      );
+    }
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       connectionDiagnostics.log(
@@ -99,6 +116,8 @@ class _ConnectionsViewState extends ConsumerState<ConnectionsView>
 
   @override
   void dispose() {
+    unawaited(_strictPolicySubscription?.cancel());
+    _strictPolicySubscription = null;
     window?.visible.removeListener(_syncManagerVisibility);
     _isCurrentPage = false;
     _syncManagerVisibility();
@@ -375,6 +394,7 @@ class _ConnectionsViewState extends ConsumerState<ConnectionsView>
           showIcon: settings.connectionShowIcon,
           useApplicationName: settings.connectionUseApplicationName,
           policy: perAppPolicyStore.policyFor(group.processPath),
+          strictStatus: _strictPolicyStatus,
           onPolicyChanged: group.processPath.isEmpty
               ? null
               : (policy) => unawaited(

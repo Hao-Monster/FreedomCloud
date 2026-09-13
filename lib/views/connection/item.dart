@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:flclashx/clash/agent_protocol.dart';
 import 'package:flclashx/common/common.dart';
 import 'package:flclashx/common/process_icon.dart';
 import 'package:flclashx/models/models.dart';
@@ -57,6 +58,94 @@ String formatConnectionAddress(String host, String port) {
 
 String connectionRate(double value) =>
     '${TrafficValue(value: value.round()).show}/s';
+
+/// User-facing rendering for the strict-capture status reported by Agent.
+///
+/// A missing status is deliberately shown as *unreported* rather than
+/// inventing an armed/failed state.  The Agent status is the only authority
+/// for capture readiness; the connection UI must not claim that a policy is
+/// enforced until that status is received.
+String strictPolicyStateLabel(AgentStrictPolicyState state) =>
+    state.name.replaceAll('_', ' ').toUpperCase();
+
+String strictPolicyFailureLabel(AgentStrictPolicyFailureReason reason) =>
+    reason.name
+        .replaceAll('_', ' ')
+        .replaceAllMapped(RegExp(r'([a-z])([A-Z])'), (match) {
+          return '${match.group(1)} ${match.group(2)}';
+        })
+        .toUpperCase();
+
+class StrictPolicyStatusIndicator extends StatelessWidget {
+  const StrictPolicyStatusIndicator(
+      {super.key, this.status, this.compact = false});
+
+  final AgentStrictPolicyStatus? status;
+  final bool compact;
+
+  @override
+  Widget build(BuildContext context) {
+    final state = status?.state;
+    final color = switch (state) {
+      AgentStrictPolicyState.armed => Colors.green,
+      AgentStrictPolicyState.blocking => context.colorScheme.error,
+      AgentStrictPolicyState.degraded ||
+      AgentStrictPolicyState.preparing =>
+        Colors.orange,
+      AgentStrictPolicyState.recovering => context.colorScheme.primary,
+      AgentStrictPolicyState.disabled ||
+      null =>
+        context.colorScheme.onSurfaceVariant,
+    };
+    final label = status == null
+        ? 'STRICT STATUS UNREPORTED'
+        : [
+            strictPolicyStateLabel(status!.state),
+            if (status!.failureReason != null)
+              strictPolicyFailureLabel(status!.failureReason!),
+          ].join(' · ');
+    final tooltip = status == null
+        ? 'Agent has not reported strict-capture status'
+        : 'generation ${status!.generation} · '
+            '${status!.failClosed ? 'fail-closed' : 'forwarding allowed'}';
+    return Tooltip(
+      message: tooltip,
+      child: Container(
+        padding: EdgeInsets.symmetric(
+          horizontal: compact ? 5 : 7,
+          vertical: compact ? 1 : 2,
+        ),
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.12),
+          borderRadius: BorderRadius.circular(5),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              status?.failClosed == true
+                  ? Icons.block_rounded
+                  : status?.state == AgentStrictPolicyState.armed
+                      ? Icons.verified_rounded
+                      : Icons.help_outline_rounded,
+              size: compact ? 12 : 14,
+              color: color,
+            ),
+            const SizedBox(width: 4),
+            Flexible(
+              child: Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: context.textTheme.labelSmall?.copyWith(color: color),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
 
 /// Sorts process overview cards using the same setting as the classic list.
 ///
@@ -201,6 +290,7 @@ class ProcessConnectionCard extends StatelessWidget {
     required this.onTap,
     this.policy = ApplicationRoutingPolicy.inherit,
     this.onPolicyChanged,
+    this.strictStatus,
   });
 
   final ProcessConnectionGroup group;
@@ -209,6 +299,10 @@ class ProcessConnectionCard extends StatelessWidget {
   final VoidCallback onTap;
   final ApplicationRoutingPolicy policy;
   final ValueChanged<ApplicationRoutingPolicy>? onPolicyChanged;
+
+  /// Latest status received from Agent for this app's strict policy.  Null
+  /// means no status has been reported and is shown explicitly in the UI.
+  final AgentStrictPolicyStatus? strictStatus;
 
   @override
   Widget build(BuildContext context) {
@@ -280,6 +374,13 @@ class ProcessConnectionCard extends StatelessWidget {
                             : muted,
                       ),
                     ),
+                    if (policy != ApplicationRoutingPolicy.inherit) ...[
+                      const SizedBox(height: 4),
+                      StrictPolicyStatusIndicator(
+                        status: strictStatus,
+                        compact: true,
+                      ),
+                    ],
                   ],
                 ),
               ),
