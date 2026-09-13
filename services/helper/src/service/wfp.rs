@@ -148,14 +148,23 @@ mod platform {
         Ok(bytes)
     }
 
-    fn filter_key(path: &Path, v6: bool) -> GUID {
+    fn filter_key_for(path: &Path, v6: bool, kind: &[u8]) -> GUID {
         let mut hasher = Sha256::new();
         hasher.update(path.to_string_lossy().to_ascii_lowercase().as_bytes());
         hasher.update([u8::from(v6)]);
+        hasher.update(kind);
         let digest = hasher.finalize();
         GUID::from_u128(u128::from_be_bytes(
             digest[..16].try_into().expect("sha256 size"),
         ))
+    }
+
+    fn filter_key(path: &Path, v6: bool) -> GUID {
+        filter_key_for(path, v6, b"block")
+    }
+
+    fn callout_filter_key(path: &Path, v6: bool) -> GUID {
+        filter_key_for(path, v6, b"callout")
     }
 
     fn open_engine() -> Result<HANDLE, String> {
@@ -176,13 +185,16 @@ mod platform {
         }
     }
 
-    fn add_filter(
+    #[allow(clippy::too_many_arguments)]
+    fn add_filter_with_action(
         engine: HANDLE,
         path: &Path,
         app_id: &[u8],
         layer: GUID,
         key: GUID,
         display: &[u16],
+        action_type: FWP_ACTION_TYPE,
+        callout_key: GUID,
     ) -> Result<(), String> {
         let mut blob = FWP_BYTE_BLOB {
             size: app_id.len() as u32,
@@ -219,10 +231,10 @@ mod platform {
             numFilterConditions: 1,
             filterCondition: &mut condition,
             action: FWPM_ACTION0 {
-                r#type: FWP_ACTION_BLOCK,
-                Anonymous: FWPM_ACTION0_0 {
-                    filterType: GUID::from_u128(0),
-                },
+                    r#type: action_type,
+                    Anonymous: FWPM_ACTION0_0 {
+                        calloutKey: callout_key,
+                    },
             },
             Anonymous: FWPM_FILTER0_0 { rawContext: 0 },
             reserved: null_mut(),
@@ -242,6 +254,26 @@ mod platform {
             ));
         }
         Ok(())
+    }
+
+    fn add_filter(
+        engine: HANDLE,
+        path: &Path,
+        app_id: &[u8],
+        layer: GUID,
+        key: GUID,
+        display: &[u16],
+    ) -> Result<(), String> {
+        add_filter_with_action(
+            engine,
+            path,
+            app_id,
+            layer,
+            key,
+            display,
+            FWP_ACTION_BLOCK,
+            GUID::from_u128(0),
+        )
     }
 
     pub fn install(plan: &BlockFilterPlan) -> Result<InstalledBlockFilters, String> {
@@ -272,6 +304,57 @@ mod platform {
                 FWPM_LAYER_ALE_AUTH_CONNECT_V6,
                 keys[1],
                 &display,
+            ) {
+                unsafe {
+                    let _ = FwpmFilterDeleteByKey0(engine, &keys[0]);
+                }
+                return Err(error);
+            }
+            Ok(InstalledBlockFilters { keys })
+        })();
+        close_engine(engine);
+        result
+    }
+
+    /// Installs terminating callout filters for the driver's ALE redirect
+    /// callouts. This is broker plumbing only; the driver must be present and
+    /// the callout data plane must be ready before a selected flow is allowed.
+    pub fn install_callout_filters(
+        plan: &BlockFilterPlan,
+        callout_v4: GUID,
+        callout_v6: GUID,
+    ) -> Result<InstalledBlockFilters, String> {
+        let app_id = app_id(&plan.executable)?;
+        let display = plan
+            .display_name
+            .encode_utf16()
+            .chain(std::iter::once(0))
+            .collect::<Vec<_>>();
+        let engine = open_engine()?;
+        let keys = [
+            callout_filter_key(&plan.executable, false),
+            callout_filter_key(&plan.executable, true),
+        ];
+        let result = (|| {
+            add_filter_with_action(
+                engine,
+                &plan.executable,
+                &app_id,
+                FWPM_LAYER_ALE_CONNECT_REDIRECT_V4,
+                keys[0],
+                &display,
+                FWP_ACTION_CALLOUT_TERMINATING,
+                callout_v4,
+            )?;
+            if let Err(error) = add_filter_with_action(
+                engine,
+                &plan.executable,
+                &app_id,
+                FWPM_LAYER_ALE_CONNECT_REDIRECT_V6,
+                keys[1],
+                &display,
+                FWP_ACTION_CALLOUT_TERMINATING,
+                callout_v6,
             ) {
                 unsafe {
                     let _ = FwpmFilterDeleteByKey0(engine, &keys[0]);
@@ -319,11 +402,31 @@ mod platform {
         close_engine(engine);
         first_error.map_or(Ok(()), Err)
     }
+
+    /// Removes deterministic callout filters created by
+    /// [`install_callout_filters`]. Missing filters are idempotent success.
+    pub fn remove_callout_filters(plan: &BlockFilterPlan) -> Result<(), String> {
+        const FWP_E_FILTER_NOT_FOUND: u32 = 0x8032_0003;
+        let engine = open_engine()?;
+        let keys = [
+            callout_filter_key(&plan.executable, false),
+            callout_filter_key(&plan.executable, true),
+        ];
+        let mut first_error = None;
+        for key in keys {
+            let code = unsafe { FwpmFilterDeleteByKey0(engine, &key) };
+            if code != 0 && code != FWP_E_FILTER_NOT_FOUND && first_error.is_none() {
+                first_error = Some(status("FwpmFilterDeleteByKey0", code));
+            }
+        }
+        close_engine(engine);
+        first_error.map_or(Ok(()), Err)
+    }
 }
 
 #[cfg(windows)]
 #[allow(unused_imports)]
-pub use platform::{install, remove, InstalledBlockFilters};
+pub use platform::{install, install_callout_filters, remove, remove_callout_filters, InstalledBlockFilters};
 
 #[cfg(not(windows))]
 pub fn install(_plan: &BlockFilterPlan) -> Result<(), String> {
