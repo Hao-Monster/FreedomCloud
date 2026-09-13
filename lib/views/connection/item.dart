@@ -94,20 +94,19 @@ List<ProcessConnectionGroup> sortProcessConnectionGroups(
 }
 
 Object _processGroupSortValue(
-    ProcessConnectionGroup group, ConnectionSort sort) {
-  return switch (sort) {
-    ConnectionSort.time => _latestProcessConnectionStart(group),
-    ConnectionSort.upload => group.upload,
-    ConnectionSort.download => group.download,
-    ConnectionSort.uploadSpeed => group.uploadSpeed,
-    ConnectionSort.downloadSpeed => group.downloadSpeed,
-    ConnectionSort.process => connectionProcessName(
-        (group.activeConnections.firstOrNull?.connection ??
-                group.closedConnections.first.connection)
-            .metadata,
-      ).toLowerCase(),
-  };
-}
+        ProcessConnectionGroup group, ConnectionSort sort) =>
+    switch (sort) {
+      ConnectionSort.time => _latestProcessConnectionStart(group),
+      ConnectionSort.upload => group.upload,
+      ConnectionSort.download => group.download,
+      ConnectionSort.uploadSpeed => group.uploadSpeed,
+      ConnectionSort.downloadSpeed => group.downloadSpeed,
+      ConnectionSort.process => connectionProcessName(
+          (group.activeConnections.firstOrNull?.connection ??
+                  group.closedConnections.first.connection)
+              .metadata,
+        ).toLowerCase(),
+    };
 
 DateTime _latestProcessConnectionStart(ProcessConnectionGroup group) {
   var latest = DateTime.fromMicrosecondsSinceEpoch(0, isUtc: true);
