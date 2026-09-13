@@ -1,8 +1,36 @@
 import 'package:flclashx/models/common.dart';
 import 'package:flclashx/models/connection_tracker.dart';
+import 'package:flclashx/views/connection/connections.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('closed tab never exposes active connections as closeable', () {
+    final active = [_tracked(id: 'active')];
+    expect(
+      closeableConnectionItemsForView(
+        showProcessOverview: true,
+        isActiveTab: false,
+        activeConnections: active,
+        filteredItems: active,
+        query: '',
+      ),
+      isEmpty,
+    );
+  });
+
+  test('process overview closes only active connections matching the query', () {
+    final matching = _tracked(id: 'matching', process: 'edge.exe');
+    final other = _tracked(id: 'other', process: 'mail.exe');
+    final result = closeableConnectionItemsForView(
+      showProcessOverview: true,
+      isActiveTab: true,
+      activeConnections: [matching, other],
+      filteredItems: const [],
+      query: 'edge',
+    );
+    expect(result.map((item) => item.connection.id), ['matching']);
+  });
+
   group('connection filtering', () {
     final item = _tracked(
       process: 'msedge.exe',

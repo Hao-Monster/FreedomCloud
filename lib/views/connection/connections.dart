@@ -159,14 +159,13 @@ class _ConnectionsViewState extends ConsumerState<ConnectionsView>
           settings.connectionSort,
           direction: settings.connectionSortDirection,
         );
-        final closeable = showProcessOverview
-            ? filterTrackedConnections(
-                connectionManager.activeConnections,
-                _query,
-              )
-            : _status == _ConnectionStatusTab.active
-                ? filtered
-                : const <TrackedConnection>[];
+        final closeable = closeableConnectionItemsForView(
+          showProcessOverview: showProcessOverview,
+          isActiveTab: _status == _ConnectionStatusTab.active,
+          activeConnections: connectionManager.activeConnections,
+          filteredItems: filtered,
+          query: _query,
+        );
         return Column(
           children: [
             _SummaryHeader(
@@ -514,6 +513,23 @@ List<ProcessConnectionGroup> _filteredGroups(
           (item) => trackedConnectionMatchesNormalizedQuery(item, normalized),
         );
   }).toList(growable: false);
+}
+
+/// Returns the connections that may be closed from the current list view.
+///
+/// The closed/history tab is intentionally never closeable: closing an active
+/// connection from that tab would be surprising and would make the action
+/// button depend on which process groups happen to remain active.
+List<TrackedConnection> closeableConnectionItemsForView({
+  required bool showProcessOverview,
+  required bool isActiveTab,
+  required List<TrackedConnection> activeConnections,
+  required List<TrackedConnection> filteredItems,
+  required String query,
+}) {
+  if (!isActiveTab) return const <TrackedConnection>[];
+  if (!showProcessOverview) return filteredItems;
+  return filterTrackedConnections(activeConnections, query);
 }
 
 class _SummaryHeader extends StatelessWidget {
