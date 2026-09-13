@@ -185,6 +185,14 @@ class PerAppPolicyStore extends ChangeNotifier {
   Future<void> _load() async {
     try {
       final file = await _policyFile();
+      // A process crash can occur after the previous file was moved to the
+      // backup but before the pending file was renamed into place. Recover the
+      // last known-good snapshot before decoding instead of silently starting
+      // with an empty policy set.
+      final backup = File('${file.path}.backup');
+      if (!await file.exists() && await backup.exists()) {
+        await backup.rename(file.path);
+      }
       if (!await file.exists()) return;
       final raw = jsonDecode(await file.readAsString());
       final decoded = decodePerAppPolicies(raw);
@@ -211,8 +219,32 @@ class PerAppPolicyStore extends ChangeNotifier {
     });
     final pending = File('${file.path}.pending');
     await pending.writeAsString(content, flush: true);
-    if (await file.exists()) await file.delete();
-    await pending.rename(file.path);
+    final backup = File('${file.path}.backup');
+    var movedOriginal = false;
+    try {
+      // Dart's rename does not replace an existing file on Windows. Keep the
+      // old snapshot until the new one is in place so a failed write cannot
+      // erase the user's policies.
+      if (await backup.exists()) await backup.delete();
+      if (await file.exists()) {
+        await file.rename(backup.path);
+        movedOriginal = true;
+      }
+      await pending.rename(file.path);
+      if (movedOriginal && await backup.exists()) {
+        await backup.delete();
+      }
+    } catch (_) {
+      // Best-effort cleanup and rollback. Preserve the original error for the
+      // caller so the UI can report that the policy was not applied.
+      if (await pending.exists()) {
+        await pending.delete();
+      }
+      if (movedOriginal && !await file.exists() && await backup.exists()) {
+        await backup.rename(file.path);
+      }
+      rethrow;
+    }
   }
 
   Future<File> _policyFile() async =>
