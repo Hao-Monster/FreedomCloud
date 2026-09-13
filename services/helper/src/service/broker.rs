@@ -13,6 +13,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::TcpStream;
+use tokio::time::timeout;
 
 pub const BROKER_PROTOCOL_VERSION: u32 = 1;
 pub const MAX_FRAME_BYTES: usize = 64 * 1024;
@@ -20,6 +23,7 @@ pub const MAX_DESTINATION_BYTES: usize = 255;
 pub const MAX_PAYLOAD_BYTES: usize = 32 * 1024;
 pub const MAX_FLOWS: usize = 4096;
 pub const FLOW_IDLE_TIMEOUT: Duration = Duration::from_secs(120);
+pub const MIHOMO_CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -311,6 +315,95 @@ pub fn decode_frame(line: &[u8]) -> Result<BrokerFrame, BrokerErrorCode> {
     serde_json::from_slice(&line[..line.len() - 1]).map_err(|_| BrokerErrorCode::InvalidRequest)
 }
 
+/// Establishes one TCP flow through Mihomo's local SOCKS5 listener.  The
+/// caller remains responsible for registering the returned stream in the
+/// flow registry before forwarding bytes.  Only loopback Mihomo endpoints are
+/// accepted, and every handshake stage has a bounded timeout.
+pub async fn connect_tcp_via_mihomo(
+    mihomo: SocketAddr,
+    destination: &str,
+) -> Result<TcpStream, BrokerErrorCode> {
+    validate_open(1, 1, destination, mihomo)?;
+    let (host, port) = parse_destination(destination).ok_or(BrokerErrorCode::InvalidRequest)?;
+    let mut stream = timeout(MIHOMO_CONNECT_TIMEOUT, TcpStream::connect(mihomo))
+        .await
+        .map_err(|_| BrokerErrorCode::Timeout)?
+        .map_err(|_| BrokerErrorCode::ProxyUnavailable)?;
+    timeout(MIHOMO_CONNECT_TIMEOUT, async {
+        stream.write_all(&[0x05, 0x01, 0x00]).await?;
+        let mut greeting = [0u8; 2];
+        stream.read_exact(&mut greeting).await?;
+        if greeting != [0x05, 0x00] {
+            return Err(std::io::Error::other(
+                "Mihomo SOCKS5 authentication rejected",
+            ));
+        }
+        let mut request = vec![0x05, 0x01, 0x00];
+        if let Ok(address) = host.parse::<std::net::IpAddr>() {
+            match address {
+                std::net::IpAddr::V4(value) => {
+                    request.push(0x01);
+                    request.extend_from_slice(&value.octets());
+                }
+                std::net::IpAddr::V6(value) => {
+                    request.push(0x04);
+                    request.extend_from_slice(&value.octets());
+                }
+            }
+        } else {
+            let bytes = host.as_bytes();
+            if bytes.is_empty() || bytes.len() > 255 {
+                return Err(std::io::Error::other("Mihomo destination is too long"));
+            }
+            request.push(0x03);
+            request.push(bytes.len() as u8);
+            request.extend_from_slice(bytes);
+        }
+        request.extend_from_slice(&port.to_be_bytes());
+        stream.write_all(&request).await?;
+        let mut response = [0u8; 4];
+        stream.read_exact(&mut response).await?;
+        if response[0] != 0x05 || response[1] != 0x00 {
+            return Err(std::io::Error::other("Mihomo SOCKS5 CONNECT failed"));
+        }
+        let address_len = match response[3] {
+            0x01 => 4,
+            0x04 => 16,
+            0x03 => {
+                let mut length = [0u8; 1];
+                stream.read_exact(&mut length).await?;
+                usize::from(length[0])
+            }
+            _ => {
+                return Err(std::io::Error::other(
+                    "Mihomo returned invalid address type",
+                ))
+            }
+        };
+        let mut bound_address = vec![0u8; address_len + 2];
+        stream.read_exact(&mut bound_address).await?;
+        Ok::<(), std::io::Error>(())
+    })
+    .await
+    .map_err(|_| BrokerErrorCode::Timeout)?
+    .map_err(|_| BrokerErrorCode::ProxyUnavailable)?;
+    Ok(stream)
+}
+
+fn parse_destination(destination: &str) -> Option<(String, u16)> {
+    if let Some(rest) = destination.strip_prefix('[') {
+        let (host, port) = rest.split_once("]:")?;
+        let port = port.parse().ok()?;
+        return (port != 0).then_some((host.to_owned(), port));
+    }
+    let (host, port) = destination.rsplit_once(':')?;
+    if host.is_empty() || host.contains(':') {
+        return None;
+    }
+    let port = port.parse().ok()?;
+    (port != 0).then_some((host.to_owned(), port))
+}
+
 fn validate_open(
     flow_id: u64,
     process_id: u32,
@@ -457,5 +550,19 @@ mod tests {
         assert_eq!(expired.len(), 1);
         assert_eq!(expired[0].state, FlowState::Closed);
         assert_eq!(registry.len(), 0);
+    }
+
+    #[test]
+    fn destination_parser_handles_domains_and_bracketed_ipv6() {
+        assert_eq!(
+            parse_destination("example.com:443"),
+            Some(("example.com".to_owned(), 443))
+        );
+        assert_eq!(
+            parse_destination("[2001:db8::1]:443"),
+            Some(("2001:db8::1".to_owned(), 443))
+        );
+        assert!(parse_destination("2001:db8::1:443").is_none());
+        assert!(parse_destination("example.com:0").is_none());
     }
 }
