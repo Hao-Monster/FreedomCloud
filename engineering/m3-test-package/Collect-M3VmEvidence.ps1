@@ -13,7 +13,15 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-if (-not [IO.Path]::IsPathFullyQualified($OutputDirectory)) {
+function Test-FcxAbsolutePath {
+    param([string]$Path)
+    # IsPathFullyQualified and GetRelativePath are not available in Windows
+    # PowerShell 5.1, which is still present on supported Windows 11 hosts.
+    return (-not [string]::IsNullOrWhiteSpace($Path)) -and
+        ($Path -match '^(?:[A-Za-z]:[\\/]|\\\\)')
+}
+
+if (-not (Test-FcxAbsolutePath $OutputDirectory)) {
     throw 'OutputDirectory must be an absolute path'
 }
 $output = [IO.Path]::GetFullPath($OutputDirectory)
@@ -154,9 +162,13 @@ Do not include packet payloads, profile data, credentials, or command-line secre
 "@,
     $utf8
 )
+$outputPrefix = $output.TrimEnd('\\') + '\\'
 $hashLines = Get-ChildItem -LiteralPath $output -File -Recurse |
     ForEach-Object {
-        $relative = [IO.Path]::GetRelativePath($output, $_.FullName) -replace '\\', '/'
+        if (-not $_.FullName.StartsWith($outputPrefix, [StringComparison]::OrdinalIgnoreCase)) {
+            throw 'evidence file escaped the output directory'
+        }
+        $relative = $_.FullName.Substring($outputPrefix.Length) -replace '\\', '/'
         if ($relative -ne 'SHA256SUMS.txt') {
             '{0} *{1}' -f (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash, $relative
         }

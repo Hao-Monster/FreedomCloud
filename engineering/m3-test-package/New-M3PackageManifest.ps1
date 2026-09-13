@@ -26,10 +26,18 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+function Test-FcxAbsolutePath {
+    param([string]$Path)
+    # IsPathFullyQualified was added after the Windows PowerShell 5.1
+    # runtime. Keep the package tooling usable on the supported inbox shell.
+    return (-not [string]::IsNullOrWhiteSpace($Path)) -and
+        ($Path -match '^(?:[A-Za-z]:[\\/]|\\\\)')
+}
+
 function Resolve-PlainFile {
     param([string]$Path, [string]$Label)
 
-    if (-not [IO.Path]::IsPathFullyQualified($Path)) {
+    if (-not (Test-FcxAbsolutePath $Path)) {
         throw "$Label must be an absolute path"
     }
     $item = Get-Item -LiteralPath $Path -Force
@@ -66,7 +74,7 @@ function Get-FileIdentity {
 $driver = Resolve-PlainFile -Path $DriverPath -Label 'driver'
 $agent = Resolve-PlainFile -Path $AgentPath -Label 'Agent'
 $core = Resolve-PlainFile -Path $CorePath -Label 'Core'
-if (-not [IO.Path]::IsPathFullyQualified($OutputPath)) {
+if (-not (Test-FcxAbsolutePath $OutputPath)) {
     throw 'OutputPath must be an absolute path'
 }
 $output = [IO.Path]::GetFullPath($OutputPath)

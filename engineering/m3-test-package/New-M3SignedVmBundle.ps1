@@ -13,9 +13,16 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+function Test-FcxAbsolutePath {
+    param([string]$Path)
+    # IsPathFullyQualified is unavailable in Windows PowerShell 5.1.
+    return (-not [string]::IsNullOrWhiteSpace($Path)) -and
+        ($Path -match '^(?:[A-Za-z]:[\\/]|\\\\)')
+}
+
 function Resolve-PlainFile {
     param([string]$Path, [string]$Label)
-    if (-not [IO.Path]::IsPathFullyQualified($Path)) { throw "$Label must be an absolute path" }
+    if (-not (Test-FcxAbsolutePath $Path)) { throw "$Label must be an absolute path" }
     $item = Get-Item -LiteralPath $Path -Force
     if ($item.PSIsContainer -or (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0)) {
         throw "$Label must be a plain file"
@@ -95,7 +102,7 @@ if (-not (Test-ContainsByteSequence -Haystack $brokerBytes -Needle $manifestByte
     throw 'Broker does not embed the exact supplied package manifest'
 }
 
-if (-not [IO.Path]::IsPathFullyQualified($OutputZip) -or
+if (-not (Test-FcxAbsolutePath $OutputZip) -or
     -not $OutputZip.EndsWith('.zip', [StringComparison]::OrdinalIgnoreCase)) {
     throw 'OutputZip must be an absolute .zip path'
 }
