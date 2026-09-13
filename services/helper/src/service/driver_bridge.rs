@@ -29,7 +29,7 @@ mod windows_bridge {
         (FILE_DEVICE_NETWORK << 16) | (FILE_ANY_ACCESS << 14) | (0x8338 << 2) | METHOD_BUFFERED;
     const IOCTL_SC_QUERY_STATUS: u32 =
         (FILE_DEVICE_NETWORK << 16) | (FILE_ANY_ACCESS << 14) | (0x8339 << 2) | METHOD_BUFFERED;
-    pub const PROTOCOL_VERSION: u32 = 1;
+    pub const PROTOCOL_VERSION: u32 = 2;
 
     #[repr(C)]
     #[derive(Clone, Copy, Debug, Default)]
@@ -37,9 +37,11 @@ mod windows_bridge {
         pub version: u32,
         pub flags: u32,
         pub process_id: u32,
+        pub broker_process_id: u32,
         pub proxy_ipv4: u32,
         pub proxy_port: u16,
         pub reserved: u16,
+        pub proxy_ipv6: [u8; 16],
     }
 
     #[repr(C)]
@@ -73,7 +75,10 @@ mod windows_bridge {
 
     impl DriverClient {
         pub fn connect() -> Result<Self, String> {
-            let path: Vec<u16> = OsStr::new(DEVICE_PATH).encode_wide().chain(Some(0)).collect();
+            let path: Vec<u16> = OsStr::new(DEVICE_PATH)
+                .encode_wide()
+                .chain(Some(0))
+                .collect();
             // SAFETY: path is a valid NUL-terminated UTF-16 string.
             let handle = unsafe {
                 CreateFileW(
@@ -87,9 +92,10 @@ mod windows_bridge {
                 )
             };
             if handle == INVALID_HANDLE_VALUE {
-                return Err(format!("strict capture device unavailable: Win32 error {}", unsafe {
-                    GetLastError()
-                }));
+                return Err(format!(
+                    "strict capture device unavailable: Win32 error {}",
+                    unsafe { GetLastError() }
+                ));
             }
             Ok(Self { handle })
         }
@@ -97,20 +103,25 @@ mod windows_bridge {
         pub fn update_policy(
             &self,
             process_id: u32,
+            broker_process_id: u32,
             proxy_ipv4: u32,
             proxy_port: u16,
             redirect_ready: bool,
         ) -> Result<(), String> {
-            if process_id == 0 || proxy_port == 0 {
-                return Err("process id and proxy port must be non-zero".to_owned());
+            if process_id == 0 || broker_process_id == 0 || proxy_port == 0 {
+                return Err(
+                    "process id, broker process id and proxy port must be non-zero".to_owned(),
+                );
             }
             let request = PolicyUpdate {
                 version: PROTOCOL_VERSION,
                 flags: if redirect_ready { 1 } else { 0 },
                 process_id,
+                broker_process_id,
                 proxy_ipv4,
                 proxy_port,
                 reserved: 0,
+                proxy_ipv6: [0; 16],
             };
             self.call(IOCTL_SC_UPDATE_POLICY, &request, None::<&mut DriverStatus>)
         }
@@ -119,7 +130,10 @@ mod windows_bridge {
             if process_id == 0 {
                 return Err("process id must be non-zero".to_owned());
             }
-            let request = PolicyClear { version: PROTOCOL_VERSION, process_id };
+            let request = PolicyClear {
+                version: PROTOCOL_VERSION,
+                process_id,
+            };
             self.call(IOCTL_SC_CLEAR_POLICY, &request, None::<&mut DriverStatus>)
         }
 
@@ -127,12 +141,20 @@ mod windows_bridge {
             let mut response = DriverStatus::default();
             self.call(IOCTL_SC_QUERY_STATUS, &(), Some(&mut response))?;
             if response.version != PROTOCOL_VERSION {
-                return Err(format!("strict capture protocol mismatch: {}", response.version));
+                return Err(format!(
+                    "strict capture protocol mismatch: {}",
+                    response.version
+                ));
             }
             Ok(response)
         }
 
-        fn call<T: Copy, R>(&self, code: u32, request: &T, response: Option<&mut R>) -> Result<(), String> {
+        fn call<T: Copy, R>(
+            &self,
+            code: u32,
+            request: &T,
+            response: Option<&mut R>,
+        ) -> Result<(), String> {
             let mut returned = 0u32;
             let (out_ptr, out_len) = match response {
                 Some(value) => (value as *mut R as *mut _, size_of::<R>() as u32),
@@ -152,9 +174,10 @@ mod windows_bridge {
                 )
             };
             if ok == 0 {
-                return Err(format!("strict capture IOCTL 0x{code:08x} failed: Win32 error {}", unsafe {
-                    GetLastError()
-                }));
+                return Err(format!(
+                    "strict capture IOCTL 0x{code:08x} failed: Win32 error {}",
+                    unsafe { GetLastError() }
+                ));
             }
             Ok(())
         }
@@ -165,7 +188,7 @@ mod windows_bridge {
         use super::*;
         #[test]
         fn protocol_layout_is_stable() {
-            assert_eq!(size_of::<PolicyUpdate>(), 20);
+            assert_eq!(size_of::<PolicyUpdate>(), 40);
             assert_eq!(size_of::<PolicyClear>(), 8);
             assert_eq!(size_of::<DriverStatus>(), 16);
         }

@@ -21,7 +21,7 @@
 #define IOCTL_SC_CLEAR_POLICY  CTL_CODE(FILE_DEVICE_NETWORK, SC_IOCTL_BASE + 1, METHOD_BUFFERED, FILE_ANY_ACCESS)
 #define IOCTL_SC_QUERY_STATUS  CTL_CODE(FILE_DEVICE_NETWORK, SC_IOCTL_BASE + 2, METHOD_BUFFERED, FILE_ANY_ACCESS)
 
-#define SC_PROTOCOL_VERSION 1u
+#define SC_PROTOCOL_VERSION 2u
 #define SC_MAX_POLICIES 128u
 #define SC_POLICY_FLAG_REDIRECT_READY 0x00000001u
 
@@ -29,9 +29,11 @@ typedef struct _SC_POLICY_UPDATE {
     ULONG Version;
     ULONG Flags;
     ULONG ProcessId;
+    ULONG BrokerProcessId;
     ULONG ProxyIpv4;       // network byte order; zero means broker-owned endpoint
     USHORT ProxyPort;
     USHORT Reserved;
+    UCHAR ProxyIpv6[16];   // network byte order; zero means use IPv4-mapped endpoint
 } SC_POLICY_UPDATE, *PSC_POLICY_UPDATE;
 
 typedef struct _SC_POLICY_CLEAR {
@@ -58,6 +60,7 @@ void NTAPI ScClassify(
     const FWPS_INCOMING_VALUES0* inFixedValues,
     const FWPS_INCOMING_METADATA_VALUES0* inMetaValues,
     void* layerData,
-    const FWPS_FILTER0* filter,
+    const void* classifyContext,
+    const FWPS_FILTER2* filter,
     UINT64 flowContext,
     FWPS_CLASSIFY_OUT0* classifyOut);
