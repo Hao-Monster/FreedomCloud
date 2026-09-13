@@ -2,6 +2,76 @@ import 'package:flclashx/common/per_app_policy.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('strict policy blocks on capture or forwarding failure', () {
+    final unavailable = evaluateStrictPolicy(
+      policy: ApplicationRoutingPolicy.proxy,
+      state: StrictPolicyState.blocking,
+      captureOwned: false,
+      forwardingHealthy: false,
+      failureReason: StrictPolicyFailureReason.proxyRouteUnavailable,
+    );
+    expect(unavailable.route, StrictPolicyRoute.block);
+    expect(unavailable.failureReason,
+        StrictPolicyFailureReason.proxyRouteUnavailable);
+    expect(unavailable.isBlocking, isTrue);
+
+    final direct = evaluateStrictPolicy(
+      policy: ApplicationRoutingPolicy.direct,
+      state: StrictPolicyState.armed,
+      captureOwned: true,
+      forwardingHealthy: true,
+    );
+    expect(direct.route, StrictPolicyRoute.direct);
+    expect(direct.failureReason, isNull);
+  });
+
+  test('strict policy never treats an explicit proxy failure as direct', () {
+    final decision = evaluateStrictPolicy(
+      policy: ApplicationRoutingPolicy.proxy,
+      state: StrictPolicyState.armed,
+      captureOwned: true,
+      forwardingHealthy: false,
+      failureReason: StrictPolicyFailureReason.coreUnavailable,
+    );
+    expect(decision.route, StrictPolicyRoute.block);
+    expect(decision.route, isNot(StrictPolicyRoute.direct));
+  });
+
+  test('strict state transitions reject unsafe recovery shortcuts', () {
+    expect(
+      canTransitionStrictPolicyState(
+        StrictPolicyState.blocking,
+        StrictPolicyState.armed,
+      ),
+      isFalse,
+    );
+    expect(
+      canTransitionStrictPolicyState(
+        StrictPolicyState.blocking,
+        StrictPolicyState.recovering,
+      ),
+      isTrue,
+    );
+    expect(
+      canTransitionStrictPolicyState(
+        StrictPolicyState.recovering,
+        StrictPolicyState.armed,
+      ),
+      isTrue,
+    );
+  });
+
+  test('strict failure codes are stable and transport-safe', () {
+    expect(
+      strictPolicyFailureCode(StrictPolicyFailureReason.brokerUnavailable),
+      'broker_unavailable',
+    );
+    expect(
+      strictPolicyFailureCode(StrictPolicyFailureReason.recoveryExhausted),
+      'recovery_exhausted',
+    );
+  });
+
   test('application policies compile ahead-of-profile Mihomo rules', () {
     final policies = [
       const PerAppPolicy(

@@ -4,6 +4,47 @@ pub const PROTOCOL_VERSION: u32 = 1;
 pub const MAX_AUTH_LINE_BYTES: usize = 4096;
 pub const MAX_MESSAGE_LINE_BYTES: usize = 1024 * 1024;
 
+/// Strict-capture status is a data contract only. Platform capture backends
+/// must publish `armed` before selected flows are allowed to leave the host;
+/// the Agent itself does not pretend to implement WFP or Network Extension.
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum StrictPolicyState {
+    Disabled,
+    Preparing,
+    Armed,
+    Degraded,
+    Blocking,
+    Recovering,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum StrictPolicyFailureReason {
+    CaptureUnavailable,
+    ProxyRouteUnavailable,
+    IdentityUnavailable,
+    CoreUnavailable,
+    BrokerUnavailable,
+    RecoveryExhausted,
+    InvalidPolicy,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct StrictPolicyStatus {
+    pub state: StrictPolicyState,
+    pub generation: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub failure_reason: Option<StrictPolicyFailureReason>,
+}
+
+impl StrictPolicyStatus {
+    pub fn fail_closed(&self) -> bool {
+        self.state != StrictPolicyState::Armed
+    }
+}
+
 #[derive(Debug, Deserialize, PartialEq, Eq)]
 pub struct AuthRequest {
     pub token: String,
@@ -105,5 +146,20 @@ mod tests {
         assert_eq!(control.id, "request-1");
         assert_eq!(control.command, AgentCommand::RestartCore);
         assert!(parse_control(r#"{"id":"core-1","method":"updateConfig","data":"{}"}"#).is_none());
+    }
+
+    #[test]
+    fn strict_status_is_fail_closed_until_armed() {
+        let status = StrictPolicyStatus {
+            state: StrictPolicyState::Blocking,
+            generation: 7,
+            failure_reason: Some(StrictPolicyFailureReason::BrokerUnavailable),
+        };
+        assert!(status.fail_closed());
+        let encoded = serde_json::to_string(&status).expect("strict status JSON");
+        assert!(encoded.contains("brokerUnavailable"));
+        let armed: StrictPolicyStatus =
+            serde_json::from_str(r#"{"state":"armed","generation":8}"#).expect("armed status");
+        assert!(!armed.fail_closed());
     }
 }

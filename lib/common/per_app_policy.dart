@@ -12,6 +12,112 @@ const maxPerAppPolicies = 128;
 
 enum ApplicationRoutingPolicy { inherit, proxy, direct, block }
 
+/// Lifecycle of the platform capture owner used by strict per-application
+/// routing.  This is deliberately separate from Mihomo's `find-process-mode`:
+/// a strict policy is not considered active until the capture owner and the
+/// forwarding route are both healthy.
+enum StrictPolicyState {
+  disabled,
+  preparing,
+  armed,
+  degraded,
+  blocking,
+  recovering
+}
+
+enum StrictPolicyFailureReason {
+  captureUnavailable,
+  proxyRouteUnavailable,
+  identityUnavailable,
+  coreUnavailable,
+  brokerUnavailable,
+  recoveryExhausted,
+  invalidPolicy,
+}
+
+String strictPolicyFailureCode(StrictPolicyFailureReason reason) =>
+    switch (reason) {
+      StrictPolicyFailureReason.captureUnavailable => 'capture_unavailable',
+      StrictPolicyFailureReason.proxyRouteUnavailable =>
+        'proxy_route_unavailable',
+      StrictPolicyFailureReason.identityUnavailable => 'identity_unavailable',
+      StrictPolicyFailureReason.coreUnavailable => 'core_unavailable',
+      StrictPolicyFailureReason.brokerUnavailable => 'broker_unavailable',
+      StrictPolicyFailureReason.recoveryExhausted => 'recovery_exhausted',
+      StrictPolicyFailureReason.invalidPolicy => 'invalid_policy',
+    };
+
+/// Strict state transitions are intentionally explicit so a backend cannot
+/// accidentally remove a block before forwarding has recovered.
+bool canTransitionStrictPolicyState(
+  StrictPolicyState from,
+  StrictPolicyState to,
+) {
+  if (from == to) return true;
+  return switch (from) {
+    StrictPolicyState.disabled => to == StrictPolicyState.preparing,
+    StrictPolicyState.preparing => to == StrictPolicyState.armed ||
+        to == StrictPolicyState.degraded ||
+        to == StrictPolicyState.blocking ||
+        to == StrictPolicyState.disabled,
+    StrictPolicyState.armed => to == StrictPolicyState.degraded ||
+        to == StrictPolicyState.blocking ||
+        to == StrictPolicyState.recovering ||
+        to == StrictPolicyState.disabled,
+    StrictPolicyState.degraded ||
+    StrictPolicyState.blocking =>
+      to == StrictPolicyState.recovering || to == StrictPolicyState.disabled,
+    StrictPolicyState.recovering => to == StrictPolicyState.armed ||
+        to == StrictPolicyState.degraded ||
+        to == StrictPolicyState.blocking ||
+        to == StrictPolicyState.disabled,
+  };
+}
+
+enum StrictPolicyRoute { unmanaged, proxy, direct, block }
+
+/// Result of evaluating one selected application's strict policy.
+///
+/// `direct` is only returned for an explicit DIRECT policy while the capture
+/// owner is armed and forwarding is healthy.  A failed capture/forwarding
+/// path always returns `block`; it never silently falls through to DIRECT.
+@immutable
+class StrictPolicyDecision {
+  const StrictPolicyDecision({required this.route, this.failureReason});
+
+  final StrictPolicyRoute route;
+  final StrictPolicyFailureReason? failureReason;
+
+  bool get isBlocking => route == StrictPolicyRoute.block;
+}
+
+StrictPolicyDecision evaluateStrictPolicy({
+  required ApplicationRoutingPolicy policy,
+  required StrictPolicyState state,
+  required bool captureOwned,
+  required bool forwardingHealthy,
+  StrictPolicyFailureReason failureReason =
+      StrictPolicyFailureReason.captureUnavailable,
+}) {
+  if (policy == ApplicationRoutingPolicy.inherit) {
+    return const StrictPolicyDecision(route: StrictPolicyRoute.unmanaged);
+  }
+  if (state != StrictPolicyState.armed || !captureOwned || !forwardingHealthy) {
+    return StrictPolicyDecision(
+      route: StrictPolicyRoute.block,
+      failureReason: failureReason,
+    );
+  }
+  return StrictPolicyDecision(
+    route: switch (policy) {
+      ApplicationRoutingPolicy.proxy => StrictPolicyRoute.proxy,
+      ApplicationRoutingPolicy.direct => StrictPolicyRoute.direct,
+      ApplicationRoutingPolicy.block => StrictPolicyRoute.block,
+      ApplicationRoutingPolicy.inherit => StrictPolicyRoute.unmanaged,
+    },
+  );
+}
+
 String applicationRoutingPolicyLabel(ApplicationRoutingPolicy policy) =>
     switch (policy) {
       ApplicationRoutingPolicy.inherit => 'INHERIT',

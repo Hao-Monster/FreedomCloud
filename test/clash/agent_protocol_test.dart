@@ -4,6 +4,52 @@ import 'package:flclashx/clash/agent_protocol.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('strict policy status round-trips and fails closed before armed', () {
+    const status = AgentStrictPolicyStatus(
+      state: AgentStrictPolicyState.blocking,
+      generation: 4,
+      failureReason: AgentStrictPolicyFailureReason.brokerUnavailable,
+    );
+    final decoded = AgentStrictPolicyStatus.fromJson(status.toJson());
+    expect(decoded.state, AgentStrictPolicyState.blocking);
+    expect(decoded.generation, 4);
+    expect(decoded.failureReason,
+        AgentStrictPolicyFailureReason.brokerUnavailable);
+    expect(decoded.failClosed, isTrue);
+
+    const armed = AgentStrictPolicyStatus(
+      state: AgentStrictPolicyState.armed,
+      generation: 5,
+    );
+    expect(
+        AgentStrictPolicyStatus.fromJson(armed.toJson()).failClosed, isFalse);
+  });
+
+  test('strict policy status rejects unknown state, reason and generation', () {
+    expect(
+      () => AgentStrictPolicyStatus.fromJson({
+        'state': 'unknown',
+        'generation': 1,
+      }),
+      throwsA(isA<ArgumentError>()),
+    );
+    expect(
+      () => AgentStrictPolicyStatus.fromJson({
+        'state': 'blocking',
+        'failureReason': 'unknown',
+        'generation': 1,
+      }),
+      throwsA(isA<ArgumentError>()),
+    );
+    expect(
+      () => AgentStrictPolicyStatus.fromJson({
+        'state': 'blocking',
+        'generation': -1,
+      }),
+      throwsFormatException,
+    );
+  });
+
   test('endpoint requires v1, a loopback port and a 256-bit token', () {
     final endpoint = AgentEndpoint.fromJson({
       'protocol': 1,
