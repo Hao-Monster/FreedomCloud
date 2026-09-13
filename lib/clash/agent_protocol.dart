@@ -108,6 +108,7 @@ class AgentEvent {
   final bool? ok;
   final bool? proxyRunning;
   final bool? privilegedBackend;
+
   /// Strict capture state reported by Agent. Missing status is treated as
   /// disabled so older Agents remain fail-closed to strict-policy consumers.
   final AgentStrictPolicyStatus strictPolicyStatus;
@@ -165,6 +166,57 @@ class AgentStrictPolicyStatus {
       };
 
   bool get failClosed => state != AgentStrictPolicyState.armed;
+}
+
+/// Keeps the latest strict-policy status received from the Agent.
+///
+/// Agent events can be delivered out of order after a reconnect.  A status
+/// from an older generation must never overwrite a newer status, otherwise a
+/// stale `armed` event could make the UI/strategy layer believe capture is
+/// healthy.  States within the same generation are accepted because capture
+/// can legitimately move through preparing/degraded/recovering without a Core
+/// restart.
+class AgentStrictPolicyStatusCache {
+  AgentStrictPolicyStatusCache({
+    AgentStrictPolicyStatus initial = const AgentStrictPolicyStatus(
+      state: AgentStrictPolicyState.disabled,
+      generation: 0,
+    ),
+  }) : _value = initial;
+
+  AgentStrictPolicyStatus _value;
+
+  AgentStrictPolicyStatus get value => _value;
+
+  /// Applies [next] unless it belongs to an older Agent generation.
+  bool update(AgentStrictPolicyStatus next) {
+    if (next.generation < _value.generation) return false;
+    if (next.state == _value.state &&
+        next.generation == _value.generation &&
+        next.failureReason == _value.failureReason) {
+      return false;
+    }
+    _value = next;
+    return true;
+  }
+}
+
+/// An Agent must not report an armed strict policy while its Core is not ready.
+/// This adapter only removes an unsafe claim; it never fabricates capture
+/// success and leaves all other fail-closed states unchanged.
+AgentStrictPolicyStatus strictPolicyStatusForCore({
+  required AgentStrictPolicyStatus status,
+  required AgentCoreState coreState,
+}) {
+  if (coreState == AgentCoreState.ready ||
+      status.state != AgentStrictPolicyState.armed) {
+    return status;
+  }
+  return AgentStrictPolicyStatus(
+    state: AgentStrictPolicyState.blocking,
+    generation: status.generation,
+    failureReason: AgentStrictPolicyFailureReason.coreUnavailable,
+  );
 }
 
 String encodeAgentCommand({

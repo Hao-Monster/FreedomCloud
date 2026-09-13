@@ -27,6 +27,11 @@ class ClashService extends ClashHandlerInterface {
   Completer<void> _agentAttachedCompleter = Completer();
   Completer<void> _coreReadyCompleter = Completer();
   final Map<String, Completer<bool>> _agentCommandCompleters = {};
+  final AgentStrictPolicyStatusCache _strictPolicyStatusCache =
+      AgentStrictPolicyStatusCache();
+  final StreamController<AgentStrictPolicyStatus>
+      _strictPolicyStatusController =
+      StreamController<AgentStrictPolicyStatus>.broadcast();
   bool _agentMode = false;
   bool _detaching = false;
   bool _agentRecovering = false;
@@ -63,6 +68,22 @@ class ClashService extends ClashHandlerInterface {
   bool get usesAgent => _agentMode;
 
   bool? get agentProxyRunning => _agentProxyRunning;
+
+  /// Latest strict-capture status reported by the Agent.  The value is
+  /// fail-closed by default and is never inferred from `proxyRunning`.
+  AgentStrictPolicyStatus get strictPolicyStatus =>
+      _strictPolicyStatusCache.value;
+
+  /// Emits accepted strict-capture status changes for strategy/UI consumers.
+  /// A reconnect status from an older generation is discarded by the cache.
+  Stream<AgentStrictPolicyStatus> get strictPolicyStatusChanges =>
+      _strictPolicyStatusController.stream;
+
+  void _publishStrictPolicyStatus(AgentStrictPolicyStatus status) {
+    if (_strictPolicyStatusCache.update(status)) {
+      _strictPolicyStatusController.add(_strictPolicyStatusCache.value);
+    }
+  }
 
   Future<void> _initialize() async {
     try {
@@ -198,6 +219,12 @@ class ClashService extends ClashHandlerInterface {
 
   void _handleAgentEvent(AgentEvent event) {
     _agentCoreState = event.coreState;
+    _publishStrictPolicyStatus(
+      strictPolicyStatusForCore(
+        status: event.strictPolicyStatus,
+        coreState: event.coreState,
+      ),
+    );
     if (event.type == AgentEventType.ready &&
         !_agentAttachedCompleter.isCompleted) {
       _agentAttachedCompleter.complete();
@@ -263,6 +290,17 @@ class ClashService extends ClashHandlerInterface {
   }
 
   void _onAgentLost(String reason) {
+    // Socket loss invalidates any previously armed claim.  Keep the status
+    // fail-closed while the bounded reconnect loop runs; never leave an armed
+    // snapshot visible to policy consumers during an outage.
+    final current = strictPolicyStatus;
+    _publishStrictPolicyStatus(
+      AgentStrictPolicyStatus(
+        state: AgentStrictPolicyState.blocking,
+        generation: current.generation,
+        failureReason: AgentStrictPolicyFailureReason.coreUnavailable,
+      ),
+    );
     if (_detaching || _stopping || _agentRecovering) return;
     _agentRecovering = true;
     final previousAgentPid = _agentPid;

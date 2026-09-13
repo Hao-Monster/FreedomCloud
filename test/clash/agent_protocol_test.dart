@@ -50,6 +50,67 @@ void main() {
     );
   });
 
+  test(
+      'strict status cache rejects stale generations but accepts same-generation transitions',
+      () {
+    final cache = AgentStrictPolicyStatusCache(
+      initial: const AgentStrictPolicyStatus(
+        state: AgentStrictPolicyState.preparing,
+        generation: 4,
+      ),
+    );
+    expect(
+      cache.update(const AgentStrictPolicyStatus(
+        state: AgentStrictPolicyState.armed,
+        generation: 3,
+      )),
+      isFalse,
+    );
+    expect(cache.value.state, AgentStrictPolicyState.preparing);
+    expect(
+      cache.update(const AgentStrictPolicyStatus(
+        state: AgentStrictPolicyState.armed,
+        generation: 4,
+      )),
+      isTrue,
+    );
+    expect(cache.value.state, AgentStrictPolicyState.armed);
+    expect(
+      cache.update(const AgentStrictPolicyStatus(
+        state: AgentStrictPolicyState.armed,
+        generation: 4,
+      )),
+      isFalse,
+    );
+  });
+
+  test('core adapter removes unsafe armed status when Core is unavailable', () {
+    const armed = AgentStrictPolicyStatus(
+      state: AgentStrictPolicyState.armed,
+      generation: 8,
+    );
+    final blocked = strictPolicyStatusForCore(
+      status: armed,
+      coreState: AgentCoreState.stopped,
+    );
+    expect(blocked.state, AgentStrictPolicyState.blocking);
+    expect(
+        blocked.failureReason, AgentStrictPolicyFailureReason.coreUnavailable);
+    expect(blocked.failClosed, isTrue);
+
+    const preparing = AgentStrictPolicyStatus(
+      state: AgentStrictPolicyState.preparing,
+      generation: 8,
+    );
+    expect(
+      strictPolicyStatusForCore(
+        status: preparing,
+        coreState: AgentCoreState.failed,
+      ),
+      same(preparing),
+    );
+  });
+
   test('endpoint requires v1, a loopback port and a 256-bit token', () {
     final endpoint = AgentEndpoint.fromJson({
       'protocol': 1,
@@ -123,8 +184,8 @@ void main() {
         },
       },
     });
-    expect(strictEvent?.strictPolicyStatus.state,
-        AgentStrictPolicyState.blocking);
+    expect(
+        strictEvent?.strictPolicyStatus.state, AgentStrictPolicyState.blocking);
     expect(strictEvent?.strictPolicyStatus.failClosed, isTrue);
     final undecided = AgentEvent.tryParse({
       '_agent': {
