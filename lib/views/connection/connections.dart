@@ -436,6 +436,8 @@ class _ConnectionsViewState extends ConsumerState<ConnectionsView>
         items: items,
         columns: settings.connectionTableColumns,
         columnWidths: settings.connectionTableColumnWidths,
+        sort: settings.connectionSort,
+        sortDirection: settings.connectionSortDirection,
         onColumnWidthsChanged: (widths) {
           ref.read(appSettingProvider.notifier).updateState(
                 (value) => value.copyWith(connectionTableColumnWidths: widths),

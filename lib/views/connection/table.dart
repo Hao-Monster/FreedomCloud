@@ -14,6 +14,8 @@ class ConnectionTable extends StatefulWidget {
     required this.onColumnWidthsChanged,
     required this.onTap,
     required this.onClose,
+    this.sort,
+    this.sortDirection,
   });
 
   final List<TrackedConnection> items;
@@ -22,6 +24,12 @@ class ConnectionTable extends StatefulWidget {
   final ValueChanged<Map<String, double>> onColumnWidthsChanged;
   final ValueChanged<TrackedConnection> onTap;
   final ValueChanged<TrackedConnection> onClose;
+  /// Initial sort selected in the connection settings.
+  ///
+  /// Header taps remain local to this table, but the first render (and an
+  /// external settings change) must not silently fall back to time sorting.
+  final ConnectionSort? sort;
+  final ConnectionSortDirection? sortDirection;
 
   @override
   State<ConnectionTable> createState() => _ConnectionTableState();
@@ -38,6 +46,8 @@ class _ConnectionTableState extends State<ConnectionTable> {
   void initState() {
     super.initState();
     _widths = Map.of(widget.columnWidths);
+    _sortColumn = _columnForSort(widget.sort);
+    _direction = widget.sortDirection ?? _direction;
   }
 
   @override
@@ -45,6 +55,13 @@ class _ConnectionTableState extends State<ConnectionTable> {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.columnWidths != widget.columnWidths) {
       _widths = Map.of(widget.columnWidths);
+    }
+    if (oldWidget.sort != widget.sort ||
+        oldWidget.sortDirection != widget.sortDirection) {
+      setState(() {
+        _sortColumn = _columnForSort(widget.sort);
+        _direction = widget.sortDirection ?? _direction;
+      });
     }
   }
 
@@ -242,6 +259,15 @@ class _ConnectionTableState extends State<ConnectionTable> {
     );
   }
 }
+
+String _columnForSort(ConnectionSort? sort) => switch (sort) {
+      ConnectionSort.upload => 'upload',
+      ConnectionSort.download => 'download',
+      ConnectionSort.uploadSpeed => 'uploadSpeed',
+      ConnectionSort.downloadSpeed => 'downloadSpeed',
+      ConnectionSort.process => 'process',
+      ConnectionSort.time || null => 'time',
+    };
 
 double _defaultColumnWidth(String column) => switch (column) {
       'status' => 76,

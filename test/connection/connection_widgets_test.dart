@@ -74,6 +74,8 @@ void main() {
               items: items,
               columns: const ['process', 'host', 'uploadSpeed'],
               columnWidths: const {},
+              sort: ConnectionSort.uploadSpeed,
+              sortDirection: ConnectionSortDirection.descending,
               onColumnWidthsChanged: (_) {},
               onTap: (_) {},
               onClose: (_) {},
@@ -89,6 +91,46 @@ void main() {
     );
     expect(renderedProcesses, findsWidgets);
     expect(renderedProcesses.evaluate().length, lessThan(items.length));
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('table follows connection sort settings on first render',
+      (tester) async {
+    await AppLocalizations.delegate.load(const Locale('en'));
+    final items = [
+      _tracked(id: 'slow', process: 'slow.exe', uploadSpeed: 1),
+      _tracked(id: 'fast', process: 'fast.exe', uploadSpeed: 10),
+    ];
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SizedBox(
+            width: 720,
+            height: 420,
+            child: ConnectionTable(
+              items: items,
+              columns: const ['process', 'uploadSpeed'],
+              columnWidths: const {},
+              sort: ConnectionSort.uploadSpeed,
+              sortDirection: ConnectionSortDirection.descending,
+              onColumnWidthsChanged: (_) {},
+              onTap: (_) {},
+              onClose: (_) {},
+            ),
+          ),
+        ),
+      ),
+    );
+
+    final processTexts = tester
+        .widgetList<Text>(find.byWidgetPredicate(
+          (widget) =>
+              widget is Text && (widget.data?.endsWith('.exe') ?? false),
+        ))
+        .map((text) => text.data)
+        .toList();
+    expect(processTexts, containsAllInOrder(['fast.exe', 'slow.exe']));
     expect(tester.takeException(), isNull);
   });
 
@@ -134,7 +176,11 @@ void main() {
   });
 }
 
-TrackedConnection _tracked({required String id, required String process}) =>
+TrackedConnection _tracked({
+  required String id,
+  required String process,
+  double uploadSpeed = 512,
+}) =>
     TrackedConnection(
       connection: Connection(
         id: id,
@@ -156,6 +202,6 @@ TrackedConnection _tracked({required String id, required String process}) =>
         chains: const ['Proxy'],
       ),
       isActive: true,
-      uploadSpeed: 512,
+      uploadSpeed: uploadSpeed,
       downloadSpeed: 1024,
     );
