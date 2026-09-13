@@ -68,9 +68,10 @@ impl StrictAppTarget {
             .file_name()
             .and_then(|value| value.to_str())
             .unwrap_or("application");
-        let mut name = format!("FlClashX strict block: {filename}");
-        name.truncate(MAX_DISPLAY_NAME_CHARS);
-        name
+        format!("FlClashX strict block: {filename}")
+            .chars()
+            .take(MAX_DISPLAY_NAME_CHARS)
+            .collect()
     }
 }
 
@@ -381,5 +382,14 @@ mod tests {
         fs::write(&path, b"test").expect("write service fixture");
         assert!(StrictAppTarget::new(path.clone()).is_err());
         let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn display_name_truncation_is_unicode_safe() {
+        let path = temp_executable(&"测".repeat(128));
+        let target = StrictAppTarget::new(&path).expect("valid unicode target");
+        let name = target.display_name();
+        assert!(name.chars().count() <= MAX_DISPLAY_NAME_CHARS);
+        let _ = fs::remove_file(path);
     }
 }
