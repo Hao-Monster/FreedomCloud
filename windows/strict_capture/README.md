@@ -5,12 +5,12 @@ strict per-application mode.  It is deliberately a small, auditable WDM
 driver: policy is supplied by the elevated Helper through a versioned IOCTL,
 and the callout is registered on the ALE connect-redirect IPv4/IPv6 layers.
 
-The current implementation is a **fail-closed capture skeleton**.  A selected
-process is blocked until the user-mode broker has installed a complete,
-authenticated redirect path to Mihomo.  It never silently permits a selected
-flow or injects a DLL.  The redirect data-plane (socket ownership, TCP/UDP
-mapping and lifecycle recovery) remains a separate milestone and must not be
-represented as complete by a test package.
+The current implementation is a **fail-closed callout skeleton**.  Once the
+broker attaches a WFP filter for a selected process, that process is blocked
+until a complete, authenticated redirect path to Mihomo is ready.  The source
+does not yet install those per-process filters or implement the TCP/UDP socket
+mapping; the existing Helper WFP block backend remains the only active strict
+enforcement path.  It never silently permits a selected flow or injects a DLL.
 
 ## Build (development only)
 

@@ -12,8 +12,8 @@ is intentionally split from source development:
 | Microsoft attestation/WHQL | No | Partner Center account and submission rights |
 | HLK | Checklist and package preparation | HLK controller, clean Windows 11 client(s), target OS builds |
 
-The current driver deliberately blocks a selected PID until a complete
-user-mode redirect data plane is present. This prevents a selected application
-from silently escaping to a direct connection while the TCP/UDP mapping and
-Mihomo lifecycle work is still under validation. Do not install or load it on
-the development workstation.
+The current callout deliberately blocks a selected PID only after a broker WFP
+filter has been attached, and only until a complete user-mode redirect data
+plane is present. The filter installation, TCP/UDP mapping, and Mihomo
+lifecycle are still separate implementation gates. Do not install or load the
+driver on the development workstation.
