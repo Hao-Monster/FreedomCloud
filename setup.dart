@@ -974,7 +974,7 @@ class BuildCommand extends Command {
           .replaceAll(
             "{{STRICT_PACKAGE_FILES}}",
             Build.strictPackageEnabled
-                ? '''Source: "{{SOURCE_DIR}}\\FlClashStrictCallout.sys"; DestDir: "{commonpf}\\FlClashX Service"; Flags: ignoreversion\nSource: "{{SOURCE_DIR}}\\FlClashStrictBroker.exe"; DestDir: "{commonpf}\\FlClashX Service"; Flags: ignoreversion\nSource: "{{SOURCE_DIR}}\\strict-package-manifest.json"; DestDir: "{commonpf}\\FlClashX Service"; Flags: ignoreversion'''
+                ? '''Source: "{{SOURCE_DIR}}\\FlClashStrictCallout.sys"; DestDir: "{commonpf}\\FlClashX Service"; Flags: ignoreversion\nSource: "{{SOURCE_DIR}}\\FlClashStrictBroker.exe"; DestDir: "{commonpf}\\FlClashX Service"; Flags: ignoreversion\nSource: "{{SOURCE_DIR}}\\strict-package-manifest.json"; DestDir: "{commonpf}\\FlClashX Service"; Flags: ignoreversion\nSource: "{{SOURCE_DIR}}\\FlClashAgent.exe"; DestDir: "{commonpf}\\FlClashX Service"; Flags: ignoreversion'''
                 : "",
           )
           .replaceAll(

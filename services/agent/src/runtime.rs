@@ -1085,6 +1085,10 @@ async fn supervise_core(
 
         *shared.core.lock().await = None;
         shared.journal.lock().await.discard_pending();
+        #[cfg(windows)]
+        if matches!(&session_end, SessionEnd::Crashed | SessionEnd::Restart) {
+            fail_closed_strict_core_loss(&shared).await;
+        }
         writer.abort();
         stop_backend(&config, helper_token.as_deref(), &shared.logger, &mut child).await;
         match session_end {
@@ -1113,6 +1117,49 @@ async fn supervise_core(
                 return Ok(());
             }
         }
+    }
+}
+
+#[cfg(windows)]
+async fn fail_closed_strict_core_loss(shared: &Arc<Shared>) {
+    let Some(runtime) = shared.strict_runtime.lock().await.clone() else {
+        return;
+    };
+    set_strict_policy(
+        shared,
+        crate::protocol::StrictPolicyState::Recovering,
+        Some(crate::protocol::StrictPolicyFailureReason::CoreUnavailable),
+    )
+    .await;
+    let action = {
+        let mut orchestrator = runtime.orchestrator.lock().await;
+        orchestrator.force_blocking()
+    };
+    let action = match action {
+        Ok(action) => action,
+        Err(error) => {
+            shared
+                .logger
+                .log(format!("strict Core loss could not enter blocking phase: {error:#}"));
+            set_strict_policy(
+                shared,
+                crate::protocol::StrictPolicyState::Blocking,
+                Some(crate::protocol::StrictPolicyFailureReason::CoreUnavailable),
+            )
+            .await;
+            return;
+        }
+    };
+    if !drive_strict_action(shared, runtime, action).await {
+        shared
+            .logger
+            .log("strict Core loss recovery left policy fail-closed");
+        set_strict_policy(
+            shared,
+            crate::protocol::StrictPolicyState::Blocking,
+            Some(crate::protocol::StrictPolicyFailureReason::CoreUnavailable),
+        )
+        .await;
     }
 }
 

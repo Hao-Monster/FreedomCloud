@@ -93,9 +93,10 @@ signed Broker can be selected with `FLCLASH_STRICT_BROKER_PATH`; otherwise
 `setup.dart` builds `services/strict-broker` with the supplied manifest embedded.
 The generated portable root contains `FlClashStrictCallout.sys`,
 `FlClashStrictBroker.exe` and `strict-package-manifest.json`; the Inno installer
-also installs them under the protected `FlClashX Service` directory and manages
-the `FlClashStrictBroker` SCM service. The legacy `windows/strict_capture`
-artifact is never selected by this path.
+also installs the strict set (including the matching `FlClashAgent.exe`) under
+the protected `FlClashX Service` directory and manages the
+`FlClashStrictBroker` SCM service. The legacy `windows/strict_capture` artifact
+is never selected by this path.
 
 ## Local safety boundary
 
