@@ -95,6 +95,39 @@ void main() {
     expect(output, isNot(contains('203.0.113.1')));
   });
 
+  test('diagnostics classify missing process attribution without leaking metadata',
+      () async {
+    final events = <String>[];
+    final connection = _connection(upload: 100).copyWith(
+      metadata: const Metadata(
+        uid: 0,
+        network: 'tcp',
+        sourceIP: '',
+        sourcePort: '',
+        destinationIP: '',
+        destinationPort: '',
+        host: '',
+        process: '',
+        processPath: '',
+        remoteDestination: '',
+      ),
+    );
+    final manager = ConnectionManager(
+      loadSnapshot: () async => _snapshot(connection: connection),
+      diagnosticLog: events.add,
+    );
+    addTearDown(manager.dispose);
+
+    manager.setViewVisible(visible: true);
+    manager.configure(running: true, refreshIntervalMs: 10000);
+    await _waitUntil(() => manager.activeConnections.isNotEmpty);
+
+    final output = events.join('\n');
+    expect(output, contains('processMetadata=full:0,processOnly:0,missing:1'));
+    expect(output, isNot(contains('example.com')));
+    expect(output, isNot(contains('192.0.2.1')));
+  });
+
   test('steady polling diagnostics are throttled after the first three polls',
       () async {
     final events = <String>[];

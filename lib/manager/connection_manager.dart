@@ -259,12 +259,31 @@ class ConnectionManager extends ChangeNotifier {
     _lastSnapshotWasEmpty = isEmpty;
     if (!shouldLog) return;
     _lastDiagnosticAt = now;
+    final processMetadata = _processMetadataSummary(snapshot.connections);
     _diagnosticLog(
       '[ConnectionsDiag] manager.poll status=ok poll=$pollNumber '
-      'durationMs=$elapsedMilliseconds sourceConnections=${snapshot.connections.length} '
-      'active=${_tracker.activeConnections.length} '
-      'groups=${_tracker.processGroups.length} paused=$_paused',
+        'durationMs=$elapsedMilliseconds sourceConnections=${snapshot.connections.length} '
+        'active=${_tracker.activeConnections.length} '
+        'groups=${_tracker.processGroups.length} paused=$_paused '
+        'processMetadata=$processMetadata',
     );
+  }
+
+  String _processMetadataSummary(List<Connection> connections) {
+    var full = 0;
+    var processOnly = 0;
+    var missing = 0;
+    for (final connection in connections) {
+      final metadata = connection.metadata;
+      if (metadata.processPath.trim().isNotEmpty) {
+        full++;
+      } else if (metadata.process.trim().isNotEmpty) {
+        processOnly++;
+      } else {
+        missing++;
+      }
+    }
+    return 'full:$full,processOnly:$processOnly,missing:$missing';
   }
 
   void _logFailedPoll({
