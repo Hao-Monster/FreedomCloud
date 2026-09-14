@@ -359,7 +359,8 @@ class _PerAppPolicySection extends ConsumerStatefulWidget {
   const _PerAppPolicySection();
 
   @override
-  State<_PerAppPolicySection> createState() => _PerAppPolicySectionState();
+  ConsumerState<_PerAppPolicySection> createState() =>
+      _PerAppPolicySectionState();
 }
 
 class _PerAppPolicySectionState extends ConsumerState<_PerAppPolicySection> {
