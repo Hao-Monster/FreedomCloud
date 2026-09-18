@@ -1,8 +1,5 @@
-import 'dart:io';
-
 import 'package:flclashx/clash/agent_protocol.dart';
 import 'package:flclashx/common/per_app_policy.dart';
-import 'package:path/path.dart' as path;
 
 /// Builds the JSON contract consumed by the Agent strict-policy command.
 ///
@@ -69,8 +66,7 @@ Map<String, dynamic> buildStrictPolicyBundle({
 }
 
 String _strictPathKey(String value) {
-  final normalized = path.normalize(value.trim());
-  return Platform.isWindows ? normalized.toLowerCase() : normalized;
+  return normalizePerAppProcessPath(value);
 }
 
 /// Reuses cached identity evidence only when it corresponds to the same

@@ -292,7 +292,7 @@ List<PerAppPolicy> decodePerAppPolicies(Object? value) {
         policy: policy,
         targetGroup: targetGroup,
       );
-      final key = _normalizeProcessPath(processPath);
+      final key = normalizePerAppProcessPath(processPath);
       decodedByPath[key] = entry;
     } catch (_) {
       // A malformed entry must not disable all valid application policies.
@@ -493,14 +493,14 @@ class PerAppPolicyStore extends ChangeNotifier {
       File(path.join(await appPath.homeDirPath, _fileName));
 
   String _key(String value) {
-    return _normalizeProcessPath(value);
+    return normalizePerAppProcessPath(value);
   }
 }
 
 bool _looksLikeWindowsPath(String value) =>
     RegExp(r'^[A-Za-z]:[\\/]').hasMatch(value) || value.contains('\\');
 
-String _normalizeProcessPath(String value) {
+String normalizePerAppProcessPath(String value) {
   final trimmed = value.trim();
   if (_looksLikeWindowsPath(trimmed)) {
     return path.posix.normalize(trimmed.replaceAll('\\', '/')).toLowerCase();
