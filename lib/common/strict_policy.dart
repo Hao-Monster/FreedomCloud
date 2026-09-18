@@ -1,8 +1,5 @@
-import 'dart:io';
-
 import 'package:flclashx/clash/agent_protocol.dart';
 import 'package:flclashx/common/per_app_policy.dart';
-import 'package:path/path.dart' as path;
 
 /// Builds the JSON contract consumed by the Agent strict-policy command.
 ///
@@ -20,7 +17,7 @@ Map<String, dynamic> buildStrictPolicyBundle({
   final policyEntries = <Map<String, dynamic>>[];
   for (final entry in entries) {
     if (entry.policy == ApplicationRoutingPolicy.inherit) continue;
-    final identity = identities[_strictPathKey(entry.path)];
+    final identity = _identityForPath(identities, entry.path);
     if (identity == null) {
       throw StateError('strict identity evidence is unavailable');
     }
@@ -69,8 +66,18 @@ Map<String, dynamic> buildStrictPolicyBundle({
 }
 
 String _strictPathKey(String value) {
-  final normalized = path.normalize(value.trim());
-  return Platform.isWindows ? normalized.toLowerCase() : normalized;
+  return normalizePerAppProcessPath(value);
+}
+
+StrictIdentityResolution? _identityForPath(
+  Map<String, StrictIdentityResolution> identities,
+  String processPath,
+) {
+  final normalized = _strictPathKey(processPath);
+  for (final entry in identities.entries) {
+    if (_strictPathKey(entry.key) == normalized) return entry.value;
+  }
+  return null;
 }
 
 /// Reuses cached identity evidence only when it corresponds to the same
