@@ -9,6 +9,7 @@ export 'dashboard/dashboard.dart';
 export 'developer.dart';
 export 'logs.dart';
 export 'profiles/profiles.dart';
+export 'purchase.dart';
 export 'proxies/proxies.dart';
 export 'resources.dart';
 export 'tools.dart';

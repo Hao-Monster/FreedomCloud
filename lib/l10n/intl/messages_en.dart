@@ -743,6 +743,13 @@ class MessageLookup extends MessageLookupByLibrary {
       "Set the Clash listening port",
     ),
     "proxyProviders": MessageLookupByLibrary.simpleMessage("Proxy providers"),
+    "purchase": MessageLookupByLibrary.simpleMessage("Purchase"),
+    "purchaseContactDescription": MessageLookupByLibrary.simpleMessage(
+      "Online payment is not available yet. Add either WeChat account below to purchase or renew your service.",
+    ),
+    "purchaseTitle": MessageLookupByLibrary.simpleMessage(
+      "Purchase and renewal",
+    ),
     "pureBlackMode": MessageLookupByLibrary.simpleMessage("Pure black mode"),
     "qrNotFound": MessageLookupByLibrary.simpleMessage("QR code not found"),
     "qrcode": MessageLookupByLibrary.simpleMessage("QR code"),
@@ -826,6 +833,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "saveTip": MessageLookupByLibrary.simpleMessage(
       "Are you sure you want to save?",
     ),
+    "scan": MessageLookupByLibrary.simpleMessage("Scan"),
     "script": MessageLookupByLibrary.simpleMessage("Script"),
     "search": MessageLookupByLibrary.simpleMessage("Search"),
     "seconds": MessageLookupByLibrary.simpleMessage("Seconds"),
@@ -978,6 +986,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "webDAVConfiguration": MessageLookupByLibrary.simpleMessage(
       "WebDAV configuration",
     ),
+    "wechatId": MessageLookupByLibrary.simpleMessage("WeChat ID"),
     "whitelistMode": MessageLookupByLibrary.simpleMessage("Whitelist mode"),
     "whitelistModeDesc": MessageLookupByLibrary.simpleMessage(
       "Only the selected apps are routed through the VPN; all others connect directly.",

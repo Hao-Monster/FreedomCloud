@@ -469,6 +469,7 @@ enum PageLabel {
   proxies,
   profiles,
   tools,
+  purchase,
   logs,
   requests,
   resources,

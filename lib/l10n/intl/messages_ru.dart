@@ -664,6 +664,13 @@ class MessageLookup extends MessageLookupByLibrary {
       "Установить порт прослушивания прокси-сервера",
     ),
     "proxyProviders": MessageLookupByLibrary.simpleMessage("Провайдеры прокси"),
+    "purchase": MessageLookupByLibrary.simpleMessage("Покупка"),
+    "purchaseContactDescription": MessageLookupByLibrary.simpleMessage(
+      "Онлайн-оплата пока недоступна. Добавьте любой из указанных аккаунтов WeChat для покупки или продления.",
+    ),
+    "purchaseTitle": MessageLookupByLibrary.simpleMessage(
+      "Покупка и продление",
+    ),
     "pureBlackMode": MessageLookupByLibrary.simpleMessage("Чисто черный режим"),
     "qrNotFound": MessageLookupByLibrary.simpleMessage("QR-код не найден"),
     "qrcode": MessageLookupByLibrary.simpleMessage("QR-код"),
@@ -753,6 +760,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "save": MessageLookupByLibrary.simpleMessage("Сохранить"),
     "saveChanges": MessageLookupByLibrary.simpleMessage("Сохранить изменения?"),
     "saveTip": MessageLookupByLibrary.simpleMessage("Сохранить изменения?"),
+    "scan": MessageLookupByLibrary.simpleMessage("Сканировать"),
     "script": MessageLookupByLibrary.simpleMessage("Скрипт"),
     "search": MessageLookupByLibrary.simpleMessage("Поиск"),
     "seconds": MessageLookupByLibrary.simpleMessage("Секунд"),
@@ -909,6 +917,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "webDAVConfiguration": MessageLookupByLibrary.simpleMessage(
       "Конфигурация WebDAV",
     ),
+    "wechatId": MessageLookupByLibrary.simpleMessage("WeChat ID"),
     "whitelistMode": MessageLookupByLibrary.simpleMessage(
       "Режим белого списка",
     ),

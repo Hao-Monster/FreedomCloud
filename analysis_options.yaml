@@ -18,6 +18,10 @@ analyzer:
     - lib/generated_plugin_registrant.dart
     - lib/clash/generated/**
     - lib/l10n/**
+    - android/**
+    - windows/**
+    - macos/**
+    - linux/**
 
 linter:
   rules:

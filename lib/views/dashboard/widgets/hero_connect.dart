@@ -1063,43 +1063,93 @@ class _EmptyHero extends ConsumerWidget {
           style: context.textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w700),
         ),
         const SizedBox(height: 24),
-        _FocusableTap(
-          autofocus: true,
-          borderRadius: 16,
-          onTap: () async {
-            final url = await globalState.showCommonDialog<String>(
-              child: const URLFormDialog(),
-            );
-            if (url != null) {
-              globalState.appController.addProfileFormURL(url);
-            }
-          },
-          child: Container(
-            width: double.infinity,
-            padding: const EdgeInsets.symmetric(vertical: 16),
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(16),
-              color: colorScheme.primary,
+        Row(
+          children: [
+            Expanded(
+              child: _EmptyHeroAction(
+                icon: Icons.qr_code_scanner_rounded,
+                label: appLocalizations.scan,
+                foregroundColor: colorScheme.onSecondaryContainer,
+                backgroundColor: colorScheme.secondaryContainer,
+                onTap: () async {
+                  await scanAndAddProfile(context);
+                },
+              ),
             ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(Icons.add_rounded, size: 20, color: colorScheme.onPrimary),
-                const SizedBox(width: 8),
-                Text(
-                  appLocalizations.addProfile,
-                  style: context.textTheme.titleSmall?.copyWith(
-                    color: colorScheme.onPrimary,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ],
+            const SizedBox(width: 12),
+            Expanded(
+              child: _EmptyHeroAction(
+                autofocus: true,
+                icon: Icons.add_rounded,
+                label: appLocalizations.addProfile,
+                foregroundColor: colorScheme.onPrimary,
+                backgroundColor: colorScheme.primary,
+                onTap: () async {
+                  final url = await globalState.showCommonDialog<String>(
+                    child: const URLFormDialog(),
+                  );
+                  if (url != null) {
+                    await globalState.appController.addProfileFormURL(url);
+                  }
+                },
+              ),
             ),
-          ),
+          ],
         ),
       ],
     );
   }
+}
+
+class _EmptyHeroAction extends StatelessWidget {
+  const _EmptyHeroAction({
+    required this.icon,
+    required this.label,
+    required this.foregroundColor,
+    required this.backgroundColor,
+    required this.onTap,
+    this.autofocus = false,
+  });
+
+  final IconData icon;
+  final String label;
+  final Color foregroundColor;
+  final Color backgroundColor;
+  final VoidCallback onTap;
+  final bool autofocus;
+
+  @override
+  Widget build(BuildContext context) => _FocusableTap(
+        autofocus: autofocus,
+        borderRadius: 16,
+        onTap: onTap,
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 16),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(16),
+            color: backgroundColor,
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(icon, size: 20, color: foregroundColor),
+              const SizedBox(width: 8),
+              Flexible(
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: context.textTheme.titleSmall?.copyWith(
+                    color: foregroundColor,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
 }
 
 class _AnnounceBanner extends StatelessWidget {
