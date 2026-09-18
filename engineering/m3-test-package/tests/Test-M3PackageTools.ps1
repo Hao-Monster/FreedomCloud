@@ -45,6 +45,7 @@ try {
         -DriverBuildId '0123456789abcdef0123456789abcdef' `
         -PackageVersion '0.2.0+m3-tool-test' `
         -DriverPath "$env:SystemRoot\System32\drivers\null.sys" `
+        -BrokerPath "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" `
         -AgentPath "$env:SystemRoot\System32\notepad.exe" `
         -CorePath "$env:SystemRoot\System32\cmd.exe" `
         -OutputPath $manifest | Out-Null
@@ -61,6 +62,7 @@ try {
             -DriverBuildId '0123456789abcdef0123456789abcdef' `
             -PackageVersion 'negative' `
             -DriverPath $unsigned `
+            -BrokerPath "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" `
             -AgentPath "$env:SystemRoot\System32\notepad.exe" `
             -CorePath "$env:SystemRoot\System32\cmd.exe" `
             -OutputPath (Join-Path $testRoot 'unsigned.json') | Out-Null
