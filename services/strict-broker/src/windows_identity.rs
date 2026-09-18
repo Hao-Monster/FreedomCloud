@@ -490,20 +490,6 @@ pub fn verify_windows_packaged_core_image(
     })
 }
 
-pub fn verify_windows_packaged_broker_image(
-    expected_broker_path: impl AsRef<Path>,
-    package: &StrictPackageManifest,
-) -> Result<()> {
-    verify_windows_packaged_image(
-        expected_broker_path.as_ref(),
-        package.broker_file_sha256(),
-        package.broker_publisher_certificate_sha256(),
-        "Broker",
-        MAX_CORE_FILE_BYTES,
-    )?;
-    Ok(())
-}
-
 fn verify_windows_packaged_image(
     expected_path: &Path,
     expected_file_sha256: &str,

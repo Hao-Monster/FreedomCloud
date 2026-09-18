@@ -36,14 +36,12 @@ fn packaged_core_process_is_bound_to_pid_path_file_and_publisher() {
     let file_sha256 = format!("{:x}", Sha256::digest(fs::read(&system_binary).unwrap()));
     let manifest = StrictPackageManifest::parse(
         format!(
-            r#"{{"protocol":2,"packageVersion":"core-process-test","driverBuildId":"{}","driverFileSha256":"{}","driverPublisherCertificateSha256":"{}","brokerFileSha256":"{}","brokerPublisherCertificateSha256":"{}","agentFileSha256":"{}","agentPublisherCertificateSha256":"{}","coreFileSha256":"{file_sha256}","corePublisherCertificateSha256":"{}"}}"#,
+            r#"{{"protocol":2,"packageVersion":"core-process-test","driverBuildId":"{}","driverFileSha256":"{}","driverPublisherCertificateSha256":"{}","agentFileSha256":"{}","agentPublisherCertificateSha256":"{}","coreFileSha256":"{file_sha256}","corePublisherCertificateSha256":"{}"}}"#,
             "12".repeat(16),
             "23".repeat(32),
             "34".repeat(32),
             "45".repeat(32),
             "56".repeat(32),
-            "67".repeat(32),
-            "78".repeat(32),
             inspected.publisher_certificate_sha256,
         )
         .as_bytes(),
@@ -148,12 +146,10 @@ fn packaged_agent_process_is_bound_to_pid_path_file_and_publisher() {
     let file_sha256 = format!("{:x}", Sha256::digest(fs::read(&system_binary).unwrap()));
     let manifest = StrictPackageManifest::parse(
         format!(
-            r#"{{"protocol":2,"packageVersion":"agent-process-test","driverBuildId":"{}","driverFileSha256":"{}","driverPublisherCertificateSha256":"{}","brokerFileSha256":"{}","brokerPublisherCertificateSha256":"{}","agentFileSha256":"{file_sha256}","agentPublisherCertificateSha256":"{}","coreFileSha256":"{file_sha256}","corePublisherCertificateSha256":"{}"}}"#,
+            r#"{{"protocol":2,"packageVersion":"agent-process-test","driverBuildId":"{}","driverFileSha256":"{}","driverPublisherCertificateSha256":"{}","agentFileSha256":"{file_sha256}","agentPublisherCertificateSha256":"{}","coreFileSha256":"{file_sha256}","corePublisherCertificateSha256":"{}"}}"#,
             "12".repeat(16),
             "23".repeat(32),
             "34".repeat(32),
-            "45".repeat(32),
-            "56".repeat(32),
             inspected.publisher_certificate_sha256,
             inspected.publisher_certificate_sha256,
         )

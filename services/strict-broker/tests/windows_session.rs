@@ -40,12 +40,10 @@ fn packaged_command_process() -> (
     let file_sha256 = format!("{:x}", Sha256::digest(fs::read(&binary).unwrap()));
     let package = StrictPackageManifest::parse(
         format!(
-            r#"{{"protocol":2,"packageVersion":"session-test","driverBuildId":"{}","driverFileSha256":"{}","driverPublisherCertificateSha256":"{}","brokerFileSha256":"{}","brokerPublisherCertificateSha256":"{}","agentFileSha256":"{file_sha256}","agentPublisherCertificateSha256":"{}","coreFileSha256":"{file_sha256}","corePublisherCertificateSha256":"{}"}}"#,
+            r#"{{"protocol":2,"packageVersion":"session-test","driverBuildId":"{}","driverFileSha256":"{}","driverPublisherCertificateSha256":"{}","agentFileSha256":"{file_sha256}","agentPublisherCertificateSha256":"{}","coreFileSha256":"{file_sha256}","corePublisherCertificateSha256":"{}"}}"#,
             "12".repeat(16),
             "23".repeat(32),
             "34".repeat(32),
-            "45".repeat(32),
-            "56".repeat(32),
             inspected.publisher_certificate_sha256,
             inspected.publisher_certificate_sha256,
         )

@@ -16,16 +16,24 @@ installer, when available, each get their own adjacent `.sha256` file.
 
 ## Assembly order
 
+The embedded manifest must not contain the final Broker file hash: embedding
+that hash changes the binary, and signing changes it again. Broker Authenticode
+verification protects the embedded manifest; the final Broker hash belongs in
+the external bundle inventory after signing. A plain SHA-256 inventory provides
+transport integrity, not an independent publisher signature for the ZIP.
+`tests/Test-M3ManifestAssemblyOrder.ps1` verifies that manifest generation needs
+no Broker binary and retains the Driver/Agent/Core identity pins.
+
 1. Choose one 128-bit hexadecimal driver build ID and compile the driver with
    that ID.
-2. Obtain trusted signatures for the driver, Broker, Agent and Core. Public Windows
+2. Obtain trusted signatures for the driver, Agent and Core. Public Windows
    kernel qualification requires the Microsoft-signed driver returned by the
    Hardware Dashboard; a locally trusted test certificate is insufficient.
 3. Run `New-M3PackageManifest.ps1` over those immutable signed files.
 4. Build the production Broker with `FLCLASH_STRICT_PACKAGE_MANIFEST` set to the
    absolute generated manifest path, then sign the Broker.
 5. Run `New-M3SignedVmBundle.ps1 -SourceDateEpoch <unix-seconds>`. It rejects unsigned files and any driver,
-   Broker, Agent or Core hash/publisher mismatch before producing the ZIP.
+   Agent or Core hash/publisher mismatch before producing the ZIP.
 6. Transfer the ZIP to a snapshotted Windows 11 VM, extract it, run
    `Invoke-M3VmPreflight.ps1`, and follow `M3-WINDOWS-VM-CHECKLIST.md`.
 7. Before restoring the VM snapshot, run
