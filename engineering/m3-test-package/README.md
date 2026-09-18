@@ -41,6 +41,9 @@ no Broker binary and retains the Driver/Agent/Core identity pins.
    collector copies the bounded Flutter, Agent, Helper and Strict Broker logs,
    recent Service Control Manager events and the driver-capture instructions.
    It never copies profile YAML, subscriptions or credential files.
+8. After collection, run `Validate-M3VmEvidence.ps1` with the preflight JSON and
+   evidence directory. It is read-only and fails when trust, VM isolation,
+   service state, process samples, verifier output or event evidence is absent.
 
 The manifest generator hashes the exact leaf publisher certificate bytes, which
 matches the Broker trust contract; it does not use the certificate's SHA-1

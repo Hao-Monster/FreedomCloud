@@ -148,6 +148,7 @@ try {
         'Collect-M3VmEvidence.ps1'
         'M3-WINDOWS-VM-CHECKLIST.md'
         'REAL-WINDOWS11-TEST-GUIDE.md'
+        'Validate-M3VmEvidence.ps1'
     )) {
         Copy-Item -LiteralPath (Join-Path $PSScriptRoot $support) -Destination (Join-Path $staging $support)
     }

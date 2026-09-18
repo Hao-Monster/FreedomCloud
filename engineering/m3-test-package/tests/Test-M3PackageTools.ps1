@@ -25,6 +25,7 @@ try {
         'Collect-M3VmEvidence.ps1'
         'M3-WINDOWS-VM-CHECKLIST.md'
         'REAL-WINDOWS11-TEST-GUIDE.md'
+        'Validate-M3VmEvidence.ps1'
     )
     foreach ($support in $requiredBundleSupportFiles) {
         if (-not (Test-Path -LiteralPath (Join-Path $toolRoot $support) -PathType Leaf)) {
