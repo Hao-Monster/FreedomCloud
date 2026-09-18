@@ -21,28 +21,37 @@ class ProvidersView extends ConsumerStatefulWidget {
 
 class _ProvidersViewState extends ConsumerState<ProvidersView> {
 
+  Future<String?> _refreshProvider(ExternalProvider provider) async {
+    final notifier = ref.read(providersProvider.notifier);
+    notifier.setProvider(provider.copyWith(isUpdating: true));
+    String? message;
+    try {
+      message = await clashCore.updateExternalProvider(
+        providerName: provider.name,
+      );
+      if (message.isNotEmpty) {
+        return "${provider.name}: $message \n";
+      }
+    } catch (error) {
+      return "${provider.name}: $error \n";
+    } finally {
+      try {
+        final refreshed = await clashCore.getExternalProvider(provider.name);
+        notifier.setProvider(refreshed ?? provider.copyWith(isUpdating: false));
+      } catch (_) {
+        notifier.setProvider(provider.copyWith(isUpdating: false));
+      }
+    }
+    return message?.isNotEmpty == true ? "${provider.name}: $message \n" : null;
+  }
+
   Future<void> _updateProviders() async {
     final providers = ref.read(providersProvider);
-    final providersNotifier = ref.read(providersProvider.notifier);
     final messages = [];
-    final updateProviders = providers.map<Future>(
-      (provider) async {
-        providersNotifier.setProvider(
-          provider.copyWith(isUpdating: true),
-        );
-        final message = await clashCore.updateExternalProvider(
-          providerName: provider.name,
-        );
-        if (message.isNotEmpty) {
-          messages.add("${provider.name}: $message \n");
-        }
-        providersNotifier.setProvider(
-          await clashCore.getExternalProvider(provider.name),
-        );
-      },
-    );
+    final updateProviders = providers.map(_refreshProvider);
+    final results = await Future.wait(updateProviders);
+    messages.addAll(results.whereType<String>());
     final titleMedium = context.textTheme.titleMedium;
-    await Future.wait(updateProviders);
     globalState.appController.updateGroupsDebounce();
     if (messages.isNotEmpty) {
       globalState.showMessage(
@@ -110,23 +119,28 @@ class ProviderItem extends StatelessWidget {
   Future<void> _handleUpdateProvider() async {
     final appController = globalState.appController;
     if (provider.vehicleType != "HTTP") return;
-    await globalState.safeRun(
-      () async {
+    var message = '';
+    try {
+      appController.setProvider(provider.copyWith(isUpdating: true));
+      message = await clashCore.updateExternalProvider(
+        providerName: provider.name,
+      );
+      if (message.isNotEmpty) throw message;
+    } catch (error) {
+      globalState.showMessage(
+        title: appLocalizations.tip,
+        message: TextSpan(text: '${provider.name}: $error'),
+      );
+    } finally {
+      try {
         appController.setProvider(
-          provider.copyWith(
-            isUpdating: true,
-          ),
+          await clashCore.getExternalProvider(provider.name) ??
+              provider.copyWith(isUpdating: false),
         );
-        final message = await clashCore.updateExternalProvider(
-          providerName: provider.name,
-        );
-        if (message.isNotEmpty) throw message;
-      },
-      silence: false,
-    );
-    appController.setProvider(
-      await clashCore.getExternalProvider(provider.name),
-    );
+      } catch (_) {
+        appController.setProvider(provider.copyWith(isUpdating: false));
+      }
+    }
     globalState.appController.updateGroupsDebounce();
   }
 
