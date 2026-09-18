@@ -17,7 +17,7 @@ Map<String, dynamic> buildStrictPolicyBundle({
   final policyEntries = <Map<String, dynamic>>[];
   for (final entry in entries) {
     if (entry.policy == ApplicationRoutingPolicy.inherit) continue;
-    final identity = identities[_strictPathKey(entry.path)];
+    final identity = _identityForPath(identities, entry.path);
     if (identity == null) {
       throw StateError('strict identity evidence is unavailable');
     }
@@ -67,6 +67,17 @@ Map<String, dynamic> buildStrictPolicyBundle({
 
 String _strictPathKey(String value) {
   return normalizePerAppProcessPath(value);
+}
+
+StrictIdentityResolution? _identityForPath(
+  Map<String, StrictIdentityResolution> identities,
+  String processPath,
+) {
+  final normalized = _strictPathKey(processPath);
+  for (final entry in identities.entries) {
+    if (_strictPathKey(entry.key) == normalized) return entry.value;
+  }
+  return null;
 }
 
 /// Reuses cached identity evidence only when it corresponds to the same
