@@ -18,14 +18,14 @@ installer, when available, each get their own adjacent `.sha256` file.
 
 1. Choose one 128-bit hexadecimal driver build ID and compile the driver with
    that ID.
-2. Obtain trusted signatures for the driver, Agent and Core. Public Windows
+2. Obtain trusted signatures for the driver, Broker, Agent and Core. Public Windows
    kernel qualification requires the Microsoft-signed driver returned by the
    Hardware Dashboard; a locally trusted test certificate is insufficient.
 3. Run `New-M3PackageManifest.ps1` over those immutable signed files.
 4. Build the production Broker with `FLCLASH_STRICT_PACKAGE_MANIFEST` set to the
    absolute generated manifest path, then sign the Broker.
 5. Run `New-M3SignedVmBundle.ps1 -SourceDateEpoch <unix-seconds>`. It rejects unsigned files and any driver,
-   Agent or Core hash/publisher mismatch before producing the ZIP.
+   Broker, Agent or Core hash/publisher mismatch before producing the ZIP.
 6. Transfer the ZIP to a snapshotted Windows 11 VM, extract it, run
    `Invoke-M3VmPreflight.ps1`, and follow `M3-WINDOWS-VM-CHECKLIST.md`.
 7. Before restoring the VM snapshot, run

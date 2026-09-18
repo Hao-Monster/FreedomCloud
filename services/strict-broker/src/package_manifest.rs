@@ -12,6 +12,8 @@ pub struct StrictPackageManifest {
     driver_build_id: String,
     driver_file_sha256: String,
     driver_publisher_certificate_sha256: String,
+    broker_file_sha256: String,
+    broker_publisher_certificate_sha256: String,
     agent_file_sha256: String,
     agent_publisher_certificate_sha256: String,
     core_file_sha256: String,
@@ -57,6 +59,14 @@ impl StrictPackageManifest {
         &self.agent_publisher_certificate_sha256
     }
 
+    pub fn broker_file_sha256(&self) -> &str {
+        &self.broker_file_sha256
+    }
+
+    pub fn broker_publisher_certificate_sha256(&self) -> &str {
+        &self.broker_publisher_certificate_sha256
+    }
+
     pub fn agent_file_sha256(&self) -> &str {
         &self.agent_file_sha256
     }
@@ -90,6 +100,12 @@ impl StrictPackageManifest {
             64,
             "driver publisher certificate digest",
         )?;
+        validate_hex(&self.broker_file_sha256, 64, "Broker file digest")?;
+        validate_hex(
+            &self.broker_publisher_certificate_sha256,
+            64,
+            "Broker publisher certificate digest",
+        )?;
         validate_hex(&self.agent_file_sha256, 64, "Agent file digest")?;
         validate_hex(
             &self.agent_publisher_certificate_sha256,
@@ -122,7 +138,7 @@ mod tests {
 
     fn manifest() -> Vec<u8> {
         format!(
-            r#"{{"protocol":2,"packageVersion":"1.2.3-m3","driverBuildId":"{}","driverFileSha256":"{}","driverPublisherCertificateSha256":"{}","agentFileSha256":"{}","agentPublisherCertificateSha256":"{}","coreFileSha256":"{}","corePublisherCertificateSha256":"{}"}}"#,
+            r#"{{"protocol":2,"packageVersion":"1.2.3-m3","driverBuildId":"{}","driverFileSha256":"{}","driverPublisherCertificateSha256":"{}","brokerFileSha256":"{}","brokerPublisherCertificateSha256":"{}","agentFileSha256":"{}","agentPublisherCertificateSha256":"{}","coreFileSha256":"{}","corePublisherCertificateSha256":"{}"}}"#,
             "12".repeat(16),
             "23".repeat(32),
             "34".repeat(32),
@@ -130,6 +146,8 @@ mod tests {
             "56".repeat(32),
             "67".repeat(32),
             "78".repeat(32),
+            "89".repeat(32),
+            "9a".repeat(32),
         )
         .into_bytes()
     }
@@ -144,10 +162,15 @@ mod tests {
             parsed.driver_publisher_certificate_sha256(),
             "34".repeat(32)
         );
-        assert_eq!(parsed.agent_file_sha256(), "45".repeat(32));
-        assert_eq!(parsed.agent_publisher_certificate_sha256(), "56".repeat(32));
-        assert_eq!(parsed.core_file_sha256(), "67".repeat(32));
-        assert_eq!(parsed.core_publisher_certificate_sha256(), "78".repeat(32));
+        assert_eq!(parsed.broker_file_sha256(), "45".repeat(32));
+        assert_eq!(
+            parsed.broker_publisher_certificate_sha256(),
+            "56".repeat(32)
+        );
+        assert_eq!(parsed.agent_file_sha256(), "67".repeat(32));
+        assert_eq!(parsed.agent_publisher_certificate_sha256(), "78".repeat(32));
+        assert_eq!(parsed.core_file_sha256(), "89".repeat(32));
+        assert_eq!(parsed.core_publisher_certificate_sha256(), "9a".repeat(32));
     }
 
     #[test]
@@ -173,6 +196,13 @@ mod tests {
             .as_object_mut()
             .unwrap()
             .remove("corePublisherCertificateSha256");
+        assert!(StrictPackageManifest::parse(&serde_json::to_vec(&missing).unwrap()).is_err());
+
+        let mut missing = serde_json::from_slice::<serde_json::Value>(&manifest()).unwrap();
+        missing
+            .as_object_mut()
+            .unwrap()
+            .remove("brokerPublisherCertificateSha256");
         assert!(StrictPackageManifest::parse(&serde_json::to_vec(&missing).unwrap()).is_err());
     }
 
