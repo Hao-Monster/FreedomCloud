@@ -285,16 +285,14 @@ List<PerAppPolicy> decodePerAppPolicies(Object? value) {
       final rawName = raw['name'];
       final name = rawName is String && rawName.trim().isNotEmpty
           ? rawName.trim()
-          : path.basename(processPath);
+          : _processBasename(processPath);
       final entry = PerAppPolicy(
         path: processPath,
         name: name.length > 256 ? name.substring(0, 256) : name,
         policy: policy,
         targetGroup: targetGroup,
       );
-      final key = Platform.isWindows
-          ? path.normalize(processPath).toLowerCase()
-          : path.normalize(processPath);
+      final key = _normalizeProcessPath(processPath);
       decodedByPath[key] = entry;
     } catch (_) {
       // A malformed entry must not disable all valid application policies.
@@ -376,8 +374,9 @@ class PerAppPolicyStore extends ChangeNotifier {
     final key = _key(validatedPath);
     next.remove(key);
     if (policy != ApplicationRoutingPolicy.inherit) {
-      final candidateName =
-          name.trim().isEmpty ? path.basename(validatedPath) : name.trim();
+      final candidateName = name.trim().isEmpty
+          ? _processBasename(validatedPath)
+          : name.trim();
       next[key] = PerAppPolicy(
         path: validatedPath,
         name: candidateName.length > 256
@@ -494,9 +493,26 @@ class PerAppPolicyStore extends ChangeNotifier {
       File(path.join(await appPath.homeDirPath, _fileName));
 
   String _key(String value) {
-    final normalized = path.normalize(value.trim());
-    return Platform.isWindows ? normalized.toLowerCase() : normalized;
+    return _normalizeProcessPath(value);
   }
+}
+
+bool _looksLikeWindowsPath(String value) =>
+    RegExp(r'^[A-Za-z]:[\\/]').hasMatch(value) || value.contains('\\');
+
+String _normalizeProcessPath(String value) {
+  final trimmed = value.trim();
+  if (_looksLikeWindowsPath(trimmed)) {
+    return path.posix.normalize(trimmed.replaceAll('\\', '/')).toLowerCase();
+  }
+  return path.normalize(trimmed);
+}
+
+String _processBasename(String value) {
+  final normalized = _looksLikeWindowsPath(value)
+      ? value.trim().replaceAll('\\', '/')
+      : value.trim();
+  return path.posix.basename(normalized);
 }
 
 final perAppPolicyStore = PerAppPolicyStore();
