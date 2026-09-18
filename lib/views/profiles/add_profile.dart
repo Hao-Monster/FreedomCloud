@@ -6,8 +6,21 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'receive_profile_dialog.dart';
 
-class AddProfileView extends StatelessWidget {
+Future<void> scanAndAddProfile(BuildContext context) async {
+  if (system.isDesktop) {
+    await globalState.appController.addProfileFormQrCode();
+    return;
+  }
+  final url = await BaseNavigator.push<String>(
+    context,
+    const ScanPage(),
+  );
+  if (url != null && url.isNotEmpty) {
+    await globalState.appController.addProfileFormURL(url);
+  }
+}
 
+class AddProfileView extends StatelessWidget {
   const AddProfileView({
     super.key,
     required this.context,
@@ -15,27 +28,15 @@ class AddProfileView extends StatelessWidget {
   final BuildContext context;
 
   Future<void> _handleAddProfileFormFile() async {
-    globalState.appController.addProfileFormFile();
+    await globalState.appController.addProfileFormFile();
   }
 
   Future<void> _handleAddProfileFormURL(String url) async {
-    globalState.appController.addProfileFormURL(url);
+    await globalState.appController.addProfileFormURL(url);
   }
 
   Future<void> _toScan() async {
-    if (system.isDesktop) {
-      globalState.appController.addProfileFormQrCode();
-      return;
-    }
-    final url = await BaseNavigator.push(
-      context,
-      const ScanPage(),
-    );
-    if (url != null) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        _handleAddProfileFormURL(url);
-      });
-    }
+    await scanAndAddProfile(context);
   }
 
   Future<void> _toAdd() async {
@@ -43,7 +44,7 @@ class AddProfileView extends StatelessWidget {
       child: const URLFormDialog(),
     );
     if (url != null) {
-      _handleAddProfileFormURL(url);
+      await _handleAddProfileFormURL(url);
     }
   }
 
@@ -53,7 +54,7 @@ class AddProfileView extends StatelessWidget {
     builder: (_) => const ReceiveProfileDialog(),
   );
   if (url != null && url.isNotEmpty) {
-    _handleAddProfileFormURL(url);
+    await _handleAddProfileFormURL(url);
   }
 }
 

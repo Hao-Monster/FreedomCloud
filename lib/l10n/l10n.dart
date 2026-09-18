@@ -294,6 +294,36 @@ class AppLocalizations {
     return Intl.message('Settings', name: 'tools', desc: '', args: []);
   }
 
+  /// `Purchase`
+  String get purchase {
+    return Intl.message('Purchase', name: 'purchase', desc: '', args: []);
+  }
+
+  /// `Purchase and renewal`
+  String get purchaseTitle {
+    return Intl.message(
+      'Purchase and renewal',
+      name: 'purchaseTitle',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Online payment is not available yet. Add either WeChat account below to purchase or renew your service.`
+  String get purchaseContactDescription {
+    return Intl.message(
+      'Online payment is not available yet. Add either WeChat account below to purchase or renew your service.',
+      name: 'purchaseContactDescription',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `WeChat ID`
+  String get wechatId {
+    return Intl.message('WeChat ID', name: 'wechatId', desc: '', args: []);
+  }
+
   /// `Logs`
   String get logs {
     return Intl.message('Logs', name: 'logs', desc: '', args: []);
@@ -832,6 +862,11 @@ class AppLocalizations {
   /// `QR code`
   String get qrcode {
     return Intl.message('QR code', name: 'qrcode', desc: '', args: []);
+  }
+
+  /// `Scan`
+  String get scan {
+    return Intl.message('Scan', name: 'scan', desc: '', args: []);
   }
 
   /// `Scan QR code to obtain profile`

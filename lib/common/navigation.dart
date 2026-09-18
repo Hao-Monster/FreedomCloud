@@ -91,6 +91,16 @@ class Navigation {
         ),
         modes: [NavigationItemMode.desktop, NavigationItemMode.mobile],
       ),
+      const NavigationItem(
+        icon: Icon(Icons.shopping_bag_rounded),
+        label: PageLabel.purchase,
+        view: PurchaseView(
+          key: GlobalObjectKey(
+            PageLabel.purchase,
+          ),
+        ),
+        modes: [NavigationItemMode.desktop, NavigationItemMode.mobile],
+      ),
     ];
 }
 
