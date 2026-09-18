@@ -1238,6 +1238,21 @@ class BuildCommand extends Command {
           .replaceAll(
               "{{ARCH}}", archName == "amd64" ? "x64compatible" : "arm64")
           .replaceAll("{{SOURCE_DIR}}", buildDir)
+          .replaceAll(
+            "{{STRICT_UPGRADE_STOP}}",
+            Build.strictPackageEnabled
+                ? '''  Exec('sc.exe', 'query "FlClashStrictBroker"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  if ResultCode = 0 then
+  begin
+    Exec('sc.exe', 'stop "FlClashStrictBroker"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+    if ResultCode <> 0 then
+    begin
+      MsgBox('The existing Strict Broker service could not be stopped for upgrade.', mbError, MB_OK);
+      Abort;
+    end;
+  end;'''
+                : "",
+          )
           .replaceAll("{{EXECUTABLE_NAME}}", "${Build.appName}.exe")
           .replaceAll(
             "{{STRICT_PACKAGE_FILES}}",
@@ -1249,18 +1264,59 @@ class BuildCommand extends Command {
             "{{STRICT_SERVICE_BLOCK}}",
             Build.strictPackageEnabled
                 ? '''    StrictBrokerExe := ExpandConstant('{commonpf}\\FlClashX Service\\FlClashStrictBroker.exe');
-    Exec('sc.exe', 'config "FlClashStrictBroker" binPath= "' + StrictBrokerExe + '" start= auto', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+    Exec('sc.exe', 'config "FlClashStrictBroker" binPath= "' + StrictBrokerExe + '" obj= LocalSystem type= own start= auto', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
     if ResultCode <> 0 then
-      Exec('sc.exe', 'create "FlClashStrictBroker" binPath= "' + StrictBrokerExe + '" start= auto', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+      Exec('sc.exe', 'create "FlClashStrictBroker" binPath= "' + StrictBrokerExe + '" obj= LocalSystem type= own start= auto', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
     if ResultCode = 0 then
-      Exec('sc.exe', 'start "FlClashStrictBroker"', '', SW_HIDE, ewNoWait, ResultCode);'''
+      Exec('sc.exe', 'config "FlClashStrictBroker" binPath= "' + StrictBrokerExe + '" obj= LocalSystem type= own start= auto', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+    if ResultCode = 0 then
+      Exec('sc.exe', 'failure "FlClashStrictBroker" reset= 86400 actions= restart/60000/restart/120000/""', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+    if ResultCode = 0 then
+      Exec('sc.exe', 'failureflag "FlClashStrictBroker" 1', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+    if ResultCode = 0 then
+      Exec('sc.exe', 'start "FlClashStrictBroker"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+    if ResultCode <> 0 then
+    begin
+      MsgBox('Strict Broker service registration or startup failed. Installation cannot continue.', mbError, MB_OK);
+      Abort;
+    end;'''
                 : "",
           )
           .replaceAll(
             "{{STRICT_UNINSTALL_BLOCK}}",
             Build.strictPackageEnabled
-                ? '''      Exec('sc.exe', 'stop "FlClashStrictBroker"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-      Exec('sc.exe', 'delete "FlClashStrictBroker"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);'''
+                ? '''      Exec('sc.exe', 'query "FlClashStrictBroker"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+      if ResultCode = 0 then
+      begin
+        Exec('sc.exe', 'stop "FlClashStrictBroker"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+        if ResultCode <> 0 then
+        begin
+          MsgBox('The Strict Broker service could not be stopped for uninstall.', mbError, MB_OK);
+          Abort;
+        end;
+        Exec('sc.exe', 'delete "FlClashStrictBroker"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+        if ResultCode <> 0 then
+        begin
+          MsgBox('The Strict Broker service could not be removed.', mbError, MB_OK);
+          Abort;
+        end;
+      end;
+      Exec('sc.exe', 'query "FlClashStrictCallout"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+      if ResultCode = 0 then
+      begin
+        Exec('sc.exe', 'stop "FlClashStrictCallout"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+        if ResultCode <> 0 then
+        begin
+          MsgBox('The Strict driver service could not be stopped.', mbError, MB_OK);
+          Abort;
+        end;
+        Exec('sc.exe', 'delete "FlClashStrictCallout"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+        if ResultCode <> 0 then
+        begin
+          MsgBox('The Strict driver service could not be removed.', mbError, MB_OK);
+          Abort;
+        end;
+      end;'''
                 : "",
           )
           // The strict file block is injected after the normal source-dir

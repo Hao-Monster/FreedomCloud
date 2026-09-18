@@ -103,6 +103,7 @@ begin
   // Stop service if running
   Exec('sc.exe', 'stop "FlClashHelperService"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   Exec('sc.exe', 'stop "FlClashStrictBroker"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+{{STRICT_UPGRADE_STOP}}
   Sleep(1000);
   
   // Kill all processes
