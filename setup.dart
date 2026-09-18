@@ -284,35 +284,158 @@ class Build {
     return (await sha256.bind(file.openRead()).first).toString();
   }
 
-  static Future<String> _resolveSourceCommit() async {
-    final environmentCommit = Platform.environment["GITHUB_SHA"]?.trim() ?? "";
-    if (RegExp(r'^[0-9a-fA-F]{40,64}$').hasMatch(environmentCommit)) {
+  static Future<String> resolveSourceCommit() async {
+    final environmentCommit = Platform.environment["GITHUB_SHA"]?.trim() ??
+        Platform.environment["GIT_COMMIT"]?.trim() ??
+        Platform.environment["SOURCE_COMMIT"]?.trim() ??
+        "";
+    if (RegExp(r'^[0-9a-fA-F]{40}$').hasMatch(environmentCommit)) {
       return environmentCommit.toLowerCase();
     }
-    final result = await Process.run(
-      "git",
-      ["rev-parse", "HEAD"],
-      workingDirectory: current,
-      runInShell: false,
-    );
-    final repositoryCommit = result.stdout.toString().trim();
-    if (result.exitCode != 0 ||
-        !RegExp(r'^[0-9a-fA-F]{40,64}$').hasMatch(repositoryCommit)) {
+    try {
+      final result = await Process.run(
+        "git",
+        ["rev-parse", "HEAD"],
+        workingDirectory: current,
+        runInShell: false,
+      );
+      final repositoryCommit = result.stdout.toString().trim();
+      if (result.exitCode == 0 &&
+          RegExp(r'^[0-9a-fA-F]{40}$').hasMatch(repositoryCommit)) {
+        return repositoryCommit.toLowerCase();
+      }
+    } catch (_) {
       throw "Unable to resolve an immutable source commit for the test package";
     }
-    return repositoryCommit.toLowerCase();
+    throw "Unable to resolve an immutable source commit for the test package";
   }
+
+  static Future<String> _resolveSourceCommit() => resolveSourceCommit();
+
+  static Future<String> resolveSourceBranch() async {
+    final headRef = Platform.environment["GITHUB_HEAD_REF"]?.trim() ?? "";
+    if (headRef.isNotEmpty) {
+      return headRef;
+    }
+    final refType = Platform.environment["GITHUB_REF_TYPE"]?.trim() ?? "";
+    final refName = Platform.environment["GITHUB_REF_NAME"]?.trim() ?? "";
+    if (refType == "branch" && refName.isNotEmpty) {
+      return refName;
+    }
+    if (refType == "tag") {
+      return "detached";
+    }
+    final envBranch = Platform.environment["GIT_BRANCH"]?.trim() ??
+        Platform.environment["SOURCE_BRANCH"]?.trim() ??
+        "";
+    if (envBranch.isNotEmpty) {
+      if (envBranch == "HEAD" || envBranch.toLowerCase() == "detached") {
+        return "detached";
+      }
+      return envBranch.replaceFirst(RegExp(r'^refs/heads/'), '');
+    }
+
+    try {
+      final showCurrent = await Process.run(
+        "git",
+        ["branch", "--show-current"],
+        workingDirectory: current,
+        runInShell: false,
+      );
+      if (showCurrent.exitCode == 0) {
+        final branch = showCurrent.stdout.toString().trim();
+        if (branch.isNotEmpty) {
+          return branch;
+        }
+        final headVerify = await Process.run(
+          "git",
+          ["rev-parse", "--verify", "HEAD"],
+          workingDirectory: current,
+          runInShell: false,
+        );
+        if (headVerify.exitCode == 0) {
+          return "detached";
+        }
+      } else {
+        final abbrevRef = await Process.run(
+          "git",
+          ["rev-parse", "--abbrev-ref", "HEAD"],
+          workingDirectory: current,
+          runInShell: false,
+        );
+        if (abbrevRef.exitCode == 0) {
+          final ref = abbrevRef.stdout.toString().trim();
+          if (ref == "HEAD") {
+            return "detached";
+          } else if (ref.isNotEmpty) {
+            return ref;
+          }
+        }
+      }
+    } catch (_) {
+      throw "Unable to resolve source branch or detached state for the test package";
+    }
+    throw "Unable to resolve source branch or detached state for the test package";
+  }
+
+  static Future<String> _resolveSourceBranch() => resolveSourceBranch();
+
+  static Future<String> resolveSourceTreeState() async {
+    final rawEnvState = Platform.environment["SOURCE_TREE_STATE"] ??
+        Platform.environment["GIT_TREE_STATE"];
+    final envState = rawEnvState?.trim().toLowerCase();
+    if (envState == "clean" || envState == "dirty" || envState == "unknown") {
+      return envState!;
+    }
+
+    try {
+      final result = await Process.run(
+        "git",
+        ["status", "--porcelain", "-uall"],
+        workingDirectory: current,
+        runInShell: false,
+      );
+      if (result.exitCode != 0) {
+        return "unknown";
+      }
+      final statusOutput = result.stdout.toString().trim();
+      return statusOutput.isEmpty ? "clean" : "dirty";
+    } catch (_) {
+      return "unknown";
+    }
+  }
+
+  static Future<String> _resolveSourceTreeState() => resolveSourceTreeState();
 
   static Future<void> writeWindowsTestPackageMetadata(
     String buildDir, {
     String? commit,
+    String? branch,
+    String? treeState,
     DateTime? builtAt,
     String? flutterVersion,
   }) async {
-    final sourceCommit = commit ?? await _resolveSourceCommit();
-    if (!RegExp(r'^[0-9a-fA-F]{40,64}$').hasMatch(sourceCommit)) {
+    final sourceCommit = commit ?? await resolveSourceCommit();
+    if (!RegExp(r'^[0-9a-fA-F]{40}$').hasMatch(sourceCommit)) {
       throw "Invalid source commit for the test package";
     }
+
+    final sourceBranch = branch ?? await resolveSourceBranch();
+    if (sourceBranch.trim().isEmpty) {
+      throw "Invalid source branch for the test package";
+    }
+
+    final rawTreeState = treeState ?? await resolveSourceTreeState();
+    final normalizedTreeState = rawTreeState.trim().toLowerCase();
+    final String resolvedTreeState;
+    if (normalizedTreeState == "clean" ||
+        normalizedTreeState == "dirty" ||
+        normalizedTreeState == "unknown") {
+      resolvedTreeState = normalizedTreeState;
+    } else {
+      throw "Invalid source tree state for the test package";
+    }
+
     final templateDir = join(current, "engineering", "test-package");
     final buildInfoTemplate = File(join(templateDir, "BUILD-INFO.txt.in"));
     final vmChecklist = File(join(templateDir, "WINDOWS-VM-CHECKLIST.md"));
@@ -323,11 +446,24 @@ class Build {
       throw "Windows test-package metadata is incomplete";
     }
 
+    final workingTreeDescription = switch (resolvedTreeState) {
+      "clean" => "clean (reproducible from recorded commit)",
+      "dirty" =>
+        "dirty (NON-REPRODUCIBLE: build includes uncommitted tracked or untracked changes)",
+      _ => "unknown (NON-REPRODUCIBLE: unable to verify git working tree state)",
+    };
+
     final buildTime = (builtAt ?? DateTime.now()).toUtc().toIso8601String();
     final buildInfo = (await buildInfoTemplate.readAsString())
         .replaceAll("{{GIT_COMMIT}}", sourceCommit.toLowerCase())
+        .replaceAll("{{GIT_BRANCH}}", sourceBranch.trim())
+        .replaceAll("{{SOURCE_BRANCH}}", sourceBranch.trim())
         .replaceAll("{{BUILD_TIME_UTC}}", buildTime)
-        .replaceAll("{{FLUTTER_VERSION}}", flutterVersion ?? "unavailable");
+        .replaceAll("{{FLUTTER_VERSION}}", flutterVersion ?? "unavailable")
+        .replaceAll("{{WORKING_TREE_STATE}}", workingTreeDescription)
+        .replaceAll("{{WORKING_TREE}}", workingTreeDescription)
+        .replaceAll("{{SOURCE_TREE_STATE}}", resolvedTreeState)
+        .replaceAll("{{TREE_STATE}}", resolvedTreeState);
     if (buildInfo.contains("{{")) {
       throw "Windows test-package metadata contains unresolved placeholders";
     }
@@ -917,8 +1053,14 @@ class BuildCommand extends Command {
       if (broker == null) throw "strict Broker path was not prepared";
       await Build.bundleWindowsStrictArtifacts(buildDir, brokerPath: broker);
     }
+    final commit = await Build.resolveSourceCommit();
+    final branch = await Build.resolveSourceBranch();
+    final treeState = await Build.resolveSourceTreeState();
     await Build.writeWindowsTestPackageMetadata(
       buildDir,
+      commit: commit,
+      branch: branch,
+      treeState: treeState,
       flutterVersion: await Build.resolveFlutterVersion(),
     );
     await Build.writeWindowsPackageChecksums(buildDir);
