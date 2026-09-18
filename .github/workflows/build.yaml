@@ -7,6 +7,10 @@ on:
 env:
   IS_STABLE: ${{ !contains(github.ref, '-') }}
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  WINDOWS_FLUTTER_VERSION: "3.41.7"
+  WINDOWS_FLUTTER_ARM_COMMIT: "e4cb8ffd9882e8db5edb7ab356205630f863c1e0"
+  WINDOWS_RUST_TOOLCHAIN: "1.98.1"
+  WINDOWS_INNO_SETUP_VERSION: "6.7.3"
 
 jobs:
   build:
@@ -41,9 +45,15 @@ jobs:
         if: startsWith(matrix.os, 'windows-11-arm')
         run: |
           Invoke-WebRequest -Uri "https://win.rustup.rs/aarch64" -OutFile rustup-init.exe
-          .\rustup-init.exe -y --default-toolchain stable
+          .\rustup-init.exe -y --default-toolchain $env:WINDOWS_RUST_TOOLCHAIN
           $cargoPath = "$env:USERPROFILE\.cargo\bin"
           Add-Content $env:GITHUB_PATH $cargoPath
+
+      - name: Pin Rust toolchain for Windows x64
+        if: matrix.platform == 'windows' && !startsWith(matrix.os, 'windows-11-arm')
+        run: |
+          rustup toolchain install $env:WINDOWS_RUST_TOOLCHAIN --profile minimal
+          rustup default $env:WINDOWS_RUST_TOOLCHAIN
       
       - name: Setup Rust ARM64 target for cross-compilation
         if: matrix.platform == 'windows' && matrix.arch == 'arm64' && !startsWith(matrix.os, 'windows-11-arm')
@@ -120,14 +130,18 @@ jobs:
         if: startsWith(matrix.os, 'windows-11-arm') || startsWith(matrix.os, 'ubuntu-24.04-arm')
         uses: subosito/flutter-action@v2
         with:
+          # The ARM Windows runner needs the Flutter ARM-capable tree. Keep the
+          # channel for the action clone path, but always detach at this exact
+          # commit so the build never follows a moving master branch.
           channel: "master"
+          flutter-version: ${{ startsWith(matrix.os, 'windows-11-arm') && env.WINDOWS_FLUTTER_ARM_COMMIT || 'any' }}
           cache: true
 
       - name: Setup Flutter
         if: ${{ !(startsWith(matrix.os, 'windows-11-arm') || startsWith(matrix.os, 'ubuntu-24.04-arm')) }}
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: "3.41.7"
+          flutter-version: ${{ env.WINDOWS_FLUTTER_VERSION }}
           cache: true
 
       - run: flutter --version
@@ -151,7 +165,7 @@ jobs:
       - name: Setup Inno Setup
         if: matrix.platform == 'windows'
         run: |
-          choco install innosetup -y
+          choco install innosetup --version $env:WINDOWS_INNO_SETUP_VERSION -y --no-progress
           echo "C:\Program Files (x86)\Inno Setup 6" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
       - name: Setup
@@ -346,7 +360,6 @@ jobs:
           fi
 
       - name: Generate sha256
-        if: env.IS_STABLE == 'true'
         run: |
           cd ./dist
           for file in $(find . -type f -not -name "*.sha256"); do

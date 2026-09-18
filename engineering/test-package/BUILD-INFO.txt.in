@@ -1,13 +1,14 @@
-FlClashX Windows x64 v0.2 test package
+FlClashX Windows {{ARCHITECTURE}} qualification package
 Source branch: {{GIT_BRANCH}}
 Source commit: {{GIT_COMMIT}}
-Build time (UTC): {{BUILD_TIME_UTC}}
+Build time (UTC, SOURCE_DATE_EPOCH or commit time): {{BUILD_TIME_UTC}}
 Flutter: {{FLUTTER_VERSION}}
-Package type: unsigned local VM acceptance build
+{{TOOLCHAIN}}
+Package type: {{PACKAGE_TYPE}}
 Working tree: {{WORKING_TREE_STATE}}
 Included milestones: M0 connections, M1 non-strict application policy,
 M2 authenticated background Agent and UI detach/reattach lifecycle,
-M3 strict policy/identity/process-family code paths (unsigned driver not included)
+M3 strict policy/identity/process-family code paths
 
 Package verification: SHA256SUMS.txt contains hashes for every portable-package
 file; the adjacent .sha256 file contains the ZIP hash.
@@ -17,5 +18,4 @@ isolated Windows 11 VM. The portable entrypoint is FlClashX.exe; do not launch
 FlClashAgent.exe or FlClashHelperService.exe directly. Export
 connections_diagnostic.log from the Connections page after reproducing an
 issue, then run Collect-FlClashXLogs.ps1 to collect the bounded evidence set.
-Do not share Agent/Helper token files. Strict WFP capture is not enabled by
-this unsigned package and requires separately signed driver/Broker artifacts.
+Do not share Agent/Helper token files. {{STRICT_STATUS}}
