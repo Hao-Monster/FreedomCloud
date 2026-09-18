@@ -1,11 +1,10 @@
 FlClashX Windows x64 v0.2 test package
-Source branch: codex/koala-connections
+Source branch: {{GIT_BRANCH}}
 Source commit: {{GIT_COMMIT}}
 Build time (UTC): {{BUILD_TIME_UTC}}
 Flutter: {{FLUTTER_VERSION}}
 Package type: unsigned local VM acceptance build
-Working tree: build includes uncommitted local changes; reproduce from the
-recorded commit only after reviewing the working-tree diff.
+Working tree: {{WORKING_TREE_STATE}}
 Included milestones: M0 connections, M1 non-strict application policy,
 M2 authenticated background Agent and UI detach/reattach lifecycle,
 M3 strict policy/identity/process-family code paths (unsigned driver not included)
