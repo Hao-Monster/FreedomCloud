@@ -459,6 +459,7 @@ class GlobalState {
     final profileId = profile.id;
     final configMap = await getProfileConfig(profileId);
     final rawConfig = await handleEvaluate(configMap);
+    migrateDeprecatedGlobalClientFingerprint(rawConfig);
     
     final realPatchConfig = patchConfig.copyWith(
       tun: patchConfig.tun.getRealTun(config.networkProps.routeMode),

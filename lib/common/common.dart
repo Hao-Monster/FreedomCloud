@@ -30,6 +30,7 @@ export 'network.dart';
 export 'num.dart';
 export 'package.dart';
 export 'per_app_policy.dart';
+export 'client_fingerprint.dart';
 export 'path.dart';
 export 'picker.dart';
 export 'preferences.dart';
