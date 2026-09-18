@@ -8,6 +8,10 @@ import 'package:flclashx/enum/enum.dart';
 import 'package:path/path.dart';
 import 'package:win32/win32.dart';
 
+/// ShellExecute returns an HINSTANCE-like value. Values 0..32 are documented
+/// failure codes; any value above 32 means the elevated process was launched.
+bool windowsShellExecuteSucceeded(int result) => result > 32;
+
 class Windows {
   factory Windows() {
     _instance ??= Windows._internal();
@@ -191,10 +195,7 @@ class Windows {
 
     commonPrint.log("windows runas: $command $arguments resultCode:$result");
 
-    if (result < 42) {
-      return false;
-    }
-    return true;
+    return windowsShellExecuteSucceeded(result);
   }
 
   Future<WindowsHelperServiceStatus> checkService() async {
