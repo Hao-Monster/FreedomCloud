@@ -21,10 +21,9 @@ use crate::windows_pipe::is_connect_deadline;
 use crate::windows_tcp_runtime::WindowsTcpForwardingHealth;
 use crate::{
     run_windows_scm_service, verify_windows_packaged_agent_image,
-    verify_windows_packaged_broker_image, verify_windows_packaged_core_image,
-    AuthorizedBrokerRequest, BrokerDispatcher, BrokerEngine, BrokerSessionRegistry,
-    BrokerSessionResource, FileRecoveryStore, ForwardingHealthProbe, PlannedWfpBackend,
-    StrictPackageManifest, WfpPolicyPlan, WindowsAgentImageTrustLease,
+    verify_windows_packaged_core_image, AuthorizedBrokerRequest, BrokerDispatcher, BrokerEngine,
+    BrokerSessionRegistry, BrokerSessionResource, FileRecoveryStore, ForwardingHealthProbe,
+    PlannedWfpBackend, StrictPackageManifest, WfpPolicyPlan, WindowsAgentImageTrustLease,
     WindowsBrokerActivationAttempt, WindowsBrokerActivationPipeInstance, WindowsBrokerPipeSession,
     WindowsIdentityVerifier, WindowsPipeDeadlines, WindowsPipeShutdown, WindowsScmContext,
     WindowsSharedIoctlDriverChannel, WindowsWfpControl, WindowsWfpEngineStore,
@@ -217,8 +216,6 @@ fn run_service(
         WINDOWS_STRICT_BROKER_ACTIVATION_PIPE_NAME,
         activation_deadlines,
     )?;
-    verify_windows_packaged_broker_image(paths.broker(), &package)
-        .context("open and attest packaged strict Broker")?;
     let agent_image = verify_windows_packaged_agent_image(paths.agent(), &package)
         .context("open and attest packaged strict Agent")?;
     let _core_image = verify_windows_packaged_core_image(paths.core(), &package)
