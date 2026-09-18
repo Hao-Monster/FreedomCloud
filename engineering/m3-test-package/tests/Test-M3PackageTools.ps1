@@ -79,6 +79,7 @@ try {
             -CorePath "$env:SystemRoot\System32\cmd.exe" `
             -ManifestPath $manifest `
             -SourceCommit ('ab' * 20) `
+            -SourceDateEpoch 1720000000 `
             -OutputZip (Join-Path $testRoot 'must-not-exist.zip') | Out-Null
     }
     catch {

@@ -7,6 +7,7 @@ param(
     [Parameter(Mandatory = $true)] [string]$ManifestPath,
     [Parameter(Mandatory = $true)] [ValidatePattern('^[0-9A-Fa-f]{40,64}$')] [string]$SourceCommit,
     [Parameter(Mandatory = $true)] [string]$OutputZip,
+    [Parameter(Mandatory = $false)] [long]$SourceDateEpoch = -1,
     [switch]$Force
 )
 
@@ -118,6 +119,19 @@ if (($outputParentItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0
 if ((Test-Path -LiteralPath $output) -and -not $Force) {
     throw 'OutputZip already exists; use -Force to replace it'
 }
+$outputSha = "$output.sha256"
+if ((Test-Path -LiteralPath $outputSha) -and -not $Force) {
+    throw 'OutputZip checksum already exists; use -Force to replace it'
+}
+if ($SourceDateEpoch -lt 0) {
+    $envEpoch = [Environment]::GetEnvironmentVariable('SOURCE_DATE_EPOCH')
+    if ([string]::IsNullOrWhiteSpace($envEpoch) -or -not [long]::TryParse($envEpoch, [ref]$SourceDateEpoch)) {
+        throw 'SourceDateEpoch is required; pass -SourceDateEpoch or SOURCE_DATE_EPOCH'
+    }
+}
+if ($SourceDateEpoch -lt 0 -or $SourceDateEpoch -gt 4354819198) {
+    throw 'SourceDateEpoch must be Unix seconds in the ZIP range (through 2107)'
+}
 
 $staging = Join-Path $outputParent ('.m3-vm-bundle-' + [Guid]::NewGuid().ToString('N'))
 $temporaryZip = Join-Path $outputParent ('.m3-vm-bundle-' + [Guid]::NewGuid().ToString('N') + '.zip')
@@ -153,7 +167,7 @@ try {
         "Source commit: $($SourceCommit.ToLowerInvariant())"
         "Package version: $($manifest.packageVersion)"
         "Driver build ID: $($manifest.driverBuildId.ToLowerInvariant())"
-        "Created UTC: $([DateTime]::UtcNow.ToString('o'))"
+        "Created UTC (SOURCE_DATE_EPOCH): $([DateTimeOffset]::FromUnixTimeSeconds($SourceDateEpoch).UtcDateTime.ToString('o'))"
         "Broker SHA-256: $($brokerIdentity.FileSha256)"
         'Purpose: isolated Windows 11 VM qualification only; not a public release.'
     ) -join [Environment]::NewLine
@@ -164,8 +178,12 @@ try {
         Sort-Object Name |
         ForEach-Object { '{0} *{1}' -f (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash, $_.Name }
     [IO.File]::WriteAllText((Join-Path $staging 'SHA256SUMS.txt'), ($sumLines -join [Environment]::NewLine) + [Environment]::NewLine, $utf8)
-    Compress-Archive -Path (Join-Path $staging '*') -DestinationPath $temporaryZip -CompressionLevel Optimal
+    $zipHelper = Join-Path $PSScriptRoot 'New-DeterministicZip.ps1'
+    if (-not (Test-Path -LiteralPath $zipHelper -PathType Leaf)) { throw 'deterministic ZIP helper is missing' }
+    & $zipHelper -SourceDirectory $staging -OutputZip $temporaryZip -SourceDateEpoch $SourceDateEpoch -Force
     Move-Item -LiteralPath $temporaryZip -Destination $output -Force:$Force
+    $zipHash = (Get-FileHash -LiteralPath $output -Algorithm SHA256).Hash.ToLowerInvariant()
+    [IO.File]::WriteAllText($outputSha, "$zipHash  $([IO.Path]::GetFileName($output))$([Environment]::NewLine)", $utf8)
 }
 finally {
     if (Test-Path -LiteralPath $temporaryZip) { Remove-Item -LiteralPath $temporaryZip -Force }

@@ -407,6 +407,120 @@ class Build {
 
   static Future<String> _resolveSourceTreeState() => resolveSourceTreeState();
 
+  static Future<int> resolveSourceDateEpoch(String commit) async {
+    final override = Platform.environment["SOURCE_DATE_EPOCH"];
+    String raw;
+    if (override != null) {
+      raw = override;
+    } else {
+      final result = await Process.run(
+        "git", ["show", "-s", "--format=%ct", commit],
+        workingDirectory: current, runInShell: false,
+      );
+      if (result.exitCode != 0) throw "Unable to resolve source commit time";
+      raw = result.stdout.toString().trim();
+    }
+    final epoch = int.tryParse(raw);
+    if (!RegExp(r'^\d+$').hasMatch(raw) || epoch == null ||
+        epoch < 0 || epoch > 4354819198) {
+      throw "SOURCE_DATE_EPOCH must be Unix seconds in the ZIP range (through 2107)";
+    }
+    return epoch;
+  }
+
+  static Future<String> toolVersion(String command, List<String> arguments) async {
+    try {
+      final result = await Process.run(command, arguments, runInShell: true);
+      if (result.exitCode == 0) {
+        return result.stdout.toString().trim().replaceAll(RegExp(r'[\r\n]+'), '; ');
+      }
+    } on ProcessException {
+      // Unavailable metadata is explicit; never invent a toolchain identity.
+    }
+    return "unavailable";
+  }
+
+  static Future<String> windowsToolchainIdentity(String buildDir) async {
+    final lines = <String>[
+      "Go: ${await toolVersion('go', ['version'])}",
+      "Rust: ${await toolVersion('rustc', ['--version'])}",
+      "Cargo: ${await toolVersion('cargo', ['--version'])}",
+      "CMake: ${await toolVersion('cmake', ['--version'])}",
+    ];
+    final cmakeDir = Directory(join(dirname(dirname(buildDir)), "CMakeFiles"));
+    var compilerRecorded = false;
+    if (cmakeDir.existsSync()) {
+      final compilerFiles = cmakeDir.listSync(recursive: true, followLinks: false)
+          .whereType<File>()
+          .where((file) => basename(file.path) == "CMakeCXXCompiler.cmake")
+          .toList()..sort((a, b) => a.path.compareTo(b.path));
+      for (final file in compilerFiles) {
+        final content = await file.readAsString();
+        final version = RegExp(r'set\(CMAKE_CXX_COMPILER_VERSION "([^"]+)"\)')
+            .firstMatch(content)?.group(1);
+        if (version != null) {
+          lines.add("MSVC compiler: $version");
+          compilerRecorded = true;
+        }
+      }
+    }
+    if (!compilerRecorded) lines.add("MSVC compiler: unavailable");
+    final project = File(join(dirname(buildDir), "${appName}.vcxproj"));
+    final sdk = project.existsSync()
+        ? RegExp(r'<WindowsTargetPlatformVersion>([^<]+)</WindowsTargetPlatformVersion>')
+            .firstMatch(await project.readAsString())?.group(1)
+        : null;
+    lines.add("Windows SDK: ${sdk ?? 'unavailable'}");
+    lines.add("WDK: ${Platform.environment['FLCLASH_WDK_VERSION'] ?? 'external signed driver input; not invoked'}");
+    for (final path in ["pubspec.lock", "core/go.sum", "services/helper/Cargo.lock",
+      "services/agent/Cargo.lock", "services/strict-broker/Cargo.lock"]) {
+      final file = File(join(current, path));
+      lines.add("Input SHA256 $path: ${file.existsSync() ? await calcSha256(file.path) : 'missing'}");
+    }
+    return lines.join('\n');
+  }
+
+  static Future<void> writeArtifactChecksum(String artifact) async {
+    await File("$artifact.sha256").writeAsString(
+      "${await calcSha256(artifact)}  ${basename(artifact)}\n", flush: true,
+    );
+  }
+
+  static Future<void> createDeterministicZip({
+    required String sourceDirectory,
+    required String outputZip,
+    required int sourceDateEpoch,
+  }) async {
+    final helper = join(current, "engineering", "m3-test-package",
+        "New-DeterministicZip.ps1");
+    if (!File(helper).existsSync()) {
+      throw "Deterministic ZIP helper is missing";
+    }
+    await exec([
+      "powershell", "-NoProfile", "-File", helper,
+      "-SourceDirectory", sourceDirectory,
+      "-OutputZip", outputZip,
+      "-SourceDateEpoch", sourceDateEpoch.toString(),
+      "-Force",
+    ], name: "create deterministic zip", runInShell: false);
+  }
+
+  /// Only fixed generated files may be removed; never traverse a directory/link.
+  static Future<void> prepareWindowsPackageMode(String buildDir, {required bool strict}) async {
+    for (final name in ["FlClashStrictCallout.sys", "FlClashStrictBroker.exe",
+      "strict-package-manifest.json"]) {
+      final path = join(buildDir, name);
+      final type = FileSystemEntity.typeSync(path, followLinks: false);
+      if (strict) {
+        if (type != FileSystemEntityType.file) throw "Strict package is missing regular file $name";
+      } else if (type == FileSystemEntityType.file) {
+        await File(path).delete();
+      } else if (type != FileSystemEntityType.notFound) {
+        throw "Refusing to remove non-file package artifact $name";
+      }
+    }
+  }
+
   static Future<void> writeWindowsTestPackageMetadata(
     String buildDir, {
     String? commit,
@@ -414,6 +528,9 @@ class Build {
     String? treeState,
     DateTime? builtAt,
     String? flutterVersion,
+    String toolchain = "unavailable",
+    bool strict = false,
+    String architecture = "amd64",
   }) async {
     final sourceCommit = commit ?? await resolveSourceCommit();
     if (!RegExp(r'^[0-9a-fA-F]{40}$').hasMatch(sourceCommit)) {
@@ -447,19 +564,28 @@ class Build {
     }
 
     final workingTreeDescription = switch (resolvedTreeState) {
-      "clean" => "clean (reproducible from recorded commit)",
+      "clean" => "clean (source identity verified; binary reproducibility requires matching toolchain and inputs)",
       "dirty" =>
         "dirty (NON-REPRODUCIBLE: build includes uncommitted tracked or untracked changes)",
       _ => "unknown (NON-REPRODUCIBLE: unable to verify git working tree state)",
     };
 
-    final buildTime = (builtAt ?? DateTime.now()).toUtc().toIso8601String();
+    final timestamp = builtAt ?? DateTime.fromMillisecondsSinceEpoch(
+      (await resolveSourceDateEpoch(sourceCommit)) * 1000, isUtc: true,
+    );
+    final buildTime = timestamp.toUtc().toIso8601String();
     final buildInfo = (await buildInfoTemplate.readAsString())
         .replaceAll("{{GIT_COMMIT}}", sourceCommit.toLowerCase())
         .replaceAll("{{GIT_BRANCH}}", sourceBranch.trim())
         .replaceAll("{{SOURCE_BRANCH}}", sourceBranch.trim())
         .replaceAll("{{BUILD_TIME_UTC}}", buildTime)
         .replaceAll("{{FLUTTER_VERSION}}", flutterVersion ?? "unavailable")
+        .replaceAll("{{TOOLCHAIN}}", toolchain)
+        .replaceAll("{{ARCHITECTURE}}", architecture)
+        .replaceAll("{{PACKAGE_TYPE}}", strict ? "strict VM qualification package (signed inputs required)" : "unsigned local VM acceptance build")
+        .replaceAll("{{STRICT_STATUS}}", strict
+            ? "Strict artifact inputs are present. Run New-M3SignedVmBundle.ps1 to validate Authenticode, manifest digests and Broker embedding before qualification."
+            : "Strict WFP capture is not enabled by this unsigned package; signed driver/Broker artifacts are not included.")
         .replaceAll("{{WORKING_TREE_STATE}}", workingTreeDescription)
         .replaceAll("{{WORKING_TREE}}", workingTreeDescription)
         .replaceAll("{{SOURCE_TREE_STATE}}", resolvedTreeState)
@@ -484,16 +610,15 @@ class Build {
     if (!root.existsSync()) throw "Windows package directory does not exist";
     final files = <File>[];
     await for (final entity in root.list(recursive: true, followLinks: false)) {
-      if (entity is File && basename(entity.path) != "SHA256SUMS.txt") {
+      if (entity is Link) throw "Package checksum inventory cannot contain links";
+      if (entity is File && relative(entity.path, from: buildDir) != "SHA256SUMS.txt") {
         files.add(entity);
       }
     }
     files.sort((a, b) => relative(a.path, from: buildDir)
         .replaceAll('\\', '/')
-        .toLowerCase()
         .compareTo(relative(b.path, from: buildDir)
-            .replaceAll('\\', '/')
-            .toLowerCase()));
+            .replaceAll('\\', '/')));
     final manifest = StringBuffer();
     for (final file in files) {
       final path = relative(file.path, from: buildDir).replaceAll('\\', '/');
@@ -630,6 +755,8 @@ class Build {
       final execLines = [
         "go",
         "build",
+        "-trimpath",
+        "-mod=readonly",
         "-ldflags=-w -s -X github.com/metacubex/mihomo/constant.Version=$coreVersion",
         "-tags=${tagsFor(target)}",
         if (isLib) "-buildmode=c-shared",
@@ -683,6 +810,7 @@ class Build {
       "cargo",
       "build",
       "--release",
+      "--locked",
       "--features",
       "windows-service",
     ];
@@ -1053,15 +1181,24 @@ class BuildCommand extends Command {
       if (broker == null) throw "strict Broker path was not prepared";
       await Build.bundleWindowsStrictArtifacts(buildDir, brokerPath: broker);
     }
+    await Build.prepareWindowsPackageMode(
+      buildDir, strict: Build.strictPackageEnabled,
+    );
     final commit = await Build.resolveSourceCommit();
     final branch = await Build.resolveSourceBranch();
     final treeState = await Build.resolveSourceTreeState();
+    final sourceDateEpoch = await Build.resolveSourceDateEpoch(commit);
     await Build.writeWindowsTestPackageMetadata(
       buildDir,
       commit: commit,
       branch: branch,
       treeState: treeState,
       flutterVersion: await Build.resolveFlutterVersion(),
+      builtAt: DateTime.fromMillisecondsSinceEpoch(sourceDateEpoch * 1000,
+          isUtc: true),
+      toolchain: await Build.windowsToolchainIdentity(buildDir),
+      strict: Build.strictPackageEnabled,
+      architecture: arch.name,
     );
     await Build.writeWindowsPackageChecksums(buildDir);
 
@@ -1072,24 +1209,13 @@ class BuildCommand extends Command {
     final archName = arch.name;
     final zipName = "${Build.appName}-windows-$archName.zip";
     final zipPath = join(Build.distPath, zipName);
-    await Build.exec(
-      name: "create zip",
-      [
-        "powershell",
-        "Compress-Archive",
-        "-Path",
-        "$buildDir\\*",
-        "-DestinationPath",
-        zipPath,
-        "-Force"
-      ],
+    await Build.createDeterministicZip(
+      sourceDirectory: buildDir,
+      outputZip: zipPath,
+      sourceDateEpoch: sourceDateEpoch,
     );
     print("✅ ZIP created: $zipPath");
-    final zipSha256 = await Build.calcSha256(zipPath);
-    await File("$zipPath.sha256").writeAsString(
-      "$zipSha256  ${basename(zipPath)}\n",
-      flush: true,
-    );
+    await Build.writeArtifactChecksum(zipPath);
     print("✅ ZIP checksum created: $zipPath.sha256");
 
     final issTemplate =
@@ -1177,6 +1303,12 @@ class BuildCommand extends Command {
           [innoCompiler, issOut.path],
           runInShell: false,
         );
+        final setupPath = join(Build.distPath,
+            "${Build.appName}-windows-$archName-setup.exe");
+        if (!File(setupPath).existsSync()) {
+          throw "Inno Setup completed without creating $setupPath";
+        }
+        await Build.writeArtifactChecksum(setupPath);
         print("✅ EXE installer created");
       } else {
         print("⚠️  Inno Setup not installed; portable ZIP is still complete");
