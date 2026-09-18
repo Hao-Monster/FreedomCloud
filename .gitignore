@@ -90,3 +90,11 @@ target-check-windows/
 .gocache-temp/
 .gomodcache-temp/
 .gopath-temp/
+
+# Local strict-package and Visual Studio discovery outputs. These are generated
+# from signed inputs or machine state and must never be committed as source.
+/include/flclash_strict_build.h
+/strict-package-manifest.json
+/engineering/m3-test-package/_tmp-*.json
+/tmp_vswhere.json
+/vswhere*.json
