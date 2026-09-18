@@ -12,6 +12,9 @@ param(
     [string]$DriverPath,
 
     [Parameter(Mandatory = $true)]
+    [string]$BrokerPath,
+
+    [Parameter(Mandatory = $true)]
     [string]$AgentPath,
 
     [Parameter(Mandatory = $true)]
@@ -72,6 +75,7 @@ function Get-FileIdentity {
 }
 
 $driver = Resolve-PlainFile -Path $DriverPath -Label 'driver'
+$broker = Resolve-PlainFile -Path $BrokerPath -Label 'Broker'
 $agent = Resolve-PlainFile -Path $AgentPath -Label 'Agent'
 $core = Resolve-PlainFile -Path $CorePath -Label 'Core'
 if (-not (Test-FcxAbsolutePath $OutputPath)) {
@@ -91,6 +95,7 @@ if ((Test-Path -LiteralPath $output) -and -not $Force) {
 }
 
 $driverIdentity = Get-FileIdentity -Path $driver -Label 'driver'
+$brokerIdentity = Get-FileIdentity -Path $broker -Label 'Broker'
 $agentIdentity = Get-FileIdentity -Path $agent -Label 'Agent'
 $coreIdentity = Get-FileIdentity -Path $core -Label 'Core'
 $manifest = [ordered]@{
@@ -99,6 +104,8 @@ $manifest = [ordered]@{
     driverBuildId = $DriverBuildId.ToLowerInvariant()
     driverFileSha256 = $driverIdentity.FileSha256
     driverPublisherCertificateSha256 = $driverIdentity.PublisherCertificateSha256
+    brokerFileSha256 = $brokerIdentity.FileSha256
+    brokerPublisherCertificateSha256 = $brokerIdentity.PublisherCertificateSha256
     agentFileSha256 = $agentIdentity.FileSha256
     agentPublisherCertificateSha256 = $agentIdentity.PublisherCertificateSha256
     coreFileSha256 = $coreIdentity.FileSha256

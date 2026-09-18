@@ -1199,10 +1199,12 @@ mod tests {
         let file_sha256 = format!("{:x}", Sha256::digest(fs::read(unexpected_path).unwrap()));
         let manifest = StrictPackageManifest::parse(
             format!(
-                r#"{{"protocol":2,"packageVersion":"rejection-test","driverBuildId":"{}","driverFileSha256":"{}","driverPublisherCertificateSha256":"{}","agentFileSha256":"{}","agentPublisherCertificateSha256":"{}","coreFileSha256":"{}","corePublisherCertificateSha256":"{}"}}"#,
+                r#"{{"protocol":2,"packageVersion":"rejection-test","driverBuildId":"{}","driverFileSha256":"{}","driverPublisherCertificateSha256":"{}","brokerFileSha256":"{}","brokerPublisherCertificateSha256":"{}","agentFileSha256":"{}","agentPublisherCertificateSha256":"{}","coreFileSha256":"{}","corePublisherCertificateSha256":"{}"}}"#,
                 "12".repeat(16),
                 "23".repeat(32),
                 "34".repeat(32),
+                "45".repeat(32),
+                "56".repeat(32),
                 file_sha256,
                 inspected.publisher_certificate_sha256,
                 "67".repeat(32),
