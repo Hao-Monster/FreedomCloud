@@ -69,8 +69,10 @@ assigned to a focused commit.
    - Enable CI on the development branch before calling a milestone complete.
 
 9. **Post-M3 roadmap control**
-   - Keep macOS Network Extension (M4) and P2 items R-201 through R-208
-     separate from M3 acceptance.
+   - Keep macOS Network Extension (M4) and P2 items R-201 through R-208 in
+     their separate GitHub milestones and roadmap documents.
+   - M4 and P2 work receives no M3 acceptance credit and must not be mixed into
+     the Windows evidence ledger.
    - Do not start release claims for M4/P2 until M3's signed Windows gates,
      current runtime defects and repository governance are closed.
 
@@ -80,6 +82,9 @@ The milestone is complete only when all nine goals have linked commits, review
 evidence and, where applicable, Windows 11 VM artifacts. A visible strict
 button, YAML policy or unsigned local package is not evidence of strict WFP
 acceptance.
+
+M4 and P2 are explicitly outside this gate. Their documents and GitHub
+milestones define separate dependencies, issues and acceptance evidence.
 
 ## Repository workflow
 
