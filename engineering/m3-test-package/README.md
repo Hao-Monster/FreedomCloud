@@ -5,6 +5,15 @@ portion of M3 without weakening the production trust model. They never create a
 test certificate, enable test-signing mode, install a service, load a driver or
 change network state by themselves.
 
+Portable and signed VM ZIPs use `New-DeterministicZip.ps1`. It includes hidden
+files in ordinal path order, rejects links and output paths inside the source,
+uses a fixed `-SourceDateEpoch`, and writes uncompressed entries through a
+temporary file before replacement. `setup.dart` derives this epoch from
+`SOURCE_DATE_EPOCH` when supplied, otherwise from the recorded source commit.
+The source tree state remains part of `BUILD-INFO.txt`; dirty checkouts are
+explicitly marked non-reproducible. The portable ZIP, strict VM bundle and Inno
+installer, when available, each get their own adjacent `.sha256` file.
+
 ## Assembly order
 
 1. Choose one 128-bit hexadecimal driver build ID and compile the driver with
@@ -15,7 +24,7 @@ change network state by themselves.
 3. Run `New-M3PackageManifest.ps1` over those immutable signed files.
 4. Build the production Broker with `FLCLASH_STRICT_PACKAGE_MANIFEST` set to the
    absolute generated manifest path, then sign the Broker.
-5. Run `New-M3SignedVmBundle.ps1`. It rejects unsigned files and any driver,
+5. Run `New-M3SignedVmBundle.ps1 -SourceDateEpoch <unix-seconds>`. It rejects unsigned files and any driver,
    Agent or Core hash/publisher mismatch before producing the ZIP.
 6. Transfer the ZIP to a snapshotted Windows 11 VM, extract it, run
    `Invoke-M3VmPreflight.ps1`, and follow `M3-WINDOWS-VM-CHECKLIST.md`.
