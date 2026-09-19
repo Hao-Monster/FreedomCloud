@@ -40,6 +40,40 @@ function Assert-PlainDirectory {
     return $item.FullName
 }
 
+function Get-SignedIdentity {
+    param([string]$Path, [string]$Label)
+    $signature = Get-AuthenticodeSignature -LiteralPath $Path
+    if ($signature.Status -ne [System.Management.Automation.SignatureStatus]::Valid -or
+        $null -eq $signature.SignerCertificate -or
+        $signature.SignerCertificate.RawData.Length -eq 0) {
+        throw "$Label signature is not trusted"
+    }
+    $sha256 = [Security.Cryptography.SHA256]::Create()
+    try { $certificateHash = $sha256.ComputeHash($signature.SignerCertificate.RawData) }
+    finally { $sha256.Dispose() }
+    return [pscustomobject]@{
+        FileSha256 = (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
+        PublisherCertificateSha256 = ([BitConverter]::ToString($certificateHash) -replace '-', '').ToLowerInvariant()
+    }
+}
+
+function Assert-ManifestIdentity {
+    param(
+        [string]$Path,
+        [string]$Label,
+        [string]$ExpectedFileSha256,
+        [string]$ExpectedPublisherCertificateSha256
+    )
+    $identity = Get-SignedIdentity $Path $Label
+    if (-not $identity.FileSha256.Equals($ExpectedFileSha256, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "$Label digest does not match the package manifest"
+    }
+    if (-not $identity.PublisherCertificateSha256.Equals($ExpectedPublisherCertificateSha256, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "$Label publisher does not match the package manifest"
+    }
+    return $identity
+}
+
 $package = Assert-PlainDirectory ([IO.Path]::GetFullPath($PackageDirectory)) 'package directory'
 if (-not (Test-IsAdministrator)) { throw 'M3 VM qualification must run from an elevated PowerShell session' }
 $computer = Get-CimInstance -ClassName Win32_ComputerSystem
@@ -103,6 +137,16 @@ if (Test-Path -LiteralPath $hvciPath) {
 }
 $os = Get-CimInstance -ClassName Win32_OperatingSystem
 $manifest = Get-Content -LiteralPath (Join-Path $package 'strict-package-manifest.json') -Raw | ConvertFrom-Json
+$identityResults = [ordered]@{}
+$identityResults['FlClashStrictCallout.sys'] = Assert-ManifestIdentity `
+    (Join-Path $package 'FlClashStrictCallout.sys') 'driver' `
+    $manifest.driverFileSha256 $manifest.driverPublisherCertificateSha256
+$identityResults['FlClashAgent.exe'] = Assert-ManifestIdentity `
+    (Join-Path $package 'FlClashAgent.exe') 'Agent' `
+    $manifest.agentFileSha256 $manifest.agentPublisherCertificateSha256
+$identityResults['FlClashCore.exe'] = Assert-ManifestIdentity `
+    (Join-Path $package 'FlClashCore.exe') 'Core' `
+    $manifest.coreFileSha256 $manifest.corePublisherCertificateSha256
 $report = [ordered]@{
     schema = 1
     collectedUtc = [DateTime]::UtcNow.ToString('o')
@@ -119,6 +163,7 @@ $report = [ordered]@{
     driverBuildId = $manifest.driverBuildId
     hashes = $verified
     signatures = $signatureResults
+    signedIdentities = $identityResults
 }
 
 $evidenceFull = [IO.Path]::GetFullPath($EvidenceDirectory)

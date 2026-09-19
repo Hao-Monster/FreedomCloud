@@ -37,7 +37,9 @@ try {
     }
     $preflightSource = Get-Content -LiteralPath (Join-Path $toolRoot 'Invoke-M3VmPreflight.ps1') -Raw
     if ($preflightSource -match '\[IO\.Path\]::IsPathFullyQualified' -or
-        $preflightSource -notmatch 'Test-FcxAbsolutePath') {
+        $preflightSource -notmatch 'Test-FcxAbsolutePath' -or
+        $preflightSource -notmatch 'Assert-ManifestIdentity' -or
+        $preflightSource -notmatch 'signedIdentities') {
         throw 'preflight must use a Windows PowerShell 5.1-compatible absolute-path check'
     }
     if ($bundleSource -notmatch 'Get-SignedIdentity' -or
