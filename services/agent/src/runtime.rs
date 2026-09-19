@@ -883,6 +883,7 @@ async fn handle_ui(stream: TcpStream, token: String, shared: Arc<Shared>) -> Res
     send_ui_activity(&shared, true).await;
 
     let mut reader = BufReader::new(read_half);
+    let session_result: Result<()> = async {
     loop {
         if session_cancel.cancelled.load(Ordering::Acquire) {
             break;
@@ -995,7 +996,7 @@ async fn handle_ui(stream: TcpStream, token: String, shared: Arc<Shared>) -> Res
             shared.journal.lock().await.stage(line);
             if core.send(line.to_owned()).await.is_err() {
                 shared.journal.lock().await.discard_pending();
-                return Err(anyhow!("Core command channel is closed"));
+                bail!("Core command channel is closed");
             }
         } else {
             let response = json!({
@@ -1008,6 +1009,8 @@ async fn handle_ui(stream: TcpStream, token: String, shared: Arc<Shared>) -> Res
             output_tx.send(UiOutput::new(response.to_string())).await?;
         }
     }
+    Ok(())
+    }.await;
 
     let owns_session = {
         let mut current = shared.ui.lock().await;
@@ -1026,7 +1029,7 @@ async fn handle_ui(stream: TcpStream, token: String, shared: Arc<Shared>) -> Res
     }
     drop(output_tx);
     writer.abort();
-    Ok(())
+    session_result
 }
 
 #[derive(Clone, Copy)]
@@ -1716,6 +1719,61 @@ fn crash_delay(attempt: u32) -> Duration {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn session_fixture() -> Arc<Shared> {
+        let (supervisor, _) = mpsc::channel(1);
+        Arc::new(Shared {
+            ui: Mutex::new(None),
+            core: Mutex::new(None),
+            journal: Mutex::new(ReplayJournal::default()),
+            logger: AgentLogger::new(&std::env::temp_dir().join("flclash-agent-session-tests")),
+            status: RwLock::new(CoreStatus::Ready),
+            strict_policy: RwLock::new(StrictPolicyStatus::disabled()),
+            generation: AtomicU64::new(7),
+            next_session: AtomicU64::new(1),
+            shutting_down: AtomicBool::new(false),
+            shutdown: Notify::new(),
+            supervisor,
+            privileged_backend: false,
+            helper_port: None,
+            helper_token: None,
+            home_dir: PathBuf::new(),
+            strict_blocks: Mutex::new(HashSet::new()),
+            #[cfg(windows)]
+            strict_runtime: Mutex::new(None),
+        })
+    }
+
+    async fn attach_ui(shared: Arc<Shared>) -> (BufReader<TcpStream>, tokio::task::JoinHandle<Result<()>>) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let mut client = TcpStream::connect(listener.local_addr().unwrap()).await.unwrap();
+        let (server, _) = listener.accept().await.unwrap();
+        let task = tokio::spawn(handle_ui(server, "test-token".to_owned(), shared));
+        client.write_all(b"{\"token\":\"test-token\",\"protocol\":1}\n").await.unwrap();
+        let mut reader = BufReader::new(client);
+        let mut ready = String::new();
+        timeout(Duration::from_secs(3), reader.read_line(&mut ready)).await.unwrap().unwrap();
+        let event: Value = serde_json::from_str(&ready).unwrap();
+        assert_eq!(event["_agent"]["type"], "ready");
+        (reader, task)
+    }
+
+    #[tokio::test]
+    async fn ui_error_cleanup_allows_reattach_without_core_restart() {
+        for payload in ["not-json\n", "{\"id\":\"broken\"}\n", "truncated"] {
+            let shared = session_fixture();
+            let (mut client, task) = attach_ui(shared.clone()).await;
+            client.get_mut().write_all(payload.as_bytes()).await.unwrap();
+            client.get_mut().shutdown().await.unwrap();
+            assert!(timeout(Duration::from_secs(3), task).await.unwrap().unwrap().is_err());
+            assert!(shared.ui.lock().await.is_none(), "failed session retained");
+            let (mut reconnected, task) = attach_ui(shared.clone()).await;
+            assert_eq!(shared.generation.load(Ordering::Acquire), 7);
+            reconnected.get_mut().shutdown().await.unwrap();
+            assert!(timeout(Duration::from_secs(3), task).await.unwrap().unwrap().is_ok());
+            assert!(shared.ui.lock().await.is_none());
+        }
+    }
 
     #[tokio::test]
     async fn bounded_reader_rejects_oversized_and_truncated_lines() {
