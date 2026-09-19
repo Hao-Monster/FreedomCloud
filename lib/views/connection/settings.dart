@@ -666,7 +666,23 @@ class _PerAppPolicySectionState extends ConsumerState<_PerAppPolicySection> {
         targetGroup: targetGroup,
       );
       await globalState.appController.applyProfile();
-      if (mounted) await context.showNotifier(appLocalizations.successTitle);
+      // Keep the privileged strict-policy snapshot in lockstep with the
+      // persisted PROCESS-PATH policy.  Editing an application while strict
+      // capture is armed must never leave the old snapshot enforcing stale
+      // routes; failures remain fail-closed and are surfaced to the user.
+      var strictSynced = true;
+      if (_strictCaptureActive) {
+        strictSynced = await _prepareStrictEvidence(
+          perAppPolicyStore.entries,
+        );
+      }
+      if (mounted) {
+        await context.showNotifier(
+          strictSynced
+              ? appLocalizations.successTitle
+              : 'Strict mode could not be updated; traffic remains blocked',
+        );
+      }
     } catch (error) {
       connectionDiagnostics.log(
         '[ConnectionsDiag] perApp.settings status=error '
