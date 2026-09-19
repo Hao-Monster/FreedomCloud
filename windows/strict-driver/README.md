@@ -62,6 +62,19 @@ nuget.exe restore .\packages.config -PackagesDirectory .\packages `
   -Source https://api.nuget.org/v3/index.json -NonInteractive
 ```
 
+Before packaging or compiling, run the repository preflight. It exits non-zero
+when 64-bit MSBuild, the x64 `WindowsKernelModeDriver10.0` toolset, the pinned
+WDK headers/libs, or the Spectre libraries are missing, and prints the exact
+paths and versions selected by the host:
+
+```powershell
+.\check-toolchain.ps1 | ConvertFrom-Json
+```
+
+The verified local installation currently reports MSBuild `17.14.60`, MSVC
+`14.44.35207`, and WDK/SDK `10.0.28000.0`; the NuGet WDK package remains pinned
+to `10.0.28000.2526`.
+
 Use the 64-bit Visual Studio 2026 MSBuild executable with the x64 KMDF toolset.
 The x64 WDK package contains the x64 ApiValidator, so invoking 32-bit MSBuild
 would incorrectly search for an unavailable x86 validator. A 128-bit build ID
