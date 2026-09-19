@@ -245,6 +245,21 @@ void main() {
     );
   });
 
+  test('persisted target remains visible when its provider group disappears',
+      () {
+    final options = perAppTargetGroupOptions(
+      const ['Work', 'Streaming'],
+      selectedGroup: 'OldProvider',
+    );
+
+    expect(options.first.value, 'OldProvider');
+    expect(options.first.available, isFalse);
+    expect(
+      options.skip(1).map((option) => option.value).toList(),
+      ['GLOBAL', 'Work', 'Streaming'],
+    );
+  });
+
   test('JSON decoding collapses duplicate canonical paths deterministically',
       () {
     final decoded = decodePerAppPolicies({
