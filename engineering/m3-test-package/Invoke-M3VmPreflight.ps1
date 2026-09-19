@@ -23,9 +23,16 @@ function Test-VirtualMachine {
     return $false
 }
 
+function Test-FcxAbsolutePath {
+    param([string]$Path)
+    # IsPathFullyQualified is unavailable in Windows PowerShell 5.1.
+    return (-not [string]::IsNullOrWhiteSpace($Path)) -and
+        ($Path -match '^(?:[A-Za-z]:[\\/]|\\\\)')
+}
+
 function Assert-PlainDirectory {
     param([string]$Path, [string]$Label)
-    if (-not [IO.Path]::IsPathFullyQualified($Path)) { throw "$Label must be an absolute path" }
+    if (-not (Test-FcxAbsolutePath $Path)) { throw "$Label must be an absolute path" }
     $item = Get-Item -LiteralPath $Path -Force
     if (-not $item.PSIsContainer -or (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0)) {
         throw "$Label must be a plain directory"

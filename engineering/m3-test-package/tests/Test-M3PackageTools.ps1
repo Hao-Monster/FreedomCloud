@@ -35,6 +35,11 @@ try {
             throw "bundle script does not include support file: $support"
         }
     }
+    $preflightSource = Get-Content -LiteralPath (Join-Path $toolRoot 'Invoke-M3VmPreflight.ps1') -Raw
+    if ($preflightSource -match '\[IO\.Path\]::IsPathFullyQualified' -or
+        $preflightSource -notmatch 'Test-FcxAbsolutePath') {
+        throw 'preflight must use a Windows PowerShell 5.1-compatible absolute-path check'
+    }
     if ($bundleSource -notmatch 'Get-SignedIdentity' -or
         $bundleSource -notmatch 'Test-ContainsByteSequence' -or
         $bundleSource -notmatch 'refusing to clean an unexpected staging path') {
