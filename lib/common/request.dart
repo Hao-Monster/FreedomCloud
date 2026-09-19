@@ -227,11 +227,32 @@ class Request {
             ),
           );
       if (response.statusCode != HttpStatus.ok) {
+        commonPrint.log(formatHelperFailure(
+          operation: 'start',
+          statusCode: response.statusCode,
+          responseBody: response.data?.toString(),
+        ));
         return false;
       }
       final data = response.data as String;
+      if (data.isNotEmpty) {
+        commonPrint.log(formatHelperFailure(
+          operation: 'start',
+          statusCode: response.statusCode,
+          responseBody: data,
+        ));
+      }
       return data.isEmpty;
-    } catch (_) {
+    } on DioException catch (error) {
+      commonPrint.log(formatHelperFailure(
+        operation: 'start',
+        statusCode: error.response?.statusCode,
+        responseBody: error.response?.data?.toString(),
+        error: error,
+      ));
+      return false;
+    } catch (error) {
+      commonPrint.log(formatHelperFailure(operation: 'start', error: error));
       return false;
     }
   }
@@ -251,10 +272,33 @@ class Request {
           )
           .timeout(const Duration(milliseconds: 2000));
 
-      if (response.statusCode != HttpStatus.ok) return false;
+      if (response.statusCode != HttpStatus.ok) {
+        commonPrint.log(formatHelperFailure(
+          operation: 'stop',
+          statusCode: response.statusCode,
+          responseBody: response.data?.toString(),
+        ));
+        return false;
+      }
       final data = response.data as String;
+      if (data.isNotEmpty) {
+        commonPrint.log(formatHelperFailure(
+          operation: 'stop',
+          statusCode: response.statusCode,
+          responseBody: data,
+        ));
+      }
       return data.isEmpty;
-    } catch (_) {
+    } on DioException catch (error) {
+      commonPrint.log(formatHelperFailure(
+        operation: 'stop',
+        statusCode: error.response?.statusCode,
+        responseBody: error.response?.data?.toString(),
+        error: error,
+      ));
+      return false;
+    } catch (error) {
+      commonPrint.log(formatHelperFailure(operation: 'stop', error: error));
       return false;
     }
   }
