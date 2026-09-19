@@ -317,6 +317,40 @@ List<String> availablePerAppTargetGroups(Iterable<String> declaredGroups) {
   return List.unmodifiable(groups);
 }
 
+@immutable
+class PerAppTargetGroupOption {
+  const PerAppTargetGroupOption({
+    required this.value,
+    required this.available,
+  });
+
+  final String value;
+  final bool available;
+}
+
+/// Includes a persisted target that disappeared from the current profile so
+/// the settings UI can explain why it cannot be used and offer a replacement.
+List<PerAppTargetGroupOption> perAppTargetGroupOptions(
+  Iterable<String> declaredGroups, {
+  String? selectedGroup,
+}) {
+  final groups = availablePerAppTargetGroups(declaredGroups);
+  final selected = selectedGroup?.trim();
+  final options = groups
+      .map((group) => PerAppTargetGroupOption(value: group, available: true))
+      .toList(growable: true);
+  if (selected != null &&
+      selected.isNotEmpty &&
+      PerAppPolicy.isValidTargetGroup(selected) &&
+      !groups.contains(selected)) {
+    options.insert(
+      0,
+      PerAppTargetGroupOption(value: selected, available: false),
+    );
+  }
+  return List.unmodifiable(options);
+}
+
 bool _isValidPolicySnapshot(Object? value) =>
     value is Map &&
     (value['version'] == 1 || value['version'] == 2) &&

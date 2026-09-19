@@ -19,10 +19,13 @@ Future<String?> showApplicationProxyGroupDialog(
   BuildContext context, {
   String? selectedGroup,
 }) async {
-  final groups = availablePerAppTargetGroups(
+  final groups = perAppTargetGroupOptions(
     globalState.proxyGroupOrder.value,
+    selectedGroup: selectedGroup,
   );
-  if (groups.length == 1) return groups.single;
+  if (groups.length == 1 && groups.single.available) {
+    return groups.single.value;
+  }
   return showDialog<String>(
     context: context,
     builder: (context) => SimpleDialog(
@@ -30,17 +33,21 @@ Future<String?> showApplicationProxyGroupDialog(
       children: [
         for (final group in groups)
           SimpleDialogOption(
-            onPressed: () => Navigator.pop(context, group),
+            onPressed: group.available
+                ? () => Navigator.pop(context, group.value)
+                : null,
             child: Row(
               children: [
-                if (group == selectedGroup)
+                if (group.value == selectedGroup)
                   const Icon(Icons.check_rounded, size: 18)
                 else
                   const SizedBox(width: 18),
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
-                    group,
+                    group.available
+                        ? group.value
+                        : '${group.value} (unavailable)',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
