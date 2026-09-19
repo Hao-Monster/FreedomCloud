@@ -74,6 +74,24 @@ function Assert-ManifestIdentity {
     return $identity
 }
 
+function Test-ContainsByteSequence {
+    param([byte[]]$Haystack, [byte[]]$Needle)
+    if ($Needle.Length -eq 0 -or $Needle.Length -gt $Haystack.Length) { return $false }
+    $limit = $Haystack.Length - $Needle.Length
+    for ($offset = 0; $offset -le $limit; ++$offset) {
+        if ($Haystack[$offset] -ne $Needle[0]) { continue }
+        $match = $true
+        for ($index = 1; $index -lt $Needle.Length; ++$index) {
+            if ($Haystack[$offset + $index] -ne $Needle[$index]) {
+                $match = $false
+                break
+            }
+        }
+        if ($match) { return $true }
+    }
+    return $false
+}
+
 $package = Assert-PlainDirectory ([IO.Path]::GetFullPath($PackageDirectory)) 'package directory'
 if (-not (Test-IsAdministrator)) { throw 'M3 VM qualification must run from an elevated PowerShell session' }
 $computer = Get-CimInstance -ClassName Win32_ComputerSystem
@@ -137,6 +155,11 @@ if (Test-Path -LiteralPath $hvciPath) {
 }
 $os = Get-CimInstance -ClassName Win32_OperatingSystem
 $manifest = Get-Content -LiteralPath (Join-Path $package 'strict-package-manifest.json') -Raw | ConvertFrom-Json
+$manifestBytes = [IO.File]::ReadAllBytes((Join-Path $package 'strict-package-manifest.json'))
+$brokerBytes = [IO.File]::ReadAllBytes((Join-Path $package 'FlClashStrictBroker.exe'))
+if (-not (Test-ContainsByteSequence -Haystack $brokerBytes -Needle $manifestBytes)) {
+    throw 'Broker does not embed the exact supplied package manifest'
+}
 $identityResults = [ordered]@{}
 $identityResults['FlClashStrictCallout.sys'] = Assert-ManifestIdentity `
     (Join-Path $package 'FlClashStrictCallout.sys') 'driver' `
