@@ -30,6 +30,7 @@ class StatusBarController {
     private var statusItem: NSStatusItem
     private var popover: NSPopover
     private var contextMenu: NSMenu?
+    var menuChannel: FlutterMethodChannel?
     
     init(_ popover: NSPopover) {
         self.popover = popover
@@ -75,7 +76,13 @@ class StatusBarController {
     @objc func togglePopover(sender: AnyObject) {
         if let event = NSApp.currentEvent {
             if event.type == .rightMouseUp {
-                showContextMenu()
+                if let channel = menuChannel {
+                    channel.invokeMethod("refreshMenu", arguments: nil) { [weak self] _ in
+                        self?.showContextMenu()
+                    }
+                } else {
+                    showContextMenu()
+                }
                 return
             }
         }
@@ -98,6 +105,45 @@ class StatusBarController {
         }
     }
     
+    func updateMenu(_ data: [String: Any]) {
+        contextMenu = buildMenu(data)
+    }
+
+    private func buildMenu(_ data: [String: Any]) -> NSMenu {
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        for row in data["items"] as? [[String: Any]] ?? [] {
+            if row["type"] as? String == "separator" {
+                menu.addItem(NSMenuItem.separator())
+                continue
+            }
+            let item = NSMenuItem(title: row["label"] as? String ?? "",
+                                  action: #selector(menuAction(_:)), keyEquivalent: "")
+            item.target = self
+            item.tag = row["id"] as? Int ?? -1
+            item.representedObject = row["key"] as? String
+            item.isEnabled = !(row["disabled"] as? Bool ?? false)
+            item.state = row["checked"] as? Bool == true ? .on : .off
+            if let submenu = row["submenu"] as? [String: Any] {
+                item.submenu = buildMenu(submenu)
+            }
+            menu.addItem(item)
+        }
+        return menu
+    }
+
+    @objc private func menuAction(_ sender: NSMenuItem) {
+        if sender.representedObject as? String == "show" {
+            showPopover(sender)
+            return
+        }
+        menuChannel?.invokeMethod("menuAction", arguments: sender.tag)
+    }
+
+    func updateRates(_ text: String) {
+        statusItem.button?.toolTip = "FlClashX · " + text
+    }
+
     @objc func quitApp() {
         NSLog("StatusBarController: Quit requested")
         NSApplication.shared.terminate(nil)

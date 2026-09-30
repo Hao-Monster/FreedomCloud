@@ -50,6 +50,7 @@ class AppDelegate: FlutterAppDelegate {
             binaryMessenger: flutterViewController.engine.binaryMessenger
         )
         
+        statusBarController?.menuChannel = channel
         channel.setMethodCallHandler { [weak self] (call: FlutterMethodCall, result: @escaping FlutterResult) in
             switch call.method {
             case "updateIcon":
@@ -60,6 +61,16 @@ class AppDelegate: FlutterAppDelegate {
                 } else {
                     result(FlutterError(code: "INVALID_ARGS", message: "Invalid arguments", details: nil))
                 }
+            case "updateMenu":
+                guard let args = call.arguments as? [String: Any] else {
+                    result(FlutterError(code: "INVALID_ARGS", message: "Menu required", details: nil))
+                    return
+                }
+                self?.statusBarController?.updateMenu(args)
+                result(nil)
+            case "updateRates":
+                self?.statusBarController?.updateRates(call.arguments as? String ?? "")
+                result(nil)
             default:
                 result(FlutterMethodNotImplemented)
             }

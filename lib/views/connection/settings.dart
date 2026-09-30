@@ -1,3 +1,4 @@
+import 'package:flclashx/widgets/effective_route.dart';
 import 'dart:async';
 import 'dart:io';
 
@@ -578,6 +579,11 @@ class _PerAppPolicySectionState extends ConsumerState<_PerAppPolicySection> {
                       trailing: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
+                          if (entry.policy == ApplicationRoutingPolicy.proxy)
+                            EffectiveRouteButton(
+                              chains: [entry.targetGroup ?? 'GLOBAL'],
+                              policy: true,
+                            ),
                           _policyMenu(entry),
                           IconButton(
                             tooltip: appLocalizations.delete,

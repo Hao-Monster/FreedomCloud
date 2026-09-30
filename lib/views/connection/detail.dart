@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'item.dart';
+import 'package:flclashx/widgets/effective_route.dart';
 
 void showConnectionDetail(
   BuildContext context,
@@ -21,6 +22,7 @@ void showConnectionDetail(
         type: type,
         title: appLocalizations.connectionsDetail,
         actions: [
+          EffectiveRouteButton(chains: item.connection.chains),
           if (onClose != null)
             IconButton(
               onPressed: () {
