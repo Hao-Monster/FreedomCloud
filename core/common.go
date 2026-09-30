@@ -396,10 +396,12 @@ func setupConfig(params *SetupParams) error {
 	}
 
 	parseStart := time.Now()
+	appliedSource := params.Config
 	currentConfig, err = config.ParseRawConfig(params.Config)
 	if err != nil {
 		log.Errorln("[Config] ParseRawConfig failed, falling back to default: %v", err)
-		currentConfig, _ = config.ParseRawConfig(config.DefaultRawConfig())
+		appliedSource = config.DefaultRawConfig()
+		currentConfig, _ = config.ParseRawConfig(appliedSource)
 	}
 	log.Infoln("[Setup] ParseRawConfig took %s", time.Since(parseStart))
 	pendingTunEnable = currentConfig.General.Tun.Enable
@@ -408,6 +410,7 @@ func setupConfig(params *SetupParams) error {
 	}
 	applyStart := time.Now()
 	executor.ApplyConfig(currentConfig, true)
+	appliedRawConfig, _ = json.Marshal(appliedSource)
 	log.Infoln("[Setup] executor.ApplyConfig took %s", time.Since(applyStart))
 	go runtime.GC()
 	currentConfig.General.Tun.Enable = pendingTunEnable

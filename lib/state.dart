@@ -58,6 +58,7 @@ class GlobalState {
   DateTime? startTime;
   UpdateTasks tasks = [];
   Map<String, dynamic>? lastRuntimeConfig;
+  String? lastRuntimeProfileId;
   // Effective external-controller endpoint after merging subscription value
   // over UI defaults. Empty string means disabled. Subscription value wins if
   // present, otherwise falls back to the UI toggle default.
@@ -395,6 +396,7 @@ class GlobalState {
       patchConfig: pathConfig,
     );
     lastRuntimeConfig = clashConfig;
+    lastRuntimeProfileId = config.currentProfile?.id;
     final params = SetupParams(
       config: clashConfig,
       selectedMap: config.currentProfile?.selectedMap ?? {},

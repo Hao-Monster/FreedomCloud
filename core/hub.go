@@ -971,6 +971,9 @@ func handleSetState(params string) {
 }
 
 func handleGetConfig(path string) (*config.RawConfig, error) {
+	if path == "fcx://runtime" {
+		return runtimeConfigSnapshot()
+	}
 	if !constant.Path.IsSafePath(path) {
 		return nil, constant.Path.ErrNotSafePath(path)
 	}
