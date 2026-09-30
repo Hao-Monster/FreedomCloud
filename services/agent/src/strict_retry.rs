@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 /// The retry policy is deliberately small and deterministic.  It is a state
-/// primitive for the future strict-policy supervisor; it does not start a
+/// primitive used by the strict-policy supervisor; it does not start a
 /// task, touch WFP, or change the existing Core supervisor policy.
 pub const MAX_STRICT_RECOVERY_ATTEMPTS: u32 = 5;
 pub const STRICT_RECOVERY_BASE_DELAY: Duration = Duration::from_secs(1);
@@ -72,6 +72,11 @@ impl StrictRecoveryRetry {
             attempt: self.attempts,
             delay,
         })
+    }
+
+    /// The scheduled attempt has started; no timer remains pending.
+    pub fn started(&mut self) {
+        self.next_delay = None;
     }
 
     /// Clears the failure budget after a fresh, authenticated recovery commit

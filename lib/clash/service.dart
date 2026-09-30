@@ -327,6 +327,29 @@ class ClashService extends ClashHandlerInterface {
         policy: policy,
       );
 
+  /// The Broker re-verifies the replacement and retains all old App-IDs.
+  Future<bool> migrateStrictIdentity(
+    String previousPath,
+    StrictIdentityResolution replacement,
+  ) => _agentCommand(
+    AgentCommand.migrateStrictPolicy,
+    path: previousPath,
+    policy: {
+      'revision': DateTime.now().microsecondsSinceEpoch,
+      'replacement': {
+        'identityId': replacement.identityId,
+        'canonicalPath': replacement.canonicalPath,
+        'wfpAppIdSha256': replacement.wfpAppIdSha256,
+        'publisherCertificateSha256': replacement.publisherCertificateSha256,
+        'verifiedChildren': replacement.verifiedChildren.map((child) => {
+          'canonicalPath': child.canonicalPath,
+          'wfpAppIdSha256': child.wfpAppIdSha256,
+          'publisherCertificateSha256': child.publisherCertificateSha256,
+        }).toList(growable: false),
+      },
+    },
+  );
+
   /// Disables strict capture and revokes Core ingress before filter cleanup.
   Future<bool> clearStrictPolicy() =>
       _agentCommand(AgentCommand.clearStrictPolicy);

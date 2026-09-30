@@ -520,8 +520,12 @@ where
 
     pub fn prepare(&mut self, policy: StrictPolicyBundle) -> Result<BrokerStatus> {
         self.load_store_once()?;
-        if self.current_marker.is_some() {
-            bail!("strict policy recovery or disable is required before prepare");
+        if let Some(marker) = &self.current_marker {
+            if marker.policy == policy && marker.phase != BrokerPhase::Disabling {
+                // Exact replay is recovery, not a new revision or relaxed identity.
+                return self.recover();
+            }
+            return self.migrate_identity(policy);
         }
         policy.validate()?;
         if policy.entries.len() > MAX_STRICT_APPLICATIONS {
@@ -563,6 +567,42 @@ where
         self.current_marker = Some(blocking.clone());
         self.phase = next_phase;
         self.store.persist(&blocking)?;
+        self.status_from_snapshot(snapshot)
+    }
+
+    /// A publisher-preserving upgrade retains every formerly protected App-ID
+    /// in the replacement family. The atomic guard swap therefore cannot leak
+    /// a still-running old version, including during commit failure or rollback.
+    fn migrate_identity(&mut self, policy: StrictPolicyBundle) -> Result<BrokerStatus> {
+        policy.validate()?;
+        let old = self.current_marker.as_ref()
+            .ok_or_else(|| anyhow::anyhow!("strict migration has no source policy"))?.clone();
+        if old.phase == BrokerPhase::Disabling || policy.revision <= self.high_watermark
+            || old.policy.entries.len() != policy.entries.len() {
+            bail!("strict migration revision or source phase is invalid");
+        }
+        flclash_strict_contract::validate_identity_migration(&old.policy, &policy)?;
+        // This reopens every executable, verifies its real Authenticode signer
+        // and locks replacement. Comparing client-provided hashes is not proof.
+        let verification = self.verifier.verify(&policy)?;
+        let digest = policy.canonical_digest()?;
+        self.force_blocking(old.revision)?;
+        let preparing = RecoveryMarker::preparing(policy, digest);
+        self.store.persist(&preparing)?;
+        self.high_watermark = preparing.revision;
+        self.current_marker = Some(preparing.clone());
+        self.phase = BrokerPhase::Preparing;
+        self.verification_lease = Some(verification);
+        self.backend.install_guards(&preparing.policy,
+            self.verification_lease.as_ref().expect("migration retains verified identities").app_ids(),
+            &preparing.policy_digest)?;
+        let snapshot = self.backend.snapshot()?;
+        validate_snapshot(&snapshot, &preparing, true, false)?;
+        let phase = if has_proxy_entries(&preparing.policy) { BrokerPhase::Blocking } else { BrokerPhase::Armed };
+        let marker = preparing.with_phase(phase, snapshot.filter_generation);
+        self.store.persist(&marker)?;
+        self.current_marker = Some(marker);
+        self.phase = phase;
         self.status_from_snapshot(snapshot)
     }
 

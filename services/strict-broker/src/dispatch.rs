@@ -79,7 +79,11 @@ where
                 (self.engine.status(), BrokerErrorCode::BackendUnavailable)
             }
             BrokerCommand::PreparePolicy { policy } => {
-                (self.engine.prepare(policy), BrokerErrorCode::Internal)
+                // Exact replay and identity migration may replace a previous
+                // graph. Revoke forwarding resources before rebinding guards.
+                let result = self.health_probe.deactivate()
+                    .and_then(|()| self.engine.prepare(policy));
+                (result, BrokerErrorCode::Internal)
             }
             BrokerCommand::CommitPolicy {
                 revision,

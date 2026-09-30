@@ -10,3 +10,6 @@ pub mod runtime;
 pub mod strict;
 pub mod strict_flow;
 pub mod strict_retry;
+
+#[cfg(windows)]
+pub mod strict_store;

@@ -1,3 +1,6 @@
+import 'package:flclashx/manager/connection_manager.dart';
+import 'package:flclashx/common/application_discovery.dart';
+import 'package:flclashx/widgets/application_picker.dart';
 import 'package:flclashx/widgets/effective_route.dart';
 import 'dart:async';
 import 'dart:io';
@@ -557,6 +560,11 @@ class _PerAppPolicySectionState extends ConsumerState<_PerAppPolicySection> {
                         child: Text(appLocalizations.noData),
                       ),
                     ),
+                  if (_strictCaptureActive)
+                    Padding(padding: const EdgeInsets.symmetric(vertical: 8),
+                      child: Text('严格恢复：${clashService?.strictPolicyStatus.recoveryAttempts ?? 0} 次'
+                        '${clashService?.strictPolicyStatus.recoveryExhausted == true ? ' · 重试已耗尽' : ''}'
+                        '${clashService?.strictPolicyStatus.recoveryNextDelayMs == null ? '' : ' · 下次 ${clashService!.strictPolicyStatus.recoveryNextDelayMs} ms'}')),
                   for (final entry in filteredEntries)
                     ListTile(
                       contentPadding: EdgeInsets.zero,
@@ -584,6 +592,10 @@ class _PerAppPolicySectionState extends ConsumerState<_PerAppPolicySection> {
                               chains: [entry.targetGroup ?? 'GLOBAL'],
                               policy: true,
                             ),
+                          if (_strictCaptureActive && entry.policy != ApplicationRoutingPolicy.inherit)
+                            IconButton(tooltip: '迁移到升级后的程序（同发布者）',
+                              onPressed: () => _migrateApplication(entry),
+                              icon: const Icon(Icons.upgrade)),
                           _policyMenu(entry),
                           IconButton(
                             tooltip: appLocalizations.delete,
@@ -621,19 +633,74 @@ class _PerAppPolicySectionState extends ConsumerState<_PerAppPolicySection> {
             .toList(growable: false),
       );
 
-  Future<void> _pickApplication() async {
-    final result = await FilePicker.platform.pickFiles(
-      type: Platform.isWindows ? FileType.custom : FileType.any,
-      allowedExtensions: Platform.isWindows ? const ['exe'] : null,
-      allowMultiple: false,
-      withData: false,
+  Future<void> _migrateApplication(PerAppPolicy entry) async {
+    final service = clashService;
+    if (service == null || !_strictCaptureActive) return;
+    final picked = await FilePicker.platform.pickFiles(
+      type: FileType.custom, allowedExtensions: const ['exe'],
+      allowMultiple: false, withData: false,
     );
-    final processPath = result?.files.single.path;
+    final replacementPath = picked?.files.single.path;
+    if (replacementPath == null || !mounted) return;
+    final identity = await service.inspectStrictIdentity(replacementPath);
+    if (identity == null) {
+      if (mounted) await context.showNotifier('无法验证升级程序的签名与身份');
+      return;
+    }
+    final accepted = await service.migrateStrictIdentity(entry.path, identity);
+    if (accepted) {
+      // Broker retains the old exact WFP family until strict is disabled.
+      await perAppPolicyStore.setPolicy(processPath: identity.canonicalPath,
+        name: entry.name, policy: entry.policy, targetGroup: entry.targetGroup);
+      if (entry.path.toLowerCase() != identity.canonicalPath.toLowerCase()) {
+        await perAppPolicyStore.setPolicy(processPath: entry.path,
+          name: entry.name, policy: ApplicationRoutingPolicy.inherit);
+      }
+    }
+    if (mounted) await context.showNotifier(accepted
+      ? '升级迁移请求已提交；请确认严格模式恢复为 Armed'
+      : '升级迁移未完成；现有保护保持，请检查签名和恢复状态');
+  }
+
+  Future<void> _pickApplication() async {
+    final recent = <String, ApplicationCandidate>{};
+    for (final tracked in [...connectionManager.activeConnections, ...connectionManager.closedConnections]) {
+      final metadata = tracked.connection.metadata;
+      if (metadata.processPath.isEmpty || !path.isAbsolute(metadata.processPath)) continue;
+      final key = Platform.isWindows ? metadata.processPath.toLowerCase() : metadata.processPath;
+      recent.putIfAbsent(key, () => ApplicationCandidate(
+        name: metadata.process.isEmpty ? path.basename(metadata.processPath) : metadata.process,
+        executable: metadata.processPath, source: '最近联网'));
+      if (recent.length >= 256) break;
+    }
+    final selected = await showDialog<ApplicationCandidate>(context: context,
+      builder: (_) => ApplicationPickerDialog(recent: recent.values.toList(growable: false)));
+    if (selected == null || !mounted) return;
+    String? processPath = selected.executable;
+    if (processPath.isEmpty) {
+      final result = await FilePicker.platform.pickFiles(
+        type: Platform.isWindows ? FileType.custom : FileType.any,
+        allowedExtensions: Platform.isWindows ? const ['exe'] : null,
+        allowMultiple: false, withData: false,
+      );
+      processPath = result?.files.single.path;
+    }
     if (processPath == null || !mounted) return;
+    try {
+      processPath = await File(processPath).resolveSymbolicLinks().timeout(const Duration(seconds: 3));
+    } on TimeoutException {
+      if (mounted) await context.showNotifier('读取程序路径超时，请选择本地程序');
+      return;
+    } on FileSystemException {
+      if (mounted) await context.showNotifier('所选程序已经移动或无法访问，请重新选择');
+      return;
+    }
+    if (!mounted) return;
+    final canonicalPath = processPath;
     final policy = await showDialog<ApplicationRoutingPolicy>(
       context: context,
       builder: (context) => SimpleDialog(
-        title: Text(path.basename(processPath)),
+        title: Text(path.basename(canonicalPath)),
         children: ApplicationRoutingPolicy.values
             .where((value) => value != ApplicationRoutingPolicy.inherit)
             .map(
@@ -646,7 +713,7 @@ class _PerAppPolicySectionState extends ConsumerState<_PerAppPolicySection> {
       ),
     );
     if (policy == null) return;
-    await _save(processPath, path.basename(processPath), policy);
+    await _save(canonicalPath, selected.name.isEmpty ? path.basename(canonicalPath) : selected.name, policy);
   }
 
   Future<void> _save(

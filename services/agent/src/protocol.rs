@@ -72,6 +72,7 @@ pub enum AgentCommand {
     /// Atomically arms a signed strict-capture policy through the privileged
     /// Windows Broker. The policy is carried as a validated contract object.
     ApplyStrictPolicy,
+    MigrateStrictPolicy,
     /// Disables the currently armed strict-capture policy and revokes Core
     /// ingress before the Broker removes its filters.
     ClearStrictPolicy,
