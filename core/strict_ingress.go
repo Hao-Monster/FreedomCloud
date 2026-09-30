@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/binary"
@@ -16,6 +17,7 @@ import (
 	"reflect"
 	"runtime"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -23,6 +25,8 @@ import (
 	"github.com/metacubex/mihomo/adapter/outboundgroup"
 	"github.com/metacubex/mihomo/common/pool"
 	"github.com/metacubex/mihomo/config"
+	"github.com/metacubex/mihomo/component/resolver"
+	D "github.com/miekg/dns"
 	C "github.com/metacubex/mihomo/constant"
 	"github.com/metacubex/mihomo/listener"
 	"github.com/metacubex/mihomo/tunnel"
@@ -127,9 +131,14 @@ type strictUDPIngressService struct {
 	packetSlots chan struct{}
 	closeOnce   sync.Once
 	closed      atomic.Bool
+	routes []*strictProxyRoute
+	dnsMu sync.Mutex
+	dnsProof map[[16]byte]strictDNSProof
 }
 
 type strictUDPIngressCredential struct {
+	routeName string
+	username string
 	targetGroup string
 	key         [sha256.Size]byte
 	macPool     sync.Pool
@@ -289,7 +298,7 @@ func buildStrictIngressListeners(
 			"listen": "127.0.0.1",
 			"port":   "0",
 			"udp":    false,
-			"proxy":  entry.TargetGroup,
+			"proxy":  strictProxyAlias(request.Generation, entry.TargetGroup),
 			"users": []map[string]string{{
 				"username": entry.Username,
 				"password": entry.Password,
@@ -335,6 +344,8 @@ func startStrictUDPIngressService(request *StrictIngressRequest, strictTunnel C.
 			return nil, errors.New("strict UDP health key identifier is duplicated")
 		}
 		credentials[keyID] = newStrictUDPIngressCredential(entry.TargetGroup, key)
+	credentials[keyID].routeName = strictProxyAlias(request.Generation, entry.TargetGroup)
+	credentials[keyID].username = entry.Username
 	}
 	connection, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
 	if err != nil {
@@ -358,6 +369,7 @@ func startStrictUDPIngressService(request *StrictIngressRequest, strictTunnel C.
 		tunnel:      strictTunnel,
 		done:        make(chan struct{}),
 		packetSlots: make(chan struct{}, strictUDPDataMaxInFlight),
+	dnsProof: make(map[[16]byte]strictDNSProof),
 	}
 	go service.serve()
 	return service, nil
@@ -406,7 +418,7 @@ func (service *strictUDPIngressService) serve() {
 func (service *strictUDPIngressService) handleHealthFrame(frame []byte, source *net.UDPAddr) {
 	if !bytes.Equal(frame[strictUDPHealthMagicOffset:strictUDPHealthVersionOffset], strictUDPHealthMagic) ||
 		frame[strictUDPHealthVersionOffset] != strictUDPHealthVersion ||
-		frame[strictUDPHealthKindOffset] != strictUDPHealthPing ||
+		(frame[strictUDPHealthKindOffset] != strictUDPHealthPing && frame[strictUDPHealthKindOffset] != 3 && frame[strictUDPHealthKindOffset] != 5) ||
 		frame[strictUDPHealthReservedOffset] != 0 || frame[strictUDPHealthReservedOffset+1] != 0 ||
 		binary.BigEndian.Uint64(frame[strictUDPHealthGenerationOffset:strictUDPHealthKeyIDOffset]) != service.generation {
 		return
@@ -418,6 +430,50 @@ func (service *strictUDPIngressService) handleHealthFrame(frame []byte, source *
 		return
 	}
 	if !credential.authenticate(frame[:strictUDPHealthTagOffset], frame[strictUDPHealthTagOffset:]) {
+		return
+	}
+	if frame[5] == 5 {
+		var nonce [16]byte
+		copy(nonce[:], frame[32:48])
+		service.dnsMu.Lock()
+		proof, ok := service.dnsProof[keyID]
+		service.dnsMu.Unlock()
+		if !ok || !proof.observed || proof.nonce != nonce || time.Now().After(proof.expires) { return }
+		frame[5] = 6
+		credential.sign(frame[:48], frame[48:])
+		_, _ = service.connection.WriteToUDP(frame, source)
+		return
+	}
+	if frame[strictUDPHealthKindOffset] == 3 {
+		// The resolver must supply the mapping itself. A ping or fabricated
+		// cache entry cannot qualify domain restoration.
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		query := new(D.Msg)
+		query.SetQuestion("www.cloudflare.com.", D.TypeA)
+		answer, err := resolver.ServeMsg(ctx, query)
+		if err != nil || answer == nil { return }
+		for _, record := range answer.Answer {
+			a, ok := record.(*D.A)
+			if !ok { continue }
+			addr, ok := netip.AddrFromSlice(a.A.To4())
+			if !ok { continue }
+			host, mapped := resolver.FindHostByIP(addr)
+			if !mapped || host != "www.cloudflare.com" { continue }
+			var nonce [16]byte
+			copy(nonce[:], frame[32:48])
+			service.dnsMu.Lock()
+			service.dnsProof[keyID] = strictDNSProof{address: addr, nonce: nonce, expires: time.Now().Add(30*time.Second)}
+			service.dnsMu.Unlock()
+			response := make([]byte, 112)
+			copy(response, frame[:48])
+			response[5] = 4
+			response[48] = 4
+			copy(response[49:53], a.A.To4())
+			credential.sign(response[:80], response[80:])
+			_, _ = service.connection.WriteToUDP(response, source)
+			return
+		}
 		return
 	}
 	frame[strictUDPHealthKindOffset] = strictUDPHealthPong
@@ -519,7 +575,8 @@ func (service *strictUDPIngressService) handleDataFrame(
 		InIP:         service.local.Addr(),
 		InPort:       service.local.Port(),
 		InName:       "flclashx-strict-udp",
-		SpecialProxy: association.credential.targetGroup,
+		SpecialProxy: association.credential.routeName,
+		InUser: association.credential.username,
 		RawSrcAddr:   source,
 		RawDstAddr:   net.UDPAddrFromAddrPort(destination),
 	}
@@ -708,6 +765,7 @@ func (service *strictUDPIngressService) close() {
 	}
 	service.closeOnce.Do(func() {
 		service.closed.Store(true)
+		revokeStrictProxyRoutes(service.routes)
 		_ = service.connection.Close()
 		<-service.done
 	})
@@ -758,11 +816,14 @@ func handleConfigureStrictIngress(data string) (StrictIngressResult, error) {
 	if err != nil {
 		return StrictIngressResult{}, err
 	}
+	routes, err := installStrictProxyRoutes(request, currentConfig, ordered)
+	if err != nil { udpIngress.close(); return StrictIngressResult{}, err }
+	udpIngress.routes = routes
 	merged := normalInboundListenersLocked()
 	for name, inbound := range strictListeners {
 		merged[name] = inbound
 	}
-	listener.PatchInboundListeners(merged, tunnel.Tunnel, true)
+	listener.PatchInboundListeners(merged, &strictObservedTunnel{Tunnel: tunnel.Tunnel, service: udpIngress}, true)
 
 	result := StrictIngressResult{
 		Protocol:    strictIngressProtocol,
@@ -856,4 +917,39 @@ func validStrictCredential(value string) bool {
 		}
 	}
 	return true
+}
+
+// Observe the metadata mutated by the real Mihomo tunnel, after it has handled
+// the authenticated IP-only SOCKS connection. A DNS cache lookup or a working
+// real IP alone is not sufficient proof of redir-host/Fake-IP restoration.
+type strictDNSProof struct {
+	address netip.Addr
+	nonce [16]byte
+	expires time.Time
+	observed bool
+}
+type strictObservedTunnel struct {
+	C.Tunnel
+	service *strictUDPIngressService
+}
+func (t *strictObservedTunnel) HandleTCPConn(conn net.Conn, metadata *C.Metadata) {
+	originalIP, originalHost := metadata.DstIP.Unmap(), metadata.Host
+	var keyID [16]byte
+	user, err := hex.DecodeString(metadata.InUser)
+	eligible := err == nil && len(user) == 32 && strings.HasPrefix(metadata.InName, strictIngressNamePrefix) && originalHost == ""
+	if eligible { copy(keyID[:], user[:16]) }
+	t.service.dnsMu.Lock()
+	proof, exists := t.service.dnsProof[keyID]
+	credential := t.service.credentials[keyID]
+	t.service.dnsMu.Unlock()
+	eligible = eligible && exists && credential != nil && metadata.SpecialProxy == credential.routeName && originalIP == proof.address && time.Now().Before(proof.expires)
+	t.Tunnel.HandleTCPConn(conn, metadata)
+	if !eligible || metadata.Host != "www.cloudflare.com" || (metadata.DNSMode != C.DNSMapping && metadata.DNSMode != C.DNSFakeIP) { return }
+	t.service.dnsMu.Lock()
+	current := t.service.dnsProof[keyID]
+	if current.nonce == proof.nonce && current.address == proof.address && time.Now().Before(current.expires) {
+		current.observed = true
+		t.service.dnsProof[keyID] = current
+	}
+	t.service.dnsMu.Unlock()
 }

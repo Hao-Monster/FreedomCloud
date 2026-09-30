@@ -305,6 +305,49 @@ impl WindowsSharedIoctlDriverChannel {
         self.lock()?.revoke_endpoint_lease()
     }
 
+    pub(crate) fn bind_canary(&self, revision: u64, digest: &str, nonce: [u8; 16], pid: u32, target: u16) -> Result<()> {
+        if pid == 0 || digest.len() != 64 { bail!("invalid strict canary identity"); }
+        let mut wire = [0u8; 80];
+        wire[..4].copy_from_slice(&WIRE_MAGIC.to_le_bytes());
+        wire[4..6].copy_from_slice(&WIRE_PROTOCOL.to_le_bytes());
+        wire[6..8].copy_from_slice(&80u16.to_le_bytes());
+        wire[8..16].copy_from_slice(&revision.to_le_bytes());
+        for (index, pair) in digest.as_bytes().chunks_exact(2).enumerate() {
+            wire[16 + index] = u8::from_str_radix(std::str::from_utf8(pair)?, 16)?;
+        }
+        wire[48..64].copy_from_slice(&nonce);
+        wire[64..72].copy_from_slice(&u64::from(pid).to_le_bytes());
+        wire[72..74].copy_from_slice(&target.to_le_bytes());
+        wire[76..80].copy_from_slice(&30_000u32.to_le_bytes());
+        let snapshot = self.lock()?.issue(ctl_code(0x909), &wire)?;
+        if snapshot.revision != Some(revision) || snapshot.policy_digest.as_deref() != Some(digest)
+            || snapshot.endpoint_lease.as_ref().map(|lease| lease.nonce) != Some(nonce) {
+            bail!("strict canary driver binding does not match active lease");
+        }
+        Ok(())
+    }
+
+    pub(crate) fn canary_udp_mask(&self) -> Result<u64> {
+        let channel = self.lock()?;
+        let mut output = [0u8; SNAPSHOT_BYTES];
+        let transferred = run_overlapped_ioctl(channel.device.as_ref().as_raw_handle(), ctl_code(0x90b),
+            &[], &mut output, channel.deadline.0)?;
+        if transferred as usize != SNAPSHOT_BYTES { bail!("truncated canary snapshot"); }
+        let mask = u64::from_le_bytes(output[160..168].try_into()?);
+        output[160..168].fill(0);
+        let snapshot = decode_snapshot(&output)?;
+        if snapshot.driver_build_id.as_deref() != Some(channel.expected_driver_build_id.as_str()) || mask & !15 != 0 {
+            bail!("invalid canary snapshot identity");
+        }
+        Ok(mask)
+    }
+
+    pub(crate) fn clear_canary(&self) -> Result<()> {
+        let snapshot = self.lock()?.issue(ctl_code(0x90a), &[])?;
+        if snapshot.datagram_path_active { bail!("strict canary datagram gate remained active"); }
+        Ok(())
+    }
+
     pub fn activate_datagram_path(&self) -> Result<WindowsDriverPolicySnapshot> {
         self.lock()?.activate_datagram_path()
     }
@@ -1439,7 +1482,7 @@ mod tests {
                 "missing kernel safety invariant: {declaration}"
             );
         }
-        for unavailable_capability in [
+        for implemented_capability in [
             "FCX_STRICT_CAP_TCP4_REDIRECT",
             "FCX_STRICT_CAP_TCP6_REDIRECT",
             "FCX_STRICT_CAP_UDP4_REDIRECT",
@@ -1449,9 +1492,21 @@ mod tests {
             "FCX_STRICT_CAP_REDIRECT_LOOP_PROTECTED",
         ] {
             assert!(
-                !driver.contains(unavailable_capability),
-                "driver advertised an unavailable capability: {unavailable_capability}"
+                driver.contains(implemented_capability),
+                "driver omitted implemented transport support: {implemented_capability}"
             );
+        }
+        for resource_gate in [
+            "FcxRegisteredCallouts == RTL_NUMBER_OF(FcxCalloutIds)",
+            "FcxRedirectHandle != NULL",
+            "FcxTransportInjectionHandleV4 != NULL",
+            "FcxTransportInjectionHandleV6 != NULL",
+            "FcxDatagramNblPool != NULL",
+            "FcxDatagramReceiveQueue != NULL",
+            "FcxProcessNotifyRegistered &&",
+            "InterlockedCompareExchange(&FcxUdpStopping, 0, 0) == 0",
+        ] {
+            assert!(driver.contains(resource_gate), "missing capability prerequisite: {resource_gate}");
         }
         for deprecated_allocator in ["ExAllocatePool(", "ExAllocatePoolWithTag("] {
             assert!(

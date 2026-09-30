@@ -42,11 +42,15 @@ into prepared cancellation, verified lease/gate revocation, forwarding teardown
 and forced blocking. Proven cleanup keeps the Actor available but suspends health
 polling; at most four pre-failure queued requests are rejected, and only a fresh
 authenticated commit attempt re-arms supervision. Cleanup uncertainty still
-terminates the Actor. This remains an inactive vertical slice: a multi-record
+terminates the Actor. A multi-record
 batch can have an accepted prefix if a later initiation fails, and real
-WDK/driver fault execution is not proven. No UDP/DNS/QUIC capability is
-advertised until end-to-end canaries, signing, performance measurement and VM
-qualification are complete. Capture also rejects flows requiring ALE
+WDK/driver fault execution is not proven. Transport capability advertisement now
+requires all eight callouts, both injection handles, the redirect handle, receive
+queue, NBL pool, process notification and a non-stopping driver. These bits report
+implemented support, not successful traffic acceptance. Broker graph attestation,
+live endpoint lease, receive pre-arm and explicit admission remain mandatory.
+End-to-end canaries, performance and real-machine qualification are user-owned
+and have not been executed for this change. Capture also rejects flows requiring ALE
 reclassification; enterprise IPsec
 compatibility remains a separate VM gate because locally generated inbound
 injection bypasses IPsec processing.

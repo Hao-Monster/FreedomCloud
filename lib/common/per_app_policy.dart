@@ -33,6 +33,10 @@ enum StrictPolicyFailureReason {
   brokerUnavailable,
   recoveryExhausted,
   invalidPolicy,
+  forwardingDnsMapping,
+  forwardingDnsRestoration,
+  forwardingCanary,
+  forwardingTimeout,
 }
 
 String strictPolicyFailureCode(StrictPolicyFailureReason reason) =>
@@ -45,6 +49,10 @@ String strictPolicyFailureCode(StrictPolicyFailureReason reason) =>
       StrictPolicyFailureReason.brokerUnavailable => 'broker_unavailable',
       StrictPolicyFailureReason.recoveryExhausted => 'recovery_exhausted',
       StrictPolicyFailureReason.invalidPolicy => 'invalid_policy',
+      StrictPolicyFailureReason.forwardingDnsMapping => 'forwarding_dns_mapping',
+      StrictPolicyFailureReason.forwardingDnsRestoration => 'forwarding_dns_restoration',
+      StrictPolicyFailureReason.forwardingCanary => 'forwarding_canary',
+      StrictPolicyFailureReason.forwardingTimeout => 'forwarding_timeout',
     };
 
 /// Strict state transitions are intentionally explicit so a backend cannot

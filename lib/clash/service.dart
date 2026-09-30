@@ -296,7 +296,13 @@ class ClashService extends ClashHandlerInterface {
         ),
       );
       return await completer.future.timeout(
-        const Duration(seconds: 10),
+        const {
+          AgentCommand.applyStrictPolicy,
+          AgentCommand.migrateStrictPolicy,
+          AgentCommand.clearStrictPolicy,
+        }.contains(command)
+            ? const Duration(seconds: 310)
+            : const Duration(seconds: 10),
         onTimeout: () => false,
       );
     } catch (_) {

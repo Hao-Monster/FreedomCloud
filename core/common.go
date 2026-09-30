@@ -52,6 +52,7 @@ func (a ExternalProviders) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
 func proxiesWithProviders() map[string]constant.Proxy {
 	allProxies := make(map[string]constant.Proxy)
 	for name, proxy := range tunnel.Proxies() {
+		if _, internal := proxy.(*strictProxyRoute); internal { continue }
 		allProxies[name] = proxy
 	}
 	for _, p := range tunnel.Providers() {

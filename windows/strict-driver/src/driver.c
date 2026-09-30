@@ -20,6 +20,7 @@ EVT_WDF_DRIVER_UNLOAD FcxEvtDriverUnload;
 EVT_WDF_IO_QUEUE_IO_DEVICE_CONTROL FcxEvtIoDeviceControl;
 
 static NTSTATUS FcxCreateRedirectHandle(VOID);
+static VOID FcxClearCanary(VOID);
 static VOID FcxDestroyRedirectHandle(VOID);
 static NTSTATUS FcxCreateDatagramNblPool(
     _In_ PDRIVER_OBJECT DriverObject
@@ -121,6 +122,7 @@ typedef struct _FCX_STRICT_UDP_FLOW_CONTEXT {
     volatile LONG ReferenceCount;
     UINT64 FlowId;
     UINT64 FlowToken;
+    UINT64 CanarySequence;
     UINT64 LeaseGeneration;
     UINT64 Revision;
     UINT8 PolicyDigest[32];
@@ -186,6 +188,13 @@ static volatile LONG FcxUdpFlowCount;
 static volatile LONG64 FcxUdpFlowToken;
 static volatile LONG FcxUdpStopping;
 static volatile LONG FcxDatagramActive;
+static KSPIN_LOCK FcxCanaryLock;
+static FCX_STRICT_CANARY_BINDING FcxCanary;
+static UINT64 FcxCanaryExpires;
+static PEPROCESS FcxCanaryProcess;
+static BOOLEAN FcxCanaryOnly;
+static UINT64 FcxCanarySequence;
+static UINT64 FcxCanaryUdpMask;
 static KSPIN_LOCK FcxUdpFlowLock;
 static LIST_ENTRY FcxUdpFlowList;
 static LIST_ENTRY FcxUdpFlowBuckets[FCX_STRICT_UDP_FLOW_BUCKETS];
@@ -367,14 +376,41 @@ FcxContinueClassify(
     }
 }
 
+static BOOLEAN FcxCanaryPid(const FWPS_INCOMING_METADATA_VALUES0 *Metadata)
+{
+    KIRQL irql;
+    BOOLEAN matches;
+    KeAcquireSpinLock(&FcxCanaryLock, &irql);
+    matches = FcxCanary.ProcessId != 0 &&
+        FWPS_IS_METADATA_FIELD_PRESENT(Metadata, FWPS_METADATA_FIELD_PROCESS_ID) &&
+        Metadata->processId == FcxCanary.ProcessId;
+    KeReleaseSpinLock(&FcxCanaryLock, irql);
+    return matches;
+}
+
+static BOOLEAN FcxSkipCanaryFilter(const FWPS_FILTER1 *Filter,
+    const FWPS_INCOMING_METADATA_VALUES0 *Metadata, FWPS_CLASSIFY_OUT0 *Out)
+{
+    if (Filter != NULL && Filter->context == FCX_STRICT_CANARY_CONTEXT &&
+        !FcxCanaryPid(Metadata)) {
+        FcxContinueClassify(Out);
+        return TRUE;
+    }
+    return FALSE;
+}
 static
 const FCX_STRICT_RULE_RECORD *
 FcxFindSelectedRule(
     _In_ const FCX_STRICT_POLICY_SNAPSHOT *Snapshot,
     _In_ const FWPS_INCOMING_VALUES0 *IncomingValues,
-    _In_ UINT32 AppIdField
+    _In_ UINT32 AppIdField,
+    _In_ const FWPS_INCOMING_METADATA_VALUES0 *Metadata,
+    _Out_ FCX_STRICT_RULE_RECORD *CanaryRule
     )
 {
+    KIRQL irql;
+    BOOLEAN canaryOnly;
+    BOOLEAN matches;
     const FWP_BYTE_BLOB *appId;
     const FWP_VALUE0 *value;
 
@@ -387,6 +423,22 @@ FcxFindSelectedRule(
         appId->size > FCX_STRICT_MAX_APP_ID_BYTES) {
         return NULL;
     }
+    KeAcquireSpinLock(&FcxCanaryLock, &irql);
+    canaryOnly = FcxCanaryOnly;
+    matches = canaryOnly && FcxCanaryExpires > KeQueryInterruptTime() &&
+        FWPS_IS_METADATA_FIELD_PRESENT(Metadata, FWPS_METADATA_FIELD_PROCESS_ID) &&
+        Metadata->processId == FcxCanary.ProcessId &&
+        FcxCanary.Revision == Snapshot->Revision &&
+        RtlCompareMemory(FcxCanary.PolicyDigest, Snapshot->PolicyDigest, 32) == 32;
+    if (matches) {
+        RtlZeroMemory(CanaryRule, sizeof(*CanaryRule));
+        CanaryRule->Action = FCX_STRICT_ACTION_PROXY;
+        CanaryRule->TargetGroupIndex = FcxCanary.TargetGroup;
+    }
+    KeReleaseSpinLock(&FcxCanaryLock, irql);
+    if (matches) return CanaryRule;
+    // No production identity may pass while scoped probes are running.
+    if (canaryOnly) return NULL;
     return FcxStrictPolicyFind(Snapshot, appId->data, appId->size);
 }
 
@@ -437,7 +489,7 @@ FcxRedirectContextMatchesPolicy(
 
     return context != NULL &&
            context->Magic == FCX_STRICT_REDIRECT_CONTEXT_MAGIC &&
-           context->Protocol == FCX_STRICT_REDIRECT_CONTEXT_PROTOCOL &&
+           (context->Protocol == FCX_STRICT_REDIRECT_CONTEXT_PROTOCOL || context->Protocol == 2) &&
            context->ContextBytes == FCX_STRICT_REDIRECT_CONTEXT_BYTES &&
            context->Revision == Snapshot->Revision &&
            context->TargetGroupIndex == Rule->TargetGroupIndex &&
@@ -590,6 +642,7 @@ FcxClassifyAuthorizationGuard(
     const FCX_STRICT_POLICY_SNAPSHOT *snapshot;
     const FCX_STRICT_LEASE_STATE *lease;
     const FCX_STRICT_RULE_RECORD *rule;
+    FCX_STRICT_RULE_RECORD canaryRule;
     UINT8 protocol = 0;
     BOOLEAN permit = FALSE;
 
@@ -603,7 +656,7 @@ FcxClassifyAuthorizationGuard(
         (PVOID volatile *)&FcxPolicySnapshot,
         NULL,
         NULL);
-    rule = FcxFindSelectedRule(snapshot, IncomingValues, AppIdField);
+    rule = FcxFindSelectedRule(snapshot, IncomingValues, AppIdField, IncomingMetadata, &canaryRule);
     if (rule != NULL && rule->Action == FCX_STRICT_ACTION_PROXY &&
         ProtocolField < IncomingValues->valueCount &&
         IncomingValues->incomingValue[ProtocolField].value.type == FWP_UINT8) {
@@ -660,6 +713,7 @@ FcxClassifyTcpRedirect(
     const FCX_STRICT_POLICY_SNAPSHOT *snapshot;
     const FCX_STRICT_LEASE_STATE *lease;
     const FCX_STRICT_RULE_RECORD *rule;
+    FCX_STRICT_RULE_RECORD canaryRule;
     const FCX_STRICT_ENDPOINT *endpoint;
     FCX_STRICT_REDIRECT_CONTEXT *redirectContext = NULL;
     FWPS_CONNECT_REQUEST0 *connectRequest;
@@ -681,7 +735,7 @@ FcxClassifyTcpRedirect(
         (PVOID volatile *)&FcxPolicySnapshot,
         NULL,
         NULL);
-    rule = FcxFindSelectedRule(snapshot, IncomingValues, AppIdField);
+    rule = FcxFindSelectedRule(snapshot, IncomingValues, AppIdField, IncomingMetadata, &canaryRule);
     if (rule == NULL || rule->Action != FCX_STRICT_ACTION_PROXY ||
         ProtocolField >= IncomingValues->valueCount ||
         IncomingValues->incomingValue[ProtocolField].value.type != FWP_UINT8 ||
@@ -750,6 +804,10 @@ FcxClassifyTcpRedirect(
         goto Apply;
     }
 
+    if (FcxCanaryPid(IncomingMetadata)) {
+        redirectContext->Protocol = 2;
+        RtlCopyMemory(redirectContext->Reserved1, &IncomingMetadata->processId, sizeof(UINT64));
+    }
     endpoint = Ipv6 ? &lease->TcpV6 : &lease->TcpV4;
     FcxSetRedirectTarget(connectRequest, Ipv6, endpoint);
     connectRequest->localRedirectTargetPID =
@@ -800,6 +858,7 @@ FcxGuardClassifyV4(
     UNREFERENCED_PARAMETER(ClassifyContext);
     UNREFERENCED_PARAMETER(Filter);
     UNREFERENCED_PARAMETER(FlowContext);
+    if (FcxSkipCanaryFilter(Filter, IncomingMetadata, ClassifyOut)) return;
     FcxClassifyAuthorizationGuard(
         IncomingValues,
         IncomingMetadata,
@@ -825,6 +884,7 @@ FcxGuardClassifyV6(
     UNREFERENCED_PARAMETER(ClassifyContext);
     UNREFERENCED_PARAMETER(Filter);
     UNREFERENCED_PARAMETER(FlowContext);
+    if (FcxSkipCanaryFilter(Filter, IncomingMetadata, ClassifyOut)) return;
     FcxClassifyAuthorizationGuard(
         IncomingValues,
         IncomingMetadata,
@@ -848,6 +908,7 @@ FcxRedirectClassifyV4(
 {
     UNREFERENCED_PARAMETER(LayerData);
     UNREFERENCED_PARAMETER(FlowContext);
+    if (FcxSkipCanaryFilter(Filter, IncomingMetadata, ClassifyOut)) return;
     FcxClassifyTcpRedirect(
         IncomingValues,
         IncomingMetadata,
@@ -873,6 +934,7 @@ FcxRedirectClassifyV6(
 {
     UNREFERENCED_PARAMETER(LayerData);
     UNREFERENCED_PARAMETER(FlowContext);
+    if (FcxSkipCanaryFilter(Filter, IncomingMetadata, ClassifyOut)) return;
     FcxClassifyTcpRedirect(
         IncomingValues,
         IncomingMetadata,
@@ -1150,6 +1212,19 @@ FcxDestroyUdpInjectionContext(
     }
     RtlSecureZeroMemory(Context, allocationBytes);
     ExFreePoolWithTag(Context, FCX_STRICT_UDP_INJECTION_POOL_TAG);
+    if (attempted && NT_SUCCESS(CompletionStatus) && flowContext->CanarySequence != 0) {
+        KIRQL canaryIrql;
+        UINT64 bit = 0;
+        if (flowContext->RemotePort == 53) bit = flowContext->AddressFamily == FCX_STRICT_ADDRESS_FAMILY_V4 ? 1 : 2;
+        if (flowContext->RemotePort == 443) bit = flowContext->AddressFamily == FCX_STRICT_ADDRESS_FAMILY_V4 ? 4 : 8;
+        KeAcquireSpinLock(&FcxCanaryLock, &canaryIrql);
+        if (FcxCanaryOnly && flowContext->CanarySequence == FcxCanarySequence &&
+            flowContext->TargetGroupIndex == FcxCanary.TargetGroup &&
+            RtlCompareMemory(flowContext->LeaseNonce, FcxCanary.LeaseNonce, 16) == 16) {
+            FcxCanaryUdpMask |= bit;
+        }
+        KeReleaseSpinLock(&FcxCanaryLock, canaryIrql);
+    }
     FcxDereferenceUdpFlowContext(flowContext);
     FcxFinishUdpInjectionSlot(attempted, CompletionStatus);
 }
@@ -1374,6 +1449,7 @@ FcxClassifyUdpFlow(
     const FCX_STRICT_POLICY_SNAPSHOT *snapshot;
     const FCX_STRICT_LEASE_STATE *lease;
     const FCX_STRICT_RULE_RECORD *rule;
+    FCX_STRICT_RULE_RECORD canaryRule;
     FCX_STRICT_UDP_FLOW_CONTEXT *context = NULL;
     LONG64 flowToken;
     NTSTATUS status;
@@ -1400,7 +1476,7 @@ FcxClassifyUdpFlow(
         (PVOID volatile *)&FcxPolicySnapshot,
         NULL,
         NULL);
-    rule = FcxFindSelectedRule(snapshot, IncomingValues, AppIdField);
+    rule = FcxFindSelectedRule(snapshot, IncomingValues, AppIdField, IncomingMetadata, &canaryRule);
     if (rule == NULL || rule->Action != FCX_STRICT_ACTION_PROXY ||
         rule->TargetGroupIndex == FCX_STRICT_NO_TARGET_GROUP ||
         rule->TargetGroupIndex >= snapshot->TargetGroupCount ||
@@ -1437,6 +1513,12 @@ FcxClassifyUdpFlow(
         goto Exit;
     }
     context->FlowToken = (UINT64)flowToken;
+    if (FcxCanaryPid(IncomingMetadata)) {
+        KIRQL canaryIrql;
+        KeAcquireSpinLock(&FcxCanaryLock, &canaryIrql);
+        context->CanarySequence = FcxCanarySequence;
+        KeReleaseSpinLock(&FcxCanaryLock, canaryIrql);
+    }
     context->LeaseGeneration = lease->Generation;
     context->Revision = snapshot->Revision;
     RtlCopyMemory(context->PolicyDigest,
@@ -1518,6 +1600,7 @@ FcxFlowClassifyV4(
     UNREFERENCED_PARAMETER(ClassifyContext);
     UNREFERENCED_PARAMETER(Filter);
     UNREFERENCED_PARAMETER(FlowContext);
+    if (FcxSkipCanaryFilter(Filter, IncomingMetadata, ClassifyOut)) return;
     FcxClassifyUdpFlow(
         IncomingValues,
         IncomingMetadata,
@@ -1545,6 +1628,7 @@ FcxFlowClassifyV6(
     UNREFERENCED_PARAMETER(ClassifyContext);
     UNREFERENCED_PARAMETER(Filter);
     UNREFERENCED_PARAMETER(FlowContext);
+    if (FcxSkipCanaryFilter(Filter, IncomingMetadata, ClassifyOut)) return;
     FcxClassifyUdpFlow(
         IncomingValues,
         IncomingMetadata,
@@ -2180,6 +2264,7 @@ FcxReleaseLeaseLocked(
     }
     FcxWaitForUdpInjections();
     FcxDrainUdpFlowContexts(FALSE);
+    FcxClearCanary();
 }
 
 static
@@ -2782,6 +2867,19 @@ Exit:
     return status;
 
 ExitWithoutContext:
+    if (attempted && NT_SUCCESS(CompletionStatus) && flowContext->CanarySequence != 0) {
+        KIRQL canaryIrql;
+        UINT64 bit = 0;
+        if (flowContext->RemotePort == 53) bit = flowContext->AddressFamily == FCX_STRICT_ADDRESS_FAMILY_V4 ? 1 : 2;
+        if (flowContext->RemotePort == 443) bit = flowContext->AddressFamily == FCX_STRICT_ADDRESS_FAMILY_V4 ? 4 : 8;
+        KeAcquireSpinLock(&FcxCanaryLock, &canaryIrql);
+        if (FcxCanaryOnly && flowContext->CanarySequence == FcxCanarySequence &&
+            flowContext->TargetGroupIndex == FcxCanary.TargetGroup &&
+            RtlCompareMemory(flowContext->LeaseNonce, FcxCanary.LeaseNonce, 16) == 16) {
+            FcxCanaryUdpMask |= bit;
+        }
+        KeReleaseSpinLock(&FcxCanaryLock, canaryIrql);
+    }
     FcxDereferenceUdpFlowContext(flowContext);
     FcxFinishUdpInjectionSlot(FALSE, status);
     return status;
@@ -2971,6 +3069,27 @@ FcxFillDriverSnapshot(
         if (FcxRegisteredCallouts >= 2) {
             Output->Capabilities = FCX_STRICT_CAP_PERSISTENT_FAIL_CLOSED;
         }
+        // Report implemented transport support only when the entire capture
+        // infrastructure exists. This is not an Armed proof: Broker still
+        // attests the graph, owns a current lease and pre-arms the UDP receive
+        // before admission can open. Missing resources keep selected flows
+        // blocked rather than presenting a partially functional strict path.
+        if (FcxRegisteredCallouts == RTL_NUMBER_OF(FcxCalloutIds) &&
+            FcxRedirectHandle != NULL &&
+            FcxTransportInjectionHandleV4 != NULL &&
+            FcxTransportInjectionHandleV6 != NULL &&
+            FcxDatagramNblPool != NULL &&
+            FcxDatagramReceiveQueue != NULL &&
+            FcxProcessNotifyRegistered &&
+            InterlockedCompareExchange(&FcxUdpStopping, 0, 0) == 0) {
+            Output->Capabilities |= FCX_STRICT_CAP_TCP4_REDIRECT |
+                FCX_STRICT_CAP_TCP6_REDIRECT |
+                FCX_STRICT_CAP_UDP4_REDIRECT |
+                FCX_STRICT_CAP_UDP6_REDIRECT |
+                FCX_STRICT_CAP_DNS_CAPTURED |
+                FCX_STRICT_CAP_QUIC_CAPTURED |
+                FCX_STRICT_CAP_REDIRECT_LOOP_PROTECTED;
+        }
     }
     ExReleaseRundownProtectionCacheAware(FcxPolicyRundown);
 
@@ -3004,6 +3123,71 @@ FcxFillDriverSnapshot(
     ExReleaseRundownProtectionCacheAware(FcxLeaseRundown);
 }
 
+static NTSTATUS FcxBindCanary(WDFREQUEST Request, size_t InputBytes)
+{
+    const FCX_STRICT_CANARY_BINDING *input;
+    size_t bytes;
+    NTSTATUS status;
+    PEPROCESS process = NULL, previous;
+    const FCX_STRICT_LEASE_STATE *lease;
+    const FCX_STRICT_POLICY_SNAPSHOT *policy;
+    KIRQL irql;
+    if (InputBytes != sizeof(*input)) return STATUS_INVALID_BUFFER_SIZE;
+    status = WdfRequestRetrieveInputBuffer(Request, sizeof(*input), (PVOID *)&input, &bytes);
+    if (!NT_SUCCESS(status)) return status;
+    if (input->Magic != FCX_STRICT_WIRE_MAGIC || input->Protocol != FCX_STRICT_WIRE_PROTOCOL ||
+        input->Bytes != sizeof(*input) || input->Reserved != 0 || input->ProcessId == 0 ||
+        input->ProcessId > MAXULONG || input->TtlMillis < 1000 || input->TtlMillis > 30000)
+        return STATUS_INVALID_PARAMETER;
+    status = PsLookupProcessByProcessId((HANDLE)(ULONG_PTR)input->ProcessId, &process);
+    if (!NT_SUCCESS(status)) return status;
+    if (FcxPolicyRundown == NULL || !ExAcquireRundownProtectionCacheAware(FcxPolicyRundown)) {
+        ObDereferenceObject(process);
+        return STATUS_DEVICE_NOT_READY;
+    }
+    (VOID)WdfWaitLockAcquire(FcxLeaseMutationLock, NULL);
+    lease = (const FCX_STRICT_LEASE_STATE *)FcxLeaseState;
+    policy = (const FCX_STRICT_POLICY_SNAPSHOT *)FcxPolicySnapshot;
+    if (!FcxLeaseMatchesSnapshot(lease, policy) ||
+        WdfRequestGetRequestorProcessId(Request) != HandleToULong(PsGetProcessId(lease->BrokerProcess)) ||
+        PsGetProcessExitStatus(process) != STATUS_PENDING ||
+        input->Revision != lease->Revision || input->TargetGroup >= policy->TargetGroupCount ||
+        RtlCompareMemory(input->PolicyDigest, lease->PolicyDigest, 32) != 32 ||
+        RtlCompareMemory(input->LeaseNonce, lease->Nonce, 16) != 16) {
+        WdfWaitLockRelease(FcxLeaseMutationLock);
+        ExReleaseRundownProtectionCacheAware(FcxPolicyRundown);
+        ObDereferenceObject(process);
+        return STATUS_ACCESS_DENIED;
+    }
+    KeAcquireSpinLock(&FcxCanaryLock, &irql);
+    previous = FcxCanaryProcess;
+    FcxCanaryProcess = process;
+    RtlCopyMemory(&FcxCanary, input, sizeof(FcxCanary));
+    FcxCanaryExpires = KeQueryInterruptTime() + (UINT64)input->TtlMillis * 10000ull;
+    FcxCanaryOnly = TRUE;
+    ++FcxCanarySequence;
+    FcxCanaryUdpMask = 0;
+    KeReleaseSpinLock(&FcxCanaryLock, irql);
+    WdfWaitLockRelease(FcxLeaseMutationLock);
+    ExReleaseRundownProtectionCacheAware(FcxPolicyRundown);
+    if (previous != NULL) ObDereferenceObject(previous);
+    return STATUS_SUCCESS;
+}
+
+static VOID FcxClearCanary(VOID)
+{
+    KIRQL irql;
+    PEPROCESS process;
+    KeAcquireSpinLock(&FcxCanaryLock, &irql);
+    process = FcxCanaryProcess;
+    FcxCanaryProcess = NULL;
+    FcxCanaryOnly = FALSE;
+    FcxCanaryUdpMask = 0;
+    FcxCanaryExpires = 0;
+    RtlZeroMemory(&FcxCanary, sizeof(FcxCanary));
+    KeReleaseSpinLock(&FcxCanaryLock, irql);
+    if (process != NULL) ObDereferenceObject(process);
+}
 VOID
 FcxEvtIoDeviceControl(
     _In_ WDFQUEUE Queue,
@@ -3055,6 +3239,17 @@ FcxEvtIoDeviceControl(
     }
 
     switch (IoControlCode) {
+    case IOCTL_FCX_STRICT_QUERY_CANARY:
+        status = InputBufferLength == 0 && FcxLeaseOwnsRequest(Request, NULL) ? STATUS_SUCCESS : STATUS_ACCESS_DENIED;
+        break;
+    case IOCTL_FCX_STRICT_BIND_CANARY:
+        status = FcxBindCanary(Request, InputBufferLength);
+        break;
+    case IOCTL_FCX_STRICT_CLEAR_CANARY:
+        if (InputBufferLength != 0) { status = STATUS_INVALID_BUFFER_SIZE; break; }
+        status = FcxSetDatagramPathActive(Request, FALSE);
+        if (NT_SUCCESS(status)) FcxClearCanary();
+        break;
     case IOCTL_FCX_STRICT_UPLOAD_POLICY:
     {
         const VOID *input;
@@ -3153,6 +3348,12 @@ FcxEvtIoDeviceControl(
 
     if (NT_SUCCESS(status)) {
         FcxFillDriverSnapshot(output);
+        if (IoControlCode == IOCTL_FCX_STRICT_QUERY_CANARY) {
+            KIRQL canaryIrql;
+            KeAcquireSpinLock(&FcxCanaryLock, &canaryIrql);
+            RtlCopyMemory(output->Reserved, &FcxCanaryUdpMask, sizeof(UINT64));
+            KeReleaseSpinLock(&FcxCanaryLock, canaryIrql);
+        }
         information = sizeof(*output);
     }
     WdfRequestCompleteWithInformation(Request, status, information);
@@ -3420,6 +3621,7 @@ FcxEvtDriverUnload(
     (VOID)FcxUnregisterCallouts();
     FcxDestroyTransportInjectionHandles();
     FcxDestroyDatagramNblPool();
+    FcxClearCanary();
     FcxDestroyRedirectHandle();
     FcxReleasePolicy();
     if (FcxLeaseRundown != NULL) {
@@ -3468,6 +3670,7 @@ DriverEntry(
     if (!NT_SUCCESS(status)) {
         return status;
     }
+    KeInitializeSpinLock(&FcxCanaryLock);
     KeInitializeSpinLock(&FcxUdpFlowLock);
     InitializeListHead(&FcxUdpFlowList);
     for (bucketIndex = 0;
@@ -3577,6 +3780,7 @@ Failure:
     (VOID)FcxUnregisterCallouts();
     FcxDestroyTransportInjectionHandles();
     FcxDestroyDatagramNblPool();
+    FcxClearCanary();
     FcxDestroyRedirectHandle();
     if (FcxProcessNotifyRegistered) {
         (VOID)PsSetCreateProcessNotifyRoutineEx(FcxProcessNotify, TRUE);

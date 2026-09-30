@@ -372,6 +372,12 @@ class _PerAppPolicySectionState extends ConsumerState<_PerAppPolicySection> {
   final TextEditingController _searchController = TextEditingController();
   StreamSubscription<AgentStrictPolicyStatus>? _strictStatusSubscription;
   String _searchQuery = '';
+  bool _strictCommandPending = false;
+
+  bool get _strictTransition => _strictCommandPending || const {
+    AgentStrictPolicyState.preparing,
+    AgentStrictPolicyState.recovering,
+  }.contains(clashService?.strictPolicyStatus.state);
 
   @override
   void initState() {
@@ -455,6 +461,16 @@ class _PerAppPolicySectionState extends ConsumerState<_PerAppPolicySection> {
   }
 
   Future<void> _toggleStrictCapture() async {
+    if (_strictTransition) return;
+    setState(() => _strictCommandPending = true);
+    try {
+      await _changeStrictCapture();
+    } finally {
+      if (mounted) setState(() => _strictCommandPending = false);
+    }
+  }
+
+  Future<void> _changeStrictCapture() async {
     final service = clashService;
     if (service == null || !_strictAvailable) return;
     if (service.strictPolicyStatus.state != AgentStrictPolicyState.disabled) {
@@ -466,13 +482,13 @@ class _PerAppPolicySectionState extends ConsumerState<_PerAppPolicySection> {
       }
       return;
     }
-    final armed = await _prepareStrictEvidence(
+    final accepted = await _prepareStrictEvidence(
       perAppPolicyStore.entries,
       force: true,
     );
     if (mounted) {
       await context.showNotifier(
-        armed ? appLocalizations.successTitle : 'Strict mode unavailable',
+        accepted ? '严格模式请求已提交，请查看转发状态' : '严格模式请求未完成，请查看失败原因',
       );
     }
   }
@@ -519,9 +535,12 @@ class _PerAppPolicySectionState extends ConsumerState<_PerAppPolicySection> {
                       ),
                       if (_strictAvailable)
                         IconButton(
-                          tooltip: 'Toggle strict application capture',
-                          onPressed: _toggleStrictCapture,
-                          icon: Icon(
+                          tooltip: _strictTransition ? '正在准备严格模式，请稍候' : '切换严格应用代理',
+                          onPressed: _strictTransition ? null : _toggleStrictCapture,
+                          icon: _strictTransition
+                              ? const SizedBox(width: 20, height: 20,
+                                  child: CircularProgressIndicator(strokeWidth: 2))
+                              : Icon(
                             clashService?.strictPolicyStatus.state ==
                                     AgentStrictPolicyState.armed
                                 ? Icons.shield_rounded
@@ -565,6 +584,14 @@ class _PerAppPolicySectionState extends ConsumerState<_PerAppPolicySection> {
                       child: Text('严格恢复：${clashService?.strictPolicyStatus.recoveryAttempts ?? 0} 次'
                         '${clashService?.strictPolicyStatus.recoveryExhausted == true ? ' · 重试已耗尽' : ''}'
                         '${clashService?.strictPolicyStatus.recoveryNextDelayMs == null ? '' : ' · 下次 ${clashService!.strictPolicyStatus.recoveryNextDelayMs} ms'}')),
+                  if (_strictTransition)
+                    const Padding(padding: EdgeInsets.symmetric(vertical: 8),
+                      child: Text('正在准备并检查严格转发路径，选中应用保持阻断。网络较慢时可能需要数分钟。')),
+                  if (_strictAvailable)
+                    StrictPolicyStatusIndicator(status: clashService?.strictPolicyStatus),
+                  if (clashService?.strictPolicyStatus.failureReason case final reason?)
+                    Padding(padding: const EdgeInsets.symmetric(vertical: 8),
+                      child: Text(strictPolicyFailureLabel(reason))),
                   for (final entry in filteredEntries)
                     ListTile(
                       contentPadding: EdgeInsets.zero,

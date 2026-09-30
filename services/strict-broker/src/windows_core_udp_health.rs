@@ -117,6 +117,64 @@ fn validate_pong(
         .context("strict Core UDP health pong authentication failed")
 }
 
+pub(crate) fn probe_core_dns_mapping(endpoint: SocketAddrV4, generation: u64,
+    username: &str, password: &str, nonce: [u8;16], timeout: Duration) -> Result<Ipv4Addr> {
+    if !endpoint.ip().is_loopback() || generation == 0 || timeout.is_zero() || timeout > MAX_TIMEOUT {
+        bail!("invalid strict DNS mapping probe");
+    }
+    let username = decode_strict_udp_credential(username, "username")?;
+    let key = decode_strict_udp_credential(password, "password")?;
+    let key_id: [u8;16] = username[..16].try_into()?;
+    let request = build_frame(3, generation, key_id, nonce, &key)?;
+    let socket = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0))?;
+    socket.set_read_timeout(Some(timeout))?;
+    socket.set_write_timeout(Some(timeout))?;
+    socket.connect(endpoint)?;
+    socket.send(&request)?;
+    let mut response = [0u8;113];
+    if socket.recv(&mut response)? != 112 || response[..5] != request[..5] || response[5] != 4
+        || response[6..48] != request[6..48] || response[48] != 4
+        || response[53..80].iter().any(|b| *b != 0) { bail!("strict DNS mapping response mismatch"); }
+    let mut mac = HmacSha256::new_from_slice(&key)?;
+    mac.update(&response[..80]);
+    mac.verify_slice(&response[80..112]).context("strict DNS mapping response authentication")?;
+    let ip = Ipv4Addr::new(response[49],response[50],response[51],response[52]);
+    if ip.is_loopback() || ip.is_unspecified() || ip.is_multicast() { bail!("unsafe strict DNS mapping"); }
+    Ok(ip)
+}
+
+pub(crate) fn confirm_core_dns_restoration(endpoint: SocketAddrV4, generation: u64,
+    username: &str, password: &str, nonce: [u8;16], timeout: Duration) -> Result<()> {
+    if endpoint.ip() != &Ipv4Addr::LOCALHOST || generation == 0 || timeout.is_zero() || timeout > MAX_TIMEOUT {
+        bail!("invalid strict DNS restoration probe");
+    }
+    let username = decode_strict_udp_credential(username, "username")?;
+    let key = decode_strict_udp_credential(password, "password")?;
+    let key_id: [u8;16] = username[..16].try_into()?;
+    let request = build_frame(5, generation, key_id, nonce, &key)?;
+    let socket = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0))?;
+    socket.set_read_timeout(Some(Duration::from_millis(100)))?;
+    socket.set_write_timeout(Some(timeout))?;
+    socket.connect(endpoint)?;
+    let deadline = std::time::Instant::now() + timeout;
+    while std::time::Instant::now() < deadline {
+        socket.send(&request)?;
+        let mut response = [0u8;81];
+        let count = match socket.recv(&mut response) {
+            Ok(count) => count,
+            Err(error) if matches!(error.kind(), std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock) => continue,
+            Err(error) => return Err(error.into()),
+        };
+        if count != 80 || response[..5] != request[..5] || response[5] != 6 || response[6..48] != request[6..48] {
+            bail!("strict DNS restoration proof mismatch");
+        }
+        let mut mac = HmacSha256::new_from_slice(&key)?;
+        mac.update(&response[..48]);
+        return mac.verify_slice(&response[48..80]).context("strict DNS restoration proof authentication");
+    }
+    bail!("Core did not observe real DNS domain restoration before deadline")
+}
+
 #[cfg(test)]
 mod tests {
     use std::fmt::Write;

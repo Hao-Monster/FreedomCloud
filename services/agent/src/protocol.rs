@@ -27,6 +27,10 @@ pub enum StrictPolicyFailureReason {
     IdentityUnavailable,
     CoreUnavailable,
     BrokerUnavailable,
+    ForwardingDnsMapping,
+    ForwardingDnsRestoration,
+    ForwardingCanary,
+    ForwardingTimeout,
     RecoveryExhausted,
     InvalidPolicy,
 }

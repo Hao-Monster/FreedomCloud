@@ -702,6 +702,10 @@ pub enum BrokerErrorCode {
     IdentityRejected,
     BackendUnavailable,
     PersistenceFailure,
+    ForwardingDnsMapping,
+    ForwardingDnsRestoration,
+    ForwardingCanary,
+    ForwardingTimeout,
     Internal,
 }
 

@@ -42,6 +42,10 @@ enum AgentStrictPolicyFailureReason {
   brokerUnavailable,
   recoveryExhausted,
   invalidPolicy,
+  forwardingDnsMapping,
+  forwardingDnsRestoration,
+  forwardingCanary,
+  forwardingTimeout,
 }
 
 class AgentEndpoint {

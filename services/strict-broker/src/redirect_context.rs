@@ -76,9 +76,11 @@ pub struct StrictRedirectContext {
     target_group_index: u16,
     original_destination: SocketAddr,
     transport: StrictRedirectTransport,
+    canary_process_id: u32,
 }
 
 impl StrictRedirectContext {
+    pub(crate) fn canary_process_id(&self) -> u32 { self.canary_process_id }
     pub fn target_group_index(&self) -> u16 {
         self.target_group_index
     }
@@ -99,7 +101,7 @@ pub fn parse_strict_redirect_context(
 ) -> Result<StrictRedirectContext> {
     if bytes.len() != REDIRECT_CONTEXT_BYTES
         || read_u32(bytes, 0)? != REDIRECT_CONTEXT_MAGIC
-        || read_u16(bytes, 4)? != REDIRECT_CONTEXT_PROTOCOL
+        || ![REDIRECT_CONTEXT_PROTOCOL, 2].contains(&read_u16(bytes, 4)?)
         || read_u16(bytes, 6)? as usize != REDIRECT_CONTEXT_BYTES
         || {
             let generation = read_u64(bytes, 8)?;
@@ -109,7 +111,9 @@ pub fn parse_strict_redirect_context(
         || !constant_time_eq(&bytes[24..56], &binding.policy_digest)
         || !constant_time_eq(&bytes[56..72], &binding.nonce)
         || bytes[78..80].iter().any(|byte| *byte != 0)
-        || bytes[96..112].iter().any(|byte| *byte != 0)
+        || bytes[104..112].iter().any(|byte| *byte != 0)
+        || (read_u16(bytes,4)? == 1 && read_u64(bytes,96)? != 0)
+        || (read_u16(bytes,4)? == 2 && (read_u64(bytes,96)? == 0 || read_u64(bytes,96)? > u64::from(u32::MAX)))
     {
         bail!("strict redirect context is not bound to the active lease");
     }
@@ -158,6 +162,7 @@ pub fn parse_strict_redirect_context(
         target_group_index,
         original_destination: SocketAddr::new(ip, port),
         transport: expected_transport,
+        canary_process_id: read_u64(bytes,96)? as u32,
     })
 }
 

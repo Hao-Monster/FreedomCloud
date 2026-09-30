@@ -797,7 +797,9 @@ async fn drive_strict_action(
                     set_strict_policy(
                         shared,
                         crate::protocol::StrictPolicyState::Blocking,
-                        Some(crate::protocol::StrictPolicyFailureReason::BrokerUnavailable),
+                        Some(error.downcast_ref::<crate::broker::BrokerDiagnostic>()
+                            .map(crate::broker::BrokerDiagnostic::failure_reason)
+                            .unwrap_or(crate::protocol::StrictPolicyFailureReason::BrokerUnavailable)),
                     )
                     .await;
                     return false;
@@ -908,10 +910,15 @@ async fn supervise_strict_recovery(shared: Arc<Shared>) {
         *retry_at = None;
         drop(retry_at);
         runtime.retry.lock().await.started();
+        set_strict_policy(&shared, crate::protocol::StrictPolicyState::Recovering, None).await;
         let action = runtime.orchestrator.lock().await.recover(runtime.policy.read().await.clone());
         match action {
             Ok(action) => { let _ = drive_strict_action(&shared, runtime, action).await; }
-            Err(error) => shared.logger.log(format!("strict recovery remains blocked: {error:#}")),
+            Err(error) => {
+                set_strict_policy(&shared, crate::protocol::StrictPolicyState::Blocking,
+                    Some(crate::protocol::StrictPolicyFailureReason::BrokerUnavailable)).await;
+                shared.logger.log(format!("strict recovery remains blocked: {error:#}"));
+            }
         }
     }
 }

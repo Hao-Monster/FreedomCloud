@@ -968,3 +968,8 @@ fn validate_snapshot(
     }
     Ok(())
 }
+
+#[cfg(all(windows, feature = "production-host"))]
+mod windows_canary;
+#[cfg(all(windows, feature = "production-host"))]
+pub use windows_canary::run_windows_strict_canary_child;

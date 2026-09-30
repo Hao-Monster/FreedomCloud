@@ -1351,3 +1351,49 @@ mod tests {
         }
     }
 }
+
+/// Dynamic filters cover the signed helper image, while driver rawContext
+/// dispatch restricts them to one live PID. No production inventory is changed.
+pub(crate) struct WindowsCanaryFilters { _engine: WfpEngineHandle }
+impl WindowsCanaryFilters {
+    pub(crate) fn install(app: &[u8], nonce: [u8; 16]) -> Result<Self> {
+        if app.is_empty() || app.len() > MAX_VERIFIED_APP_ID_BYTES { bail!("invalid canary App ID"); }
+        let mut engine = WfpEngineHandle::open(true)?;
+        engine.transaction(|raw| {
+            // prepare -> install_guards already installed the two global
+            // conditional DATAGRAM_DATA filters (WfpPolicyPlan::guard_filters).
+            // Add only ALE admission/tracking here: a duplicate datagram
+            // callout would capture/inject the same packet twice. The existing
+            // callout selects only the flow context bound by this helper PID.
+            for (index, layer) in [WfpLayer::AuthConnectV4, WfpLayer::AuthConnectV6,
+                WfpLayer::ConnectRedirectV4, WfpLayer::ConnectRedirectV6,
+                WfpLayer::FlowEstablishedV4, WfpLayer::FlowEstablishedV6].into_iter().enumerate() {
+                let mut key = nonce;
+                key[15] ^= index as u8;
+                let mut blob = FWP_BYTE_BLOB { size: app.len() as u32, data: app.as_ptr().cast_mut() };
+                let mut condition = FWPM_FILTER_CONDITION0 {
+                    fieldKey: FWPM_CONDITION_ALE_APP_ID, matchType: FWP_MATCH_EQUAL,
+                    conditionValue: FWP_CONDITION_VALUE0 { r#type: FWP_BYTE_BLOB_TYPE,
+                        Anonymous: FWP_CONDITION_VALUE0_0 { byteBlob: &mut blob } },
+                };
+                let flow = is_flow_tracking_layer(layer);
+                let filter = FWPM_FILTER0 {
+                    filterKey: object_key_to_guid(WfpObjectKey::from_bytes(key)),
+                    flags: if flow { 0 } else { FWPM_FILTER_FLAG_CLEAR_ACTION_RIGHT },
+                    layerKey: layer_guid(layer),
+                    subLayerKey: object_key_to_guid(crate::wfp_plan::SUBLAYER_KEY),
+                    weight: FWP_VALUE0 { r#type: FWP_EMPTY, ..FWP_VALUE0::default() },
+                    numFilterConditions: 1, filterCondition: &mut condition,
+                    action: FWPM_ACTION0 { r#type: if flow { FWP_ACTION_CALLOUT_INSPECTION } else { FWP_ACTION_CALLOUT_TERMINATING },
+                        Anonymous: FWPM_ACTION0_0 { calloutKey: object_key_to_guid(expected_callout_key(layer)) } },
+                    Anonymous: FWPM_FILTER0_0 { rawContext: 0x594e4143584346 },
+                    ..FWPM_FILTER0::default()
+                };
+                // BFE copies this bounded stack-owned filter synchronously.
+                check_wfp(unsafe { FwpmFilterAdd0(raw, &filter, null_mut(), null_mut()) }, "install scoped strict canary filter")?;
+            }
+            Ok(())
+        })?;
+        Ok(Self { _engine: engine })
+    }
+}
