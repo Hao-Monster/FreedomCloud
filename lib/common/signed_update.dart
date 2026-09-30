@@ -21,6 +21,7 @@ class SignedUpdate {
   Map<String, dynamic>? _manifest;
   String? _script;
   String? _root;
+  Future<void>? _initializing;
 
   String? get unavailable {
     if (!Platform.isWindows && !Platform.isMacOS && !Platform.isLinux) return '自动更新仅支持桌面平台';
@@ -31,7 +32,13 @@ class SignedUpdate {
     return null;
   }
 
-  Future<void> _initialize() async {
+  Future<void> _initialize() => _initializing ??=
+      _initializeStorage().catchError((Object error, StackTrace stack) {
+        _initializing = null;
+        Error.throwWithStackTrace(error, stack);
+      });
+
+  Future<void> _initializeStorage() async {
     if (unavailable != null) throw StateError(unavailable!);
     _root ??= p.join(await appPath.homeDirPath, 'signed-updates');
     await Directory(_root!).create(recursive: true);
