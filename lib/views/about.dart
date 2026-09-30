@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:flclashx/widgets/signed_update_dialog.dart';
 
 import 'package:flclashx/clash/core.dart';
 import 'package:flclashx/common/common.dart';
@@ -34,15 +35,10 @@ class AboutView extends StatelessWidget {
   const AboutView({super.key});
 
   Future<void> _checkUpdate(BuildContext context) async {
-    final commonScaffoldState = context.commonScaffoldState;
-    if (commonScaffoldState?.mounted != true) return;
-    final data = await commonScaffoldState?.loadingRun<Map<String, dynamic>?>(
-      request.checkForUpdate,
-      title: appLocalizations.checkUpdate,
-    );
-    globalState.appController.checkUpdateResultHandle(
-      data: data,
-      handleError: true,
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const SignedUpdateDialog(),
     );
   }
 

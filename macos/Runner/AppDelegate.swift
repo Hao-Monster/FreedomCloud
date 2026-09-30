@@ -1,4 +1,6 @@
 import Cocoa
+import CryptoKit
+import Darwin
 import FlutterMacOS
 import window_ext
 import LaunchAtLogin
@@ -110,94 +112,153 @@ class AppDelegate: FlutterAppDelegate {
         NSLog("Zashboard channel set up successfully")
     }
 
+    private func coreDigest(_ path: String) throws -> String {
+        let handle = try FileHandle(forReadingFrom: URL(fileURLWithPath: path))
+        defer { try? handle.close() }
+        var hasher = SHA256()
+        while true {
+            let data = handle.readData(ofLength: 65536)
+            if data.isEmpty { break }
+            hasher.update(data: data)
+        }
+        return hasher.finalize().map { String(format: "%02x", $0) }.joined()
+    }
+
+    private func signingCommand(_ arguments: [String]) throws -> String {
+        let process = Process()
+        let output = Pipe()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/codesign")
+        process.arguments = arguments
+        process.standardOutput = output
+        process.standardError = output
+        try process.run()
+        let data = output.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else {
+            throw NSError(domain: "FlClashX.Core", code: Int(process.terminationStatus),
+                          userInfo: [NSLocalizedDescriptionKey: "Signed application/core verification failed"])
+        }
+        return String(data: data, encoding: .utf8) ?? ""
+    }
+
+    private func shellQuote(_ value: String) -> String {
+        return "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
+    }
+
     func setupCoreInApplicationSupport() {
-        guard let appSupportURL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
-            print("ERROR: Could not get Application Support directory")
-            return
-        }
-        
-        let bundleURL = Bundle.main.bundleURL
-        let bundleCorePath = bundleURL.appendingPathComponent("Contents/MacOS/FlClashCore")
-        let appSupportCorePath = appSupportURL.appendingPathComponent("com.follow.clash/cores/FlClashCore")
-        let appSupportDir = appSupportCorePath.deletingLastPathComponent()
-        
+        let bundle = Bundle.main.bundleURL.path
+        let source = Bundle.main.bundleURL.appendingPathComponent("Contents/MacOS/FlClashCore").path
+        let destination = "/Library/Application Support/FlClashX/Core/FlClashCore"
         do {
-            try FileManager.default.createDirectory(at: appSupportDir, withIntermediateDirectories: true)
-            print("Directory created: \(appSupportDir.path)")
-            
-            let coreExists = FileManager.default.fileExists(atPath: appSupportCorePath.path)
-            let needsUpdate = !coreExists || shouldUpdateCore(bundlePath: bundleCorePath.path, appSupportPath: appSupportCorePath.path)
-            
-            if needsUpdate {
-                try? FileManager.default.removeItem(at: appSupportCorePath)
-                
-                try FileManager.default.copyItem(at: bundleCorePath, to: appSupportCorePath)
-                
-                if setCorePermissions(corePath: appSupportCorePath.path) {
-                    print("FlClashCore updated to: \(appSupportCorePath.path)")
+            _ = try signingCommand(["--verify", "--deep", "--strict", bundle])
+            let identity = try signingCommand(["-dv", "--verbose=4", bundle])
+            let lines = identity.components(separatedBy: "\n")
+            let team = lines.first(where: { $0.hasPrefix("TeamIdentifier=") })
+                .map { String($0.dropFirst("TeamIdentifier=".count)) } ?? ""
+            let hasTeam = team.range(of: "^[A-Z0-9]{10}$", options: .regularExpression) != nil
+            let localDevelopment = !hasTeam && lines.contains("Signature=adhoc")
+            let requirement: String?
+            if hasTeam {
+                let releaseRequirement = "anchor apple generic and certificate leaf[subject.OU] = \"" + team + "\""
+                requirement = releaseRequirement
+                _ = try signingCommand(["--verify", "--strict", "-R", releaseRequirement, source])
+            } else if localDevelopment {
+                // Ad-hoc signatures establish local bundle integrity, not a
+                // trusted publisher. Only explicit local administrator consent
+                // can authorize this exact development Core for privileged use.
+                _ = try signingCommand(["--verify", "--strict", source])
+                let coreIdentity = try signingCommand(["-dv", "--verbose=4", source])
+                guard coreIdentity.components(separatedBy: "\n").contains("Signature=adhoc") else {
+                    throw NSError(domain: "FlClashX.Core", code: 2,
+                                  userInfo: [NSLocalizedDescriptionKey: "Local development requires valid ad-hoc signatures on both the app and Core"])
                 }
+                requirement = nil
             } else {
-                let attrs = try? FileManager.default.attributesOfItem(atPath: appSupportCorePath.path)
-                if let posixPerms = attrs?[.posixPermissions] as? NSNumber {
-                    // Check if setuid bit is set (04000 in octal)
-                    if (posixPerms.uint16Value & 0o4000) == 0 {
-                        print("Permissions not set, setting them now...")
-                        let _ = setCorePermissions(corePath: appSupportCorePath.path)
-                    } else {
-                        print("FlClashCore already up-to-date with correct permissions")
-                    }
-                }
+                throw NSError(domain: "FlClashX.Core", code: 1,
+                              userInfo: [NSLocalizedDescriptionKey: "Application must have a valid team signature or an explicit ad-hoc development signature"])
             }
+            let expected = try coreDigest(source)
+            let protectedDirectories = ["/Library/Application Support/FlClashX", "/Library/Application Support/FlClashX/Core"]
+            let protectedPath = protectedDirectories.allSatisfy { path in
+                guard URL(fileURLWithPath: path).resolvingSymlinksInPath().path == path,
+                      let attrs = try? FileManager.default.attributesOfItem(atPath: path),
+                      let owner = attrs[.ownerAccountID] as? NSNumber,
+                      let mode = attrs[.posixPermissions] as? NSNumber else { return false }
+                return owner.intValue == 0 && mode.intValue == 0o755
+            }
+            if protectedPath, URL(fileURLWithPath: destination).resolvingSymlinksInPath().path == destination,
+               let current = try? coreDigest(destination), current == expected,
+               let attributes = try? FileManager.default.attributesOfItem(atPath: destination),
+               let owner = attributes[.ownerAccountID] as? NSNumber,
+               let permissions = attributes[.posixPermissions] as? NSNumber,
+               owner.intValue == 0, permissions.intValue == 0o4755 {
+                return
+            }
+            if localDevelopment {
+                let consent = NSAlert()
+                consent.messageText = "Authorize local development network core"
+                consent.informativeText = "This is a local ad-hoc development build, not a trusted publisher release. Installing this exact Core grants it administrator capabilities. SHA-256: " + expected
+                consent.addButton(withTitle: "Install local development Core")
+                consent.addButton(withTitle: "Quit")
+                guard consent.runModal() == .alertFirstButtonReturn else { Darwin.exit(EXIT_FAILURE) }
+            }
+            let stagedVerification: String
+            if let requirement = requirement {
+                stagedVerification = "/usr/bin/codesign --verify --strict -R " + shellQuote(requirement) + " \"$staged/FlClashCore\""
+            } else {
+                stagedVerification = "/usr/bin/codesign --verify --strict \"$staged/FlClashCore\"\n/usr/bin/codesign -dv --verbose=4 \"$staged/FlClashCore\" 2>&1 | /usr/bin/grep -Fx 'Signature=adhoc' >/dev/null"
+            }
+            // Only the immutable executable moves. Credentials, subscriptions,
+            // Agent tokens and profiles keep their existing per-user paths.
+            let command = """
+            set -eu
+            for d in '/Library' '/Library/Application Support'; do
+              test ! -L "$d"
+              test "$(/usr/bin/stat -f %u "$d")" = 0
+            done
+            base='/Library/Application Support/FlClashX'
+            for d in "$base" "$base/Core"; do
+              if test -e "$d"; then
+                test ! -L "$d"
+                test "$(/usr/bin/stat -f %u "$d")" = 0
+              else
+                /bin/mkdir -m 755 "$d"
+              fi
+              /bin/chmod 755 "$d"
+            done
+            test ! -L "$base/Core/FlClashCore"
+            staged=$(/usr/bin/mktemp -d "$base/Core/.update.XXXXXX")
+            trap '/bin/rm -f "$staged/FlClashCore"; /bin/rmdir "$staged"' EXIT
+            /bin/cp \(shellQuote(source)) "$staged/FlClashCore"
+            test "$(/usr/bin/shasum -a 256 "$staged/FlClashCore" | /usr/bin/cut -d ' ' -f 1)" = \(shellQuote(expected))
+            \(stagedVerification)
+            /usr/sbin/chown root:wheel "$staged/FlClashCore"
+            /bin/chmod 4755 "$staged/FlClashCore"
+            /bin/mv -f "$staged/FlClashCore" "$base/Core/FlClashCore"
+            """
+            let escaped = command.replacingOccurrences(of: "\\", with: "\\\\")
+                .replacingOccurrences(of: "\"", with: "\\\"")
+                .replacingOccurrences(of: "\n", with: "\\n")
+            var error: NSDictionary?
+            let authorizationPrompt = localDevelopment ? "Install this local development Core; publisher trust is not verified." : "Install the verified FlClashX network core."
+            guard let script = NSAppleScript(source: "do shell script \"" + escaped + "\" with administrator privileges with prompt \"" + authorizationPrompt + "\"") else {
+                throw NSError(domain: "FlClashX.Core", code: 3)
+            }
+            script.executeAndReturnError(&error)
+            if let error = error { throw NSError(domain: "FlClashX.Core", code: 4, userInfo: error as? [String: Any]) }
+            guard try coreDigest(destination) == expected else { throw NSError(domain: "FlClashX.Core", code: 5) }
         } catch {
-            print("Failed to setup core: \(error)")
+            let alert = NSAlert()
+            alert.messageText = "Verified network core could not be installed"
+            alert.informativeText = error.localizedDescription
+            alert.addButton(withTitle: "Quit")
+            alert.runModal()
+            // Startup must not proceed with an unverified or stale privileged
+            // executable. Flutter's window delegate can cancel terminate().
+            Darwin.exit(EXIT_FAILURE)
         }
     }
-    
-    func setCorePermissions(corePath: String) -> Bool {
-        let escaped = corePath.replacingOccurrences(of: "'", with: "'\\''")
-        let script = """
-        do shell script "chown root:admin '\(escaped)' && chmod +sx '\(escaped)'" with administrator privileges
-        """
-        
-        var error: NSDictionary?
-        if let scriptObject = NSAppleScript(source: script) {
-            scriptObject.executeAndReturnError(&error)
-            if let error = error {
-                if let errorCode = error["NSAppleScriptErrorNumber"] as? Int, errorCode == -128 {
-                    print("User cancelled password prompt")
-                    showPermissionRequiredAlert()
-                    NSApplication.shared.terminate(nil)
-                    return false
-                }
-                print("Failed to set permissions: \(error)")
-                return false
-            } else {
-                print("Permissions set successfully for: \(corePath)")
-                return true
-            }
-        }
-        return false
-    }
-    
-    func showPermissionRequiredAlert() {
-        let alert = NSAlert()
-        alert.messageText = "Administrator Access Required"
-        alert.informativeText = "FlClashX requires administrator privileges to set up the network core. The application cannot run without these permissions.\n\nPlease restart the application and grant administrator access when prompted."
-        alert.alertStyle = .critical
-        alert.addButton(withTitle: "Quit")
-        alert.runModal()
-    }
-    
-    func shouldUpdateCore(bundlePath: String, appSupportPath: String) -> Bool {
-        guard let bundleAttrs = try? FileManager.default.attributesOfItem(atPath: bundlePath),
-              let appSupportAttrs = try? FileManager.default.attributesOfItem(atPath: appSupportPath),
-              let bundleDate = bundleAttrs[.modificationDate] as? Date,
-              let appSupportDate = appSupportAttrs[.modificationDate] as? Date else {
-            return true
-        }
-        return bundleDate > appSupportDate
-    }
-    
+
     override func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         return false
     }

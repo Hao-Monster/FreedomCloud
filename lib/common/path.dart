@@ -44,10 +44,9 @@ class AppPath {
 
   String get corePath {
     if (Platform.isMacOS) {
-      // Core is stored in Application Support/com.follow.clash/cores/ (copied by Swift code on launch)
-      // Permissions are set automatically in Swift
-      final home = Platform.environment['HOME'] ?? '';
-      return '$home/Library/Application Support/com.follow.clash/cores/FlClashCore';
+      // Native bootstrap verifies the signed bundle and atomically installs the
+      // privileged executable into a root-owned directory. User data stays put.
+      return '/Library/Application Support/FlClashX/Core/FlClashCore';
     }
     return join(executableDirPath, "FlClashCore$executableExtension");
   }

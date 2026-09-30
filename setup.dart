@@ -147,6 +147,30 @@ class Build {
 
   static String get distPath => join(current, "dist");
 
+  /// Public update trust configuration is baked into the client, never read
+  /// from an untrusted release feed or a downloaded settings file.
+  static List<String> get signedUpdateDefines {
+    final feed = Platform.environment['FCX_RELEASE_MANIFEST_URL']?.trim() ?? '';
+    final pin = Platform.environment['FCX_RELEASE_CERT_SHA256']?.trim() ?? '';
+    final team = Platform.environment['FCX_MACOS_TEAM_ID']?.trim() ?? '';
+    if (feed.isEmpty && pin.isEmpty && team.isEmpty) return const [];
+    final uri = Uri.tryParse(feed);
+    if (uri == null || uri.scheme != 'https' || uri.host.isEmpty ||
+        uri.userInfo.isNotEmpty || !RegExp(r'^[a-fA-F0-9]{64}$').hasMatch(pin)) {
+      throw StateError('Signed updates require an HTTPS FCX_RELEASE_MANIFEST_URL '
+          'and a 64-digit FCX_RELEASE_CERT_SHA256');
+    }
+    if ((Platform.isMacOS || team.isNotEmpty) &&
+        !RegExp(r'^[A-Z0-9]{10}$').hasMatch(team)) {
+      throw StateError('macOS signed updates require FCX_MACOS_TEAM_ID');
+    }
+    return [
+      '--dart-define=FCX_RELEASE_MANIFEST_URL=$feed',
+      '--dart-define=FCX_RELEASE_CERT_SHA256=${pin.toUpperCase()}',
+      if (team.isNotEmpty) '--dart-define=FCX_MACOS_TEAM_ID=$team',
+    ];
+  }
+
   // Full release version for the User-Agent, taken from the CI tag
   // (GITHUB_REF_NAME, e.g. "v0.4.1-pre.18"), baked in via --dart-define=APP_VERSION.
   // Only a version tag counts — a branch name (e.g. "dev") is ignored, so local
@@ -1130,6 +1154,7 @@ class BuildCommand extends Command {
         "build",
         "macos",
         "--release",
+        ...Build.signedUpdateDefines,
         "--dart-define=APP_ENV=$env",
         "--dart-define=CORE_VERSION=$coreVersion",
         "--dart-define=APP_VERSION=${Build.appVersion}",
@@ -1198,6 +1223,7 @@ class BuildCommand extends Command {
         "build",
         "windows",
         "--release",
+        ...Build.signedUpdateDefines,
         "--dart-define=APP_ENV=$env",
         "--dart-define=CORE_SHA256=$token",
         "--dart-define=CORE_VERSION=$coreVersion",
@@ -1423,6 +1449,7 @@ class BuildCommand extends Command {
         "build",
         "linux",
         "--release",
+        ...Build.signedUpdateDefines,
         "--target-platform=${targetMap[arch]}",
         "--dart-define=APP_ENV=$env",
         "--dart-define=CORE_VERSION=$coreVersion",
