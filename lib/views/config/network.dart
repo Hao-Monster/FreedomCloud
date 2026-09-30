@@ -9,6 +9,8 @@ import 'package:flclashx/widgets/widgets.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
+import 'pac.dart';
+import 'network_automation.dart';
 
 class OverrideNetworkSettingsItemNetwork extends ConsumerWidget {
   const OverrideNetworkSettingsItemNetwork({super.key});
@@ -430,6 +432,7 @@ final networkItems = [
       title: appLocalizations.system,
       items: [
         const SystemProxyItem(),
+        const PacSettingsItem(),
         const BypassDomainItem(),
       ],
     ),
@@ -437,6 +440,7 @@ final networkItems = [
     title: appLocalizations.options,
     items: [
       const OverrideNetworkSettingsItemNetwork(),
+      const NetworkAutomationItem(),
       if (system.isDesktop) const TUNItem(),
       if (Platform.isMacOS) const AutoSetSystemDnsItem(),
       const TunStackItem(),
