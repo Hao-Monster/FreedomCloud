@@ -36,7 +36,7 @@ jobs:
           set -euo pipefail
           test "$(uname -m)" = arm64
           mkdir -p libclash/macos
-          (cd core && CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -trimpath -mod=readonly -tags=with_gvisor,cmfa -ldflags='-w -s -X github.com/metacubex/mihomo/constant.Version=v1.19.28' -o ../libclash/macos/FlClashCore)
+          (cd core && CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -trimpath -mod=readonly -tags=with_gvisor -ldflags='-w -s -X github.com/metacubex/mihomo/constant.Version=v1.19.28' -o ../libclash/macos/FlClashCore)
           rustup toolchain install 1.98.1 --profile minimal
           cargo +1.98.1 build --manifest-path services/agent/Cargo.toml --release --locked
           cp services/agent/target/release/flclash-agent libclash/macos/FlClashAgent
@@ -93,3 +93,4 @@ jobs:
           path: macos-build.log
           if-no-files-found: ignore
           retention-days: 7
+
