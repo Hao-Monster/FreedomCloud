@@ -52,6 +52,7 @@ func (a ExternalProviders) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
 func proxiesWithProviders() map[string]constant.Proxy {
 	allProxies := make(map[string]constant.Proxy)
 	for name, proxy := range tunnel.Proxies() {
+		if _, internal := proxy.(*strictProxyRoute); internal { continue }
 		allProxies[name] = proxy
 	}
 	for _, p := range tunnel.Providers() {
@@ -307,11 +308,11 @@ func readFile(path string) ([]byte, error) {
 	return data, err
 }
 
-func updateConfig(params *UpdateParams) {
+func updateConfig(params *UpdateParams) error {
 	runLock.Lock()
 	defer runLock.Unlock()
 	if currentConfig == nil {
-		return
+		return nil
 	}
 	general := currentConfig.General
 	if params.MixedPort != nil {
@@ -380,6 +381,10 @@ func updateConfig(params *UpdateParams) {
 	}
 
 	updateListeners()
+	if err := restoreMacStrictIngressLocked(); err != nil {
+		return errors.New("macOS strict ingress could not be restored after configuration update")
+	}
+	return nil
 }
 
 func setupConfig(params *SetupParams) error {
@@ -396,10 +401,12 @@ func setupConfig(params *SetupParams) error {
 	}
 
 	parseStart := time.Now()
+	appliedSource := params.Config
 	currentConfig, err = config.ParseRawConfig(params.Config)
 	if err != nil {
 		log.Errorln("[Config] ParseRawConfig failed, falling back to default: %v", err)
-		currentConfig, _ = config.ParseRawConfig(config.DefaultRawConfig())
+		appliedSource = config.DefaultRawConfig()
+		currentConfig, _ = config.ParseRawConfig(appliedSource)
 	}
 	log.Infoln("[Setup] ParseRawConfig took %s", time.Since(parseStart))
 	pendingTunEnable = currentConfig.General.Tun.Enable
@@ -408,6 +415,7 @@ func setupConfig(params *SetupParams) error {
 	}
 	applyStart := time.Now()
 	executor.ApplyConfig(currentConfig, true)
+	appliedRawConfig, _ = json.Marshal(appliedSource)
 	log.Infoln("[Setup] executor.ApplyConfig took %s", time.Since(applyStart))
 	go runtime.GC()
 	currentConfig.General.Tun.Enable = pendingTunEnable
@@ -422,6 +430,9 @@ func setupConfig(params *SetupParams) error {
 	})
 	patchSelectGroup(params.SelectedMap)
 	updateListeners()
+	if restoreErr := restoreMacStrictIngressLocked(); restoreErr != nil {
+		return errors.New("macOS strict ingress could not be restored after configuration reload")
+	}
 
 	// Kick off pings immediately so the UI shows latencies as soon as the
 	// profile loads, without waiting for the user to start TUN or for each

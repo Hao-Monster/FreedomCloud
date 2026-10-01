@@ -115,12 +115,22 @@ String strictPolicyStateLabel(AgentStrictPolicyState state) =>
     state.name.replaceAll('_', ' ').toUpperCase();
 
 String strictPolicyFailureLabel(AgentStrictPolicyFailureReason reason) =>
-    reason.name
+    switch (reason) {
+      AgentStrictPolicyFailureReason.forwardingDnsMapping =>
+        'DNS 域名映射不可用，请检查 Core DNS 配置',
+      AgentStrictPolicyFailureReason.forwardingDnsRestoration =>
+        '域名恢复未完成，选中应用保持阻断',
+      AgentStrictPolicyFailureReason.forwardingCanary =>
+        '严格转发探测失败，请检查 IPv4/IPv6、DNS、QUIC 和目标策略连通性',
+      AgentStrictPolicyFailureReason.forwardingTimeout =>
+        '严格转发准备超过 240 秒，选中应用保持阻断',
+      _ => reason.name
         .replaceAll('_', ' ')
         .replaceAllMapped(RegExp(r'([a-z])([A-Z])'), (match) {
           return '${match.group(1)} ${match.group(2)}';
         })
-        .toUpperCase();
+        .toUpperCase(),
+    };
 
 class StrictPolicyStatusIndicator extends StatelessWidget {
   const StrictPolicyStatusIndicator(
@@ -155,7 +165,7 @@ class StrictPolicyStatusIndicator extends StatelessWidget {
         : 'generation ${status!.generation} · '
             '${status!.failClosed ? 'fail-closed' : 'forwarding allowed'}';
     return Tooltip(
-      message: tooltip,
+      message: '$label\n$tooltip',
       child: Container(
         padding: EdgeInsets.symmetric(
           horizontal: compact ? 5 : 7,

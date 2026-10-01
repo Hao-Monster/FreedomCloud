@@ -102,6 +102,26 @@ impl StrictPolicyOrchestrator {
         ))
     }
 
+    pub fn restore_disable(&mut self, policy: StrictPolicyBundle) -> Result<StrictOrchestrationAction> {
+        let revision = policy.revision;
+        self.begin(policy)?;
+        self.controller.request_disable();
+        self.phase = Phase::AwaitDisable;
+        Ok(StrictOrchestrationAction::Broker(BrokerCommand::DisablePolicy { revision }))
+    }
+
+    pub fn can_replace_or_disable(&self) -> bool {
+        matches!(self.phase, Phase::Active { .. } | Phase::Blocked { .. })
+    }
+
+    pub fn begin_migration(&mut self, policy: StrictPolicyBundle) -> Result<StrictOrchestrationAction> {
+        if !matches!(self.phase, Phase::Active { .. } | Phase::Blocked { .. }) {
+            bail!("strict identity migration requires a settled policy");
+        }
+        self.phase = Phase::Idle;
+        self.begin(policy)
+    }
+
     pub fn accept_broker_proof(&mut self, proof: BrokerProof) -> Result<StrictOrchestrationAction> {
         let phase = std::mem::replace(&mut self.phase, Phase::Idle);
         match phase {
@@ -390,6 +410,37 @@ impl StrictPolicyOrchestrator {
         Ok(StrictOrchestrationAction::Broker(
             BrokerCommand::DisablePolicy { revision },
         ))
+    }
+
+    /// Retain the desired revision after transport loss. Recovery must first
+    /// reconcile persistent guards, then revoke old Core ingress, then prepare
+    /// and commit afresh. Losing a session never means a policy was disabled.
+    pub fn broker_lost(&mut self, revision: u64) {
+        self.controller.backend_lost(StrictReason::BackendUnavailable);
+        if !matches!(self.phase, Phase::AwaitPrepare { .. } | Phase::AwaitDisable | Phase::AwaitDisableRevoke) {
+            self.phase = Phase::AwaitBlocking { revision };
+        }
+    }
+
+    /// Re-enroll only after the old ingress has been revoked. Never reset an
+    /// in-flight transaction: its authenticated response must settle first.
+    pub fn recover(&mut self, policy: StrictPolicyBundle) -> Result<StrictOrchestrationAction> {
+        match self.phase {
+            Phase::AwaitPrepare { .. } => Ok(StrictOrchestrationAction::Broker(
+                BrokerCommand::PreparePolicy { policy },
+            )),
+            Phase::AwaitDisable => Ok(StrictOrchestrationAction::Broker(
+                BrokerCommand::DisablePolicy { revision: policy.revision },
+            )),
+            Phase::AwaitDisableRevoke => self.retry_core_revoke(),
+            Phase::Blocked { .. } => {
+                self.phase = Phase::Idle;
+                self.begin(policy)
+            }
+            Phase::AwaitBlocking { .. } | Phase::AwaitIngress { .. } | Phase::AwaitCommit { .. } => self.force_blocking(),
+            Phase::AwaitBlockingRevoke { .. } => self.retry_core_revoke(),
+            _ => bail!("strict recovery must wait for a blocked policy"),
+        }
     }
 
     pub fn retry_core_revoke(&mut self) -> Result<StrictOrchestrationAction> {

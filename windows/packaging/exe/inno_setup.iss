@@ -29,12 +29,122 @@ const
   SHCNE_ASSOCCHANGED = $08000000;
   SHCNF_IDLIST = $0000;
 
+type
+  TStrictServiceStatus = record
+    ServiceType, CurrentState, ControlsAccepted, Win32ExitCode,
+      ServiceSpecificExitCode, CheckPoint, WaitHint: Cardinal;
+  end;
+
 var
   IsUpgrade: Boolean;
   PreviousVersion: String;
   StrictBrokerExe: String;
 
 procedure SHChangeNotify(wEventId: Integer; uFlags: Integer; dwItem1: Integer; dwItem2: Integer); external 'SHChangeNotify@shell32.dll stdcall';
+
+function ConvertStringSecurityDescriptorToSecurityDescriptor(Sddl: String; Revision: Cardinal; var Descriptor: LongWord; Size: LongWord): Boolean;
+  external 'ConvertStringSecurityDescriptorToSecurityDescriptorW@advapi32.dll stdcall';
+function SetKernelObjectSecurity(Handle: THandle; Information: Cardinal; Descriptor: LongWord): Boolean;
+  external 'SetKernelObjectSecurity@advapi32.dll stdcall';
+function CreateFileForSecurity(Name: String; Access, Share: Cardinal; Attributes: LongWord; Creation, Flags: Cardinal; Template: THandle): THandle;
+  external 'CreateFileW@kernel32.dll stdcall';
+function CloseSecurityHandle(Handle: THandle): Boolean;
+  external 'CloseHandle@kernel32.dll stdcall';
+function FreeSecurityDescriptor(Memory: LongWord): LongWord;
+  external 'LocalFree@kernel32.dll stdcall';
+
+function StrictFileAttributes(Name: String): Cardinal;
+  external 'GetFileAttributesW@kernel32.dll stdcall';
+
+procedure SecureStrictRecoveryDirectory;
+var
+  Path: String;
+  Descriptor: LongWord;
+  Handle: THandle;
+begin
+  Path := ExpandConstant('{commonappdata}\FlClashX.StrictBroker');
+  if not ForceDirectories(Path) then
+    RaiseException('Cannot create Strict Broker recovery directory.');
+  if (StrictFileAttributes(Path) and $400) <> 0 then
+    RaiseException('Strict Broker recovery directory must not be a reparse point.');
+  Descriptor := 0;
+  if not ConvertStringSecurityDescriptorToSecurityDescriptor(
+      'O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)', 1, Descriptor, 0) then
+    RaiseException('Cannot create Strict Broker recovery security descriptor.');
+  try
+    // Pin the directory itself (OPEN_REPARSE_POINT), never follow a replaced
+    // junction. The Broker independently validates path, owner and exact ACL.
+    Handle := CreateFileForSecurity(Path, $000C0000, 3, 0, 3, $02200000, 0);
+    if Handle = THandle(-1) then
+      RaiseException('Cannot secure Strict Broker recovery directory.');
+    try
+      if not SetKernelObjectSecurity(Handle, $80000005, Descriptor) then
+        RaiseException('Cannot set Strict Broker recovery permissions.');
+    finally
+      CloseSecurityHandle(Handle);
+    end;
+  finally
+    FreeSecurityDescriptor(Descriptor);
+  end;
+end;
+
+// Use the trusted system executable and preserve launch failure separately
+// from the service command exit status.
+procedure StrictSc(Arguments: String; var Code: Integer);
+begin
+  if not Exec(ExpandConstant('{sys}\sc.exe'), Arguments, '', SW_HIDE,
+      ewWaitUntilTerminated, Code) then
+    RaiseException('Cannot run the Windows service controller.');
+end;
+
+function OpenStrictSCManager(Machine, Database: LongWord; Access: Cardinal): THandle;
+  external 'OpenSCManagerW@advapi32.dll stdcall';
+function OpenStrictService(Manager: THandle; Name: String; Access: Cardinal): THandle;
+  external 'OpenServiceW@advapi32.dll stdcall';
+function QueryStrictServiceStatus(Service: THandle; var Status: TStrictServiceStatus): Boolean;
+  external 'QueryServiceStatus@advapi32.dll stdcall';
+function CloseStrictServiceHandle(Handle: THandle): Boolean;
+  external 'CloseServiceHandle@advapi32.dll stdcall';
+
+procedure StopStrictService(Name: String);
+var
+  Code, Attempt: Integer;
+  Manager, Service: THandle;
+  Status: TStrictServiceStatus;
+begin
+  StrictSc('query "' + Name + '"', Code);
+  if Code = 1060 then Exit;
+  if Code <> 0 then RaiseException('Cannot query strict service: ' + Name);
+  Manager := OpenStrictSCManager(0, 0, 1);
+  if Manager = 0 then RaiseException('Cannot open Windows service manager.');
+  try
+    Service := OpenStrictService(Manager, Name, 4);
+    if Service = 0 then RaiseException('Cannot open strict service: ' + Name);
+    try
+      if not QueryStrictServiceStatus(Service, Status) then
+        RaiseException('Cannot inspect strict service: ' + Name);
+      if Status.CurrentState = 1 then Exit;
+      if Status.CurrentState <> 3 then
+      begin
+        StrictSc('stop "' + Name + '"', Code);
+        if (Code <> 0) and (Code <> 1062) then
+          RaiseException('Cannot stop strict service: ' + Name);
+      end;
+      for Attempt := 1 to 30 do
+      begin
+        if not QueryStrictServiceStatus(Service, Status) then
+          RaiseException('Cannot inspect stopping strict service: ' + Name);
+        if Status.CurrentState = 1 then Exit;
+        Sleep(1000);
+      end;
+      RaiseException('Strict service did not stop within 30 seconds: ' + Name);
+    finally
+      CloseStrictServiceHandle(Service);
+    end;
+  finally
+    CloseStrictServiceHandle(Manager);
+  end;
+end;
 
 procedure KillProcesses;
 var
@@ -91,6 +201,19 @@ begin
     Result := Version;
 end;
 
+function IsManagedUpdate(): Boolean;
+var
+  Index: Integer;
+begin
+  Result := False;
+  for Index := 1 to ParamCount do
+    if CompareText(ParamStr(Index), '/FCXUPDATE') = 0 then
+    begin
+      Result := True;
+      Exit;
+    end;
+end;
+
 function InitializeSetup(): Boolean;
 var
   ResultCode: Integer;
@@ -102,12 +225,13 @@ begin
   
   // Stop service if running
   Exec('sc.exe', 'stop "FlClashHelperService"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-  Exec('sc.exe', 'stop "FlClashStrictBroker"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
 {{STRICT_UPGRADE_STOP}}
   Sleep(1000);
   
-  // Kill all processes
-  KillProcesses;
+  // The signed updater already requested a full graceful exit. Never turn a
+  // failed graceful shutdown into a force-kill of this or another installation.
+  // /NOCLOSEAPPLICATIONS leaves locked files to the installer's error handling.
+  if not IsManagedUpdate() then KillProcesses;
   
   Result := True;
 end;

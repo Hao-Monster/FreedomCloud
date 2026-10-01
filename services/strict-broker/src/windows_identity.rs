@@ -682,7 +682,7 @@ fn verify_pinned_values(
     Ok(())
 }
 
-fn inspect_and_lock(path: &Path) -> Result<(WindowsVerifiedIdentity, Vec<u8>, OwnedHandle)> {
+pub(crate) fn inspect_and_lock(path: &Path) -> Result<(WindowsVerifiedIdentity, Vec<u8>, OwnedHandle)> {
     let (canonical_path, handle) = open_and_lock_plain_file(path, "strict executable identity")?;
     if canonical_path.len() > 1024
         || !canonical_path.to_ascii_lowercase().ends_with(".exe")

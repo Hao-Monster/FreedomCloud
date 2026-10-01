@@ -702,6 +702,10 @@ pub enum BrokerErrorCode {
     IdentityRejected,
     BackendUnavailable,
     PersistenceFailure,
+    ForwardingDnsMapping,
+    ForwardingDnsRestoration,
+    ForwardingCanary,
+    ForwardingTimeout,
     Internal,
 }
 
@@ -1141,4 +1145,42 @@ mod tests {
         .is_err());
         assert!(StrictProxyIngressSet::empty().validate().is_ok());
     }
+}
+
+/// A migration cannot broaden routes or drop the previous executable family.
+/// Signer hashes are constraints only; the privileged verifier must still open
+/// and verify the actual replacement files before using this policy.
+pub fn validate_identity_migration(old: &StrictPolicyBundle, policy: &StrictPolicyBundle) -> Result<()> {
+    old.validate()?;
+    policy.validate()?;
+    if policy.revision <= old.revision || policy.entries.len() != old.entries.len() {
+        bail!("strict migration must advance revision and retain application count");
+    }
+    for previous in &old.entries {
+        let next = policy.entries.iter().find(|entry|
+            entry.identity.identity_id == previous.identity.identity_id)
+            .ok_or_else(|| anyhow::anyhow!("strict migration cannot remove an application"))?;
+        if next.action != previous.action || next.target_group != previous.target_group
+            || !next.identity.publisher_certificate_sha256.eq_ignore_ascii_case(
+                &previous.identity.publisher_certificate_sha256) {
+            bail!("strict migration cannot change action, target or publisher");
+        }
+        let contains = |path: &str, app_id: &str, publisher: &str| {
+            (next.identity.canonical_path.eq_ignore_ascii_case(path)
+                && next.identity.wfp_app_id_sha256.eq_ignore_ascii_case(app_id)
+                && next.identity.publisher_certificate_sha256.eq_ignore_ascii_case(publisher))
+            || next.identity.verified_children.iter().any(|child|
+                child.canonical_path.eq_ignore_ascii_case(path)
+                && child.wfp_app_id_sha256.eq_ignore_ascii_case(app_id)
+                && child.publisher_certificate_sha256.eq_ignore_ascii_case(publisher))
+        };
+        if !contains(&previous.identity.canonical_path, &previous.identity.wfp_app_id_sha256,
+                &previous.identity.publisher_certificate_sha256)
+            || previous.identity.verified_children.iter().any(|child|
+                !contains(&child.canonical_path, &child.wfp_app_id_sha256,
+                    &child.publisher_certificate_sha256)) {
+            bail!("strict migration must retain every previously guarded identity");
+        }
+    }
+    Ok(())
 }

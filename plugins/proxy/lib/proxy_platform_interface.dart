@@ -27,4 +27,8 @@ abstract class ProxyPlatform extends PlatformInterface {
   Future<bool?> stopProxy() {
     throw UnimplementedError('stopProxy() has not been implemented.');
   }
+
+  Future<bool?> startPac(String url) {
+    throw UnsupportedError('PAC is not supported by this platform');
+  }
 }

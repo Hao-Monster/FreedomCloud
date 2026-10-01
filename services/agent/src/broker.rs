@@ -66,7 +66,7 @@ impl WindowsStrictBrokerSession {
         match response.body {
             BrokerResponseBody::Status { proof } => Ok(proof),
             BrokerResponseBody::Error { code } => {
-                bail!("strict Broker request failed with code {code:?}")
+                return Err(BrokerDiagnostic(code).into());
             }
         }
     }
@@ -126,5 +126,34 @@ mod tests {
     #[test]
     fn invalid_capability_never_reaches_the_pipe_exchange() {
         assert!(build_request_frame("agent-test-2", "short", BrokerCommand::Status {},).is_err());
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct BrokerDiagnostic(pub flclash_strict_contract::BrokerErrorCode);
+impl std::fmt::Display for BrokerDiagnostic {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use flclash_strict_contract::BrokerErrorCode;
+        f.write_str(match self.0 {
+            BrokerErrorCode::ForwardingDnsMapping => "严格代理 DNS 探测失败：Core 未返回可还原域名映射，请检查 DNS/Fake-IP 或 redir-host 配置。",
+            BrokerErrorCode::ForwardingDnsRestoration => "严格代理 DNS 验证失败：Core 未观察到连接域名恢复，应用继续保持阻断。",
+            BrokerErrorCode::ForwardingCanary => "严格代理链路探测失败：IPv4/IPv6 TCP、DNS 或 QUIC 未通过真实 WFP 转发，请检查目标策略和端点可达性。",
+            BrokerErrorCode::ForwardingTimeout => "严格代理链路探测超过时间预算，应用继续保持阻断，请检查目标策略数量及网络连通性。",
+            _ => "严格代理后端不可用，请检查 Broker、驱动及签名状态。",
+        })
+    }
+}
+impl std::error::Error for BrokerDiagnostic {}
+impl BrokerDiagnostic {
+    pub(crate) fn failure_reason(&self) -> crate::protocol::StrictPolicyFailureReason {
+        use flclash_strict_contract::BrokerErrorCode;
+        use crate::protocol::StrictPolicyFailureReason as Reason;
+        match self.0 {
+            BrokerErrorCode::ForwardingDnsMapping => Reason::ForwardingDnsMapping,
+            BrokerErrorCode::ForwardingDnsRestoration => Reason::ForwardingDnsRestoration,
+            BrokerErrorCode::ForwardingCanary => Reason::ForwardingCanary,
+            BrokerErrorCode::ForwardingTimeout => Reason::ForwardingTimeout,
+            _ => Reason::BrokerUnavailable,
+        }
     }
 }

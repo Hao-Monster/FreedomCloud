@@ -38,6 +38,12 @@
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>$(MACOSX_DEPLOYMENT_TARGET)</string>
+	<key>FCXStrictKeychainAccessGroup</key>
+	<string>$(AppIdentifierPrefix)com.follow.clash.strict-control</string>
+	<key>FCXStrictProviderBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER).StrictProxy</string>
+	<key>NSSystemExtensionUsageDescription</key>
+	<string>Protect selected managed applications with per-app proxy policies.</string>
 	<key>LSUIElement</key>
 	<true/>
 	<key>NSHumanReadableCopyright</key>

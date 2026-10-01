@@ -13,3 +13,10 @@
 
 // Note: If Local.xcconfig exists, it will override these settings for local development
 
+
+// Managed strict mode requires separately issued host and system-extension
+// profiles with Network Extensions and the shared Keychain access group.
+// Set both in Local.xcconfig or with xcodebuild build-setting arguments:
+// FCX_HOST_PROVISIONING_PROFILE = host-profile-name
+// FCX_STRICT_PROVISIONING_PROFILE = provider-profile-name
+// Both targets must use the same DEVELOPMENT_TEAM and signing identity.

@@ -38,17 +38,23 @@ const MAX_STRICT_BLOCKS: usize = 128;
 #[cfg(windows)]
 struct StrictRuntime {
     orchestrator: Mutex<StrictPolicyOrchestrator>,
-    broker: std::sync::Mutex<WindowsStrictBrokerSession>,
+    broker: std::sync::Mutex<Option<WindowsStrictBrokerSession>>,
     pending_core_id: Mutex<Option<String>>,
+    policy: RwLock<StrictPolicyBundle>,
+    retry: Mutex<crate::strict_retry::StrictRecoveryRetry>,
+    retry_at: Mutex<Option<Instant>>,
 }
 
 #[cfg(windows)]
 impl StrictRuntime {
-    fn new(broker: WindowsStrictBrokerSession) -> Self {
+    fn new(policy: StrictPolicyBundle) -> Self {
         Self {
             orchestrator: Mutex::new(StrictPolicyOrchestrator::default()),
-            broker: std::sync::Mutex::new(broker),
+            broker: std::sync::Mutex::new(None),
             pending_core_id: Mutex::new(None),
+            policy: RwLock::new(policy),
+            retry: Mutex::new(crate::strict_retry::StrictRecoveryRetry::default()),
+            retry_at: Mutex::new(None),
         }
     }
 }
@@ -108,6 +114,10 @@ struct Shared {
     ui: Mutex<Option<UiSession>>,
     core: Mutex<Option<mpsc::Sender<String>>>,
     journal: Mutex<ReplayJournal>,
+    #[cfg(target_os = "macos")]
+    mac_strict_replay: Mutex<crate::mac_strict_replay::MacStrictReplay>,
+    #[cfg(target_os = "macos")]
+    mac_strict_account: String,
     logger: Arc<AgentLogger>,
     status: RwLock<CoreStatus>,
     // The Agent does not implement a platform capture backend. Keeping an
@@ -126,6 +136,8 @@ struct Shared {
     strict_blocks: Mutex<HashSet<String>>,
     #[cfg(windows)]
     strict_runtime: Mutex<Option<Arc<StrictRuntime>>>,
+    #[cfg(windows)]
+    strict_store: Mutex<Option<crate::strict_store::StrictIntentStore>>,
 }
 
 enum SupervisorCommand {
@@ -202,6 +214,20 @@ async fn set_strict_policy(
     status.generation = status.generation.saturating_add(1);
     status.state = state;
     status.failure_reason = failure_reason;
+    drop(status);
+    publish_strict_status(shared).await;
+}
+
+async fn publish_strict_status(shared: &Arc<Shared>) {
+    let state = *shared.status.read().await;
+    let envelope = json!({"_agent": {
+        "type": "coreState", "protocol": PROTOCOL_VERSION,
+        "coreState": state.as_str(),
+        "generation": shared.generation.load(Ordering::Acquire),
+        "privilegedBackend": shared.privileged_backend,
+        "strictPolicy": strict_policy_json(shared).await,
+    }});
+    forward_to_ui(shared, envelope.to_string()).await;
 }
 
 async fn apply_strict_block(shared: &Arc<Shared>, path: Option<String>) -> bool {
@@ -480,35 +506,17 @@ async fn apply_strict_policy(shared: &Arc<Shared>, raw: Option<Value>) -> bool {
         return false;
     }
 
-    let broker = match tokio::task::spawn_blocking(WindowsStrictBrokerSession::activate).await {
-        Ok(Ok(broker)) => broker,
-        Ok(Err(error)) => {
-            set_strict_policy(
-                shared,
-                crate::protocol::StrictPolicyState::Blocking,
-                Some(crate::protocol::StrictPolicyFailureReason::BrokerUnavailable),
-            )
-            .await;
-            shared
-                .logger
-                .log(format!("strict Broker activation failed: {error:#}"));
-            return false;
-        }
-        Err(error) => {
-            set_strict_policy(
-                shared,
-                crate::protocol::StrictPolicyState::Blocking,
-                Some(crate::protocol::StrictPolicyFailureReason::BrokerUnavailable),
-            )
-            .await;
-            shared
-                .logger
-                .log(format!("strict Broker activation worker failed: {error}"));
-            return false;
-        }
-    };
-
-    let runtime = Arc::new(StrictRuntime::new(broker));
+    if shared.strict_runtime.lock().await.is_some() {
+        shared.logger.log("strict apply rejected: a policy is already active");
+        return false;
+    }
+    if let Err(error) = persist_strict_intent(shared, true, &policy).await {
+        shared.logger.log(format!("strict intent persistence failed: {error:#}"));
+        set_strict_policy(shared, crate::protocol::StrictPolicyState::Blocking,
+            Some(crate::protocol::StrictPolicyFailureReason::BrokerUnavailable)).await;
+        return false;
+    }
+    let runtime = Arc::new(StrictRuntime::new(policy.clone()));
     let action = {
         let mut orchestrator = runtime.orchestrator.lock().await;
         match orchestrator.begin(policy) {
@@ -535,6 +543,121 @@ async fn apply_strict_policy(shared: &Arc<Shared>, raw: Option<Value>) -> bool {
     drive_strict_action(shared, runtime, action).await
 }
 
+#[cfg(windows)]
+async fn persist_strict_intent(shared: &Arc<Shared>, enabled: bool, policy: &StrictPolicyBundle) -> Result<()> {
+    let store = shared.strict_store.lock().await;
+    store.as_ref().context("protected strict intent storage is unavailable")?.save(enabled, policy)
+}
+
+#[cfg(windows)]
+async fn restore_strict_intent(shared: &Arc<Shared>, intent: crate::strict_store::StoredStrictIntent) {
+    if intent.enabled {
+        let raw = serde_json::to_value(&intent.policy).ok();
+        let _ = apply_strict_policy(shared, raw).await;
+        return;
+    }
+    let runtime = Arc::new(StrictRuntime::new(intent.policy.clone()));
+    let action = runtime.orchestrator.lock().await.restore_disable(intent.policy);
+    if let Ok(action) = action {
+        *shared.strict_runtime.lock().await = Some(runtime.clone());
+        let _ = drive_strict_action(shared, runtime, action).await;
+    } else {
+        shared.logger.log("persisted strict disable intent could not be restored");
+        set_strict_policy(shared, crate::protocol::StrictPolicyState::Blocking,
+            Some(crate::protocol::StrictPolicyFailureReason::InvalidPolicy)).await;
+    }
+}
+
+#[cfg(windows)]
+async fn migrate_strict_policy(shared: &Arc<Shared>, path: Option<String>, raw: Option<Value>) -> bool {
+    let Some(runtime) = shared.strict_runtime.lock().await.clone() else { return false; };
+    let Some(raw) = raw else { return false; };
+    let Some(path) = path else { return false; };
+    let Some(revision) = raw.get("revision").and_then(Value::as_u64) else { return false; };
+    let Some(replacement) = raw.get("replacement") else { return false; };
+    let mut replacement: flclash_strict_contract::StrictIdentity = match serde_json::from_value(replacement.clone()) {
+        Ok(identity) => identity,
+        Err(_) => return false,
+    };
+    let mut policy = runtime.policy.read().await.clone();
+    let previous_policy = policy.clone();
+    let Some(entry) = policy.entries.iter_mut().find(|entry|
+        entry.identity.canonical_path.eq_ignore_ascii_case(&path)) else { return false; };
+    replacement.identity_id = entry.identity.identity_id.clone();
+    let previous_root = flclash_strict_contract::StrictChildIdentity {
+        canonical_path: entry.identity.canonical_path.clone(),
+        wfp_app_id_sha256: entry.identity.wfp_app_id_sha256.clone(),
+        publisher_certificate_sha256: entry.identity.publisher_certificate_sha256.clone(),
+    };
+    for previous in std::iter::once(previous_root).chain(entry.identity.verified_children.clone()) {
+        if !previous.canonical_path.eq_ignore_ascii_case(&replacement.canonical_path)
+            && !replacement.verified_children.iter().any(|child|
+                child.canonical_path.eq_ignore_ascii_case(&previous.canonical_path)) {
+            replacement.verified_children.push(previous);
+        }
+    }
+    entry.identity = replacement;
+    policy.revision = revision;
+    let action = {
+        let mut orchestrator = runtime.orchestrator.lock().await;
+        let mut previous = runtime.policy.write().await;
+        if flclash_strict_contract::validate_identity_migration(&previous, &policy).is_err() {
+            shared.logger.log("strict identity migration rejected: invalid continuity");
+            return false;
+        }
+        if !orchestrator.can_replace_or_disable() { return false; }
+        if let Err(error) = persist_strict_intent(shared, true, &policy).await {
+            shared.logger.log(format!("strict migration intent persistence failed: {error:#}"));
+            return false;
+        }
+        match orchestrator.begin_migration(policy.clone()) {
+            Ok(action) => { *previous = policy; action }
+            Err(error) => {
+                shared.logger.log(format!("strict identity migration cannot begin: {error:#}"));
+                return false;
+            }
+        }
+    };
+    set_strict_policy(shared, crate::protocol::StrictPolicyState::Preparing, None).await;
+    let accepted = drive_strict_action(shared, runtime.clone(), action).await;
+    if !accepted {
+        // A rejected signer must not strand the Agent on an unaccepted new
+        // revision. Restore only after authenticated status proves the Broker
+        // still owns the original policy; an uncertain/new revision stays blocked.
+        let mut orchestrator = runtime.orchestrator.lock().await;
+        let worker_runtime = runtime.clone();
+        let status = tokio::task::spawn_blocking(move || {
+            let mut broker = worker_runtime.broker.lock()
+                .map_err(|_| anyhow!("strict Broker session lock poisoned"))?;
+            if broker.is_none() { *broker = Some(WindowsStrictBrokerSession::activate()?); }
+            broker.as_mut().context("strict Broker session missing")?
+                .request(flclash_strict_contract::BrokerCommand::Status {})
+        }).await;
+        if let Ok(Ok(proof)) = status {
+            if proof.revision == previous_policy.revision
+                && previous_policy.canonical_digest().is_ok_and(|digest|
+                    digest.eq_ignore_ascii_case(&proof.policy_digest)) {
+                let mut restored = StrictPolicyOrchestrator::default();
+                if let Ok(prepare) = restored.begin(previous_policy.clone()) {
+                    if persist_strict_intent(shared, true, &previous_policy).await.is_err() {
+                        shared.logger.log("strict original intent could not be persisted; policy stays blocked");
+                        return false;
+                    }
+                    *orchestrator = restored;
+                    *runtime.policy.write().await = previous_policy;
+                    drop(orchestrator);
+                    let _ = drive_strict_action(shared, runtime, prepare).await;
+                    return false;
+                }
+            }
+        }
+    }
+    accepted
+}
+
+#[cfg(not(windows))]
+async fn migrate_strict_policy(_shared: &Arc<Shared>, _path: Option<String>, _raw: Option<Value>) -> bool { false }
+
 #[cfg(not(windows))]
 async fn apply_strict_policy(shared: &Arc<Shared>, _raw: Option<Value>) -> bool {
     set_strict_policy(
@@ -556,6 +679,12 @@ async fn clear_strict_policy(shared: &Arc<Shared>) -> bool {
     };
     let action = {
         let mut orchestrator = runtime.orchestrator.lock().await;
+        if !orchestrator.can_replace_or_disable() { return false; }
+        let policy = runtime.policy.read().await.clone();
+        if let Err(error) = persist_strict_intent(shared, false, &policy).await {
+            shared.logger.log(format!("strict disable intent persistence failed: {error:#}"));
+            return false;
+        }
         match orchestrator.disable() {
             Ok(action) => action,
             Err(error) => {
@@ -594,6 +723,10 @@ async fn drive_strict_action(
                 StrictState::Recovering => crate::protocol::StrictPolicyState::Recovering,
             };
             set_strict_policy(shared, state, None).await;
+            if status.state == StrictState::Armed {
+                runtime.retry.lock().await.reset();
+                *runtime.retry_at.lock().await = None;
+            }
             if status.state == StrictState::Disabled {
                 *shared.strict_runtime.lock().await = None;
             }
@@ -602,6 +735,10 @@ async fn drive_strict_action(
         StrictOrchestrationAction::Core(core_action) => {
             let Some(core) = shared.core.lock().await.clone() else {
                 shared.logger.log("strict policy Core ingress unavailable");
+                // Startup restore can precede Core readiness. Update the
+                // controller as well as the UI state so the supervisor sees
+                // a recoverable failure and reconciles guards before replay.
+                runtime.orchestrator.lock().await.broker_lost(runtime.policy.read().await.revision);
                 set_strict_policy(
                     shared,
                     crate::protocol::StrictPolicyState::Blocking,
@@ -614,6 +751,7 @@ async fn drive_strict_action(
             if core.send(core_action.line().to_owned()).await.is_err() {
                 *runtime.pending_core_id.lock().await = None;
                 shared.logger.log("strict policy Core ingress send failed");
+                runtime.orchestrator.lock().await.broker_lost(runtime.policy.read().await.revision);
                 set_strict_policy(
                     shared,
                     crate::protocol::StrictPolicyState::Blocking,
@@ -631,7 +769,26 @@ async fn drive_strict_action(
                     .broker
                     .lock()
                     .map_err(|_| anyhow!("strict Broker session lock poisoned"))?;
-                broker.request(command)
+                if broker.is_none() {
+                    *broker = Some(WindowsStrictBrokerSession::activate()?);
+                }
+                let disabling = matches!(command, flclash_strict_contract::BrokerCommand::DisablePolicy { .. });
+                let mut result = broker.as_mut().context("strict Broker session missing")?.request(command);
+                if disabling && result.is_err() {
+                    // An earlier disable may have committed before a lost
+                    // response/crash. Only an authenticated empty proof can
+                    // confirm it; the orchestrator checks all cleanup fields.
+                    if let Ok(proof) = broker.as_mut().context("strict Broker session missing")?
+                        .request(flclash_strict_contract::BrokerCommand::Status {}) {
+                        if proof.revision == 0 { result = Ok(proof); }
+                    }
+                }
+                if result.is_err() {
+                    // Discard capabilities on every transport/protocol failure.
+                    // A retry performs a new authenticated activation exchange.
+                    *broker = None;
+                }
+                result
             })
             .await;
             let proof = match result {
@@ -640,16 +797,13 @@ async fn drive_strict_action(
                     shared
                         .logger
                         .log(format!("strict Broker request failed: {error:#}"));
-                    let mut orchestrator = runtime.orchestrator.lock().await;
-                    if let Ok(fallback) = orchestrator.force_blocking() {
-                        drop(orchestrator);
-                        return Box::pin(drive_strict_action(shared, runtime, fallback)).await;
-                    }
-                    *shared.strict_runtime.lock().await = None;
+                    runtime.orchestrator.lock().await.broker_lost(runtime.policy.read().await.revision);
                     set_strict_policy(
                         shared,
                         crate::protocol::StrictPolicyState::Blocking,
-                        Some(crate::protocol::StrictPolicyFailureReason::BrokerUnavailable),
+                        Some(error.downcast_ref::<crate::broker::BrokerDiagnostic>()
+                            .map(crate::broker::BrokerDiagnostic::failure_reason)
+                            .unwrap_or(crate::protocol::StrictPolicyFailureReason::BrokerUnavailable)),
                     )
                     .await;
                     return false;
@@ -658,7 +812,7 @@ async fn drive_strict_action(
                     shared
                         .logger
                         .log(format!("strict Broker worker failed: {error}"));
-                    *shared.strict_runtime.lock().await = None;
+                    runtime.orchestrator.lock().await.broker_lost(runtime.policy.read().await.revision);
                     set_strict_policy(
                         shared,
                         crate::protocol::StrictPolicyState::Blocking,
@@ -676,7 +830,7 @@ async fn drive_strict_action(
                         shared
                             .logger
                             .log(format!("strict Broker proof rejected: {error:#}"));
-                        *shared.strict_runtime.lock().await = None;
+                        orchestrator.broker_lost(runtime.policy.read().await.revision);
                         set_strict_policy(
                             shared,
                             crate::protocol::StrictPolicyState::Blocking,
@@ -697,6 +851,79 @@ fn strict_target_key(path: &str) -> String {
         path.to_ascii_lowercase()
     } else {
         path.to_owned()
+    }
+}
+
+/// A single bounded supervisor serves the active policy, including while UI
+/// is detached. It never removes guards or skips the fresh Broker/Core commit.
+#[cfg(windows)]
+async fn supervise_strict_recovery(shared: Arc<Shared>) {
+    let mut last_health_check = Instant::now();
+    let mut timer = tokio::time::interval(Duration::from_secs(1));
+    timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    loop {
+        timer.tick().await;
+        if shared.shutting_down.load(Ordering::Acquire) { break; }
+        if *shared.status.read().await != CoreStatus::Ready { continue; }
+        let Some(runtime) = shared.strict_runtime.lock().await.clone() else { continue; };
+        let mut orchestrator = runtime.orchestrator.lock().await;
+        let status = orchestrator.status();
+        if status.state == StrictState::Armed && last_health_check.elapsed() >= Duration::from_secs(5) {
+            last_health_check = Instant::now();
+            let worker_runtime = runtime.clone();
+            let health = tokio::task::spawn_blocking(move || {
+                let mut broker = worker_runtime.broker.lock()
+                    .map_err(|_| anyhow!("strict Broker session lock poisoned"))?;
+                let result = broker.as_mut().context("strict Broker session missing")?
+                    .request(flclash_strict_contract::BrokerCommand::Status {});
+                if result.is_err() { *broker = None; }
+                result
+            }).await;
+            match health {
+                Ok(Ok(proof)) => {
+                    match orchestrator.accept_broker_proof(proof) {
+                        Ok(action) => {
+                            drop(orchestrator);
+                            let _ = drive_strict_action(&shared, runtime, action).await;
+                        }
+                        Err(error) => {
+                            orchestrator.broker_lost(runtime.policy.read().await.revision);
+                            shared.logger.log(format!("strict health proof rejected: {error:#}"));
+                        }
+                    }
+                }
+                _ => {
+                    orchestrator.broker_lost(runtime.policy.read().await.revision);
+                    set_strict_policy(&shared, crate::protocol::StrictPolicyState::Blocking,
+                        Some(crate::protocol::StrictPolicyFailureReason::BrokerUnavailable)).await;
+                    shared.logger.log("strict Broker health lost; authenticated recovery required");
+                }
+            }
+            continue;
+        }
+        drop(orchestrator);
+        if status.state != StrictState::Blocking { continue; }
+        let mut retry_at = runtime.retry_at.lock().await;
+        if retry_at.is_none() {
+            let Some(decision) = runtime.retry.lock().await.schedule_failure() else { continue; };
+            *retry_at = Some(Instant::now() + decision.delay);
+            shared.logger.log(format!("strict recovery scheduled attempt={}", decision.attempt));
+            publish_strict_status(&shared).await;
+        }
+        if retry_at.is_some_and(|deadline| Instant::now() < deadline) { continue; }
+        *retry_at = None;
+        drop(retry_at);
+        runtime.retry.lock().await.started();
+        set_strict_policy(&shared, crate::protocol::StrictPolicyState::Recovering, None).await;
+        let action = runtime.orchestrator.lock().await.recover(runtime.policy.read().await.clone());
+        match action {
+            Ok(action) => { let _ = drive_strict_action(&shared, runtime, action).await; }
+            Err(error) => {
+                set_strict_policy(&shared, crate::protocol::StrictPolicyState::Blocking,
+                    Some(crate::protocol::StrictPolicyFailureReason::BrokerUnavailable)).await;
+                shared.logger.log(format!("strict recovery remains blocked: {error:#}"));
+            }
+        }
     }
 }
 
@@ -767,10 +994,38 @@ pub async fn run(config: AgentConfig) -> Result<()> {
     let shared_helper_token = helper_token.clone();
     let shared_home_dir = config.home.clone();
     let (supervisor_tx, supervisor_rx) = mpsc::channel(16);
+    #[cfg(windows)]
+    let (strict_store, stored_intent) = match crate::strict_store::StrictIntentStore::open(&shared_home_dir) {
+        Ok(store) => match store.load() {
+            Ok(intent) => (Some(store), intent),
+            Err(error) => { logger.log(format!("strict stored intent rejected: {error:#}")); (None, None) }
+        },
+        Err(error) => { logger.log(format!("strict intent storage unavailable: {error:#}")); (None, None) }
+    };
+    #[cfg(target_os = "macos")]
+    let mac_strict_account = {
+        use sha2::{Digest, Sha256};
+        let path = std::fs::canonicalize(&shared_home_dir).context("macOS Agent home is unavailable")?;
+        let digest = Sha256::digest(path.as_os_str().as_encoded_bytes());
+        format!("strict-ingress-{}", digest.iter().map(|byte| format!("{byte:02x}")).collect::<String>())
+    };
+    #[cfg(target_os = "macos")]
+    let (mac_strict_replay, initial_journal) = {
+        let account = mac_strict_account.clone();
+        let saved = tokio::task::spawn_blocking(move || crate::mac_strict_store::load(&account))
+            .await.context("macOS strict recovery load task failed")??;
+        crate::mac_strict_replay::MacStrictReplay::decode_store(saved.as_deref(), &shared_home_dir)?
+    };
+    #[cfg(not(target_os = "macos"))]
+    let initial_journal = ReplayJournal::default();
     let shared = Arc::new(Shared {
         ui: Mutex::new(None),
         core: Mutex::new(None),
-        journal: Mutex::new(ReplayJournal::default()),
+        journal: Mutex::new(initial_journal),
+        #[cfg(target_os = "macos")]
+        mac_strict_replay: Mutex::new(mac_strict_replay),
+        #[cfg(target_os = "macos")]
+        mac_strict_account,
         logger: logger.clone(),
         status: RwLock::new(CoreStatus::Starting),
         strict_policy: RwLock::new(StrictPolicyStatus::disabled()),
@@ -786,7 +1041,22 @@ pub async fn run(config: AgentConfig) -> Result<()> {
         strict_blocks: Mutex::new(HashSet::new()),
         #[cfg(windows)]
         strict_runtime: Mutex::new(None),
+        #[cfg(windows)]
+        strict_store: Mutex::new(strict_store),
     });
+    #[cfg(windows)]
+    {
+        let storage_available = shared.strict_store.lock().await.is_some();
+        if !storage_available {
+            set_strict_policy(&shared, crate::protocol::StrictPolicyState::Blocking,
+                Some(crate::protocol::StrictPolicyFailureReason::BrokerUnavailable)).await;
+        } else if let Some(intent) = stored_intent {
+            restore_strict_intent(&shared, intent).await;
+        }
+    }
+
+    #[cfg(windows)]
+    let strict_recovery = tokio::spawn(supervise_strict_recovery(shared.clone()));
 
     let supervisor_shared = shared.clone();
     let supervisor = tokio::spawn(async move {
@@ -830,6 +1100,8 @@ pub async fn run(config: AgentConfig) -> Result<()> {
         }
     }
 
+    #[cfg(windows)]
+    strict_recovery.abort();
     let result = supervisor.await.context("Core supervisor task failed")?;
     if let Err(error) = &result {
         logger.log(format!("Core supervisor failed: {error:#}"));
@@ -933,6 +1205,11 @@ async fn handle_ui(stream: TcpStream, token: String, shared: Arc<Shared>) -> Res
                     *shared.status.read().await,
                     None,
                 ),
+                AgentCommand::MigrateStrictPolicy => (
+                    migrate_strict_policy(&shared, control.path.clone(), control.policy.clone()).await,
+                    *shared.status.read().await,
+                    None,
+                ),
                 AgentCommand::ClearStrictPolicy => (
                     clear_strict_policy(&shared).await,
                     *shared.status.read().await,
@@ -993,8 +1270,12 @@ async fn handle_ui(stream: TcpStream, token: String, shared: Arc<Shared>) -> Res
         }
         let core = shared.core.lock().await.clone();
         if let Some(core) = core {
+            #[cfg(target_os = "macos")]
+            shared.mac_strict_replay.lock().await.stage(&action)?;
             shared.journal.lock().await.stage(line);
             if core.send(line.to_owned()).await.is_err() {
+                #[cfg(target_os = "macos")]
+                shared.mac_strict_replay.lock().await.discard_pending();
                 shared.journal.lock().await.discard_pending();
                 bail!("Core command channel is closed");
             }
@@ -1222,6 +1503,36 @@ async fn supervise_core(
                                 continue;
                             }
                             shared.journal.lock().await.commit_response(&line);
+                            #[cfg(target_os = "macos")]
+                            {
+                                let response: Value = serde_json::from_str(&line)?;
+                                let mut state = shared.mac_strict_replay.lock().await;
+                                let previous = state.clone();
+                                let outcome = async {
+                                    state.commit_response(&response)?;
+                                    if response.get("code").and_then(Value::as_i64) == Some(0) {
+                                        let method = response.get("method").and_then(Value::as_str).unwrap_or_default();
+                                        if method == "configureStrictIngress" ||
+                                            ["initClash", "setState", "setupConfig", "updateConfig", "startListener", "stopListener", "startLog", "stopLog", "changeProxy"].contains(&method) {
+                                            let snapshot = state.encode_store(&shared.journal.lock().await, &shared.home_dir)?;
+                                            let account = shared.mac_strict_account.clone();
+                                            tokio::task::spawn_blocking(move || crate::mac_strict_store::save(&account, snapshot.as_deref()))
+                                                .await.context("macOS strict recovery save task failed")??;
+                                        }
+                                    }
+                                    Ok::<(), anyhow::Error>(())
+                                }.await;
+                                if outcome.is_err() {
+                                    *state = previous;
+                                    drop(state);
+                                    shared.logger.log("macOS strict ingress persistence rejected; stopping Core");
+                                    let mut rejected = response;
+                                    rejected["code"] = json!(-1);
+                                    rejected["data"] = json!("strict ingress secure persistence failed");
+                                    forward_to_ui(&shared, rejected.to_string()).await;
+                                    break SessionEnd::Stopped;
+                                }
+                            }
                             forward_to_ui(&shared, line).await;
                         }
                         Ok(None) => break SessionEnd::Crashed,
@@ -1239,6 +1550,8 @@ async fn supervise_core(
 
         *shared.core.lock().await = None;
         shared.journal.lock().await.discard_pending();
+        #[cfg(target_os = "macos")]
+        shared.mac_strict_replay.lock().await.discard_pending();
         #[cfg(windows)]
         if matches!(&session_end, SessionEnd::Crashed | SessionEnd::Restart) {
             fail_closed_strict_core_loss(&shared).await;
@@ -1383,15 +1696,25 @@ async fn start_backend(
     }
 
     let mut command = Command::new(&config.core);
+    #[cfg(target_os = "macos")]
+    let launch_credential = "@stdin";
+    #[cfg(not(target_os = "macos"))]
+    let launch_credential = token;
     command
         .arg(core_port.to_string())
-        .arg(token)
+        .arg(launch_credential)
         .env("SAFE_PATHS", &config.home)
-        .stdin(Stdio::null())
+        .stdin(if cfg!(target_os = "macos") { Stdio::piped() } else { Stdio::null() })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
     let mut process = command.spawn().context("unable to spawn local Core")?;
+    #[cfg(target_os = "macos")]
+    {
+        let mut input = process.stdin.take().context("Core private credential pipe unavailable")?;
+        input.write_all(format!("{token}\n").as_bytes()).await?;
+        input.shutdown().await?;
+    }
     if let Some(stdout) = process.stdout.take() {
         spawn_core_output_logger(stdout, logger.clone(), "stdout");
     }
@@ -1514,9 +1837,21 @@ async fn accept_core(listener: &TcpListener, expected_token: &str) -> Result<Tcp
             continue;
         }
         let mut reader = BufReader::new(stream);
-        let Some(line) = read_bounded_line(&mut reader, MAX_AUTH_LINE_BYTES).await? else {
+        let Some(line) = timeout(remaining, read_bounded_line(&mut reader, MAX_AUTH_LINE_BYTES))
+            .await.context("Core authentication timed out")?? else {
             continue;
         };
+        #[cfg(target_os = "macos")]
+        {
+            let reply = match mac_core_handshake_reply(&line, expected_token) {
+                Ok(reply) => reply,
+                Err(_) => continue,
+            };
+            timeout(remaining, reader.get_mut().write_all(reply.as_bytes()))
+                .await.context("macOS Core authentication reply timed out")??;
+            return Ok(reader.into_inner());
+        }
+        #[cfg(not(target_os = "macos"))]
         let valid = serde_json::from_str::<Value>(line.trim_end())
             .ok()
             .and_then(|value| {
@@ -1527,10 +1862,41 @@ async fn accept_core(listener: &TcpListener, expected_token: &str) -> Result<Tcp
                     .map(str::to_owned)
             })
             .is_some_and(|token| crate::protocol::constant_time_eq(&token, expected_token));
+        #[cfg(not(target_os = "macos"))]
         if valid {
             return Ok(reader.into_inner());
         }
     }
+}
+
+#[cfg(target_os = "macos")]
+fn mac_core_handshake_reply(line: &str, token: &str) -> Result<String> {
+    use hmac::{Hmac, Mac};
+    use sha2::Sha256;
+    fn decode_hex(value: &str) -> Result<Vec<u8>> {
+        if value.len() != 64 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            bail!("invalid macOS Core authentication field");
+        }
+        (0..64).step_by(2).map(|offset| {
+            u8::from_str_radix(&value[offset..offset + 2], 16).map_err(Into::into)
+        }).collect()
+    }
+    let message: Value = serde_json::from_str(line)?;
+    let auth = message.get("_macCore").context("missing macOS Core authentication")?;
+    if auth.get("protocol").and_then(Value::as_u64) != Some(1) {
+        bail!("unsupported macOS Core authentication protocol");
+    }
+    let nonce = auth.get("nonce").and_then(Value::as_str).context("missing nonce")?;
+    let _ = decode_hex(nonce)?;
+    let proof = decode_hex(auth.get("proof").and_then(Value::as_str).context("missing proof")?)?;
+    let key = decode_hex(token)?;
+    let mut verifier = Hmac::<Sha256>::new_from_slice(&key).context("invalid MAC key")?;
+    verifier.update(format!("FCX-MAC-CORE/1/core/{nonce}").as_bytes());
+    verifier.verify_slice(&proof).map_err(|_| anyhow!("macOS Core proof rejected"))?;
+    let mut signer = Hmac::<Sha256>::new_from_slice(&key).context("invalid MAC key")?;
+    signer.update(format!("FCX-MAC-CORE/1/host/{nonce}").as_bytes());
+    let proof = signer.finalize().into_bytes().iter().map(|byte| format!("{byte:02x}")).collect::<String>();
+    Ok(format!("{}\n", json!({"_macCore": {"protocol": 1, "nonce": nonce, "proof": proof}})))
 }
 
 async fn replay_journal(stream: &mut TcpStream, shared: &Arc<Shared>) -> Result<()> {
@@ -1563,6 +1929,35 @@ async fn replay_journal(stream: &mut TcpStream, shared: &Arc<Shared>) -> Result<
         })
         .await
         .with_context(|| format!("Core replay timed out for {expected_id}"))??;
+    }
+    #[cfg(target_os = "macos")]
+    let strict_stopped = shared.journal.lock().await.listener_running() == Some(false);
+    #[cfg(target_os = "macos")]
+    let strict_replay = {
+        let state = shared.mac_strict_replay.lock().await;
+        if strict_stopped { state.stopped_replay_line() } else { state.replay_line() }
+    };
+    #[cfg(target_os = "macos")]
+    if let Some(line) = strict_replay {
+        stream.write_all(line.as_bytes()).await?;
+        stream.write_all(b"\n").await?;
+        let response = timeout(CORE_REPLAY_TIMEOUT, async {
+            loop {
+                let line = read_line_bytewise(stream, MAX_MESSAGE_LINE_BYTES).await?
+                    .context("Core disconnected during strict ingress recovery")?;
+                let value: Value = serde_json::from_str(&line)?;
+                if value.get("id").and_then(Value::as_str) == Some(if strict_stopped { "_agent-macos-strict-intent" } else { "_agent-macos-strict-replay" }) {
+                    return Ok::<Value, anyhow::Error>(value);
+                }
+            }
+        }).await.context("strict ingress recovery timed out")??;
+        if strict_stopped {
+            if response.get("code").and_then(Value::as_i64) != Some(0) || response.get("data").and_then(Value::as_bool) != Some(true) {
+                bail!("Core rejected stopped strict ingress intent");
+            }
+        } else {
+            shared.mac_strict_replay.lock().await.validate_replay(&response)?;
+        }
     }
     Ok(())
 }
@@ -1675,13 +2070,23 @@ async fn ready_envelope(shared: &Arc<Shared>) -> String {
 async fn strict_policy_json(shared: &Arc<Shared>) -> Value {
     // StrictPolicyStatus contains only infallible serde primitives. The
     // explicit match keeps this boundary defensive if that ever changes.
-    serde_json::to_value(&*shared.strict_policy.read().await).unwrap_or_else(|_| {
+    let mut value = serde_json::to_value(&*shared.strict_policy.read().await).unwrap_or_else(|_| {
         json!({
             "state": "blocking",
             "generation": 0,
             "failureReason": "invalidPolicy",
         })
-    })
+    });
+    #[cfg(windows)]
+    if let Some(runtime) = shared.strict_runtime.lock().await.clone() {
+        let diagnostics = runtime.retry.lock().await.diagnostics();
+        value["recovery"] = json!({
+            "attempts": diagnostics.attempts,
+            "exhausted": diagnostics.exhausted,
+            "nextDelayMs": diagnostics.next_delay.map(|delay| delay.as_millis() as u64),
+        });
+    }
+    value
 }
 
 async fn forward_to_ui(shared: &Arc<Shared>, line: String) {
@@ -1726,6 +2131,10 @@ mod tests {
             ui: Mutex::new(None),
             core: Mutex::new(None),
             journal: Mutex::new(ReplayJournal::default()),
+            #[cfg(target_os = "macos")]
+            mac_strict_replay: Mutex::new(crate::mac_strict_replay::MacStrictReplay::default()),
+            #[cfg(target_os = "macos")]
+            mac_strict_account: "test-only-no-keychain-access".to_owned(),
             logger: AgentLogger::new(&std::env::temp_dir().join("flclash-agent-session-tests")),
             status: RwLock::new(CoreStatus::Ready),
             strict_policy: RwLock::new(StrictPolicyStatus::disabled()),
@@ -1741,6 +2150,8 @@ mod tests {
             strict_blocks: Mutex::new(HashSet::new()),
             #[cfg(windows)]
             strict_runtime: Mutex::new(None),
+            #[cfg(windows)]
+            strict_store: Mutex::new(None),
         })
     }
 

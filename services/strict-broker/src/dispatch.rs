@@ -79,7 +79,11 @@ where
                 (self.engine.status(), BrokerErrorCode::BackendUnavailable)
             }
             BrokerCommand::PreparePolicy { policy } => {
-                (self.engine.prepare(policy), BrokerErrorCode::Internal)
+                // Exact replay and identity migration may replace a previous
+                // graph. Revoke forwarding resources before rebinding guards.
+                let result = self.health_probe.deactivate()
+                    .and_then(|()| self.engine.prepare(policy));
+                (result, BrokerErrorCode::Internal)
             }
             BrokerCommand::CommitPolicy {
                 revision,
@@ -104,12 +108,13 @@ where
                         };
                         (result, BrokerErrorCode::Internal)
                     }
-                    Err(_) => {
+                    Err(error) => {
+                        let code = forwarding_error_code(&error);
                         let result = fail_after_deactivation(
-                            anyhow::anyhow!("strict forwarding health measurement failed"),
+                            error.context("strict forwarding health measurement failed"),
                             self.health_probe.deactivate(),
                         );
-                        (result, BrokerErrorCode::BackendUnavailable)
+                        (result, code)
                     }
                 },
             },
@@ -173,4 +178,18 @@ fn response_for_result(
             code: BrokerErrorCode::Internal,
         },
     })
+}
+
+fn forwarding_error_code(error: &anyhow::Error) -> BrokerErrorCode {
+    #[cfg(all(windows, feature = "production-host"))]
+    if let Some(failure) = error.downcast_ref::<crate::windows_canary::CanaryFailure>() {
+        return match failure {
+            crate::windows_canary::CanaryFailure::DnsMapping => BrokerErrorCode::ForwardingDnsMapping,
+            crate::windows_canary::CanaryFailure::DnsRestoration => BrokerErrorCode::ForwardingDnsRestoration,
+            crate::windows_canary::CanaryFailure::Network => BrokerErrorCode::ForwardingCanary,
+            crate::windows_canary::CanaryFailure::Timeout => BrokerErrorCode::ForwardingTimeout,
+        };
+    }
+    let _ = error;
+    BrokerErrorCode::BackendUnavailable
 }

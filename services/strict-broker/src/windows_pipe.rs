@@ -495,7 +495,10 @@ pub fn exchange_windows_pipe_for_agent(pipe_name: &str, frame: &[u8]) -> Result<
     }
     // SAFETY: CreateFileW returned a unique, owned handle.
     let handle = unsafe { OwnedHandle::from_raw_handle(handle) };
-    let deadlines = WindowsPipeDeadlines::default();
+    let mut deadlines = WindowsPipeDeadlines::default();
+    if matches!(&request.command, flclash_strict_contract::BrokerCommand::CommitPolicy { .. }) {
+        deadlines.read = Duration::from_secs(300);
+    }
     write_message(raw_handle(&handle), frame, "request", deadlines.write)?;
     let response = parse_broker_response(&read_message(
         raw_handle(&handle),

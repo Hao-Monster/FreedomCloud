@@ -4,7 +4,7 @@ import 'dart:io';
 
 import 'package:ffi/ffi.dart';
 import 'package:flclashx/common/common.dart';
-import 'package:flclashx/providers/state.dart';
+import 'package:flclashx/providers/providers.dart';
 import 'package:flclashx/state.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -24,6 +24,7 @@ class TrayManager extends ConsumerStatefulWidget {
 
 class _TrayContainerState extends ConsumerState<TrayManager> with TrayListener, WidgetsBindingObserver {
   Timer? _menuMonitor;
+  DateTime? _lastRateUpdate;
 
   void _closeWindowsPopupMenu() {
     if (!Platform.isWindows) return;
@@ -77,34 +78,8 @@ class _TrayContainerState extends ConsumerState<TrayManager> with TrayListener, 
           return;
         }
 
-        final leftButtonPressed = GetAsyncKeyState(VK_LBUTTON) & 0x8000;
-        final rightButtonPressed = GetAsyncKeyState(VK_RBUTTON) & 0x8000;
-
-        if (leftButtonPressed != 0 || rightButtonPressed != 0) {
-          final point = calloc<POINT>();
-          GetCursorPos(point);
-
-          final rect = calloc<RECT>();
-          GetWindowRect(hwnd, rect);
-
-          final cursorX = point.ref.x;
-          final cursorY = point.ref.y;
-          final menuLeft = rect.ref.left;
-          final menuTop = rect.ref.top;
-          final menuRight = rect.ref.right;
-          final menuBottom = rect.ref.bottom;
-
-          calloc.free(point);
-          calloc.free(rect);
-
-          if (cursorX < menuLeft ||
-              cursorX > menuRight ||
-              cursorY < menuTop ||
-              cursorY > menuBottom) {
-            PostMessage(hwnd, WM_CLOSE, 0, 0);
-            _stopMenuMonitor();
-          }
-        }
+        // Native menus dismiss on outside clicks. A submenu can lie outside
+        // the parent rectangle, so manually closing here breaks node selection.
       } catch (e) {
         _stopMenuMonitor();
       }
@@ -119,8 +94,21 @@ class _TrayContainerState extends ConsumerState<TrayManager> with TrayListener, 
   @override
   void initState() {
     super.initState();
+    tray.selectProfile = (id) {
+      ref.read(currentProfileIdProvider.notifier).value = id;
+    };
+    StatusBarManager.setMenuRefresh(() async {
+      await tray.update(trayState: ref.read(trayStateProvider));
+    });
     trayManager.addListener(this);
     WidgetsBinding.instance.addObserver(this);
+    ref.listenManual(trafficsProvider, (_, next) {
+      final now = DateTime.now();
+      if (_lastRateUpdate != null &&
+          now.difference(_lastRateUpdate!) < const Duration(seconds: 2)) return;
+      _lastRateUpdate = now;
+      unawaited(tray.updateTrayTitle(next.list.lastOrNull));
+    });
     ref.listenManual(
       trayStateProvider,
       (prev, next) {
@@ -148,7 +136,13 @@ class _TrayContainerState extends ConsumerState<TrayManager> with TrayListener, 
 
   @override
   void onTrayIconRightMouseDown() {
-    trayManager.popUpContextMenu();
+    unawaited(_openContextMenu());
+  }
+
+  Future<void> _openContextMenu() async {
+    await tray.update(trayState: ref.read(trayStateProvider));
+    if (!mounted) return;
+    await trayManager.popUpContextMenu();
     _startMenuMonitor();
   }
 
@@ -171,6 +165,8 @@ class _TrayContainerState extends ConsumerState<TrayManager> with TrayListener, 
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _stopMenuMonitor();
+    StatusBarManager.setMenuRefresh(null);
+    tray.selectProfile = null;
     trayManager.removeListener(this);
     super.dispose();
   }

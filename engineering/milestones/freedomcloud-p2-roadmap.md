@@ -1,6 +1,6 @@
 # FreedomCloud P2 roadmap
 
-Status: **Post-M3 roadmap; no M3 acceptance credit**
+Status: **R-201–R-208 source integrated; user validation pending; no M3 acceptance credit**
 
 GitHub milestone: [FreedomCloud P2 roadmap](https://github.com/Hao-Monster/FreedomCloud/milestone/3)
 
@@ -33,3 +33,11 @@ separate issue, focused PR, tests, user-visible acceptance and rollback notes.
 
 No P2 item changes M3 exit criteria, creates strict WFP evidence, or silently
 becomes part of an M3 release candidate.
+
+## Source handoff — 2026-10-01
+
+DEV-07 through DEV-12 in `../full-development-plan-2026-10-01.md` map all eight
+requirements to integrated source commits. Development is no longer merely
+planned. Runtime acceptance remains user-owned. R-206 still needs real release
+trust configuration and signed release artifacts; no production feed or release
+was provisioned. Keep the milestone open until acceptance is recorded.

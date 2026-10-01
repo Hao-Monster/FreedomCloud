@@ -278,7 +278,8 @@ func TestStrictUDPDataIngressAuthenticatesRoutesRepliesAndRejectsReplay(t *testi
 	}
 	if string(received.packet.Data()) != "request" ||
 		received.metadata.NetWork != C.UDP ||
-		received.metadata.SpecialProxy != "GLOBAL" ||
+		received.metadata.SpecialProxy != "flclashx-strict-route-23-e7440dd384f12056f4865f279e2c4093" ||
+		received.metadata.InUser != username ||
 		received.metadata.DstIP != destination.Addr() ||
 		received.metadata.DstPort != destination.Port() ||
 		received.metadata.Type != C.INNER {
@@ -347,7 +348,7 @@ func TestStrictUDPDataAssociationRejectsCrossCredentialCollision(t *testing.T) {
 	}
 	select {
 	case received := <-fakeTunnel.packets:
-		if received.metadata.SpecialProxy != "GROUP-A" {
+		if received.metadata.SpecialProxy != "flclashx-strict-route-24-32a26fb30feb8ba639b3ca9fa0cd6f03" || received.metadata.InUser != request.Entries[0].Username {
 			t.Fatalf("strict UDP association collision changed its target group: %s", received.metadata.SpecialProxy)
 		}
 		received.packet.Drop()

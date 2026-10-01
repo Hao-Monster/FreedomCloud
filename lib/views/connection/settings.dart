@@ -1,3 +1,8 @@
+import 'package:flclashx/widgets/managed_strict_proxy.dart';
+import 'package:flclashx/manager/connection_manager.dart';
+import 'package:flclashx/common/application_discovery.dart';
+import 'package:flclashx/widgets/application_picker.dart';
+import 'package:flclashx/widgets/effective_route.dart';
 import 'dart:async';
 import 'dart:io';
 
@@ -368,6 +373,12 @@ class _PerAppPolicySectionState extends ConsumerState<_PerAppPolicySection> {
   final TextEditingController _searchController = TextEditingController();
   StreamSubscription<AgentStrictPolicyStatus>? _strictStatusSubscription;
   String _searchQuery = '';
+  bool _strictCommandPending = false;
+
+  bool get _strictTransition => _strictCommandPending || const {
+    AgentStrictPolicyState.preparing,
+    AgentStrictPolicyState.recovering,
+  }.contains(clashService?.strictPolicyStatus.state);
 
   @override
   void initState() {
@@ -451,6 +462,16 @@ class _PerAppPolicySectionState extends ConsumerState<_PerAppPolicySection> {
   }
 
   Future<void> _toggleStrictCapture() async {
+    if (_strictTransition) return;
+    setState(() => _strictCommandPending = true);
+    try {
+      await _changeStrictCapture();
+    } finally {
+      if (mounted) setState(() => _strictCommandPending = false);
+    }
+  }
+
+  Future<void> _changeStrictCapture() async {
     final service = clashService;
     if (service == null || !_strictAvailable) return;
     if (service.strictPolicyStatus.state != AgentStrictPolicyState.disabled) {
@@ -462,13 +483,13 @@ class _PerAppPolicySectionState extends ConsumerState<_PerAppPolicySection> {
       }
       return;
     }
-    final armed = await _prepareStrictEvidence(
+    final accepted = await _prepareStrictEvidence(
       perAppPolicyStore.entries,
       force: true,
     );
     if (mounted) {
       await context.showNotifier(
-        armed ? appLocalizations.successTitle : 'Strict mode unavailable',
+        accepted ? '严格模式请求已提交，请查看转发状态' : '严格模式请求未完成，请查看失败原因',
       );
     }
   }
@@ -513,11 +534,17 @@ class _PerAppPolicySectionState extends ConsumerState<_PerAppPolicySection> {
                         onPressed: _pickApplication,
                         icon: const Icon(Icons.add_rounded),
                       ),
+                      if (Platform.isMacOS)
+                        IconButton(tooltip: 'macOS 受管严格代理', icon: const Icon(Icons.security),
+                          onPressed: () => showDialog<void>(context: context, builder: (_) => const ManagedStrictProxyPanel())),
                       if (_strictAvailable)
                         IconButton(
-                          tooltip: 'Toggle strict application capture',
-                          onPressed: _toggleStrictCapture,
-                          icon: Icon(
+                          tooltip: _strictTransition ? '正在准备严格模式，请稍候' : '切换严格应用代理',
+                          onPressed: _strictTransition ? null : _toggleStrictCapture,
+                          icon: _strictTransition
+                              ? const SizedBox(width: 20, height: 20,
+                                  child: CircularProgressIndicator(strokeWidth: 2))
+                              : Icon(
                             clashService?.strictPolicyStatus.state ==
                                     AgentStrictPolicyState.armed
                                 ? Icons.shield_rounded
@@ -556,6 +583,19 @@ class _PerAppPolicySectionState extends ConsumerState<_PerAppPolicySection> {
                         child: Text(appLocalizations.noData),
                       ),
                     ),
+                  if (_strictCaptureActive)
+                    Padding(padding: const EdgeInsets.symmetric(vertical: 8),
+                      child: Text('严格恢复：${clashService?.strictPolicyStatus.recoveryAttempts ?? 0} 次'
+                        '${clashService?.strictPolicyStatus.recoveryExhausted == true ? ' · 重试已耗尽' : ''}'
+                        '${clashService?.strictPolicyStatus.recoveryNextDelayMs == null ? '' : ' · 下次 ${clashService!.strictPolicyStatus.recoveryNextDelayMs} ms'}')),
+                  if (_strictTransition)
+                    const Padding(padding: EdgeInsets.symmetric(vertical: 8),
+                      child: Text('正在准备并检查严格转发路径，选中应用保持阻断。网络较慢时可能需要数分钟。')),
+                  if (_strictAvailable)
+                    StrictPolicyStatusIndicator(status: clashService?.strictPolicyStatus),
+                  if (clashService?.strictPolicyStatus.failureReason case final reason?)
+                    Padding(padding: const EdgeInsets.symmetric(vertical: 8),
+                      child: Text(strictPolicyFailureLabel(reason))),
                   for (final entry in filteredEntries)
                     ListTile(
                       contentPadding: EdgeInsets.zero,
@@ -578,6 +618,15 @@ class _PerAppPolicySectionState extends ConsumerState<_PerAppPolicySection> {
                       trailing: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
+                          if (entry.policy == ApplicationRoutingPolicy.proxy)
+                            EffectiveRouteButton(
+                              chains: [entry.targetGroup ?? 'GLOBAL'],
+                              policy: true,
+                            ),
+                          if (_strictCaptureActive && entry.policy != ApplicationRoutingPolicy.inherit)
+                            IconButton(tooltip: '迁移到升级后的程序（同发布者）',
+                              onPressed: () => _migrateApplication(entry),
+                              icon: const Icon(Icons.upgrade)),
                           _policyMenu(entry),
                           IconButton(
                             tooltip: appLocalizations.delete,
@@ -615,19 +664,74 @@ class _PerAppPolicySectionState extends ConsumerState<_PerAppPolicySection> {
             .toList(growable: false),
       );
 
-  Future<void> _pickApplication() async {
-    final result = await FilePicker.platform.pickFiles(
-      type: Platform.isWindows ? FileType.custom : FileType.any,
-      allowedExtensions: Platform.isWindows ? const ['exe'] : null,
-      allowMultiple: false,
-      withData: false,
+  Future<void> _migrateApplication(PerAppPolicy entry) async {
+    final service = clashService;
+    if (service == null || !_strictCaptureActive) return;
+    final picked = await FilePicker.platform.pickFiles(
+      type: FileType.custom, allowedExtensions: const ['exe'],
+      allowMultiple: false, withData: false,
     );
-    final processPath = result?.files.single.path;
+    final replacementPath = picked?.files.single.path;
+    if (replacementPath == null || !mounted) return;
+    final identity = await service.inspectStrictIdentity(replacementPath);
+    if (identity == null) {
+      if (mounted) await context.showNotifier('无法验证升级程序的签名与身份');
+      return;
+    }
+    final accepted = await service.migrateStrictIdentity(entry.path, identity);
+    if (accepted) {
+      // Broker retains the old exact WFP family until strict is disabled.
+      await perAppPolicyStore.setPolicy(processPath: identity.canonicalPath,
+        name: entry.name, policy: entry.policy, targetGroup: entry.targetGroup);
+      if (entry.path.toLowerCase() != identity.canonicalPath.toLowerCase()) {
+        await perAppPolicyStore.setPolicy(processPath: entry.path,
+          name: entry.name, policy: ApplicationRoutingPolicy.inherit);
+      }
+    }
+    if (mounted) await context.showNotifier(accepted
+      ? '升级迁移请求已提交；请确认严格模式恢复为 Armed'
+      : '升级迁移未完成；现有保护保持，请检查签名和恢复状态');
+  }
+
+  Future<void> _pickApplication() async {
+    final recent = <String, ApplicationCandidate>{};
+    for (final tracked in [...connectionManager.activeConnections, ...connectionManager.closedConnections]) {
+      final metadata = tracked.connection.metadata;
+      if (metadata.processPath.isEmpty || !path.isAbsolute(metadata.processPath)) continue;
+      final key = Platform.isWindows ? metadata.processPath.toLowerCase() : metadata.processPath;
+      recent.putIfAbsent(key, () => ApplicationCandidate(
+        name: metadata.process.isEmpty ? path.basename(metadata.processPath) : metadata.process,
+        executable: metadata.processPath, source: '最近联网'));
+      if (recent.length >= 256) break;
+    }
+    final selected = await showDialog<ApplicationCandidate>(context: context,
+      builder: (_) => ApplicationPickerDialog(recent: recent.values.toList(growable: false)));
+    if (selected == null || !mounted) return;
+    String? processPath = selected.executable;
+    if (processPath.isEmpty) {
+      final result = await FilePicker.platform.pickFiles(
+        type: Platform.isWindows ? FileType.custom : FileType.any,
+        allowedExtensions: Platform.isWindows ? const ['exe'] : null,
+        allowMultiple: false, withData: false,
+      );
+      processPath = result?.files.single.path;
+    }
     if (processPath == null || !mounted) return;
+    try {
+      processPath = await File(processPath).resolveSymbolicLinks().timeout(const Duration(seconds: 3));
+    } on TimeoutException {
+      if (mounted) await context.showNotifier('读取程序路径超时，请选择本地程序');
+      return;
+    } on FileSystemException {
+      if (mounted) await context.showNotifier('所选程序已经移动或无法访问，请重新选择');
+      return;
+    }
+    if (!mounted) return;
+    final canonicalPath = processPath;
     final policy = await showDialog<ApplicationRoutingPolicy>(
       context: context,
       builder: (context) => SimpleDialog(
-        title: Text(path.basename(processPath)),
+        title: Text(path.basename(canonicalPath)),
         children: ApplicationRoutingPolicy.values
             .where((value) => value != ApplicationRoutingPolicy.inherit)
             .map(
@@ -640,7 +744,7 @@ class _PerAppPolicySectionState extends ConsumerState<_PerAppPolicySection> {
       ),
     );
     if (policy == null) return;
-    await _save(processPath, path.basename(processPath), policy);
+    await _save(canonicalPath, selected.name.isEmpty ? path.basename(canonicalPath) : selected.name, policy);
   }
 
   Future<void> _save(

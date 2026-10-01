@@ -144,6 +144,34 @@ void stopProxy()
 namespace proxy
 {
 
+  // Use the OS PAC engine. Never evaluate user-provided JavaScript in the UI.
+  bool SetPac(const std::string& address) {
+    if (address.size() > 2048 ||
+        (address.rfind("https://", 0) != 0 && address.rfind("http://", 0) != 0) ||
+        address.find_first_of("\r\n\t ") != std::string::npos ||
+        address.find('\0') != std::string::npos) return false;
+    const int length = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS,
+        address.data(), static_cast<int>(address.size()), nullptr, 0);
+    if (length <= 0) return false;
+    std::wstring wide(length, L'\0');
+    MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, address.data(),
+        static_cast<int>(address.size()), wide.data(), length);
+    INTERNET_PER_CONN_OPTIONW options[2]{};
+    options[0].dwOption = INTERNET_PER_CONN_FLAGS;
+    options[0].Value.dwValue = PROXY_TYPE_AUTO_PROXY_URL;
+    options[1].dwOption = INTERNET_PER_CONN_AUTOCONFIG_URL;
+    options[1].Value.pszValue = wide.data();
+    INTERNET_PER_CONN_OPTION_LISTW list{};
+    list.dwSize = sizeof(list);
+    list.dwOptionCount = 2;
+    list.pOptions = options;
+    if (!InternetSetOptionW(nullptr, INTERNET_OPTION_PER_CONNECTION_OPTION,
+        &list, sizeof(list))) return false;
+    const bool changed = InternetSetOptionW(nullptr, INTERNET_OPTION_SETTINGS_CHANGED, nullptr, 0);
+    const bool refreshed = InternetSetOptionW(nullptr, INTERNET_OPTION_REFRESH, nullptr, 0);
+    return changed && refreshed;
+  }
+
   // static
   void ProxyPlugin::RegisterWithRegistrar(
       flutter::PluginRegistrarWindows *registrar)
@@ -172,7 +200,18 @@ namespace proxy
       const flutter::MethodCall<flutter::EncodableValue> &method_call,
       std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result)
   {
-    if (method_call.method_name().compare("StopProxy") == 0)
+    if (method_call.method_name() == "StartPac")
+    {
+      const auto* args = std::get_if<flutter::EncodableMap>(method_call.arguments());
+      if (!args) { result->Error("invalid_arguments", "PAC URL required"); return; }
+      const auto entry = args->find(flutter::EncodableValue("url"));
+      if (entry == args->end()) { result->Error("invalid_arguments", "PAC URL required"); return; }
+      const auto* url = std::get_if<std::string>(&entry->second);
+      if (!url) { result->Error("invalid_arguments", "PAC URL must be a string"); return; }
+      if (!SetPac(*url)) { result->Error("pac_failed", "Windows could not apply PAC settings"); return; }
+      result->Success(true);
+    }
+    else if (method_call.method_name().compare("StopProxy") == 0)
     {
       stopProxy();
       result->Success(true);

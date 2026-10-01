@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/binary"
@@ -16,6 +17,7 @@ import (
 	"reflect"
 	"runtime"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -23,6 +25,8 @@ import (
 	"github.com/metacubex/mihomo/adapter/outboundgroup"
 	"github.com/metacubex/mihomo/common/pool"
 	"github.com/metacubex/mihomo/config"
+	"github.com/metacubex/mihomo/component/resolver"
+	D "github.com/miekg/dns"
 	C "github.com/metacubex/mihomo/constant"
 	"github.com/metacubex/mihomo/listener"
 	"github.com/metacubex/mihomo/tunnel"
@@ -48,7 +52,8 @@ const (
 	strictUDPHealthPong              byte   = 2
 	strictUDPDataHeaderBytes                = 80
 	strictUDPDataMaxPayloadBytes            = 16 * 1024
-	strictUDPDataMaxFrameBytes              = strictUDPDataHeaderBytes + strictUDPDataMaxPayloadBytes + sha256.Size
+	strictUDPDataMaxDomainBytes             = 253
+	strictUDPDataMaxFrameBytes              = strictUDPDataHeaderBytes + 1 + strictUDPDataMaxDomainBytes + strictUDPDataMaxPayloadBytes + sha256.Size
 	strictUDPDataMaxAssociations            = 1024
 	strictUDPDataMaxInFlight                = 256
 	strictUDPReceiveBufferBytes             = 256 * 1024
@@ -64,10 +69,12 @@ const (
 	strictUDPDataAddressOffset              = 60
 	strictUDPDataPayloadLengthOffset        = 76
 	strictUDPDataVersion             byte   = 1
+	strictUDPDataDomainVersion       byte   = 2
 	strictUDPDataOutbound            byte   = 1
 	strictUDPDataInbound             byte   = 2
 	strictUDPDataAddressIPv4         byte   = 4
 	strictUDPDataAddressIPv6         byte   = 6
+	strictUDPDataAddressDomain       byte   = 3
 )
 
 const (
@@ -83,6 +90,7 @@ var (
 type StrictIngressRequest struct {
 	Protocol   uint32                      `json:"protocol"`
 	Generation uint64                      `json:"generation"`
+	UDPPort    uint16                      `json:"udpPort,omitempty"`
 	Entries    []StrictIngressRequestEntry `json:"entries"`
 }
 
@@ -90,6 +98,7 @@ type StrictIngressRequestEntry struct {
 	TargetGroup string `json:"targetGroup"`
 	Username    string `json:"username"`
 	Password    string `json:"password"`
+	Port        uint16 `json:"port,omitempty"`
 }
 
 type StrictIngressResult struct {
@@ -127,9 +136,14 @@ type strictUDPIngressService struct {
 	packetSlots chan struct{}
 	closeOnce   sync.Once
 	closed      atomic.Bool
+	routes []*strictProxyRoute
+	dnsMu sync.Mutex
+	dnsProof map[[16]byte]strictDNSProof
 }
 
 type strictUDPIngressCredential struct {
+	routeName string
+	username string
 	targetGroup string
 	key         [sha256.Size]byte
 	macPool     sync.Pool
@@ -203,6 +217,8 @@ type strictUDPDataPacket struct {
 var (
 	activeStrictIngress    *strictIngressSession
 	agentCoreAuthenticated atomic.Bool
+	macCoreAuthenticated   atomic.Bool
+	macStrictIngressIntent *StrictIngressRequest
 	strictUDPIPv4Padding   [12]byte
 )
 
@@ -231,6 +247,17 @@ func validateStrictIngressRequestShape(request *StrictIngressRequest) error {
 	}
 	if len(request.Entries) > maxStrictIngressEntries {
 		return errors.New("strict ingress entry limit exceeded")
+	}
+	if request.UDPPort != 0 && (runtime.GOOS != "darwin" || request.UDPPort < 1024) {
+		return errors.New("fixed strict UDP port requires macOS and an unprivileged port")
+	}
+	ports := make(map[uint16]bool)
+	for _, entry := range request.Entries {
+		if entry.Port == 0 { continue }
+		if runtime.GOOS != "darwin" || entry.Port < 1024 || ports[entry.Port] {
+			return errors.New("fixed strict TCP port is unavailable or duplicated")
+		}
+		ports[entry.Port] = true
 	}
 	return nil
 }
@@ -287,9 +314,9 @@ func buildStrictIngressListeners(
 			"name":   name,
 			"type":   "socks",
 			"listen": "127.0.0.1",
-			"port":   "0",
+			"port":   fmt.Sprint(entry.Port),
 			"udp":    false,
-			"proxy":  entry.TargetGroup,
+			"proxy":  strictProxyAlias(request.Generation, entry.TargetGroup),
 			"users": []map[string]string{{
 				"username": entry.Username,
 				"password": entry.Password,
@@ -335,8 +362,10 @@ func startStrictUDPIngressService(request *StrictIngressRequest, strictTunnel C.
 			return nil, errors.New("strict UDP health key identifier is duplicated")
 		}
 		credentials[keyID] = newStrictUDPIngressCredential(entry.TargetGroup, key)
+	credentials[keyID].routeName = strictProxyAlias(request.Generation, entry.TargetGroup)
+	credentials[keyID].username = entry.Username
 	}
-	connection, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	connection, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: int(request.UDPPort)})
 	if err != nil {
 		return nil, errors.New("strict UDP health endpoint failed to bind")
 	}
@@ -358,6 +387,7 @@ func startStrictUDPIngressService(request *StrictIngressRequest, strictTunnel C.
 		tunnel:      strictTunnel,
 		done:        make(chan struct{}),
 		packetSlots: make(chan struct{}, strictUDPDataMaxInFlight),
+	dnsProof: make(map[[16]byte]strictDNSProof),
 	}
 	go service.serve()
 	return service, nil
@@ -406,7 +436,7 @@ func (service *strictUDPIngressService) serve() {
 func (service *strictUDPIngressService) handleHealthFrame(frame []byte, source *net.UDPAddr) {
 	if !bytes.Equal(frame[strictUDPHealthMagicOffset:strictUDPHealthVersionOffset], strictUDPHealthMagic) ||
 		frame[strictUDPHealthVersionOffset] != strictUDPHealthVersion ||
-		frame[strictUDPHealthKindOffset] != strictUDPHealthPing ||
+		(frame[strictUDPHealthKindOffset] != strictUDPHealthPing && frame[strictUDPHealthKindOffset] != 3 && frame[strictUDPHealthKindOffset] != 5) ||
 		frame[strictUDPHealthReservedOffset] != 0 || frame[strictUDPHealthReservedOffset+1] != 0 ||
 		binary.BigEndian.Uint64(frame[strictUDPHealthGenerationOffset:strictUDPHealthKeyIDOffset]) != service.generation {
 		return
@@ -420,6 +450,50 @@ func (service *strictUDPIngressService) handleHealthFrame(frame []byte, source *
 	if !credential.authenticate(frame[:strictUDPHealthTagOffset], frame[strictUDPHealthTagOffset:]) {
 		return
 	}
+	if frame[5] == 5 {
+		var nonce [16]byte
+		copy(nonce[:], frame[32:48])
+		service.dnsMu.Lock()
+		proof, ok := service.dnsProof[keyID]
+		service.dnsMu.Unlock()
+		if !ok || !proof.observed || proof.nonce != nonce || time.Now().After(proof.expires) { return }
+		frame[5] = 6
+		credential.sign(frame[:48], frame[48:])
+		_, _ = service.connection.WriteToUDP(frame, source)
+		return
+	}
+	if frame[strictUDPHealthKindOffset] == 3 {
+		// The resolver must supply the mapping itself. A ping or fabricated
+		// cache entry cannot qualify domain restoration.
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		query := new(D.Msg)
+		query.SetQuestion("www.cloudflare.com.", D.TypeA)
+		answer, err := resolver.ServeMsg(ctx, query)
+		if err != nil || answer == nil { return }
+		for _, record := range answer.Answer {
+			a, ok := record.(*D.A)
+			if !ok { continue }
+			addr, ok := netip.AddrFromSlice(a.A.To4())
+			if !ok { continue }
+			host, mapped := resolver.FindHostByIP(addr)
+			if !mapped || host != "www.cloudflare.com" { continue }
+			var nonce [16]byte
+			copy(nonce[:], frame[32:48])
+			service.dnsMu.Lock()
+			service.dnsProof[keyID] = strictDNSProof{address: addr, nonce: nonce, expires: time.Now().Add(30*time.Second)}
+			service.dnsMu.Unlock()
+			response := make([]byte, 112)
+			copy(response, frame[:48])
+			response[5] = 4
+			response[48] = 4
+			copy(response[49:53], a.A.To4())
+			credential.sign(response[:80], response[80:])
+			_, _ = service.connection.WriteToUDP(response, source)
+			return
+		}
+		return
+	}
 	frame[strictUDPHealthKindOffset] = strictUDPHealthPong
 	credential.sign(frame[:strictUDPHealthTagOffset], frame[strictUDPHealthTagOffset:])
 	_, _ = service.connection.WriteToUDP(frame[:], source)
@@ -431,7 +505,8 @@ func (service *strictUDPIngressService) handleDataFrame(
 	associations map[[16]byte]*strictUDPDataAssociation,
 	now time.Time,
 ) {
-	if frame[strictUDPDataVersionOffset] != strictUDPDataVersion ||
+	domainFrame := runtime.GOOS == "darwin" && frame[strictUDPDataVersionOffset] == strictUDPDataDomainVersion
+	if (!domainFrame && frame[strictUDPDataVersionOffset] != strictUDPDataVersion) ||
 		frame[strictUDPDataKindOffset] != strictUDPDataOutbound ||
 		frame[strictUDPDataFlagsOffset] != 0 || frame[strictUDPDataFlagsOffset+1] != 0 ||
 		binary.BigEndian.Uint64(frame[strictUDPDataGenerationOffset:strictUDPDataKeyIDOffset]) != service.generation ||
@@ -439,7 +514,9 @@ func (service *strictUDPIngressService) handleDataFrame(
 		return
 	}
 	payloadLength := int(binary.BigEndian.Uint16(frame[strictUDPDataPayloadLengthOffset:strictUDPDataHeaderBytes]))
-	if payloadLength == 0 || payloadLength > strictUDPDataMaxPayloadBytes ||
+	maximumPayload := strictUDPDataMaxPayloadBytes
+	if domainFrame { maximumPayload += 1 + strictUDPDataMaxDomainBytes }
+	if payloadLength == 0 || payloadLength > maximumPayload ||
 		len(frame) != strictUDPDataHeaderBytes+payloadLength+sha256.Size {
 		return
 	}
@@ -462,9 +539,27 @@ func (service *strictUDPIngressService) handleDataFrame(
 	if sequence == 0 {
 		return
 	}
-	destination, ok := parseStrictUDPDataDestination(frame)
-	if !ok {
-		return
+	var destination netip.AddrPort
+	var host string
+	port := binary.BigEndian.Uint16(frame[strictUDPDataPortOffset:strictUDPDataAddressOffset])
+	payloadOffset := strictUDPDataHeaderBytes
+	if domainFrame {
+		if frame[strictUDPDataAddressFamilyOffset] != strictUDPDataAddressDomain || port == 0 || payloadLength < 3 { return }
+		for _, value := range frame[strictUDPDataAddressOffset:strictUDPDataPayloadLengthOffset] {
+			if value != 0 { return }
+		}
+		domainLength := int(frame[payloadOffset])
+		if domainLength == 0 || domainLength > strictUDPDataMaxDomainBytes || domainLength + 1 >= payloadLength { return }
+		host = string(frame[payloadOffset+1:payloadOffset+1+domainLength])
+		if !validStrictUDPDomain(host) { return }
+		host = strings.ToLower(host)
+		payloadOffset += 1 + domainLength
+		payloadLength -= 1 + domainLength
+		if payloadLength > strictUDPDataMaxPayloadBytes { return }
+	} else {
+		var ok bool
+		destination, ok = parseStrictUDPDataDestination(frame)
+		if !ok { return }
 	}
 	association, exists := associations[associationID]
 	if !exists {
@@ -502,7 +597,7 @@ func (service *strictUDPIngressService) handleDataFrame(
 		return
 	}
 	payload := pool.Get(payloadLength)
-	copy(payload, frame[strictUDPDataHeaderBytes:tagOffset])
+	copy(payload, frame[payloadOffset:tagOffset])
 	packet := &strictUDPDataPacket{
 		service:     service,
 		association: association,
@@ -515,15 +610,34 @@ func (service *strictUDPIngressService) handleDataFrame(
 		SrcIP:        sourceAddress,
 		SrcPort:      uint16(source.Port),
 		DstIP:        destination.Addr().Unmap(),
-		DstPort:      destination.Port(),
+		DstPort:      port,
+		Host:         host,
 		InIP:         service.local.Addr(),
 		InPort:       service.local.Port(),
 		InName:       "flclashx-strict-udp",
-		SpecialProxy: association.credential.targetGroup,
+		SpecialProxy: association.credential.routeName,
+		InUser: association.credential.username,
 		RawSrcAddr:   source,
-		RawDstAddr:   net.UDPAddrFromAddrPort(destination),
 	}
+	if !domainFrame { metadata.RawDstAddr = net.UDPAddrFromAddrPort(destination) }
 	service.tunnel.HandleUDPPacket(packet, metadata)
+}
+
+// Domain frames carry canonical ASCII/IDNA DNS labels only. Literal addresses
+// must use v1, and malformed names never fall back to a local system lookup.
+func validStrictUDPDomain(host string) bool {
+	if host == "" || len(host) > strictUDPDataMaxDomainBytes { return false }
+	if _, err := netip.ParseAddr(host); err == nil { return false }
+	numeric := true
+	for _, label := range strings.Split(host, ".") {
+		if len(label) == 0 || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' { return false }
+		for index := 0; index < len(label); index++ {
+			value := label[index]
+			if !((value >= 'a' && value <= 'z') || (value >= 'A' && value <= 'Z') || (value >= '0' && value <= '9') || value == '-') { return false }
+			if value < '0' || value > '9' { numeric = false }
+		}
+	}
+	return !numeric
 }
 
 func parseStrictUDPDataDestination(frame []byte) (netip.AddrPort, bool) {
@@ -708,14 +822,15 @@ func (service *strictUDPIngressService) close() {
 	}
 	service.closeOnce.Do(func() {
 		service.closed.Store(true)
+		revokeStrictProxyRoutes(service.routes)
 		_ = service.connection.Close()
 		<-service.done
 	})
 }
 
 func handleConfigureStrictIngress(data string) (StrictIngressResult, error) {
-	if runtime.GOOS != "windows" || !agentCoreAuthenticated.Load() {
-		return StrictIngressResult{}, errors.New("strict ingress requires an authenticated Windows Agent channel")
+	if !strictControlAuthenticated() {
+		return StrictIngressResult{}, errors.New("strict ingress requires an authenticated platform control channel")
 	}
 	request, err := parseStrictIngressRequest(data)
 	if err != nil {
@@ -729,7 +844,15 @@ func handleConfigureStrictIngress(data string) (StrictIngressResult, error) {
 
 	runLock.Lock()
 	defer runLock.Unlock()
+	return configureStrictIngressLocked(request)
+}
+
+func configureStrictIngressLocked(request *StrictIngressRequest) (StrictIngressResult, error) {
+	if !strictControlAuthenticated() {
+		return StrictIngressResult{}, errors.New("strict ingress control channel was closed")
+	}
 	if len(request.Entries) == 0 {
+		if runtime.GOOS == "darwin" { macStrictIngressIntent = nil }
 		removeStrictIngressListenersLocked()
 		return StrictIngressResult{
 			Protocol:   strictIngressProtocol,
@@ -758,11 +881,14 @@ func handleConfigureStrictIngress(data string) (StrictIngressResult, error) {
 	if err != nil {
 		return StrictIngressResult{}, err
 	}
+	routes, err := installStrictProxyRoutes(request, currentConfig, ordered)
+	if err != nil { udpIngress.close(); return StrictIngressResult{}, err }
+	udpIngress.routes = routes
 	merged := normalInboundListenersLocked()
 	for name, inbound := range strictListeners {
 		merged[name] = inbound
 	}
-	listener.PatchInboundListeners(merged, tunnel.Tunnel, true)
+	listener.PatchInboundListeners(merged, &strictObservedTunnel{Tunnel: tunnel.Tunnel, service: udpIngress}, true)
 
 	result := StrictIngressResult{
 		Protocol:    strictIngressProtocol,
@@ -777,6 +903,13 @@ func handleConfigureStrictIngress(data string) (StrictIngressResult, error) {
 			udpIngress.close()
 			removeStrictIngressListenersLocked()
 			return StrictIngressResult{}, errors.New("strict ingress listener failed to bind")
+		}
+		for _, requested := range request.Entries {
+			if requested.TargetGroup == entry.TargetGroup && requested.Port != 0 && requested.Port != address.Port() {
+				udpIngress.close()
+				removeStrictIngressListenersLocked()
+				return StrictIngressResult{}, errors.New("strict ingress fixed port was not restored")
+			}
 		}
 		result.Entries = append(result.Entries, StrictIngressResultEntry{
 			TargetGroup: entry.TargetGroup,
@@ -793,7 +926,53 @@ func handleConfigureStrictIngress(data string) (StrictIngressResult, error) {
 	if previous != nil {
 		previous.udpIngress.close()
 	}
+	if runtime.GOOS == "darwin" {
+		intent := canonicalStrictIngressRequest(request)
+		udp, _ := netip.ParseAddrPort(result.UDPEndpoint)
+		intent.UDPPort = udp.Port()
+		for index := range intent.Entries {
+			for _, endpoint := range result.Entries {
+				if endpoint.TargetGroup == intent.Entries[index].TargetGroup {
+					address, _ := netip.ParseAddrPort(endpoint.Endpoint)
+					intent.Entries[index].Port = address.Port()
+				}
+			}
+		}
+		macStrictIngressIntent = &intent
+	}
 	return result, nil
+}
+
+func restoreMacStrictIngressLocked() error {
+	if runtime.GOOS != "darwin" || macStrictIngressIntent == nil || !isRunning { return nil }
+	if activeStrictIngress != nil { return nil }
+	_, err := configureStrictIngressLocked(macStrictIngressIntent)
+	return err
+}
+
+// Used only by the authenticated macOS Agent when its persisted listener intent
+// is stopped. This acknowledges intent storage, not active traffic capture.
+func handleRestoreMacStrictIngressIntent(data string) error {
+	if runtime.GOOS != "darwin" || !macCoreAuthenticated.Load() { return errors.New("macOS authenticated control required") }
+	request, err := parseStrictIngressRequest(data)
+	if err != nil { return err }
+	if err := validateStrictIngressRequestShape(request); err != nil { return err }
+	if request.UDPPort < 1024 || len(request.Entries) == 0 { return errors.New("fixed recovery endpoints required") }
+	for _, entry := range request.Entries {
+		if entry.Port < 1024 { return errors.New("fixed recovery endpoints required") }
+	}
+	runLock.Lock()
+	defer runLock.Unlock()
+	if !macCoreAuthenticated.Load() || isRunning { return errors.New("strict intent recovery requires stopped Core listeners") }
+	if _, _, err := buildStrictIngressListeners(request, currentConfig); err != nil { return err }
+	intent := canonicalStrictIngressRequest(request)
+	macStrictIngressIntent = &intent
+	return nil
+}
+
+func strictControlAuthenticated() bool {
+	return (runtime.GOOS == "windows" && agentCoreAuthenticated.Load()) ||
+		(runtime.GOOS == "darwin" && macCoreAuthenticated.Load())
 }
 
 func inboundListenersWithStrictLocked() map[string]C.InboundListener {
@@ -856,4 +1035,39 @@ func validStrictCredential(value string) bool {
 		}
 	}
 	return true
+}
+
+// Observe the metadata mutated by the real Mihomo tunnel, after it has handled
+// the authenticated IP-only SOCKS connection. A DNS cache lookup or a working
+// real IP alone is not sufficient proof of redir-host/Fake-IP restoration.
+type strictDNSProof struct {
+	address netip.Addr
+	nonce [16]byte
+	expires time.Time
+	observed bool
+}
+type strictObservedTunnel struct {
+	C.Tunnel
+	service *strictUDPIngressService
+}
+func (t *strictObservedTunnel) HandleTCPConn(conn net.Conn, metadata *C.Metadata) {
+	originalIP, originalHost := metadata.DstIP.Unmap(), metadata.Host
+	var keyID [16]byte
+	user, err := hex.DecodeString(metadata.InUser)
+	eligible := err == nil && len(user) == 32 && strings.HasPrefix(metadata.InName, strictIngressNamePrefix) && originalHost == ""
+	if eligible { copy(keyID[:], user[:16]) }
+	t.service.dnsMu.Lock()
+	proof, exists := t.service.dnsProof[keyID]
+	credential := t.service.credentials[keyID]
+	t.service.dnsMu.Unlock()
+	eligible = eligible && exists && credential != nil && metadata.SpecialProxy == credential.routeName && originalIP == proof.address && time.Now().Before(proof.expires)
+	t.Tunnel.HandleTCPConn(conn, metadata)
+	if !eligible || metadata.Host != "www.cloudflare.com" || (metadata.DNSMode != C.DNSMapping && metadata.DNSMode != C.DNSFakeIP) { return }
+	t.service.dnsMu.Lock()
+	current := t.service.dnsProof[keyID]
+	if current.nonce == proof.nonce && current.address == proof.address && time.Now().Before(current.expires) {
+		current.observed = true
+		t.service.dnsProof[keyID] = current
+	}
+	t.service.dnsMu.Unlock()
 }

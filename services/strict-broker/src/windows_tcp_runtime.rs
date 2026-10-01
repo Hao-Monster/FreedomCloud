@@ -16,7 +16,7 @@ use windows_sys::Win32::Security::Cryptography::{
 
 use crate::windows_core_udp_health::probe_core_udp_health;
 use crate::{
-    handle_windows_strict_tcp_connection, probe_socks5_authentication,
+    probe_socks5_authentication,
     spawn_windows_udp_bridge_runtime, verify_windows_packaged_core_ingress_set, ForwardingHealth,
     ForwardingHealthProbe, Socks5ProxyIngress, StrictCoreUdpTransport,
     StrictDriverDatagramLeaseWindow, StrictPackageManifest, WindowsDriverPolicySnapshot,
@@ -145,11 +145,20 @@ impl WindowsTcpForwardingHealth {
 
         let plan_slot = Arc::new(OnceLock::<Arc<WindowsStrictTcpSessionPlan>>::new());
         let handler_slot = Arc::clone(&plan_slot);
+        let relayed = Arc::new(AtomicUsize::new(0));
+        let relay_observer = Arc::clone(&relayed);
+        let canary_pid = Arc::new(AtomicUsize::new(0));
+        let canary_pid_observer = Arc::clone(&canary_pid);
         let pool = listener_binding.into_pool(tcp_worker_count(), move |stream, shutdown| {
             let plan = handler_slot
                 .get()
                 .ok_or_else(|| anyhow::anyhow!("strict TCP session plan is not active"))?;
-            handle_windows_strict_tcp_connection(stream, plan, shutdown).map(|_| ())
+            crate::windows_tcp_session::handle_windows_strict_tcp_connection_observed(stream, plan, shutdown, |context| {
+                let pid = context.canary_process_id() as usize;
+                if pid != 0 && pid == canary_pid_observer.load(Ordering::Acquire) {
+                    relay_observer.fetch_add(1, Ordering::Release);
+                }
+            }).map(|_| ())
         })?;
         let nonce = random_nonce()?;
         let lease = WindowsEndpointLease::new(
@@ -248,7 +257,7 @@ impl WindowsTcpForwardingHealth {
             Arc::clone(&self.lease_driver),
             lease,
             plan,
-            lease_window,
+            Arc::clone(&lease_window),
             renewal_requests,
             listener_shutdown.clone(),
             Arc::clone(&listener_alive),
@@ -278,14 +287,49 @@ impl WindowsTcpForwardingHealth {
             _udp_sockets: udp_sockets,
         });
 
-        // Core ownership/authentication and a pre-armed bounded UDP receive are
-        // proven locally. Full relay and DNS health remain false until the
-        // end-to-end WFP canaries and VM gates pass, so BrokerEngine cannot arm
-        // this partial data plane.
+        let measured = crate::windows_canary::run_canaries(
+            &self.datagram_driver, &self.package, revision, policy_digest, nonce, ingress, &relayed, &canary_pid,
+        );
+        // Close the canary-only data gate before removing its PID admission.
+        // A stopped receive loop cannot be reused after gate revocation.
+        let cleanup = (|| {
+            if let Some(bridge) = self.active.as_mut().and_then(|a| a.udp_bridge.take()) {
+                bridge.prepare_gate_revocation();
+                let gate = self.datagram_driver.deactivate_datagram_path();
+                let stopped = bridge.stop();
+                gate?;
+                stopped?;
+            }
+            self.datagram_driver.clear_canary()?;
+            Ok::<_, anyhow::Error>(())
+        })();
+        if let Err(error) = measured.and(cleanup) {
+            let rollback = self.deactivate();
+            return Err(match rollback {
+                Ok(()) => error,
+                Err(rollback) => anyhow::anyhow!("{error:#}; canary rollback: {rollback:#}"),
+            });
+        }
+        let rearm = (|| {
+            let core = StrictCoreUdpTransport::connect(ingress, CORE_UDP_DATA_TIMEOUT)?;
+            let target_groups = ingress.entries.iter().map(|entry| entry.target_group.clone()).collect();
+            let bridge = spawn_windows_udp_bridge_runtime(
+                Arc::clone(&self.datagram_driver), core, target_groups, lease_window, random_nonce,
+            )?;
+            self.active.as_mut().context("strict runtime disappeared")?.udp_bridge = Some(Box::new(bridge));
+            self.active.as_ref().context("strict runtime disappeared")?.verify_alive()
+        })();
+        if let Err(error) = rearm {
+            let rollback = self.deactivate();
+            return Err(match rollback {
+                Ok(()) => error,
+                Err(rollback) => anyhow::anyhow!("{error:#}; canary rearm rollback: {rollback:#}"),
+            });
+        }
         Ok(ForwardingHealth {
             core_healthy: true,
-            relay_healthy: false,
-            dns_healthy: false,
+            relay_healthy: true,
+            dns_healthy: true,
             capabilities: initial_snapshot.capabilities,
         })
     }

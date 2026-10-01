@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"runtime"
 	"strconv"
 	"sync"
 )
@@ -41,6 +42,7 @@ func send(data []byte) {
 
 func startServer(arg string, authToken string) {
 	agentCoreAuthenticated.Store(false)
+	macCoreAuthenticated.Store(false)
 
 	_, numErr := strconv.Atoi(arg)
 
@@ -55,7 +57,15 @@ func startServer(arg string, authToken string) {
 		fmt.Printf("startServer: connection failed: %v\n", err)
 		return
 	}
-	if authToken != "" {
+	reader := bufio.NewReaderSize(c, 4096)
+	if runtime.GOOS == "darwin" && authToken != "" {
+		if err := authenticateMacCore(c, reader, authToken); err != nil {
+			_ = c.Close()
+			fmt.Println("startServer: macOS control authentication failed")
+			return
+		}
+		macCoreAuthenticated.Store(true)
+	} else if authToken != "" {
 		handshake, marshalErr := json.Marshal(map[string]any{
 			"_agentCore": map[string]string{"token": authToken},
 		})
@@ -76,6 +86,12 @@ func startServer(arg string, authToken string) {
 
 	defer func() {
 		agentCoreAuthenticated.Store(false)
+		if macCoreAuthenticated.Swap(false) {
+			runLock.Lock()
+			macStrictIngressIntent = nil
+			removeStrictIngressListenersLocked()
+			runLock.Unlock()
+		}
 		connMu.Lock()
 		if conn != nil {
 			_ = conn.Close()
@@ -83,8 +99,6 @@ func startServer(arg string, authToken string) {
 		}
 		connMu.Unlock()
 	}()
-
-	reader := bufio.NewReader(c)
 
 	for {
 		data, err := reader.ReadString('\n')

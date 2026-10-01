@@ -13,6 +13,7 @@ enum AgentCommand {
   applyStrictBlock,
   clearStrictBlock,
   applyStrictPolicy,
+  migrateStrictPolicy,
   clearStrictPolicy,
   inspectStrictIdentity,
 }
@@ -41,6 +42,10 @@ enum AgentStrictPolicyFailureReason {
   brokerUnavailable,
   recoveryExhausted,
   invalidPolicy,
+  forwardingDnsMapping,
+  forwardingDnsRestoration,
+  forwardingCanary,
+  forwardingTimeout,
 }
 
 class AgentEndpoint {
@@ -256,6 +261,9 @@ class AgentStrictPolicyStatus {
     required this.state,
     required this.generation,
     this.failureReason,
+    this.recoveryAttempts = 0,
+    this.recoveryExhausted = false,
+    this.recoveryNextDelayMs,
   });
 
   factory AgentStrictPolicyStatus.fromJson(Map<String, dynamic> json) {
@@ -268,7 +276,19 @@ class AgentStrictPolicyStatus {
     if (generation is! int || generation < 0) {
       throw const FormatException('Invalid strict policy generation');
     }
+    final recovery = json['recovery'];
+    if (recovery != null && (recovery is! Map<String, dynamic> ||
+        recovery['attempts'] is! int || (recovery['attempts'] as int) < 0 ||
+        recovery['exhausted'] is! bool ||
+        (recovery['nextDelayMs'] != null && (recovery['nextDelayMs'] is! int ||
+          (recovery['nextDelayMs'] as int) < 0)))) {
+      throw const FormatException('Invalid strict recovery diagnostics');
+    }
+    final details = recovery as Map<String, dynamic>?;
     return AgentStrictPolicyStatus(
+      recoveryAttempts: details?['attempts'] as int? ?? 0,
+      recoveryExhausted: details?['exhausted'] as bool? ?? false,
+      recoveryNextDelayMs: details?['nextDelayMs'] as int?,
       state: state,
       generation: generation,
       failureReason: reason,
@@ -278,10 +298,14 @@ class AgentStrictPolicyStatus {
   final AgentStrictPolicyState state;
   final int generation;
   final AgentStrictPolicyFailureReason? failureReason;
+  final int recoveryAttempts;
+  final bool recoveryExhausted;
+  final int? recoveryNextDelayMs;
 
   Map<String, Object?> toJson() => {
         'state': state.name,
         'generation': generation,
+        'recovery': {'attempts': recoveryAttempts, 'exhausted': recoveryExhausted, 'nextDelayMs': recoveryNextDelayMs},
         if (failureReason != null) 'failureReason': failureReason!.name,
       };
 
@@ -313,7 +337,10 @@ class AgentStrictPolicyStatusCache {
     if (next.generation < _value.generation) return false;
     if (next.state == _value.state &&
         next.generation == _value.generation &&
-        next.failureReason == _value.failureReason) {
+        next.failureReason == _value.failureReason &&
+        next.recoveryAttempts == _value.recoveryAttempts &&
+        next.recoveryExhausted == _value.recoveryExhausted &&
+        next.recoveryNextDelayMs == _value.recoveryNextDelayMs) {
       return false;
     }
     _value = next;
@@ -336,6 +363,9 @@ AgentStrictPolicyStatus strictPolicyStatusForCore({
     state: AgentStrictPolicyState.blocking,
     generation: status.generation,
     failureReason: AgentStrictPolicyFailureReason.coreUnavailable,
+    recoveryAttempts: status.recoveryAttempts,
+    recoveryExhausted: status.recoveryExhausted,
+    recoveryNextDelayMs: status.recoveryNextDelayMs,
   );
 }
 

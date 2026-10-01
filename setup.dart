@@ -147,6 +147,30 @@ class Build {
 
   static String get distPath => join(current, "dist");
 
+  /// Public update trust configuration is baked into the client, never read
+  /// from an untrusted release feed or a downloaded settings file.
+  static List<String> get signedUpdateDefines {
+    final feed = Platform.environment['FCX_RELEASE_MANIFEST_URL']?.trim() ?? '';
+    final pin = Platform.environment['FCX_RELEASE_CERT_SHA256']?.trim() ?? '';
+    final team = Platform.environment['FCX_MACOS_TEAM_ID']?.trim() ?? '';
+    if (feed.isEmpty && pin.isEmpty && team.isEmpty) return const [];
+    final uri = Uri.tryParse(feed);
+    if (uri == null || uri.scheme != 'https' || uri.host.isEmpty ||
+        uri.userInfo.isNotEmpty || !RegExp(r'^[a-fA-F0-9]{64}$').hasMatch(pin)) {
+      throw StateError('Signed updates require an HTTPS FCX_RELEASE_MANIFEST_URL '
+          'and a 64-digit FCX_RELEASE_CERT_SHA256');
+    }
+    if ((Platform.isMacOS || team.isNotEmpty) &&
+        !RegExp(r'^[A-Z0-9]{10}$').hasMatch(team)) {
+      throw StateError('macOS signed updates require FCX_MACOS_TEAM_ID');
+    }
+    return [
+      '--dart-define=FCX_RELEASE_MANIFEST_URL=$feed',
+      '--dart-define=FCX_RELEASE_CERT_SHA256=${pin.toUpperCase()}',
+      if (team.isNotEmpty) '--dart-define=FCX_MACOS_TEAM_ID=$team',
+    ];
+  }
+
   // Full release version for the User-Agent, taken from the CI tag
   // (GITHUB_REF_NAME, e.g. "v0.4.1-pre.18"), baked in via --dart-define=APP_VERSION.
   // Only a version tag counts — a branch name (e.g. "dev") is ignored, so local
@@ -888,8 +912,38 @@ class Build {
     return value == "1" || value == "true" || value == "yes";
   }
 
+  static String? _generatedStrictManifest;
+
+  static Future<void> signWindowsBinary(String path) async {
+    final thumbprint = Platform.environment['FLCLASH_SIGNING_THUMBPRINT']?.trim();
+    final signTool = Platform.environment['FLCLASH_SIGNTOOL']?.trim();
+    if (thumbprint == null || thumbprint.isEmpty || signTool == null || signTool.isEmpty) {
+      throw 'FLCLASH_SIGNING_THUMBPRINT and FLCLASH_SIGNTOOL are required for the strict source build';
+    }
+    await exec(['powershell.exe', '-NoLogo', '-NoProfile', '-NonInteractive',
+      '-File', join(current, 'engineering', 'm3-test-package', 'Sign-StrictBinary.ps1'),
+      '-Path', File(path).absolute.path, '-SignTool', signTool, '-Thumbprint', thumbprint],
+      name: 'sign strict component');
+  }
+
+  static Future<void> prepareStrictManifest(String corePath, String agentPath) async {
+    final buildId = Platform.environment['FLCLASH_STRICT_DRIVER_BUILD_ID']?.trim();
+    if (buildId == null || !RegExp(r'^[0-9a-fA-F]{32}$').hasMatch(buildId)) {
+      throw 'FLCLASH_STRICT_DRIVER_BUILD_ID must match the supplied driver build ID';
+    }
+    final output = File(join(outDir, 'windows', 'strict-package-manifest.json')).absolute.path;
+    await exec(['powershell.exe', '-NoLogo', '-NoProfile', '-NonInteractive',
+      '-File', join(current, 'engineering', 'm3-test-package', 'New-M3PackageManifest.ps1'),
+      '-DriverBuildId', buildId, '-PackageVersion', readVersion(),
+      '-DriverPath', _requiredStrictInput('FLCLASH_STRICT_DRIVER_PATH'),
+      '-AgentPath', File(agentPath).absolute.path, '-CorePath', File(corePath).absolute.path,
+      '-OutputPath', output, '-Force'], name: 'assemble signed component manifest');
+    _generatedStrictManifest = output;
+  }
+
   static String _requiredStrictInput(String name) {
-    final value = Platform.environment[name]?.trim();
+    final value = name == 'FLCLASH_STRICT_PACKAGE_MANIFEST' && _generatedStrictManifest != null
+        ? _generatedStrictManifest : Platform.environment[name]?.trim();
     if (value == null || value.isEmpty) {
       throw "$name is required when FLCLASH_STRICT_PACKAGE is enabled";
     }
@@ -907,6 +961,9 @@ class Build {
   /// qualification and embeds the supplied manifest through Cargo.
   static Future<String> buildStrictBroker(Target target, {Arch? arch}) async {
     final prebuilt = Platform.environment["FLCLASH_STRICT_BROKER_PATH"]?.trim();
+    if (_generatedStrictManifest != null && prebuilt != null && prebuilt.isNotEmpty) {
+      throw 'A source-built signed package must rebuild Broker against its new manifest; unset FLCLASH_STRICT_BROKER_PATH';
+    }
     if (prebuilt != null && prebuilt.isNotEmpty) {
       final file = File(prebuilt);
       if (FileSystemEntity.typeSync(prebuilt, followLinks: false) !=
@@ -1097,6 +1154,7 @@ class BuildCommand extends Command {
         "build",
         "macos",
         "--release",
+        ...Build.signedUpdateDefines,
         "--dart-define=APP_ENV=$env",
         "--dart-define=CORE_VERSION=$coreVersion",
         "--dart-define=APP_VERSION=${Build.appVersion}",
@@ -1165,6 +1223,7 @@ class BuildCommand extends Command {
         "build",
         "windows",
         "--release",
+        ...Build.signedUpdateDefines,
         "--dart-define=APP_ENV=$env",
         "--dart-define=CORE_SHA256=$token",
         "--dart-define=CORE_VERSION=$coreVersion",
@@ -1175,6 +1234,9 @@ class BuildCommand extends Command {
     final winArch = arch == Arch.arm64 ? "arm64" : "x64";
     final buildDir =
         join(current, "build", "windows", winArch, "runner", "Release");
+    if (Build.strictPackageEnabled) {
+      await Build.signWindowsBinary(join(buildDir, '${Build.appName}.exe'));
+    }
     Build.bundleWindowsMsvcRuntime(buildDir, winArch);
     if (Build.strictPackageEnabled) {
       final broker = strictBrokerPath;
@@ -1241,16 +1303,8 @@ class BuildCommand extends Command {
           .replaceAll(
             "{{STRICT_UPGRADE_STOP}}",
             Build.strictPackageEnabled
-                ? '''  Exec('sc.exe', 'query "FlClashStrictBroker"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-  if ResultCode = 0 then
-  begin
-    Exec('sc.exe', 'stop "FlClashStrictBroker"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-    if ResultCode <> 0 then
-    begin
-      MsgBox('The existing Strict Broker service could not be stopped for upgrade.', mbError, MB_OK);
-      Abort;
-    end;
-  end;'''
+                ? '''  StopStrictService('FlClashStrictBroker');
+  StopStrictService('FlClashStrictCallout');'''
                 : "",
           )
           .replaceAll("{{EXECUTABLE_NAME}}", "${Build.appName}.exe")
@@ -1263,18 +1317,30 @@ class BuildCommand extends Command {
           .replaceAll(
             "{{STRICT_SERVICE_BLOCK}}",
             Build.strictPackageEnabled
-                ? '''    StrictBrokerExe := ExpandConstant('{commonpf}\\FlClashX Service\\FlClashStrictBroker.exe');
-    Exec('sc.exe', 'config "FlClashStrictBroker" binPath= "' + StrictBrokerExe + '" obj= LocalSystem type= own start= auto', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-    if ResultCode <> 0 then
-      Exec('sc.exe', 'create "FlClashStrictBroker" binPath= "' + StrictBrokerExe + '" obj= LocalSystem type= own start= auto', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+                ? '''    SecureStrictRecoveryDirectory;
+    StrictSc('query "FlClashStrictCallout"', ResultCode);
+    if ResultCode = 1060 then
+      StrictSc('create "FlClashStrictCallout" type= kernel start= demand binPath= "' + ExpandConstant('{commonpf}\\FlClashX Service\\FlClashStrictCallout.sys') + '"', ResultCode)
+    else if ResultCode = 0 then
+      StrictSc('config "FlClashStrictCallout" type= kernel start= demand binPath= "' + ExpandConstant('{commonpf}\\FlClashX Service\\FlClashStrictCallout.sys') + '"', ResultCode);
     if ResultCode = 0 then
-      Exec('sc.exe', 'config "FlClashStrictBroker" binPath= "' + StrictBrokerExe + '" obj= LocalSystem type= own start= auto', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+      StrictSc('start "FlClashStrictCallout"', ResultCode);
+    if (ResultCode <> 0) and (ResultCode <> 1056) then
+      RaiseException('Strict driver registration or startup failed. Existing protection is retained.');
+    StrictBrokerExe := ExpandConstant('{commonpf}\\FlClashX Service\\FlClashStrictBroker.exe');
+    StrictSc('query "FlClashStrictBroker"', ResultCode);
     if ResultCode = 0 then
-      Exec('sc.exe', 'failure "FlClashStrictBroker" reset= 86400 actions= restart/60000/restart/120000/""', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+      StrictSc('config "FlClashStrictBroker" binPath= "\\"' + StrictBrokerExe + '\\"" obj= LocalSystem type= own start= auto', ResultCode);
+    if ResultCode = 1060 then
+      StrictSc('create "FlClashStrictBroker" binPath= "\\"' + StrictBrokerExe + '\\"" obj= LocalSystem type= own start= auto', ResultCode);
     if ResultCode = 0 then
-      Exec('sc.exe', 'failureflag "FlClashStrictBroker" 1', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+      StrictSc('config "FlClashStrictBroker" binPath= "\\"' + StrictBrokerExe + '\\"" obj= LocalSystem type= own start= auto', ResultCode);
     if ResultCode = 0 then
-      Exec('sc.exe', 'start "FlClashStrictBroker"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+      StrictSc('failure "FlClashStrictBroker" reset= 86400 actions= restart/60000/restart/120000/""', ResultCode);
+    if ResultCode = 0 then
+      StrictSc('failureflag "FlClashStrictBroker" 1', ResultCode);
+    if ResultCode = 0 then
+      StrictSc('start "FlClashStrictBroker"', ResultCode);
     if ResultCode <> 0 then
     begin
       MsgBox('Strict Broker service registration or startup failed. Installation cannot continue.', mbError, MB_OK);
@@ -1285,38 +1351,14 @@ class BuildCommand extends Command {
           .replaceAll(
             "{{STRICT_UNINSTALL_BLOCK}}",
             Build.strictPackageEnabled
-                ? '''      Exec('sc.exe', 'query "FlClashStrictBroker"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-      if ResultCode = 0 then
-      begin
-        Exec('sc.exe', 'stop "FlClashStrictBroker"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-        if ResultCode <> 0 then
-        begin
-          MsgBox('The Strict Broker service could not be stopped for uninstall.', mbError, MB_OK);
-          Abort;
-        end;
-        Exec('sc.exe', 'delete "FlClashStrictBroker"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-        if ResultCode <> 0 then
-        begin
-          MsgBox('The Strict Broker service could not be removed.', mbError, MB_OK);
-          Abort;
-        end;
-      end;
-      Exec('sc.exe', 'query "FlClashStrictCallout"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-      if ResultCode = 0 then
-      begin
-        Exec('sc.exe', 'stop "FlClashStrictCallout"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-        if ResultCode <> 0 then
-        begin
-          MsgBox('The Strict driver service could not be stopped.', mbError, MB_OK);
-          Abort;
-        end;
-        Exec('sc.exe', 'delete "FlClashStrictCallout"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-        if ResultCode <> 0 then
-        begin
-          MsgBox('The Strict driver service could not be removed.', mbError, MB_OK);
-          Abort;
-        end;
-      end;'''
+                ? '''      StopStrictService('FlClashStrictBroker');
+      StopStrictService('FlClashStrictCallout');
+      StrictSc('delete "FlClashStrictBroker"', ResultCode);
+      if (ResultCode <> 0) and (ResultCode <> 1060) then
+        RaiseException('Cannot remove Strict Broker service.');
+      StrictSc('delete "FlClashStrictCallout"', ResultCode);
+      if (ResultCode <> 0) and (ResultCode <> 1060) then
+        RaiseException('Cannot remove Strict driver service.');'''
                 : "",
           )
           // The strict file block is injected after the normal source-dir
@@ -1407,6 +1449,7 @@ class BuildCommand extends Command {
         "build",
         "linux",
         "--release",
+        ...Build.signedUpdateDefines,
         "--target-platform=${targetMap[arch]}",
         "--dart-define=APP_ENV=$env",
         "--dart-define=CORE_VERSION=$coreVersion",
@@ -1744,13 +1787,23 @@ class BuildCommand extends Command {
 
     switch (target) {
       case Target.windows:
+        // Signing changes PE bytes. Compute the immutable Core allow-list only
+        // after signing, then compile both Helper and UI against that digest.
+        if (Build.strictPackageEnabled) await Build.signWindowsBinary(corePaths.first);
         final token = await Build.calcSha256(corePaths.first);
         final buildMsix = argResults?["msix"] == true;
         await Build.buildAgent(target, arch: arch);
         await Build.buildHelper(target, token, arch: arch);
+        if (Build.strictPackageEnabled) {
+          final agentPath = join(Build.outDir, target.name, 'FlClashAgent.exe');
+          await Build.signWindowsBinary(agentPath);
+          await Build.signWindowsBinary(join(Build.outDir, target.name, 'FlClashHelperService.exe'));
+          await Build.prepareStrictManifest(corePaths.first, agentPath);
+        }
         final strictBrokerPath = Build.strictPackageEnabled
             ? await Build.buildStrictBroker(target, arch: arch)
             : null;
+        if (strictBrokerPath != null) await Build.signWindowsBinary(strictBrokerPath);
         await _buildWindowsApp(
           arch: arch!,
           env: env,

@@ -10,6 +10,52 @@ class Proxy extends ProxyPlatform {
   static String url = "127.0.0.1";
 
   @override
+  Future<bool?> startPac(String address) async {
+    final uri = Uri.tryParse(address);
+    if (uri == null || !['http', 'https'].contains(uri.scheme) ||
+        uri.host.isEmpty || uri.userInfo.isNotEmpty || address.length > 2048 ||
+        address.contains(RegExp(r'[\x00-\x20]'))) {
+      throw ArgumentError('Invalid PAC URL');
+    }
+    if (Platform.isWindows) return ProxyPlatform.instance.startPac(address);
+    if (Platform.isMacOS) {
+      final devices = await _getNetworkDeviceListWithMacos();
+      if (devices.isEmpty) return false;
+      for (final device in devices) {
+        for (final args in [
+          ['-setautoproxyurl', device, address],
+          ['-setwebproxystate', device, 'off'],
+          ['-setsecurewebproxystate', device, 'off'],
+          ['-setsocksfirewallproxystate', device, 'off'],
+          ['-setautoproxystate', device, 'on'],
+        ]) {
+          final result = await Process.run('/usr/sbin/networksetup', args);
+          if (result.exitCode != 0) return false;
+        }
+      }
+      return true;
+    }
+    if (Platform.isLinux) {
+      final kde = Platform.environment['XDG_CURRENT_DESKTOP']?.contains('KDE') == true;
+      final commands = kde
+          ? [
+              ['kwriteconfig5', '--file', 'kioslaverc', '--group', 'Proxy Settings', '--key', 'Proxy Config Script', address],
+              ['kwriteconfig5', '--file', 'kioslaverc', '--group', 'Proxy Settings', '--key', 'ProxyType', '2'],
+            ]
+          : [
+              ['gsettings', 'set', 'org.gnome.system.proxy', 'autoconfig-url', address],
+              ['gsettings', 'set', 'org.gnome.system.proxy', 'mode', 'auto'],
+            ];
+      for (final command in commands) {
+        final result = await Process.run(command.first, command.sublist(1));
+        if (result.exitCode != 0) return false;
+      }
+      return true;
+    }
+    return false;
+  }
+
+  @override
   Future<bool?> startProxy(
     int port, [
     List<String> bypassDomain = const [],
@@ -180,6 +226,9 @@ class Proxy extends ProxyPlatform {
     try {
       final devices = await _getNetworkDeviceListWithMacos();
       for (final dev in devices) {
+        final pacOff = await Process.run('/usr/sbin/networksetup',
+            ['-setautoproxystate', dev, 'off']);
+        if (pacOff.exitCode != 0) return false;
         await Future.wait([
           Process.run(
             "/usr/sbin/networksetup",
@@ -257,8 +306,8 @@ class Proxy extends ProxyPlatform {
   Future<List<String>> _getNetworkDeviceListWithMacos() async {
     final res = await Process.run(
         "/usr/sbin/networksetup", ["-listallnetworkservices"]);
-    final lines = res.stdout.toString().split("\n");
-    lines.removeWhere((element) => element.contains("*"));
-    return lines;
+    if (res.exitCode != 0) throw StateError('Cannot enumerate network services');
+    return res.stdout.toString().split('\n').skip(1).map((line) => line.trim())
+        .where((line) => line.isNotEmpty && !line.startsWith('*')).toList();
   }
 }

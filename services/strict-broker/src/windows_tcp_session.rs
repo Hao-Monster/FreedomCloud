@@ -180,20 +180,31 @@ pub fn handle_windows_strict_tcp_connection(
     plan: &WindowsStrictTcpSessionPlan,
     shutdown: &WindowsPipeShutdown,
 ) -> Result<WindowsTcpRelayReport> {
+    handle_windows_strict_tcp_connection_observed(client, plan, shutdown, |_| {})
+}
+
+pub(crate) fn handle_windows_strict_tcp_connection_observed(
+    client: TcpStream, plan: &WindowsStrictTcpSessionPlan, shutdown: &WindowsPipeShutdown,
+    observer: impl FnOnce(StrictRedirectContext),
+) -> Result<WindowsTcpRelayReport> {
     if shutdown.is_requested() {
         bail!("strict TCP session was cancelled before metadata validation");
     }
     plan.ensure_core_running()?;
     let binding = plan.current_binding()?;
     let metadata = query_windows_redirect_socket(&client, &binding, StrictRedirectTransport::Tcp)?;
-    connect_and_relay_with(
+    let report = connect_and_relay_with(
         client,
         plan,
         metadata.context(),
         metadata.redirect_records(),
         shutdown,
         connect_windows_redirected_outbound,
-    )
+    )?;
+    if report.client_to_upstream_bytes > 0 && report.upstream_to_client_bytes > 0 {
+        observer(metadata.context());
+    }
+    Ok(report)
 }
 
 fn connect_and_relay_with<C>(

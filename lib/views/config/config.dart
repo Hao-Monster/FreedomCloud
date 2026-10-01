@@ -1,3 +1,5 @@
+import 'package:flclashx/views/config/effective_config.dart';
+import 'package:flclashx/views/config/rules_editor.dart';
 import 'package:flclashx/common/common.dart';
 import 'package:flclashx/models/clash_config.dart';
 import 'package:flclashx/providers/config.dart' show patchClashConfigProvider;
@@ -20,6 +22,8 @@ class _ConfigViewState extends State<ConfigView> {
   @override
   Widget build(BuildContext context) {
     final items = <Widget>[
+      ListItem.open(title: const Text('生效配置差异'), subtitle: const Text('订阅、覆写与实际 Core 配置'), leading: const Icon(Icons.difference), delegate: OpenDelegate(title: '生效配置差异', widget: const EffectiveConfigView(), blur: false)),
+      ListItem.open(title: const Text('规则编辑器'), subtitle: const Text('YAML 同步、撤销、恢复与生效差异'), leading: const Icon(Icons.rule), delegate: OpenDelegate(title: '规则编辑器', widget: const RulesEditorView(), blur: false)),
       ListItem.open(
         title: Text(appLocalizations.general),
         subtitle: Text(appLocalizations.generalDesc),

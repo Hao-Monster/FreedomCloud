@@ -5,6 +5,7 @@ import 'package:flclashx/state.dart';
 import 'package:flclashx/widgets/widgets.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flclashx/widgets/health_check_dialog.dart';
 
 class NetworkDetection extends ConsumerStatefulWidget {
   const NetworkDetection({super.key});
@@ -77,6 +78,10 @@ class _NetworkDetectionState extends ConsumerState<NetworkDetection> {
                       const SizedBox(
                         width: 8,
                       ),
+                      IconButton(tooltip: '健康检查与诊断导出',
+                        icon: const Icon(Icons.health_and_safety_outlined, size: 18),
+                        onPressed: () => showDialog<void>(context: context,
+                          builder: (_) => const HealthCheckDialog())),
                       Flexible(
                         flex: 1,
                         child: TooltipText(
