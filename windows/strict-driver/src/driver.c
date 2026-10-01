@@ -2867,19 +2867,7 @@ Exit:
     return status;
 
 ExitWithoutContext:
-    if (attempted && NT_SUCCESS(CompletionStatus) && flowContext->CanarySequence != 0) {
-        KIRQL canaryIrql;
-        UINT64 bit = 0;
-        if (flowContext->RemotePort == 53) bit = flowContext->AddressFamily == FCX_STRICT_ADDRESS_FAMILY_V4 ? 1 : 2;
-        if (flowContext->RemotePort == 443) bit = flowContext->AddressFamily == FCX_STRICT_ADDRESS_FAMILY_V4 ? 4 : 8;
-        KeAcquireSpinLock(&FcxCanaryLock, &canaryIrql);
-        if (FcxCanaryOnly && flowContext->CanarySequence == FcxCanarySequence &&
-            flowContext->TargetGroupIndex == FcxCanary.TargetGroup &&
-            RtlCompareMemory(flowContext->LeaseNonce, FcxCanary.LeaseNonce, 16) == 16) {
-            FcxCanaryUdpMask |= bit;
-        }
-        KeReleaseSpinLock(&FcxCanaryLock, canaryIrql);
-    }
+    // No injection context was created; this failure cannot qualify a canary.
     FcxDereferenceUdpFlowContext(flowContext);
     FcxFinishUdpInjectionSlot(FALSE, status);
     return status;
