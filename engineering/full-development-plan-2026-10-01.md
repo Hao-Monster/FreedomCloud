@@ -189,6 +189,10 @@ remains on hold; the Windows development signing path remains supported.
 The integration checkout is `E:\CodeWorkstation\FlClashX-full-development` on
 `codex/full-requirements-development`. The original checkout and pre-existing
 branches/worktrees are preserved. Changes are saved in focused local commits;
-the source branch is handed off through a Draft PR targeting development. Main
+the source branch is handed off through a Draft PR targeting main. Main
 merge and distribution remain pending user-owned validation and required checks.
 None of the commits is described as having passed CI.
+
+The source handoff targets main under the user-authorized main integration scope.
+Development is an ancestor behind main; targeting it would re-list already merged
+main history. This exception does not bypass either branch protection or tests.
