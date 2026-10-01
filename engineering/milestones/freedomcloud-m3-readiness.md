@@ -96,3 +96,23 @@ milestones define separate dependencies, issues and acceptance evidence.
   are recorded.
 - Never force-push shared branches. Never clean or reset unrelated local work
   as part of milestone work.
+
+## Current handoff — 2026-10-01
+
+Source implementation status is tracked by `../full-development-plan-2026-10-01.md`.
+This original nine-goal ledger remains the release/acceptance gate, not a claim
+that all implementation is still missing. Open GitHub items remain:
+
+| Issue | Work item | Remaining ownership |
+|---|---|---|
+| #4 | M3-4; R-011/R-110 | Commercial trust/signing paused by user. Development self-signing source exists; real artifacts and OS trust are not provisioned in this handoff. |
+| #3 | M3-5; R-110/R-114/R-116 | User installation/lifecycle validation; fixes discovered by validation return to development. |
+| #7 | M3-6; R-107/R-108/R-112 | User Windows 11 traffic and failure-matrix acceptance. |
+| #5 | M3-7; R-005/R-008/R-113 | User runtime regression acceptance; external endpoint availability is not proven by source changes. |
+
+No item is closed using unexecuted tests. Main protection requires Flutter tests,
+Core Go tests and M3 package integrity checks. The source handoff PR stays Draft
+and unmerged until user-owned checks are available. User requested no testing,
+so the handoff commit explicitly skips automatic CI; this does not satisfy or
+remove required checks. No protected branch bypass or release is authorized by
+source completion. Existing worktrees are retained without destructive cleanup.

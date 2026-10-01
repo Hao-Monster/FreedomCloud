@@ -189,5 +189,6 @@ remains on hold; the Windows development signing path remains supported.
 The integration checkout is `E:\CodeWorkstation\FlClashX-full-development` on
 `codex/full-requirements-development`. The original checkout and pre-existing
 branches/worktrees are preserved. Changes are saved in focused local commits;
-no remote PR, main merge or distribution artifact is produced in this code-only
-delivery. None of the local commits is described as having passed CI.
+the source branch is handed off through a Draft PR targeting development. Main
+merge and distribution remain pending user-owned validation and required checks.
+None of the commits is described as having passed CI.

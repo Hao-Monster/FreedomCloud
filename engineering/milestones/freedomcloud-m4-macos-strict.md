@@ -1,6 +1,6 @@
 # FreedomCloud M4 macOS strict mode
 
-Status: **Blocked until M3 exit criteria and Apple prerequisites are complete**
+Status: **Source implementation integrated; user validation and Apple/MDM provisioning pending**
 
 GitHub milestone: [FreedomCloud M4 macOS strict mode](https://github.com/Hao-Monster/FreedomCloud/milestone/2)
 
@@ -28,3 +28,12 @@ Windows strict WFP release gate.
 
 Every M4 feature gets its own GitHub issue and focused PR. M4 work targets the
 M4 milestone and must not be attached to the M3 Windows evidence ledger.
+
+## Source handoff — 2026-10-01
+
+R-111 and related identity, control, forwarding and recovery code are integrated
+through `5826ba1`. See `../full-development-plan-2026-10-01.md` (DEV-06) and
+`../macos-managed-strict.md`. The accepted implementation uses MDM-managed per-app
+VPN and a Network Extension system extension. No build, signing, installation or
+acceptance was executed for this handoff. Keep this milestone open for user
+validation and external provisioning; source completion is not release approval.
