@@ -111,7 +111,7 @@ final class ManagedStrictProxyController: NSObject, OSSystemExtensionRequestDele
                     return ["name": manager.localizedDescription ?? "Managed VPN",
                             "account": proto?.providerConfiguration?["controlKeyAccount"] as? String ?? "",
                             "status": manager.connection.status.rawValue,
-                            "identities": (manager.appRules ?? []).map { $0.matchSigningIdentifier }]
+                            "identities": manager.appRules.map { $0.matchSigningIdentifier }]
                 }); return
             }
             if ["prepare", "configure"].contains(call.method) && matching.count != 1 {
@@ -152,7 +152,7 @@ final class ManagedStrictProxyController: NSObject, OSSystemExtensionRequestDele
                 let body = try JSONSerialization.data(withJSONObject: raw)
                 let configuration = try JSONDecoder().decode(StrictProxyConfiguration.self, from: body)
                 try configuration.validate()
-                let mapped = Set((manager.appRules ?? []).map { $0.matchSigningIdentifier })
+                let mapped = Set(manager.appRules.map { $0.matchSigningIdentifier })
                 let selected = Set(configuration.policies.map { $0.signingIdentifier })
                 guard mapped == selected, !mapped.isEmpty else {
                     throw StrictProxyError(message: "MDM application mappings must exactly match the selected strict identities")
@@ -161,7 +161,7 @@ final class ManagedStrictProxyController: NSObject, OSSystemExtensionRequestDele
                     throw StrictProxyError(message: "Exact executable paths are required")
                 }
                 for (index, policy) in configuration.policies.enumerated() {
-                    guard let rule = manager.appRules?.first(where: { $0.matchSigningIdentifier == policy.signingIdentifier }),
+                    guard let rule = manager.appRules.first(where: { $0.matchSigningIdentifier == policy.signingIdentifier }),
                           (rule.matchDomains ?? []).isEmpty, (rule.matchTools ?? []).isEmpty else {
                         throw StrictProxyError(message: "Domain-limited or helper-only MDM mappings cannot protect the complete selected application")
                     }

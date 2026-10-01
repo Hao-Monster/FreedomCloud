@@ -1514,7 +1514,7 @@ async fn supervise_core(
                                         let method = response.get("method").and_then(Value::as_str).unwrap_or_default();
                                         if method == "configureStrictIngress" ||
                                             ["initClash", "setState", "setupConfig", "updateConfig", "startListener", "stopListener", "startLog", "stopLog", "changeProxy"].contains(&method) {
-                                            let snapshot = state.encode_store(&shared.journal.lock().await, &shared.home_dir)?;
+                                            let snapshot = state.encode_store(&*shared.journal.lock().await, &shared.home_dir)?;
                                             let account = shared.mac_strict_account.clone();
                                             tokio::task::spawn_blocking(move || crate::mac_strict_store::save(&account, snapshot.as_deref()))
                                                 .await.context("macOS strict recovery save task failed")??;
