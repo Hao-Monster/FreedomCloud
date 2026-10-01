@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:flclashx/models/common.dart';
 import 'package:flclashx/clash/core.dart';
 import 'package:flclashx/common/config_diff.dart';
 import 'package:flclashx/providers/providers.dart';

@@ -111,8 +111,8 @@ that all implementation is still missing. Open GitHub items remain:
 | #5 | M3-7; R-005/R-008/R-113 | User runtime regression acceptance; external endpoint availability is not proven by source changes. |
 
 No item is closed using unexecuted tests. Main protection requires Flutter tests,
-Core Go tests and M3 package integrity checks. The source handoff PR stays Draft
-and unmerged until user-owned checks are available. User requested no testing,
-so the handoff commit explicitly skips automatic CI; this does not satisfy or
-remove required checks. No protected branch bypass or release is authorized by
+Core Go tests and M3 package integrity checks. The source handoff initially stayed Draft with CI deferred at user request.
+The user subsequently authorized Codex to execute the three automated merge
+checks and fix failures; main integration still requires successful checks on
+the final head. Historical skipped checks never satisfy these requirements. No protected branch bypass or release is authorized by
 source completion. Existing worktrees are retained without destructive cleanup.
