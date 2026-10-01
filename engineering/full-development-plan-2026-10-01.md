@@ -196,3 +196,11 @@ None of the commits is described as having passed CI.
 The source handoff targets main under the user-authorized main integration scope.
 Development is an ancestor behind main; targeting it would re-list already merged
 main history. This exception does not bypass either branch protection or tests.
+
+## Automated merge checks authorized
+
+The user subsequently authorized Codex to execute the required automated checks
+for PR #53: Flutter tests, Core Go tests and M3 package integrity checks. Earlier
+NOT RUN entries describe the source-only handoff, not a permanent prohibition.
+Real-device and business acceptance remain user-owned. Required checks must pass
+on the final PR head before merging; no branch-protection bypass is permitted.
