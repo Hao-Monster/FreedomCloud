@@ -16,7 +16,7 @@ remain the coordinator's responsibility. Code implementation is not acceptance.
 | DEV-03 | R-011,R-110 | Self-signed development artifact chain; signed Core digest before Helper/UI, manifest before Broker, all components same source | Signing identity local; no formal release signing | Build/sign ordering and helper scripts implemented; artifacts not produced |
 | DEV-04 | R-113,R-115 | Operator recovery diagnostics and publisher-verified atomic identity migration | DEV-02 | Identity migration and recovery diagnostics implemented |
 | DEV-05 | R-120..R-124 | Preserve existing Agent ownership and attach/detach; integrate strict recovery into background runtime | Existing M2, DEV-02 | Durable intent and bounded background recovery implemented |
-| DEV-06 | R-111,R-106,R-108,R-114,R-116 | macOS Network Extension, signed app identity, authenticated control, forwarding and lifecycle recovery, host integration | Deployment model needs user decision | Native primitives implemented; provider/host integration unfinished |
+| DEV-06 | R-111,R-106,R-108,R-114,R-116 | macOS Network Extension, signed app identity, authenticated control, forwarding and lifecycle recovery, host integration | User accepted managed per-app VPN; Apple entitlement and MDM required | System extension, host UI, authenticated ingress and durable recovery source integrated; execution pending |
 | DEV-07 | R-201,R-208 | Enhanced tray, actual active group/node navigation | Existing providers | Implemented and integrated |
 | DEV-08 | R-202,R-207 | Actual config comparison and rule editing with bounded undo/restore and YAML synchronization | Existing configuration pipeline | Implemented and integrated |
 | DEV-09 | R-203 | Bounded health checks, progress/errors, allowlisted diagnostic export | Existing diagnostic interfaces | Implemented by coordinator after Antigravity connection failure |
@@ -133,14 +133,29 @@ Windows packages require a signed new Inno installer and a signed rollback
 installer matching the currently running version; portable distributions retain
 complete side-by-side versions. Recovery failure is reported, not hidden.
 
-### macOS deployment decision
+### macOS managed deployment decision
 
-Native SOCKS transport, signed application identity and authenticated control
-code can be developed independently. The choice between managed per-app VPN
-(MDM prerequisite) and an unmanaged design with equivalent persistent failure
-blocking is pending user decision. A transparent proxy alone must not be called
-complete strict enforcement. Provider activation, target embedding and durable
-host provisioning remain dependent work, not merely missing acceptance.
+The user accepted managed per-app VPN on 2026-10-01. R-111 now uses a provisioned
+Network Extension system extension for Developer ID distribution, loaded by
+NEAppProxyProviderManager from MDM-owned profiles. Host activation, exact signed
+identity export, profile generation, policy control and Xcode embedding are wired.
+Unmanaged desktop capture and self-signed macOS Network Extension deployment are
+not claimed. Apple entitlement, provisioning and MDM deployment remain external.
+
+Provider configuration and replay generation live in System.keychain. The host
+keeps its control key in its own Keychain and bootstraps through the OS VPN API.
+Core control uses mutual HMAC with an inherited-stdin launch key, authenticated
+SOCKS TCP and FCXD UDP. Explicit DIRECT/INHERIT apps must be removed from the MDM
+mapping; no provider path creates a direct destination socket. Before an app rule
+is edited, the host durably revokes the old provider policy to prevent stale
+forwarding. Reapplication checks the exact MDM mapping and signature requirement.
+
+Agent recovery persists both the successful Core configuration replay and strict
+fixed-port credentials in Keychain, outside the ordinary journal. Explicit login
+Agent registration is integrated with ownership and publisher checks; registration
+is not a runtime health claim. The provider
+never relaxes capture to compensate for a missing or failed Core. See
+`macos-managed-strict.md` and `macos/StrictProxy/README.md` for deployment contracts.
 
 ## Execution record
 
@@ -149,21 +164,23 @@ host provisioning remain dependent work, not merely missing acceptance.
   completion.
 - First-wave tray, configuration, PAC/transport automation, diagnostics and
   Windows installer/signing changes are integrated in focused local commits.
-- macOS reusable native code is isolated while the deployment decision is open.
+- macOS managed provider, host, Xcode and Core/Agent source packages were developed
+  concurrently in isolated worktrees after the managed deployment decision.
 - Application discovery, durable identity/recovery and all eight P2 work
   packages are integrated. Windows strict source integration is saved through
   commit `3ab7416`; that is a code baseline, not a validated release.
 - No tests, build, lint, typecheck, runtime probes, machine provisioning or
   acceptance have been executed by any worker for these changes.
 
-## Remaining development boundary
+## Remaining delivery boundary
 
-R-111 is not complete. The reusable macOS identity, authenticated control and
-SOCKS flow implementation exists, but there is no provisioned provider target,
-host activation, durable provider configuration or macOS policy ingress yet.
-Managed per-app VPN introduces an MDM deployment prerequisite and is awaiting
-the user's architecture decision. These are remaining implementation tasks,
-not tests the user is expected to compensate for.
+R-111's former missing provider target, host activation, durable configuration and
+macOS policy ingress now have integrated implementations. This is source delivery,
+not a verified build or managed-device acceptance. Unsupported NE protocol/endpoint
+shapes fail closed; authenticated UDP accepts IPv4/IPv6 and macOS-only FCXD v2
+domain endpoints through the existing Core proxy resolver. Exact helper identities must be enrolled
+separately; unknown helpers are blocked. Those limits are explicit and must not be
+reported as unrestricted protocol or process-family coverage.
 
 Signing artifacts, a real release feed, operating-system trust provisioning and
 device acceptance are external execution inputs. Formal commercial signing

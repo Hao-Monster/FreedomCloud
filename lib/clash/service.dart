@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
+import 'package:crypto/crypto.dart' as crypto;
 
 import 'package:flclashx/clash/agent_protocol.dart';
 import 'package:flclashx/clash/interface.dart';
@@ -35,6 +37,30 @@ class ClashService extends ClashHandlerInterface {
       _strictPolicyStatusController =
       StreamController<AgentStrictPolicyStatus>.broadcast();
   bool _agentMode = false;
+  List<int>? _macCoreKey;
+  bool _macCoreVerified = false;
+
+  bool _acceptMacCoreHandshake(Map<String, dynamic> value, Socket socket) {
+    final frame = value['_macCore'];
+    final key = _macCoreKey;
+    if (frame is! Map || key == null || frame['protocol'] != 1) return false;
+    final nonce = frame['nonce'];
+    final proof = frame['proof'];
+    if (nonce is! String || proof is! String ||
+        !RegExp(r'^[0-9a-f]{64}$').hasMatch(nonce) ||
+        !RegExp(r'^[0-9a-f]{64}$').hasMatch(proof)) return false;
+    final mac = crypto.Hmac(crypto.sha256, key);
+    final expected = mac.convert(utf8.encode('FCX-MAC-CORE/1/core/$nonce')).toString();
+    var difference = 0;
+    for (var i = 0; i < expected.length; i++) {
+      difference |= expected.codeUnitAt(i) ^ proof.codeUnitAt(i);
+    }
+    if (difference != 0) return false;
+    socket.writeln(jsonEncode({'_macCore': {'protocol': 1, 'nonce': nonce,
+      'proof': mac.convert(utf8.encode('FCX-MAC-CORE/1/host/$nonce')).toString()}}));
+    return true;
+  }
+
   bool _detaching = false;
   bool _agentRecovering = false;
   int? _agentPid;
@@ -448,7 +474,13 @@ class ClashService extends ClashHandlerInterface {
       serverCompleter.complete(server);
       await for (final socket in server) {
         await _destroySocket();
-        socketCompleter.complete(socket);
+        _macCoreVerified = false;
+        if (!Platform.isMacOS) socketCompleter.complete(socket);
+        if (Platform.isMacOS) {
+          Timer(const Duration(seconds: 10), () {
+            if (!_macCoreVerified) socket.destroy();
+          });
+        }
         _socketSubscription = socket
             .transform(uint8ListToListIntConverter)
             .transform(utf8.decoder)
@@ -456,11 +488,17 @@ class ClashService extends ClashHandlerInterface {
             .listen(
           (data) {
             try {
-              handleResult(
-                ActionResult.fromJson(
-                  json.decode(data.trim()),
-                ),
-              );
+              if (Platform.isMacOS && !_macCoreVerified) {
+                if (data.length > 4096 || !_acceptMacCoreHandshake(
+                    Map<String, dynamic>.from(jsonDecode(data) as Map), socket)) {
+                  socket.destroy();
+                  return;
+                }
+                _macCoreVerified = true;
+                if (!socketCompleter.isCompleted) socketCompleter.complete(socket);
+                return;
+              }
+              handleResult(ActionResult.fromJson(json.decode(data.trim())));
             } catch (e) {
               commonPrint.log('socket parse error: $e');
             }
@@ -540,14 +578,28 @@ class ClashService extends ClashHandlerInterface {
       final environment = Map<String, String>.from(Platform.environment);
       environment['SAFE_PATHS'] = homeDirPath;
 
+      String? macToken;
+      if (Platform.isMacOS) {
+        final random = Random.secure();
+        _macCoreKey = List.generate(32, (_) => random.nextInt(256));
+        macToken = _macCoreKey!.map((byte) => byte.toRadixString(16).padLeft(2, '0')).join();
+      }
       final started = await Process.start(
         appPath.corePath,
-        [
-          arg,
-        ],
+        [arg, if (macToken != null) "@stdin"],
         environment: environment,
       );
       process = started;
+      try {
+        if (macToken != null) {
+          started.stdin.writeln(macToken);
+          await started.stdin.close();
+        }
+      } catch (_) {
+        started.kill();
+        process = null;
+        rethrow;
+      }
       _stdoutSubscription = started.stdout
           .transform(utf8.decoder)
           .transform(const LineSplitter())

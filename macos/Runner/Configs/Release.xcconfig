@@ -1,3 +1,6 @@
 #include "../../Flutter/Flutter-Release.xcconfig"
 #include "Warnings.xcconfig"
 #include "Signing.xcconfig"
+
+// Used by the system-extension product reference in the containing app.
+FCX_STRICT_BUNDLE_IDENTIFIER = com.follow.clash.StrictProxy

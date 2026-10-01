@@ -308,11 +308,11 @@ func readFile(path string) ([]byte, error) {
 	return data, err
 }
 
-func updateConfig(params *UpdateParams) {
+func updateConfig(params *UpdateParams) error {
 	runLock.Lock()
 	defer runLock.Unlock()
 	if currentConfig == nil {
-		return
+		return nil
 	}
 	general := currentConfig.General
 	if params.MixedPort != nil {
@@ -381,6 +381,10 @@ func updateConfig(params *UpdateParams) {
 	}
 
 	updateListeners()
+	if err := restoreMacStrictIngressLocked(); err != nil {
+		return errors.New("macOS strict ingress could not be restored after configuration update")
+	}
+	return nil
 }
 
 func setupConfig(params *SetupParams) error {
@@ -426,6 +430,9 @@ func setupConfig(params *SetupParams) error {
 	})
 	patchSelectGroup(params.SelectedMap)
 	updateListeners()
+	if restoreErr := restoreMacStrictIngressLocked(); restoreErr != nil {
+		return errors.New("macOS strict ingress could not be restored after configuration reload")
+	}
 
 	// Kick off pings immediately so the UI shows latencies as soon as the
 	// profile loads, without waiting for the user to start TUN or for each

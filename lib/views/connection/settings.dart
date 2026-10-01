@@ -1,3 +1,4 @@
+import 'package:flclashx/widgets/managed_strict_proxy.dart';
 import 'package:flclashx/manager/connection_manager.dart';
 import 'package:flclashx/common/application_discovery.dart';
 import 'package:flclashx/widgets/application_picker.dart';
@@ -533,6 +534,9 @@ class _PerAppPolicySectionState extends ConsumerState<_PerAppPolicySection> {
                         onPressed: _pickApplication,
                         icon: const Icon(Icons.add_rounded),
                       ),
+                      if (Platform.isMacOS)
+                        IconButton(tooltip: 'macOS 受管严格代理', icon: const Icon(Icons.security),
+                          onPressed: () => showDialog<void>(context: context, builder: (_) => const ManagedStrictProxyPanel())),
                       if (_strictAvailable)
                         IconButton(
                           tooltip: _strictTransition ? '正在准备严格模式，请稍候' : '切换严格应用代理',

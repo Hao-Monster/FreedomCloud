@@ -186,6 +186,12 @@ func handleStartListener() bool {
 	// re-run updateProxies, loadProvider(wg.Wait()), updateDNS and runtime.GC()
 	// for no reason and was the main source of the long "start" delay.
 	updateListeners()
+	if err := restoreMacStrictIngressLocked(); err != nil {
+		isRunning = false
+		stopListeners()
+		runLock.Unlock()
+		return false
+	}
 	runLock.Unlock()
 
 	go func() {
@@ -1086,7 +1092,7 @@ func handleUpdateConfig(bytes []byte) string {
 	if err != nil {
 		return err.Error()
 	}
-	updateConfig(params)
+	if err := updateConfig(params); err != nil { return err.Error() }
 	return ""
 }
 

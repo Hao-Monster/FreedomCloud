@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"runtime"
 	"unsafe"
 
 	"github.com/metacubex/mihomo/constant"
@@ -74,7 +75,12 @@ func handleAction(action *Action, result ActionResult) {
 			return
 		}
 		data := []byte(s)
-		result.success(handleUpdateConfig(data))
+		updateError := handleUpdateConfig(data)
+		if runtime.GOOS == "darwin" && updateError != "" {
+			result.error(updateError)
+			return
+		}
+		result.success(updateError)
 		return
 	case configureStrictIngressMethod:
 		s, ok := action.Data.(string)
@@ -89,6 +95,14 @@ func handleAction(action *Action, result ActionResult) {
 		}
 		result.success(data)
 		return
+	case Method("restoreStrictIngressIntent"):
+		s, ok := action.Data.(string)
+		if !ok || handleRestoreMacStrictIngressIntent(s) != nil {
+			result.error("strict ingress intent recovery rejected")
+			return
+		}
+		result.success(true)
+		return
 	case setupConfigMethod:
 		s, ok := action.Data.(string)
 		if !ok {
@@ -96,7 +110,12 @@ func handleAction(action *Action, result ActionResult) {
 			return
 		}
 		data := []byte(s)
-		result.success(handleSetupConfig(data))
+		setupError := handleSetupConfig(data)
+		if runtime.GOOS == "darwin" && setupError != "" {
+			result.error(setupError)
+			return
+		}
+		result.success(setupError)
 		return
 	case getProxiesMethod:
 		result.success(handleGetProxies())

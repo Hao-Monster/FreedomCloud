@@ -114,6 +114,10 @@ struct Shared {
     ui: Mutex<Option<UiSession>>,
     core: Mutex<Option<mpsc::Sender<String>>>,
     journal: Mutex<ReplayJournal>,
+    #[cfg(target_os = "macos")]
+    mac_strict_replay: Mutex<crate::mac_strict_replay::MacStrictReplay>,
+    #[cfg(target_os = "macos")]
+    mac_strict_account: String,
     logger: Arc<AgentLogger>,
     status: RwLock<CoreStatus>,
     // The Agent does not implement a platform capture backend. Keeping an
@@ -998,10 +1002,30 @@ pub async fn run(config: AgentConfig) -> Result<()> {
         },
         Err(error) => { logger.log(format!("strict intent storage unavailable: {error:#}")); (None, None) }
     };
+    #[cfg(target_os = "macos")]
+    let mac_strict_account = {
+        use sha2::{Digest, Sha256};
+        let path = std::fs::canonicalize(&shared_home_dir).context("macOS Agent home is unavailable")?;
+        let digest = Sha256::digest(path.as_os_str().as_encoded_bytes());
+        format!("strict-ingress-{}", digest.iter().map(|byte| format!("{byte:02x}")).collect::<String>())
+    };
+    #[cfg(target_os = "macos")]
+    let (mac_strict_replay, initial_journal) = {
+        let account = mac_strict_account.clone();
+        let saved = tokio::task::spawn_blocking(move || crate::mac_strict_store::load(&account))
+            .await.context("macOS strict recovery load task failed")??;
+        crate::mac_strict_replay::MacStrictReplay::decode_store(saved.as_deref(), &shared_home_dir)?
+    };
+    #[cfg(not(target_os = "macos"))]
+    let initial_journal = ReplayJournal::default();
     let shared = Arc::new(Shared {
         ui: Mutex::new(None),
         core: Mutex::new(None),
-        journal: Mutex::new(ReplayJournal::default()),
+        journal: Mutex::new(initial_journal),
+        #[cfg(target_os = "macos")]
+        mac_strict_replay: Mutex::new(mac_strict_replay),
+        #[cfg(target_os = "macos")]
+        mac_strict_account,
         logger: logger.clone(),
         status: RwLock::new(CoreStatus::Starting),
         strict_policy: RwLock::new(StrictPolicyStatus::disabled()),
@@ -1246,8 +1270,12 @@ async fn handle_ui(stream: TcpStream, token: String, shared: Arc<Shared>) -> Res
         }
         let core = shared.core.lock().await.clone();
         if let Some(core) = core {
+            #[cfg(target_os = "macos")]
+            shared.mac_strict_replay.lock().await.stage(&action)?;
             shared.journal.lock().await.stage(line);
             if core.send(line.to_owned()).await.is_err() {
+                #[cfg(target_os = "macos")]
+                shared.mac_strict_replay.lock().await.discard_pending();
                 shared.journal.lock().await.discard_pending();
                 bail!("Core command channel is closed");
             }
@@ -1475,6 +1503,36 @@ async fn supervise_core(
                                 continue;
                             }
                             shared.journal.lock().await.commit_response(&line);
+                            #[cfg(target_os = "macos")]
+                            {
+                                let response: Value = serde_json::from_str(&line)?;
+                                let mut state = shared.mac_strict_replay.lock().await;
+                                let previous = state.clone();
+                                let outcome = async {
+                                    state.commit_response(&response)?;
+                                    if response.get("code").and_then(Value::as_i64) == Some(0) {
+                                        let method = response.get("method").and_then(Value::as_str).unwrap_or_default();
+                                        if method == "configureStrictIngress" ||
+                                            ["initClash", "setState", "setupConfig", "updateConfig", "startListener", "stopListener", "startLog", "stopLog", "changeProxy"].contains(&method) {
+                                            let snapshot = state.encode_store(&shared.journal.lock().await, &shared.home_dir)?;
+                                            let account = shared.mac_strict_account.clone();
+                                            tokio::task::spawn_blocking(move || crate::mac_strict_store::save(&account, snapshot.as_deref()))
+                                                .await.context("macOS strict recovery save task failed")??;
+                                        }
+                                    }
+                                    Ok::<(), anyhow::Error>(())
+                                }.await;
+                                if outcome.is_err() {
+                                    *state = previous;
+                                    drop(state);
+                                    shared.logger.log("macOS strict ingress persistence rejected; stopping Core");
+                                    let mut rejected = response;
+                                    rejected["code"] = json!(-1);
+                                    rejected["data"] = json!("strict ingress secure persistence failed");
+                                    forward_to_ui(&shared, rejected.to_string()).await;
+                                    break SessionEnd::Stopped;
+                                }
+                            }
                             forward_to_ui(&shared, line).await;
                         }
                         Ok(None) => break SessionEnd::Crashed,
@@ -1492,6 +1550,8 @@ async fn supervise_core(
 
         *shared.core.lock().await = None;
         shared.journal.lock().await.discard_pending();
+        #[cfg(target_os = "macos")]
+        shared.mac_strict_replay.lock().await.discard_pending();
         #[cfg(windows)]
         if matches!(&session_end, SessionEnd::Crashed | SessionEnd::Restart) {
             fail_closed_strict_core_loss(&shared).await;
@@ -1636,15 +1696,25 @@ async fn start_backend(
     }
 
     let mut command = Command::new(&config.core);
+    #[cfg(target_os = "macos")]
+    let launch_credential = "@stdin";
+    #[cfg(not(target_os = "macos"))]
+    let launch_credential = token;
     command
         .arg(core_port.to_string())
-        .arg(token)
+        .arg(launch_credential)
         .env("SAFE_PATHS", &config.home)
-        .stdin(Stdio::null())
+        .stdin(if cfg!(target_os = "macos") { Stdio::piped() } else { Stdio::null() })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
     let mut process = command.spawn().context("unable to spawn local Core")?;
+    #[cfg(target_os = "macos")]
+    {
+        let mut input = process.stdin.take().context("Core private credential pipe unavailable")?;
+        input.write_all(format!("{token}\n").as_bytes()).await?;
+        input.shutdown().await?;
+    }
     if let Some(stdout) = process.stdout.take() {
         spawn_core_output_logger(stdout, logger.clone(), "stdout");
     }
@@ -1767,9 +1837,21 @@ async fn accept_core(listener: &TcpListener, expected_token: &str) -> Result<Tcp
             continue;
         }
         let mut reader = BufReader::new(stream);
-        let Some(line) = read_bounded_line(&mut reader, MAX_AUTH_LINE_BYTES).await? else {
+        let Some(line) = timeout(remaining, read_bounded_line(&mut reader, MAX_AUTH_LINE_BYTES))
+            .await.context("Core authentication timed out")?? else {
             continue;
         };
+        #[cfg(target_os = "macos")]
+        {
+            let reply = match mac_core_handshake_reply(&line, expected_token) {
+                Ok(reply) => reply,
+                Err(_) => continue,
+            };
+            timeout(remaining, reader.get_mut().write_all(reply.as_bytes()))
+                .await.context("macOS Core authentication reply timed out")??;
+            return Ok(reader.into_inner());
+        }
+        #[cfg(not(target_os = "macos"))]
         let valid = serde_json::from_str::<Value>(line.trim_end())
             .ok()
             .and_then(|value| {
@@ -1780,10 +1862,41 @@ async fn accept_core(listener: &TcpListener, expected_token: &str) -> Result<Tcp
                     .map(str::to_owned)
             })
             .is_some_and(|token| crate::protocol::constant_time_eq(&token, expected_token));
+        #[cfg(not(target_os = "macos"))]
         if valid {
             return Ok(reader.into_inner());
         }
     }
+}
+
+#[cfg(target_os = "macos")]
+fn mac_core_handshake_reply(line: &str, token: &str) -> Result<String> {
+    use hmac::{Hmac, Mac};
+    use sha2::Sha256;
+    fn decode_hex(value: &str) -> Result<Vec<u8>> {
+        if value.len() != 64 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            bail!("invalid macOS Core authentication field");
+        }
+        (0..64).step_by(2).map(|offset| {
+            u8::from_str_radix(&value[offset..offset + 2], 16).map_err(Into::into)
+        }).collect()
+    }
+    let message: Value = serde_json::from_str(line)?;
+    let auth = message.get("_macCore").context("missing macOS Core authentication")?;
+    if auth.get("protocol").and_then(Value::as_u64) != Some(1) {
+        bail!("unsupported macOS Core authentication protocol");
+    }
+    let nonce = auth.get("nonce").and_then(Value::as_str).context("missing nonce")?;
+    let _ = decode_hex(nonce)?;
+    let proof = decode_hex(auth.get("proof").and_then(Value::as_str).context("missing proof")?)?;
+    let key = decode_hex(token)?;
+    let mut verifier = Hmac::<Sha256>::new_from_slice(&key).context("invalid MAC key")?;
+    verifier.update(format!("FCX-MAC-CORE/1/core/{nonce}").as_bytes());
+    verifier.verify_slice(&proof).map_err(|_| anyhow!("macOS Core proof rejected"))?;
+    let mut signer = Hmac::<Sha256>::new_from_slice(&key).context("invalid MAC key")?;
+    signer.update(format!("FCX-MAC-CORE/1/host/{nonce}").as_bytes());
+    let proof = signer.finalize().into_bytes().iter().map(|byte| format!("{byte:02x}")).collect::<String>();
+    Ok(format!("{}\n", json!({"_macCore": {"protocol": 1, "nonce": nonce, "proof": proof}})))
 }
 
 async fn replay_journal(stream: &mut TcpStream, shared: &Arc<Shared>) -> Result<()> {
@@ -1816,6 +1929,35 @@ async fn replay_journal(stream: &mut TcpStream, shared: &Arc<Shared>) -> Result<
         })
         .await
         .with_context(|| format!("Core replay timed out for {expected_id}"))??;
+    }
+    #[cfg(target_os = "macos")]
+    let strict_stopped = shared.journal.lock().await.listener_running() == Some(false);
+    #[cfg(target_os = "macos")]
+    let strict_replay = {
+        let state = shared.mac_strict_replay.lock().await;
+        if strict_stopped { state.stopped_replay_line() } else { state.replay_line() }
+    };
+    #[cfg(target_os = "macos")]
+    if let Some(line) = strict_replay {
+        stream.write_all(line.as_bytes()).await?;
+        stream.write_all(b"\n").await?;
+        let response = timeout(CORE_REPLAY_TIMEOUT, async {
+            loop {
+                let line = read_line_bytewise(stream, MAX_MESSAGE_LINE_BYTES).await?
+                    .context("Core disconnected during strict ingress recovery")?;
+                let value: Value = serde_json::from_str(&line)?;
+                if value.get("id").and_then(Value::as_str) == Some(if strict_stopped { "_agent-macos-strict-intent" } else { "_agent-macos-strict-replay" }) {
+                    return Ok::<Value, anyhow::Error>(value);
+                }
+            }
+        }).await.context("strict ingress recovery timed out")??;
+        if strict_stopped {
+            if response.get("code").and_then(Value::as_i64) != Some(0) || response.get("data").and_then(Value::as_bool) != Some(true) {
+                bail!("Core rejected stopped strict ingress intent");
+            }
+        } else {
+            shared.mac_strict_replay.lock().await.validate_replay(&response)?;
+        }
     }
     Ok(())
 }
@@ -1989,6 +2131,10 @@ mod tests {
             ui: Mutex::new(None),
             core: Mutex::new(None),
             journal: Mutex::new(ReplayJournal::default()),
+            #[cfg(target_os = "macos")]
+            mac_strict_replay: Mutex::new(crate::mac_strict_replay::MacStrictReplay::default()),
+            #[cfg(target_os = "macos")]
+            mac_strict_account: "test-only-no-keychain-access".to_owned(),
             logger: AgentLogger::new(&std::env::temp_dir().join("flclash-agent-session-tests")),
             status: RwLock::new(CoreStatus::Ready),
             strict_policy: RwLock::new(StrictPolicyStatus::disabled()),

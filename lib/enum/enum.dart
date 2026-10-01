@@ -246,6 +246,7 @@ enum RouteMode {
 }
 
 enum ActionMethod {
+  configureStrictIngress,
   message,
   initClash,
   getIsInit,

@@ -1,23 +1,6 @@
 import Foundation
 import NetworkExtension
 
-struct StrictProxyConfiguration: Codable {
-    let generation: UInt64
-    let policies: [StrictApplicationPolicy]
-    func validate() throws {
-        guard generation > 0, policies.count <= 256 else {
-            throw StrictProxyError(message: "Invalid policy generation or identity limit")
-        }
-        var identities = Set<String>()
-        for policy in policies {
-            try policy.validate()
-            guard identities.insert(policy.signingIdentifier).inserted else {
-                throw StrictProxyError(message: "Duplicate signing identity")
-            }
-        }
-    }
-}
-
 /// Reusable capture dispatch shared by a provisioned app proxy or a future
 /// transparent provider with a independently established persistent guard.
 /// Does not advertise installed or crash-safe enforcement on its own.

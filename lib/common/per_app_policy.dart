@@ -6,6 +6,7 @@ import 'dart:io';
 import 'package:flclashx/common/connection_diagnostics.dart';
 import 'package:flclashx/common/path.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:path/path.dart' as path;
 
 const maxPerAppPolicies = 128;
@@ -431,6 +432,16 @@ class PerAppPolicyStore extends ChangeNotifier {
       );
       while (next.length > maxPerAppPolicies) {
         next.remove(next.keys.first);
+      }
+    }
+    if (Platform.isMacOS) {
+      // Revoke the old durable snapshot before changing any visible rule. MDM
+      // continues capture; the user reapplies the complete policy afterwards.
+      final acknowledgement = await const MethodChannel('freedomcloud/managed_strict')
+          .invokeMapMethod<String, dynamic>('quarantineAll')
+          .timeout(const Duration(seconds: 30));
+      if (acknowledgement?['ok'] != true) {
+        throw StateError('Managed policy revocation was not acknowledged');
       }
     }
     await _persist(next.values);

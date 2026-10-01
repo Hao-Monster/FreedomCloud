@@ -113,18 +113,17 @@ pub fn validate_local_core(agent_executable: &Path, core: &Path) -> Result<PathB
 
 #[cfg(target_os = "macos")]
 fn is_macos_application_support_core(core: &Path) -> bool {
-    let components = core
-        .components()
-        .map(|component| component.as_os_str().to_string_lossy().into_owned())
-        .collect::<Vec<_>>();
-    let expected = [
-        "Library".to_owned(),
-        "Application Support".to_owned(),
-        "com.follow.clash".to_owned(),
-        "cores".to_owned(),
-        CORE_FILE_NAME.to_owned(),
-    ];
-    components.ends_with(&expected)
+    use std::os::unix::fs::MetadataExt;
+    // Match the native bootstrap and Dart path exactly; never accept a
+    // user-writable lookalike ending in the old Application Support suffix.
+    if core != Path::new("/Library/Application Support/FlClashX/Core/FlClashCore") {
+        return false;
+    }
+    core.ancestors().all(|path| {
+        std::fs::symlink_metadata(path).is_ok_and(|metadata| {
+            !metadata.file_type().is_symlink() && metadata.uid() == 0 && metadata.mode() & 0o022 == 0
+        })
+    })
 }
 
 #[cfg(not(target_os = "macos"))]

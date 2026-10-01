@@ -43,11 +43,6 @@ final class StrictFlowSession {
                     try await withThrowingTaskGroup(of: Void.self) { group in
                         group.addTask { try await self.udpOutgoing(udp) }
                         group.addTask { try await self.udpIncoming(udp) }
-                        group.addTask {
-                            // UDP ASSOCIATE lives only as long as this TCP socket.
-                            _ = try await self.transport.read()
-                            throw StrictProxyError(message: "UDP control connection closed")
-                        }
                         // Any finished direction closes siblings, including suspended IO.
                         do { _ = try await group.next() }
                         catch { self.close(error); throw error }

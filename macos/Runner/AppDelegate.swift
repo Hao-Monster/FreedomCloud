@@ -8,6 +8,7 @@ import LaunchAtLogin
 @main
 class AppDelegate: FlutterAppDelegate {
     var statusBarController: StatusBarController?
+    var managedStrictController: ManagedStrictProxyController?
     var zashboardChannel: FlutterMethodChannel?
     var zashboardWindowController: ZashboardWindowController?
 
@@ -38,6 +39,7 @@ class AppDelegate: FlutterAppDelegate {
         
         statusBarController = StatusBarController.init(flutterUIPopover)
         
+        managedStrictController = ManagedStrictProxyController(messenger: mainController.engine.binaryMessenger)
         setupStatusBarChannel(flutterViewController: mainController)
         setupZashboardChannel(flutterViewController: mainController)
 

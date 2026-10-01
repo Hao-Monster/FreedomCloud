@@ -12,7 +12,8 @@ enum StrictApplicationIdentity {
     }
 
     static func inspect(executable: URL) throws -> [String: String] {
-        let url = executable.resolvingSymlinksInPath().standardizedFileURL
+        let candidate = Bundle(url: executable)?.executableURL ?? executable
+        let url = candidate.resolvingSymlinksInPath().standardizedFileURL
         var code: SecStaticCode?
         var status = SecStaticCodeCreateWithPath(url as CFURL, [], &code)
         guard status == errSecSuccess, let code = code else { throw failure(status) }

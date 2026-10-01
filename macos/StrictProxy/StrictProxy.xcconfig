@@ -1,0 +1,20 @@
+// Direct distribution uses a provisioned Network Extension system extension.
+// Ad-hoc signing cannot grant the restricted Network Extension entitlement.
+#include "../Runner/Configs/Signing.xcconfig"
+CODE_SIGN_STYLE = Manual
+CODE_SIGN_ENTITLEMENTS = StrictProxy/StrictProxy.entitlements
+PROVISIONING_PROFILE_SPECIFIER = $(FCX_STRICT_PROVISIONING_PROFILE)
+ENABLE_HARDENED_RUNTIME = YES
+CODE_SIGN_INJECT_BASE_ENTITLEMENTS = NO
+INFOPLIST_FILE = StrictProxy/Info.plist
+GENERATE_INFOPLIST_FILE = NO
+PRODUCT_NAME = $(PRODUCT_BUNDLE_IDENTIFIER)
+PRODUCT_MODULE_NAME = StrictProxy
+SWIFT_VERSION = 5.0
+MACOSX_DEPLOYMENT_TARGET = 11.0
+SKIP_INSTALL = YES
+SDKROOT = macosx
+SUPPORTED_PLATFORMS = macosx
+CURRENT_PROJECT_VERSION = $(FLUTTER_BUILD_NUMBER)
+MARKETING_VERSION = $(FLUTTER_BUILD_NAME)
+LD_RUNPATH_SEARCH_PATHS = $(inherited) @executable_path/../Frameworks @executable_path/../../../../Frameworks
