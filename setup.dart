@@ -1041,7 +1041,7 @@ class BuildCommand extends Command {
       Build.getExecutable("sudo apt update -y"),
     );
     await Build.exec(
-      Build.getExecutable("sudo apt install -y ninja-build libgtk-3-dev"),
+      Build.getExecutable("sudo apt install -y ninja-build libgtk-3-dev libsecret-1-dev"),
     );
     await Build.exec(
       Build.getExecutable("sudo apt install -y libayatana-appindicator3-dev"),
@@ -1459,7 +1459,7 @@ class BuildCommand extends Command {
       "Section: x11\n"
       "Priority: optional\n"
       "Architecture: $debArch\n"
-      "Depends: libayatana-appindicator3-dev, libkeybinder-3.0-dev\n"
+      "Depends: libayatana-appindicator3-dev, libkeybinder-3.0-dev, libsecret-1-0\n"
       "Maintainer: pluralplay <mail@pluralplay.rw>\n"
       "Description: $appName\n",
     );
@@ -1506,6 +1506,7 @@ class BuildCommand extends Command {
         "Group: Applications/Internet\n"
         "Packager: pluralplay <mail@pluralplay.rw>\n"
         "AutoReqProv: no\n"
+        "Requires: libsecret\n"
         "\n"
         "%description\n"
         "$appName proxy client\n"
@@ -1607,6 +1608,30 @@ class BuildCommand extends Command {
       } else {
         print(
             "⚠️  libkeybinder-3.0.so.0 not found; AppImage may fail on hosts without it");
+      }
+
+      // Secure storage links these libraries outside the Flutter bundle.
+      // Fail packaging if missing instead of shipping an AppImage that cannot
+      // launch on a host without libsecret installed.
+      final secretLibraries = await Process.run('ldconfig', ['-p']);
+      final secretLibraryLines = secretLibraries.stdout.toString().split('\n');
+      for (final library in [
+        'libsecret-1.so.0',
+        'libgcrypt.so.20',
+        'libgpg-error.so.0',
+      ]) {
+        final line = secretLibraryLines.firstWhere(
+          (line) =>
+              line.trimLeft().startsWith('$library ') &&
+              line.contains('=>'),
+          orElse: () => '',
+        );
+        final source = line.isEmpty ? '' : line.split('=>').last.trim();
+        if (source.isEmpty || !File(source).existsSync()) {
+          throw FileSystemException(
+              'Missing AppImage secure-storage library', library);
+        }
+        await Build.exec(['cp', '-L', source, join(appLibDir, library)]);
       }
 
       File(join(appShareIcon, "$appName.png"))

@@ -8,6 +8,7 @@ import 'package:dio/dio.dart';
 import 'package:dio/io.dart';
 import 'package:flclashx/common/common.dart';
 import 'package:flclashx/models/models.dart';
+import 'package:flclashx/services/secure_subscription.dart';
 import 'package:flclashx/state.dart';
 import 'package:flutter/cupertino.dart';
 
@@ -45,15 +46,21 @@ class Request {
   }
   late final Dio _dio;
   late final Dio _clashDio;
+  final _secureSubscription = SecureSubscriptionDownloader();
   String? userAgent;
 
   Future<Response<Uint8List>> getFileResponseForUrl(
     String rawUrl, {
     Map<String, dynamic>? headers,
+    bool requireValidTls = false,
   }) async {
     final url = rawUrl.normalizeUrlCredentials;
     final requestHeaders = headers ?? {};
     requestHeaders['User-Agent'] = globalState.ua;
+
+    if (requireValidTls) {
+      return _secureSubscription.download(Uri.parse(url), requestHeaders);
+    }
 
     final dio = _dio;
 
