@@ -4448,6 +4448,816 @@ class AppLocalizations {
       args: [],
     );
   }
+
+  /// `Gift card redemption`
+  String get purchaseCenterTitle {
+    return Intl.message(
+      'Gift card redemption',
+      name: 'purchaseCenterTitle',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Redeem your card to activate or renew your service, then sync your subscription.`
+  String get purchaseCenterDescription {
+    return Intl.message(
+      'Redeem your card to activate or renew your service, then sync your subscription.',
+      name: 'purchaseCenterDescription',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Account and subscription`
+  String get purchaseAccount {
+    return Intl.message(
+      'Account and subscription',
+      name: 'purchaseAccount',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Sign in to redeem`
+  String get purchaseLoginTitle {
+    return Intl.message(
+      'Sign in to redeem',
+      name: 'purchaseLoginTitle',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Use your Xboard account. Cards are redeemed for the account shown here.`
+  String get purchaseLoginDescription {
+    return Intl.message(
+      'Use your Xboard account. Cards are redeemed for the account shown here.',
+      name: 'purchaseLoginDescription',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Email address`
+  String get purchaseEmail {
+    return Intl.message(
+      'Email address',
+      name: 'purchaseEmail',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Password`
+  String get purchasePassword {
+    return Intl.message(
+      'Password',
+      name: 'purchasePassword',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Sign in`
+  String get purchaseLogin {
+    return Intl.message('Sign in', name: 'purchaseLogin', desc: '', args: []);
+  }
+
+  /// `Signing in…`
+  String get purchaseLoggingIn {
+    return Intl.message(
+      'Signing in…',
+      name: 'purchaseLoggingIn',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Enter a valid email address.`
+  String get purchaseEmailRequired {
+    return Intl.message(
+      'Enter a valid email address.',
+      name: 'purchaseEmailRequired',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Enter your password.`
+  String get purchasePasswordRequired {
+    return Intl.message(
+      'Enter your password.',
+      name: 'purchasePasswordRequired',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Create account on website`
+  String get purchaseRegister {
+    return Intl.message(
+      'Create account on website',
+      name: 'purchaseRegister',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Reset password on website`
+  String get purchaseRecoverPassword {
+    return Intl.message(
+      'Reset password on website',
+      name: 'purchaseRecoverPassword',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Sign out`
+  String get purchaseLogout {
+    return Intl.message('Sign out', name: 'purchaseLogout', desc: '', args: []);
+  }
+
+  /// `Refresh account`
+  String get purchaseRefresh {
+    return Intl.message(
+      'Refresh account',
+      name: 'purchaseRefresh',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Current plan`
+  String get purchasePlan {
+    return Intl.message(
+      'Current plan',
+      name: 'purchasePlan',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `No active plan`
+  String get purchaseNoPlan {
+    return Intl.message(
+      'No active plan',
+      name: 'purchaseNoPlan',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Subscription`
+  String get purchasePlanUnknown {
+    return Intl.message(
+      'Subscription',
+      name: 'purchasePlanUnknown',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Remaining traffic`
+  String get purchaseRemaining {
+    return Intl.message(
+      'Remaining traffic',
+      name: 'purchaseRemaining',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Used traffic`
+  String get purchaseUsed {
+    return Intl.message(
+      'Used traffic',
+      name: 'purchaseUsed',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Expires`
+  String get purchaseExpires {
+    return Intl.message('Expires', name: 'purchaseExpires', desc: '', args: []);
+  }
+
+  /// `No expiration`
+  String get purchaseNoExpiry {
+    return Intl.message(
+      'No expiration',
+      name: 'purchaseNoExpiry',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Sync subscription`
+  String get purchaseSync {
+    return Intl.message(
+      'Sync subscription',
+      name: 'purchaseSync',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Syncing subscription…`
+  String get purchaseSyncing {
+    return Intl.message(
+      'Syncing subscription…',
+      name: 'purchaseSyncing',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Manage profiles`
+  String get purchaseProfiles {
+    return Intl.message(
+      'Manage profiles',
+      name: 'purchaseProfiles',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Redeem a gift card`
+  String get purchaseRedeemTitle {
+    return Intl.message(
+      'Redeem a gift card',
+      name: 'purchaseRedeemTitle',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Gift card code`
+  String get purchaseCode {
+    return Intl.message(
+      'Gift card code',
+      name: 'purchaseCode',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Preview benefits`
+  String get purchaseCheck {
+    return Intl.message(
+      'Preview benefits',
+      name: 'purchaseCheck',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Checking…`
+  String get purchaseChecking {
+    return Intl.message(
+      'Checking…',
+      name: 'purchaseChecking',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Review before redeeming`
+  String get purchasePreview {
+    return Intl.message(
+      'Review before redeeming',
+      name: 'purchasePreview',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Redeem for`
+  String get purchaseRedeemFor {
+    return Intl.message(
+      'Redeem for',
+      name: 'purchaseRedeemFor',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Confirm redemption`
+  String get purchaseConfirmRedeem {
+    return Intl.message(
+      'Confirm redemption',
+      name: 'purchaseConfirmRedeem',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Redeeming…`
+  String get purchaseRedeeming {
+    return Intl.message(
+      'Redeeming…',
+      name: 'purchaseRedeeming',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `This card cannot be redeemed by this account.`
+  String get purchaseNotEligible {
+    return Intl.message(
+      'This card cannot be redeemed by this account.',
+      name: 'purchaseNotEligible',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `This is a mystery card. The actual benefits are revealed after redemption.`
+  String get purchaseMysteryPreview {
+    return Intl.message(
+      'This is a mystery card. The actual benefits are revealed after redemption.',
+      name: 'purchaseMysteryPreview',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Account balance`
+  String get purchaseBalance {
+    return Intl.message(
+      'Account balance',
+      name: 'purchaseBalance',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `A balance credit does not activate a subscription.`
+  String get purchaseBalanceOnlyHint {
+    return Intl.message(
+      'A balance credit does not activate a subscription.',
+      name: 'purchaseBalanceOnlyHint',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Traffic quota`
+  String get purchaseTraffic {
+    return Intl.message(
+      'Traffic quota',
+      name: 'purchaseTraffic',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Validity (days)`
+  String get purchaseValidityDays {
+    return Intl.message(
+      'Validity (days)',
+      name: 'purchaseValidityDays',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Extra validity (days)`
+  String get purchaseExtraDays {
+    return Intl.message(
+      'Extra validity (days)',
+      name: 'purchaseExtraDays',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Additional devices`
+  String get purchaseExtraDevices {
+    return Intl.message(
+      'Additional devices',
+      name: 'purchaseExtraDevices',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Reset used traffic`
+  String get purchaseResetTraffic {
+    return Intl.message(
+      'Reset used traffic',
+      name: 'purchaseResetTraffic',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Benefits will be shown after redemption.`
+  String get purchaseBenefitsAfter {
+    return Intl.message(
+      'Benefits will be shown after redemption.',
+      name: 'purchaseBenefitsAfter',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `No additional benefits.`
+  String get purchaseNoBenefits {
+    return Intl.message(
+      'No additional benefits.',
+      name: 'purchaseNoBenefits',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Total traffic before → after`
+  String get purchaseQuotaChange {
+    return Intl.message(
+      'Total traffic before → after',
+      name: 'purchaseQuotaChange',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Expiration before → after`
+  String get purchaseExpiryChange {
+    return Intl.message(
+      'Expiration before → after',
+      name: 'purchaseExpiryChange',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Used traffic is preserved`
+  String get purchaseUsedPreserved {
+    return Intl.message(
+      'Used traffic is preserved',
+      name: 'purchaseUsedPreserved',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Not set`
+  String get purchaseNoPreviousExpiry {
+    return Intl.message(
+      'Not set',
+      name: 'purchaseNoPreviousExpiry',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Gift card redeemed`
+  String get purchaseSuccess {
+    return Intl.message(
+      'Gift card redeemed',
+      name: 'purchaseSuccess',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Your account benefits have been updated. Subscription sync is a separate step.`
+  String get purchaseSuccessDescription {
+    return Intl.message(
+      'Your account benefits have been updated. Subscription sync is a separate step.',
+      name: 'purchaseSuccessDescription',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Redemption order`
+  String get purchaseOrderNumber {
+    return Intl.message(
+      'Redemption order',
+      name: 'purchaseOrderNumber',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Redemption is complete. Subscription sync failed; retry sync below.`
+  String get purchaseSyncFailed {
+    return Intl.message(
+      'Redemption is complete. Subscription sync failed; retry sync below.',
+      name: 'purchaseSyncFailed',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Subscription sync failed. You can retry below.`
+  String get purchaseSyncError {
+    return Intl.message(
+      'Subscription sync failed. You can retry below.',
+      name: 'purchaseSyncError',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Redemption result needs confirmation`
+  String get purchaseUnresolved {
+    return Intl.message(
+      'Redemption result needs confirmation',
+      name: 'purchaseUnresolved',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `The request was interrupted. Check the result before redeeming another card.`
+  String get purchaseUnresolvedDescription {
+    return Intl.message(
+      'The request was interrupted. Check the result before redeeming another card.',
+      name: 'purchaseUnresolvedDescription',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Check redemption result`
+  String get purchaseRecoverResult {
+    return Intl.message(
+      'Check redemption result',
+      name: 'purchaseRecoverResult',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Redemption history`
+  String get purchaseHistory {
+    return Intl.message(
+      'Redemption history',
+      name: 'purchaseHistory',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `No redemptions yet.`
+  String get purchaseHistoryEmpty {
+    return Intl.message(
+      'No redemptions yet.',
+      name: 'purchaseHistoryEmpty',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Reload history`
+  String get purchaseHistoryRetry {
+    return Intl.message(
+      'Reload history',
+      name: 'purchaseHistoryRetry',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Previous page`
+  String get purchasePreviousPage {
+    return Intl.message(
+      'Previous page',
+      name: 'purchasePreviousPage',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Next page`
+  String get purchaseNextPage {
+    return Intl.message(
+      'Next page',
+      name: 'purchaseNextPage',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Page`
+  String get purchaseHistoryPage {
+    return Intl.message(
+      'Page',
+      name: 'purchaseHistoryPage',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Total`
+  String get purchaseHistoryTotal {
+    return Intl.message(
+      'Total',
+      name: 'purchaseHistoryTotal',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Get a gift card`
+  String get purchaseGetCard {
+    return Intl.message(
+      'Get a gift card',
+      name: 'purchaseGetCard',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Contact either WeChat account below to buy a gift card or get help.`
+  String get purchaseGetCardDescription {
+    return Intl.message(
+      'Contact either WeChat account below to buy a gift card or get help.',
+      name: 'purchaseGetCardDescription',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Open gift card store`
+  String get purchaseCardStore {
+    return Intl.message(
+      'Open gift card store',
+      name: 'purchaseCardStore',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Could not open the page. Please try again.`
+  String get purchaseOpenLinkFailed {
+    return Intl.message(
+      'Could not open the page. Please try again.',
+      name: 'purchaseOpenLinkFailed',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Restoring account…`
+  String get purchaseRestoring {
+    return Intl.message(
+      'Restoring account…',
+      name: 'purchaseRestoring',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Period`
+  String get purchasePeriod {
+    return Intl.message('Period', name: 'purchasePeriod', desc: '', args: []);
+  }
+
+  /// `Monthly`
+  String get purchasePeriodMonthly {
+    return Intl.message(
+      'Monthly',
+      name: 'purchasePeriodMonthly',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Quarterly`
+  String get purchasePeriodQuarterly {
+    return Intl.message(
+      'Quarterly',
+      name: 'purchasePeriodQuarterly',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Half-yearly`
+  String get purchasePeriodHalfYearly {
+    return Intl.message(
+      'Half-yearly',
+      name: 'purchasePeriodHalfYearly',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Yearly`
+  String get purchasePeriodYearly {
+    return Intl.message(
+      'Yearly',
+      name: 'purchasePeriodYearly',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Two years`
+  String get purchasePeriodTwoYearly {
+    return Intl.message(
+      'Two years',
+      name: 'purchasePeriodTwoYearly',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Three years`
+  String get purchasePeriodThreeYearly {
+    return Intl.message(
+      'Three years',
+      name: 'purchasePeriodThreeYearly',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Traffic based`
+  String get purchasePeriodOnetime {
+    return Intl.message(
+      'Traffic based',
+      name: 'purchasePeriodOnetime',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Subscription synced successfully.`
+  String get purchaseSyncSucceeded {
+    return Intl.message(
+      'Subscription synced successfully.',
+      name: 'purchaseSyncSucceeded',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `The request failed. Please try again.`
+  String get purchaseGenericError {
+    return Intl.message(
+      'The request failed. Please try again.',
+      name: 'purchaseGenericError',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Secure account storage is unavailable. Retry after checking your system credential storage.`
+  String get purchaseStorageError {
+    return Intl.message(
+      'Secure account storage is unavailable. Retry after checking your system credential storage.',
+      name: 'purchaseStorageError',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Use a regular user account to redeem gift cards.`
+  String get purchaseUnsupportedAccount {
+    return Intl.message(
+      'Use a regular user account to redeem gift cards.',
+      name: 'purchaseUnsupportedAccount',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Signed out on this device. Server sign-out could not be confirmed.`
+  String get purchaseLogoutRemoteError {
+    return Intl.message(
+      'Signed out on this device. Server sign-out could not be confirmed.',
+      name: 'purchaseLogoutRemoteError',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Enter an 8–32 character code using letters and numbers.`
+  String get purchaseCodeFormatError {
+    return Intl.message(
+      'Enter an 8–32 character code using letters and numbers.',
+      name: 'purchaseCodeFormatError',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Gift card store information could not be loaded. You can still contact support below.`
+  String get purchaseChannelError {
+    return Intl.message(
+      'Gift card store information could not be loaded. You can still contact support below.',
+      name: 'purchaseChannelError',
+      desc: '',
+      args: [],
+    );
+  }
 }
 
 class AppLocalizationDelegate extends LocalizationsDelegate<AppLocalizations> {

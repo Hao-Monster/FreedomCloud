@@ -1,122 +1,94 @@
-import 'package:flclashx/common/common.dart';
-import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
+import 'dart:async';
+import 'dart:typed_data';
 
-class PurchaseView extends StatelessWidget {
+import 'package:flclashx/common/preferences.dart';
+import 'package:flclashx/manager/purchase_manager.dart';
+import 'package:flclashx/models/profile.dart';
+import 'package:flclashx/providers/providers.dart';
+import 'package:flclashx/services/purchase_profile_sync.dart';
+import 'package:flclashx/services/purchase_storage.dart';
+import 'package:flclashx/services/xboard_api.dart';
+import 'package:flclashx/state.dart';
+import 'package:flclashx/views/purchase/center.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:url_launcher/url_launcher.dart';
+
+class PurchaseView extends ConsumerStatefulWidget {
   const PurchaseView({super.key});
 
-  static const _wechatAccounts = [
-    'ChasingDream_2021',
-    'dxm_qa',
-  ];
+  @override
+  ConsumerState<PurchaseView> createState() => _PurchaseViewState();
+}
 
-  Future<void> _copyWechat(BuildContext context, String account) async {
-    await Clipboard.setData(ClipboardData(text: account));
-    if (context.mounted) {
-      await context.showNotifier(appLocalizations.copySuccess);
-    }
+class _PurchaseViewState extends ConsumerState<PurchaseView> {
+  late final PurchaseManager _manager;
+
+  @override
+  void initState() {
+    super.initState();
+    final api = DioXboardApi();
+    final storage = SecurePurchaseStorage(api.baseUri);
+    Uint8List? downloadedBytes;
+    final synchronizer = PurchaseProfileSynchronizer(
+      origin: api.baseUri,
+      storage: storage,
+      readProfiles: () => ref.read(profilesProvider),
+      download: (profile) async {
+        final settings = await SharedPreferences.getInstance();
+        downloadedBytes = null;
+        final fetched = await profile.fetch(
+            shouldSendHeaders: settings.getBool('sendDeviceHeaders') ?? true);
+        downloadedBytes = fetched.bytes;
+        return fetched.profile;
+      },
+      save: (profile) async {
+        if (!mounted) throw const FormatException('Purchase view is closed');
+        final beforeSave = ref.read(profilesProvider).getProfile(profile.id);
+        final bytes = downloadedBytes;
+        if (bytes == null) throw const FormatException('No downloaded profile');
+        final written = await profile.saveFile(bytes,
+            canSave: () =>
+                mounted &&
+                ref.read(profilesProvider).getProfile(profile.id) ==
+                    beforeSave);
+        downloadedBytes = null;
+        if (!mounted ||
+            ref.read(profilesProvider).getProfile(profile.id) != beforeSave) {
+          throw const FormatException('Profile changed during synchronization');
+        }
+        // Save without auto-selecting a new profile or applying provider UI
+        // settings to a different active subscription.
+        globalState.appController.setProfileAndAutoApply(written);
+        final saved = await preferences.saveConfig(globalState.config);
+        if (!saved) {
+          throw const FormatException('Profile settings were not saved');
+        }
+      },
+    );
+    _manager = PurchaseManager(
+        api: api, storage: storage, synchronize: synchronizer.synchronize);
+    unawaited(_manager.initialize());
   }
 
   @override
-  Widget build(BuildContext context) => Align(
-        alignment: Alignment.topCenter,
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(20, 32, 20, 40),
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 640),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                CircleAvatar(
-                  radius: 34,
-                  backgroundColor: context.colorScheme.primaryContainer,
-                  foregroundColor: context.colorScheme.onPrimaryContainer,
-                  child: const Icon(Icons.shopping_bag_rounded, size: 34),
-                ),
-                const SizedBox(height: 20),
-                Text(
-                  appLocalizations.purchaseTitle,
-                  textAlign: TextAlign.center,
-                  style: context.textTheme.headlineSmall?.copyWith(
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                const SizedBox(height: 10),
-                Text(
-                  appLocalizations.purchaseContactDescription,
-                  textAlign: TextAlign.center,
-                  style: context.textTheme.bodyLarge?.copyWith(
-                    color: context.colorScheme.onSurfaceVariant,
-                    height: 1.5,
-                  ),
-                ),
-                const SizedBox(height: 28),
-                for (final account in _wechatAccounts) ...[
-                  _WechatAccountCard(
-                    account: account,
-                    onCopy: () => _copyWechat(context, account),
-                  ),
-                  if (account != _wechatAccounts.last)
-                    const SizedBox(height: 14),
-                ],
-              ],
-            ),
-          ),
-        ),
-      );
-}
-
-class _WechatAccountCard extends StatelessWidget {
-  const _WechatAccountCard({
-    required this.account,
-    required this.onCopy,
-  });
-
-  final String account;
-  final VoidCallback onCopy;
+  void dispose() {
+    _manager.dispose();
+    super.dispose();
+  }
 
   @override
-  Widget build(BuildContext context) => Card(
-        margin: EdgeInsets.zero,
-        clipBehavior: Clip.antiAlias,
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Row(
-            children: [
-              CircleAvatar(
-                backgroundColor: context.colorScheme.secondaryContainer,
-                foregroundColor: context.colorScheme.onSecondaryContainer,
-                child: const Icon(Icons.chat_bubble_rounded),
-              ),
-              const SizedBox(width: 14),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      appLocalizations.wechatId,
-                      style: context.textTheme.labelLarge?.copyWith(
-                        color: context.colorScheme.onSurfaceVariant,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    SelectableText(
-                      account,
-                      style: context.textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 10),
-              FilledButton.tonalIcon(
-                onPressed: onCopy,
-                icon: const Icon(Icons.copy_rounded, size: 18),
-                label: Text(appLocalizations.copy),
-              ),
-            ],
-          ),
-        ),
+  Widget build(BuildContext context) => PurchaseCenter(
+        manager: _manager,
+        openLink: (url) async {
+          if (url.scheme != 'https' ||
+              url.host.isEmpty ||
+              url.userInfo.isNotEmpty ||
+              !await launchUrl(url, mode: LaunchMode.externalApplication)) {
+            throw const FormatException('Could not open the account website');
+          }
+        },
+        openProfiles: () => globalState.appController.toProfiles(),
       );
 }

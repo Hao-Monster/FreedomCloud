@@ -16,6 +16,10 @@ part 'generated/profile.g.dart';
 
 typedef SelectedMap = Map<String, String>;
 
+// Local-only metadata; unlike provider headers this must survive every refresh.
+const xboardTlsMarker = 'local-xboard-tls';
+const xboardAccountMarker = 'local-xboard-account';
+
 @freezed
 class SubscriptionInfo with _$SubscriptionInfo {
   const factory SubscriptionInfo({
@@ -169,6 +173,15 @@ extension ProfileExtension on Profile {
   }
 
   Future<Profile> update({bool shouldSendHeaders = true}) async {
+    final fetched = await fetch(shouldSendHeaders: shouldSendHeaders);
+    return fetched.profile.saveFile(fetched.bytes);
+  }
+
+  // Native account synchronization commits only after ownership and local
+  // edits have been checked. Downloading alone must not overwrite its file.
+  Future<({Profile profile, Uint8List bytes})> fetch({
+    bool shouldSendHeaders = true,
+  }) async {
     final headers = <String, dynamic>{};
 
     if (shouldSendHeaders) {
@@ -184,6 +197,7 @@ extension ProfileExtension on Profile {
     final response = await request.getFileResponseForUrl(
       url,
       headers: headers.isNotEmpty ? headers : null,
+      requireValidTls: this.providerHeaders[xboardTlsMarker] == 'required',
     );
 
     final disposition = response.headers.value("content-disposition");
@@ -195,6 +209,11 @@ extension ProfileExtension on Profile {
     }
 
     final providerHeaders = <String, String>{};
+    if (this.providerHeaders[xboardTlsMarker] == 'required') {
+      providerHeaders[xboardTlsMarker] = 'required';
+    }
+    final owner = this.providerHeaders[xboardAccountMarker];
+    if (owner != null) providerHeaders[xboardAccountMarker] = owner;
     
     final headersToCollect = [
       'announce',
@@ -228,26 +247,35 @@ extension ProfileExtension on Profile {
 
     String updatedUrl = url;
     final newDomain = providerHeaders['flclashx-newdomain'];
-    if (newDomain != null && newDomain.isNotEmpty) {
+    // Managed account subscriptions rotate URLs through the authenticated API.
+    // Do not forward their token or device identifiers via provider migration.
+    if (this.providerHeaders[xboardTlsMarker] != 'required' &&
+        newDomain != null && newDomain.isNotEmpty) {
       final currentUri = Uri.tryParse(url);
       if (currentUri != null && currentUri.host != newDomain) {
         updatedUrl = currentUri.replace(host: newDomain).toString();
       }
     }
 
-    return copyWith(
-      url: updatedUrl,
-      label: label ?? utils.getFileNameForDisposition(disposition) ?? id,
-      subscriptionInfo: SubscriptionInfo.formHString(userinfo),
-      autoUpdateDuration: durationFromHeader ?? autoUpdateDuration,
-      providerHeaders: providerHeaders,
-    ).saveFile(responseData);
+    return (
+      profile: copyWith(
+        url: updatedUrl,
+        label: label ?? utils.getFileNameForDisposition(disposition) ?? id,
+        subscriptionInfo: SubscriptionInfo.formHString(userinfo),
+        autoUpdateDuration: durationFromHeader ?? autoUpdateDuration,
+        providerHeaders: providerHeaders,
+      ),
+      bytes: responseData,
+    );
   }
 
-  Future<Profile> saveFile(Uint8List bytes) async {
+  Future<Profile> saveFile(Uint8List bytes, {bool Function()? canSave}) async {
     final message = await clashCore.validateConfig(utf8.decode(bytes));
     if (message.isNotEmpty) {
       throw message;
+    }
+    if (canSave != null && !canSave()) {
+      throw const FormatException('Profile changed during validation');
     }
     final file = await getFile();
     await file.writeAsBytes(bytes);
