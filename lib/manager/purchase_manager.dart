@@ -19,6 +19,10 @@ class PurchaseManager extends ChangeNotifier {
   final PurchaseStorage storage;
   final PurchaseSubscriptionSync _synchronize;
 
+  XboardPlanCatalog? planCatalog;
+  XboardException? plansError;
+  bool plansLoading = false;
+
   XboardAccount? account;
   XboardSubscription? subscription;
   GiftPreview? preview;
@@ -54,6 +58,25 @@ class PurchaseManager extends ChangeNotifier {
 
   void _notify() {
     if (!_disposed) notifyListeners();
+  }
+
+  /// Public offers remain available independently of login and secure storage.
+  /// Do not let catalogue errors or a slow request block gift-card operations.
+  Future<void> loadPlans() async {
+    if (_disposed || plansLoading) return;
+    plansLoading = true;
+    plansError = null;
+    planCatalog = null;
+    _notify();
+    try {
+      final result = await api.getPlanCatalog();
+      if (!_disposed) planCatalog = result;
+    } on Exception catch (cause) {
+      if (!_disposed) plansError = _failure(cause, 'plan_catalog_failed');
+    } finally {
+      plansLoading = false;
+      _notify();
+    }
   }
 
   XboardException _failure(Object cause,

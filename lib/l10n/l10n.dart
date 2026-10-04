@@ -5258,6 +5258,76 @@ class AppLocalizations {
       args: [],
     );
   }
+
+  /// `Available plans`
+  String get purchaseAvailablePlans {
+    return Intl.message(
+      'Available plans',
+      name: 'purchaseAvailablePlans',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Prices are shown as listed on the website. Confirm the currency and buy a gift card through the WeChat contacts below, then redeem it here.`
+  String get purchasePlansDescription {
+    return Intl.message(
+      'Prices are shown as listed on the website. Confirm the currency and buy a gift card through the WeChat contacts below, then redeem it here.',
+      name: 'purchasePlansDescription',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Loading plans…`
+  String get purchasePlansLoading {
+    return Intl.message(
+      'Loading plans…',
+      name: 'purchasePlansLoading',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `No plans are currently available.`
+  String get purchasePlansEmpty {
+    return Intl.message(
+      'No plans are currently available.',
+      name: 'purchasePlansEmpty',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Plans could not be loaded. Please try again.`
+  String get purchasePlansError {
+    return Intl.message(
+      'Plans could not be loaded. Please try again.',
+      name: 'purchasePlansError',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Speed limit`
+  String get purchasePlanSpeed {
+    return Intl.message(
+      'Speed limit',
+      name: 'purchasePlanSpeed',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Device limit`
+  String get purchasePlanDevices {
+    return Intl.message(
+      'Device limit',
+      name: 'purchasePlanDevices',
+      desc: '',
+      args: [],
+    );
+  }
 }
 
 class AppLocalizationDelegate extends LocalizationsDelegate<AppLocalizations> {

@@ -384,6 +384,10 @@ class _Storage implements PurchaseStorage {
 }
 
 class _Api implements XboardApi {
+  @override
+  Future<XboardPlanCatalog> getPlanCatalog() async =>
+      const XboardPlanCatalog(plans: []);
+
   XboardAccount user = const XboardAccount(id: 1, email: 'person@example.test');
   XboardSubscription sub = XboardSubscription(
       planId: 3,

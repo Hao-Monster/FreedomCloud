@@ -470,6 +470,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "proxyProviders": MessageLookupByLibrary.simpleMessage("代理提供者"),
     "purchase": MessageLookupByLibrary.simpleMessage("购买"),
     "purchaseAccount": MessageLookupByLibrary.simpleMessage("账户与订阅"),
+    "purchaseAvailablePlans": MessageLookupByLibrary.simpleMessage("可购买套餐"),
     "purchaseBalance": MessageLookupByLibrary.simpleMessage("账户余额"),
     "purchaseBalanceOnlyHint": MessageLookupByLibrary.simpleMessage(
       "余额到账不代表套餐已经开通。",
@@ -551,7 +552,15 @@ class MessageLookup extends MessageLookupByLibrary {
     "purchasePeriodTwoYearly": MessageLookupByLibrary.simpleMessage("两年付"),
     "purchasePeriodYearly": MessageLookupByLibrary.simpleMessage("年付"),
     "purchasePlan": MessageLookupByLibrary.simpleMessage("当前套餐"),
+    "purchasePlanDevices": MessageLookupByLibrary.simpleMessage("设备上限"),
+    "purchasePlanSpeed": MessageLookupByLibrary.simpleMessage("速率上限"),
     "purchasePlanUnknown": MessageLookupByLibrary.simpleMessage("订阅套餐"),
+    "purchasePlansDescription": MessageLookupByLibrary.simpleMessage(
+      "价格按网站标价显示；币种及购买请联系下方微信确认，获取礼品卡后在此兑换。",
+    ),
+    "purchasePlansEmpty": MessageLookupByLibrary.simpleMessage("暂无可购买的套餐。"),
+    "purchasePlansError": MessageLookupByLibrary.simpleMessage("套餐加载失败，请重试。"),
+    "purchasePlansLoading": MessageLookupByLibrary.simpleMessage("正在加载套餐…"),
     "purchasePreview": MessageLookupByLibrary.simpleMessage("确认兑换权益"),
     "purchasePreviousPage": MessageLookupByLibrary.simpleMessage("上一页"),
     "purchaseProfiles": MessageLookupByLibrary.simpleMessage("管理配置"),

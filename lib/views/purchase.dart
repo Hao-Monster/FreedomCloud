@@ -70,6 +70,7 @@ class _PurchaseViewState extends ConsumerState<PurchaseView> {
     _manager = PurchaseManager(
         api: api, storage: storage, synchronize: synchronizer.synchronize);
     unawaited(_manager.initialize());
+    unawaited(_manager.loadPlans());
   }
 
   @override

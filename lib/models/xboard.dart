@@ -1,3 +1,35 @@
+/// Public catalogue prices use integer minor units; traffic is already in GiB.
+class XboardPlanPrice {
+  const XboardPlanPrice({required this.period, required this.amount});
+
+  final String period;
+  final int amount;
+}
+
+class XboardPlanOffer {
+  const XboardPlanOffer({
+    required this.id,
+    required this.name,
+    required this.transferGiB,
+    this.speedLimit,
+    this.deviceLimit,
+    required this.prices,
+  });
+
+  final int id;
+  final String name;
+  final int transferGiB;
+  final int? speedLimit;
+  final int? deviceLimit;
+  final List<XboardPlanPrice> prices;
+}
+
+class XboardPlanCatalog {
+  const XboardPlanCatalog({required this.plans});
+
+  final List<XboardPlanOffer> plans;
+}
+
 /// Xboard account credentials are deliberately kept outside display models.
 class XboardAccount {
   const XboardAccount({
