@@ -587,5 +587,12 @@
   "purchaseUnsupportedAccount": "请使用普通用户账户兑换礼品卡。",
   "purchaseLogoutRemoteError": "已在此设备退出登录，但尚未确认服务器端注销结果。",
   "purchaseCodeFormatError": "请输入由 8–32 位字母和数字组成的兑换码。",
-  "purchaseChannelError": "礼品卡商店信息加载失败，仍可通过下方微信联系客服。"
+  "purchaseChannelError": "礼品卡商店信息加载失败，仍可通过下方微信联系客服。",
+  "purchaseAvailablePlans": "可购买套餐",
+  "purchasePlansDescription": "价格按网站标价显示；币种及购买请联系下方微信确认，获取礼品卡后在此兑换。",
+  "purchasePlansLoading": "正在加载套餐…",
+  "purchasePlansEmpty": "暂无可购买的套餐。",
+  "purchasePlansError": "套餐加载失败，请重试。",
+  "purchasePlanSpeed": "速率上限",
+  "purchasePlanDevices": "设备上限"
 }

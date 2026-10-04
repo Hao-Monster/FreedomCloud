@@ -6,6 +6,7 @@ import 'package:flclashx/models/xboard.dart';
 
 abstract class XboardApi {
   Uri get baseUri;
+  Future<XboardPlanCatalog> getPlanCatalog();
   Future<String> login(String email, String password);
   Future<XboardAccount> getAccount(String authorization);
   Future<XboardSubscription> getSubscription(String authorization);
@@ -77,6 +78,40 @@ class DioXboardApi implements XboardApi {
   @override
   final Uri baseUri;
   final Dio _dio;
+
+  @override
+  Future<XboardPlanCatalog> getPlanCatalog() => _request(
+        '/api/v1/guest/plans',
+        parse: (body) {
+          final root = _object(body);
+          if (root['status'] != 'success') _invalid();
+          final plans = <XboardPlanOffer>[];
+          final ids = <int>{};
+          for (final value in _list(root['data'])) {
+            final data = _object(value);
+            if (!_boolean(data, 'can_purchase')) continue;
+            final prices = _planPrices(data['prices']);
+            // A traffic reset is not a new subscription, and missing prices
+            // must never become a zero-price offer.
+            if (prices.isEmpty) continue;
+            final id = _positive(data, 'id');
+            if (!ids.add(id)) _invalid();
+            plans.add(XboardPlanOffer(
+              id: id,
+              name: _string(data, 'name'),
+              transferGiB: _nonnegative(data, 'transfer_enable'),
+              speedLimit: data['speed_limit'] == null
+                  ? null
+                  : _nonnegative(data, 'speed_limit'),
+              deviceLimit: data['device_limit'] == null
+                  ? null
+                  : _nonnegative(data, 'device_limit'),
+              prices: prices,
+            ));
+          }
+          return XboardPlanCatalog(plans: List.unmodifiable(plans));
+        },
+      );
 
   @override
   Future<String> login(String email, String password) => _request(
@@ -341,6 +376,36 @@ Uri _validateOrigin(Uri uri) {
     throw ArgumentError('XBOARD_BASE_URL must be an HTTPS origin');
   }
   return Uri.parse(uri.origin);
+}
+
+const _catalogPeriods = [
+  'monthly',
+  'quarterly',
+  'half_yearly',
+  'yearly',
+  'two_yearly',
+  'three_yearly',
+  'onetime',
+];
+
+List<XboardPlanPrice> _planPrices(Object? value) {
+  final prices = _object(value);
+  for (final entry in prices.entries) {
+    final amount = entry.value;
+    if (amount == null) continue;
+    if ((!_catalogPeriods.contains(entry.key) &&
+            entry.key != 'reset_traffic') ||
+        amount is! int ||
+        amount < 0 ||
+        amount > 9000000000000000) {
+      _invalid();
+    }
+  }
+  return List.unmodifiable([
+    for (final period in _catalogPeriods)
+      if (prices[period] != null)
+        XboardPlanPrice(period: period, amount: _nonnegative(prices, period)),
+  ]);
 }
 
 bool _validAuthorization(String value) =>

@@ -747,6 +747,9 @@ class MessageLookup extends MessageLookupByLibrary {
     "purchaseAccount": MessageLookupByLibrary.simpleMessage(
       "Account and subscription",
     ),
+    "purchaseAvailablePlans": MessageLookupByLibrary.simpleMessage(
+      "Available plans",
+    ),
     "purchaseBalance": MessageLookupByLibrary.simpleMessage("Account balance"),
     "purchaseBalanceOnlyHint": MessageLookupByLibrary.simpleMessage(
       "A balance credit does not activate a subscription.",
@@ -864,7 +867,21 @@ class MessageLookup extends MessageLookupByLibrary {
     ),
     "purchasePeriodYearly": MessageLookupByLibrary.simpleMessage("Yearly"),
     "purchasePlan": MessageLookupByLibrary.simpleMessage("Current plan"),
+    "purchasePlanDevices": MessageLookupByLibrary.simpleMessage("Device limit"),
+    "purchasePlanSpeed": MessageLookupByLibrary.simpleMessage("Speed limit"),
     "purchasePlanUnknown": MessageLookupByLibrary.simpleMessage("Subscription"),
+    "purchasePlansDescription": MessageLookupByLibrary.simpleMessage(
+      "Prices are shown as listed on the website. Confirm the currency and buy a gift card through the WeChat contacts below, then redeem it here.",
+    ),
+    "purchasePlansEmpty": MessageLookupByLibrary.simpleMessage(
+      "No plans are currently available.",
+    ),
+    "purchasePlansError": MessageLookupByLibrary.simpleMessage(
+      "Plans could not be loaded. Please try again.",
+    ),
+    "purchasePlansLoading": MessageLookupByLibrary.simpleMessage(
+      "Loading plans…",
+    ),
     "purchasePreview": MessageLookupByLibrary.simpleMessage(
       "Review before redeeming",
     ),

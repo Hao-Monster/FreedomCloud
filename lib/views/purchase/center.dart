@@ -2,6 +2,7 @@ import 'package:flclashx/l10n/l10n.dart';
 import 'package:flclashx/manager/purchase_manager.dart';
 import 'package:flclashx/models/xboard.dart';
 import 'package:flclashx/services/xboard_api.dart';
+import 'package:flclashx/views/purchase/plan_catalog.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
@@ -124,6 +125,13 @@ class _PurchaseCenterState extends State<PurchaseCenter> {
                       style: Theme.of(context).textTheme.headlineSmall),
                   const SizedBox(height: 8),
                   Text(l.purchaseCenterDescription),
+                  const SizedBox(height: 24),
+                  PurchasePlanCatalog(
+                    catalog: manager.planCatalog,
+                    loading: manager.plansLoading,
+                    failed: manager.plansError != null,
+                    retry: manager.loadPlans,
+                  ),
                   const SizedBox(height: 24),
                   if (!manager.loggedIn && manager.receipt != null) ...[
                     _Notice(

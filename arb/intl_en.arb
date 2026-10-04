@@ -638,5 +638,12 @@
   "purchaseUnsupportedAccount": "Use a regular user account to redeem gift cards.",
   "purchaseLogoutRemoteError": "Signed out on this device. Server sign-out could not be confirmed.",
   "purchaseCodeFormatError": "Enter an 8–32 character code using letters and numbers.",
-  "purchaseChannelError": "Gift card store information could not be loaded. You can still contact support below."
+  "purchaseChannelError": "Gift card store information could not be loaded. You can still contact support below.",
+  "purchaseAvailablePlans": "Available plans",
+  "purchasePlansDescription": "Prices are shown as listed on the website. Confirm the currency and buy a gift card through the WeChat contacts below, then redeem it here.",
+  "purchasePlansLoading": "Loading plans…",
+  "purchasePlansEmpty": "No plans are currently available.",
+  "purchasePlansError": "Plans could not be loaded. Please try again.",
+  "purchasePlanSpeed": "Speed limit",
+  "purchasePlanDevices": "Device limit"
 }

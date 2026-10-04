@@ -353,6 +353,15 @@ class _Api implements XboardApi {
 
 class _Manager extends ChangeNotifier implements PurchaseManager {
   @override
+  XboardPlanCatalog? planCatalog;
+  @override
+  bool plansLoading = false;
+  @override
+  XboardException? plansError;
+  @override
+  Future<void> loadPlans() async {}
+
+  @override
   final XboardApi api = _Api();
   @override
   XboardAccount? account = _account;

@@ -92,6 +92,7 @@ void main() {
       );
     final scenarios = [
       ('login', const Size(1000, 960), _PreviewManager()..account = null),
+      ('narrow-login', const Size(320, 960), _PreviewManager()..account = null),
       ('redemption-preview', const Size(1100, 1440), preview),
       ('success-sync-failed', const Size(1100, 1500), success),
       ('narrow-preview', const Size(320, 1800), preview),
@@ -137,19 +138,26 @@ void main() {
       ));
       await tester.pumpAndSettle();
       expect(tester.takeException(), isNull, reason: name);
-      final boundary = boundaryKey.currentContext!.findRenderObject()!
-          as RenderRepaintBoundary;
-      await tester.runAsync(() async {
-        final image = await boundary.toImage(pixelRatio: 1);
-        try {
-          final data = await image.toByteData(format: ui.ImageByteFormat.png);
-          expect(data, isNotNull);
-          await File('${output.path}/$name.png')
-              .writeAsBytes(data!.buffer.asUint8List());
-        } finally {
-          image.dispose();
+      for (final phase in ['', '-support']) {
+        if (phase.isNotEmpty) {
+          await tester.ensureVisible(find.text('微信号: dxm_qa'));
+          await tester.pumpAndSettle();
+          expect(tester.takeException(), isNull, reason: '$name$phase');
         }
-      });
+        final boundary = boundaryKey.currentContext!.findRenderObject()!
+            as RenderRepaintBoundary;
+        await tester.runAsync(() async {
+          final image = await boundary.toImage(pixelRatio: 1);
+          try {
+            final data = await image.toByteData(format: ui.ImageByteFormat.png);
+            expect(data, isNotNull);
+            await File('${output.path}/$name$phase.png')
+                .writeAsBytes(data!.buffer.asUint8List());
+          } finally {
+            image.dispose();
+          }
+        });
+      }
     }
   });
 }
@@ -163,6 +171,33 @@ class _PreviewAPI implements XboardApi {
 }
 
 class _PreviewManager extends ChangeNotifier implements PurchaseManager {
+  @override
+  XboardPlanCatalog? planCatalog = const XboardPlanCatalog(plans: [
+    XboardPlanOffer(
+      id: 1,
+      name: '标准套餐',
+      transferGiB: 200,
+      speedLimit: 300,
+      deviceLimit: 5,
+      prices: [
+        XboardPlanPrice(period: 'monthly', amount: 1500),
+        XboardPlanPrice(period: 'yearly', amount: 15000),
+      ],
+    ),
+    XboardPlanOffer(
+      id: 2,
+      name: '轻量流量包',
+      transferGiB: 50,
+      prices: [XboardPlanPrice(period: 'onetime', amount: 3000)],
+    ),
+  ]);
+  @override
+  bool plansLoading = false;
+  @override
+  XboardException? plansError;
+  @override
+  Future<void> loadPlans() async {}
+
   @override
   final XboardApi api = _PreviewAPI();
   @override
