@@ -9,7 +9,8 @@ class FlClashHttpOverrides extends HttpOverrides {
       return "DIRECT";
     }
     final isStart = globalState.appState.runTime != null;
-    commonPrint.log("find $url proxy:$isStart");
+    // Subscription credentials may live in either the path or query string.
+    commonPrint.log("find ${url.host} proxy:$isStart");
     if (!isStart) return "DIRECT";
     // When TUN is handling traffic, let the OS network stack send the request
     // so it gets captured by TUN and processed by the core via rules. This

@@ -665,8 +665,29 @@ class MessageLookup extends MessageLookupByLibrary {
     ),
     "proxyProviders": MessageLookupByLibrary.simpleMessage("Провайдеры прокси"),
     "purchase": MessageLookupByLibrary.simpleMessage("Покупка"),
+    "purchaseAvailablePlans": MessageLookupByLibrary.simpleMessage(
+      "Доступные тарифы",
+    ),
     "purchaseContactDescription": MessageLookupByLibrary.simpleMessage(
       "Онлайн-оплата пока недоступна. Добавьте любой из указанных аккаунтов WeChat для покупки или продления.",
+    ),
+    "purchasePlanDevices": MessageLookupByLibrary.simpleMessage(
+      "Лимит устройств",
+    ),
+    "purchasePlanSpeed": MessageLookupByLibrary.simpleMessage(
+      "Ограничение скорости",
+    ),
+    "purchasePlansDescription": MessageLookupByLibrary.simpleMessage(
+      "Цены указаны как на сайте. Уточните валюту и купите подарочную карту через контакты WeChat ниже, затем активируйте её здесь.",
+    ),
+    "purchasePlansEmpty": MessageLookupByLibrary.simpleMessage(
+      "Сейчас нет доступных тарифов.",
+    ),
+    "purchasePlansError": MessageLookupByLibrary.simpleMessage(
+      "Не удалось загрузить тарифы. Повторите попытку.",
+    ),
+    "purchasePlansLoading": MessageLookupByLibrary.simpleMessage(
+      "Загрузка тарифов…",
     ),
     "purchaseTitle": MessageLookupByLibrary.simpleMessage(
       "Покупка и продление",

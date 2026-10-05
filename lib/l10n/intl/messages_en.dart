@@ -744,11 +744,219 @@ class MessageLookup extends MessageLookupByLibrary {
     ),
     "proxyProviders": MessageLookupByLibrary.simpleMessage("Proxy providers"),
     "purchase": MessageLookupByLibrary.simpleMessage("Purchase"),
+    "purchaseAccount": MessageLookupByLibrary.simpleMessage(
+      "Account and subscription",
+    ),
+    "purchaseAvailablePlans": MessageLookupByLibrary.simpleMessage(
+      "Available plans",
+    ),
+    "purchaseBalance": MessageLookupByLibrary.simpleMessage("Account balance"),
+    "purchaseBalanceOnlyHint": MessageLookupByLibrary.simpleMessage(
+      "A balance credit does not activate a subscription.",
+    ),
+    "purchaseBenefitsAfter": MessageLookupByLibrary.simpleMessage(
+      "Benefits will be shown after redemption.",
+    ),
+    "purchaseCardStore": MessageLookupByLibrary.simpleMessage(
+      "Open gift card store",
+    ),
+    "purchaseCenterDescription": MessageLookupByLibrary.simpleMessage(
+      "Redeem your card to activate or renew your service, then sync your subscription.",
+    ),
+    "purchaseCenterTitle": MessageLookupByLibrary.simpleMessage(
+      "Gift card redemption",
+    ),
+    "purchaseChannelError": MessageLookupByLibrary.simpleMessage(
+      "Gift card store information could not be loaded. You can still contact support below.",
+    ),
+    "purchaseCheck": MessageLookupByLibrary.simpleMessage("Preview benefits"),
+    "purchaseChecking": MessageLookupByLibrary.simpleMessage("Checking…"),
+    "purchaseCode": MessageLookupByLibrary.simpleMessage("Gift card code"),
+    "purchaseCodeFormatError": MessageLookupByLibrary.simpleMessage(
+      "Enter an 8–32 character code using letters and numbers.",
+    ),
+    "purchaseConfirmRedeem": MessageLookupByLibrary.simpleMessage(
+      "Confirm redemption",
+    ),
     "purchaseContactDescription": MessageLookupByLibrary.simpleMessage(
       "Online payment is not available yet. Add either WeChat account below to purchase or renew your service.",
     ),
+    "purchaseEmail": MessageLookupByLibrary.simpleMessage("Email address"),
+    "purchaseEmailRequired": MessageLookupByLibrary.simpleMessage(
+      "Enter a valid email address.",
+    ),
+    "purchaseExpires": MessageLookupByLibrary.simpleMessage("Expires"),
+    "purchaseExpiryChange": MessageLookupByLibrary.simpleMessage(
+      "Expiration before → after",
+    ),
+    "purchaseExtraDays": MessageLookupByLibrary.simpleMessage(
+      "Extra validity (days)",
+    ),
+    "purchaseExtraDevices": MessageLookupByLibrary.simpleMessage(
+      "Additional devices",
+    ),
+    "purchaseGenericError": MessageLookupByLibrary.simpleMessage(
+      "The request failed. Please try again.",
+    ),
+    "purchaseGetCard": MessageLookupByLibrary.simpleMessage("Get a gift card"),
+    "purchaseGetCardDescription": MessageLookupByLibrary.simpleMessage(
+      "Contact either WeChat account below to buy a gift card or get help.",
+    ),
+    "purchaseHistory": MessageLookupByLibrary.simpleMessage(
+      "Redemption history",
+    ),
+    "purchaseHistoryEmpty": MessageLookupByLibrary.simpleMessage(
+      "No redemptions yet.",
+    ),
+    "purchaseHistoryPage": MessageLookupByLibrary.simpleMessage("Page"),
+    "purchaseHistoryRetry": MessageLookupByLibrary.simpleMessage(
+      "Reload history",
+    ),
+    "purchaseHistoryTotal": MessageLookupByLibrary.simpleMessage("Total"),
+    "purchaseLoggingIn": MessageLookupByLibrary.simpleMessage("Signing in…"),
+    "purchaseLogin": MessageLookupByLibrary.simpleMessage("Sign in"),
+    "purchaseLoginDescription": MessageLookupByLibrary.simpleMessage(
+      "Use your Xboard account. Cards are redeemed for the account shown here.",
+    ),
+    "purchaseLoginTitle": MessageLookupByLibrary.simpleMessage(
+      "Sign in to redeem",
+    ),
+    "purchaseLogout": MessageLookupByLibrary.simpleMessage("Sign out"),
+    "purchaseLogoutRemoteError": MessageLookupByLibrary.simpleMessage(
+      "Signed out on this device. Server sign-out could not be confirmed.",
+    ),
+    "purchaseMysteryPreview": MessageLookupByLibrary.simpleMessage(
+      "This is a mystery card. The actual benefits are revealed after redemption.",
+    ),
+    "purchaseNextPage": MessageLookupByLibrary.simpleMessage("Next page"),
+    "purchaseNoBenefits": MessageLookupByLibrary.simpleMessage(
+      "No additional benefits.",
+    ),
+    "purchaseNoExpiry": MessageLookupByLibrary.simpleMessage("No expiration"),
+    "purchaseNoPlan": MessageLookupByLibrary.simpleMessage("No active plan"),
+    "purchaseNoPreviousExpiry": MessageLookupByLibrary.simpleMessage("Not set"),
+    "purchaseNotEligible": MessageLookupByLibrary.simpleMessage(
+      "This card cannot be redeemed by this account.",
+    ),
+    "purchaseOpenLinkFailed": MessageLookupByLibrary.simpleMessage(
+      "Could not open the page. Please try again.",
+    ),
+    "purchaseOrderNumber": MessageLookupByLibrary.simpleMessage(
+      "Redemption order",
+    ),
+    "purchasePassword": MessageLookupByLibrary.simpleMessage("Password"),
+    "purchasePasswordRequired": MessageLookupByLibrary.simpleMessage(
+      "Enter your password.",
+    ),
+    "purchasePeriod": MessageLookupByLibrary.simpleMessage("Period"),
+    "purchasePeriodHalfYearly": MessageLookupByLibrary.simpleMessage(
+      "Half-yearly",
+    ),
+    "purchasePeriodMonthly": MessageLookupByLibrary.simpleMessage("Monthly"),
+    "purchasePeriodOnetime": MessageLookupByLibrary.simpleMessage(
+      "Traffic based",
+    ),
+    "purchasePeriodQuarterly": MessageLookupByLibrary.simpleMessage(
+      "Quarterly",
+    ),
+    "purchasePeriodThreeYearly": MessageLookupByLibrary.simpleMessage(
+      "Three years",
+    ),
+    "purchasePeriodTwoYearly": MessageLookupByLibrary.simpleMessage(
+      "Two years",
+    ),
+    "purchasePeriodYearly": MessageLookupByLibrary.simpleMessage("Yearly"),
+    "purchasePlan": MessageLookupByLibrary.simpleMessage("Current plan"),
+    "purchasePlanDevices": MessageLookupByLibrary.simpleMessage("Device limit"),
+    "purchasePlanSpeed": MessageLookupByLibrary.simpleMessage("Speed limit"),
+    "purchasePlanUnknown": MessageLookupByLibrary.simpleMessage("Subscription"),
+    "purchasePlansDescription": MessageLookupByLibrary.simpleMessage(
+      "Prices are shown as listed on the website. Confirm the currency and buy a gift card through the WeChat contacts below, then redeem it here.",
+    ),
+    "purchasePlansEmpty": MessageLookupByLibrary.simpleMessage(
+      "No plans are currently available.",
+    ),
+    "purchasePlansError": MessageLookupByLibrary.simpleMessage(
+      "Plans could not be loaded. Please try again.",
+    ),
+    "purchasePlansLoading": MessageLookupByLibrary.simpleMessage(
+      "Loading plans…",
+    ),
+    "purchasePreview": MessageLookupByLibrary.simpleMessage(
+      "Review before redeeming",
+    ),
+    "purchasePreviousPage": MessageLookupByLibrary.simpleMessage(
+      "Previous page",
+    ),
+    "purchaseProfiles": MessageLookupByLibrary.simpleMessage("Manage profiles"),
+    "purchaseQuotaChange": MessageLookupByLibrary.simpleMessage(
+      "Total traffic before → after",
+    ),
+    "purchaseRecoverPassword": MessageLookupByLibrary.simpleMessage(
+      "Reset password on website",
+    ),
+    "purchaseRecoverResult": MessageLookupByLibrary.simpleMessage(
+      "Check redemption result",
+    ),
+    "purchaseRedeemFor": MessageLookupByLibrary.simpleMessage("Redeem for"),
+    "purchaseRedeemTitle": MessageLookupByLibrary.simpleMessage(
+      "Redeem a gift card",
+    ),
+    "purchaseRedeeming": MessageLookupByLibrary.simpleMessage("Redeeming…"),
+    "purchaseRefresh": MessageLookupByLibrary.simpleMessage("Refresh account"),
+    "purchaseRegister": MessageLookupByLibrary.simpleMessage(
+      "Create account on website",
+    ),
+    "purchaseRemaining": MessageLookupByLibrary.simpleMessage(
+      "Remaining traffic",
+    ),
+    "purchaseResetTraffic": MessageLookupByLibrary.simpleMessage(
+      "Reset used traffic",
+    ),
+    "purchaseRestoring": MessageLookupByLibrary.simpleMessage(
+      "Restoring account…",
+    ),
+    "purchaseStorageError": MessageLookupByLibrary.simpleMessage(
+      "Secure account storage is unavailable. Retry after checking your system credential storage.",
+    ),
+    "purchaseSuccess": MessageLookupByLibrary.simpleMessage(
+      "Gift card redeemed",
+    ),
+    "purchaseSuccessDescription": MessageLookupByLibrary.simpleMessage(
+      "Your account benefits have been updated. Subscription sync is a separate step.",
+    ),
+    "purchaseSync": MessageLookupByLibrary.simpleMessage("Sync subscription"),
+    "purchaseSyncError": MessageLookupByLibrary.simpleMessage(
+      "Subscription sync failed. You can retry below.",
+    ),
+    "purchaseSyncFailed": MessageLookupByLibrary.simpleMessage(
+      "Redemption is complete. Subscription sync failed; retry sync below.",
+    ),
+    "purchaseSyncSucceeded": MessageLookupByLibrary.simpleMessage(
+      "Subscription synced successfully.",
+    ),
+    "purchaseSyncing": MessageLookupByLibrary.simpleMessage(
+      "Syncing subscription…",
+    ),
     "purchaseTitle": MessageLookupByLibrary.simpleMessage(
       "Purchase and renewal",
+    ),
+    "purchaseTraffic": MessageLookupByLibrary.simpleMessage("Traffic quota"),
+    "purchaseUnresolved": MessageLookupByLibrary.simpleMessage(
+      "Redemption result needs confirmation",
+    ),
+    "purchaseUnresolvedDescription": MessageLookupByLibrary.simpleMessage(
+      "The request was interrupted. Check the result before redeeming another card.",
+    ),
+    "purchaseUnsupportedAccount": MessageLookupByLibrary.simpleMessage(
+      "Use a regular user account to redeem gift cards.",
+    ),
+    "purchaseUsed": MessageLookupByLibrary.simpleMessage("Used traffic"),
+    "purchaseUsedPreserved": MessageLookupByLibrary.simpleMessage(
+      "Used traffic is preserved",
+    ),
+    "purchaseValidityDays": MessageLookupByLibrary.simpleMessage(
+      "Validity (days)",
     ),
     "pureBlackMode": MessageLookupByLibrary.simpleMessage("Pure black mode"),
     "qrNotFound": MessageLookupByLibrary.simpleMessage("QR code not found"),

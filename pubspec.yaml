@@ -15,6 +15,7 @@ dependencies:
   path_provider: ^2.1.5
   path: ^1.9.1
   shared_preferences: ^2.3.5
+  flutter_secure_storage: ^10.3.4
   window_manager: ^0.5.1
   desktop_multi_window: ^0.3.0
   dynamic_color: ^1.8.1

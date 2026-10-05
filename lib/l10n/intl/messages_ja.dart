@@ -459,9 +459,22 @@ class MessageLookup extends MessageLookupByLibrary {
     "proxyPortDesc": MessageLookupByLibrary.simpleMessage("Clashのリスニングポートを設定"),
     "proxyProviders": MessageLookupByLibrary.simpleMessage("プロキシプロバイダー"),
     "purchase": MessageLookupByLibrary.simpleMessage("購入"),
+    "purchaseAvailablePlans": MessageLookupByLibrary.simpleMessage("購入可能なプラン"),
     "purchaseContactDescription": MessageLookupByLibrary.simpleMessage(
       "オンライン決済は現在ご利用いただけません。購入または更新については、以下のいずれかのWeChatアカウントを追加してください。",
     ),
+    "purchasePlanDevices": MessageLookupByLibrary.simpleMessage("デバイス数の上限"),
+    "purchasePlanSpeed": MessageLookupByLibrary.simpleMessage("速度上限"),
+    "purchasePlansDescription": MessageLookupByLibrary.simpleMessage(
+      "価格はサイトの表示額です。通貨と購入については下記の WeChat で確認し、ギフトカードを取得してここで引き換えてください。",
+    ),
+    "purchasePlansEmpty": MessageLookupByLibrary.simpleMessage(
+      "現在購入可能なプランはありません。",
+    ),
+    "purchasePlansError": MessageLookupByLibrary.simpleMessage(
+      "プランを読み込めませんでした。もう一度お試しください。",
+    ),
+    "purchasePlansLoading": MessageLookupByLibrary.simpleMessage("プランを読み込み中…"),
     "purchaseTitle": MessageLookupByLibrary.simpleMessage("購入と更新"),
     "pureBlackMode": MessageLookupByLibrary.simpleMessage("純黒モード"),
     "qrcode": MessageLookupByLibrary.simpleMessage("QRコード"),

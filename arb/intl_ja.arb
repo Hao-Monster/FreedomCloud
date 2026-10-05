@@ -452,5 +452,12 @@
   "zashboardInApp": "アプリ内で zashboard を開く",
   "zashboardInAppDesc": "外部ブラウザに切り替えず、内蔵ブラウザでパネルを表示します",
   "openPanel": "パネルを開く",
-  "downloadingZashboard": "Zashboard をダウンロード中…"
+  "downloadingZashboard": "Zashboard をダウンロード中…",
+  "purchaseAvailablePlans": "購入可能なプラン",
+  "purchasePlansDescription": "価格はサイトの表示額です。通貨と購入については下記の WeChat で確認し、ギフトカードを取得してここで引き換えてください。",
+  "purchasePlansLoading": "プランを読み込み中…",
+  "purchasePlansEmpty": "現在購入可能なプランはありません。",
+  "purchasePlansError": "プランを読み込めませんでした。もう一度お試しください。",
+  "purchasePlanSpeed": "速度上限",
+  "purchasePlanDevices": "デバイス数の上限"
 }
