@@ -11,16 +11,25 @@
 | PR #56 购买中心/匿名套餐 | `eeaf6b0468177313bb98709eb421c01757a97fb5` | quality-gate `37298035201` 三项成功 | `1efc29fe4aaeb29d849a4cd7be4b0728f66ca528` |
 | PR #57 受保护启动/安装预检 | `5b2d8a9e88414327174e8bf241c86da89cc338f8`，正常合入 #56 后重验 | quality-gate `37307123153` 三项成功 | `6b6d1532e55b5c0717986a588f25c4ec86d1d34f` |
 | PR #55 macOS 开发包 | `0ce398967a0299a0b5bcb97ab8cbc5aed1727bf9`，正常合入 #56/#57 后重验 | quality-gate `37307467535`；完整 macOS 构建 `37307460810` 均成功 | `14571208a15c732b11522da6607212d559ee2695` |
+| PR #58 购买焦点与操作进度 | `694cec8f2bfe2f614067b325fbb4542ac1582d53` | [quality-gate 37310446707](https://github.com/Hao-Monster/FreedomCloud/actions/runs/37310446707)：Flutter 290 PASS、Core Go、M3 package checks 成功 | `863298c7e3f44e821eb6df5dedeb97f95d31d987` |
 
-三次均为普通 merge commit，没有改写历史或删除源分支。主线 `1457120` 已验证包含三个原始 PR head，其 tree `5407871e914f5f326ed1316208566b4c4c38b838` 与最后受检组合 `0ce3989` 完全一致。当前工作流不监听 push main，不能把合并前检查称为自动发生的主线检查。
+前三项均以普通 merge commit 合并，没有改写历史或删除源分支。主线 `1457120` 已验证包含三个原始 PR head，其 tree `5407871e914f5f326ed1316208566b4c4c38b838` 与最后受检组合 `0ce3989` 完全一致。当前工作流不监听 push main，不能把合并前检查称为自动发生的主线检查。
+
+随后 [PR #58](https://github.com/Hao-Monster/FreedomCloud/pull/58) 也以普通 merge commit 合并。Windows 预览的功能源码基线为 `863298c7e3f44e821eb6df5dedeb97f95d31d987`，tree `18d658d6f785518012f5bfa6cab437582531948e` 与最终受检 head `694cec8` 一致；后续仅记录交付证据的文档提交不改变该包的构建来源。
 
 组合 macOS 产物经过本地 SHA256、ZIP CRC、host/provider/helper 标识和 arm64 二进制核对，PASS：55,252,135 字节，SHA256 `c4e9c5fa88af8f29b1b4dcf252982db7dc898a61bf93c63434e6fb78ff7433d0`，来源严格为 `0ce3989`。它仍为 UNSIGNED，签名、公证、激活和真实设备运行 NOT RUN。
 
 集成前另做增量保全：169 个 refs、4 个关键 HEAD/tree、唯一 stash 在独立 bundle mirror 中恢复一致，5 份原始未跟踪文件逐项 hash 一致。新增 bundle SHA256 `e2709fe9ee3bb10068abc99d50b8a8aee010f3427b78c964fe705055cca6cce4`；原有大归档、旧工作树和原稿保留。私有证据留在仓库外，未上传账号、卡号、订阅内容或原始日志。
 
+四项合并后再做增量保全：新 bundle 235,929,439 字节，SHA256 `b82cd392fc98f5e4399c9cd392aaab4d628489621d9d62797771027633fb95e4`；`git bundle verify`、离线 `clone --mirror` 和 `git fsck --full --strict` 均 exit 0，172/172 refs 完整恢复，7 个关键提交的 tree 一致。原 HEAD、5 份原稿、stash 和两份旧 bundle 的哈希不变。临时 `refs/codex/turn-diffs` 数量变化已逐对象核对，不是用户分支或源码丢失。此快照对应源码整合完成时刻，不包含随后构建缓存；异地副本按用户决定另行安排。
+
 本轮 Windows 预览前已修复 QA001 登录焦点和 QA003 操作进度文案：生产购买正文隔离侧栏焦点遍历，查询/兑换分别显示本操作进度，保留全局互斥和原消费逻辑。真实宿主/manager 回归在修复前为 6 PASS/6 FAIL；扩充后的最终目标测试 15 PASS，购买模块 181 PASS，均 0 FAIL/SKIP。变更 Dart 文件 `analyze --fatal-infos` 与 format 检查通过；测试边界和后续运行结果分开记录，不能把组件测试当 Windows 实机验收。
 
+匿名目录于 2026-10-05 12:37:51 UTC 实际执行一次无 Authorization/Cookie 的 GET，HTTP 200、TLS 校验通过；同一响应经生产解析器离线验证成功。返回 1 个套餐、200 GiB，`onetime` 整数金额 15000 按客户端规则显示为 150.00；接口没有币种字段，不推断币种。此证据不代表 Windows 新包页面已验收。
+
 Helper 重连调查见 `engineering/testing/helper-reattach-investigation-2026-10-05.md`：已确定调用链与状态缺口，但历史唯一触发入口未证实，也没有以恢复布尔值绕过信任检查。完整 Helper 修复和严格模式仍需要隔离环境；本机 UI 验收与新 native 全栈运行分别记录。存在自动订阅更新时，单纯打开新 UI 仍可能触发配置应用和授权；不能从“先连接旧 Agent”推断后台绝对不变。
+
+Windows 普通免安装包已从上述 `863298c7` 干净源码完成重编，交付 `dist/FreedomCloud-windows-amd64-preview-863298c7e3f4.zip`，139,359,772 字节，SHA256 `cae86090054186ed680e3467025f857badfca1a9f9670cfd6de9c98c4a0cafbd`。72 文件完整解压及交付副本逐文件校验通过；未运行该包，原生验收仍为 NOT RUN。环境适配、失败历史、实际命令结果和受控测试条件见 `engineering/testing/windows-preview-build-2026-10-05.md`。
 
 ## 基线与保全
 
