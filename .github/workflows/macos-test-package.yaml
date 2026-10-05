@@ -1,0 +1,110 @@
+name: macOS portable test build
+on:
+  workflow_dispatch:
+  push:
+    branches: [codex/macos-test-package-20261002]
+    paths:
+      - .github/workflows/macos-test-package.yaml
+      - macos/**
+      - services/agent/**
+      - core/**
+      - tools/macos/**
+permissions:
+  contents: read
+concurrency:
+  group: macos-test-package-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 60
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+      COCOAPODS_DISABLE_STATS: true
+      STRICT_PROVIDER_BUNDLE_IDENTIFIER: com.follow.clash.StrictProxy
+    steps:
+      - uses: actions/checkout@v5
+      - name: Test macOS packaging without system changes
+        run: python3 -m unittest discover -s tools/macos/tests -p 'test_*.py' -v
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.26.0'
+          cache-dependency-path: core/go.sum
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.41.7'
+          cache: true
+      - name: Build arm64 Core and Agent
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = arm64
+          mkdir -p libclash/macos
+          (cd core && CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -trimpath -mod=readonly -tags=with_gvisor -ldflags='-w -s -X github.com/metacubex/mihomo/constant.Version=v1.19.28' -o ../libclash/macos/FlClashCore)
+          rustup toolchain install 1.98.1 --profile minimal
+          cargo +1.98.1 build --manifest-path services/agent/Cargo.toml --release --locked
+          cp services/agent/target/release/flclash-agent libclash/macos/FlClashAgent
+      - name: Prepare Flutter and CocoaPods
+        shell: bash
+        run: |
+          set -euo pipefail
+          flutter pub get
+          flutter build macos --release --config-only --dart-define=APP_ENV=test --dart-define=CORE_VERSION=v1.19.28 --dart-define=APP_VERSION=0.4.2
+          (cd macos && pod install)
+          # Check the actual project after Flutter and CocoaPods preparation.
+          python3 tools/macos/tests/test_system_extension_project.py -v
+      - name: Build complete app without Apple credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcodebuild -workspace macos/Runner.xcworkspace -scheme Runner -configuration Release -derivedDataPath build/macos -destination 'platform=macOS,arch=arm64' ARCHS=arm64 ONLY_ACTIVE_ARCH=YES CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY= build 2>&1 | tee macos-build.log
+      - name: Archive portable development bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP=build/macos/Build/Products/Release/FlClashX.app
+          PROVIDER="$APP/Contents/Library/SystemExtensions/$STRICT_PROVIDER_BUNDLE_IDENTIFIER.systemextension"
+          test -d "$PROVIDER"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :FCXStrictProviderBundleIdentifier' "$APP/Contents/Info.plist")" = "$STRICT_PROVIDER_BUNDLE_IDENTIFIER"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$PROVIDER/Contents/Info.plist")" = "$STRICT_PROVIDER_BUNDLE_IDENTIFIER"
+          test -x "$PROVIDER/Contents/MacOS/$STRICT_PROVIDER_BUNDLE_IDENTIFIER"
+          LOGIN_HELPER="$APP/Contents/Library/LoginItems/LaunchAtLoginHelper.app"
+          test -x "$LOGIN_HELPER/Contents/MacOS/LaunchAtLoginHelper"
+          HOST_BUNDLE_IDENTIFIER=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Contents/Info.plist")
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$LOGIN_HELPER/Contents/Info.plist")" = "$HOST_BUNDLE_IDENTIFIER-LaunchAtLoginHelper"
+          test -x "$APP/Contents/MacOS/FlClashCore"
+          test -x "$APP/Contents/MacOS/FlClashAgent"
+          mkdir -p dist/package
+          ditto "$APP" dist/package/FlClashX.app
+          cp macos/Runner/Release.entitlements dist/package/host.entitlements
+          cp macos/StrictProxy/StrictProxy.entitlements dist/package/provider.entitlements
+          printf 'Source commit: %s\nArchitecture: Apple Silicon arm64\nSigning: UNSIGNED; no Apple provisioning or notarization\n' "$GITHUB_SHA" > dist/package/BUILD-INFO.txt
+          cat > dist/package/READ-ME.txt <<'EOF'
+          Full source development build, including the strict Network Extension.
+          This archive does not install services, extensions, certificates or MDM profiles.
+          No entitlement has been removed and no feature has been disabled.
+          Apple restricted entitlements still require valid Apple signing and provisioning.
+          Consequently strict proxy activation is unavailable in this unsigned archive;
+          macOS may also refuse to launch the unsigned application. This is not a fully
+          runnable or accepted strict-mode test package. Do not disable system security.
+          The supplied entitlement files are for authorized signing on a configured Mac.
+          Runtime and device acceptance have not been performed by this workflow.
+          EOF
+          ditto -c -k --sequesterRsrc --keepParent dist/package dist/FreedomCloud-macos-arm64-development.zip
+          shasum -a 256 dist/FreedomCloud-macos-arm64-development.zip > dist/FreedomCloud-macos-arm64-development.zip.sha256
+      - uses: actions/upload-artifact@v6
+        with:
+          name: macos-arm64-development-${{ github.sha }}
+          path: |
+            dist/*.zip
+            dist/*.sha256
+          if-no-files-found: error
+          retention-days: 14
+      - uses: actions/upload-artifact@v6
+        if: failure()
+        with:
+          name: macos-build-failure-${{ github.sha }}
+          path: macos-build.log
+          if-no-files-found: ignore
+          retention-days: 7
+
