@@ -6,6 +6,7 @@ import 'package:crypto/crypto.dart' as crypto;
 
 import 'package:flclashx/clash/agent_protocol.dart';
 import 'package:flclashx/clash/interface.dart';
+import 'package:flclashx/clash/windows_agent_launch.dart';
 import 'package:flclashx/common/common.dart';
 import 'package:flclashx/models/core.dart';
 import 'package:flclashx/state.dart';
@@ -151,30 +152,33 @@ class ClashService extends ClashHandlerInterface {
   Future<bool> _connectOrLaunchAgent() async {
     if (await _tryConnectAgent()) return _ensureAgentCoreReady();
 
-    final homeDirPath = await appPath.homeDirPath;
-    final arguments = <String>[
-      '--home',
-      homeDirPath,
-      '--core',
-      appPath.corePath,
-    ];
-    if (Platform.isWindows && await system.checkIsAdmin()) {
-      arguments.addAll([
-        '--service-core',
-        appPath.windowsServiceCorePath,
-        '--use-helper',
-      ]);
-    }
-    try {
-      await Process.start(
-        appPath.agentPath,
-        arguments,
-        mode: ProcessStartMode.detached,
-      );
-    } catch (e) {
-      commonPrint.log('unable to launch FlClashAgent: $e');
-      return false;
-    }
+    final launched = await tryStartAgentProcess(
+      resolvePaths: () async => Platform.isWindows
+          ? windowsAgentLaunchPaths(
+              bundledAgent: appPath.agentPath,
+              bundledCore: appPath.corePath,
+              serviceDirectory: appPath.windowsServiceDirectory,
+            )
+          : (agent: appPath.agentPath, core: appPath.corePath),
+      buildArguments: (corePath) async {
+        final arguments = <String>[
+          '--home',
+          await appPath.homeDirPath,
+          '--core',
+          corePath,
+        ];
+        if (Platform.isWindows && await system.checkIsAdmin()) {
+          arguments.addAll([
+            '--service-core',
+            appPath.windowsServiceCorePath,
+            '--use-helper',
+          ]);
+        }
+        return arguments;
+      },
+      onError: (error) => commonPrint.log('unable to launch FlClashAgent: $error'),
+    );
+    if (!launched) return false;
 
     for (var attempt = 0; attempt < 80; attempt++) {
       await Future.delayed(const Duration(milliseconds: 100));

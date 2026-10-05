@@ -58,3 +58,4 @@ jobs:
           ./engineering/m3-test-package/tests/Test-M3PackageTools.ps1
           ./engineering/m3-test-package/tests/Test-M3ManifestAssemblyOrder.ps1
           ./engineering/m3-test-package/tests/Test-M3EvidenceValidator.ps1
+          ./engineering/test-package/tests/Test-StrictTestValidation.ps1
