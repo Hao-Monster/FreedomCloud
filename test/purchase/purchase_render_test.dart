@@ -237,6 +237,10 @@ class _PreviewManager extends ChangeNotifier implements PurchaseManager {
   @override
   bool busy = false;
   @override
+  bool get checkingCode => false;
+  @override
+  bool get redeemingCode => false;
+  @override
   bool syncing = false;
   @override
   bool subscriptionSynced = false;

@@ -2,9 +2,29 @@
 
 更新日期：2026-10-05。当前阶段是快速开发、快速迭代和部分功能预览。本文记录来源与验收边界；每次继续开发仍需核实实际 Git/PR/CI 状态，不能把历史报告视为当前通过证明。
 
+## 本轮主线集成进展
+
+用户已接受先研究方案、规划任务，再执行主线集成和 Windows 普通预览；异地备份单独安排。执行方案见 `engineering/plans/mainline-windows-preview-2026-10-05.md`。以下是 2026-10-05 的新结果，后文保留首次整理时的来源与验证记录。
+
+| 工作单元 | 最终 PR head | 新组合验证 | 主线合并 |
+| --- | --- | --- | --- |
+| PR #56 购买中心/匿名套餐 | `eeaf6b0468177313bb98709eb421c01757a97fb5` | quality-gate `37298035201` 三项成功 | `1efc29fe4aaeb29d849a4cd7be4b0728f66ca528` |
+| PR #57 受保护启动/安装预检 | `5b2d8a9e88414327174e8bf241c86da89cc338f8`，正常合入 #56 后重验 | quality-gate `37307123153` 三项成功 | `6b6d1532e55b5c0717986a588f25c4ec86d1d34f` |
+| PR #55 macOS 开发包 | `0ce398967a0299a0b5bcb97ab8cbc5aed1727bf9`，正常合入 #56/#57 后重验 | quality-gate `37307467535`；完整 macOS 构建 `37307460810` 均成功 | `14571208a15c732b11522da6607212d559ee2695` |
+
+三次均为普通 merge commit，没有改写历史或删除源分支。主线 `1457120` 已验证包含三个原始 PR head，其 tree `5407871e914f5f326ed1316208566b4c4c38b838` 与最后受检组合 `0ce3989` 完全一致。当前工作流不监听 push main，不能把合并前检查称为自动发生的主线检查。
+
+组合 macOS 产物经过本地 SHA256、ZIP CRC、host/provider/helper 标识和 arm64 二进制核对，PASS：55,252,135 字节，SHA256 `c4e9c5fa88af8f29b1b4dcf252982db7dc898a61bf93c63434e6fb78ff7433d0`，来源严格为 `0ce3989`。它仍为 UNSIGNED，签名、公证、激活和真实设备运行 NOT RUN。
+
+集成前另做增量保全：169 个 refs、4 个关键 HEAD/tree、唯一 stash 在独立 bundle mirror 中恢复一致，5 份原始未跟踪文件逐项 hash 一致。新增 bundle SHA256 `e2709fe9ee3bb10068abc99d50b8a8aee010f3427b78c964fe705055cca6cce4`；原有大归档、旧工作树和原稿保留。私有证据留在仓库外，未上传账号、卡号、订阅内容或原始日志。
+
+本轮 Windows 预览前已修复 QA001 登录焦点和 QA003 操作进度文案：生产购买正文隔离侧栏焦点遍历，查询/兑换分别显示本操作进度，保留全局互斥和原消费逻辑。真实宿主/manager 回归在修复前为 6 PASS/6 FAIL；扩充后的最终目标测试 15 PASS，购买模块 181 PASS，均 0 FAIL/SKIP。变更 Dart 文件 `analyze --fatal-infos` 与 format 检查通过；测试边界和后续运行结果分开记录，不能把组件测试当 Windows 实机验收。
+
+Helper 重连调查见 `engineering/testing/helper-reattach-investigation-2026-10-05.md`：已确定调用链与状态缺口，但历史唯一触发入口未证实，也没有以恢复布尔值绕过信任检查。完整 Helper 修复和严格模式仍需要隔离环境；本机 UI 验收与新 native 全栈运行分别记录。存在自动订阅更新时，单纯打开新 UI 仍可能触发配置应用和授权；不能从“先连接旧 Agent”推断后台绝对不变。
+
 ## 基线与保全
 
-- 自有远端为 `Hao-Monster/FreedomCloud`（通常是 `freedomcloud`）；上游为 `pluralplay/FlClashX`（通常是 `origin`）。本轮核实的自有主线为 `cc1d31bc8b24b0103bc78dea2453768cb0c5a339`。
+- 自有远端为 `Hao-Monster/FreedomCloud`（通常是 `freedomcloud`）；上游为 `pluralplay/FlClashX`（通常是 `origin`）。首次保全时的自有主线为 `cc1d31bc8b24b0103bc78dea2453768cb0c5a339`；后续集成结果见本文开头。
 - 本地 `main` 跟踪上游，旧 `development` 也落后于自有主线。它们被保留，不自动重置或用作新增量的默认基线。
 - 原购买来源分支 `codex/m3-7-helper-diagnostics` 的提交保留；远端 `codex/purchase-source-snapshot-20261005` 另存其源历史。新的集成在独立工作树进行。
 - 初始 40 个工作树、全部本地 refs、stash 及 detached HEAD 已归入私有离线 bundle 和逐工作树快照。未提交文件保存精确副本、SHA256 及暂存/未暂存二进制补丁；忽略文件另行保存，不能只依靠 Git bundle。
@@ -26,7 +46,7 @@
 | Windows 受保护 Agent 启动和严格模式测试初始化原稿 | `FlClashX-test-portable-20261002` 的 4 个未提交文件 | `eac3938` 运行时、`780b31c` 安装预检，分支 `codex/protected-launch-20261005` | [PR #57](https://github.com/Hao-Monster/FreedomCloud/pull/57) |
 | macOS 构建与完整开发包 | PR #55 原 head `7cce2da` | `ddc6965` 正常合并主线，`82ac8a4` 修复 helper，`4de17bd` 修复测试路径别名，`62d53a7` 拆分嵌入文件引用以匹配当前配置 | [PR #55](https://github.com/Hao-Monster/FreedomCloud/pull/55) |
 
-购买、Windows 启动/测试安装、macOS 打包分为独立 PR；本轮未自动合并主线。未来合并前检查最终 head 的 CI、冲突和剩余验收范围。禁止从旧预览工作树整文件覆盖当前主线。
+购买、Windows 启动/测试安装、macOS 打包分为独立 PR；首次整理时未合并，随后经用户接受执行方案后按本文开头的顺序集成。每次合并都检查最终 head 的 CI、冲突和剩余验收范围。禁止从旧预览工作树整文件覆盖当前主线。
 
 ## 旧稿归属结论
 

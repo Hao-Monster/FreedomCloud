@@ -6,6 +6,8 @@ import 'package:flutter/foundation.dart';
 typedef PurchaseSubscriptionSync = Future<void> Function(
     XboardAccount account, XboardSubscription subscription);
 
+enum _GiftOperation { check, redeem }
+
 /// Keeps account authentication, card consumption, and local configuration
 /// updates separate. A failed download must never repeat a successful redemption.
 class PurchaseManager extends ChangeNotifier {
@@ -44,7 +46,10 @@ class PurchaseManager extends ChangeNotifier {
   PendingGiftRedemption? _pending;
   bool _disposed = false;
   bool _pendingStateReady = false;
+  _GiftOperation? _giftOperation;
 
+  bool get checkingCode => _giftOperation == _GiftOperation.check;
+  bool get redeemingCode => _giftOperation == _GiftOperation.redeem;
   bool get loggedIn => account != null && _authorization != null;
   bool get unresolvedRedemption => _pending != null;
   bool get canRedeem =>
@@ -85,9 +90,11 @@ class PurchaseManager extends ChangeNotifier {
           ? cause
           : XboardException(code: fallback, message: '');
 
-  Future<void> _run(Future<void> Function() action) async {
+  Future<void> _run(Future<void> Function() action,
+      {_GiftOperation? giftOperation}) async {
     if (_disposed || busy) return;
     busy = true;
+    _giftOperation = giftOperation;
     error = null;
     _notify();
     try {
@@ -108,6 +115,7 @@ class PurchaseManager extends ChangeNotifier {
       error ??= failure;
     } finally {
       busy = false;
+      _giftOperation = null;
       restoring = false;
       _notify();
     }
@@ -240,7 +248,7 @@ class PurchaseManager extends ChangeNotifier {
         final checked = await api.checkGift(_authorization!, code);
         preview = checked;
         _previewCode = code;
-      });
+      }, giftOperation: _GiftOperation.check);
 
   Future<void> redeem() async {
     if (!canRedeem) return;
@@ -291,7 +299,7 @@ class PurchaseManager extends ChangeNotifier {
         rethrow;
       }
       await _completeRedemption(result);
-    });
+    }, giftOperation: _GiftOperation.redeem);
   }
 
   Future<void> _clearPending() async {
