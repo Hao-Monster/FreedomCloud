@@ -57,7 +57,7 @@
 		FC01000100000000000000F3 /* CryptoKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = FC010001000000000000008F; };
 		FC0100010000000000000157 /* CryptoKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = FC010001000000000000008F; };
 		FC01000100000000000000F4 /* SystemExtensions.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = FC0100010000000000000090; };
-		FC0100010000000000000002 /* StrictProxy.systemextension in Embed System Extensions */ = {isa = PBXBuildFile; fileRef = FC0100010000000000000001; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		FC0100010000000000000002 /* StrictProxy.systemextension in Embed System Extensions */ = {isa = PBXBuildFile; fileRef = FC01000100000000000003EA; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -165,6 +165,7 @@
 		FC0100010000000000000079 /* StrictProxy.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = StrictProxy.entitlements; sourceTree = "<group>"; };
 		FC010001000000000000007A /* StrictProxy.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = StrictProxy.xcconfig; sourceTree = "<group>"; };
 		FC0100010000000000000001 /* StrictProxy.systemextension */ = {isa = PBXFileReference; explicitFileType = "wrapper.system-extension"; includeInIndex = 0; path = "$(FCX_STRICT_BUNDLE_IDENTIFIER).systemextension"; sourceTree = BUILT_PRODUCTS_DIR; };
+		FC01000100000000000003EA /* StrictProxy embedded systemextension */ = {isa = PBXFileReference; explicitFileType = "wrapper.system-extension"; includeInIndex = 0; name = "StrictProxy embedded systemextension"; path = "$(FCX_STRICT_BUNDLE_IDENTIFIER).systemextension"; sourceTree = BUILT_PRODUCTS_DIR; };
 		FC0100010000000000000082 /* ManagedStrictProxyController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ManagedStrictProxyController.swift; sourceTree = "<group>"; };
 		FC01000100000000000003E8 /* ManagedAgentLogin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ManagedAgentLogin.swift; sourceTree = "<group>"; };
 		FC010001000000000000008C /* NetworkExtension.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = NetworkExtension.framework; path = System/Library/Frameworks/NetworkExtension.framework; sourceTree = SDKROOT; };
@@ -244,6 +245,7 @@
 			isa = PBXGroup;
 			children = (
 				FC0100010000000000000001 /* StrictProxy.systemextension */,
+				FC01000100000000000003EA /* StrictProxy embedded systemextension */,
 				33CC10ED2044A3C60003C045 /* FlClashX.app */,
 				331C80D5294CF71000263BE5 /* RunnerTests.xctest */,
 			);

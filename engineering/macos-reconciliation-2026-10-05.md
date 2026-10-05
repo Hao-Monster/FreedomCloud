@@ -31,7 +31,9 @@
 
 [原失败运行](https://github.com/Hao-Monster/FreedomCloud/actions/runs/36910391769)
 创建了 `com.follow.clash.StrictProxy.systemextension`，Runner 却复制带 `.debug`
-的扩展路径，最终退出 65。Release 流水线现在显式传递相同的 provider bundle ID，
+的扩展路径，最终退出 65。最初尝试由 Release 命令覆盖 provider ID，但第二次 CI
+证明作用域值正确时仍使用了错误的 target 产品占位引用；该尝试不算修复成功。
+当前让 Runner copy phase 使用独立文件引用，按其实际配置解析扩展路径；
 归档前检查 Host/Provider Info.plist、扩展文件名和可执行文件的一致性。
 保留全部 System Extension target、dependency、embed phase 和 entitlement。
 
@@ -57,3 +59,12 @@ signed 构建缺少身份、签名失败或验证失败均退出失败，不自�
 - RED：head `82ac8a4` 的 [运行 37294119469](https://github.com/Hao-Monster/FreedomCloud/actions/runs/37294119469) 在 helper 测试阶段运行 14 项、记录 9 次失败断言，耗时 0.112 秒。生产脚本正确解析 `/var` 为 `/private/var`，测试却以未解析的临时目录构造预期路径，导致相同文件的命令字符串不一致；Xcode 构建尚未执行。这是本次新增测试 fixture 的跨平台缺陷。
 - 修复仅规范化 fixture 根目录，保留 archive、entitlement、helper 命令的精确路径断言；不修改生产脚本。新增路径别名回归优先使用真实目录符号链接，Windows 无创建权限时仅模拟这个 `Path.resolve` 边界，核心复制和结果断言照常执行，不 skip。
 - 本地 GREEN：相同 unittest 命令运行 15 项，0 FAIL / SKIP，耗时 0.631 秒；本机可创建目录符号链接，因此实际覆盖真实别名路径。新的 macOS CI GREEN 仍须以修复提交实际运行结果补充，不能用 Windows 单元测试代替。
+
+### System Extension 产品引用回归
+
+- [运行 37294781851](https://github.com/Hao-Monster/FreedomCloud/actions/runs/37294781851) 的 helper 15 项已通过。日志显示 Release 命令和 Runner 环境的 `FCX_STRICT_BUNDLE_IDENTIFIER` 都是 `com.follow.clash.StrictProxy`，实际扩展也以该身份生成；copy 输入仍错误指向 `.debug.StrictProxy.systemextension`。因此仅命令行覆盖无效。
+- Xcode 原模型复用了 StrictProxy target 的 `productReference` 作为 Runner 的 embed 输入。现保留 target product reference，新增独立 `BUILT_PRODUCTS_DIR` 文件引用用于原生 CopyFiles；它的路径宏在 Runner 当前配置下解析。保持 `CodeSignOnCopy`、`RemoveHeadersOnCopy`、显式 target dependency 和原扩展 PRODUCT_NAME/Bundle ID/entitlements。Debug、Release、Profile 继续使用各自身份；没有重命名产物伪装身份。
+- 构建机制依据：[Swift Build FilePathResolver](https://github.com/swiftlang/swift-build/blob/main/Sources/SWBCore/ProjectModel/FilePathResolver.swift) 区分 GroupTreeReference 路径宏与 ProductReference 名称解析；[Apple System Extensions](https://developer.apple.com/documentation/systemextensions) 要求扩展文件名匹配实际 bundle ID。未找到 CocoaPods 改写该引用的证据，不将其记为既定根因。
+- 新增静态合同检查：独立 embed 引用、三个配置的文件名与身份、原生嵌入/签名属性/依赖、Info.plist 与受限 entitlement。修改前 4 项中 1 项因共用产品引用而失败；修改后全部通过。这是源模型回归证据，最终 Xcode 行为仍须 CI 证明。
+- CI 在 Flutter/CocoaPods 准备后再次检查实际 pbxproj，并输出 target 与 embed 的 UUID/path，便于区分准备阶段改写与构建模型问题。移除已证实无效的 CLI 覆盖。
+- 最终本地检查：`python -m unittest discover -s tools/macos/tests -p 'test_*.py' -v`，19 项 PASS、0 FAIL / SKIP、0.536 秒；准备后使用的脚本入口单独 4 项 PASS。workflow YAML、4 个 Bash 块语法、diff 检查通过。独立静态审查未发现签名、依赖或配置回退；真实 macOS 打包仍等待新提交的 CI。

@@ -24,8 +24,8 @@ jobs:
       STRICT_PROVIDER_BUNDLE_IDENTIFIER: com.follow.clash.StrictProxy
     steps:
       - uses: actions/checkout@v5
-      - name: Test login helper packaging without system changes
-        run: python3 -m unittest discover -s tools/macos/tests -p 'test_copy_login_helper.py' -v
+      - name: Test macOS packaging without system changes
+        run: python3 -m unittest discover -s tools/macos/tests -p 'test_*.py' -v
       - uses: actions/setup-go@v6
         with:
           go-version: '1.26.0'
@@ -51,13 +51,13 @@ jobs:
           flutter pub get
           flutter build macos --release --config-only --dart-define=APP_ENV=test --dart-define=CORE_VERSION=v1.19.28 --dart-define=APP_VERSION=0.4.2
           (cd macos && pod install)
+          # Check the actual project after Flutter and CocoaPods preparation.
+          python3 tools/macos/tests/test_system_extension_project.py -v
       - name: Build complete app without Apple credentials
         shell: bash
         run: |
           set -euo pipefail
-          # The product reference must resolve to the Release provider, not
-          # Xcode's default Debug value when expanding the copy phase path.
-          xcodebuild -workspace macos/Runner.xcworkspace -scheme Runner -configuration Release -derivedDataPath build/macos -destination 'platform=macOS,arch=arm64' ARCHS=arm64 ONLY_ACTIVE_ARCH=YES "FCX_STRICT_BUNDLE_IDENTIFIER=$STRICT_PROVIDER_BUNDLE_IDENTIFIER" CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY= build 2>&1 | tee macos-build.log
+          xcodebuild -workspace macos/Runner.xcworkspace -scheme Runner -configuration Release -derivedDataPath build/macos -destination 'platform=macOS,arch=arm64' ARCHS=arm64 ONLY_ACTIVE_ARCH=YES CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY= build 2>&1 | tee macos-build.log
       - name: Archive portable development bundle
         shell: bash
         run: |
