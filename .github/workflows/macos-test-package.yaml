@@ -8,6 +8,7 @@ on:
       - macos/**
       - services/agent/**
       - core/**
+      - tools/macos/**
 permissions:
   contents: read
 concurrency:
@@ -20,8 +21,11 @@ jobs:
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
       COCOAPODS_DISABLE_STATS: true
+      STRICT_PROVIDER_BUNDLE_IDENTIFIER: com.follow.clash.StrictProxy
     steps:
       - uses: actions/checkout@v5
+      - name: Test login helper packaging without system changes
+        run: python3 -m unittest discover -s tools/macos/tests -p 'test_copy_login_helper.py' -v
       - uses: actions/setup-go@v6
         with:
           go-version: '1.26.0'
@@ -51,13 +55,23 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          xcodebuild -workspace macos/Runner.xcworkspace -scheme Runner -configuration Release -derivedDataPath build/macos -destination 'platform=macOS,arch=arm64' ARCHS=arm64 ONLY_ACTIVE_ARCH=YES CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY= build 2>&1 | tee macos-build.log
+          # The product reference must resolve to the Release provider, not
+          # Xcode's default Debug value when expanding the copy phase path.
+          xcodebuild -workspace macos/Runner.xcworkspace -scheme Runner -configuration Release -derivedDataPath build/macos -destination 'platform=macOS,arch=arm64' ARCHS=arm64 ONLY_ACTIVE_ARCH=YES "FCX_STRICT_BUNDLE_IDENTIFIER=$STRICT_PROVIDER_BUNDLE_IDENTIFIER" CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY= build 2>&1 | tee macos-build.log
       - name: Archive portable development bundle
         shell: bash
         run: |
           set -euo pipefail
           APP=build/macos/Build/Products/Release/FlClashX.app
-          test -d "$APP/Contents/Library/SystemExtensions/com.follow.clash.StrictProxy.systemextension"
+          PROVIDER="$APP/Contents/Library/SystemExtensions/$STRICT_PROVIDER_BUNDLE_IDENTIFIER.systemextension"
+          test -d "$PROVIDER"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :FCXStrictProviderBundleIdentifier' "$APP/Contents/Info.plist")" = "$STRICT_PROVIDER_BUNDLE_IDENTIFIER"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$PROVIDER/Contents/Info.plist")" = "$STRICT_PROVIDER_BUNDLE_IDENTIFIER"
+          test -x "$PROVIDER/Contents/MacOS/$STRICT_PROVIDER_BUNDLE_IDENTIFIER"
+          LOGIN_HELPER="$APP/Contents/Library/LoginItems/LaunchAtLoginHelper.app"
+          test -x "$LOGIN_HELPER/Contents/MacOS/LaunchAtLoginHelper"
+          HOST_BUNDLE_IDENTIFIER=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Contents/Info.plist")
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$LOGIN_HELPER/Contents/Info.plist")" = "$HOST_BUNDLE_IDENTIFIER-LaunchAtLoginHelper"
           test -x "$APP/Contents/MacOS/FlClashCore"
           test -x "$APP/Contents/MacOS/FlClashAgent"
           mkdir -p dist/package
