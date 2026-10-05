@@ -111,58 +111,62 @@ class _PurchaseCenterState extends State<PurchaseCenter> {
   @override
   Widget build(BuildContext context) => ListenableBuilder(
         listenable: manager,
-        builder: (context, _) => Align(
-          alignment: Alignment.topCenter,
-          child: SingleChildScrollView(
-            key: const Key('purchase-scroll'),
-            padding: const EdgeInsets.fromLTRB(20, 24, 20, 40),
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 960),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Text(l.purchaseCenterTitle,
-                      style: Theme.of(context).textTheme.headlineSmall),
-                  const SizedBox(height: 8),
-                  Text(l.purchaseCenterDescription),
-                  const SizedBox(height: 24),
-                  PurchasePlanCatalog(
-                    catalog: manager.planCatalog,
-                    loading: manager.plansLoading,
-                    failed: manager.plansError != null,
-                    retry: manager.loadPlans,
-                  ),
-                  const SizedBox(height: 24),
-                  if (!manager.loggedIn && manager.receipt != null) ...[
-                    _Notice(
-                      message:
-                          '${l.purchaseSuccess}\n${l.purchaseSuccessDescription}',
-                      success: true,
+        builder: (context, _) => FocusTraversalGroup(
+          // Keep the form's reading order separate from the desktop side rail.
+          child: Align(
+            alignment: Alignment.topCenter,
+            child: SingleChildScrollView(
+              key: const Key('purchase-scroll'),
+              padding: const EdgeInsets.fromLTRB(20, 24, 20, 40),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 960),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Text(l.purchaseCenterTitle,
+                        style: Theme.of(context).textTheme.headlineSmall),
+                    const SizedBox(height: 8),
+                    Text(l.purchaseCenterDescription),
+                    const SizedBox(height: 24),
+                    PurchasePlanCatalog(
+                      catalog: manager.planCatalog,
+                      loading: manager.plansLoading,
+                      failed: manager.plansError != null,
+                      retry: manager.loadPlans,
                     ),
-                    const SizedBox(height: 12),
-                  ],
-                  if (manager.restoring)
-                    _Section(
-                      title: l.purchaseRestoring,
-                      child: const LinearProgressIndicator(),
-                    )
-                  else if (!manager.loggedIn)
-                    _loginSection()
-                  else ...[
-                    _accountSection(),
-                    const SizedBox(height: 20),
-                    if (manager.error != null) ...[
+                    const SizedBox(height: 24),
+                    if (!manager.loggedIn && manager.receipt != null) ...[
                       _Notice(
-                          message: _errorMessage(manager.error!), error: true),
+                        message:
+                            '${l.purchaseSuccess}\n${l.purchaseSuccessDescription}',
+                        success: true,
+                      ),
                       const SizedBox(height: 12),
                     ],
-                    _redemptionSection(),
+                    if (manager.restoring)
+                      _Section(
+                        title: l.purchaseRestoring,
+                        child: const LinearProgressIndicator(),
+                      )
+                    else if (!manager.loggedIn)
+                      _loginSection()
+                    else ...[
+                      _accountSection(),
+                      const SizedBox(height: 20),
+                      if (manager.error != null) ...[
+                        _Notice(
+                            message: _errorMessage(manager.error!),
+                            error: true),
+                        const SizedBox(height: 12),
+                      ],
+                      _redemptionSection(),
+                      const SizedBox(height: 20),
+                      _historySection(),
+                    ],
                     const SizedBox(height: 20),
-                    _historySection(),
+                    _supportSection(),
                   ],
-                  const SizedBox(height: 20),
-                  _supportSection(),
-                ],
+                ),
               ),
             ),
           ),
@@ -386,7 +390,8 @@ class _PurchaseCenterState extends State<PurchaseCenter> {
                   ? null
                   : manager.checkCode,
               icon: const Icon(Icons.search_rounded),
-              label: Text(manager.busy ? l.purchaseChecking : l.purchaseCheck),
+              label: Text(
+                  manager.checkingCode ? l.purchaseChecking : l.purchaseCheck),
             ),
           ),
           if (preview != null && !manager.unresolvedRedemption) ...[
@@ -422,7 +427,7 @@ class _PurchaseCenterState extends State<PurchaseCenter> {
                     ? manager.redeem
                     : null,
                 icon: const Icon(Icons.redeem_rounded),
-                label: Text(manager.busy
+                label: Text(manager.redeemingCode
                     ? l.purchaseRedeeming
                     : l.purchaseConfirmRedeem),
               ),
