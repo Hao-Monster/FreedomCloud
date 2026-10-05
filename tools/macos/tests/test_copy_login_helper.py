@@ -22,7 +22,9 @@ class CopyLoginHelperTest(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
-        self.products = Path(self.temporary.name)
+        # macOS exposes the temporary directory through /var -> /private/var.
+        # Keep expected paths canonical without weakening command assertions.
+        self.products = Path(self.temporary.name).resolve()
         self.resources = self.products / "LaunchAtLogin_LaunchAtLogin.bundle/Contents/Resources"
         self.resources.mkdir(parents=True)
         self.archive = self.resources / "LaunchAtLoginHelper.zip"
@@ -74,6 +76,35 @@ class CopyLoginHelperTest(unittest.TestCase):
         self.assertEqual(len(self.commands), 1)
         self.assertEqual(self.commands[0][0], "/usr/bin/ditto")
         self.assertTrue((self.resources / "LaunchAtLogin.entitlements").is_file())
+
+    def test_build_products_alias_uses_canonical_command_and_output_paths(self):
+        with tempfile.TemporaryDirectory() as alias_directory:
+            alias = Path(alias_directory).resolve() / "products-link"
+            self.environment["BUILT_PRODUCTS_DIR"] = str(alias)
+            try:
+                alias.symlink_to(self.products, target_is_directory=True)
+            except PermissionError:
+                # Windows may forbid creating links without elevation. Model
+                # only this filesystem resolution boundary; copying and all
+                # canonical command/output assertions still run unchanged.
+                original_resolve = Path.resolve
+                resolved_aliases = []
+
+                def resolve_alias(path, *args, **kwargs):
+                    if path == alias:
+                        resolved_aliases.append(path)
+                        return original_resolve(self.products, *args, **kwargs)
+                    return original_resolve(path, *args, **kwargs)
+
+                with patch.object(Path, "resolve", resolve_alias):
+                    result = helper_script.copy_helper(self.environment)
+                self.assertEqual(resolved_aliases, [alias])
+            else:
+                self.assertEqual(alias.resolve(), self.products)
+                result = helper_script.copy_helper(self.environment)
+            self.assertEqual(result, self.helper)
+            self.assertEqual(self.commands[0][1:4], ["-x", "-k", str(self.archive)])
+            self.assertTrue((result / "Contents/MacOS/LaunchAtLoginHelper").is_file())
 
     def test_debug_host_keeps_separate_helper_identity(self):
         self.environment["PRODUCT_BUNDLE_IDENTIFIER"] = "com.follow.clash.debug"

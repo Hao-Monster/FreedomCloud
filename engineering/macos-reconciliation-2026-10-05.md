@@ -51,3 +51,9 @@ signed 构建缺少身份、签名失败或验证失败均退出失败，不自�
 - workflow YAML 解析、4 个 Bash 步骤 `bash -n`、`git diff --check`：PASS。Bash 路径先尝试默认安装位置未找到，改用本机实际 `E:/Git/bin/bash.exe` 后通过；未执行这些构建步骤。
 - 测试仅用临时构建目录和模拟 macOS 子进程；不访问 Keychain，不运行真实 codesign，不安装 helper。
 - macOS Xcode 完整构建、签名证书、设备激活和真实转发：本机 NOT RUN；需以最终 PR head 的 macOS CI 和后续专机验收分别记录。
+
+### macOS CI 路径 fixture 回归
+
+- RED：head `82ac8a4` 的 [运行 37294119469](https://github.com/Hao-Monster/FreedomCloud/actions/runs/37294119469) 在 helper 测试阶段运行 14 项、记录 9 次失败断言，耗时 0.112 秒。生产脚本正确解析 `/var` 为 `/private/var`，测试却以未解析的临时目录构造预期路径，导致相同文件的命令字符串不一致；Xcode 构建尚未执行。这是本次新增测试 fixture 的跨平台缺陷。
+- 修复仅规范化 fixture 根目录，保留 archive、entitlement、helper 命令的精确路径断言；不修改生产脚本。新增路径别名回归优先使用真实目录符号链接，Windows 无创建权限时仅模拟这个 `Path.resolve` 边界，核心复制和结果断言照常执行，不 skip。
+- 本地 GREEN：相同 unittest 命令运行 15 项，0 FAIL / SKIP，耗时 0.631 秒；本机可创建目录符号链接，因此实际覆盖真实别名路径。新的 macOS CI GREEN 仍须以修复提交实际运行结果补充，不能用 Windows 单元测试代替。
