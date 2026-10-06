@@ -7,9 +7,11 @@
 - 用户已授权在完善范围和任务后开发与测试。本批从 `development@2b587a80ad187995194608ffcd0f9f8cfa6695cd` 开始，沿用唯一开发入口。方案与依赖见 `engineering/plans/kernel-tun-reliability-2026-10-06.md`，测试矩阵、覆盖率及真实环境缺口见 `engineering/testing/kernel-tun-reliability-2026-10-06.md`。
 - 固定 Mihomo `v1.19.32`（`88dcbf7f1614a67c3b36b848ee3592dfa92ada36`），保留原栈默认值与 uTLS 覆盖。带校验的最小生命周期补丁通过独立生成源和 overlay 加载，不改模块缓存、不追随 Alpha。构建入口和 CI 已接入；新云端检查尚未触发，不以开工基线 CI 作为新代码证据。
 - UI 区分意图、实际状态和操作，Windows 的开启以真实 listener 与接口状态为依据；修复 IPC 假成功、后台授权、旧响应、只读挂接及退出/重连/迁移竞态。Agent/Helper 使用实际停止确认和 Core 会话归属；旧组件不满足合同则拒绝自动交接。微信、礼品卡兑换、账号订阅、匿名套餐和价格均保留。
-- Core 最终 46 项含子用例 PASS，Windows race PASS，四个桌面平台 Core 编译及 Android arm64 c-shared 编译通过；Flutter 最终 342、Agent 64、Helper 29 PASS，均 0 FAIL / 0 SKIP。独立审查的问题已在最终源码关闭；同源码 Windows 预览构建待完成，最终数据以本批报告为准。
+- Core 最终 46 项含子用例 PASS，Windows race PASS，四个桌面平台 Core 编译及 Android arm64 c-shared 编译通过；Flutter 最终 342、Agent 64、Helper 29 PASS，均 0 FAIL / 0 SKIP。独立审查的问题已在最终源码关闭；既有 analyzer/clippy/format 问题与覆盖缺口在报告单列。
+- 四个本地提交依次为 `1f750b1`（Core/构建）、`8bbdfc7`（Agent/Helper）、`b3f83bb`（Flutter）、`f0b1b7e`（范围/测试文档）。新 Windows 普通免安装包从 `f0b1b7eba271b2402a9a82809bec0ea53d9a3e8e` 干净源码完成四组件重编，`dist/FreedomCloud-windows-amd64-preview-f0b1b7eba271.zip` 为 152,707,168 字节，SHA256 `b45cf6f4f7a6e72499baedbb7e23893c694b4d9441d5ed79e966b99bdb41defb`。独立核对 73 文件完整 ZIP/解压/交付 hash、组件来源、Helper/Core 绑定和补丁 manifest 通过；旧包保留。后续证据文档提交不改变包来源。
 - 真实 Windows TUN/UAC/服务交接/路由/Antigravity 流量均 NOT RUN；等待获准的隔离 Windows 环境。开发工作站服务和网络未更改。当前仅准备普通预览，不声称正式发行、严格 WFP 或全部应用流量已验收。
-- 开工增量 bundle 已离线恢复/fsck 验证，原始 5 个 coverage/测试文件 hash 一致，旧包 `863298c7e3f4` SHA256 保持 `cae86090054186ed680e3467025f857badfca1a9f9670cfd6de9c98c4a0cafbd`。本批不推送、不创建/合并 PR、不改主线或远端保护；本地提交和新包来源将于构建后补录。
+- 开工与新源码两份增量 bundle 已离线恢复/fsck 验证，原始 5 个 coverage/测试文件 hash 一致，旧包 `863298c7e3f4` SHA256 保持 `cae86090054186ed680e3467025f857badfca1a9f9670cfd6de9c98c4a0cafbd`。新源码 bundle SHA256 为 `d6c11db51cf451307cfae06190dfcceea548aa9fc53b4ae9626c40b685ac2b1f`，私有构建日志与测试证据一起保留。本批未推送、未创建/合并 PR、未改主线或远端保护。
+- 下一步按 `engineering/testing/kernel-tun-vm-acceptance-2026-10-06.md` 执行 W01–W20。获取隔离环境后补真实运行证据，另经授权推送开发分支运行云端 CI；通过后再准备单一晋级 PR。不能从本地构建成功推导自动合并或正式发布。
 
 ## 唯一开发入口（2026-10-06）
 

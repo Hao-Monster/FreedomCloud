@@ -42,9 +42,9 @@ Helper `/capabilities` 只公开协议能力和允许的 Core hash，保留原�
 | T4 | Agent 实例、代次与后端交接 | T1 | Rust 协议/恢复/错误测试与 Windows 编译 | Agent 64 / Helper 29 PASS；静态检查基线问题见报告；真实服务 NOT RUN |
 | T5 | 应用操作协调、观测、授权与 IPC 失败 | T3,T4 | 正常/失败/断线/重试/乱序/恢复回归 | 自动化 PASS；OS 入口端到端 NOT RUN |
 | T6 | 全入口 UI 与真实状态消费者 | T5 | 组件测试、购买回归、非 Windows 兼容 | Flutter 342 PASS；原生窗口/托盘/热键 NOT RUN |
-| T7 | 独立跨层审查与 CI 集成、源码检查点 | T2–T6 | 缺口修复、最终 diff、相关检查、分逻辑本地提交 | 独立审查无剩余已知 High；提交准备中；云端 CI NOT RUN |
-| T8 | 同源码 Windows 完整构建与隔离验收 | T7 | 四组件来源/hash、包校验、VM 与真实流量证据分列 | 构建待执行；隔离 VM 信息未提供，运行验收 NOT RUN |
-| T9 | 台账与交付收口 | T7,T8 | 源码提交映射、包来源、测试报告、限制和恢复步骤 | 执行中；不把预览交付等同于运行验收 |
+| T7 | 独立跨层审查与 CI 集成、源码检查点 | T2–T6 | 缺口修复、最终 diff、相关检查、分逻辑本地提交 | 独立审查无剩余已知 High；已本地提交至 f0b1b7e；云端 CI NOT RUN |
+| T8 | 同源码 Windows 完整构建与隔离验收 | T7 | 四组件来源/hash、包校验、VM 与真实流量证据分列 | 构建及 73 文件校验 PASS，包来源 f0b1b7e；隔离环境未提供，运行验收 NOT RUN |
+| T9 | 台账与交付收口 | T7,T8 | 源码提交映射、包来源、测试报告、限制和恢复步骤 | 本地提交、预览及报告已交付；W01–W20 运行验收与云端 CI 待执行 |
 
 写入边界：Core 代理 `core/**`；应用代理 `lib/**`、`test/**` 与 l10n 源资源；Agent 代理 `services/agent/**` 与必要的 `services/helper/**` 停止合同；主负责人仅构建/CI/工程文档与整合。Git 写入只由主负责人串行执行。不存在第二个开发分支。只读构建快照不作为新的开发入口。
 
@@ -69,6 +69,8 @@ Helper `/capabilities` 只公开协议能力和允许的 Core hash，保留原�
 | 网卡与流量效果 | Windows | 隔离 VM，TCP/UDP/DNS/IPv4/IPv6及恢复 | 分别记录网卡、路由、流量；不以单一探针替代全部 |
 
 实际命令、退出码、计数、时间、环境、覆盖率及 NOT RUN 原因写入本批测试报告。纯构建无测试计数。Linux CI 不替代 Windows 分支；源码通过不替代设备/业务验收。
+
+本批测试结果见 `engineering/testing/kernel-tun-reliability-2026-10-06.md`，待执行的隔离验收见 `engineering/testing/kernel-tun-vm-acceptance-2026-10-06.md`。已产生可追溯的普通 Windows 测试候选；T8 的真实运行部分仍未完成，不将任务台账整体标为已验收。
 
 ## 风险与回退
 
