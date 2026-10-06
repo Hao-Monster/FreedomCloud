@@ -119,11 +119,21 @@ class StartupEffects implements WindowsTunStartupEffects {
   Future<void> reflectRunning(bool Function() isCurrent) async {
     if (isCurrent()) await record('reflect');
   }
+
+  @override
+  Future<void> startProxyWithoutTun() async {
+    await record('proxy-only');
+    running = true;
+  }
+
+  final logs = <String>[];
+  @override
+  void log(String message) => logs.add(message);
 }
 
 Future<AppController> controllerFixture(
     WidgetTester tester, StartupEffects effects, TunRuntimeController runtime,
-    {bool savedAutoRun = false, bool savedTun = false}) async {
+    {bool savedAutoRun = false, bool savedTun = true}) async {
   globalState.config = Config(
       themeProps: defaultThemeProps,
       appSetting: AppSettingProps(autoRun: savedAutoRun),
@@ -157,19 +167,21 @@ void main() {
   setUp(() async {
     await AppLocalizations.load(const Locale('zh', 'CN'));
   });
-  for (final saved in [
-    (false, false),
-    (false, true),
-    (true, false),
-    (true, true)
-  ]) {
+  test('fresh install defaults TUN preference to enabled', () {
+    expect(const Config(themeProps: defaultThemeProps).patchClashConfig.tun.enable,
+        isTrue);
+    expect(Tun.safeFormJson(null).enable, isTrue);
+    expect(Tun.fromJson(const {}).enable, isTrue);
+  });
+
+  for (final autoRun in [false, true]) {
     testWidgets(
-        'controller launch enables proxy and TUN with saved autoRun=${saved.$1},tun=${saved.$2}',
+        'controller launch enables proxy and TUN with saved autoRun=$autoRun,tun=true',
         (tester) async {
       final effects = StartupEffects();
       final runtime = TunRuntimeController();
       final controller = await controllerFixture(tester, effects, runtime,
-          savedAutoRun: saved.$1, savedTun: saved.$2);
+          savedAutoRun: autoRun, savedTun: true);
       await controller.initializeRuntime();
       expect(
           effects.calls,
@@ -185,6 +197,7 @@ void main() {
       expect(effects.running, isTrue);
       expect(runtime.observed, TunObservedState.on);
       expect(globalState.config.patchClashConfig.tun.enable, isTrue);
+      expect(effects.logs.last, contains('TUN observed=on'));
       expect(effects.backgroundConfigurations, 0);
       final container = ProviderScope.containerOf(
           tester.element(find.byType(ClashConfigUpdateListener)));
@@ -195,6 +208,25 @@ void main() {
       expect(effects.backgroundConfigurations, 1,
           reason:
               'the actual manager listener is live, not replaced by a test copy');
+    });
+
+    testWidgets(
+        'saved TUN off is respected: proxy only, no UAC, autoRun=$autoRun',
+        (tester) async {
+      final effects = StartupEffects();
+      final runtime = TunRuntimeController();
+      final controller = await controllerFixture(tester, effects, runtime,
+          savedAutoRun: autoRun, savedTun: false);
+      await controller.initializeRuntime();
+      expect(effects.calls, ['proxy-only']);
+      expect(effects.running, isTrue);
+      expect(effects.enabled, isFalse);
+      expect(runtime.isEnabled, isFalse);
+      expect(globalState.config.patchClashConfig.tun.enable, isFalse,
+          reason: 'an existing user preference must not be overwritten');
+      expect(effects.logs.single, contains('saved TUN preference is off'));
+      await tester.pump();
+      expect(effects.backgroundConfigurations, 0);
     });
   }
 

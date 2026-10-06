@@ -21,6 +21,13 @@ abstract interface class WindowsTunStartupEffects {
   Future<bool> startListener();
   Future<void> stopProxy();
   Future<void> reflectRunning(bool Function() isCurrent);
+
+  /// Launch path for a saved TUN-off preference: start (or adopt) the proxy
+  /// without enabling TUN and without requesting privileges.
+  Future<void> startProxyWithoutTun();
+
+  /// Startup diagnostics (TUN outcome / degradation reason).
+  void log(String message);
 }
 
 Future<void> startWindowsTunOnLaunch({

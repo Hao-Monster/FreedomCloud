@@ -1536,7 +1536,24 @@ class AppController {
 
   Future<void> _initializeRuntime() async {
     if (Platform.isWindows || _windowsStartupEffects != null) {
+      final effects =
+          _windowsStartupEffects ?? _ControllerWindowsTunStartupEffects(this);
+      // Fresh installs default to tun.enable=true. A saved preference (including
+      // an existing user's explicit off) is respected rather than overridden.
+      if (!_ref.read(patchClashConfigProvider).tun.enable) {
+        effects.log('startup: saved TUN preference is off; starting proxy without TUN');
+        try {
+          await effects.startProxyWithoutTun();
+        } catch (e) {
+          effects.log('startup: proxy start failed: $e');
+        }
+        return;
+      }
+      effects.log('startup: saved TUN preference is on; starting proxy and TUN');
       await _startWindowsTun();
+      final failure = _tunRuntime.failure;
+      effects.log('startup: TUN observed=${_tunRuntime.observed.name}'
+          '${failure == null ? '' : ', failure=$failure (TUN not enabled; retry from the TUN switch)'}');
       return;
     }
     try {
@@ -2324,6 +2341,22 @@ class _ControllerWindowsTunStartupEffects implements WindowsTunStartupEffects {
   Future<bool> startListener() => clashCore.startListener();
   @override
   Future<void> stopProxy() => controller._updateStatus(false);
+  @override
+  Future<void> startProxyWithoutTun() async {
+    try {
+      await controller._initCore();
+    } catch (e) {
+      commonPrint.log('initCore failed (will retry on profile change): $e');
+    }
+    if (proxyRunning) {
+      // Adopt an Agent-owned running proxy read-only; do not restart listeners.
+      await controller._initStatus();
+      return;
+    }
+    await controller.updateStatus(true);
+  }
+  @override
+  void log(String message) => commonPrint.log(message);
   @override
   Future<void> reflectRunning(bool Function() isCurrent) async {
     if (!isCurrent()) return;
