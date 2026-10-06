@@ -7,6 +7,7 @@ import 'dart:typed_data';
 import 'package:dio/dio.dart';
 import 'package:dio/io.dart';
 import 'package:flclashx/common/common.dart';
+import 'package:flclashx/common/windows_helper_compatibility.dart';
 import 'package:flclashx/models/models.dart';
 import 'package:flclashx/services/secure_subscription.dart';
 import 'package:flclashx/state.dart';
@@ -184,6 +185,21 @@ class Request {
   }
 
   Future<bool> pingHelper() async {
+    if (Platform.isWindows) {
+      return windowsHelperIsCompatible(
+        readCapabilities: () async {
+          final response = await _dio.get<Object?>(
+            'http://$localhost:$helperPort/capabilities',
+            options: Options(responseType: ResponseType.json),
+          ).timeout(const Duration(seconds: 2));
+          return response.statusCode == HttpStatus.ok ? response.data : null;
+        },
+        bundledCoreSha256: coreUpdater.calcCoreSha256,
+        bundledHelper: appPath.helperPath,
+        installedHelper: appPath.windowsServiceHelperPath,
+        installedCore: appPath.windowsServiceCorePath,
+      );
+    }
     try {
       final response = await _dio
           .get(

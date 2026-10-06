@@ -7,6 +7,8 @@ import 'package:flclashx/common/utils.dart';
 import 'package:flclashx/enum/enum.dart';
 import 'package:flclashx/models/models.dart';
 import 'package:flclashx/state.dart';
+import 'package:flclashx/common/tun_runtime.dart';
+import 'package:flclashx/widgets/tun_status.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
@@ -167,13 +169,24 @@ class Tray {
     if (trayState.isStart) {
       menuItems.add(
         MenuItem.checkbox(
-          label: appLocalizations.tun,
+          label: Platform.isWindows ? '${appLocalizations.tun}: ${tunStatusLabel(tunRuntime)}' : appLocalizations.tun,
+          disabled: Platform.isWindows && tunRuntime.busy,
           onClick: (_) {
-            globalState.appController.updateTun();
+            if (Platform.isWindows) {
+              unawaited(globalState.appController.setTunEnabled(!tunRuntime.isEnabled));
+            } else {
+              globalState.appController.updateTun();
+            }
           },
           checked: trayState.tunEnable,
         ),
       );
+      if (Platform.isWindows && (tunRuntime.observed == TunObservedState.unknown ||
+          (tunRuntime.desiredEnabled && !tunRuntime.isEnabled))) {
+        menuItems.add(MenuItem(label: appLocalizations.tunDisableAction,
+          disabled: tunRuntime.busy,
+          onClick: (_) => globalState.appController.setTunEnabled(false)));
+      }
       menuItems.add(
         MenuItem.checkbox(
           label: appLocalizations.systemProxy,

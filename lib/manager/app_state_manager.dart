@@ -155,6 +155,9 @@ class _AppStateManagerState extends ConsumerState<AppStateManager>
       render?.pause();
     } else {
       render?.resume();
+      if (state == AppLifecycleState.resumed && Platform.isWindows) {
+        globalState.appController.refreshWindowsTunStatus();
+      }
       if (state == AppLifecycleState.resumed && Platform.isAndroid) {
         // Re-assert the per-session core wiring against the (possibly recycled)
         // :remote core. A warm app-open after a headless tile start keeps this

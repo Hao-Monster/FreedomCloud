@@ -228,7 +228,12 @@ class GlobalState {
 
   Future<bool> handleStart([UpdateTasks? tasks]) async {
     startTime ??= DateTime.now();
-    await clashCore.startListener();
+    final listenerStarted = await clashCore.startListener();
+    if (Platform.isWindows && !listenerStarted) {
+      startTime = null;
+      stopUpdateTasks();
+      return false;
+    }
     final started = await service?.startVpn();
     // started == false → the Android remote bring-up failed (establish() returned
     // null / Core.startTun failed); the service emitted STOP and the tunnel is down.

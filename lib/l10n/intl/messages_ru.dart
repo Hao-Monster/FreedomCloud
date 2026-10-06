@@ -39,7 +39,9 @@ class MessageLookup extends MessageLookupByLibrary {
 
   static String m8(days) => "Ваша подписка истекает через ${days} дн.";
 
-  static String m9(label) => "${label} должен быть URL";
+  static String m9(reason) => "TUN: ${reason}";
+
+  static String m10(label) => "${label} должен быть URL";
 
   final messages = _notInlinedMessages(_notInlinedMessages);
   static Map<String, Function> _notInlinedMessages(_) => <String, Function>{
@@ -893,6 +895,41 @@ class MessageLookup extends MessageLookupByLibrary {
     "tunDesc": MessageLookupByLibrary.simpleMessage(
       "Доступно только в режиме администратора",
     ),
+    "tunDisableAction": MessageLookupByLibrary.simpleMessage(
+      "Запросить остановку",
+    ),
+    "tunErrorAuthorization": MessageLookupByLibrary.simpleMessage(
+      "Требуются права администратора; включите повторно",
+    ),
+    "tunErrorComponents": MessageLookupByLibrary.simpleMessage(
+      "Версии фоновых компонентов различаются; включите для обновления",
+    ),
+    "tunErrorConfiguration": MessageLookupByLibrary.simpleMessage(
+      "Конфигурация не применена",
+    ),
+    "tunErrorLegacyAgent": MessageLookupByLibrary.simpleMessage(
+      "Завершите старое фоновое приложение и снова откройте эту версию",
+    ),
+    "tunErrorStart": MessageLookupByLibrary.simpleMessage(
+      "Не удалось запустить интерфейс; включите повторно",
+    ),
+    "tunErrorStop": MessageLookupByLibrary.simpleMessage(
+      "Не удалось остановить; проверьте состояние",
+    ),
+    "tunErrorUnavailable": MessageLookupByLibrary.simpleMessage(
+      "Не удалось проверить состояние; проверьте версию фонового процесса",
+    ),
+    "tunStatusFailure": m9,
+    "tunStatusOff": MessageLookupByLibrary.simpleMessage("Не запущен"),
+    "tunStatusOn": MessageLookupByLibrary.simpleMessage("Запущен"),
+    "tunStatusStarting": MessageLookupByLibrary.simpleMessage("Запуск…"),
+    "tunStatusStopping": MessageLookupByLibrary.simpleMessage("Остановка…"),
+    "tunStatusUnknown": MessageLookupByLibrary.simpleMessage(
+      "Состояние неизвестно",
+    ),
+    "tunStatusWaiting": MessageLookupByLibrary.simpleMessage(
+      "Включить при запуске прокси",
+    ),
     "twoColumns": MessageLookupByLibrary.simpleMessage("Два столбца"),
     "unableToUpdateCurrentProfileDesc": MessageLookupByLibrary.simpleMessage(
       "Невозможно обновить текущий профиль",
@@ -915,7 +952,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "upload": MessageLookupByLibrary.simpleMessage("Отправка"),
     "url": MessageLookupByLibrary.simpleMessage("URL"),
     "urlDesc": MessageLookupByLibrary.simpleMessage("Загрузить профиль по URL"),
-    "urlTip": m9,
+    "urlTip": m10,
     "useHosts": MessageLookupByLibrary.simpleMessage("Использовать hosts"),
     "useSystemHosts": MessageLookupByLibrary.simpleMessage(
       "Использовать системные hosts",

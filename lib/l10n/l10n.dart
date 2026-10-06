@@ -5328,6 +5328,151 @@ class AppLocalizations {
       args: [],
     );
   }
+
+  /// `Status unknown`
+  String get tunStatusUnknown {
+    return Intl.message(
+      'Status unknown',
+      name: 'tunStatusUnknown',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Not running`
+  String get tunStatusOff {
+    return Intl.message(
+      'Not running',
+      name: 'tunStatusOff',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Running`
+  String get tunStatusOn {
+    return Intl.message('Running', name: 'tunStatusOn', desc: '', args: []);
+  }
+
+  /// `Starting…`
+  String get tunStatusStarting {
+    return Intl.message(
+      'Starting…',
+      name: 'tunStatusStarting',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Stopping…`
+  String get tunStatusStopping {
+    return Intl.message(
+      'Stopping…',
+      name: 'tunStatusStopping',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Enable when proxy starts`
+  String get tunStatusWaiting {
+    return Intl.message(
+      'Enable when proxy starts',
+      name: 'tunStatusWaiting',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `TUN: {reason}`
+  String tunStatusFailure(String reason) {
+    return Intl.message(
+      'TUN: $reason',
+      name: 'tunStatusFailure',
+      desc: '',
+      args: [reason],
+    );
+  }
+
+  /// `Administrator authorization required; enable to retry`
+  String get tunErrorAuthorization {
+    return Intl.message(
+      'Administrator authorization required; enable to retry',
+      name: 'tunErrorAuthorization',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Background components differ; enable to update`
+  String get tunErrorComponents {
+    return Intl.message(
+      'Background components differ; enable to update',
+      name: 'tunErrorComponents',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Could not stop; verify the current state`
+  String get tunErrorStop {
+    return Intl.message(
+      'Could not stop; verify the current state',
+      name: 'tunErrorStop',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Cannot verify status; check the background version`
+  String get tunErrorUnavailable {
+    return Intl.message(
+      'Cannot verify status; check the background version',
+      name: 'tunErrorUnavailable',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Configuration was not applied`
+  String get tunErrorConfiguration {
+    return Intl.message(
+      'Configuration was not applied',
+      name: 'tunErrorConfiguration',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Interface could not start; enable to retry`
+  String get tunErrorStart {
+    return Intl.message(
+      'Interface could not start; enable to retry',
+      name: 'tunErrorStart',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Request stop`
+  String get tunDisableAction {
+    return Intl.message(
+      'Request stop',
+      name: 'tunDisableAction',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Exit the old background app, then reopen this version`
+  String get tunErrorLegacyAgent {
+    return Intl.message(
+      'Exit the old background app, then reopen this version',
+      name: 'tunErrorLegacyAgent',
+      desc: '',
+      args: [],
+    );
+  }
 }
 
 class AppLocalizationDelegate extends LocalizationsDelegate<AppLocalizations> {

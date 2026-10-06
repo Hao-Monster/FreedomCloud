@@ -2,6 +2,9 @@ import 'dart:io';
 
 import 'package:flclashx/common/common.dart';
 import 'package:flclashx/providers/config.dart';
+import 'package:flclashx/providers/tun.dart';
+import 'package:flclashx/state.dart';
+import 'package:flclashx/widgets/tun_status.dart';
 import 'package:flclashx/views/config/network.dart';
 import 'package:flclashx/widgets/widgets.dart';
 import 'package:flutter/material.dart';
@@ -48,7 +51,14 @@ class TUNButton extends StatelessWidget {
             children: [
               Flexible(
                 flex: 1,
-                child: TooltipText(
+                child: Platform.isWindows ? Consumer(builder: (_, ref, __) {
+                  final runtime = ref.watch(tunRuntimeProvider);
+                  final label = tunStatusLabel(runtime,
+                    waiting: runtime.desiredEnabled && globalState.appState.runTime == null);
+                  return Tooltip(message: label, child: Text(
+                    label, maxLines: 2, overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.titleSmall?.adjustSize(-2).toLight));
+                }) : TooltipText(
                   text: Text(
                     appLocalizations.options,
                     maxLines: 1,
@@ -63,6 +73,12 @@ class TUNButton extends StatelessWidget {
               ),
               Consumer(
                 builder: (_, ref, __) {
+                  if (Platform.isWindows) {
+                    final runtime = ref.watch(tunRuntimeProvider);
+                    return Tooltip(message: tunStatusLabel(runtime),
+                      child: TunStatusSwitch(runtime: runtime,
+                        onChanged: globalState.appController.setTunEnabled));
+                  }
                   final enable = ref.watch(patchClashConfigProvider
                       .select((state) => state.tun.enable));
                   return Switch(

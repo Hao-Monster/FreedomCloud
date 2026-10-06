@@ -38,7 +38,9 @@ class MessageLookup extends MessageLookupByLibrary {
 
   static String m8(days) => "您的订阅将在${days}天后到期";
 
-  static String m9(label) => "${label}必须为URL";
+  static String m9(reason) => "虚拟网卡：${reason}";
+
+  static String m10(label) => "${label}必须为URL";
 
   final messages = _notInlinedMessages(_notInlinedMessages);
   static Map<String, Function> _notInlinedMessages(_) => <String, Function>{
@@ -716,6 +718,29 @@ class MessageLookup extends MessageLookupByLibrary {
     "trafficUsage": MessageLookupByLibrary.simpleMessage("流量统计"),
     "tun": MessageLookupByLibrary.simpleMessage("虚拟网卡"),
     "tunDesc": MessageLookupByLibrary.simpleMessage("仅在管理员模式生效"),
+    "tunDisableAction": MessageLookupByLibrary.simpleMessage("请求关闭"),
+    "tunErrorAuthorization": MessageLookupByLibrary.simpleMessage(
+      "需要管理员授权，可重新开启重试",
+    ),
+    "tunErrorComponents": MessageLookupByLibrary.simpleMessage(
+      "后台组件不匹配，可重新开启更新",
+    ),
+    "tunErrorConfiguration": MessageLookupByLibrary.simpleMessage("配置未成功应用"),
+    "tunErrorLegacyAgent": MessageLookupByLibrary.simpleMessage(
+      "请先退出旧版后台，再重新打开本版本",
+    ),
+    "tunErrorStart": MessageLookupByLibrary.simpleMessage("网卡启动失败，可重新开启重试"),
+    "tunErrorStop": MessageLookupByLibrary.simpleMessage("关闭失败，请核对当前运行状态"),
+    "tunErrorUnavailable": MessageLookupByLibrary.simpleMessage(
+      "无法确认状态，请检查后台版本",
+    ),
+    "tunStatusFailure": m9,
+    "tunStatusOff": MessageLookupByLibrary.simpleMessage("未启动"),
+    "tunStatusOn": MessageLookupByLibrary.simpleMessage("已启动"),
+    "tunStatusStarting": MessageLookupByLibrary.simpleMessage("正在开启…"),
+    "tunStatusStopping": MessageLookupByLibrary.simpleMessage("正在关闭…"),
+    "tunStatusUnknown": MessageLookupByLibrary.simpleMessage("状态未知"),
+    "tunStatusWaiting": MessageLookupByLibrary.simpleMessage("代理启动后启用"),
     "twoColumns": MessageLookupByLibrary.simpleMessage("两列"),
     "unableToUpdateCurrentProfileDesc": MessageLookupByLibrary.simpleMessage(
       "无法更新当前配置文件",
@@ -730,7 +755,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "upload": MessageLookupByLibrary.simpleMessage("上传"),
     "url": MessageLookupByLibrary.simpleMessage("URL"),
     "urlDesc": MessageLookupByLibrary.simpleMessage("通过URL获取配置文件"),
-    "urlTip": m9,
+    "urlTip": m10,
     "useHosts": MessageLookupByLibrary.simpleMessage("使用Hosts"),
     "useSystemHosts": MessageLookupByLibrary.simpleMessage("使用系统Hosts"),
     "value": MessageLookupByLibrary.simpleMessage("值"),

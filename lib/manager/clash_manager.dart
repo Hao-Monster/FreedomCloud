@@ -1,4 +1,7 @@
+import 'dart:io';
 import 'package:flclashx/clash/clash.dart';
+import 'package:flclashx/common/tun_config_update.dart';
+import 'package:flclashx/common/tun_runtime.dart';
 import 'package:flclashx/common/common.dart';
 import 'package:flclashx/enum/enum.dart';
 import 'package:flclashx/models/models.dart';
@@ -48,7 +51,8 @@ class _ClashContainerState extends ConsumerState<ClashManager>
       }
     });
     ref.listenManual(updateParamsProvider, (prev, next) {
-      if (prev != next) {
+      if (shouldScheduleClashConfigUpdate(prev, next,
+          explicitWindowsTunOperation: Platform.isWindows && tunRuntime.busy)) {
         globalState.appController.updateClashConfigDebounce();
       }
     });

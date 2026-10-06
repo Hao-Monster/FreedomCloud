@@ -459,5 +459,20 @@
   "purchasePlansEmpty": "現在購入可能なプランはありません。",
   "purchasePlansError": "プランを読み込めませんでした。もう一度お試しください。",
   "purchasePlanSpeed": "速度上限",
-  "purchasePlanDevices": "デバイス数の上限"
+  "purchasePlanDevices": "デバイス数の上限",
+  "tunStatusUnknown": "状態不明",
+  "tunStatusOff": "停止中",
+  "tunStatusOn": "起動済み",
+  "tunStatusStarting": "起動しています…",
+  "tunStatusStopping": "停止しています…",
+  "tunStatusWaiting": "プロキシの起動時に有効化",
+  "tunStatusFailure": "TUN: {reason}",
+  "tunErrorAuthorization": "管理者の許可が必要です。再度有効にしてください",
+  "tunErrorComponents": "バックグラウンドの構成が異なります。再度有効にして更新してください",
+  "tunErrorStop": "停止できませんでした。現在の状態を確認してください",
+  "tunErrorUnavailable": "状態を確認できません。バックグラウンドのバージョンを確認してください",
+  "tunErrorConfiguration": "設定が適用されませんでした",
+  "tunErrorStart": "インターフェースを起動できません。再度有効にしてください",
+  "tunDisableAction": "停止を要求",
+  "tunErrorLegacyAgent": "古いバックグラウンドアプリを終了してから、このバージョンを開き直してください"
 }

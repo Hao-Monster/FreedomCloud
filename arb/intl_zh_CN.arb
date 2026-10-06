@@ -594,5 +594,20 @@
   "purchasePlansEmpty": "暂无可购买的套餐。",
   "purchasePlansError": "套餐加载失败，请重试。",
   "purchasePlanSpeed": "速率上限",
-  "purchasePlanDevices": "设备上限"
+  "purchasePlanDevices": "设备上限",
+  "tunStatusUnknown": "状态未知",
+  "tunStatusOff": "未启动",
+  "tunStatusOn": "已启动",
+  "tunStatusStarting": "正在开启…",
+  "tunStatusStopping": "正在关闭…",
+  "tunStatusWaiting": "代理启动后启用",
+  "tunStatusFailure": "虚拟网卡：{reason}",
+  "tunErrorAuthorization": "需要管理员授权，可重新开启重试",
+  "tunErrorComponents": "后台组件不匹配，可重新开启更新",
+  "tunErrorStop": "关闭失败，请核对当前运行状态",
+  "tunErrorUnavailable": "无法确认状态，请检查后台版本",
+  "tunErrorConfiguration": "配置未成功应用",
+  "tunErrorStart": "网卡启动失败，可重新开启重试",
+  "tunDisableAction": "请求关闭",
+  "tunErrorLegacyAgent": "请先退出旧版后台，再重新打开本版本"
 }

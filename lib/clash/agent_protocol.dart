@@ -53,6 +53,7 @@ class AgentEndpoint {
     required this.port,
     required this.token,
     required this.pid,
+    this.instanceId,
   });
 
   factory AgentEndpoint.fromJson(Map<String, dynamic> json) {
@@ -60,6 +61,7 @@ class AgentEndpoint {
     final port = json['port'];
     final token = json['token'];
     final pid = json['pid'];
+    final instance = json['agentInstanceId'];
     if (protocol != agentProtocolVersion ||
         port is! int ||
         port < 1 ||
@@ -67,15 +69,19 @@ class AgentEndpoint {
         token is! String ||
         !RegExp(r'^[0-9a-fA-F]{64}$').hasMatch(token) ||
         pid is! int ||
-        pid < 1) {
+        pid < 1 ||
+        (instance != null && (instance is! String ||
+          !RegExp(r'^[0-9a-f]{64}$').hasMatch(instance)))) {
       throw const FormatException('Invalid FlClashAgent endpoint');
     }
-    return AgentEndpoint(port: port, token: token.toLowerCase(), pid: pid);
+    return AgentEndpoint(port: port, token: token.toLowerCase(), pid: pid,
+      instanceId: instance as String?);
   }
 
   final int port;
   final String token;
   final int pid;
+  final String? instanceId;
 }
 
 class AgentEvent {
@@ -87,6 +93,11 @@ class AgentEvent {
     this.ok,
     this.proxyRunning,
     this.privilegedBackend,
+    this.agentInstanceId,
+    this.agentPid,
+    this.agentExecutable,
+    this.coreExecutable,
+    this.backendSource,
     this.strictPolicyStatus = const AgentStrictPolicyStatus(
       state: AgentStrictPolicyState.disabled,
       generation: 0,
@@ -110,6 +121,11 @@ class AgentEvent {
         ok: envelope['ok'] as bool?,
         proxyRunning: envelope['proxyRunning'] as bool?,
         privilegedBackend: envelope['privilegedBackend'] as bool?,
+        agentInstanceId: envelope['agentInstanceId'] as String?,
+        agentPid: envelope['agentPid'] as int?,
+        agentExecutable: envelope['agentExecutable'] as String?,
+        coreExecutable: envelope['coreExecutable'] as String?,
+        backendSource: envelope['backendSource'] as String?,
         strictPolicyStatus: _parseStrictPolicyStatus(envelope),
         identity: _parseIdentity(envelope['identity']),
       );
@@ -125,6 +141,11 @@ class AgentEvent {
   final bool? ok;
   final bool? proxyRunning;
   final bool? privilegedBackend;
+  final String? agentInstanceId;
+  final int? agentPid;
+  final String? agentExecutable;
+  final String? coreExecutable;
+  final String? backendSource;
 
   /// Strict capture state reported by Agent. Missing status is treated as
   /// disabled so older Agents remain fail-closed to strict-policy consumers.

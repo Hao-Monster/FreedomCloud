@@ -4,6 +4,8 @@ import 'package:flclashx/common/common.dart';
 import 'package:flclashx/enum/enum.dart';
 import 'package:flclashx/models/models.dart';
 import 'package:flclashx/providers/config.dart';
+import 'package:flclashx/providers/tun.dart';
+import 'package:flclashx/widgets/tun_status.dart';
 import 'package:flclashx/state.dart';
 import 'package:flclashx/widgets/widgets.dart';
 import 'package:flutter/material.dart';
@@ -98,6 +100,17 @@ class TUNItem extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final enable =
         ref.watch(patchClashConfigProvider.select((state) => state.tun.enable));
+
+    if (Platform.isWindows) {
+      final runtime = ref.watch(tunRuntimeProvider);
+      return ListItem(
+        title: Text(appLocalizations.tun),
+        subtitle: Text(tunStatusLabel(runtime,
+          waiting: enable && globalState.appState.runTime == null)),
+        trailing: TunStatusSwitch(runtime: runtime,
+          onChanged: globalState.appController.setTunEnabled),
+      );
+    }
 
     return ListItem.switchItem(
       title: Text(appLocalizations.tun),

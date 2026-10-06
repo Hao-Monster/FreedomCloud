@@ -22,6 +22,8 @@ import 'package:url_launcher/url_launcher.dart';
 
 import 'common/common.dart';
 import 'common/admin_authorization.dart';
+import 'common/tun_runtime.dart';
+import 'common/windows_tun_prepare.dart';
 import 'models/models.dart';
 import 'plugins/vpn.dart';
 import 'views/profiles/override_profile.dart';
@@ -36,6 +38,106 @@ class AppController {
   // attempt so an unavailable/denied service cannot trigger UAC repeatedly.
   final AdminAuthorizationGate _adminAuthorization =
       AdminAuthorizationGate();
+  Timer? _tunObservationTimer;
+  late final TunStatusObserver _tunObserver = TunStatusObserver(
+    runtime: tunRuntime,
+    read: () => clashCore.getTunStatus(),
+    onObserved: () => unawaited(updateTray()),
+  );
+
+  void startTunObservation() {
+    if (!Platform.isWindows || _tunObservationTimer != null) return;
+    tunRuntime.desiredEnabled = _ref.read(patchClashConfigProvider).tun.enable;
+    clashService?.onTunTransportChanged = () {
+      tunRuntime.invalidate('statusUnavailable');
+      unawaited(updateTray());
+    };
+    _tunObservationTimer = Timer.periodic(const Duration(seconds: 3), (_) {
+      unawaited(refreshWindowsTunStatus());
+    });
+    unawaited(refreshWindowsTunStatus());
+  }
+
+  Future<TunStatus?> refreshWindowsTunStatus({bool fresh = false}) async {
+    if (!Platform.isWindows) return null;
+    return _tunObserver.refresh(fresh: fresh);
+  }
+
+  Future<void> _applyWindowsConfig(Future<String> Function(bool enable) apply) =>
+    applyWindowsTunConfiguration(
+      componentsMatch: () async => await clashService?.windowsComponentsMatch() ?? false,
+      observe: () => refreshWindowsTunStatus(fresh: true),
+      desiredEnabled: () => _ref.read(patchClashConfigProvider).tun.enable,
+      explicitStop: () => tunRuntime.operation == TunOperation.disabling,
+      explicitOperation: () => tunRuntime.busy,
+      failedRequest: () => tunRuntime.failure != null,
+      reportFailure: tunRuntime.fail,
+      invalidate: () => tunRuntime.invalidate(),
+      apply: apply,
+    );
+
+  Future<void> _updateWindowsConfig() async {
+    await _applyWindowsConfig((enabled) => clashCore.updateConfig(
+      _ref.read(updateParamsProvider).copyWith.tun(enable: enabled)));
+  }
+
+  Future<void> setTunEnabled(bool enabled) async {
+    if (!Platform.isWindows) {
+      _ref.read(patchClashConfigProvider.notifier).updateState(
+        (state) => state.copyWith.tun(enable: enabled));
+      return;
+    }
+    _adminAuthorization.clearFailure();
+    final operation = tunRuntime.request(enabled, (intent) async {
+      var replaced = false;
+      if (enabled) {
+        replaced = await prepareWindowsTunBackend(
+          observe: () => refreshWindowsTunStatus(fresh: true),
+          componentsMatch: () async => await clashService?.windowsComponentsMatch() ?? false,
+          canMigrate: () => clashService?.windowsAgentSupportsMigration ?? false,
+          authorize: () async => await _adminAuthorization.request(system.authorizeCore) != AuthorizeCode.error,
+          ensureBackend: () async {
+            if (clashService == null) throw const TunFailure('componentsMismatch');
+            return clashService!.ensureWindowsTunBackend();
+          },
+          initialize: () async {
+            if (!await clashCore.init()) throw const TunFailure('configurationFailed');
+            if (!await clashCore.setState(globalState.getCoreState())) {
+              throw const TunFailure('configurationFailed');
+            }
+          },
+          isCurrent: () => tunRuntime.isCurrentIntent(intent),
+        );
+      }
+      if (!tunRuntime.isCurrentIntent(intent)) {
+        if (replaced) await _setupClashConfigImpl();
+        return;
+      }
+      if (replaced) {
+        await _setupClashConfigImpl();
+        if (_ref.read(runTimeProvider.notifier).isStart) {
+          if (!await globalState.handleStart()) throw const TunFailure('startFailed');
+        }
+      } else {
+        await _updateWindowsConfig();
+      }
+      final status = await refreshWindowsTunStatus(fresh: true);
+      if (!tunRuntime.isCurrentIntent(intent)) return;
+      if (status == null) throw const TunFailure('statusUnavailable');
+      if (!enabled && status.observed != TunObservedState.off) {
+        throw const TunFailure('closeFailed');
+      }
+      if (enabled && _ref.read(runTimeProvider.notifier).isStart &&
+          status.observed != TunObservedState.on) {
+        throw TunFailure(status.errorCode ?? 'startFailed');
+      }
+    }, writeIntent: (value) {
+      _ref.read(patchClashConfigProvider.notifier).updateState(
+        (state) => state.copyWith.tun(enable: value));
+    });
+    await operation;
+    await updateTray();
+  }
 
   void setupClashConfigDebounce() {
     debouncer.call(FunctionTag.setupClashConfig, () async {
@@ -109,6 +211,17 @@ class AppController {
   }
 
   Future<void> restartCore() async {
+    if (Platform.isWindows) {
+      await tunRuntime.serialize(() async {
+        tunRuntime.invalidate();
+        try {
+          await clashService?.reStart();
+          await _initCore(ownsWindowsConfig: true);
+          if (_ref.read(runTimeProvider.notifier).isStart) await globalState.handleStart();
+        } finally { await refreshWindowsTunStatus(fresh: true); }
+      });
+      return;
+    }
     commonPrint.log("restart core");
     await clashService?.reStart();
     await _initCore();
@@ -136,7 +249,16 @@ class AppController {
       if (epoch != _statusEpoch) return;
       _statusOpInFlight = true;
       try {
-        await _updateStatus(isStart);
+        if (Platform.isWindows) {
+          await tunRuntime.serialize(() async {
+            if (epoch != _statusEpoch) return;
+            tunRuntime.invalidate();
+            try { await _updateStatus(isStart); }
+            finally { await refreshWindowsTunStatus(fresh: true); }
+          });
+        } else {
+          await _updateStatus(isStart);
+        }
       } finally {
         _statusOpInFlight = false;
       }
@@ -151,6 +273,11 @@ class AppController {
     await StatusBarManager.updateIcon(isConnected: isStart);
 
     if (isStart) {
+      if (Platform.isWindows && clashService?.usesAgent == true &&
+          clashService?.agentCoreReady != true) {
+        await clashService!.recoverCoreForUser();
+        await _initCore(ownsWindowsConfig: true);
+      }
       // Drop the previous exit-IP immediately so the panel shows "determining" right
       // away instead of flashing the old IP until the debounced check runs.
       detectionState.markChecking();
@@ -652,6 +779,12 @@ class AppController {
   }
 
   Future<void> _updateClashConfig() async {
+    if (Platform.isWindows) {
+      return tunRuntime.serialize(() async {
+        try { await _updateWindowsConfig(); }
+        on TunFailure catch (error) { tunRuntime.fail(error.code); rethrow; }
+      });
+    }
     final updateParams = _ref.read(updateParamsProvider);
     final res = await _requestAdmin(updateParams.tun.enable);
     if (res.isError) {
@@ -738,6 +871,16 @@ class AppController {
   }
 
   Future<void> _setupClashConfig() async {
+    if (Platform.isWindows) {
+      return tunRuntime.serialize(() async {
+        try { await _setupClashConfigImpl(); }
+        on TunFailure catch (error) { tunRuntime.fail(error.code); rethrow; }
+      });
+    }
+    return _setupClashConfigImpl();
+  }
+
+  Future<void> _setupClashConfigImpl() async {
     await _ref.read(currentProfileProvider)?.checkAndUpdate();
     var patchConfig = _ref.read(patchClashConfigProvider);
 
@@ -773,21 +916,25 @@ class AppController {
       }
     }
 
-    final res = await _requestAdmin(patchConfig.tun.enable);
-    if (res.isError) {
-      return;
-    }
-    final realTunEnable = _ref.read(realTunEnableProvider);
-    final realPatchConfig = patchConfig.copyWith.tun(enable: realTunEnable);
-    final params = await globalState.getSetupParams(
-      pathConfig: realPatchConfig,
-    );
-    final message = await clashCore.setupConfig(params);
-    if (message.isNotEmpty) {
+    if (Platform.isWindows) {
+      await _applyWindowsConfig((enabled) async {
+        final params = await globalState.getSetupParams(
+          pathConfig: patchConfig.copyWith.tun(enable: enabled));
+        return clashCore.setupConfig(params);
+      });
+    } else {
+      final res = await _requestAdmin(patchConfig.tun.enable);
+      if (res.isError) return;
+      final realTunEnable = _ref.read(realTunEnableProvider);
+      final realPatchConfig = patchConfig.copyWith.tun(enable: realTunEnable);
+      final params = await globalState.getSetupParams(pathConfig: realPatchConfig);
+      final message = await clashCore.setupConfig(params);
+      if (message.isNotEmpty) {
       // Don't advance lastProfileModified on a failed/timed-out setup: doing so
       // would make the next start's recovery re-apply think the profile is
       // already applied and skip it, leaving a degraded executor in place.
-      throw message;
+        throw message;
+      }
     }
     lastProfileModified = await _ref.read(
       currentProfileProvider.select(
@@ -1057,12 +1204,14 @@ class AppController {
       await handleExit();
       return;
     }
-    try {
-      await savePreferences();
-      await clashService?.detach();
-    } finally {
-      system.exit();
-    }
+    await _quiesceWindows(() async {
+      try {
+        await savePreferences();
+        await clashService?.detach();
+      } finally {
+        system.exit();
+      }
+    });
   }
 
   void backBlock() {
@@ -1073,7 +1222,17 @@ class AppController {
     _ref.read(backBlockProvider.notifier).value = false;
   }
 
-  Future<void> handleExit() async {
+  Future<void> _quiesceWindows(Future<void> Function() action) async {
+    if (!Platform.isWindows) { await action(); return; }
+    _tunObservationTimer?.cancel();
+    ++_statusEpoch;
+    await tunRuntime.quiesce(action);
+  }
+
+  Future<void> handleExit() => _quiesceWindows(_handleExit);
+
+  Future<void> _handleExit() async {
+    _tunObservationTimer?.cancel();
     // Bound the cleanup instead of pre-arming a 300ms hard-exit timer. On macOS the
     // DNS/proxy teardown is several slow networksetup/route subprocesses that easily
     // overrun 300ms, so the old timer fired mid-cleanup and exit(0) skipped the DNS
@@ -1106,7 +1265,9 @@ class AppController {
     }
   }
 
-  Future<void> handleRestart() async {
+  Future<void> handleRestart() => _quiesceWindows(_handleRestart);
+
+  Future<void> _handleRestart() async {
     commonPrint.log("Starting application restart...");
 
     if (clashService?.usesAgent == true) {
@@ -1148,6 +1309,9 @@ class AppController {
         commonPrint.log("New process started, exiting old process...");
       } catch (e) {
         commonPrint.log("Failed to start new process: $e");
+        // The Windows UI has already detached and revoked pending operations.
+        // End this instance; reusing it would silently ignore future requests.
+        if (Platform.isWindows) system.exit();
         return;
       }
     }
@@ -1155,7 +1319,9 @@ class AppController {
     system.exit();
   }
 
-  Future handleClear() async {
+  Future<void> handleClear() => _quiesceWindows(_handleClear);
+
+  Future<void> _handleClear() async {
     try {
       // Stop proxy/VPN first
       await globalState.handleStop();
@@ -1215,6 +1381,7 @@ class AppController {
 
       // Close file logger to release file handles (MUST be last step)
       await fileLogger.dispose();
+      if (Platform.isWindows) system.exit();
     } catch (e) {
       commonPrint.log("handleClear error: $e");
       await fileLogger.dispose();
@@ -1293,7 +1460,9 @@ class AppController {
     await handleExit();
   }
 
-  Future<void> _initCore() async {
+  Future<void> _initCore({bool ownsWindowsConfig = false}) async {
+    if (Platform.isWindows && clashService?.usesAgent == true &&
+        clashService?.agentCoreReady != true) return;
     final wasInitialized = await clashCore.isInit;
     if (!wasInitialized) {
       await clashCore.init();
@@ -1317,6 +1486,13 @@ class AppController {
       // setupConfig here rebuilds listeners/providers and can interrupt live
       // flows, defeating R-121. Refresh only the UI projections; configuration
       // remains owned by the Agent/Core journal until the user changes it.
+      await updateGroups();
+      await updateProviders();
+      initForegroundCache();
+    } else if (Platform.isWindows && ownsWindowsConfig) {
+      // Restart already owns the Windows configuration queue. Re-entering
+      // applyProfile would wait on ourselves and deadlock recovery.
+      await _setupClashConfigImpl();
       await updateGroups();
       await updateProviders();
       initForegroundCache();
@@ -1348,6 +1524,7 @@ class AppController {
   }
 
   Future<void> init() async {
+    startTunObservation();
     FlutterError.onError = (details) {
       commonPrint.log(details.stack.toString());
     };
@@ -1396,6 +1573,27 @@ class AppController {
     final agentStatus = clashService?.usesAgent == true
         ? clashService?.agentProxyRunning
         : null;
+    if (Platform.isWindows && clashService?.usesAgent == true) {
+      if (agentStatus == null) {
+        tunRuntime.invalidate('statusUnavailable');
+        return;
+      }
+      // Opening a UI attaches to the Agent-owned runtime. Restore local
+      // projections without sending start/stop and disturbing its listeners.
+      await StatusBarManager.updateIcon(isConnected: agentStatus);
+      if (agentStatus) {
+        globalState.startTime ??= DateTime.now();
+        globalState.startUpdateTasks();
+        startRunTimeTimer();
+      } else {
+        globalState.startTime = null;
+        globalState.stopUpdateTasks();
+        stopRunTimeTimer();
+        _ref.read(runTimeProvider.notifier).value = null;
+      }
+      await refreshWindowsTunStatus(fresh: true);
+      return;
+    }
     final status = agentStatus ??
         (globalState.isStart == true
             ? true
@@ -1683,9 +1881,9 @@ class AppController {
   }
 
   void updateTun() {
-    _ref.read(patchClashConfigProvider.notifier).updateState(
-          (state) => state.copyWith.tun(enable: !state.tun.enable),
-        );
+    unawaited(setTunEnabled(Platform.isWindows
+      ? !tunRuntime.isEnabled && !tunRuntime.desiredEnabled
+      : !_ref.read(patchClashConfigProvider).tun.enable));
   }
 
   void updateSystemProxy() {

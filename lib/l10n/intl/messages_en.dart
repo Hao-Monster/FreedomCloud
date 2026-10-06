@@ -40,7 +40,9 @@ class MessageLookup extends MessageLookupByLibrary {
 
   static String m8(days) => "Your subscription expires in ${days} day(s)";
 
-  static String m9(label) => "${label} must be a url";
+  static String m9(reason) => "TUN: ${reason}";
+
+  static String m10(label) => "${label} must be a url";
 
   final messages = _notInlinedMessages(_notInlinedMessages);
   static Map<String, Function> _notInlinedMessages(_) => <String, Function>{
@@ -1151,6 +1153,37 @@ class MessageLookup extends MessageLookupByLibrary {
     "tunDesc": MessageLookupByLibrary.simpleMessage(
       "only effective in administrator mode",
     ),
+    "tunDisableAction": MessageLookupByLibrary.simpleMessage("Request stop"),
+    "tunErrorAuthorization": MessageLookupByLibrary.simpleMessage(
+      "Administrator authorization required; enable to retry",
+    ),
+    "tunErrorComponents": MessageLookupByLibrary.simpleMessage(
+      "Background components differ; enable to update",
+    ),
+    "tunErrorConfiguration": MessageLookupByLibrary.simpleMessage(
+      "Configuration was not applied",
+    ),
+    "tunErrorLegacyAgent": MessageLookupByLibrary.simpleMessage(
+      "Exit the old background app, then reopen this version",
+    ),
+    "tunErrorStart": MessageLookupByLibrary.simpleMessage(
+      "Interface could not start; enable to retry",
+    ),
+    "tunErrorStop": MessageLookupByLibrary.simpleMessage(
+      "Could not stop; verify the current state",
+    ),
+    "tunErrorUnavailable": MessageLookupByLibrary.simpleMessage(
+      "Cannot verify status; check the background version",
+    ),
+    "tunStatusFailure": m9,
+    "tunStatusOff": MessageLookupByLibrary.simpleMessage("Not running"),
+    "tunStatusOn": MessageLookupByLibrary.simpleMessage("Running"),
+    "tunStatusStarting": MessageLookupByLibrary.simpleMessage("Starting…"),
+    "tunStatusStopping": MessageLookupByLibrary.simpleMessage("Stopping…"),
+    "tunStatusUnknown": MessageLookupByLibrary.simpleMessage("Status unknown"),
+    "tunStatusWaiting": MessageLookupByLibrary.simpleMessage(
+      "Enable when proxy starts",
+    ),
     "twoColumns": MessageLookupByLibrary.simpleMessage("Two columns"),
     "unableToUpdateCurrentProfileDesc": MessageLookupByLibrary.simpleMessage(
       "unable to update current profile",
@@ -1173,7 +1206,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "urlDesc": MessageLookupByLibrary.simpleMessage(
       "Obtain profile through URL",
     ),
-    "urlTip": m9,
+    "urlTip": m10,
     "useHosts": MessageLookupByLibrary.simpleMessage("Use hosts"),
     "useSystemHosts": MessageLookupByLibrary.simpleMessage("Use system hosts"),
     "value": MessageLookupByLibrary.simpleMessage("Value"),

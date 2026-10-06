@@ -4,6 +4,7 @@ import 'dart:isolate';
 
 import 'package:flclashx/clash/message.dart';
 import 'package:flclashx/common/common.dart';
+import 'package:flclashx/common/tun_runtime.dart';
 import 'package:flclashx/enum/enum.dart';
 import 'package:flclashx/models/models.dart';
 
@@ -104,6 +105,17 @@ abstract class ClashHandlerInterface with ClashInterface {
     final completer = callbackCompleterMap[result.id];
     try {
       switch (result.method) {
+        case ActionMethod.getTunStatus:
+          completer?.complete(result.toResult);
+          return;
+        case ActionMethod.updateConfig:
+        case ActionMethod.setupConfig:
+          if (result.code != ResultType.success) {
+            completer?.complete('Core rejected configuration');
+          } else {
+            completer?.complete(result.data);
+          }
+          return;
         case ActionMethod.message:
           clashMessage.controller.add(result.data);
           completer?.complete(true);
@@ -225,6 +237,7 @@ abstract class ClashHandlerInterface with ClashInterface {
   Future<String> updateConfig(UpdateParams updateParams) => invoke<String>(
         method: ActionMethod.updateConfig,
         data: json.encode(updateParams),
+        defaultValue: 'updateConfig transport unavailable',
         timeout: const Duration(minutes: 2),
         // Empty string means success to callers; the default-on-timeout is "",
         // which would mask a 2-minute hang as a successful apply. Return a
@@ -249,12 +262,23 @@ abstract class ClashHandlerInterface with ClashInterface {
     return invoke<String>(
       method: ActionMethod.setupConfig,
       data: data,
+      defaultValue: 'setupConfig transport unavailable',
       timeout: const Duration(minutes: 2),
       // Non-empty = error to callers; the default "" would mask a 2-minute hang
       // as a successful setup (and falsely advance lastProfileModified), so the
       // recovery re-apply would silently no-op against a still-broken executor.
       onTimeout: () => 'setupConfig timed out',
     );
+  }
+
+  Future<TunStatus> getTunStatus() async {
+    final result = await invoke<Result>(
+      method: ActionMethod.getTunStatus,
+      timeout: const Duration(seconds: 3),
+      defaultValue: Result.error('statusUnavailable'),
+    );
+    if (result.isError) throw const TunFailure('statusUnavailable');
+    return TunStatus.fromJson(result.data);
   }
 
   @override

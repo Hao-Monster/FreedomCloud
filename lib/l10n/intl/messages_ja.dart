@@ -38,7 +38,9 @@ class MessageLookup extends MessageLookupByLibrary {
 
   static String m8(days) => "サブスクリプションは${days}日後に期限切れになります";
 
-  static String m9(label) => "${label}はURLである必要があります";
+  static String m9(reason) => "TUN: ${reason}";
+
+  static String m10(label) => "${label}はURLである必要があります";
 
   final messages = _notInlinedMessages(_notInlinedMessages);
   static Map<String, Function> _notInlinedMessages(_) => <String, Function>{
@@ -603,6 +605,35 @@ class MessageLookup extends MessageLookupByLibrary {
     "trafficUsage": MessageLookupByLibrary.simpleMessage("トラフィック使用量"),
     "tun": MessageLookupByLibrary.simpleMessage("TUN"),
     "tunDesc": MessageLookupByLibrary.simpleMessage("管理者モードでのみ有効"),
+    "tunDisableAction": MessageLookupByLibrary.simpleMessage("停止を要求"),
+    "tunErrorAuthorization": MessageLookupByLibrary.simpleMessage(
+      "管理者の許可が必要です。再度有効にしてください",
+    ),
+    "tunErrorComponents": MessageLookupByLibrary.simpleMessage(
+      "バックグラウンドの構成が異なります。再度有効にして更新してください",
+    ),
+    "tunErrorConfiguration": MessageLookupByLibrary.simpleMessage(
+      "設定が適用されませんでした",
+    ),
+    "tunErrorLegacyAgent": MessageLookupByLibrary.simpleMessage(
+      "古いバックグラウンドアプリを終了してから、このバージョンを開き直してください",
+    ),
+    "tunErrorStart": MessageLookupByLibrary.simpleMessage(
+      "インターフェースを起動できません。再度有効にしてください",
+    ),
+    "tunErrorStop": MessageLookupByLibrary.simpleMessage(
+      "停止できませんでした。現在の状態を確認してください",
+    ),
+    "tunErrorUnavailable": MessageLookupByLibrary.simpleMessage(
+      "状態を確認できません。バックグラウンドのバージョンを確認してください",
+    ),
+    "tunStatusFailure": m9,
+    "tunStatusOff": MessageLookupByLibrary.simpleMessage("停止中"),
+    "tunStatusOn": MessageLookupByLibrary.simpleMessage("起動済み"),
+    "tunStatusStarting": MessageLookupByLibrary.simpleMessage("起動しています…"),
+    "tunStatusStopping": MessageLookupByLibrary.simpleMessage("停止しています…"),
+    "tunStatusUnknown": MessageLookupByLibrary.simpleMessage("状態不明"),
+    "tunStatusWaiting": MessageLookupByLibrary.simpleMessage("プロキシの起動時に有効化"),
     "twoColumns": MessageLookupByLibrary.simpleMessage("2列"),
     "unableToUpdateCurrentProfileDesc": MessageLookupByLibrary.simpleMessage(
       "現在のプロファイルを更新できません",
@@ -619,7 +650,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "upload": MessageLookupByLibrary.simpleMessage("アップロード"),
     "url": MessageLookupByLibrary.simpleMessage("URL"),
     "urlDesc": MessageLookupByLibrary.simpleMessage("URL経由でプロファイルを取得"),
-    "urlTip": m9,
+    "urlTip": m10,
     "useHosts": MessageLookupByLibrary.simpleMessage("ホストを使用"),
     "useSystemHosts": MessageLookupByLibrary.simpleMessage("システムホストを使用"),
     "value": MessageLookupByLibrary.simpleMessage("値"),

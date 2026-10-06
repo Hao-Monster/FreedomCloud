@@ -6,6 +6,7 @@ import 'dart:isolate';
 import 'package:flclashx/clash/clash.dart';
 import 'package:flclashx/clash/interface.dart';
 import 'package:flclashx/common/common.dart';
+import 'package:flclashx/common/tun_runtime.dart';
 import 'package:flclashx/enum/enum.dart';
 import 'package:flclashx/models/models.dart';
 import 'package:flclashx/state.dart';
@@ -100,6 +101,8 @@ class ClashCore {
 
   Future<String> setupConfig(SetupParams setupParams) =>
       clashInterface.setupConfig(setupParams);
+
+  Future<TunStatus> getTunStatus() => clashInterface.getTunStatus();
 
   Future<List<Group>> getProxiesGroups() async {
     final proxies = await clashInterface.getProxies();
@@ -299,9 +302,7 @@ class ClashCore {
   }) async =>
       clashInterface.updateExternalProvider(providerName);
 
-  Future<void> startListener() async {
-    await clashInterface.startListener();
-  }
+  Future<bool> startListener() => clashInterface.startListener();
 
   Future<void> stopListener() async {
     await clashInterface.stopListener();

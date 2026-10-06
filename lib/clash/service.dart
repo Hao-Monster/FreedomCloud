@@ -5,9 +5,11 @@ import 'dart:math';
 import 'package:crypto/crypto.dart' as crypto;
 
 import 'package:flclashx/clash/agent_protocol.dart';
+import 'package:flclashx/clash/agent_lifecycle.dart';
 import 'package:flclashx/clash/interface.dart';
 import 'package:flclashx/clash/windows_agent_launch.dart';
 import 'package:flclashx/common/common.dart';
+import 'package:flclashx/common/tun_runtime.dart';
 import 'package:flclashx/models/core.dart';
 import 'package:flclashx/state.dart';
 
@@ -68,6 +70,11 @@ class ClashService extends ClashHandlerInterface {
   AgentCoreState _agentCoreState = AgentCoreState.starting;
   bool? _agentProxyRunning;
   bool _agentUsingHelper = false;
+  AgentEvent? _agentIdentity;
+  int? _agentGeneration;
+  int _connectionEpoch = 0;
+  Completer<void> _agentDisconnected = Completer<void>();
+  void Function()? onTunTransportChanged;
 
   bool isStarting = false;
 
@@ -95,6 +102,14 @@ class ClashService extends ClashHandlerInterface {
   Future<void> Function(String reason)? onCoreCrash;
 
   bool get usesAgent => _agentMode;
+  bool get agentCoreReady => _agentCoreState == AgentCoreState.ready;
+  bool get windowsAgentSupportsMigration =>
+      _agentIdentity?.agentInstanceId != null &&
+      RegExp(r'^[0-9a-f]{64}$').hasMatch(_agentIdentity!.agentInstanceId!) &&
+      _agentIdentity?.agentPid == _agentPid &&
+      _agentIdentity?.agentExecutable != null &&
+      _agentIdentity?.coreExecutable != null;
+  final _agentConnections = AgentConnectionCoordinator();
 
   bool? get agentProxyRunning => _agentProxyRunning;
 
@@ -149,8 +164,18 @@ class ClashService extends ClashHandlerInterface {
     }
   }
 
-  Future<bool> _connectOrLaunchAgent() async {
-    if (await _tryConnectAgent()) return _ensureAgentCoreReady();
+  Future<bool> _connectOrLaunchAgent({bool recovery = false}) =>
+      _agentConnections.connect(() async {
+        if (recovery && (_stopping || _detaching)) return false;
+        return _connectOrLaunchAgentImpl();
+      }, recovery: recovery);
+
+  Future<bool> _connectOrLaunchAgentImpl() async {
+    if (await _tryConnectAgent()) {
+      if (!Platform.isWindows) return _ensureAgentCoreReady();
+      await _observeAgentCoreReady();
+      return true;
+    }
 
     final launched = await tryStartAgentProcess(
       resolvePaths: () async => Platform.isWindows
@@ -182,7 +207,9 @@ class ClashService extends ClashHandlerInterface {
 
     for (var attempt = 0; attempt < 80; attempt++) {
       await Future.delayed(const Duration(milliseconds: 100));
-      if (await _tryConnectAgent()) return _ensureAgentCoreReady();
+      if (await _tryConnectAgent()) {
+        return Platform.isWindows ? _observeAgentCoreReady() : _ensureAgentCoreReady();
+      }
     }
     commonPrint.log('FlClashAgent did not publish a usable endpoint');
     return false;
@@ -208,16 +235,27 @@ class ClashService extends ClashHandlerInterface {
         } catch (_) {}
       }
       socketCompleter = Completer<Socket>()..complete(socket);
+      final connectionEpoch = ++_connectionEpoch;
+      final disconnected = Completer<void>();
+      _agentDisconnected = disconnected;
+      _agentIdentity = null;
+      _agentGeneration = null;
+      onTunTransportChanged?.call();
       _agentAttachedCompleter = Completer<void>();
-      _detaching = false;
       _socketSubscription = socket
           .transform(uint8ListToListIntConverter)
           .transform(utf8.decoder)
           .transform(const LineSplitter())
           .listen(
-            _handleAgentLine,
-            onError: (Object error) => _onAgentLost('socket error: $error'),
-            onDone: () => _onAgentLost('socket closed'),
+            (line) { if (connectionEpoch == _connectionEpoch) _handleAgentLine(line); },
+            onError: (Object error) {
+              if (!disconnected.isCompleted) disconnected.complete();
+              if (connectionEpoch == _connectionEpoch) _onAgentLost('socket error: $error');
+            },
+            onDone: () {
+              if (!disconnected.isCompleted) disconnected.complete();
+              if (connectionEpoch == _connectionEpoch) _onAgentLost('socket closed');
+            },
             cancelOnError: true,
           );
       socket.writeln(json.encode({
@@ -227,6 +265,13 @@ class ClashService extends ClashHandlerInterface {
       await _agentAttachedCompleter.future.timeout(
         const Duration(seconds: 2),
       );
+      if (endpoint.instanceId != null &&
+          (_agentIdentity?.agentInstanceId != endpoint.instanceId ||
+           _agentIdentity?.agentPid != endpoint.pid)) {
+        await _socketSubscription?.cancel();
+        socket.destroy();
+        return false;
+      }
       _agentPid = endpoint.pid;
       return true;
     } catch (_) {
@@ -250,7 +295,21 @@ class ClashService extends ClashHandlerInterface {
   }
 
   void _handleAgentEvent(AgentEvent event) {
+    final identity = _agentIdentity;
+    if (identity?.agentInstanceId != null &&
+        (event.agentInstanceId != identity!.agentInstanceId ||
+         event.generation < (_agentGeneration ?? 0))) {
+      return;
+    }
+    if (_agentGeneration != event.generation ||
+        _agentIdentity?.agentInstanceId != event.agentInstanceId ||
+        event.coreState != AgentCoreState.ready) {
+      onTunTransportChanged?.call();
+    }
+    _agentGeneration = event.generation;
+    _agentIdentity = event;
     _agentCoreState = event.coreState;
+    _agentProxyRunning = event.coreState == AgentCoreState.ready ? event.proxyRunning : null;
     _publishStrictPolicyStatus(
       strictPolicyStatusForCore(
         status: event.strictPolicyStatus,
@@ -305,6 +364,20 @@ class ClashService extends ClashHandlerInterface {
       commonPrint.log('FlClashAgent Core readiness timed out: $e');
       return false;
     }
+  }
+
+  Future<bool> _observeAgentCoreReady({bool explicitRecovery = false}) =>
+      reconcileAgentCore(
+        state: () => _agentCoreState,
+        waitReady: () => _coreReadyCompleter.future.timeout(const Duration(seconds: 20)),
+        restart: () => _agentCommand(AgentCommand.restartCore),
+        explicitRecovery: explicitRecovery,
+      );
+
+  Future<void> recoverCoreForUser() async {
+    final ready = await _agentConnections.connect(
+      () => _observeAgentCoreReady(explicitRecovery: true));
+    if (!ready) throw const TunFailure('startFailed');
   }
 
   Future<bool> _agentCommand(
@@ -417,6 +490,7 @@ class ClashService extends ClashHandlerInterface {
   }
 
   void _onAgentLost(String reason) {
+    onTunTransportChanged?.call();
     // Socket loss invalidates any previously armed claim.  Keep the status
     // fail-closed while the bounded reconnect loop runs; never leave an armed
     // snapshot visible to policy consumers during an outage.
@@ -431,6 +505,7 @@ class ClashService extends ClashHandlerInterface {
     if (_detaching || _stopping || _agentRecovering) return;
     _agentRecovering = true;
     final previousAgentPid = _agentPid;
+    final recoveryEpoch = _agentConnections.epoch;
     _flushPendingCompleters();
     unawaited(() async {
       commonPrint.log('FlClashAgent connection lost ($reason), reconnecting');
@@ -439,7 +514,9 @@ class ClashService extends ClashHandlerInterface {
           await Future.delayed(
             Duration(milliseconds: 250 * (1 << attempt).clamp(1, 16)),
           );
-          if (await _connectOrLaunchAgent()) {
+          if (_stopping || _detaching || recoveryEpoch != _agentConnections.epoch) return;
+          if (await _connectOrLaunchAgent(recovery: true)) {
+            if (_stopping || _detaching || recoveryEpoch != _agentConnections.epoch) return;
             // A transport interruption to the same Agent requires no Core
             // restart: Agent still owns and has replayed its state. A new PID
             // means the Agent journal was lost, so rebuild Core from Flutter's
@@ -538,16 +615,15 @@ class ClashService extends ClashHandlerInterface {
     isStarting = true;
     try {
       if (_agentMode) {
-        if (Platform.isWindows &&
-            await system.checkIsAdmin() != _agentUsingHelper) {
-          await _agentCommand(AgentCommand.shutdownAgent);
-          await detach();
-          await Future.delayed(const Duration(milliseconds: 250));
-          if (!await _connectOrLaunchAgent()) return;
-          return;
-        }
-        if (!await _agentCommand(AgentCommand.restartCore)) return;
-        await _coreReadyCompleter.future.timeout(const Duration(seconds: 20));
+        // Backend migration belongs to an explicit TUN operation. A normal
+        // recovery must not replace a privileged Core with a local Core just
+        // because a transient Helper health check failed.
+        final restarted = await _agentConnections.connect(() async {
+          if (!await _agentCommand(AgentCommand.restartCore)) return false;
+          await _coreReadyCompleter.future.timeout(const Duration(seconds: 20));
+          return _agentCoreState == AgentCoreState.ready;
+        });
+        if (!restarted && Platform.isWindows) throw const TunFailure('startFailed');
         return;
       }
       if (process != null) {
@@ -622,14 +698,106 @@ class ClashService extends ClashHandlerInterface {
     }
   }
 
+  Future<bool> windowsComponentsMatch() async {
+    if (!Platform.isWindows) return true;
+    final identity = _agentIdentity;
+    if (!_agentMode || identity == null || identity.agentPid != _agentPid ||
+        identity.agentInstanceId == null ||
+        !RegExp(r'^[0-9a-f]{64}$').hasMatch(identity.agentInstanceId!) ||
+        identity.agentExecutable == null || identity.coreExecutable == null) {
+      return false;
+    }
+    try {
+      for (final pair in [
+        (appPath.agentPath, identity.agentExecutable!),
+        (appPath.corePath, identity.coreExecutable!),
+      ]) {
+        final bundled = await crypto.sha256.bind(File(pair.$1).openRead()).first;
+        final running = await crypto.sha256.bind(File(pair.$2).openRead()).first;
+        if (bundled != running) return false;
+      }
+      return identity.backendSource != 'helper' || await request.pingHelper();
+    } catch (_) { return false; }
+  }
+
+  /// Called only after an explicit user request prepared a matching Helper.
+  /// Returns whether the Core was replaced and therefore needs configuration.
+  Future<bool> ensureWindowsTunBackend() async {
+    if (!Platform.isWindows || !_agentMode) {
+      throw const TunFailure('componentsMismatch');
+    }
+    if (_agentUsingHelper && await windowsComponentsMatch()) {
+      try {
+        if ((await getTunStatus()).privilege == 'elevated') return false;
+      } on TunFailure { /* Reconcile a claimed Helper with the actual Core. */ }
+    }
+    if (!await system.checkIsAdmin()) throw const TunFailure('permissionDenied');
+    // Old Agents acknowledged shutdown before confirming Core exit. Never
+    // use that acknowledgement to replace a potentially still-live Core.
+    if (!windowsAgentSupportsMigration) throw const TunFailure('legacyAgent');
+    if (!await request.pingHelper()) throw const TunFailure('componentsMismatch');
+    // Verify the replacement can be selected before stopping a usable backend.
+    try {
+      await windowsAgentLaunchPaths(bundledAgent: appPath.agentPath,
+        bundledCore: appPath.corePath, serviceDirectory: appPath.windowsServiceDirectory);
+    } catch (_) { throw const TunFailure('componentsMismatch'); }
+    _stopping = true;
+    try {
+      return await _agentConnections.replace(() => _replaceWindowsTunBackend());
+    } finally { _stopping = false; }
+  }
+
+  Future<bool> _replaceWindowsTunBackend() async {
+    if (!windowsAgentSupportsMigration || !await request.pingHelper()) {
+      throw const TunFailure('componentsMismatch');
+    }
+    final previousPid = _agentPid;
+    final previousInstance = _agentIdentity?.agentInstanceId;
+    final disconnected = _agentDisconnected.future;
+    _stopping = true;
+    onTunTransportChanged?.call();
+    try {
+      if (!await _agentCommand(AgentCommand.shutdownAgent)) {
+        throw const TunFailure('backendStopFailed');
+      }
+      await disconnected.timeout(const Duration(seconds: 20));
+      final deadline = DateTime.now().add(const Duration(seconds: 10));
+      var endpointReleased = false;
+      while (DateTime.now().isBefore(deadline)) {
+        final file = File(await appPath.agentEndpointPath);
+        if (!await file.exists()) { endpointReleased = true; break; }
+        try {
+          final endpoint = AgentEndpoint.fromJson(jsonDecode(await file.readAsString()));
+          if (endpoint.pid != previousPid) { endpointReleased = true; break; }
+        } catch (_) { /* A partial endpoint is not proof of ownership release. */ }
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+      }
+      if (!endpointReleased) throw const TunFailure('backendStopFailed');
+      await _detachAgentSocket();
+      _coreReadyCompleter = Completer<void>();
+      if (!await _connectOrLaunchAgentImpl() || _agentPid == previousPid ||
+          (previousInstance != null && _agentIdentity?.agentInstanceId == previousInstance) ||
+          !_agentUsingHelper || !await windowsComponentsMatch()) {
+        throw const TunFailure('componentsMismatch');
+      }
+      return true;
+    } on TimeoutException {
+      throw const TunFailure('backendStopFailed');
+    } finally {
+      _stopping = false;
+    }
+  }
+
   @override
   Future<bool> destroy() async {
     if (_agentMode) {
       _stopping = true;
       try {
-        final result = await _agentCommand(AgentCommand.shutdownAgent);
-        await detach();
-        return result;
+        return await _agentConnections.replace(() async {
+          final result = await _agentCommand(AgentCommand.shutdownAgent);
+          await _detachAgentSocket();
+          return result;
+        });
       } finally {
         _stopping = false;
       }
@@ -793,7 +961,7 @@ class ClashService extends ClashHandlerInterface {
     _stopping = true;
     try {
       if (_agentMode) {
-        return _agentCommand(AgentCommand.stopCore);
+        return await _agentConnections.replace(() => _agentCommand(AgentCommand.stopCore));
       }
       if (Platform.isWindows) {
         await request.stopCoreByHelper();
@@ -818,6 +986,10 @@ class ClashService extends ClashHandlerInterface {
   /// alive so TUN/system-proxy operation survives a closed desktop window.
   Future<bool> detach() async {
     _detaching = true;
+    return _agentConnections.replace(_detachAgentSocket);
+  }
+
+  Future<bool> _detachAgentSocket() async {
     try {
       if (_agentMode && _agentCoreState == AgentCoreState.ready) {
         try {
@@ -834,9 +1006,7 @@ class ClashService extends ClashHandlerInterface {
       socketCompleter = Completer<Socket>();
       _flushPendingCompleters();
       return true;
-    } finally {
-      _detaching = false;
-    }
+    } finally { onTunTransportChanged?.call(); }
   }
 }
 

@@ -645,5 +645,27 @@
   "purchasePlansEmpty": "No plans are currently available.",
   "purchasePlansError": "Plans could not be loaded. Please try again.",
   "purchasePlanSpeed": "Speed limit",
-  "purchasePlanDevices": "Device limit"
+  "purchasePlanDevices": "Device limit",
+  "tunStatusUnknown": "Status unknown",
+  "tunStatusOff": "Not running",
+  "tunStatusOn": "Running",
+  "tunStatusStarting": "Starting…",
+  "tunStatusStopping": "Stopping…",
+  "tunStatusWaiting": "Enable when proxy starts",
+  "tunStatusFailure": "TUN: {reason}",
+  "tunErrorAuthorization": "Administrator authorization required; enable to retry",
+  "tunErrorComponents": "Background components differ; enable to update",
+  "tunErrorStop": "Could not stop; verify the current state",
+  "tunErrorUnavailable": "Cannot verify status; check the background version",
+  "tunErrorConfiguration": "Configuration was not applied",
+  "tunErrorStart": "Interface could not start; enable to retry",
+  "tunDisableAction": "Request stop",
+  "@tunStatusFailure": {
+    "placeholders": {
+      "reason": {
+        "type": "String"
+      }
+    }
+  },
+  "tunErrorLegacyAgent": "Exit the old background app, then reopen this version"
 }

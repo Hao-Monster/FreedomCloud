@@ -513,5 +513,20 @@
   "purchasePlansEmpty": "Сейчас нет доступных тарифов.",
   "purchasePlansError": "Не удалось загрузить тарифы. Повторите попытку.",
   "purchasePlanSpeed": "Ограничение скорости",
-  "purchasePlanDevices": "Лимит устройств"
+  "purchasePlanDevices": "Лимит устройств",
+  "tunStatusUnknown": "Состояние неизвестно",
+  "tunStatusOff": "Не запущен",
+  "tunStatusOn": "Запущен",
+  "tunStatusStarting": "Запуск…",
+  "tunStatusStopping": "Остановка…",
+  "tunStatusWaiting": "Включить при запуске прокси",
+  "tunStatusFailure": "TUN: {reason}",
+  "tunErrorAuthorization": "Требуются права администратора; включите повторно",
+  "tunErrorComponents": "Версии фоновых компонентов различаются; включите для обновления",
+  "tunErrorStop": "Не удалось остановить; проверьте состояние",
+  "tunErrorUnavailable": "Не удалось проверить состояние; проверьте версию фонового процесса",
+  "tunErrorConfiguration": "Конфигурация не применена",
+  "tunErrorStart": "Не удалось запустить интерфейс; включите повторно",
+  "tunDisableAction": "Запросить остановку",
+  "tunErrorLegacyAgent": "Завершите старое фоновое приложение и снова откройте эту версию"
 }
