@@ -33,12 +33,16 @@ pub struct StartParams {
     pub home_dir: Option<String>,
     pub auth_token: Option<String>,
     pub helper_token: String,
+    #[serde(default, rename = "ownerInstanceId")]
+    pub owner_instance_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct StopParams {
     pub home_dir: Option<String>,
     pub helper_token: String,
+    #[serde(default, rename = "ownerInstanceId")]
+    pub owner_instance_id: Option<String>,
 }
 
 #[cfg(target_os = "windows")]
@@ -184,10 +188,27 @@ fn allowed_hash() -> String {
     env!("TOKEN").to_string()
 }
 
-static PROCESS: Lazy<Arc<Mutex<Option<std::process::Child>>>> =
-    Lazy::new(|| Arc::new(Mutex::new(None)));
+static PROCESS: Lazy<Arc<Mutex<super::process_stop::ManagedCore<std::process::Child>>>> =
+    Lazy::new(|| Arc::new(Mutex::new(Default::default())));
 
 fn start(start_params: StartParams, logger: Arc<ServiceLogger>) -> impl Reply {
+    let owner = start_params.owner_instance_id.clone();
+    let result = start_core(start_params, logger);
+    if let Some(owner) = owner {
+        // A valid rejection means this request did not spawn a Core. Network
+        // loss still leaves the caller uncertain and must not clear ownership.
+        warp::reply::json(&serde_json::json!({
+            "schemaVersion": 1,
+            "ownerInstanceId": owner,
+            "outcome": if result.is_empty() { "started" } else { "rejected" },
+        }))
+        .into_response()
+    } else {
+        result.into_response()
+    }
+}
+
+fn start_core(start_params: StartParams, logger: Arc<ServiceLogger>) -> String {
     let request_id = request_id();
     logger.log(format!(
         "event=core_start.begin request_id={request_id} port={} helper_credential=present",
@@ -250,8 +271,20 @@ fn start(start_params: StartParams, logger: Arc<ServiceLogger>) -> impl Reply {
         ));
         return format!("The SHA256 hash of the program requesting execution is: {}. The helper program only allows execution of applications with the SHA256 hash: {}.", sha256, allowed,);
     }
-    stop_process(&logger);
     let mut process = PROCESS.lock().unwrap();
+    match process.prepare_start(
+        start_params.owner_instance_id.as_deref(),
+        std::time::Duration::from_secs(3),
+    ) {
+        Ok(true) => {}
+        Ok(false) => return String::new(),
+        Err(error) => {
+            logger.log(format!(
+                "event=core_start.failure request_id={request_id} stage=prepare error={error}"
+            ));
+            return error;
+        }
+    }
     let mut command = Command::new(core_path);
     command
         .stdout(Stdio::piped())
@@ -265,8 +298,8 @@ fn start(start_params: StartParams, logger: Arc<ServiceLogger>) -> impl Reply {
 
     match command.spawn() {
         Ok(child) => {
-            *process = Some(child);
-            if let Some(ref mut child) = *process {
+            process.process = Some(child);
+            if let Some(ref mut child) = process.process {
                 let stdout = child.stdout.take().unwrap();
                 let stderr = child.stderr.take().unwrap();
                 spawn_core_output_logger(stdout, logger.clone(), "stdout");
@@ -285,18 +318,19 @@ fn start(start_params: StartParams, logger: Arc<ServiceLogger>) -> impl Reply {
 }
 
 pub(crate) fn stop_process(logger: &Arc<ServiceLogger>) -> String {
+    stop_process_owned(logger, None)
+}
+
+fn stop_process_owned(logger: &Arc<ServiceLogger>, owner: Option<&str>) -> String {
     let mut process = PROCESS.lock().unwrap();
-    if let Some(mut child) = process.take() {
-        logger.log("stopping Core process");
-        if let Err(error) = child.kill() {
-            logger.log(format!("Core kill failed: {error}"));
-        }
-        if let Err(error) = child.wait() {
-            logger.log(format!("Core wait failed: {error}"));
+    logger.log("stopping Core process");
+    match process.stop(owner, std::time::Duration::from_secs(3)) {
+        Ok(()) => String::new(),
+        Err(error) => {
+            logger.log(format!("Core stop failed: {error}"));
+            error
         }
     }
-    *process = None;
-    "".to_string()
 }
 
 fn spawn_core_output_logger<R>(reader: R, logger: Arc<ServiceLogger>, channel: &'static str)
@@ -318,6 +352,21 @@ where
 }
 
 fn stop(stop_params: StopParams, logger: Arc<ServiceLogger>) -> impl Reply {
+    let owner = stop_params.owner_instance_id.clone();
+    let result = stop_core(stop_params, logger);
+    if let Some(owner) = owner {
+        warp::reply::json(&serde_json::json!({
+            "schemaVersion": 1,
+            "ownerInstanceId": owner,
+            "outcome": if result.is_empty() { "stopped" } else { "unconfirmed" },
+        }))
+        .into_response()
+    } else {
+        result.into_response()
+    }
+}
+
+fn stop_core(stop_params: StopParams, logger: Arc<ServiceLogger>) -> String {
     let request_id = request_id();
     let home_dir = match validate_home_directory(stop_params.home_dir) {
         Ok(value) => value,
@@ -334,8 +383,15 @@ fn stop(stop_params: StopParams, logger: Arc<ServiceLogger>) -> impl Reply {
         ));
         return error;
     }
-    let result = stop_process(&logger);
-    logger.log(format!("event=core_stop.success request_id={request_id}"));
+    let result = stop_process_owned(&logger, stop_params.owner_instance_id.as_deref());
+    logger.log(format!(
+        "event=core_stop.{} request_id={request_id}",
+        if result.is_empty() {
+            "success"
+        } else {
+            "failure"
+        }
+    ));
     result
 }
 
@@ -453,21 +509,30 @@ fn redact_error(error: &str) -> &'static str {
     }
 }
 
-pub async fn run_service() -> anyhow::Result<()> {
-    let logger = ServiceLogger::new_default();
-    logger.log("event=helper.starting");
-    #[cfg(target_os = "windows")]
-    match crate::service::wfp::recover_persistent_filters() {
-        Ok(count) => logger.log(format!(
-            "event=strict_recovery.complete recovered_targets={count}"
-        )),
-        Err(error) => logger.log(format!("event=strict_recovery.failure error={error}")),
-    }
-    let api_ping = warp::get()
+fn metadata_routes() -> impl Filter<Extract = (impl Reply,), Error = warp::Rejection> + Clone {
+    let ping = warp::get()
         .and(warp::path("ping"))
         .and(warp::path::end())
         .map(allowed_hash);
+    // Compatibility metadata is read-only, like /ping. It is not identity
+    // attestation and must never bypass the authenticated mutation routes.
+    let capabilities = warp::get()
+        .and(warp::path("capabilities"))
+        .and(warp::path::end())
+        .map(|| {
+            warp::reply::json(&serde_json::json!({
+                "schemaVersion": 1,
+                "stopAcknowledgesExit": true,
+                "ownedStop": true,
+                "allowedCoreSha256": allowed_hash(),
+            }))
+        });
+    ping.or(capabilities)
+}
 
+fn control_routes(
+    logger: Arc<ServiceLogger>,
+) -> impl Filter<Extract = (impl Reply,), Error = warp::Rejection> + Clone {
     let start_logger = logger.clone();
     let api_start = warp::post()
         .and(warp::path("start"))
@@ -483,6 +548,23 @@ pub async fn run_service() -> anyhow::Result<()> {
         .and(warp::body::content_length_limit(MAX_REQUEST_BYTES))
         .and(warp::body::json())
         .map(move |stop_params: StopParams| stop(stop_params, stop_logger.clone()));
+
+    api_start.or(api_stop)
+}
+
+pub async fn run_service() -> anyhow::Result<()> {
+    let logger = ServiceLogger::new_default();
+    logger.log("event=helper.starting");
+    #[cfg(target_os = "windows")]
+    match crate::service::wfp::recover_persistent_filters() {
+        Ok(count) => logger.log(format!(
+            "event=strict_recovery.complete recovered_targets={count}"
+        )),
+        Err(error) => logger.log(format!("event=strict_recovery.failure error={error}")),
+    }
+    let api_metadata = metadata_routes();
+
+    let api_control = control_routes(logger.clone());
 
     #[cfg(target_os = "windows")]
     let routes = {
@@ -514,16 +596,15 @@ pub async fn run_service() -> anyhow::Result<()> {
             .and(warp::body::content_length_limit(MAX_REQUEST_BYTES))
             .and(warp::body::json())
             .map(move |params: StrictBlockParams| strict_clear(params, clear_logger.clone()));
-        api_ping
-            .or(api_start)
-            .or(api_stop)
+        api_metadata
+            .or(api_control)
             .or(api_inspect)
             .or(api_block)
             .or(api_clear)
     };
 
     #[cfg(not(target_os = "windows"))]
-    let routes = api_ping.or(api_start).or(api_stop);
+    let routes = api_metadata.or(api_control);
 
     warp::serve(routes).run(([127, 0, 0, 1], LISTEN_PORT)).await;
 
@@ -537,6 +618,89 @@ mod tests {
     use std::fs;
     use std::path::Path;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[tokio::test]
+    async fn metadata_routes_report_exit_acknowledgement_and_keep_legacy_ping() {
+        let routes = metadata_routes();
+        let capabilities = warp::test::request()
+            .method("GET")
+            .path("/capabilities")
+            .reply(&routes)
+            .await;
+        assert_eq!(capabilities.status(), warp::http::StatusCode::OK);
+        let body: serde_json::Value = serde_json::from_slice(capabilities.body()).unwrap();
+        assert_eq!(body["schemaVersion"], 1);
+        assert_eq!(body["stopAcknowledgesExit"], true);
+        assert_eq!(body["ownedStop"], true);
+        assert_eq!(body["allowedCoreSha256"], allowed_hash());
+        assert_eq!(body.as_object().unwrap().len(), 4);
+
+        let ping = warp::test::request().path("/ping").reply(&routes).await;
+        assert_eq!(ping.status(), warp::http::StatusCode::OK);
+        assert_eq!(ping.body(), allowed_hash().as_bytes());
+        for path in ["/capabilities/extra", "/start", "/stop"] {
+            assert_ne!(
+                warp::test::request()
+                    .path(path)
+                    .reply(&routes)
+                    .await
+                    .status(),
+                warp::http::StatusCode::OK
+            );
+        }
+        assert_eq!(
+            warp::test::request()
+                .method("POST")
+                .path("/capabilities")
+                .reply(&routes)
+                .await
+                .status(),
+            warp::http::StatusCode::METHOD_NOT_ALLOWED
+        );
+    }
+
+    #[tokio::test]
+    async fn owned_http_routes_reject_lost_session_and_invalid_start_without_spawning() {
+        let routes = control_routes(ServiceLogger::discard_for_test());
+        let root = TempDir::new();
+        let app_home = root.path().join("AppData/Roaming/com.follow/clashx");
+        fs::create_dir_all(&app_home).unwrap();
+        let token = "a".repeat(64);
+        fs::write(app_home.join(HELPER_TOKEN_FILE_NAME), &token).unwrap();
+        let owner = format!("{}-1", "b".repeat(64));
+        let body =
+            serde_json::json!({"home_dir":app_home,"helper_token":token,"ownerInstanceId":owner});
+        let stopped = warp::test::request()
+            .method("POST")
+            .path("/stop")
+            .json(&body)
+            .reply(&routes)
+            .await;
+        let stopped: serde_json::Value = serde_json::from_slice(stopped.body()).unwrap();
+        assert_eq!(stopped["schemaVersion"], 1);
+        assert_eq!(stopped["ownerInstanceId"], owner);
+        assert_eq!(stopped["outcome"], "unconfirmed");
+        assert!(PROCESS.lock().unwrap().process.is_none());
+
+        let invalid_start = serde_json::json!({"path":root.path().join("never-execute.exe"),"arg":"0","home_dir":app_home,"helper_token":token,"ownerInstanceId":owner});
+        let started = warp::test::request()
+            .method("POST")
+            .path("/start")
+            .json(&invalid_start)
+            .reply(&routes)
+            .await;
+        let started: serde_json::Value = serde_json::from_slice(started.body()).unwrap();
+        assert_eq!(started["ownerInstanceId"], owner);
+        assert_eq!(started["outcome"], "rejected");
+        assert!(PROCESS.lock().unwrap().process.is_none());
+        let missing_auth = warp::test::request()
+            .method("POST")
+            .path("/stop")
+            .json(&serde_json::json!({"ownerInstanceId":owner}))
+            .reply(&routes)
+            .await;
+        assert_ne!(missing_auth.status(), warp::http::StatusCode::OK);
+    }
 
     struct TempDir(std::path::PathBuf);
 

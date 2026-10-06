@@ -20,6 +20,12 @@ pub struct EndpointDocument {
     pub port: u16,
     pub token: String,
     pub pid: u32,
+    #[serde(
+        default,
+        rename = "agentInstanceId",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub agent_instance_id: Option<String>,
 }
 
 pub struct EndpointGuard {
@@ -48,6 +54,7 @@ impl EndpointGuard {
             port: address.port(),
             token: token.clone(),
             pid: std::process::id(),
+            agent_instance_id: Some(random_token()),
         };
         let endpoint_path = home.join(ENDPOINT_FILE_NAME);
         write_atomic(&endpoint_path, &serde_json::to_vec(&document)?)?;
@@ -188,5 +195,24 @@ mod tests {
         let home = TempDir::new();
         fs::write(home.0.join(HELPER_TOKEN_FILE_NAME), b"partial").expect("write token");
         assert!(load_or_create_helper_token(&home.0).is_err());
+    }
+
+    #[test]
+    fn every_endpoint_lifetime_has_an_independent_public_instance_id() {
+        let home = TempDir::new();
+        let (guard, first) =
+            EndpointGuard::acquire(&home.0, "127.0.0.1:40001".parse().unwrap()).unwrap();
+        assert_ne!(
+            first.agent_instance_id.as_deref(),
+            Some(first.token.as_str())
+        );
+        assert_eq!(first.agent_instance_id.as_ref().unwrap().len(), 64);
+        drop(guard);
+        let (_guard, second) =
+            EndpointGuard::acquire(&home.0, "127.0.0.1:40001".parse().unwrap()).unwrap();
+        assert_ne!(first.agent_instance_id, second.agent_instance_id);
+        let legacy: EndpointDocument =
+            serde_json::from_str(r#"{"protocol":1,"port":40001,"token":"test","pid":1}"#).unwrap();
+        assert_eq!(legacy.agent_instance_id, None);
     }
 }

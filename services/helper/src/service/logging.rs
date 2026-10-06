@@ -19,6 +19,12 @@ pub struct ServiceLogger {
 }
 
 impl ServiceLogger {
+    #[cfg(test)]
+    pub(super) fn discard_for_test() -> Arc<Self> {
+        let (sender, _) = mpsc::sync_channel(1);
+        Arc::new(Self { sender })
+    }
+
     pub fn new_default() -> Arc<Self> {
         let path = default_log_path();
         let (sender, receiver) = mpsc::sync_channel(CHANNEL_CAPACITY);
