@@ -47,7 +47,8 @@
 - 本地单元测试、CI、真实窗口/设备测试、后端部署、业务验收分别记录 PASS / FAIL / NOT RUN。一次测试通过不能代替其他层级。
 - UI 修改至少验证关键状态与相关组件测试；工具允许时验证真实 Windows 窗口、窄窗、导航与旧入口。系统级改动增加失败、重连、兼容性和权限测试。
 - 测试强度按本次风险选择，不为文案和小样式修改机械跑驱动全套，不编造 Red 阶段、覆盖率或平台通过结果。
-- 使用现有 `.github/workflows/quality-gate.yaml` 作为 CI 命令依据：Flutter tests、`core` 中 `go test ./...`、M3 package-tool/manifest/evidence checks。工具版本先核实；本机版本不同须披露。
+- 使用现有 `.github/workflows/quality-gate.yaml` 作为 CI 命令依据：Flutter tests、Core 与 Windows Agent/Helper tests、M3 package-tool/manifest/evidence checks。Core 先在 `core` 运行 `go run ./tools/mihomo-overlay`，再用 `go test -modfile=.generated/go.mod -overlay=.generated/mihomo-overlay.json ./...`；桌面增加 `-tags=with_gvisor`，依赖 listener 的生命周期用例和 race 按工作流另跑。PowerShell 中将带 `=` 的文件路径参数整体加引号。工具版本先核实；本机版本不同须披露。
+- Mihomo 升级必须同时审查固定版本、原文件 hash、小范围生命周期补丁、依赖锁和配置默认值；禁止在模块缓存打补丁、浮动拉取 Alpha 或绕过 overlay。预览附补丁 manifest，区分上游基础版本与本地补丁；不能只换 Core 而继续沿用绑定旧 hash 的 Helper。
 - Flutter/Dart 用项目可用 SDK；不得为了让测试通过升级全仓依赖、降低断言或跳过失败。新增依赖同时更新锁文件及受影响平台构建需求。
 
 ## 本机、服务与正式能力边界

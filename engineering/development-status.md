@@ -2,6 +2,15 @@
 
 更新日期：2026-10-06。当前阶段是快速开发、快速迭代和部分功能预览。本文记录来源与验收边界；每次继续开发仍需核实实际 Git/PR/CI 状态，不能把历史报告视为当前通过证明。
 
+## 内核与 TUN 可靠性批次（2026-10-06）
+
+- 用户已授权在完善范围和任务后开发与测试。本批从 `development@2b587a80ad187995194608ffcd0f9f8cfa6695cd` 开始，沿用唯一开发入口。方案与依赖见 `engineering/plans/kernel-tun-reliability-2026-10-06.md`，测试矩阵、覆盖率及真实环境缺口见 `engineering/testing/kernel-tun-reliability-2026-10-06.md`。
+- 固定 Mihomo `v1.19.32`（`88dcbf7f1614a67c3b36b848ee3592dfa92ada36`），保留原栈默认值与 uTLS 覆盖。带校验的最小生命周期补丁通过独立生成源和 overlay 加载，不改模块缓存、不追随 Alpha。构建入口和 CI 已接入；新云端检查尚未触发，不以开工基线 CI 作为新代码证据。
+- UI 区分意图、实际状态和操作，Windows 的开启以真实 listener 与接口状态为依据；修复 IPC 假成功、后台授权、旧响应、只读挂接及退出/重连/迁移竞态。Agent/Helper 使用实际停止确认和 Core 会话归属；旧组件不满足合同则拒绝自动交接。微信、礼品卡兑换、账号订阅、匿名套餐和价格均保留。
+- Core 最终 46 项含子用例 PASS，Windows race PASS，四个桌面平台 Core 编译及 Android arm64 c-shared 编译通过；Flutter 最终 342、Agent 64、Helper 29 PASS，均 0 FAIL / 0 SKIP。独立审查的问题已在最终源码关闭；同源码 Windows 预览构建待完成，最终数据以本批报告为准。
+- 真实 Windows TUN/UAC/服务交接/路由/Antigravity 流量均 NOT RUN；等待获准的隔离 Windows 环境。开发工作站服务和网络未更改。当前仅准备普通预览，不声称正式发行、严格 WFP 或全部应用流量已验收。
+- 开工增量 bundle 已离线恢复/fsck 验证，原始 5 个 coverage/测试文件 hash 一致，旧包 `863298c7e3f4` SHA256 保持 `cae86090054186ed680e3467025f857badfca1a9f9670cfd6de9c98c4a0cafbd`。本批不推送、不创建/合并 PR、不改主线或远端保护；本地提交和新包来源将于构建后补录。
+
 ## 唯一开发入口（2026-10-06）
 
 - 用户要求收敛为一个日常开发分支和受保护的 `main`。今后日常只在 `development` 开发，默认工作目录为 `E:\CodeWorkstation\FlClashX`；旧任务分支和工作树只保留追溯，不继续写入。详细流程、门禁、任务与回退见 `engineering/plans/single-development-2026-10-06.md`。
