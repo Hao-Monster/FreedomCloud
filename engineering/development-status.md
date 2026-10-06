@@ -9,6 +9,7 @@
 - 三文件 analyze 0 error/warning（info 为既有或随代码移动）；真实窗口/注册表/UAC 行为 NOT RUN。未推送、未建 PR。
 - 用户要求后，本地 `development` 从 `8089f66` 无冲突快进到 `136546fd19c404767ee3a1a140e807dbe311614f`（含 TUN 默认开启与本批修复），领先 `freedomcloud/development` 14 个提交；`feature/tun-default-on` 保留。未推送。
 - 预览包 `dist/FreedomCloud-windows-amd64-preview-136546fd19c4.zip`，59,111,599 字节，SHA256 `b148337c83c4704250bbfa0273b976a6eec1115df7a04fd0739135a278656cf3`，73 文件，ZIP 解压逐文件校验通过。构建方式为“仅 UI 重打包”：在 `136546f` 干净 detached 快照用 `flutter assemble`（Flutter 3.47.4）重编 `data/app.so`（SHA256 `89b5506c528844ac7e5776d4bd692a1050df55dc89cc783f092e2d63df94e4a2`）与 flutter_assets；Runner/插件/Core/Agent/Helper/运行库逐字节复用已校验的 `b2cccee7303d` 包。依据：`b2cccee..136546f` 未改 windows/core/services/libclash/setup.dart/pubspec/assets/arb；复用前重验旧包 72 项 hash；assemble 生成的 flutter_windows.dll、icudtl.dat 与复用件一致；与旧包相比仅 app.so、NOTICES.Z 及 4 个元数据文件不同。ZIP 采用 Optimal 压缩，体积小于旧包不代表内容缺失。旧包 SHA256 `a04fa740…c6bb97b` 未变。未在工作站启动；TD01–TD06、B1/B3 系统验收 NOT RUN。构建脚本与日志保存在会话私有 scratch（`Build-UiRepackPreview.ps1`、`build-136546fd19c4.log`）。
+- 用户授权后 `development` 正常推送 `2b587a8..9d6b406`（快进，无强推）。quality-gate run `37507619436`（head `9d6b406`）全部 PASS：Flutter tests、Core Go tests、Windows Core and service tests、M3 package integrity checks。未建 PR，`main` 未变；预览包仍为 `136546f` 源码（`136546f..9d6b406` 仅台账文档）。
 
 ## TUN 默认开启并尊重保存偏好（2026-10-07）
 
