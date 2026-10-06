@@ -1573,6 +1573,16 @@ class AppController {
     // Desktop only (clashService is null on Android): on an unexpected core-process
     // death, respawn it AND re-init/re-apply (and re-start the tunnel if it was up).
     clashService?.onCoreCrash = (_) => restartCore();
+    // Show (or hide) the window before runtime startup. On Windows startup may
+    // wait for a UAC reply or a backend handover; the native window is created
+    // hidden, so awaiting first left the user with no app window meanwhile.
+    if (!Platform.isMacOS) {
+      if (!_ref.read(appSettingProvider).silentLaunch) {
+        window?.show();
+      } else {
+        window?.hide();
+      }
+    }
     await initializeRuntime();
     autoLaunch?.updateStatus(
       _ref.read(appSettingProvider).autoLaunch,
@@ -1582,13 +1592,6 @@ class AppController {
         const Duration(seconds: 1), _updateCurrentProfileSubscription);
     autoUpdateProfiles();
     autoCheckUpdate();
-    if (!Platform.isMacOS) {
-      if (!_ref.read(appSettingProvider).silentLaunch) {
-        window?.show();
-      } else {
-        window?.hide();
-      }
-    }
     await _handlePreference();
     await _handlerDisclaimer();
     _ref.read(initProvider.notifier).value = true;
