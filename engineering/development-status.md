@@ -7,6 +7,8 @@
 - 同一 `feature/tun-default-on` 分支，用户批准后修复 4 个确认问题，各自独立提交：`7b89ae2` 主窗口在运行时启动（UAC/后端交接）前显示；`b07e493` 自启动注册表写入 await 并记录失败；`cbcc5e0` HKCU Run 值给可执行路径加引号（已开启用户下次启动自动改写为带引号值，关闭时总是移除含旧值的条目）；`be46c97` 标题栏最大化图标跟随 Win+↑/贴靠。
 - 疑似未改：安装后 `runascurrentuser` 提权启动、退出等待挂起的 UAC 队列、最大化尺寸被保存、`SetProcessDPIAware` 与清单重复/UI 高优先级。Go Core、Agent/Helper 本轮未审查。
 - 三文件 analyze 0 error/warning（info 为既有或随代码移动）；真实窗口/注册表/UAC 行为 NOT RUN。未推送、未建 PR。
+- 用户要求后，本地 `development` 从 `8089f66` 无冲突快进到 `136546fd19c404767ee3a1a140e807dbe311614f`（含 TUN 默认开启与本批修复），领先 `freedomcloud/development` 14 个提交；`feature/tun-default-on` 保留。未推送。
+- 预览包 `dist/FreedomCloud-windows-amd64-preview-136546fd19c4.zip`，59,111,599 字节，SHA256 `b148337c83c4704250bbfa0273b976a6eec1115df7a04fd0739135a278656cf3`，73 文件，ZIP 解压逐文件校验通过。构建方式为“仅 UI 重打包”：在 `136546f` 干净 detached 快照用 `flutter assemble`（Flutter 3.47.4）重编 `data/app.so`（SHA256 `89b5506c528844ac7e5776d4bd692a1050df55dc89cc783f092e2d63df94e4a2`）与 flutter_assets；Runner/插件/Core/Agent/Helper/运行库逐字节复用已校验的 `b2cccee7303d` 包。依据：`b2cccee..136546f` 未改 windows/core/services/libclash/setup.dart/pubspec/assets/arb；复用前重验旧包 72 项 hash；assemble 生成的 flutter_windows.dll、icudtl.dat 与复用件一致；与旧包相比仅 app.so、NOTICES.Z 及 4 个元数据文件不同。ZIP 采用 Optimal 压缩，体积小于旧包不代表内容缺失。旧包 SHA256 `a04fa740…c6bb97b` 未变。未在工作站启动；TD01–TD06、B1/B3 系统验收 NOT RUN。构建脚本与日志保存在会话私有 scratch（`Build-UiRepackPreview.ps1`、`build-136546fd19c4.log`）。
 
 ## TUN 默认开启并尊重保存偏好（2026-10-07）
 
