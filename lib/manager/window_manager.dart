@@ -167,7 +167,7 @@ class WindowHeader extends StatefulWidget {
   State<WindowHeader> createState() => _WindowHeaderState();
 }
 
-class _WindowHeaderState extends State<WindowHeader> {
+class _WindowHeaderState extends State<WindowHeader> with WindowListener {
   final isMaximizedNotifier = ValueNotifier<bool>(false);
   final isPinNotifier = ValueNotifier<bool>(false);
 
@@ -175,6 +175,7 @@ class _WindowHeaderState extends State<WindowHeader> {
   void initState() {
     super.initState();
     if (!Platform.isMacOS) {
+      windowManager.addListener(this);
       _initNotifier();
     }
   }
@@ -184,8 +185,23 @@ class _WindowHeaderState extends State<WindowHeader> {
     isPinNotifier.value = await windowManager.isAlwaysOnTop();
   }
 
+  // Keep the icon in sync with maximize changes made outside the header
+  // buttons (Win+Up, snap layouts, double-clicking elsewhere).
+  @override
+  void onWindowMaximize() {
+    isMaximizedNotifier.value = true;
+  }
+
+  @override
+  void onWindowUnmaximize() {
+    isMaximizedNotifier.value = false;
+  }
+
   @override
   void dispose() {
+    if (!Platform.isMacOS) {
+      windowManager.removeListener(this);
+    }
     isMaximizedNotifier.dispose();
     isPinNotifier.dispose();
     super.dispose();
