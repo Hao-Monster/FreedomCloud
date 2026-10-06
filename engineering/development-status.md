@@ -2,12 +2,16 @@
 
 更新日期：2026-10-06。当前阶段是快速开发、快速迭代和部分功能预览。本文记录来源与验收边界；每次继续开发仍需核实实际 Git/PR/CI 状态，不能把历史报告视为当前通过证明。
 
-## Windows 启动交互修正（2026-10-06，执行中）
+## Windows 启动交互修正（2026-10-06）
 
 - 用户明确要求完整启动软件即启动代理与虚拟网卡，替代上一批应用启动只读接管的产品策略。生产入口需完成一次完整流程，实际运行才显示开启；本会话手动关闭后，后台刷新、重连和恢复窗口不自动重开。`autoLaunch` 的 Windows 登录启动含义不变。
 - 方案、任务与验收边界见 `engineering/plans/windows-startup-tun-2026-10-06.md`，本轮结果见 `engineering/testing/windows-startup-tun-2026-10-06.md`。旧 VM 清单 W01/W05 的启动预期仅适用于旧包；新候选按 WS01–WS08 及仍适用的原系统用例验收。
 - 基线 `development@d2708be491c8002400a657b66bde93eda6a16ce3`，fetch 后领先远端 5 个本地提交、无落后、无开放 PR；最近 development CI 37430048151 对应旧基线 `2b587a8`，不是本轮通过证据。旧包 `f0b1b7eba271`、历史 worktree/stash 和 coverage/QA 原稿均保留。
 - 本轮仅本地修复、测试、提交与独立新包；未授权远端推送、主线合并或部署。真实 Windows TUN/UAC/服务/网络验收仍等待获准隔离环境，不在开发工作站启动候选程序。
+- 修复源码已本地提交为 `b2cccee7303d4d5e0f0a2d94d03fab367814bd6a`：Windows 一次完整启动、取消后明确重试、同步撤销旧开启意图、断线过期观测保护，以及 derived provider 延迟通知的配置去重。保留日志/代理组/provider 投影和旧购买功能。最终专项 27、全量 Flutter 365 PASS，均 0 FAIL/SKIP；定向分析 exit 0，0 error/warning，134 条 info 的源码对照和覆盖缺口详见报告。独立审查无剩余已知 Critical/High 代码问题；系统验收未完成。
+- 新免安装包为 `dist/FreedomCloud-windows-amd64-preview-b2cccee7303d.zip`，152,707,659 字节，SHA256 `a04fa7408baa4a0fb8ce866ccc66189f06ca0b2594691b0828153cb38bd6c97b`。四组件从该干净源码重编、73 文件 ZIP/解压及交付副本 hash 检查通过；上一包未覆盖。构建仍使用已验证 CMake/Ninja 处理本机 VS 发现限制，阶段结果在本轮报告单列。
+- 独立产物审查 PASS：四组件来源、Helper 实际内嵌 Core 绑定、全部 73 文件、清单覆盖、1,011 个有效模块文件及补丁输入均通过；未发现新的高风险产物问题。包未在工作站启动，不把包完整性或本地测试等同于 UAC/TUN/路由/Antigravity 实机验收。
+- 新增源码 bundle 已 verify、独立 clone/检出精确 SHA、fsck 验证；SHA256 `0dfe6ac23aa4dd6a45c4a4788747f286d6736f854164d8d3ed0f750962af0fa0`。本轮原始 5 文件、autostash、旧包未变。代码、文档提交与包来源分别记录；未推送、未合并，WS01–WS08 仍待隔离环境验收。
 
 ## 内核与 TUN 可靠性批次（2026-10-06）
 

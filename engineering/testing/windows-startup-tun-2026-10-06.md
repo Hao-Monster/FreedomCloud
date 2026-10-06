@@ -1,6 +1,6 @@
 # Windows 启动代理与 TUN 修复验证
 
-状态：本地实现、自动化和独立审查完成，Windows 构建待执行；系统验收 NOT RUN。需求与任务见 `engineering/plans/windows-startup-tun-2026-10-06.md`。基线为 `d2708be491c8002400a657b66bde93eda6a16ce3`；历史 kernel-tun 报告仅证明其记录的来源。本次只改变 Flutter 启动编排和相应设置/测试，不重新归因前一批 Core/Rust 测试。
+状态：本地实现、自动化、独立代码审查与 Windows 预览构建完成；系统验收 NOT RUN。需求与任务见 `engineering/plans/windows-startup-tun-2026-10-06.md`。基线为 `d2708be491c8002400a657b66bde93eda6a16ce3`；历史 kernel-tun 报告仅证明其记录的来源。本次只改变 Flutter 启动编排和相应设置/测试，不重新归因前一批 Core/Rust 测试。
 
 ## 环境与证据
 
@@ -21,6 +21,8 @@ Windows 开发工作站；Flutter 3.47.4、Dart 3.13.3。CI 当前固定 Flutter
 本地 profile 预检只证明路径可读、UTF-8 有效且非空；YAML/脚本和最终配置语义由现有解析/Core 接受边界决定，拒绝不能显示成功。不要把预检称为完整配置验证。服务交接、日志订阅、系统状态栏等真实插件结果同样不由受控 effects 证明。
 
 本轮未新增生产依赖，未变更 Core/Agent/Helper 源码与锁文件；四组件重编只用于来源一致的预览。无远端 CI、真实 Windows 系统验收或正式发布结果。之前 Core/Rust 检查仍属之前批次，不计作本次新执行。
+
+源码检查点：`b2cccee7303d4d5e0f0a2d94d03fab367814bd6a`，提交 `fix(windows): start proxy and TUN on application launch`。全部变更源码在提交前与测试时记录的 SHA256 一致。增量 bundle 为 236,010,302 字节，SHA256 `0dfe6ac23aa4dd6a45c4a4788747f286d6736f854164d8d3ed0f750962af0fa0`；`git bundle verify`、独立 clone/精确 SHA 检出和 `git fsck --full --strict` 均 exit 0，构建输入干净。5 份原始未提交文件、既有 autostash 和旧包哈希复核保持。原始私有日志、包与忽略文件不由源码 bundle 包含，分别保留原位置；没有删除历史工作树或分支。
 
 ## 执行结果
 
@@ -66,6 +68,27 @@ LCOV 为本次加载/插桩文件：行 4,679/27,380（17.09%），分支 1,254/
 | `clash/service.dart` | 0/510 | 0/253 | 0/20 |
 
 默认 Windows effects、真实 IPC、组件文件与进程交接、完整 `init`、系统状态栏和成功后日志/列表投影未由受控 fixture 执行。这些路径经过独立源码审查和随后编译，仍需要 WS 系统验收。设置页新增 Windows 条件及缺配置文案分支亦没有真实窗口证据。没有修改、降低或跳过既有测试/覆盖率门禁。独立审查未发现剩余已知 Critical/High 代码问题；上述运行证据缺口阻止将候选称为正式验收版本。
+
+## 干净构建与交付
+
+源码与四组件来源均为 `b2cccee7303d4d5e0f0a2d94d03fab367814bd6a`，独立 detached 构建快照不是第二开发分支。私有复现入口：`build-tools/Build-OrdinaryPreview.ps1 -Repo C:\Users\冯飏\.codex\builds\startup-tun-b2cccee7303d -ExpectedSha b2cccee7303d4d5e0f0a2d94d03fab367814bd6a -Output <私有目录>/windows-preview-b2cccee7303d-r1 -StandaloneClone`。实际环境：Flutter/Dart 如前；Go 1.25.13、Rust 1.98.1、MSVC 14.44.35207、Windows SDK 10.0.26100.0、CMake 3.31.6、Ninja 1.11.1。ATL 来源与所有运行库输入 hash 随私有 inventory/包内 COMPONENTS 记录。
+
+| 构建步骤 | 状态 | exit | 耗时 |
+|---|---|---|---|
+| Flutter 依赖恢复 / Go module verify / driver analyze | PASS | 均 0 | 89.60 / 17.81 / 1.29 秒 |
+| Core / Agent / Helper 从同 SHA 重编 | PASS | 均 0 | 71.68 / 75.26 / 128.51 秒 |
+| Flutter config-only | FAIL，已知 VS 发现限制 | 1 | 6.62 秒 |
+| 已验证 CMake 配置路径 | PASS | 0 | 7.11 秒 |
+| Flutter assemble / Windows build | PASS | 均 0 | 156.10 / 70.29 秒 |
+| bundle copy / package / ZIP roundtrip | PASS | 均 0 | 2.44 / 22.03 / 20.66 秒 |
+
+共 18 阶段：17 个 exit 0，1 个明确记录的 VS 发现失败。脚本只接受预先限定的这类发现错误，随后 CMake/Ninja 的真实构建均通过；未注册/安装 Visual Studio 或修改全局环境。不能把 18 个阶段全称为 exit 0。构建不含测试计数，包验证计文件数。
+
+交付：`dist/FreedomCloud-windows-amd64-preview-b2cccee7303d.zip`，152,707,659 字节，SHA256 `a04fa7408baa4a0fb8ce866ccc66189f06ca0b2594691b0828153cb38bd6c97b`。旁边保留 `.zip.sha256` 及同名解压目录；完整 73 文件 ZIP/解压校验通过，交付副本与原 bundle 逐文件 hash 一致。Core SHA256 `6caa426bb583547d9123bfe3f746893ffbff9719ecadf972aee93259d24add64`，Helper 绑定对应此 hash。Mihomo 仍为 v1.19.32 加原有生命周期补丁，不在本轮再次变更内核版本。
+
+包内 `PREVIEW-README.txt` 明确启动会自动请求代理/TUN、可能需要 UAC；`BUILD-INFO.txt` 和 `COMPONENTS.json` 标注来源及普通未签名预览边界；不含严格 WFP 驱动。旧 `f0b1b7eba271` 包保持原 SHA256 `b45cf6f4f7a6e72499baedbb7e23893c694b4d9441d5ed79e966b99bdb41defb`。没有运行新 EXE、安装服务或改变当前工作站网络。后续证据文档提交不改变包的源提交。
+
+独立产物审查 PASS：流式重算 ZIP 与原 bundle、验证解压及最终交付目录均为 73 文件、逐项同名同 hash；SHA256SUMS 精确覆盖其余 72 文件；Helper 二进制内嵌 Core hash 与清单/实物一致。复算 1,011 个有效模块文件、6 个补丁源、2 个上游输入、生成器及 go.mod 均一致，有效模块 hash 为 `c316c60c9b11cc8f494749c6907a51168dba9bacfc7e5ae9a685d7dd67d26cd5`。未发现新的高风险产物问题；此结论仍不是运行验收。
 
 ## 运行验收补充
 
