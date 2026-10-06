@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:launch_at_startup/launch_at_startup.dart';
 
 import 'constant.dart';
+import 'print.dart';
 import 'system.dart';
 
 class AutoLaunch {
@@ -28,15 +29,20 @@ class AutoLaunch {
 
   Future<bool> disable() async => launchAtStartup.disable();
 
-  Future<void> updateStatus(bool isAutoLaunch) async {
+  Future<bool> updateStatus(bool isAutoLaunch) async {
     if (kDebugMode) {
-      return;
+      return true;
     }
-    if (await isEnable == isAutoLaunch) return;
-    if (isAutoLaunch == true) {
-      enable();
-    } else {
-      disable();
+    try {
+      if (await isEnable == isAutoLaunch) return true;
+      final applied = isAutoLaunch ? await enable() : await disable();
+      if (!applied) {
+        commonPrint.log('autoLaunch: failed to set enabled=$isAutoLaunch');
+      }
+      return applied;
+    } catch (e) {
+      commonPrint.log('autoLaunch: failed to set enabled=$isAutoLaunch: $e');
+      return false;
     }
   }
 }
