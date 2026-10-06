@@ -288,9 +288,17 @@ func patchSelectGroup(mapping map[string]string) {
 	}
 }
 
+// Dependency upgrades must not silently change the stack for an absent option
+// or a rejected configuration. Explicit user stack choices remain untouched.
+func defaultCoreRawConfig() *config.RawConfig {
+	defaults := config.DefaultRawConfig()
+	defaults.Tun.Stack = constant.TunGvisor
+	return defaults
+}
+
 func defaultSetupParams() *SetupParams {
 	return &SetupParams{
-		Config:      config.DefaultRawConfig(),
+		Config:      defaultCoreRawConfig(),
 		TestURL:     "https://www.gstatic.com/generate_204",
 		SelectedMap: map[string]string{},
 	}
@@ -405,7 +413,7 @@ func setupConfig(params *SetupParams) error {
 	currentConfig, err = config.ParseRawConfig(params.Config)
 	if err != nil {
 		log.Errorln("[Config] ParseRawConfig failed, falling back to default: %v", err)
-		appliedSource = config.DefaultRawConfig()
+		appliedSource = defaultCoreRawConfig()
 		currentConfig, _ = config.ParseRawConfig(appliedSource)
 	}
 	log.Infoln("[Setup] ParseRawConfig took %s", time.Since(parseStart))

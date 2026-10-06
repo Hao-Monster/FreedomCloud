@@ -40,7 +40,9 @@ jobs:
           set -euo pipefail
           test "$(uname -m)" = arm64
           mkdir -p libclash/macos
-          (cd core && CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -trimpath -mod=readonly -tags=with_gvisor -ldflags='-w -s -X github.com/metacubex/mihomo/constant.Version=v1.19.28' -o ../libclash/macos/FlClashCore)
+          CORE_VERSION=$(awk '$1 == "github.com/metacubex/mihomo" {print $2}' core/go.mod)
+          echo "CORE_VERSION=$CORE_VERSION" >> "$GITHUB_ENV"
+          (cd core && go run ./tools/mihomo-overlay && CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -trimpath -mod=readonly -modfile=.generated/go.mod -overlay=.generated/mihomo-overlay.json -tags=with_gvisor -ldflags="-w -s -X github.com/metacubex/mihomo/constant.Version=$CORE_VERSION" -o ../libclash/macos/FlClashCore)
           rustup toolchain install 1.98.1 --profile minimal
           cargo +1.98.1 build --manifest-path services/agent/Cargo.toml --release --locked
           cp services/agent/target/release/flclash-agent libclash/macos/FlClashAgent
@@ -49,7 +51,7 @@ jobs:
         run: |
           set -euo pipefail
           flutter pub get
-          flutter build macos --release --config-only --dart-define=APP_ENV=test --dart-define=CORE_VERSION=v1.19.28 --dart-define=APP_VERSION=0.4.2
+          flutter build macos --release --config-only --dart-define=APP_ENV=test --dart-define=CORE_VERSION="$CORE_VERSION" --dart-define=APP_VERSION=0.4.2
           (cd macos && pod install)
           # Check the actual project after Flutter and CocoaPods preparation.
           python3 tools/macos/tests/test_system_extension_project.py -v
@@ -76,6 +78,7 @@ jobs:
           test -x "$APP/Contents/MacOS/FlClashAgent"
           mkdir -p dist/package
           ditto "$APP" dist/package/FlClashX.app
+          cp "core/.generated/mihomo-$CORE_VERSION/manifest.json" dist/package/CORE-PATCH.json
           cp macos/Runner/Release.entitlements dist/package/host.entitlements
           cp macos/StrictProxy/StrictProxy.entitlements dist/package/provider.entitlements
           printf 'Source commit: %s\nArchitecture: Apple Silicon arm64\nSigning: UNSIGNED; no Apple provisioning or notarization\n' "$GITHUB_SHA" > dist/package/BUILD-INFO.txt

@@ -172,6 +172,9 @@ func handleAction(action *Action, result ActionResult) {
 		}
 		result.success(config)
 		return
+	case getTunStatusMethod:
+		result.success(handleGetTunStatus())
+		return
 	case getCoreVersionMethod:
 		result.success(constant.Version)
 		return

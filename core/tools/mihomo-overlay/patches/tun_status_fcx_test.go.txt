@@ -1,0 +1,98 @@
+package listener
+
+import (
+	"errors"
+	"fmt"
+	"os"
+	"sync"
+	"testing"
+
+	C "github.com/metacubex/mihomo/constant"
+	LC "github.com/metacubex/mihomo/listener/config"
+)
+
+type fcxFakeTun struct { config LC.Tun; closeError error }
+func (f *fcxFakeTun) Config() LC.Tun { return f.config }
+func (*fcxFakeTun) OnReload() {}
+func (*fcxFakeTun) Address() string { return "test-only-no-network" }
+func (f *fcxFakeTun) Close() error { return f.closeError }
+
+func fcxTestReset(t *testing.T) {
+	t.Helper()
+	previousFactory := fcxCreateTun
+	fcxTunCloseError = nil
+	fcxCreateTun = func(config LC.Tun, _ C.Tunnel) (fcxTunListener, error) {
+		return &fcxFakeTun{config: config}, nil
+	}
+	Cleanup()
+	t.Cleanup(func() { Cleanup(); fcxTunCloseError = nil; fcxCreateTun = previousFactory })
+}
+
+func TestFCXTunFailureIsNotEnabled(t *testing.T) {
+	fcxTestReset(t)
+	fcxCreateTun = func(LC.Tun, C.Tunnel) (fcxTunListener, error) { return nil, fmt.Errorf("wrapped: %w", os.ErrPermission) }
+	ReCreateTun(LC.Tun{Enable:true, Device:"fcx-test"}, nil)
+	status := GetTunLifecycleStatus()
+	if status.State != "failed" || !status.RequestedEnabled || status.ListenerActive || status.ErrorCode != "permissionDenied" || GetTunConf().Enable {
+		t.Fatalf("permission failure claimed success: %+v", status)
+	}
+}
+
+func TestFCXTunLifecycleAndCleanup(t *testing.T) {
+	fcxTestReset(t)
+	before := GetTunLifecycleStatus().Revision
+	config := LC.Tun{Enable:true, Device:"fcx-test"}
+	ReCreateTun(config, nil)
+	started := GetTunLifecycleStatus()
+	if started.State != "on" || !started.ListenerActive || started.Device != config.Device || started.Revision <= before { t.Fatalf("missing created listener evidence: %+v", started) }
+	ReCreateTun(config, nil)
+	if GetTunLifecycleStatus().Revision <= started.Revision { t.Fatal("reload did not advance revision") }
+	Cleanup()
+	stopped := GetTunLifecycleStatus()
+	if stopped.State != "off" || stopped.ListenerActive || stopped.RequestedEnabled || GetTunConf().Enable { t.Fatalf("cleanup left enabled state: %+v", stopped) }
+	ReCreateTun(config, nil)
+	if !GetTunLifecycleStatus().ListenerActive { t.Fatal("identical config could not restart after Cleanup") }
+}
+
+func TestFCXTunCloseFailureIsVisible(t *testing.T) {
+	fcxTestReset(t)
+	fcxCreateTun = func(config LC.Tun, _ C.Tunnel) (fcxTunListener, error) { return &fcxFakeTun{config:config, closeError:errors.New("simulated close failure")}, nil }
+	ReCreateTun(LC.Tun{Enable:true, Device:"fcx-test"}, nil)
+	Cleanup()
+	status := GetTunLifecycleStatus()
+	if status.State != "failed" || status.ListenerActive || status.ErrorCode != "closeFailed" { t.Fatalf("close failure lost: %+v", status) }
+	Cleanup()
+	if status := GetTunLifecycleStatus(); status.State != "failed" || status.ErrorCode != "closeFailed" { t.Fatalf("second cleanup hid close failure: %+v", status) }
+	ReCreateTun(LC.Tun{Enable:true, Device:"fcx-test"}, nil)
+	if status := GetTunLifecycleStatus(); status.State != "failed" || status.ListenerActive { t.Fatalf("close uncertainty permitted another listener: %+v", status) }
+}
+
+func TestFCXTunConcurrentObservationAndExternalMutation(t *testing.T) {
+	fcxTestReset(t)
+	var workers sync.WaitGroup
+	for worker := 0; worker < 4; worker++ {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			for index := 0; index < 50; index++ {
+				ReCreateTun(LC.Tun{Enable:index%2 == 0, Device:"fcx-test"}, nil)
+				status := GetTunLifecycleStatus()
+				if status.State == "on" && !status.ListenerActive { t.Error("inconsistent on snapshot") }
+				_ = GetTunConf()
+				Cleanup()
+			}
+		}()
+	}
+	workers.Wait()
+}
+
+func TestFCXTunConfigDoesNotExposeMutableListenerMemory(t *testing.T) {
+	fcxTestReset(t)
+	config := LC.Tun{Enable:true, Device:"fcx-test", DNSHijack:[]string{"any:53"}}
+	ReCreateTun(config, nil)
+	config.DNSHijack[0] = "caller-change"
+	returned := GetTunConf()
+	if returned.DNSHijack[0] != "any:53" { t.Fatal("listener shares caller slices") }
+	returned.DNSHijack[0] = "observer-change"
+	if GetTunConf().DNSHijack[0] != "any:53" { t.Fatal("observer can mutate listener slices") }
+}

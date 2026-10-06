@@ -1,0 +1,9 @@
+// Caller owns tunMux, including Cleanup and external-controller mutations.
+func closeTunListener() error {
+	fcxTunStatus.ListenerActive = false
+	if tunLister == nil { return fcxTunCloseError }
+	previous := tunLister
+	tunLister = nil
+	fcxTunCloseError = previous.Close()
+	return fcxTunCloseError
+}

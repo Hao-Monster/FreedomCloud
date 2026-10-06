@@ -1,0 +1,85 @@
+package listener
+
+import (
+	"errors"
+	"os"
+
+	C "github.com/metacubex/mihomo/constant"
+	LC "github.com/metacubex/mihomo/listener/config"
+	"github.com/metacubex/mihomo/listener/sing_tun"
+)
+
+// TunLifecycleStatus describes listener creation, not connectivity through a node.
+// All reads and writes share tunMux with ReCreateTun and Cleanup.
+type TunLifecycleStatus struct {
+	Revision uint64
+	RequestedEnabled bool
+	State string
+	ListenerActive bool
+	Device string
+	ErrorCode string
+}
+
+type fcxTunListener interface {
+	Config() LC.Tun
+	OnReload()
+	Address() string
+	Close() error
+}
+
+var fcxTunStatus = TunLifecycleStatus{State: "off"}
+// A failed Close may leave OS resources behind. Only a new Core can discard
+// this uncertainty; repeated Cleanup must not turn the failure into success.
+var fcxTunCloseError error
+var fcxCreateTun = func(config LC.Tun, target C.Tunnel) (fcxTunListener, error) {
+	return sing_tun.New(config, target)
+}
+
+func fcxTunErrorCode(err error) string {
+	if errors.Is(err, os.ErrPermission) { return "permissionDenied" }
+	return "startFailed"
+}
+
+func GetTunLifecycleStatus() TunLifecycleStatus {
+	tunMux.Lock()
+	defer tunMux.Unlock()
+	return fcxTunStatus
+}
+
+// The external-controller edits a returned config before ReCreateTun. Do not
+// return shared slice backing arrays that can bypass the lifecycle lock.
+func fcxCloneTunConfig(config LC.Tun) LC.Tun {
+	config.DNSHijack = fcxCloneSlice(config.DNSHijack)
+	config.Inet4Address = fcxCloneSlice(config.Inet4Address)
+	config.Inet6Address = fcxCloneSlice(config.Inet6Address)
+	config.LoopbackAddress = fcxCloneSlice(config.LoopbackAddress)
+	config.RouteAddress = fcxCloneSlice(config.RouteAddress)
+	config.RouteAddressSet = fcxCloneSlice(config.RouteAddressSet)
+	config.RouteExcludeAddress = fcxCloneSlice(config.RouteExcludeAddress)
+	config.RouteExcludeAddressSet = fcxCloneSlice(config.RouteExcludeAddressSet)
+	config.IncludeInterface = fcxCloneSlice(config.IncludeInterface)
+	config.ExcludeInterface = fcxCloneSlice(config.ExcludeInterface)
+	config.IncludeUID = fcxCloneSlice(config.IncludeUID)
+	config.IncludeUIDRange = fcxCloneSlice(config.IncludeUIDRange)
+	config.ExcludeUID = fcxCloneSlice(config.ExcludeUID)
+	config.ExcludeUIDRange = fcxCloneSlice(config.ExcludeUIDRange)
+	config.ExcludeSrcPort = fcxCloneSlice(config.ExcludeSrcPort)
+	config.ExcludeSrcPortRange = fcxCloneSlice(config.ExcludeSrcPortRange)
+	config.ExcludeDstPort = fcxCloneSlice(config.ExcludeDstPort)
+	config.ExcludeDstPortRange = fcxCloneSlice(config.ExcludeDstPortRange)
+	config.IncludeAndroidUser = fcxCloneSlice(config.IncludeAndroidUser)
+	config.IncludePackage = fcxCloneSlice(config.IncludePackage)
+	config.ExcludePackage = fcxCloneSlice(config.ExcludePackage)
+	config.IncludeMACAddress = fcxCloneSlice(config.IncludeMACAddress)
+	config.ExcludeMACAddress = fcxCloneSlice(config.ExcludeMACAddress)
+	config.Inet4RouteAddress = fcxCloneSlice(config.Inet4RouteAddress)
+	config.Inet6RouteAddress = fcxCloneSlice(config.Inet6RouteAddress)
+	config.Inet4RouteExcludeAddress = fcxCloneSlice(config.Inet4RouteExcludeAddress)
+	config.Inet6RouteExcludeAddress = fcxCloneSlice(config.Inet6RouteExcludeAddress)
+	return config
+}
+
+func fcxCloneSlice[T any](value []T) []T {
+	if value == nil { return nil }
+	return append(make([]T, 0, len(value)), value...)
+}

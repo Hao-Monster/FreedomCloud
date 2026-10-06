@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Core version (e.g. v1.19.24)"
+        description: "Pinned core version in core/go.mod (currently v1.19.32)"
         required: true
 
 jobs:
@@ -67,29 +67,39 @@ jobs:
           go-version: "1.26.0"
           cache-dependency-path: core/go.sum
 
-      - name: Update mihomo dependency
+      - name: Verify pinned dependency and prepare lifecycle overlay
+        env:
+          REQUESTED_VERSION: ${{ inputs.version }}
         run: |
+          set -euo pipefail
           cd core
-          go get github.com/metacubex/mihomo@${{ github.event.inputs.version }}
-          go mod tidy
+          PINNED_VERSION=$(awk '$1 == "github.com/metacubex/mihomo" {print $2}' go.mod)
+          test "$REQUESTED_VERSION" = "$PINNED_VERSION"
+          go run ./tools/mihomo-overlay
 
       - name: Build core
         env:
           CGO_ENABLED: "0"
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
+          CORE_VERSION: ${{ inputs.version }}
         run: |
           cd core
           go build \
-            -ldflags="-w -s -X github.com/metacubex/mihomo/constant.Version=${{ github.event.inputs.version }}" \
+            -trimpath -mod=readonly \
+            -modfile=.generated/go.mod -overlay=.generated/mihomo-overlay.json \
+            -ldflags="-w -s -X github.com/metacubex/mihomo/constant.Version=$CORE_VERSION" \
             -tags="with_gvisor,cmfa" \
             -o "../FlClashCore-${{ matrix.platform }}-${{ matrix.arch }}${{ matrix.ext }}"
+          cp ".generated/mihomo-$CORE_VERSION/manifest.json" "../FlClashCore-${{ matrix.platform }}-${{ matrix.arch }}-PATCH.json"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: core-${{ matrix.platform }}-${{ matrix.arch }}
-          path: FlClashCore-${{ matrix.platform }}-${{ matrix.arch }}${{ matrix.ext }}
+          path: |
+            FlClashCore-${{ matrix.platform }}-${{ matrix.arch }}${{ matrix.ext }}
+            FlClashCore-${{ matrix.platform }}-${{ matrix.arch }}-PATCH.json
 
   release:
     needs: build

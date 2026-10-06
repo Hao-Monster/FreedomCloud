@@ -1,0 +1,6 @@
+func GetTunConf() LC.Tun {
+	tunMux.Lock()
+	defer tunMux.Unlock()
+	if tunLister == nil { return fcxCloneTunConfig(LastTunConf) }
+	return fcxCloneTunConfig(tunLister.Config())
+}

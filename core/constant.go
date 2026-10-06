@@ -105,6 +105,7 @@ const (
 	crashMethod                    Method = "crash"
 	setupConfigMethod              Method = "setupConfig"
 	getConfigMethod                Method = "getConfig"
+	getTunStatusMethod             Method = "getTunStatus"
 	getCoreVersionMethod           Method = "getCoreVersion"
 	healthCheckMethod              Method = "healthCheck"
 	healthProbeMethod              Method = "healthProbe"

@@ -43,7 +43,42 @@ jobs:
           cache-dependency-path: core/go.sum
       - name: Run core tests
         working-directory: core
-        run: go test ./...
+        run: |
+          go run ./tools/mihomo-overlay
+          go test -modfile=.generated/go.mod -overlay=.generated/mihomo-overlay.json ./...
+          go test -modfile=.generated/go.mod -overlay=.generated/mihomo-overlay.json -tags=with_gvisor ./...
+          go test -modfile=.generated/go.mod -overlay=.generated/mihomo-overlay.json -race -run '^TestFCXTun' github.com/metacubex/mihomo/listener
+
+  windows-runtime-tests:
+    name: Windows Core and service tests
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: "1.26.0"
+          cache-dependency-path: core/go.sum
+      - name: Test Core Windows paths without creating TUN devices
+        working-directory: core
+        shell: pwsh
+        run: |
+          go run ./tools/mihomo-overlay
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          go test '-modfile=.generated/go.mod' '-overlay=.generated/mihomo-overlay.json' '-tags=with_gvisor' ./...
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          go test '-modfile=.generated/go.mod' '-overlay=.generated/mihomo-overlay.json' -run '^TestFCXTun' github.com/metacubex/mihomo/listener
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Test Agent and Helper contracts without installing services
+        shell: pwsh
+        run: |
+          rustup toolchain install 1.98.1 --profile minimal
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo +1.98.1 test --locked --manifest-path services/agent/Cargo.toml
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo +1.98.1 test --locked --features windows-service --manifest-path services/helper/Cargo.toml
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
   package-integrity:
     name: M3 package integrity checks
