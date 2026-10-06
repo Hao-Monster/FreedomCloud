@@ -609,5 +609,6 @@
   "tunErrorConfiguration": "配置未成功应用",
   "tunErrorStart": "网卡启动失败，可重新开启重试",
   "tunDisableAction": "请求关闭",
-  "tunErrorLegacyAgent": "请先退出旧版后台，再重新打开本版本"
+  "tunErrorLegacyAgent": "请先退出旧版后台，再重新打开本版本",
+  "tunErrorProfileRequired": "请先选择可读取且非空的配置，再重试连接"
 }

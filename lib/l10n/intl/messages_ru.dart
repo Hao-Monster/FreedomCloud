@@ -910,6 +910,9 @@ class MessageLookup extends MessageLookupByLibrary {
     "tunErrorLegacyAgent": MessageLookupByLibrary.simpleMessage(
       "Завершите старое фоновое приложение и снова откройте эту версию",
     ),
+    "tunErrorProfileRequired": MessageLookupByLibrary.simpleMessage(
+      "Перед подключением выберите читаемый непустой профиль",
+    ),
     "tunErrorStart": MessageLookupByLibrary.simpleMessage(
       "Не удалось запустить интерфейс; включите повторно",
     ),

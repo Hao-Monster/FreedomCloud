@@ -490,6 +490,8 @@ class ClashService extends ClashHandlerInterface {
   }
 
   void _onAgentLost(String reason) {
+    ++_connectionEpoch;
+    _agentProxyRunning = null;
     onTunTransportChanged?.call();
     // Socket loss invalidates any previously armed claim.  Keep the status
     // fail-closed while the bounded reconnect loop runs; never leave an armed
@@ -701,6 +703,8 @@ class ClashService extends ClashHandlerInterface {
   Future<bool> windowsComponentsMatch() async {
     if (!Platform.isWindows) return true;
     final identity = _agentIdentity;
+    final connectionEpoch = _connectionEpoch;
+    final generation = _agentGeneration;
     if (!_agentMode || identity == null || identity.agentPid != _agentPid ||
         identity.agentInstanceId == null ||
         !RegExp(r'^[0-9a-f]{64}$').hasMatch(identity.agentInstanceId!) ||
@@ -716,41 +720,54 @@ class ClashService extends ClashHandlerInterface {
         final running = await crypto.sha256.bind(File(pair.$2).openRead()).first;
         if (bundled != running) return false;
       }
-      return identity.backendSource != 'helper' || await request.pingHelper();
+      final helperMatches = identity.backendSource != 'helper' || await request.pingHelper();
+      return helperMatches && connectionEpoch == _connectionEpoch &&
+        generation == _agentGeneration &&
+        identity.agentInstanceId == _agentIdentity?.agentInstanceId;
     } catch (_) { return false; }
   }
 
   /// Called only after an explicit user request prepared a matching Helper.
   /// Returns whether the Core was replaced and therefore needs configuration.
-  Future<bool> ensureWindowsTunBackend() async {
+  Future<bool> ensureWindowsTunBackend({bool Function()? isCurrent}) async {
+    bool current() => isCurrent?.call() ?? true;
+    if (!current()) return false;
     if (!Platform.isWindows || !_agentMode) {
       throw const TunFailure('componentsMismatch');
     }
     if (_agentUsingHelper && await windowsComponentsMatch()) {
+      if (!current()) return false;
       try {
         if ((await getTunStatus()).privilege == 'elevated') return false;
       } on TunFailure { /* Reconcile a claimed Helper with the actual Core. */ }
     }
     if (!await system.checkIsAdmin()) throw const TunFailure('permissionDenied');
+    if (!current()) return false;
     // Old Agents acknowledged shutdown before confirming Core exit. Never
     // use that acknowledgement to replace a potentially still-live Core.
     if (!windowsAgentSupportsMigration) throw const TunFailure('legacyAgent');
     if (!await request.pingHelper()) throw const TunFailure('componentsMismatch');
+    if (!current()) return false;
     // Verify the replacement can be selected before stopping a usable backend.
     try {
       await windowsAgentLaunchPaths(bundledAgent: appPath.agentPath,
         bundledCore: appPath.corePath, serviceDirectory: appPath.windowsServiceDirectory);
     } catch (_) { throw const TunFailure('componentsMismatch'); }
+    if (!current()) return false;
     _stopping = true;
     try {
-      return await _agentConnections.replace(() => _replaceWindowsTunBackend());
+      return await _agentConnections.replace(() async {
+        if (!current()) return false;
+        return _replaceWindowsTunBackend(isCurrent: current);
+      });
     } finally { _stopping = false; }
   }
 
-  Future<bool> _replaceWindowsTunBackend() async {
+  Future<bool> _replaceWindowsTunBackend({required bool Function() isCurrent}) async {
     if (!windowsAgentSupportsMigration || !await request.pingHelper()) {
       throw const TunFailure('componentsMismatch');
     }
+    if (!isCurrent()) return false;
     final previousPid = _agentPid;
     final previousInstance = _agentIdentity?.agentInstanceId;
     final disconnected = _agentDisconnected.future;

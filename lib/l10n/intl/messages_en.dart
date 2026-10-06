@@ -1166,6 +1166,9 @@ class MessageLookup extends MessageLookupByLibrary {
     "tunErrorLegacyAgent": MessageLookupByLibrary.simpleMessage(
       "Exit the old background app, then reopen this version",
     ),
+    "tunErrorProfileRequired": MessageLookupByLibrary.simpleMessage(
+      "Select a readable, non-empty profile before connecting",
+    ),
     "tunErrorStart": MessageLookupByLibrary.simpleMessage(
       "Interface could not start; enable to retry",
     ),

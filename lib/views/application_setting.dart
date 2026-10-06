@@ -576,7 +576,7 @@ class ApplicationSettingView extends StatelessWidget {
         AutoLaunchItem(),
         SilentLaunchItem(),
       ],
-      AutoRunItem(),
+      if (!Platform.isWindows) const AutoRunItem(),
       if (Platform.isAndroid) ...[
         HiddenItem(),
         BatteryOptimizationItem(),

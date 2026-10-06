@@ -1,8 +1,6 @@
-import 'dart:io';
 import 'package:flclashx/clash/clash.dart';
-import 'package:flclashx/common/tun_config_update.dart';
-import 'package:flclashx/common/tun_runtime.dart';
 import 'package:flclashx/common/common.dart';
+import 'package:flclashx/common/tun_runtime.dart';
 import 'package:flclashx/enum/enum.dart';
 import 'package:flclashx/models/models.dart';
 import 'package:flclashx/providers/app.dart';
@@ -12,6 +10,7 @@ import 'package:flclashx/state.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'clash_config_update_listener.dart';
 import 'connection_manager.dart';
 
 class ClashManager extends ConsumerStatefulWidget {
@@ -28,7 +27,11 @@ class ClashManager extends ConsumerStatefulWidget {
 class _ClashContainerState extends ConsumerState<ClashManager>
     with AppMessageListener {
   @override
-  Widget build(BuildContext context) => widget.child;
+  Widget build(BuildContext context) => ClashConfigUpdateListener(
+    runtime: tunRuntime,
+    onConfigChanged: () => globalState.appController.updateClashConfigDebounce(),
+    child: widget.child,
+  );
 
   @override
   void initState() {
@@ -48,12 +51,6 @@ class _ClashContainerState extends ConsumerState<ClashManager>
     ref.listenManual(coreStateProvider, (prev, next) async {
       if (prev != next) {
         await clashCore.setState(next);
-      }
-    });
-    ref.listenManual(updateParamsProvider, (prev, next) {
-      if (shouldScheduleClashConfigUpdate(prev, next,
-          explicitWindowsTunOperation: Platform.isWindows && tunRuntime.busy)) {
-        globalState.appController.updateClashConfigDebounce();
       }
     });
 

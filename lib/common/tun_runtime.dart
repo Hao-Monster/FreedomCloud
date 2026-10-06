@@ -97,11 +97,20 @@ class TunRuntimeController extends ChangeNotifier {
   bool get busy => operation != TunOperation.idle;
   int _observationEpoch = 0;
   int _intent = 0;
+  int get intentRevision => _intent;
   Future<void> _queue = Future.value();
   bool _closing = false;
   bool get closing => _closing;
   int get observationEpoch => _observationEpoch;
   bool isCurrentIntent(int intent) => !_closing && intent == _intent;
+
+  /// A proxy stop cancels pending enabling work without changing the saved
+  /// TUN preference. The stop itself still runs through the shared queue.
+  void cancelPendingIntent() {
+    ++_intent;
+    operation = TunOperation.idle;
+    notifyListeners();
+  }
 
   void invalidate([String? reason]) {
     _observationEpoch++;

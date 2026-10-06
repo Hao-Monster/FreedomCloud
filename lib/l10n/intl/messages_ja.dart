@@ -618,6 +618,9 @@ class MessageLookup extends MessageLookupByLibrary {
     "tunErrorLegacyAgent": MessageLookupByLibrary.simpleMessage(
       "古いバックグラウンドアプリを終了してから、このバージョンを開き直してください",
     ),
+    "tunErrorProfileRequired": MessageLookupByLibrary.simpleMessage(
+      "接続する前に、読み取り可能な空でない設定を選択してください",
+    ),
     "tunErrorStart": MessageLookupByLibrary.simpleMessage(
       "インターフェースを起動できません。再度有効にしてください",
     ),

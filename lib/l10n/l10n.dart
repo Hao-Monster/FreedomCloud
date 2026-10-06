@@ -5473,6 +5473,16 @@ class AppLocalizations {
       args: [],
     );
   }
+
+  /// `Select a readable, non-empty profile before connecting`
+  String get tunErrorProfileRequired {
+    return Intl.message(
+      'Select a readable, non-empty profile before connecting',
+      name: 'tunErrorProfileRequired',
+      desc: '',
+      args: [],
+    );
+  }
 }
 
 class AppLocalizationDelegate extends LocalizationsDelegate<AppLocalizations> {

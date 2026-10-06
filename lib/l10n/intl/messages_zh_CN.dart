@@ -729,6 +729,9 @@ class MessageLookup extends MessageLookupByLibrary {
     "tunErrorLegacyAgent": MessageLookupByLibrary.simpleMessage(
       "请先退出旧版后台，再重新打开本版本",
     ),
+    "tunErrorProfileRequired": MessageLookupByLibrary.simpleMessage(
+      "请先选择可读取且非空的配置，再重试连接",
+    ),
     "tunErrorStart": MessageLookupByLibrary.simpleMessage("网卡启动失败，可重新开启重试"),
     "tunErrorStop": MessageLookupByLibrary.simpleMessage("关闭失败，请核对当前运行状态"),
     "tunErrorUnavailable": MessageLookupByLibrary.simpleMessage(

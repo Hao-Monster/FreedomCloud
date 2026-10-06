@@ -41,9 +41,12 @@ Future<void> applyWindowsTunConfiguration({
   required void Function(String code) reportFailure,
   required void Function() invalidate,
   required Future<String> Function(bool enable) apply,
+  bool Function()? isCurrent,
 }) async {
   if (!await componentsMatch()) throw const TunFailure('componentsMismatch');
+  if (isCurrent != null && !isCurrent()) return;
   final status = await observe();
+  if (isCurrent != null && !isCurrent()) return;
   var enabled = desiredEnabled();
   if (!enabled && explicitStop()) {
     // No observation is converted to false. This is solely a user command;
@@ -65,6 +68,7 @@ Future<void> applyWindowsTunConfiguration({
   }
   invalidate();
   final message = await apply(enabled);
+  if (isCurrent != null && !isCurrent()) return;
   await observe();
   if (message.isNotEmpty) throw const TunFailure('configurationFailed');
 }

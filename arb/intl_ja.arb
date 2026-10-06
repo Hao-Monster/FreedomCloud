@@ -474,5 +474,6 @@
   "tunErrorConfiguration": "設定が適用されませんでした",
   "tunErrorStart": "インターフェースを起動できません。再度有効にしてください",
   "tunDisableAction": "停止を要求",
-  "tunErrorLegacyAgent": "古いバックグラウンドアプリを終了してから、このバージョンを開き直してください"
+  "tunErrorLegacyAgent": "古いバックグラウンドアプリを終了してから、このバージョンを開き直してください",
+  "tunErrorProfileRequired": "接続する前に、読み取り可能な空でない設定を選択してください"
 }

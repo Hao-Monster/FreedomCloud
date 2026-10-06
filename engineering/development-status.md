@@ -2,6 +2,13 @@
 
 更新日期：2026-10-06。当前阶段是快速开发、快速迭代和部分功能预览。本文记录来源与验收边界；每次继续开发仍需核实实际 Git/PR/CI 状态，不能把历史报告视为当前通过证明。
 
+## Windows 启动交互修正（2026-10-06，执行中）
+
+- 用户明确要求完整启动软件即启动代理与虚拟网卡，替代上一批应用启动只读接管的产品策略。生产入口需完成一次完整流程，实际运行才显示开启；本会话手动关闭后，后台刷新、重连和恢复窗口不自动重开。`autoLaunch` 的 Windows 登录启动含义不变。
+- 方案、任务与验收边界见 `engineering/plans/windows-startup-tun-2026-10-06.md`，本轮结果见 `engineering/testing/windows-startup-tun-2026-10-06.md`。旧 VM 清单 W01/W05 的启动预期仅适用于旧包；新候选按 WS01–WS08 及仍适用的原系统用例验收。
+- 基线 `development@d2708be491c8002400a657b66bde93eda6a16ce3`，fetch 后领先远端 5 个本地提交、无落后、无开放 PR；最近 development CI 37430048151 对应旧基线 `2b587a8`，不是本轮通过证据。旧包 `f0b1b7eba271`、历史 worktree/stash 和 coverage/QA 原稿均保留。
+- 本轮仅本地修复、测试、提交与独立新包；未授权远端推送、主线合并或部署。真实 Windows TUN/UAC/服务/网络验收仍等待获准隔离环境，不在开发工作站启动候选程序。
+
 ## 内核与 TUN 可靠性批次（2026-10-06）
 
 - 用户已授权在完善范围和任务后开发与测试。本批从 `development@2b587a80ad187995194608ffcd0f9f8cfa6695cd` 开始，沿用唯一开发入口。方案与依赖见 `engineering/plans/kernel-tun-reliability-2026-10-06.md`，测试矩阵、覆盖率及真实环境缺口见 `engineering/testing/kernel-tun-reliability-2026-10-06.md`。
