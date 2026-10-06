@@ -245,9 +245,12 @@ class Windows {
 
     // ShellExecute returns after the elevated process launches, not after the
     // service reaches RUNNING. Report success only after the helper responds
-    // with the hash of the actual core on disk.
-    for (var attempt = 0; attempt < 15; attempt++) {
-      await Future.delayed(const Duration(milliseconds: 300));
+    // with the hash of the actual core on disk. The repair waits for the old
+    // service to stop and copies the Core before restarting it, so allow a
+    // bounded window well beyond the old 4.5 s.
+    final deadline = DateTime.now().add(const Duration(seconds: 30));
+    while (DateTime.now().isBefore(deadline)) {
+      await Future.delayed(const Duration(milliseconds: 500));
       if (await checkService() == WindowsHelperServiceStatus.running) {
         return true;
       }
