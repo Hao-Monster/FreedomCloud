@@ -2,6 +2,14 @@
 
 更新日期：2026-10-06。当前阶段是快速开发、快速迭代和部分功能预览。本文记录来源与验收边界；每次继续开发仍需核实实际 Git/PR/CI 状态，不能把历史报告视为当前通过证明。
 
+## 非管理员启动 UAC 后仍无法开启 TUN（2026-10-07）
+
+- 用户实测（预览包 `136546fd19c4`，非管理员启动）：自动开启失败；手动点 TUN 弹出 UAC 并同意，仍失败。应用日志：`windows runas ... resultCode:42`（提权进程已启动）后 `helper install/repair timed out`；`%ProgramData%\FlClashX\logs\helper-install.log` 自 2026-09-16 后无任何新记录，Helper 服务 PID 未变化 → 提权修复命令一条都未执行。
+- 根因（已复现）：cmd 中 `if not exist X mkdir X & 其余…` 把整条 `&` 链都当作 IF 主体；日志目录（或服务目录）存在后，整段修复（停服务/复制/配置/启动）被静默跳过。用相同命令、临时路径和不存在的服务名非提权重放：目录不存在时正常执行，预先建好目录时不产生任何输出。
+- 修复提交 `68716be`：两处 IF 加括号；停服务改为同步 `net stop`，再替换二进制；服务 SDDL 给 SY/BA 完整权限（旧值缺 DC/SD/WD/WO，09-16 日志中管理员 `sc config`/`sc sdset` 返回 5；IU 权限不变）；修复后健康等待从 4.5 s 增至 30 s。新增 Windows 用例真实执行该命令（假服务名、预建目录），对旧写法确认失败。
+- 验证：专项 11 PASS；全量 Flutter 370 PASS / 0 FAIL；改动文件 analyze 0 error/warning（4 条既有 info）。真实 UAC → 服务修复 → TUN 开启 NOT RUN。已被旧 SDDL 锁定的现有服务：管理员仍无法 `sc config/sdset`（binPath 不变时不影响修复），需卸载重装或用 SYSTEM 修复，未处理。
+- 本地提交，未推送，未出新预览包。
+
 ## Windows 缺陷修复批次（2026-10-07）
 
 - 同一 `feature/tun-default-on` 分支，用户批准后修复 4 个确认问题，各自独立提交：`7b89ae2` 主窗口在运行时启动（UAC/后端交接）前显示；`b07e493` 自启动注册表写入 await 并记录失败；`cbcc5e0` HKCU Run 值给可执行路径加引号（已开启用户下次启动自动改写为带引号值，关闭时总是移除含旧值的条目）；`be46c97` 标题栏最大化图标跟随 Win+↑/贴靠。
