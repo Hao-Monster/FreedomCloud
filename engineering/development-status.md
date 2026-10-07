@@ -8,7 +8,8 @@
 - 根因（已复现）：cmd 中 `if not exist X mkdir X & 其余…` 把整条 `&` 链都当作 IF 主体；日志目录（或服务目录）存在后，整段修复（停服务/复制/配置/启动）被静默跳过。用相同命令、临时路径和不存在的服务名非提权重放：目录不存在时正常执行，预先建好目录时不产生任何输出。
 - 修复提交 `68716be`：两处 IF 加括号；停服务改为同步 `net stop`，再替换二进制；服务 SDDL 给 SY/BA 完整权限（旧值缺 DC/SD/WD/WO，09-16 日志中管理员 `sc config`/`sc sdset` 返回 5；IU 权限不变）；修复后健康等待从 4.5 s 增至 30 s。新增 Windows 用例真实执行该命令（假服务名、预建目录），对旧写法确认失败。
 - 验证：专项 11 PASS；全量 Flutter 370 PASS / 0 FAIL；改动文件 analyze 0 error/warning（4 条既有 info）。真实 UAC → 服务修复 → TUN 开启 NOT RUN。已被旧 SDDL 锁定的现有服务：管理员仍无法 `sc config/sdset`（binPath 不变时不影响修复），需卸载重装或用 SYSTEM 修复，未处理。
-- 本地提交，未推送，未出新预览包。
+- 用户授权后 `development` 推送 `af7ee28..5a41421`（正常快进，无强推）。GitHub Actions quality-gate run `37578112377`（head `5a41421`）全部 PASS：Core Go tests、Flutter tests、M3 package integrity checks、Windows Core and service tests。未建 PR，`main` 未变。
+- 用户要求后产出新预览包 `dist/FreedomCloud-windows-amd64-preview-5a414210319a.zip`，59,112,074 字节，SHA256 `dba968033ef9b2469e6e82bc937e77eb1248ebf82730b9a3b935f51ed88a8a7a`，73 文件，ZIP 解压逐文件校验通过。构建方式为“仅 UI 重打包”：在 `5a41421` 干净 detached 快照用 `flutter assemble` 重编 `data/app.so`（SHA256 `3b8da58e45469653072ccce047df111670e8a7ec9c256ab05581c13c8c653c5a`）与 flutter_assets；Runner/插件/Core/Agent/Helper/运行库逐字节复用已校验的 `b2cccee7303d` 包（依据：`b2cccee..5a41421` 未改 windows/core/services/libclash/setup.dart/pubspec/assets/arb，复用前重验 hash；engine 文件一致）。旧包均保留未变。未在开发工作站启动；真实 UAC 提权修复服务及 TUN 开启等待隔离 VM 验收。构建脚本与日志保存在会话私有 scratch（`Build-UiRepackPreview.ps1`、`build-5a414210319a.log`）。
 
 ## Windows 缺陷修复批次（2026-10-07）
 
