@@ -95,6 +95,19 @@ class TunRuntimeController extends ChangeNotifier {
   TunOperation operation = TunOperation.idle;
   String? failure;
   bool get busy => operation != TunOperation.idle;
+  // Poll revisions and Core identity do not change the UI. Keep every field
+  // used by the TUN label/actions so equal checked flags cannot hide failures.
+  ({
+    TunObservedState observed,
+    TunOperation operation,
+    bool desiredEnabled,
+    String? failure,
+  }) get displayState => (
+    observed: observed,
+    operation: operation,
+    desiredEnabled: desiredEnabled,
+    failure: failure,
+  );
   int _observationEpoch = 0;
   int _intent = 0;
   int get intentRevision => _intent;

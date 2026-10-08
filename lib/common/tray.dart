@@ -19,8 +19,58 @@ import 'constant.dart';
 import 'window.dart';
 import 'statusbar.dart';
 
+class _TrayUpdate {
+  _TrayUpdate(this.state, {required this.focus, required Completer<void> waiter})
+      : waiters = [waiter];
+
+  TrayState state;
+  bool focus;
+  final List<Completer<void>> waiters;
+}
+
 class Tray {
   void Function(String)? selectProfile;
+  _TrayUpdate? _pendingUpdate;
+  bool _updating = false;
+
+  Future<void> update({required TrayState trayState, bool focus = false}) {
+    final waiter = Completer<void>();
+    final pending = _pendingUpdate;
+    if (pending == null) {
+      _pendingUpdate = _TrayUpdate(trayState, focus: focus, waiter: waiter);
+    } else {
+      final needsFocus = pending.focus || focus;
+      pending
+        ..state = trayState
+        ..focus = needsFocus
+        ..waiters.add(waiter);
+    }
+    if (!_updating) {
+      _updating = true;
+      unawaited(_drainUpdates());
+    }
+    return waiter.future;
+  }
+
+  Future<void> _drainUpdates() async {
+    // Background listeners and right-click refreshes share one native menu.
+    // While one update is in flight, only its most recent successor is needed.
+    while (_pendingUpdate != null) {
+      final update = _pendingUpdate!;
+      _pendingUpdate = null;
+      try {
+        await _renderUpdate(trayState: update.state, focus: update.focus);
+        for (final waiter in update.waiters) {
+          waiter.complete();
+        }
+      } catch (error, stackTrace) {
+        for (final waiter in update.waiters) {
+          waiter.completeError(error, stackTrace);
+        }
+      }
+    }
+    _updating = false;
+  }
 
   Future<void> _selectProxy(Group group, String name) async {
     try {
@@ -72,7 +122,7 @@ class Tray {
     }
   }
 
-  Future<void> update({
+  Future<void> _renderUpdate({
     required TrayState trayState,
     bool focus = false,
   }) async {

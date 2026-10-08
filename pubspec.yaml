@@ -29,7 +29,9 @@ dependencies:
   mobile_scanner: ^7.1.4
   app_links: ^6.4.1
   win32_registry: ^2.1.0
-  tray_manager: ^0.5.2
+  # Repository-owned Windows menu lifetime fix; keep upstream platform APIs.
+  tray_manager:
+    path: plugins/tray_manager
   qr_flutter: ^4.1.0
   shelf: ^1.4.2
   shelf_router: ^1.1.4

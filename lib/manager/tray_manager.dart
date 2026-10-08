@@ -5,11 +5,16 @@ import 'dart:io';
 import 'package:ffi/ffi.dart';
 import 'package:flclashx/common/common.dart';
 import 'package:flclashx/providers/providers.dart';
+import 'package:flclashx/providers/tun.dart';
 import 'package:flclashx/state.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:tray_manager/tray_manager.dart';
 import 'package:win32/win32.dart';
+
+final _tunTrayStateProvider = Provider(
+  (ref) => ref.watch(tunRuntimeProvider).displayState,
+);
 
 class TrayManager extends ConsumerStatefulWidget {
   const TrayManager({
@@ -113,21 +118,26 @@ class _TrayContainerState extends ConsumerState<TrayManager> with TrayListener, 
       trayStateProvider,
       (prev, next) {
         if (prev != next) {
-          globalState.appController.updateTray();
+          unawaited(globalState.appController.updateTray());
         }
       },
     );
+    ref.listenManual(_tunTrayStateProvider, (prev, next) {
+      if (prev != next) {
+        unawaited(globalState.appController.updateTray());
+      }
+    });
   }
 
   @override
   void didChangePlatformBrightness() {
-    globalState.appController.updateTray();
+    unawaited(globalState.appController.updateTray());
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
-      globalState.appController.updateTray();
+      unawaited(globalState.appController.updateTray());
     }
   }
 

@@ -51,7 +51,6 @@ class AppController {
   late final TunStatusObserver _tunObserver = TunStatusObserver(
     runtime: _tunRuntime,
     read: () => clashCore.getTunStatus(),
-    onObserved: () => unawaited(updateTray()),
   );
 
   void startTunObservation() {
@@ -2200,8 +2199,9 @@ class AppController {
   }
 
   Future<void> updateTray([bool focus = false]) async {
-    tray.update(
+    await tray.update(
       trayState: _ref.read(trayStateProvider),
+      focus: focus,
     );
   }
 

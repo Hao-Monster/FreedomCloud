@@ -1,6 +1,15 @@
 # 开发、集成与预览台账
 
-更新日期：2026-10-06。当前阶段是快速开发、快速迭代和部分功能预览。本文记录来源与验收边界；每次继续开发仍需核实实际 Git/PR/CI 状态，不能把历史报告视为当前通过证明。
+更新日期：2026-10-09。当前阶段是快速开发、快速迭代和部分功能预览。本文记录来源与验收边界；每次继续开发仍需核实实际 Git/PR/CI 状态，不能把历史报告视为当前通过证明。
+
+## Windows 托盘菜单泄漏与任务栏异常（2026-10-08–09）
+
+- 用户先要求只读系统日志/源码分析，再授权修复并打包。基线为唯一 `development@6ce68d86e855573c1d1e42cdaf4af3073b58005b`；开工 fetch 自有远端后无 ahead/behind、无开放 PR。保留旧预览与原 coverage/QA 草稿；本轮未授权推送、发布或当前工作站客户端/网络切换。
+- 确认旧运行 UI 的 USER 对象达到 10000，系统 Win32k 桌面堆失败与 Explorer 连续退出。托盘插件 `RemoveMenu` 脱挂旧子树但未销毁，TUN 3 秒观察又无条件重建菜单；这是已确认的客户端资源缺陷，当前 Explorer 故障的完整退出/替换对照仍未执行。
+- 修复使用仓库内 tray_manager：整树所有权/失败回滚/展示期间延迟替换、popup 选中 ID 与已显示菜单快照、shared lifetime 保护 owner 销毁、图标注册失败与恢复。主包仅显示状态变化触发刷新，更新等待真实完成并串行合并；保留 tooltip、force 图标重建和非 Windows legacy 回调。
+- 最终全量 Flutter 388 PASS / 0 FAIL / 0 SKIP；主包修改可执行行 36/39，Native 8 组 PASS，真实 Win32 200 次多层替换及 owner dispose/reset USER 1 → 1，生产插件警告视为错误编译 PASS。定向 analyze 0 error/warning，85 个既有 info（原始 exit 1）；独立源码复审无剩余已知中/高风险。详见 `engineering/testing/tray-menu-resources-2026-10-08.md`。
+- 从修复的精确本地提交归档准备新 Windows amd64 普通免安装包，完整重编 runner/全部插件/UI；未改 Core/Agent/Helper 逐 hash 复用 `b2cccee7303d` 来源并记录兼容证据，不复用旧托盘 DLL。实际构建提交、ZIP/hash 与核验结果在交付后追加；所有旧包保留。
+- 真实应用、鼠标 popup、当前 Explorer 恢复、Shell 故障/恢复、长时 USER/GDI、TUN/UAC/服务/流量验收 NOT RUN。本轮未运行候选客户端，不把本地测试和构建声明为本机任务栏已恢复。尚未推送、未合并、未发布。
 
 ## 非管理员启动 UAC 后仍无法开启 TUN（2026-10-07）
 
