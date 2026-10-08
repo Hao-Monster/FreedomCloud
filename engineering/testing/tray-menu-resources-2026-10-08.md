@@ -15,7 +15,7 @@
 | 更新等待与交错 | Dart 回归；多入口刷新、force/focus 请求、失败 | 等待真实更新完成，更新串行且待更新可合并，最新状态与 force 保留，失败不伪装成功 |
 | 可见菜单点击映射 | Windows 插件通道回归；展示 A 期间成功提交 B/C、更新失败、在途更新与 popup 交错 | 点击准确分发到实际展示的菜单快照；失败更新保留旧映射；没有延迟 WM_COMMAND 对最新菜单的误查 |
 | popup 中插件结束生命周期 | 原生回归；tracking 时释放 owner | 当前树保留至 tracking 返回；不访问已释放插件或向已结束引擎回调 |
-| 托盘注册失败 | 原生失败注入；Shell 图标注册/修改失败后重试 | 返回真实失败并回收新图标；后续更新能够重新注册 |
+| 托盘注册失败 | 原生失败注入；Shell 图标注册/修改失败后重试 | 返回真实失败，回收多余图标并保留唯一恢复资源；后续更新能够重新注册 |
 | 原功能回归 | Flutter 相关模块与全套测试、目标 analyze | 无本次新增失败；保留选择节点、配置、tooltip、TUN/代理启动等既有行为 |
 | 原生组件确实修复 | 新 DLL 导入表、hash 和编译日志 | 新 DLL 包含菜单释放路径，不能复用旧有缺陷 DLL |
 | 组件兼容与来源 | Core/Agent/Helper hash、Git 差异、构建 defines | 未改后端复用来源明确、hash 匹配，Core hash 与 UI/Helper 绑定一致 |
@@ -87,3 +87,15 @@
 Core/Agent/Helper 未修改；`b2cccee7303d4d5e0f0a2d94d03fab367814bd6a..本轮提交` 的 `core/services/libclash/include` 无差异。逐文件重验旧包后复用其三组件与 CORE-PATCH manifest，并在 COMPONENTS.json 逐项声明来源。Core v1.19.32、SHA256 `6caa426bb583547d9123bfe3f746893ffbff9719ecadf972aee93259d24add64` 必须同时匹配 UI define 和 Helper 绑定。实际构建、产物 SHA256 和最终解压结果在新包交付报告及 BUILD-INFO 中追加；此节是构建来源要求。
 
 NOT RUN：完整候选应用运行、真实鼠标 popup、真实 Flutter engine 在 popup 内销毁、当前 Explorer 恢复前后对照、长时 USER/GDI、实际 Shell 故障/重启/睡眠、代理/TUN/UAC/服务及路由验收、Linux/macOS 构建。普通包未签名，不包含严格 WFP 驱动/Broker。不改变当前运行客户端或网络，不将资源回归、源码审查、完整构建等同于本机故障已恢复。
+
+## 最终构建与封装结果（2026-10-09 本地时间）
+
+- 源码提交 `71a07a9d7ad0502d4a3eef1527e499460542b026`，tree `6395c5a9fb28fbf33155daeb744dd7836b32508e`。Git archive SHA256 `50b4bc244f85aa224d5fb996f7758b1476a6613a618171d07f081c2016c97a5a`；未创建 clone/分支/worktree，也未修改旧构建目录。
+- `Build-TrayPreview.ps1 -ExpectedSha 71a07a9... -WorkRoot <chat work/tray-build-retry1>`：source archive、离线 pub get、CMake/Ninja fresh configure、Dart AOT/assets、64 个原生编译/链接步骤及 install PASS。Flutter config-only 的 exit 1 是已知且唯一的 VS 发现限制，精确门禁通过后转用 CMake/Ninja；完整原生 build exit 0，26.39 s。
+- 包装工具的准备阶段先修复了 Git 正/反斜杠比较和 PowerShell 大小写同名 typed-string 参数问题；失败目录和证据保留。首次 package 因 treeState 字符串不属于 `clean/dirty/unknown` 而 exit 255，未发布失败产物。改为 `clean` 后，`Finish-TrayPreview.ps1` 从完整原生成功 bundle 逐文件验证并复制到新目录，只重做封装；原 FAIL 报告/日志/source/bundle hash 全部保留。最终 driver analyze、package、DLL imports、ZIP roundtrip exit 0。
+- 新 `tray_manager_plugin.dll` SHA256 `39625c5e0630fd718bdfcafa4f7574bc3715835b4d9f9999fac16656c21db428`，确认有 `DestroyMenu` 导入；旧 DLL SHA256 `d4a0a1dfc73d35edc777c8ed37d95b2ffe82343e3822be7045ec88bef402b04e`，无该导入。新 `data/app.so` SHA256 `974602488db84ba5a9bb6b4dda015582fdde809a4050b111df45f5cdd14dc758`。
+- Core/Agent/Helper 和 CORE-PATCH 固定 hash 验证通过；Helper 实际二进制内嵌 Core SHA256 与所打包 Core 一致。UI 的 CORE_VERSION/CORE_SHA256 构建 define 校验通过；不把原始 AOT 字符串搜索当作绑定证明。
+- 交付 `FreedomCloud-windows-amd64-trayfix-71a07a9d7ad0.zip`：152,755,710 字节，SHA256 `11dc19f930ebbe90e266bdd3d39611e8cdb9bd8ecb7c4f32d3ac3f75e7a2302d`；73 文件 ZIP/解压/交付集合、长度、hash 全部 PASS。最终 JSON 构建报告明确保留原生 build 成功与首轮 package 失败/恢复记录。
+- Native 构建实际开始 UTC `2026-10-08T16:06:51.7502717Z`，最终 package 元数据 UTC `2026-10-08T16:25:49.703501Z`；源码 commit UTC `2026-10-08T16:05:07Z` 单独记录，没有把 commit 时间冒充实际 build 时间。
+- 包放在本次聊天 outputs，并准备仓库 dist 同名无覆盖副本。原 coverage/QA 5 文件逐项长度/hash 一致；旧预览保留。当前旧客户端、代理/TUN/服务未操作；真实应用验收边界保持 NOT RUN。
+- 独立只读产物审查 PASS：bundle/ZIP 73 文件、SHA256SUMS 72 项及 COMPONENTS 31 项逐项匹配；源码 commit/tree 与 Git 实值一致，新 DLL 含 DestroyMenu/CreatePopupMenu/TrackPopupMenu 且无 RemoveMenu。Core/Agent/Helper 与旧包固定来源一致，Helper 内嵌 Core hash 匹配；文件清单无用户配置、订阅、数据库或密钥凭据文件。Runner/托盘 DLL/Core/Agent/Helper 实测 NotSigned，无 strict 驱动/Broker，README 正确披露实机 NOT RUN。审查未启动任何组件，未发现打包阻塞问题。

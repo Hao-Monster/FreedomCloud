@@ -10,6 +10,9 @@
 - 最终全量 Flutter 388 PASS / 0 FAIL / 0 SKIP；主包修改可执行行 36/39，Native 8 组 PASS，真实 Win32 200 次多层替换及 owner dispose/reset USER 1 → 1，生产插件警告视为错误编译 PASS。定向 analyze 0 error/warning，85 个既有 info（原始 exit 1）；独立源码复审无剩余已知中/高风险。详见 `engineering/testing/tray-menu-resources-2026-10-08.md`。
 - 从修复的精确本地提交归档准备新 Windows amd64 普通免安装包，完整重编 runner/全部插件/UI；未改 Core/Agent/Helper 逐 hash 复用 `b2cccee7303d` 来源并记录兼容证据，不复用旧托盘 DLL。实际构建提交、ZIP/hash 与核验结果在交付后追加；所有旧包保留。
 - 真实应用、鼠标 popup、当前 Explorer 恢复、Shell 故障/恢复、长时 USER/GDI、TUN/UAC/服务/流量验收 NOT RUN。本轮未运行候选客户端，不把本地测试和构建声明为本机任务栏已恢复。尚未推送、未合并、未发布。
+- 本地修复提交为 `71a07a9d7ad0502d4a3eef1527e499460542b026`，精确 Git archive 源构建完成 Windows runner/全部插件/UI 重编；新托盘 DLL SHA256 `39625c5e0630fd718bdfcafa4f7574bc3715835b4d9f9999fac16656c21db428`，包含 DestroyMenu，与旧 DLL 不同。Core/Agent/Helper byte-identical 复用来源和 Core define/Helper 内嵌绑定均核验。
+- 新包 `FreedomCloud-windows-amd64-trayfix-71a07a9d7ad0.zip`，152,755,710 字节，SHA256 `11dc19f930ebbe90e266bdd3d39611e8cdb9bd8ecb7c4f32d3ac3f75e7a2302d`；73 文件完整 ZIP/解压/交付核验 PASS。构建准备/包装元数据错误已在包装工具修复，完整原生 build 成功后只在新目录副本重封装，原失败记录保留。交付在本次聊天 outputs，dist 同名副本不覆盖旧包；后续证据文档不改变该包源码来源。
+- 独立只读产物审查 PASS：ZIP/bundle 全文件、31 项组件元数据、commit/tree、菜单释放导入、后端固定来源及 Helper/Core hash 绑定一致；清单无用户配置或凭据，普通未签名和实机 NOT RUN 边界准确，未发现打包阻塞问题。
 
 ## 非管理员启动 UAC 后仍无法开启 TUN（2026-10-07）
 
