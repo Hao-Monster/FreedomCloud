@@ -98,4 +98,10 @@ NOT RUN：真实Windows交互/SCM故障/IDN匹配、长时资源曲线、Android
 
 ## 构建与来源记录
 
-源码修复提交后，从该精确Git archive在聊天新的构建目录完整重编Core、Agent、Helper、UI及仓库插件。第三方插件从锁定依赖重编，Flutter/QuickJS/CRT/EnableLoopback预置输入单独记录。构建脚本：聊天 `work/remediation-build-tools/Build-Remediation.ps1`，成功产物的提交、大小、hash、逐文件核验和独立产物审查在构建完成后追加。
+源码修复提交为 `7d0a00777342ab4503e2ae20d4f4435742538d60`。从该精确Git archive在新的构建目录完整重编Core、Agent、Helper、UI及仓库插件；第三方插件从锁定依赖重编，Flutter/QuickJS/CRT/EnableLoopback预置输入单独记录。最终脚本exit0，73文件ZIP roundtrip通过，dist副本hash一致。
+
+- 包：`dist/FreedomCloud-windows-amd64-resourcefix-7d0a00777342.zip`，152,946,986 bytes，旁有`.sha256`。
+- SHA256：`f0aae7982964e9e29c22022b76fb8f8996f8d2507f0db77aaa2964bcc78fea40`。
+- 普通未签名Windows amd64预览，未启动；旧包保留。详细命令、源码/组件hash、工具链与VS发现失败后的真实编译证据见 [构建与交付记录](evidence/remediation-build-2026-10-09.md)。
+- 独立产物审查PASS：73文件、32项组件描述、14插件/111输入、实际Helper绑定、UI编译定义、CORE-PATCH和预置来源一致，未夹带用户数据；运行验收继续NOT RUN。
+- Git：代码/测试/方案已本地提交，交付记录为后续文档提交；未推送、未合并、未发布。文档HEAD不改变包内源提交。

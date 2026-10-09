@@ -8,7 +8,9 @@
 - F01–F17源码与对应隔离回归完成，详见 `docs-dev/remediation-plan-2026-10-09.md`、`docs-dev/remediation-results-2026-10-09.md` 和四份模块evidence；TODO区分代码/自动化与平台验收。P02原生资源作用域已优化；P01优先级对照测量仍待办，没有修改HIGH_PRIORITY_CLASS。
 - 最终Flutter带行/分支coverage全量457 PASS/0 FAIL/0 SKIP；Core75项、with_gvisor75项、目标race38项，Agent83项、Helper37项均PASS。proxy故障/UTF-8、tray原生8组/200次USER 1→1、包装工具与68项strict包装检查PASS；Android arm64 c-shared及Darwin arm64仅编译通过。
 - 修改且有LCOV记录的Dart行覆盖535/706（75.78%）、分支182/291（62.54%），两个窗口/lifecycle manager未载入LCOV；Core语句40.5%。平台入口与真实系统验收缺口见汇总。Dart analyze保留1条未修改文件warning，Agent clippy保留2条既有诊断，未弱化规则。
-- 独立复核发现的事务取消、WebSocket退休、首次配置失败清理、测速history、Android迟返、Profile快照、ZIP预检及组件来源问题已逐一处理。待统一Windows普通预览构建后追加实际源码提交/ZIP/hash；真实Windows/SCM/TUN/IDN/长时资源及Android设备验收仍NOT RUN，交由用户或隔离环境完成。
+- 独立复核发现的事务取消、WebSocket退休、首次配置失败清理、测速history、Android迟返、Profile快照、ZIP预检及组件来源问题已逐一处理。真实Windows/SCM/TUN/IDN/长时资源及Android设备验收仍NOT RUN，交由用户或隔离环境完成。
+- 本地修复提交 `7d0a00777342ab4503e2ae20d4f4435742538d60`；从精确Git archive完整重编Core/Agent/Helper/UI/原生插件，Windows Release与73文件ZIP roundtrip PASS。普通未签名包 `dist/FreedomCloud-windows-amd64-resourcefix-7d0a00777342.zip`，152,946,986 bytes，SHA256 `f0aae7982964e9e29c22022b76fb8f8996f8d2507f0db77aaa2964bcc78fea40`。聊天outputs有同hash副本，旧包保留；构建及组件证据见 `docs-dev/evidence/remediation-build-2026-10-09.md`。候选客户端未启动。
+- 最终独立产物审查PASS：ZIP/bundle73文件、72项内部校验、32项组件描述、14插件/111输入、Helper实际Core绑定、UI编译定义及CORE-PATCH一致；预置输入和普通未签名/运行NOT RUN声明准确，无夹带用户配置或凭据。EnableLoopback为既有x86工具，其余29个PE为x64。交付文档后续提交，不改变包对应的7d0a007源码。
 
 ## 外部程序员报告复核与 TODO 补充（2026-10-09）
 
