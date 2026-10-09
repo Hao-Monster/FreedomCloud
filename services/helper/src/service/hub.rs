@@ -352,19 +352,34 @@ fn spawn_core_output_logger<R>(reader: R, logger: Arc<ServiceLogger>, channel: &
 where
     R: Read + Send + 'static,
 {
-    thread::spawn(move || {
-        let mut reader = io::BufReader::new(reader);
-        loop {
-            match read_core_output_line(&mut reader) {
-                Ok(None) => break,
-                Ok(Some(output)) => logger.log(format!("Core {channel}: {}", output.trim_end())),
-                Err(error) => {
-                    logger.log(format!("Core {channel} read error: {error}"));
-                    break;
+    // Register before spawn: shutdown must also see a reader that has not been
+    // scheduled yet. The guard outlives its pipe and all log production.
+    let output_guard = logger.register_core_output();
+    let thread_logger = logger.clone();
+    if let Err(error) = thread::Builder::new()
+        .name(format!("flclash-core-{channel}"))
+        .spawn(move || {
+            let _output_guard = output_guard;
+            let mut reader = io::BufReader::new(reader);
+            loop {
+                match read_core_output_line(&mut reader) {
+                    Ok(None) => break,
+                    Ok(Some(output)) => {
+                        thread_logger.log(format!("Core {channel}: {}", output.trim_end()))
+                    }
+                    Err(error) => {
+                        thread_logger.record_core_output_failure();
+                        thread_logger.log(format!("Core {channel} read error: {error}"));
+                        break;
+                    }
                 }
             }
-        }
-    });
+        })
+    {
+        logger.record_core_output_failure();
+        logger.log(format!("Core {channel} reader could not start: {error}"));
+        eprintln!("FlClashHelperService: Core {channel} reader could not start: {error}");
+    }
 }
 
 fn read_core_output_line<R: BufRead>(reader: &mut R) -> io::Result<Option<String>> {
@@ -579,8 +594,7 @@ fn control_routes(
     api_start.or(api_stop)
 }
 
-pub async fn run_service() -> anyhow::Result<()> {
-    let logger = ServiceLogger::new_default();
+pub async fn run_service(logger: Arc<ServiceLogger>) -> anyhow::Result<()> {
     logger.log("event=helper.starting");
     #[cfg(target_os = "windows")]
     match crate::service::wfp::recover_persistent_filters() {
@@ -645,6 +659,148 @@ mod tests {
     use std::fs;
     use std::path::Path;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn resource_r1_shutdown_waits_for_both_core_output_tails() {
+        use std::sync::mpsc;
+        use std::time::Duration;
+        struct GatedReader {
+            entered: Option<mpsc::Sender<()>>,
+            release: mpsc::Receiver<()>,
+            tail: io::Cursor<Vec<u8>>,
+        }
+        impl Read for GatedReader {
+            fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+                if let Some(entered) = self.entered.take() {
+                    entered.send(()).unwrap();
+                    self.release.recv().unwrap();
+                }
+                self.tail.read(buffer)
+            }
+        }
+        let root = TempDir::new();
+        let path = root.path().join("helper.log");
+        let logger = ServiceLogger::new_at_path(path.clone());
+        let mut releases = Vec::new();
+        for (channel, tail) in [("stdout", "stdout-tail"), ("stderr", "stderr-tail")] {
+            let (entered, wait_entered) = mpsc::channel();
+            let (release, wait_release) = mpsc::channel();
+            spawn_core_output_logger(
+                GatedReader {
+                    entered: Some(entered),
+                    release: wait_release,
+                    tail: io::Cursor::new(tail.as_bytes().to_vec()),
+                },
+                logger.clone(),
+                channel,
+            );
+            wait_entered.recv_timeout(Duration::from_secs(1)).unwrap();
+            releases.push(release);
+        }
+        let (finished, wait_finished) = mpsc::channel();
+        let finishing_logger = logger.clone();
+        let finisher = thread::spawn(move || {
+            let result = finishing_logger
+                .finish_core_output(Duration::from_secs(2), Duration::from_secs(1));
+            finished.send(result).unwrap();
+        });
+        let completed_early = wait_finished
+            .recv_timeout(Duration::from_millis(100))
+            .is_ok();
+        for release in releases {
+            release.send(()).unwrap();
+        }
+        finisher.join().unwrap();
+        assert!(
+            !completed_early,
+            "shutdown flush completed while both Core output readers still held their tails"
+        );
+        assert!(wait_finished
+            .recv_timeout(Duration::from_secs(1))
+            .unwrap()
+            .is_ok());
+        let text = fs::read_to_string(path).unwrap();
+        assert!(text.contains("Core stdout: stdout-tail"));
+        assert!(text.contains("Core stderr: stderr-tail"));
+        let stopped = text
+            .find("service Core exit confirmed; stopping Helper")
+            .unwrap();
+        assert!(text.find("stdout-tail").unwrap() < stopped);
+        assert!(text.find("stderr-tail").unwrap() < stopped);
+    }
+
+    #[test]
+    fn resource_r1_repeated_core_readers_release_without_retained_history() {
+        use std::time::Duration;
+        let root = TempDir::new();
+        let path = root.path().join("helper.log");
+        let logger = ServiceLogger::new_at_path(path.clone());
+        for iteration in 0..20 {
+            for channel in ["stdout", "stderr"] {
+                spawn_core_output_logger(
+                    io::Cursor::new(format!("tail-{iteration}-{channel}").into_bytes()),
+                    logger.clone(),
+                    channel,
+                );
+            }
+            logger
+                .finish_core_output(Duration::from_secs(1), Duration::from_secs(1))
+                .unwrap();
+        }
+        let text = fs::read_to_string(path).unwrap();
+        for iteration in 0..20 {
+            for channel in ["stdout", "stderr"] {
+                assert_eq!(text.matches(&format!("tail-{iteration}-{channel}")).count(), 1);
+            }
+        }
+        assert_eq!(text.lines().count(), 60);
+    }
+
+    #[test]
+    fn resource_r1_reader_failure_is_drained_and_reported() {
+        use std::time::Duration;
+        struct Broken;
+        impl Read for Broken {
+            fn read(&mut self, _buffer: &mut [u8]) -> io::Result<usize> {
+                Err(io::Error::other("fixture output error"))
+            }
+        }
+        let root = TempDir::new();
+        let path = root.path().join("helper.log");
+        let logger = ServiceLogger::new_at_path(path.clone());
+        spawn_core_output_logger(
+            io::Cursor::new(b"complete-line\n").chain(Broken),
+            logger.clone(),
+            "stdout",
+        );
+        let error = logger
+            .finish_core_output(Duration::from_secs(1), Duration::from_secs(1))
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("0 readers pending, 1 reader failures"));
+        let text = fs::read_to_string(path).unwrap();
+        assert!(text.contains("Core stdout: complete-line"));
+        assert!(text.contains("Core stdout read error: fixture output error"));
+    }
+
+    #[test]
+    fn resource_r1_flush_keeps_write_loss_visible_after_reopen() {
+        use std::time::Duration;
+        let root = TempDir::new();
+        let parent = root.path().join("blocked-parent");
+        fs::write(&parent, b"not a directory").unwrap();
+        let logger = ServiceLogger::new_at_path(parent.join("helper.log"));
+        logger.log("must not silently disappear");
+        // This barrier confirms the original failed write has been processed.
+        assert!(logger.flush(Duration::from_secs(1)).is_err());
+        fs::remove_file(&parent).unwrap();
+        fs::create_dir(&parent).unwrap();
+        logger.log("recovered output");
+        assert!(
+            logger.flush(Duration::from_secs(1)).is_err(),
+            "reopening the file hid earlier lost output"
+        );
+    }
 
     #[test]
     fn resource_core_output_line_is_bounded_and_keeps_next_line() {

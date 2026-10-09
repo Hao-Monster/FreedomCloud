@@ -6,6 +6,7 @@ import 'dart:ui' as ui;
 
 import 'package:ffi/ffi.dart';
 import 'package:flclashx/common/bounded_cache.dart';
+import 'package:flclashx/common/process_icon_queue.dart';
 import 'package:flutter/widgets.dart';
 import 'package:path/path.dart' as p;
 import 'package:win32/win32.dart';
@@ -13,24 +14,55 @@ import 'package:win32/win32.dart';
 const _maxProcessIconEntries = 64;
 
 // exePath -> decoded icon, cached so polling doesn't re-extract via Win32.
-final _winIconCache = BoundedCache<String, Future<ImageProvider?>>(
-  maxEntries: _maxProcessIconEntries,
-  onEvict: _evictImageFuture,
+final windowsProcessIconLoader = WindowsProcessIconLoader(
+  load: (path) async {
+    final bytes = await _extractIconBytes(path);
+    return bytes == null ? null : MemoryImage(bytes);
+  },
 );
 
-/// Icon embedded in [processPath] on Windows. No process path is persisted; only
-/// the decoded image future is cached for the lifetime of the application.
-Future<ImageProvider?>? windowsProcessIcon(String processPath) {
-  if (processPath.isEmpty) return null;
-  final cacheKey = processPath
-      .trim()
-      .replaceAll('\\', '/')
-      .replaceAll(RegExp(r'/+'), '/')
-      .toLowerCase();
-  return _winIconCache.putIfAbsent(
-    cacheKey,
-    () => _loadWindowsIcon(processPath.trim()),
-  );
+/// Keeps the native extraction boundary injectable without touching Win32 in
+/// component tests.
+class WindowsProcessIconLoader {
+  WindowsProcessIconLoader({
+    required Future<ImageProvider?> Function(String path) load,
+    int maxWaiting = 64,
+    int maxCached = _maxProcessIconEntries,
+  }) : _queue = ProcessIconQueue<ImageProvider>(
+          load: load,
+          maxWaiting: maxWaiting,
+          maxCached: maxCached,
+          onEvict: _evictWindowsImage,
+        );
+
+  final ProcessIconQueue<ImageProvider> _queue;
+
+  Listenable get capacityChanges => _queue;
+
+  ProcessIconLease<ImageProvider>? acquire(String processPath) => _queue.acquire(
+        normalizeWindowsIconPath(processPath),
+        source: processPath.trim(),
+      );
+
+  void dispose() => _queue.dispose();
+}
+
+String normalizeWindowsIconPath(String path) {
+  final slashes = path.trim().replaceAll('\\', '/');
+  final collapsed = slashes.replaceAll(RegExp(r'/+'), '/').toLowerCase();
+  // UNC paths and paths rooted on the current drive refer to different files.
+  return slashes.startsWith('//') ? '/$collapsed' : collapsed;
+}
+
+void _evictWindowsImage(ImageProvider provider) {
+  unawaited(() async {
+    try {
+      await provider.evict();
+    } catch (_) {
+      // Eviction is best effort; the bounded loader has already dropped its
+      // reference, and a failed platform cache operation must not stop admission.
+    }
+  }());
 }
 
 // ---------------------------------------------------------------------------
@@ -162,25 +194,6 @@ Future<File?> _findIconFile(String name) async {
     if (await f.exists()) return f;
   }
   return null;
-}
-
-// Win32 icon extraction runs synchronously on the UI thread; serialize it so a
-// single list build can't fire a dozen extractions in one frame (which made the
-// page feel heavy). Each extraction yields a frame, spreading the work out.
-Future<void> _extractQueue = Future.value();
-
-Future<ImageProvider?> _loadWindowsIcon(String exePath) {
-  final completer = Completer<ImageProvider?>();
-  _extractQueue = _extractQueue.then((_) async {
-    try {
-      final bytes = await _extractIconBytes(exePath);
-      completer.complete(bytes == null ? null : MemoryImage(bytes));
-    } catch (_) {
-      completer.complete(null);
-    }
-    await Future<void>.delayed(Duration.zero);
-  });
-  return completer.future;
 }
 
 // SHGetFileInfo(exe) -> HICON -> GetIconInfo -> GetDIBits(32bpp) -> BGRA pixels ->

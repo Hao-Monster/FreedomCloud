@@ -31,7 +31,9 @@ pub fn start_service() -> Result<()> {
         Err(error) => {
             let logger = ServiceLogger::new_default();
             logger.log(format!("service dispatcher failed: {error}"));
-            logger.flush(Duration::from_millis(500));
+            if let Err(flush_error) = logger.flush(Duration::from_millis(500)) {
+                eprintln!("FlClashHelperService: dispatcher diagnostics incomplete: {flush_error}");
+            }
             Err(error)
         }
     }
@@ -51,7 +53,9 @@ pub fn service_main(_arguments: Vec<OsString>) {
             logger.log(format!("service runtime creation failed: {error}"));
         }
     }
-    logger.flush(Duration::from_millis(500));
+    if let Err(error) = logger.flush(Duration::from_millis(500)) {
+        eprintln!("FlClashHelperService: final diagnostics incomplete: {error}");
+    }
 }
 
 /// The worker, not the SCM callback, waits for the child. Errors keep the service
@@ -125,7 +129,7 @@ async fn run_windows_service(logger: std::sync::Arc<ServiceLogger>) -> anyhow::R
         }
     };
     report(ServiceState::Running, 0, false);
-    let mut server = tokio::spawn(run_service());
+    let mut server = tokio::spawn(run_service(logger.clone()));
     let mut server_failed = false;
     loop {
         tokio::select! {
@@ -161,16 +165,54 @@ async fn run_windows_service(logger: std::sync::Arc<ServiceLogger>) -> anyhow::R
             server.abort();
             let _ = server.await;
         }
-        logger.log("service Core exit confirmed; stopping Helper");
-        logger.flush(Duration::from_millis(500));
-        report(ServiceState::Stopped, 0, server_failed);
+        finish_confirmed_stop(logger.clone(), server_failed, report).await;
         return Ok(());
     }
+}
+
+async fn finish_confirmed_stop<R>(
+    logger: std::sync::Arc<ServiceLogger>,
+    server_failed: bool,
+    mut report: R,
+) where
+    R: FnMut(ServiceState, u32, bool),
+{
+    let result = tokio::task::spawn_blocking(move || {
+        logger.finish_core_output(Duration::from_secs(2), Duration::from_millis(500))
+    })
+    .await;
+    let logs_failed = match result {
+        Ok(Ok(())) => false,
+        Ok(Err(error)) => {
+            eprintln!("FlClashHelperService: {error}");
+            true
+        }
+        Err(error) => {
+            eprintln!("FlClashHelperService: log finish worker failed: {error}");
+            true
+        }
+    };
+    // A log failure must be visible, but cannot undo the verified Core exit.
+    report(ServiceState::Stopped, 0, server_failed || logs_failed);
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn resource_r1_log_failure_reports_stopped_without_reversing_core_exit() {
+        let mut events = Vec::new();
+        finish_confirmed_stop(
+            ServiceLogger::discard_for_test(),
+            false,
+            |state, checkpoint, failed| {
+                events.push((state, checkpoint, failed));
+            },
+        )
+        .await;
+        assert_eq!(events, vec![(ServiceState::Stopped, 0, true)]);
+    }
 
     #[tokio::test]
     async fn resource_scm_failed_stop_does_not_report_stopped_and_can_retry() {

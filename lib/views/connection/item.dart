@@ -1,12 +1,17 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flclashx/clash/agent_protocol.dart';
 import 'package:flclashx/common/common.dart';
 import 'package:flclashx/common/process_icon.dart';
+import 'package:flclashx/common/process_icon_activity.dart';
+import 'package:flclashx/common/process_icon_queue.dart';
+import 'package:flclashx/common/ui_activity.dart';
 import 'package:flclashx/models/models.dart';
 import 'package:flclashx/plugins/app.dart';
 import 'package:flclashx/state.dart';
 import 'package:flclashx/widgets/widgets.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:path/path.dart' as path;
 
@@ -278,13 +283,29 @@ class ProcessIcon extends StatelessWidget {
     this.connectionType = '',
     this.size = 44,
     this.enabled = true,
-  });
+  }) : _windowsLoader = null,
+       _windowActivity = null;
+
+  @visibleForTesting
+  const ProcessIcon.forTestingWindows({
+    super.key,
+    required this.process,
+    required this.processPath,
+    required WindowsProcessIconLoader loader,
+    ValueListenable<bool>? windowActivity,
+    this.connectionType = '',
+    this.size = 44,
+    this.enabled = true,
+  }) : _windowsLoader = loader,
+       _windowActivity = windowActivity;
 
   final String process;
   final String processPath;
   final String connectionType;
   final double size;
   final bool enabled;
+  final WindowsProcessIconLoader? _windowsLoader;
+  final ValueListenable<bool>? _windowActivity;
 
   @override
   Widget build(BuildContext context) {
@@ -292,12 +313,20 @@ class ProcessIcon extends StatelessWidget {
     final isInner =
         connectionType.toLowerCase() == 'inner' || process == 'mihomo';
     final resolvedPath = isInner ? Platform.resolvedExecutable : processPath;
+    if (Platform.isWindows || _windowsLoader != null) {
+      return _WindowsProcessIcon(
+        path: resolvedPath,
+        loader: _windowsLoader ?? windowsProcessIconLoader,
+        windowActivity: _windowActivity ?? uiActivity,
+        fallback: _fallback(context),
+        imageBuilder: _image,
+      );
+    }
     final future = switch (Platform.operatingSystem) {
       'android' when process.isNotEmpty => _androidProcessIconCache.putIfAbsent(
-          process,
-          () => app?.getPackageIcon(process),
-        ),
-      'windows' => windowsProcessIcon(resolvedPath),
+        process,
+        () => app?.getPackageIcon(process),
+      ),
       'linux' => linuxProcessIcon(resolvedPath, process),
       _ => null,
     };
@@ -307,34 +336,152 @@ class ProcessIcon extends StatelessWidget {
       builder: (_, snapshot) {
         final image = snapshot.data;
         if (image == null) return _fallback(context);
-        return ClipRRect(
-          borderRadius: BorderRadius.circular(size * 0.23),
-          child: Image(
-            image: image,
-            width: size,
-            height: size,
-            fit: BoxFit.cover,
-            gaplessPlayback: true,
-          ),
-        );
+        return _image(image);
       },
     );
   }
 
+  Widget _image(ImageProvider provider) => ClipRRect(
+    borderRadius: BorderRadius.circular(size * 0.23),
+    child: Image(
+      image: provider,
+      width: size,
+      height: size,
+      fit: BoxFit.cover,
+      gaplessPlayback: true,
+    ),
+  );
+
   Widget _fallback(BuildContext context) => Container(
-        width: size,
-        height: size,
-        alignment: Alignment.center,
-        decoration: BoxDecoration(
-          color: context.colorScheme.surfaceContainerHighest,
-          borderRadius: BorderRadius.circular(size * 0.23),
-        ),
-        child: Icon(
-          Icons.apps_rounded,
-          size: size * 0.55,
-          color: context.colorScheme.onSurfaceVariant,
-        ),
-      );
+    width: size,
+    height: size,
+    alignment: Alignment.center,
+    decoration: BoxDecoration(
+      color: context.colorScheme.surfaceContainerHighest,
+      borderRadius: BorderRadius.circular(size * 0.23),
+    ),
+    child: Icon(
+      Icons.apps_rounded,
+      size: size * 0.55,
+      color: context.colorScheme.onSurfaceVariant,
+    ),
+  );
+}
+
+class _WindowsProcessIcon extends StatefulWidget {
+  const _WindowsProcessIcon({
+    required this.path,
+    required this.loader,
+    required this.windowActivity,
+    required this.fallback,
+    required this.imageBuilder,
+  });
+
+  final String path;
+  final WindowsProcessIconLoader loader;
+  final ValueListenable<bool> windowActivity;
+  final Widget fallback;
+  final Widget Function(ImageProvider) imageBuilder;
+
+  @override
+  State<_WindowsProcessIcon> createState() => _WindowsProcessIconState();
+}
+
+class _WindowsProcessIconState extends State<_WindowsProcessIcon> {
+  ProcessIconLease<ImageProvider>? _lease;
+  WindowsProcessIconLoader? _capacitySource;
+  ImageProvider? _image;
+  String? _key;
+  bool _pageActive = true;
+  bool _attempted = false;
+  int _generation = 0;
+
+  bool get _active => _pageActive && widget.windowActivity.value;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.windowActivity.addListener(_syncRequest);
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _pageActive = ProcessIconActivityScope.isActive(context);
+    _syncRequest();
+  }
+
+  @override
+  void didUpdateWidget(_WindowsProcessIcon oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.windowActivity != widget.windowActivity) {
+      oldWidget.windowActivity.removeListener(_syncRequest);
+      widget.windowActivity.addListener(_syncRequest);
+    }
+    if (oldWidget.loader != widget.loader) {
+      _cancelRequest();
+      _key = null;
+      _image = null;
+    }
+    _syncRequest();
+  }
+
+  void _syncRequest() {
+    final key = normalizeWindowsIconPath(widget.path);
+    if (key != _key) {
+      _cancelRequest();
+      _key = key;
+      _image = null;
+    }
+    if (!_active || key.isEmpty) {
+      _cancelRequest();
+      return;
+    }
+    if (_attempted) return;
+    final lease = widget.loader.acquire(widget.path);
+    if (lease == null) {
+      if (_capacitySource == null) {
+        _capacitySource = widget.loader;
+        _capacitySource!.capacityChanges.addListener(_syncRequest);
+      }
+      return;
+    }
+    _stopWaiting();
+    _attempted = true;
+    _lease = lease;
+    final generation = _generation;
+    unawaited(
+      lease.future.then((value) {
+        if (!mounted || generation != _generation || _lease != lease) return;
+        _lease = null;
+        setState(() => _image = value);
+      }),
+    );
+  }
+
+  void _stopWaiting() {
+    _capacitySource?.capacityChanges.removeListener(_syncRequest);
+    _capacitySource = null;
+  }
+
+  void _cancelRequest() {
+    _generation++;
+    _stopWaiting();
+    _lease?.release();
+    _lease = null;
+    _attempted = false;
+  }
+
+  @override
+  void dispose() {
+    widget.windowActivity.removeListener(_syncRequest);
+    _cancelRequest();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) =>
+      _image == null ? widget.fallback : widget.imageBuilder(_image!);
 }
 
 class ProcessConnectionCard extends StatelessWidget {

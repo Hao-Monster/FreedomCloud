@@ -2,6 +2,14 @@
 
 更新日期：2026-10-09。当前阶段是快速开发、快速迭代和部分功能预览。本文记录来源与验收边界；每次继续开发仍需核实实际 Git/PR/CI 状态，不能把历史报告视为当前通过证明。
 
+## 运行诊断后续资源修复（2026-10-09）
+
+- 用户授权先研究再修复，起点 `development@13b0ea05dfca6840e402a1f29d543705e30382e4`。方案先冻结到 `docs-dev/resource-followup-plan-2026-10-09.md`，再实施 R1 Helper日志所有权/输出收尾、R2 Windows图标有界队列/消费者释放、R3健康检查缓存清理/代际隔离。旧coverage、QA草稿、分支/工作树和预览包均保留。
+- 三项均有有效Red→Green；交叉审查补充修复既有UNC/rooted图标key碰撞并加强失效快照消息与活动监听释放断言。汇总及三个模块证据见 `docs-dev/resource-followup-results-2026-10-09.md`。没有改变日志级别、进程优先级、Mihomo固定版本、购买或代理/TUN产品行为，没有新生产依赖。
+- 最终完整Flutter 476 PASS/0 FAIL/0 SKIP；图标目标22项；Helper service48/default45项；Core普通90/with_gvisor90项、health/config/controller race22项、overlay合同race14项全部通过。Dart定向analyze 0error/0warning/22info，service clippy通过；额外default clippy保留未修改process_stop.rs:39的既有dead_code错误。
+- 本轮Dart文本diff可执行行173/271（63.84%）、分支74/96（77.08%），含整页包装缩进；新队列与activity scope在LCOV中的行/分支100%。真实ConnectionsView整页/Win32平台入口未覆盖。Core package statement42.9%，Rust未采集coverage，范围和缺口已披露。
+- 三模块非作者复核无剩余本轮源码阻塞。当前客户端/服务/网络保持不动，真实SCM/SYSTEM、窗口/导航、长时资源及其他平台验收NOT RUN。源码本地提交后完整构建并记录配套Windows预览；不推送、不合并、不发布，后续构建/提交/hash另行追加。
+
 ## 性能、资源与可靠性17项修复（2026-10-09）
 
 - 用户授权在唯一 `development` 分支逐项修复、统一打包后自行本机测试。修复基线 `a52907c2d4425f6c1679792f64a3129ae4c562d7`；未推送/发布，未启动候选客户端或修改现役代理/TUN/SCM/驱动/Shell。原coverage/QA草稿及旧包保留。
