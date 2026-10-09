@@ -2,6 +2,14 @@
 
 更新日期：2026-10-09。当前阶段是快速开发、快速迭代和部分功能预览。本文记录来源与验收边界；每次继续开发仍需核实实际 Git/PR/CI 状态，不能把历史报告视为当前通过证明。
 
+## 外部程序员报告复核与 TODO 补充（2026-10-09）
+
+- 按用户要求在 `development@3227a863f5bdbb4ca7dc1f8caa5b7708d1f104dc` 核验外部六项主张，详细结论见 `docs-dev/evidence/external-review-verification-2026-10-09.md`。产品源码与原审查基线相同，本次仍仅调查/文档，不实施修复。
+- F11 补充 Unicode 排除域名错误编码；新增 F16 托盘菜单全桌面查找缺少所有权且主题监视启动过晚、F17 PNG 编码异常遗漏 ui.Image 显式释放。DC 跨异步持有确认但有 Win32 finally 与串行提取，作为 P02 优化候选；HIGH 优先级保留 P01，未采纳“已证明 P0/Explorer 崩溃根因”的推断。
+- 对 F06 补充 2 分钟 timeout 请求的滞留；对 F09 补充后台 Timer 清单及边界：Core 只发送新增请求，组刷新依赖 post-frame，detach/会话退出已有 setUiActive(false)，不能把正常托盘状态观察全部停掉。
+- Unicode C++ 隔离表达式 probe：4 项中 2 PASS / 2 目标 FAIL / 0 SKIP，exit 1；使用真实 Flutter EncodableValue 和严格 UTF-8 对照，未更改代理/注册表。菜单和图像失败路径为源码/契约确认，动态跨程序/PNG 故障验收未运行。原覆盖率/QA 草稿和历史报告保留；本轮无推送、发布或服务/系统设置变更。
+- 文档完整性检查 PASS：17 项均为 OPEN、原 15 项保留，9 个辅助章节/8 个本地链接/27 个源码路径及 probe 附录一致性通过；历史快照和产品源码未改。独立只读复核无阻塞，`git diff --check` 通过。本轮交付仅四份文档，所有产品修复/性能与真实系统验收仍按 TODO 跟踪。
+
 ## 性能、资源生命周期与可靠性审查待办（2026-10-09）
 
 - 用户要求将本轮发现完整登记到 `docs-dev`；清单见 `docs-dev/performance-resource-todo-2026-10-09.md`，原始报告快照见 `docs-dev/evidence/performance-resource-audit-2026-10-09.md`。源码基线为 `development@c5c5ae4400d225cf2abefccb92184d29c1b81bcd`，本次仅文档整理，未实施其中的产品修复。

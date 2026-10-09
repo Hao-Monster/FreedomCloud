@@ -2,16 +2,18 @@
 
 创建日期：2026-10-09（Asia/Singapore）。本次交付：记录与交接待办，不实施本清单中的产品修复。
 
+补充复核：2026-10-09，对用户提供的另一位程序员的六项排查逐条核实。补充 F11 编码子问题、新增 F16/F17 与 P02，完善 F06/F09/P01 边界；详见 [外部报告逐项核验](evidence/external-review-verification-2026-10-09.md)。
+
 ## 1. 来源、状态与执行边界
 
 - 排查源码：`E:\CodeWorkstation\FlClashX`，`development@c5c5ae4400d225cf2abefccb92184d29c1b81bcd`。下列行号对应该源码基线；实施前重新核对当前版本。
 - 完整证据：[原始审查报告快照](evidence/performance-resource-audit-2026-10-09.md)。原输出文件：`C:\Users\冯飏\Documents\Codex\2026-10-08\new-chat\outputs\flclashx-performance-resource-audit-2026-10-09.md`。
-- F01–F15 均为 **OPEN / 待修复**，没有因整理文档而完成；其中 F11/F12 等包含多个必须一起跟踪的子问题。
-- P01 为 **待测量的优化候选**；V01–V05 为 **尚未运行的性能/系统验收任务**。H01 为此前已修代码的历史记录，仍有长期验收待办；S01 为系统恢复待办，不冒充产品代码缺陷。
+- F01–F17 均为 **OPEN / 待修复**，没有因整理文档而完成；其中 F11/F12 等包含多个必须一起跟踪的子问题。新增项核验基线为 `development@3227a863f5bdbb4ca7dc1f8caa5b7708d1f104dc`，与原审查基线相比仅增加文档，产品源码相同。
+- P01/P02 为 **待测量的优化候选**；V01–V05 为 **尚未运行的性能/系统验收任务**。H01 为此前已修代码的历史记录，仍有长期验收待办；S01 为系统恢复待办，不冒充产品代码缺陷。
 - 证据等级：**隔离复现**（真实类/函数、合成输入）；**源码确认**（完整失败路径已核对）；**优化候选**（需要基准数据）。不要混淆这三者。
 - 优先级：P1＝下一批优先处理的高影响问题；P2＝随后稳定性/资源修复；P3＝测量后再决定的优化。优先级不表示本机此刻正在触发。
 - 本轮未改变运行中的客户端、代理、TUN、服务、Windows Shell 或用户配置；没有把这些发现作为此前任务栏故障的完整因果证明。
-- 本清单保持原 15 项编号，附加项使用 P/V/H/S 前缀，便于一一核对、不重复计数。
+- 本清单保持原 F01–F15 编号，后续确认的新问题顺延为 F16/F17；附加优化/验收使用 P/V/H/S 前缀，同一根因的补充并入原项，避免重复计数。
 
 ## 2. 总待办清单
 
@@ -25,12 +27,15 @@
 - [ ] **F08 · P2** 修复流量轮询 Timer 所有权竞态和停止后复活。
 - [ ] **F09 · P2** 按真实前后台可见性控制 UI 取样与 Core 事件生成。
 - [ ] **F10 · P2** 为测速建立真实并发/排队上限和端到端取消超时。
-- [ ] **F11 · P2** 修复 Windows 代理插件错误路径泄漏及恒报成功。
+- [ ] **F11 · P2** 修复 Windows 代理插件错误路径泄漏、恒报成功及 Unicode 排除域名编码损坏。
 - [ ] **F12 · P2** 修复日志数量、跨日滚动和清理所有权。
 - [ ] **F13 · P2** 限制 Agent 认证前连接数量及等待时间。
 - [ ] **F14 · P2** 对 Core stdout/stderr 使用有界行读取。
 - [ ] **F15 · P2** Android retired TUN handler 的 JNI 引用安全迟后回收。
+- [ ] **F16 · P2** Windows 托盘菜单操作校验所有权并修正主题监视时机。
+- [ ] **F17 · P2** 图标 PNG 编码异常时保证 `ui.Image` 显式释放。
 - [ ] **P01 · P3** 测量 NORMAL/HIGH 进程优先级后决定是否调整。
+- [ ] **P02 · P3** 缩短图标提取原生资源跨异步编码的持有时间，测量队列与资源峰值。
 - [ ] **V01–V05** 完成第 7 节的五组性能、生命周期与故障恢复验收。
 - [ ] **H01** 补此前托盘修复的长期与真实交互验收。
 - [ ] **S01** 按独立系统恢复范围验证开始按钮/搜索宿主恢复。
@@ -168,6 +173,8 @@
 
 **已有证据**：60 个成功回复后 retainedCompleters=60，响应共 6,000,170 字符；虚拟 31 秒后清零。字符数不是 heap 字节数或当前进程测量。
 
+**外部报告补充复核**：默认 30 秒之外，`lib/clash/interface.dart:237–270` 的 updateConfig/getConfig/setupConfig 使用 2 分钟 timeout，对应 cleanup Timer 和已完成状态也会等待约 2 分钟。Timer 最终会执行，故称为“与 timeout 绑定的多余 Timer/响应滞留”，不能据此称永久孤儿或无界内存泄漏。外部报告与本项为同一根因。
+
 **修复 TODO**：
 
 - [ ] 成功、错误、超时、断连/销毁路径统一及时删除 pending/default 状态并释放响应引用。
@@ -177,6 +184,7 @@
 **验收 TODO**：
 
 - [ ] 原 60 回复 probe 在完成后立即观测到零 pending；不依靠推进 31 秒才能通过。
+- [ ] 同时覆盖默认 30 秒和自定义 2 分钟 timeout：提前完成后 cleanup Timer 取消、pending 立即释放，不改变真正未完成请求的超时合同。
 - [ ] 覆盖成功/类型错误/remote error/超时/断连、同步失败与迟到重复回包，默认值与调用方契约保持正确。
 - [ ] 大快照持续轮询后 pending 与 timer 数有界，停止后回到基线；按 V02 测量真实 heap/GC，不只断言 map 大小。
 
@@ -232,10 +240,13 @@
 
 **问题/触发**：两条路径必须分别处理：① 最小化只 pause renderer，不改 window.visible，连接页仍可每 100–500ms 获取/解码全量 snapshot；② 隐藏到托盘虽停连接页 snapshot，但 desktop 未发送 setUiActive(false)，Core 仍约每 4 秒扫描活动连接并转发请求事件。
 
+**外部报告补充复核与边界**：`lib/controller.dart:56–65` 的 TUN 状态观察为 3 秒，`lib/state.dart:173–186` 的流量周期为上一轮结束后再等 3 秒，`lib/controller.dart:335–340` 的运行时显示为 1 秒；桌面 hidden 未统一暂停这些工作。`lib/state.dart:214–221` 的组刷新是 60 秒 Timer 后再等待 post-frame callback，渲染暂停时不保证仍按墙钟每 60 秒请求。`core/hub.go:544–558` 每轮扫描活动连接，但 requestSeen 会去重，只发送新增 ID，不能写成“每轮全量 IPC 发送”。UI 隐藏且保持连接时活跃标记可能维持 true；`lib/clash/service.dart:1009–1014` 的 detach 和 `services/agent/src/runtime.rs:1368–1369` 的会话退出已有 false 路径，不能写成“Core 永远 true”。TUN/托盘状态一致性有必要的后台消费者，不能一律停止。
+
 **修复 TODO**：
 
 - [ ] 统一实际可见、最小化、应用生命周期、当前页面与数据订阅者的活跃信号。
 - [ ] 非必要连接快照、解码、tracker 更新在后台暂停/合理降频；Core 的 UI 事件生成由有效消费者驱动。
+- [ ] 按消费者分别核对 TUN 3 秒观察、流量 3 秒周期、运行时 1 秒 Timer、组刷新 60 秒加 post-frame 的必要性；保留托盘状态、后台代理和诊断所需更新。
 - [ ] 显示/恢复时及时补最新数据；诊断记录等合法后台消费者单独计入，避免误停。
 - [ ] 仅约束 UI 采集，保持代理/TUN 转发、已确认后台运行与手动停止语义。
 
@@ -271,9 +282,9 @@
 
 ## 5. P2：原生资源、日志与平台失败路径
 
-### F11：Windows 普通系统代理错误路径泄漏且恒报成功
+### F11：Windows 普通系统代理失败路径与 Unicode 排除域名编码
 
-**状态**：OPEN。**平台**：Windows C++ proxy 插件。**证据**：源码确认；非当前机器动态复现。
+**状态**：OPEN。**平台**：Windows C++ proxy 插件。**证据**：A/B 为源码确认；C 已用原表达式隔离复现，未动态更改真实系统代理。
 
 **位置**：`plugins/proxy/windows/proxy_plugin.cpp:34,46,50,66,81–96,107,115,130–141,214–225`；Dart 调用/错误处理 `lib/manager/proxy_manager.dart:27–45`。
 
@@ -281,18 +292,26 @@
 
 **子问题 B**：InternetSetOption 返回值被忽略，RAS 提前返回还跳过广播刷新；普通 StartProxy/StopProxy wrapper 无论结果都 Success(true)，界面无法区分全部/部分失败。PAC 分支已有错误传播，不能回退它。
 
+**子问题 C（本次补充）**：`proxy_plugin.cpp:43` 直接用 `std::wstring(std::string.begin(), end())` 逐字节扩宽，未按 UTF-8 解码。排除列表允许 Unicode：`lib/views/config/network.dart:338–348` → `lib/widgets/input.dart:207–240,497–509,559–570` → `lib/providers/state.dart:156–175` → `lib/manager/proxy_manager.dart:37–43` → `plugins/proxy/lib/proxy_method_channel.dart:19–23`，没有提前转 ASCII/Punycode。Flutter MethodChannel 向 C++ std::string 交付 UTF-8，Windows 插件以 Unicode API 使用该损坏结果。该项是配置正确性缺陷，独立于 heap 泄漏。
+
+**C 的隔离证据**：真实 Flutter EncodableValue 加源码第 43 行原表达式，4 项检查中 ASCII/Punycode 2 PASS，`例子.测试`、`*.例子.测试` 2 个目标 FAIL，exit 1。Unicode 正确 UTF-16 应为 `4F8B 5B50 002E 6D4B 8BD5`，实际出现 `FFE4 FFBE FF8B ...`；CP_UTF8 对照正确。未运行 InternetSetOption、RAS 或实际 IDN bypass 匹配，不能宣称本机已观察到错误路由。SetPac 在同文件 153–158 行已有严格 UTF-8 转换范例。
+
 **修复 TODO**：
 
 - [ ] 用字符串自身存储、栈数组或 RAII 管理原生内存，覆盖每个早退/异常路径。
 - [ ] 检查每个 Windows API 返回值，按 API 契约记录错误码/阶段，向 Dart 传播失败。
 - [ ] 定义部分应用后失败的清理、必要通知与重试语义，不能让 UI 假成功或残留错误系统代理。
 - [ ] 保持 PAC 行为与普通代理设置兼容；不能只改一个 Start/Stop 分支。
+- [ ] 排除项执行严格 UTF-8 → UTF-16 转换，转换失败向 Dart 传播；复用/统一现有 SetPac 编码方式，避免逐字节扩宽。
+- [ ] 明确普通域名、IDN/Punycode、通配符、`<local>` 等排除项的规范化与匹配合同，保留现有模式语义；是否需 ASCII IDN 标签依据 WinINet 验证决定。
 
 **验收 TODO**：
 
 - [ ] 通过可控原生边界模拟第一次/重试 RAS 失败、普通连接及拨号连接设置失败、通知失败；重复循环无分配单调增长。
 - [ ] Start/Stop 成功返回成功，失败传到 UI，部分失败可正确重试；检查实际系统设置与展示一致。
 - [ ] 实际更改系统代理仅在获准隔离环境执行，不把小块 heap 问题等同于旧托盘 USER 泄漏。
+- [ ] 对 ASCII、Punycode、Unicode 域名/通配符、非法编码与分号列表做编码回归；原 2 个 Unicode 失败断言应转绿，ASCII 行为保持。
+- [ ] 在获准隔离环境验证 WinINet 实际设置值与 IDN/通配符匹配结果；参数正确不能直接替代网络匹配验收。
 
 ### F12：日志文件数量、跨日与删除范围不完整
 
@@ -382,16 +401,82 @@
 - [ ] Android 模拟/实机验证 JNI 引用及服务对象收敛，检测重复释放和数据竞争。
 - [ ] 不把此项写成 Windows 内存原因；没有 Android 证据前保持实机验收未完成。
 
+### F16：Windows 托盘菜单按全桌面类名查找，缺少所有权与生命周期校验
+
+**状态**：OPEN，P2。**平台**：Windows 托盘。**证据**：当前源码与生产调用链确认；未操作真实外部应用菜单。
+
+**位置**：`lib/manager/tray_manager.dart:34–50,53–91,152–170`；`lib/common/windows.dart:134–155`；`plugins/tray_manager/windows/tray_manager_plugin.cpp:211–219,417–424`；`plugins/tray_manager/lib/src/tray_manager.dart:53–73,270–275`；挂载入口 `lib/application.dart:88–98`。
+
+**子问题 A：目标不属于本进程也会尝试关闭/改主题**。`FindWindow('#32768', nullptr)` 在桌面查找第一个菜单窗口，没有 PID、线程或本次 popup 校验。左键托盘事件触发 `_closeWindowsPopupMenu` 并发出 WM_CLOSE；当前原生 TPM_RETURNCMD 菜单返回选中 ID 后，Dart `_dispatchMenuClick` 仍触发同一关闭函数。每 100ms 的主题监视也只检查非零/可见后调用 SetWindowTheme。此前 HMENU 资源修复没有移除这些入口。
+
+**子问题 B：监视启动时机错误**。`_openContextMenu` 等待 popUpContextMenu 返回后才启动监视；当前原生 TrackPopupMenu 已结束，自己的 popup 已关闭，此时全局查找可命中其他菜单。监视也可能跟随外部菜单存续，而非绑定自己的展示周期。
+
+**边界**：确认的是会选错对象并尝试操作；最终是否关闭/变主题取决于消息处理、UIPI 权限和时序。并非所有应用菜单都使用 #32768，正常外部点击本来就可能关闭菜单，不能仅凭菜单消失归因。本轮没有证明它造成 Explorer 崩溃或永久 USER 泄漏。
+
+**修复 TODO**：
+
+- [ ] 将关闭/主题处理收敛到原生端受管 popup 的 owner、创建线程和展示生命周期，移除全桌面按类名查找后操作的方式。
+- [ ] 若暂保留句柄调用，至少验证 PID、创建线程、本次 popup 身份及有效性；外部、陈旧或复用句柄不得操作，仅 PID 相同也不能代替 popup 所有权。
+- [ ] 主题在正确的菜单创建/显示阶段应用，结束后停止监视；不要在 TrackPopupMenu 已返回后全局寻找新菜单。
+- [ ] 覆盖左键托盘、菜单项回调和右键展示三个入口；保持此前多级菜单、选中快照与展示期间资源保护。
+- [ ] popup 结束、错误、owner 销毁与组件 dispose 都释放监视器，避免额外 100ms 轮询跟随外部窗口。
+
+**验收 TODO**：
+
+- [ ] 隔离 Win32/API 替身覆盖 own/foreign/no-menu/stale/reused HWND，外部目标的关闭/主题调用必须为零。
+- [ ] 验证菜单选择与取消返回后不启动错位监视，dispose/错误后无残留 Timer。
+- [ ] 隔离桌面/VM 验证自己多级菜单、同时存在的外部菜单及不同权限边界，区分 Windows 自然关闭与本应用消息造成的效果。
+- [ ] 复跑此前托盘资源回归，确认 USER/GDI 和菜单项回调没有回退；不在当前用户其他应用上发送测试 WM_CLOSE。
+
+### F17：PNG 编码失败会跳过 ui.Image 的显式释放
+
+**状态**：OPEN，P2。**平台/范围**：Windows 进程图标的 Flutter 图像编码。**证据**：源码及本机 Flutter SDK/官方 API 契约确认；未动态注入编码失败。
+
+**位置**：`lib/common/process_icon.dart:172–182,267–286`，具体错误出口为 276 行，dispose 位于 277 行；本机 SDK `E:\flutter\bin\cache\pkg\sky_engine\lib\ui\painting.dart:2057–2065,2104–2112`。
+
+**问题/触发**：`Image.toByteData` 合同允许编码失败时 Future 以错误完成。若 await image.toByteData 抛错，后续 image.dispose 被跳过；外层 finally 只释放 Win32/FFI 资源，`_loadWindowsIcon` 将异常降级为 null，也不会补偿释放 ui.Image。
+
+**性质与边界**：已创建图像的异常路径遗漏显式 dispose，资源回收时机失控；这不是 HDC/位图没有 finally，也不能据此宣称已测得永久无限内存或 GDI 增长。它是核查外部第 6 项时新发现的独立问题，与 P02 的正常路径持有时间优化分开跟踪。
+
+**修复 TODO**：
+
+- [ ] 对取得的 ui.Image 建立独立 try/finally/等价所有权，成功、null 与编码异常都 dispose 恰好一次。
+- [ ] 保持现有 Win32/FFI 成对释放，不能为修 Flutter 图像资源而移除底层 finally。
+- [ ] 编码失败返回约定降级结果，同时后续串行图标任务可继续处理；错误记录按既有日志/脱敏模式。
+- [ ] 检查解码错误/回调不返回的恢复策略并补证据；目前只作为待验证健壮性边界，不将其标成已动态复现的队列死锁。
+
+**验收 TODO**：
+
+- [ ] 隔离注入编码成功、返回 null、Future 报错，验证 ui.Image 的释放次数均为一次，无 double-dispose。
+- [ ] 编码失败后后续不同图标仍能提取；Win32 资源最终释放，缓存仍保持已有上限。
+- [ ] 分别记录 Flutter 引擎图像资源与 GDI 指标，未做压力采样前不填写资源增长数量或事故因果。
+
 ## 6. 单列优化候选
 
 ### P01：对比 UI 进程 NORMAL 与 HIGH 优先级
 
 **状态**：待测量，P3。**位置**：`windows/runner/main.cpp:16` 的 HIGH_PRIORITY_CLASS。
 
+**外部报告核验**：设置事实存在，本机只读采样亦见 FlClashX 为 High、BasePriority=13。微软文档警告高优先级 CPU 密集工作可能抢占低优先级线程，值得测量；调度还取决于线程相对/动态优先级、ready 状态和 CPU 负载。没有调度跟踪或对照实验证明其导致本次 Explorer 崩溃、任务栏卡死或输入法故障，不能直接升级为已确认 P0。外部报告把 DWM/输入相关进程一概称为 8–10 也不准确：2026-10-09 本轮采样 dwm/ctfmon 均为 BasePriority=13。上述只读进程快照不等于所有线程动态优先级或饥饿证明。
+
 - [ ] 同机器、同包源码、同配置分别测 NORMAL/HIGH，固定前台、后台和 CPU 竞争场景。
 - [ ] 记录 UI 帧耗时、Core 吞吐、桌面/任务栏交互延迟、CPU 与工作集，避免用单个瞬时值决定。
 - [ ] 根据数据决定是否改优先级并记录取舍；没有收益证据时不以“优化”名义直接修改。
 - [ ] 不宣称该设置已被证实导致开始菜单失灵，不保证修改优先级会降低 CPU 或内存。
+
+### P02：缩短图标原生资源持有范围并测量提取队列
+
+**状态**：源码确认的资源持有时间优化，P3；持续泄漏/事故因果未证实。**位置**：`lib/common/process_icon.dart:13–33,167–207,211–286`。
+
+**事实**：239 行取得 HDC，240–251 行 GetDIBits 已读取并复制像素；HDC/HBITMAP/FFI buffer 仍留到 275/276 两次 await 后的 finally，HICON 在外层 finally 释放。正常结束或编码异常均有 Win32 释放路径。当前 `_extractQueue` 串行等待完整提取/编码，同一 UI isolate 最多一组正在提取的原生图标资源；LRU 缓存上限为 64，因此不能从“列表很多进程”直接推断同时占用大量 DC。
+
+**官方契约边界**：GetDC/ReleaseDC 要求同一线程、common DC 用后释放，Common Display Device Contexts 建议尽快释放；官方文档没有外部报告所称的“严禁跨消息循环”原文，await 本身也不能证明发生跨 OS 线程释放。源码未把此 HDC 交给其他 isolate/thread。F17 针对另外一类 Flutter 图像显式释放缺口。
+
+- [ ] 复制完 BGRA 后，在进入异步解码/编码前结束原生提取作用域，释放 HDC/HBITMAP/原始 buffer/HICON；保证失败路径成对释放且无双重释放。
+- [ ] 延迟解码/编码的隔离验证中观测原生资源已释放；正常图标、透明度处理与 PNG 内容不回退。
+- [ ] 连续不同图标压力测试记录 USER/GDI、原生内存和持有时长，核对单个 isolate 串行保证与所有调用面。
+- [ ] 单独测量待提取队列长度、缓存淘汰后仍运行的任务；64 项 LRU 不等于排队上限。是否增加队列预算/取消依测量决定，未把该候选夸大成已复现无界 GDI 泄漏。
+- [ ] 保留有界缓存与串行提取，不用扩大并发来掩盖慢编码，收益与残余风险记录到 V04。
 
 ## 7. 待执行的性能与恢复验收
 
@@ -419,6 +504,7 @@
 
 - [ ] 在固定循环次数/长时窗口记录 USER/GDI、句柄、线程、子进程、内存、Timer，不出现随循环单调增长。
 - [ ] 覆盖菜单重建、菜单显示期间刷新/销毁、窗口隐藏恢复、连接页切换、失败后重试。
+- [ ] 覆盖 F16 外部菜单所有权与结束后的监视收拢，以及 F17/P02 图标编码失败、缓慢编码与原生资源持有时长。
 - [ ] 结合 H01 托盘旧问题复验；新缺陷与旧已修回归分别记录，保留原包与原证据。
 
 ### V05：慢消费者、停止失败与 Android Binder 迟返
@@ -472,8 +558,11 @@
 | T05 | F05 | raw/semantic 校验对照 | 观察性探针 exit 0；raw 通过，semantic 拒绝不存在组 |
 | T06 | F10 | 排队超出声明 timeout 的行为 | 观察性测试 1 PASS；等待 1,000 goroutine，释放槽后排空 |
 | T07 | F01 | 真实 router 有/无 secret | 观察性测试 1 PASS；匿名 200/401 对照 |
+| T08 | F11-C | UTF-8 排除项到 UTF-16 参数的保真 | C++ 表达式隔离 probe：2 PASS / 2 目标 FAIL，exit 1；未改系统代理 |
 
 **解释**：四个 Flutter FAIL 是缺陷复现，不能写成修复成功；Go PASS 仅表示观察探针证实描述的行为，不能替代修复后的保护性断言。
+
+T08 为本次外部报告复核新增证据，使用实际 Flutter EncodableValue、原 C++ 转换表达式和独立 UTF-16 期望值；不等同于执行完整插件或 WinINet 匹配。g++ 16.1.0 构建成功，主代理重跑 166ms，2 个 ASCII/Punycode 检查通过、2 个 Unicode 检查因目标缺陷失败，0 SKIP。源代码、命令、完整边界见 [补充核验记录](evidence/external-review-verification-2026-10-09.md)；F16/F17/P02 仍为源码/契约证据，没有宣称动态跨进程或图像编码故障测试已运行。
 
 Flutter 最终合并重跑：0 PASS / 4 FAIL / 0 SKIP，exit 1，6.665 秒。
 
@@ -521,7 +610,7 @@ go test '-modfile=.generated/go.mod' '-overlay=C:\Users\冯飏\Documents\Codex\2
 以下作为审查边界保存，不删除也不转为已证实缺陷：
 
 - 托盘旧 RemoveMenu/HMENU 问题已有修复，见 H01；新的普通代理 RAS 小块 heap 泄漏不能与其混为一谈。
-- 进程图标缓存已有 BoundedCache 上限，HICON/HBITMAP/HDC 释放路径已检查；图片缓存已有数量/内存上限；Agent replay journal 有 128 条上限。
+- 进程图标缓存已有 BoundedCache 上限，HICON/HBITMAP/HDC 的 Win32 finally 释放路径仍成立；异步持有时间见 P02，Flutter ui.Image 编码异常释放见 F17，不能把这两类问题混为 Win32 句柄永久泄漏。图片缓存已有数量/内存上限；Agent replay journal 有 128 条上限。
 - Dart 日志内存队列已有 2,048 条/单条 16Ki 字符保护；Rust 日志队列 256 条、单条 16Ki 字符，文件 8MiB 加三个轮转文件。F12/F14 针对其他缺口。
 - QuickJS runtime 已通过 try/finally dispose，不能重复报告旧的未释放问题。
 - ConnectionFlag 的缓存候选没有找到实际实例化调用点，本轮不认定为运行泄漏；将来接入时应重新评估。
@@ -532,7 +621,7 @@ go test '-modfile=.generated/go.mod' '-overlay=C:\Users\冯飏\Documents\Codex\2
 
 ## 11. 执行顺序与关闭标准
 
-建议顺序：F01–F05 → F06–F10 → F11–F15；P01 依赖测量，V01–V05 随对应修复批次执行；H01/S01 保持独立状态。
+建议顺序：F01–F05 → F06–F10 → F11–F17；P01/P02 依赖测量，V01–V05 随对应修复批次执行；H01/S01 保持独立状态。
 
 每项完成时在对应章节追加以下记录，未满足的验收框保持未勾选：
 
