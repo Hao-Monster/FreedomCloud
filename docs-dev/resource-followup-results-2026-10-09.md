@@ -75,8 +75,9 @@ Core statement coverage 为 package42.9%、完整profile40.5%；新增 forwarder
 
 ## 源码、构建与后续验收
 
-- 本轮由主负责人在唯一 development 分支进行本地提交；不创建新开发分支，不推送、不创建或合并PR、不发布。
-- 完整 Windows 预览在源码提交后使用精确 Git archive 构建，重编 Core、Agent、Helper、UI 与原生插件；Helper/Core hash 和 UI编译定义必须匹配。构建结果、产物hash与独立产物审查另附后续记录，不将本报告的隔离 Core WIP 作为可运行整包。
+- 本轮源码已保存为唯一 development 分支的本地提交 `485abf4d2e8664b8e03fb17ed63add2a3b2359c8`（`fix: bound residual resource lifecycles`）；本节及构建证据以后续文档提交保存，不改变包对应的源码。不创建新开发分支，不推送、不创建或合并PR、不发布。
+- 精确 Git archive 完整重编 Core、Agent、Helper、UI 与原生插件，Windows 构建 exit0；独立静态产物审查8组PASS，Helper/Core hash和UI编译定义匹配。完整步骤、已知VS发现限制及组件来源见 [构建与交付证据](evidence/resource-followup-build-2026-10-09.md)。
+- [Windows免安装包](../dist/FreedomCloud-windows-amd64-resourcefix-485abf4d2e86.zip) 152,994,092 bytes，73文件；[校验文件](../dist/FreedomCloud-windows-amd64-resourcefix-485abf4d2e86.zip.sha256)，SHA256 `050695fe6ad62e64f4efcb4985fd9c65f75cbf4b61b9276820087a66a1f318c5`。dist和聊天outputs副本重新计算hash一致，旧包保留；本报告此前的隔离Core WIP不作为交付整包。
 - 当前运行版本没有被替换。真实SCM/SYSTEM退出、Win32压力、窗口/导航、长时RSS/USER/GDI/句柄曲线和其他平台实机：**NOT RUN**。
 - 同步Win32系统调用若永不返回，本轮不能强杀；唯一执行槽仍被占用，从而不再并发扩大任务。真正强制取消需要进程隔离，不纳入此次修复。
 - 运行新预览前保留完整旧包和配置；免安装包仍共享用户配置，启动具有代理/TUN副作用。由用户安排完整退出与切换，回退使用完整匹配的旧包，不混用单独Core或Helper，不删除用户数据。

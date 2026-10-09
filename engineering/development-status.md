@@ -8,7 +8,9 @@
 - 三项均有有效Red→Green；交叉审查补充修复既有UNC/rooted图标key碰撞并加强失效快照消息与活动监听释放断言。汇总及三个模块证据见 `docs-dev/resource-followup-results-2026-10-09.md`。没有改变日志级别、进程优先级、Mihomo固定版本、购买或代理/TUN产品行为，没有新生产依赖。
 - 最终完整Flutter 476 PASS/0 FAIL/0 SKIP；图标目标22项；Helper service48/default45项；Core普通90/with_gvisor90项、health/config/controller race22项、overlay合同race14项全部通过。Dart定向analyze 0error/0warning/22info，service clippy通过；额外default clippy保留未修改process_stop.rs:39的既有dead_code错误。
 - 本轮Dart文本diff可执行行173/271（63.84%）、分支74/96（77.08%），含整页包装缩进；新队列与activity scope在LCOV中的行/分支100%。真实ConnectionsView整页/Win32平台入口未覆盖。Core package statement42.9%，Rust未采集coverage，范围和缺口已披露。
-- 三模块非作者复核无剩余本轮源码阻塞。当前客户端/服务/网络保持不动，真实SCM/SYSTEM、窗口/导航、长时资源及其他平台验收NOT RUN。源码本地提交后完整构建并记录配套Windows预览；不推送、不合并、不发布，后续构建/提交/hash另行追加。
+- 三模块非作者复核无剩余本轮源码阻塞。源码已保存为本地提交 `485abf4d2e8664b8e03fb17ed63add2a3b2359c8`（`fix: bound residual resource lifecycles`）；当前客户端/服务/网络保持不动，真实SCM/SYSTEM、窗口/导航、长时资源及其他平台验收NOT RUN。不推送、不合并、不发布。
+- 从485abf4的精确Git archive完整重编Core/Agent/Helper/UI/原生插件，Windows构建exit0；新普通未签名包 `dist/FreedomCloud-windows-amd64-resourcefix-485abf4d2e86.zip`，152,994,092 bytes，SHA256 `050695fe6ad62e64f4efcb4985fd9c65f75cbf4b61b9276820087a66a1f318c5`。dist及聊天outputs副本/hash一致，旧包未覆盖；构建与交付见 `docs-dev/evidence/resource-followup-build-2026-10-09.md`。
+- 独立产物审查8组PASS：73文件/72内部校验、931源blob、32组件、14插件/111输入、Helper/Core绑定、UI编译定义及1015有效overlay文件一致。唯一x86为既有EnableLoopback，其他29个PE为x64；运行NOT RUN和配置共享/启动副作用声明保留。交付文档单独本地提交，未运行候选版本，未把静态审查认定为长期无泄漏。
 
 ## 性能、资源与可靠性17项修复（2026-10-09）
 
