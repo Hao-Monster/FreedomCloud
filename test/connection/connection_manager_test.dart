@@ -1,10 +1,58 @@
 import 'dart:async';
 
+import 'package:fake_async/fake_async.dart';
 import 'package:flclashx/manager/connection_manager.dart';
 import 'package:flclashx/models/models.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  for (final failOld in [false, true]) {
+    test('in-flight stop/start resumes the current generation (error=$failOld)', () => fakeAsync((clock) {
+      final old = Completer<ConnectionSnapshot>();
+      var requests = 0;
+      final manager = ConnectionManager(
+        loadSnapshot: () => ++requests == 1 ? old.future : Future.value(_snapshot(uploadTotal: 99)),
+        diagnosticLog: (_) {},
+      );
+      manager.setViewVisible(visible: true);
+      manager.configure(running: true, refreshIntervalMs: 100);
+      clock.elapse(Duration.zero);
+      expect(requests, 1);
+      manager.configure(running: false, refreshIntervalMs: 100);
+      manager.configure(running: true, refreshIntervalMs: 100);
+      clock.elapse(Duration.zero);
+      expect(requests, 1);
+      if (failOld) {
+        old.completeError(StateError('old request failed'));
+      } else {
+        old.complete(_snapshot(uploadTotal: 7));
+      }
+      clock.flushMicrotasks();
+      expect(manager.uploadTotal, isNot(7));
+      clock.elapse(const Duration(milliseconds: 101));
+      final count = requests;
+      final total = manager.uploadTotal;
+      manager.dispose();
+      expect(count, greaterThan(1));
+      expect(total, 99);
+    }));
+  }
+
+  test('stop or dispose after queued refresh cannot resurrect polling', () => fakeAsync((clock) {
+    final old = Completer<ConnectionSnapshot>();
+    var requests = 0;
+    final manager = ConnectionManager(loadSnapshot: () { requests++; return old.future; }, diagnosticLog: (_) {});
+    manager.setViewVisible(visible: true);
+    manager.configure(running: true, refreshIntervalMs: 100);
+    clock.elapse(Duration.zero);
+    unawaited(manager.refresh());
+    manager.configure(running: false, refreshIntervalMs: 100);
+    old.complete(_snapshot());
+    clock.elapse(const Duration(seconds: 1));
+    expect(requests, 1);
+    manager.dispose();
+  }));
+
   test('never overlaps a slow snapshot request', () async {
     final requests = <Completer<ConnectionSnapshot>>[];
     final manager = ConnectionManager(

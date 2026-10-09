@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flclashx/clash/agent_protocol.dart';
 import 'package:flclashx/clash/service.dart';
 import 'package:flclashx/common/common.dart';
+import 'package:flclashx/common/ui_activity.dart';
 import 'package:flclashx/enum/enum.dart';
 import 'package:flclashx/manager/connection_manager.dart';
 import 'package:flclashx/models/models.dart';
@@ -74,7 +75,7 @@ class _ConnectionsViewState extends ConsumerState<ConnectionsView>
   @override
   void initState() {
     super.initState();
-    window?.visible.addListener(_syncManagerVisibility);
+    uiActivity.addListener(_syncManagerVisibility);
     final service = clashService;
     if (service != null) {
       // Keep the page honest about strict capture readiness.  The service
@@ -118,7 +119,7 @@ class _ConnectionsViewState extends ConsumerState<ConnectionsView>
   void dispose() {
     unawaited(_strictPolicySubscription?.cancel());
     _strictPolicySubscription = null;
-    window?.visible.removeListener(_syncManagerVisibility);
+    uiActivity.removeListener(_syncManagerVisibility);
     _isCurrentPage = false;
     _syncManagerVisibility();
     connectionDiagnostics.log(
@@ -133,7 +134,7 @@ class _ConnectionsViewState extends ConsumerState<ConnectionsView>
 
   void _syncManagerVisibility() {
     connectionManager.setViewVisible(
-      visible: _isCurrentPage && (window?.visible.value ?? true),
+      visible: _isCurrentPage && uiActivity.value,
     );
   }
 

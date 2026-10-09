@@ -1,4 +1,6 @@
 pub mod broker;
+#[path = "../../../shared/core_output.rs"]
+mod core_output;
 pub mod identity;
 #[cfg(target_os = "windows")]
 pub mod driver_bridge;

@@ -15,6 +15,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:tray_manager/tray_manager.dart' as native_tray;
 
 const initialTrayState = TrayState(
   mode: Mode.rule,
@@ -93,6 +94,41 @@ void main() {
 
   tearDown(() {
     binding.defaultBinaryMessenger.setMockMethodCallHandler(channel, null);
+  });
+
+  testWidgets('popup cancellation leaves no monitor and permits another open',
+      (tester) async {
+    var popups = 0;
+    final entered = Completer<void>();
+    final release = Completer<int>();
+    binding.defaultBinaryMessenger.setMockMethodCallHandler(channel,
+        (call) async {
+      if (call.method == 'popUpContextMenu') {
+        popups++;
+        if (popups == 1) {
+          entered.complete();
+          return release.future;
+        }
+        return 0;
+      }
+      return null;
+    });
+    await mountTrayManager(tester, TunRuntimeController());
+    final listener =
+        tester.state(find.byType(TrayManager)) as native_tray.TrayListener;
+    listener.onTrayIconRightMouseDown();
+    listener.onTrayIconRightMouseDown();
+    await tester.runAsync(() => entered.future);
+    expect(popups, 1);
+    release.complete(0);
+    await tester.pumpAndSettle();
+    expect(tester.binding.transientCallbackCount, 0);
+    listener.onTrayIconRightMouseDown();
+    await tester.pumpAndSettle();
+    expect(popups, 2);
+    await tester.pumpWidget(const SizedBox());
+    await tester.pump(const Duration(seconds: 1));
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('unchanged TUN observations do not rebuild the tray menu', (

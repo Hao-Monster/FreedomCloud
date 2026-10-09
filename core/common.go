@@ -4,6 +4,8 @@ import (
 	b "bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"os"
 	"runtime"
 	"sync"
@@ -19,8 +21,6 @@ import (
 	"github.com/metacubex/mihomo/config"
 	"github.com/metacubex/mihomo/constant"
 	cp "github.com/metacubex/mihomo/constant/provider"
-	"github.com/metacubex/mihomo/hub/executor"
-	"github.com/metacubex/mihomo/hub/route"
 	"github.com/metacubex/mihomo/listener"
 	LC "github.com/metacubex/mihomo/listener/config"
 	"github.com/metacubex/mihomo/log"
@@ -30,15 +30,15 @@ import (
 )
 
 var (
-	currentConfig     *config.Config
-	version           atomic.Int32
-	isRunning         = false
-	runLock           sync.Mutex
-	testDelaySem      = semaphore.NewWeighted(50)
-	proxyDescMu       sync.RWMutex
-	proxyDescriptions = map[string]string{}
-	pendingTunEnable      = false
-	currentTestURL        = "https://www.gstatic.com/generate_204"
+	currentConfig          *config.Config
+	version                atomic.Int32
+	isRunning              = false
+	runLock                contextMutex
+	testDelaySem           = semaphore.NewWeighted(50)
+	proxyDescMu            sync.RWMutex
+	proxyDescriptions      = map[string]string{}
+	pendingTunEnable       = false
+	currentTestURL         = "https://www.gstatic.com/generate_204"
 	minHealthCheckInterval = 5 * time.Second
 )
 
@@ -52,7 +52,9 @@ func (a ExternalProviders) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
 func proxiesWithProviders() map[string]constant.Proxy {
 	allProxies := make(map[string]constant.Proxy)
 	for name, proxy := range tunnel.Proxies() {
-		if _, internal := proxy.(*strictProxyRoute); internal { continue }
+		if _, internal := proxy.(*strictProxyRoute); internal {
+			continue
+		}
 		allProxies[name] = proxy
 	}
 	for _, p := range tunnel.Providers() {
@@ -322,6 +324,27 @@ func updateConfig(params *UpdateParams) error {
 	if currentConfig == nil {
 		return nil
 	}
+	if params == nil {
+		return errors.New("update parameters are required")
+	}
+	// Bind the authenticated controller before mutating other live settings.
+	if params.ExternalController != nil || params.ControllerEnabled != nil {
+		candidate := *currentConfig
+		controller := *currentConfig.Controller
+		if params.ExternalController != nil {
+			controller.ExternalController = *params.ExternalController
+		}
+		candidate.Controller = &controller
+		enabled := runtimeControllerEnabled
+		if params.ControllerEnabled != nil {
+			enabled = *params.ControllerEnabled
+		}
+		if err := recreateRuntimeController(effectiveControllerConfig(&candidate, enabled)); err != nil {
+			return err
+		}
+		currentConfig.Controller = &controller
+		runtimeControllerEnabled = enabled
+	}
 	general := currentConfig.General
 	if params.MixedPort != nil {
 		general.MixedPort = *params.MixedPort
@@ -358,16 +381,6 @@ func updateConfig(params *UpdateParams) error {
 		general.IPv6 = *params.IPv6
 		resolver.DisableIPv6 = !general.IPv6
 	}
-	if params.ExternalController != nil {
-		currentConfig.Controller.ExternalController = *params.ExternalController
-		if currentConfig.Controller.ExternalUI != "" {
-			route.SetUIPath(currentConfig.Controller.ExternalUI)
-		}
-		route.ReCreateServer(&route.Config{
-			Addr: currentConfig.Controller.ExternalController,
-		})
-	}
-
 	if params.Tun != nil {
 		general.Tun.Enable = params.Tun.Enable
 		pendingTunEnable = params.Tun.Enable
@@ -388,8 +401,8 @@ func updateConfig(params *UpdateParams) error {
 		}
 	}
 
-	updateListeners()
-	if err := restoreMacStrictIngressLocked(); err != nil {
+	refreshRuntimeListeners()
+	if err := restoreRuntimeStrictIngress(); err != nil {
 		return errors.New("macOS strict ingress could not be restored after configuration update")
 	}
 	return nil
@@ -398,56 +411,87 @@ func updateConfig(params *UpdateParams) error {
 func setupConfig(params *SetupParams) error {
 	runLock.Lock()
 	defer runLock.Unlock()
-	clearStrictIngressForConfigChangeLocked()
-	var err error
-
+	if params == nil || params.Config == nil {
+		return errors.New("configuration is required")
+	}
+	raw, err := json.Marshal(params.Config)
+	if err != nil {
+		return fmt.Errorf("serialize candidate configuration: %w", err)
+	}
+	parseStart := time.Now()
+	candidate, err := config.ParseRawConfig(params.Config)
+	if err != nil {
+		return err
+	}
+	log.Infoln("[Setup] ParseRawConfig took %s", time.Since(parseStart))
+	if activeStrictIngress != nil {
+		if _, _, err := buildStrictIngressListeners(&activeStrictIngress.request, candidate); err != nil {
+			return err
+		}
+	}
+	if macStrictIngressIntent != nil {
+		if _, _, err := buildStrictIngressListeners(macStrictIngressIntent, candidate); err != nil {
+			return err
+		}
+	}
+	controllerEnabled := true // setup preserves the complete profile controller configuration
+	if err := recreateRuntimeController(effectiveControllerConfig(candidate, controllerEnabled)); err != nil {
+		return err
+	}
+	previous, previousPending, previousControllerEnabled := currentConfig, pendingTunEnable, runtimeControllerEnabled
+	clearRuntimeStrictIngress()
+	currentConfig = candidate
+	candidatePending := candidate.General.Tun.Enable
+	if runtime.GOOS == "android" || !isRunning {
+		candidate.General.Tun.Enable = false
+	}
+	applyStart := time.Now()
+	applyRuntimeConfig(candidate, true)
+	log.Infoln("[Setup] executor.ApplyConfig took %s", time.Since(applyStart))
+	candidate.General.Tun.Enable = candidatePending
+	pendingTunEnable = candidatePending
+	selectRuntimeGroups(params.SelectedMap)
+	refreshRuntimeListeners()
+	if restoreErr := restoreRuntimeStrictIngress(); restoreErr != nil {
+		clearRuntimeStrictIngress()
+		currentConfig, pendingTunEnable = previous, previousPending
+		if previous == nil {
+			// This is rollback after an apply failure, never an invalid-input
+			// fallback. A dormant config releases candidate DNS/NTP/providers and
+			// proxy listeners even though there is no previous generation.
+			dormant, cleanupErr := config.ParseRawConfig(defaultCoreRawConfig())
+			if cleanupErr == nil {
+				applyRuntimeConfig(dormant, true)
+				cleanupErr = recreateRuntimeController(effectiveControllerConfig(dormant, false))
+			}
+			return errors.Join(fmt.Errorf("initial configuration strict ingress failed: %w", restoreErr), cleanupErr)
+		}
+		previousTun := previous.General.Tun.Enable
+		if runtime.GOOS == "android" || !isRunning {
+			previous.General.Tun.Enable = false
+		}
+		applyRuntimeConfig(previous, true)
+		previous.General.Tun.Enable = previousTun
+		controllerErr := recreateRuntimeController(effectiveControllerConfig(previous, previousControllerEnabled))
+		refreshRuntimeListeners()
+		strictErr := restoreRuntimeStrictIngress()
+		return errors.Join(fmt.Errorf("configuration strict ingress failed: %w", restoreErr), controllerErr, strictErr)
+	}
+	appliedRawConfig = raw
+	runtimeControllerEnabled = controllerEnabled
 	extractProxyDescriptionsFromRaw(params.Config)
 	computeMinHealthCheckInterval(params.Config)
 	resetHealthCheckForwarderState()
 	if params.TestURL != "" {
 		currentTestURL = params.TestURL
 	}
-
-	parseStart := time.Now()
-	appliedSource := params.Config
-	currentConfig, err = config.ParseRawConfig(params.Config)
-	if err != nil {
-		log.Errorln("[Config] ParseRawConfig failed, falling back to default: %v", err)
-		appliedSource = defaultCoreRawConfig()
-		currentConfig, _ = config.ParseRawConfig(appliedSource)
-	}
-	log.Infoln("[Setup] ParseRawConfig took %s", time.Since(parseStart))
-	pendingTunEnable = currentConfig.General.Tun.Enable
-	if runtime.GOOS == "android" || !isRunning {
-		currentConfig.General.Tun.Enable = false
-	}
-	applyStart := time.Now()
-	executor.ApplyConfig(currentConfig, true)
-	appliedRawConfig, _ = json.Marshal(appliedSource)
-	log.Infoln("[Setup] executor.ApplyConfig took %s", time.Since(applyStart))
-	go runtime.GC()
-	currentConfig.General.Tun.Enable = pendingTunEnable
-	// External-controller lifecycle is independent from TUN start/stop.
-	// Recreate API server during setup so it survives app restarts without
-	// requiring a manual UI toggle.
-	if currentConfig.Controller.ExternalUI != "" {
-		route.SetUIPath(currentConfig.Controller.ExternalUI)
-	}
-	route.ReCreateServer(&route.Config{
-		Addr: currentConfig.Controller.ExternalController,
-	})
-	patchSelectGroup(params.SelectedMap)
-	updateListeners()
-	if restoreErr := restoreMacStrictIngressLocked(); restoreErr != nil {
-		return errors.New("macOS strict ingress could not be restored after configuration reload")
-	}
+	cancelAllDelayTasks("configChanged")
 
 	// Kick off pings immediately so the UI shows latencies as soon as the
 	// profile loads, without waiting for the user to start TUN or for each
 	// provider's own healthcheck-interval to elapse. The forwarder is started
 	// here (not only on Start) and keeps running until shutdown.
-	runInitialProviderHealthChecks()
-	startHealthCheckForwarder()
+	startRuntimeHealthChecks()
 
 	// Notify Flutter that all providers are loaded
 	sendMessage(Message{
@@ -455,12 +499,18 @@ func setupConfig(params *SetupParams) error {
 		Data: "all",
 	})
 
-	return err
+	return nil
 }
 
 func UnmarshalJson(data []byte, v any) error {
 	decoder := json.NewDecoder(b.NewReader(data))
 	decoder.UseNumber()
-	err := decoder.Decode(v)
-	return err
+	if err := decoder.Decode(v); err != nil {
+		return err
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		return errors.New("configuration has trailing JSON data")
+	}
+	return nil
 }

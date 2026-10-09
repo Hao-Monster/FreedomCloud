@@ -222,6 +222,7 @@ func handleStopListener() bool {
 	runLock.Lock()
 	defer runLock.Unlock()
 	isRunning = false
+	cancelAllDelayTasks("cancelled")
 	// Keep health-check forwarder running so proxy pings stay fresh in the UI
 	// while the VPN is off. It is torn down only on full shutdown.
 	stopRequestForwarder()
@@ -243,6 +244,7 @@ func handleForceGc() {
 func handleShutdown() bool {
 	runLock.Lock()
 	defer runLock.Unlock()
+	cancelAllDelayTasks("sessionClosed")
 	stopHealthCheckForwarder()
 	stopRequestForwarder()
 	// Tear down the log subscription too: handleStartLog's subscription and pump
@@ -430,7 +432,7 @@ func handleSetUiActive(active bool) {
 	// we must still idempotently (re)arm the request forwarder and flush current delays.
 	// startRequestForwarder/stopRequestForwarder are both no-ops when already in the
 	// target state, so re-running on a redundant call is cheap.
-	uiActive.Store(active)
+	wasActive := uiActive.Swap(active)
 	if active {
 		runLock.Lock()
 		running := isRunning
@@ -447,6 +449,9 @@ func handleSetUiActive(active bool) {
 		resetHealthCheckForwarderState()
 		go forwardHealthCheckDelays()
 	} else {
+		if wasActive {
+			cancelAllDelayTasks("uiInactive")
+		}
 		stopRequestForwarder()
 	}
 }
@@ -693,72 +698,6 @@ func handleGetTotalTraffic() string {
 
 func handleResetTraffic() {
 	statistic.DefaultManager.ResetStatistic()
-}
-
-func handleAsyncTestDelay(paramsString string, fn func(string)) {
-	// Async, capped at 50 concurrent tests. Replaces a process-wide batch.Batch
-	// whose result map was never drained (slow retention + dead cancel/err state);
-	// a plain weighted semaphore preserves the concurrency cap and the
-	// returns-immediately contract without retaining anything.
-	go func() {
-		_ = testDelaySem.Acquire(context.Background(), 1) // never errors with Background
-		defer testDelaySem.Release(1)
-
-		var params = &TestDelayParams{}
-		err := json.Unmarshal([]byte(paramsString), params)
-		if err != nil {
-			fn("")
-			return
-		}
-
-		expectedStatus, err := utils.NewUnsignedRanges[uint16]("")
-		if err != nil {
-			fn("")
-			return
-		}
-
-		ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond*time.Duration(params.Timeout))
-		defer cancel()
-
-		proxies := proxiesWithProviders()
-		proxy := proxies[params.ProxyName]
-
-		delayData := &Delay{
-			Name: params.ProxyName,
-		}
-
-		if proxy == nil {
-			delayData.Value = -1
-			data, _ := json.Marshal(delayData)
-			fn(string(data))
-			return
-		}
-
-		testUrl := "https://www.gstatic.com/generate_204"
-
-		if params.TestUrl != "" {
-			testUrl = params.TestUrl
-		}
-		delayData.Url = testUrl
-
-		delay, err := proxy.URLTest(ctx, testUrl, expectedStatus)
-		if err != nil || delay == 0 {
-			delayData.Value = -1
-			data, _ := json.Marshal(delayData)
-			fn(string(data))
-			return
-		}
-
-		delayData.Value = int32(delay)
-		data, _ := json.Marshal(delayData)
-		fn(string(data))
-
-		// Push delay update via message
-		sendMessage(Message{
-			Type: DelayMessage,
-			Data: delayData,
-		})
-	}()
 }
 
 func handleGetConnections() string {
@@ -1092,16 +1031,26 @@ func handleUpdateConfig(bytes []byte) string {
 	if err != nil {
 		return err.Error()
 	}
-	if err := updateConfig(params); err != nil { return err.Error() }
+	if err := updateConfig(params); err != nil {
+		return err.Error()
+	}
 	return ""
 }
 
 func handleSetupConfig(bytes []byte) string {
+	var envelope struct {
+		Config json.RawMessage `json:"config"`
+	}
+	if err := json.Unmarshal(bytes, &envelope); err != nil {
+		return err.Error()
+	}
+	if len(envelope.Config) == 0 || string(envelope.Config) == "null" {
+		return "configuration is required"
+	}
 	var params = defaultSetupParams()
 	err := UnmarshalJson(bytes, params)
 	if err != nil {
 		log.Errorln("unmarshalRawConfig error %v", err)
-		_ = setupConfig(defaultSetupParams())
 		return err.Error()
 	}
 	err = setupConfig(params)

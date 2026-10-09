@@ -186,6 +186,28 @@ Future<ImageProvider?> _loadWindowsIcon(String exePath) {
 // SHGetFileInfo(exe) -> HICON -> GetIconInfo -> GetDIBits(32bpp) -> BGRA pixels ->
 // ui.Image -> PNG bytes.
 Future<Uint8List?> _extractIconBytes(String exePath) async {
+  final pixels = _extractIconPixels(exePath);
+  if (pixels == null) return null;
+  // All Win32 resources have been released before asynchronous engine work.
+  final buffer = await ui.ImmutableBuffer.fromUint8List(pixels.bytes);
+  ui.ImageDescriptor? descriptor;
+  ui.Codec? codec;
+  try {
+    descriptor = ui.ImageDescriptor.raw(buffer,
+        width: pixels.width,
+        height: pixels.height,
+        pixelFormat: ui.PixelFormat.bgra8888);
+    codec = await descriptor.instantiateCodec();
+    final frame = await codec.getNextFrame();
+    return await encodeProcessIconImage(frame.image);
+  } finally {
+    codec?.dispose();
+    descriptor?.dispose();
+    buffer.dispose();
+  }
+}
+
+({Uint8List bytes, int width, int height})? _extractIconPixels(String exePath) {
   final pathPtr = exePath.toNativeUtf16();
   final shfi = calloc<SHFILEINFO>();
   var hIcon = 0;
@@ -200,7 +222,7 @@ Future<Uint8List?> _extractIconBytes(String exePath) async {
     if (res == 0) return null;
     hIcon = shfi.ref.hIcon;
     if (hIcon == 0) return null;
-    return await _hIconToPng(hIcon);
+    return _hIconToPixels(hIcon);
   } finally {
     if (hIcon != 0) DestroyIcon(hIcon);
     free(pathPtr);
@@ -208,7 +230,7 @@ Future<Uint8List?> _extractIconBytes(String exePath) async {
   }
 }
 
-Future<Uint8List?> _hIconToPng(int hIcon) async {
+({Uint8List bytes, int width, int height})? _hIconToPixels(int hIcon) {
   final iconInfo = calloc<ICONINFO>();
   final bmp = calloc<BITMAP>();
   final bi = calloc<BITMAPINFO>();
@@ -264,18 +286,7 @@ Future<Uint8List?> _hIconToPng(int hIcon) async {
       }
     }
 
-    final completer = Completer<ui.Image>();
-    ui.decodeImageFromPixels(
-      bgra,
-      w,
-      h,
-      ui.PixelFormat.bgra8888,
-      completer.complete,
-    );
-    final image = await completer.future;
-    final png = await image.toByteData(format: ui.ImageByteFormat.png);
-    image.dispose();
-    return png?.buffer.asUint8List();
+    return (bytes: bgra, width: w, height: h);
   } finally {
     if (hdc != 0) ReleaseDC(NULL, hdc);
     if (hbmColor != 0) DeleteObject(hbmColor);
@@ -284,5 +295,19 @@ Future<Uint8List?> _hIconToPng(int hIcon) async {
     free(iconInfo);
     free(bmp);
     free(bi);
+  }
+}
+
+@visibleForTesting
+Future<Uint8List?> encodeProcessIconImage(
+  ui.Image image, {
+  Future<ByteData?> Function(ui.Image)? encode,
+}) async {
+  try {
+    final png = await (encode?.call(image) ??
+        image.toByteData(format: ui.ImageByteFormat.png));
+    return png?.buffer.asUint8List(png.offsetInBytes, png.lengthInBytes);
+  } finally {
+    image.dispose();
   }
 }

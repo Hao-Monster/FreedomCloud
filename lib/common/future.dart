@@ -1,26 +1,19 @@
 import 'dart:async';
 import 'dart:ui';
 
-import 'package:flclashx/common/common.dart';
-
 extension CompleterExt<T> on Completer<T> {
-  Future<Object?> safeFuture({
+  Future<T> safeFuture({
     Duration? timeout,
     VoidCallback? onLast,
     FutureOr<T> Function()? onTimeout,
     required String functionName,
   }) {
     final realTimeout = timeout ?? const Duration(seconds: 30);
-    Timer(realTimeout + commonDuration, () {
-      if (onLast != null) {
-        onLast();
-      }
-    });
     return future.withTimeout(
       timeout: realTimeout,
       functionName: functionName,
       onTimeout: onTimeout,
-    );
+    ).whenComplete(() => onLast?.call());
   }
 }
 

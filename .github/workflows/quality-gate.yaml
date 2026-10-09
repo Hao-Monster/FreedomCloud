@@ -48,6 +48,8 @@ jobs:
           go test -modfile=.generated/go.mod -overlay=.generated/mihomo-overlay.json ./...
           go test -modfile=.generated/go.mod -overlay=.generated/mihomo-overlay.json -tags=with_gvisor ./...
           go test -modfile=.generated/go.mod -overlay=.generated/mihomo-overlay.json -race -run '^TestFCXTun' github.com/metacubex/mihomo/listener
+          go test -modfile=.generated/go.mod -overlay=.generated/mihomo-overlay.json -race -run '^TestFCXController' github.com/metacubex/mihomo/hub/route
+          go test -modfile=.generated/go.mod -overlay=.generated/mihomo-overlay.json -race -run '^TestFCXURLTest' github.com/metacubex/mihomo/adapter
 
   windows-runtime-tests:
     name: Windows Core and service tests
@@ -69,6 +71,10 @@ jobs:
           go test '-modfile=.generated/go.mod' '-overlay=.generated/mihomo-overlay.json' '-tags=with_gvisor' ./...
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           go test '-modfile=.generated/go.mod' '-overlay=.generated/mihomo-overlay.json' -run '^TestFCXTun' github.com/metacubex/mihomo/listener
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          go test '-modfile=.generated/go.mod' '-overlay=.generated/mihomo-overlay.json' -run '^TestFCXController' github.com/metacubex/mihomo/hub/route
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          go test '-modfile=.generated/go.mod' '-overlay=.generated/mihomo-overlay.json' -run '^TestFCXURLTest' github.com/metacubex/mihomo/adapter
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Test Agent and Helper contracts without installing services
         shell: pwsh

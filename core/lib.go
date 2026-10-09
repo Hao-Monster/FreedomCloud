@@ -29,7 +29,8 @@ func freeCString(s *C.char) {
 func (result ActionResult) send() {
 	data, err := result.Json()
 	if err != nil {
-		return
+		result.Code, result.Data = -1, "Core response encoding failed"
+		data, _ = result.Json()
 	}
 	invokeCallback(result.Callback, string(data))
 }

@@ -1,0 +1,170 @@
+package route
+
+import (
+    "context"
+    "errors"
+    "fmt"
+    "net"
+    "os"
+    "path/filepath"
+    "strings"
+    "sync"
+    "syscall"
+
+    "github.com/metacubex/http"
+    "github.com/metacubex/tls"
+    "github.com/metacubex/mihomo/adapter/inbound"
+    "github.com/metacubex/mihomo/component/ca"
+    "github.com/metacubex/mihomo/component/ech"
+    C "github.com/metacubex/mihomo/constant"
+    "github.com/metacubex/mihomo/log"
+    "github.com/metacubex/mihomo/ntp"
+)
+
+type fcxControllerEndpoint struct { server *http.Server; listener net.Listener }
+
+// http.Server.Close excludes hijacked WebSockets. Own accepted connections at
+// the listener boundary so a retired controller cannot keep authenticated
+// streams alive. TLS wraps this listener, preserving the server's TLS/HTTP2
+// detection while retaining ownership of each underlying connection.
+type fcxControllerListener struct {
+    net.Listener
+    mu sync.Mutex
+    closed bool
+    connections map[*fcxControllerConn]struct{}
+}
+type fcxControllerConn struct { net.Conn; owner *fcxControllerListener; once sync.Once }
+func (c *fcxControllerConn) Close() error {
+    var err error
+    c.once.Do(func(){err=c.Conn.Close();c.owner.mu.Lock();delete(c.owner.connections,c);c.owner.mu.Unlock()})
+    return err
+}
+func (l *fcxControllerListener) Accept()(net.Conn,error) {
+    connection,err:=l.Listener.Accept();if err!=nil {return nil,err}
+    tracked:=&fcxControllerConn{Conn:connection,owner:l}
+    l.mu.Lock()
+    if l.closed {l.mu.Unlock();_=connection.Close();return nil,net.ErrClosed}
+    l.connections[tracked]=struct{}{};l.mu.Unlock()
+    return tracked,nil
+}
+func (l *fcxControllerListener) Close() error {
+    l.mu.Lock()
+    if l.closed {l.mu.Unlock();return nil}
+    l.closed=true
+    connections:=make([]*fcxControllerConn,0,len(l.connections))
+    for connection:=range l.connections {connections=append(connections,connection)}
+    l.mu.Unlock()
+    err:=l.Listener.Close()
+    for _,connection:=range connections {_=connection.Close()}
+    return err
+}
+var fcxControllerMu sync.Mutex
+var fcxControllerConfig *Config
+var fcxControllerEndpoints []fcxControllerEndpoint
+
+// Replaced only by package tests; no real socket is created in lifecycle tests.
+var fcxControllerListen = func(network, address string, mark int) (net.Listener, error) {
+    if network == "pipe" { return inbound.ListenNamedPipe(address) }
+    if network == "unix" {
+        address = C.Path.Resolve(address)
+        if err := os.MkdirAll(filepath.Dir(address), 0755); err != nil { return nil, err }
+        // Never unlink an unrelated ordinary file configured as a socket path.
+        if info, err := os.Lstat(address); err == nil {
+            if info.Mode()&os.ModeSocket == 0 { return nil, errors.New("controller unix path is not a socket") }
+            if err := syscall.Unlink(address); err != nil { return nil, err }
+        } else if !os.IsNotExist(err) { return nil, err }
+        mark = 0
+    }
+    lc := inbound.NewListenConfig()
+    lc.SetRouteMark(mark)
+    listener, err := lc.Listen(context.Background(), network, address)
+    if err == nil && network == "unix" {
+        if chmodErr := os.Chmod(address, 0600); chmodErr != nil { _ = listener.Close(); return nil, chmodErr }
+    }
+    return listener, err
+}
+
+func fcxControllerTLS(cfg *Config) (*tls.Config, error) {
+    if cfg.TLSAddr == "" { return nil, nil }
+    loader, err := ca.NewTLSKeyPairLoader(cfg.Certificate, cfg.PrivateKey)
+    if err != nil { return nil, err }
+    result := &tls.Config{Time: ntp.Now, NextProtos: []string{"h2", "http/1.1"}}
+    result.GetCertificate = func(*tls.ClientHelloInfo) (*tls.Certificate, error) { return loader() }
+    result.ClientAuth = ca.ClientAuthTypeFromString(cfg.ClientAuthType)
+    if cfg.ClientAuthCert != "" && result.ClientAuth == tls.NoClientCert { result.ClientAuth = tls.RequireAndVerifyClientCert }
+    if result.ClientAuth == tls.VerifyClientCertIfGiven || result.ClientAuth == tls.RequireAndVerifyClientCert {
+        result.ClientCAs, err = ca.LoadCertificates(cfg.ClientAuthCert)
+        if err != nil { return nil, err }
+    }
+    if cfg.EchKey != "" { if err := ech.LoadECHKey(cfg.EchKey, result); err != nil { return nil, err } }
+    return result, nil
+}
+
+func fcxCloseController(endpoints []fcxControllerEndpoint) {
+    for _, endpoint := range endpoints { _ = endpoint.server.Close(); _ = endpoint.listener.Close() }
+}
+
+func fcxPrepareController(cfg *Config, tlsConfig *tls.Config) ([]fcxControllerEndpoint, error) {
+    endpoints := make([]fcxControllerEndpoint, 0, 4)
+    for _, endpoint := range []struct{ network, address string; tls bool }{
+        {"tcp", cfg.Addr, false}, {"tcp", cfg.TLSAddr, true}, {"unix", cfg.UnixAddr, false}, {"pipe", cfg.PipeAddr, false},
+    } {
+        if endpoint.address == "" { continue }
+        listener, err := fcxControllerListen(endpoint.network, endpoint.address, cfg.RoutingMark)
+        if err != nil { fcxCloseController(endpoints); return nil, fmt.Errorf("%s controller listener: %w", endpoint.network, err) }
+        listener = &fcxControllerListener{Listener:listener,connections:make(map[*fcxControllerConn]struct{})}
+        if endpoint.tls { listener = tls.NewListener(listener, tlsConfig) }
+        // Preserve the configured credential for every transport, including local sockets.
+        handler := router(cfg.IsDebug, cfg.Secret, cfg.DohServer, cfg.Cors)
+        endpoints = append(endpoints, fcxControllerEndpoint{&http.Server{Handler: handler}, listener})
+    }
+    return endpoints, nil
+}
+
+func fcxServeController(endpoints []fcxControllerEndpoint) {
+    for _, endpoint := range endpoints {
+        go func(endpoint fcxControllerEndpoint) {
+            if err := endpoint.server.Serve(endpoint.listener); err != nil && !errors.Is(err, http.ErrServerClosed) && !errors.Is(err, net.ErrClosed) {
+                log.Errorln("External controller serve failed: %v", err)
+            }
+        }(endpoint)
+    }
+}
+
+// ReCreateServerChecked serializes controller generations. Invalid TLS is
+// rejected before closing the old generation; a bind failure restores its full
+// credential-bearing configuration and reports any restoration failure.
+func ReCreateServerChecked(cfg *Config) error {
+    if cfg == nil { return errors.New("controller configuration is required") }
+    next := *cfg
+    if cfg.UIPath != nil { path := *cfg.UIPath; next.UIPath = &path }
+    next.Cors.AllowOrigins = append([]string(nil), cfg.Cors.AllowOrigins...)
+    if next.PipeAddr != "" && (!inbound.SupportNamedPipe || !strings.HasPrefix(next.PipeAddr, `\\.\pipe\`)) { return errors.New("unsupported controller pipe address") }
+    tlsConfig, err := fcxControllerTLS(&next)
+    if err != nil { return fmt.Errorf("controller TLS configuration: %w", err) }
+    fcxControllerMu.Lock()
+    defer fcxControllerMu.Unlock()
+    previous := fcxControllerConfig
+    previousUI := uiPath
+    if next.UIPath != nil {
+        uiPath = *next.UIPath
+        if uiPath != "" { uiPath = C.Path.Resolve(uiPath) }
+    }
+    fcxCloseController(fcxControllerEndpoints)
+    fcxControllerEndpoints = nil
+    endpoints, err := fcxPrepareController(&next, tlsConfig)
+    if err != nil {
+        uiPath = previousUI
+        if previous != nil {
+            previousTLS, restoreErr := fcxControllerTLS(previous)
+            if restoreErr == nil { fcxControllerEndpoints, restoreErr = fcxPrepareController(previous, previousTLS) }
+            if restoreErr != nil { fcxControllerConfig = nil; return errors.Join(err, fmt.Errorf("restore previous controller: %w", restoreErr)) }
+            fcxServeController(fcxControllerEndpoints)
+        }
+        return err
+    }
+    fcxControllerConfig = &next
+    fcxControllerEndpoints = endpoints
+    fcxServeController(endpoints)
+    return nil
+}

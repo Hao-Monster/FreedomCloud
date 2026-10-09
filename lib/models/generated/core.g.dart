@@ -318,6 +318,7 @@ const _$ActionMethodEnumMap = {
   ActionMethod.getTotalTraffic: 'getTotalTraffic',
   ActionMethod.resetTraffic: 'resetTraffic',
   ActionMethod.asyncTestDelay: 'asyncTestDelay',
+  ActionMethod.cancelTestDelay: 'cancelTestDelay',
   ActionMethod.getConnections: 'getConnections',
   ActionMethod.closeConnections: 'closeConnections',
   ActionMethod.resetConnections: 'resetConnections',

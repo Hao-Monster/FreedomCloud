@@ -317,8 +317,23 @@ fn start_core(start_params: StartParams, logger: Arc<ServiceLogger>) -> String {
     }
 }
 
-pub(crate) fn stop_process(logger: &Arc<ServiceLogger>) -> String {
-    stop_process_owned(logger, None)
+#[cfg(all(feature = "windows-service", target_os = "windows"))]
+pub(crate) fn stop_for_service(logger: &Arc<ServiceLogger>) -> Result<(), String> {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+    loop {
+        match PROCESS.try_lock() {
+            Ok(mut process) => {
+                let result = process.stop_for_service(deadline.saturating_duration_since(std::time::Instant::now()));
+                if let Err(error) = &result { logger.log(format!("service Core stop failed: {error}")); }
+                return result;
+            }
+            Err(std::sync::TryLockError::Poisoned(_)) => return Err("Core ownership lock is poisoned; exit unconfirmed".into()),
+            Err(std::sync::TryLockError::WouldBlock) if std::time::Instant::now() >= deadline => {
+                return Err("Core ownership is busy; service stop can be retried".into());
+            }
+            Err(std::sync::TryLockError::WouldBlock) => thread::sleep(std::time::Duration::from_millis(10)),
+        }
+    }
 }
 
 fn stop_process_owned(logger: &Arc<ServiceLogger>, owner: Option<&str>) -> String {
@@ -338,10 +353,11 @@ where
     R: Read + Send + 'static,
 {
     thread::spawn(move || {
-        let reader = io::BufReader::new(reader);
-        for line in reader.lines() {
-            match line {
-                Ok(output) => logger.log(format!("Core {channel}: {output}")),
+        let mut reader = io::BufReader::new(reader);
+        loop {
+            match read_core_output_line(&mut reader) {
+                Ok(None) => break,
+                Ok(Some(output)) => logger.log(format!("Core {channel}: {}", output.trim_end())),
                 Err(error) => {
                     logger.log(format!("Core {channel} read error: {error}"));
                     break;
@@ -349,6 +365,17 @@ where
             }
         }
     });
+}
+
+fn read_core_output_line<R: BufRead>(reader: &mut R) -> io::Result<Option<String>> {
+    let mut line = super::core_output::LogLine::new();
+    loop {
+        let available = reader.fill_buf()?;
+        if available.is_empty() { return Ok(line.finish()); }
+        let (consumed, finished) = line.consume(available);
+        reader.consume(consumed);
+        if finished { return Ok(line.finish()); }
+    }
 }
 
 fn stop(stop_params: StopParams, logger: Arc<ServiceLogger>) -> impl Reply {
@@ -618,6 +645,29 @@ mod tests {
     use std::fs;
     use std::path::Path;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn resource_core_output_line_is_bounded_and_keeps_next_line() {
+        let input = format!("{}\nnext\n", "z".repeat(1024 * 1024));
+        let mut reader = io::BufReader::with_capacity(29, input.as_bytes());
+        let first = read_core_output_line(&mut reader).unwrap().unwrap();
+        assert!(first.len() <= 16 * 1024 + 32, "unbounded Core log: {}", first.len());
+        assert!(first.contains("[truncated]"));
+        assert_eq!(read_core_output_line(&mut reader).unwrap().unwrap().trim_end(), "next");
+    }
+
+    #[test]
+    fn resource_core_output_utf8_eof_and_read_error_are_handled() {
+        let mut reader = io::BufReader::with_capacity(1, "日志🙂\r\nlast".as_bytes());
+        assert_eq!(read_core_output_line(&mut reader).unwrap().as_deref(), Some("日志🙂"));
+        assert_eq!(read_core_output_line(&mut reader).unwrap().as_deref(), Some("last"));
+        assert!(read_core_output_line(&mut reader).unwrap().is_none());
+        struct Broken;
+        impl Read for Broken {
+            fn read(&mut self, _buffer: &mut [u8]) -> io::Result<usize> { Err(io::Error::other("fixture read failure")) }
+        }
+        assert!(read_core_output_line(&mut io::BufReader::new(Broken)).is_err());
+    }
 
     #[tokio::test]
     async fn metadata_routes_report_exit_acknowledgement_and_keep_legacy_ping() {

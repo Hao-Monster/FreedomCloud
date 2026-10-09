@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, SyncSender, TrySendError};
 use std::sync::Arc;
 use std::thread;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const CHANNEL_CAPACITY: usize = 256;
 const MAX_LINE_CHARS: usize = 16 * 1024;
@@ -15,8 +15,10 @@ const LOG_FILE_NAME: &str = "FlClashHelperService.log";
 
 #[derive(Clone)]
 pub struct ServiceLogger {
-    sender: SyncSender<String>,
+    sender: SyncSender<LogMessage>,
 }
+
+enum LogMessage { Line(String), Flush(SyncSender<()>) }
 
 impl ServiceLogger {
     #[cfg(test)]
@@ -41,13 +43,19 @@ impl ServiceLogger {
 
     pub fn log(&self, message: impl AsRef<str>) {
         let line = sanitize(message.as_ref());
-        match self.sender.try_send(line) {
+        match self.sender.try_send(LogMessage::Line(line)) {
             Ok(()) | Err(TrySendError::Disconnected(_)) => {}
             Err(TrySendError::Full(_)) => {
                 // Keep service memory bounded even when Core is noisy or the
                 // filesystem is temporarily unavailable.
             }
         }
+    }
+
+    /// A stalled filesystem must not hang service shutdown.
+    pub fn flush(&self, limit: Duration) -> bool {
+        let (tx, rx) = mpsc::sync_channel(1);
+        self.sender.try_send(LogMessage::Flush(tx)).is_ok() && rx.recv_timeout(limit).is_ok()
     }
 }
 
@@ -75,12 +83,21 @@ fn sanitize(message: &str) -> String {
     output
 }
 
-fn run_writer(path: PathBuf, receiver: mpsc::Receiver<String>) {
+fn run_writer(path: PathBuf, receiver: mpsc::Receiver<LogMessage>) {
     if let Some(parent) = path.parent() {
         let _ = fs::create_dir_all(parent);
     }
     let mut file = open_file(&path);
     while let Ok(message) = receiver.recv() {
+        let message = match message {
+            LogMessage::Line(line) => line,
+            LogMessage::Flush(done) => {
+                if file.as_mut().is_some_and(|current| current.flush().is_ok()) {
+                    let _ = done.send(());
+                }
+                continue;
+            }
+        };
         let line = format!("[unix_ms={}] {message}\n", unix_millis());
         let should_rotate = file
             .as_ref()
@@ -130,4 +147,21 @@ fn unix_millis() -> u128 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |duration| duration.as_millis())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resource_log_flush_is_bounded_when_queue_is_full_or_closed() {
+        let (sender, receiver) = mpsc::sync_channel(1);
+        let logger = ServiceLogger { sender };
+        logger.log("fills queue");
+        let started = std::time::Instant::now();
+        assert!(!logger.flush(Duration::from_millis(25)));
+        assert!(started.elapsed() < Duration::from_secs(1));
+        drop(receiver);
+        assert!(!logger.flush(Duration::from_millis(25)));
+    }
 }

@@ -126,10 +126,11 @@ class ClashLib extends ClashHandlerInterface with AndroidClashInterface {
     unawaited(_init());
   }
 
-  void reconnectIfNeeded() {
+  Future<void> reconnectIfNeeded() async {
     // An init is already running (completer not yet settled); let it finish
     // rather than spawning a second concurrent native init.
     if (_initInFlight) {
+      await _initCompleter.future;
       return;
     }
     // Re-register on EVERY resume (no _initSucceeded short-circuit): the event pipe is
@@ -145,7 +146,7 @@ class ClashLib extends ClashHandlerInterface with AndroidClashInterface {
     }
     _crashCount = 0;
     if (_initCompleter.isCompleted) _initCompleter = Completer<bool>();
-    unawaited(_init());
+    await _init();
   }
 
   @override

@@ -29,6 +29,48 @@ const upstreamCommit = "88dcbf7f1614a67c3b36b848ee3592dfa92ada36"
 const upstreamModuleSum = "h1:uD7ZC3P77isWD554NNvtee65L+99+/C5hyc+Lk8rVEk="
 const listenerSHA256 = "1a11cda3fb4a87875d817fe29f1e79973cb8cb6eeccc0ae5e22db15df1277758"
 const configsSHA256 = "d11710296ea68a8d12f7593ec50cec9fef830272b3a54f64f707ec86920baf9f"
+const controllerSHA256 = "01724bd82002cf80b85448ef664ca53a7cb82f529ccf2b7f4a6383282768d256"
+const adapterSHA256 = "0a0524f342ff1672fdb94ad675d176d069b1f6e16ddfe462ece2f55b9e10212c"
+
+func patchController(source []byte) ([]byte, error) {
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "server.go", source, 0)
+	if err != nil {
+		return nil, err
+	}
+	names := map[string]bool{"ReCreateServer": true, "SetUIPath": true, "start": true, "startTLS": true, "startUnix": true, "startPipe": true}
+	var changes []replacement
+	for _, declaration := range file.Decls {
+		fn, ok := declaration.(*ast.FuncDecl)
+		if !ok || !names[fn.Name.Name] {
+			continue
+		}
+		replacementText := ""
+		if fn.Name.Name == "ReCreateServer" {
+			replacementText = `func ReCreateServer(cfg *Config) {
+				if err := ReCreateServerChecked(cfg); err != nil { log.Errorln("External controller: %v", err) }
+			}`
+		}
+		if fn.Name.Name == "SetUIPath" {
+			replacementText = `func SetUIPath(path string) { fcxControllerMu.Lock(); defer fcxControllerMu.Unlock(); uiPath = path; if path != "" { uiPath=C.Path.Resolve(path) } }`
+		}
+		changes = append(changes, replacement{fset.Position(fn.Pos()).Offset, fset.Position(fn.End()).Offset, replacementText})
+	}
+	if len(changes) != len(names) {
+		return nil, fmt.Errorf("upstream controller function set changed")
+	}
+	sort.Slice(changes, func(i, j int) bool { return changes[i].start > changes[j].start })
+	patched := string(source)
+	for _, change := range changes {
+		patched = patched[:change.start] + change.text + patched[change.end:]
+	}
+	patched = strings.Replace(patched, "type Config struct {", "type Config struct {\n\tUIPath *string // optional embedded-controller UI path", 1)
+	patched = strings.Replace(patched, "r.Mount(\"/debug\", func() http.Handler {\n\t\t\tr := chi.NewRouter()", "r.Mount(\"/debug\", func() http.Handler {\n\t\t\tr := chi.NewRouter()\n\t\t\tif secret != \"\" { r.Use(authentication(secret)) }", 1)
+	for _, name := range []string{"context", "os", "path/filepath", "syscall", "github.com/metacubex/mihomo/adapter/inbound", "github.com/metacubex/mihomo/component/ca", "github.com/metacubex/mihomo/component/ech", "github.com/metacubex/mihomo/ntp", "github.com/metacubex/tls"} {
+		patched = strings.Replace(patched, "\t\""+name+"\"\n", "", 1)
+	}
+	return format.Source([]byte(patched))
+}
 
 func main() {
 	out := flag.String("out", ".generated/mihomo-overlay.json", "generated overlay path")
@@ -146,6 +188,27 @@ func generate(out string) error {
 		return fmt.Errorf("upstream TUN route configuration access changed")
 	}
 	patchedConfigs := []byte(strings.Replace(string(configsSource), "listener.LastTunConf", "listener.GetTunConf()", 1))
+	controllerSource, err := checkedSource(filepath.Join(module.Dir, "hub", "route", "server.go"), controllerSHA256)
+	if err != nil {
+		return err
+	}
+	patchedController, err := patchController(controllerSource)
+	if err != nil {
+		return err
+	}
+	adapterSource, err := checkedSource(filepath.Join(module.Dir, "adapter", "adapter.go"), adapterSHA256)
+	if err != nil {
+		return err
+	}
+	adapterHistoryAnchor := "defer func() {\n\t\talive := err == nil"
+	if strings.Count(string(adapterSource), adapterHistoryAnchor) != 1 {
+		return fmt.Errorf("upstream URLTest history function changed")
+	}
+	adapterSource = []byte(strings.Replace(string(adapterSource), adapterHistoryAnchor, "defer func() {\n\t\trelease,commit:=fcxBeginURLTestHistory(ctx)\n\t\tif !commit { return }\n\t\tif release!=nil {defer release()}\n\t\talive := err == nil", 1))
+	adapterSource, err = format.Source(adapterSource)
+	if err != nil {
+		return err
+	}
 	out, err = filepath.Abs(out)
 	if err != nil {
 		return err
@@ -187,6 +250,38 @@ func generate(out string) error {
 	}
 	if err := write(configsPath, "configs.go", patchedConfigs); err != nil {
 		return err
+	}
+	if err := write(filepath.Join(sourceDirectory, "hub", "route", "server.go"), "server.go", patchedController); err != nil {
+		return err
+	}
+	if err := write(filepath.Join(sourceDirectory, "adapter", "adapter.go"), "adapter.go", adapterSource); err != nil {
+		return err
+	}
+	for _, name := range []string{"urltest_history_fcx.go", "urltest_history_fcx_test.go"} {
+		contents, err := patchFiles.ReadFile("patches/" + name + ".txt")
+		if err != nil {
+			return err
+		}
+		contents, err = format.Source(contents)
+		if err != nil {
+			return err
+		}
+		if err := write(filepath.Join(sourceDirectory, "adapter", name), name, contents); err != nil {
+			return err
+		}
+	}
+	for _, name := range []string{"controller_fcx.go", "controller_fcx_test.go"} {
+		contents, err := patchFiles.ReadFile("patches/" + name + ".txt")
+		if err != nil {
+			return err
+		}
+		contents, err = format.Source(contents)
+		if err != nil {
+			return err
+		}
+		if err := write(filepath.Join(sourceDirectory, "hub", "route", name), name, contents); err != nil {
+			return err
+		}
 	}
 	for _, name := range []string{"tun_status_fcx.go", "tun_status_fcx_test.go"} {
 		contents, err := patchFiles.ReadFile("patches/" + name + ".txt")
@@ -272,7 +367,7 @@ func generate(out string) error {
 	manifest, err := json.MarshalIndent(map[string]any{
 		"schemaVersion": 1, "module": "github.com/metacubex/mihomo", "version": upstreamVersion,
 		"commit": upstreamCommit, "moduleSum": module.Sum,
-		"upstreamSourceSHA256": map[string]string{"listener/listener.go": listenerSHA256, "hub/route/configs.go": configsSHA256},
+		"upstreamSourceSHA256": map[string]string{"listener/listener.go": listenerSHA256, "hub/route/configs.go": configsSHA256, "hub/route/server.go": controllerSHA256, "adapter/adapter.go": adapterSHA256},
 		"patchesSHA256":        patchHashes, "generatorSHA256": digest(generatorSource), "projectGoModSHA256": digest(rootMod),
 		"effectiveModuleSHA256": aggregateHashes(moduleHashes), "effectiveModuleFiles": moduleHashes,
 	}, "", "  ")

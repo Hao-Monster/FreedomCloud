@@ -1,9 +1,10 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:archive/archive.dart';
 import 'package:dio/dio.dart';
 import 'package:flclashx/common/print.dart';
+import 'package:flclashx/common/zashboard_archive.dart';
 import 'package:flclashx/state.dart';
 import 'package:path/path.dart' as p;
 
@@ -26,45 +27,135 @@ Future<bool> isZashboardUiReady() async {
 /// Downloads + extracts the zashboard bundle into the external-ui dir if it isn't
 /// there yet. The core serves that dir at /ui/ live, so files appear immediately.
 /// Returns true when index.html is present afterwards.
-Future<bool> ensureZashboardUi() async {
-  final dir = globalState.effectiveExternalUi.value.trim();
+final _dashboardInstalls = <String, Future<bool>>{};
+
+Future<bool> ensureZashboardUi({
+  String? directory,
+  Dio? client,
+  CancelToken? cancelToken,
+  ZashboardLimits limits = const ZashboardLimits(),
+}) {
+  final dir = (directory ?? globalState.effectiveExternalUi.value).trim();
+  if (dir.isEmpty) return Future.value(false);
+  final target = p.normalize(p.absolute(dir));
+  final key = Platform.isWindows ? target.toLowerCase() : target;
+  return _dashboardInstalls.putIfAbsent(
+      key,
+      () => _installDashboard(target, client, cancelToken, limits)
+              .whenComplete(() {
+            _dashboardInstalls.remove(key);
+          }));
+}
+
+Future<bool> _installDashboard(String dir, Dio? suppliedClient,
+    CancelToken? cancelToken, ZashboardLimits limits) async {
   if (dir.isEmpty) return false;
   final index = File(p.join(dir, 'index.html'));
-  if (await index.exists()) return true;
+  final client = suppliedClient ?? Dio();
+  final token = CancelToken();
+  final clock = Stopwatch()..start();
+  final deadline =
+      Timer(limits.timeout, () => token.cancel('Dashboard timeout'));
+  StreamSubscription<void>? cancellation;
+  Directory? staging;
+  void checkCancelled() {
+    if (cancelToken?.isCancelled == true || token.isCancelled) {
+      throw const HttpException('Dashboard installation cancelled');
+    }
+    if (clock.elapsed >= limits.timeout) {
+      token.cancel('Dashboard timeout');
+      throw TimeoutException('Dashboard installation timed out');
+    }
+  }
+
   try {
-    final resp = await Dio().get<List<int>>(
+    checkCancelled();
+    if (await index.exists()) return true;
+    cancellation = cancelToken?.whenCancel.asStream().listen((_) {
+      if (!token.isCancelled) token.cancel('Dashboard cancelled');
+    });
+    // Never extract through a pre-existing symlink or erase arbitrary files
+    // from a user-supplied external-ui directory.
+    var ancestor = dir;
+    while (true) {
+      if (await FileSystemEntity.type(ancestor, followLinks: false) ==
+          FileSystemEntityType.link) {
+        throw const FileSystemException('Dashboard directory contains a link');
+      }
+      final parent = p.dirname(ancestor);
+      if (parent == ancestor) break;
+      ancestor = parent;
+    }
+    final target = Directory(dir);
+    if (await target.exists() && !await target.list().isEmpty) {
+      throw const FileSystemException(
+          'Incomplete dashboard directory is not empty');
+    }
+    final resp = await client
+        .get<ResponseBody>(
       zashboardDistUrl,
-      options: Options(responseType: ResponseType.bytes),
+      cancelToken: token,
+      options: Options(
+          responseType: ResponseType.stream,
+          receiveTimeout: limits.timeout,
+          sendTimeout: limits.timeout),
+    )
+        .timeout(limits.timeout, onTimeout: () {
+      token.cancel('Dashboard timeout');
+      throw TimeoutException('Dashboard download timed out');
+    });
+    final body = resp.data;
+    if (body == null) return false;
+    final declared =
+        int.tryParse(resp.headers.value(Headers.contentLengthHeader) ?? '');
+    if (declared != null && declared > limits.downloadBytes) {
+      token.cancel('Dashboard download exceeds limit');
+      throw const FormatException('Dashboard download exceeds limit');
+    }
+    final buffer = BytesBuilder(copy: false);
+    await for (final chunk
+        in body.stream.timeout(limits.timeout - clock.elapsed)) {
+      checkCancelled();
+      if (chunk.length > limits.downloadBytes - buffer.length) {
+        token.cancel('Dashboard download exceeds limit');
+        throw const FormatException('Dashboard download exceeds limit');
+      }
+      buffer.add(chunk);
+    }
+    checkCancelled();
+    await target.parent.create(recursive: true);
+    staging = await target.parent.createTemp('.flclashx-dashboard-');
+    await extractZashboardArchive(
+      buffer.takeBytes(),
+      staging,
+      limits: limits,
+      checkCancelled: checkCancelled,
     );
-    final bytes = resp.data;
-    if (bytes == null || bytes.isEmpty) return false;
-    final archive = ZipDecoder().decodeBytes(Uint8List.fromList(bytes));
-    // dist.zip may nest everything under a top folder (e.g. dist/); find where
-    // index.html sits and strip that prefix so files land at the dir root.
-    var prefix = '';
-    for (final f in archive) {
-      if (f.isFile && p.basename(f.name) == 'index.html') {
-        final d = p.dirname(f.name.replaceAll('\\', '/'));
-        prefix = d == '.' ? '' : '$d/';
-        break;
-      }
+    checkCancelled();
+    // Another process may have installed the panel while we downloaded.
+    if (await index.exists()) return true;
+    if (await target.exists()) {
+      // Non-recursive removal refuses an unexpected concurrent file writer.
+      await target.delete();
     }
-    for (final f in archive) {
-      if (!f.isFile) continue;
-      var name = f.name.replaceAll('\\', '/');
-      if (prefix.isNotEmpty) {
-        if (!name.startsWith(prefix)) continue;
-        name = name.substring(prefix.length);
-      }
-      if (name.isEmpty) continue;
-      final out = File(p.join(dir, name));
-      await out.parent.create(recursive: true);
-      await out.writeAsBytes(f.content as List<int>);
-    }
+    await staging.rename(dir);
+    staging = null;
     return await index.exists();
   } catch (e) {
     commonPrint.log('zashboard ui download failed: $e');
     return false;
+  } finally {
+    deadline.cancel();
+    await cancellation?.cancel();
+    if (!token.isCancelled) token.cancel('Dashboard operation finished');
+    if (suppliedClient == null) client.close(force: true);
+    if (staging != null) {
+      try {
+        if (await staging.exists()) await staging.delete(recursive: true);
+      } on FileSystemException catch (e) {
+        commonPrint.log('zashboard staging cleanup failed: $e');
+      }
+    }
   }
 }
 

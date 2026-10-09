@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flclashx/common/common.dart';
+import 'package:flclashx/common/ui_activity.dart';
 import 'package:flclashx/enum/enum.dart';
 import 'package:flclashx/providers/config.dart';
 import 'package:flclashx/providers/app.dart';
@@ -96,6 +97,7 @@ class _WindowContainerState extends ConsumerState<WindowManager>
 
   @override
   void onWindowMinimize() async {
+    uiActivity.setMinimized(true);
     globalState.appController.savePreferencesDebounce();
     commonPrint.log("minimize");
     render?.pause();
@@ -104,6 +106,7 @@ class _WindowContainerState extends ConsumerState<WindowManager>
 
   @override
   void onWindowRestore() {
+    uiActivity.setMinimized(false);
     commonPrint.log("restore");
     render?.resume();
     super.onWindowRestore();

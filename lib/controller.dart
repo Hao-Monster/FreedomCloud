@@ -22,7 +22,9 @@ import 'package:url_launcher/url_launcher.dart';
 
 import 'common/common.dart';
 import 'common/admin_authorization.dart';
+import 'common/delay_tests.dart';
 import 'common/tun_runtime.dart';
+import 'common/ui_activity.dart';
 import 'common/windows_tun_prepare.dart';
 import 'common/windows_tun_startup.dart';
 import 'models/models.dart';
@@ -33,10 +35,13 @@ class AppController {
   AppController(this.context, WidgetRef ref, {
     WindowsTunStartupEffects? windowsStartupEffects,
     TunRuntimeController? tunRuntimeController,
+    Future<DateTime?> Function()? nativeRunTimeProbe,
   }) : _ref = ref,
        _windowsStartupEffects = windowsStartupEffects,
+       _nativeRunTimeProbe = nativeRunTimeProbe,
        _tunRuntime = tunRuntimeController ?? tunRuntime;
   final WindowsTunStartupEffects? _windowsStartupEffects;
+  final Future<DateTime?> Function()? _nativeRunTimeProbe;
   final TunRuntimeController _tunRuntime;
   Future<void>? _runtimeInitialization;
   int? lastProfileModified;
@@ -92,9 +97,11 @@ class AppController {
       isCurrent: isCurrent,
     );
 
-  Future<void> _updateWindowsConfig({bool Function()? isCurrent}) async {
+  Future<void> _updateWindowsConfig({bool Function()? isCurrent,
+      String? controllerAddress, bool? controllerEnabled}) async {
     await _applyWindowsConfig((enabled) => clashCore.updateConfig(
-      _ref.read(updateParamsProvider).copyWith.tun(enable: enabled)), isCurrent: isCurrent);
+      _ref.read(updateParamsProvider).copyWith.tun(enable: enabled),
+      controllerAddress: controllerAddress, controllerEnabled: controllerEnabled), isCurrent: isCurrent);
   }
 
   Future<void> setTunEnabled(bool enabled) async {
@@ -335,6 +342,7 @@ class AppController {
   void startRunTimeTimer() {
     stopRunTimeTimer();
     updateRunTime();
+    if (!uiActivity.value) return;
     _runTimeTimer = Timer.periodic(const Duration(seconds: 1), (_) {
       updateRunTime();
     });
@@ -755,12 +763,22 @@ class AppController {
     });
   }
 
-  /// Flip the core's external-controller API on/off for a zashboard session
-  /// (see openZashboard / ZashboardWebViewPage). Reuses the same updateConfig
-  /// path as the manual toggle, so the core brings the API listener up/down
-  /// live. updateConfig does NOT recompute effectiveExternalController (that's
-  /// the applyProfile path), so set it here too — the zashboard URL reads it.
+  /// Explicit toggles share the normal configuration serialization. Commit the
+  /// visible state only after Core acknowledges the listener change.
   Future<void> setExternalControllerEnabled(bool enable) async {
+    String? address;
+    if (enable) {
+      var runtimeConfig = globalState.lastRuntimeConfig;
+      // Attaching to an existing Agent/Core does not re-apply the profile.
+      // Resolve its endpoint without silently replacing it with port 9090.
+      final profileId = _ref.read(currentProfileProvider)?.id;
+      if (runtimeConfig == null && profileId != null) {
+        runtimeConfig = await globalState.handleEvaluate(
+          await globalState.getProfileConfig(profileId));
+      }
+      address = globalState.controllerAddressForEnable(runtimeConfig);
+    }
+    await _updateClashConfig(controllerAddress: address, controllerEnabled: enable);
     _ref.read(patchClashConfigProvider.notifier).updateState(
           (state) => state.copyWith(
             externalController: enable
@@ -769,20 +787,21 @@ class AppController {
           ),
         );
     globalState.effectiveExternalController.value =
-        enable ? ExternalControllerStatus.open.value : "";
-    await updateClashConfig();
+        enable ? address! : "";
   }
 
-  Future<void> _updateClashConfig() async {
+  Future<void> _updateClashConfig({String? controllerAddress, bool? controllerEnabled}) async {
     if (Platform.isWindows) {
       return _tunRuntime.serialize(() async {
-        try { await _updateWindowsConfig(); }
+        try { await _updateWindowsConfig(controllerAddress: controllerAddress,
+          controllerEnabled: controllerEnabled); }
         on TunFailure catch (error) { _tunRuntime.fail(error.code); rethrow; }
       });
     }
     final updateParams = _ref.read(updateParamsProvider);
     final res = await _requestAdmin(updateParams.tun.enable);
     if (res.isError) {
+      if (controllerEnabled != null) throw res.message;
       return;
     }
     final realTunEnable = _ref.read(realTunEnableProvider);
@@ -790,6 +809,7 @@ class AppController {
       updateParams.copyWith.tun(
         enable: realTunEnable,
       ),
+      controllerAddress: controllerAddress, controllerEnabled: controllerEnabled,
     );
     if (message.isNotEmpty) throw message;
   }
@@ -876,17 +896,23 @@ class AppController {
   }
 
   Future<void> _setupClashConfigImpl({bool Function()? isCurrent}) async {
-    if (isCurrent != null && !isCurrent()) return;
-    await _ref.read(currentProfileProvider)?.checkAndUpdate();
-    if (isCurrent != null && !isCurrent()) return;
+    final applyingProfile = _ref.read(currentProfileProvider);
+    final applyingProfileId = applyingProfile?.id;
+    bool configurationIsCurrent() =>
+        (isCurrent == null || isCurrent()) &&
+        _ref.read(currentProfileProvider)?.id == applyingProfileId;
+    if (!configurationIsCurrent()) return;
+    await applyingProfile?.checkAndUpdate();
+    if (!configurationIsCurrent()) return;
     var patchConfig = _ref.read(patchClashConfigProvider);
 
     // Sync network settings from provider config if not overriding
     final appSetting = _ref.read(appSettingProvider);
     if (!appSetting.overrideNetworkSettings) {
       final syncedConfig =
-          await globalState.syncNetworkSettingsFromProvider(patchConfig);
-      if (isCurrent != null && !isCurrent()) return;
+          await globalState.syncNetworkSettingsFromProvider(patchConfig,
+              profile: applyingProfile);
+      if (!configurationIsCurrent()) return;
       // Always update provider when using provider settings to ensure UI reflects config
       _ref
           .read(patchClashConfigProvider.notifier)
@@ -901,8 +927,7 @@ class AppController {
     // and behave consistently with patchRawConfig's forced override. Applied
     // after syncFromProvider so it overrides both user and provider values.
     if (Platform.isAndroid) {
-      final profile = _ref.read(currentProfileProvider);
-      final secure = profile?.providerHeaders['flclashx-androidsecure']
+      final secure = applyingProfile?.providerHeaders['flclashx-androidsecure']
               ?.trim()
               .toLowerCase() ==
           'true';
@@ -914,21 +939,27 @@ class AppController {
       }
     }
 
+    final applyingModified = await applyingProfile?.profileLastModified;
+    if (!configurationIsCurrent()) return;
+
     if (Platform.isWindows) {
       await _applyWindowsConfig((enabled) async {
         final params = await globalState.getSetupParams(
-          pathConfig: patchConfig.copyWith.tun(enable: enabled));
-        if (isCurrent != null && !isCurrent()) return '';
+          pathConfig: patchConfig.copyWith.tun(enable: enabled),
+          profile: applyingProfile);
+        if (!configurationIsCurrent()) return '';
         if (isCurrent != null && params.config.isEmpty) throw const TunFailure('profileRequired');
-        return clashCore.setupConfig(params);
-      }, isCurrent: isCurrent);
+        return clashCore.setupConfig(params, profileId: applyingProfileId);
+      }, isCurrent: configurationIsCurrent);
     } else {
       final res = await _requestAdmin(patchConfig.tun.enable);
-      if (res.isError) return;
+      if (res.isError || !configurationIsCurrent()) return;
       final realTunEnable = _ref.read(realTunEnableProvider);
       final realPatchConfig = patchConfig.copyWith.tun(enable: realTunEnable);
-      final params = await globalState.getSetupParams(pathConfig: realPatchConfig);
-      final message = await clashCore.setupConfig(params);
+      final params = await globalState.getSetupParams(
+          pathConfig: realPatchConfig, profile: applyingProfile);
+      if (!configurationIsCurrent()) return;
+      final message = await clashCore.setupConfig(params, profileId: applyingProfileId);
       if (message.isNotEmpty) {
       // Don't advance lastProfileModified on a failed/timed-out setup: doing so
       // would make the next start's recovery re-apply think the profile is
@@ -936,11 +967,7 @@ class AppController {
         throw message;
       }
     }
-    lastProfileModified = await _ref.read(
-      currentProfileProvider.select(
-        (state) => state?.profileLastModified,
-      ),
-    );
+    if (configurationIsCurrent()) lastProfileModified = applyingModified;
   }
 
   Future _applyProfile({bool silence = false}) async {
@@ -1268,6 +1295,7 @@ class AppController {
   Future<void> handleRestart() => _quiesceWindows(_handleRestart);
 
   Future<void> _handleRestart() async {
+    await cancelDelayTests(reason: 'sessionClosed');
     commonPrint.log("Starting application restart...");
 
     if (clashService?.usesAgent == true) {
@@ -1470,6 +1498,7 @@ class AppController {
         globalState.getCoreState(),
       );
     }
+    await clashCore.setUiActive(uiActivity.value);
     // Re-assert the log subscription on every attach. startLog() lives inside
     // clashCore.init(), which is skipped above when the core is already
     // initialised — e.g. after a headless tile/always-on cold-start the core is
@@ -1509,6 +1538,7 @@ class AppController {
       );
       final setupParams = await globalState.getSetupParams(
         pathConfig: clashConfig,
+        profile: globalState.config.currentProfile,
       );
       unawaited(clashLib?.saveParamsForColdStart(
         initParams: InitParams(
@@ -1648,16 +1678,28 @@ class AppController {
   /// channel, lost broadcasts), leaving a ticking "connected" UI over a dead
   /// tunnel — or a "disconnected" UI over a live one. Never sends start/stop
   /// IPC; only local state is touched.
+  int _resumeProbeEpoch = 0;
+
   Future<void> syncVpnStateOnResume() async {
     // A start/stop toggle is mid-flight (e.g. a ~70s startVpn still awaiting VPN
     // consent): its optimistic startTime isn't reflected by getRunTime yet, so
     // re-probing now would null it and tear down a live tunnel's UI. The
     // in-flight op sets the correct run-state on completion, so just skip.
-    if (_statusOpInFlight) return;
-    final known = await globalState.updateStartTime();
-    if (!known) return;
+    if (_statusOpInFlight || !uiActivity.value) return;
+    final statusEpoch = _statusEpoch;
+    final activityEpoch = uiActivity.epoch;
+    final probeEpoch = ++_resumeProbeEpoch;
+    bool isCurrent() => !_statusOpInFlight &&
+        statusEpoch == _statusEpoch &&
+        activityEpoch == uiActivity.epoch &&
+        probeEpoch == _resumeProbeEpoch &&
+        uiActivity.value;
+    final result = await globalState.probeStartTime(readRunTime: _nativeRunTimeProbe);
+    if (!result.known || !isCurrent()) return;
+    globalState.startTime = result.startTime;
     final running = globalState.isStart;
     await StatusBarManager.updateIcon(isConnected: running);
+    if (!isCurrent()) return;
     if (running) {
       globalState.startUpdateTasks();
       startRunTimeTimer();
@@ -2362,6 +2404,8 @@ class _ControllerWindowsTunStartupEffects implements WindowsTunStartupEffects {
   void log(String message) => commonPrint.log(message);
   @override
   Future<void> reflectRunning(bool Function() isCurrent) async {
+    if (!isCurrent()) return;
+    await clashCore.setUiActive(uiActivity.value);
     if (!isCurrent()) return;
     if (controller._ref.read(appSettingProvider).openLogs) {
       clashCore.startLog();

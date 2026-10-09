@@ -20,6 +20,7 @@ impl ManagedProcess for Child {
 pub(super) struct ManagedCore<P> {
     pub process: Option<P>,
     pub owner: Option<String>,
+    service_stopping: bool,
 }
 
 impl<P> Default for ManagedCore<P> {
@@ -27,11 +28,21 @@ impl<P> Default for ManagedCore<P> {
         Self {
             process: None,
             owner: None,
+            service_stopping: false,
         }
     }
 }
 
 impl<P: ManagedProcess> ManagedCore<P> {
+    /// The same lock guards prepare_start: confirmed service shutdown cannot
+    /// race a new child into the gap before the SCM worker exits.
+    pub fn stop_for_service(&mut self, wait_limit: Duration) -> Result<(), String> {
+        self.service_stopping = true;
+        let result = self.stop(None, wait_limit);
+        if result.is_err() { self.service_stopping = false; }
+        result
+    }
+
     pub fn stop(&mut self, owner: Option<&str>, wait_limit: Duration) -> Result<(), String> {
         if let Some(owner) = owner {
             validate_owner(owner)?;
@@ -51,6 +62,7 @@ impl<P: ManagedProcess> ManagedCore<P> {
         owner: Option<&str>,
         wait_limit: Duration,
     ) -> Result<bool, String> {
+        if self.service_stopping { return Err("Helper service is stopping".to_owned()); }
         if let Some(owner) = owner {
             validate_owner(owner)?;
             if let Some(child) = self.process.as_mut() {
@@ -227,6 +239,7 @@ mod tests {
         let mut live = ManagedCore {
             process: fixture(vec![], Ok(())),
             owner: Some(owner),
+            service_stopping: false,
         };
         assert!(live.stop(Some(&other), Duration::ZERO).is_err());
         assert_eq!(live.process.as_ref().unwrap().kill_calls, 0);
@@ -238,6 +251,7 @@ mod tests {
         let mut core = ManagedCore {
             process: fixture(vec![Ok(true)], Ok(())),
             owner: Some(owner.clone()),
+            service_stopping: false,
         };
         assert!(core.stop(Some(&owner), Duration::ZERO).is_ok());
         assert!(core.stop(Some(&owner), Duration::ZERO).is_ok());
@@ -255,6 +269,7 @@ mod tests {
         let mut core = ManagedCore {
             process: fixture(vec![Ok(false), Ok(false)], Ok(())),
             owner: Some(owner.clone()),
+            service_stopping: false,
         };
         assert!(core.prepare_start(Some(&other), Duration::ZERO).is_err());
         assert!(!core.prepare_start(Some(&owner), Duration::ZERO).unwrap());
@@ -272,6 +287,27 @@ mod tests {
             format!("{}-18446744073709551616", "a".repeat(64)),
         ] {
             assert!(validate_owner(&value).is_err());
+        }
+    }
+
+    #[test]
+    fn resource_service_stop_failure_retains_owner_and_success_blocks_new_starts() {
+        let owner = format!("{}-1", "a".repeat(64));
+        for kill_error in [false, true] {
+            let mut core = ManagedCore {
+                process: fixture(vec![Ok(false), Ok(false), Ok(true)], if kill_error { Err(denied()) } else { Ok(()) }),
+                owner: Some(owner.clone()),
+                service_stopping: false,
+            };
+            assert!(core.stop_for_service(Duration::ZERO).is_err());
+            assert!(core.process.is_some());
+            assert_eq!(core.owner.as_deref(), Some(owner.as_str()));
+            assert!(!core.service_stopping);
+            assert!(core.stop_for_service(Duration::ZERO).is_ok());
+            assert!(core.process.is_none());
+            assert_eq!(core.owner.as_deref(), Some(owner.as_str()));
+            assert!(core.prepare_start(Some(&format!("{}-2", "a".repeat(64))), Duration::ZERO).is_err());
+            assert!(core.stop_for_service(Duration::ZERO).is_ok());
         }
     }
 }

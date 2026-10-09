@@ -6,18 +6,51 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"runtime"
 	"strconv"
 	"sync"
 )
 
-var conn net.Conn
+var conn *coreOutput
 var connMu sync.Mutex
+
+// All connection ownership passes through this boundary, which also permits
+// isolated net.Pipe tests without starting a Core listener or process.
+func attachCoreConnection(c net.Conn) func() {
+	output := newCoreOutput(c, coreWriteTimeout, coreEnqueueTimeout)
+	output.onClose = func() {
+		connMu.Lock()
+		owned := conn == output
+		if owned {
+			conn = nil
+		}
+		connMu.Unlock()
+		if owned {
+			cancelAllDelayTasks("sessionClosed")
+		}
+	}
+	connMu.Lock()
+	previous := conn
+	conn = output
+	connMu.Unlock()
+	if previous != nil {
+		previous.close()
+	}
+	cancelAllDelayTasks("sessionClosed")
+	go output.writeLoop()
+	return output.close
+}
 
 func (result ActionResult) send() {
 	data, err := result.Json()
 	if err != nil {
+		result.Code, result.Data = -1, "Core response encoding failed"
+		data, _ = result.Json()
+	}
+	if result.Response != nil {
+		result.Response(data)
 		return
 	}
 	send(data)
@@ -28,16 +61,25 @@ func sendMessage(message Message) {
 		Method: messageMethod,
 		Data:   message,
 	}
-	result.send()
+	data, err := result.Json()
+	if err != nil {
+		return
+	}
+	connMu.Lock()
+	output := conn
+	connMu.Unlock()
+	if output != nil {
+		output.sendStream(data)
+	}
 }
 
 func send(data []byte) {
 	connMu.Lock()
-	defer connMu.Unlock()
-	if conn == nil {
-		return
+	output := conn
+	connMu.Unlock()
+	if output != nil {
+		_ = output.sendReliable(data)
 	}
-	_, _ = conn.Write(append(data, []byte("\n")...))
 }
 
 func startServer(arg string, authToken string) {
@@ -80,28 +122,25 @@ func startServer(arg string, authToken string) {
 		agentCoreAuthenticated.Store(true)
 	}
 
+	detach := attachCoreConnection(c)
 	connMu.Lock()
-	conn = c
+	output := conn
 	connMu.Unlock()
 
 	defer func() {
 		agentCoreAuthenticated.Store(false)
-		if macCoreAuthenticated.Swap(false) {
+		wasMacAuthenticated := macCoreAuthenticated.Swap(false)
+		detach()
+		if wasMacAuthenticated {
 			runLock.Lock()
 			macStrictIngressIntent = nil
 			removeStrictIngressListenersLocked()
 			runLock.Unlock()
 		}
-		connMu.Lock()
-		if conn != nil {
-			_ = conn.Close()
-			conn = nil
-		}
-		connMu.Unlock()
 	}()
 
 	for {
-		data, err := reader.ReadString('\n')
+		data, err := readCoreLine(reader)
 		if err != nil {
 			return
 		}
@@ -114,12 +153,53 @@ func startServer(arg string, authToken string) {
 			continue
 		}
 
-		result := ActionResult{
-			Id:     action.Id,
-			Method: action.Method,
-		}
+		dispatchCoreAction(output, action, handleAction)
+	}
+}
 
-		go handleAction(action, result)
+func dispatchCoreAction(output *coreOutput, action *Action, handler func(*Action, ActionResult)) bool {
+	result := ActionResult{Id: action.Id, Method: action.Method}
+	slots := output.actions
+	// A full batch of asynchronous work must not exclude its cancellation.
+	switch action.Method {
+	case cancelTestDelayMethod, setUiActiveMethod, stopListenerMethod, shutdownMethod:
+		slots = output.controls
+	}
+	select {
+	case <-output.done:
+		return false
+	default:
+	}
+	select {
+	case slots <- struct{}{}:
+		var completed sync.Once
+		result.Response = func(data []byte) { completed.Do(func() { defer func() { <-slots }(); _ = output.sendReliable(data) }) }
+		go handler(action, result)
+		return true
+	default:
+		result.Response = func(data []byte) { _ = output.sendReliable(data) }
+		result.error("Core request capacity exceeded")
+		return false
+	}
+}
+
+func readCoreLine(reader *bufio.Reader) (string, error) {
+	var data []byte
+	for {
+		fragment, err := reader.ReadSlice('\n')
+		if len(data)+len(fragment) > coreMaxMessageBytes {
+			return "", fmt.Errorf("Core input exceeds message limit")
+		}
+		data = append(data, fragment...)
+		if err == nil {
+			return string(data), nil
+		}
+		if err != bufio.ErrBufferFull {
+			if err == io.EOF && len(data) != 0 {
+				return "", io.ErrUnexpectedEOF
+			}
+			return "", err
+		}
 	}
 }
 

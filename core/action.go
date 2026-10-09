@@ -20,6 +20,7 @@ type ActionResult struct {
 	Data     interface{}    `json:"data"`
 	Code     int            `json:"code"`
 	Callback unsafe.Pointer `json:"-"`
+	Response func([]byte)   `json:"-"`
 }
 
 func (result ActionResult) Json() ([]byte, error) {
@@ -149,6 +150,14 @@ func handleAction(action *Action, result ActionResult) {
 		handleAsyncTestDelay(data, func(value string) {
 			result.success(value)
 		})
+		return
+	case cancelTestDelayMethod:
+		id, ok := action.Data.(string)
+		if !ok || id == "" {
+			result.error("invalid request id")
+			return
+		}
+		result.success(cancelDelayTask(id, "cancelled"))
 		return
 	case getConnectionsMethod:
 		result.success(handleGetConnections())

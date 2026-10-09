@@ -407,7 +407,9 @@ void TrayManagerPlugin::PopUpContextMenu(
   x = cursorPos.x;
   y = cursorPos.y;
 
-  if (bringAppToFront) {
+  // A tray popup needs a foreground owner for native outside-click dismissal.
+  // SetForegroundWindow does not restore/show a hidden Flutter window.
+  if (bringAppToFront || GetForegroundWindow() != hWnd) {
     SetForegroundWindow(hWnd);
   }
   if (lifetime->disposed || !lifetime->menus.BeginTracking()) {
@@ -421,6 +423,7 @@ void TrayManagerPlugin::PopUpContextMenu(
   lifetime->menus.EndTracking();
   // No member access or engine reply after the nested loop destroys the owner.
   if (lifetime->disposed) return;
+  PostMessage(hWnd, WM_NULL, 0, 0);
   result->Success(flutter::EncodableValue(static_cast<int>(selected_id)));
 }
 

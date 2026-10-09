@@ -2,6 +2,14 @@
 
 更新日期：2026-10-09。当前阶段是快速开发、快速迭代和部分功能预览。本文记录来源与验收边界；每次继续开发仍需核实实际 Git/PR/CI 状态，不能把历史报告视为当前通过证明。
 
+## 性能、资源与可靠性17项修复（2026-10-09）
+
+- 用户授权在唯一 `development` 分支逐项修复、统一打包后自行本机测试。修复基线 `a52907c2d4425f6c1679792f64a3129ae4c562d7`；未推送/发布，未启动候选客户端或修改现役代理/TUN/SCM/驱动/Shell。原coverage/QA草稿及旧包保留。
+- F01–F17源码与对应隔离回归完成，详见 `docs-dev/remediation-plan-2026-10-09.md`、`docs-dev/remediation-results-2026-10-09.md` 和四份模块evidence；TODO区分代码/自动化与平台验收。P02原生资源作用域已优化；P01优先级对照测量仍待办，没有修改HIGH_PRIORITY_CLASS。
+- 最终Flutter带行/分支coverage全量457 PASS/0 FAIL/0 SKIP；Core75项、with_gvisor75项、目标race38项，Agent83项、Helper37项均PASS。proxy故障/UTF-8、tray原生8组/200次USER 1→1、包装工具与68项strict包装检查PASS；Android arm64 c-shared及Darwin arm64仅编译通过。
+- 修改且有LCOV记录的Dart行覆盖535/706（75.78%）、分支182/291（62.54%），两个窗口/lifecycle manager未载入LCOV；Core语句40.5%。平台入口与真实系统验收缺口见汇总。Dart analyze保留1条未修改文件warning，Agent clippy保留2条既有诊断，未弱化规则。
+- 独立复核发现的事务取消、WebSocket退休、首次配置失败清理、测速history、Android迟返、Profile快照、ZIP预检及组件来源问题已逐一处理。待统一Windows普通预览构建后追加实际源码提交/ZIP/hash；真实Windows/SCM/TUN/IDN/长时资源及Android设备验收仍NOT RUN，交由用户或隔离环境完成。
+
 ## 外部程序员报告复核与 TODO 补充（2026-10-09）
 
 - 按用户要求在 `development@3227a863f5bdbb4ca7dc1f8caa5b7708d1f104dc` 核验外部六项主张，详细结论见 `docs-dev/evidence/external-review-verification-2026-10-09.md`。产品源码与原审查基线相同，本次仍仅调查/文档，不实施修复。

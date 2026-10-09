@@ -4,6 +4,8 @@ import 'dart:io';
 import 'package:flclashx/clash/core.dart';
 import 'package:flclashx/clash/lib.dart';
 import 'package:flclashx/common/common.dart';
+import 'package:flclashx/common/delay_tests.dart';
+import 'package:flclashx/common/ui_activity.dart';
 import 'package:flclashx/enum/enum.dart';
 import 'package:flclashx/plugins/tile.dart';
 import 'package:flclashx/providers/providers.dart';
@@ -30,21 +32,49 @@ class _AppStateManagerState extends ConsumerState<AppStateManager>
   // toggle / TUN flap) can't interleave networksetup calls and snapshot a transient
   // injected value as the "origin".
   Future<void> _dnsOp = Future.value();
+  bool? _coreUiWanted;
+  bool _updatingCoreUi = false;
+
+  void _syncUiActivity() {
+    if (!mounted) return;
+    final active = uiActivity.value;
+    _coreUiWanted = active;
+    if (!_updatingCoreUi) unawaited(_updateCoreUi());
+    if (!globalState.isAppControllerReady) return;
+    if (active) {
+      render?.resume();
+      if (globalState.isStart) globalState.appController.startRunTimeTimer();
+      globalState.appController.updateGroupsDebounce();
+    } else {
+      unawaited(cancelDelayTests(reason: 'uiInactive'));
+      render?.pause();
+      globalState.appController.stopRunTimeTimer();
+    }
+  }
+
+  Future<void> _updateCoreUi() async {
+    _updatingCoreUi = true;
+    try {
+      while (mounted && _coreUiWanted != null) {
+        final active = _coreUiWanted!;
+        _coreUiWanted = null;
+        try {
+          await clashCore.setUiActive(active);
+        } catch (error) {
+          commonPrint.log('UI activity update failed: ${error.runtimeType}');
+        }
+      }
+    } finally {
+      _updatingCoreUi = false;
+    }
+  }
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    if (Platform.isAndroid) {
-      // Assert foreground cadence as soon as the UI mounts. A headless cold-start
-      // leaves the core in background mode (uiActive=false, set by FlVpnService),
-      // and the initial 'resumed' is a state — not always a lifecycle *event* — on a
-      // fresh launch, so relying on didChangeAppLifecycleState alone could strand the
-      // UI in background cadence (no request forwarder, slow pings).
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        clashCore.setUiActive(true);
-      });
-    }
+    uiActivity.addListener(_syncUiActivity);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _syncUiActivity());
     ref.listenManual(layoutChangeProvider, (prev, next) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (prev != next) {
@@ -129,12 +159,15 @@ class _AppStateManagerState extends ConsumerState<AppStateManager>
     // before shutdown); dispose() is not awaited by the framework, so doing async
     // work here was unreliable and delayed observer teardown.
     WidgetsBinding.instance.removeObserver(this);
+    uiActivity.removeListener(_syncUiActivity);
+    unawaited(cancelDelayTests(reason: 'sessionClosed'));
     super.dispose();
   }
 
   @override
   Future<void> didChangeAppLifecycleState(AppLifecycleState state) async {
     commonPrint.log("$state");
+    uiActivity.setLifecycle(state);
     if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.inactive) {
       globalState.appController.savePreferences();
@@ -145,7 +178,6 @@ class _AppStateManagerState extends ConsumerState<AppStateManager>
         // Tell the core the UI is backgrounded: it pauses the request forwarder
         // and stretches the health-check forwarder to a slow interval so it stops
         // pinging every proxy every few seconds for a UI nobody is looking at.
-        clashCore.setUiActive(false);
       }
     } else if (state == AppLifecycleState.hidden) {
       // Desktop window hidden (tray/minimize). Falling through to the generic
@@ -165,8 +197,10 @@ class _AppStateManagerState extends ConsumerState<AppStateManager>
         // :remote core has been replaced — so logs/journal/delays silently stop
         // arriving (only the polled traffic survives). All idempotent and mirror what
         // the cold-start path already does.
-        clashLib?.reconnectIfNeeded();
-        clashCore.setUiActive(true);
+        await clashLib?.reconnectIfNeeded();
+        if (!mounted) return;
+        _syncUiActivity();
+        if (!uiActivity.value) return;
         // Re-subscribe the log stream: the log subscriber lives in :remote and is gone
         // after a recycle, and nothing else re-issues it on resume. Gated on openLogs.
         if (globalState.config.appSetting.openLogs) {

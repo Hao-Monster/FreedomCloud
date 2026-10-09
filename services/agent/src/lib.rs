@@ -2,6 +2,8 @@
 pub mod broker;
 pub mod config;
 pub mod core_ingress;
+#[path = "../../shared/core_output.rs"]
+mod core_output;
 pub mod endpoint;
 pub mod journal;
 pub mod logging;

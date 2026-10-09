@@ -1,0 +1,111 @@
+package route
+
+import (
+    "bufio"
+    "errors"
+    "net"
+    "sync"
+    "testing"
+    "time"
+
+    "github.com/metacubex/http"
+    "github.com/metacubex/http/httptest"
+    "github.com/metacubex/mihomo/component/ca"
+    "github.com/metacubex/tls"
+)
+
+type fcxTestListener struct { closed chan struct{}; once sync.Once }
+func (l *fcxTestListener) Accept() (net.Conn,error) { <-l.closed; return nil,net.ErrClosed }
+func (l *fcxTestListener) Close() error { l.once.Do(func(){ close(l.closed) }); return nil }
+func (l *fcxTestListener) Addr() net.Addr { return &net.TCPAddr{} }
+
+func fcxWithControllerTest(t *testing.T) {
+    t.Helper()
+    original := fcxControllerListen
+    fcxControllerListen = func(network,address string,mark int)(net.Listener,error) {
+        if address == "busy" { return nil,errors.New("synthetic address already in use") }
+        return &fcxTestListener{closed:make(chan struct{})},nil
+    }
+    t.Cleanup(func(){ _ = ReCreateServerChecked(&Config{}); fcxControllerConfig=nil; fcxControllerListen=original })
+}
+
+func fcxAssertAuthorization(t *testing.T, secret string) {
+    t.Helper()
+    for _, endpoint := range fcxControllerEndpoints {
+        for _, test := range []struct{ credential string; status int }{{"",401},{"wrong",401},{secret,200}} {
+            request:=httptest.NewRequest(http.MethodGet,"http://controller/",nil)
+            if test.credential!="" { request.Header.Set("Authorization","Bearer "+test.credential) }
+            result:=httptest.NewRecorder(); endpoint.server.Handler.ServeHTTP(result,request)
+            if result.Code!=test.status { t.Fatalf("auth status %d want %d",result.Code,test.status) }
+        }
+    }
+}
+
+func TestFCXControllerRecreateRetainsAuthenticationAndRestoresFailure(t *testing.T) {
+    fcxWithControllerTest(t)
+    cfg:=&Config{Addr:"first",UnixAddr:"synthetic.sock",Secret:"test-secret",RoutingMark:42,Cors:Cors{AllowOrigins:[]string{"https://example.test"}}}
+    if err:=ReCreateServerChecked(cfg); err!=nil { t.Fatal(err) }
+    if len(fcxControllerEndpoints)!=2 { t.Fatal("missing transports") }
+    fcxAssertAuthorization(t,"test-secret")
+    cfg.Secret="changed"; cfg.Cors.AllowOrigins[0]="changed"
+    if fcxControllerConfig.Secret!="test-secret" || fcxControllerConfig.Cors.AllowOrigins[0]!="https://example.test" { t.Fatal("configuration aliases caller") }
+    if err:=ReCreateServerChecked(&Config{Addr:"busy",Secret:"new-secret"}); err==nil { t.Fatal("bind failure hidden") }
+    if fcxControllerConfig.Addr!="first" { t.Fatal("last controller lost") }; fcxAssertAuthorization(t,"test-secret")
+    if err:=ReCreateServerChecked(&Config{TLSAddr:"tls",Certificate:"missing-certificate",PrivateKey:"missing-key"}); err==nil { t.Fatal("invalid TLS accepted") }
+    fcxAssertAuthorization(t,"test-secret")
+    if err:=ReCreateServerChecked(&Config{}); err!=nil { t.Fatal(err) }
+    if len(fcxControllerEndpoints)!=0 { t.Fatal("disable left transport open") }
+    if err:=ReCreateServerChecked(&Config{Addr:"second",Secret:"second-secret"}); err!=nil { t.Fatal(err) }; fcxAssertAuthorization(t,"second-secret")
+}
+
+func TestFCXControllerPartialFailureClosesCandidateAndReportsRollbackFailure(t *testing.T) {
+    fcxWithControllerTest(t)
+    created:=[]*fcxTestListener{}
+    fcxControllerListen=func(network,address string,mark int)(net.Listener,error){
+        if address=="busy" { return nil,errors.New("busy") }; l:=&fcxTestListener{closed:make(chan struct{})};created=append(created,l);return l,nil
+    }
+    if err:=ReCreateServerChecked(&Config{Addr:"first",Secret:"secret"});err!=nil { t.Fatal(err) }
+    if err:=ReCreateServerChecked(&Config{Addr:"candidate",UnixAddr:"busy",Secret:"candidate-secret"});err==nil { t.Fatal("partial failure hidden") }
+    select { case <-created[1].closed: default: t.Fatal("candidate listener leaked") }
+    fcxAssertAuthorization(t,"secret")
+    fcxControllerListen=func(string,string,int)(net.Listener,error){return nil,errors.New("all busy")}
+    if err:=ReCreateServerChecked(&Config{Addr:"new"});err==nil { t.Fatal("restoration failure hidden") }
+    if len(fcxControllerEndpoints)!=0 || fcxControllerConfig!=nil { t.Fatal("failed generation still advertised") }
+}
+
+func TestFCXControllerTLSAndDebugAuthentication(t *testing.T) {
+    fcxWithControllerTest(t)
+    certificate,key,_,err:=ca.NewRandomTLSKeyPair(ca.KeyPairTypeP256)
+    if err!=nil {t.Fatal(err)}
+    cfg:=&Config{TLSAddr:"synthetic-tls",Certificate:certificate,PrivateKey:key,Secret:"tls-secret",IsDebug:true,ClientAuthType:"RequireAndVerifyClientCert",ClientAuthCert:certificate}
+    settings,err:=fcxControllerTLS(cfg)
+    if err!=nil {t.Fatal(err)}
+    if settings.ClientAuth!=tls.RequireAndVerifyClientCert || settings.ClientCAs==nil || settings.GetCertificate==nil || len(settings.NextProtos)!=2 || settings.NextProtos[0]!="h2" {t.Fatal("TLS security or HTTP2 settings were lost")}
+    if err:=ReCreateServerChecked(cfg);err!=nil {t.Fatal(err)}
+    fcxAssertAuthorization(t,"tls-secret")
+    request:=httptest.NewRequest(http.MethodGet,"http://controller/debug/pprof/",nil)
+    response:=httptest.NewRecorder();fcxControllerEndpoints[0].server.Handler.ServeHTTP(response,request)
+    if response.Code!=401 {t.Fatal("debug endpoints bypass configured authentication")}
+}
+
+type fcxPipeListener struct {connections chan net.Conn;done chan struct{};once sync.Once}
+func(l *fcxPipeListener)Accept()(net.Conn,error){select{case connection:=<-l.connections:return connection,nil;case <-l.done:return nil,net.ErrClosed}}
+func(l *fcxPipeListener)Close()error{l.once.Do(func(){close(l.done)});return nil}
+func(l *fcxPipeListener)Addr()net.Addr{return &net.TCPAddr{}}
+
+func TestFCXControllerRetirementClosesHijackedConnections(t *testing.T) {
+    fcxWithControllerTest(t)
+    listener:=&fcxPipeListener{connections:make(chan net.Conn),done:make(chan struct{})}
+    fcxControllerListen=func(string,string,int)(net.Listener,error){return listener,nil}
+    if err:=ReCreateServerChecked(&Config{Addr:"synthetic"});err!=nil {t.Fatal(err)}
+    left,right:=net.Pipe();defer right.Close()
+    listener.connections<-left
+    _=right.SetDeadline(time.Now().Add(time.Second))
+    if _,err:=right.Write([]byte("GET /traffic HTTP/1.1\r\nHost: synthetic\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n"));err!=nil {t.Fatal(err)}
+    reader:=bufio.NewReader(right)
+    status,err:=reader.ReadString('\n');if err!=nil || status!="HTTP/1.1 101 Switching Protocols\r\n" {t.Fatalf("WebSocket upgrade failed: %q %v",status,err)}
+    for {line,err:=reader.ReadString('\n');if err!=nil {t.Fatal(err)};if line=="\r\n" {break}}
+    if err:=ReCreateServerChecked(&Config{});err!=nil {t.Fatal(err)}
+    _=right.SetWriteDeadline(time.Now().Add(time.Second))
+    if _,err:=right.Write([]byte("old-session"));err==nil {t.Fatal("retired controller retained hijacked socket")}
+}

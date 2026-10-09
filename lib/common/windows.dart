@@ -20,15 +20,9 @@ class Windows {
 
   Windows._internal() {
     _shell32 = DynamicLibrary.open('shell32.dll');
-    try {
-      _uxtheme = DynamicLibrary.open('uxtheme.dll');
-    } catch (e) {
-      // Ignore if uxtheme.dll is not available
-    }
   }
   static Windows? _instance;
   late DynamicLibrary _shell32;
-  late DynamicLibrary _uxtheme;
 
   bool _readThemeValue(String valueName) {
     try {
@@ -67,7 +61,6 @@ class Windows {
   void enableDarkModeForApp() {
     try {
       final isDark = isDarkMode();
-      if (!isDark) return;
 
       try {
         final kernel32 = DynamicLibrary.open('kernel32.dll');
@@ -95,7 +88,7 @@ class Windows {
                 Pointer<NativeFunction<Int32 Function(Int32)>>.fromAddress(
                         setPreferredAppModePtr)
                     .asFunction<int Function(int)>();
-            setPreferredAppMode(1);
+            setPreferredAppMode(isDark ? 1 : 0);
           } else {
             final ordinal133 = Pointer<Utf8>.fromAddress(133);
             final allowDarkModePtr =
@@ -106,7 +99,7 @@ class Windows {
                   Pointer<NativeFunction<Int32 Function(Int32)>>.fromAddress(
                           allowDarkModePtr)
                       .asFunction<int Function(int)>();
-              allowDarkModeForApp(1); // TRUE
+              allowDarkModeForApp(isDark ? 1 : 0);
             }
           }
 
@@ -125,34 +118,6 @@ class Windows {
         }
       } catch (_) {
         // FFI call may fail on unsupported Windows versions
-      }
-    } catch (_) {
-      // FFI call may fail on unsupported Windows versions
-    }
-  }
-
-  void applyDarkModeToMenu(int hwnd) {
-    if (hwnd == 0) return;
-
-    try {
-      final isDark = isDarkMode();
-
-      final themeName = isDark ? 'DarkMode_Explorer'.toNativeUtf16() : nullptr;
-
-      try {
-        final setWindowTheme = _uxtheme.lookupFunction<
-            Int32 Function(IntPtr hwnd, Pointer<Utf16> pszSubAppName,
-                Pointer<Utf16> pszSubIdList),
-            int Function(int hwnd, Pointer<Utf16> pszSubAppName,
-                Pointer<Utf16> pszSubIdList)>('SetWindowTheme');
-
-        setWindowTheme(hwnd, themeName, nullptr);
-      } catch (_) {
-        // FFI call may fail on unsupported Windows versions
-      }
-
-      if (themeName != nullptr) {
-        calloc.free(themeName);
       }
     } catch (_) {
       // FFI call may fail on unsupported Windows versions

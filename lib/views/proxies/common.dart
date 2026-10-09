@@ -1,8 +1,12 @@
-import 'package:flclashx/clash/clash.dart';
 import 'package:flclashx/common/common.dart';
+import 'package:flclashx/common/delay_test_coordinator.dart';
+import 'package:flclashx/common/delay_tests.dart';
 import 'package:flclashx/enum/enum.dart';
 import 'package:flclashx/models/models.dart';
 import 'package:flclashx/state.dart';
+import 'package:intl/intl.dart';
+
+export 'package:flclashx/common/delay_tests.dart';
 
 double get listHeaderHeight {
   final measure = globalState.measure;
@@ -21,81 +25,48 @@ double getItemHeight(ProxyCardType proxyCardType) {
   };
 }
 
-Future<void> proxyDelayTest(Proxy proxy, [String? testUrl]) async {
+Iterable<DelayTestTarget> _targets(
+    Iterable<Proxy> proxies, String? testUrl) sync* {
   final appController = globalState.appController;
-  final state = appController.getProxyCardState(proxy.name);
-  final url = state.testUrl.getSafeValue(
-    appController.getRealTestUrl(testUrl),
-  );
-  if (state.proxyName.isEmpty) {
-    return;
-  }
-  appController.setDelay(
-    Delay(
-      url: url,
-      name: state.proxyName,
-      value: 0,
-    ),
-  );
-  try {
-    appController.setDelay(
-      await clashCore.getDelay(
-        url,
-        state.proxyName,
-      ),
-    );
-  } catch (_) {
-    appController.setDelay(
-      Delay(
-        url: url,
-        name: state.proxyName,
-        value: -1,
-      ),
+  for (final proxy in proxies) {
+    final state = appController.getProxyCardState(proxy.name);
+    if (state.proxyName.isEmpty) continue;
+    yield DelayTestTarget(
+      state.proxyName,
+      state.testUrl.getSafeValue(appController.getRealTestUrl(testUrl)),
     );
   }
 }
 
-Future<void> delayTest(List<Proxy> proxies, [String? testUrl]) async {
-  final appController = globalState.appController;
-  final proxyNames = proxies.map((proxy) => proxy.name).toSet().toList();
+Future<void> proxyDelayTest(Proxy proxy, [String? testUrl]) =>
+    _runDelayTests(_targets([proxy], testUrl));
 
-  final delayProxies = proxyNames.map<Future>((proxyName) async {
-    final state = appController.getProxyCardState(proxyName);
-    final url = state.testUrl.getSafeValue(
-      appController.getRealTestUrl(testUrl),
-    );
-    final name = state.proxyName;
-    if (name.isEmpty) {
-      return;
-    }
-    appController.setDelay(
-      Delay(
-        url: url,
-        name: name,
-        value: 0,
-      ),
-    );
-    try {
-      appController.setDelay(
-        await clashCore.getDelay(
-          url,
-          name,
-        ),
-      );
-    } catch (_) {
-      appController.setDelay(
-        Delay(
-          url: url,
-          name: name,
-          value: -1,
-        ),
-      );
-    }
-  }).toList();
+Future<void> delayTest(List<Proxy> proxies, [String? testUrl]) =>
+    _runDelayTests(_targets(proxies, testUrl));
 
-  final batchesDelayProxies = delayProxies.batch(100);
-  for (final batchDelayProxies in batchesDelayProxies) {
-    await Future.wait(batchDelayProxies);
+Future<void> delayTestGroups(Iterable<Group> groups) => _runDelayTests(
+      groups.expand((group) => _targets(group.all, group.testUrl)),
+    );
+
+Future<void> _runDelayTests(Iterable<DelayTestTarget> targets) async {
+  final result = await delayTests.run(targets);
+  if (result.reason == 'busy') {
+    globalState
+        .showNotifier('${appLocalizations.delay}: ${appLocalizations.running}');
+    return;
   }
-  appController.addSortNum();
+  globalState.appController.addSortNum();
+  final message = switch (result.reason) {
+    'overloaded' => Intl.message('Too many proxies. Test a smaller group.',
+        name: 'delayTooManyProxies'),
+    'deadlineExceeded' => Intl.message(
+        'Delay test timed out. Remaining tests were cancelled.',
+        name: 'delayBatchTimedOut'),
+    'cancelled' => '${appLocalizations.delay}: ${appLocalizations.cancel}',
+    'transportFailure' || 'sessionClosed' => Intl.message(
+        'Delay test stopped because the core disconnected.',
+        name: 'delayCoreDisconnected'),
+    _ => null,
+  };
+  if (message != null) globalState.showNotifier(message);
 }
