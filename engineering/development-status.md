@@ -1,6 +1,16 @@
 # 开发、集成与预览台账
 
-更新日期：2026-10-09。当前阶段是快速开发、快速迭代和部分功能预览。本文记录来源与验收边界；每次继续开发仍需核实实际 Git/PR/CI 状态，不能把历史报告视为当前通过证明。
+更新日期：2026-10-10。当前阶段是快速开发、快速迭代和部分功能预览。本文记录来源与验收边界；每次继续开发仍需核实实际 Git/PR/CI 状态，不能把历史报告视为当前通过证明。
+
+## 购买页公开套餐展示补全（2026-10-10）
+
+- 用户授权“先研究一个方案，然后进行开发”，仅补全购买页套餐信息。起点 `development@b565b33da5cf4d95baa9a2e752b5884f26fa57dd`；fetch自有远端后领先8、落后0，无开放development PR；最近CI成功对应旧 `6ce68d8`，不是本轮证据。原coverage、QA原稿、stash、历史工作树与旧包保留。
+- 本轮匿名GET和Xboard-Go本地源码确认公开字段已存在，客户端原解析丢弃。现保留并呈现正文Markdown、标签、明确限额、流量重置规则、销售剩余名额和单列重置标价；不猜测币种，不改变匿名可见集合、七新购周期、价格精度或礼品卡兑换行为。账号左下角入口、其他页面、在线支付、后端、代理/TUN均未修改。
+- 正文使用原生 `flutter_markdown_plus 1.0.12` / `markdown 7.3.1`（只新增两项依赖，BSD许可）；仅无属性u可扩展，其余HTML保持原文，图片以alt占位不加载外部资源；仅显式HTTPS链接经购买页原有外跳和失败提示。4语言既有ARB键值未变。
+- 有效宿主Red 0/2→Green；审查期间修正HTML根文本丢失、linked-image alt、复合下划线、未闭合u扫描和多字体列表缩进，并补入口异常/段落隔离/实际文字盒断言。最终购买模块 **268 PASS/0 FAIL/0 SKIP**；全Flutter带行/分支coverage **563 PASS/0 FAIL/0 SKIP**，墙钟95.44秒；定向analyze无error/warning/info；Windows目标debug UI资源编译exit0（非可运行包）。
+- 本轮LCOV记录的可执行diff行161/162（99.38%），分支43/43（100%）；默认父样式兜底未命中，新增const字段无LCOV可执行行记录。真实Widget树4张中文浅/深/窄窗/2x截图已查看，保存在 `build/plan-catalog-completeness-preview`，均为合成套餐，不是真实客户端运行。独立只读复核最后无新增阻塞。
+- 方案与本轮详细证据：`engineering/plans/plan-catalog-completeness-2026-10-10.md`、`engineering/testing/plan-catalog-completeness-2026-10-10.md`。目标分支为development，源码和本节随同一可追溯本地提交保存；未推送、未PR/合并、未打新可执行包、未部署。
+- NOT RUN：真实Windows窗口/外部浏览器、真实账户/兑换/支付、各平台设备、Core/Agent/Helper新验证、代理/TUN与系统服务、CI。下一步如需预览包，须从本轮精确提交单独构建并标明组件来源，完整启动/网络验收须另获环境授权。
 
 ## 运行诊断后续资源修复（2026-10-09）
 

@@ -63,6 +63,8 @@ dependencies:
       url: https://github.com/chen08209/flutter_js
       ref: master
   flutter_svg: ^2.2.3
+  flutter_markdown_plus: 1.0.12
+  markdown: ^7.3.1
   flutter_cache_manager: ^3.4.1
   cached_network_image: ^3.4.1
   crypto: ^3.0.7

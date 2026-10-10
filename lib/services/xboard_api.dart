@@ -90,7 +90,8 @@ class DioXboardApi implements XboardApi {
           for (final value in _list(root['data'])) {
             final data = _object(value);
             if (!_boolean(data, 'can_purchase')) continue;
-            final prices = _planPrices(data['prices']);
+            final priceData = _object(data['prices']);
+            final prices = _planPrices(priceData);
             // A traffic reset is not a new subscription, and missing prices
             // must never become a zero-price offer.
             if (prices.isEmpty) continue;
@@ -107,6 +108,21 @@ class DioXboardApi implements XboardApi {
                   ? null
                   : _nonnegative(data, 'device_limit'),
               prices: prices,
+              content: _optionalString(data, 'content') ?? '',
+              tags: _planTags(data['tags']),
+              resetTrafficMethod: data['reset_traffic_method'] == null
+                  ? null
+                  : _integer(data, 'reset_traffic_method'),
+              capacityRemaining: data['capacity_remaining'] == null
+                  ? null
+                  : _nonnegative(data, 'capacity_remaining'),
+              resetTrafficPrice: priceData['reset_traffic'] == null
+                  ? null
+                  : _nonnegative(priceData, 'reset_traffic'),
+              hasSpeedLimit: data.containsKey('speed_limit'),
+              hasDeviceLimit: data.containsKey('device_limit'),
+              hasResetTrafficMethod: data.containsKey('reset_traffic_method'),
+              hasCapacityRemaining: data.containsKey('capacity_remaining'),
             ));
           }
           return XboardPlanCatalog(plans: List.unmodifiable(plans));
@@ -388,8 +404,15 @@ const _catalogPeriods = [
   'onetime',
 ];
 
-List<XboardPlanPrice> _planPrices(Object? value) {
-  final prices = _object(value);
+List<String> _planTags(Object? value) {
+  if (value == null) return const [];
+  return List.unmodifiable(_list(value).map((tag) {
+    if (tag is! String) _invalid();
+    return tag;
+  }));
+}
+
+List<XboardPlanPrice> _planPrices(Map<String, Object?> prices) {
   for (final entry in prices.entries) {
     final amount = entry.value;
     if (amount == null) continue;

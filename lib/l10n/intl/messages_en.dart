@@ -36,13 +36,15 @@ class MessageLookup extends MessageLookupByLibrary {
 
   static String m6(label) => "${label} must be between 1024 and 49151";
 
-  static String m7(count) => "${count} items have been selected";
+  static String m7(code) => "Unknown rule (${code})";
 
-  static String m8(days) => "Your subscription expires in ${days} day(s)";
+  static String m8(count) => "${count} items have been selected";
 
-  static String m9(reason) => "TUN: ${reason}";
+  static String m9(days) => "Your subscription expires in ${days} day(s)";
 
-  static String m10(label) => "${label} must be a url";
+  static String m10(reason) => "TUN: ${reason}";
+
+  static String m11(label) => "${label} must be a url";
 
   final messages = _notInlinedMessages(_notInlinedMessages);
   static Map<String, Function> _notInlinedMessages(_) => <String, Function>{
@@ -869,9 +871,45 @@ class MessageLookup extends MessageLookupByLibrary {
     ),
     "purchasePeriodYearly": MessageLookupByLibrary.simpleMessage("Yearly"),
     "purchasePlan": MessageLookupByLibrary.simpleMessage("Current plan"),
+    "purchasePlanDetails": MessageLookupByLibrary.simpleMessage("Plan details"),
     "purchasePlanDevices": MessageLookupByLibrary.simpleMessage("Device limit"),
+    "purchasePlanImageNotLoaded": MessageLookupByLibrary.simpleMessage(
+      "External image not loaded",
+    ),
+    "purchasePlanNotProvided": MessageLookupByLibrary.simpleMessage(
+      "Not provided",
+    ),
+    "purchasePlanResetMonthStart": MessageLookupByLibrary.simpleMessage(
+      "On the 1st of each month",
+    ),
+    "purchasePlanResetMonthlyExpiry": MessageLookupByLibrary.simpleMessage(
+      "Monthly on the expiry day",
+    ),
+    "purchasePlanResetNever": MessageLookupByLibrary.simpleMessage(
+      "Does not reset automatically",
+    ),
+    "purchasePlanResetPrice": MessageLookupByLibrary.simpleMessage(
+      "Traffic reset · listed price",
+    ),
+    "purchasePlanResetSystem": MessageLookupByLibrary.simpleMessage(
+      "Follows system settings",
+    ),
+    "purchasePlanResetUnknown": m7,
+    "purchasePlanResetYearStart": MessageLookupByLibrary.simpleMessage(
+      "On January 1 each year",
+    ),
+    "purchasePlanResetYearlyExpiry": MessageLookupByLibrary.simpleMessage(
+      "Yearly on the expiry month and day",
+    ),
+    "purchasePlanSalesCapacity": MessageLookupByLibrary.simpleMessage(
+      "Remaining sales slots",
+    ),
     "purchasePlanSpeed": MessageLookupByLibrary.simpleMessage("Speed limit"),
+    "purchasePlanTrafficReset": MessageLookupByLibrary.simpleMessage(
+      "Traffic reset",
+    ),
     "purchasePlanUnknown": MessageLookupByLibrary.simpleMessage("Subscription"),
+    "purchasePlanUnlimited": MessageLookupByLibrary.simpleMessage("Unlimited"),
     "purchasePlansDescription": MessageLookupByLibrary.simpleMessage(
       "Prices are shown as listed on the website. Confirm the currency and buy a gift card through the WeChat contacts below, then redeem it here.",
     ),
@@ -1050,7 +1088,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "selectAll": MessageLookupByLibrary.simpleMessage("Select all"),
     "selectProfile": MessageLookupByLibrary.simpleMessage("Select Profile"),
     "selected": MessageLookupByLibrary.simpleMessage("Selected"),
-    "selectedCountTitle": m7,
+    "selectedCountTitle": m8,
     "sendToTv": MessageLookupByLibrary.simpleMessage("Send to TV"),
     "sendToTvTitle": MessageLookupByLibrary.simpleMessage("Send to TV"),
     "sentSuccessfullyMessage": MessageLookupByLibrary.simpleMessage(
@@ -1094,7 +1132,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "subscriptionExpired": MessageLookupByLibrary.simpleMessage(
       "Your subscription has expired",
     ),
-    "subscriptionExpiresInDays": m8,
+    "subscriptionExpiresInDays": m9,
     "subscriptionExpiresSoon": MessageLookupByLibrary.simpleMessage(
       "Subscription expires soon",
     ),
@@ -1178,7 +1216,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "tunErrorUnavailable": MessageLookupByLibrary.simpleMessage(
       "Cannot verify status; check the background version",
     ),
-    "tunStatusFailure": m9,
+    "tunStatusFailure": m10,
     "tunStatusOff": MessageLookupByLibrary.simpleMessage("Not running"),
     "tunStatusOn": MessageLookupByLibrary.simpleMessage("Running"),
     "tunStatusStarting": MessageLookupByLibrary.simpleMessage("Starting…"),
@@ -1209,7 +1247,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "urlDesc": MessageLookupByLibrary.simpleMessage(
       "Obtain profile through URL",
     ),
-    "urlTip": m10,
+    "urlTip": m11,
     "useHosts": MessageLookupByLibrary.simpleMessage("Use hosts"),
     "useSystemHosts": MessageLookupByLibrary.simpleMessage("Use system hosts"),
     "value": MessageLookupByLibrary.simpleMessage("Value"),

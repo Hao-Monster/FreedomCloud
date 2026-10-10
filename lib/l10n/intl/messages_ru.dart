@@ -35,13 +35,15 @@ class MessageLookup extends MessageLookupByLibrary {
 
   static String m6(label) => "${label} должен быть числом от 1024 до 49151";
 
-  static String m7(count) => "Выбрано ${count} элементов";
+  static String m7(code) => "Неизвестное правило (${code})";
 
-  static String m8(days) => "Ваша подписка истекает через ${days} дн.";
+  static String m8(count) => "Выбрано ${count} элементов";
 
-  static String m9(reason) => "TUN: ${reason}";
+  static String m9(days) => "Ваша подписка истекает через ${days} дн.";
 
-  static String m10(label) => "${label} должен быть URL";
+  static String m10(reason) => "TUN: ${reason}";
+
+  static String m11(label) => "${label} должен быть URL";
 
   final messages = _notInlinedMessages(_notInlinedMessages);
   static Map<String, Function> _notInlinedMessages(_) => <String, Function>{
@@ -673,11 +675,51 @@ class MessageLookup extends MessageLookupByLibrary {
     "purchaseContactDescription": MessageLookupByLibrary.simpleMessage(
       "Онлайн-оплата пока недоступна. Добавьте любой из указанных аккаунтов WeChat для покупки или продления.",
     ),
+    "purchasePlanDetails": MessageLookupByLibrary.simpleMessage(
+      "Описание тарифа",
+    ),
     "purchasePlanDevices": MessageLookupByLibrary.simpleMessage(
       "Лимит устройств",
     ),
+    "purchasePlanImageNotLoaded": MessageLookupByLibrary.simpleMessage(
+      "Внешнее изображение не загружено",
+    ),
+    "purchasePlanNotProvided": MessageLookupByLibrary.simpleMessage(
+      "Не указано",
+    ),
+    "purchasePlanResetMonthStart": MessageLookupByLibrary.simpleMessage(
+      "Первого числа каждого месяца",
+    ),
+    "purchasePlanResetMonthlyExpiry": MessageLookupByLibrary.simpleMessage(
+      "Ежемесячно в день окончания срока",
+    ),
+    "purchasePlanResetNever": MessageLookupByLibrary.simpleMessage(
+      "Без автоматического сброса",
+    ),
+    "purchasePlanResetPrice": MessageLookupByLibrary.simpleMessage(
+      "Сброс трафика · указанная цена",
+    ),
+    "purchasePlanResetSystem": MessageLookupByLibrary.simpleMessage(
+      "По настройкам системы",
+    ),
+    "purchasePlanResetUnknown": m7,
+    "purchasePlanResetYearStart": MessageLookupByLibrary.simpleMessage(
+      "1 января каждого года",
+    ),
+    "purchasePlanResetYearlyExpiry": MessageLookupByLibrary.simpleMessage(
+      "Ежегодно в дату окончания срока",
+    ),
+    "purchasePlanSalesCapacity": MessageLookupByLibrary.simpleMessage(
+      "Оставшиеся места для продажи",
+    ),
     "purchasePlanSpeed": MessageLookupByLibrary.simpleMessage(
       "Ограничение скорости",
+    ),
+    "purchasePlanTrafficReset": MessageLookupByLibrary.simpleMessage(
+      "Сброс трафика",
+    ),
+    "purchasePlanUnlimited": MessageLookupByLibrary.simpleMessage(
+      "Без ограничений",
     ),
     "purchasePlansDescription": MessageLookupByLibrary.simpleMessage(
       "Цены указаны как на сайте. Уточните валюту и купите подарочную карту через контакты WeChat ниже, затем активируйте её здесь.",
@@ -790,7 +832,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "selectAll": MessageLookupByLibrary.simpleMessage("Выбрать все"),
     "selectProfile": MessageLookupByLibrary.simpleMessage("Выбрать профиль"),
     "selected": MessageLookupByLibrary.simpleMessage("Выбрано"),
-    "selectedCountTitle": m7,
+    "selectedCountTitle": m8,
     "sendToTv": MessageLookupByLibrary.simpleMessage("Отправить на ТВ"),
     "sendToTvTitle": MessageLookupByLibrary.simpleMessage("Отправить на ТВ"),
     "sentSuccessfullyMessage": MessageLookupByLibrary.simpleMessage(
@@ -834,7 +876,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "subscriptionExpired": MessageLookupByLibrary.simpleMessage(
       "Ваша подписка истекла",
     ),
-    "subscriptionExpiresInDays": m8,
+    "subscriptionExpiresInDays": m9,
     "subscriptionExpiresSoon": MessageLookupByLibrary.simpleMessage(
       "Подписка скоро истекает",
     ),
@@ -922,7 +964,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "tunErrorUnavailable": MessageLookupByLibrary.simpleMessage(
       "Не удалось проверить состояние; проверьте версию фонового процесса",
     ),
-    "tunStatusFailure": m9,
+    "tunStatusFailure": m10,
     "tunStatusOff": MessageLookupByLibrary.simpleMessage("Не запущен"),
     "tunStatusOn": MessageLookupByLibrary.simpleMessage("Запущен"),
     "tunStatusStarting": MessageLookupByLibrary.simpleMessage("Запуск…"),
@@ -955,7 +997,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "upload": MessageLookupByLibrary.simpleMessage("Отправка"),
     "url": MessageLookupByLibrary.simpleMessage("URL"),
     "urlDesc": MessageLookupByLibrary.simpleMessage("Загрузить профиль по URL"),
-    "urlTip": m10,
+    "urlTip": m11,
     "useHosts": MessageLookupByLibrary.simpleMessage("Использовать hosts"),
     "useSystemHosts": MessageLookupByLibrary.simpleMessage(
       "Использовать системные hosts",

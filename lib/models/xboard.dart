@@ -14,7 +14,21 @@ class XboardPlanOffer {
     this.speedLimit,
     this.deviceLimit,
     required this.prices,
-  });
+    this.content = '',
+    this.tags = const [],
+    this.resetTrafficMethod,
+    this.capacityRemaining,
+    this.resetTrafficPrice,
+    bool? hasSpeedLimit,
+    bool? hasDeviceLimit,
+    bool? hasResetTrafficMethod,
+    bool? hasCapacityRemaining,
+  })  : hasSpeedLimit = hasSpeedLimit ?? speedLimit != null,
+        hasDeviceLimit = hasDeviceLimit ?? deviceLimit != null,
+        hasResetTrafficMethod =
+            hasResetTrafficMethod ?? resetTrafficMethod != null,
+        hasCapacityRemaining =
+            hasCapacityRemaining ?? capacityRemaining != null;
 
   final int id;
   final String name;
@@ -22,6 +36,18 @@ class XboardPlanOffer {
   final int? speedLimit;
   final int? deviceLimit;
   final List<XboardPlanPrice> prices;
+  final String content;
+  final List<String> tags;
+  final int? resetTrafficMethod;
+  final int? capacityRemaining;
+  final int? resetTrafficPrice;
+
+  // Missing fields from older servers are unknown, not an unlimited benefit
+  // (or an inherited reset rule). Explicit null has a defined API meaning.
+  final bool hasSpeedLimit;
+  final bool hasDeviceLimit;
+  final bool hasResetTrafficMethod;
+  final bool hasCapacityRemaining;
 }
 
 class XboardPlanCatalog {

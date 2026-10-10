@@ -5329,6 +5329,146 @@ class AppLocalizations {
     );
   }
 
+  /// `Unlimited`
+  String get purchasePlanUnlimited {
+    return Intl.message(
+      'Unlimited',
+      name: 'purchasePlanUnlimited',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Not provided`
+  String get purchasePlanNotProvided {
+    return Intl.message(
+      'Not provided',
+      name: 'purchasePlanNotProvided',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Traffic reset`
+  String get purchasePlanTrafficReset {
+    return Intl.message(
+      'Traffic reset',
+      name: 'purchasePlanTrafficReset',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Follows system settings`
+  String get purchasePlanResetSystem {
+    return Intl.message(
+      'Follows system settings',
+      name: 'purchasePlanResetSystem',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `On the 1st of each month`
+  String get purchasePlanResetMonthStart {
+    return Intl.message(
+      'On the 1st of each month',
+      name: 'purchasePlanResetMonthStart',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Monthly on the expiry day`
+  String get purchasePlanResetMonthlyExpiry {
+    return Intl.message(
+      'Monthly on the expiry day',
+      name: 'purchasePlanResetMonthlyExpiry',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Does not reset automatically`
+  String get purchasePlanResetNever {
+    return Intl.message(
+      'Does not reset automatically',
+      name: 'purchasePlanResetNever',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `On January 1 each year`
+  String get purchasePlanResetYearStart {
+    return Intl.message(
+      'On January 1 each year',
+      name: 'purchasePlanResetYearStart',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Yearly on the expiry month and day`
+  String get purchasePlanResetYearlyExpiry {
+    return Intl.message(
+      'Yearly on the expiry month and day',
+      name: 'purchasePlanResetYearlyExpiry',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Unknown rule ({code})`
+  String purchasePlanResetUnknown(int code) {
+    return Intl.message(
+      'Unknown rule ($code)',
+      name: 'purchasePlanResetUnknown',
+      desc: '',
+      args: [code],
+    );
+  }
+
+  /// `Remaining sales slots`
+  String get purchasePlanSalesCapacity {
+    return Intl.message(
+      'Remaining sales slots',
+      name: 'purchasePlanSalesCapacity',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Traffic reset · listed price`
+  String get purchasePlanResetPrice {
+    return Intl.message(
+      'Traffic reset · listed price',
+      name: 'purchasePlanResetPrice',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Plan details`
+  String get purchasePlanDetails {
+    return Intl.message(
+      'Plan details',
+      name: 'purchasePlanDetails',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `External image not loaded`
+  String get purchasePlanImageNotLoaded {
+    return Intl.message(
+      'External image not loaded',
+      name: 'purchasePlanImageNotLoaded',
+      desc: '',
+      args: [],
+    );
+  }
+
   /// `Status unknown`
   String get tunStatusUnknown {
     return Intl.message(
