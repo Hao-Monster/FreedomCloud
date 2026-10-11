@@ -248,20 +248,28 @@ void main() {
 
   testWidgets('only exact attribute-free underline is interpreted',
       (tester) async {
-    await _pump(
-        tester,
-        const PurchasePlanContent(
-            data: '<u onclick="evil()">属性内容</u>\n\n'
-                '`<u>代码原文</u>`\n\n'
-                '<script>alert("never run")</script>\n\n'
-                '<iframe src="https://external.example"></iframe>'));
-    expect(find.textContaining('<u onclick="evil()">', findRichText: true),
-        findsOneWidget);
-    expect(find.text('<u>代码原文</u>', findRichText: true), findsOneWidget);
-    expect(find.textContaining('<script>', findRichText: true), findsOneWidget);
-    expect(find.byType(ButtonStyleButton), findsNothing);
-    expect(find.byType(Image), findsNothing);
-    expect(tester.takeException(), isNull);
+    final network = _NoResourceRequests();
+    await HttpOverrides.runZoned(() async {
+      await _pump(
+          tester,
+          const PurchasePlanContent(
+              data: '<u onclick="evil()">属性内容</u>\n\n'
+                  '`<u>代码原文</u>`\n\n'
+                  '<script>alert("never run")</script>\n\n'
+                  '<img src="https://image.example/track.png" onerror="evil()">\n\n'
+                  '<iframe src="https://external.example"></iframe>'));
+      expect(find.textContaining('<u onclick="evil()">', findRichText: true),
+          findsOneWidget);
+      expect(find.text('<u>代码原文</u>', findRichText: true), findsOneWidget);
+      expect(
+          find.textContaining('<script>', findRichText: true), findsOneWidget);
+      expect(find.byType(ButtonStyleButton), findsNothing);
+      expect(find.byType(RawImage), findsNothing);
+      expect(
+          find.textContaining('<img src=', findRichText: true), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    }, createHttpClient: network.createHttpClient);
+    expect(network.requests, 0);
   });
 
   testWidgets('HTTPS links require explicit clicks and support keyboard',
@@ -315,48 +323,258 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('all image origins and malformed image URLs use alt placeholders',
+  testWidgets('links preserve inline emphasis and combined decorations',
+      (tester) async {
+    final opened = <Uri>[];
+    await _pump(
+        tester,
+        PurchasePlanContent(
+          data: '[**高速线路** 与 *使用说明*、~~旧说明~~、'
+              '`client.yaml` 和 <u>下划线</u>](https://support.example/plan)',
+          openLink: (uri) async => opened.add(uri),
+        ));
+    expect(
+        _textSpans(tester, '高速线路')
+            .any((span) => span.style?.fontWeight == FontWeight.bold),
+        isTrue);
+    expect(
+        _textSpans(tester, '使用说明')
+            .any((span) => span.style?.fontStyle == FontStyle.italic),
+        isTrue);
+    expect(
+        _textSpans(tester, '旧说明').any((span) =>
+            span.style?.decoration?.contains(TextDecoration.lineThrough) ??
+            false),
+        isTrue);
+    expect(
+        _textSpans(tester, 'client.yaml')
+            .any((span) => span.style?.fontFamily == 'monospace'),
+        isTrue);
+    expect(
+        _textSpans(tester, '下划线').any((span) =>
+            span.style?.decoration?.contains(TextDecoration.underline) ??
+            false),
+        isTrue);
+    await tester.tap(find.byType(TextButton));
+    expect(opened, [Uri.parse('https://support.example/plan')]);
+  });
+
+  testWidgets('underline contents stay inline with literal heading markers',
+      (tester) async {
+    await _pump(
+        tester,
+        const PurchasePlanContent(
+            data: '前缀 <u># 字面标题</u> 后缀\n\n<u>~~旧说明~~</u>'));
+    expect(find.textContaining('# 字面标题', findRichText: true), findsOneWidget);
+    expect(
+        _textSpans(tester, '旧说明').any((span) =>
+            (span.style?.decoration?.contains(TextDecoration.underline) ??
+                false) &&
+            (span.style?.decoration?.contains(TextDecoration.lineThrough) ??
+                false)),
+        isTrue);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('links inside underline preserve formatting and native actions',
+      (tester) async {
+    final opened = <Uri>[];
+    await _pump(
+        tester,
+        PurchasePlanContent(
+          data: '<u>说明 [**支持页面**](https://support.example/help) 和 '
+              '[*不可点击*](http://plain.example/help)</u>',
+          openLink: (uri) async => opened.add(uri),
+        ));
+    expect(find.byType(TextButton), findsOneWidget);
+    expect(
+        _textSpans(tester, '支持页面').any((span) =>
+            span.style?.fontWeight == FontWeight.bold &&
+            (span.style?.decoration?.contains(TextDecoration.underline) ??
+                false)),
+        isTrue);
+    expect(
+        _textSpans(tester, '不可点击').any((span) =>
+            span.style?.fontStyle == FontStyle.italic &&
+            (span.style?.decoration?.contains(TextDecoration.underline) ??
+                false)),
+        isTrue);
+    await tester.tap(find.text('不可点击'));
+    expect(opened, isEmpty);
+    await tester.tap(find.text('支持页面'));
+    expect(opened, [Uri.parse('https://support.example/help')]);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('underline ignores closing tags inside inline code or escapes',
+      (tester) async {
+    await _pump(tester, const PurchasePlanContent(data: r'''
+<u>`</u>` 和 **正文**</u>
+
+<u>``a ` </u> b`` 末尾</u>
+
+<u>转义 \</u> 仍在下划线</u>
+'''));
+    expect(find.text('</u> 和 正文', findRichText: true), findsOneWidget);
+    expect(find.text('a ` </u> b 末尾', findRichText: true), findsOneWidget);
+    expect(find.text('转义 </u> 仍在下划线', findRichText: true), findsOneWidget);
+    expect(
+        _textSpans(tester, 'a ` </u> b').any((span) =>
+            span.style?.fontFamily == 'monospace' &&
+            (span.style?.decoration?.contains(TextDecoration.underline) ??
+                false)),
+        isTrue);
+    expect(
+        _textSpans(tester, '仍在下划线').any((span) =>
+            span.style?.decoration?.contains(TextDecoration.underline) ??
+            false),
+        isTrue);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('successive underline spans and hard line breaks stay intact',
+      (tester) async {
+    await _pump(
+        tester,
+        const PurchasePlanContent(
+            data: '<u>第一段</u>、<u>第二段</u>，最后<u>无结束\n\n'
+                '<u>第一行  \n第二行</u>'));
+    for (final label in ['第一段', '第二段']) {
+      expect(
+          _textSpans(tester, label).any((span) =>
+              span.style?.decoration?.contains(TextDecoration.underline) ??
+              false),
+          isTrue);
+    }
+    expect(find.textContaining('<u>无结束', findRichText: true), findsOneWidget);
+    expect(find.text('第一行\n第二行', findRichText: true), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('code block numbers do not inflate narrow catalogue list indent',
+      (tester) async {
+    await _pump(
+        tester,
+        _catalog(_plan(
+            content: '```\n999999999. literal code\n```\n\n1. 正常列表内容\n\n末尾说明')),
+        width: 320,
+        scale: 2);
+    expect(find.text('正常列表内容', findRichText: true), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    final paragraph = tester
+        .renderObject<RenderParagraph>(find.text('正常列表内容', findRichText: true));
+    expect(paragraph.size.width, greaterThan(100));
+  });
+
+  testWidgets('unsafe image origins and malformed URLs never load resources',
       (tester) async {
     final network = _NoResourceRequests();
     await HttpOverrides.runZoned(() async {
       await _pump(tester, const PurchasePlanContent(data: '''
-![远程图片](https://image.example/track.png)
+![明文图片](http://image.example/track.png)
 ![本地图片](file:///C:/private.png)
 ![内嵌图片](data:image/png;base64,AAAA)
 ![坏地址](https://[invalid)
+![相对图片](/image.png)
+![含凭据图片](https://user:pass@image.example/private.png)
 '''));
-      for (final alt in ['远程图片', '本地图片', '内嵌图片', '坏地址']) {
+      for (final alt in ['明文图片', '本地图片', '内嵌图片', '坏地址', '相对图片', '含凭据图片']) {
         expect(find.text('External image not loaded · $alt'), findsOneWidget);
       }
-      expect(find.byType(Image), findsNothing);
+      expect(find.byType(RawImage), findsNothing);
       expect(tester.takeException(), isNull);
     }, createHttpClient: network.createHttpClient);
     expect(network.requests, 0);
   });
 
   testWidgets(
-      'linked images retain alt text and compound underline stays readable',
+      'unavailable linked images retain alt and inline styles without requests',
       (tester) async {
     final opened = <Uri>[];
-    await _pump(tester, PurchasePlanContent(data: '''
-[![客服二维码](https://img.example/a.png)](https://support.example)
+    final network = _NoResourceRequests();
+    await HttpOverrides.runZoned(() async {
+      await _pump(tester, PurchasePlanContent(data: '''
+[![客服二维码](http://img.example/a.png)](https://support.example)
 
-[查看 ![说明图](https://img.example/b.png) 文档](https://support.example/docs)
+[查看 ![说明图](http://img.example/b.png) 文档](https://support.example/docs)
 
 [<u>**高速线路**</u>](https://support.example/plan)
 ''', openLink: (uri) async => opened.add(uri)));
-    expect(find.text('External image not loaded · 客服二维码'), findsOneWidget);
-    expect(find.text('查看 External image not loaded · 说明图 文档'), findsOneWidget);
-    expect(find.text('高速线路'), findsOneWidget);
-    expect(find.textContaining('**高速线路**'), findsNothing);
-    expect(find.byType(Image), findsNothing);
-    expect(opened, isEmpty);
-    await tester.tap(find.text('External image not loaded · 客服二维码'));
-    await tester.tap(find.text('高速线路'));
-    expect(opened, [
-      Uri.parse('https://support.example'),
-      Uri.parse('https://support.example/plan')
-    ]);
+      expect(find.text('External image not loaded · 客服二维码'), findsOneWidget);
+      expect(find.text('External image not loaded · 说明图'), findsOneWidget);
+      expect(find.textContaining('查看 ', findRichText: true), findsOneWidget);
+      expect(find.textContaining(' 文档', findRichText: true), findsOneWidget);
+      expect(find.text('高速线路'), findsOneWidget);
+      expect(find.textContaining('**高速线路**'), findsNothing);
+      expect(find.byType(RawImage), findsNothing);
+      expect(
+          _textSpans(tester, '高速线路').any((span) =>
+              span.style?.fontWeight == FontWeight.bold &&
+              (span.style?.decoration?.contains(TextDecoration.underline) ??
+                  false)),
+          isTrue);
+      expect(opened, isEmpty);
+      await tester.tap(find.text('External image not loaded · 客服二维码'));
+      await tester.tap(find.text('高速线路'));
+      expect(opened, [
+        Uri.parse('https://support.example'),
+        Uri.parse('https://support.example/plan')
+      ]);
+    }, createHttpClient: network.createHttpClient);
+    expect(network.requests, 0);
+  });
+
+  testWidgets('large ordered markers leave room for narrow card content',
+      (tester) async {
+    await _pump(
+        tester, _catalog(_plan(content: '999999999. 起始条目\n1. 后续条目\n\n末尾说明')),
+        width: 320, scale: 2);
+    expect(find.text('999999999.'), findsOneWidget);
+    expect(find.text('1000000000.'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    final paragraph = tester
+        .renderObject<RenderParagraph>(find.text('起始条目', findRichText: true));
+    expect(paragraph.size.width, greaterThan(100));
+    await tester.ensureVisible(find.text('末尾说明', findRichText: true));
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('server template sections and every line remain inside the card',
+      (tester) async {
+    // Same three-section Markdown shape as the public template, synthetic text.
+    await _pump(tester, _catalog(_plan(content: '''
+## 套餐特点
+- 服务端特点第一项
+- 服务端特点第二项
+
+## 使用说明
+1. 服务端步骤第一项
+2. 服务端步骤第二项
+
+## 注意事项
+- 服务端注意第一项
+- 服务端最后一行
+''')), width: 320, scale: 2);
+    final card = find.byKey(const Key('purchase-plan-1'));
+    expect(card, findsOneWidget);
+    for (final text in [
+      '套餐特点',
+      '服务端特点第一项',
+      '服务端特点第二项',
+      '使用说明',
+      '服务端步骤第一项',
+      '服务端步骤第二项',
+      '注意事项',
+      '服务端注意第一项',
+      '服务端最后一行',
+    ]) {
+      expect(
+          find.descendant(
+              of: card, matching: find.text(text, findRichText: true)),
+          findsOneWidget);
+    }
+    await tester.ensureVisible(find.text('服务端最后一行', findRichText: true));
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('unclosed underline has a bounded scan and retains all text',

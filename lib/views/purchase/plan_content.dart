@@ -1,73 +1,94 @@
 import 'dart:math' as math;
 
-import 'package:flclashx/l10n/l10n.dart';
+import 'package:flclashx/views/purchase/plan_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import 'package:markdown/markdown.dart' as md;
 
 /// Operator-authored Markdown, never a WebView or arbitrary HTML renderer.
 class PurchasePlanContent extends StatelessWidget {
-  const PurchasePlanContent({super.key, required this.data, this.openLink})
-      : _textStyle = null;
-
-  const PurchasePlanContent._underlined({
-    required this.data,
-    required this.openLink,
-    required TextStyle textStyle,
-  }) : _textStyle = textStyle;
+  const PurchasePlanContent({super.key, required this.data, this.openLink});
 
   final String data;
   final Future<void> Function(Uri)? openLink;
-  final TextStyle? _textStyle;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return MarkdownBody(
-      data: data,
-      softLineBreak: true,
-      extensionSet: md.ExtensionSet.gitHubFlavored,
-      blockSyntaxes: const [_LiteralHtmlBlockSyntax()],
-      inlineSyntaxes: [_UnderlineSyntax()],
-      builders: {
-        'u': _UnderlineBuilder(openLink),
-        'a': _LinkBuilder(openLink),
-        'img': _ImagePlaceholderBuilder(),
-      },
-      styleSheet: MarkdownStyleSheet.fromTheme(theme).copyWith(
-        p: _textStyle ?? theme.textTheme.bodyMedium?.copyWith(height: 1.5),
-        h1: theme.textTheme.titleMedium,
-        h2: theme.textTheme.titleSmall,
-        h3: theme.textTheme.titleSmall,
-        h4: theme.textTheme.titleSmall,
-        h5: theme.textTheme.titleSmall,
-        h6: theme.textTheme.titleSmall,
-        blockSpacing: 10,
-        listIndent: _listIndent(context, theme),
-        // Wide tables remain available by scrolling, including at 2x text.
-        tableColumnWidth: const IntrinsicColumnWidth(),
-        tableScrollbarThumbVisibility: true,
-        tableBorder: TableBorder.all(color: theme.colorScheme.outlineVariant),
-        tableCellsPadding: const EdgeInsets.all(8),
-      ),
-    );
+    return LayoutBuilder(builder: (context, constraints) {
+      final width = math.min(constraints.maxWidth, 640.0);
+      final inline = _InlineContent(openLink, width);
+      return MarkdownBody(
+        data: data,
+        softLineBreak: true,
+        extensionSet: md.ExtensionSet.gitHubFlavored,
+        blockSyntaxes: const [_LiteralHtmlBlockSyntax()],
+        inlineSyntaxes: [_UnderlineSyntax()],
+        builders: {
+          'u': _UnderlineBuilder(inline),
+          'a': _LinkBuilder(inline),
+          'img': _ImageBuilder(inline),
+        },
+        bulletBuilder: (parameters) => FittedBox(
+          fit: BoxFit.scaleDown,
+          alignment: AlignmentDirectional.centerEnd,
+          child: Text(
+            parameters.style == BulletStyle.orderedList
+                ? '${parameters.index + 1}.'
+                : '•',
+            style: theme.textTheme.bodyMedium,
+            maxLines: 1,
+            softWrap: false,
+          ),
+        ),
+        styleSheet: MarkdownStyleSheet.fromTheme(theme).copyWith(
+          p: theme.textTheme.bodyMedium?.copyWith(height: 1.5),
+          h1: theme.textTheme.titleMedium,
+          h2: theme.textTheme.titleSmall,
+          h3: theme.textTheme.titleSmall,
+          h4: theme.textTheme.titleSmall,
+          h5: theme.textTheme.titleSmall,
+          h6: theme.textTheme.titleSmall,
+          blockSpacing: 10,
+          listIndent: _listIndent(context, theme, width),
+          // Wide tables remain available by scrolling, including at 2x text.
+          tableColumnWidth: const IntrinsicColumnWidth(),
+          tableScrollbarThumbVisibility: true,
+          tableBorder: TableBorder.all(color: theme.colorScheme.outlineVariant),
+          tableCellsPadding: const EdgeInsets.all(8),
+        ),
+      );
+    });
   }
 
-  double _listIndent(BuildContext context, ThemeData theme) {
+  double _listIndent(BuildContext context, ThemeData theme, double width) {
     final scaler = MediaQuery.textScalerOf(context);
-    final markers =
-        RegExp(r'^\s*(\d{1,9})[.)]\s', multiLine: true).allMatches(data);
-    var largestStart = 1;
-    var count = 0;
-    for (final marker in markers) {
-      largestStart = math.max(largestStart, int.parse(marker.group(1)!));
-      count++;
+    // Inspect only block structure: code, HTML and ordinary text are not lists.
+    // Inline parsing is unnecessary here and is done once by MarkdownBody.
+    final nodes = md.BlockParser(
+      data.split('\n').map(md.Line.new).toList(),
+      md.Document(extensionSet: md.ExtensionSet.gitHubFlavored),
+    ).parseLines();
+    var largestIndex = 1;
+    void visit(md.Node node) {
+      if (node is! md.Element) return;
+      if (node.tag == 'ol') {
+        final start = int.tryParse(node.attributes['start'] ?? '') ?? 1;
+        final count = node.children
+                ?.whereType<md.Element>()
+                .where((child) => child.tag == 'li')
+                .length ??
+            0;
+        largestIndex = math.max(largestIndex, start + count - 1);
+      }
+      node.children?.forEach(visit);
     }
+
+    nodes.forEach(visit);
     // Include automatic numbering; source may use "1." on every list item.
     // Measure the actual font instead of assuming a number and dot fit at 2x.
     final painter = TextPainter(
-      text: TextSpan(
-          text: '${largestStart + count}.', style: theme.textTheme.bodyMedium),
+      text: TextSpan(text: '$largestIndex.', style: theme.textTheme.bodyMedium),
       textDirection: Directionality.of(context),
       textScaler: scaler,
       maxLines: 1,
@@ -75,7 +96,9 @@ class PurchasePlanContent extends StatelessWidget {
     final indent =
         math.max(22 * scaler.scale(1), painter.width + scaler.scale(6));
     painter.dispose();
-    return indent;
+    // Very large start numbers must not consume a narrow card's whole width.
+    // The marker scales down, while the actual list content keeps its text size.
+    return math.min(indent, width / 3);
   }
 }
 
@@ -89,38 +112,70 @@ class _LiteralHtmlBlockSyntax extends md.HtmlBlockSyntax {
       md.Element('p', [super.parse(parser)]);
 }
 
-String _imageLabel(BuildContext context, md.Element image) => [
-      AppLocalizations.of(context).purchasePlanImageNotLoaded,
-      if (image.attributes['alt']?.isNotEmpty ?? false)
-        image.attributes['alt']!,
-    ].join(' · ');
+class _ImageBuilder extends MarkdownElementBuilder {
+  _ImageBuilder(this.inline);
+  final _InlineContent inline;
 
-class _ImagePlaceholderBuilder extends MarkdownElementBuilder {
-  // Override before URI parsing: no network, file, asset, or data image loaders,
-  // including for malformed URLs.
+  // Validate the source in our bounded loader before any URI/image provider.
   @override
   Widget visitElementAfterWithContext(BuildContext context, md.Element element,
           TextStyle? preferredStyle, TextStyle? parentStyle) =>
-      Text(_imageLabel(context, element),
-          style: Theme.of(context).textTheme.bodySmall);
+      inline.image(element);
 }
 
 // Match the web editor's sole HTML extension: an exact, attribute-free pair.
-// Its body is parsed as Markdown separately, retaining emphasis and safe links.
+// Its body is parsed as inline Markdown, retaining emphasis and safe links.
 // All other raw HTML stays inert text, as in the Markdown package itself.
 class _UnderlineSyntax extends md.InlineSyntax {
   _UnderlineSyntax() : super(r'<u>', startCharacter: 60);
 
-  final _noClosingTag = Expando<bool>();
+  final _closingTags = Expando<List<int>>();
+
+  List<int> _findClosingTags(String source) {
+    // A closing tag inside code or an escape is literal text. Index backtick
+    // runs once, avoiding repeated scans of long unmatched-code tails.
+    final runs = RegExp(r'`+').allMatches(source).toList();
+    final nextRunEnd = <int, int>{};
+    final codeEnds = <int, int>{};
+    for (final run in runs.reversed) {
+      final length = run.end - run.start;
+      final next = nextRunEnd[length];
+      if (next != null) codeEnds[run.start] = next;
+      nextRunEnd[length] = run.end;
+    }
+    final tags = <int>[];
+    var index = 0;
+    while (index < source.length) {
+      if (source.codeUnitAt(index) == 92) {
+        index += 2; // Markdown escapes include '<' and '`'.
+      } else if (codeEnds.containsKey(index)) {
+        index = codeEnds[index]!;
+      } else if (source.startsWith('</u>', index)) {
+        tags.add(index);
+        index += 4;
+      } else {
+        index++;
+      }
+    }
+    return tags;
+  }
 
   @override
   bool onMatch(md.InlineParser parser, Match match) {
-    // Scan an unmatched tail only once per paragraph, not once per <u>.
-    final end = (_noClosingTag[parser] ?? false)
-        ? -1
-        : parser.source.indexOf('</u>', match.end);
+    // One index per paragraph, also bounding repeated unmatched <u> scans.
+    final tags = _closingTags[parser] ??= _findClosingTags(parser.source);
+    var low = 0;
+    var high = tags.length;
+    while (low < high) {
+      final middle = (low + high) ~/ 2;
+      if (tags[middle] < match.end) {
+        low = middle + 1;
+      } else {
+        high = middle;
+      }
+    }
+    final end = low < tags.length ? tags[low] : -1;
     if (end == -1) {
-      _noClosingTag[parser] = true;
       parser.addNode(md.Text('<u>'));
       return true;
     }
@@ -128,7 +183,7 @@ class _UnderlineSyntax extends md.InlineSyntax {
     final element = md.Element(
       'u',
       md.InlineParser(source, parser.document).parse(),
-    )..attributes['data-markdown'] = source;
+    );
     parser.addNode(element);
     parser.consume(end + 4 - parser.pos);
     return false;
@@ -136,50 +191,93 @@ class _UnderlineSyntax extends md.InlineSyntax {
 }
 
 class _UnderlineBuilder extends MarkdownElementBuilder {
-  _UnderlineBuilder(this.openLink);
-
-  final Future<void> Function(Uri)? openLink;
+  _UnderlineBuilder(this.inline);
+  final _InlineContent inline;
 
   @override
   Widget visitElementAfterWithContext(BuildContext context, md.Element element,
       TextStyle? preferredStyle, TextStyle? parentStyle) {
     final style = parentStyle ?? DefaultTextStyle.of(context).style;
-    return PurchasePlanContent._underlined(
-      data: element.attributes['data-markdown']!,
-      openLink: openLink,
-      textStyle: style.copyWith(
-        decoration: TextDecoration.combine([
-          if (style.decoration != null) style.decoration!,
-          TextDecoration.underline,
-        ]),
-      ),
-    );
+    return inline.text(context, [element], style);
   }
 }
 
 class _LinkBuilder extends MarkdownElementBuilder {
-  _LinkBuilder(this.openLink);
-
-  final Future<void> Function(Uri)? openLink;
+  _LinkBuilder(this.inline);
+  final _InlineContent inline;
 
   @override
   Widget visitElementAfterWithContext(BuildContext context, md.Element element,
-      TextStyle? preferredStyle, TextStyle? parentStyle) {
+          TextStyle? preferredStyle, TextStyle? parentStyle) =>
+      inline.link(
+          context, element, parentStyle ?? DefaultTextStyle.of(context).style);
+}
+
+class _InlineContent {
+  const _InlineContent(this.openLink, this.maxWidth);
+
+  final Future<void> Function(Uri)? openLink;
+  final double maxWidth;
+
+  Widget image(md.Element element) => PurchasePlanImage(
+        source: element.attributes['src'] ?? '',
+        alt: element.attributes['alt'] ?? '',
+        maxWidth: maxWidth,
+      );
+
+  TextStyle _decorate(TextStyle style, TextDecoration decoration) =>
+      style.copyWith(
+          decoration: TextDecoration.combine([
+        if (style.decoration != null) style.decoration!,
+        decoration,
+      ]));
+
+  Iterable<InlineSpan> _spans(
+      BuildContext context, List<md.Node> nodes, TextStyle style) sync* {
+    for (final node in nodes) {
+      if (node is! md.Element) {
+        yield TextSpan(text: node.textContent, style: style);
+        continue;
+      }
+      if (node.tag == 'img' || node.tag == 'a') {
+        yield WidgetSpan(
+          alignment: PlaceholderAlignment.middle,
+          child: node.tag == 'img' ? image(node) : link(context, node, style),
+        );
+      } else if (node.tag == 'br') {
+        yield TextSpan(text: '\n', style: style);
+      } else {
+        final childStyle = switch (node.tag) {
+          'strong' => style.copyWith(fontWeight: FontWeight.bold),
+          'em' => style.copyWith(fontStyle: FontStyle.italic),
+          'del' => _decorate(style, TextDecoration.lineThrough),
+          'u' => _decorate(style, TextDecoration.underline),
+          'code' => style.copyWith(fontFamily: 'monospace'),
+          _ => style,
+        };
+        yield* _spans(context, node.children ?? const [], childStyle);
+      }
+    }
+  }
+
+  Widget text(BuildContext context, List<md.Node> nodes, TextStyle style) =>
+      // The Markdown renderer flattens Text widgets and can discard nested
+      // decorations. Keep this inline AST intact, without reparsing it as blocks.
+      Padding(
+        padding: EdgeInsets.zero,
+        child: Text.rich(
+            TextSpan(children: _spans(context, nodes, style).toList())),
+      );
+
+  Widget link(BuildContext context, md.Element element, TextStyle style) {
     final href = element.attributes['href'];
     final uri = href == null ? null : Uri.tryParse(href);
-    // textContent alone drops image alt text and creates empty linked images.
-    String labelFor(md.Node node) => node is md.Element
-        ? node.tag == 'img'
-            ? _imageLabel(context, node)
-            : (node.children ?? const []).map(labelFor).join()
-        : node.textContent;
-    final label = labelFor(element);
     if (openLink == null ||
         uri == null ||
         uri.scheme != 'https' ||
         uri.host.isEmpty ||
         uri.userInfo.isNotEmpty) {
-      return Text(label, style: parentStyle);
+      return text(context, element.children ?? const [], style);
     }
     // A native button supports focus/keyboard activation as well as a tap.
     // Opening and error feedback use the purchase page's existing boundary.
@@ -190,9 +288,13 @@ class _LinkBuilder extends MarkdownElementBuilder {
         minimumSize: Size.zero,
         tapTargetSize: MaterialTapTargetSize.shrinkWrap,
         alignment: Alignment.centerLeft,
-        textStyle: parentStyle?.copyWith(decoration: TextDecoration.underline),
       ),
-      child: Text(label),
+      child: text(
+          context,
+          element.children ?? const [],
+          _decorate(
+              style.copyWith(color: Theme.of(context).colorScheme.primary),
+              TextDecoration.underline)),
     );
   }
 }

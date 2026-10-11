@@ -68,7 +68,11 @@ const _plans = [
 | 销售名额 | 指套餐剩余销售数量 |
 | 流量重置标价 | 仅展示，不在此执行重置 |
 
-[查看使用说明](https://example.test/help)
+[查看 **使用说明** 与 *设备支持*](https://example.test/help)
+
+<u># 此处是字面说明，不是标题</u>
+
+[~~旧版说明~~ 与 `client.yaml`](https://example.test/config)
 ''',
   ),
 ];
@@ -84,6 +88,14 @@ void main() {
       await loader.load();
       fontFamily = 'CatalogPreviewChinese';
     }
+    // Widget tests otherwise render an unregistered monospace face with Ahem.
+    final mono = File('C:/Windows/Fonts/consola.ttf');
+    if (mono.existsSync()) {
+      await (FontLoader('monospace')
+            ..addFont(
+                Future.value(ByteData.sublistView(await mono.readAsBytes()))))
+          .load();
+    }
     await (FontLoader('MaterialIcons')
           ..addFont(rootBundle.load('fonts/MaterialIcons-Regular.otf')))
         .load();
@@ -91,7 +103,7 @@ void main() {
 
   testWidgets('render catalogue completeness without starting the application',
       (tester) async {
-    final output = Directory('build/plan-catalog-completeness-preview');
+    final output = Directory('build/plan-card-rich-content-preview');
     await tester.runAsync(() => output.create(recursive: true));
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
