@@ -2,7 +2,7 @@
 
 更新日期：2026-10-12。当前阶段是快速开发、快速迭代和部分功能预览。本文记录来源与验收边界；每次继续开发仍需核实实际 Git/PR/CI 状态，不能把历史报告视为当前通过证明。
 
-## 开发分支累计晋级准备（2026-10-12）
+## 开发分支累计源码晋级（2026-10-12，合并前快照）
 
 - 用户明确授权本次正常推送 `development` 并通过 PR 合并 `main`，暂不生成可执行客户端包。只做源码集成和质量检查；不创建版本标签、不运行候选客户端、不修改当前代理/TUN/服务、不部署。
 - 开工 fetch 后：本地 `development@a97e42d860b40e4918d9310328e4582ac445d2d8`，远端 `development@6ce68d86e855573c1d1e42cdaf4af3073b58005b`，自有 `main@4738293ea90ca9b90afcc201a5c9a09b729a86ad`；本地领先开发远端11个、领先主线31个提交，均无落后，无开放 PR。晋级范围包含此前 Core/TUN、Windows 启动、托盘及资源生命周期修复，不仅是本轮购买卡片。
@@ -11,6 +11,8 @@
 - 已回读主线保护：必需 PR、三项指定 Actions 检查、严格更新、讨论解决、管理员适用，禁止强推/删除；本次另等待 Windows Core and service tests，采用普通 merge commit，再把主线合并提交快进同步回 `development`。不改保护设置。
 - 已核对全部 workflow 触发器：普通 `development`/`main` push 与 PR 只触发 `quality-gate`；可执行包构建要求版本标签、独立旧预览分支或手动触发，本轮均不执行。M3 package integrity checks 只是现有工具/清单测试，不是客户端发行包。
 - 原 coverage、原生 QA/probes、stash、旧工作树和已有预览包保持原位，不混入提交。系统/真实兑换/实机验收边界维持各报告的 NOT RUN；合并不代表打包、部署或正式发布。
+- `a92e3ec` 已正常推送，单一晋级 [PR #60](https://github.com/Hao-Monster/FreedomCloud/pull/60) 已建立。三个独立只读审查覆盖累计产品范围；CI 在 Linux 复现两条托盘测试错误平台预期，Core/Windows service/M3 检查通过。仅修正测试的真实宿主调用顺序/tooltip断言，不改产品代码、不新增skip，最终head重新通过全部检查前不合并。
+- 本轮具体 Red、Windows 回归、静态检查、历史空白诊断及 NOT RUN 边界见[源码晋级验证](testing/source-promotion-2026-10-12.md)。最终合并SHA、最终head CI和两分支同步结果以同一 PR 的实际记录为准；不为记录自身合并SHA再追加造成分叉的文档提交。
 
 ## 购买页重新设计：只用兑换码（2026-10-11）
 

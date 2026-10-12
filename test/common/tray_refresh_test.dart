@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flclashx/common/fixed.dart';
 import 'package:flclashx/common/tray.dart';
@@ -115,9 +116,9 @@ void main() {
     });
     await mountTrayManager(tester, TunRuntimeController());
     final listener =
-        tester.state(find.byType(TrayManager)) as native_tray.TrayListener;
-    listener.onTrayIconRightMouseDown();
-    listener.onTrayIconRightMouseDown();
+        (tester.state(find.byType(TrayManager)) as native_tray.TrayListener)
+          ..onTrayIconRightMouseDown()
+          ..onTrayIconRightMouseDown();
     await tester.runAsync(() => entered.future);
     expect(popups, 1);
     release.complete(0);
@@ -229,12 +230,25 @@ void main() {
     try {
       await tester.runAsync(() => menuEntered.future);
       expect(completed, isFalse);
-      expect(calls, contains('destroy'));
+      // Linux must install the menu before creating its tray icon; Windows
+      // refreshes the icon first. Both paths must await the blocked menu.
+      expect(
+        calls,
+        Platform.isLinux
+            ? ['setContextMenu']
+            : ['destroy', 'setIcon', 'setToolTip', 'setContextMenu'],
+      );
     } finally {
       release.complete();
       await tester.runAsync(() => update);
     }
     expect(completed, isTrue);
+    expect(
+      calls,
+      Platform.isLinux
+          ? ['setContextMenu', 'destroy', 'setIcon']
+          : ['destroy', 'setIcon', 'setToolTip', 'setContextMenu'],
+    );
   });
 
   test('menu updates serialize and coalesce to the latest state and force',
@@ -293,6 +307,7 @@ void main() {
     }
     expect(menus, hasLength(2));
     expect(pendingCompleted, 2);
+    expect(destroys, Platform.isLinux ? 2 : 1);
   });
 
   test('coalesced native failures reach every waiter and later updates recover',
@@ -333,7 +348,7 @@ void main() {
     expect(menus, 3);
   });
 
-  test('Windows traffic tooltips remain separate from native menu rebuilding',
+  test('traffic tooltips respect Windows support without menu rebuilding',
       () async {
     final calls = <MethodCall>[];
     binding.defaultBinaryMessenger.setMockMethodCallHandler(channel,
@@ -342,11 +357,16 @@ void main() {
       return null;
     });
     await Tray().updateTrayTitle(Traffic(up: 1024, down: 2048));
-    expect(calls.map((call) => call.method), ['setToolTip']);
-    final text = (calls.single.arguments as Map)['toolTip'] as String;
-    expect(text, contains('↑'));
-    expect(text, contains('↓'));
-    expect(text, contains('/s'));
+    expect(
+      calls.map((call) => call.method),
+      Platform.isWindows ? ['setToolTip'] : isEmpty,
+    );
+    if (Platform.isWindows) {
+      final text = (calls.single.arguments as Map)['toolTip'] as String;
+      expect(text, contains('↑'));
+      expect(text, contains('↓'));
+      expect(text, contains('/s'));
+    }
   });
 
   testWidgets('explicit menu refresh updates node latency with equal TrayState',
