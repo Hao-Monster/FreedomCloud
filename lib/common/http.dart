@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flclashx/common/common.dart';
 import 'package:flclashx/state.dart';
+import 'package:flclashx/common/tun_runtime.dart';
 
 class FlClashHttpOverrides extends HttpOverrides {
   static String handleFindProxy(Uri url) {
@@ -22,11 +23,11 @@ class FlClashHttpOverrides extends HttpOverrides {
     // physical interface).
     //
     // On Android the service is always a VpnService (TUN), so when it's
-    // running the traffic is already captured. `realTunEnable` is a desktop-
-    // only flag (it tracks admin authorization for TUN on Win/macOS/Linux)
-    // and stays false on Android even though TUN is effectively on.
+    // running the traffic is already captured. Windows uses observed listener
+    // and interface readiness. Other platforms retain their existing contract.
     final tunHandlesTraffic =
-        Platform.isAndroid || globalState.appState.realTunEnable;
+        Platform.isAndroid || (Platform.isWindows
+          ? tunRuntime.isEnabled : globalState.appState.realTunEnable);
     if (tunHandlesTraffic) {
       return "DIRECT";
     }

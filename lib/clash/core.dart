@@ -6,10 +6,14 @@ import 'dart:isolate';
 import 'package:flclashx/clash/clash.dart';
 import 'package:flclashx/clash/interface.dart';
 import 'package:flclashx/common/common.dart';
+import 'package:flclashx/common/delay_test_coordinator.dart';
+import 'package:flclashx/common/delay_tests.dart';
+import 'package:flclashx/common/tun_runtime.dart';
 import 'package:flclashx/enum/enum.dart';
 import 'package:flclashx/models/models.dart';
 import 'package:flclashx/state.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter/foundation.dart';
 import 'package:path/path.dart';
 
 class ClashCore {
@@ -25,6 +29,8 @@ class ClashCore {
       clashInterface = clashService!;
     }
   }
+  @visibleForTesting
+  ClashCore.forTesting(this.clashInterface);
   static ClashCore? _instance;
   late ClashHandlerInterface clashInterface;
   final _connectionSnapshotDecoder = ConnectionSnapshotDecoder();
@@ -32,6 +38,8 @@ class ClashCore {
   bool? _lastConnectionSnapshotWasEmpty;
   DateTime? _lastConnectionSnapshotDiagnosticAt;
   String? _lastConnectionSnapshotErrorType;
+  bool? _wantedUiActive;
+  Future<bool>? _uiActivityUpdate;
 
   Future<bool> preload() => clashInterface.preload();
 
@@ -84,9 +92,25 @@ class ClashCore {
 
   Future<bool> setState(CoreState state) => clashInterface.setState(state);
 
-  Future<bool> setUiActive(bool active) => clashInterface.setUiActive(active);
+  Future<bool> setUiActive(bool active) {
+    _wantedUiActive = active;
+    return _uiActivityUpdate ??= _drainUiActivity().whenComplete(() {
+      _uiActivityUpdate = null;
+    });
+  }
+
+  Future<bool> _drainUiActivity() async {
+    var applied = true;
+    while (_wantedUiActive != null) {
+      final active = _wantedUiActive!;
+      _wantedUiActive = null;
+      applied = await clashInterface.setUiActive(active);
+    }
+    return applied;
+  }
 
   Future<void> shutdown() async {
+    await cancelDelayTests(reason: 'sessionClosed');
     await clashInterface.shutdown();
   }
 
@@ -95,11 +119,25 @@ class ClashCore {
   FutureOr<String> validateConfig(String data) =>
       clashInterface.validateConfig(data);
 
-  Future<String> updateConfig(UpdateParams updateParams) =>
-      clashInterface.updateConfig(updateParams);
+  Future<String> updateConfig(UpdateParams updateParams, {
+    String? controllerAddress, bool? controllerEnabled,
+  }) async {
+    final result = await clashInterface.updateConfig(updateParams,
+      controllerAddress: controllerAddress, controllerEnabled: controllerEnabled);
+    if (result.isEmpty) await cancelDelayTests(reason: 'configChanged');
+    return result;
+  }
 
-  Future<String> setupConfig(SetupParams setupParams) =>
-      clashInterface.setupConfig(setupParams);
+  Future<String> setupConfig(SetupParams setupParams, {required String? profileId}) async {
+    final result = await clashInterface.setupConfig(setupParams);
+    if (result.isEmpty) {
+      globalState.commitRuntimeSetup(setupParams, profileId);
+      await cancelDelayTests(reason: 'configChanged');
+    }
+    return result;
+  }
+
+  Future<TunStatus> getTunStatus() => clashInterface.getTunStatus();
 
   Future<List<Group>> getProxiesGroups() async {
     final proxies = await clashInterface.getProxies();
@@ -299,11 +337,10 @@ class ClashCore {
   }) async =>
       clashInterface.updateExternalProvider(providerName);
 
-  Future<void> startListener() async {
-    await clashInterface.startListener();
-  }
+  Future<bool> startListener() => clashInterface.startListener();
 
   Future<void> stopListener() async {
+    await cancelDelayTests(reason: 'sessionClosed');
     await clashInterface.stopListener();
   }
 
@@ -313,6 +350,20 @@ class ClashCore {
   Future<Delay> getDelay(String url, String proxyName) async {
     final data = await clashInterface.asyncTestDelay(url, proxyName);
     return Delay.fromJson(json.decode(data));
+  }
+
+  Future<DelayTestResult> getDelayResult(String url, String proxyName, {
+    required String requestId, required Duration timeout,
+  }) async {
+    final data = await clashInterface.asyncTestDelay(url, proxyName,
+      requestId: requestId, timeout: timeout);
+    final decoded = json.decode(data) as Map<String, dynamic>;
+    return DelayTestResult((decoded['value'] as num?)?.toInt() ?? -1,
+      reason: decoded['reason'] as String?);
+  }
+
+  Future<void> cancelDelayTest(String requestId) async {
+    await clashInterface.cancelTestDelay(requestId);
   }
 
   Future<Map<String, dynamic>> getConfig(String id) async {

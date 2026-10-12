@@ -7,6 +7,8 @@ import 'package:flclashx/common/utils.dart';
 import 'package:flclashx/enum/enum.dart';
 import 'package:flclashx/models/models.dart';
 import 'package:flclashx/state.dart';
+import 'package:flclashx/common/tun_runtime.dart';
+import 'package:flclashx/widgets/tun_status.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
@@ -17,8 +19,58 @@ import 'constant.dart';
 import 'window.dart';
 import 'statusbar.dart';
 
+class _TrayUpdate {
+  _TrayUpdate(this.state, {required this.focus, required Completer<void> waiter})
+      : waiters = [waiter];
+
+  TrayState state;
+  bool focus;
+  final List<Completer<void>> waiters;
+}
+
 class Tray {
   void Function(String)? selectProfile;
+  _TrayUpdate? _pendingUpdate;
+  bool _updating = false;
+
+  Future<void> update({required TrayState trayState, bool focus = false}) {
+    final waiter = Completer<void>();
+    final pending = _pendingUpdate;
+    if (pending == null) {
+      _pendingUpdate = _TrayUpdate(trayState, focus: focus, waiter: waiter);
+    } else {
+      final needsFocus = pending.focus || focus;
+      pending
+        ..state = trayState
+        ..focus = needsFocus
+        ..waiters.add(waiter);
+    }
+    if (!_updating) {
+      _updating = true;
+      unawaited(_drainUpdates());
+    }
+    return waiter.future;
+  }
+
+  Future<void> _drainUpdates() async {
+    // Background listeners and right-click refreshes share one native menu.
+    // While one update is in flight, only its most recent successor is needed.
+    while (_pendingUpdate != null) {
+      final update = _pendingUpdate!;
+      _pendingUpdate = null;
+      try {
+        await _renderUpdate(trayState: update.state, focus: update.focus);
+        for (final waiter in update.waiters) {
+          waiter.complete();
+        }
+      } catch (error, stackTrace) {
+        for (final waiter in update.waiters) {
+          waiter.completeError(error, stackTrace);
+        }
+      }
+    }
+    _updating = false;
+  }
 
   Future<void> _selectProxy(Group group, String name) async {
     try {
@@ -70,7 +122,7 @@ class Tray {
     }
   }
 
-  Future<void> update({
+  Future<void> _renderUpdate({
     required TrayState trayState,
     bool focus = false,
   }) async {
@@ -167,13 +219,24 @@ class Tray {
     if (trayState.isStart) {
       menuItems.add(
         MenuItem.checkbox(
-          label: appLocalizations.tun,
+          label: Platform.isWindows ? '${appLocalizations.tun}: ${tunStatusLabel(tunRuntime)}' : appLocalizations.tun,
+          disabled: Platform.isWindows && tunRuntime.busy,
           onClick: (_) {
-            globalState.appController.updateTun();
+            if (Platform.isWindows) {
+              unawaited(globalState.appController.setTunEnabled(!tunRuntime.isEnabled));
+            } else {
+              globalState.appController.updateTun();
+            }
           },
           checked: trayState.tunEnable,
         ),
       );
+      if (Platform.isWindows && (tunRuntime.observed == TunObservedState.unknown ||
+          (tunRuntime.desiredEnabled && !tunRuntime.isEnabled))) {
+        menuItems.add(MenuItem(label: appLocalizations.tunDisableAction,
+          disabled: tunRuntime.busy,
+          onClick: (_) => globalState.appController.setTunEnabled(false)));
+      }
       menuItems.add(
         MenuItem.checkbox(
           label: appLocalizations.systemProxy,

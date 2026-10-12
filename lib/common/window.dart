@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flclashx/common/common.dart';
+import 'package:flclashx/common/ui_activity.dart';
 import 'package:flclashx/state.dart';
 import 'package:flutter/material.dart';
 import 'package:screen_retriever/screen_retriever.dart';
@@ -78,6 +79,8 @@ class Window {
     await windowManager.focus();
     await windowManager.setSkipTaskbar(false);
     visible.value = true;
+    uiActivity.setMinimized(false);
+    uiActivity.setVisible(true);
   }
 
   Future<bool> get isVisible async {
@@ -99,6 +102,7 @@ class Window {
     await windowManager.hide();
     await windowManager.setSkipTaskbar(true);
     visible.value = false;
+    uiActivity.setVisible(false);
   }
 }
 

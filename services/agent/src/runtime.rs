@@ -7,17 +7,18 @@ use std::time::Duration;
 
 use anyhow::{anyhow, bail, Context, Result};
 use serde_json::{json, Value};
-use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::process::{Child, Command};
-use tokio::sync::{mpsc, oneshot, Mutex, Notify, RwLock};
+use tokio::sync::{mpsc, oneshot, Mutex, Notify, OwnedSemaphorePermit, RwLock, Semaphore};
+use tokio::task::JoinSet;
 use tokio::time::{timeout, Instant};
 
 #[cfg(windows)]
 use crate::broker::WindowsStrictBrokerSession;
 use crate::config::AgentConfig;
 use crate::endpoint::{load_or_create_helper_token, random_token, EndpointGuard};
-use crate::journal::ReplayJournal;
+use crate::journal::{mutation_was_accepted, ReplayJournal};
 use crate::logging::AgentLogger;
 use crate::protocol::{
     authenticate, parse_control, AgentCommand, StrictPolicyStatus, MAX_AUTH_LINE_BYTES,
@@ -29,6 +30,11 @@ use crate::strict_flow::{StrictOrchestrationAction, StrictPolicyOrchestrator};
 use flclash_strict_contract::{StrictPolicyBundle, StrictState, MAX_STRICT_CHILDREN};
 
 const CHANNEL_CAPACITY: usize = 256;
+const UI_RELIABLE_RESERVE: usize = 32;
+const MAX_PENDING_UI_AUTH: usize = 8;
+const UI_AUTH_TIMEOUT: Duration = Duration::from_secs(3);
+const IPC_ENQUEUE_TIMEOUT: Duration = Duration::from_secs(2);
+const IPC_WRITE_TIMEOUT: Duration = Duration::from_secs(5);
 const CORE_CONNECT_TIMEOUT: Duration = Duration::from_secs(8);
 const CORE_REPLAY_TIMEOUT: Duration = Duration::from_secs(30);
 const HELPER_RESPONSE_LIMIT: usize = 64 * 1024;
@@ -92,7 +98,16 @@ struct SessionCancel {
 impl SessionCancel {
     fn cancel(&self) {
         self.cancelled.store(true, Ordering::Release);
-        self.notify.notify_one();
+        self.notify.notify_waiters();
+    }
+
+    async fn cancelled(&self) {
+        let notification = self.notify.notified();
+        tokio::pin!(notification);
+        notification.as_mut().enable();
+        if !self.cancelled.load(Ordering::Acquire) {
+            notification.await;
+        }
     }
 }
 
@@ -112,6 +127,7 @@ impl UiOutput {
 
 struct Shared {
     ui: Mutex<Option<UiSession>>,
+    strict_mutations: Arc<Semaphore>,
     core: Mutex<Option<mpsc::Sender<String>>>,
     journal: Mutex<ReplayJournal>,
     #[cfg(target_os = "macos")]
@@ -130,6 +146,11 @@ struct Shared {
     shutdown: Notify,
     supervisor: mpsc::Sender<SupervisorCommand>,
     privileged_backend: bool,
+    agent_instance_id: String,
+    agent_executable: PathBuf,
+    core_executable: PathBuf,
+    core_pid: Mutex<Option<u32>>,
+    helper_session: Mutex<HelperSession>,
     helper_port: Option<u16>,
     helper_token: Option<String>,
     home_dir: PathBuf,
@@ -140,6 +161,12 @@ struct Shared {
     strict_store: Mutex<Option<crate::strict_store::StrictIntentStore>>,
 }
 
+#[derive(Default)]
+struct HelperSession {
+    owner: Option<String>,
+    attempt: u64,
+}
+
 enum SupervisorCommand {
     Restart(oneshot::Sender<bool>),
     Stop(oneshot::Sender<bool>),
@@ -147,27 +174,16 @@ enum SupervisorCommand {
 }
 
 enum SessionEnd {
-    Restart,
+    #[cfg(target_os = "macos")]
     Stopped,
     Crashed,
-    ShutdownRequested,
+    Command(SupervisorCommand),
     Shutdown,
 }
 
 fn resolve_supervisor_command(command: Option<SupervisorCommand>) -> SessionEnd {
     match command {
-        Some(SupervisorCommand::Restart(reply)) => {
-            let _ = reply.send(true);
-            SessionEnd::Restart
-        }
-        Some(SupervisorCommand::Stop(reply)) => {
-            let _ = reply.send(true);
-            SessionEnd::Stopped
-        }
-        Some(SupervisorCommand::Shutdown(reply)) => {
-            let _ = reply.send(true);
-            SessionEnd::ShutdownRequested
-        }
+        Some(command) => SessionEnd::Command(command),
         None => SessionEnd::Shutdown,
     }
 }
@@ -176,11 +192,42 @@ async fn apply_supervisor_end(
     end: SessionEnd,
     should_start: &mut bool,
     shared: &Arc<Shared>,
+    config: &AgentConfig,
+    helper_token: Option<&str>,
+    child: &mut Option<Child>,
 ) -> bool {
+    let stopped = stop_backend(config, helper_token, shared, child).await;
+    if let Err(error) = stopped {
+        shared.logger.log(format!("Core stop failed: {error:#}"));
+        *should_start = false;
+        set_status(shared, CoreStatus::Failed).await;
+        if let SessionEnd::Command(command) = end {
+            let reply = match command {
+                SupervisorCommand::Restart(reply)
+                | SupervisorCommand::Stop(reply)
+                | SupervisorCommand::Shutdown(reply) => reply,
+            };
+            let _ = reply.send(false);
+        }
+        return false;
+    }
+    *shared.core_pid.lock().await = None;
     match end {
-        SessionEnd::Restart => *should_start = true,
+        #[cfg(target_os = "macos")]
         SessionEnd::Stopped => *should_start = false,
-        SessionEnd::ShutdownRequested => {
+        SessionEnd::Command(SupervisorCommand::Restart(reply)) => {
+            *should_start = true;
+            set_status(shared, CoreStatus::Starting).await;
+            let _ = reply.send(true);
+        }
+        SessionEnd::Command(SupervisorCommand::Stop(reply)) => {
+            *should_start = false;
+            set_status(shared, CoreStatus::Stopped).await;
+            let _ = reply.send(true);
+        }
+        SessionEnd::Command(SupervisorCommand::Shutdown(reply)) => {
+            set_status(shared, CoreStatus::Stopped).await;
+            let _ = reply.send(true);
             // The UI handler signals shutdown after the command result is
             // written to the socket. Fall back to a bounded forced shutdown
             // if that client disappears before acknowledging delivery.
@@ -220,13 +267,14 @@ async fn set_strict_policy(
 
 async fn publish_strict_status(shared: &Arc<Shared>) {
     let state = *shared.status.read().await;
-    let envelope = json!({"_agent": {
+    let mut envelope = json!({"_agent": {
         "type": "coreState", "protocol": PROTOCOL_VERSION,
         "coreState": state.as_str(),
         "generation": shared.generation.load(Ordering::Acquire),
         "privilegedBackend": shared.privileged_backend,
         "strictPolicy": strict_policy_json(shared).await,
     }});
+    add_backend_identity(shared, &mut envelope).await;
     forward_to_ui(shared, envelope.to_string()).await;
 }
 
@@ -748,7 +796,7 @@ async fn drive_strict_action(
                 return false;
             };
             *runtime.pending_core_id.lock().await = Some(core_action.id().to_owned());
-            if core.send(core_action.line().to_owned()).await.is_err() {
+            if !matches!(timeout(IPC_ENQUEUE_TIMEOUT, core.send(core_action.line().to_owned())).await, Ok(Ok(()))) {
                 *runtime.pending_core_id.lock().await = None;
                 shared.logger.log("strict policy Core ingress send failed");
                 runtime.orchestrator.lock().await.broker_lost(runtime.policy.read().await.revision);
@@ -978,6 +1026,18 @@ pub async fn run(config: AgentConfig) -> Result<()> {
         }
     };
     let endpoint_token = endpoint.token;
+    let agent_instance_id = endpoint
+        .agent_instance_id
+        .context("Agent instance ID is unavailable")?;
+    let agent_executable = std::env::current_exe().context("Agent executable is unavailable")?;
+    let core_executable = if config.use_helper {
+        config
+            .service_core
+            .clone()
+            .context("service Core is unavailable")?
+    } else {
+        config.core.clone()
+    };
     let core_token = random_token();
     let helper_token = if config.use_helper {
         match load_or_create_helper_token(&config.home) {
@@ -1020,6 +1080,7 @@ pub async fn run(config: AgentConfig) -> Result<()> {
     let initial_journal = ReplayJournal::default();
     let shared = Arc::new(Shared {
         ui: Mutex::new(None),
+        strict_mutations: Arc::new(Semaphore::new(1)),
         core: Mutex::new(None),
         journal: Mutex::new(initial_journal),
         #[cfg(target_os = "macos")]
@@ -1035,6 +1096,11 @@ pub async fn run(config: AgentConfig) -> Result<()> {
         shutdown: Notify::new(),
         supervisor: supervisor_tx,
         privileged_backend: config.use_helper,
+        agent_instance_id,
+        agent_executable,
+        core_executable,
+        core_pid: Mutex::new(None),
+        helper_session: Mutex::new(HelperSession::default()),
         helper_port: shared_helper_port,
         helper_token: shared_helper_token,
         home_dir: shared_home_dir,
@@ -1071,37 +1137,11 @@ pub async fn run(config: AgentConfig) -> Result<()> {
         .await
     });
 
-    loop {
-        tokio::select! {
-            accepted = ui_listener.accept() => {
-                let (stream, address) = match accepted {
-                    Ok(value) => value,
-                    Err(error) => {
-                        logger.log(format!("UI IPC accept failed: {error}"));
-                        return Err(error.into());
-                    }
-                };
-                if !address.ip().is_loopback() {
-                    continue;
-                }
-                let handler_shared = shared.clone();
-                let handler_logger = shared.logger.clone();
-                let token = endpoint_token.clone();
-                tokio::spawn(async move {
-                    if let Err(error) = handle_ui(stream, token, handler_shared).await {
-                        handler_logger.log(format!("UI session error: {error:#}"));
-                    }
-                });
-            }
-            _ = shared.shutdown.notified() => break,
-        }
-        if shared.shutting_down.load(Ordering::Acquire) {
-            break;
-        }
-    }
+    let ui_result = serve_ui(ui_listener, endpoint_token, shared.clone()).await;
 
     #[cfg(windows)]
     strict_recovery.abort();
+    ui_result?;
     let result = supervisor.await.context("Core supervisor task failed")?;
     if let Err(error) = &result {
         logger.log(format!("Core supervisor failed: {error:#}"));
@@ -1109,18 +1149,77 @@ pub async fn run(config: AgentConfig) -> Result<()> {
     result
 }
 
+async fn serve_ui(ui_listener: TcpListener, endpoint_token: String, shared: Arc<Shared>) -> Result<()> {
+    let pending_auth = Arc::new(Semaphore::new(MAX_PENDING_UI_AUTH));
+    let mut handlers = JoinSet::new();
+    let result = loop {
+        // Register before checking the flag so a concurrent shutdown cannot be lost.
+        let shutdown = shared.shutdown.notified();
+        tokio::pin!(shutdown);
+        shutdown.as_mut().enable();
+        if shared.shutting_down.load(Ordering::Acquire) {
+            break Ok(());
+        }
+        tokio::select! {
+            biased;
+            _ = &mut shutdown => break Ok(()),
+            _ = handlers.join_next(), if !handlers.is_empty() => {},
+            accepted = ui_listener.accept() => {
+                let (stream, address) = match accepted {
+                    Ok(value) => value,
+                    Err(error) => {
+                        shared.logger.log(format!("UI IPC accept failed: {error}"));
+                        break Err(error.into());
+                    }
+                };
+                if !address.ip().is_loopback() {
+                    continue;
+                }
+                let Ok(permit) = pending_auth.clone().try_acquire_owned() else {
+                    // Close before spawning or allocating a reader for an unauthenticated peer.
+                    continue;
+                };
+                let handler_shared = shared.clone();
+                let handler_logger = shared.logger.clone();
+                let token = endpoint_token.clone();
+                handlers.spawn(async move {
+                    if let Err(error) = handle_ui_admitted(stream, token, handler_shared, Some(permit)).await {
+                        handler_logger.log(format!("UI session error: {error:#}"));
+                    }
+                });
+            }
+        }
+    };
+    handlers.abort_all();
+    while handlers.join_next().await.is_some() {}
+    *shared.ui.lock().await = None;
+    result
+}
+
+#[cfg(test)]
 async fn handle_ui(stream: TcpStream, token: String, shared: Arc<Shared>) -> Result<()> {
+    handle_ui_admitted(stream, token, shared, None).await
+}
+
+async fn handle_ui_admitted(
+    stream: TcpStream,
+    token: String,
+    shared: Arc<Shared>,
+    auth_permit: Option<OwnedSemaphorePermit>,
+) -> Result<()> {
     let mut reader = BufReader::new(stream);
-    let auth = read_bounded_line(&mut reader, MAX_AUTH_LINE_BYTES)
-        .await?
+    let auth = timeout(UI_AUTH_TIMEOUT, read_bounded_line(&mut reader, MAX_AUTH_LINE_BYTES))
+        .await.context("UI authentication timed out")??
         .ok_or_else(|| anyhow!("UI disconnected before authentication"))?;
     if !authenticate(auth.trim_end(), &token) {
         bail!("UI authentication failed");
     }
+    drop(auth_permit);
 
-    let stream = reader.into_inner();
-    let (read_half, mut write_half) = stream.into_split();
-    let (output_tx, mut output_rx) = mpsc::channel::<UiOutput>(CHANNEL_CAPACITY);
+    // Preserve bytes read beyond the auth newline when a client pipelines its first command.
+    let buffered = reader.buffer().to_vec();
+    let (read_half, write_half) = reader.into_inner().into_split();
+    let (output_tx, output_rx) = mpsc::channel::<UiOutput>(CHANNEL_CAPACITY);
     let session_id = shared.next_session.fetch_add(1, Ordering::Relaxed);
     let session_cancel = Arc::new(SessionCancel {
         cancelled: AtomicBool::new(false),
@@ -1137,161 +1236,179 @@ async fn handle_ui(stream: TcpStream, token: String, shared: Arc<Shared>) -> Res
         }
     }
 
-    let writer = tokio::spawn(async move {
-        while let Some(output) = output_rx.recv().await {
-            write_half.write_all(output.line.as_bytes()).await?;
-            write_half.write_all(b"\n").await?;
-            write_half.flush().await?;
-            if let Some(delivered) = output.delivered {
-                let _ = delivered.send(());
-            }
-        }
-        Result::<()>::Ok(())
-    });
-
-    output_tx
-        .send(UiOutput::new(ready_envelope(&shared).await))
-        .await?;
-    send_ui_activity(&shared, true).await;
-
-    let mut reader = BufReader::new(read_half);
-    let session_result: Result<()> = async {
-    loop {
-        if session_cancel.cancelled.load(Ordering::Acquire) {
-            break;
-        }
-        let line = tokio::select! {
-            line = read_bounded_line(&mut reader, MAX_MESSAGE_LINE_BYTES) => line?,
-            _ = session_cancel.notify.notified() => break,
-        };
-        let Some(line) = line else {
-            break;
-        };
-        let line = line.trim_end();
-        if line.is_empty() {
-            continue;
-        }
-        if let Some(control) = parse_control(line) {
-            let shutdown = matches!(control.command, AgentCommand::ShutdownAgent);
-            let (ok, state, identity) = match control.command {
-                AgentCommand::Status => (true, *shared.status.read().await, None),
-                AgentCommand::RestartCore => {
-                    let (ok, state) =
-                        issue_supervisor_command(&shared, SupervisorCommandKind::Restart).await;
-                    (ok, state, None)
-                }
-                AgentCommand::StopCore => {
-                    let (ok, state) =
-                        issue_supervisor_command(&shared, SupervisorCommandKind::Stop).await;
-                    (ok, state, None)
-                }
-                AgentCommand::ShutdownAgent => {
-                    let (ok, state) =
-                        issue_supervisor_command(&shared, SupervisorCommandKind::Shutdown).await;
-                    (ok, state, None)
-                }
-                AgentCommand::ApplyStrictBlock => (
-                    apply_strict_block(&shared, control.path.clone()).await,
-                    *shared.status.read().await,
-                    None,
-                ),
-                AgentCommand::ClearStrictBlock => (
-                    clear_strict_block(&shared, control.path.clone()).await,
-                    *shared.status.read().await,
-                    None,
-                ),
-                AgentCommand::ApplyStrictPolicy => (
-                    apply_strict_policy(&shared, control.policy.clone()).await,
-                    *shared.status.read().await,
-                    None,
-                ),
-                AgentCommand::MigrateStrictPolicy => (
-                    migrate_strict_policy(&shared, control.path.clone(), control.policy.clone()).await,
-                    *shared.status.read().await,
-                    None,
-                ),
-                AgentCommand::ClearStrictPolicy => (
-                    clear_strict_policy(&shared).await,
-                    *shared.status.read().await,
-                    None,
-                ),
-                AgentCommand::InspectStrictIdentity => {
-                    match inspect_strict_identity(&shared, control.path.clone()).await {
-                        Ok(identity) => (true, *shared.status.read().await, Some(identity)),
-                        Err(error) => {
-                            shared
-                                .logger
-                                .log(format!("strict identity inspection failed: {error:#}"));
-                            (false, *shared.status.read().await, None)
-                        }
-                    }
-                }
-            };
-            let response = json!({
-                "_agent": {
-                    "type": "commandResult",
-                    "id": control.id,
-                    "ok": ok,
-                    "coreState": state.as_str(),
-                    "generation": shared.generation.load(Ordering::Acquire),
-                    "strictPolicy": strict_policy_json(&shared).await,
-                    "identity": identity,
-                }
-            });
-            let delivered = if shutdown {
-                let (tx, rx) = oneshot::channel();
-                let _ = output_tx
-                    .send(UiOutput {
-                        line: response.to_string(),
-                        delivered: Some(tx),
-                    })
-                    .await;
-                Some(rx)
-            } else {
-                let _ = output_tx.send(UiOutput::new(response.to_string())).await;
-                None
-            };
-            if shutdown {
-                if let Some(delivered) = delivered {
-                    let _ = timeout(Duration::from_secs(1), delivered).await;
-                }
-                signal_shutdown(&shared);
+    let session_result: Result<()> = {
+      let writer = write_ui_output(write_half, output_rx, IPC_WRITE_TIMEOUT);
+      let handler = async {
+        output_tx.send(UiOutput::new(ready_envelope(&shared).await)).await?;
+        send_ui_activity(&shared, true).await;
+        let mut reader = BufReader::new(std::io::Cursor::new(buffered).chain(read_half));
+        loop {
+            if session_cancel.cancelled.load(Ordering::Acquire) {
                 break;
             }
-            continue;
-        }
-
-        let action = serde_json::from_str::<Value>(line).context("invalid Core action JSON")?;
-        if action.get("id").and_then(Value::as_str).is_none()
-            || action.get("method").and_then(Value::as_str).is_none()
-            || action.get("data").is_none()
-        {
-            bail!("invalid Core action envelope");
-        }
-        let core = shared.core.lock().await.clone();
-        if let Some(core) = core {
-            #[cfg(target_os = "macos")]
-            shared.mac_strict_replay.lock().await.stage(&action)?;
-            shared.journal.lock().await.stage(line);
-            if core.send(line.to_owned()).await.is_err() {
-                #[cfg(target_os = "macos")]
-                shared.mac_strict_replay.lock().await.discard_pending();
-                shared.journal.lock().await.discard_pending();
-                bail!("Core command channel is closed");
+            let line = read_bounded_line(&mut reader, MAX_MESSAGE_LINE_BYTES).await?;
+            let Some(line) = line else {
+                break;
+            };
+            let line = line.trim_end();
+            if line.is_empty() {
+                continue;
             }
-        } else {
-            let response = json!({
-                "_agent": {
-                    "type": "coreUnavailable",
-                    "id": action["id"],
-                    "coreState": shared.status.read().await.as_str(),
+            if let Some(control) = parse_control(line) {
+                let shutdown = matches!(control.command, AgentCommand::ShutdownAgent);
+                let (ok, state, identity) = match control.command {
+                    AgentCommand::Status => (true, *shared.status.read().await, None),
+                    AgentCommand::RestartCore => {
+                        let (ok, state) =
+                            issue_supervisor_command(&shared, SupervisorCommandKind::Restart).await;
+                        (ok, state, None)
+                    }
+                    AgentCommand::StopCore => {
+                        let (ok, state) =
+                            issue_supervisor_command(&shared, SupervisorCommandKind::Stop).await;
+                        (ok, state, None)
+                    }
+                    AgentCommand::ShutdownAgent => {
+                        let (ok, state) =
+                            issue_supervisor_command(&shared, SupervisorCommandKind::Shutdown)
+                                .await;
+                        (ok, state, None)
+                    }
+                    AgentCommand::ApplyStrictBlock => (
+                        complete_strict_mutation(&shared, {
+                            let shared = shared.clone();
+                            let path = control.path.clone();
+                            async move { apply_strict_block(&shared, path).await }
+                        }).await,
+                        *shared.status.read().await,
+                        None,
+                    ),
+                    AgentCommand::ClearStrictBlock => (
+                        complete_strict_mutation(&shared, {
+                            let shared = shared.clone();
+                            let path = control.path.clone();
+                            async move { clear_strict_block(&shared, path).await }
+                        }).await,
+                        *shared.status.read().await,
+                        None,
+                    ),
+                    AgentCommand::ApplyStrictPolicy => (
+                        complete_strict_mutation(&shared, {
+                            let shared = shared.clone();
+                            let policy = control.policy.clone();
+                            async move { apply_strict_policy(&shared, policy).await }
+                        }).await,
+                        *shared.status.read().await,
+                        None,
+                    ),
+                    AgentCommand::MigrateStrictPolicy => (
+                        complete_strict_mutation(&shared, {
+                            let shared = shared.clone();
+                            let path = control.path.clone();
+                            let policy = control.policy.clone();
+                            async move { migrate_strict_policy(&shared, path, policy).await }
+                        }).await,
+                        *shared.status.read().await,
+                        None,
+                    ),
+                    AgentCommand::ClearStrictPolicy => (
+                        complete_strict_mutation(&shared, {
+                            let shared = shared.clone();
+                            async move { clear_strict_policy(&shared).await }
+                        }).await,
+                        *shared.status.read().await,
+                        None,
+                    ),
+                    AgentCommand::InspectStrictIdentity => {
+                        match inspect_strict_identity(&shared, control.path.clone()).await {
+                            Ok(identity) => (true, *shared.status.read().await, Some(identity)),
+                            Err(error) => {
+                                shared
+                                    .logger
+                                    .log(format!("strict identity inspection failed: {error:#}"));
+                                (false, *shared.status.read().await, None)
+                            }
+                        }
+                    }
+                };
+                let mut response = json!({
+                    "_agent": {
+                        "type": "commandResult",
+                        "id": control.id,
+                        "ok": ok,
+                        "coreState": state.as_str(),
+                        "generation": shared.generation.load(Ordering::Acquire),
+                        "strictPolicy": strict_policy_json(&shared).await,
+                        "identity": identity,
+                    }
+                });
+                add_backend_identity(&shared, &mut response).await;
+                let delivered = if shutdown && ok {
+                    let (tx, rx) = oneshot::channel();
+                    let _ = output_tx
+                        .send(UiOutput {
+                            line: response.to_string(),
+                            delivered: Some(tx),
+                        })
+                        .await;
+                    Some(rx)
+                } else {
+                    let _ = output_tx.send(UiOutput::new(response.to_string())).await;
+                    None
+                };
+                if shutdown && ok {
+                    if let Some(delivered) = delivered {
+                        let _ = timeout(Duration::from_secs(1), delivered).await;
+                    }
+                    signal_shutdown(&shared);
+                    break;
                 }
-            });
-            output_tx.send(UiOutput::new(response.to_string())).await?;
+                continue;
+            }
+
+            let action = serde_json::from_str::<Value>(line).context("invalid Core action JSON")?;
+            if action.get("id").and_then(Value::as_str).is_none()
+                || action.get("method").and_then(Value::as_str).is_none()
+                || action.get("data").is_none()
+            {
+                bail!("invalid Core action envelope");
+            }
+            let core = shared.core.lock().await.clone();
+            if let Some(core) = core {
+                #[cfg(target_os = "macos")]
+                shared.mac_strict_replay.lock().await.stage(&action)?;
+                shared.journal.lock().await.stage(line);
+                if !matches!(timeout(IPC_ENQUEUE_TIMEOUT, core.send(line.to_owned())).await, Ok(Ok(()))) {
+                    #[cfg(target_os = "macos")]
+                    shared.mac_strict_replay.lock().await.discard_pending();
+                    shared.journal.lock().await.discard_pending();
+                    bail!("Core command queue is unavailable or stalled");
+                }
+            } else {
+                let mut response = json!({
+                    "_agent": {
+                        "type": "coreUnavailable",
+                        "protocol": PROTOCOL_VERSION,
+                        "generation": shared.generation.load(Ordering::Acquire),
+                        "id": action["id"],
+                        "coreState": shared.status.read().await.as_str(),
+                    }
+                });
+                add_backend_identity(&shared, &mut response).await;
+                output_tx.send(UiOutput::new(response.to_string())).await?;
+            }
         }
-    }
-    Ok(())
-    }.await;
+        Ok(())
+      };
+      // Own both halves in this scope: cancellation/error drops the writer immediately,
+      // including when the handler is awaiting another bounded channel or Core command.
+      tokio::select! {
+          biased;
+          _ = session_cancel.cancelled() => Ok(()),
+          result = writer => result.and_then(|()| Err(anyhow!("UI writer ended"))),
+          result = handler => result,
+      }
+    };
 
     let owns_session = {
         let mut current = shared.ui.lock().await;
@@ -1305,12 +1422,53 @@ async fn handle_ui(stream: TcpStream, token: String, shared: Arc<Shared>) -> Res
             false
         }
     };
+    drop(output_tx);
     if owns_session {
         send_ui_activity(&shared, false).await;
     }
-    drop(output_tx);
-    writer.abort();
     session_result
+}
+
+async fn write_ui_output<W: AsyncWrite + Unpin>(
+    mut writer: W,
+    mut output: mpsc::Receiver<UiOutput>,
+    write_limit: Duration,
+) -> Result<()> {
+    while let Some(item) = output.recv().await {
+        timeout(write_limit, async {
+            writer.write_all(item.line.as_bytes()).await?;
+            writer.write_all(b"\n").await?;
+            writer.flush().await
+        }).await.context("UI output timed out")??;
+        if let Some(delivered) = item.delivered {
+            let _ = delivered.send(());
+        }
+    }
+    Ok(())
+}
+
+async fn complete_strict_mutation<F>(shared: &Arc<Shared>, operation: F) -> bool
+where
+    F: std::future::Future<Output = bool> + Send + 'static,
+{
+    let Ok(permit) = shared.strict_mutations.clone().try_acquire_owned() else {
+        shared.logger.log("strict control rejected: previous mutation is still completing");
+        return false;
+    };
+    // A cancelled UI must not drop an accepted privileged transaction halfway
+    // through its state reconciliation. At most one mutation may outlive a UI;
+    // there is no waiting task queue, and its external I/O keeps its deadlines.
+    // Dropping the join handle intentionally leaves this owned worker running.
+    match tokio::spawn(async move {
+        let _permit = permit;
+        operation.await
+    }).await {
+        Ok(result) => result,
+        Err(error) => {
+            shared.logger.log(format!("strict control worker failed: {error}"));
+            false
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -1335,7 +1493,7 @@ async fn issue_supervisor_command(
         SupervisorCommandKind::Stop => SupervisorCommand::Stop(tx),
         SupervisorCommandKind::Shutdown => SupervisorCommand::Shutdown(tx),
     };
-    let sent = shared.supervisor.send(message).await.is_ok();
+    let sent = matches!(timeout(IPC_ENQUEUE_TIMEOUT, shared.supervisor.send(message)).await, Ok(Ok(())));
     let acknowledged = if sent {
         timeout(Duration::from_secs(10), rx)
             .await
@@ -1368,9 +1526,20 @@ async fn supervise_core(
 
     loop {
         if !should_start {
-            set_status(&shared, CoreStatus::Stopped).await;
+            if *shared.status.read().await != CoreStatus::Failed {
+                set_status(&shared, CoreStatus::Stopped).await;
+            }
             let end = resolve_supervisor_command(commands.recv().await);
-            if apply_supervisor_end(end, &mut should_start, &shared).await {
+            if apply_supervisor_end(
+                end,
+                &mut should_start,
+                &shared,
+                &config,
+                helper_token.as_deref(),
+                &mut child,
+            )
+            .await
+            {
                 return Ok(());
             }
             continue;
@@ -1382,12 +1551,22 @@ async fn supervise_core(
             core_port,
             &core_token,
             helper_token.as_deref(),
-            &shared.logger,
+            &shared,
             &mut child,
         )
         .await
         {
             shared.logger.log(format!("Core start error: {error:#}"));
+            if let Err(error) =
+                stop_backend(&config, helper_token.as_deref(), &shared, &mut child).await
+            {
+                shared
+                    .logger
+                    .log(format!("Core start cleanup failed: {error:#}"));
+                set_status(&shared, CoreStatus::Failed).await;
+                should_start = false;
+                continue;
+            }
             crashes += 1;
             if crashes > MAX_CRASH_RETRIES {
                 set_status(&shared, CoreStatus::Failed).await;
@@ -1395,25 +1574,28 @@ async fn supervise_core(
                 continue;
             }
             if let Some(end) = retry_or_command(crash_delay(crashes), &mut commands).await {
-                if apply_supervisor_end(end, &mut should_start, &shared).await {
+                if apply_supervisor_end(
+                    end,
+                    &mut should_start,
+                    &shared,
+                    &config,
+                    helper_token.as_deref(),
+                    &mut child,
+                )
+                .await
+                {
                     return Ok(());
                 }
             }
             continue;
         }
+        *shared.core_pid.lock().await = child.as_ref().and_then(Child::id);
 
         let attach = tokio::select! {
             result = accept_core(&core_listener, &core_token) => Some(result),
             command = commands.recv() => {
                 let end = resolve_supervisor_command(command);
-                stop_backend(
-                    &config,
-                    helper_token.as_deref(),
-                    &shared.logger,
-                    &mut child,
-                )
-                .await;
-                if apply_supervisor_end(end, &mut should_start, &shared).await {
+                if apply_supervisor_end(end, &mut should_start, &shared, &config, helper_token.as_deref(), &mut child).await {
                     return Ok(());
                 }
                 None
@@ -1426,7 +1608,17 @@ async fn supervise_core(
             Ok(stream) => stream,
             Err(error) => {
                 shared.logger.log(format!("Core attach error: {error:#}"));
-                stop_backend(&config, helper_token.as_deref(), &shared.logger, &mut child).await;
+                if let Err(error) =
+                    stop_backend(&config, helper_token.as_deref(), &shared, &mut child).await
+                {
+                    shared
+                        .logger
+                        .log(format!("Core attach cleanup failed: {error:#}"));
+                    set_status(&shared, CoreStatus::Failed).await;
+                    should_start = false;
+                    continue;
+                }
+                *shared.core_pid.lock().await = None;
                 crashes += 1;
                 if crashes > MAX_CRASH_RETRIES {
                     set_status(&shared, CoreStatus::Failed).await;
@@ -1434,7 +1626,16 @@ async fn supervise_core(
                 } else if let Some(end) =
                     retry_or_command(crash_delay(crashes), &mut commands).await
                 {
-                    if apply_supervisor_end(end, &mut should_start, &shared).await {
+                    if apply_supervisor_end(
+                        end,
+                        &mut should_start,
+                        &shared,
+                        &config,
+                        helper_token.as_deref(),
+                        &mut child,
+                    )
+                    .await
+                    {
                         return Ok(());
                     }
                 }
@@ -1446,14 +1647,7 @@ async fn supervise_core(
             result = replay_journal(&mut stream, &shared) => Some(result),
             command = commands.recv() => {
                 let end = resolve_supervisor_command(command);
-                stop_backend(
-                    &config,
-                    helper_token.as_deref(),
-                    &shared.logger,
-                    &mut child,
-                )
-                .await;
-                if apply_supervisor_end(end, &mut should_start, &shared).await {
+                if apply_supervisor_end(end, &mut should_start, &shared, &config, helper_token.as_deref(), &mut child).await {
                     return Ok(());
                 }
                 None
@@ -1464,13 +1658,32 @@ async fn supervise_core(
         };
         if let Err(error) = replay {
             shared.logger.log(format!("Core replay error: {error:#}"));
-            stop_backend(&config, helper_token.as_deref(), &shared.logger, &mut child).await;
+            if let Err(error) =
+                stop_backend(&config, helper_token.as_deref(), &shared, &mut child).await
+            {
+                shared
+                    .logger
+                    .log(format!("Core replay cleanup failed: {error:#}"));
+                set_status(&shared, CoreStatus::Failed).await;
+                should_start = false;
+                continue;
+            }
+            *shared.core_pid.lock().await = None;
             crashes += 1;
             if crashes > MAX_CRASH_RETRIES {
                 set_status(&shared, CoreStatus::Failed).await;
                 should_start = false;
             } else if let Some(end) = retry_or_command(crash_delay(crashes), &mut commands).await {
-                if apply_supervisor_end(end, &mut should_start, &shared).await {
+                if apply_supervisor_end(
+                    end,
+                    &mut should_start,
+                    &shared,
+                    &config,
+                    helper_token.as_deref(),
+                    &mut child,
+                )
+                .await
+                {
                     return Ok(());
                 }
             }
@@ -1484,16 +1697,22 @@ async fn supervise_core(
         set_status(&shared, CoreStatus::Ready).await;
         let ready_at = Instant::now();
 
-        let writer = tokio::spawn(async move {
+        let mut writer = tokio::spawn(async move {
             while let Some(line) = core_rx.recv().await {
-                write_half.write_all(line.as_bytes()).await?;
-                write_half.write_all(b"\n").await?;
+                timeout(IPC_WRITE_TIMEOUT, async {
+                    write_half.write_all(line.as_bytes()).await?;
+                    write_half.write_all(b"\n").await
+                }).await.context("Core output timed out")??;
             }
             Result::<()>::Ok(())
         });
         let mut reader = BufReader::new(read_half);
         let session_end = loop {
             tokio::select! {
+                result = &mut writer => {
+                    shared.logger.log(format!("Core writer ended: {result:?}"));
+                    break SessionEnd::Crashed;
+                }
                 line = read_bounded_line(&mut reader, MAX_MESSAGE_LINE_BYTES) => {
                     match line {
                         Ok(Some(line)) => {
@@ -1549,19 +1768,33 @@ async fn supervise_core(
         };
 
         *shared.core.lock().await = None;
+        // Disconnect/restart invalidates readiness immediately, including the
+        // crash backoff interval and a stop whose result is still pending.
+        set_status(&shared, CoreStatus::Starting).await;
         shared.journal.lock().await.discard_pending();
         #[cfg(target_os = "macos")]
         shared.mac_strict_replay.lock().await.discard_pending();
         #[cfg(windows)]
-        if matches!(&session_end, SessionEnd::Crashed | SessionEnd::Restart) {
+        if matches!(
+            &session_end,
+            SessionEnd::Crashed | SessionEnd::Command(SupervisorCommand::Restart(_))
+        ) {
             fail_closed_strict_core_loss(&shared).await;
         }
         writer.abort();
-        stop_backend(&config, helper_token.as_deref(), &shared.logger, &mut child).await;
         match session_end {
-            SessionEnd::Restart => should_start = true,
-            SessionEnd::Stopped => should_start = false,
             SessionEnd::Crashed => {
+                if let Err(error) =
+                    stop_backend(&config, helper_token.as_deref(), &shared, &mut child).await
+                {
+                    shared
+                        .logger
+                        .log(format!("Core crash cleanup failed: {error:#}"));
+                    set_status(&shared, CoreStatus::Failed).await;
+                    should_start = false;
+                    continue;
+                }
+                *shared.core_pid.lock().await = None;
                 crashes = if ready_at.elapsed() >= Duration::from_secs(60) {
                     1
                 } else {
@@ -1573,15 +1806,33 @@ async fn supervise_core(
                 } else if let Some(end) =
                     retry_or_command(crash_delay(crashes), &mut commands).await
                 {
-                    if apply_supervisor_end(end, &mut should_start, &shared).await {
+                    if apply_supervisor_end(
+                        end,
+                        &mut should_start,
+                        &shared,
+                        &config,
+                        helper_token.as_deref(),
+                        &mut child,
+                    )
+                    .await
+                    {
                         return Ok(());
                     }
                 }
             }
-            SessionEnd::ShutdownRequested => return Ok(()),
-            SessionEnd::Shutdown => {
-                signal_shutdown(&shared);
-                return Ok(());
+            end => {
+                if apply_supervisor_end(
+                    end,
+                    &mut should_start,
+                    &shared,
+                    &config,
+                    helper_token.as_deref(),
+                    &mut child,
+                )
+                .await
+                {
+                    return Ok(());
+                }
             }
         }
     }
@@ -1671,27 +1922,62 @@ async fn start_backend(
     core_port: u16,
     token: &str,
     helper_token: Option<&str>,
-    logger: &Arc<AgentLogger>,
+    shared: &Shared,
     child: &mut Option<Child>,
 ) -> Result<()> {
+    let logger = &shared.logger;
     if config.use_helper {
+        let helper_token = helper_token.context("Helper credential is unavailable")?;
         let service_core = config
             .service_core
             .as_ref()
             .context("service Core is unavailable")?;
         logger.log(format!("starting Core through Helper on port={core_port}"));
-        helper_request(
+        let capabilities: Value = serde_json::from_str(
+            &helper_request_raw(config.helper_port, "/capabilities", None).await?,
+        )
+        .context("Helper capabilities are invalid")?;
+        if capabilities["schemaVersion"] != 1
+            || capabilities["ownedStop"] != true
+            || capabilities["stopAcknowledgesExit"] != true
+        {
+            bail!("Helper does not support owned Core sessions");
+        }
+        let mut session = shared.helper_session.lock().await;
+        if session.owner.is_some() {
+            bail!("previous Helper Core exit is unconfirmed");
+        }
+        session.attempt = session
+            .attempt
+            .checked_add(1)
+            .context("Core attempt exhausted")?;
+        let owner = format!("{}-{}", shared.agent_instance_id, session.attempt);
+        // Persist before the request: a timeout is not proof that spawn failed.
+        session.owner = Some(owner.clone());
+        let response = helper_request_json(
             config.helper_port,
             "/start",
-            Some(json!({
+            json!({
                 "path": service_core,
                 "arg": core_port.to_string(),
                 "home_dir": config.home,
                 "auth_token": token,
-                "helper_token": helper_token.context("Helper credential is unavailable")?,
-            })),
+                "helper_token": helper_token,
+                "ownerInstanceId": owner,
+            }),
         )
         .await?;
+        if response["schemaVersion"] != 1 || response["ownerInstanceId"] != owner {
+            bail!("Helper start acknowledgement does not identify this session");
+        }
+        match response["outcome"].as_str() {
+            Some("started") => {}
+            Some("rejected") => {
+                session.owner = None;
+                bail!("Helper explicitly rejected Core start");
+            }
+            _ => bail!("Helper start outcome is unconfirmed"),
+        }
         return Ok(());
     }
 
@@ -1704,14 +1990,21 @@ async fn start_backend(
         .arg(core_port.to_string())
         .arg(launch_credential)
         .env("SAFE_PATHS", &config.home)
-        .stdin(if cfg!(target_os = "macos") { Stdio::piped() } else { Stdio::null() })
+        .stdin(if cfg!(target_os = "macos") {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
     let mut process = command.spawn().context("unable to spawn local Core")?;
     #[cfg(target_os = "macos")]
     {
-        let mut input = process.stdin.take().context("Core private credential pipe unavailable")?;
+        let mut input = process
+            .stdin
+            .take()
+            .context("Core private credential pipe unavailable")?;
         input.write_all(format!("{token}\n").as_bytes()).await?;
         input.shutdown().await?;
     }
@@ -1729,28 +2022,61 @@ async fn start_backend(
 async fn stop_backend(
     config: &AgentConfig,
     helper_token: Option<&str>,
-    logger: &Arc<AgentLogger>,
+    shared: &Shared,
     child: &mut Option<Child>,
-) {
+) -> Result<()> {
+    let logger = &shared.logger;
     if config.use_helper {
-        if let Some(helper_token) = helper_token {
-            logger.log("stopping Core through Helper");
-            let _ = helper_request(
-                config.helper_port,
-                "/stop",
-                Some(json!({
-                    "home_dir": config.home,
-                    "helper_token": helper_token,
-                })),
-            )
-            .await;
+        let mut session = shared.helper_session.lock().await;
+        let Some(owner) = session.owner.as_ref() else {
+            // No start was issued, or Helper explicitly rejected it. Never
+            // fall back to an ownerless stop that could kill another Agent.
+            return Ok(());
+        };
+        let helper_token = helper_token.context("Helper credential is unavailable")?;
+        logger.log("stopping Core through Helper");
+        let response = helper_request_json(
+            config.helper_port,
+            "/stop",
+            json!({
+                "home_dir": config.home,
+                "helper_token": helper_token,
+                "ownerInstanceId": owner,
+            }),
+        )
+        .await?;
+        if response["schemaVersion"] != 1
+            || response["ownerInstanceId"] != *owner
+            || response["outcome"] != "stopped"
+        {
+            bail!("Helper Core exit is unconfirmed for the owned session");
         }
+        session.owner = None;
     }
-    if let Some(mut process) = child.take() {
+    if let Some(process) = child.as_mut() {
         logger.log("stopping local Core");
-        let _ = process.kill().await;
-        let _ = process.wait().await;
+        if process
+            .try_wait()
+            .context("inspect local Core exit")?
+            .is_none()
+        {
+            if let Err(error) = process.start_kill() {
+                if process
+                    .try_wait()
+                    .context("recheck local Core exit")?
+                    .is_none()
+                {
+                    return Err(error).context("stop local Core");
+                }
+            }
+            timeout(Duration::from_secs(5), process.wait())
+                .await
+                .context("local Core stop timed out")?
+                .context("wait for local Core exit")?;
+        }
+        *child = None;
     }
+    Ok(())
 }
 
 fn spawn_core_output_logger<R>(stream: R, logger: Arc<AgentLogger>, channel: &'static str)
@@ -1759,12 +2085,10 @@ where
 {
     tokio::spawn(async move {
         let mut reader = BufReader::new(stream);
-        let mut line = String::new();
         loop {
-            line.clear();
-            match reader.read_line(&mut line).await {
-                Ok(0) => break,
-                Ok(_) => logger.log(format!("Core {channel}: {}", line.trim_end())),
+            match read_core_output_line(&mut reader).await {
+                Ok(None) => break,
+                Ok(Some(line)) => logger.log(format!("Core {channel}: {}", line.trim_end())),
                 Err(error) => {
                     logger.log(format!("Core {channel} read error: {error}"));
                     break;
@@ -1774,8 +2098,23 @@ where
     });
 }
 
+async fn read_core_output_line<R: AsyncBufRead + Unpin>(reader: &mut R) -> std::io::Result<Option<String>> {
+    let mut line = crate::core_output::LogLine::new();
+    loop {
+        let available = reader.fill_buf().await?;
+        if available.is_empty() { return Ok(line.finish()); }
+        let (consumed, finished) = line.consume(available);
+        reader.consume(consumed);
+        if finished { return Ok(line.finish()); }
+    }
+}
+
 async fn helper_request(port: u16, path: &str, body: Option<Value>) -> Result<()> {
-    let _ = helper_request_raw(port, path, body).await?;
+    let response = helper_request_raw(port, path, body).await?;
+    // The legacy Helper reports start/stop errors in an HTTP-200 body.
+    if matches!(path, "/start" | "/stop") && !response.trim().is_empty() {
+        bail!("Helper {path} did not confirm the operation");
+    }
     Ok(())
 }
 
@@ -1785,6 +2124,7 @@ async fn helper_request_json(port: u16, path: &str, body: Value) -> Result<Value
 }
 
 async fn helper_request_raw(port: u16, path: &str, body: Option<Value>) -> Result<String> {
+    let method = if body.is_some() { "POST" } else { "GET" };
     let body = body.map(|value| value.to_string()).unwrap_or_default();
     let mut stream = timeout(
         Duration::from_secs(2),
@@ -1793,13 +2133,13 @@ async fn helper_request_raw(port: u16, path: &str, body: Option<Value>) -> Resul
     .await
     .context("Helper connection timed out")??;
     let request = format!(
-        "POST {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        "{method} {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
         body.len()
     );
     stream.write_all(request.as_bytes()).await?;
     let mut response = Vec::new();
     timeout(
-        Duration::from_secs(2),
+        Duration::from_secs(5),
         stream
             .take((HELPER_RESPONSE_LIMIT + 1) as u64)
             .read_to_end(&mut response),
@@ -1902,7 +2242,8 @@ fn mac_core_handshake_reply(line: &str, token: &str) -> Result<String> {
 async fn replay_journal(stream: &mut TcpStream, shared: &Arc<Shared>) -> Result<()> {
     let lines = shared.journal.lock().await.replay_lines();
     for line in lines {
-        let expected_id = serde_json::from_str::<Value>(&line)?["id"]
+        let action = serde_json::from_str::<Value>(&line)?;
+        let expected_id = action["id"]
             .as_str()
             .context("replay action has no id")?
             .to_owned();
@@ -1915,12 +2256,7 @@ async fn replay_journal(stream: &mut TcpStream, shared: &Arc<Shared>) -> Result<
                     .context("Core disconnected during replay")?;
                 let value = serde_json::from_str::<Value>(response.trim_end())?;
                 if value.get("id").and_then(Value::as_str) == Some(expected_id.as_str()) {
-                    if value
-                        .get("code")
-                        .and_then(Value::as_i64)
-                        .unwrap_or_default()
-                        != 0
-                    {
+                    if !mutation_was_accepted(&action, &value) {
                         bail!("Core rejected replay action {expected_id}");
                     }
                     return Ok(());
@@ -2017,8 +2353,11 @@ async fn send_ui_activity(shared: &Arc<Shared>, active: bool) {
         "method": "setUiActive",
         "data": active,
     });
-    if let Some(core) = shared.core.lock().await.clone() {
-        let _ = core.send(action.to_string()).await;
+    let core = shared.core.lock().await.clone();
+    if let Some(core) = core {
+        if !matches!(timeout(IPC_ENQUEUE_TIMEOUT, core.send(action.to_string())).await, Ok(Ok(()))) {
+            shared.logger.log("UI activity notification could not reach Core");
+        }
     }
 }
 
@@ -2032,7 +2371,7 @@ async fn set_status(shared: &Arc<Shared>, status: CoreStatus) {
     } else {
         None
     };
-    let envelope = json!({
+    let mut envelope = json!({
         "_agent": {
             "type": "coreState",
             "protocol": PROTOCOL_VERSION,
@@ -2043,6 +2382,7 @@ async fn set_status(shared: &Arc<Shared>, status: CoreStatus) {
             "strictPolicy": strict_policy_json(shared).await,
         }
     });
+    add_backend_identity(shared, &mut envelope).await;
     forward_to_ui(shared, envelope.to_string()).await;
 }
 
@@ -2053,7 +2393,7 @@ async fn ready_envelope(shared: &Arc<Shared>) -> String {
     } else {
         None
     };
-    json!({
+    let mut envelope = json!({
         "_agent": {
             "type": "ready",
             "protocol": PROTOCOL_VERSION,
@@ -2063,8 +2403,24 @@ async fn ready_envelope(shared: &Arc<Shared>) -> String {
             "privilegedBackend": shared.privileged_backend,
             "strictPolicy": strict_policy_json(shared).await,
         }
-    })
-    .to_string()
+    });
+    add_backend_identity(shared, &mut envelope).await;
+    envelope.to_string()
+}
+
+async fn add_backend_identity(shared: &Shared, envelope: &mut Value) {
+    let event = &mut envelope["_agent"];
+    event["agentInstanceId"] = json!(shared.agent_instance_id);
+    event["agentPid"] = json!(std::process::id());
+    event["agentExecutable"] = json!(shared.agent_executable);
+    event["coreExecutable"] = json!(shared.core_executable);
+    event["corePid"] = json!(*shared.core_pid.lock().await);
+    // This is launch provenance. Only Core can report its effective token.
+    event["backendSource"] = json!(if shared.privileged_backend {
+        "helper"
+    } else {
+        "local"
+    });
 }
 
 async fn strict_policy_json(shared: &Arc<Shared>) -> Value {
@@ -2095,17 +2451,26 @@ async fn forward_to_ui(shared: &Arc<Shared>, line: String) {
         .lock()
         .await
         .as_ref()
-        .map(|session| session.output.clone());
-    if let Some(output) = output {
+        .map(|session| (session.output.clone(), session.cancel.clone()));
+    if let Some((output, cancel)) = output {
+        if cancel.cancelled.load(Ordering::Acquire) {
+            return;
+        }
         if is_unsolicited_message(&line) {
             // Connection/log/traffic streams may be much faster than a hidden
             // or stalled UI. Dropping stale stream samples keeps Agent memory
             // bounded without sacrificing request/response correctness.
-            let _ = output.try_send(UiOutput::new(line));
+            if output.capacity() > UI_RELIABLE_RESERVE {
+                let _ = output.try_send(UiOutput::new(line));
+            }
         } else {
-            // Responses and lifecycle state must apply backpressure; dropping
-            // one would strand a Flutter completer until its timeout.
-            let _ = output.send(UiOutput::new(line)).await;
+            // Never let a UI block the Core supervisor. A reliable response that
+            // cannot be queued fails the entire session, so pending RPCs observe
+            // disconnection instead of silently losing a response on a live socket.
+            if output.try_send(UiOutput::new(line)).is_err() {
+                shared.logger.log("UI reliable output unavailable; closing slow or failed session");
+                cancel.cancel();
+            }
         }
     }
 }
@@ -2129,6 +2494,7 @@ mod tests {
         let (supervisor, _) = mpsc::channel(1);
         Arc::new(Shared {
             ui: Mutex::new(None),
+            strict_mutations: Arc::new(Semaphore::new(1)),
             core: Mutex::new(None),
             journal: Mutex::new(ReplayJournal::default()),
             #[cfg(target_os = "macos")]
@@ -2144,6 +2510,11 @@ mod tests {
             shutdown: Notify::new(),
             supervisor,
             privileged_backend: false,
+            agent_instance_id: random_token(),
+            agent_executable: PathBuf::from("test-agent"),
+            core_executable: PathBuf::from("test-core"),
+            core_pid: Mutex::new(None),
+            helper_session: Mutex::new(HelperSession::default()),
             helper_port: None,
             helper_token: None,
             home_dir: PathBuf::new(),
@@ -2153,6 +2524,486 @@ mod tests {
             #[cfg(windows)]
             strict_store: Mutex::new(None),
         })
+    }
+
+    #[tokio::test]
+    async fn lifecycle_events_identify_the_agent_instance_and_backend() {
+        let shared = session_fixture();
+        let first: Value = serde_json::from_str(&ready_envelope(&shared).await).unwrap();
+        let second: Value = serde_json::from_str(&ready_envelope(&shared).await).unwrap();
+        let event = &first["_agent"];
+        assert_eq!(event["agentPid"], std::process::id());
+        assert_eq!(event["backendSource"], "local");
+        assert!(event["agentInstanceId"]
+            .as_str()
+            .is_some_and(|id| id.len() == 64));
+        assert_eq!(
+            event["agentInstanceId"],
+            second["_agent"]["agentInstanceId"]
+        );
+        assert!(event["corePid"].is_null());
+        assert!(
+            event.get("privilege").is_none(),
+            "launch source is not an elevation proof"
+        );
+    }
+
+    #[tokio::test]
+    async fn helper_launch_reports_the_protected_path_without_claiming_elevation() {
+        let mut shared = session_fixture();
+        let state = Arc::get_mut(&mut shared).unwrap();
+        state.privileged_backend = true;
+        state.core_executable = PathBuf::from("protected-core");
+        let event: Value = serde_json::from_str(&ready_envelope(&shared).await).unwrap();
+        assert_eq!(event["_agent"]["backendSource"], "helper");
+        assert_eq!(event["_agent"]["coreExecutable"], "protected-core");
+        assert_eq!(event["_agent"]["corePid"], Value::Null);
+        assert!(event["_agent"].get("privilege").is_none());
+    }
+
+    #[tokio::test]
+    async fn rejected_shutdown_keeps_the_authenticated_ui_session_available() {
+        let shared = session_fixture();
+        let (mut client, handler) = attach_ui(shared.clone()).await;
+        client
+            .get_mut()
+            .write_all(b"{\"_agent\":{\"id\":\"shutdown\",\"command\":\"shutdownAgent\"}}\n")
+            .await
+            .unwrap();
+        let mut line = String::new();
+        timeout(Duration::from_secs(3), client.read_line(&mut line))
+            .await
+            .unwrap()
+            .unwrap();
+        let response: Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(response["_agent"]["ok"], false);
+        assert_eq!(
+            response["_agent"]["agentInstanceId"],
+            shared.agent_instance_id
+        );
+        assert!(!shared.shutting_down.load(Ordering::Acquire));
+        client
+            .get_mut()
+            .write_all(b"{\"_agent\":{\"id\":\"status\",\"command\":\"status\"}}\n")
+            .await
+            .unwrap();
+        line.clear();
+        timeout(Duration::from_secs(3), client.read_line(&mut line))
+            .await
+            .unwrap()
+            .unwrap();
+        let response: Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(response["_agent"]["id"], "status");
+        assert_eq!(response["_agent"]["ok"], true);
+        client.get_mut().shutdown().await.unwrap();
+        assert!(timeout(Duration::from_secs(3), handler)
+            .await
+            .unwrap()
+            .unwrap()
+            .is_ok());
+    }
+
+    #[test]
+    fn shutdown_is_not_acknowledged_before_backend_stop() {
+        let (reply, mut response) = oneshot::channel();
+        let _pending = resolve_supervisor_command(Some(SupervisorCommand::Shutdown(reply)));
+        assert!(matches!(
+            response.try_recv(),
+            Err(oneshot::error::TryRecvError::Empty)
+        ));
+    }
+
+    async fn helper_fixture(body: &'static str) -> (u16, tokio::task::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let task = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut reader = BufReader::new(stream);
+            let mut line = String::new();
+            let mut length = 0;
+            loop {
+                line.clear();
+                reader.read_line(&mut line).await.unwrap();
+                if line == "\r\n" {
+                    break;
+                }
+                if let Some(value) = line.strip_prefix("Content-Length: ") {
+                    length = value.trim().parse::<usize>().unwrap();
+                }
+            }
+            let mut request_body = vec![0; length];
+            reader.read_exact(&mut request_body).await.unwrap();
+            let request: Value = serde_json::from_slice(&request_body).unwrap();
+            assert!(request["ownerInstanceId"].as_str().unwrap().len() > 64);
+            let body = if body.is_empty() {
+                json!({"schemaVersion":1,"ownerInstanceId":request["ownerInstanceId"],"outcome":"stopped"}).to_string()
+            } else {
+                body.to_owned()
+            };
+            reader
+                .get_mut()
+                .write_all(
+                    format!(
+                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    )
+                    .as_bytes(),
+                )
+                .await
+                .unwrap();
+        });
+        (port, task)
+    }
+
+    async fn owned_helper_fixture(
+        responses: Vec<(&'static str, Option<Value>)>,
+    ) -> (u16, tokio::task::JoinHandle<Vec<Value>>) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let task = tokio::spawn(async move {
+            let mut requests = Vec::new();
+            for (expected, response) in responses {
+                let (stream, _) = timeout(Duration::from_secs(5), listener.accept())
+                    .await
+                    .unwrap()
+                    .unwrap();
+                let mut reader = BufReader::new(stream);
+                let mut line = String::new();
+                reader.read_line(&mut line).await.unwrap();
+                assert_eq!(line.trim(), format!("{expected} HTTP/1.1"));
+                let mut length = 0;
+                loop {
+                    line.clear();
+                    reader.read_line(&mut line).await.unwrap();
+                    if line == "\r\n" {
+                        break;
+                    }
+                    if let Some(value) = line.strip_prefix("Content-Length: ") {
+                        length = value.trim().parse::<usize>().unwrap();
+                    }
+                }
+                let mut bytes = vec![0; length];
+                reader.read_exact(&mut bytes).await.unwrap();
+                let request: Value = if bytes.is_empty() {
+                    Value::Null
+                } else {
+                    serde_json::from_slice(&bytes).unwrap()
+                };
+                if let Some(mut response) = response {
+                    if response.get("ownerInstanceId").and_then(Value::as_str) == Some("$owner") {
+                        response["ownerInstanceId"] = request["ownerInstanceId"].clone();
+                    }
+                    let body = response
+                        .as_str()
+                        .map(str::to_owned)
+                        .unwrap_or_else(|| response.to_string());
+                    reader.get_mut().write_all(format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).as_bytes()).await.unwrap();
+                }
+                requests.push(request);
+            }
+            requests
+        });
+        (port, task)
+    }
+
+    fn owned_capabilities() -> Value {
+        json!({"schemaVersion":1,"ownedStop":true,"stopAcknowledgesExit":true})
+    }
+
+    fn owned_reply(outcome: &str) -> Value {
+        json!({"schemaVersion":1,"ownerInstanceId":"$owner","outcome":outcome})
+    }
+
+    fn helper_config(port: u16) -> AgentConfig {
+        AgentConfig {
+            home: PathBuf::new(),
+            core: PathBuf::from("local"),
+            service_core: Some(PathBuf::from("protected")),
+            helper_port: port,
+            use_helper: true,
+        }
+    }
+
+    #[tokio::test]
+    async fn explicitly_rejected_owned_start_can_retry_with_a_new_owner() {
+        let (port, helper) = owned_helper_fixture(vec![
+            ("GET /capabilities", Some(owned_capabilities())),
+            ("POST /start", Some(owned_reply("rejected"))),
+            ("GET /capabilities", Some(owned_capabilities())),
+            ("POST /start", Some(owned_reply("started"))),
+            ("POST /stop", Some(owned_reply("stopped"))),
+        ])
+        .await;
+        let shared = session_fixture();
+        let config = helper_config(port);
+        assert!(start_backend(
+            &config,
+            1234,
+            "core-token",
+            Some("helper-token"),
+            &shared,
+            &mut None
+        )
+        .await
+        .is_err());
+        assert!(shared.helper_session.lock().await.owner.is_none());
+        // No ownerless stop is sent for a request proven not to have spawned.
+        assert!(
+            stop_backend(&config, Some("helper-token"), &shared, &mut None)
+                .await
+                .is_ok()
+        );
+        assert!(start_backend(
+            &config,
+            1234,
+            "core-token",
+            Some("helper-token"),
+            &shared,
+            &mut None
+        )
+        .await
+        .is_ok());
+        assert!(
+            stop_backend(&config, Some("helper-token"), &shared, &mut None)
+                .await
+                .is_ok()
+        );
+        let requests = helper.await.unwrap();
+        assert_ne!(
+            requests[1]["ownerInstanceId"],
+            requests[3]["ownerInstanceId"]
+        );
+        assert_eq!(
+            requests[3]["ownerInstanceId"],
+            requests[4]["ownerInstanceId"]
+        );
+        assert!(shared.helper_session.lock().await.owner.is_none());
+    }
+
+    #[tokio::test]
+    async fn unknown_start_and_restarted_helper_keep_the_attempt_owner() {
+        let (port, helper) = owned_helper_fixture(vec![
+            ("GET /capabilities", Some(owned_capabilities())),
+            ("POST /start", None),
+            ("POST /stop", Some(owned_reply("unconfirmed"))),
+        ])
+        .await;
+        let shared = session_fixture();
+        let config = helper_config(port);
+        assert!(start_backend(
+            &config,
+            1234,
+            "core-token",
+            Some("helper-token"),
+            &shared,
+            &mut None
+        )
+        .await
+        .is_err());
+        let owner = shared.helper_session.lock().await.owner.clone();
+        assert!(owner.is_some());
+        assert!(
+            stop_backend(&config, Some("helper-token"), &shared, &mut None)
+                .await
+                .is_err()
+        );
+        assert_eq!(shared.helper_session.lock().await.owner, owner);
+        let requests = helper.await.unwrap();
+        assert_eq!(
+            requests[1]["ownerInstanceId"],
+            requests[2]["ownerInstanceId"]
+        );
+    }
+
+    #[tokio::test]
+    async fn legacy_or_wrong_owner_stop_ack_never_confirms_exit_and_can_retry() {
+        for invalid in [
+            json!(""),
+            json!({"schemaVersion":1,"ownerInstanceId":"different","outcome":"stopped"}),
+        ] {
+            let (port, helper) = owned_helper_fixture(vec![
+                ("GET /capabilities", Some(owned_capabilities())),
+                ("POST /start", Some(owned_reply("started"))),
+                ("POST /stop", Some(invalid)),
+                ("POST /stop", Some(owned_reply("stopped"))),
+            ])
+            .await;
+            let shared = session_fixture();
+            let config = helper_config(port);
+            assert!(start_backend(
+                &config,
+                1234,
+                "core-token",
+                Some("helper-token"),
+                &shared,
+                &mut None
+            )
+            .await
+            .is_ok());
+            let owner = shared.helper_session.lock().await.owner.clone();
+            assert!(
+                stop_backend(&config, Some("helper-token"), &shared, &mut None)
+                    .await
+                    .is_err()
+            );
+            assert_eq!(shared.helper_session.lock().await.owner, owner);
+            assert!(
+                stop_backend(&config, Some("helper-token"), &shared, &mut None)
+                    .await
+                    .is_ok()
+            );
+            assert!(shared.helper_session.lock().await.owner.is_none());
+            let requests = helper.await.unwrap();
+            assert_eq!(
+                requests[2]["ownerInstanceId"],
+                requests[3]["ownerInstanceId"]
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn missing_owned_capability_or_local_credential_never_creates_an_owner() {
+        let shared = session_fixture();
+        assert!(start_backend(
+            &helper_config(1),
+            1234,
+            "core-token",
+            None,
+            &shared,
+            &mut None
+        )
+        .await
+        .is_err());
+        assert!(shared.helper_session.lock().await.owner.is_none());
+        let (port, helper) = owned_helper_fixture(vec![(
+            "GET /capabilities",
+            Some(json!({"schemaVersion":1,"stopAcknowledgesExit":true})),
+        )])
+        .await;
+        let config = helper_config(port);
+        assert!(start_backend(
+            &config,
+            1234,
+            "core-token",
+            Some("helper-token"),
+            &shared,
+            &mut None
+        )
+        .await
+        .is_err());
+        assert!(shared.helper_session.lock().await.owner.is_none());
+        assert!(
+            stop_backend(&config, Some("helper-token"), &shared, &mut None)
+                .await
+                .is_ok()
+        );
+        assert_eq!(helper.await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn helper_failure_does_not_confirm_shutdown_or_discard_identity() {
+        let (port, helper) = helper_fixture("Core kill failed").await;
+        let shared = session_fixture();
+        shared.helper_session.lock().await.owner = Some(format!("{}-1", shared.agent_instance_id));
+        *shared.core_pid.lock().await = Some(42);
+        let config = AgentConfig {
+            home: PathBuf::new(),
+            core: PathBuf::from("local"),
+            service_core: Some(PathBuf::from("protected")),
+            helper_port: port,
+            use_helper: true,
+        };
+        let (reply, response) = oneshot::channel();
+        let pending = resolve_supervisor_command(Some(SupervisorCommand::Shutdown(reply)));
+        let mut should_start = true;
+        assert!(
+            !apply_supervisor_end(
+                pending,
+                &mut should_start,
+                &shared,
+                &config,
+                Some("test-only"),
+                &mut None
+            )
+            .await
+        );
+        assert!(!response.await.unwrap());
+        assert!(!should_start);
+        assert!(!shared.shutting_down.load(Ordering::Acquire));
+        assert_eq!(*shared.status.read().await, CoreStatus::Failed);
+        assert_eq!(*shared.core_pid.lock().await, Some(42));
+        assert!(shared.helper_session.lock().await.owner.is_some());
+        helper.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn stop_acknowledgement_follows_verified_backend_stop() {
+        let (port, helper) = helper_fixture("").await;
+        let shared = session_fixture();
+        shared.helper_session.lock().await.owner = Some(format!("{}-1", shared.agent_instance_id));
+        *shared.core_pid.lock().await = Some(42);
+        let config = AgentConfig {
+            home: PathBuf::new(),
+            core: PathBuf::from("local"),
+            service_core: Some(PathBuf::from("protected")),
+            helper_port: port,
+            use_helper: true,
+        };
+        let (reply, response) = oneshot::channel();
+        let pending = resolve_supervisor_command(Some(SupervisorCommand::Stop(reply)));
+        let mut should_start = true;
+        assert!(
+            !apply_supervisor_end(
+                pending,
+                &mut should_start,
+                &shared,
+                &config,
+                Some("test-only"),
+                &mut None
+            )
+            .await
+        );
+        assert!(response.await.unwrap());
+        assert!(!should_start);
+        assert_eq!(*shared.status.read().await, CoreStatus::Stopped);
+        assert_eq!(*shared.core_pid.lock().await, None);
+        assert!(shared.helper_session.lock().await.owner.is_none());
+        helper.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn config_and_listener_replay_reject_errors_even_with_code_zero() {
+        for (method, data) in [
+            ("setupConfig", json!("invalid configuration")),
+            ("startListener", json!(false)),
+            ("stopListener", json!(false)),
+        ] {
+            let shared = session_fixture();
+            shared
+                .journal
+                .lock()
+                .await
+                .record(&json!({"id":"accepted","method":method,"data":"{}"}).to_string());
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let mut client = TcpStream::connect(listener.local_addr().unwrap())
+                .await
+                .unwrap();
+            let (server, _) = listener.accept().await.unwrap();
+            let core = tokio::spawn(async move {
+                let mut reader = BufReader::new(server);
+                let mut line = String::new();
+                reader.read_line(&mut line).await.unwrap();
+                let action: Value = serde_json::from_str(&line).unwrap();
+                let response = json!({"id":action["id"],"method":method,"code":0,"data":data});
+                reader
+                    .get_mut()
+                    .write_all(format!("{response}\n").as_bytes())
+                    .await
+                    .unwrap();
+            });
+            assert!(replay_journal(&mut client, &shared).await.is_err());
+            core.await.unwrap();
+        }
     }
 
     async fn attach_ui(shared: Arc<Shared>) -> (BufReader<TcpStream>, tokio::task::JoinHandle<Result<()>>) {
@@ -2213,5 +3064,341 @@ mod tests {
             r#"{"_agent":{"type":"coreState","coreState":"ready"}}"#
         ));
         assert!(!is_unsolicited_message("not-json"));
+    }
+
+    #[tokio::test]
+    async fn resource_full_ui_queue_cannot_block_core_lifecycle() {
+        let shared = session_fixture();
+        let (output, _receiver) = mpsc::channel(1);
+        output.send(UiOutput::new("occupied".into())).await.unwrap();
+        let cancel = Arc::new(SessionCancel { cancelled: AtomicBool::new(false), notify: Notify::new() });
+        *shared.ui.lock().await = Some(UiSession { id: 1, output, cancel: cancel.clone() });
+        timeout(Duration::from_millis(200), set_status(&shared, CoreStatus::Stopped))
+            .await.expect("stopping Core must not wait for a full UI queue");
+        assert!(cancel.cancelled.load(Ordering::Acquire), "an undeliverable reliable state must fail its UI session");
+    }
+
+    #[tokio::test]
+    async fn resource_idle_authentication_has_a_total_deadline() {
+        let shared = session_fixture();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let _client = TcpStream::connect(listener.local_addr().unwrap()).await.unwrap();
+        let (server, _) = listener.accept().await.unwrap();
+        let task = tokio::spawn(handle_ui(server, "test-token".into(), shared));
+        let result = timeout(Duration::from_secs(4), task).await
+            .expect("an idle authentication must close within its 3 second budget").unwrap();
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn resource_core_log_line_is_bounded_and_drains_following_line() {
+        let payload = format!("{}\nsentinel\n", "x".repeat(1024 * 1024));
+        let mut reader = BufReader::with_capacity(31, payload.as_bytes());
+        let first = read_core_output_line(&mut reader).await.unwrap().unwrap();
+        assert!(first.len() <= 16 * 1024 + 32, "Core line was retained without a bound: {}", first.len());
+        assert!(first.contains("[truncated]"));
+        assert_eq!(read_core_output_line(&mut reader).await.unwrap().unwrap().trim_end(), "sentinel");
+        assert!(read_core_output_line(&mut reader).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn resource_stream_samples_reserve_room_for_reliable_responses() {
+        let shared = session_fixture();
+        let (output, mut receiver) = mpsc::channel(CHANNEL_CAPACITY);
+        let cancel = Arc::new(SessionCancel { cancelled: AtomicBool::new(false), notify: Notify::new() });
+        *shared.ui.lock().await = Some(UiSession { id: 1, output: output.clone(), cancel: cancel.clone() });
+        for _ in 0..CHANNEL_CAPACITY * 2 {
+            forward_to_ui(&shared, r#"{"method":"message","data":{}}"#.into()).await;
+        }
+        assert_eq!(output.capacity(), UI_RELIABLE_RESERVE);
+        forward_to_ui(&shared, r#"{"id":"reply","method":"getConnections","data":[]}"#.into()).await;
+        assert!(!cancel.cancelled.load(Ordering::Acquire));
+        let mut replies = 0;
+        while let Ok(item) = receiver.try_recv() { replies += usize::from(item.line.contains("reply")); }
+        assert_eq!(replies, 1);
+    }
+
+    #[tokio::test]
+    async fn resource_ui_writer_timeout_and_error_do_not_acknowledge_delivery() {
+        for close_peer in [false, true] {
+            let (writer, peer) = tokio::io::duplex(8);
+            let peer = if close_peer { drop(peer); None } else { Some(peer) };
+            let (output, receiver) = mpsc::channel(2);
+            let (delivered, confirmation) = oneshot::channel();
+            output.send(UiOutput { line: "x".repeat(1024), delivered: Some(delivered) }).await.unwrap();
+            let result = timeout(Duration::from_secs(1), write_ui_output(writer, receiver, Duration::from_millis(50))).await.unwrap();
+            assert!(result.is_err());
+            assert!(confirmation.await.is_err(), "failed delivery must not be acknowledged");
+            assert!(output.is_closed());
+            drop(peer);
+        }
+    }
+
+    #[tokio::test]
+    async fn resource_ui_writer_delivers_large_response_once_when_peer_drains() {
+        let (writer, peer) = tokio::io::duplex(512);
+        let (output, receiver) = mpsc::channel(2);
+        let (delivered, confirmation) = oneshot::channel();
+        output.send(UiOutput { line: "x".repeat(256 * 1024), delivered: Some(delivered) }).await.unwrap();
+        drop(output);
+        let reader = async {
+            let mut reader = BufReader::new(peer);
+            let mut value = String::new();
+            reader.read_to_string(&mut value).await.unwrap();
+            assert_eq!(value.len(), 256 * 1024 + 1);
+            assert_eq!(value.bytes().filter(|b| *b == b'\n').count(), 1);
+        };
+        let (result, ()) = tokio::join!(write_ui_output(writer, receiver, Duration::from_secs(2)), reader);
+        assert!(result.is_ok());
+        assert!(confirmation.await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn resource_replacement_cancels_handler_stalled_on_core_queue() {
+        let shared = session_fixture();
+        let (core, receiver) = mpsc::channel(1);
+        core.send("occupied".into()).await.unwrap();
+        *shared.core.lock().await = Some(core);
+        let (_old_client, old_handler) = attach_ui(shared.clone()).await;
+        let (mut client, new_handler) = attach_ui(shared.clone()).await;
+        assert!(timeout(Duration::from_secs(1), old_handler).await.unwrap().unwrap().is_ok());
+        drop(receiver);
+        client.get_mut().shutdown().await.unwrap();
+        assert!(timeout(Duration::from_secs(1), new_handler).await.unwrap().unwrap().is_ok());
+        assert!(shared.ui.lock().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn resource_failed_reliable_delivery_closes_socket_and_allows_reattach() {
+        let shared = session_fixture();
+        let (mut client, handler) = attach_ui(shared.clone()).await;
+        let output = shared.ui.lock().await.as_ref().unwrap().output.clone();
+        // No await in the fill: this single-thread test has not given the writer
+        // a turn to consume any item, so the full-queue condition is deterministic.
+        for _ in 0..CHANNEL_CAPACITY { output.try_send(UiOutput::new("queued".into())).unwrap(); }
+        forward_to_ui(&shared, r#"{"id":"must-not-disappear","method":"getConnections"}"#.into()).await;
+        assert!(timeout(Duration::from_secs(1), handler).await.unwrap().unwrap().is_ok());
+        assert!(matches!(client.read(&mut [0; 1]).await, Ok(0) | Err(_)));
+        assert!(output.is_closed());
+        assert!(shared.ui.lock().await.is_none());
+        let (mut replacement, handler) = attach_ui(shared.clone()).await;
+        replacement.get_mut().shutdown().await.unwrap();
+        assert!(handler.await.unwrap().is_ok());
+    }
+
+    #[tokio::test]
+    async fn resource_stop_and_restart_acknowledge_with_a_full_ui_queue() {
+        for restart in [false, true] {
+            let shared = session_fixture();
+            let (output, _receiver) = mpsc::channel(1);
+            output.send(UiOutput::new("occupied".into())).await.unwrap();
+            let cancel = Arc::new(SessionCancel { cancelled: AtomicBool::new(false), notify: Notify::new() });
+            *shared.ui.lock().await = Some(UiSession { id: 1, output, cancel });
+            let config = AgentConfig { home: PathBuf::new(), core: PathBuf::from("not-launched"), service_core: None, helper_port: 0, use_helper: false };
+            let (reply, acknowledged) = oneshot::channel();
+            let command = if restart { SupervisorCommand::Restart(reply) } else { SupervisorCommand::Stop(reply) };
+            let mut should_start = false;
+            assert!(!timeout(Duration::from_millis(200), apply_supervisor_end(SessionEnd::Command(command), &mut should_start, &shared, &config, None, &mut None)).await.unwrap());
+            assert!(acknowledged.await.unwrap());
+            assert_eq!(should_start, restart);
+        }
+    }
+
+    #[tokio::test]
+    async fn resource_pipelined_auth_does_not_discard_first_command() {
+        let shared = session_fixture();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let mut client = TcpStream::connect(listener.local_addr().unwrap()).await.unwrap();
+        let (server, _) = listener.accept().await.unwrap();
+        let handler = tokio::spawn(handle_ui(server, "test-token".into(), shared));
+        client.write_all(b"{\"token\":\"test-token\",\"protocol\":1}\n{\"_agent\":{\"id\":\"pipelined\",\"command\":\"status\"}}\n").await.unwrap();
+        let mut reader = BufReader::new(client);
+        for expected in ["ready", "pipelined"] {
+            let mut line = String::new();
+            timeout(Duration::from_secs(1), reader.read_line(&mut line)).await.unwrap().unwrap();
+            assert!(line.contains(expected));
+        }
+        reader.get_mut().shutdown().await.unwrap();
+        assert!(handler.await.unwrap().is_ok());
+    }
+
+    #[tokio::test]
+    async fn resource_auth_capacity_recovers_and_shutdown_drains_all_handlers() {
+        let shared = session_fixture();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(serve_ui(listener, "test-token".into(), shared.clone()));
+        let mut idle = Vec::new();
+        for _ in 0..MAX_PENDING_UI_AUTH { idle.push(TcpStream::connect(address).await.unwrap()); }
+        let mut excess = TcpStream::connect(address).await.unwrap();
+        let rejected = timeout(Duration::from_secs(1), excess.read(&mut [0; 1])).await.unwrap();
+        assert!(matches!(rejected, Ok(0) | Err(_)));
+        drop(idle);
+        let mut client = timeout(Duration::from_secs(1), async {
+            loop {
+                let mut stream = TcpStream::connect(address).await.unwrap();
+                if stream.write_all(b"{\"token\":\"test-token\",\"protocol\":1}\n").await.is_ok() {
+                    let mut reader = BufReader::new(stream);
+                    let mut line = String::new();
+                    if matches!(reader.read_line(&mut line).await, Ok(n) if n > 0) {
+                        assert!(line.contains("ready"));
+                        break reader;
+                    }
+                }
+                tokio::task::yield_now().await;
+            }
+        }).await.unwrap();
+        // Shutdown owns both authenticated and newly pending clients.
+        let mut pending = TcpStream::connect(address).await.unwrap();
+        signal_shutdown(&shared);
+        timeout(Duration::from_secs(1), server).await.unwrap().unwrap().unwrap();
+        assert!(matches!(client.read(&mut [0; 1]).await, Ok(0) | Err(_)));
+        assert!(matches!(pending.read(&mut [0; 1]).await, Ok(0) | Err(_)));
+        assert!(shared.ui.lock().await.is_none());
+        assert_eq!(Arc::strong_count(&shared), 1);
+    }
+
+    #[tokio::test]
+    async fn resource_bad_and_oversized_auth_are_rejected_without_a_session() {
+        for auth in ["{\"token\":\"wrong\",\"protocol\":1}\n".to_owned(), "x".repeat(MAX_AUTH_LINE_BYTES + 1)] {
+            let shared = session_fixture();
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let mut client = TcpStream::connect(listener.local_addr().unwrap()).await.unwrap();
+            let (stream, _) = listener.accept().await.unwrap();
+            let handler = tokio::spawn(handle_ui(stream, "test-token".into(), shared.clone()));
+            client.write_all(auth.as_bytes()).await.unwrap();
+            client.shutdown().await.unwrap();
+            assert!(timeout(Duration::from_secs(1), handler).await.unwrap().unwrap().is_err());
+            assert!(shared.ui.lock().await.is_none());
+        }
+    }
+
+    #[tokio::test]
+    async fn resource_auth_drip_feed_does_not_reset_total_deadline() {
+        let shared = session_fixture();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let client = TcpStream::connect(listener.local_addr().unwrap()).await.unwrap();
+        let (stream, _) = listener.accept().await.unwrap();
+        let handler = tokio::spawn(handle_ui(stream, "test-token".into(), shared));
+        let (mut read, mut write) = client.into_split();
+        let drip = tokio::spawn(async move {
+            let mut ticks = tokio::time::interval(Duration::from_millis(200));
+            loop { ticks.tick().await; if write.write_all(b"x").await.is_err() { break; } }
+        });
+        assert!(matches!(timeout(Duration::from_secs(4), read.read(&mut [0; 1])).await.unwrap(), Ok(0) | Err(_)));
+        assert!(handler.await.unwrap().is_err());
+        drip.abort();
+        let _ = drip.await;
+    }
+
+    #[tokio::test]
+    async fn resource_both_core_output_pipes_drain_and_utf8_survives_chunks() {
+        async fn pipe() {
+            let (mut write, read) = tokio::io::duplex(128);
+            let producer = tokio::spawn(async move {
+                for _ in 0..500 { write.write_all(&[b'x'; 257]).await.unwrap(); }
+                write.write_all("\n日志🙂\nlast".as_bytes()).await.unwrap();
+            });
+            let mut reader = BufReader::with_capacity(7, read);
+            assert!(read_core_output_line(&mut reader).await.unwrap().unwrap().starts_with("[truncated]"));
+            assert_eq!(read_core_output_line(&mut reader).await.unwrap().unwrap(), "日志🙂");
+            assert_eq!(read_core_output_line(&mut reader).await.unwrap().unwrap(), "last");
+            assert!(read_core_output_line(&mut reader).await.unwrap().is_none());
+            producer.await.unwrap();
+        }
+        timeout(Duration::from_secs(2), async { tokio::join!(pipe(), pipe()); }).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn resource_core_output_read_errors_are_reported() {
+        struct Broken;
+        impl AsyncRead for Broken {
+            fn poll_read(self: std::pin::Pin<&mut Self>, _cx: &mut std::task::Context<'_>, _buffer: &mut tokio::io::ReadBuf<'_>) -> std::task::Poll<std::io::Result<()>> {
+                std::task::Poll::Ready(Err(std::io::Error::other("fixture read failure")))
+            }
+        }
+        assert!(read_core_output_line(&mut BufReader::new(Broken)).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn resource_ui_replacement_keeps_accepted_strict_mutation_consistent() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let mut shared = session_fixture();
+        let state = Arc::get_mut(&mut shared).unwrap();
+        state.helper_port = Some(listener.local_addr().unwrap().port());
+        state.helper_token = Some("fixture-token".into());
+        let (accepted_tx, accepted_rx) = oneshot::channel();
+        let (finish_tx, finish_rx) = oneshot::channel();
+        let helper = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut reader = BufReader::new(stream);
+            let mut line = String::new();
+            let mut length = 0;
+            loop {
+                line.clear();
+                reader.read_line(&mut line).await.unwrap();
+                if line == "\r\n" { break; }
+                if let Some(value) = line.strip_prefix("Content-Length: ") {
+                    length = value.trim().parse::<usize>().unwrap();
+                }
+            }
+            let mut request = vec![0; length];
+            reader.read_exact(&mut request).await.unwrap();
+            accepted_tx.send(()).unwrap();
+            finish_rx.await.unwrap();
+            let _ = reader.get_mut().write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").await;
+        });
+        let (mut old_ui, old_handler) = attach_ui(shared.clone()).await;
+        old_ui.get_mut().write_all(b"{\"_agent\":{\"id\":\"block\",\"command\":\"applyStrictBlock\",\"path\":\"test-target\"}}\n").await.unwrap();
+        timeout(Duration::from_secs(1), accepted_rx).await.unwrap().unwrap();
+        let (mut new_ui, new_handler) = attach_ui(shared.clone()).await;
+        timeout(Duration::from_secs(1), old_handler).await.unwrap().unwrap().unwrap();
+        finish_tx.send(()).unwrap();
+        helper.await.unwrap();
+        timeout(Duration::from_secs(1), async {
+            while !shared.strict_blocks.lock().await.contains("test-target") {
+                tokio::task::yield_now().await;
+            }
+        }).await.expect("an accepted Helper mutation must reconcile after UI replacement");
+        assert_eq!(shared.strict_policy.read().await.state, crate::protocol::StrictPolicyState::Blocking);
+        new_ui.get_mut().shutdown().await.unwrap();
+        timeout(Duration::from_secs(1), new_handler).await.unwrap().unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn resource_strict_mutation_admission_stays_bounded_after_ui_cancel() {
+        let shared = session_fixture();
+        let completed = Arc::new(AtomicBool::new(false));
+        let completed_by_worker = completed.clone();
+        let (entered_tx, entered_rx) = oneshot::channel();
+        let (finish_tx, finish_rx) = oneshot::channel();
+        let caller_shared = shared.clone();
+        let caller = tokio::spawn(async move {
+            complete_strict_mutation(&caller_shared, async move {
+                entered_tx.send(()).unwrap();
+                finish_rx.await.unwrap();
+                completed_by_worker.store(true, Ordering::Release);
+                true
+            }).await
+        });
+        entered_rx.await.unwrap();
+        caller.abort();
+        assert!(caller.await.unwrap_err().is_cancelled());
+        assert_eq!(shared.strict_mutations.available_permits(), 0);
+        for _ in 0..32 {
+            assert!(!complete_strict_mutation(&shared, async {
+                panic!("a replacement UI must not create a concurrent mutation worker")
+            }).await);
+        }
+        finish_tx.send(()).unwrap();
+        timeout(Duration::from_secs(1), async {
+            while shared.strict_mutations.available_permits() == 0 {
+                tokio::task::yield_now().await;
+            }
+        }).await.unwrap();
+        assert!(completed.load(Ordering::Acquire));
+        assert!(!complete_strict_mutation(&shared, async { false }).await);
+        assert!(complete_strict_mutation(&shared, async { true }).await);
+        assert_eq!(shared.strict_mutations.available_permits(), 1);
     }
 }

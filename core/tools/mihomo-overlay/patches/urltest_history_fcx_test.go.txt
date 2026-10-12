@@ -1,0 +1,74 @@
+package adapter
+
+import (
+    "bufio"
+    "context"
+    "errors"
+    "net"
+    "testing"
+    "time"
+
+    "github.com/metacubex/http"
+    "github.com/metacubex/mihomo/adapter/outbound"
+    C "github.com/metacubex/mihomo/constant"
+)
+
+type fcxHistoryAdapter struct{ *outbound.Base; fail bool; started chan struct{} }
+func(a *fcxHistoryAdapter)DialContext(ctx context.Context,_ *C.Metadata)(C.Conn,error) {
+    if a.started!=nil {close(a.started);<-ctx.Done();return nil,ctx.Err()}
+    if err:=ctx.Err();err!=nil {return nil,err}
+    if a.fail {return nil,errors.New("synthetic ordinary failure")}
+    left,right:=net.Pipe()
+    go func(){defer right.Close();request,err:=http.ReadRequest(bufio.NewReader(right));if err==nil {request.Body.Close();_,_=right.Write([]byte("HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n"))}}()
+    return outbound.NewConn(left,a),nil
+}
+
+func TestFCXURLTestExplicitCancellationDoesNotChangeHistoryOrAlive(t *testing.T) {
+    for _,deadline:=range []bool{false,true} {
+        proxy:=NewProxy(&fcxHistoryAdapter{Base:&outbound.Base{}})
+        var ctx context.Context;var cancel context.CancelFunc
+        if deadline {ctx,cancel=context.WithDeadline(context.Background(),time.Now().Add(-time.Second))} else {ctx,cancel=context.WithCancel(context.Background());cancel()}
+        ctx=WithURLTestHistoryGuard(ctx,nil)
+        _,err:=proxy.URLTest(ctx,"http://synthetic.test",nil);cancel()
+        if err==nil {t.Fatal("cancelled test unexpectedly succeeded")}
+        if len(proxy.DelayHistory())!=0 || len(proxy.ExtraDelayHistories())!=0 || !proxy.AliveForTestUrl("http://synthetic.test") {t.Fatal("cancelled explicit test contaminated shared health state")}
+    }
+}
+
+func TestFCXURLTestSuccessfulAndOrdinaryFailedTestsKeepHistory(t *testing.T) {
+    for _,fail:=range []bool{false,true} {
+        proxy:=NewProxy(&fcxHistoryAdapter{Base:&outbound.Base{},fail:fail})
+        _,err:=proxy.URLTest(WithURLTestHistoryGuard(context.Background(),nil),"http://synthetic.test",nil)
+        if (err!=nil)!=fail {t.Fatal(err)}
+        if len(proxy.DelayHistory())!=1 || proxy.AliveForTestUrl("http://synthetic.test")==fail {t.Fatal("normal test no longer updates health history")}
+    }
+}
+
+func TestFCXURLTestAutomaticTimeoutStillUpdatesHealth(t *testing.T) {
+    proxy:=NewProxy(&fcxHistoryAdapter{Base:&outbound.Base{}})
+    ctx,cancel:=context.WithDeadline(context.Background(),time.Now().Add(-time.Second));defer cancel()
+    _,err:=proxy.URLTest(ctx,"http://synthetic.test",nil)
+    if err==nil || len(proxy.DelayHistory())!=1 || proxy.AliveForTestUrl("http://synthetic.test") {t.Fatal("automatic timeout stopped recording failed health")}
+}
+
+func TestFCXURLTestLateCancelledCallDoesNotPublishFailure(t *testing.T) {
+    started:=make(chan struct{})
+    proxy:=NewProxy(&fcxHistoryAdapter{Base:&outbound.Base{},started:started})
+    ctx,cancel:=context.WithCancel(context.Background());defer cancel()
+    done:=make(chan error,1)
+    go func(){_,err:=proxy.URLTest(WithURLTestHistoryGuard(ctx,nil),"http://synthetic.test",nil);done<-err}()
+    <-started;cancel()
+    select {case err:=<-done:if err==nil {t.Fatal("cancelled in-flight test succeeded")};case <-time.After(time.Second):t.Fatal("cancelled call did not return")}
+    if len(proxy.DelayHistory())!=0 || !proxy.AliveForTestUrl("http://synthetic.test") {t.Fatal("late cancellation changed health state")}
+}
+
+func TestFCXURLTestOwnerGateControlsEntireCommit(t *testing.T) {
+    proxy:=NewProxy(&fcxHistoryAdapter{Base:&outbound.Base{}})
+    ctx:=WithURLTestHistoryGuard(context.Background(),func()(func(),bool){return nil,false})
+    if _,err:=proxy.URLTest(ctx,"http://synthetic.test",nil);err!=nil {t.Fatal(err)}
+    if len(proxy.DelayHistory())!=0 {t.Fatal("retired owner could commit history")}
+    released:=false
+    ctx=WithURLTestHistoryGuard(context.Background(),func()(func(),bool){return func(){released=true;if len(proxy.DelayHistory())!=1 {t.Error("gate released before history commit")}},true})
+    if _,err:=proxy.URLTest(ctx,"http://synthetic.test",nil);err!=nil {t.Fatal(err)}
+    if !released {t.Fatal("history guard was not released")}
+}

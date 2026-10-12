@@ -4,7 +4,6 @@ import (
 	"context"
 	"core/state"
 	"encoding/json"
-	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -35,17 +34,19 @@ import (
 )
 
 var (
-	isInit            atomic.Bool
-	externalProviders = map[string]cp.Provider{}
-	logSubscriber     observable.Subscription[log.Event]
-	healthCheckStopCh chan struct{}
-	healthCheckChMu   sync.Mutex
-	healthCheckMu     sync.Mutex
-	healthCheckSeen   = map[string]string{}
-	requestStopCh     chan struct{}
-	requestChMu       sync.Mutex
-	requestMu         sync.Mutex
-	requestSeen       = map[string]bool{}
+	isInit                atomic.Bool
+	externalProviders     = map[string]cp.Provider{}
+	logSubscriber         observable.Subscription[log.Event]
+	healthCheckStopCh     chan struct{}
+	healthCheckChMu       sync.Mutex
+	healthCheckSweepMu    sync.Mutex
+	healthCheckMu         sync.Mutex
+	healthCheckGeneration uint64
+	healthCheckSeen       = map[healthCheckKey]healthCheckSignature{}
+	requestStopCh         chan struct{}
+	requestChMu           sync.Mutex
+	requestMu             sync.Mutex
+	requestSeen           = map[string]bool{}
 	// uiActive reflects whether the Flutter UI is in the foreground. When false
 	// (app backgrounded) the request forwarder is paused and the health-check
 	// forwarder slows to backgroundHealthCheckInterval, so the core stops pinging
@@ -75,6 +76,16 @@ var (
 // (instead of minHealthCheckInterval) so url-test/fallback groups don't go stale,
 // without spamming pings/UI updates.
 const backgroundHealthCheckInterval = 5 * time.Minute
+
+type healthCheckKey struct {
+	proxyName string
+	testURL   string
+}
+
+type healthCheckSignature struct {
+	timestamp int64
+	delay     uint16
+}
 
 const (
 	runtimeGCPercent       = 100
@@ -222,6 +233,7 @@ func handleStopListener() bool {
 	runLock.Lock()
 	defer runLock.Unlock()
 	isRunning = false
+	cancelAllDelayTasks("cancelled")
 	// Keep health-check forwarder running so proxy pings stay fresh in the UI
 	// while the VPN is off. It is torn down only on full shutdown.
 	stopRequestForwarder()
@@ -243,6 +255,7 @@ func handleForceGc() {
 func handleShutdown() bool {
 	runLock.Lock()
 	defer runLock.Unlock()
+	cancelAllDelayTasks("sessionClosed")
 	stopHealthCheckForwarder()
 	stopRequestForwarder()
 	// Tear down the log subscription too: handleStartLog's subscription and pump
@@ -297,7 +310,7 @@ func startHealthCheckForwarder() {
 			select {
 			case <-time.After(d):
 				if uiActive.Load() {
-					forwardHealthCheckDelays()
+					forwardHealthCheckDelaysForRun(stopCh)
 				}
 			case <-stopCh:
 				return
@@ -316,14 +329,14 @@ func startHealthCheckForwarder() {
 			select {
 			case <-time.After(interval):
 				if uiActive.Load() {
-					forwardHealthCheckDelays()
+					forwardHealthCheckDelaysForRun(stopCh)
 				} else if touchGateOpen() {
 					// App backgrounded/killed but the screen is on and the tunnel is
 					// up: keep touching so lazy provider/group health checks run at
 					// their config interval — fallback/url-test groups must not go
 					// stale (they keep routing into dead nodes otherwise). UI emits
 					// stay foreground-only.
-					touchProvidersSafely()
+					touchProvidersSafelyForRun(stopCh)
 				}
 				// Dark screen / no tunnel: do nothing. Real traffic re-warms
 				// providers on demand (URLTest dial -> Touch); the screen-on edge
@@ -339,34 +352,82 @@ func startHealthCheckForwarder() {
 func stopHealthCheckForwarder() {
 	healthCheckChMu.Lock()
 	defer healthCheckChMu.Unlock()
-	if healthCheckStopCh == nil {
-		return
+	if healthCheckStopCh != nil {
+		close(healthCheckStopCh)
+		healthCheckStopCh = nil
 	}
-	close(healthCheckStopCh)
-	healthCheckStopCh = nil
+	// A foreground flush may still be reading histories even without a worker.
+	// Retire that snapshot too, so it cannot repopulate state after shutdown.
+	resetHealthCheckForwarderState()
 }
 
 func resetHealthCheckForwarderState() {
 	healthCheckMu.Lock()
-	healthCheckSeen = map[string]string{}
+	healthCheckGeneration++
+	healthCheckSeen = map[healthCheckKey]healthCheckSignature{}
 	healthCheckMu.Unlock()
 }
 
 func forwardHealthCheckDelays() {
+	forwardHealthCheckDelaysForRun(nil)
+}
+
+func forwardHealthCheckDelaysForRun(stopCh <-chan struct{}) {
+	// Foreground flushes and timer ticks must not overtake one another: an old
+	// provider snapshot must never prune a newer one. Lock order is sweep -> run
+	// -> state; reset/start/stop take state but never sweep. No run/state lock is
+	// held while reading histories or dispatching events to native consumers.
+	healthCheckSweepMu.Lock()
+	defer healthCheckSweepMu.Unlock()
 	runLock.Lock()
 	if currentConfig == nil {
 		runLock.Unlock()
 		return
 	}
+	healthCheckMu.Lock()
+	select {
+	case <-stopCh:
+		healthCheckMu.Unlock()
+		runLock.Unlock()
+		return
+	default:
+	}
+	generation := healthCheckGeneration
+	healthCheckMu.Unlock()
 	touchProviders()
 	proxies := proxiesWithProviders()
 	runLock.Unlock()
 
+	live := make(map[healthCheckKey]healthCheckSignature, len(proxies))
 	for name, proxy := range proxies {
-		emitLatestDelay(name, "", proxy.DelayHistory())
+		collectLatestDelay(live, name, "", proxy.DelayHistory())
 		for url, state := range proxy.ExtraDelayHistories() {
-			emitLatestDelay(name, url, state.History)
+			collectLatestDelay(live, name, url, state.History)
 		}
+	}
+	healthCheckMu.Lock()
+	if generation != healthCheckGeneration {
+		healthCheckMu.Unlock()
+		return
+	}
+	var delays []Delay
+	for key, signature := range live {
+		if previous, seen := healthCheckSeen[key]; seen && previous == signature {
+			continue
+		}
+		value := int32(signature.delay)
+		if value == 0 {
+			value = -1
+		}
+		delays = append(delays, Delay{Name: key.proxyName, Url: key.testURL, Value: value})
+	}
+	// Replace instead of deleting keys: removed nodes/URLs and the old map's
+	// high-water bucket allocation can be collected when a provider shrinks.
+	// Capacity follows the current directory, without evicting valid dedup state.
+	healthCheckSeen = live
+	healthCheckMu.Unlock()
+	for i := range delays {
+		sendMessage(Message{Type: DelayMessage, Data: &delays[i]})
 	}
 }
 
@@ -414,11 +475,20 @@ func touchGateOpen() bool {
 // touchProvidersSafely is forwardHealthCheckDelays' touch step under runLock,
 // without emitting delays — used to keep providers warm while the UI is hidden.
 func touchProvidersSafely() {
+	touchProvidersSafelyForRun(nil)
+}
+
+func touchProvidersSafelyForRun(stopCh <-chan struct{}) {
 	runLock.Lock()
+	defer runLock.Unlock()
+	select {
+	case <-stopCh:
+		return
+	default:
+	}
 	if currentConfig != nil {
 		touchProviders()
 	}
-	runLock.Unlock()
 }
 
 // handleSetUiActive toggles the foreground flag. On the active->inactive edge it
@@ -430,7 +500,7 @@ func handleSetUiActive(active bool) {
 	// we must still idempotently (re)arm the request forwarder and flush current delays.
 	// startRequestForwarder/stopRequestForwarder are both no-ops when already in the
 	// target state, so re-running on a redundant call is cheap.
-	uiActive.Store(active)
+	wasActive := uiActive.Swap(active)
 	if active {
 		runLock.Lock()
 		running := isRunning
@@ -447,6 +517,9 @@ func handleSetUiActive(active bool) {
 		resetHealthCheckForwarderState()
 		go forwardHealthCheckDelays()
 	} else {
+		if wasActive {
+			cancelAllDelayTasks("uiInactive")
+		}
 		stopRequestForwarder()
 	}
 }
@@ -565,33 +638,15 @@ func forwardNewRequests() {
 	}
 }
 
-func emitLatestDelay(proxyName string, testURL string, history []constant.DelayHistory) {
+func collectLatestDelay(live map[healthCheckKey]healthCheckSignature, proxyName string, testURL string, history []constant.DelayHistory) {
 	if len(history) == 0 {
 		return
 	}
 	latest := history[len(history)-1]
-	key := proxyName + "|" + testURL
-	signature := fmt.Sprintf("%d:%d", latest.Time.UnixNano(), latest.Delay)
-	healthCheckMu.Lock()
-	if healthCheckSeen[key] == signature {
-		healthCheckMu.Unlock()
-		return
+	live[healthCheckKey{proxyName: proxyName, testURL: testURL}] = healthCheckSignature{
+		timestamp: latest.Time.UnixNano(),
+		delay:     latest.Delay,
 	}
-	healthCheckSeen[key] = signature
-	healthCheckMu.Unlock()
-
-	delayValue := int32(latest.Delay)
-	if latest.Delay == 0 {
-		delayValue = -1
-	}
-	sendMessage(Message{
-		Type: DelayMessage,
-		Data: &Delay{
-			Url:   testURL,
-			Name:  proxyName,
-			Value: delayValue,
-		},
-	})
 }
 
 func handleValidateConfig(bytes []byte) string {
@@ -693,72 +748,6 @@ func handleGetTotalTraffic() string {
 
 func handleResetTraffic() {
 	statistic.DefaultManager.ResetStatistic()
-}
-
-func handleAsyncTestDelay(paramsString string, fn func(string)) {
-	// Async, capped at 50 concurrent tests. Replaces a process-wide batch.Batch
-	// whose result map was never drained (slow retention + dead cancel/err state);
-	// a plain weighted semaphore preserves the concurrency cap and the
-	// returns-immediately contract without retaining anything.
-	go func() {
-		_ = testDelaySem.Acquire(context.Background(), 1) // never errors with Background
-		defer testDelaySem.Release(1)
-
-		var params = &TestDelayParams{}
-		err := json.Unmarshal([]byte(paramsString), params)
-		if err != nil {
-			fn("")
-			return
-		}
-
-		expectedStatus, err := utils.NewUnsignedRanges[uint16]("")
-		if err != nil {
-			fn("")
-			return
-		}
-
-		ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond*time.Duration(params.Timeout))
-		defer cancel()
-
-		proxies := proxiesWithProviders()
-		proxy := proxies[params.ProxyName]
-
-		delayData := &Delay{
-			Name: params.ProxyName,
-		}
-
-		if proxy == nil {
-			delayData.Value = -1
-			data, _ := json.Marshal(delayData)
-			fn(string(data))
-			return
-		}
-
-		testUrl := "https://www.gstatic.com/generate_204"
-
-		if params.TestUrl != "" {
-			testUrl = params.TestUrl
-		}
-		delayData.Url = testUrl
-
-		delay, err := proxy.URLTest(ctx, testUrl, expectedStatus)
-		if err != nil || delay == 0 {
-			delayData.Value = -1
-			data, _ := json.Marshal(delayData)
-			fn(string(data))
-			return
-		}
-
-		delayData.Value = int32(delay)
-		data, _ := json.Marshal(delayData)
-		fn(string(data))
-
-		// Push delay update via message
-		sendMessage(Message{
-			Type: DelayMessage,
-			Data: delayData,
-		})
-	}()
 }
 
 func handleGetConnections() string {
@@ -1092,16 +1081,26 @@ func handleUpdateConfig(bytes []byte) string {
 	if err != nil {
 		return err.Error()
 	}
-	if err := updateConfig(params); err != nil { return err.Error() }
+	if err := updateConfig(params); err != nil {
+		return err.Error()
+	}
 	return ""
 }
 
 func handleSetupConfig(bytes []byte) string {
+	var envelope struct {
+		Config json.RawMessage `json:"config"`
+	}
+	if err := json.Unmarshal(bytes, &envelope); err != nil {
+		return err.Error()
+	}
+	if len(envelope.Config) == 0 || string(envelope.Config) == "null" {
+		return "configuration is required"
+	}
 	var params = defaultSetupParams()
 	err := UnmarshalJson(bytes, params)
 	if err != nil {
 		log.Errorln("unmarshalRawConfig error %v", err)
-		_ = setupConfig(defaultSetupParams())
 		return err.Error()
 	}
 	err = setupConfig(params)

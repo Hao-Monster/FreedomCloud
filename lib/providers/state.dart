@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:dynamic_color/dynamic_color.dart';
 import 'package:flclashx/common/common.dart';
 import 'package:flclashx/enum/enum.dart';
@@ -9,6 +11,7 @@ import 'package:riverpod_annotation/riverpod_annotation.dart';
 
 import 'app.dart';
 import 'config.dart';
+import 'tun.dart';
 
 part 'generated/state.g.dart';
 
@@ -200,7 +203,7 @@ TrayState trayState(Ref ref) {
     port: clashConfig.mixedPort,
     autoLaunch: appSetting.autoLaunch,
     systemProxy: networkProps.systemProxy,
-    tunEnable: clashConfig.tun.enable,
+    tunEnable: Platform.isWindows ? ref.watch(tunRuntimeProvider).isEnabled : clashConfig.tun.enable,
     isStart: isStart,
     locale: appSetting.locale,
     brightness: brightness,
@@ -747,7 +750,9 @@ VM3<String?, String?, Dns?> needSetup(Ref ref) {
 @riverpod
 VM2<bool, bool> autoSetSystemDnsState(Ref ref) {
   final isStart = ref.watch(runTimeProvider.select((state) => state != null));
-  final realTunEnable = ref.watch(realTunEnableProvider);
+  final realTunEnable = Platform.isWindows
+      ? ref.watch(tunRuntimeProvider).isEnabled
+      : ref.watch(realTunEnableProvider);
   final autoSetSystemDns = ref.watch(
     networkSettingProvider.select(
       (state) => state.autoSetSystemDns,

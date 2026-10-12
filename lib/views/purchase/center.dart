@@ -133,6 +133,7 @@ class _PurchaseCenterState extends State<PurchaseCenter> {
                       loading: manager.plansLoading,
                       failed: manager.plansError != null,
                       retry: manager.loadPlans,
+                      openLink: _open,
                     ),
                     const SizedBox(height: 24),
                     if (!manager.loggedIn && manager.receipt != null) ...[

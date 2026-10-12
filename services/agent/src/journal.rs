@@ -48,7 +48,10 @@ impl ReplayJournal {
         if let Some(position) = self.pending_order.iter().position(|item| item == id) {
             self.pending_order.remove(position);
         }
-        if value.get("code").and_then(Value::as_i64) == Some(0) {
+        let Ok(action) = serde_json::from_str::<Value>(&staged) else {
+            return;
+        };
+        if mutation_was_accepted(&action, &value) {
             self.record(&staged);
         }
     }
@@ -117,6 +120,27 @@ impl ReplayJournal {
             "stopListener" => Some(false),
             _ => None,
         }
+    }
+}
+
+/// A config acknowledgement confirms accepted intent, not successful TUN
+/// capture. Legacy Core encodes config errors as a nonempty string even when
+/// its outer code is zero. Unknown payloads must not become recovery inputs.
+pub(crate) fn mutation_was_accepted(action: &Value, response: &Value) -> bool {
+    if response.get("code").and_then(Value::as_i64) != Some(0)
+        || response.get("method") != action.get("method")
+    {
+        return false;
+    }
+    match action.get("method").and_then(Value::as_str) {
+        Some("setupConfig" | "updateConfig") => {
+            matches!(response.get("data"), Some(Value::String(value)) if value.is_empty())
+                || response.get("data").and_then(Value::as_bool) == Some(true)
+        }
+        Some("startListener" | "stopListener") => {
+            response.get("data").and_then(Value::as_bool) == Some(true)
+        }
+        _ => true,
     }
 }
 
@@ -281,5 +305,82 @@ mod tests {
         assert!(journal.pending.len() <= MAX_REPLAY_ENTRIES);
         journal.discard_pending();
         assert!(journal.pending.is_empty());
+    }
+
+    #[test]
+    fn legacy_config_error_string_does_not_replace_accepted_intent() {
+        let mut journal = ReplayJournal::default();
+        journal.record(&action("old", "setupConfig", json!("accepted")));
+        journal.stage(&action("failed", "setupConfig", json!("invalid")));
+        journal.commit_response(
+            &json!({"id":"failed","method":"setupConfig","code":0,"data":"invalid configuration"})
+                .to_string(),
+        );
+        let replay = journal.replay_lines();
+        assert_eq!(replay.len(), 1);
+        assert!(replay[0].contains("accepted"));
+        assert!(!replay[0].contains("invalid"));
+    }
+
+    #[test]
+    fn config_confirmation_requires_a_valid_response_payload() {
+        for data in [
+            Value::Null,
+            json!(false),
+            json!(42),
+            json!({"unexpected":true}),
+        ] {
+            let mut journal = ReplayJournal::default();
+            journal.stage(&action("request", "updateConfig", json!("intent")));
+            journal.commit_response(
+                &json!({"id":"request","method":"updateConfig","code":0,"data":data}).to_string(),
+            );
+            assert!(
+                journal.is_empty(),
+                "malformed acknowledgement became replayable: {data}"
+            );
+        }
+    }
+
+    #[test]
+    fn accepted_config_intent_does_not_require_a_tun_success_claim() {
+        let mut journal = ReplayJournal::default();
+        journal.stage(&action("request", "updateConfig", json!("tun requested")));
+        journal.commit_response(
+            &json!({"id":"request","method":"updateConfig","code":0,"data":""}).to_string(),
+        );
+        assert_eq!(journal.len(), 1);
+        // Read-only failure observations cannot overwrite replayable intent.
+        journal.stage(&action("status", "getTunStatus", Value::Null));
+        journal.commit_response(&json!({"id":"status","method":"getTunStatus","code":0,"data":{"state":"failed","listenerActive":false}}).to_string());
+        assert_eq!(journal.len(), 1);
+        assert!(journal.replay_lines()[0].contains("tun requested"));
+    }
+
+    #[test]
+    fn rejected_listener_transition_does_not_change_running_or_replay_state() {
+        for (previous, rejected, expected_running) in [
+            ("stopListener", "startListener", false),
+            ("startListener", "stopListener", true),
+        ] {
+            for data in [json!(false), Value::Null, json!(""), json!(1)] {
+                let mut journal = ReplayJournal::default();
+                journal.stage(&action("accepted", previous, Value::Null));
+                journal.commit_response(
+                    &json!({"id":"accepted","method":previous,"code":0,"data":true}).to_string(),
+                );
+                journal.stage(&action("rejected", rejected, Value::Null));
+                journal.commit_response(
+                    &json!({"id":"rejected","method":rejected,"code":0,"data":data}).to_string(),
+                );
+                assert_eq!(journal.listener_running(), Some(expected_running));
+                let replay = journal.replay_lines();
+                assert_eq!(replay.len(), 1);
+                assert_eq!(
+                    serde_json::from_str::<Value>(&replay[0]).unwrap()["method"],
+                    previous
+                );
+            }
+        }
     }
 }

@@ -20,6 +20,7 @@ set(PLUGIN_NAME "proxy_plugin")
 list(APPEND PLUGIN_SOURCES
   "proxy_plugin.cpp"
   "proxy_plugin.h"
+  "proxy_settings.h"
 )
 
 # Define the plugin library target. Its name must not be changed (see comment

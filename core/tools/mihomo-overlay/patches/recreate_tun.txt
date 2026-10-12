@@ -1,0 +1,43 @@
+func ReCreateTun(tunConf LC.Tun, tunnel C.Tunnel) {
+	tunConf = fcxCloneTunConfig(tunConf)
+	tunConf.Sort()
+	tunMux.Lock()
+	defer tunMux.Unlock()
+	fcxTunStatus.Revision++
+	fcxTunStatus.RequestedEnabled = tunConf.Enable
+	fcxTunStatus.ErrorCode = ""
+	defer func() { LastTunConf = tunConf }()
+	if tunConf.Equal(LastTunConf) && tunLister != nil {
+		tunLister.OnReload()
+		fcxTunStatus.State = "on"
+		fcxTunStatus.ListenerActive = true
+		fcxTunStatus.Device = tunLister.Config().Device
+		return
+	}
+	if err := closeTunListener(); err != nil {
+		tunConf.Enable = false
+		fcxTunStatus.State = "failed"
+		fcxTunStatus.ErrorCode = "closeFailed"
+		log.Errorln("Stop TUN listening error: %s", err.Error())
+		return
+	}
+	fcxTunStatus.Device = tunConf.Device
+	if !tunConf.Enable {
+		fcxTunStatus.State = "off"
+		return
+	}
+	fcxTunStatus.State = "starting"
+	created, err := fcxCreateTun(tunConf, tunnel)
+	if err != nil {
+		tunConf.Enable = false
+		fcxTunStatus.State = "failed"
+		fcxTunStatus.ErrorCode = fcxTunErrorCode(err)
+		log.Errorln("Start TUN listening error: %s", err.Error())
+		return
+	}
+	tunLister = created
+	fcxTunStatus.State = "on"
+	fcxTunStatus.ListenerActive = true
+	fcxTunStatus.Device = created.Config().Device
+	log.Infoln("[TUN] Tun adapter listening at: %s", created.Address())
+}

@@ -1,0 +1,22 @@
+package adapter
+
+import "context"
+
+type fcxURLTestHistoryKey struct{}
+type fcxURLTestHistoryGate struct {begin func() (release func(), allowed bool)}
+
+// WithURLTestHistoryGuard opts a UI-owned test into cancellation-safe history
+// updates. Automatic provider health checks retain the upstream behavior. An
+// optional gate linearizes the commit with the owner's cancellation; its
+// release is called after both history and alive state have been updated.
+func WithURLTestHistoryGuard(ctx context.Context,begin func() (func(),bool)) context.Context {
+    return context.WithValue(ctx,fcxURLTestHistoryKey{},fcxURLTestHistoryGate{begin:begin})
+}
+
+func fcxBeginURLTestHistory(ctx context.Context)(func(),bool) {
+    gate,marked:=ctx.Value(fcxURLTestHistoryKey{}).(fcxURLTestHistoryGate)
+    if !marked {return nil,true}
+    if ctx.Err()!=nil {return nil,false}
+    if gate.begin==nil {return nil,true}
+    return gate.begin()
+}

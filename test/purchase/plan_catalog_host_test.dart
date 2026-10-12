@@ -41,6 +41,10 @@ class _Response extends Stream<List<int>> implements HttpClientResponse {
               'transfer_enable': 200,
               'speed_limit': null,
               'device_limit': null,
+              'content': '## Host plan details\n\nPublished plan description.',
+              'tags': ['Public catalog tag'],
+              'reset_traffic_method': 2,
+              'capacity_remaining': null,
               'can_purchase': true,
               'prices': {'yearly': 15000},
             },
@@ -170,6 +174,11 @@ void main() {
         expect(find.text('Host-only plan fixture'), findsOneWidget);
         expect(find.text('Traffic quota: 200 GiB'), findsOneWidget);
         expect(find.text('150.00'), findsOneWidget);
+        expect(find.text('Public catalog tag'), findsOneWidget);
+        expect(
+            find.text('Host plan details', findRichText: true), findsOneWidget);
+        expect(find.text('Published plan description.', findRichText: true),
+            findsOneWidget);
         expect(find.byKey(const Key('purchase-email')), findsOneWidget);
         expect(find.byKey(const Key('purchase-password')), findsOneWidget);
         expect(find.byKey(const Key('purchase-login')), findsOneWidget);

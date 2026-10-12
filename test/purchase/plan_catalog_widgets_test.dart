@@ -34,6 +34,7 @@ void main() {
     _Manager manager, {
     Size size = const Size(1000, 900),
     double textScale = 1,
+    Future<void> Function(Uri)? openLink,
   }) async {
     tester.view.physicalSize = size;
     tester.view.devicePixelRatio = 1;
@@ -56,7 +57,7 @@ void main() {
       home: Scaffold(
         body: PurchaseCenter(
           manager: manager,
-          openLink: (_) async {},
+          openLink: openLink ?? (_) async {},
           openProfiles: () {},
         ),
       ),
@@ -103,6 +104,39 @@ void main() {
     expect(find.text('WeChat ID: ChasingDream_2021'), findsOneWidget);
     expect(find.text('WeChat ID: dxm_qa'), findsOneWidget);
   });
+
+  for (final failsToOpen in [false, true]) {
+    testWidgets(
+        'plan links use purchase center boundary (failure=$failsToOpen)',
+        (tester) async {
+      final opened = <Uri>[];
+      final manager = _Manager()
+        ..planCatalog = const XboardPlanCatalog(plans: [
+          XboardPlanOffer(
+            id: 1,
+            name: 'Linked plan',
+            transferGiB: 200,
+            prices: [XboardPlanPrice(period: 'onetime', amount: 15000)],
+            content: '[Plan help](https://support.example/help)',
+          ),
+        ]);
+      await showCenter(tester, manager, openLink: (uri) async {
+        opened.add(uri);
+        if (failsToOpen) throw StateError('Private launcher failure');
+      });
+      expect(opened, isEmpty);
+      await tester.ensureVisible(find.text('Plan help'));
+      await tester.tap(find.text('Plan help'));
+      await tester.pumpAndSettle();
+      expect(opened, [Uri.parse('https://support.example/help')]);
+      expect(find.text('Could not open the page. Please try again.'),
+          failsToOpen ? findsOneWidget : findsNothing);
+      expect(find.textContaining('Private launcher failure'), findsNothing);
+      expect(find.text('WeChat ID: dxm_qa'), findsOneWidget);
+      expect(find.byKey(const Key('purchase-login')), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+  }
 
   testWidgets('loading offers leaves login and existing support available',
       (tester) async {

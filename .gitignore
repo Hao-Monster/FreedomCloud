@@ -90,6 +90,8 @@ target-check-windows/
 .gocache-temp/
 .gomodcache-temp/
 .gopath-temp/
+# Verified local Mihomo source copy and overlay; regenerated from pinned inputs.
+/core/.generated/
 
 # Local strict-package and Visual Studio discovery outputs. These are generated
 # from signed inputs or machine state and must never be committed as source.

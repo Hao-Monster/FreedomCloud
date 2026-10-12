@@ -11,8 +11,8 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/metacubex/mihomo/component/dialer"
-	"github.com/metacubex/mihomo/component/resolver"
 	"github.com/metacubex/mihomo/component/process"
+	"github.com/metacubex/mihomo/component/resolver"
 	"github.com/metacubex/mihomo/constant"
 	"github.com/metacubex/mihomo/dns"
 	"github.com/metacubex/mihomo/listener/sing_tun"
@@ -22,75 +22,71 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 	"unsafe"
 )
 
 type TunHandler struct {
-	listener *sing_tun.Listener
-	callback unsafe.Pointer
-
-	limit *semaphore.Weighted
+	listener  *sing_tun.Listener
+	callback  unsafe.Pointer
+	limit     *semaphore.Weighted
+	resource  *retiredResource
+	ready     atomic.Bool
+	ctx       context.Context
+	cancel    context.CancelFunc
+	closeOnce sync.Once
 }
 
 func (t *TunHandler) close() {
-	// Bound the drain. handleProtect/handleResolveProcess hold this semaphore while
-	// calling into the JVM (Binder), which can wedge under system pressure; close()
-	// runs under tunLock, so an unbounded Acquire here would block stop AND the next
-	// start/getRunTime forever. On timeout, skip releaseObject and leak the callback
-	// global ref rather than risk a use-after-free on an in-flight Protect call.
-	// Only Release what was actually acquired (a deferred Release after a failed
-	// Acquire would drive the semaphore negative and panic).
+	t.closeOnce.Do(func() {
+		t.ready.Store(false)
+		t.cancel()
+		removeTunHook()
+		t.resource.Retire()
+		l := t.listener
+		t.listener = nil
+		if l != nil {
+			_ = l.Close()
+		}
+	})
+	// JNI calls may outlive this bounded stop. Their leases retain the immutable
+	// callback until the last late return, which then releases it exactly once.
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	drained := t.limit.Acquire(ctx, 4) == nil
-	if drained {
-		defer t.limit.Release(4)
-	} else {
-		log.Warnln("TunHandler.close: drain timed out, leaking callback global ref to avoid use-after-free")
+	if err := t.resource.Wait(ctx); err != nil {
+		log.Warnln("TunHandler.close: waiting for late JNI calls; pending retired handlers=%d", pendingRetiredResources())
 	}
-	removeTunHook()
-	// Capture and clear the listener BEFORE closing it. On the drain-timeout path
-	// the handler is otherwise left intact, so without clearing here the next
-	// handleStopTun would call Close() a second time on the same (already closed)
-	// listener. In-flight Protect/ResolveProcess don't read t.listener after their
-	// nil-guard, so clearing it now is safe for them.
-	l := t.listener
-	t.listener = nil
-	if l != nil {
-		_ = l.Close()
+}
+
+func (t *TunHandler) acquireCallback() (func(), bool) {
+	if !t.ready.Load() || t.limit.Acquire(t.ctx, 1) != nil {
+		return nil, false
 	}
-	if drained {
-		if t.callback != nil {
-			releaseObject(t.callback)
-		}
-		t.callback = nil
+	lease, ok := t.resource.Acquire()
+	if !ok {
+		t.limit.Release(1)
+		return nil, false
 	}
-	// Timeout path: t.callback is intentionally left intact (and its global ref
-	// leaked, not released). An in-flight Protect/ResolveProcess still holding a
-	// permit is already past its t.listener nil-guard and may read t.callback;
-	// writing nil here would race and could hand a null jobject to the JVM.
+	return func() { lease(); t.limit.Release(1) }, true
 }
 
 func (t *TunHandler) handleProtect(fd int) {
-	_ = t.limit.Acquire(context.Background(), 1)
-	defer t.limit.Release(1)
-
-	if t.listener == nil {
+	release, ok := t.acquireCallback()
+	if !ok {
 		return
 	}
-
+	defer release()
 	Protect(t.callback, fd)
 }
 
 func (t *TunHandler) handleResolveProcess(source, target net.Addr) string {
-	_ = t.limit.Acquire(context.Background(), 1)
-	defer t.limit.Release(1)
-
-	if t.listener == nil {
+	release, ok := t.acquireCallback()
+	if !ok {
 		return ""
 	}
+	defer release()
 	var protocol int
 	uid := -1
 	switch source.Network() {
@@ -150,6 +146,12 @@ func handleStartTun(fd int, callback unsafe.Pointer) bool {
 			callback: callback,
 			limit:    semaphore.NewWeighted(4),
 		}
+		tunHandler.ctx, tunHandler.cancel = context.WithCancel(context.Background())
+		tunHandler.resource = newRetiredResource(func() {
+			if callback != nil {
+				releaseObject(callback)
+			}
+		})
 		initTunHook()
 		tunListener, err := t.Start(fd, tunCfg)
 		if err != nil {
@@ -161,22 +163,23 @@ func handleStartTun(fd int, callback unsafe.Pointer) bool {
 			// add an unconditional syscall.Close(fd) here — that would double-close a
 			// number sing-tun may have already closed/reused. (A rare pre-wrap sing-tun
 			// failure would leak this one fd; accepted over a double-close.)
-			removeTunHook()
 			if tunHandler != nil {
-				releaseObject(tunHandler.callback)
+				tunHandler.close()
 				tunHandler = nil
 			}
+			runTime = nil
 			return false
 		}
 		if tunListener != nil {
 			log.Infoln("TUN address: %v", tunListener.Address())
 			tunHandler.listener = tunListener
+			tunHandler.ready.Store(true)
 		} else {
-			removeTunHook()
 			if tunHandler != nil {
-				releaseObject(tunHandler.callback)
+				tunHandler.close()
 				tunHandler = nil
 			}
+			runTime = nil
 			return false
 		}
 	} else if callback != nil {

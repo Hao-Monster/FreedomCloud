@@ -258,11 +258,11 @@ class _ProxyGroupCardState extends State<ProxyGroupCard>
   Future<void> _delayTest() async {
     if (isLock) return;
     isLock = true;
-    await delayTest(
-      widget.group.all,
-      widget.group.testUrl,
-    );
-    isLock = false;
+    try {
+      await delayTest(widget.group.all, widget.group.testUrl);
+    } finally {
+      isLock = false;
+    }
   }
 
   Widget _buildIcon() => Consumer(
@@ -396,12 +396,15 @@ class _ProxyGroupCardState extends State<ProxyGroupCard>
                           // taller filled-tonal box), so up/down moves straight to
                           // the next/previous group in one press; left/right switches
                           // between ping and expand within the group.
-                          IconButton(
-                            onPressed: _delayTest,
-                            padding: EdgeInsets.zero,
-                            constraints:
-                                const BoxConstraints.tightFor(width: 40, height: 40),
-                            icon: const Icon(Icons.network_ping),
+                          ListenableBuilder(
+                            listenable: delayTests,
+                            builder: (_, __) => IconButton(
+                              onPressed: delayTests.busy ? null : _delayTest,
+                              padding: EdgeInsets.zero,
+                              constraints:
+                                  const BoxConstraints.tightFor(width: 40, height: 40),
+                              icon: const Icon(Icons.network_ping),
+                            ),
                           ),
                           const SizedBox(width: 6),
                           IconButton.filledTonal(

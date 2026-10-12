@@ -35,6 +35,8 @@ class GlobalState {
   }
 
   GlobalState._internal();
+  @visibleForTesting
+  GlobalState.forTesting();
   static GlobalState? _instance;
   Map<CacheTag, double> cacheScrollPosition = {};
   Map<CacheTag, FixedMap<String, double>> cacheHeightMap = {};
@@ -169,25 +171,38 @@ class GlobalState {
       packageInfo.ua(appVersion: _uaVersion, coreVersion: coreVersion);
 
   int _tasksEpoch = 0;
+  bool _tasksRunning = false;
+  Future<void>? _tasksCycle;
 
-  Future<void> startUpdateTasks([UpdateTasks? tasks]) async {
-    if (timer != null && timer!.isActive == true) return;
+  Future<void> startUpdateTasks([UpdateTasks? tasks]) {
     if (tasks != null) {
       this.tasks = tasks;
     }
-    final epoch = ++_tasksEpoch;
-    await executorUpdateTask();
-    // stopUpdateTasks() (or a restart) bumped the epoch while the executor was
-    // in flight: don't reschedule, otherwise the poll loop resurrects itself and
-    // keeps hammering a (possibly dead) remote forever after a stop.
-    if (epoch != _tasksEpoch) return;
-    timer = Timer(const Duration(seconds: 3), () {
-      startUpdateTasks();
+    _tasksRunning = true;
+    final inFlight = _tasksCycle;
+    if (inFlight != null) return inFlight;
+    if (timer?.isActive == true) return Future.value();
+    final epoch = _tasksEpoch;
+    final cycle = executorUpdateTask(epoch: epoch);
+    _tasksCycle = cycle.whenComplete(() {
+      _tasksCycle = null;
+      if (!_tasksRunning) return;
+      if (epoch != _tasksEpoch) {
+        unawaited(startUpdateTasks());
+        return;
+      }
+      timer = Timer(const Duration(seconds: 3), () {
+        if (!_tasksRunning || epoch != _tasksEpoch) return;
+        timer = null;
+        unawaited(startUpdateTasks());
+      });
     });
+    return _tasksCycle!;
   }
 
-  Future<void> executorUpdateTask() async {
-    for (final task in tasks) {
+  Future<void> executorUpdateTask({int? epoch}) async {
+    for (final task in List<FutureOr Function()>.of(tasks)) {
+      if (epoch != null && (!_tasksRunning || epoch != _tasksEpoch)) return;
       // Isolate failures: one throwing task must not kill the whole loop (which
       // would silently freeze traffic/runtime counters while the tunnel is live).
       try {
@@ -196,7 +211,6 @@ class GlobalState {
         commonPrint.log('executorUpdateTask error: $e');
       }
     }
-    timer = null;
   }
 
   void stopUpdateTasks() {
@@ -204,20 +218,18 @@ class GlobalState {
     // so the old `timer == null` early-return let a stop slip through and the
     // loop rescheduled anyway).
     _tasksEpoch++;
+    _tasksRunning = false;
     timer?.cancel();
     timer = null;
   }
 
-  // Background proxy-group refresh (latency/now). Paused while the app is in the
-  // background so it doesn't poll the core every 60s for a UI nobody is looking
-  // at; resumed (with an immediate refresh) when the app comes back to front.
+  // Desktop tray menus consume group selection/latency while the main window
+  // is hidden. Android explicitly pauses this loop with its UI.
   void startGroupsUpdateTask() {
     if (groupsUpdateTimer != null && groupsUpdateTimer!.isActive) return;
     groupsUpdateTimer = Timer(const Duration(seconds: 60), () {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        appController.updateGroupsDebounce();
-        startGroupsUpdateTask();
-      });
+      if (isAppControllerReady) appController.updateGroupsDebounce();
+      startGroupsUpdateTask();
     });
   }
 
@@ -228,7 +240,12 @@ class GlobalState {
 
   Future<bool> handleStart([UpdateTasks? tasks]) async {
     startTime ??= DateTime.now();
-    await clashCore.startListener();
+    final listenerStarted = await clashCore.startListener();
+    if (Platform.isWindows && !listenerStarted) {
+      startTime = null;
+      stopUpdateTasks();
+      return false;
+    }
     final started = await service?.startVpn();
     // started == false → the Android remote bring-up failed (establish() returned
     // null / Core.startTun failed); the service emitted STOP and the tunnel is down.
@@ -244,22 +261,31 @@ class GlobalState {
     return true;
   }
 
-  /// Probes the native run time and syncs [startTime]. Returns false when the
-  /// probe failed (state unknown) — [startTime] is left untouched in that case
-  /// so callers don't mistake "couldn't reach the service" for "stopped".
-  Future<bool> updateStartTime() async {
+  /// Reads native state without committing it. Resume callers must validate
+  /// their UI/status generation before a delayed reply can change [startTime].
+  Future<({bool known, DateTime? startTime})> probeStartTime({
+    Future<DateTime?> Function()? readRunTime,
+  }) async {
     final lib = clashLib;
-    if (lib == null) return true;
+    final probe = readRunTime ?? lib?.getRunTime;
+    if (probe == null) return (known: true, startTime: startTime);
     for (var attempt = 1; attempt <= 2; attempt++) {
       try {
-        startTime = await lib.getRunTime();
-        return true;
+        return (known: true, startTime: await probe());
       } catch (e) {
         commonPrint.log('updateStartTime probe failed (#$attempt): $e');
         await Future.delayed(const Duration(milliseconds: 500));
       }
     }
-    return false;
+    return (known: false, startTime: null);
+  }
+
+  /// Initial attach uses the same bounded probe; unknown state preserves the
+  /// current value rather than being misreported as a stopped VPN.
+  Future<bool> updateStartTime() async {
+    final result = await probeStartTime();
+    if (result.known) startTime = result.startTime;
+    return result.known;
   }
 
   Future handleStop() async {
@@ -391,26 +417,85 @@ class GlobalState {
 
   Future<SetupParams> getSetupParams({
     required ClashConfig pathConfig,
+    required Profile? profile,
   }) async {
+    final testUrl = config.appSetting.testUrl;
     final clashConfig = await patchRawConfig(
       patchConfig: pathConfig,
+      profile: profile,
     );
-    lastRuntimeConfig = clashConfig;
-    lastRuntimeProfileId = config.currentProfile?.id;
     final params = SetupParams(
       config: clashConfig,
-      selectedMap: config.currentProfile?.selectedMap ?? {},
-      testUrl: config.appSetting.testUrl,
+      selectedMap: profile?.selectedMap ?? {},
+      testUrl: testUrl,
     );
     return params;
   }
 
-  Future<ClashConfig> syncNetworkSettingsFromProvider(ClashConfig patchConfig) async {
+  String controllerAddressForEnable(Map<String, dynamic>? runtimeConfig) {
+    final address = (runtimeConfig?['external-controller'] as String?)?.trim();
+    if (address?.isNotEmpty == true) return address!;
+    // Enabling a TLS/pipe-only profile must not add a new plaintext listener.
+    for (final key in ['external-controller-tls', 'external-controller-unix', 'external-controller-pipe']) {
+      if ((runtimeConfig?[key] as String?)?.trim().isNotEmpty == true) return '';
+    }
+    return ExternalControllerStatus.open.value;
+  }
+
+  void commitRuntimeSetup(SetupParams params, String? profileId) {
+    final rawConfig = params.config;
+    lastRuntimeConfig = rawConfig;
+    lastRuntimeProfileId = profileId;
+    effectiveExternalController.value = (rawConfig['external-controller'] as String?) ?? '';
+    effectiveSecret.value = (rawConfig['secret'] as String?) ?? '';
+    effectiveExternalUi.value = (rawConfig['external-ui'] as String?) ?? '';
+    effectiveTcpConcurrent.value = rawConfig['tcp-concurrent'] as bool? ?? false;
+    effectiveUnifiedDelay.value = rawConfig['unified-delay'] as bool? ?? false;
+    effectiveLogLevel.value = rawConfig['log-level'] as String? ?? 'info';
+    effectiveKeepAliveInterval.value = (rawConfig['keep-alive-interval'] as num?)?.toInt() ?? 30;
+    _commitGroupMetadata(rawConfig);
+  }
+
+  void _commitGroupMetadata(Map<String, dynamic> rawConfig) {
+    final descriptions = <String, String>{};
+    final globalOrder = <String>[];
+    final groupOrder = <String>[];
+    var globalOverride = false;
+    final groups = rawConfig['proxy-groups'];
+    if (groups is List) {
+      for (final group in groups) {
+        if (group is! Map || group['name'] is! String) continue;
+        final name = group['name'] as String;
+        groupOrder.add(name);
+        final description = group['description'];
+        if (description is String && description.trim().isNotEmpty) {
+          descriptions[name] = description.trim();
+        }
+        if (name == GroupName.GLOBAL.name) {
+          final override = group['flclashx-override'];
+          globalOverride = override == true ||
+            (override is String && override.trim().toLowerCase() == 'true');
+          final proxies = group['proxies'];
+          if (globalOverride && proxies is List) {
+            globalOrder.addAll(proxies.whereType<String>()
+              .map((name) => name.trim()).where((name) => name.isNotEmpty));
+          }
+        }
+      }
+    }
+    groupDescriptions.value = descriptions;
+    globalGroupOrder.value = globalOrder;
+    proxyGroupOrder.value = groupOrder;
+    globalOverrideEnabled.value = globalOverride;
+  }
+
+  Future<ClashConfig> syncNetworkSettingsFromProvider(ClashConfig patchConfig, {
+    required Profile? profile,
+  }) async {
     if (config.appSetting.overrideNetworkSettings) {
       return patchConfig; // User wants to override, keep current settings
     }
 
-    final profile = config.currentProfile;
     if (profile == null) {
       return patchConfig;
     }
@@ -453,8 +538,8 @@ class GlobalState {
 
   Future<Map<String, dynamic>> patchRawConfig({
     required ClashConfig patchConfig,
+    required Profile? profile,
   }) async {
-    final profile = config.currentProfile;
     if (profile == null) {
       return {};
     }
@@ -471,48 +556,6 @@ class GlobalState {
         supportsProcessLookup: platformSupportsProcessLookup,
       ),
     );
-    // Custom "description" field on proxy-groups — extracted here because
-    // mihomo's /proxies API doesn't forward arbitrary YAML keys.
-    final parsedGroupDescriptions = <String, String>{};
-    // Opt-in only: when the GLOBAL proxy-group (and only GLOBAL) carries
-    // `flclashx-override: true`, its `proxies` list is the curated set/order we
-    // show in global mode. Any other group's flag is ignored.
-    final parsedGlobalOrder = <String>[];
-    // Every proxy-group name in declaration order (see proxyGroupOrder).
-    final parsedProxyGroupOrder = <String>[];
-    var parsedGlobalOverride = false;
-    final rawGroups = rawConfig["proxy-groups"];
-    if (rawGroups is List) {
-      for (final g in rawGroups) {
-        if (g is! Map) continue;
-        final name = g["name"];
-        if (name is! String) continue;
-        parsedProxyGroupOrder.add(name);
-        final desc = g["description"];
-        if (desc is String && desc.trim().isNotEmpty) {
-          parsedGroupDescriptions[name] = desc.trim();
-        }
-        if (name == GroupName.GLOBAL.name) {
-          final override = g["flclashx-override"];
-          parsedGlobalOverride = override == true ||
-              (override is String && override.trim().toLowerCase() == 'true');
-          if (parsedGlobalOverride) {
-            final proxies = g["proxies"];
-            if (proxies is List) {
-              for (final p in proxies) {
-                if (p is String && p.trim().isNotEmpty) {
-                  parsedGlobalOrder.add(p.trim());
-                }
-              }
-            }
-          }
-        }
-      }
-    }
-    groupDescriptions.value = parsedGroupDescriptions;
-    globalGroupOrder.value = parsedGlobalOrder;
-    proxyGroupOrder.value = parsedProxyGroupOrder;
-    globalOverrideEnabled.value = parsedGlobalOverride;
     // external-controller: profile value always wins when present. The UI
     // toggle only acts as a fallback because the enum hardcodes 127.0.0.1:9090
     // and would otherwise silently override a subscription-provided endpoint
@@ -524,8 +567,6 @@ class GlobalState {
         ? providerExternalController
         : realPatchConfig.externalController.value;
     rawConfig["external-controller"] = effectiveExternalControllerValue;
-    effectiveExternalController.value = effectiveExternalControllerValue;
-    effectiveSecret.value = (rawConfig["secret"] as String?)?.trim() ?? "";
     // Always point the core at a local dir so it serves the dashboard at /ui/
     // on the same host:port as the controller (same origin, plain http — no
     // public instance, no mixed content). The app downloads zashboard into this
@@ -535,7 +576,6 @@ class GlobalState {
         ? providerUi
         : p.join(await appPath.homeDirPath, "zashboard");
     rawConfig["external-ui"] = uiDir;
-    effectiveExternalUi.value = uiDir;
     rawConfig["interface-name"] = "";
     if (rawConfig["external-ui-url"] == null || rawConfig["external-ui-url"] == "") {
       rawConfig["external-ui-url"] = "";
@@ -566,10 +606,6 @@ class GlobalState {
     rawConfig["unified-delay"] = effUnifiedDelay;
     rawConfig["log-level"] = effLogLevel;
     rawConfig["keep-alive-interval"] = effKeepAlive;
-    effectiveTcpConcurrent.value = effTcpConcurrent;
-    effectiveUnifiedDelay.value = effUnifiedDelay;
-    effectiveLogLevel.value = effLogLevel;
-    effectiveKeepAliveInterval.value = effKeepAlive;
     rawConfig["port"] = 0;
     rawConfig["socks-port"] = 0;
     rawConfig["port"] = realPatchConfig.port;
@@ -763,7 +799,8 @@ class GlobalState {
       rules.cast<Object?>(),
       availableTargetGroups: {
         GroupName.GLOBAL.name,
-        ...parsedProxyGroupOrder,
+        ...((rawConfig['proxy-groups'] as List?) ?? const [])
+          .whereType<Map>().map((group) => group['name']).whereType<String>(),
       },
       onUnavailableTarget: (_) => unavailablePerAppTargets++,
     );

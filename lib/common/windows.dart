@@ -20,15 +20,9 @@ class Windows {
 
   Windows._internal() {
     _shell32 = DynamicLibrary.open('shell32.dll');
-    try {
-      _uxtheme = DynamicLibrary.open('uxtheme.dll');
-    } catch (e) {
-      // Ignore if uxtheme.dll is not available
-    }
   }
   static Windows? _instance;
   late DynamicLibrary _shell32;
-  late DynamicLibrary _uxtheme;
 
   bool _readThemeValue(String valueName) {
     try {
@@ -67,7 +61,6 @@ class Windows {
   void enableDarkModeForApp() {
     try {
       final isDark = isDarkMode();
-      if (!isDark) return;
 
       try {
         final kernel32 = DynamicLibrary.open('kernel32.dll');
@@ -95,7 +88,7 @@ class Windows {
                 Pointer<NativeFunction<Int32 Function(Int32)>>.fromAddress(
                         setPreferredAppModePtr)
                     .asFunction<int Function(int)>();
-            setPreferredAppMode(1);
+            setPreferredAppMode(isDark ? 1 : 0);
           } else {
             final ordinal133 = Pointer<Utf8>.fromAddress(133);
             final allowDarkModePtr =
@@ -106,7 +99,7 @@ class Windows {
                   Pointer<NativeFunction<Int32 Function(Int32)>>.fromAddress(
                           allowDarkModePtr)
                       .asFunction<int Function(int)>();
-              allowDarkModeForApp(1); // TRUE
+              allowDarkModeForApp(isDark ? 1 : 0);
             }
           }
 
@@ -125,34 +118,6 @@ class Windows {
         }
       } catch (_) {
         // FFI call may fail on unsupported Windows versions
-      }
-    } catch (_) {
-      // FFI call may fail on unsupported Windows versions
-    }
-  }
-
-  void applyDarkModeToMenu(int hwnd) {
-    if (hwnd == 0) return;
-
-    try {
-      final isDark = isDarkMode();
-
-      final themeName = isDark ? 'DarkMode_Explorer'.toNativeUtf16() : nullptr;
-
-      try {
-        final setWindowTheme = _uxtheme.lookupFunction<
-            Int32 Function(IntPtr hwnd, Pointer<Utf16> pszSubAppName,
-                Pointer<Utf16> pszSubIdList),
-            int Function(int hwnd, Pointer<Utf16> pszSubAppName,
-                Pointer<Utf16> pszSubIdList)>('SetWindowTheme');
-
-        setWindowTheme(hwnd, themeName, nullptr);
-      } catch (_) {
-        // FFI call may fail on unsupported Windows versions
-      }
-
-      if (themeName != nullptr) {
-        calloc.free(themeName);
       }
     } catch (_) {
       // FFI call may fail on unsupported Windows versions
@@ -245,9 +210,12 @@ class Windows {
 
     // ShellExecute returns after the elevated process launches, not after the
     // service reaches RUNNING. Report success only after the helper responds
-    // with the hash of the actual core on disk.
-    for (var attempt = 0; attempt < 15; attempt++) {
-      await Future.delayed(const Duration(milliseconds: 300));
+    // with the hash of the actual core on disk. The repair waits for the old
+    // service to stop and copies the Core before restarting it, so allow a
+    // bounded window well beyond the old 4.5 s.
+    final deadline = DateTime.now().add(const Duration(seconds: 30));
+    while (DateTime.now().isBefore(deadline)) {
+      await Future.delayed(const Duration(milliseconds: 500));
       if (await checkService() == WindowsHelperServiceStatus.running) {
         return true;
       }

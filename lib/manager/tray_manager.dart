@@ -1,15 +1,17 @@
 import 'dart:async';
-import 'dart:ffi';
 import 'dart:io';
 
-import 'package:ffi/ffi.dart';
 import 'package:flclashx/common/common.dart';
 import 'package:flclashx/providers/providers.dart';
+import 'package:flclashx/providers/tun.dart';
 import 'package:flclashx/state.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:tray_manager/tray_manager.dart';
-import 'package:win32/win32.dart';
+
+final _tunTrayStateProvider = Provider(
+  (ref) => ref.watch(tunRuntimeProvider).displayState,
+);
 
 class TrayManager extends ConsumerStatefulWidget {
   const TrayManager({
@@ -22,74 +24,10 @@ class TrayManager extends ConsumerStatefulWidget {
   ConsumerState<TrayManager> createState() => _TrayContainerState();
 }
 
-class _TrayContainerState extends ConsumerState<TrayManager> with TrayListener, WidgetsBindingObserver {
-  Timer? _menuMonitor;
+class _TrayContainerState extends ConsumerState<TrayManager>
+    with TrayListener, WidgetsBindingObserver {
+  bool _openingMenu = false;
   DateTime? _lastRateUpdate;
-
-  void _closeWindowsPopupMenu() {
-    if (!Platform.isWindows) return;
-
-    try {
-      final className = '#32768'.toNativeUtf16();
-      final hwnd = FindWindow(className, nullptr);
-
-      if (hwnd != 0) {
-        PostMessage(hwnd, WM_CLOSE, 0, 0);
-      }
-
-      calloc.free(className);
-    } catch (_) {
-      // FFI menu detection may fail
-    }
-
-    _stopMenuMonitor();
-  }
-
-  void _startMenuMonitor() {
-    if (!Platform.isWindows) return;
-
-    _menuMonitor?.cancel();
-    var themeApplied = false;
-    var waitCycles = 0;
-
-    _menuMonitor = Timer.periodic(const Duration(milliseconds: 100), (timer) {
-      try {
-        final className = '#32768'.toNativeUtf16();
-        final hwnd = FindWindow(className, nullptr);
-        calloc.free(className);
-
-        if (hwnd == 0) {
-          _stopMenuMonitor();
-          return;
-        }
-
-        if (IsWindowVisible(hwnd) == 0) {
-          _stopMenuMonitor();
-          return;
-        }
-
-        if (!themeApplied) {
-          windows?.applyDarkModeToMenu(hwnd);
-          themeApplied = true;
-        }
-
-        if (waitCycles < 3) {
-          waitCycles++;
-          return;
-        }
-
-        // Native menus dismiss on outside clicks. A submenu can lie outside
-        // the parent rectangle, so manually closing here breaks node selection.
-      } catch (e) {
-        _stopMenuMonitor();
-      }
-    });
-  }
-
-  void _stopMenuMonitor() {
-    _menuMonitor?.cancel();
-    _menuMonitor = null;
-  }
 
   @override
   void initState() {
@@ -113,21 +51,26 @@ class _TrayContainerState extends ConsumerState<TrayManager> with TrayListener, 
       trayStateProvider,
       (prev, next) {
         if (prev != next) {
-          globalState.appController.updateTray();
+          unawaited(globalState.appController.updateTray());
         }
       },
     );
+    ref.listenManual(_tunTrayStateProvider, (prev, next) {
+      if (prev != next) {
+        unawaited(globalState.appController.updateTray());
+      }
+    });
   }
 
   @override
   void didChangePlatformBrightness() {
-    globalState.appController.updateTray();
+    unawaited(globalState.appController.updateTray());
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
-      globalState.appController.updateTray();
+      unawaited(globalState.appController.updateTray());
     }
   }
 
@@ -140,31 +83,38 @@ class _TrayContainerState extends ConsumerState<TrayManager> with TrayListener, 
   }
 
   Future<void> _openContextMenu() async {
-    await tray.update(trayState: ref.read(trayStateProvider));
-    if (!mounted) return;
-    await trayManager.popUpContextMenu();
-    _startMenuMonitor();
+    if (_openingMenu) return;
+    _openingMenu = true;
+    try {
+      await tray.update(trayState: ref.read(trayStateProvider));
+      if (!mounted) return;
+      // Theme configuration is process-scoped. Native TrackPopupMenu owns the
+      // popup lifetime and closes it on selection/cancel/outside click.
+      windows?.enableDarkModeForApp();
+      await trayManager.popUpContextMenu();
+    } catch (error) {
+      commonPrint.log('Tray popup failed: $error');
+    } finally {
+      _openingMenu = false;
+    }
   }
 
   @override
   void onTrayMenuItemClick(MenuItem menuItem) {
     render?.active();
-    _closeWindowsPopupMenu();
     super.onTrayMenuItemClick(menuItem);
   }
 
   @override
   void onTrayIconMouseDown() {
-    _closeWindowsPopupMenu();
     if (!Platform.isLinux) {
-      window?.show();
+      unawaited(window?.show());
     }
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    _stopMenuMonitor();
     StatusBarManager.setMenuRefresh(null);
     tray.selectProfile = null;
     trayManager.removeListener(this);

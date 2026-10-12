@@ -676,13 +676,11 @@ class ExternalControllerItem extends ConsumerWidget {
                 // the subscription's forced value is visible.
                 value: isEnabled ? hasExternalController : isEffective,
                 onChanged: (value) async {
-                  ref.read(patchClashConfigProvider.notifier).updateState(
-                        (state) => state.copyWith(
-                          externalController: value
-                              ? ExternalControllerStatus.open
-                              : ExternalControllerStatus.close,
-                        ),
-                      );
+                  try {
+                    await globalState.appController.setExternalControllerEnabled(value);
+                  } catch (error) {
+                    globalState.showNotifier(error.toString());
+                  }
                 },
               ),
             ),

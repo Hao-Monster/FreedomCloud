@@ -108,7 +108,7 @@ enum Network { tcp, udp }
 
 enum ProxiesSortType { none, delay, name }
 
-enum TunStack { gvisor, system, mixed }
+enum TunStack { gvisor, system, mixed, mips }
 
 enum AccessControlMode { acceptSelected, rejectSelected }
 
@@ -255,12 +255,14 @@ enum ActionMethod {
   validateConfig,
   updateConfig,
   getConfig,
+  getTunStatus,
   getProxies,
   changeProxy,
   getTraffic,
   getTotalTraffic,
   resetTraffic,
   asyncTestDelay,
+  cancelTestDelay,
   getConnections,
   closeConnections,
   resetConnections,

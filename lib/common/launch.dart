@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:launch_at_startup/launch_at_startup.dart';
 
 import 'constant.dart';
+import 'print.dart';
 import 'system.dart';
 
 class AutoLaunch {
@@ -17,7 +18,11 @@ class AutoLaunch {
   AutoLaunch._internal() {
     launchAtStartup.setup(
       appName: appName,
-      appPath: Platform.resolvedExecutable,
+      // The Windows Run value is used verbatim as a command line; quote it so
+      // install paths containing spaces (Program Files) are unambiguous.
+      appPath: Platform.isWindows
+          ? '"${Platform.resolvedExecutable}"'
+          : Platform.resolvedExecutable,
     );
   }
   static AutoLaunch? _instance;
@@ -28,15 +33,22 @@ class AutoLaunch {
 
   Future<bool> disable() async => launchAtStartup.disable();
 
-  Future<void> updateStatus(bool isAutoLaunch) async {
+  Future<bool> updateStatus(bool isAutoLaunch) async {
     if (kDebugMode) {
-      return;
+      return true;
     }
-    if (await isEnable == isAutoLaunch) return;
-    if (isAutoLaunch == true) {
-      enable();
-    } else {
-      disable();
+    try {
+      // disable() is idempotent; always run it so a legacy entry that no longer
+      // matches isEnabled (e.g. the former unquoted path) is still removed.
+      if (isAutoLaunch && await isEnable) return true;
+      final applied = isAutoLaunch ? await enable() : await disable();
+      if (!applied) {
+        commonPrint.log('autoLaunch: failed to set enabled=$isAutoLaunch');
+      }
+      return applied;
+    } catch (e) {
+      commonPrint.log('autoLaunch: failed to set enabled=$isAutoLaunch: $e');
+      return false;
     }
   }
 }

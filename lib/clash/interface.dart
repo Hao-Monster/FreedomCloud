@@ -4,6 +4,7 @@ import 'dart:isolate';
 
 import 'package:flclashx/clash/message.dart';
 import 'package:flclashx/common/common.dart';
+import 'package:flclashx/common/tun_runtime.dart';
 import 'package:flclashx/enum/enum.dart';
 import 'package:flclashx/models/models.dart';
 
@@ -22,11 +23,17 @@ mixin ClashInterface {
 
   FutureOr<Result> getConfig(String path);
 
-  Future<String> asyncTestDelay(String url, String proxyName);
+  Future<String> asyncTestDelay(String url, String proxyName, {
+    String? requestId, Duration timeout = const Duration(seconds: 5),
+  });
+
+  Future<bool> cancelTestDelay(String requestId);
 
   Future<void> healthCheck([String groupName = '']);
 
-  FutureOr<String> updateConfig(UpdateParams updateParams);
+  FutureOr<String> updateConfig(UpdateParams updateParams, {
+    String? controllerAddress, bool? controllerEnabled,
+  });
 
   FutureOr<String> setupConfig(SetupParams setupParams);
 
@@ -101,9 +108,22 @@ abstract class ClashHandlerInterface with ClashInterface {
   Map<String, dynamic> callbackDefaultMap = {};
 
   Future<void> handleResult(ActionResult result) async {
-    final completer = callbackCompleterMap[result.id];
+    final completer = callbackCompleterMap.remove(result.id);
+    final defaultValue = callbackDefaultMap.remove(result.id);
+    if (completer?.isCompleted == true) return;
     try {
       switch (result.method) {
+        case ActionMethod.getTunStatus:
+          completer?.complete(result.toResult);
+          return;
+        case ActionMethod.updateConfig:
+        case ActionMethod.setupConfig:
+          if (result.code != ResultType.success) {
+            completer?.complete('Core rejected configuration');
+          } else {
+            completer?.complete(result.data);
+          }
+          return;
         case ActionMethod.message:
           clashMessage.controller.add(result.data);
           completer?.complete(true);
@@ -122,7 +142,7 @@ abstract class ClashHandlerInterface with ClashInterface {
       // pending until the 30s safeFuture timeout — a "random" 30s freeze of
       // whatever call this was. Complete with the typed default now.
       if (completer != null && !completer.isCompleted) {
-        completer.complete(callbackDefaultMap[result.id]);
+        completer.complete(defaultValue);
       }
     }
   }
@@ -142,7 +162,8 @@ abstract class ClashHandlerInterface with ClashInterface {
   }) async {
     final id = "${method.name}#${utils.id}";
 
-    callbackCompleterMap[id] = Completer<T>();
+    final completer = Completer<T>();
+    callbackCompleterMap[id] = completer;
 
     dynamic mDefaultValue = defaultValue;
     if (mDefaultValue == null) {
@@ -156,17 +177,7 @@ abstract class ClashHandlerInterface with ClashInterface {
     }
     callbackDefaultMap[id] = mDefaultValue;
 
-    sendMessage(
-      json.encode(
-        Action(
-          id: id,
-          method: method,
-          data: data,
-        ),
-      ),
-    );
-
-    return (callbackCompleterMap[id]! as Completer<T>).safeFuture(
+    final result = completer.safeFuture(
       timeout: timeout,
       onLast: () {
         callbackCompleterMap.remove(id);
@@ -175,7 +186,25 @@ abstract class ClashHandlerInterface with ClashInterface {
       onTimeout: onTimeout ??
           () => mDefaultValue as T,
       functionName: id,
-    ) as Future<T>;
+    );
+    // Register completion/cleanup before sending: transports may reply or fail
+    // synchronously, and an async send failure must not become a zone error.
+    void failSend(Object _) {
+      if (!completer.isCompleted) completer.complete(mDefaultValue as T);
+    }
+    try {
+      final sent = sendMessage(json.encode(Action(
+        id: id,
+        method: method,
+        data: data,
+      )));
+      if (sent is Future) {
+        unawaited(sent.then<void>((_) {}, onError: failSend));
+      }
+    } catch (error) {
+      failSend(error);
+    }
+    return result;
   }
 
   @override
@@ -222,9 +251,18 @@ abstract class ClashHandlerInterface with ClashInterface {
       );
 
   @override
-  Future<String> updateConfig(UpdateParams updateParams) => invoke<String>(
+  Future<String> updateConfig(UpdateParams updateParams, {
+    String? controllerAddress, bool? controllerEnabled,
+  }) => invoke<String>(
         method: ActionMethod.updateConfig,
-        data: json.encode(updateParams),
+        // A general update has no authority to replace a profile's controller
+        // endpoint with the UI enum's default, or re-enable a closed listener.
+        data: json.encode({
+          ...(updateParams.toJson()..remove('external-controller')),
+          if (controllerAddress != null) 'external-controller': controllerAddress,
+          if (controllerEnabled != null) 'controller-enabled': controllerEnabled,
+        }),
+        defaultValue: 'updateConfig transport unavailable',
         timeout: const Duration(minutes: 2),
         // Empty string means success to callers; the default-on-timeout is "",
         // which would mask a 2-minute hang as a successful apply. Return a
@@ -249,12 +287,23 @@ abstract class ClashHandlerInterface with ClashInterface {
     return invoke<String>(
       method: ActionMethod.setupConfig,
       data: data,
+      defaultValue: 'setupConfig transport unavailable',
       timeout: const Duration(minutes: 2),
       // Non-empty = error to callers; the default "" would mask a 2-minute hang
       // as a successful setup (and falsely advance lastProfileModified), so the
       // recovery re-apply would silently no-op against a still-broken executor.
       onTimeout: () => 'setupConfig timed out',
     );
+  }
+
+  Future<TunStatus> getTunStatus() async {
+    final result = await invoke<Result>(
+      method: ActionMethod.getTunStatus,
+      timeout: const Duration(seconds: 3),
+      defaultValue: Result.error('statusUnavailable'),
+    );
+    if (result.isError) throw const TunFailure('statusUnavailable');
+    return TunStatus.fromJson(result.data);
   }
 
   @override
@@ -369,27 +418,34 @@ abstract class ClashHandlerInterface with ClashInterface {
     );
 
   @override
-  Future<String> asyncTestDelay(String url, String proxyName) {
+  Future<String> asyncTestDelay(String url, String proxyName, {
+    String? requestId, Duration timeout = const Duration(seconds: 5),
+  }) {
+    final id = requestId ?? 'delay-${utils.id}';
     final delayParams = {
       "proxy-name": proxyName,
-      "timeout": httpTimeoutDuration.inMilliseconds,
+      "request-id": id,
+      "timeout": timeout.inMilliseconds,
       "test-url": url,
     };
     return invoke<String>(
       method: ActionMethod.asyncTestDelay,
       data: json.encode(delayParams),
-      timeout: const Duration(
-        milliseconds: 6000,
-      ),
-      onTimeout: () => json.encode(
-          Delay(
-            name: proxyName,
-            value: -1,
-            url: url,
-          ),
-        ),
+      timeout: timeout,
+      onTimeout: () {
+        unawaited(cancelTestDelay(id));
+        return json.encode({'name': proxyName, 'value': -1, 'url': url,
+          'reason': 'deadlineExceeded'});
+      },
     );
   }
+
+  @override
+  Future<bool> cancelTestDelay(String requestId) => invoke<bool>(
+    method: ActionMethod.cancelTestDelay,
+    data: requestId,
+    timeout: const Duration(seconds: 1),
+  );
 
   @override
   Future<void> healthCheck([String groupName = '']) => invoke<String>(

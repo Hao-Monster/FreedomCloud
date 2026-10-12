@@ -24,6 +24,7 @@ type SetupParams struct {
 }
 
 type UpdateParams struct {
+	ControllerEnabled  *bool              `json:"controller-enabled,omitempty"`
 	Tun                *tunSchema         `json:"tun"`
 	AllowLan           *bool              `json:"allow-lan"`
 	MixedPort          *int               `json:"mixed-port"`
@@ -53,6 +54,7 @@ type ChangeProxyParams struct {
 }
 
 type TestDelayParams struct {
+	RequestID string `json:"request-id,omitempty"`
 	ProxyName string `json:"proxy-name"`
 	TestUrl   string `json:"test-url"`
 	Timeout   int64  `json:"timeout"`
@@ -82,6 +84,7 @@ const (
 	getTotalTrafficMethod          Method = "getTotalTraffic"
 	resetTrafficMethod             Method = "resetTraffic"
 	asyncTestDelayMethod           Method = "asyncTestDelay"
+	cancelTestDelayMethod          Method = "cancelTestDelay"
 	getConnectionsMethod           Method = "getConnections"
 	closeConnectionsMethod         Method = "closeConnections"
 	resetConnectionsMethod         Method = "resetConnections"
@@ -105,6 +108,7 @@ const (
 	crashMethod                    Method = "crash"
 	setupConfigMethod              Method = "setupConfig"
 	getConfigMethod                Method = "getConfig"
+	getTunStatusMethod             Method = "getTunStatus"
 	getCoreVersionMethod           Method = "getCoreVersion"
 	healthCheckMethod              Method = "healthCheck"
 	healthProbeMethod              Method = "healthProbe"
@@ -118,9 +122,10 @@ type Method string
 type MessageType string
 
 type Delay struct {
-	Url   string `json:"url"`
-	Name  string `json:"name"`
-	Value int32  `json:"value"`
+	Reason string `json:"reason,omitempty"`
+	Url    string `json:"url"`
+	Name   string `json:"name"`
+	Value  int32  `json:"value"`
 }
 
 type Message struct {

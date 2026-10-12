@@ -1,4 +1,3 @@
-import 'package:flclashx/clash/clash.dart';
 import 'package:flclashx/common/common.dart';
 import 'package:flclashx/enum/enum.dart';
 import 'package:flclashx/models/models.dart';
@@ -11,6 +10,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'common.dart';
+import 'delay_test_action.dart';
 import 'setting.dart';
 import 'tab.dart';
 
@@ -26,19 +26,9 @@ class _ProxiesViewState extends ConsumerState<ProxiesView> with PageMixin {
   bool _isTab = false;
 
   Future<void> _pingAllGroups() async {
-    // Fan out the per-group delay test (the same path the per-group ping button uses
-    // and is known to update every member) across all groups in parallel — each group
-    // tests its OWN full member list with its OWN test URL. This is both parallel and
-    // correct, unlike collecting a flat unique list where group names only resolve to
-    // their active member and inactive hosts (e.g. in SERVERS) never get tested.
+    // Resolve every group's members and URL inside one shared bounded batch.
     final groups = ref.read(currentGroupsStateProvider).value;
-    if (groups.isEmpty) {
-      await clashCore.healthCheck();
-      return;
-    }
-    await Future.wait(
-      groups.map((group) => delayTest(group.all, group.testUrl)),
-    );
+    await delayTestGroups(groups);
   }
 
   @override
@@ -52,12 +42,11 @@ class _ProxiesViewState extends ConsumerState<ProxiesView> with PageMixin {
           child: const _ModeSelectorAction(),
         ),
         const SearchOrderMarker(),
-        IconButton(
-          tooltip: appLocalizations.testAllDelay,
-          onPressed: _pingAllGroups,
-          icon: const Icon(
-            Icons.network_ping,
-          ),
+        DelayTestAction(
+          coordinator: delayTests,
+          onStart: _pingAllGroups,
+          startLabel: appLocalizations.testAllDelay,
+          cancelLabel: appLocalizations.cancel,
         ),
         if (!_isTab) ...[
           Consumer(

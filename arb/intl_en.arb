@@ -645,5 +645,43 @@
   "purchasePlansEmpty": "No plans are currently available.",
   "purchasePlansError": "Plans could not be loaded. Please try again.",
   "purchasePlanSpeed": "Speed limit",
-  "purchasePlanDevices": "Device limit"
+  "purchasePlanDevices": "Device limit",
+  "purchasePlanUnlimited": "Unlimited",
+  "purchasePlanNotProvided": "Not provided",
+  "purchasePlanTrafficReset": "Traffic reset",
+  "purchasePlanResetSystem": "Follows system settings",
+  "purchasePlanResetMonthStart": "On the 1st of each month",
+  "purchasePlanResetMonthlyExpiry": "Monthly on the expiry day",
+  "purchasePlanResetNever": "Does not reset automatically",
+  "purchasePlanResetYearStart": "On January 1 each year",
+  "purchasePlanResetYearlyExpiry": "Yearly on the expiry month and day",
+  "purchasePlanResetUnknown": "Unknown rule ({code})",
+  "@purchasePlanResetUnknown": {"placeholders": {"code": {"type": "int"}}},
+  "purchasePlanSalesCapacity": "Remaining sales slots",
+  "purchasePlanResetPrice": "Traffic reset · listed price",
+  "purchasePlanDetails": "Plan details",
+  "purchasePlanImageNotLoaded": "External image not loaded",
+  "tunStatusUnknown": "Status unknown",
+  "tunStatusOff": "Not running",
+  "tunStatusOn": "Running",
+  "tunStatusStarting": "Starting…",
+  "tunStatusStopping": "Stopping…",
+  "tunStatusWaiting": "Enable when proxy starts",
+  "tunStatusFailure": "TUN: {reason}",
+  "tunErrorAuthorization": "Administrator authorization required; enable to retry",
+  "tunErrorComponents": "Background components differ; enable to update",
+  "tunErrorStop": "Could not stop; verify the current state",
+  "tunErrorUnavailable": "Cannot verify status; check the background version",
+  "tunErrorConfiguration": "Configuration was not applied",
+  "tunErrorStart": "Interface could not start; enable to retry",
+  "tunDisableAction": "Request stop",
+  "@tunStatusFailure": {
+    "placeholders": {
+      "reason": {
+        "type": "String"
+      }
+    }
+  },
+  "tunErrorLegacyAgent": "Exit the old background app, then reopen this version",
+  "tunErrorProfileRequired": "Select a readable, non-empty profile before connecting"
 }

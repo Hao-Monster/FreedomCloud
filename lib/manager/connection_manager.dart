@@ -45,6 +45,7 @@ class ConnectionManager extends ChangeNotifier {
   bool _running = false;
   bool _paused = false;
   bool _polling = false;
+  bool _refreshPending = false;
   bool _disposed = false;
   bool _viewVisible = false;
   bool _loading = false;
@@ -110,6 +111,7 @@ class ConnectionManager extends ChangeNotifier {
       } else {
         _timer?.cancel();
         _timer = null;
+        _refreshPending = false;
       }
     }
   }
@@ -137,7 +139,11 @@ class ConnectionManager extends ChangeNotifier {
       '[ConnectionsDiag] manager.manualRefresh '
       'running=$_running polling=$_polling',
     );
-    if (!_running || _polling) return;
+    if (!_running || _disposed) return;
+    if (_polling) {
+      _refreshPending = true;
+      return;
+    }
     _timer?.cancel();
     await _poll(_generation);
   }
@@ -179,6 +185,7 @@ class ConnectionManager extends ChangeNotifier {
     _generation++;
     _timer?.cancel();
     _timer = null;
+    _refreshPending = false;
     _pausedSnapshot = null;
     _diagnosticLog(
       '[ConnectionsDiag] manager.running value=$value '
@@ -198,6 +205,10 @@ class ConnectionManager extends ChangeNotifier {
   void _schedule(Duration delay) {
     if (!_running || _disposed) return;
     _timer?.cancel();
+    if (_polling) {
+      _refreshPending = true;
+      return;
+    }
     final generation = _generation;
     _timer = Timer(delay, () => unawaited(_poll(generation)));
   }
@@ -241,8 +252,13 @@ class ConnectionManager extends ChangeNotifier {
       notifyListeners();
     } finally {
       _polling = false;
-      if (_running && _viewVisible && !_disposed && generation == _generation) {
-        _schedule(_interval);
+      final refreshPending = _refreshPending;
+      _refreshPending = false;
+      if (_running && _viewVisible && !_disposed) {
+        // An old generation cannot publish its result, but must release the
+        // single-flight slot to the latest start/visibility/refresh request.
+        _schedule(refreshPending || generation != _generation
+            ? Duration.zero : _interval);
       }
     }
   }
@@ -318,6 +334,7 @@ class ConnectionManager extends ChangeNotifier {
     _generation++;
     _timer?.cancel();
     _timer = null;
+    _refreshPending = false;
     super.dispose();
   }
 }

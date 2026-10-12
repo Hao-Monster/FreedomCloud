@@ -4,6 +4,22 @@ import 'package:flclashx/clash/agent_protocol.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('endpoint and Agent events carry the same non-secret instance identity', () {
+    final instance = 'a' * 64;
+    final endpoint = AgentEndpoint.fromJson({'protocol': 1, 'port': 4455,
+      'pid': 42, 'token': 'b' * 64, 'agentInstanceId': instance});
+    final event = AgentEvent.tryParse({'_agent': {'type': 'ready',
+      'coreState': 'ready', 'generation': 3, 'agentInstanceId': instance,
+      'agentPid': 42, 'agentExecutable': r'C:\preview\FlClashAgent.exe',
+      'coreExecutable': r'C:\protected\FlClashCore.exe', 'backendSource': 'helper'}});
+    expect(endpoint.instanceId, instance);
+    expect(event?.agentInstanceId, endpoint.instanceId);
+    expect(event?.agentPid, endpoint.pid);
+    expect(event?.backendSource, 'helper');
+    expect(event?.coreExecutable, r'C:\protected\FlClashCore.exe');
+    expect(() => AgentEndpoint.fromJson({'protocol': 1, 'port': 4455,
+      'pid': 42, 'token': 'b' * 64, 'agentInstanceId': 'invalid'}), throwsFormatException);
+  });
   test('strict policy status round-trips and fails closed before armed', () {
     const status = AgentStrictPolicyStatus(
       state: AgentStrictPolicyState.blocking,

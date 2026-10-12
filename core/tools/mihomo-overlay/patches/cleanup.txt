@@ -1,0 +1,14 @@
+func Cleanup() {
+	tunMux.Lock()
+	defer tunMux.Unlock()
+	fcxTunStatus.Revision++
+	fcxTunStatus.RequestedEnabled = false
+	LastTunConf.Enable = false
+	fcxTunStatus.State = "off"
+	fcxTunStatus.ErrorCode = ""
+	if err := closeTunListener(); err != nil {
+		fcxTunStatus.State = "failed"
+		fcxTunStatus.ErrorCode = "closeFailed"
+		log.Errorln("Stop TUN listening error: %s", err.Error())
+	}
+}

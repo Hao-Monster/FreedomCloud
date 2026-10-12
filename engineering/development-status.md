@@ -1,6 +1,150 @@
 # 开发、集成与预览台账
 
-更新日期：2026-10-05。当前阶段是快速开发、快速迭代和部分功能预览。本文记录来源与验收边界；每次继续开发仍需核实实际 Git/PR/CI 状态，不能把历史报告视为当前通过证明。
+更新日期：2026-10-12。当前阶段是快速开发、快速迭代和部分功能预览。本文记录来源与验收边界；每次继续开发仍需核实实际 Git/PR/CI 状态，不能把历史报告视为当前通过证明。
+
+## 开发分支累计源码晋级（2026-10-12，合并前快照）
+
+- 用户明确授权本次正常推送 `development` 并通过 PR 合并 `main`，暂不生成可执行客户端包。只做源码集成和质量检查；不创建版本标签、不运行候选客户端、不修改当前代理/TUN/服务、不部署。
+- 开工 fetch 后：本地 `development@a97e42d860b40e4918d9310328e4582ac445d2d8`，远端 `development@6ce68d86e855573c1d1e42cdaf4af3073b58005b`，自有 `main@4738293ea90ca9b90afcc201a5c9a09b729a86ad`；本地领先开发远端11个、领先主线31个提交，均无落后，无开放 PR。晋级范围包含此前 Core/TUN、Windows 启动、托盘及资源生命周期修复，不仅是本轮购买卡片。
+- 将已经确认的仅兑换码 v2 方案/任务/测试矩阵与 v1 作废标记作为独立文档提交保存，避免主线继续把余额结算当作当前需求。套餐目录及富文本展示已实现；v2 四区域布局整理仍是未执行任务，不据此宣称完整新版购买页已交付。
+- 最新本地产品验证对应 `a97e42d`：全 Flutter 591 PASS/0 FAIL/0 SKIP，购买目标58项通过，定向 analyze 无问题；详见[卡片富文本测试报告](testing/plan-card-rich-content-2026-10-11.md)。其他批次沿用各自历史证据，最终 head 的远端 CI 尚待本轮推送后核实。
+- 已回读主线保护：必需 PR、三项指定 Actions 检查、严格更新、讨论解决、管理员适用，禁止强推/删除；本次另等待 Windows Core and service tests，采用普通 merge commit，再把主线合并提交快进同步回 `development`。不改保护设置。
+- 已核对全部 workflow 触发器：普通 `development`/`main` push 与 PR 只触发 `quality-gate`；可执行包构建要求版本标签、独立旧预览分支或手动触发，本轮均不执行。M3 package integrity checks 只是现有工具/清单测试，不是客户端发行包。
+- 原 coverage、原生 QA/probes、stash、旧工作树和已有预览包保持原位，不混入提交。系统/真实兑换/实机验收边界维持各报告的 NOT RUN；合并不代表打包、部署或正式发布。
+- `a92e3ec` 已正常推送，单一晋级 [PR #60](https://github.com/Hao-Monster/FreedomCloud/pull/60) 已建立。三个独立只读审查覆盖累计产品范围；CI 在 Linux 复现两条托盘测试错误平台预期，Core/Windows service/M3 检查通过。仅修正测试的真实宿主调用顺序/tooltip断言，不改产品代码、不新增skip，最终head重新通过全部检查前不合并。
+- 本轮具体 Red、Windows 回归、静态检查、历史空白诊断及 NOT RUN 边界见[源码晋级验证](testing/source-promotion-2026-10-12.md)。最终合并SHA、最终head CI和两分支同步结果以同一 PR 的实际记录为准；不为记录自身合并SHA再追加造成分叉的文档提交。
+
+## 购买页重新设计：只用兑换码（2026-10-11）
+
+- 用户明确排除钱包、余额支付、第三方支付、金额补差和余额结算：通过微信或其他渠道取得兑换码，再兑换套餐。2026-10-10的v1方案/开发任务/测试矩阵已标记作废；不再等待或申请其中的后端扩展。
+- 当前development@c2fe8c5；fetch freedomcloud成功，本地领先10/落后0。无开放development PR；最新CI仍对应旧6ce68d8，不是本轮验证。原coverage、QA/probes、stash和旧工作树保持不动。
+- 客户端及Xboard-Go本地07476e0只读核实：现有查码/兑换/历史和type4套餐购买码已能支持主链；套餐取自兑换码，浏览目录不创建订单。旧卡类型保留原规则，不改成余额支付。
+- v2方案、5项开发任务、12组测试任务已整理到engineering/plans/purchase-redemption-2026-10-11.md、engineering/tasks/purchase-redemption-2026-10-11.md、engineering/testing/purchase-redemption-2026-10-11.md。
+- 独立只读复核通过；文档git diff --check通过，6份新旧方案文档的13个相对链接有效，无行尾空白。文档修订保留在当前工作树，本轮重新设计未创建新提交。
+- 本轮只重新设计和更新文档，尚未实现新版布局或执行功能测试；未改产品/后端代码，未真实兑换、修改模板、启动客户端、推送或部署。
+
+## 历史：完整购买流程v1（2026-10-10，已由2026-10-11用户纠正作废）
+
+- 用户要求先研究方案、拆开发任务，再开发和测试；仍保留仅购买页的范围限制。当前研究基线development@70c4643；Xboard-Go本地07476e0不等于线上部署版本。两次Git fetch因网络失败，另用GitHub API核实远端development为6ce68d8，本地领先9/落后0；无开放development PR，旧CI成功不是本轮验证。
+- 源码与已打开网页只读核实：余额扣款基础存在，但普通用户接口缺购买上下文余额/币种组合与完整报价；创建订单会立即抵扣余额，且无请求幂等键。不能只串客户端接口就承诺可靠完整结算。当前后台可见模板未见余额型通用卡，本轮未新增/修改。
+- 推荐仅改客户端购买页，并新增Xboard-Go必要购买上下文、无消费报价、原子余额型购买和精确恢复接口/防重记录；旧页面、旧兑换与订单合同保留。type4快照码和标准onetime订单权益规则不同，不能统一成相同叠加。
+- 已编制方案、开发任务、30组测试矩阵：engineering/plans/purchase-checkout-2026-10-10.md、engineering/tasks/purchase-checkout-2026-10-10.md、engineering/testing/purchase-checkout-plan-2026-10-10.md。状态为等待用户确认后端范围和业务基线，产品实现未开始。
+- 已完成后端合同与文档独立审查，补入报价时间派生字段、单报价执行绑定、不同请求争用有限资源，以及邀请奖励/佣金/折抵旧单共同回滚的验收条件；这是方案审查，不是新功能测试通过。
+- 文档检查：git diff --check通过；3份新增文档的5个相对链接均有效，无行尾空白；修订后的独立文档复核通过。方案文档作为独立本地成果保存，产品开发任务仍等待G0确认。
+- 本轮未运行新的购买功能测试，全部新用例NOT RUN；未真实下单/兑换、未启动完整客户端、未推送/部署。现有coverage/QA/probes/stash/工作树和后台未跟踪文档均保留。
+
+## 购买页公开套餐展示补全（2026-10-10）
+
+- 用户授权“先研究一个方案，然后进行开发”，仅补全购买页套餐信息。起点 `development@b565b33da5cf4d95baa9a2e752b5884f26fa57dd`；fetch自有远端后领先8、落后0，无开放development PR；最近CI成功对应旧 `6ce68d8`，不是本轮证据。原coverage、QA原稿、stash、历史工作树与旧包保留。
+- 本轮匿名GET和Xboard-Go本地源码确认公开字段已存在，客户端原解析丢弃。现保留并呈现正文Markdown、标签、明确限额、流量重置规则、销售剩余名额和单列重置标价；不猜测币种，不改变匿名可见集合、七新购周期、价格精度或礼品卡兑换行为。账号左下角入口、其他页面、在线支付、后端、代理/TUN均未修改。
+- 正文使用原生 `flutter_markdown_plus 1.0.12` / `markdown 7.3.1`（只新增两项依赖，BSD许可）；仅无属性u可扩展，其余HTML保持原文，图片以alt占位不加载外部资源；仅显式HTTPS链接经购买页原有外跳和失败提示。4语言既有ARB键值未变。
+- 有效宿主Red 0/2→Green；审查期间修正HTML根文本丢失、linked-image alt、复合下划线、未闭合u扫描和多字体列表缩进，并补入口异常/段落隔离/实际文字盒断言。最终购买模块 **268 PASS/0 FAIL/0 SKIP**；全Flutter带行/分支coverage **563 PASS/0 FAIL/0 SKIP**，墙钟95.44秒；定向analyze无error/warning/info；Windows目标debug UI资源编译exit0（非可运行包）。
+- 本轮LCOV记录的可执行diff行161/162（99.38%），分支43/43（100%）；默认父样式兜底未命中，新增const字段无LCOV可执行行记录。真实Widget树4张中文浅/深/窄窗/2x截图已查看，保存在 `build/plan-catalog-completeness-preview`，均为合成套餐，不是真实客户端运行。独立只读复核最后无新增阻塞。
+- 方案与本轮详细证据：`engineering/plans/plan-catalog-completeness-2026-10-10.md`、`engineering/testing/plan-catalog-completeness-2026-10-10.md`。目标分支为development，源码和本节随同一可追溯本地提交保存；未推送、未PR/合并、未打新可执行包、未部署。
+- NOT RUN：真实Windows窗口/外部浏览器、真实账户/兑换/支付、各平台设备、Core/Agent/Helper新验证、代理/TUN与系统服务、CI。下一步如需预览包，须从本轮精确提交单独构建并标明组件来源，完整启动/网络验收须另获环境授权。
+
+## 运行诊断后续资源修复（2026-10-09）
+
+- 用户授权先研究再修复，起点 `development@13b0ea05dfca6840e402a1f29d543705e30382e4`。方案先冻结到 `docs-dev/resource-followup-plan-2026-10-09.md`，再实施 R1 Helper日志所有权/输出收尾、R2 Windows图标有界队列/消费者释放、R3健康检查缓存清理/代际隔离。旧coverage、QA草稿、分支/工作树和预览包均保留。
+- 三项均有有效Red→Green；交叉审查补充修复既有UNC/rooted图标key碰撞并加强失效快照消息与活动监听释放断言。汇总及三个模块证据见 `docs-dev/resource-followup-results-2026-10-09.md`。没有改变日志级别、进程优先级、Mihomo固定版本、购买或代理/TUN产品行为，没有新生产依赖。
+- 最终完整Flutter 476 PASS/0 FAIL/0 SKIP；图标目标22项；Helper service48/default45项；Core普通90/with_gvisor90项、health/config/controller race22项、overlay合同race14项全部通过。Dart定向analyze 0error/0warning/22info，service clippy通过；额外default clippy保留未修改process_stop.rs:39的既有dead_code错误。
+- 本轮Dart文本diff可执行行173/271（63.84%）、分支74/96（77.08%），含整页包装缩进；新队列与activity scope在LCOV中的行/分支100%。真实ConnectionsView整页/Win32平台入口未覆盖。Core package statement42.9%，Rust未采集coverage，范围和缺口已披露。
+- 三模块非作者复核无剩余本轮源码阻塞。源码已保存为本地提交 `485abf4d2e8664b8e03fb17ed63add2a3b2359c8`（`fix: bound residual resource lifecycles`）；当前客户端/服务/网络保持不动，真实SCM/SYSTEM、窗口/导航、长时资源及其他平台验收NOT RUN。不推送、不合并、不发布。
+- 从485abf4的精确Git archive完整重编Core/Agent/Helper/UI/原生插件，Windows构建exit0；新普通未签名包 `dist/FreedomCloud-windows-amd64-resourcefix-485abf4d2e86.zip`，152,994,092 bytes，SHA256 `050695fe6ad62e64f4efcb4985fd9c65f75cbf4b61b9276820087a66a1f318c5`。dist及聊天outputs副本/hash一致，旧包未覆盖；构建与交付见 `docs-dev/evidence/resource-followup-build-2026-10-09.md`。
+- 独立产物审查8组PASS：73文件/72内部校验、931源blob、32组件、14插件/111输入、Helper/Core绑定、UI编译定义及1015有效overlay文件一致。唯一x86为既有EnableLoopback，其他29个PE为x64；运行NOT RUN和配置共享/启动副作用声明保留。交付文档单独本地提交，未运行候选版本，未把静态审查认定为长期无泄漏。
+
+## 性能、资源与可靠性17项修复（2026-10-09）
+
+- 用户授权在唯一 `development` 分支逐项修复、统一打包后自行本机测试。修复基线 `a52907c2d4425f6c1679792f64a3129ae4c562d7`；未推送/发布，未启动候选客户端或修改现役代理/TUN/SCM/驱动/Shell。原coverage/QA草稿及旧包保留。
+- F01–F17源码与对应隔离回归完成，详见 `docs-dev/remediation-plan-2026-10-09.md`、`docs-dev/remediation-results-2026-10-09.md` 和四份模块evidence；TODO区分代码/自动化与平台验收。P02原生资源作用域已优化；P01优先级对照测量仍待办，没有修改HIGH_PRIORITY_CLASS。
+- 最终Flutter带行/分支coverage全量457 PASS/0 FAIL/0 SKIP；Core75项、with_gvisor75项、目标race38项，Agent83项、Helper37项均PASS。proxy故障/UTF-8、tray原生8组/200次USER 1→1、包装工具与68项strict包装检查PASS；Android arm64 c-shared及Darwin arm64仅编译通过。
+- 修改且有LCOV记录的Dart行覆盖535/706（75.78%）、分支182/291（62.54%），两个窗口/lifecycle manager未载入LCOV；Core语句40.5%。平台入口与真实系统验收缺口见汇总。Dart analyze保留1条未修改文件warning，Agent clippy保留2条既有诊断，未弱化规则。
+- 独立复核发现的事务取消、WebSocket退休、首次配置失败清理、测速history、Android迟返、Profile快照、ZIP预检及组件来源问题已逐一处理。真实Windows/SCM/TUN/IDN/长时资源及Android设备验收仍NOT RUN，交由用户或隔离环境完成。
+- 本地修复提交 `7d0a00777342ab4503e2ae20d4f4435742538d60`；从精确Git archive完整重编Core/Agent/Helper/UI/原生插件，Windows Release与73文件ZIP roundtrip PASS。普通未签名包 `dist/FreedomCloud-windows-amd64-resourcefix-7d0a00777342.zip`，152,946,986 bytes，SHA256 `f0aae7982964e9e29c22022b76fb8f8996f8d2507f0db77aaa2964bcc78fea40`。聊天outputs有同hash副本，旧包保留；构建及组件证据见 `docs-dev/evidence/remediation-build-2026-10-09.md`。候选客户端未启动。
+- 最终独立产物审查PASS：ZIP/bundle73文件、72项内部校验、32项组件描述、14插件/111输入、Helper实际Core绑定、UI编译定义及CORE-PATCH一致；预置输入和普通未签名/运行NOT RUN声明准确，无夹带用户配置或凭据。EnableLoopback为既有x86工具，其余29个PE为x64。交付文档后续提交，不改变包对应的7d0a007源码。
+
+## 外部程序员报告复核与 TODO 补充（2026-10-09）
+
+- 按用户要求在 `development@3227a863f5bdbb4ca7dc1f8caa5b7708d1f104dc` 核验外部六项主张，详细结论见 `docs-dev/evidence/external-review-verification-2026-10-09.md`。产品源码与原审查基线相同，本次仍仅调查/文档，不实施修复。
+- F11 补充 Unicode 排除域名错误编码；新增 F16 托盘菜单全桌面查找缺少所有权且主题监视启动过晚、F17 PNG 编码异常遗漏 ui.Image 显式释放。DC 跨异步持有确认但有 Win32 finally 与串行提取，作为 P02 优化候选；HIGH 优先级保留 P01，未采纳“已证明 P0/Explorer 崩溃根因”的推断。
+- 对 F06 补充 2 分钟 timeout 请求的滞留；对 F09 补充后台 Timer 清单及边界：Core 只发送新增请求，组刷新依赖 post-frame，detach/会话退出已有 setUiActive(false)，不能把正常托盘状态观察全部停掉。
+- Unicode C++ 隔离表达式 probe：4 项中 2 PASS / 2 目标 FAIL / 0 SKIP，exit 1；使用真实 Flutter EncodableValue 和严格 UTF-8 对照，未更改代理/注册表。菜单和图像失败路径为源码/契约确认，动态跨程序/PNG 故障验收未运行。原覆盖率/QA 草稿和历史报告保留；本轮无推送、发布或服务/系统设置变更。
+- 文档完整性检查 PASS：17 项均为 OPEN、原 15 项保留，9 个辅助章节/8 个本地链接/27 个源码路径及 probe 附录一致性通过；历史快照和产品源码未改。独立只读复核无阻塞，`git diff --check` 通过。本轮交付仅四份文档，所有产品修复/性能与真实系统验收仍按 TODO 跟踪。
+
+## 性能、资源生命周期与可靠性审查待办（2026-10-09）
+
+- 用户要求将本轮发现完整登记到 `docs-dev`；清单见 `docs-dev/performance-resource-todo-2026-10-09.md`，原始报告快照见 `docs-dev/evidence/performance-resource-audit-2026-10-09.md`。源码基线为 `development@c5c5ae4400d225cf2abefccb92184d29c1b81bcd`，本次仅文档整理，未实施其中的产品修复。
+- F01–F15 覆盖外控认证、ZIP 路径边界、IPC 阻塞、Helper 停止失败、无效配置覆盖运行态、RPC 滞留、两类轮询竞态、后台取样、测速排队、Windows 代理失败路径、日志滚动、认证前连接、日志读取及 Android JNI 回收。另列 P01 优先级测量、V01–V05 长期/系统验收，以及 H01 托盘历史修复与 S01 开始菜单恢复边界，均保留独立状态。
+- 历史隔离验证：Flutter 0 PASS / 4 目标 FAIL / 0 SKIP，表示四项缺陷复现；Go 两个观察性测试各 1 PASS、一个纯解析探针 exit 0，证明所述机制，不表示产品已修。Green、完整回归、发布构建、覆盖率、长时 profile、原生故障注入和 Android 实机验收均未因此完成。
+- 本轮不更改客户端/代理/TUN/服务/Windows Shell，原有 coverage/QA 草稿保留；没有推送或发布。后续按清单逐项补修复提交、目标/回归测试及平台验收证据，不把记录 TODO 视为修复完成。
+
+## Windows 托盘菜单泄漏与任务栏异常（2026-10-08–09）
+
+- 用户先要求只读系统日志/源码分析，再授权修复并打包。基线为唯一 `development@6ce68d86e855573c1d1e42cdaf4af3073b58005b`；开工 fetch 自有远端后无 ahead/behind、无开放 PR。保留旧预览与原 coverage/QA 草稿；本轮未授权推送、发布或当前工作站客户端/网络切换。
+- 确认旧运行 UI 的 USER 对象达到 10000，系统 Win32k 桌面堆失败与 Explorer 连续退出。托盘插件 `RemoveMenu` 脱挂旧子树但未销毁，TUN 3 秒观察又无条件重建菜单；这是已确认的客户端资源缺陷，当前 Explorer 故障的完整退出/替换对照仍未执行。
+- 修复使用仓库内 tray_manager：整树所有权/失败回滚/展示期间延迟替换、popup 选中 ID 与已显示菜单快照、shared lifetime 保护 owner 销毁、图标注册失败与恢复。主包仅显示状态变化触发刷新，更新等待真实完成并串行合并；保留 tooltip、force 图标重建和非 Windows legacy 回调。
+- 最终全量 Flutter 388 PASS / 0 FAIL / 0 SKIP；主包修改可执行行 36/39，Native 8 组 PASS，真实 Win32 200 次多层替换及 owner dispose/reset USER 1 → 1，生产插件警告视为错误编译 PASS。定向 analyze 0 error/warning，85 个既有 info（原始 exit 1）；独立源码复审无剩余已知中/高风险。详见 `engineering/testing/tray-menu-resources-2026-10-08.md`。
+- 从修复的精确本地提交归档准备新 Windows amd64 普通免安装包，完整重编 runner/全部插件/UI；未改 Core/Agent/Helper 逐 hash 复用 `b2cccee7303d` 来源并记录兼容证据，不复用旧托盘 DLL。实际构建提交、ZIP/hash 与核验结果在交付后追加；所有旧包保留。
+- 真实应用、鼠标 popup、当前 Explorer 恢复、Shell 故障/恢复、长时 USER/GDI、TUN/UAC/服务/流量验收 NOT RUN。本轮未运行候选客户端，不把本地测试和构建声明为本机任务栏已恢复。尚未推送、未合并、未发布。
+- 本地修复提交为 `71a07a9d7ad0502d4a3eef1527e499460542b026`，精确 Git archive 源构建完成 Windows runner/全部插件/UI 重编；新托盘 DLL SHA256 `39625c5e0630fd718bdfcafa4f7574bc3715835b4d9f9999fac16656c21db428`，包含 DestroyMenu，与旧 DLL 不同。Core/Agent/Helper byte-identical 复用来源和 Core define/Helper 内嵌绑定均核验。
+- 新包 `FreedomCloud-windows-amd64-trayfix-71a07a9d7ad0.zip`，152,755,710 字节，SHA256 `11dc19f930ebbe90e266bdd3d39611e8cdb9bd8ecb7c4f32d3ac3f75e7a2302d`；73 文件完整 ZIP/解压/交付核验 PASS。构建准备/包装元数据错误已在包装工具修复，完整原生 build 成功后只在新目录副本重封装，原失败记录保留。交付在本次聊天 outputs，dist 同名副本不覆盖旧包；后续证据文档不改变该包源码来源。
+- 独立只读产物审查 PASS：ZIP/bundle 全文件、31 项组件元数据、commit/tree、菜单释放导入、后端固定来源及 Helper/Core hash 绑定一致；清单无用户配置或凭据，普通未签名和实机 NOT RUN 边界准确，未发现打包阻塞问题。
+
+## 非管理员启动 UAC 后仍无法开启 TUN（2026-10-07）
+
+- 用户实测（预览包 `136546fd19c4`，非管理员启动）：自动开启失败；手动点 TUN 弹出 UAC 并同意，仍失败。应用日志：`windows runas ... resultCode:42`（提权进程已启动）后 `helper install/repair timed out`；`%ProgramData%\FlClashX\logs\helper-install.log` 自 2026-09-16 后无任何新记录，Helper 服务 PID 未变化 → 提权修复命令一条都未执行。
+- 根因（已复现）：cmd 中 `if not exist X mkdir X & 其余…` 把整条 `&` 链都当作 IF 主体；日志目录（或服务目录）存在后，整段修复（停服务/复制/配置/启动）被静默跳过。用相同命令、临时路径和不存在的服务名非提权重放：目录不存在时正常执行，预先建好目录时不产生任何输出。
+- 修复提交 `68716be`：两处 IF 加括号；停服务改为同步 `net stop`，再替换二进制；服务 SDDL 给 SY/BA 完整权限（旧值缺 DC/SD/WD/WO，09-16 日志中管理员 `sc config`/`sc sdset` 返回 5；IU 权限不变）；修复后健康等待从 4.5 s 增至 30 s。新增 Windows 用例真实执行该命令（假服务名、预建目录），对旧写法确认失败。
+- 验证：专项 11 PASS；全量 Flutter 370 PASS / 0 FAIL；改动文件 analyze 0 error/warning（4 条既有 info）。真实 UAC → 服务修复 → TUN 开启 NOT RUN。已被旧 SDDL 锁定的现有服务：管理员仍无法 `sc config/sdset`（binPath 不变时不影响修复），需卸载重装或用 SYSTEM 修复，未处理。
+- 用户授权后 `development` 推送 `af7ee28..5a41421`（正常快进，无强推）。GitHub Actions quality-gate run `37578112377`（head `5a41421`）全部 PASS：Core Go tests、Flutter tests、M3 package integrity checks、Windows Core and service tests。未建 PR，`main` 未变。
+- 用户要求后产出新预览包 `dist/FreedomCloud-windows-amd64-preview-5a414210319a.zip`，59,112,074 字节，SHA256 `dba968033ef9b2469e6e82bc937e77eb1248ebf82730b9a3b935f51ed88a8a7a`，73 文件，ZIP 解压逐文件校验通过。构建方式为“仅 UI 重打包”：在 `5a41421` 干净 detached 快照用 `flutter assemble` 重编 `data/app.so`（SHA256 `3b8da58e45469653072ccce047df111670e8a7ec9c256ab05581c13c8c653c5a`）与 flutter_assets；Runner/插件/Core/Agent/Helper/运行库逐字节复用已校验的 `b2cccee7303d` 包（依据：`b2cccee..5a41421` 未改 windows/core/services/libclash/setup.dart/pubspec/assets/arb，复用前重验 hash；engine 文件一致）。旧包均保留未变。未在开发工作站启动；真实 UAC 提权修复服务及 TUN 开启等待隔离 VM 验收。构建脚本与日志保存在会话私有 scratch（`Build-UiRepackPreview.ps1`、`build-5a414210319a.log`）。
+
+## Windows 缺陷修复批次（2026-10-07）
+
+- 同一 `feature/tun-default-on` 分支，用户批准后修复 4 个确认问题，各自独立提交：`7b89ae2` 主窗口在运行时启动（UAC/后端交接）前显示；`b07e493` 自启动注册表写入 await 并记录失败；`cbcc5e0` HKCU Run 值给可执行路径加引号（已开启用户下次启动自动改写为带引号值，关闭时总是移除含旧值的条目）；`be46c97` 标题栏最大化图标跟随 Win+↑/贴靠。
+- 疑似未改：安装后 `runascurrentuser` 提权启动、退出等待挂起的 UAC 队列、最大化尺寸被保存、`SetProcessDPIAware` 与清单重复/UI 高优先级。Go Core、Agent/Helper 本轮未审查。
+- 三文件 analyze 0 error/warning（info 为既有或随代码移动）；真实窗口/注册表/UAC 行为 NOT RUN。未推送、未建 PR。
+- 用户要求后，本地 `development` 从 `8089f66` 无冲突快进到 `136546fd19c404767ee3a1a140e807dbe311614f`（含 TUN 默认开启与本批修复），领先 `freedomcloud/development` 14 个提交；`feature/tun-default-on` 保留。未推送。
+- 预览包 `dist/FreedomCloud-windows-amd64-preview-136546fd19c4.zip`，59,111,599 字节，SHA256 `b148337c83c4704250bbfa0273b976a6eec1115df7a04fd0739135a278656cf3`，73 文件，ZIP 解压逐文件校验通过。构建方式为“仅 UI 重打包”：在 `136546f` 干净 detached 快照用 `flutter assemble`（Flutter 3.47.4）重编 `data/app.so`（SHA256 `89b5506c528844ac7e5776d4bd692a1050df55dc89cc783f092e2d63df94e4a2`）与 flutter_assets；Runner/插件/Core/Agent/Helper/运行库逐字节复用已校验的 `b2cccee7303d` 包。依据：`b2cccee..136546f` 未改 windows/core/services/libclash/setup.dart/pubspec/assets/arb；复用前重验旧包 72 项 hash；assemble 生成的 flutter_windows.dll、icudtl.dat 与复用件一致；与旧包相比仅 app.so、NOTICES.Z 及 4 个元数据文件不同。ZIP 采用 Optimal 压缩，体积小于旧包不代表内容缺失。旧包 SHA256 `a04fa740…c6bb97b` 未变。未在工作站启动；TD01–TD06、B1/B3 系统验收 NOT RUN。构建脚本与日志保存在会话私有 scratch（`Build-UiRepackPreview.ps1`、`build-136546fd19c4.log`）。
+- 用户授权后 `development` 正常推送 `2b587a8..9d6b406`（快进，无强推）。quality-gate run `37507619436`（head `9d6b406`）全部 PASS：Flutter tests、Core Go tests、Windows Core and service tests、M3 package integrity checks。未建 PR，`main` 未变；预览包仍为 `136546f` 源码（`136546f..9d6b406` 仅台账文档）。
+
+## TUN 默认开启并尊重保存偏好（2026-10-07）
+
+- 用户选择 A2/B2/C1：全新安装默认开启 TUN、保存的关闭不被覆盖；本任务在 `feature/tun-default-on`（自 `development@8089f66`）上进行，为用户授权的一次性分支例外；仅自动化验证。
+- 源码提交 `b64e0d5`：保存 `tun.enable=false` 时 Windows 启动只启动/接管代理且不请求权限；`true`/无保存配置沿用 `b2cccee` 完整流程；启动结果与降级原因写日志。专项 24、全量 Flutter 366 PASS，0 FAIL；三文件 analyze 0 error/warning，info 不在改动行。
+- 未改 Go/原生代码、未出新包；真实 UAC/网卡/流量/退出清理 TD01–TD06 NOT RUN。未推送、未建 PR。详见 `engineering/plans/tun-default-on-2026-10-07.md`。
+
+## Windows 启动交互修正（2026-10-06）
+
+- 用户明确要求完整启动软件即启动代理与虚拟网卡，替代上一批应用启动只读接管的产品策略。生产入口需完成一次完整流程，实际运行才显示开启；本会话手动关闭后，后台刷新、重连和恢复窗口不自动重开。`autoLaunch` 的 Windows 登录启动含义不变。
+- 方案、任务与验收边界见 `engineering/plans/windows-startup-tun-2026-10-06.md`，本轮结果见 `engineering/testing/windows-startup-tun-2026-10-06.md`。旧 VM 清单 W01/W05 的启动预期仅适用于旧包；新候选按 WS01–WS08 及仍适用的原系统用例验收。
+- 基线 `development@d2708be491c8002400a657b66bde93eda6a16ce3`，fetch 后领先远端 5 个本地提交、无落后、无开放 PR；最近 development CI 37430048151 对应旧基线 `2b587a8`，不是本轮通过证据。旧包 `f0b1b7eba271`、历史 worktree/stash 和 coverage/QA 原稿均保留。
+- 本轮仅本地修复、测试、提交与独立新包；未授权远端推送、主线合并或部署。真实 Windows TUN/UAC/服务/网络验收仍等待获准隔离环境，不在开发工作站启动候选程序。
+- 修复源码已本地提交为 `b2cccee7303d4d5e0f0a2d94d03fab367814bd6a`：Windows 一次完整启动、取消后明确重试、同步撤销旧开启意图、断线过期观测保护，以及 derived provider 延迟通知的配置去重。保留日志/代理组/provider 投影和旧购买功能。最终专项 27、全量 Flutter 365 PASS，均 0 FAIL/SKIP；定向分析 exit 0，0 error/warning，134 条 info 的源码对照和覆盖缺口详见报告。独立审查无剩余已知 Critical/High 代码问题；系统验收未完成。
+- 新免安装包为 `dist/FreedomCloud-windows-amd64-preview-b2cccee7303d.zip`，152,707,659 字节，SHA256 `a04fa7408baa4a0fb8ce866ccc66189f06ca0b2594691b0828153cb38bd6c97b`。四组件从该干净源码重编、73 文件 ZIP/解压及交付副本 hash 检查通过；上一包未覆盖。构建仍使用已验证 CMake/Ninja 处理本机 VS 发现限制，阶段结果在本轮报告单列。
+- 独立产物审查 PASS：四组件来源、Helper 实际内嵌 Core 绑定、全部 73 文件、清单覆盖、1,011 个有效模块文件及补丁输入均通过；未发现新的高风险产物问题。包未在工作站启动，不把包完整性或本地测试等同于 UAC/TUN/路由/Antigravity 实机验收。
+- 新增源码 bundle 已 verify、独立 clone/检出精确 SHA、fsck 验证；SHA256 `0dfe6ac23aa4dd6a45c4a4788747f286d6736f854164d8d3ed0f750962af0fa0`。本轮原始 5 文件、autostash、旧包未变。代码、文档提交与包来源分别记录；未推送、未合并，WS01–WS08 仍待隔离环境验收。
+
+## 内核与 TUN 可靠性批次（2026-10-06）
+
+- 用户已授权在完善范围和任务后开发与测试。本批从 `development@2b587a80ad187995194608ffcd0f9f8cfa6695cd` 开始，沿用唯一开发入口。方案与依赖见 `engineering/plans/kernel-tun-reliability-2026-10-06.md`，测试矩阵、覆盖率及真实环境缺口见 `engineering/testing/kernel-tun-reliability-2026-10-06.md`。
+- 固定 Mihomo `v1.19.32`（`88dcbf7f1614a67c3b36b848ee3592dfa92ada36`），保留原栈默认值与 uTLS 覆盖。带校验的最小生命周期补丁通过独立生成源和 overlay 加载，不改模块缓存、不追随 Alpha。构建入口和 CI 已接入；新云端检查尚未触发，不以开工基线 CI 作为新代码证据。
+- UI 区分意图、实际状态和操作，Windows 的开启以真实 listener 与接口状态为依据；修复 IPC 假成功、后台授权、旧响应、只读挂接及退出/重连/迁移竞态。Agent/Helper 使用实际停止确认和 Core 会话归属；旧组件不满足合同则拒绝自动交接。微信、礼品卡兑换、账号订阅、匿名套餐和价格均保留。
+- Core 最终 46 项含子用例 PASS，Windows race PASS，四个桌面平台 Core 编译及 Android arm64 c-shared 编译通过；Flutter 最终 342、Agent 64、Helper 29 PASS，均 0 FAIL / 0 SKIP。独立审查的问题已在最终源码关闭；既有 analyzer/clippy/format 问题与覆盖缺口在报告单列。
+- 四个本地提交依次为 `1f750b1`（Core/构建）、`8bbdfc7`（Agent/Helper）、`b3f83bb`（Flutter）、`f0b1b7e`（范围/测试文档）。新 Windows 普通免安装包从 `f0b1b7eba271b2402a9a82809bec0ea53d9a3e8e` 干净源码完成四组件重编，`dist/FreedomCloud-windows-amd64-preview-f0b1b7eba271.zip` 为 152,707,168 字节，SHA256 `b45cf6f4f7a6e72499baedbb7e23893c694b4d9441d5ed79e966b99bdb41defb`。独立核对 73 文件完整 ZIP/解压/交付 hash、组件来源、Helper/Core 绑定和补丁 manifest 通过；旧包保留。后续证据文档提交不改变包来源。
+- 真实 Windows TUN/UAC/服务交接/路由/Antigravity 流量均 NOT RUN；等待获准的隔离 Windows 环境。开发工作站服务和网络未更改。当前仅准备普通预览，不声称正式发行、严格 WFP 或全部应用流量已验收。
+- 开工与新源码两份增量 bundle 已离线恢复/fsck 验证，原始 5 个 coverage/测试文件 hash 一致，旧包 `863298c7e3f4` SHA256 保持 `cae86090054186ed680e3467025f857badfca1a9f9670cfd6de9c98c4a0cafbd`。新源码 bundle SHA256 为 `d6c11db51cf451307cfae06190dfcceea548aa9fc53b4ae9626c40b685ac2b1f`，私有构建日志与测试证据一起保留。本批未推送、未创建/合并 PR、未改主线或远端保护。
+- 下一步按 `engineering/testing/kernel-tun-vm-acceptance-2026-10-06.md` 执行 W01–W20。获取隔离环境后补真实运行证据，另经授权推送开发分支运行云端 CI；通过后再准备单一晋级 PR。不能从本地构建成功推导自动合并或正式发布。
+
+## 唯一开发入口（2026-10-06）
+
+- 用户要求收敛为一个日常开发分支和受保护的 `main`。今后日常只在 `development` 开发，默认工作目录为 `E:\CodeWorkstation\FlClashX`；旧任务分支和工作树只保留追溯，不继续写入。详细流程、门禁、任务与回退见 `engineering/plans/single-development-2026-10-06.md`。
+- 本地 `main`、`development` 已从各自祖先无 force 快进到自有主线 `4738293ea90ca9b90afcc201a5c9a09b729a86ad`，当前检出 `development`。本地 `main` 已由跟踪上游 `origin/main` 改为跟踪自有 `freedomcloud/main`；开发分支跟踪并推向 `freedomcloud/development`。
+- 日常小提交正常推送开发分支；按验收批次创建一个 `development → main` PR。普通 merge 后同步 `main` 回开发分支，避免 squash/rebase 长期分支造成重复提交和冲突。主线合并和正式发布分别按当次授权执行。
+- 迁移前新建私有全 refs bundle，并完成 verify、离线 mirror 恢复和 fsck；5 份原稿逐项复制/hash 一致，原来源分支和 stash 未改动。95,620 个忽略文件及 5 个未跟踪文件与目标的 798 个跟踪文件没有同名或父子路径覆盖；实际切换使用 `--no-overwrite-ignore`。此前大备份和全部旧工作树保留，异地副本仍另行安排。
+- 云端保护于 2026-10-06 07:28 UTC 配置并回读确认：开发分支只移除接收提交前的必需 CI 状态，正常推送后仍运行 CI；主线新增必需 PR、0 个必需审批，保留原有三项 CI、严格更新、讨论解决、管理员适用和禁止强推删除。其余保护字段逐项比较不变，API 前后快照保存在私有恢复目录；后续开工仍需核实最新设置。
+- 本次 CI 改动仅为 quality-gate 增加 `push main`，已有测试命令与固定工具版本不变。该修改进入 `main` 前，旧主线仍不监听 push main；进入后才会产生最终主线提交检查。开发分支推送不触发现有正式发行；macOS 预览仍可手动触发，不默认增加每次提交的全平台构建。
+- 本轮不合并新的主线 PR、不创建标签、不发布版本、不运行本机代理程序；此前 Windows/macOS 运行验收边界保持原记录。推送后以开发 HEAD 对应的实际 Actions 结果及本次最终报告为准，不能沿用上一批次 CI 作为新提交通过证明。
 
 ## 本轮主线集成进展
 
@@ -34,8 +178,8 @@ Windows 普通免安装包已从上述 `863298c7` 干净源码完成重编，交
 ## 基线与保全
 
 - 自有远端为 `Hao-Monster/FreedomCloud`（通常是 `freedomcloud`）；上游为 `pluralplay/FlClashX`（通常是 `origin`）。首次保全时的自有主线为 `cc1d31bc8b24b0103bc78dea2453768cb0c5a339`；后续集成结果见本文开头。
-- 本地 `main` 跟踪上游，旧 `development` 也落后于自有主线。它们被保留，不自动重置或用作新增量的默认基线。
-- 原购买来源分支 `codex/m3-7-helper-diagnostics` 的提交保留；远端 `codex/purchase-source-snapshot-20261005` 另存其源历史。新的集成在独立工作树进行。
+- 2026-10-05 首次保全时，本地 `main` 跟踪上游，旧 `development` 也落后于自有主线；当时保持原状。2026-10-06 的无 force 快进与唯一开发入口见本文开头，旧提交仍在新基线的祖先历史中。
+- 原购买来源分支 `codex/m3-7-helper-diagnostics` 的提交保留；远端 `codex/purchase-source-snapshot-20261005` 另存其源历史。2026-10-05 的集成在独立工作树进行，之后的日常开发遵循本文开头的唯一开发入口。
 - 初始 40 个工作树、全部本地 refs、stash 及 detached HEAD 已归入私有离线 bundle 和逐工作树快照。未提交文件保存精确副本、SHA256 及暂存/未暂存二进制补丁；忽略文件另行保存，不能只依靠 Git bundle。
 - 恢复演练：16 个实际有未提交内容的工作树从独立 bundle 恢复后，文件 hash、Git 状态及暂存内容一致；23 个干净工作树 HEAD 已验证；1 个初始化异常另行保全。初次审计与备份时刻的 dirty 数量因生成文件的换行规范化而不同，不混为同一快照。
 - 忽略文件归档已完成：164,527 个文件、42,850,666,804 字节逐文件 SHA256 核验通过，0 错误，复制期间未发现源文件变化。Windows 长路径复制的首次失败已通过续传和重新核验解决。另复核了原快照的 137 个现有变更文件，原位置内容仍与整理前一致。
@@ -83,7 +227,16 @@ Windows 普通免安装包已从上述 `863298c7` 干净源码完成重编，交
 
 ## 后续开发顺序
 
-1. 读取项目 `AGENTS.md`，核实自有最新主线及上述 PR 的最终 head；按任务依赖选择分支。新独立任务默认从最新自有主线建立 `codex/<topic>`。
+1. 读取项目 `AGENTS.md`，核实 `development` 本地/远端进度、未提交内容及自有 `main`；在唯一开发分支继续任务，不为独立任务默认新建分支或工作树。
 2. 一次推进一个可测试增量；小范围相关门禁通过即可提供标明来源和缺口的部分预览，不把全平台正式发布门禁强加给每次 UI 迭代。
-3. 对需共享的代码及时形成可审查提交和经授权的远端 PR；更新本台账，记录源提交、实际运行的检查、预览 hash 和未验收项。
+3. 对需共享的代码及时形成可审查提交并经授权推送 `development`；CI 和预览达到批次验收标准后，再创建一个晋级 PR。更新本台账，记录源提交、实际检查、预览 hash 和未验收项。
 4. 主线合并、正式发布和历史清理分别按授权执行。保全完成不是自动删除旧分支、工作树或 stash 的授权。
+
+## 套餐卡片富文本增量（2026-10-11至2026-10-12）
+
+- 用户要求先核实“后台写什么、客户端展示什么”，不足直接开发；本轮起点development@c2fe8c5，fetch自有远端后领先10/落后0。原稿与QA资料保留，未改分支、stash、旧工作树或已有预览包。
+- 已确认70c4643包含主要套餐字段和完整Markdown卡片；当前公开套餐正文163字符、三段说明、无图片。此次只补链接内部样式、下划线行内/代码/转义语义、代码块影响列表缩进，以及受限HTTPS图片，不改API、模型、套餐字段、价格、兑换、账户或其他页面。
+- 新图片组件保留代理路由与TLS验证，不携带账号凭据，不跟随重定向；单图下载4MiB、取得槽位后15秒、解码最长2048px、共享4路并发和16MP目标栅格预算。失败/不安全/不支持资源保留alt，任意HTML不执行；动画仅首帧。
+- 先冻结C1-C8矩阵；4条富文本缺陷和2条图片资源缺陷均有真实Red→Green。最终目标58 PASS、全Flutter **591 PASS/0 FAIL/0 SKIP**（97.33秒），定向analyze无问题，Windows目标debug UI资源编译exit0；本次diff行290/293、分支104/111。四种真实组件截图已查看，仍是合成内容而非当前客户端实机。
+- 源码、测试与本节随本次development本地提交保存；详细命令、覆盖率、边界和审查在`engineering/testing/plan-card-rich-content-2026-10-11.md`。未推送、未PR/合并、未打新可执行包、未部署，旧CI不冒充本提交结果。
+- NOT RUN：完整客户端/真实图片/TLS设备与兑换、原生解码中故障注入、Core/Agent/Helper和各平台实机。没有启动候选应用、改代理/TUN或消费卡码；如需让运行中的客户端包含新展示，应另从精确提交构建预览并遵守启动环境授权。

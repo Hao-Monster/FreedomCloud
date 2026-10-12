@@ -5328,6 +5328,301 @@ class AppLocalizations {
       args: [],
     );
   }
+
+  /// `Unlimited`
+  String get purchasePlanUnlimited {
+    return Intl.message(
+      'Unlimited',
+      name: 'purchasePlanUnlimited',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Not provided`
+  String get purchasePlanNotProvided {
+    return Intl.message(
+      'Not provided',
+      name: 'purchasePlanNotProvided',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Traffic reset`
+  String get purchasePlanTrafficReset {
+    return Intl.message(
+      'Traffic reset',
+      name: 'purchasePlanTrafficReset',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Follows system settings`
+  String get purchasePlanResetSystem {
+    return Intl.message(
+      'Follows system settings',
+      name: 'purchasePlanResetSystem',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `On the 1st of each month`
+  String get purchasePlanResetMonthStart {
+    return Intl.message(
+      'On the 1st of each month',
+      name: 'purchasePlanResetMonthStart',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Monthly on the expiry day`
+  String get purchasePlanResetMonthlyExpiry {
+    return Intl.message(
+      'Monthly on the expiry day',
+      name: 'purchasePlanResetMonthlyExpiry',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Does not reset automatically`
+  String get purchasePlanResetNever {
+    return Intl.message(
+      'Does not reset automatically',
+      name: 'purchasePlanResetNever',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `On January 1 each year`
+  String get purchasePlanResetYearStart {
+    return Intl.message(
+      'On January 1 each year',
+      name: 'purchasePlanResetYearStart',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Yearly on the expiry month and day`
+  String get purchasePlanResetYearlyExpiry {
+    return Intl.message(
+      'Yearly on the expiry month and day',
+      name: 'purchasePlanResetYearlyExpiry',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Unknown rule ({code})`
+  String purchasePlanResetUnknown(int code) {
+    return Intl.message(
+      'Unknown rule ($code)',
+      name: 'purchasePlanResetUnknown',
+      desc: '',
+      args: [code],
+    );
+  }
+
+  /// `Remaining sales slots`
+  String get purchasePlanSalesCapacity {
+    return Intl.message(
+      'Remaining sales slots',
+      name: 'purchasePlanSalesCapacity',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Traffic reset · listed price`
+  String get purchasePlanResetPrice {
+    return Intl.message(
+      'Traffic reset · listed price',
+      name: 'purchasePlanResetPrice',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Plan details`
+  String get purchasePlanDetails {
+    return Intl.message(
+      'Plan details',
+      name: 'purchasePlanDetails',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `External image not loaded`
+  String get purchasePlanImageNotLoaded {
+    return Intl.message(
+      'External image not loaded',
+      name: 'purchasePlanImageNotLoaded',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Status unknown`
+  String get tunStatusUnknown {
+    return Intl.message(
+      'Status unknown',
+      name: 'tunStatusUnknown',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Not running`
+  String get tunStatusOff {
+    return Intl.message(
+      'Not running',
+      name: 'tunStatusOff',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Running`
+  String get tunStatusOn {
+    return Intl.message('Running', name: 'tunStatusOn', desc: '', args: []);
+  }
+
+  /// `Starting…`
+  String get tunStatusStarting {
+    return Intl.message(
+      'Starting…',
+      name: 'tunStatusStarting',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Stopping…`
+  String get tunStatusStopping {
+    return Intl.message(
+      'Stopping…',
+      name: 'tunStatusStopping',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Enable when proxy starts`
+  String get tunStatusWaiting {
+    return Intl.message(
+      'Enable when proxy starts',
+      name: 'tunStatusWaiting',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `TUN: {reason}`
+  String tunStatusFailure(String reason) {
+    return Intl.message(
+      'TUN: $reason',
+      name: 'tunStatusFailure',
+      desc: '',
+      args: [reason],
+    );
+  }
+
+  /// `Administrator authorization required; enable to retry`
+  String get tunErrorAuthorization {
+    return Intl.message(
+      'Administrator authorization required; enable to retry',
+      name: 'tunErrorAuthorization',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Background components differ; enable to update`
+  String get tunErrorComponents {
+    return Intl.message(
+      'Background components differ; enable to update',
+      name: 'tunErrorComponents',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Could not stop; verify the current state`
+  String get tunErrorStop {
+    return Intl.message(
+      'Could not stop; verify the current state',
+      name: 'tunErrorStop',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Cannot verify status; check the background version`
+  String get tunErrorUnavailable {
+    return Intl.message(
+      'Cannot verify status; check the background version',
+      name: 'tunErrorUnavailable',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Configuration was not applied`
+  String get tunErrorConfiguration {
+    return Intl.message(
+      'Configuration was not applied',
+      name: 'tunErrorConfiguration',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Interface could not start; enable to retry`
+  String get tunErrorStart {
+    return Intl.message(
+      'Interface could not start; enable to retry',
+      name: 'tunErrorStart',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Request stop`
+  String get tunDisableAction {
+    return Intl.message(
+      'Request stop',
+      name: 'tunDisableAction',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Exit the old background app, then reopen this version`
+  String get tunErrorLegacyAgent {
+    return Intl.message(
+      'Exit the old background app, then reopen this version',
+      name: 'tunErrorLegacyAgent',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Select a readable, non-empty profile before connecting`
+  String get tunErrorProfileRequired {
+    return Intl.message(
+      'Select a readable, non-empty profile before connecting',
+      name: 'tunErrorProfileRequired',
+      desc: '',
+      args: [],
+    );
+  }
 }
 
 class AppLocalizationDelegate extends LocalizationsDelegate<AppLocalizations> {

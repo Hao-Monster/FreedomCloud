@@ -14,10 +14,15 @@ const _msvcRuntimeFiles = [
   'vcruntime140_threads.dll',
 ];
 
+const windowsHelperDefaultLogDirectory = r'%ProgramData%\FlClashX\logs';
+
 /// Builds the elevated service repair command from values that cannot escape
 /// cmd.exe quoting. The service is configured in place when it already exists;
 /// deleting it on every transient health-check failure caused repeat UAC and a
 /// race with the Service Control Manager.
+///
+/// [serviceName] and [logDirectory] exist only so tests can execute the real
+/// command against a non-existent service and a temporary directory.
 String buildWindowsHelperRepairCommand({
   required bool serviceExists,
   required String helperPath,
@@ -25,22 +30,33 @@ String buildWindowsHelperRepairCommand({
   required String serviceDirectory,
   required String serviceHelperPath,
   required String serviceCorePath,
+  String serviceName = windowsHelperServiceName,
+  String logDirectory = windowsHelperDefaultLogDirectory,
 }) {
   _validateWindowsPath(helperPath, 'helperPath');
   _validateWindowsPath(corePath, 'corePath');
   _validateWindowsPath(serviceDirectory, 'serviceDirectory');
   _validateWindowsPath(serviceHelperPath, 'serviceHelperPath');
   _validateWindowsPath(serviceCorePath, 'serviceCorePath');
+  if (logDirectory != windowsHelperDefaultLogDirectory) {
+    _validateWindowsPath(logDirectory, 'logDirectory');
+  }
+  if (!RegExp(r'^[A-Za-z0-9_]+$').hasMatch(serviceName)) {
+    throw ArgumentError.value(serviceName, 'serviceName', 'invalid name');
+  }
 
   final sourceDirectory = helperPath.substring(0, helperPath.lastIndexOf(r'\'));
-  const installLog = r'%ProgramData%\FlClashX\logs\helper-install.log';
-  const logRedirect = '>> "$installLog" 2>&1';
+  final installLog = '$logDirectory\\helper-install.log';
+  final logRedirect = '>> "$installLog" 2>&1';
   const logMarker = 'echo [helper-install] [%date% %time%]';
-  // Keep LocalSystem and Administrators full control while allowing the
-  // interactive user to query, start and stop the service without another UAC
-  // prompt. Users are not granted change-config, delete, or security rights.
+  // Keep LocalSystem and Administrators full control (including change-config,
+  // delete and security rights, so a later elevated repair can still run
+  // `sc config`/`sc sdset`) while allowing the interactive user to query,
+  // start and stop the service without another UAC prompt. Users are not
+  // granted change-config, delete, or security rights.
   const serviceSecurity =
-      'D:(A;;CCLCSWRPWPDTLOCRRC;;;SY)(A;;CCLCSWRPWPDTLOCRRC;;;BA)'
+      'D:(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;SY)'
+      '(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;BA)'
       '(A;;CCLCSWRPWPLOCRRC;;;IU)(A;;CCLCSWLOCRRC;;;SU)';
   final runtimeCopies = _msvcRuntimeFiles
       .map((name) => 'copy /b /y "$sourceDirectory\\$name" '
@@ -48,17 +64,21 @@ String buildWindowsHelperRepairCommand({
       .join(' && ');
 
   final configure = serviceExists
-      ? 'sc config $windowsHelperServiceName '
+      ? 'sc config $serviceName '
           'binPath= "$serviceHelperPath" start= auto'
-      : 'sc create $windowsHelperServiceName '
+      : 'sc create $serviceName '
           'binPath= "$serviceHelperPath" start= auto';
 
-  return 'if not exist "%ProgramData%\\FlClashX\\logs" mkdir '
-      '"%ProgramData%\\FlClashX\\logs" >nul 2>&1 & '
+  // cmd.exe treats everything after `if <cond> <command>` on the same line,
+  // including `& next`, as the IF body. Unparenthesized, an existing log or
+  // service directory silently skipped the entire repair after UAC consent.
+  // `net stop` waits for the service to stop so its binaries can be replaced.
+  return '(if not exist "$logDirectory" mkdir "$logDirectory") >nul 2>&1 & '
       '$logMarker begin >> "$installLog" 2>&1 & '
-      'sc stop $windowsHelperServiceName $logRedirect & '
-      '$logMarker sc-stop exit=!errorlevel! >> "$installLog" 2>&1 & '
-      'if not exist "$serviceDirectory" mkdir "$serviceDirectory" $logRedirect & '
+      'net stop $serviceName $logRedirect & '
+      '$logMarker service-stop exit=!errorlevel! >> "$installLog" 2>&1 & '
+      '(if not exist "$serviceDirectory" mkdir "$serviceDirectory") '
+      '$logRedirect & '
       '$logMarker mkdir-service exit=!errorlevel! >> "$installLog" 2>&1 & '
       'copy /b /y "$helperPath" "$serviceHelperPath" $logRedirect & '
       '$logMarker copy-helper exit=!errorlevel! >> "$installLog" 2>&1 & '
@@ -68,11 +88,11 @@ String buildWindowsHelperRepairCommand({
       '$logMarker copy-runtime exit=!errorlevel! >> "$installLog" 2>&1 & '
       '$configure $logRedirect & '
       '$logMarker configure-service exit=!errorlevel! >> "$installLog" 2>&1 & '
-      'sc sdset $windowsHelperServiceName "$serviceSecurity" $logRedirect & '
+      'sc sdset $serviceName "$serviceSecurity" $logRedirect & '
       '$logMarker set-service-acl exit=!errorlevel! >> "$installLog" 2>&1 & '
-      'sc start $windowsHelperServiceName $logRedirect & '
+      'sc start $serviceName $logRedirect & '
       '$logMarker start-service exit=!errorlevel! >> "$installLog" 2>&1 & '
-      'sc queryex $windowsHelperServiceName $logRedirect & '
+      'sc queryex $serviceName $logRedirect & '
       '$logMarker query-service exit=!errorlevel! >> "$installLog" 2>&1 & '
       '$logMarker end >> "$installLog" 2>&1';
 }

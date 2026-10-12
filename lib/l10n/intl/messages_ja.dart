@@ -34,11 +34,15 @@ class MessageLookup extends MessageLookupByLibrary {
 
   static String m6(label) => "${label} は 1024 から 49151 の間でなければなりません";
 
-  static String m7(count) => "${count} 項目が選択されています";
+  static String m7(code) => "不明なルール（${code}）";
 
-  static String m8(days) => "サブスクリプションは${days}日後に期限切れになります";
+  static String m8(count) => "${count} 項目が選択されています";
 
-  static String m9(label) => "${label}はURLである必要があります";
+  static String m9(days) => "サブスクリプションは${days}日後に期限切れになります";
+
+  static String m10(reason) => "TUN: ${reason}";
+
+  static String m11(label) => "${label}はURLである必要があります";
 
   final messages = _notInlinedMessages(_notInlinedMessages);
   static Map<String, Function> _notInlinedMessages(_) => <String, Function>{
@@ -463,8 +467,36 @@ class MessageLookup extends MessageLookupByLibrary {
     "purchaseContactDescription": MessageLookupByLibrary.simpleMessage(
       "オンライン決済は現在ご利用いただけません。購入または更新については、以下のいずれかのWeChatアカウントを追加してください。",
     ),
+    "purchasePlanDetails": MessageLookupByLibrary.simpleMessage("プランの詳細"),
     "purchasePlanDevices": MessageLookupByLibrary.simpleMessage("デバイス数の上限"),
+    "purchasePlanImageNotLoaded": MessageLookupByLibrary.simpleMessage(
+      "外部画像は読み込まれていません",
+    ),
+    "purchasePlanNotProvided": MessageLookupByLibrary.simpleMessage("未提供"),
+    "purchasePlanResetMonthStart": MessageLookupByLibrary.simpleMessage("毎月1日"),
+    "purchasePlanResetMonthlyExpiry": MessageLookupByLibrary.simpleMessage(
+      "毎月の有効期限日",
+    ),
+    "purchasePlanResetNever": MessageLookupByLibrary.simpleMessage("自動リセットなし"),
+    "purchasePlanResetPrice": MessageLookupByLibrary.simpleMessage(
+      "通信量リセットの表示価格",
+    ),
+    "purchasePlanResetSystem": MessageLookupByLibrary.simpleMessage(
+      "システム設定に従う",
+    ),
+    "purchasePlanResetUnknown": m7,
+    "purchasePlanResetYearStart": MessageLookupByLibrary.simpleMessage(
+      "毎年1月1日",
+    ),
+    "purchasePlanResetYearlyExpiry": MessageLookupByLibrary.simpleMessage(
+      "毎年の有効期限月日",
+    ),
+    "purchasePlanSalesCapacity": MessageLookupByLibrary.simpleMessage("残りの販売枠"),
     "purchasePlanSpeed": MessageLookupByLibrary.simpleMessage("速度上限"),
+    "purchasePlanTrafficReset": MessageLookupByLibrary.simpleMessage(
+      "通信量のリセット",
+    ),
+    "purchasePlanUnlimited": MessageLookupByLibrary.simpleMessage("無制限"),
     "purchasePlansDescription": MessageLookupByLibrary.simpleMessage(
       "価格はサイトの表示額です。通貨と購入については下記の WeChat で確認し、ギフトカードを取得してここで引き換えてください。",
     ),
@@ -535,7 +567,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "seconds": MessageLookupByLibrary.simpleMessage("秒"),
     "selectAll": MessageLookupByLibrary.simpleMessage("すべて選択"),
     "selected": MessageLookupByLibrary.simpleMessage("選択済み"),
-    "selectedCountTitle": m7,
+    "selectedCountTitle": m8,
     "settings": MessageLookupByLibrary.simpleMessage("設定"),
     "show": MessageLookupByLibrary.simpleMessage("表示"),
     "shrink": MessageLookupByLibrary.simpleMessage("縮小"),
@@ -561,7 +593,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "subscriptionExpired": MessageLookupByLibrary.simpleMessage(
       "サブスクリプションが期限切れになりました",
     ),
-    "subscriptionExpiresInDays": m8,
+    "subscriptionExpiresInDays": m9,
     "subscriptionExpiresSoon": MessageLookupByLibrary.simpleMessage(
       "サブスクリプションがまもなく期限切れ",
     ),
@@ -603,6 +635,38 @@ class MessageLookup extends MessageLookupByLibrary {
     "trafficUsage": MessageLookupByLibrary.simpleMessage("トラフィック使用量"),
     "tun": MessageLookupByLibrary.simpleMessage("TUN"),
     "tunDesc": MessageLookupByLibrary.simpleMessage("管理者モードでのみ有効"),
+    "tunDisableAction": MessageLookupByLibrary.simpleMessage("停止を要求"),
+    "tunErrorAuthorization": MessageLookupByLibrary.simpleMessage(
+      "管理者の許可が必要です。再度有効にしてください",
+    ),
+    "tunErrorComponents": MessageLookupByLibrary.simpleMessage(
+      "バックグラウンドの構成が異なります。再度有効にして更新してください",
+    ),
+    "tunErrorConfiguration": MessageLookupByLibrary.simpleMessage(
+      "設定が適用されませんでした",
+    ),
+    "tunErrorLegacyAgent": MessageLookupByLibrary.simpleMessage(
+      "古いバックグラウンドアプリを終了してから、このバージョンを開き直してください",
+    ),
+    "tunErrorProfileRequired": MessageLookupByLibrary.simpleMessage(
+      "接続する前に、読み取り可能な空でない設定を選択してください",
+    ),
+    "tunErrorStart": MessageLookupByLibrary.simpleMessage(
+      "インターフェースを起動できません。再度有効にしてください",
+    ),
+    "tunErrorStop": MessageLookupByLibrary.simpleMessage(
+      "停止できませんでした。現在の状態を確認してください",
+    ),
+    "tunErrorUnavailable": MessageLookupByLibrary.simpleMessage(
+      "状態を確認できません。バックグラウンドのバージョンを確認してください",
+    ),
+    "tunStatusFailure": m10,
+    "tunStatusOff": MessageLookupByLibrary.simpleMessage("停止中"),
+    "tunStatusOn": MessageLookupByLibrary.simpleMessage("起動済み"),
+    "tunStatusStarting": MessageLookupByLibrary.simpleMessage("起動しています…"),
+    "tunStatusStopping": MessageLookupByLibrary.simpleMessage("停止しています…"),
+    "tunStatusUnknown": MessageLookupByLibrary.simpleMessage("状態不明"),
+    "tunStatusWaiting": MessageLookupByLibrary.simpleMessage("プロキシの起動時に有効化"),
     "twoColumns": MessageLookupByLibrary.simpleMessage("2列"),
     "unableToUpdateCurrentProfileDesc": MessageLookupByLibrary.simpleMessage(
       "現在のプロファイルを更新できません",
@@ -619,7 +683,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "upload": MessageLookupByLibrary.simpleMessage("アップロード"),
     "url": MessageLookupByLibrary.simpleMessage("URL"),
     "urlDesc": MessageLookupByLibrary.simpleMessage("URL経由でプロファイルを取得"),
-    "urlTip": m9,
+    "urlTip": m11,
     "useHosts": MessageLookupByLibrary.simpleMessage("ホストを使用"),
     "useSystemHosts": MessageLookupByLibrary.simpleMessage("システムホストを使用"),
     "value": MessageLookupByLibrary.simpleMessage("値"),
