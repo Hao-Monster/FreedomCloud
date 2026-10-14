@@ -1,6 +1,15 @@
 # 开发、集成与预览台账
 
-更新日期：2026-10-12。当前阶段是快速开发、快速迭代和部分功能预览。本文记录来源与验收边界；每次继续开发仍需核实实际 Git/PR/CI 状态，不能把历史报告视为当前通过证明。
+更新日期：2026-10-14。当前阶段是快速开发、快速迭代和部分功能预览。本文记录来源与验收边界；每次继续开发仍需核实实际 Git/PR/CI 状态，不能把历史报告视为当前通过证明。
+
+## TUN 修复源码推送与 Windows 预览（2026-10-14）
+
+- 用户授权正常推送全部开发代码并重打预览，由用户自行测试、观察方只读看日志/运行。`f08fedb → fb6f5d43e204b1cc47278b8916ecae2ebc1dcccf` 共 9 提交已推送自有 `freedomcloud/development`，远端 SHA 回读一致；未晋级 main、未建 PR/tag/release。原 coverage、QA/probes、stash、47 历史工作树及旧包保留未动。
+- 精确源码 [CI 38525761829](https://github.com/Hao-Monster/FreedomCloud/actions/runs/38525761829) 四项全通过：Flutter 609 PASS/0 FAIL/1 Linux 平台 skip（Windows cmd.exe）；本机对应 11 项补跑全通过。Core 按预览 CGO=0/with_gvisor 全量 91 PASS，CI Linux/race 和 Windows Core/Agent 83/Helper 48 通过。未把此前 CGO=1 环境编译失败记为修复。
+- 从干净 tracked HEAD 的 Git archive 完整重编 Core/Agent/Helper/UI/原生插件；普通未签名包 `dist/FreedomCloud-windows-amd64-tunfix-fb6f5d43e204.zip`，153,552,555 bytes，SHA256 `4c70e5cba8d9afb1b13de47fcf674232a82318c5070b88295040cd7096393055`。同名解压目录已准备并校验，旧包未覆盖。
+- 独立产物审计 8/8 PASS：73 文件/72 校验、948 源 blob、14 插件/111 输入、Helper 实际新 Core hash、UI 编译定义及固定 overlay 一致；无用户配置/凭据/私密日志和 strict 驱动/Broker。构建工具适配与只读观察脚本另做审查。
+- 详细矩阵、构建命令、组件 hash、工具版本漂移及用户验收见 [Windows TUN 预览报告](testing/windows-tun-preview-2026-10-14.md)。本条为打包后文档，不改变包对应的 `fb6f5d4` 源码。
+- 交付时现役仍为旧 `resourcefix-485abf4d2e86`；候选未启动，未操作当前代理/TUN/服务。用户真实开关、权限、慢关闭、切网/休眠与长时稳定性仍 NOT RUN；观察不连接 Agent IPC，不将静态构建或网卡 Up 当作运行验收。
 
 ## TUN 启动与状态同步稳定性修复（2026-10-13，第一批）
 
