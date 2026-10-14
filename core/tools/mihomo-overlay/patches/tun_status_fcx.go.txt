@@ -2,7 +2,10 @@ package listener
 
 import (
 	"errors"
+	"net"
 	"os"
+	"runtime"
+	"strings"
 	"sync/atomic"
 
 	C "github.com/metacubex/mihomo/constant"
@@ -43,6 +46,20 @@ var fcxCreateTun = func(config LC.Tun, target C.Tunnel) (fcxTunListener, error) 
 func fcxTunErrorCode(err error) string {
 	if errors.Is(err, os.ErrPermission) { return "permissionDenied" }
 	return "startFailed"
+}
+
+// Windows can remove or disable an adapter (driver reset, user action, some
+// resume paths) while the listener object survives. An identical-config reload
+// must then rebuild instead of only calling OnReload. Enumeration failure is
+// not evidence of loss, so it keeps the existing listener.
+var fcxTunInterfaceUsable = func(device string) bool {
+	if runtime.GOOS != "windows" || device == "" { return true }
+	interfaces, err := net.Interfaces()
+	if err != nil { return true }
+	for _, adapter := range interfaces {
+		if strings.EqualFold(adapter.Name, device) { return adapter.Flags&net.FlagUp != 0 }
+	}
+	return false
 }
 
 // Caller owns tunMux. Publishes an immutable copy for lock-free readers.

@@ -21,12 +21,31 @@ func (f *fcxFakeTun) Close() error { return f.closeError }
 func fcxTestReset(t *testing.T) {
 	t.Helper()
 	previousFactory := fcxCreateTun
+	previousUsable := fcxTunInterfaceUsable
 	fcxTunCloseError = nil
+	fcxTunInterfaceUsable = func(string) bool { return true }
 	fcxCreateTun = func(config LC.Tun, _ C.Tunnel) (fcxTunListener, error) {
 		return &fcxFakeTun{config: config}, nil
 	}
 	Cleanup()
-	t.Cleanup(func() { Cleanup(); fcxTunCloseError = nil; fcxCreateTun = previousFactory })
+	t.Cleanup(func() { Cleanup(); fcxTunCloseError = nil; fcxCreateTun = previousFactory; fcxTunInterfaceUsable = previousUsable })
+}
+
+func TestFCXTunIdenticalReloadRebuildsVanishedAdapter(t *testing.T) {
+	fcxTestReset(t)
+	created := 0
+	fcxCreateTun = func(config LC.Tun, _ C.Tunnel) (fcxTunListener, error) {
+		created++
+		return &fcxFakeTun{config: config}, nil
+	}
+	config := LC.Tun{Enable:true, Device:"fcx-test"}
+	ReCreateTun(config, nil)
+	ReCreateTun(config, nil)
+	if created != 1 { t.Fatalf("healthy identical reload recreated the adapter: %d", created) }
+	fcxTunInterfaceUsable = func(device string) bool { return device != "fcx-test" }
+	ReCreateTun(config, nil)
+	if created != 2 { t.Fatalf("vanished adapter was not rebuilt: %d", created) }
+	if status := GetTunLifecycleStatus(); status.State != "on" || !status.ListenerActive { t.Fatalf("rebuilt adapter not published: %+v", status) }
 }
 
 func TestFCXTunFailureIsNotEnabled(t *testing.T) {

@@ -8,7 +8,7 @@ func ReCreateTun(tunConf LC.Tun, tunnel C.Tunnel) {
 	fcxTunStatus.RequestedEnabled = tunConf.Enable
 	fcxTunStatus.ErrorCode = ""
 	defer func() { LastTunConf = tunConf }()
-	if tunConf.Equal(LastTunConf) && tunLister != nil {
+	if tunConf.Equal(LastTunConf) && tunLister != nil && fcxTunInterfaceUsable(tunLister.Config().Device) {
 		tunLister.OnReload()
 		fcxTunStatus.State = "on"
 		fcxTunStatus.ListenerActive = true
