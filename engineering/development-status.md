@@ -11,6 +11,15 @@
 - NOT RUN：race 用例、ClashService 监听缓存的单元测试（需真实 Agent 连接）、真实 Windows 开关/切网/休眠恢复/长时运行、预览包构建、CI。未推送、未 PR、未打包、未改动本机代理/TUN/服务。
 - 待处理（第二批）：网卡消失（interfaceMissing/listener 仍在）时用户无法直接重开且 `ReCreateTun` 同配置不重建；`closeFailed` 锁存无自动恢复；全量路径内 `checkAndUpdate` 联网拉订阅；订阅 `tun.stack` 覆盖导致重建网卡；网卡名精确匹配与 Up 判定在真机的可靠性。
 
+## TUN 网卡消失与 closeFailed 恢复（2026-10-13，第二批）
+
+- 起点：第一批本地提交 `f0aa190` 之上，同一 `development` 工作树。
+- Core overlay：`ReCreateTun` 同配置快速路径增加 `fcxTunInterfaceUsable(device)`；Windows 上网卡缺失或非 Up 时关闭并重建，枚举失败或非 Windows 保持原行为。新增 `TestFCXTunIdenticalReloadRebuildsVanishedAdapter`。`tun_status.go` 网卡名改为大小写不敏感匹配（`matchTunInterface`，新增 `TestTunInterfaceMatchIsCaseInsensitive`）。补丁 hash 再次变化，Core 与 Helper 必须一同重建。
+- Dart：① 用户显式开启时，已提权 Core 返回 unknown（如 interfaceMissing）也允许下发配置以触发重建；后台刷新仍不对 unknown 动作，未提权仍拒绝。② 启动/显式开启读到 `closeFailed` 时先在同一后端重启 Core（不提权、不重入 TUN 队列），再强制走全量配置与监听。③ 轮询发现同一 Core listener 仍在而网卡 `interfaceMissing` 且偏好开启、无请求失败、已提权时，自动走增量路径重建；不请求 UAC，失败记为请求失败并停止重试，每个 Core 实例最多 2 次，读到 on 后清零。`interfaceDown`（可能是用户禁用网卡）只在用户显式开启时修复，不后台自动修复。
+- 复核后不改：`checkAndUpdate` 只在配置文件缺失时下载，而启动前已要求可读配置，原先“全量路径联网拉订阅”的判断夸大；订阅覆盖 `tun.stack` 属既有设计（`overrideNetworkSettings=false`），栈变化本就需要重建网卡。
+- 验证：Core overlay `TestFCXTun*` PASS；Core `-tags=with_gvisor ./...` PASS（Go 1.25.13，CI 为 1.26.0）。Flutter 3.47.4 全量 **607 PASS/0 FAIL**（新增 8 项），`pubspec.lock` 未变化；定向 analyze 无 error/warning。新增 Dart 用例依赖新接口，未在修复前代码执行 Red。
+- NOT RUN：真实 Windows 网卡删除/禁用、驱动重置、closeFailed 现场、切网/休眠/长时运行、race 用例、CI 3.41.7 复跑、预览包构建。未推送、未 PR、未打包、未改动本机代理/TUN/服务。
+
 ## 开发分支累计源码晋级（2026-10-12，合并前快照）
 
 - 用户明确授权本次正常推送 `development` 并通过 PR 合并 `main`，暂不生成可执行客户端包。只做源码集成和质量检查；不创建版本标签、不运行候选客户端、不修改当前代理/TUN/服务、不部署。
