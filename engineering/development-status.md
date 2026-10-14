@@ -2,6 +2,15 @@
 
 更新日期：2026-10-12。当前阶段是快速开发、快速迭代和部分功能预览。本文记录来源与验收边界；每次继续开发仍需核实实际 Git/PR/CI 状态，不能把历史报告视为当前通过证明。
 
+## TUN 启动与状态同步稳定性修复（2026-10-13，第一批）
+
+- 来源：对 `resourcefix-485abf4d2e86` 现场“Core 已建卡、UI 报 statusUnavailable/TUN 未开启”及外部只读排查的复核。起点 `development@f08fedb`（与 `freedomcloud/development` 领先0/落后0）。原 coverage、QA 草稿、probes、stash、历史工作树均保留未动。
+- Core overlay：`GetTunLifecycleStatus` 改为读取原子发布的快照，不再等待建卡持有的 `tunMux`；`ReCreateTun` 在建卡前发布 `starting`，结束和 `Cleanup` 时发布终态。新增 `TestFCXTunStatusReadableDuringSlowCreation`。Mihomo 固定版本/上游 hash 未变，仅补丁内容变化（manifest 中补丁 hash 会随之变化，Helper 绑定的 Core hash 需随新包重建）。
+- Dart：① Agent 只在 Core 状态切换时推送 `proxyRunning`，现由 `ClashService` 在同一 Core 确认 start/stopListener 后同步缓存，TUN 重开不再误判为全量重载；② 启动最终验证对 null/unknown 做有界等待（默认 8 次×500ms），并接受观察器已采纳的新鲜读数，不再因并发轮询失效 epoch 而误报；③ 轮询之后读到同一 Core TUN 已开且运行投影缺失时补做一次 `reflectRunning`；④ `TunRuntimeController.requestFailure` 与观察失败分离，后台配置刷新的降级只看真实请求失败；⑤ `_setupClashConfigImpl` 只合并订阅同步字段，不再整份回写旧快照覆盖 TUN 开关。
+- 验证：Core overlay `TestFCXTun*` PASS；Core `-tags=with_gvisor ./...` PASS（本机 Go 1.25.13，CI 为 1.26.0）。Flutter 3.47.4（与已提交 `pubspec.lock` 一致）全量 **599 PASS/0 FAIL**，锁文件未变化。另用 CI 声明的 3.41.7 跑过：TUN/Agent 相关 9 个文件 77 PASS/0 FAIL，全量 592 PASS/7 FAIL，7 项均为 `ink_sparkle.frag` 着色器资源版本不兼容（未修改模块），该 SDK 改写的 `pubspec.lock` 已还原。定向 analyze 无 error/warning。新增用例依赖新 API，未在修复前代码上执行 Red。
+- NOT RUN：race 用例、ClashService 监听缓存的单元测试（需真实 Agent 连接）、真实 Windows 开关/切网/休眠恢复/长时运行、预览包构建、CI。未推送、未 PR、未打包、未改动本机代理/TUN/服务。
+- 待处理（第二批）：网卡消失（interfaceMissing/listener 仍在）时用户无法直接重开且 `ReCreateTun` 同配置不重建；`closeFailed` 锁存无自动恢复；全量路径内 `checkAndUpdate` 联网拉订阅；订阅 `tun.stack` 覆盖导致重建网卡；网卡名精确匹配与 Up 判定在真机的可靠性。
+
 ## 开发分支累计源码晋级（2026-10-12，合并前快照）
 
 - 用户明确授权本次正常推送 `development` 并通过 PR 合并 `main`，暂不生成可执行客户端包。只做源码集成和质量检查；不创建版本标签、不运行候选客户端、不修改当前代理/TUN/服务、不部署。
