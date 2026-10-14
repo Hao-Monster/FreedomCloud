@@ -31,6 +31,7 @@ const listenerSHA256 = "1a11cda3fb4a87875d817fe29f1e79973cb8cb6eeccc0ae5e22db15d
 const configsSHA256 = "d11710296ea68a8d12f7593ec50cec9fef830272b3a54f64f707ec86920baf9f"
 const controllerSHA256 = "01724bd82002cf80b85448ef664ca53a7cb82f529ccf2b7f4a6383282768d256"
 const adapterSHA256 = "0a0524f342ff1672fdb94ad675d176d069b1f6e16ddfe462ece2f55b9e10212c"
+const dnsDoHSHA256 = "1ba0170bed4aabf6b295471f9fddb03da20122d339526a97170dff537fbde57b"
 
 func patchController(source []byte) ([]byte, error) {
 	fset := token.NewFileSet()
@@ -140,6 +141,57 @@ func patchListener(source []byte) ([]byte, error) {
 	return format.Source([]byte(patched))
 }
 
+func patchDNSDoH(source []byte) ([]byte, error) {
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "doh.go", source, 0)
+	if err != nil {
+		return nil, err
+	}
+	names := map[string]string{
+		"ExchangeContext": "dns_exchange_context.txt",
+		"resetClient":     "dns_reset_client.txt",
+		"getClient":       "dns_get_client.txt",
+	}
+	seen := map[string]bool{}
+	var changes []replacement
+	for _, declaration := range file.Decls {
+		fn, ok := declaration.(*ast.FuncDecl)
+		if !ok {
+			continue
+		}
+		name, ok := names[fn.Name.Name]
+		if !ok {
+			continue
+		}
+		if seen[fn.Name.Name] || fn.Recv == nil || len(fn.Recv.List) != 1 {
+			return nil, fmt.Errorf("upstream DoH method set changed: %s", fn.Name.Name)
+		}
+		pointer, ok := fn.Recv.List[0].Type.(*ast.StarExpr)
+		if !ok {
+			return nil, fmt.Errorf("upstream DoH receiver changed: %s", fn.Name.Name)
+		}
+		receiver, ok := pointer.X.(*ast.Ident)
+		if !ok || receiver.Name != "dnsOverHTTPS" {
+			return nil, fmt.Errorf("upstream DoH receiver changed: %s", fn.Name.Name)
+		}
+		seen[fn.Name.Name] = true
+		body, err := patchFiles.ReadFile("patches/" + name)
+		if err != nil {
+			return nil, err
+		}
+		changes = append(changes, replacement{fset.Position(fn.Pos()).Offset, fset.Position(fn.End()).Offset, string(body)})
+	}
+	if len(changes) != len(names) {
+		return nil, fmt.Errorf("upstream DoH method set changed")
+	}
+	sort.Slice(changes, func(i, j int) bool { return changes[i].start > changes[j].start })
+	patched := string(source)
+	for _, change := range changes {
+		patched = patched[:change.start] + change.text + patched[change.end:]
+	}
+	return format.Source([]byte(patched))
+}
+
 func generate(out string) error {
 	command := exec.Command("go", "list", "-m", "-json", "github.com/metacubex/mihomo")
 	data, err := command.Output()
@@ -209,6 +261,14 @@ func generate(out string) error {
 	if err != nil {
 		return err
 	}
+	dnsDoHSource, err := checkedSource(filepath.Join(module.Dir, "dns", "doh.go"), dnsDoHSHA256)
+	if err != nil {
+		return err
+	}
+	patchedDNSDoH, err := patchDNSDoH(dnsDoHSource)
+	if err != nil {
+		return err
+	}
 	out, err = filepath.Abs(out)
 	if err != nil {
 		return err
@@ -255,6 +315,20 @@ func generate(out string) error {
 		return err
 	}
 	if err := write(filepath.Join(sourceDirectory, "adapter", "adapter.go"), "adapter.go", adapterSource); err != nil {
+		return err
+	}
+	if err := write(filepath.Join(sourceDirectory, "dns", "doh.go"), "doh.go", patchedDNSDoH); err != nil {
+		return err
+	}
+	dnsTests, err := patchFiles.ReadFile("patches/dns_doh_lifecycle_fcx_test.go.txt")
+	if err != nil {
+		return err
+	}
+	dnsTests, err = format.Source(dnsTests)
+	if err != nil {
+		return err
+	}
+	if err := write(filepath.Join(sourceDirectory, "dns", "doh_lifecycle_fcx_test.go"), "doh_lifecycle_fcx_test.go", dnsTests); err != nil {
 		return err
 	}
 	for _, name := range []string{"urltest_history_fcx.go", "urltest_history_fcx_test.go"} {
@@ -367,7 +441,7 @@ func generate(out string) error {
 	manifest, err := json.MarshalIndent(map[string]any{
 		"schemaVersion": 1, "module": "github.com/metacubex/mihomo", "version": upstreamVersion,
 		"commit": upstreamCommit, "moduleSum": module.Sum,
-		"upstreamSourceSHA256": map[string]string{"listener/listener.go": listenerSHA256, "hub/route/configs.go": configsSHA256, "hub/route/server.go": controllerSHA256, "adapter/adapter.go": adapterSHA256},
+		"upstreamSourceSHA256": map[string]string{"listener/listener.go": listenerSHA256, "hub/route/configs.go": configsSHA256, "hub/route/server.go": controllerSHA256, "adapter/adapter.go": adapterSHA256, "dns/doh.go": dnsDoHSHA256},
 		"patchesSHA256":        patchHashes, "generatorSHA256": digest(generatorSource), "projectGoModSHA256": digest(rootMod),
 		"effectiveModuleSHA256": aggregateHashes(moduleHashes), "effectiveModuleFiles": moduleHashes,
 	}, "", "  ")

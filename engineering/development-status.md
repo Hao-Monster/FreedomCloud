@@ -2,6 +2,15 @@
 
 更新日期：2026-10-14。当前阶段是快速开发、快速迭代和部分功能预览。本文记录来源与验收边界；每次继续开发仍需核实实际 Git/PR/CI 状态，不能把历史报告视为当前通过证明。
 
+## 微信间歇断网调查与 DoH 恢复修复（2026-10-14）
+
+- 用户确认微信长时运行后显示网络不可用、微信不重启而关闭 TUN 即恢复，授权定位、修复、回归及独立新预览。本轮从 `development@3c48432a77971a3e0c18a26ca1c55d1632df04e6` 继续，仅本地提交，未授权推送/PR/合并/发布；当前客户端、服务及网络保持不动，旧包/草稿/stash/历史工作树保留。
+- 现场被动证据仍来自旧 `resourcefix-485abf4d2e86`，20:35–20:37 双栈公网 DIRECT 与 DoH 暂时性故障，之后同 PID 恢复部分新连接。用户微信业务是否恢复及关闭 TUN 精确时间未由自动化观察确认。不能把此缩减为“网卡 Up 即正常”，或认定今天旧候选已被实机测试。
+- 固定 Mihomo v1.19.32 overlay 仅替换三个 DoH 方法：请求到期/取消不重置共享 client，迟到错误仅允许作用于原失败代次，锁等待后重新检查 context。保留有效 transport timeout、0-RTT、显式 ResetConnection 与最多两次重试。未改 DNS/TLS/分流默认值、TUN 栈或依赖版本。此修复消除已重现的 DNS 恢复放大器，尚不能独立解释全部公网 IP 超时。
+- 原始同一 5 项内存探针 **2 FAIL/3 PASS → 5 PASS**；新增 17 组 + 2 子例随机重复 100 轮全部通过；Core 普通与 gVisor 各 81 组 + 17 子例、既有补丁专项 17 组 + 2 子例、vet、Agent83/Helper48 均通过。独立审查无本轮新增高置信阻塞，移除身份/锁内取消保护的隔离变异被测试检出。三方法语句覆盖 51/58（87.9%），无 Go 分支率。
+- 环境限制：Helper 首次链接器路径误选，子进程使用既有 MSVC 后全套通过；Go1.25 coverage+overlay 编译限制由逐文件匹配 manifest 的隔离 effective-source 副本补测；Windows race 因现有 UCRT ld 依赖加载失败未执行。DNS Windows/Linux-race CI 命令已加入，但新提交尚未推送，不能借用旧 CI 结果。
+- 详细范围/矩阵见 [计划](plans/windows-tun-wechat-reliability-2026-10-14.md)，命令、计数、失败记录、覆盖率及未验证项见 [回归报告](testing/windows-tun-wechat-reliability-2026-10-14.md)。源码随本节提交保存；独立新包待固定干净 SHA 完整构建/审计。真实微信长时、TUN/SCM/切网/休眠验收仍 NOT RUN，不自动运行候选。
+
 ## TUN 修复源码推送与 Windows 预览（2026-10-14）
 
 - 用户授权正常推送全部开发代码并重打预览，由用户自行测试、观察方只读看日志/运行。`f08fedb → fb6f5d43e204b1cc47278b8916ecae2ebc1dcccf` 共 9 提交已推送自有 `freedomcloud/development`，远端 SHA 回读一致；未晋级 main、未建 PR/tag/release。原 coverage、QA/probes、stash、47 历史工作树及旧包保留未动。

@@ -1,0 +1,29 @@
+func (doh *dnsOverHTTPS) resetClient(ctx context.Context, failedClient *http.Client, resetErr error) (client *http.Client, err error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	doh.clientMu.Lock()
+	defer doh.clientMu.Unlock()
+
+	// The caller may have expired or another request may have recovered while
+	// this goroutine waited for the lock. Never close that newer generation,
+	// nor reset its QUIC tokens in response to an old generation's failure.
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if doh.client != failedClient {
+		return doh.client, nil
+	}
+	if errors.Is(resetErr, quic.Err0RTTRejected) {
+		doh.resetQUICConfig()
+	}
+	if failedClient != nil {
+		if closeErr := doh.closeClient(failedClient); closeErr != nil {
+			log.Warnln("warning: failed to close the old http client: %v", closeErr)
+		}
+	}
+	doh.client = nil
+	log.Debugln("re-creating the http client due to %v", resetErr)
+	doh.client, err = doh.createClient(ctx)
+	return doh.client, err
+}
