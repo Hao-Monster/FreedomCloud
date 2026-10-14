@@ -9,7 +9,9 @@
 - 固定 Mihomo v1.19.32 overlay 仅替换三个 DoH 方法：请求到期/取消不重置共享 client，迟到错误仅允许作用于原失败代次，锁等待后重新检查 context。保留有效 transport timeout、0-RTT、显式 ResetConnection 与最多两次重试。未改 DNS/TLS/分流默认值、TUN 栈或依赖版本。此修复消除已重现的 DNS 恢复放大器，尚不能独立解释全部公网 IP 超时。
 - 原始同一 5 项内存探针 **2 FAIL/3 PASS → 5 PASS**；新增 17 组 + 2 子例随机重复 100 轮全部通过；Core 普通与 gVisor 各 81 组 + 17 子例、既有补丁专项 17 组 + 2 子例、vet、Agent83/Helper48 均通过。独立审查无本轮新增高置信阻塞，移除身份/锁内取消保护的隔离变异被测试检出。三方法语句覆盖 51/58（87.9%），无 Go 分支率。
 - 环境限制：Helper 首次链接器路径误选，子进程使用既有 MSVC 后全套通过；Go1.25 coverage+overlay 编译限制由逐文件匹配 manifest 的隔离 effective-source 副本补测；Windows race 因现有 UCRT ld 依赖加载失败未执行。DNS Windows/Linux-race CI 命令已加入，但新提交尚未推送，不能借用旧 CI 结果。
-- 详细范围/矩阵见 [计划](plans/windows-tun-wechat-reliability-2026-10-14.md)，命令、计数、失败记录、覆盖率及未验证项见 [回归报告](testing/windows-tun-wechat-reliability-2026-10-14.md)。源码随本节提交保存；独立新包待固定干净 SHA 完整构建/审计。真实微信长时、TUN/SCM/切网/休眠验收仍 NOT RUN，不自动运行候选。
+- 源码已本地提交为 `4e4a146513c90e18090fe87a7f9eeada501e5a71`（`fix(core): isolate DoH recovery from expired and stale requests`），从该干净 tracked SHA 完整重编 Core/Agent/Helper/UI/原生插件。普通未签名包 `dist/FreedomCloud-windows-amd64-tunwechat-4e4a146513c9.zip` 为 153,556,800 bytes，SHA256 `db4a47bafceb0af6981c496e4d407e59ccadbdd5673af9416732dba3ef604a1f`；同名完整解压目录已校验，旧包未覆盖。
+- 独立产物审计 8/8 PASS：73 文件/72 checksum、955 源 blob、32 组件、14 插件/111 输入；Helper 实际新 Core hash、UI 编译输入/AOT与包含 DoH 补丁的 14 模板/12 映射一致。Flutter config-only 的已知 VS 识别失败如实保留，后续完整 CMake/Ninja/AOT/Windows 编译通过；未运行候选。
+- 详细范围/矩阵见 [计划](plans/windows-tun-wechat-reliability-2026-10-14.md)，命令、计数、失败记录、覆盖率及未验证项见 [回归报告](testing/windows-tun-wechat-reliability-2026-10-14.md)，产物来源/hash/构建与用户验收见 [新预览交付](testing/windows-tun-wechat-preview-2026-10-14.md)。交付文档另作本地提交，不改变包的 `4e4a146` 源码；本轮源码与交付文档均未推送。真实微信长时、TUN/SCM/切网/休眠验收仍 NOT RUN，须先确认实际运行组件匹配，不将静态文件 hash 当作运行验收。
 
 ## TUN 修复源码推送与 Windows 预览（2026-10-14）
 
