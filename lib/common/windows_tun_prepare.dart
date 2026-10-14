@@ -52,7 +52,15 @@ Future<void> applyWindowsTunConfiguration({
     // No observation is converted to false. This is solely a user command;
     // its outcome must still be observed after sending the request.
   } else {
-    if (status == null || status.observed == TunObservedState.unknown) {
+    if (status == null) throw const TunFailure('statusUnavailable');
+    // A Core that answered with an indeterminate listener (adapter missing or
+    // down, transition) may be repaired by an explicit user enable: the
+    // identical-config reload then rebuilds the adapter. Background refreshes
+    // still never act on an unknown observation.
+    final explicitRepair = enabled &&
+        explicitOperation() &&
+        status.privilege == 'elevated';
+    if (status.observed == TunObservedState.unknown && !explicitRepair) {
       throw const TunFailure('statusUnavailable');
     }
     if (enabled &&

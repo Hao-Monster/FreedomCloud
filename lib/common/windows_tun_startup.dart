@@ -26,6 +26,11 @@ abstract interface class WindowsTunStartupEffects {
   /// without enabling TUN and without requesting privileges.
   Future<void> startProxyWithoutTun();
 
+  /// Replaces the current Core process on the same backend. Used only by an
+  /// explicit enable when the Core latched a TUN close failure, which only a
+  /// new Core can discard. Must not request privileges.
+  Future<void> restartCore();
+
   /// Startup diagnostics (TUN outcome / degradation reason).
   void log(String message);
 }
@@ -87,7 +92,15 @@ Future<void> startWindowsTunOnLaunch({
       if (!current()) return;
       if (!hasProfile) throw const TunFailure('profileRequired');
 
-      final wasRunning = effects.proxyRunning;
+      var coreRestarted = false;
+      if (initial?.errorCode == 'closeFailed') {
+        effects.log('TUN: previous close failed; restarting Core before enable');
+        await effects.restartCore();
+        if (!current()) return;
+        coreRestarted = true;
+      }
+
+      final wasRunning = !coreRestarted && effects.proxyRunning;
       var initialized = false;
       final replaced = await prepareWindowsTunBackend(
         observe: observe,

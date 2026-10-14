@@ -29,6 +29,8 @@ class StartupEffects implements WindowsTunStartupEffects {
   int backgroundConfigurations = 0;
   bool statusAvailable = true;
   bool loseStatusAfterListener = false;
+  bool adapterVanished = false;
+  bool repairRestoresAdapter = true;
   void Function()? duringMatch;
   String? pauseAt;
   final entered = Completer<void>();
@@ -53,6 +55,17 @@ class StartupEffects implements WindowsTunStartupEffects {
   Future<TunStatus?> observe() async {
     await record('observe');
     if (!statusAvailable) return null;
+    if (adapterVanished) {
+      return TunStatus(
+          instanceId: 'core',
+          revision: calls.length,
+          state: 'failed',
+          listenerActive: true,
+          interfaceState: 'missing',
+          privilege: elevated ? 'elevated' : 'unprivileged',
+          requestedEnabled: true,
+          errorCode: 'interfaceMissing');
+    }
     return TunStatus(
         instanceId: 'core',
         revision: calls.length,
@@ -99,6 +112,7 @@ class StartupEffects implements WindowsTunStartupEffects {
     if (!isCurrent()) return;
     if (!configurationSucceeds) throw const TunFailure('configurationFailed');
     if (running) enabled = true;
+    if (!full && repairRestoresAdapter) adapterVanished = false;
   }
 
   @override
@@ -128,6 +142,11 @@ class StartupEffects implements WindowsTunStartupEffects {
   Future<void> startProxyWithoutTun() async {
     await record('proxy-only');
     running = true;
+  }
+
+  @override
+  Future<void> restartCore() async {
+    await record('restart-core');
   }
 
   final logs = <String>[];
@@ -423,6 +442,61 @@ void main() {
     await tester.pump();
     expect(effects.calls.where((c) => c == 'reflect').length, 1);
     expect(effects.backgroundConfigurations, 0);
+  });
+
+  testWidgets('a vanished adapter is rebuilt incrementally without UAC',
+      (tester) async {
+    final effects = StartupEffects();
+    final runtime = TunRuntimeController();
+    final controller = await controllerFixture(tester, effects, runtime);
+    await controller.initializeRuntime();
+    expect(runtime.observed, TunObservedState.on);
+    final authorizations = effects.calls.where((c) => c == 'authorize').length;
+
+    effects.adapterVanished = true;
+    await controller.refreshWindowsTunStatus();
+    await tester.pumpAndSettle();
+    expect(effects.calls.where((c) => c == 'incremental').length, 1);
+    expect(effects.calls.where((c) => c == 'authorize').length, authorizations,
+        reason: 'a background repair never requests privileges');
+    expect(runtime.observed, TunObservedState.on);
+    expect(runtime.failure, isNull);
+    expect(runtime.desiredEnabled, isTrue);
+    expect(effects.logs, contains(contains('rebuilding (attempt 1)')));
+  });
+
+  testWidgets('vanished adapter repair is bounded and reports failure',
+      (tester) async {
+    final effects = StartupEffects();
+    final runtime = TunRuntimeController();
+    final controller = await controllerFixture(tester, effects, runtime);
+    await controller.initializeRuntime();
+    final authorizations = effects.calls.where((c) => c == 'authorize').length;
+    effects
+      ..adapterVanished = true
+      ..repairRestoresAdapter = false;
+    for (var poll = 0; poll < 4; poll++) {
+      await controller.refreshWindowsTunStatus();
+      await tester.pumpAndSettle();
+    }
+    expect(effects.calls.where((c) => c == 'incremental').length, 1,
+        reason: 'a failed repair is a request failure; polls stop retrying');
+    expect(runtime.failure, 'interfaceMissing');
+    expect(runtime.requestFailure, 'interfaceMissing');
+    expect(effects.calls.where((c) => c == 'authorize').length, authorizations);
+  });
+
+  testWidgets('vanished adapter is not repaired after a manual TUN off',
+      (tester) async {
+    final effects = StartupEffects();
+    final runtime = TunRuntimeController();
+    final controller = await controllerFixture(tester, effects, runtime);
+    await controller.initializeRuntime();
+    await runtime.request(false, (_) async {});
+    effects.adapterVanished = true;
+    await controller.refreshWindowsTunStatus();
+    await tester.pumpAndSettle();
+    expect(effects.calls, isNot(contains('incremental')));
   });
 
   for (final phase in [

@@ -13,6 +13,10 @@ class StabilityEffects implements WindowsTunStartupEffects {
   final TunRuntimeController runtime;
   late final TunStatusObserver observer;
   bool running;
+  String instanceId = 'core';
+  bool closeFailed = false;
+  int coreRestarts = 0;
+  final List<String> logs = [];
   bool pendingTun = false;
   bool actualTun = false;
   int revision = 0;
@@ -28,10 +32,22 @@ class StabilityEffects implements WindowsTunStartupEffects {
       failReads--;
       throw const TunFailure('statusUnavailable');
     }
+    if (closeFailed) {
+      // The Core latched a failed close: listener gone, adapter missing.
+      return TunStatus(
+          instanceId: instanceId,
+          revision: revision,
+          state: 'failed',
+          listenerActive: false,
+          interfaceState: 'missing',
+          privilege: 'elevated',
+          requestedEnabled: false,
+          errorCode: 'closeFailed');
+    }
     if (transitionalReads > 0) {
       transitionalReads--;
       return TunStatus(
-          instanceId: 'core',
+          instanceId: instanceId,
           revision: revision,
           state: 'starting',
           listenerActive: false,
@@ -40,7 +56,7 @@ class StabilityEffects implements WindowsTunStartupEffects {
           requestedEnabled: true);
     }
     return TunStatus(
-        instanceId: 'core',
+        instanceId: instanceId,
         revision: revision,
         state: actualTun ? 'on' : 'off',
         listenerActive: actualTun,
@@ -104,7 +120,18 @@ class StabilityEffects implements WindowsTunStartupEffects {
   @override
   Future<void> startProxyWithoutTun() async {}
   @override
-  void log(String message) {}
+  Future<void> restartCore() async {
+    coreRestarts++;
+    instanceId = 'core-$coreRestarts';
+    revision = 0;
+    closeFailed = false;
+    running = false;
+    pendingTun = false;
+    actualTun = false;
+  }
+
+  @override
+  void log(String message) => logs.add(message);
 }
 
 Future<void> launch(TunRuntimeController runtime, StabilityEffects effects,
@@ -158,6 +185,93 @@ void main() {
     await launch(runtime, effects);
     expect(runtime.failure, 'startFailed');
     expect(effects.finalReads, 1);
+  });
+
+  test('a latched closeFailed Core is restarted and fully re-applied',
+      () async {
+    final runtime = TunRuntimeController();
+    addTearDown(runtime.dispose);
+    // The proxy is still running, so without the restart this would take the
+    // incremental path against a Core that can no longer open TUN.
+    final effects = StabilityEffects(runtime, running: true)
+      ..closeFailed = true;
+    await launch(runtime, effects);
+    expect(effects.coreRestarts, 1);
+    expect(effects.fullApplications, 1);
+    expect(effects.incrementalApplications, 0);
+    expect(runtime.observed, TunObservedState.on);
+    expect(runtime.status?.instanceId, 'core-1');
+    expect(runtime.failure, isNull);
+    expect(effects.reflectCalls, 1);
+  });
+
+  test('a healthy running Core is not restarted', () async {
+    final runtime = TunRuntimeController();
+    addTearDown(runtime.dispose);
+    final effects = StabilityEffects(runtime, running: true);
+    await launch(runtime, effects);
+    expect(effects.coreRestarts, 0);
+    expect(effects.incrementalApplications, 1);
+    expect(effects.fullApplications, 0);
+    expect(runtime.observed, TunObservedState.on);
+  });
+
+  group('vanished adapter on an elevated Core', () {
+    const vanished = TunStatus(
+        instanceId: 'core',
+        revision: 3,
+        state: 'failed',
+        listenerActive: true,
+        interfaceState: 'missing',
+        privilege: 'elevated',
+        requestedEnabled: true,
+        errorCode: 'interfaceMissing');
+
+    Future<bool?> applyWith({required bool explicit, String privilege = 'elevated'}) async {
+      bool? applied;
+      final status = TunStatus(
+          instanceId: vanished.instanceId,
+          revision: vanished.revision,
+          state: vanished.state,
+          listenerActive: vanished.listenerActive,
+          interfaceState: vanished.interfaceState,
+          privilege: privilege,
+          requestedEnabled: vanished.requestedEnabled,
+          errorCode: vanished.errorCode);
+      expect(status.observed, TunObservedState.unknown);
+      await applyWindowsTunConfiguration(
+        componentsMatch: () async => true,
+        observe: () async => status,
+        desiredEnabled: () => true,
+        explicitStop: () => false,
+        explicitOperation: () => explicit,
+        failedRequest: () => false,
+        reportFailure: (_) {},
+        invalidate: () {},
+        apply: (enabled) async {
+          applied = enabled;
+          return '';
+        },
+      );
+      return applied;
+    }
+
+    test('an explicit enable re-applies to rebuild the adapter', () async {
+      expect(await applyWith(explicit: true), isTrue);
+    });
+
+    test('a background refresh never acts on the unknown observation',
+        () async {
+      await expectLater(applyWith(explicit: false),
+          throwsA(isA<TunFailure>()
+              .having((e) => e.code, 'code', 'statusUnavailable')));
+    });
+
+    test('an unprivileged Core is not treated as repairable', () async {
+      await expectLater(applyWith(explicit: true, privilege: 'unprivileged'),
+          throwsA(isA<TunFailure>()
+              .having((e) => e.code, 'code', 'statusUnavailable')));
+    });
   });
 
   group('observation failures are not request failures', () {

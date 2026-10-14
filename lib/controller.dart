@@ -49,6 +49,8 @@ class AppController {
   Future<void>? _runtimeInitialization;
   bool _runtimeInitialized = false;
   bool _recoveringRunningProjection = false;
+  static const _maxTunRepairAttempts = 2;
+  final Map<String, int> _tunRepairAttempts = {};
   int? lastProfileModified;
   final BuildContext context;
   final WidgetRef _ref;
@@ -88,8 +90,50 @@ class AppController {
       if (!Platform.isWindows) return null;
       status = await _tunObserver.refresh(fresh: fresh);
     }
-    if (status != null) _recoverRunningProjection(status);
+    if (status != null) {
+      _recoverRunningProjection(status);
+      _repairVanishedAdapter(status);
+    }
     return status;
+  }
+
+  /// The Core still holds an enabled listener but Windows no longer has its
+  /// adapter (driver reset, adapter removed). Rebuild through the incremental
+  /// apply path, which recreates an identical config when the adapter is gone.
+  /// Never requests authorization; bounded per Core instance and reset by a
+  /// healthy observation. A failure is recorded as a request failure, which
+  /// also stops background re-enables until the user retries.
+  void _repairVanishedAdapter(TunStatus status) {
+    if (status.observed == TunObservedState.on) {
+      _tunRepairAttempts.remove(status.instanceId);
+      return;
+    }
+    if (!_runtimeInitialized ||
+        _tunRuntime.busy ||
+        _tunRuntime.closing ||
+        !_tunRuntime.desiredEnabled ||
+        _tunRuntime.requestFailure != null ||
+        status.errorCode != 'interfaceMissing' ||
+        !status.listenerActive ||
+        status.privilege != 'elevated') {
+      return;
+    }
+    final attempts = _tunRepairAttempts[status.instanceId] ?? 0;
+    if (attempts >= _maxTunRepairAttempts) return;
+    _tunRepairAttempts[status.instanceId] = attempts + 1;
+    final effects =
+        _windowsStartupEffects ?? _ControllerWindowsTunStartupEffects(this);
+    effects.log('TUN adapter missing; rebuilding (attempt ${attempts + 1})');
+    unawaited(_tunRuntime.request(true, (intent) async {
+      bool current() => _tunRuntime.isCurrentIntent(intent);
+      await effects.applyConfiguration(full: false, isCurrent: current);
+      if (!current()) return;
+      final observed = await refreshWindowsTunStatus(fresh: true);
+      if (!current()) return;
+      if (observed?.observed != TunObservedState.on) {
+        throw TunFailure(observed?.errorCode ?? 'statusUnavailable');
+      }
+    }));
   }
 
   /// A startup whose final status read failed skips the running projection
@@ -2448,6 +2492,16 @@ class _ControllerWindowsTunStartupEffects implements WindowsTunStartupEffects {
       return;
     }
     await controller.updateStatus(true);
+  }
+  @override
+  Future<void> restartCore() async {
+    // Runs inside the TUN request queue; AppController.restartCore would
+    // re-enter the same queue and deadlock. Drop observations of the old Core
+    // so its latched closeFailed cannot be accepted after the replacement.
+    final service = clashService;
+    if (service == null) throw const TunFailure('startFailed');
+    controller._tunRuntime.invalidate();
+    await service.reStart();
   }
   @override
   void log(String message) => commonPrint.log(message);
