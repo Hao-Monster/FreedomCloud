@@ -328,6 +328,10 @@ class ClashService extends ClashHandlerInterface {
     }
   }
 
+  bool? _mergeProxyRunning(AgentEvent event, bool sameReadyCore) =>
+      mergeAgentProxyRunning(event,
+          cached: _agentProxyRunning, sameReadyCore: sameReadyCore);
+
   void _handleAgentEvent(AgentEvent event) {
     final identity = _agentIdentity;
     if (identity?.agentInstanceId != null &&
@@ -340,10 +344,13 @@ class ClashService extends ClashHandlerInterface {
         event.coreState != AgentCoreState.ready) {
       onTunTransportChanged?.call();
     }
+    final sameReadyCore = _agentGeneration == event.generation &&
+        _agentIdentity?.agentInstanceId == event.agentInstanceId &&
+        _agentCoreState == AgentCoreState.ready;
     _agentGeneration = event.generation;
     _agentIdentity = event;
     _agentCoreState = event.coreState;
-    _agentProxyRunning = event.coreState == AgentCoreState.ready ? event.proxyRunning : null;
+    _agentProxyRunning = _mergeProxyRunning(event, sameReadyCore);
     _publishStrictPolicyStatus(
       strictPolicyStatusForCore(
         status: event.strictPolicyStatus,
@@ -355,7 +362,6 @@ class ClashService extends ClashHandlerInterface {
       _agentAttachedCompleter.complete();
     }
     if (event.coreState == AgentCoreState.ready) {
-      _agentProxyRunning = event.proxyRunning;
       _agentUsingHelper = event.privilegedBackend ?? _agentUsingHelper;
       if (!_coreReadyCompleter.isCompleted) {
         _coreReadyCompleter.complete();
