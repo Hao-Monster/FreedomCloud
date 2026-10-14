@@ -20,6 +20,14 @@
 - 验证：Core overlay `TestFCXTun*` PASS；Core `-tags=with_gvisor ./...` PASS（Go 1.25.13，CI 为 1.26.0）。Flutter 3.47.4 全量 **607 PASS/0 FAIL**（新增 8 项），`pubspec.lock` 未变化；定向 analyze 无 error/warning。新增 Dart 用例依赖新接口，未在修复前代码执行 Red。
 - NOT RUN：真实 Windows 网卡删除/禁用、驱动重置、closeFailed 现场、切网/休眠/长时运行、race 用例、CI 3.41.7 复跑、预览包构建。未推送、未 PR、未打包、未改动本机代理/TUN/服务。
 
+## TUN 交叉审查补修（2026-10-13，第二批之后）
+
+- 来源：对 `f08fedb → 315274c` 的外部交叉审查，2 项 P2，均复核属实。
+- P2-1 慢关闭期间仍报告旧 `on`：`closeTunListener` 已清除内部 listener 并进入可能阻塞的 `Close()`，但快照只在函数返回时发布。现于 `Close()` 前发布 `state=unknown / ListenerActive=false` 过渡快照并推进 revision，关闭结束后由调用方发布真实终态（off 或 closeFailed），不提前宣称关闭成功；`starting` 过渡同样改为独立 revision（`fcxPublishTunTransition`）。新增 `TestFCXTunStatusNotReadyDuringSlowClose`（Cleanup 与 ReCreateTun(disable) 两个子场景）。**Red**：用 HEAD 的 `close_tun.txt` 运行，两个子场景均返回旧 `on`，与审查一致；恢复修复后 Green。
+- P2-2 `proxyRunning` 缓存被不含该字段的 Agent 事件清空：Agent `publish_strict_status` 与 `commandResult` 报文不带 `proxyRunning`，原解析为 null 后无条件覆盖。现 `AgentEvent.proxyRunningReported` 区分“未提供字段”和“显式 null”；`mergeAgentProxyRunning` 仅在同一 ready Core 上对缺字段事件保留缓存，显式 null 仍清空，换 Core 或非 ready 清空。回归测试使用 `runtime.rs` 实际报文形状。Agent 未改动。该 Dart 用例依赖新 API，未执行 Red。
+- 验证：Core overlay `TestFCXTun*` 8 项 PASS；Core `-tags=with_gvisor ./...` PASS（Go 1.25.13）。Flutter 3.47.4 全量 **610 PASS/0 FAIL**，`pubspec.lock` 未变。审查方报告的主 Core `TestTun*` cgo 编译失败本机未复现（本机全量 Core 通过）。
+- NOT RUN：真实 Windows 慢关闭/切网/休眠/长时运行、race、CI、预览包。未推送、未打包、未改动本机代理/TUN/服务。
+
 ## 开发分支累计源码晋级（2026-10-12，合并前快照）
 
 - 用户明确授权本次正常推送 `development` 并通过 PR 合并 `main`，暂不生成可执行客户端包。只做源码集成和质量检查；不创建版本标签、不运行候选客户端、不修改当前代理/TUN/服务、不部署。
