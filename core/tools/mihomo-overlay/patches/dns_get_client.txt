@@ -17,5 +17,9 @@ func (doh *dnsOverHTTPS) getClient(ctx context.Context) (c *http.Client, isCache
 	}
 	log.Debugln("creating a new http client")
 	doh.client, err = doh.createClient(ctx)
+	if err != nil {
+		log.Warnln("[DNS][DoH] %s: creating connection pool failed: %s", doh.fcxHost(), doh.fcxRedact(err))
+	}
+	doh.fcxAdoptClient(doh.client, "lazy init", time.Since(startTime))
 	return doh.client, false, err
 }

@@ -1,5 +1,6 @@
 func (doh *dnsOverHTTPS) resetClient(ctx context.Context, failedClient *http.Client, resetErr error) (client *http.Client, err error) {
 	if err := ctx.Err(); err != nil {
+		log.Debugln("[DNS][DoH] %s: reset skipped, caller already done: %v", doh.fcxHost(), err)
 		return nil, err
 	}
 	doh.clientMu.Lock()
@@ -9,9 +10,11 @@ func (doh *dnsOverHTTPS) resetClient(ctx context.Context, failedClient *http.Cli
 	// this goroutine waited for the lock. Never close that newer generation,
 	// nor reset its QUIC tokens in response to an old generation's failure.
 	if err := ctx.Err(); err != nil {
+		log.Debugln("[DNS][DoH] %s: reset skipped, caller expired while waiting: %v", doh.fcxHost(), err)
 		return nil, err
 	}
 	if doh.client != failedClient {
+		log.Debugln("[DNS][DoH] %s: failure from a replaced connection ignored: %s", doh.fcxHost(), doh.fcxRedact(resetErr))
 		return doh.client, nil
 	}
 	if errors.Is(resetErr, quic.Err0RTTRejected) {
@@ -23,7 +26,13 @@ func (doh *dnsOverHTTPS) resetClient(ctx context.Context, failedClient *http.Cli
 		}
 	}
 	doh.client = nil
-	log.Debugln("re-creating the http client due to %v", resetErr)
+	doh.fcxHealth.adopt(nil)
+	log.Infoln("[DNS][DoH] %s: re-creating connection pool due to: %s", doh.fcxHost(), doh.fcxRedact(resetErr))
+	startTime := time.Now()
 	doh.client, err = doh.createClient(ctx)
+	if err != nil {
+		log.Warnln("[DNS][DoH] %s: re-creating connection pool failed: %s", doh.fcxHost(), doh.fcxRedact(err))
+	}
+	doh.fcxAdoptClient(doh.client, "reset", time.Since(startTime))
 	return doh.client, err
 }

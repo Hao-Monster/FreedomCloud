@@ -184,6 +184,38 @@ func patchDNSDoH(source []byte) ([]byte, error) {
 	if len(changes) != len(names) {
 		return nil, fmt.Errorf("upstream DoH method set changed")
 	}
+	// Connection health state lives with the upstream object so it is freed
+	// with it; exactly one dnsOverHTTPS struct must exist.
+	structs := 0
+	for _, declaration := range file.Decls {
+		generic, ok := declaration.(*ast.GenDecl)
+		if !ok || generic.Tok != token.TYPE {
+			continue
+		}
+		for _, spec := range generic.Specs {
+			typeSpec, ok := spec.(*ast.TypeSpec)
+			if !ok || typeSpec.Name.Name != "dnsOverHTTPS" {
+				continue
+			}
+			structType, ok := typeSpec.Type.(*ast.StructType)
+			if !ok || structType.Fields == nil || !structType.Fields.Closing.IsValid() {
+				return nil, fmt.Errorf("upstream DoH struct changed")
+			}
+			for _, field := range structType.Fields.List {
+				for _, fieldName := range field.Names {
+					if fieldName.Name == "fcxHealth" {
+						return nil, fmt.Errorf("upstream DoH struct already has fcxHealth")
+					}
+				}
+			}
+			structs++
+			closing := fset.Position(structType.Fields.Closing).Offset
+			changes = append(changes, replacement{closing, closing, "\n\tfcxHealth fcxDoHHealth\n"})
+		}
+	}
+	if structs != 1 {
+		return nil, fmt.Errorf("upstream DoH struct changed")
+	}
 	sort.Slice(changes, func(i, j int) bool { return changes[i].start > changes[j].start })
 	patched := string(source)
 	for _, change := range changes {
@@ -329,6 +361,17 @@ func generate(out string) error {
 		return err
 	}
 	if err := write(filepath.Join(sourceDirectory, "dns", "doh_lifecycle_fcx_test.go"), "doh_lifecycle_fcx_test.go", dnsTests); err != nil {
+		return err
+	}
+	dnsHealth, err := patchFiles.ReadFile("patches/dns_doh_health_fcx.go.txt")
+	if err != nil {
+		return err
+	}
+	dnsHealth, err = format.Source(dnsHealth)
+	if err != nil {
+		return err
+	}
+	if err := write(filepath.Join(sourceDirectory, "dns", "doh_health_fcx.go"), "doh_health_fcx.go", dnsHealth); err != nil {
 		return err
 	}
 	for _, name := range []string{"urltest_history_fcx.go", "urltest_history_fcx_test.go"} {
