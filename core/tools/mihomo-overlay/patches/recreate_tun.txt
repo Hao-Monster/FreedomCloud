@@ -3,6 +3,7 @@ func ReCreateTun(tunConf LC.Tun, tunnel C.Tunnel) {
 	tunConf.Sort()
 	tunMux.Lock()
 	defer tunMux.Unlock()
+	defer fcxPublishTunStatus()
 	fcxTunStatus.Revision++
 	fcxTunStatus.RequestedEnabled = tunConf.Enable
 	fcxTunStatus.ErrorCode = ""
@@ -27,6 +28,7 @@ func ReCreateTun(tunConf LC.Tun, tunnel C.Tunnel) {
 		return
 	}
 	fcxTunStatus.State = "starting"
+	fcxPublishTunStatus()
 	created, err := fcxCreateTun(tunConf, tunnel)
 	if err != nil {
 		tunConf.Enable = false

@@ -6,6 +6,7 @@ import (
 	"os"
 	"sync"
 	"testing"
+	"time"
 
 	C "github.com/metacubex/mihomo/constant"
 	LC "github.com/metacubex/mihomo/listener/config"
@@ -95,4 +96,34 @@ func TestFCXTunConfigDoesNotExposeMutableListenerMemory(t *testing.T) {
 	if returned.DNSHijack[0] != "any:53" { t.Fatal("listener shares caller slices") }
 	returned.DNSHijack[0] = "observer-change"
 	if GetTunConf().DNSHijack[0] != "any:53" { t.Fatal("observer can mutate listener slices") }
+}
+
+func TestFCXTunStatusReadableDuringSlowCreation(t *testing.T) {
+	fcxTestReset(t)
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	fcxCreateTun = func(config LC.Tun, _ C.Tunnel) (fcxTunListener, error) {
+		close(entered)
+		<-release
+		return &fcxFakeTun{config: config}, nil
+	}
+	before := GetTunLifecycleStatus().Revision
+	done := make(chan struct{})
+	go func() { defer close(done); ReCreateTun(LC.Tun{Enable:true, Device:"fcx-test"}, nil) }()
+	<-entered
+	read := make(chan TunLifecycleStatus, 1)
+	go func() { read <- GetTunLifecycleStatus() }()
+	select {
+	case status := <-read:
+		if status.State != "starting" || status.ListenerActive || !status.RequestedEnabled || status.Revision <= before {
+			t.Errorf("creation transition not observable: %+v", status)
+		}
+	case <-time.After(2 * time.Second):
+		t.Error("status read waited for adapter creation")
+	}
+	close(release)
+	<-done
+	if status := GetTunLifecycleStatus(); status.State != "on" || !status.ListenerActive {
+		t.Fatalf("completed creation not published: %+v", status)
+	}
 }

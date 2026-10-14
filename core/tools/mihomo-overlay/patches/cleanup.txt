@@ -1,6 +1,7 @@
 func Cleanup() {
 	tunMux.Lock()
 	defer tunMux.Unlock()
+	defer fcxPublishTunStatus()
 	fcxTunStatus.Revision++
 	fcxTunStatus.RequestedEnabled = false
 	LastTunConf.Enable = false
