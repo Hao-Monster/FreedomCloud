@@ -36,14 +36,19 @@ class AppController {
     WindowsTunStartupEffects? windowsStartupEffects,
     TunRuntimeController? tunRuntimeController,
     Future<DateTime?> Function()? nativeRunTimeProbe,
+    Duration tunSettleDelay = const Duration(milliseconds: 500),
   }) : _ref = ref,
        _windowsStartupEffects = windowsStartupEffects,
        _nativeRunTimeProbe = nativeRunTimeProbe,
+       _tunSettleDelay = tunSettleDelay,
        _tunRuntime = tunRuntimeController ?? tunRuntime;
   final WindowsTunStartupEffects? _windowsStartupEffects;
   final Future<DateTime?> Function()? _nativeRunTimeProbe;
+  final Duration _tunSettleDelay;
   final TunRuntimeController _tunRuntime;
   Future<void>? _runtimeInitialization;
+  bool _runtimeInitialized = false;
+  bool _recoveringRunningProjection = false;
   int? lastProfileModified;
   final BuildContext context;
   final WidgetRef _ref;
@@ -72,14 +77,47 @@ class AppController {
   }
 
   Future<TunStatus?> refreshWindowsTunStatus({bool fresh = false}) async {
+    final TunStatus? status;
     if (_windowsStartupEffects != null) {
       final epoch = _tunRuntime.observationEpoch;
-      final status = await _windowsStartupEffects.observe();
-      if (status == null || !_tunRuntime.accept(status, epoch)) return null;
-      return status;
+      final observed = await _windowsStartupEffects.observe();
+      status = observed == null || !_tunRuntime.accept(observed, epoch)
+          ? null
+          : observed;
+    } else {
+      if (!Platform.isWindows) return null;
+      status = await _tunObserver.refresh(fresh: fresh);
     }
-    if (!Platform.isWindows) return null;
-    return _tunObserver.refresh(fresh: fresh);
+    if (status != null) _recoverRunningProjection(status);
+    return status;
+  }
+
+  /// A startup whose final status read failed skips the running projection
+  /// (uptime, traffic tasks, tray icon). When a later poll proves the same
+  /// Core has TUN on, complete that projection once instead of leaving a
+  /// working tunnel displayed as stopped.
+  void _recoverRunningProjection(TunStatus status) {
+    if (!_runtimeInitialized ||
+        _recoveringRunningProjection ||
+        _tunRuntime.busy ||
+        _tunRuntime.closing ||
+        status.observed != TunObservedState.on ||
+        globalState.startTime != null) {
+      return;
+    }
+    _recoveringRunningProjection = true;
+    final effects =
+        _windowsStartupEffects ?? _ControllerWindowsTunStartupEffects(this);
+    effects.log('TUN observed on after startup; restoring running state');
+    unawaited(effects
+        .reflectRunning(() =>
+            !_tunRuntime.busy &&
+            !_tunRuntime.closing &&
+            _tunRuntime.isEnabled &&
+            _tunRuntime.status?.instanceId == status.instanceId)
+        .catchError((Object error) {
+      effects.log('TUN running-state recovery failed: $error');
+    }).whenComplete(() => _recoveringRunningProjection = false));
   }
 
   Future<void> _applyWindowsConfig(Future<String> Function(bool enable) apply,
@@ -90,7 +128,7 @@ class AppController {
       desiredEnabled: () => _ref.read(patchClashConfigProvider).tun.enable,
       explicitStop: () => _tunRuntime.operation == TunOperation.disabling,
       explicitOperation: () => _tunRuntime.busy,
-      failedRequest: () => _tunRuntime.failure != null,
+      failedRequest: () => _tunRuntime.requestFailure != null,
       reportFailure: _tunRuntime.fail,
       invalidate: _tunRuntime.invalidate,
       apply: apply,
@@ -913,10 +951,19 @@ class AppController {
           await globalState.syncNetworkSettingsFromProvider(patchConfig,
               profile: applyingProfile);
       if (!configurationIsCurrent()) return;
-      // Always update provider when using provider settings to ensure UI reflects config
-      _ref
-          .read(patchClashConfigProvider.notifier)
-          .updateState((state) => syncedConfig);
+      // Always update provider when using provider settings to ensure UI reflects config.
+      // Merge only the synced fields: the snapshot was read before several
+      // awaits, and writing it back whole could revert a concurrent TUN
+      // switch or other preference change.
+      _ref.read(patchClashConfigProvider.notifier).updateState((state) => state
+          .copyWith(
+            ipv6: syncedConfig.ipv6,
+            allowLan: syncedConfig.allowLan,
+            mixedPort: syncedConfig.mixedPort,
+            findProcessMode: syncedConfig.findProcessMode,
+          )
+          .copyWith
+          .tun(stack: syncedConfig.tun.stack));
       patchConfig = syncedConfig;
     }
 
@@ -1554,13 +1601,15 @@ class AppController {
   }
 
   Future<void> initializeRuntime() =>
-      _runtimeInitialization ??= _initializeRuntime();
+      _runtimeInitialization ??= _initializeRuntime()
+          .whenComplete(() => _runtimeInitialized = true);
 
   Future<void> _startWindowsTun() => startWindowsTunOnLaunch(
     runtime: _tunRuntime,
     effects: _windowsStartupEffects ?? _ControllerWindowsTunStartupEffects(this),
     writeIntent: (value) => _ref.read(patchClashConfigProvider.notifier)
       .updateState((state) => state.copyWith.tun(enable: value)),
+    settleDelay: _tunSettleDelay,
   );
 
   Future<void> _initializeRuntime() async {

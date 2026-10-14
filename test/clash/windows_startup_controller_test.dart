@@ -27,6 +27,8 @@ class StartupEffects implements WindowsTunStartupEffects {
   bool initializationSucceeds = true;
   bool proveOn = true;
   int backgroundConfigurations = 0;
+  bool statusAvailable = true;
+  bool loseStatusAfterListener = false;
   void Function()? duringMatch;
   String? pauseAt;
   final entered = Completer<void>();
@@ -50,6 +52,7 @@ class StartupEffects implements WindowsTunStartupEffects {
   @override
   Future<TunStatus?> observe() async {
     await record('observe');
+    if (!statusAvailable) return null;
     return TunStatus(
         instanceId: 'core',
         revision: calls.length,
@@ -104,6 +107,7 @@ class StartupEffects implements WindowsTunStartupEffects {
     if (listenerSucceeds) {
       running = true;
       enabled = true;
+      if (loseStatusAfterListener) statusAvailable = false;
     }
     return listenerSucceeds;
   }
@@ -151,7 +155,8 @@ Future<AppController> controllerFixture(
                 builder: (context, ref, _) {
                   controller ??= AppController(context, ref,
                       windowsStartupEffects: effects,
-                      tunRuntimeController: runtime);
+                      tunRuntimeController: runtime,
+                      tunSettleDelay: Duration.zero);
                   return Material(
                       child: AnimatedBuilder(
                           animation: runtime,
@@ -389,6 +394,35 @@ void main() {
     expect(effects.calls, isNot(contains('listener')));
     expect(effects.calls, isNot(contains('authorize')));
     expect(runtime.isEnabled, isTrue);
+  });
+
+  testWidgets(
+      'failed final status read is repaired once by a later successful poll',
+      (tester) async {
+    final effects = StartupEffects()..loseStatusAfterListener = true;
+    globalState.startTime = null;
+    final runtime = TunRuntimeController();
+    final controller = await controllerFixture(tester, effects, runtime);
+    await controller.initializeRuntime();
+    expect(effects.running, isTrue);
+    expect(runtime.failure, 'statusUnavailable');
+    expect(effects.calls, isNot(contains('reflect')));
+
+    effects.statusAvailable = true;
+    await controller.refreshWindowsTunStatus();
+    await tester.pump();
+    expect(runtime.observed, TunObservedState.on);
+    expect(runtime.failure, isNull);
+    expect(runtime.requestFailure, isNull);
+    expect(effects.calls.where((c) => c == 'reflect').length, 1);
+
+    // Once the running projection exists, further polls do not repeat it.
+    globalState.startTime = DateTime.now();
+    addTearDown(() => globalState.startTime = null);
+    await controller.refreshWindowsTunStatus();
+    await tester.pump();
+    expect(effects.calls.where((c) => c == 'reflect').length, 1);
+    expect(effects.backgroundConfigurations, 0);
   });
 
   for (final phase in [

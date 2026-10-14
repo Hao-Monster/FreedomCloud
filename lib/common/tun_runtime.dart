@@ -94,6 +94,12 @@ class TunRuntimeController extends ChangeNotifier {
   bool desiredEnabled = false;
   TunOperation operation = TunOperation.idle;
   String? failure;
+  // Only an explicit enable/disable request (or a writer that rejected one)
+  // records this. A failed or invalid status poll is an observation problem;
+  // it must not make background configuration refreshes downgrade TUN.
+  static const _observationFailures = {'statusUnavailable', 'invalidStatus'};
+  String? _requestFailure;
+  String? get requestFailure => _requestFailure;
   bool get busy => operation != TunOperation.idle;
   // Poll revisions and Core identity do not change the UI. Keep every field
   // used by the TUN label/actions so equal checked flags cannot hide failures.
@@ -139,6 +145,11 @@ class TunRuntimeController extends ChangeNotifier {
         previous.instanceId == value.instanceId &&
         value.revision < previous.revision) return false;
     _status = value;
+    if (value.errorCode == null &&
+        value.observed ==
+            (desiredEnabled ? TunObservedState.on : TunObservedState.off)) {
+      _requestFailure = null;
+    }
     if (value.errorCode != null) {
       failure = value.errorCode;
     } else if (failure == 'statusUnavailable' ||
@@ -160,6 +171,7 @@ class TunRuntimeController extends ChangeNotifier {
 
   void fail(String reason) {
     failure = reason;
+    if (!_observationFailures.contains(reason)) _requestFailure = reason;
     notifyListeners();
   }
 
@@ -179,6 +191,7 @@ class TunRuntimeController extends ChangeNotifier {
     desiredEnabled = enabled;
     operation = enabled ? TunOperation.enabling : TunOperation.disabling;
     failure = null;
+    _requestFailure = null;
     notifyListeners();
     // Riverpod listeners can run synchronously here. They must observe busy
     // before the preference changes, or they schedule a second config apply.
@@ -194,9 +207,11 @@ class TunRuntimeController extends ChangeNotifier {
           failure = null;
         }
       } on TunFailure catch (error) {
-        if (isCurrentIntent(intent)) failure = error.code;
+        if (isCurrentIntent(intent)) failure = _requestFailure = error.code;
       } catch (_) {
-        if (isCurrentIntent(intent)) failure = 'operationFailed';
+        if (isCurrentIntent(intent)) {
+          failure = _requestFailure = 'operationFailed';
+        }
       } finally {
         if (isCurrentIntent(intent)) {
           operation = TunOperation.idle;

@@ -113,6 +113,40 @@ class ClashService extends ClashHandlerInterface {
 
   bool? get agentProxyRunning => _agentProxyRunning;
 
+  // The Agent republishes proxyRunning only on Core state transitions. Keep
+  // the cache aligned with listener commands acknowledged by the same Core;
+  // otherwise a running proxy looks stopped after an ordinary stop/start and
+  // a TUN-only enable falls back to a full profile reload.
+  bool _sameAgentCore(int epoch, int? generation) =>
+      _agentMode &&
+      epoch == _connectionEpoch &&
+      generation == _agentGeneration &&
+      agentCoreReady;
+
+  @override
+  Future<bool> startListener() async {
+    final epoch = _connectionEpoch;
+    final generation = _agentGeneration;
+    final started = await super.startListener();
+    if (started && _sameAgentCore(epoch, generation)) {
+      _agentProxyRunning = true;
+    }
+    return started;
+  }
+
+  @override
+  Future<bool> stopListener() async {
+    final epoch = _connectionEpoch;
+    final generation = _agentGeneration;
+    final stopped = await super.stopListener();
+    // An unacknowledged stop leaves the previous claim; the next Agent state
+    // event or TUN observation remains authoritative.
+    if (stopped && _sameAgentCore(epoch, generation)) {
+      _agentProxyRunning = false;
+    }
+    return stopped;
+  }
+
   /// Latest strict-capture status reported by the Agent.  The value is
   /// fail-closed by default and is never inferred from `proxyRunning`.
   AgentStrictPolicyStatus get strictPolicyStatus =>
