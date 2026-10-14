@@ -68,6 +68,14 @@ func fcxPublishTunStatus() {
 	fcxTunStatusSnapshot.Store(&snapshot)
 }
 
+// Caller owns tunMux. Publishes an intermediate state before a potentially
+// blocking create/close, then advances the revision so the terminal snapshot
+// published afterwards never shares a revision with the transition.
+func fcxPublishTunTransition() {
+	fcxPublishTunStatus()
+	fcxTunStatus.Revision++
+}
+
 func GetTunLifecycleStatus() TunLifecycleStatus {
 	if snapshot := fcxTunStatusSnapshot.Load(); snapshot != nil {
 		return *snapshot

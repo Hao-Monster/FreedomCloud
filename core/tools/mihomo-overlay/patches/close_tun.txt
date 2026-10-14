@@ -2,6 +2,13 @@
 func closeTunListener() error {
 	fcxTunStatus.ListenerActive = false
 	if tunLister == nil { return fcxTunCloseError }
+	// Close can block (stack first, adapter last). Lock-free readers must not
+	// keep seeing the previous ready snapshot meanwhile; publish a non-ready
+	// transition, then let the caller publish the real terminal state.
+	pending := fcxTunStatus.State
+	fcxTunStatus.State = "unknown"
+	fcxPublishTunTransition()
+	fcxTunStatus.State = pending
 	previous := tunLister
 	tunLister = nil
 	fcxTunCloseError = previous.Close()

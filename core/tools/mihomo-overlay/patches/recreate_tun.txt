@@ -28,7 +28,7 @@ func ReCreateTun(tunConf LC.Tun, tunnel C.Tunnel) {
 		return
 	}
 	fcxTunStatus.State = "starting"
-	fcxPublishTunStatus()
+	fcxPublishTunTransition()
 	created, err := fcxCreateTun(tunConf, tunnel)
 	if err != nil {
 		tunConf.Enable = false

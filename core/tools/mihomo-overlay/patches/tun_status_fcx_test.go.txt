@@ -146,3 +146,46 @@ func TestFCXTunStatusReadableDuringSlowCreation(t *testing.T) {
 		t.Fatalf("completed creation not published: %+v", status)
 	}
 }
+
+type fcxBlockingCloseTun struct {
+	fcxFakeTun
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (f *fcxBlockingCloseTun) Close() error { close(f.entered); <-f.release; return nil }
+
+func TestFCXTunStatusNotReadyDuringSlowClose(t *testing.T) {
+	for _, path := range []struct {
+		name string
+		stop func()
+	}{
+		{"Cleanup", Cleanup},
+		{"ReCreateTunDisable", func() { ReCreateTun(LC.Tun{Enable:false, Device:"fcx-test"}, nil) }},
+	} {
+		t.Run(path.name, func(t *testing.T) {
+			fcxTestReset(t)
+			listener := &fcxBlockingCloseTun{entered: make(chan struct{}), release: make(chan struct{})}
+			fcxCreateTun = func(config LC.Tun, _ C.Tunnel) (fcxTunListener, error) {
+				listener.config = config
+				return listener, nil
+			}
+			ReCreateTun(LC.Tun{Enable:true, Device:"fcx-test"}, nil)
+			ready := GetTunLifecycleStatus()
+			if ready.State != "on" || !ready.ListenerActive { t.Fatalf("listener not ready: %+v", ready) }
+			done := make(chan struct{})
+			go func() { defer close(done); path.stop() }()
+			<-listener.entered
+			closing := GetTunLifecycleStatus()
+			if closing.State == "on" || closing.ListenerActive || closing.RequestedEnabled || closing.Revision <= ready.Revision {
+				t.Errorf("slow close still reports the previous ready state: %+v", closing)
+			}
+			close(listener.release)
+			<-done
+			stopped := GetTunLifecycleStatus()
+			if stopped.State != "off" || stopped.ListenerActive || stopped.Revision <= closing.Revision {
+				t.Fatalf("terminal state not published after close: %+v", stopped)
+			}
+		})
+	}
+}
