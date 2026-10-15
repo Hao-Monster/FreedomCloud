@@ -2,6 +2,11 @@
 
 更新日期：2026-10-15。当前阶段是快速开发、快速迭代和部分功能预览。本文记录来源与验收边界；每次继续开发仍需核实实际 Git/PR/CI 状态，不能把历史报告视为当前通过证明。
 
+## 跨配置节点总览：工程书（2026-10-15，仅设计）
+
+- 用户需求：不用切换配置，在同一页面查看所有配置的节点状态。基线 `development@2074cce`。本轮只产出 [工程书](plans/cross-profile-node-overview-2026-10-15.md)：概念设计、详细设计（Core `catalogPrepare/catalogTestDelay/catalogRelease` 契约、协调器 scope、健康缓存、跨配置切换状态机）、P0/P1/P2 任务拆分、测试矩阵、风险、禁用方案及负责人评审清单。
+- 状态：未实现、未运行任何测试或构建，未推送。由其他开发者按工程书实施，负责人逐批评审；P1 涉及 Core 改动，须整包重建并重新绑定 Helper/Core hash，TUN 不回环须 VM 验证。
+
 ## DoH 静默连接恢复回归修复（2026-10-14）
 
 - 来源：两份独立审查对 `4e4a146` 的同一 P2——调用方 5s 截止（`DefaultDNSTimeout`）总先于 `http.Client.Timeout`（5s）到期，“调用方已过期即返回”跳过恢复，静默的 HTTP/2/HTTP/3 连接留在池中，后续查询继续复用并再次超时，只能等 H2 ping（约 30–45s）/QUIC idle 或切网 `ResetConnection`。两项发现为同一根因。
