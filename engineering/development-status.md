@@ -1,6 +1,6 @@
 # 开发、集成与预览台账
 
-更新日期：2026-10-14。当前阶段是快速开发、快速迭代和部分功能预览。本文记录来源与验收边界；每次继续开发仍需核实实际 Git/PR/CI 状态，不能把历史报告视为当前通过证明。
+更新日期：2026-10-15。当前阶段是快速开发、快速迭代和部分功能预览。本文记录来源与验收边界；每次继续开发仍需核实实际 Git/PR/CI 状态，不能把历史报告视为当前通过证明。
 
 ## DoH 静默连接恢复回归修复（2026-10-14）
 
@@ -8,7 +8,10 @@
 - 修复（本地提交 `4fdf293`，基于 `fa758a6`）：新增 `dns/doh_health_fcx.go` 按客户端代次统计应答。调用方截止且该代次在整个请求期间**没有任何应答**时，立即停止分发该代次（`doh.client=nil`，下一次查询懒建新连接），延迟 `fcxDoHRetireGrace`（默认 5s）再关闭，避免切断仍在途的并发请求。取消、旧代次、锁竞争（`TryLock`）一律不计；保留代次保护、显式重置不被撤销、0-RTT 与最多两次重试。健康判断用单调应答计数而非墙钟时间戳——首版时间戳在 Windows 粗粒度时钟下被真实 H2 探针抓到误判“期间有应答”。
 - 新增日志 `[DNS][DoH] <host>`：重试（Debug）、旧代次失败忽略/重置跳过（Debug）、重建连接池及原因（Info）、静默连接退役（Warn，含时长/末次错误/累计次数）、延迟关闭结果（Debug/Warn）、建池失败（Warn）、截止但期间有应答而保留（Debug）。仅记录 host，错误文本中的 DoH 路径/查询串被替换，避免账号标识进日志。
 - 验证：overlay 生成器 PASS；DoH 专项 24 组 + 2 子例 PASS，重复 10 轮 PASS（原“截止即保留 client”断言已按新语义改写）；审查者真实 TLS/HTTP/2 黑洞探针 **时间戳版 FAIL → 最终 PASS**（下一次查询新建 TCP、7ms 成功）；内存静默探针 PASS；dns 包 vet PASS；Core `-tags=with_gvisor ./...` PASS；`git diff --check` PASS。本机 Go 1.25.13（CI 1.26.0）。
-- NOT RUN：race（本机 UCRT 链接限制）、CI（未推送）、预览包（补丁 hash 变化，Core 与 Helper 须一同重建）、真实微信长时、TUN/切网/休眠实机。未推送、未 PR、未打包、未操作本机代理/TUN/服务。
+- 2026-10-15 交付补记：源码 `335911106ea827ae9776789c8563d0409f227a4a`（含 `4fdf293` 修复及 `3359111` 文档）已在自有 `freedomcloud/development`，本轮 fetch/远端回读一致；[CI 38671805210](https://github.com/Hao-Monster/FreedomCloud/actions/runs/38671805210) 对应该 SHA，4/4 success。Linux DoH `-race` 实际 PASS（2.198s），Windows Core 专项 PASS，Agent 83/Helper 48 PASS；Flutter 609 PASS/1 SKIP（Linux 无 cmd.exe 的既有用例），M3 四脚本 PASS。本机 Windows race 仍因 UCRT 链接限制 NOT RUN，不能将其误写为 CI race 未运行。
+- 同 SHA 完整新编 Core/Agent/Helper/UI 的普通未签名包：`dist/FreedomCloud-windows-amd64-dohfix-335911106ea8.zip`，153,567,226 bytes，SHA256 `20fb8fe5c6b61515a92c444360d11b8410e4435484da620b865399982c5e7199`；同名完整解压目录已逐项核对。构建 r2 exit 0，73 文件/72 checksum、独立静态审计 8/8 PASS，Helper 实际内嵌的新 Core hash 与 UI 编译输入一致；新增 `dns/doh_health_fcx.go` 在包内 manifest/唯一 overlay 映射/生成文件的专项核验 PASS。未覆盖旧产物，未混用旧 Core/Helper。
+- r1 构建失败证据保留：`E:\Temp\flclashx-dohfix-preview-20261015-335911106ea8-r1` 的 AOT `zone.cc: 95: error: Out of memory`，snapshotter exit `-1073740791`。用户表示内存已改善后在全新 r2 重建；同源码/同脚本的 AOT 70.780s PASS、完整构建约 408.66s。便携 pwsh 7.6.7 的 ZIP digest 已核对官方 release；本地 Flutter 3.47.4/Go1.25.13 与 CI 3.41.7/1.26.0 的差异及已知 VS config-only exit 1 均保留披露。
+- 详细组件 hash、15 步构建、独立审计、CI 证据、r1 失败、观察信号及换包/回退见[DoH 静默连接修复预览交付](testing/windows-dohfix-preview-2026-10-15.md)。交付文档单独本地提交，本任务未推送文档、未 PR/合并/发布/部署。真实微信长时、TUN/SCM/切网/休眠实机及候选运行仍 NOT RUN；未操作本机客户端、代理/TUN/服务、UAC，未启动或修改观察脚本。
 - 已知取舍：空闲连接上单个慢查询（>5s 且无其他应答）会触发一次重连；上游完全不可达时每个超时查询各退役一个代次，Warn 日志随之增加（含累计计数便于识别）。
 
 ## 微信间歇断网调查与 DoH 恢复修复（2026-10-14）
