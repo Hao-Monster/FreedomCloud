@@ -648,7 +648,7 @@ class MessageLookup extends MessageLookupByLibrary {
     ),
     "nodeOverviewHealthCounts": m4,
     "nodeOverviewHistoryNotice": MessageLookupByLibrary.simpleMessage(
-      "History saves manual tests after this app applies a profile. When taking over an existing proxy, only earlier history and live results are shown.",
+      "Manual tests are saved only when the running profile can be verified. Otherwise, earlier history and live results remain visible, without saving new history.",
     ),
     "nodeOverviewInline": MessageLookupByLibrary.simpleMessage("Inline"),
     "nodeOverviewLastActiveTest": m5,
@@ -660,6 +660,9 @@ class MessageLookup extends MessageLookupByLibrary {
     "nodeOverviewNoNodes": MessageLookupByLibrary.simpleMessage(
       "No matching nodes",
     ),
+    "nodeOverviewNodeUnidentified": MessageLookupByLibrary.simpleMessage(
+      "Node could not be identified",
+    ),
     "nodeOverviewParseFailed": MessageLookupByLibrary.simpleMessage(
       "Profile could not be parsed",
     ),
@@ -668,7 +671,7 @@ class MessageLookup extends MessageLookupByLibrary {
     ),
     "nodeOverviewProviderPending": m8,
     "nodeOverviewRuntimeSource": MessageLookupByLibrary.simpleMessage(
-      "Runtime provider",
+      "Runtime node",
     ),
     "nodeOverviewStale": MessageLookupByLibrary.simpleMessage(
       "May be outdated",

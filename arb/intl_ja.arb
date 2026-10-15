@@ -495,7 +495,7 @@
   "nodeOverviewActive": "使用中",
   "nodeOverviewAvailableOnly": "利用可能のみ",
   "nodeOverviewInline": "インライン",
-  "nodeOverviewRuntimeSource": "実行中のプロバイダー",
+  "nodeOverviewRuntimeSource": "実行中のノード",
   "nodeOverviewUntested": "未測定",
   "nodeOverviewTestFailed": "テスト失敗",
   "nodeOverviewStale": "古い可能性あり",
@@ -553,5 +553,6 @@
     }
   },
   "nodeOverviewPartialSummary": "概要は読み込み済みノードのみを集計します",
-  "nodeOverviewHistoryNotice": "履歴はこのアプリで設定を適用した後の手動測定を保存します。既存のプロキシを引き継ぐ場合は、過去の履歴と現在の結果を表示します。"
+  "nodeOverviewHistoryNotice": "実行中の設定を確認できた場合のみ手動測定を保存します。確認できない場合も過去の履歴と現在の結果を表示しますが、新たな履歴は保存しません。",
+  "nodeOverviewNodeUnidentified": "ノードを識別できません"
 }

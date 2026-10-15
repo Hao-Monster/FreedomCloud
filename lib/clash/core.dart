@@ -32,6 +32,8 @@ class ClashCore {
   @visibleForTesting
   ClashCore.forTesting(this.clashInterface);
   static ClashCore? _instance;
+  /// Passive readers must not construct the service as a side effect.
+  static ClashHandlerInterface? get existingInterface => _instance?.clashInterface;
   late ClashHandlerInterface clashInterface;
   final _connectionSnapshotDecoder = ConnectionSnapshotDecoder();
   int _connectionSnapshotRequestCount = 0;

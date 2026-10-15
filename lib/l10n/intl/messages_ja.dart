@@ -382,7 +382,7 @@ class MessageLookup extends MessageLookupByLibrary {
     ),
     "nodeOverviewHealthCounts": m4,
     "nodeOverviewHistoryNotice": MessageLookupByLibrary.simpleMessage(
-      "履歴はこのアプリで設定を適用した後の手動測定を保存します。既存のプロキシを引き継ぐ場合は、過去の履歴と現在の結果を表示します。",
+      "実行中の設定を確認できた場合のみ手動測定を保存します。確認できない場合も過去の履歴と現在の結果を表示しますが、新たな履歴は保存しません。",
     ),
     "nodeOverviewInline": MessageLookupByLibrary.simpleMessage("インライン"),
     "nodeOverviewLastActiveTest": m5,
@@ -394,6 +394,9 @@ class MessageLookup extends MessageLookupByLibrary {
     "nodeOverviewNoNodes": MessageLookupByLibrary.simpleMessage(
       "一致するノードがありません",
     ),
+    "nodeOverviewNodeUnidentified": MessageLookupByLibrary.simpleMessage(
+      "ノードを識別できません",
+    ),
     "nodeOverviewParseFailed": MessageLookupByLibrary.simpleMessage(
       "設定の解析に失敗しました",
     ),
@@ -402,7 +405,7 @@ class MessageLookup extends MessageLookupByLibrary {
     ),
     "nodeOverviewProviderPending": m8,
     "nodeOverviewRuntimeSource": MessageLookupByLibrary.simpleMessage(
-      "実行中のプロバイダー",
+      "実行中のノード",
     ),
     "nodeOverviewStale": MessageLookupByLibrary.simpleMessage("古い可能性あり"),
     "nodeOverviewTestFailed": MessageLookupByLibrary.simpleMessage("テスト失敗"),

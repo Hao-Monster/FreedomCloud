@@ -90,4 +90,20 @@ void main() {
     expect(() => node(proxy()..['port'] = 0), throwsFormatException);
     expect(() => node(proxy()..['name'] = 42), throwsFormatException);
   });
+
+  test('unparsed display keys are stable, unique and never endpoint identities',
+      () {
+    final placeholder = unparsedCatalogNode(profileId: 'a', sourceIndex: 1);
+    expect(placeholder.name, '#2');
+    expect(placeholder.type, 'unknown');
+    expect(placeholder.unsupported, CatalogUnsupportedReason.parseFailed);
+    expect(placeholder.identityKey, startsWith('invalid:v1:'));
+    expect(placeholder.endpointKey, isEmpty);
+    expect(unparsedCatalogNode(profileId: 'a', sourceIndex: 1), placeholder);
+    expect(unparsedCatalogNode(profileId: 'a', sourceIndex: 2).identityKey,
+        isNot(placeholder.identityKey));
+    expect(unparsedCatalogNode(profileId: 'b', sourceIndex: 1).identityKey,
+        isNot(placeholder.identityKey));
+    expect(CatalogNode.fromJson(placeholder.toJson()), placeholder);
+  });
 }

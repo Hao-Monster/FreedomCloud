@@ -689,7 +689,7 @@
   "nodeOverviewActive": "Active",
   "nodeOverviewAvailableOnly": "Available only",
   "nodeOverviewInline": "Inline",
-  "nodeOverviewRuntimeSource": "Runtime provider",
+  "nodeOverviewRuntimeSource": "Runtime node",
   "nodeOverviewUntested": "Untested",
   "nodeOverviewTestFailed": "Test failed",
   "nodeOverviewStale": "May be outdated",
@@ -747,5 +747,6 @@
     }
   },
   "nodeOverviewPartialSummary": "Summary includes loaded nodes only",
-  "nodeOverviewHistoryNotice": "History saves manual tests after this app applies a profile. When taking over an existing proxy, only earlier history and live results are shown."
+  "nodeOverviewHistoryNotice": "Manual tests are saved only when the running profile can be verified. Otherwise, earlier history and live results remain visible, without saving new history.",
+  "nodeOverviewNodeUnidentified": "Node could not be identified"
 }

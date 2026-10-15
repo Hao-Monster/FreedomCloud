@@ -106,3 +106,29 @@ CatalogNode catalogNodeFromMap({
             : CatalogUnsupportedReason.none,
   );
 }
+
+/// A display-only identity, deliberately outside the persistent health-key
+/// namespace. No endpoint or source map can escape through a malformed item.
+CatalogNode unparsedCatalogNode({
+  required String profileId,
+  required int sourceIndex,
+  String? name,
+  String? type,
+}) {
+  final displayName =
+      name == null || name.isEmpty ? '#${sourceIndex + 1}' : name;
+  final displayType = type == null || type.isEmpty ? 'unknown' : type;
+  final key = sha256
+      .convert(utf8.encode(
+          jsonEncode([profileId, sourceIndex, displayName, displayType])))
+      .toString()
+      .substring(0, 32);
+  return CatalogNode(
+    identityKey: 'invalid:v1:$key',
+    endpointKey: '',
+    name: displayName,
+    type: displayType,
+    source: CatalogNodeSource.inline,
+    unsupported: CatalogUnsupportedReason.parseFailed,
+  );
+}

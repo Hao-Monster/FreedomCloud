@@ -90,7 +90,9 @@ class DelayTestCoordinator extends ChangeNotifier {
     _batch = batch;
     notifyListeners();
     final deadline = Timer(batchTimeout, () {
-      unawaited(cancel(reason: 'deadlineExceeded'));
+      // The batch budget may expire before an individual request's deadline.
+      // Do not turn that scheduling decision into a failed node measurement.
+      unawaited(cancel(reason: 'batchDeadlineExceeded'));
     });
     try {
       await Future.wait(

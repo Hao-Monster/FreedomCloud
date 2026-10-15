@@ -189,6 +189,7 @@ void main() {
       () => fakeAsync((clock) {
             var calls = 0;
             final cancelled = <String>[];
+            final results = <DelayTestResult>[];
             final coordinator = DelayTestCoordinator(
               concurrency: 1,
               requestTimeout: const Duration(seconds: 5),
@@ -199,7 +200,7 @@ void main() {
               },
               cancelRequest: (id) async => cancelled.add(id),
               onStarted: (_) {},
-              onResult: (_, __) {},
+              onResult: (_, result) => results.add(result),
             );
             DelayBatchResult? summary;
             coordinator
@@ -209,7 +210,9 @@ void main() {
             clock.elapse(const Duration(milliseconds: 20));
             expect(calls, 1);
             expect(cancelled.length, 1);
-            expect(summary!.reason, 'deadlineExceeded');
+            expect(summary!.reason, 'batchDeadlineExceeded');
+            expect(results.single.reason, 'batchDeadlineExceeded');
+            expect(results.single.value, -1);
             expect(clock.nonPeriodicTimerCount, 0);
             coordinator.dispose();
           }));
@@ -220,6 +223,7 @@ void main() {
             var calls = 0;
             var cancelled = 0;
             final values = <int>[];
+            final reasons = <String?>[];
             final coordinator = DelayTestCoordinator(
               concurrency: 1,
               requestTimeout: const Duration(milliseconds: 10),
@@ -228,7 +232,10 @@ void main() {
                   : Future.value(const DelayTestResult(15)),
               cancelRequest: (_) async => cancelled++,
               onStarted: (_) {},
-              onResult: (_, result) => values.add(result.value),
+              onResult: (_, result) {
+                values.add(result.value);
+                reasons.add(result.reason);
+              },
             );
             unawaited(coordinator.run([
               const DelayTestTarget('a', 'url'),
@@ -238,6 +245,7 @@ void main() {
             expect(calls, 2);
             expect(cancelled, 1);
             expect(values, [-1, 15]);
+            expect(reasons, ['deadlineExceeded', null]);
             expect(coordinator.busy, isFalse);
             coordinator.dispose();
           }));

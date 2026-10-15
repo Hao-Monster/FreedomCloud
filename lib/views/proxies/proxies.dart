@@ -35,6 +35,7 @@ class _ProxiesViewState extends ConsumerState<ProxiesView> with PageMixin {
 
   @override
   List<Widget> get actions => [
+        const NodeOverviewScopeAction(),
         Consumer(
           builder: (_, ref, child) {
             final globalModeEnabled = ref.watch(globalModeEnabledProvider);

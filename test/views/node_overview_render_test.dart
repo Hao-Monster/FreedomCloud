@@ -3,12 +3,14 @@ import 'dart:ui' as ui;
 
 import 'package:flclashx/common/common.dart';
 import 'package:flclashx/common/node_health_store.dart';
+import 'package:flclashx/enum/enum.dart';
 import 'package:flclashx/l10n/l10n.dart';
 import 'package:flclashx/models/models.dart';
 import 'package:flclashx/models/node_catalog.dart';
 import 'package:flclashx/providers/node_overview.dart';
 import 'package:flclashx/state.dart';
-import 'package:flclashx/views/proxies/overview/overview.dart';
+import 'package:flclashx/views/proxies/proxies.dart';
+import 'package:flclashx/widgets/scaffold.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
@@ -54,6 +56,7 @@ void main() {
       globalState.config =
           const Config(themeProps: defaultThemeProps, profiles: profiles);
       globalState.appState = AppState(
+          pageLabel: PageLabel.proxies,
           viewSize: size,
           version: 1,
           requests: FixedList(1),
@@ -103,6 +106,7 @@ void main() {
       await tester.pumpWidget(ProviderScope(
           overrides: [
             nodeOverviewEnabledProvider.overrideWithValue(true),
+            activeNodeCatalogProvider.overrideWithValue(null),
             cachedProfileCatalogsProvider.overrideWith((ref) => catalogs),
             profileCatalogProvider
                 .overrideWith((ref, id) async => catalogs[id]!),
@@ -119,15 +123,25 @@ void main() {
               GlobalCupertinoLocalizations.delegate
             ],
             supportedLocales: AppLocalizations.delegate.supportedLocales,
-            home: const Scaffold(
-                body: RepaintBoundary(
-                    key: ValueKey('overview-render'),
-                    child: Material(
-                        child: NodeOverviewScopeView(
-                            currentView: Text('Existing proxy view'))))),
+            home: RepaintBoundary(
+                key: const ValueKey('overview-render'),
+                child: CommonScaffold(
+                    title: 'Proxies',
+                    body: Builder(builder: (context) {
+                      globalState.measure = Measure.of(context, 1);
+                      return const ProxiesView();
+                    }))),
           )));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('All profiles'));
+      final scopeMenu = find.byKey(const ValueKey('overview-scope-menu'));
+      if (scopeMenu.evaluate().isNotEmpty) {
+        await tester.tap(scopeMenu);
+        await tester.pumpAndSettle();
+        await tester.tap(find.widgetWithText(
+            CheckedPopupMenuItem<ProxiesScope>, 'All profiles'));
+      } else {
+        await tester.tap(find.text('All profiles'));
+      }
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('overview-header-a')));
       await tester.pumpAndSettle();

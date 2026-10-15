@@ -62,23 +62,33 @@ ProfileCatalog buildProfileCatalog({
   }
 
   final nodes = <CatalogNode>[];
-  for (final proxy in (rawProxies as List?) ?? const []) {
-    if (proxy is! Map) {
-      throw const CatalogBuildException('parseFailed');
-    }
-    if (_nonLeafTypes.contains(proxy['type'])) continue;
+  for (final (sourceIndex, proxy)
+      in ((rawProxies as List?) ?? const []).indexed) {
+    if (proxy is Map && _nonLeafTypes.contains(proxy['type'])) continue;
     if (nodes.length >= NodeCatalogService.maxNodes) {
       throw const CatalogBuildException('tooManyNodes');
     }
-    try {
-      nodes.add(catalogNodeFromMap(
-        profileId: profileId,
-        proxy: proxy,
-        selectGroups: selectGroups[proxy['name']] ?? const [],
-      ));
-    } on FormatException {
-      throw const CatalogBuildException('parseFailed');
+    if (proxy is Map) {
+      try {
+        nodes.add(catalogNodeFromMap(
+          profileId: profileId,
+          proxy: proxy,
+          selectGroups: selectGroups[proxy['name']] ?? const [],
+        ));
+        continue;
+      } on FormatException {
+        // One unsupported shape must not hide the rest of this configuration.
+        // Only approved display fields are allowed into its placeholder.
+      }
     }
+    final name = proxy is Map ? proxy['name'] : null;
+    final type = proxy is Map ? proxy['type'] : null;
+    nodes.add(unparsedCatalogNode(
+      profileId: profileId,
+      sourceIndex: sourceIndex,
+      name: name is String ? name : null,
+      type: type is String ? type : null,
+    ));
   }
 
   final providers = <String, int>{};

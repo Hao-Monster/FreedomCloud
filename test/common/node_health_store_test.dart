@@ -33,8 +33,9 @@ void main() {
         'u': NodeHealthStore.hashTestUrl(url),
       };
 
-  Future<void> snapshot(Map<String, Object?> entries) => file.writeAsString(
-        jsonEncode({'version': 1, 'entries': entries}),
+  Future<void> snapshot(Map<String, Object?> entries, {int version = 1}) =>
+      file.writeAsString(
+        jsonEncode({'version': version, 'entries': entries}),
       );
 
   setUp(() async {
@@ -62,6 +63,7 @@ void main() {
     expect(raw, isNot(contains('secret-token')));
     final json = jsonDecode(raw) as Map<String, dynamic>;
     expect(json.keys, unorderedEquals(['version', 'entries']));
+    expect(json['version'], 2);
     expect(json['entries']['profile-a'][key], {
       'd': 183,
       't': now.millisecondsSinceEpoch,
@@ -127,6 +129,7 @@ void main() {
       identityKey: key,
       delayMs: -1,
       testUrl: url,
+      reason: 'testFailed',
       testedAt: now.subtract(const Duration(seconds: 1)),
     );
     expect(store.read('a', key, testUrl: url)?.delayMs, 100);
@@ -147,8 +150,7 @@ void main() {
       testUrl: url,
       reason: 'failure at https://example/credential',
     );
-    expect(store.read('a', key, testUrl: url)?.delayMs, -1);
-    expect(store.read('a', key, testUrl: url)?.reason, 'testFailed');
+    expect(store.read('a', key, testUrl: url), isNull);
     await store.record(
       profileId: 'a',
       identityKey: secondKey,
@@ -161,6 +163,137 @@ void main() {
     expect(
         store.read('a', secondKey, testUrl: url)?.reason, 'deadlineExceeded');
     store.dispose();
+  });
+
+  const controlReasons = <String?>[
+    'cancelled',
+    'configChanged',
+    'sessionClosed',
+    'uiInactive',
+    'transportFailure',
+    'clientFailure',
+    'overloaded',
+    'notFound',
+    'invalidParameters',
+    'duplicateRequest',
+    'busy',
+    'batchDeadlineExceeded',
+    'unknownFailure',
+    null,
+  ];
+
+  for (final reason in controlReasons) {
+    test('control failure $reason preserves prior measurement and empty state',
+        () async {
+      final store = createStore();
+      addTearDown(store.dispose);
+      final measuredAt = now.subtract(const Duration(minutes: 3));
+      await store.record(
+        profileId: 'a',
+        identityKey: key,
+        delayMs: 100,
+        testUrl: url,
+        testedAt: measuredAt,
+      );
+      await store.flush();
+      final persisted = await file.readAsString();
+      var changes = 0;
+      store.addListener(() => changes++);
+      for (final identity in [key, secondKey]) {
+        await store.record(
+          profileId: 'a',
+          identityKey: identity,
+          delayMs: -1,
+          testUrl: url,
+          reason: reason,
+        );
+      }
+      final retained = store.read('a', key, testUrl: url)!;
+      expect(retained.delayMs, 100);
+      expect(retained.testedAt, measuredAt);
+      expect(retained.reason, isNull);
+      expect(store.read('a', secondKey, testUrl: url), isNull);
+      expect(changes, 0);
+      await store.flush();
+      expect(await file.readAsString(), persisted);
+    });
+  }
+
+  for (final reason in ['testFailed', 'deadlineExceeded']) {
+    test('measured failure $reason replaces success and survives reopening',
+        () async {
+      final store = createStore();
+      addTearDown(store.dispose);
+      await store.record(
+        profileId: 'a',
+        identityKey: key,
+        delayMs: 100,
+        testUrl: url,
+        testedAt: now.subtract(const Duration(minutes: 3)),
+      );
+      await store.record(
+        profileId: 'a',
+        identityKey: key,
+        delayMs: -1,
+        testUrl: url,
+        reason: reason,
+      );
+      expect(store.read('a', key, testUrl: url)?.delayMs, -1);
+      expect(store.read('a', key, testUrl: url)?.testedAt, now);
+      expect(store.read('a', key, testUrl: url)?.reason, reason);
+      await store.flush();
+      final restored = createStore();
+      addTearDown(restored.dispose);
+      await restored.load();
+      expect(restored.read('a', key, testUrl: url)?.delayMs, -1);
+      expect(restored.read('a', key, testUrl: url)?.reason, reason);
+      expect(restored.read('a', key, testUrl: url)?.testedAt, now);
+    });
+  }
+
+  test('v1 migration drops all ambiguous failures and preserves success',
+      () async {
+    final invalidReasons = [...controlReasons, 'deadlineExceeded'];
+    final invalidKeys = List.generate(
+        invalidReasons.length, (i) => i.toRadixString(16).padLeft(32, '0'));
+    await snapshot({
+      'a': {
+        key: entry(delay: 123),
+        secondKey: entry(delay: -1, reason: 'testFailed'),
+        for (var i = 0; i < invalidKeys.length; i++)
+          invalidKeys[i]: entry(delay: -1, reason: invalidReasons[i]),
+      }
+    });
+    final store = createStore();
+    addTearDown(store.dispose);
+    await store.load();
+    expect(store.readProfile('a', testUrl: url).keys, [key]);
+    expect(store.read('a', key, testUrl: url)?.delayMs, 123);
+    expect(store.read('a', secondKey, testUrl: url), isNull);
+    expect(store.lastErrorCode, isNull);
+    await store.flush();
+    final migrated = jsonDecode(await file.readAsString()) as Map;
+    expect(migrated['version'], 2);
+    expect((migrated['entries']['a'] as Map).keys, [key]);
+  });
+
+  test('v2 load excludes nonmeasurement failures without losing valid peers',
+      () async {
+    await snapshot({
+      'a': {
+        key: entry(delay: -1, reason: 'deadlineExceeded'),
+        secondKey: entry(delay: -1, reason: 'configChanged'),
+      }
+    }, version: 2);
+    final store = createStore();
+    addTearDown(store.dispose);
+    await store.load();
+    expect(store.read('a', key, testUrl: url)?.reason, 'deadlineExceeded');
+    expect(store.read('a', secondKey, testUrl: url), isNull);
+    expect(store.lastErrorCode, isNull);
+    await store.flush();
+    final persisted = jsonDecode(await file.readAsString()) as Map;
+    expect((persisted['entries']['a'] as Map).keys, [key]);
   });
 
   test('unhashed keys are rejected before writing', () async {
@@ -261,7 +394,7 @@ void main() {
 
   for (final damaged in [
     '{broken',
-    '{"version":2,"entries":{}}',
+    '{"version":99,"entries":{}}',
     '{"version":1,"entries":{"a":{"not-a-hash":{}}}}'
   ]) {
     test('damaged snapshot is quarantined and starts empty: $damaged',

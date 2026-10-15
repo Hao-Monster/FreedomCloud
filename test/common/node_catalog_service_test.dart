@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flclashx/common/node_catalog_service.dart';
 import 'package:flclashx/models/node_catalog.dart';
@@ -246,9 +247,10 @@ void main() {
     for (final raw in [
       null,
       {'proxies': 'not-a-list'},
+      {'proxy-groups': 'not-a-list'},
       {
-        'proxies': [42]
-      }
+        'proxy-providers': ['not-a-map']
+      },
     ]) {
       service = NodeCatalogService(
         readProfileConfig: (id) async {
@@ -268,6 +270,105 @@ void main() {
       expect(catalog.toString(), isNot(contains('secret-value')));
       expect(catalog.toString(), isNot(contains('private.example')));
     }
+  });
+
+  test('one malformed leaf preserves healthy leaves with a safe placeholder',
+      () async {
+    final raw = _config();
+    (raw['proxies'] as List).insert(1, {
+      'name': 'Broken',
+      'type': 'ss',
+      'server': 'private-broken.example',
+      'password': 'secret-broken-password',
+    });
+    service = NodeCatalogService(
+      readProfileConfig: (id) async => raw,
+      evaluate: (raw) async => raw,
+      fileMetadata: (id) async => metadata,
+      scriptFingerprint: () => script,
+    );
+    final catalog = await service.load(_profile('a'));
+    expect(catalog.status, ProfileCatalogStatus.ready);
+    expect(catalog.nodes.map((node) => node.name), ['Node', 'Broken']);
+    expect(catalog.nodes.first.unsupported, CatalogUnsupportedReason.none);
+    expect(catalog.nodes.first.selectGroups, ['First', 'Second']);
+    final broken = catalog.nodes.last;
+    expect(broken.unsupported, CatalogUnsupportedReason.parseFailed);
+    expect(broken.identityKey, startsWith('invalid:v1:'));
+    expect(broken.identityKey, isNot(matches(RegExp(r'^[a-f0-9]{32}$'))));
+    expect(broken.endpointKey, isEmpty);
+    expect(broken.selectGroups, isEmpty);
+    final output = '${catalog.toString()} ${jsonEncode(catalog.toJson())}';
+    expect(output, isNot(contains('private-broken.example')));
+    expect(output, isNot(contains('secret-broken-password')));
+  });
+
+  test('peers-only WireGuard and malformed items stay visible without secrets',
+      () {
+    final raw = <String, dynamic>{
+      'proxies': [
+        {'name': 'Healthy', 'type': 'ss', 'server': 'ok.invalid', 'port': 443},
+        {
+          'name': 'Peers-only',
+          'type': 'wireguard',
+          'private-key': 'secret-private-key',
+          'peers': [
+            {
+              'server': 'private-peer.invalid',
+              'port': 51820,
+              'public-key': 'secret-peer-key'
+            }
+          ],
+        },
+        'secret-malformed-value',
+        {
+          'name': 42,
+          'type': ['secret-type-value'],
+          'uuid': 'secret-uuid'
+        },
+        {'name': 'No endpoint', 'type': 'ss'},
+      ],
+    };
+    ProfileCatalog parse() =>
+        buildProfileCatalog(profileId: 'a', fingerprint: 'f', raw: raw);
+    final catalog = parse();
+    expect(catalog.status, ProfileCatalogStatus.ready);
+    expect(catalog.nodes.map((node) => node.name),
+        ['Healthy', 'Peers-only', '#3', '#4', 'No endpoint']);
+    expect(catalog.nodes.skip(1).map((node) => node.unsupported),
+        everyElement(CatalogUnsupportedReason.parseFailed));
+    expect(catalog.nodes.skip(1).map((node) => node.endpointKey),
+        everyElement(isEmpty));
+    expect(catalog.nodes.map((node) => node.identityKey).toSet(), hasLength(5));
+    expect(parse().nodes, catalog.nodes);
+    final output = '${catalog.toString()} ${jsonEncode(catalog.toJson())}';
+    for (final secret in [
+      'secret-private-key',
+      'private-peer.invalid',
+      'secret-peer-key',
+      'secret-malformed-value',
+      'secret-type-value',
+      'secret-uuid',
+      'ok.invalid',
+    ]) {
+      expect(output, isNot(contains(secret)));
+    }
+    expect(catalog.nodes[2].type, 'unknown');
+    expect(catalog.nodes[3].type, 'unknown');
+  });
+
+  test('malformed placeholders count toward the same 2000-node limit', () {
+    final raw = <String, dynamic>{'proxies': List.filled(2000, null)};
+    final catalog =
+        buildProfileCatalog(profileId: 'a', fingerprint: 'f', raw: raw);
+    expect(catalog.nodes, hasLength(2000));
+    expect(
+        catalog.nodes.map((node) => node.identityKey).toSet(), hasLength(2000));
+    raw['proxies'] = List.filled(2001, null);
+    expect(
+        () => buildProfileCatalog(profileId: 'a', fingerprint: 'f', raw: raw),
+        throwsA(isA<CatalogBuildException>()
+            .having((error) => error.reason, 'reason', 'tooManyNodes')));
   });
 
   test('more than 2000 leaves is an explicit failure rather than truncation',

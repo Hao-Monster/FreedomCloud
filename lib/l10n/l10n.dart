@@ -5674,10 +5674,10 @@ class AppLocalizations {
     );
   }
 
-  /// `Runtime provider`
+  /// `Runtime node`
   String get nodeOverviewRuntimeSource {
     return Intl.message(
-      'Runtime provider',
+      'Runtime node',
       name: 'nodeOverviewRuntimeSource',
       desc: '',
       args: [],
@@ -5844,11 +5844,21 @@ class AppLocalizations {
     );
   }
 
-  /// `History saves manual tests after this app applies a profile. When taking over an existing proxy, only earlier history and live results are shown.`
+  /// `Manual tests are saved only when the running profile can be verified. Otherwise, earlier history and live results remain visible, without saving new history.`
   String get nodeOverviewHistoryNotice {
     return Intl.message(
-      'History saves manual tests after this app applies a profile. When taking over an existing proxy, only earlier history and live results are shown.',
+      'Manual tests are saved only when the running profile can be verified. Otherwise, earlier history and live results remain visible, without saving new history.',
       name: 'nodeOverviewHistoryNotice',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Node could not be identified`
+  String get nodeOverviewNodeUnidentified {
+    return Intl.message(
+      'Node could not be identified',
+      name: 'nodeOverviewNodeUnidentified',
       desc: '',
       args: [],
     );

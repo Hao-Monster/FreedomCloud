@@ -563,7 +563,7 @@ class MessageLookup extends MessageLookupByLibrary {
     ),
     "nodeOverviewHealthCounts": m4,
     "nodeOverviewHistoryNotice": MessageLookupByLibrary.simpleMessage(
-      "В историю сохраняются ручные проверки после применения профиля в этом сеансе. При подключении к уже работающему прокси показаны прежняя история и текущие результаты.",
+      "Ручные проверки сохраняются, только если удалось определить работающий профиль. Иначе прежняя история и текущие результаты доступны без записи новой истории.",
     ),
     "nodeOverviewInline": MessageLookupByLibrary.simpleMessage("Встроенный"),
     "nodeOverviewLastActiveTest": m5,
@@ -575,6 +575,9 @@ class MessageLookup extends MessageLookupByLibrary {
     "nodeOverviewNoNodes": MessageLookupByLibrary.simpleMessage(
       "Нет подходящих узлов",
     ),
+    "nodeOverviewNodeUnidentified": MessageLookupByLibrary.simpleMessage(
+      "Не удалось распознать узел",
+    ),
     "nodeOverviewParseFailed": MessageLookupByLibrary.simpleMessage(
       "Не удалось разобрать профиль",
     ),
@@ -583,7 +586,7 @@ class MessageLookup extends MessageLookupByLibrary {
     ),
     "nodeOverviewProviderPending": m8,
     "nodeOverviewRuntimeSource": MessageLookupByLibrary.simpleMessage(
-      "Активный провайдер",
+      "Активный узел",
     ),
     "nodeOverviewStale": MessageLookupByLibrary.simpleMessage(
       "Возможно, устарело",

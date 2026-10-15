@@ -55,20 +55,10 @@ class NodeHealthStore extends ChangeNotifier {
   final _entries = <String, Map<String, NodeHealthRecord>>{};
   static final _identityPattern = RegExp(r'^[a-f0-9]{32}$');
   static final _urlHashPattern = RegExp(r'^[a-f0-9]{16}$');
-  static const _failureReasons = {
+  static const _schemaVersion = 2;
+  static const _measurementFailureReasons = {
     'testFailed',
     'deadlineExceeded',
-    'cancelled',
-    'configChanged',
-    'sessionClosed',
-    'uiInactive',
-    'transportFailure',
-    'clientFailure',
-    'overloaded',
-    'notFound',
-    'invalidParameters',
-    'duplicateRequest',
-    'busy',
   };
 
   Future<void>? _loading;
@@ -116,8 +106,12 @@ class NodeHealthStore extends ChangeNotifier {
     if (!_identityPattern.hasMatch(identityKey)) {
       throw ArgumentError('Health cache requires a hashed node identity');
     }
-    // The existing delay source uses zero as the in-progress marker.
-    if (delayMs == 0) return;
+    // Zero means in progress. Cancellation, admission and transport failures
+    // say nothing about the node, so preserve its last actual measurement.
+    if (delayMs == 0 ||
+        (delayMs < 0 && !_measurementFailureReasons.contains(reason))) {
+      return;
+    }
     final timestamp = testedAt ?? _now();
     if (!_loaded) await load();
     _ensureActive();
@@ -128,7 +122,7 @@ class NodeHealthStore extends ChangeNotifier {
       delayMs: delayMs < 0 ? -1 : delayMs,
       testedAt: timestamp,
       testUrlHash: hashTestUrl(testUrl),
-      reason: delayMs < 0 ? _safeFailureReason(reason) : null,
+      reason: delayMs < 0 ? reason : null,
     );
     _trim();
     _changed();
@@ -169,7 +163,7 @@ class NodeHealthStore extends ChangeNotifier {
         throw const FormatException('Health cache exceeds its limit');
       }
       final raw = jsonDecode(await file.readAsString());
-      _decode(raw);
+      if (_decode(raw)) _revision++;
       _trim();
       if (_entries.isNotEmpty && !_disposed) notifyListeners();
     } on FormatException {
@@ -183,10 +177,14 @@ class NodeHealthStore extends ChangeNotifier {
     }
   }
 
-  void _decode(Object? raw) {
-    if (raw is! Map || raw['version'] != 1 || raw['entries'] is! Map) {
+  bool _decode(Object? raw) {
+    if (raw is! Map ||
+        (raw['version'] != 1 && raw['version'] != _schemaVersion) ||
+        raw['entries'] is! Map) {
       throw const FormatException('Unknown health cache schema');
     }
+    final legacy = raw['version'] == 1;
+    var needsRewrite = legacy;
     final entries = raw['entries'] as Map;
     for (final profile in entries.entries) {
       if (profile.key is! String || profile.value is! Map) {
@@ -210,16 +208,27 @@ class NodeHealthStore extends ChangeNotifier {
           throw const FormatException('Invalid health record');
         }
         final delay = value['d'] as int;
+        final reason = value['r'] as String?;
+        // V1 conflated batch/request deadlines and mapped unknown errors to
+        // testFailed. No negative V1 value proves node failure, and no older
+        // good value survives in this cache. Migrate those as unmeasured.
+        if (delay < 0 &&
+            (legacy || !_measurementFailureReasons.contains(reason))) {
+          needsRewrite = true;
+          continue;
+        }
+        if (delay > 0 && reason != null) needsRewrite = true;
         records[node.key as String] = NodeHealthRecord(
           delayMs: delay,
           testedAt: DateTime.fromMillisecondsSinceEpoch(value['t'] as int,
               isUtc: true),
           testUrlHash: value['u'] as String,
-          reason: delay < 0 ? _safeFailureReason(value['r'] as String?) : null,
+          reason: delay < 0 ? reason : null,
         );
       }
       _entries[profile.key as String] = records;
     }
+    return needsRewrite;
   }
 
   void _trim() {
@@ -264,7 +273,7 @@ class NodeHealthStore extends ChangeNotifier {
     final pending = File('${file.path}.pending');
     final revision = _revision;
     final encoded = jsonEncode({
-      'version': 1,
+      'version': _schemaVersion,
       'entries': {
         for (final profile in _entries.entries)
           profile.key: {
@@ -308,9 +317,6 @@ class NodeHealthStore extends ChangeNotifier {
       _report('corruptBackupFailed');
     }
   }
-
-  static String _safeFailureReason(String? reason) =>
-      _failureReasons.contains(reason) ? reason! : 'testFailed';
 
   void _report(String code) {
     _lastErrorCode = code;

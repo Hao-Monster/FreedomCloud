@@ -408,7 +408,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "nodeOverviewFileMissing": MessageLookupByLibrary.simpleMessage("配置文件缺失"),
     "nodeOverviewHealthCounts": m4,
     "nodeOverviewHistoryNotice": MessageLookupByLibrary.simpleMessage(
-      "历史仅保存本次应用配置后的手动测速。接管已有代理时，显示旧历史和实时结果。",
+      "确认运行配置归属后才保存手动测速；无法确认时，仍显示旧历史和实时结果，不写入新历史。",
     ),
     "nodeOverviewInline": MessageLookupByLibrary.simpleMessage("内联"),
     "nodeOverviewLastActiveTest": m5,
@@ -418,12 +418,15 @@ class MessageLookup extends MessageLookupByLibrary {
     ),
     "nodeOverviewMedian": m7,
     "nodeOverviewNoNodes": MessageLookupByLibrary.simpleMessage("没有符合条件的节点"),
+    "nodeOverviewNodeUnidentified": MessageLookupByLibrary.simpleMessage(
+      "无法识别此节点",
+    ),
     "nodeOverviewParseFailed": MessageLookupByLibrary.simpleMessage("配置解析失败"),
     "nodeOverviewPartialSummary": MessageLookupByLibrary.simpleMessage(
       "摘要仅统计已加载的节点",
     ),
     "nodeOverviewProviderPending": m8,
-    "nodeOverviewRuntimeSource": MessageLookupByLibrary.simpleMessage("运行时订阅源"),
+    "nodeOverviewRuntimeSource": MessageLookupByLibrary.simpleMessage("运行时节点"),
     "nodeOverviewStale": MessageLookupByLibrary.simpleMessage("可能过时"),
     "nodeOverviewTestFailed": MessageLookupByLibrary.simpleMessage("测试失败"),
     "nodeOverviewTooManyNodes": MessageLookupByLibrary.simpleMessage(

@@ -549,7 +549,7 @@
   "nodeOverviewActive": "Активный",
   "nodeOverviewAvailableOnly": "Только доступные",
   "nodeOverviewInline": "Встроенный",
-  "nodeOverviewRuntimeSource": "Активный провайдер",
+  "nodeOverviewRuntimeSource": "Активный узел",
   "nodeOverviewUntested": "Не проверено",
   "nodeOverviewTestFailed": "Ошибка проверки",
   "nodeOverviewStale": "Возможно, устарело",
@@ -607,5 +607,6 @@
     }
   },
   "nodeOverviewPartialSummary": "В сводке учтены только загруженные узлы",
-  "nodeOverviewHistoryNotice": "В историю сохраняются ручные проверки после применения профиля в этом сеансе. При подключении к уже работающему прокси показаны прежняя история и текущие результаты."
+  "nodeOverviewHistoryNotice": "Ручные проверки сохраняются, только если удалось определить работающий профиль. Иначе прежняя история и текущие результаты доступны без записи новой истории.",
+  "nodeOverviewNodeUnidentified": "Не удалось распознать узел"
 }

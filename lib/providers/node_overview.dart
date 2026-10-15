@@ -3,10 +3,12 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:crypto/crypto.dart';
+import 'package:flclashx/clash/core.dart';
 import 'package:flclashx/common/constant.dart';
 import 'package:flclashx/common/node_catalog_service.dart';
 import 'package:flclashx/common/node_health_recorder.dart';
 import 'package:flclashx/common/node_health_store.dart';
+import 'package:flclashx/common/node_runtime_catalog.dart';
 import 'package:flclashx/common/path.dart';
 import 'package:flclashx/common/print.dart';
 import 'package:flclashx/models/models.dart';
@@ -15,6 +17,7 @@ import 'package:flclashx/state.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path/path.dart' as p;
 
+import 'app.dart';
 import 'config.dart';
 import 'state.dart';
 
@@ -28,6 +31,67 @@ final cachedProfileCatalogsProvider =
     StateProvider<Map<String, ProfileCatalog>>((ref) => const {});
 final nodeOverviewTestUrlProvider =
     Provider<String>((ref) => ref.watch(getRealTestUrlProvider(null)));
+
+// Read-only IO seam, shared with the existing effective configuration screen.
+// Keep Core access inside the callback so disabled/unused UI cannot start it.
+final nodeRuntimeReaderProvider =
+    Provider<Future<Map<String, dynamic>> Function()>((ref) => () async {
+          final interface = ClashCore.existingInterface;
+          if (interface == null) {
+            throw const CatalogBuildException('runtimeUnavailable');
+          }
+          final result = await interface.getConfig('fcx://runtime');
+          if (!result.isSuccess || result.data is! Map) {
+            throw const CatalogBuildException('runtimeUnavailable');
+          }
+          return Map<String, dynamic>.from(result.data as Map);
+        });
+
+// Keep the exact read future separate from AsyncValue: a request must complete
+// with its original read even when Riverpod replaces the displayed future.
+final nodeRuntimeReadProvider = Provider<NodeRuntimeRead>((ref) {
+  if (!ref.watch(nodeOverviewEnabledProvider)) {
+    return NodeRuntimeRead((_) => Future.value());
+  }
+  final id = ref.watch(currentProfileIdProvider);
+  final profile =
+      ref.watch(profilesProvider.select((profiles) => profiles.getProfile(id)));
+  ref
+    ..watch(scriptStateProvider.select((state) => state.currentScript))
+    ..watch(versionProvider);
+  if (profile == null || profile.isUpdating) {
+    return NodeRuntimeRead((_) => Future.value());
+  }
+  final service = ref.watch(nodeCatalogServiceProvider);
+  final runtimeReader = ref.watch(nodeRuntimeReaderProvider);
+  final read = NodeRuntimeRead((isCurrent) => readVerifiedNodeRuntime(
+      profileId: profile.id,
+      readRuntime: runtimeReader,
+      readProfile: () => service.load(profile),
+      isCurrent: isCurrent));
+  // Revoke immediately, even before Riverpod schedules a rebuild/frame. This
+  // also catches A -> B -> A and deletion/recreation with the same profile id.
+  ref
+    ..onDispose(read.invalidate)
+    ..listen(currentProfileIdProvider, (_, __) => read.invalidate())
+    ..listen(profilesProvider, (previous, next) {
+      if (previous?.getProfile(id) != next.getProfile(id)) read.invalidate();
+    })
+    ..listen(scriptStateProvider, (previous, next) {
+      if (previous?.currentScript != next.currentScript) read.invalidate();
+    })
+    ..listen(versionProvider, (_, __) => read.invalidate());
+  return read;
+});
+
+final verifiedNodeRuntimeProvider = FutureProvider<ProfileCatalog?>(
+    (ref) => ref.watch(nodeRuntimeReadProvider).result);
+
+/// Active source labels must come from the verified running configuration.
+final activeNodeCatalogProvider = Provider<ProfileCatalog?>((ref) {
+  final snapshot = ref.watch(verifiedNodeRuntimeProvider);
+  return snapshot.isLoading ? null : snapshot.asData?.value;
+});
 
 void _logHealthFailure(String code) {
   commonPrint.log('node.health reason=$code');
@@ -71,7 +135,12 @@ final nodeHealthEntriesProvider = Provider.autoDispose
 // Inject only the IO boundary in tests; provider invalidation stays real.
 final nodeCatalogServiceFactoryProvider =
     Provider<NodeCatalogService Function()>((ref) => () => NodeCatalogService(
-          readProfileConfig: globalState.getProfileConfig,
+          readProfileConfig: (id) {
+            if (ClashCore.existingInterface == null) {
+              throw const CatalogBuildException('runtimeUnavailable');
+            }
+            return globalState.getProfileConfig(id);
+          },
           evaluate: globalState.handleEvaluate,
           fileMetadata: (id) async {
             final stat = await File(await appPath.getProfilePath(id)).stat();

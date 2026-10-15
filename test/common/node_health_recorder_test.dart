@@ -1,7 +1,9 @@
 import 'dart:io';
 
+import 'package:flclashx/common/node_catalog_service.dart';
 import 'package:flclashx/common/node_health_recorder.dart';
 import 'package:flclashx/common/node_health_store.dart';
+import 'package:flclashx/models/node_catalog.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -11,7 +13,7 @@ void main() {
   var now = DateTime.utc(2026, 10, 15);
   const url = 'https://probe.invalid/204';
   Map<String, dynamic> config(String server) => {
-        'proxies': [
+        'proxies': <Object?>[
           {
             'name': 'same',
             'type': 'ss',
@@ -43,12 +45,13 @@ void main() {
         profileId: 'a', raw: config('old.invalid'), name: 'same', url: url)!;
     final current = recorder.capture(
         profileId: 'b', raw: config('new.invalid'), name: 'same', url: url)!;
+    await recorder.record(old, 40);
     await recorder.record(old, -1, reason: 'configChanged');
-    expect(store.read('a', old.identityKey, testUrl: url)?.reason,
-        'configChanged');
+    expect(store.read('a', old.identityKey, testUrl: url)?.delayMs, 40);
+    expect(store.read('a', old.identityKey, testUrl: url)?.reason, isNull);
     expect(store.read('b', current.identityKey, testUrl: url), isNull);
     await recorder.record(current, 55);
-    expect(store.read('a', old.identityKey, testUrl: url)?.delayMs, -1);
+    expect(store.read('a', old.identityKey, testUrl: url)?.delayMs, 40);
     expect(store.read('b', current.identityKey, testUrl: url)?.delayMs, 55);
   });
 
@@ -101,5 +104,112 @@ void main() {
       expect(persisted, isNot(contains(value)));
       expect(target.toString(), isNot(contains(value)));
     }
+  });
+
+  test('malformed nodes do not block healthy-node history or become targets',
+      () async {
+    final raw = config('healthy.invalid');
+    (raw['proxies'] as List).addAll([
+      {'name': 'broken', 'type': 'ss', 'password': 'secret-malformed'},
+      {
+        'name': 'peers-only',
+        'type': 'wireguard',
+        'private-key': 'secret-peer-key',
+        'peers': [
+          {'server': 'private-peer.invalid', 'port': 51820}
+        ],
+      },
+      'secret-malformed-item',
+    ]);
+    final target =
+        recorder.capture(profileId: 'a', raw: raw, name: 'same', url: url);
+    expect(target, isNotNull);
+    for (final name in ['broken', 'peers-only', '#4']) {
+      expect(recorder.capture(profileId: 'a', raw: raw, name: name, url: url),
+          isNull);
+    }
+    await recorder.record(target!, 63);
+    await recorder.flush();
+    expect(store.read('a', target.identityKey, testUrl: url)?.delayMs, 63);
+    expect(store.readProfile('a', testUrl: url), hasLength(1));
+    final persisted =
+        await File('${directory.path}/health.json').readAsString();
+    for (final secret in [
+      'healthy.invalid',
+      'private-peer.invalid',
+      'secret-malformed',
+      'secret-peer-key',
+      'invalid:v1:'
+    ]) {
+      expect(persisted, isNot(contains(secret)));
+    }
+  });
+
+  for (final brokenFirst in [false, true]) {
+    test(
+        'bad/good duplicate names never capture history (badFirst=$brokenFirst)',
+        () {
+      final raw = config('healthy.invalid');
+      final broken = {'name': 'same', 'type': 'ss'};
+      final proxies = raw['proxies'] as List;
+      if (brokenFirst) {
+        proxies.insert(0, broken);
+      } else {
+        proxies.add(broken);
+      }
+      expect(recorder.capture(profileId: 'a', raw: raw, name: 'same', url: url),
+          isNull);
+    });
+  }
+
+  test('redacted catalog capture shares filtering and deletion generations',
+      () async {
+    final raw = config('healthy.invalid');
+    (raw['proxies'] as List).addAll([
+      {'name': 'broken', 'type': 'ss'},
+      {'name': 'ambiguous', 'type': 'ss'},
+      {
+        'name': 'ambiguous',
+        'type': 'ss',
+        'server': 'other.invalid',
+        'port': 443
+      },
+    ]);
+    final catalog =
+        buildProfileCatalog(profileId: 'a', fingerprint: 'verified', raw: raw);
+    final target =
+        recorder.captureCatalog(catalog: catalog, name: 'same', url: url);
+    expect(target, isNotNull);
+    expect(target!.profileId, 'a');
+    expect(recorder.captureCatalog(catalog: catalog, name: 'broken', url: url),
+        isNull);
+    expect(
+        recorder.captureCatalog(catalog: catalog, name: 'ambiguous', url: url),
+        isNull);
+    expect(
+        recorder.captureCatalog(
+            catalog: catalog.copyWith(status: ProfileCatalogStatus.parseFailed),
+            name: 'same',
+            url: url),
+        isNull);
+    await recorder.record(target, 71);
+    expect(store.read('a', target.identityKey, testUrl: url)?.delayMs, 71);
+    await recorder.removeProfile('a');
+    await recorder.record(target, 72);
+    expect(store.readProfile('a', testUrl: url), isEmpty);
+  });
+
+  test('async runtime verification preserves the captured measurement time',
+      () async {
+    final arrivedAt = now;
+    final target = recorder.capture(
+        profileId: 'a',
+        raw: config('healthy.invalid'),
+        name: 'same',
+        url: url)!;
+    now = now.add(const Duration(minutes: 2));
+    await recorder.record(target, 81, testedAt: arrivedAt);
+    expect(
+        store.read('a', target.identityKey, testUrl: url)!.testedAt, arrivedAt);
   });
 }

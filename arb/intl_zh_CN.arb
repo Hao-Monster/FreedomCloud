@@ -630,7 +630,7 @@
   "nodeOverviewActive": "活动配置",
   "nodeOverviewAvailableOnly": "仅显示可用",
   "nodeOverviewInline": "内联",
-  "nodeOverviewRuntimeSource": "运行时订阅源",
+  "nodeOverviewRuntimeSource": "运行时节点",
   "nodeOverviewUntested": "未测",
   "nodeOverviewTestFailed": "测试失败",
   "nodeOverviewStale": "可能过时",
@@ -688,5 +688,6 @@
     }
   },
   "nodeOverviewPartialSummary": "摘要仅统计已加载的节点",
-  "nodeOverviewHistoryNotice": "历史仅保存本次应用配置后的手动测速。接管已有代理时，显示旧历史和实时结果。"
+  "nodeOverviewHistoryNotice": "确认运行配置归属后才保存手动测速；无法确认时，仍显示旧历史和实时结果，不写入新历史。",
+  "nodeOverviewNodeUnidentified": "无法识别此节点"
 }

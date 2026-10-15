@@ -1,3 +1,5 @@
+import 'package:flclashx/models/node_catalog.dart';
+
 import 'node_catalog_service.dart';
 import 'node_health_store.dart';
 
@@ -19,6 +21,7 @@ class NodeHealthRecorder {
   final NodeHealthStore store;
   final DateTime Function() _now;
   final _identities = Expando<Map<String, Map<String, String>>>();
+  final _catalogIdentities = Expando<Map<String, String>>();
   final _generations = <String, int>{};
   Future<void> _pending = Future<void>.value();
 
@@ -33,13 +36,7 @@ class NodeHealthRecorder {
     if (identities == null) {
       final catalog = buildProfileCatalog(
           profileId: profileId, fingerprint: 'runtime', raw: raw);
-      identities = <String, String>{};
-      final ambiguous = <String>{};
-      for (final node in catalog.nodes) {
-        if (identities.containsKey(node.name)) ambiguous.add(node.name);
-        identities[node.name] = node.identityKey;
-      }
-      ambiguous.forEach(identities.remove);
+      identities = _identitiesForCatalog(catalog);
       profiles[profileId] = identities;
     }
     final key = identities[name];
@@ -48,9 +45,40 @@ class NodeHealthRecorder {
         profileId, key, url, _generations[profileId] ?? 0);
   }
 
-  Future<void> record(NodeHealthTarget target, int value, {String? reason}) {
+  /// Accepts a verified, already-redacted runtime catalog without retaining its
+  /// source configuration. Callers establish runtime ownership before capture.
+  NodeHealthTarget? captureCatalog({
+    required ProfileCatalog catalog,
+    required String name,
+    required String url,
+  }) {
+    if (catalog.status != ProfileCatalogStatus.ready) return null;
+    final identities =
+        _catalogIdentities[catalog] ??= _identitiesForCatalog(catalog);
+    final key = identities[name];
+    if (key == null) return null;
+    return NodeHealthTarget._(
+        catalog.profileId, key, url, _generations[catalog.profileId] ?? 0);
+  }
+
+  Map<String, String> _identitiesForCatalog(ProfileCatalog catalog) {
+    final identities = <String, String>{};
+    final seen = <String>{};
+    final ambiguous = <String>{};
+    for (final node in catalog.nodes) {
+      // Bad/good duplicates are still ambiguous, in either source order.
+      if (!seen.add(node.name)) ambiguous.add(node.name);
+      if (node.unsupported == CatalogUnsupportedReason.parseFailed) continue;
+      identities[node.name] = node.identityKey;
+    }
+    ambiguous.forEach(identities.remove);
+    return identities;
+  }
+
+  Future<void> record(NodeHealthTarget target, int value,
+      {String? reason, DateTime? testedAt}) {
     if (value == 0) return Future<void>.value();
-    final arrivedAt = _now();
+    final arrivedAt = testedAt ?? _now();
     return _serialize(() async {
       if (target.generation != (_generations[target.profileId] ?? 0)) return;
       await store.record(

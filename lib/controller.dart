@@ -23,7 +23,6 @@ import 'package:url_launcher/url_launcher.dart';
 import 'common/common.dart';
 import 'common/admin_authorization.dart';
 import 'common/delay_tests.dart';
-import 'common/node_catalog_service.dart';
 import 'common/node_health_recorder.dart';
 import 'common/tun_runtime.dart';
 import 'common/ui_activity.dart';
@@ -57,6 +56,7 @@ class AppController {
   int? lastProfileModified;
   final BuildContext context;
   final WidgetRef _ref;
+  final _nodeHealthWrites = <Future<void>>{};
   // A configuration update can race with profile recovery or another UI
   // setting.  Keep one privileged operation in flight and latch a failed
   // attempt so an unavailable/denied service cannot trigger UAC repeatedly.
@@ -73,6 +73,7 @@ class AppController {
     _tunRuntime.desiredEnabled = _ref.read(patchClashConfigProvider).tun.enable;
     clashService?.onTunTransportChanged = () {
       _tunRuntime.invalidate('statusUnavailable');
+      _ref.invalidate(nodeRuntimeReadProvider);
       unawaited(updateTray());
     };
     _tunObservationTimer = Timer.periodic(const Duration(seconds: 3), (_) {
@@ -1269,6 +1270,13 @@ class AppController {
   Future<void> savePreferences() async {
     commonPrint.log("save preferences");
     await preferences.saveConfig(globalState.config);
+    await flushNodeHealth();
+  }
+
+  Future<void> flushNodeHealth() async {
+    while (_nodeHealthWrites.isNotEmpty) {
+      await Future.wait(_nodeHealthWrites.toList());
+    }
     if (_ref.read(nodeOverviewEnabledProvider) &&
         _ref.exists(nodeHealthRecorderProvider)) {
       try {
@@ -1591,6 +1599,7 @@ class AppController {
   }
 
   Future<void> _initCore({bool ownsWindowsConfig = false}) async {
+    _ref.invalidate(nodeRuntimeReadProvider);
     if (Platform.isWindows && clashService?.usesAgent == true &&
         clashService?.agentCoreReady != true) return;
     final wasInitialized = await clashCore.isInit;
@@ -1817,42 +1826,56 @@ class AppController {
     }
   }
 
-  NodeHealthTarget? captureNodeHealthTarget(Delay delay) {
+  Future<NodeHealthTarget?> captureNodeHealthTarget(Delay delay,
+      {bool refreshRuntime = false}) async {
     if (!_ref.read(nodeOverviewEnabledProvider)) return null;
-    final profileId = globalState.lastRuntimeProfileId;
-    final raw = globalState.lastRuntimeConfig;
-    // Selected and applied configurations may differ during a switch/failure.
-    // Name-only Core messages cannot safely identify a historical request then.
-    if (profileId == null || raw == null ||
-        profileId != _ref.read(currentProfileIdProvider)) return null;
+    final profileId = _ref.read(currentProfileIdProvider);
+    if (profileId == null) return null;
     final profile = _ref.read(profilesProvider).getProfile(profileId);
     if (profile == null || profile.isUpdating) return null;
     try {
-      return _ref.read(nodeHealthRecorderProvider).capture(
-        profileId: profileId, raw: raw, name: delay.name, url: delay.url,
-      );
-    } on CatalogBuildException {
-      commonPrint.log('node.health reason=catalogUnavailable');
+      // One fresh, shared read per explicit batch. This does not wait before
+      // starting the measurement and never applies configuration to gain trust.
+      final read = _ref.read(nodeRuntimeReadProvider);
+      if (refreshRuntime) {
+        read.refresh();
+        _ref.invalidate(verifiedNodeRuntimeProvider);
+      }
+      final catalog = await read.result;
+      if (!read.isCurrent || catalog == null || catalog.profileId != profileId ||
+          _ref.read(currentProfileIdProvider) != profileId) return null;
+      return _ref.read(nodeHealthRecorderProvider).captureCatalog(
+          catalog: catalog, name: delay.name, url: delay.url);
+    } catch (_) {
+      commonPrint.log('node.health reason=runtimeUnavailable');
       return null;
     }
   }
 
   void setDelay(Delay delay, {
     String? reason,
-    NodeHealthTarget? healthTarget,
+    FutureOr<NodeHealthTarget?>? healthTarget,
     bool capturedHealthTarget = false,
   }) {
     _ref.read(delayDataSourceProvider.notifier).setDelay(delay);
     if (!_ref.read(nodeOverviewEnabledProvider) ||
         delay.value == null || delay.value == 0) return;
+    if (delay.value! < 0 && reason != 'testFailed' &&
+        reason != 'deadlineExceeded') return;
     // Broadcast DelayMessage has no configuration generation. A late message
     // after setup cannot safely become cross-profile history; only explicit
     // requests carry the snapshot captured when they started.
-    final target = capturedHealthTarget ? healthTarget : null;
-    if (target != null) {
-      unawaited(_ref.read(nodeHealthRecorderProvider)
-          .record(target, delay.value!, reason: reason)
-          .catchError((Object _) => commonPrint.log('node.health reason=recordFailed')));
+    if (capturedHealthTarget && healthTarget != null) {
+      final arrivedAt = DateTime.now();
+      final write = () async {
+        final target = await healthTarget;
+        if (target != null) {
+          await _ref.read(nodeHealthRecorderProvider)
+              .record(target, delay.value!, reason: reason, testedAt: arrivedAt);
+        }
+      }().catchError((Object _) => commonPrint.log('node.health reason=recordFailed'));
+      _nodeHealthWrites.add(write);
+      unawaited(write.whenComplete(() => _nodeHealthWrites.remove(write)));
     }
   }
 

@@ -6,7 +6,7 @@ import 'package:flclashx/state.dart';
 
 /// Shared by the window and tray, so opening another group cannot multiply
 /// the request budget. Dependencies are read only when a user starts a test.
-final _healthTargets = <DelayTestTarget, NodeHealthTarget?>{};
+final _healthTargets = <DelayTestTarget, Future<NodeHealthTarget?>>{};
 
 final delayTests = DelayTestCoordinator(
   test: (target, requestId, timeout) => clashCore.getDelayResult(
@@ -21,8 +21,9 @@ final delayTests = DelayTestCoordinator(
   cancelRequest: (requestId) => clashCore.cancelDelayTest(requestId),
   onStarted: (target) {
     final delay = Delay(name: target.name, url: target.url, value: 0);
-    _healthTargets[target] =
-        globalState.appController.captureNodeHealthTarget(delay);
+    final refreshRuntime = _healthTargets.isEmpty;
+    _healthTargets[target] = globalState.appController
+        .captureNodeHealthTarget(delay, refreshRuntime: refreshRuntime);
     globalState.appController.setDelay(delay);
   },
   onResult: (target, result) => globalState.appController.setDelay(
