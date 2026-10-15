@@ -4,7 +4,7 @@
 |---|---|
 | 文档版本 | v1.0（2026-10-15） |
 | 基线 | `development@2074cce2900a0159e75833fcc19ae930dd17f6a5`（与 `freedomcloud/development` 0/0） |
-| 状态 | P0 源码已本地提交 `c8fa0a3`，完成本地自动化验证；FR-4 接管历史限制与真机 NOT RUN 见下方补记；P1/P2 未实施、未推送 |
+| 状态 | 首轮 `c8fa0a3` 经复评未达 P0 验收；四项修复已本地提交 `2ecb4ec`，复验证据见下方补记；P1/P2 未实施、未推送，真实运行验收 NOT RUN |
 | 负责人（评审/Git 写操作） | 技术负责人（本书作者） |
 | 实施者 | Dev A（Core/Go）、Dev B（Dart 领域层）、Dev C（UI） |
 | 授权边界 | 只做本地开发与本地提交；推送、PR、合并、发布、运行候选包、操作现役代理/TUN/服务，均需另行授权（见 `AGENTS.md`） |
@@ -16,8 +16,9 @@
 本书保留原设计基线；实际开工为 `development@c7166fe`，相对 `2074cce` 仅增加本书与台账。源码提交、测试计数和已知缺口以 [开发台账](../development-status.md) 与 [P0 测试记录](../testing/node-overview-p0-2026-10-15.md) 为准。
 
 - P0 目录、宽窄总览、搜索/排序/筛选、脱敏历史、异常提示及开关回退已实现。目录构建只读，不调用配置应用、订阅下载或 TUN/服务操作；非活动 provider 叶子仍属于 P1。
-- FR-4 只保存显式测速中可绑定到已应用运行快照的结果；无请求归属的 Core 广播只保留实时显示。新 UI 接管已有 Core 时没有可信快照，旧历史可读、新结果暂不记录，不能称完整 FR-4 验收。没有通过 setup/重启补建快照；完整接管记录需后续只读运行身份契约。
-- P0 不改 Core/Agent/Helper；本轮只获准本地实现、测试和提交，不推送、不启动候选包、不影响现役代理/TUN。真实窗口、性能及完整运行链验收仍为 NOT RUN。
+- 首轮 FR-4 接管限制已按评审修复：复用已有只读 `fcx://runtime`，将运行配置与当前文件解析出的可识别节点身份集合完全比较（含名称、类型、端点和重复次数）。匹配才记录显式测速，读取失败/超时/不一致或配置变化则不写；无请求归属的 Core 广播仍只保留实时显示。无需新增协议、setup 或重启，真实接管验收仍 NOT RUN。
+- R1/R2/R3 同轮修复：仅成功及真实单请求失败/超时入历史；单坏节点显示“无法识别”且不阻断兄弟节点；视口和侧栏可见配置自动加载折叠摘要。范围入口回工具栏、色带复用既有分档、活动来源取可信运行目录。详见 [评审修复与复验](../testing/node-overview-p0-review-2026-10-15.md)。
+- P0 不改 Go Core/Agent/Helper 或协议，Dart Core 包装类仅增加不构造单例的只读 existingInterface 入口；本轮只获准本地实现、测试和提交，不推送、不启动候选包、不影响现役代理/TUN。真实窗口、性能及完整运行链验收仍为 NOT RUN。
 
 ## 1. 背景与问题
 
@@ -245,25 +246,26 @@ class ProfileCatalog with _$ProfileCatalog {
 
 ```text
 Future<ProfileCatalog> load(Profile profile)
-  1. 文件不存在（profile.check()==false） → status=fileMissing
+  1. 只读 File.stat 确认文件不存在 → status=fileMissing；不调用会创建文件的 helper
   2. profile.isUpdating → 返回旧缓存并标 updating；没有缓存则 status=updating
   3. fingerprint = "${lastModifiedMicros}|${fileSize}|${scriptId}|${sha256(script.content) 前16位}"
      命中内存 LRU（容量 8）则直接返回
   4. raw = await globalState.getProfileConfig(id)      // 内核解析，与运行一致
      raw = await globalState.handleEvaluate(raw)       // 与运行一致（全局脚本）
-     失败 → status=parseFailed, errorSummary=sanitize(e)
+     失败 → status=parseFailed，只返回固定原因码，不保存原始错误
   5. 解析 raw["proxies"] 与 raw["proxy-groups"]（只取 name/type/proxies/use），按白名单生成 CatalogNode
      - 叶子节点 = proxies 中 type 不属于 {direct, reject, reject-drop, pass, dns, compatible} 的条目
      - selectGroups：type=="select" 且 proxies 列表直接包含该节点名的组名，保持 proxy-groups 原顺序
      - 订阅源节点：P0 只统计 provider 名称，节点数显示“激活后可见”；P1 由 catalogPrepare 返回
+     - 单节点结构或端点无法识别 → parseFailed 显示占位，不参与健康历史；其他节点继续。整体容器错误或超过 2000 节点才使配置目录失败
   6. 放入 LRU；串行化：同一 profileId 的并发 load 合并为同一个 Future
 ```
 
 - **并发限制**：全局最多 2 个 profile 同时构建（`getConfig` IPC 和 QuickJS 都很重）。
-- **懒加载**：只有分节进入视口或展开时才构建；左栏摘要只用已构建的目录和健康缓存，未构建时显示“—”。
-- **活动配置**：目录照常构建（用于 NodeKey 映射与健康快照），但节点展示与交互走实时 `currentGroupsStateProvider`。
+- **懒加载**：分节进入视口或展开时构建；宽屏左栏可见配置也触发同一受限服务。加载完成后即使折叠也显示摘要；未进入视口的配置保留惰性，显式搜索可加载全部。
+- **活动配置**：展示与交互走实时 `currentGroupsStateProvider`；来源和历史身份只取校验后的运行目录，未知时显示“运行时节点”。磁盘目录失败不遮挡已知实时健康摘要。
 - **失效**：监听 `profilesProvider`，某个 profile 的 `lastUpdateDate`/`url`/`isUpdating` 变化，或全局脚本变化时，清掉对应缓存；`clearEffect(id)` 时清除该 profile 的缓存。
-- **sanitize(e)**：取第一行，去掉 `http(s)://…`，截断到 120 字符。原始错误只能进入现有调试日志，并遵守现有日志脱敏规则。
+- **错误脱敏**：只保存/记录固定原因码，原始解析或传输错误不进入目录状态和日志。
 
 ### 8.3 健康缓存 `NodeHealthStore`（`lib/common/node_health_store.dart`）
 
@@ -271,17 +273,18 @@ Future<ProfileCatalog> load(Profile profile)
 - 结构（**不含节点名、服务器、URL 明文**）：
 
 ```json
-{ "version": 1,
+{ "version": 2,
   "entries": { "<profileId>": { "<identityKey>": { "d": 183, "t": 1760500000000, "r": null, "u": "<sha256(testUrl)前16位>" } } } }
 ```
 
-- `d`：延迟毫秒；失败时为 -1，并在 `r` 写原因码（`testFailed/deadlineExceeded/cancelled/...`）。
+- `d`：成功延迟毫秒；真实单请求失败/超时时为 -1，`r` 仅接受 `testFailed/deadlineExceeded`。取消、切配置、窗口隐藏、会话关闭、准入/传输失败、批次截止均不覆盖历史。批次截止使用独立原因码 `batchDeadlineExceeded`。
+- 文件名保留 `node_health_v1.json`，内部 schema 升为 2。v1 曾将未知错误映射为 `testFailed`，也混用批次/请求截止码，因此迁移只保留 v1 成功值，全部旧负值变为未测（包括无法区分的真实失败）；被旧版本覆盖的成功值无法恢复。回退旧版本时可丢弃健康缓存重建，不影响用户配置。
 - 限额：总条目 ≤ 5000，超出按 `t` 淘汰最旧；`t` 超过 7 天的条目在加载时丢弃。
 - 文件损坏或版本未知：备份为 `.corrupt-<ts>`（最多保留 1 个），以空数据启动，不弹错误。
 - 写入来源：
-  1. **活动配置实时结果**：监听 `delayDataSourceProvider`，通过当前目录的 `name → identityKey` 映射写入。每条结果到达即写，不依赖切换前快照（切换时数据源会被清空）。映射不到的名称（代理组）忽略。
+  1. **活动配置显式测速**：协调器开始时捕获独立的只读运行快照 Future；与文件目录匹配后保存归属，结果到达时间单独捕获。配置/脚本/版本变化立即撤销旧读取；不让旧请求借用新快照。同名歧义、无法识别节点、代理组及无请求归属广播不写。删除代次防止迟返复活历史。
   2. **目录测速结果**（P1）：协调器回调直接写入。
-- 读取：UI 只展示 `u` 等于当前有效测试地址（`appSetting.testUrl` 解析值）的结果；有组级 testUrl 的情况在目录视图中不区分（写进已知限制）。
+- 读取：非活动配置只展示 `u` 等于当前默认测试地址的结果；活动节点保留组级 testUrl，摘要按首个可见组去重，不混合不同 URL 的历史。
 - 新鲜度：`now - t > 10min` 显示为“可能过时”（灰色并带时间）。
 - 删除配置：`clearEffect(id)` 时调用 `removeProfile(id)`。
 
