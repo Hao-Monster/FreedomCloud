@@ -2,6 +2,14 @@
 
 更新日期：2026-10-15。当前阶段是快速开发、快速迭代和部分功能预览。本文记录来源与验收边界；每次继续开发仍需核实实际 Git/PR/CI 状态，不能把历史报告视为当前通过证明。
 
+## 跨配置节点总览 P0 推送与 Windows 预览（2026-10-15）
+
+- 用户新授权推送、打包，由用户在本机测试，观察方只读看日志。`2074cce → f6dff78c762654af1f77adfa46eed697a1492626` 共 5 提交已正常推送自有 `freedomcloud/development`，远端 SHA 回读一致；未晋级 main、未 PR/tag/release。下方“仅本地”是上一阶段历史状态。
+- 固定源 [CI 38713589918](https://github.com/Hao-Monster/FreedomCloud/actions/runs/38713589918) 4/4 success：Flutter 731 PASS/1 既有 Linux cmd.exe skip，Core Linux 默认/with_gvisor/四组 race、Windows Core 专项、Agent83/Helper48、M3 四脚本均通过。本机此前732项无skip结果保持为修复阶段证据。
+- 从干净 tracked Git archive 完整新编并交付 `dist/FreedomCloud-windows-amd64-nodeoverview-f6dff78c7626.zip` 及同名完整解压目录；153,831,212 bytes，SHA256 `30793c99108b69fdd040253d7ea1dea4dd4dc618d870aa584080d33f0b3ffc46`。构建 r1 exit0、约345.44s；73文件/72checksum，独立静态审计8/8 PASS，Helper实际绑定Core hash、UI编译输入一致。普通未签名预览，无strict驱动/Broker，旧DoH包及原始草稿保留。
+- 本轮没有产品源码改动；交付文档单独提交，不改变固定包源码。完整命令、工具差异、已知VS发现exit1与后续实际编译、测试矩阵、组件hash及用户验收见 [节点总览预览交付](testing/windows-node-overview-preview-2026-10-15.md)。
+- 只读观察工具私有目录 `E:\Temp\flclashx-nodeoverview-monitor-20261015-f6dff78c7626`，21项合成测试PASS；09:45:54Z从15个日志EOF建立新基线，0读取错误/缺口，现役UI/Agent仍是旧DoH包。已启用本对话每5分钟心跳，关注node.health原因、UI异常、组件生命周期和DNS失败，仅读增量并脱敏计数。候选启动和操作由用户执行；打包方未启动候选、未改代理/TUN/节点/服务/配置。真实Windows接管、UI/IPC、网络与长时验收仍待用户，不以静态包或无错误日志代替。
+
 ## 跨配置节点总览 P0 评审修复（2026-10-15，仅本地）
 
 - 来源：用户对 `c8fa0a3` 的复评明确该版不能按 P0 验收。修复起点 `development@5a38b1a`，fetch 后领先自有远端 3、落后 0，无开放 PR；最新远端 CI 仍只对应 `2074cce`。本轮沿用本地实施/测试/提交授权，不推送、不运行候选、不操作现役代理/TUN。
