@@ -1,9 +1,11 @@
 import 'package:flclashx/common/common.dart';
 import 'package:flclashx/enum/enum.dart';
 import 'package:flclashx/models/models.dart';
+import 'package:flclashx/providers/node_overview.dart';
 import 'package:flclashx/providers/providers.dart';
 import 'package:flclashx/state.dart';
 import 'package:flclashx/views/proxies/list.dart';
+import 'package:flclashx/views/proxies/overview/overview.dart';
 import 'package:flclashx/views/proxies/providers.dart';
 import 'package:flclashx/widgets/widgets.dart';
 import 'package:flutter/material.dart';
@@ -42,15 +44,20 @@ class _ProxiesViewState extends ConsumerState<ProxiesView> with PageMixin {
           child: const _ModeSelectorAction(),
         ),
         const SearchOrderMarker(),
-        DelayTestAction(
-          coordinator: delayTests,
-          onStart: _pingAllGroups,
-          startLabel: appLocalizations.testAllDelay,
-          cancelLabel: appLocalizations.cancel,
+        Consumer(
+          builder: (_, ref, child) =>
+              _showAllProfiles(ref) ? const SizedBox.shrink() : child!,
+          child: DelayTestAction(
+            coordinator: delayTests,
+            onStart: _pingAllGroups,
+            startLabel: appLocalizations.testAllDelay,
+            cancelLabel: appLocalizations.cancel,
+          ),
         ),
         if (!_isTab) ...[
           Consumer(
             builder: (_, ref, __) {
+              if (_showAllProfiles(ref)) return const SizedBox.shrink();
               final unfoldSet = ref.watch(unfoldSetProvider);
               final groupNames = ref.watch(
                 currentGroupsStateProvider.select(
@@ -198,12 +205,18 @@ class _ProxiesViewState extends ConsumerState<ProxiesView> with PageMixin {
         (state) => state.type,
       ),
     );
-    return switch (proxiesType) {
+    return NodeOverviewScopeView(
+        currentView: switch (proxiesType) {
       ProxiesType.tab => const ProxiesTabView(),
       ProxiesType.list => const ProxiesListView(),
-    };
+    });
   }
 }
+
+bool _showAllProfiles(WidgetRef ref) =>
+    ref.watch(nodeOverviewEnabledProvider) &&
+    ref.watch(profilesProvider.select((profiles) => profiles.length)) >= 2 &&
+    ref.watch(proxiesScopeProvider) == ProxiesScope.all;
 
 class _ModeSelectorAction extends ConsumerWidget {
   const _ModeSelectorAction();

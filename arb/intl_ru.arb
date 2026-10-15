@@ -543,5 +543,69 @@
   "tunErrorStart": "Не удалось запустить интерфейс; включите повторно",
   "tunDisableAction": "Запросить остановку",
   "tunErrorLegacyAgent": "Завершите старое фоновое приложение и снова откройте эту версию",
-  "tunErrorProfileRequired": "Перед подключением выберите читаемый непустой профиль"
+  "tunErrorProfileRequired": "Перед подключением выберите читаемый непустой профиль",
+  "nodeOverviewCurrentProfile": "Текущий профиль",
+  "nodeOverviewAllProfiles": "Все профили",
+  "nodeOverviewActive": "Активный",
+  "nodeOverviewAvailableOnly": "Только доступные",
+  "nodeOverviewInline": "Встроенный",
+  "nodeOverviewRuntimeSource": "Активный провайдер",
+  "nodeOverviewUntested": "Не проверено",
+  "nodeOverviewTestFailed": "Ошибка проверки",
+  "nodeOverviewStale": "Возможно, устарело",
+  "nodeOverviewLastActiveTest": "Проверка при последней активации: {time}",
+  "nodeOverviewLastTest": "Последняя проверка: {time}",
+  "nodeOverviewHealthCounts": "Доступно {available} / проверено {tested} / всего {total}",
+  "nodeOverviewMedian": "Медиана: {delay}",
+  "nodeOverviewFileMissing": "Файл профиля отсутствует",
+  "nodeOverviewParseFailed": "Не удалось разобрать профиль",
+  "nodeOverviewExpired": "Подписка истекла",
+  "nodeOverviewUpdating": "Обновление подписки",
+  "nodeOverviewManageProfiles": "Управление профилями / обновление подписки",
+  "nodeOverviewProviderPending": "{provider}: узлы появятся после активации",
+  "nodeOverviewNoNodes": "Нет подходящих узлов",
+  "nodeOverviewTooManyNodes": "Слишком много узлов для этой предварительной версии",
+  "@nodeOverviewLastActiveTest": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "@nodeOverviewLastTest": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "@nodeOverviewHealthCounts": {
+    "placeholders": {
+      "available": {
+        "type": "int"
+      },
+      "tested": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      }
+    }
+  },
+  "@nodeOverviewMedian": {
+    "placeholders": {
+      "delay": {
+        "type": "String"
+      }
+    }
+  },
+  "@nodeOverviewProviderPending": {
+    "placeholders": {
+      "provider": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewPartialSummary": "В сводке учтены только загруженные узлы",
+  "nodeOverviewHistoryNotice": "В историю сохраняются ручные проверки после применения профиля в этом сеансе. При подключении к уже работающему прокси показаны прежняя история и текущие результаты."
 }

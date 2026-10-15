@@ -5623,6 +5623,236 @@ class AppLocalizations {
       args: [],
     );
   }
+
+  /// `Current profile`
+  String get nodeOverviewCurrentProfile {
+    return Intl.message(
+      'Current profile',
+      name: 'nodeOverviewCurrentProfile',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `All profiles`
+  String get nodeOverviewAllProfiles {
+    return Intl.message(
+      'All profiles',
+      name: 'nodeOverviewAllProfiles',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Active`
+  String get nodeOverviewActive {
+    return Intl.message(
+      'Active',
+      name: 'nodeOverviewActive',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Available only`
+  String get nodeOverviewAvailableOnly {
+    return Intl.message(
+      'Available only',
+      name: 'nodeOverviewAvailableOnly',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Inline`
+  String get nodeOverviewInline {
+    return Intl.message(
+      'Inline',
+      name: 'nodeOverviewInline',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Runtime provider`
+  String get nodeOverviewRuntimeSource {
+    return Intl.message(
+      'Runtime provider',
+      name: 'nodeOverviewRuntimeSource',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Untested`
+  String get nodeOverviewUntested {
+    return Intl.message(
+      'Untested',
+      name: 'nodeOverviewUntested',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Test failed`
+  String get nodeOverviewTestFailed {
+    return Intl.message(
+      'Test failed',
+      name: 'nodeOverviewTestFailed',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `May be outdated`
+  String get nodeOverviewStale {
+    return Intl.message(
+      'May be outdated',
+      name: 'nodeOverviewStale',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Last active test: {time}`
+  String nodeOverviewLastActiveTest(String time) {
+    return Intl.message(
+      'Last active test: $time',
+      name: 'nodeOverviewLastActiveTest',
+      desc: '',
+      args: [time],
+    );
+  }
+
+  /// `Last test: {time}`
+  String nodeOverviewLastTest(String time) {
+    return Intl.message(
+      'Last test: $time',
+      name: 'nodeOverviewLastTest',
+      desc: '',
+      args: [time],
+    );
+  }
+
+  /// `{available} available / {tested} tested / {total} total`
+  String nodeOverviewHealthCounts(int available, int tested, int total) {
+    return Intl.message(
+      '$available available / $tested tested / $total total',
+      name: 'nodeOverviewHealthCounts',
+      desc: '',
+      args: [available, tested, total],
+    );
+  }
+
+  /// `Median: {delay}`
+  String nodeOverviewMedian(String delay) {
+    return Intl.message(
+      'Median: $delay',
+      name: 'nodeOverviewMedian',
+      desc: '',
+      args: [delay],
+    );
+  }
+
+  /// `Profile file is missing`
+  String get nodeOverviewFileMissing {
+    return Intl.message(
+      'Profile file is missing',
+      name: 'nodeOverviewFileMissing',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Profile could not be parsed`
+  String get nodeOverviewParseFailed {
+    return Intl.message(
+      'Profile could not be parsed',
+      name: 'nodeOverviewParseFailed',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Subscription expired`
+  String get nodeOverviewExpired {
+    return Intl.message(
+      'Subscription expired',
+      name: 'nodeOverviewExpired',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Updating subscription`
+  String get nodeOverviewUpdating {
+    return Intl.message(
+      'Updating subscription',
+      name: 'nodeOverviewUpdating',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Manage profiles / update subscription`
+  String get nodeOverviewManageProfiles {
+    return Intl.message(
+      'Manage profiles / update subscription',
+      name: 'nodeOverviewManageProfiles',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `{provider}: nodes visible after activation`
+  String nodeOverviewProviderPending(String provider) {
+    return Intl.message(
+      '$provider: nodes visible after activation',
+      name: 'nodeOverviewProviderPending',
+      desc: '',
+      args: [provider],
+    );
+  }
+
+  /// `No matching nodes`
+  String get nodeOverviewNoNodes {
+    return Intl.message(
+      'No matching nodes',
+      name: 'nodeOverviewNoNodes',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Too many nodes to display in this preview`
+  String get nodeOverviewTooManyNodes {
+    return Intl.message(
+      'Too many nodes to display in this preview',
+      name: 'nodeOverviewTooManyNodes',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Summary includes loaded nodes only`
+  String get nodeOverviewPartialSummary {
+    return Intl.message(
+      'Summary includes loaded nodes only',
+      name: 'nodeOverviewPartialSummary',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `History saves manual tests after this app applies a profile. When taking over an existing proxy, only earlier history and live results are shown.`
+  String get nodeOverviewHistoryNotice {
+    return Intl.message(
+      'History saves manual tests after this app applies a profile. When taking over an existing proxy, only earlier history and live results are shown.',
+      name: 'nodeOverviewHistoryNotice',
+      desc: '',
+      args: [],
+    );
+  }
 }
 
 class AppLocalizationDelegate extends LocalizationsDelegate<AppLocalizations> {

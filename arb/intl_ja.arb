@@ -489,5 +489,69 @@
   "tunErrorStart": "インターフェースを起動できません。再度有効にしてください",
   "tunDisableAction": "停止を要求",
   "tunErrorLegacyAgent": "古いバックグラウンドアプリを終了してから、このバージョンを開き直してください",
-  "tunErrorProfileRequired": "接続する前に、読み取り可能な空でない設定を選択してください"
+  "tunErrorProfileRequired": "接続する前に、読み取り可能な空でない設定を選択してください",
+  "nodeOverviewCurrentProfile": "現在の設定",
+  "nodeOverviewAllProfiles": "すべての設定",
+  "nodeOverviewActive": "使用中",
+  "nodeOverviewAvailableOnly": "利用可能のみ",
+  "nodeOverviewInline": "インライン",
+  "nodeOverviewRuntimeSource": "実行中のプロバイダー",
+  "nodeOverviewUntested": "未測定",
+  "nodeOverviewTestFailed": "テスト失敗",
+  "nodeOverviewStale": "古い可能性あり",
+  "nodeOverviewLastActiveTest": "前回使用時の測定：{time}",
+  "nodeOverviewLastTest": "最終測定：{time}",
+  "nodeOverviewHealthCounts": "利用可能 {available} / 測定済み {tested} / 合計 {total}",
+  "nodeOverviewMedian": "中央値：{delay}",
+  "nodeOverviewFileMissing": "設定ファイルがありません",
+  "nodeOverviewParseFailed": "設定の解析に失敗しました",
+  "nodeOverviewExpired": "サブスクリプションの有効期限切れ",
+  "nodeOverviewUpdating": "サブスクリプションを更新中",
+  "nodeOverviewManageProfiles": "設定管理 / サブスクリプション更新",
+  "nodeOverviewProviderPending": "{provider}：有効化後にノードを表示",
+  "nodeOverviewNoNodes": "一致するノードがありません",
+  "nodeOverviewTooManyNodes": "ノードが多すぎるためプレビューでは表示できません",
+  "@nodeOverviewLastActiveTest": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "@nodeOverviewLastTest": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "@nodeOverviewHealthCounts": {
+    "placeholders": {
+      "available": {
+        "type": "int"
+      },
+      "tested": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      }
+    }
+  },
+  "@nodeOverviewMedian": {
+    "placeholders": {
+      "delay": {
+        "type": "String"
+      }
+    }
+  },
+  "@nodeOverviewProviderPending": {
+    "placeholders": {
+      "provider": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewPartialSummary": "概要は読み込み済みノードのみを集計します",
+  "nodeOverviewHistoryNotice": "履歴はこのアプリで設定を適用した後の手動測定を保存します。既存のプロキシを引き継ぐ場合は、過去の履歴と現在の結果を表示します。"
 }

@@ -683,5 +683,69 @@
     }
   },
   "tunErrorLegacyAgent": "Exit the old background app, then reopen this version",
-  "tunErrorProfileRequired": "Select a readable, non-empty profile before connecting"
+  "tunErrorProfileRequired": "Select a readable, non-empty profile before connecting",
+  "nodeOverviewCurrentProfile": "Current profile",
+  "nodeOverviewAllProfiles": "All profiles",
+  "nodeOverviewActive": "Active",
+  "nodeOverviewAvailableOnly": "Available only",
+  "nodeOverviewInline": "Inline",
+  "nodeOverviewRuntimeSource": "Runtime provider",
+  "nodeOverviewUntested": "Untested",
+  "nodeOverviewTestFailed": "Test failed",
+  "nodeOverviewStale": "May be outdated",
+  "nodeOverviewLastActiveTest": "Last active test: {time}",
+  "nodeOverviewLastTest": "Last test: {time}",
+  "nodeOverviewHealthCounts": "{available} available / {tested} tested / {total} total",
+  "nodeOverviewMedian": "Median: {delay}",
+  "nodeOverviewFileMissing": "Profile file is missing",
+  "nodeOverviewParseFailed": "Profile could not be parsed",
+  "nodeOverviewExpired": "Subscription expired",
+  "nodeOverviewUpdating": "Updating subscription",
+  "nodeOverviewManageProfiles": "Manage profiles / update subscription",
+  "nodeOverviewProviderPending": "{provider}: nodes visible after activation",
+  "nodeOverviewNoNodes": "No matching nodes",
+  "nodeOverviewTooManyNodes": "Too many nodes to display in this preview",
+  "@nodeOverviewLastActiveTest": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "@nodeOverviewLastTest": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "@nodeOverviewHealthCounts": {
+    "placeholders": {
+      "available": {
+        "type": "int"
+      },
+      "tested": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      }
+    }
+  },
+  "@nodeOverviewMedian": {
+    "placeholders": {
+      "delay": {
+        "type": "String"
+      }
+    }
+  },
+  "@nodeOverviewProviderPending": {
+    "placeholders": {
+      "provider": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewPartialSummary": "Summary includes loaded nodes only",
+  "nodeOverviewHistoryNotice": "History saves manual tests after this app applies a profile. When taking over an existing proxy, only earlier history and live results are shown."
 }

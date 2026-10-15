@@ -23,12 +23,15 @@ import 'package:url_launcher/url_launcher.dart';
 import 'common/common.dart';
 import 'common/admin_authorization.dart';
 import 'common/delay_tests.dart';
+import 'common/node_catalog_service.dart';
+import 'common/node_health_recorder.dart';
 import 'common/tun_runtime.dart';
 import 'common/ui_activity.dart';
 import 'common/windows_tun_prepare.dart';
 import 'common/windows_tun_startup.dart';
 import 'models/models.dart';
 import 'plugins/vpn.dart';
+import 'providers/node_overview.dart';
 import 'views/profiles/override_profile.dart';
 
 class AppController {
@@ -1266,6 +1269,14 @@ class AppController {
   Future<void> savePreferences() async {
     commonPrint.log("save preferences");
     await preferences.saveConfig(globalState.config);
+    if (_ref.read(nodeOverviewEnabledProvider) &&
+        _ref.exists(nodeHealthRecorderProvider)) {
+      try {
+        await _ref.read(nodeHealthRecorderProvider).flush();
+      } catch (_) {
+        commonPrint.log('node.health reason=flushFailed');
+      }
+    }
   }
 
   Future<void> changeProxy({
@@ -1806,8 +1817,43 @@ class AppController {
     }
   }
 
-  void setDelay(Delay delay) {
+  NodeHealthTarget? captureNodeHealthTarget(Delay delay) {
+    if (!_ref.read(nodeOverviewEnabledProvider)) return null;
+    final profileId = globalState.lastRuntimeProfileId;
+    final raw = globalState.lastRuntimeConfig;
+    // Selected and applied configurations may differ during a switch/failure.
+    // Name-only Core messages cannot safely identify a historical request then.
+    if (profileId == null || raw == null ||
+        profileId != _ref.read(currentProfileIdProvider)) return null;
+    final profile = _ref.read(profilesProvider).getProfile(profileId);
+    if (profile == null || profile.isUpdating) return null;
+    try {
+      return _ref.read(nodeHealthRecorderProvider).capture(
+        profileId: profileId, raw: raw, name: delay.name, url: delay.url,
+      );
+    } on CatalogBuildException {
+      commonPrint.log('node.health reason=catalogUnavailable');
+      return null;
+    }
+  }
+
+  void setDelay(Delay delay, {
+    String? reason,
+    NodeHealthTarget? healthTarget,
+    bool capturedHealthTarget = false,
+  }) {
     _ref.read(delayDataSourceProvider.notifier).setDelay(delay);
+    if (!_ref.read(nodeOverviewEnabledProvider) ||
+        delay.value == null || delay.value == 0) return;
+    // Broadcast DelayMessage has no configuration generation. A late message
+    // after setup cannot safely become cross-profile history; only explicit
+    // requests carry the snapshot captured when they started.
+    final target = capturedHealthTarget ? healthTarget : null;
+    if (target != null) {
+      unawaited(_ref.read(nodeHealthRecorderProvider)
+          .record(target, delay.value!, reason: reason)
+          .catchError((Object _) => commonPrint.log('node.health reason=recordFailed')));
+    }
   }
 
   void toPage(PageLabel pageLabel) {
@@ -2037,6 +2083,17 @@ class AppController {
       };
 
   Future<Null> clearEffect(String profileId) async {
+    if (_ref.read(nodeOverviewEnabledProvider)) {
+      if (_ref.exists(nodeCatalogServiceProvider)) {
+        _ref.read(nodeCatalogServiceProvider).invalidate(profileId);
+      }
+      // Explicit deletion also cleans history before the overview is opened.
+      try {
+        await _ref.read(nodeHealthRecorderProvider).removeProfile(profileId);
+      } catch (_) {
+        commonPrint.log('node.health reason=removeFailed');
+      }
+    }
     final profilePath = await appPath.getProfilePath(profileId);
     final providersDirPath = await appPath.getProvidersDirPath(profileId);
     return Isolate.run(() async {

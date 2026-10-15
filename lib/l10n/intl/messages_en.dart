@@ -30,21 +30,32 @@ class MessageLookup extends MessageLookupByLibrary {
 
   static String m3(label) => "Current ${label} already exists";
 
-  static String m4(label) => "No ${label} at the moment";
+  static String m4(available, tested, total) =>
+      "${available} available / ${tested} tested / ${total} total";
 
-  static String m5(label) => "${label} must be a number";
+  static String m5(time) => "Last active test: ${time}";
 
-  static String m6(label) => "${label} must be between 1024 and 49151";
+  static String m6(time) => "Last test: ${time}";
 
-  static String m7(code) => "Unknown rule (${code})";
+  static String m7(delay) => "Median: ${delay}";
 
-  static String m8(count) => "${count} items have been selected";
+  static String m8(provider) => "${provider}: nodes visible after activation";
 
-  static String m9(days) => "Your subscription expires in ${days} day(s)";
+  static String m9(label) => "No ${label} at the moment";
 
-  static String m10(reason) => "TUN: ${reason}";
+  static String m10(label) => "${label} must be a number";
 
-  static String m11(label) => "${label} must be a url";
+  static String m11(label) => "${label} must be between 1024 and 49151";
+
+  static String m12(code) => "Unknown rule (${code})";
+
+  static String m13(count) => "${count} items have been selected";
+
+  static String m14(days) => "Your subscription expires in ${days} day(s)";
+
+  static String m15(reason) => "TUN: ${reason}";
+
+  static String m16(label) => "${label} must be a url";
 
   final messages = _notInlinedMessages(_notInlinedMessages);
   static Map<String, Function> _notInlinedMessages(_) => <String, Function>{
@@ -619,6 +630,59 @@ class MessageLookup extends MessageLookupByLibrary {
       "Please create a profile or add a valid profile",
     ),
     "noResolve": MessageLookupByLibrary.simpleMessage("No resolve IP"),
+    "nodeOverviewActive": MessageLookupByLibrary.simpleMessage("Active"),
+    "nodeOverviewAllProfiles": MessageLookupByLibrary.simpleMessage(
+      "All profiles",
+    ),
+    "nodeOverviewAvailableOnly": MessageLookupByLibrary.simpleMessage(
+      "Available only",
+    ),
+    "nodeOverviewCurrentProfile": MessageLookupByLibrary.simpleMessage(
+      "Current profile",
+    ),
+    "nodeOverviewExpired": MessageLookupByLibrary.simpleMessage(
+      "Subscription expired",
+    ),
+    "nodeOverviewFileMissing": MessageLookupByLibrary.simpleMessage(
+      "Profile file is missing",
+    ),
+    "nodeOverviewHealthCounts": m4,
+    "nodeOverviewHistoryNotice": MessageLookupByLibrary.simpleMessage(
+      "History saves manual tests after this app applies a profile. When taking over an existing proxy, only earlier history and live results are shown.",
+    ),
+    "nodeOverviewInline": MessageLookupByLibrary.simpleMessage("Inline"),
+    "nodeOverviewLastActiveTest": m5,
+    "nodeOverviewLastTest": m6,
+    "nodeOverviewManageProfiles": MessageLookupByLibrary.simpleMessage(
+      "Manage profiles / update subscription",
+    ),
+    "nodeOverviewMedian": m7,
+    "nodeOverviewNoNodes": MessageLookupByLibrary.simpleMessage(
+      "No matching nodes",
+    ),
+    "nodeOverviewParseFailed": MessageLookupByLibrary.simpleMessage(
+      "Profile could not be parsed",
+    ),
+    "nodeOverviewPartialSummary": MessageLookupByLibrary.simpleMessage(
+      "Summary includes loaded nodes only",
+    ),
+    "nodeOverviewProviderPending": m8,
+    "nodeOverviewRuntimeSource": MessageLookupByLibrary.simpleMessage(
+      "Runtime provider",
+    ),
+    "nodeOverviewStale": MessageLookupByLibrary.simpleMessage(
+      "May be outdated",
+    ),
+    "nodeOverviewTestFailed": MessageLookupByLibrary.simpleMessage(
+      "Test failed",
+    ),
+    "nodeOverviewTooManyNodes": MessageLookupByLibrary.simpleMessage(
+      "Too many nodes to display in this preview",
+    ),
+    "nodeOverviewUntested": MessageLookupByLibrary.simpleMessage("Untested"),
+    "nodeOverviewUpdating": MessageLookupByLibrary.simpleMessage(
+      "Updating subscription",
+    ),
     "none": MessageLookupByLibrary.simpleMessage("none"),
     "notSelectedTip": MessageLookupByLibrary.simpleMessage(
       "The current proxy group cannot be selected.",
@@ -627,8 +691,8 @@ class MessageLookup extends MessageLookupByLibrary {
       "No profile, Please add a profile",
     ),
     "nullScriptTip": MessageLookupByLibrary.simpleMessage("No scripts"),
-    "nullTip": m4,
-    "numberTip": m5,
+    "nullTip": m9,
+    "numberTip": m10,
     "oneColumn": MessageLookupByLibrary.simpleMessage("One column"),
     "oneline": MessageLookupByLibrary.simpleMessage("Oneline"),
     "onlyIcon": MessageLookupByLibrary.simpleMessage("Icon"),
@@ -699,7 +763,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "portConflictTip": MessageLookupByLibrary.simpleMessage(
       "Please enter a different port",
     ),
-    "portTip": m6,
+    "portTip": m11,
     "preferH3Desc": MessageLookupByLibrary.simpleMessage(
       "Prioritize the use of DOH\'s http/3",
     ),
@@ -894,7 +958,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "purchasePlanResetSystem": MessageLookupByLibrary.simpleMessage(
       "Follows system settings",
     ),
-    "purchasePlanResetUnknown": m7,
+    "purchasePlanResetUnknown": m12,
     "purchasePlanResetYearStart": MessageLookupByLibrary.simpleMessage(
       "On January 1 each year",
     ),
@@ -1088,7 +1152,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "selectAll": MessageLookupByLibrary.simpleMessage("Select all"),
     "selectProfile": MessageLookupByLibrary.simpleMessage("Select Profile"),
     "selected": MessageLookupByLibrary.simpleMessage("Selected"),
-    "selectedCountTitle": m8,
+    "selectedCountTitle": m13,
     "sendToTv": MessageLookupByLibrary.simpleMessage("Send to TV"),
     "sendToTvTitle": MessageLookupByLibrary.simpleMessage("Send to TV"),
     "sentSuccessfullyMessage": MessageLookupByLibrary.simpleMessage(
@@ -1132,7 +1196,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "subscriptionExpired": MessageLookupByLibrary.simpleMessage(
       "Your subscription has expired",
     ),
-    "subscriptionExpiresInDays": m9,
+    "subscriptionExpiresInDays": m14,
     "subscriptionExpiresSoon": MessageLookupByLibrary.simpleMessage(
       "Subscription expires soon",
     ),
@@ -1216,7 +1280,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "tunErrorUnavailable": MessageLookupByLibrary.simpleMessage(
       "Cannot verify status; check the background version",
     ),
-    "tunStatusFailure": m10,
+    "tunStatusFailure": m15,
     "tunStatusOff": MessageLookupByLibrary.simpleMessage("Not running"),
     "tunStatusOn": MessageLookupByLibrary.simpleMessage("Running"),
     "tunStatusStarting": MessageLookupByLibrary.simpleMessage("Starting…"),
@@ -1247,7 +1311,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "urlDesc": MessageLookupByLibrary.simpleMessage(
       "Obtain profile through URL",
     ),
-    "urlTip": m11,
+    "urlTip": m16,
     "useHosts": MessageLookupByLibrary.simpleMessage("Use hosts"),
     "useSystemHosts": MessageLookupByLibrary.simpleMessage("Use system hosts"),
     "value": MessageLookupByLibrary.simpleMessage("Value"),

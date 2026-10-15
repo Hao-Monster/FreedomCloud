@@ -624,5 +624,69 @@
   "tunErrorStart": "网卡启动失败，可重新开启重试",
   "tunDisableAction": "请求关闭",
   "tunErrorLegacyAgent": "请先退出旧版后台，再重新打开本版本",
-  "tunErrorProfileRequired": "请先选择可读取且非空的配置，再重试连接"
+  "tunErrorProfileRequired": "请先选择可读取且非空的配置，再重试连接",
+  "nodeOverviewCurrentProfile": "当前配置",
+  "nodeOverviewAllProfiles": "全部配置",
+  "nodeOverviewActive": "活动配置",
+  "nodeOverviewAvailableOnly": "仅显示可用",
+  "nodeOverviewInline": "内联",
+  "nodeOverviewRuntimeSource": "运行时订阅源",
+  "nodeOverviewUntested": "未测",
+  "nodeOverviewTestFailed": "测试失败",
+  "nodeOverviewStale": "可能过时",
+  "nodeOverviewLastActiveTest": "上次活动时测速：{time}",
+  "nodeOverviewLastTest": "最近测速：{time}",
+  "nodeOverviewHealthCounts": "可用 {available} / 已测 {tested} / 总数 {total}",
+  "nodeOverviewMedian": "中位延迟：{delay}",
+  "nodeOverviewFileMissing": "配置文件缺失",
+  "nodeOverviewParseFailed": "配置解析失败",
+  "nodeOverviewExpired": "订阅已过期",
+  "nodeOverviewUpdating": "正在更新订阅",
+  "nodeOverviewManageProfiles": "管理配置 / 更新订阅",
+  "nodeOverviewProviderPending": "{provider}：激活后可见节点",
+  "nodeOverviewNoNodes": "没有符合条件的节点",
+  "nodeOverviewTooManyNodes": "节点过多，预览版暂不展示",
+  "@nodeOverviewLastActiveTest": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "@nodeOverviewLastTest": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "@nodeOverviewHealthCounts": {
+    "placeholders": {
+      "available": {
+        "type": "int"
+      },
+      "tested": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      }
+    }
+  },
+  "@nodeOverviewMedian": {
+    "placeholders": {
+      "delay": {
+        "type": "String"
+      }
+    }
+  },
+  "@nodeOverviewProviderPending": {
+    "placeholders": {
+      "provider": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewPartialSummary": "摘要仅统计已加载的节点",
+  "nodeOverviewHistoryNotice": "历史仅保存本次应用配置后的手动测速。接管已有代理时，显示旧历史和实时结果。"
 }
