@@ -2,10 +2,13 @@
 
 更新日期：2026-10-15。当前阶段是快速开发、快速迭代和部分功能预览。本文记录来源与验收边界；每次继续开发仍需核实实际 Git/PR/CI 状态，不能把历史报告视为当前通过证明。
 
-## 跨配置节点总览：工程书（2026-10-15，仅设计）
+## 跨配置节点总览 P0（2026-10-15，本地实现）
 
-- 用户需求：不用切换配置，在同一页面查看所有配置的节点状态。基线 `development@2074cce`。本轮只产出 [工程书](plans/cross-profile-node-overview-2026-10-15.md)：概念设计、详细设计（Core `catalogPrepare/catalogTestDelay/catalogRelease` 契约、协调器 scope、健康缓存、跨配置切换状态机）、P0/P1/P2 任务拆分、测试矩阵、风险、禁用方案及负责人评审清单。
-- 状态：未实现、未运行任何测试或构建，未推送。由其他开发者按工程书实施，负责人逐批评审；P1 涉及 Core 改动，须整包重建并重新绑定 Helper/Core hash，TUN 不回环须 VM 验证。
+- 来源：[工程书](plans/cross-profile-node-overview-2026-10-15.md) 设计基线 `2074cce`，实际开工 `development@c7166fe`（仅增加工程书/台账，fetch 后领先自有远端 1、落后 0，无开放 PR）。用户明确授权从 P0 实施、测试和本地提交；不推送、不运行候选包、不影响现役代理/TUN。
+- 源码与测试已本地提交 `c8fa0a3f55386778a4d1f17c7ce4845a03980449`（`feat(proxies): add cross-profile node overview P0`）。实现脱敏目录/稳定键、受限并发与 LRU、跨会话健康文件、按请求捕获归属、宽窄总览/搜索/排序/筛选/异常卡、活动 ProxyCard 复用和四语言文案。`FCX_NODE_OVERVIEW=false` 可关闭；当前配置仍默认，少于两个配置隐藏范围入口。Core/Agent/Helper 未改动。
+- 验证：新增目标 64 PASS，全 Flutter 674 PASS/0 FAIL/0 SKIP；合成渲染 400×800、1200×900 两项 PASS 且看图；Windows debug UI 资源编译 PASS（非可执行预览包）。新增六个手写模块行覆盖率 726/787（92.25%）、分支 240/282（85.11%）。全仓 analyze 0 error、11 既有 warning，退出 1，未冒充全绿；最终独立复核未发现未解决 Critical/High。首次提前初始化回归和 coverage 内存崩溃均保留失败证据，前者已修复并重跑，后者以分离/降低并发采集成功。完整矩阵、命令、覆盖缺口见 [P0 测试记录](testing/node-overview-p0-2026-10-15.md)。本机 Flutter 3.47.4 / Dart 3.13.3，CI 仍声明 Flutter 3.41.7，未升级依赖。
+- **验收限制**：FR-4 只记录可绑定到已应用快照的显式测速；接管已有 Core 且本会话未应用配置时缺少可信快照，保留实时值/旧历史，不新写历史；无归属自动广播同样不写。UI 有说明，未用 setup/重启补救。因此 P0 本地实现已交付，完整接管历史与真实运行验收尚未完成。非活动 provider 叶子属 P1；peers-only WireGuard 缺顶层 server/port 时目录明确解析失败。
+- 交付状态：仅本地源码和本地文档提交；未推送、未 PR/合并、未生成可执行预览、未部署、未启动候选。真实窗口、性能、QuickJS/IPC 与现役代理/TUN 验收 NOT RUN。原 coverage/QA/probes 文件 hash、stash、历史工作树保持原状。后续先补可信只读运行身份契约或明确接管限制，再按授权构建预览和运行验收；P1/P2 未实施，P1 改 Core 时仍须整包重建、Helper/Core hash 绑定及 VM 证据。
 
 ## DoH 静默连接恢复回归修复（2026-10-14）
 
