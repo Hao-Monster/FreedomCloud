@@ -1,6 +1,61 @@
 # 开发、集成与预览台账
 
-更新日期：2026-10-15。当前阶段是快速开发、快速迭代和部分功能预览。本文记录来源与验收边界；每次继续开发仍需核实实际 Git/PR/CI 状态，不能把历史报告视为当前通过证明。
+更新日期：2026-10-16。当前阶段是快速开发、快速迭代和部分功能预览。本文记录来源与验收边界；每次继续开发仍需核实实际 Git/PR/CI 状态，不能把历史报告视为当前通过证明。
+
+
+## 节点延迟漏测与所选配置修复预览及 P1 源码本地提交（2026-10-16，仅本地）
+
+- 用户真实反馈：全量测试遗漏末尾配置，选中配置后当前配置入口无效。已复现普通60秒代理组刷新递增version被误当成会话失效，以及当前按钮忽略所选profileId。仅修改overview.dart与node_overview.dart两处产品文件，保留其他P1 WIP。
+- 新增8项回归：2项页面选择、2项16配置/170节点跨刷新完成并逐配置存储、4项真实配置/脚本失效反例。目标66+6+53 PASS；全Flutter894 PASS/0FAIL/SKIP；analyze0error/11既有warning/889info（exit2）；diff-check通过。Go本轮无改动，未重复运行。
+- 完整预览 `FreedomCloud-windows-amd64-latency-fix-wip-69d7ea5b117c.zip`，SHA256 `addf26b9e47e8374f3216fdfcbe2190c0d516e5f58a6dc6418ede39e64550501`；WIP快照 `69d7ea5b117c2d0334a8c1ac1d579bdf34a116008a757aa456c4d98d20d9ebd1`，1007文件，完整重编exit0，静态审计8/8与解压逐文件核验PASS。源码ZIP及证据目录一并交付，旧包保留。
+- 技术负责人复审通过后，已将 P1 隔离测速、全配置延迟与批次修复的 **58 个源码与测试文件**在 `development` 分支完成本地提交 `9c3986e150c8bfb5f2f5cace5cc950b1e0a00b18`（`feat(proxies): add cross-profile node overview P1 isolated delay tests and flat UI`），配套工程文档单独本地提交；未推送远端、无候选启动、无现役代理/TUN/服务/配置操作。用户自行验收新包；旧窗口截图和有缺口的日志不能替代新候选验收。详见 [修复与交付报告](testing/node-latency-batch-fix-2026-10-16.md)。
+
+
+## 全配置节点延迟 Windows 预览复审与交付（2026-10-15）
+
+- 本轮只复审和打包，未修改产品代码，未发现新增阻塞项。44项本轮交付与此前P1清单核验后固定59项变更、1004文件快照 `1509079d76b5eb7887db1013a334aeadcc2ca6350a1605f502e4bf06b22fe914`；HEAD仍为 `e3ab52bd1afc46b009907f0ee7386fd228914d8e`，暂存区空，未执行Git写操作。
+- 新包 `dist/FreedomCloud-windows-amd64-all-delay-wip-1509079d76b5.zip`，154,097,799 bytes，SHA256 `892e73f7948a775c11df548d5dfacda10081505b040d1f4804eee2dd28f554a8`；同名完整解压目录与源码附件、证据目录已交付。旧P1包hash复核一致，未覆盖。
+- Core/Agent/Helper/UI 同源码完整重编，exit0 / 598.417秒；Helper/Core/UI编译绑定一致。74文件解压校验、独立静态审计8/8、审计guard8/8均PASS。既有VS自动发现例外后的实际CMake/AOT/native均通过。
+- 本轮重跑Dart目标105 PASS、Go全套120顶层/含子测试164 PASS，0fail/skip；相同源码的Flutter全套886 PASS与analyze 0error/11既有warning/886info（exit2）证据已按hash核对。没有把静态分析写成零告警，也没有把构建写成实机验收。
+- 未启动候选或操作现役代理/TUN/服务/网卡/权限；由用户测试。已知不支持协议/provider边界和历史5000条/4MiB容量保留。详见 [本次复审与预览交付](testing/windows-all-profile-latency-preview-2026-10-15.md)。本条为打包后文档，以下“未打新包”为此前阶段历史记录。
+
+## 全配置节点延迟测试与批次修复（2026-10-15，留工作树）
+
+- 用户收敛需求：保留“测试当前配置”独立入口并修复点击未开始/中途停止；将“测试可见节点”改为“测试全部节点延迟”，包含活动配置、忽略所有展示过滤，仅测 ms 延迟；坏配置不能阻断后续配置。历史保留至下一次有效测试覆盖；选择 B，显式全量测试可读取 provider/下载缺失列表，内存使用，不应用配置或切节点。
+- 本轮在既有 P1 WIP 上增量修改 42 个源码/测试/本地化文件，新增只读 provider resolver、纯 Core parser、受限压缩/分块；继续沿用共享测速预算、目录资源释放及协议安全限制。修复当前入口 30 秒截断、重复计数、元数据误取消、provider 混合失败、2001 节点投影、历史到期删除与容量告警串配置。没有重构其他功能。
+- 最终 Flutter **886 PASS/0 FAIL/0 SKIP**（含 coverage，158.404s）；UI 文件 64 项包含其中，另宽窄合成渲染 2 PASS且已看图。Go default/gVisor 各 **120 顶层/含子例164 PASS**，catalog/delay race **38 顶层/含子例58 PASS**。Analyze **0 error/11既有warning/886info，exit2**，warning 与此前评审逐条一致；不是全绿。
+- 真实 Red→Green、首次全量 882/1 失败、overlay helper 单独 coverage 编译失败均保留。Dart 本轮手写变更行 **90.28%**、分支 **69.71%**；含生成代码改动行82.75%、分支58.82%。Go总体语句47.9%、新provider边界82.4%；不声称 overlay helper 或 Go 分支覆盖率。
+- 历史默认无 TTL，但仍有5000条/4MiB保护，满额保留旧记录并明确拒存新身份。隔离器不支持协议、危险 provider override/具名代理缺缓存、大小与节点总量超限会明确未测，其他配置继续。活动列表不新增运行态不存在的叶子，provider投影缺失时不能仅凭散列历史重建行。详见 [本轮交付与限制](testing/all-profile-node-latency-2026-10-15.md)。
+- HEAD仍为 `development@e3ab52bd1afc46b009907f0ee7386fd228914d8e`、暂存区为空。没有Git写操作、候选构建/启动、真实IPC/节点测试或现役代理/TUN/服务操作。控制器、现役Core运行器/生命周期与依赖锁逐hash保持；前一WIP包不含本轮修改。提交/推送由技术负责人执行，真实验收 NOT RUN。
+- 主证据 `E:/Temp/fcx-node-latency-all-20261015`（含最终源码SHA、完整输出、覆盖率与渲染图），领域/Go证据 `E:/Temp/fcx-nodeoverview-alltest-20261015/catalog`。本轮前文件保存在 `before/` 及此前 `flclashx-nodeoverview-p1-wip-source-20261015/source-tree`，原草稿与旧包保留。
+
+## 跨配置节点总览 P1 Windows WIP 重建（2026-10-15）
+
+- 用户批准完整重建，沿用技术负责人管理 Git 写操作的边界。HEAD 仍为 `development@e3ab52bd1afc46b009907f0ee7386fd228914d8e`、暂存区为空，没有提交、推送、fetch 或分支操作；没有启动候选或触碰现役代理/TUN/网卡/服务/权限。
+- 从冻结的 994 文件 WIP 快照完整新编 Core、Agent、Helper、Dart AOT、runner 和原生插件。快照 ID `4c1df825fcf3641bb17e29443e6e6b66ea1b36b58c659186e61fca33472dc0e1`；42 项复审文件全匹配，构建前后 994 文件逐字节未变。基线提交只表示来源起点，不能将此包当作 e3ab52b 的纯净产物。
+- 已交付 `dist/FreedomCloud-windows-amd64-nodeoverview-p1-wip-4c1df825fcf3.zip` 与同名完整解压目录：153,961,998 bytes，SHA256 `d6139a074e46613291c7a30746d2054122061cfd0bccd76897c4a072fa2afa37`。另交付可恢复源码 ZIP 和 source-evidence 清单，旧 P0/DoH 包保留。
+- r2 完整构建 exit0，599.17 秒；74 文件/73 checksum，ZIP 和交付目录解压校验 PASS；独立静态审计 8/8 PASS、guard 8/8 PASS。Helper 实际绑定新 Core hash，UI 实际编译输入一致。15 步中包含原有 VS discovery 精确例外，后续 CMake/AOT/native 均成功；首次 overlay 目录重命名失败及审计范围适配失败均保留记录，没有隐去。
+- 本轮未改产品源码，未重跑全套测试；下方复审的 Flutter 823、Go/race 与 analyze 既有 warning 证据通过 42 文件 hash 关联。普通未签名 Windows 预览不含 strict 驱动/Broker；真实窗口、IPC、网络节点、代理/TUN 和长时验收仍 NOT RUN，由用户自行操作。
+- 构建、组件哈希、失败/重试、独立审计、工具版本及用户测试边界详见 [P1 WIP 预览交付报告](testing/windows-node-overview-p1-preview-2026-10-15.md)。本条及报告为打包后的交付文档，不改变已冻结源码包；下方“未构建”描述保留为对应阶段的历史状态。
+
+## 跨配置节点总览 P1 评审修复（2026-10-15，阶段历史记录）
+
+- 在同一 `development@e3ab52bd1afc46b009907f0ee7386fd228914d8e` 工作树收敛外部评审的 2 个 Medium 与 2 个 Low。经技术负责人独立复审通过，并随后续全配置延迟与批次修复一并归入本地提交 `9c3986e150c8bfb5f2f5cace5cc950b1e0a00b18`。
+- Provider 只传有效 HTTP(S) URL 映射的受管缓存路径，file/custom/缺失或无效 URL 不再阻断内联准备；Core 正规化可信 HomeDir，再逐段拒绝 profiles/providers 内部链接，兼容父目录别名并堵住缺目录提前返回边界。
+- 非活动目录首屏协议预筛与 Core 对齐，限制通过显式 `isolatedTest` 投影启用，活动 runtime 身份/历史记录保持；节点和左栏统一“最近测速”时间，不再误称活动测试。
+- 本轮最终验证：Flutter **823 PASS/0 FAIL/0 SKIP**；4 文件目标 85 PASS（含 UI 43），覆盖率目标 221 PASS，宽窄合成渲染 2 PASS且已看图。Go CGO0 全量与 gVisor 各 **110 顶层+44 子例 PASS**，CGO1 catalog/测速 race **28 顶层+20 子例 PASS**。Analyze **0 error/11 既有 warning/857 info，exit 2**，warning 与首轮逐条一致；非全绿。
+- Race 首次捕获旧取消测试替身阻塞：独立复现及超时栈证明通知通道满后无法响应 ctx。仅修 `delay_tasks_test.go` 的通知取消与 cleanup 等待，原 150 个结果、执行预算与资源释放断言全部保留；同两测试连续 20 轮 / 40 次执行及完整回归通过。失败与后续证据均保留。
+- 最新证据 `E:/Temp/fcx-nodeoverview-p1-reviewfix-20261015`，`final-source-manifest.json` 固定 **42 个源码/测试文件**。Dart 八模块行 91.40% / 分支 80.85%；Go 语句总体 47.6%、catalog 89.91%，不混称分支覆盖。首轮 39 文件清单、799 项结果与旧截图不回写，下面条目保留为历史。
+- 修改清单、矩阵、命令/退出码/时间、Red→Green 与证据链接见 [审查清单的评审修复补记](testing/node-overview-p1-review-2026-10-15.md)。真实候选、网络节点、Windows IPC/QuickJS、代理/TUN、跨平台完整路径矩阵及远端 CI 均 NOT RUN。
+
+## 跨配置节点总览 P1 实现交接（2026-10-15，评审前历史记录）
+
+- 实际起点 `development@e3ab52bd1afc46b009907f0ee7386fd228914d8e`；用户本轮明确将所有 Git 写操作交由技术负责人。实现与测试留在工作树，没有暂存、提交、推送、fetch、分支切换或重置，HEAD 未改变。未生成或启动 P1 候选，未操作现役代理/TUN/网卡/服务/权限。
+- UI 去除折叠外壳与活动代理组卡片，宽屏左侧筛选、窄屏下拉、全部配置轻量吸顶标题、单配置平铺、活动节点只读且展示实时延迟；宽窄布局依据实际父约束。新增单节点、当前配置和完整筛选集测速、进度与取消。
+- Core/Dart 三个 catalog 动作贯通：独立目录锁、三目录/2000 节点/10 分钟 TTL、共享 150 任务槽与 50 执行预算、目录结果不广播；作用域健康绑定、配置代次、会话 owner 和引用释放。目录按配置依次准备/测速/释放；页面退出或隐藏同步撤销未完成 prepare，迟返不能释放新页面资源或启动隐藏窗口的测试。
+- 最终本机验证：Flutter 全量 **799 PASS/0 FAIL/0 SKIP**（108.268s），UI **41 PASS**，合成宽窄渲染 2 PASS且看图；Go CGO0 全量与 `with_gvisor` 各 **107 PASS**，目录/共享测速 race **25 PASS**。`dart analyze --format machine` 为 **0 error、11 既有 warning、857 info，exit 2**，11 条 warning 与本轮初始扫描逐条一致，不声称全绿。Flutter 3.47.4 / Dart 3.13.3 / Go 1.25.13 与 CI 声明版本差异保留披露；未运行远端 CI。
+- 预览限制：仅内联节点，provider 缓存仅安全路径/stat；链式、重型、smux 和不能可靠释放/取消的 TUIC、Snell、AnyTLS、Hysteria v1、SS kcptun、Hysteria2 realm 配置暂不支持隔离测速，普通 SS/VMess/VLESS/Trojan/Hysteria2 等保留。限制只作用于新入口，现役协议实现未变。真实节点/Windows IPC/QuickJS/候选启动/TUN/长时验收均 NOT RUN。
+- 完整修改清单、矩阵、Red→Green、覆盖率、最终日志、限制和适配器资源链依据见 [P1 技术负责人审查清单](testing/node-overview-p1-review-2026-10-15.md)。私有证据 `E:/Temp/fcx-nodeoverview-p1-20261015`；`final-source-manifest.json` 固定 39 个源码/测试文件 hash。旧 QA、coverage、probes 和 P0 预览包保留。下一步由技术负责人审查并统一处理 Git 写操作；此处不代表已提交、发布或实机验收。
 
 ## 跨配置节点总览 P1 隔离测速与界面层级重构排期（2026-10-15）
 
