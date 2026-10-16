@@ -18,6 +18,52 @@ enum CatalogUnsupportedReason {
   strictModeUnsupported,
 }
 
+const _isolatedCatalogTypes = {
+  'ss',
+  'ssr',
+  'socks5',
+  'http',
+  'vmess',
+  'vless',
+  'trojan',
+  'hysteria2',
+  'ssh',
+};
+
+/// Preflight for isolated tests only, matching Core's catalog admission rules.
+/// A supported shape still needs Core parsing; these restrictions must not
+/// change the identities or health history of already-running adapters.
+CatalogUnsupportedReason catalogIsolationUnsupportedReason(
+    Map<Object?, Object?> proxy) {
+  final type = proxy['type'];
+  var hasRetainedTransport = false;
+  for (final entry in proxy.entries) {
+    final key = entry.key;
+    if (key is! String) continue;
+    final field = key.toLowerCase().replaceAll('_', '-');
+    // Chains take precedence regardless of the source map's key order.
+    if (field == 'dialer-proxy') {
+      return CatalogUnsupportedReason.chainUnsupported;
+    }
+    final value = entry.value;
+    if (field == 'smux' ||
+        (type == 'ss' &&
+            field == 'plugin' &&
+            value is String &&
+            value.toLowerCase() == 'kcptun') ||
+        (type == 'hysteria2' && field == 'realm-opts')) {
+      hasRetainedTransport = true;
+    }
+  }
+  if (type is! String || type.isEmpty) {
+    return CatalogUnsupportedReason.parseFailed;
+  }
+  if (!_isolatedCatalogTypes.contains(type) || hasRetainedTransport) {
+    return CatalogUnsupportedReason.typeUnsupported;
+  }
+  return CatalogUnsupportedReason.none;
+}
+
 @freezed
 class CatalogNode with _$CatalogNode {
   const factory CatalogNode({
@@ -101,7 +147,7 @@ CatalogNode catalogNodeFromMap({
     selectGroups: List<String>.unmodifiable(selectGroups),
     unsupported: proxy.containsKey('dialer-proxy')
         ? CatalogUnsupportedReason.chainUnsupported
-        : type == 'wireguard'
+        : const {'wireguard', 'amneziawg'}.contains(type.toLowerCase())
             ? CatalogUnsupportedReason.typeUnsupported
             : CatalogUnsupportedReason.none,
   );
@@ -114,13 +160,21 @@ CatalogNode unparsedCatalogNode({
   required int sourceIndex,
   String? name,
   String? type,
+  CatalogNodeSource source = CatalogNodeSource.inline,
+  String? providerName,
 }) {
   final displayName =
       name == null || name.isEmpty ? '#${sourceIndex + 1}' : name;
   final displayType = type == null || type.isEmpty ? 'unknown' : type;
   final key = sha256
-      .convert(utf8.encode(
-          jsonEncode([profileId, sourceIndex, displayName, displayType])))
+      .convert(utf8.encode(jsonEncode([
+        profileId,
+        sourceIndex,
+        displayName,
+        displayType,
+        if (source != CatalogNodeSource.inline || providerName != null)
+          [source.name, providerName]
+      ])))
       .toString()
       .substring(0, 32);
   return CatalogNode(
@@ -128,7 +182,8 @@ CatalogNode unparsedCatalogNode({
     endpointKey: '',
     name: displayName,
     type: displayType,
-    source: CatalogNodeSource.inline,
+    source: source,
+    providerName: providerName,
     unsupported: CatalogUnsupportedReason.parseFailed,
   );
 }

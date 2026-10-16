@@ -99,7 +99,7 @@ void main() {
       'one worker budget spans groups and deduplicates node plus URL',
       () => fakeAsync((clock) {
             final pending = <Completer<DelayTestResult>>[];
-            final visited = <(String, String)>[];
+            final visited = <(String, String, String)>[];
             var active = 0;
             var peak = 0;
             var applied = 0;

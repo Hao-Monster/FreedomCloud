@@ -32,6 +32,7 @@ const configsSHA256 = "d11710296ea68a8d12f7593ec50cec9fef830272b3a54f64f707ec869
 const controllerSHA256 = "01724bd82002cf80b85448ef664ca53a7cb82f529ccf2b7f4a6383282768d256"
 const adapterSHA256 = "0a0524f342ff1672fdb94ad675d176d069b1f6e16ddfe462ece2f55b9e10212c"
 const dnsDoHSHA256 = "1ba0170bed4aabf6b295471f9fddb03da20122d339526a97170dff537fbde57b"
+const converterSHA256 = "503aac2968628ab826f8208d620bcd5939ca67219426cf0189fab76346626ede"
 
 func patchController(source []byte) ([]byte, error) {
 	fset := token.NewFileSet()
@@ -301,6 +302,25 @@ func generate(out string) error {
 	if err != nil {
 		return err
 	}
+	converterSource, err := checkedSource(filepath.Join(module.Dir, "common", "convert", "converter.go"), converterSHA256)
+	if err != nil {
+		return err
+	}
+	converterHeader := "func ConvertsV2Ray(buf []byte) ([]map[string]any, error) {"
+	converterLog := `log.Warnln("error:%s line:%s", err.Error(), line)`
+	if strings.Count(string(converterSource), converterHeader) != 1 || strings.Count(string(converterSource), converterLog) != 2 {
+		return fmt.Errorf("upstream subscription conversion diagnostics changed")
+	}
+	// Keep active/import behavior unchanged. The isolated parser uses a
+	// per-call quiet entry point, never a mutable global logging setting.
+	converterSource = []byte(strings.Replace(string(converterSource), converterHeader, `func ConvertsV2Ray(buf []byte) ([]map[string]any, error) { return convertsV2RayFCX(buf, true) }
+func ConvertsV2RayQuietFCX(buf []byte) ([]map[string]any, error) { return convertsV2RayFCX(buf, false) }
+func convertsV2RayFCX(buf []byte, diagnostics bool) ([]map[string]any, error) {`, 1))
+	converterSource = []byte(strings.ReplaceAll(string(converterSource), converterLog, "if diagnostics { "+converterLog+" }"))
+	converterSource, err = format.Source(converterSource)
+	if err != nil {
+		return err
+	}
 	out, err = filepath.Abs(out)
 	if err != nil {
 		return err
@@ -350,6 +370,9 @@ func generate(out string) error {
 		return err
 	}
 	if err := write(filepath.Join(sourceDirectory, "dns", "doh.go"), "doh.go", patchedDNSDoH); err != nil {
+		return err
+	}
+	if err := write(filepath.Join(sourceDirectory, "common", "convert", "converter.go"), "catalog_converter.go", converterSource); err != nil {
 		return err
 	}
 	dnsTests, err := patchFiles.ReadFile("patches/dns_doh_lifecycle_fcx_test.go.txt")
@@ -412,6 +435,17 @@ func generate(out string) error {
 		if err := write(filepath.Join(sourceDirectory, "listener", name), name, contents); err != nil {
 			return err
 		}
+	}
+	catalogParser, err := patchFiles.ReadFile("patches/catalog_provider_fcx.go.txt")
+	if err != nil {
+		return err
+	}
+	catalogParser, err = format.Source(catalogParser)
+	if err != nil {
+		return err
+	}
+	if err := write(filepath.Join(sourceDirectory, "adapter", "provider", "catalog_provider_fcx.go"), "catalog_provider_fcx.go", catalogParser); err != nil {
+		return err
 	}
 	encoded, err := json.MarshalIndent(struct{ Replace map[string]string }{replacements}, "", "  ")
 	if err != nil {
@@ -484,7 +518,7 @@ func generate(out string) error {
 	manifest, err := json.MarshalIndent(map[string]any{
 		"schemaVersion": 1, "module": "github.com/metacubex/mihomo", "version": upstreamVersion,
 		"commit": upstreamCommit, "moduleSum": module.Sum,
-		"upstreamSourceSHA256": map[string]string{"listener/listener.go": listenerSHA256, "hub/route/configs.go": configsSHA256, "hub/route/server.go": controllerSHA256, "adapter/adapter.go": adapterSHA256, "dns/doh.go": dnsDoHSHA256},
+		"upstreamSourceSHA256": map[string]string{"listener/listener.go": listenerSHA256, "hub/route/configs.go": configsSHA256, "hub/route/server.go": controllerSHA256, "adapter/adapter.go": adapterSHA256, "dns/doh.go": dnsDoHSHA256, "common/convert/converter.go": converterSHA256},
 		"patchesSHA256":        patchHashes, "generatorSHA256": digest(generatorSource), "projectGoModSHA256": digest(rootMod),
 		"effectiveModuleSHA256": aggregateHashes(moduleHashes), "effectiveModuleFiles": moduleHashes,
 	}, "", "  ")

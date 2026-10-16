@@ -688,6 +688,68 @@
     }
   },
   "nodeOverviewPartialSummary": "摘要仅统计已加载的节点",
-  "nodeOverviewHistoryNotice": "确认运行配置归属后才保存手动测速；无法确认时，仍显示旧历史和实时结果，不写入新历史。",
-  "nodeOverviewNodeUnidentified": "无法识别此节点"
+  "nodeOverviewHistoryNotice": "延迟结果保留至下次有效测试，测试时间见节点下方。",
+  "nodeOverviewNodeUnidentified": "无法识别此节点",
+  "nodeOverviewLive": "实时",
+  "nodeOverviewIndependentTest": "独立延迟测试",
+  "nodeOverviewFileSource": "配置文件 · {provider}",
+  "@nodeOverviewFileSource": {
+    "placeholders": { "provider": { "type": "String" } }
+  },
+  "nodeOverviewTestCurrent": "测当前配置",
+  "nodeOverviewTestAll": "测试全部节点延迟",
+  "nodeOverviewTestNode": "测试此节点",
+  "nodeOverviewProgress": "{completed} / {total}",
+  "@nodeOverviewProgress": {
+    "placeholders": {
+      "completed": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewChainUnsupported": "代理链暂不支持隔离测速",
+  "nodeOverviewTypeUnsupported": "此协议暂不支持隔离测速",
+  "nodeOverviewProviderNotCached": "订阅源本地缓存不可用",
+  "nodeOverviewStrictUnsupported": "严格模式下不可使用隔离测速",
+  "nodeOverviewTestUnavailable": "未能启动测速，请检查后台组件版本后重试",
+  "nodeOverviewTestInterrupted": "测速已中断，已保留此前的测量结果",
+  "nodeOverviewPreviewUnsupported": "本预览暂不支持订阅源缓存节点",
+  "nodeOverviewBatchSummary": "已完成 {completed} · 失败 {failed} · 未测 {untested} · 异常配置 {profiles}",
+  "@nodeOverviewBatchSummary": {
+    "placeholders": {
+      "completed": {
+        "type": "int"
+      },
+      "failed": {
+        "type": "int"
+      },
+      "untested": {
+        "type": "int"
+      },
+      "profiles": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewAmbiguousNode": "节点定义重复，无法确认归属",
+  "nodeOverviewHealthCapacityExceeded": "历史容量已满，部分结果未保存",
+  "nodeOverviewMoreIssues": "另有 {count} 类问题",
+  "@nodeOverviewMoreIssues": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewProviderUnsafeUrl": "订阅源地址不符合安全要求",
+  "nodeOverviewProviderUnsafePath": "订阅源文件不在授权目录内",
+  "nodeOverviewProviderDownloadFailed": "订阅源下载失败",
+  "nodeOverviewProviderTooLarge": "订阅源超出大小或节点数量限制",
+  "nodeOverviewProviderOptionsUnsupported": "此类订阅源选项暂不支持",
+  "nodeOverviewTestTimedOut": "测速或订阅源读取超时",
+  "nodeOverviewProviderUnloaded": "订阅源节点尚未加载；测试全部节点延迟时会读取，缺失缓存会获取。",
+  "nodeOverviewHealthStoreUnavailable": "部分延迟测试结果未能保存"
 }

@@ -5844,10 +5844,10 @@ class AppLocalizations {
     );
   }
 
-  /// `Manual tests are saved only when the running profile can be verified. Otherwise, earlier history and live results remain visible, without saving new history.`
+  /// `Delay results are kept until the next completed test. Test times appear below each node.`
   String get nodeOverviewHistoryNotice {
     return Intl.message(
-      'Manual tests are saved only when the running profile can be verified. Otherwise, earlier history and live results remain visible, without saving new history.',
+      'Delay results are kept until the next completed test. Test times appear below each node.',
       name: 'nodeOverviewHistoryNotice',
       desc: '',
       args: [],
@@ -5859,6 +5859,266 @@ class AppLocalizations {
     return Intl.message(
       'Node could not be identified',
       name: 'nodeOverviewNodeUnidentified',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Live`
+  String get nodeOverviewLive {
+    return Intl.message('Live', name: 'nodeOverviewLive', desc: '', args: []);
+  }
+
+  /// `Independent delay test`
+  String get nodeOverviewIndependentTest {
+    return Intl.message(
+      'Independent delay test',
+      name: 'nodeOverviewIndependentTest',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Profile file · {provider}`
+  String nodeOverviewFileSource(String provider) {
+    return Intl.message(
+      'Profile file · $provider',
+      name: 'nodeOverviewFileSource',
+      desc: '',
+      args: [provider],
+    );
+  }
+
+  /// `Test current profile`
+  String get nodeOverviewTestCurrent {
+    return Intl.message(
+      'Test current profile',
+      name: 'nodeOverviewTestCurrent',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Test all node delays`
+  String get nodeOverviewTestAll {
+    return Intl.message(
+      'Test all node delays',
+      name: 'nodeOverviewTestAll',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Test this node`
+  String get nodeOverviewTestNode {
+    return Intl.message(
+      'Test this node',
+      name: 'nodeOverviewTestNode',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `{completed} / {total}`
+  String nodeOverviewProgress(int completed, int total) {
+    return Intl.message(
+      '$completed / $total',
+      name: 'nodeOverviewProgress',
+      desc: '',
+      args: [completed, total],
+    );
+  }
+
+  /// `Proxy chains cannot be tested in isolation`
+  String get nodeOverviewChainUnsupported {
+    return Intl.message(
+      'Proxy chains cannot be tested in isolation',
+      name: 'nodeOverviewChainUnsupported',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `This protocol is not supported for isolated tests`
+  String get nodeOverviewTypeUnsupported {
+    return Intl.message(
+      'This protocol is not supported for isolated tests',
+      name: 'nodeOverviewTypeUnsupported',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Provider cache is unavailable`
+  String get nodeOverviewProviderNotCached {
+    return Intl.message(
+      'Provider cache is unavailable',
+      name: 'nodeOverviewProviderNotCached',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Isolated tests are unavailable in strict mode`
+  String get nodeOverviewStrictUnsupported {
+    return Intl.message(
+      'Isolated tests are unavailable in strict mode',
+      name: 'nodeOverviewStrictUnsupported',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Could not start this test. Check the background component version and retry.`
+  String get nodeOverviewTestUnavailable {
+    return Intl.message(
+      'Could not start this test. Check the background component version and retry.',
+      name: 'nodeOverviewTestUnavailable',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Test interrupted; earlier measurements were preserved`
+  String get nodeOverviewTestInterrupted {
+    return Intl.message(
+      'Test interrupted; earlier measurements were preserved',
+      name: 'nodeOverviewTestInterrupted',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Local provider nodes are not supported in this preview`
+  String get nodeOverviewPreviewUnsupported {
+    return Intl.message(
+      'Local provider nodes are not supported in this preview',
+      name: 'nodeOverviewPreviewUnsupported',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Completed {completed} · Failed {failed} · Untested {untested} · Profiles with issues {profiles}`
+  String nodeOverviewBatchSummary(
+    int completed,
+    int failed,
+    int untested,
+    int profiles,
+  ) {
+    return Intl.message(
+      'Completed $completed · Failed $failed · Untested $untested · Profiles with issues $profiles',
+      name: 'nodeOverviewBatchSummary',
+      desc: '',
+      args: [completed, failed, untested, profiles],
+    );
+  }
+
+  /// `Duplicate node definitions; identity could not be verified`
+  String get nodeOverviewAmbiguousNode {
+    return Intl.message(
+      'Duplicate node definitions; identity could not be verified',
+      name: 'nodeOverviewAmbiguousNode',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `History storage is full; some results were not saved`
+  String get nodeOverviewHealthCapacityExceeded {
+    return Intl.message(
+      'History storage is full; some results were not saved',
+      name: 'nodeOverviewHealthCapacityExceeded',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Additional issue types: {count}`
+  String nodeOverviewMoreIssues(int count) {
+    return Intl.message(
+      'Additional issue types: $count',
+      name: 'nodeOverviewMoreIssues',
+      desc: '',
+      args: [count],
+    );
+  }
+
+  /// `Provider URL does not meet safety requirements`
+  String get nodeOverviewProviderUnsafeUrl {
+    return Intl.message(
+      'Provider URL does not meet safety requirements',
+      name: 'nodeOverviewProviderUnsafeUrl',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Provider file is outside the allowed directory`
+  String get nodeOverviewProviderUnsafePath {
+    return Intl.message(
+      'Provider file is outside the allowed directory',
+      name: 'nodeOverviewProviderUnsafePath',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Provider download failed`
+  String get nodeOverviewProviderDownloadFailed {
+    return Intl.message(
+      'Provider download failed',
+      name: 'nodeOverviewProviderDownloadFailed',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Provider exceeds the size or node limit`
+  String get nodeOverviewProviderTooLarge {
+    return Intl.message(
+      'Provider exceeds the size or node limit',
+      name: 'nodeOverviewProviderTooLarge',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `These provider options are not supported`
+  String get nodeOverviewProviderOptionsUnsupported {
+    return Intl.message(
+      'These provider options are not supported',
+      name: 'nodeOverviewProviderOptionsUnsupported',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Test or provider read timed out`
+  String get nodeOverviewTestTimedOut {
+    return Intl.message(
+      'Test or provider read timed out',
+      name: 'nodeOverviewTestTimedOut',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Provider nodes are not loaded yet. Testing all node delays reads them and downloads missing caches.`
+  String get nodeOverviewProviderUnloaded {
+    return Intl.message(
+      'Provider nodes are not loaded yet. Testing all node delays reads them and downloads missing caches.',
+      name: 'nodeOverviewProviderUnloaded',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Some delay results could not be saved`
+  String get nodeOverviewHealthStoreUnavailable {
+    return Intl.message(
+      'Some delay results could not be saved',
+      name: 'nodeOverviewHealthStoreUnavailable',
       desc: '',
       args: [],
     );

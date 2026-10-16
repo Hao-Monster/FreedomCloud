@@ -1,0 +1,128 @@
+package provider
+
+import (
+	"bytes"
+	"errors"
+	"encoding/json"
+	"io"
+	"strings"
+	"time"
+
+	"github.com/dlclark/regexp2"
+	"github.com/metacubex/mihomo/common/convert"
+	"github.com/metacubex/mihomo/common/structure"
+	"github.com/metacubex/mihomo/common/yaml"
+	"github.com/metacubex/age"
+	"github.com/metacubex/age/armor"
+)
+
+// FCXParseCatalogProvider decodes data only. It deliberately has no adapter,
+// tunnel, fetcher, health-check, file, or network dependency. The returned raw
+// mappings are private preparation input, never a public/display catalog.
+func FCXParseCatalogProvider(buf []byte, definition map[string]any) (proxies []map[string]any, rejected int, err error) {
+	defer func() {
+		if recover() != nil { proxies = nil; rejected = 0; err = errors.New("parseFailed") }
+	}()
+	if len(buf) > 8*1024*1024 { return nil, 0, errors.New("providerTooLarge") }
+	deadline := time.Now().Add(3*time.Second)
+	// The general override expression evaluator permits allocation-producing
+	// expressions. It has no cancellation/budget API, so do not execute it in
+	// the shared Core for an explicit catalog-only operation.
+	for key, value := range definition {
+		if strings.EqualFold(key, "override") {
+			if mapping, ok := value.(map[string]any); ok {
+				for field := range mapping {
+					if strings.EqualFold(strings.ReplaceAll(field, "_", "-"), "override-expr") { return nil, 0, errors.New("providerOptionsUnsupported") }
+				}
+			}
+		}
+	}
+	decodeDefinition := make(map[string]any, len(definition))
+	var payload any
+	for key, value := range definition {
+		if strings.EqualFold(key, "payload") { payload = value } else { decodeDefinition[key] = value }
+	}
+	schema := &proxyProviderSchema{}
+	decoder := structure.NewDecoder(structure.Option{TagName: "provider", WeaklyTypedInput: true})
+	if decoder.Decode(decodeDefinition, schema) != nil { return nil, 0, errors.New("parseFailed") }
+	// regexp replacement allocates before returning and can multiply a name
+	// through successive rules; matching timeouts do not bound output memory.
+	if len(schema.Override.ProxyName) != 0 { return nil, 0, errors.New("providerOptionsUnsupported") }
+	compile := func(text string) ([]*regexp2.Regexp, error) {
+		if text == "" { return nil, nil }
+		var result []*regexp2.Regexp
+		for _, part := range strings.Split(text, "`") {
+			r, e := regexp2.Compile(part, regexp2.None); if e != nil { return nil, errors.New("parseFailed") }
+			r.MatchTimeout = 25 * time.Millisecond; result = append(result, r)
+		}
+		return result, nil
+	}
+	include, e := compile(schema.Filter); if e != nil { return nil, 0, e }
+	exclude, e := compile(schema.ExcludeFilter); if e != nil { return nil, 0, e }
+	var raw []map[string]any
+	appendRaw := func(items []any) {
+		for _, item := range items {
+			if mapping, ok := item.(map[string]any); ok { raw = append(raw, mapping) } else { rejected++ }
+		}
+	}
+	if schema.Type == "inline" {
+		items, ok := payload.([]any); if !ok { return nil, 0, errors.New("parseFailed") }; appendRaw(items)
+	} else {
+		decoded := buf
+		if bytes.HasPrefix(buf, []byte(armor.Header)) {
+			// Do not read Mihomo's mutable globalSecretKeys or the active
+			// configuration. Only this provider's explicit key is authorized.
+			if schema.AgeSecretKey == "" { return nil, 0, errors.New("providerOptionsUnsupported") }
+			identities, e := age.ParseIdentities(strings.NewReader(schema.AgeSecretKey)); if e != nil { return nil, 0, errors.New("parseFailed") }
+			reader, e := age.Decrypt(armor.NewReader(bytes.NewReader(buf)), identities...); if e != nil { return nil, 0, errors.New("parseFailed") }
+			decoded, e = io.ReadAll(io.LimitReader(reader, 8*1024*1024+1)); if e != nil { return nil, 0, errors.New("parseFailed") }
+		}
+		if len(decoded) > 8*1024*1024 { return nil, 0, errors.New("providerTooLarge") }
+		var document any
+		if yaml.Unmarshal(decoded, &document) != nil { return nil, 0, errors.New("parseFailed") }
+		if envelope, ok := document.(map[string]any); ok {
+			items, ok := envelope["proxies"].([]any); if !ok { return nil, 0, errors.New("parseFailed") }; appendRaw(items)
+		} else {
+			if _, scalar := document.(string); !scalar { return nil, 0, errors.New("parseFailed") }
+			// Preserve the converter's whole-subscription naming, but separately
+			// count every nonempty rejected URI line rather than silently losing it.
+			lines := bytes.Split(convert.DecodeBase64(decoded), []byte("\n"))
+			if len(lines) > 20001 { return nil, 0, errors.New("providerTooLarge") }
+			for _, line := range lines {
+				if time.Now().After(deadline) { return nil, 0, errors.New("deadlineExceeded") }
+				line = bytes.TrimSpace(line); if len(line) == 0 { continue }
+				items, parseErr := convert.ConvertsV2RayQuietFCX(line)
+				if parseErr != nil || len(items) == 0 { rejected++ }
+			}
+			raw, e = convert.ConvertsV2RayQuietFCX(decoded)
+			if e != nil && rejected == 0 { return nil, 0, errors.New("parseFailed") }
+		}
+	}
+	if len(raw) > 20000 { return nil, 0, errors.New("providerTooLarge") }
+	matches := func(rs []*regexp2.Regexp, name string) (bool, error) {
+		for _, r := range rs { yes, e := r.MatchString(name); if e != nil { return false, errors.New("parseFailed") }; if yes { return true, nil } }
+		return false, nil
+	}
+	proxies = make([]map[string]any, 0, len(raw))
+	outputBytes := 0
+	for _, mapping := range raw {
+		if time.Now().After(deadline) { return nil, 0, errors.New("deadlineExceeded") }
+		name, validName := mapping["name"].(string)
+		typ, _ := mapping["type"].(string)
+		skip := false
+		for _, excluded := range strings.Split(schema.ExcludeType, "|") { if excluded != "" && strings.EqualFold(excluded, typ) { skip = true; break } }
+		if skip { continue }
+		if validName {
+			yes, e := matches(exclude, name); if e != nil { return nil, 0, e }; if yes { continue }
+			if len(include) > 0 { yes, e = matches(include, name); if e != nil { return nil, 0, e }; if !yes { continue } }
+		}
+		if mapping == nil { mapping = map[string]any{} }
+		if schema.DialerProxy != "" { mapping["dialer-proxy"] = schema.DialerProxy }
+		if validName && schema.Override.Apply(mapping) != nil { return nil, 0, errors.New("parseFailed") }
+		encoded, e := json.Marshal(mapping); if e != nil { return nil, 0, errors.New("parseFailed") }
+		outputBytes += len(encoded)
+		if outputBytes > 8*1024*1024 { return nil, 0, errors.New("providerTooLarge") }
+		proxies = append(proxies, mapping)
+	}
+	return proxies, rejected, nil
+}

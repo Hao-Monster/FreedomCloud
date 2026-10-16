@@ -24,6 +24,7 @@ import 'common/common.dart';
 import 'common/admin_authorization.dart';
 import 'common/delay_tests.dart';
 import 'common/node_health_recorder.dart';
+import 'common/node_health_store.dart';
 import 'common/tun_runtime.dart';
 import 'common/ui_activity.dart';
 import 'common/windows_tun_prepare.dart';
@@ -57,6 +58,10 @@ class AppController {
   final BuildContext context;
   final WidgetRef _ref;
   final _nodeHealthWrites = <Future<void>>{};
+  NodeHealthStore? get catalogHealthStore =>
+      _ref.read(nodeOverviewEnabledProvider)
+          ? _ref.read(nodeHealthRecorderProvider).store
+          : null;
   // A configuration update can race with profile recovery or another UI
   // setting.  Keep one privileged operation in flight and latch a failed
   // attempt so an unavailable/denied service cannot trigger UAC repeatedly.

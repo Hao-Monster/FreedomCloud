@@ -57,7 +57,13 @@ type blockingDelayProxy struct {
 func (p *blockingDelayProxy) URLTest(ctx context.Context, _ string, _ utils.IntRanges[uint16]) (uint16, error) {
 	p.active.Add(1)
 	defer p.active.Add(-1)
-	p.started <- struct{}{}
+	// Queued work may start while cancellation walks the registered tasks.
+	// A full notification channel must not prevent the fake from cancelling.
+	select {
+	case p.started <- struct{}{}:
+	case <-ctx.Done():
+		return 0, ctx.Err()
+	}
 	<-ctx.Done()
 	return 0, ctx.Err()
 }
@@ -68,9 +74,27 @@ func TestDelayRunningAndQueuedCancellationReleasesAllResources(t *testing.T) {
 	original := lookupDelayProxy
 	lookupDelayProxy = func(string) constant.Proxy { return &blockingDelayProxy{started: started, active: &active} }
 	done := make(chan Delay, 150)
-	t.Cleanup(func() { cancelAllDelayTasks("cancelled"); lookupDelayProxy = original })
+	allDone := make(chan struct{})
+	var remaining atomic.Int32
+	remaining.Store(150)
+	t.Cleanup(func() {
+		cancelAllDelayTasks("cancelled")
+		select {
+		case <-allDone:
+		case <-time.After(2 * time.Second):
+			t.Error("cancelled task cleanup did not finish")
+		}
+		lookupDelayProxy = original
+	})
 	for i := 0; i < 150; i++ {
-		handleAsyncTestDelay(fmt.Sprintf(`{"request-id":"running-%d","proxy-name":"synthetic","timeout":5000}`, i), func(value string) { var d Delay; _ = json.Unmarshal([]byte(value), &d); done <- d })
+		handleAsyncTestDelay(fmt.Sprintf(`{"request-id":"running-%d","proxy-name":"synthetic","timeout":5000}`, i), func(value string) {
+			var d Delay
+			_ = json.Unmarshal([]byte(value), &d)
+			done <- d
+			if remaining.Add(-1) == 0 {
+				close(allDone)
+			}
+		})
 	}
 	for i := 0; i < 50; i++ {
 		select {

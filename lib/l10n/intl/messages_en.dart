@@ -30,32 +30,41 @@ class MessageLookup extends MessageLookupByLibrary {
 
   static String m3(label) => "Current ${label} already exists";
 
-  static String m4(available, tested, total) =>
+  static String m4(completed, failed, untested, profiles) =>
+      "Completed ${completed} · Failed ${failed} · Untested ${untested} · Profiles with issues ${profiles}";
+
+  static String m5(provider) => "Profile file · ${provider}";
+
+  static String m6(available, tested, total) =>
       "${available} available / ${tested} tested / ${total} total";
 
-  static String m5(time) => "Last active test: ${time}";
+  static String m7(time) => "Last active test: ${time}";
 
-  static String m6(time) => "Last test: ${time}";
+  static String m8(time) => "Last test: ${time}";
 
-  static String m7(delay) => "Median: ${delay}";
+  static String m9(delay) => "Median: ${delay}";
 
-  static String m8(provider) => "${provider}: nodes visible after activation";
+  static String m10(count) => "Additional issue types: ${count}";
 
-  static String m9(label) => "No ${label} at the moment";
+  static String m11(completed, total) => "${completed} / ${total}";
 
-  static String m10(label) => "${label} must be a number";
+  static String m12(provider) => "${provider}: nodes visible after activation";
 
-  static String m11(label) => "${label} must be between 1024 and 49151";
+  static String m13(label) => "No ${label} at the moment";
 
-  static String m12(code) => "Unknown rule (${code})";
+  static String m14(label) => "${label} must be a number";
 
-  static String m13(count) => "${count} items have been selected";
+  static String m15(label) => "${label} must be between 1024 and 49151";
 
-  static String m14(days) => "Your subscription expires in ${days} day(s)";
+  static String m16(code) => "Unknown rule (${code})";
 
-  static String m15(reason) => "TUN: ${reason}";
+  static String m17(count) => "${count} items have been selected";
 
-  static String m16(label) => "${label} must be a url";
+  static String m18(days) => "Your subscription expires in ${days} day(s)";
+
+  static String m19(reason) => "TUN: ${reason}";
+
+  static String m20(label) => "${label} must be a url";
 
   final messages = _notInlinedMessages(_notInlinedMessages);
   static Map<String, Function> _notInlinedMessages(_) => <String, Function>{
@@ -634,8 +643,15 @@ class MessageLookup extends MessageLookupByLibrary {
     "nodeOverviewAllProfiles": MessageLookupByLibrary.simpleMessage(
       "All profiles",
     ),
+    "nodeOverviewAmbiguousNode": MessageLookupByLibrary.simpleMessage(
+      "Duplicate node definitions; identity could not be verified",
+    ),
     "nodeOverviewAvailableOnly": MessageLookupByLibrary.simpleMessage(
       "Available only",
+    ),
+    "nodeOverviewBatchSummary": m4,
+    "nodeOverviewChainUnsupported": MessageLookupByLibrary.simpleMessage(
+      "Proxy chains cannot be tested in isolation",
     ),
     "nodeOverviewCurrentProfile": MessageLookupByLibrary.simpleMessage(
       "Current profile",
@@ -646,17 +662,29 @@ class MessageLookup extends MessageLookupByLibrary {
     "nodeOverviewFileMissing": MessageLookupByLibrary.simpleMessage(
       "Profile file is missing",
     ),
-    "nodeOverviewHealthCounts": m4,
+    "nodeOverviewFileSource": m5,
+    "nodeOverviewHealthCapacityExceeded": MessageLookupByLibrary.simpleMessage(
+      "History storage is full; some results were not saved",
+    ),
+    "nodeOverviewHealthCounts": m6,
+    "nodeOverviewHealthStoreUnavailable": MessageLookupByLibrary.simpleMessage(
+      "Some delay results could not be saved",
+    ),
     "nodeOverviewHistoryNotice": MessageLookupByLibrary.simpleMessage(
-      "Manual tests are saved only when the running profile can be verified. Otherwise, earlier history and live results remain visible, without saving new history.",
+      "Delay results are kept until the next completed test. Test times appear below each node.",
+    ),
+    "nodeOverviewIndependentTest": MessageLookupByLibrary.simpleMessage(
+      "Independent delay test",
     ),
     "nodeOverviewInline": MessageLookupByLibrary.simpleMessage("Inline"),
-    "nodeOverviewLastActiveTest": m5,
-    "nodeOverviewLastTest": m6,
+    "nodeOverviewLastActiveTest": m7,
+    "nodeOverviewLastTest": m8,
+    "nodeOverviewLive": MessageLookupByLibrary.simpleMessage("Live"),
     "nodeOverviewManageProfiles": MessageLookupByLibrary.simpleMessage(
       "Manage profiles / update subscription",
     ),
-    "nodeOverviewMedian": m7,
+    "nodeOverviewMedian": m9,
+    "nodeOverviewMoreIssues": m10,
     "nodeOverviewNoNodes": MessageLookupByLibrary.simpleMessage(
       "No matching nodes",
     ),
@@ -669,18 +697,68 @@ class MessageLookup extends MessageLookupByLibrary {
     "nodeOverviewPartialSummary": MessageLookupByLibrary.simpleMessage(
       "Summary includes loaded nodes only",
     ),
-    "nodeOverviewProviderPending": m8,
+    "nodeOverviewPreviewUnsupported": MessageLookupByLibrary.simpleMessage(
+      "Local provider nodes are not supported in this preview",
+    ),
+    "nodeOverviewProgress": m11,
+    "nodeOverviewProviderDownloadFailed": MessageLookupByLibrary.simpleMessage(
+      "Provider download failed",
+    ),
+    "nodeOverviewProviderNotCached": MessageLookupByLibrary.simpleMessage(
+      "Provider cache is unavailable",
+    ),
+    "nodeOverviewProviderOptionsUnsupported":
+        MessageLookupByLibrary.simpleMessage(
+          "These provider options are not supported",
+        ),
+    "nodeOverviewProviderPending": m12,
+    "nodeOverviewProviderTooLarge": MessageLookupByLibrary.simpleMessage(
+      "Provider exceeds the size or node limit",
+    ),
+    "nodeOverviewProviderUnloaded": MessageLookupByLibrary.simpleMessage(
+      "Provider nodes are not loaded yet. Testing all node delays reads them and downloads missing caches.",
+    ),
+    "nodeOverviewProviderUnsafePath": MessageLookupByLibrary.simpleMessage(
+      "Provider file is outside the allowed directory",
+    ),
+    "nodeOverviewProviderUnsafeUrl": MessageLookupByLibrary.simpleMessage(
+      "Provider URL does not meet safety requirements",
+    ),
     "nodeOverviewRuntimeSource": MessageLookupByLibrary.simpleMessage(
       "Runtime node",
     ),
     "nodeOverviewStale": MessageLookupByLibrary.simpleMessage(
       "May be outdated",
     ),
+    "nodeOverviewStrictUnsupported": MessageLookupByLibrary.simpleMessage(
+      "Isolated tests are unavailable in strict mode",
+    ),
+    "nodeOverviewTestAll": MessageLookupByLibrary.simpleMessage(
+      "Test all node delays",
+    ),
+    "nodeOverviewTestCurrent": MessageLookupByLibrary.simpleMessage(
+      "Test current profile",
+    ),
     "nodeOverviewTestFailed": MessageLookupByLibrary.simpleMessage(
       "Test failed",
     ),
+    "nodeOverviewTestInterrupted": MessageLookupByLibrary.simpleMessage(
+      "Test interrupted; earlier measurements were preserved",
+    ),
+    "nodeOverviewTestNode": MessageLookupByLibrary.simpleMessage(
+      "Test this node",
+    ),
+    "nodeOverviewTestTimedOut": MessageLookupByLibrary.simpleMessage(
+      "Test or provider read timed out",
+    ),
+    "nodeOverviewTestUnavailable": MessageLookupByLibrary.simpleMessage(
+      "Could not start this test. Check the background component version and retry.",
+    ),
     "nodeOverviewTooManyNodes": MessageLookupByLibrary.simpleMessage(
       "Too many nodes to display in this preview",
+    ),
+    "nodeOverviewTypeUnsupported": MessageLookupByLibrary.simpleMessage(
+      "This protocol is not supported for isolated tests",
     ),
     "nodeOverviewUntested": MessageLookupByLibrary.simpleMessage("Untested"),
     "nodeOverviewUpdating": MessageLookupByLibrary.simpleMessage(
@@ -694,8 +772,8 @@ class MessageLookup extends MessageLookupByLibrary {
       "No profile, Please add a profile",
     ),
     "nullScriptTip": MessageLookupByLibrary.simpleMessage("No scripts"),
-    "nullTip": m9,
-    "numberTip": m10,
+    "nullTip": m13,
+    "numberTip": m14,
     "oneColumn": MessageLookupByLibrary.simpleMessage("One column"),
     "oneline": MessageLookupByLibrary.simpleMessage("Oneline"),
     "onlyIcon": MessageLookupByLibrary.simpleMessage("Icon"),
@@ -766,7 +844,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "portConflictTip": MessageLookupByLibrary.simpleMessage(
       "Please enter a different port",
     ),
-    "portTip": m11,
+    "portTip": m15,
     "preferH3Desc": MessageLookupByLibrary.simpleMessage(
       "Prioritize the use of DOH\'s http/3",
     ),
@@ -961,7 +1039,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "purchasePlanResetSystem": MessageLookupByLibrary.simpleMessage(
       "Follows system settings",
     ),
-    "purchasePlanResetUnknown": m12,
+    "purchasePlanResetUnknown": m16,
     "purchasePlanResetYearStart": MessageLookupByLibrary.simpleMessage(
       "On January 1 each year",
     ),
@@ -1155,7 +1233,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "selectAll": MessageLookupByLibrary.simpleMessage("Select all"),
     "selectProfile": MessageLookupByLibrary.simpleMessage("Select Profile"),
     "selected": MessageLookupByLibrary.simpleMessage("Selected"),
-    "selectedCountTitle": m13,
+    "selectedCountTitle": m17,
     "sendToTv": MessageLookupByLibrary.simpleMessage("Send to TV"),
     "sendToTvTitle": MessageLookupByLibrary.simpleMessage("Send to TV"),
     "sentSuccessfullyMessage": MessageLookupByLibrary.simpleMessage(
@@ -1199,7 +1277,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "subscriptionExpired": MessageLookupByLibrary.simpleMessage(
       "Your subscription has expired",
     ),
-    "subscriptionExpiresInDays": m14,
+    "subscriptionExpiresInDays": m18,
     "subscriptionExpiresSoon": MessageLookupByLibrary.simpleMessage(
       "Subscription expires soon",
     ),
@@ -1283,7 +1361,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "tunErrorUnavailable": MessageLookupByLibrary.simpleMessage(
       "Cannot verify status; check the background version",
     ),
-    "tunStatusFailure": m15,
+    "tunStatusFailure": m19,
     "tunStatusOff": MessageLookupByLibrary.simpleMessage("Not running"),
     "tunStatusOn": MessageLookupByLibrary.simpleMessage("Running"),
     "tunStatusStarting": MessageLookupByLibrary.simpleMessage("Starting…"),
@@ -1314,7 +1392,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "urlDesc": MessageLookupByLibrary.simpleMessage(
       "Obtain profile through URL",
     ),
-    "urlTip": m16,
+    "urlTip": m20,
     "useHosts": MessageLookupByLibrary.simpleMessage("Use hosts"),
     "useSystemHosts": MessageLookupByLibrary.simpleMessage("Use system hosts"),
     "value": MessageLookupByLibrary.simpleMessage("Value"),

@@ -49,6 +49,58 @@ void main() {
         isNull);
   });
 
+  test('runtime verification includes nodes beyond one Core catalog chunk',
+      () async {
+    source = {
+      'proxies': List.generate(
+          2001, (index) => node('Node $index', 'n$index.invalid')),
+    };
+    final catalog = await verify(source);
+    expect(catalog, isNotNull);
+    expect(catalog!.nodes, hasLength(2001));
+    final expected = catalogNodeFromMap(
+        profileId: 'profile-a', proxy: node('Node 2000', 'n2000.invalid'));
+    expect(catalog.nodes.last.identityKey, expected.identityKey);
+    final changed = {
+      'proxies': [
+        ...(source['proxies'] as List).take(2000),
+        node('Node 2000', 'changed.invalid'),
+      ],
+    };
+    expect(await verify(changed), isNull);
+  });
+
+  test('expanded provider cache cannot revoke verified inline runtime nodes',
+      () async {
+    final file = buildProfileCatalog(
+        profileId: 'profile-a', fingerprint: 'file', raw: source);
+    final expanded = file.copyWith(nodes: [
+      ...file.nodes,
+      catalogNodeFromMap(
+          profileId: 'profile-a',
+          proxy: node('Provider node', 'provider.invalid'),
+          source: CatalogNodeSource.provider,
+          providerName: 'Subscription'),
+    ]);
+    final result = await readVerifiedNodeRuntime(
+        profileId: 'profile-a',
+        readRuntime: () async => source,
+        readProfile: () async => expanded,
+        isCurrent: () => true);
+    expect(result?.nodes.map((node) => node.name), ['One', 'Two']);
+    expect(result!.nodes.every((node) => node.source == CatalogNodeSource.inline),
+        isTrue, reason: 'cached provider endpoints are not runtime proof');
+    expect(
+        await readVerifiedNodeRuntime(
+            profileId: 'profile-a',
+            readRuntime: () async => {
+              'proxies': [node('One', 'changed.invalid'), node('Two', 'b.invalid')],
+            },
+            readProfile: () async => expanded,
+            isCurrent: () => true),
+        isNull);
+  });
+
   test('missing extra and changed endpoints are rejected', () async {
     for (final nodes in [
       [node('One', 'a.invalid')],

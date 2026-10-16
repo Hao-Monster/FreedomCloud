@@ -607,6 +607,68 @@
     }
   },
   "nodeOverviewPartialSummary": "В сводке учтены только загруженные узлы",
-  "nodeOverviewHistoryNotice": "Ручные проверки сохраняются, только если удалось определить работающий профиль. Иначе прежняя история и текущие результаты доступны без записи новой истории.",
-  "nodeOverviewNodeUnidentified": "Не удалось распознать узел"
+  "nodeOverviewHistoryNotice": "Результаты проверки задержки сохраняются до следующей завершённой проверки. Время проверки указано под каждым узлом.",
+  "nodeOverviewNodeUnidentified": "Не удалось распознать узел",
+  "nodeOverviewLive": "В реальном времени",
+  "nodeOverviewIndependentTest": "Независимая проверка задержки",
+  "nodeOverviewFileSource": "Файл профиля · {provider}",
+  "@nodeOverviewFileSource": {
+    "placeholders": { "provider": { "type": "String" } }
+  },
+  "nodeOverviewTestCurrent": "Проверить текущий профиль",
+  "nodeOverviewTestAll": "Проверить задержку всех узлов",
+  "nodeOverviewTestNode": "Проверить этот узел",
+  "nodeOverviewProgress": "{completed} / {total}",
+  "@nodeOverviewProgress": {
+    "placeholders": {
+      "completed": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewChainUnsupported": "Изолированная проверка цепочек прокси не поддерживается",
+  "nodeOverviewTypeUnsupported": "Изолированная проверка этого протокола не поддерживается",
+  "nodeOverviewProviderNotCached": "Локальный кэш провайдера недоступен",
+  "nodeOverviewStrictUnsupported": "В строгом режиме изолированные проверки недоступны",
+  "nodeOverviewTestUnavailable": "Не удалось начать проверку. Проверьте версию фоновых компонентов.",
+  "nodeOverviewTestInterrupted": "Проверка прервана; предыдущие результаты сохранены",
+  "nodeOverviewPreviewUnsupported": "Локальные узлы провайдера не поддерживаются в этой предварительной версии",
+  "nodeOverviewBatchSummary": "Завершено {completed} · Ошибок {failed} · Не проверено {untested} · Профилей с проблемами {profiles}",
+  "@nodeOverviewBatchSummary": {
+    "placeholders": {
+      "completed": {
+        "type": "int"
+      },
+      "failed": {
+        "type": "int"
+      },
+      "untested": {
+        "type": "int"
+      },
+      "profiles": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewAmbiguousNode": "Определения узлов повторяются; не удалось подтвердить идентичность",
+  "nodeOverviewHealthCapacityExceeded": "Хранилище истории заполнено; часть результатов не сохранена",
+  "nodeOverviewMoreIssues": "Ещё типов проблем: {count}",
+  "@nodeOverviewMoreIssues": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewProviderUnsafeUrl": "URL провайдера не соответствует требованиям безопасности",
+  "nodeOverviewProviderUnsafePath": "Файл провайдера находится вне разрешённого каталога",
+  "nodeOverviewProviderDownloadFailed": "Не удалось загрузить провайдера",
+  "nodeOverviewProviderTooLarge": "Превышен лимит размера или числа узлов провайдера",
+  "nodeOverviewProviderOptionsUnsupported": "Эти параметры провайдера не поддерживаются",
+  "nodeOverviewTestTimedOut": "Истекло время проверки или чтения провайдера",
+  "nodeOverviewProviderUnloaded": "Узлы провайдера ещё не загружены. Проверка задержки всех узлов прочитает их и загрузит отсутствующий кэш.",
+  "nodeOverviewHealthStoreUnavailable": "Не удалось сохранить часть результатов проверки задержки"
 }

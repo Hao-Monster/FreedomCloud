@@ -322,7 +322,7 @@ void main() {
         isTrue);
   });
 
-  test('load drops records older than seven days and bounds total count',
+  test('explicit retention drops old records without changing the default',
       () async {
     await snapshot({
       'a': {
@@ -331,16 +331,77 @@ void main() {
       'b': {key: entry(delay: 200, at: now.subtract(const Duration(days: 7)))},
       'c': {key: entry(delay: 300)},
     });
-    final store = createStore(maxEntries: 1);
+    final store = NodeHealthStore(
+      fileProvider: () async => file,
+      now: () => now,
+      retention: const Duration(days: 7),
+    );
     await store.load();
     expect(store.readProfile('a', testUrl: url), isEmpty);
-    expect(store.readProfile('b', testUrl: url), isEmpty);
+    expect(store.read('b', key, testUrl: url)?.delayMs, 200);
     expect(store.read('c', key, testUrl: url)?.delayMs, 300);
     store.dispose();
   });
 
-  test('capacity eviction uses measurement time across profiles', () async {
+  test('default history survives a century and changes only on measurement',
+      () async {
+    await snapshot({
+      'a': {key: entry(delay: 123)},
+    }, version: 2);
+    final future = DateTime.utc(2126, 10, 15, 8);
+    NodeHealthStore futureStore() => NodeHealthStore(
+          fileProvider: () async => file,
+          now: () => future,
+        );
+    final store = futureStore();
+    addTearDown(store.dispose);
+    await store.load();
+    expect(store.read('a', key, testUrl: url)?.delayMs, 123);
+    await store.record(
+        profileId: 'b', identityKey: key, delayMs: 200, testUrl: url);
+    for (final result in [
+      (0, null),
+      (-1, 'cancelled'),
+      (-1, 'configChanged')
+    ]) {
+      await store.record(
+        profileId: 'a',
+        identityKey: key,
+        delayMs: result.$1,
+        testUrl: url,
+        reason: result.$2,
+      );
+    }
+    expect(store.read('a', key, testUrl: url)?.testedAt, now);
+    await store.flush();
+    final restored = futureStore();
+    addTearDown(restored.dispose);
+    await restored.load();
+    expect(restored.read('a', key, testUrl: url)?.delayMs, 123);
+    expect(restored.read('a', key, testUrl: url)?.testedAt, now);
+    await restored.record(
+        profileId: 'a', identityKey: key, delayMs: 456, testUrl: url);
+    expect(restored.read('a', key, testUrl: url)?.delayMs, 456);
+    expect(restored.read('a', key, testUrl: url)?.testedAt, future);
+    await restored.record(
+      profileId: 'a',
+      identityKey: key,
+      delayMs: -1,
+      testUrl: url,
+      reason: 'testFailed',
+    );
+    await restored.flush();
+    final failed = futureStore();
+    addTearDown(failed.dispose);
+    await failed.load();
+    expect(failed.read('a', key, testUrl: url)?.delayMs, -1);
+    expect(failed.read('a', key, testUrl: url)?.reason, 'testFailed');
+  });
+
+  test('capacity refuses new identities but keeps and updates older history',
+      () async {
     final store = createStore(maxEntries: 2);
+    addTearDown(store.dispose);
     await store.record(
         profileId: 'a', identityKey: key, delayMs: 1, testUrl: url);
     await store.record(
@@ -357,13 +418,32 @@ void main() {
       testUrl: url,
       testedAt: now.subtract(const Duration(minutes: 1)),
     );
-    expect(store.readProfile('b', testUrl: url), isEmpty);
-    expect(store.readProfile('a', testUrl: url).length, 2);
+    expect(store.read('b', key, testUrl: url)?.delayMs, 2);
+    expect(store.read('a', key, testUrl: url)?.delayMs, 1);
+    expect(store.read('a', secondKey, testUrl: url), isNull);
+    expect(store.lastErrorCode, 'capacityExceeded');
+    expect(store.capacityRejectedWrites, 1);
+    await store.record(
+        profileId: 'b', identityKey: key, delayMs: 9, testUrl: url);
     await store.flush();
-    store.dispose();
+    expect(store.lastErrorCode, 'capacityExceeded');
+    expect(store.capacityRejectedWrites, 1);
+    final restored = createStore(maxEntries: 2);
+    addTearDown(restored.dispose);
+    await restored.load();
+    expect(restored.read('a', key, testUrl: url)?.delayMs, 1);
+    expect(restored.read('b', key, testUrl: url)?.delayMs, 9);
+    expect(restored.read('a', secondKey, testUrl: url), isNull);
+    await store.removeProfile('a');
+    await store.record(
+        profileId: 'c', identityKey: key, delayMs: 7, testUrl: url);
+    await store.flush();
+    expect(store.read('c', key, testUrl: url)?.delayMs, 7);
+    expect(store.lastErrorCode, isNull);
+    expect(store.capacityRejectedWrites, 1);
   });
 
-  test('the seven day boundary is retained and the default cap is 5000',
+  test('over-capacity snapshots are bounded and protected without data loss',
       () async {
     final keys =
         List.generate(5001, (i) => i.toRadixString(16).padLeft(32, '0'));
@@ -374,22 +454,93 @@ void main() {
       },
     });
     final store = createStore();
+    addTearDown(store.dispose);
+    final original = await file.readAsString();
     await store.load();
     expect(store.readProfile('a', testUrl: url), hasLength(5000));
-    expect(store.read('a', keys.last, testUrl: url), isNull);
-    store.dispose();
+    expect(store.lastErrorCode, 'capacityExceeded');
+    expect(store.capacityRejectedWrites, 0);
+    expect(await file.readAsString(), original);
+    final originalDelay = store.read('a', keys.first, testUrl: url)?.delayMs;
+    await store.record(
+        profileId: 'a', identityKey: keys.first, delayMs: 999, testUrl: url);
+    expect(store.read('a', keys.first, testUrl: url)?.delayMs, originalDelay);
+    expect(store.capacityRejectedWrites, 1);
+    await expectLater(store.flush(), throwsStateError);
+    expect(await file.readAsString(), original);
+    await store.removeProfile('a');
+    await expectLater(store.flush(), throwsStateError);
+    expect(await file.readAsString(), original);
+    expect(store.capacityRejectedWrites, 1);
+    expect(directory.listSync(), hasLength(1));
+    final expanded = createStore(maxEntries: 5001);
+    addTearDown(expanded.dispose);
+    await expanded.load();
+    expect(expanded.readProfile('a', testUrl: url), hasLength(5001));
+    expect(expanded.lastErrorCode, isNull);
+  });
 
+  test('the default cap counts all profiles without evicting earlier values',
+      () async {
+    final keys =
+        List.generate(2500, (i) => i.toRadixString(16).padLeft(32, '0'));
+    await snapshot({
+      for (final profile in ['a', 'b'])
+        profile: {for (final identity in keys) identity: entry(delay: 123)},
+    }, version: 2);
+    final store = createStore();
+    addTearDown(store.dispose);
+    await store.load();
+    expect(store.lastErrorCode, isNull);
+    await store.record(
+        profileId: 'c', identityKey: key, delayMs: 999, testUrl: url);
+    expect(store.readProfile('c', testUrl: url), isEmpty);
+    expect(store.lastErrorCode, 'capacityExceeded');
+    await store.record(
+        profileId: 'a', identityKey: keys.first, delayMs: 321, testUrl: url);
+    await store.flush();
+    final restored = createStore();
+    addTearDown(restored.dispose);
+    await restored.load();
+    expect(restored.readProfile('a', testUrl: url), hasLength(2500));
+    expect(restored.readProfile('b', testUrl: url), hasLength(2500));
+    expect(restored.read('a', keys.first, testUrl: url)?.delayMs, 321);
+    expect(restored.read('b', keys.first, testUrl: url)?.delayMs, 123);
+  });
+
+  test('validation continues after the capacity boundary', () async {
     await snapshot({
       'a': {
-        key: entry(at: now.subtract(const Duration(days: 7))),
-        secondKey:
-            entry(at: now.subtract(const Duration(days: 7, milliseconds: 1))),
+        key: entry(),
+        secondKey: entry(),
+        'not-a-hash': entry(),
       },
     });
-    final boundary = createStore();
-    await boundary.load();
-    expect(boundary.readProfile('a', testUrl: url).keys, [key]);
-    boundary.dispose();
+    final store = createStore(maxEntries: 1);
+    addTearDown(store.dispose);
+    await store.load();
+    expect(store.lastErrorCode, 'corruptRecovered');
+    expect(store.readProfile('a', testUrl: url), isEmpty);
+    await store.record(
+        profileId: 'a', identityKey: key, delayMs: 23, testUrl: url);
+    await store.flush();
+    expect(store.read('a', key, testUrl: url)?.delayMs, 23);
+    expect(store.lastErrorCode, isNull);
+  });
+
+  test('oversized snapshots stay untouched and cannot be replaced', () async {
+    final original = ' ' * (4 * 1024 * 1024 + 1);
+    await file.writeAsString(original);
+    final store = createStore();
+    addTearDown(store.dispose);
+    await store.load();
+    expect(store.lastErrorCode, 'readFailed');
+    expect(store.readProfile('a', testUrl: url), isEmpty);
+    await store.record(
+        profileId: 'a', identityKey: key, delayMs: 1, testUrl: url);
+    await expectLater(store.flush(), throwsStateError);
+    expect(await file.readAsString(), original);
+    expect(directory.listSync(), hasLength(1));
   });
 
   for (final damaged in [

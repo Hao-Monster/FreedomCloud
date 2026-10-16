@@ -34,6 +34,7 @@ import (
 )
 
 var (
+	coreLifecycleMu       sync.Mutex
 	isInit                atomic.Bool
 	externalProviders     = map[string]cp.Provider{}
 	logSubscriber         observable.Subscription[log.Event]
@@ -102,6 +103,8 @@ func configureRuntimeMemory() {
 }
 
 func handleInitClash(paramsString string) bool {
+	coreLifecycleMu.Lock()
+	defer coreLifecycleMu.Unlock()
 	var params = InitParams{}
 	err := json.Unmarshal([]byte(paramsString), &params)
 	if err != nil {
@@ -118,7 +121,9 @@ func handleInitClash(paramsString string) bool {
 	}
 	configureRuntimeMemory()
 	version.Store(int32(params.Version))
+	catalogPathMu.Lock()
 	constant.SetHomeDir(params.HomeDir)
+	catalogPathMu.Unlock()
 	// Default to "foreground": the main process drives setUiActive(false) when it
 	// backgrounds. A headless cold-start has no UI but keeping the foreground
 	// cadence here preserves the previous behaviour (no regression).
@@ -126,6 +131,7 @@ func handleInitClash(paramsString string) bool {
 	// Screen assumed on until the SuspendModule pushes the real state.
 	screenActive.Store(true)
 	isInit.Store(true)
+	resumeCatalogs()
 	return true
 }
 
@@ -253,6 +259,9 @@ func handleForceGc() {
 }
 
 func handleShutdown() bool {
+	coreLifecycleMu.Lock()
+	defer coreLifecycleMu.Unlock()
+	clearCatalogsForShutdown(true)
 	runLock.Lock()
 	defer runLock.Unlock()
 	cancelAllDelayTasks("sessionClosed")

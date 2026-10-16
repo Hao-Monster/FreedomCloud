@@ -553,6 +553,68 @@
     }
   },
   "nodeOverviewPartialSummary": "概要は読み込み済みノードのみを集計します",
-  "nodeOverviewHistoryNotice": "実行中の設定を確認できた場合のみ手動測定を保存します。確認できない場合も過去の履歴と現在の結果を表示しますが、新たな履歴は保存しません。",
-  "nodeOverviewNodeUnidentified": "ノードを識別できません"
+  "nodeOverviewHistoryNotice": "遅延結果は次の有効なテストまで保持されます。テスト時刻は各ノードの下に表示されます。",
+  "nodeOverviewNodeUnidentified": "ノードを識別できません",
+  "nodeOverviewLive": "リアルタイム",
+  "nodeOverviewIndependentTest": "独立した遅延テスト",
+  "nodeOverviewFileSource": "設定ファイル · {provider}",
+  "@nodeOverviewFileSource": {
+    "placeholders": { "provider": { "type": "String" } }
+  },
+  "nodeOverviewTestCurrent": "現在のプロファイルをテスト",
+  "nodeOverviewTestAll": "全ノードの遅延を測定",
+  "nodeOverviewTestNode": "このノードをテスト",
+  "nodeOverviewProgress": "{completed} / {total}",
+  "@nodeOverviewProgress": {
+    "placeholders": {
+      "completed": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewChainUnsupported": "プロキシチェーンの分離テストは未対応です",
+  "nodeOverviewTypeUnsupported": "このプロトコルの分離テストは未対応です",
+  "nodeOverviewProviderNotCached": "プロバイダーのキャッシュを利用できません",
+  "nodeOverviewStrictUnsupported": "厳格モードでは分離テストを利用できません",
+  "nodeOverviewTestUnavailable": "テストを開始できません。バックグラウンドのバージョンを確認してください。",
+  "nodeOverviewTestInterrupted": "テストを中断しました。以前の測定結果は保持されています",
+  "nodeOverviewPreviewUnsupported": "このプレビューではローカルプロバイダーノードは未対応です",
+  "nodeOverviewBatchSummary": "測定済み {completed} · 失敗 {failed} · 未測定 {untested} · 問題のあるプロファイル {profiles}",
+  "@nodeOverviewBatchSummary": {
+    "placeholders": {
+      "completed": {
+        "type": "int"
+      },
+      "failed": {
+        "type": "int"
+      },
+      "untested": {
+        "type": "int"
+      },
+      "profiles": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewAmbiguousNode": "ノード定義が重複しているため、識別できません",
+  "nodeOverviewHealthCapacityExceeded": "履歴の保存容量が不足し、一部の結果を保存できませんでした",
+  "nodeOverviewMoreIssues": "ほかに {count} 種類の問題",
+  "@nodeOverviewMoreIssues": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewProviderUnsafeUrl": "プロバイダーのURLが安全要件を満たしていません",
+  "nodeOverviewProviderUnsafePath": "プロバイダーファイルが許可されたディレクトリの外にあります",
+  "nodeOverviewProviderDownloadFailed": "プロバイダーのダウンロードに失敗しました",
+  "nodeOverviewProviderTooLarge": "プロバイダーがサイズまたはノード数の上限を超えています",
+  "nodeOverviewProviderOptionsUnsupported": "これらのプロバイダー設定には対応していません",
+  "nodeOverviewTestTimedOut": "テストまたはプロバイダーの読み取りがタイムアウトしました",
+  "nodeOverviewProviderUnloaded": "プロバイダーのノードはまだ読み込まれていません。全ノードの遅延テスト時に読み込み、不足するキャッシュを取得します。",
+  "nodeOverviewHealthStoreUnavailable": "一部の遅延テスト結果を保存できませんでした"
 }

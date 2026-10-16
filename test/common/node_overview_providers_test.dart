@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flclashx/common/node_catalog_service.dart';
+import 'package:flclashx/common/node_health_store.dart';
 import 'package:flclashx/models/models.dart';
 import 'package:flclashx/models/node_catalog.dart';
 import 'package:flclashx/providers/node_overview.dart';
@@ -49,6 +50,40 @@ void main() {
     ]);
   });
   tearDown(() => container.dispose());
+
+  test('tester profile guard ignores display metadata but revokes definitions',
+      () async {
+    final isolated = ProviderContainer(overrides: [
+      nodeHealthStoreProvider.overrideWith((ref) => NodeHealthStore(
+          fileProvider: () => throw StateError('No storage read expected'))),
+      nodeCatalogServiceFactoryProvider.overrideWithValue(() =>
+          NodeCatalogService(
+              readProfileConfig: (_) async => raw('fixture'),
+              evaluate: (r) async => r,
+              fileMetadata: (_) async => (modifiedMicros: 1, size: 2),
+              scriptFingerprint: () => '')),
+    ]);
+    addTearDown(isolated.dispose);
+    final subscription = isolated.listen(nodeCatalogTesterProvider, (_, __) {});
+    addTearDown(subscription.close);
+    final tester = isolated.read(nodeCatalogTesterProvider);
+    expect(tester.isCurrentProfile(a), isTrue);
+    isolated.read(profilesProvider.notifier).setProfile(a.copyWith(
+        label: 'Renamed',
+        selectedMap: {'group': 'node'},
+        unfoldSet: {'group'}));
+    expect(tester.isCurrentProfile(a), isTrue);
+    for (final changed in [
+      a.copyWith(url: 'https://fixture.invalid/new'),
+      a.copyWith(lastUpdateDate: DateTime.utc(2026)),
+      a.copyWith(isUpdating: true)
+    ]) {
+      isolated.read(profilesProvider.notifier).setProfile(changed);
+      expect(tester.isCurrentProfile(a), isFalse);
+    }
+    isolated.read(profilesProvider.notifier).value = [];
+    expect(tester.isCurrentProfile(a), isFalse);
+  });
 
   test(
       'real provider invalidates URL/date/update/script changes and preserves updating snapshot',

@@ -1,12 +1,61 @@
 import 'dart:async';
 import 'dart:convert';
+import 'package:flclashx/common/node_catalog_codec.dart';
 import 'dart:isolate';
 
 import 'package:flclashx/clash/message.dart';
 import 'package:flclashx/common/common.dart';
+import 'package:flclashx/common/delay_test_coordinator.dart';
 import 'package:flclashx/common/tun_runtime.dart';
 import 'package:flclashx/enum/enum.dart';
 import 'package:flclashx/models/models.dart';
+
+/// Protocol failures carry only fixed categories, never remote/parser text.
+class CatalogCoreException implements Exception {
+  factory CatalogCoreException(Object? reason) =>
+      CatalogCoreException._(safeReason(reason));
+  const CatalogCoreException._(this.reason);
+  final String reason;
+
+  static String safeReason(Object? reason) => reason is String &&
+          const {
+            'invalidParameters',
+            'invalidResponse',
+            'tooManyNodes',
+            'strictModeUnsupported',
+            'catalogNotFound',
+            'overloaded',
+            'duplicateRequest',
+            'parseFailed',
+            'chainUnsupported',
+            'typeUnsupported',
+            'testFailed',
+            'deadlineExceeded',
+            'cancelled',
+            'uiInactive',
+            'sessionClosed',
+            'configChanged',
+            'transportFailure',
+            'coreUnavailable',
+            'clientFailure',
+            'batchDeadlineExceeded',
+            'unknown',
+            'providerTooLarge',
+            'providerOptionsUnsupported',
+          }.contains(reason)
+      ? reason
+      : 'unknown';
+
+  @override
+  String toString() => 'CatalogCoreException($reason)';
+}
+
+bool _isCatalogMethod(ActionMethod method) => const {
+      ActionMethod.catalogPrepare,
+      ActionMethod.catalogParseProvider,
+      ActionMethod.catalogTestDelay,
+      ActionMethod.catalogRelease,
+    }.contains(method);
 
 mixin ClashInterface {
   Future<bool> init(InitParams params);
@@ -23,16 +72,34 @@ mixin ClashInterface {
 
   FutureOr<Result> getConfig(String path);
 
-  Future<String> asyncTestDelay(String url, String proxyName, {
-    String? requestId, Duration timeout = const Duration(seconds: 5),
+  Future<String> asyncTestDelay(
+    String url,
+    String proxyName, {
+    String? requestId,
+    Duration timeout = const Duration(seconds: 5),
   });
 
   Future<bool> cancelTestDelay(String requestId);
 
+  Future<String> catalogPrepare(String catalogId,
+      List<Map<String, dynamic>> proxies, List<Map<String, dynamic>> providers);
+
+  Future<String> catalogParseProvider(
+      String contentBase64, Map<String, dynamic> definition);
+
+  Future<DelayTestResult> catalogTestDelay(
+      String catalogId, int index, String url,
+      {required String requestId,
+      Duration timeout = const Duration(seconds: 5)});
+
+  Future<bool> catalogRelease(String catalogId);
+
   Future<void> healthCheck([String groupName = '']);
 
-  FutureOr<String> updateConfig(UpdateParams updateParams, {
-    String? controllerAddress, bool? controllerEnabled,
+  FutureOr<String> updateConfig(
+    UpdateParams updateParams, {
+    String? controllerAddress,
+    bool? controllerEnabled,
   });
 
   FutureOr<String> setupConfig(SetupParams setupParams);
@@ -111,6 +178,20 @@ abstract class ClashHandlerInterface with ClashInterface {
     final completer = callbackCompleterMap.remove(result.id);
     final defaultValue = callbackDefaultMap.remove(result.id);
     if (completer?.isCompleted == true) return;
+    if (_isCatalogMethod(result.method)) {
+      // Do not send catalog failures through the legacy dynamic completion/log
+      // path: a mismatched type can include the remote value in its exception.
+      if (result.code != ResultType.success) {
+        completer?.completeError(CatalogCoreException(result.data));
+      } else if (result.method == ActionMethod.catalogRelease
+          ? result.data is bool
+          : result.data is String) {
+        completer?.complete(result.data);
+      } else {
+        completer?.completeError(CatalogCoreException('invalidResponse'));
+      }
+      return;
+    }
     try {
       switch (result.method) {
         case ActionMethod.getTunStatus:
@@ -183,15 +264,21 @@ abstract class ClashHandlerInterface with ClashInterface {
         callbackCompleterMap.remove(id);
         callbackDefaultMap.remove(id);
       },
-      onTimeout: onTimeout ??
-          () => mDefaultValue as T,
+      onTimeout: onTimeout ?? () => mDefaultValue as T,
       functionName: id,
     );
     // Register completion/cleanup before sending: transports may reply or fail
     // synchronously, and an async send failure must not become a zone error.
     void failSend(Object _) {
-      if (!completer.isCompleted) completer.complete(mDefaultValue as T);
+      if (!completer.isCompleted) {
+        if (_isCatalogMethod(method)) {
+          completer.completeError(CatalogCoreException('transportFailure'));
+        } else {
+          completer.complete(mDefaultValue as T);
+        }
+      }
     }
+
     try {
       final sent = sendMessage(json.encode(Action(
         id: id,
@@ -209,30 +296,30 @@ abstract class ClashHandlerInterface with ClashInterface {
 
   @override
   Future<bool> init(InitParams params) => invoke<bool>(
-      method: ActionMethod.initClash,
-      data: json.encode(params),
-    );
+        method: ActionMethod.initClash,
+        data: json.encode(params),
+      );
 
   @override
   Future<bool> setState(CoreState state) => invoke<bool>(
-      method: ActionMethod.setState,
-      data: json.encode(state),
-    );
+        method: ActionMethod.setState,
+        data: json.encode(state),
+      );
 
   @override
   Future<bool> setUiActive(bool active) => invoke<bool>(
-      method: ActionMethod.setUiActive,
-      data: active,
-      // Short timeout so an older core without this handler degrades silently
-      // instead of leaving a pending completer.
-      timeout: const Duration(seconds: 2),
-    );
+        method: ActionMethod.setUiActive,
+        data: active,
+        // Short timeout so an older core without this handler degrades silently
+        // instead of leaving a pending completer.
+        timeout: const Duration(seconds: 2),
+      );
 
   @override
   Future<bool> shutdown() => invoke<bool>(
-      method: ActionMethod.shutdown,
-      timeout: const Duration(seconds: 1),
-    );
+        method: ActionMethod.shutdown,
+        timeout: const Duration(seconds: 1),
+      );
 
   @override
   Future<bool> get isInit => invoke<bool>(
@@ -251,16 +338,21 @@ abstract class ClashHandlerInterface with ClashInterface {
       );
 
   @override
-  Future<String> updateConfig(UpdateParams updateParams, {
-    String? controllerAddress, bool? controllerEnabled,
-  }) => invoke<String>(
+  Future<String> updateConfig(
+    UpdateParams updateParams, {
+    String? controllerAddress,
+    bool? controllerEnabled,
+  }) =>
+      invoke<String>(
         method: ActionMethod.updateConfig,
         // A general update has no authority to replace a profile's controller
         // endpoint with the UI enum's default, or re-enable a closed listener.
         data: json.encode({
           ...(updateParams.toJson()..remove('external-controller')),
-          if (controllerAddress != null) 'external-controller': controllerAddress,
-          if (controllerEnabled != null) 'controller-enabled': controllerEnabled,
+          if (controllerAddress != null)
+            'external-controller': controllerAddress,
+          if (controllerEnabled != null)
+            'controller-enabled': controllerEnabled,
         }),
         defaultValue: 'updateConfig transport unavailable',
         timeout: const Duration(minutes: 2),
@@ -308,87 +400,90 @@ abstract class ClashHandlerInterface with ClashInterface {
 
   @override
   Future<bool> crash() => invoke<bool>(
-      method: ActionMethod.crash,
-    );
+        method: ActionMethod.crash,
+      );
 
   @override
   Future<Map> getProxies() => invoke<Map>(
-      method: ActionMethod.getProxies,
-      timeout: const Duration(seconds: 5),
-    );
+        method: ActionMethod.getProxies,
+        timeout: const Duration(seconds: 5),
+      );
 
   @override
-  FutureOr<String> changeProxy(ChangeProxyParams changeProxyParams) => invoke<String>(
-      method: ActionMethod.changeProxy,
-      data: json.encode(changeProxyParams),
-    );
+  FutureOr<String> changeProxy(ChangeProxyParams changeProxyParams) =>
+      invoke<String>(
+        method: ActionMethod.changeProxy,
+        data: json.encode(changeProxyParams),
+      );
 
   @override
   FutureOr<String> getExternalProviders() => invoke<String>(
-      method: ActionMethod.getExternalProviders,
-    );
+        method: ActionMethod.getExternalProviders,
+      );
 
   @override
-  FutureOr<String> getExternalProvider(String externalProviderName) => invoke<String>(
-      method: ActionMethod.getExternalProvider,
-      data: externalProviderName,
-    );
+  FutureOr<String> getExternalProvider(String externalProviderName) =>
+      invoke<String>(
+        method: ActionMethod.getExternalProvider,
+        data: externalProviderName,
+      );
 
   @override
   Future<String> updateGeoData(UpdateGeoDataParams params) => invoke<String>(
-        method: ActionMethod.updateGeoData,
-        data: json.encode(params),
-        timeout: const Duration(seconds: 100));
+      method: ActionMethod.updateGeoData,
+      data: json.encode(params),
+      timeout: const Duration(seconds: 100));
 
   @override
   Future<String> sideLoadExternalProvider({
     required String providerName,
     required String data,
-  }) => invoke<String>(
-      method: ActionMethod.sideLoadExternalProvider,
-      data: json.encode({
-        "providerName": providerName,
-        "data": data,
-      }),
-    );
+  }) =>
+      invoke<String>(
+        method: ActionMethod.sideLoadExternalProvider,
+        data: json.encode({
+          "providerName": providerName,
+          "data": data,
+        }),
+      );
 
   @override
   Future<String> updateExternalProvider(String providerName) => invoke<String>(
-      method: ActionMethod.updateExternalProvider,
-      data: providerName,
-      timeout: const Duration(minutes: 1),
-    );
+        method: ActionMethod.updateExternalProvider,
+        data: providerName,
+        timeout: const Duration(minutes: 1),
+      );
 
   @override
   FutureOr<String> getConnections() => invoke<String>(
-      method: ActionMethod.getConnections,
-    );
+        method: ActionMethod.getConnections,
+      );
 
   @override
   Future<bool> closeConnections() => invoke<bool>(
-      method: ActionMethod.closeConnections,
-    );
+        method: ActionMethod.closeConnections,
+      );
 
   @override
   Future<bool> resetConnections() => invoke<bool>(
-      method: ActionMethod.resetConnections,
-    );
+        method: ActionMethod.resetConnections,
+      );
 
   @override
   Future<bool> closeConnection(String id) => invoke<bool>(
-      method: ActionMethod.closeConnection,
-      data: id,
-    );
+        method: ActionMethod.closeConnection,
+        data: id,
+      );
 
   @override
   FutureOr<String> getTotalTraffic() => invoke<String>(
-      method: ActionMethod.getTotalTraffic,
-    );
+        method: ActionMethod.getTotalTraffic,
+      );
 
   @override
   FutureOr<String> getTraffic() => invoke<String>(
-      method: ActionMethod.getTraffic,
-    );
+        method: ActionMethod.getTraffic,
+      );
 
   @override
   void resetTraffic() {
@@ -409,17 +504,20 @@ abstract class ClashHandlerInterface with ClashInterface {
 
   @override
   Future<bool> startListener() => invoke<bool>(
-      method: ActionMethod.startListener,
-    );
+        method: ActionMethod.startListener,
+      );
 
   @override
   Future<bool> stopListener() => invoke<bool>(
-      method: ActionMethod.stopListener,
-    );
+        method: ActionMethod.stopListener,
+      );
 
   @override
-  Future<String> asyncTestDelay(String url, String proxyName, {
-    String? requestId, Duration timeout = const Duration(seconds: 5),
+  Future<String> asyncTestDelay(
+    String url,
+    String proxyName, {
+    String? requestId,
+    Duration timeout = const Duration(seconds: 5),
   }) {
     final id = requestId ?? 'delay-${utils.id}';
     final delayParams = {
@@ -434,39 +532,153 @@ abstract class ClashHandlerInterface with ClashInterface {
       timeout: timeout,
       onTimeout: () {
         unawaited(cancelTestDelay(id));
-        return json.encode({'name': proxyName, 'value': -1, 'url': url,
-          'reason': 'deadlineExceeded'});
+        return json.encode({
+          'name': proxyName,
+          'value': -1,
+          'url': url,
+          'reason': 'deadlineExceeded'
+        });
       },
     );
   }
 
   @override
   Future<bool> cancelTestDelay(String requestId) => invoke<bool>(
-    method: ActionMethod.cancelTestDelay,
-    data: requestId,
-    timeout: const Duration(seconds: 1),
-  );
+        method: ActionMethod.cancelTestDelay,
+        data: requestId,
+        timeout: const Duration(seconds: 1),
+      );
+
+  @override
+  Future<String> catalogPrepare(
+      String catalogId,
+      List<Map<String, dynamic>> proxies,
+      List<Map<String, dynamic>> providers) async {
+    final String data;
+    try {
+      data = jsonEncode({
+        'catalog-id': catalogId,
+        'proxies': proxies,
+        'providers': providers
+      });
+      // The encoder uses Error for unsupported data and includes its value.
+      // Sanitize this boundary instead of allowing raw configuration to escape.
+      // ignore: avoid_catching_errors
+    } on JsonUnsupportedObjectError {
+      throw CatalogCoreException('invalidParameters');
+    }
+    if (utf8.encode(jsonEncode(data)).length > catalogPayloadFrameBytes) {
+      throw CatalogCoreException('providerTooLarge');
+    }
+    return invoke<String>(
+      method: ActionMethod.catalogPrepare,
+      data: data,
+      onTimeout: () => throw CatalogCoreException('deadlineExceeded'),
+    );
+  }
+
+  @override
+  Future<String> catalogParseProvider(
+      String contentBase64, Map<String, dynamic> definition) async {
+    final String data;
+    // As with preparation, serialization failures must not expose raw inputs.
+    // ignore: avoid_catching_errors
+    try {
+      data = jsonEncode(
+          {'content-base64': contentBase64, 'definition': definition});
+    } catch (_) {
+      throw CatalogCoreException('invalidParameters');
+    }
+    try {
+      final encoded = await encodeCatalogPayload(data);
+      final response = await invoke<String>(
+          method: ActionMethod.catalogParseProvider,
+          data: encoded,
+          timeout: const Duration(seconds: 10),
+          onTimeout: () => throw CatalogCoreException('deadlineExceeded'));
+      return await decodeCatalogPayload(response);
+    } on CatalogPayloadException catch (error) {
+      throw CatalogCoreException(error.reason);
+    }
+  }
+
+  @override
+  Future<DelayTestResult> catalogTestDelay(
+      String catalogId, int index, String url,
+      {required String requestId,
+      Duration timeout = const Duration(seconds: 5)}) async {
+    if (catalogId.isEmpty ||
+        index < 0 ||
+        requestId.isEmpty ||
+        timeout <= Duration.zero) {
+      return const DelayTestResult(-1, reason: 'invalidParameters');
+    }
+    try {
+      final data = await invoke<String>(
+        method: ActionMethod.catalogTestDelay,
+        data: jsonEncode({
+          'catalog-id': catalogId,
+          'index': index,
+          'request-id': requestId,
+          'timeout': timeout.inMilliseconds,
+          'test-url': url
+        }),
+        timeout: timeout,
+        onTimeout: () {
+          // Cancellation is best effort; Core still owns an independent
+          // request deadline when the cancellation transport is unavailable.
+          unawaited(Future<bool>.sync(() => cancelTestDelay(requestId))
+              .then<void>((_) {}, onError: (Object _, StackTrace __) {}));
+          return '{"value":-1,"reason":"deadlineExceeded"}';
+        },
+      );
+      final decoded = jsonDecode(data);
+      if (decoded is! Map ||
+          decoded['value'] is! int ||
+          decoded['value'] == 0 ||
+          (decoded['value'] as int) < -1) {
+        return const DelayTestResult(-1, reason: 'invalidResponse');
+      }
+      final value = decoded['value'] as int;
+      return DelayTestResult(value,
+          reason: value < 0
+              ? CatalogCoreException.safeReason(decoded['reason'])
+              : null);
+    } on CatalogCoreException catch (error) {
+      return DelayTestResult(-1, reason: error.reason);
+    } on FormatException {
+      return const DelayTestResult(-1, reason: 'invalidResponse');
+    }
+  }
+
+  @override
+  Future<bool> catalogRelease(String catalogId) => invoke<bool>(
+        method: ActionMethod.catalogRelease,
+        data: jsonEncode({'catalog-id': catalogId}),
+        timeout: const Duration(seconds: 2),
+        onTimeout: () => throw CatalogCoreException('deadlineExceeded'),
+      );
 
   @override
   Future<void> healthCheck([String groupName = '']) => invoke<String>(
-      method: ActionMethod.healthCheck,
-      data: groupName,
-      timeout: const Duration(seconds: 30),
-    );
+        method: ActionMethod.healthCheck,
+        data: groupName,
+        timeout: const Duration(seconds: 30),
+      );
 
   @override
   FutureOr<String> getCountryCode(String ip) => invoke<String>(
-      method: ActionMethod.getCountryCode,
-      data: ip,
-    );
+        method: ActionMethod.getCountryCode,
+        data: ip,
+      );
 
   @override
   FutureOr<String> getMemory() => invoke<String>(
-      method: ActionMethod.getMemory,
-    );
+        method: ActionMethod.getMemory,
+      );
 
   @override
   FutureOr<String> getCoreVersion() => invoke<String>(
-      method: ActionMethod.getCoreVersion,
-    );
+        method: ActionMethod.getCoreVersion,
+      );
 }

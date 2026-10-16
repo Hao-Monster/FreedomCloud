@@ -43,9 +43,13 @@ Future<ProfileCatalog?> readVerifiedNodeRuntime({
     // Unidentifiable nodes have no history identity. Their presence must not
     // prevent other nodes from being verified, but extras/duplicates/renames in
     // the identifiable set must fail closed (including swapped endpoints).
+    // The runtime snapshot attests inline definitions only. An explicit all-
+    // profile test may have expanded provider caches in the display catalog;
+    // those endpoints are not evidence of the running provider generation.
     List<String> identities(ProfileCatalog catalog) => catalog.nodes
-        .where(
-            (node) => node.unsupported != CatalogUnsupportedReason.parseFailed)
+        .where((node) =>
+            node.source == CatalogNodeSource.inline &&
+            node.unsupported != CatalogUnsupportedReason.parseFailed)
         .map((node) => node.identityKey)
         .toList()
       ..sort();

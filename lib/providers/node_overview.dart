@@ -4,13 +4,19 @@ import 'dart:io';
 
 import 'package:crypto/crypto.dart';
 import 'package:flclashx/clash/core.dart';
+import 'package:flclashx/clash/interface.dart';
 import 'package:flclashx/common/constant.dart';
+import 'package:flclashx/common/delay_tests.dart';
+import 'package:flclashx/common/delay_test_coordinator.dart';
 import 'package:flclashx/common/node_catalog_service.dart';
+import 'package:flclashx/common/node_catalog_provider_resolver.dart';
+import 'package:flclashx/common/node_catalog_tester.dart';
 import 'package:flclashx/common/node_health_recorder.dart';
 import 'package:flclashx/common/node_health_store.dart';
 import 'package:flclashx/common/node_runtime_catalog.dart';
 import 'package:flclashx/common/path.dart';
 import 'package:flclashx/common/print.dart';
+import 'package:flclashx/common/ui_activity.dart';
 import 'package:flclashx/models/models.dart';
 import 'package:flclashx/models/node_catalog.dart';
 import 'package:flclashx/state.dart';
@@ -155,9 +161,55 @@ final nodeCatalogServiceFactoryProvider =
             final script = ref.read(scriptStateProvider).currentScript;
             return '${script?.id ?? ''}|${sha256.convert(utf8.encode(script?.content ?? '')).toString().substring(0, 16)}';
           },
+          prepareCatalog: (id, proxies, providers) async {
+            final interface = ClashCore.existingInterface;
+            if (interface == null) {
+              throw const CatalogBuildException('runtimeUnavailable');
+            }
+            try {
+              return await interface.catalogPrepare(id, proxies, providers);
+            } on CatalogCoreException catch (error) {
+              throw CatalogBuildException(error.reason);
+            }
+          },
+          releaseCatalog: (id) async =>
+              await ClashCore.existingInterface?.catalogRelease(id) ?? false,
+          providerCachePath: (id, name, definition) async {
+            final url = definition['url'];
+            if (definition['type'] != 'http' || url is! String) return null;
+            final uri = Uri.tryParse(url);
+            if (uri == null ||
+                !const {'http', 'https'}.contains(uri.scheme) ||
+                uri.host.isEmpty) {
+              return null;
+            }
+            // P1 only reports managed HTTP cache status. Arbitrary file paths
+            // are outside this scope and must not block healthy inline nodes.
+            return appPath.getProvidersFilePath(id, 'proxies', url);
+          },
+          providerResolver: CatalogProviderResolver(
+            homeDirectory: () => appPath.homeDirPath,
+            httpCachePath: (id, url) =>
+                appPath.getProvidersFilePath(id, 'proxies', url),
+            parse: (content, definition) async {
+              final interface = ClashCore.existingInterface;
+              if (interface == null)
+                throw const CatalogBuildException('runtimeUnavailable');
+              try {
+                return await interface.catalogParseProvider(
+                    content, definition);
+              } on CatalogCoreException catch (error) {
+                throw CatalogBuildException(error.reason);
+              }
+            },
+          ),
+          onError: (code) => commonPrint.log('node.catalog reason=$code'),
+          onPrepared: (catalog) =>
+              ref.invalidate(profileCatalogProvider(catalog.profileId)),
         ));
 
-final nodeCatalogServiceProvider = Provider<NodeCatalogService>((ref) {
+final Provider<NodeCatalogService> nodeCatalogServiceProvider =
+    Provider<NodeCatalogService>((ref) {
   final service = ref.read(nodeCatalogServiceFactoryProvider)();
   ref.listen(profilesProvider, (previous, next) {
     final cached =
@@ -187,6 +239,50 @@ final nodeCatalogServiceProvider = Provider<NodeCatalogService>((ref) {
   });
   ref.onDispose(service.clear);
   return service;
+});
+
+// The overview and existing live entry points use the same request budget.
+final nodeCatalogDelayCoordinatorProvider =
+    Provider<DelayTestCoordinator>((ref) => delayTests);
+
+final nodeCatalogTesterProvider =
+    ChangeNotifierProvider.autoDispose<NodeCatalogTester>((ref) {
+  final tester = NodeCatalogTester(
+    service: ref.read(nodeCatalogServiceProvider),
+    store: ref.read(nodeHealthStoreProvider),
+    coordinator: ref.read(nodeCatalogDelayCoordinatorProvider),
+    activity: uiActivity,
+    isCurrentProfile: (profile) {
+      final current = ref.read(profilesProvider).getProfile(profile.id);
+      return current != null &&
+          current.url == profile.url &&
+          current.lastUpdateDate == profile.lastUpdateDate &&
+          current.isUpdating == profile.isUpdating;
+    },
+    activeProfileId: () => ref.read(currentProfileIdProvider),
+  );
+  // These revoke binding ownership synchronously, before asynchronous reads or
+  // writes can complete against a replaced/deleted profile or script.
+  ref
+    ..listen(profilesProvider, (previous, next) {
+      for (final old in previous ?? const <Profile>[]) {
+        final updated = next.getProfile(old.id);
+        if (updated == null ||
+            updated.url != old.url ||
+            updated.lastUpdateDate != old.lastUpdateDate ||
+            updated.isUpdating != old.isUpdating) {
+          tester.profileChanged(old.id);
+        }
+      }
+    })
+    ..listen(currentProfileIdProvider, (_, __) => tester.disposeScope())
+    ..listen(scriptStateProvider, (old, next) {
+      if (old?.currentScript != next.currentScript) tester.disposeScope();
+    });
+  // versionProvider also advances on the 60-second group refresh. It is not
+  // a Core/session identity, and must not cancel an explicit latency batch.
+  // Real session loss is reported by the shared coordinator/Core transport.
+  return tester;
 });
 
 final profileCatalogProvider = FutureProvider.autoDispose

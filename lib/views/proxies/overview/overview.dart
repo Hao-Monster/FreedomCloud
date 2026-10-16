@@ -1,6 +1,8 @@
 import 'dart:async';
 
 import 'package:flclashx/common/common.dart';
+import 'package:flclashx/common/delay_test_coordinator.dart';
+import 'package:flclashx/common/node_catalog_tester.dart';
 import 'package:flclashx/common/node_health_store.dart';
 import 'package:flclashx/enum/enum.dart';
 import 'package:flclashx/models/models.dart';
@@ -8,7 +10,6 @@ import 'package:flclashx/models/node_catalog.dart';
 import 'package:flclashx/providers/node_overview.dart';
 import 'package:flclashx/providers/providers.dart';
 import 'package:flclashx/state.dart';
-import 'package:flclashx/views/proxies/card.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -86,16 +87,16 @@ class NodeOverviewView extends ConsumerStatefulWidget {
 }
 
 class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
-  final _expanded = <String>{};
   String? _selectedProfile;
   bool _availableOnly = false;
   Timer? _clock;
+  late final NodeCatalogTester _tester;
+  String? _feedback;
 
   @override
   void initState() {
     super.initState();
-    final activeId = ref.read(currentProfileIdProvider);
-    if (activeId != null) _expanded.add(activeId);
+    _tester = ref.read(nodeCatalogTesterProvider);
     _clock = Timer.periodic(const Duration(minutes: 1), (_) {
       if (mounted) setState(() {});
     });
@@ -104,36 +105,122 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
   @override
   void dispose() {
     _clock?.cancel();
+    _tester.disposeScope();
     super.dispose();
   }
 
-  void _toggle(String id) => setState(() {
-        if (!_expanded.remove(id)) _expanded.add(id);
-      });
+  Future<void> _run(Future<DelayBatchResult> Function() action,
+      {bool summarize = false}) async {
+    setState(() => _feedback = null);
+    String? feedback;
+    try {
+      final result = await action();
+      if (summarize) {
+        final explanations = {
+          if (result.reason != null) _testFailure(result.reason!),
+          for (final issue in result.issues) _testFailure(issue.reason),
+        };
+        feedback = [
+          appLocalizations.nodeOverviewBatchSummary(
+              result.completed,
+              result.failed,
+              result.untested,
+              result.issues.map((issue) => issue.profileId).toSet().length),
+          ...explanations.take(3),
+          if (explanations.length > 3)
+            appLocalizations.nodeOverviewMoreIssues(explanations.length - 3),
+        ].join('\n');
+      } else {
+        feedback = result.reason == null
+            ? result.completed == 0
+                ? appLocalizations.nodeOverviewNoNodes
+                : null
+            : _testFailure(result.reason!);
+      }
+    } catch (_) {
+      feedback = appLocalizations.nodeOverviewTestUnavailable;
+    }
+    if (mounted) setState(() => _feedback = feedback);
+  }
+
+  void _testCurrent(Profile? selected) {
+    if (selected != null) {
+      _testAll([selected]);
+      return;
+    }
+    final targets = <DelayTestTarget>[];
+    for (final group in ref.read(currentGroupsStateProvider).value) {
+      for (final proxy in group.all) {
+        // Keep the existing current-profile action's nested group and URL
+        // resolution. Overview display deduplication must not alter that API.
+        final state = ref.read(getProxyCardStateProvider(proxy.name));
+        if (state.proxyName.isEmpty) continue;
+        targets.add(DelayTestTarget(
+            state.proxyName,
+            state.testUrl.getSafeValue(
+                ref.read(getRealTestUrlProvider(group.testUrl)))));
+      }
+    }
+    unawaited(_run(() => _tester.testCurrent(targets)));
+  }
+
+  void _testAll(List<Profile> profiles) => unawaited(_run(
+      () => _tester.testAll(profiles, ref.read(nodeOverviewTestUrlProvider)),
+      summarize: true));
+
+  void _testNode(Profile profile, CatalogNode node) =>
+      unawaited(_run(() => _tester.testVisible([
+            (profile: profile, nodes: [node])
+          ], ref.read(nodeOverviewTestUrlProvider))));
 
   @override
   Widget build(BuildContext context) {
     final profiles = ref.watch(profilesProvider);
+    final tester = ref.watch(nodeCatalogTesterProvider);
     final activeId = ref.watch(currentProfileIdProvider);
-    final mobile = ref.watch(isMobileViewProvider);
+    final isMobile = ref.watch(isMobileViewProvider);
     final sort =
         ref.watch(proxiesStyleSettingProvider.select((s) => s.sortType));
-    // Explicit search may inspect every saved profile. Ordinary browsing keeps
-    // unopened profiles lazy, and clearing search restores manual expansion.
     final searching = ref.watch(proxiesQueryProvider).trim().isNotEmpty;
     final selected =
         profiles.any((p) => p.id == _selectedProfile) ? _selectedProfile : null;
+    final visible = selected == null
+        ? profiles
+        : profiles.where((p) => p.id == selected).toList();
     final now = DateTime.now();
-    return Column(children: [
-      Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-        child: Align(
+    return LayoutBuilder(builder: (context, constraints) {
+      final wide = !isMobile && constraints.maxWidth > maxLaptopWidth;
+      return Column(children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          child: Align(
             alignment: Alignment.centerLeft,
             child: Wrap(
               spacing: 12,
               runSpacing: 8,
               crossAxisAlignment: WrapCrossAlignment.center,
               children: [
+                if (!wide)
+                  DropdownButton<String>(
+                    key: const ValueKey('overview-profile-filter'),
+                    value: selected ?? '',
+                    items: [
+                      DropdownMenuItem(
+                          value: '',
+                          child:
+                              Text(appLocalizations.nodeOverviewAllProfiles)),
+                      for (final profile in profiles)
+                        DropdownMenuItem(
+                            value: profile.id,
+                            child: ConstrainedBox(
+                                constraints:
+                                    const BoxConstraints(maxWidth: 220),
+                                child: Text(profile.label ?? profile.id,
+                                    overflow: TextOverflow.ellipsis))),
+                    ],
+                    onChanged: (value) => setState(
+                        () => _selectedProfile = value == '' ? null : value),
+                  ),
                 FilterChip(
                     label: Text(appLocalizations.nodeOverviewAvailableOnly),
                     selected: _availableOnly,
@@ -161,79 +248,125 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
                     }
                   },
                 ),
+                TextButton.icon(
+                    key: const ValueKey('overview-test-current'),
+                    onPressed: tester.busy ||
+                            (selected == null &&
+                                (activeId == null ||
+                                    ref
+                                        .watch(currentGroupsStateProvider)
+                                        .value
+                                        .isEmpty))
+                        ? null
+                        : () => _testCurrent(
+                            selected == null ? null : visible.single),
+                    icon: const Icon(Icons.speed),
+                    label: Text(appLocalizations.nodeOverviewTestCurrent)),
+                TextButton.icon(
+                    key: const ValueKey('overview-test-all'),
+                    onPressed: tester.busy || profiles.isEmpty
+                        ? null
+                        : () => _testAll(profiles),
+                    icon: const Icon(Icons.bolt),
+                    label: Text(appLocalizations.nodeOverviewTestAll)),
+                if (tester.busy) ...[
+                  Text(appLocalizations.nodeOverviewProgress(
+                      tester.completed, tester.total)),
+                  TextButton.icon(
+                      key: const ValueKey('overview-cancel'),
+                      onPressed: () => unawaited(tester.cancel()),
+                      icon: const Icon(Icons.close),
+                      label: Text(appLocalizations.cancel)),
+                ],
               ],
-            )),
-      ),
-      Padding(
-        padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-        child: Align(
-            alignment: Alignment.centerLeft,
-            child: Text(appLocalizations.nodeOverviewHistoryNotice,
-                style: Theme.of(context).textTheme.bodySmall)),
-      ),
-      Expanded(child: LayoutBuilder(builder: (context, constraints) {
-        final wide = !mobile && constraints.maxWidth > maxLaptopWidth;
-        final visible = wide && selected != null && !searching
-            ? profiles.where((p) => p.id == selected).toList()
-            : profiles;
-        return Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-          if (wide) ...[
-            SizedBox(
-                width: 290,
-                child: ListView.builder(
-                  key: const ValueKey('overview-sidebar'),
-                  padding: const EdgeInsets.fromLTRB(16, 0, 0, 16),
-                  itemCount: profiles.length + 1,
-                  itemBuilder: (context, index) {
-                    if (index == 0) {
-                      return ListTile(
-                          title: Text(appLocalizations.nodeOverviewAllProfiles),
-                          selected: selected == null,
-                          onTap: () => setState(() => _selectedProfile = null));
-                    }
-                    final profile = profiles[index - 1];
-                    return _SidebarProfileCard(
+            ),
+          ),
+        ),
+        if (tester.busy)
+          LinearProgressIndicator(
+              value: tester.total == 0
+                  ? null
+                  : (tester.completed / tester.total).clamp(0.0, 1.0)),
+        if (_feedback != null)
+          Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+              child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(_feedback!,
+                      key: const ValueKey('overview-feedback')))),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+          child: Align(
+              alignment: Alignment.centerLeft,
+              child: Text(appLocalizations.nodeOverviewHistoryNotice,
+                  style: Theme.of(context).textTheme.bodySmall)),
+        ),
+        Expanded(
+            child: Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            if (wide) ...[
+              SizedBox(
+                  width: 280,
+                  child: ListView.builder(
+                    key: const ValueKey('overview-sidebar'),
+                    padding: const EdgeInsets.fromLTRB(16, 0, 0, 16),
+                    itemCount: profiles.length + 1,
+                    itemBuilder: (context, index) {
+                      if (index == 0) {
+                        return ListTile(
+                            key: const ValueKey('overview-select-all'),
+                            title:
+                                Text(appLocalizations.nodeOverviewAllProfiles),
+                            selected: selected == null,
+                            onTap: () =>
+                                setState(() => _selectedProfile = null));
+                      }
+                      final profile = profiles[index - 1];
+                      return _SidebarProfileCard(
+                          profile: profile,
+                          selected: selected == profile.id,
+                          active: profile.id == activeId,
+                          now: now,
+                          onSelect: () =>
+                              setState(() => _selectedProfile = profile.id));
+                    },
+                  )),
+              const VerticalDivider(width: 16),
+            ],
+            Expanded(
+                child: CustomScrollView(
+              key: const ValueKey('overview-nodes'),
+              slivers: [
+                for (final profile in visible)
+                  _ProfileNodesSliver(
+                      key: ValueKey('overview-section-${profile.id}'),
                       profile: profile,
                       active: profile.id == activeId,
-                      now: now,
-                      onSelect: () => setState(() {
-                        _selectedProfile = profile.id;
-                        _expanded.add(profile.id);
-                      }),
-                    );
-                  },
-                )),
-            const VerticalDivider(width: 16),
+                      showHeader: selected == null,
+                      loadImmediately: selected != null || searching,
+                      availableOnly: _availableOnly,
+                      onTest: _testNode,
+                      now: now),
+                const SliverToBoxAdapter(child: SizedBox(height: 32)),
+              ],
+            )),
           ],
-          Expanded(
-              child: CustomScrollView(
-            key: const ValueKey('overview-nodes'),
-            slivers: [
-              for (final profile in visible)
-                _ProfileSection(
-                    key: ValueKey('overview-section-${profile.id}'),
-                    profile: profile,
-                    active: profile.id == activeId,
-                    expanded: searching || _expanded.contains(profile.id),
-                    availableOnly: _availableOnly,
-                    now: now,
-                    onToggle: searching ? null : () => _toggle(profile.id)),
-              const SliverToBoxAdapter(child: SizedBox(height: 32)),
-            ],
-          )),
-        ]);
-      })),
-    ]);
+        )),
+      ]);
+    });
   }
 }
 
 class _SidebarProfileCard extends ConsumerWidget {
   const _SidebarProfileCard(
       {required this.profile,
+      required this.selected,
       required this.active,
       required this.now,
       required this.onSelect});
   final Profile profile;
+  final bool selected;
   final bool active;
   final DateTime now;
   final VoidCallback onSelect;
@@ -246,57 +379,54 @@ class _SidebarProfileCard extends ConsumerWidget {
     final catalog = loaded.valueOrNull ??
         ref.watch(cachedProfileCatalogsProvider)[profile.id];
     return Card(
+        color:
+            selected ? Theme.of(context).colorScheme.secondaryContainer : null,
         child: InkWell(
-      key: ValueKey('overview-select-${profile.id}'),
-      borderRadius: BorderRadius.circular(12),
-      onTap: onSelect,
-      child: Padding(
-          padding: const EdgeInsets.all(12),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(profile.label ?? profile.id,
-                  style: Theme.of(context).textTheme.titleSmall),
-              if (active) Text(appLocalizations.nodeOverviewActive),
-              _HealthSummary(profile: profile, catalog: catalog, now: now),
-            ],
-          )),
-    ));
+          key: ValueKey('overview-select-${profile.id}'),
+          borderRadius: BorderRadius.circular(12),
+          onTap: onSelect,
+          child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(profile.label ?? profile.id,
+                      style: Theme.of(context).textTheme.titleSmall),
+                  if (active) Text(appLocalizations.nodeOverviewActive),
+                  _HealthSummary(profile: profile, catalog: catalog, now: now),
+                ],
+              )),
+        ));
   }
 }
 
-class _ProfileSection extends ConsumerStatefulWidget {
-  const _ProfileSection(
+class _ProfileNodesSliver extends ConsumerStatefulWidget {
+  const _ProfileNodesSliver(
       {super.key,
       required this.profile,
       required this.active,
-      required this.expanded,
+      required this.showHeader,
+      required this.loadImmediately,
       required this.availableOnly,
-      required this.now,
-      required this.onToggle});
-
+      required this.onTest,
+      required this.now});
   final Profile profile;
   final bool active;
-  final bool expanded;
+  final bool showHeader;
+  final bool loadImmediately;
   final bool availableOnly;
+  final void Function(Profile, CatalogNode) onTest;
   final DateTime now;
-  final VoidCallback? onToggle;
 
   @override
-  ConsumerState<_ProfileSection> createState() => _ProfileSectionState();
+  ConsumerState<_ProfileNodesSliver> createState() =>
+      _ProfileNodesSliverState();
 }
 
-class _ProfileSectionState extends ConsumerState<_ProfileSection> {
+class _ProfileNodesSliverState extends ConsumerState<_ProfileNodesSliver> {
   bool _visible = false;
   bool _nextVisible = false;
   bool _visibilityScheduled = false;
-
-  Profile get profile => widget.profile;
-  bool get active => widget.active;
-  bool get expanded => widget.expanded;
-  bool get availableOnly => widget.availableOnly;
-  DateTime get now => widget.now;
-  VoidCallback? get onToggle => widget.onToggle;
 
   void _visibilityChanged(bool value) {
     _nextVisible = value;
@@ -312,14 +442,14 @@ class _ProfileSectionState extends ConsumerState<_ProfileSection> {
 
   @override
   Widget build(BuildContext context) {
-    // Slivers outside the viewport retain their small header but do not parse a
-    // profile. Explicit expansion/search still opts into loading offscreen data.
-    final loaded = expanded || _visible
+    final profile = widget.profile;
+    final loaded = widget.loadImmediately || _visible
         ? ref.watch(profileCatalogProvider(profile.id))
         : null;
     final catalog = loaded?.valueOrNull ??
         ref.watch(cachedProfileCatalogsProvider)[profile.id];
     final health = ref.watch(nodeHealthEntriesProvider(profile.id));
+    final tester = ref.watch(nodeCatalogTesterProvider);
     final query = ref.watch(proxiesQueryProvider).trim().toLowerCase();
     final sort =
         ref.watch(proxiesStyleSettingProvider.select((s) => s.sortType));
@@ -328,102 +458,127 @@ class _ProfileSectionState extends ConsumerState<_ProfileSection> {
     final nodes = (catalog?.nodes ?? <CatalogNode>[])
         .where((node) =>
             (profileMatches || _matches(node, query)) &&
-            (!availableOnly || (_nodeHealth(node, health)?.delayMs ?? -1) > 0))
+            (!widget.availableOnly ||
+                (_nodeHealth(node, health)?.delayMs ?? -1) > 0))
         .toList();
     _sortNodes(nodes, health, sort);
+    final error = (loaded?.hasError ?? false) ||
+        catalog?.status == ProfileCatalogStatus.fileMissing ||
+        catalog?.status == ProfileCatalogStatus.parseFailed;
     return _PaintVisibilitySliver(
-        onVisibilityChanged: _visibilityChanged,
-        child: SliverMainAxisGroup(slivers: [
+      onVisibilityChanged: _visibilityChanged,
+      child: SliverMainAxisGroup(slivers: [
+        if (widget.showHeader)
+          SliverPersistentHeader(
+              pinned: true,
+              delegate: _PinnedProfileHeader(
+                  profile: profile, active: widget.active)),
+        if (((loaded?.isLoading ?? false) && catalog == null) ||
+            catalog?.status == ProfileCatalogStatus.loading)
+          const SliverToBoxAdapter(
+              child: Padding(
+                  padding: EdgeInsets.all(16),
+                  child: LinearProgressIndicator())),
+        if (_expired(profile, widget.now))
+          _notice(appLocalizations.nodeOverviewExpired),
+        if (profile.isUpdating ||
+            catalog?.status == ProfileCatalogStatus.updating)
+          _notice(appLocalizations.nodeOverviewUpdating),
+        if (error)
+          _notice(catalog?.status == ProfileCatalogStatus.fileMissing
+              ? appLocalizations.nodeOverviewFileMissing
+              : catalog?.errorSummary == 'tooManyNodes'
+                  ? appLocalizations.nodeOverviewTooManyNodes
+                  : appLocalizations.nodeOverviewParseFailed),
+        if (error || _expired(profile, widget.now))
           SliverToBoxAdapter(
-              child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
-            child: Card(
-                child: InkWell(
-              key: ValueKey('overview-header-${profile.id}'),
-              borderRadius: BorderRadius.circular(12),
-              onTap: onToggle,
-              child: Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(children: [
-                        Expanded(
-                            child: Text(profile.label ?? profile.id,
-                                style:
-                                    Theme.of(context).textTheme.titleMedium)),
-                        if (active)
-                          Padding(
-                              padding:
-                                  const EdgeInsets.symmetric(horizontal: 8),
-                              child: Text(appLocalizations.nodeOverviewActive)),
-                        Icon(expanded ? Icons.expand_less : Icons.expand_more),
-                      ]),
-                      const SizedBox(height: 6),
-                      _HealthSummary(
-                          profile: profile, catalog: catalog, now: now),
-                    ],
-                  )),
-            )),
-          )),
-          if (expanded) ...[
-            if (((loaded?.isLoading ?? false) && catalog == null) ||
-                catalog?.status == ProfileCatalogStatus.loading)
-              const SliverToBoxAdapter(
+              child: Align(
+                  alignment: Alignment.centerLeft,
                   child: Padding(
-                      padding: EdgeInsets.all(16),
-                      child: LinearProgressIndicator())),
-            if (loaded?.hasError ?? false)
-              _notice(appLocalizations.nodeOverviewParseFailed),
-            if (_expired(profile, now) ||
-                (loaded?.hasError ?? false) ||
-                catalog?.status == ProfileCatalogStatus.fileMissing ||
-                catalog?.status == ProfileCatalogStatus.parseFailed)
-              SliverToBoxAdapter(
-                  child: Align(
-                alignment: Alignment.centerLeft,
-                child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 16),
-                    child: TextButton.icon(
-                      onPressed: () =>
-                          globalState.appController.toPage(PageLabel.profiles),
-                      icon: const Icon(Icons.manage_accounts_outlined),
-                      label: Text(appLocalizations.nodeOverviewManageProfiles),
-                    )),
-              )),
-            if (active)
-              _ActiveNodes(
-                  query: profileMatches ? '' : query,
-                  availableOnly: availableOnly,
-                  now: now,
-                  sort: sort)
-            else if (nodes.isNotEmpty)
-              SliverPadding(
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                sliver: SliverList.builder(
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      child: TextButton.icon(
+                          onPressed: () => globalState.appController
+                              .toPage(PageLabel.profiles),
+                          icon: const Icon(Icons.manage_accounts_outlined),
+                          label: Text(
+                              appLocalizations.nodeOverviewManageProfiles))))),
+        if (widget.active)
+          _ActiveNodes(
+              profileId: profile.id,
+              fileCatalog: profile.isUpdating ? null : catalog,
+              query: profileMatches ? '' : query,
+              availableOnly: widget.availableOnly,
+              now: widget.now,
+              sort: sort)
+        else if (nodes.isNotEmpty)
+          SliverPadding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              sliver: SliverList.builder(
                   itemCount: nodes.length,
                   itemBuilder: (context, index) => _InactiveNodeRow(
                       key: ValueKey(
                           'overview-node-${profile.id}-${nodes[index].identityKey}'),
                       node: nodes[index],
+                      pending:
+                          tester.pending(profile.id, nodes[index].identityKey),
+                      testKey: ValueKey(
+                          'overview-test-${profile.id}-${nodes[index].identityKey}'),
+                      onTest: tester.busy ||
+                              profile.isUpdating ||
+                              catalog?.status != ProfileCatalogStatus.ready
+                          ? null
+                          : () => widget.onTest(profile, nodes[index]),
                       health: _nodeHealth(nodes[index], health),
-                      now: now),
-                ),
-              )
-            else if (catalog?.status == ProfileCatalogStatus.ready)
-              _notice(appLocalizations.nodeOverviewNoNodes),
-            if (!active && catalog != null)
-              for (final provider in catalog.providerNodeCounts.entries)
-                _notice(
-                    appLocalizations.nodeOverviewProviderPending(provider.key)),
-          ],
-        ]));
+                      now: widget.now)))
+        else if (catalog?.status == ProfileCatalogStatus.ready)
+          _notice(appLocalizations.nodeOverviewNoNodes),
+        if (!widget.active && catalog != null)
+          for (final provider in catalog.providerNodeCounts.entries)
+            if (provider.value < 0)
+              _notice(
+                  '${provider.key}: ${appLocalizations.nodeOverviewProviderUnloaded}'),
+        const SliverToBoxAdapter(child: SizedBox(height: 12)),
+      ]),
+    );
   }
 
   Widget _notice(String text) => SliverToBoxAdapter(
       child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
           child: Text(text)));
+}
+
+class _PinnedProfileHeader extends SliverPersistentHeaderDelegate {
+  _PinnedProfileHeader({required this.profile, required this.active});
+  final Profile profile;
+  final bool active;
+  @override
+  double get minExtent => 44;
+  @override
+  double get maxExtent => 44;
+  @override
+  Widget build(
+          BuildContext context, double shrinkOffset, bool overlapsContent) =>
+      Material(
+          color: Theme.of(context).colorScheme.surface,
+          child: SizedBox.expand(
+              child: Padding(
+            key: ValueKey('overview-header-${profile.id}'),
+            padding: const EdgeInsets.symmetric(horizontal: 24),
+            child: Row(children: [
+              Expanded(
+                  child: Text(profile.label ?? profile.id,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.titleSmall)),
+              if (active)
+                Text(appLocalizations.nodeOverviewActive,
+                    style: Theme.of(context).textTheme.labelSmall),
+            ]),
+          )));
+  @override
+  bool shouldRebuild(covariant _PinnedProfileHeader oldDelegate) =>
+      profile != oldDelegate.profile || active != oldDelegate.active;
 }
 
 /// A sliver's painted geometry is the viewport authority; mounted headers alone
@@ -526,13 +681,102 @@ Map<String, NodeHealthRecord> _activeHealthForUrl(
       .readProfile(profileId, testUrl: effectiveUrl);
 }
 
+// Explicit measurements keep their value and timestamp together until the next
+// measurement. A transient live cancellation must not erase that result.
+int? _activeDelay(int? live, NodeHealthRecord? history) =>
+    live == 0 ? 0 : history?.delayMs ?? live;
+
+Map<String, ({Proxy proxy, String? testUrl})> _activeLeaves(WidgetRef ref) {
+  final groups = ref.watch(currentGroupsStateProvider).value;
+  final groupNames = ref.watch(groupsProvider).map((g) => g.name).toSet();
+  final leaves = <String, ({Proxy proxy, String? testUrl})>{};
+  for (final group in groups) {
+    for (final proxy in group.all.where((p) => _isLeaf(p, groupNames))) {
+      leaves.putIfAbsent(
+          proxy.name, () => (proxy: proxy, testUrl: group.testUrl));
+    }
+  }
+  return leaves;
+}
+
+typedef _ActiveDisplay = ({
+  Proxy proxy,
+  CatalogNode? node,
+  NodeHealthRecord? history,
+  int? delay,
+  bool fileSource,
+  bool independent,
+});
+
+Map<String, _ActiveDisplay> _activeDisplays(
+    WidgetRef ref, String profileId, ProfileCatalog? fileCatalog) {
+  final runtime = ref.watch(activeNodeCatalogProvider);
+  final runtimeNodes =
+      _uniqueCatalogNodes(runtime?.profileId == profileId ? runtime : null);
+  final fileNodes = _uniqueCatalogNodes(fileCatalog?.profileId == profileId &&
+          fileCatalog?.status == ProfileCatalogStatus.ready
+      ? fileCatalog
+      : null);
+  final allUrl = ref.watch(nodeOverviewTestUrlProvider);
+  final allHistory = ref.watch(nodeHealthEntriesProvider(profileId));
+  final groupHistory = <String?, Map<String, NodeHealthRecord>>{};
+  return {
+    for (final entry in _activeLeaves(ref).values)
+      entry.proxy.name: () {
+        var node = runtimeNodes[entry.proxy.name];
+        NodeHealthRecord? history;
+        var fileSource = false;
+        var independent = false;
+        if (node != null) {
+          history = _nodeHealth(
+              node,
+              groupHistory.putIfAbsent(entry.testUrl,
+                  () => _activeHealthForUrl(ref, profileId, entry.testUrl)));
+          final allRecord = _nodeHealth(node, allHistory);
+          if (allRecord != null &&
+              (history == null ||
+                  allRecord.testedAt.isAfter(history.testedAt))) {
+            history = allRecord;
+            independent =
+                ref.watch(getRealTestUrlProvider(entry.testUrl)) != allUrl;
+          }
+        } else {
+          // Name is only a display association. File endpoints never attest
+          // runtime identity, and ambiguous names cannot select file history.
+          final candidate = fileNodes[entry.proxy.name];
+          if (candidate?.source == CatalogNodeSource.provider) {
+            history = _nodeHealth(candidate!, allHistory);
+            if (history != null) {
+              node = candidate;
+              fileSource = independent = true;
+            }
+          }
+        }
+        return (
+          proxy: entry.proxy,
+          node: node,
+          history: history,
+          delay: _activeDelay(
+              ref.watch(getDelayProvider(
+                  proxyName: entry.proxy.name, testUrl: entry.testUrl)),
+              history),
+          fileSource: fileSource,
+          independent: independent,
+        );
+      }(),
+  };
+}
+
 class _ActiveNodes extends ConsumerWidget {
   const _ActiveNodes(
-      {required this.query,
+      {required this.profileId,
+      required this.fileCatalog,
+      required this.query,
       required this.availableOnly,
       required this.now,
       required this.sort});
-
+  final String profileId;
+  final ProfileCatalog? fileCatalog;
   final String query;
   final bool availableOnly;
   final DateTime now;
@@ -540,48 +784,22 @@ class _ActiveNodes extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final groups = ref.watch(currentGroupsStateProvider).value;
-    final catalog = ref.watch(activeNodeCatalogProvider);
-    final groupNames = ref.watch(groupsProvider).map((g) => g.name).toSet();
-    final cardType =
-        ref.watch(proxiesStyleSettingProvider.select((s) => s.cardType));
-    ref.watch(delayDataSourceProvider);
-    final runtimeNodes = _uniqueCatalogNodes(catalog);
-    final histories = <String?, Map<String, NodeHealthRecord>>{};
-    final rows = <({Group group, Proxy? proxy})>[];
-    for (final group in groups) {
-      final proxies = group.all.where((proxy) {
-        if (!_isLeaf(proxy, groupNames)) return false;
-        if (!'${proxy.name}\n${proxy.type}'.toLowerCase().contains(query)) {
-          return false;
+    final rows =
+        _activeDisplays(ref, profileId, fileCatalog).values.where((entry) {
+      final matches =
+          '${entry.proxy.name}\n${entry.fileSource ? entry.node!.type : entry.proxy.type}\n${entry.node?.providerName ?? ''}'
+              .toLowerCase()
+              .contains(query);
+      return matches && (!availableOnly || (entry.delay ?? -1) > 0);
+    }).toList();
+    if (sort != ProxiesSortType.none) {
+      rows.sort((a, b) {
+        if (sort == ProxiesSortType.delay) {
+          final result = _compareDelay(a.delay, b.delay);
+          if (result != 0) return result;
         }
-        return !availableOnly ||
-            (ref.read(getDelayProvider(
-                        proxyName: proxy.name, testUrl: group.testUrl)) ??
-                    -1) >
-                0;
-      }).toList();
-      if (sort != ProxiesSortType.none) {
-        proxies.sort((a, b) {
-          if (sort == ProxiesSortType.delay) {
-            final result = _compareDelay(
-                ref.read(getDelayProvider(
-                    proxyName: a.name, testUrl: group.testUrl)),
-                ref.read(getDelayProvider(
-                    proxyName: b.name, testUrl: group.testUrl)));
-            if (result != 0) return result;
-          }
-          return a.name.toLowerCase().compareTo(b.name.toLowerCase());
-        });
-      }
-      if (proxies.isEmpty) continue;
-      if (catalog != null && runtimeNodes.isNotEmpty) {
-        histories.putIfAbsent(group.testUrl,
-            () => _activeHealthForUrl(ref, catalog.profileId, group.testUrl));
-      }
-      rows
-        ..add((group: group, proxy: null))
-        ..addAll(proxies.map((proxy) => (group: group, proxy: proxy)));
+        return a.proxy.name.toLowerCase().compareTo(b.proxy.name.toLowerCase());
+      });
     }
     if (rows.isEmpty) {
       return SliverToBoxAdapter(
@@ -590,45 +808,87 @@ class _ActiveNodes extends ConsumerWidget {
               child: Text(appLocalizations.nodeOverviewNoNodes)));
     }
     return SliverPadding(
-      padding: const EdgeInsets.symmetric(horizontal: 16),
-      sliver: SliverList.builder(
-          itemCount: rows.length,
-          itemBuilder: (context, index) {
-            final row = rows[index];
-            final proxy = row.proxy;
-            if (proxy == null) {
-              return Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 8),
-                  child: Text(row.group.name,
-                      style: Theme.of(context).textTheme.titleSmall));
-            }
-            final node = runtimeNodes[proxy.name];
-            final history = node == null
-                ? null
-                : _nodeHealth(node, histories[row.group.testUrl] ?? const {});
-            return Padding(
-                padding: const EdgeInsets.only(bottom: 8),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    ProxyCard(
-                        key: ValueKey(
-                            'overview-active-${row.group.name}-${proxy.name}'),
-                        groupName: row.group.name,
-                        testUrl: row.group.testUrl,
-                        proxy: proxy,
-                        groupType: row.group.type,
-                        type: cardType),
-                    Padding(
-                        padding: const EdgeInsets.fromLTRB(12, 4, 12, 0),
-                        child: Text(
-                            '${node == null ? appLocalizations.nodeOverviewRuntimeSource : _source(node)}'
-                            '${history != null ? ' · ${_testedAt(history, now, historical: false)}' : ''}',
-                            style: Theme.of(context).textTheme.bodySmall)),
-                  ],
-                ));
-          }),
-    );
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        sliver: SliverList.builder(
+            itemCount: rows.length,
+            itemBuilder: (context, index) {
+              final entry = rows[index];
+              return _ActiveNodeRow(
+                  key: ValueKey('overview-active-${entry.proxy.name}'),
+                  proxy: entry.proxy,
+                  node: entry.node,
+                  delay: entry.delay,
+                  history: entry.history,
+                  fileSource: entry.fileSource,
+                  independent: entry.independent,
+                  now: now);
+            }));
+  }
+}
+
+class _ActiveNodeRow extends StatelessWidget {
+  const _ActiveNodeRow(
+      {super.key,
+      required this.proxy,
+      required this.node,
+      required this.delay,
+      required this.history,
+      required this.fileSource,
+      required this.independent,
+      required this.now});
+  final Proxy proxy;
+  final CatalogNode? node;
+  final int? delay;
+  final NodeHealthRecord? history;
+  final bool fileSource;
+  final bool independent;
+  final DateTime now;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = utils.getDelayColor(delay);
+    final source = node == null
+        ? appLocalizations.nodeOverviewRuntimeSource
+        : fileSource
+            ? appLocalizations.nodeOverviewFileSource(_source(node!))
+            : _source(node!);
+    final type = fileSource ? node!.type : proxy.type;
+    final description = [
+      type,
+      source,
+      if (independent) appLocalizations.nodeOverviewIndependentTest,
+    ].join(' · ');
+    return Card(
+        child: Padding(
+            padding: const EdgeInsets.all(12),
+            child:
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Row(children: [
+                Expanded(child: Text(proxy.name)),
+                const SizedBox(width: 12),
+                if (delay == 0)
+                  const SizedBox(
+                      width: 14,
+                      height: 14,
+                      child: CircularProgressIndicator(strokeWidth: 2))
+                else
+                  Text(
+                      delay == null
+                          ? appLocalizations.nodeOverviewUntested
+                          : delay! > 0
+                              ? '$delay ms'
+                              : appLocalizations.nodeOverviewTestFailed,
+                      style: TextStyle(color: color)),
+              ]),
+              const SizedBox(height: 4),
+              Text(description, style: Theme.of(context).textTheme.bodySmall),
+              const SizedBox(height: 4),
+              Text(
+                  history == null
+                      ? appLocalizations.nodeOverviewLive
+                      : _testedAt(history!, now),
+                  style: Theme.of(context).textTheme.bodySmall),
+            ])));
   }
 }
 
@@ -636,12 +896,9 @@ String _source(CatalogNode node) => node.source == CatalogNodeSource.inline
     ? appLocalizations.nodeOverviewInline
     : node.providerName ?? appLocalizations.providers;
 
-String _testedAt(NodeHealthRecord record, DateTime now,
-    {required bool historical}) {
+String _testedAt(NodeHealthRecord record, DateTime now) {
   final time = DateFormat.yMd().add_Hm().format(record.testedAt.toLocal());
-  final label = historical
-      ? appLocalizations.nodeOverviewLastActiveTest(time)
-      : appLocalizations.nodeOverviewLastTest(time);
+  final label = appLocalizations.nodeOverviewLastTest(time);
   return record.isStale(now)
       ? '$label · ${appLocalizations.nodeOverviewStale}'
       : label;
@@ -649,10 +906,19 @@ String _testedAt(NodeHealthRecord record, DateTime now,
 
 class _InactiveNodeRow extends StatelessWidget {
   const _InactiveNodeRow(
-      {super.key, required this.node, required this.health, required this.now});
+      {super.key,
+      required this.node,
+      required this.health,
+      required this.now,
+      required this.pending,
+      required this.onTest,
+      required this.testKey});
   final CatalogNode node;
   final NodeHealthRecord? health;
   final DateTime now;
+  final bool pending;
+  final VoidCallback? onTest;
+  final Key testKey;
 
   @override
   Widget build(BuildContext context) {
@@ -674,6 +940,11 @@ class _InactiveNodeRow extends StatelessWidget {
                   if (invalid)
                     Icon(Icons.help_outline,
                         color: Theme.of(context).colorScheme.onSurfaceVariant)
+                  else if (pending)
+                    const SizedBox(
+                        width: 14,
+                        height: 14,
+                        child: CircularProgressIndicator(strokeWidth: 2))
                   else
                     Text(
                         record == null
@@ -682,19 +953,25 @@ class _InactiveNodeRow extends StatelessWidget {
                                 ? '${record.delayMs} ms'
                                 : appLocalizations.nodeOverviewTestFailed,
                         style: TextStyle(color: color)),
+                  if (node.unsupported == CatalogUnsupportedReason.none)
+                    IconButton(
+                        key: testKey,
+                        onPressed: onTest,
+                        icon: const Icon(Icons.bolt),
+                        tooltip: appLocalizations.nodeOverviewTestNode),
                 ]),
                 const SizedBox(height: 4),
                 Text('${node.type} · ${_source(node)}',
                     style: Theme.of(context).textTheme.bodySmall),
-                if (invalid)
+                if (node.unsupported != CatalogUnsupportedReason.none)
                   Padding(
                       padding: const EdgeInsets.only(top: 4),
-                      child: Text(appLocalizations.nodeOverviewNodeUnidentified,
+                      child: Text(_unsupported(node.unsupported),
                           style: Theme.of(context).textTheme.bodySmall)),
                 if (record != null)
                   Padding(
                       padding: const EdgeInsets.only(top: 4),
-                      child: Text(_testedAt(record, now, historical: true),
+                      child: Text(_testedAt(record, now),
                           style: Theme.of(context)
                               .textTheme
                               .bodySmall
@@ -703,6 +980,59 @@ class _InactiveNodeRow extends StatelessWidget {
             )));
   }
 }
+
+String _unsupported(CatalogUnsupportedReason reason) => switch (reason) {
+      CatalogUnsupportedReason.parseFailed =>
+        appLocalizations.nodeOverviewNodeUnidentified,
+      CatalogUnsupportedReason.chainUnsupported =>
+        appLocalizations.nodeOverviewChainUnsupported,
+      CatalogUnsupportedReason.typeUnsupported =>
+        appLocalizations.nodeOverviewTypeUnsupported,
+      CatalogUnsupportedReason.providerNotCached =>
+        appLocalizations.nodeOverviewProviderNotCached,
+      CatalogUnsupportedReason.strictModeUnsupported =>
+        appLocalizations.nodeOverviewStrictUnsupported,
+      CatalogUnsupportedReason.none => '',
+    };
+
+String _testFailure(String reason) => switch (reason) {
+      'healthStoreUnavailable' =>
+        appLocalizations.nodeOverviewHealthStoreUnavailable,
+      'providerUnsafeUrl' => appLocalizations.nodeOverviewProviderUnsafeUrl,
+      'providerUnsafePath' => appLocalizations.nodeOverviewProviderUnsafePath,
+      'providerDownloadFailed' =>
+        appLocalizations.nodeOverviewProviderDownloadFailed,
+      'providerTooLarge' => appLocalizations.nodeOverviewProviderTooLarge,
+      'providerOptionsUnsupported' =>
+        appLocalizations.nodeOverviewProviderOptionsUnsupported,
+      'deadlineExceeded' => appLocalizations.nodeOverviewTestTimedOut,
+      'ambiguousNode' => appLocalizations.nodeOverviewAmbiguousNode,
+      'healthCapacityExceeded' =>
+        appLocalizations.nodeOverviewHealthCapacityExceeded,
+      'chainUnsupported' => appLocalizations.nodeOverviewChainUnsupported,
+      'typeUnsupported' => appLocalizations.nodeOverviewTypeUnsupported,
+      'providerNotCached' => appLocalizations.nodeOverviewProviderNotCached,
+      'providerPending' ||
+      'notSupportedInPreview' =>
+        appLocalizations.nodeOverviewPreviewUnsupported,
+      'strictModeUnsupported' => appLocalizations.nodeOverviewStrictUnsupported,
+      'fileMissing' => appLocalizations.nodeOverviewFileMissing,
+      'parseFailed' => appLocalizations.nodeOverviewParseFailed,
+      'tooManyNodes' ||
+      'overloaded' =>
+        appLocalizations.nodeOverviewTooManyNodes,
+      'updating' => appLocalizations.nodeOverviewUpdating,
+      'cancelled' ||
+      'uiInactive' ||
+      'configChanged' ||
+      'coreRestarted' ||
+      'batchDeadlineExceeded' ||
+      'transportFailure' ||
+      'sessionClosed' =>
+        appLocalizations.nodeOverviewTestInterrupted,
+      'busy' => '${appLocalizations.delay}: ${appLocalizations.running}',
+      _ => appLocalizations.nodeOverviewTestUnavailable,
+    };
 
 class _HealthSummary extends ConsumerWidget {
   const _HealthSummary(
@@ -741,33 +1071,21 @@ class _HealthSummary extends ConsumerWidget {
     }
     final records = <NodeHealthRecord>[];
     final delays = <int>[];
-    var total = catalog?.nodes.length ?? 0;
+    var total = catalog?.nodes
+            .where((node) =>
+                node.unsupported != CatalogUnsupportedReason.parseFailed)
+            .length ??
+        0;
     if (active) {
-      final groups = ref.watch(currentGroupsStateProvider).value;
-      final names = ref.watch(groupsProvider).map((g) => g.name).toSet();
-      final leaves = <String, ({Proxy proxy, String? testUrl})>{};
-      for (final group in groups) {
-        for (final proxy in group.all.where((proxy) => _isLeaf(proxy, names))) {
-          // One node can occur in several groups with different test URLs.
-          // Count it once, using the first visible card's test semantics.
-          leaves.putIfAbsent(
-              proxy.name, () => (proxy: proxy, testUrl: group.testUrl));
+      final displays =
+          _activeDisplays(ref, profile.id, profile.isUpdating ? null : catalog);
+      total = displays.length;
+      for (final entry in displays.values) {
+        final displayedDelay = entry.delay;
+        if (displayedDelay != null && displayedDelay != 0) {
+          delays.add(displayedDelay);
         }
-      }
-      total = leaves.length;
-      final runtimeNodes =
-          _uniqueCatalogNodes(ref.watch(activeNodeCatalogProvider));
-      final histories = <String?, Map<String, NodeHealthRecord>>{};
-      for (final entry in leaves.values) {
-        final delay = ref.watch(getDelayProvider(
-            proxyName: entry.proxy.name, testUrl: entry.testUrl));
-        if (delay != null && delay != 0) delays.add(delay);
-        final node = runtimeNodes[entry.proxy.name];
-        if (node == null) continue;
-        final health = histories.putIfAbsent(entry.testUrl,
-            () => _activeHealthForUrl(ref, profile.id, entry.testUrl));
-        final record = _nodeHealth(node, health);
-        if (record != null) records.add(record);
+        if (entry.history != null) records.add(entry.history!);
       }
     } else {
       records.addAll((catalog?.nodes ?? <CatalogNode>[])
@@ -795,12 +1113,13 @@ class _HealthSummary extends ConsumerWidget {
       ...status,
       Text(appLocalizations.nodeOverviewHealthCounts(
           success.length, delays.length, total)),
-      if (!active && catalog!.providerNodeCounts.isNotEmpty)
+      if (!active &&
+          catalog!.providerNodeCounts.values.any((count) => count < 0))
         Text(appLocalizations.nodeOverviewPartialSummary,
             style: Theme.of(context).textTheme.bodySmall),
       Text(appLocalizations.nodeOverviewMedian(median)),
       if (records.isNotEmpty)
-        Text(_testedAt(records.first, now, historical: !active),
+        Text(_testedAt(records.first, now),
             style: Theme.of(context).textTheme.bodySmall),
       if (total > 0)
         Padding(

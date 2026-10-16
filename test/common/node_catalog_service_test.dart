@@ -359,19 +359,20 @@ void main() {
 
   test('malformed placeholders count toward the same 2000-node limit', () {
     final raw = <String, dynamic>{'proxies': List.filled(2000, null)};
-    final catalog =
-        buildProfileCatalog(profileId: 'a', fingerprint: 'f', raw: raw);
+    final catalog = buildProfileCatalog(
+        profileId: 'a', fingerprint: 'f', raw: raw, maxNodes: 2000);
     expect(catalog.nodes, hasLength(2000));
     expect(
         catalog.nodes.map((node) => node.identityKey).toSet(), hasLength(2000));
     raw['proxies'] = List.filled(2001, null);
     expect(
-        () => buildProfileCatalog(profileId: 'a', fingerprint: 'f', raw: raw),
+        () => buildProfileCatalog(
+            profileId: 'a', fingerprint: 'f', raw: raw, maxNodes: 2000),
         throwsA(isA<CatalogBuildException>()
             .having((error) => error.reason, 'reason', 'tooManyNodes')));
   });
 
-  test('more than 2000 leaves is an explicit failure rather than truncation',
+  test('display projects over 2000 leaves while legacy prepare stays bounded',
       () async {
     service = NodeCatalogService(
       readProfileConfig: (id) async => {
@@ -383,10 +384,17 @@ void main() {
       evaluate: (raw) async => raw,
       fileMetadata: (id) async => metadata,
       scriptFingerprint: () => script,
+      prepareCatalog: (_, __, ___) async =>
+          throw StateError('Oversized legacy catalog must not be sent'),
+      releaseCatalog: (_) async => true,
     );
     final catalog = await service.load(_profile('a'));
-    expect(catalog.status, ProfileCatalogStatus.parseFailed);
-    expect(catalog.errorSummary, 'tooManyNodes');
-    expect(catalog.nodes, isEmpty);
+    expect(catalog.status, ProfileCatalogStatus.ready);
+    expect(catalog.nodes, hasLength(2001));
+    expect(catalog.nodes.last.name, 'N2000');
+    await expectLater(
+        service.ensurePrepared(_profile('a')),
+        throwsA(isA<CatalogBuildException>()
+            .having((e) => e.reason, 'reason', 'tooManyNodes')));
   });
 }

@@ -1,6 +1,9 @@
 import 'dart:io';
 
 import 'package:flclashx/common/common.dart';
+import 'package:flclashx/common/delay_test_coordinator.dart';
+import 'package:flclashx/common/node_catalog_service.dart';
+import 'package:flclashx/common/node_catalog_tester.dart';
 import 'package:flclashx/common/node_health_store.dart';
 import 'package:flclashx/controller.dart';
 import 'package:flclashx/enum/enum.dart';
@@ -52,6 +55,78 @@ class _ProxyController implements AppController {
       'Unexpected controller effect: ${invocation.memberName}');
 }
 
+class _CatalogTester extends ChangeNotifier implements NodeCatalogTester {
+  final batches = <List<CatalogTestSelection>>[];
+  final urls = <String>[];
+  final current = <List<DelayTestTarget>>[];
+  final all = <List<Profile>>[];
+  final pendingKeys = <(String, String)>{};
+  String? reason;
+  DelayBatchResult? allResult;
+  int cancellations = 0;
+  int scopeDisposals = 0;
+  @override
+  bool busy = false;
+  @override
+  int total = 0;
+  @override
+  int completed = 0;
+  @override
+  bool pending(String profileId, String identityKey) =>
+      pendingKeys.contains((profileId, identityKey));
+  void progress({required int done, required int count}) {
+    busy = true;
+    completed = done;
+    total = count;
+    notifyListeners();
+  }
+
+  @override
+  Future<DelayBatchResult> testCurrent(
+      Iterable<DelayTestTarget> targets) async {
+    current.add(targets.toList());
+    return DelayBatchResult(completed: 0, failed: 0, reason: reason);
+  }
+
+  @override
+  Future<DelayBatchResult> testAll(List<Profile> profiles, String url) async {
+    all.add(profiles);
+    urls.add(url);
+    return allResult ??
+        DelayBatchResult(completed: 0, failed: 0, reason: reason);
+  }
+
+  @override
+  Future<DelayBatchResult> collectAndTest(
+          Future<List<CatalogTestSelection>> Function(bool Function() isCurrent)
+              collect,
+          String url) async =>
+      testVisible(await collect(() => true), url);
+
+  @override
+  Future<DelayBatchResult> testVisible(
+      List<CatalogTestSelection> selections, String url) async {
+    batches.add(selections);
+    urls.add(url);
+    return DelayBatchResult(completed: 0, failed: 0, reason: reason);
+  }
+
+  @override
+  Future<void> cancel({String reason = 'cancelled'}) async {
+    cancellations++;
+    busy = false;
+    pendingKeys.clear();
+    notifyListeners();
+  }
+
+  @override
+  void disposeScope() => scopeDisposals++;
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) =>
+      throw StateError('Unexpected catalog effect: ${invocation.memberName}');
+}
+
 void main() {
   setUp(() async {
     await AppLocalizations.load(const Locale('en'));
@@ -83,6 +158,7 @@ void main() {
     bool scopeToolbar = false,
     ProfileCatalog? activeCatalog,
     NodeHealthStore? healthStore,
+    _CatalogTester? catalogTester,
   }) async {
     tester.view.physicalSize = Size(width, 1000);
     tester.view.devicePixelRatio = 1;
@@ -95,6 +171,8 @@ void main() {
     await tester.pumpWidget(ProviderScope(
       overrides: [
         nodeOverviewEnabledProvider.overrideWithValue(enabled),
+        nodeCatalogTesterProvider
+            .overrideWith((ref) => catalogTester ?? _CatalogTester()),
         activeNodeCatalogProvider.overrideWithValue(activeCatalog),
         cachedProfileCatalogsProvider.overrideWith((ref) => cached),
         profileCatalogProvider.overrideWith((ref, id) async {
@@ -154,10 +232,926 @@ void main() {
     await tester.pumpAndSettle();
   }
 
-  for (final width in [400.0, 1200.0]) {
+  Map<String, ProfileCatalog> flatCatalogs() => {
+        'a': ProfileCatalog(
+            profileId: 'a',
+            fingerprint: 'fixture',
+            status: ProfileCatalogStatus.ready,
+            nodes: [_node('a-node', 'Alpha node')]),
+        'b': ProfileCatalog(
+            profileId: 'b',
+            fingerprint: 'fixture',
+            status: ProfileCatalogStatus.ready,
+            nodes: [_node('b-node', 'Beta node')]),
+      };
+
+  testWidgets(
+      'all-node test ignores selection and search and includes the active profile',
+      (tester) async {
+    final backend = _CatalogTester();
+    globalState.config = globalState.config.copyWith(currentProfileId: 'a');
+    final nodes = List.generate(50, (i) => _node('b-$i', 'Match $i'));
+    final container =
+        await mount(tester, width: 1200, catalogTester: backend, catalogs: {
+      ...flatCatalogs(),
+      'b': ProfileCatalog(
+          profileId: 'b',
+          fingerprint: 'fixture',
+          status: ProfileCatalogStatus.ready,
+          nodes: [...nodes, _node('other', 'Other')]),
+    });
+    await tester.tap(find.byKey(const ValueKey('overview-select-b')));
+    container.read(proxiesQueryProvider.notifier).value = 'match';
+    await tester.pumpAndSettle();
+    expect(find.text('Match 49'), findsNothing);
+    await tester.tap(find.text('Test all node delays'));
+    await tester.pumpAndSettle();
+    expect(backend.all.single.map((profile) => profile.id), ['a', 'b']);
+    expect(backend.batches, isEmpty);
+    expect(backend.urls, [defaultTestUrl]);
+    expect(container.read(currentProfileIdProvider), 'a');
+  });
+
+  testWidgets('all-node test ignores the available-only filter',
+      (tester) async {
+    final backend = _CatalogTester();
+    final now = DateTime.now();
+    await mount(tester, width: 1200, catalogTester: backend, catalogs: {
+      'a': ProfileCatalog(
+          profileId: 'a',
+          fingerprint: 'fixture',
+          status: ProfileCatalogStatus.ready,
+          nodes: [
+            _node('fast', 'Fast'),
+            _node('failed', 'Failed'),
+            _node('new', 'New')
+          ]),
+    }, health: {
+      'a': {
+        'fast': NodeHealthRecord(
+            delayMs: 50, testedAt: now, testUrlHash: 'fixture'),
+        'failed': NodeHealthRecord(
+            delayMs: -1, testedAt: now, testUrlHash: 'fixture'),
+      }
+    });
+    await tester.tap(find.text('Available only'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Test all node delays'));
+    await tester.pumpAndSettle();
+    expect(backend.all.single.map((profile) => profile.id), ['a', 'b']);
+    expect(backend.batches, isEmpty);
+  });
+
+  testWidgets(
+      'all-node test remains enabled when only the active profile is selected',
+      (tester) async {
+    final backend = _CatalogTester();
+    globalState.config = globalState.config.copyWith(currentProfileId: 'a');
+    await mount(tester,
+        width: 1200, catalogTester: backend, catalogs: flatCatalogs());
+    await tester.tap(find.byKey(const ValueKey('overview-select-a')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Test all node delays'));
+    await tester.pumpAndSettle();
+    expect(backend.all.single.map((profile) => profile.id), ['a', 'b']);
+    expect(backend.batches, isEmpty);
+    expect(backend.current, isEmpty);
+  });
+
+  testWidgets(
+      'all-node summary reports completed failed untested and affected profiles safely',
+      (tester) async {
+    final backend = _CatalogTester()
+      ..allResult =
+          const DelayBatchResult(completed: 3, failed: 1, untested: 4, issues: [
+        DelayBatchIssue(
+            profileId: 'private-profile-a',
+            reason: 'typeUnsupported',
+            count: 2),
+        DelayBatchIssue(
+            profileId: 'private-profile-a',
+            reason: 'chainUnsupported',
+            count: 1),
+        DelayBatchIssue(
+            profileId: 'private-profile-b',
+            reason: 'https://private.invalid/token',
+            count: 1),
+      ]);
+    await mount(tester, catalogTester: backend);
+    await tester.tap(find.byKey(const ValueKey('overview-test-all')));
+    await tester.pumpAndSettle();
+    expect(
+        find.textContaining(
+            'Completed 3 · Failed 1 · Untested 4 · Profiles with issues 2'),
+        findsOneWidget);
+    expect(
+        find.textContaining(
+            'This protocol is not supported for isolated tests'),
+        findsOneWidget);
+    expect(find.textContaining('https://private.invalid'), findsNothing);
+    expect(find.textContaining('private-profile'), findsNothing);
+    expect(find.textContaining('typeUnsupported'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'all-node many issue types retain totals with bounded explanations',
+      (tester) async {
+    final backend = _CatalogTester()
+      ..allResult =
+          const DelayBatchResult(completed: 0, failed: 0, untested: 3, issues: [
+        DelayBatchIssue(profileId: 'a', reason: 'ambiguousNode', count: 1),
+        DelayBatchIssue(profileId: 'a', reason: 'healthCapacityExceeded'),
+        DelayBatchIssue(profileId: 'a', reason: 'healthStoreUnavailable'),
+        DelayBatchIssue(profileId: 'b', reason: 'providerNotCached', count: 2),
+      ]);
+    await mount(tester, catalogTester: backend);
+    await tester.tap(find.byKey(const ValueKey('overview-test-all')));
+    await tester.pumpAndSettle();
+    expect(
+        find.textContaining(
+            'Completed 0 · Failed 0 · Untested 3 · Profiles with issues 2'),
+        findsOneWidget);
+    expect(
+        find.textContaining(
+            'Duplicate node definitions; identity could not be verified'),
+        findsOneWidget);
+    expect(
+        find.textContaining(
+            'History storage is full; some results were not saved'),
+        findsOneWidget);
+    expect(find.textContaining('Some delay results could not be saved'),
+        findsOneWidget);
+    expect(find.textContaining('Additional issue types: 1'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('all-node interruption retains its partial summary',
+      (tester) async {
+    final backend = _CatalogTester()
+      ..allResult = const DelayBatchResult(
+          completed: 2, failed: 0, untested: 5, reason: 'cancelled');
+    await mount(tester, catalogTester: backend);
+    await tester.tap(find.byKey(const ValueKey('overview-test-all')));
+    await tester.pumpAndSettle();
+    expect(
+        find.textContaining(
+            'Completed 2 · Failed 0 · Untested 5 · Profiles with issues 0'),
+        findsOneWidget);
+    expect(
+        find.textContaining(
+            'Test interrupted; earlier measurements were preserved'),
+        findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'loaded provider counts do not show unsupported or partial notices',
+      (tester) async {
+    await mount(tester, width: 1200, catalogs: {
+      'a': ProfileCatalog(
+          profileId: 'a',
+          fingerprint: '',
+          status: ProfileCatalogStatus.ready,
+          nodes: [_node('provider-node', 'Cached provider node')],
+          providerNodeCounts: const {'Loaded provider': 1}),
+    });
+    expect(find.text('Cached provider node'), findsOneWidget);
+    expect(find.textContaining('Local provider nodes are not supported'),
+        findsNothing);
+    expect(find.text('Summary includes loaded nodes only'), findsNothing);
+  });
+
+  testWidgets(
+      'unloaded provider notice explains all-node reads without changing filters',
+      (tester) async {
+    await mount(tester, catalogs: {
+      'a': const ProfileCatalog(
+          profileId: 'a',
+          fingerprint: '',
+          status: ProfileCatalogStatus.ready,
+          providerNodeCounts: {'Pending provider': -1}),
+    });
+    expect(
+        find.text(
+            'Pending provider: Provider nodes are not loaded yet. Testing all node delays reads them and downloads missing caches.'),
+        findsOneWidget);
+    expect(
+        find.text(
+            'Delay results are kept until the next completed test. Test times appear below each node.'),
+        findsOneWidget);
+    expect(find.text('Available only'), findsOneWidget);
+    expect(find.text('Test current profile'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  for (final customHistory in [false, true]) {
     testWidgets(
-        'review: visible collapsed profiles load summaries at width $width',
+        'active source: trusted history identifies its test URL: $customHistory',
         (tester) async {
+      const key = '0123456789abcdef0123456789abcdef';
+      const customUrl = 'https://custom.invalid/probe';
+      final directory =
+          Directory.systemTemp.createTempSync('node-overview-fallback-');
+      final store = NodeHealthStore(
+          fileProvider: () async => File('${directory.path}/health.json'),
+          debounce: const Duration(hours: 1));
+      addTearDown(() {
+        expect(
+            directory.parent.absolute.path, Directory.systemTemp.absolute.path);
+        directory.deleteSync(recursive: true);
+      });
+      await tester.runAsync(() => store.record(
+          profileId: 'a',
+          identityKey: key,
+          delayMs: 321,
+          testUrl: customHistory ? customUrl : defaultTestUrl,
+          testedAt: DateTime(2026, 10, 15, 10, 11)));
+      globalState.config = globalState.config.copyWith(currentProfileId: 'a');
+      globalState.appState = globalState.appState.copyWith(groups: const [
+        Group(
+            name: 'Custom',
+            type: GroupType.Selector,
+            hidden: false,
+            testUrl: customUrl,
+            all: [Proxy(name: 'Live leaf', type: 'Shadowsocks')]),
+      ]);
+      final container = await mount(tester,
+          width: 1200,
+          healthStore: store,
+          activeCatalog: ProfileCatalog(
+              profileId: 'a',
+              fingerprint: 'verified-runtime',
+              status: ProfileCatalogStatus.ready,
+              nodes: [_node(key, 'Live leaf')]));
+      final row = find.byKey(const ValueKey('overview-active-Live leaf'));
+      expect(find.descendant(of: row, matching: find.text('321 ms')),
+          findsOneWidget);
+      expect(find.text('1 available / 1 tested / 1 total'), findsOneWidget);
+      expect(
+          find.descendant(
+              of: row, matching: find.textContaining('Independent delay test')),
+          customHistory ? findsNothing : findsOneWidget);
+      if (customHistory) {
+        await tester.tap(find.text('Available only'));
+        await tester.pumpAndSettle();
+        expect(row, findsOneWidget);
+        await tester.tap(find.text('Available only'));
+        await tester.pumpAndSettle();
+        container
+            .read(delayDataSourceProvider.notifier)
+            .setDelay(const Delay(name: 'Live leaf', url: customUrl, value: 0));
+        await tester.pump();
+        expect(
+            find.descendant(
+                of: row, matching: find.byType(CircularProgressIndicator)),
+            findsOneWidget);
+        expect(find.descendant(of: row, matching: find.text('321 ms')),
+            findsNothing);
+        container.read(delayDataSourceProvider.notifier).setDelay(
+            const Delay(name: 'Live leaf', url: customUrl, value: 77));
+        await tester.pumpAndSettle();
+        expect(find.descendant(of: row, matching: find.text('321 ms')),
+            findsOneWidget);
+        expect(find.text('Median: 321 ms'), findsOneWidget);
+      }
+    });
+  }
+
+  testWidgets('active source: provider history is explicitly a file result',
+      (tester) async {
+    globalState.config = globalState.config.copyWith(currentProfileId: 'a');
+    globalState.appState = globalState.appState.copyWith(groups: const [
+      Group(
+          name: 'Live',
+          type: GroupType.Selector,
+          hidden: false,
+          testUrl: 'https://group.invalid/probe',
+          all: [
+            Proxy(name: 'Shared', type: 'Shadowsocks'),
+          ]),
+    ], delayMap: {
+      'https://group.invalid/probe': {'Shared': 42},
+    });
+    final node = _node('file-provider', 'Shared').copyWith(
+        type: 'trojan',
+        source: CatalogNodeSource.provider,
+        providerName: 'Feed');
+    final container = await mount(tester, width: 1200, catalogs: {
+      'a': ProfileCatalog(
+          profileId: 'a',
+          fingerprint: 'file',
+          status: ProfileCatalogStatus.ready,
+          nodes: [
+            node,
+            node.copyWith(identityKey: 'not-running', name: 'Not running'),
+          ]),
+    }, health: {
+      'a': {
+        'file-provider': NodeHealthRecord(
+            delayMs: 80,
+            testedAt: DateTime(2026, 10, 15, 10, 11),
+            testUrlHash: 'fixture'),
+      },
+    });
+    final row = find.byKey(const ValueKey('overview-active-Shared'));
+    expect(
+        find.descendant(of: row, matching: find.text('80 ms')), findsOneWidget);
+    expect(
+        find.descendant(
+            of: row,
+            matching: find
+                .text('trojan · Profile file · Feed · Independent delay test')),
+        findsOneWidget);
+    expect(find.descendant(of: row, matching: find.textContaining('10:11')),
+        findsOneWidget);
+    expect(find.text('Median: 80 ms'), findsOneWidget);
+    expect(find.text('Not running'), findsNothing);
+    expect(container.read(activeNodeCatalogProvider), isNull);
+    expect(
+        container.read(delayDataSourceProvider)['https://group.invalid/probe']
+            ?['Shared'],
+        42);
+    expect(tester.takeException(), isNull);
+  });
+
+  for (final hasRuntimeHistory in [false, true]) {
+    testWidgets(
+        'active source: verified identity wins over file provider: '
+        '$hasRuntimeHistory', (tester) async {
+      globalState.config = globalState.config.copyWith(currentProfileId: 'a');
+      globalState.appState = globalState.appState.copyWith(groups: const [
+        Group(
+            name: 'Live',
+            type: GroupType.Selector,
+            hidden: false,
+            all: [Proxy(name: 'Shared', type: 'Shadowsocks')]),
+      ], delayMap: {
+        defaultTestUrl: {'Shared': 42}
+      });
+      await mount(tester,
+          activeCatalog: ProfileCatalog(
+              profileId: 'a',
+              fingerprint: 'runtime',
+              status: ProfileCatalogStatus.ready,
+              nodes: [_node('runtime', 'Shared')]),
+          catalogs: {
+            'a': ProfileCatalog(
+                profileId: 'a',
+                fingerprint: 'file',
+                status: ProfileCatalogStatus.ready,
+                nodes: [
+                  _node('file', 'Shared').copyWith(
+                      source: CatalogNodeSource.provider, providerName: 'Feed'),
+                ]),
+          },
+          health: {
+            'a': {
+              'file': NodeHealthRecord(
+                  delayMs: 80,
+                  testedAt: DateTime(2026, 10, 15, 10, 11),
+                  testUrlHash: 'fixture'),
+              if (hasRuntimeHistory)
+                'runtime': NodeHealthRecord(
+                    delayMs: 64,
+                    testedAt: DateTime(2026, 10, 15, 9, 10),
+                    testUrlHash: 'fixture'),
+            },
+          });
+      final row = find.byKey(const ValueKey('overview-active-Shared'));
+      expect(
+          find.descendant(
+              of: row,
+              matching: find.text(hasRuntimeHistory ? '64 ms' : '42 ms')),
+          findsOneWidget);
+      expect(find.textContaining('Profile file'), findsNothing);
+      expect(find.text('80 ms'), findsNothing);
+      expect(tester.takeException(), isNull);
+    });
+  }
+
+  for (final invalid in [
+    'inline duplicate',
+    'provider duplicate',
+    'no history',
+    'unparseable',
+    'file error',
+    'updating'
+  ]) {
+    testWidgets(
+        'active source: rejects ambiguous or unavailable file result: '
+        '$invalid', (tester) async {
+      globalState.config = globalState.config.copyWith(currentProfileId: 'a');
+      globalState.appState = globalState.appState.copyWith(groups: const [
+        Group(
+            name: 'Live',
+            type: GroupType.Selector,
+            hidden: false,
+            all: [Proxy(name: 'Shared', type: 'Shadowsocks')]),
+      ], delayMap: {
+        defaultTestUrl: {'Shared': 42}
+      });
+      final node = _node('file', 'Shared').copyWith(
+          source: CatalogNodeSource.provider,
+          providerName: 'Feed',
+          unsupported: invalid == 'unparseable'
+              ? CatalogUnsupportedReason.parseFailed
+              : CatalogUnsupportedReason.none);
+      await mount(tester, catalogs: {
+        'a': ProfileCatalog(
+            profileId: 'a',
+            fingerprint: 'file',
+            status: invalid == 'file error'
+                ? ProfileCatalogStatus.fileMissing
+                : invalid == 'updating'
+                    ? ProfileCatalogStatus.updating
+                    : ProfileCatalogStatus.ready,
+            nodes: [
+              node,
+              if (invalid == 'inline duplicate') _node('inline', 'Shared'),
+              if (invalid == 'provider duplicate')
+                node.copyWith(identityKey: 'other', providerName: 'Other feed'),
+            ]),
+      }, health: {
+        'a': {
+          if (invalid != 'no history')
+            'file': NodeHealthRecord(
+                delayMs: 80,
+                testedAt: DateTime(2026, 10, 15, 10, 11),
+                testUrlHash: 'fixture'),
+        },
+      });
+      final row = find.byKey(const ValueKey('overview-active-Shared'));
+      expect(find.descendant(of: row, matching: find.text('42 ms')),
+          findsOneWidget);
+      expect(
+          find.descendant(
+              of: row, matching: find.text('Shadowsocks · Runtime node')),
+          findsOneWidget);
+      expect(
+          find.descendant(of: row, matching: find.textContaining('Last test:')),
+          findsNothing);
+      expect(tester.takeException(), isNull);
+    });
+  }
+
+  testWidgets('active source: file result drives filtering sorting and summary',
+      (tester) async {
+    globalState.config = globalState.config.copyWith(currentProfileId: 'a');
+    globalState.appState = globalState.appState.copyWith(groups: const [
+      Group(name: 'Live', type: GroupType.Selector, hidden: false, all: [
+        Proxy(name: 'Failed', type: 'Shadowsocks'),
+        Proxy(name: 'Good', type: 'Shadowsocks'),
+      ]),
+    ], delayMap: {
+      defaultTestUrl: {'Failed': 20, 'Good': -1}
+    });
+    final container = await mount(tester, width: 1200, catalogs: {
+      'a': ProfileCatalog(
+          profileId: 'a',
+          fingerprint: 'file',
+          status: ProfileCatalogStatus.ready,
+          nodes: [
+            for (final name in ['Failed', 'Good'])
+              _node(name, name).copyWith(
+                  source: CatalogNodeSource.provider, providerName: 'Feed'),
+          ]),
+    }, health: {
+      'a': {
+        for (final name in ['Failed', 'Good'])
+          name: NodeHealthRecord(
+              delayMs: name == 'Good' ? 80 : -1,
+              testedAt: DateTime(2026, 10, 15, 10, 11),
+              testUrlHash: 'fixture'),
+      },
+    });
+    expect(find.text('1 available / 2 tested / 2 total'), findsOneWidget);
+    expect(find.text('Median: 80 ms'), findsOneWidget);
+    container.read(proxiesStyleSettingProvider.notifier).updateState(
+        (state) => state.copyWith(sortType: ProxiesSortType.delay));
+    await tester.pumpAndSettle();
+    expect(tester.getTopLeft(find.text('Good')).dy,
+        lessThan(tester.getTopLeft(find.text('Failed')).dy));
+    await tester.tap(find.text('Available only'));
+    await tester.pumpAndSettle();
+    expect(find.text('Good'), findsOneWidget);
+    expect(find.text('Failed'), findsNothing);
+    container.read(proxiesQueryProvider.notifier).value = 'Feed';
+    await tester.pumpAndSettle();
+    expect(find.text('Good'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  for (final sample in [
+    (label: 'new history overrides older live value', live: 42, saved: 80),
+    (
+      label: 'cancellation does not replace successful history',
+      live: -1,
+      saved: 42
+    ),
+    (
+      label: 'new failed measurement replaces successful live value',
+      live: 42,
+      saved: -1
+    ),
+  ]) {
+    testWidgets('active explicit result: ${sample.label}', (tester) async {
+      globalState.config = globalState.config.copyWith(currentProfileId: 'a');
+      globalState.appState = globalState.appState.copyWith(groups: const [
+        Group(
+            name: 'Runtime',
+            type: GroupType.Selector,
+            hidden: false,
+            all: [Proxy(name: 'Saved leaf', type: 'Shadowsocks')])
+      ], delayMap: {
+        defaultTestUrl: {'Saved leaf': sample.live}
+      });
+      final catalog = ProfileCatalog(
+          profileId: 'a',
+          fingerprint: 'runtime',
+          status: ProfileCatalogStatus.ready,
+          nodes: [_node('saved', 'Saved leaf')]);
+      final container =
+          await mount(tester, width: 1200, activeCatalog: catalog, health: {
+        'a': {
+          'saved': NodeHealthRecord(
+              delayMs: sample.saved,
+              testedAt: DateTime(2026, 10, 15, 10, 11),
+              testUrlHash: 'fixture')
+        }
+      });
+      final row = find.byKey(const ValueKey('overview-active-Saved leaf'));
+      expect(
+          find.descendant(
+              of: row,
+              matching: find.text(
+                  sample.saved > 0 ? '${sample.saved} ms' : 'Test failed')),
+          findsOneWidget);
+      expect(find.descendant(of: row, matching: find.textContaining('10:11')),
+          findsOneWidget);
+      expect(
+          find.text(
+              '${sample.saved > 0 ? 1 : 0} available / 1 tested / 1 total'),
+          findsOneWidget);
+      expect(
+          container.read(delayDataSourceProvider)[defaultTestUrl]
+              ?['Saved leaf'],
+          sample.live);
+      expect(tester.takeException(), isNull);
+    });
+  }
+
+  testWidgets('P1 test: a single node uses its own profile identity',
+      (tester) async {
+    final backend = _CatalogTester();
+    await mount(tester, catalogTester: backend, catalogs: {
+      for (final id in ['a', 'b'])
+        id: ProfileCatalog(
+            profileId: id,
+            fingerprint: 'fixture',
+            status: ProfileCatalogStatus.ready,
+            nodes: [_node('$id-key', 'Shared name')])
+    });
+    await tester.tap(find.byKey(const ValueKey('overview-test-b-b-key')));
+    await tester.pumpAndSettle();
+    expect(backend.batches.single.single.profile.id, 'b');
+    expect(backend.batches.single.single.nodes.single.identityKey, 'b-key');
+  });
+
+  testWidgets(
+      'P1 test: unsupported nodes explain why no test button is available',
+      (tester) async {
+    await mount(tester, catalogs: {
+      'a': ProfileCatalog(
+          profileId: 'a',
+          fingerprint: 'fixture',
+          status: ProfileCatalogStatus.ready,
+          nodes: [
+            _node('invalid', 'Invalid')
+                .copyWith(unsupported: CatalogUnsupportedReason.parseFailed),
+            _node('chain', 'Chain').copyWith(
+                unsupported: CatalogUnsupportedReason.chainUnsupported),
+            _node('type', 'Heavy').copyWith(
+                unsupported: CatalogUnsupportedReason.typeUnsupported),
+          ])
+    });
+    expect(find.byTooltip('Test this node'), findsNothing);
+    expect(find.text('Proxy chains cannot be tested in isolation'),
+        findsOneWidget);
+    expect(find.text('This protocol is not supported for isolated tests'),
+        findsOneWidget);
+    expect(find.text('Node could not be identified'), findsOneWidget);
+  });
+
+  testWidgets('raw isolated protocol exclusions are visible before any test',
+      (tester) async {
+    final catalog = buildProfileCatalog(
+      profileId: 'a',
+      fingerprint: '',
+      isolatedTest: true,
+      raw: {
+        'proxies': [
+          {
+            'name': 'Supported',
+            'type': 'vless',
+            'server': 'fixture.invalid',
+            'port': 443
+          },
+          {
+            'name': 'Heavy',
+            'type': 'tuic',
+            'server': 'fixture.invalid',
+            'port': 443
+          },
+          {
+            'name': 'Mux',
+            'type': 'ss',
+            'server': 'fixture.invalid',
+            'port': 443,
+            'SMUX': {'enabled': false}
+          },
+          {
+            'name': 'Chain',
+            'type': 'ss',
+            'server': 'fixture.invalid',
+            'port': 443,
+            'dialer_proxy': 'upstream'
+          },
+        ]
+      },
+    );
+    final backend = _CatalogTester();
+    await mount(tester,
+        width: 1200, catalogs: {'a': catalog}, catalogTester: backend);
+    expect(find.byTooltip('Test this node'), findsOneWidget);
+    expect(find.text('This protocol is not supported for isolated tests'),
+        findsNWidgets(2));
+    expect(find.text('Proxy chains cannot be tested in isolation'),
+        findsOneWidget);
+    for (final name in ['Supported', 'Heavy', 'Mux', 'Chain']) {
+      expect(find.text(name), findsOneWidget);
+    }
+    expect(backend.batches, isEmpty);
+  });
+
+  testWidgets('P1 test: current profile batch keeps all group URL semantics',
+      (tester) async {
+    final backend = _CatalogTester();
+    globalState.config = globalState.config.copyWith(currentProfileId: 'a');
+    globalState.appState = globalState.appState.copyWith(groups: const [
+      Group(
+          name: 'First',
+          type: GroupType.Selector,
+          hidden: false,
+          testUrl: 'https://first.invalid',
+          all: [Proxy(name: 'Live', type: 'Shadowsocks')]),
+      Group(
+          name: 'Second',
+          type: GroupType.Selector,
+          hidden: false,
+          all: [Proxy(name: 'Live', type: 'Shadowsocks')]),
+    ]);
+    await mount(tester, catalogTester: backend);
+    await tester.tap(find.text('Test current profile'));
+    await tester.pumpAndSettle();
+    expect(backend.current.single.map((t) => (t.name, t.url, t.scope)), [
+      ('Live', 'https://first.invalid', null),
+      ('Live', defaultTestUrl, null),
+    ]);
+    expect(backend.batches, isEmpty);
+    expect(find.textContaining('Profiles with issues'), findsNothing);
+  });
+
+  testWidgets(
+      'current profile tests the sidebar selection instead of the active profile',
+      (tester) async {
+    final backend = _CatalogTester();
+    globalState.config = globalState.config.copyWith(currentProfileId: 'a');
+    globalState.appState = globalState.appState.copyWith(groups: const [
+      Group(
+          name: 'Live group',
+          type: GroupType.Selector,
+          hidden: false,
+          all: [Proxy(name: 'Live', type: 'Shadowsocks')]),
+    ]);
+    final container = await mount(tester,
+        width: 1200, catalogs: flatCatalogs(), catalogTester: backend);
+    await tester.tap(find.byKey(const ValueKey('overview-select-b')));
+    await tester.pumpAndSettle();
+    container.read(proxiesQueryProvider.notifier).state = 'no matching rows';
+    await tester.tap(find.text('Available only'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('overview-test-current')));
+    await tester.pumpAndSettle();
+    expect(backend.all.single.map((profile) => profile.id), ['b']);
+    expect(backend.current, isEmpty);
+    expect(backend.batches, isEmpty);
+  });
+
+  testWidgets(
+      'current profile tests the dropdown selection without live groups',
+      (tester) async {
+    final backend = _CatalogTester();
+    await mount(tester, catalogs: flatCatalogs(), catalogTester: backend);
+    await tester.tap(find.byKey(const ValueKey('overview-profile-filter')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Beta profile').last);
+    await tester.pumpAndSettle();
+    final button = find.byKey(const ValueKey('overview-test-current'));
+    expect(tester.widget<TextButton>(button).onPressed, isNotNull);
+    await tester.tap(button);
+    await tester.pumpAndSettle();
+    expect(backend.all.single.map((profile) => profile.id), ['b']);
+    expect(backend.current, isEmpty);
+  });
+
+  testWidgets(
+      'P1 test: shared progress disables start controls and cancel remains usable',
+      (tester) async {
+    final backend = _CatalogTester();
+    await mount(tester, catalogTester: backend, catalogs: flatCatalogs());
+    backend.pendingKeys.add(('b', 'b-node'));
+    backend.progress(done: 3, count: 8);
+    await tester.pump();
+    expect(find.text('3 / 8'), findsOneWidget);
+    expect(
+        tester
+            .widget<TextButton>(
+                find.widgetWithText(TextButton, 'Test all node delays'))
+            .onPressed,
+        isNull);
+    expect(
+        tester
+            .widget<IconButton>(
+                find.byKey(const ValueKey('overview-test-a-a-node')))
+            .onPressed,
+        isNull);
+    expect(
+        find.descendant(
+            of: find.byKey(const ValueKey('overview-node-b-b-node')),
+            matching: find.byType(CircularProgressIndicator)),
+        findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('overview-cancel')));
+    await tester.pumpAndSettle();
+    expect(backend.cancellations, 1);
+    expect(backend.batches, isEmpty);
+    expect(find.text('3 / 8'), findsNothing);
+  });
+
+  testWidgets('P1 test: leaving overview disposes only its owned scope',
+      (tester) async {
+    final backend = _CatalogTester();
+    await mount(tester, catalogTester: backend);
+    await tester.pumpWidget(const SizedBox.shrink());
+    expect(backend.scopeDisposals, 1);
+    expect(backend.cancellations, 0);
+  });
+
+  testWidgets('P1 test: rejected isolated test shows a localized reason',
+      (tester) async {
+    final backend = _CatalogTester()..reason = 'strictModeUnsupported';
+    await mount(tester, catalogTester: backend, catalogs: flatCatalogs());
+    await tester.tap(find.byKey(const ValueKey('overview-test-b-b-node')));
+    await tester.pumpAndSettle();
+    expect(find.text('Isolated tests are unavailable in strict mode'),
+        findsOneWidget);
+    expect(find.text('strictModeUnsupported'), findsNothing);
+  });
+
+  testWidgets('P1 flat: all profiles show nodes without accordion interactions',
+      (tester) async {
+    await mount(tester, width: 1200, catalogs: flatCatalogs());
+    expect(find.text('Alpha node'), findsOneWidget);
+    expect(find.text('Beta node'), findsOneWidget);
+    final body = find.byKey(const ValueKey('overview-nodes'));
+    expect(find.descendant(of: body, matching: find.byIcon(Icons.expand_more)),
+        findsNothing);
+    expect(find.descendant(of: body, matching: find.byIcon(Icons.expand_less)),
+        findsNothing);
+    expect(find.byType(SliverPersistentHeader), findsNWidgets(2));
+    expect(
+        tester
+            .widgetList<SliverPersistentHeader>(
+                find.byType(SliverPersistentHeader))
+            .every((header) => header.pinned),
+        isTrue);
+  });
+
+  testWidgets('P1 flat: sidebar selection shows only one plain node list',
+      (tester) async {
+    await mount(tester, width: 1200, catalogs: flatCatalogs());
+    await tester.tap(find.byKey(const ValueKey('overview-select-b')));
+    await tester.pumpAndSettle();
+    expect(find.text('Beta node'), findsOneWidget);
+    expect(find.text('Alpha node'), findsNothing);
+    final body = find.byKey(const ValueKey('overview-nodes'));
+    expect(find.descendant(of: body, matching: find.text('Beta profile')),
+        findsNothing);
+    expect(find.byType(SliverPersistentHeader), findsNothing);
+  });
+
+  testWidgets('P1 flat: profile heading stays pinned while its rows scroll',
+      (tester) async {
+    await mount(tester, width: 1200, catalogs: {
+      'a': ProfileCatalog(
+          profileId: 'a',
+          fingerprint: 'fixture',
+          status: ProfileCatalogStatus.ready,
+          nodes: List.generate(30, (i) => _node('a-$i', 'Alpha $i'))),
+    });
+    final header = find.byKey(const ValueKey('overview-header-a'));
+    final top = tester.getTopLeft(header).dy;
+    await tester.drag(
+        find.byKey(const ValueKey('overview-nodes')), const Offset(0, -450));
+    await tester.pumpAndSettle();
+    expect(tester.getTopLeft(header).dy, top);
+    expect(find.text('Alpha 0'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('P1 flat: narrow profile selector filters without folding',
+      (tester) async {
+    await mount(tester, width: 400, catalogs: flatCatalogs());
+    final selector = find.byKey(const ValueKey('overview-profile-filter'));
+    expect(selector, findsOneWidget);
+    await tester.tap(selector);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Beta profile').last);
+    await tester.pumpAndSettle();
+    expect(find.text('Beta node'), findsOneWidget);
+    expect(find.text('Alpha node'), findsNothing);
+    expect(find.byType(SliverPersistentHeader), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('P1 flat: narrow parent constraints override wide app width',
+      (tester) async {
+    final container = await mount(tester,
+        width: 1200,
+        catalogs: flatCatalogs(),
+        child: const Align(
+            alignment: Alignment.topLeft,
+            child: SizedBox(width: 400, child: NodeOverviewView())));
+    expect(container.read(viewWidthProvider), 1200);
+    expect(find.byKey(const ValueKey('overview-sidebar')), findsNothing);
+    final selector = find.byKey(const ValueKey('overview-profile-filter'));
+    expect(selector, findsOneWidget);
+    await tester.tap(selector);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Beta profile').last);
+    await tester.pumpAndSettle();
+    expect(find.text('Beta node'), findsOneWidget);
+    expect(find.text('Alpha node'), findsNothing);
+    expect(find.byType(SliverPersistentHeader), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'P1 flat: active leaves are unique read-only rows using first URL',
+      (tester) async {
+    final controller = _ProxyController();
+    globalState.appController = controller;
+    globalState.config = globalState.config.copyWith(currentProfileId: 'a');
+    const leaf = Proxy(name: 'Unique leaf', type: 'Shadowsocks');
+    globalState.appState = globalState.appState.copyWith(
+      groups: const [
+        Group(
+            name: 'First group',
+            type: GroupType.Selector,
+            hidden: false,
+            testUrl: 'https://first.invalid',
+            all: [
+              leaf,
+              Proxy(name: 'DIRECT', type: 'Direct'),
+              Proxy(name: 'Other group', type: 'Selector')
+            ]),
+        Group(
+            name: 'Other group',
+            type: GroupType.URLTest,
+            hidden: false,
+            testUrl: 'https://second.invalid',
+            all: [leaf]),
+      ],
+      delayMap: {
+        'https://first.invalid': {'Unique leaf': 123},
+        'https://second.invalid': {'Unique leaf': 999},
+      },
+    );
+    await mount(tester);
+    expect(find.byType(ProxyCard), findsNothing);
+    expect(find.text('Unique leaf'), findsOneWidget);
+    expect(find.text('123 ms'), findsOneWidget);
+    expect(find.text('999 ms'), findsNothing);
+    expect(find.text('First group'), findsNothing);
+    expect(find.text('Other group'), findsNothing);
+    await tester.tap(find.text('Unique leaf'));
+    expect(controller.changes, isEmpty);
+    expect(controller.selections, isEmpty);
+    expect(tester.takeException(), isNull);
+  });
+
+  for (final width in [400.0, 1200.0]) {
+    testWidgets('visible profiles load lazily at width $width', (tester) async {
       final loaded = <String>[];
       final profiles =
           List.generate(40, (i) => _a.copyWith(id: 'p$i', label: 'Profile $i'));
@@ -182,7 +1176,10 @@ void main() {
           });
       expect(loaded, contains('p0'));
       expect(loaded.length, lessThan(profiles.length));
-      expect(find.text('1 available / 1 tested / 1 total'), findsWidgets);
+      if (width > 840) {
+        expect(find.text('1 available / 1 tested / 1 total'), findsOneWidget);
+      }
+      expect(find.text('Node p0'), findsOneWidget);
       final scroller = find
           .byKey(ValueKey(width > 840 ? 'overview-sidebar' : 'overview-nodes'));
       final firstCount = loaded.length;
@@ -216,7 +1213,7 @@ void main() {
       (tester) async {
     final invalid = _node('invalid-node', 'Invalid node')
         .copyWith(unsupported: CatalogUnsupportedReason.parseFailed);
-    await mount(tester, catalogs: {
+    await mount(tester, width: 1200, catalogs: {
       'a': ProfileCatalog(
           profileId: 'a',
           fingerprint: '',
@@ -228,11 +1225,9 @@ void main() {
             delayMs: 123, testedAt: DateTime.now(), testUrlHash: 'fixture')
       }
     });
-    await tester.tap(find.byKey(const ValueKey('overview-header-a')));
-    await tester.pumpAndSettle();
     expect(find.text('Node could not be identified'), findsOneWidget);
     expect(find.text('123 ms'), findsNothing);
-    expect(find.text('0 available / 0 tested / 2 total'), findsOneWidget);
+    expect(find.text('0 available / 0 tested / 1 total'), findsOneWidget);
     await tester.tap(find.text('Available only'));
     await tester.pumpAndSettle();
     expect(find.text('Invalid node'), findsNothing);
@@ -258,8 +1253,8 @@ void main() {
           status: ProfileCatalogStatus.ready,
           nodes: [_node('new', 'Shared name')]),
     });
-    expect(find.text('Runtime node'), findsOneWidget);
-    expect(find.text('Inline'), findsNothing);
+    expect(find.textContaining('Runtime node'), findsOneWidget);
+    expect(find.textContaining('Inline'), findsNothing);
   });
 
   testWidgets('scope is hidden for one profile and when disabled',
@@ -309,7 +1304,7 @@ void main() {
         });
     expect(find.textContaining('Verified provider'), findsOneWidget);
     expect(find.textContaining('Inline'), findsNothing);
-    expect(find.text('Runtime node'), findsNothing);
+    expect(find.textContaining('Runtime node'), findsNothing);
     expect(find.textContaining('Last test:'), findsWidgets);
   });
 
@@ -336,14 +1331,14 @@ void main() {
     expect(loaded.toSet(), profiles.map((p) => p.id).toSet());
     container.read(proxiesQueryProvider.notifier).value = '';
     await tester.pumpAndSettle();
-    expect(find.text('Needle p0'), findsNothing);
+    expect(find.text('Needle p0'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
   testWidgets('health band uses node color scale at the 600 ms boundary',
       (tester) async {
     final now = DateTime.now();
-    await mount(tester, catalogs: {
+    await mount(tester, width: 1200, catalogs: {
       'a': ProfileCatalog(
           profileId: 'a',
           fingerprint: 'fixture',
@@ -363,7 +1358,7 @@ void main() {
     });
     final bands = tester
         .widgetList<Container>(find.descendant(
-            of: find.byKey(const ValueKey('overview-header-a')),
+            of: find.byKey(const ValueKey('overview-select-a')),
             matching: find.byType(Container)))
         .where((container) => container.constraints?.maxHeight == 5)
         .toList();
@@ -377,7 +1372,7 @@ void main() {
   });
 
   testWidgets(
-      'defaults to existing view; opening overview loads visible collapsed summaries',
+      'defaults to existing view; opening overview loads visible profiles',
       (tester) async {
     final loaded = <String>[];
     final container = await mount(tester,
@@ -390,8 +1385,6 @@ void main() {
     expect(find.text('Alpha profile'), findsOneWidget);
     expect(loaded, containsAll(['a', 'b']));
     expect(container.read(currentProfileIdProvider), isNull);
-    await tester.tap(find.byKey(const ValueKey('overview-header-b')));
-    await tester.pumpAndSettle();
     expect(loaded, ['a', 'b']);
     expect(container.read(currentProfileIdProvider), isNull);
   });
@@ -423,10 +1416,6 @@ void main() {
             testUrlHash: 'hash')
       },
     });
-    for (final id in ['a', 'b']) {
-      await tester.tap(find.byKey(ValueKey('overview-header-$id')));
-      await tester.pumpAndSettle();
-    }
     expect(find.text('Same node'), findsNWidgets(2));
     expect(find.text('123 ms'), findsOneWidget);
     expect(find.text('456 ms'), findsOneWidget);
@@ -435,14 +1424,56 @@ void main() {
       expect(
           find.descendant(
               of: find.byKey(ValueKey('overview-node-$id-$id-node')),
-              matching: find.textContaining('Last active test')),
+              matching: find.textContaining('Last test:')),
           findsOneWidget);
     }
+    expect(find.textContaining('Last active test'), findsNothing);
     await tester.tap(find.text('Same node').last);
     await tester.pump();
     expect(container.read(currentProfileIdProvider), isNull);
     expect(container.read(delayDataSourceProvider), isEmpty);
     expect(find.byType(ProxyCard), findsNothing);
+  });
+
+  testWidgets('inactive isolated result uses neutral last-test time',
+      (tester) async {
+    final directory =
+        Directory.systemTemp.createTempSync('node-overview-isolated-time-');
+    addTearDown(() => directory.deleteSync(recursive: true));
+    final store = NodeHealthStore(
+        fileProvider: () async => File('${directory.path}/health.json'),
+        debounce: const Duration(hours: 1));
+    final node = catalogNodeFromMap(profileId: 'b', proxy: {
+      'name': 'Isolated result',
+      'type': 'ss',
+      'server': 'fixture.invalid',
+      'port': 443,
+    }).copyWith(coreIndex: 0);
+    final catalog = ProfileCatalog(
+        profileId: 'b',
+        fingerprint: '',
+        status: ProfileCatalogStatus.ready,
+        coreCatalogId: 'c-time-fixture',
+        nodes: [node]);
+    store.bindCatalog(catalog);
+    final target = store.beginCatalogTest(
+        catalogId: catalog.coreCatalogId!,
+        nodeIndex: 0,
+        identityKey: node.identityKey,
+        testUrl: defaultTestUrl)!;
+    await tester.runAsync(() => store.finishCatalogTest(target, 42));
+    store.unbindCatalog(catalog.coreCatalogId!);
+    final container =
+        await mount(tester, catalogs: {'b': catalog}, healthStore: store);
+    final row = find.byKey(ValueKey('overview-node-b-${node.identityKey}'));
+    expect(
+        find.descendant(of: row, matching: find.text('42 ms')), findsOneWidget);
+    expect(
+        find.descendant(of: row, matching: find.textContaining('Last test:')),
+        findsOneWidget);
+    expect(find.textContaining('Last active test'), findsNothing);
+    expect(container.read(currentProfileIdProvider), isNull);
+    expect(container.read(delayDataSourceProvider), isEmpty);
   });
 
   testWidgets(
@@ -471,8 +1502,6 @@ void main() {
             reason: 'testFailed'),
       },
     });
-    await tester.tap(find.byKey(const ValueKey('overview-header-a')));
-    await tester.pumpAndSettle();
     container
         .read(proxiesStyleSettingProvider.notifier)
         .updateState((state) => state.copyWith(sortType: ProxiesSortType.name));
@@ -525,10 +1554,6 @@ void main() {
           fingerprint: '',
           status: ProfileCatalogStatus.parseFailed),
     });
-    for (final id in ['a', 'b']) {
-      await tester.tap(find.byKey(ValueKey('overview-header-$id')));
-      await tester.pumpAndSettle();
-    }
     expect(find.text('Profile file is missing'), findsOneWidget);
     expect(find.text('Profile could not be parsed'), findsOneWidget);
     expect(find.text('Subscription expired'), findsWidgets);
@@ -536,8 +1561,7 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets(
-      'active nodes reuse live group cards and keep each selection target',
+  testWidgets('active flat list omits nested groups and repeats no leaf',
       (tester) async {
     globalState.config = globalState.config.copyWith(currentProfileId: 'a');
     const leaf = Proxy(name: 'Live leaf', type: 'Shadowsocks');
@@ -558,14 +1582,11 @@ void main() {
       const Group(name: 'Nested', type: GroupType.Selector, hidden: true),
     ]);
     final container = await mount(tester);
-    final cards = tester.widgetList<ProxyCard>(find.byType(ProxyCard)).toList();
-    expect(cards, hasLength(2));
-    expect(cards.map((card) => card.groupName), ['One', 'Two']);
-    expect(cards.map((card) => card.groupType),
-        [GroupType.Selector, GroupType.URLTest]);
-    expect(cards.map((card) => card.testUrl),
-        ['https://one.invalid', 'https://two.invalid']);
-    expect(cards.map((card) => card.proxy.name), everyElement('Live leaf'));
+    expect(find.byType(ProxyCard), findsNothing);
+    expect(find.text('Live leaf'), findsOneWidget);
+    expect(find.text('Nested'), findsNothing);
+    expect(find.text('One'), findsNothing);
+    expect(find.text('Two'), findsNothing);
     expect(container.read(currentProfileIdProvider), 'a');
     expect(container.read(delayDataSourceProvider), isEmpty);
     expect(tester.takeException(), isNull);
@@ -601,20 +1622,20 @@ void main() {
     expect(find.byType(NodeOverviewView), findsOneWidget);
     await tester.tap(find.text('Selectable leaf', findRichText: true));
     await tester.pump();
-    expect(controller.changes, [('Select', 'Selectable leaf')]);
-    expect(controller.selections, [('Select', 'Selectable leaf')]);
+    expect(controller.changes, isEmpty);
+    expect(controller.selections, isEmpty);
     await selectScope(tester, 'Current profile');
     expect(find.byType(NodeOverviewView), findsNothing);
     await tester.tap(find.text('Selectable leaf', findRichText: true));
     await tester.pump();
-    expect(controller.changes,
-        [('Select', 'Selectable leaf'), ('Select', 'Selectable leaf')]);
+    expect(controller.changes, [('Select', 'Selectable leaf')]);
+    expect(controller.selections, [('Select', 'Selectable leaf')]);
     expect(container.read(currentProfileIdProvider), 'a');
     expect(tester.takeException(), isNull);
   });
 
   testWidgets(
-      'search expands collapsed profiles and clearing restores expansion',
+      'search and clearing keep matching nodes visible without expansion',
       (tester) async {
     final loaded = <String>[];
     final container = await mount(tester, onLoad: loaded.add, catalogs: {
@@ -637,12 +1658,12 @@ void main() {
     expect(find.text('Needle Beta'), findsOneWidget);
     container.read(proxiesQueryProvider.notifier).value = '';
     await tester.pumpAndSettle();
-    expect(find.text('Needle Alpha'), findsNothing);
-    expect(find.text('Needle Beta'), findsNothing);
+    expect(find.text('Needle Alpha'), findsOneWidget);
+    expect(find.text('Needle Beta'), findsOneWidget);
   });
 
   testWidgets(
-      'wide search spans profiles even after selecting one in the sidebar',
+      'wide search respects selected profile and All restores cross-profile search',
       (tester) async {
     final container = await mount(tester, width: 1200, catalogs: {
       'a': ProfileCatalog(
@@ -661,11 +1682,15 @@ void main() {
     expect(find.text('Needle Alpha'), findsNothing);
     container.read(proxiesQueryProvider.notifier).value = 'needle';
     await tester.pumpAndSettle();
+    expect(find.text('Needle Alpha'), findsNothing);
+    expect(find.text('Needle Beta'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('overview-select-all')));
+    await tester.pumpAndSettle();
     expect(find.text('Needle Alpha'), findsOneWidget);
     expect(find.text('Needle Beta'), findsOneWidget);
     container.read(proxiesQueryProvider.notifier).value = '';
     await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey('overview-header-a')), findsNothing);
+    expect(find.byKey(const ValueKey('overview-header-a')), findsOneWidget);
     expect(find.text('Needle Beta'), findsOneWidget);
   });
 
@@ -693,11 +1718,11 @@ void main() {
         defaultTestUrl: {'Live leaf': -1}
       },
     );
-    await mount(tester);
+    await mount(tester, width: 1200);
     expect(find.text('1 available / 1 tested / 1 total'), findsOneWidget);
     expect(find.text('Median: 321 ms'), findsOneWidget);
     expect(find.text('321 ms'), findsOneWidget);
-    expect(find.text('Timeout'), findsOneWidget);
+    expect(find.text('Test failed'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
@@ -720,10 +1745,10 @@ void main() {
       ProfileCatalogStatus.fileMissing: 'Profile file is missing',
       ProfileCatalogStatus.parseFailed: 'Profile could not be parsed',
     }.entries) {
-      await mount(tester, catalogs: {
+      await mount(tester, width: 1200, catalogs: {
         'a': ProfileCatalog(profileId: 'a', fingerprint: '', status: entry.key),
       });
-      expect(find.text(entry.value), findsOneWidget);
+      expect(find.text(entry.value), findsNWidgets(2));
       expect(find.text('1 available / 1 tested / 1 total'), findsOneWidget);
       expect(find.text('Median: 88 ms'), findsOneWidget);
       expect(find.text('88 ms'), findsOneWidget);
@@ -735,7 +1760,7 @@ void main() {
 
   for (final customHistory in [false, true]) {
     testWidgets(
-        'active URL history matches group and first-group summary: '
+        'active source: newest URL history and first-group summary: '
         '${customHistory ? 'custom' : 'default'} history', (tester) async {
       const key = '0123456789abcdef0123456789abcdef';
       const customUrl = 'https://custom.invalid/probe';
@@ -755,9 +1780,15 @@ void main() {
       await tester.runAsync(() => store.record(
           profileId: 'a',
           identityKey: key,
+          delayMs: customHistory ? 88 : 321,
+          testUrl: customHistory ? defaultTestUrl : customUrl,
+          testedAt: oldTime));
+      await tester.runAsync(() => store.record(
+          profileId: 'a',
+          identityKey: key,
           delayMs: customHistory ? 321 : 88,
           testUrl: customHistory ? customUrl : defaultTestUrl,
-          testedAt: customHistory ? customTime : oldTime));
+          testedAt: customTime));
       globalState.config = globalState.config.copyWith(currentProfileId: 'a');
       globalState.appState = globalState.appState.copyWith(groups: const [
         Group(
@@ -776,52 +1807,39 @@ void main() {
         defaultTestUrl: {'Live leaf': 88},
       });
       await mount(tester,
+          width: 1200,
           healthStore: store,
           activeCatalog: ProfileCatalog(
               profileId: 'a',
               fingerprint: 'verified-runtime',
               status: ProfileCatalogStatus.ready,
               nodes: [_node(key, 'Live leaf')]));
-      Finder cardRow(String group) => find
-          .ancestor(
-              of: find.byKey(ValueKey('overview-active-$group-Live leaf')),
-              matching: find.byType(Column))
-          .first;
-      final summary = find.byKey(const ValueKey('overview-header-a'));
+      final row = find.byKey(const ValueKey('overview-active-Live leaf'));
+      final summary = find.byKey(const ValueKey('overview-select-a'));
       final customTimes = find.textContaining('10:11');
       final defaultTimes = find.textContaining('8:09');
-      expect(find.descendant(of: cardRow('Custom'), matching: defaultTimes),
-          findsNothing);
+      expect(find.descendant(of: row, matching: defaultTimes), findsNothing);
       expect(
           find.descendant(of: summary, matching: defaultTimes), findsNothing);
-      expect(find.descendant(of: cardRow('Default'), matching: customTimes),
-          findsNothing);
-      if (customHistory) {
-        expect(find.descendant(of: cardRow('Custom'), matching: customTimes),
-            findsOneWidget);
-        expect(find.descendant(of: summary, matching: customTimes),
-            findsOneWidget);
-        expect(defaultTimes, findsNothing);
-      } else {
-        expect(find.descendant(of: cardRow('Default'), matching: defaultTimes),
-            findsOneWidget);
-        expect(
-            find.descendant(
-                of: cardRow('Custom'),
-                matching: find.textContaining('Last test:')),
-            findsNothing);
-      }
+      expect(find.descendant(of: row, matching: customTimes), findsOneWidget);
+      expect(
+          find.descendant(of: summary, matching: customTimes), findsOneWidget);
+      expect(defaultTimes, findsNothing);
+      expect(
+          find.descendant(
+              of: row, matching: find.textContaining('Independent delay test')),
+          customHistory ? findsNothing : findsOneWidget);
       expect(find.text('1 available / 1 tested / 1 total'), findsOneWidget);
-      expect(find.text('Median: 321 ms'), findsOneWidget);
-      expect(find.text('321 ms'), findsOneWidget);
-      expect(find.text('88 ms'), findsOneWidget);
+      expect(find.text(customHistory ? 'Median: 321 ms' : 'Median: 88 ms'),
+          findsOneWidget);
+      expect(find.text(customHistory ? '321 ms' : '88 ms'), findsOneWidget);
+      expect(find.text(customHistory ? '88 ms' : '321 ms'), findsNothing);
       expect(tester.takeException(), isNull);
     });
   }
 
   for (final width in [400.0, 1200.0]) {
-    testWidgets(
-        'cached errors and expiry remain visible while collapsed at width $width',
+    testWidgets('cached errors and expiry remain visible at width $width',
         (tester) async {
       final loaded = <String>[];
       await mount(tester, width: width, onLoad: loaded.add, profiles: [
@@ -856,9 +1874,76 @@ void main() {
   }
 
   testWidgets(
-      'large expanded catalogs only build viewport rows and show provider limitation',
+      '2001-node real projections retain the last active node history in search',
       (tester) async {
-    await mount(tester, catalogs: {
+    final raw = <String, dynamic>{
+      'proxies': List.generate(
+          2001,
+          (i) => {
+                'name': 'Node $i',
+                'type': 'ss',
+                'server': 'node-$i.invalid',
+                'port': 443,
+                'cipher': 'aes-128-gcm',
+                'password': 'synthetic-fixture',
+              }),
+    };
+    final fileCatalog = buildProfileCatalog(
+        profileId: 'a', fingerprint: 'file', raw: raw, isolatedTest: true);
+    final runtimeCatalog = buildProfileCatalog(
+        profileId: 'a', fingerprint: 'verified-runtime', raw: raw);
+    expect(fileCatalog.nodes, hasLength(2001));
+    expect(runtimeCatalog.nodes, hasLength(2001));
+    expect(fileCatalog.nodes.last.identityKey,
+        runtimeCatalog.nodes.last.identityKey);
+    final directory =
+        Directory.systemTemp.createTempSync('node-overview-large-history-');
+    final store = NodeHealthStore(
+        fileProvider: () async => File('${directory.path}/health.json'),
+        debounce: const Duration(hours: 1));
+    addTearDown(() {
+      expect(
+          directory.parent.absolute.path, Directory.systemTemp.absolute.path);
+      directory.deleteSync(recursive: true);
+    });
+    await tester.runAsync(() => store.record(
+        profileId: 'a',
+        identityKey: runtimeCatalog.nodes.last.identityKey,
+        delayMs: 246,
+        testUrl: defaultTestUrl,
+        testedAt: DateTime(2026, 10, 15, 10, 11)));
+    globalState.config = globalState.config.copyWith(currentProfileId: 'a');
+    globalState.appState = globalState.appState.copyWith(groups: [
+      Group(
+          name: 'Live',
+          type: GroupType.Selector,
+          hidden: false,
+          all: List.generate(
+              2001, (i) => Proxy(name: 'Node $i', type: 'Shadowsocks'))),
+    ]);
+    final container = await mount(tester,
+        width: 1200,
+        catalogs: {'a': fileCatalog},
+        activeCatalog: runtimeCatalog,
+        healthStore: store);
+    expect(find.text('Node 2000'), findsNothing);
+    container.read(proxiesQueryProvider.notifier).value = 'Node 2000';
+    await tester.pumpAndSettle();
+    final row = find.byKey(const ValueKey('overview-active-Node 2000'));
+    expect(row, findsOneWidget);
+    expect(find.descendant(of: row, matching: find.text('246 ms')),
+        findsOneWidget);
+    expect(find.descendant(of: row, matching: find.textContaining('10:11')),
+        findsOneWidget);
+    expect(find.text('1 available / 1 tested / 2001 total'), findsOneWidget);
+    expect(find.text('Profile could not be parsed'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'large flat catalogs only build viewport rows and show provider limitation',
+      (tester) async {
+    await mount(tester, width: 1200, catalogs: {
       'a': ProfileCatalog(
           profileId: 'a',
           fingerprint: '',
@@ -866,8 +1951,6 @@ void main() {
           nodes: List.generate(2000, (i) => _node('key-$i', 'Node $i')),
           providerNodeCounts: const {'Provider QA': -1}),
     });
-    await tester.tap(find.byKey(const ValueKey('overview-header-a')));
-    await tester.pumpAndSettle();
     expect(find.text('Node 0'), findsOneWidget);
     expect(find.text('Node 1999'), findsNothing);
     expect(find.text('Summary includes loaded nodes only'), findsOneWidget);

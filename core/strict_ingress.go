@@ -848,6 +848,7 @@ func handleConfigureStrictIngress(data string) (StrictIngressResult, error) {
 }
 
 func configureStrictIngressLocked(request *StrictIngressRequest) (StrictIngressResult, error) {
+	defer func() { setCatalogStrictBlocked(activeStrictIngress != nil || macStrictIngressIntent != nil) }()
 	if !strictControlAuthenticated() {
 		return StrictIngressResult{}, errors.New("strict ingress control channel was closed")
 	}
@@ -873,6 +874,9 @@ func configureStrictIngressLocked(request *StrictIngressRequest) (StrictIngressR
 		return StrictIngressResult{}, errors.New("strict ingress generation is stale")
 	}
 
+	// Block new isolated work before listener construction and cancel any work
+	// admitted before this transition; failures restore the actual strict state.
+	setCatalogStrictBlocked(true)
 	strictListeners, ordered, err := buildStrictIngressListeners(request, currentConfig)
 	if err != nil {
 		return StrictIngressResult{}, err
@@ -964,6 +968,8 @@ func handleRestoreMacStrictIngressIntent(data string) error {
 	runLock.Lock()
 	defer runLock.Unlock()
 	if !macCoreAuthenticated.Load() || isRunning { return errors.New("strict intent recovery requires stopped Core listeners") }
+	setCatalogStrictBlocked(true)
+	defer func() { setCatalogStrictBlocked(activeStrictIngress != nil || macStrictIngressIntent != nil) }()
 	if _, _, err := buildStrictIngressListeners(request, currentConfig); err != nil { return err }
 	intent := canonicalStrictIngressRequest(request)
 	macStrictIngressIntent = &intent
@@ -1006,6 +1012,7 @@ func removeStrictIngressListenersLocked() {
 	if previous != nil {
 		previous.udpIngress.close()
 	}
+	setCatalogStrictBlocked(macStrictIngressIntent != nil)
 }
 
 func clearStrictIngressForConfigChangeLocked() {
@@ -1014,6 +1021,7 @@ func clearStrictIngressForConfigChangeLocked() {
 	if previous != nil {
 		previous.udpIngress.close()
 	}
+	setCatalogStrictBlocked(macStrictIngressIntent != nil)
 }
 
 func validStrictTargetGroup(value string) bool {
