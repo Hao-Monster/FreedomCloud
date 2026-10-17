@@ -272,6 +272,70 @@ void main() {
           throwsA(isA<TunFailure>()
               .having((e) => e.code, 'code', 'statusUnavailable')));
     });
+
+    test(
+        'a non-explicit config apply after a failed repair downgrades TUN instead of blocking profile switches',
+        () async {
+      for (final code in [
+        'interfaceMissing',
+        'interfaceDown',
+        'interfaceUnknown',
+        'closeFailed',
+      ]) {
+        bool? applied;
+        final status = TunStatus(
+            instanceId: 'core',
+            revision: 4,
+            state: 'failed',
+            listenerActive: code != 'closeFailed',
+            interfaceState: code == 'interfaceDown'
+                ? 'down'
+                : (code == 'interfaceUnknown' ? 'unknown' : 'missing'),
+            privilege: 'elevated',
+            requestedEnabled: code != 'closeFailed',
+            errorCode: code);
+        expect(status.observed, TunObservedState.unknown);
+        await applyWindowsTunConfiguration(
+          componentsMatch: () async => true,
+          observe: () async => status,
+          desiredEnabled: () => true,
+          explicitStop: () => false,
+          explicitOperation: () => false,
+          failedRequest: () => true,
+          reportFailure: (_) {},
+          invalidate: () {},
+          apply: (enabled) async {
+            applied = enabled;
+            return '';
+          },
+        );
+        expect(applied, isFalse, reason: 'failed $code should downgrade TUN');
+      }
+    });
+
+    test(
+        'an observe side effect cannot promote a background refresh into an explicit repair',
+        () async {
+      var busy = false;
+      await expectLater(
+        applyWindowsTunConfiguration(
+          componentsMatch: () async => true,
+          observe: () async {
+            busy = true;
+            return vanished;
+          },
+          desiredEnabled: () => true,
+          explicitStop: () => false,
+          explicitOperation: () => busy,
+          failedRequest: () => false,
+          reportFailure: (_) {},
+          invalidate: () {},
+          apply: (_) async => '',
+        ),
+        throwsA(isA<TunFailure>()
+            .having((e) => e.code, 'code', 'statusUnavailable')),
+      );
+    });
   });
 
   group('observation failures are not request failures', () {

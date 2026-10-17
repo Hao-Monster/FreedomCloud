@@ -52,6 +52,11 @@ class AppController {
   Future<void>? _runtimeInitialization;
   bool _runtimeInitialized = false;
   bool _recoveringRunningProjection = false;
+  int _applyingWindowsConfigDepth = 0;
+  Future<bool>? _activeTunRepair;
+  Future<bool>? _lastTriggeredTunRepair;
+  String? _lastAppliedWindowsProfileId;
+  UpdateParams? _syncingProfileUpdateParams;
   static const _maxTunRepairAttempts = 2;
   final Map<String, int> _tunRepairAttempts = {};
   int? lastProfileModified;
@@ -100,49 +105,317 @@ class AppController {
       status = await _tunObserver.refresh(fresh: fresh);
     }
     if (status != null) {
-      _recoverRunningProjection(status);
-      _repairVanishedAdapter(status);
+      if (status.observed == TunObservedState.on) {
+        _tunRepairAttempts.remove(status.instanceId);
+      }
+      if (_applyingWindowsConfigDepth == 0) {
+        _recoverRunningProjection(status);
+        unawaited(_repairVanishedAdapter(status));
+      }
     }
     return status;
   }
 
-  /// The Core still holds an enabled listener but Windows no longer has its
-  /// adapter (driver reset, adapter removed). Rebuild through the incremental
-  /// apply path, which recreates an identical config when the adapter is gone.
-  /// Never requests authorization; bounded per Core instance and reset by a
-  /// healthy observation. A failure is recorded as a request failure, which
-  /// also stops background re-enables until the user retries.
-  void _repairVanishedAdapter(TunStatus status) {
-    if (status.observed == TunObservedState.on) {
-      _tunRepairAttempts.remove(status.instanceId);
-      return;
+  bool _isRepairableTunFailure(
+      TunStatus status, WindowsTunStartupEffects effects) {
+    if (status.privilege != 'elevated') return false;
+    if (status.listenerActive) {
+      return status.errorCode == 'interfaceMissing' ||
+          status.errorCode == 'interfaceDown';
     }
+    if (!effects.proxyRunning && !globalState.isStart) return false;
+    if (status.state != 'failed') return false;
+    return (status.requestedEnabled && status.errorCode == 'startFailed') ||
+        status.errorCode == 'closeFailed';
+  }
+
+  bool _canRepairVanishedAdapter(TunStatus status) {
+    if (status.observed == TunObservedState.on) return false;
+    final effects =
+        _windowsStartupEffects ?? _ControllerWindowsTunStartupEffects(this);
     if (!_runtimeInitialized ||
         _tunRuntime.busy ||
         _tunRuntime.closing ||
         !_tunRuntime.desiredEnabled ||
         _tunRuntime.requestFailure != null ||
-        status.errorCode != 'interfaceMissing' ||
-        !status.listenerActive ||
-        status.privilege != 'elevated') {
-      return;
+        !_isRepairableTunFailure(status, effects)) {
+      return false;
     }
+    return (_tunRepairAttempts[status.instanceId] ?? 0) < _maxTunRepairAttempts;
+  }
+
+  /// The Core still holds an enabled listener whose adapter is missing or down,
+  /// or a configuration reload failed while tearing down / recreating the TUN
+  /// listener (`startFailed` / `closeFailed`). Rebuild incrementally first and
+  /// escalate to a Core restart via the Helper if needed. Never requests
+  /// authorization; bounded per Core instance and reset by a healthy
+  /// observation. A failure is recorded as a request failure, which also stops
+  /// background re-enables until the user retries.
+  Future<bool> _repairVanishedAdapter(
+    TunStatus status, {
+    bool fullConfiguration = false,
+    bool applyPendingConfig = false,
+  }) {
+    if (status.observed == TunObservedState.on) {
+      _tunRepairAttempts.remove(status.instanceId);
+      return Future.value(false);
+    }
+    if (!_canRepairVanishedAdapter(status)) {
+      return Future.value(false);
+    }
+    final effects = _windowsStartupEffects ??
+        _ControllerWindowsTunStartupEffects(
+          this,
+          syncProviderSettings: fullConfiguration,
+        );
     final attempts = _tunRepairAttempts[status.instanceId] ?? 0;
-    if (attempts >= _maxTunRepairAttempts) return;
     _tunRepairAttempts[status.instanceId] = attempts + 1;
-    final effects =
-        _windowsStartupEffects ?? _ControllerWindowsTunStartupEffects(this);
-    effects.log('TUN adapter missing; rebuilding (attempt ${attempts + 1})');
-    unawaited(_tunRuntime.request(true, (intent) async {
-      bool current() => _tunRuntime.isCurrentIntent(intent);
-      await effects.applyConfiguration(full: false, isCurrent: current);
-      if (!current()) return;
-      final observed = await refreshWindowsTunStatus(fresh: true);
-      if (!current()) return;
-      if (observed?.observed != TunObservedState.on) {
-        throw TunFailure(observed?.errorCode ?? 'statusUnavailable');
+    effects.log(
+        'TUN adapter ${status.errorCode ?? 'missing'}; rebuilding (attempt ${attempts + 1})');
+    var repairedAndApplied = false;
+    var terminalOutcome = false;
+    var finished = false;
+    String? escalatedInstanceId;
+    int? previousEscalatedAttempts;
+    void rollbackAttemptsIfCancelled() {
+      if (terminalOutcome) return;
+      if (attempts == 0) {
+        _tunRepairAttempts.remove(status.instanceId);
+      } else {
+        _tunRepairAttempts[status.instanceId] = attempts;
       }
-    }));
+      final extraId = escalatedInstanceId;
+      if (extraId != null && extraId != status.instanceId) {
+        if (previousEscalatedAttempts == null ||
+            previousEscalatedAttempts == 0) {
+          _tunRepairAttempts.remove(extraId);
+        } else {
+          _tunRepairAttempts[extraId] = previousEscalatedAttempts!;
+        }
+      }
+    }
+
+    bool isPendingConfigSatisfied(
+      String? appliedProfileId,
+      UpdateParams? appliedUpdateParams,
+    ) {
+      if (!applyPendingConfig) return true;
+      if (fullConfiguration) {
+        return _windowsStartupEffects != null
+            ? _ref.read(currentProfileIdProvider) == appliedProfileId
+            : (_lastAppliedWindowsProfileId != null &&
+                _lastAppliedWindowsProfileId ==
+                    _ref.read(currentProfileIdProvider));
+      }
+      return _ref.read(updateParamsProvider) == appliedUpdateParams;
+    }
+
+    late final Future<bool> repairFuture;
+    void finishRepair() {
+      if (finished) return;
+      finished = true;
+      if (identical(_activeTunRepair, repairFuture)) {
+        _activeTunRepair = null;
+      }
+      rollbackAttemptsIfCancelled();
+    }
+
+    repairFuture = _tunRuntime.request(true, (intent) async {
+      try {
+        bool current() => _tunRuntime.isCurrentIntent(intent);
+        Future<TunStatus?> observeSettled() async {
+          TunStatus? latest;
+          final maxReads = _tunSettleDelay > Duration.zero ? 8 : 1;
+          for (var read = 0; read < maxReads; read++) {
+            latest = await refreshWindowsTunStatus(fresh: true);
+            if (!current()) return null;
+            if (latest != null && latest.observed != TunObservedState.unknown) {
+              break;
+            }
+            if (read + 1 >= maxReads) break;
+            await Future.delayed(_tunSettleDelay);
+            if (!current()) return null;
+          }
+          return latest;
+        }
+
+        final currentStatus = _tunRuntime.status;
+        if (currentStatus != null) {
+          if (currentStatus.observed == TunObservedState.on &&
+              currentStatus.errorCode == null) {
+            _tunRepairAttempts
+              ..remove(currentStatus.instanceId)
+              ..remove(status.instanceId);
+            repairedAndApplied = !applyPendingConfig;
+            return;
+          }
+          if (!_isRepairableTunFailure(currentStatus, effects)) {
+            return;
+          }
+        }
+        final activeStatus = currentStatus ?? status;
+        final activeAttempts = activeStatus.instanceId == status.instanceId
+            ? attempts
+            : (_tunRepairAttempts[activeStatus.instanceId] ?? 0);
+        if (activeStatus.instanceId != status.instanceId &&
+            activeAttempts >= _maxTunRepairAttempts) {
+          return;
+        }
+        if (activeStatus.instanceId != status.instanceId) {
+          escalatedInstanceId = activeStatus.instanceId;
+          previousEscalatedAttempts =
+              _tunRepairAttempts[activeStatus.instanceId];
+          _tunRepairAttempts[activeStatus.instanceId] = activeAttempts + 1;
+        }
+        final activeErrorCode =
+            activeStatus.observed == TunObservedState.on &&
+                    activeStatus.errorCode == null
+                ? null
+                : (activeStatus.errorCode ?? status.errorCode);
+        TunStatus? observed;
+        TunFailure? stageOneFailure;
+        if (activeErrorCode != 'closeFailed') {
+          if (_tunSettleDelay > Duration.zero &&
+              activeErrorCode != null &&
+              activeErrorCode != 'interfaceMissing') {
+            await Future.delayed(_tunSettleDelay);
+            if (!current()) return;
+            if (!applyPendingConfig &&
+                activeStatus.listenerActive &&
+                activeErrorCode == 'interfaceDown') {
+              observed = await refreshWindowsTunStatus(fresh: true);
+              if (!current()) return;
+              if (observed?.observed == TunObservedState.on) {
+                _tunRepairAttempts
+                  ..remove(status.instanceId)
+                  ..remove(activeStatus.instanceId);
+                repairedAndApplied = true;
+                terminalOutcome = true;
+                return;
+              }
+            }
+          }
+          try {
+            final appliedProfileId = _ref.read(currentProfileIdProvider);
+            final appliedUpdateParams = _ref.read(updateParamsProvider);
+            await effects.applyConfiguration(
+                full: fullConfiguration, isCurrent: current);
+            if (!current()) return;
+            observed = await observeSettled();
+            if (!current()) return;
+            if (observed?.observed == TunObservedState.on) {
+              _tunRepairAttempts
+                ..remove(status.instanceId)
+                ..remove(activeStatus.instanceId);
+              repairedAndApplied = isPendingConfigSatisfied(
+                appliedProfileId,
+                appliedUpdateParams,
+              );
+              terminalOutcome = true;
+              return;
+            }
+          } on TunFailure catch (error) {
+            if (error.code == 'componentsMismatch' ||
+                error.code == 'permissionDenied' ||
+                error.code == 'authorizationRequired') {
+              terminalOutcome = true;
+              rethrow;
+            }
+            stageOneFailure = error;
+          } catch (_) {
+            terminalOutcome = true;
+            rethrow;
+          }
+        }
+        final canEscalate = activeErrorCode == 'closeFailed' ||
+            ((activeErrorCode != 'interfaceMissing' ||
+                    observed?.errorCode != 'interfaceMissing') &&
+                activeAttempts + 1 < _maxTunRepairAttempts);
+        if (canEscalate) {
+          if (activeErrorCode != 'closeFailed') {
+            _tunRepairAttempts[status.instanceId] = attempts + 2;
+            _tunRepairAttempts[activeStatus.instanceId] = activeAttempts + 2;
+          }
+          final stageOneReason = stageOneFailure?.code == 'statusUnavailable'
+              ? (activeErrorCode ?? stageOneFailure?.code)
+              : (stageOneFailure?.code ?? activeErrorCode);
+          effects.log(
+              'TUN adapter ${observed?.errorCode ?? stageOneReason}; restarting Core');
+          stageOneFailure = null;
+          try {
+            await effects.restartCore();
+            // Once the Core process has been replaced, restore its initialization
+            // before yielding the queue, even if this repair intent was superseded.
+            await effects.initialize(() => true);
+            if (!current()) return;
+            final appliedProfileId = _ref.read(currentProfileIdProvider);
+            final appliedUpdateParams = _ref.read(updateParamsProvider);
+            await effects.applyConfiguration(full: true, isCurrent: current);
+            if (!current()) return;
+            final started = await effects.startListener();
+            if (!current()) return;
+            if (!started) throw const TunFailure('startFailed');
+            observed = await observeSettled();
+            if (!current()) return;
+            if (observed?.observed == TunObservedState.on) {
+              _tunRepairAttempts
+                ..remove(status.instanceId)
+                ..remove(activeStatus.instanceId);
+              repairedAndApplied = isPendingConfigSatisfied(
+                appliedProfileId,
+                appliedUpdateParams,
+              );
+              terminalOutcome = true;
+              final instanceId = observed!.instanceId;
+              final epoch = _tunRuntime.observationEpoch;
+              await effects.reflectRunning(() =>
+                  current() &&
+                  epoch == _tunRuntime.observationEpoch &&
+                  _tunRuntime.isEnabled &&
+                  _tunRuntime.status?.instanceId == instanceId);
+              return;
+            }
+            if (_windowsStartupEffects == null) {
+              await clashCore.setUiActive(uiActivity.value);
+              if (_ref.read(appSettingProvider).openLogs) {
+                clashCore.startLog();
+              } else {
+                clashCore.stopLog();
+              }
+              await updateGroups();
+              await updateProviders();
+              initForegroundCache();
+            }
+          } catch (_) {
+            terminalOutcome = true;
+            final failedInstanceId =
+                observed?.instanceId ?? _tunRuntime.status?.instanceId;
+            if (failedInstanceId != null) {
+              _tunRepairAttempts[failedInstanceId] = _maxTunRepairAttempts;
+            }
+            rethrow;
+          }
+        }
+        terminalOutcome = true;
+        final failedInstanceId =
+            observed?.instanceId ?? _tunRuntime.status?.instanceId;
+        if (failedInstanceId != null) {
+          _tunRepairAttempts[failedInstanceId] = _maxTunRepairAttempts;
+        }
+        final fallbackFailure = stageOneFailure?.code == 'statusUnavailable'
+            ? (activeErrorCode ?? stageOneFailure?.code)
+            : (stageOneFailure?.code ?? activeErrorCode);
+        throw TunFailure(
+            observed?.errorCode ?? fallbackFailure ?? 'statusUnavailable');
+      } finally {
+        finishRepair();
+      }
+    }).whenComplete(() {
+      finishRepair();
+      if (_windowsStartupEffects == null) unawaited(updateTray());
+    }).then((_) => repairedAndApplied);
+    _activeTunRepair = repairFuture;
+    return repairFuture;
   }
 
   /// A startup whose final status read failed skips the running projection
@@ -173,26 +446,50 @@ class AppController {
     }).whenComplete(() => _recoveringRunningProjection = false));
   }
 
+  void _handlePostConfigTunStatus(TunStatus? status) {
+    if (_applyingWindowsConfigDepth != 0 || status == null) return;
+    _recoverRunningProjection(status);
+    if (_canRepairVanishedAdapter(status)) {
+      _lastTriggeredTunRepair = _repairVanishedAdapter(status);
+    }
+  }
+
   Future<void> _applyWindowsConfig(Future<String> Function(bool enable) apply,
-      {bool Function()? isCurrent}) =>
-    applyWindowsTunConfiguration(
-      componentsMatch: () async => await clashService?.windowsComponentsMatch() ?? false,
-      observe: () => refreshWindowsTunStatus(fresh: true),
-      desiredEnabled: () => _ref.read(patchClashConfigProvider).tun.enable,
-      explicitStop: () => _tunRuntime.operation == TunOperation.disabling,
-      explicitOperation: () => _tunRuntime.busy,
-      failedRequest: () => _tunRuntime.requestFailure != null,
-      reportFailure: _tunRuntime.fail,
-      invalidate: _tunRuntime.invalidate,
-      apply: apply,
-      isCurrent: isCurrent,
-    );
+      {bool Function()? isCurrent, bool explicitTunOperation = false}) async {
+    _applyingWindowsConfigDepth++;
+    try {
+      await applyWindowsTunConfiguration(
+        componentsMatch: () async =>
+            await clashService?.windowsComponentsMatch() ?? false,
+        observe: () => refreshWindowsTunStatus(fresh: true),
+        desiredEnabled: () => _ref.read(patchClashConfigProvider).tun.enable,
+        explicitStop: () =>
+            explicitTunOperation &&
+            _tunRuntime.operation == TunOperation.disabling,
+        explicitOperation: () => explicitTunOperation && _tunRuntime.busy,
+        failedRequest: () => _tunRuntime.requestFailure != null,
+        reportFailure: _tunRuntime.fail,
+        invalidate: _tunRuntime.invalidate,
+        apply: apply,
+        isCurrent: isCurrent,
+      );
+    } finally {
+      _applyingWindowsConfigDepth--;
+    }
+    _handlePostConfigTunStatus(_tunRuntime.status);
+  }
 
   Future<void> _updateWindowsConfig({bool Function()? isCurrent,
       String? controllerAddress, bool? controllerEnabled}) async {
-    await _applyWindowsConfig((enabled) => clashCore.updateConfig(
-      _ref.read(updateParamsProvider).copyWith.tun(enable: enabled),
-      controllerAddress: controllerAddress, controllerEnabled: controllerEnabled), isCurrent: isCurrent);
+    await _applyWindowsConfig(
+      (enabled) => clashCore.updateConfig(
+        _ref.read(updateParamsProvider).copyWith.tun(enable: enabled),
+        controllerAddress: controllerAddress,
+        controllerEnabled: controllerEnabled,
+      ),
+      isCurrent: isCurrent,
+      explicitTunOperation: isCurrent != null,
+    );
   }
 
   Future<void> setTunEnabled(bool enabled) async {
@@ -231,6 +528,11 @@ class AppController {
   }
 
   void updateClashConfigDebounce() {
+    final synced = _syncingProfileUpdateParams;
+    if (synced != null) {
+      _syncingProfileUpdateParams = null;
+      if (_ref.read(updateParamsProvider) == synced) return;
+    }
     debouncer.call(FunctionTag.updateClashConfig, () async {
       await updateClashConfig();
     });
@@ -299,11 +601,15 @@ class AppController {
     if (Platform.isWindows) {
       await _tunRuntime.serialize(() async {
         _tunRuntime.invalidate();
+        _applyingWindowsConfigDepth++;
         try {
           await clashService?.reStart();
           await _initCore(ownsWindowsConfig: true);
           if (_ref.read(runTimeProvider.notifier).isStart) await globalState.handleStart();
-        } finally { await refreshWindowsTunStatus(fresh: true); }
+        } finally {
+          _applyingWindowsConfigDepth--;
+          await refreshWindowsTunStatus(fresh: true);
+        }
       });
       return;
     }
@@ -328,32 +634,45 @@ class AppController {
 
   Future<void> updateStatus(bool isStart) {
     final windowsTun = Platform.isWindows || _windowsStartupEffects != null;
-    if (windowsTun && !isStart) _tunRuntime.cancelPendingIntent();
+    final suppressTunRecovery = windowsTun && !isStart;
+    if (suppressTunRecovery) {
+      _applyingWindowsConfigDepth++;
+      _tunRuntime.cancelPendingIntent();
+    }
     final epoch = ++_statusEpoch;
     final op = _statusOp.then((_) async {
-      // Superseded by a newer toggle (rapid double-tap, start-then-stop): make
-      // it a no-op instead of driving a full redundant bring-up/tear-down.
-      if (epoch != _statusEpoch) return;
-      _statusOpInFlight = true;
       try {
-        if (windowsTun) {
-          await _tunRuntime.serialize(() async {
-            if (epoch != _statusEpoch) return;
-            _tunRuntime.invalidate();
-            try {
-              if (!isStart) {
-                await (_windowsStartupEffects ?? _ControllerWindowsTunStartupEffects(this)).stopProxy();
-              } else {
-                await _updateStatus(true);
+        // Superseded by a newer toggle (rapid double-tap, start-then-stop): make
+        // it a no-op instead of driving a full redundant bring-up/tear-down.
+        if (epoch != _statusEpoch) return;
+        _statusOpInFlight = true;
+        try {
+          if (windowsTun) {
+            await _tunRuntime.serialize(() async {
+              if (epoch != _statusEpoch) return;
+              _tunRuntime.invalidate();
+              if (isStart) _applyingWindowsConfigDepth++;
+              try {
+                if (!isStart) {
+                  await (_windowsStartupEffects ??
+                          _ControllerWindowsTunStartupEffects(this))
+                      .stopProxy();
+                } else {
+                  await _updateStatus(true);
+                }
+              } finally {
+                if (isStart) _applyingWindowsConfigDepth--;
+                await refreshWindowsTunStatus(fresh: true);
               }
-            }
-            finally { await refreshWindowsTunStatus(fresh: true); }
-          });
-        } else {
-          await _updateStatus(isStart);
+            });
+          } else {
+            await _updateStatus(isStart);
+          }
+        } finally {
+          _statusOpInFlight = false;
         }
       } finally {
-        _statusOpInFlight = false;
+        if (suppressTunRecovery) _applyingWindowsConfigDepth--;
       }
     });
     // Keep the chain alive if one toggle throws, but still surface the error to
@@ -883,11 +1202,95 @@ class AppController {
 
   Future<void> _updateClashConfig({String? controllerAddress, bool? controllerEnabled}) async {
     if (Platform.isWindows) {
-      return _tunRuntime.serialize(() async {
-        try { await _updateWindowsConfig(controllerAddress: controllerAddress,
-          controllerEnabled: controllerEnabled); }
-        on TunFailure catch (error) { _tunRuntime.fail(error.code); rethrow; }
+      TunStatus? preApplyRepairStatus;
+      Future<bool>? pendingRepair;
+      Future<bool>? postApplyRepair;
+      await _tunRuntime.serialize(() async {
+        _lastTriggeredTunRepair = null;
+        try {
+          await _updateWindowsConfig(
+            controllerAddress: controllerAddress,
+            controllerEnabled: controllerEnabled,
+          );
+          postApplyRepair = _lastTriggeredTunRepair;
+        } on TunFailure catch (error) {
+          final status = _tunRuntime.status;
+          if (error.code == 'statusUnavailable' && status != null) {
+            if (_canRepairVanishedAdapter(status)) {
+              preApplyRepairStatus = status;
+              return;
+            }
+            if (_activeTunRepair != null) {
+              pendingRepair = _activeTunRepair;
+              return;
+            }
+          }
+          _tunRuntime.fail(error.code);
+          if (error.code == 'statusUnavailable' && status != null) {
+            unawaited(_repairVanishedAdapter(status));
+          }
+          rethrow;
+        } finally {
+          _lastTriggeredTunRepair = null;
+        }
       });
+      final hasControllerOverride =
+          controllerAddress != null || controllerEnabled != null;
+      var needsFollowUpApply = false;
+      if (preApplyRepairStatus != null) {
+        final applied = await _repairVanishedAdapter(
+          preApplyRepairStatus!,
+          fullConfiguration: false,
+          applyPendingConfig: true,
+        );
+        needsFollowUpApply = !applied || hasControllerOverride;
+      } else if (pendingRepair != null) {
+        await pendingRepair;
+        needsFollowUpApply = true;
+      } else if (postApplyRepair != null) {
+        final applied = await postApplyRepair!;
+        postApplyRepair = null;
+        needsFollowUpApply = hasControllerOverride ||
+            (!applied &&
+                _tunRuntime.desiredEnabled &&
+                _tunRuntime.requestFailure != null);
+      }
+      for (var pass = 0; pass < 2 && needsFollowUpApply; pass++) {
+        needsFollowUpApply = false;
+        await _tunRuntime.serialize(() async {
+          _lastTriggeredTunRepair = null;
+          if (_tunRuntime.desiredEnabled &&
+              _tunRuntime.observed == TunObservedState.unknown &&
+              _tunRuntime.requestFailure == null) {
+            _tunRuntime.fail(
+              _tunRuntime.status?.errorCode ??
+                  preApplyRepairStatus?.errorCode ??
+                  'startFailed',
+            );
+          }
+          try {
+            await _updateWindowsConfig(
+              controllerAddress: controllerAddress,
+              controllerEnabled: controllerEnabled,
+            );
+            postApplyRepair = _lastTriggeredTunRepair;
+          } on TunFailure catch (error) {
+            _tunRuntime.fail(error.code);
+            rethrow;
+          } finally {
+            _lastTriggeredTunRepair = null;
+          }
+        });
+        if (postApplyRepair != null) {
+          final applied = await postApplyRepair!;
+          postApplyRepair = null;
+          needsFollowUpApply = hasControllerOverride ||
+              (!applied &&
+                  _tunRuntime.desiredEnabled &&
+                  _tunRuntime.requestFailure != null);
+        }
+      }
+      return;
     }
     final updateParams = _ref.read(updateParamsProvider);
     final res = await _requestAdmin(updateParams.tun.enable);
@@ -978,96 +1381,250 @@ class AppController {
 
   Future<void> _setupClashConfig() async {
     if (Platform.isWindows) {
-      return _tunRuntime.serialize(() async {
-        try { await _setupClashConfigImpl(); }
-        on TunFailure catch (error) { _tunRuntime.fail(error.code); rethrow; }
+      TunStatus? preApplyRepairStatus;
+      Future<bool>? pendingRepair;
+      Future<bool>? postApplyRepair;
+      await _tunRuntime.serialize(() async {
+        _lastTriggeredTunRepair = null;
+        try {
+          await _setupClashConfigImpl();
+          postApplyRepair = _lastTriggeredTunRepair;
+        } on TunFailure catch (error) {
+          final status = _tunRuntime.status;
+          if (error.code == 'statusUnavailable' && status != null) {
+            if (_canRepairVanishedAdapter(status)) {
+              preApplyRepairStatus = status;
+              return;
+            }
+            if (_activeTunRepair != null) {
+              pendingRepair = _activeTunRepair;
+              return;
+            }
+          }
+          _tunRuntime.fail(error.code);
+          if (error.code == 'statusUnavailable' && status != null) {
+            unawaited(_repairVanishedAdapter(status));
+          }
+          rethrow;
+        } finally {
+          _lastTriggeredTunRepair = null;
+        }
       });
+      var needsFollowUpApply = false;
+      if (preApplyRepairStatus != null) {
+        final applied = await _repairVanishedAdapter(
+          preApplyRepairStatus!,
+          fullConfiguration: true,
+          applyPendingConfig: true,
+        );
+        needsFollowUpApply = !applied;
+      } else if (pendingRepair != null) {
+        await pendingRepair;
+        needsFollowUpApply = true;
+      } else if (postApplyRepair != null) {
+        final applied = await postApplyRepair!;
+        postApplyRepair = null;
+        needsFollowUpApply = !applied &&
+            _tunRuntime.desiredEnabled &&
+            _tunRuntime.requestFailure != null;
+      }
+      for (var pass = 0; pass < 2 && needsFollowUpApply; pass++) {
+        needsFollowUpApply = false;
+        await _tunRuntime.serialize(() async {
+          _lastTriggeredTunRepair = null;
+          if (_tunRuntime.desiredEnabled &&
+              _tunRuntime.observed == TunObservedState.unknown &&
+              _tunRuntime.requestFailure == null) {
+            _tunRuntime.fail(
+              _tunRuntime.status?.errorCode ??
+                  preApplyRepairStatus?.errorCode ??
+                  'startFailed',
+            );
+          }
+          try {
+            await _setupClashConfigImpl();
+            postApplyRepair = _lastTriggeredTunRepair;
+          } on TunFailure catch (error) {
+            _tunRuntime.fail(error.code);
+            rethrow;
+          } finally {
+            _lastTriggeredTunRepair = null;
+          }
+        });
+        if (postApplyRepair != null) {
+          final applied = await postApplyRepair!;
+          postApplyRepair = null;
+          needsFollowUpApply = !applied &&
+              _tunRuntime.desiredEnabled &&
+              _tunRuntime.requestFailure != null;
+        }
+      }
+      return;
     }
     return _setupClashConfigImpl();
   }
 
-  Future<void> _setupClashConfigImpl({bool Function()? isCurrent}) async {
-    final applyingProfile = _ref.read(currentProfileProvider);
-    final applyingProfileId = applyingProfile?.id;
-    bool configurationIsCurrent() =>
-        (isCurrent == null || isCurrent()) &&
-        _ref.read(currentProfileProvider)?.id == applyingProfileId;
-    if (!configurationIsCurrent()) return;
-    await applyingProfile?.checkAndUpdate();
-    if (!configurationIsCurrent()) return;
-    var patchConfig = _ref.read(patchClashConfigProvider);
+  Future<void> _setupClashConfigImpl({
+    bool Function()? isCurrent,
+    bool syncProviderSettings = true,
+  }) async {
+    final isWindows = Platform.isWindows;
+    var configApplied = false;
+    if (isWindows) _applyingWindowsConfigDepth++;
+    try {
+      for (var profileAttempt = 0; profileAttempt < 4; profileAttempt++) {
+        final applyingProfile = _ref.read(currentProfileProvider);
+        final applyingProfileId = applyingProfile?.id;
+        bool intentIsCurrent() => isCurrent == null || isCurrent();
+        bool configurationIsCurrent() =>
+            intentIsCurrent() &&
+            _ref.read(currentProfileProvider)?.id == applyingProfileId;
+        if (!intentIsCurrent()) return;
+        await applyingProfile?.checkAndUpdate();
+        if (!intentIsCurrent()) return;
+        if (!configurationIsCurrent()) {
+          if (isCurrent != null) continue;
+          return;
+        }
+        var patchConfig = _ref.read(patchClashConfigProvider);
 
-    // Sync network settings from provider config if not overriding
-    final appSetting = _ref.read(appSettingProvider);
-    if (!appSetting.overrideNetworkSettings) {
-      final syncedConfig =
-          await globalState.syncNetworkSettingsFromProvider(patchConfig,
-              profile: applyingProfile);
-      if (!configurationIsCurrent()) return;
-      // Always update provider when using provider settings to ensure UI reflects config.
-      // Merge only the synced fields: the snapshot was read before several
-      // awaits, and writing it back whole could revert a concurrent TUN
-      // switch or other preference change.
-      _ref.read(patchClashConfigProvider.notifier).updateState((state) => state
-          .copyWith(
-            ipv6: syncedConfig.ipv6,
-            allowLan: syncedConfig.allowLan,
-            mixedPort: syncedConfig.mixedPort,
-            findProcessMode: syncedConfig.findProcessMode,
-          )
-          .copyWith
-          .tun(stack: syncedConfig.tun.stack));
-      patchConfig = syncedConfig;
-    }
+        // Sync network settings from provider config if not overriding
+        final appSetting = _ref.read(appSettingProvider);
+        ClashConfig? syncedConfig;
+        if (syncProviderSettings && !appSetting.overrideNetworkSettings) {
+          syncedConfig =
+              await globalState.syncNetworkSettingsFromProvider(patchConfig,
+                  profile: applyingProfile);
+          if (!intentIsCurrent()) return;
+          if (!configurationIsCurrent()) {
+            if (isCurrent != null) continue;
+            return;
+          }
+        }
 
-    // flclashx-androidsecure header: on Android, when the current profile
-    // declares "androidsecure: true", force mixedPort=0 on the Dart-side
-    // ClashConfig so that all downstream providers (coreStateProvider,
-    // proxyStateProvider, http.handleFindProxy) observe the disabled inbound
-    // and behave consistently with patchRawConfig's forced override. Applied
-    // after syncFromProvider so it overrides both user and provider values.
-    if (Platform.isAndroid) {
-      final secure = applyingProfile?.providerHeaders['flclashx-androidsecure']
-              ?.trim()
-              .toLowerCase() ==
-          'true';
-      if (secure && patchConfig.mixedPort != 0) {
-        patchConfig = patchConfig.copyWith(mixedPort: 0);
-        _ref
-            .read(patchClashConfigProvider.notifier)
-            .updateState((state) => state.copyWith(mixedPort: 0));
+        final beforeProfileSync = _ref.read(updateParamsProvider);
+        if (syncedConfig != null) {
+          final resolvedSyncedConfig = syncedConfig;
+          // Always update provider when using provider settings to ensure UI reflects config.
+          // Merge only the synced fields: the snapshot was read before several
+          // awaits, and writing it back whole could revert a concurrent TUN
+          // switch or other preference change.
+          _ref.read(patchClashConfigProvider.notifier).updateState((state) => state
+              .copyWith(
+                ipv6: resolvedSyncedConfig.ipv6,
+                allowLan: resolvedSyncedConfig.allowLan,
+                mixedPort: resolvedSyncedConfig.mixedPort,
+                findProcessMode: resolvedSyncedConfig.findProcessMode,
+              )
+              .copyWith
+              .tun(stack: resolvedSyncedConfig.tun.stack));
+          patchConfig = resolvedSyncedConfig;
+        }
+
+        // flclashx-androidsecure header: on Android, when the current profile
+        // declares "androidsecure: true", force mixedPort=0 on the Dart-side
+        // ClashConfig so that all downstream providers (coreStateProvider,
+        // proxyStateProvider, http.handleFindProxy) observe the disabled inbound
+        // and behave consistently with patchRawConfig's forced override. Applied
+        // after syncFromProvider so it overrides both user and provider values.
+        if (Platform.isAndroid) {
+          final secure =
+              applyingProfile?.providerHeaders['flclashx-androidsecure']
+                      ?.trim()
+                      .toLowerCase() ==
+                  'true';
+          if (secure && patchConfig.mixedPort != 0) {
+            patchConfig = patchConfig.copyWith(mixedPort: 0);
+            _ref
+                .read(patchClashConfigProvider.notifier)
+                .updateState((state) => state.copyWith(mixedPort: 0));
+          }
+        }
+        final afterProfileSync = _ref.read(updateParamsProvider);
+        if (afterProfileSync != beforeProfileSync) {
+          _syncingProfileUpdateParams = afterProfileSync;
+        }
+
+        try {
+          final applyingModified = await applyingProfile?.profileLastModified;
+          if (!intentIsCurrent()) return;
+          if (!configurationIsCurrent()) {
+            if (isCurrent != null) continue;
+            return;
+          }
+
+          if (isWindows) {
+            var applyEntered = false;
+            var setupExecuted = false;
+            await _applyWindowsConfig(
+              (enabled) async {
+                applyEntered = true;
+                final params = await globalState.getSetupParams(
+                  pathConfig: patchConfig.copyWith.tun(enable: enabled),
+                  profile: applyingProfile,
+                );
+                if (!configurationIsCurrent()) return '';
+                if (isCurrent != null && params.config.isEmpty) {
+                  throw const TunFailure('profileRequired');
+                }
+                setupExecuted = true;
+                final message = await clashCore.setupConfig(
+                  params,
+                  profileId: applyingProfileId,
+                );
+                if (message.isEmpty) {
+                  _lastAppliedWindowsProfileId = applyingProfileId;
+                }
+                return message;
+              },
+              isCurrent: () => applyEntered
+                  ? intentIsCurrent()
+                  : configurationIsCurrent(),
+              explicitTunOperation: isCurrent != null,
+            );
+            if (!setupExecuted) {
+              if (isCurrent != null && intentIsCurrent()) continue;
+              return;
+            }
+            configApplied = true;
+          } else {
+            final res = await _requestAdmin(patchConfig.tun.enable);
+            if (res.isError || !configurationIsCurrent()) return;
+            final realTunEnable = _ref.read(realTunEnableProvider);
+            final realPatchConfig =
+                patchConfig.copyWith.tun(enable: realTunEnable);
+            final params = await globalState.getSetupParams(
+                pathConfig: realPatchConfig, profile: applyingProfile);
+            if (!configurationIsCurrent()) return;
+            final message = await clashCore.setupConfig(params,
+                profileId: applyingProfileId);
+            if (message.isNotEmpty) {
+              // Don't advance lastProfileModified on a failed/timed-out setup: doing so
+              // would make the next start's recovery re-apply think the profile is
+              // already applied and skip it, leaving a degraded executor in place.
+              throw message;
+            }
+          }
+          if (configurationIsCurrent()) lastProfileModified = applyingModified;
+          break;
+        } finally {
+          if (afterProfileSync != beforeProfileSync) {
+            unawaited(
+              Future(() {
+                if (_syncingProfileUpdateParams == afterProfileSync) {
+                  _syncingProfileUpdateParams = null;
+                }
+              }),
+            );
+          }
+        }
       }
+    } finally {
+      if (isWindows) _applyingWindowsConfigDepth--;
     }
-
-    final applyingModified = await applyingProfile?.profileLastModified;
-    if (!configurationIsCurrent()) return;
-
-    if (Platform.isWindows) {
-      await _applyWindowsConfig((enabled) async {
-        final params = await globalState.getSetupParams(
-          pathConfig: patchConfig.copyWith.tun(enable: enabled),
-          profile: applyingProfile);
-        if (!configurationIsCurrent()) return '';
-        if (isCurrent != null && params.config.isEmpty) throw const TunFailure('profileRequired');
-        return clashCore.setupConfig(params, profileId: applyingProfileId);
-      }, isCurrent: configurationIsCurrent);
-    } else {
-      final res = await _requestAdmin(patchConfig.tun.enable);
-      if (res.isError || !configurationIsCurrent()) return;
-      final realTunEnable = _ref.read(realTunEnableProvider);
-      final realPatchConfig = patchConfig.copyWith.tun(enable: realTunEnable);
-      final params = await globalState.getSetupParams(
-          pathConfig: realPatchConfig, profile: applyingProfile);
-      if (!configurationIsCurrent()) return;
-      final message = await clashCore.setupConfig(params, profileId: applyingProfileId);
-      if (message.isNotEmpty) {
-      // Don't advance lastProfileModified on a failed/timed-out setup: doing so
-      // would make the next start's recovery re-apply think the profile is
-      // already applied and skip it, leaving a degraded executor in place.
-        throw message;
-      }
+    if (isWindows && configApplied) {
+      _handlePostConfigTunStatus(_tunRuntime.status);
     }
-    if (configurationIsCurrent()) lastProfileModified = applyingModified;
   }
 
   Future _applyProfile({bool silence = false}) async {
@@ -2515,8 +3072,12 @@ class AppController {
 }
 
 class _ControllerWindowsTunStartupEffects implements WindowsTunStartupEffects {
-  _ControllerWindowsTunStartupEffects(this.controller);
+  _ControllerWindowsTunStartupEffects(
+    this.controller, {
+    this.syncProviderSettings = true,
+  });
   final AppController controller;
+  final bool syncProviderSettings;
   @override
   bool get proxyRunning => clashService?.agentProxyRunning ?? false;
   @override
@@ -2553,7 +3114,10 @@ class _ControllerWindowsTunStartupEffects implements WindowsTunStartupEffects {
   Future<void> applyConfiguration({required bool full, required bool Function() isCurrent}) async {
     try {
       if (full) {
-        await controller._setupClashConfigImpl(isCurrent: isCurrent);
+        await controller._setupClashConfigImpl(
+          isCurrent: isCurrent,
+          syncProviderSettings: syncProviderSettings,
+        );
       } else {
         await controller._updateWindowsConfig(isCurrent: isCurrent);
       }
@@ -2586,6 +3150,7 @@ class _ControllerWindowsTunStartupEffects implements WindowsTunStartupEffects {
     final service = clashService;
     if (service == null) throw const TunFailure('startFailed');
     controller._tunRuntime.invalidate();
+    controller._ref.invalidate(nodeRuntimeReadProvider);
     await service.reStart();
   }
   @override

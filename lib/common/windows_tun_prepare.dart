@@ -43,12 +43,14 @@ Future<void> applyWindowsTunConfiguration({
   required Future<String> Function(bool enable) apply,
   bool Function()? isCurrent,
 }) async {
+  final isExplicitStop = explicitStop();
+  final isExplicitOperation = explicitOperation();
   if (!await componentsMatch()) throw const TunFailure('componentsMismatch');
   if (isCurrent != null && !isCurrent()) return;
   final status = await observe();
   if (isCurrent != null && !isCurrent()) return;
   var enabled = desiredEnabled();
-  if (!enabled && explicitStop()) {
+  if (!enabled && isExplicitStop) {
     // No observation is converted to false. This is solely a user command;
     // its outcome must still be observed after sending the request.
   } else {
@@ -57,16 +59,19 @@ Future<void> applyWindowsTunConfiguration({
     // down, transition) may be repaired by an explicit user enable: the
     // identical-config reload then rebuilds the adapter. Background refreshes
     // still never act on an unknown observation.
+    final downgradeFailedAdapter = enabled &&
+        !isExplicitOperation &&
+        failedRequest() &&
+        status.observed != TunObservedState.on;
     final explicitRepair = enabled &&
-        explicitOperation() &&
+        isExplicitOperation &&
         status.privilege == 'elevated';
-    if (status.observed == TunObservedState.unknown && !explicitRepair) {
+    if (status.observed == TunObservedState.unknown &&
+        !explicitRepair &&
+        !downgradeFailedAdapter) {
       throw const TunFailure('statusUnavailable');
     }
-    if (enabled &&
-        !explicitOperation() &&
-        failedRequest() &&
-        status.observed == TunObservedState.off) enabled = false;
+    if (downgradeFailedAdapter) enabled = false;
     if (enabled && status.privilege != 'elevated') {
       if (status.observed != TunObservedState.off)
         throw const TunFailure('permissionDenied');
