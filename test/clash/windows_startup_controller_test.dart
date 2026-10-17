@@ -776,6 +776,32 @@ void main() {
     expect(runtime.status?.instanceId, 'core-restarted');
   });
 
+  testWidgets(
+      'launch with latched closeFailed superseded during restartCore still initializes replaced Core',
+      (tester) async {
+    final effects = StartupEffects()
+      ..elevated = true
+      ..running = true
+      ..adapterErrorCode = 'closeFailed'
+      ..pauseAt = 'restart-core';
+    final runtime = TunRuntimeController();
+    final controller = await controllerFixture(tester, effects, runtime);
+    final launch = controller.initializeRuntime();
+    await effects.entered.future;
+    final off = runtime.request(false, (_) async {
+      effects.calls.add('disabled');
+    });
+    effects.release.complete();
+    await Future.wait([launch, off]);
+    expect(
+        effects.calls,
+        containsAllInOrder(
+            ['restart-core', 'initialize', 'initialized', 'disabled']));
+    expect(effects.calls, isNot(contains('configure')));
+    expect(effects.calls, isNot(contains('listener')));
+    expect(runtime.desiredEnabled, isFalse);
+  });
+
   for (final phase in [
     'profile',
     'authorize',

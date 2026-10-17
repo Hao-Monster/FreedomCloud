@@ -93,15 +93,17 @@ Future<void> startWindowsTunOnLaunch({
       if (!hasProfile) throw const TunFailure('profileRequired');
 
       var coreRestarted = false;
+      var initialized = false;
       if (initial?.errorCode == 'closeFailed') {
         effects.log('TUN: previous close failed; restarting Core before enable');
         await effects.restartCore();
+        await effects.initialize(() => true);
+        initialized = true;
         if (!current()) return;
         coreRestarted = true;
       }
 
       final wasRunning = !coreRestarted && effects.proxyRunning;
-      var initialized = false;
       final replaced = await prepareWindowsTunBackend(
         observe: observe,
         componentsMatch: effects.componentsMatch,
