@@ -1958,4 +1958,363 @@ void main() {
         find.textContaining('Node ').evaluate().length, lessThanOrEqualTo(20));
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets(
+      'one-click use: active profile switches proxy in first Selector group without profile reload and updates In use state',
+      (tester) async {
+    final controller = _ProxyController();
+    globalState.appController = controller;
+    globalState.config = globalState.config.copyWith(
+      currentProfileId: 'a',
+      profiles: [
+        _a.copyWith(selectedMap: const {'Primary Select': 'Leaf 1'}),
+        _b,
+      ],
+    );
+    const leaf1 = Proxy(name: 'Leaf 1', type: 'Shadowsocks');
+    const leaf2 = Proxy(name: 'Leaf 2', type: 'Shadowsocks');
+    globalState.appState = globalState.appState.copyWith(
+      groups: const [
+        Group(
+            name: 'Auto First',
+            type: GroupType.URLTest,
+            hidden: false,
+            testUrl: 'https://auto.invalid',
+            all: [leaf1, leaf2]),
+        Group(
+            name: 'Primary Select',
+            type: GroupType.Selector,
+            hidden: false,
+            testUrl: 'https://select.invalid',
+            now: 'Leaf 1',
+            all: [leaf1, leaf2]),
+        Group(
+            name: 'Secondary Select',
+            type: GroupType.Selector,
+            hidden: false,
+            all: [leaf1, leaf2]),
+      ],
+    );
+    final container = await mount(
+      tester,
+      width: 1200,
+      profiles: [
+        _a.copyWith(selectedMap: const {'Primary Select': 'Leaf 1'}),
+        _b,
+      ],
+    );
+
+    final useLeaf1 = find.byKey(const ValueKey('overview-use-a-Leaf 1'));
+    final useLeaf2 = find.byKey(const ValueKey('overview-use-a-Leaf 2'));
+    expect(useLeaf1, findsOneWidget);
+    expect(useLeaf2, findsOneWidget);
+    expect(tester.widget<TextButton>(useLeaf1).onPressed, isNull);
+    expect(
+      find.descendant(of: useLeaf1, matching: find.text('In use')),
+      findsOneWidget,
+    );
+    expect(tester.widget<TextButton>(useLeaf2).onPressed, isNotNull);
+    expect(
+      find.descendant(of: useLeaf2, matching: find.text('Use')),
+      findsOneWidget,
+    );
+
+    await tester.tap(useLeaf2);
+    await tester.pumpAndSettle();
+
+    expect(container.read(currentProfileIdProvider), 'a');
+    expect(controller.selections, [('Primary Select', 'Leaf 2')]);
+    expect(controller.changes, [('Primary Select', 'Leaf 2')]);
+    expect(
+      container.read(profilesProvider).getProfile('a')?.selectedMap,
+      {'Primary Select': 'Leaf 2'},
+    );
+    expect(
+      container.read(profilesProvider).getProfile('a')?.currentGroupName,
+      'Primary Select',
+    );
+    expect(tester.widget<TextButton>(useLeaf2).onPressed, isNull);
+    expect(
+      find.descendant(of: useLeaf2, matching: find.text('In use')),
+      findsOneWidget,
+    );
+    expect(tester.widget<TextButton>(useLeaf1).onPressed, isNotNull);
+    expect(
+      find.descendant(of: useLeaf1, matching: find.text('Use')),
+      findsOneWidget,
+    );
+    expect(find.text('Switched to Alpha profile · Leaf 2'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'one-click use: inactive profile cancels running test, writes first select group, and switches currentProfileId immediately',
+      (tester) async {
+    final backend = _CatalogTester();
+    globalState.lastRuntimeProfileId = 'a';
+    globalState.config = globalState.config.copyWith(currentProfileId: 'a');
+    globalState.appState = globalState.appState.copyWith(
+      groups: const [
+        Group(
+            name: 'Alpha Select',
+            type: GroupType.Selector,
+            hidden: false,
+            now: 'Alpha live',
+            all: [Proxy(name: 'Alpha live', type: 'Shadowsocks')]),
+      ],
+    );
+    final container = await mount(
+      tester,
+      width: 1200,
+      catalogTester: backend,
+      catalogs: {
+        'a': ProfileCatalog(
+            profileId: 'a',
+            fingerprint: 'fa',
+            status: ProfileCatalogStatus.ready,
+            nodes: [
+              _node('a-1', 'Alpha live')
+                  .copyWith(selectGroups: const ['Alpha Select']),
+            ]),
+        'b': ProfileCatalog(
+            profileId: 'b',
+            fingerprint: 'fb',
+            status: ProfileCatalogStatus.ready,
+            nodes: [
+              _node('b-1', 'Beta fast').copyWith(
+                  selectGroups: const ['GLOBAL', 'Beta Primary', 'Beta Backup']),
+              _node('b-2', 'Beta other')
+                  .copyWith(selectGroups: const ['Beta Primary']),
+            ]),
+      },
+    );
+
+    backend.progress(done: 1, count: 4);
+    await tester.pump();
+    expect(backend.busy, isTrue);
+
+    final useBeta1 = find.byKey(const ValueKey('overview-use-b-b-1'));
+    final useBeta2 = find.byKey(const ValueKey('overview-use-b-b-2'));
+    expect(tester.widget<TextButton>(useBeta1).onPressed, isNotNull);
+    await tester.tap(useBeta1);
+    await tester.pumpAndSettle();
+
+    expect(backend.cancellations, 1);
+    expect(container.read(currentProfileIdProvider), 'b');
+    final updatedBeta = container.read(profilesProvider).getProfile('b')!;
+    expect(updatedBeta.selectedMap['Beta Primary'], 'Beta fast');
+    expect(updatedBeta.currentGroupName, 'Beta Primary');
+    expect(find.text('Switched to Beta profile · Beta fast'), findsOneWidget);
+    expect(tester.widget<TextButton>(useBeta1).onPressed, isNull);
+    expect(
+      find.descendant(of: useBeta1, matching: find.text('In use')),
+      findsOneWidget,
+    );
+    expect(tester.widget<TextButton>(useBeta2).onPressed, isNotNull);
+
+    // A background 60s refresh before Core finishes setupConfig('b') must not
+    // clear the pending switch and flash Alpha's old runtime groups under Beta.
+    container.read(groupsProvider.notifier).value = const [
+      Group(
+          name: 'Alpha Select',
+          type: GroupType.Selector,
+          hidden: false,
+          now: 'Alpha live',
+          all: [Proxy(name: 'Alpha live', type: 'Shadowsocks')]),
+    ];
+    container.read(versionProvider.notifier).value = 2;
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('overview-use-b-b-1')), findsOneWidget);
+    expect(find.byKey(const ValueKey('overview-use-b-Alpha live')), findsNothing);
+
+    // Simulate Core completing setupConfig('b') and publishing Beta's runtime groups.
+    globalState.lastRuntimeProfileId = 'b';
+    container.read(groupsProvider.notifier).value = const [
+      Group(
+          name: 'Beta Primary',
+          type: GroupType.Selector,
+          hidden: false,
+          now: 'Beta fast',
+          all: [
+            Proxy(name: 'Beta fast', type: 'Shadowsocks'),
+            Proxy(name: 'Beta other', type: 'Shadowsocks'),
+          ]),
+    ];
+    container.read(versionProvider.notifier).value = 3;
+    await tester.pumpAndSettle();
+
+    final liveUseBeta1 = find.byKey(const ValueKey('overview-use-b-Beta fast'));
+    expect(liveUseBeta1, findsOneWidget);
+    expect(tester.widget<TextButton>(liveUseBeta1).onPressed, isNull);
+    expect(
+      find.descendant(of: liveUseBeta1, matching: find.text('In use')),
+      findsOneWidget,
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'one-click use: Global mode targets GLOBAL, Direct/unselectable disables Use, and parseFailed hides Use',
+      (tester) async {
+    const c = Profile(
+      id: 'c',
+      label: 'Gamma profile',
+      autoUpdateDuration: Duration.zero,
+      providerHeaders: {'flclashx-globalmode': 'false'},
+    );
+    globalState.config = globalState.config.copyWith(
+      currentProfileId: 'a',
+      profiles: [_a, _b, c],
+      patchClashConfig: defaultClashConfig.copyWith(mode: Mode.global),
+    );
+    final container = await mount(
+      tester,
+      width: 1200,
+      profiles: [_a, _b, c],
+      catalogs: {
+        'b': ProfileCatalog(
+            profileId: 'b',
+            fingerprint: 'fb',
+            status: ProfileCatalogStatus.ready,
+            nodes: [
+              _node('b-global', 'Global node'),
+              _node('b-chain', 'Chain node').copyWith(
+                  selectGroups: const ['Proxy'],
+                  unsupported: CatalogUnsupportedReason.chainUnsupported),
+              _node('b-invalid', 'Invalid node').copyWith(
+                  unsupported: CatalogUnsupportedReason.parseFailed),
+            ]),
+        'c': ProfileCatalog(
+            profileId: 'c',
+            fingerprint: 'fc',
+            status: ProfileCatalogStatus.ready,
+            nodes: [
+              _node('c-rule', 'Rule-only node')
+                  .copyWith(selectGroups: const ['Gamma Select']),
+            ]),
+      },
+    );
+
+    // parseFailed nodes never show a Use button.
+    expect(
+      find.byKey(const ValueKey('overview-use-b-b-invalid')),
+      findsNothing,
+    );
+
+    // In Global mode, even a node with empty selectGroups targets GLOBAL.
+    final useGlobal = find.byKey(const ValueKey('overview-use-b-b-global'));
+    expect(tester.widget<TextButton>(useGlobal).onPressed, isNotNull);
+    await tester.tap(useGlobal);
+    await tester.pumpAndSettle();
+    expect(container.read(currentProfileIdProvider), 'b');
+    expect(
+      container.read(profilesProvider).getProfile('b')?.selectedMap['GLOBAL'],
+      'Global node',
+    );
+
+    // Profile C disables global mode via flclashx-globalmode: false, so Use
+    // writes its first Rule-mode select group even while currently in Global mode.
+    final useGamma = find.byKey(const ValueKey('overview-use-c-c-rule'));
+    expect(tester.widget<TextButton>(useGamma).onPressed, isNotNull);
+    await tester.tap(useGamma);
+    await tester.pumpAndSettle();
+    expect(container.read(currentProfileIdProvider), 'c');
+    expect(
+      container
+          .read(profilesProvider)
+          .getProfile('c')
+          ?.selectedMap['Gamma Select'],
+      'Rule-only node',
+    );
+
+    // In Direct mode, Use buttons are disabled.
+    container.read(patchClashConfigProvider.notifier).updateState(
+          (state) => state.copyWith(mode: Mode.direct),
+        );
+    await tester.pumpAndSettle();
+    final useChain = find.byKey(const ValueKey('overview-use-b-b-chain'));
+    expect(tester.widget<TextButton>(useChain).onPressed, isNull);
+
+    // In Rule mode, a node without selectGroups is disabled, while a chain node with selectGroups is enabled.
+    container.read(patchClashConfigProvider.notifier).updateState(
+          (state) => state.copyWith(mode: Mode.rule),
+        );
+    await tester.pumpAndSettle();
+    expect(tester.widget<TextButton>(useGlobal).onPressed, isNull);
+    expect(tester.widget<TextButton>(useChain).onPressed, isNotNull);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'one-click use: unknown runtime identity does not clear pending switch on stale refresh',
+      (tester) async {
+    globalState.appController = _ProxyController();
+    globalState.lastRuntimeProfileId = null;
+    globalState.config = globalState.config.copyWith(currentProfileId: 'a');
+    const staleGroups = [
+      Group(
+          name: 'Alpha Select',
+          type: GroupType.Selector,
+          hidden: false,
+          now: 'Alpha live',
+          all: [Proxy(name: 'Alpha live', type: 'Shadowsocks')]),
+    ];
+    globalState.appState = globalState.appState.copyWith(groups: staleGroups);
+    final container = await mount(
+      tester,
+      width: 1200,
+      catalogs: {
+        'b': ProfileCatalog(
+            profileId: 'b',
+            fingerprint: 'fb',
+            status: ProfileCatalogStatus.ready,
+            nodes: [
+              _node('b-1', 'Beta fast')
+                  .copyWith(selectGroups: const ['Beta Select']),
+            ]),
+      },
+    );
+
+    await tester.tap(find.byKey(const ValueKey('overview-use-b-b-1')));
+    await tester.pumpAndSettle();
+    expect(container.read(currentProfileIdProvider), 'b');
+    expect(find.byKey(const ValueKey('overview-use-b-b-1')), findsOneWidget);
+
+    // A periodic refresh arrives while runtime identity is still unknown (null).
+    container.read(groupsProvider.notifier).value = List<Group>.of(staleGroups);
+    container.read(versionProvider.notifier).value = 2;
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey('overview-use-b-Alpha live')),
+      findsNothing,
+    );
+    expect(find.byKey(const ValueKey('overview-use-b-b-1')), findsOneWidget);
+
+    // Even if lastRuntimeProfileId commits before updateGroups() publishes B's
+    // groups, the absorbed stale groups must not prematurely clear pending switch.
+    globalState.lastRuntimeProfileId = 'b';
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey('overview-use-b-Alpha live')),
+      findsNothing,
+    );
+    expect(find.byKey(const ValueKey('overview-use-b-b-1')), findsOneWidget);
+
+    // Once B's runtime groups are published, the pending switch clears cleanly.
+    container.read(groupsProvider.notifier).value = const [
+      Group(
+          name: 'Beta Select',
+          type: GroupType.Selector,
+          hidden: false,
+          now: 'Beta fast',
+          all: [Proxy(name: 'Beta fast', type: 'Shadowsocks')]),
+    ];
+    container.read(versionProvider.notifier).value = 3;
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey('overview-use-b-Beta fast')),
+      findsOneWidget,
+    );
+    expect(tester.takeException(), isNull);
+  });
 }

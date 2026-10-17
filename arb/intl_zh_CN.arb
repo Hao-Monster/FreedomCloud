@@ -751,5 +751,18 @@
   "nodeOverviewProviderOptionsUnsupported": "此类订阅源选项暂不支持",
   "nodeOverviewTestTimedOut": "测速或订阅源读取超时",
   "nodeOverviewProviderUnloaded": "订阅源节点尚未加载；测试全部节点延迟时会读取，缺失缓存会获取。",
-  "nodeOverviewHealthStoreUnavailable": "部分延迟测试结果未能保存"
+  "nodeOverviewHealthStoreUnavailable": "部分延迟测试结果未能保存",
+  "nodeOverviewUseNode": "使用",
+  "nodeOverviewInUse": "使用中",
+  "nodeOverviewSwitchedToNode": "已切换至 {profile} · {node}",
+  "@nodeOverviewSwitchedToNode": {
+    "placeholders": {
+      "profile": {
+        "type": "String"
+      },
+      "node": {
+        "type": "String"
+      }
+    }
+  }
 }

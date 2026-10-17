@@ -92,6 +92,9 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
   Timer? _clock;
   late final NodeCatalogTester _tester;
   String? _feedback;
+  String? _pendingSwitchProfileId;
+  List<Group>? _pendingSwitchGroups;
+  int? _pendingSwitchVersion;
 
   @override
   void initState() {
@@ -173,11 +176,90 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
             (profile: profile, nodes: [node])
           ], ref.read(nodeOverviewTestUrlProvider))));
 
+  void _useActiveNode(Profile profile, String groupName, String proxyName) {
+    if (globalState.isAppControllerReady) {
+      globalState.appController
+        ..updateCurrentSelectedMap(groupName, proxyName)
+        ..changeProxyDebounce(groupName, proxyName);
+    }
+    final current =
+        ref.read(profilesProvider).getProfile(profile.id) ?? profile;
+    if (current.selectedMap[groupName] != proxyName ||
+        current.currentGroupName != groupName) {
+      final selectedMap = Map<String, String>.from(current.selectedMap)
+        ..[groupName] = proxyName;
+      ref.read(profilesProvider.notifier).setProfile(
+            current.copyWith(
+              selectedMap: selectedMap,
+              currentGroupName: groupName,
+            ),
+          );
+    }
+    if (mounted) {
+      setState(() {
+        _feedback = appLocalizations.nodeOverviewSwitchedToNode(
+            current.label ?? current.id, proxyName);
+      });
+    }
+  }
+
+  void _useCatalogNode(
+      Profile profile, CatalogNode node, String targetGroup) {
+    if (_tester.busy) {
+      unawaited(_tester.cancel());
+    }
+    final latest =
+        ref.read(profilesProvider).getProfile(profile.id) ?? profile;
+    final selectedMap = Map<String, String>.from(latest.selectedMap)
+      ..[targetGroup] = node.name;
+    final updated = latest.copyWith(
+      selectedMap: selectedMap,
+      currentGroupName: targetGroup,
+    );
+    ref.read(profilesProvider.notifier).setProfile(updated);
+    if (ref.read(currentProfileIdProvider) != updated.id) {
+      _pendingSwitchProfileId = updated.id;
+      _pendingSwitchGroups = ref.read(groupsProvider);
+      _pendingSwitchVersion = ref.read(versionProvider);
+      ref.read(currentProfileIdProvider.notifier).value = updated.id;
+    } else if (globalState.isAppControllerReady) {
+      if (_pendingSwitchProfileId == updated.id) {
+        globalState.appController.applyProfileDebounce(silence: true);
+      }
+      globalState.appController.changeProxyDebounce(targetGroup, node.name);
+    }
+    if (mounted) {
+      setState(() {
+        _feedback = appLocalizations.nodeOverviewSwitchedToNode(
+            updated.label ?? updated.id, node.name);
+      });
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final profiles = ref.watch(profilesProvider);
     final tester = ref.watch(nodeCatalogTesterProvider);
     final activeId = ref.watch(currentProfileIdProvider);
+    final groups = ref.watch(groupsProvider);
+    final version = ref.watch(versionProvider);
+    final verifiedRuntimeProfileId = globalState.lastRuntimeProfileId ??
+        ref.watch(activeNodeCatalogProvider)?.profileId;
+    final runtimeMatchesPending = _pendingSwitchProfileId != null &&
+        verifiedRuntimeProfileId == _pendingSwitchProfileId;
+    if (_pendingSwitchProfileId != null) {
+      if (activeId != _pendingSwitchProfileId ||
+          (runtimeMatchesPending &&
+              (!identical(groups, _pendingSwitchGroups) ||
+                  version != _pendingSwitchVersion))) {
+        _pendingSwitchProfileId = null;
+        _pendingSwitchGroups = null;
+        _pendingSwitchVersion = null;
+      } else if (!runtimeMatchesPending) {
+        _pendingSwitchGroups = groups;
+        _pendingSwitchVersion = version;
+      }
+    }
     final isMobile = ref.watch(isMobileViewProvider);
     final sort =
         ref.watch(proxiesStyleSettingProvider.select((s) => s.sortType));
@@ -323,10 +405,13 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
                                 setState(() => _selectedProfile = null));
                       }
                       final profile = profiles[index - 1];
+                      final isCurrent = profile.id == activeId;
                       return _SidebarProfileCard(
                           profile: profile,
                           selected: selected == profile.id,
-                          active: profile.id == activeId,
+                          active: isCurrent,
+                          liveActive: isCurrent &&
+                              _pendingSwitchProfileId != profile.id,
                           now: now,
                           onSelect: () =>
                               setState(() => _selectedProfile = profile.id));
@@ -343,10 +428,14 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
                       key: ValueKey('overview-section-${profile.id}'),
                       profile: profile,
                       active: profile.id == activeId,
+                      liveActive: profile.id == activeId &&
+                          _pendingSwitchProfileId != profile.id,
                       showHeader: selected == null,
                       loadImmediately: selected != null || searching,
                       availableOnly: _availableOnly,
                       onTest: _testNode,
+                      onUseActive: _useActiveNode,
+                      onUseCatalog: _useCatalogNode,
                       now: now),
                 const SliverToBoxAdapter(child: SizedBox(height: 32)),
               ],
@@ -363,11 +452,13 @@ class _SidebarProfileCard extends ConsumerWidget {
       {required this.profile,
       required this.selected,
       required this.active,
+      required this.liveActive,
       required this.now,
       required this.onSelect});
   final Profile profile;
   final bool selected;
   final bool active;
+  final bool liveActive;
   final DateTime now;
   final VoidCallback onSelect;
 
@@ -393,7 +484,11 @@ class _SidebarProfileCard extends ConsumerWidget {
                   Text(profile.label ?? profile.id,
                       style: Theme.of(context).textTheme.titleSmall),
                   if (active) Text(appLocalizations.nodeOverviewActive),
-                  _HealthSummary(profile: profile, catalog: catalog, now: now),
+                  _HealthSummary(
+                      profile: profile,
+                      catalog: catalog,
+                      liveActive: liveActive,
+                      now: now),
                 ],
               )),
         ));
@@ -405,17 +500,23 @@ class _ProfileNodesSliver extends ConsumerStatefulWidget {
       {super.key,
       required this.profile,
       required this.active,
+      required this.liveActive,
       required this.showHeader,
       required this.loadImmediately,
       required this.availableOnly,
       required this.onTest,
+      required this.onUseActive,
+      required this.onUseCatalog,
       required this.now});
   final Profile profile;
   final bool active;
+  final bool liveActive;
   final bool showHeader;
   final bool loadImmediately;
   final bool availableOnly;
   final void Function(Profile, CatalogNode) onTest;
+  final void Function(Profile, String groupName, String proxyName) onUseActive;
+  final void Function(Profile, CatalogNode, String targetGroup) onUseCatalog;
   final DateTime now;
 
   @override
@@ -453,6 +554,8 @@ class _ProfileNodesSliverState extends ConsumerState<_ProfileNodesSliver> {
     final query = ref.watch(proxiesQueryProvider).trim().toLowerCase();
     final sort =
         ref.watch(proxiesStyleSettingProvider.select((s) => s.sortType));
+    final mode =
+        ref.watch(patchClashConfigProvider.select((state) => state.mode));
     final profileMatches =
         (profile.label ?? profile.id).toLowerCase().contains(query);
     final nodes = (catalog?.nodes ?? <CatalogNode>[])
@@ -502,12 +605,13 @@ class _ProfileNodesSliverState extends ConsumerState<_ProfileNodesSliver> {
                           icon: const Icon(Icons.manage_accounts_outlined),
                           label: Text(
                               appLocalizations.nodeOverviewManageProfiles))))),
-        if (widget.active)
+        if (widget.liveActive)
           _ActiveNodes(
-              profileId: profile.id,
+              profile: profile,
               fileCatalog: profile.isUpdating ? null : catalog,
               query: profileMatches ? '' : query,
               availableOnly: widget.availableOnly,
+              onUse: widget.onUseActive,
               now: widget.now,
               sort: sort)
         else if (nodes.isNotEmpty)
@@ -515,24 +619,41 @@ class _ProfileNodesSliverState extends ConsumerState<_ProfileNodesSliver> {
               padding: const EdgeInsets.symmetric(horizontal: 16),
               sliver: SliverList.builder(
                   itemCount: nodes.length,
-                  itemBuilder: (context, index) => _InactiveNodeRow(
-                      key: ValueKey(
-                          'overview-node-${profile.id}-${nodes[index].identityKey}'),
-                      node: nodes[index],
-                      pending:
-                          tester.pending(profile.id, nodes[index].identityKey),
-                      testKey: ValueKey(
-                          'overview-test-${profile.id}-${nodes[index].identityKey}'),
-                      onTest: tester.busy ||
-                              profile.isUpdating ||
-                              catalog?.status != ProfileCatalogStatus.ready
-                          ? null
-                          : () => widget.onTest(profile, nodes[index]),
-                      health: _nodeHealth(nodes[index], health),
-                      now: widget.now)))
+                  itemBuilder: (context, index) {
+                    final node = nodes[index];
+                    final targetGroup =
+                        _targetGroupForCatalogNode(profile, node, mode);
+                    final inUse = widget.active &&
+                        targetGroup != null &&
+                        profile.selectedMap[targetGroup] == node.name;
+                    return _InactiveNodeRow(
+                        key: ValueKey(
+                            'overview-node-${profile.id}-${node.identityKey}'),
+                        node: node,
+                        pending: tester.pending(profile.id, node.identityKey),
+                        testKey: ValueKey(
+                            'overview-test-${profile.id}-${node.identityKey}'),
+                        onTest: tester.busy ||
+                                profile.isUpdating ||
+                                catalog?.status != ProfileCatalogStatus.ready
+                            ? null
+                            : () => widget.onTest(profile, node),
+                        useKey: ValueKey(
+                            'overview-use-${profile.id}-${node.identityKey}'),
+                        inUse: inUse,
+                        onUse: inUse ||
+                                targetGroup == null ||
+                                profile.isUpdating ||
+                                catalog?.status != ProfileCatalogStatus.ready
+                            ? null
+                            : () =>
+                                widget.onUseCatalog(profile, node, targetGroup),
+                        health: _nodeHealth(node, health),
+                        now: widget.now);
+                  }))
         else if (catalog?.status == ProfileCatalogStatus.ready)
           _notice(appLocalizations.nodeOverviewNoNodes),
-        if (!widget.active && catalog != null)
+        if (!widget.liveActive && catalog != null)
           for (final provider in catalog.providerNodeCounts.entries)
             if (provider.value < 0)
               _notice(
@@ -686,14 +807,91 @@ Map<String, NodeHealthRecord> _activeHealthForUrl(
 int? _activeDelay(int? live, NodeHealthRecord? history) =>
     live == 0 ? 0 : history?.delayMs ?? live;
 
-Map<String, ({Proxy proxy, String? testUrl})> _activeLeaves(WidgetRef ref) {
+String? _targetGroupForCatalogNode(
+    Profile profile, CatalogNode node, Mode mode) {
+  if (node.unsupported == CatalogUnsupportedReason.parseFailed) {
+    return null;
+  }
+  final globalModeAllowed =
+      profile.providerHeaders['flclashx-globalmode']?.toLowerCase() != 'false';
+  final effectiveMode =
+      mode == Mode.global && !globalModeAllowed ? Mode.rule : mode;
+  return switch (effectiveMode) {
+    Mode.direct => null,
+    Mode.global => GroupName.GLOBAL.name,
+    Mode.rule => node.selectGroups
+        .where((name) => name != GroupName.GLOBAL.name)
+        .firstOrNull,
+  };
+}
+
+Widget _buildUseButton(
+  BuildContext context, {
+  required Key buttonKey,
+  required bool inUse,
+  required VoidCallback? onPressed,
+}) {
+  final colorScheme = Theme.of(context).colorScheme;
+  return TextButton(
+    key: buttonKey,
+    onPressed: inUse ? null : onPressed,
+    style: TextButton.styleFrom(
+      visualDensity: VisualDensity.compact,
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      minimumSize: Size.zero,
+      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      backgroundColor: inUse
+          ? colorScheme.secondaryContainer
+          : colorScheme.surfaceContainerLow,
+      foregroundColor: colorScheme.primary,
+      disabledBackgroundColor: inUse ? colorScheme.secondaryContainer : null,
+      disabledForegroundColor: inUse ? colorScheme.onSecondaryContainer : null,
+    ),
+    child: Text(
+      inUse
+          ? appLocalizations.nodeOverviewInUse
+          : appLocalizations.nodeOverviewUseNode,
+    ),
+  );
+}
+
+Map<String, ({Proxy proxy, String? testUrl, String? selectGroup})>
+    _activeLeaves(WidgetRef ref) {
+  final mode =
+      ref.watch(patchClashConfigProvider.select((state) => state.mode));
   final groups = ref.watch(currentGroupsStateProvider).value;
-  final groupNames = ref.watch(groupsProvider).map((g) => g.name).toSet();
-  final leaves = <String, ({Proxy proxy, String? testUrl})>{};
+  final allGroups = ref.watch(groupsProvider);
+  final groupNames = allGroups.map((g) => g.name).toSet();
+  final selectorGroups = <String, String>{};
+  if (mode == Mode.global) {
+    final global = allGroups
+        .where((g) =>
+            g.name == GroupName.GLOBAL.name && g.type == GroupType.Selector)
+        .firstOrNull;
+    if (global != null) {
+      for (final proxy in global.all.where((p) => _isLeaf(p, groupNames))) {
+        selectorGroups[proxy.name] = global.name;
+      }
+    }
+  } else if (mode == Mode.rule) {
+    for (final group in groups) {
+      if (group.type != GroupType.Selector) continue;
+      for (final proxy in group.all.where((p) => _isLeaf(p, groupNames))) {
+        selectorGroups.putIfAbsent(proxy.name, () => group.name);
+      }
+    }
+  }
+  final leaves =
+      <String, ({Proxy proxy, String? testUrl, String? selectGroup})>{};
   for (final group in groups) {
     for (final proxy in group.all.where((p) => _isLeaf(p, groupNames))) {
       leaves.putIfAbsent(
-          proxy.name, () => (proxy: proxy, testUrl: group.testUrl));
+          proxy.name,
+          () => (
+                proxy: proxy,
+                testUrl: group.testUrl,
+                selectGroup: selectorGroups[proxy.name],
+              ));
     }
   }
   return leaves;
@@ -706,6 +904,8 @@ typedef _ActiveDisplay = ({
   int? delay,
   bool fileSource,
   bool independent,
+  String? selectGroup,
+  bool inUse,
 });
 
 Map<String, _ActiveDisplay> _activeDisplays(
@@ -752,6 +952,10 @@ Map<String, _ActiveDisplay> _activeDisplays(
             }
           }
         }
+        final selectGroup = entry.selectGroup;
+        final selectedProxyName = selectGroup == null
+            ? null
+            : ref.watch(getSelectedProxyNameProvider(selectGroup));
         return (
           proxy: entry.proxy,
           node: node,
@@ -762,6 +966,8 @@ Map<String, _ActiveDisplay> _activeDisplays(
               history),
           fileSource: fileSource,
           independent: independent,
+          selectGroup: selectGroup,
+          inUse: selectGroup != null && selectedProxyName == entry.proxy.name,
         );
       }(),
   };
@@ -769,23 +975,25 @@ Map<String, _ActiveDisplay> _activeDisplays(
 
 class _ActiveNodes extends ConsumerWidget {
   const _ActiveNodes(
-      {required this.profileId,
+      {required this.profile,
       required this.fileCatalog,
       required this.query,
       required this.availableOnly,
+      required this.onUse,
       required this.now,
       required this.sort});
-  final String profileId;
+  final Profile profile;
   final ProfileCatalog? fileCatalog;
   final String query;
   final bool availableOnly;
+  final void Function(Profile, String groupName, String proxyName) onUse;
   final DateTime now;
   final ProxiesSortType sort;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final rows =
-        _activeDisplays(ref, profileId, fileCatalog).values.where((entry) {
+        _activeDisplays(ref, profile.id, fileCatalog).values.where((entry) {
       final matches =
           '${entry.proxy.name}\n${entry.fileSource ? entry.node!.type : entry.proxy.type}\n${entry.node?.providerName ?? ''}'
               .toLowerCase()
@@ -821,6 +1029,15 @@ class _ActiveNodes extends ConsumerWidget {
                   history: entry.history,
                   fileSource: entry.fileSource,
                   independent: entry.independent,
+                  useKey: ValueKey(
+                      'overview-use-${profile.id}-${entry.proxy.name}'),
+                  inUse: entry.inUse,
+                  onUse: entry.inUse ||
+                          entry.selectGroup == null ||
+                          profile.isUpdating
+                      ? null
+                      : () =>
+                          onUse(profile, entry.selectGroup!, entry.proxy.name),
                   now: now);
             }));
   }
@@ -835,6 +1052,9 @@ class _ActiveNodeRow extends StatelessWidget {
       required this.history,
       required this.fileSource,
       required this.independent,
+      required this.useKey,
+      required this.inUse,
+      required this.onUse,
       required this.now});
   final Proxy proxy;
   final CatalogNode? node;
@@ -842,6 +1062,9 @@ class _ActiveNodeRow extends StatelessWidget {
   final NodeHealthRecord? history;
   final bool fileSource;
   final bool independent;
+  final Key useKey;
+  final bool inUse;
+  final VoidCallback? onUse;
   final DateTime now;
 
   @override
@@ -865,7 +1088,7 @@ class _ActiveNodeRow extends StatelessWidget {
                 Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               Row(children: [
                 Expanded(child: Text(proxy.name)),
-                const SizedBox(width: 12),
+                const SizedBox(width: 8),
                 if (delay == 0)
                   const SizedBox(
                       width: 14,
@@ -879,6 +1102,13 @@ class _ActiveNodeRow extends StatelessWidget {
                               ? '$delay ms'
                               : appLocalizations.nodeOverviewTestFailed,
                       style: TextStyle(color: color)),
+                const SizedBox(width: 8),
+                _buildUseButton(
+                  context,
+                  buttonKey: useKey,
+                  inUse: inUse,
+                  onPressed: onUse,
+                ),
               ]),
               const SizedBox(height: 4),
               Text(description, style: Theme.of(context).textTheme.bodySmall),
@@ -912,13 +1142,19 @@ class _InactiveNodeRow extends StatelessWidget {
       required this.now,
       required this.pending,
       required this.onTest,
-      required this.testKey});
+      required this.testKey,
+      required this.useKey,
+      required this.inUse,
+      required this.onUse});
   final CatalogNode node;
   final NodeHealthRecord? health;
   final DateTime now;
   final bool pending;
   final VoidCallback? onTest;
   final Key testKey;
+  final Key useKey;
+  final bool inUse;
+  final VoidCallback? onUse;
 
   @override
   Widget build(BuildContext context) {
@@ -936,7 +1172,7 @@ class _InactiveNodeRow extends StatelessWidget {
               children: [
                 Row(children: [
                   Expanded(child: Text(node.name)),
-                  const SizedBox(width: 12),
+                  const SizedBox(width: 8),
                   if (invalid)
                     Icon(Icons.help_outline,
                         color: Theme.of(context).colorScheme.onSurfaceVariant)
@@ -959,6 +1195,16 @@ class _InactiveNodeRow extends StatelessWidget {
                         onPressed: onTest,
                         icon: const Icon(Icons.bolt),
                         tooltip: appLocalizations.nodeOverviewTestNode),
+                  if (!invalid) ...[
+                    if (node.unsupported != CatalogUnsupportedReason.none)
+                      const SizedBox(width: 8),
+                    _buildUseButton(
+                      context,
+                      buttonKey: useKey,
+                      inUse: inUse,
+                      onPressed: onUse,
+                    ),
+                  ],
                 ]),
                 const SizedBox(height: 4),
                 Text('${node.type} · ${_source(node)}',
@@ -1036,15 +1282,19 @@ String _testFailure(String reason) => switch (reason) {
 
 class _HealthSummary extends ConsumerWidget {
   const _HealthSummary(
-      {required this.profile, required this.catalog, required this.now});
+      {required this.profile,
+      required this.catalog,
+      required this.liveActive,
+      required this.now});
   final Profile profile;
   final ProfileCatalog? catalog;
+  final bool liveActive;
   final DateTime now;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final entries = ref.watch(nodeHealthEntriesProvider(profile.id));
-    final active = ref.watch(currentProfileIdProvider) == profile.id;
+    final active = liveActive;
     final status = <Widget>[
       if (_expired(profile, now)) Text(appLocalizations.nodeOverviewExpired),
       if (profile.isUpdating ||

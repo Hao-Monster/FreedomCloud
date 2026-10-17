@@ -61,6 +61,34 @@
 - 交付状态：已在 `development` 分支提交并推送至 `freedomcloud/development`；未触碰用户正在运行的预览进程与现役代理/TUN/服务。
 
 
+## 跨配置节点总览“一键使用”开发、审查修复与单测（2026-10-16）
+
+- 来源：用户确认在跨配置节点总览每个节点行增加“使用 / 使用中”按钮，并明确选择“直接一键切换（无二次确认弹窗）+ 自动写入首个包含该节点的 `select` 主选择组 + 当前命中节点显示 `使用中`”；完成初版开发、针对外部独立审查 r1 / r2 / r3 / r4 / r5 指出的边界问题完成修复后，再次执行源码级对抗式自审并加固剩余边缘场景。
+- 实现、自审与外部审查收敛项：
+  1. 目录构建与全量解析统一收集 `select` 组归属（[`_SelectGroupIndex`](file:///E:/CodeWorkstation/FlClashX/lib/common/node_catalog_service.dart#L36-L1240)）：
+     - 严格保留 `proxy-groups` 原始声明顺序；过滤 `hidden: true` 的 `select` 组；
+     - **修复外部审查 Finding 2（`exclude-type` 协议名称对齐 Core）**：新增 [`_canonicalAdapterType`](file:///E:/CodeWorkstation/FlClashX/lib/common/node_catalog_service.dart#L36-L50)，将 YAML `type` 别名（如 `ss`→`shadowsocks`、`ssr`→`shadowsocksr`、`gost-relay`→`gostrelay` 等）映射对齐至 Mihomo `AdapterType.String()`，确保 `exclude-type: Shadowsocks` 等规则与 Core `GroupBase.GetProxies` 行为一致；
+     - **修复外部审查 Finding 3、r2、r3、r4、r5 及二次自审加固（正则语义保真、运算符保留、Go 15.0.0 Unicode 字符类/大小写等价、换行锚点对齐与 fail-closed）**：新增 [`_compileClashRegex`](file:///E:/CodeWorkstation/FlClashX/lib/common/node_catalog_service.dart#L794-L1076) 与 [`_parseGroupFilter`](file:///E:/CodeWorkstation/FlClashX/lib/common/node_catalog_service.dart#L1084-L1105)：
+       - 保留未转义分支与量词运算符（`|`、`*`、`+`、`?` 及合法 `{m,n}` 量词），支持大小写内联标志（`(?i)`/`(?I)`、`(?m)`/`(?M)`、`(?s)`/`(?S)`），同时确保反斜杠转义（如 `\|`、`\*`）按字面字符处理；
+       - **对齐 Go 15.0.0 Unicode 字符分类表（r5 Finding 1）**：移除对 Dart `\p{L}`、`\p{Mn}`、`\p{Nd}`、`\p{Pc}` 属性转义（基于新版本 Unicode 表，会把 `U+1C89`、`U+10D40`、`U+1CCF0` 等 Go 15.0.0 未收录码点误判为 word/digit）的依赖，直接内嵌由 Core 所用 Go 1.25.13（Unicode 15.0.0）`unicode.Nd` 与 `regexp2` word 类别生成的精确码点区间表（[`_goDigitRangeDeltas`](file:///E:/CodeWorkstation/FlClashX/lib/common/node_catalog_service.dart#L291-L304)、[`_goWordRangeDeltas`](file:///E:/CodeWorkstation/FlClashX/lib/common/node_catalog_service.dart#L307-L454)、[`_GoCaseTables`](file:///E:/CodeWorkstation/FlClashX/lib/common/node_catalog_service.dart#L611-L661)），统一展开字符类内外的 `\w`/`\W`、`\d`/`\D`、`\b`/`\B`；
+       - **对齐 `regexp2.None` 大小写等价关系（r4 Finding 1）**：移除对 Dart `toLowerCase()`/`toUpperCase()` 及 ECMAScript `caseSensitive: false` 的依赖，统一以 `RegExp(..., caseSensitive: true, multiLine: false, unicode: true)` 编译，并使用与 Go `unicode.ToLower` 及 `regexp2/syntax/charclass.go` `lcTable` 完全一致的大小写等价表（[`_GoCaseTables`](file:///E:/CodeWorkstation/FlClashX/lib/common/node_catalog_service.dart#L611-L661)、[`_expandIgnoreCaseClassRanges`](file:///E:/CodeWorkstation/FlClashX/lib/common/node_catalog_service.dart#L743-L792)）展开 `(?i)` 下的单字符与字符类区间（正确处理 `İstanbul`/`i`、`ß`/`ẞ`、`K`/`k`、`ſ`≠`s`、`ς`≠`σ`、`ı`≠`i` 等全部 Unicode 边界）；
+       - **对齐 `regexp2.None` 普通与多行锚点边界（r4 Finding 2）**：按 `regexp2` 的 `Beginning`/`End`/`EndZ`/`Bol`/`Eol` 语义精确转换锚点——`\A` 与非多行 `^` 映射为 `^`，`\z` 映射为 `$`，`\Z` 与非多行 `$` 映射为 `(?=\n?$)`（匹配末尾或末尾单个 `\n` 之前），`(?m)` 多行 `^` 映射为 `(?:^|(?<=\n))`，`(?m)` 多行 `$` 映射为 `(?=\n|$)`（仅以 `\n` 为行分隔符，不将 `\r` 误判为行边界）；
+       - **源码级对抗自审加固**：对原子组 `(?>...)`、字符类内负向多区间简写（`[\W]`/`[\S]`）、字符类内 `\D` 与其他简写组合（如 `[\D\w]`/`[\D\d]`，规避 `regexp2` `CharSet.CharIn` 负向类别提前跳出循环/取反异常）、字符类内以转义连字符 `\-` 作为区间端点（如 `[\--0]`/`[!-\-]`，规避 `regexp2` `scanCharSet` 对 `\-` 直接 `continue` 不参与区间构建的差异）、同组同时声明 `proxies` 与非法 `filter`、未知/不等价转义、字符类差集及任何解析异常严格按 **fail-closed（禁用依赖该规则的候选 `select` 组）** 处理，杜绝因 Dart 编译通过而误把 Core 排除的节点判入可选组；
+     - `Mode.rule` 下在 [`_targetGroupForCatalogNode`](file:///E:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart#L810-L826) 排除 YAML 中显式声明的 `GLOBAL` 组。
+  2. 节点总览行级一键使用与状态流转（[`overview.dart`](file:///E:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart#L179-L263)）：
+     - 活动配置节点点击“使用”：调用 `updateCurrentSelectedMap` + `changeProxyDebounce` 切换该节点所属主选择组，并确保 `currentGroupName` 在 `isAppControllerReady == true` 时同样写回 `profilesProvider`；
+     - `Mode.global` 下 [`_activeLeaves`](file:///E:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart#L858-L898) 与 `Mode.rule` 分支严格互斥；
+     - **修复外部审查 Finding 1（运行配置身份未知时防闪回旧配置运行态节点）**：非活动配置节点点击“使用”进入 `_pendingSwitchProfileId` 过渡态后，仅在已验证运行配置身份（`globalState.lastRuntimeProfileId ?? ref.watch(activeNodeCatalogProvider)?.profileId`）等于 `_pendingSwitchProfileId` 且运行组/版本发生新变更时才结束过渡；运行身份为 `null`（接管已有 Core 但尚未确认身份）或仍为旧配置时，后台定时的 `updateGroups`/`version` 刷新只会更新过渡基线而不会清除等待状态，杜绝将旧配置运行节点渲染到目标配置分区下。
+  3. 四语言文案补齐（`arb/intl_*.arb` 及生成的 `lib/l10n/`）：新增 `nodeOverviewUseNode`、`nodeOverviewInUse`、`nodeOverviewSwitchedToNode`。
+- 单测与验证：
+  - `test/common/node_catalog_service_test.dart`：**21 PASS**（含 `exclude-type: Shadowsocks|ShadowsocksR`、`(?i:hk)`/`(?I)^hk$`、`\AHK`、`(?i)^\x68k(?-i)X$`、分支与量词 `HK|JP`/`^HK.*$`/`^HK[0-9]{2}$`、Unicode `\w`/`\d`/`\b` 对 `港`/`١`、Go 15.0.0 与 Unicode 16.0.0 差异码点 `U+1C89`/`U+10D40`/`U+1CCF0`/`U+A7CB`/`U+105C0`/`U+13460`/`U+2EBF0`、Unicode 大小写等价 `İstanbul`/`ſ`/`ẞ`/`K`/`ς`、换行锚点 `HK\n`/`HK\r`/`\r\n`，以及原子组 `(?>...)`、`[\D\w]`/`[\D\d]`、`[\--0]`/`[!-\-]`、显式 `proxies` 伴随非法 `filter` 与损坏正则 fail-closed 回归用例）。
+  - `test/views/node_overview_test.dart`：**70 PASS**（目标单测合计 **91 PASS，0 FAIL**）。
+  - 外部审查 r1 + r2 + r3 + r4 + r5 复现套件与 31,488 项扩展语义对照矩阵（123 规则 × 128 合成节点名 × `filter`/`exclude-filter`）：**全部 PASS，0 次错误放行（0 unsafe admissions，0 mismatches）**。
+  - 修改文件 `dart analyze`：**0 error，0 warning，4 info**（exit 0）；`git diff --check` 通过。
+- 交付状态：已在 `development` 分支提交并推送至 `freedomcloud/development`；未启动候选程序，未触碰现役代理/TUN/服务。
+
+
+
 ## 节点延迟漏测与所选配置修复预览及 P1 源码本地提交（2026-10-16，仅本地）
 
 - 用户真实反馈：全量测试遗漏末尾配置，选中配置后当前配置入口无效。已复现普通60秒代理组刷新递增version被误当成会话失效，以及当前按钮忽略所选profileId。仅修改overview.dart与node_overview.dart两处产品文件，保留其他P1 WIP。

@@ -616,5 +616,18 @@
   "nodeOverviewProviderOptionsUnsupported": "これらのプロバイダー設定には対応していません",
   "nodeOverviewTestTimedOut": "テストまたはプロバイダーの読み取りがタイムアウトしました",
   "nodeOverviewProviderUnloaded": "プロバイダーのノードはまだ読み込まれていません。全ノードの遅延テスト時に読み込み、不足するキャッシュを取得します。",
-  "nodeOverviewHealthStoreUnavailable": "一部の遅延テスト結果を保存できませんでした"
+  "nodeOverviewHealthStoreUnavailable": "一部の遅延テスト結果を保存できませんでした",
+  "nodeOverviewUseNode": "使用",
+  "nodeOverviewInUse": "使用中",
+  "nodeOverviewSwitchedToNode": "{profile} · {node} に切り替えました",
+  "@nodeOverviewSwitchedToNode": {
+    "placeholders": {
+      "profile": {
+        "type": "String"
+      },
+      "node": {
+        "type": "String"
+      }
+    }
+  }
 }

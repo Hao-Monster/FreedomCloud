@@ -810,5 +810,18 @@
   "nodeOverviewProviderOptionsUnsupported": "These provider options are not supported",
   "nodeOverviewTestTimedOut": "Test or provider read timed out",
   "nodeOverviewProviderUnloaded": "Provider nodes are not loaded yet. Testing all node delays reads them and downloads missing caches.",
-  "nodeOverviewHealthStoreUnavailable": "Some delay results could not be saved"
+  "nodeOverviewHealthStoreUnavailable": "Some delay results could not be saved",
+  "nodeOverviewUseNode": "Use",
+  "nodeOverviewInUse": "In use",
+  "nodeOverviewSwitchedToNode": "Switched to {profile} · {node}",
+  "@nodeOverviewSwitchedToNode": {
+    "placeholders": {
+      "profile": {
+        "type": "String"
+      },
+      "node": {
+        "type": "String"
+      }
+    }
+  }
 }

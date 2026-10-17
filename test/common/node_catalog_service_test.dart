@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flclashx/common/node_catalog_provider_resolver.dart';
 import 'package:flclashx/common/node_catalog_service.dart';
 import 'package:flclashx/models/node_catalog.dart';
 import 'package:flclashx/models/profile.dart';
@@ -396,5 +397,500 @@ void main() {
         service.ensurePrepared(_profile('a')),
         throwsA(isA<CatalogBuildException>()
             .having((e) => e.reason, 'reason', 'tooManyNodes')));
+  });
+
+  test(
+      'selectGroups resolves explicit proxies, include-all flags, and provider use across build and resolveForTestAll',
+      () async {
+    ProfileCatalog? preparedSnapshot;
+    service = NodeCatalogService(
+      readProfileConfig: (id) async => {
+        'proxies': [
+          {
+            'name': 'Inline A',
+            'type': 'ss',
+            'server': 'inline.invalid',
+            'port': 443,
+          },
+        ],
+        'proxy-groups': [
+          {
+            'name': 'Explicit',
+            'type': 'select',
+            'proxies': ['Inline A'],
+          },
+          {
+            'name': 'InlineAll',
+            'type': 'select',
+            'include-all-proxies': true,
+          },
+          {
+            'name': 'ProviderUse',
+            'type': 'select',
+            'use': ['FeedA'],
+          },
+          {
+            'name': 'ProviderAll',
+            'type': 'select',
+            'include-all-providers': true,
+          },
+          {
+            'name': 'GlobalSelect',
+            'type': 'select',
+            'include-all': true,
+          },
+        ],
+        'proxy-providers': {
+          'FeedA': {'type': 'inline'},
+        },
+      },
+      evaluate: (raw) async => raw,
+      fileMetadata: (id) async => metadata,
+      scriptFingerprint: () => script,
+      onPrepared: (catalog) => preparedSnapshot = catalog,
+      providerResolver: CatalogProviderResolver(
+        homeDirectory: () async => '/tmp',
+        httpCachePath: (id, url) async => '/tmp/unused',
+        parse: (_, __) async => jsonEncode({
+          'rejected': 0,
+          'proxies': [
+            {
+              'name': 'Provider B',
+              'type': 'vmess',
+              'server': 'provider.invalid',
+              'port': 443,
+              'uuid': '00000000-0000-0000-0000-000000000000',
+            },
+          ],
+        }),
+      ),
+    );
+    final initial = await service.load(_profile('a'));
+    expect(
+      initial.nodes.single.selectGroups,
+      ['Explicit', 'InlineAll', 'GlobalSelect'],
+    );
+    final plan = await service.resolveForTestAll(
+      _profile('a'),
+      isCurrent: () => true,
+    );
+    addTearDown(plan.dispose);
+    expect(plan.nodes, hasLength(2));
+    expect(
+      plan.nodes[0].selectGroups,
+      ['Explicit', 'InlineAll', 'GlobalSelect'],
+    );
+    expect(
+      plan.nodes[1].selectGroups,
+      ['ProviderUse', 'ProviderAll', 'GlobalSelect'],
+    );
+    expect(
+      preparedSnapshot?.nodes.map((n) => n.selectGroups).toList(),
+      [
+        ['Explicit', 'InlineAll', 'GlobalSelect'],
+        ['ProviderUse', 'ProviderAll', 'GlobalSelect'],
+      ],
+    );
+  });
+
+  test(
+      'selectGroups preserves declaration order and applies hidden, filter, exclude-filter, and exclude-type rules',
+      () {
+    final catalog = buildProfileCatalog(
+      profileId: 'a',
+      fingerprint: 'f',
+      raw: {
+        'proxies': [
+          {
+            'name': 'HK Premium 01',
+            'type': 'ss',
+            'server': 'hk.invalid',
+            'port': 443,
+          },
+          {
+            'name': 'US Trial 01',
+            'type': 'vmess',
+            'server': 'us.invalid',
+            'port': 443,
+            'uuid': '00000000-0000-0000-0000-000000000000',
+          },
+        ],
+        'proxy-groups': [
+          {
+            'name': 'HiddenSelect',
+            'type': 'select',
+            'hidden': true,
+            'include-all': true,
+          },
+          {
+            'name': 'PrimaryIncludeAll',
+            'type': 'select',
+            'include-all': true,
+            'exclude-filter': '(?i)trial',
+          },
+          {
+            'name': 'HKManual',
+            'type': 'select',
+            'include-all-proxies': true,
+            'filter': '(?i)hk`hongkong',
+          },
+          {
+            'name': 'NoVmess',
+            'type': 'select',
+            'include-all': true,
+            'exclude-type': 'vmess|trojan',
+          },
+          {
+            'name': 'SecondaryExplicit',
+            'type': 'select',
+            'proxies': ['HK Premium 01', 'US Trial 01'],
+          },
+        ],
+      },
+    );
+    expect(
+      catalog.nodes[0].selectGroups,
+      ['PrimaryIncludeAll', 'HKManual', 'NoVmess', 'SecondaryExplicit'],
+    );
+    expect(
+      catalog.nodes[1].selectGroups,
+      ['SecondaryExplicit'],
+    );
+  });
+
+  test(
+      'selectGroups maps YAML proxy types to Mihomo AdapterType names for exclude-type and supports PCRE filter syntax with fail-closed fallback',
+      () {
+    final catalog = buildProfileCatalog(
+      profileId: 'a',
+      fingerprint: 'f',
+      raw: {
+        'proxies': [
+          {
+            'name': 'HK SS',
+            'type': 'ss',
+            'server': 'hk.invalid',
+            'port': 443,
+            'cipher': 'aes-128-gcm',
+            'password': 'secret',
+          },
+          {
+            'name': 'US SS',
+            'type': 'ss',
+            'server': 'us.invalid',
+            'port': 443,
+            'cipher': 'aes-128-gcm',
+            'password': 'secret',
+          },
+          {
+            'name': 'HK SSR',
+            'type': 'ssr',
+            'server': 'ssr.invalid',
+            'port': 443,
+            'cipher': 'aes-256-cfb',
+            'password': 'secret',
+            'protocol': 'origin',
+            'obfs': 'plain',
+          },
+        ],
+        'proxy-groups': [
+          {
+            'name': 'NoShadowsocks',
+            'type': 'select',
+            'include-all': true,
+            'exclude-type': 'Shadowsocks|ShadowsocksR',
+          },
+          {
+            'name': 'ScopedIgnoreCaseHK',
+            'type': 'select',
+            'include-all': true,
+            'filter': '(?i:hk)',
+          },
+          {
+            'name': 'AtomicGroupHK',
+            'type': 'select',
+            'include-all': true,
+            'filter': '(?i)^(?>HK|Hong Kong)',
+          },
+          {
+            'name': 'BrokenFilterFailClosed',
+            'type': 'select',
+            'include-all': true,
+            'filter': '[unclosed',
+          },
+          {
+            'name': 'BrokenExcludeFilterFailClosed',
+            'type': 'select',
+            'include-all': true,
+            'exclude-filter': '[unclosed',
+          },
+          {
+            'name': 'Fallback',
+            'type': 'select',
+            'include-all': true,
+          },
+        ],
+      },
+    );
+    expect(
+      catalog.nodes[0].selectGroups,
+      ['ScopedIgnoreCaseHK', 'Fallback'],
+    );
+    expect(
+      catalog.nodes[1].selectGroups,
+      ['Fallback'],
+    );
+    expect(
+      catalog.nodes[2].selectGroups,
+      ['ScopedIgnoreCaseHK', 'Fallback'],
+    );
+  });
+
+  test(
+      'selectGroups preserves Core regex semantics for start anchors and escaped characters under scoped ignore-case and fails closed on atomic groups',
+      () {
+    for (final fixture in [
+      (node: 'HK', key: 'filter', pattern: r'^(?>HK|H)K$'),
+      (node: 'HK node', key: 'exclude-filter', pattern: r'\AHK'),
+      (node: 'HKX', key: 'exclude-filter', pattern: r'(?i)^\x68k(?-i)X$'),
+    ]) {
+      final catalog = buildProfileCatalog(
+        profileId: 'fixture',
+        fingerprint: 'f',
+        raw: {
+          'proxies': [
+            {
+              'name': fixture.node,
+              'type': 'ss',
+              'server': 'fixture.invalid',
+              'port': 443,
+              'cipher': 'aes-128-gcm',
+              'password': 'secret',
+            },
+          ],
+          'proxy-groups': [
+            {
+              'name': 'Primary',
+              'type': 'select',
+              'include-all': true,
+              fixture.key: fixture.pattern,
+            },
+            {
+              'name': 'Fallback',
+              'type': 'select',
+              'proxies': [fixture.node],
+            },
+          ],
+        },
+      );
+      expect(catalog.nodes.single.selectGroups, ['Fallback']);
+    }
+  });
+
+  test(
+      'selectGroups preserves regex alternation, quantifiers, and Core Unicode shorthand semantics',
+      () {
+    for (final fixture in [
+      (node: 'HK', key: 'filter', pattern: 'HK|JP', expected: ['Primary', 'Fallback']),
+      (node: 'HK', key: 'exclude-filter', pattern: 'HK|JP', expected: ['Fallback']),
+      (node: 'HK01', key: 'exclude-filter', pattern: r'^HK.*$', expected: ['Fallback']),
+      (node: 'HK01', key: 'exclude-filter', pattern: r'^HK[0-9]{2}$', expected: ['Fallback']),
+      (node: '港', key: 'exclude-filter', pattern: r'^\w$', expected: ['Fallback']),
+      (node: '١', key: 'exclude-filter', pattern: r'^\d$', expected: ['Fallback']),
+      (node: '港', key: 'exclude-filter', pattern: r'\b港\b', expected: ['Fallback']),
+      (node: 'HK|JP', key: 'exclude-filter', pattern: r'HK\|JP', expected: ['Fallback']),
+      (node: '港', key: 'exclude-filter', pattern: r'^[\w]$', expected: ['Fallback']),
+      (node: '١', key: 'exclude-filter', pattern: r'^[\d]$', expected: ['Fallback']),
+    ]) {
+      final catalog = buildProfileCatalog(
+        profileId: 'fixture',
+        fingerprint: 'f',
+        raw: {
+          'proxies': [
+            {
+              'name': fixture.node,
+              'type': 'ss',
+              'server': 'fixture.invalid',
+              'port': 443,
+              'cipher': 'aes-128-gcm',
+              'password': 'secret',
+            },
+          ],
+          'proxy-groups': [
+            {
+              'name': 'Primary',
+              'type': 'select',
+              'include-all': true,
+              fixture.key: fixture.pattern,
+            },
+            {
+              'name': 'Fallback',
+              'type': 'select',
+              'proxies': [fixture.node],
+            },
+          ],
+        },
+      );
+      expect(
+        catalog.nodes.single.selectGroups,
+        fixture.expected,
+        reason: '${fixture.key}: ${fixture.pattern} on ${fixture.node}',
+      );
+    }
+  });
+
+  test(
+      'selectGroups aligns Unicode case equivalence and newline anchor boundaries with Core regexp2.None',
+      () {
+    for (final fixture in [
+      (node: 'İstanbul', key: 'exclude-filter', pattern: r'(?i)^istanbul$', expected: ['Fallback']),
+      (node: 'ſ', key: 'filter', pattern: r'(?i)^s$', expected: ['Fallback']),
+      (node: 'SX', key: 'filter', pattern: r'(?i:ſ)X', expected: ['Fallback']),
+      (node: 'ẞ', key: 'exclude-filter', pattern: r'(?i)^ß$', expected: ['Fallback']),
+      (node: 'K', key: 'filter', pattern: r'(?i)^k$', expected: ['Primary', 'Fallback']),
+      (node: 'ς', key: 'filter', pattern: r'(?i)^σ$', expected: ['Fallback']),
+      (node: 'σ', key: 'filter', pattern: r'(?i)^ς$', expected: ['Fallback']),
+      (node: 'İ', key: 'exclude-filter', pattern: r'(?i)^[a-z]$', expected: ['Fallback']),
+      (node: 'ſ', key: 'filter', pattern: r'(?i)^[a-z]$', expected: ['Fallback']),
+      (node: 'HK\n', key: 'exclude-filter', pattern: r'^HK$', expected: ['Fallback']),
+      (node: 'HK\r\n', key: 'exclude-filter', pattern: r'^HK.*$', expected: ['Fallback']),
+      (node: 'HK\r', key: 'filter', pattern: r'(?m)^HK$', expected: ['Fallback']),
+      (node: 'HK\nX', key: 'filter', pattern: r'(?m)^HK$', expected: ['Primary', 'Fallback']),
+      (node: 'x\nHK', key: 'filter', pattern: r'(?m)^HK$', expected: ['Primary', 'Fallback']),
+      (node: 'x\rHK', key: 'filter', pattern: r'(?m)^HK$', expected: ['Fallback']),
+      (node: '\r\n', key: 'exclude-filter', pattern: r'^\W$', expected: ['Fallback']),
+    ]) {
+      final catalog = buildProfileCatalog(
+        profileId: 'fixture',
+        fingerprint: 'f',
+        raw: {
+          'proxies': [
+            {
+              'name': fixture.node,
+              'type': 'ss',
+              'server': 'fixture.invalid',
+              'port': 443,
+              'cipher': 'aes-128-gcm',
+              'password': 'secret',
+            },
+          ],
+          'proxy-groups': [
+            {
+              'name': 'Primary',
+              'type': 'select',
+              'include-all': true,
+              fixture.key: fixture.pattern,
+            },
+            {
+              'name': 'Fallback',
+              'type': 'select',
+              'proxies': [fixture.node],
+            },
+          ],
+        },
+      );
+      expect(
+        catalog.nodes.single.selectGroups,
+        fixture.expected,
+        reason: '${fixture.key}: ${fixture.pattern} on ${fixture.node}',
+      );
+    }
+  });
+
+  test(
+      r'selectGroups aligns \w, \W, \d, \D, \b, and \B with Core Go Unicode 15.0.0 tables instead of newer Dart Unicode properties',
+      () {
+    for (final fixture in [
+      (node: '\u1C89', key: 'filter', pattern: r'^\w$', expected: ['Fallback']),
+      (node: '\u1C89', key: 'filter', pattern: r'^[\w]$', expected: ['Fallback']),
+      (node: '\u1C89', key: 'exclude-filter', pattern: r'^\W$', expected: ['Fallback']),
+      (node: '\u1C89', key: 'filter', pattern: r'\b\u1C89\b', expected: ['Fallback']),
+      (node: '\u1C89', key: 'exclude-filter', pattern: r'^\B\u1C89\B$', expected: ['Fallback']),
+      (node: '\u{10D40}', key: 'filter', pattern: r'^\d$', expected: ['Fallback']),
+      (node: '\u{10D40}', key: 'filter', pattern: r'^[\d]$', expected: ['Fallback']),
+      (node: '\u{10D40}', key: 'exclude-filter', pattern: r'^\D$', expected: ['Fallback']),
+      (node: '\u{10D40}', key: 'exclude-filter', pattern: r'^[\D]$', expected: ['Fallback']),
+      (node: '\u{1CCF0}', key: 'exclude-filter', pattern: r'^\D$', expected: ['Fallback']),
+      (node: '\u{1CCF0}', key: 'exclude-filter', pattern: r'^[\D]$', expected: ['Fallback']),
+      (node: '\u{1CCF0}', key: 'filter', pattern: r'^\d$', expected: ['Fallback']),
+      (node: '\uA7CB', key: 'filter', pattern: r'^\w$', expected: ['Fallback']),
+      (node: '\u{105C0}', key: 'filter', pattern: r'^\w$', expected: ['Fallback']),
+      (node: '\u{13460}', key: 'filter', pattern: r'^\w$', expected: ['Fallback']),
+      (node: '\u{2EBF0}', key: 'filter', pattern: r'^\w$', expected: ['Fallback']),
+      (node: '港', key: 'exclude-filter', pattern: r'^\w$', expected: ['Fallback']),
+      (node: '١', key: 'exclude-filter', pattern: r'^\d$', expected: ['Fallback']),
+      (node: '5', key: 'filter', pattern: r'^[\D\w]$', expected: ['Fallback']),
+      (node: '5', key: 'filter', pattern: r'^[\D\d]$', expected: ['Fallback']),
+      (node: '.', key: 'filter', pattern: r'^[\--0]$', expected: ['Fallback']),
+      (node: '"', key: 'filter', pattern: r'^[!-\-]$', expected: ['Fallback']),
+      (node: '-', key: 'filter', pattern: r'^[a\-z]$', expected: ['Primary', 'Fallback']),
+      (node: 'HK', key: 'filter', pattern: r'(?I)^hk$', expected: ['Primary', 'Fallback']),
+    ]) {
+      final catalog = buildProfileCatalog(
+        profileId: 'fixture',
+        fingerprint: 'f',
+        raw: {
+          'proxies': [
+            {
+              'name': fixture.node,
+              'type': 'ss',
+              'server': 'fixture.invalid',
+              'port': 443,
+              'cipher': 'aes-128-gcm',
+              'password': 'secret',
+            },
+          ],
+          'proxy-groups': [
+            {
+              'name': 'Primary',
+              'type': 'select',
+              'include-all': true,
+              fixture.key: fixture.pattern,
+            },
+            {
+              'name': 'Fallback',
+              'type': 'select',
+              'proxies': [fixture.node],
+            },
+          ],
+        },
+      );
+      expect(
+        catalog.nodes.single.selectGroups,
+        fixture.expected,
+        reason: '${fixture.key}: ${fixture.pattern} on ${fixture.node.runes.map((r) => 'U+${r.toRadixString(16).toUpperCase()}').join(' ')}',
+      );
+    }
+
+    final invalidFilterWithExplicit = buildProfileCatalog(
+      profileId: 'fixture-explicit',
+      fingerprint: 'f',
+      raw: {
+        'proxies': [
+          {
+            'name': 'HK',
+            'type': 'ss',
+            'server': 'fixture.invalid',
+            'port': 443,
+            'cipher': 'aes-128-gcm',
+            'password': 'secret',
+          },
+        ],
+        'proxy-groups': [
+          {
+            'name': 'Primary',
+            'type': 'select',
+            'proxies': ['HK'],
+            'filter': r'^(?>HK|H)K$',
+          },
+          {
+            'name': 'Fallback',
+            'type': 'select',
+            'proxies': ['HK'],
+          },
+        ],
+      },
+    );
+    expect(invalidFilterWithExplicit.nodes.single.selectGroups, ['Fallback']);
   });
 }

@@ -6123,6 +6123,31 @@ class AppLocalizations {
       args: [],
     );
   }
+
+  /// `Use`
+  String get nodeOverviewUseNode {
+    return Intl.message('Use', name: 'nodeOverviewUseNode', desc: '', args: []);
+  }
+
+  /// `In use`
+  String get nodeOverviewInUse {
+    return Intl.message(
+      'In use',
+      name: 'nodeOverviewInUse',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Switched to {profile} · {node}`
+  String nodeOverviewSwitchedToNode(String profile, String node) {
+    return Intl.message(
+      'Switched to $profile · $node',
+      name: 'nodeOverviewSwitchedToNode',
+      desc: '',
+      args: [profile, node],
+    );
+  }
 }
 
 class AppLocalizationDelegate extends LocalizationsDelegate<AppLocalizations> {

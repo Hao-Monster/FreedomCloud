@@ -50,21 +50,23 @@ class MessageLookup extends MessageLookupByLibrary {
 
   static String m12(provider) => "${provider}: nodes visible after activation";
 
-  static String m13(label) => "No ${label} at the moment";
+  static String m13(profile, node) => "Switched to ${profile} · ${node}";
 
-  static String m14(label) => "${label} must be a number";
+  static String m14(label) => "No ${label} at the moment";
 
-  static String m15(label) => "${label} must be between 1024 and 49151";
+  static String m15(label) => "${label} must be a number";
 
-  static String m16(code) => "Unknown rule (${code})";
+  static String m16(label) => "${label} must be between 1024 and 49151";
 
-  static String m17(count) => "${count} items have been selected";
+  static String m17(code) => "Unknown rule (${code})";
 
-  static String m18(days) => "Your subscription expires in ${days} day(s)";
+  static String m18(count) => "${count} items have been selected";
 
-  static String m19(reason) => "TUN: ${reason}";
+  static String m19(days) => "Your subscription expires in ${days} day(s)";
 
-  static String m20(label) => "${label} must be a url";
+  static String m20(reason) => "TUN: ${reason}";
+
+  static String m21(label) => "${label} must be a url";
 
   final messages = _notInlinedMessages(_notInlinedMessages);
   static Map<String, Function> _notInlinedMessages(_) => <String, Function>{
@@ -673,6 +675,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "nodeOverviewHistoryNotice": MessageLookupByLibrary.simpleMessage(
       "Delay results are kept until the next completed test. Test times appear below each node.",
     ),
+    "nodeOverviewInUse": MessageLookupByLibrary.simpleMessage("In use"),
     "nodeOverviewIndependentTest": MessageLookupByLibrary.simpleMessage(
       "Independent delay test",
     ),
@@ -733,6 +736,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "nodeOverviewStrictUnsupported": MessageLookupByLibrary.simpleMessage(
       "Isolated tests are unavailable in strict mode",
     ),
+    "nodeOverviewSwitchedToNode": m13,
     "nodeOverviewTestAll": MessageLookupByLibrary.simpleMessage(
       "Test all node delays",
     ),
@@ -764,6 +768,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "nodeOverviewUpdating": MessageLookupByLibrary.simpleMessage(
       "Updating subscription",
     ),
+    "nodeOverviewUseNode": MessageLookupByLibrary.simpleMessage("Use"),
     "none": MessageLookupByLibrary.simpleMessage("none"),
     "notSelectedTip": MessageLookupByLibrary.simpleMessage(
       "The current proxy group cannot be selected.",
@@ -772,8 +777,8 @@ class MessageLookup extends MessageLookupByLibrary {
       "No profile, Please add a profile",
     ),
     "nullScriptTip": MessageLookupByLibrary.simpleMessage("No scripts"),
-    "nullTip": m13,
-    "numberTip": m14,
+    "nullTip": m14,
+    "numberTip": m15,
     "oneColumn": MessageLookupByLibrary.simpleMessage("One column"),
     "oneline": MessageLookupByLibrary.simpleMessage("Oneline"),
     "onlyIcon": MessageLookupByLibrary.simpleMessage("Icon"),
@@ -844,7 +849,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "portConflictTip": MessageLookupByLibrary.simpleMessage(
       "Please enter a different port",
     ),
-    "portTip": m15,
+    "portTip": m16,
     "preferH3Desc": MessageLookupByLibrary.simpleMessage(
       "Prioritize the use of DOH\'s http/3",
     ),
@@ -1039,7 +1044,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "purchasePlanResetSystem": MessageLookupByLibrary.simpleMessage(
       "Follows system settings",
     ),
-    "purchasePlanResetUnknown": m16,
+    "purchasePlanResetUnknown": m17,
     "purchasePlanResetYearStart": MessageLookupByLibrary.simpleMessage(
       "On January 1 each year",
     ),
@@ -1233,7 +1238,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "selectAll": MessageLookupByLibrary.simpleMessage("Select all"),
     "selectProfile": MessageLookupByLibrary.simpleMessage("Select Profile"),
     "selected": MessageLookupByLibrary.simpleMessage("Selected"),
-    "selectedCountTitle": m17,
+    "selectedCountTitle": m18,
     "sendToTv": MessageLookupByLibrary.simpleMessage("Send to TV"),
     "sendToTvTitle": MessageLookupByLibrary.simpleMessage("Send to TV"),
     "sentSuccessfullyMessage": MessageLookupByLibrary.simpleMessage(
@@ -1277,7 +1282,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "subscriptionExpired": MessageLookupByLibrary.simpleMessage(
       "Your subscription has expired",
     ),
-    "subscriptionExpiresInDays": m18,
+    "subscriptionExpiresInDays": m19,
     "subscriptionExpiresSoon": MessageLookupByLibrary.simpleMessage(
       "Subscription expires soon",
     ),
@@ -1361,7 +1366,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "tunErrorUnavailable": MessageLookupByLibrary.simpleMessage(
       "Cannot verify status; check the background version",
     ),
-    "tunStatusFailure": m19,
+    "tunStatusFailure": m20,
     "tunStatusOff": MessageLookupByLibrary.simpleMessage("Not running"),
     "tunStatusOn": MessageLookupByLibrary.simpleMessage("Running"),
     "tunStatusStarting": MessageLookupByLibrary.simpleMessage("Starting…"),
@@ -1392,7 +1397,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "urlDesc": MessageLookupByLibrary.simpleMessage(
       "Obtain profile through URL",
     ),
-    "urlTip": m20,
+    "urlTip": m21,
     "useHosts": MessageLookupByLibrary.simpleMessage("Use hosts"),
     "useSystemHosts": MessageLookupByLibrary.simpleMessage("Use system hosts"),
     "value": MessageLookupByLibrary.simpleMessage("Value"),

@@ -670,5 +670,18 @@
   "nodeOverviewProviderOptionsUnsupported": "Эти параметры провайдера не поддерживаются",
   "nodeOverviewTestTimedOut": "Истекло время проверки или чтения провайдера",
   "nodeOverviewProviderUnloaded": "Узлы провайдера ещё не загружены. Проверка задержки всех узлов прочитает их и загрузит отсутствующий кэш.",
-  "nodeOverviewHealthStoreUnavailable": "Не удалось сохранить часть результатов проверки задержки"
+  "nodeOverviewHealthStoreUnavailable": "Не удалось сохранить часть результатов проверки задержки",
+  "nodeOverviewUseNode": "Использовать",
+  "nodeOverviewInUse": "Используется",
+  "nodeOverviewSwitchedToNode": "Переключено на {profile} · {node}",
+  "@nodeOverviewSwitchedToNode": {
+    "placeholders": {
+      "profile": {
+        "type": "String"
+      },
+      "node": {
+        "type": "String"
+      }
+    }
+  }
 }
