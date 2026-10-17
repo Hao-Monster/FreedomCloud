@@ -112,6 +112,7 @@ class ClashCore {
   }
 
   Future<void> shutdown() async {
+    globalState.clearRuntimeSetup();
     await cancelDelayTests(reason: 'sessionClosed');
     await clashInterface.shutdown();
   }

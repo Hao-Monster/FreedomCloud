@@ -61,6 +61,7 @@ class GlobalState {
   UpdateTasks tasks = [];
   Map<String, dynamic>? lastRuntimeConfig;
   String? lastRuntimeProfileId;
+  int runtimeConfigEpoch = 0;
   // Effective external-controller endpoint after merging subscription value
   // over UI defaults. Empty string means disabled. Subscription value wins if
   // present, otherwise falls back to the UI toggle default.
@@ -442,7 +443,14 @@ class GlobalState {
     return ExternalControllerStatus.open.value;
   }
 
+  void clearRuntimeSetup() {
+    runtimeConfigEpoch++;
+    lastRuntimeConfig = null;
+    lastRuntimeProfileId = null;
+  }
+
   void commitRuntimeSetup(SetupParams params, String? profileId) {
+    runtimeConfigEpoch++;
     final rawConfig = params.config;
     lastRuntimeConfig = rawConfig;
     lastRuntimeProfileId = profileId;

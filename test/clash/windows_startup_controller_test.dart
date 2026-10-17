@@ -891,4 +891,32 @@ void main() {
     await file.writeAsString('mode: rule\n');
     expect(await isReadableWindowsStartupProfile(file.path), isTrue);
   });
+
+  testWidgets(
+      'queued repair preserves terminal failure when status transitions to non-repairable while waiting on queue',
+      (tester) async {
+    final effects = StartupEffects();
+    final runtime = TunRuntimeController();
+    final controller = await controllerFixture(tester, effects, runtime);
+    await controller.initializeRuntime();
+    expect(runtime.observed, TunObservedState.on);
+
+    final blocker = Completer<void>();
+    final serialized = runtime.serialize(() async {
+      await blocker.future;
+      effects.adapterErrorCode = 'interfaceUnknown';
+      await controller.refreshWindowsTunStatus(fresh: true);
+    });
+
+    effects.adapterErrorCode = 'interfaceDown';
+    await controller.refreshWindowsTunStatus();
+    blocker.complete();
+    await serialized;
+    await tester.pumpAndSettle();
+
+    expect(effects.calls.where((c) => c == 'incremental'), isEmpty);
+    expect(effects.calls.where((c) => c == 'restart-core'), isEmpty);
+    expect(runtime.failure, 'interfaceUnknown');
+    expect(runtime.requestFailure, 'interfaceUnknown');
+  });
 }

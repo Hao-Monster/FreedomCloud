@@ -159,6 +159,9 @@ class TunRuntimeController extends ChangeNotifier {
               'permissionDenied',
               'authorizationRequired',
               'startFailed',
+              'closeFailed',
+              'configurationFailed',
+              'operationFailed',
               'interfaceDown',
               'interfaceMissing',
               'interfaceUnknown'
@@ -167,6 +170,29 @@ class TunRuntimeController extends ChangeNotifier {
     }
     notifyListeners();
     return true;
+  }
+
+  static const _environmentFailures = {
+    'authorizationRequired',
+    'permissionDenied',
+    'componentsMismatch',
+    'legacyAgent',
+  };
+
+  /// Clears a latched Core-level runtime failure when the Core process is
+  /// replaced, while preserving environment or authorization gates.
+  void clearCoreRuntimeFailure() {
+    if (_environmentFailures.contains(_requestFailure)) return;
+    var changed = false;
+    if (_requestFailure != null) {
+      _requestFailure = null;
+      changed = true;
+    }
+    if (failure != null && !_environmentFailures.contains(failure)) {
+      failure = null;
+      changed = true;
+    }
+    if (changed) notifyListeners();
   }
 
   void fail(String reason) {

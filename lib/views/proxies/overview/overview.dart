@@ -857,8 +857,11 @@ Widget _buildUseButton(
 
 Map<String, ({Proxy proxy, String? testUrl, String? selectGroup})>
     _activeLeaves(WidgetRef ref) {
-  final mode =
+  final rawMode =
       ref.watch(patchClashConfigProvider.select((state) => state.mode));
+  final globalModeEnabled = ref.watch(globalModeEnabledProvider);
+  final mode =
+      rawMode == Mode.global && !globalModeEnabled ? Mode.rule : rawMode;
   final groups = ref.watch(currentGroupsStateProvider).value;
   final allGroups = ref.watch(groupsProvider);
   final groupNames = allGroups.map((g) => g.name).toSet();

@@ -259,7 +259,22 @@ class AppController {
             return;
           }
           if (!_isRepairableTunFailure(currentStatus, effects)) {
-            return;
+            if (_pendingWindowsProxyStop ||
+                (!effects.proxyRunning && !globalState.isStart) ||
+                (currentStatus.observed == TunObservedState.off &&
+                    currentStatus.errorCode == null)) {
+              return;
+            }
+            rollbackAttemptsIfCancelled();
+            terminalOutcome = true;
+            throw TunFailure(
+              currentStatus.errorCode ??
+                  (currentStatus.privilege != 'elevated'
+                      ? 'permissionDenied'
+                      : null) ??
+                  status.errorCode ??
+                  'statusUnavailable',
+            );
           }
         }
         final activeStatus = currentStatus ?? status;
@@ -268,7 +283,11 @@ class AppController {
             : (_tunRepairAttempts[activeStatus.instanceId] ?? 0);
         if (activeStatus.instanceId != status.instanceId &&
             activeAttempts >= _maxTunRepairAttempts) {
-          return;
+          rollbackAttemptsIfCancelled();
+          terminalOutcome = true;
+          throw TunFailure(
+            activeStatus.errorCode ?? status.errorCode ?? 'startFailed',
+          );
         }
         if (activeStatus.instanceId != status.instanceId) {
           escalatedInstanceId = activeStatus.instanceId;
@@ -579,14 +598,28 @@ class AppController {
   }
 
   void changeProxyDebounce(String groupName, String proxyName) {
-    debouncer.call(FunctionTag.changeProxy,
-        (String groupName, String proxyName) async {
+    final targetProfileId = _ref.read(currentProfileIdProvider);
+    final targetConfigEpoch = globalState.runtimeConfigEpoch;
+    debouncer.call(FunctionTag.changeProxy, (
+      String groupName,
+      String proxyName,
+      String? expectedProfileId,
+      int expectedConfigEpoch,
+    ) async {
+      if (_ref.read(currentProfileIdProvider) != expectedProfileId ||
+          globalState.runtimeConfigEpoch != expectedConfigEpoch) {
+        return;
+      }
       await changeProxy(
         groupName: groupName,
         proxyName: proxyName,
       );
+      if (_ref.read(currentProfileIdProvider) != expectedProfileId ||
+          globalState.runtimeConfigEpoch != expectedConfigEpoch) {
+        return;
+      }
       await updateGroups();
-    }, args: [groupName, proxyName]);
+    }, args: [groupName, proxyName, targetProfileId, targetConfigEpoch]);
   }
 
   /// Initialize foreground notification cache with current profile
@@ -619,6 +652,10 @@ class AppController {
     if (Platform.isWindows) {
       await _tunRuntime.serialize(() async {
         _tunRuntime.invalidate();
+        _tunRuntime.clearCoreRuntimeFailure();
+        _tunRepairAttempts.clear();
+        globalState.clearRuntimeSetup();
+        _hasAppliedWindowsProfile = false;
         _applyingWindowsConfigDepth++;
         try {
           await clashService?.reStart();
@@ -632,6 +669,7 @@ class AppController {
       return;
     }
     commonPrint.log("restart core");
+    globalState.clearRuntimeSetup();
     await clashService?.reStart();
     await _initCore();
     if (_ref.read(runTimeProvider.notifier).isStart) {
@@ -709,6 +747,10 @@ class AppController {
       if (Platform.isWindows && clashService?.usesAgent == true &&
           clashService?.agentCoreReady != true) {
         await clashService!.recoverCoreForUser();
+        _tunRuntime.clearCoreRuntimeFailure();
+        _tunRepairAttempts.clear();
+        globalState.clearRuntimeSetup();
+        _hasAppliedWindowsProfile = false;
         await _initCore(ownsWindowsConfig: true);
       }
       // Drop the previous exit-IP immediately so the panel shows "determining" right
@@ -1240,8 +1282,9 @@ class AppController {
             return;
           }
           if (repairFailedOrCancelled &&
+              !_pendingWindowsProxyStop &&
               _tunRuntime.desiredEnabled &&
-              _tunRuntime.observed == TunObservedState.unknown &&
+              _tunRuntime.observed != TunObservedState.on &&
               _tunRuntime.requestFailure == null) {
             _tunRuntime.fail(
               _tunRuntime.status?.errorCode ??
@@ -1286,20 +1329,26 @@ class AppController {
         var needsFollowUpApply = false;
         if (preApplyRepair != null) {
           final applied = await preApplyRepair!;
-          needsFollowUpApply = !applied || hasControllerOverride;
-          repairFailedOrCancelled =
-              !applied && _tunRuntime.observed != TunObservedState.on;
+          needsFollowUpApply =
+              !_pendingWindowsProxyStop && (!applied || hasControllerOverride);
+          repairFailedOrCancelled = !applied &&
+              !_pendingWindowsProxyStop &&
+              _tunRuntime.observed != TunObservedState.on;
         } else if (pendingRepair != null) {
           final repaired = await pendingRepair!;
-          needsFollowUpApply = true;
-          repairFailedOrCancelled =
-              !repaired && _tunRuntime.observed != TunObservedState.on;
+          needsFollowUpApply = !_pendingWindowsProxyStop;
+          repairFailedOrCancelled = !repaired &&
+              !_pendingWindowsProxyStop &&
+              _tunRuntime.observed != TunObservedState.on;
         } else if (postApplyRepair != null) {
           final applied = await postApplyRepair!;
           final failedPostRepair = !applied &&
+              !_pendingWindowsProxyStop &&
               _tunRuntime.desiredEnabled &&
-              _tunRuntime.requestFailure != null;
-          needsFollowUpApply = hasControllerOverride || failedPostRepair;
+              (_tunRuntime.requestFailure != null ||
+                  _tunRuntime.observed != TunObservedState.on);
+          needsFollowUpApply = !_pendingWindowsProxyStop &&
+              (hasControllerOverride || failedPostRepair);
           repairFailedOrCancelled = failedPostRepair;
         }
         if (!needsFollowUpApply) break;
@@ -1410,8 +1459,9 @@ class AppController {
             return;
           }
           if (repairFailedOrCancelled &&
+              !_pendingWindowsProxyStop &&
               _tunRuntime.desiredEnabled &&
-              _tunRuntime.observed == TunObservedState.unknown &&
+              _tunRuntime.observed != TunObservedState.on &&
               _tunRuntime.requestFailure == null) {
             _tunRuntime.fail(
               _tunRuntime.status?.errorCode ??
@@ -1453,19 +1503,23 @@ class AppController {
         var needsFollowUpApply = false;
         if (preApplyRepair != null) {
           final applied = await preApplyRepair!;
-          needsFollowUpApply = !applied;
-          repairFailedOrCancelled =
-              !applied && _tunRuntime.observed != TunObservedState.on;
+          needsFollowUpApply = !_pendingWindowsProxyStop && !applied;
+          repairFailedOrCancelled = !applied &&
+              !_pendingWindowsProxyStop &&
+              _tunRuntime.observed != TunObservedState.on;
         } else if (pendingRepair != null) {
           final repaired = await pendingRepair!;
-          needsFollowUpApply = true;
-          repairFailedOrCancelled =
-              !repaired && _tunRuntime.observed != TunObservedState.on;
+          needsFollowUpApply = !_pendingWindowsProxyStop;
+          repairFailedOrCancelled = !repaired &&
+              !_pendingWindowsProxyStop &&
+              _tunRuntime.observed != TunObservedState.on;
         } else if (postApplyRepair != null) {
           final applied = await postApplyRepair!;
           final failedPostRepair = !applied &&
+              !_pendingWindowsProxyStop &&
               _tunRuntime.desiredEnabled &&
-              _tunRuntime.requestFailure != null;
+              (_tunRuntime.requestFailure != null ||
+                  _tunRuntime.observed != TunObservedState.on);
           needsFollowUpApply = failedPostRepair;
           repairFailedOrCancelled = failedPostRepair;
         }
@@ -1533,6 +1587,18 @@ class AppController {
           patchConfig = _ref.read(patchClashConfigProvider);
         }
 
+        final disableGlobalMode =
+            applyingProfile?.providerHeaders['flclashx-globalmode']
+                    ?.trim()
+                    .toLowerCase() ==
+                'false';
+        if (disableGlobalMode && patchConfig.mode == Mode.global) {
+          patchConfig = patchConfig.copyWith(mode: Mode.rule);
+          _ref
+              .read(patchClashConfigProvider.notifier)
+              .updateState((state) => state.copyWith(mode: Mode.rule));
+        }
+
         // flclashx-androidsecure header: on Android, when the current profile
         // declares "androidsecure: true", force mixedPort=0 on the Dart-side
         // ClashConfig so that all downstream providers (coreStateProvider,
@@ -1580,6 +1646,9 @@ class AppController {
                 if (isCurrent != null && params.config.isEmpty) {
                   throw const TunFailure('profileRequired');
                 }
+                if (_ref.read(patchClashConfigProvider) == currentPatchConfig) {
+                  debouncer.cancel(FunctionTag.updateClashConfig);
+                }
                 setupExecuted = true;
                 final message = await clashCore.setupConfig(
                   params,
@@ -1604,12 +1673,16 @@ class AppController {
           } else {
             final res = await _requestAdmin(patchConfig.tun.enable);
             if (res.isError || !configurationIsCurrent()) return;
+            final currentPatchConfig = _ref.read(patchClashConfigProvider);
             final realTunEnable = _ref.read(realTunEnableProvider);
             final realPatchConfig =
-                patchConfig.copyWith.tun(enable: realTunEnable);
+                currentPatchConfig.copyWith.tun(enable: realTunEnable);
             final params = await globalState.getSetupParams(
                 pathConfig: realPatchConfig, profile: applyingProfile);
             if (!configurationIsCurrent()) return;
+            if (_ref.read(patchClashConfigProvider) == currentPatchConfig) {
+              debouncer.cancel(FunctionTag.updateClashConfig);
+            }
             final message = await clashCore.setupConfig(params,
                 profileId: applyingProfileId);
             if (message.isNotEmpty) {
@@ -1674,6 +1747,8 @@ class AppController {
   }
 
   void handleChangeProfile() {
+    debouncer.cancel(FunctionTag.changeProxy);
+    debouncer.cancel(FunctionTag.updateGroups);
     _ref.read(delayDataSourceProvider.notifier).value = {};
 
     final currentProfileId = _ref.read(currentProfileIdProvider);
@@ -1814,11 +1889,20 @@ class AppController {
   }
 
   Future<void> updateGroups() async {
+    final configEpoch = globalState.runtimeConfigEpoch;
+    final profileId = _ref.read(currentProfileIdProvider);
     try {
       final newGroups = await retry(
         task: () async => clashCore.getProxiesGroups(),
-        retryIf: (res) => res.isEmpty,
+        retryIf: (res) =>
+            res.isEmpty &&
+            configEpoch == globalState.runtimeConfigEpoch &&
+            profileId == _ref.read(currentProfileIdProvider),
       );
+      if (configEpoch != globalState.runtimeConfigEpoch ||
+          profileId != _ref.read(currentProfileIdProvider)) {
+        return;
+      }
 
       if (newGroups.isNotEmpty) {
         _ref.read(groupsProvider.notifier).value =
@@ -3164,6 +3248,9 @@ class _ControllerWindowsTunStartupEffects implements WindowsTunStartupEffects {
     final service = clashService;
     if (service == null) throw const TunFailure('startFailed');
     controller._tunRuntime.invalidate();
+    controller._tunRuntime.clearCoreRuntimeFailure();
+    globalState.clearRuntimeSetup();
+    controller._hasAppliedWindowsProfile = false;
     controller._ref.invalidate(nodeRuntimeReadProvider);
     await service.reStart();
   }
