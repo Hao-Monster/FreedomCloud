@@ -26,6 +26,7 @@ class NodeOverviewScopeView extends ConsumerWidget {
     final enabled = ref.watch(nodeOverviewEnabledProvider);
     final count = ref.watch(profilesProvider.select((value) => value.length));
     if (!enabled || count < 2) return currentView;
+    ref.watch(_overviewSwitchTrackerProvider);
     final scope = ref.watch(proxiesScopeProvider);
     return scope == ProxiesScope.all ? const NodeOverviewView() : currentView;
   }
@@ -85,11 +86,56 @@ class _OverviewSwitchTracker {
   String? pendingNodeName;
   List<Group>? pendingGroups;
   int? pendingVersion;
+  List<Group>? attestedGroups;
+  int? attestedVersion;
+  String? attestedProfileId;
   String? feedback;
+
+  void onSnapshotChanged({
+    required List<Group> groups,
+    required int version,
+    required String? runtimeProfileId,
+  }) {
+    attestedGroups = groups;
+    attestedVersion = version;
+    attestedProfileId = groups.isEmpty ? null : runtimeProfileId;
+    if (pendingProfileId != null && runtimeProfileId != pendingProfileId) {
+      pendingGroups = groups;
+      pendingVersion = version;
+    }
+  }
 }
 
 final _overviewSwitchTrackerProvider =
-    Provider<_OverviewSwitchTracker>((ref) => _OverviewSwitchTracker());
+    Provider<_OverviewSwitchTracker>((ref) {
+  final tracker = _OverviewSwitchTracker();
+  String? currentRuntimeProfileId() =>
+      globalState.lastRuntimeProfileId ??
+      ref.read(activeNodeCatalogProvider)?.profileId;
+  final initialGroups = ref.read(groupsProvider);
+  final initialVersion = ref.read(versionProvider);
+  final initialAttestedProfileId =
+      identical(initialGroups, globalState.groupsSnapshot) &&
+              initialVersion == globalState.groupsSnapshotVersion &&
+              globalState.groupsSnapshotProfileId != null
+          ? globalState.groupsSnapshotProfileId
+          : currentRuntimeProfileId();
+  tracker.onSnapshotChanged(
+    groups: initialGroups,
+    version: initialVersion,
+    runtimeProfileId: initialAttestedProfileId,
+  );
+  void recordUpdate() {
+    tracker.onSnapshotChanged(
+      groups: ref.read(groupsProvider),
+      version: ref.read(versionProvider),
+      runtimeProfileId: currentRuntimeProfileId(),
+    );
+  }
+  ref.listen<List<Group>>(groupsProvider, (_, __) => recordUpdate());
+  ref.listen<int>(versionProvider, (_, __) => recordUpdate());
+  return tracker;
+});
 
 class NodeOverviewView extends ConsumerStatefulWidget {
   const NodeOverviewView({super.key});
@@ -237,17 +283,29 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
     final currentActiveId = ref.read(currentProfileIdProvider);
     final verifiedRuntimeProfileId = globalState.lastRuntimeProfileId ??
         ref.read(activeNodeCatalogProvider)?.profileId;
+    final currentGroups = ref.read(groupsProvider);
+    final currentVersion = ref.read(versionProvider);
+    final currentSnapshotProfileId =
+        identical(currentGroups, tracker.attestedGroups) &&
+                currentVersion == tracker.attestedVersion
+            ? tracker.attestedProfileId
+            : (identical(currentGroups, globalState.groupsSnapshot) &&
+                    currentVersion == globalState.groupsSnapshotVersion
+                ? globalState.groupsSnapshotProfileId
+                : null);
     final isAlreadyLiveActive = currentActiveId == updated.id &&
         (verifiedRuntimeProfileId == null ||
             verifiedRuntimeProfileId == updated.id) &&
+        (currentSnapshotProfileId == null ||
+            currentSnapshotProfileId == updated.id) &&
         tracker.pendingProfileId != updated.id;
     if (currentActiveId != updated.id) {
       tracker
         ..pendingProfileId = updated.id
         ..pendingProfileLabel = updated.label ?? updated.id
         ..pendingNodeName = node.name
-        ..pendingGroups = ref.read(groupsProvider)
-        ..pendingVersion = ref.read(versionProvider)
+        ..pendingGroups = currentGroups
+        ..pendingVersion = currentVersion
         ..feedback = null;
       ref.read(currentProfileIdProvider.notifier).value = updated.id;
     } else if (!isAlreadyLiveActive) {
@@ -255,8 +313,8 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
         ..pendingProfileId = updated.id
         ..pendingProfileLabel = updated.label ?? updated.id
         ..pendingNodeName = node.name
-        ..pendingGroups = ref.read(groupsProvider)
-        ..pendingVersion = ref.read(versionProvider)
+        ..pendingGroups = currentGroups
+        ..pendingVersion = currentVersion
         ..feedback = null;
       if (globalState.isAppControllerReady) {
         globalState.appController
@@ -287,8 +345,17 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
     final tracker = ref.watch(_overviewSwitchTrackerProvider);
     final verifiedRuntimeProfileId = globalState.lastRuntimeProfileId ??
         ref.watch(activeNodeCatalogProvider)?.profileId;
+    final snapshotAttestedProfileId =
+        identical(groups, tracker.attestedGroups) &&
+                version == tracker.attestedVersion
+            ? tracker.attestedProfileId
+            : (identical(groups, globalState.groupsSnapshot) &&
+                    version == globalState.groupsSnapshotVersion
+                ? globalState.groupsSnapshotProfileId
+                : null);
     final runtimeMatchesPending = tracker.pendingProfileId != null &&
-        verifiedRuntimeProfileId == tracker.pendingProfileId;
+        verifiedRuntimeProfileId == tracker.pendingProfileId &&
+        snapshotAttestedProfileId == tracker.pendingProfileId;
     if (tracker.pendingProfileId != null) {
       if (activeId != tracker.pendingProfileId) {
         tracker
@@ -317,9 +384,11 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
           ..pendingGroups = groups
           ..pendingVersion = version;
       }
-    } else if (verifiedRuntimeProfileId != null &&
-        activeId != null &&
-        verifiedRuntimeProfileId != activeId) {
+    } else if (activeId != null &&
+        ((verifiedRuntimeProfileId != null &&
+                verifiedRuntimeProfileId != activeId) ||
+            (snapshotAttestedProfileId != null &&
+                snapshotAttestedProfileId != activeId))) {
       tracker
         ..pendingProfileId = activeId
         ..pendingGroups = groups
@@ -329,6 +398,8 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
         profile.id == activeId &&
         (verifiedRuntimeProfileId == null ||
             verifiedRuntimeProfileId == profile.id) &&
+        (snapshotAttestedProfileId == null ||
+            snapshotAttestedProfileId == profile.id) &&
         tracker.pendingProfileId != profile.id;
     final feedback = _feedback ?? tracker.feedback;
     final isMobile = ref.watch(isMobileViewProvider);

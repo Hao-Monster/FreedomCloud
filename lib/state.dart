@@ -43,7 +43,31 @@ class GlobalState {
   Timer? timer;
   Timer? groupsUpdateTimer;
   late Config config;
-  late AppState appState;
+  late AppState _appState;
+  bool _appStateInitialized = false;
+  List<Group>? _groupsSnapshot;
+  int? _groupsSnapshotVersion;
+  String? _groupsSnapshotProfileId;
+
+  List<Group>? get groupsSnapshot => _groupsSnapshot;
+  int? get groupsSnapshotVersion => _groupsSnapshotVersion;
+  String? get groupsSnapshotProfileId => _groupsSnapshotProfileId;
+
+  AppState get appState => _appState;
+
+  set appState(AppState value) {
+    final groupsChanged = !_appStateInitialized ||
+        !identical(value.groups, _appState.groups) ||
+        value.version != _appState.version;
+    _appState = value;
+    _appStateInitialized = true;
+    if (groupsChanged) {
+      _groupsSnapshot = value.groups;
+      _groupsSnapshotVersion = value.version;
+      _groupsSnapshotProfileId =
+          value.groups.isEmpty ? null : lastRuntimeProfileId;
+    }
+  }
   bool isPre = true;
   String? coreSHA256;
   String? coreVersion;
@@ -447,6 +471,7 @@ class GlobalState {
     runtimeConfigEpoch++;
     lastRuntimeConfig = null;
     lastRuntimeProfileId = null;
+    _groupsSnapshotProfileId = null;
   }
 
   void commitRuntimeSetup(SetupParams params, String? profileId) {

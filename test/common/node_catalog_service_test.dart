@@ -1045,5 +1045,57 @@ void main() {
     addTearDown(plan.dispose);
     final hkResolved = plan.nodes.firstWhere((node) => node.name == 'HK');
     expect(hkResolved.selectGroups, ['ProviderBackedPrimary']);
+
+    final matchingCustomDirect = buildProfileCatalog(
+      profileId: 'p-custom-direct-match',
+      fingerprint: 'f',
+      raw: {
+        'proxies': [
+          {
+            'name': 'HK',
+            'type': 'socks5',
+            'server': 'fixture.invalid',
+            'port': 443,
+          },
+          {'name': 'Bypass', 'type': 'direct'},
+        ],
+        'proxy-groups': [
+          {
+            'name': 'Primary',
+            'type': 'select',
+            'include-all-proxies': true,
+            'filter': r'^Bypass$',
+            'empty-fallback': 'HK',
+          },
+        ],
+      },
+    );
+    expect(matchingCustomDirect.nodes.single.selectGroups, isEmpty);
+
+    final excludedCustomDirect = buildProfileCatalog(
+      profileId: 'p-custom-direct-excluded',
+      fingerprint: 'f',
+      raw: {
+        'proxies': [
+          {
+            'name': 'HK',
+            'type': 'socks5',
+            'server': 'fixture.invalid',
+            'port': 443,
+          },
+          {'name': 'Bypass', 'type': 'direct'},
+        ],
+        'proxy-groups': [
+          {
+            'name': 'Primary',
+            'type': 'select',
+            'proxies': ['Bypass'],
+            'exclude-filter': r'^Bypass$',
+            'empty-fallback': 'HK',
+          },
+        ],
+      },
+    );
+    expect(excludedCustomDirect.nodes.single.selectGroups, ['Primary']);
   });
 }

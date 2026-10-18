@@ -1130,7 +1130,14 @@ const _builtInProxyTypes = <String, String>{
   'REJECT': 'reject',
   'REJECT-DROP': 'reject-drop',
   'PASS': 'pass',
+  'PASS-RULE': 'pass-rule',
   'COMPATIBLE': 'compatible',
+};
+
+const _customNonLeafAdapterTypes = <String>{
+  'direct',
+  'reject',
+  'dns',
 };
 
 class _SelectGroupRule {
@@ -1200,6 +1207,7 @@ class _SelectGroupRule {
 
   bool canUseEmptyFallback({
     required Set<String> inlineLeafNames,
+    required Map<String, String> inlineMemberTypes,
     required Map<String, String> definedGroupTypes,
     required Set<String> providerNames,
     required Set<String> unresolvedProviders,
@@ -1222,15 +1230,13 @@ class _SelectGroupRule {
       return false;
     }
     for (final explicit in explicitProxies) {
-      final nonLeafType =
-          _builtInProxyTypes[explicit] ?? definedGroupTypes[explicit];
-      if (nonLeafType == null) {
-        if (!inlineLeafNames.contains(explicit)) {
-          return false;
-        }
-        continue;
+      final memberType = inlineMemberTypes[explicit] ??
+          _builtInProxyTypes[explicit] ??
+          definedGroupTypes[explicit];
+      if (memberType == null) {
+        return false;
       }
-      if (!isExcluded(name: explicit, type: nonLeafType)) {
+      if (!isExcluded(name: explicit, type: memberType)) {
         return false;
       }
     }
@@ -1239,11 +1245,13 @@ class _SelectGroupRule {
 }
 
 typedef _SelectGroupCandidate = ({
+  int? nodeIndex,
   String? name,
   String? type,
   CatalogNodeSource source,
   String? providerName,
   bool validLeaf,
+  bool validMember,
 });
 
 class _SelectGroupIndex {
@@ -1317,14 +1325,15 @@ class _SelectGroupIndex {
 
   List<List<String>> resolveForCandidates(
     List<_SelectGroupCandidate> candidates, {
+    required int nodeCount,
     Set<String> providerNames = const {},
     Set<String> unresolvedProviders = const {},
   }) {
     final result = List<List<String>>.generate(
-      candidates.length,
+      nodeCount,
       (_) => <String>[],
     );
-    if (_rules.isEmpty || candidates.isEmpty) return result;
+    if (_rules.isEmpty || nodeCount == 0) return result;
     final inlineLeafNames = <String>{
       for (final candidate in candidates)
         if (candidate.source == CatalogNodeSource.inline &&
@@ -1333,45 +1342,59 @@ class _SelectGroupIndex {
             candidate.name!.isNotEmpty)
           candidate.name!,
     };
+    final inlineMemberTypes = <String, String>{
+      for (final candidate in candidates)
+        if (candidate.source == CatalogNodeSource.inline &&
+            candidate.validMember &&
+            candidate.name != null &&
+            candidate.name!.isNotEmpty &&
+            candidate.type != null)
+          candidate.name!: candidate.type!,
+    };
     for (final rule in _rules) {
       if (!rule.valid) continue;
-      final matchedIndices = <int>[];
-      for (var i = 0; i < candidates.length; i++) {
-        final candidate = candidates[i];
+      var hasMatchedMember = false;
+      final matchedNodeIndices = <int>[];
+      for (final candidate in candidates) {
         final name = candidate.name;
-        if (!candidate.validLeaf || name == null) continue;
+        if (!candidate.validMember || name == null) continue;
         if (rule.matches(
           name: name,
           type: candidate.type,
           source: candidate.source,
           providerName: candidate.providerName,
         )) {
-          matchedIndices.add(i);
+          hasMatchedMember = true;
+          if (candidate.validLeaf && candidate.nodeIndex != null) {
+            matchedNodeIndices.add(candidate.nodeIndex!);
+          }
         }
       }
-      if (matchedIndices.isNotEmpty) {
-        for (final index in matchedIndices) {
-          if (!result[index].contains(rule.name)) {
-            result[index].add(rule.name);
+      if (hasMatchedMember) {
+        for (final nodeIndex in matchedNodeIndices) {
+          if (!result[nodeIndex].contains(rule.name)) {
+            result[nodeIndex].add(rule.name);
           }
         }
         continue;
       }
       if (!rule.canUseEmptyFallback(
         inlineLeafNames: inlineLeafNames,
+        inlineMemberTypes: inlineMemberTypes,
         definedGroupTypes: _definedGroupTypes,
         providerNames: providerNames,
         unresolvedProviders: unresolvedProviders,
       )) {
         continue;
       }
-      for (var i = 0; i < candidates.length; i++) {
-        final candidate = candidates[i];
+      for (final candidate in candidates) {
+        final nodeIndex = candidate.nodeIndex;
         if (candidate.source == CatalogNodeSource.inline &&
             candidate.validLeaf &&
+            nodeIndex != null &&
             candidate.name == rule.emptyFallback &&
-            !result[i].contains(rule.name)) {
-          result[i].add(rule.name);
+            !result[nodeIndex].contains(rule.name)) {
+          result[nodeIndex].add(rule.name);
         }
       }
     }
@@ -1413,7 +1436,24 @@ ProfileCatalog buildProfileCatalog({
   final candidates = <_SelectGroupCandidate>[];
   for (final (sourceIndex, proxy)
       in ((rawProxies as List?) ?? const []).indexed) {
-    if (proxy is Map && _nonLeafTypes.contains(proxy['type'])) continue;
+    if (proxy is Map && _nonLeafTypes.contains(proxy['type'])) {
+      final rawName = proxy['name'];
+      final rawType = proxy['type'];
+      candidates.add((
+        nodeIndex: null,
+        name: rawName is String ? rawName : null,
+        type: rawType is String ? rawType : null,
+        source: CatalogNodeSource.inline,
+        providerName: null,
+        validLeaf: false,
+        validMember: rawName is String &&
+            rawName.isNotEmpty &&
+            !_builtInProxyTypes.containsKey(rawName) &&
+            rawType is String &&
+            _customNonLeafAdapterTypes.contains(rawType),
+      ));
+      continue;
+    }
     if (nodes.length >= maxNodes) {
       throw const CatalogBuildException('tooManyNodes');
     }
@@ -1423,16 +1463,19 @@ ProfileCatalog buildProfileCatalog({
           profileId: profileId,
           proxy: proxy,
         );
+        final nodeIndex = nodes.length;
         nodes.add(isolatedTest
             ? node.copyWith(
                 unsupported: catalogIsolationUnsupportedReason(proxy))
             : node);
         candidates.add((
+          nodeIndex: nodeIndex,
           name: node.name,
           type: proxy['type'] is String ? proxy['type'] as String : node.type,
           source: CatalogNodeSource.inline,
           providerName: null,
           validLeaf: true,
+          validMember: true,
         ));
         continue;
       } on FormatException {
@@ -1442,6 +1485,7 @@ ProfileCatalog buildProfileCatalog({
     }
     final name = proxy is Map ? proxy['name'] : null;
     final type = proxy is Map ? proxy['type'] : null;
+    final nodeIndex = nodes.length;
     nodes.add(unparsedCatalogNode(
       profileId: profileId,
       sourceIndex: sourceIndex,
@@ -1449,17 +1493,20 @@ ProfileCatalog buildProfileCatalog({
       type: type is String ? type : null,
     ));
     candidates.add((
+      nodeIndex: nodeIndex,
       name: name is String ? name : null,
       type: type is String ? type : null,
       source: CatalogNodeSource.inline,
       providerName: null,
       validLeaf: false,
+      validMember: false,
     ));
   }
 
   final providerNames = providers.keys.toSet();
   final resolvedSelectGroups = selectGroups.resolveForCandidates(
     candidates,
+    nodeCount: nodes.length,
     providerNames: providerNames,
     unresolvedProviders: providerNames,
   );
@@ -1664,7 +1711,25 @@ class NodeCatalogService {
       final candidates = <_SelectGroupCandidate>[];
       final unresolvedProviders = <String>{};
       void append(Object? value, CatalogNodeSource source, String? provider) {
-        if (value is Map && _nonLeafTypes.contains(value['type'])) return;
+        if (value is Map && _nonLeafTypes.contains(value['type'])) {
+          final rawName = value['name'];
+          final rawType = value['type'];
+          candidates.add((
+            nodeIndex: null,
+            name: rawName is String ? rawName : null,
+            type: rawType is String ? rawType : null,
+            source: source,
+            providerName: provider,
+            validLeaf: false,
+            validMember: rawName is String &&
+                rawName.isNotEmpty &&
+                (source != CatalogNodeSource.inline ||
+                    !_builtInProxyTypes.containsKey(rawName)) &&
+                rawType is String &&
+                _customNonLeafAdapterTypes.contains(rawType),
+          ));
+          return;
+        }
         if (nodes.length >= maxProjectionNodes) {
           issues.add(CatalogProviderIssue(
               providerName: provider, reason: 'tooManyNodes', count: 1));
@@ -1689,6 +1754,7 @@ class NodeCatalogService {
           return;
         }
         CatalogNode node;
+        final nodeIndex = nodes.length;
         try {
           node = catalogNodeFromMap(
                   profileId: profile.id,
@@ -1697,11 +1763,13 @@ class NodeCatalogService {
                   providerName: provider)
               .copyWith(unsupported: catalogIsolationUnsupportedReason(map));
           candidates.add((
+            nodeIndex: nodeIndex,
             name: node.name,
             type: map['type'] is String ? map['type'] as String : node.type,
             source: source,
             providerName: provider,
             validLeaf: true,
+            validMember: true,
           ));
         } on FormatException {
           final rawName = map['name'] is String ? map['name'] as String : null;
@@ -1714,11 +1782,13 @@ class NodeCatalogService {
               name: rawName,
               type: rawType);
           candidates.add((
+            nodeIndex: nodeIndex,
             name: rawName,
             type: rawType,
             source: source,
             providerName: provider,
             validLeaf: false,
+            validMember: false,
           ));
         }
         maps.add(map);
@@ -1775,6 +1845,7 @@ class NodeCatalogService {
       };
       final resolvedSelectGroups = selectGroups.resolveForCandidates(
         candidates,
+        nodeCount: nodes.length,
         providerNames: providerNames,
         unresolvedProviders: unresolvedProviders,
       );

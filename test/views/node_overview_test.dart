@@ -2433,16 +2433,36 @@ void main() {
     // Toggle Current -> All to unmount and remount NodeOverviewView while runtime is still A.
     container.read(proxiesScopeProvider.notifier).state = ProxiesScope.current;
     await tester.pumpAndSettle();
+    expect(find.byType(NodeOverviewView), findsNothing);
+
+    // While overview is unmounted, a refresh completes for the still-running A
+    // generation, and then setupConfig commits B before B's updateGroups returns.
+    const aGroups = [
+      Group(
+          name: 'Alpha Select',
+          type: GroupType.Selector,
+          hidden: false,
+          now: 'Alpha live',
+          all: [Proxy(name: 'Alpha live', type: 'Shadowsocks')]),
+    ];
+    container.read(groupsProvider.notifier).value = List<Group>.of(aGroups);
+    container.read(versionProvider.notifier).value =
+        container.read(versionProvider) + 1;
+    await tester.pumpAndSettle();
+    globalState.lastRuntimeProfileId = 'b';
     container.read(proxiesScopeProvider.notifier).state = ProxiesScope.all;
     await tester.pumpAndSettle();
 
-    expect(globalState.lastRuntimeProfileId, 'a');
+    expect(container.read(groupsProvider).single.name, 'Alpha Select');
     expect(container.read(currentProfileIdProvider), 'b');
+    expect(globalState.lastRuntimeProfileId, 'b');
     expect(
       find.byKey(const ValueKey('overview-use-b-Alpha live')),
       findsNothing,
-      reason: 'Reopening overview must not render A live nodes in profile B',
+      reason:
+          'Changing runtime identity does not attest the cached A group snapshot',
     );
+    expect(find.text('Switched to Beta profile · Beta fast'), findsNothing);
     expect(find.byKey(const ValueKey('overview-use-b-b-1')), findsOneWidget);
     expect(
       tester
@@ -2450,6 +2470,24 @@ void main() {
           .onPressed,
       isNotNull,
     );
+
+    // Once B's runtime groups are actually published, overview switches to B's live rows.
+    container.read(groupsProvider.notifier).value = const [
+      Group(
+          name: 'Beta Select',
+          type: GroupType.Selector,
+          hidden: false,
+          now: 'Beta fast',
+          all: [Proxy(name: 'Beta fast', type: 'Shadowsocks')]),
+    ];
+    container.read(versionProvider.notifier).value =
+        container.read(versionProvider) + 1;
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey('overview-use-b-Beta fast')),
+      findsOneWidget,
+    );
+    expect(find.text('Switched to Beta profile · Beta fast'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 }
