@@ -176,4 +176,21 @@ void main() {
       expect(runtime.requestFailure, gate);
     }
   });
+  test(
+      'off observation after statusUnavailable preserves latched requestFailure when desiredEnabled is true',
+      () {
+    final runtime = TunRuntimeController()
+      ..desiredEnabled = true
+      ..fail('interfaceDown')
+      ..invalidate('statusUnavailable');
+    expect(runtime.failure, 'statusUnavailable');
+    expect(runtime.requestFailure, 'interfaceDown');
+    runtime.accept(
+      TunStatus.fromJson(status(state: 'off', listener: false, revision: 2)),
+      runtime.observationEpoch,
+    );
+    expect(runtime.observed, TunObservedState.off);
+    expect(runtime.requestFailure, 'interfaceDown');
+    expect(runtime.failure, 'interfaceDown');
+  });
 }

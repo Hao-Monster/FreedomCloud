@@ -145,28 +145,31 @@ class TunRuntimeController extends ChangeNotifier {
         previous.instanceId == value.instanceId &&
         value.revision < previous.revision) return false;
     _status = value;
+    const clearableOnHealthyTun = [
+      'permissionDenied',
+      'authorizationRequired',
+      'startFailed',
+      'closeFailed',
+      'configurationFailed',
+      'operationFailed',
+      'interfaceDown',
+      'interfaceMissing',
+      'interfaceUnknown',
+    ];
     if (value.errorCode == null &&
-        value.observed ==
-            (desiredEnabled ? TunObservedState.on : TunObservedState.off)) {
+        (value.observed ==
+                (desiredEnabled ? TunObservedState.on : TunObservedState.off) ||
+            (value.observed == TunObservedState.on &&
+                clearableOnHealthyTun.contains(_requestFailure)))) {
       _requestFailure = null;
     }
     if (value.errorCode != null) {
       failure = value.errorCode;
-    } else if (failure == 'statusUnavailable' ||
-        failure == 'invalidStatus' ||
-        (value.observed == TunObservedState.on &&
-            const [
-              'permissionDenied',
-              'authorizationRequired',
-              'startFailed',
-              'closeFailed',
-              'configurationFailed',
-              'operationFailed',
-              'interfaceDown',
-              'interfaceMissing',
-              'interfaceUnknown'
-            ].contains(failure))) {
+    } else if (value.observed == TunObservedState.on &&
+        clearableOnHealthyTun.contains(failure)) {
       failure = null;
+    } else if (failure == 'statusUnavailable' || failure == 'invalidStatus') {
+      failure = _requestFailure;
     }
     notifyListeners();
     return true;
