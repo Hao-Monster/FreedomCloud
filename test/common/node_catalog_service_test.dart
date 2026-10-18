@@ -1097,5 +1097,71 @@ void main() {
       },
     );
     expect(excludedCustomDirect.nodes.single.selectGroups, ['Primary']);
+
+    final matchingRematch = buildProfileCatalog(
+      profileId: 'p-rematch-match',
+      fingerprint: 'f',
+      raw: {
+        'proxies': [
+          {
+            'name': 'HK',
+            'type': 'socks5',
+            'server': 'fixture.invalid',
+            'port': 443,
+          },
+          {
+            'name': 'ReRoute',
+            'type': 'rematch',
+            'target-rematch-name': 'rewritten',
+          },
+        ],
+        'proxy-groups': [
+          {
+            'name': 'Primary',
+            'type': 'select',
+            'include-all-proxies': true,
+            'filter': r'^ReRoute$',
+            'empty-fallback': 'HK',
+          },
+        ],
+      },
+    );
+    expect(
+      matchingRematch.nodes.firstWhere((node) => node.name == 'HK').selectGroups,
+      isEmpty,
+    );
+
+    final excludedRematch = buildProfileCatalog(
+      profileId: 'p-rematch-excluded',
+      fingerprint: 'f',
+      raw: {
+        'proxies': [
+          {
+            'name': 'HK',
+            'type': 'socks5',
+            'server': 'fixture.invalid',
+            'port': 443,
+          },
+          {
+            'name': 'ReRoute',
+            'type': 'rematch',
+            'target-rematch-name': 'rewritten',
+          },
+        ],
+        'proxy-groups': [
+          {
+            'name': 'Primary',
+            'type': 'select',
+            'proxies': ['ReRoute'],
+            'exclude-filter': r'^ReRoute$',
+            'empty-fallback': 'HK',
+          },
+        ],
+      },
+    );
+    expect(
+      excludedRematch.nodes.firstWhere((node) => node.name == 'HK').selectGroups,
+      ['Primary'],
+    );
   });
 }

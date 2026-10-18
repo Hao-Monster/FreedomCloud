@@ -46,6 +46,7 @@ class GlobalState {
   late AppState _appState;
   bool _appStateInitialized = false;
   List<Group>? _groupsSnapshot;
+  List<Group>? _rawGroupsSnapshot;
   int? _groupsSnapshotVersion;
   String? _groupsSnapshotProfileId;
 
@@ -53,19 +54,48 @@ class GlobalState {
   int? get groupsSnapshotVersion => _groupsSnapshotVersion;
   String? get groupsSnapshotProfileId => _groupsSnapshotProfileId;
 
+  bool matchesGroupsSnapshot(List<Group> groups, int version) =>
+      version == _groupsSnapshotVersion &&
+      (identical(groups, _groupsSnapshot) ||
+          identical(groups, _rawGroupsSnapshot));
+
+  void recordGroupsSnapshot(List<Group> groups, {int? version}) {
+    final nextVersion = version ?? _appState.version;
+    final nextState = _appState.copyWith(
+      groups: groups,
+      version: nextVersion,
+    );
+    final canonicalGroups = nextState.groups;
+    _appState = identical(canonicalGroups, nextState.groups)
+        ? nextState
+        : nextState.copyWith(groups: canonicalGroups);
+    _appStateInitialized = true;
+    _groupsSnapshot = _appState.groups;
+    _rawGroupsSnapshot = groups;
+    _groupsSnapshotVersion = nextVersion;
+    _groupsSnapshotProfileId =
+        _appState.groups.isEmpty ? null : lastRuntimeProfileId;
+  }
+
   AppState get appState => _appState;
 
   set appState(AppState value) {
+    final firstReadGroups = value.groups;
+    final isAlreadyCanonical = identical(firstReadGroups, value.groups);
+    final normalized = isAlreadyCanonical
+        ? value
+        : value.copyWith(groups: firstReadGroups);
     final groupsChanged = !_appStateInitialized ||
-        !identical(value.groups, _appState.groups) ||
-        value.version != _appState.version;
-    _appState = value;
+        !identical(normalized.groups, _groupsSnapshot) ||
+        normalized.version != _groupsSnapshotVersion;
+    _appState = normalized;
     _appStateInitialized = true;
     if (groupsChanged) {
-      _groupsSnapshot = value.groups;
-      _groupsSnapshotVersion = value.version;
+      _groupsSnapshot = normalized.groups;
+      _rawGroupsSnapshot = firstReadGroups;
+      _groupsSnapshotVersion = normalized.version;
       _groupsSnapshotProfileId =
-          value.groups.isEmpty ? null : lastRuntimeProfileId;
+          normalized.groups.isEmpty ? null : lastRuntimeProfileId;
     }
   }
   bool isPre = true;

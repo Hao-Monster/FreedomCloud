@@ -2490,4 +2490,66 @@ void main() {
     expect(find.text('Switched to Beta profile · Beta fast'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets(
+      'one-click use: unrelated AppState updates and cold overview mount preserve preexisting group snapshot ownership',
+      (tester) async {
+    const oldGroups = [
+      Group(
+          name: 'Alpha Select',
+          type: GroupType.Selector,
+          hidden: false,
+          now: 'Alpha live',
+          all: [Proxy(name: 'Alpha live', type: 'Shadowsocks')]),
+    ];
+    const bSetup = SetupParams(
+      config: {'proxy-groups': []},
+      selectedMap: {},
+      testUrl: 'https://example.invalid/204',
+    );
+
+    globalState.lastRuntimeProfileId = 'a';
+    globalState.appState = globalState.appState.copyWith(
+      viewSize: const Size(1200, 1000),
+      groups: List<Group>.of(oldGroups),
+    );
+    expect(globalState.groupsSnapshotProfileId, 'a');
+
+    globalState.config = globalState.config.copyWith(currentProfileId: 'b');
+    globalState.commitRuntimeSetup(bSetup, 'b');
+    expect(globalState.groupsSnapshotProfileId, 'a');
+
+    final container = await mount(
+      tester,
+      width: 1200,
+      child: const NodeOverviewScopeView(currentView: SizedBox.shrink()),
+      catalogs: {
+        'b': ProfileCatalog(
+            profileId: 'b',
+            fingerprint: 'fb',
+            status: ProfileCatalogStatus.ready,
+            nodes: [
+              _node('b-1', 'Beta fast')
+                  .copyWith(selectGroups: const ['Beta Select']),
+            ]),
+      },
+    );
+    container.read(runTimeProvider.notifier).value = 123;
+    expect(globalState.appState.runTime, 123);
+    expect(globalState.groupsSnapshotProfileId, 'a');
+
+    container.read(proxiesScopeProvider.notifier).state = ProxiesScope.all;
+    await tester.pumpAndSettle();
+
+    expect(globalState.groupsSnapshotProfileId, 'a');
+    expect(globalState.lastRuntimeProfileId, 'b');
+    expect(container.read(currentProfileIdProvider), 'b');
+    expect(container.read(groupsProvider).single.name, 'Alpha Select');
+    expect(
+      find.byKey(const ValueKey('overview-use-b-Alpha live')),
+      findsNothing,
+    );
+    expect(find.byKey(const ValueKey('overview-use-b-b-1')), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
 }

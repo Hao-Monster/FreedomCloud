@@ -1140,6 +1140,68 @@ const _customNonLeafAdapterTypes = <String>{
   'dns',
 };
 
+bool _isNonEmptyString(Object? value) => value is String && value.isNotEmpty;
+
+bool _isWeakStringFieldPresent(Map<Object?, Object?> map, String key) {
+  final altKey = key.replaceAll('-', '_');
+  final value = map.containsKey(key) ? map[key] : map[altKey];
+  return value is String || value is num || value is bool;
+}
+
+bool _isValidNonEndpointCoreProxy(
+  Map<Object?, Object?> proxy, {
+  required CatalogNodeSource source,
+}) {
+  final rawName = proxy['name'];
+  final rawType = proxy['type'];
+  if (rawName is! String ||
+      rawName.isEmpty ||
+      (source == CatalogNodeSource.inline &&
+          _builtInProxyTypes.containsKey(rawName)) ||
+      rawType is! String ||
+      rawType.isEmpty) {
+    return false;
+  }
+  switch (rawType) {
+    case 'direct' || 'reject' || 'dns':
+      return _customNonLeafAdapterTypes.contains(rawType);
+    case 'rematch':
+      return _isWeakStringFieldPresent(proxy, 'target-rematch-name') ||
+          _isWeakStringFieldPresent(proxy, 'target-sub-rule');
+    case 'tailscale' || 'easytier':
+      return true;
+    case 'zerotier':
+      final network = proxy['network'];
+      return network is String &&
+          RegExp(r'^[0-9a-fA-F]{16}$').hasMatch(network);
+    case 'wireguard':
+      final privateKey = proxy['private-key'] ?? proxy['private_key'];
+      final peers = proxy['peers'];
+      return _isNonEmptyString(privateKey) &&
+          peers is List &&
+          peers.isNotEmpty &&
+          peers.every((peer) => peer is Map);
+    case 'mieru':
+      final server = proxy['server'];
+      final portRange = proxy['port-range'] ?? proxy['port_range'];
+      final transport = proxy['transport'];
+      final username = proxy['username'];
+      final password = proxy['password'];
+      return _isNonEmptyString(server) &&
+          _isNonEmptyString(portRange) &&
+          (transport == 'TCP' || transport == 'UDP') &&
+          _isNonEmptyString(username) &&
+          _isNonEmptyString(password);
+    case 'hysteria' || 'hysteria2':
+      final server = proxy['server'];
+      final ports = proxy['ports'];
+      return _isNonEmptyString(server) &&
+          ((ports is String && ports.isNotEmpty) || ports is int);
+    default:
+      return false;
+  }
+}
+
 class _SelectGroupRule {
   const _SelectGroupRule({
     required this.name,
@@ -1354,10 +1416,33 @@ class _SelectGroupIndex {
     for (final rule in _rules) {
       if (!rule.valid) continue;
       var hasMatchedMember = false;
+      var hasUncertainMatch = false;
       final matchedNodeIndices = <int>[];
       for (final candidate in candidates) {
         final name = candidate.name;
-        if (!candidate.validMember || name == null) continue;
+        if (!candidate.validMember) {
+          if (candidate.nodeIndex != null) {
+            final includedBySource = switch (candidate.source) {
+              CatalogNodeSource.inline => rule.includeAllProxies,
+              CatalogNodeSource.provider => rule.includeAllProviders ||
+                  (candidate.providerName != null &&
+                      rule.usedProviders.contains(candidate.providerName)),
+            };
+            if (includedBySource &&
+                (name == null ||
+                    candidate.type == null ||
+                    rule.matches(
+                      name: name,
+                      type: candidate.type,
+                      source: candidate.source,
+                      providerName: candidate.providerName,
+                    ))) {
+              hasUncertainMatch = true;
+            }
+          }
+          continue;
+        }
+        if (name == null) continue;
         if (rule.matches(
           name: name,
           type: candidate.type,
@@ -1378,13 +1463,14 @@ class _SelectGroupIndex {
         }
         continue;
       }
-      if (!rule.canUseEmptyFallback(
-        inlineLeafNames: inlineLeafNames,
-        inlineMemberTypes: inlineMemberTypes,
-        definedGroupTypes: _definedGroupTypes,
-        providerNames: providerNames,
-        unresolvedProviders: unresolvedProviders,
-      )) {
+      if (hasUncertainMatch ||
+          !rule.canUseEmptyFallback(
+            inlineLeafNames: inlineLeafNames,
+            inlineMemberTypes: inlineMemberTypes,
+            definedGroupTypes: _definedGroupTypes,
+            providerNames: providerNames,
+            unresolvedProviders: unresolvedProviders,
+          )) {
         continue;
       }
       for (final candidate in candidates) {
@@ -1446,11 +1532,10 @@ ProfileCatalog buildProfileCatalog({
         source: CatalogNodeSource.inline,
         providerName: null,
         validLeaf: false,
-        validMember: rawName is String &&
-            rawName.isNotEmpty &&
-            !_builtInProxyTypes.containsKey(rawName) &&
-            rawType is String &&
-            _customNonLeafAdapterTypes.contains(rawType),
+        validMember: _isValidNonEndpointCoreProxy(
+          proxy,
+          source: CatalogNodeSource.inline,
+        ),
       ));
       continue;
     }
@@ -1475,7 +1560,7 @@ ProfileCatalog buildProfileCatalog({
           source: CatalogNodeSource.inline,
           providerName: null,
           validLeaf: true,
-          validMember: true,
+          validMember: !_builtInProxyTypes.containsKey(node.name),
         ));
         continue;
       } on FormatException {
@@ -1499,7 +1584,11 @@ ProfileCatalog buildProfileCatalog({
       source: CatalogNodeSource.inline,
       providerName: null,
       validLeaf: false,
-      validMember: false,
+      validMember: proxy is Map &&
+          _isValidNonEndpointCoreProxy(
+            proxy,
+            source: CatalogNodeSource.inline,
+          ),
     ));
   }
 
@@ -1721,12 +1810,10 @@ class NodeCatalogService {
             source: source,
             providerName: provider,
             validLeaf: false,
-            validMember: rawName is String &&
-                rawName.isNotEmpty &&
-                (source != CatalogNodeSource.inline ||
-                    !_builtInProxyTypes.containsKey(rawName)) &&
-                rawType is String &&
-                _customNonLeafAdapterTypes.contains(rawType),
+            validMember: _isValidNonEndpointCoreProxy(
+              value,
+              source: source,
+            ),
           ));
           return;
         }
@@ -1769,7 +1856,8 @@ class NodeCatalogService {
             source: source,
             providerName: provider,
             validLeaf: true,
-            validMember: true,
+            validMember: source != CatalogNodeSource.inline ||
+                !_builtInProxyTypes.containsKey(node.name),
           ));
         } on FormatException {
           final rawName = map['name'] is String ? map['name'] as String : null;
@@ -1788,7 +1876,11 @@ class NodeCatalogService {
             source: source,
             providerName: provider,
             validLeaf: false,
-            validMember: false,
+            validMember: value is Map &&
+                _isValidNonEndpointCoreProxy(
+                  value,
+                  source: source,
+                ),
           ));
         }
         maps.add(map);

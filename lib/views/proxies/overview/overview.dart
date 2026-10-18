@@ -91,6 +91,11 @@ class _OverviewSwitchTracker {
   String? attestedProfileId;
   String? feedback;
 
+  bool matchesAttested(List<Group> groups, int version) =>
+      attestedGroups != null &&
+      version == attestedVersion &&
+      identical(groups, attestedGroups);
+
   void onSnapshotChanged({
     required List<Group> groups,
     required int version,
@@ -114,22 +119,30 @@ final _overviewSwitchTrackerProvider =
       ref.read(activeNodeCatalogProvider)?.profileId;
   final initialGroups = ref.read(groupsProvider);
   final initialVersion = ref.read(versionProvider);
-  final initialAttestedProfileId =
-      identical(initialGroups, globalState.groupsSnapshot) &&
-              initialVersion == globalState.groupsSnapshotVersion &&
-              globalState.groupsSnapshotProfileId != null
-          ? globalState.groupsSnapshotProfileId
-          : currentRuntimeProfileId();
-  tracker.onSnapshotChanged(
-    groups: initialGroups,
-    version: initialVersion,
-    runtimeProfileId: initialAttestedProfileId,
-  );
-  void recordUpdate() {
+  if (globalState.matchesGroupsSnapshot(initialGroups, initialVersion)) {
     tracker.onSnapshotChanged(
-      groups: ref.read(groupsProvider),
-      version: ref.read(versionProvider),
-      runtimeProfileId: currentRuntimeProfileId(),
+      groups: initialGroups,
+      version: initialVersion,
+      runtimeProfileId: globalState.groupsSnapshotProfileId ??
+          (globalState.lastRuntimeProfileId == null
+              ? ref.read(activeNodeCatalogProvider)?.profileId
+              : null),
+    );
+  }
+  void recordUpdate() {
+    final nextGroups = ref.read(groupsProvider);
+    final nextVersion = ref.read(versionProvider);
+    final runtimeProfileId =
+        globalState.matchesGroupsSnapshot(nextGroups, nextVersion)
+            ? (globalState.groupsSnapshotProfileId ??
+                (globalState.lastRuntimeProfileId == null
+                    ? ref.read(activeNodeCatalogProvider)?.profileId
+                    : null))
+            : currentRuntimeProfileId();
+    tracker.onSnapshotChanged(
+      groups: nextGroups,
+      version: nextVersion,
+      runtimeProfileId: runtimeProfileId,
     );
   }
   ref.listen<List<Group>>(groupsProvider, (_, __) => recordUpdate());
@@ -150,6 +163,36 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
   Timer? _clock;
   late final NodeCatalogTester _tester;
   String? _feedback;
+
+  ({bool verified, String? profileId}) _resolveSnapshotAttestation(
+    _OverviewSwitchTracker tracker,
+    List<Group> groups,
+    int version,
+  ) {
+    if (tracker.matchesAttested(groups, version)) {
+      return (verified: true, profileId: tracker.attestedProfileId);
+    }
+    if (globalState.matchesGroupsSnapshot(groups, version)) {
+      return (
+        verified: true,
+        profileId: globalState.groupsSnapshotProfileId,
+      );
+    }
+    return (verified: false, profileId: null);
+  }
+
+  bool _isSnapshotLiveForProfile({
+    required String profileId,
+    required List<Group> groups,
+    required ({bool verified, String? profileId}) attestation,
+  }) {
+    if (groups.isEmpty) return true;
+    if (!attestation.verified) return false;
+    if (attestation.profileId != null) {
+      return attestation.profileId == profileId;
+    }
+    return globalState.lastRuntimeProfileId == null;
+  }
 
   @override
   void initState() {
@@ -273,7 +316,7 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
     final latest =
         ref.read(profilesProvider).getProfile(profile.id) ?? profile;
     final selectedMap = Map<String, String>.from(latest.selectedMap)
-      ..[targetGroup] = node.name;
+        ..[targetGroup] = node.name;
     final updated = latest.copyWith(
       selectedMap: selectedMap,
       currentGroupName: targetGroup,
@@ -285,19 +328,19 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
         ref.read(activeNodeCatalogProvider)?.profileId;
     final currentGroups = ref.read(groupsProvider);
     final currentVersion = ref.read(versionProvider);
-    final currentSnapshotProfileId =
-        identical(currentGroups, tracker.attestedGroups) &&
-                currentVersion == tracker.attestedVersion
-            ? tracker.attestedProfileId
-            : (identical(currentGroups, globalState.groupsSnapshot) &&
-                    currentVersion == globalState.groupsSnapshotVersion
-                ? globalState.groupsSnapshotProfileId
-                : null);
+    final attestation = _resolveSnapshotAttestation(
+      tracker,
+      currentGroups,
+      currentVersion,
+    );
     final isAlreadyLiveActive = currentActiveId == updated.id &&
         (verifiedRuntimeProfileId == null ||
             verifiedRuntimeProfileId == updated.id) &&
-        (currentSnapshotProfileId == null ||
-            currentSnapshotProfileId == updated.id) &&
+        _isSnapshotLiveForProfile(
+          profileId: updated.id,
+          groups: currentGroups,
+          attestation: attestation,
+        ) &&
         tracker.pendingProfileId != updated.id;
     if (currentActiveId != updated.id) {
       tracker
@@ -345,17 +388,11 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
     final tracker = ref.watch(_overviewSwitchTrackerProvider);
     final verifiedRuntimeProfileId = globalState.lastRuntimeProfileId ??
         ref.watch(activeNodeCatalogProvider)?.profileId;
-    final snapshotAttestedProfileId =
-        identical(groups, tracker.attestedGroups) &&
-                version == tracker.attestedVersion
-            ? tracker.attestedProfileId
-            : (identical(groups, globalState.groupsSnapshot) &&
-                    version == globalState.groupsSnapshotVersion
-                ? globalState.groupsSnapshotProfileId
-                : null);
+    final attestation = _resolveSnapshotAttestation(tracker, groups, version);
     final runtimeMatchesPending = tracker.pendingProfileId != null &&
         verifiedRuntimeProfileId == tracker.pendingProfileId &&
-        snapshotAttestedProfileId == tracker.pendingProfileId;
+        attestation.verified &&
+        attestation.profileId == tracker.pendingProfileId;
     if (tracker.pendingProfileId != null) {
       if (activeId != tracker.pendingProfileId) {
         tracker
@@ -387,8 +424,11 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
     } else if (activeId != null &&
         ((verifiedRuntimeProfileId != null &&
                 verifiedRuntimeProfileId != activeId) ||
-            (snapshotAttestedProfileId != null &&
-                snapshotAttestedProfileId != activeId))) {
+            !_isSnapshotLiveForProfile(
+              profileId: activeId,
+              groups: groups,
+              attestation: attestation,
+            ))) {
       tracker
         ..pendingProfileId = activeId
         ..pendingGroups = groups
@@ -398,8 +438,11 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
         profile.id == activeId &&
         (verifiedRuntimeProfileId == null ||
             verifiedRuntimeProfileId == profile.id) &&
-        (snapshotAttestedProfileId == null ||
-            snapshotAttestedProfileId == profile.id) &&
+        _isSnapshotLiveForProfile(
+          profileId: profile.id,
+          groups: groups,
+          attestation: attestation,
+        ) &&
         tracker.pendingProfileId != profile.id;
     final feedback = _feedback ?? tracker.feedback;
     final isMobile = ref.watch(isMobileViewProvider);

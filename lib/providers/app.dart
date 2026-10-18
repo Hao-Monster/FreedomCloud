@@ -281,7 +281,8 @@ class Version extends _$Version with AutoDisposeNotifierMixin {
 
   @override
   void onUpdate(int value) {
-    globalState.appState = globalState.appState.copyWith(
+    globalState.recordGroupsSnapshot(
+      globalState.appState.groups,
       version: value,
     );
   }
@@ -294,9 +295,7 @@ class Groups extends _$Groups with AutoDisposeNotifierMixin {
 
   @override
   void onUpdate(List<Group> value) {
-    globalState.appState = globalState.appState.copyWith(
-      groups: value,
-    );
+    globalState.recordGroupsSnapshot(value);
   }
 }
 
