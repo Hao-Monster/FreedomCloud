@@ -79,6 +79,18 @@ class NodeOverviewScopeAction extends ConsumerWidget {
   }
 }
 
+class _OverviewSwitchTracker {
+  String? pendingProfileId;
+  String? pendingProfileLabel;
+  String? pendingNodeName;
+  List<Group>? pendingGroups;
+  int? pendingVersion;
+  String? feedback;
+}
+
+final _overviewSwitchTrackerProvider =
+    Provider<_OverviewSwitchTracker>((ref) => _OverviewSwitchTracker());
+
 class NodeOverviewView extends ConsumerStatefulWidget {
   const NodeOverviewView({super.key});
 
@@ -92,14 +104,12 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
   Timer? _clock;
   late final NodeCatalogTester _tester;
   String? _feedback;
-  String? _pendingSwitchProfileId;
-  List<Group>? _pendingSwitchGroups;
-  int? _pendingSwitchVersion;
 
   @override
   void initState() {
     super.initState();
     _tester = ref.read(nodeCatalogTesterProvider);
+    _feedback = ref.read(_overviewSwitchTrackerProvider).feedback;
     _clock = Timer.periodic(const Duration(minutes: 1), (_) {
       if (mounted) setState(() {});
     });
@@ -114,6 +124,7 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
 
   Future<void> _run(Future<DelayBatchResult> Function() action,
       {bool summarize = false}) async {
+    ref.read(_overviewSwitchTrackerProvider).feedback = null;
     setState(() => _feedback = null);
     String? feedback;
     try {
@@ -143,7 +154,10 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
     } catch (_) {
       feedback = appLocalizations.nodeOverviewTestUnavailable;
     }
-    if (mounted) setState(() => _feedback = feedback);
+    if (mounted) {
+      ref.read(_overviewSwitchTrackerProvider).feedback = feedback;
+      setState(() => _feedback = feedback);
+    }
   }
 
   void _testCurrent(Profile? selected) {
@@ -195,10 +209,12 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
             ),
           );
     }
+    final feedback = appLocalizations.nodeOverviewSwitchedToNode(
+        current.label ?? current.id, proxyName);
+    ref.read(_overviewSwitchTrackerProvider).feedback = feedback;
     if (mounted) {
       setState(() {
-        _feedback = appLocalizations.nodeOverviewSwitchedToNode(
-            current.label ?? current.id, proxyName);
+        _feedback = feedback;
       });
     }
   }
@@ -217,21 +233,46 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
       currentGroupName: targetGroup,
     );
     ref.read(profilesProvider.notifier).setProfile(updated);
-    if (ref.read(currentProfileIdProvider) != updated.id) {
-      _pendingSwitchProfileId = updated.id;
-      _pendingSwitchGroups = ref.read(groupsProvider);
-      _pendingSwitchVersion = ref.read(versionProvider);
+    final tracker = ref.read(_overviewSwitchTrackerProvider);
+    final currentActiveId = ref.read(currentProfileIdProvider);
+    final verifiedRuntimeProfileId = globalState.lastRuntimeProfileId ??
+        ref.read(activeNodeCatalogProvider)?.profileId;
+    final isAlreadyLiveActive = currentActiveId == updated.id &&
+        (verifiedRuntimeProfileId == null ||
+            verifiedRuntimeProfileId == updated.id) &&
+        tracker.pendingProfileId != updated.id;
+    if (currentActiveId != updated.id) {
+      tracker
+        ..pendingProfileId = updated.id
+        ..pendingProfileLabel = updated.label ?? updated.id
+        ..pendingNodeName = node.name
+        ..pendingGroups = ref.read(groupsProvider)
+        ..pendingVersion = ref.read(versionProvider)
+        ..feedback = null;
       ref.read(currentProfileIdProvider.notifier).value = updated.id;
-    } else if (globalState.isAppControllerReady) {
-      if (_pendingSwitchProfileId == updated.id) {
-        globalState.appController.applyProfileDebounce(silence: true);
+    } else if (!isAlreadyLiveActive) {
+      tracker
+        ..pendingProfileId = updated.id
+        ..pendingProfileLabel = updated.label ?? updated.id
+        ..pendingNodeName = node.name
+        ..pendingGroups = ref.read(groupsProvider)
+        ..pendingVersion = ref.read(versionProvider)
+        ..feedback = null;
+      if (globalState.isAppControllerReady) {
+        globalState.appController
+          ..applyProfileDebounce(silence: true)
+          ..changeProxyDebounce(targetGroup, node.name);
       }
-      globalState.appController.changeProxyDebounce(targetGroup, node.name);
+    } else {
+      if (globalState.isAppControllerReady) {
+        globalState.appController.changeProxyDebounce(targetGroup, node.name);
+      }
+      tracker.feedback = appLocalizations.nodeOverviewSwitchedToNode(
+          updated.label ?? updated.id, node.name);
     }
     if (mounted) {
       setState(() {
-        _feedback = appLocalizations.nodeOverviewSwitchedToNode(
-            updated.label ?? updated.id, node.name);
+        _feedback = tracker.feedback;
       });
     }
   }
@@ -243,23 +284,53 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
     final activeId = ref.watch(currentProfileIdProvider);
     final groups = ref.watch(groupsProvider);
     final version = ref.watch(versionProvider);
+    final tracker = ref.watch(_overviewSwitchTrackerProvider);
     final verifiedRuntimeProfileId = globalState.lastRuntimeProfileId ??
         ref.watch(activeNodeCatalogProvider)?.profileId;
-    final runtimeMatchesPending = _pendingSwitchProfileId != null &&
-        verifiedRuntimeProfileId == _pendingSwitchProfileId;
-    if (_pendingSwitchProfileId != null) {
-      if (activeId != _pendingSwitchProfileId ||
-          (runtimeMatchesPending &&
-              (!identical(groups, _pendingSwitchGroups) ||
-                  version != _pendingSwitchVersion))) {
-        _pendingSwitchProfileId = null;
-        _pendingSwitchGroups = null;
-        _pendingSwitchVersion = null;
+    final runtimeMatchesPending = tracker.pendingProfileId != null &&
+        verifiedRuntimeProfileId == tracker.pendingProfileId;
+    if (tracker.pendingProfileId != null) {
+      if (activeId != tracker.pendingProfileId) {
+        tracker
+          ..pendingProfileId = null
+          ..pendingProfileLabel = null
+          ..pendingNodeName = null
+          ..pendingGroups = null
+          ..pendingVersion = null;
+      } else if (runtimeMatchesPending &&
+          (!identical(groups, tracker.pendingGroups) ||
+              version != tracker.pendingVersion)) {
+        if (tracker.pendingProfileLabel != null &&
+            tracker.pendingNodeName != null) {
+          tracker.feedback = appLocalizations.nodeOverviewSwitchedToNode(
+              tracker.pendingProfileLabel!, tracker.pendingNodeName!);
+          _feedback = tracker.feedback;
+        }
+        tracker
+          ..pendingProfileId = null
+          ..pendingProfileLabel = null
+          ..pendingNodeName = null
+          ..pendingGroups = null
+          ..pendingVersion = null;
       } else if (!runtimeMatchesPending) {
-        _pendingSwitchGroups = groups;
-        _pendingSwitchVersion = version;
+        tracker
+          ..pendingGroups = groups
+          ..pendingVersion = version;
       }
+    } else if (verifiedRuntimeProfileId != null &&
+        activeId != null &&
+        verifiedRuntimeProfileId != activeId) {
+      tracker
+        ..pendingProfileId = activeId
+        ..pendingGroups = groups
+        ..pendingVersion = version;
     }
+    bool isLiveActive(Profile profile) =>
+        profile.id == activeId &&
+        (verifiedRuntimeProfileId == null ||
+            verifiedRuntimeProfileId == profile.id) &&
+        tracker.pendingProfileId != profile.id;
+    final feedback = _feedback ?? tracker.feedback;
     final isMobile = ref.watch(isMobileViewProvider);
     final sort =
         ref.watch(proxiesStyleSettingProvider.select((s) => s.sortType));
@@ -369,12 +440,12 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
               value: tester.total == 0
                   ? null
                   : (tester.completed / tester.total).clamp(0.0, 1.0)),
-        if (_feedback != null)
+        if (feedback != null)
           Padding(
               padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
               child: Align(
                   alignment: Alignment.centerLeft,
-                  child: Text(_feedback!,
+                  child: Text(feedback,
                       key: const ValueKey('overview-feedback')))),
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
@@ -410,8 +481,7 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
                           profile: profile,
                           selected: selected == profile.id,
                           active: isCurrent,
-                          liveActive: isCurrent &&
-                              _pendingSwitchProfileId != profile.id,
+                          liveActive: isLiveActive(profile),
                           now: now,
                           onSelect: () =>
                               setState(() => _selectedProfile = profile.id));
@@ -428,8 +498,7 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
                       key: ValueKey('overview-section-${profile.id}'),
                       profile: profile,
                       active: profile.id == activeId,
-                      liveActive: profile.id == activeId &&
-                          _pendingSwitchProfileId != profile.id,
+                      liveActive: isLiveActive(profile),
                       showHeader: selected == null,
                       loadImmediately: selected != null || searching,
                       availableOnly: _availableOnly,
@@ -623,9 +692,6 @@ class _ProfileNodesSliverState extends ConsumerState<_ProfileNodesSliver> {
                     final node = nodes[index];
                     final targetGroup =
                         _targetGroupForCatalogNode(profile, node, mode);
-                    final inUse = widget.active &&
-                        targetGroup != null &&
-                        profile.selectedMap[targetGroup] == node.name;
                     return _InactiveNodeRow(
                         key: ValueKey(
                             'overview-node-${profile.id}-${node.identityKey}'),
@@ -640,9 +706,8 @@ class _ProfileNodesSliverState extends ConsumerState<_ProfileNodesSliver> {
                             : () => widget.onTest(profile, node),
                         useKey: ValueKey(
                             'overview-use-${profile.id}-${node.identityKey}'),
-                        inUse: inUse,
-                        onUse: inUse ||
-                                targetGroup == null ||
+                        inUse: false,
+                        onUse: targetGroup == null ||
                                 profile.isUpdating ||
                                 catalog?.status != ProfileCatalogStatus.ready
                             ? null

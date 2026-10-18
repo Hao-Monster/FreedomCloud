@@ -893,4 +893,157 @@ void main() {
     );
     expect(invalidFilterWithExplicit.nodes.single.selectGroups, ['Fallback']);
   });
+
+  test(
+      'selectGroups resolves empty-fallback when filtering empties group candidates and guards against non-empty or unresolved groups',
+      () async {
+    final fallbackMatched = buildProfileCatalog(
+      profileId: 'p',
+      fingerprint: 'f',
+      raw: {
+        'proxies': [
+          {
+            'name': 'HK',
+            'type': 'ss',
+            'server': '1.1.1.1',
+            'port': 443,
+            'cipher': 'aes-128-gcm',
+            'password': 'secret',
+          },
+        ],
+        'proxy-groups': [
+          {
+            'name': 'Primary',
+            'type': 'select',
+            'include-all-proxies': true,
+            'filter': r'^JP$',
+            'empty-fallback': 'HK',
+          },
+          {
+            'name': 'TypeFiltered',
+            'type': 'select',
+            'include-all': true,
+            'exclude-type': 'ss',
+            'empty-fallback': 'HK',
+          },
+        ],
+      },
+    );
+    expect(fallbackMatched.nodes.single.selectGroups, [
+      'Primary',
+      'TypeFiltered',
+    ]);
+
+    final nonEmptyOrUnresolved = buildProfileCatalog(
+      profileId: 'p-guard',
+      fingerprint: 'f',
+      raw: {
+        'proxies': [
+          {
+            'name': 'HK',
+            'type': 'ss',
+            'server': '1.1.1.1',
+            'port': 443,
+            'cipher': 'aes-128-gcm',
+            'password': 'secret',
+          },
+          {
+            'name': 'JP',
+            'type': 'ss',
+            'server': '1.1.1.2',
+            'port': 443,
+            'cipher': 'aes-128-gcm',
+            'password': 'secret',
+          },
+        ],
+        'proxy-providers': {
+          'remote': {'type': 'http', 'path': './remote.yaml'},
+        },
+        'proxy-groups': [
+          {
+            'name': 'HasMatchingMember',
+            'type': 'select',
+            'include-all-proxies': true,
+            'filter': r'^JP$',
+            'empty-fallback': 'HK',
+          },
+          {
+            'name': 'HasExplicitDirect',
+            'type': 'select',
+            'proxies': ['DIRECT'],
+            'include-all-proxies': true,
+            'filter': r'^US$',
+            'empty-fallback': 'HK',
+          },
+          {
+            'name': 'UnresolvedProviderGroup',
+            'type': 'select',
+            'include-all': true,
+            'filter': r'^US$',
+            'empty-fallback': 'HK',
+          },
+        ],
+      },
+    );
+    final hkGuard =
+        nonEmptyOrUnresolved.nodes.firstWhere((node) => node.name == 'HK');
+    final jpGuard =
+        nonEmptyOrUnresolved.nodes.firstWhere((node) => node.name == 'JP');
+    expect(hkGuard.selectGroups, isEmpty);
+    expect(jpGuard.selectGroups, ['HasMatchingMember']);
+
+    final service = NodeCatalogService(
+      readProfileConfig: (_) async => {
+        'proxies': [
+          {
+            'name': 'HK',
+            'type': 'ss',
+            'server': '1.1.1.1',
+            'port': 443,
+            'cipher': 'aes-128-gcm',
+            'password': 'secret',
+          },
+        ],
+        'proxy-providers': {
+          'remote': {'type': 'inline'},
+        },
+        'proxy-groups': [
+          {
+            'name': 'ProviderBackedPrimary',
+            'type': 'select',
+            'include-all': true,
+            'filter': r'^US$',
+            'empty-fallback': 'HK',
+          },
+        ],
+      },
+      evaluate: (raw) async => raw,
+      fileMetadata: (_) async => metadata,
+      scriptFingerprint: () => script,
+      providerResolver: CatalogProviderResolver(
+        homeDirectory: () async => '/tmp',
+        httpCachePath: (id, url) async => '/tmp/unused',
+        parse: (_, __) async => jsonEncode({
+          'rejected': 0,
+          'proxies': [
+            {
+              'name': 'SG',
+              'type': 'ss',
+              'server': '1.1.1.3',
+              'port': 443,
+              'cipher': 'aes-128-gcm',
+              'password': 'secret',
+            },
+          ],
+        }),
+      ),
+    );
+    final plan = await service.resolveForTestAll(
+      _profile('p-resolved'),
+      isCurrent: () => true,
+    );
+    addTearDown(plan.dispose);
+    final hkResolved = plan.nodes.firstWhere((node) => node.name == 'HK');
+    expect(hkResolved.selectGroups, ['ProviderBackedPrimary']);
+  });
 }

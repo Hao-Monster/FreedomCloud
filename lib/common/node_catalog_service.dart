@@ -1125,6 +1125,14 @@ _ParsedExcludeTypes _parseExcludeTypes(Object? raw) {
   return (types: types, valid: true);
 }
 
+const _builtInProxyTypes = <String, String>{
+  'DIRECT': 'direct',
+  'REJECT': 'reject',
+  'REJECT-DROP': 'reject-drop',
+  'PASS': 'pass',
+  'COMPATIBLE': 'compatible',
+};
+
 class _SelectGroupRule {
   const _SelectGroupRule({
     required this.name,
@@ -1135,6 +1143,8 @@ class _SelectGroupRule {
     required this.filter,
     required this.excludeFilter,
     required this.excludeTypes,
+    required this.emptyFallback,
+    required this.valid,
   });
 
   final String name;
@@ -1145,6 +1155,23 @@ class _SelectGroupRule {
   final _ParsedGroupFilter filter;
   final _ParsedGroupFilter excludeFilter;
   final _ParsedExcludeTypes excludeTypes;
+  final String emptyFallback;
+  final bool valid;
+
+  bool isExcluded({required String name, String? type}) {
+    final normalizedType = type?.trim().toLowerCase();
+    final canonicalType = _canonicalAdapterType(normalizedType);
+    if ((normalizedType != null &&
+            normalizedType.isNotEmpty &&
+            excludeTypes.types.contains(normalizedType)) ||
+        (canonicalType != null && excludeTypes.types.contains(canonicalType))) {
+      return true;
+    }
+    if (excludeFilter.regexes.any((reg) => reg.hasMatch(name))) {
+      return true;
+    }
+    return false;
+  }
 
   bool matches({
     required String name,
@@ -1152,18 +1179,10 @@ class _SelectGroupRule {
     required CatalogNodeSource source,
     String? providerName,
   }) {
-    if (!excludeTypes.valid || !excludeFilter.allValid || !filter.allValid) {
+    if (!valid) {
       return false;
     }
-    final normalizedType = type?.trim().toLowerCase();
-    final canonicalType = _canonicalAdapterType(normalizedType);
-    if ((normalizedType != null &&
-            normalizedType.isNotEmpty &&
-            excludeTypes.types.contains(normalizedType)) ||
-        (canonicalType != null && excludeTypes.types.contains(canonicalType))) {
-      return false;
-    }
-    if (excludeFilter.regexes.any((reg) => reg.hasMatch(name))) {
+    if (isExcluded(name: name, type: type)) {
       return false;
     }
     if (source == CatalogNodeSource.inline && explicitProxies.contains(name)) {
@@ -1178,10 +1197,67 @@ class _SelectGroupRule {
     if (!filter.hasFilter) return true;
     return filter.regexes.any((reg) => reg.hasMatch(name));
   }
+
+  bool canUseEmptyFallback({
+    required Set<String> inlineLeafNames,
+    required Map<String, String> definedGroupTypes,
+    required Set<String> providerNames,
+    required Set<String> unresolvedProviders,
+  }) {
+    if (!valid ||
+        emptyFallback.isEmpty ||
+        _builtInProxyTypes.containsKey(emptyFallback) ||
+        definedGroupTypes.containsKey(emptyFallback) ||
+        !inlineLeafNames.contains(emptyFallback)) {
+      return false;
+    }
+    final hasProviderSource =
+        usedProviders.isNotEmpty || (includeAllProviders && providerNames.isNotEmpty);
+    final hasAnySource =
+        includeAllProxies || explicitProxies.isNotEmpty || hasProviderSource;
+    if (!hasAnySource) return false;
+    if (!usedProviders.every(providerNames.contains)) return false;
+    if (usedProviders.any(unresolvedProviders.contains) ||
+        (includeAllProviders && unresolvedProviders.isNotEmpty)) {
+      return false;
+    }
+    for (final explicit in explicitProxies) {
+      final nonLeafType =
+          _builtInProxyTypes[explicit] ?? definedGroupTypes[explicit];
+      if (nonLeafType == null) {
+        if (!inlineLeafNames.contains(explicit)) {
+          return false;
+        }
+        continue;
+      }
+      if (!isExcluded(name: explicit, type: nonLeafType)) {
+        return false;
+      }
+    }
+    return true;
+  }
 }
+
+typedef _SelectGroupCandidate = ({
+  String? name,
+  String? type,
+  CatalogNodeSource source,
+  String? providerName,
+  bool validLeaf,
+});
 
 class _SelectGroupIndex {
   _SelectGroupIndex(List? rawGroups) {
+    for (final group in rawGroups ?? const []) {
+      if (group is! Map) {
+        throw const CatalogBuildException('parseFailed');
+      }
+      final name = group['name'];
+      final type = group['type'];
+      if (name is String && name.isNotEmpty && type is String) {
+        _definedGroupTypes[name] = type;
+      }
+    }
     for (final group in rawGroups ?? const []) {
       if (group is! Map) {
         throw const CatalogBuildException('parseFailed');
@@ -1200,10 +1276,20 @@ class _SelectGroupIndex {
         explicitProxies.add(proxyName);
       }
       if (group['hidden'] == true) continue;
-      final usedProviders = <String>{};
-      if (group['use'] case final List<Object?> useList) {
-        usedProviders.addAll(useList.whereType<String>());
-      }
+      final rawUse = group['use'];
+      final useValid = rawUse == null ||
+          (rawUse is List && rawUse.every((item) => item is String));
+      final usedProviders = <String>{
+        if (rawUse is List) ...rawUse.whereType<String>(),
+      };
+      final rawEmptyFallback = group['empty-fallback'];
+      final emptyFallbackValid =
+          rawEmptyFallback == null || rawEmptyFallback is String;
+      final emptyFallback =
+          rawEmptyFallback is String ? rawEmptyFallback : 'COMPATIBLE';
+      final filter = _parseGroupFilter(group['filter']);
+      final excludeFilter = _parseGroupFilter(group['exclude-filter']);
+      final excludeTypes = _parseExcludeTypes(group['exclude-type']);
       final includeAll = group['include-all'] == true;
       _rules.add(_SelectGroupRule(
         name: name,
@@ -1212,33 +1298,81 @@ class _SelectGroupIndex {
         includeAllProxies: includeAll || group['include-all-proxies'] == true,
         includeAllProviders:
             includeAll || group['include-all-providers'] == true,
-        filter: _parseGroupFilter(group['filter']),
-        excludeFilter: _parseGroupFilter(group['exclude-filter']),
-        excludeTypes: _parseExcludeTypes(group['exclude-type']),
+        filter: filter,
+        excludeFilter: excludeFilter,
+        excludeTypes: excludeTypes,
+        emptyFallback: emptyFallback,
+        valid: emptyFallbackValid &&
+            useValid &&
+            excludeTypes.valid &&
+            excludeFilter.allValid &&
+            filter.allValid &&
+            !_definedGroupTypes.containsKey(emptyFallback),
       ));
     }
   }
 
+  final _definedGroupTypes = <String, String>{};
   final _rules = <_SelectGroupRule>[];
 
-  List<String> forNode({
-    required Object? name,
-    Object? type,
-    required CatalogNodeSource source,
-    String? providerName,
+  List<List<String>> resolveForCandidates(
+    List<_SelectGroupCandidate> candidates, {
+    Set<String> providerNames = const {},
+    Set<String> unresolvedProviders = const {},
   }) {
-    if (name is! String) return const [];
-    final typeName = type is String ? type : null;
-    final result = <String>[];
+    final result = List<List<String>>.generate(
+      candidates.length,
+      (_) => <String>[],
+    );
+    if (_rules.isEmpty || candidates.isEmpty) return result;
+    final inlineLeafNames = <String>{
+      for (final candidate in candidates)
+        if (candidate.source == CatalogNodeSource.inline &&
+            candidate.validLeaf &&
+            candidate.name != null &&
+            candidate.name!.isNotEmpty)
+          candidate.name!,
+    };
     for (final rule in _rules) {
-      if (!result.contains(rule.name) &&
-          rule.matches(
-            name: name,
-            type: typeName,
-            source: source,
-            providerName: providerName,
-          )) {
-        result.add(rule.name);
+      if (!rule.valid) continue;
+      final matchedIndices = <int>[];
+      for (var i = 0; i < candidates.length; i++) {
+        final candidate = candidates[i];
+        final name = candidate.name;
+        if (!candidate.validLeaf || name == null) continue;
+        if (rule.matches(
+          name: name,
+          type: candidate.type,
+          source: candidate.source,
+          providerName: candidate.providerName,
+        )) {
+          matchedIndices.add(i);
+        }
+      }
+      if (matchedIndices.isNotEmpty) {
+        for (final index in matchedIndices) {
+          if (!result[index].contains(rule.name)) {
+            result[index].add(rule.name);
+          }
+        }
+        continue;
+      }
+      if (!rule.canUseEmptyFallback(
+        inlineLeafNames: inlineLeafNames,
+        definedGroupTypes: _definedGroupTypes,
+        providerNames: providerNames,
+        unresolvedProviders: unresolvedProviders,
+      )) {
+        continue;
+      }
+      for (var i = 0; i < candidates.length; i++) {
+        final candidate = candidates[i];
+        if (candidate.source == CatalogNodeSource.inline &&
+            candidate.validLeaf &&
+            candidate.name == rule.emptyFallback &&
+            !result[i].contains(rule.name)) {
+          result[i].add(rule.name);
+        }
       }
     }
     return result;
@@ -1267,7 +1401,16 @@ ProfileCatalog buildProfileCatalog({
 
   final selectGroups = _SelectGroupIndex(rawGroups as List?);
 
+  final providers = <String, int>{};
+  for (final name in (rawProviders as Map?)?.keys ?? const []) {
+    if (name is! String) {
+      throw const CatalogBuildException('parseFailed');
+    }
+    providers[name] = -1;
+  }
+
   final nodes = <CatalogNode>[];
+  final candidates = <_SelectGroupCandidate>[];
   for (final (sourceIndex, proxy)
       in ((rawProxies as List?) ?? const []).indexed) {
     if (proxy is Map && _nonLeafTypes.contains(proxy['type'])) continue;
@@ -1279,16 +1422,18 @@ ProfileCatalog buildProfileCatalog({
         final node = catalogNodeFromMap(
           profileId: profileId,
           proxy: proxy,
-          selectGroups: selectGroups.forNode(
-            name: proxy['name'],
-            type: proxy['type'],
-            source: CatalogNodeSource.inline,
-          ),
         );
         nodes.add(isolatedTest
             ? node.copyWith(
                 unsupported: catalogIsolationUnsupportedReason(proxy))
             : node);
+        candidates.add((
+          name: node.name,
+          type: proxy['type'] is String ? proxy['type'] as String : node.type,
+          source: CatalogNodeSource.inline,
+          providerName: null,
+          validLeaf: true,
+        ));
         continue;
       } on FormatException {
         // One unsupported shape must not hide the rest of this configuration.
@@ -1303,14 +1448,25 @@ ProfileCatalog buildProfileCatalog({
       name: name is String ? name : null,
       type: type is String ? type : null,
     ));
+    candidates.add((
+      name: name is String ? name : null,
+      type: type is String ? type : null,
+      source: CatalogNodeSource.inline,
+      providerName: null,
+      validLeaf: false,
+    ));
   }
 
-  final providers = <String, int>{};
-  for (final name in (rawProviders as Map?)?.keys ?? const []) {
-    if (name is! String) {
-      throw const CatalogBuildException('parseFailed');
+  final providerNames = providers.keys.toSet();
+  final resolvedSelectGroups = selectGroups.resolveForCandidates(
+    candidates,
+    providerNames: providerNames,
+    unresolvedProviders: providerNames,
+  );
+  for (var i = 0; i < nodes.length; i++) {
+    if (resolvedSelectGroups[i].isNotEmpty) {
+      nodes[i] = nodes[i].copyWith(selectGroups: resolvedSelectGroups[i]);
     }
-    providers[name] = -1;
   }
   return ProfileCatalog(
     profileId: profileId,
@@ -1505,11 +1661,14 @@ class NodeCatalogService {
           fingerprint: '',
           raw: {...raw, 'proxies': const []});
       final selectGroups = _SelectGroupIndex(raw['proxy-groups'] as List?);
+      final candidates = <_SelectGroupCandidate>[];
+      final unresolvedProviders = <String>{};
       void append(Object? value, CatalogNodeSource source, String? provider) {
         if (value is Map && _nonLeafTypes.contains(value['type'])) return;
         if (nodes.length >= maxProjectionNodes) {
           issues.add(CatalogProviderIssue(
               providerName: provider, reason: 'tooManyNodes', count: 1));
+          if (provider != null) unresolvedProviders.add(provider);
           return;
         }
         Map<String, dynamic> map;
@@ -1526,6 +1685,7 @@ class NodeCatalogService {
             frameBytes > 512 * 1024 - 1024) {
           issues.add(CatalogProviderIssue(
               providerName: provider, reason: 'providerTooLarge', count: 1));
+          if (provider != null) unresolvedProviders.add(provider);
           return;
         }
         CatalogNode node;
@@ -1534,21 +1694,32 @@ class NodeCatalogService {
                   profileId: profile.id,
                   proxy: map,
                   source: source,
-                  providerName: provider,
-                  selectGroups: selectGroups.forNode(
-                      name: map['name'],
-                      type: map['type'],
-                      source: source,
-                      providerName: provider))
+                  providerName: provider)
               .copyWith(unsupported: catalogIsolationUnsupportedReason(map));
+          candidates.add((
+            name: node.name,
+            type: map['type'] is String ? map['type'] as String : node.type,
+            source: source,
+            providerName: provider,
+            validLeaf: true,
+          ));
         } on FormatException {
+          final rawName = map['name'] is String ? map['name'] as String : null;
+          final rawType = map['type'] is String ? map['type'] as String : null;
           node = unparsedCatalogNode(
               profileId: profile.id,
               sourceIndex: nodes.length,
               source: source,
               providerName: provider,
-              name: map['name'] is String ? map['name'] as String : null,
-              type: map['type'] is String ? map['type'] as String : null);
+              name: rawName,
+              type: rawType);
+          candidates.add((
+            name: rawName,
+            type: rawType,
+            source: source,
+            providerName: provider,
+            validLeaf: false,
+          ));
         }
         maps.add(map);
         encodedNodeBytes.add(frameBytes);
@@ -1570,6 +1741,7 @@ class NodeCatalogService {
                   ? 'providerOptionsUnsupported'
                   : 'parseFailed'));
           providerCounts[name] = -1;
+          unresolvedProviders.add(name);
           continue;
         }
         final resolved = await providerResolver!.resolve(
@@ -1577,6 +1749,9 @@ class NodeCatalogService {
             isCurrent: current);
         check();
         issues.addAll(resolved.issues);
+        if (resolved.issues.isNotEmpty && resolved.proxies.isEmpty) {
+          unresolvedProviders.add(name);
+        }
         final sourceBytes = resolved.proxies.fold<int>(
             0, (sum, value) => sum + utf8.encode(jsonEncode(value)).length);
         if (payloadBytes + sourceBytes > maxProfilePayloadBytes) {
@@ -1585,6 +1760,7 @@ class NodeCatalogService {
               reason: 'providerTooLarge',
               count: resolved.proxies.length));
           providerCounts[name] = -1;
+          unresolvedProviders.add(name);
           continue;
         }
         final before = nodes.length;
@@ -1592,6 +1768,20 @@ class NodeCatalogService {
           append(proxy, CatalogNodeSource.provider, name);
         }
         providerCounts[name] = nodes.length - before;
+      }
+      final providerNames = <String>{
+        for (final key in ((raw['proxy-providers'] as Map?) ?? const {}).keys)
+          if (key is String) key,
+      };
+      final resolvedSelectGroups = selectGroups.resolveForCandidates(
+        candidates,
+        providerNames: providerNames,
+        unresolvedProviders: unresolvedProviders,
+      );
+      for (var i = 0; i < nodes.length; i++) {
+        if (resolvedSelectGroups[i].isNotEmpty) {
+          nodes[i] = nodes[i].copyWith(selectGroups: resolvedSelectGroups[i]);
+        }
       }
       await verify();
       final fingerprint = '${metadata.modifiedMicros}|${metadata.size}|$script';

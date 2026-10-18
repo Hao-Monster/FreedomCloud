@@ -112,13 +112,21 @@ class StartupEffects implements WindowsTunStartupEffects {
     if (isCurrent()) calls.add('initialized');
   }
 
+  bool pendingTunEnable = true;
+  bool Function()? readDesiredTunEnabled;
+
   @override
   Future<void> applyConfiguration(
       {required bool full, required bool Function() isCurrent}) async {
     await record(full ? 'configure' : 'incremental');
     if (!isCurrent()) return;
+    final dispatchedTunEnable = readDesiredTunEnabled?.call() ?? true;
+    if (full && pauseAt == 'configure-in-flight') {
+      await record('configure-in-flight');
+    }
     if (!configurationSucceeds) throw const TunFailure('configurationFailed');
-    if (running) enabled = true;
+    pendingTunEnable = dispatchedTunEnable;
+    if (running) enabled = dispatchedTunEnable;
     if (!full && repairRestoresAdapter) {
       adapterVanished = false;
       adapterErrorCode = null;
@@ -130,7 +138,7 @@ class StartupEffects implements WindowsTunStartupEffects {
     await record('listener');
     if (listenerSucceeds) {
       running = true;
-      enabled = true;
+      enabled = pendingTunEnable;
       if (loseStatusAfterListener) statusAvailable = false;
     }
     return listenerSucceeds;
@@ -160,6 +168,7 @@ class StartupEffects implements WindowsTunStartupEffects {
     instanceId = 'core-restarted';
     running = false;
     enabled = false;
+    pendingTunEnable = false;
     if (restartRestoresAdapter) {
       adapterVanished = false;
       adapterErrorCode = null;
@@ -190,6 +199,8 @@ Future<AppController> controllerFixture(
               },
               child: Consumer(
                 builder: (context, ref, _) {
+                  effects.readDesiredTunEnabled ??=
+                      () => ref.read(patchClashConfigProvider).tun.enable;
                   controller ??= AppController(context, ref,
                       windowsStartupEffects: effects,
                       tunRuntimeController: runtime,
@@ -918,5 +929,91 @@ void main() {
     expect(effects.calls.where((c) => c == 'restart-core'), isEmpty);
     expect(runtime.failure, 'interfaceUnknown');
     expect(runtime.requestFailure, 'interfaceUnknown');
+  });
+
+  testWidgets(
+      'setTunEnabled(false) superseding in-flight Stage 2 setupConfig(tun: true) writes tun: false before restoring listener',
+      (tester) async {
+    final effects = StartupEffects();
+    final runtime = TunRuntimeController();
+    final controller = await controllerFixture(tester, effects, runtime);
+    await controller.initializeRuntime();
+    expect(runtime.observed, TunObservedState.on);
+
+    final baseline = effects.calls.length;
+    effects
+      ..adapterErrorCode = 'closeFailed'
+      ..pauseAt = 'configure-in-flight';
+    await controller.refreshWindowsTunStatus();
+    await effects.entered.future;
+
+    // User disables TUN (e.g. via hotkey) while Stage 2's setupConfig(tun: true)
+    // is already in flight on the replaced Core.
+    final disableFuture = controller.setTunEnabled(false);
+    effects.release.complete();
+    await disableFuture;
+    await tester.pumpAndSettle();
+
+    final postCalls = effects.calls.sublist(baseline);
+    expect(
+      postCalls,
+      containsAllInOrder([
+        'restart-core',
+        'initialize',
+        'initialized',
+        'configure',
+        'configure-in-flight',
+        'incremental',
+        'listener',
+        'observe',
+      ]),
+    );
+    expect(effects.running, isTrue);
+    expect(effects.enabled, isFalse);
+    expect(runtime.desiredEnabled, isFalse);
+    expect(runtime.observed, TunObservedState.off);
+    expect(runtime.failure, isNull);
+    expect(runtime.requestFailure, isNull);
+  });
+
+  testWidgets(
+      'setTunEnabled(false) superseding Stage 2 restartCore before setupConfig applies full profile with tun: false and restores listener',
+      (tester) async {
+    final effects = StartupEffects();
+    final runtime = TunRuntimeController();
+    final controller = await controllerFixture(tester, effects, runtime);
+    await controller.initializeRuntime();
+    expect(runtime.observed, TunObservedState.on);
+
+    final baseline = effects.calls.length;
+    effects
+      ..adapterErrorCode = 'closeFailed'
+      ..pauseAt = 'restart-core';
+    await controller.refreshWindowsTunStatus();
+    await effects.entered.future;
+
+    final disableFuture = controller.setTunEnabled(false);
+    effects.release.complete();
+    await disableFuture;
+    await tester.pumpAndSettle();
+
+    final postCalls = effects.calls.sublist(baseline);
+    expect(
+      postCalls,
+      containsAllInOrder([
+        'restart-core',
+        'initialize',
+        'initialized',
+        'configure',
+        'listener',
+        'observe',
+      ]),
+    );
+    expect(effects.running, isTrue);
+    expect(effects.enabled, isFalse);
+    expect(runtime.desiredEnabled, isFalse);
+    expect(runtime.observed, TunObservedState.off);
+    expect(runtime.failure, isNull);
+    expect(runtime.requestFailure, isNull);
   });
 }

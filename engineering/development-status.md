@@ -66,18 +66,21 @@
        - **修复 `_updateClashConfig` 与 `_setupClashConfig` 在前序自愈被用户显式 `setTunEnabled(true)` 取代且随后恢复成功时仍保留 `repairFailedOrCancelled = true` 的问题，并补齐 `closeFailed` Stage 2 失败配额标记**：在每趟进入 `_tunRuntime.serialize` 闭包时，若 `_tunRuntime.observed == TunObservedState.on && _tunRuntime.requestFailure == null` 则自动复位 `repairFailedOrCancelled = false`；同时在 `_repairVanishedAdapter` Stage 2 失败路径中将 `status.instanceId` 与 `activeStatus.instanceId` 一并记满 `_maxTunRepairAttempts`；
        - **允许同一配置在跨配置 `setupConfig` 落地后执行期间新点击节点的 `changeProxyDebounce`**：在 [`changeProxyDebounce`](file:///E:/CodeWorkstation/FlClashX/lib/controller.dart#L622-L645) 中校验 `currentProfileIdProvider == expectedProfileId` 且当前配置的 `selectedMap[groupName]` 仍为目标 `proxyName`，仅在 `await changeProxy(...)` 执行期间发生 `runtimeConfigEpoch` 变更时才跳过 `updateGroups()`，确保用户在跨配置切换 `setupConfig` 执行中途又点击了同一目标配置下的新节点时，新节点选择不会因首个 `setupConfig` 完成递增 `runtimeConfigEpoch` 而被防抖回调丢弃；
        - **为 `updateProviders()` 与 `ClashManager.onLoaded()` 补齐 `runtimeConfigEpoch` 及 `currentProfileIdProvider` 跨异步边界守卫**：在 [`updateProviders()`](file:///E:/CodeWorkstation/FlClashX/lib/controller.dart#L950-L959) 与 [`ClashManager.onLoaded()`](file:///E:/CodeWorkstation/FlClashX/lib/manager/clash_manager.dart#L143-L157) 等待 `getExternalProviders()` / `getExternalProvider()` 返回后校验配置代数与当前配置 ID（以及 `mounted`），防止旧配置或重启前 Core 的外部 Provider 异步返回覆写新配置状态。
+     - **外部独立审查 `30e6884` 发现的 P1 修复（Stage 2 在途 `setupConfig(tun: true)` 被 `setTunEnabled(false)` 取代时丢失关闭配置写入）**：
+       - **根因**：Stage 2 重启新 Core 后，若 `setupConfig(tun: true)` 已发出（在 Go Core 中置 `pendingTunEnable = true`），用户在等待返回期间通过热键触发 `setTunEnabled(false)`，旧修复虽被取消，但在途 `setupConfig(tun: true)` 完成时仍将 `_hasAppliedWindowsProfile` 置为 `true`。随后 `setTunEnabled(false)` 进入 `_restoreReplacedWindowsCoreIfNeeded` 分支，因 `_hasAppliedWindowsProfile == true` 跳过配置写入而直接调用 `startListener()`（将 `pendingTunEnable == true` 写入 `currentConfig.General.Tun.Enable`），导致关闭操作未向 Core 发送 `tun: false`，TUN 保持开启并报错 `closeFailed`；
+       - **修复**：在 [`setTunEnabled`](file:///E:/CodeWorkstation/FlClashX/lib/controller.dart#L596-L622) 与 [`_updateClashConfig`](file:///E:/CodeWorkstation/FlClashX/lib/controller.dart#L1265-L1291) 中区分“新 Core 尚未加载 Profile（`!_hasAppliedWindowsProfile`）”与“在途 `setupConfig(tun: true)` 已落地但尚未 `startListener`（`_hasAppliedWindowsProfile == true`）”：后者先执行 `_updateWindowsConfig(...)` 向 Core 发送最新 `tun: false`（将 Go Core 的 `pendingTunEnable` 清为 `false`），再在 `finally` 中调用 [`_restoreReplacedWindowsCoreIfNeeded(..., applyProfileIfMissing: false)`](file:///E:/CodeWorkstation/FlClashX/lib/controller.dart#L550-L607) 补齐 `startListener()` 与代理会话恢复；同时新增 `_TrackedWindowsTunStartupEffects` 使注入 `windowsStartupEffects` 的测试同样覆盖 `controller.setTunEnabled(false)` 生产恢复分支。
 - 单测与验证：
-  - Windows TUN 专项测试套件（`test/clash/windows_startup_controller_test.dart`、`test/common/windows_tun_startup_stability_test.dart`、`test/clash/windows_tun_prepare_test.dart`、`test/clash/tun_config_scheduling_test.dart`、`test/clash/tun_runtime_test.dart`）：**78 PASS，0 FAIL**（含 18 项跨配置 `interfaceDown` / `startFailed` 增量自愈、第一级失败或抛错升级无 UAC 重启 Core、`closeFailed` 直连重启 Core、Stage 2 及启动 `closeFailed` 重启中途取消仍恢复必要初始化、排队期间状态更新自动对齐最新 `TunStatus`、排队期间网卡已恢复跳过过期 `closeFailed`、排队期间转为不可自愈故障保留终态 `failure`/`requestFailure`、健康 `on` 观测清除 `closeFailed`/`configurationFailed`/`operationFailed`、瞬态 `statusUnavailable` 后观测到 `off` 仍保留锁存 `_requestFailure`、`clearCoreRuntimeFailure` 清除 Core 失败但保留权限/环境门禁、排队自愈被取消回滚预算后仍可升级重启、手动停止代理在 `cancelPendingIntent` 窗口与停止后刷新均不误触发自愈、失败后跨配置切换降级（含 `interfaceUnknown`）及 `observe` 副作用隔离回归测试）；`test/clash` 全目录 **146 PASS，0 FAIL**。
-  - 节点总览与目录回归测试（`test/views/node_overview_test.dart`、`test/common/node_catalog_service_test.dart`）：**91 PASS，0 FAIL**。
-  - 修改文件 `dart analyze`：**0 error，0 warning**（改动行 0 新增 info）；`git diff --check` 通过。
-- 交付状态：已在 `development` 分支提交并推送至 `freedomcloud/development`；未触碰用户正在运行的预览进程与现役代理/TUN/服务。
+  - Windows TUN 专项测试套件（`test/clash/windows_startup_controller_test.dart`、`test/common/windows_tun_startup_stability_test.dart`、`test/clash/windows_tun_prepare_test.dart`、`test/clash/tun_config_scheduling_test.dart`、`test/clash/tun_runtime_test.dart`）：**80 PASS，0 FAIL**（含 `controller.setTunEnabled(false)` 在 Stage 2 `setupConfig(tun: true)` 在途及 `restartCore` 阶段中途取代的 2 项生产入口回归测试，以及 18 项跨配置自愈、重启、队列交错与降级回归测试）。
+  - 节点总览与目录回归测试（`test/views/node_overview_test.dart`、`test/common/node_catalog_service_test.dart`）：**94 PASS，0 FAIL**（7 个目标测试文件合计 **174 PASS，0 FAIL**）。
+  - 修改文件 `dart analyze`：**0 error，0 warning**；`git diff --check` 通过。
+- 交付状态：已在 `development` 分支完成修复与验证；未触碰用户正在运行的预览进程与现役代理/TUN/服务。
 
 
 ## 跨配置节点总览“一键使用”开发、审查修复与单测（2026-10-16）
 
-- 来源：用户确认在跨配置节点总览每个节点行增加“使用 / 使用中”按钮，并明确选择“直接一键切换（无二次确认弹窗）+ 自动写入首个包含该节点的 `select` 主选择组 + 当前命中节点显示 `使用中`”；完成初版开发、针对外部独立审查 r1 / r2 / r3 / r4 / r5 指出的边界问题完成修复后，再次执行源码级对抗式自审并加固剩余边缘场景。
+- 来源：用户确认在跨配置节点总览每个节点行增加“使用 / 使用中”按钮，并明确选择“直接一键切换（无二次确认弹窗）+ 自动写入首个包含该节点的 `select` 主选择组 + 当前命中节点显示 `使用中`”；完成初版开发、针对外部独立审查 r1 / r2 / r3 / r4 / r5 及 `30e6884` 独立审查指出的边界问题完成修复后，再次执行验证。
 - 实现、自审与外部审查收敛项：
-  1. 目录构建与全量解析统一收集 `select` 组归属（[`_SelectGroupIndex`](file:///E:/CodeWorkstation/FlClashX/lib/common/node_catalog_service.dart#L36-L1240)）：
+  1. 目录构建与全量解析统一收集 `select` 组归属（[`_SelectGroupIndex`](file:///E:/CodeWorkstation/FlClashX/lib/common/node_catalog_service.dart#L36-L1310)）：
      - 严格保留 `proxy-groups` 原始声明顺序；过滤 `hidden: true` 的 `select` 组；
      - **修复外部审查 Finding 2（`exclude-type` 协议名称对齐 Core）**：新增 [`_canonicalAdapterType`](file:///E:/CodeWorkstation/FlClashX/lib/common/node_catalog_service.dart#L36-L50)，将 YAML `type` 别名（如 `ss`→`shadowsocks`、`ssr`→`shadowsocksr`、`gost-relay`→`gostrelay` 等）映射对齐至 Mihomo `AdapterType.String()`，确保 `exclude-type: Shadowsocks` 等规则与 Core `GroupBase.GetProxies` 行为一致；
      - **修复外部审查 Finding 3、r2、r3、r4、r5 及二次自审加固（正则语义保真、运算符保留、Go 15.0.0 Unicode 字符类/大小写等价、换行锚点对齐与 fail-closed）**：新增 [`_compileClashRegex`](file:///E:/CodeWorkstation/FlClashX/lib/common/node_catalog_service.dart#L794-L1076) 与 [`_parseGroupFilter`](file:///E:/CodeWorkstation/FlClashX/lib/common/node_catalog_service.dart#L1084-L1105)：
@@ -86,18 +89,22 @@
        - **对齐 `regexp2.None` 大小写等价关系（r4 Finding 1）**：移除对 Dart `toLowerCase()`/`toUpperCase()` 及 ECMAScript `caseSensitive: false` 的依赖，统一以 `RegExp(..., caseSensitive: true, multiLine: false, unicode: true)` 编译，并使用与 Go `unicode.ToLower` 及 `regexp2/syntax/charclass.go` `lcTable` 完全一致的大小写等价表（[`_GoCaseTables`](file:///E:/CodeWorkstation/FlClashX/lib/common/node_catalog_service.dart#L611-L661)、[`_expandIgnoreCaseClassRanges`](file:///E:/CodeWorkstation/FlClashX/lib/common/node_catalog_service.dart#L743-L792)）展开 `(?i)` 下的单字符与字符类区间（正确处理 `İstanbul`/`i`、`ß`/`ẞ`、`K`/`k`、`ſ`≠`s`、`ς`≠`σ`、`ı`≠`i` 等全部 Unicode 边界）；
        - **对齐 `regexp2.None` 普通与多行锚点边界（r4 Finding 2）**：按 `regexp2` 的 `Beginning`/`End`/`EndZ`/`Bol`/`Eol` 语义精确转换锚点——`\A` 与非多行 `^` 映射为 `^`，`\z` 映射为 `$`，`\Z` 与非多行 `$` 映射为 `(?=\n?$)`（匹配末尾或末尾单个 `\n` 之前），`(?m)` 多行 `^` 映射为 `(?:^|(?<=\n))`，`(?m)` 多行 `$` 映射为 `(?=\n|$)`（仅以 `\n` 为行分隔符，不将 `\r` 误判为行边界）；
        - **源码级对抗自审加固**：对原子组 `(?>...)`、字符类内负向多区间简写（`[\W]`/`[\S]`）、字符类内 `\D` 与其他简写组合（如 `[\D\w]`/`[\D\d]`，规避 `regexp2` `CharSet.CharIn` 负向类别提前跳出循环/取反异常）、字符类内以转义连字符 `\-` 作为区间端点（如 `[\--0]`/`[!-\-]`，规避 `regexp2` `scanCharSet` 对 `\-` 直接 `continue` 不参与区间构建的差异）、同组同时声明 `proxies` 与非法 `filter`、未知/不等价转义、字符类差集及任何解析异常严格按 **fail-closed（禁用依赖该规则的候选 `select` 组）** 处理，杜绝因 Dart 编译通过而误把 Core 排除的节点判入可选组；
-     - `Mode.rule` 下在 [`_targetGroupForCatalogNode`](file:///E:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart#L810-L826) 排除 YAML 中显式声明的 `GLOBAL` 组。
-  2. 节点总览行级一键使用与状态流转（[`overview.dart`](file:///E:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart#L179-L263)）：
+     - **修复 `30e6884` 外部审查 P2（`select` 组分组成员为空时的 `empty-fallback` 推断）**：在 [`_SelectGroupIndex.resolveForCandidates`](file:///E:/CodeWorkstation/FlClashX/lib/common/node_catalog_service.dart#L1217-L1249) 中统一按完整候选节点集计算每个 `select` 组的过滤后成员；当过滤结果为空且该组未引用未解析的外部 `use` provider、过滤规则合法（`canUseEmptyFallback`）时，将 `empty-fallback` 指向的已解析节点纳入该 `select` 组，与 Mihomo `parseProxyGroups` + `GroupBase.GetProxies` 行为严格一致；
+     - `Mode.rule` 下在 [`_targetGroupForCatalogNode`](file:///E:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart#L890-L906) 排除 YAML 中显式声明的 `GLOBAL` 组。
+  2. 节点总览行级一键使用与状态流转（[`overview.dart`](file:///E:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart#L179-L315)）：
      - 活动配置节点点击“使用”：调用 `updateCurrentSelectedMap` + `changeProxyDebounce` 切换该节点所属主选择组，并确保 `currentGroupName` 在 `isAppControllerReady == true` 时同样写回 `profilesProvider`；
-     - `Mode.global` 下 [`_activeLeaves`](file:///E:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart#L858-L898) 与 `Mode.rule` 分支严格互斥；
-     - **修复外部审查 Finding 1（运行配置身份未知时防闪回旧配置运行态节点）**：非活动配置节点点击“使用”进入 `_pendingSwitchProfileId` 过渡态后，仅在已验证运行配置身份（`globalState.lastRuntimeProfileId ?? ref.watch(activeNodeCatalogProvider)?.profileId`）等于 `_pendingSwitchProfileId` 且运行组/版本发生新变更时才结束过渡；运行身份为 `null`（接管已有 Core 但尚未确认身份）或仍为旧配置时，后台定时的 `updateGroups`/`version` 刷新只会更新过渡基线而不会清除等待状态，杜绝将旧配置运行节点渲染到目标配置分区下。
+     - `Mode.global` 下 [`_activeLeaves`](file:///E:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart#L938-L982) 与 `Mode.rule` 分支严格互斥；
+     - **修复外部审查 Finding 1 及 `30e6884` 外部审查 2 项 P2（跨配置切换失败后目标节点仍标为“使用中”不可重试、重建总览丢失切换防护导致旧配置实时节点挂到目标配置下）**：
+       - 将跨配置切换跟踪状态上提到 Riverpod Provider（[`_overviewSwitchTrackerProvider`](file:///E:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart#L42-L120)），跨 `ProxiesScope.current ↔ ProxiesScope.all` 页面卸载重建保持 `pendingProfileId` 与待展示反馈文案；
+       - 在 [`isLiveActive`](file:///E:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart#L477-L484) 中同时要求 `verifiedRuntimeProfileId == null || verifiedRuntimeProfileId == profile.id` 且 `tracker.pendingProfileId != profile.id`，确保只要运行配置身份仍为旧配置 A，无论是否重建总览页面，都不会把 A 的实时节点列表渲染到目标配置 B 下；
+       - 将“已保存的选择（`selectedMap`/`currentProfileId`）”与“运行态已确认生效（`liveActive`）”解耦：非运行态配置行（[`_InactiveNodeRow`](file:///E:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart#L670-L686)）始终保持 `inUse: false`（显示“使用”且可点击重试），失败或未生效时不提前显示“已切换到 ...”或禁用按钮；用户点击重试时重新触发 `applyProfileDebounce(silence: true)` 与 `changeProxyDebounce(targetGroup, node.name)`，待运行态确认切到目标配置后再转为 `In use` 并展示成功反馈。
   3. 四语言文案补齐（`arb/intl_*.arb` 及生成的 `lib/l10n/`）：新增 `nodeOverviewUseNode`、`nodeOverviewInUse`、`nodeOverviewSwitchedToNode`。
 - 单测与验证：
-  - `test/common/node_catalog_service_test.dart`：**21 PASS**（含 `exclude-type: Shadowsocks|ShadowsocksR`、`(?i:hk)`/`(?I)^hk$`、`\AHK`、`(?i)^\x68k(?-i)X$`、分支与量词 `HK|JP`/`^HK.*$`/`^HK[0-9]{2}$`、Unicode `\w`/`\d`/`\b` 对 `港`/`١`、Go 15.0.0 与 Unicode 16.0.0 差异码点 `U+1C89`/`U+10D40`/`U+1CCF0`/`U+A7CB`/`U+105C0`/`U+13460`/`U+2EBF0`、Unicode 大小写等价 `İstanbul`/`ſ`/`ẞ`/`K`/`ς`、换行锚点 `HK\n`/`HK\r`/`\r\n`，以及原子组 `(?>...)`、`[\D\w]`/`[\D\d]`、`[\--0]`/`[!-\-]`、显式 `proxies` 伴随非法 `filter` 与损坏正则 fail-closed 回归用例）。
-  - `test/views/node_overview_test.dart`：**70 PASS**（目标单测合计 **91 PASS，0 FAIL**）。
+  - `test/common/node_catalog_service_test.dart`：**22 PASS**（新增 `empty-fallback` 命中、非空组忽略 `empty-fallback`、含未解析 `use` provider 时 fail-closed 回归测试）。
+  - `test/views/node_overview_test.dart`：**72 PASS**（新增跨配置切换失败保持目标节点可点击重试且不误标 `In use`、切换期间或失败后通过 `ProxiesScope` 重建总览绝不将旧配置实时节点渲染到目标配置下 2 项回归测试；目标单测合计 **94 PASS，0 FAIL**）。
   - 外部审查 r1 + r2 + r3 + r4 + r5 复现套件与 31,488 项扩展语义对照矩阵（123 规则 × 128 合成节点名 × `filter`/`exclude-filter`）：**全部 PASS，0 次错误放行（0 unsafe admissions，0 mismatches）**。
-  - 修改文件 `dart analyze`：**0 error，0 warning，4 info**（exit 0）；`git diff --check` 通过。
-- 交付状态：已在 `development` 分支提交并推送至 `freedomcloud/development`；未启动候选程序，未触碰现役代理/TUN/服务。
+  - 修改文件 `dart analyze`：**0 error，0 warning**（exit 0）；`git diff --check` 通过。
+- 交付状态：已在 `development` 分支完成修复与验证；未启动候选程序，未触碰现役代理/TUN/服务。
 
 
 

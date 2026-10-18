@@ -38,6 +38,7 @@ CatalogNode _node(String key, String name) => CatalogNode(
 class _ProxyController implements AppController {
   final selections = <(String, String)>[];
   final changes = <(String, String)>[];
+  final applyDebounces = <bool>[];
 
   @override
   void updateCurrentSelectedMap(String groupName, String proxyName) =>
@@ -46,6 +47,10 @@ class _ProxyController implements AppController {
   @override
   void changeProxyDebounce(String groupName, String proxyName) =>
       changes.add((groupName, proxyName));
+
+  @override
+  void applyProfileDebounce({bool silence = false}) =>
+      applyDebounces.add(silence);
 
   @override
   List<Proxy> getSortProxies(List<Proxy> proxies, [String? url]) => proxies;
@@ -2104,10 +2109,10 @@ void main() {
     final updatedBeta = container.read(profilesProvider).getProfile('b')!;
     expect(updatedBeta.selectedMap['Beta Primary'], 'Beta fast');
     expect(updatedBeta.currentGroupName, 'Beta Primary');
-    expect(find.text('Switched to Beta profile · Beta fast'), findsOneWidget);
-    expect(tester.widget<TextButton>(useBeta1).onPressed, isNull);
+    expect(find.text('Switched to Beta profile · Beta fast'), findsNothing);
+    expect(tester.widget<TextButton>(useBeta1).onPressed, isNotNull);
     expect(
-      find.descendant(of: useBeta1, matching: find.text('In use')),
+      find.descendant(of: useBeta1, matching: find.text('Use')),
       findsOneWidget,
     );
     expect(tester.widget<TextButton>(useBeta2).onPressed, isNotNull);
@@ -2150,6 +2155,7 @@ void main() {
       find.descendant(of: liveUseBeta1, matching: find.text('In use')),
       findsOneWidget,
     );
+    expect(find.text('Switched to Beta profile · Beta fast'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
@@ -2314,6 +2320,135 @@ void main() {
     expect(
       find.byKey(const ValueKey('overview-use-b-Beta fast')),
       findsOneWidget,
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'one-click use: failed cross-profile switch keeps target node retryable and does not mark it In use while runtime stays on previous profile',
+      (tester) async {
+    final controller = _ProxyController();
+    globalState.appController = controller;
+    globalState.lastRuntimeProfileId = 'a';
+    globalState.config = globalState.config.copyWith(currentProfileId: 'a');
+    const aGroups = [
+      Group(
+          name: 'Alpha Select',
+          type: GroupType.Selector,
+          hidden: false,
+          now: 'Alpha live',
+          all: [Proxy(name: 'Alpha live', type: 'Shadowsocks')]),
+    ];
+    globalState.appState = globalState.appState.copyWith(groups: aGroups);
+    final container = await mount(
+      tester,
+      width: 1200,
+      catalogs: {
+        'b': ProfileCatalog(
+            profileId: 'b',
+            fingerprint: 'fb',
+            status: ProfileCatalogStatus.ready,
+            nodes: [
+              _node('b-1', 'Beta fast')
+                  .copyWith(selectGroups: const ['Beta Select']),
+            ]),
+      },
+    );
+
+    final button = find.byKey(const ValueKey('overview-use-b-b-1'));
+    await tester.tap(button);
+    await tester.pumpAndSettle();
+
+    // Model failed setup outcome: runtime stays A, and periodic group refresh
+    // publishes the still-running A generation again.
+    container.read(groupsProvider.notifier).value = List<Group>.of(aGroups);
+    container.read(versionProvider.notifier).value =
+        container.read(versionProvider) + 1;
+    await tester.pumpAndSettle();
+
+    expect(globalState.lastRuntimeProfileId, 'a');
+    expect(container.read(currentProfileIdProvider), 'b');
+    expect(container.read(groupsProvider).single.now, 'Alpha live');
+    expect(find.text('Switched to Beta profile · Beta fast'), findsNothing);
+    expect(
+      find.descendant(of: button, matching: find.text('In use')),
+      findsNothing,
+    );
+    expect(
+      find.descendant(of: button, matching: find.text('Use')),
+      findsOneWidget,
+    );
+    expect(
+      tester.widget<TextButton>(button).onPressed,
+      isNotNull,
+      reason: 'Runtime is still A; B must not be disabled as successfully in use',
+    );
+
+    // Tapping Use again retries applying profile B and selecting the node.
+    await tester.tap(button);
+    await tester.pumpAndSettle();
+    expect(controller.applyDebounces, [true]);
+    expect(controller.changes, [('Beta Select', 'Beta fast')]);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'one-click use: remounting overview via ProxiesScope during pending or failed switch never renders previous profile live nodes under target profile',
+      (tester) async {
+    globalState.lastRuntimeProfileId = 'a';
+    globalState.config = globalState.config.copyWith(currentProfileId: 'a');
+    globalState.appState = globalState.appState.copyWith(groups: const [
+      Group(
+          name: 'Alpha Select',
+          type: GroupType.Selector,
+          hidden: false,
+          now: 'Alpha live',
+          all: [Proxy(name: 'Alpha live', type: 'Shadowsocks')]),
+    ]);
+    final container = await mount(
+      tester,
+      width: 1200,
+      child: const NodeOverviewScopeView(currentView: SizedBox.shrink()),
+      catalogs: {
+        'b': ProfileCatalog(
+            profileId: 'b',
+            fingerprint: 'fb',
+            status: ProfileCatalogStatus.ready,
+            nodes: [
+              _node('b-1', 'Beta fast')
+                  .copyWith(selectGroups: const ['Beta Select']),
+            ]),
+      },
+    );
+
+    container.read(proxiesScopeProvider.notifier).state = ProxiesScope.all;
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('overview-use-b-b-1')));
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey('overview-use-b-Alpha live')),
+      findsNothing,
+    );
+
+    // Toggle Current -> All to unmount and remount NodeOverviewView while runtime is still A.
+    container.read(proxiesScopeProvider.notifier).state = ProxiesScope.current;
+    await tester.pumpAndSettle();
+    container.read(proxiesScopeProvider.notifier).state = ProxiesScope.all;
+    await tester.pumpAndSettle();
+
+    expect(globalState.lastRuntimeProfileId, 'a');
+    expect(container.read(currentProfileIdProvider), 'b');
+    expect(
+      find.byKey(const ValueKey('overview-use-b-Alpha live')),
+      findsNothing,
+      reason: 'Reopening overview must not render A live nodes in profile B',
+    );
+    expect(find.byKey(const ValueKey('overview-use-b-b-1')), findsOneWidget);
+    expect(
+      tester
+          .widget<TextButton>(find.byKey(const ValueKey('overview-use-b-b-1')))
+          .onPressed,
+      isNotNull,
     );
     expect(tester.takeException(), isNull);
   });
