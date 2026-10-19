@@ -71,14 +71,14 @@
        - **修复**：在 [`setTunEnabled`](file:///E:/CodeWorkstation/FlClashX/lib/controller.dart#L596-L622) 与 [`_updateClashConfig`](file:///E:/CodeWorkstation/FlClashX/lib/controller.dart#L1265-L1291) 中区分“新 Core 尚未加载 Profile（`!_hasAppliedWindowsProfile`）”与“在途 `setupConfig(tun: true)` 已落地但尚未 `startListener`（`_hasAppliedWindowsProfile == true`）”：后者先执行 `_updateWindowsConfig(...)` 向 Core 发送最新 `tun: false`（将 Go Core 的 `pendingTunEnable` 清为 `false`），再在 `finally` 中调用 [`_restoreReplacedWindowsCoreIfNeeded(..., applyProfileIfMissing: false)`](file:///E:/CodeWorkstation/FlClashX/lib/controller.dart#L550-L607) 补齐 `startListener()` 与代理会话恢复；同时新增 `_TrackedWindowsTunStartupEffects` 使注入 `windowsStartupEffects` 的测试同样覆盖 `controller.setTunEnabled(false)` 生产恢复分支。
 - 单测与验证：
   - Windows TUN 专项测试套件（`test/clash/windows_startup_controller_test.dart`、`test/common/windows_tun_startup_stability_test.dart`、`test/clash/windows_tun_prepare_test.dart`、`test/clash/tun_config_scheduling_test.dart`、`test/clash/tun_runtime_test.dart`）：**80 PASS，0 FAIL**（含 `controller.setTunEnabled(false)` 在 Stage 2 `setupConfig(tun: true)` 在途及 `restartCore` 阶段中途取代的 2 项生产入口回归测试，以及 18 项跨配置自愈、重启、队列交错与降级回归测试）。
-  - 节点总览与目录回归测试（`test/views/node_overview_test.dart`、`test/common/node_catalog_service_test.dart`）：**95 PASS，0 FAIL**（7 个目标测试文件合计 **175 PASS，0 FAIL**）。
+  - 节点总览与目录回归测试（`test/views/node_overview_test.dart`、`test/common/node_catalog_service_test.dart`）：**96 PASS，0 FAIL**（7 个目标测试文件合计 **176 PASS，0 FAIL**）。
   - 修改文件 `dart analyze`：**0 error，0 warning**；`git diff --check` 通过。
 - 交付状态：已在 `development` 分支完成修复与验证；未触碰用户正在运行的预览进程与现役代理/TUN/服务。
 
 
 ## 跨配置节点总览“一键使用”开发、审查修复与单测（2026-10-16）
 
-- 来源：用户确认在跨配置节点总览每个节点行增加“使用 / 使用中”按钮，并明确选择“直接一键切换（无二次确认弹窗）+ 自动写入首个包含该节点的 `select` 主选择组 + 当前命中节点显示 `使用中`”；完成初版开发、针对外部独立审查 r1 / r2 / r3 / r4 / r5 及 `30e6884` / `2e1ff5f` / `db24f45` 独立审查指出的边界问题完成修复后，再次执行验证。
+- 来源：用户确认在跨配置节点总览每个节点行增加“使用 / 使用中”按钮，并明确选择“直接一键切换（无二次确认弹窗）+ 自动写入首个包含该节点的 `select` 主选择组 + 当前命中节点显示 `使用中`”；完成初版开发、针对外部独立审查 r1 / r2 / r3 / r4 / r5 及 `30e6884` / `2e1ff5f` / `db24f45` / `cf5b329` 独立审查指出的边界问题完成修复后，再次执行验证。
 - 实现、自审与外部审查收敛项：
   1. 目录构建与全量解析统一收集 `select` 组归属（[`_SelectGroupIndex`](file:///E:/CodeWorkstation/FlClashX/lib/common/node_catalog_service.dart#L36-L1310)）：
      - 严格保留 `proxy-groups` 原始声明顺序；过滤 `hidden: true` 的 `select` 组；
@@ -94,15 +94,15 @@
   2. 节点总览行级一键使用与状态流转（[`overview.dart`](file:///E:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart#L179-L380)）：
      - 活动配置节点点击“使用”：调用 `updateCurrentSelectedMap` + `changeProxyDebounce` 切换该节点所属主选择组，并确保 `currentGroupName` 在 `isAppControllerReady == true` 时同样写回 `profilesProvider`；
      - `Mode.global` 下 [`_activeLeaves`](file:///E:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart#L968-L1012) 与 `Mode.rule` 分支严格互斥；
-     - **修复外部审查 Finding 1 及 `30e6884` / `2e1ff5f` / `db24f45` 外部审查 P2（跨配置切换失败后目标节点仍标为“使用中”不可重试、重建总览或隐藏期间完成旧组刷新或首次冷挂载总览导致旧配置实时节点挂到目标配置下）**：
-       - 在 [`GlobalState.appState`](file:///E:/CodeWorkstation/FlClashX/lib/state.dart#L46-L100) 中将 `AppState.groups` 规范化为稳定的 `EqualUnmodifiableListView` 实例并提供显式 [`recordGroupsSnapshot`](file:///E:/CodeWorkstation/FlClashX/lib/state.dart#L60-L76)（由 `Groups.onUpdate` 与 `Version.onUpdate` 调用）与 [`matchesGroupsSnapshot`](file:///E:/CodeWorkstation/FlClashX/lib/state.dart#L55-L58)，杜绝 `runTimeProvider` 等无关 `copyWith` 因 Freezed 包装器每次生成新实例而误判组变化并篡改 `groupsSnapshotProfileId`；
-       - 在 [`_overviewSwitchTrackerProvider`](file:///E:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart#L109-L148) 首次冷初始化时移除核验失败回退到 `currentRuntimeProfileId()` 的分支，仅在 `globalState.matchesGroupsSnapshot` 校验通过时继承 `globalState.groupsSnapshotProfileId`；在 [`_isSnapshotLiveForProfile`](file:///E:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart#L169-L180) 中要求非空组快照必须通过校验且归属当前运行配置，确保首次打开总览或隐藏期间完成旧组刷新时绝不把旧 A 节点渲染到 B 下；
+     - **修复外部审查 Finding 1 及 `30e6884` / `2e1ff5f` / `db24f45` / `cf5b329` 外部审查 P2（跨配置切换失败后目标节点仍标为“使用中”不可重试、重建总览或隐藏期间完成旧组刷新或首次冷挂载总览导致旧配置实时节点挂到目标配置下、以及版本更新覆盖原始组列表引用导致首次打开总览退回目录行）**：
+       - 在 [`GlobalState`](file:///E:/CodeWorkstation/FlClashX/lib/state.dart#L46-L120) 中将 `AppState.groups` 规范化为稳定的 `EqualUnmodifiableListView` 实例，同时分离 [`recordGroupsSnapshot`](file:///E:/CodeWorkstation/FlClashX/lib/state.dart#L72-L88)（由 `Groups` 调用，记录原始列表引用 `_rawGroupsSnapshot`、规范化包装 `_groupsSnapshot` 及归属 `_groupsSnapshotProfileId`）与 [`recordGroupsVersion`](file:///E:/CodeWorkstation/FlClashX/lib/state.dart#L90-L98)（由 `Version` 调用，仅更新版本号而保留 `_rawGroupsSnapshot` 与 `_groupsSnapshotProfileId`），并提供 [`isSameGroupsList`](file:///E:/CodeWorkstation/FlClashX/lib/state.dart#L58-L66) 与 [`matchesGroupsSnapshot`](file:///E:/CodeWorkstation/FlClashX/lib/state.dart#L68-L71)，杜绝 `runTimeProvider` 无关更新篡改快照归属，也杜绝 `Version` 更新把 `_rawGroupsSnapshot` 覆盖为包装列表；
+       - 在 [`_overviewSwitchTrackerProvider`](file:///E:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart#L114-L148) 中移除核验失败回退到 `currentRuntimeProfileId()` 的分支，仅在 `globalState.matchesGroupsSnapshot` 校验通过时继承 `globalState.groupsSnapshotProfileId`；在 [`_isSnapshotLiveForProfile`](file:///E:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart#L179-L190) 中要求非空组快照必须通过校验且归属当前运行配置，确保首次打开总览或隐藏期间完成旧组刷新时绝不把旧 A 节点渲染到 B 下，同时单配置刷新后新增第二配置首次打开总览时准确保留当前活动配置的实时 `In use` 行；
        - 将“已保存的选择（`selectedMap`/`currentProfileId`）”与“运行态已确认生效（`liveActive`）”解耦：非运行态配置行（[`_InactiveNodeRow`](file:///E:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart#L700-L716)）始终保持 `inUse: false`（显示“使用”且可点击重试），失败或未生效时不提前显示“已切换到 ...”或禁用按钮；用户点击重试时重新触发 `applyProfileDebounce(silence: true)` 与 `changeProxyDebounce(targetGroup, node.name)`，待运行态确认切到目标配置且发布归属目标配置的组快照后再转为 `In use` 并展示成功反馈。
   3. 四语言文案补齐（`arb/intl_*.arb` 及生成的 `lib/l10n/`）：新增 `nodeOverviewUseNode`、`nodeOverviewInUse`、`nodeOverviewSwitchedToNode`。
 - 单测与验证：
   - `test/common/node_catalog_service_test.dart`：**22 PASS**（含 `empty-fallback` 命中、自定义 `direct` 及 `rematch` 代理命中阻止回退、显式自定义 `direct` 及 `rematch` 代理被排除允许回退、非空组忽略 `empty-fallback`、含未解析 `use` provider 时 fail-closed 回归测试）。
-  - `test/views/node_overview_test.dart`：**73 PASS**（含跨配置切换失败保持目标节点可点击重试且不误标 `In use`、总览卸载隐藏期间完成旧配置组刷新、无关 `runTimeProvider` 更新及首次冷挂载总览绝不将旧配置实时节点渲染到目标配置下 3 项回归测试；目标单测合计 **95 PASS，0 FAIL**）。
-  - 外部审查 r1 + r2 + r3 + r4 + r5 及 `30e6884` / `2e1ff5f` / `db24f45` 复现套件与 31,488 项扩展语义对照矩阵（123 规则 × 128 合成节点名 × `filter`/`exclude-filter`）：**全部 PASS，0 次错误放行（0 unsafe admissions，0 mismatches）**。
+  - `test/views/node_overview_test.dart`：**74 PASS**（含跨配置切换失败保持目标节点可点击重试且不误标 `In use`、总览卸载隐藏期间完成旧配置组刷新、无关 `runTimeProvider` 更新及首次冷挂载总览绝不将旧配置实时节点渲染到目标配置下、单配置 `groups + version` 发布后新增配置首次进入总览保留实时 `In use` 状态 4 项回归测试；目标单测合计 **96 PASS，0 FAIL**）。
+  - 外部审查 r1 + r2 + r3 + r4 + r5 及 `30e6884` / `2e1ff5f` / `db24f45` / `cf5b329` 复现套件与 31,488 项扩展语义对照矩阵（123 规则 × 128 合成节点名 × `filter`/`exclude-filter`）：**全部 PASS，0 次错误放行（0 unsafe admissions，0 mismatches）**。
   - 修改文件 `dart analyze`：**0 error，0 warning**（exit 0）；`git diff --check` 通过。
 - 交付状态：已在 `development` 分支完成修复与验证；未启动候选程序，未触碰现役代理/TUN/服务。
 

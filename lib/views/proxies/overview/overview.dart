@@ -94,7 +94,7 @@ class _OverviewSwitchTracker {
   bool matchesAttested(List<Group> groups, int version) =>
       attestedGroups != null &&
       version == attestedVersion &&
-      identical(groups, attestedGroups);
+      globalState.isSameGroupsList(groups, attestedGroups);
 
   void onSnapshotChanged({
     required List<Group> groups,
@@ -114,9 +114,6 @@ class _OverviewSwitchTracker {
 final _overviewSwitchTrackerProvider =
     Provider<_OverviewSwitchTracker>((ref) {
   final tracker = _OverviewSwitchTracker();
-  String? currentRuntimeProfileId() =>
-      globalState.lastRuntimeProfileId ??
-      ref.read(activeNodeCatalogProvider)?.profileId;
   final initialGroups = ref.read(groupsProvider);
   final initialVersion = ref.read(versionProvider);
   if (globalState.matchesGroupsSnapshot(initialGroups, initialVersion)) {
@@ -132,13 +129,13 @@ final _overviewSwitchTrackerProvider =
   void recordUpdate() {
     final nextGroups = ref.read(groupsProvider);
     final nextVersion = ref.read(versionProvider);
-    final runtimeProfileId =
-        globalState.matchesGroupsSnapshot(nextGroups, nextVersion)
-            ? (globalState.groupsSnapshotProfileId ??
-                (globalState.lastRuntimeProfileId == null
-                    ? ref.read(activeNodeCatalogProvider)?.profileId
-                    : null))
-            : currentRuntimeProfileId();
+    if (!globalState.matchesGroupsSnapshot(nextGroups, nextVersion)) {
+      return;
+    }
+    final runtimeProfileId = globalState.groupsSnapshotProfileId ??
+        (globalState.lastRuntimeProfileId == null
+            ? ref.read(activeNodeCatalogProvider)?.profileId
+            : null);
     tracker.onSnapshotChanged(
       groups: nextGroups,
       version: nextVersion,
@@ -402,7 +399,7 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
           ..pendingGroups = null
           ..pendingVersion = null;
       } else if (runtimeMatchesPending &&
-          (!identical(groups, tracker.pendingGroups) ||
+          (!globalState.isSameGroupsList(groups, tracker.pendingGroups) ||
               version != tracker.pendingVersion)) {
         if (tracker.pendingProfileLabel != null &&
             tracker.pendingNodeName != null) {

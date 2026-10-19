@@ -14,6 +14,7 @@ import 'package:flclashx/providers/node_overview.dart';
 import 'package:flclashx/providers/providers.dart';
 import 'package:flclashx/state.dart';
 import 'package:flclashx/views/proxies/card.dart';
+import 'package:flclashx/views/proxies/list.dart';
 import 'package:flclashx/views/proxies/overview/overview.dart';
 import 'package:flclashx/views/proxies/proxies.dart';
 import 'package:flclashx/widgets/scaffold.dart';
@@ -2550,6 +2551,70 @@ void main() {
       findsNothing,
     );
     expect(find.byKey(const ValueKey('overview-use-b-b-1')), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'one-click use: adding second profile after normal groups plus version publication preserves live In use rows',
+      (tester) async {
+    final controller = _ProxyController();
+    globalState.appController = controller;
+    globalState.lastRuntimeProfileId = 'a';
+    final activeProfile = _a.copyWith(
+      selectedMap: const {'Alpha Select': 'Alpha live'},
+    );
+    globalState.config = globalState.config.copyWith(
+      currentProfileId: 'a',
+      profiles: [activeProfile],
+    );
+    final container = await mount(
+      tester,
+      width: 1200,
+      profiles: [activeProfile],
+      child: const NodeOverviewScopeView(currentView: ProxiesListView()),
+      catalogs: {
+        'a': ProfileCatalog(
+          profileId: 'a',
+          fingerprint: 'fa',
+          status: ProfileCatalogStatus.ready,
+          nodes: [
+            _node('a-1', 'Alpha live')
+                .copyWith(selectGroups: const ['Alpha Select']),
+          ],
+        ),
+      },
+    );
+    expect(find.byType(ProxiesListView), findsOneWidget);
+    expect(find.byType(NodeOverviewView), findsNothing);
+
+    final publishedGroups = <Group>[
+      const Group(
+        name: 'Alpha Select',
+        type: GroupType.Selector,
+        hidden: false,
+        now: 'Alpha live',
+        all: [Proxy(name: 'Alpha live', type: 'Shadowsocks')],
+      ),
+    ];
+    container.read(groupsProvider.notifier).value = publishedGroups;
+    container.read(versionProvider.notifier).value =
+        container.read(versionProvider) + 1;
+    await tester.pumpAndSettle();
+    expect(identical(container.read(groupsProvider), publishedGroups), isTrue);
+    expect(globalState.groupsSnapshotProfileId, 'a');
+
+    container.read(profilesProvider.notifier).setProfile(_b);
+    await tester.pumpAndSettle();
+    container.read(proxiesScopeProvider.notifier).state = ProxiesScope.all;
+    await tester.pumpAndSettle();
+
+    final liveButton = find.byKey(const ValueKey('overview-use-a-Alpha live'));
+    expect(liveButton, findsOneWidget);
+    expect(tester.widget<TextButton>(liveButton).onPressed, isNull);
+    expect(
+      find.descendant(of: liveButton, matching: find.text('In use')),
+      findsOneWidget,
+    );
     expect(tester.takeException(), isNull);
   });
 }

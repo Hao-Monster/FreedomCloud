@@ -280,22 +280,46 @@ class Version extends _$Version with AutoDisposeNotifierMixin {
   int build() => globalState.appState.version;
 
   @override
+  set value(int value) {
+    globalState.recordGroupsVersion(value);
+    super.value = value;
+  }
+
+  @override
   void onUpdate(int value) {
-    globalState.recordGroupsSnapshot(
-      globalState.appState.groups,
-      version: value,
-    );
+    if (globalState.groupsSnapshotVersion != value) {
+      globalState.recordGroupsVersion(value);
+    }
   }
 }
 
 @riverpod
 class Groups extends _$Groups with AutoDisposeNotifierMixin {
   @override
-  List<Group> build() => globalState.appState.groups;
+  List<Group> build() =>
+      globalState.rawGroupsSnapshot ?? globalState.appState.groups;
+
+  @override
+  set value(List<Group> value) {
+    globalState.recordGroupsSnapshot(value);
+    super.value = value;
+  }
+
+  @override
+  bool updateShouldNotify(List<Group> previous, List<Group> next) {
+    final res = super.updateShouldNotify(previous, next) ||
+        !identical(previous, next);
+    if (res) {
+      onUpdate(next);
+    }
+    return res;
+  }
 
   @override
   void onUpdate(List<Group> value) {
-    globalState.recordGroupsSnapshot(value);
+    if (!identical(value, globalState.rawGroupsSnapshot)) {
+      globalState.recordGroupsSnapshot(value);
+    }
   }
 }
 
