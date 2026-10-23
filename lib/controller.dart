@@ -882,7 +882,9 @@ class AppController {
       }
       // Drop the previous exit-IP immediately so the panel shows "determining" right
       // away instead of flashing the old IP until the debounced check runs.
-      detectionState.markChecking();
+      detectionState
+        ..notifyRoutingChanged()
+        ..markChecking();
       // Initialize foreground notification cache before starting
       initForegroundCache();
       final started = await globalState.handleStart([
@@ -892,6 +894,7 @@ class AppController {
         // Bring-up failed (VPN consent denied / establish failed): undo the
         // optimistic "connected" UI instead of leaving a ticking-but-dead state
         // that never self-heals.
+        detectionState.notifyRoutingChanged();
         await StatusBarManager.updateIcon(isConnected: false);
         stopRunTimeTimer();
         _ref.read(runTimeProvider.notifier).value = null;
@@ -929,6 +932,7 @@ class AppController {
       }
       applyProfileDebounce();
     } else {
+      detectionState.notifyRoutingChanged();
       stopRunTimeTimer();
       await globalState.handleStop();
       _windowsCoreRestoreNeedsListener = false;

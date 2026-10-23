@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flclashx/common/common.dart';
@@ -158,6 +159,7 @@ void main() {
     Map<String, ProfileCatalog> cached = const {},
     Map<String, Map<String, NodeHealthRecord>> health = const {},
     void Function(String)? onLoad,
+    Future<ProfileCatalog> Function(String)? loadCatalog,
     bool enabled = true,
     double width = 400,
     bool appBarScaffold = false,
@@ -183,6 +185,9 @@ void main() {
         cachedProfileCatalogsProvider.overrideWith((ref) => cached),
         profileCatalogProvider.overrideWith((ref, id) async {
           onLoad?.call(id);
+          if (loadCatalog != null) {
+            return loadCatalog(id);
+          }
           return catalogs[id] ??
               cached[id] ??
               ProfileCatalog(
@@ -2816,15 +2821,18 @@ void main() {
       ipInfo: IpInfo(ip: '203.0.113.1', countryCode: 'US'),
     );
     globalState.config = globalState.config.copyWith(currentProfileId: 'a');
-    globalState.appState = globalState.appState.copyWith(groups: const [
-      Group(
-        name: 'Primary',
-        type: GroupType.Selector,
-        hidden: false,
-        now: 'VIP Line 1',
-        all: [Proxy(name: 'VIP Line 1', type: 'Shadowsocks')],
-      ),
-    ]);
+    globalState.appState = globalState.appState.copyWith(
+      runTime: 123,
+      groups: const [
+        Group(
+          name: 'Primary',
+          type: GroupType.Selector,
+          hidden: false,
+          now: 'VIP Line 1',
+          all: [Proxy(name: 'VIP Line 1', type: 'Shadowsocks')],
+        ),
+      ],
+    );
     await mount(
       tester,
       profiles: [
@@ -2901,22 +2909,25 @@ void main() {
       ipInfo: null,
     );
     globalState.config = globalState.config.copyWith(currentProfileId: 'a');
-    globalState.appState = globalState.appState.copyWith(groups: const [
-      Group(
-        name: 'Primary',
-        type: GroupType.Selector,
-        hidden: false,
-        now: 'US node',
-        all: [Proxy(name: 'US node', type: 'Shadowsocks')],
-      ),
-      Group(
-        name: 'Media',
-        type: GroupType.Selector,
-        hidden: false,
-        now: 'Japan node',
-        all: [Proxy(name: 'Japan node', type: 'Shadowsocks')],
-      ),
-    ]);
+    globalState.appState = globalState.appState.copyWith(
+      runTime: 123,
+      groups: const [
+        Group(
+          name: 'Primary',
+          type: GroupType.Selector,
+          hidden: false,
+          now: 'US node',
+          all: [Proxy(name: 'US node', type: 'Shadowsocks')],
+        ),
+        Group(
+          name: 'Media',
+          type: GroupType.Selector,
+          hidden: false,
+          now: 'Japan node',
+          all: [Proxy(name: 'Japan node', type: 'Shadowsocks')],
+        ),
+      ],
+    );
     await mount(
       tester,
       profiles: [
@@ -2967,18 +2978,21 @@ void main() {
       ipInfo: IpInfo(ip: '198.51.100.11', countryCode: 'JP'),
     );
     globalState.config = globalState.config.copyWith(currentProfileId: 'a');
-    globalState.appState = globalState.appState.copyWith(groups: const [
-      Group(
-        name: 'Primary',
-        type: GroupType.Selector,
-        hidden: false,
-        now: 'VIP Alpha',
-        all: [
-          Proxy(name: 'VIP Alpha', type: 'Shadowsocks'),
-          Proxy(name: 'VIP Beta', type: 'Shadowsocks'),
-        ],
-      ),
-    ]);
+    globalState.appState = globalState.appState.copyWith(
+      runTime: 123,
+      groups: const [
+        Group(
+          name: 'Primary',
+          type: GroupType.Selector,
+          hidden: false,
+          now: 'VIP Alpha',
+          all: [
+            Proxy(name: 'VIP Alpha', type: 'Shadowsocks'),
+            Proxy(name: 'VIP Beta', type: 'Shadowsocks'),
+          ],
+        ),
+      ],
+    );
 
     final container = await mount(
       tester,
@@ -3041,6 +3055,162 @@ void main() {
       find.descendant(of: betaRow, matching: find.text('🇺🇸 United States')),
       findsOneWidget,
     );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'stopped proxy revokes active target and ignores direct exit IP before, during, and after stop (R2 P2 #1)',
+      (tester) async {
+    addTearDown(() {
+      detectionState.state.value = const NetworkDetectionState(
+        isLoading: true,
+        isTesting: false,
+        ipInfo: null,
+      );
+    });
+    detectionState.state.value = const NetworkDetectionState(
+      isLoading: false,
+      isTesting: false,
+      ipInfo: IpInfo(ip: '198.51.100.11', countryCode: 'JP'),
+    );
+    globalState.config = globalState.config.copyWith(currentProfileId: 'a');
+    globalState.appState = globalState.appState.copyWith(
+      runTime: 123,
+      groups: const [
+        Group(
+          name: 'Primary',
+          type: GroupType.Selector,
+          hidden: false,
+          now: 'VIP Alpha',
+          all: [Proxy(name: 'VIP Alpha', type: 'Shadowsocks')],
+        ),
+      ],
+    );
+
+    final container = await mount(
+      tester,
+      width: 1200,
+      profiles: [
+        _a.copyWith(selectedMap: const {'Primary': 'VIP Alpha'}),
+        _b,
+      ],
+    );
+    final resolver = container.read(nodeCountryResolverProvider);
+    expect(
+      resolver.resolveCountryCode(
+        profileId: 'a',
+        profileLabel: 'Alpha profile',
+        nodeName: 'VIP Alpha',
+      ),
+      'JP',
+    );
+
+    // Stop proxy (runTime becomes null) and publish direct CN exit IP
+    container.read(runTimeProvider.notifier).value = null;
+    expect(globalState.appState.runTime, isNull);
+    detectionState.state.value = const NetworkDetectionState(
+      isLoading: true,
+      isTesting: true,
+      ipInfo: null,
+    );
+    detectionState.state.value = const NetworkDetectionState(
+      isLoading: false,
+      isTesting: false,
+      ipInfo: IpInfo(ip: '203.0.113.99', countryCode: 'CN'),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      resolver.resolveCountryCode(
+        profileId: 'a',
+        profileLabel: 'Alpha profile',
+        nodeName: 'VIP Alpha',
+      ),
+      'JP',
+      reason: 'stopped listener produces a direct exit; it must never overwrite proxy calibration',
+    );
+
+    // Even if proxy restarts before a fresh check replaces the direct CN IpInfo,
+    // the tainted direct IpInfo must still not overwrite VIP Alpha.
+    container.read(runTimeProvider.notifier).value = 456;
+    await tester.pumpAndSettle();
+    expect(
+      resolver.resolveCountryCode(
+        profileId: 'a',
+        profileLabel: 'Alpha profile',
+        nodeName: 'VIP Alpha',
+      ),
+      'JP',
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'switching override script while both country index workers are pending restarts scan and discovers offscreen countries (R2 P2 #4)',
+      (tester) async {
+    final loaded = <String>[];
+    final pending = <String, Completer<ProfileCatalog>>{};
+    final profiles = <Profile>[
+      _a,
+      ...List.generate(
+        29,
+        (i) => Profile(
+          id: 'p$i',
+          label: 'Fixture $i',
+          autoUpdateDuration: Duration.zero,
+        ),
+      ),
+      _b,
+    ];
+    ProfileCatalog buildCatalog(String id) => ProfileCatalog(
+          profileId: id,
+          fingerprint: id,
+          status: ProfileCatalogStatus.ready,
+          nodes: id == 'a'
+              ? List.generate(200, (i) => _node('a$i', 'VIP Line $i'))
+              : id == 'b'
+                  ? [_node('japan', 'Japan node')]
+                  : const [],
+        );
+
+    final container = await mount(
+      tester,
+      width: 400,
+      profiles: profiles,
+      onLoad: loaded.add,
+      loadCatalog: (id) async {
+        final number = id.startsWith('p') ? int.tryParse(id.substring(1)) : null;
+        if (number == 12 || number == 13) {
+          final gate = pending.putIfAbsent(id, Completer<ProfileCatalog>.new);
+          return gate.future;
+        }
+        return buildCatalog(id);
+      },
+    );
+
+    expect(pending, hasLength(2));
+    expect(loaded, isNot(contains('b')));
+
+    container.read(scriptStateProvider.notifier).setScript(
+          const Script(
+            id: 'review-script',
+            label: 'Fixture script',
+            content: 'function main(config) { return config; }',
+          ),
+        );
+    container.read(scriptStateProvider.notifier).setId('review-script');
+    await tester.pump();
+    await tester.pump();
+
+    for (final id in pending.keys.toList()) {
+      if (!pending[id]!.isCompleted) {
+        pending[id]!.complete(buildCatalog(id));
+      }
+    }
+    await tester.pumpAndSettle();
+
+    expect(loaded, contains('b'));
+    expect(find.byKey(const ValueKey('overview-country-JP')), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 }

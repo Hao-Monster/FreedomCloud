@@ -982,43 +982,102 @@ typedef ExitCalibrationEntry = ({
   String countryCode,
   String? endpointKey,
   String? server,
+  String? configFingerprint,
 });
+
+Object? _canonicalizeProxyValue(Object? value, {bool isRoot = false}) {
+  if (value == null || value is bool || value is num || value is String) {
+    return value;
+  }
+  if (value is Map) {
+    final keys = <String>[];
+    final byStringKey = <String, Object?>{};
+    for (final entry in value.entries) {
+      final key = entry.key.toString();
+      if (isRoot && key == 'name') continue;
+      keys.add(key);
+      byStringKey[key] = entry.value;
+    }
+    keys.sort();
+    final sorted = <String, Object?>{};
+    for (final key in keys) {
+      final rawVal = byStringKey[key];
+      if (isRoot && (key == 'type' || key == 'server') && rawVal is String) {
+        sorted[key] = rawVal.trim().toLowerCase();
+      } else if (isRoot && key == 'port') {
+        final parsedPort = rawVal is int
+            ? rawVal
+            : rawVal is String
+                ? int.tryParse(rawVal)
+                : null;
+        sorted[key] = parsedPort ?? _canonicalizeProxyValue(rawVal);
+      } else {
+        sorted[key] = _canonicalizeProxyValue(rawVal);
+      }
+    }
+    return sorted;
+  }
+  if (value is Iterable) {
+    return value.map(_canonicalizeProxyValue).toList();
+  }
+  return value.toString();
+}
+
+String _computeProxyConfigFingerprint(Map<Object?, Object?> proxy) {
+  final canonical = _canonicalizeProxyValue(proxy, isRoot: true);
+  return sha256
+      .convert(utf8.encode('v1|cfg|${jsonEncode(canonical)}'))
+      .toString()
+      .substring(0, 32);
+}
 
 /// Resolves and caches proxy node countries using the aligned 3-tier pipeline:
 /// 1. Live exit IP country from NetworkDetection (`detectionState` / `checkIp`)
 ///    strictly bound to proven outbound node ownership, central routing state,
-///    request generation, and endpoint identity.
+///    proxy-running eligibility, request generation, and full proxy identity.
 /// 2. Node server IP / domain resolution via Core `getCountryCode` (`geoip.metadb`)
 /// 3. Node name and subscription profile name keyword/flag inference (`OTHER` fallback)
 ///
-/// Server hostnames remain private to this resolver and are never added to
+/// Server hostnames and credentials remain private and are never added to
 /// `CatalogNode` or `ProfileCatalog` debug/JSON representations.
 class NodeCountryResolver extends ChangeNotifier {
   NodeCountryResolver({
     ResolveServerCountryCallback? resolveServerCountry,
     this.detectionListenable,
     this.readDetectionMeta,
+    this.isDetectionProxyEligible,
     this.resolveConnectionTarget,
     this.maxConcurrency = 4,
     DateTime Function()? clock,
   })  : _resolveServerCountry =
-            resolveServerCountry ?? defaultResolveServerCountry {
+            resolveServerCountry ?? defaultResolveServerCountry,
+        _clock = clock ?? DateTime.now {
     final initialMeta = readDetectionMeta?.call();
     if (initialMeta != null) {
       _lastSeenGeneration = initialMeta.completedGeneration;
     }
+    final initialDetection = detectionListenable?.value;
+    if (initialDetection?.ipInfo != null &&
+        !(isDetectionProxyEligible?.call() ?? true)) {
+      _directIneligibleIpInfo = initialDetection!.ipInfo;
+    }
     detectionListenable?.addListener(_onDetectionChanged);
   }
+
+  static const Duration connectionAttributionGraceWindow = Duration(seconds: 5);
 
   final ResolveServerCountryCallback _resolveServerCountry;
   final ValueListenable<NetworkDetectionState>? detectionListenable;
   final DetectionCheckMetadata Function()? readDetectionMeta;
+  final bool Function()? isDetectionProxyEligible;
   final ConnectionOutboundTarget? Function()? resolveConnectionTarget;
   final int maxConcurrency;
+  final DateTime Function() _clock;
 
   final Map<String, String> _endpointServers = <String, String>{};
   final Map<String, String> _nameServers = <String, String>{};
   final Map<String, String> _nameEndpointKeys = <String, String>{};
+  final Map<String, String> _nameConfigFingerprints = <String, String>{};
   final Map<String, String> _serverCountryCache = <String, String>{};
   final Set<String> _pendingServers = <String>{};
   final Queue<String> _lookupQueue = Queue<String>();
@@ -1027,23 +1086,68 @@ class NodeCountryResolver extends ChangeNotifier {
 
   final Map<String, ExitCalibrationEntry> _exitCountryByNodeKey =
       <String, ExitCalibrationEntry>{};
-  final Map<String, String> _exitCountryByEndpointKey = <String, String>{};
+  final Map<String, String?> _exitCountryByProfileConfig =
+      <String, String?>{};
   (String, String)? _activeTarget;
   String? _activeEndpointKey;
   bool _awaitingFreshDetection = false;
   String? _staleIpAtSwitch;
   int _lastSeenGeneration = 0;
+  IpInfo? _directIneligibleIpInfo;
+
+  int _syntheticAttributionToken = 0;
+  int? _pendingConnectionAttributionToken;
+  int? _pendingConnectionAttributionRoutingEpoch;
+  IpInfo? _pendingConnectionAttributionIpInfo;
+  DateTime? _pendingConnectionAttributionDeadline;
 
   @override
   void dispose() {
     _disposed = true;
     detectionListenable?.removeListener(_onDetectionChanged);
     _lookupQueue.clear();
+    _clearPendingConnectionAttribution();
     super.dispose();
   }
 
   void _notify() {
     if (!_disposed) notifyListeners();
+  }
+
+  void _clearPendingConnectionAttribution() {
+    _pendingConnectionAttributionToken = null;
+    _pendingConnectionAttributionRoutingEpoch = null;
+    _pendingConnectionAttributionIpInfo = null;
+    _pendingConnectionAttributionDeadline = null;
+  }
+
+  bool _isCurrentDetectionProxyEligible(IpInfo info) {
+    if (identical(info, _directIneligibleIpInfo)) return false;
+    final eligible = isDetectionProxyEligible?.call() ?? true;
+    if (!eligible) {
+      _directIneligibleIpInfo = info;
+      return false;
+    }
+    return true;
+  }
+
+  void onProxyRunningChanged({required bool isRunning}) {
+    _clearPendingConnectionAttribution();
+    if (!isRunning) {
+      _activeTarget = null;
+      _activeEndpointKey = null;
+      final currentIp = detectionListenable?.value.ipInfo;
+      if (currentIp != null) {
+        _awaitingFreshDetection = true;
+        _staleIpAtSwitch = currentIp.ip;
+      }
+    } else {
+      final currentIp = detectionListenable?.value.ipInfo;
+      if (currentIp != null && identical(currentIp, _directIneligibleIpInfo)) {
+        _awaitingFreshDetection = true;
+        _staleIpAtSwitch = currentIp.ip;
+      }
+    }
   }
 
   void invalidateProfile(String profileId) {
@@ -1063,7 +1167,21 @@ class NodeCountryResolver extends ChangeNotifier {
       }
       return false;
     });
+    _nameConfigFingerprints.removeWhere((key, _) {
+      if (key.startsWith(prefix)) {
+        changed = true;
+        return true;
+      }
+      return false;
+    });
     _exitCountryByNodeKey.removeWhere((key, _) {
+      if (key.startsWith(prefix)) {
+        changed = true;
+        return true;
+      }
+      return false;
+    });
+    _exitCountryByProfileConfig.removeWhere((key, _) {
       if (key.startsWith(prefix)) {
         changed = true;
         return true;
@@ -1073,6 +1191,7 @@ class NodeCountryResolver extends ChangeNotifier {
     if (_activeTarget?.$1 == profileId) {
       _activeTarget = null;
       _activeEndpointKey = null;
+      _clearPendingConnectionAttribution();
     }
     if (changed) _notify();
   }
@@ -1080,16 +1199,22 @@ class NodeCountryResolver extends ChangeNotifier {
   void clearProfiles() {
     final hadEntries = _nameServers.isNotEmpty ||
         _nameEndpointKeys.isNotEmpty ||
-        _exitCountryByNodeKey.isNotEmpty;
+        _nameConfigFingerprints.isNotEmpty ||
+        _exitCountryByNodeKey.isNotEmpty ||
+        _exitCountryByProfileConfig.isNotEmpty;
     _nameServers.clear();
     _nameEndpointKeys.clear();
+    _nameConfigFingerprints.clear();
     _exitCountryByNodeKey.clear();
+    _exitCountryByProfileConfig.clear();
     _activeTarget = null;
     _activeEndpointKey = null;
+    _clearPendingConnectionAttribution();
     if (hadEntries) _notify();
   }
 
   void markSwitchingNode() {
+    _clearPendingConnectionAttribution();
     _awaitingFreshDetection = true;
     _staleIpAtSwitch = detectionListenable?.value.ipInfo?.ip;
   }
@@ -1134,21 +1259,34 @@ class NodeCountryResolver extends ChangeNotifier {
             ? endpointKey
             : _nameEndpointKeys[nodeKey];
     final currentServer = _nameServers[nodeKey];
+    final currentFingerprint = _nameConfigFingerprints[nodeKey];
     final nextEntry = (
       countryCode: normalized,
       endpointKey: effectiveEndpointKey,
       server: currentServer,
+      configFingerprint: currentFingerprint,
     );
     var changed = false;
     if (_exitCountryByNodeKey[nodeKey] != nextEntry) {
       _exitCountryByNodeKey[nodeKey] = nextEntry;
       changed = true;
     }
-    if (effectiveEndpointKey != null &&
-        effectiveEndpointKey.isNotEmpty &&
-        _exitCountryByEndpointKey[effectiveEndpointKey] != normalized) {
-      _exitCountryByEndpointKey[effectiveEndpointKey] = normalized;
-      changed = true;
+    if (currentFingerprint != null) {
+      final configKey = '$profileId|$currentFingerprint';
+      if (_exitCountryByProfileConfig.containsKey(configKey)) {
+        final existingConfigCountry = _exitCountryByProfileConfig[configKey];
+        if (existingConfigCountry != normalized) {
+          // Multiple identical-config nodes produced different exit countries;
+          // retain per-node entries, disable cross-name fallback for this config.
+          if (existingConfigCountry != null) {
+            _exitCountryByProfileConfig[configKey] = null;
+            changed = true;
+          }
+        }
+      } else {
+        _exitCountryByProfileConfig[configKey] = normalized;
+        changed = true;
+      }
     }
     if (changed && notify) _notify();
   }
@@ -1172,6 +1310,7 @@ class NodeCountryResolver extends ChangeNotifier {
         effectiveNodeName == 'DIRECT' ||
         effectiveNodeName == 'REJECT') {
       if (isSwitching || _activeTarget != null) {
+        _clearPendingConnectionAttribution();
         final detection = detectionListenable?.value;
         if (detection != null &&
             !detection.isLoading &&
@@ -1195,6 +1334,7 @@ class NodeCountryResolver extends ChangeNotifier {
     _activeEndpointKey = resolvedEndpoint;
     final detection = detectionListenable?.value;
     if (previousTarget != null && previousTarget != nextTarget) {
+      _clearPendingConnectionAttribution();
       if (detection != null &&
           !detection.isLoading &&
           !detection.isTesting &&
@@ -1210,31 +1350,62 @@ class NodeCountryResolver extends ChangeNotifier {
         !detection.isTesting &&
         detection.ipInfo != null &&
         _isDetectionGenerationValidForCurrentRoute(allowPreexisting: true)) {
-      _applyDetectionInfo(detection.ipInfo!, notify: notify);
+      _applyDetectionInfo(
+        detection.ipInfo!,
+        notify: notify,
+        allowDeferredConnectionAttribution: false,
+      );
     }
   }
 
-  /// Re-evaluates exit attribution when Core connection logs arrive slightly
-  /// after `detectionState` publishes an `IpInfo` in multi-group configs.
+  /// Re-evaluates exit attribution only when an unattributed proxy exit-IP
+  /// check is still within its post-completion grace window waiting for Core
+  /// connection telemetry. Never rebinds an already-attributed or old check.
   void onConnectionsUpdated({bool notify = true}) {
-    if (_awaitingFreshDetection) return;
+    final pendingToken = _pendingConnectionAttributionToken;
+    final pendingIpInfo = _pendingConnectionAttributionIpInfo;
+    final deadline = _pendingConnectionAttributionDeadline;
+    if (pendingToken == null || pendingIpInfo == null || deadline == null) {
+      return;
+    }
+    if (_awaitingFreshDetection || _clock().isAfter(deadline)) {
+      _clearPendingConnectionAttribution();
+      return;
+    }
     final detection = detectionListenable?.value;
     if (detection == null ||
         detection.isLoading ||
         detection.isTesting ||
-        detection.ipInfo == null) {
+        !identical(detection.ipInfo, pendingIpInfo) ||
+        !_isCurrentDetectionProxyEligible(pendingIpInfo)) {
+      _clearPendingConnectionAttribution();
       return;
     }
     if (!_isDetectionGenerationValidForCurrentRoute(allowPreexisting: true)) {
+      _clearPendingConnectionAttribution();
       return;
     }
+    final meta = readDetectionMeta?.call();
+    if (meta != null) {
+      if (_pendingConnectionAttributionRoutingEpoch != null &&
+          meta.routingEpoch != _pendingConnectionAttributionRoutingEpoch) {
+        _clearPendingConnectionAttribution();
+        return;
+      }
+      if (pendingToken > 0 && meta.completedGeneration != pendingToken) {
+        _clearPendingConnectionAttribution();
+        return;
+      }
+    }
     final observed = resolveConnectionTarget?.call();
-    if (observed == null || observed.isDirectOrReject) return;
+    if (observed == null) return;
+    _clearPendingConnectionAttribution();
+    if (observed.isDirectOrReject) return;
     recordExitCountry(
       profileId: observed.profileId,
       proxyName: observed.proxyName,
       endpointKey: observed.endpointKey,
-      countryCode: detection.ipInfo!.countryCode,
+      countryCode: pendingIpInfo.countryCode,
       notify: notify,
     );
   }
@@ -1257,6 +1428,11 @@ class NodeCountryResolver extends ChangeNotifier {
     if (detection.isLoading || detection.isTesting || detection.ipInfo == null) {
       _awaitingFreshDetection = false;
       _staleIpAtSwitch = null;
+      _clearPendingConnectionAttribution();
+      return;
+    }
+    if (!_isCurrentDetectionProxyEligible(detection.ipInfo!)) {
+      _clearPendingConnectionAttribution();
       return;
     }
     final meta = readDetectionMeta?.call();
@@ -1267,6 +1443,7 @@ class NodeCountryResolver extends ChangeNotifier {
         // Check started under an earlier route before a switch; reject it.
         _awaitingFreshDetection = true;
         _staleIpAtSwitch = detection.ipInfo!.ip;
+        _clearPendingConnectionAttribution();
         return;
       }
       _awaitingFreshDetection = false;
@@ -1280,12 +1457,25 @@ class NodeCountryResolver extends ChangeNotifier {
       _awaitingFreshDetection = false;
       _staleIpAtSwitch = null;
     }
-    _applyDetectionInfo(detection.ipInfo!, notify: true);
+    _applyDetectionInfo(
+      detection.ipInfo!,
+      notify: true,
+      allowDeferredConnectionAttribution: true,
+    );
   }
 
-  void _applyDetectionInfo(IpInfo info, {required bool notify}) {
+  void _applyDetectionInfo(
+    IpInfo info, {
+    required bool notify,
+    required bool allowDeferredConnectionAttribution,
+  }) {
+    if (!_isCurrentDetectionProxyEligible(info)) {
+      _clearPendingConnectionAttribution();
+      return;
+    }
     final observed = resolveConnectionTarget?.call();
     if (observed != null) {
+      _clearPendingConnectionAttribution();
       if (observed.isDirectOrReject) return;
       recordExitCountry(
         profileId: observed.profileId,
@@ -1297,14 +1487,30 @@ class NodeCountryResolver extends ChangeNotifier {
       return;
     }
     final target = _activeTarget;
-    if (target == null) return;
-    recordExitCountry(
-      profileId: target.$1,
-      proxyName: target.$2,
-      endpointKey: _activeEndpointKey,
-      countryCode: info.countryCode,
-      notify: notify,
-    );
+    if (target != null) {
+      _clearPendingConnectionAttribution();
+      recordExitCountry(
+        profileId: target.$1,
+        proxyName: target.$2,
+        endpointKey: _activeEndpointKey,
+        countryCode: info.countryCode,
+        notify: notify,
+      );
+      return;
+    }
+    if (allowDeferredConnectionAttribution && resolveConnectionTarget != null) {
+      final meta = readDetectionMeta?.call();
+      final token = (meta != null && meta.completedGeneration > 0)
+          ? meta.completedGeneration
+          : --_syntheticAttributionToken;
+      _pendingConnectionAttributionToken = token;
+      _pendingConnectionAttributionRoutingEpoch = meta?.routingEpoch;
+      _pendingConnectionAttributionIpInfo = info;
+      _pendingConnectionAttributionDeadline =
+          _clock().add(connectionAttributionGraceWindow);
+    } else {
+      _clearPendingConnectionAttribution();
+    }
   }
 
   void registerFromRawConfig(String profileId, Map<String, dynamic> raw) {
@@ -1339,7 +1545,11 @@ class NodeCountryResolver extends ChangeNotifier {
       if (normalizedServer.isEmpty) continue;
       final nodeKey = '$profileId|$name';
       final previousServer = _nameServers[nodeKey];
+      final previousEndpointKey = _nameEndpointKeys[nodeKey];
+      final previousFingerprint = _nameConfigFingerprints[nodeKey];
+      final configFingerprint = _computeProxyConfigFingerprint(item);
       _nameServers[nodeKey] = normalizedServer;
+      _nameConfigFingerprints[nodeKey] = configFingerprint;
       String? endpointKey;
       if (port != null && port >= 1 && port <= 65535) {
         final endpoint = '$type|${server.toLowerCase()}|$port';
@@ -1349,17 +1559,26 @@ class NodeCountryResolver extends ChangeNotifier {
             .substring(0, 32);
         _endpointServers[endpointKey] = normalizedServer;
         _nameEndpointKeys[nodeKey] = endpointKey;
+      } else {
+        _nameEndpointKeys.remove(nodeKey);
       }
       final existingExit = _exitCountryByNodeKey[nodeKey];
       if (existingExit != null) {
-        final endpointChanged = existingExit.endpointKey != null &&
-            endpointKey != null &&
-            existingExit.endpointKey != endpointKey;
+        final endpointChanged = existingExit.endpointKey != endpointKey &&
+            (existingExit.endpointKey != null || previousEndpointKey != null);
         final serverChanged = (existingExit.server != null &&
                 existingExit.server != normalizedServer) ||
             (previousServer != null && previousServer != normalizedServer);
-        if (endpointChanged || serverChanged) {
+        final configChanged = (existingExit.configFingerprint != null &&
+                existingExit.configFingerprint != configFingerprint) ||
+            (previousFingerprint != null &&
+                previousFingerprint != configFingerprint);
+        if (endpointChanged || serverChanged || configChanged) {
           _exitCountryByNodeKey.remove(nodeKey);
+          if (existingExit.configFingerprint != null) {
+            _exitCountryByProfileConfig
+                .remove('$profileId|${existingExit.configFingerprint}');
+          }
           evictedStaleExit = true;
         }
       }
@@ -1419,28 +1638,42 @@ class NodeCountryResolver extends ChangeNotifier {
     bool inUse = false,
   }) {
     final nodeKey = '$profileId|$nodeName';
+    final registeredEndpointKey = _nameEndpointKeys[nodeKey];
     final effectiveEndpointKey =
         (endpointKey != null && endpointKey.isNotEmpty)
             ? endpointKey
-            : _nameEndpointKeys[nodeKey];
-    if (effectiveEndpointKey != null && effectiveEndpointKey.isNotEmpty) {
-      final exitByEndpoint = _exitCountryByEndpointKey[effectiveEndpointKey];
-      if (exitByEndpoint != null && exitByEndpoint.isNotEmpty) {
-        return exitByEndpoint;
-      }
-      final exitByNode = _exitCountryByNodeKey[nodeKey];
-      if (exitByNode != null &&
-          (exitByNode.endpointKey == null ||
-              exitByNode.endpointKey == effectiveEndpointKey) &&
-          (exitByNode.server == null ||
-              _nameServers[nodeKey] == null ||
-              exitByNode.server == _nameServers[nodeKey])) {
+            : registeredEndpointKey;
+    final currentServer = _nameServers[nodeKey];
+    final currentFingerprint = _nameConfigFingerprints[nodeKey];
+
+    final exitByNode = _exitCountryByNodeKey[nodeKey];
+    if (exitByNode != null) {
+      final callerEndpointMatches = endpointKey == null ||
+          endpointKey.isEmpty ||
+          exitByNode.endpointKey == null ||
+          exitByNode.endpointKey == endpointKey;
+      final registeredEndpointMatches = registeredEndpointKey == null ||
+          exitByNode.endpointKey == null ||
+          exitByNode.endpointKey == registeredEndpointKey;
+      final serverMatches = exitByNode.server == null ||
+          currentServer == null ||
+          exitByNode.server == currentServer;
+      final fingerprintMatches = exitByNode.configFingerprint == null ||
+          currentFingerprint == null ||
+          exitByNode.configFingerprint == currentFingerprint;
+      if (callerEndpointMatches &&
+          registeredEndpointMatches &&
+          serverMatches &&
+          fingerprintMatches) {
         return exitByNode.countryCode;
       }
-    } else {
-      final exitByNode = _exitCountryByNodeKey[nodeKey];
-      if (exitByNode != null) {
-        return exitByNode.countryCode;
+    }
+
+    if (currentFingerprint != null) {
+      final exitByConfig =
+          _exitCountryByProfileConfig['$profileId|$currentFingerprint'];
+      if (exitByConfig != null && exitByConfig.isNotEmpty) {
+        return exitByConfig;
       }
     }
 
@@ -1448,7 +1681,7 @@ class NodeCountryResolver extends ChangeNotifier {
                 effectiveEndpointKey.isNotEmpty
             ? _endpointServers[effectiveEndpointKey]
             : null) ??
-        _nameServers[nodeKey];
+        currentServer;
     final rawServerCountry = server == null ? null : _serverCountryCache[server];
     final serverCountry =
         rawServerCountry != null && rawServerCountry.isNotEmpty

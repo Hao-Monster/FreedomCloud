@@ -966,6 +966,8 @@ class DetectionState {
   int? _lastCompletedRoutingEpoch;
   String? _lastMatchedHost;
   DateTime? _lastCheckStartedAt;
+  DateTime? _lastCheckCompletedAt;
+  bool? _lastCheckProxyEligible;
   IpInfo? _lastCompletedIpInfo;
 
   int get routingEpoch => _routingEpoch;
@@ -984,6 +986,14 @@ class DetectionState {
   DateTime? get lastCheckStartedAt =>
       identical(state.value.ipInfo, _lastCompletedIpInfo)
           ? _lastCheckStartedAt
+          : null;
+  DateTime? get lastCheckCompletedAt =>
+      identical(state.value.ipInfo, _lastCompletedIpInfo)
+          ? _lastCheckCompletedAt
+          : null;
+  bool? get lastCheckProxyEligible =>
+      identical(state.value.ipInfo, _lastCompletedIpInfo)
+          ? _lastCheckProxyEligible
           : null;
 
   /// Advances the central proxy/profile/mode routing epoch so any in-flight
@@ -1061,6 +1071,8 @@ class DetectionState {
     cancelToken = CancelToken();
     final requestGen = ++_requestGeneration;
     final startRoutingEpoch = _routingEpoch;
+    final wasStartAtBegin = isStart;
+    final modeAtBegin = globalState.config.patchClashConfig.mode;
     final checkStartedAt = DateTime.now();
     state.value = state.value.copyWith(
       isTesting: true,
@@ -1077,16 +1089,27 @@ class DetectionState {
       return;
     }
     final ipInfo = res.data?.ipInfo;
+    final checkCompletedAt = DateTime.now();
+    final isStartAtEnd =
+        globalState.isAppStateInitialized && globalState.appState.runTime != null;
+    final modeAtEnd = globalState.config.patchClashConfig.mode;
     state.value = state.value.copyWith(
       isTesting: false,
     );
     if (ipInfo != null) {
+      final sameRoute = startRoutingEpoch == _routingEpoch;
+      final proxyEligible = sameRoute &&
+          wasStartAtBegin &&
+          isStartAtEnd &&
+          modeAtBegin != Mode.direct &&
+          modeAtEnd != Mode.direct;
       _lastCompletedIpInfo = ipInfo;
       _lastCompletedGeneration = requestGen;
-      _lastCompletedRoutingEpoch =
-          startRoutingEpoch == _routingEpoch ? startRoutingEpoch : null;
+      _lastCompletedRoutingEpoch = sameRoute ? startRoutingEpoch : null;
       _lastMatchedHost = res.data?.host;
       _lastCheckStartedAt = checkStartedAt;
+      _lastCheckCompletedAt = checkCompletedAt;
+      _lastCheckProxyEligible = proxyEligible;
       state.value = state.value.copyWith(
         isLoading: false,
         ipInfo: ipInfo,

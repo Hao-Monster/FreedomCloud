@@ -1,7 +1,11 @@
 import 'dart:io';
 
+import 'package:flclashx/common/fixed.dart';
 import 'package:flclashx/common/node_country.dart';
+import 'package:flclashx/enum/enum.dart';
 import 'package:flclashx/models/models.dart';
+import 'package:flclashx/models/node_catalog.dart';
+import 'package:flclashx/providers/node_overview.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -610,6 +614,308 @@ void main() {
           endpointKey: 'ep-jp',
           isLiveActive: true,
           inUse: true,
+        ),
+        'JP',
+      );
+    });
+
+    test(
+        'shared endpointKey across distinct accounts retains own exit countries, port change evicts stale exit, and clearProfiles clears calibrations (R2 P2 #3)',
+        () async {
+      final resolver = NodeCountryResolver(
+        resolveServerCountry: (server) async =>
+            server == 'relay.invalid' ? 'US' : null,
+      );
+      addTearDown(resolver.dispose);
+
+      // 1. Same host, different port evicts prior exit calibration
+      final oldPort = {
+        'name': 'Node',
+        'type': 'ss',
+        'server': 'relay.invalid',
+        'port': 80,
+      };
+      final nextPort = {
+        'name': 'Node',
+        'type': 'ss',
+        'server': 'relay.invalid',
+        'port': 443,
+      };
+      resolver.registerProxyMaps('p', [oldPort]);
+      await Future<void>.delayed(Duration.zero);
+      resolver.recordExitCountry(
+        profileId: 'p',
+        proxyName: 'Node',
+        countryCode: 'GB',
+      );
+      expect(
+        resolver.resolveCountryCode(
+          profileId: 'p',
+          profileLabel: null,
+          nodeName: 'Node',
+        ),
+        'GB',
+      );
+
+      resolver.registerProxyMaps('p', [nextPort]);
+      await Future<void>.delayed(Duration.zero);
+      expect(
+        resolver.resolveCountryCode(
+          profileId: 'p',
+          profileLabel: null,
+          nodeName: 'Node',
+        ),
+        'US',
+      );
+
+      // 2. Distinct SOCKS5 accounts sharing type/server/port retain independent exit countries
+      final resolverShared = NodeCountryResolver(
+        resolveServerCountry: (_) async => null,
+      );
+      addTearDown(resolverShared.dispose);
+      final usMap = {
+        'name': 'US account',
+        'type': 'socks5',
+        'server': 'relay.invalid',
+        'port': 1080,
+        'username': 'country-us',
+      };
+      final jpMap = {
+        'name': 'JP account',
+        'type': 'socks5',
+        'server': 'relay.invalid',
+        'port': 1080,
+        'username': 'country-jp',
+      };
+      final usNode = catalogNodeFromMap(profileId: 'p', proxy: usMap);
+      final jpNode = catalogNodeFromMap(profileId: 'p', proxy: jpMap);
+      expect(usNode.endpointKey, jpNode.endpointKey);
+
+      resolverShared.registerProxyMaps('p', [usMap, jpMap]);
+      await Future<void>.delayed(Duration.zero);
+
+      resolverShared.recordExitCountry(
+        profileId: 'p',
+        proxyName: 'US account',
+        endpointKey: usNode.endpointKey,
+        countryCode: 'US',
+      );
+      // Before JP account is calibrated, US account's calibration must not leak to JP account
+      expect(
+        resolverShared.resolveCountryCode(
+          profileId: 'p',
+          profileLabel: null,
+          nodeName: 'JP account',
+          endpointKey: jpNode.endpointKey,
+        ),
+        'JP',
+      );
+
+      resolverShared.recordExitCountry(
+        profileId: 'p',
+        proxyName: 'JP account',
+        endpointKey: jpNode.endpointKey,
+        countryCode: 'JP',
+      );
+      expect(
+        resolverShared.resolveCountryCode(
+          profileId: 'p',
+          profileLabel: null,
+          nodeName: 'US account',
+          endpointKey: usNode.endpointKey,
+        ),
+        'US',
+      );
+      expect(
+        resolverShared.resolveCountryCode(
+          profileId: 'p',
+          profileLabel: null,
+          nodeName: 'JP account',
+          endpointKey: jpNode.endpointKey,
+        ),
+        'JP',
+      );
+
+      // 3. clearProfiles and invalidateProfile remove exit calibrations even when endpointKey is supplied
+      final nextNode = catalogNodeFromMap(profileId: 'p', proxy: nextPort);
+      resolver.recordExitCountry(
+        profileId: 'p',
+        proxyName: 'Node',
+        endpointKey: nextNode.endpointKey,
+        countryCode: 'GB',
+      );
+      expect(
+        resolver.resolveCountryCode(
+          profileId: 'p',
+          profileLabel: null,
+          nodeName: 'Node',
+          endpointKey: nextNode.endpointKey,
+        ),
+        'GB',
+      );
+      resolver
+        ..clearProfiles()
+        ..registerProxyMaps('p', [nextPort]);
+      await Future<void>.delayed(Duration.zero);
+      expect(
+        resolver.resolveCountryCode(
+          profileId: 'p',
+          profileLabel: null,
+          nodeName: 'Node',
+          endpointKey: nextNode.endpointKey,
+        ),
+        'US',
+      );
+    });
+
+    test(
+        'later unrelated same-host connections never reuse an earlier IP check result (R2 P2 #2)',
+        () {
+      final probeStart = DateTime.utc(2026, 10, 23, 12);
+      final probeDone = probeStart.add(const Duration(milliseconds: 300));
+      var now = probeDone;
+
+      Connection makeConn(String id, String leaf, DateTime at) => Connection(
+            id: id,
+            start: at,
+            chains: [leaf, 'Balance'],
+            metadata: const Metadata(
+              uid: 0,
+              network: 'tcp',
+              sourceIP: '127.0.0.1',
+              sourcePort: '12345',
+              destinationIP: '203.0.113.1',
+              destinationPort: '443',
+              host: 'api-ipv4.ip.sb',
+              process: 'FreedomCloud.exe',
+              remoteDestination: '',
+            ),
+          );
+
+      final connections = FixedList<Connection>(20)
+        ..add(makeConn('the-ip-check', 'US node', probeStart));
+      var completed = 0;
+      final detection = ValueNotifier<NetworkDetectionState>(
+        const NetworkDetectionState(
+          isLoading: true,
+          isTesting: true,
+          ipInfo: null,
+        ),
+      );
+      addTearDown(detection.dispose);
+
+      final resolver = NodeCountryResolver(
+        clock: () => now,
+        detectionListenable: detection,
+        readDetectionMeta: () => (
+          routingEpoch: 4,
+          completedGeneration: completed,
+          completedRoutingEpoch: 4,
+        ),
+        resolveServerCountry: (_) async => null,
+        resolveConnectionTarget: () => resolveObservedConnectionTarget(
+          activeId: 'p1',
+          runtimeLive: true,
+          effectiveMode: Mode.rule,
+          allGroups: const [Group(name: 'Balance', type: GroupType.LoadBalance)],
+          requests: connections,
+          matchedHost: 'api-ipv4.ip.sb',
+          checkStartedAt: probeStart,
+          checkCompletedAt: probeDone,
+          verifiedCatalog: null,
+          cachedCatalogs: const {},
+        ),
+      );
+      addTearDown(resolver.dispose);
+
+      completed = 1;
+      detection.value = const NetworkDetectionState(
+        isLoading: false,
+        isTesting: false,
+        ipInfo: IpInfo(ip: '198.51.100.10', countryCode: 'US'),
+      );
+      expect(
+        resolver.resolveCountryCode(
+          profileId: 'p1',
+          profileLabel: 'generic',
+          nodeName: 'US node',
+        ),
+        'US',
+      );
+      expect(
+        resolver.resolveCountryCode(
+          profileId: 'p1',
+          profileLabel: 'generic',
+          nodeName: 'Japan node',
+        ),
+        'JP',
+      );
+
+      // Ten minutes later an unrelated request hits the same host via Japan node
+      now = probeStart.add(const Duration(minutes: 10));
+      connections.add(makeConn('unrelated-later', 'Japan node', now));
+      resolver.onConnectionsUpdated();
+      expect(
+        resolver.resolveCountryCode(
+          profileId: 'p1',
+          profileLabel: 'generic',
+          nodeName: 'Japan node',
+        ),
+        'JP',
+      );
+
+      // Even if a check originally had no connection at completion time,
+      // connections arriving after the 5-second grace deadline are ignored.
+      final lateConnections = FixedList<Connection>(20);
+      completed = 2;
+      now = probeDone.add(const Duration(minutes: 20));
+      final lateProbeStart = now;
+      final lateProbeDone = now.add(const Duration(milliseconds: 200));
+      final resolverLate = NodeCountryResolver(
+        clock: () => now,
+        detectionListenable: detection,
+        readDetectionMeta: () => (
+          routingEpoch: 4,
+          completedGeneration: completed,
+          completedRoutingEpoch: 4,
+        ),
+        resolveServerCountry: (_) async => null,
+        resolveConnectionTarget: () => resolveObservedConnectionTarget(
+          activeId: 'p1',
+          runtimeLive: true,
+          effectiveMode: Mode.rule,
+          allGroups: const [Group(name: 'Balance', type: GroupType.LoadBalance)],
+          requests: lateConnections,
+          matchedHost: 'api-ipv4.ip.sb',
+          checkStartedAt: lateProbeStart,
+          checkCompletedAt: lateProbeDone,
+          verifiedCatalog: null,
+          cachedCatalogs: const {},
+        ),
+      );
+      addTearDown(resolverLate.dispose);
+
+      detection.value = const NetworkDetectionState(
+        isLoading: true,
+        isTesting: true,
+        ipInfo: null,
+      );
+      completed = 3;
+      detection.value = const NetworkDetectionState(
+        isLoading: false,
+        isTesting: false,
+        ipInfo: IpInfo(ip: '198.51.100.88', countryCode: 'DE'),
+      );
+
+      // Advance clock past the 5s grace window before any connection arrives
+      now = lateProbeDone.add(const Duration(seconds: 10));
+      lateConnections.add(makeConn('delayed-too-late', 'Japan node', lateProbeStart));
+      resolverLate.onConnectionsUpdated();
+      expect(
+        resolverLate.resolveCountryCode(
+          profileId: 'p1',
+          profileLabel: 'generic',
+          nodeName: 'Japan node',
         ),
         'JP',
       );

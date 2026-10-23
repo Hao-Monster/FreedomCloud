@@ -113,64 +113,81 @@ String? _lookupEndpointKeyForProxy({
   );
 }
 
-ConnectionOutboundTarget? _resolveObservedConnectionTarget({
+ConnectionOutboundTarget? resolveObservedConnectionTarget({
   required String? activeId,
   required bool runtimeLive,
   required Mode effectiveMode,
   required List<Group> allGroups,
   required FixedList<Connection> requests,
+  required String? matchedHost,
+  required DateTime? checkStartedAt,
+  DateTime? checkCompletedAt,
   required ProfileCatalog? verifiedCatalog,
   required Map<String, ProfileCatalog> cachedCatalogs,
 }) {
-  final matchedHost = detectionState.lastMatchedHost?.toLowerCase();
-  final startedAt = detectionState.lastCheckStartedAt;
+  final normalizedHost = matchedHost?.trim().toLowerCase();
   if (activeId == null ||
       activeId.isEmpty ||
       !runtimeLive ||
       effectiveMode == Mode.direct ||
-      matchedHost == null ||
-      matchedHost.isEmpty ||
-      startedAt == null) {
+      normalizedHost == null ||
+      normalizedHost.isEmpty ||
+      checkStartedAt == null) {
     return null;
   }
   final groupNames = <String>{
     for (final group in allGroups) group.name,
     GroupName.GLOBAL.name,
   };
-  final minStart = startedAt.subtract(const Duration(seconds: 2));
+  final minStart = checkStartedAt.subtract(const Duration(seconds: 2));
+  final maxStart =
+      (checkCompletedAt ?? checkStartedAt.add(const Duration(seconds: 15)))
+          .add(const Duration(seconds: 1));
   final list = requests.list;
+  String? matchedLeaf;
   for (var i = list.length - 1; i >= 0; i--) {
     final conn = list[i];
-    if (conn.start.isBefore(minStart)) continue;
+    if (conn.start.isBefore(minStart) || conn.start.isAfter(maxStart)) {
+      continue;
+    }
     final host = conn.metadata.host.toLowerCase();
     final sniffHost = conn.metadata.sniffHost.toLowerCase();
-    if (host != matchedHost && sniffHost != matchedHost) continue;
+    if (host != normalizedHost && sniffHost != normalizedHost) continue;
     if (conn.chains.isEmpty) continue;
     final leaf = conn.chains.firstWhere(
       (hop) => hop.isNotEmpty && !groupNames.contains(hop),
       orElse: () => conn.chains.first,
     );
-    if (leaf == 'DIRECT' || leaf == 'REJECT' || leaf == 'REJECT-DROP') {
-      return (
-        profileId: activeId,
-        proxyName: leaf,
-        endpointKey: null,
-        isDirectOrReject: true,
-      );
+    if (leaf.isEmpty) continue;
+    if (matchedLeaf != null && matchedLeaf != leaf) {
+      // Multiple concurrent connections to the same probe host within the
+      // check window routed through different outbound leaves: ambiguous.
+      return null;
     }
+    matchedLeaf = leaf;
+  }
+  if (matchedLeaf == null) return null;
+  if (matchedLeaf == 'DIRECT' ||
+      matchedLeaf == 'REJECT' ||
+      matchedLeaf == 'REJECT-DROP') {
     return (
       profileId: activeId,
-      proxyName: leaf,
-      endpointKey: _lookupEndpointKeyForProxy(
-        profileId: activeId,
-        proxyName: leaf,
-        verifiedCatalog: verifiedCatalog,
-        cachedCatalogs: cachedCatalogs,
-      ),
-      isDirectOrReject: false,
+      proxyName: matchedLeaf,
+      endpointKey: null,
+      isDirectOrReject: true,
     );
   }
-  return null;
+  return (
+    profileId: activeId,
+    proxyName: matchedLeaf,
+    endpointKey: _lookupEndpointKeyForProxy(
+      profileId: activeId,
+      proxyName: matchedLeaf,
+      verifiedCatalog: verifiedCatalog,
+      cachedCatalogs: cachedCatalogs,
+    ),
+    isDirectOrReject: false,
+  );
 }
 
 ({String profileId, String proxyName, String? endpointKey})?
@@ -261,6 +278,7 @@ void notifyProxyCardSelection(
         );
     return;
   }
+  final isProxyRunning = ref.read(runTimeProvider) != null;
   final activeId = ref.read(currentProfileIdProvider);
   final profiles = ref.read(profilesProvider);
   final allGroups = ref.read(groupsProvider);
@@ -273,7 +291,8 @@ void notifyProxyCardSelection(
     ...?currentProfile?.selectedMap,
     groupName: nextProxyName,
   };
-  final runtimeLive = activeId != null &&
+  final runtimeLive = isProxyRunning &&
+      activeId != null &&
       _isRuntimeSnapshotLiveForProfile(
         verifiedRuntimeProfileId: globalState.lastRuntimeProfileId,
         profileId: activeId,
@@ -308,8 +327,19 @@ final ChangeNotifierProvider<NodeCountryResolver> nodeCountryResolverProvider =
       completedGeneration: detectionState.lastCompletedGeneration,
       completedRoutingEpoch: detectionState.lastCompletedRoutingEpoch,
     ),
+    isDetectionProxyEligible: () {
+      if (!globalState.isAppStateInitialized) return false;
+      if (ref.read(runTimeProvider) == null) return false;
+      if (ref.read(patchClashConfigProvider).mode == Mode.direct) {
+        return false;
+      }
+      final checkEligible = detectionState.lastCheckProxyEligible;
+      if (checkEligible == false) return false;
+      return true;
+    },
     resolveConnectionTarget: () {
       if (!globalState.isAppStateInitialized) return null;
+      if (ref.read(runTimeProvider) == null) return null;
       final activeId = ref.read(currentProfileIdProvider);
       final allGroups = ref.read(groupsProvider);
       final version = ref.read(versionProvider);
@@ -320,12 +350,15 @@ final ChangeNotifierProvider<NodeCountryResolver> nodeCountryResolverProvider =
             groups: allGroups,
             version: version,
           );
-      return _resolveObservedConnectionTarget(
+      return resolveObservedConnectionTarget(
         activeId: activeId,
         runtimeLive: runtimeLive,
         effectiveMode: ref.read(patchClashConfigProvider).mode,
         allGroups: allGroups,
         requests: ref.read(requestsProvider),
+        matchedHost: detectionState.lastMatchedHost,
+        checkStartedAt: detectionState.lastCheckStartedAt,
+        checkCompletedAt: detectionState.lastCheckCompletedAt,
         verifiedCatalog: null,
         cachedCatalogs: ref.read(cachedProfileCatalogsProvider),
       );
@@ -342,6 +375,7 @@ final ChangeNotifierProvider<NodeCountryResolver> nodeCountryResolverProvider =
       );
       return;
     }
+    final isProxyRunning = ref.read(runTimeProvider) != null;
     final activeId = ref.read(currentProfileIdProvider);
     final profiles = ref.read(profilesProvider);
     final allGroups = ref.read(groupsProvider);
@@ -350,7 +384,8 @@ final ChangeNotifierProvider<NodeCountryResolver> nodeCountryResolverProvider =
     final mode = ref.read(patchClashConfigProvider).mode;
     final cachedCatalogs = ref.read(cachedProfileCatalogsProvider);
     final currentProfile = profiles.getProfile(activeId);
-    final runtimeLive = activeId != null &&
+    final runtimeLive = isProxyRunning &&
+        activeId != null &&
         !(currentProfile?.isUpdating ?? false) &&
         _isRuntimeSnapshotLiveForProfile(
           verifiedRuntimeProfileId: globalState.lastRuntimeProfileId,
@@ -384,14 +419,30 @@ final ChangeNotifierProvider<NodeCountryResolver> nodeCountryResolverProvider =
   ref
     ..listen(currentProfileIdProvider, (_, __) => syncCentralTarget(notify: true))
     ..listen(profilesProvider, (_, __) => syncCentralTarget(notify: true))
-    ..listen(
+    ..listen<Mode>(
       patchClashConfigProvider.select((s) => s.mode),
-      (_, __) => syncCentralTarget(notify: true),
+      (previous, next) {
+        if (previous == next) return;
+        detectionState.notifyRoutingChanged();
+        if (next == Mode.direct) {
+          resolver.onProxyRunningChanged(isRunning: false);
+        }
+        syncCentralTarget(notify: true);
+      },
     )
     ..listen(
         cachedProfileCatalogsProvider, (_, __) => syncCentralTarget(notify: true));
   if (globalState.isAppStateInitialized) {
     ref
+      ..listen<bool>(
+        runTimeProvider.select((state) => state != null),
+        (previous, isRunning) {
+          if (previous == isRunning) return;
+          detectionState.notifyRoutingChanged();
+          resolver.onProxyRunningChanged(isRunning: isRunning);
+          syncCentralTarget(notify: true);
+        },
+      )
       ..listen(groupsProvider, (_, __) => syncCentralTarget(notify: true))
       ..listen(
           currentGroupsStateProvider, (_, __) => syncCentralTarget(notify: true))

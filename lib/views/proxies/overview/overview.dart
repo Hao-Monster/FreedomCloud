@@ -209,6 +209,29 @@ class _IndexedProfileCountrySummary {
       scriptContent == currentScript?.content;
 }
 
+class _IndexScanEpochState {
+  _IndexScanEpochState(this.generation);
+
+  final int generation;
+  final Set<String> indexingProfileIds = <String>{};
+  final Set<ProviderSubscription<Object?>> subscriptions =
+      <ProviderSubscription<Object?>>{};
+  int activeWorkers = 0;
+  bool dirty = false;
+  bool cancelled = false;
+
+  void cancel() {
+    cancelled = true;
+    indexingProfileIds.clear();
+    activeWorkers = 0;
+    dirty = false;
+    for (final sub in subscriptions.toList()) {
+      sub.close();
+    }
+    subscriptions.clear();
+  }
+}
+
 class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
   static const int _maxIndexScanConcurrency = 2;
 
@@ -218,14 +241,9 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
   final Set<String> _visibleProfileIds = <String>{};
   final Map<String, _IndexedProfileCountrySummary> _indexedProfiles =
       <String, _IndexedProfileCountrySummary>{};
-  final Set<String> _indexingProfileIds = <String>{};
   final List<ProviderSubscription<Object?>> _lifecycleSubscriptions =
       <ProviderSubscription<Object?>>[];
-  final Set<ProviderSubscription<Object?>> _activeScanSubscriptions =
-      <ProviderSubscription<Object?>>{};
-  int _activeIndexWorkers = 0;
-  int _indexScanGeneration = 0;
-  bool _indexScanDirty = false;
+  _IndexScanEpochState _scanEpoch = _IndexScanEpochState(0);
   bool _disposed = false;
   Timer? _clock;
   late final NodeCatalogTester _tester;
@@ -287,16 +305,21 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
   void _scheduleCountryIndexScan() {
     if (_disposed || !mounted) return;
     if (!ref.read(nodeOverviewEnabledProvider)) return;
-    _pumpCountryIndexWorkers(_indexScanGeneration);
+    _pumpCountryIndexWorkers(_scanEpoch);
   }
 
-  void _pumpCountryIndexWorkers(int generation) {
-    if (_disposed || !mounted || generation != _indexScanGeneration) return;
+  void _pumpCountryIndexWorkers(_IndexScanEpochState epoch) {
+    if (_disposed ||
+        !mounted ||
+        epoch.cancelled ||
+        !identical(epoch, _scanEpoch)) {
+      return;
+    }
     final profiles = ref.read(profilesProvider);
     final currentScript = ref.read(scriptStateProvider).currentScript;
     final cachedCatalogs = ref.read(cachedProfileCatalogsProvider);
     for (final profile in profiles) {
-      if (_activeIndexWorkers >= _maxIndexScanConcurrency) break;
+      if (epoch.activeWorkers >= _maxIndexScanConcurrency) break;
       if (profile.isUpdating) continue;
       final existing = _indexedProfiles[profile.id];
       if (existing != null && existing.matchesProfile(profile, currentScript)) {
@@ -305,50 +328,72 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
       final cached = cachedCatalogs[profile.id];
       if (cached != null && cached.status != ProfileCatalogStatus.loading) {
         _recordIndexedCatalog(profile, currentScript, cached);
-        _indexScanDirty = true;
+        epoch.dirty = true;
         continue;
       }
-      if (_indexingProfileIds.contains(profile.id)) continue;
-      _indexingProfileIds.add(profile.id);
-      _activeIndexWorkers++;
-      unawaited(_indexSingleProfile(profile.id, generation));
+      if (epoch.indexingProfileIds.contains(profile.id)) continue;
+      epoch.indexingProfileIds.add(profile.id);
+      epoch.activeWorkers++;
+      unawaited(_indexSingleProfile(profile.id, epoch));
     }
-    if (_indexScanDirty &&
-        (_activeIndexWorkers == 0 || _indexedProfiles.length % 8 == 0) &&
+    if (epoch.dirty &&
+        (epoch.activeWorkers == 0 || _indexedProfiles.length % 8 == 0) &&
         mounted &&
-        !_disposed) {
-      _indexScanDirty = false;
+        !_disposed &&
+        !epoch.cancelled &&
+        identical(epoch, _scanEpoch)) {
+      epoch.dirty = false;
       setState(() {});
     }
   }
 
-  Future<void> _indexSingleProfile(String profileId, int generation) async {
+  Future<void> _indexSingleProfile(
+    String profileId,
+    _IndexScanEpochState epoch,
+  ) async {
     ProviderSubscription<AsyncValue<ProfileCatalog>>? sub;
     try {
-      if (_disposed || !mounted || generation != _indexScanGeneration) return;
+      if (_disposed ||
+          !mounted ||
+          epoch.cancelled ||
+          !identical(epoch, _scanEpoch)) {
+        return;
+      }
+      final snapshotAtStart = ref.read(profilesProvider).getProfile(profileId);
       sub = ref.listenManual(profileCatalogProvider(profileId), (_, __) {});
-      _activeScanSubscriptions.add(sub);
+      epoch.subscriptions.add(sub);
       final catalog = await ref.read(profileCatalogProvider(profileId).future);
-      if (_disposed || !mounted || generation != _indexScanGeneration) return;
+      if (_disposed ||
+          !mounted ||
+          epoch.cancelled ||
+          !identical(epoch, _scanEpoch)) {
+        return;
+      }
       final profile = ref.read(profilesProvider).getProfile(profileId);
-      if (profile != null && !profile.isUpdating) {
+      final unchangedSinceStart = snapshotAtStart != null &&
+          profile != null &&
+          profile.url == snapshotAtStart.url &&
+          profile.lastUpdateDate == snapshotAtStart.lastUpdateDate &&
+          profile.isUpdating == snapshotAtStart.isUpdating;
+      if (unchangedSinceStart && !profile.isUpdating) {
         final currentScript = ref.read(scriptStateProvider).currentScript;
         _recordIndexedCatalog(profile, currentScript, catalog);
-        _indexScanDirty = true;
+        epoch.dirty = true;
       }
     } catch (_) {
       // Catalog load errors are surfaced through ProfileCatalogStatus.
     } finally {
-      if (sub != null) {
-        _activeScanSubscriptions.remove(sub);
+      if (sub != null && epoch.subscriptions.remove(sub)) {
         sub.close();
       }
-      _indexingProfileIds.remove(profileId);
-      if (_activeIndexWorkers > 0) {
-        _activeIndexWorkers--;
-      }
-      if (!_disposed && mounted && generation == _indexScanGeneration) {
-        _pumpCountryIndexWorkers(generation);
+      if (!epoch.cancelled && identical(epoch, _scanEpoch)) {
+        epoch.indexingProfileIds.remove(profileId);
+        if (epoch.activeWorkers > 0) {
+          epoch.activeWorkers--;
+        }
+        if (!_disposed && mounted) {
+          _pumpCountryIndexWorkers(epoch);
+        }
       }
     }
   }
@@ -376,13 +421,10 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
       ..add(
         ref.listenManual<ScriptProps>(scriptStateProvider, (previous, next) {
           if (previous?.currentScript == next.currentScript) return;
-          _indexScanGeneration++;
+          final nextGen = _scanEpoch.generation + 1;
+          _scanEpoch.cancel();
+          _scanEpoch = _IndexScanEpochState(nextGen);
           _indexedProfiles.clear();
-          _indexingProfileIds.clear();
-          for (final sub in _activeScanSubscriptions.toList()) {
-            sub.close();
-          }
-          _activeScanSubscriptions.clear();
           WidgetsBinding.instance.addPostFrameCallback((_) {
             if (mounted && !_disposed) _scheduleCountryIndexScan();
           });
@@ -405,15 +447,11 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
   @override
   void dispose() {
     _disposed = true;
-    _indexScanGeneration++;
+    _scanEpoch.cancel();
     for (final sub in _lifecycleSubscriptions) {
       sub.close();
     }
     _lifecycleSubscriptions.clear();
-    for (final sub in _activeScanSubscriptions.toList()) {
-      sub.close();
-    }
-    _activeScanSubscriptions.clear();
     _clock?.cancel();
     _tester.disposeScope();
     super.dispose();
@@ -697,7 +735,7 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
           catalog == null &&
           validIndexed == null &&
           !profile.isUpdating &&
-          _indexingProfileIds.contains(profile.id);
+          _scanEpoch.indexingProfileIds.contains(profile.id);
       if (((loaded?.isLoading ?? false) && catalog == null) ||
           pendingIndex ||
           profile.isUpdating ||
