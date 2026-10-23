@@ -6,11 +6,12 @@ import 'package:crypto/crypto.dart';
 import 'package:flclashx/clash/core.dart';
 import 'package:flclashx/clash/interface.dart';
 import 'package:flclashx/common/constant.dart';
-import 'package:flclashx/common/delay_tests.dart';
 import 'package:flclashx/common/delay_test_coordinator.dart';
-import 'package:flclashx/common/node_catalog_service.dart';
+import 'package:flclashx/common/delay_tests.dart';
 import 'package:flclashx/common/node_catalog_provider_resolver.dart';
+import 'package:flclashx/common/node_catalog_service.dart';
 import 'package:flclashx/common/node_catalog_tester.dart';
+import 'package:flclashx/common/node_country.dart';
 import 'package:flclashx/common/node_health_recorder.dart';
 import 'package:flclashx/common/node_health_store.dart';
 import 'package:flclashx/common/node_runtime_catalog.dart';
@@ -37,6 +38,11 @@ final cachedProfileCatalogsProvider =
     StateProvider<Map<String, ProfileCatalog>>((ref) => const {});
 final nodeOverviewTestUrlProvider =
     Provider<String>((ref) => ref.watch(getRealTestUrlProvider(null)));
+
+final nodeCountryResolverProvider =
+    ChangeNotifierProvider<NodeCountryResolver>((ref) => NodeCountryResolver(
+          detectionListenable: detectionState.state,
+        ));
 
 // Read-only IO seam, shared with the existing effective configuration screen.
 // Keep Core access inside the callback so disabled/unused UI cannot start it.
@@ -70,11 +76,24 @@ final nodeRuntimeReadProvider = Provider<NodeRuntimeRead>((ref) {
   }
   final service = ref.watch(nodeCatalogServiceProvider);
   final runtimeReader = ref.watch(nodeRuntimeReaderProvider);
-  final read = NodeRuntimeRead((isCurrent) => readVerifiedNodeRuntime(
+  final countryResolver = ref.read(nodeCountryResolverProvider);
+  final read = NodeRuntimeRead((isCurrent) async {
+    Map<String, dynamic>? latestRuntimeRaw;
+    final verified = await readVerifiedNodeRuntime(
       profileId: profile.id,
-      readRuntime: runtimeReader,
+      readRuntime: () async {
+        final raw = await runtimeReader();
+        latestRuntimeRaw = raw;
+        return raw;
+      },
       readProfile: () => service.load(profile),
-      isCurrent: isCurrent));
+      isCurrent: isCurrent,
+    );
+    if (verified != null && latestRuntimeRaw != null && isCurrent()) {
+      countryResolver.registerFromRawConfig(profile.id, latestRuntimeRaw!);
+    }
+    return verified;
+  });
   // Revoke immediately, even before Riverpod schedules a rebuild/frame. This
   // also catches A -> B -> A and deletion/recreation with the same profile id.
   ref
@@ -206,11 +225,15 @@ final nodeCatalogServiceFactoryProvider =
           onError: (code) => commonPrint.log('node.catalog reason=$code'),
           onPrepared: (catalog) =>
               ref.invalidate(profileCatalogProvider(catalog.profileId)),
+          onProxiesEvaluated: (profileId, proxies) => ref
+              .read(nodeCountryResolverProvider)
+              .registerProxyMaps(profileId, proxies),
         ));
 
 final Provider<NodeCatalogService> nodeCatalogServiceProvider =
     Provider<NodeCatalogService>((ref) {
   final service = ref.read(nodeCatalogServiceFactoryProvider)();
+  final countryResolver = ref.read(nodeCountryResolverProvider);
   ref.listen(profilesProvider, (previous, next) {
     final cached =
         Map<String, ProfileCatalog>.of(ref.read(cachedProfileCatalogsProvider));
@@ -222,6 +245,9 @@ final Provider<NodeCatalogService> nodeCatalogServiceProvider =
           updated.isUpdating != old.isUpdating) {
         final updating = updated?.isUpdating ?? false;
         service.invalidate(old.id, keepCached: updating);
+        if (!updating) {
+          countryResolver.invalidateProfile(old.id);
+        }
         if (updating && cached[old.id] != null) {
           cached[old.id] =
               cached[old.id]!.copyWith(status: ProfileCatalogStatus.updating);
@@ -235,6 +261,7 @@ final Provider<NodeCatalogService> nodeCatalogServiceProvider =
   ref.listen(scriptStateProvider, (previous, next) {
     if (previous?.currentScript == next.currentScript) return;
     service.clear();
+    countryResolver.clearProfiles();
     ref.read(cachedProfileCatalogsProvider.notifier).state = const {};
   });
   ref.onDispose(service.clear);

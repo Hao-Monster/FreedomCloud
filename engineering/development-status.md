@@ -1,6 +1,26 @@
 # 开发、集成与预览台账
 
-更新日期：2026-10-17。当前阶段是快速开发、快速迭代和部分功能预览。本文记录来源与验收边界；每次继续开发仍需核实实际 Git/PR/CI 状态，不能把历史报告视为当前通过证明。
+更新日期：2026-10-23。当前阶段是快速开发、快速迭代和部分功能预览。本文记录来源与验收边界；每次继续开发仍需核实实际 Git/PR/CI 状态，不能把历史报告视为当前通过证明。
+
+
+## 跨配置节点总览按国家筛选与三级国家识别流水线（2026-10-22 ~ 2026-10-23）
+
+- 来源：用户提出在“代理 → 全部配置”（[`NodeOverviewView`](file:///E:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart#L151-L779)）顶部工具栏“测试全部节点延迟”右侧区域增加按国家筛选代理配置的能力，并通过对齐确认四项设计决策：
+  1. **三级混合国家识别流水线**：
+     - **第一级（使用中节点真实出口 IP 校准）**：复用仪表盘“您的 IP 地址”现成的出口探测数据源（`detectionState` / [`request.checkIp`](file:///E:/CodeWorkstation/FlClashX/lib/common/request.dart#L157)），对当前 `inUse` 节点校准其真实出口国家并按节点/端点缓存，同时在节点切换窗口期设置防抖守卫（`markSwitchingNode` / `syncActiveNode`），防止新切换节点误继承上一节点的旧出口 IP；
+     - **第二级（节点配置 `server` 离线 GeoIP 解析与公网 IP 边界加固）**：在不把原始 `server` 域名/IP 写入 [`CatalogNode`](file:///E:/CodeWorkstation/FlClashX/lib/models/node_catalog.dart#L68) 或 [`ProfileCatalog`](file:///E:/CodeWorkstation/FlClashX/lib/models/node_catalog.dart#L89) 序列化与 `toString()` 的隐私边界前提下，由 [`NodeCatalogService.onProxiesEvaluated`](file:///E:/CodeWorkstation/FlClashX/lib/common/node_catalog_service.dart#L1651) 与经归属校验后的 [`nodeRuntimeReadProvider`](file:///E:/CodeWorkstation/FlClashX/lib/providers/node_overview.dart#L79-L95) 将代理映射注册到 [`NodeCountryResolver`](file:///E:/CodeWorkstation/FlClashX/lib/common/node_country.dart#L864)，通过 [`isPublicRoutableIp`](file:///E:/CodeWorkstation/FlClashX/lib/common/node_country.dart#L779) 严格拦截 TUN Fake-IP（`198.18.0.0/15`、`fc00::/7`）、RFC1918 私网、CGNAT（`100.64.0.0/10`）、回环与保留地址，有界异步调用 Core 离线 GeoIP 库 [`clashCore.getCountryCode`](file:///E:/CodeWorkstation/FlClashX/lib/clash/core.dart#L406)（`geoip.metadb`），并对未就绪/瞬态解析失败设置 60 秒负缓存冷却重试；当 `server` 为国内 `CN` 中转入口时优先让位于节点/配置名中的海外落地国家；
+     - **第三级（节点名称与订阅配置名语义兜底）**：从节点名称提取国旗 Emoji、中英文国家/城市名、大写 ISO/机场三字码（自动剔除 `128 GB` / `500 MB` 等流量单位避免与英国代码 `GB` 冲突），若节点名称无国家特征则回退提取所属订阅配置名称（如订阅名 `伦敦` → `GB`、`美国` → `US`），仍无法识别归入 `🌐 其他`（`OTHER`）。
+  2. **动态生成国家筛选胶囊、节点卡片国家徽标与 Windows 彩色国旗字体（`Twemoji`）适配**：
+     - 在顶部工具栏 `Wrap` 紧接 `overview-test-all` 右侧动态渲染当前作用范围内实际存在的国家 `FilterChip`（`ValueKey('overview-country-$code')`），格式为 `🇺🇸 美国 (5)`，按节点数量降序排列（`🌐 其他` 固定排在末尾）；
+     - 在右侧每个节点卡片（[`_ActiveNodeRow`](file:///E:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart#L1483) 与 [`_InactiveNodeRow`](file:///E:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart#L1645)）副标题行展示紧凑国家徽标（[`_CountryBadge`](file:///E:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart#L1606)，如 `🇺🇸 美国`），并对胶囊与徽标的国旗 `TextSpan` 显式绑定 `FontFamily.twEmoji.value`（`Twemoji.Mozilla.ttf`），解决 Windows 默认字体将区域指示符国旗渲染成双字母框的问题，同时保持 `Text.rich` 文本节点语义与既有协议/来源文本查找契约。
+  3. **单选切换交互与配置切换幽灵状态清理**：点击国家胶囊筛选对应国家节点，再次点击已选中胶囊取消筛选恢复显示全部；跟踪当前范围国家集合 `scopeCountries`，当切换到不包含该国家的单个订阅配置时立即自动清理失效的 `_selectedCountry`，防止切回“全部配置”或切换“仅可用”时旧筛选幽灵复活；订阅更新/删除或脚本变更时同步调用 `invalidateProfile` / `clearProfiles` 清理过期缓存。
+  4. **“全部配置”下自动隐藏无匹配节点的空订阅配置分组**：当左侧选中“全部配置”且激活国家筛选时，自动隐藏该国家下匹配节点数为 0 的订阅配置分组标题与空占位，仅展示包含该国家节点的订阅配置及其节点；当左侧选中单个配置时，国家胶囊与节点列表自动收敛至该配置范围。
+- 单测与验证：
+  - 新增 [`test/common/node_country_test.dart`](file:///E:/CodeWorkstation/FlClashX/test/common/node_country_test.dart)（11 项单测，覆盖三级识别流水线、TUN Fake-IP/CGNAT/私网拦截、国内中转入口让位、60 秒冷却重试与按配置缓存失效）并在 [`test/views/node_overview_test.dart`](file:///E:/CodeWorkstation/FlClashX/test/views/node_overview_test.dart#L2621-L2797) 新增跨配置/单配置国家筛选、空分组自动隐藏、`Twemoji` 国旗字体绑定与跨配置切换幽灵筛选清理组件测试；
+  - 本地单元测试（`node_country_test.dart`、`node_catalog_test.dart`、`node_catalog_service_test.dart`、`node_runtime_catalog_test.dart`、`node_overview_providers_test.dart`、`node_overview_integration_test.dart`、`node_overview_render_test.dart`、`node_overview_test.dart` 共 8 个套件）：**PASS（149 PASS，0 FAIL）**；
+  - 变更文件 `dart analyze`：**PASS（0 error，0 warning）**；
+  - 远端 CI / 真实窗口预览 / 后端部署 / 业务验收：**NOT RUN**（尚未推送远端，未触碰本机运行中代理、TUN 及服务状态）。
+- 交付状态：已在 `development` 分支完成代码实现、边界加固、测试验证与本地提交（未推送至 `freedomcloud/development`，未创建 PR）。
 
 
 ## Windows 跨配置切换虚拟网卡（TUN）重启失败自愈与自动重启补丁（2026-10-17）

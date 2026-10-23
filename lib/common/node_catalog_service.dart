@@ -3,10 +3,10 @@ import 'dart:collection';
 import 'dart:convert';
 import 'dart:math';
 
-import 'package:flclashx/models/node_catalog.dart';
-import 'package:flclashx/models/profile.dart';
 import 'package:flclashx/common/node_catalog_provider_resolver.dart';
 import 'package:flclashx/common/node_catalog_test_plan.dart';
+import 'package:flclashx/models/node_catalog.dart';
+import 'package:flclashx/models/profile.dart';
 
 export 'package:flclashx/common/node_catalog_test_plan.dart';
 
@@ -1627,6 +1627,7 @@ class NodeCatalogService {
     this.providerResolver,
     this.onError,
     this.onPrepared,
+    this.onProxiesEvaluated,
   });
 
   static const maxNodes = 2000;
@@ -1647,6 +1648,8 @@ class NodeCatalogService {
       Map<String, dynamic> definition)? providerCachePath;
   final void Function(String reason)? onError;
   final void Function(ProfileCatalog catalog)? onPrepared;
+  final void Function(String profileId, Iterable<Object?> proxies)?
+      onProxiesEvaluated;
 
   final _cache = <String, ProfileCatalog>{};
   final _dirtyCache = <String>{};
@@ -1947,6 +1950,7 @@ class NodeCatalogService {
         }
       }
       await verify();
+      onProxiesEvaluated?.call(profile.id, maps);
       final fingerprint = '${metadata.modifiedMicros}|${metadata.size}|$script';
       final display = ProfileCatalog(
           profileId: profile.id,
@@ -2156,6 +2160,7 @@ class NodeCatalogService {
                     : reason);
       }
       await verifyCurrent();
+      onProxiesEvaluated?.call(profile.id, proxies);
       final prepared = catalog.copyWith(coreCatalogId: id, nodes: nodes);
       _prepared[profile.id] = prepared;
       // Preserve newly discovered unsupported rows in the display cache. Core
@@ -2242,6 +2247,9 @@ class NodeCatalogService {
           isolatedTest: true,
         );
         if (_isCurrent(profile.id, generation)) {
+          if (evaluated['proxies'] case final List<Object?> rawProxies) {
+            onProxiesEvaluated?.call(profile.id, rawProxies);
+          }
           _dirtyCache.remove(profile.id);
           _cache
             ..remove(profile.id)

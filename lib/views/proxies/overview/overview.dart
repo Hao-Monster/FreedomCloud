@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flclashx/common/common.dart';
 import 'package:flclashx/common/delay_test_coordinator.dart';
 import 'package:flclashx/common/node_catalog_tester.dart';
+import 'package:flclashx/common/node_country.dart';
 import 'package:flclashx/common/node_health_store.dart';
 import 'package:flclashx/enum/enum.dart';
 import 'package:flclashx/models/models.dart';
@@ -156,10 +157,18 @@ class NodeOverviewView extends ConsumerStatefulWidget {
 
 class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
   String? _selectedProfile;
+  String? _selectedCountry;
   bool _availableOnly = false;
+  final Set<String> _visibleProfileIds = <String>{};
   Timer? _clock;
   late final NodeCatalogTester _tester;
   String? _feedback;
+
+  void _onProfileVisibilityChanged(String profileId, bool visible) {
+    if (visible && _visibleProfileIds.add(profileId) && mounted) {
+      setState(() {});
+    }
+  }
 
   ({bool verified, String? profileId}) _resolveSnapshotAttestation(
     _OverviewSwitchTracker tracker,
@@ -277,6 +286,7 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
           ], ref.read(nodeOverviewTestUrlProvider))));
 
   void _useActiveNode(Profile profile, String groupName, String proxyName) {
+    ref.read(nodeCountryResolverProvider).markSwitchingNode();
     if (globalState.isAppControllerReady) {
       globalState.appController
         ..updateCurrentSelectedMap(groupName, proxyName)
@@ -307,6 +317,7 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
 
   void _useCatalogNode(
       Profile profile, CatalogNode node, String targetGroup) {
+    ref.read(nodeCountryResolverProvider).markSwitchingNode();
     if (_tester.busy) {
       unawaited(_tester.cancel());
     }
@@ -445,12 +456,120 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
     final isMobile = ref.watch(isMobileViewProvider);
     final sort =
         ref.watch(proxiesStyleSettingProvider.select((s) => s.sortType));
-    final searching = ref.watch(proxiesQueryProvider).trim().isNotEmpty;
     final selected =
         profiles.any((p) => p.id == _selectedProfile) ? _selectedProfile : null;
     final visible = selected == null
         ? profiles
         : profiles.where((p) => p.id == selected).toList();
+    final countryResolver = ref.watch(nodeCountryResolverProvider);
+    final cachedCatalogs = ref.watch(cachedProfileCatalogsProvider);
+    final query = ref.watch(proxiesQueryProvider).trim().toLowerCase();
+    final searching = query.isNotEmpty;
+    final locale = Localizations.localeOf(context);
+    final scopeCountries = <String>{};
+    final countryCounts = <String, int>{};
+    var anyVisibleCatalogLoading = false;
+    String? liveActiveProfileId;
+    String? liveActiveNodeName;
+    String? liveActiveEndpointKey;
+    for (final profile in visible) {
+      final liveActive = isLiveActive(profile);
+      final shouldWatchCatalog = selected != null ||
+          searching ||
+          _selectedCountry != null ||
+          _visibleProfileIds.contains(profile.id);
+      final loaded = shouldWatchCatalog
+          ? ref.watch(profileCatalogProvider(profile.id))
+          : null;
+      final catalog = loaded?.valueOrNull ?? cachedCatalogs[profile.id];
+      if (((loaded?.isLoading ?? false) && catalog == null) ||
+          profile.isUpdating ||
+          catalog?.status == ProfileCatalogStatus.loading ||
+          catalog?.status == ProfileCatalogStatus.updating) {
+        anyVisibleCatalogLoading = true;
+      }
+      final profileMatches =
+          (profile.label ?? profile.id).toLowerCase().contains(query);
+      if (liveActive) {
+        final displays = _activeDisplays(
+            ref, profile.id, profile.isUpdating ? null : catalog);
+        final inUseEntry = displays.values.where((e) => e.inUse).firstOrNull;
+        if (inUseEntry != null) {
+          liveActiveProfileId = profile.id;
+          liveActiveNodeName = inUseEntry.proxy.name;
+          liveActiveEndpointKey = inUseEntry.node?.endpointKey;
+        }
+        final effectiveQuery = profileMatches ? '' : query;
+        for (final entry in displays.values) {
+          final code = countryResolver.resolveCountryCode(
+            profileId: profile.id,
+            profileLabel: profile.label,
+            nodeName: entry.proxy.name,
+            endpointKey: entry.node?.endpointKey,
+            isLiveActive: true,
+            inUse: entry.inUse,
+          );
+          scopeCountries.add(code);
+          final matches =
+              '${entry.proxy.name}\n${entry.fileSource ? entry.node!.type : entry.proxy.type}\n${entry.node?.providerName ?? ''}'
+                  .toLowerCase()
+                  .contains(effectiveQuery);
+          if (!matches || (_availableOnly && (entry.delay ?? -1) <= 0)) {
+            continue;
+          }
+          countryCounts.update(code, (count) => count + 1, ifAbsent: () => 1);
+        }
+      } else {
+        final health = ref.watch(nodeHealthEntriesProvider(profile.id));
+        for (final node in catalog?.nodes ?? const <CatalogNode>[]) {
+          final code = countryResolver.resolveCountryCode(
+            profileId: profile.id,
+            profileLabel: profile.label,
+            nodeName: node.name,
+            endpointKey: node.endpointKey,
+          );
+          scopeCountries.add(code);
+          if (!(profileMatches || _matches(node, query)) ||
+              (_availableOnly &&
+                  (_nodeHealth(node, health)?.delayMs ?? -1) <= 0)) {
+            continue;
+          }
+          countryCounts.update(code, (count) => count + 1, ifAbsent: () => 1);
+        }
+      }
+    }
+    countryResolver.syncActiveNode(
+      profileId: liveActiveProfileId,
+      nodeName: liveActiveNodeName,
+      endpointKey: liveActiveEndpointKey,
+      isLiveActive: liveActiveProfileId != null && liveActiveNodeName != null,
+    );
+    final activeCountry = _selectedCountry != null &&
+            (scopeCountries.contains(_selectedCountry) ||
+                anyVisibleCatalogLoading)
+        ? _selectedCountry
+        : null;
+    if (_selectedCountry != null &&
+        activeCountry == null &&
+        !anyVisibleCatalogLoading) {
+      final staleCountry = _selectedCountry;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && _selectedCountry == staleCountry) {
+          setState(() => _selectedCountry = null);
+        }
+      });
+    }
+    if (activeCountry != null && !countryCounts.containsKey(activeCountry)) {
+      countryCounts[activeCountry] = 0;
+    }
+    final showCountryChips =
+        countryCounts.keys.any((code) => code != kUnknownCountryCode) ||
+            activeCountry != null;
+    final sortedCountries = showCountryChips
+        ? sortCountryCodes(countryCounts.keys, countryCounts)
+        : const <String>[];
+    final activeCountryMatchCount =
+        activeCountry == null ? 0 : (countryCounts[activeCountry] ?? 0);
     final now = DateTime.now();
     return LayoutBuilder(builder: (context, constraints) {
       final wide = !isMobile && constraints.maxWidth > maxLaptopWidth;
@@ -533,6 +652,19 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
                         : () => _testAll(profiles),
                     icon: const Icon(Icons.bolt),
                     label: Text(appLocalizations.nodeOverviewTestAll)),
+                for (final code in sortedCountries)
+                  FilterChip(
+                    key: ValueKey('overview-country-$code'),
+                    label: _CountryLabelText(
+                      emoji: nodeCountryEmoji(code),
+                      text:
+                          '${nodeCountryName(code, locale: locale)} (${countryCounts[code] ?? 0})',
+                    ),
+                    selected: activeCountry == code,
+                    onSelected: (value) => setState(() {
+                      _selectedCountry = value ? code : null;
+                    }),
+                  ),
                 if (tester.busy) ...[
                   Text(appLocalizations.nodeOverviewProgress(
                       tester.completed, tester.total)),
@@ -594,6 +726,8 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
                           active: isCurrent,
                           liveActive: isLiveActive(profile),
                           now: now,
+                          onVisible: () =>
+                              _onProfileVisibilityChanged(profile.id, true),
                           onSelect: () =>
                               setState(() => _selectedProfile = profile.id));
                     },
@@ -611,12 +745,27 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
                       active: profile.id == activeId,
                       liveActive: isLiveActive(profile),
                       showHeader: selected == null,
-                      loadImmediately: selected != null || searching,
+                      loadImmediately:
+                          selected != null || searching || activeCountry != null,
                       availableOnly: _availableOnly,
+                      countryFilter: activeCountry,
+                      onVisibilityChanged: (isVisible) =>
+                          _onProfileVisibilityChanged(profile.id, isVisible),
                       onTest: _testNode,
                       onUseActive: _useActiveNode,
                       onUseCatalog: _useCatalogNode,
                       now: now),
+                if (selected == null &&
+                    activeCountry != null &&
+                    activeCountryMatchCount == 0 &&
+                    !anyVisibleCatalogLoading)
+                  SliverToBoxAdapter(
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 24, vertical: 16),
+                      child: Text(appLocalizations.nodeOverviewNoNodes),
+                    ),
+                  ),
                 const SliverToBoxAdapter(child: SizedBox(height: 32)),
               ],
             )),
@@ -634,12 +783,14 @@ class _SidebarProfileCard extends ConsumerWidget {
       required this.active,
       required this.liveActive,
       required this.now,
+      required this.onVisible,
       required this.onSelect});
   final Profile profile;
   final bool selected;
   final bool active;
   final bool liveActive;
   final DateTime now;
+  final VoidCallback onVisible;
   final VoidCallback onSelect;
 
   @override
@@ -649,6 +800,7 @@ class _SidebarProfileCard extends ConsumerWidget {
     final loaded = ref.watch(profileCatalogProvider(profile.id));
     final catalog = loaded.valueOrNull ??
         ref.watch(cachedProfileCatalogsProvider)[profile.id];
+    WidgetsBinding.instance.addPostFrameCallback((_) => onVisible());
     return Card(
         color:
             selected ? Theme.of(context).colorScheme.secondaryContainer : null,
@@ -684,6 +836,8 @@ class _ProfileNodesSliver extends ConsumerStatefulWidget {
       required this.showHeader,
       required this.loadImmediately,
       required this.availableOnly,
+      required this.countryFilter,
+      required this.onVisibilityChanged,
       required this.onTest,
       required this.onUseActive,
       required this.onUseCatalog,
@@ -694,6 +848,8 @@ class _ProfileNodesSliver extends ConsumerStatefulWidget {
   final bool showHeader;
   final bool loadImmediately;
   final bool availableOnly;
+  final String? countryFilter;
+  final ValueChanged<bool> onVisibilityChanged;
   final void Function(Profile, CatalogNode) onTest;
   final void Function(Profile, String groupName, String proxyName) onUseActive;
   final void Function(Profile, CatalogNode, String targetGroup) onUseCatalog;
@@ -717,6 +873,7 @@ class _ProfileNodesSliverState extends ConsumerState<_ProfileNodesSliver> {
       _visibilityScheduled = false;
       if (mounted && _visible != _nextVisible) {
         setState(() => _visible = _nextVisible);
+        widget.onVisibilityChanged(_visible);
       }
     });
   }
@@ -731,6 +888,8 @@ class _ProfileNodesSliverState extends ConsumerState<_ProfileNodesSliver> {
         ref.watch(cachedProfileCatalogsProvider)[profile.id];
     final health = ref.watch(nodeHealthEntriesProvider(profile.id));
     final tester = ref.watch(nodeCatalogTesterProvider);
+    final countryResolver = ref.watch(nodeCountryResolverProvider);
+    final locale = Localizations.localeOf(context);
     final query = ref.watch(proxiesQueryProvider).trim().toLowerCase();
     final sort =
         ref.watch(proxiesStyleSettingProvider.select((s) => s.sortType));
@@ -739,12 +898,64 @@ class _ProfileNodesSliverState extends ConsumerState<_ProfileNodesSliver> {
     final profileMatches =
         (profile.label ?? profile.id).toLowerCase().contains(query);
     final nodes = (catalog?.nodes ?? <CatalogNode>[])
-        .where((node) =>
-            (profileMatches || _matches(node, query)) &&
-            (!widget.availableOnly ||
-                (_nodeHealth(node, health)?.delayMs ?? -1) > 0))
+        .where((node) {
+          if (!(profileMatches || _matches(node, query))) return false;
+          if (widget.availableOnly &&
+              (_nodeHealth(node, health)?.delayMs ?? -1) <= 0) {
+            return false;
+          }
+          if (widget.countryFilter != null) {
+            final code = countryResolver.resolveCountryCode(
+              profileId: profile.id,
+              profileLabel: profile.label,
+              nodeName: node.name,
+              endpointKey: node.endpointKey,
+            );
+            if (code != widget.countryFilter) return false;
+          }
+          return true;
+        })
         .toList();
     _sortNodes(nodes, health, sort);
+    final isLoading = ((loaded?.isLoading ?? false) && catalog == null) ||
+        catalog?.status == ProfileCatalogStatus.loading;
+    if (widget.showHeader && widget.countryFilter != null) {
+      if (widget.liveActive) {
+        final effectiveQuery = profileMatches ? '' : query;
+        final hasActiveMatch = _activeDisplays(
+                ref, profile.id, profile.isUpdating ? null : catalog)
+            .values
+            .any((entry) {
+          final matches =
+              '${entry.proxy.name}\n${entry.fileSource ? entry.node!.type : entry.proxy.type}\n${entry.node?.providerName ?? ''}'
+                  .toLowerCase()
+                  .contains(effectiveQuery);
+          if (!matches || (widget.availableOnly && (entry.delay ?? -1) <= 0)) {
+            return false;
+          }
+          final code = countryResolver.resolveCountryCode(
+            profileId: profile.id,
+            profileLabel: profile.label,
+            nodeName: entry.proxy.name,
+            endpointKey: entry.node?.endpointKey,
+            isLiveActive: true,
+            inUse: entry.inUse,
+          );
+          return code == widget.countryFilter;
+        });
+        if (!hasActiveMatch) {
+          return _PaintVisibilitySliver(
+            onVisibilityChanged: _visibilityChanged,
+            child: const SliverToBoxAdapter(child: SizedBox.shrink()),
+          );
+        }
+      } else if (!isLoading && nodes.isEmpty) {
+        return _PaintVisibilitySliver(
+          onVisibilityChanged: _visibilityChanged,
+          child: const SliverToBoxAdapter(child: SizedBox.shrink()),
+        );
+      }
+    }
     final error = (loaded?.hasError ?? false) ||
         catalog?.status == ProfileCatalogStatus.fileMissing ||
         catalog?.status == ProfileCatalogStatus.parseFailed;
@@ -756,8 +967,7 @@ class _ProfileNodesSliverState extends ConsumerState<_ProfileNodesSliver> {
               pinned: true,
               delegate: _PinnedProfileHeader(
                   profile: profile, active: widget.active)),
-        if (((loaded?.isLoading ?? false) && catalog == null) ||
-            catalog?.status == ProfileCatalogStatus.loading)
+        if (isLoading)
           const SliverToBoxAdapter(
               child: Padding(
                   padding: EdgeInsets.all(16),
@@ -791,6 +1001,7 @@ class _ProfileNodesSliverState extends ConsumerState<_ProfileNodesSliver> {
               fileCatalog: profile.isUpdating ? null : catalog,
               query: profileMatches ? '' : query,
               availableOnly: widget.availableOnly,
+              countryFilter: widget.countryFilter,
               onUse: widget.onUseActive,
               now: widget.now,
               sort: sort)
@@ -803,10 +1014,24 @@ class _ProfileNodesSliverState extends ConsumerState<_ProfileNodesSliver> {
                     final node = nodes[index];
                     final targetGroup =
                         _targetGroupForCatalogNode(profile, node, mode);
+                    final countryCode = countryResolver.resolveCountryCode(
+                      profileId: profile.id,
+                      profileLabel: profile.label,
+                      nodeName: node.name,
+                      endpointKey: node.endpointKey,
+                    );
+                    final badgeCode = countryCode == kUnknownCountryCode
+                        ? null
+                        : countryCode;
                     return _InactiveNodeRow(
                         key: ValueKey(
                             'overview-node-${profile.id}-${node.identityKey}'),
                         node: node,
+                        countryEmoji:
+                            badgeCode == null ? null : nodeCountryEmoji(badgeCode),
+                        countryName: badgeCode == null
+                            ? null
+                            : nodeCountryName(badgeCode, locale: locale),
                         pending: tester.pending(profile.id, node.identityKey),
                         testKey: ValueKey(
                             'overview-test-${profile.id}-${node.identityKey}'),
@@ -1158,6 +1383,7 @@ class _ActiveNodes extends ConsumerWidget {
       required this.fileCatalog,
       required this.query,
       required this.availableOnly,
+      required this.countryFilter,
       required this.onUse,
       required this.now,
       required this.sort});
@@ -1165,19 +1391,36 @@ class _ActiveNodes extends ConsumerWidget {
   final ProfileCatalog? fileCatalog;
   final String query;
   final bool availableOnly;
+  final String? countryFilter;
   final void Function(Profile, String groupName, String proxyName) onUse;
   final DateTime now;
   final ProxiesSortType sort;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final countryResolver = ref.watch(nodeCountryResolverProvider);
+    final locale = Localizations.localeOf(context);
     final rows =
         _activeDisplays(ref, profile.id, fileCatalog).values.where((entry) {
       final matches =
           '${entry.proxy.name}\n${entry.fileSource ? entry.node!.type : entry.proxy.type}\n${entry.node?.providerName ?? ''}'
               .toLowerCase()
               .contains(query);
-      return matches && (!availableOnly || (entry.delay ?? -1) > 0);
+      if (!matches || (availableOnly && (entry.delay ?? -1) <= 0)) {
+        return false;
+      }
+      if (countryFilter != null) {
+        final code = countryResolver.resolveCountryCode(
+          profileId: profile.id,
+          profileLabel: profile.label,
+          nodeName: entry.proxy.name,
+          endpointKey: entry.node?.endpointKey,
+          isLiveActive: true,
+          inUse: entry.inUse,
+        );
+        if (code != countryFilter) return false;
+      }
+      return true;
     }).toList();
     if (sort != ProxiesSortType.none) {
       rows.sort((a, b) {
@@ -1200,10 +1443,25 @@ class _ActiveNodes extends ConsumerWidget {
             itemCount: rows.length,
             itemBuilder: (context, index) {
               final entry = rows[index];
+              final countryCode = countryResolver.resolveCountryCode(
+                profileId: profile.id,
+                profileLabel: profile.label,
+                nodeName: entry.proxy.name,
+                endpointKey: entry.node?.endpointKey,
+                isLiveActive: true,
+                inUse: entry.inUse,
+              );
+              final badgeCode =
+                  countryCode == kUnknownCountryCode ? null : countryCode;
               return _ActiveNodeRow(
                   key: ValueKey('overview-active-${entry.proxy.name}'),
                   proxy: entry.proxy,
                   node: entry.node,
+                  countryEmoji:
+                      badgeCode == null ? null : nodeCountryEmoji(badgeCode),
+                  countryName: badgeCode == null
+                      ? null
+                      : nodeCountryName(badgeCode, locale: locale),
                   delay: entry.delay,
                   history: entry.history,
                   fileSource: entry.fileSource,
@@ -1227,6 +1485,8 @@ class _ActiveNodeRow extends StatelessWidget {
       {super.key,
       required this.proxy,
       required this.node,
+      required this.countryEmoji,
+      required this.countryName,
       required this.delay,
       required this.history,
       required this.fileSource,
@@ -1237,6 +1497,8 @@ class _ActiveNodeRow extends StatelessWidget {
       required this.now});
   final Proxy proxy;
   final CatalogNode? node;
+  final String? countryEmoji;
+  final String? countryName;
   final int? delay;
   final NodeHealthRecord? history;
   final bool fileSource;
@@ -1290,7 +1552,20 @@ class _ActiveNodeRow extends StatelessWidget {
                 ),
               ]),
               const SizedBox(height: 4),
-              Text(description, style: Theme.of(context).textTheme.bodySmall),
+              Row(
+                children: [
+                  if (countryEmoji != null && countryName != null) ...[
+                    _CountryBadge(emoji: countryEmoji!, name: countryName!),
+                    const SizedBox(width: 6),
+                  ],
+                  Flexible(
+                    child: Text(
+                      description,
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  ),
+                ],
+              ),
               const SizedBox(height: 4),
               Text(
                   history == null
@@ -1298,6 +1573,61 @@ class _ActiveNodeRow extends StatelessWidget {
                       : _testedAt(history!, now),
                   style: Theme.of(context).textTheme.bodySmall),
             ])));
+  }
+}
+
+class _CountryLabelText extends StatelessWidget {
+  const _CountryLabelText({
+    required this.emoji,
+    required this.text,
+    this.style,
+  });
+
+  final String emoji;
+  final String text;
+  final TextStyle? style;
+
+  @override
+  Widget build(BuildContext context) => Text.rich(
+        TextSpan(
+          style: style,
+          children: [
+            TextSpan(
+              text: emoji,
+              style: TextStyle(fontFamily: FontFamily.twEmoji.value),
+            ),
+            TextSpan(text: ' $text'),
+          ],
+        ),
+      );
+}
+
+class _CountryBadge extends StatelessWidget {
+  const _CountryBadge({
+    required this.emoji,
+    required this.name,
+  });
+
+  final String emoji;
+  final String name;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+      decoration: BoxDecoration(
+        color: colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: _CountryLabelText(
+        emoji: emoji,
+        text: name,
+        style: Theme.of(context).textTheme.labelSmall?.copyWith(
+              color: colorScheme.onSurfaceVariant,
+            ),
+      ),
+    );
   }
 }
 
@@ -1317,6 +1647,8 @@ class _InactiveNodeRow extends StatelessWidget {
   const _InactiveNodeRow(
       {super.key,
       required this.node,
+      required this.countryEmoji,
+      required this.countryName,
       required this.health,
       required this.now,
       required this.pending,
@@ -1326,6 +1658,8 @@ class _InactiveNodeRow extends StatelessWidget {
       required this.inUse,
       required this.onUse});
   final CatalogNode node;
+  final String? countryEmoji;
+  final String? countryName;
   final NodeHealthRecord? health;
   final DateTime now;
   final bool pending;
@@ -1386,8 +1720,20 @@ class _InactiveNodeRow extends StatelessWidget {
                   ],
                 ]),
                 const SizedBox(height: 4),
-                Text('${node.type} · ${_source(node)}',
-                    style: Theme.of(context).textTheme.bodySmall),
+                Row(
+                  children: [
+                    if (countryEmoji != null && countryName != null) ...[
+                      _CountryBadge(emoji: countryEmoji!, name: countryName!),
+                      const SizedBox(width: 6),
+                    ],
+                    Flexible(
+                      child: Text(
+                        '${node.type} · ${_source(node)}',
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                    ),
+                  ],
+                ),
                 if (node.unsupported != CatalogUnsupportedReason.none)
                   Padding(
                       padding: const EdgeInsets.only(top: 4),

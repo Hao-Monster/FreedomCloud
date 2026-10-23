@@ -2617,4 +2617,181 @@ void main() {
     );
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets(
+      'country filter chips aggregate across all profiles, auto-hide empty profile sections, and toggle off on second tap',
+      (tester) async {
+    const pIkuuu = Profile(
+      id: 'ikuuu',
+      label: 'ikuuu',
+      autoUpdateDuration: Duration.zero,
+    );
+    const pLondon = Profile(
+      id: 'london',
+      label: '伦敦',
+      autoUpdateDuration: Duration.zero,
+    );
+    const pUs = Profile(
+      id: 'us',
+      label: '美国',
+      autoUpdateDuration: Duration.zero,
+    );
+    await mount(
+      tester,
+      width: 1200,
+      profiles: const [pIkuuu, pLondon, pUs],
+      catalogs: {
+        'ikuuu': ProfileCatalog(
+          profileId: 'ikuuu',
+          fingerprint: 'f1',
+          status: ProfileCatalogStatus.ready,
+          nodes: [
+            _node('ik-us', '🇺🇸 US Node 1'),
+            _node('ik-jp', '🇯🇵 Tokyo Node 1'),
+          ],
+        ),
+        'london': ProfileCatalog(
+          profileId: 'london',
+          fingerprint: 'f2',
+          status: ProfileCatalogStatus.ready,
+          nodes: [
+            _node('lon-1', 'VIP Line 1'),
+            _node('lon-2', 'VIP Line 2'),
+          ],
+        ),
+        'us': ProfileCatalog(
+          profileId: 'us',
+          fingerprint: 'f3',
+          status: ProfileCatalogStatus.ready,
+          nodes: [
+            _node('us-2', 'Los Angeles 02'),
+          ],
+        ),
+      },
+    );
+
+    final usChip = find.byKey(const ValueKey('overview-country-US'));
+    final gbChip = find.byKey(const ValueKey('overview-country-GB'));
+    final jpChip = find.byKey(const ValueKey('overview-country-JP'));
+    expect(usChip, findsOneWidget);
+    expect(gbChip, findsOneWidget);
+    expect(jpChip, findsOneWidget);
+    expect(find.text('🇺🇸 United States (2)'), findsOneWidget);
+    expect(find.text('🇬🇧 United Kingdom (2)'), findsOneWidget);
+    expect(find.text('🇯🇵 Japan (1)'), findsOneWidget);
+
+    // Node card country badges are rendered
+    expect(find.text('🇺🇸 United States'), findsNWidgets(2));
+    expect(find.text('🇬🇧 United Kingdom'), findsNWidgets(2));
+    expect(find.text('🇯🇵 Japan'), findsOneWidget);
+
+    // Tap GB chip -> only London profile section and its 2 nodes are shown;
+    // ikuuu and us profile sections are automatically hidden.
+    await tester.tap(gbChip);
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('overview-header-london')), findsOneWidget);
+    expect(find.byKey(const ValueKey('overview-header-ikuuu')), findsNothing);
+    expect(find.byKey(const ValueKey('overview-header-us')), findsNothing);
+    expect(find.text('VIP Line 1'), findsOneWidget);
+    expect(find.text('VIP Line 2'), findsOneWidget);
+    expect(find.text('🇺🇸 US Node 1'), findsNothing);
+    expect(find.text('🇯🇵 Tokyo Node 1'), findsNothing);
+
+    // Tap GB chip a second time -> clears country filter and restores all sections
+    await tester.tap(gbChip);
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('overview-header-ikuuu')), findsOneWidget);
+    expect(find.byKey(const ValueKey('overview-header-london')), findsOneWidget);
+    expect(find.byKey(const ValueKey('overview-header-us')), findsOneWidget);
+    expect(find.text('🇺🇸 US Node 1'), findsOneWidget);
+    expect(find.text('🇯🇵 Tokyo Node 1'), findsOneWidget);
+    expect(find.text('VIP Line 1'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'country filter chips scope to selected single profile on sidebar selection',
+      (tester) async {
+    const pIkuuu = Profile(
+      id: 'ikuuu',
+      label: 'ikuuu',
+      autoUpdateDuration: Duration.zero,
+    );
+    const pLondon = Profile(
+      id: 'london',
+      label: '伦敦',
+      autoUpdateDuration: Duration.zero,
+    );
+    await mount(
+      tester,
+      width: 1200,
+      profiles: const [pIkuuu, pLondon],
+      catalogs: {
+        'ikuuu': ProfileCatalog(
+          profileId: 'ikuuu',
+          fingerprint: 'f1',
+          status: ProfileCatalogStatus.ready,
+          nodes: [
+            _node('ik-us', '🇺🇸 US Node 1'),
+            _node('ik-jp', '🇯🇵 Tokyo Node 1'),
+          ],
+        ),
+        'london': ProfileCatalog(
+          profileId: 'london',
+          fingerprint: 'f2',
+          status: ProfileCatalogStatus.ready,
+          nodes: [
+            _node('lon-1', 'VIP Line 1'),
+          ],
+        ),
+      },
+    );
+
+    // Select ikuuu in sidebar
+    await tester.tap(find.byKey(const ValueKey('overview-select-ikuuu')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('overview-country-US')), findsOneWidget);
+    expect(find.byKey(const ValueKey('overview-country-JP')), findsOneWidget);
+    expect(find.byKey(const ValueKey('overview-country-GB')), findsNothing);
+    expect(find.text('🇺🇸 United States (1)'), findsOneWidget);
+    expect(find.text('🇯🇵 Japan (1)'), findsOneWidget);
+
+    // Filter by JP within ikuuu
+    await tester.tap(find.byKey(const ValueKey('overview-country-JP')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('🇯🇵 Tokyo Node 1'), findsOneWidget);
+    expect(find.text('🇺🇸 US Node 1'), findsNothing);
+
+    // Flag emojis in chips use Twemoji font family so Windows renders color flags
+    final jpChipText = tester.widget<Text>(
+      find.descendant(
+        of: find.byKey(const ValueKey('overview-country-JP')),
+        matching: find.byType(Text),
+      ),
+    );
+    final rootSpan = jpChipText.textSpan! as TextSpan;
+    final emojiSpan = rootSpan.children!.first as TextSpan;
+    expect(emojiSpan.style?.fontFamily, FontFamily.twEmoji.value);
+
+    // Switch sidebar to London (which has only GB, no JP):
+    // JP filter clears cleanly without leaving a ghost filter when returning to All profiles.
+    await tester.tap(find.byKey(const ValueKey('overview-select-london')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('VIP Line 1'), findsOneWidget);
+    expect(find.byKey(const ValueKey('overview-country-GB')), findsOneWidget);
+    expect(find.byKey(const ValueKey('overview-country-JP')), findsNothing);
+
+    await tester.tap(find.byKey(const ValueKey('overview-select-all')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('🇺🇸 US Node 1'), findsOneWidget);
+    expect(find.text('🇯🇵 Tokyo Node 1'), findsOneWidget);
+    expect(find.text('VIP Line 1'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
 }
