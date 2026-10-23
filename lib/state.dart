@@ -54,6 +54,7 @@ class GlobalState {
   List<Group>? get rawGroupsSnapshot => _rawGroupsSnapshot;
   int? get groupsSnapshotVersion => _groupsSnapshotVersion;
   String? get groupsSnapshotProfileId => _groupsSnapshotProfileId;
+  bool get isAppStateInitialized => _appStateInitialized;
 
   bool isSameGroupsList(List<Group>? a, List<Group>? b) {
     if (identical(a, b)) return true;
@@ -959,6 +960,37 @@ class DetectionState {
   Timer? _setTimeoutTimer;
   CancelToken? cancelToken;
   DateTime? _lastManualCheck;
+  int _routingEpoch = 0;
+  int _requestGeneration = 0;
+  int _lastCompletedGeneration = 0;
+  int? _lastCompletedRoutingEpoch;
+  String? _lastMatchedHost;
+  DateTime? _lastCheckStartedAt;
+  IpInfo? _lastCompletedIpInfo;
+
+  int get routingEpoch => _routingEpoch;
+  int get lastCompletedGeneration =>
+      identical(state.value.ipInfo, _lastCompletedIpInfo)
+          ? _lastCompletedGeneration
+          : 0;
+  int? get lastCompletedRoutingEpoch =>
+      identical(state.value.ipInfo, _lastCompletedIpInfo)
+          ? _lastCompletedRoutingEpoch
+          : null;
+  String? get lastMatchedHost =>
+      identical(state.value.ipInfo, _lastCompletedIpInfo)
+          ? _lastMatchedHost
+          : null;
+  DateTime? get lastCheckStartedAt =>
+      identical(state.value.ipInfo, _lastCompletedIpInfo)
+          ? _lastCheckStartedAt
+          : null;
+
+  /// Advances the central proxy/profile/mode routing epoch so any in-flight
+  /// exit-IP check started under a previous route cannot calibrate the new node.
+  void notifyRoutingChanged() {
+    _routingEpoch++;
+  }
 
   final state = ValueNotifier<NetworkDetectionState>(
     const NetworkDetectionState(
@@ -1027,10 +1059,16 @@ class DetectionState {
       await Future.delayed(const Duration(milliseconds: 2000));
     }
     cancelToken = CancelToken();
+    final requestGen = ++_requestGeneration;
+    final startRoutingEpoch = _routingEpoch;
+    final checkStartedAt = DateTime.now();
     state.value = state.value.copyWith(
       isTesting: true,
     );
-    final res = await request.checkIp(cancelToken: cancelToken);
+    final res = await request.checkIpWithHost(cancelToken: cancelToken);
+    if (requestGen != _requestGeneration) {
+      return;
+    }
     if (res.isError) {
       state.value = state.value.copyWith(
         isLoading: true,
@@ -1038,11 +1076,17 @@ class DetectionState {
       );
       return;
     }
-    final ipInfo = res.data;
+    final ipInfo = res.data?.ipInfo;
     state.value = state.value.copyWith(
       isTesting: false,
     );
     if (ipInfo != null) {
+      _lastCompletedIpInfo = ipInfo;
+      _lastCompletedGeneration = requestGen;
+      _lastCompletedRoutingEpoch =
+          startRoutingEpoch == _routingEpoch ? startRoutingEpoch : null;
+      _lastMatchedHost = res.data?.host;
+      _lastCheckStartedAt = checkStartedAt;
       state.value = state.value.copyWith(
         isLoading: false,
         ipInfo: ipInfo,

@@ -155,6 +155,16 @@ class Request {
   /// source is bounded by a short receive timeout (plus the client-wide connect
   /// timeout) so a slow/dead node falls through to the next instead of hanging.
   Future<Result<IpInfo?>> checkIp({CancelToken? cancelToken}) async {
+    final res = await checkIpWithHost(cancelToken: cancelToken);
+    if (res.isError) {
+      return Result.error(res.message);
+    }
+    return Result.success(res.data?.ipInfo);
+  }
+
+  Future<Result<({IpInfo ipInfo, String host})?>> checkIpWithHost({
+    CancelToken? cancelToken,
+  }) async {
     for (final source in _ipInfoSources.entries) {
       if (cancelToken?.isCancelled ?? false) {
         return Result.error("cancelled");
@@ -169,7 +179,11 @@ class Request {
           ),
         );
         if (res.statusCode == HttpStatus.ok && res.data != null) {
-          return Result.success(source.value(res.data!));
+          final host = Uri.tryParse(source.key)?.host.toLowerCase() ?? '';
+          return Result.success((
+            ipInfo: source.value(res.data!),
+            host: host,
+          ));
         }
       } on DioException catch (e) {
         if (e.type == DioExceptionType.cancel) {

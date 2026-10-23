@@ -711,6 +711,7 @@ class AppController {
   }
 
   void changeProxyDebounce(String groupName, String proxyName) {
+    detectionState.notifyRoutingChanged();
     final targetProfileId = _ref.read(currentProfileIdProvider);
     debouncer.call(FunctionTag.changeProxy, (
       String groupName,
@@ -1932,6 +1933,7 @@ class AppController {
   }
 
   void handleChangeProfile() {
+    detectionState.notifyRoutingChanged();
     debouncer.cancel(FunctionTag.changeProxy);
     debouncer.cancel(FunctionTag.updateGroups);
     _ref.read(delayDataSourceProvider.notifier).value = {};
@@ -2136,6 +2138,7 @@ class AppController {
     required String groupName,
     required String proxyName,
   }) async {
+    detectionState.notifyRoutingChanged();
     await clashCore.changeProxy(
       ChangeProxyParams(
         groupName: groupName,
@@ -3126,6 +3129,7 @@ class AppController {
     final currentProfile = _ref.read(currentProfileProvider);
     if (currentProfile != null &&
         currentProfile.selectedMap[groupName] != proxyName) {
+      detectionState.notifyRoutingChanged();
       final selectedMap = Map<String, String>.from(
         currentProfile.selectedMap,
       )..[groupName] = proxyName;
@@ -3150,6 +3154,7 @@ class AppController {
   }
 
   void changeMode(Mode mode) {
+    detectionState.notifyRoutingChanged();
     _ref.read(patchClashConfigProvider.notifier).updateState(
           (state) => state.copyWith(mode: mode),
         );

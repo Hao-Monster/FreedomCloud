@@ -155,11 +155,78 @@ class NodeOverviewView extends ConsumerStatefulWidget {
   ConsumerState<NodeOverviewView> createState() => _NodeOverviewViewState();
 }
 
+class _IndexedNodeSummary {
+  const _IndexedNodeSummary({
+    required this.identityKey,
+    required this.endpointKey,
+    required this.name,
+    required this.type,
+    required this.providerName,
+    required this.parseFailed,
+  });
+
+  factory _IndexedNodeSummary.fromNode(CatalogNode node) => _IndexedNodeSummary(
+        identityKey: node.identityKey,
+        endpointKey: node.endpointKey,
+        name: node.name,
+        type: node.type,
+        providerName: node.providerName,
+        parseFailed: node.unsupported == CatalogUnsupportedReason.parseFailed,
+      );
+
+  final String identityKey;
+  final String endpointKey;
+  final String name;
+  final String type;
+  final String? providerName;
+  final bool parseFailed;
+}
+
+class _IndexedProfileCountrySummary {
+  const _IndexedProfileCountrySummary({
+    required this.url,
+    required this.lastUpdateDate,
+    required this.isUpdating,
+    required this.scriptId,
+    required this.scriptContent,
+    required this.status,
+    required this.nodes,
+  });
+
+  final String? url;
+  final DateTime? lastUpdateDate;
+  final bool isUpdating;
+  final String? scriptId;
+  final String? scriptContent;
+  final ProfileCatalogStatus status;
+  final List<_IndexedNodeSummary> nodes;
+
+  bool matchesProfile(Profile profile, Script? currentScript) =>
+      url == profile.url &&
+      lastUpdateDate == profile.lastUpdateDate &&
+      isUpdating == profile.isUpdating &&
+      scriptId == currentScript?.id &&
+      scriptContent == currentScript?.content;
+}
+
 class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
+  static const int _maxIndexScanConcurrency = 2;
+
   String? _selectedProfile;
   String? _selectedCountry;
   bool _availableOnly = false;
   final Set<String> _visibleProfileIds = <String>{};
+  final Map<String, _IndexedProfileCountrySummary> _indexedProfiles =
+      <String, _IndexedProfileCountrySummary>{};
+  final Set<String> _indexingProfileIds = <String>{};
+  final List<ProviderSubscription<Object?>> _lifecycleSubscriptions =
+      <ProviderSubscription<Object?>>[];
+  final Set<ProviderSubscription<Object?>> _activeScanSubscriptions =
+      <ProviderSubscription<Object?>>{};
+  int _activeIndexWorkers = 0;
+  int _indexScanGeneration = 0;
+  bool _indexScanDirty = false;
+  bool _disposed = false;
   Timer? _clock;
   late final NodeCatalogTester _tester;
   String? _feedback;
@@ -200,11 +267,136 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
     return globalState.lastRuntimeProfileId == null;
   }
 
+  void _recordIndexedCatalog(
+    Profile profile,
+    Script? currentScript,
+    ProfileCatalog catalog,
+  ) {
+    if (catalog.status == ProfileCatalogStatus.loading) return;
+    _indexedProfiles[profile.id] = _IndexedProfileCountrySummary(
+      url: profile.url,
+      lastUpdateDate: profile.lastUpdateDate,
+      isUpdating: profile.isUpdating,
+      scriptId: currentScript?.id,
+      scriptContent: currentScript?.content,
+      status: catalog.status,
+      nodes: catalog.nodes.map(_IndexedNodeSummary.fromNode).toList(),
+    );
+  }
+
+  void _scheduleCountryIndexScan() {
+    if (_disposed || !mounted) return;
+    if (!ref.read(nodeOverviewEnabledProvider)) return;
+    _pumpCountryIndexWorkers(_indexScanGeneration);
+  }
+
+  void _pumpCountryIndexWorkers(int generation) {
+    if (_disposed || !mounted || generation != _indexScanGeneration) return;
+    final profiles = ref.read(profilesProvider);
+    final currentScript = ref.read(scriptStateProvider).currentScript;
+    final cachedCatalogs = ref.read(cachedProfileCatalogsProvider);
+    for (final profile in profiles) {
+      if (_activeIndexWorkers >= _maxIndexScanConcurrency) break;
+      if (profile.isUpdating) continue;
+      final existing = _indexedProfiles[profile.id];
+      if (existing != null && existing.matchesProfile(profile, currentScript)) {
+        continue;
+      }
+      final cached = cachedCatalogs[profile.id];
+      if (cached != null && cached.status != ProfileCatalogStatus.loading) {
+        _recordIndexedCatalog(profile, currentScript, cached);
+        _indexScanDirty = true;
+        continue;
+      }
+      if (_indexingProfileIds.contains(profile.id)) continue;
+      _indexingProfileIds.add(profile.id);
+      _activeIndexWorkers++;
+      unawaited(_indexSingleProfile(profile.id, generation));
+    }
+    if (_indexScanDirty &&
+        (_activeIndexWorkers == 0 || _indexedProfiles.length % 8 == 0) &&
+        mounted &&
+        !_disposed) {
+      _indexScanDirty = false;
+      setState(() {});
+    }
+  }
+
+  Future<void> _indexSingleProfile(String profileId, int generation) async {
+    ProviderSubscription<AsyncValue<ProfileCatalog>>? sub;
+    try {
+      if (_disposed || !mounted || generation != _indexScanGeneration) return;
+      sub = ref.listenManual(profileCatalogProvider(profileId), (_, __) {});
+      _activeScanSubscriptions.add(sub);
+      final catalog = await ref.read(profileCatalogProvider(profileId).future);
+      if (_disposed || !mounted || generation != _indexScanGeneration) return;
+      final profile = ref.read(profilesProvider).getProfile(profileId);
+      if (profile != null && !profile.isUpdating) {
+        final currentScript = ref.read(scriptStateProvider).currentScript;
+        _recordIndexedCatalog(profile, currentScript, catalog);
+        _indexScanDirty = true;
+      }
+    } catch (_) {
+      // Catalog load errors are surfaced through ProfileCatalogStatus.
+    } finally {
+      if (sub != null) {
+        _activeScanSubscriptions.remove(sub);
+        sub.close();
+      }
+      _indexingProfileIds.remove(profileId);
+      if (_activeIndexWorkers > 0) {
+        _activeIndexWorkers--;
+      }
+      if (!_disposed && mounted && generation == _indexScanGeneration) {
+        _pumpCountryIndexWorkers(generation);
+      }
+    }
+  }
+
   @override
   void initState() {
     super.initState();
     _tester = ref.read(nodeCatalogTesterProvider);
     _feedback = ref.read(_overviewSwitchTrackerProvider).feedback;
+    _lifecycleSubscriptions
+      ..add(
+        ref.listenManual<List<Profile>>(profilesProvider, (previous, next) {
+          final script = ref.read(scriptStateProvider).currentScript;
+          final nextIds = <String>{for (final profile in next) profile.id};
+          _indexedProfiles.removeWhere((id, summary) {
+            if (!nextIds.contains(id)) return true;
+            final profile = next.getProfile(id);
+            return profile == null || !summary.matchesProfile(profile, script);
+          });
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted && !_disposed) _scheduleCountryIndexScan();
+          });
+        }),
+      )
+      ..add(
+        ref.listenManual<ScriptProps>(scriptStateProvider, (previous, next) {
+          if (previous?.currentScript == next.currentScript) return;
+          _indexScanGeneration++;
+          _indexedProfiles.clear();
+          _indexingProfileIds.clear();
+          for (final sub in _activeScanSubscriptions.toList()) {
+            sub.close();
+          }
+          _activeScanSubscriptions.clear();
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted && !_disposed) _scheduleCountryIndexScan();
+          });
+        }),
+      );
+    // Schedule background country indexing one frame after initial sliver
+    // visibility settles so visible slivers attach their own catalog watches
+    // first without causing duplicate initial loads.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _disposed) return;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && !_disposed) _scheduleCountryIndexScan();
+      });
+    });
     _clock = Timer.periodic(const Duration(minutes: 1), (_) {
       if (mounted) setState(() {});
     });
@@ -212,6 +404,16 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
 
   @override
   void dispose() {
+    _disposed = true;
+    _indexScanGeneration++;
+    for (final sub in _lifecycleSubscriptions) {
+      sub.close();
+    }
+    _lifecycleSubscriptions.clear();
+    for (final sub in _activeScanSubscriptions.toList()) {
+      sub.close();
+    }
+    _activeScanSubscriptions.clear();
     _clock?.cancel();
     _tester.disposeScope();
     super.dispose();
@@ -286,6 +488,7 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
           ], ref.read(nodeOverviewTestUrlProvider))));
 
   void _useActiveNode(Profile profile, String groupName, String proxyName) {
+    detectionState.notifyRoutingChanged();
     ref.read(nodeCountryResolverProvider).markSwitchingNode();
     if (globalState.isAppControllerReady) {
       globalState.appController
@@ -317,6 +520,7 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
 
   void _useCatalogNode(
       Profile profile, CatalogNode node, String targetGroup) {
+    detectionState.notifyRoutingChanged();
     ref.read(nodeCountryResolverProvider).markSwitchingNode();
     if (_tester.busy) {
       unawaited(_tester.cancel());
@@ -463,15 +667,14 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
         : profiles.where((p) => p.id == selected).toList();
     final countryResolver = ref.watch(nodeCountryResolverProvider);
     final cachedCatalogs = ref.watch(cachedProfileCatalogsProvider);
+    final currentScript =
+        ref.watch(scriptStateProvider.select((state) => state.currentScript));
     final query = ref.watch(proxiesQueryProvider).trim().toLowerCase();
     final searching = query.isNotEmpty;
     final locale = Localizations.localeOf(context);
     final scopeCountries = <String>{};
     final countryCounts = <String, int>{};
     var anyVisibleCatalogLoading = false;
-    String? liveActiveProfileId;
-    String? liveActiveNodeName;
-    String? liveActiveEndpointKey;
     for (final profile in visible) {
       final liveActive = isLiveActive(profile);
       final shouldWatchCatalog = selected != null ||
@@ -482,7 +685,21 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
           ? ref.watch(profileCatalogProvider(profile.id))
           : null;
       final catalog = loaded?.valueOrNull ?? cachedCatalogs[profile.id];
+      if (catalog != null && catalog.status != ProfileCatalogStatus.loading) {
+        _recordIndexedCatalog(profile, currentScript, catalog);
+      }
+      final indexedSummary = _indexedProfiles[profile.id];
+      final validIndexed = indexedSummary != null &&
+              indexedSummary.matchesProfile(profile, currentScript)
+          ? indexedSummary
+          : null;
+      final pendingIndex = !liveActive &&
+          catalog == null &&
+          validIndexed == null &&
+          !profile.isUpdating &&
+          _indexingProfileIds.contains(profile.id);
       if (((loaded?.isLoading ?? false) && catalog == null) ||
+          pendingIndex ||
           profile.isUpdating ||
           catalog?.status == ProfileCatalogStatus.loading ||
           catalog?.status == ProfileCatalogStatus.updating) {
@@ -493,12 +710,6 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
       if (liveActive) {
         final displays = _activeDisplays(
             ref, profile.id, profile.isUpdating ? null : catalog);
-        final inUseEntry = displays.values.where((e) => e.inUse).firstOrNull;
-        if (inUseEntry != null) {
-          liveActiveProfileId = profile.id;
-          liveActiveNodeName = inUseEntry.proxy.name;
-          liveActiveEndpointKey = inUseEntry.node?.endpointKey;
-        }
         final effectiveQuery = profileMatches ? '' : query;
         for (final entry in displays.values) {
           final code = countryResolver.resolveCountryCode(
@@ -521,29 +732,45 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
         }
       } else {
         final health = ref.watch(nodeHealthEntriesProvider(profile.id));
-        for (final node in catalog?.nodes ?? const <CatalogNode>[]) {
-          final code = countryResolver.resolveCountryCode(
-            profileId: profile.id,
-            profileLabel: profile.label,
-            nodeName: node.name,
-            endpointKey: node.endpointKey,
-          );
-          scopeCountries.add(code);
-          if (!(profileMatches || _matches(node, query)) ||
-              (_availableOnly &&
-                  (_nodeHealth(node, health)?.delayMs ?? -1) <= 0)) {
-            continue;
+        if (catalog != null) {
+          for (final node in catalog.nodes) {
+            final code = countryResolver.resolveCountryCode(
+              profileId: profile.id,
+              profileLabel: profile.label,
+              nodeName: node.name,
+              endpointKey: node.endpointKey,
+            );
+            scopeCountries.add(code);
+            if (!(profileMatches || _matches(node, query)) ||
+                (_availableOnly &&
+                    (_nodeHealth(node, health)?.delayMs ?? -1) <= 0)) {
+              continue;
+            }
+            countryCounts.update(code, (count) => count + 1, ifAbsent: () => 1);
           }
-          countryCounts.update(code, (count) => count + 1, ifAbsent: () => 1);
+        } else if (validIndexed != null) {
+          for (final node in validIndexed.nodes) {
+            final code = countryResolver.resolveCountryCode(
+              profileId: profile.id,
+              profileLabel: profile.label,
+              nodeName: node.name,
+              endpointKey: node.endpointKey,
+            );
+            scopeCountries.add(code);
+            final matchesQuery = profileMatches ||
+                '${node.name}\n${node.type}\n${node.providerName ?? ''}'
+                    .toLowerCase()
+                    .contains(query);
+            final delayMs =
+                node.parseFailed ? null : health[node.identityKey]?.delayMs;
+            if (!matchesQuery || (_availableOnly && (delayMs ?? -1) <= 0)) {
+              continue;
+            }
+            countryCounts.update(code, (count) => count + 1, ifAbsent: () => 1);
+          }
         }
       }
     }
-    countryResolver.syncActiveNode(
-      profileId: liveActiveProfileId,
-      nodeName: liveActiveNodeName,
-      endpointKey: liveActiveEndpointKey,
-      isLiveActive: liveActiveProfileId != null && liveActiveNodeName != null,
-    );
     final activeCountry = _selectedCountry != null &&
             (scopeCountries.contains(_selectedCountry) ||
                 anyVisibleCatalogLoading)

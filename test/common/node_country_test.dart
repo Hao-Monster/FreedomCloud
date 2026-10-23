@@ -24,6 +24,15 @@ void main() {
       expect(inferCountryCodeFromText('伦敦 专线 01'), 'GB');
       expect(inferCountryCodeFromText('London Premium 02'), 'GB');
       expect(inferCountryCodeFromText('Frankfurt Germany'), 'DE');
+      // Longest-keyword priority avoids substring prefix collisions (P2 #7)
+      expect(inferCountryCodeFromText('印度尼西亚 01'), 'ID');
+      expect(inferCountryCodeFromText('印尼 雅加达 02'), 'ID');
+      expect(inferCountryCodeFromText('印度 孟买 01'), 'IN');
+      expect(inferCountryCodeFromText('罗马尼亚 01'), 'RO');
+      expect(inferCountryCodeFromText('意大利 罗马 01'), 'IT');
+      expect(inferCountryCodeFromText('内蒙古 BGP 01'), 'CN');
+      expect(inferCountryCodeFromText('蒙古 乌兰巴托 01'), 'MN');
+      expect(inferCountryCodeFromText('North Korea Pyongyang'), 'KP');
     });
 
     test('infers country code from uppercase ISO and airport codes', () {
@@ -372,13 +381,13 @@ void main() {
     });
 
     test(
-        'invalidateProfile clears stale per-profile mappings and transient lookup misses retry after cooldown',
+        'invalidateProfile clears stale per-profile mappings and transient lookup misses retry immediately on next evaluation',
         () async {
-      var now = DateTime.utc(2026, 10, 23, 10);
+      var calls = 0;
       var coreReady = false;
       final resolver = NodeCountryResolver(
-        clock: () => now,
         resolveServerCountry: (server) async {
+          calls++;
           if (!coreReady) return null;
           if (server == 'sg.example.org') return 'SG';
           return null;
@@ -396,6 +405,7 @@ void main() {
         },
       ]);
       await Future<void>.delayed(Duration.zero);
+      expect(calls, 1);
       expect(
         resolver.resolveCountryCode(
           profileId: 'p1',
@@ -405,9 +415,8 @@ void main() {
         kUnknownCountryCode,
       );
 
-      // Advance past 60s cooldown and mark Core ready -> retries cleanly and resolves SG
+      // Immediate re-evaluation (0s elapsed) once Core recovers retries cleanly (P2 #6)
       coreReady = true;
-      now = now.add(const Duration(seconds: 61));
       resolver.registerProxyMaps('p1', [
         {
           'name': 'Mystery Node',
@@ -419,6 +428,7 @@ void main() {
       await Future<void>.delayed(Duration.zero);
       await Future<void>.delayed(Duration.zero);
 
+      expect(calls, 2);
       expect(
         resolver.resolveCountryCode(
           profileId: 'p1',
@@ -457,6 +467,151 @@ void main() {
           nodeName: 'Keep Node',
         ),
         'DE',
+      );
+    });
+
+    test(
+        'same-name node changing server endpoint evicts stale exit country and resolves new endpoint (P2 #4)',
+        () async {
+      final resolver = NodeCountryResolver(
+        resolveServerCountry: (server) async =>
+            server == 'new.invalid' ? 'US' : 'GB',
+      );
+      addTearDown(resolver.dispose);
+
+      resolver.registerProxyMaps('p1', [
+        {'name': 'Node', 'type': 'ss', 'server': 'old.invalid', 'port': 443},
+      ]);
+      await Future<void>.delayed(Duration.zero);
+      resolver.recordExitCountry(
+        profileId: 'p1',
+        proxyName: 'Node',
+        countryCode: 'GB',
+      );
+      expect(
+        resolver.resolveCountryCode(
+          profileId: 'p1',
+          profileLabel: 'Profile',
+          nodeName: 'Node',
+        ),
+        'GB',
+      );
+
+      // Subscription update keeps node name 'Node' while moving server to new.invalid (US)
+      resolver.registerProxyMaps('p1', [
+        {'name': 'Node', 'type': 'ss', 'server': 'new.invalid', 'port': 443},
+      ]);
+      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(Duration.zero);
+
+      expect(
+        resolver.resolveCountryCode(
+          profileId: 'p1',
+          profileLabel: 'Profile',
+          nodeName: 'Node',
+        ),
+        'US',
+      );
+    });
+
+    test(
+        'rejects cross-epoch in-flight detection results and attributes multi-group exit via proven connection target (P2 #2 & #3)',
+        () {
+      var routingEpoch = 1;
+      var completedGeneration = 0;
+      int? completedRoutingEpoch;
+      ConnectionOutboundTarget? observedTarget;
+      final detection = ValueNotifier<NetworkDetectionState>(
+        const NetworkDetectionState(
+          isTesting: false,
+          isLoading: true,
+          ipInfo: null,
+        ),
+      );
+      addTearDown(detection.dispose);
+
+      final resolver = NodeCountryResolver(
+        detectionListenable: detection,
+        readDetectionMeta: () => (
+          routingEpoch: routingEpoch,
+          completedGeneration: completedGeneration,
+          completedRoutingEpoch: completedRoutingEpoch,
+        ),
+        resolveConnectionTarget: () => observedTarget,
+        resolveServerCountry: (_) async => null,
+      );
+      addTearDown(resolver.dispose);
+
+      // Node B is selected in epoch 2, while an older check started in epoch 1 finishes
+      routingEpoch = 2;
+      resolver.syncActiveNode(
+        profileId: 'p1',
+        nodeName: 'Node B',
+        endpointKey: 'ep-b',
+        isLiveActive: true,
+      );
+      completedGeneration = 1;
+      completedRoutingEpoch = null; // mismatched epoch in DetectionState._checkIp
+      detection.value = const NetworkDetectionState(
+        isTesting: false,
+        isLoading: false,
+        ipInfo: IpInfo(ip: '198.51.100.77', countryCode: 'GB'),
+      );
+
+      expect(
+        resolver.resolveCountryCode(
+          profileId: 'p1',
+          profileLabel: 'p1',
+          nodeName: 'Node B',
+          endpointKey: 'ep-b',
+          isLiveActive: true,
+          inUse: true,
+        ),
+        kUnknownCountryCode,
+      );
+
+      // Ambiguous multi-Selector state (_activeTarget == null), but Core Connection
+      // proves 'US node' handled the exit check -> calibrates only 'US node', not 'Japan node'.
+      resolver.syncActiveNode(
+        profileId: null,
+        nodeName: null,
+        isLiveActive: false,
+      );
+      observedTarget = (
+        profileId: 'p1',
+        proxyName: 'US node',
+        endpointKey: 'ep-us',
+        isDirectOrReject: false,
+      );
+      completedGeneration = 2;
+      completedRoutingEpoch = 2;
+      detection.value = const NetworkDetectionState(
+        isTesting: false,
+        isLoading: false,
+        ipInfo: IpInfo(ip: '203.0.113.55', countryCode: 'SG'),
+      );
+
+      expect(
+        resolver.resolveCountryCode(
+          profileId: 'p1',
+          profileLabel: 'p1',
+          nodeName: 'US node',
+          endpointKey: 'ep-us',
+          isLiveActive: true,
+          inUse: true,
+        ),
+        'SG',
+      );
+      expect(
+        resolver.resolveCountryCode(
+          profileId: 'p1',
+          profileLabel: 'p1',
+          nodeName: 'Japan node',
+          endpointKey: 'ep-jp',
+          isLiveActive: true,
+          inUse: true,
+        ),
+        'JP',
       );
     });
   });

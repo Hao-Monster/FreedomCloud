@@ -1169,7 +1169,7 @@ void main() {
               status: ProfileCatalogStatus.ready,
               nodes: [_node('${profile.id}-node', 'Node ${profile.id}')]),
       };
-      await mount(tester,
+      final container = await mount(tester,
           width: width,
           profiles: profiles,
           catalogs: catalogs,
@@ -1181,7 +1181,10 @@ void main() {
             },
           });
       expect(loaded, contains('p0'));
-      expect(loaded.length, lessThan(profiles.length));
+      // Offscreen slivers do not build node rows and auto-dispose their catalog
+      // providers immediately after bounded country indexing completes.
+      expect(find.text('Node p39'), findsNothing);
+      expect(container.exists(profileCatalogProvider('p39')), isFalse);
       if (width > 840) {
         expect(find.text('1 available / 1 tested / 1 total'), findsOneWidget);
       }
@@ -1331,9 +1334,11 @@ void main() {
                 status: ProfileCatalogStatus.ready,
                 nodes: [_node('${profile.id}-node', 'Needle ${profile.id}')]),
         });
-    expect(loaded, isNot(contains('p39')));
+    expect(find.text('Needle p39'), findsNothing);
+    expect(container.exists(profileCatalogProvider('p39')), isFalse);
     container.read(proxiesQueryProvider.notifier).value = 'needle';
     await tester.pumpAndSettle();
+    expect(container.exists(profileCatalogProvider('p39')), isTrue);
     expect(loaded.toSet(), profiles.map((p) => p.id).toSet());
     container.read(proxiesQueryProvider.notifier).value = '';
     await tester.pumpAndSettle();
@@ -2792,6 +2797,250 @@ void main() {
     expect(find.text('🇺🇸 US Node 1'), findsOneWidget);
     expect(find.text('🇯🇵 Tokyo Node 1'), findsOneWidget);
     expect(find.text('VIP Line 1'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'cached exit IP before opening overview does not mutate provider during build (P2 #1)',
+      (tester) async {
+    addTearDown(() {
+      detectionState.state.value = const NetworkDetectionState(
+        isLoading: true,
+        isTesting: false,
+        ipInfo: null,
+      );
+    });
+    detectionState.state.value = const NetworkDetectionState(
+      isLoading: false,
+      isTesting: false,
+      ipInfo: IpInfo(ip: '203.0.113.1', countryCode: 'US'),
+    );
+    globalState.config = globalState.config.copyWith(currentProfileId: 'a');
+    globalState.appState = globalState.appState.copyWith(groups: const [
+      Group(
+        name: 'Primary',
+        type: GroupType.Selector,
+        hidden: false,
+        now: 'VIP Line 1',
+        all: [Proxy(name: 'VIP Line 1', type: 'Shadowsocks')],
+      ),
+    ]);
+    await mount(
+      tester,
+      profiles: [
+        _a.copyWith(selectedMap: const {'Primary': 'VIP Line 1'}),
+        _b,
+      ],
+      width: 1200,
+    );
+    expect(tester.takeException(), isNull);
+    expect(find.byKey(const ValueKey('overview-country-US')), findsOneWidget);
+    expect(find.text('🇺🇸 United States (1)'), findsOneWidget);
+  });
+
+  testWidgets(
+      'offscreen profile countries appear in All profiles chips without scrolling (P2 #5)',
+      (tester) async {
+    final loaded = <String>[];
+    final profiles = <Profile>[
+      _a,
+      ...List.generate(
+        19,
+        (i) => Profile(
+          id: 'p-i$i',
+          label: 'Profile $i',
+          autoUpdateDuration: Duration.zero,
+        ),
+      ),
+      _b,
+    ];
+    await mount(
+      tester,
+      width: 400,
+      profiles: profiles,
+      onLoad: loaded.add,
+      catalogs: {
+        'a': ProfileCatalog(
+          profileId: 'a',
+          fingerprint: 'a',
+          status: ProfileCatalogStatus.ready,
+          nodes: List.generate(200, (i) => _node('a-$i', 'VIP Line $i')),
+        ),
+        'b': ProfileCatalog(
+          profileId: 'b',
+          fingerprint: 'b',
+          status: ProfileCatalogStatus.ready,
+          nodes: [_node('b-jp', 'Japan node')],
+        ),
+      },
+    );
+    expect(loaded, contains('b'));
+    final jpChip = find.byKey(const ValueKey('overview-country-JP'));
+    expect(jpChip, findsOneWidget);
+    expect(find.text('🇯🇵 Japan (1)'), findsOneWidget);
+
+    await tester.tap(jpChip);
+    await tester.pumpAndSettle();
+    expect(find.text('Japan node'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'multiple Selector groups keep independent countries instead of smearing global exit IP (P2 #2)',
+      (tester) async {
+    addTearDown(() {
+      detectionState.state.value = const NetworkDetectionState(
+        isLoading: true,
+        isTesting: false,
+        ipInfo: null,
+      );
+    });
+    detectionState.state.value = const NetworkDetectionState(
+      isLoading: true,
+      isTesting: false,
+      ipInfo: null,
+    );
+    globalState.config = globalState.config.copyWith(currentProfileId: 'a');
+    globalState.appState = globalState.appState.copyWith(groups: const [
+      Group(
+        name: 'Primary',
+        type: GroupType.Selector,
+        hidden: false,
+        now: 'US node',
+        all: [Proxy(name: 'US node', type: 'Shadowsocks')],
+      ),
+      Group(
+        name: 'Media',
+        type: GroupType.Selector,
+        hidden: false,
+        now: 'Japan node',
+        all: [Proxy(name: 'Japan node', type: 'Shadowsocks')],
+      ),
+    ]);
+    await mount(
+      tester,
+      profiles: [
+        _a.copyWith(
+          selectedMap: const {'Primary': 'US node', 'Media': 'Japan node'},
+        ),
+        _b,
+      ],
+      width: 1200,
+    );
+
+    detectionState.state.value = const NetworkDetectionState(
+      isLoading: false,
+      isTesting: false,
+      ipInfo: IpInfo(ip: '203.0.113.1', countryCode: 'US'),
+    );
+    await tester.pumpAndSettle();
+
+    final jpRow = find.byKey(const ValueKey('overview-active-Japan node'));
+    expect(jpRow, findsOneWidget);
+    expect(
+      find.descendant(of: jpRow, matching: find.text('🇺🇸 United States')),
+      findsNothing,
+    );
+    expect(
+      find.descendant(of: jpRow, matching: find.text('🇯🇵 Japan')),
+      findsOneWidget,
+    );
+    expect(find.text('🇯🇵 Japan (1)'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'leaving overview and switching node from Current profile ProxyCard does not overwrite previous node exit country (P2 #3)',
+      (tester) async {
+    addTearDown(() {
+      detectionState.state.value = const NetworkDetectionState(
+        isLoading: true,
+        isTesting: false,
+        ipInfo: null,
+      );
+    });
+    final controller = _ProxyController();
+    globalState.appController = controller;
+    detectionState.state.value = const NetworkDetectionState(
+      isLoading: false,
+      isTesting: false,
+      ipInfo: IpInfo(ip: '198.51.100.11', countryCode: 'JP'),
+    );
+    globalState.config = globalState.config.copyWith(currentProfileId: 'a');
+    globalState.appState = globalState.appState.copyWith(groups: const [
+      Group(
+        name: 'Primary',
+        type: GroupType.Selector,
+        hidden: false,
+        now: 'VIP Alpha',
+        all: [
+          Proxy(name: 'VIP Alpha', type: 'Shadowsocks'),
+          Proxy(name: 'VIP Beta', type: 'Shadowsocks'),
+        ],
+      ),
+    ]);
+
+    final container = await mount(
+      tester,
+      width: 1200,
+      profiles: [
+        _a.copyWith(
+          unfoldSet: const {'Primary'},
+          selectedMap: const {'Primary': 'VIP Alpha'},
+        ),
+        _b,
+      ],
+      child: const NodeOverviewScopeView(currentView: ProxiesListView()),
+      scopeToolbar: true,
+    );
+
+    // Enter All profiles -> VIP Alpha is calibrated to JP
+    await selectScope(tester, 'All profiles');
+    final alphaRowInitial =
+        find.byKey(const ValueKey('overview-active-VIP Alpha'));
+    expect(alphaRowInitial, findsOneWidget);
+    expect(
+      find.descendant(of: alphaRowInitial, matching: find.text('🇯🇵 Japan')),
+      findsOneWidget,
+    );
+
+    // Leave overview back to Current profile (unmounts NodeOverviewView)
+    await selectScope(tester, 'Current profile');
+    expect(find.byType(NodeOverviewView), findsNothing);
+    expect(find.byType(ProxiesListView), findsOneWidget);
+
+    // Switch to VIP Beta via legacy ProxyCard in Current profile
+    await tester.tap(find.text('VIP Beta', findRichText: true));
+    await tester.pump();
+    expect(controller.selections, [('Primary', 'VIP Beta')]);
+
+    // Update profile/group snapshot and publish VIP Beta's US exit IP while overview is unmounted
+    container.read(profilesProvider.notifier).setProfile(
+          _a.copyWith(selectedMap: const {'Primary': 'VIP Beta'}),
+        );
+    detectionState.state.value = const NetworkDetectionState(
+      isLoading: false,
+      isTesting: false,
+      ipInfo: IpInfo(ip: '203.0.113.88', countryCode: 'US'),
+    );
+    await tester.pumpAndSettle();
+
+    // Return to All profiles -> VIP Alpha still keeps JP, VIP Beta has US
+    await selectScope(tester, 'All profiles');
+    final alphaRow = find.byKey(const ValueKey('overview-active-VIP Alpha'));
+    final betaRow = find.byKey(const ValueKey('overview-active-VIP Beta'));
+    expect(
+      find.descendant(of: alphaRow, matching: find.text('🇯🇵 Japan')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: alphaRow, matching: find.text('🇺🇸 United States')),
+      findsNothing,
+    );
+    expect(
+      find.descendant(of: betaRow, matching: find.text('🇺🇸 United States')),
+      findsOneWidget,
+    );
     expect(tester.takeException(), isNull);
   });
 }

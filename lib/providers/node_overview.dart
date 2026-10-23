@@ -8,6 +8,7 @@ import 'package:flclashx/clash/interface.dart';
 import 'package:flclashx/common/constant.dart';
 import 'package:flclashx/common/delay_test_coordinator.dart';
 import 'package:flclashx/common/delay_tests.dart';
+import 'package:flclashx/common/fixed.dart';
 import 'package:flclashx/common/node_catalog_provider_resolver.dart';
 import 'package:flclashx/common/node_catalog_service.dart';
 import 'package:flclashx/common/node_catalog_tester.dart';
@@ -18,6 +19,7 @@ import 'package:flclashx/common/node_runtime_catalog.dart';
 import 'package:flclashx/common/path.dart';
 import 'package:flclashx/common/print.dart';
 import 'package:flclashx/common/ui_activity.dart';
+import 'package:flclashx/enum/enum.dart';
 import 'package:flclashx/models/models.dart';
 import 'package:flclashx/models/node_catalog.dart';
 import 'package:flclashx/state.dart';
@@ -39,10 +41,366 @@ final cachedProfileCatalogsProvider =
 final nodeOverviewTestUrlProvider =
     Provider<String>((ref) => ref.watch(getRealTestUrlProvider(null)));
 
-final nodeCountryResolverProvider =
-    ChangeNotifierProvider<NodeCountryResolver>((ref) => NodeCountryResolver(
-          detectionListenable: detectionState.state,
-        ));
+bool _isRuntimeSnapshotLiveForProfile({
+  required String? verifiedRuntimeProfileId,
+  required String profileId,
+  required List<Group> groups,
+  required int version,
+}) {
+  if (groups.isEmpty) return false;
+  if (verifiedRuntimeProfileId != null &&
+      verifiedRuntimeProfileId != profileId) {
+    return false;
+  }
+  if (!globalState.matchesGroupsSnapshot(groups, version)) {
+    return false;
+  }
+  final snapshotProfileId = globalState.groupsSnapshotProfileId;
+  if (snapshotProfileId != null) {
+    return snapshotProfileId == profileId;
+  }
+  return globalState.lastRuntimeProfileId == null;
+}
+
+String? _lookupEndpointKeyForProxy({
+  required String profileId,
+  required String proxyName,
+  required ProfileCatalog? verifiedCatalog,
+  required Map<String, ProfileCatalog> cachedCatalogs,
+}) {
+  final catalog =
+      (verifiedCatalog?.profileId == profileId ? verifiedCatalog : null) ??
+          cachedCatalogs[profileId];
+  if (catalog == null) return null;
+  for (final node in catalog.nodes) {
+    if (node.name == proxyName && node.endpointKey.isNotEmpty) {
+      return node.endpointKey;
+    }
+  }
+  return null;
+}
+
+({String? leafName, bool ambiguous}) _resolveGroupToLeafProxy({
+  required String entryName,
+  required List<Group> allGroups,
+  required Map<String, String> selectedMap,
+  int depth = 0,
+}) {
+  if (depth > 16 || entryName.isEmpty) {
+    return (leafName: null, ambiguous: true);
+  }
+  if (entryName == 'DIRECT' ||
+      entryName == 'REJECT' ||
+      entryName == 'REJECT-DROP') {
+    return (leafName: entryName, ambiguous: false);
+  }
+  final group = allGroups.getGroup(entryName);
+  if (group == null) {
+    return (leafName: entryName, ambiguous: false);
+  }
+  if (group.type == GroupType.LoadBalance) {
+    return (leafName: null, ambiguous: true);
+  }
+  final next = group.getCurrentSelectedName(selectedMap[group.name] ?? '');
+  if (next.isEmpty) {
+    return (leafName: null, ambiguous: true);
+  }
+  return _resolveGroupToLeafProxy(
+    entryName: next,
+    allGroups: allGroups,
+    selectedMap: selectedMap,
+    depth: depth + 1,
+  );
+}
+
+ConnectionOutboundTarget? _resolveObservedConnectionTarget({
+  required String? activeId,
+  required bool runtimeLive,
+  required Mode effectiveMode,
+  required List<Group> allGroups,
+  required FixedList<Connection> requests,
+  required ProfileCatalog? verifiedCatalog,
+  required Map<String, ProfileCatalog> cachedCatalogs,
+}) {
+  final matchedHost = detectionState.lastMatchedHost?.toLowerCase();
+  final startedAt = detectionState.lastCheckStartedAt;
+  if (activeId == null ||
+      activeId.isEmpty ||
+      !runtimeLive ||
+      effectiveMode == Mode.direct ||
+      matchedHost == null ||
+      matchedHost.isEmpty ||
+      startedAt == null) {
+    return null;
+  }
+  final groupNames = <String>{
+    for (final group in allGroups) group.name,
+    GroupName.GLOBAL.name,
+  };
+  final minStart = startedAt.subtract(const Duration(seconds: 2));
+  final list = requests.list;
+  for (var i = list.length - 1; i >= 0; i--) {
+    final conn = list[i];
+    if (conn.start.isBefore(minStart)) continue;
+    final host = conn.metadata.host.toLowerCase();
+    final sniffHost = conn.metadata.sniffHost.toLowerCase();
+    if (host != matchedHost && sniffHost != matchedHost) continue;
+    if (conn.chains.isEmpty) continue;
+    final leaf = conn.chains.firstWhere(
+      (hop) => hop.isNotEmpty && !groupNames.contains(hop),
+      orElse: () => conn.chains.first,
+    );
+    if (leaf == 'DIRECT' || leaf == 'REJECT' || leaf == 'REJECT-DROP') {
+      return (
+        profileId: activeId,
+        proxyName: leaf,
+        endpointKey: null,
+        isDirectOrReject: true,
+      );
+    }
+    return (
+      profileId: activeId,
+      proxyName: leaf,
+      endpointKey: _lookupEndpointKeyForProxy(
+        profileId: activeId,
+        proxyName: leaf,
+        verifiedCatalog: verifiedCatalog,
+        cachedCatalogs: cachedCatalogs,
+      ),
+      isDirectOrReject: false,
+    );
+  }
+  return null;
+}
+
+({String profileId, String proxyName, String? endpointKey})?
+    _computeUnambiguousStaticTarget({
+  required String? activeId,
+  required bool runtimeLive,
+  required Mode effectiveMode,
+  required List<Group> allGroups,
+  required List<Group> visibleGroups,
+  required Map<String, String> selectedMap,
+  required ProfileCatalog? verifiedCatalog,
+  required Map<String, ProfileCatalog> cachedCatalogs,
+}) {
+  if (activeId == null ||
+      activeId.isEmpty ||
+      !runtimeLive ||
+      effectiveMode == Mode.direct ||
+      allGroups.isEmpty) {
+    return null;
+  }
+  String? unambiguousLeaf;
+  if (effectiveMode == Mode.global) {
+    final globalGroup = allGroups.getGroup(GroupName.GLOBAL.name) ??
+        (visibleGroups.length == 1 ? visibleGroups.single : null);
+    if (globalGroup == null) return null;
+    final resolved = _resolveGroupToLeafProxy(
+      entryName: globalGroup.name,
+      allGroups: allGroups,
+      selectedMap: selectedMap,
+    );
+    if (resolved.ambiguous ||
+        resolved.leafName == null ||
+        resolved.leafName == 'DIRECT' ||
+        resolved.leafName == 'REJECT' ||
+        resolved.leafName == 'REJECT-DROP') {
+      return null;
+    }
+    unambiguousLeaf = resolved.leafName;
+  } else {
+    final selectors = visibleGroups
+        .where((group) => group.type == GroupType.Selector)
+        .toList();
+    final targetGroups = selectors.isNotEmpty ? selectors : visibleGroups;
+    if (targetGroups.isEmpty) return null;
+    final candidates = <String>{};
+    for (final group in targetGroups) {
+      final resolved = _resolveGroupToLeafProxy(
+        entryName: group.name,
+        allGroups: allGroups,
+        selectedMap: selectedMap,
+      );
+      if (resolved.ambiguous || resolved.leafName == null) {
+        return null;
+      }
+      if (resolved.leafName == 'REJECT' ||
+          resolved.leafName == 'REJECT-DROP') {
+        continue;
+      }
+      candidates.add(resolved.leafName!);
+    }
+    if (candidates.length != 1 || candidates.single == 'DIRECT') {
+      return null;
+    }
+    unambiguousLeaf = candidates.single;
+  }
+  return (
+    profileId: activeId,
+    proxyName: unambiguousLeaf!,
+    endpointKey: _lookupEndpointKeyForProxy(
+      profileId: activeId,
+      proxyName: unambiguousLeaf,
+      verifiedCatalog: verifiedCatalog,
+      cachedCatalogs: cachedCatalogs,
+    ),
+  );
+}
+
+void notifyProxyCardSelection(
+  WidgetRef ref, {
+  required String groupName,
+  required String nextProxyName,
+}) {
+  detectionState.notifyRoutingChanged();
+  if (!globalState.isAppStateInitialized) {
+    ref.read(nodeCountryResolverProvider).notifyManualProxySelection(
+          profileId: null,
+          proxyName: '',
+        );
+    return;
+  }
+  final activeId = ref.read(currentProfileIdProvider);
+  final profiles = ref.read(profilesProvider);
+  final allGroups = ref.read(groupsProvider);
+  final visibleGroups = ref.read(currentGroupsStateProvider).value;
+  final version = ref.read(versionProvider);
+  final mode = ref.read(patchClashConfigProvider).mode;
+  final cachedCatalogs = ref.read(cachedProfileCatalogsProvider);
+  final currentProfile = profiles.getProfile(activeId);
+  final effectiveSelectedMap = <String, String>{
+    ...?currentProfile?.selectedMap,
+    groupName: nextProxyName,
+  };
+  final runtimeLive = activeId != null &&
+      _isRuntimeSnapshotLiveForProfile(
+        verifiedRuntimeProfileId: globalState.lastRuntimeProfileId,
+        profileId: activeId,
+        groups: allGroups,
+        version: version,
+      );
+  final target = _computeUnambiguousStaticTarget(
+    activeId: activeId,
+    runtimeLive: runtimeLive,
+    effectiveMode: mode,
+    allGroups: allGroups,
+    visibleGroups: visibleGroups,
+    selectedMap: effectiveSelectedMap,
+    verifiedCatalog: null,
+    cachedCatalogs: cachedCatalogs,
+  );
+  ref.read(nodeCountryResolverProvider).notifyManualProxySelection(
+        profileId: target?.profileId,
+        proxyName: target?.proxyName ?? '',
+        endpointKey: target?.endpointKey,
+        unambiguous: target != null,
+      );
+}
+
+final ChangeNotifierProvider<NodeCountryResolver> nodeCountryResolverProvider =
+    ChangeNotifierProvider<NodeCountryResolver>((ref) {
+  late final NodeCountryResolver resolver;
+  resolver = NodeCountryResolver(
+    detectionListenable: detectionState.state,
+    readDetectionMeta: () => (
+      routingEpoch: detectionState.routingEpoch,
+      completedGeneration: detectionState.lastCompletedGeneration,
+      completedRoutingEpoch: detectionState.lastCompletedRoutingEpoch,
+    ),
+    resolveConnectionTarget: () {
+      if (!globalState.isAppStateInitialized) return null;
+      final activeId = ref.read(currentProfileIdProvider);
+      final allGroups = ref.read(groupsProvider);
+      final version = ref.read(versionProvider);
+      final runtimeLive = activeId != null &&
+          _isRuntimeSnapshotLiveForProfile(
+            verifiedRuntimeProfileId: globalState.lastRuntimeProfileId,
+            profileId: activeId,
+            groups: allGroups,
+            version: version,
+          );
+      return _resolveObservedConnectionTarget(
+        activeId: activeId,
+        runtimeLive: runtimeLive,
+        effectiveMode: ref.read(patchClashConfigProvider).mode,
+        allGroups: allGroups,
+        requests: ref.read(requestsProvider),
+        verifiedCatalog: null,
+        cachedCatalogs: ref.read(cachedProfileCatalogsProvider),
+      );
+    },
+  );
+
+  void syncCentralTarget({required bool notify}) {
+    if (!globalState.isAppStateInitialized) {
+      resolver.syncActiveNode(
+        profileId: null,
+        nodeName: null,
+        isLiveActive: false,
+        notify: notify,
+      );
+      return;
+    }
+    final activeId = ref.read(currentProfileIdProvider);
+    final profiles = ref.read(profilesProvider);
+    final allGroups = ref.read(groupsProvider);
+    final visibleGroups = ref.read(currentGroupsStateProvider).value;
+    final version = ref.read(versionProvider);
+    final mode = ref.read(patchClashConfigProvider).mode;
+    final cachedCatalogs = ref.read(cachedProfileCatalogsProvider);
+    final currentProfile = profiles.getProfile(activeId);
+    final runtimeLive = activeId != null &&
+        !(currentProfile?.isUpdating ?? false) &&
+        _isRuntimeSnapshotLiveForProfile(
+          verifiedRuntimeProfileId: globalState.lastRuntimeProfileId,
+          profileId: activeId,
+          groups: allGroups,
+          version: version,
+        );
+    final target = _computeUnambiguousStaticTarget(
+      activeId: activeId,
+      runtimeLive: runtimeLive,
+      effectiveMode: mode,
+      allGroups: allGroups,
+      visibleGroups: visibleGroups,
+      selectedMap: currentProfile?.selectedMap ?? const <String, String>{},
+      verifiedCatalog: null,
+      cachedCatalogs: cachedCatalogs,
+    );
+    resolver.syncActiveNode(
+      profileId: target?.profileId,
+      nodeName: target?.proxyName,
+      endpointKey: target?.endpointKey,
+      isLiveActive: target != null,
+      notify: notify,
+    );
+  }
+
+  // Initial seed runs with notify: false so watching nodeCountryResolverProvider
+  // inside build() never triggers notifyListeners() during widget build.
+  syncCentralTarget(notify: false);
+
+  ref
+    ..listen(currentProfileIdProvider, (_, __) => syncCentralTarget(notify: true))
+    ..listen(profilesProvider, (_, __) => syncCentralTarget(notify: true))
+    ..listen(
+      patchClashConfigProvider.select((s) => s.mode),
+      (_, __) => syncCentralTarget(notify: true),
+    )
+    ..listen(
+        cachedProfileCatalogsProvider, (_, __) => syncCentralTarget(notify: true));
+  if (globalState.isAppStateInitialized) {
+    ref
+      ..listen(groupsProvider, (_, __) => syncCentralTarget(notify: true))
+      ..listen(
+          currentGroupsStateProvider, (_, __) => syncCentralTarget(notify: true))
+      ..listen(
+          requestsProvider, (_, __) => resolver.onConnectionsUpdated(notify: true));
+  }
+
+  return resolver;
+});
 
 // Read-only IO seam, shared with the existing effective configuration screen.
 // Keep Core access inside the callback so disabled/unused UI cannot start it.
@@ -61,7 +419,8 @@ final nodeRuntimeReaderProvider =
 
 // Keep the exact read future separate from AsyncValue: a request must complete
 // with its original read even when Riverpod replaces the displayed future.
-final nodeRuntimeReadProvider = Provider<NodeRuntimeRead>((ref) {
+final Provider<NodeRuntimeRead> nodeRuntimeReadProvider =
+    Provider<NodeRuntimeRead>((ref) {
   if (!ref.watch(nodeOverviewEnabledProvider)) {
     return NodeRuntimeRead((_) => Future.value());
   }
@@ -76,7 +435,6 @@ final nodeRuntimeReadProvider = Provider<NodeRuntimeRead>((ref) {
   }
   final service = ref.watch(nodeCatalogServiceProvider);
   final runtimeReader = ref.watch(nodeRuntimeReaderProvider);
-  final countryResolver = ref.read(nodeCountryResolverProvider);
   final read = NodeRuntimeRead((isCurrent) async {
     Map<String, dynamic>? latestRuntimeRaw;
     final verified = await readVerifiedNodeRuntime(
@@ -90,7 +448,9 @@ final nodeRuntimeReadProvider = Provider<NodeRuntimeRead>((ref) {
       isCurrent: isCurrent,
     );
     if (verified != null && latestRuntimeRaw != null && isCurrent()) {
-      countryResolver.registerFromRawConfig(profile.id, latestRuntimeRaw!);
+      ref
+          .read(nodeCountryResolverProvider)
+          .registerFromRawConfig(profile.id, latestRuntimeRaw!);
     }
     return verified;
   });
@@ -109,11 +469,13 @@ final nodeRuntimeReadProvider = Provider<NodeRuntimeRead>((ref) {
   return read;
 });
 
-final verifiedNodeRuntimeProvider = FutureProvider<ProfileCatalog?>(
-    (ref) => ref.watch(nodeRuntimeReadProvider).result);
+final FutureProvider<ProfileCatalog?> verifiedNodeRuntimeProvider =
+    FutureProvider<ProfileCatalog?>(
+        (ref) => ref.watch(nodeRuntimeReadProvider).result);
 
 /// Active source labels must come from the verified running configuration.
-final activeNodeCatalogProvider = Provider<ProfileCatalog?>((ref) {
+final Provider<ProfileCatalog?> activeNodeCatalogProvider =
+    Provider<ProfileCatalog?>((ref) {
   final snapshot = ref.watch(verifiedNodeRuntimeProvider);
   return snapshot.isLoading ? null : snapshot.asData?.value;
 });
@@ -233,7 +595,6 @@ final nodeCatalogServiceFactoryProvider =
 final Provider<NodeCatalogService> nodeCatalogServiceProvider =
     Provider<NodeCatalogService>((ref) {
   final service = ref.read(nodeCatalogServiceFactoryProvider)();
-  final countryResolver = ref.read(nodeCountryResolverProvider);
   ref.listen(profilesProvider, (previous, next) {
     final cached =
         Map<String, ProfileCatalog>.of(ref.read(cachedProfileCatalogsProvider));
@@ -246,7 +607,7 @@ final Provider<NodeCatalogService> nodeCatalogServiceProvider =
         final updating = updated?.isUpdating ?? false;
         service.invalidate(old.id, keepCached: updating);
         if (!updating) {
-          countryResolver.invalidateProfile(old.id);
+          ref.read(nodeCountryResolverProvider).invalidateProfile(old.id);
         }
         if (updating && cached[old.id] != null) {
           cached[old.id] =
@@ -261,7 +622,7 @@ final Provider<NodeCatalogService> nodeCatalogServiceProvider =
   ref.listen(scriptStateProvider, (previous, next) {
     if (previous?.currentScript == next.currentScript) return;
     service.clear();
-    countryResolver.clearProfiles();
+    ref.read(nodeCountryResolverProvider).clearProfiles();
     ref.read(cachedProfileCatalogsProvider.notifier).state = const {};
   });
   ref.onDispose(service.clear);
