@@ -2820,7 +2820,11 @@ void main() {
       isTesting: false,
       ipInfo: IpInfo(ip: '203.0.113.1', countryCode: 'US'),
     );
-    globalState.config = globalState.config.copyWith(currentProfileId: 'a');
+    globalState.config = globalState.config.copyWith(
+      currentProfileId: 'a',
+      patchClashConfig:
+          globalState.config.patchClashConfig.copyWith(mode: Mode.global),
+    );
     globalState.appState = globalState.appState.copyWith(
       runTime: 123,
       groups: const [
@@ -2977,7 +2981,11 @@ void main() {
       isTesting: false,
       ipInfo: IpInfo(ip: '198.51.100.11', countryCode: 'JP'),
     );
-    globalState.config = globalState.config.copyWith(currentProfileId: 'a');
+    globalState.config = globalState.config.copyWith(
+      currentProfileId: 'a',
+      patchClashConfig:
+          globalState.config.patchClashConfig.copyWith(mode: Mode.global),
+    );
     globalState.appState = globalState.appState.copyWith(
       runTime: 123,
       groups: const [
@@ -3073,7 +3081,11 @@ void main() {
       isTesting: false,
       ipInfo: IpInfo(ip: '198.51.100.11', countryCode: 'JP'),
     );
-    globalState.config = globalState.config.copyWith(currentProfileId: 'a');
+    globalState.config = globalState.config.copyWith(
+      currentProfileId: 'a',
+      patchClashConfig:
+          globalState.config.patchClashConfig.copyWith(mode: Mode.global),
+    );
     globalState.appState = globalState.appState.copyWith(
       runTime: 123,
       groups: const [
@@ -3211,6 +3223,93 @@ void main() {
 
     expect(loaded, contains('b'));
     expect(find.byKey(const ValueKey('overview-country-JP')), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'rule-mode DIRECT probe before connection telemetry arrives never overwrites sole visible Selector node (R3 P2 #1)',
+      (tester) async {
+    detectionState.state.value = const NetworkDetectionState(
+      isLoading: true,
+      isTesting: true,
+      ipInfo: null,
+    );
+    addTearDown(() {
+      detectionState.state.value = const NetworkDetectionState(
+        isLoading: true,
+        isTesting: false,
+        ipInfo: null,
+      );
+    });
+    globalState.config = globalState.config.copyWith(
+      currentProfileId: 'a',
+      patchClashConfig:
+          globalState.config.patchClashConfig.copyWith(mode: Mode.rule),
+    );
+    globalState.lastRuntimeConfig = {
+      'rules': ['DOMAIN,api-ipv4.ip.sb,DIRECT', 'MATCH,Primary'],
+    };
+    globalState.appState = globalState.appState.copyWith(
+      runTime: 123,
+      groups: const [
+        Group(
+          name: 'Primary',
+          type: GroupType.Selector,
+          hidden: false,
+          now: 'Japan node',
+          all: [Proxy(name: 'Japan node', type: 'Shadowsocks')],
+        ),
+      ],
+    );
+
+    final container = await mount(
+      tester,
+      width: 1200,
+      profiles: [
+        _a.copyWith(selectedMap: const {'Primary': 'Japan node'}),
+        _b,
+      ],
+    );
+    expect(container.read(patchClashConfigProvider).mode, Mode.rule);
+    expect(container.read(runTimeProvider), isNotNull);
+    final resolver = container.read(nodeCountryResolverProvider);
+    expect(
+      resolver.resolveCountryCode(
+        profileId: 'a',
+        profileLabel: 'Alpha profile',
+        nodeName: 'Japan node',
+      ),
+      'JP',
+    );
+
+    // Direct exit IP result arrives before Core's 4-second connection telemetry poll
+    detectionState.state.value = const NetworkDetectionState(
+      isLoading: false,
+      isTesting: false,
+      ipInfo: IpInfo(ip: '203.0.113.99', countryCode: 'CN'),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      resolver.resolveCountryCode(
+        profileId: 'a',
+        profileLabel: 'Alpha profile',
+        nodeName: 'Japan node',
+      ),
+      'JP',
+      reason:
+          'in Mode.rule a sole visible Selector does not prove probe outbound ownership',
+    );
+    final jpRow = find.byKey(const ValueKey('overview-active-Japan node'));
+    expect(jpRow, findsOneWidget);
+    expect(
+      find.descendant(of: jpRow, matching: find.text('🇯🇵 Japan')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: jpRow, matching: find.text('🇨🇳 China')),
+      findsNothing,
+    );
     expect(tester.takeException(), isNull);
   });
 }

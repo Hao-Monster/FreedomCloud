@@ -113,7 +113,7 @@ String? _lookupEndpointKeyForProxy({
   );
 }
 
-ConnectionOutboundTarget? resolveObservedConnectionTarget({
+ConnectionEvidenceEvaluation evaluateObservedConnectionEvidence({
   required String? activeId,
   required bool runtimeLive,
   required Mode effectiveMode,
@@ -133,7 +133,7 @@ ConnectionOutboundTarget? resolveObservedConnectionTarget({
       normalizedHost == null ||
       normalizedHost.isEmpty ||
       checkStartedAt == null) {
-    return null;
+    return (status: ConnectionEvidenceStatus.missing, target: null);
   }
   final groupNames = <String>{
     for (final group in allGroups) group.name,
@@ -162,32 +162,69 @@ ConnectionOutboundTarget? resolveObservedConnectionTarget({
     if (matchedLeaf != null && matchedLeaf != leaf) {
       // Multiple concurrent connections to the same probe host within the
       // check window routed through different outbound leaves: ambiguous.
-      return null;
+      return (status: ConnectionEvidenceStatus.ambiguous, target: null);
     }
     matchedLeaf = leaf;
   }
-  if (matchedLeaf == null) return null;
+  if (matchedLeaf == null) {
+    return (status: ConnectionEvidenceStatus.missing, target: null);
+  }
   if (matchedLeaf == 'DIRECT' ||
       matchedLeaf == 'REJECT' ||
       matchedLeaf == 'REJECT-DROP') {
     return (
-      profileId: activeId,
-      proxyName: matchedLeaf,
-      endpointKey: null,
-      isDirectOrReject: true,
+      status: ConnectionEvidenceStatus.matched,
+      target: (
+        profileId: activeId,
+        proxyName: matchedLeaf,
+        endpointKey: null,
+        isDirectOrReject: true,
+      ),
     );
   }
   return (
-    profileId: activeId,
-    proxyName: matchedLeaf,
-    endpointKey: _lookupEndpointKeyForProxy(
+    status: ConnectionEvidenceStatus.matched,
+    target: (
       profileId: activeId,
       proxyName: matchedLeaf,
-      verifiedCatalog: verifiedCatalog,
-      cachedCatalogs: cachedCatalogs,
+      endpointKey: _lookupEndpointKeyForProxy(
+        profileId: activeId,
+        proxyName: matchedLeaf,
+        verifiedCatalog: verifiedCatalog,
+        cachedCatalogs: cachedCatalogs,
+      ),
+      isDirectOrReject: false,
     ),
-    isDirectOrReject: false,
   );
+}
+
+ConnectionOutboundTarget? resolveObservedConnectionTarget({
+  required String? activeId,
+  required bool runtimeLive,
+  required Mode effectiveMode,
+  required List<Group> allGroups,
+  required FixedList<Connection> requests,
+  required String? matchedHost,
+  required DateTime? checkStartedAt,
+  DateTime? checkCompletedAt,
+  required ProfileCatalog? verifiedCatalog,
+  required Map<String, ProfileCatalog> cachedCatalogs,
+}) {
+  final evidence = evaluateObservedConnectionEvidence(
+    activeId: activeId,
+    runtimeLive: runtimeLive,
+    effectiveMode: effectiveMode,
+    allGroups: allGroups,
+    requests: requests,
+    matchedHost: matchedHost,
+    checkStartedAt: checkStartedAt,
+    checkCompletedAt: checkCompletedAt,
+    verifiedCatalog: verifiedCatalog,
+    cachedCatalogs: cachedCatalogs,
+  );
+  return evidence.status == ConnectionEvidenceStatus.matched
+      ? evidence.target
+      : null;
 }
 
 ({String profileId, String proxyName, String? endpointKey})?
@@ -201,61 +238,36 @@ ConnectionOutboundTarget? resolveObservedConnectionTarget({
   required ProfileCatalog? verifiedCatalog,
   required Map<String, ProfileCatalog> cachedCatalogs,
 }) {
+  // Static group selection only proves the probe's outbound in `Mode.global`,
+  // where Mihomo bypasses routing rules. In `Mode.rule`, rules may route the
+  // IP-detection host through `DIRECT`, a hidden group, or another proxy leaf,
+  // so exit calibration must rely exclusively on observed connection telemetry.
   if (activeId == null ||
       activeId.isEmpty ||
       !runtimeLive ||
-      effectiveMode == Mode.direct ||
+      effectiveMode != Mode.global ||
       allGroups.isEmpty) {
     return null;
   }
-  String? unambiguousLeaf;
-  if (effectiveMode == Mode.global) {
-    final globalGroup = allGroups.getGroup(GroupName.GLOBAL.name) ??
-        (visibleGroups.length == 1 ? visibleGroups.single : null);
-    if (globalGroup == null) return null;
-    final resolved = _resolveGroupToLeafProxy(
-      entryName: globalGroup.name,
-      allGroups: allGroups,
-      selectedMap: selectedMap,
-    );
-    if (resolved.ambiguous ||
-        resolved.leafName == null ||
-        resolved.leafName == 'DIRECT' ||
-        resolved.leafName == 'REJECT' ||
-        resolved.leafName == 'REJECT-DROP') {
-      return null;
-    }
-    unambiguousLeaf = resolved.leafName;
-  } else {
-    final selectors = visibleGroups
-        .where((group) => group.type == GroupType.Selector)
-        .toList();
-    final targetGroups = selectors.isNotEmpty ? selectors : visibleGroups;
-    if (targetGroups.isEmpty) return null;
-    final candidates = <String>{};
-    for (final group in targetGroups) {
-      final resolved = _resolveGroupToLeafProxy(
-        entryName: group.name,
-        allGroups: allGroups,
-        selectedMap: selectedMap,
-      );
-      if (resolved.ambiguous || resolved.leafName == null) {
-        return null;
-      }
-      if (resolved.leafName == 'REJECT' ||
-          resolved.leafName == 'REJECT-DROP') {
-        continue;
-      }
-      candidates.add(resolved.leafName!);
-    }
-    if (candidates.length != 1 || candidates.single == 'DIRECT') {
-      return null;
-    }
-    unambiguousLeaf = candidates.single;
+  final globalGroup = allGroups.getGroup(GroupName.GLOBAL.name) ??
+      (visibleGroups.length == 1 ? visibleGroups.single : null);
+  if (globalGroup == null) return null;
+  final resolved = _resolveGroupToLeafProxy(
+    entryName: globalGroup.name,
+    allGroups: allGroups,
+    selectedMap: selectedMap,
+  );
+  if (resolved.ambiguous ||
+      resolved.leafName == null ||
+      resolved.leafName == 'DIRECT' ||
+      resolved.leafName == 'REJECT' ||
+      resolved.leafName == 'REJECT-DROP') {
+    return null;
   }
+  final unambiguousLeaf = resolved.leafName!;
   return (
     profileId: activeId,
-    proxyName: unambiguousLeaf!,
+    proxyName: unambiguousLeaf,
     endpointKey: _lookupEndpointKeyForProxy(
       profileId: activeId,
       proxyName: unambiguousLeaf,
@@ -314,11 +326,43 @@ void notifyProxyCardSelection(
         proxyName: target?.proxyName ?? '',
         endpointKey: target?.endpointKey,
         unambiguous: target != null,
+        isGlobalStaticTarget: mode == Mode.global && target != null,
       );
 }
 
 final ChangeNotifierProvider<NodeCountryResolver> nodeCountryResolverProvider =
     ChangeNotifierProvider<NodeCountryResolver>((ref) {
+  ConnectionEvidenceEvaluation evaluateCurrentConnection() {
+    if (!globalState.isAppStateInitialized) {
+      return (status: ConnectionEvidenceStatus.missing, target: null);
+    }
+    if (ref.read(runTimeProvider) == null) {
+      return (status: ConnectionEvidenceStatus.missing, target: null);
+    }
+    final activeId = ref.read(currentProfileIdProvider);
+    final allGroups = ref.read(groupsProvider);
+    final version = ref.read(versionProvider);
+    final runtimeLive = activeId != null &&
+        _isRuntimeSnapshotLiveForProfile(
+          verifiedRuntimeProfileId: globalState.lastRuntimeProfileId,
+          profileId: activeId,
+          groups: allGroups,
+          version: version,
+        );
+    return evaluateObservedConnectionEvidence(
+      activeId: activeId,
+      runtimeLive: runtimeLive,
+      effectiveMode: ref.read(patchClashConfigProvider).mode,
+      allGroups: allGroups,
+      requests: ref.read(requestsProvider),
+      matchedHost: detectionState.lastMatchedHost,
+      checkStartedAt: detectionState.lastCheckStartedAt,
+      checkCompletedAt: detectionState.lastCheckCompletedAt,
+      verifiedCatalog: null,
+      cachedCatalogs: ref.read(cachedProfileCatalogsProvider),
+    );
+  }
+
   late final NodeCountryResolver resolver;
   resolver = NodeCountryResolver(
     detectionListenable: detectionState.state,
@@ -327,6 +371,7 @@ final ChangeNotifierProvider<NodeCountryResolver> nodeCountryResolverProvider =
       completedGeneration: detectionState.lastCompletedGeneration,
       completedRoutingEpoch: detectionState.lastCompletedRoutingEpoch,
     ),
+    readCheckCompletedAt: () => detectionState.lastCheckCompletedAt,
     isDetectionProxyEligible: () {
       if (!globalState.isAppStateInitialized) return false;
       if (ref.read(runTimeProvider) == null) return false;
@@ -337,31 +382,12 @@ final ChangeNotifierProvider<NodeCountryResolver> nodeCountryResolverProvider =
       if (checkEligible == false) return false;
       return true;
     },
+    evaluateConnectionEvidence: evaluateCurrentConnection,
     resolveConnectionTarget: () {
-      if (!globalState.isAppStateInitialized) return null;
-      if (ref.read(runTimeProvider) == null) return null;
-      final activeId = ref.read(currentProfileIdProvider);
-      final allGroups = ref.read(groupsProvider);
-      final version = ref.read(versionProvider);
-      final runtimeLive = activeId != null &&
-          _isRuntimeSnapshotLiveForProfile(
-            verifiedRuntimeProfileId: globalState.lastRuntimeProfileId,
-            profileId: activeId,
-            groups: allGroups,
-            version: version,
-          );
-      return resolveObservedConnectionTarget(
-        activeId: activeId,
-        runtimeLive: runtimeLive,
-        effectiveMode: ref.read(patchClashConfigProvider).mode,
-        allGroups: allGroups,
-        requests: ref.read(requestsProvider),
-        matchedHost: detectionState.lastMatchedHost,
-        checkStartedAt: detectionState.lastCheckStartedAt,
-        checkCompletedAt: detectionState.lastCheckCompletedAt,
-        verifiedCatalog: null,
-        cachedCatalogs: ref.read(cachedProfileCatalogsProvider),
-      );
+      final evidence = evaluateCurrentConnection();
+      return evidence.status == ConnectionEvidenceStatus.matched
+          ? evidence.target
+          : null;
     },
   );
 
@@ -408,6 +434,7 @@ final ChangeNotifierProvider<NodeCountryResolver> nodeCountryResolverProvider =
       nodeName: target?.proxyName,
       endpointKey: target?.endpointKey,
       isLiveActive: target != null,
+      isGlobalStaticTarget: mode == Mode.global && target != null,
       notify: notify,
     );
   }
@@ -415,6 +442,7 @@ final ChangeNotifierProvider<NodeCountryResolver> nodeCountryResolverProvider =
   // Initial seed runs with notify: false so watching nodeCountryResolverProvider
   // inside build() never triggers notifyListeners() during widget build.
   syncCentralTarget(notify: false);
+  resolver.seedInitialDetection(notify: false);
 
   ref
     ..listen(currentProfileIdProvider, (_, __) => syncCentralTarget(notify: true))

@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:flclashx/common/constant.dart' show maxLength;
 import 'package:flclashx/common/fixed.dart';
 import 'package:flclashx/common/node_country.dart';
 import 'package:flclashx/enum/enum.dart';
@@ -918,6 +919,366 @@ void main() {
           nodeName: 'Japan node',
         ),
         'JP',
+      );
+    });
+
+    test(
+        'rule-mode missing or ambiguous connection evidence never falls back to static Selector guess, and late DIRECT telemetry leaves proxy untouched (R3 P2 #1)',
+        () {
+      final probeStart = DateTime.utc(2026, 10, 23, 12);
+      final probeDone = probeStart.add(const Duration(milliseconds: 200));
+      var now = probeDone;
+
+      Connection makeConn(String id, String leaf, DateTime at) => Connection(
+            id: id,
+            start: at,
+            chains: [leaf, 'Primary'],
+            metadata: const Metadata(
+              uid: 0,
+              network: 'tcp',
+              sourceIP: '127.0.0.1',
+              sourcePort: '12345',
+              destinationIP: '203.0.113.1',
+              destinationPort: '443',
+              host: 'api-ipv4.ip.sb',
+              process: 'FreedomCloud.exe',
+              remoteDestination: '',
+            ),
+          );
+
+      // 1. Late DIRECT telemetry arriving after HTTP IpInfo does not mislabel Japan node
+      final directConnections = FixedList<Connection>(20);
+      var completed = 0;
+      final detection = ValueNotifier<NetworkDetectionState>(
+        const NetworkDetectionState(
+          isLoading: true,
+          isTesting: true,
+          ipInfo: null,
+        ),
+      );
+      addTearDown(detection.dispose);
+
+      ConnectionEvidenceEvaluation evaluateDirect() =>
+          evaluateObservedConnectionEvidence(
+            activeId: 'p1',
+            runtimeLive: true,
+            effectiveMode: Mode.rule,
+            allGroups: const [
+              Group(
+                name: 'Primary',
+                type: GroupType.Selector,
+                hidden: false,
+                now: 'Japan node',
+              ),
+            ],
+            requests: directConnections,
+            matchedHost: 'api-ipv4.ip.sb',
+            checkStartedAt: probeStart,
+            checkCompletedAt: probeDone,
+            verifiedCatalog: null,
+            cachedCatalogs: const {},
+          );
+
+      final resolverDirect = NodeCountryResolver(
+        clock: () => now,
+        detectionListenable: detection,
+        readDetectionMeta: () => (
+          routingEpoch: 4,
+          completedGeneration: completed,
+          completedRoutingEpoch: 4,
+        ),
+        isDetectionProxyEligible: () => true,
+        resolveServerCountry: (_) async => null,
+        evaluateConnectionEvidence: evaluateDirect,
+      );
+      addTearDown(resolverDirect.dispose);
+
+      // Even if a caller supplies a non-global static node, rule mode waits for telemetry
+      resolverDirect.syncActiveNode(
+        profileId: 'p1',
+        nodeName: 'Japan node',
+        isLiveActive: true,
+      );
+      expect(evaluateDirect().status, ConnectionEvidenceStatus.missing);
+
+      completed = 1;
+      detection.value = const NetworkDetectionState(
+        isLoading: false,
+        isTesting: false,
+        ipInfo: IpInfo(ip: '203.0.113.99', countryCode: 'CN'),
+      );
+      expect(
+        resolverDirect.resolveCountryCode(
+          profileId: 'p1',
+          profileLabel: 'generic',
+          nodeName: 'Japan node',
+        ),
+        'JP',
+      );
+
+      // Core's 4-second telemetry poll arrives with DIRECT outbound
+      now = probeDone.add(const Duration(seconds: 3));
+      directConnections.add(makeConn('direct-probe', 'DIRECT', probeStart));
+      expect(evaluateDirect().status, ConnectionEvidenceStatus.matched);
+      expect(evaluateDirect().target!.isDirectOrReject, isTrue);
+      resolverDirect.onConnectionsUpdated();
+      expect(
+        resolverDirect.resolveCountryCode(
+          profileId: 'p1',
+          profileLabel: 'generic',
+          nodeName: 'Japan node',
+        ),
+        'JP',
+      );
+
+      // 2. Ambiguous observed leaves reject static fallback (even under global static target)
+      //    and immediately finalize so later ring-buffer eviction cannot reinterpret survivor.
+      final ambigConnections = FixedList<Connection>(maxLength)
+        ..add(makeConn('probe-us', 'US node', probeStart))
+        ..add(makeConn('probe-jp', 'Japan node', probeStart));
+      var ambigCompleted = 0;
+      final ambigDetection = ValueNotifier<NetworkDetectionState>(
+        const NetworkDetectionState(
+          isLoading: true,
+          isTesting: true,
+          ipInfo: null,
+        ),
+      );
+      addTearDown(ambigDetection.dispose);
+
+      ConnectionEvidenceEvaluation evaluateAmbig() =>
+          evaluateObservedConnectionEvidence(
+            activeId: 'p1',
+            runtimeLive: true,
+            effectiveMode: Mode.rule,
+            allGroups: const [
+              Group(
+                name: 'Primary',
+                type: GroupType.Selector,
+                hidden: false,
+                now: 'Japan node',
+              ),
+            ],
+            requests: ambigConnections,
+            matchedHost: 'api-ipv4.ip.sb',
+            checkStartedAt: probeStart,
+            checkCompletedAt: probeDone,
+            verifiedCatalog: null,
+            cachedCatalogs: const {},
+          );
+      expect(evaluateAmbig().status, ConnectionEvidenceStatus.ambiguous);
+
+      final resolverAmbig = NodeCountryResolver(
+        clock: () => now,
+        detectionListenable: ambigDetection,
+        readDetectionMeta: () => (
+          routingEpoch: 4,
+          completedGeneration: ambigCompleted,
+          completedRoutingEpoch: 4,
+        ),
+        isDetectionProxyEligible: () => true,
+        resolveServerCountry: (_) async => null,
+        evaluateConnectionEvidence: evaluateAmbig,
+      );
+      addTearDown(resolverAmbig.dispose);
+
+      resolverAmbig.syncActiveNode(
+        profileId: 'p1',
+        nodeName: 'Japan node',
+        isLiveActive: true,
+        isGlobalStaticTarget: true,
+      );
+      ambigCompleted = 1;
+      ambigDetection.value = const NetworkDetectionState(
+        isLoading: false,
+        isTesting: false,
+        ipInfo: IpInfo(ip: '198.51.100.10', countryCode: 'US'),
+      );
+      expect(
+        resolverAmbig.resolveCountryCode(
+          profileId: 'p1',
+          profileLabel: 'generic',
+          nodeName: 'Japan node',
+        ),
+        'JP',
+      );
+
+      // Evict 'US node' leaving only 'Japan node' inside grace window: still finalized!
+      for (var i = 0; i < maxLength - 1; i++) {
+        ambigConnections.add(
+          Connection(
+            id: 'fill-$i',
+            start: probeDone.add(const Duration(seconds: 2)),
+            chains: const ['US node', 'Primary'],
+            metadata: const Metadata(
+              uid: 0,
+              network: 'tcp',
+              sourceIP: '127.0.0.1',
+              sourcePort: '12345',
+              destinationIP: '1.1.1.1',
+              destinationPort: '443',
+              host: 'other.example.invalid',
+              process: 'FreedomCloud.exe',
+              remoteDestination: '',
+            ),
+          ),
+        );
+      }
+      expect(evaluateAmbig().status, ConnectionEvidenceStatus.matched);
+      expect(evaluateAmbig().target?.proxyName, 'Japan node');
+      resolverAmbig
+        ..onConnectionsUpdated()
+        ..syncActiveNode(
+          profileId: 'p1',
+          nodeName: 'Japan node',
+          isLiveActive: true,
+          isGlobalStaticTarget: true,
+        );
+      expect(
+        resolverAmbig.resolveCountryCode(
+          profileId: 'p1',
+          profileLabel: 'generic',
+          nodeName: 'Japan node',
+        ),
+        'JP',
+      );
+    });
+
+    test(
+        'syncActiveNode never replays a consumed or expired probe after FixedList evicts original connection (R3 P2 #2)',
+        () {
+      final started = DateTime.utc(2026, 10, 23, 12);
+      final done = started.add(const Duration(milliseconds: 300));
+      var now = done;
+      var generation = 0;
+
+      Connection conn(
+        String id,
+        String leaf,
+        DateTime at, {
+        String host = 'api-ipv4.ip.sb',
+      }) =>
+          Connection(
+            id: id,
+            start: at,
+            chains: [leaf, 'Primary'],
+            metadata: Metadata(
+              uid: 0,
+              network: 'tcp',
+              sourceIP: '127.0.0.1',
+              sourcePort: '12345',
+              destinationIP: '1.1.1.1',
+              destinationPort: '443',
+              host: host,
+              process: 'FreedomCloud.exe',
+              remoteDestination: '',
+            ),
+          );
+
+      const allGroups = [
+        Group(
+          name: 'Primary',
+          type: GroupType.Selector,
+          now: 'Node A',
+          all: [
+            Proxy(name: 'Node A', type: 'Socks5'),
+            Proxy(name: 'Node B', type: 'Socks5'),
+          ],
+        ),
+      ];
+      final history = FixedList<Connection>(maxLength)
+        ..add(conn('probe', 'Node A', started));
+
+      ConnectionOutboundTarget? observed() => resolveObservedConnectionTarget(
+            activeId: 'p',
+            runtimeLive: true,
+            effectiveMode: Mode.rule,
+            allGroups: allGroups,
+            requests: history,
+            matchedHost: 'api-ipv4.ip.sb',
+            checkStartedAt: started,
+            checkCompletedAt: done,
+            verifiedCatalog: null,
+            cachedCatalogs: const {},
+          );
+
+      final detection = ValueNotifier<NetworkDetectionState>(
+        const NetworkDetectionState(
+          isLoading: true,
+          isTesting: true,
+          ipInfo: null,
+        ),
+      );
+      addTearDown(detection.dispose);
+
+      final resolver = NodeCountryResolver(
+        resolveServerCountry: (_) async => null,
+        clock: () => now,
+        detectionListenable: detection,
+        readDetectionMeta: () => (
+          routingEpoch: 4,
+          completedGeneration: generation,
+          completedRoutingEpoch: 4,
+        ),
+        resolveConnectionTarget: observed,
+      );
+      addTearDown(resolver.dispose);
+
+      resolver.syncActiveNode(profileId: 'p', nodeName: 'Node A');
+      generation = 1;
+      detection.value = const NetworkDetectionState(
+        isLoading: false,
+        isTesting: false,
+        ipInfo: IpInfo(ip: '8.8.8.8', countryCode: 'US'),
+      );
+      expect(
+        resolver.resolveCountryCode(
+          profileId: 'p',
+          profileLabel: null,
+          nodeName: 'Node A',
+        ),
+        'US',
+      );
+
+      // Concurrent browser request via Node B inside [started - 2s, done + 1s]
+      history.add(
+        conn(
+          'unrelated-browser',
+          'Node B',
+          done.add(const Duration(milliseconds: 500)),
+        ),
+      );
+      expect(observed(), isNull);
+
+      // Bounded ring buffer evicts Node A, retaining Node B
+      for (var i = 0; i < maxLength - 1; i++) {
+        history.add(
+          conn(
+            'traffic-$i',
+            'Node A',
+            done.add(Duration(seconds: 10 + i)),
+            host: 'example.invalid',
+          ),
+        );
+      }
+      now = done.add(const Duration(minutes: 10));
+      expect(observed()?.proxyName, 'Node B');
+
+      resolver
+        ..onConnectionsUpdated()
+        ..syncActiveNode(profileId: 'p', nodeName: 'Node A')
+        ..syncActiveNode(
+          profileId: 'p',
+          nodeName: 'Node A',
+          isGlobalStaticTarget: true,
+        );
+      expect(
+        resolver.resolveCountryCode(
+          profileId: 'p',
+          profileLabel: null,
+          nodeName: 'Node B',
+        ),
+        kUnknownCountryCode,
       );
     });
   });

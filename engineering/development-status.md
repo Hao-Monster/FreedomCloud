@@ -1,9 +1,9 @@
 # 开发、集成与预览台账
 
-更新日期：2026-10-23。当前阶段是快速开发、快速迭代和部分功能预览。本文记录来源与验收边界；每次继续开发仍需核实实际 Git/PR/CI 状态，不能把历史报告视为当前通过证明。
+更新日期：2026-10-24。当前阶段是快速开发、快速迭代和部分功能预览。本文记录来源与验收边界；每次继续开发仍需核实实际 Git/PR/CI 状态，不能把历史报告视为当前通过证明。
 
 
-## 跨配置节点总览按国家筛选与三级国家识别流水线（2026-10-22 ~ 2026-10-23）
+## 跨配置节点总览按国家筛选与三级国家识别流水线（2026-10-22 ~ 2026-10-24）
 
 - 来源：用户提出在“代理 → 全部配置”（[`NodeOverviewView`](file:///E:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart#L151-L779)）顶部工具栏“测试全部节点延迟”右侧区域增加按国家筛选代理配置的能力，并通过对齐确认四项设计决策：
   1. **三级混合国家识别流水线**：
@@ -35,12 +35,19 @@
      - 同名节点变更端口（`80 → 443`）、服务器或认证参数时立即驱逐旧校准；`invalidateProfile` 与 `clearProfiles` 同步彻底清理两级出口校准缓存。
   4. **[二轮 P2 #4] 修复国家索引后台扫描期间切换覆写脚本导致后续屏外扫描停滞**：
      - 在 [`_NodeOverviewViewState`](file:///E:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart#L212-L458) 将每轮扫描的并发计数 `activeWorkers`、在途集合 `indexingProfileIds`、`dirty` 标记与订阅集合封装进按代隔离的 [`_IndexScanEpochState`](file:///E:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart#L212-L234)；切换 `scriptStateProvider` 时取消旧代并创建零并发计数的新代实例，旧代挂起任务完成后不会篡改新代计数或阻塞新代继续调度，同时校验单配置加载前后的 `Profile` 快照一致性。
+- 三轮外部复审（针对 `development@dac796d` 的 2 项 P2 出站归属边界问题）复核与修复（2026-10-24）：
+  1. **[三轮 P2 #1] 修复规则模式（`Mode.rule`）下缺失或有歧义的连接证据仍回退触发错误静态归属**：
+     - 在 [`_computeUnambiguousStaticTarget`](file:///E:/CodeWorkstation/FlClashX/lib/providers/node_overview.dart#L230-L276) 中移除 `Mode.rule` 的静态可见 `Selector` 推断分支：规则模式下分流规则（如 `DOMAIN,api-ipv4.ip.sb,DIRECT`、隐藏组或内联节点）可使探测域名绕过可见 `Selector`，因此仅在 Mihomo 跳过规则表直达 `GLOBAL` 的 `Mode.global` 下才产出静态目标（通过 `isGlobalStaticTarget: true` 显式标记）；
+     - 新增三态连接证据模型 [`ConnectionEvidenceStatus`](file:///E:/CodeWorkstation/FlClashX/lib/common/node_country.dart#L981-L990)（`matched` / `missing` / `ambiguous`）与 [`evaluateObservedConnectionEvidence`](file:///E:/CodeWorkstation/FlClashX/lib/providers/node_overview.dart#L116-L202)（保留 [`resolveObservedConnectionTarget`](file:///E:/CodeWorkstation/FlClashX/lib/providers/node_overview.dart#L204-L228) 作为仅在 `matched` 时返回目标的兼容包装）：缺证（`missing`，例如 Core 4 秒连接轮询尚未送达）时在非全局模式下进入有界 `pending` 等待真实连接证据而不回退静态猜测，迟到的 `DIRECT`/`REJECT` 证据到达后直接封存终态且不污染代理节点；歧义（`ambiguous`，探测窗口内同域名命中多个不同出站叶子）时即使在 `Mode.global` 下也立即拒绝静态回退并封存终态（`finalized`），杜绝环形缓冲淘汰部分连接后把残余单条连接误判为唯一证据。
+  2. **[三轮 P2 #2] 修复一次性消费与 5 秒时限未覆盖中央同步入口（`syncActiveNode`）导致有界连接历史淘汰后旧检测结果重放绑定至其他节点**：
+     - 在 [`NodeCountryResolver`](file:///E:/CodeWorkstation/FlClashX/lib/common/node_country.dart#L999-L1165) 中引入由 `_onDetectionChanged`、`onConnectionsUpdated`、`syncActiveNode` 与 `seedInitialDetection` 全部归属入口共享的单次检测归属记录 `_DetectionAttributionRecord`（绑定 `ipInfo` 实例、`generation`、`routingEpoch`、`deadline` 与 `pending | finalized` 状态，并接入 [`detectionState.lastCheckCompletedAt`](file:///E:/CodeWorkstation/FlClashX/lib/state.dart#L990-L993) 计算真实截止时刻）；
+     - 任一检测一旦完成节点校准、命中 `DIRECT`/`REJECT`、判定为 `ambiguous`、发生切节点/停机/路由代数变更或超过 5 秒宽限窗口，立即转移并锁存为 `finalized`（墓碑态）；后续 `cachedProfileCatalogsProvider`、`groupsProvider`、`profilesProvider` 更新触发的 `syncActiveNode` 或 `onConnectionsUpdated` 均在入口处 O(1) 短路返回，即使 `FixedList(150)` 已淘汰原探测连接并保留窗口内其他节点的同域连接，也绝不会重放已消费或已过期的 `IpInfo`。
 - 单测与验证：
-  - [`test/common/node_country_test.dart`](file:///E:/CodeWorkstation/FlClashX/test/common/node_country_test.dart)（15 项单测，覆盖同名换服/换端口驱逐旧出口、共享 SOCKS5 端点多账号独立出口保留、`clearProfiles`/`invalidateProfile` 彻底清理、后续无关同域连接与宽限超时不复用旧探测、0 秒重评估立即重试、跨路由代数过期探测丢弃、多策略组连接链路归属、`印度尼西亚→ID` / `罗马尼亚→RO` / `内蒙古→CN` / `North Korea→KP` 长词优先）与 [`test/views/node_overview_test.dart`](file:///E:/CodeWorkstation/FlClashX/test/views/node_overview_test.dart#L2800-L3210)（覆盖运行中已有出口 IP 打开总览零异常、窄窗 21 配置免滚动发现屏外 `JP`、多 `Selector` 组独立国家不串染、离开总览在“当前配置”通过 `ProxyCard` 切节点不覆写旧节点、停止代理后直连 `CN` 出口与重启前残留直连 IP 绝不覆写代理节点、索引扫描挂起期间切换覆写脚本重启扫描并发现屏外 `JP`）；
-  - 本地单元与组件测试（全部 20 个 `*node*.dart` 目录/国家/总览测试套件 + Windows 启动与 TUN 调度 2 个套件，合计 22 个套件）：**PASS（345 PASS，0 FAIL）**；外部隔离复现脚本（`country_stopped_review_test.dart`、`country_connection_rebind_review_test.dart`、`resolver_identity_review_test.dart`、`country_scan_generation_repro_test.dart` 新增复现项）验证通过；本机 Flutter 版本为 `3.47.4`（CI 配置为 `3.41.7`）；
+  - [`test/common/node_country_test.dart`](file:///E:/CodeWorkstation/FlClashX/test/common/node_country_test.dart)（17 项单测，新增覆盖 `Mode.rule` 缺证等待与迟到 `DIRECT` 证据不污染代理节点、并发多出站 `ambiguous` 拒绝静态回退及防环形缓冲淘汰复活、`FixedList(maxLength)` 淘汰原连接后 `syncActiveNode` 绝不重放已消费/已过期探测结果）与 [`test/views/node_overview_test.dart`](file:///E:/CodeWorkstation/FlClashX/test/views/node_overview_test.dart#L2808-L3310)（新增 `Mode.rule` 下 `DIRECT` 分流探测在连接遥测到达前绝不覆写唯一可见 `Selector` 节点的中央 Provider 组件回归测试，并将合成静态出口夹具显式对齐至 `Mode.global`）；
+  - 全仓 Flutter 单元与组件测试（`flutter test -j 4`）：**PASS（956 PASS，0 FAIL）**；三轮外部隔离复现脚本（含本轮 `country_rule_provider_dac796d_review_test.dart`、`country_rule_route_dac796d_review_test.dart`、`resolver_actual_history_rebind_test.dart` 共 5 项复现用例）全部验证通过；本机 Flutter 版本为 `3.47.4`（CI 配置为 `3.41.7`）；
   - 变更文件 `dart analyze`：**PASS（0 error，0 warning，0 新增 info）**；`git diff --check` 通过；
   - 远端 CI / 真实窗口预览 / 后端部署 / 业务验收：**NOT RUN**（尚未推送远端，未触碰本机运行中代理、TUN 及服务状态）。
-- 交付状态：已在 `development` 分支完成两轮共 11 项 P2 缺陷修复、回归测试验证与本地提交（未推送至 `freedomcloud/development`，未创建 PR）。
+- 交付状态：已在 `development` 分支完成三轮共 13 项 P2 缺陷修复、回归测试验证与本地提交（未推送至 `freedomcloud/development`，未创建 PR）。
 
 
 ## Windows 跨配置切换虚拟网卡（TUN）重启失败自愈与自动重启补丁（2026-10-17）

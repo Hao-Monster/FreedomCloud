@@ -978,12 +978,44 @@ typedef ConnectionOutboundTarget = ({
   bool isDirectOrReject,
 });
 
+enum ConnectionEvidenceStatus {
+  matched,
+  missing,
+  ambiguous,
+}
+
+typedef ConnectionEvidenceEvaluation = ({
+  ConnectionEvidenceStatus status,
+  ConnectionOutboundTarget? target,
+});
+
 typedef ExitCalibrationEntry = ({
   String countryCode,
   String? endpointKey,
   String? server,
   String? configFingerprint,
 });
+
+enum _DetectionAttributionState {
+  pending,
+  finalized,
+}
+
+class _DetectionAttributionRecord {
+  _DetectionAttributionRecord({
+    required this.ipInfo,
+    required this.generation,
+    required this.routingEpoch,
+    required this.deadline,
+    required this.state,
+  });
+
+  final IpInfo ipInfo;
+  final int generation;
+  final int? routingEpoch;
+  final DateTime deadline;
+  _DetectionAttributionState state;
+}
 
 Object? _canonicalizeProxyValue(Object? value, {bool isRoot = false}) {
   if (value == null || value is bool || value is num || value is String) {
@@ -1045,8 +1077,10 @@ class NodeCountryResolver extends ChangeNotifier {
     ResolveServerCountryCallback? resolveServerCountry,
     this.detectionListenable,
     this.readDetectionMeta,
+    this.readCheckCompletedAt,
     this.isDetectionProxyEligible,
     this.resolveConnectionTarget,
+    this.evaluateConnectionEvidence,
     this.maxConcurrency = 4,
     DateTime Function()? clock,
   })  : _resolveServerCountry =
@@ -1069,8 +1103,10 @@ class NodeCountryResolver extends ChangeNotifier {
   final ResolveServerCountryCallback _resolveServerCountry;
   final ValueListenable<NetworkDetectionState>? detectionListenable;
   final DetectionCheckMetadata Function()? readDetectionMeta;
+  final DateTime? Function()? readCheckCompletedAt;
   final bool Function()? isDetectionProxyEligible;
   final ConnectionOutboundTarget? Function()? resolveConnectionTarget;
+  final ConnectionEvidenceEvaluation Function()? evaluateConnectionEvidence;
   final int maxConcurrency;
   final DateTime Function() _clock;
 
@@ -1090,23 +1126,35 @@ class NodeCountryResolver extends ChangeNotifier {
       <String, String?>{};
   (String, String)? _activeTarget;
   String? _activeEndpointKey;
+  bool _activeTargetIsGlobal = false;
   bool _awaitingFreshDetection = false;
   String? _staleIpAtSwitch;
   int _lastSeenGeneration = 0;
   IpInfo? _directIneligibleIpInfo;
+  _DetectionAttributionRecord? _detectionRecord;
 
-  int _syntheticAttributionToken = 0;
-  int? _pendingConnectionAttributionToken;
-  int? _pendingConnectionAttributionRoutingEpoch;
-  IpInfo? _pendingConnectionAttributionIpInfo;
-  DateTime? _pendingConnectionAttributionDeadline;
+  bool get _hasConnectionTelemetry =>
+      evaluateConnectionEvidence != null || resolveConnectionTarget != null;
+
+  ConnectionEvidenceEvaluation _evaluateConnection() {
+    if (evaluateConnectionEvidence != null) {
+      return evaluateConnectionEvidence!();
+    }
+    if (resolveConnectionTarget != null) {
+      final target = resolveConnectionTarget!();
+      if (target != null) {
+        return (status: ConnectionEvidenceStatus.matched, target: target);
+      }
+    }
+    return (status: ConnectionEvidenceStatus.missing, target: null);
+  }
 
   @override
   void dispose() {
     _disposed = true;
     detectionListenable?.removeListener(_onDetectionChanged);
     _lookupQueue.clear();
-    _clearPendingConnectionAttribution();
+    _detectionRecord = null;
     super.dispose();
   }
 
@@ -1114,11 +1162,27 @@ class NodeCountryResolver extends ChangeNotifier {
     if (!_disposed) notifyListeners();
   }
 
-  void _clearPendingConnectionAttribution() {
-    _pendingConnectionAttributionToken = null;
-    _pendingConnectionAttributionRoutingEpoch = null;
-    _pendingConnectionAttributionIpInfo = null;
-    _pendingConnectionAttributionDeadline = null;
+  void _tombstoneCurrentDetection([IpInfo? explicitIpInfo]) {
+    final currentIp = explicitIpInfo ?? detectionListenable?.value.ipInfo;
+    if (currentIp == null) {
+      _detectionRecord = null;
+      return;
+    }
+    final meta = readDetectionMeta?.call();
+    final currentGen = meta?.completedGeneration ?? 0;
+    if (_detectionRecord != null &&
+        identical(_detectionRecord!.ipInfo, currentIp) &&
+        _detectionRecord!.generation == currentGen) {
+      _detectionRecord!.state = _DetectionAttributionState.finalized;
+      return;
+    }
+    _detectionRecord = _DetectionAttributionRecord(
+      ipInfo: currentIp,
+      generation: currentGen,
+      routingEpoch: meta?.routingEpoch,
+      deadline: _clock(),
+      state: _DetectionAttributionState.finalized,
+    );
   }
 
   bool _isCurrentDetectionProxyEligible(IpInfo info) {
@@ -1132,10 +1196,11 @@ class NodeCountryResolver extends ChangeNotifier {
   }
 
   void onProxyRunningChanged({required bool isRunning}) {
-    _clearPendingConnectionAttribution();
+    _tombstoneCurrentDetection();
     if (!isRunning) {
       _activeTarget = null;
       _activeEndpointKey = null;
+      _activeTargetIsGlobal = false;
       final currentIp = detectionListenable?.value.ipInfo;
       if (currentIp != null) {
         _awaitingFreshDetection = true;
@@ -1191,7 +1256,8 @@ class NodeCountryResolver extends ChangeNotifier {
     if (_activeTarget?.$1 == profileId) {
       _activeTarget = null;
       _activeEndpointKey = null;
-      _clearPendingConnectionAttribution();
+      _activeTargetIsGlobal = false;
+      _tombstoneCurrentDetection();
     }
     if (changed) _notify();
   }
@@ -1209,12 +1275,13 @@ class NodeCountryResolver extends ChangeNotifier {
     _exitCountryByProfileConfig.clear();
     _activeTarget = null;
     _activeEndpointKey = null;
-    _clearPendingConnectionAttribution();
+    _activeTargetIsGlobal = false;
+    _tombstoneCurrentDetection();
     if (hadEntries) _notify();
   }
 
   void markSwitchingNode() {
-    _clearPendingConnectionAttribution();
+    _tombstoneCurrentDetection();
     _awaitingFreshDetection = true;
     _staleIpAtSwitch = detectionListenable?.value.ipInfo?.ip;
   }
@@ -1228,6 +1295,7 @@ class NodeCountryResolver extends ChangeNotifier {
     required String proxyName,
     String? endpointKey,
     bool unambiguous = false,
+    bool isGlobalStaticTarget = false,
   }) {
     markSwitchingNode();
     if (!unambiguous ||
@@ -1238,10 +1306,12 @@ class NodeCountryResolver extends ChangeNotifier {
         proxyName == 'REJECT') {
       _activeTarget = null;
       _activeEndpointKey = null;
+      _activeTargetIsGlobal = false;
       return;
     }
     _activeTarget = (profileId, proxyName);
     _activeEndpointKey = endpointKey ?? _nameEndpointKeys['$profileId|$proxyName'];
+    _activeTargetIsGlobal = isGlobalStaticTarget;
   }
 
   void recordExitCountry({
@@ -1291,6 +1361,13 @@ class NodeCountryResolver extends ChangeNotifier {
     if (changed && notify) _notify();
   }
 
+  void seedInitialDetection({bool notify = false}) {
+    _tryAttributeCurrentDetection(
+      notify: notify,
+      allowColdStaticSeed: _activeTarget != null,
+    );
+  }
+
   void syncActiveNode({
     required String? profileId,
     String? proxyName,
@@ -1298,6 +1375,7 @@ class NodeCountryResolver extends ChangeNotifier {
     String? endpointKey,
     bool isSwitching = false,
     bool isLiveActive = true,
+    bool isGlobalStaticTarget = false,
     bool notify = true,
   }) {
     final effectiveNodeName = nodeName ?? proxyName;
@@ -1310,7 +1388,7 @@ class NodeCountryResolver extends ChangeNotifier {
         effectiveNodeName == 'DIRECT' ||
         effectiveNodeName == 'REJECT') {
       if (isSwitching || _activeTarget != null) {
-        _clearPendingConnectionAttribution();
+        _tombstoneCurrentDetection();
         final detection = detectionListenable?.value;
         if (detection != null &&
             !detection.isLoading &&
@@ -1322,6 +1400,7 @@ class NodeCountryResolver extends ChangeNotifier {
       }
       _activeTarget = null;
       _activeEndpointKey = null;
+      _activeTargetIsGlobal = false;
       return;
     }
     final nextTarget = (profileId, effectiveNodeName);
@@ -1332,9 +1411,10 @@ class NodeCountryResolver extends ChangeNotifier {
             : _nameEndpointKeys['$profileId|$effectiveNodeName'];
     _activeTarget = nextTarget;
     _activeEndpointKey = resolvedEndpoint;
+    _activeTargetIsGlobal = isGlobalStaticTarget;
     final detection = detectionListenable?.value;
     if (previousTarget != null && previousTarget != nextTarget) {
-      _clearPendingConnectionAttribution();
+      _tombstoneCurrentDetection();
       if (detection != null &&
           !detection.isLoading &&
           !detection.isTesting &&
@@ -1344,69 +1424,24 @@ class NodeCountryResolver extends ChangeNotifier {
       }
       return;
     }
-    if (!_awaitingFreshDetection &&
-        detection != null &&
-        !detection.isLoading &&
-        !detection.isTesting &&
-        detection.ipInfo != null &&
-        _isDetectionGenerationValidForCurrentRoute(allowPreexisting: true)) {
-      _applyDetectionInfo(
-        detection.ipInfo!,
-        notify: notify,
-        allowDeferredConnectionAttribution: false,
-      );
-    }
+    _tryAttributeCurrentDetection(
+      notify: notify,
+      allowColdStaticSeed: previousTarget == null,
+    );
   }
 
   /// Re-evaluates exit attribution only when an unattributed proxy exit-IP
-  /// check is still within its post-completion grace window waiting for Core
-  /// connection telemetry. Never rebinds an already-attributed or old check.
+  /// check is still pending within its post-completion grace window waiting for
+  /// Core connection telemetry. Never rebinds a consumed, ambiguous, or expired
+  /// check.
   void onConnectionsUpdated({bool notify = true}) {
-    final pendingToken = _pendingConnectionAttributionToken;
-    final pendingIpInfo = _pendingConnectionAttributionIpInfo;
-    final deadline = _pendingConnectionAttributionDeadline;
-    if (pendingToken == null || pendingIpInfo == null || deadline == null) {
+    final record = _detectionRecord;
+    if (record == null || record.state != _DetectionAttributionState.pending) {
       return;
     }
-    if (_awaitingFreshDetection || _clock().isAfter(deadline)) {
-      _clearPendingConnectionAttribution();
-      return;
-    }
-    final detection = detectionListenable?.value;
-    if (detection == null ||
-        detection.isLoading ||
-        detection.isTesting ||
-        !identical(detection.ipInfo, pendingIpInfo) ||
-        !_isCurrentDetectionProxyEligible(pendingIpInfo)) {
-      _clearPendingConnectionAttribution();
-      return;
-    }
-    if (!_isDetectionGenerationValidForCurrentRoute(allowPreexisting: true)) {
-      _clearPendingConnectionAttribution();
-      return;
-    }
-    final meta = readDetectionMeta?.call();
-    if (meta != null) {
-      if (_pendingConnectionAttributionRoutingEpoch != null &&
-          meta.routingEpoch != _pendingConnectionAttributionRoutingEpoch) {
-        _clearPendingConnectionAttribution();
-        return;
-      }
-      if (pendingToken > 0 && meta.completedGeneration != pendingToken) {
-        _clearPendingConnectionAttribution();
-        return;
-      }
-    }
-    final observed = resolveConnectionTarget?.call();
-    if (observed == null) return;
-    _clearPendingConnectionAttribution();
-    if (observed.isDirectOrReject) return;
-    recordExitCountry(
-      profileId: observed.profileId,
-      proxyName: observed.proxyName,
-      endpointKey: observed.endpointKey,
-      countryCode: pendingIpInfo.countryCode,
+    _tryAttributeCurrentDetection(
       notify: notify,
+      allowColdStaticSeed: false,
     );
   }
 
@@ -1428,11 +1463,12 @@ class NodeCountryResolver extends ChangeNotifier {
     if (detection.isLoading || detection.isTesting || detection.ipInfo == null) {
       _awaitingFreshDetection = false;
       _staleIpAtSwitch = null;
-      _clearPendingConnectionAttribution();
+      _detectionRecord = null;
       return;
     }
-    if (!_isCurrentDetectionProxyEligible(detection.ipInfo!)) {
-      _clearPendingConnectionAttribution();
+    final info = detection.ipInfo!;
+    if (!_isCurrentDetectionProxyEligible(info)) {
+      _tombstoneCurrentDetection(info);
       return;
     }
     final meta = readDetectionMeta?.call();
@@ -1442,8 +1478,8 @@ class NodeCountryResolver extends ChangeNotifier {
           meta.completedRoutingEpoch != meta.routingEpoch) {
         // Check started under an earlier route before a switch; reject it.
         _awaitingFreshDetection = true;
-        _staleIpAtSwitch = detection.ipInfo!.ip;
-        _clearPendingConnectionAttribution();
+        _staleIpAtSwitch = info.ip;
+        _tombstoneCurrentDetection(info);
         return;
       }
       _awaitingFreshDetection = false;
@@ -1451,65 +1487,133 @@ class NodeCountryResolver extends ChangeNotifier {
     } else if (_awaitingFreshDetection) {
       // Synthetic ValueNotifier write (e.g. widget/unit test without _checkIp):
       // accept if a distinct exit IP was published after the switch.
-      if (detection.ipInfo!.ip == _staleIpAtSwitch) {
+      if (info.ip == _staleIpAtSwitch) {
         return;
       }
       _awaitingFreshDetection = false;
       _staleIpAtSwitch = null;
     }
-    _applyDetectionInfo(
-      detection.ipInfo!,
+    _tryAttributeCurrentDetection(
       notify: true,
-      allowDeferredConnectionAttribution: true,
+      allowColdStaticSeed: false,
     );
   }
 
-  void _applyDetectionInfo(
-    IpInfo info, {
+  void _tryAttributeCurrentDetection({
     required bool notify,
-    required bool allowDeferredConnectionAttribution,
+    required bool allowColdStaticSeed,
   }) {
-    if (!_isCurrentDetectionProxyEligible(info)) {
-      _clearPendingConnectionAttribution();
+    if (_awaitingFreshDetection) {
+      _tombstoneCurrentDetection();
       return;
     }
-    final observed = resolveConnectionTarget?.call();
-    if (observed != null) {
-      _clearPendingConnectionAttribution();
-      if (observed.isDirectOrReject) return;
-      recordExitCountry(
-        profileId: observed.profileId,
-        proxyName: observed.proxyName,
-        endpointKey: observed.endpointKey,
-        countryCode: info.countryCode,
-        notify: notify,
+    final detection = detectionListenable?.value;
+    if (detection == null ||
+        detection.isLoading ||
+        detection.isTesting ||
+        detection.ipInfo == null) {
+      _detectionRecord = null;
+      return;
+    }
+    final info = detection.ipInfo!;
+    if (!_isCurrentDetectionProxyEligible(info) ||
+        !_isDetectionGenerationValidForCurrentRoute(allowPreexisting: true)) {
+      _tombstoneCurrentDetection(info);
+      return;
+    }
+    final meta = readDetectionMeta?.call();
+    final currentGen = meta?.completedGeneration ?? 0;
+    final existing = _detectionRecord;
+    final matchesExisting = existing != null &&
+        identical(existing.ipInfo, info) &&
+        existing.generation == currentGen;
+    final _DetectionAttributionRecord record;
+    if (matchesExisting) {
+      record = existing;
+      if (record.state == _DetectionAttributionState.finalized) {
+        return;
+      }
+      if (meta != null &&
+          record.routingEpoch != null &&
+          meta.routingEpoch != record.routingEpoch) {
+        record.state = _DetectionAttributionState.finalized;
+        return;
+      }
+    } else {
+      final completedAt = readCheckCompletedAt?.call() ?? _clock();
+      record = _DetectionAttributionRecord(
+        ipInfo: info,
+        generation: currentGen,
+        routingEpoch: meta?.routingEpoch,
+        deadline: completedAt.add(connectionAttributionGraceWindow),
+        state: _DetectionAttributionState.pending,
       );
+      _detectionRecord = record;
+    }
+
+    final withinGrace = !_clock().isAfter(record.deadline);
+    if (!_hasConnectionTelemetry) {
+      if (_activeTarget != null && (withinGrace || allowColdStaticSeed)) {
+        record.state = _DetectionAttributionState.finalized;
+        recordExitCountry(
+          profileId: _activeTarget!.$1,
+          proxyName: _activeTarget!.$2,
+          endpointKey: _activeEndpointKey,
+          countryCode: info.countryCode,
+          notify: notify,
+        );
+      } else if (!withinGrace) {
+        record.state = _DetectionAttributionState.finalized;
+      }
       return;
     }
-    final target = _activeTarget;
-    if (target != null) {
-      _clearPendingConnectionAttribution();
+
+    if (withinGrace) {
+      final evidence = _evaluateConnection();
+      switch (evidence.status) {
+        case ConnectionEvidenceStatus.matched:
+          record.state = _DetectionAttributionState.finalized;
+          final target = evidence.target!;
+          if (!target.isDirectOrReject) {
+            recordExitCountry(
+              profileId: target.profileId,
+              proxyName: target.proxyName,
+              endpointKey: target.endpointKey,
+              countryCode: info.countryCode,
+              notify: notify,
+            );
+          }
+          return;
+        case ConnectionEvidenceStatus.ambiguous:
+          // Conflicting outbound connections observed during this check window:
+          // reject static fallback and finalize immediately so later ring-buffer
+          // eviction cannot reinterpret a partial survivor.
+          record.state = _DetectionAttributionState.finalized;
+          return;
+        case ConnectionEvidenceStatus.missing:
+          if (_activeTargetIsGlobal && _activeTarget != null) {
+            record.state = _DetectionAttributionState.finalized;
+            recordExitCountry(
+              profileId: _activeTarget!.$1,
+              proxyName: _activeTarget!.$2,
+              endpointKey: _activeEndpointKey,
+              countryCode: info.countryCode,
+              notify: notify,
+            );
+          }
+          return;
+      }
+    }
+
+    record.state = _DetectionAttributionState.finalized;
+    if (allowColdStaticSeed && _activeTargetIsGlobal && _activeTarget != null) {
       recordExitCountry(
-        profileId: target.$1,
-        proxyName: target.$2,
+        profileId: _activeTarget!.$1,
+        proxyName: _activeTarget!.$2,
         endpointKey: _activeEndpointKey,
         countryCode: info.countryCode,
         notify: notify,
       );
-      return;
-    }
-    if (allowDeferredConnectionAttribution && resolveConnectionTarget != null) {
-      final meta = readDetectionMeta?.call();
-      final token = (meta != null && meta.completedGeneration > 0)
-          ? meta.completedGeneration
-          : --_syntheticAttributionToken;
-      _pendingConnectionAttributionToken = token;
-      _pendingConnectionAttributionRoutingEpoch = meta?.routingEpoch;
-      _pendingConnectionAttributionIpInfo = info;
-      _pendingConnectionAttributionDeadline =
-          _clock().add(connectionAttributionGraceWindow);
-    } else {
-      _clearPendingConnectionAttribution();
     }
   }
 
