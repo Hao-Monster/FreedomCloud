@@ -3,6 +3,14 @@
 更新日期：2026-10-24。当前阶段是快速开发、快速迭代和部分功能预览。本文记录来源与验收边界；每次继续开发仍需核实实际 Git/PR/CI 状态，不能把历史报告视为当前通过证明。
 
 
+## Windows 国家筛选与 TLS 清理预览交付（2026-10-24）
+
+- 固定源码：`development@159f16eecc7863f163cf22b0eec4ad0e86fb321b`，干净 tracked Git archive；UI/Core/Agent/Helper 同批新编，来源和绑定已核对。
+- [Windows amd64 预览包](../dist/FreedomCloud-windows-amd64-country-tls-159f16eecc78.zip)：165,987,494 bytes；SHA256 `98d8a7a9ef7160af5f3148d5dfe8a260d78441968750cea5e6ae6825f966c2b8`。完整解压目录同名（去掉 `.zip`），启动 `FlClashX.exe`。
+- 构建 PASS、两次 ZIP/解压逐文件校验 PASS（73 文件/72 checksum）、独立静态审计 8/8 PASS；已知 VS discovery 预检例外后实际 CMake/AOT/native 编译均成功。工具版本与全部边界见[交付报告](testing/windows-country-tls-preview-2026-10-24.md)。
+- 普通未签名预览，不含 strict WFP 驱动/Broker；现有生产 CONNECT 证书放行行为保留并已披露。原预览包、覆盖率、QA、probes 和 stash 均保留。
+- 已构建 / 已交付静态包；未推送 / 未创建 PR / 远端 CI NOT RUN / 候选未启动 / 真实代理、TUN、服务及业务验收 NOT RUN。下一步：用户按包内 PREVIEW-README 手工测试。
+
 ## 跨配置节点总览按国家筛选与三级国家识别流水线（2026-10-22 ~ 2026-10-24）
 
 - 来源：用户提出在“代理 → 全部配置”（[`NodeOverviewView`](file:///E:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart#L151-L779)）顶部工具栏“测试全部节点延迟”右侧区域增加按国家筛选代理配置的能力，并通过对齐确认四项设计决策：
