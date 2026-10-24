@@ -98,7 +98,7 @@ String? _lookupEndpointKeyForProxy({
   if (group == null) {
     return (leafName: entryName, ambiguous: false);
   }
-  if (group.type == GroupType.LoadBalance) {
+  if (group.type != GroupType.Selector) {
     return (leafName: null, ambiguous: true);
   }
   final next = group.getCurrentSelectedName(selectedMap[group.name] ?? '');
@@ -113,6 +113,69 @@ String? _lookupEndpointKeyForProxy({
   );
 }
 
+const Set<String> _knownAppProcessStems = {
+  'flclashx',
+  'freedomcloud',
+  'com.follow.clashx',
+  'com.follow.clashx.debug',
+  'com.follow.clashx.alpha',
+};
+
+const Set<String> _testRunnerExecutableStems = {
+  'dart',
+  'dartaotruntime',
+  'flutter_tester',
+};
+
+String _extractProcessStem(String raw) {
+  final trimmed = raw.trim();
+  if (trimmed.isEmpty) return '';
+  final normalized = trimmed.replaceAll(r'\', '/');
+  final segments =
+      normalized.split('/').where((segment) => segment.isNotEmpty).toList();
+  if (segments.isEmpty) return '';
+  var base = segments.last.toLowerCase();
+  if (base.endsWith('.exe')) {
+    base = base.substring(0, base.length - 4);
+  } else if (base.endsWith('.app')) {
+    base = base.substring(0, base.length - 4);
+  }
+  return base;
+}
+
+bool _isAppProcessStem(String stem) {
+  if (stem.isEmpty) return false;
+  if (_knownAppProcessStems.contains(stem)) return true;
+  final runtimeStem = _extractProcessStem(Platform.resolvedExecutable);
+  if (runtimeStem.isNotEmpty &&
+      !_testRunnerExecutableStems.contains(runtimeStem) &&
+      stem == runtimeStem) {
+    return true;
+  }
+  return false;
+}
+
+bool _isConnectionOwnedByProbe(
+  Metadata metadata,
+  Set<String>? probeSourcePorts,
+) {
+  final processRaw = metadata.process.trim();
+  final processPathRaw = metadata.processPath.trim();
+  if (processRaw.isNotEmpty &&
+      !_isAppProcessStem(_extractProcessStem(processRaw))) {
+    return false;
+  }
+  if (processPathRaw.isNotEmpty &&
+      !_isAppProcessStem(_extractProcessStem(processPathRaw))) {
+    return false;
+  }
+  if (probeSourcePorts != null) {
+    final sourcePort = metadata.sourcePort.trim();
+    return sourcePort.isNotEmpty && probeSourcePorts.contains(sourcePort);
+  }
+  return processRaw.isNotEmpty || processPathRaw.isNotEmpty;
+}
+
 ConnectionEvidenceEvaluation evaluateObservedConnectionEvidence({
   required String? activeId,
   required bool runtimeLive,
@@ -122,6 +185,7 @@ ConnectionEvidenceEvaluation evaluateObservedConnectionEvidence({
   required String? matchedHost,
   required DateTime? checkStartedAt,
   DateTime? checkCompletedAt,
+  Set<String>? probeSourcePorts,
   required ProfileCatalog? verifiedCatalog,
   required Map<String, ProfileCatalog> cachedCatalogs,
 }) {
@@ -153,6 +217,7 @@ ConnectionEvidenceEvaluation evaluateObservedConnectionEvidence({
     final host = conn.metadata.host.toLowerCase();
     final sniffHost = conn.metadata.sniffHost.toLowerCase();
     if (host != normalizedHost && sniffHost != normalizedHost) continue;
+    if (!_isConnectionOwnedByProbe(conn.metadata, probeSourcePorts)) continue;
     if (conn.chains.isEmpty) continue;
     final leaf = conn.chains.firstWhere(
       (hop) => hop.isNotEmpty && !groupNames.contains(hop),
@@ -207,6 +272,7 @@ ConnectionOutboundTarget? resolveObservedConnectionTarget({
   required String? matchedHost,
   required DateTime? checkStartedAt,
   DateTime? checkCompletedAt,
+  Set<String>? probeSourcePorts,
   required ProfileCatalog? verifiedCatalog,
   required Map<String, ProfileCatalog> cachedCatalogs,
 }) {
@@ -219,6 +285,7 @@ ConnectionOutboundTarget? resolveObservedConnectionTarget({
     matchedHost: matchedHost,
     checkStartedAt: checkStartedAt,
     checkCompletedAt: checkCompletedAt,
+    probeSourcePorts: probeSourcePorts,
     verifiedCatalog: verifiedCatalog,
     cachedCatalogs: cachedCatalogs,
   );
@@ -358,8 +425,23 @@ final ChangeNotifierProvider<NodeCountryResolver> nodeCountryResolverProvider =
       matchedHost: detectionState.lastMatchedHost,
       checkStartedAt: detectionState.lastCheckStartedAt,
       checkCompletedAt: detectionState.lastCheckCompletedAt,
+      probeSourcePorts: detectionState.lastProbeSourcePorts,
       verifiedCatalog: null,
       cachedCatalogs: ref.read(cachedProfileCatalogsProvider),
+    );
+  }
+
+  ActiveProfileAttributionScope? readActiveProfileScope() {
+    final activeId = ref.read(currentProfileIdProvider);
+    if (activeId == null || activeId.isEmpty) return null;
+    final profile = ref.read(profilesProvider).getProfile(activeId);
+    if (profile == null) return null;
+    final scriptId = ref.read(scriptStateProvider).realId ?? '';
+    final updatedMillis = profile.lastUpdateDate?.millisecondsSinceEpoch ?? 0;
+    return (
+      profileId: activeId,
+      profileToken:
+          '$activeId|${profile.url}|$updatedMillis|${profile.isUpdating}|$scriptId',
     );
   }
 
@@ -372,6 +454,7 @@ final ChangeNotifierProvider<NodeCountryResolver> nodeCountryResolverProvider =
       completedRoutingEpoch: detectionState.lastCompletedRoutingEpoch,
     ),
     readCheckCompletedAt: () => detectionState.lastCheckCompletedAt,
+    readActiveProfileScope: readActiveProfileScope,
     isDetectionProxyEligible: () {
       if (!globalState.isAppStateInitialized) return false;
       if (ref.read(runTimeProvider) == null) return false;
@@ -445,8 +528,39 @@ final ChangeNotifierProvider<NodeCountryResolver> nodeCountryResolverProvider =
   resolver.seedInitialDetection(notify: false);
 
   ref
-    ..listen(currentProfileIdProvider, (_, __) => syncCentralTarget(notify: true))
-    ..listen(profilesProvider, (_, __) => syncCentralTarget(notify: true))
+    ..listen(currentProfileIdProvider, (previous, next) {
+      if (previous != next) {
+        detectionState.notifyRoutingChanged();
+        resolver.markSwitchingNode();
+      }
+      syncCentralTarget(notify: true);
+    })
+    ..listen(profilesProvider, (previous, next) {
+      final activeId = ref.read(currentProfileIdProvider);
+      for (final old in previous ?? const <Profile>[]) {
+        final updated = next.getProfile(old.id);
+        if (updated == null ||
+            updated.url != old.url ||
+            updated.lastUpdateDate != old.lastUpdateDate ||
+            updated.isUpdating != old.isUpdating) {
+          if (old.id == activeId) {
+            detectionState.notifyRoutingChanged();
+          }
+          if (updated?.isUpdating ?? false) {
+            resolver.revokePendingDetectionForProfile(old.id);
+          } else {
+            resolver.invalidateProfile(old.id);
+          }
+        }
+      }
+      syncCentralTarget(notify: true);
+    })
+    ..listen(scriptStateProvider, (previous, next) {
+      if (previous?.currentScript == next.currentScript) return;
+      detectionState.notifyRoutingChanged();
+      resolver.clearProfiles();
+      syncCentralTarget(notify: true);
+    })
     ..listen<Mode>(
       patchClashConfigProvider.select((s) => s.mode),
       (previous, next) {

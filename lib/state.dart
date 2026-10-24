@@ -968,6 +968,7 @@ class DetectionState {
   DateTime? _lastCheckStartedAt;
   DateTime? _lastCheckCompletedAt;
   bool? _lastCheckProxyEligible;
+  Set<String>? _lastProbeSourcePorts;
   IpInfo? _lastCompletedIpInfo;
 
   int get routingEpoch => _routingEpoch;
@@ -982,6 +983,10 @@ class DetectionState {
   String? get lastMatchedHost =>
       identical(state.value.ipInfo, _lastCompletedIpInfo)
           ? _lastMatchedHost
+          : null;
+  Set<String>? get lastProbeSourcePorts =>
+      identical(state.value.ipInfo, _lastCompletedIpInfo)
+          ? _lastProbeSourcePorts
           : null;
   DateTime? get lastCheckStartedAt =>
       identical(state.value.ipInfo, _lastCompletedIpInfo)
@@ -1102,11 +1107,13 @@ class DetectionState {
           wasStartAtBegin &&
           isStartAtEnd &&
           modeAtBegin != Mode.direct &&
-          modeAtEnd != Mode.direct;
+          modeAtEnd != Mode.direct &&
+          (res.data?.routedViaClash ?? false);
       _lastCompletedIpInfo = ipInfo;
       _lastCompletedGeneration = requestGen;
       _lastCompletedRoutingEpoch = sameRoute ? startRoutingEpoch : null;
       _lastMatchedHost = res.data?.host;
+      _lastProbeSourcePorts = res.data?.sourcePorts;
       _lastCheckStartedAt = checkStartedAt;
       _lastCheckCompletedAt = checkCompletedAt;
       _lastCheckProxyEligible = proxyEligible;

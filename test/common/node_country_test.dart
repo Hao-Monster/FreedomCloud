@@ -1,8 +1,10 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flclashx/common/constant.dart' show maxLength;
 import 'package:flclashx/common/fixed.dart';
 import 'package:flclashx/common/node_country.dart';
+import 'package:flclashx/common/request.dart';
 import 'package:flclashx/enum/enum.dart';
 import 'package:flclashx/models/models.dart';
 import 'package:flclashx/models/node_catalog.dart';
@@ -1279,6 +1281,485 @@ void main() {
           nodeName: 'Node B',
         ),
         kUnknownCountryCode,
+      );
+    });
+
+    test(
+        'invalidating a rule-mode profile or replacing its endpoint revokes pending probe before late telemetry arrives, without cancelling unrelated profiles (R4 P2 #1)',
+        () async {
+      final started = DateTime.utc(2026, 10, 24, 12);
+      final done = started.add(const Duration(milliseconds: 200));
+      var now = done;
+      var gen = 0;
+      final oldMap = {
+        'name': 'Node A',
+        'type': 'ss',
+        'server': 'old.invalid',
+        'port': 443,
+      };
+      final newMap = {
+        'name': 'Node A',
+        'type': 'ss',
+        'server': 'new.invalid',
+        'port': 443,
+      };
+      final oldNode = catalogNodeFromMap(profileId: 'p', proxy: oldMap);
+      final newNode = catalogNodeFromMap(profileId: 'p', proxy: newMap);
+      expect(oldNode.endpointKey, isNot(newNode.endpointKey));
+
+      var cached = {
+        'p': ProfileCatalog(
+          profileId: 'p',
+          fingerprint: 'old',
+          status: ProfileCatalogStatus.ready,
+          nodes: [oldNode],
+        ),
+      };
+      final requests = FixedList<Connection>(150);
+      final detection = ValueNotifier<NetworkDetectionState>(
+        const NetworkDetectionState(
+          isLoading: true,
+          isTesting: true,
+          ipInfo: null,
+        ),
+      );
+      addTearDown(detection.dispose);
+
+      ConnectionEvidenceEvaluation evaluate() =>
+          evaluateObservedConnectionEvidence(
+            activeId: 'p',
+            runtimeLive: true,
+            effectiveMode: Mode.rule,
+            allGroups: const [
+              Group(name: 'Primary', type: GroupType.Selector, now: 'Node A'),
+            ],
+            requests: requests,
+            matchedHost: 'api-ipv4.ip.sb',
+            checkStartedAt: started,
+            checkCompletedAt: done,
+            verifiedCatalog: null,
+            cachedCatalogs: cached,
+          );
+
+      final resolver = NodeCountryResolver(
+        resolveServerCountry: (_) async => null,
+        clock: () => now,
+        detectionListenable: detection,
+        readDetectionMeta: () => (
+          routingEpoch: 1,
+          completedGeneration: gen,
+          completedRoutingEpoch: 1,
+        ),
+        readCheckCompletedAt: () => done,
+        evaluateConnectionEvidence: evaluate,
+      );
+      addTearDown(resolver.dispose);
+
+      resolver.registerProxyMaps('p', [oldMap]);
+      gen = 1;
+      detection.value = const NetworkDetectionState(
+        isLoading: false,
+        isTesting: false,
+        ipInfo: IpInfo(ip: '8.8.8.8', countryCode: 'US'),
+      );
+      expect(evaluate().status, ConnectionEvidenceStatus.missing);
+
+      // Subscription update invalidates profile 'p' and registers replaced endpoint
+      resolver
+        ..invalidateProfile('p')
+        ..registerProxyMaps('p', [newMap]);
+      cached = {
+        'p': ProfileCatalog(
+          profileId: 'p',
+          fingerprint: 'new',
+          status: ProfileCatalogStatus.ready,
+          nodes: [newNode],
+        ),
+      };
+
+      now = done.add(const Duration(seconds: 2));
+      requests.add(
+        Connection(
+          id: 'old-probe',
+          start: started,
+          chains: const ['Node A', 'Primary'],
+          metadata: const Metadata(
+            uid: 0,
+            network: 'tcp',
+            sourceIP: '127.0.0.1',
+            sourcePort: '12345',
+            destinationIP: '1.1.1.1',
+            destinationPort: '443',
+            host: 'api-ipv4.ip.sb',
+            process: 'FreedomCloud.exe',
+            remoteDestination: '',
+          ),
+        ),
+      );
+      expect(evaluate().target?.endpointKey, newNode.endpointKey);
+      resolver.onConnectionsUpdated();
+      expect(
+        resolver.resolveCountryCode(
+          profileId: 'p',
+          profileLabel: null,
+          nodeName: 'Node A',
+          endpointKey: newNode.endpointKey,
+        ),
+        kUnknownCountryCode,
+      );
+
+      // Invalidating an unrelated inactive profile 'other' must not cancel active 'p'
+      final requests2 = FixedList<Connection>(150);
+      now = done;
+      detection.value = const NetworkDetectionState(
+        isLoading: true,
+        isTesting: true,
+        ipInfo: null,
+      );
+      gen = 2;
+      final resolverUnrelated = NodeCountryResolver(
+        resolveServerCountry: (_) async => null,
+        clock: () => now,
+        detectionListenable: detection,
+        readDetectionMeta: () => (
+          routingEpoch: 1,
+          completedGeneration: gen,
+          completedRoutingEpoch: 1,
+        ),
+        readCheckCompletedAt: () => done,
+        evaluateConnectionEvidence: () => evaluateObservedConnectionEvidence(
+          activeId: 'p',
+          runtimeLive: true,
+          effectiveMode: Mode.rule,
+          allGroups: const [
+            Group(name: 'Primary', type: GroupType.Selector, now: 'Node A'),
+          ],
+          requests: requests2,
+          matchedHost: 'api-ipv4.ip.sb',
+          checkStartedAt: started,
+          checkCompletedAt: done,
+          verifiedCatalog: null,
+          cachedCatalogs: cached,
+        ),
+      );
+      addTearDown(resolverUnrelated.dispose);
+      resolverUnrelated.registerProxyMaps('p', [newMap]);
+      detection.value = const NetworkDetectionState(
+        isLoading: false,
+        isTesting: false,
+        ipInfo: IpInfo(ip: '9.9.9.9', countryCode: 'SG'),
+      );
+      resolverUnrelated.invalidateProfile('other');
+      now = done.add(const Duration(seconds: 2));
+      requests2.add(
+        Connection(
+          id: 'p-probe',
+          start: started,
+          chains: const ['Node A', 'Primary'],
+          metadata: const Metadata(
+            uid: 0,
+            network: 'tcp',
+            sourceIP: '127.0.0.1',
+            sourcePort: '54321',
+            destinationIP: '1.1.1.1',
+            destinationPort: '443',
+            host: 'api-ipv4.ip.sb',
+            process: 'FreedomCloud.exe',
+            remoteDestination: '',
+          ),
+        ),
+      );
+      resolverUnrelated.onConnectionsUpdated();
+      expect(
+        resolverUnrelated.resolveCountryCode(
+          profileId: 'p',
+          profileLabel: null,
+          nodeName: 'Node A',
+          endpointKey: newNode.endpointKey,
+        ),
+        'SG',
+      );
+    });
+
+    for (final coldAge in [
+      const Duration(seconds: 1),
+      const Duration(seconds: 10),
+    ]) {
+      test(
+          'initial cold seed obeys connection evidence and 5s deadline after automatic URLTest failover at ${coldAge.inSeconds}s (R4 P2 #2)',
+          () {
+        final started = DateTime.utc(2026, 10, 24, 12);
+        final completed = started.add(const Duration(milliseconds: 300));
+        final now = completed.add(coldAge);
+        final history = FixedList<Connection>(150)
+          ..add(
+            Connection(
+              id: 'us-probe',
+              start: started,
+              chains: const ['US node', 'Auto', 'GLOBAL'],
+              metadata: const Metadata(
+                uid: 0,
+                network: 'tcp',
+                sourceIP: '127.0.0.1',
+                sourcePort: '12345',
+                destinationIP: '203.0.113.1',
+                destinationPort: '443',
+                host: 'api-ipv4.ip.sb',
+                process: 'FreedomCloud.exe',
+                remoteDestination: '',
+              ),
+            ),
+          );
+        const groups = [
+          Group(name: 'GLOBAL', type: GroupType.Selector, now: 'Auto'),
+          Group(name: 'Auto', type: GroupType.URLTest, now: 'Japan node'),
+        ];
+        ConnectionEvidenceEvaluation evidence() =>
+            evaluateObservedConnectionEvidence(
+              activeId: 'p',
+              runtimeLive: true,
+              effectiveMode: Mode.global,
+              allGroups: groups,
+              requests: history,
+              matchedHost: 'api-ipv4.ip.sb',
+              checkStartedAt: started,
+              checkCompletedAt: completed,
+              verifiedCatalog: null,
+              cachedCatalogs: const {},
+            );
+        expect(evidence().status, ConnectionEvidenceStatus.matched);
+        expect(evidence().target!.proxyName, 'US node');
+
+        final detection = ValueNotifier<NetworkDetectionState>(
+          const NetworkDetectionState(
+            isLoading: false,
+            isTesting: false,
+            ipInfo: IpInfo(ip: '203.0.113.2', countryCode: 'US'),
+          ),
+        );
+        addTearDown(detection.dispose);
+
+        final resolver = NodeCountryResolver(
+          detectionListenable: detection,
+          clock: () => now,
+          readDetectionMeta: () => (
+            routingEpoch: 4,
+            completedGeneration: 1,
+            completedRoutingEpoch: 4,
+          ),
+          readCheckCompletedAt: () => completed,
+          isDetectionProxyEligible: () => true,
+          evaluateConnectionEvidence: evidence,
+          resolveServerCountry: (_) async => null,
+        );
+        addTearDown(resolver.dispose);
+
+        resolver
+          ..syncActiveNode(
+            profileId: 'p',
+            nodeName: 'Japan node',
+            isGlobalStaticTarget: true,
+            notify: false,
+          )
+          ..seedInitialDetection(notify: false);
+        expect(
+          resolver.resolveCountryCode(
+            profileId: 'p',
+            profileLabel: null,
+            nodeName: 'Japan node',
+          ),
+          'JP',
+          reason:
+              'cold seed must never overwrite current Japan leaf with old US probe',
+        );
+      });
+    }
+
+    test(
+        'foreign process connections and mismatched socket sourcePorts never prove probe ownership, while Request.checkIpWithHost records exact socket sourcePort (R4 P2 #3)',
+        () async {
+      final start = DateTime.utc(2026, 10, 24, 12);
+      final done = start.add(const Duration(milliseconds: 250));
+
+      // 1. Foreign process (chrome.exe) to same host/window is rejected
+      final connections = FixedList<Connection>(20)
+        ..add(
+          Connection(
+            id: 'chrome-not-the-probe',
+            start: start.add(const Duration(milliseconds: 100)),
+            chains: const ['Japan node', 'Primary'],
+            metadata: const Metadata(
+              uid: 0,
+              network: 'tcp',
+              sourceIP: '127.0.0.1',
+              sourcePort: '52777',
+              destinationIP: '203.0.113.1',
+              destinationPort: '443',
+              host: 'api-ipv4.ip.sb',
+              process: 'chrome.exe',
+              processPath:
+                  r'C:\Program Files\Google\Chrome\Application\chrome.exe',
+              remoteDestination: '',
+            ),
+          ),
+        );
+
+      ConnectionEvidenceEvaluation evaluateForeign() =>
+          evaluateObservedConnectionEvidence(
+            activeId: 'p1',
+            runtimeLive: true,
+            effectiveMode: Mode.rule,
+            allGroups: const [
+              Group(name: 'Primary', type: GroupType.Selector),
+            ],
+            requests: connections,
+            matchedHost: 'api-ipv4.ip.sb',
+            checkStartedAt: start,
+            checkCompletedAt: done,
+            verifiedCatalog: null,
+            cachedCatalogs: const {},
+          );
+      expect(evaluateForeign().status, ConnectionEvidenceStatus.missing);
+
+      var completed = 0;
+      final detection = ValueNotifier<NetworkDetectionState>(
+        const NetworkDetectionState(
+          isLoading: true,
+          isTesting: true,
+          ipInfo: null,
+        ),
+      );
+      addTearDown(detection.dispose);
+      final resolver = NodeCountryResolver(
+        detectionListenable: detection,
+        clock: () => done.add(const Duration(seconds: 1)),
+        readCheckCompletedAt: () => done,
+        readDetectionMeta: () => (
+          routingEpoch: 4,
+          completedGeneration: completed,
+          completedRoutingEpoch: 4,
+        ),
+        isDetectionProxyEligible: () => true,
+        evaluateConnectionEvidence: evaluateForeign,
+        resolveServerCountry: (_) async => null,
+      );
+      addTearDown(resolver.dispose);
+      completed = 1;
+      detection.value = const NetworkDetectionState(
+        isLoading: false,
+        isTesting: false,
+        ipInfo: IpInfo(ip: '203.0.113.99', countryCode: 'CN'),
+      );
+      expect(
+        resolver.resolveCountryCode(
+          profileId: 'p1',
+          profileLabel: 'generic',
+          nodeName: 'Japan node',
+        ),
+        'JP',
+      );
+
+      // 2. Same app process on a different TCP sourcePort is rejected when probeSourcePorts is bound;
+      //    matching probeSourcePorts succeeds even when FindProcessMode.off leaves process empty.
+      final socketConnections = FixedList<Connection>(20)
+        ..add(
+          Connection(
+            id: 'other-in-app-socket',
+            start: start.add(const Duration(milliseconds: 50)),
+            chains: const ['Japan node', 'Primary'],
+            metadata: const Metadata(
+              uid: 0,
+              network: 'tcp',
+              sourceIP: '127.0.0.1',
+              sourcePort: '59999',
+              destinationIP: '203.0.113.1',
+              destinationPort: '443',
+              host: 'api-ipv4.ip.sb',
+              process: 'FreedomCloud.exe',
+              remoteDestination: '',
+            ),
+          ),
+        );
+      expect(
+        evaluateObservedConnectionEvidence(
+          activeId: 'p1',
+          runtimeLive: true,
+          effectiveMode: Mode.rule,
+          allGroups: const [Group(name: 'Primary', type: GroupType.Selector)],
+          requests: socketConnections,
+          matchedHost: 'api-ipv4.ip.sb',
+          checkStartedAt: start,
+          checkCompletedAt: done,
+          probeSourcePorts: const {'54321'},
+          verifiedCatalog: null,
+          cachedCatalogs: const {},
+        ).status,
+        ConnectionEvidenceStatus.missing,
+      );
+
+      socketConnections.add(
+        Connection(
+          id: 'actual-probe-find-process-off',
+          start: start.add(const Duration(milliseconds: 80)),
+          chains: const ['US node', 'Primary'],
+          metadata: const Metadata(
+            uid: 0,
+            network: 'tcp',
+            sourceIP: '127.0.0.1',
+            sourcePort: '54321',
+            destinationIP: '203.0.113.1',
+            destinationPort: '443',
+            host: 'api-ipv4.ip.sb',
+            process: '',
+            remoteDestination: '',
+          ),
+        ),
+      );
+      final socketMatched = evaluateObservedConnectionEvidence(
+        activeId: 'p1',
+        runtimeLive: true,
+        effectiveMode: Mode.rule,
+        allGroups: const [Group(name: 'Primary', type: GroupType.Selector)],
+        requests: socketConnections,
+        matchedHost: 'api-ipv4.ip.sb',
+        checkStartedAt: start,
+        checkCompletedAt: done,
+        probeSourcePorts: const {'54321'},
+        verifiedCatalog: null,
+        cachedCatalogs: const {},
+      );
+      expect(socketMatched.status, ConnectionEvidenceStatus.matched);
+      expect(socketMatched.target?.proxyName, 'US node');
+
+      // 3. Real loopback TCP server verifies Request.checkIpWithHost captures exact ephemeral client port
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      addTearDown(() => server.close(force: true));
+      int? serverObservedClientPort;
+      server.listen((req) async {
+        serverObservedClientPort = req.connectionInfo?.remotePort;
+        req.response.statusCode = HttpStatus.ok;
+        req.response.headers.contentType = ContentType.json;
+        req.response.write(
+          jsonEncode({'ip': '198.51.100.42', 'country_code': 'SG'}),
+        );
+        await req.response.close();
+      });
+
+      final localRequest = Request(
+        ipInfoSources: {
+          'http://127.0.0.1:${server.port}/geoip': IpInfo.fromIpSbJson,
+        },
+      );
+      final probeRes = await localRequest.checkIpWithHost(
+        keepAliveHold: Duration.zero,
+      );
+      expect(probeRes.isError, isFalse);
+      expect(probeRes.data, isNotNull);
+      expect(probeRes.data!.ipInfo.countryCode, 'SG');
+      expect(serverObservedClientPort, isNotNull);
+      expect(
+        probeRes.data!.sourcePorts,
+        contains(serverObservedClientPort.toString()),
       );
     });
   });

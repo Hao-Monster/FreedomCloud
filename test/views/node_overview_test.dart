@@ -3312,4 +3312,69 @@ void main() {
     );
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets(
+      'Mode.global pointing GLOBAL to URLTest group never statically calibrates automatic failover leaf without connection evidence (R4 P2 #2)',
+      (tester) async {
+    detectionState.state.value = const NetworkDetectionState(
+      isLoading: false,
+      isTesting: false,
+      ipInfo: IpInfo(ip: '203.0.113.2', countryCode: 'US'),
+    );
+    addTearDown(() {
+      detectionState.state.value = const NetworkDetectionState(
+        isLoading: true,
+        isTesting: false,
+        ipInfo: null,
+      );
+    });
+    globalState.config = globalState.config.copyWith(
+      currentProfileId: 'a',
+      patchClashConfig:
+          globalState.config.patchClashConfig.copyWith(mode: Mode.global),
+    );
+    globalState.appState = globalState.appState.copyWith(
+      runTime: 123,
+      groups: const [
+        Group(
+          name: 'GLOBAL',
+          type: GroupType.Selector,
+          hidden: false,
+          now: 'Auto',
+          all: [Proxy(name: 'Auto', type: 'URLTest')],
+        ),
+        Group(
+          name: 'Auto',
+          type: GroupType.URLTest,
+          hidden: false,
+          now: 'Japan node',
+          all: [
+            Proxy(name: 'US node', type: 'Shadowsocks'),
+            Proxy(name: 'Japan node', type: 'Shadowsocks'),
+          ],
+        ),
+      ],
+    );
+
+    final container = await mount(
+      tester,
+      width: 1200,
+      profiles: [
+        _a.copyWith(selectedMap: const {'GLOBAL': 'Auto'}),
+        _b,
+      ],
+    );
+    final resolver = container.read(nodeCountryResolverProvider);
+    expect(
+      resolver.resolveCountryCode(
+        profileId: 'a',
+        profileLabel: 'Alpha profile',
+        nodeName: 'Japan node',
+      ),
+      'JP',
+      reason:
+          'URLTest group under GLOBAL switches autonomously and must not be treated as a deterministic static target',
+    );
+    expect(tester.takeException(), isNull);
+  });
 }

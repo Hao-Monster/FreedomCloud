@@ -7,14 +7,24 @@ import 'dart:typed_data';
 import 'package:dio/dio.dart';
 import 'package:dio/io.dart';
 import 'package:flclashx/common/common.dart';
+import 'package:flclashx/common/tun_runtime.dart';
 import 'package:flclashx/common/windows_helper_compatibility.dart';
 import 'package:flclashx/models/models.dart';
 import 'package:flclashx/services/secure_subscription.dart';
 import 'package:flclashx/state.dart';
 import 'package:flutter/cupertino.dart';
 
+typedef IpCheckProbeResult = ({
+  IpInfo ipInfo,
+  String host,
+  Set<String> sourcePorts,
+  bool routedViaClash,
+});
+
 class Request {
-  Request() {
+  Request({
+    Map<String, IpInfo Function(Map<String, dynamic>)>? ipInfoSources,
+  }) : _ipInfoSources = ipInfoSources ?? _defaultIpInfoSources {
     _dio = Dio(
       BaseOptions(
         headers: {
@@ -142,12 +152,14 @@ class Request {
   //   ip.sb     — `api-ipv4` host is A-only, so the exit is forced over IPv4
   //   ip-api.com — IPv4-only on the free tier
   //   ipinfo.io — plain {ip, country}, used as a last-resort fallback
-  final Map<String, IpInfo Function(Map<String, dynamic>)> _ipInfoSources = {
+  static final Map<String, IpInfo Function(Map<String, dynamic>)>
+      _defaultIpInfoSources = {
     "https://api-ipv4.ip.sb/geoip": IpInfo.fromIpSbJson,
     "http://ip-api.com/json/?fields=status,countryCode,query":
         IpInfo.fromIpApiComJson,
     "https://ipinfo.io/json": IpInfo.fromIpInfoIoJson,
   };
+  final Map<String, IpInfo Function(Map<String, dynamic>)> _ipInfoSources;
 
   /// Resolve the exit IP by trying each source **sequentially**, stopping at the
   /// first success. A healthy primary therefore means exactly one request — not
@@ -162,15 +174,73 @@ class Request {
     return Result.success(res.data?.ipInfo);
   }
 
-  Future<Result<({IpInfo ipInfo, String host})?>> checkIpWithHost({
+  Future<Result<IpCheckProbeResult?>> checkIpWithHost({
     CancelToken? cancelToken,
+    Duration keepAliveHold = const Duration(milliseconds: 4500),
   }) async {
     for (final source in _ipInfoSources.entries) {
       if (cancelToken?.isCancelled ?? false) {
         return Result.error("cancelled");
       }
+      final attemptPorts = <String>{};
+      var attemptRoutedViaClash = false;
+      var holdForTelemetry = false;
+      final attemptDio = Dio(
+        BaseOptions(
+          connectTimeout: const Duration(seconds: 5),
+        ),
+      )..httpClientAdapter = IOHttpClientAdapter(
+        createHttpClient: () {
+          final client = HttpClient()
+            ..connectionTimeout = const Duration(seconds: 5)
+            ..idleTimeout = keepAliveHold > Duration.zero
+                ? keepAliveHold
+                : const Duration(seconds: 1);
+          client.findProxy = (uri) {
+            if (!globalState.isAppStateInitialized) {
+              attemptRoutedViaClash = false;
+              return 'DIRECT';
+            }
+            client.userAgent = globalState.ua;
+            final directive = FlClashHttpOverrides.handleFindProxy(uri);
+            final isStart = globalState.appState.runTime != null;
+            final tunHandlesTraffic = isStart &&
+                (Platform.isAndroid ||
+                    (Platform.isWindows
+                        ? tunRuntime.isEnabled
+                        : globalState.appState.realTunEnable));
+            attemptRoutedViaClash =
+                directive.startsWith('PROXY ') || tunHandlesTraffic;
+            return directive;
+          };
+          client.connectionFactory = (uri, proxyHost, proxyPort) {
+            final Future<ConnectionTask<Socket>> taskFuture;
+            if (proxyHost != null && proxyPort != null) {
+              taskFuture = Socket.startConnect(proxyHost, proxyPort);
+            } else if (uri.isScheme('https')) {
+              final targetPort = uri.hasPort ? uri.port : 443;
+              taskFuture = SecureSocket.startConnect(uri.host, targetPort);
+            } else {
+              final targetPort = uri.hasPort ? uri.port : 80;
+              taskFuture = Socket.startConnect(uri.host, targetPort);
+            }
+            return taskFuture.then((task) {
+              unawaited(
+                task.socket.then(
+                  (socket) {
+                    attemptPorts.add(socket.port.toString());
+                  },
+                  onError: (_) {},
+                ),
+              );
+              return task;
+            });
+          };
+          return client;
+        },
+      );
       try {
-        final res = await _clashDio.get<Map<String, dynamic>>(
+        final res = await attemptDio.get<Map<String, dynamic>>(
           source.key,
           cancelToken: cancelToken,
           options: Options(
@@ -179,10 +249,28 @@ class Request {
           ),
         );
         if (res.statusCode == HttpStatus.ok && res.data != null) {
+          final ipInfo = source.value(res.data!);
           final host = Uri.tryParse(source.key)?.host.toLowerCase() ?? '';
+          holdForTelemetry =
+              attemptRoutedViaClash && keepAliveHold > Duration.zero;
+          if (holdForTelemetry) {
+            final holdTimer = Timer(keepAliveHold, () {
+              attemptDio.close(force: true);
+            });
+            if (cancelToken != null) {
+              unawaited(
+                cancelToken.whenCancel.then((_) {
+                  holdTimer.cancel();
+                  attemptDio.close(force: true);
+                }),
+              );
+            }
+          }
           return Result.success((
-            ipInfo: source.value(res.data!),
+            ipInfo: ipInfo,
             host: host,
+            sourcePorts: Set<String>.unmodifiable(attemptPorts),
+            routedViaClash: attemptRoutedViaClash,
           ));
         }
       } on DioException catch (e) {
@@ -192,6 +280,10 @@ class Request {
         // connect/receive timeout or bad status — fall through to the next source
       } catch (_) {
         // unexpected shape / parse failure — try the next source
+      } finally {
+        if (!holdForTelemetry) {
+          attemptDio.close(force: true);
+        }
       }
     }
     // Every source failed (offline, all timed out, or unparseable).
