@@ -1,6 +1,8 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:dio/dio.dart';
 import 'package:flclashx/common/constant.dart' show maxLength;
 import 'package:flclashx/common/fixed.dart';
 import 'package:flclashx/common/node_country.dart';
@@ -9,6 +11,7 @@ import 'package:flclashx/enum/enum.dart';
 import 'package:flclashx/models/models.dart';
 import 'package:flclashx/models/node_catalog.dart';
 import 'package:flclashx/providers/node_overview.dart';
+import 'package:flclashx/state.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -1762,5 +1765,265 @@ void main() {
         contains(serverObservedClientPort.toString()),
       );
     });
+
+    test(
+      'R5: stalled direct and CONNECT HTTPS TLS handshakes close remote sockets promptly on timeout or mid-ClientHello cancel',
+      () async {
+        void resetGlobalProxyState({int? proxyPort}) {
+          globalState
+            ..config = Config(
+              themeProps: defaultThemeProps,
+              patchClashConfig: ClashConfig(
+                globalUa: 'FlClashX/test',
+                mixedPort: proxyPort ?? 0,
+              ),
+            )
+            ..appState = AppState(
+              viewSize: Size.zero,
+              version: 1,
+              runTime: proxyPort == null ? null : 123,
+              requests: FixedList(2),
+              logs: FixedList(2),
+              traffics: FixedList(2),
+              totalTraffic: Traffic(),
+            );
+        }
+
+        addTearDown(resetGlobalProxyState);
+        resetGlobalProxyState();
+
+        // 1. Direct HTTPS: peer accepts TCP, receives TLS ClientHello (0x16), and stalls.
+        //    Timeout closes the stalled remote TCP socket promptly and falls back to HTTP.
+        final stalledDirect = await ServerSocket.bind(
+          InternetAddress.loopbackIPv4,
+          0,
+        );
+        addTearDown(stalledDirect.close);
+        final directClientHelloSeen = Completer<void>();
+        final directClosed = Completer<void>();
+        final directSockets = <Socket>[];
+        addTearDown(() {
+          for (final s in directSockets) {
+            s.destroy();
+          }
+        });
+        stalledDirect.listen((socket) {
+          directSockets.add(socket);
+          socket.listen(
+            (data) {
+              if (data.isNotEmpty &&
+                  data.first == 0x16 &&
+                  !directClientHelloSeen.isCompleted) {
+                directClientHelloSeen.complete();
+              }
+            },
+            onError: (_) {
+              if (!directClosed.isCompleted) {
+                directClosed.complete();
+              }
+            },
+            onDone: () {
+              if (!directClosed.isCompleted) {
+                directClosed.complete();
+              }
+            },
+          );
+        });
+
+        final healthyHttp = await HttpServer.bind(
+          InternetAddress.loopbackIPv4,
+          0,
+        );
+        addTearDown(() => healthyHttp.close(force: true));
+        int? healthyPort;
+        healthyHttp.listen((req) async {
+          healthyPort = req.connectionInfo?.remotePort;
+          req.response
+            ..statusCode = HttpStatus.ok
+            ..headers.contentType = ContentType.json
+            ..write(
+              jsonEncode({'ip': '198.51.100.43', 'country_code': 'SG'}),
+            );
+          await req.response.close();
+        });
+
+        final directFallbackRequest = Request(
+          ipInfoSources: {
+            'https://127.0.0.1:${stalledDirect.port}/geoip':
+                IpInfo.fromIpSbJson,
+            'http://127.0.0.1:${healthyHttp.port}/geoip': IpInfo.fromIpSbJson,
+          },
+        );
+        final directRes = await directFallbackRequest.checkIpWithHost(
+          keepAliveHold: Duration.zero,
+          connectTimeout: const Duration(milliseconds: 300),
+        );
+        await directClientHelloSeen.future.timeout(const Duration(seconds: 1));
+        await directClosed.future.timeout(const Duration(seconds: 1));
+        expect(directRes.isError, isFalse);
+        expect(directRes.data, isNotNull);
+        expect(directRes.data!.ipInfo.countryCode, 'SG');
+        expect(directRes.data!.sourcePorts, {'$healthyPort'});
+
+        // 2. Mid-ClientHello CancelToken cancellation (past RawSocket connecting phase):
+        //    Wait until server actually observes ClientHello bytes + 30ms before cancelling.
+        final stalledCancel = await ServerSocket.bind(
+          InternetAddress.loopbackIPv4,
+          0,
+        );
+        addTearDown(stalledCancel.close);
+        final cancelClientHelloSeen = Completer<void>();
+        final cancelClosed = Completer<void>();
+        final cancelSockets = <Socket>[];
+        addTearDown(() {
+          for (final s in cancelSockets) {
+            s.destroy();
+          }
+        });
+        stalledCancel.listen((socket) {
+          cancelSockets.add(socket);
+          socket.listen(
+            (data) {
+              if (data.isNotEmpty &&
+                  data.first == 0x16 &&
+                  !cancelClientHelloSeen.isCompleted) {
+                cancelClientHelloSeen.complete();
+              }
+            },
+            onError: (_) {
+              if (!cancelClosed.isCompleted) {
+                cancelClosed.complete();
+              }
+            },
+            onDone: () {
+              if (!cancelClosed.isCompleted) {
+                cancelClosed.complete();
+              }
+            },
+          );
+        });
+
+        final cancelToken = CancelToken();
+        final cancelRequest = Request(
+          ipInfoSources: {
+            'https://127.0.0.1:${stalledCancel.port}/geoip':
+                IpInfo.fromIpSbJson,
+          },
+        );
+        final pendingCancel = cancelRequest.checkIpWithHost(
+          cancelToken: cancelToken,
+          keepAliveHold: Duration.zero,
+        );
+        await cancelClientHelloSeen.future.timeout(const Duration(seconds: 2));
+        await Future<void>.delayed(const Duration(milliseconds: 30));
+        cancelToken.cancel('cancel mid-TLS');
+        final cancelRes = await pendingCancel.timeout(
+          const Duration(seconds: 2),
+        );
+        expect(cancelRes.isError, isTrue);
+        await cancelClosed.future.timeout(const Duration(seconds: 1));
+
+        // 3. Proxied CONNECT HTTPS: tunnel establishes (200 Connection Established),
+        //    upstream stalls during TLS handshake -> timeout closes proxy tunnel socket promptly.
+        final stalledUpstream = await ServerSocket.bind(
+          InternetAddress.loopbackIPv4,
+          0,
+        );
+        addTearDown(stalledUpstream.close);
+        final proxyTunnelClientHelloSeen = Completer<void>();
+        final proxySockets = <Socket>[];
+        addTearDown(() {
+          for (final s in proxySockets) {
+            s.destroy();
+          }
+        });
+        stalledUpstream.listen((socket) {
+          proxySockets.add(socket);
+          socket.listen(
+            (data) {
+              if (data.isNotEmpty &&
+                  data.first == 0x16 &&
+                  !proxyTunnelClientHelloSeen.isCompleted) {
+                proxyTunnelClientHelloSeen.complete();
+              }
+            },
+            onError: (_) {},
+            onDone: () {},
+          );
+        });
+
+        final proxyServer = await HttpServer.bind(
+          InternetAddress.loopbackIPv4,
+          0,
+        );
+        addTearDown(() => proxyServer.close(force: true));
+        final proxyTunnelClosed = Completer<void>();
+        int? proxiedHealthyPort;
+        proxyServer.listen((req) async {
+          if (req.method == 'CONNECT') {
+            final peer = await req.response.detachSocket(writeHeaders: false);
+            proxySockets.add(peer);
+            final upstream = await Socket.connect(
+              InternetAddress.loopbackIPv4,
+              stalledUpstream.port,
+            );
+            proxySockets.add(upstream);
+            peer
+              ..write('HTTP/1.1 200 Connection Established\r\n\r\n')
+              ..listen(
+                upstream.add,
+                onError: (_) {
+                  upstream.destroy();
+                  if (!proxyTunnelClosed.isCompleted) {
+                    proxyTunnelClosed.complete();
+                  }
+                },
+                onDone: () {
+                  upstream.destroy();
+                  if (!proxyTunnelClosed.isCompleted) {
+                    proxyTunnelClosed.complete();
+                  }
+                },
+              );
+            upstream.listen(
+              peer.add,
+              onError: (_) => peer.destroy(),
+              onDone: peer.destroy,
+            );
+            return;
+          }
+          proxiedHealthyPort = req.connectionInfo?.remotePort;
+          req.response
+            ..statusCode = HttpStatus.ok
+            ..headers.contentType = ContentType.json
+            ..write(
+              jsonEncode({'ip': '198.51.100.44', 'country_code': 'JP'}),
+            );
+          await req.response.close();
+        });
+
+        resetGlobalProxyState(proxyPort: proxyServer.port);
+        final proxiedRequest = Request(
+          ipInfoSources: {
+            'https://localhost:${stalledUpstream.port}/geoip':
+                IpInfo.fromIpSbJson,
+            'http://example.invalid/geoip': IpInfo.fromIpSbJson,
+          },
+        );
+        final proxiedRes = await proxiedRequest.checkIpWithHost(
+          keepAliveHold: Duration.zero,
+          connectTimeout: const Duration(milliseconds: 300),
+        );
+        await proxyTunnelClientHelloSeen.future.timeout(
+          const Duration(seconds: 1),
+        );
+        await proxyTunnelClosed.future.timeout(const Duration(seconds: 1));
+        expect(proxiedRes.isError, isFalse);
+        expect(proxiedRes.data, isNotNull);
+        expect(proxiedRes.data!.ipInfo.countryCode, 'JP');
+        expect(proxiedRes.data!.sourcePorts, {'$proxiedHealthyPort'});
+        expect(proxiedRes.data!.routedViaClash, isTrue);
+      },
+    );
   });
 }

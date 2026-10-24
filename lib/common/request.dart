@@ -177,22 +177,34 @@ class Request {
   Future<Result<IpCheckProbeResult?>> checkIpWithHost({
     CancelToken? cancelToken,
     Duration keepAliveHold = const Duration(milliseconds: 4500),
+    Duration connectTimeout = const Duration(seconds: 5),
   }) async {
     for (final source in _ipInfoSources.entries) {
       if (cancelToken?.isCancelled ?? false) {
         return Result.error("cancelled");
       }
       final attemptPorts = <String>{};
+      final clientAbortCallbacks = <void Function()>[];
       var attemptRoutedViaClash = false;
       var holdForTelemetry = false;
+
+      void abortAllAttemptSockets() {
+        for (final callback in clientAbortCallbacks.reversed) {
+          try {
+            callback();
+          } catch (_) {}
+        }
+        clientAbortCallbacks.clear();
+      }
+
       final attemptDio = Dio(
         BaseOptions(
-          connectTimeout: const Duration(seconds: 5),
+          connectTimeout: connectTimeout,
         ),
       )..httpClientAdapter = IOHttpClientAdapter(
         createHttpClient: () {
           final client = HttpClient()
-            ..connectionTimeout = const Duration(seconds: 5)
+            ..connectionTimeout = connectTimeout
             ..idleTimeout = keepAliveHold > Duration.zero
                 ? keepAliveHold
                 : const Duration(seconds: 1);
@@ -213,29 +225,14 @@ class Request {
                 directive.startsWith('PROXY ') || tunHandlesTraffic;
             return directive;
           };
-          client.connectionFactory = (uri, proxyHost, proxyPort) {
-            final Future<ConnectionTask<Socket>> taskFuture;
-            if (proxyHost != null && proxyPort != null) {
-              taskFuture = Socket.startConnect(proxyHost, proxyPort);
-            } else if (uri.isScheme('https')) {
-              final targetPort = uri.hasPort ? uri.port : 443;
-              taskFuture = SecureSocket.startConnect(uri.host, targetPort);
-            } else {
-              final targetPort = uri.hasPort ? uri.port : 80;
-              taskFuture = Socket.startConnect(uri.host, targetPort);
-            }
-            return taskFuture.then((task) {
-              unawaited(
-                task.socket.then(
-                  (socket) {
-                    attemptPorts.add(socket.port.toString());
-                  },
-                  onError: (_) {},
-                ),
+          client.connectionFactory = (uri, proxyHost, proxyPort) =>
+              _openCancellableProbeConnection(
+                uri: uri,
+                proxyHost: proxyHost,
+                proxyPort: proxyPort,
+                attemptPorts: attemptPorts,
+                clientAbortCallbacks: clientAbortCallbacks,
               );
-              return task;
-            });
-          };
           return client;
         },
       );
@@ -255,12 +252,14 @@ class Request {
               attemptRoutedViaClash && keepAliveHold > Duration.zero;
           if (holdForTelemetry) {
             final holdTimer = Timer(keepAliveHold, () {
+              abortAllAttemptSockets();
               attemptDio.close(force: true);
             });
             if (cancelToken != null) {
               unawaited(
                 cancelToken.whenCancel.then((_) {
                   holdTimer.cancel();
+                  abortAllAttemptSockets();
                   attemptDio.close(force: true);
                 }),
               );
@@ -282,12 +281,219 @@ class Request {
         // unexpected shape / parse failure — try the next source
       } finally {
         if (!holdForTelemetry) {
+          abortAllAttemptSockets();
           attemptDio.close(force: true);
         }
       }
     }
     // Every source failed (offline, all timed out, or unparseable).
     return Result.success(null);
+  }
+
+  static Future<ConnectionTask<Socket>> _openCancellableProbeConnection({
+    required Uri uri,
+    required String? proxyHost,
+    required int? proxyPort,
+    required Set<String> attemptPorts,
+    required List<void Function()> clientAbortCallbacks,
+  }) {
+    final isProxied = proxyHost != null && proxyPort != null;
+    final isHttps = uri.isScheme('https');
+    final targetHost = isProxied ? proxyHost : uri.host;
+    final targetPort = isProxied
+        ? proxyPort
+        : (uri.hasPort ? uri.port : (isHttps ? 443 : 80));
+
+    var aborted = false;
+    final connectionAbortCallbacks = <void Function()>[];
+
+    void abortConnection() {
+      if (aborted) return;
+      aborted = true;
+      for (final callback in connectionAbortCallbacks.reversed) {
+        try {
+          callback();
+        } catch (_) {}
+      }
+      connectionAbortCallbacks.clear();
+    }
+
+    clientAbortCallbacks.add(abortConnection);
+
+    Future<Socket> openSocket() async {
+      final outboundTask = await Socket.startConnect(targetHost, targetPort);
+      connectionAbortCallbacks.add(outboundTask.cancel);
+      if (aborted) {
+        outboundTask.cancel();
+        throw const SocketException('Probe connection cancelled');
+      }
+
+      final outboundSocket = await outboundTask.socket;
+      unawaited(outboundSocket.done.then((_) {}, onError: (_) {}));
+      connectionAbortCallbacks.add(outboundSocket.destroy);
+      if (aborted) {
+        outboundSocket.destroy();
+        throw const SocketException('Probe connection cancelled');
+      }
+      attemptPorts.add(outboundSocket.port.toString());
+
+      if (!isHttps) {
+        return outboundSocket;
+      }
+
+      // `SecureSocket.secure` (used both here for direct HTTPS and inside
+      // `HttpClient.createProxyTunnel` after HTTP CONNECT) detaches the raw
+      // socket handle from its input `Socket`, which leaves upstream
+      // `SecureSocket.startConnect` / `ConnectionTask.cancel()` unable to close
+      // the underlying TCP connection once the TCP handshake has completed and
+      // the peer stalls during TLS negotiation. Bridging TLS over a one-shot
+      // loopback pair keeps `outboundSocket` directly destroyable on timeout or
+      // cancellation while preserving full system CA and hostname/SAN validation.
+      final localClient = await _bridgeSocketForTls(
+        outboundSocket: outboundSocket,
+        abortCallbacks: connectionAbortCallbacks,
+        isAborted: () => aborted,
+      );
+
+      if (isProxied) {
+        return localClient;
+      }
+
+      try {
+        final tlsSocket = await SecureSocket.secure(
+          localClient,
+          host: uri.host,
+        );
+        unawaited(tlsSocket.done.then((_) {}, onError: (_) {}));
+        connectionAbortCallbacks.add(tlsSocket.destroy);
+        if (aborted) {
+          tlsSocket.destroy();
+          outboundSocket.destroy();
+          throw const SocketException('Probe connection cancelled');
+        }
+        return tlsSocket;
+      } catch (_) {
+        abortConnection();
+        rethrow;
+      }
+    }
+
+    final socketFuture = openSocket();
+    unawaited(socketFuture.then((_) {}, onError: (_) {}));
+    return Future.value(ConnectionTask.fromSocket(socketFuture, abortConnection));
+  }
+
+  static Future<Socket> _bridgeSocketForTls({
+    required Socket outboundSocket,
+    required List<void Function()> abortCallbacks,
+    required bool Function() isAborted,
+  }) async {
+    final bridgeServer = await ServerSocket.bind(
+      InternetAddress.loopbackIPv4,
+      0,
+    );
+    abortCallbacks.add(() {
+      unawaited(bridgeServer.close());
+    });
+    if (isAborted()) {
+      await bridgeServer.close();
+      outboundSocket.destroy();
+      throw const SocketException('Probe connection cancelled');
+    }
+
+    final peerCompleter = Completer<Socket>();
+    late final StreamSubscription<Socket> acceptSubscription;
+    acceptSubscription = bridgeServer.listen(
+      (peer) {
+        if (!peerCompleter.isCompleted) {
+          peerCompleter.complete(peer);
+        } else {
+          peer.destroy();
+        }
+        unawaited(acceptSubscription.cancel());
+        unawaited(bridgeServer.close());
+      },
+      onError: (error, stackTrace) {
+        if (!peerCompleter.isCompleted) {
+          peerCompleter.completeError(error, stackTrace);
+        }
+      },
+    );
+
+    final Socket localClient;
+    try {
+      localClient = await Socket.connect(
+        InternetAddress.loopbackIPv4,
+        bridgeServer.port,
+      );
+    } catch (_) {
+      unawaited(acceptSubscription.cancel());
+      unawaited(bridgeServer.close());
+      outboundSocket.destroy();
+      rethrow;
+    }
+    abortCallbacks.add(localClient.destroy);
+
+    final bridgePeer = await peerCompleter.future;
+    unawaited(bridgePeer.done.then((_) {}, onError: (_) {}));
+    abortCallbacks.add(bridgePeer.destroy);
+
+    if (isAborted()) {
+      bridgePeer.destroy();
+      localClient.destroy();
+      outboundSocket.destroy();
+      throw const SocketException('Probe connection cancelled');
+    }
+
+    outboundSocket.listen(
+      (data) {
+        try {
+          bridgePeer.add(data);
+        } catch (_) {
+          outboundSocket.destroy();
+          bridgePeer.destroy();
+        }
+      },
+      onError: (_) {
+        bridgePeer.destroy();
+      },
+      onDone: () {
+        unawaited(
+          bridgePeer.flush().then(
+            (_) => bridgePeer.close(),
+            onError: (_) {
+              bridgePeer.destroy();
+            },
+          ),
+        );
+      },
+    );
+
+    bridgePeer.listen(
+      (data) {
+        try {
+          outboundSocket.add(data);
+        } catch (_) {
+          bridgePeer.destroy();
+          outboundSocket.destroy();
+        }
+      },
+      onError: (_) {
+        outboundSocket.destroy();
+      },
+      onDone: () {
+        unawaited(
+          outboundSocket.flush().then(
+            (_) => outboundSocket.close(),
+            onError: (_) {
+              outboundSocket.destroy();
+            },
+          ),
+        );
+      },
+    );
+
+    return localClient;
   }
 
   Future<bool> pingHelper() async {
