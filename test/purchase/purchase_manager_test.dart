@@ -323,6 +323,26 @@ void main() {
     expect(manager.receipt, isNotNull);
     expect(storage.pending[1], isNull);
   });
+
+  test(
+      'CR2-01: setCode strips formatting hyphens and whitespace while preserving invalid symbols and overlong input',
+      () async {
+    await login();
+    manager.setCode('  synth-8888-code  ');
+    expect(manager.code, 'SYNTH8888CODE');
+    await manager.checkCode();
+    expect(api.checkCalls, 1);
+    expect(manager.error, isNull);
+
+    manager.setCode('abcd 1234 efgh');
+    expect(manager.code, 'ABCD1234EFGH');
+
+    manager.setCode(r'ABCD$1234');
+    expect(manager.code, r'ABCD$1234');
+    await manager.checkCode();
+    expect(api.checkCalls, 1);
+    expect(manager.error?.code, 'gift_code_format');
+  });
 }
 
 PendingGiftRedemption _pending() => const PendingGiftRedemption(

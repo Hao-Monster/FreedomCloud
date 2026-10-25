@@ -61,6 +61,21 @@
      - `flutter test --no-pub test/purchase`：**PASS**（`308 PASS / 0 FAIL`）；
      - 全仓 `flutter test --no-pub -j 4`：**PASS**（`974 PASS / 0 FAIL`）；
      - 离线 PNG 快照二次核验：`build/purchase-preview/login.png`、`redemption-preview.png`、`narrow-login.png` 已目视确认双国旗 `🇯🇵 🇸🇬` 顺序正确且去掉 `maxLength` 字符计数噪声。
+8. **二轮深度 Code Review 六项问题（`CR2-01`–`CR2-06`）修复与回归验证**
+   - 范围：针对 `development` 上购买改版及首轮修复范围（`cb68fb9..0631995`）开展高级工程二轮审查并完成修复：
+     - `CR2-01`（P1）：加固 `extractRedemptionCodeFromClipboard`（剥离 ASCII URL、邮箱地址、`YYYY-MM-DD` 日期与时间戳，补齐英文标签前向词边界防 `status_code: 200` 误命中，支持反引号/方括号/引号包裹卡密，收紧无标签词边界防 `wxid_abc123456` 误提取）与 `PurchaseManager.setCode`（统一剥离空白与横线分隔符并转大写，消除键盘 `Ctrl+V` 粘贴带连字符卡密触发 `gift_code_format` 的割裂，同时保留非法符号与超长串交由本地校验拦截）；
+     - `CR2-02`（P1）：新增 `_UpperCaseCodeFormatter` 与 `_updatingCodeFromInput` 输入重入守卫，修复桌面物理键盘在字符串中间键入小写字母时触发光标强制跳尾及打断中文/日文 IME 组合态（`composing`）的问题；
+     - `CR2-03`（P2）：修正 `summarizePlanMarkdown` 开围栏识别遵循 CommonMark §4.5（反引号围栏 info string 不含反引号，防止行首行内代码 ```` ```VIP2026``` ```` 吞噬全文）、补齐 ATX 标题与分割线边界、`innerLines` 真实行数预算，并通过块内同构扫描 `_closeTruncatedUnderlines` 忽略转义与反引号代码跨度，消除 `` `<u>` `` 误补字面 `</u>`；
+     - `CR2-04`（P2）：在 `resolvePlanRegionBadge` 补齐繁体 `'中國香港'`/`'中國澳門'`、英文命中掩码（防 `'North Korea'` 二次命中 `KR`）、剔除大写冲突词 `MO`/`CAN`/`ARE`，并区分显式全域覆盖词（`全球`/`多国`/`全节点`/`Worldwide` → `🌐`）与普通 `Global` 前缀（`'Global Pro · 日本/新加坡'` → `🇯🇵 🇸🇬`）；
+     - `CR2-05`（P2）：登出、401 会话过期及组件切换 `manager` 时自动重置 `_obscurePassword = true` 并清空残留输入，同时抽离 `_receiptCard` 使 401 保全回执完整保留模板名称、奖励明细与订单号；
+     - `CR2-06`（P3）：为 `catalogPane` 绑定 `_catalogAnchor = GlobalKey()` 保证跨 `860px` 单双栏断点缩放不丢失筛选与展开态，并在 `_AcquirePlanSheet` 补齐 `channelError` 降级提示与桌面显式关闭按钮 `purchase-acquire-close`。
+   - 前置 Red 验证：`test/purchase/purchase_manager_test.dart` 与 `test/purchase/purchase_v2_ux_test.dart` 新增 7 组 `CR2-*` 回归用例，在旧实现上全部命中预期失败（`31 PASS / 7 FAIL`，退出码 `1`）。
+   - 修复后验证：
+     - `dart format --set-exit-if-changed`：**PASS**（0 差异）；
+     - `dart analyze`：**PASS**（`No issues found!` — `0 error / 0 warning / 0 info`）；
+     - `flutter test --no-pub test/purchase`：**PASS**（`315 PASS / 0 FAIL`）；
+     - 全仓 `flutter test --no-pub -j 4`：**PASS**（`981 PASS / 0 FAIL`）；
+     - 离线 PNG 快照复核：`build/purchase-preview/login.png`、`redemption-preview.png`、`success-sync-failed.png` 目视确认国旗徽章、双栏排版与抽离后的 `_receiptCard` 渲染无回退。
 
 ## 3. 未运行项与边界说明（NOT RUN）
 

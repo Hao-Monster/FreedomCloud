@@ -227,9 +227,12 @@ class PurchaseManager extends ChangeNotifier {
     subscriptionSynced = false;
   }
 
+  static final RegExp _codeSeparators =
+      RegExp(r'[\s\u00AD\u2010-\u2015\u2212-]+');
+
   void setCode(String value) {
     if (busy || unresolvedRedemption || _disposed) return;
-    final normalized = value.trim().toUpperCase();
+    final normalized = value.replaceAll(_codeSeparators, '').toUpperCase();
     if (normalized == code) return;
     code = normalized;
     preview = null;

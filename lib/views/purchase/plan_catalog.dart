@@ -23,10 +23,15 @@ final RegExp _planGlobalPattern = RegExp(
   caseSensitive: false,
 );
 
+final RegExp _planExplicitGlobalOverridePattern = RegExp(
+  r'(?<![A-Za-z])(worldwide|multi[-\s]?region|all\s+(?:nodes|regions))(?![A-Za-z])|全球|多国|环球|全节点',
+  caseSensitive: false,
+);
+
 const List<(String, List<String>)> _planZhRegionKeywords = [
-  ('HK', ['中国香港', '香港', '深港', '沪港', '广港']),
+  ('HK', ['中国香港', '中國香港', '香港', '深港', '沪港', '广港']),
   ('TW', ['中国台湾', '中國台灣', '台湾', '台灣', '台北', '新北', '台中', '高雄', '新竹']),
-  ('MO', ['中国澳门', '澳门', '澳門']),
+  ('MO', ['中国澳门', '中國澳門', '澳门', '澳門']),
   (
     'JP',
     ['日本', '东京', '東京', '大阪', '名古屋', '埼玉', '福冈', '札幌', '横滨', '泉日', '沪日', '广日']
@@ -189,7 +194,7 @@ final List<(String, RegExp)> _planEnglishRegionPatterns = [
     RegExp(r'(?<![A-Za-z])(russia|moscow)(?![A-Za-z])', caseSensitive: false)
   ),
   (
-    'IND_TMP',
+    'ID',
     RegExp(r'(?<![A-Za-z])(indonesia|jakarta)(?![A-Za-z])',
         caseSensitive: false)
   ),
@@ -230,12 +235,12 @@ final List<(String, RegExp)> _planEnglishRegionPatterns = [
   ),
 ];
 
-// Excludes 2-letter uppercase tokens that collide with English marketing words
-// in plan titles (e.g. "MY", "IN", "IT", "IS", "NO", "AT", "BE", "US$").
+// Excludes 2/3-letter uppercase tokens that collide with English marketing words
+// in plan titles (e.g. "MY", "IN", "IT", "IS", "NO", "AT", "BE", "MO", "CAN", "ARE", "US$").
 final List<(String, RegExp)> _planUpperCodePatterns = [
   ('HK', RegExp(r'(?<![A-Za-z])(HK|HKG)(?![A-Za-z])')),
   ('TW', RegExp(r'(?<![A-Za-z])(TW|TWN|TPE|KHH)(?![A-Za-z])')),
-  ('MO', RegExp(r'(?<![A-Za-z])(MO|MAC|MFM)(?![A-Za-z])')),
+  ('MO', RegExp(r'(?<![A-Za-z])(MAC|MFM)(?![A-Za-z])')),
   ('JP', RegExp(r'(?<![A-Za-z])(JP|JPN|NRT|HND|KIX|TYO|OSA)(?![A-Za-z])')),
   ('SG', RegExp(r'(?<![A-Za-z])(SG|SGP|SIN)(?![A-Za-z])')),
   (
@@ -247,7 +252,7 @@ final List<(String, RegExp)> _planUpperCodePatterns = [
   ('DE', RegExp(r'(?<![A-Za-z])(DEU|FRA|MUC|BER)(?![A-Za-z])')),
   ('FR', RegExp(r'(?<![A-Za-z])(CDG|MRS)(?![A-Za-z])')),
   ('NL', RegExp(r'(?<![A-Za-z])(NLD|AMS)(?![A-Za-z])')),
-  ('CA', RegExp(r'(?<![A-Za-z])(CAN|YVR|YYZ)(?![A-Za-z])')),
+  ('CA', RegExp(r'(?<![A-Za-z])(YVR|YYZ)(?![A-Za-z])')),
   ('AU', RegExp(r'(?<![A-Za-z])(AUS|SYD|MEL)(?![A-Za-z])')),
   ('RU', RegExp(r'(?<![A-Za-z])(RUS|SVO)(?![A-Za-z])')),
   ('IN', RegExp(r'(?<![A-Za-z])(IND|BOM|DEL|BLR)(?![A-Za-z])')),
@@ -259,7 +264,7 @@ final List<(String, RegExp)> _planUpperCodePatterns = [
   ('TR', RegExp(r'(?<![A-Za-z])(TUR|IST)(?![A-Za-z])')),
   ('BR', RegExp(r'(?<![A-Za-z])(BRA|GRU)(?![A-Za-z])')),
   ('AR', RegExp(r'(?<![A-Za-z])(ARG|EZE)(?![A-Za-z])')),
-  ('AE', RegExp(r'(?<![A-Za-z])(UAE|ARE|DXB|AUH)(?![A-Za-z])')),
+  ('AE', RegExp(r'(?<![A-Za-z])(UAE|DXB|AUH)(?![A-Za-z])')),
 ];
 
 String? resolvePlanRegionBadge(String planName) {
@@ -293,10 +298,15 @@ String? resolvePlanRegionBadge(String planName) {
     }
   }
 
-  for (final (rawCode, pattern) in _planEnglishRegionPatterns) {
-    final code = rawCode == 'IND_TMP' ? 'ID' : rawCode;
-    for (final match in pattern.allMatches(masked)) {
+  for (final (code, pattern) in _planEnglishRegionPatterns) {
+    final matches = pattern.allMatches(masked).toList(growable: false);
+    for (final match in matches) {
       hits.add((index: match.start, code: code));
+      masked = masked.replaceRange(
+        match.start,
+        match.end,
+        ' ' * (match.end - match.start),
+      );
     }
   }
 
@@ -318,6 +328,9 @@ String? resolvePlanRegionBadge(String planName) {
     }
   }
 
+  if (_planExplicitGlobalOverridePattern.hasMatch(planName)) {
+    return '🌐';
+  }
   final isGlobal = _planGlobalPattern.hasMatch(planName);
   if (distinctCodes.isEmpty) {
     return isGlobal ? '🌐' : null;
@@ -330,6 +343,17 @@ String? resolvePlanRegionBadge(String planName) {
   }
   return '🌐';
 }
+
+final RegExp _backtickFenceOpenPattern = RegExp(r'^( {0,3})(`{3,})([^`]*)$');
+final RegExp _tildeFenceOpenPattern = RegExp(r'^( {0,3})(~{3,})(.*)$');
+final RegExp _thematicBreakPattern = RegExp(
+  r'^ {0,3}(?:-\s*-\s*-[-\s]*|\*\s*\*\s*\*[\*\s]*|_\s*_\s*_[_\s]*)$',
+);
+final RegExp _atxHeadingPattern = RegExp(r'^ {0,3}#{1,6}(?:\s|$)');
+
+RegExpMatch? _matchCodeFenceOpen(String line) =>
+    _backtickFenceOpenPattern.firstMatch(line) ??
+    _tildeFenceOpenPattern.firstMatch(line);
 
 ({bool collapsible, String preview}) summarizePlanMarkdown(
   String markdown, {
@@ -347,8 +371,7 @@ String? resolvePlanRegionBadge(String planName) {
       continue;
     }
 
-    final fenceMatch =
-        RegExp(r'^( {0,3})(`{3,}|~{3,})(.*)$').firstMatch(lines[i]);
+    final fenceMatch = _matchCodeFenceOpen(lines[i]);
     if (fenceMatch != null) {
       final openLine = lines[i];
       final fenceChars = fenceMatch.group(2)!;
@@ -391,8 +414,15 @@ String? resolvePlanRegionBadge(String planName) {
       continue;
     }
 
+    if (_thematicBreakPattern.hasMatch(lines[i])) {
+      segments.add(_LinesSegment([lines[i]], fixedUnits: 1));
+      i++;
+      continue;
+    }
+
     if (i + 1 < lines.length &&
-        !RegExp(r'^ {0,3}(?:[-*+]\s|>|\d+\.\s)').hasMatch(lines[i]) &&
+        !RegExp(r'^ {0,3}(?:[-*+]\s|>|\d+[.)]\s)').hasMatch(lines[i]) &&
+        !_atxHeadingPattern.hasMatch(lines[i]) &&
         RegExp(r'^ {0,3}(?:=+|-+)\s*$').hasMatch(lines[i + 1])) {
       segments.add(_LinesSegment([lines[i], lines[i + 1]], fixedUnits: 1));
       i += 2;
@@ -402,7 +432,7 @@ String? resolvePlanRegionBadge(String planName) {
     final blockLines = <String>[];
     while (i < lines.length && lines[i].trim().isNotEmpty) {
       if (blockLines.isNotEmpty) {
-        if (RegExp(r'^( {0,3})(`{3,}|~{3,})').hasMatch(lines[i])) break;
+        if (_matchCodeFenceOpen(lines[i]) != null) break;
         if (i + 1 < lines.length &&
             lines[i].contains('|') &&
             _isGfmTableDelimiter(lines[i + 1])) {
@@ -422,7 +452,6 @@ String? resolvePlanRegionBadge(String planName) {
 
   final rendered = <String>[];
   var remaining = maxPreviewUnits;
-  var openUnderlines = 0;
 
   for (final seg in segments) {
     if (remaining <= 0) break;
@@ -430,18 +459,8 @@ String? resolvePlanRegionBadge(String planName) {
       break;
     }
     final budget = math.max(remaining, seg.minUnits);
-    final chunk = seg.render(maxUnits: budget);
-    rendered.add(chunk);
-    if (!seg.isCodeBlock) {
-      openUnderlines +=
-          '<u>'.allMatches(chunk).length - '</u>'.allMatches(chunk).length;
-    }
+    rendered.add(seg.render(maxUnits: budget));
     remaining -= math.min(seg.units, budget);
-  }
-
-  if (openUnderlines > 0 && rendered.isNotEmpty) {
-    rendered[rendered.length - 1] =
-        '${rendered.last}${'</u>' * openUnderlines}';
   }
 
   final preview = rendered.join('\n\n');
@@ -463,10 +482,80 @@ bool _isGfmTableDelimiter(String line) {
   return cells.every((cell) => RegExp(r'^\s*:?-+:?\s*$').hasMatch(cell));
 }
 
+String _closeTruncatedUnderlines(String fullBlock, String truncatedBlock) {
+  if (!truncatedBlock.contains('<u>')) return truncatedBlock;
+  final runs = RegExp(r'`+').allMatches(fullBlock).toList(growable: false);
+  final events = <({int pos, bool isClose})>[];
+  var index = 0;
+  var runCursor = 0;
+
+  while (index < fullBlock.length) {
+    if (fullBlock.codeUnitAt(index) == 0x5C) {
+      index += 2;
+      continue;
+    }
+    if (fullBlock.codeUnitAt(index) == 0x60) {
+      while (runCursor < runs.length && runs[runCursor].start < index) {
+        runCursor++;
+      }
+      if (runCursor < runs.length && runs[runCursor].start == index) {
+        final openRun = runs[runCursor];
+        final len = openRun.end - openRun.start;
+        int? closeEnd;
+        for (var j = runCursor + 1; j < runs.length; j++) {
+          if (runs[j].end - runs[j].start == len) {
+            closeEnd = runs[j].end;
+            runCursor = j + 1;
+            break;
+          }
+        }
+        index = closeEnd ?? openRun.end;
+        continue;
+      }
+    }
+    if (fullBlock.startsWith('<u>', index)) {
+      events.add((pos: index, isClose: false));
+      index += 3;
+    } else if (fullBlock.startsWith('</u>', index)) {
+      events.add((pos: index, isClose: true));
+      index += 4;
+    } else {
+      index++;
+    }
+  }
+
+  var severedCount = 0;
+  var e = 0;
+  while (e < events.length) {
+    final current = events[e];
+    if (current.isClose) {
+      e++;
+      continue;
+    }
+    var closeIdx = -1;
+    for (var j = e + 1; j < events.length; j++) {
+      if (events[j].isClose) {
+        closeIdx = j;
+        break;
+      }
+    }
+    if (closeIdx < 0) break;
+    final closePos = events[closeIdx].pos;
+    if (current.pos < truncatedBlock.length &&
+        closePos >= truncatedBlock.length) {
+      severedCount++;
+    }
+    e = closeIdx + 1;
+  }
+
+  return severedCount > 0
+      ? '$truncatedBlock${'</u>' * severedCount}'
+      : truncatedBlock;
+}
+
 abstract class _MdSegment {
   int get units;
   int get minUnits => 1;
-  bool get isCodeBlock => false;
   String render({int? maxUnits});
 }
 
@@ -482,27 +571,14 @@ class _CodeFenceSegment extends _MdSegment {
   final String closeLine;
 
   @override
-  bool get isCodeBlock => true;
-
-  @override
-  int get units =>
-      math.max(1, innerLines.where((line) => line.trim().isNotEmpty).length);
+  int get units => math.max(1, innerLines.length);
 
   @override
   String render({int? maxUnits}) {
-    if (maxUnits == null || units <= maxUnits) {
+    if (maxUnits == null || innerLines.length <= maxUnits) {
       return [openLine, ...innerLines, closeLine].join('\n');
     }
-    final kept = <String>[];
-    var count = 0;
-    for (final line in innerLines) {
-      if (line.trim().isNotEmpty) {
-        if (count >= maxUnits) break;
-        count++;
-      }
-      kept.add(line);
-    }
-    return [openLine, ...kept, closeLine].join('\n');
+    return [openLine, ...innerLines.take(maxUnits), closeLine].join('\n');
   }
 }
 
@@ -544,10 +620,12 @@ class _LinesSegment extends _MdSegment {
 
   @override
   String render({int? maxUnits}) {
+    final fullBlock = lines.join('\n');
     if (fixedUnits != null || maxUnits == null || lines.length <= maxUnits) {
-      return lines.join('\n');
+      return fullBlock;
     }
-    return lines.take(maxUnits).join('\n');
+    final truncatedBlock = lines.take(maxUnits).join('\n');
+    return _closeTruncatedUnderlines(fullBlock, truncatedBlock);
   }
 }
 

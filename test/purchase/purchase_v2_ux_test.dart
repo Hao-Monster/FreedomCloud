@@ -7,6 +7,7 @@ import 'package:flclashx/services/purchase_profile_sync.dart';
 import 'package:flclashx/services/purchase_storage.dart';
 import 'package:flclashx/services/xboard_api.dart';
 import 'package:flclashx/views/purchase/center.dart';
+import 'package:flclashx/views/purchase/plan_catalog.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
@@ -852,6 +853,222 @@ void main() {
       semantics.dispose();
     }
   });
+
+  test(
+      'CR2-01: smart paste skips ISO dates, emails, underscored IDs, and status_code noise while supporting wrapped labels',
+      () {
+    const receiptBlob = '【发货通知】2026-10-25 21:30:00\n'
+        '账号：user12345@gmail.com\n'
+        '客服微信：wxid_abc123456\n'
+        'status_code: 200\n'
+        'ABCD-EFGH-1234';
+    expect(extractRedemptionCodeFromClipboard(receiptBlob), 'ABCDEFGH1234');
+    expect(
+      extractRedemptionCodeFromClipboard('您的兑换码：`A-1234-5678`'),
+      'A12345678',
+    );
+    expect(
+      extractRedemptionCodeFromClipboard('礼品卡：【VIP-2026-PRO88】'),
+      'VIP2026PRO88',
+    );
+    expect(
+      extractRedemptionCodeFromClipboard(
+        '账号:user@gmail.com，官网https://panel.example.test/shop兑换码:ABCD-1234',
+      ),
+      'ABCD1234',
+    );
+  });
+
+  testWidgets(
+      'CR2-02: mid-string lowercase edit uppercases in place without jumping cursor to end or clobbering IME composing',
+      (tester) async {
+    final manager = _UxManager()..account = _account;
+    await pumpCenter(tester, manager, size: const Size(1280, 900));
+
+    final codeFinder = find.byKey(const Key('purchase-code'));
+    await tester.tap(codeFinder);
+    await tester.pumpAndSettle();
+    await tester.enterText(codeFinder, 'ABCD1234');
+    await tester.pump();
+
+    EditableText codeEditable() => tester.widget<EditableText>(
+          find.descendant(of: codeFinder, matching: find.byType(EditableText)),
+        );
+
+    // Insert lowercase 'x' at index 2 (caret moves to offset 3).
+    tester.testTextInput.updateEditingValue(
+      const TextEditingValue(
+        text: 'ABxCD1234',
+        selection: TextSelection.collapsed(offset: 3),
+      ),
+    );
+    await tester.pump();
+    expect(codeEditable().controller.text, 'ABXCD1234');
+    expect(codeEditable().controller.selection.baseOffset, 3);
+    expect(manager.code, 'ABXCD1234');
+
+    // Active IME composition range must not be wiped or prematurely uppercased.
+    tester.testTextInput.updateEditingValue(
+      const TextEditingValue(
+        text: 'ABniXCD1234',
+        selection: TextSelection.collapsed(offset: 4),
+        composing: TextRange(start: 2, end: 4),
+      ),
+    );
+    await tester.pump();
+    expect(codeEditable().controller.value.composing,
+        const TextRange(start: 2, end: 4));
+    expect(codeEditable().controller.text, 'ABniXCD1234');
+  });
+
+  testWidgets(
+      'CR2-03: summarizePlanMarkdown keeps inline triple-backtick spans as paragraph text and avoids stray closing underline tags',
+      (tester) async {
+    const trickyPlan = XboardPlanOffer(
+      id: 41,
+      name: '企业专线 · 日本',
+      transferGiB: 400,
+      prices: [XboardPlanPrice(period: 'monthly', amount: 4500)],
+      content: '```VIP2026``` 限时福利请在右侧核销\n\n'
+          '支持 `<u>` 下划线语法渲染\n\n'
+          '- 香港高速节点\n'
+          '- 日本高速节点\n'
+          '- 新加坡高速节点\n'
+          '- 美国高速节点\n'
+          '- 英国高速节点\n'
+          '- 德国高速节点\n',
+    );
+    final summary = summarizePlanMarkdown(trickyPlan.content);
+    expect(summary.collapsible, isTrue);
+    expect(summary.preview.trimRight().endsWith('```'), isFalse);
+    expect(summary.preview.trimRight().endsWith('</u>'), isFalse);
+
+    final severedSummary = summarizePlanMarkdown(
+      '<u>第一行重点说明\n'
+      '第二行仍带下划线\n'
+      '第三行仍带下划线\n'
+      '第四行仍带下划线\n'
+      '第五行仍带下划线\n'
+      '第六行隐藏且带闭合</u>\n'
+      '第七行隐藏补充\n',
+    );
+    expect(severedSummary.collapsible, isTrue);
+    expect(severedSummary.preview.endsWith('</u>'), isTrue);
+
+    final manager = _UxManager()
+      ..planCatalog = const XboardPlanCatalog(plans: [trickyPlan]);
+    await pumpCenter(tester, manager, size: const Size(1280, 900));
+    expect(find.text('•'), findsWidgets);
+    expect(find.textContaining('</u>', findRichText: true), findsNothing);
+  });
+
+  test(
+      'CR2-04: resolvePlanRegionBadge handles Traditional HK/MO, North Korea without KR overlap, explicit global override, and English marketing noise',
+      () {
+    expect(resolvePlanRegionBadge('中國香港專線'), '🇭🇰');
+    expect(resolvePlanRegionBadge('中國澳門專線'), '🇲🇴');
+    expect(resolvePlanRegionBadge('North Korea Special'), '🇰🇵');
+    expect(resolvePlanRegionBadge('全球旗舰套餐（含香港专线）'), '🌐');
+    expect(resolvePlanRegionBadge('Global Pro · 日本/新加坡'), '🇯🇵 🇸🇬');
+    expect(resolvePlanRegionBadge(r'Pro Plan $9.9/MO'), isNull);
+    expect(resolvePlanRegionBadge('ALL YOU CAN USE'), isNull);
+    expect(resolvePlanRegionBadge('WE ARE PRO'), isNull);
+  });
+
+  testWidgets(
+      'CR2-05: password visibility resets to obscured after login/logout and unauthenticated 401 receipt preserves order details',
+      (tester) async {
+    final manager = _UxManager()..account = null;
+    await pumpCenter(tester, manager, size: const Size(1280, 900));
+
+    EditableText passwordEditable() => tester.widget<EditableText>(
+          find.descendant(
+            of: find.byKey(const Key('purchase-password')),
+            matching: find.byType(EditableText),
+          ),
+        );
+
+    await tester.tap(find.byKey(const Key('purchase-password-visibility')));
+    await tester.pumpAndSettle();
+    expect(passwordEditable().obscureText, isFalse);
+
+    await tester.enterText(
+      find.byKey(const Key('purchase-email')),
+      'vip@example.test',
+    );
+    await tester.enterText(
+      find.byKey(const Key('purchase-password')),
+      'secret123',
+    );
+    await tester.tap(find.byKey(const Key('purchase-login')));
+    await tester.pumpAndSettle();
+    expect(manager.loggedIn, isTrue);
+
+    await tester.ensureVisible(find.byKey(const Key('purchase-logout')));
+    await tester.tap(find.byKey(const Key('purchase-logout')));
+    await tester.pumpAndSettle();
+    expect(manager.loggedIn, isFalse);
+    expect(passwordEditable().obscureText, isTrue);
+
+    // Simulate confirmed redemption surviving a follow-up 401 session expiration.
+    manager
+      ..receipt = GiftReceipt(
+        templateName: '旗舰年付卡',
+        rewards: _planBPreview.rewards,
+        orderTradeNo: 'ORD-401-KEEP',
+      )
+      ..notify();
+    await tester.pumpAndSettle();
+    expect(find.text('旗舰年付卡'), findsOneWidget);
+    expect(find.textContaining('ORD-401-KEEP'), findsOneWidget);
+  });
+
+  testWidgets(
+      'CR2-06: catalog preserves filter and expanded details across 860px resize, and acquire sheet shows channelError fallback and close button',
+      (tester) async {
+    final manager = _UxManager()
+      ..account = _account
+      ..cardStoreUrl = null
+      ..channelError = const XboardException(code: 'network_error', message: '')
+      ..planCatalog = const XboardPlanCatalog(plans: _mixedPlans);
+
+    await pumpCenter(tester, manager, size: const Size(1280, 900));
+
+    await tester.tap(find.byKey(const Key('purchase-plans-filter-onetime')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('purchase-plan-2')), findsNothing);
+
+    await tester.tap(find.byKey(const Key('purchase-plan-details-toggle-1')));
+    await tester.pumpAndSettle();
+    expect(find.text('最终开通套餐以兑换码预览为准', findRichText: true), findsOneWidget);
+
+    // Resize across 860px dual-column -> single-column breakpoint.
+    tester.view.physicalSize = const Size(620, 900);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('purchase-plan-2')), findsNothing);
+    expect(find.text('最终开通套餐以兑换码预览为准', findRichText: true), findsOneWidget);
+
+    // Open acquire sheet and verify channelError degradation notice + explicit close button.
+    await tester
+        .ensureVisible(find.byKey(const Key('purchase-plan-acquire-1')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('purchase-plan-acquire-1')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('purchase-acquire-sheet')), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byKey(const Key('purchase-acquire-sheet')),
+        matching: find.text('礼品卡商店信息加载失败，仍可通过下方微信联系客服。'),
+      ),
+      findsOneWidget,
+    );
+
+    final closeBtn = find.byKey(const Key('purchase-acquire-close'));
+    expect(closeBtn, findsOneWidget);
+    await tester.tap(closeBtn);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('purchase-acquire-sheet')), findsNothing);
+  });
 }
 
 class _MemProfileStorage implements PurchaseStorage {
@@ -944,9 +1161,12 @@ class _UxManager extends ChangeNotifier implements PurchaseManager {
   @override
   bool get canSync => loggedIn;
 
+  static final RegExp _codeSeparators =
+      RegExp(r'[\s\u00AD\u2010-\u2015\u2212-]+');
+
   @override
   void setCode(String value) {
-    final normalized = value.trim().toUpperCase();
+    final normalized = value.replaceAll(_codeSeparators, '').toUpperCase();
     if (normalized == code) return;
     code = normalized;
     preview = null;
@@ -978,6 +1198,13 @@ class _UxManager extends ChangeNotifier implements PurchaseManager {
   Future<void> syncSubscription() async {}
   @override
   Future<void> refresh() async {}
+  @override
+  Future<void> login(String email, String password) async {
+    account = XboardAccount(id: 42, email: email);
+    error = null;
+    notifyListeners();
+  }
+
   @override
   Future<void> logout() async {
     if (failLogout) {

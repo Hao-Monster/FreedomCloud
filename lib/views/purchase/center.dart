@@ -11,25 +11,33 @@ import 'package:intl/intl.dart';
 
 String? extractRedemptionCodeFromClipboard(String raw) {
   if (raw.trim().isEmpty) return null;
-  final withoutUrlsAndTimes = raw
-      .replaceAll(RegExp(r'https?://\S+', caseSensitive: false), ' ')
+  final sanitized = raw
+      .replaceAll(RegExp(r'https?://[\x21-\x7E]+', caseSensitive: false), ' ')
+      .replaceAll(
+        RegExp(r'[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}'),
+        ' ',
+      )
+      .replaceAll(
+        RegExp(r'(?<!\d)\d{4}[-/.]\d{1,2}[-/.]\d{1,2}(?!\d)'),
+        ' ',
+      )
       .replaceAll(RegExp(r'(?<!\d)\d{1,2}:\d{2}(?::\d{2})?(?!\d)'), ' ');
-  if (!RegExp(r'[A-Za-z0-9]').hasMatch(withoutUrlsAndTimes)) {
+  if (!RegExp(r'[A-Za-z0-9]').hasMatch(sanitized)) {
     return null;
   }
 
-  final labeledMatch = RegExp(
-    r'(?:兑换码|卡密|礼品卡|激活码|voucher|gift\s*code|redeem\s*code|code)\s*[:：]\s*([A-Za-z0-9]+(?:-[A-Za-z0-9]+)*)',
+  final labeledMatches = RegExp(
+    r'''(?:兑换码|卡密|礼品卡|激活码|(?<![A-Za-z0-9_])(?:voucher|gift\s*code|redeem\s*code|code))\s*[:：]\s*[`'"“”‘’【「『\[\(]*([A-Za-z0-9]+(?:-[A-Za-z0-9]+)*)''',
     caseSensitive: false,
-  ).firstMatch(withoutUrlsAndTimes);
-  if (labeledMatch != null) {
+  ).allMatches(sanitized);
+  for (final labeledMatch in labeledMatches) {
     final normalized = labeledMatch.group(1)!.replaceAll('-', '').toUpperCase();
-    if (normalized.isNotEmpty) return normalized;
+    if (normalized.length >= 4) return normalized;
   }
 
   final tokenMatches = RegExp(
-    r'(?<![A-Za-z0-9])(?:[A-Za-z0-9]{2,}(?:-[A-Za-z0-9]{2,})+|[A-Za-z0-9]{8,})(?![A-Za-z0-9])',
-  ).allMatches(withoutUrlsAndTimes);
+    r'(?<![A-Za-z0-9_@./-])(?:[A-Za-z0-9]+(?:-[A-Za-z0-9]+)+|[A-Za-z0-9]{8,})(?![A-Za-z0-9_@./-])',
+  ).allMatches(sanitized);
   String? fallbackInRange;
   String? fallbackOverlong;
   for (final match in tokenMatches) {
@@ -49,8 +57,34 @@ String? extractRedemptionCodeFromClipboard(String raw) {
   if (fallbackOverlong != null) return fallbackOverlong;
 
   final fallback =
-      withoutUrlsAndTimes.replaceAll(RegExp(r'[^A-Za-z0-9]'), '').toUpperCase();
+      sanitized.replaceAll(RegExp(r'[^A-Za-z0-9]'), '').toUpperCase();
   return fallback.isEmpty ? null : fallback;
+}
+
+class _UpperCaseCodeFormatter extends TextInputFormatter {
+  const _UpperCaseCodeFormatter();
+
+  static final RegExp _asciiLower = RegExp('[a-z]');
+
+  @override
+  TextEditingValue formatEditUpdate(
+    TextEditingValue oldValue,
+    TextEditingValue newValue,
+  ) {
+    if (newValue.isComposingRangeValid ||
+        !_asciiLower.hasMatch(newValue.text)) {
+      return newValue;
+    }
+    final upper = newValue.text.replaceAllMapped(
+      _asciiLower,
+      (m) => String.fromCharCode(m.group(0)!.codeUnitAt(0) - 32),
+    );
+    return newValue.copyWith(
+      text: upper,
+      selection: newValue.selection,
+      composing: TextRange.empty,
+    );
+  }
 }
 
 class PurchaseCenter extends StatefulWidget {
@@ -73,6 +107,7 @@ class _PurchaseCenterState extends State<PurchaseCenter> {
   static const _wechatContacts = <String>['ChasingDream_2021', 'dxm_qa'];
 
   final _loginForm = GlobalKey<FormState>();
+  final _catalogAnchor = GlobalKey();
   final _workbenchAnchor = GlobalKey();
   final _email = TextEditingController();
   final _password = TextEditingController();
@@ -80,6 +115,7 @@ class _PurchaseCenterState extends State<PurchaseCenter> {
   bool _wasLoggedIn = false;
   bool _obscurePassword = true;
   bool _historyExpanded = false;
+  bool _updatingCodeFromInput = false;
 
   PurchaseManager get manager => widget.manager;
   AppLocalizations get l => AppLocalizations.of(context);
@@ -100,13 +136,16 @@ class _PurchaseCenterState extends State<PurchaseCenter> {
       manager.addListener(_onManagerChanged);
       _email.clear();
       _password.clear();
+      _obscurePassword = true;
       _historyExpanded = false;
-      _onManagerChanged();
+      _onManagerChanged(notifyState: false);
     }
   }
 
-  void _onManagerChanged() {
-    if (_code.text != manager.code) {
+  void _onManagerChanged({bool notifyState = true}) {
+    if (!_updatingCodeFromInput &&
+        _code.text != manager.code &&
+        (manager.code.isEmpty || !_code.value.isComposingRangeValid)) {
       _code.value = TextEditingValue(
         text: manager.code,
         selection: TextSelection.collapsed(offset: manager.code.length),
@@ -116,7 +155,16 @@ class _PurchaseCenterState extends State<PurchaseCenter> {
       _password.clear();
       if (!manager.loggedIn) {
         _email.clear();
+        _code.clear();
+      }
+      final needsStateReset =
+          !_obscurePassword || (!manager.loggedIn && _historyExpanded);
+      _obscurePassword = true;
+      if (!manager.loggedIn) {
         _historyExpanded = false;
+      }
+      if (notifyState && needsStateReset && mounted) {
+        setState(() {});
       }
     }
     _wasLoggedIn = manager.loggedIn;
@@ -143,8 +191,11 @@ class _PurchaseCenterState extends State<PurchaseCenter> {
     if (!mounted || manager.loggedIn) return;
     _email.clear();
     _code.clear();
-    if (_historyExpanded) {
-      setState(() => _historyExpanded = false);
+    if (!_obscurePassword || _historyExpanded) {
+      setState(() {
+        _obscurePassword = true;
+        _historyExpanded = false;
+      });
     }
   }
 
@@ -237,14 +288,17 @@ class _PurchaseCenterState extends State<PurchaseCenter> {
                           constraints.maxWidth >= 1080 ? 24.0 : 20.0;
 
                       final catalogPane = FocusTraversalGroup(
-                        child: PurchasePlanCatalog(
-                          catalog: manager.planCatalog,
-                          loading: manager.plansLoading,
-                          failed: manager.plansError != null,
-                          retry: manager.loadPlans,
-                          openLink: _open,
-                          onAcquirePlan: _showAcquireSheet,
-                          collapsibleDetails: true,
+                        child: KeyedSubtree(
+                          key: _catalogAnchor,
+                          child: PurchasePlanCatalog(
+                            catalog: manager.planCatalog,
+                            loading: manager.plansLoading,
+                            failed: manager.plansError != null,
+                            retry: manager.loadPlans,
+                            openLink: _open,
+                            onAcquirePlan: _showAcquireSheet,
+                            collapsibleDetails: true,
+                          ),
                         ),
                       );
 
@@ -257,10 +311,9 @@ class _PurchaseCenterState extends State<PurchaseCenter> {
                             children: [
                               if (!manager.loggedIn &&
                                   manager.receipt != null) ...[
-                                _Notice(
-                                  message:
-                                      '${l.purchaseSuccess}\n${l.purchaseSuccessDescription}',
-                                  success: true,
+                                _receiptCard(
+                                  manager.receipt!,
+                                  showOpenProfiles: false,
                                 ),
                                 const SizedBox(height: 12),
                               ],
@@ -712,61 +765,14 @@ class _PurchaseCenterState extends State<PurchaseCenter> {
             const SizedBox(height: 16),
           ],
           if (receipt != null) ...[
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: colors.surfaceContainerHighest.withValues(alpha: 0.35),
-                borderRadius: BorderRadius.circular(14),
-                border: Border.all(
-                  color: colors.primary.withValues(alpha: 0.45),
-                ),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  _Notice(
-                    message:
-                        '${l.purchaseSuccess}\n${l.purchaseSuccessDescription}',
-                    success: true,
-                  ),
-                  const SizedBox(height: 12),
-                  Text(
-                    receipt.templateName,
-                    style: theme.textTheme.titleMedium?.copyWith(
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  _rewardDetails(receipt.rewards),
-                  if (receipt.orderTradeNo != null) ...[
-                    const SizedBox(height: 6),
-                    Text(
-                      '${l.purchaseOrderNumber}: ${receipt.orderTradeNo}',
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        fontFamily: FontFamily.jetBrainsMono.value,
-                        fontFamilyFallback: _cjkMonoFallback(theme),
-                      ),
-                    ),
-                  ],
-                  const SizedBox(height: 12),
-                  Align(
-                    alignment: Alignment.centerLeft,
-                    child: OutlinedButton.icon(
-                      key: const Key('purchase-open-profiles'),
-                      onPressed: widget.openProfiles,
-                      icon: const Icon(Icons.dns_outlined, size: 18),
-                      label: Text(l.purchaseOpenNodesAction),
-                    ),
-                  ),
-                ],
-              ),
-            ),
+            _receiptCard(receipt, showOpenProfiles: true),
             const SizedBox(height: 16),
           ],
           TextField(
             key: const Key('purchase-code'),
             controller: _code,
             enabled: !locked,
+            inputFormatters: const [_UpperCaseCodeFormatter()],
             style: TextStyle(
               fontFamily: FontFamily.jetBrainsMono.value,
               fontFamilyFallback: _cjkMonoFallback(theme),
@@ -810,7 +816,14 @@ class _PurchaseCenterState extends State<PurchaseCenter> {
             textInputAction: TextInputAction.search,
             autocorrect: false,
             enableSuggestions: false,
-            onChanged: manager.setCode,
+            onChanged: (value) {
+              _updatingCodeFromInput = true;
+              try {
+                manager.setCode(value);
+              } finally {
+                _updatingCodeFromInput = false;
+              }
+            },
             onSubmitted: (_) async {
               if (!locked && manager.code.trim().isNotEmpty) {
                 await manager.checkCode();
@@ -948,6 +961,64 @@ class _PurchaseCenterState extends State<PurchaseCenter> {
                     ),
                   ),
                 ],
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _receiptCard(
+    GiftReceipt receipt, {
+    required bool showOpenProfiles,
+  }) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: colors.surfaceContainerHighest.withValues(alpha: 0.35),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: colors.primary.withValues(alpha: 0.45),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _Notice(
+            message: '${l.purchaseSuccess}\n${l.purchaseSuccessDescription}',
+            success: true,
+          ),
+          const SizedBox(height: 12),
+          Text(
+            receipt.templateName,
+            style: theme.textTheme.titleMedium?.copyWith(
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 8),
+          _rewardDetails(receipt.rewards),
+          if (receipt.orderTradeNo != null) ...[
+            const SizedBox(height: 6),
+            Text(
+              '${l.purchaseOrderNumber}: ${receipt.orderTradeNo}',
+              style: theme.textTheme.bodySmall?.copyWith(
+                fontFamily: FontFamily.jetBrainsMono.value,
+                fontFamilyFallback: _cjkMonoFallback(theme),
+              ),
+            ),
+          ],
+          if (showOpenProfiles) ...[
+            const SizedBox(height: 12),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: OutlinedButton.icon(
+                key: const Key('purchase-open-profiles'),
+                onPressed: widget.openProfiles,
+                icon: const Icon(Icons.dns_outlined, size: 18),
+                label: Text(l.purchaseOpenNodesAction),
               ),
             ),
           ],
@@ -1452,6 +1523,13 @@ class _AcquirePlanSheetState extends State<_AcquirePlanSheet> {
                           ),
                         ),
                       ),
+                      IconButton(
+                        key: const Key('purchase-acquire-close'),
+                        tooltip: MaterialLocalizations.of(context)
+                            .closeButtonTooltip,
+                        onPressed: () => Navigator.of(context).maybePop(),
+                        icon: const Icon(Icons.close_rounded, size: 20),
+                      ),
                     ],
                   ),
                   const SizedBox(height: 8),
@@ -1481,6 +1559,12 @@ class _AcquirePlanSheetState extends State<_AcquirePlanSheet> {
                       color: colors.onSurfaceVariant,
                     ),
                   ),
+                  if (widget.manager.channelError != null &&
+                      widget.manager.cardStoreUrl == null)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 12),
+                      child: _Notice(message: l.purchaseChannelError),
+                    ),
                   if (_feedbackMessage != null)
                     Padding(
                       key: const Key('purchase-acquire-feedback'),
