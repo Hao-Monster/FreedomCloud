@@ -1,6 +1,14 @@
 # 开发、集成与预览台账
 
-更新日期：2026-10-25。当前阶段是快速开发、快速迭代和部分功能预览。本文记录来源与验收边界；每次继续开发仍需核实实际 Git/PR/CI 状态，不能把历史报告视为当前通过证明。
+更新日期：2026-10-26。当前阶段是快速开发、快速迭代和部分功能预览。本文记录来源与验收边界；每次继续开发仍需核实实际 Git/PR/CI 状态，不能把历史报告视为当前通过证明。
+
+## Windows 仅兑换码购买与核销工作台 v2 预览交付（2026-10-26）
+
+- 固定源码：`development@8a666bb0100503848010d7d565e42e61d9c2320b`（Git tree `e4cb32b3164b17bf262d6b70f844c735569c7304`），干净 tracked Git archive；UI/Core/Agent/Helper 与仓库原生插件同批新编，来源与 SHA256 绑定已核对。
+- [Windows amd64 预览包](../dist/FreedomCloud-windows-amd64-purchase-v2-8a666bb01005.zip)：166,041,571 bytes；SHA256 `1fd3a06fdc360b2185d1bacde4186158250d27b1a6415ff899c45a1c0552c2ad`。已安全解压目录 [`FreedomCloud-windows-amd64-purchase-v2-8a666bb01005`](../dist/FreedomCloud-windows-amd64-purchase-v2-8a666bb01005/)，启动入口 `FlClashX.exe`。
+- 构建 PASS、两次 ZIP/解压逐文件校验 PASS（73 文件 / 72 checksum）、独立静态审计 8/8 PASS；同提交单测 `test/purchase` 315/315 PASS、全仓 981/981 PASS。工具版本（本机 Flutter `3.47.4` vs CI `3.41.7`）与全部边界见[交付报告](testing/windows-purchase-v2-preview-2026-10-26.md)。
+- 普通未签名预览，不含 strict WFP 驱动/Broker；现有生产 HTTP CONNECT 证书放行行为保留并已披露。上一可用包 `country-tls-159f16eecc78`（SHA256 `98d8a7a9ef7160af5f3148d5dfe8a260d78441968750cea5e6ae6825f966c2b8`）、现役四进程 PID（`5344`/`8904`/`19472`/`25704`）、覆盖率、QA、probes 和 `stash@{0}` 均完整保留。
+- 已构建 / 已交付静态预览包；未推送 / 未创建 PR / 远端 CI NOT RUN / 候选未启动 / 真实代理、TUN、服务及线上发卡消费业务验收 NOT RUN。下一步：用户按包内 `PREVIEW-README.txt` 手工验证。
 
 ## 剩余旧工作树归属核查与清理（2026-10-25）
 
