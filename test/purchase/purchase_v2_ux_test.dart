@@ -369,7 +369,8 @@ void main() {
     expect(find.byKey(const Key('purchase-history-next')), findsNothing);
 
     // Expanding history reveals masked entry and pagination controls.
-    await tester.ensureVisible(find.byKey(const Key('purchase-history-toggle')));
+    await tester
+        .ensureVisible(find.byKey(const Key('purchase-history-toggle')));
     await tester.tap(find.byKey(const Key('purchase-history-toggle')));
     await tester.pumpAndSettle();
     expect(find.textContaining('PLAN****VIP'), findsOneWidget);
@@ -419,8 +420,10 @@ void main() {
     expect(passwordEditable().focusNode.hasFocus, isTrue);
     await tester.sendKeyEvent(LogicalKeyboardKey.tab);
     await tester.pumpAndSettle();
-    final loginElement = tester.element(find.byKey(const Key('purchase-login')));
-    var loginFocused = FocusManager.instance.primaryFocus?.context == loginElement;
+    final loginElement =
+        tester.element(find.byKey(const Key('purchase-login')));
+    var loginFocused =
+        FocusManager.instance.primaryFocus?.context == loginElement;
     FocusManager.instance.primaryFocus?.context?.visitAncestorElements((el) {
       loginFocused |= el == loginElement;
       return !loginFocused;
@@ -464,11 +467,390 @@ void main() {
         valid: true,
         planId: 1,
         planName: 'ultra线路-美国',
-        url: Uri.parse('https://panel.example.test/api/v1/client/subscribe?token=SYNTH'),
+        url: Uri.parse(
+            'https://panel.example.test/api/v1/client/subscribe?token=SYNTH'),
       ),
     );
     expect(savedProfiles.single.label, isNot(contains('Xboard')));
     expect(savedProfiles.single.label, contains(_account.email));
+  });
+
+  testWidgets(
+      'CR-01: Markdown progressive collapse preserves leading-blank-line GFM tables and fenced code blocks',
+      (tester) async {
+    const richCollapsiblePlan = XboardPlanOffer(
+      id: 21,
+      name: '旗舰双栈专线 · 美国',
+      transferGiB: 300,
+      prices: [XboardPlanPrice(period: 'monthly', amount: 3900)],
+      content: '\n\n\n\n'
+          '| 节点 | 带宽 |\n'
+          '| --- | --- |\n'
+          '| 东京 | 10Gbps |\n'
+          '| 新加坡 | 10Gbps |\n\n'
+          '```yaml\n'
+          'mode: rule\n'
+          '```\n\n'
+          '- 第五行补充权益说明\n'
+          '- 第六行隐藏条款说明\n'
+          '- 第七行隐藏条款说明\n\n'
+          '尾部隐藏段落说明\n',
+    );
+    final manager = _UxManager()
+      ..planCatalog = const XboardPlanCatalog(plans: [richCollapsiblePlan]);
+
+    await pumpCenter(tester, manager, size: const Size(1280, 900));
+
+    // Collapsed state keeps GFM table intact and closes code fence cleanly, while omitting tail lines.
+    expect(
+      find.byKey(const Key('purchase-plan-details-toggle-21')),
+      findsOneWidget,
+    );
+    expect(find.byType(Table), findsOneWidget);
+    expect(find.text('10Gbps', findRichText: true), findsNWidgets(2));
+    expect(
+        find.textContaining('mode: rule', findRichText: true), findsOneWidget);
+    expect(find.text('```yaml', findRichText: true), findsNothing);
+    expect(find.text('尾部隐藏段落说明', findRichText: true), findsNothing);
+
+    await tester.tap(find.byKey(const Key('purchase-plan-details-toggle-21')));
+    await tester.pumpAndSettle();
+    expect(find.text('尾部隐藏段落说明', findRichText: true), findsOneWidget);
+  });
+
+  testWidgets(
+      'CR-02: smart paste ignores timestamps and URL ports and preserves overlong tokens for local format validation',
+      (tester) async {
+    var clipboardText = '您的兑换码：synth-8888-code\n'
+        '官网地址：https://panel.example.test:8443/shop\n'
+        '客服在线时间 09:00-18:30';
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(SystemChannels.platform, (call) async {
+      if (call.method == 'Clipboard.getData') {
+        return <String, dynamic>{'text': clipboardText};
+      }
+      return null;
+    });
+    addTearDown(() => TestDefaultBinaryMessengerBinding
+        .instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(SystemChannels.platform, null));
+
+    final manager = _UxManager()..account = _account;
+    await pumpCenter(tester, manager, size: const Size(1280, 900));
+
+    await tester.tap(find.byKey(const Key('purchase-code-paste')));
+    await tester.pumpAndSettle();
+    expect(manager.code, 'SYNTH8888CODE');
+
+    // Clear and paste an overlong (>32 chars) invalid token; it must NOT be truncated to 32 chars.
+    await tester.tap(find.byKey(const Key('purchase-code-clear')));
+    await tester.pumpAndSettle();
+    clipboardText = '兑换码：ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890EXTRA';
+    await tester.tap(find.byKey(const Key('purchase-code-paste')));
+    await tester.pumpAndSettle();
+    expect(manager.code, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890EXTRA');
+
+    await tester.tap(find.byKey(const Key('purchase-check')));
+    await tester.pumpAndSettle();
+    expect(manager.apiCheckCalls, 0);
+    expect(manager.error?.code, 'gift_code_format');
+  });
+
+  testWidgets(
+      'CR-03: acquisition sheet shows Copy label on WeChat buttons, gives modal-visible feedback, and reacts to cardStoreUrl updates',
+      (tester) async {
+    final copied = <String>[];
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(SystemChannels.platform, (call) async {
+      if (call.method == 'Clipboard.setData') {
+        copied.add((call.arguments as Map)['text'] as String);
+      }
+      return null;
+    });
+    addTearDown(() => TestDefaultBinaryMessengerBinding
+        .instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(SystemChannels.platform, null));
+
+    final manager = _UxManager()
+      ..cardStoreUrl = null
+      ..planCatalog = const XboardPlanCatalog(plans: [_usFlagshipPlan]);
+    await pumpCenter(tester, manager, size: const Size(1280, 900));
+
+    await tester.tap(find.byKey(const Key('purchase-plan-acquire-1')));
+    await tester.pumpAndSettle();
+
+    final sheet = find.byKey(const Key('purchase-acquire-sheet'));
+    expect(sheet, findsOneWidget);
+    expect(find.byKey(const Key('purchase-acquire-store')), findsNothing);
+
+    final wechatCopyBtn =
+        find.byKey(const Key('purchase-acquire-wechat-ChasingDream_2021'));
+    expect(
+      find.descendant(of: wechatCopyBtn, matching: find.text('复制')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: wechatCopyBtn, matching: find.text('微信号')),
+      findsNothing,
+    );
+
+    await tester.tap(wechatCopyBtn);
+    await tester.pumpAndSettle();
+    expect(copied, ['ChasingDream_2021']);
+    expect(
+      find.byKey(const Key('purchase-acquire-feedback')),
+      findsOneWidget,
+    );
+    expect(find.byType(SnackBar), findsNothing);
+
+    // Live update to cardStoreUrl while modal sheet is open updates sheet immediately.
+    manager
+      ..cardStoreUrl = Uri.parse('https://shop.example.test/live-cards')
+      ..notify();
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('purchase-acquire-store')), findsOneWidget);
+  });
+
+  testWidgets(
+      'CR-04: plan region badge preserves multi-country order, shows globe for global plans, and avoids marketing false positives',
+      (tester) async {
+    const regionPlans = <XboardPlanOffer>[
+      XboardPlanOffer(
+        id: 10,
+        name: '标准套餐 · 日本/新加坡',
+        transferGiB: 200,
+        prices: [XboardPlanPrice(period: 'monthly', amount: 1990)],
+      ),
+      XboardPlanOffer(
+        id: 11,
+        name: 'Global Pass 全球通',
+        transferGiB: 500,
+        prices: [XboardPlanPrice(period: 'monthly', amount: 4990)],
+      ),
+      XboardPlanOffer(
+        id: 12,
+        name: 'MY Starter Plan',
+        transferGiB: 100,
+        prices: [XboardPlanPrice(period: 'monthly', amount: 990)],
+      ),
+      XboardPlanOffer(
+        id: 13,
+        name: 'ALL IN ONE Plan',
+        transferGiB: 150,
+        prices: [XboardPlanPrice(period: 'monthly', amount: 1490)],
+      ),
+    ];
+    final manager = _UxManager()
+      ..planCatalog = const XboardPlanCatalog(plans: regionPlans);
+    await pumpCenter(tester, manager, size: const Size(1280, 900));
+
+    expect(
+      find.descendant(
+        of: find.byKey(const Key('purchase-plan-flag-10')),
+        matching: find.text('🇯🇵 🇸🇬', findRichText: true),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: find.byKey(const Key('purchase-plan-flag-11')),
+        matching: find.text('🌐', findRichText: true),
+      ),
+      findsOneWidget,
+    );
+    expect(find.byKey(const Key('purchase-plan-flag-12')), findsNothing);
+    expect(find.byKey(const Key('purchase-plan-flag-13')), findsNothing);
+  });
+
+  testWidgets(
+      'CR-05: hybrid plan exposes category filters, whitespace toggles clear suffix immediately, and failed logout keeps UI state',
+      (tester) async {
+    const hybridCatalog = XboardPlanCatalog(
+      plans: [
+        XboardPlanOffer(
+          id: 31,
+          name: '弹性套餐 · 香港',
+          transferGiB: 200,
+          prices: [
+            XboardPlanPrice(period: 'monthly', amount: 2500),
+            XboardPlanPrice(period: 'onetime', amount: 6000),
+          ],
+        ),
+        XboardPlanOffer(
+          id: 32,
+          name: '纯月付套餐 · 日本',
+          transferGiB: 150,
+          prices: [XboardPlanPrice(period: 'monthly', amount: 1800)],
+        ),
+      ],
+    );
+    final manager = _UxManager()
+      ..account = _account
+      ..planCatalog = hybridCatalog
+      ..failLogout = true
+      ..history = GiftHistoryPage(
+        entries: [
+          GiftHistoryEntry(
+            id: 1,
+            codeId: 88,
+            maskedCode: 'PLAN****VIP',
+            templateName: 'Global Pro 月付兑换码',
+            rewards: _planBPreview.rewards,
+            usedAt: DateTime.utc(2026, 10, 25, 8),
+          ),
+        ],
+        page: 1,
+        lastPage: 1,
+        total: 1,
+      );
+
+    await pumpCenter(tester, manager, size: const Size(1280, 900));
+
+    // Hybrid + recurring-only catalog displays category filter chips.
+    final onetimeChip = find.byKey(const Key('purchase-plans-filter-onetime'));
+    expect(onetimeChip, findsOneWidget);
+    await tester.tap(onetimeChip);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('purchase-plan-31')), findsOneWidget);
+    expect(find.byKey(const Key('purchase-plan-32')), findsNothing);
+
+    // Typing pure whitespace immediately switches paste suffix to clear suffix.
+    await tester.enterText(find.byKey(const Key('purchase-code')), '   ');
+    await tester.pump();
+    expect(find.byKey(const Key('purchase-code-clear')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('purchase-code-clear')));
+    await tester.pump();
+    expect(find.byKey(const Key('purchase-code-paste')), findsOneWidget);
+
+    // Failed logout preserves code and expanded history accordion.
+    await tester.enterText(find.byKey(const Key('purchase-code')), 'KEEP1234');
+    await tester.pump();
+    await tester
+        .ensureVisible(find.byKey(const Key('purchase-history-toggle')));
+    await tester.tap(find.byKey(const Key('purchase-history-toggle')));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('PLAN****VIP'), findsOneWidget);
+
+    await tester.ensureVisible(find.byKey(const Key('purchase-logout')));
+    await tester.tap(find.byKey(const Key('purchase-logout')));
+    await tester.pumpAndSettle();
+    expect(manager.loggedIn, isTrue);
+    expect(manager.code, 'KEEP1234');
+    expect(find.textContaining('PLAN****VIP'), findsOneWidget);
+  });
+
+  testWidgets(
+      'CR-06: narrow jump button and code suffix action are keyboard-reachable and accordions expose expanded semantics',
+      (tester) async {
+    final semantics = tester.ensureSemantics();
+    try {
+      final loggedOutManager = _UxManager()
+        ..account = null
+        ..planCatalog = const XboardPlanCatalog(plans: [_usFlagshipPlan]);
+      await pumpCenter(
+        tester,
+        loggedOutManager,
+        locale: const Locale('en'),
+        size: const Size(360, 640),
+      );
+
+      bool isFocused(Finder target) {
+        final element = tester.element(target);
+        var hit = FocusManager.instance.primaryFocus?.context == element;
+        FocusManager.instance.primaryFocus?.context
+            ?.visitAncestorElements((el) {
+          hit |= el == element;
+          return !hit;
+        });
+        return hit;
+      }
+
+      // First Tab on narrow viewport reaches purchase-jump-workbench.
+      await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+      await tester.pumpAndSettle();
+      expect(
+        isFocused(find.byKey(const Key('purchase-jump-workbench'))),
+        isTrue,
+      );
+
+      // Plan details accordion exposes button + expanded semantics state.
+      final planToggle =
+          find.byKey(const Key('purchase-plan-details-toggle-1'));
+      await tester.ensureVisible(planToggle);
+      await tester.pumpAndSettle();
+      expect(
+        tester.getSemantics(planToggle),
+        matchesSemantics(
+          isButton: true,
+          isFocusable: true,
+          hasExpandedState: true,
+          isExpanded: false,
+          hasTapAction: true,
+          hasFocusAction: true,
+        ),
+      );
+      await tester.tap(planToggle);
+      await tester.pumpAndSettle();
+      expect(
+        tester.getSemantics(planToggle),
+        matchesSemantics(
+          isButton: true,
+          isFocusable: true,
+          hasExpandedState: true,
+          isExpanded: true,
+          hasTapAction: true,
+          hasFocusAction: true,
+        ),
+      );
+
+      // Logged-in code suffix button is reachable by Tab from purchase-code, and history accordion exposes semantics.
+      final loggedInManager = _UxManager()
+        ..account = _account
+        ..history = GiftHistoryPage(
+          entries: [],
+          page: 1,
+          lastPage: 1,
+          total: 0,
+        );
+      await pumpCenter(tester, loggedInManager, size: const Size(1280, 900));
+
+      await tester.tap(find.byKey(const Key('purchase-code')));
+      await tester.pumpAndSettle();
+      await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+      await tester.pumpAndSettle();
+      expect(
+        isFocused(find.byKey(const Key('purchase-code-paste'))),
+        isTrue,
+      );
+
+      final historyToggle = find.byKey(const Key('purchase-history-toggle'));
+      expect(
+        tester.getSemantics(historyToggle),
+        matchesSemantics(
+          isButton: true,
+          isFocusable: true,
+          hasExpandedState: true,
+          isExpanded: false,
+          hasTapAction: true,
+          hasFocusAction: true,
+        ),
+      );
+      await tester.tap(historyToggle);
+      await tester.pumpAndSettle();
+      expect(
+        tester.getSemantics(historyToggle),
+        matchesSemantics(
+          isButton: true,
+          isFocusable: true,
+          hasExpandedState: true,
+          isExpanded: true,
+          hasTapAction: true,
+          hasFocusAction: true,
+        ),
+      );
+    } finally {
+      semantics.dispose();
+    }
   });
 }
 
@@ -549,7 +931,11 @@ class _UxManager extends ChangeNotifier implements PurchaseManager {
   @override
   String code = '';
   int checked = 0;
+  int apiCheckCalls = 0;
   int redeemed = 0;
+  bool failLogout = false;
+
+  void notify() => notifyListeners();
 
   @override
   bool get loggedIn => account != null;
@@ -560,14 +946,25 @@ class _UxManager extends ChangeNotifier implements PurchaseManager {
 
   @override
   void setCode(String value) {
-    code = value.replaceAll(RegExp(r'[\s-]+'), '').toUpperCase();
+    final normalized = value.trim().toUpperCase();
+    if (normalized == code) return;
+    code = normalized;
     preview = null;
+    error = null;
     notifyListeners();
   }
 
   @override
   Future<void> checkCode() async {
     checked++;
+    preview = null;
+    if (!RegExp(r'^[A-Z0-9]{8,32}$').hasMatch(code)) {
+      error = const XboardException(code: 'gift_code_format', message: '');
+      notifyListeners();
+      return;
+    }
+    apiCheckCalls++;
+    error = null;
     preview = nextPreview;
     notifyListeners();
   }
@@ -583,7 +980,16 @@ class _UxManager extends ChangeNotifier implements PurchaseManager {
   Future<void> refresh() async {}
   @override
   Future<void> logout() async {
+    if (failLogout) {
+      error = const XboardException(
+        code: 'secure_storage_failed',
+        message: '',
+      );
+      notifyListeners();
+      return;
+    }
     account = null;
+    code = '';
     notifyListeners();
   }
 

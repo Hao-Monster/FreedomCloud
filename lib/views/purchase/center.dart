@@ -1,4 +1,3 @@
-import 'package:flclashx/common/node_country.dart';
 import 'package:flclashx/enum/enum.dart';
 import 'package:flclashx/l10n/l10n.dart';
 import 'package:flclashx/manager/purchase_manager.dart';
@@ -9,6 +8,50 @@ import 'package:flclashx/widgets/text.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
+
+String? extractRedemptionCodeFromClipboard(String raw) {
+  if (raw.trim().isEmpty) return null;
+  final withoutUrlsAndTimes = raw
+      .replaceAll(RegExp(r'https?://\S+', caseSensitive: false), ' ')
+      .replaceAll(RegExp(r'(?<!\d)\d{1,2}:\d{2}(?::\d{2})?(?!\d)'), ' ');
+  if (!RegExp(r'[A-Za-z0-9]').hasMatch(withoutUrlsAndTimes)) {
+    return null;
+  }
+
+  final labeledMatch = RegExp(
+    r'(?:兑换码|卡密|礼品卡|激活码|voucher|gift\s*code|redeem\s*code|code)\s*[:：]\s*([A-Za-z0-9]+(?:-[A-Za-z0-9]+)*)',
+    caseSensitive: false,
+  ).firstMatch(withoutUrlsAndTimes);
+  if (labeledMatch != null) {
+    final normalized = labeledMatch.group(1)!.replaceAll('-', '').toUpperCase();
+    if (normalized.isNotEmpty) return normalized;
+  }
+
+  final tokenMatches = RegExp(
+    r'(?<![A-Za-z0-9])(?:[A-Za-z0-9]{2,}(?:-[A-Za-z0-9]{2,})+|[A-Za-z0-9]{8,})(?![A-Za-z0-9])',
+  ).allMatches(withoutUrlsAndTimes);
+  String? fallbackInRange;
+  String? fallbackOverlong;
+  for (final match in tokenMatches) {
+    final rawToken = match.group(0)!;
+    final upper = rawToken.replaceAll('-', '').toUpperCase();
+    if (upper.length >= 8 && upper.length <= 32) {
+      final looksLikeCode = rawToken.contains('-') ||
+          RegExp(r'\d').hasMatch(rawToken) ||
+          rawToken == upper;
+      if (looksLikeCode) return upper;
+      fallbackInRange ??= upper;
+    } else if (upper.length > 32) {
+      fallbackOverlong ??= upper;
+    }
+  }
+  if (fallbackInRange != null) return fallbackInRange;
+  if (fallbackOverlong != null) return fallbackOverlong;
+
+  final fallback =
+      withoutUrlsAndTimes.replaceAll(RegExp(r'[^A-Za-z0-9]'), '').toUpperCase();
+  return fallback.isEmpty ? null : fallback;
+}
 
 class PurchaseCenter extends StatefulWidget {
   const PurchaseCenter({
@@ -96,10 +139,13 @@ class _PurchaseCenterState extends State<PurchaseCenter> {
 
   Future<void> _logout() async {
     _password.clear();
+    await manager.logout();
+    if (!mounted || manager.loggedIn) return;
     _email.clear();
     _code.clear();
-    _historyExpanded = false;
-    await manager.logout();
+    if (_historyExpanded) {
+      setState(() => _historyExpanded = false);
+    }
   }
 
   Future<void> _open(Uri uri) async {
@@ -124,21 +170,14 @@ class _PurchaseCenterState extends State<PurchaseCenter> {
   Future<void> _pasteCode() async {
     final clip = await Clipboard.getData('text/plain');
     final raw = clip?.text ?? '';
-    if (raw.trim().isEmpty || !mounted) return;
-    final colonIndex = raw.lastIndexOf(RegExp(r'[:：]'));
-    final candidate =
-        colonIndex >= 0 ? raw.substring(colonIndex + 1) : raw;
-    final sanitized = candidate
-        .replaceAll(RegExp(r'[^A-Za-z0-9]'), '')
-        .toUpperCase();
-    if (sanitized.isEmpty) return;
-    final bounded =
-        sanitized.length > 32 ? sanitized.substring(0, 32) : sanitized;
+    if (!mounted) return;
+    final extracted = extractRedemptionCodeFromClipboard(raw);
+    if (extracted == null || extracted.isEmpty) return;
     _code.value = TextEditingValue(
-      text: bounded,
-      selection: TextSelection.collapsed(offset: bounded.length),
+      text: extracted,
+      selection: TextSelection.collapsed(offset: extracted.length),
     );
-    manager.setCode(bounded);
+    manager.setCode(extracted);
   }
 
   Future<void> _jumpToWorkbench() async {
@@ -152,139 +191,17 @@ class _PurchaseCenterState extends State<PurchaseCenter> {
   }
 
   Future<void> _showAcquireSheet(XboardPlanOffer plan) async {
-    final priceSummary = plan.prices
-        .map((price) => '${_period(price.period)} ${_amount(price.amount)}')
-        .join(' / ');
-    final inquiryText = l.purchaseInquiryTemplate(
-      plan.name,
-      plan.transferGiB,
-      priceSummary,
-    );
-    final countryCode = inferCountryCodeFromText(plan.name);
-
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
       showDragHandle: true,
-      builder: (sheetContext) {
-        final theme = Theme.of(sheetContext);
-        final colors = theme.colorScheme;
-        return ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 560),
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.fromLTRB(24, 4, 24, 28),
-            child: Column(
-              key: const Key('purchase-acquire-sheet'),
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Row(
-                  children: [
-                    if (countryCode != null) ...[
-                      EmojiText(
-                        nodeCountryEmoji(countryCode),
-                        style: const TextStyle(fontSize: 20),
-                      ),
-                      const SizedBox(width: 8),
-                    ],
-                    Expanded(
-                      child: Text(
-                        plan.name,
-                        style: theme.textTheme.titleLarge?.copyWith(
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 10,
-                  ),
-                  decoration: BoxDecoration(
-                    color: colors.primaryContainer.withValues(alpha: 0.45),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Text(
-                    '${plan.transferGiB} GiB · $priceSummary',
-                    style: theme.textTheme.bodyMedium?.copyWith(
-                      fontFamily: FontFamily.jetBrainsMono.value,
-fontFamilyFallback: _cjkMonoFallback(theme),
-                      fontWeight: FontWeight.w600,
-                      color: colors.onPrimaryContainer,
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                Text(
-                  l.purchaseAcquireSheetSubtitle,
-                  style: theme.textTheme.bodyMedium?.copyWith(
-                    color: colors.onSurfaceVariant,
-                  ),
-                ),
-                const SizedBox(height: 16),
-                if (manager.cardStoreUrl != null) ...[
-                  FilledButton.icon(
-                    key: const Key('purchase-acquire-store'),
-                    onPressed: () => _open(manager.cardStoreUrl!),
-                    icon: const Icon(Icons.storefront_rounded, size: 18),
-                    label: Text(l.purchaseCardStore),
-                  ),
-                  const SizedBox(height: 10),
-                ],
-                FilledButton.tonalIcon(
-                  key: const Key('purchase-acquire-copy-inquiry'),
-                  onPressed: () => _copyText(inquiryText),
-                  icon: const Icon(Icons.chat_bubble_outline_rounded, size: 18),
-                  label: Text(l.purchaseCopyInquiry),
-                ),
-                const SizedBox(height: 16),
-                const Divider(height: 1),
-                const SizedBox(height: 12),
-                for (final account in _wechatContacts)
-                  Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 4),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 8,
-                      ),
-                      decoration: BoxDecoration(
-                        color: colors.surfaceContainerHighest
-                            .withValues(alpha: 0.45),
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      child: Wrap(
-                        spacing: 12,
-                        runSpacing: 6,
-                        alignment: WrapAlignment.spaceBetween,
-                        crossAxisAlignment: WrapCrossAlignment.center,
-                        children: [
-                          SelectableText(
-                            '${l.wechatId}: $account',
-                            style: theme.textTheme.bodyMedium?.copyWith(
-                              fontFamily: FontFamily.jetBrainsMono.value,
-fontFamilyFallback: _cjkMonoFallback(theme),
-                            ),
-                          ),
-                          OutlinedButton.icon(
-                            key: Key('purchase-acquire-wechat-$account'),
-                            onPressed: () => _copyText(account),
-                            icon: const Icon(Icons.copy_rounded, size: 16),
-                            label: Text(l.wechatId),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-              ],
-            ),
-          ),
-        );
-      },
+      builder: (sheetContext) => _AcquirePlanSheet(
+        plan: plan,
+        manager: manager,
+        wechatContacts: _wechatContacts,
+        openLink: widget.openLink,
+      ),
     );
   }
 
@@ -458,13 +375,11 @@ fontFamilyFallback: _cjkMonoFallback(theme),
                 ),
               ),
               if (showQuickJump)
-                ExcludeFocusTraversal(
-                  child: FilledButton.tonalIcon(
-                    key: const Key('purchase-jump-workbench'),
-                    onPressed: _jumpToWorkbench,
-                    icon: const Icon(Icons.bolt_rounded, size: 18),
-                    label: Text(l.purchaseJumpToWorkbench),
-                  ),
+                FilledButton.tonalIcon(
+                  key: const Key('purchase-jump-workbench'),
+                  onPressed: _jumpToWorkbench,
+                  icon: const Icon(Icons.bolt_rounded, size: 18),
+                  label: Text(l.purchaseJumpToWorkbench),
                 ),
             ],
           ),
@@ -666,7 +581,7 @@ fontFamilyFallback: _cjkMonoFallback(theme),
                     manager.account?.email ?? '',
                     style: theme.textTheme.titleSmall?.copyWith(
                       fontFamily: FontFamily.jetBrainsMono.value,
-fontFamilyFallback: _cjkMonoFallback(theme),
+                      fontFamilyFallback: _cjkMonoFallback(theme),
                       fontWeight: FontWeight.w600,
                     ),
                   ),
@@ -772,7 +687,6 @@ fontFamilyFallback: _cjkMonoFallback(theme),
         manager.busy || manager.syncing || manager.unresolvedRedemption;
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
-    final hasCodeText = manager.code.trim().isNotEmpty || _code.text.isNotEmpty;
 
     return _Section(
       icon: Icons.redeem_rounded,
@@ -830,7 +744,7 @@ fontFamilyFallback: _cjkMonoFallback(theme),
                       '${l.purchaseOrderNumber}: ${receipt.orderTradeNo}',
                       style: theme.textTheme.bodySmall?.copyWith(
                         fontFamily: FontFamily.jetBrainsMono.value,
-fontFamilyFallback: _cjkMonoFallback(theme),
+                        fontFamilyFallback: _cjkMonoFallback(theme),
                       ),
                     ),
                   ],
@@ -855,7 +769,7 @@ fontFamilyFallback: _cjkMonoFallback(theme),
             enabled: !locked,
             style: TextStyle(
               fontFamily: FontFamily.jetBrainsMono.value,
-fontFamilyFallback: _cjkMonoFallback(theme),
+              fontFamilyFallback: _cjkMonoFallback(theme),
               letterSpacing: 1.1,
               fontWeight: FontWeight.w600,
             ),
@@ -863,28 +777,35 @@ fontFamilyFallback: _cjkMonoFallback(theme),
               context,
               labelText: l.purchaseCode,
               prefixIcon: Icons.confirmation_number_outlined,
-              suffixIcon: ExcludeFocusTraversal(
-                child: hasCodeText
-                    ? IconButton(
-                        key: const Key('purchase-code-clear'),
-                        tooltip: l.purchaseClearCode,
-                        onPressed: locked
-                            ? null
-                            : () {
-                                _code.clear();
-                                manager.setCode('');
-                              },
-                        icon: const Icon(Icons.close_rounded, size: 18),
-                      )
-                    : IconButton(
-                        key: const Key('purchase-code-paste'),
-                        tooltip: l.paste,
-                        onPressed: locked ? null : _pasteCode,
-                        icon: const Icon(Icons.content_paste_rounded, size: 18),
-                      ),
+              suffixIcon: ValueListenableBuilder<TextEditingValue>(
+                valueListenable: _code,
+                builder: (context, codeValue, _) {
+                  final hasCodeText =
+                      codeValue.text.isNotEmpty || manager.code.isNotEmpty;
+                  return hasCodeText
+                      ? IconButton(
+                          key: const Key('purchase-code-clear'),
+                          tooltip: l.purchaseClearCode,
+                          onPressed: locked
+                              ? null
+                              : () {
+                                  _code.clear();
+                                  manager.setCode('');
+                                },
+                          icon: const Icon(Icons.close_rounded, size: 18),
+                        )
+                      : IconButton(
+                          key: const Key('purchase-code-paste'),
+                          tooltip: l.paste,
+                          onPressed: locked ? null : _pasteCode,
+                          icon: const Icon(
+                            Icons.content_paste_rounded,
+                            size: 18,
+                          ),
+                        );
+                },
               ),
             ),
-            maxLength: 32,
             textCapitalization: TextCapitalization.characters,
             textInputAction: TextInputAction.search,
             autocorrect: false,
@@ -1053,7 +974,7 @@ fontFamilyFallback: _cjkMonoFallback(theme),
             '${l.purchaseQuotaChange}\n${_traffic(value.transferBefore)} → ${_traffic(value.transferAfter)}',
             style: theme.textTheme.bodyMedium?.copyWith(
               fontFamily: FontFamily.jetBrainsMono.value,
-fontFamilyFallback: _cjkMonoFallback(theme),
+              fontFamilyFallback: _cjkMonoFallback(theme),
               fontWeight: FontWeight.w600,
             ),
           ),
@@ -1114,57 +1035,65 @@ fontFamilyFallback: _cjkMonoFallback(theme),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          InkWell(
+          MergeSemantics(
             key: const Key('purchase-history-toggle'),
-            borderRadius: BorderRadius.circular(18),
-            onTap: () => setState(() => _historyExpanded = !_historyExpanded),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
-              child: Row(
-                children: [
-                  Icon(
-                    Icons.history_rounded,
-                    size: 20,
-                    color: colors.primary,
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      l.purchaseHistory,
-                      style: theme.textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.w700,
+            child: Semantics(
+              button: true,
+              expanded: _historyExpanded,
+              child: InkWell(
+                borderRadius: BorderRadius.circular(18),
+                onTap: () =>
+                    setState(() => _historyExpanded = !_historyExpanded),
+                child: Padding(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.history_rounded,
+                        size: 20,
+                        color: colors.primary,
                       ),
-                    ),
-                  ),
-                  if (history != null && history.total > 0) ...[
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 2,
-                      ),
-                      decoration: BoxDecoration(
-                        color: colors.secondaryContainer,
-                        borderRadius: BorderRadius.circular(999),
-                      ),
-                      child: Text(
-                        '${history.total}',
-                        style: theme.textTheme.labelSmall?.copyWith(
-                          fontFamily: FontFamily.jetBrainsMono.value,
-fontFamilyFallback: _cjkMonoFallback(theme),
-                          color: colors.onSecondaryContainer,
-                          fontWeight: FontWeight.w600,
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          l.purchaseHistory,
+                          style: theme.textTheme.titleMedium?.copyWith(
+                            fontWeight: FontWeight.w700,
+                          ),
                         ),
                       ),
-                    ),
-                    const SizedBox(width: 8),
-                  ],
-                  Icon(
-                    _historyExpanded
-                        ? Icons.expand_less_rounded
-                        : Icons.expand_more_rounded,
-                    color: colors.onSurfaceVariant,
+                      if (history != null && history.total > 0) ...[
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 2,
+                          ),
+                          decoration: BoxDecoration(
+                            color: colors.secondaryContainer,
+                            borderRadius: BorderRadius.circular(999),
+                          ),
+                          child: Text(
+                            '${history.total}',
+                            style: theme.textTheme.labelSmall?.copyWith(
+                              fontFamily: FontFamily.jetBrainsMono.value,
+                              fontFamilyFallback: _cjkMonoFallback(theme),
+                              color: colors.onSecondaryContainer,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                      ],
+                      Icon(
+                        _historyExpanded
+                            ? Icons.expand_less_rounded
+                            : Icons.expand_more_rounded,
+                        color: colors.onSurfaceVariant,
+                      ),
+                    ],
                   ),
-                ],
+                ),
               ),
             ),
           ),
@@ -1212,7 +1141,7 @@ fontFamilyFallback: _cjkMonoFallback(theme),
                             '${item.maskedCode} · ${_date(item.usedAt)}',
                             style: theme.textTheme.bodySmall?.copyWith(
                               fontFamily: FontFamily.jetBrainsMono.value,
-fontFamilyFallback: _cjkMonoFallback(theme),
+                              fontFamilyFallback: _cjkMonoFallback(theme),
                               color: colors.onSurfaceVariant,
                             ),
                           ),
@@ -1223,7 +1152,7 @@ fontFamilyFallback: _cjkMonoFallback(theme),
                               '${l.purchaseOrderNumber}: ${item.orderTradeNo}',
                               style: theme.textTheme.bodySmall?.copyWith(
                                 fontFamily: FontFamily.jetBrainsMono.value,
-fontFamilyFallback: _cjkMonoFallback(theme),
+                                fontFamilyFallback: _cjkMonoFallback(theme),
                               ),
                             ),
                         ],
@@ -1252,10 +1181,10 @@ fontFamilyFallback: _cjkMonoFallback(theme),
                         ),
                         TextButton.icon(
                           key: const Key('purchase-history-next'),
-                          onPressed: manager.busy ||
-                                  history.page >= history.lastPage
-                              ? null
-                              : () => manager.loadHistory(history.page + 1),
+                          onPressed:
+                              manager.busy || history.page >= history.lastPage
+                                  ? null
+                                  : () => manager.loadHistory(history.page + 1),
                           icon: const Icon(Icons.chevron_right_rounded),
                           label: Text(l.purchaseNextPage),
                         ),
@@ -1323,7 +1252,7 @@ fontFamilyFallback: _cjkMonoFallback(theme),
                       '${l.wechatId}: $account',
                       style: theme.textTheme.bodyMedium?.copyWith(
                         fontFamily: FontFamily.jetBrainsMono.value,
-fontFamilyFallback: _cjkMonoFallback(theme),
+                        fontFamilyFallback: _cjkMonoFallback(theme),
                       ),
                     ),
                     TextButton.icon(
@@ -1363,9 +1292,6 @@ fontFamilyFallback: _cjkMonoFallback(theme),
       contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
     );
   }
-
-  String _amount(int amount) =>
-      '${amount ~/ 100}.${(amount % 100).toString().padLeft(2, '0')}';
 
   String _date(DateTime value) {
     final local = value.toLocal();
@@ -1419,6 +1345,229 @@ List<String> _cjkMonoFallback(ThemeData theme) => <String>[
       'Noto Sans CJK SC',
       'sans-serif',
     ];
+
+String _formatMinorAmount(int amount) =>
+    '${amount ~/ 100}.${(amount % 100).toString().padLeft(2, '0')}';
+
+String _formatPeriodLabel(AppLocalizations l, String period) =>
+    switch (period) {
+      'monthly' => l.purchasePeriodMonthly,
+      'quarterly' => l.purchasePeriodQuarterly,
+      'half_yearly' => l.purchasePeriodHalfYearly,
+      'yearly' => l.purchasePeriodYearly,
+      'two_yearly' => l.purchasePeriodTwoYearly,
+      'three_yearly' => l.purchasePeriodThreeYearly,
+      'onetime' => l.purchasePeriodOnetime,
+      _ => period,
+    };
+
+class _AcquirePlanSheet extends StatefulWidget {
+  const _AcquirePlanSheet({
+    required this.plan,
+    required this.manager,
+    required this.wechatContacts,
+    required this.openLink,
+  });
+
+  final XboardPlanOffer plan;
+  final PurchaseManager manager;
+  final List<String> wechatContacts;
+  final Future<void> Function(Uri) openLink;
+
+  @override
+  State<_AcquirePlanSheet> createState() => _AcquirePlanSheetState();
+}
+
+class _AcquirePlanSheetState extends State<_AcquirePlanSheet> {
+  String? _copiedKey;
+  String? _feedbackMessage;
+  bool _feedbackError = false;
+
+  Future<void> _copy(String key, String value, String successMessage) async {
+    await Clipboard.setData(ClipboardData(text: value));
+    if (!mounted) return;
+    setState(() {
+      _copiedKey = key;
+      _feedbackMessage = successMessage;
+      _feedbackError = false;
+    });
+  }
+
+  Future<void> _open(Uri uri, String errorMessage) async {
+    try {
+      await widget.openLink(uri);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _feedbackMessage = errorMessage;
+        _feedbackError = true;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => ListenableBuilder(
+        listenable: widget.manager,
+        builder: (context, _) {
+          final l = AppLocalizations.of(context);
+          final theme = Theme.of(context);
+          final colors = theme.colorScheme;
+          final plan = widget.plan;
+          final priceSummary = plan.prices
+              .map(
+                (price) =>
+                    '${_formatPeriodLabel(l, price.period)} ${_formatMinorAmount(price.amount)}',
+              )
+              .join(' / ');
+          final inquiryText = l.purchaseInquiryTemplate(
+            plan.name,
+            plan.transferGiB,
+            priceSummary,
+          );
+          final regionBadge = resolvePlanRegionBadge(plan.name);
+
+          return ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 560),
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(24, 4, 24, 28),
+              child: Column(
+                key: const Key('purchase-acquire-sheet'),
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Row(
+                    children: [
+                      if (regionBadge != null) ...[
+                        EmojiText(
+                          regionBadge,
+                          style: const TextStyle(fontSize: 20),
+                        ),
+                        const SizedBox(width: 8),
+                      ],
+                      Expanded(
+                        child: Text(
+                          plan.name,
+                          style: theme.textTheme.titleLarge?.copyWith(
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 10,
+                    ),
+                    decoration: BoxDecoration(
+                      color: colors.primaryContainer.withValues(alpha: 0.45),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Text(
+                      '${plan.transferGiB} GiB · $priceSummary',
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        fontFamily: FontFamily.jetBrainsMono.value,
+                        fontFamilyFallback: _cjkMonoFallback(theme),
+                        fontWeight: FontWeight.w600,
+                        color: colors.onPrimaryContainer,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    l.purchaseAcquireSheetSubtitle,
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: colors.onSurfaceVariant,
+                    ),
+                  ),
+                  if (_feedbackMessage != null)
+                    Padding(
+                      key: const Key('purchase-acquire-feedback'),
+                      padding: const EdgeInsets.only(top: 12),
+                      child: _Notice(
+                        message: _feedbackMessage!,
+                        error: _feedbackError,
+                        success: !_feedbackError,
+                      ),
+                    ),
+                  const SizedBox(height: 16),
+                  if (widget.manager.cardStoreUrl != null) ...[
+                    FilledButton.icon(
+                      key: const Key('purchase-acquire-store'),
+                      onPressed: () => _open(
+                        widget.manager.cardStoreUrl!,
+                        l.purchaseOpenLinkFailed,
+                      ),
+                      icon: const Icon(Icons.storefront_rounded, size: 18),
+                      label: Text(l.purchaseCardStore),
+                    ),
+                    const SizedBox(height: 10),
+                  ],
+                  FilledButton.tonalIcon(
+                    key: const Key('purchase-acquire-copy-inquiry'),
+                    onPressed: () =>
+                        _copy('inquiry', inquiryText, l.copySuccess),
+                    icon: Icon(
+                      _copiedKey == 'inquiry'
+                          ? Icons.check_rounded
+                          : Icons.chat_bubble_outline_rounded,
+                      size: 18,
+                    ),
+                    label: Text(l.purchaseCopyInquiry),
+                  ),
+                  const SizedBox(height: 16),
+                  const Divider(height: 1),
+                  const SizedBox(height: 12),
+                  for (final account in widget.wechatContacts)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 4),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 8,
+                        ),
+                        decoration: BoxDecoration(
+                          color: colors.surfaceContainerHighest
+                              .withValues(alpha: 0.45),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: Wrap(
+                          spacing: 12,
+                          runSpacing: 6,
+                          alignment: WrapAlignment.spaceBetween,
+                          crossAxisAlignment: WrapCrossAlignment.center,
+                          children: [
+                            SelectableText(
+                              '${l.wechatId}: $account',
+                              style: theme.textTheme.bodyMedium?.copyWith(
+                                fontFamily: FontFamily.jetBrainsMono.value,
+                                fontFamilyFallback: _cjkMonoFallback(theme),
+                              ),
+                            ),
+                            OutlinedButton.icon(
+                              key: Key('purchase-acquire-wechat-$account'),
+                              onPressed: () => _copy(
+                                  'wechat:$account', account, l.copySuccess),
+                              icon: Icon(
+                                _copiedKey == 'wechat:$account'
+                                    ? Icons.check_rounded
+                                    : Icons.copy_rounded,
+                                size: 16,
+                              ),
+                              label: Text(l.copy),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          );
+        },
+      );
+}
 
 class _StepChip extends StatelessWidget {
   const _StepChip({required this.label, required this.active});

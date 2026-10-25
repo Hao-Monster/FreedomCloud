@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flclashx/common/node_country.dart';
 import 'package:flclashx/enum/enum.dart';
 import 'package:flclashx/l10n/l10n.dart';
@@ -5,6 +7,549 @@ import 'package:flclashx/models/xboard.dart';
 import 'package:flclashx/views/purchase/plan_content.dart';
 import 'package:flclashx/widgets/text.dart';
 import 'package:flutter/material.dart';
+
+final RegExp _planFlagEmojiPattern = RegExp(
+  r'[\u{1F1E6}-\u{1F1FF}]{2}',
+  unicode: true,
+);
+
+final RegExp _planByteUnitPattern = RegExp(
+  r'\d+(?:\.\d+)?\s*(?:[KMGTPE]i?B|B)(?![A-Za-z])',
+  caseSensitive: false,
+);
+
+final RegExp _planGlobalPattern = RegExp(
+  r'(?<![A-Za-z])(global|worldwide|international|multi[-\s]?region)(?![A-Za-z])|全球|多国|国际|环球|全节点',
+  caseSensitive: false,
+);
+
+const List<(String, List<String>)> _planZhRegionKeywords = [
+  ('HK', ['中国香港', '香港', '深港', '沪港', '广港']),
+  ('TW', ['中国台湾', '中國台灣', '台湾', '台灣', '台北', '新北', '台中', '高雄', '新竹']),
+  ('MO', ['中国澳门', '澳门', '澳門']),
+  (
+    'JP',
+    ['日本', '东京', '東京', '大阪', '名古屋', '埼玉', '福冈', '札幌', '横滨', '泉日', '沪日', '广日']
+  ),
+  ('SG', ['新加坡', '狮城', '獅城', '坡县']),
+  (
+    'US',
+    [
+      '美国',
+      '美國',
+      '洛杉矶',
+      '洛杉磯',
+      '圣何塞',
+      '聖荷西',
+      '硅谷',
+      '西雅图',
+      '西雅圖',
+      '芝加哥',
+      '达拉斯',
+      '纽约',
+      '紐約',
+      '凤凰城',
+      '亚特兰大',
+      '波特兰',
+      '拉斯维加斯',
+      '丹佛',
+      '盐湖城',
+      '迈阿密',
+      '弗吉尼亚',
+      '俄勒冈',
+    ],
+  ),
+  ('KP', ['朝鲜', '平壤']),
+  ('KR', ['韩国', '韓國', '首尔', '首爾', '釜山', '仁川', '春川']),
+  ('GB', ['英国', '英國', '伦敦', '倫敦', '曼彻斯特', '伯明翰', '苏格兰', '爱丁堡']),
+  ('DE', ['德国', '德國', '法兰克福', '慕尼黑', '柏林', '杜塞尔多夫']),
+  ('FR', ['法国', '法國', '巴黎', '马赛']),
+  ('NL', ['荷兰', '荷蘭', '阿姆斯特丹', '鹿特丹']),
+  ('CA', ['加拿大', '温哥华', '多伦多', '蒙特利尔', '渥太华']),
+  ('AU', ['澳大利亚', '澳洲', '悉尼', '墨尔本', '布里斯班', '珀斯']),
+  ('RU', ['俄罗斯', '俄羅斯', '莫斯科', '圣彼得堡', '新西伯利亚', '伯力', '海参崴']),
+  ('ID', ['印度尼西亚', '印尼', '雅加达']),
+  ('IN', ['印度', '孟买', '新德里', '班加罗尔']),
+  ('MY', ['马来西亚', '馬來西亞', '大马', '吉隆坡', '柔佛']),
+  ('TH', ['泰国', '泰國', '曼谷']),
+  ('VN', ['越南', '河内', '胡志明']),
+  ('PH', ['菲律宾', '菲律賓', '马尼拉']),
+  ('TR', ['土耳其', '伊斯坦布尔', '安卡拉']),
+  ('BR', ['巴西', '圣保罗']),
+  ('AR', ['阿根廷', '布宜诺斯艾利斯']),
+  ('AE', ['阿联酋', '迪拜', '阿布扎比']),
+  ('IT', ['意大利', '米兰', '罗马']),
+  ('ES', ['西班牙', '马德里', '巴塞罗那']),
+  ('CH', ['瑞士', '苏黎世', '日内瓦']),
+  ('SE', ['瑞典', '斯德哥尔摩']),
+  ('IE', ['爱尔兰', '都柏林']),
+  ('PL', ['波兰', '华沙']),
+  ('ZA', ['南非', '约翰内斯堡']),
+  ('UA', ['乌克兰', '基辅']),
+  ('FI', ['芬兰', '赫尔辛基']),
+  ('NO', ['挪威', '奥斯陆']),
+  ('AT', ['奥地利', '维也纳']),
+  ('BE', ['比利时', '布鲁塞尔']),
+  ('PT', ['葡萄牙', '里斯本']),
+  ('NZ', ['新西兰', '奥克兰']),
+  ('IL', ['以色列', '特拉维夫']),
+  ('MX', ['墨西哥']),
+  ('CL', ['智利', '圣地亚哥']),
+  ('RO', ['罗马尼亚', '布加勒斯特']),
+  ('CN', ['内蒙古', '中国', '中國']),
+];
+
+final List<(String, String)> _sortedPlanZhKeywords = () {
+  final items = <({String code, String keyword, int order})>[];
+  var order = 0;
+  for (final (code, keywords) in _planZhRegionKeywords) {
+    for (final keyword in keywords) {
+      items.add((code: code, keyword: keyword, order: order++));
+    }
+  }
+  items.sort((a, b) {
+    final byLen = b.keyword.length.compareTo(a.keyword.length);
+    return byLen != 0 ? byLen : a.order.compareTo(b.order);
+  });
+  return [for (final item in items) (item.code, item.keyword)];
+}();
+
+final List<(String, RegExp)> _planEnglishRegionPatterns = [
+  (
+    'HK',
+    RegExp(r'(?<![A-Za-z])(hong\s*kong)(?![A-Za-z])', caseSensitive: false)
+  ),
+  (
+    'TW',
+    RegExp(r'(?<![A-Za-z])(taiwan|taipei|kaohsiung)(?![A-Za-z])',
+        caseSensitive: false)
+  ),
+  (
+    'MO',
+    RegExp(r'(?<![A-Za-z])(macao|macau)(?![A-Za-z])', caseSensitive: false)
+  ),
+  (
+    'JP',
+    RegExp(
+        r'(?<![A-Za-z])(japan|tokyo|osaka|nagoya|fukuoka|sapporo)(?![A-Za-z])',
+        caseSensitive: false)
+  ),
+  ('SG', RegExp(r'(?<![A-Za-z])(singapore)(?![A-Za-z])', caseSensitive: false)),
+  (
+    'US',
+    RegExp(
+      r'(?<![A-Za-z])(united\s+states|america|los\s*angeles|san\s*jose|san\s*francisco|silicon\s*valley|seattle|new\s*york|chicago|dallas|miami)(?![A-Za-z])',
+      caseSensitive: false,
+    ),
+  ),
+  (
+    'KP',
+    RegExp(r'(?<![A-Za-z])(north\s+korea|pyongyang)(?![A-Za-z])',
+        caseSensitive: false)
+  ),
+  (
+    'KR',
+    RegExp(
+        r'(?<![A-Za-z])(south\s+korea|korea|seoul|busan|incheon)(?![A-Za-z])',
+        caseSensitive: false)
+  ),
+  (
+    'GB',
+    RegExp(
+        r'(?<![A-Za-z])(united\s+kingdom|great\s+britain|britain|england|london|manchester)(?![A-Za-z])',
+        caseSensitive: false)
+  ),
+  (
+    'DE',
+    RegExp(r'(?<![A-Za-z])(germany|frankfurt|munich|berlin)(?![A-Za-z])',
+        caseSensitive: false)
+  ),
+  (
+    'FR',
+    RegExp(r'(?<![A-Za-z])(france|paris|marseille)(?![A-Za-z])',
+        caseSensitive: false)
+  ),
+  (
+    'NL',
+    RegExp(r'(?<![A-Za-z])(netherlands|amsterdam|rotterdam)(?![A-Za-z])',
+        caseSensitive: false)
+  ),
+  (
+    'CA',
+    RegExp(r'(?<![A-Za-z])(canada|vancouver|toronto|montreal)(?![A-Za-z])',
+        caseSensitive: false)
+  ),
+  (
+    'AU',
+    RegExp(r'(?<![A-Za-z])(australia|sydney|melbourne|brisbane)(?![A-Za-z])',
+        caseSensitive: false)
+  ),
+  (
+    'RU',
+    RegExp(r'(?<![A-Za-z])(russia|moscow)(?![A-Za-z])', caseSensitive: false)
+  ),
+  (
+    'IND_TMP',
+    RegExp(r'(?<![A-Za-z])(indonesia|jakarta)(?![A-Za-z])',
+        caseSensitive: false)
+  ),
+  (
+    'IN',
+    RegExp(r'(?<![A-Za-z])(india|mumbai)(?![A-Za-z])', caseSensitive: false)
+  ),
+  (
+    'MY',
+    RegExp(r'(?<![A-Za-z])(malaysia|kuala\s+lumpur)(?![A-Za-z])',
+        caseSensitive: false)
+  ),
+  (
+    'TH',
+    RegExp(r'(?<![A-Za-z])(thailand|bangkok)(?![A-Za-z])', caseSensitive: false)
+  ),
+  (
+    'VN',
+    RegExp(r'(?<![A-Za-z])(vietnam|hanoi|saigon)(?![A-Za-z])',
+        caseSensitive: false)
+  ),
+  (
+    'PH',
+    RegExp(r'(?<![A-Za-z])(philippines|manila)(?![A-Za-z])',
+        caseSensitive: false)
+  ),
+  (
+    'TR',
+    RegExp(r'(?<![A-Za-z])(turkey|turkiye|istanbul)(?![A-Za-z])',
+        caseSensitive: false)
+  ),
+  ('BR', RegExp(r'(?<![A-Za-z])(brazil)(?![A-Za-z])', caseSensitive: false)),
+  ('AR', RegExp(r'(?<![A-Za-z])(argentina)(?![A-Za-z])', caseSensitive: false)),
+  (
+    'AE',
+    RegExp(r'(?<![A-Za-z])(dubai|abu\s+dhabi)(?![A-Za-z])',
+        caseSensitive: false)
+  ),
+];
+
+// Excludes 2-letter uppercase tokens that collide with English marketing words
+// in plan titles (e.g. "MY", "IN", "IT", "IS", "NO", "AT", "BE", "US$").
+final List<(String, RegExp)> _planUpperCodePatterns = [
+  ('HK', RegExp(r'(?<![A-Za-z])(HK|HKG)(?![A-Za-z])')),
+  ('TW', RegExp(r'(?<![A-Za-z])(TW|TWN|TPE|KHH)(?![A-Za-z])')),
+  ('MO', RegExp(r'(?<![A-Za-z])(MO|MAC|MFM)(?![A-Za-z])')),
+  ('JP', RegExp(r'(?<![A-Za-z])(JP|JPN|NRT|HND|KIX|TYO|OSA)(?![A-Za-z])')),
+  ('SG', RegExp(r'(?<![A-Za-z])(SG|SGP|SIN)(?![A-Za-z])')),
+  (
+    'US',
+    RegExp(r'(?<!JOIN\s)(?<![A-Za-z])(US|USA|LAX|SJC|SFO|SEA|JFK)(?![A-Za-z$])')
+  ),
+  ('KR', RegExp(r'(?<![A-Za-z])(KR|KOR|ICN|SEL)(?![A-Za-z])')),
+  ('GB', RegExp(r'(?<![A-Za-z])(UK|GB|GBR|LHR)(?![A-Za-z])')),
+  ('DE', RegExp(r'(?<![A-Za-z])(DEU|FRA|MUC|BER)(?![A-Za-z])')),
+  ('FR', RegExp(r'(?<![A-Za-z])(CDG|MRS)(?![A-Za-z])')),
+  ('NL', RegExp(r'(?<![A-Za-z])(NLD|AMS)(?![A-Za-z])')),
+  ('CA', RegExp(r'(?<![A-Za-z])(CAN|YVR|YYZ)(?![A-Za-z])')),
+  ('AU', RegExp(r'(?<![A-Za-z])(AUS|SYD|MEL)(?![A-Za-z])')),
+  ('RU', RegExp(r'(?<![A-Za-z])(RUS|SVO)(?![A-Za-z])')),
+  ('IN', RegExp(r'(?<![A-Za-z])(IND|BOM|DEL|BLR)(?![A-Za-z])')),
+  ('MY', RegExp(r'(?<![A-Za-z])(MYS|KUL)(?![A-Za-z])')),
+  ('TH', RegExp(r'(?<![A-Za-z])(THA|BKK)(?![A-Za-z])')),
+  ('VN', RegExp(r'(?<![A-Za-z])(VNM|HAN|SGN)(?![A-Za-z])')),
+  ('PH', RegExp(r'(?<![A-Za-z])(PHL|MNL)(?![A-Za-z])')),
+  ('ID', RegExp(r'(?<![A-Za-z])(IDN|CGK)(?![A-Za-z])')),
+  ('TR', RegExp(r'(?<![A-Za-z])(TUR|IST)(?![A-Za-z])')),
+  ('BR', RegExp(r'(?<![A-Za-z])(BRA|GRU)(?![A-Za-z])')),
+  ('AR', RegExp(r'(?<![A-Za-z])(ARG|EZE)(?![A-Za-z])')),
+  ('AE', RegExp(r'(?<![A-Za-z])(UAE|ARE|DXB|AUH)(?![A-Za-z])')),
+];
+
+String? resolvePlanRegionBadge(String planName) {
+  if (planName.trim().isEmpty) return null;
+  final hits = <({int index, String code})>[];
+  var masked = planName;
+
+  for (final match in _planFlagEmojiPattern.allMatches(planName)) {
+    final code = inferCountryCodeFromText(match.group(0));
+    if (code != null) {
+      hits.add((index: match.start, code: code));
+    }
+  }
+  masked = masked.replaceAllMapped(
+    _planFlagEmojiPattern,
+    (m) => ' ' * m.group(0)!.length,
+  );
+
+  for (final (code, keyword) in _sortedPlanZhKeywords) {
+    var searchFrom = 0;
+    while (true) {
+      final idx = masked.indexOf(keyword, searchFrom);
+      if (idx < 0) break;
+      hits.add((index: idx, code: code));
+      masked = masked.replaceRange(
+        idx,
+        idx + keyword.length,
+        ' ' * keyword.length,
+      );
+      searchFrom = idx + keyword.length;
+    }
+  }
+
+  for (final (rawCode, pattern) in _planEnglishRegionPatterns) {
+    final code = rawCode == 'IND_TMP' ? 'ID' : rawCode;
+    for (final match in pattern.allMatches(masked)) {
+      hits.add((index: match.start, code: code));
+    }
+  }
+
+  final sanitizedUpper = masked.replaceAllMapped(
+    _planByteUnitPattern,
+    (m) => ' ' * m.group(0)!.length,
+  );
+  for (final (code, pattern) in _planUpperCodePatterns) {
+    for (final match in pattern.allMatches(sanitizedUpper)) {
+      hits.add((index: match.start, code: code));
+    }
+  }
+
+  hits.sort((a, b) => a.index.compareTo(b.index));
+  final distinctCodes = <String>[];
+  for (final hit in hits) {
+    if (!distinctCodes.contains(hit.code)) {
+      distinctCodes.add(hit.code);
+    }
+  }
+
+  final isGlobal = _planGlobalPattern.hasMatch(planName);
+  if (distinctCodes.isEmpty) {
+    return isGlobal ? '🌐' : null;
+  }
+  if (distinctCodes.length == 1) {
+    return nodeCountryEmoji(distinctCodes.first);
+  }
+  if (distinctCodes.length == 2) {
+    return '${nodeCountryEmoji(distinctCodes[0])} ${nodeCountryEmoji(distinctCodes[1])}';
+  }
+  return '🌐';
+}
+
+({bool collapsible, String preview}) summarizePlanMarkdown(
+  String markdown, {
+  int collapseThreshold = 6,
+  int maxPreviewUnits = 5,
+}) {
+  final normalized = markdown.replaceAll('\r\n', '\n').replaceAll('\r', '\n');
+  final lines = normalized.split('\n');
+  final segments = <_MdSegment>[];
+
+  var i = 0;
+  while (i < lines.length) {
+    if (lines[i].trim().isEmpty) {
+      i++;
+      continue;
+    }
+
+    final fenceMatch =
+        RegExp(r'^( {0,3})(`{3,}|~{3,})(.*)$').firstMatch(lines[i]);
+    if (fenceMatch != null) {
+      final openLine = lines[i];
+      final fenceChars = fenceMatch.group(2)!;
+      final fenceChar = fenceChars[0];
+      final fenceLen = fenceChars.length;
+      final closePattern = RegExp('^ {0,3}$fenceChar{$fenceLen,}\\s*\$');
+      i++;
+      final inner = <String>[];
+      while (i < lines.length && !closePattern.hasMatch(lines[i])) {
+        inner.add(lines[i]);
+        i++;
+      }
+      if (i < lines.length) i++;
+      segments.add(
+        _CodeFenceSegment(
+          openLine: openLine,
+          innerLines: inner,
+          closeLine: fenceChars,
+        ),
+      );
+      continue;
+    }
+
+    if (i + 1 < lines.length &&
+        lines[i].contains('|') &&
+        _isGfmTableDelimiter(lines[i + 1])) {
+      final header = lines[i];
+      final delimiter = lines[i + 1];
+      i += 2;
+      final rows = <String>[];
+      while (i < lines.length &&
+          lines[i].trim().isNotEmpty &&
+          lines[i].contains('|')) {
+        rows.add(lines[i]);
+        i++;
+      }
+      segments.add(
+        _TableSegment(header: header, delimiter: delimiter, rows: rows),
+      );
+      continue;
+    }
+
+    if (i + 1 < lines.length &&
+        !RegExp(r'^ {0,3}(?:[-*+]\s|>|\d+\.\s)').hasMatch(lines[i]) &&
+        RegExp(r'^ {0,3}(?:=+|-+)\s*$').hasMatch(lines[i + 1])) {
+      segments.add(_LinesSegment([lines[i], lines[i + 1]], fixedUnits: 1));
+      i += 2;
+      continue;
+    }
+
+    final blockLines = <String>[];
+    while (i < lines.length && lines[i].trim().isNotEmpty) {
+      if (blockLines.isNotEmpty) {
+        if (RegExp(r'^( {0,3})(`{3,}|~{3,})').hasMatch(lines[i])) break;
+        if (i + 1 < lines.length &&
+            lines[i].contains('|') &&
+            _isGfmTableDelimiter(lines[i + 1])) {
+          break;
+        }
+      }
+      blockLines.add(lines[i]);
+      i++;
+    }
+    segments.add(_LinesSegment(blockLines));
+  }
+
+  final totalUnits = segments.fold<int>(0, (sum, seg) => sum + seg.units);
+  if (totalUnits <= collapseThreshold) {
+    return (collapsible: false, preview: markdown);
+  }
+
+  final rendered = <String>[];
+  var remaining = maxPreviewUnits;
+  var openUnderlines = 0;
+
+  for (final seg in segments) {
+    if (remaining <= 0) break;
+    if (rendered.isNotEmpty && remaining < seg.minUnits) {
+      break;
+    }
+    final budget = math.max(remaining, seg.minUnits);
+    final chunk = seg.render(maxUnits: budget);
+    rendered.add(chunk);
+    if (!seg.isCodeBlock) {
+      openUnderlines +=
+          '<u>'.allMatches(chunk).length - '</u>'.allMatches(chunk).length;
+    }
+    remaining -= math.min(seg.units, budget);
+  }
+
+  if (openUnderlines > 0 && rendered.isNotEmpty) {
+    rendered[rendered.length - 1] =
+        '${rendered.last}${'</u>' * openUnderlines}';
+  }
+
+  final preview = rendered.join('\n\n');
+  final isTruncated = preview.trim() != normalized.trim();
+  return (
+    collapsible: isTruncated,
+    preview: isTruncated ? preview : markdown,
+  );
+}
+
+bool _isGfmTableDelimiter(String line) {
+  final trimmed = line.trim();
+  if (!trimmed.contains('|') || !trimmed.contains('-')) return false;
+  var inner = trimmed;
+  if (inner.startsWith('|')) inner = inner.substring(1);
+  if (inner.endsWith('|')) inner = inner.substring(0, inner.length - 1);
+  final cells = inner.split('|');
+  if (cells.isEmpty) return false;
+  return cells.every((cell) => RegExp(r'^\s*:?-+:?\s*$').hasMatch(cell));
+}
+
+abstract class _MdSegment {
+  int get units;
+  int get minUnits => 1;
+  bool get isCodeBlock => false;
+  String render({int? maxUnits});
+}
+
+class _CodeFenceSegment extends _MdSegment {
+  _CodeFenceSegment({
+    required this.openLine,
+    required this.innerLines,
+    required this.closeLine,
+  });
+
+  final String openLine;
+  final List<String> innerLines;
+  final String closeLine;
+
+  @override
+  bool get isCodeBlock => true;
+
+  @override
+  int get units =>
+      math.max(1, innerLines.where((line) => line.trim().isNotEmpty).length);
+
+  @override
+  String render({int? maxUnits}) {
+    if (maxUnits == null || units <= maxUnits) {
+      return [openLine, ...innerLines, closeLine].join('\n');
+    }
+    final kept = <String>[];
+    var count = 0;
+    for (final line in innerLines) {
+      if (line.trim().isNotEmpty) {
+        if (count >= maxUnits) break;
+        count++;
+      }
+      kept.add(line);
+    }
+    return [openLine, ...kept, closeLine].join('\n');
+  }
+}
+
+class _TableSegment extends _MdSegment {
+  _TableSegment({
+    required this.header,
+    required this.delimiter,
+    required this.rows,
+  });
+
+  final String header;
+  final String delimiter;
+  final List<String> rows;
+
+  @override
+  int get units => 1 + rows.length;
+
+  @override
+  int get minUnits => rows.isEmpty ? 1 : 2;
+
+  @override
+  String render({int? maxUnits}) {
+    if (maxUnits == null || units <= maxUnits) {
+      return [header, delimiter, ...rows].join('\n');
+    }
+    final rowBudget = math.max(1, maxUnits - 1);
+    return [header, delimiter, ...rows.take(rowBudget)].join('\n');
+  }
+}
+
+class _LinesSegment extends _MdSegment {
+  _LinesSegment(this.lines, {this.fixedUnits});
+
+  final List<String> lines;
+  final int? fixedUnits;
+
+  @override
+  int get units => fixedUnits ?? lines.length;
+
+  @override
+  String render({int? maxUnits}) {
+    if (fixedUnits != null || maxUnits == null || lines.length <= maxUnits) {
+      return lines.join('\n');
+    }
+    return lines.take(maxUnits).join('\n');
+  }
+}
 
 enum _PlanCategoryFilter { all, period, onetime }
 
@@ -67,13 +612,13 @@ class _PurchasePlanCatalogState extends State<PurchasePlanCatalog> {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
     final plans = widget.catalog?.plans ?? const <XboardPlanOffer>[];
+    final recurringCount = plans.where(_hasRecurringPeriod).length;
+    final onetimeCount = plans.where(_hasOnetimePeriod).length;
     final hasMixedCategories = plans.length > 1 &&
-        plans.any(_hasRecurringPeriod) &&
-        plans.any(
-          (plan) => !_hasRecurringPeriod(plan) && _hasOnetimePeriod(plan),
-        );
-    final filteredPlans =
-        hasMixedCategories ? _applyFilter(plans) : plans;
+        recurringCount > 0 &&
+        onetimeCount > 0 &&
+        (recurringCount < plans.length || onetimeCount < plans.length);
+    final filteredPlans = hasMixedCategories ? _applyFilter(plans) : plans;
 
     return Column(
       key: const Key('purchase-plans'),
@@ -293,22 +838,19 @@ class _PlanCardState extends State<_PlanCard> {
     final l = AppLocalizations.of(context);
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
-    final countryCode = inferCountryCodeFromText(plan.name);
-    final isSoldOut =
-        plan.hasCapacityRemaining && plan.capacityRemaining == 0;
+    final regionBadge = resolvePlanRegionBadge(plan.name);
+    final isSoldOut = plan.hasCapacityRemaining && plan.capacityRemaining == 0;
     final isLowStock = plan.hasCapacityRemaining &&
         plan.capacityRemaining != null &&
         plan.capacityRemaining! > 0 &&
         plan.capacityRemaining! <= 20;
 
-    final contentLines = plan.content
-        .split('\n')
-        .where((line) => line.trim().isNotEmpty)
-        .toList(growable: false);
-    final shouldCollapse =
-        widget.collapsibleDetails && contentLines.length > 6;
+    final markdownSummary = widget.collapsibleDetails
+        ? summarizePlanMarkdown(plan.content)
+        : (collapsible: false, preview: plan.content);
+    final shouldCollapse = markdownSummary.collapsible;
     final previewMarkdown = shouldCollapse && !_detailsExpanded
-        ? plan.content.split('\n').take(5).join('\n')
+        ? markdownSummary.preview
         : plan.content;
 
     return Container(
@@ -336,7 +878,7 @@ class _PlanCardState extends State<_PlanCard> {
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    if (countryCode != null) ...[
+                    if (regionBadge != null) ...[
                       Container(
                         key: Key('purchase-plan-flag-${plan.id}'),
                         padding: const EdgeInsets.symmetric(
@@ -344,12 +886,12 @@ class _PlanCardState extends State<_PlanCard> {
                           vertical: 4,
                         ),
                         decoration: BoxDecoration(
-                          color: colors.secondaryContainer
-                              .withValues(alpha: 0.65),
+                          color:
+                              colors.secondaryContainer.withValues(alpha: 0.65),
                           borderRadius: BorderRadius.circular(8),
                         ),
                         child: EmojiText(
-                          nodeCountryEmoji(countryCode),
+                          regionBadge,
                           style: const TextStyle(fontSize: 15, height: 1.1),
                         ),
                       ),
@@ -521,40 +1063,47 @@ class _PlanCardState extends State<_PlanCard> {
                     ),
                   ),
                   if (shouldCollapse)
-                    InkWell(
+                    MergeSemantics(
                       key: Key('purchase-plan-details-toggle-${plan.id}'),
-                      borderRadius: BorderRadius.circular(8),
-                      onTap: () => setState(
-                        () => _detailsExpanded = !_detailsExpanded,
-                      ),
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 6,
-                          vertical: 4,
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Flexible(
-                              child: Text(
-                                _detailsExpanded
-                                    ? l.purchasePlanCollapseDetails
-                                    : l.purchasePlanExpandDetails,
-                                style: theme.textTheme.labelMedium?.copyWith(
-                                  color: colors.primary,
-                                  fontWeight: FontWeight.w600,
+                      child: Semantics(
+                        button: true,
+                        expanded: _detailsExpanded,
+                        child: InkWell(
+                          borderRadius: BorderRadius.circular(8),
+                          onTap: () => setState(
+                            () => _detailsExpanded = !_detailsExpanded,
+                          ),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 6,
+                              vertical: 4,
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Flexible(
+                                  child: Text(
+                                    _detailsExpanded
+                                        ? l.purchasePlanCollapseDetails
+                                        : l.purchasePlanExpandDetails,
+                                    style:
+                                        theme.textTheme.labelMedium?.copyWith(
+                                      color: colors.primary,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
                                 ),
-                              ),
+                                const SizedBox(width: 2),
+                                Icon(
+                                  _detailsExpanded
+                                      ? Icons.expand_less_rounded
+                                      : Icons.expand_more_rounded,
+                                  size: 18,
+                                  color: colors.primary,
+                                ),
+                              ],
                             ),
-                            const SizedBox(width: 2),
-                            Icon(
-                              _detailsExpanded
-                                  ? Icons.expand_less_rounded
-                                  : Icons.expand_more_rounded,
-                              size: 18,
-                              color: colors.primary,
-                            ),
-                          ],
+                          ),
                         ),
                       ),
                     ),
@@ -570,12 +1119,9 @@ class _PlanCardState extends State<_PlanCard> {
               const SizedBox(height: 16),
               FilledButton.tonalIcon(
                 key: Key('purchase-plan-acquire-${plan.id}'),
-                onPressed:
-                    isSoldOut ? null : () => widget.onAcquirePlan!(plan),
+                onPressed: isSoldOut ? null : () => widget.onAcquirePlan!(plan),
                 icon: Icon(
-                  isSoldOut
-                      ? Icons.block_rounded
-                      : Icons.card_giftcard_rounded,
+                  isSoldOut ? Icons.block_rounded : Icons.card_giftcard_rounded,
                   size: 18,
                 ),
                 label: Text(l.purchaseAcquirePlanCode),

@@ -24,7 +24,13 @@
   - 全仓 Flutter 回归测试（`flutter test --no-pub -j 4`）：**PASS（968 PASS / 0 FAIL）**；
   - 静态检查（`dart analyze`）：**PASS（0 error / 0 warning / 0 info）**；`git diff --check` 通过；`pubspec.lock` 未改动；
   - 离线真实 Widget 合成数据渲染与逐图视觉复核：**PASS**（产物位于 `build/purchase-preview/*.png` 与 `build/plan-card-rich-content-preview/*.png`，详细记录见 [`engineering/testing/purchase-redemption-2026-10-11.md`](file:///E:/CodeWorkstation/FlClashX/engineering/testing/purchase-redemption-2026-10-11.md) 与 [`engineering/tasks/purchase-redemption-2026-10-11.md`](file:///E:/CodeWorkstation/FlClashX/engineering/tasks/purchase-redemption-2026-10-11.md)）。
-- 交付状态：**已实现 / 已本地提交**；未推送远端 / 未创建或合并 PR / 远端 CI **NOT RUN** / 离线 Widget 截图已预览（未启动真实客户端窗口，未触碰本机运行中代理、TUN 及服务） / 服务端部署与线上真实发卡消费业务验收 **NOT RUN**。
+- Code Review 复核与修复（针对 `development@cb68fb9` 的 `CR-01`–`CR-07` 共 `2 P1 / 3 P2 / 2 P3`）：
+  1. **[CR-01 / P1] 修复长 Markdown 渐进折叠按物理行硬切破坏 GFM 表格与围栏代码块**：在 [`summarizePlanMarkdown`](file:///E:/CodeWorkstation/FlClashX/lib/views/purchase/plan_catalog.dart#L329-L433) 中改为块级结构感知摘要，跳过前导空行并保证 GFM 表格结构、围栏代码块及 `<u>` 标签成对闭合。
+  2. **[CR-02 / P1] 修复剪贴板智能粘贴误取时间戳/URL 端口及超长码 32 位静默截断**：新增 [`extractRedemptionCodeFromClipboard`](file:///E:/CodeWorkstation/FlClashX/lib/views/purchase/center.dart#L12-L55)，剥离 URL 与时间格式后优先提取标签卡密，并移除 `substring(0, 32)` 与输入框 `maxLength: 32`，确保超长无效串交由本地 `gift_code_format` 报错拦截。
+  3. **[CR-03 / P2] 修复获码弹窗微信按钮误标“微信号”、遮罩下弹条遮挡与非响应式状态**：抽离 [`_AcquirePlanSheet`](file:///E:/CodeWorkstation/FlClashX/lib/views/purchase/center.dart#L1364-L1570)，微信复制按钮修正为 `l.copy`（“复制”），改为弹窗内联即时反馈条并监听 `manager` 动态更新商店入口。
+  4. **[CR-04 / P2] 修复多国套餐只显示单国旗及英文营销词误判国家徽章**：新增 [`resolvePlanRegionBadge`](file:///E:/CodeWorkstation/FlClashX/lib/views/purchase/plan_catalog.dart#L265-L327)，按出现顺序渲染双国旗（`🇯🇵 🇸🇬`）、全球/多国渲染 `🌐`，剔除 `MY`/`IN` 等营销词冲突。
+  5. **[CR-05 & CR-06 & CR-07 / P2–P3] 修复混合套餐筛选显隐、纯空格清空按钮联动、登出失败状态保护、键盘焦点可达性、手风琴无障碍语义与代码格式**：新增 6 组 TDD 回归测试（前置有效 Red：`6 PASS / 6 FAIL`），修复后 `test/purchase` **308 PASS / 0 FAIL**、全仓 **974 PASS / 0 FAIL**、`dart analyze` `No issues found!`、`dart format` 零差异。
+- 交付状态：**已实现 / 已完成 Code Review 修复并本地提交**；未推送远端 / 未创建或合并 PR / 远端 CI **NOT RUN** / 离线 Widget 截图已二次核验（未启动真实客户端窗口，未触碰本机运行中代理、TUN 及服务） / 服务端部署与线上真实发卡消费业务验收 **NOT RUN**。
 
 ## 本机历史产出清理（2026-10-25）
 

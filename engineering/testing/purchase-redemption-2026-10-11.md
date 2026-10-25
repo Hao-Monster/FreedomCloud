@@ -45,6 +45,22 @@
    - 命令：`& E:\flutter\bin\flutter.bat test --no-pub test/purchase/purchase_render_test.dart test/purchase/plan_catalog_render_test.dart --reporter expanded`
    - 产物路径：`build/purchase-preview/flagship-us-single.png`、`login.png`、`redemption-preview.png`、`success-sync-failed.png`、`narrow-login.png`、`narrow-preview.png`（及对应 `*-support.png`）与 `build/plan-card-rich-content-preview/catalog-light.png`、`catalog-dark.png`、`catalog-narrow.png`、`catalog-large-text.png`。
    - 视觉审查修正：首轮截图巡检发现混排中英文标签绑定 `JetBrainsMono` 时缺少中文字体回退链导致中文字符显示为 `.notdef` 方框，已在 `plan_catalog.dart` 与 `center.dart` 补齐 `_cjkMonoFallback` 回退链并二次生成 PNG 逐图人工核验通过。
+7. **Code Review 七项问题（`CR-01`–`CR-07`）修复与回归验证**
+   - 范围：针对 `development@cb68fb9` 独立审查识别的 7 项问题实施修复：
+     - `CR-01`（P1）：新增块级结构感知摘要 `summarizePlanMarkdown`，跳过前导空行并保持 GFM 表格表头/分隔行/数据行、围栏代码块 ```` ``` ```` 及 `<u>...</u>` 完整闭合；
+     - `CR-02`（P1）：新增 `extractRedemptionCodeFromClipboard`，剥离 URL 端口与时间戳冒号干扰，优先提取显式标签卡密，并移除 `substring(0, 32)` 与 `maxLength: 32` 静默截断，保留超长无效串交由本地 `gift_code_format` 拦截；
+     - `CR-03`（P2）：抽离响应式 `_AcquirePlanSheet`，修正微信按钮文案为 `l.copy`（“复制”），使用弹窗内联反馈条替代被遮罩遮挡的底层 `SnackBar`，支持 `cardStoreUrl` 动态响应；
+     - `CR-04`（P2）：新增 `resolvePlanRegionBadge`，按出现顺序渲染双国旗（如“日本/新加坡” → `🇯🇵 🇸🇬`）、全球/三国及以上渲染 `🌐`，剔除 `MY`/`IN` 等英文营销词误判；
+     - `CR-05`（P2）：修复混合计费套餐目录筛选胶囊显隐、`ValueListenableBuilder` 实时联动纯空格清空按钮，以及 `logout` 失败时不提前清空输入与折叠历史；
+     - `CR-06`（P3）：恢复窄窗 `purchase-jump-workbench` 与兑换码粘贴/清空按钮的键盘 `Tab` 可达性（仅保留密码显隐按钮跳过 `Tab`），并通过外层 `MergeSemantics` 注入手风琴 `button` + `expanded` 无障碍语义；
+     - `CR-07`（P3）：统一执行 `dart format` 清零缩进偏差。
+   - 前置 Red 验证：`test/purchase/purchase_v2_ux_test.dart` 新增 `CR-01`–`CR-06` 6 组回归用例，在旧实现上全部命中预期失败（`6 PASS / 6 FAIL`，退出码 `1`）。
+   - 修复后验证：
+     - `dart format --set-exit-if-changed`：**PASS**（0 差异）；
+     - `dart analyze`：**PASS**（`No issues found!`）；
+     - `flutter test --no-pub test/purchase`：**PASS**（`308 PASS / 0 FAIL`）；
+     - 全仓 `flutter test --no-pub -j 4`：**PASS**（`974 PASS / 0 FAIL`）；
+     - 离线 PNG 快照二次核验：`build/purchase-preview/login.png`、`redemption-preview.png`、`narrow-login.png` 已目视确认双国旗 `🇯🇵 🇸🇬` 顺序正确且去掉 `maxLength` 字符计数噪声。
 
 ## 3. 未运行项与边界说明（NOT RUN）
 
