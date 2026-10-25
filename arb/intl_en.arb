@@ -560,7 +560,7 @@
   "purchaseCenterDescription": "Redeem your card to activate or renew your service, then sync your subscription.",
   "purchaseAccount": "Account and subscription",
   "purchaseLoginTitle": "Sign in to redeem",
-  "purchaseLoginDescription": "Use your Xboard account. Cards are redeemed for the account shown here.",
+  "purchaseLoginDescription": "Sign in to your account to redeem a code and sync high-speed nodes automatically.",
   "purchaseEmail": "Email address",
   "purchasePassword": "Password",
   "purchaseLogin": "Sign in",
@@ -813,6 +813,47 @@
   "nodeOverviewHealthStoreUnavailable": "Some delay results could not be saved",
   "nodeOverviewUseNode": "Use",
   "nodeOverviewInUse": "In use",
+  "purchaseStepBrowse": "1. Choose plan or get code",
+  "purchaseStepRedeem": "2. Sign in & verify code",
+  "purchaseStepSync": "3. Auto-sync nodes",
+  "purchaseJumpToWorkbench": "Have a code? Redeem now",
+  "purchaseFilterAll": "All plans",
+  "purchaseFilterPeriod": "Recurring",
+  "purchaseFilterOnetime": "Traffic pack",
+  "purchaseAcquirePlanCode": "Get redemption code",
+  "purchasePlanSoldOut": "Sold out",
+  "purchasePlanLowStock": "{count} left",
+  "@purchasePlanLowStock": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "purchasePlanExpandDetails": "Show full plan details",
+  "purchasePlanCollapseDetails": "Hide plan details",
+  "purchaseAcquireSheetSubtitle": "Contact support or open the card store to get a code, then return here to redeem. No order is created in the app.",
+  "purchaseCopyInquiry": "Copy plan inquiry",
+  "purchaseInquiryTemplate": "Hello, I would like to get a redemption code for [{plan} · {quota} GiB ({price})].",
+  "@purchaseInquiryTemplate": {
+    "placeholders": {
+      "plan": {
+        "type": "String"
+      },
+      "quota": {
+        "type": "int"
+      },
+      "price": {
+        "type": "String"
+      }
+    }
+  },
+  "purchaseShowPassword": "Show password",
+  "purchaseHidePassword": "Hide password",
+  "purchaseClearCode": "Clear code",
+  "purchaseRenewalBadge": "Renewal",
+  "purchaseNewActivationBadge": "New activation",
+  "purchaseOpenNodesAction": "View profiles & nodes",
   "nodeOverviewSwitchedToNode": "Switched to {profile} · {node}",
   "@nodeOverviewSwitchedToNode": {
     "placeholders": {

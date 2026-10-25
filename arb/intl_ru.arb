@@ -673,6 +673,48 @@
   "nodeOverviewHealthStoreUnavailable": "Не удалось сохранить часть результатов проверки задержки",
   "nodeOverviewUseNode": "Использовать",
   "nodeOverviewInUse": "Используется",
+  "purchaseLoginDescription": "Войдите в аккаунт для активации кода — тариф и узлы синхронизируются автоматически.",
+  "purchaseStepBrowse": "① Выберите тариф или код",
+  "purchaseStepRedeem": "② Войдите и проверьте код",
+  "purchaseStepSync": "③ Автосинхронизация узлов",
+  "purchaseJumpToWorkbench": "Есть код? Перейти к активации",
+  "purchaseFilterAll": "Все тарифы",
+  "purchaseFilterPeriod": "По периоду",
+  "purchaseFilterOnetime": "Пакеты трафика",
+  "purchaseAcquirePlanCode": "Получить код тарифа",
+  "purchasePlanSoldOut": "Распродано",
+  "purchasePlanLowStock": "Осталось: {count}",
+  "@purchasePlanLowStock": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "purchasePlanExpandDetails": "Показать полное описание",
+  "purchasePlanCollapseDetails": "Свернуть описание",
+  "purchaseAcquireSheetSubtitle": "Получите код через магазин карт или WeChat ниже, затем активируйте его здесь. Заказ в приложении не создаётся.",
+  "purchaseCopyInquiry": "Скопировать запрос",
+  "purchaseInquiryTemplate": "Здравствуйте! Хочу приобрести код активации для тарифа «{plan} · {quota} GiB ({price})».",
+  "@purchaseInquiryTemplate": {
+    "placeholders": {
+      "plan": {
+        "type": "String"
+      },
+      "quota": {
+        "type": "int"
+      },
+      "price": {
+        "type": "String"
+      }
+    }
+  },
+  "purchaseShowPassword": "Показать пароль",
+  "purchaseHidePassword": "Скрыть пароль",
+  "purchaseClearCode": "Очистить код",
+  "purchaseRenewalBadge": "Продление",
+  "purchaseNewActivationBadge": "Новая активация",
+  "purchaseOpenNodesAction": "Открыть профили и узлы",
   "nodeOverviewSwitchedToNode": "Переключено на {profile} · {node}",
   "@nodeOverviewSwitchedToNode": {
     "placeholders": {

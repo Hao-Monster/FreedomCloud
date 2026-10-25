@@ -4489,10 +4489,10 @@ class AppLocalizations {
     );
   }
 
-  /// `Use your Xboard account. Cards are redeemed for the account shown here.`
+  /// `Sign in to your account to redeem a code and sync high-speed nodes automatically.`
   String get purchaseLoginDescription {
     return Intl.message(
-      'Use your Xboard account. Cards are redeemed for the account shown here.',
+      'Sign in to your account to redeem a code and sync high-speed nodes automatically.',
       name: 'purchaseLoginDescription',
       desc: '',
       args: [],
@@ -6134,6 +6134,216 @@ class AppLocalizations {
     return Intl.message(
       'In use',
       name: 'nodeOverviewInUse',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `1. Choose plan or get code`
+  String get purchaseStepBrowse {
+    return Intl.message(
+      '1. Choose plan or get code',
+      name: 'purchaseStepBrowse',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `2. Sign in & verify code`
+  String get purchaseStepRedeem {
+    return Intl.message(
+      '2. Sign in & verify code',
+      name: 'purchaseStepRedeem',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `3. Auto-sync nodes`
+  String get purchaseStepSync {
+    return Intl.message(
+      '3. Auto-sync nodes',
+      name: 'purchaseStepSync',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Have a code? Redeem now`
+  String get purchaseJumpToWorkbench {
+    return Intl.message(
+      'Have a code? Redeem now',
+      name: 'purchaseJumpToWorkbench',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `All plans`
+  String get purchaseFilterAll {
+    return Intl.message(
+      'All plans',
+      name: 'purchaseFilterAll',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Recurring`
+  String get purchaseFilterPeriod {
+    return Intl.message(
+      'Recurring',
+      name: 'purchaseFilterPeriod',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Traffic pack`
+  String get purchaseFilterOnetime {
+    return Intl.message(
+      'Traffic pack',
+      name: 'purchaseFilterOnetime',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Get redemption code`
+  String get purchaseAcquirePlanCode {
+    return Intl.message(
+      'Get redemption code',
+      name: 'purchaseAcquirePlanCode',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Sold out`
+  String get purchasePlanSoldOut {
+    return Intl.message(
+      'Sold out',
+      name: 'purchasePlanSoldOut',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `{count} left`
+  String purchasePlanLowStock(int count) {
+    return Intl.message(
+      '$count left',
+      name: 'purchasePlanLowStock',
+      desc: '',
+      args: [count],
+    );
+  }
+
+  /// `Show full plan details`
+  String get purchasePlanExpandDetails {
+    return Intl.message(
+      'Show full plan details',
+      name: 'purchasePlanExpandDetails',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Hide plan details`
+  String get purchasePlanCollapseDetails {
+    return Intl.message(
+      'Hide plan details',
+      name: 'purchasePlanCollapseDetails',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Contact support or open the card store to get a code, then return here to redeem. No order is created in the app.`
+  String get purchaseAcquireSheetSubtitle {
+    return Intl.message(
+      'Contact support or open the card store to get a code, then return here to redeem. No order is created in the app.',
+      name: 'purchaseAcquireSheetSubtitle',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Copy plan inquiry`
+  String get purchaseCopyInquiry {
+    return Intl.message(
+      'Copy plan inquiry',
+      name: 'purchaseCopyInquiry',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Hello, I would like to get a redemption code for [{plan} · {quota} GiB ({price})].`
+  String purchaseInquiryTemplate(String plan, int quota, String price) {
+    return Intl.message(
+      'Hello, I would like to get a redemption code for [$plan · $quota GiB ($price)].',
+      name: 'purchaseInquiryTemplate',
+      desc: '',
+      args: [plan, quota, price],
+    );
+  }
+
+  /// `Show password`
+  String get purchaseShowPassword {
+    return Intl.message(
+      'Show password',
+      name: 'purchaseShowPassword',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Hide password`
+  String get purchaseHidePassword {
+    return Intl.message(
+      'Hide password',
+      name: 'purchaseHidePassword',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Clear code`
+  String get purchaseClearCode {
+    return Intl.message(
+      'Clear code',
+      name: 'purchaseClearCode',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Renewal`
+  String get purchaseRenewalBadge {
+    return Intl.message(
+      'Renewal',
+      name: 'purchaseRenewalBadge',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `New activation`
+  String get purchaseNewActivationBadge {
+    return Intl.message(
+      'New activation',
+      name: 'purchaseNewActivationBadge',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `View profiles & nodes`
+  String get purchaseOpenNodesAction {
+    return Intl.message(
+      'View profiles & nodes',
+      name: 'purchaseOpenNodesAction',
       desc: '',
       args: [],
     );

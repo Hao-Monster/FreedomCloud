@@ -619,6 +619,48 @@
   "nodeOverviewHealthStoreUnavailable": "一部の遅延テスト結果を保存できませんでした",
   "nodeOverviewUseNode": "使用",
   "nodeOverviewInUse": "使用中",
+  "purchaseLoginDescription": "アカウントにサインインしてコードを引き換えると、プランと高速ノードが自動的に同期されます。",
+  "purchaseStepBrowse": "① プラン確認・コード取得",
+  "purchaseStepRedeem": "② サインインして確認",
+  "purchaseStepSync": "③ ノード自動同期",
+  "purchaseJumpToWorkbench": "コードをお持ちの方はこちら",
+  "purchaseFilterAll": "すべて",
+  "purchaseFilterPeriod": "定期プラン",
+  "purchaseFilterOnetime": "通信量パック",
+  "purchaseAcquirePlanCode": "このプランのコードを取得",
+  "purchasePlanSoldOut": "売り切れ",
+  "purchasePlanLowStock": "残り {count} 枠",
+  "@purchasePlanLowStock": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "purchasePlanExpandDetails": "詳細をすべて表示",
+  "purchasePlanCollapseDetails": "詳細を折りたたむ",
+  "purchaseAcquireSheetSubtitle": "下記のストアまたは WeChat サポートでコードを取得し、この画面で引き換えてください。アプリ内で注文は作成されません。",
+  "purchaseCopyInquiry": "問い合わせ文をコピー",
+  "purchaseInquiryTemplate": "こんにちは。【{plan} · {quota} GiB（{price}）】の引き換えコードを購入したいです。",
+  "@purchaseInquiryTemplate": {
+    "placeholders": {
+      "plan": {
+        "type": "String"
+      },
+      "quota": {
+        "type": "int"
+      },
+      "price": {
+        "type": "String"
+      }
+    }
+  },
+  "purchaseShowPassword": "パスワードを表示",
+  "purchaseHidePassword": "パスワードを隠す",
+  "purchaseClearCode": "コードをクリア",
+  "purchaseRenewalBadge": "更新",
+  "purchaseNewActivationBadge": "新規有効化",
+  "purchaseOpenNodesAction": "プロファイルとノードを表示",
   "nodeOverviewSwitchedToNode": "{profile} · {node} に切り替えました",
   "@nodeOverviewSwitchedToNode": {
     "placeholders": {

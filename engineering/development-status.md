@@ -2,6 +2,21 @@
 
 更新日期：2026-10-25。当前阶段是快速开发、快速迭代和部分功能预览。本文记录来源与验收边界；每次继续开发仍需核实实际 Git/PR/CI 状态，不能把历史报告视为当前通过证明。
 
+## 仅兑换码购买页 UI/UE 工作台重构与体验优化（2026-10-25）
+
+- 来源：基于购买页方案 [`purchase-redemption-2026-10-11.md`](file:///E:/CodeWorkstation/FlClashX/engineering/plans/purchase-redemption-2026-10-11.md)（仅兑换码 v2）与产品/UX 优化规范，从基线 `development@591481f` 完成 `D1`–`D5` 客户端购买页重构，严格保持“外部渠道获码 + 客户端核销 `type4` 套餐码/兼容 `type1–3` 旧卡 + 自动同步订阅”的唯一业务主线，未引入钱包、余额、报价、选支付方式或在线订单，未改动 `Xboard-Go` 后端及其他客户端页面。
+- 核心实现：
+  1. **桌面双栏“左橱窗 + 右工作台”与窄窗直达核销架构**：重写 [`PurchaseCenter`](file:///E:/CodeWorkstation/FlClashX/lib/views/purchase/center.dart#L15-L416)，在 `>= 860 * textScale` 宽窗采用左侧自适应套餐橱窗 + 右侧 `356–420px` 核销/账户工作台并排布局（彻底消除单套餐右半屏留白黑洞与多套餐下有码用户滚屏痛点），窄窗自动回退纵向单列并在顶部提供跳过 `Tab` 陷阱的“已有兑换码？直达核销”锚点按钮（`purchase-jump-workbench`）。
+  2. **高信息密度套餐卡片、国旗徽标与不建单购码抽屉**：重写 [`PurchasePlanCatalog`](file:///E:/CodeWorkstation/FlClashX/lib/views/purchase/plan_catalog.dart#L14-L600)，单套餐自动通栏展开、多套餐响应式双列网格；复用 [`inferCountryCodeFromText`](file:///E:/CodeWorkstation/FlClashX/lib/common/node_country.dart) + `Twemoji` 渲染国家国旗徽标，支持混合目录 `全部套餐 / 周期订阅 / 按量流量包` 筛选胶囊、余量稀缺/售罄角标、长 Markdown 说明渐进展开，以及卡片底部“获取此套餐兑换码”抽屉（支持一键复制带套餐名/流量/标价的客服咨询话术、复制两个微信号与打开礼品卡商店，零建单/零兑码副作用）。
+  3. **品牌去 `Xboard` 化、支票级权益核验卡与默认折叠历史**：更新四语种 `arb/intl_*.arb` 与 `lib/l10n/*` 清理界面暴露的 `Xboard` 字样，并将 [`PurchaseProfileSynchronizer.synchronize`](file:///E:/CodeWorkstation/FlClashX/lib/services/purchase_profile_sync.dart#L56-L58) 新建托管配置默认标签改为 `'FreedomCloud · ${account.email}'`（保留 `xboard-$ownership` ID 与安全请求头标记）；兑换码输入框内置智能清洗粘贴与清空按钮，核验后呈现含 `兑换前 → 兑换后` 对比及新开通/续费徽标的确认卡；成功回执置顶并附一键查看配置与节点入口（`purchase-open-profiles`）；兑换记录默认收起并展示总数角标，按需展开分页；所有 `JetBrainsMono` 混排文本均补齐 `_cjkMonoFallback` 中文字体回退链。
+- 验证记录（本机 `Flutter 3.47.4` / `Dart 3.13.3`，CI 配置 `3.41.7`）：
+  - 基线测试 `test/purchase`：**PASS（296 PASS / 0 FAIL）**；`D1` 新目标用例前置验证：**有效 Red（退出码 1，24 PASS / 10 FAIL）**；
+  - 购买模块全量测试（含新增 [`purchase_v2_ux_test.dart`](file:///E:/CodeWorkstation/FlClashX/test/purchase/purchase_v2_ux_test.dart) 覆盖 `R01`–`R12`）：**PASS（302 PASS / 0 FAIL）**；
+  - 全仓 Flutter 回归测试（`flutter test --no-pub -j 4`）：**PASS（968 PASS / 0 FAIL）**；
+  - 静态检查（`dart analyze`）：**PASS（0 error / 0 warning / 0 info）**；`git diff --check` 通过；`pubspec.lock` 未改动；
+  - 离线真实 Widget 合成数据渲染与逐图视觉复核：**PASS**（产物位于 `build/purchase-preview/*.png` 与 `build/plan-card-rich-content-preview/*.png`，详细记录见 [`engineering/testing/purchase-redemption-2026-10-11.md`](file:///E:/CodeWorkstation/FlClashX/engineering/testing/purchase-redemption-2026-10-11.md) 与 [`engineering/tasks/purchase-redemption-2026-10-11.md`](file:///E:/CodeWorkstation/FlClashX/engineering/tasks/purchase-redemption-2026-10-11.md)）。
+- 交付状态：**已实现 / 已本地提交**；未推送远端 / 未创建或合并 PR / 远端 CI **NOT RUN** / 离线 Widget 截图已预览（未启动真实客户端窗口，未触碰本机运行中代理、TUN 及服务） / 服务端部署与线上真实发卡消费业务验收 **NOT RUN**。
+
 ## 本机历史产出清理（2026-10-25）
 
 - 来源：用户授权先检查、制定方案并清理；固定产品源码 `development@a47738de808913ffac9ec148330fd5086b566f81`，开工领先自有远端 11 个提交。清理对象为编译缓存、旧备份内缓存副本及已集成/补丁等效的干净工作树。

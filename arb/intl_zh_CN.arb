@@ -509,7 +509,7 @@
   "purchaseCenterDescription": "使用礼品卡开通或续费服务，兑换后同步订阅。",
   "purchaseAccount": "账户与订阅",
   "purchaseLoginTitle": "登录后兑换",
-  "purchaseLoginDescription": "使用 Xboard 账户登录，礼品卡权益将发放至当前账户。",
+  "purchaseLoginDescription": "登录账户后核销兑换码，套餐权益与高速节点将自动同步至本机。",
   "purchaseEmail": "邮箱地址",
   "purchasePassword": "密码",
   "purchaseLogin": "登录",
@@ -754,6 +754,47 @@
   "nodeOverviewHealthStoreUnavailable": "部分延迟测试结果未能保存",
   "nodeOverviewUseNode": "使用",
   "nodeOverviewInUse": "使用中",
+  "purchaseStepBrowse": "① 选套餐或获取兑换码",
+  "purchaseStepRedeem": "② 登录并核验兑换码",
+  "purchaseStepSync": "③ 自动同步节点",
+  "purchaseJumpToWorkbench": "已有兑换码？直达核销",
+  "purchaseFilterAll": "全部套餐",
+  "purchaseFilterPeriod": "周期订阅",
+  "purchaseFilterOnetime": "按量流量包",
+  "purchaseAcquirePlanCode": "获取此套餐兑换码",
+  "purchasePlanSoldOut": "已售罄",
+  "purchasePlanLowStock": "仅剩 {count} 席",
+  "@purchasePlanLowStock": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "purchasePlanExpandDetails": "展开完整套餐说明",
+  "purchasePlanCollapseDetails": "收起套餐说明",
+  "purchaseAcquireSheetSubtitle": "通过下方自助商店或微信客服获取兑换码后，返回本页输入核销；客户端内不创建付款订单。",
+  "purchaseCopyInquiry": "一键复制咨询口令",
+  "purchaseInquiryTemplate": "您好，我想咨询购买【{plan} · {quota} GiB（{price}）】兑换码。",
+  "@purchaseInquiryTemplate": {
+    "placeholders": {
+      "plan": {
+        "type": "String"
+      },
+      "quota": {
+        "type": "int"
+      },
+      "price": {
+        "type": "String"
+      }
+    }
+  },
+  "purchaseShowPassword": "显示密码",
+  "purchaseHidePassword": "隐藏密码",
+  "purchaseClearCode": "清空兑换码",
+  "purchaseRenewalBadge": "续费叠加",
+  "purchaseNewActivationBadge": "新购开通",
+  "purchaseOpenNodesAction": "查看配置与节点",
   "nodeOverviewSwitchedToNode": "已切换至 {profile} · {node}",
   "@nodeOverviewSwitchedToNode": {
     "placeholders": {

@@ -54,7 +54,7 @@ class PurchaseProfileSynchronizer {
             (profile.providerHeaders[xboardAccountMarker] == null ||
                 profile.providerHeaders[xboardAccountMarker] == ownership));
     final base = existing ??
-        Profile.normal(label: 'Xboard · ${account.email}')
+        Profile.normal(label: 'FreedomCloud · ${account.email}')
             .copyWith(id: 'xboard-$ownership');
     final target = base.copyWith(
       url: subscription.url.toString(),
