@@ -698,7 +698,7 @@
   },
   "nodeOverviewTestCurrent": "测当前配置",
   "nodeOverviewTestAll": "测试全部节点延迟",
-  "nodeOverviewTestNode": "测试此节点",
+  "nodeOverviewTestNode": "延迟测试",
   "nodeOverviewProgress": "{completed} / {total}",
   "@nodeOverviewProgress": {
     "placeholders": {

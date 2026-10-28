@@ -672,7 +672,7 @@ class MessageLookup extends MessageLookupByLibrary {
       "Проверка прервана; предыдущие результаты сохранены",
     ),
     "nodeOverviewTestNode": MessageLookupByLibrary.simpleMessage(
-      "Проверить этот узел",
+      "Тест задержки",
     ),
     "nodeOverviewTestTimedOut": MessageLookupByLibrary.simpleMessage(
       "Истекло время проверки или чтения провайдера",

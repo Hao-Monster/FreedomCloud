@@ -167,7 +167,12 @@ void main() {
     ProfileCatalog? activeCatalog,
     NodeHealthStore? healthStore,
     _CatalogTester? catalogTester,
+    Locale locale = const Locale('en'),
   }) async {
+    if (locale != const Locale('en')) {
+      await AppLocalizations.load(locale);
+      addTearDown(() => AppLocalizations.load(const Locale('en')));
+    }
     tester.view.physicalSize = Size(width, 1000);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
@@ -203,7 +208,7 @@ void main() {
                 testUrl: ref.watch(nodeOverviewTestUrlProvider))),
       ],
       child: MaterialApp(
-        locale: const Locale('en'),
+        locale: locale,
         localizationsDelegates: const [
           AppLocalizations.delegate,
           GlobalMaterialLocalizations.delegate,
@@ -846,7 +851,7 @@ void main() {
                 unsupported: CatalogUnsupportedReason.typeUnsupported),
           ])
     });
-    expect(find.byTooltip('Test this node'), findsNothing);
+    expect(find.widgetWithText(TextButton, 'Delay test'), findsNothing);
     expect(find.text('Proxy chains cannot be tested in isolation'),
         findsOneWidget);
     expect(find.text('This protocol is not supported for isolated tests'),
@@ -894,7 +899,7 @@ void main() {
     final backend = _CatalogTester();
     await mount(tester,
         width: 1200, catalogs: {'a': catalog}, catalogTester: backend);
-    expect(find.byTooltip('Test this node'), findsOneWidget);
+    expect(find.widgetWithText(TextButton, 'Delay test'), findsOneWidget);
     expect(find.text('This protocol is not supported for isolated tests'),
         findsNWidgets(2));
     expect(find.text('Proxy chains cannot be tested in isolation'),
@@ -993,7 +998,7 @@ void main() {
         isNull);
     expect(
         tester
-            .widget<IconButton>(
+            .widget<TextButton>(
                 find.byKey(const ValueKey('overview-test-a-a-node')))
             .onPressed,
         isNull);
@@ -3375,6 +3380,98 @@ void main() {
       reason:
           'URLTest group under GLOBAL switches autonomously and must not be treated as a deterministic static target',
     );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'both active and inactive node rows render explicit "延迟测试" TextButton without bolt icon and dispatch single-node tests',
+      (tester) async {
+    final backend = _CatalogTester();
+    globalState.config = globalState.config.copyWith(currentProfileId: 'a');
+    globalState.appState = globalState.appState.copyWith(
+      groups: const [
+        Group(
+          name: 'Select',
+          type: GroupType.Selector,
+          hidden: false,
+          testUrl: 'https://active-group.invalid',
+          now: 'Active HK',
+          all: [
+            Proxy(name: 'Active HK', type: 'vless'),
+            Proxy(name: 'Active US', type: 'hysteria2'),
+          ],
+        ),
+      ],
+    );
+    final container = await mount(
+      tester,
+      width: 1200,
+      locale: const Locale('zh', 'CN'),
+      catalogTester: backend,
+      catalogs: {
+        'a': ProfileCatalog(
+          profileId: 'a',
+          fingerprint: 'fixture-a',
+          status: ProfileCatalogStatus.ready,
+          nodes: [
+            _node('a-hk', 'Active HK'),
+            _node('a-us', 'Active US'),
+          ],
+        ),
+        'b': ProfileCatalog(
+          profileId: 'b',
+          fingerprint: 'fixture-b',
+          status: ProfileCatalogStatus.ready,
+          nodes: [
+            _node('b-uk', 'Inactive UK'),
+          ],
+        ),
+      },
+    );
+
+    final nodesList = find.byKey(const ValueKey('overview-nodes'));
+    expect(
+      find.descendant(of: nodesList, matching: find.byIcon(Icons.bolt)),
+      findsNothing,
+    );
+
+    final activeTestHk = find.byKey(const ValueKey('overview-test-a-Active HK'));
+    final activeTestUs = find.byKey(const ValueKey('overview-test-a-Active US'));
+    final inactiveTestUk = find.byKey(const ValueKey('overview-test-b-b-uk'));
+    expect(activeTestHk, findsOneWidget);
+    expect(activeTestUs, findsOneWidget);
+    expect(inactiveTestUk, findsOneWidget);
+    expect(
+      find.descendant(of: nodesList, matching: find.widgetWithText(TextButton, '延迟测试')),
+      findsNWidgets(3),
+    );
+
+    await tester.tap(activeTestHk);
+    await tester.pumpAndSettle();
+    expect(
+      backend.current.single.map((t) => (t.name, t.url, t.scope)),
+      [('Active HK', 'https://active-group.invalid', null)],
+    );
+    expect(backend.batches, isEmpty);
+
+    await tester.tap(inactiveTestUk);
+    await tester.pumpAndSettle();
+    expect(backend.batches.single.single.profile.id, 'b');
+    expect(backend.batches.single.single.nodes.single.identityKey, 'b-uk');
+
+    // Disables active single-node test button when tester is busy or delay == 0.
+    backend.progress(done: 0, count: 1);
+    await tester.pump();
+    expect(tester.widget<TextButton>(activeTestHk).onPressed, isNull);
+    expect(tester.widget<TextButton>(inactiveTestUk).onPressed, isNull);
+
+    await backend.cancel();
+    container.read(delayDataSourceProvider.notifier).value = {
+      'https://active-group.invalid': {'Active US': 0},
+    };
+    await tester.pump();
+    expect(tester.widget<TextButton>(activeTestHk).onPressed, isNotNull);
+    expect(tester.widget<TextButton>(activeTestUs).onPressed, isNull);
     expect(tester.takeException(), isNull);
   });
 }

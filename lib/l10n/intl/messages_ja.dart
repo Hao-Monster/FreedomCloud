@@ -480,7 +480,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "nodeOverviewTestInterrupted": MessageLookupByLibrary.simpleMessage(
       "テストを中断しました。以前の測定結果は保持されています",
     ),
-    "nodeOverviewTestNode": MessageLookupByLibrary.simpleMessage("このノードをテスト"),
+    "nodeOverviewTestNode": MessageLookupByLibrary.simpleMessage("遅延テスト"),
     "nodeOverviewTestTimedOut": MessageLookupByLibrary.simpleMessage(
       "テストまたはプロバイダーの読み取りがタイムアウトしました",
     ),

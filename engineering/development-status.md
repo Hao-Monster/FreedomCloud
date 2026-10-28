@@ -1,6 +1,18 @@
 # 开发、集成与预览台账
 
-更新日期：2026-10-26。当前阶段是快速开发、快速迭代和部分功能预览。本文记录来源与验收边界；每次继续开发仍需核实实际 Git/PR/CI 状态，不能把历史报告视为当前通过证明。
+更新日期：2026-10-28。当前阶段是快速开发、快速迭代和部分功能预览。本文记录来源与验收边界；每次继续开发仍需核实实际 Git/PR/CI 状态，不能把历史报告视为当前通过证明。
+
+## 跨配置节点总览单节点“延迟测试”文字按钮统一与活动配置补齐（2026-10-28）
+
+- 来源：针对“代理 → 全部配置”（[`NodeOverviewView`](file:///E:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart#L151-L156)）单节点测速闪电按钮（`Icons.bolt`）在活动配置节点行缺失及图标语义不直观的问题，从基线 `development@3656c4e` 将单节点测速入口统一改为文字按钮 **`延迟测试`**（`nodeOverviewTestNode`），并同时覆盖活动配置与非活动配置节点行。
+- 核心实现：
+  1. **单节点文字按钮替换闪电图标**：新增 [`_buildTestButton`](file:///E:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart#L1509-L1528) 与自适应头部行布局 [`_buildNodeHeaderLayout`](file:///E:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart#L1560-L1606)（宽屏单行并排、窄屏 `< 460 * textScale` 自动折行防溢出），替换 [`_InactiveNodeRow`](file:///E:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart#L2044-L2091) 原 `IconButton(icon: Icons.bolt)`，保持 P1 隔离测速不支持项（`parseFailed` / `chainUnsupported` / `typeUnsupported` / `strictModeUnsupported`）不暴露隔离测速按钮的安全边界不变；四语种 `arb/intl_*.arb` 与 `lib/l10n/*` 同步更新（`zh_CN`：`延迟测试`、`en`：`Delay test`、`ja`：`遅延テスト`、`ru`：`Тест задержки`）。
+  2. **活动配置节点行补齐单节点“延迟测试”**：在 [`_ActiveDisplay`](file:///E:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart#L1622-L1632) 保留代理组有效 `testUrl`，新增 [`_NodeOverviewViewState._testActiveNode`](file:///E:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart#L528-L537) 接入共享协调器 `_tester.testCurrent`，并在 [`_ActiveNodes`](file:///E:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart#L1700-L1817) / [`_ActiveNodeRow`](file:///E:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart#L1819-L1928) 渲染 `ValueKey('overview-test-${profile.id}-${entry.proxy.name}')` 的 `延迟测试` 按钮（在 `tester.busy || entry.delay == 0 || profile.isUpdating` 时自动禁用），消除切换活动配置后测速按钮消失的问题。
+- 验证记录（本机 `Flutter 3.47.4` / `Dart 3.13.3`，CI 配置 `3.41.7`）：
+  - 前置有效 Red（`test/views/node_overview_test.dart`）：退出码 `1`（`82 PASS / 3 FAIL`）；
+  - 组件与回归测试（`test/views/node_overview_test.dart`，含新增中英文双态单节点测速断言）：**PASS（85 PASS / 0 FAIL）**；
+  - 静态检查（`dart analyze lib/views/proxies/overview/overview.dart lib/l10n test/views/node_overview_test.dart`）：**PASS（0 error / 0 warning / 0 新增 info）**；`git diff --check` 通过；`pubspec.lock` 未改动。
+- 交付状态：**已实现 / 已本地验证并提交至本地 `development`**；未推送远端（因未经推送授权，当前本地 `development` 位于 `E:\CodeWorkstation\FlClashX`） / 未创建或合并 PR / 远端 CI **NOT RUN** / 未重打静态预览包 / 未启动候选窗口（未触碰本机运行中代理、TUN 及后台服务） / 后端部署与业务验收 **NOT RUN**。下一步：如需预览包或推送 `freedomcloud/development` 可按授权继续执行。
 
 ## Windows 仅兑换码购买与核销工作台 v2 预览交付（2026-10-26）
 

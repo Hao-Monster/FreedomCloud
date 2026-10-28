@@ -617,7 +617,7 @@
   },
   "nodeOverviewTestCurrent": "Проверить текущий профиль",
   "nodeOverviewTestAll": "Проверить задержку всех узлов",
-  "nodeOverviewTestNode": "Проверить этот узел",
+  "nodeOverviewTestNode": "Тест задержки",
   "nodeOverviewProgress": "{completed} / {total}",
   "@nodeOverviewProgress": {
     "placeholders": {

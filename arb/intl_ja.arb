@@ -563,7 +563,7 @@
   },
   "nodeOverviewTestCurrent": "現在のプロファイルをテスト",
   "nodeOverviewTestAll": "全ノードの遅延を測定",
-  "nodeOverviewTestNode": "このノードをテスト",
+  "nodeOverviewTestNode": "遅延テスト",
   "nodeOverviewProgress": "{completed} / {total}",
   "@nodeOverviewProgress": {
     "placeholders": {

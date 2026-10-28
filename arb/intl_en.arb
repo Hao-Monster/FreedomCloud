@@ -757,7 +757,7 @@
   },
   "nodeOverviewTestCurrent": "Test current profile",
   "nodeOverviewTestAll": "Test all node delays",
-  "nodeOverviewTestNode": "Test this node",
+  "nodeOverviewTestNode": "Delay test",
   "nodeOverviewProgress": "{completed} / {total}",
   "@nodeOverviewProgress": {
     "placeholders": {

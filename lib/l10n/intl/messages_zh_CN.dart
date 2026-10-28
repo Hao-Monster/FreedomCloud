@@ -498,7 +498,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "nodeOverviewTestInterrupted": MessageLookupByLibrary.simpleMessage(
       "测速已中断，已保留此前的测量结果",
     ),
-    "nodeOverviewTestNode": MessageLookupByLibrary.simpleMessage("测试此节点"),
+    "nodeOverviewTestNode": MessageLookupByLibrary.simpleMessage("延迟测试"),
     "nodeOverviewTestTimedOut": MessageLookupByLibrary.simpleMessage(
       "测速或订阅源读取超时",
     ),

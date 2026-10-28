@@ -5909,10 +5909,10 @@ class AppLocalizations {
     );
   }
 
-  /// `Test this node`
+  /// `Delay test`
   String get nodeOverviewTestNode {
     return Intl.message(
-      'Test this node',
+      'Delay test',
       name: 'nodeOverviewTestNode',
       desc: '',
       args: [],

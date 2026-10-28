@@ -755,7 +755,7 @@ class MessageLookup extends MessageLookupByLibrary {
       "Test interrupted; earlier measurements were preserved",
     ),
     "nodeOverviewTestNode": MessageLookupByLibrary.simpleMessage(
-      "Test this node",
+      "Delay test",
     ),
     "nodeOverviewTestTimedOut": MessageLookupByLibrary.simpleMessage(
       "Test or provider read timed out",

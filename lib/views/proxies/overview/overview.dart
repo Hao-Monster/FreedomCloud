@@ -525,6 +525,17 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
             (profile: profile, nodes: [node])
           ], ref.read(nodeOverviewTestUrlProvider))));
 
+  void _testActiveNode(Proxy proxy, String? testUrl) {
+    final state = ref.read(getProxyCardStateProvider(proxy.name));
+    if (state.proxyName.isEmpty) return;
+    final url = state.testUrl.getSafeValue(
+      ref.read(getRealTestUrlProvider(testUrl)),
+    );
+    unawaited(
+      _run(() => _tester.testCurrent([DelayTestTarget(state.proxyName, url)])),
+    );
+  }
+
   void _useActiveNode(Profile profile, String groupName, String proxyName) {
     detectionState.notifyRoutingChanged();
     ref.read(nodeCountryResolverProvider).markSwitchingNode();
@@ -1017,6 +1028,7 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
                       onVisibilityChanged: (isVisible) =>
                           _onProfileVisibilityChanged(profile.id, isVisible),
                       onTest: _testNode,
+                      onTestActive: _testActiveNode,
                       onUseActive: _useActiveNode,
                       onUseCatalog: _useCatalogNode,
                       now: now),
@@ -1104,6 +1116,7 @@ class _ProfileNodesSliver extends ConsumerStatefulWidget {
       required this.countryFilter,
       required this.onVisibilityChanged,
       required this.onTest,
+      required this.onTestActive,
       required this.onUseActive,
       required this.onUseCatalog,
       required this.now});
@@ -1116,6 +1129,7 @@ class _ProfileNodesSliver extends ConsumerStatefulWidget {
   final String? countryFilter;
   final ValueChanged<bool> onVisibilityChanged;
   final void Function(Profile, CatalogNode) onTest;
+  final void Function(Proxy, String? testUrl) onTestActive;
   final void Function(Profile, String groupName, String proxyName) onUseActive;
   final void Function(Profile, CatalogNode, String targetGroup) onUseCatalog;
   final DateTime now;
@@ -1267,6 +1281,7 @@ class _ProfileNodesSliverState extends ConsumerState<_ProfileNodesSliver> {
               query: profileMatches ? '' : query,
               availableOnly: widget.availableOnly,
               countryFilter: widget.countryFilter,
+              onTest: widget.onTestActive,
               onUse: widget.onUseActive,
               now: widget.now,
               sort: sort)
@@ -1491,6 +1506,27 @@ String? _targetGroupForCatalogNode(
   };
 }
 
+Widget _buildTestButton(
+  BuildContext context, {
+  required Key buttonKey,
+  required VoidCallback? onPressed,
+}) {
+  final colorScheme = Theme.of(context).colorScheme;
+  return TextButton(
+    key: buttonKey,
+    onPressed: onPressed,
+    style: TextButton.styleFrom(
+      visualDensity: VisualDensity.compact,
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      minimumSize: Size.zero,
+      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      backgroundColor: colorScheme.surfaceContainerLow,
+      foregroundColor: colorScheme.primary,
+    ),
+    child: Text(appLocalizations.nodeOverviewTestNode),
+  );
+}
+
 Widget _buildUseButton(
   BuildContext context, {
   required Key buttonKey,
@@ -1520,6 +1556,55 @@ Widget _buildUseButton(
     ),
   );
 }
+
+Widget _buildNodeHeaderLayout(
+  BuildContext context, {
+  required String name,
+  required Widget status,
+  required List<Widget> actions,
+}) =>
+    LayoutBuilder(
+      builder: (context, constraints) {
+        final textScale = MediaQuery.textScalerOf(context).scale(1.0);
+        final singleRow =
+            actions.isEmpty || constraints.maxWidth >= 460 * textScale;
+        if (singleRow) {
+          return Row(
+            children: [
+              Expanded(child: Text(name)),
+              const SizedBox(width: 8),
+              status,
+              for (final action in actions) ...[
+                const SizedBox(width: 8),
+                action,
+              ],
+            ],
+          );
+        }
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                Expanded(child: Text(name)),
+                const SizedBox(width: 8),
+                Flexible(child: status),
+              ],
+            ),
+            const SizedBox(height: 6),
+            Align(
+              alignment: Alignment.centerRight,
+              child: Wrap(
+                spacing: 8,
+                runSpacing: 6,
+                alignment: WrapAlignment.end,
+                children: actions,
+              ),
+            ),
+          ],
+        );
+      },
+    );
 
 Map<String, ({Proxy proxy, String? testUrl, String? selectGroup})>
     _activeLeaves(WidgetRef ref) {
@@ -1568,6 +1653,7 @@ Map<String, ({Proxy proxy, String? testUrl, String? selectGroup})>
 
 typedef _ActiveDisplay = ({
   Proxy proxy,
+  String? testUrl,
   CatalogNode? node,
   NodeHealthRecord? history,
   int? delay,
@@ -1627,6 +1713,7 @@ Map<String, _ActiveDisplay> _activeDisplays(
             : ref.watch(getSelectedProxyNameProvider(selectGroup));
         return (
           proxy: entry.proxy,
+          testUrl: entry.testUrl,
           node: node,
           history: history,
           delay: _activeDelay(
@@ -1649,6 +1736,7 @@ class _ActiveNodes extends ConsumerWidget {
       required this.query,
       required this.availableOnly,
       required this.countryFilter,
+      required this.onTest,
       required this.onUse,
       required this.now,
       required this.sort});
@@ -1657,12 +1745,14 @@ class _ActiveNodes extends ConsumerWidget {
   final String query;
   final bool availableOnly;
   final String? countryFilter;
+  final void Function(Proxy proxy, String? testUrl) onTest;
   final void Function(Profile, String groupName, String proxyName) onUse;
   final DateTime now;
   final ProxiesSortType sort;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final tester = ref.watch(nodeCatalogTesterProvider);
     final countryResolver = ref.watch(nodeCountryResolverProvider);
     final locale = Localizations.localeOf(context);
     final rows =
@@ -1731,6 +1821,11 @@ class _ActiveNodes extends ConsumerWidget {
                   history: entry.history,
                   fileSource: entry.fileSource,
                   independent: entry.independent,
+                  testKey: ValueKey(
+                      'overview-test-${profile.id}-${entry.proxy.name}'),
+                  onTest: tester.busy || entry.delay == 0 || profile.isUpdating
+                      ? null
+                      : () => onTest(entry.proxy, entry.testUrl),
                   useKey: ValueKey(
                       'overview-use-${profile.id}-${entry.proxy.name}'),
                   inUse: entry.inUse,
@@ -1756,6 +1851,8 @@ class _ActiveNodeRow extends StatelessWidget {
       required this.history,
       required this.fileSource,
       required this.independent,
+      required this.testKey,
+      required this.onTest,
       required this.useKey,
       required this.inUse,
       required this.onUse,
@@ -1768,6 +1865,8 @@ class _ActiveNodeRow extends StatelessWidget {
   final NodeHealthRecord? history;
   final bool fileSource;
   final bool independent;
+  final Key testKey;
+  final VoidCallback? onTest;
   final Key useKey;
   final bool inUse;
   final VoidCallback? onUse;
@@ -1792,30 +1891,35 @@ class _ActiveNodeRow extends StatelessWidget {
             padding: const EdgeInsets.all(12),
             child:
                 Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Row(children: [
-                Expanded(child: Text(proxy.name)),
-                const SizedBox(width: 8),
-                if (delay == 0)
-                  const SizedBox(
-                      width: 14,
-                      height: 14,
-                      child: CircularProgressIndicator(strokeWidth: 2))
-                else
-                  Text(
-                      delay == null
-                          ? appLocalizations.nodeOverviewUntested
-                          : delay! > 0
-                              ? '$delay ms'
-                              : appLocalizations.nodeOverviewTestFailed,
-                      style: TextStyle(color: color)),
-                const SizedBox(width: 8),
-                _buildUseButton(
-                  context,
-                  buttonKey: useKey,
-                  inUse: inUse,
-                  onPressed: onUse,
-                ),
-              ]),
+              _buildNodeHeaderLayout(
+                context,
+                name: proxy.name,
+                status: delay == 0
+                    ? const SizedBox(
+                        width: 14,
+                        height: 14,
+                        child: CircularProgressIndicator(strokeWidth: 2))
+                    : Text(
+                        delay == null
+                            ? appLocalizations.nodeOverviewUntested
+                            : delay! > 0
+                                ? '$delay ms'
+                                : appLocalizations.nodeOverviewTestFailed,
+                        style: TextStyle(color: color)),
+                actions: [
+                  _buildTestButton(
+                    context,
+                    buttonKey: testKey,
+                    onPressed: onTest,
+                  ),
+                  _buildUseButton(
+                    context,
+                    buttonKey: useKey,
+                    inUse: inUse,
+                    onPressed: onUse,
+                  ),
+                ],
+              ),
               const SizedBox(height: 4),
               Row(
                 children: [
@@ -1948,42 +2052,40 @@ class _InactiveNodeRow extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Row(children: [
-                  Expanded(child: Text(node.name)),
-                  const SizedBox(width: 8),
-                  if (invalid)
-                    Icon(Icons.help_outline,
-                        color: Theme.of(context).colorScheme.onSurfaceVariant)
-                  else if (pending)
-                    const SizedBox(
-                        width: 14,
-                        height: 14,
-                        child: CircularProgressIndicator(strokeWidth: 2))
-                  else
-                    Text(
-                        record == null
-                            ? appLocalizations.nodeOverviewUntested
-                            : record.delayMs > 0
-                                ? '${record.delayMs} ms'
-                                : appLocalizations.nodeOverviewTestFailed,
-                        style: TextStyle(color: color)),
-                  if (node.unsupported == CatalogUnsupportedReason.none)
-                    IconButton(
-                        key: testKey,
+                _buildNodeHeaderLayout(
+                  context,
+                  name: node.name,
+                  status: invalid
+                      ? Icon(Icons.help_outline,
+                          color: Theme.of(context).colorScheme.onSurfaceVariant)
+                      : pending
+                          ? const SizedBox(
+                              width: 14,
+                              height: 14,
+                              child: CircularProgressIndicator(strokeWidth: 2))
+                          : Text(
+                              record == null
+                                  ? appLocalizations.nodeOverviewUntested
+                                  : record.delayMs > 0
+                                      ? '${record.delayMs} ms'
+                                      : appLocalizations.nodeOverviewTestFailed,
+                              style: TextStyle(color: color)),
+                  actions: [
+                    if (node.unsupported == CatalogUnsupportedReason.none)
+                      _buildTestButton(
+                        context,
+                        buttonKey: testKey,
                         onPressed: onTest,
-                        icon: const Icon(Icons.bolt),
-                        tooltip: appLocalizations.nodeOverviewTestNode),
-                  if (!invalid) ...[
-                    if (node.unsupported != CatalogUnsupportedReason.none)
-                      const SizedBox(width: 8),
-                    _buildUseButton(
-                      context,
-                      buttonKey: useKey,
-                      inUse: inUse,
-                      onPressed: onUse,
-                    ),
+                      ),
+                    if (!invalid)
+                      _buildUseButton(
+                        context,
+                        buttonKey: useKey,
+                        inUse: inUse,
+                        onPressed: onUse,
+                      ),
                   ],
-                ]),
+                ),
                 const SizedBox(height: 4),
                 Row(
                   children: [
