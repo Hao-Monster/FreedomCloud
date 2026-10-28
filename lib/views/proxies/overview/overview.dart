@@ -902,7 +902,7 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
           child: Align(
             alignment: Alignment.centerLeft,
             child: Wrap(
-              spacing: 12,
+              spacing: 10,
               runSpacing: 8,
               crossAxisAlignment: WrapCrossAlignment.center,
               children: [
@@ -927,31 +927,17 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
                     onChanged: (value) => setState(
                         () => _selectedProfile = value == '' ? null : value),
                   ),
-                FilterChip(
-                    label: Text(appLocalizations.nodeOverviewAvailableOnly),
-                    selected: _availableOnly,
-                    onSelected: (value) =>
-                        setState(() => _availableOnly = value)),
-                DropdownButton<ProxiesSortType>(
+                _OverviewAvailableFilterButton(
+                  key: const ValueKey('overview-available-only'),
+                  selected: _availableOnly,
+                  onChanged: (value) => setState(() => _availableOnly = value),
+                ),
+                _OverviewSortSelector(
                   value: sort,
-                  items: [
-                    DropdownMenuItem(
-                        value: ProxiesSortType.none,
-                        child: Text(appLocalizations.defaultText)),
-                    DropdownMenuItem(
-                        value: ProxiesSortType.name,
-                        child: Text(appLocalizations.name)),
-                    DropdownMenuItem(
-                        value: ProxiesSortType.delay,
-                        child: Text(appLocalizations.delay)),
-                  ],
                   onChanged: (value) {
-                    if (value != null) {
-                      ref
-                          .read(proxiesStyleSettingProvider.notifier)
-                          .updateState(
-                              (state) => state.copyWith(sortType: value));
-                    }
+                    ref
+                        .read(proxiesStyleSettingProvider.notifier)
+                        .updateState((state) => state.copyWith(sortType: value));
                   },
                 ),
                 TextButton.icon(
@@ -1098,6 +1084,475 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
         )),
       ]);
     });
+  }
+}
+
+class _OverviewAvailableFilterButton extends StatefulWidget {
+  const _OverviewAvailableFilterButton({
+    super.key,
+    required this.selected,
+    required this.onChanged,
+  });
+
+  final bool selected;
+  final ValueChanged<bool> onChanged;
+
+  @override
+  State<_OverviewAvailableFilterButton> createState() =>
+      _OverviewAvailableFilterButtonState();
+}
+
+class _OverviewAvailableFilterButtonState
+    extends State<_OverviewAvailableFilterButton> {
+  bool _hovered = false;
+  bool _focused = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
+    final selected = widget.selected;
+    final borderRadius = BorderRadius.circular(10);
+    final inkBorderRadius = BorderRadius.circular(9);
+
+    final backgroundColor = selected
+        ? colors.primary.withValues(
+            alpha: _hovered ? (isDark ? 0.22 : 0.16) : (isDark ? 0.16 : 0.11),
+          )
+        : _hovered
+            ? colors.surfaceContainerHighest.withValues(
+                alpha: isDark ? 0.68 : 0.88,
+              )
+            : colors.surfaceContainerHigh.withValues(
+                alpha: isDark ? 0.45 : 0.65,
+              );
+    final borderColor = selected
+        ? colors.primary.withValues(
+            alpha: _hovered || _focused ? 0.78 : 0.60,
+          )
+        : _focused
+            ? colors.primary.withValues(alpha: 0.65)
+            : _hovered
+                ? colors.outline.withValues(alpha: 0.55)
+                : colors.outlineVariant.withValues(alpha: 0.60);
+    final foregroundColor =
+        selected ? colors.primary : colors.onSurface.withValues(alpha: 0.90);
+    final iconColor = selected ? colors.primary : colors.onSurfaceVariant;
+
+    return Semantics(
+      button: true,
+      toggled: selected,
+      child: MouseRegion(
+        onEnter: (_) => setState(() => _hovered = true),
+        onExit: (_) => setState(() => _hovered = false),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 160),
+          curve: Curves.easeOutCubic,
+          constraints: const BoxConstraints(minHeight: 36),
+          decoration: BoxDecoration(
+            color: backgroundColor,
+            borderRadius: borderRadius,
+            border: Border.all(color: borderColor),
+            boxShadow: selected
+                ? [
+                    BoxShadow(
+                      color: colors.primary.withValues(
+                        alpha: isDark ? 0.14 : 0.08,
+                      ),
+                      blurRadius: 8,
+                      offset: const Offset(0, 2),
+                    ),
+                  ]
+                : const [],
+          ),
+          child: Material(
+            color: Colors.transparent,
+            child: InkWell(
+              borderRadius: inkBorderRadius,
+              hoverColor: Colors.transparent,
+              focusColor: Colors.transparent,
+              splashColor: colors.primary.withValues(alpha: 0.10),
+              highlightColor: colors.primary.withValues(alpha: 0.06),
+              onFocusChange: (value) {
+                if (mounted && _focused != value) {
+                  setState(() => _focused = value);
+                }
+              },
+              onTap: () => widget.onChanged(!selected),
+              child: Padding(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    AnimatedSwitcher(
+                      duration: const Duration(milliseconds: 140),
+                      switchInCurve: Curves.easeOutCubic,
+                      switchOutCurve: Curves.easeInCubic,
+                      child: Icon(
+                        selected
+                            ? Icons.check_circle_rounded
+                            : Icons.check_circle_outline_rounded,
+                        key: ValueKey<bool>(selected),
+                        size: 15,
+                        color: iconColor,
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      appLocalizations.nodeOverviewAvailableOnly,
+                      style: TextStyle(
+                        fontSize: 13,
+                        height: 1.2,
+                        fontWeight: FontWeight.w500,
+                        letterSpacing: 0.1,
+                        color: foregroundColor,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _OverviewSortSelector extends StatefulWidget {
+  const _OverviewSortSelector({
+    required this.value,
+    required this.onChanged,
+  });
+
+  final ProxiesSortType value;
+  final ValueChanged<ProxiesSortType> onChanged;
+
+  @override
+  State<_OverviewSortSelector> createState() => _OverviewSortSelectorState();
+}
+
+class _OverviewSortSelectorState extends State<_OverviewSortSelector> {
+  static const List<ProxiesSortType> _orderedOptions = [
+    ProxiesSortType.none,
+    ProxiesSortType.name,
+    ProxiesSortType.delay,
+  ];
+
+  final MenuController _controller = MenuController();
+  bool _hovered = false;
+  bool _focused = false;
+  bool _isOpen = false;
+
+  static String _labelFor(ProxiesSortType type) => switch (type) {
+        ProxiesSortType.none => appLocalizations.defaultText,
+        ProxiesSortType.name => appLocalizations.name,
+        ProxiesSortType.delay => appLocalizations.delay,
+      };
+
+  static IconData _iconFor(ProxiesSortType type) => switch (type) {
+        ProxiesSortType.none => Icons.swap_vert_rounded,
+        ProxiesSortType.name => Icons.sort_by_alpha_rounded,
+        ProxiesSortType.delay => Icons.timer_outlined,
+      };
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
+    final isCustomSort = widget.value != ProxiesSortType.none;
+    final borderRadius = BorderRadius.circular(10);
+    final inkBorderRadius = BorderRadius.circular(9);
+
+    final backgroundColor = _isOpen
+        ? colors.surfaceContainerHighest.withValues(
+            alpha: isDark ? 0.82 : 0.96,
+          )
+        : isCustomSort
+            ? colors.primary.withValues(
+                alpha: _hovered
+                    ? (isDark ? 0.17 : 0.12)
+                    : (isDark ? 0.11 : 0.08),
+              )
+            : _hovered
+                ? colors.surfaceContainerHighest.withValues(
+                    alpha: isDark ? 0.68 : 0.88,
+                  )
+                : colors.surfaceContainerHigh.withValues(
+                    alpha: isDark ? 0.45 : 0.65,
+                  );
+    final borderColor = _isOpen || _focused
+        ? colors.primary.withValues(alpha: 0.68)
+        : isCustomSort
+            ? colors.primary.withValues(alpha: _hovered ? 0.58 : 0.42)
+            : _hovered
+                ? colors.outline.withValues(alpha: 0.55)
+                : colors.outlineVariant.withValues(alpha: 0.60);
+    final valueColor = isCustomSort
+        ? colors.primary
+        : colors.onSurface.withValues(alpha: 0.92);
+    final accentIconColor =
+        isCustomSort || _isOpen ? colors.primary : colors.onSurfaceVariant;
+
+    return MenuAnchor(
+      controller: _controller,
+      alignmentOffset: const Offset(0, 8),
+      onOpen: () {
+        if (mounted && !_isOpen) setState(() => _isOpen = true);
+      },
+      onClose: () {
+        if (mounted && _isOpen) setState(() => _isOpen = false);
+      },
+      style: MenuStyle(
+        backgroundColor: WidgetStatePropertyAll(colors.surfaceContainerHigh),
+        surfaceTintColor: const WidgetStatePropertyAll(Colors.transparent),
+        elevation: WidgetStatePropertyAll(isDark ? 4 : 3),
+        shadowColor: WidgetStatePropertyAll(
+          Colors.black.withValues(alpha: isDark ? 0.36 : 0.14),
+        ),
+        padding: const WidgetStatePropertyAll(EdgeInsets.zero),
+        minimumSize: const WidgetStatePropertyAll(Size.zero),
+        visualDensity: VisualDensity.compact,
+        shape: WidgetStatePropertyAll(
+          RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+            side: BorderSide(
+              color: colors.outlineVariant.withValues(
+                alpha: isDark ? 0.65 : 0.75,
+              ),
+            ),
+          ),
+        ),
+      ),
+      menuChildren: [
+        Padding(
+          key: const ValueKey('overview-sort-menu'),
+          padding: const EdgeInsets.all(5),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(minWidth: 144, maxWidth: 210),
+            child: IntrinsicWidth(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  for (var i = 0; i < _orderedOptions.length; i++) ...[
+                    if (i > 0) const SizedBox(height: 2),
+                    _OverviewSortOptionTile(
+                      key: ValueKey(
+                        'overview-sort-option-${_orderedOptions[i].name}',
+                      ),
+                      icon: _iconFor(_orderedOptions[i]),
+                      label: _labelFor(_orderedOptions[i]),
+                      selected: _orderedOptions[i] == widget.value,
+                      onTap: () {
+                        final selectedOption = _orderedOptions[i];
+                        _controller.close();
+                        if (selectedOption != widget.value) {
+                          widget.onChanged(selectedOption);
+                        }
+                      },
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+        ),
+      ],
+      child: Semantics(
+        button: true,
+        expanded: _isOpen,
+        child: MouseRegion(
+          onEnter: (_) => setState(() => _hovered = true),
+          onExit: (_) => setState(() => _hovered = false),
+          child: AnimatedContainer(
+            key: const ValueKey('overview-sort-button'),
+            duration: const Duration(milliseconds: 160),
+            curve: Curves.easeOutCubic,
+            constraints: const BoxConstraints(minHeight: 36),
+            decoration: BoxDecoration(
+              color: backgroundColor,
+              borderRadius: borderRadius,
+              border: Border.all(color: borderColor),
+            ),
+            child: Material(
+              color: Colors.transparent,
+              child: InkWell(
+                borderRadius: inkBorderRadius,
+                hoverColor: Colors.transparent,
+                focusColor: Colors.transparent,
+                splashColor: colors.primary.withValues(alpha: 0.10),
+                highlightColor: colors.primary.withValues(alpha: 0.06),
+                onFocusChange: (value) {
+                  if (mounted && _focused != value) {
+                    setState(() => _focused = value);
+                  }
+                },
+                onTap: () {
+                  if (_controller.isOpen) {
+                    _controller.close();
+                  } else {
+                    _controller.open();
+                  }
+                },
+                child: Padding(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        _iconFor(widget.value),
+                        size: 15,
+                        color: accentIconColor,
+                      ),
+                      const SizedBox(width: 6),
+                      Text(
+                        appLocalizations.sort,
+                        style: TextStyle(
+                          fontSize: 12.5,
+                          height: 1.2,
+                          fontWeight: FontWeight.w400,
+                          color: colors.onSurfaceVariant,
+                        ),
+                      ),
+                      Container(
+                        width: 1,
+                        height: 11,
+                        margin: const EdgeInsets.symmetric(horizontal: 6),
+                        color: colors.outlineVariant.withValues(alpha: 0.65),
+                      ),
+                      Text(
+                        _labelFor(widget.value),
+                        style: TextStyle(
+                          fontSize: 13,
+                          height: 1.2,
+                          fontWeight: FontWeight.w600,
+                          letterSpacing: 0.1,
+                          color: valueColor,
+                        ),
+                      ),
+                      const SizedBox(width: 4),
+                      AnimatedRotation(
+                        turns: _isOpen ? 0.5 : 0.0,
+                        duration: const Duration(milliseconds: 180),
+                        curve: Curves.easeOutCubic,
+                        child: Icon(
+                          Icons.keyboard_arrow_down_rounded,
+                          size: 16,
+                          color: accentIconColor,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _OverviewSortOptionTile extends StatefulWidget {
+  const _OverviewSortOptionTile({
+    super.key,
+    required this.icon,
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  State<_OverviewSortOptionTile> createState() =>
+      _OverviewSortOptionTileState();
+}
+
+class _OverviewSortOptionTileState extends State<_OverviewSortOptionTile> {
+  bool _hovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
+    final selected = widget.selected;
+    final borderRadius = BorderRadius.circular(8);
+
+    final backgroundColor = selected
+        ? colors.primary.withValues(
+            alpha: _hovered ? (isDark ? 0.22 : 0.15) : (isDark ? 0.16 : 0.11),
+          )
+        : _hovered
+            ? colors.onSurface.withValues(alpha: isDark ? 0.08 : 0.06)
+            : Colors.transparent;
+    final foregroundColor =
+        selected ? colors.primary : colors.onSurface.withValues(alpha: 0.92);
+    final iconColor = selected ? colors.primary : colors.onSurfaceVariant;
+
+    return MouseRegion(
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 120),
+        curve: Curves.easeOutCubic,
+        decoration: BoxDecoration(
+          color: backgroundColor,
+          borderRadius: borderRadius,
+        ),
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            borderRadius: borderRadius,
+            hoverColor: Colors.transparent,
+            focusColor: colors.primary.withValues(alpha: 0.10),
+            onTap: widget.onTap,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(widget.icon, size: 15, color: iconColor),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      widget.label,
+                      style: TextStyle(
+                        fontSize: 13,
+                        height: 1.2,
+                        fontWeight:
+                            selected ? FontWeight.w600 : FontWeight.w500,
+                        color: foregroundColor,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  SizedBox(
+                    width: 15,
+                    child: selected
+                        ? Icon(
+                            Icons.check_rounded,
+                            size: 15,
+                            color: colors.primary,
+                          )
+                        : null,
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }
 

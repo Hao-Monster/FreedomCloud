@@ -3743,4 +3743,133 @@ void main() {
     expect(container.exists(profileCatalogProvider('p28')), isFalse);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets(
+      'available-only pill and sort selector share aligned geometry, never shift or occlude neighbors when opened, and switch sort modes cleanly',
+      (tester) async {
+    final now = DateTime.now();
+    final container = await mount(
+      tester,
+      width: 1200,
+      locale: const Locale('zh', 'CN'),
+      catalogs: {
+        'a': ProfileCatalog(
+          profileId: 'a',
+          fingerprint: 'fp-a',
+          status: ProfileCatalogStatus.ready,
+          nodes: [
+            _node('z', 'Zulu'),
+            _node('a', 'Alpha'),
+            _node('f', 'Failed'),
+          ],
+        ),
+        'b': ProfileCatalog(
+          profileId: 'b',
+          fingerprint: 'fp-b',
+          status: ProfileCatalogStatus.ready,
+          nodes: [_node('b-1', 'Beta')],
+        ),
+      },
+      health: {
+        'a': {
+          'z': NodeHealthRecord(
+              delayMs: 35, testedAt: now, testUrlHash: 'fixture'),
+          'a': NodeHealthRecord(
+              delayMs: 120, testedAt: now, testUrlHash: 'fixture'),
+          'f': NodeHealthRecord(
+              delayMs: -1, testedAt: now, testUrlHash: 'fixture'),
+        },
+      },
+    );
+
+    // Legacy underlined DropdownButton<ProxiesSortType> is replaced.
+    expect(find.byType(DropdownButton<ProxiesSortType>), findsNothing);
+
+    final availableButton =
+        find.byKey(const ValueKey('overview-available-only'));
+    final sortButton = find.byKey(const ValueKey('overview-sort-button'));
+    final testCurrentButton =
+        find.byKey(const ValueKey('overview-test-current'));
+    expect(availableButton, findsOneWidget);
+    expect(sortButton, findsOneWidget);
+
+    final availableRect = tester.getRect(availableButton);
+    final sortRectBefore = tester.getRect(sortButton);
+    final testCurrentRect = tester.getRect(testCurrentButton);
+
+    // Cohesive height, vertical alignment, and non-overlapping horizontal spacing.
+    expect(availableRect.height, closeTo(sortRectBefore.height, 0.5));
+    expect(availableRect.center.dy, closeTo(sortRectBefore.center.dy, 0.5));
+    expect(availableRect.overlaps(sortRectBefore), isFalse);
+    expect(sortRectBefore.left - availableRect.right, greaterThanOrEqualTo(8));
+
+    // Toggling "仅显示可用" does not shift the sort button horizontally.
+    await tester.tap(availableButton);
+    await tester.pumpAndSettle();
+    expect(find.text('Failed'), findsNothing);
+    final sortRectAfterToggle = tester.getRect(sortButton);
+    expect(sortRectAfterToggle.left, closeTo(sortRectBefore.left, 0.5));
+
+    // Opening the sort popover anchors cleanly below the trigger without occluding
+    // "仅显示可用", the sort trigger itself, or "测当前配置".
+    await tester.tap(sortButton);
+    await tester.pumpAndSettle();
+
+    final sortMenu = find.byKey(const ValueKey('overview-sort-menu'));
+    expect(sortMenu, findsOneWidget);
+    final menuRect = tester.getRect(sortMenu);
+    expect(menuRect.overlaps(tester.getRect(availableButton)), isFalse);
+    expect(menuRect.overlaps(tester.getRect(sortButton)), isFalse);
+    expect(menuRect.overlaps(testCurrentRect), isFalse);
+    expect(
+      menuRect.top,
+      greaterThanOrEqualTo(tester.getRect(sortButton).bottom + 4),
+    );
+    // Menu options preserve intuitive order: 默认 (none) -> 名称 (name) -> 延迟 (delay).
+    final noneTop = tester
+        .getTopLeft(find.byKey(const ValueKey('overview-sort-option-none')))
+        .dy;
+    final nameTop = tester
+        .getTopLeft(find.byKey(const ValueKey('overview-sort-option-name')))
+        .dy;
+    final delayTop = tester
+        .getTopLeft(find.byKey(const ValueKey('overview-sort-option-delay')))
+        .dy;
+    expect(noneTop, lessThan(nameTop));
+    expect(nameTop, lessThan(delayTop));
+
+    // Selecting "延迟" updates provider, re-sorts nodes (Zulu 35ms before Alpha 120ms), and closes menu.
+    await tester.tap(find.byKey(const ValueKey('overview-sort-option-delay')));
+    await tester.pumpAndSettle();
+    expect(sortMenu, findsNothing);
+    expect(
+      container.read(proxiesStyleSettingProvider).sortType,
+      ProxiesSortType.delay,
+    );
+    expect(
+      tester.getTopLeft(find.text('Zulu')).dy,
+      lessThan(tester.getTopLeft(find.text('Alpha')).dy),
+    );
+
+    // Selecting "名称" updates provider and re-sorts nodes (Alpha before Zulu).
+    await tester.tap(sortButton);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('overview-sort-option-name')));
+    await tester.pumpAndSettle();
+    expect(
+      container.read(proxiesStyleSettingProvider).sortType,
+      ProxiesSortType.name,
+    );
+    expect(
+      tester.getTopLeft(find.text('Alpha')).dy,
+      lessThan(tester.getTopLeft(find.text('Zulu')).dy),
+    );
+
+    // Narrow 320px English layout also renders cleanly without overflow.
+    await mount(tester, width: 320);
+    await tester.tap(find.byKey(const ValueKey('overview-sort-button')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('overview-sort-menu')), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
 }

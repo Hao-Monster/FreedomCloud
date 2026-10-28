@@ -2,6 +2,18 @@
 
 更新日期：2026-10-28。当前阶段是快速开发、快速迭代和部分功能预览。本文记录来源与验收边界；每次继续开发仍需核实实际 Git/PR/CI 状态，不能把历史报告视为当前通过证明。
 
+## 跨配置节点总览顶部“仅显示可用”与“排序”控件精细化重设计（2026-10-28）
+
+- 来源：针对“代理 → 全部配置”（[`NodeOverviewView`](file:///E:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart#L151-L156)）顶部工具栏原 `FilterChip`（`仅显示可用`）与带底横线的 `DropdownButton<ProxiesSortType>`（`默认 / 名称 / 延迟`）外观粗糙、勾选引发同行按钮跳动且展开下拉菜单横向遮挡两侧相邻控件的问题，从基线 `development@52cf5e9` 完成配对式精细化前端 UI 重构。
+- 核心实现：
+  1. **等高定宽“仅显示可用”胶囊按钮（[`_OverviewAvailableFilterButton`](file:///E:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart#L1090-L1222)）**：统一 `36px` 控件高度、`10px` 圆角、`1px` 细描边与 `160ms` 悬停/聚焦/激活过渡，常驻 `15px` 前置状态图标槽位（`check_circle_outline_rounded` ↔ `check_circle_rounded`），消除切换选中态时的水平布局抖动。
+  2. **双段式“排序 │ 当前规则”胶囊触发器与向下锚定浮层菜单（[`_OverviewSortSelector`](file:///E:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart#L1224-L1459) / [`_OverviewSortOptionTile`](file:///E:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart#L1461-L1556)）**：移除旧版带下划线的 `DropdownButton`，改为与筛选胶囊等高对齐的 `图标 + 排序 │ 当前项 + 旋转箭头` 触发器，使用 `MenuAnchor(alignmentOffset: Offset(0, 8))` 将圆角浮层严格锚定于触发按钮正下方 `8px` 处，彻底杜绝遮挡左侧“仅显示可用”、触发器自身及右侧“测当前配置”热区；浮层内固定按“默认 → 名称 → 延迟”顺序渲染带语义图标与选中勾号的紧凑胶囊项。
+- 验证记录（本机 `Flutter 3.47.4` / `Dart 3.13.3`，CI 配置 `3.41.7`）：
+  - 前置有效 Red（[`test/views/node_overview_test.dart`](file:///E:/CodeWorkstation/FlClashX/test/views/node_overview_test.dart#L3747-L3875)）：退出码 `1`（`0 PASS / 1 FAIL`）；
+  - 组件与回归测试（`flutter test --no-pub test/views/node_overview_test.dart`，含控件等高/基线对齐、切换不位移、浮层展开零遮挡、菜单顺序与 `320px`/`1200px` 响应式断言）：**PASS（88 PASS / 0 FAIL）**；离线深色模式 2x PNG 像素级视觉复核 **PASS**；
+  - 静态检查（`dart analyze lib/views/proxies/overview/overview.dart test/views/node_overview_test.dart`）：**PASS（0 error / 0 warning / 0 新增 info）**；`git diff --check` 通过；`pubspec.lock` 未改动。
+- 交付状态：**已实现 / 已本地验证并提交至本地 `development`**；未推送远端（未经推送授权，当前工作树位于 `E:\CodeWorkstation\FlClashX`） / 未创建或合并 PR / 远端 CI **NOT RUN** / 未重打静态预览包 / 未启动候选窗口（未触碰本机运行中代理、TUN 及后台服务） / 后端部署与业务验收 **NOT RUN**。下一步：如需预览包或推送 `freedomcloud/development` 可按授权继续执行。
+
 ## 跨配置节点总览订阅列表默认按可用节点数降序排列（2026-10-28）
 
 - 来源：针对“代理 → 全部配置”（[`NodeOverviewView`](file:///E:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart#L151-L156)）左侧配置栏、窄屏配置筛选下拉框及右侧全部配置平铺分区仍按原始导入顺序排列导致可用节点多的配置被 `0` 可用配置埋没的问题，从基线 `development@d051a12` 实现按配置可用节点数（`delay > 0`）默认降序排列。
