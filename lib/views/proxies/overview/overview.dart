@@ -711,9 +711,6 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
         ref.watch(proxiesStyleSettingProvider.select((s) => s.sortType));
     final selected =
         profiles.any((p) => p.id == _selectedProfile) ? _selectedProfile : null;
-    final visible = selected == null
-        ? profiles
-        : profiles.where((p) => p.id == selected).toList();
     final countryResolver = ref.watch(nodeCountryResolverProvider);
     final cachedCatalogs = ref.watch(cachedProfileCatalogsProvider);
     final currentScript =
@@ -723,13 +720,17 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
     final locale = Localizations.localeOf(context);
     final scopeCountries = <String>{};
     final countryCounts = <String, int>{};
+    final availableCounts = <String, int>{};
+    final originalIndexes = <String, int>{};
     var anyVisibleCatalogLoading = false;
-    for (final profile in visible) {
+    for (var i = 0; i < profiles.length; i++) {
+      final profile = profiles[i];
+      originalIndexes[profile.id] = i;
       final liveActive = isLiveActive(profile);
-      final shouldWatchCatalog = selected != null ||
-          searching ||
-          _selectedCountry != null ||
-          _visibleProfileIds.contains(profile.id);
+      final inSelectedScope = selected == null || selected == profile.id;
+      final shouldWatchCatalog = selected == profile.id ||
+          _visibleProfileIds.contains(profile.id) ||
+          (inSelectedScope && (searching || _selectedCountry != null));
       final loaded = shouldWatchCatalog
           ? ref.watch(profileCatalogProvider(profile.id))
           : null;
@@ -742,84 +743,130 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
               indexedSummary.matchesProfile(profile, currentScript)
           ? indexedSummary
           : null;
-      final pendingIndex = !liveActive &&
-          catalog == null &&
-          validIndexed == null &&
-          !profile.isUpdating &&
-          _scanEpoch.indexingProfileIds.contains(profile.id);
-      if (((loaded?.isLoading ?? false) && catalog == null) ||
-          pendingIndex ||
-          profile.isUpdating ||
-          catalog?.status == ProfileCatalogStatus.loading ||
-          catalog?.status == ProfileCatalogStatus.updating) {
-        anyVisibleCatalogLoading = true;
+      if (inSelectedScope) {
+        final pendingIndex = !liveActive &&
+            catalog == null &&
+            validIndexed == null &&
+            !profile.isUpdating &&
+            _scanEpoch.indexingProfileIds.contains(profile.id);
+        if (((loaded?.isLoading ?? false) && catalog == null) ||
+            pendingIndex ||
+            profile.isUpdating ||
+            catalog?.status == ProfileCatalogStatus.loading ||
+            catalog?.status == ProfileCatalogStatus.updating) {
+          anyVisibleCatalogLoading = true;
+        }
       }
       final profileMatches =
           (profile.label ?? profile.id).toLowerCase().contains(query);
       if (liveActive) {
         final displays = _activeDisplays(
             ref, profile.id, profile.isUpdating ? null : catalog);
-        final effectiveQuery = profileMatches ? '' : query;
-        for (final entry in displays.values) {
-          final code = countryResolver.resolveCountryCode(
-            profileId: profile.id,
-            profileLabel: profile.label,
-            nodeName: entry.proxy.name,
-            endpointKey: entry.node?.endpointKey,
-            isLiveActive: true,
-            inUse: entry.inUse,
-          );
-          scopeCountries.add(code);
-          final matches =
-              '${entry.proxy.name}\n${entry.fileSource ? entry.node!.type : entry.proxy.type}\n${entry.node?.providerName ?? ''}'
-                  .toLowerCase()
-                  .contains(effectiveQuery);
-          if (!matches || (_availableOnly && (entry.delay ?? -1) <= 0)) {
-            continue;
+        availableCounts[profile.id] =
+            displays.values.where((entry) => (entry.delay ?? -1) > 0).length;
+        if (inSelectedScope) {
+          final effectiveQuery = profileMatches ? '' : query;
+          for (final entry in displays.values) {
+            final code = countryResolver.resolveCountryCode(
+              profileId: profile.id,
+              profileLabel: profile.label,
+              nodeName: entry.proxy.name,
+              endpointKey: entry.node?.endpointKey,
+              isLiveActive: true,
+              inUse: entry.inUse,
+            );
+            scopeCountries.add(code);
+            final matches =
+                '${entry.proxy.name}\n${entry.fileSource ? entry.node!.type : entry.proxy.type}\n${entry.node?.providerName ?? ''}'
+                    .toLowerCase()
+                    .contains(effectiveQuery);
+            if (!matches || (_availableOnly && (entry.delay ?? -1) <= 0)) {
+              continue;
+            }
+            countryCounts.update(code, (count) => count + 1, ifAbsent: () => 1);
           }
-          countryCounts.update(code, (count) => count + 1, ifAbsent: () => 1);
         }
       } else {
         final health = ref.watch(nodeHealthEntriesProvider(profile.id));
         if (catalog != null) {
-          for (final node in catalog.nodes) {
-            final code = countryResolver.resolveCountryCode(
-              profileId: profile.id,
-              profileLabel: profile.label,
-              nodeName: node.name,
-              endpointKey: node.endpointKey,
-            );
-            scopeCountries.add(code);
-            if (!(profileMatches || _matches(node, query)) ||
-                (_availableOnly &&
-                    (_nodeHealth(node, health)?.delayMs ?? -1) <= 0)) {
-              continue;
+          final unusableCatalog =
+              catalog.status == ProfileCatalogStatus.loading ||
+                  catalog.status == ProfileCatalogStatus.fileMissing ||
+                  catalog.status == ProfileCatalogStatus.parseFailed;
+          availableCounts[profile.id] = unusableCatalog
+              ? 0
+              : catalog.nodes
+                  .where(
+                      (node) => (_nodeHealth(node, health)?.delayMs ?? -1) > 0)
+                  .length;
+          if (inSelectedScope) {
+            for (final node in catalog.nodes) {
+              final code = countryResolver.resolveCountryCode(
+                profileId: profile.id,
+                profileLabel: profile.label,
+                nodeName: node.name,
+                endpointKey: node.endpointKey,
+              );
+              scopeCountries.add(code);
+              if (!(profileMatches || _matches(node, query)) ||
+                  (_availableOnly &&
+                      (_nodeHealth(node, health)?.delayMs ?? -1) <= 0)) {
+                continue;
+              }
+              countryCounts.update(
+                  code, (count) => count + 1, ifAbsent: () => 1);
             }
-            countryCounts.update(code, (count) => count + 1, ifAbsent: () => 1);
           }
         } else if (validIndexed != null) {
-          for (final node in validIndexed.nodes) {
-            final code = countryResolver.resolveCountryCode(
-              profileId: profile.id,
-              profileLabel: profile.label,
-              nodeName: node.name,
-              endpointKey: node.endpointKey,
-            );
-            scopeCountries.add(code);
-            final matchesQuery = profileMatches ||
-                '${node.name}\n${node.type}\n${node.providerName ?? ''}'
-                    .toLowerCase()
-                    .contains(query);
-            final delayMs =
-                node.parseFailed ? null : health[node.identityKey]?.delayMs;
-            if (!matchesQuery || (_availableOnly && (delayMs ?? -1) <= 0)) {
-              continue;
+          final unusableIndexed =
+              validIndexed.status == ProfileCatalogStatus.loading ||
+                  validIndexed.status == ProfileCatalogStatus.fileMissing ||
+                  validIndexed.status == ProfileCatalogStatus.parseFailed;
+          availableCounts[profile.id] = unusableIndexed
+              ? 0
+              : validIndexed.nodes
+                  .where((node) =>
+                      !node.parseFailed &&
+                      (health[node.identityKey]?.delayMs ?? -1) > 0)
+                  .length;
+          if (inSelectedScope) {
+            for (final node in validIndexed.nodes) {
+              final code = countryResolver.resolveCountryCode(
+                profileId: profile.id,
+                profileLabel: profile.label,
+                nodeName: node.name,
+                endpointKey: node.endpointKey,
+              );
+              scopeCountries.add(code);
+              final matchesQuery = profileMatches ||
+                  '${node.name}\n${node.type}\n${node.providerName ?? ''}'
+                      .toLowerCase()
+                      .contains(query);
+              final delayMs =
+                  node.parseFailed ? null : health[node.identityKey]?.delayMs;
+              if (!matchesQuery || (_availableOnly && (delayMs ?? -1) <= 0)) {
+                continue;
+              }
+              countryCounts.update(
+                  code, (count) => count + 1, ifAbsent: () => 1);
             }
-            countryCounts.update(code, (count) => count + 1, ifAbsent: () => 1);
           }
+        } else {
+          availableCounts[profile.id] = 0;
         }
       }
     }
+    final orderedProfiles = profiles.toList()
+      ..sort((a, b) {
+        final byAvailable =
+            (availableCounts[b.id] ?? 0).compareTo(availableCounts[a.id] ?? 0);
+        if (byAvailable != 0) return byAvailable;
+        return (originalIndexes[a.id] ?? 0)
+            .compareTo(originalIndexes[b.id] ?? 0);
+      });
+    final visible = selected == null
+        ? orderedProfiles
+        : orderedProfiles.where((p) => p.id == selected).toList();
     final activeCountry = _selectedCountry != null &&
             (scopeCountries.contains(_selectedCountry) ||
                 anyVisibleCatalogLoading)
@@ -868,7 +915,7 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
                           value: '',
                           child:
                               Text(appLocalizations.nodeOverviewAllProfiles)),
-                      for (final profile in profiles)
+                      for (final profile in orderedProfiles)
                         DropdownMenuItem(
                             value: profile.id,
                             child: ConstrainedBox(
@@ -983,7 +1030,7 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
                   child: ListView.builder(
                     key: const ValueKey('overview-sidebar'),
                     padding: const EdgeInsets.fromLTRB(16, 0, 0, 16),
-                    itemCount: profiles.length + 1,
+                    itemCount: orderedProfiles.length + 1,
                     itemBuilder: (context, index) {
                       if (index == 0) {
                         return ListTile(
@@ -994,9 +1041,10 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
                             onTap: () =>
                                 setState(() => _selectedProfile = null));
                       }
-                      final profile = profiles[index - 1];
+                      final profile = orderedProfiles[index - 1];
                       final isCurrent = profile.id == activeId;
                       return _SidebarProfileCard(
+                          key: ValueKey('overview-sidebar-card-${profile.id}'),
                           profile: profile,
                           selected: selected == profile.id,
                           active: isCurrent,
@@ -1055,7 +1103,8 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
 
 class _SidebarProfileCard extends ConsumerWidget {
   const _SidebarProfileCard(
-      {required this.profile,
+      {super.key,
+      required this.profile,
       required this.selected,
       required this.active,
       required this.liveActive,

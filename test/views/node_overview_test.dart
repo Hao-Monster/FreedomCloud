@@ -3474,4 +3474,273 @@ void main() {
     expect(tester.widget<TextButton>(activeTestUs).onPressed, isNull);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets(
+      'profiles sort by available count descending across sidebar, sections, and narrow filter while preserving ties and testAll order',
+      (tester) async {
+    const pZeroA = Profile(
+      id: 'pZeroA',
+      label: 'opus',
+      autoUpdateDuration: Duration.zero,
+    );
+    const pActive = Profile(
+      id: 'pActive',
+      label: '伦敦',
+      autoUpdateDuration: Duration.zero,
+    );
+    const pZeroB = Profile(
+      id: 'pZeroB',
+      label: 'gemini_test.yaml',
+      autoUpdateDuration: Duration.zero,
+    );
+    const pTop = Profile(
+      id: 'pTop',
+      label: 'admin',
+      autoUpdateDuration: Duration.zero,
+    );
+    const pOne = Profile(
+      id: 'pOne',
+      label: 'admin(1)',
+      autoUpdateDuration: Duration.zero,
+    );
+    final rawProfiles = [pZeroA, pActive, pZeroB, pTop, pOne];
+    final backend = _CatalogTester();
+    final now = DateTime.now();
+
+    NodeHealthRecord ok(int ms) =>
+        NodeHealthRecord(delayMs: ms, testedAt: now, testUrlHash: 'fixture');
+    NodeHealthRecord fail() =>
+        NodeHealthRecord(delayMs: -1, testedAt: now, testUrlHash: 'fixture');
+
+    globalState.config =
+        globalState.config.copyWith(currentProfileId: pActive.id);
+    globalState.appState = globalState.appState.copyWith(
+      groups: const [
+        Group(
+          name: 'Select',
+          type: GroupType.Selector,
+          hidden: false,
+          testUrl: 'https://active.invalid',
+          now: 'UK-1',
+          all: [
+            Proxy(name: 'UK-1', type: 'vless'),
+            Proxy(name: 'UK-2', type: 'vless'),
+            Proxy(name: 'UK-3', type: 'vless'),
+          ],
+        ),
+      ],
+    );
+
+    final catalogs = <String, ProfileCatalog>{
+      pZeroA.id: ProfileCatalog(
+        profileId: pZeroA.id,
+        fingerprint: 'f-zero-a',
+        status: ProfileCatalogStatus.ready,
+        nodes: [_node('za-1', 'ZA 1'), _node('za-2', 'ZA 2')],
+      ),
+      pActive.id: ProfileCatalog(
+        profileId: pActive.id,
+        fingerprint: 'f-active',
+        status: ProfileCatalogStatus.ready,
+        nodes: [
+          _node('uk-1', 'UK-1'),
+          _node('uk-2', 'UK-2'),
+          _node('uk-3', 'UK-3'),
+        ],
+      ),
+      pZeroB.id: ProfileCatalog(
+        profileId: pZeroB.id,
+        fingerprint: 'f-zero-b',
+        status: ProfileCatalogStatus.ready,
+        nodes: [_node('zb-1', 'ZB 1')],
+      ),
+      pTop.id: ProfileCatalog(
+        profileId: pTop.id,
+        fingerprint: 'f-top',
+        status: ProfileCatalogStatus.ready,
+        nodes: [
+          _node('top-1', 'Top 1'),
+          _node('top-2', 'Top 2'),
+          _node('top-3', 'Top 3'),
+          _node('top-4', 'Top 4'),
+          _node('top-5', 'Top 5'),
+        ],
+      ),
+      pOne.id: ProfileCatalog(
+        profileId: pOne.id,
+        fingerprint: 'f-one',
+        status: ProfileCatalogStatus.ready,
+        nodes: [
+          _node('one-1', 'One 1'),
+          _node('one-bad', 'One Invalid')
+              .copyWith(unsupported: CatalogUnsupportedReason.parseFailed),
+        ],
+      ),
+    };
+
+    final health = <String, Map<String, NodeHealthRecord>>{
+      pZeroB.id: {'zb-1': fail()},
+      pTop.id: {
+        'top-1': ok(110),
+        'top-2': ok(130),
+        'top-3': ok(150),
+        'top-4': ok(170),
+        'top-5': fail(),
+      },
+      pOne.id: {
+        'one-1': ok(232),
+        // Invalid node health must be ignored, keeping pOne at 1 available.
+        'one-bad': ok(50),
+      },
+    };
+
+    final container = await mount(
+      tester,
+      width: 1200,
+      profiles: rawProfiles,
+      catalogs: catalogs,
+      health: health,
+      catalogTester: backend,
+    );
+    container.read(delayDataSourceProvider.notifier).value = {
+      'https://active.invalid': {
+        'UK-1': 150,
+        'UK-2': 178,
+        'UK-3': 210,
+      },
+    };
+    await tester.pumpAndSettle();
+
+    // Expected order: pTop (4) -> pActive (3) -> pOne (1) -> pZeroA (0) -> pZeroB (0).
+    const expectedOrder = ['pTop', 'pActive', 'pOne', 'pZeroA', 'pZeroB'];
+    final sidebarTops = [
+      for (final id in expectedOrder)
+        tester.getTopLeft(find.byKey(ValueKey('overview-select-$id'))).dy,
+    ];
+    for (var i = 0; i < sidebarTops.length - 1; i++) {
+      expect(
+        sidebarTops[i],
+        lessThan(sidebarTops[i + 1]),
+        reason:
+            'Sidebar card ${expectedOrder[i]} should appear above ${expectedOrder[i + 1]}',
+      );
+    }
+
+    // Top right-pane profile headers follow the same descending available order.
+    final headerTop =
+        tester.getTopLeft(find.byKey(const ValueKey('overview-header-pTop'))).dy;
+    final headerActive = tester
+        .getTopLeft(find.byKey(const ValueKey('overview-header-pActive')))
+        .dy;
+    expect(headerTop, lessThan(headerActive));
+
+    // Selecting a single profile in the sidebar keeps sidebar order stable.
+    await tester.tap(find.byKey(const ValueKey('overview-select-pOne')));
+    await tester.pumpAndSettle();
+    final selectedSidebarTops = [
+      for (final id in expectedOrder)
+        tester.getTopLeft(find.byKey(ValueKey('overview-select-$id'))).dy,
+    ];
+    for (var i = 0; i < selectedSidebarTops.length - 1; i++) {
+      expect(selectedSidebarTops[i], lessThan(selectedSidebarTops[i + 1]));
+    }
+
+    // "Test all" continues to receive the raw profiles list order.
+    await tester.tap(find.byKey(const ValueKey('overview-test-all')));
+    await tester.pumpAndSettle();
+    expect(
+      backend.all.single.map((p) => p.id).toList(),
+      rawProfiles.map((p) => p.id).toList(),
+    );
+
+    // Narrow layout profile dropdown also lists profiles in available-count order.
+    final narrowContainer = await mount(
+      tester,
+      width: 400,
+      profiles: rawProfiles,
+      catalogs: catalogs,
+      health: health,
+    );
+    narrowContainer.read(delayDataSourceProvider.notifier).value = {
+      'https://active.invalid': {
+        'UK-1': 150,
+        'UK-2': 178,
+        'UK-3': 210,
+      },
+    };
+    await tester.pumpAndSettle();
+    final dropdown = tester.widget<DropdownButton<String>>(
+      find.byKey(const ValueKey('overview-profile-filter')),
+    );
+    expect(
+      dropdown.items!.map((item) => item.value).toList(),
+      ['', ...expectedOrder],
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'offscreen profile with higher available count promotes to top after index scan while keeping 0-available offscreen providers disposed',
+      (tester) async {
+    final now = DateTime.now();
+    final profiles = List.generate(
+      30,
+      (i) => Profile(
+        id: 'p$i',
+        label: 'Profile $i',
+        autoUpdateDuration: Duration.zero,
+      ),
+    );
+    final catalogs = <String, ProfileCatalog>{
+      for (final profile in profiles)
+        profile.id: ProfileCatalog(
+          profileId: profile.id,
+          fingerprint: 'fp-${profile.id}',
+          status: ProfileCatalogStatus.ready,
+          nodes: [
+            _node('${profile.id}-1', 'Node ${profile.id}-1'),
+            _node('${profile.id}-2', 'Node ${profile.id}-2'),
+          ],
+        ),
+    };
+    final container = await mount(
+      tester,
+      width: 1200,
+      profiles: profiles,
+      catalogs: catalogs,
+      health: {
+        'p0': {
+          'p0-1': NodeHealthRecord(
+            delayMs: 110,
+            testedAt: now,
+            testUrlHash: 'fixture',
+          ),
+        },
+        'p29': {
+          'p29-1': NodeHealthRecord(
+            delayMs: 65,
+            testedAt: now,
+            testUrlHash: 'fixture',
+          ),
+          'p29-2': NodeHealthRecord(
+            delayMs: 80,
+            testedAt: now,
+            testUrlHash: 'fixture',
+          ),
+        },
+      },
+    );
+
+    // p29 (2 available) promotes above p0 (1 available) at the top of sidebar and nodes list.
+    final p29SidebarTop =
+        tester.getTopLeft(find.byKey(const ValueKey('overview-select-p29'))).dy;
+    final p0SidebarTop =
+        tester.getTopLeft(find.byKey(const ValueKey('overview-select-p0'))).dy;
+    expect(p29SidebarTop, lessThan(p0SidebarTop));
+    expect(find.text('Node p29-1'), findsOneWidget);
+
+    // Offscreen 0-available profiles remain lazy and auto-disposed.
+    expect(container.exists(profileCatalogProvider('p28')), isFalse);
+    expect(tester.takeException(), isNull);
+  });
 }

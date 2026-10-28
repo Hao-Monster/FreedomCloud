@@ -2,6 +2,18 @@
 
 更新日期：2026-10-28。当前阶段是快速开发、快速迭代和部分功能预览。本文记录来源与验收边界；每次继续开发仍需核实实际 Git/PR/CI 状态，不能把历史报告视为当前通过证明。
 
+## 跨配置节点总览订阅列表默认按可用节点数降序排列（2026-10-28）
+
+- 来源：针对“代理 → 全部配置”（[`NodeOverviewView`](file:///E:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart#L151-L156)）左侧配置栏、窄屏配置筛选下拉框及右侧全部配置平铺分区仍按原始导入顺序排列导致可用节点多的配置被 `0` 可用配置埋没的问题，从基线 `development@d051a12` 实现按配置可用节点数（`delay > 0`）默认降序排列。
+- 核心实现：
+  1. **与 [`_HealthSummary`](file:///E:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart#L2224-L2289) 口径一致的可用节点数统计与稳定降序排序**：在 [`_NodeOverviewViewState.build`](file:///E:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart#L723-L869) 中单次遍历 `profiles`，活动配置按 [`_activeDisplays`](file:///E:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart#L1715-L1779) 统计 `(entry.delay ?? -1) > 0` 数量，非活动配置结合已加载/缓存 `ProfileCatalog` 或后台索引摘要 [`_IndexedProfileCountrySummary`](file:///E:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart#L185-L210) 与 `nodeHealthEntriesProvider` 统计有效节点（排除 `loading` / `fileMissing` / `parseFailed` 目录与单节点 `parseFailed`）的 `delayMs > 0` 数量，生成降序排列且相同可用数按原始顺序稳定兜底的 `orderedProfiles`。
+  2. **三处展示统一与既有契约保全**：宽屏侧边栏（[`overview-sidebar`](file:///E:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart#L1030-L1058)，补充卡片 `ValueKey('overview-sidebar-card-${profile.id}')`）、窄屏下拉框（[`overview-profile-filter`](file:///E:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart#L910-L929)）及右侧“全部配置”分区列表（[`overview-nodes`](file:///E:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart#L1062-L1082)）统一接入 `orderedProfiles`；点击侧边栏切换单个配置时侧边栏排序保持稳定不跳动；`overview-test-all` 保持传入原始 `profiles` 顺序不变；未选中屏外 `0` 可用配置继续保持按需加载与 `profileCatalogProvider` 的 `autoDispose` 内存边界，屏外高可用数配置在有界后台索引完成后自动晋升置顶。
+- 验证记录（本机 `Flutter 3.47.4` / `Dart 3.13.3`，CI 配置 `3.41.7`）：
+  - 前置有效 Red（[`test/views/node_overview_test.dart`](file:///E:/CodeWorkstation/FlClashX/test/views/node_overview_test.dart#L3478-L3746)）：退出码 `1`（`85 PASS / 2 FAIL`）；
+  - 组件与回归测试（`flutter test --no-pub test/views/node_overview_test.dart`，含活动/非活动混排、同分稳定兜底、单配置选中侧栏稳定、窄屏下拉框顺序、屏外高可用数配置索引置顶及 `autoDispose` 断言）：**PASS（87 PASS / 0 FAIL）**；
+  - 静态检查（`dart analyze lib/views/proxies/overview/overview.dart test/views/node_overview_test.dart`）：**PASS（0 error / 0 warning / 0 新增 info）**；`git diff --check` 通过；`pubspec.lock` 未改动。
+- 交付状态：**已实现 / 已本地验证并提交至本地 `development`**；未推送远端（未经推送授权，当前工作树位于 `E:\CodeWorkstation\FlClashX`） / 未创建或合并 PR / 远端 CI **NOT RUN** / 未重打静态预览包 / 未启动候选窗口（未触碰本机运行中代理、TUN 及后台服务） / 后端部署与业务验收 **NOT RUN**。下一步：如需预览包或推送 `freedomcloud/development` 可按授权继续执行。
+
 ## 跨配置节点总览单节点“延迟测试”文字按钮统一与活动配置补齐（2026-10-28）
 
 - 来源：针对“代理 → 全部配置”（[`NodeOverviewView`](file:///E:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart#L151-L156)）单节点测速闪电按钮（`Icons.bolt`）在活动配置节点行缺失及图标语义不直观的问题，从基线 `development@3656c4e` 将单节点测速入口统一改为文字按钮 **`延迟测试`**（`nodeOverviewTestNode`），并同时覆盖活动配置与非活动配置节点行。
