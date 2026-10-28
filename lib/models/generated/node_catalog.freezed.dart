@@ -26,6 +26,7 @@ mixin _$CatalogNode {
   String get type => throw _privateConstructorUsedError;
   CatalogNodeSource get source => throw _privateConstructorUsedError;
   String? get providerName => throw _privateConstructorUsedError;
+  String? get protocolSummary => throw _privateConstructorUsedError;
   int? get coreIndex => throw _privateConstructorUsedError;
   List<String> get selectGroups => throw _privateConstructorUsedError;
   CatalogUnsupportedReason get unsupported =>
@@ -54,6 +55,7 @@ abstract class $CatalogNodeCopyWith<$Res> {
       String type,
       CatalogNodeSource source,
       String? providerName,
+      String? protocolSummary,
       int? coreIndex,
       List<String> selectGroups,
       CatalogUnsupportedReason unsupported});
@@ -80,6 +82,7 @@ class _$CatalogNodeCopyWithImpl<$Res, $Val extends CatalogNode>
     Object? type = null,
     Object? source = null,
     Object? providerName = freezed,
+    Object? protocolSummary = freezed,
     Object? coreIndex = freezed,
     Object? selectGroups = null,
     Object? unsupported = null,
@@ -108,6 +111,10 @@ class _$CatalogNodeCopyWithImpl<$Res, $Val extends CatalogNode>
       providerName: freezed == providerName
           ? _value.providerName
           : providerName // ignore: cast_nullable_to_non_nullable
+              as String?,
+      protocolSummary: freezed == protocolSummary
+          ? _value.protocolSummary
+          : protocolSummary // ignore: cast_nullable_to_non_nullable
               as String?,
       coreIndex: freezed == coreIndex
           ? _value.coreIndex
@@ -140,6 +147,7 @@ abstract class _$$CatalogNodeImplCopyWith<$Res>
       String type,
       CatalogNodeSource source,
       String? providerName,
+      String? protocolSummary,
       int? coreIndex,
       List<String> selectGroups,
       CatalogUnsupportedReason unsupported});
@@ -164,6 +172,7 @@ class __$$CatalogNodeImplCopyWithImpl<$Res>
     Object? type = null,
     Object? source = null,
     Object? providerName = freezed,
+    Object? protocolSummary = freezed,
     Object? coreIndex = freezed,
     Object? selectGroups = null,
     Object? unsupported = null,
@@ -193,6 +202,10 @@ class __$$CatalogNodeImplCopyWithImpl<$Res>
           ? _value.providerName
           : providerName // ignore: cast_nullable_to_non_nullable
               as String?,
+      protocolSummary: freezed == protocolSummary
+          ? _value.protocolSummary
+          : protocolSummary // ignore: cast_nullable_to_non_nullable
+              as String?,
       coreIndex: freezed == coreIndex
           ? _value.coreIndex
           : coreIndex // ignore: cast_nullable_to_non_nullable
@@ -219,6 +232,7 @@ class _$CatalogNodeImpl implements _CatalogNode {
       required this.type,
       required this.source,
       this.providerName,
+      this.protocolSummary,
       this.coreIndex,
       final List<String> selectGroups = const <String>[],
       this.unsupported = CatalogUnsupportedReason.none})
@@ -240,6 +254,8 @@ class _$CatalogNodeImpl implements _CatalogNode {
   @override
   final String? providerName;
   @override
+  final String? protocolSummary;
+  @override
   final int? coreIndex;
   final List<String> _selectGroups;
   @override
@@ -256,7 +272,7 @@ class _$CatalogNodeImpl implements _CatalogNode {
 
   @override
   String toString() {
-    return 'CatalogNode(identityKey: $identityKey, endpointKey: $endpointKey, name: $name, type: $type, source: $source, providerName: $providerName, coreIndex: $coreIndex, selectGroups: $selectGroups, unsupported: $unsupported)';
+    return 'CatalogNode(identityKey: $identityKey, endpointKey: $endpointKey, name: $name, type: $type, source: $source, providerName: $providerName, protocolSummary: $protocolSummary, coreIndex: $coreIndex, selectGroups: $selectGroups, unsupported: $unsupported)';
   }
 
   @override
@@ -273,6 +289,8 @@ class _$CatalogNodeImpl implements _CatalogNode {
             (identical(other.source, source) || other.source == source) &&
             (identical(other.providerName, providerName) ||
                 other.providerName == providerName) &&
+            (identical(other.protocolSummary, protocolSummary) ||
+                other.protocolSummary == protocolSummary) &&
             (identical(other.coreIndex, coreIndex) ||
                 other.coreIndex == coreIndex) &&
             const DeepCollectionEquality()
@@ -291,6 +309,7 @@ class _$CatalogNodeImpl implements _CatalogNode {
       type,
       source,
       providerName,
+      protocolSummary,
       coreIndex,
       const DeepCollectionEquality().hash(_selectGroups),
       unsupported);
@@ -319,6 +338,7 @@ abstract class _CatalogNode implements CatalogNode {
       required final String type,
       required final CatalogNodeSource source,
       final String? providerName,
+      final String? protocolSummary,
       final int? coreIndex,
       final List<String> selectGroups,
       final CatalogUnsupportedReason unsupported}) = _$CatalogNodeImpl;
@@ -338,6 +358,8 @@ abstract class _CatalogNode implements CatalogNode {
   CatalogNodeSource get source;
   @override
   String? get providerName;
+  @override
+  String? get protocolSummary;
   @override
   int? get coreIndex;
   @override

@@ -854,6 +854,87 @@
   "purchaseRenewalBadge": "Renewal",
   "purchaseNewActivationBadge": "New activation",
   "purchaseOpenNodesAction": "View profiles & nodes",
+  "nodeOverviewRemainingTraffic": "Remaining: {traffic}",
+  "@nodeOverviewRemainingTraffic": {
+    "placeholders": {
+      "traffic": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewUsedOfTotalTraffic": "Used {used} / {total}",
+  "@nodeOverviewUsedOfTotalTraffic": {
+    "placeholders": {
+      "used": {
+        "type": "String"
+      },
+      "total": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewTrafficUnlimited": "Traffic: Unlimited",
+  "nodeOverviewUsedTrafficOnly": "Used: {used}",
+  "@nodeOverviewUsedTrafficOnly": {
+    "placeholders": {
+      "used": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewExpireAt": "Expires: {date}",
+  "@nodeOverviewExpireAt": {
+    "placeholders": {
+      "date": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewExpireDaysLeft": "{days}d left",
+  "@nodeOverviewExpireDaysLeft": {
+    "placeholders": {
+      "days": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewExpireHoursLeft": "{hours}h left",
+  "@nodeOverviewExpireHoursLeft": {
+    "placeholders": {
+      "hours": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewExpireSoon": "< 1h left",
+  "nodeOverviewNeverExpires": "Expires: Never",
+  "nodeOverviewLastSync": "Synced: {time}",
+  "@nodeOverviewLastSync": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewAutoUpdateHours": "Auto-update {hours}h",
+  "@nodeOverviewAutoUpdateHours": {
+    "placeholders": {
+      "hours": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewAutoUpdateMinutes": "Auto-update {minutes}m",
+  "@nodeOverviewAutoUpdateMinutes": {
+    "placeholders": {
+      "minutes": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewManualUpdate": "Manual update",
+  "nodeOverviewLocalProfile": "Local file",
+  "nodeOverviewDeviceLimitReached": "Device limit reached",
   "nodeOverviewSwitchedToNode": "Switched to {profile} · {node}",
   "@nodeOverviewSwitchedToNode": {
     "placeholders": {

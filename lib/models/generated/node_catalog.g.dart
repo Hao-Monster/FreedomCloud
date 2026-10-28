@@ -14,6 +14,7 @@ _$CatalogNodeImpl _$$CatalogNodeImplFromJson(Map<String, dynamic> json) =>
       type: json['type'] as String,
       source: $enumDecode(_$CatalogNodeSourceEnumMap, json['source']),
       providerName: json['providerName'] as String?,
+      protocolSummary: json['protocolSummary'] as String?,
       coreIndex: (json['coreIndex'] as num?)?.toInt(),
       selectGroups: (json['selectGroups'] as List<dynamic>?)
               ?.map((e) => e as String)
@@ -32,6 +33,7 @@ Map<String, dynamic> _$$CatalogNodeImplToJson(_$CatalogNodeImpl instance) =>
       'type': instance.type,
       'source': _$CatalogNodeSourceEnumMap[instance.source]!,
       'providerName': instance.providerName,
+      'protocolSummary': instance.protocolSummary,
       'coreIndex': instance.coreIndex,
       'selectGroups': instance.selectGroups,
       'unsupported': _$CatalogUnsupportedReasonEnumMap[instance.unsupported]!,

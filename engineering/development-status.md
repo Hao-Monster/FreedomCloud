@@ -2,6 +2,18 @@
 
 更新日期：2026-10-28。当前阶段是快速开发、快速迭代和部分功能预览。本文记录来源与验收边界；每次继续开发仍需核实实际 Git/PR/CI 状态，不能把历史报告视为当前通过证明。
 
+## 跨配置节点总览订阅详情全量展示与节点完整协议栈去“内联”化（2026-10-28）
+
+- 来源：针对“代理 → 全部配置”（[`NodeOverviewView`](file:///E:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart#L153-L158)）配置卡片缺少订阅剩余流量/到期时间等关键状态、以及节点协议行仅显示粗糙的 `Vless · 内联` 的问题，从基线 `development@f9884dc` 完成订阅元数据面板与节点安全协议栈摘要实现。
+- 核心实现：
+  1. **订阅配置全量安全元数据面板（[`_ProfileSubscriptionSummary`](file:///E:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart#L1711-L2028) / [`_SidebarProfileCard`](file:///E:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart#L1562-L1661)）**：在宽屏侧边栏配置卡片及窄屏/单配置聚焦分区顶部展示剩余流量与剩余百分比胶囊、三级告警色流量进度条、已用/总流量与 `↑ 上传 · ↓ 下载` 明细、不限流量态、到期日期与剩余天/小时倒计时（临期橙色/过期红色预警）或长期有效态、最近同步时间、自动更新周期/手动更新/本地配置标签，以及安全解码后的服务商名称（`flclashx-servicename`）、设备数上限告警（`x-hwid-max-devices-reached`）与订阅公告（`announce`）；严格排除订阅 URL、令牌与 `local-xboard-account` 等敏感字段。同步补齐四语种 `arb/intl_*.arb` 与 `lib/l10n/*`。
+  2. **闭世界白名单协议栈摘要提取与移除“内联”标签（[`extractSafeProtocolSummary`](file:///E:/CodeWorkstation/FlClashX/lib/models/node_catalog.dart#L219-L404) / [`CatalogNode.protocolSummary`](file:///E:/CodeWorkstation/FlClashX/lib/models/node_catalog.dart#L68-L85) / [`_ActiveNodeRow`](file:///E:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart#L2911-L3015) / [`_InactiveNodeRow`](file:///E:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart#L3087-L3192)）**：在 `catalogNodeFromMap` 中通过严格枚举白名单提取协议名、传输层（`TCP`/`WS`/`gRPC`/`H2`/`HTTPUpgrade`/`XHTTP`/`QUIC`/`UDP` 等）、安全层（`REALITY`/`TLS`）、`flow`（`xtls-rprx-vision` 等）、加密套件（`2022-blake3-*`/`aes-*-gcm` 等）、混淆/插件/拥塞控制、uTLS 指纹、`Mux`、`XUDP` 与 `UDP` 能力（绝不回显 `server`、`port`、`uuid`、`password`、`public-key`、`sni`、`path` 或未知字符串，且不改变 `v1` `identityKey`/`endpointKey` 哈希向量）；在活动与非活动节点行彻底移除内联节点的 `内联`（`Inline`）后缀，直接展示完整协议栈（如 `VLESS · TCP · REALITY · xtls-rprx-vision · uTLS:chrome · UDP`），同时完整保留 `provider` 归属名、未验证运行时 `Runtime node` 及独立测速标记契约，并将 `protocolSummary` 纳入节点搜索索引。
+- 验证记录（本机 `Flutter 3.47.4` / `Dart 3.13.3`，CI 配置 `3.41.7`）：
+  - 前置有效 Red（[`test/models/node_catalog_test.dart`](file:///E:/CodeWorkstation/FlClashX/test/models/node_catalog_test.dart#L340-L463)、[`test/views/node_overview_test.dart`](file:///E:/CodeWorkstation/FlClashX/test/views/node_overview_test.dart#L3877-L4148)）：退出码 `1`；
+  - 单元、运行时校验与组件回归测试（`flutter test --no-pub test/models/node_catalog_test.dart test/common/node_runtime_catalog_test.dart test/views/node_overview_test.dart`）：**PASS（115 PASS / 0 FAIL：目录模型 14/14、运行时目录 11/11、节点总览视图 90/90）**；离线深色模式 2x PNG 视觉复核 **PASS**；
+  - 静态检查（`dart analyze lib/models/node_catalog.dart lib/views/proxies/overview/overview.dart lib/l10n test/models/node_catalog_test.dart test/views/node_overview_test.dart`）：**PASS（0 error / 0 warning / 0 新增 info）**；`git diff --check` 通过；`pubspec.lock` 未改动。
+- 交付状态：**已实现 / 已本地验证并提交至本地 `development`**；未推送远端（未经推送授权，当前工作树位于 `E:\CodeWorkstation\FlClashX`） / 未创建或合并 PR / 远端 CI **NOT RUN** / 未重打静态预览包 / 未启动候选窗口（未触碰本机运行中代理、TUN 及后台服务） / 后端部署与业务验收 **NOT RUN**。下一步：如需预览包或推送 `freedomcloud/development` 可按授权继续执行。
+
 ## 跨配置节点总览顶部“仅显示可用”与“排序”控件精细化重设计（2026-10-28）
 
 - 来源：针对“代理 → 全部配置”（[`NodeOverviewView`](file:///E:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart#L151-L156)）顶部工具栏原 `FilterChip`（`仅显示可用`）与带底横线的 `DropdownButton<ProxiesSortType>`（`默认 / 名称 / 延迟`）外观粗糙、勾选引发同行按钮跳动且展开下拉菜单横向遮挡两侧相邻控件的问题，从基线 `development@52cf5e9` 完成配对式精细化前端 UI 重构。

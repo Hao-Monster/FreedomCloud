@@ -6349,6 +6349,156 @@ class AppLocalizations {
     );
   }
 
+  /// `Remaining: {traffic}`
+  String nodeOverviewRemainingTraffic(String traffic) {
+    return Intl.message(
+      'Remaining: $traffic',
+      name: 'nodeOverviewRemainingTraffic',
+      desc: '',
+      args: [traffic],
+    );
+  }
+
+  /// `Used {used} / {total}`
+  String nodeOverviewUsedOfTotalTraffic(String used, String total) {
+    return Intl.message(
+      'Used $used / $total',
+      name: 'nodeOverviewUsedOfTotalTraffic',
+      desc: '',
+      args: [used, total],
+    );
+  }
+
+  /// `Traffic: Unlimited`
+  String get nodeOverviewTrafficUnlimited {
+    return Intl.message(
+      'Traffic: Unlimited',
+      name: 'nodeOverviewTrafficUnlimited',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Used: {used}`
+  String nodeOverviewUsedTrafficOnly(String used) {
+    return Intl.message(
+      'Used: $used',
+      name: 'nodeOverviewUsedTrafficOnly',
+      desc: '',
+      args: [used],
+    );
+  }
+
+  /// `Expires: {date}`
+  String nodeOverviewExpireAt(String date) {
+    return Intl.message(
+      'Expires: $date',
+      name: 'nodeOverviewExpireAt',
+      desc: '',
+      args: [date],
+    );
+  }
+
+  /// `{days}d left`
+  String nodeOverviewExpireDaysLeft(int days) {
+    return Intl.message(
+      '${days}d left',
+      name: 'nodeOverviewExpireDaysLeft',
+      desc: '',
+      args: [days],
+    );
+  }
+
+  /// `{hours}h left`
+  String nodeOverviewExpireHoursLeft(int hours) {
+    return Intl.message(
+      '${hours}h left',
+      name: 'nodeOverviewExpireHoursLeft',
+      desc: '',
+      args: [hours],
+    );
+  }
+
+  /// `< 1h left`
+  String get nodeOverviewExpireSoon {
+    return Intl.message(
+      '< 1h left',
+      name: 'nodeOverviewExpireSoon',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Expires: Never`
+  String get nodeOverviewNeverExpires {
+    return Intl.message(
+      'Expires: Never',
+      name: 'nodeOverviewNeverExpires',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Synced: {time}`
+  String nodeOverviewLastSync(String time) {
+    return Intl.message(
+      'Synced: $time',
+      name: 'nodeOverviewLastSync',
+      desc: '',
+      args: [time],
+    );
+  }
+
+  /// `Auto-update {hours}h`
+  String nodeOverviewAutoUpdateHours(int hours) {
+    return Intl.message(
+      'Auto-update ${hours}h',
+      name: 'nodeOverviewAutoUpdateHours',
+      desc: '',
+      args: [hours],
+    );
+  }
+
+  /// `Auto-update {minutes}m`
+  String nodeOverviewAutoUpdateMinutes(int minutes) {
+    return Intl.message(
+      'Auto-update ${minutes}m',
+      name: 'nodeOverviewAutoUpdateMinutes',
+      desc: '',
+      args: [minutes],
+    );
+  }
+
+  /// `Manual update`
+  String get nodeOverviewManualUpdate {
+    return Intl.message(
+      'Manual update',
+      name: 'nodeOverviewManualUpdate',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Local file`
+  String get nodeOverviewLocalProfile {
+    return Intl.message(
+      'Local file',
+      name: 'nodeOverviewLocalProfile',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Device limit reached`
+  String get nodeOverviewDeviceLimitReached {
+    return Intl.message(
+      'Device limit reached',
+      name: 'nodeOverviewDeviceLimitReached',
+      desc: '',
+      args: [],
+    );
+  }
+
   /// `Switched to {profile} · {node}`
   String nodeOverviewSwitchedToNode(String profile, String node) {
     return Intl.message(

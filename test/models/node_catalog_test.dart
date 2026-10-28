@@ -336,4 +336,129 @@ void main() {
           40 + index);
     }
   });
+
+  test(
+      'catalogNodeFromMap extracts whitelisted protocol summary without leaking secrets',
+      () {
+    final vlessReality = catalogNodeFromMap(
+      profileId: 'profile-a',
+      proxy: {
+        'name': 'DE-Reality-Vision',
+        'type': 'vless',
+        'server': 'de.secret-host.example',
+        'port': 443,
+        'uuid': 'secret-uuid-9999',
+        'tls': true,
+        'udp': true,
+        'flow': 'xtls-rprx-vision',
+        'client-fingerprint': 'chrome',
+        'packet-encoding': 'xudp',
+        'servername': 'secret-sni.example',
+        'reality-opts': {
+          'public-key': 'secret-pub-key',
+          'short-id': 'secret-short-id',
+        },
+      },
+    );
+    expect(
+      vlessReality.protocolSummary,
+      'VLESS · TCP · REALITY · xtls-rprx-vision · uTLS:chrome · XUDP · UDP',
+    );
+    expect(CatalogNode.fromJson(vlessReality.toJson()), vlessReality);
+
+    final vlessWs = catalogNodeFromMap(
+      profileId: 'profile-a',
+      proxy: {
+        'name': 'HK-WS-TLS',
+        'type': 'vless',
+        'server': 'hk.secret-host.example',
+        'port': 443,
+        'uuid': 'secret-uuid-8888',
+        'network': 'ws',
+        'tls': true,
+        'ws-opts': {
+          'path': '/secret-ws-path',
+          'headers': {'Host': 'secret-ws-host.example'},
+        },
+      },
+    );
+    expect(vlessWs.protocolSummary, 'VLESS · WS · TLS');
+
+    final ssObfs = catalogNodeFromMap(
+      profileId: 'profile-a',
+      proxy: {
+        'name': 'SG-SS2022',
+        'type': 'ss',
+        'server': 'sg.secret-host.example',
+        'port': 8388,
+        'password': 'secret-ss-password',
+        'cipher': '2022-blake3-aes-128-gcm',
+        'plugin': 'obfs',
+        'plugin-opts': {
+          'mode': 'tls',
+          'host': 'secret-obfs-host.example',
+        },
+        'udp': true,
+      },
+    );
+    expect(
+      ssObfs.protocolSummary,
+      'Shadowsocks · 2022-blake3-aes-128-gcm · simple-obfs (TLS) · UDP',
+    );
+
+    final hy2 = catalogNodeFromMap(
+      profileId: 'profile-a',
+      proxy: {
+        'name': 'JP-HY2',
+        'type': 'hysteria2',
+        'server': 'jp.secret-host.example',
+        'port': 443,
+        'password': 'secret-hy2-password',
+        'obfs': 'salamander',
+        'obfs-password': 'secret-salamander-password',
+      },
+    );
+    expect(hy2.protocolSummary, 'Hysteria2 · QUIC · TLS · salamander');
+
+    final untrustedTokens = catalogNodeFromMap(
+      profileId: 'profile-a',
+      proxy: {
+        'name': 'Untrusted-Fields',
+        'type': 'vless',
+        'server': 'untrusted.secret-host.example',
+        'port': 443,
+        'uuid': 'secret-uuid-7777',
+        'flow': 'custom-secret-flow-token',
+        'cipher': 'custom-secret-cipher-token',
+        'client-fingerprint': 'custom-secret-fp',
+      },
+    );
+    expect(untrustedTokens.protocolSummary, 'VLESS · TCP');
+
+    final serialized = [
+      vlessReality,
+      vlessWs,
+      ssObfs,
+      hy2,
+      untrustedTokens,
+    ].map((item) => '${item.toString()} ${jsonEncode(item.toJson())}').join(' ');
+    for (final secret in [
+      'secret-host.example',
+      'secret-uuid',
+      'secret-pub-key',
+      'secret-short-id',
+      'secret-sni.example',
+      '/secret-ws-path',
+      'secret-ws-host.example',
+      'secret-ss-password',
+      'secret-obfs-host.example',
+      'secret-hy2-password',
+      'secret-salamander-password',
+      'custom-secret-flow-token',
+      'custom-secret-cipher-token',
+      'custom-secret-fp',
+    ]) {
+      expect(serialized, isNot(contains(secret)));
+    }
+  });
 }

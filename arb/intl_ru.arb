@@ -715,6 +715,87 @@
   "purchaseRenewalBadge": "Продление",
   "purchaseNewActivationBadge": "Новая активация",
   "purchaseOpenNodesAction": "Открыть профили и узлы",
+  "nodeOverviewRemainingTraffic": "Остаток трафика: {traffic}",
+  "@nodeOverviewRemainingTraffic": {
+    "placeholders": {
+      "traffic": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewUsedOfTotalTraffic": "Использовано {used} из {total}",
+  "@nodeOverviewUsedOfTotalTraffic": {
+    "placeholders": {
+      "used": {
+        "type": "String"
+      },
+      "total": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewTrafficUnlimited": "Трафик: безлимитный",
+  "nodeOverviewUsedTrafficOnly": "Использовано: {used}",
+  "@nodeOverviewUsedTrafficOnly": {
+    "placeholders": {
+      "used": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewExpireAt": "Истекает: {date}",
+  "@nodeOverviewExpireAt": {
+    "placeholders": {
+      "date": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewExpireDaysLeft": "осталось {days} дн.",
+  "@nodeOverviewExpireDaysLeft": {
+    "placeholders": {
+      "days": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewExpireHoursLeft": "осталось {hours} ч.",
+  "@nodeOverviewExpireHoursLeft": {
+    "placeholders": {
+      "hours": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewExpireSoon": "менее 1 ч.",
+  "nodeOverviewNeverExpires": "Истекает: бессрочно",
+  "nodeOverviewLastSync": "Синхронизация: {time}",
+  "@nodeOverviewLastSync": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewAutoUpdateHours": "Автообновление {hours} ч.",
+  "@nodeOverviewAutoUpdateHours": {
+    "placeholders": {
+      "hours": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewAutoUpdateMinutes": "Автообновление {minutes} мин.",
+  "@nodeOverviewAutoUpdateMinutes": {
+    "placeholders": {
+      "minutes": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewManualUpdate": "Вручную",
+  "nodeOverviewLocalProfile": "Локальный файл",
+  "nodeOverviewDeviceLimitReached": "Достигнут лимит устройств",
   "nodeOverviewSwitchedToNode": "Переключено на {profile} · {node}",
   "@nodeOverviewSwitchedToNode": {
     "placeholders": {

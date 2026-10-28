@@ -73,6 +73,7 @@ class CatalogNode with _$CatalogNode {
     required String type,
     required CatalogNodeSource source,
     String? providerName,
+    String? protocolSummary,
     int? coreIndex,
     @Default(<String>[]) List<String> selectGroups,
     @Default(CatalogUnsupportedReason.none)
@@ -102,6 +103,305 @@ class ProfileCatalog with _$ProfileCatalog {
 
   factory ProfileCatalog.fromJson(Map<String, dynamic> json) =>
       _$ProfileCatalogFromJson(json);
+}
+
+const _canonicalProtocolLabels = <String, String>{
+  'vless': 'VLESS',
+  'vmess': 'VMess',
+  'ss': 'Shadowsocks',
+  'shadowsocks': 'Shadowsocks',
+  'ssr': 'ShadowsocksR',
+  'shadowsocksr': 'ShadowsocksR',
+  'trojan': 'Trojan',
+  'hysteria2': 'Hysteria2',
+  'hysteria': 'Hysteria',
+  'tuic': 'TUIC',
+  'anytls': 'AnyTLS',
+  'wireguard': 'WireGuard',
+  'amneziawg': 'AmneziaWG',
+  'snell': 'Snell',
+  'mieru': 'Mieru',
+  'socks5': 'SOCKS5',
+  'http': 'HTTP',
+  'ssh': 'SSH',
+};
+
+const _canonicalTransports = <String, String>{
+  'tcp': 'TCP',
+  'ws': 'WS',
+  'grpc': 'gRPC',
+  'h2': 'H2',
+  'http': 'HTTP',
+  'httpupgrade': 'HTTPUpgrade',
+  'splithttp': 'SplitHTTP',
+  'xhttp': 'XHTTP',
+  'quic': 'QUIC',
+  'kcp': 'KCP',
+  'udp': 'UDP',
+};
+
+const _allowedFlows = <String>{
+  'xtls-rprx-vision',
+  'xtls-rprx-vision-udp443',
+  'xtls-rprx-direct',
+  'xtls-rprx-splice',
+};
+
+const _allowedCiphers = <String>{
+  'auto',
+  'none',
+  'zero',
+  'dummy',
+  'aes-128-gcm',
+  'aes-192-gcm',
+  'aes-256-gcm',
+  'chacha20-ietf-poly1305',
+  'xchacha20-ietf-poly1305',
+  '2022-blake3-aes-128-gcm',
+  '2022-blake3-aes-256-gcm',
+  '2022-blake3-chacha20-poly1305',
+  'aes-128-cfb',
+  'aes-192-cfb',
+  'aes-256-cfb',
+  'aes-128-ctr',
+  'aes-192-ctr',
+  'aes-256-ctr',
+  'chacha20',
+  'chacha20-ietf',
+  'xchacha20',
+  'rc4-md5',
+  'salsa20',
+};
+
+const _allowedSsrProtocols = <String>{
+  'origin',
+  'auth_sha1_v4',
+  'auth_aes128_md5',
+  'auth_aes128_sha1',
+  'auth_chain_a',
+  'auth_chain_b',
+};
+
+const _allowedSsrObfs = <String>{
+  'plain',
+  'http_simple',
+  'http_post',
+  'random_head',
+  'tls1.2_ticket_auth',
+};
+
+const _allowedFingerprints = <String>{
+  'chrome',
+  'firefox',
+  'safari',
+  'ios',
+  'android',
+  'edge',
+  '360',
+  'qq',
+  'random',
+  'randomized',
+};
+
+const _congestionLabels = <String, String>{
+  'bbr': 'BBR',
+  'cubic': 'CUBIC',
+  'new_reno': 'NewReno',
+};
+
+const _packetEncodingLabels = <String, String>{
+  'xudp': 'XUDP',
+  'packetaddr': 'PacketAddr',
+};
+
+final _safeUnknownTypePattern = RegExp(r'^[A-Za-z0-9_-]{1,24}$');
+
+/// Extracts a human-readable protocol stack summary using ONLY closed-world
+/// canonical tokens. Raw strings for hosts, ports, credentials, paths, SNI,
+/// keys, or unknown tokens are never echoed.
+String? extractSafeProtocolSummary(Map<Object?, Object?> proxy) {
+  final fields = <String, Object?>{};
+  for (final entry in proxy.entries) {
+    final key = entry.key;
+    if (key is String) {
+      fields[key.trim().toLowerCase().replaceAll('_', '-')] = entry.value;
+    }
+  }
+  final rawType = fields['type'];
+  if (rawType is! String) return null;
+  final trimmedType = rawType.trim();
+  if (trimmedType.isEmpty) return null;
+  final typeLower = trimmedType.toLowerCase();
+  final protocolLabel = _canonicalProtocolLabels[typeLower] ??
+      (_safeUnknownTypePattern.hasMatch(trimmedType) ? trimmedType : null);
+  if (protocolLabel == null) return null;
+
+  final parts = <String>[protocolLabel];
+
+  String? transport;
+  final rawNetwork = fields['network'] ??
+      (typeLower == 'mieru' ? fields['transport'] : null);
+  if (rawNetwork is String) {
+    transport = _canonicalTransports[rawNetwork.trim().toLowerCase()];
+  }
+  if (transport == null) {
+    if (fields['ws-opts'] is Map) {
+      transport = 'WS';
+    } else if (fields['grpc-opts'] is Map) {
+      transport = 'gRPC';
+    } else if (fields['h2-opts'] is Map) {
+      transport = 'H2';
+    } else if (fields['http-opts'] is Map) {
+      transport = 'HTTP';
+    } else if (const {'vless', 'vmess', 'trojan'}.contains(typeLower)) {
+      transport = 'TCP';
+    } else if (const {'hysteria2', 'hysteria', 'tuic'}.contains(typeLower)) {
+      transport = 'QUIC';
+    } else if (const {'wireguard', 'amneziawg'}.contains(typeLower)) {
+      transport = 'UDP';
+    }
+  }
+  if (transport != null) {
+    parts.add(transport);
+  }
+
+  final hasReality = fields['reality-opts'] is Map;
+  final hasTls = fields['tls'] == true ||
+      const {'trojan', 'hysteria2', 'hysteria', 'tuic', 'anytls'}
+          .contains(typeLower);
+  if (hasReality) {
+    parts.add('REALITY');
+  } else if (hasTls) {
+    parts.add('TLS');
+  }
+
+  final rawFlow = fields['flow'];
+  if (rawFlow is String) {
+    final normalizedFlow = rawFlow.trim().toLowerCase();
+    if (_allowedFlows.contains(normalizedFlow)) {
+      parts.add(normalizedFlow);
+    }
+  }
+
+  if (const {'ss', 'shadowsocks', 'ssr', 'shadowsocksr', 'vmess'}
+      .contains(typeLower)) {
+    final rawCipher = fields['cipher'];
+    if (rawCipher is String) {
+      final normalizedCipher = rawCipher.trim().toLowerCase();
+      if (_allowedCiphers.contains(normalizedCipher)) {
+        parts.add(normalizedCipher);
+      }
+    }
+  }
+
+  if (typeLower == 'ssr' || typeLower == 'shadowsocksr') {
+    final rawProtocol = fields['protocol'];
+    if (rawProtocol is String) {
+      final normalized = rawProtocol.trim().toLowerCase();
+      if (_allowedSsrProtocols.contains(normalized)) {
+        parts.add(normalized);
+      }
+    }
+    final rawObfs = fields['obfs'];
+    if (rawObfs is String) {
+      final normalized = rawObfs.trim().toLowerCase();
+      if (_allowedSsrObfs.contains(normalized)) {
+        parts.add(normalized);
+      }
+    }
+  }
+
+  if (typeLower == 'ss' || typeLower == 'shadowsocks') {
+    final rawPlugin = fields['plugin'];
+    if (rawPlugin is String) {
+      final pluginLower = rawPlugin.trim().toLowerCase();
+      if (pluginLower == 'obfs' || pluginLower == 'simple-obfs') {
+        String? modeSuffix;
+        final pluginOpts = fields['plugin-opts'];
+        if (pluginOpts is Map) {
+          final rawMode = pluginOpts['mode'];
+          if (rawMode is String) {
+            final modeLower = rawMode.trim().toLowerCase();
+            if (modeLower == 'tls') {
+              modeSuffix = 'TLS';
+            } else if (modeLower == 'http') {
+              modeSuffix = 'HTTP';
+            }
+          }
+        }
+        parts.add(
+            modeSuffix == null ? 'simple-obfs' : 'simple-obfs ($modeSuffix)');
+      } else if (pluginLower == 'v2ray-plugin') {
+        parts.add('v2ray-plugin');
+      } else if (pluginLower == 'shadow-tls') {
+        parts.add('ShadowTLS');
+      } else if (pluginLower == 'restls') {
+        parts.add('Restls');
+      } else if (pluginLower == 'kcptun') {
+        parts.add('kcptun');
+      } else if (pluginLower == 'gost-plugin') {
+        parts.add('gost-plugin');
+      }
+    }
+  } else if (typeLower == 'hysteria2') {
+    final rawObfs = fields['obfs'];
+    if (rawObfs is String && rawObfs.trim().toLowerCase() == 'salamander') {
+      parts.add('salamander');
+    }
+  } else if (typeLower == 'tuic') {
+    final rawCongestion = fields['congestion-controller'];
+    if (rawCongestion is String) {
+      final label = _congestionLabels[rawCongestion.trim().toLowerCase()];
+      if (label != null) {
+        parts.add(label);
+      }
+    }
+  } else if (typeLower == 'snell') {
+    final rawVersion = fields['version'];
+    final version = rawVersion is int
+        ? rawVersion
+        : rawVersion is String
+            ? int.tryParse(rawVersion.trim())
+            : null;
+    if (version != null && version >= 1 && version <= 5) {
+      parts.add('v$version');
+    }
+  }
+
+  final rawFp = fields['client-fingerprint'];
+  if (rawFp is String) {
+    final fpLower = rawFp.trim().toLowerCase();
+    if (_allowedFingerprints.contains(fpLower)) {
+      parts.add('uTLS:$fpLower');
+    }
+  }
+
+  final smux = fields['smux'];
+  if (smux is Map && smux['enabled'] == true) {
+    final rawSmuxProto = smux['protocol'];
+    final smuxLower =
+        rawSmuxProto is String ? rawSmuxProto.trim().toLowerCase() : null;
+    if (smuxLower != null &&
+        const {'h2mux', 'yamux', 'smux'}.contains(smuxLower)) {
+      parts.add(smuxLower);
+    } else {
+      parts.add('Mux');
+    }
+  }
+
+  final rawPacketEncoding = fields['packet-encoding'];
+  if (rawPacketEncoding is String) {
+    final label = _packetEncodingLabels[rawPacketEncoding.trim().toLowerCase()];
+    if (label != null) {
+      parts.add(label);
+    }
+  }
+
+  if (fields['udp'] == true && transport != 'UDP') {
+    parts.add('UDP');
+  }
+
+  return parts.join(' · ');
 }
 
 /// Read only identity/display fields; never retain the source map or credentials.
@@ -144,6 +444,7 @@ CatalogNode catalogNodeFromMap({
     type: type,
     source: source,
     providerName: providerName,
+    protocolSummary: extractSafeProtocolSummary(proxy),
     selectGroups: List<String>.unmodifiable(selectGroups),
     unsupported: proxy.containsKey('dialer-proxy')
         ? CatalogUnsupportedReason.chainUnsupported

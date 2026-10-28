@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:math' as math;
 
 import 'package:flclashx/common/common.dart';
 import 'package:flclashx/common/delay_test_coordinator.dart';
@@ -161,6 +163,7 @@ class _IndexedNodeSummary {
     required this.endpointKey,
     required this.name,
     required this.type,
+    required this.protocolSummary,
     required this.providerName,
     required this.parseFailed,
   });
@@ -170,6 +173,7 @@ class _IndexedNodeSummary {
         endpointKey: node.endpointKey,
         name: node.name,
         type: node.type,
+        protocolSummary: node.protocolSummary,
         providerName: node.providerName,
         parseFailed: node.unsupported == CatalogUnsupportedReason.parseFailed,
       );
@@ -178,6 +182,7 @@ class _IndexedNodeSummary {
   final String endpointKey;
   final String name;
   final String type;
+  final String? protocolSummary;
   final String? providerName;
   final bool parseFailed;
 }
@@ -776,10 +781,7 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
               inUse: entry.inUse,
             );
             scopeCountries.add(code);
-            final matches =
-                '${entry.proxy.name}\n${entry.fileSource ? entry.node!.type : entry.proxy.type}\n${entry.node?.providerName ?? ''}'
-                    .toLowerCase()
-                    .contains(effectiveQuery);
+            final matches = _activeEntryMatchesQuery(entry, effectiveQuery);
             if (!matches || (_availableOnly && (entry.delay ?? -1) <= 0)) {
               continue;
             }
@@ -839,7 +841,7 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
               );
               scopeCountries.add(code);
               final matchesQuery = profileMatches ||
-                  '${node.name}\n${node.type}\n${node.providerName ?? ''}'
+                  '${node.name}\n${node.type}\n${node.protocolSummary ?? ''}\n${node.providerName ?? ''}'
                       .toLowerCase()
                       .contains(query);
               final delayMs =
@@ -1012,7 +1014,7 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
           children: [
             if (wide) ...[
               SizedBox(
-                  width: 280,
+                  width: 296,
                   child: ListView.builder(
                     key: const ValueKey('overview-sidebar'),
                     padding: const EdgeInsets.fromLTRB(16, 0, 0, 16),
@@ -1055,6 +1057,7 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
                       active: profile.id == activeId,
                       liveActive: isLiveActive(profile),
                       showHeader: selected == null,
+                      showSubscriptionSummary: !wide || selected != null,
                       loadImmediately:
                           selected != null || searching || activeCountry != null,
                       availableOnly: _availableOnly,
@@ -1581,10 +1584,12 @@ class _SidebarProfileCard extends ConsumerWidget {
     final loaded = ref.watch(profileCatalogProvider(profile.id));
     final catalog = loaded.valueOrNull ??
         ref.watch(cachedProfileCatalogsProvider)[profile.id];
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final hasMetadata = _hasDisplayableProfileMetadata(profile);
     WidgetsBinding.instance.addPostFrameCallback((_) => onVisible());
     return Card(
-        color:
-            selected ? Theme.of(context).colorScheme.secondaryContainer : null,
+        color: selected ? colors.secondaryContainer : null,
         child: InkWell(
           key: ValueKey('overview-select-${profile.id}'),
           borderRadius: BorderRadius.circular(12),
@@ -1594,9 +1599,58 @@ class _SidebarProfileCard extends ConsumerWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(profile.label ?? profile.id,
-                      style: Theme.of(context).textTheme.titleSmall),
-                  if (active) Text(appLocalizations.nodeOverviewActive),
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      Expanded(
+                        child: Text(
+                          profile.label ?? profile.id,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: theme.textTheme.titleSmall?.copyWith(
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                      if (active) ...[
+                        const SizedBox(width: 8),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 7, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: colors.primary.withValues(alpha: 0.14),
+                            borderRadius: BorderRadius.circular(999),
+                            border: Border.all(
+                              color: colors.primary.withValues(alpha: 0.36),
+                            ),
+                          ),
+                          child: Text(
+                            appLocalizations.nodeOverviewActive,
+                            style: theme.textTheme.labelSmall?.copyWith(
+                              color: colors.primary,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                  if (hasMetadata) ...[
+                    const SizedBox(height: 8),
+                    _ProfileSubscriptionSummary(
+                      profile: profile,
+                      now: now,
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 8),
+                      child: Divider(
+                        height: 1,
+                        thickness: 0.6,
+                        color: colors.outlineVariant.withValues(alpha: 0.55),
+                      ),
+                    ),
+                  ] else
+                    const SizedBox(height: 4),
                   _HealthSummary(
                       profile: profile,
                       catalog: catalog,
@@ -1608,6 +1662,487 @@ class _SidebarProfileCard extends ConsumerWidget {
   }
 }
 
+bool _hasDisplayableProfileMetadata(Profile profile) =>
+    profile.subscriptionInfo != null ||
+    profile.url.isNotEmpty ||
+    profile.lastUpdateDate != null ||
+    _decodeSafeHeaderText(profile.providerHeaders['flclashx-servicename']) !=
+        null ||
+    _decodeSafeHeaderText(profile.providerHeaders['announce']) != null ||
+    profile.providerHeaders['x-hwid-max-devices-reached']
+            ?.trim()
+            .toLowerCase() ==
+        'true';
+
+String? _decodeSafeHeaderText(String? raw) {
+  if (raw == null) return null;
+  final trimmed = raw.trim();
+  if (trimmed.isEmpty) return null;
+  var candidate = trimmed;
+  final explicitBase64 = candidate.startsWith('base64:');
+  if (explicitBase64) {
+    candidate = candidate.substring(7).trim();
+    if (candidate.isEmpty) return null;
+  }
+  if (explicitBase64 ||
+      (candidate.length >= 8 &&
+          RegExp(r'^[A-Za-z0-9+/_-]+={0,2}$').hasMatch(candidate) &&
+          (candidate.contains('=') ||
+              candidate.contains('+') ||
+              candidate.contains('/') ||
+              candidate.length >= 16))) {
+    try {
+      final normalized =
+          base64.normalize(candidate.replaceAll('-', '+').replaceAll('_', '/'));
+      final decoded = utf8.decode(base64.decode(normalized)).trim();
+      final hasControlChars = decoded.runes
+          .any((r) => r < 0x20 && r != 0x09 && r != 0x0A && r != 0x0D);
+      if (decoded.isNotEmpty && !hasControlChars) {
+        return decoded;
+      }
+    } catch (_) {
+      if (explicitBase64) return null;
+    }
+  }
+  return trimmed;
+}
+
+String _formatOverviewTraffic(int bytes) {
+  final value = TrafficValue(value: math.max(0, bytes));
+  return '${value.showValue} ${value.showUnit}';
+}
+
+class _ProfileSubscriptionSummary extends StatelessWidget {
+  const _ProfileSubscriptionSummary({
+    required this.profile,
+    required this.now,
+  });
+
+  final Profile profile;
+  final DateTime now;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final sub = profile.subscriptionInfo;
+    final headers = profile.providerHeaders;
+    final rawServiceName =
+        _decodeSafeHeaderText(headers['flclashx-servicename']);
+    final profileTitle = (profile.label ?? profile.id).trim();
+    final serviceName =
+        rawServiceName != null && rawServiceName != profileTitle
+            ? rawServiceName
+            : null;
+    final rawAnnounce = _decodeSafeHeaderText(headers['announce']);
+    final announce = rawAnnounce
+        ?.replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+    final deviceLimitReached =
+        headers['x-hwid-max-devices-reached']?.trim().toLowerCase() == 'true';
+
+    String? updatePolicyText;
+    if (profile.url.isNotEmpty) {
+      final minutes = profile.autoUpdateDuration.inMinutes;
+      if (profile.realAutoUpdate && minutes > 0) {
+        if (minutes % 60 == 0 && profile.autoUpdateDuration.inHours >= 1) {
+          updatePolicyText = appLocalizations
+              .nodeOverviewAutoUpdateHours(profile.autoUpdateDuration.inHours);
+        } else {
+          updatePolicyText =
+              appLocalizations.nodeOverviewAutoUpdateMinutes(minutes);
+        }
+      } else {
+        updatePolicyText = appLocalizations.nodeOverviewManualUpdate;
+      }
+    } else if (profile.lastUpdateDate != null) {
+      updatePolicyText = appLocalizations.nodeOverviewLocalProfile;
+    }
+
+    final metaStyle = theme.textTheme.bodySmall?.copyWith(
+      fontSize: 11.5,
+      height: 1.35,
+      color: colors.onSurfaceVariant,
+    );
+
+    final children = <Widget>[];
+
+    if (serviceName != null || updatePolicyText != null) {
+      children.add(
+        Wrap(
+          spacing: 6,
+          runSpacing: 4,
+          children: [
+            if (serviceName != null)
+              _SubscriptionTagPill(
+                icon: Icons.cloud_outlined,
+                label: serviceName,
+                foreground: colors.primary,
+                background: colors.primary.withValues(alpha: 0.12),
+                border: colors.primary.withValues(alpha: 0.30),
+              ),
+            if (updatePolicyText != null)
+              _SubscriptionTagPill(
+                icon: profile.url.isEmpty
+                    ? Icons.description_outlined
+                    : profile.realAutoUpdate
+                        ? Icons.autorenew_rounded
+                        : Icons.sync_disabled_rounded,
+                label: updatePolicyText,
+                foreground: colors.onSurfaceVariant,
+                background: colors.surfaceContainerHighest.withValues(
+                  alpha: 0.65,
+                ),
+                border: colors.outlineVariant.withValues(alpha: 0.55),
+              ),
+          ],
+        ),
+      );
+    }
+
+    if (sub != null) {
+      final upload = math.max(0, sub.upload);
+      final download = math.max(0, sub.download);
+      final used = upload + download;
+      final total = math.max(0, sub.total);
+
+      if (children.isNotEmpty) {
+        children.add(const SizedBox(height: 6));
+      }
+
+      if (total > 0) {
+        final remaining = math.max(0, total - used);
+        final usedRatio = (used / total).clamp(0.0, 1.0);
+        final remainingPercent = ((1.0 - usedRatio) * 100).round();
+        final barColor = usedRatio > 0.90
+            ? colors.error
+            : usedRatio > 0.70
+                ? Colors.orange
+                : Colors.green;
+
+        children.addAll([
+          Row(
+            children: [
+              Icon(
+                Icons.data_usage_rounded,
+                size: 13.5,
+                color: barColor,
+              ),
+              const SizedBox(width: 5),
+              Expanded(
+                child: Text(
+                  appLocalizations.nodeOverviewRemainingTraffic(
+                    _formatOverviewTraffic(remaining),
+                  ),
+                  style: theme.textTheme.labelMedium?.copyWith(
+                    fontWeight: FontWeight.w600,
+                    color: usedRatio > 0.90 ? colors.error : colors.onSurface,
+                  ),
+                ),
+              ),
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 6, vertical: 1.5),
+                decoration: BoxDecoration(
+                  color: barColor.withValues(alpha: 0.14),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Text(
+                  '$remainingPercent%',
+                  style: theme.textTheme.labelSmall?.copyWith(
+                    fontSize: 10.5,
+                    fontWeight: FontWeight.w700,
+                    color: barColor,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 5),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(999),
+            child: LinearProgressIndicator(
+              value: usedRatio,
+              minHeight: 5,
+              backgroundColor: colors.surfaceContainerHighest,
+              valueColor: AlwaysStoppedAnimation<Color>(barColor),
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            appLocalizations.nodeOverviewUsedOfTotalTraffic(
+              _formatOverviewTraffic(used),
+              _formatOverviewTraffic(total),
+            ),
+            style: metaStyle,
+          ),
+          if (upload > 0 || download > 0)
+            Text(
+              '↑ ${_formatOverviewTraffic(upload)} · ↓ ${_formatOverviewTraffic(download)}',
+              style: metaStyle?.copyWith(
+                fontSize: 11,
+                color: colors.onSurfaceVariant.withValues(alpha: 0.85),
+              ),
+            ),
+        ]);
+      } else {
+        children.add(
+          Row(
+            children: [
+              Icon(
+                Icons.all_inclusive_rounded,
+                size: 13.5,
+                color: colors.primary,
+              ),
+              const SizedBox(width: 5),
+              Expanded(
+                child: Text(
+                  appLocalizations.nodeOverviewTrafficUnlimited,
+                  style: metaStyle?.copyWith(
+                    color: colors.onSurface.withValues(alpha: 0.90),
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+        if (used > 0) {
+          children.add(
+            Padding(
+              padding: const EdgeInsets.only(top: 2),
+              child: Text(
+                '${appLocalizations.nodeOverviewUsedTrafficOnly(_formatOverviewTraffic(used))} · ↑ ${_formatOverviewTraffic(upload)} · ↓ ${_formatOverviewTraffic(download)}',
+                style: metaStyle,
+              ),
+            ),
+          );
+        }
+      }
+
+      children.add(const SizedBox(height: 4));
+      if (sub.expire <= 0) {
+        children.add(
+          Row(
+            children: [
+              Icon(
+                Icons.verified_outlined,
+                size: 13.5,
+                color: colors.onSurfaceVariant,
+              ),
+              const SizedBox(width: 5),
+              Expanded(
+                child: Text(
+                  appLocalizations.nodeOverviewNeverExpires,
+                  style: metaStyle,
+                ),
+              ),
+            ],
+          ),
+        );
+      } else {
+        final expireDate =
+            DateTime.fromMillisecondsSinceEpoch(sub.expire * 1000).toLocal();
+        final dateStr = DateFormat('yyyy-MM-dd').format(expireDate);
+        final diff = expireDate.difference(now);
+        final isExpired = diff.isNegative || diff.inSeconds <= 0;
+        final isExpiringSoon = !isExpired && diff.inDays <= 7;
+        final String expireText;
+        if (isExpired) {
+          expireText = appLocalizations.nodeOverviewExpireAt(dateStr);
+        } else if (diff.inDays >= 1) {
+          expireText =
+              '${appLocalizations.nodeOverviewExpireAt(dateStr)} · ${appLocalizations.nodeOverviewExpireDaysLeft(diff.inDays)}';
+        } else if (diff.inHours >= 1) {
+          expireText =
+              '${appLocalizations.nodeOverviewExpireAt(dateStr)} · ${appLocalizations.nodeOverviewExpireHoursLeft(diff.inHours)}';
+        } else {
+          expireText =
+              '${appLocalizations.nodeOverviewExpireAt(dateStr)} · ${appLocalizations.nodeOverviewExpireSoon}';
+        }
+        final expireColor = isExpired
+            ? colors.error
+            : isExpiringSoon
+                ? Colors.orange
+                : colors.onSurfaceVariant;
+        children.add(
+          Row(
+            children: [
+              Icon(
+                Icons.event_outlined,
+                size: 13.5,
+                color: expireColor,
+              ),
+              const SizedBox(width: 5),
+              Expanded(
+                child: Text(
+                  expireText,
+                  style: metaStyle?.copyWith(
+                    color: expireColor,
+                    fontWeight: isExpired || isExpiringSoon
+                        ? FontWeight.w600
+                        : FontWeight.w400,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+      }
+    }
+
+    if (profile.lastUpdateDate != null) {
+      if (children.isNotEmpty) {
+        children.add(const SizedBox(height: 3));
+      }
+      final syncStr = DateFormat('yyyy-MM-dd HH:mm')
+          .format(profile.lastUpdateDate!.toLocal());
+      children.add(
+        Row(
+          children: [
+            Icon(
+              Icons.schedule_rounded,
+              size: 13,
+              color: colors.onSurfaceVariant.withValues(alpha: 0.85),
+            ),
+            const SizedBox(width: 5),
+            Expanded(
+              child: Text(
+                appLocalizations.nodeOverviewLastSync(syncStr),
+                style: metaStyle,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    if (deviceLimitReached) {
+      if (children.isNotEmpty) {
+        children.add(const SizedBox(height: 4));
+      }
+      children.add(
+        Row(
+          children: [
+            Icon(
+              Icons.devices_other_outlined,
+              size: 13.5,
+              color: colors.error,
+            ),
+            const SizedBox(width: 5),
+            Expanded(
+              child: Text(
+                appLocalizations.nodeOverviewDeviceLimitReached,
+                style: metaStyle?.copyWith(
+                  color: colors.error,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    if (announce != null && announce.isNotEmpty) {
+      if (children.isNotEmpty) {
+        children.add(const SizedBox(height: 4));
+      }
+      children.add(
+        Tooltip(
+          message: announce,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
+            decoration: BoxDecoration(
+              color: colors.surfaceContainerHighest.withValues(alpha: 0.55),
+              borderRadius: BorderRadius.circular(6),
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.only(top: 1.5),
+                  child: Icon(
+                    Icons.campaign_outlined,
+                    size: 13.5,
+                    color: colors.primary,
+                  ),
+                ),
+                const SizedBox(width: 5),
+                Expanded(
+                  child: Text(
+                    '${appLocalizations.announcement}：$announce',
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: metaStyle?.copyWith(
+                      color: colors.onSurface.withValues(alpha: 0.88),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
+    if (children.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: children,
+    );
+  }
+}
+
+class _SubscriptionTagPill extends StatelessWidget {
+  const _SubscriptionTagPill({
+    required this.icon,
+    required this.label,
+    required this.foreground,
+    required this.background,
+    required this.border,
+  });
+
+  final IconData icon;
+  final String label;
+  final Color foreground;
+  final Color background;
+  final Color border;
+
+  @override
+  Widget build(BuildContext context) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 6.5, vertical: 2),
+        decoration: BoxDecoration(
+          color: background,
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(color: border, width: 0.8),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 11.5, color: foreground),
+            const SizedBox(width: 3.5),
+            Flexible(
+              child: Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                      fontSize: 10.5,
+                      height: 1.2,
+                      color: foreground,
+                      fontWeight: FontWeight.w500,
+                    ),
+              ),
+            ),
+          ],
+        ),
+      );
+}
+
 class _ProfileNodesSliver extends ConsumerStatefulWidget {
   const _ProfileNodesSliver(
       {super.key,
@@ -1615,6 +2150,7 @@ class _ProfileNodesSliver extends ConsumerStatefulWidget {
       required this.active,
       required this.liveActive,
       required this.showHeader,
+      required this.showSubscriptionSummary,
       required this.loadImmediately,
       required this.availableOnly,
       required this.countryFilter,
@@ -1628,6 +2164,7 @@ class _ProfileNodesSliver extends ConsumerStatefulWidget {
   final bool active;
   final bool liveActive;
   final bool showHeader;
+  final bool showSubscriptionSummary;
   final bool loadImmediately;
   final bool availableOnly;
   final String? countryFilter;
@@ -1709,10 +2246,7 @@ class _ProfileNodesSliverState extends ConsumerState<_ProfileNodesSliver> {
                 ref, profile.id, profile.isUpdating ? null : catalog)
             .values
             .any((entry) {
-          final matches =
-              '${entry.proxy.name}\n${entry.fileSource ? entry.node!.type : entry.proxy.type}\n${entry.node?.providerName ?? ''}'
-                  .toLowerCase()
-                  .contains(effectiveQuery);
+          final matches = _activeEntryMatchesQuery(entry, effectiveQuery);
           if (!matches || (widget.availableOnly && (entry.delay ?? -1) <= 0)) {
             return false;
           }
@@ -1750,6 +2284,23 @@ class _ProfileNodesSliverState extends ConsumerState<_ProfileNodesSliver> {
               pinned: true,
               delegate: _PinnedProfileHeader(
                   profile: profile, active: widget.active)),
+        if (widget.showSubscriptionSummary &&
+            _hasDisplayableProfileMetadata(profile))
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 4, 16, 6),
+              child: Card(
+                margin: EdgeInsets.zero,
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: _ProfileSubscriptionSummary(
+                    profile: profile,
+                    now: widget.now,
+                  ),
+                ),
+              ),
+            ),
+          ),
         if (isLoading)
           const SliverToBoxAdapter(
               child: Padding(
@@ -1933,7 +2484,12 @@ bool _expired(Profile profile, DateTime now) {
 }
 
 bool _matches(CatalogNode node, String query) =>
-    '${node.name}\n${node.type}\n${node.providerName ?? ''}'
+    '${node.name}\n${node.type}\n${node.protocolSummary ?? ''}\n${node.providerName ?? ''}'
+        .toLowerCase()
+        .contains(query);
+
+bool _activeEntryMatchesQuery(_ActiveDisplay entry, String query) =>
+    '${entry.proxy.name}\n${entry.fileSource ? entry.node!.type : entry.proxy.type}\n${entry.node?.protocolSummary ?? ''}\n${entry.node?.providerName ?? ''}'
         .toLowerCase()
         .contains(query);
 
@@ -2261,10 +2817,7 @@ class _ActiveNodes extends ConsumerWidget {
     final locale = Localizations.localeOf(context);
     final rows =
         _activeDisplays(ref, profile.id, fileCatalog).values.where((entry) {
-      final matches =
-          '${entry.proxy.name}\n${entry.fileSource ? entry.node!.type : entry.proxy.type}\n${entry.node?.providerName ?? ''}'
-              .toLowerCase()
-              .contains(query);
+      final matches = _activeEntryMatchesQuery(entry, query);
       if (!matches || (availableOnly && (entry.delay ?? -1) <= 0)) {
         return false;
       }
@@ -2379,15 +2932,22 @@ class _ActiveNodeRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final color = utils.getDelayColor(delay);
+    final providerSource = node == null ? null : _providerSourceLabel(node!);
     final source = node == null
         ? appLocalizations.nodeOverviewRuntimeSource
         : fileSource
-            ? appLocalizations.nodeOverviewFileSource(_source(node!))
-            : _source(node!);
-    final type = fileSource ? node!.type : proxy.type;
+            ? (providerSource == null
+                ? null
+                : appLocalizations.nodeOverviewFileSource(providerSource))
+            : providerSource;
+    final protocol = fileSource
+        ? _catalogProtocolLabel(node!)
+        : (node?.protocolSummary != null && node!.protocolSummary!.isNotEmpty)
+            ? node!.protocolSummary!
+            : proxy.type;
     final description = [
-      type,
-      source,
+      protocol,
+      if (source != null) source,
       if (independent) appLocalizations.nodeOverviewIndependentTest,
     ].join(' · ');
     return Card(
@@ -2504,9 +3064,15 @@ class _CountryBadge extends StatelessWidget {
   }
 }
 
-String _source(CatalogNode node) => node.source == CatalogNodeSource.inline
-    ? appLocalizations.nodeOverviewInline
-    : node.providerName ?? appLocalizations.providers;
+String? _providerSourceLabel(CatalogNode node) =>
+    node.source == CatalogNodeSource.inline
+        ? null
+        : node.providerName ?? appLocalizations.providers;
+
+String _catalogProtocolLabel(CatalogNode node) {
+  final summary = node.protocolSummary;
+  return summary != null && summary.isNotEmpty ? summary : node.type;
+}
 
 String _testedAt(NodeHealthRecord record, DateTime now) {
   final time = DateFormat.yMd().add_Hm().format(record.testedAt.toLocal());
@@ -2599,7 +3165,10 @@ class _InactiveNodeRow extends StatelessWidget {
                     ],
                     Flexible(
                       child: Text(
-                        '${node.type} · ${_source(node)}',
+                        [
+                          _catalogProtocolLabel(node),
+                          if (_providerSourceLabel(node) case final src?) src,
+                        ].join(' · '),
                         style: Theme.of(context).textTheme.bodySmall,
                       ),
                     ),

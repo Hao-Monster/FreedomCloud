@@ -661,6 +661,87 @@
   "purchaseRenewalBadge": "更新",
   "purchaseNewActivationBadge": "新規有効化",
   "purchaseOpenNodesAction": "プロファイルとノードを表示",
+  "nodeOverviewRemainingTraffic": "残り通信量：{traffic}",
+  "@nodeOverviewRemainingTraffic": {
+    "placeholders": {
+      "traffic": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewUsedOfTotalTraffic": "使用済み {used} / {total}",
+  "@nodeOverviewUsedOfTotalTraffic": {
+    "placeholders": {
+      "used": {
+        "type": "String"
+      },
+      "total": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewTrafficUnlimited": "通信量：無制限",
+  "nodeOverviewUsedTrafficOnly": "使用済み：{used}",
+  "@nodeOverviewUsedTrafficOnly": {
+    "placeholders": {
+      "used": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewExpireAt": "有効期限：{date}",
+  "@nodeOverviewExpireAt": {
+    "placeholders": {
+      "date": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewExpireDaysLeft": "残り {days} 日",
+  "@nodeOverviewExpireDaysLeft": {
+    "placeholders": {
+      "days": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewExpireHoursLeft": "残り {hours} 時間",
+  "@nodeOverviewExpireHoursLeft": {
+    "placeholders": {
+      "hours": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewExpireSoon": "残り 1 時間未満",
+  "nodeOverviewNeverExpires": "有効期限：無期限",
+  "nodeOverviewLastSync": "同期日時：{time}",
+  "@nodeOverviewLastSync": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewAutoUpdateHours": "自動更新 {hours}h",
+  "@nodeOverviewAutoUpdateHours": {
+    "placeholders": {
+      "hours": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewAutoUpdateMinutes": "自動更新 {minutes}m",
+  "@nodeOverviewAutoUpdateMinutes": {
+    "placeholders": {
+      "minutes": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewManualUpdate": "手動更新",
+  "nodeOverviewLocalProfile": "ローカル設定",
+  "nodeOverviewDeviceLimitReached": "端末数の上限に達しました",
   "nodeOverviewSwitchedToNode": "{profile} · {node} に切り替えました",
   "@nodeOverviewSwitchedToNode": {
     "placeholders": {

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flclashx/common/common.dart';
@@ -3871,5 +3872,277 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('overview-sort-menu')), findsOneWidget);
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'active and inactive inline nodes display full protocol summary and omit Inline label',
+      (tester) async {
+    globalState.config = globalState.config.copyWith(currentProfileId: 'a');
+    globalState.appState = globalState.appState.copyWith(
+      groups: const [
+        Group(
+          name: 'Proxy',
+          type: GroupType.Selector,
+          hidden: false,
+          now: '德国SuperLine-Reality-Vision',
+          all: [
+            Proxy(name: '德国SuperLine-Reality-Vision', type: 'Vless'),
+            Proxy(name: '香港WS-TLS', type: 'Vless'),
+          ],
+        ),
+      ],
+    );
+
+    final activeCatalog = buildProfileCatalog(
+      profileId: 'a',
+      fingerprint: 'verified-runtime',
+      raw: {
+        'proxies': [
+          {
+            'name': '德国SuperLine-Reality-Vision',
+            'type': 'vless',
+            'server': 'de.example.invalid',
+            'port': 443,
+            'uuid': 'uuid-1',
+            'tls': true,
+            'udp': true,
+            'flow': 'xtls-rprx-vision',
+            'client-fingerprint': 'chrome',
+            'reality-opts': {'public-key': 'pub-key'},
+          },
+          {
+            'name': '香港WS-TLS',
+            'type': 'vless',
+            'server': 'hk.example.invalid',
+            'port': 443,
+            'uuid': 'uuid-2',
+            'network': 'ws',
+            'tls': true,
+            'udp': true,
+          },
+        ],
+      },
+    );
+
+    final inactiveHy2 = catalogNodeFromMap(
+      profileId: 'b',
+      proxy: {
+        'name': '东京HY2',
+        'type': 'hysteria2',
+        'server': 'jp.example.invalid',
+        'port': 443,
+        'password': 'pw',
+        'obfs': 'salamander',
+      },
+    );
+    final inactiveProvider = catalogNodeFromMap(
+      profileId: 'b',
+      source: CatalogNodeSource.provider,
+      providerName: 'SubFeed',
+      proxy: {
+        'name': 'Provider-VLESS',
+        'type': 'vless',
+        'server': 'us.example.invalid',
+        'port': 443,
+        'uuid': 'uuid-3',
+        'network': 'grpc',
+        'tls': true,
+      },
+    );
+
+    await mount(
+      tester,
+      width: 1200,
+      locale: const Locale('zh', 'CN'),
+      activeCatalog: activeCatalog,
+      catalogs: {
+        'a': activeCatalog,
+        'b': ProfileCatalog(
+          profileId: 'b',
+          fingerprint: 'b-fp',
+          status: ProfileCatalogStatus.ready,
+          nodes: [inactiveHy2, inactiveProvider],
+        ),
+      },
+    );
+
+    expect(find.text('内联'), findsNothing);
+    expect(find.textContaining('内联'), findsNothing);
+    expect(
+      find.descendant(
+        of: find.byKey(
+            const ValueKey('overview-active-德国SuperLine-Reality-Vision')),
+        matching: find.text(
+            'VLESS · TCP · REALITY · xtls-rprx-vision · uTLS:chrome · UDP'),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('overview-active-香港WS-TLS')),
+        matching: find.text('VLESS · WS · TLS · UDP'),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: find.byKey(ValueKey('overview-node-b-${inactiveHy2.identityKey}')),
+        matching: find.text('Hysteria2 · QUIC · TLS · salamander'),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: find.byKey(
+            ValueKey('overview-node-b-${inactiveProvider.identityKey}')),
+        matching: find.text('VLESS · gRPC · TLS · SubFeed'),
+      ),
+      findsOneWidget,
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'subscription cards display remaining traffic, usage, expiry, sync metadata, and safe headers without leaking secrets',
+      (tester) async {
+    const giB = 1024 * 1024 * 1024;
+    final futureExpire =
+        DateTime.now().add(const Duration(days: 45, hours: 6)).millisecondsSinceEpoch ~/
+            1000;
+    final syncedAt = DateTime(2026, 10, 28, 18, 30);
+
+    final quotaProfile = Profile(
+      id: 'sub-quota',
+      label: 'admin',
+      url: 'https://panel.secret-sub.invalid/api/v1/client/subscribe?token=SECRET_SUB_TOKEN_1',
+      lastUpdateDate: syncedAt,
+      autoUpdate: true,
+      autoUpdateDuration: const Duration(hours: 24),
+      subscriptionInfo: SubscriptionInfo(
+        upload: 10 * giB,
+        download: 20 * giB,
+        total: 100 * giB,
+        expire: futureExpire,
+      ),
+      providerHeaders: {
+        'flclashx-servicename': base64Encode(utf8.encode('星云专线')),
+        'announce': 'base64:${base64Encode(utf8.encode('全线已完成扩容升级'))}',
+        'x-hwid-max-devices-reached': 'true',
+        'local-xboard-account': 'secret-owner@example.invalid',
+      },
+    );
+    final unlimitedProfile = Profile(
+      id: 'sub-unlimited',
+      label: 'opus',
+      url: 'https://panel.secret-sub.invalid/sub?token=SECRET_SUB_TOKEN_2',
+      lastUpdateDate: syncedAt,
+      autoUpdate: false,
+      autoUpdateDuration: const Duration(hours: 12),
+      subscriptionInfo: const SubscriptionInfo(
+        upload: 2 * giB,
+        download: 3 * giB,
+        total: 0,
+        expire: 0,
+      ),
+    );
+
+    for (final width in [1200.0, 420.0]) {
+      await mount(
+        tester,
+        width: width,
+        locale: const Locale('zh', 'CN'),
+        profiles: [quotaProfile, unlimitedProfile],
+        catalogs: {
+          'sub-quota': ProfileCatalog(
+            profileId: 'sub-quota',
+            fingerprint: 'q',
+            status: ProfileCatalogStatus.ready,
+            nodes: [_node('q-1', 'Node Q')],
+          ),
+          'sub-unlimited': ProfileCatalog(
+            profileId: 'sub-unlimited',
+            fingerprint: 'u',
+            status: ProfileCatalogStatus.ready,
+            nodes: [_node('u-1', 'Node U')],
+          ),
+        },
+      );
+
+      final scope = find.byKey(
+        ValueKey(width > 840 ? 'overview-sidebar' : 'overview-nodes'),
+      );
+      expect(
+        find.descendant(
+            of: scope, matching: find.textContaining('剩余流量：70 GB')),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(
+            of: scope,
+            matching: find.textContaining('已用 30 GB / 共 100 GB')),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(
+            of: scope, matching: find.textContaining('↑ 10 GB · ↓ 20 GB')),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(of: scope, matching: find.textContaining('到期时间：')),
+        findsWidgets,
+      );
+      expect(
+        find.descendant(of: scope, matching: find.textContaining('剩余 45 天')),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(of: scope, matching: find.textContaining('同步时间：')),
+        findsWidgets,
+      );
+      expect(
+        find.descendant(of: scope, matching: find.text('自动更新 24h')),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(of: scope, matching: find.text('手动更新')),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(of: scope, matching: find.text('星云专线')),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(of: scope, matching: find.text('已达设备数量上限')),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(
+            of: scope, matching: find.textContaining('全线已完成扩容升级')),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(of: scope, matching: find.text('流量：不限流量')),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(
+            of: scope, matching: find.textContaining('已用流量：5 GB')),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(of: scope, matching: find.text('到期时间：长期有效')),
+        findsOneWidget,
+      );
+
+      for (final secret in [
+        'SECRET_SUB_TOKEN_1',
+        'SECRET_SUB_TOKEN_2',
+        'panel.secret-sub.invalid',
+        'secret-owner@example.invalid',
+      ]) {
+        expect(find.textContaining(secret), findsNothing);
+      }
+      expect(tester.takeException(), isNull);
+    }
   });
 }

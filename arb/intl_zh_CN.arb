@@ -795,6 +795,87 @@
   "purchaseRenewalBadge": "续费叠加",
   "purchaseNewActivationBadge": "新购开通",
   "purchaseOpenNodesAction": "查看配置与节点",
+  "nodeOverviewRemainingTraffic": "剩余流量：{traffic}",
+  "@nodeOverviewRemainingTraffic": {
+    "placeholders": {
+      "traffic": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewUsedOfTotalTraffic": "已用 {used} / 共 {total}",
+  "@nodeOverviewUsedOfTotalTraffic": {
+    "placeholders": {
+      "used": {
+        "type": "String"
+      },
+      "total": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewTrafficUnlimited": "流量：不限流量",
+  "nodeOverviewUsedTrafficOnly": "已用流量：{used}",
+  "@nodeOverviewUsedTrafficOnly": {
+    "placeholders": {
+      "used": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewExpireAt": "到期时间：{date}",
+  "@nodeOverviewExpireAt": {
+    "placeholders": {
+      "date": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewExpireDaysLeft": "剩余 {days} 天",
+  "@nodeOverviewExpireDaysLeft": {
+    "placeholders": {
+      "days": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewExpireHoursLeft": "剩余 {hours} 小时",
+  "@nodeOverviewExpireHoursLeft": {
+    "placeholders": {
+      "hours": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewExpireSoon": "不足 1 小时",
+  "nodeOverviewNeverExpires": "到期时间：长期有效",
+  "nodeOverviewLastSync": "同步时间：{time}",
+  "@nodeOverviewLastSync": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewAutoUpdateHours": "自动更新 {hours}h",
+  "@nodeOverviewAutoUpdateHours": {
+    "placeholders": {
+      "hours": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewAutoUpdateMinutes": "自动更新 {minutes}m",
+  "@nodeOverviewAutoUpdateMinutes": {
+    "placeholders": {
+      "minutes": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewManualUpdate": "手动更新",
+  "nodeOverviewLocalProfile": "本地配置",
+  "nodeOverviewDeviceLimitReached": "已达设备数量上限",
   "nodeOverviewSwitchedToNode": "已切换至 {profile} · {node}",
   "@nodeOverviewSwitchedToNode": {
     "placeholders": {
