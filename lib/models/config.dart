@@ -316,6 +316,11 @@ class Config with _$Config {
         if (nextProxiesStyle["iconStyle"] == "standard") {
           nextProxiesStyle["iconStyle"] = "icon";
         }
+        final rawSort = nextProxiesStyle["sortType"];
+        if (rawSort is! String ||
+            !const {'none', 'delay', 'name'}.contains(rawSort)) {
+          nextProxiesStyle.remove("sortType");
+        }
         if (nextProxiesStyle["sortTypeDefaultDelayMigrated"] != true) {
           if (nextProxiesStyle["sortType"] == null ||
               nextProxiesStyle["sortType"] == "none") {

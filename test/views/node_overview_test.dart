@@ -15,6 +15,7 @@ import 'package:flclashx/models/node_catalog.dart';
 import 'package:flclashx/providers/node_overview.dart';
 import 'package:flclashx/providers/providers.dart';
 import 'package:flclashx/state.dart';
+import 'package:flclashx/views/profiles/add_profile.dart';
 import 'package:flclashx/views/proxies/card.dart';
 import 'package:flclashx/views/proxies/list.dart';
 import 'package:flclashx/views/proxies/overview/overview.dart';
@@ -5691,5 +5692,486 @@ void main() {
     } finally {
       semanticsHandle.dispose();
     }
+  });
+
+  testWidgets(
+      'CR-review 1 (CR-02 & CR-05): quick use never falls through updating/loading top profile or selects failed nodes, and test-current disables while target profile updates',
+      (tester) async {
+    final controller = _ProxyController();
+    globalState.appController = controller;
+    final now = DateTime(2026, 10, 29, 14, 0);
+
+    // 1. Active top profile isUpdating == true: BOTH test-current and quick-use must be disabled
+    //    (must NOT silently fall through to Beta!).
+    final baseProfiles = <Profile>[
+      const Profile(
+        id: 'a',
+        label: 'Alpha',
+        url: 'https://example.com/a',
+        autoUpdateDuration: defaultUpdateDuration,
+        currentGroupName: 'Live',
+        selectedMap: {'Live': 'AlphaFast'},
+      ),
+      const Profile(
+        id: 'b',
+        label: 'Beta',
+        url: 'https://example.com/b',
+        autoUpdateDuration: defaultUpdateDuration,
+      ),
+    ];
+    globalState.config = globalState.config.copyWith(currentProfileId: 'a');
+    globalState.appState = globalState.appState.copyWith(
+      groups: const [
+        Group(
+          name: 'Live',
+          type: GroupType.Selector,
+          now: 'AlphaFast',
+          hidden: false,
+          all: [Proxy(name: 'AlphaFast', type: 'VLESS')],
+        ),
+      ],
+      delayMap: {
+        defaultTestUrl: {'AlphaFast': 70},
+      },
+    );
+
+    var container = await mount(
+      tester,
+      width: 1200,
+      locale: const Locale('zh', 'CN'),
+      profiles: baseProfiles,
+      catalogs: {
+        'a': ProfileCatalog(
+          profileId: 'a',
+          fingerprint: 'fa',
+          status: ProfileCatalogStatus.ready,
+          nodes: [
+            _node('af', 'AlphaFast').copyWith(selectGroups: const ['Live']),
+          ],
+        ),
+        'b': ProfileCatalog(
+          profileId: 'b',
+          fingerprint: 'fb',
+          status: ProfileCatalogStatus.ready,
+          nodes: [
+            _node('bf', 'BetaFast').copyWith(selectGroups: const ['Proxy']),
+          ],
+        ),
+      },
+      health: {
+        'b': {
+          'bf': NodeHealthRecord(
+            delayMs: 55,
+            testedAt: now,
+            testUrlHash: 'h',
+          ),
+        },
+      },
+    );
+    container.read(profilesProvider.notifier).setProfile(
+          baseProfiles[0].copyWith(isUpdating: true),
+        );
+    await tester.pump();
+
+    final testBtn = find.byKey(const ValueKey('overview-test-current'));
+    final useBtn = find.byKey(const ValueKey('overview-quick-use'));
+    expect(tester.widget<TextButton>(testBtn).onPressed, isNull);
+    expect(tester.widget<TextButton>(useBtn).onPressed, isNull);
+
+    // 2. Selected sidebar profile 'b' with isUpdating == true also disables test-current.
+    container.read(profilesProvider.notifier).setProfile(
+          baseProfiles[0].copyWith(isUpdating: false),
+        );
+    container.read(profilesProvider.notifier).setProfile(
+          baseProfiles[1].copyWith(isUpdating: true),
+        );
+    await tester.tap(find.byKey(const ValueKey('overview-select-b')));
+    await tester.pump();
+    expect(tester.widget<TextButton>(testBtn).onPressed, isNull);
+    expect(tester.widget<TextButton>(useBtn).onPressed, isNull);
+
+    // 3. All nodes in top profile failed (-1): quick-use is disabled (never selects failed node or jumps to 'b').
+    final readyProfiles = <Profile>[
+      const Profile(
+        id: 'a',
+        label: 'Alpha',
+        url: 'https://example.com/a',
+        autoUpdateDuration: defaultUpdateDuration,
+        currentGroupName: 'Live',
+      ),
+      const Profile(
+        id: 'b',
+        label: 'Beta',
+        url: 'https://example.com/b',
+        autoUpdateDuration: defaultUpdateDuration,
+      ),
+    ];
+    globalState.config = globalState.config.copyWith(currentProfileId: 'a');
+    globalState.appState = globalState.appState.copyWith(
+      groups: const [
+        Group(
+          name: 'Live',
+          type: GroupType.Selector,
+          hidden: false,
+          all: [
+            Proxy(name: 'AlphaDead', type: 'VLESS'),
+            Proxy(name: 'BetaHealthy', type: 'VLESS'),
+          ],
+        ),
+      ],
+      delayMap: {
+        defaultTestUrl: {
+          'AlphaDead': -1,
+          'BetaHealthy': -1,
+        },
+      },
+    );
+    await tester.pumpWidget(const SizedBox.shrink());
+    container = await mount(
+      tester,
+      width: 1200,
+      locale: const Locale('zh', 'CN'),
+      profiles: readyProfiles,
+      catalogs: {
+        'b': ProfileCatalog(
+          profileId: 'b',
+          fingerprint: 'fb',
+          status: ProfileCatalogStatus.ready,
+          nodes: [
+            _node('bu', 'BetaUntested').copyWith(selectGroups: const ['Proxy']),
+          ],
+        ),
+      },
+    );
+    expect(tester.widget<TextButton>(useBtn).onPressed, isNull);
+
+    // 4. Under "名称" sort where AlphaDead (-1) sorts before BetaHealthy (85ms),
+    //    quick-use skips AlphaDead and selects BetaHealthy!
+    globalState.appState = globalState.appState.copyWith(
+      groups: const [
+        Group(
+          name: 'Live',
+          type: GroupType.Selector,
+          hidden: false,
+          all: [
+            Proxy(name: 'AlphaDead', type: 'VLESS'),
+            Proxy(name: 'BetaHealthy', type: 'VLESS'),
+          ],
+        ),
+      ],
+      delayMap: {
+        defaultTestUrl: {
+          'AlphaDead': -1,
+          'BetaHealthy': 85,
+        },
+      },
+    );
+    await tester.pumpWidget(const SizedBox.shrink());
+    container = await mount(
+      tester,
+      width: 1200,
+      locale: const Locale('zh', 'CN'),
+      profiles: readyProfiles,
+    );
+    container
+        .read(proxiesStyleSettingProvider.notifier)
+        .updateState((s) => s.copyWith(sortType: ProxiesSortType.name));
+    await tester.pumpAndSettle();
+    expect(
+      tester.getTopLeft(find.text('AlphaDead')).dy,
+      lessThan(tester.getTopLeft(find.text('BetaHealthy')).dy),
+    );
+    await tester.tap(useBtn);
+    await tester.pumpAndSettle();
+    expect(controller.selections.last, ('Live', 'BetaHealthy'));
+  });
+
+  testWidgets(
+      'CR-review 2 (CR-03): unmounting overview while subscription sync fails surfaces real error instead of disposed ref StateError',
+      (tester) async {
+    final originalPathProvider = PathProviderPlatform.instance;
+    final tempRoot = Directory.systemTemp.createTempSync('flclashx-cr03-');
+    Directory('${tempRoot.path}/logs').createSync(recursive: true);
+    PathProviderPlatform.instance = _TestPaths(tempRoot.path);
+    addTearDown(() {
+      PathProviderPlatform.instance = originalPathProvider;
+      if (tempRoot.existsSync()) {
+        tempRoot.deleteSync(recursive: true);
+      }
+    });
+
+    late ProviderContainer container;
+    final syncCompleter = Completer<void>();
+    final controller = _ProxyController()
+      ..onSetProfile = (p) {
+        container.read(profilesProvider.notifier).setProfile(p);
+      }
+      ..onUpdateProfile = (_) => syncCompleter.future;
+    globalState.appController = controller;
+
+    final profiles = <Profile>[
+      const Profile(
+        id: 'a',
+        label: 'Alpha',
+        url: 'https://example.com/a',
+        autoUpdateDuration: defaultUpdateDuration,
+      ),
+      const Profile(
+        id: 'b',
+        label: 'Beta',
+        url: 'https://example.com/b',
+        autoUpdateDuration: defaultUpdateDuration,
+      ),
+    ];
+
+    final showView = ValueNotifier<bool>(true);
+    addTearDown(showView.dispose);
+
+    container = await mount(
+      tester,
+      width: 1200,
+      locale: const Locale('zh', 'CN'),
+      attachNavigatorKey: true,
+      profiles: profiles,
+      child: ValueListenableBuilder<bool>(
+        valueListenable: showView,
+        builder: (_, visible, __) =>
+            visible ? const NodeOverviewView() : const SizedBox.shrink(),
+      ),
+    );
+
+    await tester.tap(find.byKey(const ValueKey('overview-sync-a')));
+    await tester.pump();
+    expect(controller.updatedProfiles, hasLength(1));
+
+    // Unmount NodeOverviewView while sync HTTP request is still in flight.
+    showView.value = false;
+    await tester.pump();
+
+    // Fail the in-flight sync: must display upstream 503 error, NOT Riverpod disposed ref StateError!
+    syncCompleter.completeError(Exception('upstream 503'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('upstream 503'), findsOneWidget);
+    expect(find.textContaining('disposed'), findsNothing);
+    await tester.tap(find.text('确定'));
+    await tester.pumpAndSettle();
+
+    // Direct contract assertions for AppController.updateProfile snapshot merge & rollback:
+    const baseSnapshot = Profile(
+      id: 'p1',
+      label: 'Original',
+      url: 'https://old.example.com/sub',
+      autoUpdateDuration: Duration(hours: 12),
+      selectedMap: {'Proxy': 'HK-01'},
+      currentGroupName: 'Proxy',
+      providerHeaders: {
+        'announce': 'old-notice',
+        'local-xboard-account': 'owner-1',
+      },
+    );
+    final fetchedSnapshot = baseSnapshot.copyWith(
+      url: 'https://new.example.com/sub',
+      lastUpdateDate: DateTime(2026, 10, 29, 20, 0),
+      subscriptionInfo: const SubscriptionInfo(
+        upload: 100,
+        download: 200,
+        total: 1000,
+        expire: 0,
+      ),
+      providerHeaders: const {
+        'local-xboard-account': 'owner-1',
+        'profile-update-interval': '6',
+      },
+      autoUpdateDuration: const Duration(hours: 6),
+    );
+    final concurrentLatest = baseSnapshot.copyWith(
+      isUpdating: true,
+      selectedMap: const {'Proxy': 'JP-02'},
+      currentGroupName: 'Auto',
+      unfoldSet: const {'Proxy'},
+      autoUpdate: false,
+    );
+    final merged = mergeUpdatedProfileSnapshot(
+      base: baseSnapshot,
+      fetched: fetchedSnapshot,
+      latest: concurrentLatest,
+    )!;
+    expect(merged.isUpdating, isFalse);
+    expect(merged.selectedMap, {'Proxy': 'JP-02'});
+    expect(merged.currentGroupName, 'Auto');
+    expect(merged.unfoldSet, {'Proxy'});
+    expect(merged.autoUpdate, isFalse);
+    expect(merged.url, 'https://new.example.com/sub');
+    expect(merged.autoUpdateDuration, const Duration(hours: 6));
+    expect(merged.subscriptionInfo?.total, 1000);
+    expect(merged.providerHeaders.containsKey('announce'), isFalse);
+    expect(merged.providerHeaders['local-xboard-account'], 'owner-1');
+    expect(
+      mergeUpdatedProfileSnapshot(
+        base: baseSnapshot,
+        fetched: fetchedSnapshot,
+        latest: null,
+      ),
+      isNull,
+    );
+    expect(rollbackFailedProfileUpdate(null), isNull);
+    final rolledBack = rollbackFailedProfileUpdate(concurrentLatest)!;
+    expect(rolledBack.isUpdating, isFalse);
+    expect(rolledBack.selectedMap, {'Proxy': 'JP-02'});
+  });
+
+  testWidgets(
+      'CR-review 3 (CR-04): 添加订阅 blocks rapid double-tap re-entrancy and disposes URLFormDialog controller cleanly',
+      (tester) async {
+    final importCompleter = Completer<void>();
+    final controller = _ProxyController()
+      ..onAddProfileFormURL = (_) => importCompleter.future;
+    globalState.appController = controller;
+
+    await mount(
+      tester,
+      width: 1200,
+      locale: const Locale('zh', 'CN'),
+      attachNavigatorKey: true,
+      catalogs: flatCatalogs(),
+    );
+
+    final addBtn = find.byKey(const ValueKey('overview-add-subscription'));
+    // Rapid double tap before frame settles: only ONE URLFormDialog may open.
+    await tester.tap(addBtn);
+    await tester.tap(addBtn, warnIfMissed: false);
+    await tester.pumpAndSettle();
+
+    expect(find.byType(URLFormDialog), findsOneWidget);
+
+    await tester.enterText(
+      find.byType(TextField),
+      'https://sub.example.com/import',
+    );
+    await tester.tap(find.text('提交'));
+    await tester.pump();
+
+    // While import is still running in background, button stays disabled against re-entry.
+    expect(tester.widget<TextButton>(addBtn).onPressed, isNull);
+
+    importCompleter.complete();
+    await tester.pumpAndSettle();
+    expect(tester.widget<TextButton>(addBtn).onPressed, isNotNull);
+    expect(controller.addedUrls, ['https://sub.example.com/import']);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'CR-review 4 (CR-01, CR-06, CR-07): malformed config JSON normalizes safely, 1.3x Russian active card preserves title width, wide selected detail shows sync button, and narrow workflow arrows stay paired with destination steps',
+      (tester) async {
+    // 1. Total-order delay comparator (CR-01) & malformed config JSON normalization (CR-07).
+    final samples = <int?>[25, 120, null, 0, -1, -99];
+    for (final x in samples) {
+      expect(utils.compareDelay(x, x), 0);
+      for (final y in samples) {
+        expect(utils.compareDelay(x, y), -utils.compareDelay(y, x));
+      }
+    }
+    final sortedDelays = <int?>[-99, 0, 120, null, -1, 25]
+      ..sort(utils.compareDelay);
+    expect(sortedDelays.sublist(0, 2), [25, 120]);
+    expect(sortedDelays.sublist(2, 4), containsAll(<int?>[0, null]));
+    expect(sortedDelays.sublist(4, 6), containsAll(<int?>[-99, -1]));
+
+    final recovered = Config.compatibleFromJson(<String, Object?>{
+      'themeProps': <String, Object?>{},
+      'proxiesStyle': <String, Object?>{
+        'sortType': 42,
+        'sortTypeDefaultDelayMigrated': 'corrupt',
+      },
+    });
+    expect(recovered.proxiesStyle.sortType, ProxiesSortType.delay);
+    expect(recovered.proxiesStyle.sortTypeDefaultDelayMigrated, isTrue);
+
+    // 2. At 1.3x text scale in Russian with active + updating URL profile, sidebar title retains >= 120px width.
+    final profiles = <Profile>[
+      const Profile(
+        id: 'a',
+        label: 'Основная подписка',
+        url: 'https://example.com/a',
+        autoUpdateDuration: defaultUpdateDuration,
+      ),
+      const Profile(
+        id: 'b',
+        label: 'Резервная подписка',
+        url: 'https://example.com/b',
+        autoUpdateDuration: defaultUpdateDuration,
+      ),
+    ];
+    globalState.config = globalState.config.copyWith(currentProfileId: 'a');
+
+    final ruContainer = await mount(
+      tester,
+      width: 1200,
+      locale: const Locale('ru'),
+      profiles: profiles,
+      child: const MediaQuery(
+        data: MediaQueryData(
+          size: Size(1200, 1000),
+          textScaler: TextScaler.linear(1.3),
+        ),
+        child: NodeOverviewView(),
+      ),
+      catalogs: flatCatalogs(),
+    );
+    ruContainer.read(profilesProvider.notifier).setProfile(
+          profiles[0].copyWith(isUpdating: true),
+        );
+    await tester.pump();
+
+    final titleRect = tester.getRect(
+      find.descendant(
+        of: find.byKey(const ValueKey('overview-sidebar-card-a')),
+        matching: find.text('Основная подписка'),
+      ),
+    );
+    expect(titleRect.width, greaterThanOrEqualTo(120));
+    expect(tester.takeException(), isNull);
+
+    // 3. Selecting URL profile 'b' in wide mode exposes detail sync button without duplicate keys.
+    ruContainer.read(profilesProvider.notifier).setProfile(
+          profiles[0].copyWith(isUpdating: false),
+        );
+    await tester.tap(find.byKey(const ValueKey('overview-select-b')));
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey('overview-sync-b')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('overview-detail-sync-b')),
+      findsOneWidget,
+    );
+
+    // 4. Narrow 380px wrapped workflow bar keeps each arrow on the exact same row as its destination step.
+    await tester.pumpWidget(const SizedBox.shrink());
+    await mount(
+      tester,
+      width: 380,
+      locale: const Locale('zh', 'CN'),
+      profiles: profiles,
+      catalogs: flatCatalogs(),
+    );
+    final arrow1CenterY = tester
+        .getCenter(find.byKey(const ValueKey('overview-workflow-arrow-1')))
+        .dy;
+    final testCenterY = tester
+        .getCenter(find.byKey(const ValueKey('overview-test-current')))
+        .dy;
+    final arrow2CenterY = tester
+        .getCenter(find.byKey(const ValueKey('overview-workflow-arrow-2')))
+        .dy;
+    final useCenterY = tester
+        .getCenter(find.byKey(const ValueKey('overview-quick-use')))
+        .dy;
+    expect(arrow1CenterY, closeTo(testCenterY, 1.5));
+    expect(arrow2CenterY, closeTo(useCenterY, 1.5));
+    expect(tester.takeException(), isNull);
   });
 }

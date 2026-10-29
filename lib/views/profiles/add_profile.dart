@@ -106,6 +106,12 @@ class URLFormDialog extends StatefulWidget {
 class _URLFormDialogState extends State<URLFormDialog> {
   final urlController = TextEditingController();
 
+  @override
+  void dispose() {
+    urlController.dispose();
+    super.dispose();
+  }
+
   void _handleSubmit() {
     final url = urlController.text.trim();
     if (url.isNotEmpty) {

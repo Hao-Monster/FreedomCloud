@@ -311,6 +311,8 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
       <ProviderSubscription<Object?>>[];
   List<String> _stableProfileOrderIds = const <String>[];
   final Set<String> _updatingOrderFreezeIds = <String>{};
+  final Set<String> _syncingProfileIds = <String>{};
+  bool _importingSubscription = false;
   _IndexScanEpochState _scanEpoch = _IndexScanEpochState(0);
   bool _disposed = false;
   Timer? _clock;
@@ -768,49 +770,71 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
   }
 
   Future<void> _syncSubscription(Profile targetProfile) async {
+    if (_syncingProfileIds.contains(targetProfile.id)) return;
     final current =
         ref.read(profilesProvider).getProfile(targetProfile.id) ??
             targetProfile;
     if (current.type != ProfileType.url || current.isUpdating) return;
     if (!globalState.isAppControllerReady) return;
     final appController = globalState.appController;
-    await globalState.safeRun(silence: false, () async {
-      try {
-        appController.setProfile(
-          current.copyWith(
-            isUpdating: true,
-          ),
-        );
-        await appController.updateProfile(current);
-      } catch (e) {
-        final latest = ref.read(profilesProvider).getProfile(current.id);
-        if (latest != null && latest.isUpdating) {
+    _syncingProfileIds.add(current.id);
+    try {
+      await globalState.safeRun(silence: false, () async {
+        try {
           appController.setProfile(
-            latest.copyWith(
-              isUpdating: false,
+            current.copyWith(
+              isUpdating: true,
             ),
           );
+          await appController.updateProfile(current);
+        } catch (e) {
+          if (mounted) {
+            final latest = ref.read(profilesProvider).getProfile(current.id);
+            if (latest != null && latest.isUpdating) {
+              appController.setProfile(
+                latest.copyWith(
+                  isUpdating: false,
+                ),
+              );
+            }
+          }
+          rethrow;
         }
-        rethrow;
-      }
-    });
+      });
+    } finally {
+      _syncingProfileIds.remove(current.id);
+    }
   }
 
   Future<void> _openUrlSubscriptionImport() async {
-    final String? url;
-    if (globalState.navigatorKey.currentState != null) {
-      url = await globalState.showCommonDialog<String>(
-        child: const URLFormDialog(),
-      );
-    } else {
-      if (!mounted) return;
-      url = await showDialog<String>(
-        context: context,
-        builder: (_) => const URLFormDialog(),
-      );
-    }
-    if (url != null && url.isNotEmpty && globalState.isAppControllerReady) {
-      await globalState.appController.addProfileFormURL(url);
+    if (_importingSubscription) return;
+    setState(() {
+      _importingSubscription = true;
+    });
+    try {
+      final String? url;
+      if (globalState.navigatorKey.currentState != null) {
+        url = await globalState.showCommonDialog<String>(
+          child: const URLFormDialog(),
+        );
+      } else {
+        if (!mounted) return;
+        url = await showDialog<String>(
+          context: context,
+          builder: (_) => const URLFormDialog(),
+        );
+      }
+      if (url != null && url.isNotEmpty && globalState.isAppControllerReady) {
+        await globalState.appController.addProfileFormURL(url);
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _importingSubscription = false;
+        });
+      } else {
+        _importingSubscription = false;
+      }
     }
   }
 
@@ -1096,13 +1120,20 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
         : const <String>[];
     final activeCountryMatchCount =
         activeCountry == null ? 0 : (countryCounts[activeCountry] ?? 0);
+    final targetTestProfile = selected != null
+        ? visible.firstOrNull
+        : (activeId == null ? null : profiles.getProfile(activeId));
     final testCurrentAction = tester.busy ||
+            (targetTestProfile?.isUpdating ?? false) ||
+            (selected != null && targetTestProfile == null) ||
             (selected == null && (activeId == null || currentGroups.isEmpty))
         ? null
-        : () => _testCurrent(selected == null ? null : visible.single);
+        : () => _testCurrent(selected == null ? null : targetTestProfile);
     VoidCallback? resolveQuickUseAction() {
       for (final profile in visible) {
-        if (profile.isUpdating) continue;
+        if (profile.isUpdating) {
+          return null;
+        }
         final profileMatches =
             (profile.label ?? profile.id).toLowerCase().contains(query);
         final catalog = resolvedCatalogs[profile.id];
@@ -1130,6 +1161,9 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
             }
             return true;
           }).toList();
+          if (rows.isEmpty) {
+            continue;
+          }
           if (sort != ProxiesSortType.none) {
             rows.sort((a, b) {
               if (sort == ProxiesSortType.delay) {
@@ -1142,41 +1176,60 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
             });
           }
           for (final entry in rows) {
-            if (entry.selectGroup != null) {
+            if (entry.selectGroup != null &&
+                (entry.delay == null || entry.delay! >= 0)) {
               final targetGroup = entry.selectGroup!;
               final targetProxy = entry.proxy.name;
               return () => _useActiveNode(profile, targetGroup, targetProxy);
             }
           }
-        } else if (catalog != null &&
-            catalog.status == ProfileCatalogStatus.ready) {
-          final health = ref.watch(nodeHealthEntriesProvider(profile.id));
-          final nodes = catalog.nodes.where((node) {
-            final matches = profileMatches || _matches(node, query);
-            if (!matches ||
-                (_availableOnly &&
-                    (_nodeHealth(node, health)?.delayMs ?? -1) <= 0)) {
-              return false;
-            }
-            if (activeCountry != null) {
-              final code = countryResolver.resolveCountryCode(
-                profileId: profile.id,
-                profileLabel: profile.label,
-                nodeName: node.name,
-                endpointKey: node.endpointKey,
-              );
-              if (code != activeCountry) return false;
-            }
-            return true;
-          }).toList();
-          _sortNodes(nodes, health, sort);
-          for (final node in nodes) {
-            final targetGroup = _targetGroupForCatalogNode(profile, node, mode);
-            if (targetGroup != null) {
-              return () => _useCatalogNode(profile, node, targetGroup);
-            }
+          return null;
+        }
+        if (catalog == null ||
+            catalog.status == ProfileCatalogStatus.loading ||
+            catalog.status == ProfileCatalogStatus.updating) {
+          return null;
+        }
+        if (catalog.status != ProfileCatalogStatus.ready) {
+          if (activeCountry != null || query.isNotEmpty) {
+            continue;
+          }
+          return null;
+        }
+        final health = ref.watch(nodeHealthEntriesProvider(profile.id));
+        final nodes = catalog.nodes.where((node) {
+          final matches = profileMatches || _matches(node, query);
+          if (!matches ||
+              (_availableOnly &&
+                  (_nodeHealth(node, health)?.delayMs ?? -1) <= 0)) {
+            return false;
+          }
+          if (activeCountry != null) {
+            final code = countryResolver.resolveCountryCode(
+              profileId: profile.id,
+              profileLabel: profile.label,
+              nodeName: node.name,
+              endpointKey: node.endpointKey,
+            );
+            if (code != activeCountry) return false;
+          }
+          return true;
+        }).toList();
+        if (nodes.isEmpty) {
+          continue;
+        }
+        _sortNodes(nodes, health, sort);
+        for (final node in nodes) {
+          final delayMs = _nodeHealth(node, health)?.delayMs;
+          if (delayMs != null && delayMs < 0) {
+            continue;
+          }
+          final targetGroup = _targetGroupForCatalogNode(profile, node, mode);
+          if (targetGroup != null) {
+            return () => _useCatalogNode(profile, node, targetGroup);
           }
         }
+        return null;
       }
       return null;
     }
@@ -1331,8 +1384,9 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
                 children: [
                   _OverviewQuickWorkflowBar(
                     key: const ValueKey('overview-workflow-bar'),
-                    onAddSubscription: () =>
-                        unawaited(_openUrlSubscriptionImport()),
+                    onAddSubscription: _importingSubscription
+                        ? null
+                        : () => unawaited(_openUrlSubscriptionImport()),
                     onTestCurrent: testCurrentAction,
                     onQuickUse: quickUseAction,
                   ),
@@ -1350,10 +1404,15 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
                               showSubscriptionSummary:
                                   !wide || selected != null,
                               onSyncSubscription:
-                                  !wide && profile.type == ProfileType.url
+                                  profile.type == ProfileType.url &&
+                                          (!wide || selected != null)
                                       ? () =>
                                           unawaited(_syncSubscription(profile))
                                       : null,
+                              syncButtonKey: wide
+                                  ? ValueKey(
+                                      'overview-detail-sync-${profile.id}')
+                                  : ValueKey('overview-sync-${profile.id}'),
                               loadImmediately: selected != null ||
                                   searching ||
                                   activeCountry != null,
@@ -1400,7 +1459,7 @@ class _OverviewQuickWorkflowBar extends StatelessWidget {
     required this.onQuickUse,
   });
 
-  final VoidCallback onAddSubscription;
+  final VoidCallback? onAddSubscription;
   final VoidCallback? onTestCurrent;
   final VoidCallback? onQuickUse;
 
@@ -1437,28 +1496,44 @@ class _OverviewQuickWorkflowBar extends StatelessWidget {
                 label: appLocalizations.nodeOverviewAddSubscription,
                 onPressed: onAddSubscription,
               ),
-              _WorkflowStepArrow(
-                key: const ValueKey('overview-workflow-arrow-1'),
-                active: onTestCurrent != null,
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  _WorkflowStepArrow(
+                    key: const ValueKey('overview-workflow-arrow-1'),
+                    active: onTestCurrent != null,
+                  ),
+                  const SizedBox(width: 8),
+                  Flexible(
+                    child: _WorkflowStepButton(
+                      buttonKey: const ValueKey('overview-test-current'),
+                      stepNumber: 2,
+                      icon: Icons.speed_rounded,
+                      label: appLocalizations.nodeOverviewTestCurrent,
+                      onPressed: onTestCurrent,
+                    ),
+                  ),
+                ],
               ),
-              _WorkflowStepButton(
-                buttonKey: const ValueKey('overview-test-current'),
-                stepNumber: 2,
-                icon: Icons.speed_rounded,
-                label: appLocalizations.nodeOverviewTestCurrent,
-                onPressed: onTestCurrent,
-              ),
-              _WorkflowStepArrow(
-                key: const ValueKey('overview-workflow-arrow-2'),
-                active: onQuickUse != null,
-              ),
-              _WorkflowStepButton(
-                buttonKey: const ValueKey('overview-quick-use'),
-                stepNumber: 3,
-                icon: Icons.play_arrow_rounded,
-                label: appLocalizations.nodeOverviewQuickUse,
-                onPressed: onQuickUse,
-                emphasized: true,
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  _WorkflowStepArrow(
+                    key: const ValueKey('overview-workflow-arrow-2'),
+                    active: onQuickUse != null,
+                  ),
+                  const SizedBox(width: 8),
+                  Flexible(
+                    child: _WorkflowStepButton(
+                      buttonKey: const ValueKey('overview-quick-use'),
+                      stepNumber: 3,
+                      icon: Icons.play_arrow_rounded,
+                      label: appLocalizations.nodeOverviewQuickUse,
+                      onPressed: onQuickUse,
+                      emphasized: true,
+                    ),
+                  ),
+                ],
               ),
             ],
           ),
@@ -2273,6 +2348,7 @@ class _SidebarProfileCard extends ConsumerWidget {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
     final textScale = MediaQuery.textScalerOf(context).scale(1.0);
+    final locale = Localizations.localeOf(context);
     final metadata = _resolveProfileMetadata(profile);
     final titleWidget = Text(
       profile.label ?? profile.id,
@@ -2283,22 +2359,25 @@ class _SidebarProfileCard extends ConsumerWidget {
       ),
     );
     final activeBadge = active
-        ? Container(
-            padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
-            decoration: BoxDecoration(
-              color: colors.primary.withValues(alpha: 0.14),
-              borderRadius: BorderRadius.circular(999),
-              border: Border.all(
-                color: colors.primary.withValues(alpha: 0.36),
+        ? ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 96),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+              decoration: BoxDecoration(
+                color: colors.primary.withValues(alpha: 0.14),
+                borderRadius: BorderRadius.circular(999),
+                border: Border.all(
+                  color: colors.primary.withValues(alpha: 0.36),
+                ),
               ),
-            ),
-            child: Text(
-              appLocalizations.nodeOverviewActive,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: theme.textTheme.labelSmall?.copyWith(
-                color: colors.primary,
-                fontWeight: FontWeight.w600,
+              child: Text(
+                appLocalizations.nodeOverviewActive,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: theme.textTheme.labelSmall?.copyWith(
+                  color: colors.primary,
+                  fontWeight: FontWeight.w600,
+                ),
               ),
             ),
           )
@@ -2308,9 +2387,15 @@ class _SidebarProfileCard extends ConsumerWidget {
             key: ValueKey('overview-sync-${profile.id}'),
             updating: profile.isUpdating,
             selectedCard: selected,
+            maxWidth: 118,
             onPressed: onSync,
           )
         : null;
+    final splitActiveHeader = activeBadge != null &&
+        syncButton != null &&
+        (textScale > 1.15 ||
+            locale.languageCode == 'ru' ||
+            locale.languageCode == 'ja');
     WidgetsBinding.instance.addPostFrameCallback((_) => onVisible());
     return Card(
         color: selected ? colors.secondaryContainer : null,
@@ -2323,9 +2408,7 @@ class _SidebarProfileCard extends ConsumerWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  if (activeBadge != null &&
-                      syncButton != null &&
-                      textScale > 1.35) ...[
+                  if (splitActiveHeader) ...[
                     Row(
                       crossAxisAlignment: CrossAxisAlignment.center,
                       children: [
@@ -2387,11 +2470,13 @@ class _ProfileSyncButton extends StatefulWidget {
     required this.updating,
     required this.onPressed,
     this.selectedCard = false,
+    this.maxWidth = 168,
   });
 
   final bool updating;
   final VoidCallback? onPressed;
   final bool selectedCard;
+  final double maxWidth;
 
   @override
   State<_ProfileSyncButton> createState() => _ProfileSyncButtonState();
@@ -2460,7 +2545,7 @@ class _ProfileSyncButtonState extends State<_ProfileSyncButton> {
               if (_hovered) setState(() => _hovered = false);
             },
             child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 148),
+              constraints: BoxConstraints(maxWidth: widget.maxWidth),
               child: AnimatedContainer(
                 duration: const Duration(milliseconds: 140),
                 curve: Curves.easeOutCubic,
@@ -3144,6 +3229,7 @@ class _ProfileNodesSliver extends ConsumerStatefulWidget {
       required this.showHeader,
       required this.showSubscriptionSummary,
       this.onSyncSubscription,
+      this.syncButtonKey,
       required this.loadImmediately,
       required this.availableOnly,
       required this.countryFilter,
@@ -3159,6 +3245,7 @@ class _ProfileNodesSliver extends ConsumerStatefulWidget {
   final bool showHeader;
   final bool showSubscriptionSummary;
   final VoidCallback? onSyncSubscription;
+  final Key? syncButtonKey;
   final bool loadImmediately;
   final bool availableOnly;
   final String? countryFilter;
@@ -3299,7 +3386,8 @@ class _ProfileNodesSliverState extends ConsumerState<_ProfileNodesSliver> {
                     trailingAction: widget.onSyncSubscription == null
                         ? null
                         : _ProfileSyncButton(
-                            key: ValueKey('overview-sync-${profile.id}'),
+                            key: widget.syncButtonKey ??
+                                ValueKey('overview-sync-${profile.id}'),
                             updating: profile.isUpdating,
                             onPressed: widget.onSyncSubscription,
                           ),
@@ -3519,13 +3607,7 @@ bool _activeEntryMatchesQuery(_ActiveDisplay entry, String query) {
       .contains(query);
 }
 
-int _compareDelay(int? a, int? b) {
-  final aRank =
-      a != null && a > 0 ? a : (a == null || a == 0 ? 1 << 61 : 1 << 62);
-  final bRank =
-      b != null && b > 0 ? b : (b == null || b == 0 ? 1 << 61 : 1 << 62);
-  return aRank.compareTo(bRank);
-}
+int _compareDelay(int? a, int? b) => utils.compareDelay(a, b);
 
 void _sortNodes(List<CatalogNode> nodes, Map<String, NodeHealthRecord> health,
     ProxiesSortType sort) {

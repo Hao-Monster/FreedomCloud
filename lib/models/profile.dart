@@ -294,3 +294,50 @@ extension ProfileExtension on Profile {
     return copyWith(lastUpdateDate: DateTime.now());
   }
 }
+
+/// Merges remotely refreshed subscription fields from [fetched] onto the
+/// latest provider snapshot [latest] (which started from [base]), preserving
+/// concurrent local edits (`selectedMap`, `currentGroupName`, `unfoldSet`,
+/// `overrideData`, `autoUpdate`, and user `label`). Returns `null` when
+/// [latest] is `null` (profile was deleted while synchronization was in flight).
+Profile? mergeUpdatedProfileSnapshot({
+  required Profile base,
+  required Profile fetched,
+  required Profile? latest,
+}) {
+  if (latest == null) {
+    return null;
+  }
+  final mergedHeaders = Map<String, String>.from(latest.providerHeaders)
+    ..addAll(fetched.providerHeaders);
+  for (final key in const ['announce', 'support-url']) {
+    if (!fetched.providerHeaders.containsKey(key)) {
+      mergedHeaders.remove(key);
+    }
+  }
+  final resolvedUrl = fetched.url != base.url ? fetched.url : latest.url;
+  final intervalHours = int.tryParse(
+    fetched.providerHeaders['profile-update-interval'] ?? '',
+  );
+  final durationFromHeader = intervalHours != null && intervalHours > 0
+      ? Duration(hours: intervalHours)
+      : null;
+  return latest.copyWith(
+    url: resolvedUrl,
+    label: latest.label ?? fetched.label,
+    subscriptionInfo: fetched.subscriptionInfo,
+    lastUpdateDate: fetched.lastUpdateDate,
+    autoUpdateDuration: durationFromHeader ?? latest.autoUpdateDuration,
+    providerHeaders: mergedHeaders,
+    isUpdating: false,
+  );
+}
+
+/// Clears `isUpdating` on the latest provider snapshot after a failed sync
+/// without clobbering concurrent edits or resurrecting a deleted profile.
+Profile? rollbackFailedProfileUpdate(Profile? latest) {
+  if (latest == null || !latest.isUpdating) {
+    return null;
+  }
+  return latest.copyWith(isUpdating: false);
+}

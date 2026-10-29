@@ -1179,62 +1179,65 @@ class AppController {
       profile.copyWith(isUpdating: true),
     );
     try {
-    final prefs = await SharedPreferences.getInstance();
-    final shouldSend = prefs.getBool('sendDeviceHeaders') ?? true;
-    final newProfile = await profile.update(
-      shouldSendHeaders: shouldSend,
-    );
-
-    final mergedHeaders = Map<String, String>.from(profile.providerHeaders)
-      ..addAll(newProfile.providerHeaders);
-    for (final key in ['announce', 'support-url']) {
-      if (!newProfile.providerHeaders.containsKey(key)) {
-        mergedHeaders.remove(key);
-      }
-    }
-    final mergedProfile = newProfile.copyWith(
-      providerHeaders: mergedHeaders,
-      isUpdating: false,
-    );
-
-    // Apply the header-driven app settings (theme/flclashx-hex, flclashx-settings,
-    // flclashx-custom view/widgets, etc.) ONLY when the updated profile is the ACTIVE
-    // one. Otherwise auto-updating a background profile would push its headers into the
-    // global settings and clobber the active profile's ("last updated wins"). Mirrors
-    // the active-profile gate on applyProfileDebounce below; the reactive header
-    // providers (background / global-mode / server-info) already read the active profile.
-    if (mergedHeaders.isNotEmpty &&
-        profile.id == _ref.read(currentProfileIdProvider)) {
-      _applyAllHeaderSettings(mergedProfile, isNewProfile: false);
-    }
-
-    final showHwidLimit = mergedHeaders['x-hwid-max-devices-reached']?.toLowerCase() == 'true';
-    final announceText = mergedHeaders['announce'];
-    if (showHwidLimit && announceText != null && announceText.isNotEmpty) {
-      _showHwidLimitNotice(announceText, mergedHeaders['support-url']);
-    }
-
-    if (mergedHeaders['x-hwid-not-supported']?.toLowerCase() == 'true') {
-      _showHwidNotSupportedNotice();
-    }
-
-    _ref
-        .read(profilesProvider.notifier)
-        .setProfile(mergedProfile);
-
-    if (profile.id == _ref.read(currentProfileIdProvider)) {
-      applyProfileDebounce(silence: true);
-    }
-
-    // Check subscription expiration and show notification if needed
-    unawaited(SubscriptionNotificationService.checkAndNotify(newProfile)
-        .catchError((e) {
-      commonPrint.log("Error checking subscription: $e");
-    }));
-    } catch (e) {
-      _ref.read(profilesProvider.notifier).setProfile(
-        profile.copyWith(isUpdating: false),
+      final prefs = await SharedPreferences.getInstance();
+      final shouldSend = prefs.getBool('sendDeviceHeaders') ?? true;
+      final fetched = await profile.fetch(
+        shouldSendHeaders: shouldSend,
       );
+      if (_ref.read(profilesProvider).getProfile(profile.id) == null) {
+        return;
+      }
+      final savedProfile = await fetched.profile.saveFile(fetched.bytes);
+      final mergedProfile = mergeUpdatedProfileSnapshot(
+        base: profile,
+        fetched: savedProfile,
+        latest: _ref.read(profilesProvider).getProfile(profile.id),
+      );
+      if (mergedProfile == null) {
+        return;
+      }
+      final mergedHeaders = mergedProfile.providerHeaders;
+
+      // Apply the header-driven app settings (theme/flclashx-hex, flclashx-settings,
+      // flclashx-custom view/widgets, etc.) ONLY when the updated profile is the ACTIVE
+      // one. Otherwise auto-updating a background profile would push its headers into the
+      // global settings and clobber the active profile's ("last updated wins"). Mirrors
+      // the active-profile gate on applyProfileDebounce below; the reactive header
+      // providers (background / global-mode / server-info) already read the active profile.
+      if (mergedHeaders.isNotEmpty &&
+          profile.id == _ref.read(currentProfileIdProvider)) {
+        _applyAllHeaderSettings(mergedProfile, isNewProfile: false);
+      }
+
+      final showHwidLimit =
+          mergedHeaders['x-hwid-max-devices-reached']?.toLowerCase() == 'true';
+      final announceText = mergedHeaders['announce'];
+      if (showHwidLimit && announceText != null && announceText.isNotEmpty) {
+        _showHwidLimitNotice(announceText, mergedHeaders['support-url']);
+      }
+
+      if (mergedHeaders['x-hwid-not-supported']?.toLowerCase() == 'true') {
+        _showHwidNotSupportedNotice();
+      }
+
+      _ref.read(profilesProvider.notifier).setProfile(mergedProfile);
+
+      if (profile.id == _ref.read(currentProfileIdProvider)) {
+        applyProfileDebounce(silence: true);
+      }
+
+      // Check subscription expiration and show notification if needed
+      unawaited(SubscriptionNotificationService.checkAndNotify(mergedProfile)
+          .catchError((e) {
+        commonPrint.log("Error checking subscription: $e");
+      }));
+    } catch (e) {
+      final rollback = rollbackFailedProfileUpdate(
+        _ref.read(profilesProvider).getProfile(profile.id),
+      );
+      if (rollback != null) {
+        _ref.read(profilesProvider.notifier).setProfile(rollback);
+      }
       rethrow;
     }
   }
@@ -2932,17 +2935,7 @@ class AppController {
                 testUrl: testUrl,
               ),
             );
-            // null (untested) and -1 (failed) are equivalent "no delay"
-            // sentinels: map both to the same rank so the comparator stays
-            // antisymmetric (compare(a,b) == -compare(b,a)) and they sort to
-            // the end together.
-            if (aDelay == null || aDelay == -1) {
-              return (bDelay == null || bDelay == -1) ? 0 : 1;
-            }
-            if (bDelay == null || bDelay == -1) {
-              return -1;
-            }
-            return aDelay.compareTo(bDelay);
+            return utils.compareDelay(aDelay, bDelay);
           },
         );
 

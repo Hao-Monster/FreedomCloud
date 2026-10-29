@@ -18,6 +18,22 @@ class Utils {
     return const Color(0xFFC57F0A);
   }
 
+  /// Total-order delay comparator:
+  /// 0: positive measured latency (`> 0`), sorted ascending;
+  /// 1: untested (`null`) or in-flight testing (`0`);
+  /// 2: failed sentinel (`< 0`).
+  int compareDelay(int? a, int? b) {
+    final aBucket = a != null && a > 0 ? 0 : (a == null || a == 0 ? 1 : 2);
+    final bBucket = b != null && b > 0 ? 0 : (b == null || b == 0 ? 1 : 2);
+    if (aBucket != bBucket) {
+      return aBucket.compareTo(bBucket);
+    }
+    if (aBucket == 0) {
+      return a!.compareTo(b!);
+    }
+    return 0;
+  }
+
   String get id {
     final timestamp = DateTime.now().microsecondsSinceEpoch;
     final random = Random();
