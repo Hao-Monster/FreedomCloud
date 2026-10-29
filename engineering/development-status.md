@@ -2,7 +2,19 @@
 
 更新日期：2026-10-29。当前阶段是快速开发、快速迭代和部分功能预览。本文记录来源与验收边界；每次继续开发仍需核实实际 Git/PR/CI 状态，不能把历史报告视为当前通过证明。
 
-## 跨配置节点总览增量开发（`8a666bb..66c0909`）Code Review 全量修复（2026-10-29）
+## 批次晋级 PR #61 合并主线与 Windows 跨配置总览订阅详情/协议栈预览交付（2026-10-29）
+
+- 批次晋级与独立审查闭环：
+  1. 将 `development` 推送至自有远端 `freedomcloud/development` 并创建单一批次晋级 PR [#61](https://github.com/Hao-Monster/FreedomCloud/pull/61)（`f08fedb..694ce1c`，共 51 个提交，涵盖跨配置节点总览订阅详情/协议栈/排序筛选/单点测速、仅兑换码购买与核销工作台 v2、三级国家筛选与 TLS 探针超时套接字关闭、Windows TUN 两阶段自愈及 Core DoH 静默连接恢复）。
+  2. 执行两轮独立代码与治理审查：首轮检出 [`overview.dart`](file:///E:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart) 活动配置显式测速链路的 2 项 `P1`（`_activeDisplays` 误用可变 `live` 导致后续取消或未授信后台广播覆写已确认 `explicitLive.delayMs`，以及 `_runExplicitCurrentTest` 中 `!identical(prevUrlMap, nextUrlMap)` 在部分完成并取消的批次中将未启动旁观节点旧值误采为显式结果）与 2 项 `P3`（排序按钮 `Semantics` 去重朗读、未验证运行时节点规范化协议搜索与到期边界对齐）；在提交 `694ce1c0ef40a767306393f76e1b08763626c1c4` 按 TDD Red → Green 完成修复（[`node_overview_test.dart`](file:///E:/CodeWorkstation/FlClashX/test/views/node_overview_test.dart) `96/96 PASS`、`dart analyze` `0 issues`），二轮独立复审放行（`VERDICT: APPROVE`，`0 P1 / 0 P2`）。
+  3. 远端门禁与合并同步：最终 PR head `694ce1c` 的 [push `40811835890`](https://github.com/Hao-Monster/FreedomCloud/actions/runs/40811835890) 与 [PR `40811842381`](https://github.com/Hao-Monster/FreedomCloud/actions/runs/40811842381) 全部 4 项 CI（`Flutter tests` `3.41.7`、`Core Go tests`、`Windows Core and service tests`、`M3 package integrity checks`）通过后，以普通 merge commit 合并至 `main`，生成合并提交 `a8dc8bfc102e54e404f792d2602939854e9a9128`（Git tree `3ccf124a06dfe2f41bb3dfebaaed2288aa6954e4`），并将 `development` 快进同步至同一提交；合并后 [main `40812322068`](https://github.com/Hao-Monster/FreedomCloud/actions/runs/40812322068) 与 [development `40812388471`](https://github.com/Hao-Monster/FreedomCloud/actions/runs/40812388471) 4/4 CI 均 **PASS**。
+- Windows amd64 预览包构建与审计：
+  - 基于合并提交 `a8dc8bfc102e54e404f792d2602939854e9a9128` 的干净 tracked `git archive` 全量重编 UI、Core（`v1.19.32` + Mihomo overlay）、Agent、Helper 与仓库原生插件，产出 [`FreedomCloud-windows-amd64-overview-sub-a8dc8bfc102e.zip`](../dist/FreedomCloud-windows-amd64-overview-sub-a8dc8bfc102e.zip)（166,142,005 bytes，SHA256 `9fa38b8fe63df2fc133ae77b57f6c5339b4e43c2a6eea9a4b7a168a3f0074c95`）及安全解压目录 [`FreedomCloud-windows-amd64-overview-sub-a8dc8bfc102e`](../dist/FreedomCloud-windows-amd64-overview-sub-a8dc8bfc102e/)（入口 `FlClashX.exe`，73 文件 / 72 checksum）。
+  - 构建 exit `0`、构建内 ZIP roundtrip 与交付目录解压逐文件校验 **PASS**、独立静态产物审计 **8/8 PASS**（Helper 二进制内嵌与 UI `CORE_SHA256` 静态一致，Core SHA256 `59dbcacc38720b7ea004bbb77e7aa45ddabc14648afb1cda3c7c8c1b52f98a2a`）。详见[预览交付报告](testing/windows-overview-sub-preview-2026-10-29.md)。
+  - 既有预览包 `purchase-v2-8a666bb01005`（SHA256 `1fd3a06fdc360b2185d1bacde4186158250d27b1a6415ff899c45a1c0552c2ad`）、`country-tls-159f16eecc78`（SHA256 `98d8a7a9ef7160af5f3148d5dfe8a260d78441968750cea5e6ae6825f966c2b8`）、现役四进程 PID（`39648`/`67152`/`54840`/`42840`）、未跟踪 QA/probes/coverage 与 `stash@{0}` 均完整保留未触碰。
+- 交付状态：**已实现 / 已提交 / 已推送 / 已合并至 `main`（`a8dc8bfc102e`）并快进同步 `development` / 远端 CI 全部 PASS / 已构建并交付静态预览包**（本交付报告与台账随后单独提交推送至 `development`，不改变已合并 `main` 及包内固定源码）；候选程序未启动 / 真实 Windows 窗口、代理、TUN、后台服务及线上发卡消费业务验收 **NOT RUN**。下一步：用户按包内 `PREVIEW-README.txt` 手工验证。
+
+## 跨配置节点总览增量开发（`8a666bb..66c0909`）Code Review 全量修复（2026-10-29，阶段历史记录）
 
 - 来源：对上次打包预览基线 `development@8a666bb0100503848010d7d565e42e61d9c2320b` 至 `development@66c0909065ac419a662098bae62c35bf0bab5150` 的全部 5 个增量提交（`3656c4e`、`d051a12`、`52cf5e9`、`f9884dc`、`66c0909`）执行深度 Code Review（检出 `CR-01`–`CR-10` 共 `3 P1 / 4 P2 / 3 P3`），经用户确认后按 TDD 闭环完成全量修复。
 - 核心修复：
