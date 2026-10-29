@@ -695,7 +695,7 @@
   "@nodeOverviewFileSource": {
     "placeholders": { "provider": { "type": "String" } }
   },
-  "nodeOverviewTestCurrent": "测当前配置",
+  "nodeOverviewTestCurrent": "测试当前配置",
   "nodeOverviewTestAll": "测试全部节点延迟",
   "nodeOverviewTestNode": "延迟测试",
   "nodeOverviewProgress": "{completed} / {total}",
@@ -896,5 +896,7 @@
     }
   },
   "nodeOverviewUpdateSubscription": "更新订阅",
-  "nodeOverviewUpdatingShort": "更新中"
+  "nodeOverviewUpdatingShort": "更新中",
+  "nodeOverviewAddSubscription": "添加订阅",
+  "nodeOverviewQuickUse": "点击使用"
 }

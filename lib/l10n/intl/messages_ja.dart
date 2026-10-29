@@ -407,6 +407,9 @@ class MessageLookup extends MessageLookupByLibrary {
     ),
     "noResolve": MessageLookupByLibrary.simpleMessage("IPを解決しない"),
     "nodeOverviewActive": MessageLookupByLibrary.simpleMessage("使用中"),
+    "nodeOverviewAddSubscription": MessageLookupByLibrary.simpleMessage(
+      "購読を追加",
+    ),
     "nodeOverviewAllProfiles": MessageLookupByLibrary.simpleMessage("すべての設定"),
     "nodeOverviewAmbiguousNode": MessageLookupByLibrary.simpleMessage(
       "ノード定義が重複しているため、識別できません",
@@ -499,6 +502,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "nodeOverviewProviderUnsafeUrl": MessageLookupByLibrary.simpleMessage(
       "プロバイダーのURLが安全要件を満たしていません",
     ),
+    "nodeOverviewQuickUse": MessageLookupByLibrary.simpleMessage("すぐ使う"),
     "nodeOverviewRemainingTraffic": m20,
     "nodeOverviewRuntimeSource": MessageLookupByLibrary.simpleMessage(
       "実行中のノード",

@@ -13,10 +13,11 @@ import 'package:flclashx/models/node_catalog.dart';
 import 'package:flclashx/providers/node_overview.dart';
 import 'package:flclashx/providers/providers.dart';
 import 'package:flclashx/state.dart';
+import 'package:flclashx/views/profiles/add_profile.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:intl/intl.dart';
+import 'package:intl/intl.dart' hide TextDirection;
 
 /// Selects only the page body; the scope control belongs to the existing app bar.
 class NodeOverviewScopeView extends ConsumerWidget {
@@ -795,6 +796,24 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
     });
   }
 
+  Future<void> _openUrlSubscriptionImport() async {
+    final String? url;
+    if (globalState.navigatorKey.currentState != null) {
+      url = await globalState.showCommonDialog<String>(
+        child: const URLFormDialog(),
+      );
+    } else {
+      if (!mounted) return;
+      url = await showDialog<String>(
+        context: context,
+        builder: (_) => const URLFormDialog(),
+      );
+    }
+    if (url != null && url.isNotEmpty && globalState.isAppControllerReady) {
+      await globalState.appController.addProfileFormURL(url);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final profiles = ref.watch(profilesProvider);
@@ -874,10 +893,14 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
     final query = ref.watch(proxiesQueryProvider).trim().toLowerCase();
     final searching = query.isNotEmpty;
     final locale = Localizations.localeOf(context);
+    final mode =
+        ref.watch(patchClashConfigProvider.select((state) => state.mode));
+    final currentGroups = ref.watch(currentGroupsStateProvider).value;
     final scopeCountries = <String>{};
     final countryCounts = <String, int>{};
     final availableCounts = <String, int>{};
     final originalIndexes = <String, int>{};
+    final resolvedCatalogs = <String, ProfileCatalog?>{};
     var anyVisibleCatalogLoading = false;
     for (var i = 0; i < profiles.length; i++) {
       final profile = profiles[i];
@@ -891,6 +914,7 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
           ? ref.watch(profileCatalogProvider(profile.id))
           : null;
       final catalog = loaded?.valueOrNull ?? cachedCatalogs[profile.id];
+      resolvedCatalogs[profile.id] = catalog;
       final catalogReloadingAfterSync =
           ((loaded?.isLoading ?? false) && catalog == null) ||
               catalog?.status == ProfileCatalogStatus.loading ||
@@ -1072,6 +1096,92 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
         : const <String>[];
     final activeCountryMatchCount =
         activeCountry == null ? 0 : (countryCounts[activeCountry] ?? 0);
+    final testCurrentAction = tester.busy ||
+            (selected == null && (activeId == null || currentGroups.isEmpty))
+        ? null
+        : () => _testCurrent(selected == null ? null : visible.single);
+    VoidCallback? resolveQuickUseAction() {
+      for (final profile in visible) {
+        if (profile.isUpdating) continue;
+        final profileMatches =
+            (profile.label ?? profile.id).toLowerCase().contains(query);
+        final catalog = resolvedCatalogs[profile.id];
+        if (isLiveActive(profile)) {
+          final effectiveQuery = profileMatches ? '' : query;
+          final rows = _activeDisplays(
+            ref,
+            profile.id,
+            profile.isUpdating ? null : catalog,
+          ).values.where((entry) {
+            final matches = _activeEntryMatchesQuery(entry, effectiveQuery);
+            if (!matches || (_availableOnly && (entry.delay ?? -1) <= 0)) {
+              return false;
+            }
+            if (activeCountry != null) {
+              final code = countryResolver.resolveCountryCode(
+                profileId: profile.id,
+                profileLabel: profile.label,
+                nodeName: entry.proxy.name,
+                endpointKey: entry.node?.endpointKey,
+                isLiveActive: true,
+                inUse: entry.inUse,
+              );
+              if (code != activeCountry) return false;
+            }
+            return true;
+          }).toList();
+          if (sort != ProxiesSortType.none) {
+            rows.sort((a, b) {
+              if (sort == ProxiesSortType.delay) {
+                final result = _compareDelay(a.delay, b.delay);
+                if (result != 0) return result;
+              }
+              return a.proxy.name
+                  .toLowerCase()
+                  .compareTo(b.proxy.name.toLowerCase());
+            });
+          }
+          for (final entry in rows) {
+            if (entry.selectGroup != null) {
+              final targetGroup = entry.selectGroup!;
+              final targetProxy = entry.proxy.name;
+              return () => _useActiveNode(profile, targetGroup, targetProxy);
+            }
+          }
+        } else if (catalog != null &&
+            catalog.status == ProfileCatalogStatus.ready) {
+          final health = ref.watch(nodeHealthEntriesProvider(profile.id));
+          final nodes = catalog.nodes.where((node) {
+            final matches = profileMatches || _matches(node, query);
+            if (!matches ||
+                (_availableOnly &&
+                    (_nodeHealth(node, health)?.delayMs ?? -1) <= 0)) {
+              return false;
+            }
+            if (activeCountry != null) {
+              final code = countryResolver.resolveCountryCode(
+                profileId: profile.id,
+                profileLabel: profile.label,
+                nodeName: node.name,
+                endpointKey: node.endpointKey,
+              );
+              if (code != activeCountry) return false;
+            }
+            return true;
+          }).toList();
+          _sortNodes(nodes, health, sort);
+          for (final node in nodes) {
+            final targetGroup = _targetGroupForCatalogNode(profile, node, mode);
+            if (targetGroup != null) {
+              return () => _useCatalogNode(profile, node, targetGroup);
+            }
+          }
+        }
+      }
+      return null;
+    }
+
+    final quickUseAction = resolveQuickUseAction();
     final now = DateTime.now();
     return LayoutBuilder(builder: (context, constraints) {
       final wide = !isMobile && constraints.maxWidth > maxLaptopWidth;
@@ -1122,20 +1232,6 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
                         .updateState((state) => state.copyWith(sortType: value));
                   },
                 ),
-                TextButton.icon(
-                    key: const ValueKey('overview-test-current'),
-                    onPressed: tester.busy ||
-                            (selected == null &&
-                                (activeId == null ||
-                                    ref
-                                        .watch(currentGroupsStateProvider)
-                                        .value
-                                        .isEmpty))
-                        ? null
-                        : () => _testCurrent(
-                            selected == null ? null : visible.single),
-                    icon: const Icon(Icons.speed),
-                    label: Text(appLocalizations.nodeOverviewTestCurrent)),
                 TextButton.icon(
                     key: const ValueKey('overview-test-all'),
                     onPressed: tester.busy || profiles.isEmpty
@@ -1230,51 +1326,421 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
               const VerticalDivider(width: 16),
             ],
             Expanded(
-                child: CustomScrollView(
-              key: const ValueKey('overview-nodes'),
-              slivers: [
-                for (final profile in visible)
-                  _ProfileNodesSliver(
-                      key: ValueKey('overview-section-${profile.id}'),
-                      profile: profile,
-                      active: profile.id == activeId,
-                      liveActive: isLiveActive(profile),
-                      showHeader: selected == null,
-                      showSubscriptionSummary: !wide || selected != null,
-                      onSyncSubscription:
-                          !wide && profile.type == ProfileType.url
-                              ? () => unawaited(_syncSubscription(profile))
-                              : null,
-                      loadImmediately:
-                          selected != null || searching || activeCountry != null,
-                      availableOnly: _availableOnly,
-                      countryFilter: activeCountry,
-                      onVisibilityChanged: (isVisible) =>
-                          _onProfileVisibilityChanged(profile.id, isVisible),
-                      onTest: _testNode,
-                      onTestActive: _testActiveNode,
-                      onUseActive: _useActiveNode,
-                      onUseCatalog: _useCatalogNode,
-                      now: now),
-                if (selected == null &&
-                    activeCountry != null &&
-                    activeCountryMatchCount == 0 &&
-                    !anyVisibleCatalogLoading)
-                  SliverToBoxAdapter(
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 24, vertical: 16),
-                      child: Text(appLocalizations.nodeOverviewNoNodes),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  _OverviewQuickWorkflowBar(
+                    key: const ValueKey('overview-workflow-bar'),
+                    onAddSubscription: () =>
+                        unawaited(_openUrlSubscriptionImport()),
+                    onTestCurrent: testCurrentAction,
+                    onQuickUse: quickUseAction,
+                  ),
+                  Expanded(
+                    child: CustomScrollView(
+                      key: const ValueKey('overview-nodes'),
+                      slivers: [
+                        for (final profile in visible)
+                          _ProfileNodesSliver(
+                              key: ValueKey('overview-section-${profile.id}'),
+                              profile: profile,
+                              active: profile.id == activeId,
+                              liveActive: isLiveActive(profile),
+                              showHeader: selected == null,
+                              showSubscriptionSummary:
+                                  !wide || selected != null,
+                              onSyncSubscription:
+                                  !wide && profile.type == ProfileType.url
+                                      ? () =>
+                                          unawaited(_syncSubscription(profile))
+                                      : null,
+                              loadImmediately: selected != null ||
+                                  searching ||
+                                  activeCountry != null,
+                              availableOnly: _availableOnly,
+                              countryFilter: activeCountry,
+                              onVisibilityChanged: (isVisible) =>
+                                  _onProfileVisibilityChanged(
+                                      profile.id, isVisible),
+                              onTest: _testNode,
+                              onTestActive: _testActiveNode,
+                              onUseActive: _useActiveNode,
+                              onUseCatalog: _useCatalogNode,
+                              now: now),
+                        if (selected == null &&
+                            activeCountry != null &&
+                            activeCountryMatchCount == 0 &&
+                            !anyVisibleCatalogLoading)
+                          SliverToBoxAdapter(
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 24, vertical: 16),
+                              child: Text(appLocalizations.nodeOverviewNoNodes),
+                            ),
+                          ),
+                        const SliverToBoxAdapter(child: SizedBox(height: 32)),
+                      ],
                     ),
                   ),
-                const SliverToBoxAdapter(child: SizedBox(height: 32)),
-              ],
-            )),
+                ],
+              ),
+            ),
           ],
         )),
       ]);
     });
   }
+}
+
+class _OverviewQuickWorkflowBar extends StatelessWidget {
+  const _OverviewQuickWorkflowBar({
+    super.key,
+    required this.onAddSubscription,
+    required this.onTestCurrent,
+    required this.onQuickUse,
+  });
+
+  final VoidCallback onAddSubscription;
+  final VoidCallback? onTestCurrent;
+  final VoidCallback? onQuickUse;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: colors.surfaceContainerLow.withValues(
+            alpha: isDark ? 0.56 : 0.72,
+          ),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: colors.outlineVariant.withValues(
+              alpha: isDark ? 0.46 : 0.58,
+            ),
+          ),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          child: Wrap(
+            spacing: 8,
+            runSpacing: 6,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              _WorkflowStepButton(
+                buttonKey: const ValueKey('overview-add-subscription'),
+                stepNumber: 1,
+                icon: Icons.add_link_rounded,
+                label: appLocalizations.nodeOverviewAddSubscription,
+                onPressed: onAddSubscription,
+              ),
+              _WorkflowStepArrow(
+                key: const ValueKey('overview-workflow-arrow-1'),
+                active: onTestCurrent != null,
+              ),
+              _WorkflowStepButton(
+                buttonKey: const ValueKey('overview-test-current'),
+                stepNumber: 2,
+                icon: Icons.speed_rounded,
+                label: appLocalizations.nodeOverviewTestCurrent,
+                onPressed: onTestCurrent,
+              ),
+              _WorkflowStepArrow(
+                key: const ValueKey('overview-workflow-arrow-2'),
+                active: onQuickUse != null,
+              ),
+              _WorkflowStepButton(
+                buttonKey: const ValueKey('overview-quick-use'),
+                stepNumber: 3,
+                icon: Icons.play_arrow_rounded,
+                label: appLocalizations.nodeOverviewQuickUse,
+                onPressed: onQuickUse,
+                emphasized: true,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _WorkflowStepButton extends StatelessWidget {
+  const _WorkflowStepButton({
+    required this.buttonKey,
+    required this.stepNumber,
+    required this.icon,
+    required this.label,
+    required this.onPressed,
+    this.emphasized = false,
+  });
+
+  final Key buttonKey;
+  final int stepNumber;
+  final IconData icon;
+  final String label;
+  final VoidCallback? onPressed;
+  final bool emphasized;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
+    final enabled = onPressed != null;
+
+    final badgeBg = !enabled
+        ? colors.onSurface.withValues(alpha: 0.08)
+        : emphasized
+            ? colors.primary.withValues(alpha: isDark ? 0.28 : 0.20)
+            : colors.primary.withValues(alpha: isDark ? 0.16 : 0.11);
+    final badgeFg = !enabled
+        ? colors.onSurface.withValues(alpha: 0.38)
+        : colors.primary;
+
+    return TextButton(
+      key: buttonKey,
+      onPressed: onPressed,
+      style: ButtonStyle(
+        visualDensity: VisualDensity.compact,
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        minimumSize: const WidgetStatePropertyAll(Size(0, 34)),
+        padding: const WidgetStatePropertyAll(
+          EdgeInsets.symmetric(horizontal: 11, vertical: 6),
+        ),
+        backgroundColor: WidgetStateProperty.resolveWith((states) {
+          if (states.contains(WidgetState.disabled)) {
+            return colors.surfaceContainerHigh.withValues(
+              alpha: isDark ? 0.24 : 0.38,
+            );
+          }
+          final hovered = states.contains(WidgetState.hovered);
+          if (emphasized) {
+            return colors.primary.withValues(
+              alpha: hovered ? (isDark ? 0.24 : 0.17) : (isDark ? 0.16 : 0.11),
+            );
+          }
+          return hovered
+              ? colors.surfaceContainerHighest.withValues(
+                  alpha: isDark ? 0.78 : 0.94,
+                )
+              : colors.surfaceContainerHigh.withValues(
+                  alpha: isDark ? 0.52 : 0.78,
+                );
+        }),
+        foregroundColor: WidgetStateProperty.resolveWith((states) {
+          if (states.contains(WidgetState.disabled)) {
+            return colors.onSurface.withValues(alpha: 0.38);
+          }
+          return emphasized
+              ? colors.primary
+              : colors.onSurface.withValues(alpha: 0.92);
+        }),
+        overlayColor: WidgetStatePropertyAll(
+          colors.primary.withValues(alpha: 0.08),
+        ),
+        shape: WidgetStateProperty.resolveWith((states) {
+          final disabled = states.contains(WidgetState.disabled);
+          final hovered = states.contains(WidgetState.hovered);
+          final focused = states.contains(WidgetState.focused);
+          final Color borderColor;
+          if (disabled) {
+            borderColor = colors.outlineVariant.withValues(alpha: 0.32);
+          } else if (focused) {
+            borderColor = colors.primary.withValues(alpha: 0.72);
+          } else if (emphasized) {
+            borderColor =
+                colors.primary.withValues(alpha: hovered ? 0.68 : 0.48);
+          } else if (hovered) {
+            borderColor = colors.outline.withValues(alpha: 0.58);
+          } else {
+            borderColor = colors.outlineVariant.withValues(alpha: 0.62);
+          }
+          return RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(10),
+            side: BorderSide(color: borderColor),
+          );
+        }),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 18,
+            height: 18,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: badgeBg,
+              shape: BoxShape.circle,
+            ),
+            child: Text(
+              '$stepNumber',
+              style: TextStyle(
+                fontSize: 11,
+                height: 1.0,
+                fontWeight: FontWeight.w700,
+                color: badgeFg,
+              ),
+            ),
+          ),
+          const SizedBox(width: 6),
+          Icon(
+            icon,
+            size: 15,
+            color: !enabled
+                ? colors.onSurface.withValues(alpha: 0.38)
+                : emphasized
+                    ? colors.primary
+                    : colors.onSurfaceVariant,
+          ),
+          const SizedBox(width: 5),
+          Flexible(
+            child: Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 13,
+                height: 1.2,
+                fontWeight: emphasized ? FontWeight.w600 : FontWeight.w500,
+                letterSpacing: 0.1,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _WorkflowStepArrow extends StatelessWidget {
+  const _WorkflowStepArrow({
+    super.key,
+    required this.active,
+  });
+
+  final bool active;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final isRtl = Directionality.of(context) == TextDirection.rtl;
+    return ExcludeSemantics(
+      child: SizedBox(
+        width: 34,
+        height: 18,
+        child: CustomPaint(
+          painter: _WorkflowArrowPainter(
+            color: active ? colors.primary : colors.outline,
+            active: active,
+            isDark: theme.brightness == Brightness.dark,
+            isRtl: isRtl,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _WorkflowArrowPainter extends CustomPainter {
+  const _WorkflowArrowPainter({
+    required this.color,
+    required this.active,
+    required this.isDark,
+    required this.isRtl,
+  });
+
+  final Color color;
+  final bool active;
+  final bool isDark;
+  final bool isRtl;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (isRtl) {
+      canvas
+        ..save()
+        ..translate(size.width, 0)
+        ..scale(-1, 1);
+    }
+
+    final cy = size.height / 2;
+    const startX = 3.5;
+    final tipX = size.width - 3.5;
+    final shaftEndX = tipX - 1.2;
+
+    // 1. Subtle origin dot.
+    final dotPaint = Paint()
+      ..style = PaintingStyle.fill
+      ..color = color.withValues(alpha: active ? 0.46 : 0.24);
+    canvas.drawCircle(Offset(startX, cy), 2.0, dotPaint);
+
+    // 2. Gradient shaft fading into crisp arrowhead.
+    final shaftRect = Rect.fromLTRB(startX, cy - 2, tipX, cy + 2);
+    final shaftPaint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.65
+      ..strokeCap = StrokeCap.round
+      ..shader = LinearGradient(
+        colors: [
+          color.withValues(alpha: active ? 0.20 : 0.10),
+          color.withValues(alpha: active ? 0.88 : 0.40),
+        ],
+      ).createShader(shaftRect);
+    canvas.drawLine(Offset(startX + 2.5, cy), Offset(shaftEndX, cy), shaftPaint);
+
+    // 3. Soft trailing motion chevron.
+    final trailX = tipX - 6.8;
+    final trailPath = Path()
+      ..moveTo(trailX - 3.6, cy - 3.4)
+      ..lineTo(trailX, cy)
+      ..lineTo(trailX - 3.6, cy + 3.4);
+    final trailPaint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.4
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round
+      ..color = color.withValues(alpha: active ? 0.38 : 0.18);
+    canvas.drawPath(trailPath, trailPaint);
+
+    // 4. Primary crisp arrowhead (+ subtle glow in dark mode when active).
+    final headPath = Path()
+      ..moveTo(tipX - 4.8, cy - 4.4)
+      ..lineTo(tipX, cy)
+      ..lineTo(tipX - 4.8, cy + 4.4);
+    if (active && isDark) {
+      final glowPaint = Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 3.2
+        ..strokeCap = StrokeCap.round
+        ..strokeJoin = StrokeJoin.round
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 2.2)
+        ..color = color.withValues(alpha: 0.26);
+      canvas.drawPath(headPath, glowPaint);
+    }
+    final headPaint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.85
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round
+      ..color = color.withValues(alpha: active ? 0.94 : 0.44);
+    canvas.drawPath(headPath, headPaint);
+
+    if (isRtl) {
+      canvas.restore();
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _WorkflowArrowPainter oldDelegate) =>
+      color != oldDelegate.color ||
+      active != oldDelegate.active ||
+      isDark != oldDelegate.isDark ||
+      isRtl != oldDelegate.isRtl;
 }
 
 class _OverviewAvailableFilterButton extends StatefulWidget {
@@ -3054,8 +3520,10 @@ bool _activeEntryMatchesQuery(_ActiveDisplay entry, String query) {
 }
 
 int _compareDelay(int? a, int? b) {
-  final aRank = a != null && a > 0 ? a : 1 << 62;
-  final bRank = b != null && b > 0 ? b : 1 << 62;
+  final aRank =
+      a != null && a > 0 ? a : (a == null || a == 0 ? 1 << 61 : 1 << 62);
+  final bRank =
+      b != null && b > 0 ? b : (b == null || b == 0 ? 1 << 61 : 1 << 62);
   return aRank.compareTo(bRank);
 }
 

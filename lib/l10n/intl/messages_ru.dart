@@ -582,6 +582,9 @@ class MessageLookup extends MessageLookupByLibrary {
     ),
     "noResolve": MessageLookupByLibrary.simpleMessage("Не разрешать IP"),
     "nodeOverviewActive": MessageLookupByLibrary.simpleMessage("Активный"),
+    "nodeOverviewAddSubscription": MessageLookupByLibrary.simpleMessage(
+      "Добавить подписку",
+    ),
     "nodeOverviewAllProfiles": MessageLookupByLibrary.simpleMessage(
       "Все профили",
     ),
@@ -687,6 +690,9 @@ class MessageLookup extends MessageLookupByLibrary {
     ),
     "nodeOverviewProviderUnsafeUrl": MessageLookupByLibrary.simpleMessage(
       "URL провайдера не соответствует требованиям безопасности",
+    ),
+    "nodeOverviewQuickUse": MessageLookupByLibrary.simpleMessage(
+      "Использовать",
     ),
     "nodeOverviewRemainingTraffic": m20,
     "nodeOverviewRuntimeSource": MessageLookupByLibrary.simpleMessage(

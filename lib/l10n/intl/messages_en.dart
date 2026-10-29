@@ -667,6 +667,9 @@ class MessageLookup extends MessageLookupByLibrary {
     ),
     "noResolve": MessageLookupByLibrary.simpleMessage("No resolve IP"),
     "nodeOverviewActive": MessageLookupByLibrary.simpleMessage("Active"),
+    "nodeOverviewAddSubscription": MessageLookupByLibrary.simpleMessage(
+      "Add subscription",
+    ),
     "nodeOverviewAllProfiles": MessageLookupByLibrary.simpleMessage(
       "All profiles",
     ),
@@ -771,6 +774,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "nodeOverviewProviderUnsafeUrl": MessageLookupByLibrary.simpleMessage(
       "Provider URL does not meet safety requirements",
     ),
+    "nodeOverviewQuickUse": MessageLookupByLibrary.simpleMessage("Quick use"),
     "nodeOverviewRemainingTraffic": m20,
     "nodeOverviewRuntimeSource": MessageLookupByLibrary.simpleMessage(
       "Runtime node",

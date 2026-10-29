@@ -762,5 +762,7 @@
     }
   },
   "nodeOverviewUpdateSubscription": "購読を更新",
-  "nodeOverviewUpdatingShort": "更新中"
+  "nodeOverviewUpdatingShort": "更新中",
+  "nodeOverviewAddSubscription": "購読を追加",
+  "nodeOverviewQuickUse": "すぐ使う"
 }

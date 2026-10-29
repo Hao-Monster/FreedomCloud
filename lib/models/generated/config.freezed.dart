@@ -1926,6 +1926,7 @@ ProxiesStyle _$ProxiesStyleFromJson(Map<String, dynamic> json) {
 mixin _$ProxiesStyle {
   ProxiesType get type => throw _privateConstructorUsedError;
   ProxiesSortType get sortType => throw _privateConstructorUsedError;
+  bool get sortTypeDefaultDelayMigrated => throw _privateConstructorUsedError;
   ProxiesLayout get layout => throw _privateConstructorUsedError;
   @JsonKey(unknownEnumValue: ProxiesIconStyle.icon)
   ProxiesIconStyle get iconStyle => throw _privateConstructorUsedError;
@@ -1951,6 +1952,7 @@ abstract class $ProxiesStyleCopyWith<$Res> {
   $Res call(
       {ProxiesType type,
       ProxiesSortType sortType,
+      bool sortTypeDefaultDelayMigrated,
       ProxiesLayout layout,
       @JsonKey(unknownEnumValue: ProxiesIconStyle.icon)
       ProxiesIconStyle iconStyle,
@@ -1975,6 +1977,7 @@ class _$ProxiesStyleCopyWithImpl<$Res, $Val extends ProxiesStyle>
   $Res call({
     Object? type = null,
     Object? sortType = null,
+    Object? sortTypeDefaultDelayMigrated = null,
     Object? layout = null,
     Object? iconStyle = null,
     Object? cardType = null,
@@ -1989,6 +1992,10 @@ class _$ProxiesStyleCopyWithImpl<$Res, $Val extends ProxiesStyle>
           ? _value.sortType
           : sortType // ignore: cast_nullable_to_non_nullable
               as ProxiesSortType,
+      sortTypeDefaultDelayMigrated: null == sortTypeDefaultDelayMigrated
+          ? _value.sortTypeDefaultDelayMigrated
+          : sortTypeDefaultDelayMigrated // ignore: cast_nullable_to_non_nullable
+              as bool,
       layout: null == layout
           ? _value.layout
           : layout // ignore: cast_nullable_to_non_nullable
@@ -2020,6 +2027,7 @@ abstract class _$$ProxiesStyleImplCopyWith<$Res>
   $Res call(
       {ProxiesType type,
       ProxiesSortType sortType,
+      bool sortTypeDefaultDelayMigrated,
       ProxiesLayout layout,
       @JsonKey(unknownEnumValue: ProxiesIconStyle.icon)
       ProxiesIconStyle iconStyle,
@@ -2042,6 +2050,7 @@ class __$$ProxiesStyleImplCopyWithImpl<$Res>
   $Res call({
     Object? type = null,
     Object? sortType = null,
+    Object? sortTypeDefaultDelayMigrated = null,
     Object? layout = null,
     Object? iconStyle = null,
     Object? cardType = null,
@@ -2056,6 +2065,10 @@ class __$$ProxiesStyleImplCopyWithImpl<$Res>
           ? _value.sortType
           : sortType // ignore: cast_nullable_to_non_nullable
               as ProxiesSortType,
+      sortTypeDefaultDelayMigrated: null == sortTypeDefaultDelayMigrated
+          ? _value.sortTypeDefaultDelayMigrated
+          : sortTypeDefaultDelayMigrated // ignore: cast_nullable_to_non_nullable
+              as bool,
       layout: null == layout
           ? _value.layout
           : layout // ignore: cast_nullable_to_non_nullable
@@ -2081,7 +2094,8 @@ class __$$ProxiesStyleImplCopyWithImpl<$Res>
 class _$ProxiesStyleImpl implements _ProxiesStyle {
   const _$ProxiesStyleImpl(
       {this.type = ProxiesType.list,
-      this.sortType = ProxiesSortType.none,
+      this.sortType = ProxiesSortType.delay,
+      this.sortTypeDefaultDelayMigrated = true,
       this.layout = ProxiesLayout.standard,
       @JsonKey(unknownEnumValue: ProxiesIconStyle.icon)
       this.iconStyle = ProxiesIconStyle.icon,
@@ -2098,6 +2112,9 @@ class _$ProxiesStyleImpl implements _ProxiesStyle {
   @override
   @JsonKey()
   final ProxiesSortType sortType;
+  @override
+  @JsonKey()
+  final bool sortTypeDefaultDelayMigrated;
   @override
   @JsonKey()
   final ProxiesLayout layout;
@@ -2118,7 +2135,7 @@ class _$ProxiesStyleImpl implements _ProxiesStyle {
 
   @override
   String toString() {
-    return 'ProxiesStyle(type: $type, sortType: $sortType, layout: $layout, iconStyle: $iconStyle, cardType: $cardType, iconMap: $iconMap)';
+    return 'ProxiesStyle(type: $type, sortType: $sortType, sortTypeDefaultDelayMigrated: $sortTypeDefaultDelayMigrated, layout: $layout, iconStyle: $iconStyle, cardType: $cardType, iconMap: $iconMap)';
   }
 
   @override
@@ -2129,6 +2146,10 @@ class _$ProxiesStyleImpl implements _ProxiesStyle {
             (identical(other.type, type) || other.type == type) &&
             (identical(other.sortType, sortType) ||
                 other.sortType == sortType) &&
+            (identical(other.sortTypeDefaultDelayMigrated,
+                    sortTypeDefaultDelayMigrated) ||
+                other.sortTypeDefaultDelayMigrated ==
+                    sortTypeDefaultDelayMigrated) &&
             (identical(other.layout, layout) || other.layout == layout) &&
             (identical(other.iconStyle, iconStyle) ||
                 other.iconStyle == iconStyle) &&
@@ -2139,8 +2160,15 @@ class _$ProxiesStyleImpl implements _ProxiesStyle {
 
   @JsonKey(includeFromJson: false, includeToJson: false)
   @override
-  int get hashCode => Object.hash(runtimeType, type, sortType, layout,
-      iconStyle, cardType, const DeepCollectionEquality().hash(_iconMap));
+  int get hashCode => Object.hash(
+      runtimeType,
+      type,
+      sortType,
+      sortTypeDefaultDelayMigrated,
+      layout,
+      iconStyle,
+      cardType,
+      const DeepCollectionEquality().hash(_iconMap));
 
   /// Create a copy of ProxiesStyle
   /// with the given fields replaced by the non-null parameter values.
@@ -2162,6 +2190,7 @@ abstract class _ProxiesStyle implements ProxiesStyle {
   const factory _ProxiesStyle(
       {final ProxiesType type,
       final ProxiesSortType sortType,
+      final bool sortTypeDefaultDelayMigrated,
       final ProxiesLayout layout,
       @JsonKey(unknownEnumValue: ProxiesIconStyle.icon)
       final ProxiesIconStyle iconStyle,
@@ -2175,6 +2204,8 @@ abstract class _ProxiesStyle implements ProxiesStyle {
   ProxiesType get type;
   @override
   ProxiesSortType get sortType;
+  @override
+  bool get sortTypeDefaultDelayMigrated;
   @override
   ProxiesLayout get layout;
   @override

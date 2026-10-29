@@ -194,7 +194,8 @@ class NetworkProps with _$NetworkProps {
 class ProxiesStyle with _$ProxiesStyle {
   const factory ProxiesStyle({
     @Default(ProxiesType.list) ProxiesType type,
-    @Default(ProxiesSortType.none) ProxiesSortType sortType,
+    @Default(ProxiesSortType.delay) ProxiesSortType sortType,
+    @Default(true) bool sortTypeDefaultDelayMigrated,
     @Default(ProxiesLayout.standard) ProxiesLayout layout,
     @JsonKey(unknownEnumValue: ProxiesIconStyle.icon)
     @Default(ProxiesIconStyle.icon)
@@ -296,26 +297,37 @@ class Config with _$Config {
   factory Config.fromJson(Map<String, Object?> json) => _$ConfigFromJson(json);
 
   factory Config.compatibleFromJson(Map<String, Object?> json) {
+    var normalizedJson = Map<String, Object?>.from(json);
     try {
-      final accessControlMap = json["accessControl"];
-      final isAccessControl = json["isAccessControl"];
+      final accessControlMap = normalizedJson["accessControl"];
+      final isAccessControl = normalizedJson["isAccessControl"];
       if (accessControlMap != null) {
         (accessControlMap as Map)["enable"] = isAccessControl;
-        if (json["vpnProps"] != null) {
-          (json["vpnProps"]! as Map)["accessControl"] = accessControlMap;
+        if (normalizedJson["vpnProps"] != null) {
+          (normalizedJson["vpnProps"]! as Map)["accessControl"] = accessControlMap;
         }
       }
 
-      // Migration: Replace deprecated "standard" iconStyle with "icon"
-      final proxiesStyle = json["proxiesStyle"];
+      // Migration: Replace deprecated "standard" iconStyle with "icon" and
+      // promote legacy unmigrated default sortType ("none") to "delay" once.
+      final proxiesStyle = normalizedJson["proxiesStyle"];
       if (proxiesStyle is Map) {
-        if (proxiesStyle["iconStyle"] == "standard") {
-          proxiesStyle["iconStyle"] = "icon";
+        final nextProxiesStyle = Map<String, Object?>.from(proxiesStyle);
+        if (nextProxiesStyle["iconStyle"] == "standard") {
+          nextProxiesStyle["iconStyle"] = "icon";
         }
+        if (nextProxiesStyle["sortTypeDefaultDelayMigrated"] != true) {
+          if (nextProxiesStyle["sortType"] == null ||
+              nextProxiesStyle["sortType"] == "none") {
+            nextProxiesStyle["sortType"] = "delay";
+          }
+          nextProxiesStyle["sortTypeDefaultDelayMigrated"] = true;
+        }
+        normalizedJson["proxiesStyle"] = nextProxiesStyle;
       }
 
       // Migration: strip removed fields from profiles
-      final profiles = json["profiles"];
+      final profiles = normalizedJson["profiles"];
       if (profiles is List) {
         for (final p in profiles) {
           if (p is Map) {
@@ -324,7 +336,7 @@ class Config with _$Config {
         }
       }
     } catch (_) {}
-    return Config.fromJson(json);
+    return Config.fromJson(normalizedJson);
   }
 }
 

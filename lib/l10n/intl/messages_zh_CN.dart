@@ -437,6 +437,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "noProxyDesc": MessageLookupByLibrary.simpleMessage("请创建配置文件或者添加有效配置文件"),
     "noResolve": MessageLookupByLibrary.simpleMessage("不解析IP"),
     "nodeOverviewActive": MessageLookupByLibrary.simpleMessage("活动配置"),
+    "nodeOverviewAddSubscription": MessageLookupByLibrary.simpleMessage("添加订阅"),
     "nodeOverviewAllProfiles": MessageLookupByLibrary.simpleMessage("全部配置"),
     "nodeOverviewAmbiguousNode": MessageLookupByLibrary.simpleMessage(
       "节点定义重复，无法确认归属",
@@ -521,6 +522,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "nodeOverviewProviderUnsafeUrl": MessageLookupByLibrary.simpleMessage(
       "订阅源地址不符合安全要求",
     ),
+    "nodeOverviewQuickUse": MessageLookupByLibrary.simpleMessage("点击使用"),
     "nodeOverviewRemainingTraffic": m20,
     "nodeOverviewRuntimeSource": MessageLookupByLibrary.simpleMessage("运行时节点"),
     "nodeOverviewStale": MessageLookupByLibrary.simpleMessage("可能过时"),
@@ -530,7 +532,7 @@ class MessageLookup extends MessageLookupByLibrary {
     ),
     "nodeOverviewSwitchedToNode": m21,
     "nodeOverviewTestAll": MessageLookupByLibrary.simpleMessage("测试全部节点延迟"),
-    "nodeOverviewTestCurrent": MessageLookupByLibrary.simpleMessage("测当前配置"),
+    "nodeOverviewTestCurrent": MessageLookupByLibrary.simpleMessage("测试当前配置"),
     "nodeOverviewTestFailed": MessageLookupByLibrary.simpleMessage("测试失败"),
     "nodeOverviewTestInterrupted": MessageLookupByLibrary.simpleMessage(
       "测速已中断，已保留此前的测量结果",

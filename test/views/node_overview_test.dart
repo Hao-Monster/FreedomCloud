@@ -56,8 +56,10 @@ class _ProxyController implements AppController {
   final changes = <(String, String)>[];
   final applyDebounces = <bool>[];
   final updatedProfiles = <Profile>[];
+  final addedUrls = <String>[];
   void Function(Profile profile)? onSetProfile;
   Future<void> Function(Profile profile)? onUpdateProfile;
+  Future<void> Function(String url)? onAddProfileFormURL;
 
   @override
   void updateCurrentSelectedMap(String groupName, String proxyName) =>
@@ -88,6 +90,16 @@ class _ProxyController implements AppController {
     }
     updatedProfiles.add(profile);
     await handler(profile);
+  }
+
+  @override
+  Future<void> addProfileFormURL(String url) async {
+    final handler = onAddProfileFormURL;
+    if (handler == null) {
+      throw StateError('Unexpected controller effect: addProfileFormURL');
+    }
+    addedUrls.add(url);
+    await handler(url);
   }
 
   @override
@@ -1977,7 +1989,10 @@ void main() {
         delayMs: 246,
         testUrl: defaultTestUrl,
         testedAt: DateTime(2026, 10, 15, 10, 11)));
-    globalState.config = globalState.config.copyWith(currentProfileId: 'a');
+    globalState.config = globalState.config.copyWith(
+      currentProfileId: 'a',
+      proxiesStyle: const ProxiesStyle(sortType: ProxiesSortType.none),
+    );
     globalState.appState = globalState.appState.copyWith(groups: [
       Group(
           name: 'Live',
@@ -3882,10 +3897,7 @@ void main() {
     expect(noneTop, lessThan(nameTop));
     expect(nameTop, lessThan(delayTop));
 
-    // Selecting "延迟" updates provider, re-sorts nodes (Zulu 35ms before Alpha 120ms), and closes menu.
-    await tester.tap(find.byKey(const ValueKey('overview-sort-option-delay')));
-    await tester.pumpAndSettle();
-    expect(sortMenu, findsNothing);
+    // Default sort is already "延迟" (ProxiesSortType.delay): Zulu 35ms before Alpha 120ms.
     expect(
       container.read(proxiesStyleSettingProvider).sortType,
       ProxiesSortType.delay,
@@ -3895,11 +3907,10 @@ void main() {
       lessThan(tester.getTopLeft(find.text('Alpha')).dy),
     );
 
-    // Selecting "名称" updates provider and re-sorts nodes (Alpha before Zulu).
-    await tester.tap(sortButton);
-    await tester.pumpAndSettle();
+    // Selecting "名称" updates provider, re-sorts nodes (Alpha before Zulu), and closes menu.
     await tester.tap(find.byKey(const ValueKey('overview-sort-option-name')));
     await tester.pumpAndSettle();
+    expect(sortMenu, findsNothing);
     expect(
       container.read(proxiesStyleSettingProvider).sortType,
       ProxiesSortType.name,
@@ -3907,6 +3918,20 @@ void main() {
     expect(
       tester.getTopLeft(find.text('Alpha')).dy,
       lessThan(tester.getTopLeft(find.text('Zulu')).dy),
+    );
+
+    // Selecting "延迟" updates provider and re-sorts nodes (Zulu 35ms before Alpha 120ms).
+    await tester.tap(sortButton);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('overview-sort-option-delay')));
+    await tester.pumpAndSettle();
+    expect(
+      container.read(proxiesStyleSettingProvider).sortType,
+      ProxiesSortType.delay,
+    );
+    expect(
+      tester.getTopLeft(find.text('Zulu')).dy,
+      lessThan(tester.getTopLeft(find.text('Alpha')).dy),
     );
 
     // Narrow 320px English layout also renders cleanly without overflow.
@@ -4849,11 +4874,11 @@ void main() {
       findsOneWidget,
     );
 
-    // 5. P3: Sort selector exposes deduplicated semantics label and canonical protocol search matches 'shadowsocks'.
+    // 5. P3: Sort selector exposes deduplicated semantics label (defaulting to Delay) and canonical protocol search matches 'shadowsocks'.
     final sortSemantics = tester.getSemantics(
       find.byKey(const ValueKey('overview-sort-button')),
     );
-    expect(sortSemantics.label, 'Sort: Default');
+    expect(sortSemantics.label, 'Sort: Delay');
     expect(
       sortSemantics.getSemanticsData().hasAction(SemanticsAction.tap),
       isTrue,
@@ -5280,6 +5305,385 @@ void main() {
         );
         expect(
           find.byKey(const ValueKey('overview-sync-long-sub')),
+          findsOneWidget,
+        );
+        expect(tester.takeException(), isNull);
+      }
+    } finally {
+      semanticsHandle.dispose();
+    }
+  });
+
+  testWidgets(
+      'default delay sort & migration: defaults to delay, migrates legacy none once, preserves explicit user none after migration, and ranks untested above failed',
+      (tester) async {
+    expect(defaultProxiesStyle.sortType, ProxiesSortType.delay);
+    expect(defaultProxiesStyle.sortTypeDefaultDelayMigrated, isTrue);
+
+    // 1. Legacy unmigrated config with sortType "none" upgrades to "delay".
+    const unmigratedLegacyJson = <String, Object?>{
+      'themeProps': <String, Object?>{},
+      'proxiesStyle': <String, Object?>{
+        'type': 'list',
+        'sortType': 'none',
+      },
+    };
+    final migratedConfig = Config.compatibleFromJson(unmigratedLegacyJson);
+    expect(migratedConfig.proxiesStyle.sortType, ProxiesSortType.delay);
+    expect(migratedConfig.proxiesStyle.sortTypeDefaultDelayMigrated, isTrue);
+
+    // 2. Legacy explicit "name" sort is preserved while setting migration flag.
+    final legacyNameConfig = Config.compatibleFromJson(<String, Object?>{
+      'themeProps': <String, Object?>{},
+      'proxiesStyle': <String, Object?>{
+        'sortType': 'name',
+      },
+    });
+    expect(legacyNameConfig.proxiesStyle.sortType, ProxiesSortType.name);
+    expect(legacyNameConfig.proxiesStyle.sortTypeDefaultDelayMigrated, isTrue);
+
+    // 3. Once migrated, explicit user choice back to "none" persists across restarts.
+    final explicitNoneSaved = jsonDecode(
+      jsonEncode(
+        migratedConfig
+            .copyWith(
+              proxiesStyle: migratedConfig.proxiesStyle.copyWith(
+                sortType: ProxiesSortType.none,
+              ),
+            )
+            .toJson(),
+      ),
+    ) as Map<String, Object?>;
+    final reloadedExplicitNone = Config.compatibleFromJson(explicitNoneSaved);
+    expect(reloadedExplicitNone.proxiesStyle.sortType, ProxiesSortType.none);
+    expect(
+      reloadedExplicitNone.proxiesStyle.sortTypeDefaultDelayMigrated,
+      isTrue,
+    );
+
+    // 4. Under default delay sort, positive delays sort ascending, untested above failed.
+    final now = DateTime(2026, 10, 29, 12, 0);
+    await mount(
+      tester,
+      width: 1200,
+      catalogs: {
+        'a': ProfileCatalog(
+          profileId: 'a',
+          fingerprint: 'f',
+          status: ProfileCatalogStatus.ready,
+          nodes: [
+            _node('f', 'A-Failed'),
+            _node('u', 'Z-Untested'),
+            _node('s', 'M-Slow'),
+            _node('g', 'K-Fast'),
+          ],
+        ),
+      },
+      health: {
+        'a': {
+          'f': NodeHealthRecord(
+            delayMs: -1,
+            testedAt: now,
+            testUrlHash: 'h',
+          ),
+          's': NodeHealthRecord(
+            delayMs: 210,
+            testedAt: now,
+            testUrlHash: 'h',
+          ),
+          'g': NodeHealthRecord(
+            delayMs: 95,
+            testedAt: now,
+            testUrlHash: 'h',
+          ),
+        },
+      },
+    );
+    final fastY = tester.getTopLeft(find.text('K-Fast')).dy;
+    final slowY = tester.getTopLeft(find.text('M-Slow')).dy;
+    final untestedY = tester.getTopLeft(find.text('Z-Untested')).dy;
+    final failedY = tester.getTopLeft(find.text('A-Failed')).dy;
+    expect(fastY, lessThan(slowY));
+    expect(slowY, lessThan(untestedY));
+    expect(untestedY, lessThan(failedY));
+  });
+
+  testWidgets(
+      'workflow bar: renders 添加订阅 -> 测试当前配置 -> 点击使用 with refined arrows in right pane and opens URL import dialog',
+      (tester) async {
+    final controller = _ProxyController()..onAddProfileFormURL = (_) async {};
+    globalState.appController = controller;
+    globalState.config = globalState.config.copyWith(currentProfileId: 'a');
+    globalState.appState = globalState.appState.copyWith(groups: const [
+      Group(
+        name: 'Live',
+        type: GroupType.Selector,
+        hidden: false,
+        all: [Proxy(name: 'Node A', type: 'VLESS')],
+      ),
+    ]);
+    final backend = _CatalogTester();
+    await mount(
+      tester,
+      width: 1200,
+      locale: const Locale('zh', 'CN'),
+      attachNavigatorKey: true,
+      catalogTester: backend,
+      catalogs: flatCatalogs(),
+    );
+
+    final workflowBar = find.byKey(const ValueKey('overview-workflow-bar'));
+    final addBtn = find.byKey(const ValueKey('overview-add-subscription'));
+    final arrow1 = find.byKey(const ValueKey('overview-workflow-arrow-1'));
+    final testBtn = find.byKey(const ValueKey('overview-test-current'));
+    final arrow2 = find.byKey(const ValueKey('overview-workflow-arrow-2'));
+    final useBtn = find.byKey(const ValueKey('overview-quick-use'));
+    expect(workflowBar, findsOneWidget);
+    expect(addBtn, findsOneWidget);
+    expect(arrow1, findsOneWidget);
+    expect(testBtn, findsOneWidget);
+    expect(arrow2, findsOneWidget);
+    expect(useBtn, findsOneWidget);
+
+    expect(find.text('添加订阅'), findsOneWidget);
+    expect(find.text('测试当前配置'), findsOneWidget);
+    expect(find.text('点击使用'), findsOneWidget);
+
+    // Moved out of top filter row into right-hand pane above node list.
+    final sortRect =
+        tester.getRect(find.byKey(const ValueKey('overview-sort-button')));
+    final sidebarRect =
+        tester.getRect(find.byKey(const ValueKey('overview-sidebar')));
+    final headerRect =
+        tester.getRect(find.byKey(const ValueKey('overview-header-a')));
+    final addRect = tester.getRect(addBtn);
+    final arrow1Rect = tester.getRect(arrow1);
+    final testRect = tester.getRect(testBtn);
+    final arrow2Rect = tester.getRect(arrow2);
+    final useRect = tester.getRect(useBtn);
+
+    expect(testRect.top, greaterThan(sortRect.bottom));
+    expect(addRect.left, greaterThan(sidebarRect.right));
+    expect(addRect.bottom, lessThanOrEqualTo(headerRect.top));
+    expect(addRect.right, lessThanOrEqualTo(arrow1Rect.left));
+    expect(arrow1Rect.right, lessThanOrEqualTo(testRect.left));
+    expect(testRect.right, lessThanOrEqualTo(arrow2Rect.left));
+    expect(arrow2Rect.right, lessThanOrEqualTo(useRect.left));
+    expect(addRect.center.dy, closeTo(testRect.center.dy, 1.0));
+    expect(testRect.center.dy, closeTo(useRect.center.dy, 1.0));
+
+    // Step 2 preserves TextButton contract and triggers current profile test.
+    expect(tester.widget<TextButton>(testBtn).onPressed, isNotNull);
+    await tester.tap(testBtn);
+    await tester.pumpAndSettle();
+    expect(backend.current, hasLength(1));
+
+    // Step 1 opens URLFormDialog directly and forwards trimmed URL to addProfileFormURL.
+    await tester.tap(addBtn);
+    await tester.pumpAndSettle();
+    expect(find.text('从URL导入'), findsOneWidget);
+    await tester.enterText(
+      find.byType(TextField),
+      '  https://sub.example.com/api/v1/client/subscribe?token=demo  ',
+    );
+    await tester.tap(find.text('提交'));
+    await tester.pumpAndSettle();
+    expect(find.text('从URL导入'), findsNothing);
+    expect(
+      controller.addedUrls,
+      ['https://sub.example.com/api/v1/client/subscribe?token=demo'],
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'quick use (点击使用): activates lowest-delay node on live profile, switches to selected catalog profile, disables when empty, and scales cleanly at 2.0x',
+      (tester) async {
+    final semanticsHandle = tester.ensureSemantics();
+    try {
+      final controller = _ProxyController();
+      globalState.appController = controller;
+      final now = DateTime(2026, 10, 29, 12, 0);
+      final profiles = <Profile>[
+        const Profile(
+          id: 'a',
+          label: 'Alpha',
+          url: 'https://example.com/a',
+          autoUpdateDuration: defaultUpdateDuration,
+          currentGroupName: 'Live',
+          selectedMap: {'Live': 'SlowCurrent'},
+        ),
+        const Profile(
+          id: 'b',
+          label: 'Beta',
+          url: 'https://example.com/b',
+          autoUpdateDuration: defaultUpdateDuration,
+        ),
+      ];
+      globalState.config = globalState.config.copyWith(currentProfileId: 'a');
+      globalState.appState = globalState.appState.copyWith(
+        groups: const [
+          Group(
+            name: 'Live',
+            type: GroupType.Selector,
+            now: 'SlowCurrent',
+            hidden: false,
+            all: [
+              Proxy(name: 'SlowCurrent', type: 'VLESS'),
+              Proxy(name: 'FastBest', type: 'VLESS'),
+              Proxy(name: 'BrokenNode', type: 'VLESS'),
+            ],
+          ),
+        ],
+        delayMap: {
+          defaultTestUrl: {
+            'SlowCurrent': 210,
+            'FastBest': 85,
+            'BrokenNode': -1,
+          },
+        },
+      );
+
+      final container = await mount(
+        tester,
+        width: 1200,
+        locale: const Locale('zh', 'CN'),
+        profiles: profiles,
+        catalogs: {
+          'a': ProfileCatalog(
+            profileId: 'a',
+            fingerprint: 'fa',
+            status: ProfileCatalogStatus.ready,
+            nodes: [
+              _node('s', 'SlowCurrent')
+                  .copyWith(selectGroups: const ['Live']),
+              _node('f', 'FastBest')
+                  .copyWith(selectGroups: const ['Live']),
+              _node('x', 'BrokenNode')
+                  .copyWith(selectGroups: const ['Live']),
+            ],
+          ),
+          'b': ProfileCatalog(
+            profileId: 'b',
+            fingerprint: 'fb',
+            status: ProfileCatalogStatus.ready,
+            nodes: [
+              _node('bs', 'BetaSlow')
+                  .copyWith(selectGroups: const ['Proxy']),
+              _node('bf', 'BetaFast')
+                  .copyWith(selectGroups: const ['Proxy']),
+            ],
+          ),
+        },
+        health: {
+          'b': {
+            'bs': NodeHealthRecord(
+              delayMs: 260,
+              testedAt: now,
+              testUrlHash: 'h',
+            ),
+            'bf': NodeHealthRecord(
+              delayMs: 62,
+              testedAt: now,
+              testUrlHash: 'h',
+            ),
+          },
+        },
+      );
+
+      // 1. Under default delay sort, FastBest (85 ms) is first above SlowCurrent (210 ms).
+      expect(
+        tester.getTopLeft(find.text('FastBest')).dy,
+        lessThan(tester.getTopLeft(find.text('SlowCurrent')).dy),
+      );
+
+      // Clicking "点击使用" activates FastBest immediately.
+      final useBtn = find.byKey(const ValueKey('overview-quick-use'));
+      await tester.tap(useBtn);
+      await tester.pumpAndSettle();
+      expect(controller.selections, [('Live', 'FastBest')]);
+      expect(controller.changes, [('Live', 'FastBest')]);
+      expect(
+        container
+            .read(profilesProvider)
+            .getProfile('a')
+            ?.selectedMap['Live'],
+      equals('FastBest'),
+      );
+      expect(find.text('已切换至 Alpha · FastBest'), findsOneWidget);
+
+      // 2. Selecting inactive profile Beta in sidebar and clicking "点击使用" switches to Beta · BetaFast (62 ms).
+      await tester.tap(find.byKey(const ValueKey('overview-select-b')));
+      await tester.pumpAndSettle();
+      expect(
+        tester.getTopLeft(find.text('BetaFast')).dy,
+        lessThan(tester.getTopLeft(find.text('BetaSlow')).dy),
+      );
+      await tester.tap(useBtn);
+      await tester.pumpAndSettle();
+      expect(container.read(currentProfileIdProvider), 'b');
+      expect(
+        container
+            .read(profilesProvider)
+            .getProfile('b')
+            ?.selectedMap['Proxy'],
+        equals('BetaFast'),
+      );
+
+      // 3. Non-matching search query disables "点击使用" cleanly.
+      container.read(proxiesQueryProvider.notifier).value =
+          '__no_matching_node_xyz__';
+      await tester.pumpAndSettle();
+      expect(tester.widget<TextButton>(useBtn).onPressed, isNull);
+      container.read(proxiesQueryProvider.notifier).value = '';
+      await tester.pumpAndSettle();
+
+      // 4. Narrow & wide 2.0x text scale across zh_CN and ru render without overflow.
+      for (final (width, locale) in [
+        (320.0, const Locale('zh', 'CN')),
+        (380.0, const Locale('ru')),
+        (1200.0, const Locale('ru')),
+      ]) {
+        await mount(
+          tester,
+          width: width,
+          locale: locale,
+          profiles: profiles,
+          child: MediaQuery(
+            data: MediaQueryData(
+              size: Size(width, 1000),
+              textScaler: const TextScaler.linear(2.0),
+            ),
+            child: const NodeOverviewView(),
+          ),
+          catalogs: {
+            'a': ProfileCatalog(
+              profileId: 'a',
+              fingerprint: 'fa',
+              status: ProfileCatalogStatus.ready,
+              nodes: [
+                _node('f', 'FastBest')
+                    .copyWith(selectGroups: const ['Live']),
+              ],
+            ),
+            'b': ProfileCatalog(
+              profileId: 'b',
+              fingerprint: 'fb',
+              status: ProfileCatalogStatus.ready,
+              nodes: [_node('bf', 'BetaFast')],
+            ),
+          },
+        );
+        expect(
+          find.byKey(const ValueKey('overview-add-subscription')),
+          findsOneWidget,
+        );
+        expect(
+          find.byKey(const ValueKey('overview-test-current')),
+          findsOneWidget,
+        );
+        expect(
+          find.byKey(const ValueKey('overview-quick-use')),
           findsOneWidget,
         );
         expect(tester.takeException(), isNull);

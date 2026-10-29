@@ -816,5 +816,7 @@
     }
   },
   "nodeOverviewUpdateSubscription": "Обновить",
-  "nodeOverviewUpdatingShort": "Обновление"
+  "nodeOverviewUpdatingShort": "Обновление",
+  "nodeOverviewAddSubscription": "Добавить подписку",
+  "nodeOverviewQuickUse": "Использовать"
 }

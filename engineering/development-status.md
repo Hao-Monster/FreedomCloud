@@ -2,6 +2,22 @@
 
 更新日期：2026-10-29。当前阶段是快速开发、快速迭代和部分功能预览。本文记录来源与验收边界；每次继续开发仍需核实实际 Git/PR/CI 状态，不能把历史报告视为当前通过证明。
 
+## 跨配置节点总览三步引导工作流栏（添加订阅 → 测试当前配置 → 点击使用）与默认延迟排序（2026-10-29）
+
+- 来源：基于本地 `development@12b4b5b3b55762ac51420934890f166df2cc37ef`，在“代理 → 全部配置”（[`NodeOverviewView`](file:///E:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart#L214-L219)）右侧节点面板顶部新增三步式快捷引导工作流栏 **`添加订阅` → `测试当前配置` → `点击使用`**，并将节点排序默认规则切换为 **`延迟`**（`ProxiesSortType.delay`）。
+- 核心实现：
+  1. **默认延迟排序与历史配置一次性平滑迁移（[`ProxiesStyle`](file:///E:/CodeWorkstation/FlClashX/lib/models/config.dart#L194-L209) / [`Config.compatibleFromJson`](file:///E:/CodeWorkstation/FlClashX/lib/models/config.dart#L299-L343) / [`_compareDelay`](file:///E:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart#L3539-L3545)）**：将 `ProxiesStyle.sortType` 默认值由 `ProxiesSortType.none` 调整为 `ProxiesSortType.delay`，新增 `sortTypeDefaultDelayMigrated` 标记并在 `Config.compatibleFromJson` 对旧版未迁移的默认 `"none"` 一次性升级为 `"delay"`，同时保留已显式选择 `"name"` 或迁移后手动切回 `"none"` 的用户偏好；优化 `_compareDelay` 使正延迟升序置顶、未测速节点排在测速失败（`< 0`）节点之前。
+  2. **三步引导工作流栏与自绘流向箭头（[`_OverviewQuickWorkflowBar`](file:///E:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart#L1401-L1471) / [`_WorkflowStepButton`](file:///E:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart#L1473-L1614) / [`_WorkflowStepArrow`](file:///E:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart#L1616-L1729)）**：
+     - 步骤 1 **`添加订阅`**（`ValueKey('overview-add-subscription')`）：调用 [`_openUrlSubscriptionImport`](file:///E:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart#L800-L816) 直接弹出既有 [`URLFormDialog`](file:///E:/CodeWorkstation/FlClashX/lib/views/profiles/add_profile.dart#L99-L153)（`从URL导入`），提交后完整复用 [`AppController.addProfileFormURL`](file:///E:/CodeWorkstation/FlClashX/lib/controller.dart#L2809-L2845) 导入订阅；
+     - 步骤 2 **`测试当前配置`**（`ValueKey('overview-test-current')`）：从顶部筛选工具栏移入工作流栏第 2 步，保留 `TextButton` 类型与原有 [`_testCurrent`](file:///E:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart#L623-L642) 行为契约，中文词条更新为 `测试当前配置`；
+     - 步骤 3 **`点击使用`**（`ValueKey('overview-quick-use')`）：按当前可见范围、搜索词、“仅显示可用”、国家筛选与当前排序规则（默认按延迟升序），自动定位并启用首个可切换节点（活动配置走 [`_useActiveNode`](file:///E:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart#L666-L695)，非活动目录配置走 [`_useCatalogNode`](file:///E:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart#L697-L767)）；
+     - 步骤间连接采用 [`_WorkflowArrowPainter`](file:///E:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart#L1643-L1729) `CustomPainter` 绘制原点微节点、渐变轴线、双层动感折角箭头与暗色柔光，支持 RTL 镜像、`ExcludeSemantics` 无障碍降噪及 `320px @ 2.0x` 自适应换行防溢出。补齐四语种 `arb/intl_*.arb` 与 `lib/l10n/*`。
+- 验证记录（本机 `Flutter 3.47.4` / `Dart 3.13.3`，CI 配置 `3.41.7`）：
+  - 前置有效 Red（[`test/views/node_overview_test.dart`](file:///E:/CodeWorkstation/FlClashX/test/views/node_overview_test.dart#L5316-L5696) 新增默认延迟迁移、三步工作流栏与 URL 导入弹窗、一键点击使用及 `2.0x` 大字号共 3 组专项用例）：退出码 `1`（`0 PASS / 3 FAIL`）；
+  - 节点总览全量组件与渲染回归测试（`flutter test --no-pub test/views/node_overview_test.dart test/views/node_overview_render_test.dart`）：**PASS（102 PASS / 0 FAIL）**；
+  - 静态检查（`dart analyze lib/views/proxies/overview/overview.dart test/views/node_overview_test.dart test/views/node_overview_render_test.dart`）：**PASS（`No issues found!`）**；本任务改动文件 `git diff --check` 无告警；`pubspec.lock` 未改动。
+- 交付状态：**已实现 / 已本地验证并提交至本地 `development`**；未推送远端（按规范待授权后推送） / 未创建或合并 PR / 远端 CI **NOT RUN** / 未重打静态预览包 / 未启动候选窗口（未触碰本机运行中代理、TUN 及后台服务） / 后端部署与业务验收 **NOT RUN**。下一步：如需推送 `freedomcloud/development`、晋级 `main` 或打新预览包，按授权执行。
+
 ## 跨配置节点总览配置卡片右上角“更新订阅”按钮（2026-10-29）
 
 - 来源：针对“代理 → 全部配置”（[`NodeOverviewView`](file:///E:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart#L213-L218)）配置卡片缺少快捷订阅更新入口的问题，从基线 `development@842b43fea4c1a6b3fd28cbd76c00324f96916ee2` 为 URL 订阅配置卡片补齐右上角 **`更新订阅`** 按钮，直接复用“配置 → ⋮ → 同步”（[`AppController.updateProfile`](file:///E:/CodeWorkstation/FlClashX/lib/controller.dart#L1177-L1240) / `globalState.safeRun(silence: false, ...)`）既有同步能力。

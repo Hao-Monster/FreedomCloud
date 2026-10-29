@@ -955,5 +955,7 @@
     }
   },
   "nodeOverviewUpdateSubscription": "Update",
-  "nodeOverviewUpdatingShort": "Updating"
+  "nodeOverviewUpdatingShort": "Updating",
+  "nodeOverviewAddSubscription": "Add subscription",
+  "nodeOverviewQuickUse": "Quick use"
 }

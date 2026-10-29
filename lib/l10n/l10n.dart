@@ -6538,6 +6538,26 @@ class AppLocalizations {
       args: [],
     );
   }
+
+  /// `Add subscription`
+  String get nodeOverviewAddSubscription {
+    return Intl.message(
+      'Add subscription',
+      name: 'nodeOverviewAddSubscription',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Quick use`
+  String get nodeOverviewQuickUse {
+    return Intl.message(
+      'Quick use',
+      name: 'nodeOverviewQuickUse',
+      desc: '',
+      args: [],
+    );
+  }
 }
 
 class AppLocalizationDelegate extends LocalizationsDelegate<AppLocalizations> {
