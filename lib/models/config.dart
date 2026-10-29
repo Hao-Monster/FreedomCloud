@@ -297,17 +297,24 @@ class Config with _$Config {
   factory Config.fromJson(Map<String, Object?> json) => _$ConfigFromJson(json);
 
   factory Config.compatibleFromJson(Map<String, Object?> json) {
-    var normalizedJson = Map<String, Object?>.from(json);
+    final normalizedJson = Map<String, Object?>.from(json);
     try {
       final accessControlMap = normalizedJson["accessControl"];
       final isAccessControl = normalizedJson["isAccessControl"];
-      if (accessControlMap != null) {
-        (accessControlMap as Map)["enable"] = isAccessControl;
-        if (normalizedJson["vpnProps"] != null) {
-          (normalizedJson["vpnProps"]! as Map)["accessControl"] = accessControlMap;
+      if (accessControlMap is Map) {
+        final nextAccessControl = Map<String, Object?>.from(accessControlMap);
+        nextAccessControl["enable"] = isAccessControl;
+        normalizedJson["accessControl"] = nextAccessControl;
+        final vpnProps = normalizedJson["vpnProps"];
+        if (vpnProps is Map) {
+          final nextVpnProps = Map<String, Object?>.from(vpnProps);
+          nextVpnProps["accessControl"] = nextAccessControl;
+          normalizedJson["vpnProps"] = nextVpnProps;
         }
       }
+    } catch (_) {}
 
+    try {
       // Migration: Replace deprecated "standard" iconStyle with "icon" and
       // promote legacy unmigrated default sortType ("none") to "delay" once.
       final proxiesStyle = normalizedJson["proxiesStyle"];
@@ -329,18 +336,25 @@ class Config with _$Config {
           nextProxiesStyle["sortTypeDefaultDelayMigrated"] = true;
         }
         normalizedJson["proxiesStyle"] = nextProxiesStyle;
+      } else if (proxiesStyle != null) {
+        normalizedJson.remove("proxiesStyle");
       }
+    } catch (_) {}
 
+    try {
       // Migration: strip removed fields from profiles
       final profiles = normalizedJson["profiles"];
       if (profiles is List) {
-        for (final p in profiles) {
-          if (p is Map) {
-            p.remove("updateMethod");
-          }
-        }
+        normalizedJson["profiles"] = [
+          for (final p in profiles)
+            if (p is Map)
+              (Map<String, Object?>.from(p)..remove("updateMethod"))
+            else
+              p,
+        ];
       }
     } catch (_) {}
+
     return Config.fromJson(normalizedJson);
   }
 }

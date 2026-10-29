@@ -5956,6 +5956,10 @@ void main() {
     expect(find.textContaining('disposed'), findsNothing);
     await tester.tap(find.text('确定'));
     await tester.pumpAndSettle();
+    expect(
+      container.read(profilesProvider).getProfile('a')!.isUpdating,
+      isFalse,
+    );
 
     // Direct contract assertions for AppController.updateProfile snapshot merge & rollback:
     const baseSnapshot = Profile(
@@ -6173,5 +6177,324 @@ void main() {
     expect(arrow1CenterY, closeTo(testCenterY, 1.5));
     expect(arrow2CenterY, closeTo(useCenterY, 1.5));
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'R2-review 1 (R2-01 & R2-02): mergeUpdatedProfileSnapshot rejects mid-sync URL/ownership rotation and clears revoked HWID/interval/newdomain headers while preserving local & branding headers',
+      (tester) async {
+    const baseSnapshot = Profile(
+      id: 'p-managed',
+      label: 'Managed',
+      url: 'https://old.example.com/sub?token=old',
+      autoUpdateDuration: Duration(hours: 12),
+      selectedMap: {'Proxy': 'HK-01'},
+      providerHeaders: {
+        xboardAccountMarker: 'owner-1',
+        xboardTlsMarker: 'required',
+        'flclashx-servicename': 'FreedomCloud',
+        'flclashx-newdomain': 'legacy.example.com',
+        'x-hwid-max-devices-reached': 'true',
+        'x-hwid-not-supported': 'true',
+        'profile-update-interval': '6',
+        'announce': 'old-announce',
+        'support-url': 'https://support.example.com/old',
+      },
+    );
+    final fetchedFromStaleUrl = baseSnapshot.copyWith(
+      lastUpdateDate: DateTime(2026, 10, 29, 22, 0),
+      providerHeaders: const {
+        xboardAccountMarker: 'owner-1',
+        xboardTlsMarker: 'required',
+        'flclashx-servicename': 'FreedomCloud',
+      },
+    );
+
+    // 1. Mid-sync gift-card redemption / EditProfile rotated latest.url -> stale fetch MUST NOT commit!
+    final rotatedUrlLatest = baseSnapshot.copyWith(
+      url: 'https://rotated.example.com/sub?token=new',
+      isUpdating: false,
+    );
+    expect(
+      mergeUpdatedProfileSnapshot(
+        base: baseSnapshot,
+        fetched: fetchedFromStaleUrl,
+        latest: rotatedUrlLatest,
+      ),
+      isNull,
+    );
+
+    // 2. Mid-sync ownership marker rotation -> stale fetch MUST NOT commit!
+    final rotatedOwnerLatest = baseSnapshot.copyWith(
+      providerHeaders: {
+        ...baseSnapshot.providerHeaders,
+        xboardAccountMarker: 'owner-2',
+      },
+    );
+    expect(
+      mergeUpdatedProfileSnapshot(
+        base: baseSnapshot,
+        fetched: fetchedFromStaleUrl,
+        latest: rotatedOwnerLatest,
+      ),
+      isNull,
+    );
+
+    // 3. Same-source sync where server revoked HWID & transient headers clears all revoked transient keys
+    // while keeping xboard markers and persistent branding headers.
+    final sameSourceLatest = baseSnapshot.copyWith(
+      isUpdating: true,
+      selectedMap: const {'Proxy': 'SG-02'},
+    );
+    final merged = mergeUpdatedProfileSnapshot(
+      base: baseSnapshot,
+      fetched: fetchedFromStaleUrl,
+      latest: sameSourceLatest,
+    )!;
+    expect(merged.isUpdating, isFalse);
+    expect(merged.selectedMap, {'Proxy': 'SG-02'});
+    expect(
+      merged.providerHeaders.containsKey('x-hwid-max-devices-reached'),
+      isFalse,
+    );
+    expect(
+      merged.providerHeaders.containsKey('x-hwid-not-supported'),
+      isFalse,
+    );
+    expect(
+      merged.providerHeaders.containsKey('profile-update-interval'),
+      isFalse,
+    );
+    expect(
+      merged.providerHeaders.containsKey('flclashx-newdomain'),
+      isFalse,
+    );
+    expect(merged.providerHeaders.containsKey('announce'), isFalse);
+    expect(merged.providerHeaders.containsKey('support-url'), isFalse);
+    expect(merged.providerHeaders[xboardAccountMarker], 'owner-1');
+    expect(merged.providerHeaders[xboardTlsMarker], 'required');
+    expect(merged.providerHeaders['flclashx-servicename'], 'FreedomCloud');
+
+    // 4. prepareStartingProfileUpdate never resurrects deleted profiles and preserves live selectedMap
+    // when a delayed/edit caller supplies a newer URL & label onto a stale Profile snapshot.
+    expect(
+      prepareStartingProfileUpdate(requested: baseSnapshot, current: null),
+      isNull,
+    );
+    final staleCallerEdited = baseSnapshot.copyWith(
+      url: 'https://edited.example.com/sub',
+      label: 'Edited Label',
+      autoUpdate: false,
+      autoUpdateDuration: const Duration(hours: 24),
+    );
+    final liveCurrent = baseSnapshot.copyWith(
+      selectedMap: const {'Proxy': 'US-Fast-01'},
+      currentGroupName: 'Auto',
+      unfoldSet: const {'Proxy'},
+    );
+    final prepared = prepareStartingProfileUpdate(
+      requested: staleCallerEdited,
+      current: liveCurrent,
+    )!;
+    expect(prepared.isUpdating, isTrue);
+    expect(prepared.url, 'https://edited.example.com/sub');
+    expect(prepared.label, 'Edited Label');
+    expect(prepared.autoUpdate, isFalse);
+    expect(prepared.autoUpdateDuration, const Duration(hours: 24));
+    expect(prepared.selectedMap, {'Proxy': 'US-Fast-01'});
+    expect(prepared.currentGroupName, 'Auto');
+    expect(prepared.unfoldSet, {'Proxy'});
+    expect(
+      canCommitProfileUpdate(starting: baseSnapshot, latest: null),
+      isFalse,
+    );
+    expect(
+      canCommitProfileUpdate(starting: baseSnapshot, latest: rotatedUrlLatest),
+      isFalse,
+    );
+    expect(
+      canCommitProfileUpdate(
+        starting: baseSnapshot,
+        latest: rotatedOwnerLatest,
+      ),
+      isFalse,
+    );
+    expect(
+      canCommitProfileUpdate(starting: baseSnapshot, latest: sameSourceLatest),
+      isTrue,
+    );
+  });
+
+  testWidgets(
+      'R2-review 2 (R2-03 & R2-04): stableSortByDelay stays O(N) & deterministic for 64 proxies, Config.compatibleFromJson isolates unmodifiable/corrupt sections, and 点击使用 skips frozen broken catalog when 仅显示可用 is active',
+      (tester) async {
+    // 0. R2-03: 64-element list (> 32 Dual-Pivot Quicksort threshold) preserves exact input order within tie buckets in O(N) reads.
+    final sixtyFour = List<String>.generate(64, (i) => 'Node-$i');
+    final delayTable = <String, int?>{
+      for (var i = 0; i < 64; i++)
+        'Node-$i': switch (i % 5) {
+          0 => null, // untested tie bucket
+          1 => 0, // testing tie bucket (same bucket as null)
+          2 => -1 - (i % 3), // failed tie bucket (< 0)
+          3 => 50, // equal positive latency tie bucket
+          _ => 10 + i, // distinct positive latency
+        },
+    };
+    var delayReads = 0;
+    final sorted64 = utils.stableSortByDelay<String>(sixtyFour, (name) {
+      delayReads++;
+      return delayTable[name];
+    });
+    expect(delayReads, 64);
+
+    final equal50 = sorted64.where((n) => delayTable[n] == 50).toList();
+    expect(
+      equal50,
+      sixtyFour.where((n) => delayTable[n] == 50).toList(),
+    );
+    final pendingAndUntested = sorted64
+        .where((n) => delayTable[n] == null || delayTable[n] == 0)
+        .toList();
+    expect(
+      pendingAndUntested,
+      sixtyFour
+          .where((n) => delayTable[n] == null || delayTable[n] == 0)
+          .toList(),
+    );
+    final failedBucket =
+        sorted64.where((n) => (delayTable[n] ?? 0) < 0).toList();
+    expect(
+      failedBucket,
+      sixtyFour.where((n) => (delayTable[n] ?? 0) < 0).toList(),
+    );
+    // 1. Unmodifiable accessControl map must not abort proxiesStyle default-delay migration.
+    final fromConstMaps = Config.compatibleFromJson(<String, Object?>{
+      'themeProps': const <String, Object?>{},
+      'isAccessControl': true,
+      'accessControl': const <String, Object?>{},
+      'vpnProps': const <String, Object?>{},
+      'proxiesStyle': const <String, Object?>{
+        'sortType': 'none',
+      },
+      'profiles': const <Object?>[
+        <String, Object?>{
+          'id': 'p1',
+          'url': 'https://example.com/p1',
+          'autoUpdateDuration': 86400000000,
+          'updateMethod': 'legacy',
+        },
+      ],
+    });
+    expect(fromConstMaps.proxiesStyle.sortType, ProxiesSortType.delay);
+    expect(fromConstMaps.proxiesStyle.sortTypeDefaultDelayMigrated, isTrue);
+    expect(fromConstMaps.vpnProps.accessControl.enable, isTrue);
+
+    // 2. Non-Map proxiesStyle (corrupt JSON scalar) must not crash Config.fromJson.
+    final fromCorruptProxiesStyle = Config.compatibleFromJson(<String, Object?>{
+      'themeProps': const <String, Object?>{},
+      'proxiesStyle': 'corrupt-scalar',
+    });
+    expect(
+      fromCorruptProxiesStyle.proxiesStyle.sortType,
+      ProxiesSortType.delay,
+    );
+
+    // 3. When 仅显示可用 is enabled and a frozen top profile turns fileMissing, 点击使用 skips it to healthy profile b.
+    final controller = _ProxyController();
+    globalState.appController = controller;
+    final catalogTester = _CatalogTester();
+    final now = DateTime(2026, 10, 29, 22, 0);
+    final profiles = <Profile>[
+      const Profile(
+        id: 'a',
+        label: 'Alpha',
+        url: 'https://example.com/a',
+        autoUpdateDuration: defaultUpdateDuration,
+      ),
+      const Profile(
+        id: 'b',
+        label: 'Beta',
+        url: 'https://example.com/b',
+        autoUpdateDuration: defaultUpdateDuration,
+      ),
+    ];
+    globalState.config = globalState.config.copyWith(currentProfileId: null);
+    var alphaMissing = false;
+    final container = await mount(
+      tester,
+      width: 1200,
+      locale: const Locale('zh', 'CN'),
+      profiles: profiles,
+      catalogTester: catalogTester,
+      loadCatalog: (id) async {
+        if (id == 'a') {
+          if (alphaMissing) {
+            return const ProfileCatalog(
+              profileId: 'a',
+              fingerprint: 'fa-missing',
+              status: ProfileCatalogStatus.fileMissing,
+            );
+          }
+          return ProfileCatalog(
+            profileId: 'a',
+            fingerprint: 'fa',
+            status: ProfileCatalogStatus.ready,
+            nodes: [
+              _node('a1', 'Alpha1').copyWith(selectGroups: const ['Proxy']),
+              _node('a2', 'Alpha2').copyWith(selectGroups: const ['Proxy']),
+            ],
+          );
+        }
+        return ProfileCatalog(
+          profileId: 'b',
+          fingerprint: 'fb',
+          status: ProfileCatalogStatus.ready,
+          nodes: [
+            _node('bf', 'BetaFast').copyWith(selectGroups: const ['Proxy']),
+          ],
+        );
+      },
+      health: {
+        'a': {
+          'a1': NodeHealthRecord(
+            delayMs: 25,
+            testedAt: now,
+            testUrlHash: 'h',
+          ),
+          'a2': NodeHealthRecord(
+            delayMs: 35,
+            testedAt: now,
+            testUrlHash: 'h',
+          ),
+        },
+        'b': {
+          'bf': NodeHealthRecord(
+            delayMs: 62,
+            testedAt: now,
+            testUrlHash: 'h',
+          ),
+        },
+      },
+    );
+
+    // Freeze sidebar order ['a', 'b'] while a catalog batch is running, then reload 'a' as fileMissing.
+    // Note: keep indeterminate LinearProgressIndicator out of pumpAndSettle by using pump().
+    catalogTester.progress(done: 1, count: 2);
+    alphaMissing = true;
+    container.invalidate(profileCatalogProvider('a'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+
+    await tester.tap(find.text('仅显示可用'));
+    await tester.pump();
+
+    final useBtn = find.byKey(const ValueKey('overview-quick-use'));
+    expect(tester.widget<TextButton>(useBtn).onPressed, isNotNull);
+    await tester.tap(useBtn);
+    await tester.pump();
+    expect(container.read(currentProfileIdProvider), 'b');
+    expect(
+      container.read(profilesProvider).getProfile('b')?.selectedMap['Proxy'],
+      'BetaFast',
+    );
   });
 }

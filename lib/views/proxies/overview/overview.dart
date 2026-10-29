@@ -788,15 +788,12 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
           );
           await appController.updateProfile(current);
         } catch (e) {
-          if (mounted) {
-            final latest = ref.read(profilesProvider).getProfile(current.id);
-            if (latest != null && latest.isUpdating) {
-              appController.setProfile(
-                latest.copyWith(
-                  isUpdating: false,
-                ),
-              );
-            }
+          final latest = mounted
+              ? ref.read(profilesProvider).getProfile(current.id)
+              : globalState.config.profiles.getProfile(current.id);
+          final rollback = rollbackFailedProfileUpdate(latest);
+          if (rollback != null) {
+            appController.setProfile(rollback);
           }
           rethrow;
         }
@@ -1191,7 +1188,7 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
           return null;
         }
         if (catalog.status != ProfileCatalogStatus.ready) {
-          if (activeCountry != null || query.isNotEmpty) {
+          if (_availableOnly || activeCountry != null || query.isNotEmpty) {
             continue;
           }
           return null;

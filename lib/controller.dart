@@ -67,6 +67,10 @@ class AppController {
   final BuildContext context;
   final WidgetRef _ref;
   final _nodeHealthWrites = <Future<void>>{};
+  int _nextProfileUpdateToken = 0;
+  final Map<String, int> _activeProfileUpdateTokens = {};
+  final Map<String, ({int token, String url, Future<void> future})>
+      _inFlightProfileUpdates = {};
   NodeHealthStore? get catalogHealthStore =>
       _ref.read(nodeOverviewEnabledProvider)
           ? _ref.read(nodeHealthRecorderProvider).store
@@ -1175,25 +1179,89 @@ class AppController {
   }
 
   Future<void> updateProfile(Profile profile) async {
-    _ref.read(profilesProvider.notifier).setProfile(
-      profile.copyWith(isUpdating: true),
+    final current = _ref.read(profilesProvider).getProfile(profile.id);
+    final starting = prepareStartingProfileUpdate(
+      requested: profile,
+      current: current,
     );
+    if (starting == null) {
+      return;
+    }
+    final existingInFlight = _inFlightProfileUpdates[starting.id];
+    if (existingInFlight != null && existingInFlight.url == starting.url) {
+      if (starting != current) {
+        _ref.read(profilesProvider.notifier).setProfile(starting);
+      }
+      return existingInFlight.future;
+    }
+    final token = ++_nextProfileUpdateToken;
+    _activeProfileUpdateTokens[starting.id] = token;
+    final future = _runProfileUpdate(starting: starting, token: token);
+    _inFlightProfileUpdates[starting.id] = (
+      token: token,
+      url: starting.url,
+      future: future,
+    );
+    try {
+      await future;
+    } finally {
+      if (_activeProfileUpdateTokens[starting.id] == token) {
+        _activeProfileUpdateTokens.remove(starting.id);
+        _inFlightProfileUpdates.remove(starting.id);
+      }
+    }
+  }
+
+  Future<void> _runProfileUpdate({
+    required Profile starting,
+    required int token,
+  }) async {
+    bool isCurrentRun() => _activeProfileUpdateTokens[starting.id] == token;
+
+    bool canStillCommit() =>
+        isCurrentRun() &&
+        canCommitProfileUpdate(
+          starting: starting,
+          latest: _ref.read(profilesProvider).getProfile(starting.id),
+        );
+
+    void clearUpdatingIfCurrentRun() {
+      if (!isCurrentRun()) {
+        return;
+      }
+      final rollback = rollbackFailedProfileUpdate(
+        _ref.read(profilesProvider).getProfile(starting.id),
+      );
+      if (rollback != null) {
+        _ref.read(profilesProvider.notifier).setProfile(rollback);
+      }
+    }
+
+    _ref.read(profilesProvider.notifier).setProfile(starting);
     try {
       final prefs = await SharedPreferences.getInstance();
       final shouldSend = prefs.getBool('sendDeviceHeaders') ?? true;
-      final fetched = await profile.fetch(
+      final fetched = await starting.fetch(
         shouldSendHeaders: shouldSend,
       );
-      if (_ref.read(profilesProvider).getProfile(profile.id) == null) {
+      if (!canStillCommit()) {
+        clearUpdatingIfCurrentRun();
         return;
       }
-      final savedProfile = await fetched.profile.saveFile(fetched.bytes);
+      final savedProfile = await fetched.profile.saveFile(
+        fetched.bytes,
+        canSave: canStillCommit,
+      );
+      if (!isCurrentRun()) {
+        return;
+      }
       final mergedProfile = mergeUpdatedProfileSnapshot(
-        base: profile,
+        base: starting,
         fetched: savedProfile,
-        latest: _ref.read(profilesProvider).getProfile(profile.id),
+        latest: _ref.read(profilesProvider).getProfile(starting.id),
       );
       if (mergedProfile == null) {
+        clearUpdatingIfCurrentRun();
         return;
       }
       final mergedHeaders = mergedProfile.providerHeaders;
@@ -1205,7 +1273,7 @@ class AppController {
       // the active-profile gate on applyProfileDebounce below; the reactive header
       // providers (background / global-mode / server-info) already read the active profile.
       if (mergedHeaders.isNotEmpty &&
-          profile.id == _ref.read(currentProfileIdProvider)) {
+          starting.id == _ref.read(currentProfileIdProvider)) {
         _applyAllHeaderSettings(mergedProfile, isNewProfile: false);
       }
 
@@ -1222,7 +1290,7 @@ class AppController {
 
       _ref.read(profilesProvider.notifier).setProfile(mergedProfile);
 
-      if (profile.id == _ref.read(currentProfileIdProvider)) {
+      if (starting.id == _ref.read(currentProfileIdProvider)) {
         applyProfileDebounce(silence: true);
       }
 
@@ -1232,12 +1300,11 @@ class AppController {
         commonPrint.log("Error checking subscription: $e");
       }));
     } catch (e) {
-      final rollback = rollbackFailedProfileUpdate(
-        _ref.read(profilesProvider).getProfile(profile.id),
-      );
-      if (rollback != null) {
-        _ref.read(profilesProvider.notifier).setProfile(rollback);
+      if (!canStillCommit()) {
+        clearUpdatingIfCurrentRun();
+        return;
       }
+      clearUpdatingIfCurrentRun();
       rethrow;
     }
   }
@@ -1971,14 +2038,23 @@ class AppController {
   }
 
   Future<void> autoUpdateProfiles() async {
-    for (final profile in _ref.read(profilesProvider)) {
-      if (!profile.autoUpdate) continue;
+    final profileIds = [
+      for (final profile in _ref.read(profilesProvider)) profile.id,
+    ];
+    for (final id in profileIds) {
+      final profile = _ref.read(profilesProvider).getProfile(id);
+      if (profile == null ||
+          !profile.autoUpdate ||
+          profile.isUpdating ||
+          profile.type == ProfileType.file) {
+        continue;
+      }
       final isNotNeedUpdate = profile.lastUpdateDate
           ?.add(
             profile.autoUpdateDuration,
           )
           .isBeforeNow;
-      if (isNotNeedUpdate == false || profile.type == ProfileType.file) {
+      if (isNotNeedUpdate == false) {
         continue;
       }
       try {
@@ -2113,8 +2189,12 @@ class AppController {
   }
 
   Future<void> updateProfiles() async {
-    for (final profile in _ref.read(profilesProvider)) {
-      if (profile.type == ProfileType.file) {
+    final profileIds = [
+      for (final profile in _ref.read(profilesProvider)) profile.id,
+    ];
+    for (final id in profileIds) {
+      final profile = _ref.read(profilesProvider).getProfile(id);
+      if (profile == null || profile.type == ProfileType.file) {
         continue;
       }
       await updateProfile(profile);
@@ -2922,22 +3002,15 @@ class AppController {
     required List<Proxy> proxies,
     String? testUrl,
   }) =>
-      List.of(proxies)
-        ..sort(
-          (a, b) {
-            final aDelay = _ref.read(getDelayProvider(
-              proxyName: a.name,
-              testUrl: testUrl,
-            ));
-            final bDelay = _ref.read(
-              getDelayProvider(
-                proxyName: b.name,
-                testUrl: testUrl,
-              ),
-            );
-            return utils.compareDelay(aDelay, bDelay);
-          },
-        );
+      utils.stableSortByDelay(
+        proxies,
+        (proxy) => _ref.read(
+          getDelayProvider(
+            proxyName: proxy.name,
+            testUrl: testUrl,
+          ),
+        ),
+      );
 
   List<Proxy> getSortProxies(List<Proxy> proxies, [String? url]) =>
       switch (_ref.read(proxiesStyleSettingProvider).sortType) {
