@@ -21,6 +21,7 @@ import 'package:flclashx/views/proxies/overview/overview.dart';
 import 'package:flclashx/views/proxies/proxies.dart';
 import 'package:flclashx/widgets/scaffold.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -4347,6 +4348,9 @@ void main() {
     backend.onTestCurrent = (targets) async {
       for (final target in targets) {
         container.read(delayDataSourceProvider.notifier).setDelay(
+              Delay(name: target.name, url: target.url, value: 0),
+            );
+        container.read(delayDataSourceProvider.notifier).setDelay(
               Delay(name: target.name, url: target.url, value: nextMeasuredDelay),
             );
       }
@@ -4608,5 +4612,225 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('overview-sort-menu')), findsOneWidget);
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'PR-61 review: explicit active delay preserves value across cancel/background broadcast and ignores unstarted bystanders',
+      (tester) async {
+    const groupUrl = 'https://group.invalid/probe';
+    globalState.config = globalState.config.copyWith(currentProfileId: 'a');
+    globalState.appState = globalState.appState.copyWith(
+      groups: const [
+        Group(
+          name: 'Live',
+          type: GroupType.Selector,
+          hidden: false,
+          testUrl: groupUrl,
+          all: [
+            Proxy(name: 'ProviderLeaf', type: 'Vless'),
+            Proxy(name: 'BystanderProvider', type: 'Vless'),
+            Proxy(name: 'RuntimeSsLeaf', type: 'ss'),
+          ],
+        ),
+      ],
+      delayMap: const {
+        groupUrl: {
+          'BystanderProvider': 42,
+        },
+      },
+    );
+    final providerNode = catalogNodeFromMap(
+      profileId: 'a',
+      source: CatalogNodeSource.provider,
+      providerName: 'Feed',
+      proxy: {
+        'name': 'ProviderLeaf',
+        'type': 'vless',
+        'server': 'p1.example.invalid',
+        'port': 443,
+        'uuid': 'u-1',
+        'network': 'ws',
+        'tls': true,
+      },
+    );
+    final bystanderNode = catalogNodeFromMap(
+      profileId: 'a',
+      source: CatalogNodeSource.provider,
+      providerName: 'Feed',
+      proxy: {
+        'name': 'BystanderProvider',
+        'type': 'vless',
+        'server': 'p2.example.invalid',
+        'port': 443,
+        'uuid': 'u-2',
+        'network': 'ws',
+        'tls': true,
+      },
+    );
+    final backend = _CatalogTester();
+    late ProviderContainer container;
+    var scenario = 'single_success';
+    backend.onTestCurrent = (targets) async {
+      switch (scenario) {
+        case 'single_success':
+          for (final target in targets) {
+            container.read(delayDataSourceProvider.notifier).setDelay(
+                  Delay(name: target.name, url: target.url, value: 0),
+                );
+            container.read(delayDataSourceProvider.notifier).setDelay(
+                  Delay(name: target.name, url: target.url, value: 245),
+                );
+          }
+          return DelayBatchResult(completed: targets.length, failed: 0);
+        case 'single_cancelled':
+          for (final target in targets) {
+            container.read(delayDataSourceProvider.notifier).setDelay(
+                  Delay(name: target.name, url: target.url, value: 0),
+                );
+            container.read(delayDataSourceProvider.notifier).setDelay(
+                  Delay(name: target.name, url: target.url, value: -1),
+                );
+          }
+          return const DelayBatchResult(
+            completed: 0,
+            failed: 0,
+            reason: 'cancelled',
+          );
+        case 'partial_batch_cancelled':
+          final first = targets.first;
+          container.read(delayDataSourceProvider.notifier).setDelay(
+                Delay(name: first.name, url: first.url, value: 0),
+              );
+          // Unauthenticated background broadcast hits unstarted bystander mid-batch.
+          container.read(delayDataSourceProvider.notifier).setDelay(
+                const Delay(
+                    name: 'BystanderProvider', url: groupUrl, value: 55),
+              );
+          container.read(delayDataSourceProvider.notifier).setDelay(
+                Delay(name: first.name, url: first.url, value: 180),
+              );
+          return const DelayBatchResult(
+            completed: 1,
+            failed: 0,
+            reason: 'cancelled',
+          );
+        default:
+          throw StateError('Unknown scenario: $scenario');
+      }
+    };
+
+    final semanticsHandle = tester.ensureSemantics();
+    try {
+      container = await mount(
+      tester,
+      width: 1200,
+      catalogTester: backend,
+      catalogs: {
+        'a': ProfileCatalog(
+          profileId: 'a',
+          fingerprint: 'file',
+          status: ProfileCatalogStatus.ready,
+          nodes: [providerNode, bystanderNode],
+        ),
+      },
+      health: {
+        'a': {
+          providerNode.identityKey: NodeHealthRecord(
+            delayMs: 80,
+            testedAt: DateTime(2026, 10, 15, 10, 11),
+            testUrlHash: 'fixture',
+          ),
+          bystanderNode.identityKey: NodeHealthRecord(
+            delayMs: 80,
+            testedAt: DateTime(2026, 10, 15, 10, 11),
+            testUrlHash: 'fixture',
+          ),
+        },
+      },
+    );
+
+    final providerRow =
+        find.byKey(const ValueKey('overview-active-ProviderLeaf'));
+    final bystanderRow =
+        find.byKey(const ValueKey('overview-active-BystanderProvider'));
+
+    // 1. Explicit single-node test updates ProviderLeaf to 245 ms.
+    await tester
+        .tap(find.byKey(const ValueKey('overview-test-a-ProviderLeaf')));
+    await tester.pumpAndSettle();
+    expect(
+      find.descendant(of: providerRow, matching: find.text('245 ms')),
+      findsOneWidget,
+    );
+
+    // 2. Unauthenticated background broadcast (77 ms) must NOT overwrite 245 ms.
+    container.read(delayDataSourceProvider.notifier).setDelay(
+          const Delay(name: 'ProviderLeaf', url: groupUrl, value: 77),
+        );
+    await tester.pumpAndSettle();
+    expect(
+      find.descendant(of: providerRow, matching: find.text('245 ms')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: providerRow, matching: find.text('77 ms')),
+      findsNothing,
+    );
+
+    // 3. Subsequent cancelled test (-1) must NOT flip 245 ms to Test failed.
+    scenario = 'single_cancelled';
+    await tester
+        .tap(find.byKey(const ValueKey('overview-test-a-ProviderLeaf')));
+    await tester.pumpAndSettle();
+    expect(
+      find.descendant(of: providerRow, matching: find.text('245 ms')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: providerRow, matching: find.text('Test failed')),
+      findsNothing,
+    );
+
+    // 4. Partially completed then cancelled group batch updates Tested target (180 ms)
+    //    while preserving unstarted BystanderProvider's trusted file history (80 ms).
+    scenario = 'partial_batch_cancelled';
+    await tester.tap(find.byKey(const ValueKey('overview-test-current')));
+    await tester.pumpAndSettle();
+    expect(
+      find.descendant(of: providerRow, matching: find.text('180 ms')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: bystanderRow, matching: find.text('80 ms')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: bystanderRow,
+        matching:
+            find.text('VLESS · WS · TLS · Profile file · Feed · Independent delay test'),
+      ),
+      findsOneWidget,
+    );
+
+    // 5. P3: Sort selector exposes deduplicated semantics label and canonical protocol search matches 'shadowsocks'.
+    final sortSemantics = tester.getSemantics(
+      find.byKey(const ValueKey('overview-sort-button')),
+    );
+    expect(sortSemantics.label, 'Sort: Default');
+    expect(
+      sortSemantics.getSemanticsData().hasAction(SemanticsAction.tap),
+      isTrue,
+    );
+
+      container.read(proxiesQueryProvider.notifier).value = 'shadowsocks';
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey('overview-active-RuntimeSsLeaf')),
+        findsOneWidget,
+      );
+    } finally {
+      semanticsHandle.dispose();
+    }
   });
 }

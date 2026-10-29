@@ -153,9 +153,61 @@ final _overviewSwitchTrackerProvider =
 
 typedef _ExplicitLiveMeasurement = ({int delayMs, DateTime testedAt});
 
-final _overviewExplicitLiveResultsProvider = StateProvider.autoDispose<
+class _OverviewExplicitLiveResultsNotifier extends AutoDisposeNotifier<
+    Map<(String, String, String), _ExplicitLiveMeasurement>> {
+  @override
+  Map<(String, String, String), _ExplicitLiveMeasurement> build() {
+    ref
+      ..listen<String?>(currentProfileIdProvider, (previous, next) {
+        if (previous == next || state.isEmpty) return;
+        state = {
+          for (final entry in state.entries)
+            if (entry.key.$1 == next) entry.key: entry.value,
+        };
+      })
+      ..listen<List<Profile>>(profilesProvider, (previous, next) {
+        if (previous == null || state.isEmpty) return;
+        final invalidatedIds = <String>{};
+        for (final old in previous) {
+          final updated = next.getProfile(old.id);
+          if (updated == null ||
+              updated.url != old.url ||
+              updated.lastUpdateDate != old.lastUpdateDate ||
+              updated.isUpdating != old.isUpdating) {
+            invalidatedIds.add(old.id);
+          }
+        }
+        if (invalidatedIds.isNotEmpty &&
+            state.keys.any((key) => invalidatedIds.contains(key.$1))) {
+          state = {
+            for (final entry in state.entries)
+              if (!invalidatedIds.contains(entry.key.$1))
+                entry.key: entry.value,
+          };
+        }
+      })
+      ..listen<ScriptProps>(scriptStateProvider, (previous, next) {
+        if (previous != null &&
+            previous.currentScript != next.currentScript &&
+            state.isNotEmpty) {
+          state = const {};
+        }
+      });
+    return const <(String, String, String), _ExplicitLiveMeasurement>{};
+  }
+
+  void merge(
+    Map<(String, String, String), _ExplicitLiveMeasurement> updates,
+  ) {
+    if (updates.isEmpty) return;
+    state = {...state, ...updates};
+  }
+}
+
+final _overviewExplicitLiveResultsProvider = NotifierProvider.autoDispose<
+    _OverviewExplicitLiveResultsNotifier,
     Map<(String, String, String), _ExplicitLiveMeasurement>>(
-  (ref) => const <(String, String, String), _ExplicitLiveMeasurement>{},
+  _OverviewExplicitLiveResultsNotifier.new,
 );
 
 class NodeOverviewView extends ConsumerStatefulWidget {
@@ -419,19 +471,6 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
     _feedback = ref.read(_overviewSwitchTrackerProvider).feedback;
     _lifecycleSubscriptions
       ..add(
-        ref.listenManual<String?>(currentProfileIdProvider, (previous, next) {
-          if (previous == next) return;
-          final liveNotifier =
-              ref.read(_overviewExplicitLiveResultsProvider.notifier);
-          if (liveNotifier.state.isNotEmpty) {
-            liveNotifier.state = {
-              for (final entry in liveNotifier.state.entries)
-                if (entry.key.$1 == next) entry.key: entry.value,
-            };
-          }
-        }),
-      )
-      ..add(
         ref.listenManual<List<Profile>>(profilesProvider, (previous, next) {
           final script = ref.read(scriptStateProvider).currentScript;
           final nextIds = <String>{for (final profile in next) profile.id};
@@ -440,16 +479,6 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
             final profile = next.getProfile(id);
             return profile == null || !summary.matchesProfile(profile, script);
           });
-          final liveNotifier =
-              ref.read(_overviewExplicitLiveResultsProvider.notifier);
-          if (liveNotifier.state.isNotEmpty) {
-            liveNotifier.state = {
-              for (final entry in liveNotifier.state.entries)
-                if (nextIds.contains(entry.key.$1) &&
-                    !(next.getProfile(entry.key.$1)?.isUpdating ?? true))
-                  entry.key: entry.value,
-            };
-          }
           WidgetsBinding.instance.addPostFrameCallback((_) {
             if (mounted && !_disposed) _scheduleCountryIndexScan();
           });
@@ -462,8 +491,6 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
           _scanEpoch.cancel();
           _scanEpoch = _IndexScanEpochState(nextGen);
           _indexedProfiles.clear();
-          ref.read(_overviewExplicitLiveResultsProvider.notifier).state =
-              const <(String, String, String), _ExplicitLiveMeasurement>{};
           WidgetsBinding.instance.addPostFrameCallback((_) {
             if (mounted && !_disposed) _scheduleCountryIndexScan();
           });
@@ -545,17 +572,27 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
       for (final target in targets)
         if (target.name.isNotEmpty) (target.name, target.url),
     };
-    final updatedTargets = <(String, String)>{};
+    final startedTargets = <(String, String)>{};
+    final convergedMeasurements = <(String, String), _ExplicitLiveMeasurement>{};
     final sub = ref.listenManual<DelayMap>(
       delayDataSourceProvider,
       (previous, next) {
+        final observedAt = DateTime.now();
         for (final key in requestedKeys) {
-          final prevUrlMap = previous?[key.$2];
-          final nextUrlMap = next[key.$2];
-          if (nextUrlMap == null) continue;
-          if (nextUrlMap[key.$1] != prevUrlMap?[key.$1] ||
-              !identical(prevUrlMap, nextUrlMap)) {
-            updatedTargets.add(key);
+          final prevVal = previous?[key.$2]?[key.$1];
+          final nextVal = next[key.$2]?[key.$1];
+          if (nextVal == prevVal) continue;
+          if (nextVal == null) {
+            startedTargets.remove(key);
+            convergedMeasurements.remove(key);
+          } else if (nextVal == 0) {
+            startedTargets.add(key);
+            convergedMeasurements.remove(key);
+          } else if (startedTargets.contains(key)) {
+            convergedMeasurements[key] = (
+              delayMs: nextVal,
+              testedAt: observedAt,
+            );
           }
         }
       },
@@ -566,28 +603,15 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
           mounted &&
           result.completed > 0 &&
           ref.read(currentProfileIdProvider) == activeId &&
-          updatedTargets.isNotEmpty) {
-        final delayMap = ref.read(delayDataSourceProvider);
-        final measuredAt = DateTime.now();
+          convergedMeasurements.isNotEmpty) {
         final updates = <(String, String, String), _ExplicitLiveMeasurement>{};
-        for (final key in updatedTargets) {
-          final live = delayMap[key.$2]?[key.$1];
-          if (live == null || live == 0) continue;
-          // Preserve previous history if a batch was cancelled/interrupted.
-          if (live < 0 && result.reason != null) continue;
-          updates[(activeId, key.$1, key.$2)] = (
-            delayMs: live,
-            testedAt: measuredAt,
-          );
+        for (final entry in convergedMeasurements.entries) {
+          // Preserve previous history if an in-flight target was cancelled or
+          // interrupted by batch/session termination.
+          if (entry.value.delayMs < 0 && result.reason != null) continue;
+          updates[(activeId, entry.key.$1, entry.key.$2)] = entry.value;
         }
-        if (updates.isNotEmpty) {
-          final notifier =
-              ref.read(_overviewExplicitLiveResultsProvider.notifier);
-          notifier.state = {
-            ...notifier.state,
-            ...updates,
-          };
-        }
+        ref.read(_overviewExplicitLiveResultsProvider.notifier).merge(updates);
       }
       return result;
     } finally {
@@ -1486,6 +1510,14 @@ class _OverviewSortSelectorState extends State<_OverviewSortSelector> {
       child: Semantics(
         button: true,
         expanded: _isOpen,
+        excludeSemantics: true,
+        onTap: () {
+          if (_controller.isOpen) {
+            _controller.close();
+          } else {
+            _controller.open();
+          }
+        },
         label: '${appLocalizations.sort}: ${_labelFor(widget.value)}',
         child: MouseRegion(
           onEnter: (_) => setState(() => _hovered = true),
@@ -2183,7 +2215,7 @@ class _ProfileSubscriptionSummary extends StatelessWidget {
       } else {
         final dateStr = DateFormat('yyyy-MM-dd').format(expireDate);
         final diff = expireDate.difference(now);
-        final isExpired = diff.isNegative || diff.inSeconds <= 0;
+        final isExpired = !expireDate.isAfter(now);
         final isExpiringSoon = !isExpired && diff.inDays <= 7;
         final String expireText;
         if (isExpired) {
@@ -2750,10 +2782,12 @@ bool _matches(CatalogNode node, String query) =>
         .toLowerCase()
         .contains(query);
 
-bool _activeEntryMatchesQuery(_ActiveDisplay entry, String query) =>
-    '${entry.proxy.name}\n${entry.fileSource ? entry.node!.type : entry.proxy.type}\n${entry.node?.protocolSummary ?? ''}\n${entry.node?.providerName ?? ''}'
-        .toLowerCase()
-        .contains(query);
+bool _activeEntryMatchesQuery(_ActiveDisplay entry, String query) {
+  final rawType = entry.fileSource ? entry.node!.type : entry.proxy.type;
+  return '${entry.proxy.name}\n$rawType\n${canonicalProtocolLabel(rawType)}\n${entry.node?.protocolSummary ?? ''}\n${entry.node?.providerName ?? ''}'
+      .toLowerCase()
+      .contains(query);
+}
 
 int _compareDelay(int? a, int? b) {
   final aRank = a != null && a > 0 ? a : 1 << 62;
@@ -3042,11 +3076,10 @@ Map<String, _ActiveDisplay> _activeDisplays(
         final live = ref.watch(getDelayProvider(
             proxyName: entry.proxy.name, testUrl: entry.testUrl));
         if (explicitLive != null &&
-            live != null &&
-            live != 0 &&
-            (history == null || !history.testedAt.isAfter(explicitLive.testedAt))) {
+            (history == null ||
+                history.testedAt.isBefore(explicitLive.testedAt))) {
           history = NodeHealthRecord(
-            delayMs: live,
+            delayMs: explicitLive.delayMs,
             testedAt: explicitLive.testedAt,
             testUrlHash: '',
           );
