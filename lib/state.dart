@@ -43,7 +43,89 @@ class GlobalState {
   Timer? timer;
   Timer? groupsUpdateTimer;
   late Config config;
-  late AppState appState;
+  late AppState _appState;
+  bool _appStateInitialized = false;
+  List<Group>? _groupsSnapshot;
+  List<Group>? _rawGroupsSnapshot;
+  int? _groupsSnapshotVersion;
+  String? _groupsSnapshotProfileId;
+
+  List<Group>? get groupsSnapshot => _groupsSnapshot;
+  List<Group>? get rawGroupsSnapshot => _rawGroupsSnapshot;
+  int? get groupsSnapshotVersion => _groupsSnapshotVersion;
+  String? get groupsSnapshotProfileId => _groupsSnapshotProfileId;
+  bool get isAppStateInitialized => _appStateInitialized;
+
+  bool isSameGroupsList(List<Group>? a, List<Group>? b) {
+    if (identical(a, b)) return true;
+    if (a == null || b == null) return false;
+    final matchesCurrentA =
+        identical(a, _groupsSnapshot) || identical(a, _rawGroupsSnapshot);
+    final matchesCurrentB =
+        identical(b, _groupsSnapshot) || identical(b, _rawGroupsSnapshot);
+    return matchesCurrentA && matchesCurrentB;
+  }
+
+  bool matchesGroupsSnapshot(List<Group> groups, int version) =>
+      version == _groupsSnapshotVersion &&
+      (identical(groups, _groupsSnapshot) ||
+          identical(groups, _rawGroupsSnapshot));
+
+  void recordGroupsSnapshot(List<Group> groups, {int? version}) {
+    final nextVersion = version ?? _appState.version;
+    final nextState = _appState.copyWith(
+      groups: groups,
+      version: nextVersion,
+    );
+    final canonicalGroups = nextState.groups;
+    _appState = identical(canonicalGroups, nextState.groups)
+        ? nextState
+        : nextState.copyWith(groups: canonicalGroups);
+    _appStateInitialized = true;
+    _groupsSnapshot = _appState.groups;
+    _rawGroupsSnapshot = groups;
+    _groupsSnapshotVersion = nextVersion;
+    _groupsSnapshotProfileId =
+        _appState.groups.isEmpty ? null : lastRuntimeProfileId;
+  }
+
+  void recordGroupsVersion(int version) {
+    _appState = _appState.copyWith(version: version);
+    _appStateInitialized = true;
+    _groupsSnapshot = _appState.groups;
+    _groupsSnapshotVersion = version;
+    if (_appState.groups.isEmpty) {
+      _groupsSnapshotProfileId = null;
+    }
+  }
+
+  AppState get appState => _appState;
+
+  set appState(AppState value) {
+    final firstReadGroups = value.groups;
+    final isAlreadyCanonical = identical(firstReadGroups, value.groups);
+    final normalized = isAlreadyCanonical
+        ? value
+        : value.copyWith(groups: firstReadGroups);
+    final groupsListChanged = !_appStateInitialized ||
+        !identical(normalized.groups, _groupsSnapshot);
+    final versionChanged = !_appStateInitialized ||
+        normalized.version != _groupsSnapshotVersion;
+    _appState = normalized;
+    _appStateInitialized = true;
+    if (groupsListChanged) {
+      _groupsSnapshot = normalized.groups;
+      _rawGroupsSnapshot = firstReadGroups;
+      _groupsSnapshotVersion = normalized.version;
+      _groupsSnapshotProfileId =
+          normalized.groups.isEmpty ? null : lastRuntimeProfileId;
+    } else if (versionChanged) {
+      _groupsSnapshotVersion = normalized.version;
+      if (normalized.groups.isEmpty) {
+        _groupsSnapshotProfileId = null;
+      }
+    }
+  }
   bool isPre = true;
   String? coreSHA256;
   String? coreVersion;
@@ -61,6 +143,7 @@ class GlobalState {
   UpdateTasks tasks = [];
   Map<String, dynamic>? lastRuntimeConfig;
   String? lastRuntimeProfileId;
+  int runtimeConfigEpoch = 0;
   // Effective external-controller endpoint after merging subscription value
   // over UI defaults. Empty string means disabled. Subscription value wins if
   // present, otherwise falls back to the UI toggle default.
@@ -442,7 +525,15 @@ class GlobalState {
     return ExternalControllerStatus.open.value;
   }
 
+  void clearRuntimeSetup() {
+    runtimeConfigEpoch++;
+    lastRuntimeConfig = null;
+    lastRuntimeProfileId = null;
+    _groupsSnapshotProfileId = null;
+  }
+
   void commitRuntimeSetup(SetupParams params, String? profileId) {
+    runtimeConfigEpoch++;
     final rawConfig = params.config;
     lastRuntimeConfig = rawConfig;
     lastRuntimeProfileId = profileId;
@@ -869,6 +960,52 @@ class DetectionState {
   Timer? _setTimeoutTimer;
   CancelToken? cancelToken;
   DateTime? _lastManualCheck;
+  int _routingEpoch = 0;
+  int _requestGeneration = 0;
+  int _lastCompletedGeneration = 0;
+  int? _lastCompletedRoutingEpoch;
+  String? _lastMatchedHost;
+  DateTime? _lastCheckStartedAt;
+  DateTime? _lastCheckCompletedAt;
+  bool? _lastCheckProxyEligible;
+  Set<String>? _lastProbeSourcePorts;
+  IpInfo? _lastCompletedIpInfo;
+
+  int get routingEpoch => _routingEpoch;
+  int get lastCompletedGeneration =>
+      identical(state.value.ipInfo, _lastCompletedIpInfo)
+          ? _lastCompletedGeneration
+          : 0;
+  int? get lastCompletedRoutingEpoch =>
+      identical(state.value.ipInfo, _lastCompletedIpInfo)
+          ? _lastCompletedRoutingEpoch
+          : null;
+  String? get lastMatchedHost =>
+      identical(state.value.ipInfo, _lastCompletedIpInfo)
+          ? _lastMatchedHost
+          : null;
+  Set<String>? get lastProbeSourcePorts =>
+      identical(state.value.ipInfo, _lastCompletedIpInfo)
+          ? _lastProbeSourcePorts
+          : null;
+  DateTime? get lastCheckStartedAt =>
+      identical(state.value.ipInfo, _lastCompletedIpInfo)
+          ? _lastCheckStartedAt
+          : null;
+  DateTime? get lastCheckCompletedAt =>
+      identical(state.value.ipInfo, _lastCompletedIpInfo)
+          ? _lastCheckCompletedAt
+          : null;
+  bool? get lastCheckProxyEligible =>
+      identical(state.value.ipInfo, _lastCompletedIpInfo)
+          ? _lastCheckProxyEligible
+          : null;
+
+  /// Advances the central proxy/profile/mode routing epoch so any in-flight
+  /// exit-IP check started under a previous route cannot calibrate the new node.
+  void notifyRoutingChanged() {
+    _routingEpoch++;
+  }
 
   final state = ValueNotifier<NetworkDetectionState>(
     const NetworkDetectionState(
@@ -937,10 +1074,18 @@ class DetectionState {
       await Future.delayed(const Duration(milliseconds: 2000));
     }
     cancelToken = CancelToken();
+    final requestGen = ++_requestGeneration;
+    final startRoutingEpoch = _routingEpoch;
+    final wasStartAtBegin = isStart;
+    final modeAtBegin = globalState.config.patchClashConfig.mode;
+    final checkStartedAt = DateTime.now();
     state.value = state.value.copyWith(
       isTesting: true,
     );
-    final res = await request.checkIp(cancelToken: cancelToken);
+    final res = await request.checkIpWithHost(cancelToken: cancelToken);
+    if (requestGen != _requestGeneration) {
+      return;
+    }
     if (res.isError) {
       state.value = state.value.copyWith(
         isLoading: true,
@@ -948,11 +1093,30 @@ class DetectionState {
       );
       return;
     }
-    final ipInfo = res.data;
+    final ipInfo = res.data?.ipInfo;
+    final checkCompletedAt = DateTime.now();
+    final isStartAtEnd =
+        globalState.isAppStateInitialized && globalState.appState.runTime != null;
+    final modeAtEnd = globalState.config.patchClashConfig.mode;
     state.value = state.value.copyWith(
       isTesting: false,
     );
     if (ipInfo != null) {
+      final sameRoute = startRoutingEpoch == _routingEpoch;
+      final proxyEligible = sameRoute &&
+          wasStartAtBegin &&
+          isStartAtEnd &&
+          modeAtBegin != Mode.direct &&
+          modeAtEnd != Mode.direct &&
+          (res.data?.routedViaClash ?? false);
+      _lastCompletedIpInfo = ipInfo;
+      _lastCompletedGeneration = requestGen;
+      _lastCompletedRoutingEpoch = sameRoute ? startRoutingEpoch : null;
+      _lastMatchedHost = res.data?.host;
+      _lastProbeSourcePorts = res.data?.sourcePorts;
+      _lastCheckStartedAt = checkStartedAt;
+      _lastCheckCompletedAt = checkCompletedAt;
+      _lastCheckProxyEligible = proxyEligible;
       state.value = state.value.copyWith(
         isLoading: false,
         ipInfo: ipInfo,

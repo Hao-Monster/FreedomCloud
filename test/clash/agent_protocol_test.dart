@@ -212,6 +212,64 @@ void main() {
     );
   });
 
+  group('cached proxyRunning across real Agent envelopes', () {
+    const instance =
+        'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+    AgentEvent parse(Map<String, dynamic> agent) => AgentEvent.tryParse({
+          '_agent': {'agentInstanceId': instance, ...agent}
+        })!;
+
+    // Shapes copied from services/agent/src/runtime.rs.
+    final strictStatus = parse({
+      'type': 'coreState', 'protocol': 1, 'coreState': 'ready',
+      'generation': 2, 'privilegedBackend': true,
+      'strictPolicy': {'state': 'disabled', 'generation': 1},
+    });
+    final identityResult = parse({
+      'type': 'commandResult', 'id': 'agent-7', 'ok': true,
+      'coreState': 'ready', 'generation': 2,
+      'strictPolicy': {'state': 'disabled', 'generation': 1},
+    });
+    final coreStateUndecided = parse({
+      'type': 'coreState', 'protocol': 1, 'coreState': 'ready',
+      'generation': 2, 'proxyRunning': null, 'privilegedBackend': true,
+    });
+
+    test('envelopes without the key keep the same Core listener state', () {
+      expect(strictStatus.proxyRunningReported, isFalse);
+      expect(identityResult.proxyRunningReported, isFalse);
+      // startListener() acknowledged true for this Core, then strict status
+      // and an identity check arrive.
+      var cached =
+          mergeAgentProxyRunning(strictStatus, cached: true, sameReadyCore: true);
+      cached =
+          mergeAgentProxyRunning(identityResult, cached: cached, sameReadyCore: true);
+      expect(cached, isTrue);
+      expect(
+          mergeAgentProxyRunning(identityResult, cached: false, sameReadyCore: true),
+          isFalse);
+    });
+
+    test('an explicit null still means no listener decision', () {
+      expect(coreStateUndecided.proxyRunningReported, isTrue);
+      expect(
+          mergeAgentProxyRunning(coreStateUndecided, cached: true, sameReadyCore: true),
+          isNull);
+    });
+
+    test('a different or non-ready Core never inherits the cache', () {
+      expect(
+          mergeAgentProxyRunning(identityResult, cached: true, sameReadyCore: false),
+          isNull);
+      final unavailable = parse({
+        'type': 'coreUnavailable', 'protocol': 1, 'generation': 2,
+        'id': 'x', 'coreState': 'failed',
+      });
+      expect(mergeAgentProxyRunning(unavailable, cached: true, sameReadyCore: true),
+          isNull);
+    });
+  });
+
   test('agent events expose readiness without pretending to be Core results',
       () {
     final event = AgentEvent.tryParse({

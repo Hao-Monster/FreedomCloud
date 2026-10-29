@@ -560,7 +560,7 @@
   "purchaseCenterDescription": "Redeem your card to activate or renew your service, then sync your subscription.",
   "purchaseAccount": "Account and subscription",
   "purchaseLoginTitle": "Sign in to redeem",
-  "purchaseLoginDescription": "Use your Xboard account. Cards are redeemed for the account shown here.",
+  "purchaseLoginDescription": "Sign in to your account to redeem a code and sync high-speed nodes automatically.",
   "purchaseEmail": "Email address",
   "purchasePassword": "Password",
   "purchaseLogin": "Sign in",
@@ -683,5 +683,275 @@
     }
   },
   "tunErrorLegacyAgent": "Exit the old background app, then reopen this version",
-  "tunErrorProfileRequired": "Select a readable, non-empty profile before connecting"
+  "tunErrorProfileRequired": "Select a readable, non-empty profile before connecting",
+  "nodeOverviewCurrentProfile": "Current profile",
+  "nodeOverviewAllProfiles": "All profiles",
+  "nodeOverviewActive": "Active",
+  "nodeOverviewAvailableOnly": "Available only",
+  "nodeOverviewRuntimeSource": "Runtime node",
+  "nodeOverviewUntested": "Untested",
+  "nodeOverviewTestFailed": "Test failed",
+  "nodeOverviewStale": "May be outdated",
+  "nodeOverviewLastActiveTest": "Last active test: {time}",
+  "nodeOverviewLastTest": "Last test: {time}",
+  "nodeOverviewHealthCounts": "{available} available / {tested} tested / {total} total",
+  "nodeOverviewMedian": "Median: {delay}",
+  "nodeOverviewFileMissing": "Profile file is missing",
+  "nodeOverviewParseFailed": "Profile could not be parsed",
+  "nodeOverviewExpired": "Subscription expired",
+  "nodeOverviewUpdating": "Updating subscription",
+  "nodeOverviewManageProfiles": "Manage profiles / update subscription",
+  "nodeOverviewProviderPending": "{provider}: nodes visible after activation",
+  "nodeOverviewNoNodes": "No matching nodes",
+  "nodeOverviewTooManyNodes": "Too many nodes to display in this preview",
+  "@nodeOverviewLastActiveTest": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "@nodeOverviewLastTest": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "@nodeOverviewHealthCounts": {
+    "placeholders": {
+      "available": {
+        "type": "int"
+      },
+      "tested": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      }
+    }
+  },
+  "@nodeOverviewMedian": {
+    "placeholders": {
+      "delay": {
+        "type": "String"
+      }
+    }
+  },
+  "@nodeOverviewProviderPending": {
+    "placeholders": {
+      "provider": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewPartialSummary": "Summary includes loaded nodes only",
+  "nodeOverviewHistoryNotice": "Delay results are kept until the next completed test. Test times appear below each node.",
+  "nodeOverviewNodeUnidentified": "Node could not be identified",
+  "nodeOverviewLive": "Live",
+  "nodeOverviewIndependentTest": "Independent delay test",
+  "nodeOverviewFileSource": "Profile file · {provider}",
+  "@nodeOverviewFileSource": {
+    "placeholders": { "provider": { "type": "String" } }
+  },
+  "nodeOverviewTestCurrent": "Test current profile",
+  "nodeOverviewTestAll": "Test all node delays",
+  "nodeOverviewTestNode": "Delay test",
+  "nodeOverviewProgress": "{completed} / {total}",
+  "@nodeOverviewProgress": {
+    "placeholders": {
+      "completed": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewChainUnsupported": "Proxy chains cannot be tested in isolation",
+  "nodeOverviewTypeUnsupported": "This protocol is not supported for isolated tests",
+  "nodeOverviewProviderNotCached": "Provider cache is unavailable",
+  "nodeOverviewStrictUnsupported": "Isolated tests are unavailable in strict mode",
+  "nodeOverviewTestUnavailable": "Could not start this test. Check the background component version and retry.",
+  "nodeOverviewTestInterrupted": "Test interrupted; earlier measurements were preserved",
+  "nodeOverviewPreviewUnsupported": "Local provider nodes are not supported in this preview",
+  "nodeOverviewBatchSummary": "Completed {completed} · Failed {failed} · Untested {untested} · Profiles with issues {profiles}",
+  "@nodeOverviewBatchSummary": {
+    "placeholders": {
+      "completed": {
+        "type": "int"
+      },
+      "failed": {
+        "type": "int"
+      },
+      "untested": {
+        "type": "int"
+      },
+      "profiles": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewAmbiguousNode": "Duplicate node definitions; identity could not be verified",
+  "nodeOverviewHealthCapacityExceeded": "History storage is full; some results were not saved",
+  "nodeOverviewMoreIssues": "Additional issue types: {count}",
+  "@nodeOverviewMoreIssues": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewProviderUnsafeUrl": "Provider URL does not meet safety requirements",
+  "nodeOverviewProviderUnsafePath": "Provider file is outside the allowed directory",
+  "nodeOverviewProviderDownloadFailed": "Provider download failed",
+  "nodeOverviewProviderTooLarge": "Provider exceeds the size or node limit",
+  "nodeOverviewProviderOptionsUnsupported": "These provider options are not supported",
+  "nodeOverviewTestTimedOut": "Test or provider read timed out",
+  "nodeOverviewProviderUnloaded": "Provider nodes are not loaded yet. Testing all node delays reads them and downloads missing caches.",
+  "nodeOverviewHealthStoreUnavailable": "Some delay results could not be saved",
+  "nodeOverviewUseNode": "Use",
+  "nodeOverviewInUse": "In use",
+  "purchaseStepBrowse": "1. Choose plan or get code",
+  "purchaseStepRedeem": "2. Sign in & verify code",
+  "purchaseStepSync": "3. Auto-sync nodes",
+  "purchaseJumpToWorkbench": "Have a code? Redeem now",
+  "purchaseFilterAll": "All plans",
+  "purchaseFilterPeriod": "Recurring",
+  "purchaseFilterOnetime": "Traffic pack",
+  "purchaseAcquirePlanCode": "Get redemption code",
+  "purchasePlanSoldOut": "Sold out",
+  "purchasePlanLowStock": "{count} left",
+  "@purchasePlanLowStock": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "purchasePlanExpandDetails": "Show full plan details",
+  "purchasePlanCollapseDetails": "Hide plan details",
+  "purchaseAcquireSheetSubtitle": "Contact support or open the card store to get a code, then return here to redeem. No order is created in the app.",
+  "purchaseCopyInquiry": "Copy plan inquiry",
+  "purchaseInquiryTemplate": "Hello, I would like to get a redemption code for [{plan} · {quota} GiB ({price})].",
+  "@purchaseInquiryTemplate": {
+    "placeholders": {
+      "plan": {
+        "type": "String"
+      },
+      "quota": {
+        "type": "int"
+      },
+      "price": {
+        "type": "String"
+      }
+    }
+  },
+  "purchaseShowPassword": "Show password",
+  "purchaseHidePassword": "Hide password",
+  "purchaseClearCode": "Clear code",
+  "purchaseRenewalBadge": "Renewal",
+  "purchaseNewActivationBadge": "New activation",
+  "purchaseOpenNodesAction": "View profiles & nodes",
+  "nodeOverviewRemainingTraffic": "Remaining: {traffic}",
+  "@nodeOverviewRemainingTraffic": {
+    "placeholders": {
+      "traffic": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewUsedOfTotalTraffic": "Used {used} / {total}",
+  "@nodeOverviewUsedOfTotalTraffic": {
+    "placeholders": {
+      "used": {
+        "type": "String"
+      },
+      "total": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewTrafficUnlimited": "Traffic: Unlimited",
+  "nodeOverviewUsedTrafficOnly": "Used: {used}",
+  "@nodeOverviewUsedTrafficOnly": {
+    "placeholders": {
+      "used": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewExpireAt": "Expires: {date}",
+  "@nodeOverviewExpireAt": {
+    "placeholders": {
+      "date": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewExpireDaysLeft": "{days}d left",
+  "@nodeOverviewExpireDaysLeft": {
+    "placeholders": {
+      "days": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewExpireHoursLeft": "{hours}h left",
+  "@nodeOverviewExpireHoursLeft": {
+    "placeholders": {
+      "hours": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewExpireSoon": "< 1h left",
+  "nodeOverviewNeverExpires": "Expires: Never",
+  "nodeOverviewLastSync": "Synced: {time}",
+  "@nodeOverviewLastSync": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewAutoUpdateHours": "Auto-update {hours}h",
+  "@nodeOverviewAutoUpdateHours": {
+    "placeholders": {
+      "hours": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewAutoUpdateMinutes": "Auto-update {minutes}m",
+  "@nodeOverviewAutoUpdateMinutes": {
+    "placeholders": {
+      "minutes": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewManualUpdate": "Manual update",
+  "nodeOverviewLocalProfile": "Local file",
+  "nodeOverviewDeviceLimitReached": "Device limit reached",
+  "nodeOverviewStatusExpired": "Expired",
+  "nodeOverviewAnnouncement": "Announcement: {text}",
+  "@nodeOverviewAnnouncement": {
+    "placeholders": {
+      "text": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewSwitchedToNode": "Switched to {profile} · {node}",
+  "@nodeOverviewSwitchedToNode": {
+    "placeholders": {
+      "profile": {
+        "type": "String"
+      },
+      "node": {
+        "type": "String"
+      }
+    }
+  }
 }

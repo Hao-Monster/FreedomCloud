@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"net"
 	"testing"
 	"time"
 
@@ -99,5 +100,22 @@ func TestTunStatusAndroidDoesNotClaimDesktopListenerEvidence(t *testing.T) {
 	status := makeTunStatus(listener.TunLifecycleStatus{State: "on", ListenerActive: true}, "notApplicable", "android", "unknown", time.Now())
 	if status.State != "unknown" || status.ErrorCode != "unsupportedPlatform" {
 		t.Fatalf("wrong ownership: %+v", status)
+	}
+}
+
+func TestTunInterfaceMatchIsCaseInsensitive(t *testing.T) {
+	interfaces := []net.Interface{
+		{Name: "Ethernet", Flags: net.FlagUp},
+		{Name: "flclashx", Flags: net.FlagUp},
+		{Name: "Other", Flags: 0},
+	}
+	if got := matchTunInterface("FlClashX", interfaces); got != "up" {
+		t.Fatalf("case-different adapter not matched: %s", got)
+	}
+	if got := matchTunInterface("other", interfaces); got != "down" {
+		t.Fatalf("down adapter misreported: %s", got)
+	}
+	if got := matchTunInterface("FlClashX 2", interfaces); got != "missing" {
+		t.Fatalf("prefix match accepted: %s", got)
 	}
 }

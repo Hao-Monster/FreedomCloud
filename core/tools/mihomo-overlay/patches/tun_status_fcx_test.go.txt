@@ -6,6 +6,7 @@ import (
 	"os"
 	"sync"
 	"testing"
+	"time"
 
 	C "github.com/metacubex/mihomo/constant"
 	LC "github.com/metacubex/mihomo/listener/config"
@@ -20,12 +21,31 @@ func (f *fcxFakeTun) Close() error { return f.closeError }
 func fcxTestReset(t *testing.T) {
 	t.Helper()
 	previousFactory := fcxCreateTun
+	previousUsable := fcxTunInterfaceUsable
 	fcxTunCloseError = nil
+	fcxTunInterfaceUsable = func(string) bool { return true }
 	fcxCreateTun = func(config LC.Tun, _ C.Tunnel) (fcxTunListener, error) {
 		return &fcxFakeTun{config: config}, nil
 	}
 	Cleanup()
-	t.Cleanup(func() { Cleanup(); fcxTunCloseError = nil; fcxCreateTun = previousFactory })
+	t.Cleanup(func() { Cleanup(); fcxTunCloseError = nil; fcxCreateTun = previousFactory; fcxTunInterfaceUsable = previousUsable })
+}
+
+func TestFCXTunIdenticalReloadRebuildsVanishedAdapter(t *testing.T) {
+	fcxTestReset(t)
+	created := 0
+	fcxCreateTun = func(config LC.Tun, _ C.Tunnel) (fcxTunListener, error) {
+		created++
+		return &fcxFakeTun{config: config}, nil
+	}
+	config := LC.Tun{Enable:true, Device:"fcx-test"}
+	ReCreateTun(config, nil)
+	ReCreateTun(config, nil)
+	if created != 1 { t.Fatalf("healthy identical reload recreated the adapter: %d", created) }
+	fcxTunInterfaceUsable = func(device string) bool { return device != "fcx-test" }
+	ReCreateTun(config, nil)
+	if created != 2 { t.Fatalf("vanished adapter was not rebuilt: %d", created) }
+	if status := GetTunLifecycleStatus(); status.State != "on" || !status.ListenerActive { t.Fatalf("rebuilt adapter not published: %+v", status) }
 }
 
 func TestFCXTunFailureIsNotEnabled(t *testing.T) {
@@ -95,4 +115,77 @@ func TestFCXTunConfigDoesNotExposeMutableListenerMemory(t *testing.T) {
 	if returned.DNSHijack[0] != "any:53" { t.Fatal("listener shares caller slices") }
 	returned.DNSHijack[0] = "observer-change"
 	if GetTunConf().DNSHijack[0] != "any:53" { t.Fatal("observer can mutate listener slices") }
+}
+
+func TestFCXTunStatusReadableDuringSlowCreation(t *testing.T) {
+	fcxTestReset(t)
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	fcxCreateTun = func(config LC.Tun, _ C.Tunnel) (fcxTunListener, error) {
+		close(entered)
+		<-release
+		return &fcxFakeTun{config: config}, nil
+	}
+	before := GetTunLifecycleStatus().Revision
+	done := make(chan struct{})
+	go func() { defer close(done); ReCreateTun(LC.Tun{Enable:true, Device:"fcx-test"}, nil) }()
+	<-entered
+	read := make(chan TunLifecycleStatus, 1)
+	go func() { read <- GetTunLifecycleStatus() }()
+	select {
+	case status := <-read:
+		if status.State != "starting" || status.ListenerActive || !status.RequestedEnabled || status.Revision <= before {
+			t.Errorf("creation transition not observable: %+v", status)
+		}
+	case <-time.After(2 * time.Second):
+		t.Error("status read waited for adapter creation")
+	}
+	close(release)
+	<-done
+	if status := GetTunLifecycleStatus(); status.State != "on" || !status.ListenerActive {
+		t.Fatalf("completed creation not published: %+v", status)
+	}
+}
+
+type fcxBlockingCloseTun struct {
+	fcxFakeTun
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (f *fcxBlockingCloseTun) Close() error { close(f.entered); <-f.release; return nil }
+
+func TestFCXTunStatusNotReadyDuringSlowClose(t *testing.T) {
+	for _, path := range []struct {
+		name string
+		stop func()
+	}{
+		{"Cleanup", Cleanup},
+		{"ReCreateTunDisable", func() { ReCreateTun(LC.Tun{Enable:false, Device:"fcx-test"}, nil) }},
+	} {
+		t.Run(path.name, func(t *testing.T) {
+			fcxTestReset(t)
+			listener := &fcxBlockingCloseTun{entered: make(chan struct{}), release: make(chan struct{})}
+			fcxCreateTun = func(config LC.Tun, _ C.Tunnel) (fcxTunListener, error) {
+				listener.config = config
+				return listener, nil
+			}
+			ReCreateTun(LC.Tun{Enable:true, Device:"fcx-test"}, nil)
+			ready := GetTunLifecycleStatus()
+			if ready.State != "on" || !ready.ListenerActive { t.Fatalf("listener not ready: %+v", ready) }
+			done := make(chan struct{})
+			go func() { defer close(done); path.stop() }()
+			<-listener.entered
+			closing := GetTunLifecycleStatus()
+			if closing.State == "on" || closing.ListenerActive || closing.RequestedEnabled || closing.Revision <= ready.Revision {
+				t.Errorf("slow close still reports the previous ready state: %+v", closing)
+			}
+			close(listener.release)
+			<-done
+			stopped := GetTunLifecycleStatus()
+			if stopped.State != "off" || stopped.ListenerActive || stopped.Revision <= closing.Revision {
+				t.Fatalf("terminal state not published after close: %+v", stopped)
+			}
+		})
+	}
 }

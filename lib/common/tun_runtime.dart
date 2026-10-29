@@ -94,6 +94,12 @@ class TunRuntimeController extends ChangeNotifier {
   bool desiredEnabled = false;
   TunOperation operation = TunOperation.idle;
   String? failure;
+  // Only an explicit enable/disable request (or a writer that rejected one)
+  // records this. A failed or invalid status poll is an observation problem;
+  // it must not make background configuration refreshes downgrade TUN.
+  static const _observationFailures = {'statusUnavailable', 'invalidStatus'};
+  String? _requestFailure;
+  String? get requestFailure => _requestFailure;
   bool get busy => operation != TunOperation.idle;
   // Poll revisions and Core identity do not change the UI. Keep every field
   // used by the TUN label/actions so equal checked flags cannot hide failures.
@@ -139,27 +145,62 @@ class TunRuntimeController extends ChangeNotifier {
         previous.instanceId == value.instanceId &&
         value.revision < previous.revision) return false;
     _status = value;
+    const clearableOnHealthyTun = [
+      'permissionDenied',
+      'authorizationRequired',
+      'startFailed',
+      'closeFailed',
+      'configurationFailed',
+      'operationFailed',
+      'interfaceDown',
+      'interfaceMissing',
+      'interfaceUnknown',
+    ];
+    if (value.errorCode == null &&
+        (value.observed ==
+                (desiredEnabled ? TunObservedState.on : TunObservedState.off) ||
+            (value.observed == TunObservedState.on &&
+                clearableOnHealthyTun.contains(_requestFailure)))) {
+      _requestFailure = null;
+    }
     if (value.errorCode != null) {
       failure = value.errorCode;
-    } else if (failure == 'statusUnavailable' ||
-        failure == 'invalidStatus' ||
-        (value.observed == TunObservedState.on &&
-            const [
-              'permissionDenied',
-              'authorizationRequired',
-              'startFailed',
-              'interfaceDown',
-              'interfaceMissing',
-              'interfaceUnknown'
-            ].contains(failure))) {
+    } else if (value.observed == TunObservedState.on &&
+        clearableOnHealthyTun.contains(failure)) {
       failure = null;
+    } else if (failure == 'statusUnavailable' || failure == 'invalidStatus') {
+      failure = _requestFailure;
     }
     notifyListeners();
     return true;
   }
 
+  static const _environmentFailures = {
+    'authorizationRequired',
+    'permissionDenied',
+    'componentsMismatch',
+    'legacyAgent',
+  };
+
+  /// Clears a latched Core-level runtime failure when the Core process is
+  /// replaced, while preserving environment or authorization gates.
+  void clearCoreRuntimeFailure() {
+    if (_environmentFailures.contains(_requestFailure)) return;
+    var changed = false;
+    if (_requestFailure != null) {
+      _requestFailure = null;
+      changed = true;
+    }
+    if (failure != null && !_environmentFailures.contains(failure)) {
+      failure = null;
+      changed = true;
+    }
+    if (changed) notifyListeners();
+  }
+
   void fail(String reason) {
     failure = reason;
+    if (!_observationFailures.contains(reason)) _requestFailure = reason;
     notifyListeners();
   }
 
@@ -179,6 +220,7 @@ class TunRuntimeController extends ChangeNotifier {
     desiredEnabled = enabled;
     operation = enabled ? TunOperation.enabling : TunOperation.disabling;
     failure = null;
+    _requestFailure = null;
     notifyListeners();
     // Riverpod listeners can run synchronously here. They must observe busy
     // before the preference changes, or they schedule a second config apply.
@@ -194,9 +236,11 @@ class TunRuntimeController extends ChangeNotifier {
           failure = null;
         }
       } on TunFailure catch (error) {
-        if (isCurrentIntent(intent)) failure = error.code;
+        if (isCurrentIntent(intent)) failure = _requestFailure = error.code;
       } catch (_) {
-        if (isCurrentIntent(intent)) failure = 'operationFailed';
+        if (isCurrentIntent(intent)) {
+          failure = _requestFailure = 'operationFailed';
+        }
       } finally {
         if (isCurrentIntent(intent)) {
           operation = TunOperation.idle;

@@ -27,6 +27,13 @@ class StartupEffects implements WindowsTunStartupEffects {
   bool initializationSucceeds = true;
   bool proveOn = true;
   int backgroundConfigurations = 0;
+  bool statusAvailable = true;
+  bool loseStatusAfterListener = false;
+  bool adapterVanished = false;
+  String? adapterErrorCode;
+  bool repairRestoresAdapter = true;
+  bool restartRestoresAdapter = true;
+  String instanceId = 'core';
   void Function()? duringMatch;
   String? pauseAt;
   final entered = Completer<void>();
@@ -50,8 +57,24 @@ class StartupEffects implements WindowsTunStartupEffects {
   @override
   Future<TunStatus?> observe() async {
     await record('observe');
+    if (!statusAvailable) return null;
+    final errorCode =
+        adapterErrorCode ?? (adapterVanished ? 'interfaceMissing' : null);
+    if (errorCode != null) {
+      final listenerActive =
+          errorCode == 'interfaceMissing' || errorCode == 'interfaceDown';
+      return TunStatus(
+          instanceId: instanceId,
+          revision: calls.length,
+          state: 'failed',
+          listenerActive: listenerActive,
+          interfaceState: errorCode == 'interfaceDown' ? 'down' : 'missing',
+          privilege: elevated ? 'elevated' : 'unprivileged',
+          requestedEnabled: errorCode != 'closeFailed',
+          errorCode: errorCode);
+    }
     return TunStatus(
-        instanceId: 'core',
+        instanceId: instanceId,
         revision: calls.length,
         state: enabled && proveOn ? 'on' : 'off',
         listenerActive: enabled && proveOn,
@@ -89,13 +112,25 @@ class StartupEffects implements WindowsTunStartupEffects {
     if (isCurrent()) calls.add('initialized');
   }
 
+  bool pendingTunEnable = true;
+  bool Function()? readDesiredTunEnabled;
+
   @override
   Future<void> applyConfiguration(
       {required bool full, required bool Function() isCurrent}) async {
     await record(full ? 'configure' : 'incremental');
     if (!isCurrent()) return;
+    final dispatchedTunEnable = readDesiredTunEnabled?.call() ?? true;
+    if (full && pauseAt == 'configure-in-flight') {
+      await record('configure-in-flight');
+    }
     if (!configurationSucceeds) throw const TunFailure('configurationFailed');
-    if (running) enabled = true;
+    pendingTunEnable = dispatchedTunEnable;
+    if (running) enabled = dispatchedTunEnable;
+    if (!full && repairRestoresAdapter) {
+      adapterVanished = false;
+      adapterErrorCode = null;
+    }
   }
 
   @override
@@ -103,7 +138,8 @@ class StartupEffects implements WindowsTunStartupEffects {
     await record('listener');
     if (listenerSucceeds) {
       running = true;
-      enabled = true;
+      enabled = pendingTunEnable;
+      if (loseStatusAfterListener) statusAvailable = false;
     }
     return listenerSucceeds;
   }
@@ -124,6 +160,20 @@ class StartupEffects implements WindowsTunStartupEffects {
   Future<void> startProxyWithoutTun() async {
     await record('proxy-only');
     running = true;
+  }
+
+  @override
+  Future<void> restartCore() async {
+    await record('restart-core');
+    instanceId = 'core-restarted';
+    running = false;
+    enabled = false;
+    pendingTunEnable = false;
+    if (restartRestoresAdapter) {
+      adapterVanished = false;
+      adapterErrorCode = null;
+      configurationSucceeds = true;
+    }
   }
 
   final logs = <String>[];
@@ -149,9 +199,12 @@ Future<AppController> controllerFixture(
               },
               child: Consumer(
                 builder: (context, ref, _) {
+                  effects.readDesiredTunEnabled ??=
+                      () => ref.read(patchClashConfigProvider).tun.enable;
                   controller ??= AppController(context, ref,
                       windowsStartupEffects: effects,
-                      tunRuntimeController: runtime);
+                      tunRuntimeController: runtime,
+                      tunSettleDelay: Duration.zero);
                   return Material(
                       child: AnimatedBuilder(
                           animation: runtime,
@@ -391,6 +444,375 @@ void main() {
     expect(runtime.isEnabled, isTrue);
   });
 
+  testWidgets(
+      'failed final status read is repaired once by a later successful poll',
+      (tester) async {
+    final effects = StartupEffects()..loseStatusAfterListener = true;
+    globalState.startTime = null;
+    final runtime = TunRuntimeController();
+    final controller = await controllerFixture(tester, effects, runtime);
+    await controller.initializeRuntime();
+    expect(effects.running, isTrue);
+    expect(runtime.failure, 'statusUnavailable');
+    expect(effects.calls, isNot(contains('reflect')));
+
+    effects.statusAvailable = true;
+    await controller.refreshWindowsTunStatus();
+    await tester.pump();
+    expect(runtime.observed, TunObservedState.on);
+    expect(runtime.failure, isNull);
+    expect(runtime.requestFailure, isNull);
+    expect(effects.calls.where((c) => c == 'reflect').length, 1);
+
+    // Once the running projection exists, further polls do not repeat it.
+    globalState.startTime = DateTime.now();
+    addTearDown(() => globalState.startTime = null);
+    await controller.refreshWindowsTunStatus();
+    await tester.pump();
+    expect(effects.calls.where((c) => c == 'reflect').length, 1);
+    expect(effects.backgroundConfigurations, 0);
+  });
+
+  testWidgets('a vanished adapter is rebuilt incrementally without UAC',
+      (tester) async {
+    final effects = StartupEffects();
+    final runtime = TunRuntimeController();
+    final controller = await controllerFixture(tester, effects, runtime);
+    await controller.initializeRuntime();
+    expect(runtime.observed, TunObservedState.on);
+    final authorizations = effects.calls.where((c) => c == 'authorize').length;
+
+    effects.adapterVanished = true;
+    await controller.refreshWindowsTunStatus();
+    await tester.pumpAndSettle();
+    expect(effects.calls.where((c) => c == 'incremental').length, 1);
+    expect(effects.calls.where((c) => c == 'authorize').length, authorizations,
+        reason: 'a background repair never requests privileges');
+    expect(runtime.observed, TunObservedState.on);
+    expect(runtime.failure, isNull);
+    expect(runtime.desiredEnabled, isTrue);
+    expect(effects.logs, contains(contains('rebuilding (attempt 1)')));
+  });
+
+  testWidgets('vanished adapter repair is bounded and reports failure',
+      (tester) async {
+    final effects = StartupEffects();
+    final runtime = TunRuntimeController();
+    final controller = await controllerFixture(tester, effects, runtime);
+    await controller.initializeRuntime();
+    final authorizations = effects.calls.where((c) => c == 'authorize').length;
+    effects
+      ..adapterVanished = true
+      ..repairRestoresAdapter = false;
+    for (var poll = 0; poll < 4; poll++) {
+      await controller.refreshWindowsTunStatus();
+      await tester.pumpAndSettle();
+    }
+    expect(effects.calls.where((c) => c == 'incremental').length, 1,
+        reason: 'a failed repair is a request failure; polls stop retrying');
+    expect(runtime.failure, 'interfaceMissing');
+    expect(runtime.requestFailure, 'interfaceMissing');
+    expect(effects.calls.where((c) => c == 'authorize').length, authorizations);
+  });
+
+  testWidgets('vanished adapter is not repaired after a manual TUN off',
+      (tester) async {
+    final effects = StartupEffects();
+    final runtime = TunRuntimeController();
+    final controller = await controllerFixture(tester, effects, runtime);
+    await controller.initializeRuntime();
+    await runtime.request(false, (_) async {});
+    effects.adapterVanished = true;
+    await controller.refreshWindowsTunStatus();
+    await tester.pumpAndSettle();
+    expect(effects.calls, isNot(contains('incremental')));
+  });
+
+  for (final code in ['interfaceDown', 'startFailed']) {
+    testWidgets(
+        'cross-profile $code is self-healed incrementally without UAC',
+        (tester) async {
+      final effects = StartupEffects();
+      final runtime = TunRuntimeController();
+      final controller = await controllerFixture(tester, effects, runtime);
+      await controller.initializeRuntime();
+      expect(runtime.observed, TunObservedState.on);
+      final authorizations =
+          effects.calls.where((c) => c == 'authorize').length;
+
+      effects.adapterErrorCode = code;
+      await controller.refreshWindowsTunStatus();
+      await tester.pumpAndSettle();
+      expect(effects.calls.where((c) => c == 'incremental').length, 1);
+      expect(effects.calls, isNot(contains('restart-core')));
+      expect(
+          effects.calls.where((c) => c == 'authorize').length, authorizations,
+          reason: 'self-healing never prompts for UAC');
+      expect(runtime.observed, TunObservedState.on);
+      expect(runtime.failure, isNull);
+      expect(runtime.requestFailure, isNull);
+    });
+
+    testWidgets(
+        'cross-profile $code escalates to UAC-free Core restart when incremental rebuild fails',
+        (tester) async {
+      final effects = StartupEffects();
+      final runtime = TunRuntimeController();
+      final controller = await controllerFixture(tester, effects, runtime);
+      await controller.initializeRuntime();
+      expect(runtime.observed, TunObservedState.on);
+      final authorizations =
+          effects.calls.where((c) => c == 'authorize').length;
+
+      effects
+        ..adapterErrorCode = code
+        ..repairRestoresAdapter = false
+        ..restartRestoresAdapter = true;
+      await controller.refreshWindowsTunStatus();
+      await tester.pumpAndSettle();
+      expect(effects.calls.where((c) => c == 'incremental').length, 1);
+      expect(effects.calls.where((c) => c == 'restart-core').length, 1);
+      expect(
+          effects.calls.where((c) => c == 'authorize').length, authorizations,
+          reason: 'Core restart recovery never prompts for UAC');
+      expect(runtime.observed, TunObservedState.on);
+      expect(runtime.status?.instanceId, 'core-restarted');
+      expect(runtime.failure, isNull);
+      expect(runtime.requestFailure, isNull);
+    });
+  }
+
+  testWidgets('cross-profile closeFailed heals via UAC-free Core restart',
+      (tester) async {
+    final effects = StartupEffects();
+    final runtime = TunRuntimeController();
+    final controller = await controllerFixture(tester, effects, runtime);
+    await controller.initializeRuntime();
+    expect(runtime.observed, TunObservedState.on);
+    final authorizations = effects.calls.where((c) => c == 'authorize').length;
+
+    effects.adapterErrorCode = 'closeFailed';
+    await controller.refreshWindowsTunStatus();
+    await tester.pumpAndSettle();
+    expect(effects.calls.where((c) => c == 'incremental').length, 0);
+    expect(effects.calls.where((c) => c == 'restart-core').length, 1);
+    expect(effects.calls.where((c) => c == 'authorize').length, authorizations);
+    expect(runtime.observed, TunObservedState.on);
+    expect(runtime.status?.instanceId, 'core-restarted');
+    expect(runtime.failure, isNull);
+    expect(runtime.requestFailure, isNull);
+  });
+
+  testWidgets(
+      'incremental rebuild throwing configurationFailed escalates to UAC-free Core restart',
+      (tester) async {
+    final effects = StartupEffects();
+    final runtime = TunRuntimeController();
+    final controller = await controllerFixture(tester, effects, runtime);
+    await controller.initializeRuntime();
+    expect(runtime.observed, TunObservedState.on);
+    final authorizations = effects.calls.where((c) => c == 'authorize').length;
+
+    effects
+      ..adapterErrorCode = 'startFailed'
+      ..configurationSucceeds = false
+      ..restartRestoresAdapter = true;
+    await controller.refreshWindowsTunStatus();
+    await tester.pumpAndSettle();
+    expect(effects.calls.where((c) => c == 'incremental').length, 1);
+    expect(effects.calls.where((c) => c == 'restart-core').length, 1);
+    expect(effects.calls.where((c) => c == 'authorize').length, authorizations);
+    expect(runtime.observed, TunObservedState.on);
+    expect(runtime.status?.instanceId, 'core-restarted');
+    expect(runtime.failure, isNull);
+    expect(runtime.requestFailure, isNull);
+  });
+
+  testWidgets(
+      'disable during Stage 2 Core restart restores initialization without configuring or starting listener',
+      (tester) async {
+    final effects = StartupEffects();
+    final runtime = TunRuntimeController();
+    final controller = await controllerFixture(tester, effects, runtime);
+    await controller.initializeRuntime();
+    expect(runtime.observed, TunObservedState.on);
+
+    final baseline = effects.calls.length;
+    effects
+      ..adapterErrorCode = 'closeFailed'
+      ..pauseAt = 'restart-core';
+    await controller.refreshWindowsTunStatus();
+    await effects.entered.future;
+    final off = runtime.request(false, (_) async {
+      effects.calls.add('disabled');
+    });
+    effects.release.complete();
+    await off;
+    await tester.pumpAndSettle();
+    final repairCalls = effects.calls.sublist(baseline);
+    expect(
+        repairCalls,
+        containsAllInOrder(
+            ['restart-core', 'initialize', 'initialized', 'disabled']));
+    expect(repairCalls, isNot(contains('configure')));
+    expect(repairCalls, isNot(contains('listener')));
+    expect(runtime.desiredEnabled, isFalse);
+  });
+
+  testWidgets(
+      'queued repair uses latest runtime status updated while waiting on serialized queue',
+      (tester) async {
+    final effects = StartupEffects();
+    final runtime = TunRuntimeController();
+    final controller = await controllerFixture(tester, effects, runtime);
+    await controller.initializeRuntime();
+    expect(runtime.observed, TunObservedState.on);
+
+    final blocker = Completer<void>();
+    final serialized = runtime.serialize(() async {
+      await blocker.future;
+      effects.adapterErrorCode = 'closeFailed';
+      await controller.refreshWindowsTunStatus(fresh: true);
+    });
+
+    effects.adapterErrorCode = 'interfaceDown';
+    await controller.refreshWindowsTunStatus();
+    blocker.complete();
+    await serialized;
+    await tester.pumpAndSettle();
+
+    expect(effects.calls.where((c) => c == 'incremental').length, 0);
+    expect(effects.calls.where((c) => c == 'restart-core').length, 1);
+    expect(runtime.observed, TunObservedState.on);
+    expect(runtime.status?.instanceId, 'core-restarted');
+    expect(runtime.failure, isNull);
+  });
+
+  testWidgets(
+      'cancelled queued repair rolls back attempt budget so subsequent failure still escalates',
+      (tester) async {
+    final effects = StartupEffects();
+    final runtime = TunRuntimeController();
+    final controller = await controllerFixture(tester, effects, runtime);
+    await controller.initializeRuntime();
+    expect(runtime.observed, TunObservedState.on);
+
+    final blocker = Completer<void>();
+    final serialized = runtime.serialize(() async {
+      await blocker.future;
+    });
+
+    effects.adapterErrorCode = 'interfaceDown';
+    await controller.refreshWindowsTunStatus();
+    runtime.cancelPendingIntent();
+    blocker.complete();
+    await serialized;
+    await tester.pumpAndSettle();
+
+    expect(effects.calls.where((c) => c == 'incremental'), isEmpty);
+    expect(effects.calls.where((c) => c == 'restart-core'), isEmpty);
+
+    effects.repairRestoresAdapter = false;
+    await controller.refreshWindowsTunStatus();
+    await tester.pumpAndSettle();
+
+    expect(effects.calls.where((c) => c == 'incremental').length, 1);
+    expect(effects.calls.where((c) => c == 'restart-core').length, 1);
+    expect(runtime.observed, TunObservedState.on);
+    expect(runtime.status?.instanceId, 'core-restarted');
+  });
+
+  testWidgets(
+      'explicit updateStatus(false) does not trigger adapter repair during cancelPendingIntent window or post-stop refresh',
+      (tester) async {
+    final effects = StartupEffects();
+    final runtime = TunRuntimeController();
+    final controller = await controllerFixture(tester, effects, runtime);
+    await controller.initializeRuntime();
+    expect(runtime.observed, TunObservedState.on);
+
+    final blocker = Completer<void>();
+    final serialized = runtime.serialize(() async {
+      await blocker.future;
+    });
+    effects.adapterErrorCode = 'interfaceDown';
+    final stopFuture = controller.updateStatus(false);
+    // Poll while stopProxy is still waiting on the queue after cancelPendingIntent().
+    await controller.refreshWindowsTunStatus(fresh: true);
+    blocker.complete();
+    await Future.wait([serialized, stopFuture]);
+    await tester.pumpAndSettle();
+
+    expect(effects.calls, contains('stop-proxy'));
+    expect(effects.calls.where((c) => c == 'incremental'), isEmpty);
+    expect(effects.calls.where((c) => c == 'restart-core'), isEmpty);
+  });
+
+  testWidgets(
+      'queued repair skips stale closeFailed when adapter recovers while waiting on serialized queue',
+      (tester) async {
+    final effects = StartupEffects();
+    final runtime = TunRuntimeController();
+    final controller = await controllerFixture(tester, effects, runtime);
+    await controller.initializeRuntime();
+    expect(runtime.observed, TunObservedState.on);
+
+    final blocker = Completer<void>();
+    final serialized = runtime.serialize(() async {
+      await blocker.future;
+      effects.adapterErrorCode = null;
+      await controller.refreshWindowsTunStatus(fresh: true);
+    });
+
+    effects.adapterErrorCode = 'closeFailed';
+    await controller.refreshWindowsTunStatus();
+    blocker.complete();
+    await serialized;
+    await tester.pumpAndSettle();
+
+    expect(effects.calls.where((c) => c == 'incremental'), isEmpty);
+    expect(effects.calls.where((c) => c == 'restart-core'), isEmpty);
+    expect(runtime.observed, TunObservedState.on);
+    expect(runtime.failure, isNull);
+
+    effects
+      ..adapterErrorCode = 'interfaceDown'
+      ..repairRestoresAdapter = false;
+    await controller.refreshWindowsTunStatus();
+    await tester.pumpAndSettle();
+
+    expect(effects.calls.where((c) => c == 'incremental').length, 1);
+    expect(effects.calls.where((c) => c == 'restart-core').length, 1);
+    expect(runtime.observed, TunObservedState.on);
+    expect(runtime.status?.instanceId, 'core-restarted');
+  });
+
+  testWidgets(
+      'launch with latched closeFailed superseded during restartCore still initializes replaced Core',
+      (tester) async {
+    final effects = StartupEffects()
+      ..elevated = true
+      ..running = true
+      ..adapterErrorCode = 'closeFailed'
+      ..pauseAt = 'restart-core';
+    final runtime = TunRuntimeController();
+    final controller = await controllerFixture(tester, effects, runtime);
+    final launch = controller.initializeRuntime();
+    await effects.entered.future;
+    final off = runtime.request(false, (_) async {
+      effects.calls.add('disabled');
+    });
+    effects.release.complete();
+    await Future.wait([launch, off]);
+    expect(
+        effects.calls,
+        containsAllInOrder(
+            ['restart-core', 'initialize', 'initialized', 'disabled']));
+    expect(effects.calls, isNot(contains('configure')));
+    expect(effects.calls, isNot(contains('listener')));
+    expect(runtime.desiredEnabled, isFalse);
+  });
+
   for (final phase in [
     'profile',
     'authorize',
@@ -479,5 +901,119 @@ void main() {
     expect(await isReadableWindowsStartupProfile(file.path), isFalse);
     await file.writeAsString('mode: rule\n');
     expect(await isReadableWindowsStartupProfile(file.path), isTrue);
+  });
+
+  testWidgets(
+      'queued repair preserves terminal failure when status transitions to non-repairable while waiting on queue',
+      (tester) async {
+    final effects = StartupEffects();
+    final runtime = TunRuntimeController();
+    final controller = await controllerFixture(tester, effects, runtime);
+    await controller.initializeRuntime();
+    expect(runtime.observed, TunObservedState.on);
+
+    final blocker = Completer<void>();
+    final serialized = runtime.serialize(() async {
+      await blocker.future;
+      effects.adapterErrorCode = 'interfaceUnknown';
+      await controller.refreshWindowsTunStatus(fresh: true);
+    });
+
+    effects.adapterErrorCode = 'interfaceDown';
+    await controller.refreshWindowsTunStatus();
+    blocker.complete();
+    await serialized;
+    await tester.pumpAndSettle();
+
+    expect(effects.calls.where((c) => c == 'incremental'), isEmpty);
+    expect(effects.calls.where((c) => c == 'restart-core'), isEmpty);
+    expect(runtime.failure, 'interfaceUnknown');
+    expect(runtime.requestFailure, 'interfaceUnknown');
+  });
+
+  testWidgets(
+      'setTunEnabled(false) superseding in-flight Stage 2 setupConfig(tun: true) writes tun: false before restoring listener',
+      (tester) async {
+    final effects = StartupEffects();
+    final runtime = TunRuntimeController();
+    final controller = await controllerFixture(tester, effects, runtime);
+    await controller.initializeRuntime();
+    expect(runtime.observed, TunObservedState.on);
+
+    final baseline = effects.calls.length;
+    effects
+      ..adapterErrorCode = 'closeFailed'
+      ..pauseAt = 'configure-in-flight';
+    await controller.refreshWindowsTunStatus();
+    await effects.entered.future;
+
+    // User disables TUN (e.g. via hotkey) while Stage 2's setupConfig(tun: true)
+    // is already in flight on the replaced Core.
+    final disableFuture = controller.setTunEnabled(false);
+    effects.release.complete();
+    await disableFuture;
+    await tester.pumpAndSettle();
+
+    final postCalls = effects.calls.sublist(baseline);
+    expect(
+      postCalls,
+      containsAllInOrder([
+        'restart-core',
+        'initialize',
+        'initialized',
+        'configure',
+        'configure-in-flight',
+        'incremental',
+        'listener',
+        'observe',
+      ]),
+    );
+    expect(effects.running, isTrue);
+    expect(effects.enabled, isFalse);
+    expect(runtime.desiredEnabled, isFalse);
+    expect(runtime.observed, TunObservedState.off);
+    expect(runtime.failure, isNull);
+    expect(runtime.requestFailure, isNull);
+  });
+
+  testWidgets(
+      'setTunEnabled(false) superseding Stage 2 restartCore before setupConfig applies full profile with tun: false and restores listener',
+      (tester) async {
+    final effects = StartupEffects();
+    final runtime = TunRuntimeController();
+    final controller = await controllerFixture(tester, effects, runtime);
+    await controller.initializeRuntime();
+    expect(runtime.observed, TunObservedState.on);
+
+    final baseline = effects.calls.length;
+    effects
+      ..adapterErrorCode = 'closeFailed'
+      ..pauseAt = 'restart-core';
+    await controller.refreshWindowsTunStatus();
+    await effects.entered.future;
+
+    final disableFuture = controller.setTunEnabled(false);
+    effects.release.complete();
+    await disableFuture;
+    await tester.pumpAndSettle();
+
+    final postCalls = effects.calls.sublist(baseline);
+    expect(
+      postCalls,
+      containsAllInOrder([
+        'restart-core',
+        'initialize',
+        'initialized',
+        'configure',
+        'listener',
+        'observe',
+      ]),
+    );
+    expect(effects.running, isTrue);
+    expect(effects.enabled, isFalse);
+    expect(runtime.desiredEnabled, isFalse);
+    expect(runtime.observed, TunObservedState.off);
+    expect(runtime.failure, isNull);
+    expect(runtime.requestFailure, isNull);
   });
 }

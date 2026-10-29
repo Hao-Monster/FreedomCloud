@@ -28,6 +28,7 @@ type coreOutput struct {
 	once                         sync.Once
 	admission                    sync.Mutex
 	closed                       bool
+	owner                        *catalogOwner
 	senders                      sync.WaitGroup
 	onClose                      func()
 	bytes                        atomic.Int64
@@ -35,7 +36,7 @@ type coreOutput struct {
 }
 
 func newCoreOutput(c net.Conn, writeTimeout, enqueueTimeout time.Duration) *coreOutput {
-	return &coreOutput{connection: c, queue: make(chan []byte, 256), actions: make(chan struct{}, 64), controls: make(chan struct{}, 8), done: make(chan struct{}), writerDone: make(chan struct{}), writeTimeout: writeTimeout, enqueueTimeout: enqueueTimeout}
+	return &coreOutput{connection: c, owner: newCatalogOwner(), queue: make(chan []byte, 256), actions: make(chan struct{}, 64), controls: make(chan struct{}, 8), done: make(chan struct{}), writerDone: make(chan struct{}), writeTimeout: writeTimeout, enqueueTimeout: enqueueTimeout}
 }
 
 func (o *coreOutput) close() {
@@ -45,6 +46,7 @@ func (o *coreOutput) close() {
 		close(o.done)
 		o.admission.Unlock()
 		_ = o.connection.Close() // never waits for a mutex held across Write
+		closeCatalogOwner(o.owner)
 		if o.onClose != nil {
 			o.onClose()
 		}

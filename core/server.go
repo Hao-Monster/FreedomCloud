@@ -27,9 +27,6 @@ func attachCoreConnection(c net.Conn) func() {
 			conn = nil
 		}
 		connMu.Unlock()
-		if owned {
-			cancelAllDelayTasks("sessionClosed")
-		}
 	}
 	connMu.Lock()
 	previous := conn
@@ -38,7 +35,6 @@ func attachCoreConnection(c net.Conn) func() {
 	if previous != nil {
 		previous.close()
 	}
-	cancelAllDelayTasks("sessionClosed")
 	go output.writeLoop()
 	return output.close
 }
@@ -158,11 +154,11 @@ func startServer(arg string, authToken string) {
 }
 
 func dispatchCoreAction(output *coreOutput, action *Action, handler func(*Action, ActionResult)) bool {
-	result := ActionResult{Id: action.Id, Method: action.Method}
+	result := ActionResult{Id: action.Id, Method: action.Method, owner: output.owner}
 	slots := output.actions
 	// A full batch of asynchronous work must not exclude its cancellation.
 	switch action.Method {
-	case cancelTestDelayMethod, setUiActiveMethod, stopListenerMethod, shutdownMethod:
+	case cancelTestDelayMethod, catalogReleaseMethod, setUiActiveMethod, stopListenerMethod, shutdownMethod:
 		slots = output.controls
 	}
 	select {

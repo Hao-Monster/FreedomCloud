@@ -509,7 +509,7 @@
   "purchaseCenterDescription": "使用礼品卡开通或续费服务，兑换后同步订阅。",
   "purchaseAccount": "账户与订阅",
   "purchaseLoginTitle": "登录后兑换",
-  "purchaseLoginDescription": "使用 Xboard 账户登录，礼品卡权益将发放至当前账户。",
+  "purchaseLoginDescription": "登录账户后核销兑换码，套餐权益与高速节点将自动同步至本机。",
   "purchaseEmail": "邮箱地址",
   "purchasePassword": "密码",
   "purchaseLogin": "登录",
@@ -624,5 +624,275 @@
   "tunErrorStart": "网卡启动失败，可重新开启重试",
   "tunDisableAction": "请求关闭",
   "tunErrorLegacyAgent": "请先退出旧版后台，再重新打开本版本",
-  "tunErrorProfileRequired": "请先选择可读取且非空的配置，再重试连接"
+  "tunErrorProfileRequired": "请先选择可读取且非空的配置，再重试连接",
+  "nodeOverviewCurrentProfile": "当前配置",
+  "nodeOverviewAllProfiles": "全部配置",
+  "nodeOverviewActive": "活动配置",
+  "nodeOverviewAvailableOnly": "仅显示可用",
+  "nodeOverviewRuntimeSource": "运行时节点",
+  "nodeOverviewUntested": "未测",
+  "nodeOverviewTestFailed": "测试失败",
+  "nodeOverviewStale": "可能过时",
+  "nodeOverviewLastActiveTest": "上次活动时测速：{time}",
+  "nodeOverviewLastTest": "最近测速：{time}",
+  "nodeOverviewHealthCounts": "可用 {available} / 已测 {tested} / 总数 {total}",
+  "nodeOverviewMedian": "中位延迟：{delay}",
+  "nodeOverviewFileMissing": "配置文件缺失",
+  "nodeOverviewParseFailed": "配置解析失败",
+  "nodeOverviewExpired": "订阅已过期",
+  "nodeOverviewUpdating": "正在更新订阅",
+  "nodeOverviewManageProfiles": "管理配置 / 更新订阅",
+  "nodeOverviewProviderPending": "{provider}：激活后可见节点",
+  "nodeOverviewNoNodes": "没有符合条件的节点",
+  "nodeOverviewTooManyNodes": "节点过多，预览版暂不展示",
+  "@nodeOverviewLastActiveTest": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "@nodeOverviewLastTest": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "@nodeOverviewHealthCounts": {
+    "placeholders": {
+      "available": {
+        "type": "int"
+      },
+      "tested": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      }
+    }
+  },
+  "@nodeOverviewMedian": {
+    "placeholders": {
+      "delay": {
+        "type": "String"
+      }
+    }
+  },
+  "@nodeOverviewProviderPending": {
+    "placeholders": {
+      "provider": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewPartialSummary": "摘要仅统计已加载的节点",
+  "nodeOverviewHistoryNotice": "延迟结果保留至下次有效测试，测试时间见节点下方。",
+  "nodeOverviewNodeUnidentified": "无法识别此节点",
+  "nodeOverviewLive": "实时",
+  "nodeOverviewIndependentTest": "独立延迟测试",
+  "nodeOverviewFileSource": "配置文件 · {provider}",
+  "@nodeOverviewFileSource": {
+    "placeholders": { "provider": { "type": "String" } }
+  },
+  "nodeOverviewTestCurrent": "测当前配置",
+  "nodeOverviewTestAll": "测试全部节点延迟",
+  "nodeOverviewTestNode": "延迟测试",
+  "nodeOverviewProgress": "{completed} / {total}",
+  "@nodeOverviewProgress": {
+    "placeholders": {
+      "completed": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewChainUnsupported": "代理链暂不支持隔离测速",
+  "nodeOverviewTypeUnsupported": "此协议暂不支持隔离测速",
+  "nodeOverviewProviderNotCached": "订阅源本地缓存不可用",
+  "nodeOverviewStrictUnsupported": "严格模式下不可使用隔离测速",
+  "nodeOverviewTestUnavailable": "未能启动测速，请检查后台组件版本后重试",
+  "nodeOverviewTestInterrupted": "测速已中断，已保留此前的测量结果",
+  "nodeOverviewPreviewUnsupported": "本预览暂不支持订阅源缓存节点",
+  "nodeOverviewBatchSummary": "已完成 {completed} · 失败 {failed} · 未测 {untested} · 异常配置 {profiles}",
+  "@nodeOverviewBatchSummary": {
+    "placeholders": {
+      "completed": {
+        "type": "int"
+      },
+      "failed": {
+        "type": "int"
+      },
+      "untested": {
+        "type": "int"
+      },
+      "profiles": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewAmbiguousNode": "节点定义重复，无法确认归属",
+  "nodeOverviewHealthCapacityExceeded": "历史容量已满，部分结果未保存",
+  "nodeOverviewMoreIssues": "另有 {count} 类问题",
+  "@nodeOverviewMoreIssues": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewProviderUnsafeUrl": "订阅源地址不符合安全要求",
+  "nodeOverviewProviderUnsafePath": "订阅源文件不在授权目录内",
+  "nodeOverviewProviderDownloadFailed": "订阅源下载失败",
+  "nodeOverviewProviderTooLarge": "订阅源超出大小或节点数量限制",
+  "nodeOverviewProviderOptionsUnsupported": "此类订阅源选项暂不支持",
+  "nodeOverviewTestTimedOut": "测速或订阅源读取超时",
+  "nodeOverviewProviderUnloaded": "订阅源节点尚未加载；测试全部节点延迟时会读取，缺失缓存会获取。",
+  "nodeOverviewHealthStoreUnavailable": "部分延迟测试结果未能保存",
+  "nodeOverviewUseNode": "使用",
+  "nodeOverviewInUse": "使用中",
+  "purchaseStepBrowse": "① 选套餐或获取兑换码",
+  "purchaseStepRedeem": "② 登录并核验兑换码",
+  "purchaseStepSync": "③ 自动同步节点",
+  "purchaseJumpToWorkbench": "已有兑换码？直达核销",
+  "purchaseFilterAll": "全部套餐",
+  "purchaseFilterPeriod": "周期订阅",
+  "purchaseFilterOnetime": "按量流量包",
+  "purchaseAcquirePlanCode": "获取此套餐兑换码",
+  "purchasePlanSoldOut": "已售罄",
+  "purchasePlanLowStock": "仅剩 {count} 席",
+  "@purchasePlanLowStock": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "purchasePlanExpandDetails": "展开完整套餐说明",
+  "purchasePlanCollapseDetails": "收起套餐说明",
+  "purchaseAcquireSheetSubtitle": "通过下方自助商店或微信客服获取兑换码后，返回本页输入核销；客户端内不创建付款订单。",
+  "purchaseCopyInquiry": "一键复制咨询口令",
+  "purchaseInquiryTemplate": "您好，我想咨询购买【{plan} · {quota} GiB（{price}）】兑换码。",
+  "@purchaseInquiryTemplate": {
+    "placeholders": {
+      "plan": {
+        "type": "String"
+      },
+      "quota": {
+        "type": "int"
+      },
+      "price": {
+        "type": "String"
+      }
+    }
+  },
+  "purchaseShowPassword": "显示密码",
+  "purchaseHidePassword": "隐藏密码",
+  "purchaseClearCode": "清空兑换码",
+  "purchaseRenewalBadge": "续费叠加",
+  "purchaseNewActivationBadge": "新购开通",
+  "purchaseOpenNodesAction": "查看配置与节点",
+  "nodeOverviewRemainingTraffic": "剩余流量：{traffic}",
+  "@nodeOverviewRemainingTraffic": {
+    "placeholders": {
+      "traffic": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewUsedOfTotalTraffic": "已用 {used} / 共 {total}",
+  "@nodeOverviewUsedOfTotalTraffic": {
+    "placeholders": {
+      "used": {
+        "type": "String"
+      },
+      "total": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewTrafficUnlimited": "流量：不限流量",
+  "nodeOverviewUsedTrafficOnly": "已用流量：{used}",
+  "@nodeOverviewUsedTrafficOnly": {
+    "placeholders": {
+      "used": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewExpireAt": "到期时间：{date}",
+  "@nodeOverviewExpireAt": {
+    "placeholders": {
+      "date": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewExpireDaysLeft": "剩余 {days} 天",
+  "@nodeOverviewExpireDaysLeft": {
+    "placeholders": {
+      "days": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewExpireHoursLeft": "剩余 {hours} 小时",
+  "@nodeOverviewExpireHoursLeft": {
+    "placeholders": {
+      "hours": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewExpireSoon": "不足 1 小时",
+  "nodeOverviewNeverExpires": "到期时间：长期有效",
+  "nodeOverviewLastSync": "同步时间：{time}",
+  "@nodeOverviewLastSync": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewAutoUpdateHours": "自动更新 {hours}h",
+  "@nodeOverviewAutoUpdateHours": {
+    "placeholders": {
+      "hours": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewAutoUpdateMinutes": "自动更新 {minutes}m",
+  "@nodeOverviewAutoUpdateMinutes": {
+    "placeholders": {
+      "minutes": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewManualUpdate": "手动更新",
+  "nodeOverviewLocalProfile": "本地配置",
+  "nodeOverviewDeviceLimitReached": "已达设备数量上限",
+  "nodeOverviewStatusExpired": "已过期",
+  "nodeOverviewAnnouncement": "公告：{text}",
+  "@nodeOverviewAnnouncement": {
+    "placeholders": {
+      "text": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewSwitchedToNode": "已切换至 {profile} · {node}",
+  "@nodeOverviewSwitchedToNode": {
+    "placeholders": {
+      "profile": {
+        "type": "String"
+      },
+      "node": {
+        "type": "String"
+      }
+    }
+  }
 }

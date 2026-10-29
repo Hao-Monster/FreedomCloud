@@ -96,6 +96,12 @@ void main() {
                 Future.value(ByteData.sublistView(await mono.readAsBytes()))))
           .load();
     }
+    await (FontLoader('JetBrainsMono')
+          ..addFont(rootBundle.load('assets/fonts/JetBrainsMono-Regular.ttf')))
+        .load();
+    await (FontLoader('Twemoji')
+          ..addFont(rootBundle.load('assets/fonts/Twemoji.Mozilla.ttf')))
+        .load();
     await (FontLoader('MaterialIcons')
           ..addFont(rootBundle.load('fonts/MaterialIcons-Regular.otf')))
         .load();

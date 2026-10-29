@@ -1,0 +1,767 @@
+package dns
+
+import (
+	"bytes"
+	"context"
+	"encoding/base64"
+	"errors"
+	"io"
+	"net"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/metacubex/http"
+	"github.com/metacubex/quic-go"
+	D "github.com/miekg/dns"
+)
+
+// No fixture listens, dials, or uses a live resolver. Newly-created HTTP
+// transports are either inspected without RoundTrip or see an already-expired
+// context at their pre-dial cancellation gate. Exchange and peer fixtures use
+// in-memory transports.
+type fcxDoHTransport struct {
+	roundTrip func(*http.Request) (*http.Response, error)
+	onClose   func()
+	closed    atomic.Int32
+}
+
+func (tr *fcxDoHTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	return tr.roundTrip(req)
+}
+
+func (tr *fcxDoHTransport) CloseIdleConnections() {
+	tr.closed.Add(1)
+	if tr.onClose != nil {
+		tr.onClose()
+	}
+}
+
+func fcxNewDoH(t *testing.T) (*dnsOverHTTPS, *D.Msg) {
+	t.Helper()
+	doh := newDoHClient("http://doh.invalid/dns-query", nil, false, nil, nil, "").(*dnsOverHTTPS)
+	t.Cleanup(func() { _ = doh.Close() })
+	query := new(D.Msg)
+	query.SetQuestion("lifecycle.invalid.", D.TypeA)
+	return doh, query
+}
+
+func fcxDoHAnswer(req *http.Request) (*http.Response, error) {
+	wire, err := base64.RawURLEncoding.DecodeString(req.URL.Query().Get("dns"))
+	if err != nil {
+		return nil, err
+	}
+	query := new(D.Msg)
+	if err := query.Unpack(wire); err != nil {
+		return nil, err
+	}
+	answer := new(D.Msg)
+	answer.SetReply(query)
+	wire, err = answer.Pack()
+	if err != nil {
+		return nil, err
+	}
+	return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(bytes.NewReader(wire))}, nil
+}
+
+func TestFCXDoHExpiredRequestKeepsSharedClient(t *testing.T) {
+	doh, query := fcxNewDoH(t)
+	tr := &fcxDoHTransport{roundTrip: func(req *http.Request) (*http.Response, error) {
+		return nil, req.Context().Err()
+	}}
+	shared := &http.Client{Transport: tr}
+	doh.client = shared
+	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancel()
+	_, err := doh.ExchangeContext(ctx, query)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected request deadline, got %v", err)
+	}
+	if tr.closed.Load() != 0 || doh.client != shared {
+		t.Fatalf("expired request reset shared client: closes=%d same=%v", tr.closed.Load(), doh.client == shared)
+	}
+}
+
+func TestFCXDoHStaleFailureKeepsReplacementClient(t *testing.T) {
+	doh, query := fcxNewDoH(t)
+	freshTransport := &fcxDoHTransport{roundTrip: fcxDoHAnswer}
+	fresh := &http.Client{Transport: freshTransport}
+	staleFailure := errors.New("synthetic old transport failure")
+	oldTransport := &fcxDoHTransport{roundTrip: func(*http.Request) (*http.Response, error) {
+		// A different request recovered while this request used the old client.
+		doh.clientMu.Lock()
+		doh.client = fresh
+		doh.clientMu.Unlock()
+		return nil, staleFailure
+	}}
+	doh.client = &http.Client{Transport: oldTransport}
+	_, err := doh.ExchangeContext(context.Background(), query)
+	if !errors.Is(err, staleFailure) {
+		t.Fatalf("original failure lost: %v", err)
+	}
+	if freshTransport.closed.Load() != 0 || doh.client != fresh {
+		t.Fatalf("stale failure discarded replacement: closes=%d same=%v", freshTransport.closed.Load(), doh.client == fresh)
+	}
+}
+
+func TestFCXDoHCanceledRequestKeepsSharedClient(t *testing.T) {
+	doh, query := fcxNewDoH(t)
+	tr := &fcxDoHTransport{roundTrip: func(req *http.Request) (*http.Response, error) {
+		return nil, req.Context().Err()
+	}}
+	shared := &http.Client{Transport: tr}
+	doh.client = shared
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := doh.ExchangeContext(ctx, query)
+	if !errors.Is(err, context.Canceled) || tr.closed.Load() != 0 || doh.client != shared {
+		t.Fatalf("canceled request changed shared client: err=%v closes=%d same=%v", err, tr.closed.Load(), doh.client == shared)
+	}
+}
+
+func TestFCXDoHSuccessKeepsSharedClientAndQueryID(t *testing.T) {
+	doh, query := fcxNewDoH(t)
+	wantID := query.Id
+	tr := &fcxDoHTransport{roundTrip: fcxDoHAnswer}
+	shared := &http.Client{Transport: tr}
+	doh.client = shared
+	answer, err := doh.ExchangeContext(context.Background(), query)
+	if err != nil || answer == nil || answer.Id != wantID || query.Id != wantID || tr.closed.Load() != 0 || doh.client != shared {
+		t.Fatalf("success changed query/client: err=%v answer=%v closes=%d same=%v", err, answer != nil, tr.closed.Load(), doh.client == shared)
+	}
+}
+
+func TestFCXDoHGenuineTransportTimeoutIsRetryable(t *testing.T) {
+	doh, _ := fcxNewDoH(t)
+	if !doh.shouldRetry(&net.DNSError{Err: "synthetic transport timeout", IsTimeout: true}) {
+		t.Fatal("live transport timeout lost recovery")
+	}
+}
+
+func TestFCXDoHLiveContextDeadlineRetriesAndSucceeds(t *testing.T) {
+	doh, query := fcxNewDoH(t)
+	var attempts atomic.Int32
+	freshTransport := &fcxDoHTransport{roundTrip: func(req *http.Request) (*http.Response, error) {
+		attempts.Add(1)
+		return fcxDoHAnswer(req)
+	}}
+	fresh := &http.Client{Transport: freshTransport}
+	oldTransport := &fcxDoHTransport{roundTrip: func(*http.Request) (*http.Response, error) {
+		attempts.Add(1)
+		doh.clientMu.Lock()
+		doh.client = fresh
+		doh.clientMu.Unlock()
+		// Like http.Client.Timeout, this error is not the caller's deadline.
+		return nil, context.DeadlineExceeded
+	}}
+	doh.client = &http.Client{Transport: oldTransport}
+	answer, err := doh.ExchangeContext(context.Background(), query)
+	if err != nil || answer == nil || attempts.Load() != 2 || doh.client != fresh || freshTransport.closed.Load() != 0 {
+		t.Fatalf("live deadline did not reuse recovered client: err=%v answer=%v attempts=%d closes=%d", err, answer != nil, attempts.Load(), freshTransport.closed.Load())
+	}
+}
+
+func TestFCXDoHLiveTimeoutRetriesAreBounded(t *testing.T) {
+	doh, query := fcxNewDoH(t)
+	var attempts atomic.Int32
+	var transports []*fcxDoHTransport
+	var newClient func() *http.Client
+	newClient = func() *http.Client {
+		tr := &fcxDoHTransport{roundTrip: func(*http.Request) (*http.Response, error) {
+			attempts.Add(1)
+			doh.clientMu.Lock()
+			doh.client = newClient()
+			doh.clientMu.Unlock()
+			return nil, context.DeadlineExceeded
+		}}
+		transports = append(transports, tr)
+		return &http.Client{Transport: tr}
+	}
+	doh.client = newClient()
+	_, err := doh.ExchangeContext(context.Background(), query)
+	if !errors.Is(err, context.DeadlineExceeded) || attempts.Load() != 3 {
+		t.Fatalf("expected initial request and two retries, got err=%v attempts=%d", err, attempts.Load())
+	}
+	for _, tr := range transports {
+		if tr.closed.Load() != 0 {
+			t.Fatal("a stale attempt closed a different generation")
+		}
+	}
+}
+
+func TestFCXDoHCurrentTransportTimeoutResetsClient(t *testing.T) {
+	doh, _ := fcxNewDoH(t)
+	tr := &fcxDoHTransport{roundTrip: fcxDoHAnswer}
+	old := &http.Client{Transport: tr}
+	doh.client = old
+	fresh, err := doh.resetClient(context.Background(), old, &net.DNSError{Err: "transport timeout", IsTimeout: true})
+	if err != nil || fresh == nil || fresh == old || doh.client != fresh || tr.closed.Load() != 1 {
+		t.Fatalf("current transport did not reset: err=%v fresh=%v closes=%d", err, fresh != nil, tr.closed.Load())
+	}
+}
+
+func TestFCXDoHCallerCanceledDuringTransportTimeoutKeepsClient(t *testing.T) {
+	doh, query := fcxNewDoH(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	tr := &fcxDoHTransport{roundTrip: func(*http.Request) (*http.Response, error) {
+		cancel()
+		return nil, &net.DNSError{Err: "transport timed out as caller canceled", IsTimeout: true}
+	}}
+	shared := &http.Client{Transport: tr}
+	doh.client = shared
+	_, err := doh.ExchangeContext(ctx, query)
+	if !errors.Is(err, context.Canceled) || doh.client != shared || tr.closed.Load() != 0 {
+		t.Fatalf("in-flight caller cancellation reset shared client: err=%v closes=%d", err, tr.closed.Load())
+	}
+}
+
+// This test-controlled caller clock exposes the usual Done/Err transition
+// without sleeping until a wall-clock deadline or adding production hooks.
+type fcxDoHDeadlineContext struct {
+	context.Context
+	done    chan struct{}
+	expired atomic.Bool
+}
+
+func (ctx *fcxDoHDeadlineContext) Done() <-chan struct{} { return ctx.done }
+func (ctx *fcxDoHDeadlineContext) Err() error {
+	if ctx.expired.Load() {
+		return context.DeadlineExceeded
+	}
+	return nil
+}
+
+// A caller deadline during a request that the connection never answered is
+// the silent-connection signal: no retry and no synchronous close, but the
+// generation is no longer handed out and closes only after the grace period.
+func TestFCXDoHCallerDeadlineOnUnansweredRequestRetiresWithoutImmediateClose(t *testing.T) {
+	fcxDoHShortGrace(t, 50*time.Millisecond)
+	doh, query := fcxNewDoH(t)
+	ctx := &fcxDoHDeadlineContext{Context: context.Background(), done: make(chan struct{})}
+	var attempts atomic.Int32
+	tr := &fcxDoHTransport{roundTrip: func(req *http.Request) (*http.Response, error) {
+		attempts.Add(1)
+		ctx.expired.Store(true)
+		close(ctx.done)
+		return nil, req.Context().Err()
+	}}
+	shared := &http.Client{Transport: tr}
+	doh.client = shared
+	_, err := doh.ExchangeContext(ctx, query)
+	if !errors.Is(err, context.DeadlineExceeded) || attempts.Load() != 1 || doh.client != nil || tr.closed.Load() != 0 {
+		t.Fatalf("unanswered caller deadline: err=%v attempts=%d client_present=%v closes=%d", err, attempts.Load(), doh.client != nil, tr.closed.Load())
+	}
+	fcxDoHEventually(t, "deferred close of the retired pool", func() bool { return tr.closed.Load() == 1 })
+}
+
+type fcxDoHResult struct {
+	answer *D.Msg
+	err    error
+}
+
+func fcxDoHAwait(t *testing.T, ctx context.Context, ch <-chan struct{}) {
+	t.Helper()
+	select {
+	case <-ch:
+	case <-ctx.Done():
+		t.Fatalf("fixture synchronization: %v", ctx.Err())
+	}
+}
+
+func fcxDoHResultFrom(t *testing.T, ctx context.Context, ch <-chan fcxDoHResult) fcxDoHResult {
+	t.Helper()
+	select {
+	case result := <-ch:
+		return result
+	case <-ctx.Done():
+		t.Fatalf("fixture result: %v", ctx.Err())
+		return fcxDoHResult{}
+	}
+}
+
+func TestFCXDoHExpiredCallerDoesNotInterruptActivePeer(t *testing.T) {
+	doh, query := fcxNewDoH(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	started, release, interrupted := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	var interruptOnce sync.Once
+	tr := &fcxDoHTransport{
+		onClose: func() { interruptOnce.Do(func() { close(interrupted) }) },
+		roundTrip: func(req *http.Request) (*http.Response, error) {
+			if err := req.Context().Err(); err != nil {
+				return nil, err
+			}
+			close(started)
+			select {
+			case <-release:
+				return fcxDoHAnswer(req)
+			case <-interrupted:
+				return nil, errors.New("healthy peer interrupted by expired request")
+			case <-req.Context().Done():
+				return nil, req.Context().Err()
+			}
+		},
+	}
+	shared := &http.Client{Transport: tr}
+	doh.client = shared
+	result := make(chan fcxDoHResult, 1)
+	go func() { answer, err := doh.ExchangeContext(ctx, query); result <- fcxDoHResult{answer, err} }()
+	fcxDoHAwait(t, ctx, started)
+	expired, stop := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer stop()
+	_, err := doh.ExchangeContext(expired, query)
+	if !errors.Is(err, context.DeadlineExceeded) || tr.closed.Load() != 0 || doh.client != shared {
+		t.Fatalf("expired caller disrupted peer: err=%v closes=%d", err, tr.closed.Load())
+	}
+	close(release)
+	if got := fcxDoHResultFrom(t, ctx, result); got.err != nil || got.answer == nil {
+		t.Fatalf("peer failed: %v", got.err)
+	}
+}
+
+func TestFCXDoHConcurrentOldFailuresDoNotCloseActivePeer(t *testing.T) {
+	doh, query := fcxNewDoH(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	startedA, startedB := make(chan struct{}), make(chan struct{})
+	releaseA, releaseB := make(chan struct{}), make(chan struct{})
+	var oldCalls atomic.Int32
+	oldFailure := errors.New("old connection closed")
+	oldTransport := &fcxDoHTransport{roundTrip: func(req *http.Request) (*http.Response, error) {
+		var release <-chan struct{}
+		if oldCalls.Add(1) == 1 {
+			close(startedA)
+			release = releaseA
+		} else {
+			close(startedB)
+			release = releaseB
+		}
+		select {
+		case <-release:
+			return nil, oldFailure
+		case <-req.Context().Done():
+			return nil, req.Context().Err()
+		}
+	}}
+	doh.client = &http.Client{Transport: oldTransport}
+	resultA, resultB := make(chan fcxDoHResult, 1), make(chan fcxDoHResult, 1)
+	go func() { answer, err := doh.ExchangeContext(ctx, query); resultA <- fcxDoHResult{answer, err} }()
+	fcxDoHAwait(t, ctx, startedA)
+	go func() { answer, err := doh.ExchangeContext(ctx, query); resultB <- fcxDoHResult{answer, err} }()
+	fcxDoHAwait(t, ctx, startedB)
+	close(releaseA)
+	if result := fcxDoHResultFrom(t, ctx, resultA); !errors.Is(result.err, oldFailure) {
+		t.Fatalf("first failure lost: %v", result.err)
+	}
+
+	peerStarted, releasePeer, peerInterrupted := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	var interruptOnce sync.Once
+	peerTransport := &fcxDoHTransport{
+		onClose: func() { interruptOnce.Do(func() { close(peerInterrupted) }) },
+		roundTrip: func(req *http.Request) (*http.Response, error) {
+			close(peerStarted)
+			select {
+			case <-releasePeer:
+				return fcxDoHAnswer(req)
+			case <-peerInterrupted:
+				return nil, errors.New("active peer was interrupted")
+			case <-req.Context().Done():
+				return nil, req.Context().Err()
+			}
+		},
+	}
+	doh.clientMu.Lock()
+	fresh := doh.client
+	if fresh != nil {
+		// No request has used this newly-created transport yet. Replace it
+		// with an in-memory peer before releasing the second old failure.
+		fresh.Transport = peerTransport
+	}
+	doh.clientMu.Unlock()
+	if fresh == nil {
+		t.Fatal("first failure did not install a replacement")
+	}
+	peerResult := make(chan fcxDoHResult, 1)
+	go func() { answer, err := doh.ExchangeContext(ctx, query); peerResult <- fcxDoHResult{answer, err} }()
+	fcxDoHAwait(t, ctx, peerStarted)
+	close(releaseB)
+	if result := fcxDoHResultFrom(t, ctx, resultB); !errors.Is(result.err, oldFailure) {
+		t.Fatalf("second failure lost: %v", result.err)
+	}
+	doh.clientMu.Lock()
+	same := doh.client == fresh
+	doh.clientMu.Unlock()
+	if !same || peerTransport.closed.Load() != 0 || oldTransport.closed.Load() != 1 {
+		t.Fatalf("old failure disrupted new peer: same=%v new_closes=%d old_closes=%d", same, peerTransport.closed.Load(), oldTransport.closed.Load())
+	}
+	close(releasePeer)
+	if result := fcxDoHResultFrom(t, ctx, peerResult); result.err != nil || result.answer == nil {
+		t.Fatalf("active peer failed: %v", result.err)
+	}
+}
+
+// A barrier after the first, pre-lock Err check makes lock-wait interleavings
+// deterministic without sleeps, transport hooks, or a production clock seam.
+type fcxDoHObservedContext struct {
+	context.Context
+	checked chan struct{}
+	once    sync.Once
+}
+
+func (ctx *fcxDoHObservedContext) Err() error {
+	err := ctx.Context.Err()
+	ctx.once.Do(func() { close(ctx.checked) })
+	return err
+}
+
+func TestFCXDoHGetClientCanceledWhileWaitingKeepsCache(t *testing.T) {
+	doh, _ := fcxNewDoH(t)
+	tr := &fcxDoHTransport{roundTrip: fcxDoHAnswer}
+	shared := &http.Client{Transport: tr}
+	doh.client = shared
+	base, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ctx := &fcxDoHObservedContext{Context: base, checked: make(chan struct{})}
+	deadline, stop := context.WithTimeout(context.Background(), 5*time.Second)
+	defer stop()
+	doh.clientMu.Lock()
+	var unlockOnce sync.Once
+	unlock := func() { unlockOnce.Do(doh.clientMu.Unlock) }
+	defer unlock()
+	result := make(chan error, 1)
+	go func() { _, _, err := doh.getClient(ctx); result <- err }()
+	fcxDoHAwait(t, deadline, ctx.checked)
+	cancel()
+	unlock()
+	select {
+	case err := <-result:
+		if !errors.Is(err, context.Canceled) || doh.client != shared || tr.closed.Load() != 0 {
+			t.Fatalf("lock-wait cancellation changed client: err=%v", err)
+		}
+	case <-deadline.Done():
+		t.Fatal("getClient did not finish")
+	}
+}
+
+func TestFCXDoHResetCanceledWhileWaitingKeepsCache(t *testing.T) {
+	doh, _ := fcxNewDoH(t)
+	tr := &fcxDoHTransport{roundTrip: fcxDoHAnswer}
+	shared := &http.Client{Transport: tr}
+	doh.client = shared
+	base, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ctx := &fcxDoHObservedContext{Context: base, checked: make(chan struct{})}
+	deadline, stop := context.WithTimeout(context.Background(), 5*time.Second)
+	defer stop()
+	doh.clientMu.Lock()
+	var unlockOnce sync.Once
+	unlock := func() { unlockOnce.Do(doh.clientMu.Unlock) }
+	defer unlock()
+	result := make(chan error, 1)
+	go func() { _, err := doh.resetClient(ctx, shared, io.ErrUnexpectedEOF); result <- err }()
+	fcxDoHAwait(t, deadline, ctx.checked)
+	cancel()
+	unlock()
+	select {
+	case err := <-result:
+		if !errors.Is(err, context.Canceled) || doh.client != shared || tr.closed.Load() != 0 {
+			t.Fatalf("lock-wait cancellation reset shared client: err=%v", err)
+		}
+	case <-deadline.Done():
+		t.Fatal("resetClient did not finish")
+	}
+}
+
+func TestFCXDoHResetWaitingForLockKeepsNewGeneration(t *testing.T) {
+	doh, _ := fcxNewDoH(t)
+	old := &http.Client{Transport: &fcxDoHTransport{roundTrip: fcxDoHAnswer}}
+	freshTransport := &fcxDoHTransport{roundTrip: fcxDoHAnswer}
+	fresh := &http.Client{Transport: freshTransport}
+	doh.client = old
+	ctx := &fcxDoHObservedContext{Context: context.Background(), checked: make(chan struct{})}
+	deadline, stop := context.WithTimeout(context.Background(), 5*time.Second)
+	defer stop()
+	doh.clientMu.Lock()
+	var unlockOnce sync.Once
+	unlock := func() { unlockOnce.Do(doh.clientMu.Unlock) }
+	defer unlock()
+	result := make(chan *http.Client, 1)
+	errResult := make(chan error, 1)
+	go func() {
+		client, err := doh.resetClient(ctx, old, io.ErrUnexpectedEOF)
+		result <- client
+		errResult <- err
+	}()
+	fcxDoHAwait(t, deadline, ctx.checked)
+	doh.client = fresh
+	unlock()
+	select {
+	case client := <-result:
+		err := <-errResult
+		if err != nil || client != fresh || doh.client != fresh || freshTransport.closed.Load() != 0 {
+			t.Fatalf("waiting old request replaced new generation: err=%v same=%v closes=%d", err, client == fresh, freshTransport.closed.Load())
+		}
+	case <-deadline.Done():
+		t.Fatal("resetClient did not finish")
+	}
+}
+
+func TestFCXDoHExplicitResetIsNotUndoneByStaleCleanup(t *testing.T) {
+	doh, query := fcxNewDoH(t)
+	oldFailure := errors.New("old request completed after explicit reset")
+	tr := &fcxDoHTransport{roundTrip: func(*http.Request) (*http.Response, error) {
+		doh.ResetConnection()
+		return nil, oldFailure
+	}}
+	doh.client = &http.Client{Transport: tr}
+	_, err := doh.ExchangeContext(context.Background(), query)
+	if !errors.Is(err, oldFailure) || doh.client != nil || tr.closed.Load() != 1 {
+		t.Fatalf("stale cleanup undid explicit reset: err=%v client_present=%v closes=%d", err, doh.client != nil, tr.closed.Load())
+	}
+	client, cached, err := doh.getClient(context.Background())
+	if err != nil || cached || client == nil {
+		t.Fatalf("explicit reset prevented a later live request from initializing: err=%v cached=%v", err, cached)
+	}
+}
+
+func TestFCXDoH0RTTRejectionResetsOnlyCurrentGeneration(t *testing.T) {
+	t.Run("current", func(t *testing.T) {
+		doh, _ := fcxNewDoH(t)
+		tr := &fcxDoHTransport{roundTrip: fcxDoHAnswer}
+		old := &http.Client{Transport: tr}
+		doh.client = old
+		oldConfig := doh.getQUICConfig()
+		fresh, err := doh.resetClient(context.Background(), old, quic.Err0RTTRejected)
+		newConfig := doh.getQUICConfig()
+		if err != nil || fresh == nil || fresh == old || newConfig == oldConfig || newConfig.TokenStore == oldConfig.TokenStore || tr.closed.Load() != 1 {
+			t.Fatalf("current 0RTT recovery broken: err=%v closes=%d", err, tr.closed.Load())
+		}
+	})
+	t.Run("stale", func(t *testing.T) {
+		doh, _ := fcxNewDoH(t)
+		old := &http.Client{Transport: &fcxDoHTransport{roundTrip: fcxDoHAnswer}}
+		tr := &fcxDoHTransport{roundTrip: fcxDoHAnswer}
+		fresh := &http.Client{Transport: tr}
+		doh.client = fresh
+		config := doh.getQUICConfig()
+		client, err := doh.resetClient(context.Background(), old, quic.Err0RTTRejected)
+		if err != nil || client != fresh || doh.getQUICConfig() != config || tr.closed.Load() != 0 {
+			t.Fatalf("stale 0RTT changed new generation: err=%v closes=%d", err, tr.closed.Load())
+		}
+	})
+}
+
+// fcxDoHStallTransport models a shared connection that stopped answering
+// without being closed: stalled requests wait for their own context, others
+// answer immediately.
+func fcxDoHStallTransport(stall *atomic.Bool) *fcxDoHTransport {
+	return &fcxDoHTransport{roundTrip: func(req *http.Request) (*http.Response, error) {
+		if stall.Load() {
+			<-req.Context().Done()
+			return nil, req.Context().Err()
+		}
+		return fcxDoHAnswer(req)
+	}}
+}
+
+func fcxDoHExchangeWithin(doh *dnsOverHTTPS, query *D.Msg, timeout time.Duration) error {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	_, err := doh.ExchangeContext(ctx, query)
+	return err
+}
+
+func fcxDoHShortGrace(t *testing.T, grace time.Duration) {
+	t.Helper()
+	previous := fcxDoHRetireGrace
+	fcxDoHRetireGrace = grace
+	t.Cleanup(func() { fcxDoHRetireGrace = previous })
+}
+
+func fcxDoHEventually(t *testing.T, what string, condition func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for !condition() {
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for %s", what)
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+func TestFCXDoHSilentConnectionIsRetiredAndNextQueryReconnects(t *testing.T) {
+	fcxDoHShortGrace(t, 10*time.Millisecond)
+	doh, query := fcxNewDoH(t)
+	var stall atomic.Bool
+	stall.Store(true)
+	tr := fcxDoHStallTransport(&stall)
+	stalled := &http.Client{Transport: tr}
+	doh.client = stalled
+	doh.fcxHealth.adopt(stalled)
+	if err := fcxDoHExchangeWithin(doh, query, 20*time.Millisecond); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected caller deadline, got %v", err)
+	}
+	if doh.client != nil || doh.fcxHealth.retired.Load() != 1 {
+		t.Fatalf("silent connection still handed out: present=%v", doh.client != nil)
+	}
+	fcxDoHEventually(t, "retired pool close", func() bool { return tr.closed.Load() == 1 })
+	// The next live caller lazily creates a new generation (inspected only;
+	// no RoundTrip, no network).
+	client, cached, err := doh.getClient(context.Background())
+	if err != nil || cached || client == nil || client == stalled || doh.fcxHealth.client.Load() != client {
+		t.Fatalf("no fresh generation after retirement: err=%v cached=%v", err, cached)
+	}
+}
+
+// Mirrors the real TLS/HTTP/2 blackhole probe: a healthy answer immediately
+// before the connection goes silent must not count as "answered meanwhile"
+// (a wall-clock comparison failed this on Windows' coarse clock).
+func TestFCXDoHAnswerJustBeforeSilenceStillRetires(t *testing.T) {
+	fcxDoHShortGrace(t, 10*time.Millisecond)
+	doh, query := fcxNewDoH(t)
+	var stall atomic.Bool
+	tr := fcxDoHStallTransport(&stall)
+	shared := &http.Client{Transport: tr}
+	doh.client = shared
+	doh.fcxHealth.adopt(shared)
+	if err := fcxDoHExchangeWithin(doh, query, time.Second); err != nil {
+		t.Fatalf("warmup failed: %v", err)
+	}
+	stall.Store(true)
+	if err := fcxDoHExchangeWithin(doh, query, 20*time.Millisecond); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected caller deadline, got %v", err)
+	}
+	if doh.client != nil || doh.fcxHealth.retired.Load() != 1 {
+		t.Fatalf("silent connection kept after a preceding answer: present=%v retired=%d", doh.client != nil, doh.fcxHealth.retired.Load())
+	}
+}
+
+func TestFCXDoHRetirementDoesNotCutOffInFlightPeers(t *testing.T) {
+	fcxDoHShortGrace(t, 300*time.Millisecond)
+	doh, query := fcxNewDoH(t)
+	var stall atomic.Bool
+	stall.Store(true)
+	tr := fcxDoHStallTransport(&stall)
+	var entered atomic.Int32
+	stallRoundTrip := tr.roundTrip
+	tr.roundTrip = func(req *http.Request) (*http.Response, error) {
+		entered.Add(1)
+		return stallRoundTrip(req)
+	}
+	stalled := &http.Client{Transport: tr}
+	doh.client = stalled
+	doh.fcxHealth.adopt(stalled)
+	peer := make(chan error, 1)
+	go func() { peer <- fcxDoHExchangeWithin(doh, query, time.Second) }()
+	fcxDoHEventually(t, "peer in flight", func() bool { return entered.Load() == 1 })
+	_ = fcxDoHExchangeWithin(doh, query, 20*time.Millisecond)
+	if doh.client != nil {
+		t.Fatal("silent connection not retired")
+	}
+	if tr.closed.Load() != 0 {
+		t.Fatal("retirement closed the pool while a peer was still in flight")
+	}
+	fcxDoHEventually(t, "deferred close", func() bool { return tr.closed.Load() == 1 })
+	<-peer
+}
+
+func TestFCXDoHConcurrentAnswerDuringDeadlineKeepsConnection(t *testing.T) {
+	doh, query := fcxNewDoH(t)
+	slowEntered := make(chan struct{}, 1)
+	tr := &fcxDoHTransport{roundTrip: func(req *http.Request) (*http.Response, error) {
+		select {
+		case slowEntered <- struct{}{}:
+		default:
+		}
+		<-req.Context().Done()
+		return nil, req.Context().Err()
+	}}
+	shared := &http.Client{Transport: tr}
+	doh.client = shared
+	doh.fcxHealth.adopt(shared)
+	for round := 0; round < 3; round++ {
+		done := make(chan error, 1)
+		go func() { done <- fcxDoHExchangeWithin(doh, query, 20*time.Millisecond) }()
+		<-slowEntered
+		// A peer on the same connection is answered while the slow query waits.
+		doh.fcxNoteSuccess(shared)
+		<-done
+	}
+	if doh.client != shared || tr.closed.Load() != 0 || doh.fcxHealth.retired.Load() != 0 {
+		t.Fatalf("a slow name retired a connection that answered peers: closes=%d", tr.closed.Load())
+	}
+}
+
+func TestFCXDoHCanceledCallersNeverRetireConnection(t *testing.T) {
+	doh, query := fcxNewDoH(t)
+	var stall atomic.Bool
+	stall.Store(true)
+	tr := fcxDoHStallTransport(&stall)
+	shared := &http.Client{Transport: tr}
+	doh.client = shared
+	doh.fcxHealth.adopt(shared)
+	for i := 0; i < 3; i++ {
+		ctx, cancel := context.WithCancel(context.Background())
+		go func() { time.Sleep(5 * time.Millisecond); cancel() }()
+		_, _ = doh.ExchangeContext(ctx, query)
+		cancel()
+	}
+	if doh.client != shared || tr.closed.Load() != 0 || doh.fcxHealth.retired.Load() != 0 {
+		t.Fatalf("cancellation counted as connection failure: closes=%d", tr.closed.Load())
+	}
+}
+
+func TestFCXDoHDeadlineOnReplacedGenerationIsIgnored(t *testing.T) {
+	doh, _ := fcxNewDoH(t)
+	old := &http.Client{Transport: &fcxDoHTransport{roundTrip: fcxDoHAnswer}}
+	tr := &fcxDoHTransport{roundTrip: fcxDoHAnswer}
+	fresh := &http.Client{Transport: tr}
+	doh.client = fresh
+	doh.fcxHealth.adopt(fresh)
+	for i := 0; i < 3; i++ {
+		if doh.fcxNoteCallerTimeout(old, time.Now().Add(-time.Second), doh.fcxAnswerMark(), context.DeadlineExceeded, context.DeadlineExceeded) {
+			t.Fatal("old generation deadline retired the new one")
+		}
+	}
+	if doh.client != fresh || tr.closed.Load() != 0 || doh.fcxHealth.retired.Load() != 0 {
+		t.Fatalf("stale deadline touched current generation: closes=%d", tr.closed.Load())
+	}
+}
+
+func TestFCXDoHDeadlineAccountingNeverWaitsForLock(t *testing.T) {
+	doh, _ := fcxNewDoH(t)
+	tr := &fcxDoHTransport{roundTrip: fcxDoHAnswer}
+	shared := &http.Client{Transport: tr}
+	doh.client = shared
+	doh.fcxHealth.adopt(shared)
+	doh.clientMu.Lock()
+	done := make(chan bool, 1)
+	go func() {
+		done <- doh.fcxNoteCallerTimeout(shared, time.Now().Add(-time.Second), doh.fcxAnswerMark(), context.DeadlineExceeded, context.DeadlineExceeded)
+	}()
+	select {
+	case retired := <-done:
+		doh.clientMu.Unlock()
+		if retired || doh.fcxHealth.retired.Load() != 0 {
+			t.Fatal("contended accounting changed state")
+		}
+	case <-time.After(2 * time.Second):
+		doh.clientMu.Unlock()
+		t.Fatal("expired caller blocked on clientMu")
+	}
+}
+
+func TestFCXDoHLogRedactsPathAndQuery(t *testing.T) {
+	doh := newDoHClient("https://doh.invalid/acct-0123/dns-query?token=s3cr3t", nil, false, nil, nil, "").(*dnsOverHTTPS)
+	t.Cleanup(func() { _ = doh.Close() })
+	err := errors.New(`Get "https://doh.invalid/acct-0123/dns-query?token=s3cr3t&dns=AAAB": i/o timeout`)
+	got := doh.fcxRedact(err)
+	if doh.fcxHost() != "doh.invalid" || bytes.Contains([]byte(got), []byte("acct-0123")) || bytes.Contains([]byte(got), []byte("s3cr3t")) {
+		t.Fatalf("log text leaks DoH path or query: host=%q text=%q", doh.fcxHost(), got)
+	}
+	if !bytes.Contains([]byte(got), []byte("doh.invalid")) || !bytes.Contains([]byte(got), []byte("i/o timeout")) {
+		t.Fatalf("redaction dropped diagnostics: %q", got)
+	}
+}

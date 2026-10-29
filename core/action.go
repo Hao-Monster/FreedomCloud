@@ -21,6 +21,7 @@ type ActionResult struct {
 	Code     int            `json:"code"`
 	Callback unsafe.Pointer `json:"-"`
 	Response func([]byte)   `json:"-"`
+	owner    *catalogOwner
 }
 
 func (result ActionResult) Json() ([]byte, error) {
@@ -42,6 +43,34 @@ func (result ActionResult) error(data interface{}) {
 
 func handleAction(action *Action, result ActionResult) {
 	switch action.Method {
+	case catalogParseProviderMethod:
+		data, ok := action.Data.(string)
+		if !ok {
+			result.error("invalidParameters")
+			return
+		}
+		parsed, reason := parseCatalogProviderMessage(data)
+		if reason != "" {
+			result.error(reason)
+		} else {
+			result.success(parsed)
+		}
+		return
+	case catalogPrepareMethod, catalogTestDelayMethod, catalogReleaseMethod:
+		data, ok := action.Data.(string)
+		if !ok {
+			result.error("invalidParameters")
+			return
+		}
+		switch action.Method {
+		case catalogPrepareMethod:
+			handleCatalogPrepare(data, result)
+		case catalogReleaseMethod:
+			handleCatalogRelease(data, result)
+		case catalogTestDelayMethod:
+			handleCatalogTestDelay(data, result.owner, func(value string) { result.success(value) })
+		}
+		return
 	case initClashMethod:
 		paramsString, ok := action.Data.(string)
 		if !ok {
@@ -147,7 +176,7 @@ func handleAction(action *Action, result ActionResult) {
 			result.error("invalid data type")
 			return
 		}
-		handleAsyncTestDelay(data, func(value string) {
+		handleAsyncTestDelayOwned(data, result.owner, func(value string) {
 			result.success(value)
 		})
 		return
@@ -157,7 +186,7 @@ func handleAction(action *Action, result ActionResult) {
 			result.error("invalid request id")
 			return
 		}
-		result.success(cancelDelayTask(id, "cancelled"))
+		result.success(cancelDelayTaskOwned(result.owner, id, "cancelled"))
 		return
 	case getConnectionsMethod:
 		result.success(handleGetConnections())

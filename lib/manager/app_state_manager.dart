@@ -8,6 +8,7 @@ import 'package:flclashx/common/delay_tests.dart';
 import 'package:flclashx/common/ui_activity.dart';
 import 'package:flclashx/enum/enum.dart';
 import 'package:flclashx/plugins/tile.dart';
+import 'package:flclashx/providers/node_overview.dart';
 import 'package:flclashx/providers/providers.dart';
 import 'package:flclashx/state.dart';
 import 'package:flutter/foundation.dart';
@@ -82,6 +83,9 @@ class _AppStateManagerState extends ConsumerState<AppStateManager>
         }
       });
     });
+    if (ref.read(nodeOverviewEnabledProvider)) {
+      ref.read(nodeCountryResolverProvider);
+    }
     ref.listenManual(
       checkIpProvider,
       (prev, next) {

@@ -1,6 +1,7 @@
 import 'package:flclashx/common/common.dart';
 import 'package:flclashx/enum/enum.dart';
 import 'package:flclashx/models/models.dart';
+import 'package:flclashx/providers/node_overview.dart';
 import 'package:flclashx/providers/providers.dart';
 import 'package:flclashx/state.dart';
 import 'package:flclashx/views/proxies/common.dart';
@@ -137,6 +138,11 @@ class ProxyCard extends StatelessWidget {
         true => currentProxyName == proxy.name ? "" : proxy.name,
         false => proxy.name,
       };
+      notifyProxyCardSelection(
+        ref,
+        groupName: groupName,
+        nextProxyName: nextProxyName,
+      );
       final appController = globalState.appController;
       appController.updateCurrentSelectedMap(
         groupName,

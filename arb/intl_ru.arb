@@ -543,5 +543,276 @@
   "tunErrorStart": "Не удалось запустить интерфейс; включите повторно",
   "tunDisableAction": "Запросить остановку",
   "tunErrorLegacyAgent": "Завершите старое фоновое приложение и снова откройте эту версию",
-  "tunErrorProfileRequired": "Перед подключением выберите читаемый непустой профиль"
+  "tunErrorProfileRequired": "Перед подключением выберите читаемый непустой профиль",
+  "nodeOverviewCurrentProfile": "Текущий профиль",
+  "nodeOverviewAllProfiles": "Все профили",
+  "nodeOverviewActive": "Активный",
+  "nodeOverviewAvailableOnly": "Только доступные",
+  "nodeOverviewRuntimeSource": "Активный узел",
+  "nodeOverviewUntested": "Не проверено",
+  "nodeOverviewTestFailed": "Ошибка проверки",
+  "nodeOverviewStale": "Возможно, устарело",
+  "nodeOverviewLastActiveTest": "Проверка при последней активации: {time}",
+  "nodeOverviewLastTest": "Последняя проверка: {time}",
+  "nodeOverviewHealthCounts": "Доступно {available} / проверено {tested} / всего {total}",
+  "nodeOverviewMedian": "Медиана: {delay}",
+  "nodeOverviewFileMissing": "Файл профиля отсутствует",
+  "nodeOverviewParseFailed": "Не удалось разобрать профиль",
+  "nodeOverviewExpired": "Подписка истекла",
+  "nodeOverviewUpdating": "Обновление подписки",
+  "nodeOverviewManageProfiles": "Управление профилями / обновление подписки",
+  "nodeOverviewProviderPending": "{provider}: узлы появятся после активации",
+  "nodeOverviewNoNodes": "Нет подходящих узлов",
+  "nodeOverviewTooManyNodes": "Слишком много узлов для этой предварительной версии",
+  "@nodeOverviewLastActiveTest": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "@nodeOverviewLastTest": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "@nodeOverviewHealthCounts": {
+    "placeholders": {
+      "available": {
+        "type": "int"
+      },
+      "tested": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      }
+    }
+  },
+  "@nodeOverviewMedian": {
+    "placeholders": {
+      "delay": {
+        "type": "String"
+      }
+    }
+  },
+  "@nodeOverviewProviderPending": {
+    "placeholders": {
+      "provider": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewPartialSummary": "В сводке учтены только загруженные узлы",
+  "nodeOverviewHistoryNotice": "Результаты проверки задержки сохраняются до следующей завершённой проверки. Время проверки указано под каждым узлом.",
+  "nodeOverviewNodeUnidentified": "Не удалось распознать узел",
+  "nodeOverviewLive": "В реальном времени",
+  "nodeOverviewIndependentTest": "Независимая проверка задержки",
+  "nodeOverviewFileSource": "Файл профиля · {provider}",
+  "@nodeOverviewFileSource": {
+    "placeholders": { "provider": { "type": "String" } }
+  },
+  "nodeOverviewTestCurrent": "Проверить текущий профиль",
+  "nodeOverviewTestAll": "Проверить задержку всех узлов",
+  "nodeOverviewTestNode": "Тест задержки",
+  "nodeOverviewProgress": "{completed} / {total}",
+  "@nodeOverviewProgress": {
+    "placeholders": {
+      "completed": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewChainUnsupported": "Изолированная проверка цепочек прокси не поддерживается",
+  "nodeOverviewTypeUnsupported": "Изолированная проверка этого протокола не поддерживается",
+  "nodeOverviewProviderNotCached": "Локальный кэш провайдера недоступен",
+  "nodeOverviewStrictUnsupported": "В строгом режиме изолированные проверки недоступны",
+  "nodeOverviewTestUnavailable": "Не удалось начать проверку. Проверьте версию фоновых компонентов.",
+  "nodeOverviewTestInterrupted": "Проверка прервана; предыдущие результаты сохранены",
+  "nodeOverviewPreviewUnsupported": "Локальные узлы провайдера не поддерживаются в этой предварительной версии",
+  "nodeOverviewBatchSummary": "Завершено {completed} · Ошибок {failed} · Не проверено {untested} · Профилей с проблемами {profiles}",
+  "@nodeOverviewBatchSummary": {
+    "placeholders": {
+      "completed": {
+        "type": "int"
+      },
+      "failed": {
+        "type": "int"
+      },
+      "untested": {
+        "type": "int"
+      },
+      "profiles": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewAmbiguousNode": "Определения узлов повторяются; не удалось подтвердить идентичность",
+  "nodeOverviewHealthCapacityExceeded": "Хранилище истории заполнено; часть результатов не сохранена",
+  "nodeOverviewMoreIssues": "Ещё типов проблем: {count}",
+  "@nodeOverviewMoreIssues": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewProviderUnsafeUrl": "URL провайдера не соответствует требованиям безопасности",
+  "nodeOverviewProviderUnsafePath": "Файл провайдера находится вне разрешённого каталога",
+  "nodeOverviewProviderDownloadFailed": "Не удалось загрузить провайдера",
+  "nodeOverviewProviderTooLarge": "Превышен лимит размера или числа узлов провайдера",
+  "nodeOverviewProviderOptionsUnsupported": "Эти параметры провайдера не поддерживаются",
+  "nodeOverviewTestTimedOut": "Истекло время проверки или чтения провайдера",
+  "nodeOverviewProviderUnloaded": "Узлы провайдера ещё не загружены. Проверка задержки всех узлов прочитает их и загрузит отсутствующий кэш.",
+  "nodeOverviewHealthStoreUnavailable": "Не удалось сохранить часть результатов проверки задержки",
+  "nodeOverviewUseNode": "Использовать",
+  "nodeOverviewInUse": "Используется",
+  "purchaseLoginDescription": "Войдите в аккаунт для активации кода — тариф и узлы синхронизируются автоматически.",
+  "purchaseStepBrowse": "① Выберите тариф или код",
+  "purchaseStepRedeem": "② Войдите и проверьте код",
+  "purchaseStepSync": "③ Автосинхронизация узлов",
+  "purchaseJumpToWorkbench": "Есть код? Перейти к активации",
+  "purchaseFilterAll": "Все тарифы",
+  "purchaseFilterPeriod": "По периоду",
+  "purchaseFilterOnetime": "Пакеты трафика",
+  "purchaseAcquirePlanCode": "Получить код тарифа",
+  "purchasePlanSoldOut": "Распродано",
+  "purchasePlanLowStock": "Осталось: {count}",
+  "@purchasePlanLowStock": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "purchasePlanExpandDetails": "Показать полное описание",
+  "purchasePlanCollapseDetails": "Свернуть описание",
+  "purchaseAcquireSheetSubtitle": "Получите код через магазин карт или WeChat ниже, затем активируйте его здесь. Заказ в приложении не создаётся.",
+  "purchaseCopyInquiry": "Скопировать запрос",
+  "purchaseInquiryTemplate": "Здравствуйте! Хочу приобрести код активации для тарифа «{plan} · {quota} GiB ({price})».",
+  "@purchaseInquiryTemplate": {
+    "placeholders": {
+      "plan": {
+        "type": "String"
+      },
+      "quota": {
+        "type": "int"
+      },
+      "price": {
+        "type": "String"
+      }
+    }
+  },
+  "purchaseShowPassword": "Показать пароль",
+  "purchaseHidePassword": "Скрыть пароль",
+  "purchaseClearCode": "Очистить код",
+  "purchaseRenewalBadge": "Продление",
+  "purchaseNewActivationBadge": "Новая активация",
+  "purchaseOpenNodesAction": "Открыть профили и узлы",
+  "nodeOverviewRemainingTraffic": "Остаток трафика: {traffic}",
+  "@nodeOverviewRemainingTraffic": {
+    "placeholders": {
+      "traffic": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewUsedOfTotalTraffic": "Использовано {used} из {total}",
+  "@nodeOverviewUsedOfTotalTraffic": {
+    "placeholders": {
+      "used": {
+        "type": "String"
+      },
+      "total": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewTrafficUnlimited": "Трафик: безлимитный",
+  "nodeOverviewUsedTrafficOnly": "Использовано: {used}",
+  "@nodeOverviewUsedTrafficOnly": {
+    "placeholders": {
+      "used": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewExpireAt": "Истекает: {date}",
+  "@nodeOverviewExpireAt": {
+    "placeholders": {
+      "date": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewExpireDaysLeft": "осталось {days} дн.",
+  "@nodeOverviewExpireDaysLeft": {
+    "placeholders": {
+      "days": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewExpireHoursLeft": "осталось {hours} ч.",
+  "@nodeOverviewExpireHoursLeft": {
+    "placeholders": {
+      "hours": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewExpireSoon": "менее 1 ч.",
+  "nodeOverviewNeverExpires": "Истекает: бессрочно",
+  "nodeOverviewLastSync": "Синхронизация: {time}",
+  "@nodeOverviewLastSync": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewAutoUpdateHours": "Автообновление {hours} ч.",
+  "@nodeOverviewAutoUpdateHours": {
+    "placeholders": {
+      "hours": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewAutoUpdateMinutes": "Автообновление {minutes} мин.",
+  "@nodeOverviewAutoUpdateMinutes": {
+    "placeholders": {
+      "minutes": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewManualUpdate": "Вручную",
+  "nodeOverviewLocalProfile": "Локальный файл",
+  "nodeOverviewDeviceLimitReached": "Достигнут лимит устройств",
+  "nodeOverviewStatusExpired": "Истёк",
+  "nodeOverviewAnnouncement": "Объявление: {text}",
+  "@nodeOverviewAnnouncement": {
+    "placeholders": {
+      "text": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewSwitchedToNode": "Переключено на {profile} · {node}",
+  "@nodeOverviewSwitchedToNode": {
+    "placeholders": {
+      "profile": {
+        "type": "String"
+      },
+      "node": {
+        "type": "String"
+      }
+    }
+  }
 }

@@ -136,4 +136,61 @@ void main() {
     expect(calls, ['close']);
     expect(runtime.closing, isTrue);
   });
+  test('healthy on observation clears closeFailed and configurationFailed', () {
+    for (final code in [
+      'closeFailed',
+      'configurationFailed',
+      'operationFailed',
+    ]) {
+      final runtime = TunRuntimeController()..fail(code);
+      expect(runtime.failure, code);
+      expect(runtime.requestFailure, code);
+      runtime.accept(
+        TunStatus.fromJson(status(revision: 2)),
+        runtime.observationEpoch,
+      );
+      expect(runtime.observed, TunObservedState.on);
+      expect(runtime.failure, isNull);
+      expect(runtime.requestFailure, isNull);
+    }
+  });
+  test(
+      'clearCoreRuntimeFailure clears Core runtime failures but preserves environment gates',
+      () {
+    final runtime = TunRuntimeController()
+      ..fail('startFailed')
+      ..clearCoreRuntimeFailure();
+    expect(runtime.failure, isNull);
+    expect(runtime.requestFailure, isNull);
+
+    for (final gate in [
+      'authorizationRequired',
+      'permissionDenied',
+      'componentsMismatch',
+      'legacyAgent',
+    ]) {
+      runtime
+        ..fail(gate)
+        ..clearCoreRuntimeFailure();
+      expect(runtime.failure, gate);
+      expect(runtime.requestFailure, gate);
+    }
+  });
+  test(
+      'off observation after statusUnavailable preserves latched requestFailure when desiredEnabled is true',
+      () {
+    final runtime = TunRuntimeController()
+      ..desiredEnabled = true
+      ..fail('interfaceDown')
+      ..invalidate('statusUnavailable');
+    expect(runtime.failure, 'statusUnavailable');
+    expect(runtime.requestFailure, 'interfaceDown');
+    runtime.accept(
+      TunStatus.fromJson(status(state: 'off', listener: false, revision: 2)),
+      runtime.observationEpoch,
+    );
+    expect(runtime.observed, TunObservedState.off);
+    expect(runtime.requestFailure, 'interfaceDown');
+    expect(runtime.failure, 'interfaceDown');
+  });
 }

@@ -31,6 +31,8 @@ const listenerSHA256 = "1a11cda3fb4a87875d817fe29f1e79973cb8cb6eeccc0ae5e22db15d
 const configsSHA256 = "d11710296ea68a8d12f7593ec50cec9fef830272b3a54f64f707ec86920baf9f"
 const controllerSHA256 = "01724bd82002cf80b85448ef664ca53a7cb82f529ccf2b7f4a6383282768d256"
 const adapterSHA256 = "0a0524f342ff1672fdb94ad675d176d069b1f6e16ddfe462ece2f55b9e10212c"
+const dnsDoHSHA256 = "1ba0170bed4aabf6b295471f9fddb03da20122d339526a97170dff537fbde57b"
+const converterSHA256 = "503aac2968628ab826f8208d620bcd5939ca67219426cf0189fab76346626ede"
 
 func patchController(source []byte) ([]byte, error) {
 	fset := token.NewFileSet()
@@ -140,6 +142,89 @@ func patchListener(source []byte) ([]byte, error) {
 	return format.Source([]byte(patched))
 }
 
+func patchDNSDoH(source []byte) ([]byte, error) {
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "doh.go", source, 0)
+	if err != nil {
+		return nil, err
+	}
+	names := map[string]string{
+		"ExchangeContext": "dns_exchange_context.txt",
+		"resetClient":     "dns_reset_client.txt",
+		"getClient":       "dns_get_client.txt",
+	}
+	seen := map[string]bool{}
+	var changes []replacement
+	for _, declaration := range file.Decls {
+		fn, ok := declaration.(*ast.FuncDecl)
+		if !ok {
+			continue
+		}
+		name, ok := names[fn.Name.Name]
+		if !ok {
+			continue
+		}
+		if seen[fn.Name.Name] || fn.Recv == nil || len(fn.Recv.List) != 1 {
+			return nil, fmt.Errorf("upstream DoH method set changed: %s", fn.Name.Name)
+		}
+		pointer, ok := fn.Recv.List[0].Type.(*ast.StarExpr)
+		if !ok {
+			return nil, fmt.Errorf("upstream DoH receiver changed: %s", fn.Name.Name)
+		}
+		receiver, ok := pointer.X.(*ast.Ident)
+		if !ok || receiver.Name != "dnsOverHTTPS" {
+			return nil, fmt.Errorf("upstream DoH receiver changed: %s", fn.Name.Name)
+		}
+		seen[fn.Name.Name] = true
+		body, err := patchFiles.ReadFile("patches/" + name)
+		if err != nil {
+			return nil, err
+		}
+		changes = append(changes, replacement{fset.Position(fn.Pos()).Offset, fset.Position(fn.End()).Offset, string(body)})
+	}
+	if len(changes) != len(names) {
+		return nil, fmt.Errorf("upstream DoH method set changed")
+	}
+	// Connection health state lives with the upstream object so it is freed
+	// with it; exactly one dnsOverHTTPS struct must exist.
+	structs := 0
+	for _, declaration := range file.Decls {
+		generic, ok := declaration.(*ast.GenDecl)
+		if !ok || generic.Tok != token.TYPE {
+			continue
+		}
+		for _, spec := range generic.Specs {
+			typeSpec, ok := spec.(*ast.TypeSpec)
+			if !ok || typeSpec.Name.Name != "dnsOverHTTPS" {
+				continue
+			}
+			structType, ok := typeSpec.Type.(*ast.StructType)
+			if !ok || structType.Fields == nil || !structType.Fields.Closing.IsValid() {
+				return nil, fmt.Errorf("upstream DoH struct changed")
+			}
+			for _, field := range structType.Fields.List {
+				for _, fieldName := range field.Names {
+					if fieldName.Name == "fcxHealth" {
+						return nil, fmt.Errorf("upstream DoH struct already has fcxHealth")
+					}
+				}
+			}
+			structs++
+			closing := fset.Position(structType.Fields.Closing).Offset
+			changes = append(changes, replacement{closing, closing, "\n\tfcxHealth fcxDoHHealth\n"})
+		}
+	}
+	if structs != 1 {
+		return nil, fmt.Errorf("upstream DoH struct changed")
+	}
+	sort.Slice(changes, func(i, j int) bool { return changes[i].start > changes[j].start })
+	patched := string(source)
+	for _, change := range changes {
+		patched = patched[:change.start] + change.text + patched[change.end:]
+	}
+	return format.Source([]byte(patched))
+}
+
 func generate(out string) error {
 	command := exec.Command("go", "list", "-m", "-json", "github.com/metacubex/mihomo")
 	data, err := command.Output()
@@ -209,6 +294,33 @@ func generate(out string) error {
 	if err != nil {
 		return err
 	}
+	dnsDoHSource, err := checkedSource(filepath.Join(module.Dir, "dns", "doh.go"), dnsDoHSHA256)
+	if err != nil {
+		return err
+	}
+	patchedDNSDoH, err := patchDNSDoH(dnsDoHSource)
+	if err != nil {
+		return err
+	}
+	converterSource, err := checkedSource(filepath.Join(module.Dir, "common", "convert", "converter.go"), converterSHA256)
+	if err != nil {
+		return err
+	}
+	converterHeader := "func ConvertsV2Ray(buf []byte) ([]map[string]any, error) {"
+	converterLog := `log.Warnln("error:%s line:%s", err.Error(), line)`
+	if strings.Count(string(converterSource), converterHeader) != 1 || strings.Count(string(converterSource), converterLog) != 2 {
+		return fmt.Errorf("upstream subscription conversion diagnostics changed")
+	}
+	// Keep active/import behavior unchanged. The isolated parser uses a
+	// per-call quiet entry point, never a mutable global logging setting.
+	converterSource = []byte(strings.Replace(string(converterSource), converterHeader, `func ConvertsV2Ray(buf []byte) ([]map[string]any, error) { return convertsV2RayFCX(buf, true) }
+func ConvertsV2RayQuietFCX(buf []byte) ([]map[string]any, error) { return convertsV2RayFCX(buf, false) }
+func convertsV2RayFCX(buf []byte, diagnostics bool) ([]map[string]any, error) {`, 1))
+	converterSource = []byte(strings.ReplaceAll(string(converterSource), converterLog, "if diagnostics { "+converterLog+" }"))
+	converterSource, err = format.Source(converterSource)
+	if err != nil {
+		return err
+	}
 	out, err = filepath.Abs(out)
 	if err != nil {
 		return err
@@ -257,6 +369,34 @@ func generate(out string) error {
 	if err := write(filepath.Join(sourceDirectory, "adapter", "adapter.go"), "adapter.go", adapterSource); err != nil {
 		return err
 	}
+	if err := write(filepath.Join(sourceDirectory, "dns", "doh.go"), "doh.go", patchedDNSDoH); err != nil {
+		return err
+	}
+	if err := write(filepath.Join(sourceDirectory, "common", "convert", "converter.go"), "catalog_converter.go", converterSource); err != nil {
+		return err
+	}
+	dnsTests, err := patchFiles.ReadFile("patches/dns_doh_lifecycle_fcx_test.go.txt")
+	if err != nil {
+		return err
+	}
+	dnsTests, err = format.Source(dnsTests)
+	if err != nil {
+		return err
+	}
+	if err := write(filepath.Join(sourceDirectory, "dns", "doh_lifecycle_fcx_test.go"), "doh_lifecycle_fcx_test.go", dnsTests); err != nil {
+		return err
+	}
+	dnsHealth, err := patchFiles.ReadFile("patches/dns_doh_health_fcx.go.txt")
+	if err != nil {
+		return err
+	}
+	dnsHealth, err = format.Source(dnsHealth)
+	if err != nil {
+		return err
+	}
+	if err := write(filepath.Join(sourceDirectory, "dns", "doh_health_fcx.go"), "doh_health_fcx.go", dnsHealth); err != nil {
+		return err
+	}
 	for _, name := range []string{"urltest_history_fcx.go", "urltest_history_fcx_test.go"} {
 		contents, err := patchFiles.ReadFile("patches/" + name + ".txt")
 		if err != nil {
@@ -295,6 +435,17 @@ func generate(out string) error {
 		if err := write(filepath.Join(sourceDirectory, "listener", name), name, contents); err != nil {
 			return err
 		}
+	}
+	catalogParser, err := patchFiles.ReadFile("patches/catalog_provider_fcx.go.txt")
+	if err != nil {
+		return err
+	}
+	catalogParser, err = format.Source(catalogParser)
+	if err != nil {
+		return err
+	}
+	if err := write(filepath.Join(sourceDirectory, "adapter", "provider", "catalog_provider_fcx.go"), "catalog_provider_fcx.go", catalogParser); err != nil {
+		return err
 	}
 	encoded, err := json.MarshalIndent(struct{ Replace map[string]string }{replacements}, "", "  ")
 	if err != nil {
@@ -367,7 +518,7 @@ func generate(out string) error {
 	manifest, err := json.MarshalIndent(map[string]any{
 		"schemaVersion": 1, "module": "github.com/metacubex/mihomo", "version": upstreamVersion,
 		"commit": upstreamCommit, "moduleSum": module.Sum,
-		"upstreamSourceSHA256": map[string]string{"listener/listener.go": listenerSHA256, "hub/route/configs.go": configsSHA256, "hub/route/server.go": controllerSHA256, "adapter/adapter.go": adapterSHA256},
+		"upstreamSourceSHA256": map[string]string{"listener/listener.go": listenerSHA256, "hub/route/configs.go": configsSHA256, "hub/route/server.go": controllerSHA256, "adapter/adapter.go": adapterSHA256, "dns/doh.go": dnsDoHSHA256, "common/convert/converter.go": converterSHA256},
 		"patchesSHA256":        patchHashes, "generatorSHA256": digest(generatorSource), "projectGoModSHA256": digest(rootMod),
 		"effectiveModuleSHA256": aggregateHashes(moduleHashes), "effectiveModuleFiles": moduleHashes,
 	}, "", "  ")

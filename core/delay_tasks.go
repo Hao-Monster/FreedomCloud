@@ -19,6 +19,8 @@ type delayTask struct {
 	cancel           context.CancelFunc
 	reason           string // protected by delayTasksMu
 	historyCommitted bool   // commit is the completion point for explicit UI tests
+	owner            *catalogOwner
+	catalog          *catalogEntry
 }
 
 func (task *delayTask) beginHistoryCommit(ctx context.Context) (func(), bool) {
@@ -39,9 +41,20 @@ var (
 )
 
 func cancelDelayTask(id, reason string) bool {
+	return cancelDelayTaskOwned(nil, id, reason)
+}
+
+func delayTaskKey(owner *catalogOwner, id string) string {
+	if owner == nil {
+		return id
+	}
+	return fmt.Sprintf("owner-%d/%s", owner.id, id)
+}
+
+func cancelDelayTaskOwned(owner *catalogOwner, id, reason string) bool {
 	delayTasksMu.Lock()
 	defer delayTasksMu.Unlock()
-	task := delayTasks[id]
+	task := delayTasks[delayTaskKey(owner, id)]
 	if task == nil || task.historyCommitted {
 		return false
 	}
@@ -53,10 +66,24 @@ func cancelDelayTask(id, reason string) bool {
 }
 
 func cancelAllDelayTasks(reason string) {
+	cancelMatchingDelayTasks(reason, func(*delayTask) bool { return true })
+}
+
+func cancelOwnedDelayTasks(owner *catalogOwner, reason string) {
+	cancelMatchingDelayTasks(reason, func(task *delayTask) bool { return task.owner == owner })
+}
+
+// Lock ordering is catalogMu -> delayTasksMu; the runner never holds the
+// history/cancellation mutex while acquiring or returning a catalog reference.
+func cancelCatalogDelayTasksLocked(entry *catalogEntry, reason string) {
+	cancelMatchingDelayTasks(reason, func(task *delayTask) bool { return task.catalog == entry })
+}
+
+func cancelMatchingDelayTasks(reason string, matches func(*delayTask) bool) {
 	delayTasksMu.Lock()
 	defer delayTasksMu.Unlock()
 	for _, task := range delayTasks {
-		if task.historyCommitted {
+		if task.historyCommitted || !matches(task) {
 			continue
 		}
 		if task.reason == "" {
@@ -67,15 +94,33 @@ func cancelAllDelayTasks(reason string) {
 }
 
 func handleAsyncTestDelay(paramsString string, fn func(string)) {
-	started := time.Now()
+	handleAsyncTestDelayOwned(paramsString, nil, fn)
+}
+
+func handleAsyncTestDelayOwned(paramsString string, owner *catalogOwner, fn func(string)) {
 	var params TestDelayParams
-	result := Delay{Value: -1}
-	respond := func() { data, _ := json.Marshal(result); fn(string(data)) }
 	if err := json.Unmarshal([]byte(paramsString), &params); err != nil || params.ProxyName == "" {
-		result.Reason = "invalidParameters"
-		respond()
+		data, _ := json.Marshal(Delay{Value: -1, Reason: "invalidParameters"})
+		fn(string(data))
 		return
 	}
+	runDelayTask(params, func(ctx context.Context) (constant.Proxy, string, func()) {
+		if runLock.LockContext(ctx) != nil {
+			return nil, "deadlineExceeded", nil
+		}
+		proxy := lookupDelayProxy(params.ProxyName)
+		runLock.Unlock()
+		if proxy == nil {
+			return nil, "notFound", nil
+		}
+		return proxy, "", nil
+	}, fn, params.RequestID == "", owner, nil)
+}
+
+func runDelayTask(params TestDelayParams, lookup func(context.Context) (constant.Proxy, string, func()), fn func(string), broadcast bool, owner *catalogOwner, entry *catalogEntry) {
+	started := time.Now()
+	result := Delay{Value: -1}
+	respond := func() { data, _ := json.Marshal(result); fn(string(data)) }
 	result.Name, result.Url = params.ProxyName, params.TestUrl
 	if result.Url == "" {
 		result.Url = "https://www.gstatic.com/generate_204"
@@ -99,11 +144,27 @@ func handleAsyncTestDelay(paramsString string, fn func(string)) {
 	if id == "" {
 		id = fmt.Sprintf("legacy-%d", delaySequence.Add(1))
 	}
+	id = delayTaskKey(owner, id)
 	ctx, cancel := context.WithDeadline(context.Background(), started.Add(time.Duration(params.Timeout)*time.Millisecond))
-	task := &delayTask{cancel: cancel}
+	task := &delayTask{cancel: cancel, owner: owner, catalog: entry}
+	// Linearize registration with disconnect/release, including a request whose
+	// action goroutine did not begin until its old connection was already closed.
+	catalogMu.RLock()
+	if owner != nil && owner.closed || entry != nil && (entry.retired || catalogStopped) {
+		catalogMu.RUnlock()
+		cancel()
+		<-delayTaskSlots
+		result.Reason = "sessionClosed"
+		if entry != nil {
+			result.Reason = "catalogNotFound"
+		}
+		respond()
+		return
+	}
 	delayTasksMu.Lock()
 	if delayTasks[id] != nil {
 		delayTasksMu.Unlock()
+		catalogMu.RUnlock()
 		cancel()
 		<-delayTaskSlots
 		result.Reason = "duplicateRequest"
@@ -112,6 +173,7 @@ func handleAsyncTestDelay(paramsString string, fn func(string)) {
 	}
 	delayTasks[id] = task
 	delayTasksMu.Unlock()
+	catalogMu.RUnlock()
 	if params.RequestID != "" {
 		ctx = adapter.WithURLTestHistoryGuard(ctx, func() (func(), bool) { return task.beginHistoryCommit(ctx) })
 	}
@@ -123,13 +185,12 @@ func handleAsyncTestDelay(paramsString string, fn func(string)) {
 				if ctx.Err() != nil {
 					return
 				}
-				if runLock.LockContext(ctx) != nil {
-					return
+				proxy, reason, release := lookup(ctx)
+				if release != nil {
+					defer release()
 				}
-				proxy := lookupDelayProxy(params.ProxyName)
-				runLock.Unlock()
 				if proxy == nil {
-					result.Reason = "notFound"
+					result.Reason = reason
 					return
 				}
 				expected, _ := utils.NewUnsignedRanges[uint16]("")
@@ -153,11 +214,11 @@ func handleAsyncTestDelay(paramsString string, fn func(string)) {
 		delayTasksMu.Unlock()
 		cancel()
 		<-delayTaskSlots
-		respond()
 		// Request-id callers own their result generation. Emitting a second,
 		// uncorrelated stream update could resurrect a cancelled Dart batch.
-		if result.Value > 0 && params.RequestID == "" {
+		if result.Value > 0 && broadcast {
 			sendMessage(Message{Type: DelayMessage, Data: &result})
 		}
+		respond()
 	}()
 }

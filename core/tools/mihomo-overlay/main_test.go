@@ -54,6 +54,51 @@ func TestPatchIsDeterministicAndRejectsChangedShape(t *testing.T) {
 	}
 }
 
+const minimalDNSDoH = `package dns
+type dnsOverHTTPS struct {
+	client   *http.Client
+	clientMu sync.Mutex
+}
+func (doh *dnsOverHTTPS) ExchangeContext(ctx context.Context, m *D.Msg) (msg *D.Msg, err error) {}
+func (doh *dnsOverHTTPS) resetClient(ctx context.Context, resetErr error) (client *http.Client, err error) {}
+func (doh *dnsOverHTTPS) getClient(ctx context.Context) (c *http.Client, isCached bool, err error) {}
+func (doh *dnsOverHTTPS) ResetConnection() { originalReset() }
+`
+
+func TestDNSPatchIsDeterministicAndRejectsChangedShape(t *testing.T) {
+	first, err := patchDNSDoH([]byte(minimalDNSDoH))
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := patchDNSDoH([]byte(minimalDNSDoH))
+	if err != nil || !bytes.Equal(first, second) {
+		t.Fatalf("DoH patch is nondeterministic: %v", err)
+	}
+	for _, required := range []string{"failedClient *http.Client", "ctx.Err()", "originalReset()", "fcxHealth fcxDoHHealth", "fcxNoteCallerTimeout"} {
+		if !bytes.Contains(first, []byte(required)) {
+			t.Fatalf("DoH recovery patch lost %q", required)
+		}
+	}
+	for name, source := range map[string]string{
+		"missing":        strings.Replace(minimalDNSDoH, " getClient(", " removedClient(", 1),
+		"other receiver": strings.Replace(minimalDNSDoH, "*dnsOverHTTPS", "*otherClient", 1),
+		"value receiver": strings.Replace(minimalDNSDoH, "*dnsOverHTTPS", "dnsOverHTTPS", 1),
+		"not a method":   strings.Replace(minimalDNSDoH, "(doh *dnsOverHTTPS) ", "", 1),
+		"duplicate":      minimalDNSDoH + "\nfunc (doh *dnsOverHTTPS) getClient() {}\n",
+		"invalid syntax": "package dns\nfunc (",
+		"no struct":      strings.Replace(minimalDNSDoH, "type dnsOverHTTPS struct", "type otherClient struct", 1),
+		"two structs":    minimalDNSDoH + "\ntype dnsOverHTTPS struct{}\n",
+		"not a struct":   strings.Replace(minimalDNSDoH, "type dnsOverHTTPS struct {\n\tclient   *http.Client\n\tclientMu sync.Mutex\n}", "type dnsOverHTTPS int", 1),
+		"already patched": strings.Replace(minimalDNSDoH, "clientMu sync.Mutex\n", "clientMu sync.Mutex\n\tfcxHealth int\n", 1),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := patchDNSDoH([]byte(source)); err == nil {
+				t.Fatal("changed upstream DoH shape accepted")
+			}
+		})
+	}
+}
+
 func TestProvenanceDigestIgnoresMapOrderAndDetectsAnyFileChange(t *testing.T) {
 	left := map[string]string{"b": digest([]byte("b")), "a": digest([]byte("a"))}
 	right := map[string]string{"a": digest([]byte("a")), "b": digest([]byte("b"))}

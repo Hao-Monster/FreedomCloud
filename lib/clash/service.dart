@@ -113,6 +113,40 @@ class ClashService extends ClashHandlerInterface {
 
   bool? get agentProxyRunning => _agentProxyRunning;
 
+  // The Agent republishes proxyRunning only on Core state transitions. Keep
+  // the cache aligned with listener commands acknowledged by the same Core;
+  // otherwise a running proxy looks stopped after an ordinary stop/start and
+  // a TUN-only enable falls back to a full profile reload.
+  bool _sameAgentCore(int epoch, int? generation) =>
+      _agentMode &&
+      epoch == _connectionEpoch &&
+      generation == _agentGeneration &&
+      agentCoreReady;
+
+  @override
+  Future<bool> startListener() async {
+    final epoch = _connectionEpoch;
+    final generation = _agentGeneration;
+    final started = await super.startListener();
+    if (started && _sameAgentCore(epoch, generation)) {
+      _agentProxyRunning = true;
+    }
+    return started;
+  }
+
+  @override
+  Future<bool> stopListener() async {
+    final epoch = _connectionEpoch;
+    final generation = _agentGeneration;
+    final stopped = await super.stopListener();
+    // An unacknowledged stop leaves the previous claim; the next Agent state
+    // event or TUN observation remains authoritative.
+    if (stopped && _sameAgentCore(epoch, generation)) {
+      _agentProxyRunning = false;
+    }
+    return stopped;
+  }
+
   /// Latest strict-capture status reported by the Agent.  The value is
   /// fail-closed by default and is never inferred from `proxyRunning`.
   AgentStrictPolicyStatus get strictPolicyStatus =>
@@ -294,6 +328,10 @@ class ClashService extends ClashHandlerInterface {
     }
   }
 
+  bool? _mergeProxyRunning(AgentEvent event, bool sameReadyCore) =>
+      mergeAgentProxyRunning(event,
+          cached: _agentProxyRunning, sameReadyCore: sameReadyCore);
+
   void _handleAgentEvent(AgentEvent event) {
     final identity = _agentIdentity;
     if (identity?.agentInstanceId != null &&
@@ -306,10 +344,13 @@ class ClashService extends ClashHandlerInterface {
         event.coreState != AgentCoreState.ready) {
       onTunTransportChanged?.call();
     }
+    final sameReadyCore = _agentGeneration == event.generation &&
+        _agentIdentity?.agentInstanceId == event.agentInstanceId &&
+        _agentCoreState == AgentCoreState.ready;
     _agentGeneration = event.generation;
     _agentIdentity = event;
     _agentCoreState = event.coreState;
-    _agentProxyRunning = event.coreState == AgentCoreState.ready ? event.proxyRunning : null;
+    _agentProxyRunning = _mergeProxyRunning(event, sameReadyCore);
     _publishStrictPolicyStatus(
       strictPolicyStatusForCore(
         status: event.strictPolicyStatus,
@@ -321,7 +362,6 @@ class ClashService extends ClashHandlerInterface {
       _agentAttachedCompleter.complete();
     }
     if (event.coreState == AgentCoreState.ready) {
-      _agentProxyRunning = event.proxyRunning;
       _agentUsingHelper = event.privilegedBackend ?? _agentUsingHelper;
       if (!_coreReadyCompleter.isCompleted) {
         _coreReadyCompleter.complete();

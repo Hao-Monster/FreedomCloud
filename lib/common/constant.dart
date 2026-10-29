@@ -9,6 +9,8 @@ import 'package:flclashx/models/models.dart';
 import 'package:flutter/material.dart';
 
 const appName = "FlClashX";
+const nodeOverviewEnabled =
+    bool.fromEnvironment('FCX_NODE_OVERVIEW', defaultValue: true);
 const appHelperService = "FlClashHelperService";
 const coreName = "clashx.meta";
 const browserUa =

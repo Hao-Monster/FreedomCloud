@@ -23,6 +23,35 @@ const _gift = GiftReward(
   ),
 );
 
+const _singleUsCatalog = XboardPlanCatalog(plans: [
+  XboardPlanOffer(
+    id: 10,
+    name: 'ultra线路-美国',
+    transferGiB: 200,
+    speedLimit: 0,
+    deviceLimit: 0,
+    resetTrafficMethod: 2,
+    capacityRemaining: null,
+    hasSpeedLimit: true,
+    hasDeviceLimit: true,
+    hasResetTrafficMethod: true,
+    hasCapacityRemaining: true,
+    tags: ['IEPL专线', '流媒体解锁'],
+    prices: [XboardPlanPrice(period: 'onetime', amount: 15000)],
+    content: '''
+## 套餐特点
+- 美国原生高速专线，晚高峰低延迟稳定连接
+- 一次性流量包，无到期时间限制
+- 支持 Windows、macOS、iOS、Android 全平台
+
+## 使用说明
+1. 点击获取兑换码联系微信客服或打开自助商店
+2. 右侧登录账户后粘贴兑换码查询权益
+3. 核对权益无误后点击确认兑换并同步订阅
+''',
+  ),
+]);
+
 void main() {
   String? previewFont;
   setUpAll(() async {
@@ -38,6 +67,12 @@ void main() {
       await loader.load();
       previewFont = 'PurchasePreviewChinese';
     }
+    await (FontLoader('JetBrainsMono')
+          ..addFont(rootBundle.load('assets/fonts/JetBrainsMono-Regular.ttf')))
+        .load();
+    await (FontLoader('Twemoji')
+          ..addFont(rootBundle.load('assets/fonts/Twemoji.Mozilla.ttf')))
+        .load();
     final icons = FontLoader('MaterialIcons')
       ..addFont(rootBundle.load('fonts/MaterialIcons-Regular.otf'));
     await icons.load();
@@ -47,6 +82,9 @@ void main() {
       (tester) async {
     final output = Directory('build/purchase-preview');
     await tester.runAsync(() => output.create(recursive: true));
+    final flagshipGuest = _PreviewManager()
+      ..account = null
+      ..planCatalog = _singleUsCatalog;
     final preview = _PreviewManager()
       ..code = 'DEMO2026MONTH'
       ..preview = GiftPreview(
@@ -91,11 +129,12 @@ void main() {
         total: 1,
       );
     final scenarios = [
-      ('login', const Size(1000, 960), _PreviewManager()..account = null),
-      ('narrow-login', const Size(320, 960), _PreviewManager()..account = null),
-      ('redemption-preview', const Size(1100, 1440), preview),
-      ('success-sync-failed', const Size(1100, 1500), success),
-      ('narrow-preview', const Size(320, 1800), preview),
+      ('flagship-us-single', const Size(1280, 920), flagshipGuest),
+      ('login', const Size(1180, 960), _PreviewManager()..account = null),
+      ('narrow-login', const Size(360, 960), _PreviewManager()..account = null),
+      ('redemption-preview', const Size(1240, 1180), preview),
+      ('success-sync-failed', const Size(1240, 1280), success),
+      ('narrow-preview', const Size(360, 1500), preview),
     ];
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
@@ -138,6 +177,12 @@ void main() {
       ));
       await tester.pumpAndSettle();
       expect(tester.takeException(), isNull, reason: name);
+      if (name == 'success-sync-failed') {
+        await tester.ensureVisible(find.byKey(const Key('purchase-history-toggle')));
+        await tester.tap(find.byKey(const Key('purchase-history-toggle')));
+        await tester.pumpAndSettle();
+        expect(tester.takeException(), isNull, reason: '$name-history');
+      }
       for (final phase in ['', '-support']) {
         if (phase.isNotEmpty) {
           await tester.ensureVisible(find.text('微信号: dxm_qa'));
@@ -175,10 +220,12 @@ class _PreviewManager extends ChangeNotifier implements PurchaseManager {
   XboardPlanCatalog? planCatalog = const XboardPlanCatalog(plans: [
     XboardPlanOffer(
       id: 1,
-      name: '标准套餐',
+      name: '标准套餐 · 日本/新加坡',
       transferGiB: 200,
       speedLimit: 300,
       deviceLimit: 5,
+      capacityRemaining: 8,
+      tags: ['BGP高速', '晚高峰稳定'],
       prices: [
         XboardPlanPrice(period: 'monthly', amount: 1500),
         XboardPlanPrice(period: 'yearly', amount: 15000),
@@ -186,8 +233,9 @@ class _PreviewManager extends ChangeNotifier implements PurchaseManager {
     ),
     XboardPlanOffer(
       id: 2,
-      name: '轻量流量包',
+      name: '轻量流量包 · 美国',
       transferGiB: 50,
+      tags: ['按量不限时'],
       prices: [XboardPlanPrice(period: 'onetime', amount: 3000)],
     ),
   ]);

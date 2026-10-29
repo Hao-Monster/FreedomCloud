@@ -4489,10 +4489,10 @@ class AppLocalizations {
     );
   }
 
-  /// `Use your Xboard account. Cards are redeemed for the account shown here.`
+  /// `Sign in to your account to redeem a code and sync high-speed nodes automatically.`
   String get purchaseLoginDescription {
     return Intl.message(
-      'Use your Xboard account. Cards are redeemed for the account shown here.',
+      'Sign in to your account to redeem a code and sync high-speed nodes automatically.',
       name: 'purchaseLoginDescription',
       desc: '',
       args: [],
@@ -5621,6 +5621,901 @@ class AppLocalizations {
       name: 'tunErrorProfileRequired',
       desc: '',
       args: [],
+    );
+  }
+
+  /// `Current profile`
+  String get nodeOverviewCurrentProfile {
+    return Intl.message(
+      'Current profile',
+      name: 'nodeOverviewCurrentProfile',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `All profiles`
+  String get nodeOverviewAllProfiles {
+    return Intl.message(
+      'All profiles',
+      name: 'nodeOverviewAllProfiles',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Active`
+  String get nodeOverviewActive {
+    return Intl.message(
+      'Active',
+      name: 'nodeOverviewActive',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Available only`
+  String get nodeOverviewAvailableOnly {
+    return Intl.message(
+      'Available only',
+      name: 'nodeOverviewAvailableOnly',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Runtime node`
+  String get nodeOverviewRuntimeSource {
+    return Intl.message(
+      'Runtime node',
+      name: 'nodeOverviewRuntimeSource',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Untested`
+  String get nodeOverviewUntested {
+    return Intl.message(
+      'Untested',
+      name: 'nodeOverviewUntested',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Test failed`
+  String get nodeOverviewTestFailed {
+    return Intl.message(
+      'Test failed',
+      name: 'nodeOverviewTestFailed',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `May be outdated`
+  String get nodeOverviewStale {
+    return Intl.message(
+      'May be outdated',
+      name: 'nodeOverviewStale',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Last active test: {time}`
+  String nodeOverviewLastActiveTest(String time) {
+    return Intl.message(
+      'Last active test: $time',
+      name: 'nodeOverviewLastActiveTest',
+      desc: '',
+      args: [time],
+    );
+  }
+
+  /// `Last test: {time}`
+  String nodeOverviewLastTest(String time) {
+    return Intl.message(
+      'Last test: $time',
+      name: 'nodeOverviewLastTest',
+      desc: '',
+      args: [time],
+    );
+  }
+
+  /// `{available} available / {tested} tested / {total} total`
+  String nodeOverviewHealthCounts(int available, int tested, int total) {
+    return Intl.message(
+      '$available available / $tested tested / $total total',
+      name: 'nodeOverviewHealthCounts',
+      desc: '',
+      args: [available, tested, total],
+    );
+  }
+
+  /// `Median: {delay}`
+  String nodeOverviewMedian(String delay) {
+    return Intl.message(
+      'Median: $delay',
+      name: 'nodeOverviewMedian',
+      desc: '',
+      args: [delay],
+    );
+  }
+
+  /// `Profile file is missing`
+  String get nodeOverviewFileMissing {
+    return Intl.message(
+      'Profile file is missing',
+      name: 'nodeOverviewFileMissing',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Profile could not be parsed`
+  String get nodeOverviewParseFailed {
+    return Intl.message(
+      'Profile could not be parsed',
+      name: 'nodeOverviewParseFailed',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Subscription expired`
+  String get nodeOverviewExpired {
+    return Intl.message(
+      'Subscription expired',
+      name: 'nodeOverviewExpired',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Updating subscription`
+  String get nodeOverviewUpdating {
+    return Intl.message(
+      'Updating subscription',
+      name: 'nodeOverviewUpdating',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Manage profiles / update subscription`
+  String get nodeOverviewManageProfiles {
+    return Intl.message(
+      'Manage profiles / update subscription',
+      name: 'nodeOverviewManageProfiles',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `{provider}: nodes visible after activation`
+  String nodeOverviewProviderPending(String provider) {
+    return Intl.message(
+      '$provider: nodes visible after activation',
+      name: 'nodeOverviewProviderPending',
+      desc: '',
+      args: [provider],
+    );
+  }
+
+  /// `No matching nodes`
+  String get nodeOverviewNoNodes {
+    return Intl.message(
+      'No matching nodes',
+      name: 'nodeOverviewNoNodes',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Too many nodes to display in this preview`
+  String get nodeOverviewTooManyNodes {
+    return Intl.message(
+      'Too many nodes to display in this preview',
+      name: 'nodeOverviewTooManyNodes',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Summary includes loaded nodes only`
+  String get nodeOverviewPartialSummary {
+    return Intl.message(
+      'Summary includes loaded nodes only',
+      name: 'nodeOverviewPartialSummary',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Delay results are kept until the next completed test. Test times appear below each node.`
+  String get nodeOverviewHistoryNotice {
+    return Intl.message(
+      'Delay results are kept until the next completed test. Test times appear below each node.',
+      name: 'nodeOverviewHistoryNotice',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Node could not be identified`
+  String get nodeOverviewNodeUnidentified {
+    return Intl.message(
+      'Node could not be identified',
+      name: 'nodeOverviewNodeUnidentified',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Live`
+  String get nodeOverviewLive {
+    return Intl.message('Live', name: 'nodeOverviewLive', desc: '', args: []);
+  }
+
+  /// `Independent delay test`
+  String get nodeOverviewIndependentTest {
+    return Intl.message(
+      'Independent delay test',
+      name: 'nodeOverviewIndependentTest',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Profile file · {provider}`
+  String nodeOverviewFileSource(String provider) {
+    return Intl.message(
+      'Profile file · $provider',
+      name: 'nodeOverviewFileSource',
+      desc: '',
+      args: [provider],
+    );
+  }
+
+  /// `Test current profile`
+  String get nodeOverviewTestCurrent {
+    return Intl.message(
+      'Test current profile',
+      name: 'nodeOverviewTestCurrent',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Test all node delays`
+  String get nodeOverviewTestAll {
+    return Intl.message(
+      'Test all node delays',
+      name: 'nodeOverviewTestAll',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Delay test`
+  String get nodeOverviewTestNode {
+    return Intl.message(
+      'Delay test',
+      name: 'nodeOverviewTestNode',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `{completed} / {total}`
+  String nodeOverviewProgress(int completed, int total) {
+    return Intl.message(
+      '$completed / $total',
+      name: 'nodeOverviewProgress',
+      desc: '',
+      args: [completed, total],
+    );
+  }
+
+  /// `Proxy chains cannot be tested in isolation`
+  String get nodeOverviewChainUnsupported {
+    return Intl.message(
+      'Proxy chains cannot be tested in isolation',
+      name: 'nodeOverviewChainUnsupported',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `This protocol is not supported for isolated tests`
+  String get nodeOverviewTypeUnsupported {
+    return Intl.message(
+      'This protocol is not supported for isolated tests',
+      name: 'nodeOverviewTypeUnsupported',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Provider cache is unavailable`
+  String get nodeOverviewProviderNotCached {
+    return Intl.message(
+      'Provider cache is unavailable',
+      name: 'nodeOverviewProviderNotCached',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Isolated tests are unavailable in strict mode`
+  String get nodeOverviewStrictUnsupported {
+    return Intl.message(
+      'Isolated tests are unavailable in strict mode',
+      name: 'nodeOverviewStrictUnsupported',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Could not start this test. Check the background component version and retry.`
+  String get nodeOverviewTestUnavailable {
+    return Intl.message(
+      'Could not start this test. Check the background component version and retry.',
+      name: 'nodeOverviewTestUnavailable',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Test interrupted; earlier measurements were preserved`
+  String get nodeOverviewTestInterrupted {
+    return Intl.message(
+      'Test interrupted; earlier measurements were preserved',
+      name: 'nodeOverviewTestInterrupted',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Local provider nodes are not supported in this preview`
+  String get nodeOverviewPreviewUnsupported {
+    return Intl.message(
+      'Local provider nodes are not supported in this preview',
+      name: 'nodeOverviewPreviewUnsupported',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Completed {completed} · Failed {failed} · Untested {untested} · Profiles with issues {profiles}`
+  String nodeOverviewBatchSummary(
+    int completed,
+    int failed,
+    int untested,
+    int profiles,
+  ) {
+    return Intl.message(
+      'Completed $completed · Failed $failed · Untested $untested · Profiles with issues $profiles',
+      name: 'nodeOverviewBatchSummary',
+      desc: '',
+      args: [completed, failed, untested, profiles],
+    );
+  }
+
+  /// `Duplicate node definitions; identity could not be verified`
+  String get nodeOverviewAmbiguousNode {
+    return Intl.message(
+      'Duplicate node definitions; identity could not be verified',
+      name: 'nodeOverviewAmbiguousNode',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `History storage is full; some results were not saved`
+  String get nodeOverviewHealthCapacityExceeded {
+    return Intl.message(
+      'History storage is full; some results were not saved',
+      name: 'nodeOverviewHealthCapacityExceeded',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Additional issue types: {count}`
+  String nodeOverviewMoreIssues(int count) {
+    return Intl.message(
+      'Additional issue types: $count',
+      name: 'nodeOverviewMoreIssues',
+      desc: '',
+      args: [count],
+    );
+  }
+
+  /// `Provider URL does not meet safety requirements`
+  String get nodeOverviewProviderUnsafeUrl {
+    return Intl.message(
+      'Provider URL does not meet safety requirements',
+      name: 'nodeOverviewProviderUnsafeUrl',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Provider file is outside the allowed directory`
+  String get nodeOverviewProviderUnsafePath {
+    return Intl.message(
+      'Provider file is outside the allowed directory',
+      name: 'nodeOverviewProviderUnsafePath',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Provider download failed`
+  String get nodeOverviewProviderDownloadFailed {
+    return Intl.message(
+      'Provider download failed',
+      name: 'nodeOverviewProviderDownloadFailed',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Provider exceeds the size or node limit`
+  String get nodeOverviewProviderTooLarge {
+    return Intl.message(
+      'Provider exceeds the size or node limit',
+      name: 'nodeOverviewProviderTooLarge',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `These provider options are not supported`
+  String get nodeOverviewProviderOptionsUnsupported {
+    return Intl.message(
+      'These provider options are not supported',
+      name: 'nodeOverviewProviderOptionsUnsupported',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Test or provider read timed out`
+  String get nodeOverviewTestTimedOut {
+    return Intl.message(
+      'Test or provider read timed out',
+      name: 'nodeOverviewTestTimedOut',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Provider nodes are not loaded yet. Testing all node delays reads them and downloads missing caches.`
+  String get nodeOverviewProviderUnloaded {
+    return Intl.message(
+      'Provider nodes are not loaded yet. Testing all node delays reads them and downloads missing caches.',
+      name: 'nodeOverviewProviderUnloaded',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Some delay results could not be saved`
+  String get nodeOverviewHealthStoreUnavailable {
+    return Intl.message(
+      'Some delay results could not be saved',
+      name: 'nodeOverviewHealthStoreUnavailable',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Use`
+  String get nodeOverviewUseNode {
+    return Intl.message('Use', name: 'nodeOverviewUseNode', desc: '', args: []);
+  }
+
+  /// `In use`
+  String get nodeOverviewInUse {
+    return Intl.message(
+      'In use',
+      name: 'nodeOverviewInUse',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `1. Choose plan or get code`
+  String get purchaseStepBrowse {
+    return Intl.message(
+      '1. Choose plan or get code',
+      name: 'purchaseStepBrowse',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `2. Sign in & verify code`
+  String get purchaseStepRedeem {
+    return Intl.message(
+      '2. Sign in & verify code',
+      name: 'purchaseStepRedeem',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `3. Auto-sync nodes`
+  String get purchaseStepSync {
+    return Intl.message(
+      '3. Auto-sync nodes',
+      name: 'purchaseStepSync',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Have a code? Redeem now`
+  String get purchaseJumpToWorkbench {
+    return Intl.message(
+      'Have a code? Redeem now',
+      name: 'purchaseJumpToWorkbench',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `All plans`
+  String get purchaseFilterAll {
+    return Intl.message(
+      'All plans',
+      name: 'purchaseFilterAll',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Recurring`
+  String get purchaseFilterPeriod {
+    return Intl.message(
+      'Recurring',
+      name: 'purchaseFilterPeriod',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Traffic pack`
+  String get purchaseFilterOnetime {
+    return Intl.message(
+      'Traffic pack',
+      name: 'purchaseFilterOnetime',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Get redemption code`
+  String get purchaseAcquirePlanCode {
+    return Intl.message(
+      'Get redemption code',
+      name: 'purchaseAcquirePlanCode',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Sold out`
+  String get purchasePlanSoldOut {
+    return Intl.message(
+      'Sold out',
+      name: 'purchasePlanSoldOut',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `{count} left`
+  String purchasePlanLowStock(int count) {
+    return Intl.message(
+      '$count left',
+      name: 'purchasePlanLowStock',
+      desc: '',
+      args: [count],
+    );
+  }
+
+  /// `Show full plan details`
+  String get purchasePlanExpandDetails {
+    return Intl.message(
+      'Show full plan details',
+      name: 'purchasePlanExpandDetails',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Hide plan details`
+  String get purchasePlanCollapseDetails {
+    return Intl.message(
+      'Hide plan details',
+      name: 'purchasePlanCollapseDetails',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Contact support or open the card store to get a code, then return here to redeem. No order is created in the app.`
+  String get purchaseAcquireSheetSubtitle {
+    return Intl.message(
+      'Contact support or open the card store to get a code, then return here to redeem. No order is created in the app.',
+      name: 'purchaseAcquireSheetSubtitle',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Copy plan inquiry`
+  String get purchaseCopyInquiry {
+    return Intl.message(
+      'Copy plan inquiry',
+      name: 'purchaseCopyInquiry',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Hello, I would like to get a redemption code for [{plan} · {quota} GiB ({price})].`
+  String purchaseInquiryTemplate(String plan, int quota, String price) {
+    return Intl.message(
+      'Hello, I would like to get a redemption code for [$plan · $quota GiB ($price)].',
+      name: 'purchaseInquiryTemplate',
+      desc: '',
+      args: [plan, quota, price],
+    );
+  }
+
+  /// `Show password`
+  String get purchaseShowPassword {
+    return Intl.message(
+      'Show password',
+      name: 'purchaseShowPassword',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Hide password`
+  String get purchaseHidePassword {
+    return Intl.message(
+      'Hide password',
+      name: 'purchaseHidePassword',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Clear code`
+  String get purchaseClearCode {
+    return Intl.message(
+      'Clear code',
+      name: 'purchaseClearCode',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Renewal`
+  String get purchaseRenewalBadge {
+    return Intl.message(
+      'Renewal',
+      name: 'purchaseRenewalBadge',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `New activation`
+  String get purchaseNewActivationBadge {
+    return Intl.message(
+      'New activation',
+      name: 'purchaseNewActivationBadge',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `View profiles & nodes`
+  String get purchaseOpenNodesAction {
+    return Intl.message(
+      'View profiles & nodes',
+      name: 'purchaseOpenNodesAction',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Remaining: {traffic}`
+  String nodeOverviewRemainingTraffic(String traffic) {
+    return Intl.message(
+      'Remaining: $traffic',
+      name: 'nodeOverviewRemainingTraffic',
+      desc: '',
+      args: [traffic],
+    );
+  }
+
+  /// `Used {used} / {total}`
+  String nodeOverviewUsedOfTotalTraffic(String used, String total) {
+    return Intl.message(
+      'Used $used / $total',
+      name: 'nodeOverviewUsedOfTotalTraffic',
+      desc: '',
+      args: [used, total],
+    );
+  }
+
+  /// `Traffic: Unlimited`
+  String get nodeOverviewTrafficUnlimited {
+    return Intl.message(
+      'Traffic: Unlimited',
+      name: 'nodeOverviewTrafficUnlimited',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Used: {used}`
+  String nodeOverviewUsedTrafficOnly(String used) {
+    return Intl.message(
+      'Used: $used',
+      name: 'nodeOverviewUsedTrafficOnly',
+      desc: '',
+      args: [used],
+    );
+  }
+
+  /// `Expires: {date}`
+  String nodeOverviewExpireAt(String date) {
+    return Intl.message(
+      'Expires: $date',
+      name: 'nodeOverviewExpireAt',
+      desc: '',
+      args: [date],
+    );
+  }
+
+  /// `{days}d left`
+  String nodeOverviewExpireDaysLeft(int days) {
+    return Intl.message(
+      '${days}d left',
+      name: 'nodeOverviewExpireDaysLeft',
+      desc: '',
+      args: [days],
+    );
+  }
+
+  /// `{hours}h left`
+  String nodeOverviewExpireHoursLeft(int hours) {
+    return Intl.message(
+      '${hours}h left',
+      name: 'nodeOverviewExpireHoursLeft',
+      desc: '',
+      args: [hours],
+    );
+  }
+
+  /// `< 1h left`
+  String get nodeOverviewExpireSoon {
+    return Intl.message(
+      '< 1h left',
+      name: 'nodeOverviewExpireSoon',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Expires: Never`
+  String get nodeOverviewNeverExpires {
+    return Intl.message(
+      'Expires: Never',
+      name: 'nodeOverviewNeverExpires',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Synced: {time}`
+  String nodeOverviewLastSync(String time) {
+    return Intl.message(
+      'Synced: $time',
+      name: 'nodeOverviewLastSync',
+      desc: '',
+      args: [time],
+    );
+  }
+
+  /// `Auto-update {hours}h`
+  String nodeOverviewAutoUpdateHours(int hours) {
+    return Intl.message(
+      'Auto-update ${hours}h',
+      name: 'nodeOverviewAutoUpdateHours',
+      desc: '',
+      args: [hours],
+    );
+  }
+
+  /// `Auto-update {minutes}m`
+  String nodeOverviewAutoUpdateMinutes(int minutes) {
+    return Intl.message(
+      'Auto-update ${minutes}m',
+      name: 'nodeOverviewAutoUpdateMinutes',
+      desc: '',
+      args: [minutes],
+    );
+  }
+
+  /// `Manual update`
+  String get nodeOverviewManualUpdate {
+    return Intl.message(
+      'Manual update',
+      name: 'nodeOverviewManualUpdate',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Local file`
+  String get nodeOverviewLocalProfile {
+    return Intl.message(
+      'Local file',
+      name: 'nodeOverviewLocalProfile',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Device limit reached`
+  String get nodeOverviewDeviceLimitReached {
+    return Intl.message(
+      'Device limit reached',
+      name: 'nodeOverviewDeviceLimitReached',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Expired`
+  String get nodeOverviewStatusExpired {
+    return Intl.message(
+      'Expired',
+      name: 'nodeOverviewStatusExpired',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Announcement: {text}`
+  String nodeOverviewAnnouncement(String text) {
+    return Intl.message(
+      'Announcement: $text',
+      name: 'nodeOverviewAnnouncement',
+      desc: '',
+      args: [text],
+    );
+  }
+
+  /// `Switched to {profile} · {node}`
+  String nodeOverviewSwitchedToNode(String profile, String node) {
+    return Intl.message(
+      'Switched to $profile · $node',
+      name: 'nodeOverviewSwitchedToNode',
+      desc: '',
+      args: [profile, node],
     );
   }
 }

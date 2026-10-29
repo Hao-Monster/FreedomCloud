@@ -84,6 +84,17 @@ class AgentEndpoint {
   final String? instanceId;
 }
 
+/// Next cached listener state after [event]. An envelope without the
+/// `proxyRunning` key (strict status, command results) must not erase a state
+/// acknowledged for the same ready Core; a different or non-ready Core has no
+/// known listener state.
+bool? mergeAgentProxyRunning(AgentEvent event,
+    {required bool? cached, required bool sameReadyCore}) {
+  if (event.coreState != AgentCoreState.ready) return null;
+  if (event.proxyRunningReported) return event.proxyRunning;
+  return sameReadyCore ? cached : null;
+}
+
 class AgentEvent {
   const AgentEvent({
     required this.type,
@@ -92,6 +103,7 @@ class AgentEvent {
     this.id,
     this.ok,
     this.proxyRunning,
+    this.proxyRunningReported = false,
     this.privilegedBackend,
     this.agentInstanceId,
     this.agentPid,
@@ -120,6 +132,7 @@ class AgentEvent {
         id: envelope['id'] as String?,
         ok: envelope['ok'] as bool?,
         proxyRunning: envelope['proxyRunning'] as bool?,
+        proxyRunningReported: envelope.containsKey('proxyRunning'),
         privilegedBackend: envelope['privilegedBackend'] as bool?,
         agentInstanceId: envelope['agentInstanceId'] as String?,
         agentPid: envelope['agentPid'] as int?,
@@ -140,6 +153,11 @@ class AgentEvent {
   final String? id;
   final bool? ok;
   final bool? proxyRunning;
+
+  /// Only `coreState`/`ready` envelopes carry `proxyRunning` (an explicit
+  /// `null` there means "no listener decision yet"). Strict-status and
+  /// command-result envelopes omit the key and say nothing about listeners.
+  final bool proxyRunningReported;
   final bool? privilegedBackend;
   final String? agentInstanceId;
   final int? agentPid;

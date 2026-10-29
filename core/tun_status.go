@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"net"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/metacubex/mihomo/listener"
@@ -103,8 +104,13 @@ func observeTunInterface(name string) string {
 	if err != nil {
 		return "unknown"
 	}
+	return matchTunInterface(name, interfaces)
+}
+
+// Windows interface (friendly) names are case-insensitive.
+func matchTunInterface(name string, interfaces []net.Interface) string {
 	for _, adapter := range interfaces {
-		if adapter.Name == name {
+		if strings.EqualFold(adapter.Name, name) {
 			if adapter.Flags&net.FlagUp != 0 {
 				return "up"
 			}

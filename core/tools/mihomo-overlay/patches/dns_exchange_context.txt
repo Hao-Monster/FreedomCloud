@@ -1,0 +1,60 @@
+func (doh *dnsOverHTTPS) ExchangeContext(ctx context.Context, m *D.Msg) (msg *D.Msg, err error) {
+	m = m.Copy()
+	id := m.Id
+	m.Id = 0
+	defer func() {
+		m.Id = id
+		if msg != nil {
+			msg.Id = id
+		}
+	}()
+
+	client, isCached, err := doh.getClient(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to init http client: %w", err)
+	}
+	attemptStart, answersBefore := time.Now(), doh.fcxAnswerMark()
+	msg, err = doh.exchangeHTTPS(ctx, client, m)
+
+	// A caller's expired deadline alone says nothing about the shared
+	// transport; fcxNoteCallerTimeout decides from connection-level evidence.
+	// A transport timeout with a still-live caller keeps upstream recovery.
+	for i := 0; isCached && doh.shouldRetry(err) && i < 2; i++ {
+		if ctx.Err() != nil {
+			break
+		}
+		log.Debugln("[DNS][DoH] %s: retrying on a new connection after: %s", doh.fcxHost(), doh.fcxRedact(err))
+		client, err = doh.resetClient(ctx, client, err)
+		if err != nil {
+			return nil, fmt.Errorf("failed to reset http client: %w", err)
+		}
+		if client == nil {
+			// Explicit ResetConnection may have invalidated the old generation.
+			// Only a live retry lazily creates a client; stale final cleanup must
+			// not undo that explicit reset.
+			client, _, err = doh.getClient(ctx)
+			if err != nil {
+				return nil, fmt.Errorf("failed to init http client: %w", err)
+			}
+		}
+		attemptStart, answersBefore = time.Now(), doh.fcxAnswerMark()
+		msg, err = doh.exchangeHTTPS(ctx, client, m)
+	}
+
+	if err == nil {
+		doh.fcxNoteSuccess(client)
+		return msg, nil
+	}
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		doh.fcxNoteCallerTimeout(client, attemptStart, answersBefore, ctxErr, err)
+		if errors.Is(err, ctxErr) {
+			return nil, err
+		}
+		return nil, fmt.Errorf("requesting %s: %w (last transport error: %v)", doh.fcxHost(), ctxErr, err)
+	}
+	if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+		_, resErr := doh.resetClient(ctx, client, err)
+		return nil, fmt.Errorf("%w (resErr:%v)", err, resErr)
+	}
+	return nil, err
+}

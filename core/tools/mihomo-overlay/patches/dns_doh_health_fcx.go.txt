@@ -1,0 +1,136 @@
+package dns
+
+import (
+	"context"
+	"errors"
+	"strings"
+	"sync/atomic"
+	"time"
+
+	"github.com/metacubex/http"
+	"github.com/metacubex/mihomo/log"
+)
+
+// A shared DoH connection (notably HTTP/2) can stop answering without being
+// closed. Every resolver caller has a 5s deadline that expires before the
+// 5s http.Client.Timeout, so the transport-timeout retry never runs and the
+// pool keeps handing out the dead connection.
+//
+// An expired caller alone is not evidence: one name may be slow while the
+// connection keeps answering peers. A generation is retired only when a
+// caller deadline passes and that generation delivered no answer at all
+// during the whole request. Retirement stops handing the generation out at
+// once, but closes it only after fcxDoHRetireGrace so requests still in
+// flight on it are not cut off by another caller's deadline.
+var fcxDoHRetireGrace = DefaultTimeout
+
+// fcxDoHHealth tracks only the current client generation of one upstream.
+// adopt runs under dnsOverHTTPS.clientMu; answer accounting is lock-free.
+//
+// answers is a monotonic counter, never reset, rather than a wall-clock
+// timestamp: Windows clock ticks are coarse enough that an answer just
+// before an attempt would otherwise compare as "answered meanwhile".
+type fcxDoHHealth struct {
+	client  atomic.Pointer[http.Client]
+	answers atomic.Uint64 // answers delivered by the then-current generation
+	retired atomic.Int64  // generations retired for silence (diagnostics)
+}
+
+// Caller owns clientMu.
+func (h *fcxDoHHealth) adopt(client *http.Client) {
+	h.client.Store(client)
+}
+
+// fcxAnswerMark is taken right before an attempt and later handed to
+// fcxNoteCallerTimeout.
+func (doh *dnsOverHTTPS) fcxAnswerMark() uint64 {
+	return doh.fcxHealth.answers.Load()
+}
+
+func (doh *dnsOverHTTPS) fcxHost() string {
+	if doh.url == nil {
+		return ""
+	}
+	// Host only: DoH paths can carry per-account identifiers.
+	return doh.url.Host
+}
+
+// fcxRedact renders err for the [DNS][DoH] log lines. Transport errors embed
+// the request URL; its path and query may carry per-account identifiers.
+func (doh *dnsOverHTTPS) fcxRedact(err error) string {
+	if err == nil {
+		return "<nil>"
+	}
+	text := err.Error()
+	if doh.url == nil {
+		return text
+	}
+	if q := doh.url.RawQuery; q != "" {
+		text = strings.ReplaceAll(text, q, "<query>")
+	}
+	if p := doh.url.EscapedPath(); len(p) > 1 {
+		text = strings.ReplaceAll(text, p, "/<path>")
+	}
+	return text
+}
+
+// Caller owns clientMu. Registers a freshly created generation.
+func (doh *dnsOverHTTPS) fcxAdoptClient(client *http.Client, reason string, elapsed time.Duration) {
+	doh.fcxHealth.adopt(client)
+	if client != nil {
+		log.Debugln("[DNS][DoH] %s: new connection pool ready (%s, %s)", doh.fcxHost(), reason, elapsed.Round(time.Millisecond))
+	}
+}
+
+func (doh *dnsOverHTTPS) fcxNoteSuccess(client *http.Client) {
+	h := &doh.fcxHealth
+	if client == nil || h.client.Load() != client {
+		return
+	}
+	h.answers.Add(1)
+}
+
+// fcxNoteCallerTimeout handles a query whose caller deadline expired on
+// client. It never waits for clientMu: a holder is creating or replacing a
+// generation (or briefly reading it), and the expired caller must return now.
+// Returns true when this call retired the generation.
+func (doh *dnsOverHTTPS) fcxNoteCallerTimeout(client *http.Client, attemptStart time.Time, answersBefore uint64, cause, last error) bool {
+	if client == nil || !errors.Is(cause, context.DeadlineExceeded) {
+		// Cancellation (e.g. a faster upstream won the race) says nothing
+		// about this connection.
+		return false
+	}
+	if !doh.clientMu.TryLock() {
+		log.Debugln("[DNS][DoH] %s: caller deadline while the connection pool is being replaced; not counted", doh.fcxHost())
+		return false
+	}
+	defer doh.clientMu.Unlock()
+	h := &doh.fcxHealth
+	if doh.client != client {
+		log.Debugln("[DNS][DoH] %s: caller deadline on an already replaced connection pool; ignored", doh.fcxHost())
+		return false
+	}
+	if h.client.Load() != client {
+		h.adopt(client)
+	}
+	if h.answers.Load() != answersBefore {
+		log.Debugln("[DNS][DoH] %s: caller deadline exceeded, but the connection answered other queries meanwhile; kept", doh.fcxHost())
+		return false
+	}
+	retired := h.retired.Add(1)
+	log.Warnln("[DNS][DoH] %s: no answer on the shared connection for %s (last error: %v); retiring it, the next query reconnects (retired so far: %d)",
+		doh.fcxHost(), time.Since(attemptStart).Round(time.Millisecond), doh.fcxRedact(last), retired)
+	// No reconnect here: this caller's context has expired. The next live
+	// query creates the replacement through getClient.
+	doh.client = nil
+	h.adopt(nil)
+	host := doh.fcxHost()
+	time.AfterFunc(fcxDoHRetireGrace, func() {
+		if err := doh.closeClient(client); err != nil {
+			log.Warnln("[DNS][DoH] %s: closing retired connection pool: %v", host, err)
+		} else {
+			log.Debugln("[DNS][DoH] %s: retired connection pool closed", host)
+		}
+	})
+	return true
+}

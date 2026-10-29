@@ -231,6 +231,8 @@ void main() {
       (tester) async {
     final manager = _Manager()..history = _history(1);
     await showCenter(tester, manager);
+    expect(find.byKey(const Key('purchase-history-previous')), findsNothing);
+    await tap(tester, 'purchase-history-toggle');
     expect(
         tester
             .widget<TextButton>(
@@ -263,6 +265,7 @@ void main() {
       ..history = _history(1);
     await showCenter(tester, manager,
         size: const Size(320, 640), textScale: 1.3);
+    await tap(tester, 'purchase-history-toggle');
     await tester.ensureVisible(find.byKey(const Key('purchase-history-next')));
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
@@ -321,6 +324,7 @@ void main() {
     );
     expect(find.text('礼品卡兑换'), findsOneWidget);
     expect(find.text('确认兑换'), findsOneWidget);
+    await tap(tester, 'purchase-history-toggle');
     await tester.ensureVisible(find.byKey(const Key('purchase-history-next')));
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);

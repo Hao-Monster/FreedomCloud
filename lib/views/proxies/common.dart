@@ -59,7 +59,7 @@ Future<void> _runDelayTests(Iterable<DelayTestTarget> targets) async {
   final message = switch (result.reason) {
     'overloaded' => Intl.message('Too many proxies. Test a smaller group.',
         name: 'delayTooManyProxies'),
-    'deadlineExceeded' => Intl.message(
+    'deadlineExceeded' || 'batchDeadlineExceeded' => Intl.message(
         'Delay test timed out. Remaining tests were cancelled.',
         name: 'delayBatchTimedOut'),
     'cancelled' => '${appLocalizations.delay}: ${appLocalizations.cancel}',

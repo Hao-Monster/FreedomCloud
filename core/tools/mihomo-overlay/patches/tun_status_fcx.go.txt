@@ -2,7 +2,11 @@ package listener
 
 import (
 	"errors"
+	"net"
 	"os"
+	"runtime"
+	"strings"
+	"sync/atomic"
 
 	C "github.com/metacubex/mihomo/constant"
 	LC "github.com/metacubex/mihomo/listener/config"
@@ -10,7 +14,10 @@ import (
 )
 
 // TunLifecycleStatus describes listener creation, not connectivity through a node.
-// All reads and writes share tunMux with ReCreateTun and Cleanup.
+// Writers mutate fcxTunStatus only while holding tunMux (ReCreateTun, Cleanup)
+// and publish complete copies. Readers never wait for tunMux: adapter creation
+// can take many seconds, and a status query blocked behind it would report
+// "unavailable" instead of the real "starting" transition.
 type TunLifecycleStatus struct {
 	Revision uint64
 	RequestedEnabled bool
@@ -28,6 +35,7 @@ type fcxTunListener interface {
 }
 
 var fcxTunStatus = TunLifecycleStatus{State: "off"}
+var fcxTunStatusSnapshot atomic.Pointer[TunLifecycleStatus]
 // A failed Close may leave OS resources behind. Only a new Core can discard
 // this uncertainty; repeated Cleanup must not turn the failure into success.
 var fcxTunCloseError error
@@ -40,10 +48,39 @@ func fcxTunErrorCode(err error) string {
 	return "startFailed"
 }
 
+// Windows can remove or disable an adapter (driver reset, user action, some
+// resume paths) while the listener object survives. An identical-config reload
+// must then rebuild instead of only calling OnReload. Enumeration failure is
+// not evidence of loss, so it keeps the existing listener.
+var fcxTunInterfaceUsable = func(device string) bool {
+	if runtime.GOOS != "windows" || device == "" { return true }
+	interfaces, err := net.Interfaces()
+	if err != nil { return true }
+	for _, adapter := range interfaces {
+		if strings.EqualFold(adapter.Name, device) { return adapter.Flags&net.FlagUp != 0 }
+	}
+	return false
+}
+
+// Caller owns tunMux. Publishes an immutable copy for lock-free readers.
+func fcxPublishTunStatus() {
+	snapshot := fcxTunStatus
+	fcxTunStatusSnapshot.Store(&snapshot)
+}
+
+// Caller owns tunMux. Publishes an intermediate state before a potentially
+// blocking create/close, then advances the revision so the terminal snapshot
+// published afterwards never shares a revision with the transition.
+func fcxPublishTunTransition() {
+	fcxPublishTunStatus()
+	fcxTunStatus.Revision++
+}
+
 func GetTunLifecycleStatus() TunLifecycleStatus {
-	tunMux.Lock()
-	defer tunMux.Unlock()
-	return fcxTunStatus
+	if snapshot := fcxTunStatusSnapshot.Load(); snapshot != nil {
+		return *snapshot
+	}
+	return TunLifecycleStatus{State: "off"}
 }
 
 // The external-controller edits a returned config before ReCreateTun. Do not

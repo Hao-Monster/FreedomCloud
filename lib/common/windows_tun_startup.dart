@@ -26,6 +26,11 @@ abstract interface class WindowsTunStartupEffects {
   /// without enabling TUN and without requesting privileges.
   Future<void> startProxyWithoutTun();
 
+  /// Replaces the current Core process on the same backend. Used only by an
+  /// explicit enable when the Core latched a TUN close failure, which only a
+  /// new Core can discard. Must not request privileges.
+  Future<void> restartCore();
+
   /// Startup diagnostics (TUN outcome / degradation reason).
   void log(String message);
 }
@@ -34,16 +39,26 @@ Future<void> startWindowsTunOnLaunch({
   required TunRuntimeController runtime,
   required WindowsTunStartupEffects effects,
   required ValueChanged<bool> writeIntent,
+  Duration settleDelay = const Duration(milliseconds: 500),
+  int settleAttempts = 8,
 }) =>
     runtime.request(true, (intent) async {
       bool current() => runtime.isCurrentIntent(intent);
       Future<TunStatus?> observe() async {
         final epoch = runtime.observationEpoch;
         final status = await effects.observe();
-        if (epoch != runtime.observationEpoch) return null;
-        if (current() && status != null && !runtime.accept(status, epoch)) {
-          return null;
+        if (status == null) return null;
+        // The observer accepts fresh reads under its own epoch. An unrelated
+        // poll that failed while this read was queued may have advanced the
+        // epoch first; the result is still current if the runtime holds it.
+        final accepted = runtime.status;
+        if (accepted != null &&
+            accepted.instanceId == status.instanceId &&
+            accepted.revision == status.revision) {
+          return status;
         }
+        if (epoch != runtime.observationEpoch) return null;
+        if (current() && !runtime.accept(status, epoch)) return null;
         return status;
       }
 
@@ -77,8 +92,18 @@ Future<void> startWindowsTunOnLaunch({
       if (!current()) return;
       if (!hasProfile) throw const TunFailure('profileRequired');
 
-      final wasRunning = effects.proxyRunning;
+      var coreRestarted = false;
       var initialized = false;
+      if (initial?.errorCode == 'closeFailed') {
+        effects.log('TUN: previous close failed; restarting Core before enable');
+        await effects.restartCore();
+        await effects.initialize(() => true);
+        initialized = true;
+        if (!current()) return;
+        coreRestarted = true;
+      }
+
+      final wasRunning = !coreRestarted && effects.proxyRunning;
       final replaced = await prepareWindowsTunBackend(
         observe: observe,
         componentsMatch: effects.componentsMatch,
@@ -106,8 +131,21 @@ Future<void> startWindowsTunOnLaunch({
         if (!current()) return;
         if (!started) throw const TunFailure('startFailed');
       }
-      final observed = await observe();
-      if (!current()) return;
+      // Adapter creation and interface publication are asynchronous at the OS
+      // level. Retry only unavailable/transitional reads within a short bound;
+      // a definite off/failed observation still fails immediately.
+      TunStatus? observed;
+      for (var attempt = 0;; attempt++) {
+        observed = await observe();
+        if (!current()) return;
+        if (observed != null &&
+            observed.observed != TunObservedState.unknown) {
+          break;
+        }
+        if (attempt + 1 >= settleAttempts) break;
+        if (settleDelay > Duration.zero) await Future.delayed(settleDelay);
+        if (!current()) return;
+      }
       if (observed == null) throw const TunFailure('statusUnavailable');
       if (observed.observed != TunObservedState.on) {
         throw TunFailure(observed.errorCode ?? 'startFailed');

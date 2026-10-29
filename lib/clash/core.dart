@@ -32,6 +32,8 @@ class ClashCore {
   @visibleForTesting
   ClashCore.forTesting(this.clashInterface);
   static ClashCore? _instance;
+  /// Passive readers must not construct the service as a side effect.
+  static ClashHandlerInterface? get existingInterface => _instance?.clashInterface;
   late ClashHandlerInterface clashInterface;
   final _connectionSnapshotDecoder = ConnectionSnapshotDecoder();
   int _connectionSnapshotRequestCount = 0;
@@ -110,6 +112,7 @@ class ClashCore {
   }
 
   Future<void> shutdown() async {
+    globalState.clearRuntimeSetup();
     await cancelDelayTests(reason: 'sessionClosed');
     await clashInterface.shutdown();
   }
@@ -365,6 +368,22 @@ class ClashCore {
   Future<void> cancelDelayTest(String requestId) async {
     await clashInterface.cancelTestDelay(requestId);
   }
+
+  Future<String> catalogPrepare(String catalogId,
+      List<Map<String, dynamic>> proxies, List<Map<String, dynamic>> providers) =>
+      clashInterface.catalogPrepare(catalogId, proxies, providers);
+
+  Future<String> catalogParseProvider(String contentBase64,
+      Map<String, dynamic> definition) =>
+      clashInterface.catalogParseProvider(contentBase64, definition);
+
+  Future<DelayTestResult> catalogTestDelay(String catalogId, int index, String url,
+      {required String requestId, Duration timeout = const Duration(seconds: 5)}) =>
+      clashInterface.catalogTestDelay(catalogId, index, url,
+          requestId: requestId, timeout: timeout);
+
+  Future<bool> catalogRelease(String catalogId) =>
+      clashInterface.catalogRelease(catalogId);
 
   Future<Map<String, dynamic>> getConfig(String id) async {
     final profilePath = await appPath.getProfilePath(id);

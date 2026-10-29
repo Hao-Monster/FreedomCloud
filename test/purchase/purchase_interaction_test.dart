@@ -199,6 +199,9 @@ void main() {
         fixture.api.historyResponse = (_) => history.future;
       }
       await _show(tester, fixture);
+      if (operation == 'history') {
+        await _tap(tester, find.byKey(const Key('purchase-history-toggle')));
+      }
       await _tap(
           tester,
           operation == 'sync'

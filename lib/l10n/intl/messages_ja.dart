@@ -28,21 +28,68 @@ class MessageLookup extends MessageLookupByLibrary {
 
   static String m3(label) => "現在の${label}は既に存在しています";
 
-  static String m4(label) => "現在${label}はありません";
+  static String m4(text) => "お知らせ：${text}";
 
-  static String m5(label) => "${label}は数字でなければなりません";
+  static String m5(hours) => "自動更新 ${hours}h";
 
-  static String m6(label) => "${label} は 1024 から 49151 の間でなければなりません";
+  static String m6(minutes) => "自動更新 ${minutes}m";
 
-  static String m7(code) => "不明なルール（${code}）";
+  static String m7(completed, failed, untested, profiles) =>
+      "測定済み ${completed} · 失敗 ${failed} · 未測定 ${untested} · 問題のあるプロファイル ${profiles}";
 
-  static String m8(count) => "${count} 項目が選択されています";
+  static String m8(date) => "有効期限：${date}";
 
-  static String m9(days) => "サブスクリプションは${days}日後に期限切れになります";
+  static String m9(days) => "残り ${days} 日";
 
-  static String m10(reason) => "TUN: ${reason}";
+  static String m10(hours) => "残り ${hours} 時間";
 
-  static String m11(label) => "${label}はURLである必要があります";
+  static String m11(provider) => "設定ファイル · ${provider}";
+
+  static String m12(available, tested, total) =>
+      "利用可能 ${available} / 測定済み ${tested} / 合計 ${total}";
+
+  static String m13(time) => "前回使用時の測定：${time}";
+
+  static String m14(time) => "同期日時：${time}";
+
+  static String m15(time) => "最終測定：${time}";
+
+  static String m16(delay) => "中央値：${delay}";
+
+  static String m17(count) => "ほかに ${count} 種類の問題";
+
+  static String m18(completed, total) => "${completed} / ${total}";
+
+  static String m19(provider) => "${provider}：有効化後にノードを表示";
+
+  static String m20(traffic) => "残り通信量：${traffic}";
+
+  static String m21(profile, node) => "${profile} · ${node} に切り替えました";
+
+  static String m22(used, total) => "使用済み ${used} / ${total}";
+
+  static String m23(used) => "使用済み：${used}";
+
+  static String m24(label) => "現在${label}はありません";
+
+  static String m25(label) => "${label}は数字でなければなりません";
+
+  static String m26(label) => "${label} は 1024 から 49151 の間でなければなりません";
+
+  static String m27(plan, quota, price) =>
+      "こんにちは。【${plan} · ${quota} GiB（${price}）】の引き換えコードを購入したいです。";
+
+  static String m28(count) => "残り ${count} 枠";
+
+  static String m29(code) => "不明なルール（${code}）";
+
+  static String m30(count) => "${count} 項目が選択されています";
+
+  static String m31(days) => "サブスクリプションは${days}日後に期限切れになります";
+
+  static String m32(reason) => "TUN: ${reason}";
+
+  static String m33(label) => "${label}はURLである必要があります";
 
   final messages = _notInlinedMessages(_notInlinedMessages);
   static Map<String, Function> _notInlinedMessages(_) => <String, Function>{
@@ -359,6 +406,140 @@ class MessageLookup extends MessageLookupByLibrary {
       "プロファイルを作成するか、有効なプロファイルを追加してください",
     ),
     "noResolve": MessageLookupByLibrary.simpleMessage("IPを解決しない"),
+    "nodeOverviewActive": MessageLookupByLibrary.simpleMessage("使用中"),
+    "nodeOverviewAllProfiles": MessageLookupByLibrary.simpleMessage("すべての設定"),
+    "nodeOverviewAmbiguousNode": MessageLookupByLibrary.simpleMessage(
+      "ノード定義が重複しているため、識別できません",
+    ),
+    "nodeOverviewAnnouncement": m4,
+    "nodeOverviewAutoUpdateHours": m5,
+    "nodeOverviewAutoUpdateMinutes": m6,
+    "nodeOverviewAvailableOnly": MessageLookupByLibrary.simpleMessage("利用可能のみ"),
+    "nodeOverviewBatchSummary": m7,
+    "nodeOverviewChainUnsupported": MessageLookupByLibrary.simpleMessage(
+      "プロキシチェーンの分離テストは未対応です",
+    ),
+    "nodeOverviewCurrentProfile": MessageLookupByLibrary.simpleMessage("現在の設定"),
+    "nodeOverviewDeviceLimitReached": MessageLookupByLibrary.simpleMessage(
+      "端末数の上限に達しました",
+    ),
+    "nodeOverviewExpireAt": m8,
+    "nodeOverviewExpireDaysLeft": m9,
+    "nodeOverviewExpireHoursLeft": m10,
+    "nodeOverviewExpireSoon": MessageLookupByLibrary.simpleMessage("残り 1 時間未満"),
+    "nodeOverviewExpired": MessageLookupByLibrary.simpleMessage(
+      "サブスクリプションの有効期限切れ",
+    ),
+    "nodeOverviewFileMissing": MessageLookupByLibrary.simpleMessage(
+      "設定ファイルがありません",
+    ),
+    "nodeOverviewFileSource": m11,
+    "nodeOverviewHealthCapacityExceeded": MessageLookupByLibrary.simpleMessage(
+      "履歴の保存容量が不足し、一部の結果を保存できませんでした",
+    ),
+    "nodeOverviewHealthCounts": m12,
+    "nodeOverviewHealthStoreUnavailable": MessageLookupByLibrary.simpleMessage(
+      "一部の遅延テスト結果を保存できませんでした",
+    ),
+    "nodeOverviewHistoryNotice": MessageLookupByLibrary.simpleMessage(
+      "遅延結果は次の有効なテストまで保持されます。テスト時刻は各ノードの下に表示されます。",
+    ),
+    "nodeOverviewInUse": MessageLookupByLibrary.simpleMessage("使用中"),
+    "nodeOverviewIndependentTest": MessageLookupByLibrary.simpleMessage(
+      "独立した遅延テスト",
+    ),
+    "nodeOverviewLastActiveTest": m13,
+    "nodeOverviewLastSync": m14,
+    "nodeOverviewLastTest": m15,
+    "nodeOverviewLive": MessageLookupByLibrary.simpleMessage("リアルタイム"),
+    "nodeOverviewLocalProfile": MessageLookupByLibrary.simpleMessage("ローカル設定"),
+    "nodeOverviewManageProfiles": MessageLookupByLibrary.simpleMessage(
+      "設定管理 / サブスクリプション更新",
+    ),
+    "nodeOverviewManualUpdate": MessageLookupByLibrary.simpleMessage("手動更新"),
+    "nodeOverviewMedian": m16,
+    "nodeOverviewMoreIssues": m17,
+    "nodeOverviewNeverExpires": MessageLookupByLibrary.simpleMessage(
+      "有効期限：無期限",
+    ),
+    "nodeOverviewNoNodes": MessageLookupByLibrary.simpleMessage(
+      "一致するノードがありません",
+    ),
+    "nodeOverviewNodeUnidentified": MessageLookupByLibrary.simpleMessage(
+      "ノードを識別できません",
+    ),
+    "nodeOverviewParseFailed": MessageLookupByLibrary.simpleMessage(
+      "設定の解析に失敗しました",
+    ),
+    "nodeOverviewPartialSummary": MessageLookupByLibrary.simpleMessage(
+      "概要は読み込み済みノードのみを集計します",
+    ),
+    "nodeOverviewPreviewUnsupported": MessageLookupByLibrary.simpleMessage(
+      "このプレビューではローカルプロバイダーノードは未対応です",
+    ),
+    "nodeOverviewProgress": m18,
+    "nodeOverviewProviderDownloadFailed": MessageLookupByLibrary.simpleMessage(
+      "プロバイダーのダウンロードに失敗しました",
+    ),
+    "nodeOverviewProviderNotCached": MessageLookupByLibrary.simpleMessage(
+      "プロバイダーのキャッシュを利用できません",
+    ),
+    "nodeOverviewProviderOptionsUnsupported":
+        MessageLookupByLibrary.simpleMessage("これらのプロバイダー設定には対応していません"),
+    "nodeOverviewProviderPending": m19,
+    "nodeOverviewProviderTooLarge": MessageLookupByLibrary.simpleMessage(
+      "プロバイダーがサイズまたはノード数の上限を超えています",
+    ),
+    "nodeOverviewProviderUnloaded": MessageLookupByLibrary.simpleMessage(
+      "プロバイダーのノードはまだ読み込まれていません。全ノードの遅延テスト時に読み込み、不足するキャッシュを取得します。",
+    ),
+    "nodeOverviewProviderUnsafePath": MessageLookupByLibrary.simpleMessage(
+      "プロバイダーファイルが許可されたディレクトリの外にあります",
+    ),
+    "nodeOverviewProviderUnsafeUrl": MessageLookupByLibrary.simpleMessage(
+      "プロバイダーのURLが安全要件を満たしていません",
+    ),
+    "nodeOverviewRemainingTraffic": m20,
+    "nodeOverviewRuntimeSource": MessageLookupByLibrary.simpleMessage(
+      "実行中のノード",
+    ),
+    "nodeOverviewStale": MessageLookupByLibrary.simpleMessage("古い可能性あり"),
+    "nodeOverviewStatusExpired": MessageLookupByLibrary.simpleMessage("期限切れ"),
+    "nodeOverviewStrictUnsupported": MessageLookupByLibrary.simpleMessage(
+      "厳格モードでは分離テストを利用できません",
+    ),
+    "nodeOverviewSwitchedToNode": m21,
+    "nodeOverviewTestAll": MessageLookupByLibrary.simpleMessage("全ノードの遅延を測定"),
+    "nodeOverviewTestCurrent": MessageLookupByLibrary.simpleMessage(
+      "現在のプロファイルをテスト",
+    ),
+    "nodeOverviewTestFailed": MessageLookupByLibrary.simpleMessage("テスト失敗"),
+    "nodeOverviewTestInterrupted": MessageLookupByLibrary.simpleMessage(
+      "テストを中断しました。以前の測定結果は保持されています",
+    ),
+    "nodeOverviewTestNode": MessageLookupByLibrary.simpleMessage("遅延テスト"),
+    "nodeOverviewTestTimedOut": MessageLookupByLibrary.simpleMessage(
+      "テストまたはプロバイダーの読み取りがタイムアウトしました",
+    ),
+    "nodeOverviewTestUnavailable": MessageLookupByLibrary.simpleMessage(
+      "テストを開始できません。バックグラウンドのバージョンを確認してください。",
+    ),
+    "nodeOverviewTooManyNodes": MessageLookupByLibrary.simpleMessage(
+      "ノードが多すぎるためプレビューでは表示できません",
+    ),
+    "nodeOverviewTrafficUnlimited": MessageLookupByLibrary.simpleMessage(
+      "通信量：無制限",
+    ),
+    "nodeOverviewTypeUnsupported": MessageLookupByLibrary.simpleMessage(
+      "このプロトコルの分離テストは未対応です",
+    ),
+    "nodeOverviewUntested": MessageLookupByLibrary.simpleMessage("未測定"),
+    "nodeOverviewUpdating": MessageLookupByLibrary.simpleMessage(
+      "サブスクリプションを更新中",
+    ),
+    "nodeOverviewUseNode": MessageLookupByLibrary.simpleMessage("使用"),
+    "nodeOverviewUsedOfTotalTraffic": m22,
+    "nodeOverviewUsedTrafficOnly": m23,
     "none": MessageLookupByLibrary.simpleMessage("なし"),
     "notSelectedTip": MessageLookupByLibrary.simpleMessage(
       "現在のプロキシグループは選択できません",
@@ -367,8 +548,8 @@ class MessageLookup extends MessageLookupByLibrary {
       "プロファイルがありません。追加してください",
     ),
     "nullScriptTip": MessageLookupByLibrary.simpleMessage("スクリプトはありません"),
-    "nullTip": m4,
-    "numberTip": m5,
+    "nullTip": m24,
+    "numberTip": m25,
     "oneColumn": MessageLookupByLibrary.simpleMessage("1列"),
     "oneline": MessageLookupByLibrary.simpleMessage("オンライン"),
     "onlyIcon": MessageLookupByLibrary.simpleMessage("アイコンのみ"),
@@ -424,7 +605,7 @@ class MessageLookup extends MessageLookupByLibrary {
     ),
     "port": MessageLookupByLibrary.simpleMessage("ポート"),
     "portConflictTip": MessageLookupByLibrary.simpleMessage("別のポートを入力してください"),
-    "portTip": m6,
+    "portTip": m26,
     "preferH3Desc": MessageLookupByLibrary.simpleMessage("DOHのHTTP/3を優先使用"),
     "pressKeyboard": MessageLookupByLibrary.simpleMessage("キーボードを押してください"),
     "preview": MessageLookupByLibrary.simpleMessage("プレビュー"),
@@ -463,15 +644,45 @@ class MessageLookup extends MessageLookupByLibrary {
     "proxyPortDesc": MessageLookupByLibrary.simpleMessage("Clashのリスニングポートを設定"),
     "proxyProviders": MessageLookupByLibrary.simpleMessage("プロキシプロバイダー"),
     "purchase": MessageLookupByLibrary.simpleMessage("購入"),
+    "purchaseAcquirePlanCode": MessageLookupByLibrary.simpleMessage(
+      "このプランのコードを取得",
+    ),
+    "purchaseAcquireSheetSubtitle": MessageLookupByLibrary.simpleMessage(
+      "下記のストアまたは WeChat サポートでコードを取得し、この画面で引き換えてください。アプリ内で注文は作成されません。",
+    ),
     "purchaseAvailablePlans": MessageLookupByLibrary.simpleMessage("購入可能なプラン"),
+    "purchaseClearCode": MessageLookupByLibrary.simpleMessage("コードをクリア"),
     "purchaseContactDescription": MessageLookupByLibrary.simpleMessage(
       "オンライン決済は現在ご利用いただけません。購入または更新については、以下のいずれかのWeChatアカウントを追加してください。",
     ),
+    "purchaseCopyInquiry": MessageLookupByLibrary.simpleMessage("問い合わせ文をコピー"),
+    "purchaseFilterAll": MessageLookupByLibrary.simpleMessage("すべて"),
+    "purchaseFilterOnetime": MessageLookupByLibrary.simpleMessage("通信量パック"),
+    "purchaseFilterPeriod": MessageLookupByLibrary.simpleMessage("定期プラン"),
+    "purchaseHidePassword": MessageLookupByLibrary.simpleMessage("パスワードを隠す"),
+    "purchaseInquiryTemplate": m27,
+    "purchaseJumpToWorkbench": MessageLookupByLibrary.simpleMessage(
+      "コードをお持ちの方はこちら",
+    ),
+    "purchaseLoginDescription": MessageLookupByLibrary.simpleMessage(
+      "アカウントにサインインしてコードを引き換えると、プランと高速ノードが自動的に同期されます。",
+    ),
+    "purchaseNewActivationBadge": MessageLookupByLibrary.simpleMessage("新規有効化"),
+    "purchaseOpenNodesAction": MessageLookupByLibrary.simpleMessage(
+      "プロファイルとノードを表示",
+    ),
+    "purchasePlanCollapseDetails": MessageLookupByLibrary.simpleMessage(
+      "詳細を折りたたむ",
+    ),
     "purchasePlanDetails": MessageLookupByLibrary.simpleMessage("プランの詳細"),
     "purchasePlanDevices": MessageLookupByLibrary.simpleMessage("デバイス数の上限"),
+    "purchasePlanExpandDetails": MessageLookupByLibrary.simpleMessage(
+      "詳細をすべて表示",
+    ),
     "purchasePlanImageNotLoaded": MessageLookupByLibrary.simpleMessage(
       "外部画像は読み込まれていません",
     ),
+    "purchasePlanLowStock": m28,
     "purchasePlanNotProvided": MessageLookupByLibrary.simpleMessage("未提供"),
     "purchasePlanResetMonthStart": MessageLookupByLibrary.simpleMessage("毎月1日"),
     "purchasePlanResetMonthlyExpiry": MessageLookupByLibrary.simpleMessage(
@@ -484,7 +695,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "purchasePlanResetSystem": MessageLookupByLibrary.simpleMessage(
       "システム設定に従う",
     ),
-    "purchasePlanResetUnknown": m7,
+    "purchasePlanResetUnknown": m29,
     "purchasePlanResetYearStart": MessageLookupByLibrary.simpleMessage(
       "毎年1月1日",
     ),
@@ -492,6 +703,7 @@ class MessageLookup extends MessageLookupByLibrary {
       "毎年の有効期限月日",
     ),
     "purchasePlanSalesCapacity": MessageLookupByLibrary.simpleMessage("残りの販売枠"),
+    "purchasePlanSoldOut": MessageLookupByLibrary.simpleMessage("売り切れ"),
     "purchasePlanSpeed": MessageLookupByLibrary.simpleMessage("速度上限"),
     "purchasePlanTrafficReset": MessageLookupByLibrary.simpleMessage(
       "通信量のリセット",
@@ -507,6 +719,11 @@ class MessageLookup extends MessageLookupByLibrary {
       "プランを読み込めませんでした。もう一度お試しください。",
     ),
     "purchasePlansLoading": MessageLookupByLibrary.simpleMessage("プランを読み込み中…"),
+    "purchaseRenewalBadge": MessageLookupByLibrary.simpleMessage("更新"),
+    "purchaseShowPassword": MessageLookupByLibrary.simpleMessage("パスワードを表示"),
+    "purchaseStepBrowse": MessageLookupByLibrary.simpleMessage("① プラン確認・コード取得"),
+    "purchaseStepRedeem": MessageLookupByLibrary.simpleMessage("② サインインして確認"),
+    "purchaseStepSync": MessageLookupByLibrary.simpleMessage("③ ノード自動同期"),
     "purchaseTitle": MessageLookupByLibrary.simpleMessage("購入と更新"),
     "pureBlackMode": MessageLookupByLibrary.simpleMessage("純黒モード"),
     "qrcode": MessageLookupByLibrary.simpleMessage("QRコード"),
@@ -567,7 +784,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "seconds": MessageLookupByLibrary.simpleMessage("秒"),
     "selectAll": MessageLookupByLibrary.simpleMessage("すべて選択"),
     "selected": MessageLookupByLibrary.simpleMessage("選択済み"),
-    "selectedCountTitle": m8,
+    "selectedCountTitle": m30,
     "settings": MessageLookupByLibrary.simpleMessage("設定"),
     "show": MessageLookupByLibrary.simpleMessage("表示"),
     "shrink": MessageLookupByLibrary.simpleMessage("縮小"),
@@ -593,7 +810,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "subscriptionExpired": MessageLookupByLibrary.simpleMessage(
       "サブスクリプションが期限切れになりました",
     ),
-    "subscriptionExpiresInDays": m9,
+    "subscriptionExpiresInDays": m31,
     "subscriptionExpiresSoon": MessageLookupByLibrary.simpleMessage(
       "サブスクリプションがまもなく期限切れ",
     ),
@@ -660,7 +877,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "tunErrorUnavailable": MessageLookupByLibrary.simpleMessage(
       "状態を確認できません。バックグラウンドのバージョンを確認してください",
     ),
-    "tunStatusFailure": m10,
+    "tunStatusFailure": m32,
     "tunStatusOff": MessageLookupByLibrary.simpleMessage("停止中"),
     "tunStatusOn": MessageLookupByLibrary.simpleMessage("起動済み"),
     "tunStatusStarting": MessageLookupByLibrary.simpleMessage("起動しています…"),
@@ -683,7 +900,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "upload": MessageLookupByLibrary.simpleMessage("アップロード"),
     "url": MessageLookupByLibrary.simpleMessage("URL"),
     "urlDesc": MessageLookupByLibrary.simpleMessage("URL経由でプロファイルを取得"),
-    "urlTip": m11,
+    "urlTip": m33,
     "useHosts": MessageLookupByLibrary.simpleMessage("ホストを使用"),
     "useSystemHosts": MessageLookupByLibrary.simpleMessage("システムホストを使用"),
     "value": MessageLookupByLibrary.simpleMessage("値"),

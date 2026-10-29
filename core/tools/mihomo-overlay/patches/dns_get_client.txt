@@ -1,0 +1,25 @@
+func (doh *dnsOverHTTPS) getClient(ctx context.Context) (c *http.Client, isCached bool, err error) {
+	if err := ctx.Err(); err != nil {
+		return nil, false, err
+	}
+	startTime := time.Now()
+	doh.clientMu.Lock()
+	defer doh.clientMu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return nil, false, err
+	}
+	if doh.client != nil {
+		return doh.client, true, nil
+	}
+	elapsed := time.Since(startTime)
+	if elapsed > maxElapsedTime {
+		return nil, false, fmt.Errorf("timeout exceeded: %s", elapsed)
+	}
+	log.Debugln("creating a new http client")
+	doh.client, err = doh.createClient(ctx)
+	if err != nil {
+		log.Warnln("[DNS][DoH] %s: creating connection pool failed: %s", doh.fcxHost(), doh.fcxRedact(err))
+	}
+	doh.fcxAdoptClient(doh.client, "lazy init", time.Since(startTime))
+	return doh.client, false, err
+}

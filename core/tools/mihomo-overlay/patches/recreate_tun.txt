@@ -3,11 +3,12 @@ func ReCreateTun(tunConf LC.Tun, tunnel C.Tunnel) {
 	tunConf.Sort()
 	tunMux.Lock()
 	defer tunMux.Unlock()
+	defer fcxPublishTunStatus()
 	fcxTunStatus.Revision++
 	fcxTunStatus.RequestedEnabled = tunConf.Enable
 	fcxTunStatus.ErrorCode = ""
 	defer func() { LastTunConf = tunConf }()
-	if tunConf.Equal(LastTunConf) && tunLister != nil {
+	if tunConf.Equal(LastTunConf) && tunLister != nil && fcxTunInterfaceUsable(tunLister.Config().Device) {
 		tunLister.OnReload()
 		fcxTunStatus.State = "on"
 		fcxTunStatus.ListenerActive = true
@@ -27,6 +28,7 @@ func ReCreateTun(tunConf LC.Tun, tunnel C.Tunnel) {
 		return
 	}
 	fcxTunStatus.State = "starting"
+	fcxPublishTunTransition()
 	created, err := fcxCreateTun(tunConf, tunnel)
 	if err != nil {
 		tunConf.Enable = false
