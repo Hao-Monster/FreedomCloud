@@ -894,5 +894,7 @@
         "type": "String"
       }
     }
-  }
+  },
+  "nodeOverviewUpdateSubscription": "更新订阅",
+  "nodeOverviewUpdatingShort": "更新中"
 }

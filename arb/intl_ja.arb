@@ -760,5 +760,7 @@
         "type": "String"
       }
     }
-  }
+  },
+  "nodeOverviewUpdateSubscription": "購読を更新",
+  "nodeOverviewUpdatingShort": "更新中"
 }

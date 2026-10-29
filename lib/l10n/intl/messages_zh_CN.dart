@@ -552,7 +552,11 @@ class MessageLookup extends MessageLookupByLibrary {
       "此协议暂不支持隔离测速",
     ),
     "nodeOverviewUntested": MessageLookupByLibrary.simpleMessage("未测"),
+    "nodeOverviewUpdateSubscription": MessageLookupByLibrary.simpleMessage(
+      "更新订阅",
+    ),
     "nodeOverviewUpdating": MessageLookupByLibrary.simpleMessage("正在更新订阅"),
+    "nodeOverviewUpdatingShort": MessageLookupByLibrary.simpleMessage("更新中"),
     "nodeOverviewUseNode": MessageLookupByLibrary.simpleMessage("使用"),
     "nodeOverviewUsedOfTotalTraffic": m22,
     "nodeOverviewUsedTrafficOnly": m23,

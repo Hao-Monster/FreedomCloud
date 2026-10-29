@@ -2,6 +2,18 @@
 
 更新日期：2026-10-29。当前阶段是快速开发、快速迭代和部分功能预览。本文记录来源与验收边界；每次继续开发仍需核实实际 Git/PR/CI 状态，不能把历史报告视为当前通过证明。
 
+## 跨配置节点总览配置卡片右上角“更新订阅”按钮（2026-10-29）
+
+- 来源：针对“代理 → 全部配置”（[`NodeOverviewView`](file:///E:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart#L213-L218)）配置卡片缺少快捷订阅更新入口的问题，从基线 `development@842b43fea4c1a6b3fd28cbd76c00324f96916ee2` 为 URL 订阅配置卡片补齐右上角 **`更新订阅`** 按钮，直接复用“配置 → ⋮ → 同步”（[`AppController.updateProfile`](file:///E:/CodeWorkstation/FlClashX/lib/controller.dart#L1177-L1240) / `globalState.safeRun(silence: false, ...)`）既有同步能力。
+- 核心实现：
+  1. **配置卡片右上角“更新订阅”胶囊按钮（[`_SidebarProfileCard`](file:///E:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart#L1777-L1908) / [`_ProfileSyncButton`](file:///E:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart#L1910-L2064)）**：仅对 `ProfileType.url` 远程订阅配置在宽屏侧边栏配置卡片右上角（活动配置与“活动配置”徽标并列，大字号 `>1.35x` 自动折行防挤压）及窄屏订阅摘要卡片右上角（`!wide` 单一 `ValueKey('overview-sync-${profile.id}')` 零重复键）渲染 `更新订阅` 按钮，本地文件配置不展示；补齐四语种 `nodeOverviewUpdateSubscription` / `nodeOverviewUpdatingShort`（`arb/intl_*.arb` 与 `lib/l10n/*`）及窄屏“全部配置”下拉项 `2.0x` 大字号截断保护。
+  2. **同步链路复用、防误触与侧边栏防跳动（[`_NodeOverviewViewState._syncSubscription`](file:///E:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart#L769-L796)）**：通过 `globalState.safeRun(silence: false, ...)` 调用 `appController.updateProfile`，保持与“配置 → ⋮ → 同步”完全一致的订阅拉取、响应头合并、活动配置热重载与失败弹窗提示；异常回滚时基于最新 `profilesProvider` 快照清理 `isUpdating`（不覆盖并发 `selectedMap` 修改、不复活中途已删除配置）；更新中显示旋转进度与 `更新中` 文案并吸收点击事件（杜绝点击/连点穿透触发卡片筛选切换），同时通过 `_updatingOrderFreezeIds` 冻结更新及目录异步重载窗口内的侧边栏排序，避免卡片跳动。
+- 验证记录（本机 `Flutter 3.47.4` / `Dart 3.13.3`，CI 配置 `3.41.7`）：
+  - 前置有效 Red（[`test/views/node_overview_test.dart`](file:///E:/CodeWorkstation/FlClashX/test/views/node_overview_test.dart#L4860-L5295) 新增 3 组订阅同步专项用例）：退出码 `1`（`0 PASS / 3 FAIL`）；
+  - 节点总览全量组件与渲染回归测试（`flutter test --no-pub test/views/node_overview_test.dart test/views/node_overview_render_test.dart`）：**PASS（99 PASS / 0 FAIL）**；
+  - 静态检查（`dart analyze lib/views/proxies/overview/overview.dart lib/l10n test/views/node_overview_test.dart`）：**PASS（`No issues found!`）**；本任务改动文件 `git diff --check` 无告警；`pubspec.lock` 未改动。
+- 交付状态：**已实现 / 已本地验证并提交至本地 `development`**；未推送远端（按规范待授权后推送） / 未创建或合并 PR / 远端 CI **NOT RUN** / 未重打静态预览包 / 未启动候选窗口（未触碰本机运行中代理、TUN 及后台服务） / 后端部署与业务验收 **NOT RUN**。下一步：如需推送 `freedomcloud/development`、晋级 `main` 或打新预览包，按授权执行。
+
 ## 批次晋级 PR #61 合并主线与 Windows 跨配置总览订阅详情/协议栈预览交付（2026-10-29）
 
 - 批次晋级与独立审查闭环：

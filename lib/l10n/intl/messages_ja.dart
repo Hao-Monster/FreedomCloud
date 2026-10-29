@@ -534,9 +534,13 @@ class MessageLookup extends MessageLookupByLibrary {
       "このプロトコルの分離テストは未対応です",
     ),
     "nodeOverviewUntested": MessageLookupByLibrary.simpleMessage("未測定"),
+    "nodeOverviewUpdateSubscription": MessageLookupByLibrary.simpleMessage(
+      "購読を更新",
+    ),
     "nodeOverviewUpdating": MessageLookupByLibrary.simpleMessage(
       "サブスクリプションを更新中",
     ),
+    "nodeOverviewUpdatingShort": MessageLookupByLibrary.simpleMessage("更新中"),
     "nodeOverviewUseNode": MessageLookupByLibrary.simpleMessage("使用"),
     "nodeOverviewUsedOfTotalTraffic": m22,
     "nodeOverviewUsedTrafficOnly": m23,

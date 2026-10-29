@@ -733,8 +733,14 @@ class MessageLookup extends MessageLookupByLibrary {
     "nodeOverviewUntested": MessageLookupByLibrary.simpleMessage(
       "Не проверено",
     ),
+    "nodeOverviewUpdateSubscription": MessageLookupByLibrary.simpleMessage(
+      "Обновить",
+    ),
     "nodeOverviewUpdating": MessageLookupByLibrary.simpleMessage(
       "Обновление подписки",
+    ),
+    "nodeOverviewUpdatingShort": MessageLookupByLibrary.simpleMessage(
+      "Обновление",
     ),
     "nodeOverviewUseNode": MessageLookupByLibrary.simpleMessage("Использовать"),
     "nodeOverviewUsedOfTotalTraffic": m22,

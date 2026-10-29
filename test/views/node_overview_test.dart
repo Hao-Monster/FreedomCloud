@@ -25,6 +25,18 @@ import 'package:flutter/semantics.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
+
+class _TestPaths extends PathProviderPlatform {
+  _TestPaths(this.root);
+  final String root;
+  @override
+  Future<String> getApplicationSupportPath() async => root;
+  @override
+  Future<String> getTemporaryPath() async => root;
+  @override
+  Future<String> getDownloadsPath() async => root;
+}
 
 const _a =
     Profile(id: 'a', label: 'Alpha profile', autoUpdateDuration: Duration.zero);
@@ -43,6 +55,9 @@ class _ProxyController implements AppController {
   final selections = <(String, String)>[];
   final changes = <(String, String)>[];
   final applyDebounces = <bool>[];
+  final updatedProfiles = <Profile>[];
+  void Function(Profile profile)? onSetProfile;
+  Future<void> Function(Profile profile)? onUpdateProfile;
 
   @override
   void updateCurrentSelectedMap(String groupName, String proxyName) =>
@@ -55,6 +70,25 @@ class _ProxyController implements AppController {
   @override
   void applyProfileDebounce({bool silence = false}) =>
       applyDebounces.add(silence);
+
+  @override
+  void setProfile(Profile profile) {
+    final handler = onSetProfile;
+    if (handler == null) {
+      throw StateError('Unexpected controller effect: setProfile');
+    }
+    handler(profile);
+  }
+
+  @override
+  Future<void> updateProfile(Profile profile) async {
+    final handler = onUpdateProfile;
+    if (handler == null) {
+      throw StateError('Unexpected controller effect: updateProfile');
+    }
+    updatedProfiles.add(profile);
+    await handler(profile);
+  }
 
   @override
   List<Proxy> getSortProxies(List<Proxy> proxies, [String? url]) => proxies;
@@ -172,6 +206,7 @@ void main() {
     double width = 400,
     bool appBarScaffold = false,
     bool scopeToolbar = false,
+    bool attachNavigatorKey = false,
     ProfileCatalog? activeCatalog,
     NodeHealthStore? healthStore,
     _CatalogTester? catalogTester,
@@ -216,6 +251,7 @@ void main() {
                 testUrl: ref.watch(nodeOverviewTestUrlProvider))),
       ],
       child: MaterialApp(
+        navigatorKey: attachNavigatorKey ? globalState.navigatorKey : null,
         locale: locale,
         localizationsDelegates: const [
           AppLocalizations.delegate,
@@ -4829,6 +4865,425 @@ void main() {
         find.byKey(const ValueKey('overview-active-RuntimeSsLeaf')),
         findsOneWidget,
       );
+    } finally {
+      semanticsHandle.dispose();
+    }
+  });
+
+  testWidgets(
+      'subscription sync button: renders top-right 更新订阅 only for URL profiles, triggers updateProfile without selecting card, blocks duplicate clicks, preserves sidebar order, and refreshes subscription metadata',
+      (tester) async {
+    const giB = 1024 * 1024 * 1024;
+    final initialSync = DateTime(2026, 10, 28, 16, 56);
+    final updatedSync = DateTime(2026, 10, 29, 16, 40);
+    final adminProfile = Profile(
+      id: 'admin',
+      label: 'admin',
+      url: 'https://sub.example.invalid/admin',
+      lastUpdateDate: initialSync,
+      autoUpdateDuration: const Duration(hours: 24),
+      subscriptionInfo: const SubscriptionInfo(
+        upload: 0,
+        download: 10 * giB,
+        total: 100 * giB,
+        expire: 0,
+      ),
+    );
+    final midSubProfile = Profile(
+      id: 'sub-mid',
+      label: '测试-261026-GHDXXK',
+      url: 'https://sub.example.invalid/mid',
+      lastUpdateDate: initialSync,
+      autoUpdateDuration: const Duration(hours: 24),
+      subscriptionInfo: const SubscriptionInfo(
+        upload: 0,
+        download: 0,
+        total: 500 * giB,
+        expire: 0,
+      ),
+    );
+    const localProfile = Profile(
+      id: 'local-only',
+      label: 'gemini_test.yaml',
+      url: '',
+      autoUpdateDuration: Duration.zero,
+    );
+
+    globalState.config = globalState.config.copyWith(currentProfileId: 'admin');
+    final controller = _ProxyController();
+    globalState.appController = controller;
+    late ProviderContainer container;
+    final syncCompleter = Completer<void>();
+
+    controller
+      ..onSetProfile = (updated) {
+        container.read(profilesProvider.notifier).setProfile(updated);
+      }
+      ..onUpdateProfile = (profile) async {
+        await syncCompleter.future;
+        container.read(profilesProvider.notifier).setProfile(
+              profile.copyWith(
+                isUpdating: false,
+                lastUpdateDate: updatedSync,
+                subscriptionInfo: const SubscriptionInfo(
+                  upload: 5 * giB,
+                  download: 15 * giB,
+                  total: 500 * giB,
+                  expire: 0,
+                ),
+              ),
+            );
+      };
+
+    final nAdmin1 = _node('adm-1', 'Admin 1');
+    final nAdmin2 = _node('adm-2', 'Admin 2');
+    final nMid1 = _node('mid-1', 'Mid 1');
+    final nLocal1 = _node('loc-1', 'Local 1');
+
+    container = await mount(
+      tester,
+      width: 1200,
+      locale: const Locale('zh', 'CN'),
+      profiles: [adminProfile, midSubProfile, localProfile],
+      catalogs: {
+        'admin': ProfileCatalog(
+          profileId: 'admin',
+          fingerprint: 'adm',
+          status: ProfileCatalogStatus.ready,
+          nodes: [nAdmin1, nAdmin2],
+        ),
+        'sub-mid': ProfileCatalog(
+          profileId: 'sub-mid',
+          fingerprint: 'mid',
+          status: ProfileCatalogStatus.ready,
+          nodes: [nMid1],
+        ),
+        'local-only': ProfileCatalog(
+          profileId: 'local-only',
+          fingerprint: 'loc',
+          status: ProfileCatalogStatus.ready,
+          nodes: [nLocal1],
+        ),
+      },
+      health: {
+        'admin': {
+          nAdmin1.identityKey: NodeHealthRecord(
+            delayMs: 120,
+            testedAt: initialSync,
+            testUrlHash: 'h',
+          ),
+          nAdmin2.identityKey: NodeHealthRecord(
+            delayMs: 150,
+            testedAt: initialSync,
+            testUrlHash: 'h',
+          ),
+        },
+        'sub-mid': {
+          nMid1.identityKey: NodeHealthRecord(
+            delayMs: 180,
+            testedAt: initialSync,
+            testUrlHash: 'h',
+          ),
+        },
+      },
+    );
+
+    final adminCard = find.byKey(const ValueKey('overview-sidebar-card-admin'));
+    final midCard = find.byKey(const ValueKey('overview-sidebar-card-sub-mid'));
+    final localCard =
+        find.byKey(const ValueKey('overview-sidebar-card-local-only'));
+
+    final adminSyncBtn = find.byKey(const ValueKey('overview-sync-admin'));
+    final midSyncBtn = find.byKey(const ValueKey('overview-sync-sub-mid'));
+    final localSyncBtn = find.byKey(const ValueKey('overview-sync-local-only'));
+
+    expect(adminSyncBtn, findsOneWidget);
+    expect(midSyncBtn, findsOneWidget);
+    expect(localSyncBtn, findsNothing);
+    expect(
+      find.descendant(of: midSyncBtn, matching: find.text('更新订阅')),
+      findsOneWidget,
+    );
+
+    // Verify top-right placement on both active and inactive URL cards.
+    final adminCardRect = tester.getRect(adminCard);
+    final adminBtnRect = tester.getRect(adminSyncBtn);
+    expect(adminBtnRect.center.dx, greaterThan(adminCardRect.center.dx));
+    expect(adminBtnRect.top - adminCardRect.top, lessThan(40));
+
+    final midCardRect = tester.getRect(midCard);
+    final midBtnRect = tester.getRect(midSyncBtn);
+    expect(midBtnRect.center.dx, greaterThan(midCardRect.center.dx));
+    expect(midBtnRect.top - midCardRect.top, lessThan(40));
+
+    // Before sync: admin (2 available) -> sub-mid (1 available) -> local-only (0 available).
+    expect(
+      tester.getTopLeft(midCard).dy,
+      lessThan(tester.getTopLeft(localCard).dy),
+    );
+
+    // Tap "更新订阅" on sub-mid.
+    await tester.tap(midSyncBtn);
+    await tester.pump();
+
+    expect(controller.updatedProfiles.map((p) => p.id), ['sub-mid']);
+    expect(
+      find.descendant(of: midSyncBtn, matching: find.text('更新中')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+          of: midSyncBtn, matching: find.byType(CircularProgressIndicator)),
+      findsOneWidget,
+    );
+    // Tapping "更新订阅" must NOT switch sidebar selection away from All profiles.
+    expect(find.byKey(const ValueKey('overview-header-admin')), findsOneWidget);
+    expect(
+        find.byKey(const ValueKey('overview-header-sub-mid')), findsOneWidget);
+
+    // Tapping again while updating neither triggers a second updateProfile nor selects the card.
+    await tester.tap(midSyncBtn);
+    await tester.pump();
+    expect(controller.updatedProfiles.length, 1);
+    expect(find.byKey(const ValueKey('overview-header-admin')), findsOneWidget);
+
+    // Sidebar order stays frozen while updating.
+    expect(
+      tester.getTopLeft(midCard).dy,
+      lessThan(tester.getTopLeft(localCard).dy),
+    );
+
+    syncCompleter.complete();
+    await tester.pumpAndSettle();
+
+    expect(
+      find.descendant(of: midSyncBtn, matching: find.text('更新订阅')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+          of: midCard, matching: find.textContaining('剩余流量：480 GB')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+          of: midCard, matching: find.textContaining('2026-10-29 16:40')),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets(
+      'subscription sync button: surfaces error modal via safeRun, preserves concurrent profile edits on rollback, and never resurrects deleted profiles',
+      (tester) async {
+    final originalPaths = PathProviderPlatform.instance;
+    final tempRoot =
+        Directory.systemTemp.createTempSync('node-overview-sync-err-');
+    Directory('${tempRoot.path}/logs').createSync(recursive: true);
+    PathProviderPlatform.instance = _TestPaths(tempRoot.path);
+    addTearDown(() {
+      PathProviderPlatform.instance = originalPaths;
+      try {
+        if (tempRoot.existsSync()) {
+          tempRoot.deleteSync(recursive: true);
+        }
+      } catch (_) {}
+    });
+
+    const subProfile = Profile(
+      id: 'sub-err',
+      label: 'ErrSub',
+      url: 'https://sub.example.invalid/err',
+      autoUpdateDuration: Duration.zero,
+    );
+    const secondProfile = Profile(
+      id: 'other',
+      label: 'OtherLocal',
+      url: '',
+      autoUpdateDuration: Duration.zero,
+    );
+
+    final controller = _ProxyController();
+    globalState.appController = controller;
+    late ProviderContainer container;
+    var deleteDuringUpdate = false;
+
+    controller
+      ..onSetProfile = (updated) {
+        container.read(profilesProvider.notifier).setProfile(updated);
+      }
+      ..onUpdateProfile = (profile) async {
+        if (deleteDuringUpdate) {
+          container.read(profilesProvider.notifier).value = const [
+            secondProfile,
+          ];
+          throw Exception('deleted mid-flight');
+        }
+        // Simulate concurrent selectedMap change while network request is running.
+        final current =
+            container.read(profilesProvider).getProfile(profile.id)!;
+        container.read(profilesProvider.notifier).setProfile(
+              current.copyWith(selectedMap: const {'Proxy': 'FastNode'}),
+            );
+        throw Exception('subscription server 502');
+      };
+
+    container = await mount(
+      tester,
+      width: 1200,
+      attachNavigatorKey: true,
+      locale: const Locale('zh', 'CN'),
+      profiles: [subProfile, secondProfile],
+      catalogs: {
+        'sub-err': ProfileCatalog(
+          profileId: 'sub-err',
+          fingerprint: 'e',
+          status: ProfileCatalogStatus.ready,
+          nodes: [_node('e-1', 'Node E')],
+        ),
+        'other': ProfileCatalog(
+          profileId: 'other',
+          fingerprint: 'o',
+          status: ProfileCatalogStatus.ready,
+          nodes: [_node('o-1', 'Node O')],
+        ),
+      },
+    );
+
+    await tester.tap(find.byKey(const ValueKey('overview-sync-sub-err')));
+    await tester.pumpAndSettle();
+
+    // Error dialog is presented via globalState.safeRun(silence: false).
+    expect(find.textContaining('subscription server 502'), findsOneWidget);
+    final rolledBack = container.read(profilesProvider).getProfile('sub-err')!;
+    expect(rolledBack.isUpdating, isFalse);
+    expect(rolledBack.selectedMap, const {'Proxy': 'FastNode'});
+
+    // Dismiss modal dialog.
+    await tester.tapAt(const Offset(10, 10));
+    await tester.pumpAndSettle();
+
+    // Retry when profile is deleted mid-flight: must not resurrect 'sub-err'.
+    deleteDuringUpdate = true;
+    await tester.tap(find.byKey(const ValueKey('overview-sync-sub-err')));
+    await tester.pumpAndSettle();
+    expect(container.read(profilesProvider).getProfile('sub-err'), isNull);
+    await tester.tapAt(const Offset(10, 10));
+    await tester.pumpAndSettle();
+  });
+
+  testWidgets(
+      'subscription sync button: supports narrow layout without duplicate keys, deduplicates semantics, and handles 2.0x text scaling without overflow',
+      (tester) async {
+    final semanticsHandle = tester.ensureSemantics();
+    try {
+      const longActiveSub = Profile(
+        id: 'long-sub',
+        label: '测试超长配置名称-20261029-GHDXXK-VIP',
+        url: 'https://sub.example.invalid/long',
+        autoUpdateDuration: Duration(hours: 12),
+        subscriptionInfo: SubscriptionInfo(
+          upload: 1024,
+          download: 2048,
+          total: 10485760,
+          expire: 0,
+        ),
+      );
+      const localPeer = Profile(
+        id: 'peer',
+        label: 'LocalPeer',
+        url: '',
+        autoUpdateDuration: Duration.zero,
+      );
+
+      globalState.config =
+          globalState.config.copyWith(currentProfileId: 'long-sub');
+      final controller = _ProxyController();
+      globalState.appController = controller;
+      late ProviderContainer container;
+      controller
+        ..onSetProfile = (updated) {
+          container.read(profilesProvider.notifier).setProfile(updated);
+        }
+        ..onUpdateProfile = (profile) async {
+          container
+              .read(profilesProvider.notifier)
+              .setProfile(profile.copyWith(isUpdating: false));
+        };
+
+      // 1. Narrow layout (420px): renders single sync button in subscription card and triggers sync.
+      container = await mount(
+        tester,
+        width: 420,
+        locale: const Locale('zh', 'CN'),
+        profiles: [longActiveSub, localPeer],
+        catalogs: {
+          'long-sub': ProfileCatalog(
+            profileId: 'long-sub',
+            fingerprint: 'l',
+            status: ProfileCatalogStatus.ready,
+            nodes: [_node('l-1', 'Node L')],
+          ),
+          'peer': ProfileCatalog(
+            profileId: 'peer',
+            fingerprint: 'p',
+            status: ProfileCatalogStatus.ready,
+            nodes: [_node('p-1', 'Node P')],
+          ),
+        },
+      );
+      final narrowBtn = find.byKey(const ValueKey('overview-sync-long-sub'));
+      expect(narrowBtn, findsOneWidget);
+      final syncSemantics = tester.getSemantics(narrowBtn);
+      expect(syncSemantics.label, '更新订阅');
+      expect(
+        syncSemantics.getSemanticsData().hasAction(SemanticsAction.tap),
+        isTrue,
+      );
+      await tester.tap(narrowBtn);
+      await tester.pumpAndSettle();
+      expect(controller.updatedProfiles.map((p) => p.id), ['long-sub']);
+      expect(tester.takeException(), isNull);
+
+      // 2. Wide & narrow layouts at 2.0x text scale across zh_CN and ru without overflow.
+      for (final (width, locale) in [
+        (1200.0, const Locale('zh', 'CN')),
+        (1200.0, const Locale('ru')),
+        (380.0, const Locale('zh', 'CN')),
+        (380.0, const Locale('ru')),
+      ]) {
+        container = await mount(
+          tester,
+          width: width,
+          locale: locale,
+          profiles: [longActiveSub, localPeer],
+          child: MediaQuery(
+            data: MediaQueryData(
+              size: Size(width, 1000),
+              textScaler: const TextScaler.linear(2.0),
+            ),
+            child: const NodeOverviewView(),
+          ),
+          catalogs: {
+            'long-sub': ProfileCatalog(
+              profileId: 'long-sub',
+              fingerprint: 'l',
+              status: ProfileCatalogStatus.ready,
+              nodes: [_node('l-1', 'Node L')],
+            ),
+            'peer': ProfileCatalog(
+              profileId: 'peer',
+              fingerprint: 'p',
+              status: ProfileCatalogStatus.ready,
+              nodes: [_node('p-1', 'Node P')],
+            ),
+          },
+        );
+        expect(
+          find.byKey(const ValueKey('overview-sync-long-sub')),
+          findsOneWidget,
+        );
+        expect(tester.takeException(), isNull);
+      }
     } finally {
       semanticsHandle.dispose();
     }

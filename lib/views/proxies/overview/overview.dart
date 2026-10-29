@@ -309,6 +309,7 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
   final List<ProviderSubscription<Object?>> _lifecycleSubscriptions =
       <ProviderSubscription<Object?>>[];
   List<String> _stableProfileOrderIds = const <String>[];
+  final Set<String> _updatingOrderFreezeIds = <String>{};
   _IndexScanEpochState _scanEpoch = _IndexScanEpochState(0);
   bool _disposed = false;
   Timer? _clock;
@@ -765,6 +766,35 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
     }
   }
 
+  Future<void> _syncSubscription(Profile targetProfile) async {
+    final current =
+        ref.read(profilesProvider).getProfile(targetProfile.id) ??
+            targetProfile;
+    if (current.type != ProfileType.url || current.isUpdating) return;
+    if (!globalState.isAppControllerReady) return;
+    final appController = globalState.appController;
+    await globalState.safeRun(silence: false, () async {
+      try {
+        appController.setProfile(
+          current.copyWith(
+            isUpdating: true,
+          ),
+        );
+        await appController.updateProfile(current);
+      } catch (e) {
+        final latest = ref.read(profilesProvider).getProfile(current.id);
+        if (latest != null && latest.isUpdating) {
+          appController.setProfile(
+            latest.copyWith(
+              isUpdating: false,
+            ),
+          );
+        }
+        rethrow;
+      }
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final profiles = ref.watch(profilesProvider);
@@ -861,6 +891,15 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
           ? ref.watch(profileCatalogProvider(profile.id))
           : null;
       final catalog = loaded?.valueOrNull ?? cachedCatalogs[profile.id];
+      final catalogReloadingAfterSync =
+          ((loaded?.isLoading ?? false) && catalog == null) ||
+              catalog?.status == ProfileCatalogStatus.loading ||
+              catalog?.status == ProfileCatalogStatus.updating;
+      if (profile.isUpdating) {
+        _updatingOrderFreezeIds.add(profile.id);
+      } else if (!catalogReloadingAfterSync) {
+        _updatingOrderFreezeIds.remove(profile.id);
+      }
       if (catalog != null && catalog.status != ProfileCatalogStatus.loading) {
         _recordIndexedCatalog(profile, currentScript, catalog);
       }
@@ -979,8 +1018,10 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
         }
       }
     }
+    _updatingOrderFreezeIds.retainAll(originalIndexes.keys);
     final List<Profile> orderedProfiles;
-    if (_stableProfileOrderIds.isNotEmpty && tester.busy) {
+    if (_stableProfileOrderIds.isNotEmpty &&
+        (tester.busy || _updatingOrderFreezeIds.isNotEmpty)) {
       final byId = <String, Profile>{
         for (final profile in profiles) profile.id: profile,
       };
@@ -1051,8 +1092,11 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
                     items: [
                       DropdownMenuItem(
                           value: '',
-                          child:
-                              Text(appLocalizations.nodeOverviewAllProfiles)),
+                          child: ConstrainedBox(
+                              constraints: const BoxConstraints(maxWidth: 220),
+                              child: Text(
+                                  appLocalizations.nodeOverviewAllProfiles,
+                                  overflow: TextOverflow.ellipsis))),
                       for (final profile in orderedProfiles)
                         DropdownMenuItem(
                             value: profile.id,
@@ -1174,6 +1218,9 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
                           active: isCurrent,
                           liveActive: isLiveActive(profile),
                           now: now,
+                          onSync: profile.type == ProfileType.url
+                              ? () => unawaited(_syncSubscription(profile))
+                              : null,
                           onVisible: () =>
                               _onProfileVisibilityChanged(profile.id, true),
                           onSelect: () =>
@@ -1194,6 +1241,10 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
                       liveActive: isLiveActive(profile),
                       showHeader: selected == null,
                       showSubscriptionSummary: !wide || selected != null,
+                      onSyncSubscription:
+                          !wide && profile.type == ProfileType.url
+                              ? () => unawaited(_syncSubscription(profile))
+                              : null,
                       loadImmediately:
                           selected != null || searching || activeCountry != null,
                       availableOnly: _availableOnly,
@@ -1734,6 +1785,7 @@ class _SidebarProfileCard extends ConsumerWidget {
       required this.active,
       required this.liveActive,
       required this.now,
+      this.onSync,
       required this.onVisible,
       required this.onSelect});
   final Profile profile;
@@ -1741,6 +1793,7 @@ class _SidebarProfileCard extends ConsumerWidget {
   final bool active;
   final bool liveActive;
   final DateTime now;
+  final VoidCallback? onSync;
   final VoidCallback onVisible;
   final VoidCallback onSelect;
 
@@ -1753,7 +1806,45 @@ class _SidebarProfileCard extends ConsumerWidget {
         ref.watch(cachedProfileCatalogsProvider)[profile.id];
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
+    final textScale = MediaQuery.textScalerOf(context).scale(1.0);
     final metadata = _resolveProfileMetadata(profile);
+    final titleWidget = Text(
+      profile.label ?? profile.id,
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+      style: theme.textTheme.titleSmall?.copyWith(
+        fontWeight: FontWeight.w600,
+      ),
+    );
+    final activeBadge = active
+        ? Container(
+            padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+            decoration: BoxDecoration(
+              color: colors.primary.withValues(alpha: 0.14),
+              borderRadius: BorderRadius.circular(999),
+              border: Border.all(
+                color: colors.primary.withValues(alpha: 0.36),
+              ),
+            ),
+            child: Text(
+              appLocalizations.nodeOverviewActive,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: theme.textTheme.labelSmall?.copyWith(
+                color: colors.primary,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          )
+        : null;
+    final syncButton = onSync != null
+        ? _ProfileSyncButton(
+            key: ValueKey('overview-sync-${profile.id}'),
+            updating: profile.isUpdating,
+            selectedCard: selected,
+            onPressed: onSync,
+          )
+        : null;
     WidgetsBinding.instance.addPostFrameCallback((_) => onVisible());
     return Card(
         color: selected ? colors.secondaryContainer : null,
@@ -1766,42 +1857,37 @@ class _SidebarProfileCard extends ConsumerWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.center,
-                    children: [
-                      Expanded(
-                        child: Text(
-                          profile.label ?? profile.id,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: theme.textTheme.titleSmall?.copyWith(
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ),
-                      if (active) ...[
-                        const SizedBox(width: 8),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 7, vertical: 2),
-                          decoration: BoxDecoration(
-                            color: colors.primary.withValues(alpha: 0.14),
-                            borderRadius: BorderRadius.circular(999),
-                            border: Border.all(
-                              color: colors.primary.withValues(alpha: 0.36),
-                            ),
-                          ),
-                          child: Text(
-                            appLocalizations.nodeOverviewActive,
-                            style: theme.textTheme.labelSmall?.copyWith(
-                              color: colors.primary,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ),
+                  if (activeBadge != null &&
+                      syncButton != null &&
+                      textScale > 1.35) ...[
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: [
+                        Expanded(child: titleWidget),
+                        const SizedBox(width: 6),
+                        syncButton,
                       ],
-                    ],
-                  ),
+                    ),
+                    const SizedBox(height: 4),
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: activeBadge,
+                    ),
+                  ] else
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: [
+                        Expanded(child: titleWidget),
+                        if (activeBadge != null) ...[
+                          const SizedBox(width: 6),
+                          activeBadge,
+                        ],
+                        if (syncButton != null) ...[
+                          const SizedBox(width: 6),
+                          syncButton,
+                        ],
+                      ],
+                    ),
                   if (metadata != null) ...[
                     const SizedBox(height: 8),
                     _ProfileSubscriptionSummary(
@@ -1826,6 +1912,161 @@ class _SidebarProfileCard extends ConsumerWidget {
                 ],
               )),
         ));
+  }
+}
+
+class _ProfileSyncButton extends StatefulWidget {
+  const _ProfileSyncButton({
+    super.key,
+    required this.updating,
+    required this.onPressed,
+    this.selectedCard = false,
+  });
+
+  final bool updating;
+  final VoidCallback? onPressed;
+  final bool selectedCard;
+
+  @override
+  State<_ProfileSyncButton> createState() => _ProfileSyncButtonState();
+}
+
+class _ProfileSyncButtonState extends State<_ProfileSyncButton> {
+  bool _hovered = false;
+  bool _focused = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
+    final updating = widget.updating;
+    final enabled = !updating && widget.onPressed != null;
+    final label = updating
+        ? appLocalizations.nodeOverviewUpdatingShort
+        : appLocalizations.nodeOverviewUpdateSubscription;
+    final tooltipMessage = updating
+        ? appLocalizations.nodeOverviewUpdating
+        : appLocalizations.nodeOverviewUpdateSubscription;
+    final borderRadius = BorderRadius.circular(999);
+
+    final Color backgroundColor;
+    final Color borderColor;
+    final Color foregroundColor;
+
+    if (updating) {
+      backgroundColor = colors.primary.withValues(alpha: isDark ? 0.14 : 0.09);
+      borderColor = colors.primary.withValues(alpha: 0.36);
+      foregroundColor = colors.primary;
+    } else if (_hovered || _focused) {
+      backgroundColor = colors.primary.withValues(alpha: isDark ? 0.20 : 0.12);
+      borderColor = colors.primary.withValues(alpha: 0.68);
+      foregroundColor = colors.primary;
+    } else {
+      backgroundColor = widget.selectedCard
+          ? colors.surface.withValues(alpha: isDark ? 0.46 : 0.76)
+          : colors.surfaceContainerHighest.withValues(
+              alpha: isDark ? 0.62 : 0.85,
+            );
+      borderColor = colors.outlineVariant.withValues(alpha: 0.78);
+      foregroundColor = colors.onSurface.withValues(alpha: 0.90);
+    }
+
+    return Semantics(
+      container: true,
+      button: true,
+      enabled: enabled,
+      label: label,
+      onTap: enabled ? widget.onPressed : null,
+      excludeSemantics: true,
+      child: Tooltip(
+        message: tooltipMessage,
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: enabled ? null : () {},
+          child: MouseRegion(
+            cursor:
+                enabled ? SystemMouseCursors.click : SystemMouseCursors.basic,
+            onEnter: (_) {
+              if (!_hovered) setState(() => _hovered = true);
+            },
+            onExit: (_) {
+              if (_hovered) setState(() => _hovered = false);
+            },
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 148),
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 140),
+                curve: Curves.easeOutCubic,
+                decoration: BoxDecoration(
+                  color: backgroundColor,
+                  borderRadius: borderRadius,
+                  border: Border.all(color: borderColor, width: 0.9),
+                ),
+                child: Material(
+                  color: Colors.transparent,
+                  child: InkWell(
+                    borderRadius: borderRadius,
+                    hoverColor: Colors.transparent,
+                    focusColor: Colors.transparent,
+                    splashColor: colors.primary.withValues(alpha: 0.12),
+                    highlightColor: colors.primary.withValues(alpha: 0.08),
+                    onFocusChange: (value) {
+                      if (mounted && _focused != value) {
+                        setState(() => _focused = value);
+                      }
+                    },
+                    onTap: enabled ? widget.onPressed : null,
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 3,
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (updating)
+                            SizedBox(
+                              width: 11,
+                              height: 11,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 1.6,
+                                valueColor: AlwaysStoppedAnimation<Color>(
+                                  foregroundColor,
+                                ),
+                              ),
+                            )
+                          else
+                            Icon(
+                              Icons.sync_rounded,
+                              size: 12.5,
+                              color: foregroundColor,
+                            ),
+                          const SizedBox(width: 3.5),
+                          Flexible(
+                            child: Text(
+                              label,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: theme.textTheme.labelSmall?.copyWith(
+                                fontSize: 11,
+                                height: 1.2,
+                                color: foregroundColor,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }
 
@@ -2014,10 +2255,12 @@ class _ProfileSubscriptionSummary extends StatelessWidget {
   const _ProfileSubscriptionSummary({
     required this.data,
     required this.now,
+    this.trailingAction,
   });
 
   final _ProfileMetadataViewData data;
   final DateTime now;
+  final Widget? trailingAction;
 
   @override
   Widget build(BuildContext context) {
@@ -2037,32 +2280,44 @@ class _ProfileSubscriptionSummary extends StatelessWidget {
 
     final children = <Widget>[];
 
-    if (serviceName != null || updatePolicyText != null) {
+    if (serviceName != null ||
+        updatePolicyText != null ||
+        trailingAction != null) {
+      final tagsWrap = Wrap(
+        spacing: 6,
+        runSpacing: 4,
+        children: [
+          if (serviceName != null)
+            _SubscriptionTagPill(
+              icon: Icons.cloud_outlined,
+              label: serviceName,
+              foreground: colors.primary,
+              background: colors.primary.withValues(alpha: 0.12),
+              border: colors.primary.withValues(alpha: 0.30),
+            ),
+          if (updatePolicyText != null)
+            _SubscriptionTagPill(
+              icon: data.updatePolicyIcon ?? Icons.description_outlined,
+              label: updatePolicyText,
+              foreground: colors.onSurfaceVariant,
+              background: colors.surfaceContainerHighest.withValues(
+                alpha: 0.65,
+              ),
+              border: colors.outlineVariant.withValues(alpha: 0.55),
+            ),
+        ],
+      );
       children.add(
-        Wrap(
-          spacing: 6,
-          runSpacing: 4,
-          children: [
-            if (serviceName != null)
-              _SubscriptionTagPill(
-                icon: Icons.cloud_outlined,
-                label: serviceName,
-                foreground: colors.primary,
-                background: colors.primary.withValues(alpha: 0.12),
-                border: colors.primary.withValues(alpha: 0.30),
+        trailingAction == null
+            ? tagsWrap
+            : Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  Expanded(child: tagsWrap),
+                  const SizedBox(width: 8),
+                  trailingAction!,
+                ],
               ),
-            if (updatePolicyText != null)
-              _SubscriptionTagPill(
-                icon: data.updatePolicyIcon ?? Icons.description_outlined,
-                label: updatePolicyText,
-                foreground: colors.onSurfaceVariant,
-                background: colors.surfaceContainerHighest.withValues(
-                  alpha: 0.65,
-                ),
-                border: colors.outlineVariant.withValues(alpha: 0.55),
-              ),
-          ],
-        ),
       );
     }
 
@@ -2422,6 +2677,7 @@ class _ProfileNodesSliver extends ConsumerStatefulWidget {
       required this.liveActive,
       required this.showHeader,
       required this.showSubscriptionSummary,
+      this.onSyncSubscription,
       required this.loadImmediately,
       required this.availableOnly,
       required this.countryFilter,
@@ -2436,6 +2692,7 @@ class _ProfileNodesSliver extends ConsumerStatefulWidget {
   final bool liveActive;
   final bool showHeader;
   final bool showSubscriptionSummary;
+  final VoidCallback? onSyncSubscription;
   final bool loadImmediately;
   final bool availableOnly;
   final String? countryFilter;
@@ -2573,6 +2830,13 @@ class _ProfileNodesSliverState extends ConsumerState<_ProfileNodesSliver> {
                   child: _ProfileSubscriptionSummary(
                     data: metadata,
                     now: widget.now,
+                    trailingAction: widget.onSyncSubscription == null
+                        ? null
+                        : _ProfileSyncButton(
+                            key: ValueKey('overview-sync-${profile.id}'),
+                            updating: profile.isUpdating,
+                            onPressed: widget.onSyncSubscription,
+                          ),
                   ),
                 ),
               ),

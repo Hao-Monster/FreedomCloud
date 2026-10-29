@@ -953,5 +953,7 @@
         "type": "String"
       }
     }
-  }
+  },
+  "nodeOverviewUpdateSubscription": "Update",
+  "nodeOverviewUpdatingShort": "Updating"
 }

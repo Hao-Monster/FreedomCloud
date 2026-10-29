@@ -814,5 +814,7 @@
         "type": "String"
       }
     }
-  }
+  },
+  "nodeOverviewUpdateSubscription": "Обновить",
+  "nodeOverviewUpdatingShort": "Обновление"
 }

@@ -814,8 +814,14 @@ class MessageLookup extends MessageLookupByLibrary {
       "This protocol is not supported for isolated tests",
     ),
     "nodeOverviewUntested": MessageLookupByLibrary.simpleMessage("Untested"),
+    "nodeOverviewUpdateSubscription": MessageLookupByLibrary.simpleMessage(
+      "Update",
+    ),
     "nodeOverviewUpdating": MessageLookupByLibrary.simpleMessage(
       "Updating subscription",
+    ),
+    "nodeOverviewUpdatingShort": MessageLookupByLibrary.simpleMessage(
+      "Updating",
     ),
     "nodeOverviewUseNode": MessageLookupByLibrary.simpleMessage("Use"),
     "nodeOverviewUsedOfTotalTraffic": m22,
