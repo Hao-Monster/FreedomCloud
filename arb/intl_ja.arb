@@ -494,7 +494,6 @@
   "nodeOverviewAllProfiles": "すべての設定",
   "nodeOverviewActive": "使用中",
   "nodeOverviewAvailableOnly": "利用可能のみ",
-  "nodeOverviewInline": "インライン",
   "nodeOverviewRuntimeSource": "実行中のノード",
   "nodeOverviewUntested": "未測定",
   "nodeOverviewTestFailed": "テスト失敗",
@@ -742,6 +741,15 @@
   "nodeOverviewManualUpdate": "手動更新",
   "nodeOverviewLocalProfile": "ローカル設定",
   "nodeOverviewDeviceLimitReached": "端末数の上限に達しました",
+  "nodeOverviewStatusExpired": "期限切れ",
+  "nodeOverviewAnnouncement": "お知らせ：{text}",
+  "@nodeOverviewAnnouncement": {
+    "placeholders": {
+      "text": {
+        "type": "String"
+      }
+    }
+  },
   "nodeOverviewSwitchedToNode": "{profile} · {node} に切り替えました",
   "@nodeOverviewSwitchedToNode": {
     "placeholders": {

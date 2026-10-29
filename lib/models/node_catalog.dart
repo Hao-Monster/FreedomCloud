@@ -216,17 +216,51 @@ const _packetEncodingLabels = <String, String>{
 
 final _safeUnknownTypePattern = RegExp(r'^[A-Za-z0-9_-]{1,24}$');
 
+const _hysteriaV1Protocols = <String, String>{
+  'udp': 'QUIC',
+  'faketcp': 'FakeTCP',
+  'wechat-video': 'WeChat-Video',
+};
+
+const _v2rayPluginTransports = <String, String>{
+  'websocket': 'WS',
+  'ws': 'WS',
+  'grpc': 'gRPC',
+  'quic': 'QUIC',
+};
+
+Map<String, Object?>? _normalizeFieldMap(Object? raw) {
+  if (raw is! Map) return null;
+  final normalized = <String, Object?>{};
+  for (final entry in raw.entries) {
+    final key = entry.key;
+    if (key is String) {
+      normalized[key.trim().toLowerCase().replaceAll('_', '-')] = entry.value;
+    }
+  }
+  return normalized;
+}
+
+Map<String, Object?>? _nonEmptyFieldMap(Object? raw) {
+  final map = _normalizeFieldMap(raw);
+  return map == null || map.isEmpty ? null : map;
+}
+
+/// Normalizes a proxy `type` (e.g. Mihomo's `'Vless'`, `'Shadowsocks'`) to a
+/// canonical closed-world protocol display label.
+String canonicalProtocolLabel(String rawType) {
+  final trimmed = rawType.trim();
+  if (trimmed.isEmpty) return rawType;
+  return _canonicalProtocolLabels[trimmed.toLowerCase()] ??
+      (_safeUnknownTypePattern.hasMatch(trimmed) ? trimmed : rawType);
+}
+
 /// Extracts a human-readable protocol stack summary using ONLY closed-world
 /// canonical tokens. Raw strings for hosts, ports, credentials, paths, SNI,
 /// keys, or unknown tokens are never echoed.
 String? extractSafeProtocolSummary(Map<Object?, Object?> proxy) {
-  final fields = <String, Object?>{};
-  for (final entry in proxy.entries) {
-    final key = entry.key;
-    if (key is String) {
-      fields[key.trim().toLowerCase().replaceAll('_', '-')] = entry.value;
-    }
-  }
+  final fields = _normalizeFieldMap(proxy);
+  if (fields == null) return null;
   final rawType = fields['type'];
   if (rawType is! String) return null;
   final trimmedType = rawType.trim();
@@ -238,24 +272,46 @@ String? extractSafeProtocolSummary(Map<Object?, Object?> proxy) {
 
   final parts = <String>[protocolLabel];
 
+  final isShadowsocks = typeLower == 'ss' || typeLower == 'shadowsocks';
+  final rawPlugin = fields['plugin'];
+  final pluginLower =
+      isShadowsocks && rawPlugin is String ? rawPlugin.trim().toLowerCase() : null;
+  final pluginOpts =
+      isShadowsocks ? _nonEmptyFieldMap(fields['plugin-opts']) : null;
+
   String? transport;
   final rawNetwork = fields['network'] ??
       (typeLower == 'mieru' ? fields['transport'] : null);
   if (rawNetwork is String) {
     transport = _canonicalTransports[rawNetwork.trim().toLowerCase()];
   }
-  if (transport == null) {
-    if (fields['ws-opts'] is Map) {
+  if (transport == null && pluginLower == 'v2ray-plugin') {
+    final rawMode = pluginOpts?['mode'];
+    if (rawMode is String) {
+      transport = _v2rayPluginTransports[rawMode.trim().toLowerCase()];
+    } else {
       transport = 'WS';
-    } else if (fields['grpc-opts'] is Map) {
+    }
+  }
+  if (transport == null && typeLower == 'hysteria') {
+    final rawProto = fields['protocol'];
+    transport = rawProto is String
+        ? (_hysteriaV1Protocols[rawProto.trim().toLowerCase()] ?? 'QUIC')
+        : 'QUIC';
+  }
+  if (transport == null) {
+    if (_nonEmptyFieldMap(fields['ws-opts']) != null) {
+      transport = 'WS';
+    } else if (_nonEmptyFieldMap(fields['grpc-opts']) != null) {
       transport = 'gRPC';
-    } else if (fields['h2-opts'] is Map) {
+    } else if (_nonEmptyFieldMap(fields['h2-opts']) != null) {
       transport = 'H2';
-    } else if (fields['http-opts'] is Map) {
+    } else if (_nonEmptyFieldMap(fields['http-opts']) != null) {
       transport = 'HTTP';
-    } else if (const {'vless', 'vmess', 'trojan'}.contains(typeLower)) {
+    } else if (const {'vless', 'vmess', 'trojan', 'http', 'socks5'}
+        .contains(typeLower)) {
       transport = 'TCP';
-    } else if (const {'hysteria2', 'hysteria', 'tuic'}.contains(typeLower)) {
+    } else if (const {'hysteria2', 'tuic'}.contains(typeLower)) {
       transport = 'QUIC';
     } else if (const {'wireguard', 'amneziawg'}.contains(typeLower)) {
       transport = 'UDP';
@@ -265,8 +321,14 @@ String? extractSafeProtocolSummary(Map<Object?, Object?> proxy) {
     parts.add(transport);
   }
 
-  final hasReality = fields['reality-opts'] is Map;
+  final realityOpts = _nonEmptyFieldMap(fields['reality-opts']);
+  final realityPublicKey = realityOpts?['public-key'];
+  final hasReality =
+      realityPublicKey is String && realityPublicKey.trim().isNotEmpty;
+  final hasPluginTls =
+      pluginLower == 'v2ray-plugin' && pluginOpts?['tls'] == true;
   final hasTls = fields['tls'] == true ||
+      hasPluginTls ||
       const {'trojan', 'hysteria2', 'hysteria', 'tuic', 'anytls'}
           .contains(typeLower);
   if (hasReality) {
@@ -311,37 +373,37 @@ String? extractSafeProtocolSummary(Map<Object?, Object?> proxy) {
     }
   }
 
-  if (typeLower == 'ss' || typeLower == 'shadowsocks') {
-    final rawPlugin = fields['plugin'];
-    if (rawPlugin is String) {
-      final pluginLower = rawPlugin.trim().toLowerCase();
-      if (pluginLower == 'obfs' || pluginLower == 'simple-obfs') {
-        String? modeSuffix;
-        final pluginOpts = fields['plugin-opts'];
-        if (pluginOpts is Map) {
-          final rawMode = pluginOpts['mode'];
-          if (rawMode is String) {
-            final modeLower = rawMode.trim().toLowerCase();
-            if (modeLower == 'tls') {
-              modeSuffix = 'TLS';
-            } else if (modeLower == 'http') {
-              modeSuffix = 'HTTP';
-            }
-          }
+  if (isShadowsocks && pluginLower != null) {
+    if (pluginLower == 'obfs' || pluginLower == 'simple-obfs') {
+      String? modeSuffix;
+      final rawMode = pluginOpts?['mode'];
+      if (rawMode is String) {
+        final modeLower = rawMode.trim().toLowerCase();
+        if (modeLower == 'tls') {
+          modeSuffix = 'TLS';
+        } else if (modeLower == 'http') {
+          modeSuffix = 'HTTP';
         }
-        parts.add(
-            modeSuffix == null ? 'simple-obfs' : 'simple-obfs ($modeSuffix)');
-      } else if (pluginLower == 'v2ray-plugin') {
-        parts.add('v2ray-plugin');
-      } else if (pluginLower == 'shadow-tls') {
-        parts.add('ShadowTLS');
-      } else if (pluginLower == 'restls') {
-        parts.add('Restls');
-      } else if (pluginLower == 'kcptun') {
-        parts.add('kcptun');
-      } else if (pluginLower == 'gost-plugin') {
-        parts.add('gost-plugin');
       }
+      parts.add(
+          modeSuffix == null ? 'simple-obfs' : 'simple-obfs ($modeSuffix)');
+    } else if (pluginLower == 'v2ray-plugin') {
+      parts.add('v2ray-plugin');
+    } else if (pluginLower == 'shadow-tls') {
+      final rawVer = pluginOpts?['version'];
+      final ver = rawVer is int
+          ? rawVer
+          : rawVer is String
+              ? int.tryParse(rawVer.trim())
+              : null;
+      parts.add(
+          ver != null && ver >= 1 && ver <= 3 ? 'ShadowTLS v$ver' : 'ShadowTLS');
+    } else if (pluginLower == 'restls') {
+      parts.add('Restls');
+    } else if (pluginLower == 'kcptun') {
+      parts.add('kcptun');
+    } else if (pluginLower == 'gost-plugin') {
+      parts.add('gost-plugin');
     }
   } else if (typeLower == 'hysteria2') {
     final rawObfs = fields['obfs'];
@@ -376,8 +438,8 @@ String? extractSafeProtocolSummary(Map<Object?, Object?> proxy) {
     }
   }
 
-  final smux = fields['smux'];
-  if (smux is Map && smux['enabled'] == true) {
+  final smux = _nonEmptyFieldMap(fields['smux']);
+  if (smux != null && smux['enabled'] == true) {
     final rawSmuxProto = smux['protocol'];
     final smuxLower =
         rawSmuxProto is String ? rawSmuxProto.trim().toLowerCase() : null;

@@ -5,6 +5,7 @@ import 'package:flclashx/common/node_catalog_service.dart';
 import 'package:flclashx/common/node_health_recorder.dart';
 import 'package:flclashx/common/node_health_store.dart';
 import 'package:flclashx/common/node_runtime_catalog.dart';
+import 'package:flclashx/models/common.dart';
 import 'package:flclashx/models/node_catalog.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -460,5 +461,82 @@ void main() {
     ]) {
       expect(serialized, isNot(contains(secret)));
     }
+  });
+
+  test(
+      'extractSafeProtocolSummary rejects empty transport/reality maps and normalizes plugin/protocol variants',
+      () {
+    expect(
+      extractSafeProtocolSummary({
+        'name': 'SubConverter-TLS-Not-Reality',
+        'type': 'vless',
+        'server': 'tls.example.invalid',
+        'port': 443,
+        'tls': true,
+        'reality-opts': {'public-key': '', 'short-id': ''},
+      }),
+      'VLESS · TCP · TLS',
+    );
+    expect(
+      extractSafeProtocolSummary({
+        'name': 'Empty-WS-Opts',
+        'type': 'vmess',
+        'server': 'tcp.example.invalid',
+        'port': 443,
+        'ws-opts': <String, Object?>{},
+      }),
+      'VMess · TCP',
+    );
+    expect(
+      extractSafeProtocolSummary({
+        'name': 'Hy1-FakeTCP',
+        'type': 'hysteria',
+        'server': 'hy1.example.invalid',
+        'port': 443,
+        'protocol': 'faketcp',
+      }),
+      'Hysteria · FakeTCP · TLS',
+    );
+    expect(
+      extractSafeProtocolSummary({
+        'name': 'SS-V2Ray-WS-TLS',
+        'type': 'ss',
+        'server': 'ss.example.invalid',
+        'port': 443,
+        'cipher': 'aes-256-gcm',
+        'plugin': 'v2ray-plugin',
+        'plugin_opts': {'MODE': 'websocket', 'TLS': true},
+      }),
+      'Shadowsocks · WS · TLS · aes-256-gcm · v2ray-plugin',
+    );
+    expect(
+      extractSafeProtocolSummary({
+        'name': 'SS-ShadowTLS-v3',
+        'type': 'ss',
+        'server': 'stls.example.invalid',
+        'port': 443,
+        'plugin': 'shadow-tls',
+        'plugin-opts': {'version': 3, 'password': 'secret-stls-password'},
+      }),
+      'Shadowsocks · ShadowTLS v3',
+    );
+    expect(
+      extractSafeProtocolSummary({
+        'name': 'HTTPS-Connect',
+        'type': 'http',
+        'server': 'http.example.invalid',
+        'port': 443,
+        'tls': true,
+      }),
+      'HTTP · TCP · TLS',
+    );
+  });
+
+  test('TrafficValue formats exact power-of-1024 boundaries in the higher unit',
+      () {
+    expect(const TrafficValue(value: 1024).show, '1 KB');
+    expect(const TrafficValue(value: 1024 * 1024).show, '1 MB');
+    expect(const TrafficValue(value: 1024 * 1024 * 1024).show, '1 GB');
+    expect(const TrafficValue(value: 1024 * 1024 * 1024 * 1024).show, '1 TB');
   });
 }

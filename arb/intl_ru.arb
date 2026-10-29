@@ -548,7 +548,6 @@
   "nodeOverviewAllProfiles": "Все профили",
   "nodeOverviewActive": "Активный",
   "nodeOverviewAvailableOnly": "Только доступные",
-  "nodeOverviewInline": "Встроенный",
   "nodeOverviewRuntimeSource": "Активный узел",
   "nodeOverviewUntested": "Не проверено",
   "nodeOverviewTestFailed": "Ошибка проверки",
@@ -796,6 +795,15 @@
   "nodeOverviewManualUpdate": "Вручную",
   "nodeOverviewLocalProfile": "Локальный файл",
   "nodeOverviewDeviceLimitReached": "Достигнут лимит устройств",
+  "nodeOverviewStatusExpired": "Истёк",
+  "nodeOverviewAnnouncement": "Объявление: {text}",
+  "@nodeOverviewAnnouncement": {
+    "placeholders": {
+      "text": {
+        "type": "String"
+      }
+    }
+  },
   "nodeOverviewSwitchedToNode": "Переключено на {profile} · {node}",
   "@nodeOverviewSwitchedToNode": {
     "placeholders": {

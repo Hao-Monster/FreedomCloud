@@ -688,7 +688,6 @@
   "nodeOverviewAllProfiles": "All profiles",
   "nodeOverviewActive": "Active",
   "nodeOverviewAvailableOnly": "Available only",
-  "nodeOverviewInline": "Inline",
   "nodeOverviewRuntimeSource": "Runtime node",
   "nodeOverviewUntested": "Untested",
   "nodeOverviewTestFailed": "Test failed",
@@ -935,6 +934,15 @@
   "nodeOverviewManualUpdate": "Manual update",
   "nodeOverviewLocalProfile": "Local file",
   "nodeOverviewDeviceLimitReached": "Device limit reached",
+  "nodeOverviewStatusExpired": "Expired",
+  "nodeOverviewAnnouncement": "Announcement: {text}",
+  "@nodeOverviewAnnouncement": {
+    "placeholders": {
+      "text": {
+        "type": "String"
+      }
+    }
+  },
   "nodeOverviewSwitchedToNode": "Switched to {profile} · {node}",
   "@nodeOverviewSwitchedToNode": {
     "placeholders": {

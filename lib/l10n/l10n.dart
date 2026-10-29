@@ -5664,16 +5664,6 @@ class AppLocalizations {
     );
   }
 
-  /// `Inline`
-  String get nodeOverviewInline {
-    return Intl.message(
-      'Inline',
-      name: 'nodeOverviewInline',
-      desc: '',
-      args: [],
-    );
-  }
-
   /// `Runtime node`
   String get nodeOverviewRuntimeSource {
     return Intl.message(
@@ -6496,6 +6486,26 @@ class AppLocalizations {
       name: 'nodeOverviewDeviceLimitReached',
       desc: '',
       args: [],
+    );
+  }
+
+  /// `Expired`
+  String get nodeOverviewStatusExpired {
+    return Intl.message(
+      'Expired',
+      name: 'nodeOverviewStatusExpired',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Announcement: {text}`
+  String nodeOverviewAnnouncement(String text) {
+    return Intl.message(
+      'Announcement: $text',
+      name: 'nodeOverviewAnnouncement',
+      desc: '',
+      args: [text],
     );
   }
 

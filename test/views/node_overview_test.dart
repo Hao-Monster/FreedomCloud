@@ -71,6 +71,8 @@ class _CatalogTester extends ChangeNotifier implements NodeCatalogTester {
   final pendingKeys = <(String, String)>{};
   String? reason;
   DelayBatchResult? allResult;
+  Future<DelayBatchResult> Function(List<DelayTestTarget> targets)?
+      onTestCurrent;
   int cancellations = 0;
   int scopeDisposals = 0;
   @override
@@ -92,7 +94,11 @@ class _CatalogTester extends ChangeNotifier implements NodeCatalogTester {
   @override
   Future<DelayBatchResult> testCurrent(
       Iterable<DelayTestTarget> targets) async {
-    current.add(targets.toList());
+    final list = targets.toList();
+    current.add(list);
+    if (onTestCurrent != null) {
+      return onTestCurrent!(list);
+    }
     return DelayBatchResult(completed: 0, failed: 0, reason: reason);
   }
 
@@ -4144,5 +4150,463 @@ void main() {
       }
       expect(tester.takeException(), isNull);
     }
+  });
+
+  testWidgets(
+      'CR-01/CR-05/CR-07: ignores empty SubscriptionInfo, parses ms/sentinel expire safely, clamps sub-1% quota, localizes expired/announcement, and avoids hollow cards',
+      (tester) async {
+    const miB = 1024 * 1024;
+    const giB = 1024 * miB;
+    const emptySubProfile = Profile(
+      id: 'empty-sub',
+      label: 'Bare Remote',
+      url: 'https://sub.example.invalid/raw',
+      autoUpdate: false,
+      autoUpdateDuration: Duration.zero,
+      subscriptionInfo: SubscriptionInfo(),
+    );
+    const msExpireProfile = Profile(
+      id: 'ms-expire',
+      label: 'Millisecond Sub',
+      url: 'https://sub.example.invalid/ms',
+      autoUpdateDuration: Duration.zero,
+      subscriptionInfo: SubscriptionInfo(
+        upload: 0,
+        download: 0,
+        total: giB,
+        expire: 1798761600000,
+      ),
+    );
+    const sentinelAndTinyRemainingProfile = Profile(
+      id: 'sentinel-sub',
+      label: 'Sentinel Sub',
+      url: 'https://sub.example.invalid/sentinel',
+      autoUpdateDuration: Duration.zero,
+      subscriptionInfo: SubscriptionInfo(
+        upload: 0,
+        download: 996 * miB,
+        total: 1000 * miB,
+        expire: 9223372036854775807,
+      ),
+    );
+    const expiredAnnounceProfile = Profile(
+      id: 'expired-sub',
+      label: 'Expired Sub',
+      url: 'https://sub.example.invalid/expired',
+      autoUpdateDuration: Duration.zero,
+      subscriptionInfo: SubscriptionInfo(
+        upload: giB,
+        download: giB,
+        total: 10 * giB,
+        expire: 1,
+      ),
+      providerHeaders: {
+        'announce': 'Scheduled maintenance window',
+      },
+    );
+    const bareLocalDuplicateHeader = Profile(
+      id: 'bare-local',
+      label: 'Bare Local',
+      url: '',
+      autoUpdateDuration: Duration.zero,
+      providerHeaders: {
+        'flclashx-servicename': 'Bare Local',
+      },
+    );
+
+    final profiles = [
+      emptySubProfile,
+      msExpireProfile,
+      sentinelAndTinyRemainingProfile,
+      expiredAnnounceProfile,
+      bareLocalDuplicateHeader,
+    ];
+    final catalogs = {
+      for (final p in profiles)
+        p.id: ProfileCatalog(
+          profileId: p.id,
+          fingerprint: 'fp-${p.id}',
+          status: ProfileCatalogStatus.ready,
+          nodes: [_node('${p.id}-1', 'Node ${p.id}')],
+        ),
+    };
+
+    await mount(
+      tester,
+      width: 1200,
+      locale: const Locale('en'),
+      profiles: profiles,
+      catalogs: catalogs,
+    );
+    expect(tester.takeException(), isNull);
+
+    final emptyCard =
+        find.byKey(const ValueKey('overview-sidebar-card-empty-sub'));
+    expect(
+      find.descendant(
+          of: emptyCard, matching: find.text('Traffic: Unlimited')),
+      findsNothing,
+    );
+    expect(
+      find.descendant(of: emptyCard, matching: find.text('Expires: Never')),
+      findsNothing,
+    );
+
+    final msCard =
+        find.byKey(const ValueKey('overview-sidebar-card-ms-expire'));
+    expect(
+      find.descendant(of: msCard, matching: find.text('Remaining: 1 GB')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+          of: msCard, matching: find.textContaining('Expires: 2027-01-')),
+      findsOneWidget,
+    );
+
+    final sentinelCard =
+        find.byKey(const ValueKey('overview-sidebar-card-sentinel-sub'));
+    expect(
+      find.descendant(of: sentinelCard, matching: find.text('1%')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: sentinelCard, matching: find.text('Expires: Never')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+          of: sentinelCard, matching: find.text('Subscription expired')),
+      findsNothing,
+    );
+
+    await tester.drag(
+        find.byKey(const ValueKey('overview-sidebar')), const Offset(0, -500));
+    await tester.pumpAndSettle();
+
+    final expiredCard =
+        find.byKey(const ValueKey('overview-sidebar-card-expired-sub'));
+    expect(
+      find.descendant(
+          of: expiredCard, matching: find.textContaining('· Expired')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: expiredCard,
+        matching: find.text('Announcement: Scheduled maintenance window'),
+      ),
+      findsOneWidget,
+    );
+    expect(find.textContaining('Announcement：'), findsNothing);
+
+    final bareLocalCard =
+        find.byKey(const ValueKey('overview-sidebar-card-bare-local'));
+    expect(
+      find.descendant(of: bareLocalCard, matching: find.byType(Divider)),
+      findsNothing,
+    );
+  });
+
+  testWidgets(
+      'CR-02/CR-06: active provider node updates delay on explicit single-node test and runtime fallback uses canonical protocol label',
+      (tester) async {
+    const groupUrl = 'https://group.invalid/probe';
+    globalState.config = globalState.config.copyWith(currentProfileId: 'a');
+    globalState.appState = globalState.appState.copyWith(
+      groups: const [
+        Group(
+          name: 'Live',
+          type: GroupType.Selector,
+          hidden: false,
+          testUrl: groupUrl,
+          all: [
+            Proxy(name: 'ProviderLeaf', type: 'Vless'),
+            Proxy(name: 'RuntimeOnlyLeaf', type: 'Vless'),
+          ],
+        ),
+      ],
+    );
+    final providerNode = catalogNodeFromMap(
+      profileId: 'a',
+      source: CatalogNodeSource.provider,
+      providerName: 'Feed',
+      proxy: {
+        'name': 'ProviderLeaf',
+        'type': 'vless',
+        'server': 'provider.example.invalid',
+        'port': 443,
+        'uuid': 'u-1',
+        'network': 'ws',
+        'tls': true,
+      },
+    );
+    final backend = _CatalogTester();
+    late ProviderContainer container;
+    var nextMeasuredDelay = 245;
+    backend.onTestCurrent = (targets) async {
+      for (final target in targets) {
+        container.read(delayDataSourceProvider.notifier).setDelay(
+              Delay(name: target.name, url: target.url, value: nextMeasuredDelay),
+            );
+      }
+      return DelayBatchResult(
+        completed: targets.length,
+        failed: nextMeasuredDelay < 0 ? targets.length : 0,
+      );
+    };
+
+    container = await mount(
+      tester,
+      width: 1200,
+      catalogTester: backend,
+      catalogs: {
+        'a': ProfileCatalog(
+          profileId: 'a',
+          fingerprint: 'file',
+          status: ProfileCatalogStatus.ready,
+          nodes: [providerNode],
+        ),
+      },
+      health: {
+        'a': {
+          providerNode.identityKey: NodeHealthRecord(
+            delayMs: 80,
+            testedAt: DateTime(2026, 10, 15, 10, 11),
+            testUrlHash: 'fixture',
+          ),
+        },
+      },
+    );
+
+    final runtimeRow =
+        find.byKey(const ValueKey('overview-active-RuntimeOnlyLeaf'));
+    expect(
+      find.descendant(
+          of: runtimeRow, matching: find.text('VLESS · Runtime node')),
+      findsOneWidget,
+    );
+
+    final providerRow =
+        find.byKey(const ValueKey('overview-active-ProviderLeaf'));
+    expect(
+      find.descendant(of: providerRow, matching: find.text('80 ms')),
+      findsOneWidget,
+    );
+
+    await tester
+        .tap(find.byKey(const ValueKey('overview-test-a-ProviderLeaf')));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.descendant(of: providerRow, matching: find.text('245 ms')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+          of: providerRow, matching: find.text('VLESS · WS · TLS · Feed')),
+      findsOneWidget,
+    );
+
+    nextMeasuredDelay = -1;
+    await tester
+        .tap(find.byKey(const ValueKey('overview-test-a-ProviderLeaf')));
+    await tester.pumpAndSettle();
+    expect(
+      find.descendant(of: providerRow, matching: find.text('Test failed')),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets(
+      'CR-03: header decoder decodes short UTF-8 and uppercase BASE64 prefix while preserving 16+ char plain ASCII names',
+      (tester) async {
+    const asciiProfile = Profile(
+      id: 'ascii-p',
+      label: 'p1',
+      url: 'https://sub.example.invalid/1',
+      autoUpdateDuration: Duration.zero,
+      providerHeaders: {
+        'flclashx-servicename': 'FreedomCloudPlus',
+        'announce': 'HK/SG/JP Premium',
+      },
+    );
+    final b64Profile = Profile(
+      id: 'b64-p',
+      label: 'p2',
+      url: 'https://sub.example.invalid/2',
+      autoUpdateDuration: Duration.zero,
+      providerHeaders: {
+        'flclashx-servicename': base64Encode(utf8.encode('星云')),
+        'announce': 'BASE64:${base64Encode(utf8.encode('高速节点已上线'))}',
+      },
+    );
+
+    await mount(
+      tester,
+      width: 1200,
+      locale: const Locale('zh', 'CN'),
+      profiles: [asciiProfile, b64Profile],
+      catalogs: {
+        'ascii-p': ProfileCatalog(
+          profileId: 'ascii-p',
+          fingerprint: '1',
+          status: ProfileCatalogStatus.ready,
+          nodes: [_node('n1', 'Node 1')],
+        ),
+        'b64-p': ProfileCatalog(
+          profileId: 'b64-p',
+          fingerprint: '2',
+          status: ProfileCatalogStatus.ready,
+          nodes: [_node('n2', 'Node 2')],
+        ),
+      },
+    );
+
+    final sidebar = find.byKey(const ValueKey('overview-sidebar'));
+    expect(
+      find.descendant(of: sidebar, matching: find.text('FreedomCloudPlus')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+          of: sidebar, matching: find.textContaining('HK/SG/JP Premium')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: sidebar, matching: find.text('星云')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: sidebar, matching: find.textContaining('高速节点已上线')),
+      findsOneWidget,
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'CR-04: profile order stays frozen while delay batch is busy and promotes cleanly when batch completes',
+      (tester) async {
+    final directory =
+        Directory.systemTemp.createTempSync('node-overview-freeze-order-');
+    final store = NodeHealthStore(
+      fileProvider: () async => File('${directory.path}/health.json'),
+      debounce: const Duration(hours: 1),
+    );
+    addTearDown(() => directory.deleteSync(recursive: true));
+
+    const keyA1 = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+    const keyB1 = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb1';
+    const keyB2 = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb2';
+
+    await tester.runAsync(() => store.record(
+          profileId: 'a',
+          identityKey: keyA1,
+          delayMs: 120,
+          testUrl: defaultTestUrl,
+          testedAt: DateTime(2026, 10, 28, 12, 0),
+        ));
+
+    final backend = _CatalogTester();
+    await mount(
+      tester,
+      width: 1200,
+      healthStore: store,
+      catalogTester: backend,
+      catalogs: {
+        'a': ProfileCatalog(
+          profileId: 'a',
+          fingerprint: 'fp-a',
+          status: ProfileCatalogStatus.ready,
+          nodes: [_node(keyA1, 'Alpha 1')],
+        ),
+        'b': ProfileCatalog(
+          profileId: 'b',
+          fingerprint: 'fp-b',
+          status: ProfileCatalogStatus.ready,
+          nodes: [_node(keyB1, 'Beta 1'), _node(keyB2, 'Beta 2')],
+        ),
+      },
+    );
+
+    expect(
+      tester.getTopLeft(find.byKey(const ValueKey('overview-select-a'))).dy,
+      lessThan(
+          tester.getTopLeft(find.byKey(const ValueKey('overview-select-b'))).dy),
+    );
+
+    backend.progress(done: 1, count: 3);
+    await tester.pump();
+    await tester.runAsync(() async {
+      await store.record(
+        profileId: 'b',
+        identityKey: keyB1,
+        delayMs: 55,
+        testUrl: defaultTestUrl,
+        testedAt: DateTime(2026, 10, 28, 12, 5),
+      );
+      await store.record(
+        profileId: 'b',
+        identityKey: keyB2,
+        delayMs: 65,
+        testUrl: defaultTestUrl,
+        testedAt: DateTime(2026, 10, 28, 12, 5),
+      );
+    });
+    await tester.pump();
+
+    // While batch is busy, profile 'a' remains above 'b'.
+    expect(
+      tester.getTopLeft(find.byKey(const ValueKey('overview-select-a'))).dy,
+      lessThan(
+          tester.getTopLeft(find.byKey(const ValueKey('overview-select-b'))).dy),
+    );
+
+    // Once batch finishes, 'b' (2 available) promotes above 'a' (1 available).
+    backend
+      ..busy = false
+      ..notifyListeners();
+    await tester.pumpAndSettle();
+    expect(
+      tester.getTopLeft(find.byKey(const ValueKey('overview-select-b'))).dy,
+      lessThan(
+          tester.getTopLeft(find.byKey(const ValueKey('overview-select-a'))).dy),
+    );
+  });
+
+  testWidgets(
+      'CR-08: sort popover and pinned header handle 1.8x text scaling in Russian locale without overflow',
+      (tester) async {
+    await mount(
+      tester,
+      width: 420,
+      locale: const Locale('ru'),
+      child: const MediaQuery(
+        data: MediaQueryData(
+          size: Size(420, 1000),
+          textScaler: TextScaler.linear(1.8),
+        ),
+        child: NodeOverviewView(),
+      ),
+      catalogs: {
+        'a': ProfileCatalog(
+          profileId: 'a',
+          fingerprint: 'fp-a',
+          status: ProfileCatalogStatus.ready,
+          nodes: [_node('a-1', 'Node A1'), _node('a-2', 'Node A2')],
+        ),
+        'b': ProfileCatalog(
+          profileId: 'b',
+          fingerprint: 'fp-b',
+          status: ProfileCatalogStatus.ready,
+          nodes: [_node('b-1', 'Node B1')],
+        ),
+      },
+    );
+
+    await tester.tap(find.byKey(const ValueKey('overview-sort-button')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('overview-sort-menu')), findsOneWidget);
+    expect(tester.takeException(), isNull);
   });
 }

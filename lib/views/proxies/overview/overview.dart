@@ -145,10 +145,18 @@ final _overviewSwitchTrackerProvider =
       runtimeProfileId: runtimeProfileId,
     );
   }
-  ref.listen<List<Group>>(groupsProvider, (_, __) => recordUpdate());
-  ref.listen<int>(versionProvider, (_, __) => recordUpdate());
+  ref
+    ..listen<List<Group>>(groupsProvider, (_, __) => recordUpdate())
+    ..listen<int>(versionProvider, (_, __) => recordUpdate());
   return tracker;
 });
+
+typedef _ExplicitLiveMeasurement = ({int delayMs, DateTime testedAt});
+
+final _overviewExplicitLiveResultsProvider = StateProvider.autoDispose<
+    Map<(String, String, String), _ExplicitLiveMeasurement>>(
+  (ref) => const <(String, String, String), _ExplicitLiveMeasurement>{},
+);
 
 class NodeOverviewView extends ConsumerStatefulWidget {
   const NodeOverviewView({super.key});
@@ -248,6 +256,7 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
       <String, _IndexedProfileCountrySummary>{};
   final List<ProviderSubscription<Object?>> _lifecycleSubscriptions =
       <ProviderSubscription<Object?>>[];
+  List<String> _stableProfileOrderIds = const <String>[];
   _IndexScanEpochState _scanEpoch = _IndexScanEpochState(0);
   bool _disposed = false;
   Timer? _clock;
@@ -410,6 +419,19 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
     _feedback = ref.read(_overviewSwitchTrackerProvider).feedback;
     _lifecycleSubscriptions
       ..add(
+        ref.listenManual<String?>(currentProfileIdProvider, (previous, next) {
+          if (previous == next) return;
+          final liveNotifier =
+              ref.read(_overviewExplicitLiveResultsProvider.notifier);
+          if (liveNotifier.state.isNotEmpty) {
+            liveNotifier.state = {
+              for (final entry in liveNotifier.state.entries)
+                if (entry.key.$1 == next) entry.key: entry.value,
+            };
+          }
+        }),
+      )
+      ..add(
         ref.listenManual<List<Profile>>(profilesProvider, (previous, next) {
           final script = ref.read(scriptStateProvider).currentScript;
           final nextIds = <String>{for (final profile in next) profile.id};
@@ -418,6 +440,16 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
             final profile = next.getProfile(id);
             return profile == null || !summary.matchesProfile(profile, script);
           });
+          final liveNotifier =
+              ref.read(_overviewExplicitLiveResultsProvider.notifier);
+          if (liveNotifier.state.isNotEmpty) {
+            liveNotifier.state = {
+              for (final entry in liveNotifier.state.entries)
+                if (nextIds.contains(entry.key.$1) &&
+                    !(next.getProfile(entry.key.$1)?.isUpdating ?? true))
+                  entry.key: entry.value,
+            };
+          }
           WidgetsBinding.instance.addPostFrameCallback((_) {
             if (mounted && !_disposed) _scheduleCountryIndexScan();
           });
@@ -430,6 +462,8 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
           _scanEpoch.cancel();
           _scanEpoch = _IndexScanEpochState(nextGen);
           _indexedProfiles.clear();
+          ref.read(_overviewExplicitLiveResultsProvider.notifier).state =
+              const <(String, String, String), _ExplicitLiveMeasurement>{};
           WidgetsBinding.instance.addPostFrameCallback((_) {
             if (mounted && !_disposed) _scheduleCountryIndexScan();
           });
@@ -500,6 +534,67 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
     }
   }
 
+  Future<DelayBatchResult> _runExplicitCurrentTest(
+    List<DelayTestTarget> targets,
+  ) async {
+    final activeId = ref.read(currentProfileIdProvider);
+    if (activeId == null || targets.isEmpty) {
+      return _tester.testCurrent(targets);
+    }
+    final requestedKeys = <(String, String)>{
+      for (final target in targets)
+        if (target.name.isNotEmpty) (target.name, target.url),
+    };
+    final updatedTargets = <(String, String)>{};
+    final sub = ref.listenManual<DelayMap>(
+      delayDataSourceProvider,
+      (previous, next) {
+        for (final key in requestedKeys) {
+          final prevUrlMap = previous?[key.$2];
+          final nextUrlMap = next[key.$2];
+          if (nextUrlMap == null) continue;
+          if (nextUrlMap[key.$1] != prevUrlMap?[key.$1] ||
+              !identical(prevUrlMap, nextUrlMap)) {
+            updatedTargets.add(key);
+          }
+        }
+      },
+    );
+    try {
+      final result = await _tester.testCurrent(targets);
+      if (!_disposed &&
+          mounted &&
+          result.completed > 0 &&
+          ref.read(currentProfileIdProvider) == activeId &&
+          updatedTargets.isNotEmpty) {
+        final delayMap = ref.read(delayDataSourceProvider);
+        final measuredAt = DateTime.now();
+        final updates = <(String, String, String), _ExplicitLiveMeasurement>{};
+        for (final key in updatedTargets) {
+          final live = delayMap[key.$2]?[key.$1];
+          if (live == null || live == 0) continue;
+          // Preserve previous history if a batch was cancelled/interrupted.
+          if (live < 0 && result.reason != null) continue;
+          updates[(activeId, key.$1, key.$2)] = (
+            delayMs: live,
+            testedAt: measuredAt,
+          );
+        }
+        if (updates.isNotEmpty) {
+          final notifier =
+              ref.read(_overviewExplicitLiveResultsProvider.notifier);
+          notifier.state = {
+            ...notifier.state,
+            ...updates,
+          };
+        }
+      }
+      return result;
+    } finally {
+      sub.close();
+    }
+  }
+
   void _testCurrent(Profile? selected) {
     if (selected != null) {
       _testAll([selected]);
@@ -518,7 +613,7 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
                 ref.read(getRealTestUrlProvider(group.testUrl)))));
       }
     }
-    unawaited(_run(() => _tester.testCurrent(targets)));
+    unawaited(_run(() => _runExplicitCurrentTest(targets)));
   }
 
   void _testAll(List<Profile> profiles) => unawaited(_run(
@@ -537,7 +632,9 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
       ref.read(getRealTestUrlProvider(testUrl)),
     );
     unawaited(
-      _run(() => _tester.testCurrent([DelayTestTarget(state.proxyName, url)])),
+      _run(
+        () => _runExplicitCurrentTest([DelayTestTarget(state.proxyName, url)]),
+      ),
     );
   }
 
@@ -858,14 +955,29 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
         }
       }
     }
-    final orderedProfiles = profiles.toList()
-      ..sort((a, b) {
-        final byAvailable =
-            (availableCounts[b.id] ?? 0).compareTo(availableCounts[a.id] ?? 0);
-        if (byAvailable != 0) return byAvailable;
-        return (originalIndexes[a.id] ?? 0)
-            .compareTo(originalIndexes[b.id] ?? 0);
-      });
+    final List<Profile> orderedProfiles;
+    if (_stableProfileOrderIds.isNotEmpty && tester.busy) {
+      final byId = <String, Profile>{
+        for (final profile in profiles) profile.id: profile,
+      };
+      orderedProfiles = <Profile>[
+        for (final id in _stableProfileOrderIds)
+          if (byId.remove(id) case final Profile existing) existing,
+        ...byId.values,
+      ];
+    } else {
+      orderedProfiles = profiles.toList()
+        ..sort((a, b) {
+          final byAvailable = (availableCounts[b.id] ?? 0)
+              .compareTo(availableCounts[a.id] ?? 0);
+          if (byAvailable != 0) return byAvailable;
+          return (originalIndexes[a.id] ?? 0)
+              .compareTo(originalIndexes[b.id] ?? 0);
+        });
+      _stableProfileOrderIds = <String>[
+        for (final profile in orderedProfiles) profile.id,
+      ];
+    }
     final visible = selected == null
         ? orderedProfiles
         : orderedProfiles.where((p) => p.id == selected).toList();
@@ -1203,14 +1315,18 @@ class _OverviewAvailableFilterButtonState
                       ),
                     ),
                     const SizedBox(width: 6),
-                    Text(
-                      appLocalizations.nodeOverviewAvailableOnly,
-                      style: TextStyle(
-                        fontSize: 13,
-                        height: 1.2,
-                        fontWeight: FontWeight.w500,
-                        letterSpacing: 0.1,
-                        color: foregroundColor,
+                    Flexible(
+                      child: Text(
+                        appLocalizations.nodeOverviewAvailableOnly,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 13,
+                          height: 1.2,
+                          fontWeight: FontWeight.w500,
+                          letterSpacing: 0.1,
+                          color: foregroundColor,
+                        ),
                       ),
                     ),
                   ],
@@ -1299,6 +1415,8 @@ class _OverviewSortSelectorState extends State<_OverviewSortSelector> {
         : colors.onSurface.withValues(alpha: 0.92);
     final accentIconColor =
         isCustomSort || _isOpen ? colors.primary : colors.onSurfaceVariant;
+    final textScale = MediaQuery.textScalerOf(context).scale(1.0);
+    final menuMaxWidth = math.max(210.0, (190.0 * textScale).ceilToDouble());
 
     return MenuAnchor(
       controller: _controller,
@@ -1335,7 +1453,7 @@ class _OverviewSortSelectorState extends State<_OverviewSortSelector> {
           key: const ValueKey('overview-sort-menu'),
           padding: const EdgeInsets.all(5),
           child: ConstrainedBox(
-            constraints: const BoxConstraints(minWidth: 144, maxWidth: 210),
+            constraints: BoxConstraints(minWidth: 144, maxWidth: menuMaxWidth),
             child: IntrinsicWidth(
               child: Column(
                 mainAxisSize: MainAxisSize.min,
@@ -1368,6 +1486,7 @@ class _OverviewSortSelectorState extends State<_OverviewSortSelector> {
       child: Semantics(
         button: true,
         expanded: _isOpen,
+        label: '${appLocalizations.sort}: ${_labelFor(widget.value)}',
         child: MouseRegion(
           onEnter: (_) => setState(() => _hovered = true),
           onExit: (_) => setState(() => _hovered = false),
@@ -1413,13 +1532,17 @@ class _OverviewSortSelectorState extends State<_OverviewSortSelector> {
                         color: accentIconColor,
                       ),
                       const SizedBox(width: 6),
-                      Text(
-                        appLocalizations.sort,
-                        style: TextStyle(
-                          fontSize: 12.5,
-                          height: 1.2,
-                          fontWeight: FontWeight.w400,
-                          color: colors.onSurfaceVariant,
+                      Flexible(
+                        child: Text(
+                          appLocalizations.sort,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 12.5,
+                            height: 1.2,
+                            fontWeight: FontWeight.w400,
+                            color: colors.onSurfaceVariant,
+                          ),
                         ),
                       ),
                       Container(
@@ -1428,14 +1551,18 @@ class _OverviewSortSelectorState extends State<_OverviewSortSelector> {
                         margin: const EdgeInsets.symmetric(horizontal: 6),
                         color: colors.outlineVariant.withValues(alpha: 0.65),
                       ),
-                      Text(
-                        _labelFor(widget.value),
-                        style: TextStyle(
-                          fontSize: 13,
-                          height: 1.2,
-                          fontWeight: FontWeight.w600,
-                          letterSpacing: 0.1,
-                          color: valueColor,
+                      Flexible(
+                        child: Text(
+                          _labelFor(widget.value),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 13,
+                            height: 1.2,
+                            fontWeight: FontWeight.w600,
+                            letterSpacing: 0.1,
+                            color: valueColor,
+                          ),
                         ),
                       ),
                       const SizedBox(width: 4),
@@ -1502,54 +1629,62 @@ class _OverviewSortOptionTileState extends State<_OverviewSortOptionTile> {
         selected ? colors.primary : colors.onSurface.withValues(alpha: 0.92);
     final iconColor = selected ? colors.primary : colors.onSurfaceVariant;
 
-    return MouseRegion(
-      onEnter: (_) => setState(() => _hovered = true),
-      onExit: (_) => setState(() => _hovered = false),
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 120),
-        curve: Curves.easeOutCubic,
-        decoration: BoxDecoration(
-          color: backgroundColor,
-          borderRadius: borderRadius,
-        ),
-        child: Material(
-          color: Colors.transparent,
-          child: InkWell(
+    return Semantics(
+      button: true,
+      selected: selected,
+      label: widget.label,
+      child: MouseRegion(
+        onEnter: (_) => setState(() => _hovered = true),
+        onExit: (_) => setState(() => _hovered = false),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 120),
+          curve: Curves.easeOutCubic,
+          decoration: BoxDecoration(
+            color: backgroundColor,
             borderRadius: borderRadius,
-            hoverColor: Colors.transparent,
-            focusColor: colors.primary.withValues(alpha: 0.10),
-            onTap: widget.onTap,
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(widget.icon, size: 15, color: iconColor),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      widget.label,
-                      style: TextStyle(
-                        fontSize: 13,
-                        height: 1.2,
-                        fontWeight:
-                            selected ? FontWeight.w600 : FontWeight.w500,
-                        color: foregroundColor,
+          ),
+          child: Material(
+            color: Colors.transparent,
+            child: InkWell(
+              borderRadius: borderRadius,
+              hoverColor: Colors.transparent,
+              focusColor: colors.primary.withValues(alpha: 0.10),
+              onTap: widget.onTap,
+              child: Padding(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(widget.icon, size: 15, color: iconColor),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        widget.label,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 13,
+                          height: 1.2,
+                          fontWeight:
+                              selected ? FontWeight.w600 : FontWeight.w500,
+                          color: foregroundColor,
+                        ),
                       ),
                     ),
-                  ),
-                  const SizedBox(width: 10),
-                  SizedBox(
-                    width: 15,
-                    child: selected
-                        ? Icon(
-                            Icons.check_rounded,
-                            size: 15,
-                            color: colors.primary,
-                          )
-                        : null,
-                  ),
-                ],
+                    const SizedBox(width: 10),
+                    SizedBox(
+                      width: 15,
+                      child: selected
+                          ? Icon(
+                              Icons.check_rounded,
+                              size: 15,
+                              color: colors.primary,
+                            )
+                          : null,
+                    ),
+                  ],
+                ),
               ),
             ),
           ),
@@ -1586,7 +1721,7 @@ class _SidebarProfileCard extends ConsumerWidget {
         ref.watch(cachedProfileCatalogsProvider)[profile.id];
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
-    final hasMetadata = _hasDisplayableProfileMetadata(profile);
+    final metadata = _resolveProfileMetadata(profile);
     WidgetsBinding.instance.addPostFrameCallback((_) => onVisible());
     return Card(
         color: selected ? colors.secondaryContainer : null,
@@ -1635,10 +1770,10 @@ class _SidebarProfileCard extends ConsumerWidget {
                       ],
                     ],
                   ),
-                  if (hasMetadata) ...[
+                  if (metadata != null) ...[
                     const SizedBox(height: 8),
                     _ProfileSubscriptionSummary(
-                      profile: profile,
+                      data: metadata,
                       now: now,
                     ),
                     Padding(
@@ -1662,49 +1797,180 @@ class _SidebarProfileCard extends ConsumerWidget {
   }
 }
 
-bool _hasDisplayableProfileMetadata(Profile profile) =>
-    profile.subscriptionInfo != null ||
-    profile.url.isNotEmpty ||
-    profile.lastUpdateDate != null ||
-    _decodeSafeHeaderText(profile.providerHeaders['flclashx-servicename']) !=
-        null ||
-    _decodeSafeHeaderText(profile.providerHeaders['announce']) != null ||
-    profile.providerHeaders['x-hwid-max-devices-reached']
-            ?.trim()
-            .toLowerCase() ==
-        'true';
+typedef _ProfileMetadataViewData = ({
+  String? serviceName,
+  String? updatePolicyText,
+  IconData? updatePolicyIcon,
+  SubscriptionInfo? subscriptionInfo,
+  DateTime? lastUpdateDate,
+  bool deviceLimitReached,
+  String? announce,
+});
 
-String? _decodeSafeHeaderText(String? raw) {
+bool _hasMeaningfulSubscriptionInfo(SubscriptionInfo? sub) =>
+    sub != null &&
+    (sub.total > 0 || sub.expire > 0 || sub.upload > 0 || sub.download > 0);
+
+DateTime? _parseSubscriptionExpireLocal(int rawExpire) {
+  if (rawExpire <= 0) return null;
+  final ms = rawExpire >= 100000000000 ? rawExpire : rawExpire * 1000;
+  // Sentinels beyond 9999-12-31T23:59:59Z (or int64 max) represent perpetual plans.
+  if (ms <= 0 || ms > 253402300799000) return null;
+  return DateTime.fromMillisecondsSinceEpoch(ms).toLocal();
+}
+
+bool _containsUnsafeHeaderChars(String text) => text.runes.any(
+      (r) =>
+          (r < 0x20 && r != 0x09 && r != 0x0A && r != 0x0D) ||
+          r == 0x7F ||
+          (r >= 0x80 && r <= 0x9F) ||
+          r == 0xFFFD ||
+          (r >= 0xD800 && r <= 0xDFFF) ||
+          (r >= 0xE000 && r <= 0xF8FF) ||
+          r >= 0xF0000 ||
+          (r >= 0x202A && r <= 0x202E) ||
+          (r >= 0x2066 && r <= 0x2069),
+    );
+
+String _truncateHeaderRunes(String text, int maxChars) {
+  if (text.runes.length <= maxChars) return text;
+  return '${String.fromCharCodes(text.runes.take(maxChars))}…';
+}
+
+String? _sanitizeHeaderPlainText(String text, int maxChars) {
+  final buffer = StringBuffer();
+  for (final r in text.runes) {
+    if ((r < 0x20 && r != 0x09 && r != 0x0A && r != 0x0D) ||
+        r == 0x7F ||
+        (r >= 0x80 && r <= 0x9F) ||
+        r == 0xFFFD ||
+        (r >= 0xD800 && r <= 0xDFFF) ||
+        (r >= 0x202A && r <= 0x202E) ||
+        (r >= 0x2066 && r <= 0x2069)) {
+      continue;
+    }
+    buffer.writeCharCode(r);
+  }
+  final cleaned = buffer.toString().trim();
+  if (cleaned.isEmpty) return null;
+  return _truncateHeaderRunes(cleaned, maxChars);
+}
+
+String? _decodeSafeHeaderText(String? raw, {int maxChars = 120}) {
   if (raw == null) return null;
   final trimmed = raw.trim();
   if (trimmed.isEmpty) return null;
   var candidate = trimmed;
-  final explicitBase64 = candidate.startsWith('base64:');
+  final explicitBase64 = candidate.length >= 7 &&
+      candidate.substring(0, 7).toLowerCase() == 'base64:';
   if (explicitBase64) {
     candidate = candidate.substring(7).trim();
     if (candidate.isEmpty) return null;
   }
-  if (explicitBase64 ||
-      (candidate.length >= 8 &&
-          RegExp(r'^[A-Za-z0-9+/_-]+={0,2}$').hasMatch(candidate) &&
-          (candidate.contains('=') ||
-              candidate.contains('+') ||
-              candidate.contains('/') ||
-              candidate.length >= 16))) {
+  final looksLikeBase64Token = !explicitBase64 &&
+      candidate.length >= 4 &&
+      candidate.length % 4 != 1 &&
+      RegExp(r'^[A-Za-z0-9+/_-]+={0,2}$').hasMatch(candidate) &&
+      // Unpadded pure-letter identifiers (e.g. 'FreedomCloudPlus') cannot encode
+      // UTF-8 CJK/Emoji (which always start with Base64 digits '4'..'9') and
+      // must never be corrupted into ASCII mojibake.
+      (candidate.endsWith('=') || !RegExp(r'^[A-Za-z_-]+$').hasMatch(candidate));
+  if (explicitBase64 || looksLikeBase64Token) {
     try {
       final normalized =
           base64.normalize(candidate.replaceAll('-', '+').replaceAll('_', '/'));
-      final decoded = utf8.decode(base64.decode(normalized)).trim();
-      final hasControlChars = decoded.runes
-          .any((r) => r < 0x20 && r != 0x09 && r != 0x0A && r != 0x0D);
-      if (decoded.isNotEmpty && !hasControlChars) {
-        return decoded;
+      final decoded =
+          utf8.decode(base64.decode(normalized), allowMalformed: false).trim();
+      if (decoded.isNotEmpty && !_containsUnsafeHeaderChars(decoded)) {
+        if (explicitBase64) {
+          return _truncateHeaderRunes(decoded, maxChars);
+        }
+        final hasNonAsciiUnicode = decoded.runes.any((r) => r > 0x9F);
+        final isPaddedAscii = candidate.endsWith('=') &&
+            RegExp(r'^[\x20-\x7E\r\n\t]+$').hasMatch(decoded);
+        final isUnpaddedAsciiProse = !candidate.endsWith('=') &&
+            candidate.length >= 12 &&
+            !candidate.contains('-') &&
+            !candidate.contains('_') &&
+            decoded.contains(' ') &&
+            RegExp(r'^[A-Za-z0-9 .,!?:;()\[\]\-/\r\n\t]+$').hasMatch(decoded);
+        if (hasNonAsciiUnicode || isPaddedAscii || isUnpaddedAsciiProse) {
+          return _truncateHeaderRunes(decoded, maxChars);
+        }
+      } else if (explicitBase64) {
+        return null;
       }
     } catch (_) {
       if (explicitBase64) return null;
     }
   }
-  return trimmed;
+  return _sanitizeHeaderPlainText(trimmed, maxChars);
+}
+
+_ProfileMetadataViewData? _resolveProfileMetadata(Profile profile) {
+  final headers = profile.providerHeaders;
+  final rawServiceName =
+      _decodeSafeHeaderText(headers['flclashx-servicename'], maxChars: 80);
+  final profileTitle = (profile.label ?? profile.id).trim();
+  final serviceName = rawServiceName != null && rawServiceName != profileTitle
+      ? rawServiceName
+      : null;
+
+  final rawAnnounce =
+      _decodeSafeHeaderText(headers['announce'], maxChars: 400);
+  final normalizedAnnounce =
+      rawAnnounce?.replaceAll(RegExp(r'\s+'), ' ').trim();
+  final announce = normalizedAnnounce != null && normalizedAnnounce.isNotEmpty
+      ? normalizedAnnounce
+      : null;
+
+  final deviceLimitReached =
+      headers['x-hwid-max-devices-reached']?.trim().toLowerCase() == 'true';
+
+  String? updatePolicyText;
+  IconData? updatePolicyIcon;
+  if (profile.url.isNotEmpty) {
+    final minutes = profile.autoUpdateDuration.inMinutes;
+    if (profile.realAutoUpdate && minutes > 0) {
+      updatePolicyIcon = Icons.autorenew_rounded;
+      if (minutes % 60 == 0 && profile.autoUpdateDuration.inHours >= 1) {
+        updatePolicyText = appLocalizations
+            .nodeOverviewAutoUpdateHours(profile.autoUpdateDuration.inHours);
+      } else {
+        updatePolicyText =
+            appLocalizations.nodeOverviewAutoUpdateMinutes(minutes);
+      }
+    } else {
+      updatePolicyIcon = Icons.sync_disabled_rounded;
+      updatePolicyText = appLocalizations.nodeOverviewManualUpdate;
+    }
+  } else if (profile.lastUpdateDate != null) {
+    updatePolicyIcon = Icons.description_outlined;
+    updatePolicyText = appLocalizations.nodeOverviewLocalProfile;
+  }
+
+  final sub = _hasMeaningfulSubscriptionInfo(profile.subscriptionInfo)
+      ? profile.subscriptionInfo
+      : null;
+
+  if (serviceName == null &&
+      updatePolicyText == null &&
+      sub == null &&
+      profile.lastUpdateDate == null &&
+      !deviceLimitReached &&
+      announce == null) {
+    return null;
+  }
+
+  return (
+    serviceName: serviceName,
+    updatePolicyText: updatePolicyText,
+    updatePolicyIcon: updatePolicyIcon,
+    subscriptionInfo: sub,
+    lastUpdateDate: profile.lastUpdateDate,
+    deviceLimitReached: deviceLimitReached,
+    announce: announce,
+  );
 }
 
 String _formatOverviewTraffic(int bytes) {
@@ -1714,50 +1980,22 @@ String _formatOverviewTraffic(int bytes) {
 
 class _ProfileSubscriptionSummary extends StatelessWidget {
   const _ProfileSubscriptionSummary({
-    required this.profile,
+    required this.data,
     required this.now,
   });
 
-  final Profile profile;
+  final _ProfileMetadataViewData data;
   final DateTime now;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
-    final sub = profile.subscriptionInfo;
-    final headers = profile.providerHeaders;
-    final rawServiceName =
-        _decodeSafeHeaderText(headers['flclashx-servicename']);
-    final profileTitle = (profile.label ?? profile.id).trim();
-    final serviceName =
-        rawServiceName != null && rawServiceName != profileTitle
-            ? rawServiceName
-            : null;
-    final rawAnnounce = _decodeSafeHeaderText(headers['announce']);
-    final announce = rawAnnounce
-        ?.replaceAll(RegExp(r'\s+'), ' ')
-        .trim();
-    final deviceLimitReached =
-        headers['x-hwid-max-devices-reached']?.trim().toLowerCase() == 'true';
-
-    String? updatePolicyText;
-    if (profile.url.isNotEmpty) {
-      final minutes = profile.autoUpdateDuration.inMinutes;
-      if (profile.realAutoUpdate && minutes > 0) {
-        if (minutes % 60 == 0 && profile.autoUpdateDuration.inHours >= 1) {
-          updatePolicyText = appLocalizations
-              .nodeOverviewAutoUpdateHours(profile.autoUpdateDuration.inHours);
-        } else {
-          updatePolicyText =
-              appLocalizations.nodeOverviewAutoUpdateMinutes(minutes);
-        }
-      } else {
-        updatePolicyText = appLocalizations.nodeOverviewManualUpdate;
-      }
-    } else if (profile.lastUpdateDate != null) {
-      updatePolicyText = appLocalizations.nodeOverviewLocalProfile;
-    }
+    final sub = data.subscriptionInfo;
+    final serviceName = data.serviceName;
+    final updatePolicyText = data.updatePolicyText;
+    final announce = data.announce;
+    final deviceLimitReached = data.deviceLimitReached;
 
     final metaStyle = theme.textTheme.bodySmall?.copyWith(
       fontSize: 11.5,
@@ -1783,11 +2021,7 @@ class _ProfileSubscriptionSummary extends StatelessWidget {
               ),
             if (updatePolicyText != null)
               _SubscriptionTagPill(
-                icon: profile.url.isEmpty
-                    ? Icons.description_outlined
-                    : profile.realAutoUpdate
-                        ? Icons.autorenew_rounded
-                        : Icons.sync_disabled_rounded,
+                icon: data.updatePolicyIcon ?? Icons.description_outlined,
                 label: updatePolicyText,
                 foreground: colors.onSurfaceVariant,
                 background: colors.surfaceContainerHighest.withValues(
@@ -1813,7 +2047,12 @@ class _ProfileSubscriptionSummary extends StatelessWidget {
       if (total > 0) {
         final remaining = math.max(0, total - used);
         final usedRatio = (used / total).clamp(0.0, 1.0);
-        final remainingPercent = ((1.0 - usedRatio) * 100).round();
+        final rawPercent = ((1.0 - usedRatio) * 100).round();
+        final remainingPercent = remaining <= 0
+            ? 0
+            : remaining >= total
+                ? 100
+                : rawPercent.clamp(1, 99);
         final barColor = usedRatio > 0.90
             ? colors.error
             : usedRatio > 0.70
@@ -1921,7 +2160,8 @@ class _ProfileSubscriptionSummary extends StatelessWidget {
       }
 
       children.add(const SizedBox(height: 4));
-      if (sub.expire <= 0) {
+      final expireDate = _parseSubscriptionExpireLocal(sub.expire);
+      if (expireDate == null) {
         children.add(
           Row(
             children: [
@@ -1941,15 +2181,14 @@ class _ProfileSubscriptionSummary extends StatelessWidget {
           ),
         );
       } else {
-        final expireDate =
-            DateTime.fromMillisecondsSinceEpoch(sub.expire * 1000).toLocal();
         final dateStr = DateFormat('yyyy-MM-dd').format(expireDate);
         final diff = expireDate.difference(now);
         final isExpired = diff.isNegative || diff.inSeconds <= 0;
         final isExpiringSoon = !isExpired && diff.inDays <= 7;
         final String expireText;
         if (isExpired) {
-          expireText = appLocalizations.nodeOverviewExpireAt(dateStr);
+          expireText =
+              '${appLocalizations.nodeOverviewExpireAt(dateStr)} · ${appLocalizations.nodeOverviewStatusExpired}';
         } else if (diff.inDays >= 1) {
           expireText =
               '${appLocalizations.nodeOverviewExpireAt(dateStr)} · ${appLocalizations.nodeOverviewExpireDaysLeft(diff.inDays)}';
@@ -1991,12 +2230,12 @@ class _ProfileSubscriptionSummary extends StatelessWidget {
       }
     }
 
-    if (profile.lastUpdateDate != null) {
+    if (data.lastUpdateDate != null) {
       if (children.isNotEmpty) {
         children.add(const SizedBox(height: 3));
       }
       final syncStr = DateFormat('yyyy-MM-dd HH:mm')
-          .format(profile.lastUpdateDate!.toLocal());
+          .format(data.lastUpdateDate!.toLocal());
       children.add(
         Row(
           children: [
@@ -2044,7 +2283,7 @@ class _ProfileSubscriptionSummary extends StatelessWidget {
       );
     }
 
-    if (announce != null && announce.isNotEmpty) {
+    if (announce != null) {
       if (children.isNotEmpty) {
         children.add(const SizedBox(height: 4));
       }
@@ -2071,7 +2310,7 @@ class _ProfileSubscriptionSummary extends StatelessWidget {
                 const SizedBox(width: 5),
                 Expanded(
                   child: Text(
-                    '${appLocalizations.announcement}：$announce',
+                    appLocalizations.nodeOverviewAnnouncement(announce),
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                     style: metaStyle?.copyWith(
@@ -2276,6 +2515,11 @@ class _ProfileNodesSliverState extends ConsumerState<_ProfileNodesSliver> {
     final error = (loaded?.hasError ?? false) ||
         catalog?.status == ProfileCatalogStatus.fileMissing ||
         catalog?.status == ProfileCatalogStatus.parseFailed;
+    final textScale = MediaQuery.textScalerOf(context).scale(1.0);
+    final headerExtent =
+        math.max(44.0, (28.0 + 16.0 * textScale).ceilToDouble());
+    final metadata =
+        widget.showSubscriptionSummary ? _resolveProfileMetadata(profile) : null;
     return _PaintVisibilitySliver(
       onVisibilityChanged: _visibilityChanged,
       child: SliverMainAxisGroup(slivers: [
@@ -2283,9 +2527,10 @@ class _ProfileNodesSliverState extends ConsumerState<_ProfileNodesSliver> {
           SliverPersistentHeader(
               pinned: true,
               delegate: _PinnedProfileHeader(
-                  profile: profile, active: widget.active)),
-        if (widget.showSubscriptionSummary &&
-            _hasDisplayableProfileMetadata(profile))
+                  profile: profile,
+                  active: widget.active,
+                  extent: headerExtent)),
+        if (metadata != null)
           SliverToBoxAdapter(
             child: Padding(
               padding: const EdgeInsets.fromLTRB(16, 4, 16, 6),
@@ -2294,7 +2539,7 @@ class _ProfileNodesSliverState extends ConsumerState<_ProfileNodesSliver> {
                 child: Padding(
                   padding: const EdgeInsets.all(12),
                   child: _ProfileSubscriptionSummary(
-                    profile: profile,
+                    data: metadata,
                     now: widget.now,
                   ),
                 ),
@@ -2406,13 +2651,18 @@ class _ProfileNodesSliverState extends ConsumerState<_ProfileNodesSliver> {
 }
 
 class _PinnedProfileHeader extends SliverPersistentHeaderDelegate {
-  _PinnedProfileHeader({required this.profile, required this.active});
+  _PinnedProfileHeader({
+    required this.profile,
+    required this.active,
+    this.extent = 44,
+  });
   final Profile profile;
   final bool active;
+  final double extent;
   @override
-  double get minExtent => 44;
+  double get minExtent => extent;
   @override
-  double get maxExtent => 44;
+  double get maxExtent => extent;
   @override
   Widget build(
           BuildContext context, double shrinkOffset, bool overlapsContent) =>
@@ -2428,14 +2678,25 @@ class _PinnedProfileHeader extends SliverPersistentHeaderDelegate {
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: Theme.of(context).textTheme.titleSmall)),
-              if (active)
-                Text(appLocalizations.nodeOverviewActive,
-                    style: Theme.of(context).textTheme.labelSmall),
+              if (active) ...[
+                const SizedBox(width: 8),
+                Flexible(
+                  flex: 0,
+                  child: Text(
+                    appLocalizations.nodeOverviewActive,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.labelSmall,
+                  ),
+                ),
+              ],
             ]),
           )));
   @override
   bool shouldRebuild(covariant _PinnedProfileHeader oldDelegate) =>
-      profile != oldDelegate.profile || active != oldDelegate.active;
+      profile != oldDelegate.profile ||
+      active != oldDelegate.active ||
+      extent != oldDelegate.extent;
 }
 
 /// A sliver's painted geometry is the viewport authority; mounted headers alone
@@ -2479,8 +2740,9 @@ NodeHealthRecord? _nodeHealth(
         : health[node.identityKey];
 
 bool _expired(Profile profile, DateTime now) {
-  final expire = profile.subscriptionInfo?.expire ?? 0;
-  return expire > 0 && expire * 1000 <= now.millisecondsSinceEpoch;
+  final expireDate =
+      _parseSubscriptionExpireLocal(profile.subscriptionInfo?.expire ?? 0);
+  return expireDate != null && !expireDate.isAfter(now);
 }
 
 bool _matches(CatalogNode node, String query) =>
@@ -2734,6 +2996,7 @@ Map<String, _ActiveDisplay> _activeDisplays(
       : null);
   final allUrl = ref.watch(nodeOverviewTestUrlProvider);
   final allHistory = ref.watch(nodeHealthEntriesProvider(profileId));
+  final explicitLiveResults = ref.watch(_overviewExplicitLiveResultsProvider);
   final groupHistory = <String?, Map<String, NodeHealthRecord>>{};
   return {
     for (final entry in _activeLeaves(ref).values)
@@ -2742,6 +3005,13 @@ Map<String, _ActiveDisplay> _activeDisplays(
         NodeHealthRecord? history;
         var fileSource = false;
         var independent = false;
+        final cardState = ref.watch(getProxyCardStateProvider(entry.proxy.name));
+        final effectiveUrl = cardState.testUrl.getSafeValue(
+          ref.watch(getRealTestUrlProvider(entry.testUrl)),
+        );
+        final explicitLive = cardState.proxyName.isEmpty
+            ? null
+            : explicitLiveResults[(profileId, cardState.proxyName, effectiveUrl)];
         if (node != null) {
           history = _nodeHealth(
               node,
@@ -2764,8 +3034,24 @@ Map<String, _ActiveDisplay> _activeDisplays(
             if (history != null) {
               node = candidate;
               fileSource = independent = true;
+            } else if (explicitLive != null) {
+              node = candidate;
             }
           }
+        }
+        final live = ref.watch(getDelayProvider(
+            proxyName: entry.proxy.name, testUrl: entry.testUrl));
+        if (explicitLive != null &&
+            live != null &&
+            live != 0 &&
+            (history == null || !history.testedAt.isAfter(explicitLive.testedAt))) {
+          history = NodeHealthRecord(
+            delayMs: live,
+            testedAt: explicitLive.testedAt,
+            testUrlHash: '',
+          );
+          fileSource = false;
+          independent = false;
         }
         final selectGroup = entry.selectGroup;
         final selectedProxyName = selectGroup == null
@@ -2776,10 +3062,7 @@ Map<String, _ActiveDisplay> _activeDisplays(
           testUrl: entry.testUrl,
           node: node,
           history: history,
-          delay: _activeDelay(
-              ref.watch(getDelayProvider(
-                  proxyName: entry.proxy.name, testUrl: entry.testUrl)),
-              history),
+          delay: _activeDelay(live, history),
           fileSource: fileSource,
           independent: independent,
           selectGroup: selectGroup,
@@ -2944,7 +3227,7 @@ class _ActiveNodeRow extends StatelessWidget {
         ? _catalogProtocolLabel(node!)
         : (node?.protocolSummary != null && node!.protocolSummary!.isNotEmpty)
             ? node!.protocolSummary!
-            : proxy.type;
+            : canonicalProtocolLabel(proxy.type);
     final description = [
       protocol,
       if (source != null) source,

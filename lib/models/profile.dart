@@ -261,7 +261,9 @@ extension ProfileExtension on Profile {
       profile: copyWith(
         url: updatedUrl,
         label: label ?? utils.getFileNameForDisposition(disposition) ?? id,
-        subscriptionInfo: SubscriptionInfo.formHString(userinfo),
+        subscriptionInfo: userinfo == null || userinfo.trim().isEmpty
+            ? null
+            : SubscriptionInfo.formHString(userinfo),
         autoUpdateDuration: durationFromHeader ?? autoUpdateDuration,
         providerHeaders: providerHeaders,
       ),

@@ -29,66 +29,68 @@ class MessageLookup extends MessageLookupByLibrary {
 
   static String m3(label) => "Текущий ${label} уже существует";
 
-  static String m4(hours) => "Автообновление ${hours} ч.";
+  static String m4(text) => "Объявление: ${text}";
 
-  static String m5(minutes) => "Автообновление ${minutes} мин.";
+  static String m5(hours) => "Автообновление ${hours} ч.";
 
-  static String m6(completed, failed, untested, profiles) =>
+  static String m6(minutes) => "Автообновление ${minutes} мин.";
+
+  static String m7(completed, failed, untested, profiles) =>
       "Завершено ${completed} · Ошибок ${failed} · Не проверено ${untested} · Профилей с проблемами ${profiles}";
 
-  static String m7(date) => "Истекает: ${date}";
+  static String m8(date) => "Истекает: ${date}";
 
-  static String m8(days) => "осталось ${days} дн.";
+  static String m9(days) => "осталось ${days} дн.";
 
-  static String m9(hours) => "осталось ${hours} ч.";
+  static String m10(hours) => "осталось ${hours} ч.";
 
-  static String m10(provider) => "Файл профиля · ${provider}";
+  static String m11(provider) => "Файл профиля · ${provider}";
 
-  static String m11(available, tested, total) =>
+  static String m12(available, tested, total) =>
       "Доступно ${available} / проверено ${tested} / всего ${total}";
 
-  static String m12(time) => "Проверка при последней активации: ${time}";
+  static String m13(time) => "Проверка при последней активации: ${time}";
 
-  static String m13(time) => "Синхронизация: ${time}";
+  static String m14(time) => "Синхронизация: ${time}";
 
-  static String m14(time) => "Последняя проверка: ${time}";
+  static String m15(time) => "Последняя проверка: ${time}";
 
-  static String m15(delay) => "Медиана: ${delay}";
+  static String m16(delay) => "Медиана: ${delay}";
 
-  static String m16(count) => "Ещё типов проблем: ${count}";
+  static String m17(count) => "Ещё типов проблем: ${count}";
 
-  static String m17(completed, total) => "${completed} / ${total}";
+  static String m18(completed, total) => "${completed} / ${total}";
 
-  static String m18(provider) => "${provider}: узлы появятся после активации";
+  static String m19(provider) => "${provider}: узлы появятся после активации";
 
-  static String m19(traffic) => "Остаток трафика: ${traffic}";
+  static String m20(traffic) => "Остаток трафика: ${traffic}";
 
-  static String m20(profile, node) => "Переключено на ${profile} · ${node}";
+  static String m21(profile, node) => "Переключено на ${profile} · ${node}";
 
-  static String m21(used, total) => "Использовано ${used} из ${total}";
+  static String m22(used, total) => "Использовано ${used} из ${total}";
 
-  static String m22(used) => "Использовано: ${used}";
+  static String m23(used) => "Использовано: ${used}";
 
-  static String m23(label) => "Сейчас ${label} нет";
+  static String m24(label) => "Сейчас ${label} нет";
 
-  static String m24(label) => "${label} должно быть числом";
+  static String m25(label) => "${label} должно быть числом";
 
-  static String m25(label) => "${label} должен быть числом от 1024 до 49151";
+  static String m26(label) => "${label} должен быть числом от 1024 до 49151";
 
-  static String m26(plan, quota, price) =>
+  static String m27(plan, quota, price) =>
       "Здравствуйте! Хочу приобрести код активации для тарифа «${plan} · ${quota} GiB (${price})».";
 
-  static String m27(count) => "Осталось: ${count}";
+  static String m28(count) => "Осталось: ${count}";
 
-  static String m28(code) => "Неизвестное правило (${code})";
+  static String m29(code) => "Неизвестное правило (${code})";
 
-  static String m29(count) => "Выбрано ${count} элементов";
+  static String m30(count) => "Выбрано ${count} элементов";
 
-  static String m30(days) => "Ваша подписка истекает через ${days} дн.";
+  static String m31(days) => "Ваша подписка истекает через ${days} дн.";
 
-  static String m31(reason) => "TUN: ${reason}";
+  static String m32(reason) => "TUN: ${reason}";
 
-  static String m32(label) => "${label} должен быть URL";
+  static String m33(label) => "${label} должен быть URL";
 
   final messages = _notInlinedMessages(_notInlinedMessages);
   static Map<String, Function> _notInlinedMessages(_) => <String, Function>{
@@ -586,12 +588,13 @@ class MessageLookup extends MessageLookupByLibrary {
     "nodeOverviewAmbiguousNode": MessageLookupByLibrary.simpleMessage(
       "Определения узлов повторяются; не удалось подтвердить идентичность",
     ),
-    "nodeOverviewAutoUpdateHours": m4,
-    "nodeOverviewAutoUpdateMinutes": m5,
+    "nodeOverviewAnnouncement": m4,
+    "nodeOverviewAutoUpdateHours": m5,
+    "nodeOverviewAutoUpdateMinutes": m6,
     "nodeOverviewAvailableOnly": MessageLookupByLibrary.simpleMessage(
       "Только доступные",
     ),
-    "nodeOverviewBatchSummary": m6,
+    "nodeOverviewBatchSummary": m7,
     "nodeOverviewChainUnsupported": MessageLookupByLibrary.simpleMessage(
       "Изолированная проверка цепочек прокси не поддерживается",
     ),
@@ -601,9 +604,9 @@ class MessageLookup extends MessageLookupByLibrary {
     "nodeOverviewDeviceLimitReached": MessageLookupByLibrary.simpleMessage(
       "Достигнут лимит устройств",
     ),
-    "nodeOverviewExpireAt": m7,
-    "nodeOverviewExpireDaysLeft": m8,
-    "nodeOverviewExpireHoursLeft": m9,
+    "nodeOverviewExpireAt": m8,
+    "nodeOverviewExpireDaysLeft": m9,
+    "nodeOverviewExpireHoursLeft": m10,
     "nodeOverviewExpireSoon": MessageLookupByLibrary.simpleMessage(
       "менее 1 ч.",
     ),
@@ -613,11 +616,11 @@ class MessageLookup extends MessageLookupByLibrary {
     "nodeOverviewFileMissing": MessageLookupByLibrary.simpleMessage(
       "Файл профиля отсутствует",
     ),
-    "nodeOverviewFileSource": m10,
+    "nodeOverviewFileSource": m11,
     "nodeOverviewHealthCapacityExceeded": MessageLookupByLibrary.simpleMessage(
       "Хранилище истории заполнено; часть результатов не сохранена",
     ),
-    "nodeOverviewHealthCounts": m11,
+    "nodeOverviewHealthCounts": m12,
     "nodeOverviewHealthStoreUnavailable": MessageLookupByLibrary.simpleMessage(
       "Не удалось сохранить часть результатов проверки задержки",
     ),
@@ -628,10 +631,9 @@ class MessageLookup extends MessageLookupByLibrary {
     "nodeOverviewIndependentTest": MessageLookupByLibrary.simpleMessage(
       "Независимая проверка задержки",
     ),
-    "nodeOverviewInline": MessageLookupByLibrary.simpleMessage("Встроенный"),
-    "nodeOverviewLastActiveTest": m12,
-    "nodeOverviewLastSync": m13,
-    "nodeOverviewLastTest": m14,
+    "nodeOverviewLastActiveTest": m13,
+    "nodeOverviewLastSync": m14,
+    "nodeOverviewLastTest": m15,
     "nodeOverviewLive": MessageLookupByLibrary.simpleMessage(
       "В реальном времени",
     ),
@@ -642,8 +644,8 @@ class MessageLookup extends MessageLookupByLibrary {
       "Управление профилями / обновление подписки",
     ),
     "nodeOverviewManualUpdate": MessageLookupByLibrary.simpleMessage("Вручную"),
-    "nodeOverviewMedian": m15,
-    "nodeOverviewMoreIssues": m16,
+    "nodeOverviewMedian": m16,
+    "nodeOverviewMoreIssues": m17,
     "nodeOverviewNeverExpires": MessageLookupByLibrary.simpleMessage(
       "Истекает: бессрочно",
     ),
@@ -662,7 +664,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "nodeOverviewPreviewUnsupported": MessageLookupByLibrary.simpleMessage(
       "Локальные узлы провайдера не поддерживаются в этой предварительной версии",
     ),
-    "nodeOverviewProgress": m17,
+    "nodeOverviewProgress": m18,
     "nodeOverviewProviderDownloadFailed": MessageLookupByLibrary.simpleMessage(
       "Не удалось загрузить провайдера",
     ),
@@ -673,7 +675,7 @@ class MessageLookup extends MessageLookupByLibrary {
         MessageLookupByLibrary.simpleMessage(
           "Эти параметры провайдера не поддерживаются",
         ),
-    "nodeOverviewProviderPending": m18,
+    "nodeOverviewProviderPending": m19,
     "nodeOverviewProviderTooLarge": MessageLookupByLibrary.simpleMessage(
       "Превышен лимит размера или числа узлов провайдера",
     ),
@@ -686,17 +688,18 @@ class MessageLookup extends MessageLookupByLibrary {
     "nodeOverviewProviderUnsafeUrl": MessageLookupByLibrary.simpleMessage(
       "URL провайдера не соответствует требованиям безопасности",
     ),
-    "nodeOverviewRemainingTraffic": m19,
+    "nodeOverviewRemainingTraffic": m20,
     "nodeOverviewRuntimeSource": MessageLookupByLibrary.simpleMessage(
       "Активный узел",
     ),
     "nodeOverviewStale": MessageLookupByLibrary.simpleMessage(
       "Возможно, устарело",
     ),
+    "nodeOverviewStatusExpired": MessageLookupByLibrary.simpleMessage("Истёк"),
     "nodeOverviewStrictUnsupported": MessageLookupByLibrary.simpleMessage(
       "В строгом режиме изолированные проверки недоступны",
     ),
-    "nodeOverviewSwitchedToNode": m20,
+    "nodeOverviewSwitchedToNode": m21,
     "nodeOverviewTestAll": MessageLookupByLibrary.simpleMessage(
       "Проверить задержку всех узлов",
     ),
@@ -734,8 +737,8 @@ class MessageLookup extends MessageLookupByLibrary {
       "Обновление подписки",
     ),
     "nodeOverviewUseNode": MessageLookupByLibrary.simpleMessage("Использовать"),
-    "nodeOverviewUsedOfTotalTraffic": m21,
-    "nodeOverviewUsedTrafficOnly": m22,
+    "nodeOverviewUsedOfTotalTraffic": m22,
+    "nodeOverviewUsedTrafficOnly": m23,
     "none": MessageLookupByLibrary.simpleMessage("Нет"),
     "notSelectedTip": MessageLookupByLibrary.simpleMessage(
       "Текущая группа прокси недоступна для выбора",
@@ -746,8 +749,8 @@ class MessageLookup extends MessageLookupByLibrary {
     "nullScriptTip": MessageLookupByLibrary.simpleMessage(
       "Скрипты отсутствуют",
     ),
-    "nullTip": m23,
-    "numberTip": m24,
+    "nullTip": m24,
+    "numberTip": m25,
     "oneColumn": MessageLookupByLibrary.simpleMessage("Один столбец"),
     "oneline": MessageLookupByLibrary.simpleMessage("Линия"),
     "onlyIcon": MessageLookupByLibrary.simpleMessage("Только иконка"),
@@ -822,7 +825,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "portConflictTip": MessageLookupByLibrary.simpleMessage(
       "Введите другой порт",
     ),
-    "portTip": m25,
+    "portTip": m26,
     "preferH3Desc": MessageLookupByLibrary.simpleMessage(
       "Использовать HTTP/3 для DOH (если доступно)",
     ),
@@ -895,7 +898,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "purchaseHidePassword": MessageLookupByLibrary.simpleMessage(
       "Скрыть пароль",
     ),
-    "purchaseInquiryTemplate": m26,
+    "purchaseInquiryTemplate": m27,
     "purchaseJumpToWorkbench": MessageLookupByLibrary.simpleMessage(
       "Есть код? Перейти к активации",
     ),
@@ -923,7 +926,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "purchasePlanImageNotLoaded": MessageLookupByLibrary.simpleMessage(
       "Внешнее изображение не загружено",
     ),
-    "purchasePlanLowStock": m27,
+    "purchasePlanLowStock": m28,
     "purchasePlanNotProvided": MessageLookupByLibrary.simpleMessage(
       "Не указано",
     ),
@@ -942,7 +945,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "purchasePlanResetSystem": MessageLookupByLibrary.simpleMessage(
       "По настройкам системы",
     ),
-    "purchasePlanResetUnknown": m28,
+    "purchasePlanResetUnknown": m29,
     "purchasePlanResetYearStart": MessageLookupByLibrary.simpleMessage(
       "1 января каждого года",
     ),
@@ -1086,7 +1089,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "selectAll": MessageLookupByLibrary.simpleMessage("Выбрать все"),
     "selectProfile": MessageLookupByLibrary.simpleMessage("Выбрать профиль"),
     "selected": MessageLookupByLibrary.simpleMessage("Выбрано"),
-    "selectedCountTitle": m29,
+    "selectedCountTitle": m30,
     "sendToTv": MessageLookupByLibrary.simpleMessage("Отправить на ТВ"),
     "sendToTvTitle": MessageLookupByLibrary.simpleMessage("Отправить на ТВ"),
     "sentSuccessfullyMessage": MessageLookupByLibrary.simpleMessage(
@@ -1130,7 +1133,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "subscriptionExpired": MessageLookupByLibrary.simpleMessage(
       "Ваша подписка истекла",
     ),
-    "subscriptionExpiresInDays": m30,
+    "subscriptionExpiresInDays": m31,
     "subscriptionExpiresSoon": MessageLookupByLibrary.simpleMessage(
       "Подписка скоро истекает",
     ),
@@ -1218,7 +1221,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "tunErrorUnavailable": MessageLookupByLibrary.simpleMessage(
       "Не удалось проверить состояние; проверьте версию фонового процесса",
     ),
-    "tunStatusFailure": m31,
+    "tunStatusFailure": m32,
     "tunStatusOff": MessageLookupByLibrary.simpleMessage("Не запущен"),
     "tunStatusOn": MessageLookupByLibrary.simpleMessage("Запущен"),
     "tunStatusStarting": MessageLookupByLibrary.simpleMessage("Запуск…"),
@@ -1251,7 +1254,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "upload": MessageLookupByLibrary.simpleMessage("Отправка"),
     "url": MessageLookupByLibrary.simpleMessage("URL"),
     "urlDesc": MessageLookupByLibrary.simpleMessage("Загрузить профиль по URL"),
-    "urlTip": m32,
+    "urlTip": m33,
     "useHosts": MessageLookupByLibrary.simpleMessage("Использовать hosts"),
     "useSystemHosts": MessageLookupByLibrary.simpleMessage(
       "Использовать системные hosts",

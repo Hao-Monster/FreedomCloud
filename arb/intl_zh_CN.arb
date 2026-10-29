@@ -629,7 +629,6 @@
   "nodeOverviewAllProfiles": "全部配置",
   "nodeOverviewActive": "活动配置",
   "nodeOverviewAvailableOnly": "仅显示可用",
-  "nodeOverviewInline": "内联",
   "nodeOverviewRuntimeSource": "运行时节点",
   "nodeOverviewUntested": "未测",
   "nodeOverviewTestFailed": "测试失败",
@@ -876,6 +875,15 @@
   "nodeOverviewManualUpdate": "手动更新",
   "nodeOverviewLocalProfile": "本地配置",
   "nodeOverviewDeviceLimitReached": "已达设备数量上限",
+  "nodeOverviewStatusExpired": "已过期",
+  "nodeOverviewAnnouncement": "公告：{text}",
+  "@nodeOverviewAnnouncement": {
+    "placeholders": {
+      "text": {
+        "type": "String"
+      }
+    }
+  },
   "nodeOverviewSwitchedToNode": "已切换至 {profile} · {node}",
   "@nodeOverviewSwitchedToNode": {
     "placeholders": {
