@@ -818,5 +818,34 @@
   "nodeOverviewUpdateSubscription": "Обновить",
   "nodeOverviewUpdatingShort": "Обновление",
   "nodeOverviewAddSubscription": "Добавить подписку",
-  "nodeOverviewQuickUse": "Использовать"
+  "nodeOverviewQuickUse": "Использовать",
+  "nodeOverviewSelectProfileTitle": "Выбор профиля",
+  "nodeOverviewProfileCountBadge": "Профилей: {count}",
+  "@nodeOverviewProfileCountBadge": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewPickerAvailableNodes": "Доступно {available} / {total}",
+  "@nodeOverviewPickerAvailableNodes": {
+    "placeholders": {
+      "available": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewPickerPerpetual": "Бессрочно",
+  "nodeOverviewPickerExpireDate": "До {date}",
+  "@nodeOverviewPickerExpireDate": {
+    "placeholders": {
+      "date": {
+        "type": "String"
+      }
+    }
+  }
 }

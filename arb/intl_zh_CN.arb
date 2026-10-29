@@ -898,5 +898,34 @@
   "nodeOverviewUpdateSubscription": "更新订阅",
   "nodeOverviewUpdatingShort": "更新中",
   "nodeOverviewAddSubscription": "添加订阅",
-  "nodeOverviewQuickUse": "点击使用"
+  "nodeOverviewQuickUse": "点击使用",
+  "nodeOverviewSelectProfileTitle": "切换配置",
+  "nodeOverviewProfileCountBadge": "共 {count} 个",
+  "@nodeOverviewProfileCountBadge": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewPickerAvailableNodes": "可用 {available} / {total}",
+  "@nodeOverviewPickerAvailableNodes": {
+    "placeholders": {
+      "available": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewPickerPerpetual": "长期有效",
+  "nodeOverviewPickerExpireDate": "到期 {date}",
+  "@nodeOverviewPickerExpireDate": {
+    "placeholders": {
+      "date": {
+        "type": "String"
+      }
+    }
+  }
 }

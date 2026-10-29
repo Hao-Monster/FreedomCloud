@@ -957,5 +957,34 @@
   "nodeOverviewUpdateSubscription": "Update",
   "nodeOverviewUpdatingShort": "Updating",
   "nodeOverviewAddSubscription": "Add subscription",
-  "nodeOverviewQuickUse": "Quick use"
+  "nodeOverviewQuickUse": "Quick use",
+  "nodeOverviewSelectProfileTitle": "Switch profile",
+  "nodeOverviewProfileCountBadge": "{count} profiles",
+  "@nodeOverviewProfileCountBadge": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewPickerAvailableNodes": "Available {available} / {total}",
+  "@nodeOverviewPickerAvailableNodes": {
+    "placeholders": {
+      "available": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewPickerPerpetual": "Never expires",
+  "nodeOverviewPickerExpireDate": "Exp. {date}",
+  "@nodeOverviewPickerExpireDate": {
+    "placeholders": {
+      "date": {
+        "type": "String"
+      }
+    }
+  }
 }

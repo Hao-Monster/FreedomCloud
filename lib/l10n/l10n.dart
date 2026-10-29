@@ -6558,6 +6558,56 @@ class AppLocalizations {
       args: [],
     );
   }
+
+  /// `Switch profile`
+  String get nodeOverviewSelectProfileTitle {
+    return Intl.message(
+      'Switch profile',
+      name: 'nodeOverviewSelectProfileTitle',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `{count} profiles`
+  String nodeOverviewProfileCountBadge(int count) {
+    return Intl.message(
+      '$count profiles',
+      name: 'nodeOverviewProfileCountBadge',
+      desc: '',
+      args: [count],
+    );
+  }
+
+  /// `Available {available} / {total}`
+  String nodeOverviewPickerAvailableNodes(int available, int total) {
+    return Intl.message(
+      'Available $available / $total',
+      name: 'nodeOverviewPickerAvailableNodes',
+      desc: '',
+      args: [available, total],
+    );
+  }
+
+  /// `Never expires`
+  String get nodeOverviewPickerPerpetual {
+    return Intl.message(
+      'Never expires',
+      name: 'nodeOverviewPickerPerpetual',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Exp. {date}`
+  String nodeOverviewPickerExpireDate(String date) {
+    return Intl.message(
+      'Exp. $date',
+      name: 'nodeOverviewPickerExpireDate',
+      desc: '',
+      args: [date],
+    );
+  }
 }
 
 class AppLocalizationDelegate extends LocalizationsDelegate<AppLocalizations> {

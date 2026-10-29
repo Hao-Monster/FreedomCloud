@@ -764,5 +764,34 @@
   "nodeOverviewUpdateSubscription": "購読を更新",
   "nodeOverviewUpdatingShort": "更新中",
   "nodeOverviewAddSubscription": "購読を追加",
-  "nodeOverviewQuickUse": "すぐ使う"
+  "nodeOverviewQuickUse": "すぐ使う",
+  "nodeOverviewSelectProfileTitle": "プロファイル切替",
+  "nodeOverviewProfileCountBadge": "全 {count} 件",
+  "@nodeOverviewProfileCountBadge": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewPickerAvailableNodes": "利用可能 {available} / {total}",
+  "@nodeOverviewPickerAvailableNodes": {
+    "placeholders": {
+      "available": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewPickerPerpetual": "無期限",
+  "nodeOverviewPickerExpireDate": "期限 {date}",
+  "@nodeOverviewPickerExpireDate": {
+    "placeholders": {
+      "date": {
+        "type": "String"
+      }
+    }
+  }
 }

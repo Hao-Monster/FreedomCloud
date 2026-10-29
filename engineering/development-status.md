@@ -2,6 +2,21 @@
 
 更新日期：2026-10-29。当前阶段是快速开发、快速迭代和部分功能预览。本文记录来源与验收边界；每次继续开发仍需核实实际 Git/PR/CI 状态，不能把历史报告视为当前通过证明。
 
+## 跨配置节点总览窄窗配置选择胶囊与富卡片浮层重构（可用节点数 + 到期日期展示，2026-10-29）
+
+- 来源：针对“代理 → 全部配置”（[`NodeOverviewView`](file:///E:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart#L220-L225)）在窄窗（`!wide`，宽度 `<= 840px` 或移动端视图）下原 `DropdownButton<String>`（`overview-profile-filter`）采用粗糙原生下划线菜单、与右侧“仅显示可用 / 排序”胶囊视觉割裂且缺失节点可用数与订阅到期日期的问题，从基线 `development@bb22de3aef0f7cc8b73be39a5ffe70ffa20aa839` 完成精细化 UI/UX 重构。
+- 核心实现：
+  1. **等高融合胶囊触发器（[`_OverviewProfileSelector`](file:///E:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart#L1962-L2370)）**：移除原生 `DropdownButton<String>`，采用与 [`_OverviewAvailableFilterButton`](file:///E:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart#L2911-L3048) 和 [`_OverviewSortSelector`](file:///E:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart#L3050-L3304) 完全一致的 `36px` 等高、`10px` 圆角、`1px` 细描边及垂直中线对齐体系；选中“全部配置”时展示叠层图标与展开旋转箭头，选中具体配置时展示四态语义圆点（绿：有可用且未过期；琥珀：`<= 7` 天临期；红：已过期/`0` 可用/解析异常；灰：加载中）及紧凑 `可用/总数` 内联计数（窄宽度或 `> 1.45x` 大字号自动收起防挤压）。
+  2. **零额外挂载开销的富卡片浮层（[`_OverviewAllProfilesOptionCard`](file:///E:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart#L2372-L2557) / [`_OverviewProfileOptionCard`](file:///E:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart#L2559-L2859) / [`_PickerMetaPill`](file:///E:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart#L2861-L2909) / [`_resolvePickerExpiry`](file:///E:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart#L1914-L1960)）**：
+     - 基于 `MenuAnchor(alignmentOffset: Offset(0, 8))` 构建分层圆角浮层（`ValueKey('overview-profile-menu')`），内置标题栏（`切换配置` + `共 N 个` 数量胶囊）、置顶 **`全部配置`** 汇总卡（`ValueKey('overview-profile-option-all')`，聚合展示全部已加载健康配置的 `可用 X / Y`）及按可用节点数降序排列的配置卡片（`ValueKey('overview-profile-option-<id>')`）；
+     - 每张配置卡片首行展示语义状态圆点、配置名称、同步中微进度环（`isUpdating`）、**`活动配置`** 胶囊徽标与当前筛选选中勾号；次行采用 `Wrap` 弹性胶囊并列展示 **节点可用数量**（`可用 X / Y` 翠绿高亮 / `0` 可用中性灰 / `配置文件缺失` 或 `配置解析失败` 红色告警 / 未加载 `—`，复用单遍 `pickerNodeStats` 聚合，不额外挂载屏外 `profileCatalogProvider`）与 **订阅到期状态**（`到期 YYYY-MM-DD · 剩余 N 天`、`<= 7` 天琥珀色临期预警、`到期 YYYY-MM-DD · 已过期` 红色告警、`长期有效`、`本地配置`；无 `subscription-userinfo` 的远程配置如实省略不伪造）；
+     - 补齐 `zh_CN` / `en` / `ru` / `ja` 四语种 5 个 ARB 词条并更新 `lib/l10n/*`，自适应收束浮层宽度确保 `320px` 极窄视口与 `2.0x` 大字号展开/收起均零溢出。
+- 验证记录（本机 `Flutter 3.47.4` / `Dart 3.13.3`，CI 配置 `3.41.7`）：
+  - 前置有效 Red（[`test/views/node_overview_test.dart`](file:///E:/CodeWorkstation/FlClashX/test/views/node_overview_test.dart#L6525-L6845) 新增窄窗选择器等高对齐、富卡片可用数/到期日/活动徽标切换及 `320px`/`380px @ 2.0x` 中俄双语防溢出专项测试）：退出码 `1`（`0 PASS / 2 FAIL`）；
+  - 节点总览全套单元、运行时、组件与合成渲染回归测试（`node_overview_test.dart`、`node_overview_render_test.dart`、`node_catalog_test.dart`、`node_runtime_catalog_test.dart`、`node_runtime_race_test.dart`）：**PASS（142 PASS / 0 FAIL，含 `440x820` `2x` 深色中文富浮层合成 PNG 像素级视觉复核 PASS）**；
+  - 静态检查（`dart analyze lib/views/proxies/overview/overview.dart lib/l10n test/views/node_overview_test.dart test/views/node_overview_render_test.dart`）：**PASS（`No issues found!`）**；本任务改动文件 `git diff --check` 无告警；`pubspec.lock` 未改动。
+- 交付状态：**已实现 / 已本地验证并提交至本地 `development`**；未推送远端（按规范待授权后推送） / 未创建或合并 PR / 远端 CI **NOT RUN** / 未重打静态预览包 / 未启动候选窗口（未触碰本机运行中代理、TUN 及后台服务） / 后端部署与业务验收 **NOT RUN**。下一步：如需推送 `freedomcloud/development`、晋级 `main` 或打新预览包，按授权执行。
+
 ## 二轮独立 Code Review 跨模块全量修复（`R2-01`–`R2-04`，2026-10-29）
 
 - 来源：针对提交 `4bc615b182c1f0e4a213201635c171065afbe370` 执行二轮对抗式跨模块审查，检出 `R2-01`–`R2-04`（`1 P1 / 2 P2 / 1 P3`，含跨页面 [`ProfilesView`](file:///E:/CodeWorkstation/FlClashX/lib/views/profiles/profiles.dart) 陈旧快照回滚联动缺陷），按用户指令在本地 `development` 按 TDD Red → Green 完成全量收口修复。

@@ -1028,7 +1028,12 @@ void main() {
     await mount(tester, catalogs: flatCatalogs(), catalogTester: backend);
     await tester.tap(find.byKey(const ValueKey('overview-profile-filter')));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Beta profile').last);
+    await tester.tap(
+      find.descendant(
+        of: find.byKey(const ValueKey('overview-profile-menu')),
+        matching: find.text('Beta profile'),
+      ),
+    );
     await tester.pumpAndSettle();
     final button = find.byKey(const ValueKey('overview-test-current'));
     expect(tester.widget<TextButton>(button).onPressed, isNotNull);
@@ -1149,7 +1154,12 @@ void main() {
     expect(selector, findsOneWidget);
     await tester.tap(selector);
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Beta profile').last);
+    await tester.tap(
+      find.descendant(
+        of: find.byKey(const ValueKey('overview-profile-menu')),
+        matching: find.text('Beta profile'),
+      ),
+    );
     await tester.pumpAndSettle();
     expect(find.text('Beta node'), findsOneWidget);
     expect(find.text('Alpha node'), findsNothing);
@@ -1171,7 +1181,12 @@ void main() {
     expect(selector, findsOneWidget);
     await tester.tap(selector);
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Beta profile').last);
+    await tester.tap(
+      find.descendant(
+        of: find.byKey(const ValueKey('overview-profile-menu')),
+        matching: find.text('Beta profile'),
+      ),
+    );
     await tester.pumpAndSettle();
     expect(find.text('Beta node'), findsOneWidget);
     expect(find.text('Alpha node'), findsNothing);
@@ -3729,13 +3744,25 @@ void main() {
       },
     };
     await tester.pumpAndSettle();
-    final dropdown = tester.widget<DropdownButton<String>>(
-      find.byKey(const ValueKey('overview-profile-filter')),
-    );
-    expect(
-      dropdown.items!.map((item) => item.value).toList(),
-      ['', ...expectedOrder],
-    );
+    await tester.tap(find.byKey(const ValueKey('overview-profile-filter')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('overview-profile-menu')), findsOneWidget);
+    final optionKeys = <String>['all', ...expectedOrder];
+    for (var i = 0; i < optionKeys.length - 1; i++) {
+      final currentTop = tester
+          .getTopLeft(
+            find.byKey(ValueKey('overview-profile-option-${optionKeys[i]}')),
+          )
+          .dy;
+      final nextTop = tester
+          .getTopLeft(
+            find.byKey(
+              ValueKey('overview-profile-option-${optionKeys[i + 1]}'),
+            ),
+          )
+          .dy;
+      expect(currentTop, lessThan(nextTop));
+    }
     expect(tester.takeException(), isNull);
   });
 
@@ -6496,5 +6523,325 @@ void main() {
       container.read(profilesProvider).getProfile('b')?.selectedMap['Proxy'],
       'BetaFast',
     );
+  });
+
+  testWidgets(
+      'narrow profile selector popup: aligns 36px pill geometry with toolbar, renders rich cards with available node counts, expiry dates, active badge, and switches between profiles and 全部配置',
+      (tester) async {
+    final now = DateTime.now();
+    final futureExpire = now.add(const Duration(days: 27, hours: 6));
+    final pastExpire = now.subtract(const Duration(days: 3));
+    final futureDateStr =
+        '${futureExpire.year.toString().padLeft(4, '0')}-${futureExpire.month.toString().padLeft(2, '0')}-${futureExpire.day.toString().padLeft(2, '0')}';
+    final pastDateStr =
+        '${pastExpire.year.toString().padLeft(4, '0')}-${pastExpire.month.toString().padLeft(2, '0')}-${pastExpire.day.toString().padLeft(2, '0')}';
+
+    final profiles = <Profile>[
+      const Profile(
+        id: 'admin',
+        label: 'admin',
+        url: 'https://example.com/admin',
+        autoUpdateDuration: defaultUpdateDuration,
+        subscriptionInfo: SubscriptionInfo(
+          upload: 1024,
+          download: 2048,
+          total: 0,
+          expire: 0,
+        ),
+      ),
+      Profile(
+        id: 'vip',
+        label: '测试-261026-GHDXXK',
+        url: 'https://example.com/vip',
+        autoUpdateDuration: defaultUpdateDuration,
+        subscriptionInfo: SubscriptionInfo(
+          upload: 0,
+          download: 1024 * 1024 * 100,
+          total: 1024 * 1024 * 1024 * 500,
+          expire: futureExpire.millisecondsSinceEpoch ~/ 1000,
+        ),
+      ),
+      Profile(
+        id: 'expired',
+        label: '已到期专线',
+        url: 'https://example.com/expired',
+        autoUpdateDuration: defaultUpdateDuration,
+        subscriptionInfo: SubscriptionInfo(
+          upload: 0,
+          download: 1024,
+          total: 1024 * 1024 * 100,
+          expire: pastExpire.millisecondsSinceEpoch ~/ 1000,
+        ),
+      ),
+      const Profile(
+        id: 'local',
+        label: '本地备份配置',
+        url: '',
+        autoUpdateDuration: defaultUpdateDuration,
+      ),
+    ];
+
+    globalState.config = globalState.config.copyWith(currentProfileId: 'admin');
+    globalState.appState = globalState.appState.copyWith(
+      groups: const [
+        Group(
+          name: 'Proxy',
+          type: GroupType.Selector,
+          now: 'Admin-HK-1',
+          hidden: false,
+          all: [
+            Proxy(name: 'Admin-HK-1', type: 'VLESS'),
+            Proxy(name: 'Admin-JP-2', type: 'VLESS'),
+            Proxy(name: 'Admin-Dead', type: 'VLESS'),
+          ],
+        ),
+      ],
+      delayMap: {
+        defaultTestUrl: {
+          'Admin-HK-1': 42,
+          'Admin-JP-2': 88,
+          'Admin-Dead': -1,
+        },
+      },
+    );
+
+    await mount(
+      tester,
+      width: 460,
+      locale: const Locale('zh', 'CN'),
+      profiles: profiles,
+      catalogs: {
+        'admin': ProfileCatalog(
+          profileId: 'admin',
+          fingerprint: 'f-admin',
+          status: ProfileCatalogStatus.ready,
+          nodes: [
+            _node('ah1', 'Admin-HK-1').copyWith(selectGroups: const ['Proxy']),
+            _node('aj2', 'Admin-JP-2').copyWith(selectGroups: const ['Proxy']),
+            _node('ad3', 'Admin-Dead').copyWith(selectGroups: const ['Proxy']),
+          ],
+        ),
+        'vip': ProfileCatalog(
+          profileId: 'vip',
+          fingerprint: 'f-vip',
+          status: ProfileCatalogStatus.ready,
+          nodes: [
+            _node('v1', 'VIP-SG-1').copyWith(selectGroups: const ['Proxy']),
+            _node('v2', 'VIP-US-2').copyWith(selectGroups: const ['Proxy']),
+          ],
+        ),
+        'expired': ProfileCatalog(
+          profileId: 'expired',
+          fingerprint: 'f-exp',
+          status: ProfileCatalogStatus.ready,
+          nodes: [
+            _node('e1', 'Exp-Node-1').copyWith(selectGroups: const ['Proxy']),
+          ],
+        ),
+        'local': ProfileCatalog(
+          profileId: 'local',
+          fingerprint: 'f-loc',
+          status: ProfileCatalogStatus.ready,
+          nodes: [
+            _node('l1', 'Local-Node-1').copyWith(selectGroups: const ['Proxy']),
+          ],
+        ),
+      },
+      health: {
+        'vip': {
+          'v1': NodeHealthRecord(
+            delayMs: 55,
+            testedAt: now,
+            testUrlHash: 'h',
+          ),
+        },
+        'expired': {
+          'e1': NodeHealthRecord(
+            delayMs: -1,
+            testedAt: now,
+            testUrlHash: 'h',
+          ),
+        },
+      },
+    );
+
+    // 1. Legacy raw DropdownButton is gone; styled trigger pill matches toolbar 36px height & baseline.
+    expect(find.byType(DropdownButton<String>), findsNothing);
+    final triggerFinder = find.byKey(const ValueKey('overview-profile-filter'));
+    final availFinder = find.byKey(const ValueKey('overview-available-only'));
+    final triggerRect = tester.getRect(triggerFinder);
+    final availRect = tester.getRect(availFinder);
+    expect(triggerRect.height, greaterThanOrEqualTo(36));
+    expect((triggerRect.center.dy - availRect.center.dy).abs(), lessThan(1.5));
+
+    // 2. Open the rich profile selector popup.
+    await tester.tap(triggerFinder);
+    await tester.pumpAndSettle();
+
+    final menuFinder = find.byKey(const ValueKey('overview-profile-menu'));
+    expect(menuFinder, findsOneWidget);
+    expect(
+      find.descendant(of: menuFinder, matching: find.text('切换配置')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: menuFinder, matching: find.text('共 4 个')),
+      findsOneWidget,
+    );
+
+    // 3. Verify "全部配置" summary card shows aggregated available / total nodes (2 + 1 + 0 + 0 = 3 / 7).
+    final allCard = find.byKey(const ValueKey('overview-profile-option-all'));
+    expect(
+      find.descendant(of: allCard, matching: find.text('可用 3 / 7')),
+      findsOneWidget,
+    );
+
+    // 4. Verify each profile card renders available node count, expiry date/state, and active badge.
+    final adminCard =
+        find.byKey(const ValueKey('overview-profile-option-admin'));
+    expect(
+      find.descendant(of: adminCard, matching: find.text('活动配置')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: adminCard, matching: find.text('可用 2 / 3')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: adminCard, matching: find.text('长期有效')),
+      findsOneWidget,
+    );
+
+    final vipCard = find.byKey(const ValueKey('overview-profile-option-vip'));
+    expect(
+      find.descendant(of: vipCard, matching: find.text('可用 1 / 2')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: vipCard,
+        matching: find.textContaining('到期 $futureDateStr'),
+      ),
+      findsOneWidget,
+    );
+
+    final expiredCard =
+        find.byKey(const ValueKey('overview-profile-option-expired'));
+    expect(
+      find.descendant(of: expiredCard, matching: find.text('可用 0 / 1')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: expiredCard,
+        matching: find.text('到期 $pastDateStr · 已过期'),
+      ),
+      findsOneWidget,
+    );
+
+    final localCard =
+        find.byKey(const ValueKey('overview-profile-option-local'));
+    expect(
+      find.descendant(of: localCard, matching: find.text('本地配置')),
+      findsOneWidget,
+    );
+
+    // 5. Selecting "测试-261026-GHDXXK" closes popup, updates trigger pill, and filters node list.
+    await tester.tap(vipCard);
+    await tester.pumpAndSettle();
+    expect(menuFinder, findsNothing);
+    expect(
+      find.descendant(
+        of: triggerFinder,
+        matching: find.text('测试-261026-GHDXXK'),
+      ),
+      findsOneWidget,
+    );
+    expect(find.text('VIP-SG-1'), findsOneWidget);
+    expect(find.text('Admin-HK-1'), findsNothing);
+
+    // 6. Re-opening popup and tapping "全部配置" restores all profiles cleanly.
+    await tester.tap(triggerFinder);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('overview-profile-option-all')));
+    await tester.pumpAndSettle();
+    expect(find.text('Admin-HK-1'), findsOneWidget);
+    await tester.drag(
+      find.byKey(const ValueKey('overview-nodes')),
+      const Offset(0, -320),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('VIP-SG-1'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'narrow profile selector popup: scales cleanly without overflow at 320px & 380px @ 2.0x in zh_CN and ru (both closed and open)',
+      (tester) async {
+    final now = DateTime.now();
+    final expire = now.add(const Duration(days: 5)).millisecondsSinceEpoch ~/ 1000;
+    final profiles = <Profile>[
+      Profile(
+        id: 'a',
+        label: '超长旗舰全球高速专线订阅配置名称测试-Alpha',
+        url: 'https://example.com/a',
+        autoUpdateDuration: defaultUpdateDuration,
+        subscriptionInfo: SubscriptionInfo(
+          upload: 100,
+          download: 200,
+          total: 1024 * 1024 * 1024,
+          expire: expire,
+        ),
+      ),
+      const Profile(
+        id: 'b',
+        label: 'Международная резервная подписка Бета',
+        url: 'https://example.com/b',
+        autoUpdateDuration: defaultUpdateDuration,
+        subscriptionInfo: SubscriptionInfo(
+          upload: 100,
+          download: 200,
+          total: 0,
+          expire: 0,
+        ),
+      ),
+    ];
+    globalState.config = globalState.config.copyWith(currentProfileId: 'a');
+
+    for (final (width, locale) in [
+      (320.0, const Locale('zh', 'CN')),
+      (380.0, const Locale('ru')),
+    ]) {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await mount(
+        tester,
+        width: width,
+        locale: locale,
+        profiles: profiles,
+        catalogs: flatCatalogs(),
+        child: MediaQuery(
+          data: MediaQueryData(
+            size: Size(width, 900),
+            textScaler: const TextScaler.linear(2.0),
+          ),
+          child: const NodeOverviewView(),
+        ),
+      );
+      expect(tester.takeException(), isNull);
+
+      await tester.tap(find.byKey(const ValueKey('overview-profile-filter')));
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey('overview-profile-menu')),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+
+      await tester.tap(
+        find.byKey(const ValueKey('overview-profile-option-b')),
+      );
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+    }
   });
 }
