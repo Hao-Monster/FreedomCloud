@@ -2,6 +2,18 @@
 
 更新日期：2026-10-30。当前阶段是快速开发、快速迭代和部分功能预览。本文记录来源与验收边界；每次继续开发仍需核实实际 Git/PR/CI 状态，不能把历史报告视为当前通过证明。
 
+## 批次晋级 PR #62 合并主线与 Windows 跨配置快捷工作流/窄窗选择器预览交付（2026-10-30）
+
+- 批次晋级与独立审查闭环：
+  1. 将本地 `development`（`842b43fea4c1a6b3fd28cbd76c00324f96916ee2..c1b1e2fa83d29ccf1f75817273cca20b505fe4eb` 共 7 个提交）推送至自有远端 `freedomcloud/development` 并创建单一批次晋级 PR [#62](https://github.com/Hao-Monster/FreedomCloud/pull/62)，涵盖 URL 订阅卡片右上角“更新订阅”与 `updateProfile` 全链路并发加固、三步快捷引导工作流栏（`添加订阅` → `测试当前配置` → `点击使用`）与默认 `O(N)` 稳定延迟排序、以及窄窗（`<= 840px`）配置选择胶囊与富卡片浮层重构及 `profile_selector.dart` 模块拆分。
+  2. 执行晋级前独立代码、架构与 `Flutter 3.41.7` 标签源码兼容性全量审查：结论 **`VERDICT: APPROVE`（`0 P1 / 0 P2 / 3 P3`）**。记录 3 项非阻断低风险 `P3` 后续优化项（`updateProfile` 在途复用附加 `xboardAccountMarker` 相等判断、`_scanEpoch.failedProfileIds` 随配置删除/快照更新同步清理、窄窗长列表末尾 `ArrowDown` 循环回绕首项双向 `ensureVisible`）。
+  3. 远端门禁与合并同步：最终 PR head `c1b1e2f` 的 [push `41057617527`](https://github.com/Hao-Monster/FreedomCloud/actions/runs/41057617527) 与 [PR `41057630162`](https://github.com/Hao-Monster/FreedomCloud/actions/runs/41057630162) 全部 4 项 CI（`Flutter tests` `3.41.7`、`Core Go tests`、`Windows Core and service tests`、`M3 package integrity checks`）通过后，以普通 merge commit 合并至 `main`，生成合并提交 `189e85f33d457fee5b736e1fe1fb1c3aa828dd2e`（Git tree `c87a43ae01264739426baa5f558d3e6db7f66eec`），并将 `development` 快进同步至同一提交；合并后 [main `41058460352`](https://github.com/Hao-Monster/FreedomCloud/actions/runs/41058460352) 与 [development `41058476276`](https://github.com/Hao-Monster/FreedomCloud/actions/runs/41058476276) 4/4 CI 均 **PASS**。
+- Windows amd64 预览包构建与审计：
+  - 基于合并提交 `189e85f33d457fee5b736e1fe1fb1c3aa828dd2e` 的干净 tracked `git archive` 全量重编 UI、Core（`v1.19.32` + Mihomo overlay）、Agent、Helper 与仓库原生插件，产出 [`FreedomCloud-windows-amd64-overview-workflow-189e85f33d45.zip`](../dist/FreedomCloud-windows-amd64-overview-workflow-189e85f33d45.zip)（166,258,044 bytes，SHA256 `048c849c80f0045f0ae0a72925ca66b69cfef0d1708acc603b9e5799fb601d43`）及安全解压目录 [`FreedomCloud-windows-amd64-overview-workflow-189e85f33d45`](../dist/FreedomCloud-windows-amd64-overview-workflow-189e85f33d45/)（入口 `FlClashX.exe`，73 文件 / 72 checksum）。
+  - 构建 exit `0`、构建内 ZIP roundtrip 与交付目录解压逐文件校验 **PASS**、独立静态产物审计 **8/8 PASS**（1017 Git blobs，Helper 二进制内嵌与 UI `CORE_SHA256` 静态一致，Core SHA256 `59dbcacc38720b7ea004bbb77e7aa45ddabc14648afb1cda3c7c8c1b52f98a2a`）。详见[预览交付报告](testing/windows-overview-workflow-preview-2026-10-30.md)。
+  - 既有预览包 `overview-sub-a8dc8bfc102e`（SHA256 `9fa38b8fe63df2fc133ae77b57f6c5339b4e43c2a6eea9a4b7a168a3f0074c95`）、`purchase-v2-8a666bb01005`（SHA256 `1fd3a06fdc360b2185d1bacde4186158250d27b1a6415ff899c45a1c0552c2ad`）、`country-tls-159f16eecc78`（SHA256 `98d8a7a9ef7160af5f3148d5dfe8a260d78441968750cea5e6ae6825f966c2b8`）、现役四进程 PID（`70580`/`41268`/`68600`/`69904`）、未跟踪 QA/probes/coverage 与 `stash@{0}` 均完整保留未触碰。
+- 交付状态：**已实现 / 已提交 / 已推送 / 已合并至 `main`（`189e85f33d45`）并快进同步 `development` / 远端 CI 全部 PASS / 已构建并交付静态预览包**（本交付报告与台账随后单独提交推送至 `development`，不改变已合并 `main` 及包内固定源码）；候选程序未启动 / 真实 Windows 窗口、代理、TUN、后台服务及线上发卡消费业务验收 **NOT RUN**。下一步：用户按包内 `PREVIEW-README.txt` 手工验证。
+
 ## 窄窗配置选择浮层 Code Review 全量收口与模块拆分（`CR-N01`–`CR-N06`，2026-10-30）
 
 - 来源：针对提交 `68b509f4f2697d44bf1fcc998ffa2264955d421b` 执行深度 Code Review，检出 `CR-N01`–`CR-N06`（`1 P1 / 4 P2 / 1 P3`）并在审查回归测试编写中额外拦截 `_indexSingleProfile` 后台索引异常死循环风险，经用户确认后在本地 `development` 按 TDD Red → Green 全量收口修复。
