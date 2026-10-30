@@ -161,25 +161,24 @@ void main() {
             nodeHealthEntriesProvider
                 .overrideWith((ref, id) => health[id] ?? {}),
           ],
-          child: RepaintBoundary(
-            key: const ValueKey('overview-render'),
-            child: MaterialApp(
-              theme: ThemeData(fontFamily: 'OverviewRender'),
-              locale: const Locale('en'),
-              localizationsDelegates: const [
-                AppLocalizations.delegate,
-                GlobalMaterialLocalizations.delegate,
-                GlobalWidgetsLocalizations.delegate,
-                GlobalCupertinoLocalizations.delegate
-              ],
-              supportedLocales: AppLocalizations.delegate.supportedLocales,
-              home: CommonScaffold(
-                  title: 'Proxies',
-                  body: Builder(builder: (context) {
-                    globalState.measure = Measure.of(context, 1);
-                    return const ProxiesView();
-                  })),
-            ),
+          child: MaterialApp(
+            theme: ThemeData(fontFamily: 'OverviewRender'),
+            locale: const Locale('en'),
+            localizationsDelegates: const [
+              AppLocalizations.delegate,
+              GlobalMaterialLocalizations.delegate,
+              GlobalWidgetsLocalizations.delegate,
+              GlobalCupertinoLocalizations.delegate
+            ],
+            supportedLocales: AppLocalizations.delegate.supportedLocales,
+            home: RepaintBoundary(
+                key: const ValueKey('overview-render'),
+                child: CommonScaffold(
+                    title: 'Proxies',
+                    body: Builder(builder: (context) {
+                      globalState.measure = Measure.of(context, 1);
+                      return const ProxiesView();
+                    }))),
           )));
       await tester.pumpAndSettle();
       final scopeMenu = find.byKey(const ValueKey('overview-scope-menu'));

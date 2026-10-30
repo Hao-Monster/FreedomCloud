@@ -23,6 +23,7 @@ import 'package:flclashx/views/proxies/proxies.dart';
 import 'package:flclashx/widgets/scaffold.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -6843,5 +6844,292 @@ void main() {
       await tester.pumpAndSettle();
       expect(tester.takeException(), isNull);
     }
+  });
+
+  testWidgets(
+      'CR-narrow-picker 1 (CR-N01, CR-N02, CR-N03): active profile with empty runtime groups falls back to catalog counts/errors, offscreen disposed tooManyNodes & unresolved providers preserve exact status, thrown load error avoids stuck spinner, and 全部配置 marks partial indexing with +',
+      (tester) async {
+    final now = DateTime.now();
+    final slowCompleter = Completer<ProfileCatalog>();
+    final profiles = <Profile>[
+      const Profile(
+        id: 'active',
+        label: 'ActiveStoppedCore',
+        url: 'https://example.com/active',
+        autoUpdateDuration: defaultUpdateDuration,
+      ),
+      const Profile(
+        id: 'thrownErr',
+        label: 'BrokenDiskProfile',
+        url: 'https://example.com/broken',
+        autoUpdateDuration: defaultUpdateDuration,
+      ),
+      ...List.generate(
+        6,
+        (i) => Profile(
+          id: 'filler-$i',
+          label: 'Filler-$i',
+          url: 'https://example.com/f$i',
+          autoUpdateDuration: defaultUpdateDuration,
+        ),
+      ),
+      const Profile(
+        id: 'tooMany',
+        label: 'OffscreenTooMany',
+        url: 'https://example.com/many',
+        autoUpdateDuration: defaultUpdateDuration,
+      ),
+      const Profile(
+        id: 'providerOnly',
+        label: 'OffscreenProviderOnly',
+        url: 'https://example.com/provider',
+        autoUpdateDuration: defaultUpdateDuration,
+      ),
+      const Profile(
+        id: 'pendingSlow',
+        label: 'OffscreenPending',
+        url: 'https://example.com/slow',
+        autoUpdateDuration: defaultUpdateDuration,
+      ),
+    ];
+
+    // Core is stopped -> groups is empty!
+    globalState.config = globalState.config.copyWith(
+      currentProfileId: 'active',
+      profiles: profiles,
+    );
+    globalState.appState = globalState.appState.copyWith(groups: const []);
+
+    final catalogs = <String, ProfileCatalog>{
+      'active': ProfileCatalog(
+        profileId: 'active',
+        fingerprint: 'f-act',
+        status: ProfileCatalogStatus.ready,
+        nodes: [
+          _node('a1', 'Act-1'),
+          _node('a2', 'Act-2'),
+          _node('a3', 'Act-3'),
+        ],
+      ),
+      for (var i = 0; i < 6; i++)
+        'filler-$i': ProfileCatalog(
+          profileId: 'filler-$i',
+          fingerprint: 'f-$i',
+          status: ProfileCatalogStatus.ready,
+          nodes: [
+            _node('fn-$i-1', 'FillerNode-$i-1'),
+            _node('fn-$i-2', 'FillerNode-$i-2'),
+          ],
+        ),
+      'tooMany': const ProfileCatalog(
+        profileId: 'tooMany',
+        fingerprint: 'f-many',
+        status: ProfileCatalogStatus.parseFailed,
+        errorSummary: 'tooManyNodes',
+      ),
+      'providerOnly': const ProfileCatalog(
+        profileId: 'providerOnly',
+        fingerprint: 'f-prov',
+        status: ProfileCatalogStatus.ready,
+        nodes: [],
+        providerNodeCounts: {'RemoteProvider': -1},
+      ),
+    };
+
+    var tooManyDisposed = false;
+    await AppLocalizations.load(const Locale('zh', 'CN'));
+    addTearDown(() => AppLocalizations.load(const Locale('en')));
+    tester.view.physicalSize = const Size(460, 700);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(() async {
+      if (!slowCompleter.isCompleted) {
+        slowCompleter.complete(
+          const ProfileCatalog(
+            profileId: 'pendingSlow',
+            fingerprint: 'f-slow',
+            status: ProfileCatalogStatus.ready,
+          ),
+        );
+      }
+      await tester.pumpWidget(const SizedBox.shrink());
+    });
+    globalState.appState =
+        globalState.appState.copyWith(viewSize: const Size(460, 700));
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          nodeOverviewEnabledProvider.overrideWithValue(true),
+          nodeCatalogTesterProvider.overrideWith((ref) => _CatalogTester()),
+          activeNodeCatalogProvider.overrideWithValue(null),
+          cachedProfileCatalogsProvider.overrideWith((ref) => const {}),
+          profileCatalogProvider.overrideWith((ref, id) async {
+            if (id == 'tooMany') {
+              ref.onDispose(() => tooManyDisposed = true);
+            }
+            if (id == 'thrownErr') {
+              throw StateError('corrupted disk read');
+            }
+            if (id == 'pendingSlow') {
+              return slowCompleter.future;
+            }
+            return catalogs[id]!;
+          }),
+          nodeHealthEntriesProvider.overrideWith((ref, id) {
+            if (id == 'active') {
+              return {
+                'a1': NodeHealthRecord(
+                  delayMs: 42,
+                  testedAt: now,
+                  testUrlHash: 'h',
+                ),
+                'a2': NodeHealthRecord(
+                  delayMs: 75,
+                  testedAt: now,
+                  testUrlHash: 'h',
+                ),
+                'a3': NodeHealthRecord(
+                  delayMs: -1,
+                  testedAt: now,
+                  testUrlHash: 'h',
+                ),
+              };
+            }
+            return const {};
+          }),
+        ],
+        child: MaterialApp(
+          locale: const Locale('zh', 'CN'),
+          localizationsDelegates: const [
+            AppLocalizations.delegate,
+            GlobalMaterialLocalizations.delegate,
+            GlobalWidgetsLocalizations.delegate,
+            GlobalCupertinoLocalizations.delegate,
+          ],
+          supportedLocales: AppLocalizations.delegate.supportedLocales,
+          home: Scaffold(
+            body: Builder(builder: (context) {
+              globalState.measure = Measure.of(context, 1);
+              return const NodeOverviewView();
+            }),
+          ),
+        ),
+      ),
+    );
+    // Let visible slivers and bounded background index workers settle (except pendingSlow).
+    for (var i = 0; i < 8; i++) {
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+    expect(tooManyDisposed, isTrue);
+
+    await tester.tap(find.byKey(const ValueKey('overview-profile-filter')));
+    await tester.pump(const Duration(milliseconds: 250));
+
+    // CR-N01: Active profile with stopped Core (groups.isEmpty) falls back to static catalog (2 / 3), NOT 0 / 0!
+    final activeCard =
+        find.byKey(const ValueKey('overview-profile-option-active'));
+    expect(
+      find.descendant(of: activeCard, matching: find.text('可用 2 / 3')),
+      findsOneWidget,
+    );
+
+    // CR-N03: While pendingSlow is still loading, 全部配置 marks partial total with trailing '+' instead of claiming 15 is the full total.
+    final allCard = find.byKey(const ValueKey('overview-profile-option-all'));
+    expect(
+      find.descendant(of: allCard, matching: find.text('可用 2 / 15+')),
+      findsOneWidget,
+    );
+
+    // CR-N02a: Thrown provider error renders parseFailed instead of infinite '—' spinner.
+    final thrownCard =
+        find.byKey(const ValueKey('overview-profile-option-thrownErr'));
+    expect(
+      find.descendant(of: thrownCard, matching: find.text('配置解析失败')),
+      findsOneWidget,
+    );
+
+    // CR-N02b: Offscreen auto-disposed tooManyNodes preserves exact '节点数量超出总览上限' message.
+    final tooManyCard =
+        find.byKey(const ValueKey('overview-profile-option-tooMany'));
+    expect(
+      find.descendant(
+        of: tooManyCard,
+        matching: find.text(appLocalizations.nodeOverviewTooManyNodes),
+      ),
+      findsOneWidget,
+    );
+
+    // CR-N02c: Offscreen provider-only profile with uncached providers shows partial summary instead of misleading '可用 0 / 0'.
+    final providerCard =
+        find.byKey(const ValueKey('overview-profile-option-providerOnly'));
+    expect(
+      find.descendant(
+        of: providerCard,
+        matching: find.text(appLocalizations.nodeOverviewPartialSummary),
+      ),
+      findsOneWidget,
+    );
+
+    // Complete pendingSlow and verify in-place update without exception.
+    slowCompleter.complete(
+      ProfileCatalog(
+        profileId: 'pendingSlow',
+        fingerprint: 'f-slow',
+        status: ProfileCatalogStatus.ready,
+        nodes: [_node('ps1', 'SlowNode-1')],
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'CR-narrow-picker 2 (CR-N04): keyboard ArrowDown + Enter selects profile option, focus avoids double-tinting InkWell, and RTL indents metadata from start',
+      (tester) async {
+    await mount(
+      tester,
+      width: 440,
+      locale: const Locale('zh', 'CN'),
+      catalogs: flatCatalogs(),
+      child: const Directionality(
+        textDirection: TextDirection.rtl,
+        child: NodeOverviewView(),
+      ),
+    );
+
+    await tester.tap(find.byKey(const ValueKey('overview-profile-filter')));
+    await tester.pumpAndSettle();
+
+    final allCard = find.byKey(const ValueKey('overview-profile-option-all'));
+    final firstProfileCard =
+        find.byKey(const ValueKey('overview-profile-option-a'));
+
+    // Focus color on InkWell must be transparent so initial MenuAnchor auto-focus never washes out selected card fill.
+    final allInkWell = tester.widget<InkWell>(
+      find.descendant(of: allCard, matching: find.byType(InkWell)),
+    );
+    expect(allInkWell.focusColor, Colors.transparent);
+
+    // In RTL, metadata Wrap must be indented from the right (start), not left!
+    final cardRect = tester.getRect(firstProfileCard);
+    final wrapRect = tester.getRect(
+      find.descendant(of: firstProfileCard, matching: find.byType(Wrap)),
+    );
+    // Card has 10px horizontal padding + 14.5px start (right in RTL) indent >= 23px inset from card right edge.
+    expect(cardRect.right - wrapRect.right, greaterThanOrEqualTo(23.0));
+
+    // Keyboard ArrowDown moves from auto-focused 全部配置 -> Alpha profile ('a'), Enter selects it!
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+    await tester.pumpAndSettle();
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('overview-profile-menu')), findsNothing);
+    expect(find.text('Alpha node'), findsOneWidget);
+    expect(find.text('Beta node'), findsNothing);
+    expect(tester.takeException(), isNull);
   });
 }
