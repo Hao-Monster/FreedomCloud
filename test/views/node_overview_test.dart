@@ -15,6 +15,7 @@ import 'package:flclashx/models/node_catalog.dart';
 import 'package:flclashx/providers/node_overview.dart';
 import 'package:flclashx/providers/providers.dart';
 import 'package:flclashx/state.dart';
+import 'package:flclashx/views/profiles/add_profile.dart';
 import 'package:flclashx/views/proxies/card.dart';
 import 'package:flclashx/views/proxies/list.dart';
 import 'package:flclashx/views/proxies/overview/overview.dart';
@@ -22,9 +23,22 @@ import 'package:flclashx/views/proxies/proxies.dart';
 import 'package:flclashx/widgets/scaffold.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
+
+class _TestPaths extends PathProviderPlatform {
+  _TestPaths(this.root);
+  final String root;
+  @override
+  Future<String> getApplicationSupportPath() async => root;
+  @override
+  Future<String> getTemporaryPath() async => root;
+  @override
+  Future<String> getDownloadsPath() async => root;
+}
 
 const _a =
     Profile(id: 'a', label: 'Alpha profile', autoUpdateDuration: Duration.zero);
@@ -43,6 +57,11 @@ class _ProxyController implements AppController {
   final selections = <(String, String)>[];
   final changes = <(String, String)>[];
   final applyDebounces = <bool>[];
+  final updatedProfiles = <Profile>[];
+  final addedUrls = <String>[];
+  void Function(Profile profile)? onSetProfile;
+  Future<void> Function(Profile profile)? onUpdateProfile;
+  Future<void> Function(String url)? onAddProfileFormURL;
 
   @override
   void updateCurrentSelectedMap(String groupName, String proxyName) =>
@@ -55,6 +74,35 @@ class _ProxyController implements AppController {
   @override
   void applyProfileDebounce({bool silence = false}) =>
       applyDebounces.add(silence);
+
+  @override
+  void setProfile(Profile profile) {
+    final handler = onSetProfile;
+    if (handler == null) {
+      throw StateError('Unexpected controller effect: setProfile');
+    }
+    handler(profile);
+  }
+
+  @override
+  Future<void> updateProfile(Profile profile) async {
+    final handler = onUpdateProfile;
+    if (handler == null) {
+      throw StateError('Unexpected controller effect: updateProfile');
+    }
+    updatedProfiles.add(profile);
+    await handler(profile);
+  }
+
+  @override
+  Future<void> addProfileFormURL(String url) async {
+    final handler = onAddProfileFormURL;
+    if (handler == null) {
+      throw StateError('Unexpected controller effect: addProfileFormURL');
+    }
+    addedUrls.add(url);
+    await handler(url);
+  }
 
   @override
   List<Proxy> getSortProxies(List<Proxy> proxies, [String? url]) => proxies;
@@ -172,6 +220,7 @@ void main() {
     double width = 400,
     bool appBarScaffold = false,
     bool scopeToolbar = false,
+    bool attachNavigatorKey = false,
     ProfileCatalog? activeCatalog,
     NodeHealthStore? healthStore,
     _CatalogTester? catalogTester,
@@ -216,6 +265,7 @@ void main() {
                 testUrl: ref.watch(nodeOverviewTestUrlProvider))),
       ],
       child: MaterialApp(
+        navigatorKey: attachNavigatorKey ? globalState.navigatorKey : null,
         locale: locale,
         localizationsDelegates: const [
           AppLocalizations.delegate,
@@ -979,7 +1029,12 @@ void main() {
     await mount(tester, catalogs: flatCatalogs(), catalogTester: backend);
     await tester.tap(find.byKey(const ValueKey('overview-profile-filter')));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Beta profile').last);
+    await tester.tap(
+      find.descendant(
+        of: find.byKey(const ValueKey('overview-profile-menu')),
+        matching: find.text('Beta profile'),
+      ),
+    );
     await tester.pumpAndSettle();
     final button = find.byKey(const ValueKey('overview-test-current'));
     expect(tester.widget<TextButton>(button).onPressed, isNotNull);
@@ -1100,7 +1155,12 @@ void main() {
     expect(selector, findsOneWidget);
     await tester.tap(selector);
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Beta profile').last);
+    await tester.tap(
+      find.descendant(
+        of: find.byKey(const ValueKey('overview-profile-menu')),
+        matching: find.text('Beta profile'),
+      ),
+    );
     await tester.pumpAndSettle();
     expect(find.text('Beta node'), findsOneWidget);
     expect(find.text('Alpha node'), findsNothing);
@@ -1122,7 +1182,12 @@ void main() {
     expect(selector, findsOneWidget);
     await tester.tap(selector);
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Beta profile').last);
+    await tester.tap(
+      find.descendant(
+        of: find.byKey(const ValueKey('overview-profile-menu')),
+        matching: find.text('Beta profile'),
+      ),
+    );
     await tester.pumpAndSettle();
     expect(find.text('Beta node'), findsOneWidget);
     expect(find.text('Alpha node'), findsNothing);
@@ -1941,7 +2006,10 @@ void main() {
         delayMs: 246,
         testUrl: defaultTestUrl,
         testedAt: DateTime(2026, 10, 15, 10, 11)));
-    globalState.config = globalState.config.copyWith(currentProfileId: 'a');
+    globalState.config = globalState.config.copyWith(
+      currentProfileId: 'a',
+      proxiesStyle: const ProxiesStyle(sortType: ProxiesSortType.none),
+    );
     globalState.appState = globalState.appState.copyWith(groups: [
       Group(
           name: 'Live',
@@ -3677,13 +3745,25 @@ void main() {
       },
     };
     await tester.pumpAndSettle();
-    final dropdown = tester.widget<DropdownButton<String>>(
-      find.byKey(const ValueKey('overview-profile-filter')),
-    );
-    expect(
-      dropdown.items!.map((item) => item.value).toList(),
-      ['', ...expectedOrder],
-    );
+    await tester.tap(find.byKey(const ValueKey('overview-profile-filter')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('overview-profile-menu')), findsOneWidget);
+    final optionKeys = <String>['all', ...expectedOrder];
+    for (var i = 0; i < optionKeys.length - 1; i++) {
+      final currentTop = tester
+          .getTopLeft(
+            find.byKey(ValueKey('overview-profile-option-${optionKeys[i]}')),
+          )
+          .dy;
+      final nextTop = tester
+          .getTopLeft(
+            find.byKey(
+              ValueKey('overview-profile-option-${optionKeys[i + 1]}'),
+            ),
+          )
+          .dy;
+      expect(currentTop, lessThan(nextTop));
+    }
     expect(tester.takeException(), isNull);
   });
 
@@ -3846,10 +3926,7 @@ void main() {
     expect(noneTop, lessThan(nameTop));
     expect(nameTop, lessThan(delayTop));
 
-    // Selecting "延迟" updates provider, re-sorts nodes (Zulu 35ms before Alpha 120ms), and closes menu.
-    await tester.tap(find.byKey(const ValueKey('overview-sort-option-delay')));
-    await tester.pumpAndSettle();
-    expect(sortMenu, findsNothing);
+    // Default sort is already "延迟" (ProxiesSortType.delay): Zulu 35ms before Alpha 120ms.
     expect(
       container.read(proxiesStyleSettingProvider).sortType,
       ProxiesSortType.delay,
@@ -3859,11 +3936,10 @@ void main() {
       lessThan(tester.getTopLeft(find.text('Alpha')).dy),
     );
 
-    // Selecting "名称" updates provider and re-sorts nodes (Alpha before Zulu).
-    await tester.tap(sortButton);
-    await tester.pumpAndSettle();
+    // Selecting "名称" updates provider, re-sorts nodes (Alpha before Zulu), and closes menu.
     await tester.tap(find.byKey(const ValueKey('overview-sort-option-name')));
     await tester.pumpAndSettle();
+    expect(sortMenu, findsNothing);
     expect(
       container.read(proxiesStyleSettingProvider).sortType,
       ProxiesSortType.name,
@@ -3871,6 +3947,20 @@ void main() {
     expect(
       tester.getTopLeft(find.text('Alpha')).dy,
       lessThan(tester.getTopLeft(find.text('Zulu')).dy),
+    );
+
+    // Selecting "延迟" updates provider and re-sorts nodes (Zulu 35ms before Alpha 120ms).
+    await tester.tap(sortButton);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('overview-sort-option-delay')));
+    await tester.pumpAndSettle();
+    expect(
+      container.read(proxiesStyleSettingProvider).sortType,
+      ProxiesSortType.delay,
+    );
+    expect(
+      tester.getTopLeft(find.text('Zulu')).dy,
+      lessThan(tester.getTopLeft(find.text('Alpha')).dy),
     );
 
     // Narrow 320px English layout also renders cleanly without overflow.
@@ -4813,11 +4903,11 @@ void main() {
       findsOneWidget,
     );
 
-    // 5. P3: Sort selector exposes deduplicated semantics label and canonical protocol search matches 'shadowsocks'.
+    // 5. P3: Sort selector exposes deduplicated semantics label (defaulting to Delay) and canonical protocol search matches 'shadowsocks'.
     final sortSemantics = tester.getSemantics(
       find.byKey(const ValueKey('overview-sort-button')),
     );
-    expect(sortSemantics.label, 'Sort: Default');
+    expect(sortSemantics.label, 'Sort: Delay');
     expect(
       sortSemantics.getSemanticsData().hasAction(SemanticsAction.tap),
       isTrue,
@@ -4832,5 +4922,2214 @@ void main() {
     } finally {
       semanticsHandle.dispose();
     }
+  });
+
+  testWidgets(
+      'subscription sync button: renders top-right 更新订阅 only for URL profiles, triggers updateProfile without selecting card, blocks duplicate clicks, preserves sidebar order, and refreshes subscription metadata',
+      (tester) async {
+    const giB = 1024 * 1024 * 1024;
+    final initialSync = DateTime(2026, 10, 28, 16, 56);
+    final updatedSync = DateTime(2026, 10, 29, 16, 40);
+    final adminProfile = Profile(
+      id: 'admin',
+      label: 'admin',
+      url: 'https://sub.example.invalid/admin',
+      lastUpdateDate: initialSync,
+      autoUpdateDuration: const Duration(hours: 24),
+      subscriptionInfo: const SubscriptionInfo(
+        upload: 0,
+        download: 10 * giB,
+        total: 100 * giB,
+        expire: 0,
+      ),
+    );
+    final midSubProfile = Profile(
+      id: 'sub-mid',
+      label: '测试-261026-GHDXXK',
+      url: 'https://sub.example.invalid/mid',
+      lastUpdateDate: initialSync,
+      autoUpdateDuration: const Duration(hours: 24),
+      subscriptionInfo: const SubscriptionInfo(
+        upload: 0,
+        download: 0,
+        total: 500 * giB,
+        expire: 0,
+      ),
+    );
+    const localProfile = Profile(
+      id: 'local-only',
+      label: 'gemini_test.yaml',
+      url: '',
+      autoUpdateDuration: Duration.zero,
+    );
+
+    globalState.config = globalState.config.copyWith(currentProfileId: 'admin');
+    final controller = _ProxyController();
+    globalState.appController = controller;
+    late ProviderContainer container;
+    final syncCompleter = Completer<void>();
+
+    controller
+      ..onSetProfile = (updated) {
+        container.read(profilesProvider.notifier).setProfile(updated);
+      }
+      ..onUpdateProfile = (profile) async {
+        await syncCompleter.future;
+        container.read(profilesProvider.notifier).setProfile(
+              profile.copyWith(
+                isUpdating: false,
+                lastUpdateDate: updatedSync,
+                subscriptionInfo: const SubscriptionInfo(
+                  upload: 5 * giB,
+                  download: 15 * giB,
+                  total: 500 * giB,
+                  expire: 0,
+                ),
+              ),
+            );
+      };
+
+    final nAdmin1 = _node('adm-1', 'Admin 1');
+    final nAdmin2 = _node('adm-2', 'Admin 2');
+    final nMid1 = _node('mid-1', 'Mid 1');
+    final nLocal1 = _node('loc-1', 'Local 1');
+
+    container = await mount(
+      tester,
+      width: 1200,
+      locale: const Locale('zh', 'CN'),
+      profiles: [adminProfile, midSubProfile, localProfile],
+      catalogs: {
+        'admin': ProfileCatalog(
+          profileId: 'admin',
+          fingerprint: 'adm',
+          status: ProfileCatalogStatus.ready,
+          nodes: [nAdmin1, nAdmin2],
+        ),
+        'sub-mid': ProfileCatalog(
+          profileId: 'sub-mid',
+          fingerprint: 'mid',
+          status: ProfileCatalogStatus.ready,
+          nodes: [nMid1],
+        ),
+        'local-only': ProfileCatalog(
+          profileId: 'local-only',
+          fingerprint: 'loc',
+          status: ProfileCatalogStatus.ready,
+          nodes: [nLocal1],
+        ),
+      },
+      health: {
+        'admin': {
+          nAdmin1.identityKey: NodeHealthRecord(
+            delayMs: 120,
+            testedAt: initialSync,
+            testUrlHash: 'h',
+          ),
+          nAdmin2.identityKey: NodeHealthRecord(
+            delayMs: 150,
+            testedAt: initialSync,
+            testUrlHash: 'h',
+          ),
+        },
+        'sub-mid': {
+          nMid1.identityKey: NodeHealthRecord(
+            delayMs: 180,
+            testedAt: initialSync,
+            testUrlHash: 'h',
+          ),
+        },
+      },
+    );
+
+    final adminCard = find.byKey(const ValueKey('overview-sidebar-card-admin'));
+    final midCard = find.byKey(const ValueKey('overview-sidebar-card-sub-mid'));
+    final localCard =
+        find.byKey(const ValueKey('overview-sidebar-card-local-only'));
+
+    final adminSyncBtn = find.byKey(const ValueKey('overview-sync-admin'));
+    final midSyncBtn = find.byKey(const ValueKey('overview-sync-sub-mid'));
+    final localSyncBtn = find.byKey(const ValueKey('overview-sync-local-only'));
+
+    expect(adminSyncBtn, findsOneWidget);
+    expect(midSyncBtn, findsOneWidget);
+    expect(localSyncBtn, findsNothing);
+    expect(
+      find.descendant(of: midSyncBtn, matching: find.text('更新订阅')),
+      findsOneWidget,
+    );
+
+    // Verify top-right placement on both active and inactive URL cards.
+    final adminCardRect = tester.getRect(adminCard);
+    final adminBtnRect = tester.getRect(adminSyncBtn);
+    expect(adminBtnRect.center.dx, greaterThan(adminCardRect.center.dx));
+    expect(adminBtnRect.top - adminCardRect.top, lessThan(40));
+
+    final midCardRect = tester.getRect(midCard);
+    final midBtnRect = tester.getRect(midSyncBtn);
+    expect(midBtnRect.center.dx, greaterThan(midCardRect.center.dx));
+    expect(midBtnRect.top - midCardRect.top, lessThan(40));
+
+    // Before sync: admin (2 available) -> sub-mid (1 available) -> local-only (0 available).
+    expect(
+      tester.getTopLeft(midCard).dy,
+      lessThan(tester.getTopLeft(localCard).dy),
+    );
+
+    // Tap "更新订阅" on sub-mid.
+    await tester.tap(midSyncBtn);
+    await tester.pump();
+
+    expect(controller.updatedProfiles.map((p) => p.id), ['sub-mid']);
+    expect(
+      find.descendant(of: midSyncBtn, matching: find.text('更新中')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+          of: midSyncBtn, matching: find.byType(CircularProgressIndicator)),
+      findsOneWidget,
+    );
+    // Tapping "更新订阅" must NOT switch sidebar selection away from All profiles.
+    expect(find.byKey(const ValueKey('overview-header-admin')), findsOneWidget);
+    expect(
+        find.byKey(const ValueKey('overview-header-sub-mid')), findsOneWidget);
+
+    // Tapping again while updating neither triggers a second updateProfile nor selects the card.
+    await tester.tap(midSyncBtn);
+    await tester.pump();
+    expect(controller.updatedProfiles.length, 1);
+    expect(find.byKey(const ValueKey('overview-header-admin')), findsOneWidget);
+
+    // Sidebar order stays frozen while updating.
+    expect(
+      tester.getTopLeft(midCard).dy,
+      lessThan(tester.getTopLeft(localCard).dy),
+    );
+
+    syncCompleter.complete();
+    await tester.pumpAndSettle();
+
+    expect(
+      find.descendant(of: midSyncBtn, matching: find.text('更新订阅')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+          of: midCard, matching: find.textContaining('剩余流量：480 GB')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+          of: midCard, matching: find.textContaining('2026-10-29 16:40')),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets(
+      'subscription sync button: surfaces error modal via safeRun, preserves concurrent profile edits on rollback, and never resurrects deleted profiles',
+      (tester) async {
+    final originalPaths = PathProviderPlatform.instance;
+    final tempRoot =
+        Directory.systemTemp.createTempSync('node-overview-sync-err-');
+    Directory('${tempRoot.path}/logs').createSync(recursive: true);
+    PathProviderPlatform.instance = _TestPaths(tempRoot.path);
+    addTearDown(() {
+      PathProviderPlatform.instance = originalPaths;
+      try {
+        if (tempRoot.existsSync()) {
+          tempRoot.deleteSync(recursive: true);
+        }
+      } catch (_) {}
+    });
+
+    const subProfile = Profile(
+      id: 'sub-err',
+      label: 'ErrSub',
+      url: 'https://sub.example.invalid/err',
+      autoUpdateDuration: Duration.zero,
+    );
+    const secondProfile = Profile(
+      id: 'other',
+      label: 'OtherLocal',
+      url: '',
+      autoUpdateDuration: Duration.zero,
+    );
+
+    final controller = _ProxyController();
+    globalState.appController = controller;
+    late ProviderContainer container;
+    var deleteDuringUpdate = false;
+
+    controller
+      ..onSetProfile = (updated) {
+        container.read(profilesProvider.notifier).setProfile(updated);
+      }
+      ..onUpdateProfile = (profile) async {
+        if (deleteDuringUpdate) {
+          container.read(profilesProvider.notifier).value = const [
+            secondProfile,
+          ];
+          throw Exception('deleted mid-flight');
+        }
+        // Simulate concurrent selectedMap change while network request is running.
+        final current =
+            container.read(profilesProvider).getProfile(profile.id)!;
+        container.read(profilesProvider.notifier).setProfile(
+              current.copyWith(selectedMap: const {'Proxy': 'FastNode'}),
+            );
+        throw Exception('subscription server 502');
+      };
+
+    container = await mount(
+      tester,
+      width: 1200,
+      attachNavigatorKey: true,
+      locale: const Locale('zh', 'CN'),
+      profiles: [subProfile, secondProfile],
+      catalogs: {
+        'sub-err': ProfileCatalog(
+          profileId: 'sub-err',
+          fingerprint: 'e',
+          status: ProfileCatalogStatus.ready,
+          nodes: [_node('e-1', 'Node E')],
+        ),
+        'other': ProfileCatalog(
+          profileId: 'other',
+          fingerprint: 'o',
+          status: ProfileCatalogStatus.ready,
+          nodes: [_node('o-1', 'Node O')],
+        ),
+      },
+    );
+
+    await tester.tap(find.byKey(const ValueKey('overview-sync-sub-err')));
+    await tester.pumpAndSettle();
+
+    // Error dialog is presented via globalState.safeRun(silence: false).
+    expect(find.textContaining('subscription server 502'), findsOneWidget);
+    final rolledBack = container.read(profilesProvider).getProfile('sub-err')!;
+    expect(rolledBack.isUpdating, isFalse);
+    expect(rolledBack.selectedMap, const {'Proxy': 'FastNode'});
+
+    // Dismiss modal dialog.
+    await tester.tapAt(const Offset(10, 10));
+    await tester.pumpAndSettle();
+
+    // Retry when profile is deleted mid-flight: must not resurrect 'sub-err'.
+    deleteDuringUpdate = true;
+    await tester.tap(find.byKey(const ValueKey('overview-sync-sub-err')));
+    await tester.pumpAndSettle();
+    expect(container.read(profilesProvider).getProfile('sub-err'), isNull);
+    await tester.tapAt(const Offset(10, 10));
+    await tester.pumpAndSettle();
+  });
+
+  testWidgets(
+      'subscription sync button: supports narrow layout without duplicate keys, deduplicates semantics, and handles 2.0x text scaling without overflow',
+      (tester) async {
+    final semanticsHandle = tester.ensureSemantics();
+    try {
+      const longActiveSub = Profile(
+        id: 'long-sub',
+        label: '测试超长配置名称-20261029-GHDXXK-VIP',
+        url: 'https://sub.example.invalid/long',
+        autoUpdateDuration: Duration(hours: 12),
+        subscriptionInfo: SubscriptionInfo(
+          upload: 1024,
+          download: 2048,
+          total: 10485760,
+          expire: 0,
+        ),
+      );
+      const localPeer = Profile(
+        id: 'peer',
+        label: 'LocalPeer',
+        url: '',
+        autoUpdateDuration: Duration.zero,
+      );
+
+      globalState.config =
+          globalState.config.copyWith(currentProfileId: 'long-sub');
+      final controller = _ProxyController();
+      globalState.appController = controller;
+      late ProviderContainer container;
+      controller
+        ..onSetProfile = (updated) {
+          container.read(profilesProvider.notifier).setProfile(updated);
+        }
+        ..onUpdateProfile = (profile) async {
+          container
+              .read(profilesProvider.notifier)
+              .setProfile(profile.copyWith(isUpdating: false));
+        };
+
+      // 1. Narrow layout (420px): renders single sync button in subscription card and triggers sync.
+      container = await mount(
+        tester,
+        width: 420,
+        locale: const Locale('zh', 'CN'),
+        profiles: [longActiveSub, localPeer],
+        catalogs: {
+          'long-sub': ProfileCatalog(
+            profileId: 'long-sub',
+            fingerprint: 'l',
+            status: ProfileCatalogStatus.ready,
+            nodes: [_node('l-1', 'Node L')],
+          ),
+          'peer': ProfileCatalog(
+            profileId: 'peer',
+            fingerprint: 'p',
+            status: ProfileCatalogStatus.ready,
+            nodes: [_node('p-1', 'Node P')],
+          ),
+        },
+      );
+      final narrowBtn = find.byKey(const ValueKey('overview-sync-long-sub'));
+      expect(narrowBtn, findsOneWidget);
+      final syncSemantics = tester.getSemantics(narrowBtn);
+      expect(syncSemantics.label, '更新订阅');
+      expect(
+        syncSemantics.getSemanticsData().hasAction(SemanticsAction.tap),
+        isTrue,
+      );
+      await tester.tap(narrowBtn);
+      await tester.pumpAndSettle();
+      expect(controller.updatedProfiles.map((p) => p.id), ['long-sub']);
+      expect(tester.takeException(), isNull);
+
+      // 2. Wide & narrow layouts at 2.0x text scale across zh_CN and ru without overflow.
+      for (final (width, locale) in [
+        (1200.0, const Locale('zh', 'CN')),
+        (1200.0, const Locale('ru')),
+        (380.0, const Locale('zh', 'CN')),
+        (380.0, const Locale('ru')),
+      ]) {
+        container = await mount(
+          tester,
+          width: width,
+          locale: locale,
+          profiles: [longActiveSub, localPeer],
+          child: MediaQuery(
+            data: MediaQueryData(
+              size: Size(width, 1000),
+              textScaler: const TextScaler.linear(2.0),
+            ),
+            child: const NodeOverviewView(),
+          ),
+          catalogs: {
+            'long-sub': ProfileCatalog(
+              profileId: 'long-sub',
+              fingerprint: 'l',
+              status: ProfileCatalogStatus.ready,
+              nodes: [_node('l-1', 'Node L')],
+            ),
+            'peer': ProfileCatalog(
+              profileId: 'peer',
+              fingerprint: 'p',
+              status: ProfileCatalogStatus.ready,
+              nodes: [_node('p-1', 'Node P')],
+            ),
+          },
+        );
+        expect(
+          find.byKey(const ValueKey('overview-sync-long-sub')),
+          findsOneWidget,
+        );
+        expect(tester.takeException(), isNull);
+      }
+    } finally {
+      semanticsHandle.dispose();
+    }
+  });
+
+  testWidgets(
+      'default delay sort & migration: defaults to delay, migrates legacy none once, preserves explicit user none after migration, and ranks untested above failed',
+      (tester) async {
+    expect(defaultProxiesStyle.sortType, ProxiesSortType.delay);
+    expect(defaultProxiesStyle.sortTypeDefaultDelayMigrated, isTrue);
+
+    // 1. Legacy unmigrated config with sortType "none" upgrades to "delay".
+    const unmigratedLegacyJson = <String, Object?>{
+      'themeProps': <String, Object?>{},
+      'proxiesStyle': <String, Object?>{
+        'type': 'list',
+        'sortType': 'none',
+      },
+    };
+    final migratedConfig = Config.compatibleFromJson(unmigratedLegacyJson);
+    expect(migratedConfig.proxiesStyle.sortType, ProxiesSortType.delay);
+    expect(migratedConfig.proxiesStyle.sortTypeDefaultDelayMigrated, isTrue);
+
+    // 2. Legacy explicit "name" sort is preserved while setting migration flag.
+    final legacyNameConfig = Config.compatibleFromJson(<String, Object?>{
+      'themeProps': <String, Object?>{},
+      'proxiesStyle': <String, Object?>{
+        'sortType': 'name',
+      },
+    });
+    expect(legacyNameConfig.proxiesStyle.sortType, ProxiesSortType.name);
+    expect(legacyNameConfig.proxiesStyle.sortTypeDefaultDelayMigrated, isTrue);
+
+    // 3. Once migrated, explicit user choice back to "none" persists across restarts.
+    final explicitNoneSaved = jsonDecode(
+      jsonEncode(
+        migratedConfig
+            .copyWith(
+              proxiesStyle: migratedConfig.proxiesStyle.copyWith(
+                sortType: ProxiesSortType.none,
+              ),
+            )
+            .toJson(),
+      ),
+    ) as Map<String, Object?>;
+    final reloadedExplicitNone = Config.compatibleFromJson(explicitNoneSaved);
+    expect(reloadedExplicitNone.proxiesStyle.sortType, ProxiesSortType.none);
+    expect(
+      reloadedExplicitNone.proxiesStyle.sortTypeDefaultDelayMigrated,
+      isTrue,
+    );
+
+    // 4. Under default delay sort, positive delays sort ascending, untested above failed.
+    final now = DateTime(2026, 10, 29, 12, 0);
+    await mount(
+      tester,
+      width: 1200,
+      catalogs: {
+        'a': ProfileCatalog(
+          profileId: 'a',
+          fingerprint: 'f',
+          status: ProfileCatalogStatus.ready,
+          nodes: [
+            _node('f', 'A-Failed'),
+            _node('u', 'Z-Untested'),
+            _node('s', 'M-Slow'),
+            _node('g', 'K-Fast'),
+          ],
+        ),
+      },
+      health: {
+        'a': {
+          'f': NodeHealthRecord(
+            delayMs: -1,
+            testedAt: now,
+            testUrlHash: 'h',
+          ),
+          's': NodeHealthRecord(
+            delayMs: 210,
+            testedAt: now,
+            testUrlHash: 'h',
+          ),
+          'g': NodeHealthRecord(
+            delayMs: 95,
+            testedAt: now,
+            testUrlHash: 'h',
+          ),
+        },
+      },
+    );
+    final fastY = tester.getTopLeft(find.text('K-Fast')).dy;
+    final slowY = tester.getTopLeft(find.text('M-Slow')).dy;
+    final untestedY = tester.getTopLeft(find.text('Z-Untested')).dy;
+    final failedY = tester.getTopLeft(find.text('A-Failed')).dy;
+    expect(fastY, lessThan(slowY));
+    expect(slowY, lessThan(untestedY));
+    expect(untestedY, lessThan(failedY));
+  });
+
+  testWidgets(
+      'workflow bar: renders 添加订阅 -> 测试当前配置 -> 点击使用 with refined arrows in right pane and opens URL import dialog',
+      (tester) async {
+    final controller = _ProxyController()..onAddProfileFormURL = (_) async {};
+    globalState.appController = controller;
+    globalState.config = globalState.config.copyWith(currentProfileId: 'a');
+    globalState.appState = globalState.appState.copyWith(groups: const [
+      Group(
+        name: 'Live',
+        type: GroupType.Selector,
+        hidden: false,
+        all: [Proxy(name: 'Node A', type: 'VLESS')],
+      ),
+    ]);
+    final backend = _CatalogTester();
+    await mount(
+      tester,
+      width: 1200,
+      locale: const Locale('zh', 'CN'),
+      attachNavigatorKey: true,
+      catalogTester: backend,
+      catalogs: flatCatalogs(),
+    );
+
+    final workflowBar = find.byKey(const ValueKey('overview-workflow-bar'));
+    final addBtn = find.byKey(const ValueKey('overview-add-subscription'));
+    final arrow1 = find.byKey(const ValueKey('overview-workflow-arrow-1'));
+    final testBtn = find.byKey(const ValueKey('overview-test-current'));
+    final arrow2 = find.byKey(const ValueKey('overview-workflow-arrow-2'));
+    final useBtn = find.byKey(const ValueKey('overview-quick-use'));
+    expect(workflowBar, findsOneWidget);
+    expect(addBtn, findsOneWidget);
+    expect(arrow1, findsOneWidget);
+    expect(testBtn, findsOneWidget);
+    expect(arrow2, findsOneWidget);
+    expect(useBtn, findsOneWidget);
+
+    expect(find.text('添加订阅'), findsOneWidget);
+    expect(find.text('测试当前配置'), findsOneWidget);
+    expect(find.text('点击使用'), findsOneWidget);
+
+    // Moved out of top filter row into right-hand pane above node list.
+    final sortRect =
+        tester.getRect(find.byKey(const ValueKey('overview-sort-button')));
+    final sidebarRect =
+        tester.getRect(find.byKey(const ValueKey('overview-sidebar')));
+    final headerRect =
+        tester.getRect(find.byKey(const ValueKey('overview-header-a')));
+    final addRect = tester.getRect(addBtn);
+    final arrow1Rect = tester.getRect(arrow1);
+    final testRect = tester.getRect(testBtn);
+    final arrow2Rect = tester.getRect(arrow2);
+    final useRect = tester.getRect(useBtn);
+
+    expect(testRect.top, greaterThan(sortRect.bottom));
+    expect(addRect.left, greaterThan(sidebarRect.right));
+    expect(addRect.bottom, lessThanOrEqualTo(headerRect.top));
+    expect(addRect.right, lessThanOrEqualTo(arrow1Rect.left));
+    expect(arrow1Rect.right, lessThanOrEqualTo(testRect.left));
+    expect(testRect.right, lessThanOrEqualTo(arrow2Rect.left));
+    expect(arrow2Rect.right, lessThanOrEqualTo(useRect.left));
+    expect(addRect.center.dy, closeTo(testRect.center.dy, 1.0));
+    expect(testRect.center.dy, closeTo(useRect.center.dy, 1.0));
+
+    // Step 2 preserves TextButton contract and triggers current profile test.
+    expect(tester.widget<TextButton>(testBtn).onPressed, isNotNull);
+    await tester.tap(testBtn);
+    await tester.pumpAndSettle();
+    expect(backend.current, hasLength(1));
+
+    // Step 1 opens URLFormDialog directly and forwards trimmed URL to addProfileFormURL.
+    await tester.tap(addBtn);
+    await tester.pumpAndSettle();
+    expect(find.text('从URL导入'), findsOneWidget);
+    await tester.enterText(
+      find.byType(TextField),
+      '  https://sub.example.com/api/v1/client/subscribe?token=demo  ',
+    );
+    await tester.tap(find.text('提交'));
+    await tester.pumpAndSettle();
+    expect(find.text('从URL导入'), findsNothing);
+    expect(
+      controller.addedUrls,
+      ['https://sub.example.com/api/v1/client/subscribe?token=demo'],
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'quick use (点击使用): activates lowest-delay node on live profile, switches to selected catalog profile, disables when empty, and scales cleanly at 2.0x',
+      (tester) async {
+    final semanticsHandle = tester.ensureSemantics();
+    try {
+      final controller = _ProxyController();
+      globalState.appController = controller;
+      final now = DateTime(2026, 10, 29, 12, 0);
+      final profiles = <Profile>[
+        const Profile(
+          id: 'a',
+          label: 'Alpha',
+          url: 'https://example.com/a',
+          autoUpdateDuration: defaultUpdateDuration,
+          currentGroupName: 'Live',
+          selectedMap: {'Live': 'SlowCurrent'},
+        ),
+        const Profile(
+          id: 'b',
+          label: 'Beta',
+          url: 'https://example.com/b',
+          autoUpdateDuration: defaultUpdateDuration,
+        ),
+      ];
+      globalState.config = globalState.config.copyWith(currentProfileId: 'a');
+      globalState.appState = globalState.appState.copyWith(
+        groups: const [
+          Group(
+            name: 'Live',
+            type: GroupType.Selector,
+            now: 'SlowCurrent',
+            hidden: false,
+            all: [
+              Proxy(name: 'SlowCurrent', type: 'VLESS'),
+              Proxy(name: 'FastBest', type: 'VLESS'),
+              Proxy(name: 'BrokenNode', type: 'VLESS'),
+            ],
+          ),
+        ],
+        delayMap: {
+          defaultTestUrl: {
+            'SlowCurrent': 210,
+            'FastBest': 85,
+            'BrokenNode': -1,
+          },
+        },
+      );
+
+      final container = await mount(
+        tester,
+        width: 1200,
+        locale: const Locale('zh', 'CN'),
+        profiles: profiles,
+        catalogs: {
+          'a': ProfileCatalog(
+            profileId: 'a',
+            fingerprint: 'fa',
+            status: ProfileCatalogStatus.ready,
+            nodes: [
+              _node('s', 'SlowCurrent')
+                  .copyWith(selectGroups: const ['Live']),
+              _node('f', 'FastBest')
+                  .copyWith(selectGroups: const ['Live']),
+              _node('x', 'BrokenNode')
+                  .copyWith(selectGroups: const ['Live']),
+            ],
+          ),
+          'b': ProfileCatalog(
+            profileId: 'b',
+            fingerprint: 'fb',
+            status: ProfileCatalogStatus.ready,
+            nodes: [
+              _node('bs', 'BetaSlow')
+                  .copyWith(selectGroups: const ['Proxy']),
+              _node('bf', 'BetaFast')
+                  .copyWith(selectGroups: const ['Proxy']),
+            ],
+          ),
+        },
+        health: {
+          'b': {
+            'bs': NodeHealthRecord(
+              delayMs: 260,
+              testedAt: now,
+              testUrlHash: 'h',
+            ),
+            'bf': NodeHealthRecord(
+              delayMs: 62,
+              testedAt: now,
+              testUrlHash: 'h',
+            ),
+          },
+        },
+      );
+
+      // 1. Under default delay sort, FastBest (85 ms) is first above SlowCurrent (210 ms).
+      expect(
+        tester.getTopLeft(find.text('FastBest')).dy,
+        lessThan(tester.getTopLeft(find.text('SlowCurrent')).dy),
+      );
+
+      // Clicking "点击使用" activates FastBest immediately.
+      final useBtn = find.byKey(const ValueKey('overview-quick-use'));
+      await tester.tap(useBtn);
+      await tester.pumpAndSettle();
+      expect(controller.selections, [('Live', 'FastBest')]);
+      expect(controller.changes, [('Live', 'FastBest')]);
+      expect(
+        container
+            .read(profilesProvider)
+            .getProfile('a')
+            ?.selectedMap['Live'],
+      equals('FastBest'),
+      );
+      expect(find.text('已切换至 Alpha · FastBest'), findsOneWidget);
+
+      // 2. Selecting inactive profile Beta in sidebar and clicking "点击使用" switches to Beta · BetaFast (62 ms).
+      await tester.tap(find.byKey(const ValueKey('overview-select-b')));
+      await tester.pumpAndSettle();
+      expect(
+        tester.getTopLeft(find.text('BetaFast')).dy,
+        lessThan(tester.getTopLeft(find.text('BetaSlow')).dy),
+      );
+      await tester.tap(useBtn);
+      await tester.pumpAndSettle();
+      expect(container.read(currentProfileIdProvider), 'b');
+      expect(
+        container
+            .read(profilesProvider)
+            .getProfile('b')
+            ?.selectedMap['Proxy'],
+        equals('BetaFast'),
+      );
+
+      // 3. Non-matching search query disables "点击使用" cleanly.
+      container.read(proxiesQueryProvider.notifier).value =
+          '__no_matching_node_xyz__';
+      await tester.pumpAndSettle();
+      expect(tester.widget<TextButton>(useBtn).onPressed, isNull);
+      container.read(proxiesQueryProvider.notifier).value = '';
+      await tester.pumpAndSettle();
+
+      // 4. Narrow & wide 2.0x text scale across zh_CN and ru render without overflow.
+      for (final (width, locale) in [
+        (320.0, const Locale('zh', 'CN')),
+        (380.0, const Locale('ru')),
+        (1200.0, const Locale('ru')),
+      ]) {
+        await mount(
+          tester,
+          width: width,
+          locale: locale,
+          profiles: profiles,
+          child: MediaQuery(
+            data: MediaQueryData(
+              size: Size(width, 1000),
+              textScaler: const TextScaler.linear(2.0),
+            ),
+            child: const NodeOverviewView(),
+          ),
+          catalogs: {
+            'a': ProfileCatalog(
+              profileId: 'a',
+              fingerprint: 'fa',
+              status: ProfileCatalogStatus.ready,
+              nodes: [
+                _node('f', 'FastBest')
+                    .copyWith(selectGroups: const ['Live']),
+              ],
+            ),
+            'b': ProfileCatalog(
+              profileId: 'b',
+              fingerprint: 'fb',
+              status: ProfileCatalogStatus.ready,
+              nodes: [_node('bf', 'BetaFast')],
+            ),
+          },
+        );
+        expect(
+          find.byKey(const ValueKey('overview-add-subscription')),
+          findsOneWidget,
+        );
+        expect(
+          find.byKey(const ValueKey('overview-test-current')),
+          findsOneWidget,
+        );
+        expect(
+          find.byKey(const ValueKey('overview-quick-use')),
+          findsOneWidget,
+        );
+        expect(tester.takeException(), isNull);
+      }
+    } finally {
+      semanticsHandle.dispose();
+    }
+  });
+
+  testWidgets(
+      'CR-review 1 (CR-02 & CR-05): quick use never falls through updating/loading top profile or selects failed nodes, and test-current disables while target profile updates',
+      (tester) async {
+    final controller = _ProxyController();
+    globalState.appController = controller;
+    final now = DateTime(2026, 10, 29, 14, 0);
+
+    // 1. Active top profile isUpdating == true: BOTH test-current and quick-use must be disabled
+    //    (must NOT silently fall through to Beta!).
+    final baseProfiles = <Profile>[
+      const Profile(
+        id: 'a',
+        label: 'Alpha',
+        url: 'https://example.com/a',
+        autoUpdateDuration: defaultUpdateDuration,
+        currentGroupName: 'Live',
+        selectedMap: {'Live': 'AlphaFast'},
+      ),
+      const Profile(
+        id: 'b',
+        label: 'Beta',
+        url: 'https://example.com/b',
+        autoUpdateDuration: defaultUpdateDuration,
+      ),
+    ];
+    globalState.config = globalState.config.copyWith(currentProfileId: 'a');
+    globalState.appState = globalState.appState.copyWith(
+      groups: const [
+        Group(
+          name: 'Live',
+          type: GroupType.Selector,
+          now: 'AlphaFast',
+          hidden: false,
+          all: [Proxy(name: 'AlphaFast', type: 'VLESS')],
+        ),
+      ],
+      delayMap: {
+        defaultTestUrl: {'AlphaFast': 70},
+      },
+    );
+
+    var container = await mount(
+      tester,
+      width: 1200,
+      locale: const Locale('zh', 'CN'),
+      profiles: baseProfiles,
+      catalogs: {
+        'a': ProfileCatalog(
+          profileId: 'a',
+          fingerprint: 'fa',
+          status: ProfileCatalogStatus.ready,
+          nodes: [
+            _node('af', 'AlphaFast').copyWith(selectGroups: const ['Live']),
+          ],
+        ),
+        'b': ProfileCatalog(
+          profileId: 'b',
+          fingerprint: 'fb',
+          status: ProfileCatalogStatus.ready,
+          nodes: [
+            _node('bf', 'BetaFast').copyWith(selectGroups: const ['Proxy']),
+          ],
+        ),
+      },
+      health: {
+        'b': {
+          'bf': NodeHealthRecord(
+            delayMs: 55,
+            testedAt: now,
+            testUrlHash: 'h',
+          ),
+        },
+      },
+    );
+    container.read(profilesProvider.notifier).setProfile(
+          baseProfiles[0].copyWith(isUpdating: true),
+        );
+    await tester.pump();
+
+    final testBtn = find.byKey(const ValueKey('overview-test-current'));
+    final useBtn = find.byKey(const ValueKey('overview-quick-use'));
+    expect(tester.widget<TextButton>(testBtn).onPressed, isNull);
+    expect(tester.widget<TextButton>(useBtn).onPressed, isNull);
+
+    // 2. Selected sidebar profile 'b' with isUpdating == true also disables test-current.
+    container.read(profilesProvider.notifier).setProfile(
+          baseProfiles[0].copyWith(isUpdating: false),
+        );
+    container.read(profilesProvider.notifier).setProfile(
+          baseProfiles[1].copyWith(isUpdating: true),
+        );
+    await tester.tap(find.byKey(const ValueKey('overview-select-b')));
+    await tester.pump();
+    expect(tester.widget<TextButton>(testBtn).onPressed, isNull);
+    expect(tester.widget<TextButton>(useBtn).onPressed, isNull);
+
+    // 3. All nodes in top profile failed (-1): quick-use is disabled (never selects failed node or jumps to 'b').
+    final readyProfiles = <Profile>[
+      const Profile(
+        id: 'a',
+        label: 'Alpha',
+        url: 'https://example.com/a',
+        autoUpdateDuration: defaultUpdateDuration,
+        currentGroupName: 'Live',
+      ),
+      const Profile(
+        id: 'b',
+        label: 'Beta',
+        url: 'https://example.com/b',
+        autoUpdateDuration: defaultUpdateDuration,
+      ),
+    ];
+    globalState.config = globalState.config.copyWith(currentProfileId: 'a');
+    globalState.appState = globalState.appState.copyWith(
+      groups: const [
+        Group(
+          name: 'Live',
+          type: GroupType.Selector,
+          hidden: false,
+          all: [
+            Proxy(name: 'AlphaDead', type: 'VLESS'),
+            Proxy(name: 'BetaHealthy', type: 'VLESS'),
+          ],
+        ),
+      ],
+      delayMap: {
+        defaultTestUrl: {
+          'AlphaDead': -1,
+          'BetaHealthy': -1,
+        },
+      },
+    );
+    await tester.pumpWidget(const SizedBox.shrink());
+    container = await mount(
+      tester,
+      width: 1200,
+      locale: const Locale('zh', 'CN'),
+      profiles: readyProfiles,
+      catalogs: {
+        'b': ProfileCatalog(
+          profileId: 'b',
+          fingerprint: 'fb',
+          status: ProfileCatalogStatus.ready,
+          nodes: [
+            _node('bu', 'BetaUntested').copyWith(selectGroups: const ['Proxy']),
+          ],
+        ),
+      },
+    );
+    expect(tester.widget<TextButton>(useBtn).onPressed, isNull);
+
+    // 4. Under "名称" sort where AlphaDead (-1) sorts before BetaHealthy (85ms),
+    //    quick-use skips AlphaDead and selects BetaHealthy!
+    globalState.appState = globalState.appState.copyWith(
+      groups: const [
+        Group(
+          name: 'Live',
+          type: GroupType.Selector,
+          hidden: false,
+          all: [
+            Proxy(name: 'AlphaDead', type: 'VLESS'),
+            Proxy(name: 'BetaHealthy', type: 'VLESS'),
+          ],
+        ),
+      ],
+      delayMap: {
+        defaultTestUrl: {
+          'AlphaDead': -1,
+          'BetaHealthy': 85,
+        },
+      },
+    );
+    await tester.pumpWidget(const SizedBox.shrink());
+    container = await mount(
+      tester,
+      width: 1200,
+      locale: const Locale('zh', 'CN'),
+      profiles: readyProfiles,
+    );
+    container
+        .read(proxiesStyleSettingProvider.notifier)
+        .updateState((s) => s.copyWith(sortType: ProxiesSortType.name));
+    await tester.pumpAndSettle();
+    expect(
+      tester.getTopLeft(find.text('AlphaDead')).dy,
+      lessThan(tester.getTopLeft(find.text('BetaHealthy')).dy),
+    );
+    await tester.tap(useBtn);
+    await tester.pumpAndSettle();
+    expect(controller.selections.last, ('Live', 'BetaHealthy'));
+  });
+
+  testWidgets(
+      'CR-review 2 (CR-03): unmounting overview while subscription sync fails surfaces real error instead of disposed ref StateError',
+      (tester) async {
+    final originalPathProvider = PathProviderPlatform.instance;
+    final tempRoot = Directory.systemTemp.createTempSync('flclashx-cr03-');
+    Directory('${tempRoot.path}/logs').createSync(recursive: true);
+    PathProviderPlatform.instance = _TestPaths(tempRoot.path);
+    addTearDown(() {
+      PathProviderPlatform.instance = originalPathProvider;
+      if (tempRoot.existsSync()) {
+        tempRoot.deleteSync(recursive: true);
+      }
+    });
+
+    late ProviderContainer container;
+    final syncCompleter = Completer<void>();
+    final controller = _ProxyController()
+      ..onSetProfile = (p) {
+        container.read(profilesProvider.notifier).setProfile(p);
+      }
+      ..onUpdateProfile = (_) => syncCompleter.future;
+    globalState.appController = controller;
+
+    final profiles = <Profile>[
+      const Profile(
+        id: 'a',
+        label: 'Alpha',
+        url: 'https://example.com/a',
+        autoUpdateDuration: defaultUpdateDuration,
+      ),
+      const Profile(
+        id: 'b',
+        label: 'Beta',
+        url: 'https://example.com/b',
+        autoUpdateDuration: defaultUpdateDuration,
+      ),
+    ];
+
+    final showView = ValueNotifier<bool>(true);
+    addTearDown(showView.dispose);
+
+    container = await mount(
+      tester,
+      width: 1200,
+      locale: const Locale('zh', 'CN'),
+      attachNavigatorKey: true,
+      profiles: profiles,
+      child: ValueListenableBuilder<bool>(
+        valueListenable: showView,
+        builder: (_, visible, __) =>
+            visible ? const NodeOverviewView() : const SizedBox.shrink(),
+      ),
+    );
+
+    await tester.tap(find.byKey(const ValueKey('overview-sync-a')));
+    await tester.pump();
+    expect(controller.updatedProfiles, hasLength(1));
+
+    // Unmount NodeOverviewView while sync HTTP request is still in flight.
+    showView.value = false;
+    await tester.pump();
+
+    // Fail the in-flight sync: must display upstream 503 error, NOT Riverpod disposed ref StateError!
+    syncCompleter.completeError(Exception('upstream 503'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('upstream 503'), findsOneWidget);
+    expect(find.textContaining('disposed'), findsNothing);
+    await tester.tap(find.text('确定'));
+    await tester.pumpAndSettle();
+    expect(
+      container.read(profilesProvider).getProfile('a')!.isUpdating,
+      isFalse,
+    );
+
+    // Direct contract assertions for AppController.updateProfile snapshot merge & rollback:
+    const baseSnapshot = Profile(
+      id: 'p1',
+      label: 'Original',
+      url: 'https://old.example.com/sub',
+      autoUpdateDuration: Duration(hours: 12),
+      selectedMap: {'Proxy': 'HK-01'},
+      currentGroupName: 'Proxy',
+      providerHeaders: {
+        'announce': 'old-notice',
+        'local-xboard-account': 'owner-1',
+      },
+    );
+    final fetchedSnapshot = baseSnapshot.copyWith(
+      url: 'https://new.example.com/sub',
+      lastUpdateDate: DateTime(2026, 10, 29, 20, 0),
+      subscriptionInfo: const SubscriptionInfo(
+        upload: 100,
+        download: 200,
+        total: 1000,
+        expire: 0,
+      ),
+      providerHeaders: const {
+        'local-xboard-account': 'owner-1',
+        'profile-update-interval': '6',
+      },
+      autoUpdateDuration: const Duration(hours: 6),
+    );
+    final concurrentLatest = baseSnapshot.copyWith(
+      isUpdating: true,
+      selectedMap: const {'Proxy': 'JP-02'},
+      currentGroupName: 'Auto',
+      unfoldSet: const {'Proxy'},
+      autoUpdate: false,
+    );
+    final merged = mergeUpdatedProfileSnapshot(
+      base: baseSnapshot,
+      fetched: fetchedSnapshot,
+      latest: concurrentLatest,
+    )!;
+    expect(merged.isUpdating, isFalse);
+    expect(merged.selectedMap, {'Proxy': 'JP-02'});
+    expect(merged.currentGroupName, 'Auto');
+    expect(merged.unfoldSet, {'Proxy'});
+    expect(merged.autoUpdate, isFalse);
+    expect(merged.url, 'https://new.example.com/sub');
+    expect(merged.autoUpdateDuration, const Duration(hours: 6));
+    expect(merged.subscriptionInfo?.total, 1000);
+    expect(merged.providerHeaders.containsKey('announce'), isFalse);
+    expect(merged.providerHeaders['local-xboard-account'], 'owner-1');
+    expect(
+      mergeUpdatedProfileSnapshot(
+        base: baseSnapshot,
+        fetched: fetchedSnapshot,
+        latest: null,
+      ),
+      isNull,
+    );
+    expect(rollbackFailedProfileUpdate(null), isNull);
+    final rolledBack = rollbackFailedProfileUpdate(concurrentLatest)!;
+    expect(rolledBack.isUpdating, isFalse);
+    expect(rolledBack.selectedMap, {'Proxy': 'JP-02'});
+  });
+
+  testWidgets(
+      'CR-review 3 (CR-04): 添加订阅 blocks rapid double-tap re-entrancy and disposes URLFormDialog controller cleanly',
+      (tester) async {
+    final importCompleter = Completer<void>();
+    final controller = _ProxyController()
+      ..onAddProfileFormURL = (_) => importCompleter.future;
+    globalState.appController = controller;
+
+    await mount(
+      tester,
+      width: 1200,
+      locale: const Locale('zh', 'CN'),
+      attachNavigatorKey: true,
+      catalogs: flatCatalogs(),
+    );
+
+    final addBtn = find.byKey(const ValueKey('overview-add-subscription'));
+    // Rapid double tap before frame settles: only ONE URLFormDialog may open.
+    await tester.tap(addBtn);
+    await tester.tap(addBtn, warnIfMissed: false);
+    await tester.pumpAndSettle();
+
+    expect(find.byType(URLFormDialog), findsOneWidget);
+
+    await tester.enterText(
+      find.byType(TextField),
+      'https://sub.example.com/import',
+    );
+    await tester.tap(find.text('提交'));
+    await tester.pump();
+
+    // While import is still running in background, button stays disabled against re-entry.
+    expect(tester.widget<TextButton>(addBtn).onPressed, isNull);
+
+    importCompleter.complete();
+    await tester.pumpAndSettle();
+    expect(tester.widget<TextButton>(addBtn).onPressed, isNotNull);
+    expect(controller.addedUrls, ['https://sub.example.com/import']);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'CR-review 4 (CR-01, CR-06, CR-07): malformed config JSON normalizes safely, 1.3x Russian active card preserves title width, wide selected detail shows sync button, and narrow workflow arrows stay paired with destination steps',
+      (tester) async {
+    // 1. Total-order delay comparator (CR-01) & malformed config JSON normalization (CR-07).
+    final samples = <int?>[25, 120, null, 0, -1, -99];
+    for (final x in samples) {
+      expect(utils.compareDelay(x, x), 0);
+      for (final y in samples) {
+        expect(utils.compareDelay(x, y), -utils.compareDelay(y, x));
+      }
+    }
+    final sortedDelays = <int?>[-99, 0, 120, null, -1, 25]
+      ..sort(utils.compareDelay);
+    expect(sortedDelays.sublist(0, 2), [25, 120]);
+    expect(sortedDelays.sublist(2, 4), containsAll(<int?>[0, null]));
+    expect(sortedDelays.sublist(4, 6), containsAll(<int?>[-99, -1]));
+
+    final recovered = Config.compatibleFromJson(<String, Object?>{
+      'themeProps': <String, Object?>{},
+      'proxiesStyle': <String, Object?>{
+        'sortType': 42,
+        'sortTypeDefaultDelayMigrated': 'corrupt',
+      },
+    });
+    expect(recovered.proxiesStyle.sortType, ProxiesSortType.delay);
+    expect(recovered.proxiesStyle.sortTypeDefaultDelayMigrated, isTrue);
+
+    // 2. At 1.3x text scale in Russian with active + updating URL profile, sidebar title retains >= 120px width.
+    final profiles = <Profile>[
+      const Profile(
+        id: 'a',
+        label: 'Основная подписка',
+        url: 'https://example.com/a',
+        autoUpdateDuration: defaultUpdateDuration,
+      ),
+      const Profile(
+        id: 'b',
+        label: 'Резервная подписка',
+        url: 'https://example.com/b',
+        autoUpdateDuration: defaultUpdateDuration,
+      ),
+    ];
+    globalState.config = globalState.config.copyWith(currentProfileId: 'a');
+
+    final ruContainer = await mount(
+      tester,
+      width: 1200,
+      locale: const Locale('ru'),
+      profiles: profiles,
+      child: const MediaQuery(
+        data: MediaQueryData(
+          size: Size(1200, 1000),
+          textScaler: TextScaler.linear(1.3),
+        ),
+        child: NodeOverviewView(),
+      ),
+      catalogs: flatCatalogs(),
+    );
+    ruContainer.read(profilesProvider.notifier).setProfile(
+          profiles[0].copyWith(isUpdating: true),
+        );
+    await tester.pump();
+
+    final titleRect = tester.getRect(
+      find.descendant(
+        of: find.byKey(const ValueKey('overview-sidebar-card-a')),
+        matching: find.text('Основная подписка'),
+      ),
+    );
+    expect(titleRect.width, greaterThanOrEqualTo(120));
+    expect(tester.takeException(), isNull);
+
+    // 3. Selecting URL profile 'b' in wide mode exposes detail sync button without duplicate keys.
+    ruContainer.read(profilesProvider.notifier).setProfile(
+          profiles[0].copyWith(isUpdating: false),
+        );
+    await tester.tap(find.byKey(const ValueKey('overview-select-b')));
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey('overview-sync-b')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('overview-detail-sync-b')),
+      findsOneWidget,
+    );
+
+    // 4. Narrow 380px wrapped workflow bar keeps each arrow on the exact same row as its destination step.
+    await tester.pumpWidget(const SizedBox.shrink());
+    await mount(
+      tester,
+      width: 380,
+      locale: const Locale('zh', 'CN'),
+      profiles: profiles,
+      catalogs: flatCatalogs(),
+    );
+    final arrow1CenterY = tester
+        .getCenter(find.byKey(const ValueKey('overview-workflow-arrow-1')))
+        .dy;
+    final testCenterY = tester
+        .getCenter(find.byKey(const ValueKey('overview-test-current')))
+        .dy;
+    final arrow2CenterY = tester
+        .getCenter(find.byKey(const ValueKey('overview-workflow-arrow-2')))
+        .dy;
+    final useCenterY = tester
+        .getCenter(find.byKey(const ValueKey('overview-quick-use')))
+        .dy;
+    expect(arrow1CenterY, closeTo(testCenterY, 1.5));
+    expect(arrow2CenterY, closeTo(useCenterY, 1.5));
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'R2-review 1 (R2-01 & R2-02): mergeUpdatedProfileSnapshot rejects mid-sync URL/ownership rotation and clears revoked HWID/interval/newdomain headers while preserving local & branding headers',
+      (tester) async {
+    const baseSnapshot = Profile(
+      id: 'p-managed',
+      label: 'Managed',
+      url: 'https://old.example.com/sub?token=old',
+      autoUpdateDuration: Duration(hours: 12),
+      selectedMap: {'Proxy': 'HK-01'},
+      providerHeaders: {
+        xboardAccountMarker: 'owner-1',
+        xboardTlsMarker: 'required',
+        'flclashx-servicename': 'FreedomCloud',
+        'flclashx-newdomain': 'legacy.example.com',
+        'x-hwid-max-devices-reached': 'true',
+        'x-hwid-not-supported': 'true',
+        'profile-update-interval': '6',
+        'announce': 'old-announce',
+        'support-url': 'https://support.example.com/old',
+      },
+    );
+    final fetchedFromStaleUrl = baseSnapshot.copyWith(
+      lastUpdateDate: DateTime(2026, 10, 29, 22, 0),
+      providerHeaders: const {
+        xboardAccountMarker: 'owner-1',
+        xboardTlsMarker: 'required',
+        'flclashx-servicename': 'FreedomCloud',
+      },
+    );
+
+    // 1. Mid-sync gift-card redemption / EditProfile rotated latest.url -> stale fetch MUST NOT commit!
+    final rotatedUrlLatest = baseSnapshot.copyWith(
+      url: 'https://rotated.example.com/sub?token=new',
+      isUpdating: false,
+    );
+    expect(
+      mergeUpdatedProfileSnapshot(
+        base: baseSnapshot,
+        fetched: fetchedFromStaleUrl,
+        latest: rotatedUrlLatest,
+      ),
+      isNull,
+    );
+
+    // 2. Mid-sync ownership marker rotation -> stale fetch MUST NOT commit!
+    final rotatedOwnerLatest = baseSnapshot.copyWith(
+      providerHeaders: {
+        ...baseSnapshot.providerHeaders,
+        xboardAccountMarker: 'owner-2',
+      },
+    );
+    expect(
+      mergeUpdatedProfileSnapshot(
+        base: baseSnapshot,
+        fetched: fetchedFromStaleUrl,
+        latest: rotatedOwnerLatest,
+      ),
+      isNull,
+    );
+
+    // 3. Same-source sync where server revoked HWID & transient headers clears all revoked transient keys
+    // while keeping xboard markers and persistent branding headers.
+    final sameSourceLatest = baseSnapshot.copyWith(
+      isUpdating: true,
+      selectedMap: const {'Proxy': 'SG-02'},
+    );
+    final merged = mergeUpdatedProfileSnapshot(
+      base: baseSnapshot,
+      fetched: fetchedFromStaleUrl,
+      latest: sameSourceLatest,
+    )!;
+    expect(merged.isUpdating, isFalse);
+    expect(merged.selectedMap, {'Proxy': 'SG-02'});
+    expect(
+      merged.providerHeaders.containsKey('x-hwid-max-devices-reached'),
+      isFalse,
+    );
+    expect(
+      merged.providerHeaders.containsKey('x-hwid-not-supported'),
+      isFalse,
+    );
+    expect(
+      merged.providerHeaders.containsKey('profile-update-interval'),
+      isFalse,
+    );
+    expect(
+      merged.providerHeaders.containsKey('flclashx-newdomain'),
+      isFalse,
+    );
+    expect(merged.providerHeaders.containsKey('announce'), isFalse);
+    expect(merged.providerHeaders.containsKey('support-url'), isFalse);
+    expect(merged.providerHeaders[xboardAccountMarker], 'owner-1');
+    expect(merged.providerHeaders[xboardTlsMarker], 'required');
+    expect(merged.providerHeaders['flclashx-servicename'], 'FreedomCloud');
+
+    // 4. prepareStartingProfileUpdate never resurrects deleted profiles and preserves live selectedMap
+    // when a delayed/edit caller supplies a newer URL & label onto a stale Profile snapshot.
+    expect(
+      prepareStartingProfileUpdate(requested: baseSnapshot, current: null),
+      isNull,
+    );
+    final staleCallerEdited = baseSnapshot.copyWith(
+      url: 'https://edited.example.com/sub',
+      label: 'Edited Label',
+      autoUpdate: false,
+      autoUpdateDuration: const Duration(hours: 24),
+    );
+    final liveCurrent = baseSnapshot.copyWith(
+      selectedMap: const {'Proxy': 'US-Fast-01'},
+      currentGroupName: 'Auto',
+      unfoldSet: const {'Proxy'},
+    );
+    final prepared = prepareStartingProfileUpdate(
+      requested: staleCallerEdited,
+      current: liveCurrent,
+    )!;
+    expect(prepared.isUpdating, isTrue);
+    expect(prepared.url, 'https://edited.example.com/sub');
+    expect(prepared.label, 'Edited Label');
+    expect(prepared.autoUpdate, isFalse);
+    expect(prepared.autoUpdateDuration, const Duration(hours: 24));
+    expect(prepared.selectedMap, {'Proxy': 'US-Fast-01'});
+    expect(prepared.currentGroupName, 'Auto');
+    expect(prepared.unfoldSet, {'Proxy'});
+    expect(
+      canCommitProfileUpdate(starting: baseSnapshot, latest: null),
+      isFalse,
+    );
+    expect(
+      canCommitProfileUpdate(starting: baseSnapshot, latest: rotatedUrlLatest),
+      isFalse,
+    );
+    expect(
+      canCommitProfileUpdate(
+        starting: baseSnapshot,
+        latest: rotatedOwnerLatest,
+      ),
+      isFalse,
+    );
+    expect(
+      canCommitProfileUpdate(starting: baseSnapshot, latest: sameSourceLatest),
+      isTrue,
+    );
+  });
+
+  testWidgets(
+      'R2-review 2 (R2-03 & R2-04): stableSortByDelay stays O(N) & deterministic for 64 proxies, Config.compatibleFromJson isolates unmodifiable/corrupt sections, and 点击使用 skips frozen broken catalog when 仅显示可用 is active',
+      (tester) async {
+    // 0. R2-03: 64-element list (> 32 Dual-Pivot Quicksort threshold) preserves exact input order within tie buckets in O(N) reads.
+    final sixtyFour = List<String>.generate(64, (i) => 'Node-$i');
+    final delayTable = <String, int?>{
+      for (var i = 0; i < 64; i++)
+        'Node-$i': switch (i % 5) {
+          0 => null, // untested tie bucket
+          1 => 0, // testing tie bucket (same bucket as null)
+          2 => -1 - (i % 3), // failed tie bucket (< 0)
+          3 => 50, // equal positive latency tie bucket
+          _ => 10 + i, // distinct positive latency
+        },
+    };
+    var delayReads = 0;
+    final sorted64 = utils.stableSortByDelay<String>(sixtyFour, (name) {
+      delayReads++;
+      return delayTable[name];
+    });
+    expect(delayReads, 64);
+
+    final equal50 = sorted64.where((n) => delayTable[n] == 50).toList();
+    expect(
+      equal50,
+      sixtyFour.where((n) => delayTable[n] == 50).toList(),
+    );
+    final pendingAndUntested = sorted64
+        .where((n) => delayTable[n] == null || delayTable[n] == 0)
+        .toList();
+    expect(
+      pendingAndUntested,
+      sixtyFour
+          .where((n) => delayTable[n] == null || delayTable[n] == 0)
+          .toList(),
+    );
+    final failedBucket =
+        sorted64.where((n) => (delayTable[n] ?? 0) < 0).toList();
+    expect(
+      failedBucket,
+      sixtyFour.where((n) => (delayTable[n] ?? 0) < 0).toList(),
+    );
+    // 1. Unmodifiable accessControl map must not abort proxiesStyle default-delay migration.
+    final fromConstMaps = Config.compatibleFromJson(<String, Object?>{
+      'themeProps': const <String, Object?>{},
+      'isAccessControl': true,
+      'accessControl': const <String, Object?>{},
+      'vpnProps': const <String, Object?>{},
+      'proxiesStyle': const <String, Object?>{
+        'sortType': 'none',
+      },
+      'profiles': const <Object?>[
+        <String, Object?>{
+          'id': 'p1',
+          'url': 'https://example.com/p1',
+          'autoUpdateDuration': 86400000000,
+          'updateMethod': 'legacy',
+        },
+      ],
+    });
+    expect(fromConstMaps.proxiesStyle.sortType, ProxiesSortType.delay);
+    expect(fromConstMaps.proxiesStyle.sortTypeDefaultDelayMigrated, isTrue);
+    expect(fromConstMaps.vpnProps.accessControl.enable, isTrue);
+
+    // 2. Non-Map proxiesStyle (corrupt JSON scalar) must not crash Config.fromJson.
+    final fromCorruptProxiesStyle = Config.compatibleFromJson(<String, Object?>{
+      'themeProps': const <String, Object?>{},
+      'proxiesStyle': 'corrupt-scalar',
+    });
+    expect(
+      fromCorruptProxiesStyle.proxiesStyle.sortType,
+      ProxiesSortType.delay,
+    );
+
+    // 3. When 仅显示可用 is enabled and a frozen top profile turns fileMissing, 点击使用 skips it to healthy profile b.
+    final controller = _ProxyController();
+    globalState.appController = controller;
+    final catalogTester = _CatalogTester();
+    final now = DateTime(2026, 10, 29, 22, 0);
+    final profiles = <Profile>[
+      const Profile(
+        id: 'a',
+        label: 'Alpha',
+        url: 'https://example.com/a',
+        autoUpdateDuration: defaultUpdateDuration,
+      ),
+      const Profile(
+        id: 'b',
+        label: 'Beta',
+        url: 'https://example.com/b',
+        autoUpdateDuration: defaultUpdateDuration,
+      ),
+    ];
+    globalState.config = globalState.config.copyWith(currentProfileId: null);
+    var alphaMissing = false;
+    final container = await mount(
+      tester,
+      width: 1200,
+      locale: const Locale('zh', 'CN'),
+      profiles: profiles,
+      catalogTester: catalogTester,
+      loadCatalog: (id) async {
+        if (id == 'a') {
+          if (alphaMissing) {
+            return const ProfileCatalog(
+              profileId: 'a',
+              fingerprint: 'fa-missing',
+              status: ProfileCatalogStatus.fileMissing,
+            );
+          }
+          return ProfileCatalog(
+            profileId: 'a',
+            fingerprint: 'fa',
+            status: ProfileCatalogStatus.ready,
+            nodes: [
+              _node('a1', 'Alpha1').copyWith(selectGroups: const ['Proxy']),
+              _node('a2', 'Alpha2').copyWith(selectGroups: const ['Proxy']),
+            ],
+          );
+        }
+        return ProfileCatalog(
+          profileId: 'b',
+          fingerprint: 'fb',
+          status: ProfileCatalogStatus.ready,
+          nodes: [
+            _node('bf', 'BetaFast').copyWith(selectGroups: const ['Proxy']),
+          ],
+        );
+      },
+      health: {
+        'a': {
+          'a1': NodeHealthRecord(
+            delayMs: 25,
+            testedAt: now,
+            testUrlHash: 'h',
+          ),
+          'a2': NodeHealthRecord(
+            delayMs: 35,
+            testedAt: now,
+            testUrlHash: 'h',
+          ),
+        },
+        'b': {
+          'bf': NodeHealthRecord(
+            delayMs: 62,
+            testedAt: now,
+            testUrlHash: 'h',
+          ),
+        },
+      },
+    );
+
+    // Freeze sidebar order ['a', 'b'] while a catalog batch is running, then reload 'a' as fileMissing.
+    // Note: keep indeterminate LinearProgressIndicator out of pumpAndSettle by using pump().
+    catalogTester.progress(done: 1, count: 2);
+    alphaMissing = true;
+    container.invalidate(profileCatalogProvider('a'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+
+    await tester.tap(find.text('仅显示可用'));
+    await tester.pump();
+
+    final useBtn = find.byKey(const ValueKey('overview-quick-use'));
+    expect(tester.widget<TextButton>(useBtn).onPressed, isNotNull);
+    await tester.tap(useBtn);
+    await tester.pump();
+    expect(container.read(currentProfileIdProvider), 'b');
+    expect(
+      container.read(profilesProvider).getProfile('b')?.selectedMap['Proxy'],
+      'BetaFast',
+    );
+  });
+
+  testWidgets(
+      'narrow profile selector popup: aligns 36px pill geometry with toolbar, renders rich cards with available node counts, expiry dates, active badge, and switches between profiles and 全部配置',
+      (tester) async {
+    final now = DateTime.now();
+    final futureExpire = now.add(const Duration(days: 27, hours: 6));
+    final pastExpire = now.subtract(const Duration(days: 3));
+    final futureDateStr =
+        '${futureExpire.year.toString().padLeft(4, '0')}-${futureExpire.month.toString().padLeft(2, '0')}-${futureExpire.day.toString().padLeft(2, '0')}';
+    final pastDateStr =
+        '${pastExpire.year.toString().padLeft(4, '0')}-${pastExpire.month.toString().padLeft(2, '0')}-${pastExpire.day.toString().padLeft(2, '0')}';
+
+    final profiles = <Profile>[
+      const Profile(
+        id: 'admin',
+        label: 'admin',
+        url: 'https://example.com/admin',
+        autoUpdateDuration: defaultUpdateDuration,
+        subscriptionInfo: SubscriptionInfo(
+          upload: 1024,
+          download: 2048,
+          total: 0,
+          expire: 0,
+        ),
+      ),
+      Profile(
+        id: 'vip',
+        label: '测试-261026-GHDXXK',
+        url: 'https://example.com/vip',
+        autoUpdateDuration: defaultUpdateDuration,
+        subscriptionInfo: SubscriptionInfo(
+          upload: 0,
+          download: 1024 * 1024 * 100,
+          total: 1024 * 1024 * 1024 * 500,
+          expire: futureExpire.millisecondsSinceEpoch ~/ 1000,
+        ),
+      ),
+      Profile(
+        id: 'expired',
+        label: '已到期专线',
+        url: 'https://example.com/expired',
+        autoUpdateDuration: defaultUpdateDuration,
+        subscriptionInfo: SubscriptionInfo(
+          upload: 0,
+          download: 1024,
+          total: 1024 * 1024 * 100,
+          expire: pastExpire.millisecondsSinceEpoch ~/ 1000,
+        ),
+      ),
+      const Profile(
+        id: 'local',
+        label: '本地备份配置',
+        url: '',
+        autoUpdateDuration: defaultUpdateDuration,
+      ),
+    ];
+
+    globalState.config = globalState.config.copyWith(currentProfileId: 'admin');
+    globalState.appState = globalState.appState.copyWith(
+      groups: const [
+        Group(
+          name: 'Proxy',
+          type: GroupType.Selector,
+          now: 'Admin-HK-1',
+          hidden: false,
+          all: [
+            Proxy(name: 'Admin-HK-1', type: 'VLESS'),
+            Proxy(name: 'Admin-JP-2', type: 'VLESS'),
+            Proxy(name: 'Admin-Dead', type: 'VLESS'),
+          ],
+        ),
+      ],
+      delayMap: {
+        defaultTestUrl: {
+          'Admin-HK-1': 42,
+          'Admin-JP-2': 88,
+          'Admin-Dead': -1,
+        },
+      },
+    );
+
+    await mount(
+      tester,
+      width: 460,
+      locale: const Locale('zh', 'CN'),
+      profiles: profiles,
+      catalogs: {
+        'admin': ProfileCatalog(
+          profileId: 'admin',
+          fingerprint: 'f-admin',
+          status: ProfileCatalogStatus.ready,
+          nodes: [
+            _node('ah1', 'Admin-HK-1').copyWith(selectGroups: const ['Proxy']),
+            _node('aj2', 'Admin-JP-2').copyWith(selectGroups: const ['Proxy']),
+            _node('ad3', 'Admin-Dead').copyWith(selectGroups: const ['Proxy']),
+          ],
+        ),
+        'vip': ProfileCatalog(
+          profileId: 'vip',
+          fingerprint: 'f-vip',
+          status: ProfileCatalogStatus.ready,
+          nodes: [
+            _node('v1', 'VIP-SG-1').copyWith(selectGroups: const ['Proxy']),
+            _node('v2', 'VIP-US-2').copyWith(selectGroups: const ['Proxy']),
+          ],
+        ),
+        'expired': ProfileCatalog(
+          profileId: 'expired',
+          fingerprint: 'f-exp',
+          status: ProfileCatalogStatus.ready,
+          nodes: [
+            _node('e1', 'Exp-Node-1').copyWith(selectGroups: const ['Proxy']),
+          ],
+        ),
+        'local': ProfileCatalog(
+          profileId: 'local',
+          fingerprint: 'f-loc',
+          status: ProfileCatalogStatus.ready,
+          nodes: [
+            _node('l1', 'Local-Node-1').copyWith(selectGroups: const ['Proxy']),
+          ],
+        ),
+      },
+      health: {
+        'vip': {
+          'v1': NodeHealthRecord(
+            delayMs: 55,
+            testedAt: now,
+            testUrlHash: 'h',
+          ),
+        },
+        'expired': {
+          'e1': NodeHealthRecord(
+            delayMs: -1,
+            testedAt: now,
+            testUrlHash: 'h',
+          ),
+        },
+      },
+    );
+
+    // 1. Legacy raw DropdownButton is gone; styled trigger pill matches toolbar 36px height & baseline.
+    expect(find.byType(DropdownButton<String>), findsNothing);
+    final triggerFinder = find.byKey(const ValueKey('overview-profile-filter'));
+    final availFinder = find.byKey(const ValueKey('overview-available-only'));
+    final triggerRect = tester.getRect(triggerFinder);
+    final availRect = tester.getRect(availFinder);
+    expect(triggerRect.height, greaterThanOrEqualTo(36));
+    expect((triggerRect.center.dy - availRect.center.dy).abs(), lessThan(1.5));
+
+    // 2. Open the rich profile selector popup.
+    await tester.tap(triggerFinder);
+    await tester.pumpAndSettle();
+
+    final menuFinder = find.byKey(const ValueKey('overview-profile-menu'));
+    expect(menuFinder, findsOneWidget);
+    expect(
+      find.descendant(of: menuFinder, matching: find.text('切换配置')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: menuFinder, matching: find.text('共 4 个')),
+      findsOneWidget,
+    );
+
+    // 3. Verify "全部配置" summary card shows aggregated available / total nodes (2 + 1 + 0 + 0 = 3 / 7).
+    final allCard = find.byKey(const ValueKey('overview-profile-option-all'));
+    expect(
+      find.descendant(of: allCard, matching: find.text('可用 3 / 7')),
+      findsOneWidget,
+    );
+
+    // 4. Verify each profile card renders available node count, expiry date/state, and active badge.
+    final adminCard =
+        find.byKey(const ValueKey('overview-profile-option-admin'));
+    expect(
+      find.descendant(of: adminCard, matching: find.text('活动配置')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: adminCard, matching: find.text('可用 2 / 3')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: adminCard, matching: find.text('长期有效')),
+      findsOneWidget,
+    );
+
+    final vipCard = find.byKey(const ValueKey('overview-profile-option-vip'));
+    expect(
+      find.descendant(of: vipCard, matching: find.text('可用 1 / 2')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: vipCard,
+        matching: find.textContaining('到期 $futureDateStr'),
+      ),
+      findsOneWidget,
+    );
+
+    final expiredCard =
+        find.byKey(const ValueKey('overview-profile-option-expired'));
+    expect(
+      find.descendant(of: expiredCard, matching: find.text('可用 0 / 1')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: expiredCard,
+        matching: find.text('到期 $pastDateStr · 已过期'),
+      ),
+      findsOneWidget,
+    );
+
+    final localCard =
+        find.byKey(const ValueKey('overview-profile-option-local'));
+    expect(
+      find.descendant(of: localCard, matching: find.text('本地配置')),
+      findsOneWidget,
+    );
+
+    // 5. Selecting "测试-261026-GHDXXK" closes popup, updates trigger pill, and filters node list.
+    await tester.tap(vipCard);
+    await tester.pumpAndSettle();
+    expect(menuFinder, findsNothing);
+    expect(
+      find.descendant(
+        of: triggerFinder,
+        matching: find.text('测试-261026-GHDXXK'),
+      ),
+      findsOneWidget,
+    );
+    expect(find.text('VIP-SG-1'), findsOneWidget);
+    expect(find.text('Admin-HK-1'), findsNothing);
+
+    // 6. Re-opening popup and tapping "全部配置" restores all profiles cleanly.
+    await tester.tap(triggerFinder);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('overview-profile-option-all')));
+    await tester.pumpAndSettle();
+    expect(find.text('Admin-HK-1'), findsOneWidget);
+    await tester.drag(
+      find.byKey(const ValueKey('overview-nodes')),
+      const Offset(0, -320),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('VIP-SG-1'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'narrow profile selector popup: scales cleanly without overflow at 320px & 380px @ 2.0x in zh_CN and ru (both closed and open)',
+      (tester) async {
+    final now = DateTime.now();
+    final expire = now.add(const Duration(days: 5)).millisecondsSinceEpoch ~/ 1000;
+    final profiles = <Profile>[
+      Profile(
+        id: 'a',
+        label: '超长旗舰全球高速专线订阅配置名称测试-Alpha',
+        url: 'https://example.com/a',
+        autoUpdateDuration: defaultUpdateDuration,
+        subscriptionInfo: SubscriptionInfo(
+          upload: 100,
+          download: 200,
+          total: 1024 * 1024 * 1024,
+          expire: expire,
+        ),
+      ),
+      const Profile(
+        id: 'b',
+        label: 'Международная резервная подписка Бета',
+        url: 'https://example.com/b',
+        autoUpdateDuration: defaultUpdateDuration,
+        subscriptionInfo: SubscriptionInfo(
+          upload: 100,
+          download: 200,
+          total: 0,
+          expire: 0,
+        ),
+      ),
+    ];
+    globalState.config = globalState.config.copyWith(currentProfileId: 'a');
+
+    for (final (width, locale) in [
+      (320.0, const Locale('zh', 'CN')),
+      (380.0, const Locale('ru')),
+    ]) {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await mount(
+        tester,
+        width: width,
+        locale: locale,
+        profiles: profiles,
+        catalogs: flatCatalogs(),
+        child: MediaQuery(
+          data: MediaQueryData(
+            size: Size(width, 900),
+            textScaler: const TextScaler.linear(2.0),
+          ),
+          child: const NodeOverviewView(),
+        ),
+      );
+      expect(tester.takeException(), isNull);
+
+      await tester.tap(find.byKey(const ValueKey('overview-profile-filter')));
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey('overview-profile-menu')),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+
+      await tester.tap(
+        find.byKey(const ValueKey('overview-profile-option-b')),
+      );
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+    }
+  });
+
+  testWidgets(
+      'CR-narrow-picker 1 (CR-N01, CR-N02, CR-N03): active profile with empty runtime groups falls back to catalog counts/errors, offscreen disposed tooManyNodes & unresolved providers preserve exact status, thrown load error avoids stuck spinner, and 全部配置 marks partial indexing with +',
+      (tester) async {
+    final now = DateTime.now();
+    final slowCompleter = Completer<ProfileCatalog>();
+    final profiles = <Profile>[
+      const Profile(
+        id: 'active',
+        label: 'ActiveStoppedCore',
+        url: 'https://example.com/active',
+        autoUpdateDuration: defaultUpdateDuration,
+      ),
+      const Profile(
+        id: 'thrownErr',
+        label: 'BrokenDiskProfile',
+        url: 'https://example.com/broken',
+        autoUpdateDuration: defaultUpdateDuration,
+      ),
+      ...List.generate(
+        6,
+        (i) => Profile(
+          id: 'filler-$i',
+          label: 'Filler-$i',
+          url: 'https://example.com/f$i',
+          autoUpdateDuration: defaultUpdateDuration,
+        ),
+      ),
+      const Profile(
+        id: 'tooMany',
+        label: 'OffscreenTooMany',
+        url: 'https://example.com/many',
+        autoUpdateDuration: defaultUpdateDuration,
+      ),
+      const Profile(
+        id: 'providerOnly',
+        label: 'OffscreenProviderOnly',
+        url: 'https://example.com/provider',
+        autoUpdateDuration: defaultUpdateDuration,
+      ),
+      const Profile(
+        id: 'pendingSlow',
+        label: 'OffscreenPending',
+        url: 'https://example.com/slow',
+        autoUpdateDuration: defaultUpdateDuration,
+      ),
+    ];
+
+    // Core is stopped -> groups is empty!
+    globalState.config = globalState.config.copyWith(
+      currentProfileId: 'active',
+      profiles: profiles,
+    );
+    globalState.appState = globalState.appState.copyWith(groups: const []);
+
+    final catalogs = <String, ProfileCatalog>{
+      'active': ProfileCatalog(
+        profileId: 'active',
+        fingerprint: 'f-act',
+        status: ProfileCatalogStatus.ready,
+        nodes: [
+          _node('a1', 'Act-1'),
+          _node('a2', 'Act-2'),
+          _node('a3', 'Act-3'),
+        ],
+      ),
+      for (var i = 0; i < 6; i++)
+        'filler-$i': ProfileCatalog(
+          profileId: 'filler-$i',
+          fingerprint: 'f-$i',
+          status: ProfileCatalogStatus.ready,
+          nodes: [
+            _node('fn-$i-1', 'FillerNode-$i-1'),
+            _node('fn-$i-2', 'FillerNode-$i-2'),
+          ],
+        ),
+      'tooMany': const ProfileCatalog(
+        profileId: 'tooMany',
+        fingerprint: 'f-many',
+        status: ProfileCatalogStatus.parseFailed,
+        errorSummary: 'tooManyNodes',
+      ),
+      'providerOnly': const ProfileCatalog(
+        profileId: 'providerOnly',
+        fingerprint: 'f-prov',
+        status: ProfileCatalogStatus.ready,
+        nodes: [],
+        providerNodeCounts: {'RemoteProvider': -1},
+      ),
+    };
+
+    var tooManyDisposed = false;
+    await AppLocalizations.load(const Locale('zh', 'CN'));
+    addTearDown(() => AppLocalizations.load(const Locale('en')));
+    tester.view.physicalSize = const Size(460, 700);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(() async {
+      if (!slowCompleter.isCompleted) {
+        slowCompleter.complete(
+          const ProfileCatalog(
+            profileId: 'pendingSlow',
+            fingerprint: 'f-slow',
+            status: ProfileCatalogStatus.ready,
+          ),
+        );
+      }
+      await tester.pumpWidget(const SizedBox.shrink());
+    });
+    globalState.appState =
+        globalState.appState.copyWith(viewSize: const Size(460, 700));
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          nodeOverviewEnabledProvider.overrideWithValue(true),
+          nodeCatalogTesterProvider.overrideWith((ref) => _CatalogTester()),
+          activeNodeCatalogProvider.overrideWithValue(null),
+          cachedProfileCatalogsProvider.overrideWith((ref) => const {}),
+          profileCatalogProvider.overrideWith((ref, id) async {
+            if (id == 'tooMany') {
+              ref.onDispose(() => tooManyDisposed = true);
+            }
+            if (id == 'thrownErr') {
+              throw StateError('corrupted disk read');
+            }
+            if (id == 'pendingSlow') {
+              return slowCompleter.future;
+            }
+            return catalogs[id]!;
+          }),
+          nodeHealthEntriesProvider.overrideWith((ref, id) {
+            if (id == 'active') {
+              return {
+                'a1': NodeHealthRecord(
+                  delayMs: 42,
+                  testedAt: now,
+                  testUrlHash: 'h',
+                ),
+                'a2': NodeHealthRecord(
+                  delayMs: 75,
+                  testedAt: now,
+                  testUrlHash: 'h',
+                ),
+                'a3': NodeHealthRecord(
+                  delayMs: -1,
+                  testedAt: now,
+                  testUrlHash: 'h',
+                ),
+              };
+            }
+            return const {};
+          }),
+        ],
+        child: MaterialApp(
+          locale: const Locale('zh', 'CN'),
+          localizationsDelegates: const [
+            AppLocalizations.delegate,
+            GlobalMaterialLocalizations.delegate,
+            GlobalWidgetsLocalizations.delegate,
+            GlobalCupertinoLocalizations.delegate,
+          ],
+          supportedLocales: AppLocalizations.delegate.supportedLocales,
+          home: Scaffold(
+            body: Builder(builder: (context) {
+              globalState.measure = Measure.of(context, 1);
+              return const NodeOverviewView();
+            }),
+          ),
+        ),
+      ),
+    );
+    // Let visible slivers and bounded background index workers settle (except pendingSlow).
+    for (var i = 0; i < 8; i++) {
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+    expect(tooManyDisposed, isTrue);
+
+    await tester.tap(find.byKey(const ValueKey('overview-profile-filter')));
+    await tester.pump(const Duration(milliseconds: 250));
+
+    // CR-N01: Active profile with stopped Core (groups.isEmpty) falls back to static catalog (2 / 3), NOT 0 / 0!
+    final activeCard =
+        find.byKey(const ValueKey('overview-profile-option-active'));
+    expect(
+      find.descendant(of: activeCard, matching: find.text('可用 2 / 3')),
+      findsOneWidget,
+    );
+
+    // CR-N03: While pendingSlow is still loading, 全部配置 marks partial total with trailing '+' instead of claiming 15 is the full total.
+    final allCard = find.byKey(const ValueKey('overview-profile-option-all'));
+    expect(
+      find.descendant(of: allCard, matching: find.text('可用 2 / 15+')),
+      findsOneWidget,
+    );
+
+    // CR-N02a: Thrown provider error renders parseFailed instead of infinite '—' spinner.
+    final thrownCard =
+        find.byKey(const ValueKey('overview-profile-option-thrownErr'));
+    expect(
+      find.descendant(of: thrownCard, matching: find.text('配置解析失败')),
+      findsOneWidget,
+    );
+
+    // CR-N02b: Offscreen auto-disposed tooManyNodes preserves exact '节点数量超出总览上限' message.
+    final tooManyCard =
+        find.byKey(const ValueKey('overview-profile-option-tooMany'));
+    expect(
+      find.descendant(
+        of: tooManyCard,
+        matching: find.text(appLocalizations.nodeOverviewTooManyNodes),
+      ),
+      findsOneWidget,
+    );
+
+    // CR-N02c: Offscreen provider-only profile with uncached providers shows partial summary instead of misleading '可用 0 / 0'.
+    final providerCard =
+        find.byKey(const ValueKey('overview-profile-option-providerOnly'));
+    expect(
+      find.descendant(
+        of: providerCard,
+        matching: find.text(appLocalizations.nodeOverviewPartialSummary),
+      ),
+      findsOneWidget,
+    );
+
+    // Complete pendingSlow and verify in-place update without exception.
+    slowCompleter.complete(
+      ProfileCatalog(
+        profileId: 'pendingSlow',
+        fingerprint: 'f-slow',
+        status: ProfileCatalogStatus.ready,
+        nodes: [_node('ps1', 'SlowNode-1')],
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'CR-narrow-picker 2 (CR-N04): keyboard ArrowDown + Enter selects profile option, focus avoids double-tinting InkWell, and RTL indents metadata from start',
+      (tester) async {
+    await mount(
+      tester,
+      width: 440,
+      locale: const Locale('zh', 'CN'),
+      catalogs: flatCatalogs(),
+      child: const Directionality(
+        textDirection: TextDirection.rtl,
+        child: NodeOverviewView(),
+      ),
+    );
+
+    await tester.tap(find.byKey(const ValueKey('overview-profile-filter')));
+    await tester.pumpAndSettle();
+
+    final allCard = find.byKey(const ValueKey('overview-profile-option-all'));
+    final firstProfileCard =
+        find.byKey(const ValueKey('overview-profile-option-a'));
+
+    // Focus color on InkWell must be transparent so initial MenuAnchor auto-focus never washes out selected card fill.
+    final allInkWell = tester.widget<InkWell>(
+      find.descendant(of: allCard, matching: find.byType(InkWell)),
+    );
+    expect(allInkWell.focusColor, Colors.transparent);
+
+    // In RTL, metadata Wrap must be indented from the right (start), not left!
+    final cardRect = tester.getRect(firstProfileCard);
+    final wrapRect = tester.getRect(
+      find.descendant(of: firstProfileCard, matching: find.byType(Wrap)),
+    );
+    // Card has 10px horizontal padding + 14.5px start (right in RTL) indent >= 23px inset from card right edge.
+    expect(cardRect.right - wrapRect.right, greaterThanOrEqualTo(23.0));
+
+    // Keyboard ArrowDown moves from auto-focused 全部配置 -> Alpha profile ('a'), Enter selects it!
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+    await tester.pumpAndSettle();
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('overview-profile-menu')), findsNothing);
+    expect(find.text('Alpha node'), findsOneWidget);
+    expect(find.text('Beta node'), findsNothing);
+    expect(tester.takeException(), isNull);
   });
 }

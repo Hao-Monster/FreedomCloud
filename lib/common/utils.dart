@@ -18,6 +18,52 @@ class Utils {
     return const Color(0xFFC57F0A);
   }
 
+  /// Total-order delay comparator:
+  /// 0: positive measured latency (`> 0`), sorted ascending;
+  /// 1: untested (`null`) or in-flight testing (`0`);
+  /// 2: failed sentinel (`< 0`).
+  int compareDelay(int? a, int? b) {
+    final aBucket = a != null && a > 0 ? 0 : (a == null || a == 0 ? 1 : 2);
+    final bBucket = b != null && b > 0 ? 0 : (b == null || b == 0 ? 1 : 2);
+    if (aBucket != bBucket) {
+      return aBucket.compareTo(bBucket);
+    }
+    if (aBucket == 0) {
+      return a!.compareTo(b!);
+    }
+    return 0;
+  }
+
+  /// Stably sorts [items] by [delayOf] using [compareDelay] with a single
+  /// `O(N)` delay lookup pass. Preserves relative input order for items in the
+  /// same tie bucket (`null` / `0`, equal positive latency, or `< 0` failures)
+  /// even when `items.length > 32` (where Dart's `List.sort` switches to
+  /// unstable Dual-Pivot Quicksort).
+  List<T> stableSortByDelay<T>(
+    List<T> items,
+    int? Function(T item) delayOf,
+  ) {
+    if (items.length <= 1) {
+      return List<T>.of(items);
+    }
+    final indexed = List<({int index, T item, int? delay})>.generate(
+      items.length,
+      (index) {
+        final item = items[index];
+        return (index: index, item: item, delay: delayOf(item));
+      },
+      growable: false,
+    )..sort((a, b) {
+        final cmp = compareDelay(a.delay, b.delay);
+        return cmp != 0 ? cmp : a.index.compareTo(b.index);
+      });
+    return List<T>.generate(
+      indexed.length,
+      (i) => indexed[i].item,
+      growable: true,
+    );
+  }
+
   String get id {
     final timestamp = DateTime.now().microsecondsSinceEpoch;
     final random = Random();

@@ -13,10 +13,14 @@ import 'package:flclashx/models/node_catalog.dart';
 import 'package:flclashx/providers/node_overview.dart';
 import 'package:flclashx/providers/providers.dart';
 import 'package:flclashx/state.dart';
+import 'package:flclashx/views/profiles/add_profile.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:intl/intl.dart';
+import 'package:intl/intl.dart' hide TextDirection;
+
+part 'profile_selector.dart';
 
 /// Selects only the page body; the scope control belongs to the existing app bar.
 class NodeOverviewScopeView extends ConsumerWidget {
@@ -255,6 +259,8 @@ class _IndexedProfileCountrySummary {
     required this.scriptId,
     required this.scriptContent,
     required this.status,
+    required this.errorSummary,
+    required this.hasUnresolvedProviders,
     required this.nodes,
   });
 
@@ -264,6 +270,8 @@ class _IndexedProfileCountrySummary {
   final String? scriptId;
   final String? scriptContent;
   final ProfileCatalogStatus status;
+  final String? errorSummary;
+  final bool hasUnresolvedProviders;
   final List<_IndexedNodeSummary> nodes;
 
   bool matchesProfile(Profile profile, Script? currentScript) =>
@@ -279,6 +287,7 @@ class _IndexScanEpochState {
 
   final int generation;
   final Set<String> indexingProfileIds = <String>{};
+  final Set<String> failedProfileIds = <String>{};
   final Set<ProviderSubscription<Object?>> subscriptions =
       <ProviderSubscription<Object?>>{};
   int activeWorkers = 0;
@@ -288,6 +297,7 @@ class _IndexScanEpochState {
   void cancel() {
     cancelled = true;
     indexingProfileIds.clear();
+    failedProfileIds.clear();
     activeWorkers = 0;
     dirty = false;
     for (final sub in subscriptions.toList()) {
@@ -309,6 +319,9 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
   final List<ProviderSubscription<Object?>> _lifecycleSubscriptions =
       <ProviderSubscription<Object?>>[];
   List<String> _stableProfileOrderIds = const <String>[];
+  final Set<String> _updatingOrderFreezeIds = <String>{};
+  final Set<String> _syncingProfileIds = <String>{};
+  bool _importingSubscription = false;
   _IndexScanEpochState _scanEpoch = _IndexScanEpochState(0);
   bool _disposed = false;
   Timer? _clock;
@@ -364,6 +377,9 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
       scriptId: currentScript?.id,
       scriptContent: currentScript?.content,
       status: catalog.status,
+      errorSummary: catalog.errorSummary,
+      hasUnresolvedProviders:
+          catalog.providerNodeCounts.values.any((count) => count < 0),
       nodes: catalog.nodes.map(_IndexedNodeSummary.fromNode).toList(),
     );
   }
@@ -397,7 +413,10 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
         epoch.dirty = true;
         continue;
       }
-      if (epoch.indexingProfileIds.contains(profile.id)) continue;
+      if (epoch.indexingProfileIds.contains(profile.id) ||
+          epoch.failedProfileIds.contains(profile.id)) {
+        continue;
+      }
       epoch.indexingProfileIds.add(profile.id);
       epoch.activeWorkers++;
       unawaited(_indexSingleProfile(profile.id, epoch));
@@ -418,6 +437,7 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
     _IndexScanEpochState epoch,
   ) async {
     ProviderSubscription<AsyncValue<ProfileCatalog>>? sub;
+    Profile? snapshotAtStart;
     try {
       if (_disposed ||
           !mounted ||
@@ -425,7 +445,7 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
           !identical(epoch, _scanEpoch)) {
         return;
       }
-      final snapshotAtStart = ref.read(profilesProvider).getProfile(profileId);
+      snapshotAtStart = ref.read(profilesProvider).getProfile(profileId);
       sub = ref.listenManual(profileCatalogProvider(profileId), (_, __) {});
       epoch.subscriptions.add(sub);
       final catalog = await ref.read(profileCatalogProvider(profileId).future);
@@ -447,7 +467,34 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
         epoch.dirty = true;
       }
     } catch (_) {
-      // Catalog load errors are surfaced through ProfileCatalogStatus.
+      if (!_disposed &&
+          mounted &&
+          !epoch.cancelled &&
+          identical(epoch, _scanEpoch)) {
+        final profile = ref.read(profilesProvider).getProfile(profileId);
+        final unchangedSinceStart = snapshotAtStart != null &&
+            profile != null &&
+            profile.url == snapshotAtStart.url &&
+            profile.lastUpdateDate == snapshotAtStart.lastUpdateDate &&
+            profile.isUpdating == snapshotAtStart.isUpdating;
+        if (unchangedSinceStart && !profile.isUpdating) {
+          final currentScript = ref.read(scriptStateProvider).currentScript;
+          _indexedProfiles[profile.id] = _IndexedProfileCountrySummary(
+            url: profile.url,
+            lastUpdateDate: profile.lastUpdateDate,
+            isUpdating: profile.isUpdating,
+            scriptId: currentScript?.id,
+            scriptContent: currentScript?.content,
+            status: ProfileCatalogStatus.parseFailed,
+            errorSummary: null,
+            hasUnresolvedProviders: false,
+            nodes: const [],
+          );
+          epoch.dirty = true;
+        } else {
+          epoch.failedProfileIds.add(profileId);
+        }
+      }
     } finally {
       if (sub != null && epoch.subscriptions.remove(sub)) {
         sub.close();
@@ -765,6 +812,72 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
     }
   }
 
+  Future<void> _syncSubscription(Profile targetProfile) async {
+    if (_syncingProfileIds.contains(targetProfile.id)) return;
+    final current =
+        ref.read(profilesProvider).getProfile(targetProfile.id) ??
+            targetProfile;
+    if (current.type != ProfileType.url || current.isUpdating) return;
+    if (!globalState.isAppControllerReady) return;
+    final appController = globalState.appController;
+    _syncingProfileIds.add(current.id);
+    try {
+      await globalState.safeRun(silence: false, () async {
+        try {
+          appController.setProfile(
+            current.copyWith(
+              isUpdating: true,
+            ),
+          );
+          await appController.updateProfile(current);
+        } catch (e) {
+          final latest = mounted
+              ? ref.read(profilesProvider).getProfile(current.id)
+              : globalState.config.profiles.getProfile(current.id);
+          final rollback = rollbackFailedProfileUpdate(latest);
+          if (rollback != null) {
+            appController.setProfile(rollback);
+          }
+          rethrow;
+        }
+      });
+    } finally {
+      _syncingProfileIds.remove(current.id);
+    }
+  }
+
+  Future<void> _openUrlSubscriptionImport() async {
+    if (_importingSubscription) return;
+    setState(() {
+      _importingSubscription = true;
+    });
+    try {
+      final String? url;
+      if (globalState.navigatorKey.currentState != null) {
+        url = await globalState.showCommonDialog<String>(
+          child: const URLFormDialog(),
+        );
+      } else {
+        if (!mounted) return;
+        url = await showDialog<String>(
+          context: context,
+          builder: (_) => const URLFormDialog(),
+        );
+      }
+      if (url != null && url.isNotEmpty && globalState.isAppControllerReady) {
+        await globalState.appController.addProfileFormURL(url);
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _importingSubscription = false;
+        });
+      } else {
+        _importingSubscription = false;
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final profiles = ref.watch(profilesProvider);
@@ -844,10 +957,17 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
     final query = ref.watch(proxiesQueryProvider).trim().toLowerCase();
     final searching = query.isNotEmpty;
     final locale = Localizations.localeOf(context);
+    final mode =
+        ref.watch(patchClashConfigProvider.select((state) => state.mode));
+    final currentGroups = ref.watch(currentGroupsStateProvider).value;
     final scopeCountries = <String>{};
     final countryCounts = <String, int>{};
     final availableCounts = <String, int>{};
+    final activeDisplayCounts = <String, int>{};
+    final healthByProfile = <String, Map<String, NodeHealthRecord>>{};
+    final loadErrorIds = <String>{};
     final originalIndexes = <String, int>{};
+    final resolvedCatalogs = <String, ProfileCatalog?>{};
     var anyVisibleCatalogLoading = false;
     for (var i = 0; i < profiles.length; i++) {
       final profile = profiles[i];
@@ -860,7 +980,20 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
       final loaded = shouldWatchCatalog
           ? ref.watch(profileCatalogProvider(profile.id))
           : null;
+      if (loaded?.hasError ?? false) {
+        loadErrorIds.add(profile.id);
+      }
       final catalog = loaded?.valueOrNull ?? cachedCatalogs[profile.id];
+      resolvedCatalogs[profile.id] = catalog;
+      final catalogReloadingAfterSync =
+          ((loaded?.isLoading ?? false) && catalog == null) ||
+              catalog?.status == ProfileCatalogStatus.loading ||
+              catalog?.status == ProfileCatalogStatus.updating;
+      if (profile.isUpdating) {
+        _updatingOrderFreezeIds.add(profile.id);
+      } else if (!catalogReloadingAfterSync) {
+        _updatingOrderFreezeIds.remove(profile.id);
+      }
       if (catalog != null && catalog.status != ProfileCatalogStatus.loading) {
         _recordIndexedCatalog(profile, currentScript, catalog);
       }
@@ -885,11 +1018,23 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
       }
       final profileMatches =
           (profile.label ?? profile.id).toLowerCase().contains(query);
+      final health = ref.watch(nodeHealthEntriesProvider(profile.id));
+      healthByProfile[profile.id] = health;
       if (liveActive) {
         final displays = _activeDisplays(
             ref, profile.id, profile.isUpdating ? null : catalog);
-        availableCounts[profile.id] =
-            displays.values.where((entry) => (entry.delay ?? -1) > 0).length;
+        activeDisplayCounts[profile.id] = displays.length;
+        if (displays.isNotEmpty || profile.isUpdating) {
+          availableCounts[profile.id] =
+              displays.values.where((entry) => (entry.delay ?? -1) > 0).length;
+        } else {
+          availableCounts[profile.id] = _resolveStaticPickerStats(
+            loadedHasError: loaded?.hasError ?? false,
+            catalog: catalog,
+            validIndexed: validIndexed,
+            health: health,
+          ).availableCount;
+        }
         if (inSelectedScope) {
           final effectiveQuery = profileMatches ? '' : query;
           for (final entry in displays.values) {
@@ -910,7 +1055,6 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
           }
         }
       } else {
-        final health = ref.watch(nodeHealthEntriesProvider(profile.id));
         if (catalog != null) {
           final unusableCatalog =
               catalog.status == ProfileCatalogStatus.loading ||
@@ -979,8 +1123,10 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
         }
       }
     }
+    _updatingOrderFreezeIds.retainAll(originalIndexes.keys);
     final List<Profile> orderedProfiles;
-    if (_stableProfileOrderIds.isNotEmpty && tester.busy) {
+    if (_stableProfileOrderIds.isNotEmpty &&
+        (tester.busy || _updatingOrderFreezeIds.isNotEmpty)) {
       final byId = <String, Profile>{
         for (final profile in profiles) profile.id: profile,
       };
@@ -1031,6 +1177,121 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
         : const <String>[];
     final activeCountryMatchCount =
         activeCountry == null ? 0 : (countryCounts[activeCountry] ?? 0);
+    final targetTestProfile = selected != null
+        ? visible.firstOrNull
+        : (activeId == null ? null : profiles.getProfile(activeId));
+    final testCurrentAction = tester.busy ||
+            (targetTestProfile?.isUpdating ?? false) ||
+            (selected != null && targetTestProfile == null) ||
+            (selected == null && (activeId == null || currentGroups.isEmpty))
+        ? null
+        : () => _testCurrent(selected == null ? null : targetTestProfile);
+    VoidCallback? resolveQuickUseAction() {
+      for (final profile in visible) {
+        if (profile.isUpdating) {
+          return null;
+        }
+        final profileMatches =
+            (profile.label ?? profile.id).toLowerCase().contains(query);
+        final catalog = resolvedCatalogs[profile.id];
+        if (isLiveActive(profile)) {
+          final effectiveQuery = profileMatches ? '' : query;
+          final rows = _activeDisplays(
+            ref,
+            profile.id,
+            profile.isUpdating ? null : catalog,
+          ).values.where((entry) {
+            final matches = _activeEntryMatchesQuery(entry, effectiveQuery);
+            if (!matches || (_availableOnly && (entry.delay ?? -1) <= 0)) {
+              return false;
+            }
+            if (activeCountry != null) {
+              final code = countryResolver.resolveCountryCode(
+                profileId: profile.id,
+                profileLabel: profile.label,
+                nodeName: entry.proxy.name,
+                endpointKey: entry.node?.endpointKey,
+                isLiveActive: true,
+                inUse: entry.inUse,
+              );
+              if (code != activeCountry) return false;
+            }
+            return true;
+          }).toList();
+          if (rows.isEmpty) {
+            continue;
+          }
+          if (sort != ProxiesSortType.none) {
+            rows.sort((a, b) {
+              if (sort == ProxiesSortType.delay) {
+                final result = _compareDelay(a.delay, b.delay);
+                if (result != 0) return result;
+              }
+              return a.proxy.name
+                  .toLowerCase()
+                  .compareTo(b.proxy.name.toLowerCase());
+            });
+          }
+          for (final entry in rows) {
+            if (entry.selectGroup != null &&
+                (entry.delay == null || entry.delay! >= 0)) {
+              final targetGroup = entry.selectGroup!;
+              final targetProxy = entry.proxy.name;
+              return () => _useActiveNode(profile, targetGroup, targetProxy);
+            }
+          }
+          return null;
+        }
+        if (catalog == null ||
+            catalog.status == ProfileCatalogStatus.loading ||
+            catalog.status == ProfileCatalogStatus.updating) {
+          return null;
+        }
+        if (catalog.status != ProfileCatalogStatus.ready) {
+          if (_availableOnly || activeCountry != null || query.isNotEmpty) {
+            continue;
+          }
+          return null;
+        }
+        final health = ref.watch(nodeHealthEntriesProvider(profile.id));
+        final nodes = catalog.nodes.where((node) {
+          final matches = profileMatches || _matches(node, query);
+          if (!matches ||
+              (_availableOnly &&
+                  (_nodeHealth(node, health)?.delayMs ?? -1) <= 0)) {
+            return false;
+          }
+          if (activeCountry != null) {
+            final code = countryResolver.resolveCountryCode(
+              profileId: profile.id,
+              profileLabel: profile.label,
+              nodeName: node.name,
+              endpointKey: node.endpointKey,
+            );
+            if (code != activeCountry) return false;
+          }
+          return true;
+        }).toList();
+        if (nodes.isEmpty) {
+          continue;
+        }
+        _sortNodes(nodes, health, sort);
+        for (final node in nodes) {
+          final delayMs = _nodeHealth(node, health)?.delayMs;
+          if (delayMs != null && delayMs < 0) {
+            continue;
+          }
+          final targetGroup = _targetGroupForCatalogNode(profile, node, mode);
+          if (targetGroup != null) {
+            return () => _useCatalogNode(profile, node, targetGroup);
+          }
+        }
+        return null;
+      }
+      return null;
+    }
+
+    final quickUseAction = resolveQuickUseAction();
     final now = DateTime.now();
     return LayoutBuilder(builder: (context, constraints) {
       final wide = !isMobile && constraints.maxWidth > maxLaptopWidth;
@@ -1045,25 +1306,25 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
               crossAxisAlignment: WrapCrossAlignment.center,
               children: [
                 if (!wide)
-                  DropdownButton<String>(
-                    key: const ValueKey('overview-profile-filter'),
-                    value: selected ?? '',
-                    items: [
-                      DropdownMenuItem(
-                          value: '',
-                          child:
-                              Text(appLocalizations.nodeOverviewAllProfiles)),
-                      for (final profile in orderedProfiles)
-                        DropdownMenuItem(
-                            value: profile.id,
-                            child: ConstrainedBox(
-                                constraints:
-                                    const BoxConstraints(maxWidth: 220),
-                                child: Text(profile.label ?? profile.id,
-                                    overflow: TextOverflow.ellipsis))),
-                    ],
-                    onChanged: (value) => setState(
-                        () => _selectedProfile = value == '' ? null : value),
+                  _OverviewProfileSelector(
+                    buttonKey: const ValueKey('overview-profile-filter'),
+                    selectedProfileId: selected,
+                    maxTriggerWidth: math.max(156.0, constraints.maxWidth - 32),
+                    items: _buildNarrowPickerItems(
+                      orderedProfiles: orderedProfiles,
+                      activeId: activeId,
+                      isLiveActive: isLiveActive,
+                      activeDisplayCounts: activeDisplayCounts,
+                      availableCounts: availableCounts,
+                      resolvedCatalogs: resolvedCatalogs,
+                      indexedProfiles: _indexedProfiles,
+                      currentScript: currentScript,
+                      healthByProfile: healthByProfile,
+                      loadErrorIds: loadErrorIds,
+                      now: now,
+                    ),
+                    onChanged: (value) =>
+                        setState(() => _selectedProfile = value),
                   ),
                 _OverviewAvailableFilterButton(
                   key: const ValueKey('overview-available-only'),
@@ -1078,20 +1339,6 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
                         .updateState((state) => state.copyWith(sortType: value));
                   },
                 ),
-                TextButton.icon(
-                    key: const ValueKey('overview-test-current'),
-                    onPressed: tester.busy ||
-                            (selected == null &&
-                                (activeId == null ||
-                                    ref
-                                        .watch(currentGroupsStateProvider)
-                                        .value
-                                        .isEmpty))
-                        ? null
-                        : () => _testCurrent(
-                            selected == null ? null : visible.single),
-                    icon: const Icon(Icons.speed),
-                    label: Text(appLocalizations.nodeOverviewTestCurrent)),
                 TextButton.icon(
                     key: const ValueKey('overview-test-all'),
                     onPressed: tester.busy || profiles.isEmpty
@@ -1174,6 +1421,9 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
                           active: isCurrent,
                           liveActive: isLiveActive(profile),
                           now: now,
+                          onSync: profile.type == ProfileType.url
+                              ? () => unawaited(_syncSubscription(profile))
+                              : null,
                           onVisible: () =>
                               _onProfileVisibilityChanged(profile.id, true),
                           onSelect: () =>
@@ -1183,47 +1433,443 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
               const VerticalDivider(width: 16),
             ],
             Expanded(
-                child: CustomScrollView(
-              key: const ValueKey('overview-nodes'),
-              slivers: [
-                for (final profile in visible)
-                  _ProfileNodesSliver(
-                      key: ValueKey('overview-section-${profile.id}'),
-                      profile: profile,
-                      active: profile.id == activeId,
-                      liveActive: isLiveActive(profile),
-                      showHeader: selected == null,
-                      showSubscriptionSummary: !wide || selected != null,
-                      loadImmediately:
-                          selected != null || searching || activeCountry != null,
-                      availableOnly: _availableOnly,
-                      countryFilter: activeCountry,
-                      onVisibilityChanged: (isVisible) =>
-                          _onProfileVisibilityChanged(profile.id, isVisible),
-                      onTest: _testNode,
-                      onTestActive: _testActiveNode,
-                      onUseActive: _useActiveNode,
-                      onUseCatalog: _useCatalogNode,
-                      now: now),
-                if (selected == null &&
-                    activeCountry != null &&
-                    activeCountryMatchCount == 0 &&
-                    !anyVisibleCatalogLoading)
-                  SliverToBoxAdapter(
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 24, vertical: 16),
-                      child: Text(appLocalizations.nodeOverviewNoNodes),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  _OverviewQuickWorkflowBar(
+                    key: const ValueKey('overview-workflow-bar'),
+                    onAddSubscription: _importingSubscription
+                        ? null
+                        : () => unawaited(_openUrlSubscriptionImport()),
+                    onTestCurrent: testCurrentAction,
+                    onQuickUse: quickUseAction,
+                  ),
+                  Expanded(
+                    child: CustomScrollView(
+                      key: const ValueKey('overview-nodes'),
+                      slivers: [
+                        for (final profile in visible)
+                          _ProfileNodesSliver(
+                              key: ValueKey('overview-section-${profile.id}'),
+                              profile: profile,
+                              active: profile.id == activeId,
+                              liveActive: isLiveActive(profile),
+                              showHeader: selected == null,
+                              showSubscriptionSummary:
+                                  !wide || selected != null,
+                              onSyncSubscription:
+                                  profile.type == ProfileType.url &&
+                                          (!wide || selected != null)
+                                      ? () =>
+                                          unawaited(_syncSubscription(profile))
+                                      : null,
+                              syncButtonKey: wide
+                                  ? ValueKey(
+                                      'overview-detail-sync-${profile.id}')
+                                  : ValueKey('overview-sync-${profile.id}'),
+                              loadImmediately: selected != null ||
+                                  searching ||
+                                  activeCountry != null,
+                              availableOnly: _availableOnly,
+                              countryFilter: activeCountry,
+                              onVisibilityChanged: (isVisible) =>
+                                  _onProfileVisibilityChanged(
+                                      profile.id, isVisible),
+                              onTest: _testNode,
+                              onTestActive: _testActiveNode,
+                              onUseActive: _useActiveNode,
+                              onUseCatalog: _useCatalogNode,
+                              now: now),
+                        if (selected == null &&
+                            activeCountry != null &&
+                            activeCountryMatchCount == 0 &&
+                            !anyVisibleCatalogLoading)
+                          SliverToBoxAdapter(
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 24, vertical: 16),
+                              child: Text(appLocalizations.nodeOverviewNoNodes),
+                            ),
+                          ),
+                        const SliverToBoxAdapter(child: SizedBox(height: 32)),
+                      ],
                     ),
                   ),
-                const SliverToBoxAdapter(child: SizedBox(height: 32)),
-              ],
-            )),
+                ],
+              ),
+            ),
           ],
         )),
       ]);
     });
   }
+}
+
+class _OverviewQuickWorkflowBar extends StatelessWidget {
+  const _OverviewQuickWorkflowBar({
+    super.key,
+    required this.onAddSubscription,
+    required this.onTestCurrent,
+    required this.onQuickUse,
+  });
+
+  final VoidCallback? onAddSubscription;
+  final VoidCallback? onTestCurrent;
+  final VoidCallback? onQuickUse;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: colors.surfaceContainerLow.withValues(
+            alpha: isDark ? 0.56 : 0.72,
+          ),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: colors.outlineVariant.withValues(
+              alpha: isDark ? 0.46 : 0.58,
+            ),
+          ),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          child: Wrap(
+            spacing: 8,
+            runSpacing: 6,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              _WorkflowStepButton(
+                buttonKey: const ValueKey('overview-add-subscription'),
+                stepNumber: 1,
+                icon: Icons.add_link_rounded,
+                label: appLocalizations.nodeOverviewAddSubscription,
+                onPressed: onAddSubscription,
+              ),
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  _WorkflowStepArrow(
+                    key: const ValueKey('overview-workflow-arrow-1'),
+                    active: onTestCurrent != null,
+                  ),
+                  const SizedBox(width: 8),
+                  Flexible(
+                    child: _WorkflowStepButton(
+                      buttonKey: const ValueKey('overview-test-current'),
+                      stepNumber: 2,
+                      icon: Icons.speed_rounded,
+                      label: appLocalizations.nodeOverviewTestCurrent,
+                      onPressed: onTestCurrent,
+                    ),
+                  ),
+                ],
+              ),
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  _WorkflowStepArrow(
+                    key: const ValueKey('overview-workflow-arrow-2'),
+                    active: onQuickUse != null,
+                  ),
+                  const SizedBox(width: 8),
+                  Flexible(
+                    child: _WorkflowStepButton(
+                      buttonKey: const ValueKey('overview-quick-use'),
+                      stepNumber: 3,
+                      icon: Icons.play_arrow_rounded,
+                      label: appLocalizations.nodeOverviewQuickUse,
+                      onPressed: onQuickUse,
+                      emphasized: true,
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _WorkflowStepButton extends StatelessWidget {
+  const _WorkflowStepButton({
+    required this.buttonKey,
+    required this.stepNumber,
+    required this.icon,
+    required this.label,
+    required this.onPressed,
+    this.emphasized = false,
+  });
+
+  final Key buttonKey;
+  final int stepNumber;
+  final IconData icon;
+  final String label;
+  final VoidCallback? onPressed;
+  final bool emphasized;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
+    final enabled = onPressed != null;
+
+    final badgeBg = !enabled
+        ? colors.onSurface.withValues(alpha: 0.08)
+        : emphasized
+            ? colors.primary.withValues(alpha: isDark ? 0.28 : 0.20)
+            : colors.primary.withValues(alpha: isDark ? 0.16 : 0.11);
+    final badgeFg = !enabled
+        ? colors.onSurface.withValues(alpha: 0.38)
+        : colors.primary;
+
+    return TextButton(
+      key: buttonKey,
+      onPressed: onPressed,
+      style: ButtonStyle(
+        visualDensity: VisualDensity.compact,
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        minimumSize: const WidgetStatePropertyAll(Size(0, 34)),
+        padding: const WidgetStatePropertyAll(
+          EdgeInsets.symmetric(horizontal: 11, vertical: 6),
+        ),
+        backgroundColor: WidgetStateProperty.resolveWith((states) {
+          if (states.contains(WidgetState.disabled)) {
+            return colors.surfaceContainerHigh.withValues(
+              alpha: isDark ? 0.24 : 0.38,
+            );
+          }
+          final hovered = states.contains(WidgetState.hovered);
+          if (emphasized) {
+            return colors.primary.withValues(
+              alpha: hovered ? (isDark ? 0.24 : 0.17) : (isDark ? 0.16 : 0.11),
+            );
+          }
+          return hovered
+              ? colors.surfaceContainerHighest.withValues(
+                  alpha: isDark ? 0.78 : 0.94,
+                )
+              : colors.surfaceContainerHigh.withValues(
+                  alpha: isDark ? 0.52 : 0.78,
+                );
+        }),
+        foregroundColor: WidgetStateProperty.resolveWith((states) {
+          if (states.contains(WidgetState.disabled)) {
+            return colors.onSurface.withValues(alpha: 0.38);
+          }
+          return emphasized
+              ? colors.primary
+              : colors.onSurface.withValues(alpha: 0.92);
+        }),
+        overlayColor: WidgetStatePropertyAll(
+          colors.primary.withValues(alpha: 0.08),
+        ),
+        shape: WidgetStateProperty.resolveWith((states) {
+          final disabled = states.contains(WidgetState.disabled);
+          final hovered = states.contains(WidgetState.hovered);
+          final focused = states.contains(WidgetState.focused);
+          final Color borderColor;
+          if (disabled) {
+            borderColor = colors.outlineVariant.withValues(alpha: 0.32);
+          } else if (focused) {
+            borderColor = colors.primary.withValues(alpha: 0.72);
+          } else if (emphasized) {
+            borderColor =
+                colors.primary.withValues(alpha: hovered ? 0.68 : 0.48);
+          } else if (hovered) {
+            borderColor = colors.outline.withValues(alpha: 0.58);
+          } else {
+            borderColor = colors.outlineVariant.withValues(alpha: 0.62);
+          }
+          return RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(10),
+            side: BorderSide(color: borderColor),
+          );
+        }),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 18,
+            height: 18,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: badgeBg,
+              shape: BoxShape.circle,
+            ),
+            child: Text(
+              '$stepNumber',
+              style: TextStyle(
+                fontSize: 11,
+                height: 1.0,
+                fontWeight: FontWeight.w700,
+                color: badgeFg,
+              ),
+            ),
+          ),
+          const SizedBox(width: 6),
+          Icon(
+            icon,
+            size: 15,
+            color: !enabled
+                ? colors.onSurface.withValues(alpha: 0.38)
+                : emphasized
+                    ? colors.primary
+                    : colors.onSurfaceVariant,
+          ),
+          const SizedBox(width: 5),
+          Flexible(
+            child: Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 13,
+                height: 1.2,
+                fontWeight: emphasized ? FontWeight.w600 : FontWeight.w500,
+                letterSpacing: 0.1,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _WorkflowStepArrow extends StatelessWidget {
+  const _WorkflowStepArrow({
+    super.key,
+    required this.active,
+  });
+
+  final bool active;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final isRtl = Directionality.of(context) == TextDirection.rtl;
+    return ExcludeSemantics(
+      child: SizedBox(
+        width: 34,
+        height: 18,
+        child: CustomPaint(
+          painter: _WorkflowArrowPainter(
+            color: active ? colors.primary : colors.outline,
+            active: active,
+            isDark: theme.brightness == Brightness.dark,
+            isRtl: isRtl,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _WorkflowArrowPainter extends CustomPainter {
+  const _WorkflowArrowPainter({
+    required this.color,
+    required this.active,
+    required this.isDark,
+    required this.isRtl,
+  });
+
+  final Color color;
+  final bool active;
+  final bool isDark;
+  final bool isRtl;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (isRtl) {
+      canvas
+        ..save()
+        ..translate(size.width, 0)
+        ..scale(-1, 1);
+    }
+
+    final cy = size.height / 2;
+    const startX = 3.5;
+    final tipX = size.width - 3.5;
+    final shaftEndX = tipX - 1.2;
+
+    // 1. Subtle origin dot.
+    final dotPaint = Paint()
+      ..style = PaintingStyle.fill
+      ..color = color.withValues(alpha: active ? 0.46 : 0.24);
+    canvas.drawCircle(Offset(startX, cy), 2.0, dotPaint);
+
+    // 2. Gradient shaft fading into crisp arrowhead.
+    final shaftRect = Rect.fromLTRB(startX, cy - 2, tipX, cy + 2);
+    final shaftPaint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.65
+      ..strokeCap = StrokeCap.round
+      ..shader = LinearGradient(
+        colors: [
+          color.withValues(alpha: active ? 0.20 : 0.10),
+          color.withValues(alpha: active ? 0.88 : 0.40),
+        ],
+      ).createShader(shaftRect);
+    canvas.drawLine(Offset(startX + 2.5, cy), Offset(shaftEndX, cy), shaftPaint);
+
+    // 3. Soft trailing motion chevron.
+    final trailX = tipX - 6.8;
+    final trailPath = Path()
+      ..moveTo(trailX - 3.6, cy - 3.4)
+      ..lineTo(trailX, cy)
+      ..lineTo(trailX - 3.6, cy + 3.4);
+    final trailPaint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.4
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round
+      ..color = color.withValues(alpha: active ? 0.38 : 0.18);
+    canvas.drawPath(trailPath, trailPaint);
+
+    // 4. Primary crisp arrowhead (+ subtle glow in dark mode when active).
+    final headPath = Path()
+      ..moveTo(tipX - 4.8, cy - 4.4)
+      ..lineTo(tipX, cy)
+      ..lineTo(tipX - 4.8, cy + 4.4);
+    if (active && isDark) {
+      final glowPaint = Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 3.2
+        ..strokeCap = StrokeCap.round
+        ..strokeJoin = StrokeJoin.round
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 2.2)
+        ..color = color.withValues(alpha: 0.26);
+      canvas.drawPath(headPath, glowPaint);
+    }
+    final headPaint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.85
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round
+      ..color = color.withValues(alpha: active ? 0.94 : 0.44);
+    canvas.drawPath(headPath, headPaint);
+
+    if (isRtl) {
+      canvas.restore();
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _WorkflowArrowPainter oldDelegate) =>
+      color != oldDelegate.color ||
+      active != oldDelegate.active ||
+      isDark != oldDelegate.isDark ||
+      isRtl != oldDelegate.isRtl;
 }
 
 class _OverviewAvailableFilterButton extends StatefulWidget {
@@ -1734,6 +2380,7 @@ class _SidebarProfileCard extends ConsumerWidget {
       required this.active,
       required this.liveActive,
       required this.now,
+      this.onSync,
       required this.onVisible,
       required this.onSelect});
   final Profile profile;
@@ -1741,6 +2388,7 @@ class _SidebarProfileCard extends ConsumerWidget {
   final bool active;
   final bool liveActive;
   final DateTime now;
+  final VoidCallback? onSync;
   final VoidCallback onVisible;
   final VoidCallback onSelect;
 
@@ -1753,7 +2401,55 @@ class _SidebarProfileCard extends ConsumerWidget {
         ref.watch(cachedProfileCatalogsProvider)[profile.id];
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
+    final textScale = MediaQuery.textScalerOf(context).scale(1.0);
+    final locale = Localizations.localeOf(context);
     final metadata = _resolveProfileMetadata(profile);
+    final titleWidget = Text(
+      profile.label ?? profile.id,
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+      style: theme.textTheme.titleSmall?.copyWith(
+        fontWeight: FontWeight.w600,
+      ),
+    );
+    final activeBadge = active
+        ? ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 96),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+              decoration: BoxDecoration(
+                color: colors.primary.withValues(alpha: 0.14),
+                borderRadius: BorderRadius.circular(999),
+                border: Border.all(
+                  color: colors.primary.withValues(alpha: 0.36),
+                ),
+              ),
+              child: Text(
+                appLocalizations.nodeOverviewActive,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: theme.textTheme.labelSmall?.copyWith(
+                  color: colors.primary,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          )
+        : null;
+    final syncButton = onSync != null
+        ? _ProfileSyncButton(
+            key: ValueKey('overview-sync-${profile.id}'),
+            updating: profile.isUpdating,
+            selectedCard: selected,
+            maxWidth: 118,
+            onPressed: onSync,
+          )
+        : null;
+    final splitActiveHeader = activeBadge != null &&
+        syncButton != null &&
+        (textScale > 1.15 ||
+            locale.languageCode == 'ru' ||
+            locale.languageCode == 'ja');
     WidgetsBinding.instance.addPostFrameCallback((_) => onVisible());
     return Card(
         color: selected ? colors.secondaryContainer : null,
@@ -1766,42 +2462,35 @@ class _SidebarProfileCard extends ConsumerWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.center,
-                    children: [
-                      Expanded(
-                        child: Text(
-                          profile.label ?? profile.id,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: theme.textTheme.titleSmall?.copyWith(
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ),
-                      if (active) ...[
-                        const SizedBox(width: 8),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 7, vertical: 2),
-                          decoration: BoxDecoration(
-                            color: colors.primary.withValues(alpha: 0.14),
-                            borderRadius: BorderRadius.circular(999),
-                            border: Border.all(
-                              color: colors.primary.withValues(alpha: 0.36),
-                            ),
-                          ),
-                          child: Text(
-                            appLocalizations.nodeOverviewActive,
-                            style: theme.textTheme.labelSmall?.copyWith(
-                              color: colors.primary,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ),
+                  if (splitActiveHeader) ...[
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: [
+                        Expanded(child: titleWidget),
+                        const SizedBox(width: 6),
+                        syncButton,
                       ],
-                    ],
-                  ),
+                    ),
+                    const SizedBox(height: 4),
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: activeBadge,
+                    ),
+                  ] else
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: [
+                        Expanded(child: titleWidget),
+                        if (activeBadge != null) ...[
+                          const SizedBox(width: 6),
+                          activeBadge,
+                        ],
+                        if (syncButton != null) ...[
+                          const SizedBox(width: 6),
+                          syncButton,
+                        ],
+                      ],
+                    ),
                   if (metadata != null) ...[
                     const SizedBox(height: 8),
                     _ProfileSubscriptionSummary(
@@ -1826,6 +2515,163 @@ class _SidebarProfileCard extends ConsumerWidget {
                 ],
               )),
         ));
+  }
+}
+
+class _ProfileSyncButton extends StatefulWidget {
+  const _ProfileSyncButton({
+    super.key,
+    required this.updating,
+    required this.onPressed,
+    this.selectedCard = false,
+    this.maxWidth = 168,
+  });
+
+  final bool updating;
+  final VoidCallback? onPressed;
+  final bool selectedCard;
+  final double maxWidth;
+
+  @override
+  State<_ProfileSyncButton> createState() => _ProfileSyncButtonState();
+}
+
+class _ProfileSyncButtonState extends State<_ProfileSyncButton> {
+  bool _hovered = false;
+  bool _focused = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
+    final updating = widget.updating;
+    final enabled = !updating && widget.onPressed != null;
+    final label = updating
+        ? appLocalizations.nodeOverviewUpdatingShort
+        : appLocalizations.nodeOverviewUpdateSubscription;
+    final tooltipMessage = updating
+        ? appLocalizations.nodeOverviewUpdating
+        : appLocalizations.nodeOverviewUpdateSubscription;
+    final borderRadius = BorderRadius.circular(999);
+
+    final Color backgroundColor;
+    final Color borderColor;
+    final Color foregroundColor;
+
+    if (updating) {
+      backgroundColor = colors.primary.withValues(alpha: isDark ? 0.14 : 0.09);
+      borderColor = colors.primary.withValues(alpha: 0.36);
+      foregroundColor = colors.primary;
+    } else if (_hovered || _focused) {
+      backgroundColor = colors.primary.withValues(alpha: isDark ? 0.20 : 0.12);
+      borderColor = colors.primary.withValues(alpha: 0.68);
+      foregroundColor = colors.primary;
+    } else {
+      backgroundColor = widget.selectedCard
+          ? colors.surface.withValues(alpha: isDark ? 0.46 : 0.76)
+          : colors.surfaceContainerHighest.withValues(
+              alpha: isDark ? 0.62 : 0.85,
+            );
+      borderColor = colors.outlineVariant.withValues(alpha: 0.78);
+      foregroundColor = colors.onSurface.withValues(alpha: 0.90);
+    }
+
+    return Semantics(
+      container: true,
+      button: true,
+      enabled: enabled,
+      label: label,
+      onTap: enabled ? widget.onPressed : null,
+      excludeSemantics: true,
+      child: Tooltip(
+        message: tooltipMessage,
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: enabled ? null : () {},
+          child: MouseRegion(
+            cursor:
+                enabled ? SystemMouseCursors.click : SystemMouseCursors.basic,
+            onEnter: (_) {
+              if (!_hovered) setState(() => _hovered = true);
+            },
+            onExit: (_) {
+              if (_hovered) setState(() => _hovered = false);
+            },
+            child: ConstrainedBox(
+              constraints: BoxConstraints(maxWidth: widget.maxWidth),
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 140),
+                curve: Curves.easeOutCubic,
+                decoration: BoxDecoration(
+                  color: backgroundColor,
+                  borderRadius: borderRadius,
+                  border: Border.all(color: borderColor, width: 0.9),
+                ),
+                child: Material(
+                  color: Colors.transparent,
+                  child: InkWell(
+                    borderRadius: borderRadius,
+                    hoverColor: Colors.transparent,
+                    focusColor: Colors.transparent,
+                    splashColor: colors.primary.withValues(alpha: 0.12),
+                    highlightColor: colors.primary.withValues(alpha: 0.08),
+                    onFocusChange: (value) {
+                      if (mounted && _focused != value) {
+                        setState(() => _focused = value);
+                      }
+                    },
+                    onTap: enabled ? widget.onPressed : null,
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 3,
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (updating)
+                            SizedBox(
+                              width: 11,
+                              height: 11,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 1.6,
+                                valueColor: AlwaysStoppedAnimation<Color>(
+                                  foregroundColor,
+                                ),
+                              ),
+                            )
+                          else
+                            Icon(
+                              Icons.sync_rounded,
+                              size: 12.5,
+                              color: foregroundColor,
+                            ),
+                          const SizedBox(width: 3.5),
+                          Flexible(
+                            child: Text(
+                              label,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: theme.textTheme.labelSmall?.copyWith(
+                                fontSize: 11,
+                                height: 1.2,
+                                color: foregroundColor,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }
 
@@ -2014,10 +2860,12 @@ class _ProfileSubscriptionSummary extends StatelessWidget {
   const _ProfileSubscriptionSummary({
     required this.data,
     required this.now,
+    this.trailingAction,
   });
 
   final _ProfileMetadataViewData data;
   final DateTime now;
+  final Widget? trailingAction;
 
   @override
   Widget build(BuildContext context) {
@@ -2037,32 +2885,44 @@ class _ProfileSubscriptionSummary extends StatelessWidget {
 
     final children = <Widget>[];
 
-    if (serviceName != null || updatePolicyText != null) {
+    if (serviceName != null ||
+        updatePolicyText != null ||
+        trailingAction != null) {
+      final tagsWrap = Wrap(
+        spacing: 6,
+        runSpacing: 4,
+        children: [
+          if (serviceName != null)
+            _SubscriptionTagPill(
+              icon: Icons.cloud_outlined,
+              label: serviceName,
+              foreground: colors.primary,
+              background: colors.primary.withValues(alpha: 0.12),
+              border: colors.primary.withValues(alpha: 0.30),
+            ),
+          if (updatePolicyText != null)
+            _SubscriptionTagPill(
+              icon: data.updatePolicyIcon ?? Icons.description_outlined,
+              label: updatePolicyText,
+              foreground: colors.onSurfaceVariant,
+              background: colors.surfaceContainerHighest.withValues(
+                alpha: 0.65,
+              ),
+              border: colors.outlineVariant.withValues(alpha: 0.55),
+            ),
+        ],
+      );
       children.add(
-        Wrap(
-          spacing: 6,
-          runSpacing: 4,
-          children: [
-            if (serviceName != null)
-              _SubscriptionTagPill(
-                icon: Icons.cloud_outlined,
-                label: serviceName,
-                foreground: colors.primary,
-                background: colors.primary.withValues(alpha: 0.12),
-                border: colors.primary.withValues(alpha: 0.30),
+        trailingAction == null
+            ? tagsWrap
+            : Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  Expanded(child: tagsWrap),
+                  const SizedBox(width: 8),
+                  trailingAction!,
+                ],
               ),
-            if (updatePolicyText != null)
-              _SubscriptionTagPill(
-                icon: data.updatePolicyIcon ?? Icons.description_outlined,
-                label: updatePolicyText,
-                foreground: colors.onSurfaceVariant,
-                background: colors.surfaceContainerHighest.withValues(
-                  alpha: 0.65,
-                ),
-                border: colors.outlineVariant.withValues(alpha: 0.55),
-              ),
-          ],
-        ),
       );
     }
 
@@ -2192,8 +3052,8 @@ class _ProfileSubscriptionSummary extends StatelessWidget {
       }
 
       children.add(const SizedBox(height: 4));
-      final expireDate = _parseSubscriptionExpireLocal(sub.expire);
-      if (expireDate == null) {
+      final expiryState = _resolveSubscriptionExpiryState(sub.expire, now);
+      if (expiryState == null) {
         children.add(
           Row(
             children: [
@@ -2213,27 +3073,11 @@ class _ProfileSubscriptionSummary extends StatelessWidget {
           ),
         );
       } else {
-        final dateStr = DateFormat('yyyy-MM-dd').format(expireDate);
-        final diff = expireDate.difference(now);
-        final isExpired = !expireDate.isAfter(now);
-        final isExpiringSoon = !isExpired && diff.inDays <= 7;
-        final String expireText;
-        if (isExpired) {
-          expireText =
-              '${appLocalizations.nodeOverviewExpireAt(dateStr)} · ${appLocalizations.nodeOverviewStatusExpired}';
-        } else if (diff.inDays >= 1) {
-          expireText =
-              '${appLocalizations.nodeOverviewExpireAt(dateStr)} · ${appLocalizations.nodeOverviewExpireDaysLeft(diff.inDays)}';
-        } else if (diff.inHours >= 1) {
-          expireText =
-              '${appLocalizations.nodeOverviewExpireAt(dateStr)} · ${appLocalizations.nodeOverviewExpireHoursLeft(diff.inHours)}';
-        } else {
-          expireText =
-              '${appLocalizations.nodeOverviewExpireAt(dateStr)} · ${appLocalizations.nodeOverviewExpireSoon}';
-        }
-        final expireColor = isExpired
+        final expireText =
+            '${appLocalizations.nodeOverviewExpireAt(expiryState.dateStr)} · ${expiryState.countdownText}';
+        final expireColor = expiryState.isExpired
             ? colors.error
-            : isExpiringSoon
+            : expiryState.isExpiringSoon
                 ? Colors.orange
                 : colors.onSurfaceVariant;
         children.add(
@@ -2250,7 +3094,7 @@ class _ProfileSubscriptionSummary extends StatelessWidget {
                   expireText,
                   style: metaStyle?.copyWith(
                     color: expireColor,
-                    fontWeight: isExpired || isExpiringSoon
+                    fontWeight: expiryState.isExpired || expiryState.isExpiringSoon
                         ? FontWeight.w600
                         : FontWeight.w400,
                   ),
@@ -2422,6 +3266,8 @@ class _ProfileNodesSliver extends ConsumerStatefulWidget {
       required this.liveActive,
       required this.showHeader,
       required this.showSubscriptionSummary,
+      this.onSyncSubscription,
+      this.syncButtonKey,
       required this.loadImmediately,
       required this.availableOnly,
       required this.countryFilter,
@@ -2436,6 +3282,8 @@ class _ProfileNodesSliver extends ConsumerStatefulWidget {
   final bool liveActive;
   final bool showHeader;
   final bool showSubscriptionSummary;
+  final VoidCallback? onSyncSubscription;
+  final Key? syncButtonKey;
   final bool loadImmediately;
   final bool availableOnly;
   final String? countryFilter;
@@ -2573,6 +3421,14 @@ class _ProfileNodesSliverState extends ConsumerState<_ProfileNodesSliver> {
                   child: _ProfileSubscriptionSummary(
                     data: metadata,
                     now: widget.now,
+                    trailingAction: widget.onSyncSubscription == null
+                        ? null
+                        : _ProfileSyncButton(
+                            key: widget.syncButtonKey ??
+                                ValueKey('overview-sync-${profile.id}'),
+                            updating: profile.isUpdating,
+                            onPressed: widget.onSyncSubscription,
+                          ),
                   ),
                 ),
               ),
@@ -2789,11 +3645,7 @@ bool _activeEntryMatchesQuery(_ActiveDisplay entry, String query) {
       .contains(query);
 }
 
-int _compareDelay(int? a, int? b) {
-  final aRank = a != null && a > 0 ? a : 1 << 62;
-  final bRank = b != null && b > 0 ? b : 1 << 62;
-  return aRank.compareTo(bRank);
-}
+int _compareDelay(int? a, int? b) => utils.compareDelay(a, b);
 
 void _sortNodes(List<CatalogNode> nodes, Map<String, NodeHealthRecord> health,
     ProxiesSortType sort) {

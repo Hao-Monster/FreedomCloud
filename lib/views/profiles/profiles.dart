@@ -3,7 +3,6 @@ import 'dart:ui';
 import 'package:flclashx/common/common.dart';
 import 'package:flclashx/enum/enum.dart';
 import 'package:flclashx/models/models.dart' hide Action;
-import 'package:flclashx/pages/pages.dart';
 import 'package:flclashx/providers/providers.dart';
 import 'package:flclashx/state.dart';
 import 'package:flclashx/views/profiles/edit_profile.dart';
@@ -40,23 +39,31 @@ class _ProfilesViewState extends State<ProfilesView> with PageMixin {
   }
 
   Future<void> _updateProfiles() async {
-    final profiles = globalState.config.profiles;
-    final messages = [];
-    final updateProfiles = profiles.map<Future>(
-      (profile) async {
-        if (profile.type == ProfileType.file) return;
+    final profileIds = [
+      for (final profile in globalState.config.profiles)
+        if (profile.type != ProfileType.file) profile.id,
+    ];
+    final messages = <String>[];
+    final updateProfiles = profileIds.map<Future<void>>(
+      (id) async {
+        final current = globalState.config.profiles.getProfile(id);
+        if (current == null ||
+            current.type == ProfileType.file ||
+            current.isUpdating) {
+          return;
+        }
         globalState.appController.setProfile(
-          profile.copyWith(isUpdating: true),
+          current.copyWith(isUpdating: true),
         );
         try {
-          await globalState.appController.updateProfile(profile);
+          await globalState.appController.updateProfile(current);
         } catch (e) {
-          messages.add("${profile.label ?? profile.id}: $e \n");
-          globalState.appController.setProfile(
-            profile.copyWith(
-              isUpdating: false,
-            ),
-          );
+          final latest = globalState.config.profiles.getProfile(id);
+          messages.add("${(latest ?? current).label ?? id}: $e \n");
+          final rollback = rollbackFailedProfileUpdate(latest);
+          if (rollback != null) {
+            globalState.appController.setProfile(rollback);
+          }
         }
       },
     );
@@ -244,21 +251,25 @@ class _ProfileItemState extends State<ProfileItem> {
 
   Future updateProfile() async {
     final appController = globalState.appController;
-    if (widget.profile.type == ProfileType.file) return;
+    final current =
+        globalState.config.profiles.getProfile(widget.profile.id) ??
+            widget.profile;
+    if (current.type == ProfileType.file || current.isUpdating) return;
     await globalState.safeRun(silence: false, () async {
       try {
         appController.setProfile(
-          widget.profile.copyWith(
+          current.copyWith(
             isUpdating: true,
           ),
         );
-        await appController.updateProfile(widget.profile);
+        await appController.updateProfile(current);
       } catch (e) {
-        appController.setProfile(
-          widget.profile.copyWith(
-            isUpdating: false,
-          ),
+        final rollback = rollbackFailedProfileUpdate(
+          globalState.config.profiles.getProfile(current.id),
         );
+        if (rollback != null) {
+          appController.setProfile(rollback);
+        }
         rethrow;
       }
     });

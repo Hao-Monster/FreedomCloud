@@ -67,6 +67,10 @@ class AppController {
   final BuildContext context;
   final WidgetRef _ref;
   final _nodeHealthWrites = <Future<void>>{};
+  int _nextProfileUpdateToken = 0;
+  final Map<String, int> _activeProfileUpdateTokens = {};
+  final Map<String, ({int token, String url, Future<void> future})>
+      _inFlightProfileUpdates = {};
   NodeHealthStore? get catalogHealthStore =>
       _ref.read(nodeOverviewEnabledProvider)
           ? _ref.read(nodeHealthRecorderProvider).store
@@ -1175,66 +1179,132 @@ class AppController {
   }
 
   Future<void> updateProfile(Profile profile) async {
-    _ref.read(profilesProvider.notifier).setProfile(
-      profile.copyWith(isUpdating: true),
+    final current = _ref.read(profilesProvider).getProfile(profile.id);
+    final starting = prepareStartingProfileUpdate(
+      requested: profile,
+      current: current,
+    );
+    if (starting == null) {
+      return;
+    }
+    final existingInFlight = _inFlightProfileUpdates[starting.id];
+    if (existingInFlight != null && existingInFlight.url == starting.url) {
+      if (starting != current) {
+        _ref.read(profilesProvider.notifier).setProfile(starting);
+      }
+      return existingInFlight.future;
+    }
+    final token = ++_nextProfileUpdateToken;
+    _activeProfileUpdateTokens[starting.id] = token;
+    final future = _runProfileUpdate(starting: starting, token: token);
+    _inFlightProfileUpdates[starting.id] = (
+      token: token,
+      url: starting.url,
+      future: future,
     );
     try {
-    final prefs = await SharedPreferences.getInstance();
-    final shouldSend = prefs.getBool('sendDeviceHeaders') ?? true;
-    final newProfile = await profile.update(
-      shouldSendHeaders: shouldSend,
-    );
-
-    final mergedHeaders = Map<String, String>.from(profile.providerHeaders)
-      ..addAll(newProfile.providerHeaders);
-    for (final key in ['announce', 'support-url']) {
-      if (!newProfile.providerHeaders.containsKey(key)) {
-        mergedHeaders.remove(key);
+      await future;
+    } finally {
+      if (_activeProfileUpdateTokens[starting.id] == token) {
+        _activeProfileUpdateTokens.remove(starting.id);
+        _inFlightProfileUpdates.remove(starting.id);
       }
     }
-    final mergedProfile = newProfile.copyWith(
-      providerHeaders: mergedHeaders,
-      isUpdating: false,
-    );
+  }
 
-    // Apply the header-driven app settings (theme/flclashx-hex, flclashx-settings,
-    // flclashx-custom view/widgets, etc.) ONLY when the updated profile is the ACTIVE
-    // one. Otherwise auto-updating a background profile would push its headers into the
-    // global settings and clobber the active profile's ("last updated wins"). Mirrors
-    // the active-profile gate on applyProfileDebounce below; the reactive header
-    // providers (background / global-mode / server-info) already read the active profile.
-    if (mergedHeaders.isNotEmpty &&
-        profile.id == _ref.read(currentProfileIdProvider)) {
-      _applyAllHeaderSettings(mergedProfile, isNewProfile: false);
-    }
+  Future<void> _runProfileUpdate({
+    required Profile starting,
+    required int token,
+  }) async {
+    bool isCurrentRun() => _activeProfileUpdateTokens[starting.id] == token;
 
-    final showHwidLimit = mergedHeaders['x-hwid-max-devices-reached']?.toLowerCase() == 'true';
-    final announceText = mergedHeaders['announce'];
-    if (showHwidLimit && announceText != null && announceText.isNotEmpty) {
-      _showHwidLimitNotice(announceText, mergedHeaders['support-url']);
-    }
+    bool canStillCommit() =>
+        isCurrentRun() &&
+        canCommitProfileUpdate(
+          starting: starting,
+          latest: _ref.read(profilesProvider).getProfile(starting.id),
+        );
 
-    if (mergedHeaders['x-hwid-not-supported']?.toLowerCase() == 'true') {
-      _showHwidNotSupportedNotice();
-    }
-
-    _ref
-        .read(profilesProvider.notifier)
-        .setProfile(mergedProfile);
-
-    if (profile.id == _ref.read(currentProfileIdProvider)) {
-      applyProfileDebounce(silence: true);
-    }
-
-    // Check subscription expiration and show notification if needed
-    unawaited(SubscriptionNotificationService.checkAndNotify(newProfile)
-        .catchError((e) {
-      commonPrint.log("Error checking subscription: $e");
-    }));
-    } catch (e) {
-      _ref.read(profilesProvider.notifier).setProfile(
-        profile.copyWith(isUpdating: false),
+    void clearUpdatingIfCurrentRun() {
+      if (!isCurrentRun()) {
+        return;
+      }
+      final rollback = rollbackFailedProfileUpdate(
+        _ref.read(profilesProvider).getProfile(starting.id),
       );
+      if (rollback != null) {
+        _ref.read(profilesProvider.notifier).setProfile(rollback);
+      }
+    }
+
+    _ref.read(profilesProvider.notifier).setProfile(starting);
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final shouldSend = prefs.getBool('sendDeviceHeaders') ?? true;
+      final fetched = await starting.fetch(
+        shouldSendHeaders: shouldSend,
+      );
+      if (!canStillCommit()) {
+        clearUpdatingIfCurrentRun();
+        return;
+      }
+      final savedProfile = await fetched.profile.saveFile(
+        fetched.bytes,
+        canSave: canStillCommit,
+      );
+      if (!isCurrentRun()) {
+        return;
+      }
+      final mergedProfile = mergeUpdatedProfileSnapshot(
+        base: starting,
+        fetched: savedProfile,
+        latest: _ref.read(profilesProvider).getProfile(starting.id),
+      );
+      if (mergedProfile == null) {
+        clearUpdatingIfCurrentRun();
+        return;
+      }
+      final mergedHeaders = mergedProfile.providerHeaders;
+
+      // Apply the header-driven app settings (theme/flclashx-hex, flclashx-settings,
+      // flclashx-custom view/widgets, etc.) ONLY when the updated profile is the ACTIVE
+      // one. Otherwise auto-updating a background profile would push its headers into the
+      // global settings and clobber the active profile's ("last updated wins"). Mirrors
+      // the active-profile gate on applyProfileDebounce below; the reactive header
+      // providers (background / global-mode / server-info) already read the active profile.
+      if (mergedHeaders.isNotEmpty &&
+          starting.id == _ref.read(currentProfileIdProvider)) {
+        _applyAllHeaderSettings(mergedProfile, isNewProfile: false);
+      }
+
+      final showHwidLimit =
+          mergedHeaders['x-hwid-max-devices-reached']?.toLowerCase() == 'true';
+      final announceText = mergedHeaders['announce'];
+      if (showHwidLimit && announceText != null && announceText.isNotEmpty) {
+        _showHwidLimitNotice(announceText, mergedHeaders['support-url']);
+      }
+
+      if (mergedHeaders['x-hwid-not-supported']?.toLowerCase() == 'true') {
+        _showHwidNotSupportedNotice();
+      }
+
+      _ref.read(profilesProvider.notifier).setProfile(mergedProfile);
+
+      if (starting.id == _ref.read(currentProfileIdProvider)) {
+        applyProfileDebounce(silence: true);
+      }
+
+      // Check subscription expiration and show notification if needed
+      unawaited(SubscriptionNotificationService.checkAndNotify(mergedProfile)
+          .catchError((e) {
+        commonPrint.log("Error checking subscription: $e");
+      }));
+    } catch (e) {
+      if (!canStillCommit()) {
+        clearUpdatingIfCurrentRun();
+        return;
+      }
+      clearUpdatingIfCurrentRun();
       rethrow;
     }
   }
@@ -1968,14 +2038,23 @@ class AppController {
   }
 
   Future<void> autoUpdateProfiles() async {
-    for (final profile in _ref.read(profilesProvider)) {
-      if (!profile.autoUpdate) continue;
+    final profileIds = [
+      for (final profile in _ref.read(profilesProvider)) profile.id,
+    ];
+    for (final id in profileIds) {
+      final profile = _ref.read(profilesProvider).getProfile(id);
+      if (profile == null ||
+          !profile.autoUpdate ||
+          profile.isUpdating ||
+          profile.type == ProfileType.file) {
+        continue;
+      }
       final isNotNeedUpdate = profile.lastUpdateDate
           ?.add(
             profile.autoUpdateDuration,
           )
           .isBeforeNow;
-      if (isNotNeedUpdate == false || profile.type == ProfileType.file) {
+      if (isNotNeedUpdate == false) {
         continue;
       }
       try {
@@ -2110,8 +2189,12 @@ class AppController {
   }
 
   Future<void> updateProfiles() async {
-    for (final profile in _ref.read(profilesProvider)) {
-      if (profile.type == ProfileType.file) {
+    final profileIds = [
+      for (final profile in _ref.read(profilesProvider)) profile.id,
+    ];
+    for (final id in profileIds) {
+      final profile = _ref.read(profilesProvider).getProfile(id);
+      if (profile == null || profile.type == ProfileType.file) {
         continue;
       }
       await updateProfile(profile);
@@ -2919,32 +3002,15 @@ class AppController {
     required List<Proxy> proxies,
     String? testUrl,
   }) =>
-      List.of(proxies)
-        ..sort(
-          (a, b) {
-            final aDelay = _ref.read(getDelayProvider(
-              proxyName: a.name,
-              testUrl: testUrl,
-            ));
-            final bDelay = _ref.read(
-              getDelayProvider(
-                proxyName: b.name,
-                testUrl: testUrl,
-              ),
-            );
-            // null (untested) and -1 (failed) are equivalent "no delay"
-            // sentinels: map both to the same rank so the comparator stays
-            // antisymmetric (compare(a,b) == -compare(b,a)) and they sort to
-            // the end together.
-            if (aDelay == null || aDelay == -1) {
-              return (bDelay == null || bDelay == -1) ? 0 : 1;
-            }
-            if (bDelay == null || bDelay == -1) {
-              return -1;
-            }
-            return aDelay.compareTo(bDelay);
-          },
-        );
+      utils.stableSortByDelay(
+        proxies,
+        (proxy) => _ref.read(
+          getDelayProvider(
+            proxyName: proxy.name,
+            testUrl: testUrl,
+          ),
+        ),
+      );
 
   List<Proxy> getSortProxies(List<Proxy> proxies, [String? url]) =>
       switch (_ref.read(proxiesStyleSettingProvider).sortType) {

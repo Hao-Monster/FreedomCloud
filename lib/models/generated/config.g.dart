@@ -266,7 +266,9 @@ _$ProxiesStyleImpl _$$ProxiesStyleImplFromJson(Map<String, dynamic> json) =>
           ProxiesType.list,
       sortType:
           $enumDecodeNullable(_$ProxiesSortTypeEnumMap, json['sortType']) ??
-              ProxiesSortType.none,
+              ProxiesSortType.delay,
+      sortTypeDefaultDelayMigrated:
+          json['sortTypeDefaultDelayMigrated'] as bool? ?? true,
       layout: $enumDecodeNullable(_$ProxiesLayoutEnumMap, json['layout']) ??
           ProxiesLayout.standard,
       iconStyle: $enumDecodeNullable(
@@ -285,6 +287,7 @@ Map<String, dynamic> _$$ProxiesStyleImplToJson(_$ProxiesStyleImpl instance) =>
     <String, dynamic>{
       'type': _$ProxiesTypeEnumMap[instance.type]!,
       'sortType': _$ProxiesSortTypeEnumMap[instance.sortType]!,
+      'sortTypeDefaultDelayMigrated': instance.sortTypeDefaultDelayMigrated,
       'layout': _$ProxiesLayoutEnumMap[instance.layout]!,
       'iconStyle': _$ProxiesIconStyleEnumMap[instance.iconStyle]!,
       'cardType': _$ProxyCardTypeEnumMap[instance.cardType]!,

@@ -194,7 +194,8 @@ class NetworkProps with _$NetworkProps {
 class ProxiesStyle with _$ProxiesStyle {
   const factory ProxiesStyle({
     @Default(ProxiesType.list) ProxiesType type,
-    @Default(ProxiesSortType.none) ProxiesSortType sortType,
+    @Default(ProxiesSortType.delay) ProxiesSortType sortType,
+    @Default(true) bool sortTypeDefaultDelayMigrated,
     @Default(ProxiesLayout.standard) ProxiesLayout layout,
     @JsonKey(unknownEnumValue: ProxiesIconStyle.icon)
     @Default(ProxiesIconStyle.icon)
@@ -296,35 +297,65 @@ class Config with _$Config {
   factory Config.fromJson(Map<String, Object?> json) => _$ConfigFromJson(json);
 
   factory Config.compatibleFromJson(Map<String, Object?> json) {
+    final normalizedJson = Map<String, Object?>.from(json);
     try {
-      final accessControlMap = json["accessControl"];
-      final isAccessControl = json["isAccessControl"];
-      if (accessControlMap != null) {
-        (accessControlMap as Map)["enable"] = isAccessControl;
-        if (json["vpnProps"] != null) {
-          (json["vpnProps"]! as Map)["accessControl"] = accessControlMap;
-        }
-      }
-
-      // Migration: Replace deprecated "standard" iconStyle with "icon"
-      final proxiesStyle = json["proxiesStyle"];
-      if (proxiesStyle is Map) {
-        if (proxiesStyle["iconStyle"] == "standard") {
-          proxiesStyle["iconStyle"] = "icon";
-        }
-      }
-
-      // Migration: strip removed fields from profiles
-      final profiles = json["profiles"];
-      if (profiles is List) {
-        for (final p in profiles) {
-          if (p is Map) {
-            p.remove("updateMethod");
-          }
+      final accessControlMap = normalizedJson["accessControl"];
+      final isAccessControl = normalizedJson["isAccessControl"];
+      if (accessControlMap is Map) {
+        final nextAccessControl = Map<String, Object?>.from(accessControlMap);
+        nextAccessControl["enable"] = isAccessControl;
+        normalizedJson["accessControl"] = nextAccessControl;
+        final vpnProps = normalizedJson["vpnProps"];
+        if (vpnProps is Map) {
+          final nextVpnProps = Map<String, Object?>.from(vpnProps);
+          nextVpnProps["accessControl"] = nextAccessControl;
+          normalizedJson["vpnProps"] = nextVpnProps;
         }
       }
     } catch (_) {}
-    return Config.fromJson(json);
+
+    try {
+      // Migration: Replace deprecated "standard" iconStyle with "icon" and
+      // promote legacy unmigrated default sortType ("none") to "delay" once.
+      final proxiesStyle = normalizedJson["proxiesStyle"];
+      if (proxiesStyle is Map) {
+        final nextProxiesStyle = Map<String, Object?>.from(proxiesStyle);
+        if (nextProxiesStyle["iconStyle"] == "standard") {
+          nextProxiesStyle["iconStyle"] = "icon";
+        }
+        final rawSort = nextProxiesStyle["sortType"];
+        if (rawSort is! String ||
+            !const {'none', 'delay', 'name'}.contains(rawSort)) {
+          nextProxiesStyle.remove("sortType");
+        }
+        if (nextProxiesStyle["sortTypeDefaultDelayMigrated"] != true) {
+          if (nextProxiesStyle["sortType"] == null ||
+              nextProxiesStyle["sortType"] == "none") {
+            nextProxiesStyle["sortType"] = "delay";
+          }
+          nextProxiesStyle["sortTypeDefaultDelayMigrated"] = true;
+        }
+        normalizedJson["proxiesStyle"] = nextProxiesStyle;
+      } else if (proxiesStyle != null) {
+        normalizedJson.remove("proxiesStyle");
+      }
+    } catch (_) {}
+
+    try {
+      // Migration: strip removed fields from profiles
+      final profiles = normalizedJson["profiles"];
+      if (profiles is List) {
+        normalizedJson["profiles"] = [
+          for (final p in profiles)
+            if (p is Map)
+              (Map<String, Object?>.from(p)..remove("updateMethod"))
+            else
+              p,
+        ];
+      }
+    } catch (_) {}
+
+    return Config.fromJson(normalizedJson);
   }
 }
 

@@ -294,3 +294,97 @@ extension ProfileExtension on Profile {
     return copyWith(lastUpdateDate: DateTime.now());
   }
 }
+
+const List<String> _transientProviderHeaderKeys = [
+  'announce',
+  'support-url',
+  'profile-update-interval',
+  'x-hwid-max-devices-reached',
+  'x-hwid-not-supported',
+  'flclashx-newdomain',
+];
+
+/// Builds the entry snapshot for starting `updateProfile` from [requested] onto
+/// the live provider snapshot [current]. Returns `null` when [current] is
+/// `null` (profile was deleted before synchronization began, preventing
+/// accidental resurrection), and preserves [current]'s live `selectedMap`,
+/// `currentGroupName`, `unfoldSet`, `overrideData`, `subscriptionInfo`,
+/// `lastUpdateDate`, and `providerHeaders` while applying caller-edited config
+/// fields (`url`, `label`, `autoUpdate`, `autoUpdateDuration`).
+Profile? prepareStartingProfileUpdate({
+  required Profile requested,
+  required Profile? current,
+}) {
+  if (current == null) {
+    return null;
+  }
+  return current.copyWith(
+    url: requested.url,
+    label: requested.label ?? current.label,
+    autoUpdate: requested.autoUpdate,
+    autoUpdateDuration: requested.autoUpdateDuration,
+    isUpdating: true,
+  );
+}
+
+/// Returns `true` iff [latest] still exists in `profilesProvider` and still
+/// points to the same subscription source (`url` and `xboardAccountMarker`)
+/// that [starting] began fetching. Prevents stale in-flight fetches from
+/// overwriting a profile whose URL or managed ownership rotated mid-flight.
+bool canCommitProfileUpdate({
+  required Profile starting,
+  required Profile? latest,
+}) =>
+    latest != null &&
+    latest.url == starting.url &&
+    latest.providerHeaders[xboardAccountMarker] ==
+        starting.providerHeaders[xboardAccountMarker];
+
+/// Merges remotely refreshed subscription fields from [fetched] onto the
+/// latest provider snapshot [latest] (which started from [base]), preserving
+/// concurrent local edits (`selectedMap`, `currentGroupName`, `unfoldSet`,
+/// `overrideData`, `autoUpdate`, and user `label`). Returns `null` when
+/// [latest] was deleted or rotated to a different subscription source while
+/// synchronization was in flight.
+Profile? mergeUpdatedProfileSnapshot({
+  required Profile base,
+  required Profile fetched,
+  required Profile? latest,
+}) {
+  if (!canCommitProfileUpdate(starting: base, latest: latest)) {
+    return null;
+  }
+  final target = latest!;
+  final mergedHeaders = Map<String, String>.from(target.providerHeaders)
+    ..addAll(fetched.providerHeaders);
+  for (final key in _transientProviderHeaderKeys) {
+    if (!fetched.providerHeaders.containsKey(key)) {
+      mergedHeaders.remove(key);
+    }
+  }
+  final resolvedUrl = fetched.url != base.url ? fetched.url : target.url;
+  final intervalHours = int.tryParse(
+    fetched.providerHeaders['profile-update-interval'] ?? '',
+  );
+  final durationFromHeader = intervalHours != null && intervalHours > 0
+      ? Duration(hours: intervalHours)
+      : null;
+  return target.copyWith(
+    url: resolvedUrl,
+    label: target.label ?? fetched.label,
+    subscriptionInfo: fetched.subscriptionInfo,
+    lastUpdateDate: fetched.lastUpdateDate,
+    autoUpdateDuration: durationFromHeader ?? target.autoUpdateDuration,
+    providerHeaders: mergedHeaders,
+    isUpdating: false,
+  );
+}
+
+/// Clears `isUpdating` on the latest provider snapshot after a failed sync
+/// without clobbering concurrent edits or resurrecting a deleted profile.
+Profile? rollbackFailedProfileUpdate(Profile? latest) {
+  if (latest == null || !latest.isUpdating) {
+    return null;
+  }
+  return latest.copyWith(isUpdating: false);
+}
