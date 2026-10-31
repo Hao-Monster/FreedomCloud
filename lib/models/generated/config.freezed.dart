@@ -24,6 +24,7 @@ mixin _$AppSettingProps {
   @JsonKey(fromJson: dashboardWidgetsSafeFormJson)
   List<DashboardWidget> get dashboardWidgets =>
       throw _privateConstructorUsedError;
+  bool get dashboardDefaultV2Migrated => throw _privateConstructorUsedError;
   bool get onlyStatisticsProxy => throw _privateConstructorUsedError;
   bool get autoLaunch => throw _privateConstructorUsedError;
   bool get silentLaunch => throw _privateConstructorUsedError;
@@ -82,6 +83,7 @@ abstract class $AppSettingPropsCopyWith<$Res> {
       {String? locale,
       @JsonKey(fromJson: dashboardWidgetsSafeFormJson)
       List<DashboardWidget> dashboardWidgets,
+      bool dashboardDefaultV2Migrated,
       bool onlyStatisticsProxy,
       bool autoLaunch,
       bool silentLaunch,
@@ -134,6 +136,7 @@ class _$AppSettingPropsCopyWithImpl<$Res, $Val extends AppSettingProps>
   $Res call({
     Object? locale = freezed,
     Object? dashboardWidgets = null,
+    Object? dashboardDefaultV2Migrated = null,
     Object? onlyStatisticsProxy = null,
     Object? autoLaunch = null,
     Object? silentLaunch = null,
@@ -173,6 +176,10 @@ class _$AppSettingPropsCopyWithImpl<$Res, $Val extends AppSettingProps>
           ? _value.dashboardWidgets
           : dashboardWidgets // ignore: cast_nullable_to_non_nullable
               as List<DashboardWidget>,
+      dashboardDefaultV2Migrated: null == dashboardDefaultV2Migrated
+          ? _value.dashboardDefaultV2Migrated
+          : dashboardDefaultV2Migrated // ignore: cast_nullable_to_non_nullable
+              as bool,
       onlyStatisticsProxy: null == onlyStatisticsProxy
           ? _value.onlyStatisticsProxy
           : onlyStatisticsProxy // ignore: cast_nullable_to_non_nullable
@@ -305,6 +312,7 @@ abstract class _$$AppSettingPropsImplCopyWith<$Res>
       {String? locale,
       @JsonKey(fromJson: dashboardWidgetsSafeFormJson)
       List<DashboardWidget> dashboardWidgets,
+      bool dashboardDefaultV2Migrated,
       bool onlyStatisticsProxy,
       bool autoLaunch,
       bool silentLaunch,
@@ -355,6 +363,7 @@ class __$$AppSettingPropsImplCopyWithImpl<$Res>
   $Res call({
     Object? locale = freezed,
     Object? dashboardWidgets = null,
+    Object? dashboardDefaultV2Migrated = null,
     Object? onlyStatisticsProxy = null,
     Object? autoLaunch = null,
     Object? silentLaunch = null,
@@ -394,6 +403,10 @@ class __$$AppSettingPropsImplCopyWithImpl<$Res>
           ? _value._dashboardWidgets
           : dashboardWidgets // ignore: cast_nullable_to_non_nullable
               as List<DashboardWidget>,
+      dashboardDefaultV2Migrated: null == dashboardDefaultV2Migrated
+          ? _value.dashboardDefaultV2Migrated
+          : dashboardDefaultV2Migrated // ignore: cast_nullable_to_non_nullable
+              as bool,
       onlyStatisticsProxy: null == onlyStatisticsProxy
           ? _value.onlyStatisticsProxy
           : onlyStatisticsProxy // ignore: cast_nullable_to_non_nullable
@@ -521,6 +534,7 @@ class _$AppSettingPropsImpl implements _AppSettingProps {
       {this.locale,
       @JsonKey(fromJson: dashboardWidgetsSafeFormJson)
       final List<DashboardWidget> dashboardWidgets = defaultDashboardWidgets,
+      this.dashboardDefaultV2Migrated = true,
       this.onlyStatisticsProxy = false,
       this.autoLaunch = false,
       this.silentLaunch = false,
@@ -573,6 +587,9 @@ class _$AppSettingPropsImpl implements _AppSettingProps {
     return EqualUnmodifiableListView(_dashboardWidgets);
   }
 
+  @override
+  @JsonKey()
+  final bool dashboardDefaultV2Migrated;
   @override
   @JsonKey()
   final bool onlyStatisticsProxy;
@@ -676,7 +693,7 @@ class _$AppSettingPropsImpl implements _AppSettingProps {
 
   @override
   String toString() {
-    return 'AppSettingProps(locale: $locale, dashboardWidgets: $dashboardWidgets, onlyStatisticsProxy: $onlyStatisticsProxy, autoLaunch: $autoLaunch, silentLaunch: $silentLaunch, autoRun: $autoRun, openLogs: $openLogs, closeConnections: $closeConnections, testUrl: $testUrl, isAnimateToPage: $isAnimateToPage, autoCheckUpdate: $autoCheckUpdate, showLabel: $showLabel, disclaimerAccepted: $disclaimerAccepted, minimizeOnExit: $minimizeOnExit, hidden: $hidden, developerMode: $developerMode, crashlytics: $crashlytics, zashboardInApp: $zashboardInApp, overrideProviderSettings: $overrideProviderSettings, overrideNetworkSettings: $overrideNetworkSettings, recoveryStrategy: $recoveryStrategy, connectionListMode: $connectionListMode, connectionViewMode: $connectionViewMode, connectionSort: $connectionSort, connectionSortDirection: $connectionSortDirection, connectionShowIcon: $connectionShowIcon, connectionUseApplicationName: $connectionUseApplicationName, connectionRefreshInterval: $connectionRefreshInterval, connectionTableColumns: $connectionTableColumns, connectionTableColumnWidths: $connectionTableColumnWidths, newDashboard: $newDashboard)';
+    return 'AppSettingProps(locale: $locale, dashboardWidgets: $dashboardWidgets, dashboardDefaultV2Migrated: $dashboardDefaultV2Migrated, onlyStatisticsProxy: $onlyStatisticsProxy, autoLaunch: $autoLaunch, silentLaunch: $silentLaunch, autoRun: $autoRun, openLogs: $openLogs, closeConnections: $closeConnections, testUrl: $testUrl, isAnimateToPage: $isAnimateToPage, autoCheckUpdate: $autoCheckUpdate, showLabel: $showLabel, disclaimerAccepted: $disclaimerAccepted, minimizeOnExit: $minimizeOnExit, hidden: $hidden, developerMode: $developerMode, crashlytics: $crashlytics, zashboardInApp: $zashboardInApp, overrideProviderSettings: $overrideProviderSettings, overrideNetworkSettings: $overrideNetworkSettings, recoveryStrategy: $recoveryStrategy, connectionListMode: $connectionListMode, connectionViewMode: $connectionViewMode, connectionSort: $connectionSort, connectionSortDirection: $connectionSortDirection, connectionShowIcon: $connectionShowIcon, connectionUseApplicationName: $connectionUseApplicationName, connectionRefreshInterval: $connectionRefreshInterval, connectionTableColumns: $connectionTableColumns, connectionTableColumnWidths: $connectionTableColumnWidths, newDashboard: $newDashboard)';
   }
 
   @override
@@ -687,6 +704,10 @@ class _$AppSettingPropsImpl implements _AppSettingProps {
             (identical(other.locale, locale) || other.locale == locale) &&
             const DeepCollectionEquality()
                 .equals(other._dashboardWidgets, _dashboardWidgets) &&
+            (identical(other.dashboardDefaultV2Migrated,
+                    dashboardDefaultV2Migrated) ||
+                other.dashboardDefaultV2Migrated ==
+                    dashboardDefaultV2Migrated) &&
             (identical(other.onlyStatisticsProxy, onlyStatisticsProxy) ||
                 other.onlyStatisticsProxy == onlyStatisticsProxy) &&
             (identical(other.autoLaunch, autoLaunch) ||
@@ -753,6 +774,7 @@ class _$AppSettingPropsImpl implements _AppSettingProps {
         runtimeType,
         locale,
         const DeepCollectionEquality().hash(_dashboardWidgets),
+        dashboardDefaultV2Migrated,
         onlyStatisticsProxy,
         autoLaunch,
         silentLaunch,
@@ -806,6 +828,7 @@ abstract class _AppSettingProps implements AppSettingProps {
       {final String? locale,
       @JsonKey(fromJson: dashboardWidgetsSafeFormJson)
       final List<DashboardWidget> dashboardWidgets,
+      final bool dashboardDefaultV2Migrated,
       final bool onlyStatisticsProxy,
       final bool autoLaunch,
       final bool silentLaunch,
@@ -848,6 +871,8 @@ abstract class _AppSettingProps implements AppSettingProps {
   @override
   @JsonKey(fromJson: dashboardWidgetsSafeFormJson)
   List<DashboardWidget> get dashboardWidgets;
+  @override
+  bool get dashboardDefaultV2Migrated;
   @override
   bool get onlyStatisticsProxy;
   @override

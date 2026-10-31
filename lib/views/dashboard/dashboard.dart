@@ -41,6 +41,7 @@ class _DashboardViewState extends ConsumerState<DashboardView> with PageMixin {
   @override
   void dispose() {
     _isEditNotifier.dispose();
+    _addedWidgetsNotifier.dispose();
     super.dispose();
   }
 
@@ -142,6 +143,7 @@ class _DashboardViewState extends ConsumerState<DashboardView> with PageMixin {
     DashboardWidget item, {
     required bool globalModeEnabled,
     required bool hasAnnounceData,
+    required bool hasMetainfoWidget,
     required bool hasServiceInfoData,
     required bool hasServerInfoData,
   }) {
@@ -156,7 +158,8 @@ class _DashboardViewState extends ConsumerState<DashboardView> with PageMixin {
       }
     }
     
-    if (item == DashboardWidget.announce && !hasAnnounceData) {
+    if (item == DashboardWidget.announce &&
+        (!hasAnnounceData || hasMetainfoWidget)) {
       return false;
     }
     if (item == DashboardWidget.serviceInfo && !hasServiceInfoData) {
@@ -179,10 +182,14 @@ class _DashboardViewState extends ConsumerState<DashboardView> with PageMixin {
     final columns = max(4 * ((dashboardState.viewWidth / 320).ceil()), 8);
     final spacing = 16.ap;
 
+    final hasMetainfoWidget = dashboardState.dashboardWidgets.contains(
+      DashboardWidget.metainfo,
+    );
     bool isAllowed(DashboardWidget item) => _isAllowedWidget(
       item,
       globalModeEnabled: globalModeEnabled,
       hasAnnounceData: hasAnnounce,
+      hasMetainfoWidget: hasMetainfoWidget,
       hasServiceInfoData: hasServiceInfo,
       hasServerInfoData: hasServerInfo,
     );

@@ -352,6 +352,7 @@ enum DashboardWidget {
       crossAxisCellCount: 4,
       child: TrafficUsage(),
     ),
+    platforms: [],
   ),
   announce(
     GridItem(
@@ -454,10 +455,15 @@ extension DashboardWidgetParser on DashboardWidget {
 
     for (final name in widgetNames) {
       try {
-        final widget = DashboardWidget.values.firstWhere(
+        final parsed = DashboardWidget.values.firstWhere(
           (e) => e.name.toLowerCase() == name,
         );
-        result.add(widget);
+        final resolved = parsed == DashboardWidget.trafficUsage
+            ? DashboardWidget.networkSpeed
+            : parsed;
+        if (!result.contains(resolved)) {
+          result.add(resolved);
+        }
       } catch (e) {
         print('no data widget "$name"');
       }

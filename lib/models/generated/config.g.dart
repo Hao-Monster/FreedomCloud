@@ -13,6 +13,8 @@ _$AppSettingPropsImpl _$$AppSettingPropsImplFromJson(
       dashboardWidgets: json['dashboardWidgets'] == null
           ? defaultDashboardWidgets
           : dashboardWidgetsSafeFormJson(json['dashboardWidgets'] as List?),
+      dashboardDefaultV2Migrated:
+          json['dashboardDefaultV2Migrated'] as bool? ?? true,
       onlyStatisticsProxy: json['onlyStatisticsProxy'] as bool? ?? false,
       autoLaunch: json['autoLaunch'] as bool? ?? false,
       silentLaunch: json['silentLaunch'] as bool? ?? false,
@@ -76,6 +78,7 @@ Map<String, dynamic> _$$AppSettingPropsImplToJson(
       'dashboardWidgets': instance.dashboardWidgets
           .map((e) => _$DashboardWidgetEnumMap[e]!)
           .toList(),
+      'dashboardDefaultV2Migrated': instance.dashboardDefaultV2Migrated,
       'onlyStatisticsProxy': instance.onlyStatisticsProxy,
       'autoLaunch': instance.autoLaunch,
       'silentLaunch': instance.silentLaunch,

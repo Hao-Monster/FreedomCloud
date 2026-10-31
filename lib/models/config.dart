@@ -56,19 +56,48 @@ const defaultConnectionTableColumns = [
 ];
 
 const List<DashboardWidget> defaultDashboardWidgets = [
-  DashboardWidget.announce,
   DashboardWidget.metainfo,
+  DashboardWidget.networkSpeed,
   DashboardWidget.outboundModeV2,
 ];
+
+List<DashboardWidget> normalizeDashboardWidgets(
+  Iterable<DashboardWidget> items, {
+  bool dropRedundantAnnounce = false,
+}) {
+  final hasMetainfo = items.contains(DashboardWidget.metainfo);
+  final normalized = <DashboardWidget>[];
+  for (final raw in items) {
+    if (dropRedundantAnnounce &&
+        hasMetainfo &&
+        raw == DashboardWidget.announce) {
+      continue;
+    }
+    final resolved = raw == DashboardWidget.trafficUsage
+        ? DashboardWidget.networkSpeed
+        : raw;
+    if (!normalized.contains(resolved)) {
+      normalized.add(resolved);
+    }
+  }
+  return normalized;
+}
 
 List<DashboardWidget> dashboardWidgetsSafeFormJson(
   List<dynamic>? dashboardWidgets,
 ) {
+  if (dashboardWidgets == null) {
+    return defaultDashboardWidgets;
+  }
   try {
-    return dashboardWidgets
-            ?.map((e) => $enumDecode(_$DashboardWidgetEnumMap, e))
-            .toList() ??
-        defaultDashboardWidgets;
+    final decoded = <DashboardWidget>[];
+    for (final item in dashboardWidgets) {
+      final parsed = $enumDecodeNullable(_$DashboardWidgetEnumMap, item);
+      if (parsed != null) {
+        decoded.add(parsed);
+      }
+    }
+    return normalizeDashboardWidgets(decoded);
   } catch (_) {
     return defaultDashboardWidgets;
   }
@@ -81,6 +110,7 @@ class AppSettingProps with _$AppSettingProps {
     @Default(defaultDashboardWidgets)
     @JsonKey(fromJson: dashboardWidgetsSafeFormJson)
     List<DashboardWidget> dashboardWidgets,
+    @Default(true) bool dashboardDefaultV2Migrated,
     @Default(false) bool onlyStatisticsProxy,
     @Default(false) bool autoLaunch,
     @Default(false) bool silentLaunch,
@@ -338,6 +368,45 @@ class Config with _$Config {
         normalizedJson["proxiesStyle"] = nextProxiesStyle;
       } else if (proxiesStyle != null) {
         normalizedJson.remove("proxiesStyle");
+      }
+    } catch (_) {}
+
+    try {
+      // Migration: promote unified networkSpeed + trafficUsage card once for
+      // legacy unmigrated configs, deduplicating legacy trafficUsage/announce
+      // while preserving any subsequent user hide preference.
+      final appSetting = normalizedJson["appSetting"];
+      if (appSetting is Map) {
+        final nextAppSetting = Map<String, Object?>.from(appSetting);
+        if (nextAppSetting["dashboardDefaultV2Migrated"] != true) {
+          final rawWidgets = nextAppSetting["dashboardWidgets"];
+          if (rawWidgets is List) {
+            final stringWidgets = <String>[];
+            final hasMetainfo = rawWidgets.any((e) => e == "metainfo");
+            for (final item in rawWidgets) {
+              if (item is! String) continue;
+              if (hasMetainfo && item == "announce") continue;
+              final mapped =
+                  item == "trafficUsage" ? "networkSpeed" : item;
+              if (!stringWidgets.contains(mapped)) {
+                stringWidgets.add(mapped);
+              }
+            }
+            if (!stringWidgets.contains("networkSpeed")) {
+              final metainfoIdx = stringWidgets.indexOf("metainfo");
+              if (metainfoIdx >= 0) {
+                stringWidgets.insert(metainfoIdx + 1, "networkSpeed");
+              } else {
+                stringWidgets.insert(0, "networkSpeed");
+              }
+            }
+            nextAppSetting["dashboardWidgets"] = stringWidgets;
+          }
+          nextAppSetting["dashboardDefaultV2Migrated"] = true;
+        }
+        normalizedJson["appSetting"] = nextAppSetting;
+      } else if (appSetting != null) {
+        normalizedJson.remove("appSetting");
       }
     } catch (_) {}
 

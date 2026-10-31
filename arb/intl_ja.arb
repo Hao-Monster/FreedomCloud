@@ -558,7 +558,11 @@
   "nodeOverviewIndependentTest": "独立した遅延テスト",
   "nodeOverviewFileSource": "設定ファイル · {provider}",
   "@nodeOverviewFileSource": {
-    "placeholders": { "provider": { "type": "String" } }
+    "placeholders": {
+      "provider": {
+        "type": "String"
+      }
+    }
   },
   "nodeOverviewTestCurrent": "現在のプロファイルをテスト",
   "nodeOverviewTestAll": "全ノードの遅延を測定",
@@ -793,5 +797,37 @@
         "type": "String"
       }
     }
-  }
+  },
+  "trafficUnlimited": "無制限トラフィック",
+  "subscriptionEternal": "無期限",
+  "expiresOn": "有効期限",
+  "dashboardClickUpdateSubscription": "クリックして購読を更新",
+  "dashboardAnnouncementBadge": "お知らせ",
+  "dashboardNotSyncedYet": "同期時刻：未同期",
+  "dashboardCurrentNodeLabel": "現在のノード：{node}",
+  "@dashboardCurrentNodeLabel": {
+    "placeholders": {
+      "node": {
+        "type": "String"
+      }
+    }
+  },
+  "dashboardTotalNodesCount": "計 {count} ノード",
+  "@dashboardTotalNodesCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "dashboardRuleOverrideCount": "ルール上書き {count}",
+  "@dashboardRuleOverrideCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "dashboardHwidNotSupported": "このサーバーは HWID バインドに対応していません",
+  "dashboardContactSupport": "サポート"
 }

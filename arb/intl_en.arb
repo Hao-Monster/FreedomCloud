@@ -656,7 +656,13 @@
   "purchasePlanResetYearStart": "On January 1 each year",
   "purchasePlanResetYearlyExpiry": "Yearly on the expiry month and day",
   "purchasePlanResetUnknown": "Unknown rule ({code})",
-  "@purchasePlanResetUnknown": {"placeholders": {"code": {"type": "int"}}},
+  "@purchasePlanResetUnknown": {
+    "placeholders": {
+      "code": {
+        "type": "int"
+      }
+    }
+  },
   "purchasePlanSalesCapacity": "Remaining sales slots",
   "purchasePlanResetPrice": "Traffic reset · listed price",
   "purchasePlanDetails": "Plan details",
@@ -752,7 +758,11 @@
   "nodeOverviewIndependentTest": "Independent delay test",
   "nodeOverviewFileSource": "Profile file · {provider}",
   "@nodeOverviewFileSource": {
-    "placeholders": { "provider": { "type": "String" } }
+    "placeholders": {
+      "provider": {
+        "type": "String"
+      }
+    }
   },
   "nodeOverviewTestCurrent": "Test current profile",
   "nodeOverviewTestAll": "Test all node delays",
@@ -986,5 +996,34 @@
         "type": "String"
       }
     }
-  }
+  },
+  "dashboardClickUpdateSubscription": "Click to update subscription",
+  "dashboardAnnouncementBadge": "Notice",
+  "dashboardNotSyncedYet": "Synced: Not yet",
+  "dashboardCurrentNodeLabel": "Current node: {node}",
+  "@dashboardCurrentNodeLabel": {
+    "placeholders": {
+      "node": {
+        "type": "String"
+      }
+    }
+  },
+  "dashboardTotalNodesCount": "{count} nodes",
+  "@dashboardTotalNodesCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "dashboardRuleOverrideCount": "Overrides {count}",
+  "@dashboardRuleOverrideCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "dashboardHwidNotSupported": "HWID binding is not enabled on this server",
+  "dashboardContactSupport": "Support"
 }

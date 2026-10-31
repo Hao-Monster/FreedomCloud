@@ -693,7 +693,11 @@
   "nodeOverviewIndependentTest": "独立延迟测试",
   "nodeOverviewFileSource": "配置文件 · {provider}",
   "@nodeOverviewFileSource": {
-    "placeholders": { "provider": { "type": "String" } }
+    "placeholders": {
+      "provider": {
+        "type": "String"
+      }
+    }
   },
   "nodeOverviewTestCurrent": "测试当前配置",
   "nodeOverviewTestAll": "测试全部节点延迟",
@@ -927,5 +931,37 @@
         "type": "String"
       }
     }
-  }
+  },
+  "trafficUnlimited": "不限流量",
+  "subscriptionEternal": "长期有效",
+  "expiresOn": "到期于",
+  "dashboardClickUpdateSubscription": "点击更新订阅",
+  "dashboardAnnouncementBadge": "公告",
+  "dashboardNotSyncedYet": "同步时间：尚未同步",
+  "dashboardCurrentNodeLabel": "当前节点：{node}",
+  "@dashboardCurrentNodeLabel": {
+    "placeholders": {
+      "node": {
+        "type": "String"
+      }
+    }
+  },
+  "dashboardTotalNodesCount": "共 {count} 个节点",
+  "@dashboardTotalNodesCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "dashboardRuleOverrideCount": "规则覆写 {count}",
+  "@dashboardRuleOverrideCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "dashboardHwidNotSupported": "当前服务端未启用硬件标识 (HWID) 绑定",
+  "dashboardContactSupport": "联系支持"
 }

@@ -1,6 +1,22 @@
 # 开发、集成与预览台账
 
-更新日期：2026-10-30。当前阶段是快速开发、快速迭代和部分功能预览。本文记录来源与验收边界；每次继续开发仍需核实实际 Git/PR/CI 状态，不能把历史报告视为当前通过证明。
+更新日期：2026-11-01。当前阶段是快速开发、快速迭代和部分功能预览。本文记录来源与验收边界；每次继续开发仍需核实实际 Git/PR/CI 状态，不能把历史报告视为当前通过证明。
+
+## 仪表盘（Dashboard）网络速度与流量统计合卡默认展示及订阅信息全量卡片重构（2026-11-01）
+
+- 来源：基于 `development@99128760cc1bdc10092281a8701ee59f2bf45bd3`（与 `freedomcloud/development` 同步），按两项仪表盘 UI/UX 改造需求完成设计、范围审查与端到端实现：
+  1. **需求 1 —— `网络速度` + `流量统计` 合一卡片、默认直接展示并保留编辑隐藏/恢复能力（[`NetworkSpeed`](file:///E:/CodeWorkstation/FlClashX/lib/views/dashboard/widgets/network_speed.dart) / [`DashboardWidget`](file:///E:/CodeWorkstation/FlClashX/lib/enum/enum.dart#L331-L473) / [`Config.compatibleFromJson`](file:///E:/CodeWorkstation/FlClashX/lib/models/config.dart#L317-L429)）**：
+     - 重构 [`NetworkSpeed`](file:///E:/CodeWorkstation/FlClashX/lib/views/dashboard/widgets/network_speed.dart)（`ValueKey('dashboard-network-traffic-card')`）为左右分栏融合卡片：左侧 `58%` 展示实时 `网络速度` 标题、等宽数字 `up↑ down↓` 实时速率与渐变面积 [`LineChart`](file:///E:/CodeWorkstation/FlClashX/lib/widgets/line_chart.dart)，右侧 `42%` 展示 `流量统计` 标题、双色高对比 [`DonutChart`](file:///E:/CodeWorkstation/FlClashX/lib/widgets/donut_chart.dart)、`上传`/`下载` 图例胶囊及累计上下行数值；窄视口（`< 340px`）或大字号（`> 1.45x`）自动切换上下堆叠布局防溢出；
+     - 将 `defaultDashboardWidgets` 更新为 `[metainfo, networkSpeed, outboundModeV2]`，在 [`AppSettingProps`](file:///E:/CodeWorkstation/FlClashX/lib/models/config.dart#L97-L143) 新增 `dashboardDefaultV2Migrated` 并在 [`Config.compatibleFromJson`](file:///E:/CodeWorkstation/FlClashX/lib/models/config.dart#L317-L429) 对未迁移历史配置一次性提升展示 `networkSpeed`、合并旧 `trafficUsage` 及冗余 `announce`，同时完整保留用户后续在仪表盘编辑模式（`Icons.edit` → `SuperGrid` 关闭隐藏 / `Icons.add_circle` 重新添加 → `Icons.save`）中的隐藏偏好；将旧独立 `DashboardWidget.trafficUsage` 的 `platforms` 置空并在 `dashboardWidgetsSafeFormJson` 与 `DashboardWidgetParser.parseLayout` 统一归一化去重。
+  2. **需求 2 —— 订阅卡片（[`MetainfoWidget`](file:///E:/CodeWorkstation/FlClashX/lib/views/dashboard/widgets/metainfo_widget.dart)）第一行置顶公告、文字按钮 `"点击更新订阅"` 替换双圆弧箭头及全量信息展示**：
+     - **第一行置顶公告（`ValueKey('metainfo-announce-row')`）**：当 `providerHeaders['announce']` 非空时（支持 `base64:` / 标准及 URL-safe Base64 UTF-8 解码与控制/双向字符清洗），严格渲染在卡片最顶行，含 `"公告"` 语义徽标、Twemoji 表情混排及可点击 `https?://` 链接（`TapGestureRecognizer` 随组件销毁与文本变更安全释放）；当 `metainfo` 启用时，[`DashboardView._isAllowedWidget`](file:///E:/CodeWorkstation/FlClashX/lib/views/dashboard/dashboard.dart#L142-L173) 自动抑制独立 `AnnounceWidget` 重复渲染；
+     - **文字按钮 `"点击更新订阅"`（`ValueKey('metainfo-update-subscription-button')`）**：彻底移除旧 `Icons.sync` 图标按钮，对 URL 订阅展示 M3 描边填充文字按钮 `"点击更新订阅"`（同步期间切换微进度环 + `"更新中"` 并通过 `_syncingProfileIds` + `globalState.safeRun(silence: false, ...)` + [`rollbackFailedProfileUpdate`](file:///E:/CodeWorkstation/FlClashX/lib/models/profile.dart#L385-L390) 防重入及失败安全回滚；本地文件配置自动省略）；
+     - **全量可展示信息与多语言补齐**：展示配置标题、服务商 Logo（`flclashx-servicelogo`）与服务商名称（`flclashx-servicename`）、更新策略（`自动更新 Nh/Nm` / `手动更新` / `本地配置`）、生效规则覆写数（`overrideData.runningRule`）、客服入口（`support-url`）、设备超限与 HWID 告警（`x-hwid-max-devices-reached` / `x-hwid-not-supported`）、有限套餐剩余流量/百分比/进度条/已用与上下行明细、不限流量套餐（`"不限流量"` + 累计已用及 `↑ / ↓` 明细）、到期日期与全周期倒计时（或 `"长期有效"`）、最近同步时间（或 `"同步时间：尚未同步"`，首次未同步 URL 订阅亦完整展示卡片不再空白折叠）、当前生效节点 + 实时延迟徽标以及去重叶子节点总数；同时补齐 `arb/intl_zh_CN.arb` 与 `arb/intl_ja.arb` 缺失的 `trafficUnlimited`/`subscriptionEternal`/`expiresOn` 及新增仪表盘词条并重新生成 `lib/l10n/*`。
+- 验证记录（本机 `Flutter 3.47.4` / `Dart 3.13.3`，CI 配置 `3.41.7`）：
+  - 前置有效 Red（[`test/views/dashboard_widgets_test.dart`](file:///E:/CodeWorkstation/FlClashX/test/views/dashboard_widgets_test.dart)）：退出码 `1`（`1 PASS / 3 FAIL`）；
+  - 仪表盘专项、合成渲染与节点总览回归测试（`dashboard_widgets_test.dart`、`dashboard_render_test.dart`、`node_overview_test.dart`）：**PASS（119 PASS / 0 FAIL，含 `480x920` 深色 `admin` 不限流+置顶公告与 `520x960` 浅色配额+设备告警合成 PNG 像素级视觉复核 PASS，以及 `320px @ 2.0x` `zh_CN`/`ru` 防溢出测试 PASS）**；
+  - 静态检查（`dart analyze lib/views/dashboard/widgets/network_speed.dart lib/views/dashboard/widgets/metainfo_widget.dart lib/l10n test/views/dashboard_widgets_test.dart test/views/dashboard_render_test.dart`）：**PASS（`No issues found!`）**；改动文件 `git diff --check` 无空白错误；`pubspec.lock` 未改动。
+- 交付状态：**已实现 / 已本地验证并提交至本地 `development`**；未推送远端（按规范待授权后推送） / 未创建或合并 PR / 远端 CI **NOT RUN** / 未重打静态预览包 / 未启动候选窗口（未触碰本机运行中代理、TUN 及后台服务） / 后端部署与业务验收 **NOT RUN**。下一步：如需推送 `freedomcloud/development`、打新预览包或晋级 `main`，按授权执行。
 
 ## 批次晋级 PR #62 合并主线与 Windows 跨配置快捷工作流/窄窗选择器预览交付（2026-10-30）
 

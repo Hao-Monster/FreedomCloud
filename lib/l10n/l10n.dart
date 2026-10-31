@@ -6608,6 +6608,86 @@ class AppLocalizations {
       args: [date],
     );
   }
+
+  /// `Click to update subscription`
+  String get dashboardClickUpdateSubscription {
+    return Intl.message(
+      'Click to update subscription',
+      name: 'dashboardClickUpdateSubscription',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Notice`
+  String get dashboardAnnouncementBadge {
+    return Intl.message(
+      'Notice',
+      name: 'dashboardAnnouncementBadge',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Synced: Not yet`
+  String get dashboardNotSyncedYet {
+    return Intl.message(
+      'Synced: Not yet',
+      name: 'dashboardNotSyncedYet',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Current node: {node}`
+  String dashboardCurrentNodeLabel(String node) {
+    return Intl.message(
+      'Current node: $node',
+      name: 'dashboardCurrentNodeLabel',
+      desc: '',
+      args: [node],
+    );
+  }
+
+  /// `{count} nodes`
+  String dashboardTotalNodesCount(int count) {
+    return Intl.message(
+      '$count nodes',
+      name: 'dashboardTotalNodesCount',
+      desc: '',
+      args: [count],
+    );
+  }
+
+  /// `Overrides {count}`
+  String dashboardRuleOverrideCount(int count) {
+    return Intl.message(
+      'Overrides $count',
+      name: 'dashboardRuleOverrideCount',
+      desc: '',
+      args: [count],
+    );
+  }
+
+  /// `HWID binding is not enabled on this server`
+  String get dashboardHwidNotSupported {
+    return Intl.message(
+      'HWID binding is not enabled on this server',
+      name: 'dashboardHwidNotSupported',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Support`
+  String get dashboardContactSupport {
+    return Intl.message(
+      'Support',
+      name: 'dashboardContactSupport',
+      desc: '',
+      args: [],
+    );
+  }
 }
 
 class AppLocalizationDelegate extends LocalizationsDelegate<AppLocalizations> {

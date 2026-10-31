@@ -612,7 +612,11 @@
   "nodeOverviewIndependentTest": "Независимая проверка задержки",
   "nodeOverviewFileSource": "Файл профиля · {provider}",
   "@nodeOverviewFileSource": {
-    "placeholders": { "provider": { "type": "String" } }
+    "placeholders": {
+      "provider": {
+        "type": "String"
+      }
+    }
   },
   "nodeOverviewTestCurrent": "Проверить текущий профиль",
   "nodeOverviewTestAll": "Проверить задержку всех узлов",
@@ -847,5 +851,34 @@
         "type": "String"
       }
     }
-  }
+  },
+  "dashboardClickUpdateSubscription": "Нажмите для обновления",
+  "dashboardAnnouncementBadge": "Объявление",
+  "dashboardNotSyncedYet": "Синхронизация: нет",
+  "dashboardCurrentNodeLabel": "Узел: {node}",
+  "@dashboardCurrentNodeLabel": {
+    "placeholders": {
+      "node": {
+        "type": "String"
+      }
+    }
+  },
+  "dashboardTotalNodesCount": "Узлов: {count}",
+  "@dashboardTotalNodesCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "dashboardRuleOverrideCount": "Правил: {count}",
+  "@dashboardRuleOverrideCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "dashboardHwidNotSupported": "Привязка HWID не поддерживается сервером",
+  "dashboardContactSupport": "Поддержка"
 }
