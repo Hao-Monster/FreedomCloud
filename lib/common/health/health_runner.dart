@@ -79,7 +79,7 @@ class HealthRunner {
     return cfg.allGroups.isNotEmpty ? cfg.allGroups.first : null;
   }
 
-  static String? _resolveSelectedLeaf(
+  static ({String? leaf, String? failureReason}) _resolveSelectedLeaf(
     Group entryGroup,
     List<Group> allGroups,
     Map<String, String> selectedMap, {
@@ -91,21 +91,30 @@ class HealthRunner {
       final picked = (preferRuntimeNow && current.realNow.isNotEmpty)
           ? current.realNow
           : current.getCurrentSelectedName(selectedMap[current.name] ?? '');
-      if (picked.isEmpty || picked == current.name) {
-        return null;
+      if (picked == current.name) {
+        return (leaf: null, failureReason: 'outboundGroupLoop');
+      }
+      if (picked.isEmpty) {
+        if (current.all.isEmpty) {
+          return (leaf: null, failureReason: 'outboundGroupMissing');
+        }
+        // LoadBalance, Relay, and unprobed lazy URLTest/Fallback groups
+        // legitimately report an empty `now` in Mihomo; return the group name
+        // so D3 delay-tests the group itself through Core.
+        return (leaf: current.name, failureReason: null);
       }
       if (picked == 'DIRECT' ||
           picked == 'REJECT' ||
           picked == 'REJECT-DROP') {
-        return picked;
+        return (leaf: picked, failureReason: null);
       }
       final nextGroup = allGroups.getGroup(picked);
       if (nextGroup == null) {
-        return picked;
+        return (leaf: picked, failureReason: null);
       }
       current = nextGroup;
     }
-    return null;
+    return (leaf: null, failureReason: 'outboundGroupLoop');
   }
 
   static String _mapTunFailureReason(String? code) => switch (code) {
@@ -481,7 +490,16 @@ class HealthRunner {
             probeError = 'statusUnavailable';
           }
           final ms = watch.elapsedMilliseconds;
-          if (!cfg.tunDesiredEnabled && tun?.observed != TunObservedState.on) {
+          if (!cfg.tunDesiredEnabled) {
+            if (tun?.observed == TunObservedState.on) {
+              return HealthCheckResult(
+                id: HealthCheckId.tunTakeover,
+                status: HealthStatus.warning,
+                elapsedMs: ms,
+                reasonCode: 'tunCloseFailed',
+                action: HealthAction.openTunSettings,
+              );
+            }
             return HealthCheckResult(
               id: HealthCheckId.tunTakeover,
               status: HealthStatus.skipped,
@@ -698,13 +716,15 @@ class HealthRunner {
                   reasonCode: 'takeoverBoth',
                 );
         } else if (tunOk) {
-          c4 = sysFailed
-              ? const HealthCheckResult(
+          c4 = (sysFailed || c2.status == HealthStatus.warning)
+              ? HealthCheckResult(
                   id: HealthCheckId.trafficTakeover,
                   status: HealthStatus.warning,
                   elapsedMs: 0,
                   reasonCode: 'partialTakeover',
-                  action: HealthAction.openNetworkSettings,
+                  action: sysFailed
+                      ? HealthAction.openNetworkSettings
+                      : HealthAction.openTunSettings,
                 )
               : const HealthCheckResult(
                   id: HealthCheckId.trafficTakeover,
@@ -713,13 +733,15 @@ class HealthRunner {
                   reasonCode: 'takeoverTun',
                 );
         } else if (sysOk) {
-          c4 = tunFailed
-              ? const HealthCheckResult(
+          c4 = (tunFailed || c3.status == HealthStatus.warning)
+              ? HealthCheckResult(
                   id: HealthCheckId.trafficTakeover,
                   status: HealthStatus.warning,
                   elapsedMs: 0,
                   reasonCode: 'partialTakeover',
-                  action: HealthAction.openTunSettings,
+                  action: tunFailed
+                      ? HealthAction.openTunSettings
+                      : HealthAction.openNetworkSettings,
                 )
               : const HealthCheckResult(
                   id: HealthCheckId.trafficTakeover,
@@ -951,18 +973,19 @@ class HealthRunner {
             action: HealthAction.openProfiles,
           );
         }
-        final leaf = _resolveSelectedLeaf(
+        final leafResult = _resolveSelectedLeaf(
           group,
           cfg.allGroups,
           cfg.selectedMap,
           preferRuntimeNow: cfg.proxyStarted && a3.status == HealthStatus.passed,
         );
+        final leaf = leafResult.leaf;
         if (leaf == null) {
-          return const HealthCheckResult(
+          return HealthCheckResult(
             id: HealthCheckId.outboundConnectivity,
             status: HealthStatus.failed,
             elapsedMs: 0,
-            reasonCode: 'outboundGroupLoop',
+            reasonCode: leafResult.failureReason ?? 'outboundGroupLoop',
             action: HealthAction.openProfiles,
           );
         }
@@ -1149,14 +1172,25 @@ class HealthRunner {
             c2.status == HealthStatus.passed || c2.status == HealthStatus.warning;
         final directive = tunActive ? 'DIRECT' : verifiedSysProxyDirective;
         if (!tunActive && directive == null) {
-          d4 = HealthCheckResult(
-            id: HealthCheckId.endToEndConnectivity,
-            status: HealthStatus.skipped,
-            elapsedMs: 0,
-            reasonCode: cfg.pacEnabled
-                ? 'pacExternalUnverifiable'
-                : 'takeoverUnverifiedPlatform',
-          );
+          if (environment.platform == 'windows' &&
+              c3.status == HealthStatus.warning) {
+            d4 = const HealthCheckResult(
+              id: HealthCheckId.endToEndConnectivity,
+              status: HealthStatus.warning,
+              elapsedMs: 0,
+              reasonCode: 'trafficBypassedCore',
+              action: HealthAction.openNetworkSettings,
+            );
+          } else {
+            d4 = HealthCheckResult(
+              id: HealthCheckId.endToEndConnectivity,
+              status: HealthStatus.skipped,
+              elapsedMs: 0,
+              reasonCode: cfg.pacEnabled
+                  ? 'pacExternalUnverifiable'
+                  : 'takeoverUnverifiedPlatform',
+            );
+          }
         } else {
           final watch = Stopwatch()..start();
           try {
@@ -1277,6 +1311,7 @@ class HealthCheckController extends ChangeNotifier {
   HealthCheckController(this.runner);
 
   final HealthRunner runner;
+  final Set<Object> _activeViewLeases = <Object>{};
 
   HealthReport? _lastReport;
   Map<HealthCheckId, HealthCheckResult> _liveSnapshot = const {};
@@ -1284,12 +1319,28 @@ class HealthCheckController extends ChangeNotifier {
   HealthCancellationToken? _activeToken;
   Future<HealthReport?>? _inFlightFuture;
   bool _running = false;
+  bool _wasCancelledWithoutReport = false;
   bool _disposed = false;
 
   HealthReport? get lastReport => _lastReport;
   Map<HealthCheckId, HealthCheckResult> get liveSnapshot => _liveSnapshot;
   Map<HealthCheckId, HealthCheckResult> get previousById => _previousById;
   bool get isRunning => _running;
+  bool get wasCancelledWithoutReport =>
+      _wasCancelledWithoutReport && _lastReport == null && !_running;
+
+  Object attachView() {
+    final lease = Object();
+    _activeViewLeases.add(lease);
+    return lease;
+  }
+
+  Future<void> detachView(Object lease) async {
+    if (!_activeViewLeases.remove(lease)) return;
+    if (_activeViewLeases.isEmpty) {
+      await cancelActive();
+    }
+  }
 
   Future<HealthReport?> startOrAttach() async {
     if (_disposed) return _lastReport;
@@ -1323,6 +1374,7 @@ class HealthCheckController extends ChangeNotifier {
     final token = HealthCancellationToken();
     _activeToken = token;
     _running = true;
+    _wasCancelledWithoutReport = false;
     _liveSnapshot = {
       for (final id in HealthCheckId.values)
         id: HealthCheckResult(
@@ -1352,9 +1404,27 @@ class HealthCheckController extends ChangeNotifier {
       }
       return report;
     } catch (_) {
-      // Cancelled or interrupted: restore previous completed snapshot if any.
-      if (!_disposed && _previousById.isNotEmpty) {
-        _liveSnapshot = _previousById;
+      // Cancelled or interrupted: restore previous completed snapshot if any,
+      // or settle remaining running items to skipped/cancelled so UI never
+      // spins indefinitely when the first-ever check is cancelled.
+      if (!_disposed && identical(_activeToken, token)) {
+        if (_previousById.isNotEmpty) {
+          _liveSnapshot = _previousById;
+        } else {
+          _wasCancelledWithoutReport = true;
+          _liveSnapshot = {
+            for (final id in HealthCheckId.values)
+              id: (_liveSnapshot[id] != null &&
+                      _liveSnapshot[id]!.status != HealthStatus.running)
+                  ? _liveSnapshot[id]!
+                  : HealthCheckResult(
+                      id: id,
+                      status: HealthStatus.skipped,
+                      elapsedMs: 0,
+                      reasonCode: 'cancelled',
+                    ),
+          };
+        }
       }
       return null;
     } finally {
@@ -1376,6 +1446,7 @@ class HealthCheckController extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    _activeViewLeases.clear();
     final token = _activeToken;
     _activeToken = null;
     if (token != null) {

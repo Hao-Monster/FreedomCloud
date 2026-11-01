@@ -1160,5 +1160,7 @@
         "type": "String"
       }
     }
-  }
+  },
+  "healthVerdictCancelledTitle": "健康检查已取消",
+  "healthDetailCancelled": "已取消"
 }

@@ -1009,4 +1009,430 @@ void main() {
       expect(controller.lastReport?.verdict.code, 'healthy');
     });
   });
+
+  group('Code Review Round 2 regressions (CR2-HC01, CR2-HC03, CR2-HC04, CR2-HC05)', () {
+    test(
+        'CR2-HC01: LoadBalance, Relay, and unprobed URLTest groups (now == "") pass D3 via group delay test while empty groups still fail',
+        () async {
+      final base = _FakeProbeEnvironment._defaultHealthySnapshot();
+      final lbGroups = [
+        const Group(
+          type: GroupType.Selector,
+          name: 'Proxy',
+          now: 'LB-Pool',
+          all: [Proxy(name: 'LB-Pool', type: 'LoadBalance')],
+        ),
+        const Group(
+          type: GroupType.LoadBalance,
+          name: 'LB-Pool',
+          now: '',
+          all: [
+            Proxy(name: 'SG-01', type: 'Trojan'),
+            Proxy(name: 'SG-02', type: 'Trojan'),
+          ],
+        ),
+      ];
+      final lbEnv = _FakeProbeEnvironment(
+        configSnapshot: HealthConfigSnapshot(
+          currentProfileId: 'prof-1',
+          currentProfile: base.currentProfile!.copyWith(currentGroupName: 'Proxy'),
+          profileFileExists: true,
+          profileFileBytes: 2048,
+          mode: Mode.rule,
+          mixedPort: 7890,
+          testUrl: base.testUrl,
+          resolveGroupTestUrl: base.resolveGroupTestUrl,
+          systemProxyEnabled: false,
+          pacEnabled: false,
+          pacUrl: null,
+          tunDesiredEnabled: true,
+          tunFailureCode: null,
+          realTunEnable: true,
+          proxyStarted: true,
+          lastRuntimeProfileId: 'prof-1',
+          groupsSnapshotProfileId: 'prof-1',
+          allGroups: lbGroups,
+          visibleGroups: lbGroups,
+          selectedMap: const {'Proxy': 'LB-Pool'},
+        ),
+        delayResults: const {
+          'DIRECT': DelayTestResult(25),
+          'Proxy': DelayTestResult(72),
+        },
+      );
+      final lbReport = await HealthRunner(lbEnv).run();
+      final lbD3 = lbReport.checkById(HealthCheckId.outboundConnectivity)!;
+      expect(lbD3.status, HealthStatus.passed);
+      expect(lbD3.nodeName, 'LB-Pool');
+      expect(lbReport.verdict.code, 'healthy');
+
+      // Unprobed lazy URLTest group (now == "", all non-empty) as top-level group
+      final lazyUrlTestGroups = [
+        const Group(
+          type: GroupType.URLTest,
+          name: 'Auto',
+          now: '',
+          all: [Proxy(name: 'JP-01', type: 'Trojan')],
+        ),
+      ];
+      final lazyEnv = _FakeProbeEnvironment(
+        configSnapshot: HealthConfigSnapshot(
+          currentProfileId: 'prof-1',
+          currentProfile: base.currentProfile!.copyWith(currentGroupName: 'Auto'),
+          profileFileExists: true,
+          profileFileBytes: 2048,
+          mode: Mode.rule,
+          mixedPort: 7890,
+          testUrl: base.testUrl,
+          resolveGroupTestUrl: base.resolveGroupTestUrl,
+          systemProxyEnabled: false,
+          pacEnabled: false,
+          pacUrl: null,
+          tunDesiredEnabled: true,
+          tunFailureCode: null,
+          realTunEnable: true,
+          proxyStarted: true,
+          lastRuntimeProfileId: 'prof-1',
+          groupsSnapshotProfileId: 'prof-1',
+          allGroups: lazyUrlTestGroups,
+          visibleGroups: lazyUrlTestGroups,
+          selectedMap: const {},
+        ),
+        delayResults: const {
+          'DIRECT': DelayTestResult(25),
+          'Auto': DelayTestResult(64),
+        },
+      );
+      final lazyReport = await HealthRunner(lazyEnv).run();
+      expect(
+        lazyReport.checkById(HealthCheckId.outboundConnectivity)?.status,
+        HealthStatus.passed,
+      );
+
+      // Empty group (now == "", all: []) must still fail cleanly
+      final emptyGroups = [
+        const Group(
+          type: GroupType.LoadBalance,
+          name: 'EmptyLB',
+          now: '',
+          all: [],
+        ),
+      ];
+      final emptyEnv = _FakeProbeEnvironment(
+        configSnapshot: HealthConfigSnapshot(
+          currentProfileId: 'prof-1',
+          currentProfile:
+              base.currentProfile!.copyWith(currentGroupName: 'EmptyLB'),
+          profileFileExists: true,
+          profileFileBytes: 2048,
+          mode: Mode.rule,
+          mixedPort: 7890,
+          testUrl: base.testUrl,
+          resolveGroupTestUrl: base.resolveGroupTestUrl,
+          systemProxyEnabled: false,
+          pacEnabled: false,
+          pacUrl: null,
+          tunDesiredEnabled: true,
+          tunFailureCode: null,
+          realTunEnable: true,
+          proxyStarted: true,
+          lastRuntimeProfileId: 'prof-1',
+          groupsSnapshotProfileId: 'prof-1',
+          allGroups: emptyGroups,
+          visibleGroups: emptyGroups,
+          selectedMap: const {},
+        ),
+      );
+      final emptyReport = await HealthRunner(emptyEnv).run();
+      expect(
+        emptyReport.checkById(HealthCheckId.outboundConnectivity)?.status,
+        HealthStatus.failed,
+      );
+    });
+
+    test(
+        'CR2-HC03: single-channel C2/C3 warnings propagate to C4 partialTakeover, http=-only system proxy warns trafficBypassed in D4, and residual active TUN when desired off warns tunCloseFailed',
+        () async {
+      final base = _FakeProbeEnvironment._defaultHealthySnapshot();
+
+      // 1. Windows System-Proxy-Only with http=127.0.0.1:7890 (missing https=)
+      final httpOnlyEnv = _FakeProbeEnvironment(
+        configSnapshot: HealthConfigSnapshot(
+          currentProfileId: base.currentProfileId,
+          currentProfile: base.currentProfile,
+          profileFileExists: true,
+          profileFileBytes: 4096,
+          mode: Mode.rule,
+          mixedPort: 7890,
+          testUrl: base.testUrl,
+          resolveGroupTestUrl: base.resolveGroupTestUrl,
+          systemProxyEnabled: true,
+          pacEnabled: false,
+          pacUrl: null,
+          tunDesiredEnabled: false,
+          tunFailureCode: null,
+          realTunEnable: false,
+          proxyStarted: true,
+          lastRuntimeProfileId: base.lastRuntimeProfileId,
+          groupsSnapshotProfileId: base.groupsSnapshotProfileId,
+          allGroups: base.allGroups,
+          visibleGroups: base.visibleGroups,
+          selectedMap: base.selectedMap,
+        ),
+      )
+        ..tunStatus = const TunStatus(
+          instanceId: 'core-1',
+          revision: 1,
+          state: 'off',
+          listenerActive: false,
+          interfaceState: 'down',
+          privilege: 'elevated',
+          requestedEnabled: false,
+        )
+        ..windowsSystemProxy = const WindowsSystemProxySnapshot(
+          proxyEnabled: true,
+          proxyServer: 'http=127.0.0.1:7890',
+        );
+
+      final httpOnlyReport = await HealthRunner(httpOnlyEnv).run();
+      expect(
+        httpOnlyReport.checkById(HealthCheckId.systemProxyTakeover)?.status,
+        HealthStatus.warning,
+      );
+      expect(
+        httpOnlyReport.checkById(HealthCheckId.trafficTakeover)?.status,
+        HealthStatus.warning,
+      );
+      expect(
+        httpOnlyReport.checkById(HealthCheckId.trafficTakeover)?.reasonCode,
+        'partialTakeover',
+      );
+      expect(
+        httpOnlyReport.checkById(HealthCheckId.endToEndConnectivity)?.status,
+        HealthStatus.warning,
+      );
+      expect(
+        httpOnlyReport
+            .checkById(HealthCheckId.endToEndConnectivity)
+            ?.reasonCode,
+        'trafficBypassedCore',
+      );
+      expect(httpOnlyReport.verdict.code, 'trafficBypassed');
+      expect(
+        httpOnlyReport.verdict.primaryAction,
+        HealthAction.openNetworkSettings,
+      );
+
+      // 2. Windows tunDesiredEnabled == false while TUN adapter is still stuck 'on' (with systemProxy disabled)
+      final stuckTunEnv = _FakeProbeEnvironment(
+        configSnapshot: HealthConfigSnapshot(
+          currentProfileId: base.currentProfileId,
+          currentProfile: base.currentProfile,
+          profileFileExists: true,
+          profileFileBytes: 4096,
+          mode: Mode.rule,
+          mixedPort: 7890,
+          testUrl: base.testUrl,
+          resolveGroupTestUrl: base.resolveGroupTestUrl,
+          systemProxyEnabled: false,
+          pacEnabled: false,
+          pacUrl: null,
+          tunDesiredEnabled: false,
+          tunFailureCode: null,
+          realTunEnable: true,
+          proxyStarted: true,
+          lastRuntimeProfileId: base.lastRuntimeProfileId,
+          groupsSnapshotProfileId: base.groupsSnapshotProfileId,
+          allGroups: base.allGroups,
+          visibleGroups: base.visibleGroups,
+          selectedMap: base.selectedMap,
+        ),
+      )..tunStatus = const TunStatus(
+          instanceId: 'core-1',
+          revision: 2,
+          state: 'on',
+          listenerActive: true,
+          interfaceState: 'up',
+          privilege: 'elevated',
+          requestedEnabled: false,
+        );
+
+      final stuckTunReport = await HealthRunner(stuckTunEnv).run();
+      expect(
+        stuckTunReport.checkById(HealthCheckId.tunTakeover)?.status,
+        HealthStatus.warning,
+      );
+      expect(
+        stuckTunReport.checkById(HealthCheckId.tunTakeover)?.reasonCode,
+        'tunCloseFailed',
+      );
+      expect(
+        stuckTunReport.checkById(HealthCheckId.trafficTakeover)?.status,
+        HealthStatus.warning,
+      );
+      expect(
+        stuckTunReport.checkById(HealthCheckId.trafficTakeover)?.reasonCode,
+        'partialTakeover',
+      );
+    });
+
+    test(
+        'CR2-HC04: Request.checkIpWithHost fires active-tunnel snapshot after request/TLS ClientHello reaches upstream (ignoring CONNECT 200 header)',
+        () async {
+      // 1. Plain HTTP with Connection: close -> fires second snapshot after server parsed request and before checkIpWithHost returns
+      final server = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+      addTearDown(server.close);
+
+      var serverParsedRequest = false;
+      var clientCheckReturned = false;
+      final plainCallbacksAfterRequest = <bool>[];
+
+      server.listen((socket) {
+        var responded = false;
+        socket.listen((chunk) {
+          if (!responded &&
+              utf8.decode(chunk, allowMalformed: true).contains('\r\n\r\n')) {
+            responded = true;
+            serverParsedRequest = true;
+            const body = '{"ip":"9.9.9.9","country":"JP"}';
+            const rawResponse = 'HTTP/1.1 200 OK\r\n'
+                'Content-Type: application/json\r\n'
+                'Content-Length: ${body.length}\r\n'
+                'Connection: close\r\n'
+                '\r\n'
+                '$body';
+            socket.add(utf8.encode(rawResponse));
+            unawaited(socket.flush().then((_) => socket.close()));
+          }
+        });
+      });
+
+      final probeReq = Request(
+        ipInfoSources: {
+          'http://127.0.0.1:${server.port}/json': IpInfo.fromIpInfoIoJson,
+        },
+      );
+      final cancelToken = CancelToken();
+      final res = await probeReq.checkIpWithHost(
+        cancelToken: cancelToken,
+        keepAliveHold: const Duration(milliseconds: 500),
+        forceHoldSocket: true,
+        proxyResolver: (_) => 'DIRECT',
+        onSocketConnected: (ports) {
+          if (ports.isNotEmpty) {
+            plainCallbacksAfterRequest
+                .add(serverParsedRequest && !clientCheckReturned);
+          }
+        },
+      );
+      clientCheckReturned = true;
+      cancelToken.cancel('done');
+      expect(res.data?.ipInfo.countryCode, 'JP');
+      expect(plainCallbacksAfterRequest, equals([false, true]));
+
+      // 2. Proxied HTTPS CONNECT tunnel -> must NOT fire on CONNECT 200 header, and MUST fire once post-CONNECT tunnel bytes arrive after TLS ClientHello
+      final proxyServer =
+          await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+      addTearDown(proxyServer.close);
+
+      var connectParsed = false;
+      var tlsClientHelloSeen = false;
+      var callbackCountAfterConnectBeforeHello = 0;
+      var callbackFiredAfterTlsClientHello = false;
+      var totalConnectCallbacks = 0;
+
+      proxyServer.listen((socket) {
+        var stage = 0;
+        socket.listen((chunk) {
+          if (stage == 0 &&
+              utf8.decode(chunk, allowMalformed: true).contains('\r\n\r\n')) {
+            stage = 1;
+            connectParsed = true;
+            socket.add(
+              utf8.encode('HTTP/1.1 200 Connection Established\r\n\r\n'),
+            );
+          } else if (stage == 1 && chunk.isNotEmpty) {
+            // Client sent TLS ClientHello (0x16 ...) through established CONNECT tunnel
+            stage = 2;
+            tlsClientHelloSeen = true;
+            // Reply with a minimal alert/bytes to trigger inbound post-CONNECT payload hook, then close
+            socket.add(const <int>[0x15, 0x03, 0x03, 0x00, 0x02, 0x02, 0x28]);
+            unawaited(socket.flush().then((_) => socket.close()));
+          }
+        });
+      });
+
+      final httpsProxyReq = Request(
+        ipInfoSources: {
+          'https://example.invalid/json': IpInfo.fromIpInfoIoJson,
+        },
+      );
+      await httpsProxyReq.checkIpWithHost(
+        connectTimeout: const Duration(seconds: 2),
+        keepAliveHold: const Duration(milliseconds: 200),
+        forceHoldSocket: true,
+        proxyResolver: (_) => 'PROXY 127.0.0.1:${proxyServer.port}',
+        onSocketConnected: (_) {
+          totalConnectCallbacks++;
+          if (connectParsed && !tlsClientHelloSeen) {
+            callbackCountAfterConnectBeforeHello++;
+          }
+          if (connectParsed && tlsClientHelloSeen) {
+            callbackFiredAfterTlsClientHello = true;
+          }
+        },
+      );
+
+      expect(totalConnectCallbacks, 2);
+      expect(callbackCountAfterConnectBeforeHello, 0);
+      expect(callbackFiredAfterTlsClientHello, isTrue);
+    });
+
+    test(
+        'CR2-HC05: PAC manual proxy hijack strips credentials and never renders empty () when ProxyServer is blank',
+        () async {
+      final l10n = await AppLocalizations.load(const Locale('zh', 'CN'));
+
+      final blankManual = evaluateWindowsSystemProxy(
+        expectedEnabled: true,
+        expectedPort: 7890,
+        expectedPacEnabled: true,
+        expectedPacUrl: 'http://127.0.0.1:7899/pac',
+        snapshot: const WindowsSystemProxySnapshot(
+          proxyEnabled: true,
+          proxyServer: '',
+          autoConfigUrl: 'http://127.0.0.1:7899/pac',
+        ),
+      );
+      expect(blankManual.status, HealthStatus.warning);
+      expect(blankManual.localDetail, isNull);
+      final blankDetail = healthCheckItemDetail(
+        HealthCheckResult(
+          id: HealthCheckId.systemProxyTakeover,
+          status: blankManual.status,
+          elapsedMs: 1,
+          reasonCode: blankManual.reasonCode,
+          localDetail: blankManual.localDetail,
+        ),
+        l10n,
+      );
+      expect(blankDetail, isNot(contains('()')));
+
+      final credManual = evaluateWindowsSystemProxy(
+        expectedEnabled: true,
+        expectedPort: 7890,
+        expectedPacEnabled: true,
+        expectedPacUrl: 'http://127.0.0.1:7899/pac',
+        snapshot: const WindowsSystemProxySnapshot(
+          proxyEnabled: true,
+          proxyServer: 'http://secretUser:secretPass@127.0.0.1:10809',
+          autoConfigUrl: 'http://127.0.0.1:7899/pac',
+        ),
+      );
+      expect(credManual.status, HealthStatus.warning);
+      expect(credManual.localDetail, '127.0.0.1:10809');
+      expect(credManual.localDetail, isNot(contains('secretUser')));
+      expect(credManual.localDetail, isNot(contains('secretPass')));
+    });
+  });
 }

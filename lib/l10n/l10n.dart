@@ -7798,6 +7798,26 @@ class AppLocalizations {
       args: [flag],
     );
   }
+
+  /// `Health check cancelled`
+  String get healthVerdictCancelledTitle {
+    return Intl.message(
+      'Health check cancelled',
+      name: 'healthVerdictCancelledTitle',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Cancelled`
+  String get healthDetailCancelled {
+    return Intl.message(
+      'Cancelled',
+      name: 'healthDetailCancelled',
+      desc: '',
+      args: [],
+    );
+  }
 }
 
 class AppLocalizationDelegate extends LocalizationsDelegate<AppLocalizations> {

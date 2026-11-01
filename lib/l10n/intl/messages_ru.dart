@@ -550,6 +550,7 @@ class MessageLookup extends MessageLookupByLibrary {
       "Диагностика профиля, ядра, перехвата трафика и связи",
     ),
     "healthCheckTitle": MessageLookupByLibrary.simpleMessage("Проверка сети"),
+    "healthDetailCancelled": MessageLookupByLibrary.simpleMessage("Отменено"),
     "healthDetailCoreDelayBusy": MessageLookupByLibrary.simpleMessage(
       "Очередь замера занята, повторите позже",
     ),
@@ -731,6 +732,9 @@ class MessageLookup extends MessageLookupByLibrary {
     "healthStatusSkipped": MessageLookupByLibrary.simpleMessage("Пропуск"),
     "healthStatusTimeout": MessageLookupByLibrary.simpleMessage("Тайм-аут"),
     "healthStatusWarning": MessageLookupByLibrary.simpleMessage("Внимание"),
+    "healthVerdictCancelledTitle": MessageLookupByLibrary.simpleMessage(
+      "Проверка остановлена",
+    ),
     "healthVerdictCheckingTitle": MessageLookupByLibrary.simpleMessage(
       "Пошаговая проверка соединения…",
     ),

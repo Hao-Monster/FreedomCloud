@@ -2,6 +2,21 @@
 
 更新日期：2026-11-01。当前阶段是快速开发、快速迭代和部分功能预览。本文记录来源与验收边界；每次继续开发仍需核实实际 Git/PR/CI 状态，不能把历史报告视为当前通过证明。
 
+## 健康检查 v2 二次穿透 Code Review 全量收口修复（`CR2-HC01`–`CR2-HC05`，2026-11-01）
+
+- 来源：针对提交 `86f78295f131f38ca13c44b3e1beeb3cbf55774c` 执行二次穿透式 Code Review，检出 `CR2-HC01`–`CR2-HC05`（`2 P1 / 2 P2 / 1 P3`），经用户确认后在本地 `development` 按严格 TDD（Red → Green）完成全量收口修复。
+- 核心修复：
+  1. **[CR2-HC01 / P1] 修复 [`_resolveSelectedLeaf`](file:///E:/CodeWorkstation/FlClashX/lib/common/health/health_runner.dart#L82-L120) 将 `LoadBalance`、`Relay` 及未首测 `URLTest` 组误判为循环引用（`outboundGroupLoop`）导致合法分流组 `D3` 直接失败**：显式区分真实成环（`!visited.add` / `picked == current.name` / 深度超限）及空成员组（`current.all.isEmpty` -> `'outboundGroupMissing'`）与无静态单节点 `now` 的合法动态组（返回 `current.name` 交由 Core 真实测速）。
+  2. **[CR2-HC02 / P1] 为共享单例 [`HealthCheckController`](file:///E:/CodeWorkstation/FlClashX/lib/common/health/health_runner.dart#L1310-L1435) 增加视图租约（View Lease）隔离并修复首轮取消 UI 死锁（[`HealthCheckView`](file:///E:/CodeWorkstation/FlClashX/lib/views/tools/health_check_view.dart#L236-L760)）**：通过 `attachView` / `detachView` 与 `ModalRoute` 退场动画（`AnimationStatus.reverse`）幂等释放租约，根除 `SideSheet` `200ms` 退场动画期间重开抽屉时旧实例 `dispose()` 误杀新一轮检查的竞态；首轮检查取消（`_lastReport == null`）时将未完成项收敛为 `skipped`（`'cancelled'`）并更新顶部横幅为 `"健康检查已取消"`，消除无限旋转指示器与 `"正在逐层检测连接链路…"` 残留。
+  3. **[CR2-HC03 / P2] 修复 `C2`/`C4` 单通道 `warning` 被掩盖为 `passed` 及 Windows 缺失 `https=` 系统代理下 `D4` 静默跳过（[`HealthRunner.run`](file:///E:/CodeWorkstation/FlClashX/lib/common/health/health_runner.dart#L492-L1196)）**：当 `!cfg.tunDesiredEnabled && tun.observed == on` 时统一告警 `'tunCloseFailed'`；单通道 `tunOk`/`sysOk` 下同步传播 `C2`/`C3` 自身的 `warning` 至 `C4` `'partialTakeover'`；Windows 下无 TUN 且系统代理因缺失 `https=` 或 PAC 被手动代理劫持导致无有效回环 HTTPS 代理时，`D4` 输出 `'trafficBypassedCore'` 告警并将根因结论升格为 `'trafficBypassed'` 引导打开网络设置。
+  4. **[CR2-HC04 / P2] 补齐隧道建立后首包连接表采样与 `clashCore.getConnections()` 单次 `1.5s` 超时上限（[`Request._openCancellableProbeConnection`](file:///E:/CodeWorkstation/FlClashX/lib/common/request.dart#L362-L550) / [`DefaultHealthProbeEnvironment.probeEndToEnd`](file:///E:/CodeWorkstation/FlClashX/lib/common/health/health_environment.dart#L342-L385)）**：在直连/TUN `SecureSocket.secure` 握手完成、显式代理 HTTPS 越过 `CONNECT` `200` 响应头后的首个隧道数据块以及明文 HTTP 首个入站响应块触发连接表采样，消除 TCP `SYN-ACK` 瞬间尚未完成 SNI/CONNECT 入核与 `Connection: close` 快速销毁之间的竞态窗口；同时为 `getConnections()` 增加 `1500ms` 超时保护防止遥测阻塞拖垮已成功的 `D4` 结论。
+  5. **[CR2-HC05 / P3] 脱敏 PAC 手动代理劫持详情并防御空括号渲染（[`evaluateWindowsSystemProxy`](file:///E:/CodeWorkstation/FlClashX/lib/common/windows_system_proxy_probe.dart#L24-L178) / [`healthCheckItemDetail`](file:///E:/CodeWorkstation/FlClashX/lib/views/tools/health_check_view.dart#L62-L150)）**：剥离 `userinfo@` 凭据片段，仅输出已规范化的 `host:port`，空白或非法注册表值置 `null` 并通过 `_withOptionalDetail` 消除 `"()"` 空括号拼接。
+- 验证记录（本机 `Flutter 3.47.4` / `Dart 3.13.3`，CI 配置 `3.41.7`）：
+  - 前置有效 Red（`health_diagnostics_v2_test.dart`、`health_check_view_test.dart` 新增 5 组 `CR2-HC01`–`CR2-HC05` 复现用例）：退出码 `1`（`20 PASS / 5 FAIL`）；
+  - 全量修复后单元、组件、退场动画重开竞态、首轮取消收敛及仪表盘/TUN 回归测试（`health_diagnostics_v2_test.dart`、`health_check_view_test.dart`、`tun_status_widget_test.dart`、`dashboard_widgets_test.dart`）：**PASS（34 PASS / 0 FAIL）**；
+  - 静态检查（`dart analyze`）：健康检查全部新增/修改文件 **PASS（`No issues found!`）**；`pubspec.lock` 未改动。
+- 交付状态：**已实现 / 已本地验证并提交至本地 `development`**；未推送远端（按规范待授权后推送） / 未创建或合并 PR / 远端 CI **NOT RUN** / 未重打静态预览包 / 未启动候选窗口（未触碰本机运行中代理、TUN 及后台服务） / 后端部署与业务验收 **NOT RUN**。下一步：如需推送 `freedomcloud/development`、本机真实窗口预览、打新预览包或晋级 `main`，按授权执行。
+
 ## 健康检查 v2 对抗式 Code Review 全量收口修复（`CR-HC01`–`CR-HC08`，2026-11-01）
 
 - 来源：针对提交 `e6489d28cedc765616a4102256d918e83ddc4e0e` 执行跨模块对抗式 Code Review，检出 `CR-HC01`–`CR-HC08`（`3 P1 / 4 P2 / 1 P3`），经用户确认后在本地 `development` 按严格 TDD（Red → Green）完成全量收口修复。

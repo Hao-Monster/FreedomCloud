@@ -393,6 +393,7 @@ class MessageLookup extends MessageLookupByLibrary {
       "プロファイル・コア・トラフィック制御・通信経路を診断",
     ),
     "healthCheckTitle": MessageLookupByLibrary.simpleMessage("ヘルスチェック"),
+    "healthDetailCancelled": MessageLookupByLibrary.simpleMessage("キャンセル済み"),
     "healthDetailCoreDelayBusy": MessageLookupByLibrary.simpleMessage(
       "一括テスト実行中のため混雑しています",
     ),
@@ -534,6 +535,9 @@ class MessageLookup extends MessageLookupByLibrary {
     "healthStatusSkipped": MessageLookupByLibrary.simpleMessage("スキップ"),
     "healthStatusTimeout": MessageLookupByLibrary.simpleMessage("タイムアウト"),
     "healthStatusWarning": MessageLookupByLibrary.simpleMessage("警告"),
+    "healthVerdictCancelledTitle": MessageLookupByLibrary.simpleMessage(
+      "ヘルスチェックはキャンセルされました",
+    ),
     "healthVerdictCheckingTitle": MessageLookupByLibrary.simpleMessage(
       "通信経路を順番に診断しています…",
     ),

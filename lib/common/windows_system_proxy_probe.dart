@@ -32,6 +32,11 @@ ParsedProxyEndpoint? _parseHostPort(String raw) {
   if (slashIndex != -1) {
     text = text.substring(0, slashIndex);
   }
+  final atIndex = text.lastIndexOf('@');
+  if (atIndex != -1) {
+    text = text.substring(atIndex + 1).trim();
+  }
+  if (text.isEmpty) return null;
   if (text.startsWith('[')) {
     final closeBracket = text.indexOf(']');
     if (closeBracket <= 1 || closeBracket + 2 > text.length) return null;
@@ -151,13 +156,22 @@ Map<String, ParsedProxyEndpoint> parseWindowsProxyServer(String? raw) {
         matchesExpected(httpsEp);
   }
 
+  String? sanitizedManualDetail() {
+    final parsed = parseWindowsProxyServer(snapshot.proxyServer);
+    if (parsed.isEmpty) return null;
+    final ep =
+        parsed['*'] ?? parsed['https'] ?? parsed['http'] ?? parsed.values.first;
+    final formattedHost = ep.host.contains(':') ? '[${ep.host}]' : ep.host;
+    return '$formattedHost:${ep.port}';
+  }
+
   if (expectedPacEnabled) {
     if (_pacUrlsMatch(expectedPacUrl, snapshot.autoConfigUrl)) {
       if (snapshot.proxyEnabled && !manualSnapshotMatchesExpected()) {
         return (
           status: HealthStatus.warning,
           reasonCode: 'systemProxyHijacked',
-          localDetail: snapshot.proxyServer,
+          localDetail: sanitizedManualDetail(),
           verifiedProxyDirective: null,
         );
       }

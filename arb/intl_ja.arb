@@ -1026,5 +1026,7 @@
         "type": "String"
       }
     }
-  }
+  },
+  "healthVerdictCancelledTitle": "ヘルスチェックはキャンセルされました",
+  "healthDetailCancelled": "キャンセル済み"
 }

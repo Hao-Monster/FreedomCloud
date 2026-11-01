@@ -360,13 +360,16 @@ class Request {
         throw const SocketException('Probe connection cancelled');
       }
       attemptPorts.add(outboundSocket.port.toString());
-      if (onSocketConnected != null) {
+      void emitActiveSocketPorts() {
+        if (onSocketConnected == null || aborted) return;
         try {
           onSocketConnected(Set<String>.unmodifiable(attemptPorts));
         } catch (_) {}
       }
 
-      if (!isHttps) {
+      emitActiveSocketPorts();
+
+      if (!isHttps && onSocketConnected == null) {
         return outboundSocket;
       }
 
@@ -378,13 +381,19 @@ class Request {
       // the peer stalls during TLS negotiation. Bridging TLS over a one-shot
       // loopback pair keeps `outboundSocket` directly destroyable on timeout or
       // cancellation while preserving full system CA and hostname/SAN validation.
+      // When `onSocketConnected` is supplied, plain HTTP also bridges so we can
+      // sample active ports once the upstream tunnel delivers its first payload
+      // bytes (after Mihomo's listener/sniffer has registered the connection).
       final localClient = await _bridgeSocketForTls(
         outboundSocket: outboundSocket,
         abortCallbacks: connectionAbortCallbacks,
         isAborted: () => aborted,
+        onInboundPayloadChunk:
+            (!isHttps || isProxied) ? emitActiveSocketPorts : null,
+        waitForConnectTunnelEnd: isHttps && isProxied,
       );
 
-      if (isProxied) {
+      if (!isHttps || isProxied) {
         return localClient;
       }
 
@@ -400,6 +409,7 @@ class Request {
           outboundSocket.destroy();
           throw const SocketException('Probe connection cancelled');
         }
+        emitActiveSocketPorts();
         return tlsSocket;
       } catch (_) {
         abortConnection();
@@ -416,6 +426,8 @@ class Request {
     required Socket outboundSocket,
     required List<void Function()> abortCallbacks,
     required bool Function() isAborted,
+    void Function()? onInboundPayloadChunk,
+    bool waitForConnectTunnelEnd = false,
   }) async {
     final bridgeServer = await ServerSocket.bind(
       InternetAddress.loopbackIPv4,
@@ -474,8 +486,39 @@ class Request {
       throw const SocketException('Probe connection cancelled');
     }
 
+    var notifiedInboundPayload = false;
+    var connectHeaderMatched = 0;
+    const connectHeaderEnd = <int>[0x0D, 0x0A, 0x0D, 0x0A];
+
+    void maybeNotifyInboundPayload(List<int> data) {
+      if (notifiedInboundPayload ||
+          onInboundPayloadChunk == null ||
+          data.isEmpty) {
+        return;
+      }
+      if (!waitForConnectTunnelEnd) {
+        notifiedInboundPayload = true;
+        onInboundPayloadChunk();
+        return;
+      }
+      for (var i = 0; i < data.length; i++) {
+        if (connectHeaderMatched == 4) {
+          notifiedInboundPayload = true;
+          onInboundPayloadChunk();
+          return;
+        }
+        final b = data[i];
+        if (b == connectHeaderEnd[connectHeaderMatched]) {
+          connectHeaderMatched++;
+        } else {
+          connectHeaderMatched = b == connectHeaderEnd[0] ? 1 : 0;
+        }
+      }
+    }
+
     outboundSocket.listen(
       (data) {
+        maybeNotifyInboundPayload(data);
         try {
           bridgePeer.add(data);
         } catch (_) {

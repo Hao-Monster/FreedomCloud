@@ -1222,5 +1222,7 @@
         "type": "String"
       }
     }
-  }
+  },
+  "healthVerdictCancelledTitle": "Health check cancelled",
+  "healthDetailCancelled": "Cancelled"
 }

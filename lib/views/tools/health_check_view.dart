@@ -59,11 +59,19 @@ String healthLayerTitle(HealthLayer layer, AppLocalizations l10n) =>
       HealthLayer.networkLink => l10n.healthLayerNetwork,
     };
 
+String _withOptionalDetail(String base, String? detail) {
+  final trimmed = detail?.trim();
+  if (trimmed == null || trimmed.isEmpty) return base;
+  return '$base ($trimmed)';
+}
+
 String healthCheckItemDetail(HealthCheckResult result, AppLocalizations l10n) {
   if (result.status == HealthStatus.running) {
     return l10n.healthStatusRunning;
   }
   switch (result.reasonCode) {
+    case 'cancelled':
+      return l10n.healthDetailCancelled;
     case 'prerequisiteFailed':
     case 'coreUnavailable':
     case 'runtimeNotLoaded':
@@ -122,17 +130,21 @@ String healthCheckItemDetail(HealthCheckResult result, AppLocalizations l10n) {
     HealthCheckId.systemProxyTakeover => switch (result.reasonCode) {
         'systemProxyDisabledByPreference' => l10n.healthDetailSysProxyDisabled,
         'platformUnsupported' => l10n.healthDetailSysProxyUnsupported,
-        'ok' || 'pacMatched' => result.localDetail ?? l10n.healthStatusPassed,
-        'systemProxyUnexpectedPac' || 'unexpectedPacUrl' =>
-          result.localDetail != null
-              ? '${l10n.healthDetailSysProxyUnexpectedPac} (${result.localDetail})'
-              : l10n.healthDetailSysProxyUnexpectedPac,
-        'systemProxyPartialScheme' => result.localDetail != null
-            ? '${l10n.healthDetailTakeoverPartial} (${result.localDetail})'
-            : l10n.healthDetailTakeoverPartial,
-        _ => result.localDetail != null
-            ? '${l10n.healthDetailSysProxyHijacked} (${result.localDetail})'
-            : l10n.healthDetailSysProxyHijacked,
+        'ok' || 'pacMatched' => (result.localDetail?.trim().isNotEmpty ?? false)
+            ? result.localDetail!.trim()
+            : l10n.healthStatusPassed,
+        'systemProxyUnexpectedPac' || 'unexpectedPacUrl' => _withOptionalDetail(
+            l10n.healthDetailSysProxyUnexpectedPac,
+            result.localDetail,
+          ),
+        'systemProxyPartialScheme' => _withOptionalDetail(
+            l10n.healthDetailTakeoverPartial,
+            result.localDetail,
+          ),
+        _ => _withOptionalDetail(
+            l10n.healthDetailSysProxyHijacked,
+            result.localDetail,
+          ),
       },
     HealthCheckId.trafficTakeover => switch (result.reasonCode) {
         'takeoverBoth' => l10n.healthDetailTakeoverBoth,
@@ -223,14 +235,17 @@ class HealthCheckView extends ConsumerStatefulWidget {
 
 class _HealthCheckViewState extends ConsumerState<HealthCheckView> {
   late final HealthCheckController _controller;
+  Object? _viewLease;
+  Animation<double>? _routeAnimation;
 
   @override
   void initState() {
     super.initState();
     _controller = ref.read(healthCheckControllerProvider);
+    _viewLease = _controller.attachView();
     unawaited(
       Future.microtask(() {
-        if (mounted) {
+        if (mounted && _viewLease != null) {
           unawaited(_controller.startOrAttach());
         }
       }),
@@ -238,8 +253,35 @@ class _HealthCheckViewState extends ConsumerState<HealthCheckView> {
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final nextAnimation = ModalRoute.of(context)?.animation;
+    if (!identical(_routeAnimation, nextAnimation)) {
+      _routeAnimation?.removeStatusListener(_onRouteAnimationStatus);
+      _routeAnimation = nextAnimation;
+      _routeAnimation?.addStatusListener(_onRouteAnimationStatus);
+    }
+  }
+
+  void _onRouteAnimationStatus(AnimationStatus status) {
+    if (status == AnimationStatus.reverse ||
+        status == AnimationStatus.dismissed) {
+      _releaseViewLease();
+    }
+  }
+
+  void _releaseViewLease() {
+    final lease = _viewLease;
+    if (lease == null) return;
+    _viewLease = null;
+    unawaited(_controller.detachView(lease));
+  }
+
+  @override
   void dispose() {
-    unawaited(_controller.cancelActive());
+    _routeAnimation?.removeStatusListener(_onRouteAnimationStatus);
+    _routeAnimation = null;
+    _releaseViewLease();
     super.dispose();
   }
 
@@ -374,6 +416,7 @@ class _HealthCheckViewState extends ConsumerState<HealthCheckView> {
                 _VerdictBanner(
                   report: report,
                   isRunning: isRunning,
+                  wasCancelled: controller.wasCancelledWithoutReport,
                   l10n: l10n,
                   formatTime: _formatClockTime,
                   onAction: (action) => unawaited(_handleAction(context, action)),
@@ -439,6 +482,7 @@ class _VerdictBanner extends StatelessWidget {
   const _VerdictBanner({
     required this.report,
     required this.isRunning,
+    required this.wasCancelled,
     required this.l10n,
     required this.formatTime,
     required this.onAction,
@@ -446,6 +490,7 @@ class _VerdictBanner extends StatelessWidget {
 
   final HealthReport? report;
   final bool isRunning;
+  final bool wasCancelled;
   final AppLocalizations l10n;
   final String Function(DateTime) formatTime;
   final void Function(HealthAction) onAction;
@@ -464,8 +509,10 @@ class _VerdictBanner extends StatelessWidget {
     if (verdict == null) {
       bgColor = cs.surfaceContainerHighest.withValues(alpha: 0.55);
       borderColor = cs.outlineVariant.withValues(alpha: 0.5);
-      accentColor = cs.primary;
-      iconData = Icons.sync_rounded;
+      accentColor = (!isRunning && wasCancelled) ? cs.outline : cs.primary;
+      iconData = (!isRunning && wasCancelled)
+          ? Icons.cancel_outlined
+          : Icons.sync_rounded;
     } else {
       switch (verdict.severity) {
         case HealthVerdictSeverity.healthy:
@@ -487,7 +534,11 @@ class _VerdictBanner extends StatelessWidget {
     }
 
     final headline = verdict == null
-        ? l10n.healthVerdictCheckingTitle
+        ? (isRunning
+            ? l10n.healthVerdictCheckingTitle
+            : (wasCancelled
+                ? l10n.healthVerdictCancelledTitle
+                : l10n.healthCheckTitle))
         : healthVerdictHeadline(verdict, l10n);
 
     String? subtitle;
@@ -651,6 +702,7 @@ class _LayerSection extends StatelessWidget {
                   id: ids[i],
                   live: controller.liveSnapshot[ids[i]],
                   previous: controller.previousById[ids[i]],
+                  isControllerRunning: controller.isRunning,
                   l10n: l10n,
                   onAction: onAction,
                 ),
@@ -675,6 +727,7 @@ class _HealthCheckRow extends StatelessWidget {
     required this.id,
     required this.live,
     required this.previous,
+    required this.isControllerRunning,
     required this.l10n,
     required this.onAction,
   });
@@ -682,6 +735,7 @@ class _HealthCheckRow extends StatelessWidget {
   final HealthCheckId id;
   final HealthCheckResult? live;
   final HealthCheckResult? previous;
+  final bool isControllerRunning;
   final AppLocalizations l10n;
   final void Function(HealthAction) onAction;
 
@@ -689,12 +743,25 @@ class _HealthCheckRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final cs = context.colorScheme;
     final brightness = Theme.of(context).brightness;
-    final isItemRunning = live == null || live!.status == HealthStatus.running;
-    final effective = (isItemRunning && previous != null) ? previous! : live;
-    final status = effective?.status ?? HealthStatus.running;
+    final isItemRunning = isControllerRunning &&
+        (live == null || live!.status == HealthStatus.running);
+    final effective = (isItemRunning && previous != null)
+        ? previous!
+        : (live?.status == HealthStatus.running && !isControllerRunning
+            ? HealthCheckResult(
+                id: id,
+                status: HealthStatus.skipped,
+                elapsedMs: 0,
+                reasonCode: 'cancelled',
+              )
+            : live);
+    final status = effective?.status ??
+        (isControllerRunning ? HealthStatus.running : HealthStatus.skipped);
     final detailText = effective != null
         ? healthCheckItemDetail(effective, l10n)
-        : l10n.healthStatusRunning;
+        : (isControllerRunning
+            ? l10n.healthStatusRunning
+            : l10n.healthDetailCancelled);
 
     final (IconData icon, Color iconColor) = switch (status) {
       HealthStatus.passed => (

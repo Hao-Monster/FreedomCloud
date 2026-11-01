@@ -637,6 +637,7 @@ class MessageLookup extends MessageLookupByLibrary {
       "Inspect profile, core, traffic capture, and live connectivity",
     ),
     "healthCheckTitle": MessageLookupByLibrary.simpleMessage("Health Check"),
+    "healthDetailCancelled": MessageLookupByLibrary.simpleMessage("Cancelled"),
     "healthDetailCoreDelayBusy": MessageLookupByLibrary.simpleMessage(
       "Delay test slots busy; retry shortly",
     ),
@@ -816,6 +817,9 @@ class MessageLookup extends MessageLookupByLibrary {
     "healthStatusSkipped": MessageLookupByLibrary.simpleMessage("Skipped"),
     "healthStatusTimeout": MessageLookupByLibrary.simpleMessage("Timeout"),
     "healthStatusWarning": MessageLookupByLibrary.simpleMessage("Warning"),
+    "healthVerdictCancelledTitle": MessageLookupByLibrary.simpleMessage(
+      "Health check cancelled",
+    ),
     "healthVerdictCheckingTitle": MessageLookupByLibrary.simpleMessage(
       "Checking connection layers…",
     ),

@@ -339,6 +339,11 @@ class DefaultHealthProbeEnvironment implements HealthProbeEnvironment {
       }
     });
 
+    Future<List<Connection>> snapshotCoreConnections() => clashCore
+        .getConnections()
+        .timeout(const Duration(milliseconds: 1500))
+        .catchError((Object _) => const <Connection>[]);
+
     final startedAt = DateTime.now();
     final inFlightFutures = <Future<List<Connection>>>[];
     try {
@@ -352,11 +357,7 @@ class DefaultHealthProbeEnvironment implements HealthProbeEnvironment {
             : null,
         onSocketConnected: (_) {
           if (cancelToken.isCancelled) return;
-          inFlightFutures.add(
-            clashCore
-                .getConnections()
-                .catchError((Object _) => const <Connection>[]),
-          );
+          inFlightFutures.add(snapshotCoreConnections());
         },
       );
       if (cancelToken.isCancelled || res.isError) return null;
@@ -371,11 +372,12 @@ class DefaultHealthProbeEnvironment implements HealthProbeEnvironment {
 
       final mergedConnections = <Connection>[];
       for (final f in inFlightFutures) {
+        if (cancelToken.isCancelled) return null;
         mergedConnections.addAll(await f);
       }
-      try {
-        mergedConnections.addAll(await clashCore.getConnections());
-      } catch (_) {}
+      if (!cancelToken.isCancelled) {
+        mergedConnections.addAll(await snapshotCoreConnections());
+      }
 
       final resolved = resolveEndToEndCoreObservation(
         explicitProxyDirective: explicitProxyDirective,

@@ -433,6 +433,7 @@ class MessageLookup extends MessageLookupByLibrary {
       "检测配置、代理核心、流量接管与真实网络连通性",
     ),
     "healthCheckTitle": MessageLookupByLibrary.simpleMessage("健康检查"),
+    "healthDetailCancelled": MessageLookupByLibrary.simpleMessage("已取消"),
     "healthDetailCoreDelayBusy": MessageLookupByLibrary.simpleMessage(
       "批量测速繁忙，请稍后重新检查",
     ),
@@ -572,6 +573,9 @@ class MessageLookup extends MessageLookupByLibrary {
     "healthStatusSkipped": MessageLookupByLibrary.simpleMessage("跳过"),
     "healthStatusTimeout": MessageLookupByLibrary.simpleMessage("超时"),
     "healthStatusWarning": MessageLookupByLibrary.simpleMessage("警告"),
+    "healthVerdictCancelledTitle": MessageLookupByLibrary.simpleMessage(
+      "健康检查已取消",
+    ),
     "healthVerdictCheckingTitle": MessageLookupByLibrary.simpleMessage(
       "正在逐层检测连接链路…",
     ),

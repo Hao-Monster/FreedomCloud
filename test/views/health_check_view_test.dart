@@ -814,4 +814,88 @@ void main() {
     expect(passedText.style!.color!.computeLuminance(), greaterThan(0.35));
     expect(warningText.style!.color!.computeLuminance(), greaterThan(0.35));
   });
+
+  testWidgets(
+      'CR2-HC02: first-run cancel clears running spinners/headline, and reopening SideSheet during 200ms exit animation does not cancel the newly opened check',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1024, 820));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    // Part A: First-run cancel (_lastReport == null) must NOT leave spinning indicators or "正在逐层检测连接链路…"
+    final firstCancelGate = Completer<DelayTestResult>();
+    final cancelEnv = _TestHealthEnvironment()..outboundGate = firstCancelGate;
+    _seedTestAppState();
+
+    await tester.pumpWidget(
+      _wrapWithApp(
+        env: cancelEnv,
+        viewSize: const Size(460, 900),
+        child: const HealthCheckView(type: SheetType.page),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 20));
+    expect(find.text('取消检查'), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('health-recheck-button')));
+    firstCancelGate.complete(const DelayTestResult(-1, reason: 'cancelled'));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+    expect(find.text('检查中'), findsNothing);
+    expect(find.text('正在逐层检测连接链路…'), findsNothing);
+
+    // Part B: Reopen SideSheet at t=50ms while previous SideSheet's 200ms reverse animation is still mounted
+    final reopenEnv = _TestHealthEnvironment(
+      initialClock: DateTime(2026, 11, 1, 15, 0, 0),
+    );
+    _seedTestAppState();
+    await tester.pumpWidget(
+      _wrapWithApp(
+        env: reopenEnv,
+        withCommonScaffold: true,
+        newDashboardOverride: false,
+        child: const DashboardView(),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // Open Sheet #1 and let Run #1 complete
+    await tester.tap(find.byKey(const ValueKey('dashboard-health-check-action')));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('15:00:00'), findsOneWidget);
+
+    // Prepare Run #2 with gated Phase 2 + updated clock
+    final run2Gate = Completer<DelayTestResult>();
+    reopenEnv
+      ..clock = DateTime(2026, 11, 1, 15, 5, 30)
+      ..outboundGate = run2Gate;
+
+    // Close Sheet #1 at t=0ms (starts 200ms reverse transition; Sheet #1 is NOT disposed yet!)
+    await tester.tap(find.byType(CloseButton));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+
+    // Reopen Sheet #2 at t=50ms while Sheet #1 is still animating out!
+    await tester.tap(
+      find.byKey(const ValueKey('dashboard-health-check-action')),
+      warnIfMissed: false,
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 20));
+
+    // Advance past 200ms so Sheet #1 finishes its exit animation and runs dispose()!
+    await tester.pump(const Duration(milliseconds: 250));
+
+    // Sheet #2's Run #2 MUST still be active (button says '取消检查'), NOT killed by Sheet #1's dispose()!
+    expect(find.text('取消检查'), findsOneWidget);
+
+    // Complete Run #2 and verify Sheet #2 receives the fresh 15:05:30 report!
+    run2Gate.complete(const DelayTestResult(-1, reason: 'deadlineExceeded'));
+    reopenEnv.outboundGate = null;
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('15:05:30'), findsOneWidget);
+    expect(find.text('本机网络正常，但当前节点无法连通外网'), findsOneWidget);
+  });
 }
