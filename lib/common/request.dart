@@ -179,6 +179,8 @@ class Request {
     Duration keepAliveHold = const Duration(milliseconds: 4500),
     Duration connectTimeout = const Duration(seconds: 5),
     String Function(Uri uri)? proxyResolver,
+    bool forceHoldSocket = false,
+    void Function(Set<String> activePorts)? onSocketConnected,
   }) async {
     for (final source in _ipInfoSources.entries) {
       if (cancelToken?.isCancelled ?? false) {
@@ -222,12 +224,13 @@ class Request {
                       (Platform.isWindows
                           ? tunRuntime.isEnabled
                           : globalState.appState.realTunEnable));
-              attemptRoutedViaClash =
-                  customDirective.startsWith('PROXY ') || tunHandlesTraffic;
+              attemptRoutedViaClash = forceHoldSocket ||
+                  customDirective.startsWith('PROXY ') ||
+                  tunHandlesTraffic;
               return customDirective;
             }
             if (!globalState.isAppStateInitialized) {
-              attemptRoutedViaClash = false;
+              attemptRoutedViaClash = forceHoldSocket;
               return 'DIRECT';
             }
             client.userAgent = globalState.ua;
@@ -238,8 +241,9 @@ class Request {
                     (Platform.isWindows
                         ? tunRuntime.isEnabled
                         : globalState.appState.realTunEnable));
-            attemptRoutedViaClash =
-                directive.startsWith('PROXY ') || tunHandlesTraffic;
+            attemptRoutedViaClash = forceHoldSocket ||
+                directive.startsWith('PROXY ') ||
+                tunHandlesTraffic;
             return directive;
           };
           client.connectionFactory = (uri, proxyHost, proxyPort) =>
@@ -249,6 +253,7 @@ class Request {
                 proxyPort: proxyPort,
                 attemptPorts: attemptPorts,
                 clientAbortCallbacks: clientAbortCallbacks,
+                onSocketConnected: onSocketConnected,
               );
           return client;
         },
@@ -266,7 +271,8 @@ class Request {
           final ipInfo = source.value(res.data!);
           final host = Uri.tryParse(source.key)?.host.toLowerCase() ?? '';
           holdForTelemetry =
-              attemptRoutedViaClash && keepAliveHold > Duration.zero;
+              (forceHoldSocket || proxyResolver != null || attemptRoutedViaClash) &&
+              keepAliveHold > Duration.zero;
           if (holdForTelemetry) {
             final holdTimer = Timer(keepAliveHold, () {
               abortAllAttemptSockets();
@@ -313,6 +319,7 @@ class Request {
     required int? proxyPort,
     required Set<String> attemptPorts,
     required List<void Function()> clientAbortCallbacks,
+    void Function(Set<String> activePorts)? onSocketConnected,
   }) {
     final isProxied = proxyHost != null && proxyPort != null;
     final isHttps = uri.isScheme('https');
@@ -353,6 +360,11 @@ class Request {
         throw const SocketException('Probe connection cancelled');
       }
       attemptPorts.add(outboundSocket.port.toString());
+      if (onSocketConnected != null) {
+        try {
+          onSocketConnected(Set<String>.unmodifiable(attemptPorts));
+        } catch (_) {}
+      }
 
       if (!isHttps) {
         return outboundSocket;

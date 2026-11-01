@@ -2,17 +2,20 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:dio/dio.dart';
 import 'package:flclashx/common/delay_test_coordinator.dart';
 import 'package:flclashx/common/health/health_environment.dart';
 import 'package:flclashx/common/health/health_export.dart';
 import 'package:flclashx/common/health/health_models.dart';
 import 'package:flclashx/common/health/health_runner.dart';
 import 'package:flclashx/common/health/health_verdict.dart';
+import 'package:flclashx/common/request.dart';
 import 'package:flclashx/common/tun_runtime.dart';
 import 'package:flclashx/common/windows_system_proxy_probe.dart';
 import 'package:flclashx/enum/enum.dart';
 import 'package:flclashx/l10n/l10n.dart';
 import 'package:flclashx/models/models.dart';
+import 'package:flclashx/views/tools/health_check_view.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -644,6 +647,366 @@ void main() {
       ]);
       expect(verdict.code, 'coreUnresponsive');
       expect(verdict.primaryAction, HealthAction.restartCore);
+    });
+  });
+
+  group('Code Review regressions (CR-HC01, CR-HC02, CR-HC05, CR-HC08)', () {
+    test(
+        'CR-HC01: Request.checkIpWithHost holds custom-resolved DIRECT socket for telemetry even when tunRuntime.isEnabled is false, fires onSocketConnected, and verified loopback system proxy does not false-warn trafficBypassedCore when stream already closed',
+        () async {
+      final serverSocketClosed = Completer<void>();
+      final server = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+      addTearDown(server.close);
+
+      server.listen((socket) {
+        var responded = false;
+        socket.listen(
+          (chunk) {
+            if (!responded) {
+              responded = true;
+              const body = '{"ip":"1.2.3.4","country":"SG"}';
+              const rawResponse = 'HTTP/1.1 200 OK\r\n'
+                  'Content-Type: application/json\r\n'
+                  'Content-Length: ${body.length}\r\n'
+                  'Connection: keep-alive\r\n'
+                  '\r\n'
+                  '$body';
+              socket.add(utf8.encode(rawResponse));
+            }
+          },
+          onDone: () {
+            if (!serverSocketClosed.isCompleted) {
+              serverSocketClosed.complete();
+            }
+            socket.destroy();
+          },
+          onError: (_) {
+            if (!serverSocketClosed.isCompleted) {
+              serverSocketClosed.complete();
+            }
+          },
+        );
+      });
+
+      Set<String>? connectedPorts;
+      final probeReq = Request(
+        ipInfoSources: {
+          'http://127.0.0.1:${server.port}/json': IpInfo.fromIpInfoIoJson,
+        },
+      );
+      final cancelToken = CancelToken();
+      final res = await probeReq.checkIpWithHost(
+        cancelToken: cancelToken,
+        keepAliveHold: const Duration(seconds: 2),
+        forceHoldSocket: true,
+        proxyResolver: (_) => 'DIRECT',
+        onSocketConnected: (ports) {
+          connectedPorts = ports;
+        },
+      );
+      expect(res.data?.ipInfo.countryCode, 'SG');
+      expect(connectedPorts, isNotNull);
+      expect(connectedPorts, isNotEmpty);
+      expect(res.data?.sourcePorts, equals(connectedPorts));
+      await Future<void>.delayed(const Duration(milliseconds: 30));
+      // Must still be held open for Core connection snapshot until cancelToken cancels!
+      expect(serverSocketClosed.isCompleted, isFalse);
+      cancelToken.cancel('done');
+      await serverSocketClosed.future.timeout(const Duration(seconds: 1));
+
+      // Pure helper verification: loopback proxy directive vs DIRECT when connections empty
+      final now = DateTime.now();
+      final loopbackFallback = resolveEndToEndCoreObservation(
+        explicitProxyDirective: 'PROXY 127.0.0.1:7890',
+        sourcePorts: {'54321'},
+        probeHost: 'ipinfo.io',
+        minStart: now.subtract(const Duration(seconds: 2)),
+        maxStart: now.add(const Duration(seconds: 2)),
+        connections: const [],
+        groupNames: const {'Proxy', 'GLOBAL'},
+      );
+      expect(loopbackFallback.observedInCore, isTrue);
+
+      final tunBypass = resolveEndToEndCoreObservation(
+        explicitProxyDirective: 'DIRECT',
+        sourcePorts: {'54321'},
+        probeHost: 'ipinfo.io',
+        minStart: now.subtract(const Duration(seconds: 2)),
+        maxStart: now.add(const Duration(seconds: 2)),
+        connections: const [],
+        groupNames: const {'Proxy', 'GLOBAL'},
+      );
+      expect(tunBypass.observedInCore, isFalse);
+
+      // Also verify system proxy mode in HealthRunner where upstream closed TCP stream before getConnections() snapshot:
+      final base = _FakeProbeEnvironment._defaultHealthySnapshot();
+      final sysProxyOnlyEnv = _FakeProbeEnvironment(
+        configSnapshot: HealthConfigSnapshot(
+          currentProfileId: base.currentProfileId,
+          currentProfile: base.currentProfile,
+          profileFileExists: true,
+          profileFileBytes: 4096,
+          mode: Mode.rule,
+          mixedPort: 7890,
+          testUrl: base.testUrl,
+          resolveGroupTestUrl: base.resolveGroupTestUrl,
+          systemProxyEnabled: true,
+          pacEnabled: false,
+          pacUrl: null,
+          tunDesiredEnabled: false,
+          tunFailureCode: null,
+          realTunEnable: false,
+          proxyStarted: true,
+          lastRuntimeProfileId: base.lastRuntimeProfileId,
+          groupsSnapshotProfileId: base.groupsSnapshotProfileId,
+          allGroups: base.allGroups,
+          visibleGroups: base.visibleGroups,
+          selectedMap: base.selectedMap,
+        ),
+        e2eObservation: const EndToEndProbeObservation(
+          exitCountryCode: 'SG',
+          observedInCore: false,
+        ),
+      )
+        ..tunStatus = const TunStatus(
+          instanceId: 'core-1',
+          revision: 1,
+          state: 'off',
+          listenerActive: false,
+          interfaceState: 'down',
+          privilege: 'elevated',
+          requestedEnabled: false,
+        )
+        ..windowsSystemProxy = const WindowsSystemProxySnapshot(
+          proxyEnabled: true,
+          proxyServer: '127.0.0.1:7890',
+        );
+
+      final report = await HealthRunner(sysProxyOnlyEnv).run();
+      expect(sysProxyOnlyEnv.lastExplicitProxyDirective, 'PROXY 127.0.0.1:7890');
+      expect(
+        report.checkById(HealthCheckId.endToEndConnectivity)?.status,
+        HealthStatus.passed,
+      );
+      expect(report.verdict.code, 'healthy');
+    });
+
+    test(
+        'CR-HC02: unexpected PAC reasonCode maps to PAC copy, missing https= scheme warns partial, and PAC mode detects manual proxy hijack / external PAC',
+        () async {
+      final l10n = await AppLocalizations.load(const Locale('zh', 'CN'));
+
+      // 1. Residual PAC reasonCode mapping in UI copy
+      final residual = evaluateWindowsSystemProxy(
+        expectedEnabled: true,
+        expectedPort: 7890,
+        expectedPacEnabled: false,
+        expectedPacUrl: null,
+        snapshot: const WindowsSystemProxySnapshot(
+          proxyEnabled: true,
+          proxyServer: '127.0.0.1:7890',
+          autoConfigUrl: 'http://127.0.0.1:19999/pac',
+        ),
+      );
+      final residualItem = HealthCheckResult(
+        id: HealthCheckId.systemProxyTakeover,
+        status: residual.status,
+        elapsedMs: 1,
+        reasonCode: residual.reasonCode,
+        localDetail: residual.localDetail,
+      );
+      expect(
+        healthCheckItemDetail(residualItem, l10n),
+        contains(l10n.healthDetailSysProxyUnexpectedPac),
+      );
+
+      // 2. Per-scheme http= without https= must warn instead of passing
+      final httpOnly = evaluateWindowsSystemProxy(
+        expectedEnabled: true,
+        expectedPort: 7890,
+        expectedPacEnabled: false,
+        expectedPacUrl: null,
+        snapshot: const WindowsSystemProxySnapshot(
+          proxyEnabled: true,
+          proxyServer: 'http=127.0.0.1:7890',
+        ),
+      );
+      expect(httpOnly.status, HealthStatus.warning);
+      expect(httpOnly.reasonCode, 'systemProxyPartialScheme');
+      expect(httpOnly.verifiedProxyDirective, isNull);
+
+      // 3. PAC mode with hijacked manual ProxyServer enabled
+      final pacHijacked = evaluateWindowsSystemProxy(
+        expectedEnabled: true,
+        expectedPort: 7890,
+        expectedPacEnabled: true,
+        expectedPacUrl: 'http://127.0.0.1:7899/pac',
+        snapshot: const WindowsSystemProxySnapshot(
+          proxyEnabled: true,
+          proxyServer: '127.0.0.1:10809',
+          autoConfigUrl: 'http://127.0.0.1:7899/pac',
+        ),
+      );
+      expect(pacHijacked.status, HealthStatus.warning);
+      expect(pacHijacked.reasonCode, 'systemProxyHijacked');
+
+      // 4. External remote PAC URL must not claim PAC 127.0.0.1 or fake loopback directive
+      final externalPac = evaluateWindowsSystemProxy(
+        expectedEnabled: true,
+        expectedPort: 7890,
+        expectedPacEnabled: true,
+        expectedPacUrl: 'https://pac.corp.example/proxy.pac',
+        snapshot: const WindowsSystemProxySnapshot(
+          proxyEnabled: false,
+          autoConfigUrl: 'https://pac.corp.example/proxy.pac',
+        ),
+      );
+      expect(externalPac.status, HealthStatus.passed);
+      expect(externalPac.localDetail, isNot(contains('127.0.0.1')));
+      expect(externalPac.verifiedProxyDirective, isNull);
+    });
+
+    test(
+        'CR-HC05: flclashx-serverinfo selects active group, Core realNow wins over stale selectedMap, and cyclic groups fail cleanly',
+        () async {
+      final base = _FakeProbeEnvironment._defaultHealthySnapshot();
+      final encodedGroup =
+          'base64:${base64.encode(utf8.encode('VIP-Entry'))}';
+      final groups = [
+        const Group(
+          type: GroupType.Selector,
+          name: 'OtherGroup',
+          now: 'Dead-Node',
+          all: [Proxy(name: 'Dead-Node', type: 'Trojan')],
+        ),
+        const Group(
+          type: GroupType.Selector,
+          name: 'VIP-Entry',
+          now: 'JP-Live-Core-01',
+          all: [
+            Proxy(name: 'JP-Live-Core-01', type: 'Trojan'),
+            Proxy(name: 'JP-Stale-Saved', type: 'Trojan'),
+          ],
+        ),
+      ];
+      final serverInfoEnv = _FakeProbeEnvironment(
+        configSnapshot: HealthConfigSnapshot(
+          currentProfileId: base.currentProfileId,
+          currentProfile: Profile(
+            id: 'prof-1',
+            label: 'VIP',
+            url: 'https://sub.example.org/s',
+            currentGroupName: null,
+            providerHeaders: {'flclashx-serverinfo': encodedGroup},
+            autoUpdateDuration: const Duration(hours: 24),
+            lastUpdateDate: DateTime.utc(2026, 11, 1, 9, 0),
+          ),
+          profileFileExists: true,
+          profileFileBytes: 2048,
+          mode: Mode.rule,
+          mixedPort: 7890,
+          testUrl: base.testUrl,
+          resolveGroupTestUrl: base.resolveGroupTestUrl,
+          systemProxyEnabled: false,
+          pacEnabled: false,
+          pacUrl: null,
+          tunDesiredEnabled: true,
+          tunFailureCode: null,
+          realTunEnable: true,
+          proxyStarted: true,
+          lastRuntimeProfileId: 'prof-1',
+          groupsSnapshotProfileId: 'prof-1',
+          allGroups: groups,
+          visibleGroups: groups,
+          selectedMap: const {'VIP-Entry': 'JP-Stale-Saved'},
+        ),
+        delayResults: const {
+          'DIRECT': DelayTestResult(30),
+          'VIP-Entry': DelayTestResult(88),
+        },
+      );
+      final report = await HealthRunner(serverInfoEnv).run();
+      expect(
+        report.checkById(HealthCheckId.outboundConnectivity)?.status,
+        HealthStatus.passed,
+      );
+      expect(report.verdict.activeNodeName, 'JP-Live-Core-01');
+
+      // Cyclic group loop A -> B -> A must fail cleanly instead of returning group name
+      final cyclicGroups = [
+        const Group(
+          type: GroupType.Selector,
+          name: 'LoopA',
+          now: 'LoopB',
+          all: [Proxy(name: 'LoopB', type: 'Selector')],
+        ),
+        const Group(
+          type: GroupType.Selector,
+          name: 'LoopB',
+          now: 'LoopA',
+          all: [Proxy(name: 'LoopA', type: 'Selector')],
+        ),
+      ];
+      final cyclicEnv = _FakeProbeEnvironment(
+        configSnapshot: HealthConfigSnapshot(
+          currentProfileId: 'prof-1',
+          currentProfile: base.currentProfile!.copyWith(currentGroupName: 'LoopA'),
+          profileFileExists: true,
+          profileFileBytes: 2048,
+          mode: Mode.rule,
+          mixedPort: 7890,
+          testUrl: base.testUrl,
+          resolveGroupTestUrl: base.resolveGroupTestUrl,
+          systemProxyEnabled: false,
+          pacEnabled: false,
+          pacUrl: null,
+          tunDesiredEnabled: true,
+          tunFailureCode: null,
+          realTunEnable: true,
+          proxyStarted: true,
+          lastRuntimeProfileId: 'prof-1',
+          groupsSnapshotProfileId: 'prof-1',
+          allGroups: cyclicGroups,
+          visibleGroups: cyclicGroups,
+          selectedMap: const {'LoopA': 'LoopB', 'LoopB': 'LoopA'},
+        ),
+      );
+      final cyclicReport = await HealthRunner(cyclicEnv).run();
+      final cyclicD3 =
+          cyclicReport.checkById(HealthCheckId.outboundConnectivity)!;
+      expect(cyclicD3.status, HealthStatus.failed);
+      expect(cyclicD3.reasonCode, 'outboundGroupLoop');
+    });
+
+    test(
+        'CR-HC08: HealthCheckController close-and-immediate-reopen awaits dying cancelled run and completes fresh run',
+        () async {
+      final gate1 = Completer<DelayTestResult>();
+      final env = _FakeProbeEnvironment(
+        delayCompleterByProxy: {'Proxy': gate1},
+      );
+      final controller = HealthCheckController(HealthRunner(env));
+      addTearDown(controller.dispose);
+
+      // Start Run #1 and let it enter Phase 2 (blocked on gate1)
+      final run1Future = controller.startOrAttach();
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(controller.isRunning, isTrue);
+
+      // Simulate sheet dispose: unawaited cancelActive(), then immediate reopen!
+      unawaited(controller.cancelActive());
+      env.delayCompleterByProxy = null;
+
+      final run2Future = controller.startOrAttach();
+      // Release gate1 after reopen already called startOrAttach()
+      gate1.complete(const DelayTestResult(100));
+
+      final run1Report = await run1Future;
+      final run2Report = await run2Future;
+      expect(run1Report, isNull);
+      expect(run2Report, isNotNull);
+      expect(run2Report?.verdict.code, 'healthy');
+      expect(controller.lastReport?.verdict.code, 'healthy');
     });
   });
 }

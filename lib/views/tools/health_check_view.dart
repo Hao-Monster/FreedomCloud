@@ -123,9 +123,13 @@ String healthCheckItemDetail(HealthCheckResult result, AppLocalizations l10n) {
         'systemProxyDisabledByPreference' => l10n.healthDetailSysProxyDisabled,
         'platformUnsupported' => l10n.healthDetailSysProxyUnsupported,
         'ok' || 'pacMatched' => result.localDetail ?? l10n.healthStatusPassed,
-        'unexpectedPacUrl' => result.localDetail != null
-            ? '${l10n.healthDetailSysProxyUnexpectedPac} (${result.localDetail})'
-            : l10n.healthDetailSysProxyUnexpectedPac,
+        'systemProxyUnexpectedPac' || 'unexpectedPacUrl' =>
+          result.localDetail != null
+              ? '${l10n.healthDetailSysProxyUnexpectedPac} (${result.localDetail})'
+              : l10n.healthDetailSysProxyUnexpectedPac,
+        'systemProxyPartialScheme' => result.localDetail != null
+            ? '${l10n.healthDetailTakeoverPartial} (${result.localDetail})'
+            : l10n.healthDetailTakeoverPartial,
         _ => result.localDetail != null
             ? '${l10n.healthDetailSysProxyHijacked} (${result.localDetail})'
             : l10n.healthDetailSysProxyHijacked,
@@ -163,6 +167,7 @@ String healthCheckItemDetail(HealthCheckResult result, AppLocalizations l10n) {
         'outboundSelectedReject' => l10n.healthDetailOutboundRejectSelected,
         'coreDelayBusy' => l10n.healthDetailCoreDelayBusy,
         'outboundGroupMissing' ||
+        'outboundGroupLoop' ||
         'outboundNotFound' =>
           l10n.healthDetailRuntimeMismatch,
         _ => l10n.healthDetailOutboundFailed(result.nodeName ?? '-'),
@@ -178,7 +183,11 @@ String healthCheckItemDetail(HealthCheckResult result, AppLocalizations l10n) {
         'routedDirectByRule' => l10n.healthDetailE2eDirectRule,
         'trafficBypassedCore' => l10n.healthDetailE2eBypassed,
         'e2eRejectedByRule' => l10n.healthDetailOutboundRejectSelected,
-        'takeoverFailed' || 'outboundFailed' => l10n.healthDetailSkipPrerequisite,
+        'takeoverFailed' ||
+        'outboundFailed' ||
+        'pacExternalUnverifiable' ||
+        'takeoverUnverifiedPlatform' =>
+          l10n.healthDetailSkipPrerequisite,
         _ => l10n.healthDetailE2eFailed,
       },
   };
@@ -247,19 +256,29 @@ class _HealthCheckViewState extends ConsumerState<HealthCheckView> {
       widget.onAction!(action);
       return;
     }
+    final navigator = Navigator.maybeOf(context);
+    final hostContext = navigator?.context ?? context;
+
+    void popOverlaysToRoot() {
+      if (navigator != null && navigator.canPop()) {
+        navigator.popUntil((route) => route.isFirst);
+      }
+    }
+
     switch (action) {
       case HealthAction.openProfiles:
-        Navigator.of(context).maybePop();
+        popOverlaysToRoot();
         globalState.appController.toPage(PageLabel.profiles);
       case HealthAction.openPurchase:
-        Navigator.of(context).maybePop();
+        popOverlaysToRoot();
         globalState.appController.toPage(PageLabel.purchase);
       case HealthAction.openProxies:
-        Navigator.of(context).maybePop();
+        popOverlaysToRoot();
         globalState.appController.toPage(PageLabel.proxies);
       case HealthAction.openTunSettings:
+        popOverlaysToRoot();
         await showSheet<void>(
-          context: context,
+          context: hostContext,
           builder: (_, type) => AdaptiveSheetScaffold(
             type: type,
             title: appLocalizations.tun,
@@ -275,8 +294,9 @@ class _HealthCheckViewState extends ConsumerState<HealthCheckView> {
           ),
         );
       case HealthAction.openNetworkSettings:
+        popOverlaysToRoot();
         await showExtend<void>(
-          context,
+          hostContext,
           builder: (_, type) => AdaptiveSheetScaffold(
             type: type,
             title: appLocalizations.network,
@@ -284,8 +304,9 @@ class _HealthCheckViewState extends ConsumerState<HealthCheckView> {
           ),
         );
       case HealthAction.openDnsSettings:
+        popOverlaysToRoot();
         await showExtend<void>(
-          context,
+          hostContext,
           builder: (_, type) => AdaptiveSheetScaffold(
             type: type,
             title: 'DNS',
@@ -404,6 +425,16 @@ class _HealthCheckViewState extends ConsumerState<HealthCheckView> {
   }
 }
 
+Color _healthyForeground(Brightness brightness) =>
+    brightness == Brightness.dark
+        ? Colors.green.shade300
+        : Colors.green.shade900;
+
+Color _warningForeground(Brightness brightness) =>
+    brightness == Brightness.dark
+        ? Colors.amber.shade300
+        : const Color(0xFF7A4F00);
+
 class _VerdictBanner extends StatelessWidget {
   const _VerdictBanner({
     required this.report,
@@ -422,6 +453,7 @@ class _VerdictBanner extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cs = context.colorScheme;
+    final brightness = Theme.of(context).brightness;
     final verdict = report?.verdict;
 
     final Color bgColor;
@@ -437,14 +469,14 @@ class _VerdictBanner extends StatelessWidget {
     } else {
       switch (verdict.severity) {
         case HealthVerdictSeverity.healthy:
-          bgColor = Colors.green.withValues(alpha: 0.10);
+          bgColor = Colors.green.withValues(alpha: 0.12);
           borderColor = Colors.green.withValues(alpha: 0.35);
-          accentColor = Colors.green.shade600;
+          accentColor = _healthyForeground(brightness);
           iconData = Icons.check_circle_rounded;
         case HealthVerdictSeverity.warning:
-          bgColor = Colors.amber.withValues(alpha: 0.12);
+          bgColor = Colors.amber.withValues(alpha: 0.14);
           borderColor = Colors.amber.withValues(alpha: 0.42);
-          accentColor = Colors.amber.shade800;
+          accentColor = _warningForeground(brightness);
           iconData = Icons.warning_amber_rounded;
         case HealthVerdictSeverity.failed:
           bgColor = cs.errorContainer.withValues(alpha: 0.45);
@@ -459,7 +491,8 @@ class _VerdictBanner extends StatelessWidget {
         : healthVerdictHeadline(verdict, l10n);
 
     String? subtitle;
-    if (verdict != null && verdict.code == 'healthy') {
+    if (verdict != null &&
+        (verdict.code == 'healthy' || verdict.code == 'healthyWithWarnings')) {
       if (report?.mode == Mode.direct && verdict.directDelayMs != null) {
         subtitle = l10n.healthVerdictHealthyDirectSubtitle(
           verdict.directDelayMs!,
@@ -655,6 +688,7 @@ class _HealthCheckRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cs = context.colorScheme;
+    final brightness = Theme.of(context).brightness;
     final isItemRunning = live == null || live!.status == HealthStatus.running;
     final effective = (isItemRunning && previous != null) ? previous! : live;
     final status = effective?.status ?? HealthStatus.running;
@@ -665,11 +699,11 @@ class _HealthCheckRow extends StatelessWidget {
     final (IconData icon, Color iconColor) = switch (status) {
       HealthStatus.passed => (
           Icons.check_circle_outline_rounded,
-          Colors.green.shade600,
+          _healthyForeground(brightness),
         ),
       HealthStatus.warning => (
           Icons.warning_amber_rounded,
-          Colors.amber.shade800,
+          _warningForeground(brightness),
         ),
       HealthStatus.failed => (
           Icons.highlight_off_rounded,
@@ -814,14 +848,15 @@ class _StatusPill extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cs = context.colorScheme;
+    final brightness = Theme.of(context).brightness;
     final (Color bg, Color fg) = switch (status) {
       HealthStatus.passed => (
-          Colors.green.withValues(alpha: 0.14),
-          Colors.green.shade700,
+          Colors.green.withValues(alpha: brightness == Brightness.dark ? 0.18 : 0.14),
+          _healthyForeground(brightness),
         ),
       HealthStatus.warning => (
-          Colors.amber.withValues(alpha: 0.16),
-          Colors.amber.shade900,
+          Colors.amber.withValues(alpha: brightness == Brightness.dark ? 0.18 : 0.16),
+          _warningForeground(brightness),
         ),
       HealthStatus.failed || HealthStatus.timeout => (
           cs.errorContainer.withValues(alpha: 0.7),

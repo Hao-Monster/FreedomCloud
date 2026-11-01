@@ -1,5 +1,7 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:isolate';
 
 import 'package:dio/dio.dart';
 import 'package:flclashx/clash/clash.dart';
@@ -109,6 +111,59 @@ abstract class HealthProbeEnvironment {
   });
 }
 
+bool isVerifiedLoopbackProxyDirective(String? directive) {
+  if (directive == null) return false;
+  final trimmed = directive.trim();
+  if (!trimmed.toUpperCase().startsWith('PROXY ')) return false;
+  final lower = trimmed.substring(6).trim().toLowerCase();
+  return lower.startsWith('127.0.0.1:') ||
+      lower.startsWith('localhost:') ||
+      lower.startsWith('[::1]:');
+}
+
+({bool observedInCore, String? matchedLeafProxy})
+    resolveEndToEndCoreObservation({
+  required String? explicitProxyDirective,
+  required Set<String> sourcePorts,
+  required String probeHost,
+  required DateTime minStart,
+  required DateTime maxStart,
+  required List<Connection> connections,
+  required Set<String> groupNames,
+}) {
+  final normalizedHost = probeHost.trim().toLowerCase();
+  for (var i = connections.length - 1; i >= 0; i--) {
+    final conn = connections[i];
+    if (conn.start.isBefore(minStart) || conn.start.isAfter(maxStart)) {
+      continue;
+    }
+    final srcPort = conn.metadata.sourcePort.trim();
+    final portMatched = srcPort.isNotEmpty && sourcePorts.contains(srcPort);
+    if (!portMatched) continue;
+
+    final metaHost = conn.metadata.host.trim().toLowerCase();
+    final sniffHost = conn.metadata.sniffHost.trim().toLowerCase();
+    final hostConsistent = normalizedHost.isEmpty ||
+        (metaHost.isEmpty && sniffHost.isEmpty) ||
+        metaHost == normalizedHost ||
+        sniffHost == normalizedHost;
+    if (!hostConsistent) continue;
+
+    String? matchedLeaf;
+    if (conn.chains.isNotEmpty) {
+      matchedLeaf = conn.chains.firstWhere(
+        (hop) => hop.isNotEmpty && !groupNames.contains(hop),
+        orElse: () => conn.chains.first,
+      );
+    }
+    return (observedInCore: true, matchedLeafProxy: matchedLeaf);
+  }
+  if (isVerifiedLoopbackProxyDirective(explicitProxyDirective)) {
+    return (observedInCore: true, matchedLeafProxy: null);
+  }
+  return (observedInCore: false, matchedLeafProxy: null);
+}
+
 class DefaultHealthProbeEnvironment implements HealthProbeEnvironment {
   DefaultHealthProbeEnvironment(this._ref);
   final Ref _ref;
@@ -138,9 +193,13 @@ class DefaultHealthProbeEnvironment implements HealthProbeEnvironment {
     if (currentProfileId != null && currentProfileId.isNotEmpty) {
       try {
         final profilePath = await appPath.getProfilePath(currentProfileId);
-        final stat = File(profilePath).statSync();
-        fileExists = stat.type != FileSystemEntityType.notFound;
-        fileBytes = fileExists ? stat.size : 0;
+        final statResult = await Isolate.run(() {
+          final stat = File(profilePath).statSync();
+          final exists = stat.type != FileSystemEntityType.notFound;
+          return (exists: exists, bytes: exists ? stat.size : 0);
+        });
+        fileExists = statResult.exists;
+        fileBytes = statResult.bytes;
       } catch (_) {
         fileExists = false;
         fileBytes = 0;
@@ -149,7 +208,16 @@ class DefaultHealthProbeEnvironment implements HealthProbeEnvironment {
 
     final patchClash = _ref.read(patchClashConfigProvider);
     final networkProps = _ref.read(networkSettingProvider);
-    final pac = _ref.read(pacSettingsProvider).valueOrNull;
+    var pac = _ref.read(pacSettingsProvider).valueOrNull;
+    if (pac == null) {
+      try {
+        pac = await _ref
+            .read(pacSettingsProvider.future)
+            .timeout(const Duration(seconds: 1));
+      } catch (_) {
+        pac = _ref.read(pacSettingsProvider).valueOrNull;
+      }
+    }
     final tunRuntimeCtrl = _ref.read(tunRuntimeProvider);
 
     final bool tunDesired;
@@ -228,8 +296,14 @@ class DefaultHealthProbeEnvironment implements HealthProbeEnvironment {
   }
 
   @override
-  Future<WindowsSystemProxySnapshot?> readWindowsSystemProxy() async =>
-      readWindowsSystemProxyRegistry();
+  Future<WindowsSystemProxySnapshot?> readWindowsSystemProxy() async {
+    if (!Platform.isWindows) return null;
+    try {
+      return await Isolate.run(readWindowsSystemProxyRegistry);
+    } catch (_) {
+      return readWindowsSystemProxyRegistry();
+    }
+  }
 
   @override
   Future<DelayTestResult> testProxyDelay({
@@ -266,14 +340,24 @@ class DefaultHealthProbeEnvironment implements HealthProbeEnvironment {
     });
 
     final startedAt = DateTime.now();
+    final inFlightFutures = <Future<List<Connection>>>[];
     try {
       final res = await request.checkIpWithHost(
         cancelToken: dioCancel,
         keepAliveHold: const Duration(milliseconds: 1800),
         connectTimeout: const Duration(seconds: 4),
+        forceHoldSocket: true,
         proxyResolver: explicitProxyDirective != null
             ? (_) => explicitProxyDirective
             : null,
+        onSocketConnected: (_) {
+          if (cancelToken.isCancelled) return;
+          inFlightFutures.add(
+            clashCore
+                .getConnections()
+                .catchError((Object _) => const <Connection>[]),
+          );
+        },
       );
       if (cancelToken.isCancelled || res.isError) return null;
       final probe = res.data;
@@ -285,49 +369,28 @@ class DefaultHealthProbeEnvironment implements HealthProbeEnvironment {
         GroupName.GLOBAL.name,
       };
 
-      var observedInCore = false;
-      String? matchedLeaf;
-      try {
-        final connections = await clashCore.getConnections();
-        final minStart = startedAt.subtract(const Duration(seconds: 2));
-        final maxStart = DateTime.now().add(const Duration(seconds: 2));
-        final probeHost = probe.host.trim().toLowerCase();
-
-        for (var i = connections.length - 1; i >= 0; i--) {
-          final conn = connections[i];
-          if (conn.start.isBefore(minStart) || conn.start.isAfter(maxStart)) {
-            continue;
-          }
-          final srcPort = conn.metadata.sourcePort.trim();
-          final portMatched =
-              srcPort.isNotEmpty && probe.sourcePorts.contains(srcPort);
-          if (!portMatched) continue;
-
-          final metaHost = conn.metadata.host.trim().toLowerCase();
-          final sniffHost = conn.metadata.sniffHost.trim().toLowerCase();
-          final hostConsistent = probeHost.isEmpty ||
-              (metaHost.isEmpty && sniffHost.isEmpty) ||
-              metaHost == probeHost ||
-              sniffHost == probeHost;
-          if (!hostConsistent) continue;
-
-          observedInCore = true;
-          if (conn.chains.isNotEmpty) {
-            matchedLeaf = conn.chains.firstWhere(
-              (hop) => hop.isNotEmpty && !groupNames.contains(hop),
-              orElse: () => conn.chains.first,
-            );
-          }
-          break;
-        }
-      } catch (_) {
-        observedInCore = false;
+      final mergedConnections = <Connection>[];
+      for (final f in inFlightFutures) {
+        mergedConnections.addAll(await f);
       }
+      try {
+        mergedConnections.addAll(await clashCore.getConnections());
+      } catch (_) {}
+
+      final resolved = resolveEndToEndCoreObservation(
+        explicitProxyDirective: explicitProxyDirective,
+        sourcePorts: probe.sourcePorts,
+        probeHost: probe.host,
+        minStart: startedAt.subtract(const Duration(seconds: 2)),
+        maxStart: DateTime.now().add(const Duration(seconds: 2)),
+        connections: mergedConnections,
+        groupNames: groupNames,
+      );
 
       return EndToEndProbeObservation(
         exitCountryCode: probe.ipInfo.countryCode.trim().toUpperCase(),
-        observedInCore: observedInCore,
-        matchedLeafProxy: matchedLeaf,
+        observedInCore: resolved.observedInCore,
+        matchedLeafProxy: resolved.matchedLeafProxy,
       );
     } finally {
       if (!dioCancel.isCancelled) {

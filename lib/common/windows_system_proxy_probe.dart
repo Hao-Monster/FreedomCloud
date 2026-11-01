@@ -133,14 +133,46 @@ Map<String, ParsedProxyEndpoint> parseWindowsProxyServer(String? raw) {
     );
   }
 
+  bool matchesExpected(ParsedProxyEndpoint? ep) =>
+      ep != null && _isLoopbackHost(ep.host) && ep.port == expectedPort;
+
+  bool manualSnapshotMatchesExpected() {
+    if (expectedPort <= 0 || expectedPort > 65535) return false;
+    final parsed = parseWindowsProxyServer(snapshot.proxyServer);
+    if (parsed.isEmpty) return false;
+    if (parsed.containsKey('*')) {
+      return matchesExpected(parsed['*']);
+    }
+    final httpEp = parsed['http'];
+    final httpsEp = parsed['https'];
+    return httpEp != null &&
+        httpsEp != null &&
+        matchesExpected(httpEp) &&
+        matchesExpected(httpsEp);
+  }
+
   if (expectedPacEnabled) {
     if (_pacUrlsMatch(expectedPacUrl, snapshot.autoConfigUrl)) {
+      if (snapshot.proxyEnabled && !manualSnapshotMatchesExpected()) {
+        return (
+          status: HealthStatus.warning,
+          reasonCode: 'systemProxyHijacked',
+          localDetail: snapshot.proxyServer,
+          verifiedProxyDirective: null,
+        );
+      }
+      final pacUri = Uri.tryParse(expectedPacUrl?.trim() ?? '');
+      final isLoopbackPac = pacUri != null && _isLoopbackHost(pacUri.host);
+      final pacDetail = isLoopbackPac
+          ? 'PAC 127.0.0.1'
+          : 'PAC (${(pacUri != null && pacUri.host.isNotEmpty) ? pacUri.host : 'auto'})';
       return (
         status: HealthStatus.passed,
         reasonCode: 'ok',
-        localDetail: 'PAC 127.0.0.1',
-        verifiedProxyDirective:
-            expectedPort > 0 ? 'PROXY 127.0.0.1:$expectedPort' : null,
+        localDetail: pacDetail,
+        verifiedProxyDirective: (isLoopbackPac && expectedPort > 0)
+            ? 'PROXY 127.0.0.1:$expectedPort'
+            : null,
       );
     }
     final hasOtherPac = (snapshot.autoConfigUrl?.trim().isNotEmpty ?? false);
@@ -180,27 +212,45 @@ Map<String, ParsedProxyEndpoint> parseWindowsProxyServer(String? raw) {
     );
   }
 
-  bool matchesExpected(ParsedProxyEndpoint? ep) =>
-      ep != null && _isLoopbackHost(ep.host) && ep.port == expectedPort;
-
-  final bool validEndpoint;
   if (parsed.containsKey('*')) {
-    validEndpoint = matchesExpected(parsed['*']);
+    if (!matchesExpected(parsed['*'])) {
+      return (
+        status: HealthStatus.failed,
+        reasonCode: 'systemProxyHijacked',
+        localDetail: null,
+        verifiedProxyDirective: null,
+      );
+    }
   } else {
     final httpEp = parsed['http'];
     final httpsEp = parsed['https'];
-    validEndpoint = (httpEp != null || httpsEp != null) &&
-        (httpEp == null || matchesExpected(httpEp)) &&
-        (httpsEp == null || matchesExpected(httpsEp));
-  }
-
-  if (!validEndpoint) {
-    return (
-      status: HealthStatus.failed,
-      reasonCode: 'systemProxyHijacked',
-      localDetail: null,
-      verifiedProxyDirective: null,
-    );
+    if (httpEp == null && httpsEp == null) {
+      return (
+        status: HealthStatus.failed,
+        reasonCode: 'systemProxyHijacked',
+        localDetail: null,
+        verifiedProxyDirective: null,
+      );
+    }
+    final httpInvalid = httpEp != null && !matchesExpected(httpEp);
+    final httpsInvalid = httpsEp != null && !matchesExpected(httpsEp);
+    if (httpInvalid || httpsInvalid) {
+      return (
+        status: HealthStatus.failed,
+        reasonCode: 'systemProxyHijacked',
+        localDetail: null,
+        verifiedProxyDirective: null,
+      );
+    }
+    if (httpEp == null || httpsEp == null) {
+      return (
+        status: HealthStatus.warning,
+        reasonCode: 'systemProxyPartialScheme',
+        localDetail: '127.0.0.1:$expectedPort',
+        verifiedProxyDirective:
+            httpsEp != null ? 'PROXY 127.0.0.1:$expectedPort' : null,
+      );
+    }
   }
 
   if (snapshot.autoConfigUrl?.trim().isNotEmpty ?? false) {

@@ -300,7 +300,18 @@ class BypassDomainItem extends StatelessWidget {
 
   void _initActions(BuildContext context, WidgetRef ref) {
     WidgetsBinding.instance.addPostFrameCallback((timeStamp) {
-      context.commonScaffoldState?.actions = [
+      if (!context.mounted ||
+          context.findAncestorWidgetOfExactType<AdaptiveSheetScaffold>() !=
+              null) {
+        return;
+      }
+      final scaffoldState = context.commonScaffoldState;
+      if (scaffoldState == null ||
+          !scaffoldState.mounted ||
+          ModalRoute.of(scaffoldState.context) != ModalRoute.of(context)) {
+        return;
+      }
+      scaffoldState.actions = [
         IconButton(
           onPressed: () async {
             final res = await globalState.showMessage(
@@ -474,7 +485,18 @@ class NetworkListView extends ConsumerWidget {
 
   void _initActions(BuildContext context, WidgetRef ref) {
     WidgetsBinding.instance.addPostFrameCallback((timeStamp) {
-      context.commonScaffoldState?.actions = [
+      if (!context.mounted ||
+          context.findAncestorWidgetOfExactType<AdaptiveSheetScaffold>() !=
+              null) {
+        return;
+      }
+      final scaffoldState = context.commonScaffoldState;
+      if (scaffoldState == null ||
+          !scaffoldState.mounted ||
+          ModalRoute.of(scaffoldState.context) != ModalRoute.of(context)) {
+        return;
+      }
+      scaffoldState.actions = [
         IconButton(
           onPressed: () async {
             final res = await globalState.showMessage(

@@ -150,41 +150,43 @@ class _NetworkDetectionState extends ConsumerState<NetworkDetection> {
                                               overflow: TextOverflow.ellipsis,
                                             ),
                                           ),
-                                          const SizedBox(width: 6),
-                                          TextButton.icon(
-                                            key: const ValueKey(
-                                              'network-detection-diagnose-button',
-                                            ),
-                                            style: TextButton.styleFrom(
-                                              visualDensity:
-                                                  VisualDensity.compact,
-                                              minimumSize: const Size(0, 28),
-                                              tapTargetSize:
-                                                  MaterialTapTargetSize
-                                                      .shrinkWrap,
-                                              padding:
-                                                  const EdgeInsets.symmetric(
-                                                horizontal: 6,
-                                                vertical: 2,
+                                          const SizedBox(width: 4),
+                                          Flexible(
+                                            child: TextButton.icon(
+                                              key: const ValueKey(
+                                                'network-detection-diagnose-button',
                                               ),
-                                            ),
-                                            onPressed: () =>
-                                                openHealthCheck(context),
-                                            icon: const Icon(
-                                              Icons.monitor_heart_outlined,
-                                              size: 14,
-                                            ),
-                                            label: Text(
-                                              appLocalizations
-                                                  .healthCheckDiagnoseAction,
-                                              maxLines: 1,
-                                              overflow: TextOverflow.ellipsis,
-                                              style: context
-                                                  .textTheme.labelSmall
-                                                  ?.copyWith(
-                                                color: context
-                                                    .colorScheme.primary,
-                                                fontWeight: FontWeight.w600,
+                                              style: TextButton.styleFrom(
+                                                visualDensity:
+                                                    VisualDensity.compact,
+                                                minimumSize: const Size(0, 28),
+                                                tapTargetSize:
+                                                    MaterialTapTargetSize
+                                                        .shrinkWrap,
+                                                padding:
+                                                    const EdgeInsets.symmetric(
+                                                  horizontal: 6,
+                                                  vertical: 2,
+                                                ),
+                                              ),
+                                              onPressed: () =>
+                                                  openHealthCheck(context),
+                                              icon: const Icon(
+                                                Icons.monitor_heart_outlined,
+                                                size: 14,
+                                              ),
+                                              label: Text(
+                                                appLocalizations
+                                                    .healthCheckDiagnoseAction,
+                                                maxLines: 1,
+                                                overflow: TextOverflow.ellipsis,
+                                                style: context
+                                                    .textTheme.labelSmall
+                                                    ?.copyWith(
+                                                  color: context
+                                                      .colorScheme.primary,
+                                                  fontWeight: FontWeight.w600,
+                                                ),
                                               ),
                                             ),
                                           ),

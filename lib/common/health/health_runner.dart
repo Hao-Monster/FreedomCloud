@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
 
@@ -32,10 +33,33 @@ class HealthRunner {
     return DateTime.fromMillisecondsSinceEpoch(ms, isUtc: true);
   }
 
+  static String? _decodeServerInfoHeader(String? raw) {
+    if (raw == null || raw.trim().isEmpty) return null;
+    var text = raw.trim();
+    if (text.startsWith('base64:')) {
+      text = text.substring(7).trim();
+    }
+    if (text.isEmpty) return null;
+    try {
+      final normalized = base64.normalize(text);
+      final decoded = utf8.decode(base64.decode(normalized)).trim();
+      return decoded.isEmpty ? null : decoded;
+    } catch (_) {
+      return raw.trim().isEmpty ? null : raw.trim();
+    }
+  }
+
   static Group? _selectActiveGroup(HealthConfigSnapshot cfg) {
     if (cfg.mode == Mode.global) {
       return cfg.allGroups.getGroup(GroupName.GLOBAL.name) ??
           (cfg.visibleGroups.isNotEmpty ? cfg.visibleGroups.first : null);
+    }
+    final serverInfoGroup = _decodeServerInfoHeader(
+      cfg.currentProfile?.providerHeaders['flclashx-serverinfo'],
+    );
+    if (serverInfoGroup != null && serverInfoGroup.isNotEmpty) {
+      final found = cfg.allGroups.getGroup(serverInfoGroup);
+      if (found != null) return found;
     }
     final preferred = cfg.currentProfile?.currentGroupName;
     if (preferred != null && preferred.isNotEmpty) {
@@ -55,28 +79,33 @@ class HealthRunner {
     return cfg.allGroups.isNotEmpty ? cfg.allGroups.first : null;
   }
 
-  static String _resolveSelectedLeaf(
+  static String? _resolveSelectedLeaf(
     Group entryGroup,
     List<Group> allGroups,
-    Map<String, String> selectedMap, [
-    int depth = 0,
-  ]) {
-    if (depth > 16) return entryGroup.name;
-    final picked =
-        entryGroup.getCurrentSelectedName(selectedMap[entryGroup.name] ?? '');
-    if (picked.isEmpty || picked == entryGroup.name) {
-      return entryGroup.name;
+    Map<String, String> selectedMap, {
+    required bool preferRuntimeNow,
+  }) {
+    final visited = <String>{};
+    var current = entryGroup;
+    while (visited.add(current.name) && visited.length <= 32) {
+      final picked = (preferRuntimeNow && current.realNow.isNotEmpty)
+          ? current.realNow
+          : current.getCurrentSelectedName(selectedMap[current.name] ?? '');
+      if (picked.isEmpty || picked == current.name) {
+        return null;
+      }
+      if (picked == 'DIRECT' ||
+          picked == 'REJECT' ||
+          picked == 'REJECT-DROP') {
+        return picked;
+      }
+      final nextGroup = allGroups.getGroup(picked);
+      if (nextGroup == null) {
+        return picked;
+      }
+      current = nextGroup;
     }
-    if (picked == 'DIRECT' ||
-        picked == 'REJECT' ||
-        picked == 'REJECT-DROP') {
-      return picked;
-    }
-    final nextGroup = allGroups.getGroup(picked);
-    if (nextGroup == null) {
-      return picked;
-    }
-    return _resolveSelectedLeaf(nextGroup, allGroups, selectedMap, depth + 1);
+    return null;
   }
 
   static String _mapTunFailureReason(String? code) => switch (code) {
@@ -922,8 +951,21 @@ class HealthRunner {
             action: HealthAction.openProfiles,
           );
         }
-        final leaf =
-            _resolveSelectedLeaf(group, cfg.allGroups, cfg.selectedMap);
+        final leaf = _resolveSelectedLeaf(
+          group,
+          cfg.allGroups,
+          cfg.selectedMap,
+          preferRuntimeNow: cfg.proxyStarted && a3.status == HealthStatus.passed,
+        );
+        if (leaf == null) {
+          return const HealthCheckResult(
+            id: HealthCheckId.outboundConnectivity,
+            status: HealthStatus.failed,
+            elapsedMs: 0,
+            reasonCode: 'outboundGroupLoop',
+            action: HealthAction.openProfiles,
+          );
+        }
         resolvedActiveLeaf = leaf;
         if (leaf == 'REJECT' || leaf == 'REJECT-DROP') {
           return HealthCheckResult(
@@ -1106,83 +1148,96 @@ class HealthRunner {
         final tunActive =
             c2.status == HealthStatus.passed || c2.status == HealthStatus.warning;
         final directive = tunActive ? 'DIRECT' : verifiedSysProxyDirective;
-        final watch = Stopwatch()..start();
-        try {
-          final obs = await raceCancel(
-            environment
-                .probeEndToEnd(
-                  cancelToken: token,
-                  explicitProxyDirective: directive,
-                )
-                .timeout(const Duration(seconds: 8)),
+        if (!tunActive && directive == null) {
+          d4 = HealthCheckResult(
+            id: HealthCheckId.endToEndConnectivity,
+            status: HealthStatus.skipped,
+            elapsedMs: 0,
+            reasonCode: cfg.pacEnabled
+                ? 'pacExternalUnverifiable'
+                : 'takeoverUnverifiedPlatform',
           );
-          final ms = watch.elapsedMilliseconds;
-          if (obs == null) {
-            d4 = HealthCheckResult(
-              id: HealthCheckId.endToEndConnectivity,
-              status: HealthStatus.failed,
-              elapsedMs: ms,
-              reasonCode: 'e2eAllSourcesFailed',
-              action: HealthAction.openProxies,
+        } else {
+          final watch = Stopwatch()..start();
+          try {
+            final obs = await raceCancel(
+              environment
+                  .probeEndToEnd(
+                    cancelToken: token,
+                    explicitProxyDirective: directive,
+                  )
+                  .timeout(const Duration(seconds: 8)),
             );
-          } else {
-            exitCountryCode =
-                obs.exitCountryCode.length == 2 ? obs.exitCountryCode : null;
-            if (!obs.observedInCore) {
-              d4 = HealthCheckResult(
-                id: HealthCheckId.endToEndConnectivity,
-                status: HealthStatus.warning,
-                elapsedMs: ms,
-                reasonCode: 'trafficBypassedCore',
-                exitCountryCode: exitCountryCode,
-                action: HealthAction.openTunSettings,
-              );
-            } else if (obs.matchedLeafProxy == 'REJECT' ||
-                obs.matchedLeafProxy == 'REJECT-DROP') {
+            final ms = watch.elapsedMilliseconds;
+            if (obs == null) {
               d4 = HealthCheckResult(
                 id: HealthCheckId.endToEndConnectivity,
                 status: HealthStatus.failed,
                 elapsedMs: ms,
-                reasonCode: 'e2eRejectedByRule',
+                reasonCode: 'e2eAllSourcesFailed',
                 action: HealthAction.openProxies,
               );
-            } else if (obs.matchedLeafProxy == 'DIRECT') {
-              d4 = HealthCheckResult(
-                id: HealthCheckId.endToEndConnectivity,
-                status: HealthStatus.passed,
-                elapsedMs: ms,
-                reasonCode: 'routedDirectByRule',
-                exitCountryCode: exitCountryCode,
-              );
             } else {
-              d4 = HealthCheckResult(
-                id: HealthCheckId.endToEndConnectivity,
-                status: HealthStatus.passed,
-                elapsedMs: ms,
-                reasonCode: 'ok',
-                exitCountryCode: exitCountryCode,
-                nodeName: obs.matchedLeafProxy,
-              );
+              exitCountryCode =
+                  obs.exitCountryCode.length == 2 ? obs.exitCountryCode : null;
+              final observedInCore = obs.observedInCore ||
+                  isVerifiedLoopbackProxyDirective(directive);
+              if (!observedInCore) {
+                d4 = HealthCheckResult(
+                  id: HealthCheckId.endToEndConnectivity,
+                  status: HealthStatus.warning,
+                  elapsedMs: ms,
+                  reasonCode: 'trafficBypassedCore',
+                  exitCountryCode: exitCountryCode,
+                  action: HealthAction.openTunSettings,
+                );
+              } else if (obs.matchedLeafProxy == 'REJECT' ||
+                  obs.matchedLeafProxy == 'REJECT-DROP') {
+                d4 = HealthCheckResult(
+                  id: HealthCheckId.endToEndConnectivity,
+                  status: HealthStatus.failed,
+                  elapsedMs: ms,
+                  reasonCode: 'e2eRejectedByRule',
+                  action: HealthAction.openProxies,
+                );
+              } else if (obs.matchedLeafProxy == 'DIRECT') {
+                d4 = HealthCheckResult(
+                  id: HealthCheckId.endToEndConnectivity,
+                  status: HealthStatus.passed,
+                  elapsedMs: ms,
+                  reasonCode: 'routedDirectByRule',
+                  exitCountryCode: exitCountryCode,
+                );
+              } else {
+                d4 = HealthCheckResult(
+                  id: HealthCheckId.endToEndConnectivity,
+                  status: HealthStatus.passed,
+                  elapsedMs: ms,
+                  reasonCode: 'ok',
+                  exitCountryCode: exitCountryCode,
+                  nodeName: obs.matchedLeafProxy,
+                );
+              }
             }
+          } on _HealthCancelledException {
+            rethrow;
+          } on TimeoutException {
+            d4 = HealthCheckResult(
+              id: HealthCheckId.endToEndConnectivity,
+              status: HealthStatus.timeout,
+              elapsedMs: watch.elapsedMilliseconds,
+              reasonCode: 'e2eTimeout',
+              action: HealthAction.openProxies,
+            );
+          } catch (_) {
+            d4 = HealthCheckResult(
+              id: HealthCheckId.endToEndConnectivity,
+              status: HealthStatus.failed,
+              elapsedMs: watch.elapsedMilliseconds,
+              reasonCode: 'e2eAllSourcesFailed',
+              action: HealthAction.openProxies,
+            );
           }
-        } on _HealthCancelledException {
-          rethrow;
-        } on TimeoutException {
-          d4 = HealthCheckResult(
-            id: HealthCheckId.endToEndConnectivity,
-            status: HealthStatus.timeout,
-            elapsedMs: watch.elapsedMilliseconds,
-            reasonCode: 'e2eTimeout',
-            action: HealthAction.openProxies,
-          );
-        } catch (_) {
-          d4 = HealthCheckResult(
-            id: HealthCheckId.endToEndConnectivity,
-            status: HealthStatus.failed,
-            elapsedMs: watch.elapsedMilliseconds,
-            reasonCode: 'e2eAllSourcesFailed',
-            action: HealthAction.openProxies,
-          );
         }
       }
       record(d4);
@@ -1227,6 +1282,7 @@ class HealthCheckController extends ChangeNotifier {
   Map<HealthCheckId, HealthCheckResult> _liveSnapshot = const {};
   Map<HealthCheckId, HealthCheckResult> _previousById = const {};
   HealthCancellationToken? _activeToken;
+  Future<HealthReport?>? _inFlightFuture;
   bool _running = false;
   bool _disposed = false;
 
@@ -1236,7 +1292,29 @@ class HealthCheckController extends ChangeNotifier {
   bool get isRunning => _running;
 
   Future<HealthReport?> startOrAttach() async {
-    if (_disposed || _running) return _lastReport;
+    if (_disposed) return _lastReport;
+    if (_running) {
+      final currentToken = _activeToken;
+      if (currentToken != null && !currentToken.isCancelled) {
+        return _inFlightFuture ?? _lastReport;
+      }
+      final dyingFuture = _inFlightFuture;
+      if (dyingFuture != null) {
+        try {
+          await dyingFuture;
+        } catch (_) {}
+      }
+      if (_disposed) return _lastReport;
+      if (_running && _activeToken != null && !_activeToken!.isCancelled) {
+        return _inFlightFuture ?? _lastReport;
+      }
+    }
+    final future = _executeRun();
+    _inFlightFuture = future;
+    return future;
+  }
+
+  Future<HealthReport?> _executeRun() async {
     if (_lastReport != null) {
       _previousById = {
         for (final item in _lastReport!.checks) item.id: item,
@@ -1282,6 +1360,7 @@ class HealthCheckController extends ChangeNotifier {
     } finally {
       if (identical(_activeToken, token)) {
         _activeToken = null;
+        _inFlightFuture = null;
         _running = false;
         if (!_disposed) notifyListeners();
       }

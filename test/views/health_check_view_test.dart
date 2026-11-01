@@ -13,8 +13,10 @@ import 'package:flclashx/enum/enum.dart';
 import 'package:flclashx/l10n/l10n.dart';
 import 'package:flclashx/models/models.dart';
 import 'package:flclashx/providers/providers.dart';
+import 'package:flclashx/providers/tun.dart';
 import 'package:flclashx/state.dart';
 import 'package:flclashx/views/dashboard/dashboard.dart';
+import 'package:flclashx/views/dashboard/widgets/network_detection.dart';
 import 'package:flclashx/views/tools.dart';
 import 'package:flclashx/views/tools/health_check_view.dart';
 import 'package:flclashx/widgets/scaffold.dart';
@@ -70,6 +72,10 @@ class _TestHealthEnvironment implements HealthProbeEnvironment {
   DelayTestResult outboundDelay;
   DelayTestResult directDelay = const DelayTestResult(26);
   TunStatus? tunStatus;
+  bool systemProxyEnabled = false;
+  bool tunDesiredEnabled = true;
+  WindowsSystemProxySnapshot? windowsProxy;
+  int subscriptionExpireSec = 1796000000;
   EndToEndProbeObservation? e2e = const EndToEndProbeObservation(
     exitCountryCode: 'SG',
     observedInCore: true,
@@ -105,11 +111,11 @@ class _TestHealthEnvironment implements HealthProbeEnvironment {
       currentGroupName: 'Proxy',
       autoUpdateDuration: const Duration(hours: 24),
       lastUpdateDate: DateTime(2026, 11, 1, 10, 0),
-      subscriptionInfo: const SubscriptionInfo(
+      subscriptionInfo: SubscriptionInfo(
         upload: 1024 * 1024 * 1024,
         download: 2 * 1024 * 1024 * 1024,
         total: 100 * 1024 * 1024 * 1024,
-        expire: 1796000000,
+        expire: subscriptionExpireSec,
       ),
     );
     return HealthConfigSnapshot(
@@ -121,12 +127,12 @@ class _TestHealthEnvironment implements HealthProbeEnvironment {
       mixedPort: 7890,
       testUrl: 'https://www.gstatic.com/generate_204',
       resolveGroupTestUrl: (u) => u ?? 'https://www.gstatic.com/generate_204',
-      systemProxyEnabled: false,
+      systemProxyEnabled: systemProxyEnabled,
       pacEnabled: false,
       pacUrl: null,
-      tunDesiredEnabled: true,
+      tunDesiredEnabled: tunDesiredEnabled,
       tunFailureCode: tunStatus?.errorCode,
-      realTunEnable: true,
+      realTunEnable: tunDesiredEnabled,
       proxyStarted: true,
       lastRuntimeProfileId: 'sub-main',
       groupsSnapshotProfileId: 'sub-main',
@@ -159,7 +165,7 @@ class _TestHealthEnvironment implements HealthProbeEnvironment {
 
   @override
   Future<WindowsSystemProxySnapshot?> readWindowsSystemProxy() async =>
-      const WindowsSystemProxySnapshot(proxyEnabled: false);
+      windowsProxy ?? const WindowsSystemProxySnapshot(proxyEnabled: false);
 
   @override
   Future<DelayTestResult> testProxyDelay({
@@ -249,6 +255,7 @@ Widget _wrapWithApp({
       key: UniqueKey(),
       overrides: [
         healthProbeEnvironmentProvider.overrideWithValue(env),
+        tunRuntimeProvider.overrideWith((ref) => TunRuntimeController()),
         if (newDashboardOverride != null)
           newDashboardEnabledProvider.overrideWithValue(newDashboardOverride),
       ],
@@ -622,4 +629,189 @@ void main() {
       }
     });
   }
+
+  testWidgets(
+      'CR-HC03: stacked sheets pop back to root on page actions, and openNetworkSettings replaces HealthCheckView without clobbering CommonScaffold.actions',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1024, 820));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    final stubCtrl = _StubAppController();
+    globalState.appController = stubCtrl;
+    _seedTestAppState();
+
+    // 1. Stacked sheet -> HealthCheckView -> openPurchase must pop BOTH sheets
+    final expiredEnv = _TestHealthEnvironment(
+      initialClock: DateTime.utc(2026, 11, 1, 14, 0, 0),
+    )..subscriptionExpireSec =
+        DateTime.utc(2026, 11, 1, 10, 0, 0).millisecondsSinceEpoch ~/ 1000;
+
+    await tester.pumpWidget(
+      _wrapWithApp(
+        env: expiredEnv,
+        withCommonScaffold: true,
+        newDashboardOverride: false,
+        child: const DashboardView(),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // Open an intermediate sheet first (simulating TUNButton sheet), then openHealthCheck on top
+    final dashContext = tester.element(find.byType(DashboardView));
+    unawaited(
+      showSheet<void>(
+        context: dashContext,
+        builder: (innerCtx, type) => AdaptiveSheetScaffold(
+          type: type,
+          title: 'Intermediate Sheet',
+          body: Center(
+            child: ElevatedButton(
+              key: const ValueKey('open-hc-from-sheet'),
+              onPressed: () => openHealthCheck(innerCtx),
+              child: const Text('Diagnose'),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Intermediate Sheet'), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('open-hc-from-sheet')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('health-verdict-card')), findsOneWidget);
+
+    // Tap primary action (openPurchase) -> BOTH HealthCheckView AND Intermediate Sheet must be popped!
+    await tester.tap(find.byKey(const ValueKey('health-verdict-action-button')));
+    await tester.pumpAndSettle();
+    expect(stubCtrl.navigatedTo, PageLabel.purchase);
+    expect(find.byType(HealthCheckView), findsNothing);
+    expect(find.text('Intermediate Sheet'), findsNothing);
+
+    // 2. openNetworkSettings must NOT overwrite CommonScaffold.actions on DashboardView, and must pop HealthCheckView
+    final sysProxyHijackedEnv = _TestHealthEnvironment()
+      ..systemProxyEnabled = true
+      ..tunDesiredEnabled = false
+      ..tunStatus = const TunStatus(
+        instanceId: 'core-1',
+        revision: 1,
+        state: 'off',
+        listenerActive: false,
+        interfaceState: 'down',
+        privilege: 'elevated',
+        requestedEnabled: false,
+      )
+      ..windowsProxy = const WindowsSystemProxySnapshot(
+        proxyEnabled: true,
+        proxyServer: '127.0.0.1:10809',
+      );
+
+    await tester.pumpWidget(
+      _wrapWithApp(
+        env: sysProxyHijackedEnv,
+        withCommonScaffold: true,
+        newDashboardOverride: false,
+        child: const DashboardView(),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey('dashboard-health-check-action')),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.byKey(const ValueKey('dashboard-health-check-action')));
+    await tester.pumpAndSettle();
+
+    // Verdict is systemProxyHijacked -> primary action is openNetworkSettings
+    await tester.tap(find.byKey(const ValueKey('health-verdict-action-button')));
+    await tester.pumpAndSettle();
+
+    // HealthCheckView must have been replaced (not stacked behind Network sheet),
+    // and Dashboard's CommonScaffold action must STILL be present!
+    expect(find.byType(HealthCheckView), findsNothing);
+    expect(
+      find.byKey(const ValueKey('dashboard-health-check-action')),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets(
+      'CR-HC04 & CR-HC07: narrow 150px NetworkDetection @ 2.0x ru has no overflow, HeroConnect diagnose hit height >= 28px, dark mode pills have high luminance, and warning verdict shows node subtitle',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(960, 820));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    // 1. CR-HC04a: NetworkDetection inside narrow 150px card @ 2.0x ru
+    await AppLocalizations.load(const Locale('ru'));
+    _seedTestAppState(viewSize: const Size(320, 760));
+    detectionState.state.value = const NetworkDetectionState(
+      isLoading: false,
+      isTesting: false,
+      ipInfo: null,
+    );
+    final env = _TestHealthEnvironment();
+    await tester.pumpWidget(
+      _wrapWithApp(
+        env: env,
+        locale: const Locale('ru'),
+        textScale: 2.0,
+        viewSize: const Size(320, 760),
+        child: const Center(
+          child: SizedBox(
+            width: 150,
+            height: 130,
+            child: NetworkDetection(),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+
+    // 2. CR-HC04b: HeroConnect diagnose button height >= 28px
+    await AppLocalizations.load(const Locale('zh', 'CN'));
+    _seedTestAppState(runTime: 5000);
+    detectionState.state.value = const NetworkDetectionState(
+      isLoading: false,
+      isTesting: false,
+      ipInfo: null,
+    );
+    await tester.pumpWidget(
+      _wrapWithApp(
+        env: env,
+        withCommonScaffold: true,
+        newDashboardOverride: true,
+        child: const DashboardView(),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+    final heroBtnRect =
+        tester.getRect(find.byKey(const ValueKey('hero-diagnose-button')));
+    expect(heroBtnRect.height, greaterThanOrEqualTo(28.0));
+
+    // 3. CR-HC07: Dark mode pill luminance > 0.35 & healthyWithWarnings shows node subtitle
+    final warnEnv = _TestHealthEnvironment(
+      initialClock: DateTime.utc(2026, 11, 1, 10, 0, 0),
+    )..subscriptionExpireSec =
+        DateTime.utc(2026, 11, 3, 0, 0, 0).millisecondsSinceEpoch ~/ 1000;
+
+    await tester.pumpWidget(
+      _wrapWithApp(
+        env: warnEnv,
+        viewSize: const Size(460, 900),
+        child: const HealthCheckView(type: SheetType.page),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // Subtitle with active node + delay must appear on healthyWithWarnings!
+    expect(find.textContaining('节点 SG-01 · 出站 68 ms'), findsOneWidget);
+
+    final passedText = tester.widget<Text>(find.text('通过').first);
+    final warningText = tester.widget<Text>(find.text('警告').first);
+    expect(passedText.style!.color!.computeLuminance(), greaterThan(0.35));
+    expect(warningText.style!.color!.computeLuminance(), greaterThan(0.35));
+  });
 }

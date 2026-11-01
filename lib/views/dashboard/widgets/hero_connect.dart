@@ -743,38 +743,49 @@ class _ServerPanel extends ConsumerWidget {
                               ),
                               const SizedBox(width: 8),
                               Flexible(
-                                child: InkWell(
-                                  key: const ValueKey('hero-diagnose-button'),
-                                  borderRadius: BorderRadius.circular(6),
-                                  onTap: () => openHealthCheck(context),
-                                  child: Padding(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 6,
-                                      vertical: 2,
-                                    ),
-                                    child: Row(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        Icon(
-                                          Icons.monitor_heart_outlined,
-                                          size: 13,
-                                          color: colorScheme.primary,
+                                child: Semantics(
+                                  button: true,
+                                  label: appLocalizations
+                                      .healthCheckDiagnoseAction,
+                                  child: InkWell(
+                                    key: const ValueKey('hero-diagnose-button'),
+                                    borderRadius: BorderRadius.circular(6),
+                                    onTap: () => openHealthCheck(context),
+                                    child: ConstrainedBox(
+                                      constraints: const BoxConstraints(
+                                        minHeight: 28,
+                                      ),
+                                      child: Padding(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 6,
+                                          vertical: 4,
                                         ),
-                                        const SizedBox(width: 3),
-                                        Flexible(
-                                          child: Text(
-                                            appLocalizations
-                                                .healthCheckDiagnoseAction,
-                                            maxLines: 1,
-                                            overflow: TextOverflow.ellipsis,
-                                            style: context.textTheme.labelSmall
-                                                ?.copyWith(
+                                        child: Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            Icon(
+                                              Icons.monitor_heart_outlined,
+                                              size: 13,
                                               color: colorScheme.primary,
-                                              fontWeight: FontWeight.w600,
                                             ),
-                                          ),
+                                            const SizedBox(width: 3),
+                                            Flexible(
+                                              child: Text(
+                                                appLocalizations
+                                                    .healthCheckDiagnoseAction,
+                                                maxLines: 1,
+                                                overflow: TextOverflow.ellipsis,
+                                                style: context
+                                                    .textTheme.labelSmall
+                                                    ?.copyWith(
+                                                  color: colorScheme.primary,
+                                                  fontWeight: FontWeight.w600,
+                                                ),
+                                              ),
+                                            ),
+                                          ],
                                         ),
-                                      ],
+                                      ),
                                     ),
                                   ),
                                 ),
