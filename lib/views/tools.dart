@@ -27,6 +27,7 @@ import 'package:re_highlight/styles/atom-one-light.dart';
 import 'backup_and_recovery.dart';
 import 'developer.dart';
 import 'theme.dart';
+import 'tools/health_check_view.dart';
 
 class ToolsView extends ConsumerStatefulWidget {
   const ToolsView({super.key});
@@ -64,6 +65,7 @@ class _ToolboxViewState extends ConsumerState<ToolsView> {
   List<Widget> _getOtherList(BuildContext context, bool enableDeveloperMode) => generateSection(
       title: AppLocalizations.of(context).other,
       items: [
+        const _HealthCheckItem(key: ValueKey('tools-health-check-item')),
         const _RuntimeConfigItem(),
         const _DisclaimerItem(),
         if (enableDeveloperMode) const _DeveloperItem(),
@@ -395,6 +397,21 @@ class _RuntimeConfigSheetState extends ConsumerState<_RuntimeConfigSheet> {
           ),
         ),
       ),
+    );
+  }
+}
+
+class _HealthCheckItem extends StatelessWidget {
+  const _HealthCheckItem({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final appLocale = AppLocalizations.of(context);
+    return ListItem(
+      leading: const Icon(Icons.monitor_heart_outlined),
+      title: Text(appLocale.healthCheckTitle),
+      subtitle: Text(appLocale.healthCheckSubtitle),
+      onTap: () => openHealthCheck(context),
     );
   }
 }

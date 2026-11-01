@@ -829,5 +829,202 @@
     }
   },
   "dashboardHwidNotSupported": "このサーバーは HWID バインドに対応していません",
-  "dashboardContactSupport": "サポート"
+  "dashboardContactSupport": "サポート",
+  "healthCheckTitle": "ヘルスチェック",
+  "healthCheckSubtitle": "プロファイル・コア・トラフィック制御・通信経路を診断",
+  "healthCheckDiagnoseAction": "診断",
+  "healthCheckRecheck": "再チェック",
+  "healthCheckCancel": "キャンセル",
+  "healthCheckChecking": "チェック中…",
+  "healthCheckCopySummary": "要約をコピー",
+  "healthCheckCopied": "診断の要約をコピーしました",
+  "healthCheckExport": "レポート出力",
+  "healthCheckExportDialogTitle": "匿名化診断レポートを出力",
+  "healthCheckExportSuccess": "診断レポートを出力しました",
+  "healthCheckExportFailed": "レポートの出力に失敗しました",
+  "healthCheckPrivacyNote": "出力には状態コードと所要時間のみ含まれ、ノード名・IP・URL・ログは含まれません。",
+  "healthCheckLastChecked": "前回 {time} · {elapsed}",
+  "@healthCheckLastChecked": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      },
+      "elapsed": {
+        "type": "String"
+      }
+    }
+  },
+  "healthLayerConfig": "プロファイルと購読",
+  "healthLayerCore": "プロキシコア",
+  "healthLayerTakeover": "トラフィック制御",
+  "healthLayerNetwork": "ネットワーク経路",
+  "healthItemProfileSelected": "現在のプロファイル",
+  "healthItemSubscription": "サブスクリプション状態",
+  "healthItemRuntimeConfig": "実行時設定の適用",
+  "healthItemCoreResponsive": "Core 応答",
+  "healthItemProxyStarted": "プロキシ稼働状態",
+  "healthItemTunTakeover": "TUN 仮想アダプタ",
+  "healthItemSystemProxy": "システムプロキシ",
+  "healthItemTrafficTakeover": "制御まとめ",
+  "healthItemDirect": "ローカル直接通信",
+  "healthItemDns": "DNS 名前解決",
+  "healthItemOutbound": "現在の出力ノード",
+  "healthItemEndToEnd": "エンドツーエンド検証",
+  "healthStatusRunning": "確認中",
+  "healthStatusPassed": "正常",
+  "healthStatusWarning": "警告",
+  "healthStatusFailed": "失敗",
+  "healthStatusTimeout": "タイムアウト",
+  "healthStatusSkipped": "スキップ",
+  "healthVerdictCheckingTitle": "通信経路を順番に診断しています…",
+  "healthVerdictHealthyTitle": "接続は正常です",
+  "healthVerdictHealthySubtitle": "ノード {node} · {delay} ms{exitPart}",
+  "@healthVerdictHealthySubtitle": {
+    "placeholders": {
+      "node": {
+        "type": "String"
+      },
+      "delay": {
+        "type": "int"
+      },
+      "exitPart": {
+        "type": "String"
+      }
+    }
+  },
+  "healthVerdictHealthyDirectSubtitle": "ダイレクトモード · {delay} ms",
+  "@healthVerdictHealthyDirectSubtitle": {
+    "placeholders": {
+      "delay": {
+        "type": "int"
+      }
+    }
+  },
+  "healthVerdictCoreUnresponsive": "プロキシコアが応答していません",
+  "healthVerdictProfileMissing": "有効なプロファイルが未選択かファイルがありません",
+  "healthVerdictSubscriptionExpired": "サブスクリプションの有効期限切れです",
+  "healthVerdictSubscriptionExhausted": "通信量の上限に達しています",
+  "healthVerdictProxyNotStarted": "プロキシ停止中のため直接通信しています",
+  "healthVerdictTakeoverFailed": "トラフィック未制御：TUN またはシステムプロキシを確認してください",
+  "healthVerdictLocalNetworkDown": "端末のネットワークが利用できません（ノードの問題ではありません）",
+  "healthVerdictOutboundFailed": "端末の通信は正常ですが、現在のノードに接続できません",
+  "healthVerdictTrafficBypassed": "外部通信は可能ですがプロキシコアを経由していません",
+  "healthVerdictEndToEndFailed": "エンドツーエンド検証に失敗しました",
+  "healthVerdictDnsFailed": "DNS 名前解決に失敗したか不正な応答を検出しました",
+  "healthVerdictWarningsTitle": "利用可能ですが確認が必要な項目があります",
+  "healthActionOpenProfiles": "プロファイルへ",
+  "healthActionOpenPurchase": "更新・引き換え",
+  "healthActionOpenProxies": "ノード切替",
+  "healthActionOpenTun": "TUN 設定",
+  "healthActionOpenNetwork": "ネットワーク設定",
+  "healthActionOpenDns": "DNS 設定",
+  "healthActionStartProxy": "プロキシ開始",
+  "healthActionRestartCore": "コア再起動",
+  "healthDetailNoProfile": "プロファイル未選択",
+  "healthDetailProfileFileMissing": "設定ファイルが見つからないか空です",
+  "healthDetailLocalProfile": "ローカル設定ファイル",
+  "healthDetailSubNeverSynced": "未同期です。購読を更新してください",
+  "healthDetailSubNoMeta": "期限・容量情報なし",
+  "healthDetailSubHealthyEternal": "無期限 · 無制限",
+  "healthDetailSubHealthy": "有効",
+  "healthDetailSubExpiringSoon": "残り {days} 日",
+  "@healthDetailSubExpiringSoon": {
+    "placeholders": {
+      "days": {
+        "type": "int"
+      }
+    }
+  },
+  "healthDetailSubTrafficLow": "通信量 {percent}% 使用済み",
+  "@healthDetailSubTrafficLow": {
+    "placeholders": {
+      "percent": {
+        "type": "int"
+      }
+    }
+  },
+  "healthDetailSubDeviceLimit": "端末数上限に達しています",
+  "healthDetailSubExpired": "有効期限切れ",
+  "healthDetailSubExhausted": "容量超過",
+  "healthDetailRuntimeSynced": "適用済み（{count} グループ）",
+  "@healthDetailRuntimeSynced": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "healthDetailRuntimeMismatch": "現在の設定がコアに未適用です",
+  "healthDetailCoreHealthy": "IPC 正常 · {mb} MB",
+  "@healthDetailCoreHealthy": {
+    "placeholders": {
+      "mb": {
+        "type": "String"
+      }
+    }
+  },
+  "healthDetailCoreSlow": "コア応答が遅延しています（> 500 ms）",
+  "healthDetailCoreFailed": "コア制御インターフェースのエラーまたはタイムアウト",
+  "healthDetailProxyRunning": "稼働中",
+  "healthDetailProxyStopped": "停止中",
+  "healthDetailSkipPrerequisite": "前提項目の未通過によりスキップ",
+  "healthDetailSkipProxyStopped": "プロキシ停止中のためスキップ",
+  "healthDetailTunReadyElevated": "稼働中 · 管理者権限",
+  "healthDetailTunReady": "仮想アダプタ稼働中",
+  "healthDetailTunDisabled": "設定でオフ",
+  "healthDetailSysProxyDisabled": "設定でオフ",
+  "healthDetailSysProxyUnsupported": "この環境では対象外",
+  "healthDetailSysProxyHijacked": "システムプロキシが外部で変更または無効化されています",
+  "healthDetailSysProxyUnexpectedPac": "残存する PAC URL を検出しました",
+  "healthDetailTakeoverBoth": "TUN + システムプロキシ稼働中",
+  "healthDetailTakeoverTun": "TUN 仮想アダプタで制御中",
+  "healthDetailTakeoverSysProxy": "システムプロキシで制御中",
+  "healthDetailTakeoverPartial": "有効な制御方式の一部が異常です",
+  "healthDetailTakeoverNone": "TUN もシステムプロキシも有効ではありません",
+  "healthDetailDirectOk": "直接通信可能",
+  "healthDetailDirectSlow": "直接通信の遅延が高めです",
+  "healthDetailDirectFailed": "直接通信に失敗しました。回線やルーターを確認してください",
+  "healthDetailCoreDelayBusy": "一括テスト実行中のため混雑しています",
+  "healthDetailDnsOk": "名前解決正常",
+  "healthDetailDnsFakeIp": "Core DNS (fake-ip)",
+  "healthDetailDnsPoisoned": "DNS が無効なアドレスを返しました",
+  "healthDetailDnsFailed": "DNS 解決失敗またはタイムアウト",
+  "healthDetailDirectMode": "ダイレクトモード選択中",
+  "healthDetailOutboundDirectSelected": "グループで DIRECT が選択されています",
+  "healthDetailOutboundRejectSelected": "グループで REJECT が選択されています",
+  "healthDetailOutboundSlow": "ノード {node} の遅延が高めです",
+  "@healthDetailOutboundSlow": {
+    "placeholders": {
+      "node": {
+        "type": "String"
+      }
+    }
+  },
+  "healthDetailOutboundFailed": "ノード {node} で通信テストに失敗しました",
+  "@healthDetailOutboundFailed": {
+    "placeholders": {
+      "node": {
+        "type": "String"
+      }
+    }
+  },
+  "healthDetailE2eVerified": "プロキシ経由を確認{exitPart}",
+  "@healthDetailE2eVerified": {
+    "placeholders": {
+      "exitPart": {
+        "type": "String"
+      }
+    }
+  },
+  "healthDetailE2eDirectRule": "コア到達済み（DIRECT ルール一致）",
+  "healthDetailE2eBypassed": "外部到達しましたがコアを経由していません",
+  "healthDetailE2eFailed": "エンドツーエンド検証がすべて失敗しました",
+  "healthExitCountryPart": " · 出口 {flag}",
+  "@healthExitCountryPart": {
+    "placeholders": {
+      "flag": {
+        "type": "String"
+      }
+    }
+  }
 }

@@ -880,5 +880,202 @@
     }
   },
   "dashboardHwidNotSupported": "Привязка HWID не поддерживается сервером",
-  "dashboardContactSupport": "Поддержка"
+  "dashboardContactSupport": "Поддержка",
+  "healthCheckTitle": "Проверка сети",
+  "healthCheckSubtitle": "Диагностика профиля, ядра, перехвата трафика и связи",
+  "healthCheckDiagnoseAction": "Диагностика",
+  "healthCheckRecheck": "Проверить",
+  "healthCheckCancel": "Отмена",
+  "healthCheckChecking": "Проверка…",
+  "healthCheckCopySummary": "Копировать",
+  "healthCheckCopied": "Сводка скопирована в буфер обмена",
+  "healthCheckExport": "Экспорт отчёта",
+  "healthCheckExportDialogTitle": "Экспорт обезличенного отчёта",
+  "healthCheckExportSuccess": "Отчёт экспортирован",
+  "healthCheckExportFailed": "Ошибка экспорта отчёта",
+  "healthCheckPrivacyNote": "Отчёт содержит только коды статусов и время — без имён узлов, IP, ссылок и логов.",
+  "healthCheckLastChecked": "Проверка {time} · {elapsed}",
+  "@healthCheckLastChecked": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      },
+      "elapsed": {
+        "type": "String"
+      }
+    }
+  },
+  "healthLayerConfig": "Профиль и подписка",
+  "healthLayerCore": "Ядро прокси",
+  "healthLayerTakeover": "Перехват трафика",
+  "healthLayerNetwork": "Сетевой маршрут",
+  "healthItemProfileSelected": "Текущий профиль",
+  "healthItemSubscription": "Статус подписки",
+  "healthItemRuntimeConfig": "Применение конфига",
+  "healthItemCoreResponsive": "Отклик ядра",
+  "healthItemProxyStarted": "Состояние прокси",
+  "healthItemTunTakeover": "Адаптер TUN",
+  "healthItemSystemProxy": "Системный прокси",
+  "healthItemTrafficTakeover": "Итог перехвата",
+  "healthItemDirect": "Прямой доступ",
+  "healthItemDns": "DNS-разрешение",
+  "healthItemOutbound": "Узел выхода",
+  "healthItemEndToEnd": "Сквозная проверка",
+  "healthStatusRunning": "Проверка",
+  "healthStatusPassed": "Норма",
+  "healthStatusWarning": "Внимание",
+  "healthStatusFailed": "Ошибка",
+  "healthStatusTimeout": "Тайм-аут",
+  "healthStatusSkipped": "Пропуск",
+  "healthVerdictCheckingTitle": "Пошаговая проверка соединения…",
+  "healthVerdictHealthyTitle": "Соединение в норме",
+  "healthVerdictHealthySubtitle": "Узел {node} · {delay} мс{exitPart}",
+  "@healthVerdictHealthySubtitle": {
+    "placeholders": {
+      "node": {
+        "type": "String"
+      },
+      "delay": {
+        "type": "int"
+      },
+      "exitPart": {
+        "type": "String"
+      }
+    }
+  },
+  "healthVerdictHealthyDirectSubtitle": "Прямой режим · {delay} мс",
+  "@healthVerdictHealthyDirectSubtitle": {
+    "placeholders": {
+      "delay": {
+        "type": "int"
+      }
+    }
+  },
+  "healthVerdictCoreUnresponsive": "Ядро прокси не отвечает",
+  "healthVerdictProfileMissing": "Профиль не выбран или файл отсутствует",
+  "healthVerdictSubscriptionExpired": "Срок действия подписки истёк",
+  "healthVerdictSubscriptionExhausted": "Трафик подписки исчерпан",
+  "healthVerdictProxyNotStarted": "Прокси остановлен, трафик идёт напрямую",
+  "healthVerdictTakeoverFailed": "Трафик не перехватывается: проверьте TUN или прокси",
+  "healthVerdictLocalNetworkDown": "Локальная сеть недоступна (не связано с узлом)",
+  "healthVerdictOutboundFailed": "Локальная сеть работает, но узел недоступен",
+  "healthVerdictTrafficBypassed": "Сеть доступна, но трафик обошёл ядро прокси",
+  "healthVerdictEndToEndFailed": "Сквозная проверка не удалась, смените узел",
+  "healthVerdictDnsFailed": "Ошибка разрешения DNS или подмена адреса",
+  "healthVerdictWarningsTitle": "Соединение работает, но есть предупреждения",
+  "healthActionOpenProfiles": "К профилям",
+  "healthActionOpenPurchase": "Продлить",
+  "healthActionOpenProxies": "Сменить узел",
+  "healthActionOpenTun": "Настройки TUN",
+  "healthActionOpenNetwork": "Настройки сети",
+  "healthActionOpenDns": "Настройки DNS",
+  "healthActionStartProxy": "Запустить",
+  "healthActionRestartCore": "Перезапуск ядра",
+  "healthDetailNoProfile": "Профиль не выбран",
+  "healthDetailProfileFileMissing": "Файл профиля отсутствует или пуст",
+  "healthDetailLocalProfile": "Локальный профиль",
+  "healthDetailSubNeverSynced": "Ещё не синхронизирован, обновите подписку",
+  "healthDetailSubNoMeta": "Сервер не передал данные о лимитах",
+  "healthDetailSubHealthyEternal": "Бессрочно · Безлимит",
+  "healthDetailSubHealthy": "Подписка активна",
+  "healthDetailSubExpiringSoon": "Осталось {days} дн.",
+  "@healthDetailSubExpiringSoon": {
+    "placeholders": {
+      "days": {
+        "type": "int"
+      }
+    }
+  },
+  "healthDetailSubTrafficLow": "Использовано {percent}% трафика",
+  "@healthDetailSubTrafficLow": {
+    "placeholders": {
+      "percent": {
+        "type": "int"
+      }
+    }
+  },
+  "healthDetailSubDeviceLimit": "Достигнут лимит устройств",
+  "healthDetailSubExpired": "Подписка истекла",
+  "healthDetailSubExhausted": "Трафик исчерпан",
+  "healthDetailRuntimeSynced": "Загружено (групп: {count})",
+  "@healthDetailRuntimeSynced": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "healthDetailRuntimeMismatch": "Профиль ещё не применён к ядру",
+  "healthDetailCoreHealthy": "IPC ОК · {mb} МБ",
+  "@healthDetailCoreHealthy": {
+    "placeholders": {
+      "mb": {
+        "type": "String"
+      }
+    }
+  },
+  "healthDetailCoreSlow": "Медленный отклик ядра (> 500 мс)",
+  "healthDetailCoreFailed": "Сбой или тайм-аут интерфейса ядра",
+  "healthDetailProxyRunning": "Запущен",
+  "healthDetailProxyStopped": "Остановлен",
+  "healthDetailSkipPrerequisite": "Пропущено из-за предыдущей ошибки",
+  "healthDetailSkipProxyStopped": "Пропущено: прокси остановлен",
+  "healthDetailTunReadyElevated": "Активен · Права админа",
+  "healthDetailTunReady": "Виртуальный адаптер активен",
+  "healthDetailTunDisabled": "Выключен в настройках",
+  "healthDetailSysProxyDisabled": "Выключен в настройках",
+  "healthDetailSysProxyUnsupported": "Неприменимо на этой платформе",
+  "healthDetailSysProxyHijacked": "Системный прокси изменён извне",
+  "healthDetailSysProxyUnexpectedPac": "Обнаружен сторонний PAC-адрес",
+  "healthDetailTakeoverBoth": "Активны TUN и системный прокси",
+  "healthDetailTakeoverTun": "Перехват через адаптер TUN",
+  "healthDetailTakeoverSysProxy": "Перехват через системный прокси",
+  "healthDetailTakeoverPartial": "Активен только один из включённых режимов",
+  "healthDetailTakeoverNone": "Ни TUN, ни системный прокси не активны",
+  "healthDetailDirectOk": "Прямой доступ работает",
+  "healthDetailDirectSlow": "Высокая задержка прямого канала",
+  "healthDetailDirectFailed": "Сбой прямого доступа: проверьте сеть или роутер",
+  "healthDetailCoreDelayBusy": "Очередь замера занята, повторите позже",
+  "healthDetailDnsOk": "Разрешено успешно",
+  "healthDetailDnsFakeIp": "Core DNS (fake-ip)",
+  "healthDetailDnsPoisoned": "DNS вернул некорректный адрес-заглушку",
+  "healthDetailDnsFailed": "Ошибка или тайм-аут DNS",
+  "healthDetailDirectMode": "Выбран прямой режим (Direct)",
+  "healthDetailOutboundDirectSelected": "В группе выбран DIRECT вместо узла",
+  "healthDetailOutboundRejectSelected": "В группе выбран REJECT (блокировка)",
+  "healthDetailOutboundSlow": "Повышенная задержка узла {node}",
+  "@healthDetailOutboundSlow": {
+    "placeholders": {
+      "node": {
+        "type": "String"
+      }
+    }
+  },
+  "healthDetailOutboundFailed": "Узел {node} не прошёл проверку связи",
+  "@healthDetailOutboundFailed": {
+    "placeholders": {
+      "node": {
+        "type": "String"
+      }
+    }
+  },
+  "healthDetailE2eVerified": "Через прокси подтверждено{exitPart}",
+  "@healthDetailE2eVerified": {
+    "placeholders": {
+      "exitPart": {
+        "type": "String"
+      }
+    }
+  },
+  "healthDetailE2eDirectRule": "Вошёл в ядро (правило DIRECT)",
+  "healthDetailE2eBypassed": "Доступ есть, но соединение обошло ядро",
+  "healthDetailE2eFailed": "Сквозные запросы завершились ошибкой",
+  "healthExitCountryPart": " · Выход {flag}",
+  "@healthExitCountryPart": {
+    "placeholders": {
+      "flag": {
+        "type": "String"
+      }
+    }
+  }
 }

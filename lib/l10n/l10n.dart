@@ -6688,6 +6688,1116 @@ class AppLocalizations {
       args: [],
     );
   }
+
+  /// `Health Check`
+  String get healthCheckTitle {
+    return Intl.message(
+      'Health Check',
+      name: 'healthCheckTitle',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Inspect profile, core, traffic capture, and live connectivity`
+  String get healthCheckSubtitle {
+    return Intl.message(
+      'Inspect profile, core, traffic capture, and live connectivity',
+      name: 'healthCheckSubtitle',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Diagnose`
+  String get healthCheckDiagnoseAction {
+    return Intl.message(
+      'Diagnose',
+      name: 'healthCheckDiagnoseAction',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Re-check`
+  String get healthCheckRecheck {
+    return Intl.message(
+      'Re-check',
+      name: 'healthCheckRecheck',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Cancel`
+  String get healthCheckCancel {
+    return Intl.message(
+      'Cancel',
+      name: 'healthCheckCancel',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Checking…`
+  String get healthCheckChecking {
+    return Intl.message(
+      'Checking…',
+      name: 'healthCheckChecking',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Copy Summary`
+  String get healthCheckCopySummary {
+    return Intl.message(
+      'Copy Summary',
+      name: 'healthCheckCopySummary',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Diagnostic summary copied`
+  String get healthCheckCopied {
+    return Intl.message(
+      'Diagnostic summary copied',
+      name: 'healthCheckCopied',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Export Report`
+  String get healthCheckExport {
+    return Intl.message(
+      'Export Report',
+      name: 'healthCheckExport',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Export Redacted Health Report`
+  String get healthCheckExportDialogTitle {
+    return Intl.message(
+      'Export Redacted Health Report',
+      name: 'healthCheckExportDialogTitle',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Diagnostic report exported`
+  String get healthCheckExportSuccess {
+    return Intl.message(
+      'Diagnostic report exported',
+      name: 'healthCheckExportSuccess',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Failed to export report`
+  String get healthCheckExportFailed {
+    return Intl.message(
+      'Failed to export report',
+      name: 'healthCheckExportFailed',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Exports contain only status codes and timings — never node names, IPs, URLs, or logs.`
+  String get healthCheckPrivacyNote {
+    return Intl.message(
+      'Exports contain only status codes and timings — never node names, IPs, URLs, or logs.',
+      name: 'healthCheckPrivacyNote',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Last checked {time} · {elapsed}`
+  String healthCheckLastChecked(String time, String elapsed) {
+    return Intl.message(
+      'Last checked $time · $elapsed',
+      name: 'healthCheckLastChecked',
+      desc: '',
+      args: [time, elapsed],
+    );
+  }
+
+  /// `Profile & Subscription`
+  String get healthLayerConfig {
+    return Intl.message(
+      'Profile & Subscription',
+      name: 'healthLayerConfig',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Proxy Core`
+  String get healthLayerCore {
+    return Intl.message(
+      'Proxy Core',
+      name: 'healthLayerCore',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Traffic Capture`
+  String get healthLayerTakeover {
+    return Intl.message(
+      'Traffic Capture',
+      name: 'healthLayerTakeover',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Network Path`
+  String get healthLayerNetwork {
+    return Intl.message(
+      'Network Path',
+      name: 'healthLayerNetwork',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Active Profile`
+  String get healthItemProfileSelected {
+    return Intl.message(
+      'Active Profile',
+      name: 'healthItemProfileSelected',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Subscription Status`
+  String get healthItemSubscription {
+    return Intl.message(
+      'Subscription Status',
+      name: 'healthItemSubscription',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Runtime Config`
+  String get healthItemRuntimeConfig {
+    return Intl.message(
+      'Runtime Config',
+      name: 'healthItemRuntimeConfig',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Core Responsiveness`
+  String get healthItemCoreResponsive {
+    return Intl.message(
+      'Core Responsiveness',
+      name: 'healthItemCoreResponsive',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Proxy State`
+  String get healthItemProxyStarted {
+    return Intl.message(
+      'Proxy State',
+      name: 'healthItemProxyStarted',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `TUN Virtual Adapter`
+  String get healthItemTunTakeover {
+    return Intl.message(
+      'TUN Virtual Adapter',
+      name: 'healthItemTunTakeover',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `System Proxy`
+  String get healthItemSystemProxy {
+    return Intl.message(
+      'System Proxy',
+      name: 'healthItemSystemProxy',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Capture Summary`
+  String get healthItemTrafficTakeover {
+    return Intl.message(
+      'Capture Summary',
+      name: 'healthItemTrafficTakeover',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Local Direct Uplink`
+  String get healthItemDirect {
+    return Intl.message(
+      'Local Direct Uplink',
+      name: 'healthItemDirect',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `DNS Resolution`
+  String get healthItemDns {
+    return Intl.message(
+      'DNS Resolution',
+      name: 'healthItemDns',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Active Outbound Node`
+  String get healthItemOutbound {
+    return Intl.message(
+      'Active Outbound Node',
+      name: 'healthItemOutbound',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `End-to-End Verification`
+  String get healthItemEndToEnd {
+    return Intl.message(
+      'End-to-End Verification',
+      name: 'healthItemEndToEnd',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Checking`
+  String get healthStatusRunning {
+    return Intl.message(
+      'Checking',
+      name: 'healthStatusRunning',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Passed`
+  String get healthStatusPassed {
+    return Intl.message(
+      'Passed',
+      name: 'healthStatusPassed',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Warning`
+  String get healthStatusWarning {
+    return Intl.message(
+      'Warning',
+      name: 'healthStatusWarning',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Failed`
+  String get healthStatusFailed {
+    return Intl.message(
+      'Failed',
+      name: 'healthStatusFailed',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Timeout`
+  String get healthStatusTimeout {
+    return Intl.message(
+      'Timeout',
+      name: 'healthStatusTimeout',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Skipped`
+  String get healthStatusSkipped {
+    return Intl.message(
+      'Skipped',
+      name: 'healthStatusSkipped',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Checking connection layers…`
+  String get healthVerdictCheckingTitle {
+    return Intl.message(
+      'Checking connection layers…',
+      name: 'healthVerdictCheckingTitle',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Connection Healthy`
+  String get healthVerdictHealthyTitle {
+    return Intl.message(
+      'Connection Healthy',
+      name: 'healthVerdictHealthyTitle',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Node {node} · {delay} ms{exitPart}`
+  String healthVerdictHealthySubtitle(String node, int delay, String exitPart) {
+    return Intl.message(
+      'Node $node · $delay ms$exitPart',
+      name: 'healthVerdictHealthySubtitle',
+      desc: '',
+      args: [node, delay, exitPart],
+    );
+  }
+
+  /// `Direct mode · Uplink {delay} ms`
+  String healthVerdictHealthyDirectSubtitle(int delay) {
+    return Intl.message(
+      'Direct mode · Uplink $delay ms',
+      name: 'healthVerdictHealthyDirectSubtitle',
+      desc: '',
+      args: [delay],
+    );
+  }
+
+  /// `Proxy core is unresponsive`
+  String get healthVerdictCoreUnresponsive {
+    return Intl.message(
+      'Proxy core is unresponsive',
+      name: 'healthVerdictCoreUnresponsive',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `No valid profile selected or file is missing`
+  String get healthVerdictProfileMissing {
+    return Intl.message(
+      'No valid profile selected or file is missing',
+      name: 'healthVerdictProfileMissing',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Subscription has expired`
+  String get healthVerdictSubscriptionExpired {
+    return Intl.message(
+      'Subscription has expired',
+      name: 'healthVerdictSubscriptionExpired',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Subscription traffic is exhausted`
+  String get healthVerdictSubscriptionExhausted {
+    return Intl.message(
+      'Subscription traffic is exhausted',
+      name: 'healthVerdictSubscriptionExhausted',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Proxy is stopped; traffic goes direct`
+  String get healthVerdictProxyNotStarted {
+    return Intl.message(
+      'Proxy is stopped; traffic goes direct',
+      name: 'healthVerdictProxyNotStarted',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Traffic capture inactive; check TUN or system proxy`
+  String get healthVerdictTakeoverFailed {
+    return Intl.message(
+      'Traffic capture inactive; check TUN or system proxy',
+      name: 'healthVerdictTakeoverFailed',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Local network is unreachable (unrelated to proxy node)`
+  String get healthVerdictLocalNetworkDown {
+    return Intl.message(
+      'Local network is unreachable (unrelated to proxy node)',
+      name: 'healthVerdictLocalNetworkDown',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Local network is OK, but active proxy node failed`
+  String get healthVerdictOutboundFailed {
+    return Intl.message(
+      'Local network is OK, but active proxy node failed',
+      name: 'healthVerdictOutboundFailed',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Probe reached internet without traversing proxy core`
+  String get healthVerdictTrafficBypassed {
+    return Intl.message(
+      'Probe reached internet without traversing proxy core',
+      name: 'healthVerdictTrafficBypassed',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `End-to-end exit check failed; try switching nodes`
+  String get healthVerdictEndToEndFailed {
+    return Intl.message(
+      'End-to-end exit check failed; try switching nodes',
+      name: 'healthVerdictEndToEndFailed',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `DNS resolution failed or returned sinkhole address`
+  String get healthVerdictDnsFailed {
+    return Intl.message(
+      'DNS resolution failed or returned sinkhole address',
+      name: 'healthVerdictDnsFailed',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Connected with warnings`
+  String get healthVerdictWarningsTitle {
+    return Intl.message(
+      'Connected with warnings',
+      name: 'healthVerdictWarningsTitle',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Open Profiles`
+  String get healthActionOpenProfiles {
+    return Intl.message(
+      'Open Profiles',
+      name: 'healthActionOpenProfiles',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Renew / Redeem`
+  String get healthActionOpenPurchase {
+    return Intl.message(
+      'Renew / Redeem',
+      name: 'healthActionOpenPurchase',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Switch Node`
+  String get healthActionOpenProxies {
+    return Intl.message(
+      'Switch Node',
+      name: 'healthActionOpenProxies',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `TUN Settings`
+  String get healthActionOpenTun {
+    return Intl.message(
+      'TUN Settings',
+      name: 'healthActionOpenTun',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Network Settings`
+  String get healthActionOpenNetwork {
+    return Intl.message(
+      'Network Settings',
+      name: 'healthActionOpenNetwork',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `DNS Settings`
+  String get healthActionOpenDns {
+    return Intl.message(
+      'DNS Settings',
+      name: 'healthActionOpenDns',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Start Proxy`
+  String get healthActionStartProxy {
+    return Intl.message(
+      'Start Proxy',
+      name: 'healthActionStartProxy',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Restart Core`
+  String get healthActionRestartCore {
+    return Intl.message(
+      'Restart Core',
+      name: 'healthActionRestartCore',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `No profile selected`
+  String get healthDetailNoProfile {
+    return Intl.message(
+      'No profile selected',
+      name: 'healthDetailNoProfile',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Profile YAML file is missing or empty`
+  String get healthDetailProfileFileMissing {
+    return Intl.message(
+      'Profile YAML file is missing or empty',
+      name: 'healthDetailProfileFileMissing',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Local file profile`
+  String get healthDetailLocalProfile {
+    return Intl.message(
+      'Local file profile',
+      name: 'healthDetailLocalProfile',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Not synced yet; update subscription first`
+  String get healthDetailSubNeverSynced {
+    return Intl.message(
+      'Not synced yet; update subscription first',
+      name: 'healthDetailSubNeverSynced',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `No quota metadata from server`
+  String get healthDetailSubNoMeta {
+    return Intl.message(
+      'No quota metadata from server',
+      name: 'healthDetailSubNoMeta',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Lifetime · Unlimited`
+  String get healthDetailSubHealthyEternal {
+    return Intl.message(
+      'Lifetime · Unlimited',
+      name: 'healthDetailSubHealthyEternal',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Subscription active`
+  String get healthDetailSubHealthy {
+    return Intl.message(
+      'Subscription active',
+      name: 'healthDetailSubHealthy',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `{days}d remaining`
+  String healthDetailSubExpiringSoon(int days) {
+    return Intl.message(
+      '${days}d remaining',
+      name: 'healthDetailSubExpiringSoon',
+      desc: '',
+      args: [days],
+    );
+  }
+
+  /// `{percent}% quota used`
+  String healthDetailSubTrafficLow(int percent) {
+    return Intl.message(
+      '$percent% quota used',
+      name: 'healthDetailSubTrafficLow',
+      desc: '',
+      args: [percent],
+    );
+  }
+
+  /// `Device limit reached`
+  String get healthDetailSubDeviceLimit {
+    return Intl.message(
+      'Device limit reached',
+      name: 'healthDetailSubDeviceLimit',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Subscription expired`
+  String get healthDetailSubExpired {
+    return Intl.message(
+      'Subscription expired',
+      name: 'healthDetailSubExpired',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Traffic quota exhausted`
+  String get healthDetailSubExhausted {
+    return Intl.message(
+      'Traffic quota exhausted',
+      name: 'healthDetailSubExhausted',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Loaded ({count} groups)`
+  String healthDetailRuntimeSynced(int count) {
+    return Intl.message(
+      'Loaded ($count groups)',
+      name: 'healthDetailRuntimeSynced',
+      desc: '',
+      args: [count],
+    );
+  }
+
+  /// `Current profile not yet applied to Core`
+  String get healthDetailRuntimeMismatch {
+    return Intl.message(
+      'Current profile not yet applied to Core',
+      name: 'healthDetailRuntimeMismatch',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `IPC OK · {mb} MB`
+  String healthDetailCoreHealthy(String mb) {
+    return Intl.message(
+      'IPC OK · $mb MB',
+      name: 'healthDetailCoreHealthy',
+      desc: '',
+      args: [mb],
+    );
+  }
+
+  /// `Core IPC response is slow (> 500 ms)`
+  String get healthDetailCoreSlow {
+    return Intl.message(
+      'Core IPC response is slow (> 500 ms)',
+      name: 'healthDetailCoreSlow',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Core control interface failed or timed out`
+  String get healthDetailCoreFailed {
+    return Intl.message(
+      'Core control interface failed or timed out',
+      name: 'healthDetailCoreFailed',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Running`
+  String get healthDetailProxyRunning {
+    return Intl.message(
+      'Running',
+      name: 'healthDetailProxyRunning',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Stopped`
+  String get healthDetailProxyStopped {
+    return Intl.message(
+      'Stopped',
+      name: 'healthDetailProxyStopped',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Skipped due to earlier check`
+  String get healthDetailSkipPrerequisite {
+    return Intl.message(
+      'Skipped due to earlier check',
+      name: 'healthDetailSkipPrerequisite',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Skipped while proxy is stopped`
+  String get healthDetailSkipProxyStopped {
+    return Intl.message(
+      'Skipped while proxy is stopped',
+      name: 'healthDetailSkipProxyStopped',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Active · Elevated`
+  String get healthDetailTunReadyElevated {
+    return Intl.message(
+      'Active · Elevated',
+      name: 'healthDetailTunReadyElevated',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Virtual adapter active`
+  String get healthDetailTunReady {
+    return Intl.message(
+      'Virtual adapter active',
+      name: 'healthDetailTunReady',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Disabled in settings`
+  String get healthDetailTunDisabled {
+    return Intl.message(
+      'Disabled in settings',
+      name: 'healthDetailTunDisabled',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Disabled in settings`
+  String get healthDetailSysProxyDisabled {
+    return Intl.message(
+      'Disabled in settings',
+      name: 'healthDetailSysProxyDisabled',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Not applicable on this platform`
+  String get healthDetailSysProxyUnsupported {
+    return Intl.message(
+      'Not applicable on this platform',
+      name: 'healthDetailSysProxyUnsupported',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `System proxy disabled or overwritten externally`
+  String get healthDetailSysProxyHijacked {
+    return Intl.message(
+      'System proxy disabled or overwritten externally',
+      name: 'healthDetailSysProxyHijacked',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Residual PAC URL detected in system settings`
+  String get healthDetailSysProxyUnexpectedPac {
+    return Intl.message(
+      'Residual PAC URL detected in system settings',
+      name: 'healthDetailSysProxyUnexpectedPac',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `TUN + System Proxy active`
+  String get healthDetailTakeoverBoth {
+    return Intl.message(
+      'TUN + System Proxy active',
+      name: 'healthDetailTakeoverBoth',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Captured via TUN adapter`
+  String get healthDetailTakeoverTun {
+    return Intl.message(
+      'Captured via TUN adapter',
+      name: 'healthDetailTakeoverTun',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Captured via System Proxy`
+  String get healthDetailTakeoverSysProxy {
+    return Intl.message(
+      'Captured via System Proxy',
+      name: 'healthDetailTakeoverSysProxy',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Only one enabled capture mode is active`
+  String get healthDetailTakeoverPartial {
+    return Intl.message(
+      'Only one enabled capture mode is active',
+      name: 'healthDetailTakeoverPartial',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Neither TUN nor System Proxy is active`
+  String get healthDetailTakeoverNone {
+    return Intl.message(
+      'Neither TUN nor System Proxy is active',
+      name: 'healthDetailTakeoverNone',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Direct uplink reachable`
+  String get healthDetailDirectOk {
+    return Intl.message(
+      'Direct uplink reachable',
+      name: 'healthDetailDirectOk',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Direct uplink latency is high`
+  String get healthDetailDirectSlow {
+    return Intl.message(
+      'Direct uplink latency is high',
+      name: 'healthDetailDirectSlow',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Direct uplink failed; check Wi-Fi, router, or firewall`
+  String get healthDetailDirectFailed {
+    return Intl.message(
+      'Direct uplink failed; check Wi-Fi, router, or firewall',
+      name: 'healthDetailDirectFailed',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Delay test slots busy; retry shortly`
+  String get healthDetailCoreDelayBusy {
+    return Intl.message(
+      'Delay test slots busy; retry shortly',
+      name: 'healthDetailCoreDelayBusy',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Resolved`
+  String get healthDetailDnsOk {
+    return Intl.message(
+      'Resolved',
+      name: 'healthDetailDnsOk',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Core DNS (fake-ip)`
+  String get healthDetailDnsFakeIp {
+    return Intl.message(
+      'Core DNS (fake-ip)',
+      name: 'healthDetailDnsFakeIp',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `DNS returned loopback/sinkhole IP`
+  String get healthDetailDnsPoisoned {
+    return Intl.message(
+      'DNS returned loopback/sinkhole IP',
+      name: 'healthDetailDnsPoisoned',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `DNS lookup failed or timed out`
+  String get healthDetailDnsFailed {
+    return Intl.message(
+      'DNS lookup failed or timed out',
+      name: 'healthDetailDnsFailed',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Direct mode is selected`
+  String get healthDetailDirectMode {
+    return Intl.message(
+      'Direct mode is selected',
+      name: 'healthDetailDirectMode',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Selected target is DIRECT`
+  String get healthDetailOutboundDirectSelected {
+    return Intl.message(
+      'Selected target is DIRECT',
+      name: 'healthDetailOutboundDirectSelected',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Selected target is REJECT`
+  String get healthDetailOutboundRejectSelected {
+    return Intl.message(
+      'Selected target is REJECT',
+      name: 'healthDetailOutboundRejectSelected',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Node {node} latency is elevated`
+  String healthDetailOutboundSlow(String node) {
+    return Intl.message(
+      'Node $node latency is elevated',
+      name: 'healthDetailOutboundSlow',
+      desc: '',
+      args: [node],
+    );
+  }
+
+  /// `Node {node} failed connectivity check`
+  String healthDetailOutboundFailed(String node) {
+    return Intl.message(
+      'Node $node failed connectivity check',
+      name: 'healthDetailOutboundFailed',
+      desc: '',
+      args: [node],
+    );
+  }
+
+  /// `Verified through proxy{exitPart}`
+  String healthDetailE2eVerified(String exitPart) {
+    return Intl.message(
+      'Verified through proxy$exitPart',
+      name: 'healthDetailE2eVerified',
+      desc: '',
+      args: [exitPart],
+    );
+  }
+
+  /// `Entered Core (matched DIRECT rule)`
+  String get healthDetailE2eDirectRule {
+    return Intl.message(
+      'Entered Core (matched DIRECT rule)',
+      name: 'healthDetailE2eDirectRule',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Reached internet, but connection bypassed Core`
+  String get healthDetailE2eBypassed {
+    return Intl.message(
+      'Reached internet, but connection bypassed Core',
+      name: 'healthDetailE2eBypassed',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `All end-to-end exit probes failed`
+  String get healthDetailE2eFailed {
+    return Intl.message(
+      'All end-to-end exit probes failed',
+      name: 'healthDetailE2eFailed',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// ` · Exit {flag}`
+  String healthExitCountryPart(String flag) {
+    return Intl.message(
+      ' · Exit $flag',
+      name: 'healthExitCountryPart',
+      desc: '',
+      args: [flag],
+    );
+  }
 }
 
 class AppLocalizationDelegate extends LocalizationsDelegate<AppLocalizations> {

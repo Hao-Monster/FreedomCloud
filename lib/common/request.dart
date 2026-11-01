@@ -178,6 +178,7 @@ class Request {
     CancelToken? cancelToken,
     Duration keepAliveHold = const Duration(milliseconds: 4500),
     Duration connectTimeout = const Duration(seconds: 5),
+    String Function(Uri uri)? proxyResolver,
   }) async {
     for (final source in _ipInfoSources.entries) {
       if (cancelToken?.isCancelled ?? false) {
@@ -209,6 +210,22 @@ class Request {
                 ? keepAliveHold
                 : const Duration(seconds: 1);
           client.findProxy = (uri) {
+            if (proxyResolver != null) {
+              if (globalState.isAppStateInitialized) {
+                client.userAgent = globalState.ua;
+              }
+              final customDirective = proxyResolver(uri);
+              final isStart = globalState.isAppStateInitialized &&
+                  globalState.appState.runTime != null;
+              final tunHandlesTraffic = isStart &&
+                  (Platform.isAndroid ||
+                      (Platform.isWindows
+                          ? tunRuntime.isEnabled
+                          : globalState.appState.realTunEnable));
+              attemptRoutedViaClash =
+                  customDirective.startsWith('PROXY ') || tunHandlesTraffic;
+              return customDirective;
+            }
             if (!globalState.isAppStateInitialized) {
               attemptRoutedViaClash = false;
               return 'DIRECT';

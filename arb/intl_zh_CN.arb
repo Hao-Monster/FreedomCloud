@@ -963,5 +963,202 @@
     }
   },
   "dashboardHwidNotSupported": "当前服务端未启用硬件标识 (HWID) 绑定",
-  "dashboardContactSupport": "联系支持"
+  "dashboardContactSupport": "联系支持",
+  "healthCheckTitle": "健康检查",
+  "healthCheckSubtitle": "检测配置、代理核心、流量接管与真实网络连通性",
+  "healthCheckDiagnoseAction": "诊断",
+  "healthCheckRecheck": "重新检查",
+  "healthCheckCancel": "取消检查",
+  "healthCheckChecking": "正在检查…",
+  "healthCheckCopySummary": "复制摘要",
+  "healthCheckCopied": "诊断摘要已复制到剪贴板",
+  "healthCheckExport": "导出脱敏报告",
+  "healthCheckExportDialogTitle": "导出脱敏诊断报告",
+  "healthCheckExportSuccess": "脱敏诊断报告已导出",
+  "healthCheckExportFailed": "诊断报告导出失败",
+  "healthCheckPrivacyNote": "导出文件仅含状态枚举与耗时，不含节点名、IP、订阅地址或日志。",
+  "healthCheckLastChecked": "上次检查 {time} · 用时 {elapsed}",
+  "@healthCheckLastChecked": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      },
+      "elapsed": {
+        "type": "String"
+      }
+    }
+  },
+  "healthLayerConfig": "配置与订阅",
+  "healthLayerCore": "代理核心",
+  "healthLayerTakeover": "流量接管",
+  "healthLayerNetwork": "网络链路",
+  "healthItemProfileSelected": "当前配置",
+  "healthItemSubscription": "订阅状态",
+  "healthItemRuntimeConfig": "运行配置生效",
+  "healthItemCoreResponsive": "Core 响应",
+  "healthItemProxyStarted": "代理开关状态",
+  "healthItemTunTakeover": "TUN 虚拟网卡",
+  "healthItemSystemProxy": "系统代理",
+  "healthItemTrafficTakeover": "接管结论",
+  "healthItemDirect": "本机直连外网",
+  "healthItemDns": "DNS 解析",
+  "healthItemOutbound": "当前节点出站",
+  "healthItemEndToEnd": "端到端实测",
+  "healthStatusRunning": "检查中",
+  "healthStatusPassed": "通过",
+  "healthStatusWarning": "警告",
+  "healthStatusFailed": "失败",
+  "healthStatusTimeout": "超时",
+  "healthStatusSkipped": "跳过",
+  "healthVerdictCheckingTitle": "正在逐层检测连接链路…",
+  "healthVerdictHealthyTitle": "连接正常",
+  "healthVerdictHealthySubtitle": "节点 {node} · 出站 {delay} ms{exitPart}",
+  "@healthVerdictHealthySubtitle": {
+    "placeholders": {
+      "node": {
+        "type": "String"
+      },
+      "delay": {
+        "type": "int"
+      },
+      "exitPart": {
+        "type": "String"
+      }
+    }
+  },
+  "healthVerdictHealthyDirectSubtitle": "当前为直连模式 · 本机外网 {delay} ms",
+  "@healthVerdictHealthyDirectSubtitle": {
+    "placeholders": {
+      "delay": {
+        "type": "int"
+      }
+    }
+  },
+  "healthVerdictCoreUnresponsive": "代理核心无响应，控制通道异常",
+  "healthVerdictProfileMissing": "未选择可用配置或本地配置文件缺失",
+  "healthVerdictSubscriptionExpired": "订阅已过期，节点将无法连接",
+  "healthVerdictSubscriptionExhausted": "订阅流量已用尽，请续费或更换配置",
+  "healthVerdictProxyNotStarted": "代理尚未启动，应用流量当前直连",
+  "healthVerdictTakeoverFailed": "应用流量未被接管，请开启 TUN 或修复系统代理",
+  "healthVerdictLocalNetworkDown": "本机物理网络不可用，与代理节点无关",
+  "healthVerdictOutboundFailed": "本机网络正常，但当前节点无法连通外网",
+  "healthVerdictTrafficBypassed": "外网可达，但探测连接未经过代理核心（流量绕过）",
+  "healthVerdictEndToEndFailed": "端到端出口探测失败，请切换节点或检查规则",
+  "healthVerdictDnsFailed": "DNS 域名解析异常或遭到污染",
+  "healthVerdictWarningsTitle": "连接可用，但存在需关注的告警项",
+  "healthActionOpenProfiles": "前往配置页",
+  "healthActionOpenPurchase": "前往兑换续费",
+  "healthActionOpenProxies": "切换代理节点",
+  "healthActionOpenTun": "打开 TUN 设置",
+  "healthActionOpenNetwork": "打开网络设置",
+  "healthActionOpenDns": "打开 DNS 设置",
+  "healthActionStartProxy": "启动代理",
+  "healthActionRestartCore": "重启核心",
+  "healthDetailNoProfile": "尚未选择任何订阅配置",
+  "healthDetailProfileFileMissing": "本地配置文件缺失或为空，请重新更新订阅",
+  "healthDetailLocalProfile": "本地配置（无远程套餐额度信息）",
+  "healthDetailSubNeverSynced": "订阅尚未同步，建议先更新订阅",
+  "healthDetailSubNoMeta": "服务端未返回到期与流量信息",
+  "healthDetailSubHealthyEternal": "长期有效 · 不限流量",
+  "healthDetailSubHealthy": "订阅有效",
+  "healthDetailSubExpiringSoon": "剩余 {days} 天到期",
+  "@healthDetailSubExpiringSoon": {
+    "placeholders": {
+      "days": {
+        "type": "int"
+      }
+    }
+  },
+  "healthDetailSubTrafficLow": "流量已使用 {percent}%",
+  "@healthDetailSubTrafficLow": {
+    "placeholders": {
+      "percent": {
+        "type": "int"
+      }
+    }
+  },
+  "healthDetailSubDeviceLimit": "设备数量已达订阅上限",
+  "healthDetailSubExpired": "订阅已到期",
+  "healthDetailSubExhausted": "套餐流量已耗尽",
+  "healthDetailRuntimeSynced": "已加载（{count} 个策略组）",
+  "@healthDetailRuntimeSynced": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "healthDetailRuntimeMismatch": "当前配置尚未应用到运行核心",
+  "healthDetailCoreHealthy": "IPC 正常 · {mb} MB",
+  "@healthDetailCoreHealthy": {
+    "placeholders": {
+      "mb": {
+        "type": "String"
+      }
+    }
+  },
+  "healthDetailCoreSlow": "核心响应偏慢（> 500 ms）",
+  "healthDetailCoreFailed": "无法读取核心状态或控制接口超时",
+  "healthDetailProxyRunning": "运行中",
+  "healthDetailProxyStopped": "未启动",
+  "healthDetailSkipPrerequisite": "因前置检查未通过而跳过",
+  "healthDetailSkipProxyStopped": "代理未启动，跳过此项",
+  "healthDetailTunReadyElevated": "已就绪 · 管理员权限",
+  "healthDetailTunReady": "虚拟网卡已就绪",
+  "healthDetailTunDisabled": "未开启（按设置跳过）",
+  "healthDetailSysProxyDisabled": "未开启（按设置跳过）",
+  "healthDetailSysProxyUnsupported": "当前平台不适用注册表校验",
+  "healthDetailSysProxyHijacked": "系统代理已被其他软件关闭或改写",
+  "healthDetailSysProxyUnexpectedPac": "检测到残留 PAC 地址，可能抢占系统代理",
+  "healthDetailTakeoverBoth": "TUN 虚拟网卡 + 系统代理双接管",
+  "healthDetailTakeoverTun": "TUN 全局虚拟网卡接管",
+  "healthDetailTakeoverSysProxy": "系统代理接管",
+  "healthDetailTakeoverPartial": "仅单一通道生效，另一已开启接管项异常",
+  "healthDetailTakeoverNone": "TUN 与系统代理均未生效，应用流量未受接管",
+  "healthDetailDirectOk": "物理外网可达",
+  "healthDetailDirectSlow": "本机直连外网延迟偏高",
+  "healthDetailDirectFailed": "本机直连探测失败，请检查网卡、路由器或防火墙",
+  "healthDetailCoreDelayBusy": "批量测速繁忙，请稍后重新检查",
+  "healthDetailDnsOk": "域名解析正常",
+  "healthDetailDnsFakeIp": "Core DNS 接管 (fake-ip)",
+  "healthDetailDnsPoisoned": "解析返回黑洞/回环地址，疑似 DNS 污染",
+  "healthDetailDnsFailed": "域名解析失败或超时",
+  "healthDetailDirectMode": "当前处于直连模式 (Direct)",
+  "healthDetailOutboundDirectSelected": "策略组当前选中的是 DIRECT，不会经过代理节点",
+  "healthDetailOutboundRejectSelected": "策略组当前选中的是 REJECT，连接被阻断",
+  "healthDetailOutboundSlow": "节点 {node} 延迟偏慢",
+  "@healthDetailOutboundSlow": {
+    "placeholders": {
+      "node": {
+        "type": "String"
+      }
+    }
+  },
+  "healthDetailOutboundFailed": "节点 {node} 无法连通探测地址",
+  "@healthDetailOutboundFailed": {
+    "placeholders": {
+      "node": {
+        "type": "String"
+      }
+    }
+  },
+  "healthDetailE2eVerified": "已验证经过代理{exitPart}",
+  "@healthDetailE2eVerified": {
+    "placeholders": {
+      "exitPart": {
+        "type": "String"
+      }
+    }
+  },
+  "healthDetailE2eDirectRule": "已进入核心（探测域名命中直连规则）",
+  "healthDetailE2eBypassed": "出口探测成功，但核心连接表中未见该请求",
+  "healthDetailE2eFailed": "真实路径出口请求全部超时或失败",
+  "healthExitCountryPart": " · 出口 {flag}",
+  "@healthExitCountryPart": {
+    "placeholders": {
+      "flag": {
+        "type": "String"
+      }
+    }
+  }
 }

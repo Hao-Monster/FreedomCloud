@@ -4,6 +4,7 @@ import 'package:flclashx/common/common.dart';
 import 'package:flclashx/providers/config.dart';
 import 'package:flclashx/providers/tun.dart';
 import 'package:flclashx/state.dart';
+import 'package:flclashx/views/tools/health_check_view.dart';
 import 'package:flclashx/widgets/tun_status.dart';
 import 'package:flclashx/views/config/network.dart';
 import 'package:flclashx/widgets/widgets.dart';
@@ -75,9 +76,14 @@ class TUNButton extends StatelessWidget {
                 builder: (_, ref, __) {
                   if (Platform.isWindows) {
                     final runtime = ref.watch(tunRuntimeProvider);
-                    return Tooltip(message: tunStatusLabel(runtime),
-                      child: TunStatusSwitch(runtime: runtime,
-                        onChanged: globalState.appController.setTunEnabled));
+                    return Tooltip(
+                      message: tunStatusLabel(runtime),
+                      child: TunStatusSwitch(
+                        runtime: runtime,
+                        onChanged: globalState.appController.setTunEnabled,
+                        onDiagnose: () => openHealthCheck(context),
+                      ),
+                    );
                   }
                   final enable = ref.watch(patchClashConfigProvider
                       .select((state) => state.tun.enable));

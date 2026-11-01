@@ -36,74 +36,97 @@ class MessageLookup extends MessageLookupByLibrary {
 
   static String m6(label) => "Current ${label} already exists";
 
-  static String m7(text) => "Announcement: ${text}";
+  static String m7(time, elapsed) => "Last checked ${time} · ${elapsed}";
 
-  static String m8(hours) => "Auto-update ${hours}h";
+  static String m8(mb) => "IPC OK · ${mb} MB";
 
-  static String m9(minutes) => "Auto-update ${minutes}m";
+  static String m9(exitPart) => "Verified through proxy${exitPart}";
 
-  static String m10(completed, failed, untested, profiles) =>
+  static String m10(node) => "Node ${node} failed connectivity check";
+
+  static String m11(node) => "Node ${node} latency is elevated";
+
+  static String m12(count) => "Loaded (${count} groups)";
+
+  static String m13(days) => "${days}d remaining";
+
+  static String m14(percent) => "${percent}% quota used";
+
+  static String m15(flag) => " · Exit ${flag}";
+
+  static String m16(delay) => "Direct mode · Uplink ${delay} ms";
+
+  static String m17(node, delay, exitPart) =>
+      "Node ${node} · ${delay} ms${exitPart}";
+
+  static String m18(text) => "Announcement: ${text}";
+
+  static String m19(hours) => "Auto-update ${hours}h";
+
+  static String m20(minutes) => "Auto-update ${minutes}m";
+
+  static String m21(completed, failed, untested, profiles) =>
       "Completed ${completed} · Failed ${failed} · Untested ${untested} · Profiles with issues ${profiles}";
 
-  static String m11(date) => "Expires: ${date}";
+  static String m22(date) => "Expires: ${date}";
 
-  static String m12(days) => "${days}d left";
+  static String m23(days) => "${days}d left";
 
-  static String m13(hours) => "${hours}h left";
+  static String m24(hours) => "${hours}h left";
 
-  static String m14(provider) => "Profile file · ${provider}";
+  static String m25(provider) => "Profile file · ${provider}";
 
-  static String m15(available, tested, total) =>
+  static String m26(available, tested, total) =>
       "${available} available / ${tested} tested / ${total} total";
 
-  static String m16(time) => "Last active test: ${time}";
+  static String m27(time) => "Last active test: ${time}";
 
-  static String m17(time) => "Synced: ${time}";
+  static String m28(time) => "Synced: ${time}";
 
-  static String m18(time) => "Last test: ${time}";
+  static String m29(time) => "Last test: ${time}";
 
-  static String m19(delay) => "Median: ${delay}";
+  static String m30(delay) => "Median: ${delay}";
 
-  static String m20(count) => "Additional issue types: ${count}";
+  static String m31(count) => "Additional issue types: ${count}";
 
-  static String m21(available, total) => "Available ${available} / ${total}";
+  static String m32(available, total) => "Available ${available} / ${total}";
 
-  static String m22(date) => "Exp. ${date}";
+  static String m33(date) => "Exp. ${date}";
 
-  static String m23(count) => "${count} profiles";
+  static String m34(count) => "${count} profiles";
 
-  static String m24(completed, total) => "${completed} / ${total}";
+  static String m35(completed, total) => "${completed} / ${total}";
 
-  static String m25(provider) => "${provider}: nodes visible after activation";
+  static String m36(provider) => "${provider}: nodes visible after activation";
 
-  static String m26(traffic) => "Remaining: ${traffic}";
+  static String m37(traffic) => "Remaining: ${traffic}";
 
-  static String m27(profile, node) => "Switched to ${profile} · ${node}";
+  static String m38(profile, node) => "Switched to ${profile} · ${node}";
 
-  static String m28(used, total) => "Used ${used} / ${total}";
+  static String m39(used, total) => "Used ${used} / ${total}";
 
-  static String m29(used) => "Used: ${used}";
+  static String m40(used) => "Used: ${used}";
 
-  static String m30(label) => "No ${label} at the moment";
+  static String m41(label) => "No ${label} at the moment";
 
-  static String m31(label) => "${label} must be a number";
+  static String m42(label) => "${label} must be a number";
 
-  static String m32(label) => "${label} must be between 1024 and 49151";
+  static String m43(label) => "${label} must be between 1024 and 49151";
 
-  static String m33(plan, quota, price) =>
+  static String m44(plan, quota, price) =>
       "Hello, I would like to get a redemption code for [${plan} · ${quota} GiB (${price})].";
 
-  static String m34(count) => "${count} left";
+  static String m45(count) => "${count} left";
 
-  static String m35(code) => "Unknown rule (${code})";
+  static String m46(code) => "Unknown rule (${code})";
 
-  static String m36(count) => "${count} items have been selected";
+  static String m47(count) => "${count} items have been selected";
 
-  static String m37(days) => "Your subscription expires in ${days} day(s)";
+  static String m48(days) => "Your subscription expires in ${days} day(s)";
 
-  static String m38(reason) => "TUN: ${reason}";
+  static String m49(reason) => "TUN: ${reason}";
 
-  static String m39(label) => "${label} must be a url";
+  static String m50(label) => "${label} must be a url";
 
   final messages = _notInlinedMessages(_notInlinedMessages);
   static Map<String, Function> _notInlinedMessages(_) => <String, Function>{
@@ -564,6 +587,279 @@ class MessageLookup extends MessageLookupByLibrary {
     "hasCacheChange": MessageLookupByLibrary.simpleMessage(
       "Do you want to cache the changes?",
     ),
+    "healthActionOpenDns": MessageLookupByLibrary.simpleMessage("DNS Settings"),
+    "healthActionOpenNetwork": MessageLookupByLibrary.simpleMessage(
+      "Network Settings",
+    ),
+    "healthActionOpenProfiles": MessageLookupByLibrary.simpleMessage(
+      "Open Profiles",
+    ),
+    "healthActionOpenProxies": MessageLookupByLibrary.simpleMessage(
+      "Switch Node",
+    ),
+    "healthActionOpenPurchase": MessageLookupByLibrary.simpleMessage(
+      "Renew / Redeem",
+    ),
+    "healthActionOpenTun": MessageLookupByLibrary.simpleMessage("TUN Settings"),
+    "healthActionRestartCore": MessageLookupByLibrary.simpleMessage(
+      "Restart Core",
+    ),
+    "healthActionStartProxy": MessageLookupByLibrary.simpleMessage(
+      "Start Proxy",
+    ),
+    "healthCheckCancel": MessageLookupByLibrary.simpleMessage("Cancel"),
+    "healthCheckChecking": MessageLookupByLibrary.simpleMessage("Checking…"),
+    "healthCheckCopied": MessageLookupByLibrary.simpleMessage(
+      "Diagnostic summary copied",
+    ),
+    "healthCheckCopySummary": MessageLookupByLibrary.simpleMessage(
+      "Copy Summary",
+    ),
+    "healthCheckDiagnoseAction": MessageLookupByLibrary.simpleMessage(
+      "Diagnose",
+    ),
+    "healthCheckExport": MessageLookupByLibrary.simpleMessage("Export Report"),
+    "healthCheckExportDialogTitle": MessageLookupByLibrary.simpleMessage(
+      "Export Redacted Health Report",
+    ),
+    "healthCheckExportFailed": MessageLookupByLibrary.simpleMessage(
+      "Failed to export report",
+    ),
+    "healthCheckExportSuccess": MessageLookupByLibrary.simpleMessage(
+      "Diagnostic report exported",
+    ),
+    "healthCheckLastChecked": m7,
+    "healthCheckPrivacyNote": MessageLookupByLibrary.simpleMessage(
+      "Exports contain only status codes and timings — never node names, IPs, URLs, or logs.",
+    ),
+    "healthCheckRecheck": MessageLookupByLibrary.simpleMessage("Re-check"),
+    "healthCheckSubtitle": MessageLookupByLibrary.simpleMessage(
+      "Inspect profile, core, traffic capture, and live connectivity",
+    ),
+    "healthCheckTitle": MessageLookupByLibrary.simpleMessage("Health Check"),
+    "healthDetailCoreDelayBusy": MessageLookupByLibrary.simpleMessage(
+      "Delay test slots busy; retry shortly",
+    ),
+    "healthDetailCoreFailed": MessageLookupByLibrary.simpleMessage(
+      "Core control interface failed or timed out",
+    ),
+    "healthDetailCoreHealthy": m8,
+    "healthDetailCoreSlow": MessageLookupByLibrary.simpleMessage(
+      "Core IPC response is slow (> 500 ms)",
+    ),
+    "healthDetailDirectFailed": MessageLookupByLibrary.simpleMessage(
+      "Direct uplink failed; check Wi-Fi, router, or firewall",
+    ),
+    "healthDetailDirectMode": MessageLookupByLibrary.simpleMessage(
+      "Direct mode is selected",
+    ),
+    "healthDetailDirectOk": MessageLookupByLibrary.simpleMessage(
+      "Direct uplink reachable",
+    ),
+    "healthDetailDirectSlow": MessageLookupByLibrary.simpleMessage(
+      "Direct uplink latency is high",
+    ),
+    "healthDetailDnsFailed": MessageLookupByLibrary.simpleMessage(
+      "DNS lookup failed or timed out",
+    ),
+    "healthDetailDnsFakeIp": MessageLookupByLibrary.simpleMessage(
+      "Core DNS (fake-ip)",
+    ),
+    "healthDetailDnsOk": MessageLookupByLibrary.simpleMessage("Resolved"),
+    "healthDetailDnsPoisoned": MessageLookupByLibrary.simpleMessage(
+      "DNS returned loopback/sinkhole IP",
+    ),
+    "healthDetailE2eBypassed": MessageLookupByLibrary.simpleMessage(
+      "Reached internet, but connection bypassed Core",
+    ),
+    "healthDetailE2eDirectRule": MessageLookupByLibrary.simpleMessage(
+      "Entered Core (matched DIRECT rule)",
+    ),
+    "healthDetailE2eFailed": MessageLookupByLibrary.simpleMessage(
+      "All end-to-end exit probes failed",
+    ),
+    "healthDetailE2eVerified": m9,
+    "healthDetailLocalProfile": MessageLookupByLibrary.simpleMessage(
+      "Local file profile",
+    ),
+    "healthDetailNoProfile": MessageLookupByLibrary.simpleMessage(
+      "No profile selected",
+    ),
+    "healthDetailOutboundDirectSelected": MessageLookupByLibrary.simpleMessage(
+      "Selected target is DIRECT",
+    ),
+    "healthDetailOutboundFailed": m10,
+    "healthDetailOutboundRejectSelected": MessageLookupByLibrary.simpleMessage(
+      "Selected target is REJECT",
+    ),
+    "healthDetailOutboundSlow": m11,
+    "healthDetailProfileFileMissing": MessageLookupByLibrary.simpleMessage(
+      "Profile YAML file is missing or empty",
+    ),
+    "healthDetailProxyRunning": MessageLookupByLibrary.simpleMessage("Running"),
+    "healthDetailProxyStopped": MessageLookupByLibrary.simpleMessage("Stopped"),
+    "healthDetailRuntimeMismatch": MessageLookupByLibrary.simpleMessage(
+      "Current profile not yet applied to Core",
+    ),
+    "healthDetailRuntimeSynced": m12,
+    "healthDetailSkipPrerequisite": MessageLookupByLibrary.simpleMessage(
+      "Skipped due to earlier check",
+    ),
+    "healthDetailSkipProxyStopped": MessageLookupByLibrary.simpleMessage(
+      "Skipped while proxy is stopped",
+    ),
+    "healthDetailSubDeviceLimit": MessageLookupByLibrary.simpleMessage(
+      "Device limit reached",
+    ),
+    "healthDetailSubExhausted": MessageLookupByLibrary.simpleMessage(
+      "Traffic quota exhausted",
+    ),
+    "healthDetailSubExpired": MessageLookupByLibrary.simpleMessage(
+      "Subscription expired",
+    ),
+    "healthDetailSubExpiringSoon": m13,
+    "healthDetailSubHealthy": MessageLookupByLibrary.simpleMessage(
+      "Subscription active",
+    ),
+    "healthDetailSubHealthyEternal": MessageLookupByLibrary.simpleMessage(
+      "Lifetime · Unlimited",
+    ),
+    "healthDetailSubNeverSynced": MessageLookupByLibrary.simpleMessage(
+      "Not synced yet; update subscription first",
+    ),
+    "healthDetailSubNoMeta": MessageLookupByLibrary.simpleMessage(
+      "No quota metadata from server",
+    ),
+    "healthDetailSubTrafficLow": m14,
+    "healthDetailSysProxyDisabled": MessageLookupByLibrary.simpleMessage(
+      "Disabled in settings",
+    ),
+    "healthDetailSysProxyHijacked": MessageLookupByLibrary.simpleMessage(
+      "System proxy disabled or overwritten externally",
+    ),
+    "healthDetailSysProxyUnexpectedPac": MessageLookupByLibrary.simpleMessage(
+      "Residual PAC URL detected in system settings",
+    ),
+    "healthDetailSysProxyUnsupported": MessageLookupByLibrary.simpleMessage(
+      "Not applicable on this platform",
+    ),
+    "healthDetailTakeoverBoth": MessageLookupByLibrary.simpleMessage(
+      "TUN + System Proxy active",
+    ),
+    "healthDetailTakeoverNone": MessageLookupByLibrary.simpleMessage(
+      "Neither TUN nor System Proxy is active",
+    ),
+    "healthDetailTakeoverPartial": MessageLookupByLibrary.simpleMessage(
+      "Only one enabled capture mode is active",
+    ),
+    "healthDetailTakeoverSysProxy": MessageLookupByLibrary.simpleMessage(
+      "Captured via System Proxy",
+    ),
+    "healthDetailTakeoverTun": MessageLookupByLibrary.simpleMessage(
+      "Captured via TUN adapter",
+    ),
+    "healthDetailTunDisabled": MessageLookupByLibrary.simpleMessage(
+      "Disabled in settings",
+    ),
+    "healthDetailTunReady": MessageLookupByLibrary.simpleMessage(
+      "Virtual adapter active",
+    ),
+    "healthDetailTunReadyElevated": MessageLookupByLibrary.simpleMessage(
+      "Active · Elevated",
+    ),
+    "healthExitCountryPart": m15,
+    "healthItemCoreResponsive": MessageLookupByLibrary.simpleMessage(
+      "Core Responsiveness",
+    ),
+    "healthItemDirect": MessageLookupByLibrary.simpleMessage(
+      "Local Direct Uplink",
+    ),
+    "healthItemDns": MessageLookupByLibrary.simpleMessage("DNS Resolution"),
+    "healthItemEndToEnd": MessageLookupByLibrary.simpleMessage(
+      "End-to-End Verification",
+    ),
+    "healthItemOutbound": MessageLookupByLibrary.simpleMessage(
+      "Active Outbound Node",
+    ),
+    "healthItemProfileSelected": MessageLookupByLibrary.simpleMessage(
+      "Active Profile",
+    ),
+    "healthItemProxyStarted": MessageLookupByLibrary.simpleMessage(
+      "Proxy State",
+    ),
+    "healthItemRuntimeConfig": MessageLookupByLibrary.simpleMessage(
+      "Runtime Config",
+    ),
+    "healthItemSubscription": MessageLookupByLibrary.simpleMessage(
+      "Subscription Status",
+    ),
+    "healthItemSystemProxy": MessageLookupByLibrary.simpleMessage(
+      "System Proxy",
+    ),
+    "healthItemTrafficTakeover": MessageLookupByLibrary.simpleMessage(
+      "Capture Summary",
+    ),
+    "healthItemTunTakeover": MessageLookupByLibrary.simpleMessage(
+      "TUN Virtual Adapter",
+    ),
+    "healthLayerConfig": MessageLookupByLibrary.simpleMessage(
+      "Profile & Subscription",
+    ),
+    "healthLayerCore": MessageLookupByLibrary.simpleMessage("Proxy Core"),
+    "healthLayerNetwork": MessageLookupByLibrary.simpleMessage("Network Path"),
+    "healthLayerTakeover": MessageLookupByLibrary.simpleMessage(
+      "Traffic Capture",
+    ),
+    "healthStatusFailed": MessageLookupByLibrary.simpleMessage("Failed"),
+    "healthStatusPassed": MessageLookupByLibrary.simpleMessage("Passed"),
+    "healthStatusRunning": MessageLookupByLibrary.simpleMessage("Checking"),
+    "healthStatusSkipped": MessageLookupByLibrary.simpleMessage("Skipped"),
+    "healthStatusTimeout": MessageLookupByLibrary.simpleMessage("Timeout"),
+    "healthStatusWarning": MessageLookupByLibrary.simpleMessage("Warning"),
+    "healthVerdictCheckingTitle": MessageLookupByLibrary.simpleMessage(
+      "Checking connection layers…",
+    ),
+    "healthVerdictCoreUnresponsive": MessageLookupByLibrary.simpleMessage(
+      "Proxy core is unresponsive",
+    ),
+    "healthVerdictDnsFailed": MessageLookupByLibrary.simpleMessage(
+      "DNS resolution failed or returned sinkhole address",
+    ),
+    "healthVerdictEndToEndFailed": MessageLookupByLibrary.simpleMessage(
+      "End-to-end exit check failed; try switching nodes",
+    ),
+    "healthVerdictHealthyDirectSubtitle": m16,
+    "healthVerdictHealthySubtitle": m17,
+    "healthVerdictHealthyTitle": MessageLookupByLibrary.simpleMessage(
+      "Connection Healthy",
+    ),
+    "healthVerdictLocalNetworkDown": MessageLookupByLibrary.simpleMessage(
+      "Local network is unreachable (unrelated to proxy node)",
+    ),
+    "healthVerdictOutboundFailed": MessageLookupByLibrary.simpleMessage(
+      "Local network is OK, but active proxy node failed",
+    ),
+    "healthVerdictProfileMissing": MessageLookupByLibrary.simpleMessage(
+      "No valid profile selected or file is missing",
+    ),
+    "healthVerdictProxyNotStarted": MessageLookupByLibrary.simpleMessage(
+      "Proxy is stopped; traffic goes direct",
+    ),
+    "healthVerdictSubscriptionExhausted": MessageLookupByLibrary.simpleMessage(
+      "Subscription traffic is exhausted",
+    ),
+    "healthVerdictSubscriptionExpired": MessageLookupByLibrary.simpleMessage(
+      "Subscription has expired",
+    ),
+    "healthVerdictTakeoverFailed": MessageLookupByLibrary.simpleMessage(
+      "Traffic capture inactive; check TUN or system proxy",
+    ),
+    "healthVerdictTrafficBypassed": MessageLookupByLibrary.simpleMessage(
+      "Probe reached internet without traversing proxy core",
+    ),
+    "healthVerdictWarningsTitle": MessageLookupByLibrary.simpleMessage(
+      "Connected with warnings",
+    ),
     "hostsDesc": MessageLookupByLibrary.simpleMessage("Add Hosts"),
     "hotkeyConflict": MessageLookupByLibrary.simpleMessage("Hotkey conflict"),
     "hotkeyManagement": MessageLookupByLibrary.simpleMessage(
@@ -704,13 +1000,13 @@ class MessageLookup extends MessageLookupByLibrary {
     "nodeOverviewAmbiguousNode": MessageLookupByLibrary.simpleMessage(
       "Duplicate node definitions; identity could not be verified",
     ),
-    "nodeOverviewAnnouncement": m7,
-    "nodeOverviewAutoUpdateHours": m8,
-    "nodeOverviewAutoUpdateMinutes": m9,
+    "nodeOverviewAnnouncement": m18,
+    "nodeOverviewAutoUpdateHours": m19,
+    "nodeOverviewAutoUpdateMinutes": m20,
     "nodeOverviewAvailableOnly": MessageLookupByLibrary.simpleMessage(
       "Available only",
     ),
-    "nodeOverviewBatchSummary": m10,
+    "nodeOverviewBatchSummary": m21,
     "nodeOverviewChainUnsupported": MessageLookupByLibrary.simpleMessage(
       "Proxy chains cannot be tested in isolation",
     ),
@@ -720,9 +1016,9 @@ class MessageLookup extends MessageLookupByLibrary {
     "nodeOverviewDeviceLimitReached": MessageLookupByLibrary.simpleMessage(
       "Device limit reached",
     ),
-    "nodeOverviewExpireAt": m11,
-    "nodeOverviewExpireDaysLeft": m12,
-    "nodeOverviewExpireHoursLeft": m13,
+    "nodeOverviewExpireAt": m22,
+    "nodeOverviewExpireDaysLeft": m23,
+    "nodeOverviewExpireHoursLeft": m24,
     "nodeOverviewExpireSoon": MessageLookupByLibrary.simpleMessage("< 1h left"),
     "nodeOverviewExpired": MessageLookupByLibrary.simpleMessage(
       "Subscription expired",
@@ -730,11 +1026,11 @@ class MessageLookup extends MessageLookupByLibrary {
     "nodeOverviewFileMissing": MessageLookupByLibrary.simpleMessage(
       "Profile file is missing",
     ),
-    "nodeOverviewFileSource": m14,
+    "nodeOverviewFileSource": m25,
     "nodeOverviewHealthCapacityExceeded": MessageLookupByLibrary.simpleMessage(
       "History storage is full; some results were not saved",
     ),
-    "nodeOverviewHealthCounts": m15,
+    "nodeOverviewHealthCounts": m26,
     "nodeOverviewHealthStoreUnavailable": MessageLookupByLibrary.simpleMessage(
       "Some delay results could not be saved",
     ),
@@ -745,9 +1041,9 @@ class MessageLookup extends MessageLookupByLibrary {
     "nodeOverviewIndependentTest": MessageLookupByLibrary.simpleMessage(
       "Independent delay test",
     ),
-    "nodeOverviewLastActiveTest": m16,
-    "nodeOverviewLastSync": m17,
-    "nodeOverviewLastTest": m18,
+    "nodeOverviewLastActiveTest": m27,
+    "nodeOverviewLastSync": m28,
+    "nodeOverviewLastTest": m29,
     "nodeOverviewLive": MessageLookupByLibrary.simpleMessage("Live"),
     "nodeOverviewLocalProfile": MessageLookupByLibrary.simpleMessage(
       "Local file",
@@ -758,8 +1054,8 @@ class MessageLookup extends MessageLookupByLibrary {
     "nodeOverviewManualUpdate": MessageLookupByLibrary.simpleMessage(
       "Manual update",
     ),
-    "nodeOverviewMedian": m19,
-    "nodeOverviewMoreIssues": m20,
+    "nodeOverviewMedian": m30,
+    "nodeOverviewMoreIssues": m31,
     "nodeOverviewNeverExpires": MessageLookupByLibrary.simpleMessage(
       "Expires: Never",
     ),
@@ -775,16 +1071,16 @@ class MessageLookup extends MessageLookupByLibrary {
     "nodeOverviewPartialSummary": MessageLookupByLibrary.simpleMessage(
       "Summary includes loaded nodes only",
     ),
-    "nodeOverviewPickerAvailableNodes": m21,
-    "nodeOverviewPickerExpireDate": m22,
+    "nodeOverviewPickerAvailableNodes": m32,
+    "nodeOverviewPickerExpireDate": m33,
     "nodeOverviewPickerPerpetual": MessageLookupByLibrary.simpleMessage(
       "Never expires",
     ),
     "nodeOverviewPreviewUnsupported": MessageLookupByLibrary.simpleMessage(
       "Local provider nodes are not supported in this preview",
     ),
-    "nodeOverviewProfileCountBadge": m23,
-    "nodeOverviewProgress": m24,
+    "nodeOverviewProfileCountBadge": m34,
+    "nodeOverviewProgress": m35,
     "nodeOverviewProviderDownloadFailed": MessageLookupByLibrary.simpleMessage(
       "Provider download failed",
     ),
@@ -795,7 +1091,7 @@ class MessageLookup extends MessageLookupByLibrary {
         MessageLookupByLibrary.simpleMessage(
           "These provider options are not supported",
         ),
-    "nodeOverviewProviderPending": m25,
+    "nodeOverviewProviderPending": m36,
     "nodeOverviewProviderTooLarge": MessageLookupByLibrary.simpleMessage(
       "Provider exceeds the size or node limit",
     ),
@@ -809,7 +1105,7 @@ class MessageLookup extends MessageLookupByLibrary {
       "Provider URL does not meet safety requirements",
     ),
     "nodeOverviewQuickUse": MessageLookupByLibrary.simpleMessage("Quick use"),
-    "nodeOverviewRemainingTraffic": m26,
+    "nodeOverviewRemainingTraffic": m37,
     "nodeOverviewRuntimeSource": MessageLookupByLibrary.simpleMessage(
       "Runtime node",
     ),
@@ -825,7 +1121,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "nodeOverviewStrictUnsupported": MessageLookupByLibrary.simpleMessage(
       "Isolated tests are unavailable in strict mode",
     ),
-    "nodeOverviewSwitchedToNode": m27,
+    "nodeOverviewSwitchedToNode": m38,
     "nodeOverviewTestAll": MessageLookupByLibrary.simpleMessage(
       "Test all node delays",
     ),
@@ -865,8 +1161,8 @@ class MessageLookup extends MessageLookupByLibrary {
       "Updating",
     ),
     "nodeOverviewUseNode": MessageLookupByLibrary.simpleMessage("Use"),
-    "nodeOverviewUsedOfTotalTraffic": m28,
-    "nodeOverviewUsedTrafficOnly": m29,
+    "nodeOverviewUsedOfTotalTraffic": m39,
+    "nodeOverviewUsedTrafficOnly": m40,
     "none": MessageLookupByLibrary.simpleMessage("none"),
     "notSelectedTip": MessageLookupByLibrary.simpleMessage(
       "The current proxy group cannot be selected.",
@@ -875,8 +1171,8 @@ class MessageLookup extends MessageLookupByLibrary {
       "No profile, Please add a profile",
     ),
     "nullScriptTip": MessageLookupByLibrary.simpleMessage("No scripts"),
-    "nullTip": m30,
-    "numberTip": m31,
+    "nullTip": m41,
+    "numberTip": m42,
     "oneColumn": MessageLookupByLibrary.simpleMessage("One column"),
     "oneline": MessageLookupByLibrary.simpleMessage("Oneline"),
     "onlyIcon": MessageLookupByLibrary.simpleMessage("Icon"),
@@ -947,7 +1243,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "portConflictTip": MessageLookupByLibrary.simpleMessage(
       "Please enter a different port",
     ),
-    "portTip": m32,
+    "portTip": m43,
     "preferH3Desc": MessageLookupByLibrary.simpleMessage(
       "Prioritize the use of DOH\'s http/3",
     ),
@@ -1083,7 +1379,7 @@ class MessageLookup extends MessageLookupByLibrary {
       "Reload history",
     ),
     "purchaseHistoryTotal": MessageLookupByLibrary.simpleMessage("Total"),
-    "purchaseInquiryTemplate": m33,
+    "purchaseInquiryTemplate": m44,
     "purchaseJumpToWorkbench": MessageLookupByLibrary.simpleMessage(
       "Have a code? Redeem now",
     ),
@@ -1158,7 +1454,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "purchasePlanImageNotLoaded": MessageLookupByLibrary.simpleMessage(
       "External image not loaded",
     ),
-    "purchasePlanLowStock": m34,
+    "purchasePlanLowStock": m45,
     "purchasePlanNotProvided": MessageLookupByLibrary.simpleMessage(
       "Not provided",
     ),
@@ -1177,7 +1473,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "purchasePlanResetSystem": MessageLookupByLibrary.simpleMessage(
       "Follows system settings",
     ),
-    "purchasePlanResetUnknown": m35,
+    "purchasePlanResetUnknown": m46,
     "purchasePlanResetYearStart": MessageLookupByLibrary.simpleMessage(
       "On January 1 each year",
     ),
@@ -1385,7 +1681,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "selectAll": MessageLookupByLibrary.simpleMessage("Select all"),
     "selectProfile": MessageLookupByLibrary.simpleMessage("Select Profile"),
     "selected": MessageLookupByLibrary.simpleMessage("Selected"),
-    "selectedCountTitle": m36,
+    "selectedCountTitle": m47,
     "sendToTv": MessageLookupByLibrary.simpleMessage("Send to TV"),
     "sendToTvTitle": MessageLookupByLibrary.simpleMessage("Send to TV"),
     "sentSuccessfullyMessage": MessageLookupByLibrary.simpleMessage(
@@ -1429,7 +1725,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "subscriptionExpired": MessageLookupByLibrary.simpleMessage(
       "Your subscription has expired",
     ),
-    "subscriptionExpiresInDays": m37,
+    "subscriptionExpiresInDays": m48,
     "subscriptionExpiresSoon": MessageLookupByLibrary.simpleMessage(
       "Subscription expires soon",
     ),
@@ -1513,7 +1809,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "tunErrorUnavailable": MessageLookupByLibrary.simpleMessage(
       "Cannot verify status; check the background version",
     ),
-    "tunStatusFailure": m38,
+    "tunStatusFailure": m49,
     "tunStatusOff": MessageLookupByLibrary.simpleMessage("Not running"),
     "tunStatusOn": MessageLookupByLibrary.simpleMessage("Running"),
     "tunStatusStarting": MessageLookupByLibrary.simpleMessage("Starting…"),
@@ -1544,7 +1840,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "urlDesc": MessageLookupByLibrary.simpleMessage(
       "Obtain profile through URL",
     ),
-    "urlTip": m39,
+    "urlTip": m50,
     "useHosts": MessageLookupByLibrary.simpleMessage("Use hosts"),
     "useSystemHosts": MessageLookupByLibrary.simpleMessage("Use system hosts"),
     "value": MessageLookupByLibrary.simpleMessage("Value"),

@@ -1025,5 +1025,202 @@
     }
   },
   "dashboardHwidNotSupported": "HWID binding is not enabled on this server",
-  "dashboardContactSupport": "Support"
+  "dashboardContactSupport": "Support",
+  "healthCheckTitle": "Health Check",
+  "healthCheckSubtitle": "Inspect profile, core, traffic capture, and live connectivity",
+  "healthCheckDiagnoseAction": "Diagnose",
+  "healthCheckRecheck": "Re-check",
+  "healthCheckCancel": "Cancel",
+  "healthCheckChecking": "Checking…",
+  "healthCheckCopySummary": "Copy Summary",
+  "healthCheckCopied": "Diagnostic summary copied",
+  "healthCheckExport": "Export Report",
+  "healthCheckExportDialogTitle": "Export Redacted Health Report",
+  "healthCheckExportSuccess": "Diagnostic report exported",
+  "healthCheckExportFailed": "Failed to export report",
+  "healthCheckPrivacyNote": "Exports contain only status codes and timings — never node names, IPs, URLs, or logs.",
+  "healthCheckLastChecked": "Last checked {time} · {elapsed}",
+  "@healthCheckLastChecked": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      },
+      "elapsed": {
+        "type": "String"
+      }
+    }
+  },
+  "healthLayerConfig": "Profile & Subscription",
+  "healthLayerCore": "Proxy Core",
+  "healthLayerTakeover": "Traffic Capture",
+  "healthLayerNetwork": "Network Path",
+  "healthItemProfileSelected": "Active Profile",
+  "healthItemSubscription": "Subscription Status",
+  "healthItemRuntimeConfig": "Runtime Config",
+  "healthItemCoreResponsive": "Core Responsiveness",
+  "healthItemProxyStarted": "Proxy State",
+  "healthItemTunTakeover": "TUN Virtual Adapter",
+  "healthItemSystemProxy": "System Proxy",
+  "healthItemTrafficTakeover": "Capture Summary",
+  "healthItemDirect": "Local Direct Uplink",
+  "healthItemDns": "DNS Resolution",
+  "healthItemOutbound": "Active Outbound Node",
+  "healthItemEndToEnd": "End-to-End Verification",
+  "healthStatusRunning": "Checking",
+  "healthStatusPassed": "Passed",
+  "healthStatusWarning": "Warning",
+  "healthStatusFailed": "Failed",
+  "healthStatusTimeout": "Timeout",
+  "healthStatusSkipped": "Skipped",
+  "healthVerdictCheckingTitle": "Checking connection layers…",
+  "healthVerdictHealthyTitle": "Connection Healthy",
+  "healthVerdictHealthySubtitle": "Node {node} · {delay} ms{exitPart}",
+  "@healthVerdictHealthySubtitle": {
+    "placeholders": {
+      "node": {
+        "type": "String"
+      },
+      "delay": {
+        "type": "int"
+      },
+      "exitPart": {
+        "type": "String"
+      }
+    }
+  },
+  "healthVerdictHealthyDirectSubtitle": "Direct mode · Uplink {delay} ms",
+  "@healthVerdictHealthyDirectSubtitle": {
+    "placeholders": {
+      "delay": {
+        "type": "int"
+      }
+    }
+  },
+  "healthVerdictCoreUnresponsive": "Proxy core is unresponsive",
+  "healthVerdictProfileMissing": "No valid profile selected or file is missing",
+  "healthVerdictSubscriptionExpired": "Subscription has expired",
+  "healthVerdictSubscriptionExhausted": "Subscription traffic is exhausted",
+  "healthVerdictProxyNotStarted": "Proxy is stopped; traffic goes direct",
+  "healthVerdictTakeoverFailed": "Traffic capture inactive; check TUN or system proxy",
+  "healthVerdictLocalNetworkDown": "Local network is unreachable (unrelated to proxy node)",
+  "healthVerdictOutboundFailed": "Local network is OK, but active proxy node failed",
+  "healthVerdictTrafficBypassed": "Probe reached internet without traversing proxy core",
+  "healthVerdictEndToEndFailed": "End-to-end exit check failed; try switching nodes",
+  "healthVerdictDnsFailed": "DNS resolution failed or returned sinkhole address",
+  "healthVerdictWarningsTitle": "Connected with warnings",
+  "healthActionOpenProfiles": "Open Profiles",
+  "healthActionOpenPurchase": "Renew / Redeem",
+  "healthActionOpenProxies": "Switch Node",
+  "healthActionOpenTun": "TUN Settings",
+  "healthActionOpenNetwork": "Network Settings",
+  "healthActionOpenDns": "DNS Settings",
+  "healthActionStartProxy": "Start Proxy",
+  "healthActionRestartCore": "Restart Core",
+  "healthDetailNoProfile": "No profile selected",
+  "healthDetailProfileFileMissing": "Profile YAML file is missing or empty",
+  "healthDetailLocalProfile": "Local file profile",
+  "healthDetailSubNeverSynced": "Not synced yet; update subscription first",
+  "healthDetailSubNoMeta": "No quota metadata from server",
+  "healthDetailSubHealthyEternal": "Lifetime · Unlimited",
+  "healthDetailSubHealthy": "Subscription active",
+  "healthDetailSubExpiringSoon": "{days}d remaining",
+  "@healthDetailSubExpiringSoon": {
+    "placeholders": {
+      "days": {
+        "type": "int"
+      }
+    }
+  },
+  "healthDetailSubTrafficLow": "{percent}% quota used",
+  "@healthDetailSubTrafficLow": {
+    "placeholders": {
+      "percent": {
+        "type": "int"
+      }
+    }
+  },
+  "healthDetailSubDeviceLimit": "Device limit reached",
+  "healthDetailSubExpired": "Subscription expired",
+  "healthDetailSubExhausted": "Traffic quota exhausted",
+  "healthDetailRuntimeSynced": "Loaded ({count} groups)",
+  "@healthDetailRuntimeSynced": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "healthDetailRuntimeMismatch": "Current profile not yet applied to Core",
+  "healthDetailCoreHealthy": "IPC OK · {mb} MB",
+  "@healthDetailCoreHealthy": {
+    "placeholders": {
+      "mb": {
+        "type": "String"
+      }
+    }
+  },
+  "healthDetailCoreSlow": "Core IPC response is slow (> 500 ms)",
+  "healthDetailCoreFailed": "Core control interface failed or timed out",
+  "healthDetailProxyRunning": "Running",
+  "healthDetailProxyStopped": "Stopped",
+  "healthDetailSkipPrerequisite": "Skipped due to earlier check",
+  "healthDetailSkipProxyStopped": "Skipped while proxy is stopped",
+  "healthDetailTunReadyElevated": "Active · Elevated",
+  "healthDetailTunReady": "Virtual adapter active",
+  "healthDetailTunDisabled": "Disabled in settings",
+  "healthDetailSysProxyDisabled": "Disabled in settings",
+  "healthDetailSysProxyUnsupported": "Not applicable on this platform",
+  "healthDetailSysProxyHijacked": "System proxy disabled or overwritten externally",
+  "healthDetailSysProxyUnexpectedPac": "Residual PAC URL detected in system settings",
+  "healthDetailTakeoverBoth": "TUN + System Proxy active",
+  "healthDetailTakeoverTun": "Captured via TUN adapter",
+  "healthDetailTakeoverSysProxy": "Captured via System Proxy",
+  "healthDetailTakeoverPartial": "Only one enabled capture mode is active",
+  "healthDetailTakeoverNone": "Neither TUN nor System Proxy is active",
+  "healthDetailDirectOk": "Direct uplink reachable",
+  "healthDetailDirectSlow": "Direct uplink latency is high",
+  "healthDetailDirectFailed": "Direct uplink failed; check Wi-Fi, router, or firewall",
+  "healthDetailCoreDelayBusy": "Delay test slots busy; retry shortly",
+  "healthDetailDnsOk": "Resolved",
+  "healthDetailDnsFakeIp": "Core DNS (fake-ip)",
+  "healthDetailDnsPoisoned": "DNS returned loopback/sinkhole IP",
+  "healthDetailDnsFailed": "DNS lookup failed or timed out",
+  "healthDetailDirectMode": "Direct mode is selected",
+  "healthDetailOutboundDirectSelected": "Selected target is DIRECT",
+  "healthDetailOutboundRejectSelected": "Selected target is REJECT",
+  "healthDetailOutboundSlow": "Node {node} latency is elevated",
+  "@healthDetailOutboundSlow": {
+    "placeholders": {
+      "node": {
+        "type": "String"
+      }
+    }
+  },
+  "healthDetailOutboundFailed": "Node {node} failed connectivity check",
+  "@healthDetailOutboundFailed": {
+    "placeholders": {
+      "node": {
+        "type": "String"
+      }
+    }
+  },
+  "healthDetailE2eVerified": "Verified through proxy{exitPart}",
+  "@healthDetailE2eVerified": {
+    "placeholders": {
+      "exitPart": {
+        "type": "String"
+      }
+    }
+  },
+  "healthDetailE2eDirectRule": "Entered Core (matched DIRECT rule)",
+  "healthDetailE2eBypassed": "Reached internet, but connection bypassed Core",
+  "healthDetailE2eFailed": "All end-to-end exit probes failed",
+  "healthExitCountryPart": " · Exit {flag}",
+  "@healthExitCountryPart": {
+    "placeholders": {
+      "flag": {
+        "type": "String"
+      }
+    }
+  }
 }

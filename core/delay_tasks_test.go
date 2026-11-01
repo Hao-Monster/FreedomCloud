@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/metacubex/mihomo/common/utils"
+	"github.com/metacubex/mihomo/config"
 	"github.com/metacubex/mihomo/constant"
+	"github.com/metacubex/mihomo/tunnel"
 	"runtime"
 	"sync/atomic"
 	"testing"
@@ -224,5 +226,27 @@ func TestDelayGenerationCancellationAndLegacyCompletion(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("legacy request did not complete")
+	}
+}
+
+func TestLookupDelayProxyFindsBuiltinDirectAfterApplyConfig(t *testing.T) {
+	prevProxies := tunnel.Proxies()
+	prevProviders := tunnel.Providers()
+	t.Cleanup(func() {
+		tunnel.UpdateProxies(prevProxies, prevProviders)
+	})
+
+	cfg, err := config.Parse([]byte("mode: rule\n"))
+	if err != nil {
+		t.Fatalf("config.Parse minimal rule config failed: %v", err)
+	}
+	tunnel.UpdateProxies(cfg.Proxies, cfg.Providers)
+
+	direct := lookupDelayProxy("DIRECT")
+	if direct == nil {
+		t.Fatal("expected lookupDelayProxy(\"DIRECT\") to return built-in DIRECT proxy after config apply")
+	}
+	if direct.Type() != constant.Direct {
+		t.Fatalf("expected DIRECT proxy type %v, got %v", constant.Direct, direct.Type())
 	}
 }

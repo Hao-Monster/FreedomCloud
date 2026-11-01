@@ -5,6 +5,7 @@ import 'package:flclashx/enum/enum.dart';
 import 'package:flclashx/models/models.dart';
 import 'package:flclashx/providers/config.dart';
 import 'package:flclashx/providers/tun.dart';
+import 'package:flclashx/views/tools/health_check_view.dart';
 import 'package:flclashx/widgets/tun_status.dart';
 import 'package:flclashx/state.dart';
 import 'package:flclashx/widgets/widgets.dart';
@@ -107,8 +108,11 @@ class TUNItem extends ConsumerWidget {
         title: Text(appLocalizations.tun),
         subtitle: Text(tunStatusLabel(runtime,
           waiting: enable && globalState.appState.runTime == null)),
-        trailing: TunStatusSwitch(runtime: runtime,
-          onChanged: globalState.appController.setTunEnabled),
+        trailing: TunStatusSwitch(
+          runtime: runtime,
+          onChanged: globalState.appController.setTunEnabled,
+          onDiagnose: () => openHealthCheck(context),
+        ),
       );
     }
 

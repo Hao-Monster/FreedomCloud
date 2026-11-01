@@ -35,74 +35,97 @@ class MessageLookup extends MessageLookupByLibrary {
 
   static String m6(label) => "Текущий ${label} уже существует";
 
-  static String m7(text) => "Объявление: ${text}";
+  static String m7(time, elapsed) => "Проверка ${time} · ${elapsed}";
 
-  static String m8(hours) => "Автообновление ${hours} ч.";
+  static String m8(mb) => "IPC ОК · ${mb} МБ";
 
-  static String m9(minutes) => "Автообновление ${minutes} мин.";
+  static String m9(exitPart) => "Через прокси подтверждено${exitPart}";
 
-  static String m10(completed, failed, untested, profiles) =>
+  static String m10(node) => "Узел ${node} не прошёл проверку связи";
+
+  static String m11(node) => "Повышенная задержка узла ${node}";
+
+  static String m12(count) => "Загружено (групп: ${count})";
+
+  static String m13(days) => "Осталось ${days} дн.";
+
+  static String m14(percent) => "Использовано ${percent}% трафика";
+
+  static String m15(flag) => " · Выход ${flag}";
+
+  static String m16(delay) => "Прямой режим · ${delay} мс";
+
+  static String m17(node, delay, exitPart) =>
+      "Узел ${node} · ${delay} мс${exitPart}";
+
+  static String m18(text) => "Объявление: ${text}";
+
+  static String m19(hours) => "Автообновление ${hours} ч.";
+
+  static String m20(minutes) => "Автообновление ${minutes} мин.";
+
+  static String m21(completed, failed, untested, profiles) =>
       "Завершено ${completed} · Ошибок ${failed} · Не проверено ${untested} · Профилей с проблемами ${profiles}";
 
-  static String m11(date) => "Истекает: ${date}";
+  static String m22(date) => "Истекает: ${date}";
 
-  static String m12(days) => "осталось ${days} дн.";
+  static String m23(days) => "осталось ${days} дн.";
 
-  static String m13(hours) => "осталось ${hours} ч.";
+  static String m24(hours) => "осталось ${hours} ч.";
 
-  static String m14(provider) => "Файл профиля · ${provider}";
+  static String m25(provider) => "Файл профиля · ${provider}";
 
-  static String m15(available, tested, total) =>
+  static String m26(available, tested, total) =>
       "Доступно ${available} / проверено ${tested} / всего ${total}";
 
-  static String m16(time) => "Проверка при последней активации: ${time}";
+  static String m27(time) => "Проверка при последней активации: ${time}";
 
-  static String m17(time) => "Синхронизация: ${time}";
+  static String m28(time) => "Синхронизация: ${time}";
 
-  static String m18(time) => "Последняя проверка: ${time}";
+  static String m29(time) => "Последняя проверка: ${time}";
 
-  static String m19(delay) => "Медиана: ${delay}";
+  static String m30(delay) => "Медиана: ${delay}";
 
-  static String m20(count) => "Ещё типов проблем: ${count}";
+  static String m31(count) => "Ещё типов проблем: ${count}";
 
-  static String m21(available, total) => "Доступно ${available} / ${total}";
+  static String m32(available, total) => "Доступно ${available} / ${total}";
 
-  static String m22(date) => "До ${date}";
+  static String m33(date) => "До ${date}";
 
-  static String m23(count) => "Профилей: ${count}";
+  static String m34(count) => "Профилей: ${count}";
 
-  static String m24(completed, total) => "${completed} / ${total}";
+  static String m35(completed, total) => "${completed} / ${total}";
 
-  static String m25(provider) => "${provider}: узлы появятся после активации";
+  static String m36(provider) => "${provider}: узлы появятся после активации";
 
-  static String m26(traffic) => "Остаток трафика: ${traffic}";
+  static String m37(traffic) => "Остаток трафика: ${traffic}";
 
-  static String m27(profile, node) => "Переключено на ${profile} · ${node}";
+  static String m38(profile, node) => "Переключено на ${profile} · ${node}";
 
-  static String m28(used, total) => "Использовано ${used} из ${total}";
+  static String m39(used, total) => "Использовано ${used} из ${total}";
 
-  static String m29(used) => "Использовано: ${used}";
+  static String m40(used) => "Использовано: ${used}";
 
-  static String m30(label) => "Сейчас ${label} нет";
+  static String m41(label) => "Сейчас ${label} нет";
 
-  static String m31(label) => "${label} должно быть числом";
+  static String m42(label) => "${label} должно быть числом";
 
-  static String m32(label) => "${label} должен быть числом от 1024 до 49151";
+  static String m43(label) => "${label} должен быть числом от 1024 до 49151";
 
-  static String m33(plan, quota, price) =>
+  static String m44(plan, quota, price) =>
       "Здравствуйте! Хочу приобрести код активации для тарифа «${plan} · ${quota} GiB (${price})».";
 
-  static String m34(count) => "Осталось: ${count}";
+  static String m45(count) => "Осталось: ${count}";
 
-  static String m35(code) => "Неизвестное правило (${code})";
+  static String m46(code) => "Неизвестное правило (${code})";
 
-  static String m36(count) => "Выбрано ${count} элементов";
+  static String m47(count) => "Выбрано ${count} элементов";
 
-  static String m37(days) => "Ваша подписка истекает через ${days} дн.";
+  static String m48(days) => "Ваша подписка истекает через ${days} дн.";
 
-  static String m38(reason) => "TUN: ${reason}";
+  static String m49(reason) => "TUN: ${reason}";
 
-  static String m39(label) => "${label} должен быть URL";
+  static String m50(label) => "${label} должен быть URL";
 
   final messages = _notInlinedMessages(_notInlinedMessages);
   static Map<String, Function> _notInlinedMessages(_) => <String, Function>{
@@ -475,6 +498,283 @@ class MessageLookup extends MessageLookupByLibrary {
     "hasCacheChange": MessageLookupByLibrary.simpleMessage(
       "Сохранить изменения в кэше?",
     ),
+    "healthActionOpenDns": MessageLookupByLibrary.simpleMessage(
+      "Настройки DNS",
+    ),
+    "healthActionOpenNetwork": MessageLookupByLibrary.simpleMessage(
+      "Настройки сети",
+    ),
+    "healthActionOpenProfiles": MessageLookupByLibrary.simpleMessage(
+      "К профилям",
+    ),
+    "healthActionOpenProxies": MessageLookupByLibrary.simpleMessage(
+      "Сменить узел",
+    ),
+    "healthActionOpenPurchase": MessageLookupByLibrary.simpleMessage(
+      "Продлить",
+    ),
+    "healthActionOpenTun": MessageLookupByLibrary.simpleMessage(
+      "Настройки TUN",
+    ),
+    "healthActionRestartCore": MessageLookupByLibrary.simpleMessage(
+      "Перезапуск ядра",
+    ),
+    "healthActionStartProxy": MessageLookupByLibrary.simpleMessage("Запустить"),
+    "healthCheckCancel": MessageLookupByLibrary.simpleMessage("Отмена"),
+    "healthCheckChecking": MessageLookupByLibrary.simpleMessage("Проверка…"),
+    "healthCheckCopied": MessageLookupByLibrary.simpleMessage(
+      "Сводка скопирована в буфер обмена",
+    ),
+    "healthCheckCopySummary": MessageLookupByLibrary.simpleMessage(
+      "Копировать",
+    ),
+    "healthCheckDiagnoseAction": MessageLookupByLibrary.simpleMessage(
+      "Диагностика",
+    ),
+    "healthCheckExport": MessageLookupByLibrary.simpleMessage("Экспорт отчёта"),
+    "healthCheckExportDialogTitle": MessageLookupByLibrary.simpleMessage(
+      "Экспорт обезличенного отчёта",
+    ),
+    "healthCheckExportFailed": MessageLookupByLibrary.simpleMessage(
+      "Ошибка экспорта отчёта",
+    ),
+    "healthCheckExportSuccess": MessageLookupByLibrary.simpleMessage(
+      "Отчёт экспортирован",
+    ),
+    "healthCheckLastChecked": m7,
+    "healthCheckPrivacyNote": MessageLookupByLibrary.simpleMessage(
+      "Отчёт содержит только коды статусов и время — без имён узлов, IP, ссылок и логов.",
+    ),
+    "healthCheckRecheck": MessageLookupByLibrary.simpleMessage("Проверить"),
+    "healthCheckSubtitle": MessageLookupByLibrary.simpleMessage(
+      "Диагностика профиля, ядра, перехвата трафика и связи",
+    ),
+    "healthCheckTitle": MessageLookupByLibrary.simpleMessage("Проверка сети"),
+    "healthDetailCoreDelayBusy": MessageLookupByLibrary.simpleMessage(
+      "Очередь замера занята, повторите позже",
+    ),
+    "healthDetailCoreFailed": MessageLookupByLibrary.simpleMessage(
+      "Сбой или тайм-аут интерфейса ядра",
+    ),
+    "healthDetailCoreHealthy": m8,
+    "healthDetailCoreSlow": MessageLookupByLibrary.simpleMessage(
+      "Медленный отклик ядра (> 500 мс)",
+    ),
+    "healthDetailDirectFailed": MessageLookupByLibrary.simpleMessage(
+      "Сбой прямого доступа: проверьте сеть или роутер",
+    ),
+    "healthDetailDirectMode": MessageLookupByLibrary.simpleMessage(
+      "Выбран прямой режим (Direct)",
+    ),
+    "healthDetailDirectOk": MessageLookupByLibrary.simpleMessage(
+      "Прямой доступ работает",
+    ),
+    "healthDetailDirectSlow": MessageLookupByLibrary.simpleMessage(
+      "Высокая задержка прямого канала",
+    ),
+    "healthDetailDnsFailed": MessageLookupByLibrary.simpleMessage(
+      "Ошибка или тайм-аут DNS",
+    ),
+    "healthDetailDnsFakeIp": MessageLookupByLibrary.simpleMessage(
+      "Core DNS (fake-ip)",
+    ),
+    "healthDetailDnsOk": MessageLookupByLibrary.simpleMessage(
+      "Разрешено успешно",
+    ),
+    "healthDetailDnsPoisoned": MessageLookupByLibrary.simpleMessage(
+      "DNS вернул некорректный адрес-заглушку",
+    ),
+    "healthDetailE2eBypassed": MessageLookupByLibrary.simpleMessage(
+      "Доступ есть, но соединение обошло ядро",
+    ),
+    "healthDetailE2eDirectRule": MessageLookupByLibrary.simpleMessage(
+      "Вошёл в ядро (правило DIRECT)",
+    ),
+    "healthDetailE2eFailed": MessageLookupByLibrary.simpleMessage(
+      "Сквозные запросы завершились ошибкой",
+    ),
+    "healthDetailE2eVerified": m9,
+    "healthDetailLocalProfile": MessageLookupByLibrary.simpleMessage(
+      "Локальный профиль",
+    ),
+    "healthDetailNoProfile": MessageLookupByLibrary.simpleMessage(
+      "Профиль не выбран",
+    ),
+    "healthDetailOutboundDirectSelected": MessageLookupByLibrary.simpleMessage(
+      "В группе выбран DIRECT вместо узла",
+    ),
+    "healthDetailOutboundFailed": m10,
+    "healthDetailOutboundRejectSelected": MessageLookupByLibrary.simpleMessage(
+      "В группе выбран REJECT (блокировка)",
+    ),
+    "healthDetailOutboundSlow": m11,
+    "healthDetailProfileFileMissing": MessageLookupByLibrary.simpleMessage(
+      "Файл профиля отсутствует или пуст",
+    ),
+    "healthDetailProxyRunning": MessageLookupByLibrary.simpleMessage("Запущен"),
+    "healthDetailProxyStopped": MessageLookupByLibrary.simpleMessage(
+      "Остановлен",
+    ),
+    "healthDetailRuntimeMismatch": MessageLookupByLibrary.simpleMessage(
+      "Профиль ещё не применён к ядру",
+    ),
+    "healthDetailRuntimeSynced": m12,
+    "healthDetailSkipPrerequisite": MessageLookupByLibrary.simpleMessage(
+      "Пропущено из-за предыдущей ошибки",
+    ),
+    "healthDetailSkipProxyStopped": MessageLookupByLibrary.simpleMessage(
+      "Пропущено: прокси остановлен",
+    ),
+    "healthDetailSubDeviceLimit": MessageLookupByLibrary.simpleMessage(
+      "Достигнут лимит устройств",
+    ),
+    "healthDetailSubExhausted": MessageLookupByLibrary.simpleMessage(
+      "Трафик исчерпан",
+    ),
+    "healthDetailSubExpired": MessageLookupByLibrary.simpleMessage(
+      "Подписка истекла",
+    ),
+    "healthDetailSubExpiringSoon": m13,
+    "healthDetailSubHealthy": MessageLookupByLibrary.simpleMessage(
+      "Подписка активна",
+    ),
+    "healthDetailSubHealthyEternal": MessageLookupByLibrary.simpleMessage(
+      "Бессрочно · Безлимит",
+    ),
+    "healthDetailSubNeverSynced": MessageLookupByLibrary.simpleMessage(
+      "Ещё не синхронизирован, обновите подписку",
+    ),
+    "healthDetailSubNoMeta": MessageLookupByLibrary.simpleMessage(
+      "Сервер не передал данные о лимитах",
+    ),
+    "healthDetailSubTrafficLow": m14,
+    "healthDetailSysProxyDisabled": MessageLookupByLibrary.simpleMessage(
+      "Выключен в настройках",
+    ),
+    "healthDetailSysProxyHijacked": MessageLookupByLibrary.simpleMessage(
+      "Системный прокси изменён извне",
+    ),
+    "healthDetailSysProxyUnexpectedPac": MessageLookupByLibrary.simpleMessage(
+      "Обнаружен сторонний PAC-адрес",
+    ),
+    "healthDetailSysProxyUnsupported": MessageLookupByLibrary.simpleMessage(
+      "Неприменимо на этой платформе",
+    ),
+    "healthDetailTakeoverBoth": MessageLookupByLibrary.simpleMessage(
+      "Активны TUN и системный прокси",
+    ),
+    "healthDetailTakeoverNone": MessageLookupByLibrary.simpleMessage(
+      "Ни TUN, ни системный прокси не активны",
+    ),
+    "healthDetailTakeoverPartial": MessageLookupByLibrary.simpleMessage(
+      "Активен только один из включённых режимов",
+    ),
+    "healthDetailTakeoverSysProxy": MessageLookupByLibrary.simpleMessage(
+      "Перехват через системный прокси",
+    ),
+    "healthDetailTakeoverTun": MessageLookupByLibrary.simpleMessage(
+      "Перехват через адаптер TUN",
+    ),
+    "healthDetailTunDisabled": MessageLookupByLibrary.simpleMessage(
+      "Выключен в настройках",
+    ),
+    "healthDetailTunReady": MessageLookupByLibrary.simpleMessage(
+      "Виртуальный адаптер активен",
+    ),
+    "healthDetailTunReadyElevated": MessageLookupByLibrary.simpleMessage(
+      "Активен · Права админа",
+    ),
+    "healthExitCountryPart": m15,
+    "healthItemCoreResponsive": MessageLookupByLibrary.simpleMessage(
+      "Отклик ядра",
+    ),
+    "healthItemDirect": MessageLookupByLibrary.simpleMessage("Прямой доступ"),
+    "healthItemDns": MessageLookupByLibrary.simpleMessage("DNS-разрешение"),
+    "healthItemEndToEnd": MessageLookupByLibrary.simpleMessage(
+      "Сквозная проверка",
+    ),
+    "healthItemOutbound": MessageLookupByLibrary.simpleMessage("Узел выхода"),
+    "healthItemProfileSelected": MessageLookupByLibrary.simpleMessage(
+      "Текущий профиль",
+    ),
+    "healthItemProxyStarted": MessageLookupByLibrary.simpleMessage(
+      "Состояние прокси",
+    ),
+    "healthItemRuntimeConfig": MessageLookupByLibrary.simpleMessage(
+      "Применение конфига",
+    ),
+    "healthItemSubscription": MessageLookupByLibrary.simpleMessage(
+      "Статус подписки",
+    ),
+    "healthItemSystemProxy": MessageLookupByLibrary.simpleMessage(
+      "Системный прокси",
+    ),
+    "healthItemTrafficTakeover": MessageLookupByLibrary.simpleMessage(
+      "Итог перехвата",
+    ),
+    "healthItemTunTakeover": MessageLookupByLibrary.simpleMessage(
+      "Адаптер TUN",
+    ),
+    "healthLayerConfig": MessageLookupByLibrary.simpleMessage(
+      "Профиль и подписка",
+    ),
+    "healthLayerCore": MessageLookupByLibrary.simpleMessage("Ядро прокси"),
+    "healthLayerNetwork": MessageLookupByLibrary.simpleMessage(
+      "Сетевой маршрут",
+    ),
+    "healthLayerTakeover": MessageLookupByLibrary.simpleMessage(
+      "Перехват трафика",
+    ),
+    "healthStatusFailed": MessageLookupByLibrary.simpleMessage("Ошибка"),
+    "healthStatusPassed": MessageLookupByLibrary.simpleMessage("Норма"),
+    "healthStatusRunning": MessageLookupByLibrary.simpleMessage("Проверка"),
+    "healthStatusSkipped": MessageLookupByLibrary.simpleMessage("Пропуск"),
+    "healthStatusTimeout": MessageLookupByLibrary.simpleMessage("Тайм-аут"),
+    "healthStatusWarning": MessageLookupByLibrary.simpleMessage("Внимание"),
+    "healthVerdictCheckingTitle": MessageLookupByLibrary.simpleMessage(
+      "Пошаговая проверка соединения…",
+    ),
+    "healthVerdictCoreUnresponsive": MessageLookupByLibrary.simpleMessage(
+      "Ядро прокси не отвечает",
+    ),
+    "healthVerdictDnsFailed": MessageLookupByLibrary.simpleMessage(
+      "Ошибка разрешения DNS или подмена адреса",
+    ),
+    "healthVerdictEndToEndFailed": MessageLookupByLibrary.simpleMessage(
+      "Сквозная проверка не удалась, смените узел",
+    ),
+    "healthVerdictHealthyDirectSubtitle": m16,
+    "healthVerdictHealthySubtitle": m17,
+    "healthVerdictHealthyTitle": MessageLookupByLibrary.simpleMessage(
+      "Соединение в норме",
+    ),
+    "healthVerdictLocalNetworkDown": MessageLookupByLibrary.simpleMessage(
+      "Локальная сеть недоступна (не связано с узлом)",
+    ),
+    "healthVerdictOutboundFailed": MessageLookupByLibrary.simpleMessage(
+      "Локальная сеть работает, но узел недоступен",
+    ),
+    "healthVerdictProfileMissing": MessageLookupByLibrary.simpleMessage(
+      "Профиль не выбран или файл отсутствует",
+    ),
+    "healthVerdictProxyNotStarted": MessageLookupByLibrary.simpleMessage(
+      "Прокси остановлен, трафик идёт напрямую",
+    ),
+    "healthVerdictSubscriptionExhausted": MessageLookupByLibrary.simpleMessage(
+      "Трафик подписки исчерпан",
+    ),
+    "healthVerdictSubscriptionExpired": MessageLookupByLibrary.simpleMessage(
+      "Срок действия подписки истёк",
+    ),
+    "healthVerdictTakeoverFailed": MessageLookupByLibrary.simpleMessage(
+      "Трафик не перехватывается: проверьте TUN или прокси",
+    ),
+    "healthVerdictTrafficBypassed": MessageLookupByLibrary.simpleMessage(
+      "Сеть доступна, но трафик обошёл ядро прокси",
+    ),
+    "healthVerdictWarningsTitle": MessageLookupByLibrary.simpleMessage(
+      "Соединение работает, но есть предупреждения",
+    ),
     "hostsDesc": MessageLookupByLibrary.simpleMessage("Добавить Hosts"),
     "hotkeyConflict": MessageLookupByLibrary.simpleMessage(
       "Конфликт горячих клавиш",
@@ -621,13 +921,13 @@ class MessageLookup extends MessageLookupByLibrary {
     "nodeOverviewAmbiguousNode": MessageLookupByLibrary.simpleMessage(
       "Определения узлов повторяются; не удалось подтвердить идентичность",
     ),
-    "nodeOverviewAnnouncement": m7,
-    "nodeOverviewAutoUpdateHours": m8,
-    "nodeOverviewAutoUpdateMinutes": m9,
+    "nodeOverviewAnnouncement": m18,
+    "nodeOverviewAutoUpdateHours": m19,
+    "nodeOverviewAutoUpdateMinutes": m20,
     "nodeOverviewAvailableOnly": MessageLookupByLibrary.simpleMessage(
       "Только доступные",
     ),
-    "nodeOverviewBatchSummary": m10,
+    "nodeOverviewBatchSummary": m21,
     "nodeOverviewChainUnsupported": MessageLookupByLibrary.simpleMessage(
       "Изолированная проверка цепочек прокси не поддерживается",
     ),
@@ -637,9 +937,9 @@ class MessageLookup extends MessageLookupByLibrary {
     "nodeOverviewDeviceLimitReached": MessageLookupByLibrary.simpleMessage(
       "Достигнут лимит устройств",
     ),
-    "nodeOverviewExpireAt": m11,
-    "nodeOverviewExpireDaysLeft": m12,
-    "nodeOverviewExpireHoursLeft": m13,
+    "nodeOverviewExpireAt": m22,
+    "nodeOverviewExpireDaysLeft": m23,
+    "nodeOverviewExpireHoursLeft": m24,
     "nodeOverviewExpireSoon": MessageLookupByLibrary.simpleMessage(
       "менее 1 ч.",
     ),
@@ -649,11 +949,11 @@ class MessageLookup extends MessageLookupByLibrary {
     "nodeOverviewFileMissing": MessageLookupByLibrary.simpleMessage(
       "Файл профиля отсутствует",
     ),
-    "nodeOverviewFileSource": m14,
+    "nodeOverviewFileSource": m25,
     "nodeOverviewHealthCapacityExceeded": MessageLookupByLibrary.simpleMessage(
       "Хранилище истории заполнено; часть результатов не сохранена",
     ),
-    "nodeOverviewHealthCounts": m15,
+    "nodeOverviewHealthCounts": m26,
     "nodeOverviewHealthStoreUnavailable": MessageLookupByLibrary.simpleMessage(
       "Не удалось сохранить часть результатов проверки задержки",
     ),
@@ -664,9 +964,9 @@ class MessageLookup extends MessageLookupByLibrary {
     "nodeOverviewIndependentTest": MessageLookupByLibrary.simpleMessage(
       "Независимая проверка задержки",
     ),
-    "nodeOverviewLastActiveTest": m16,
-    "nodeOverviewLastSync": m17,
-    "nodeOverviewLastTest": m18,
+    "nodeOverviewLastActiveTest": m27,
+    "nodeOverviewLastSync": m28,
+    "nodeOverviewLastTest": m29,
     "nodeOverviewLive": MessageLookupByLibrary.simpleMessage(
       "В реальном времени",
     ),
@@ -677,8 +977,8 @@ class MessageLookup extends MessageLookupByLibrary {
       "Управление профилями / обновление подписки",
     ),
     "nodeOverviewManualUpdate": MessageLookupByLibrary.simpleMessage("Вручную"),
-    "nodeOverviewMedian": m19,
-    "nodeOverviewMoreIssues": m20,
+    "nodeOverviewMedian": m30,
+    "nodeOverviewMoreIssues": m31,
     "nodeOverviewNeverExpires": MessageLookupByLibrary.simpleMessage(
       "Истекает: бессрочно",
     ),
@@ -694,16 +994,16 @@ class MessageLookup extends MessageLookupByLibrary {
     "nodeOverviewPartialSummary": MessageLookupByLibrary.simpleMessage(
       "В сводке учтены только загруженные узлы",
     ),
-    "nodeOverviewPickerAvailableNodes": m21,
-    "nodeOverviewPickerExpireDate": m22,
+    "nodeOverviewPickerAvailableNodes": m32,
+    "nodeOverviewPickerExpireDate": m33,
     "nodeOverviewPickerPerpetual": MessageLookupByLibrary.simpleMessage(
       "Бессрочно",
     ),
     "nodeOverviewPreviewUnsupported": MessageLookupByLibrary.simpleMessage(
       "Локальные узлы провайдера не поддерживаются в этой предварительной версии",
     ),
-    "nodeOverviewProfileCountBadge": m23,
-    "nodeOverviewProgress": m24,
+    "nodeOverviewProfileCountBadge": m34,
+    "nodeOverviewProgress": m35,
     "nodeOverviewProviderDownloadFailed": MessageLookupByLibrary.simpleMessage(
       "Не удалось загрузить провайдера",
     ),
@@ -714,7 +1014,7 @@ class MessageLookup extends MessageLookupByLibrary {
         MessageLookupByLibrary.simpleMessage(
           "Эти параметры провайдера не поддерживаются",
         ),
-    "nodeOverviewProviderPending": m25,
+    "nodeOverviewProviderPending": m36,
     "nodeOverviewProviderTooLarge": MessageLookupByLibrary.simpleMessage(
       "Превышен лимит размера или числа узлов провайдера",
     ),
@@ -730,7 +1030,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "nodeOverviewQuickUse": MessageLookupByLibrary.simpleMessage(
       "Использовать",
     ),
-    "nodeOverviewRemainingTraffic": m26,
+    "nodeOverviewRemainingTraffic": m37,
     "nodeOverviewRuntimeSource": MessageLookupByLibrary.simpleMessage(
       "Активный узел",
     ),
@@ -744,7 +1044,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "nodeOverviewStrictUnsupported": MessageLookupByLibrary.simpleMessage(
       "В строгом режиме изолированные проверки недоступны",
     ),
-    "nodeOverviewSwitchedToNode": m27,
+    "nodeOverviewSwitchedToNode": m38,
     "nodeOverviewTestAll": MessageLookupByLibrary.simpleMessage(
       "Проверить задержку всех узлов",
     ),
@@ -788,8 +1088,8 @@ class MessageLookup extends MessageLookupByLibrary {
       "Обновление",
     ),
     "nodeOverviewUseNode": MessageLookupByLibrary.simpleMessage("Использовать"),
-    "nodeOverviewUsedOfTotalTraffic": m28,
-    "nodeOverviewUsedTrafficOnly": m29,
+    "nodeOverviewUsedOfTotalTraffic": m39,
+    "nodeOverviewUsedTrafficOnly": m40,
     "none": MessageLookupByLibrary.simpleMessage("Нет"),
     "notSelectedTip": MessageLookupByLibrary.simpleMessage(
       "Текущая группа прокси недоступна для выбора",
@@ -800,8 +1100,8 @@ class MessageLookup extends MessageLookupByLibrary {
     "nullScriptTip": MessageLookupByLibrary.simpleMessage(
       "Скрипты отсутствуют",
     ),
-    "nullTip": m30,
-    "numberTip": m31,
+    "nullTip": m41,
+    "numberTip": m42,
     "oneColumn": MessageLookupByLibrary.simpleMessage("Один столбец"),
     "oneline": MessageLookupByLibrary.simpleMessage("Линия"),
     "onlyIcon": MessageLookupByLibrary.simpleMessage("Только иконка"),
@@ -876,7 +1176,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "portConflictTip": MessageLookupByLibrary.simpleMessage(
       "Введите другой порт",
     ),
-    "portTip": m32,
+    "portTip": m43,
     "preferH3Desc": MessageLookupByLibrary.simpleMessage(
       "Использовать HTTP/3 для DOH (если доступно)",
     ),
@@ -949,7 +1249,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "purchaseHidePassword": MessageLookupByLibrary.simpleMessage(
       "Скрыть пароль",
     ),
-    "purchaseInquiryTemplate": m33,
+    "purchaseInquiryTemplate": m44,
     "purchaseJumpToWorkbench": MessageLookupByLibrary.simpleMessage(
       "Есть код? Перейти к активации",
     ),
@@ -977,7 +1277,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "purchasePlanImageNotLoaded": MessageLookupByLibrary.simpleMessage(
       "Внешнее изображение не загружено",
     ),
-    "purchasePlanLowStock": m34,
+    "purchasePlanLowStock": m45,
     "purchasePlanNotProvided": MessageLookupByLibrary.simpleMessage(
       "Не указано",
     ),
@@ -996,7 +1296,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "purchasePlanResetSystem": MessageLookupByLibrary.simpleMessage(
       "По настройкам системы",
     ),
-    "purchasePlanResetUnknown": m35,
+    "purchasePlanResetUnknown": m46,
     "purchasePlanResetYearStart": MessageLookupByLibrary.simpleMessage(
       "1 января каждого года",
     ),
@@ -1140,7 +1440,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "selectAll": MessageLookupByLibrary.simpleMessage("Выбрать все"),
     "selectProfile": MessageLookupByLibrary.simpleMessage("Выбрать профиль"),
     "selected": MessageLookupByLibrary.simpleMessage("Выбрано"),
-    "selectedCountTitle": m36,
+    "selectedCountTitle": m47,
     "sendToTv": MessageLookupByLibrary.simpleMessage("Отправить на ТВ"),
     "sendToTvTitle": MessageLookupByLibrary.simpleMessage("Отправить на ТВ"),
     "sentSuccessfullyMessage": MessageLookupByLibrary.simpleMessage(
@@ -1184,7 +1484,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "subscriptionExpired": MessageLookupByLibrary.simpleMessage(
       "Ваша подписка истекла",
     ),
-    "subscriptionExpiresInDays": m37,
+    "subscriptionExpiresInDays": m48,
     "subscriptionExpiresSoon": MessageLookupByLibrary.simpleMessage(
       "Подписка скоро истекает",
     ),
@@ -1272,7 +1572,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "tunErrorUnavailable": MessageLookupByLibrary.simpleMessage(
       "Не удалось проверить состояние; проверьте версию фонового процесса",
     ),
-    "tunStatusFailure": m38,
+    "tunStatusFailure": m49,
     "tunStatusOff": MessageLookupByLibrary.simpleMessage("Не запущен"),
     "tunStatusOn": MessageLookupByLibrary.simpleMessage("Запущен"),
     "tunStatusStarting": MessageLookupByLibrary.simpleMessage("Запуск…"),
@@ -1305,7 +1605,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "upload": MessageLookupByLibrary.simpleMessage("Отправка"),
     "url": MessageLookupByLibrary.simpleMessage("URL"),
     "urlDesc": MessageLookupByLibrary.simpleMessage("Загрузить профиль по URL"),
-    "urlTip": m39,
+    "urlTip": m50,
     "useHosts": MessageLookupByLibrary.simpleMessage("Использовать hosts"),
     "useSystemHosts": MessageLookupByLibrary.simpleMessage(
       "Использовать системные hosts",

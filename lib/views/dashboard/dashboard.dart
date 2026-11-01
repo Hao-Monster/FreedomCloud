@@ -8,6 +8,7 @@ import 'package:flclashx/widgets/widgets.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'package:flclashx/views/tools/health_check_view.dart';
 import 'widgets/hero_connect.dart';
 import 'widgets/start_button.dart';
 
@@ -55,6 +56,14 @@ class _DashboardViewState extends ConsumerState<DashboardView> with PageMixin {
 
   @override
   List<Widget> get actions => [
+        _buildIsEdit((isEdit) => isEdit
+            ? const SizedBox.shrink()
+            : IconButton(
+                key: const ValueKey('dashboard-health-check-action'),
+                tooltip: appLocalizations.healthCheckTitle,
+                icon: const Icon(Icons.monitor_heart_outlined),
+                onPressed: () => openHealthCheck(context),
+              )),
         _buildIsEdit((isEdit) => isEdit
               ? ValueListenableBuilder(
                   valueListenable: _addedWidgetsNotifier,

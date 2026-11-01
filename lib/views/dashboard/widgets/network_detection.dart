@@ -5,7 +5,7 @@ import 'package:flclashx/state.dart';
 import 'package:flclashx/widgets/widgets.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:flclashx/widgets/health_check_dialog.dart';
+import 'package:flclashx/views/tools/health_check_view.dart';
 
 class NetworkDetection extends ConsumerStatefulWidget {
   const NetworkDetection({super.key});
@@ -78,10 +78,6 @@ class _NetworkDetectionState extends ConsumerState<NetworkDetection> {
                       const SizedBox(
                         width: 8,
                       ),
-                      IconButton(tooltip: '健康检查与诊断导出',
-                        icon: const Icon(Icons.health_and_safety_outlined, size: 18),
-                        onPressed: () => showDialog<void>(context: context,
-                          builder: (_) => const HealthCheckDialog())),
                       Flexible(
                         flex: 1,
                         child: TooltipText(
@@ -142,13 +138,57 @@ class _NetworkDetectionState extends ConsumerState<NetworkDetection> {
                               )
                             : FadeThroughBox(
                                 child: isLoading == false && ipInfo == null
-                                    ? Text(
-                                        "timeout",
-                                        style: context.textTheme.bodyMedium
-                                            ?.copyWith(color: Colors.red)
-                                            .adjustSize(1),
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
+                                    ? Row(
+                                        children: [
+                                          Flexible(
+                                            child: Text(
+                                              "timeout",
+                                              style: context.textTheme.bodyMedium
+                                                  ?.copyWith(color: Colors.red)
+                                                  .adjustSize(1),
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                            ),
+                                          ),
+                                          const SizedBox(width: 6),
+                                          TextButton.icon(
+                                            key: const ValueKey(
+                                              'network-detection-diagnose-button',
+                                            ),
+                                            style: TextButton.styleFrom(
+                                              visualDensity:
+                                                  VisualDensity.compact,
+                                              minimumSize: const Size(0, 28),
+                                              tapTargetSize:
+                                                  MaterialTapTargetSize
+                                                      .shrinkWrap,
+                                              padding:
+                                                  const EdgeInsets.symmetric(
+                                                horizontal: 6,
+                                                vertical: 2,
+                                              ),
+                                            ),
+                                            onPressed: () =>
+                                                openHealthCheck(context),
+                                            icon: const Icon(
+                                              Icons.monitor_heart_outlined,
+                                              size: 14,
+                                            ),
+                                            label: Text(
+                                              appLocalizations
+                                                  .healthCheckDiagnoseAction,
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                              style: context
+                                                  .textTheme.labelSmall
+                                                  ?.copyWith(
+                                                color: context
+                                                    .colorScheme.primary,
+                                                fontWeight: FontWeight.w600,
+                                              ),
+                                            ),
+                                          ),
+                                        ],
                                       )
                                     : Container(
                                         padding: const EdgeInsets.all(2),

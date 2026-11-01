@@ -36,14 +36,29 @@ String tunStatusLabel(TunRuntimeController runtime, {bool waiting = false}) {
 /// A shared presentation for settings and the dashboard. The checked state is
 /// exclusively observed; unknown remains explicitly labelled and can be stopped.
 class TunStatusSwitch extends StatelessWidget {
-  const TunStatusSwitch(
-      {super.key, required this.runtime, required this.onChanged});
+  const TunStatusSwitch({
+    super.key,
+    required this.runtime,
+    required this.onChanged,
+    this.onDiagnose,
+  });
   final TunRuntimeController runtime;
   final ValueChanged<bool> onChanged;
+  final VoidCallback? onDiagnose;
 
   @override
   Widget build(BuildContext context) =>
       Row(mainAxisSize: MainAxisSize.min, children: [
+        if (onDiagnose != null && runtime.failure != null)
+          IconButton(
+            key: const ValueKey('tun-diagnose-button'),
+            visualDensity: VisualDensity.compact,
+            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+            padding: const EdgeInsets.all(4),
+            tooltip: appLocalizations.healthCheckDiagnoseAction,
+            onPressed: onDiagnose,
+            icon: const Icon(Icons.monitor_heart_outlined, size: 18),
+          ),
         if (!runtime.busy &&
             (runtime.observed == TunObservedState.unknown ||
                 (runtime.desiredEnabled && !runtime.isEnabled)))
