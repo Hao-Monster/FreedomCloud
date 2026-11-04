@@ -102,4 +102,64 @@ void main() {
     );
     expect(persisted.currentProfileId, 'p3');
   });
+
+  test('clearPreferences invalidates and linearizes an in-flight saveConfig write',
+      () async {
+    final store = _SuspendingSharedPreferences();
+    var encodeCount = 0;
+    final prefs = Preferences.forTesting(
+      store: Future<SharedPreferences?>.value(store),
+      encodeConfig: (config) {
+        encodeCount++;
+        return json.encode(config);
+      },
+    );
+
+    const c1 = Config(themeProps: defaultThemeProps, currentProfileId: 'in-flight');
+    final saveFuture = prefs.saveConfig(c1);
+    await store.writeEntered.future;
+
+    final clearFuture = prefs.clearPreferences();
+    store.allowWriteToFinish.complete(true);
+    await Future.wait([saveFuture, clearFuture]);
+
+    // Neither the backing store nor in-memory _lastSavedConfig may retain c1!
+    expect(store.getString(configKey), isNull);
+    expect(prefs.hasUnsavedConfig(c1), isTrue);
+
+    expect(await prefs.saveConfig(c1), isTrue);
+    expect(encodeCount, 2);
+    expect(store.getString(configKey), isNotNull);
+  });
+}
+
+class _SuspendingSharedPreferences extends Fake implements SharedPreferences {
+  final Map<String, String> _values = {};
+  final Completer<void> writeEntered = Completer<void>();
+  final Completer<bool> allowWriteToFinish = Completer<bool>();
+  bool _suspendedOnce = false;
+
+  @override
+  String? getString(String key) => _values[key];
+
+  @override
+  Future<bool> setString(String key, String value) async {
+    if (!_suspendedOnce) {
+      _suspendedOnce = true;
+      writeEntered.complete();
+      final ok = await allowWriteToFinish.future;
+      if (ok) {
+        _values[key] = value;
+      }
+      return ok;
+    }
+    _values[key] = value;
+    return true;
+  }
+
+  @override
+  Future<bool> clear() async {
+    _values.clear();
+    return true;
+  }
 }

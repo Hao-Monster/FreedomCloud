@@ -108,7 +108,9 @@ func handleAsyncTestDelayOwned(paramsString string, owner *catalogOwner, fn func
 		if runLock.LockContext(ctx) != nil {
 			return nil, "deadlineExceeded", nil
 		}
+		proxyStateMu.RLock()
 		proxy := lookupDelayProxy(params.ProxyName)
+		proxyStateMu.RUnlock()
 		runLock.Unlock()
 		if proxy == nil {
 			return nil, "notFound", nil

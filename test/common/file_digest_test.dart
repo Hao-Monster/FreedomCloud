@@ -81,4 +81,40 @@ void main() {
     expect(await cache.hashFile(file.path), expectedUpdated);
     expect(computeCount, 2);
   });
+
+  test(
+      'mid-stream file modification discards torn digest without poisoning cache',
+      () async {
+    final file = File(p.join(tempDir.path, 'MidWriteCore.exe'));
+    final initialBytes = Uint8List.fromList(
+      List<int>.generate(128 * 1024, (i) => i & 0xff),
+    );
+    final updatedBytes = Uint8List.fromList(
+      List<int>.generate(136 * 1024, (i) => (i * 13) & 0xff),
+    );
+    await file.writeAsBytes(initialBytes, flush: true);
+    final expectedUpdated = sha256.convert(updatedBytes).toString();
+    final syntheticTornDigest = '0' * 64;
+
+    var calls = 0;
+    final cache = FileSha256Cache(
+      isolateThresholdBytes: 64 * 1024,
+      computeDigest: (path) async {
+        calls++;
+        if (calls == 1) {
+          // Simulate an external installer overwriting the binary while the
+          // background stream reader is mid-flight, yielding a torn digest.
+          await File(path).writeAsBytes(updatedBytes, flush: true);
+          return syntheticTornDigest;
+        }
+        return fileSha256InBackground(path);
+      },
+    );
+
+    expect(await cache.hashFile(file.path), expectedUpdated);
+    expect(calls, 2);
+    // Subsequent call must hit the verified updated cache entry cleanly.
+    expect(await cache.hashFile(file.path), expectedUpdated);
+    expect(calls, 2);
+  });
 }

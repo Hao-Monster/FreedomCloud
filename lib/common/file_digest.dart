@@ -34,47 +34,63 @@ class FileSha256Cache {
   final int isolateThresholdBytes;
   final BoundedCache<_FileDigestKey, String> _cache;
   final Future<String> Function(String filePath) _computeDigest;
-  final Map<_FileDigestKey, Future<String>> _inFlight = {};
+  final Map<_FileDigestKey, Future<({String digest, bool consistent})>> _inFlight = {};
 
   Future<String> hashFile(String filePath) async {
     final file = File(filePath);
-    final stat = await file.stat();
-    if (stat.type != FileSystemEntityType.file ||
-        stat.size < isolateThresholdBytes) {
-      final bytes = await file.readAsBytes();
-      return sha256.convert(bytes).toString();
-    }
+    for (var attempt = 0; attempt < 2; attempt++) {
+      final statBefore = await file.stat();
+      if (statBefore.type != FileSystemEntityType.file ||
+          statBefore.size < isolateThresholdBytes) {
+        final bytes = await file.readAsBytes();
+        return sha256.convert(bytes).toString();
+      }
 
-    final normalizedPath = Platform.isWindows
-        ? p.normalize(file.absolute.path).toLowerCase()
-        : p.normalize(file.absolute.path);
-    final key = (
-      normalizedPath,
-      stat.size,
-      stat.modified.microsecondsSinceEpoch,
-    );
+      final normalizedPath = Platform.isWindows
+          ? p.normalize(file.absolute.path).toLowerCase()
+          : p.normalize(file.absolute.path);
+      final key = (
+        normalizedPath,
+        statBefore.size,
+        statBefore.modified.microsecondsSinceEpoch,
+      );
 
-    if (_cache.containsKey(key)) {
-      return _cache.putIfAbsent(key, () => '');
-    }
+      if (_cache.containsKey(key)) {
+        return _cache.putIfAbsent(key, () => '');
+      }
 
-    final existing = _inFlight[key];
-    if (existing != null) {
-      return existing;
-    }
+      var future = _inFlight[key];
+      if (future == null) {
+        future = () async {
+          final digest = await _computeDigest(file.path);
+          final statAfter = await file.stat();
+          final consistent = statAfter.type == FileSystemEntityType.file &&
+              statAfter.size == statBefore.size &&
+              statAfter.modified.microsecondsSinceEpoch ==
+                  statBefore.modified.microsecondsSinceEpoch;
+          if (consistent) {
+            _cache.putIfAbsent(key, () => digest);
+          }
+          return (digest: digest, consistent: consistent);
+        }();
+        _inFlight[key] = future;
+      }
 
-    final future = _computeDigest(file.path).then((digest) {
-      _cache.putIfAbsent(key, () => digest);
-      return digest;
-    });
-    _inFlight[key] = future;
-    try {
-      return await future;
-    } finally {
-      if (identical(_inFlight[key], future)) {
-        final _ = _inFlight.remove(key);
+      try {
+        final outcome = await future;
+        if (outcome.consistent) {
+          return outcome.digest;
+        }
+      } finally {
+        if (identical(_inFlight[key], future)) {
+          final _ = _inFlight.remove(key);
+        }
       }
     }
+
+    // If the file is still actively changing after a bounded retry, return a
+    // fresh digest without inserting a potentially torn entry into `_cache`.
+    return _computeDigest(file.path);
   }
 
   void clear() {

@@ -277,6 +277,7 @@ func handleShutdown() bool {
 	proxyStateMu.Lock()
 	executor.Shutdown()
 	proxyStateMu.Unlock()
+	setProxyDescriptions(map[string]string{})
 	configuredFindProcessMode.Store(int32(P.FindProcessStrict))
 	externalControllerListening.Store(false)
 	syncEffectiveFindProcessMode()
@@ -846,7 +847,9 @@ func handleUpdateGeoData(geoType string, geoName string, fn func(value string)) 
 		var err error
 		switch geoType {
 		case "MMDB":
+			mmdbMu.Lock()
 			err = updater.UpdateMMDB()
+			mmdbMu.Unlock()
 		case "ASN":
 			err = updater.UpdateASN()
 		case "GeoIp":
@@ -947,11 +950,12 @@ func handleStopLog() {
 
 func handleGetCountryCode(ip string, fn func(value string)) {
 	go func() {
-		// Look up under proxyStateMu.RLock, release, then call fn (a JNI upcall)
-		// outside the lock to avoid a re-entrant deadlock through the JVM callback.
-		proxyStateMu.RLock()
+		// Look up under mmdbMu.RLock, release, then call fn (a JNI upcall)
+		// outside the lock to avoid a re-entrant deadlock through the JVM callback
+		// and avoid contending with proxyStateMu during GeoIP refreshes.
+		mmdbMu.RLock()
 		codes := mmdb.IPInstance().LookupCode(net.ParseIP(ip))
-		proxyStateMu.RUnlock()
+		mmdbMu.RUnlock()
 		if len(codes) == 0 {
 			fn("")
 			return
@@ -997,7 +1001,16 @@ func handleHealthCheck(groupName string, fn func(value string)) {
 	testUrl := currentTestURL
 	runLock.Unlock()
 	go func() {
-		proxies := tunnel.Proxies()
+		proxyStateMu.RLock()
+		rawProxies := tunnel.Proxies()
+		proxies := make(map[string]constant.Proxy, len(rawProxies))
+		for name, proxy := range rawProxies {
+			if groupName != "" && name != groupName {
+				continue
+			}
+			proxies[name] = proxy
+		}
+		proxyStateMu.RUnlock()
 		expectedStatus, _ := utils.NewUnsignedRanges[uint16]("")
 		defaultUrl := testUrl
 
@@ -1063,7 +1076,9 @@ func handleHealthProbe(fn func(value string)) {
 		return
 	}
 	go func() {
+		proxyStateMu.RLock()
 		active := tunnel.Proxies()["GLOBAL"]
+		proxyStateMu.RUnlock()
 		if active == nil {
 			fn("")
 			return

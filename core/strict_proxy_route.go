@@ -87,6 +87,8 @@ func (p *strictProxyRoute) ListenPacketContext(ctx context.Context, metadata *C.
 // an immutable map under Mihomo's config lock; normal proxy objects are retained.
 func installStrictProxyRoutes(request *StrictIngressRequest, cfg *config.Config,
 	ordered []strictIngressBuildEntry) ([]*strictProxyRoute, error) {
+	proxyStateMu.Lock()
+	defer proxyStateMu.Unlock()
 	next := make(map[string]C.Proxy)
 	for name, proxy := range tunnel.Proxies() { next[name] = proxy }
 	listeners := make(map[string]string)
@@ -107,6 +109,8 @@ func installStrictProxyRoutes(request *StrictIngressRequest, cfg *config.Config,
 }
 func revokeStrictProxyRoutes(routes []*strictProxyRoute) {
 	if len(routes) == 0 { return }
+	proxyStateMu.Lock()
+	defer proxyStateMu.Unlock()
 	next := make(map[string]C.Proxy)
 	for name, proxy := range tunnel.Proxies() { next[name] = proxy }
 	for _, route := range routes {

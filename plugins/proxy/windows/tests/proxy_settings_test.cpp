@@ -130,6 +130,102 @@ int main() {
     }
   }
 
+  // [CR-PERF-02] Verify Shutdown() on a Win32 UI thread that owns an HWND does
+  // not self-deadlock when the background worker broadcasts WM_SETTINGCHANGE via
+  // synchronous SendMessageTimeoutW back to that HWND.
+  {
+    HWND hwnd = CreateWindowExW(
+        0, L"STATIC", L"fcx-proxy-shutdown-test", 0, 0, 0, 0, 0,
+        nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+    CHECK(hwnd != nullptr);
+
+    HANDLE worker_entered = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    CHECK(worker_entered != nullptr);
+
+    std::atomic<BOOL> send_succeeded{FALSE};
+    std::atomic<DWORD> send_error{ERROR_SUCCESS};
+    const auto start_tick = std::chrono::steady_clock::now();
+    {
+      proxy::SerialTaskRunner runner;
+      runner.Post([&]() {
+        SetEvent(worker_entered);
+        // Give the UI thread a brief moment to enter runner.Shutdown() so the
+        // SendMessageTimeoutW lands while Shutdown() is waiting on the worker.
+        std::this_thread::sleep_for(std::chrono::milliseconds(25));
+        DWORD_PTR msg_result = 0;
+        const LRESULT ok = SendMessageTimeoutW(
+            hwnd, WM_SETTINGCHANGE, 0,
+            reinterpret_cast<LPARAM>(L"InternetSettings"),
+            SMTO_NORMAL, 700, &msg_result);
+        send_succeeded.store(ok != 0 ? TRUE : FALSE);
+        if (ok == 0) {
+          send_error.store(GetLastError());
+        }
+      });
+      CHECK(WaitForSingleObject(worker_entered, 2000) == WAIT_OBJECT_0);
+      runner.Shutdown();
+    }
+    const auto elapsed_ms =
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - start_tick)
+            .count();
+
+    CloseHandle(worker_entered);
+    DestroyWindow(hwnd);
+
+    CHECK(send_succeeded.load() == TRUE);
+    CHECK(send_error.load() == ERROR_SUCCESS);
+    CHECK(elapsed_ms < 400);
+  }
+
+  // Verify CoalescingStateRunner collapses rapid superseded updates while an
+  // active apply is running, applying only [initial, latest] and completing all
+  // caller callbacks.
+  {
+    HANDLE first_started = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    HANDLE release_first = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    CHECK(first_started != nullptr && release_first != nullptr);
+
+    std::mutex applied_mu;
+    std::vector<int> applied_states;
+    std::atomic<int> completed_callbacks{0};
+    std::atomic<int> last_callback_outcome{0};
+
+    {
+      proxy::CoalescingStateRunner<int, int> coalescer([&](const int& state) {
+        {
+          std::lock_guard<std::mutex> lock(applied_mu);
+          applied_states.push_back(state);
+        }
+        if (state == 1) {
+          SetEvent(first_started);
+          WaitForSingleObject(release_first, 2000);
+        }
+        return state * 10;
+      });
+
+      coalescer.Submit(1, [&](const int&) { ++completed_callbacks; });
+      CHECK(WaitForSingleObject(first_started, 2000) == WAIT_OBJECT_0);
+
+      for (int s = 2; s <= 9; ++s) {
+        coalescer.Submit(s, [&](const int& out) {
+          last_callback_outcome.store(out);
+          ++completed_callbacks;
+        });
+      }
+      SetEvent(release_first);
+      coalescer.Shutdown();
+    }
+
+    CloseHandle(first_started);
+    CloseHandle(release_first);
+
+    CHECK(applied_states.size() == 2);
+    CHECK(applied_states[0] == 1 && applied_states[1] == 9);
+    CHECK(completed_callbacks.load() == 9);
+    CHECK(last_callback_outcome.load() == 90);
+  }
+
   std::cout << "PASS: Unicode/ASCII/Punycode, start/stop, 2000 RAS failure cycles, "
                "8 write/notify failures, invalid UTF-8/NUL/port, SerialTaskRunner FIFO; "
                "OS settings unchanged\n";

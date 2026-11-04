@@ -320,13 +320,29 @@ class GlobalState {
 
   // Desktop tray menus consume group selection/latency while the main window
   // is hidden. Android explicitly pauses this loop with its UI.
+  Duration? _groupsUpdateInterval;
+
+  void rebalanceGroupsUpdateTask() {
+    if (groupsUpdateTimer != null && groupsUpdateTimer!.isActive) {
+      startGroupsUpdateTask();
+    }
+  }
   void startGroupsUpdateTask() {
-    if (groupsUpdateTimer != null && groupsUpdateTimer!.isActive) return;
+    final targetInterval = uiActivity.value
+        ? const Duration(seconds: 60)
+        : const Duration(seconds: 180);
+    if (groupsUpdateTimer != null && groupsUpdateTimer!.isActive) {
+      if (_groupsUpdateInterval == targetInterval) return;
+      groupsUpdateTimer!.cancel();
+      groupsUpdateTimer = null;
+    }
+    _groupsUpdateInterval = targetInterval;
     final interval = uiActivity.value
         ? const Duration(seconds: 60)
         : const Duration(seconds: 180);
     groupsUpdateTimer = Timer(interval, () {
       groupsUpdateTimer = null;
+      _groupsUpdateInterval = null;
       if (isAppControllerReady) appController.updateGroupsDebounce();
       startGroupsUpdateTask();
     });
@@ -334,6 +350,7 @@ class GlobalState {
 
   void stopGroupsUpdateTask() {
     groupsUpdateTimer?.cancel();
+    _groupsUpdateInterval = null;
     groupsUpdateTimer = null;
   }
 
@@ -1041,9 +1058,13 @@ class DetectionState {
   /// Advances the central proxy/profile/mode routing epoch so any in-flight
   /// exit-IP check started under a previous route cannot calibrate the new node.
   void notifyRoutingChanged() {
+    final hadWarmupPending = _warmupRetryTimer != null;
     _warmupRetryTimer?.cancel();
     _warmupRetryTimer = null;
     _routingEpoch++;
+    if (hadWarmupPending && _activeRoute == null && state.value.isTesting) {
+      state.value = state.value.copyWith(isTesting: false);
+    }
   }
 
   final state = ValueNotifier<NetworkDetectionState>(
@@ -1146,6 +1167,7 @@ class DetectionState {
           startCheck();
         }
       });
+      return;
     }
     state.value = state.value.copyWith(
       isLoading: false,

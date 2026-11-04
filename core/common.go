@@ -36,7 +36,10 @@ var (
 	version                     atomic.Int32
 	isRunning                   = false
 	runLock                     contextMutex
+	// Lock hierarchy: runLock -> proxyStateMu. Never acquire runLock while holding proxyStateMu.
 	proxyStateMu                sync.RWMutex
+	// Leaf lock guarding mmdb.IPInstance() reload/close independently of proxyStateMu.
+	mmdbMu                      sync.RWMutex
 	configuredFindProcessMode   atomic.Int32
 	externalControllerListening atomic.Bool
 	testDelaySem                = semaphore.NewWeighted(50)
@@ -127,8 +130,11 @@ func computeMinHealthCheckInterval(rawConfig *config.RawConfig) {
 	minHealthCheckInterval = d
 }
 
-// extractProxyDescriptionsFromRaw caches custom server descriptions by proxy name.
-func extractProxyDescriptionsFromRaw(rawConfig *config.RawConfig) {
+// buildProxyDescriptionsFromRaw constructs an immutable map of custom server descriptions by proxy name.
+func buildProxyDescriptionsFromRaw(rawConfig *config.RawConfig) map[string]string {
+	if rawConfig == nil || len(rawConfig.Proxy) == 0 {
+		return map[string]string{}
+	}
 	descriptions := make(map[string]string, len(rawConfig.Proxy))
 	for _, proxy := range rawConfig.Proxy {
 		nameValue, ok := proxy["name"]
@@ -157,23 +163,45 @@ func extractProxyDescriptionsFromRaw(rawConfig *config.RawConfig) {
 		}
 		descriptions[name] = description
 	}
+	return descriptions
+}
+
+func currentProxyDescriptions() map[string]string {
+	proxyDescMu.RLock()
+	descriptions := proxyDescriptions
+	proxyDescMu.RUnlock()
+	return descriptions
+}
+
+func setProxyDescriptions(descriptions map[string]string) {
+	if descriptions == nil {
+		descriptions = map[string]string{}
+	}
 	proxyDescMu.Lock()
 	proxyDescriptions = descriptions
 	proxyDescMu.Unlock()
 }
 
+// extractProxyDescriptionsFromRaw caches custom server descriptions by proxy name.
+func extractProxyDescriptionsFromRaw(rawConfig *config.RawConfig) {
+	setProxyDescriptions(buildProxyDescriptionsFromRaw(rawConfig))
+}
+
 // proxiesWithDescriptions injects serverDescription for each proxy in API response.
 func proxiesWithDescriptions() map[string]interface{} {
 	all := proxiesWithProviders()
+	descMap := currentProxyDescriptions()
 	result := make(map[string]interface{}, len(all))
 	for name, proxy := range all {
 		data, err := json.Marshal(proxy)
 		if err != nil {
 			continue
 		}
-		proxyDescMu.RLock()
-		desc, hasDesc := proxyDescriptions[name]
-		proxyDescMu.RUnlock()
+		if len(descMap) == 0 {
+			result[name] = json.RawMessage(data)
+			continue
+		}
+		desc, hasDesc := descMap[name]
 		if !hasDesc || desc == "" {
 			result[name] = json.RawMessage(data)
 			continue
@@ -306,6 +334,8 @@ func stopListeners() {
 }
 
 func patchSelectGroup(mapping map[string]string) {
+	proxyStateMu.Lock()
+	defer proxyStateMu.Unlock()
 	for name, proxy := range proxiesWithProviders() {
 		outbound, ok := proxy.(*adapter.Proxy)
 		if !ok {
@@ -494,6 +524,8 @@ func setupConfig(params *SetupParams) error {
 		return err
 	}
 	previous, previousPending, previousControllerEnabled := currentConfig, pendingTunEnable, runtimeControllerEnabled
+	previousDescriptions := currentProxyDescriptions()
+	candidateDescriptions := buildProxyDescriptionsFromRaw(params.Config)
 	clearRuntimeStrictIngress()
 	currentConfig = candidate
 	candidatePending := candidate.General.Tun.Enable
@@ -505,6 +537,10 @@ func setupConfig(params *SetupParams) error {
 	log.Infoln("[Setup] executor.ApplyConfig took %s", time.Since(applyStart))
 	candidate.General.Tun.Enable = candidatePending
 	pendingTunEnable = candidatePending
+	setProxyDescriptions(candidateDescriptions)
+	configuredFindProcessMode.Store(int32(candidate.General.FindProcessMode))
+	externalControllerListening.Store(controllerHasActiveEndpoint(candidate, controllerEnabled))
+	syncEffectiveFindProcessMode()
 	selectRuntimeGroups(params.SelectedMap)
 	refreshRuntimeListeners()
 	if restoreErr := restoreRuntimeStrictIngress(); restoreErr != nil {
@@ -519,6 +555,7 @@ func setupConfig(params *SetupParams) error {
 				applyRuntimeConfigLocked(dormant, true)
 				cleanupErr = recreateRuntimeController(effectiveControllerConfig(dormant, false))
 			}
+			setProxyDescriptions(map[string]string{})
 			configuredFindProcessMode.Store(int32(P.FindProcessStrict))
 			externalControllerListening.Store(false)
 			syncEffectiveFindProcessMode()
@@ -531,6 +568,7 @@ func setupConfig(params *SetupParams) error {
 		applyRuntimeConfigLocked(previous, true)
 		previous.General.Tun.Enable = previousTun
 		controllerErr := recreateRuntimeController(effectiveControllerConfig(previous, previousControllerEnabled))
+		setProxyDescriptions(previousDescriptions)
 		configuredFindProcessMode.Store(int32(previous.General.FindProcessMode))
 		externalControllerListening.Store(controllerHasActiveEndpoint(previous, previousControllerEnabled))
 		syncEffectiveFindProcessMode()
@@ -540,10 +578,6 @@ func setupConfig(params *SetupParams) error {
 	}
 	appliedRawConfig = raw
 	runtimeControllerEnabled = controllerEnabled
-	configuredFindProcessMode.Store(int32(candidate.General.FindProcessMode))
-	externalControllerListening.Store(controllerHasActiveEndpoint(candidate, controllerEnabled))
-	syncEffectiveFindProcessMode()
-	extractProxyDescriptionsFromRaw(params.Config)
 	computeMinHealthCheckInterval(params.Config)
 	resetHealthCheckForwarderState()
 	if params.TestURL != "" {

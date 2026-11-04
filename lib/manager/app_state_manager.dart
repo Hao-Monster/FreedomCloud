@@ -53,6 +53,7 @@ class _AppStateManagerState extends ConsumerState<AppStateManager>
       if (Platform.isWindows) {
         unawaited(globalState.appController.refreshWindowsTunStatus());
       }
+      globalState.rebalanceGroupsUpdateTask();
       globalState.appController.updateGroupsDebounce();
     } else {
       unawaited(cancelDelayTests(reason: 'uiInactive'));
@@ -60,6 +61,7 @@ class _AppStateManagerState extends ConsumerState<AppStateManager>
       if (!Platform.isMacOS) {
         globalState.stopUpdateTasks();
       }
+      globalState.rebalanceGroupsUpdateTask();
       globalState.appController.stopRunTimeTimer();
     }
   }

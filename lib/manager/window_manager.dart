@@ -4,8 +4,8 @@ import 'dart:io';
 import 'package:flclashx/common/common.dart';
 import 'package:flclashx/common/ui_activity.dart';
 import 'package:flclashx/enum/enum.dart';
-import 'package:flclashx/providers/config.dart';
 import 'package:flclashx/providers/app.dart';
+import 'package:flclashx/providers/config.dart';
 import 'package:flclashx/state.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -13,7 +13,6 @@ import 'package:window_ext/window_ext.dart';
 import 'package:window_manager/window_manager.dart';
 
 class WindowManager extends ConsumerStatefulWidget {
-
   const WindowManager({
     super.key,
     required this.child,
@@ -26,6 +25,95 @@ class WindowManager extends ConsumerStatefulWidget {
 
 class _WindowContainerState extends ConsumerState<WindowManager>
     with WindowListener, WindowExtListener {
+  static const double _kMinNormalWidth = 380;
+  static const double _kMinNormalHeight = 600;
+  static const double _kIconicCoordinateThreshold = -16000;
+
+  bool _isMinimized = false;
+  bool _isMaximized = false;
+  bool _isFullScreen = false;
+
+  @visibleForTesting
+  static bool shouldPersistNormalWindowBounds({
+    required Rect bounds,
+    required bool isMinimized,
+    required bool isMaximized,
+    required bool isFullScreen,
+  }) {
+    if (isMinimized || isMaximized || isFullScreen) {
+      return false;
+    }
+    if (!bounds.left.isFinite ||
+        !bounds.top.isFinite ||
+        !bounds.width.isFinite ||
+        !bounds.height.isFinite) {
+      return false;
+    }
+    if (bounds.left <= _kIconicCoordinateThreshold ||
+        bounds.top <= _kIconicCoordinateThreshold) {
+      return false;
+    }
+    if (bounds.width < _kMinNormalWidth || bounds.height < _kMinNormalHeight) {
+      return false;
+    }
+    return true;
+  }
+
+  Future<void> _primeWindowState() async {
+    try {
+      final states = await Future.wait<bool>([
+        windowManager.isMinimized(),
+        windowManager.isMaximized(),
+        windowManager.isFullScreen(),
+      ]);
+      if (!mounted) return;
+      _isMinimized = states[0];
+      _isMaximized = states[1];
+      _isFullScreen = states[2];
+    } catch (_) {}
+  }
+
+  Future<void> _syncNormalWindowBounds() async {
+    if (!mounted || _isMinimized || _isMaximized || _isFullScreen) return;
+    final results = await Future.wait<Object>([
+      windowManager.getBounds(),
+      windowManager.isMinimized(),
+      windowManager.isMaximized(),
+      windowManager.isFullScreen(),
+    ]);
+    if (!mounted) return;
+    final bounds = results[0] as Rect;
+    final isMinimized = results[1] as bool;
+    final isMaximized = results[2] as bool;
+    final isFullScreen = results[3] as bool;
+    _isMinimized = isMinimized;
+    _isMaximized = isMaximized;
+    _isFullScreen = isFullScreen;
+    if (!shouldPersistNormalWindowBounds(
+      bounds: bounds,
+      isMinimized: isMinimized,
+      isMaximized: isMaximized,
+      isFullScreen: isFullScreen,
+    )) {
+      return;
+    }
+    final current = ref.read(windowSettingProvider);
+    if (current.left == bounds.left &&
+        current.top == bounds.top &&
+        current.width == bounds.width &&
+        current.height == bounds.height) {
+      return;
+    }
+    ref.read(windowSettingProvider.notifier).updateState(
+          (state) => state.copyWith(
+            top: bounds.top,
+            left: bounds.left,
+            width: bounds.width,
+            height: bounds.height,
+          ),
+        );
+  }
+
   @override
   Widget build(BuildContext context) => widget.child;
 
@@ -49,11 +137,13 @@ class _WindowContainerState extends ConsumerState<WindowManager>
     windowExtManager.addListener(this);
     if (!Platform.isMacOS) {
       windowManager.addListener(this);
+      unawaited(_primeWindowState());
     }
   }
 
   @override
   void onWindowClose() async {
+    debouncer.cancel(FunctionTag.windowBounds);
     await globalState.appController.handleBackOrExit();
     super.onWindowClose();
   }
@@ -72,26 +162,12 @@ class _WindowContainerState extends ConsumerState<WindowManager>
   }
 
   void _scheduleWindowBoundsSync() {
+    if (_isMinimized || _isMaximized || _isFullScreen) {
+      return;
+    }
     debouncer.call(
       FunctionTag.windowBounds,
-      () async {
-        if (!mounted) return;
-        final results = await Future.wait([
-          windowManager.getPosition(),
-          windowManager.getSize(),
-        ]);
-        if (!mounted) return;
-        final offset = results[0] as Offset;
-        final size = results[1] as Size;
-        ref.read(windowSettingProvider.notifier).updateState(
-              (state) => state.copyWith(
-                top: offset.dy,
-                left: offset.dx,
-                width: size.width,
-                height: size.height,
-              ),
-            );
-      },
+      _syncNormalWindowBounds,
       duration: const Duration(milliseconds: 250),
     );
   }
@@ -109,9 +185,41 @@ class _WindowContainerState extends ConsumerState<WindowManager>
   }
 
   @override
+  void onWindowMaximize() {
+    _isMaximized = true;
+    debouncer.cancel(FunctionTag.windowBounds);
+    super.onWindowMaximize();
+  }
+
+  @override
+  void onWindowUnmaximize() {
+    _isMaximized = false;
+    super.onWindowUnmaximize();
+    _scheduleWindowBoundsSync();
+  }
+
+  @override
+  void onWindowEnterFullScreen() {
+    _isFullScreen = true;
+    debouncer.cancel(FunctionTag.windowBounds);
+    super.onWindowEnterFullScreen();
+  }
+
+  @override
+  void onWindowLeaveFullScreen() {
+    _isFullScreen = false;
+    super.onWindowLeaveFullScreen();
+    _scheduleWindowBoundsSync();
+  }
+
+  @override
   void onWindowMinimize() async {
+    _isMinimized = true;
+    debouncer.cancel(FunctionTag.windowBounds);
     uiActivity.setMinimized(true);
-    globalState.appController.savePreferencesDebounce();
+    if (globalState.isAppControllerReady) {
+      globalState.appController.savePreferencesDebounce();
+    }
     commonPrint.log("minimize");
     render?.pause();
     super.onWindowMinimize();
@@ -119,6 +227,7 @@ class _WindowContainerState extends ConsumerState<WindowManager>
 
   @override
   void onWindowRestore() {
+    _isMinimized = false;
     uiActivity.setMinimized(false);
     commonPrint.log("restore");
     render?.resume();
@@ -127,6 +236,7 @@ class _WindowContainerState extends ConsumerState<WindowManager>
 
   @override
   Future<void> dispose() async {
+    debouncer.cancel(FunctionTag.windowBounds);
     windowExtManager.removeListener(this);
     if (!Platform.isMacOS) {
       windowManager.removeListener(this);
@@ -136,7 +246,6 @@ class _WindowContainerState extends ConsumerState<WindowManager>
 }
 
 class WindowHeaderContainer extends StatelessWidget {
-
   const WindowHeaderContainer({
     super.key,
     required this.child,
@@ -151,21 +260,21 @@ class WindowHeaderContainer extends StatelessWidget {
 
     return Consumer(
       builder: (_, ref, child) => Stack(
-          children: [
-            Column(
-              children: [
-                SizedBox(
-                  height: kHeaderHeight,
-                ),
-                Expanded(
-                  flex: 1,
-                  child: child!,
-                ),
-              ],
-            ),
-            const WindowHeader(),
-          ],
-        ),
+        children: [
+          Column(
+            children: [
+              SizedBox(
+                height: kHeaderHeight,
+              ),
+              Expanded(
+                flex: 1,
+                child: child!,
+              ),
+            ],
+          ),
+          const WindowHeader(),
+        ],
+      ),
       child: child,
     );
   }
@@ -313,7 +422,7 @@ class _WindowHeaderState extends State<WindowHeader> with WindowListener {
   @override
   Widget build(BuildContext context) {
     final colorScheme = context.colorScheme;
-    
+
     return Material(
       color: Colors.transparent,
       child: Container(
@@ -404,7 +513,7 @@ class _WindowControlButtonState extends State<_WindowControlButton> {
   Widget build(BuildContext context) {
     final colorScheme = context.colorScheme;
     final defaultHoverColor = colorScheme.onSurface.withValues(alpha: 0.08);
-    
+
     return MouseRegion(
       onEnter: (_) => setState(() => _isHovered = true),
       onExit: (_) => setState(() => _isHovered = false),
@@ -415,7 +524,7 @@ class _WindowControlButtonState extends State<_WindowControlButton> {
           width: 46,
           height: kHeaderHeight,
           decoration: BoxDecoration(
-            color: _isHovered 
+            color: _isHovered
                 ? (widget.hoverColor ?? defaultHoverColor)
                 : Colors.transparent,
           ),
@@ -440,18 +549,17 @@ class _ConnectionStatusIndicator extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final colorScheme = context.colorScheme;
-    
+
     // Watch VPN/TUN status via runTimeProvider
     final isStart = ref.watch(runTimeProvider.select((state) => state != null));
-    
-    final statusColor = isStart 
+
+    final statusColor = isStart
         ? const Color(0xFF4CAF50) // Green when connected
         : colorScheme.onSurface.withValues(alpha: 0.3); // Gray when disconnected
-    
-    final statusText = isStart 
-        ? appLocalizations.running 
-        : appLocalizations.stopped;
-    
+
+    final statusText =
+        isStart ? appLocalizations.running : appLocalizations.stopped;
+
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -490,24 +598,24 @@ class AppIcon extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Container(
-      margin: const EdgeInsets.only(left: 8),
-      child: const Row(
-        children: [
-          SizedBox(
-            width: 24,
-            height: 24,
-            child: CircleAvatar(
-              foregroundImage: AssetImage("assets/images/icon.png"),
-              backgroundColor: Colors.transparent,
+        margin: const EdgeInsets.only(left: 8),
+        child: const Row(
+          children: [
+            SizedBox(
+              width: 24,
+              height: 24,
+              child: CircleAvatar(
+                foregroundImage: AssetImage("assets/images/icon.png"),
+                backgroundColor: Colors.transparent,
+              ),
             ),
-          ),
-          SizedBox(
-            width: 8,
-          ),
-          Text(
-            appName,
-          ),
-        ],
-      ),
-    );
+            SizedBox(
+              width: 8,
+            ),
+            Text(
+              appName,
+            ),
+          ],
+        ),
+      );
 }

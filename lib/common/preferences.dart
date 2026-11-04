@@ -41,6 +41,7 @@ class Preferences {
   Config? _lastSavedConfig;
   Config? _pendingConfig;
   Future<bool>? _activeSave;
+  int _epoch = 0;
 
   Future<bool> get isInit async =>
       await sharedPreferencesCompleter.future != null;
@@ -62,13 +63,16 @@ class Preferences {
   }
 
   Future<Config?> getConfig() async {
+    final readEpoch = _epoch;
     final preferences = await sharedPreferencesCompleter.future;
     final configString = preferences?.getString(configKey);
     if (configString == null) return null;
     try {
       final configMap = json.decode(configString);
       final config = Config.compatibleFromJson(configMap);
-      _lastSavedConfig = config;
+      if (readEpoch == _epoch && _pendingConfig == null) {
+        _lastSavedConfig = config;
+      }
       return config;
     } catch (_) {
       await preferences?.remove(configKey);
@@ -81,31 +85,38 @@ class Preferences {
       return Future<bool>.value(true);
     }
     _pendingConfig = config;
-    return _activeSave ??= _drainPendingSaves().whenComplete(() {
+    final saveEpoch = _epoch;
+    return _activeSave ??= _drainPendingSaves(saveEpoch).whenComplete(() {
       _activeSave = null;
     });
   }
 
-  Future<bool> _drainPendingSaves() async {
+  Future<bool> _drainPendingSaves(int saveEpoch) async {
     final preferences = await sharedPreferencesCompleter.future;
     if (preferences == null) {
-      _pendingConfig = null;
+      if (saveEpoch == _epoch) {
+        _pendingConfig = null;
+      }
       return false;
     }
     var lastSaved = true;
-    while (_pendingConfig != null) {
+    while (_pendingConfig != null && saveEpoch == _epoch) {
       final candidate = _pendingConfig!;
       _pendingConfig = null;
       if (_lastSavedConfig == candidate) {
         continue;
       }
       final encoded = _encodeConfig(candidate);
-      lastSaved = await preferences.setString(configKey, encoded);
-      if (lastSaved) {
+      final wrote = await preferences.setString(configKey, encoded);
+      if (saveEpoch != _epoch) {
+        return false;
+      }
+      lastSaved = wrote;
+      if (wrote) {
         _lastSavedConfig = candidate;
       }
     }
-    return lastSaved;
+    return saveEpoch == _epoch && lastSaved;
   }
 
   Future<void> clearClashConfig() async {
@@ -114,9 +125,16 @@ class Preferences {
   }
 
   Future<void> clearPreferences() async {
-    final sharedPreferencesIns = await sharedPreferencesCompleter.future;
+    _epoch++;
     _lastSavedConfig = null;
     _pendingConfig = null;
+    final inFlight = _activeSave;
+    if (inFlight != null) {
+      try {
+        await inFlight;
+      } catch (_) {}
+    }
+    final sharedPreferencesIns = await sharedPreferencesCompleter.future;
     await sharedPreferencesIns?.clear();
   }
 }

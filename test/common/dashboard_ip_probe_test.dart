@@ -161,12 +161,17 @@ void main() {
     probe.calls[0].complete(Result.success(null));
     await Future<void>.delayed(Duration.zero);
     expect(detection.state.value.ipInfo, isNull);
+    // During the warm-up retry window, keep loading/testing active instead of
+    // flashing a false timeout failure card for 1.5s.
+    expect(detection.state.value.isLoading, isTrue);
+    expect(detection.state.value.isTesting, isTrue);
 
     await Future<void>.delayed(const Duration(milliseconds: 45));
     expect(probe.calls, hasLength(2));
     probe.succeed(1, '203.0.113.99');
     await Future<void>.delayed(Duration.zero);
     expect(detection.state.value.ipInfo?.ip, '203.0.113.99');
+    expect(detection.state.value.isLoading, isFalse);
     expect(detection.state.value.isTesting, isFalse);
   });
 }

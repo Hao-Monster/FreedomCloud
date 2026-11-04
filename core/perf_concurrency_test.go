@@ -163,3 +163,168 @@ func TestUiActiveDynamicallyDowngradesFindProcessAlways(t *testing.T) {
 		t.Fatalf("FindProcessOff must remain FindProcessOff, got %v", got)
 	}
 }
+
+func TestStrictRoutesAndHealthProbeAreRaceFreeUnderConcurrentProxyReads(t *testing.T) {
+	prevProxies := tunnel.Proxies()
+	prevProviders := tunnel.Providers()
+	prevConfig := currentConfig
+	t.Cleanup(func() {
+		runLock.Lock()
+		proxyStateMu.Lock()
+		tunnel.UpdateProxies(prevProxies, prevProviders)
+		proxyStateMu.Unlock()
+		currentConfig = prevConfig
+		runLock.Unlock()
+	})
+
+	cfg, err := config.Parse([]byte("mode: rule\nproxy-groups:\n  - name: PROXY\n    type: select\n    proxies:\n      - DIRECT\n"))
+	if err != nil {
+		t.Fatalf("config.Parse failed: %v", err)
+	}
+	runLock.Lock()
+	proxyStateMu.Lock()
+	tunnel.UpdateProxies(cfg.Proxies, cfg.Providers)
+	proxyStateMu.Unlock()
+	currentConfig = cfg
+	runLock.Unlock()
+
+	stop := make(chan struct{})
+	writerDone := make(chan error, 1)
+	go func() {
+		for gen := uint64(1); gen <= 40; gen++ {
+			runLock.Lock()
+			req := &StrictIngressRequest{
+				Protocol:   strictIngressProtocol,
+				Generation: gen,
+				Entries: []StrictIngressRequestEntry{{
+					TargetGroup: "PROXY",
+					Username:    "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+					Password:    "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210",
+				}},
+			}
+			routes, installErr := installStrictProxyRoutes(req, cfg, []strictIngressBuildEntry{{
+				TargetGroup:  "PROXY",
+				ListenerName: "strict-test",
+			}})
+			if installErr != nil {
+				runLock.Unlock()
+				close(stop)
+				writerDone <- installErr
+				return
+			}
+			revokeStrictProxyRoutes(routes)
+			runLock.Unlock()
+		}
+		close(stop)
+		writerDone <- nil
+	}()
+
+	readerDone := make(chan struct{})
+	go func() {
+		defer close(readerDone)
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				_ = handleGetProxies()
+				ch := make(chan string, 1)
+				handleChangeProxy(`{"group-name":"PROXY","proxy-name":"DIRECT"}`, func(s string) { ch <- s })
+				<-ch
+				probeCh := make(chan string, 1)
+				handleHealthProbe(func(s string) { probeCh <- s })
+				<-probeCh
+			}
+		}
+	}()
+
+	if err := <-writerDone; err != nil {
+		t.Fatalf("strict route writer failed: %v", err)
+	}
+	<-readerDone
+}
+
+func TestSetupConfigCommitsDescriptionsAndProcessModeBeforeListenerRefreshAndRollsBack(t *testing.T) {
+	isolateConfigRuntime(t)
+	oldUi := uiActive.Load()
+	oldMode := tunnel.FindProcessMode()
+	oldConfigured := configuredFindProcessMode.Load()
+	oldCtrl := externalControllerListening.Load()
+	t.Cleanup(func() {
+		uiActive.Store(oldUi)
+		configuredFindProcessMode.Store(oldConfigured)
+		externalControllerListening.Store(oldCtrl)
+		tunnel.SetFindProcessMode(oldMode)
+	})
+
+	uiActive.Store(false)
+	applyRuntimeConfig = func(cfg *config.Config, _ bool) {
+		// Mirror Mihomo executor.ApplyConfig overwriting tunnel.findProcessMode
+		// with the raw configured mode (FindProcessAlways).
+		tunnel.SetFindProcessMode(cfg.General.FindProcessMode)
+	}
+
+	previousGen := &config.General{FindProcessMode: P.FindProcessAlways}
+	previous := &config.Config{
+		General:    previousGen,
+		Controller: &config.Controller{},
+	}
+	currentConfig = previous
+	proxyDescMu.Lock()
+	proxyDescriptions = map[string]string{"DIRECT": "Old description"}
+	proxyDescMu.Unlock()
+
+	var modeDuringListenerBringUp P.FindProcessMode
+	var descDuringListenerBringUp string
+	refreshRuntimeListeners = func() {
+		modeDuringListenerBringUp = tunnel.FindProcessMode()
+		proxyDescMu.RLock()
+		descDuringListenerBringUp = proxyDescriptions["NodeA"]
+		proxyDescMu.RUnlock()
+	}
+
+	params := defaultSetupParams()
+	params.Config.FindProcessMode = P.FindProcessAlways
+	params.Config.Proxy = []map[string]any{{
+		"name":              "NodeA",
+		"type":              "socks5",
+		"server":            "127.0.0.1",
+		"port":              1080,
+		"serverDescription": "Fresh description",
+	}}
+	if err := setupConfig(params); err != nil {
+		t.Fatalf("setupConfig failed: %v", err)
+	}
+	if modeDuringListenerBringUp != P.FindProcessStrict {
+		t.Fatalf("expected hidden UI to already run FindProcessStrict during listener bring-up, got %v", modeDuringListenerBringUp)
+	}
+	if descDuringListenerBringUp != "Fresh description" {
+		t.Fatalf("expected proxyDescriptions to already contain Fresh description during listener bring-up, got %q", descDuringListenerBringUp)
+	}
+
+	// Verify rollback restores previous proxyDescriptions if restoreRuntimeStrictIngress fails.
+	restoreRuntimeStrictIngress = func() error { return errSyntheticStrictRollback }
+	rollbackParams := defaultSetupParams()
+	rollbackParams.Config.Proxy = []map[string]any{{
+		"name":              "NodeA",
+		"type":              "socks5",
+		"server":            "127.0.0.1",
+		"port":              1080,
+		"serverDescription": "Broken candidate description",
+	}}
+	if err := setupConfig(rollbackParams); err == nil {
+		t.Fatal("expected strict ingress rollback error")
+	}
+	proxyDescMu.RLock()
+	restoredDesc := proxyDescriptions["NodeA"]
+	proxyDescMu.RUnlock()
+	if restoredDesc != "Fresh description" {
+		t.Fatalf("expected rollback to restore previous proxyDescriptions ('Fresh description'), got %q", restoredDesc)
+	}
+}
+
+var errSyntheticStrictRollback = &syntheticRollbackError{}
+
+type syntheticRollbackError struct{}
+
+func (*syntheticRollbackError) Error() string { return "synthetic strict rollback" }

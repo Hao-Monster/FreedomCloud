@@ -5,10 +5,31 @@
 #include <flutter/plugin_registrar_windows.h>
 
 #include <memory>
+#include <string>
+#include <vector>
 
 #include "proxy_settings.h"
 
 namespace proxy {
+
+enum class DesiredProxyMode {
+  kStop,
+  kSystemProxy,
+  kPac,
+};
+
+struct DesiredProxyState {
+  DesiredProxyMode mode = DesiredProxyMode::kStop;
+  int port = 0;
+  std::vector<std::string> bypass;
+  std::string pac_url;
+};
+
+struct ProxyApplyOutcome {
+  DesiredProxyMode mode = DesiredProxyMode::kStop;
+  ProxyResult proxy_result;
+  bool pac_ok = false;
+};
 
 class ProxyPlugin : public flutter::Plugin {
  public:
@@ -28,7 +49,7 @@ class ProxyPlugin : public flutter::Plugin {
       std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result);
 
  private:
-  SerialTaskRunner worker_;
+  CoalescingStateRunner<DesiredProxyState, ProxyApplyOutcome> state_runner_;
 };
 
 }  // namespace proxy
