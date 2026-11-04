@@ -71,28 +71,41 @@ class _WindowContainerState extends ConsumerState<WindowManager>
     super.onShouldTerminate();
   }
 
+  void _scheduleWindowBoundsSync() {
+    debouncer.call(
+      FunctionTag.windowBounds,
+      () async {
+        if (!mounted) return;
+        final results = await Future.wait([
+          windowManager.getPosition(),
+          windowManager.getSize(),
+        ]);
+        if (!mounted) return;
+        final offset = results[0] as Offset;
+        final size = results[1] as Size;
+        ref.read(windowSettingProvider.notifier).updateState(
+              (state) => state.copyWith(
+                top: offset.dy,
+                left: offset.dx,
+                width: size.width,
+                height: size.height,
+              ),
+            );
+      },
+      duration: const Duration(milliseconds: 250),
+    );
+  }
+
   @override
   Future<void> onWindowMoved() async {
     super.onWindowMoved();
-    final offset = await windowManager.getPosition();
-    ref.read(windowSettingProvider.notifier).updateState(
-          (state) => state.copyWith(
-            top: offset.dy,
-            left: offset.dx,
-          ),
-        );
+    _scheduleWindowBoundsSync();
   }
 
   @override
   Future<void> onWindowResized() async {
     super.onWindowResized();
-    final size = await windowManager.getSize();
-    ref.read(windowSettingProvider.notifier).updateState(
-          (state) => state.copyWith(
-            width: size.width,
-            height: size.height,
-          ),
-        );
+    _scheduleWindowBoundsSync();
   }
 
   @override

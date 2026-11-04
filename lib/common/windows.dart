@@ -165,7 +165,102 @@ class Windows {
     return windowsShellExecuteSucceeded(result);
   }
 
+  static const int _scManagerConnect = 0x0001;
+  static const int _serviceQueryConfig = 0x0001;
+  static const int _serviceQueryStatus = 0x0004;
+
+  ({bool exists, int? state, String? binaryPathName})? tryQueryServiceSnapshot(
+    String serviceName, {
+    bool includeConfig = true,
+  }) {
+    try {
+      return using((arena) {
+        final scm = OpenSCManager(nullptr, nullptr, _scManagerConnect);
+        if (scm == 0) return null;
+        try {
+          final namePtr = serviceName.toNativeUtf16(allocator: arena);
+          final desiredAccess = includeConfig
+              ? (_serviceQueryStatus | _serviceQueryConfig)
+              : _serviceQueryStatus;
+          final service = OpenService(scm, namePtr, desiredAccess);
+          if (service == 0) {
+            if (!serviceName.contains(r'\') && !serviceName.contains('/')) {
+              final regKeyPath =
+                  'SYSTEM\\CurrentControlSet\\Services\\$serviceName'
+                      .toNativeUtf16(allocator: arena);
+              final phkResult = arena<HKEY>();
+              final regStatus = RegOpenKeyEx(
+                HKEY_LOCAL_MACHINE,
+                regKeyPath,
+                0,
+                KEY_READ,
+                phkResult,
+              );
+              if (regStatus == ERROR_FILE_NOT_FOUND) {
+                return (exists: false, state: null, binaryPathName: null);
+              }
+              if (regStatus == ERROR_SUCCESS) {
+                RegCloseKey(phkResult.value);
+              }
+            }
+            return null;
+          }
+          try {
+            final statusPtr = arena<SERVICE_STATUS>();
+            if (QueryServiceStatus(service, statusPtr) == 0) {
+              return null;
+            }
+            final state = statusPtr.ref.dwCurrentState;
+            if (!includeConfig) {
+              return (exists: true, state: state, binaryPathName: null);
+            }
+            final bytesNeeded = arena<Uint32>();
+            QueryServiceConfig(service, nullptr, 0, bytesNeeded);
+            final needed = bytesNeeded.value;
+            if (needed == 0 || needed > 65536) {
+              return null;
+            }
+            final configBuffer = arena<Uint8>(needed);
+            final configPtr = configBuffer.cast<QUERY_SERVICE_CONFIG>();
+            if (QueryServiceConfig(service, configPtr, needed, bytesNeeded) ==
+                0) {
+              return null;
+            }
+            final binaryPtr = configPtr.ref.lpBinaryPathName;
+            final binaryPath =
+                binaryPtr == nullptr ? '' : binaryPtr.toDartString();
+            return (exists: true, state: state, binaryPathName: binaryPath);
+          } finally {
+            CloseServiceHandle(service);
+          }
+        } finally {
+          CloseServiceHandle(scm);
+        }
+      });
+    } catch (_) {
+      return null;
+    }
+  }
+
   Future<WindowsHelperServiceStatus> checkService() async {
+    final snapshot = tryQueryServiceSnapshot(appHelperService);
+    if (snapshot != null) {
+      if (!snapshot.exists) {
+        return WindowsHelperServiceStatus.none;
+      }
+      final binaryPath = snapshot.binaryPathName ?? '';
+      if (!windowsServiceConfigReferencesHelper(
+        'BINARY_PATH_NAME   : $binaryPath',
+        appPath.windowsServiceHelperPath,
+      )) {
+        return WindowsHelperServiceStatus.presence;
+      }
+      if (snapshot.state == SERVICE_RUNNING && await request.pingHelper()) {
+        return WindowsHelperServiceStatus.running;
+      }
+      return WindowsHelperServiceStatus.presence;
+    }
+
     final result = await Process.run('sc', ['query', appHelperService]);
     if (result.exitCode != 0) {
       return WindowsHelperServiceStatus.none;
@@ -296,11 +391,24 @@ class Windows {
 
   Future<bool> _waitForServiceState({required bool running}) async {
     for (var attempt = 0; attempt < 10; attempt++) {
-      final result = await Process.run('sc', ['query', appHelperService]);
-      if (result.exitCode != 0) return !running;
-      final state = windowsServiceQueryStateCode(result.stdout.toString());
-      if (running && state == 4) return true;
-      if (!running && state != 4 && state != 3) return true;
+      final snapshot =
+          tryQueryServiceSnapshot(appHelperService, includeConfig: false);
+      if (snapshot != null) {
+        if (!snapshot.exists) return !running;
+        final state = snapshot.state;
+        if (running && state == SERVICE_RUNNING) return true;
+        if (!running &&
+            state != SERVICE_RUNNING &&
+            state != SERVICE_STOP_PENDING) {
+          return true;
+        }
+      } else {
+        final result = await Process.run('sc', ['query', appHelperService]);
+        if (result.exitCode != 0) return !running;
+        final state = windowsServiceQueryStateCode(result.stdout.toString());
+        if (running && state == 4) return true;
+        if (!running && state != 4 && state != 3) return true;
+      }
       await Future.delayed(const Duration(milliseconds: 200));
     }
     return false;

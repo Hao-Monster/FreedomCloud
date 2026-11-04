@@ -81,6 +81,7 @@ class AppController {
   final AdminAuthorizationGate _adminAuthorization =
       AdminAuthorizationGate();
   Timer? _tunObservationTimer;
+  bool _tunObservationActive = false;
   late final TunStatusObserver _tunObserver = TunStatusObserver(
     runtime: _tunRuntime,
     read: () => clashCore.getTunStatus(),
@@ -97,17 +98,51 @@ class AppController {
     );
   }
 
+  Duration _nextTunObservationDelay() {
+    if (uiActivity.value ||
+        _tunRuntime.busy ||
+        _tunRuntime.closing ||
+        _activeTunRepair != null ||
+        (_tunRuntime.desiredEnabled &&
+            _tunRuntime.observed != TunObservedState.on)) {
+      return const Duration(seconds: 3);
+    }
+    return const Duration(seconds: 15);
+  }
+
+  void _scheduleNextTunObservation() {
+    _tunObservationTimer?.cancel();
+    _tunObservationTimer = null;
+    if (!Platform.isWindows || !_tunObservationActive) return;
+    _tunObservationTimer = Timer(_nextTunObservationDelay(), () async {
+      _tunObservationTimer = null;
+      if (!Platform.isWindows || !_tunObservationActive) return;
+      try {
+        await refreshWindowsTunStatus();
+      } finally {
+        if (_tunObservationActive) {
+          _scheduleNextTunObservation();
+        }
+      }
+    });
+  }
+
+  void _stopTunObservation() {
+    _tunObservationActive = false;
+    _tunObservationTimer?.cancel();
+    _tunObservationTimer = null;
+  }
+
   void startTunObservation() {
-    if (!Platform.isWindows || _tunObservationTimer != null) return;
+    if (!Platform.isWindows || _tunObservationActive) return;
+    _tunObservationActive = true;
     _tunRuntime.desiredEnabled = _ref.read(patchClashConfigProvider).tun.enable;
     clashService?.onTunTransportChanged = () {
       _tunRuntime.invalidate('statusUnavailable');
       _ref.invalidate(nodeRuntimeReadProvider);
       unawaited(updateTray());
     };
-    _tunObservationTimer = Timer.periodic(const Duration(seconds: 3), (_) {
-      unawaited(refreshWindowsTunStatus());
-    });
+    _scheduleNextTunObservation();
     unawaited(refreshWindowsTunStatus());
   }
 
@@ -2216,8 +2251,11 @@ class AppController {
   }
 
   Future<void> savePreferences() async {
-    commonPrint.log("save preferences");
-    await preferences.saveConfig(globalState.config);
+    final config = globalState.config;
+    if (preferences.hasUnsavedConfig(config)) {
+      commonPrint.log("save preferences");
+      await preferences.saveConfig(config);
+    }
     await flushNodeHealth();
   }
 
@@ -2310,7 +2348,7 @@ class AppController {
 
   Future<void> _quiesceWindows(Future<void> Function() action) async {
     if (!Platform.isWindows) { await action(); return; }
-    _tunObservationTimer?.cancel();
+    _stopTunObservation();
     ++_statusEpoch;
     await _tunRuntime.quiesce(action);
   }
@@ -2318,7 +2356,7 @@ class AppController {
   Future<void> handleExit() => _quiesceWindows(_handleExit);
 
   Future<void> _handleExit() async {
-    _tunObservationTimer?.cancel();
+    _stopTunObservation();
     // Bound the cleanup instead of pre-arming a 300ms hard-exit timer. On macOS the
     // DNS/proxy teardown is several slow networksetup/route subprocesses that easily
     // overrun 300ms, so the old timer fired mid-cleanup and exit(0) skipped the DNS

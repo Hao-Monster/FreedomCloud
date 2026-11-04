@@ -27,7 +27,12 @@ class Logs extends _$Logs with AutoDisposeNotifierMixin {
   FixedList<Log> build() => globalState.appState.logs;
 
   void addLog(Log value) {
-    state = state.copyWith()..add(value);
+    state = state.copyWithAdded([value]);
+  }
+
+  void addLogs(List<Log> values) {
+    if (values.isEmpty) return;
+    state = state.copyWithAdded(values);
   }
 
   @override
@@ -51,7 +56,12 @@ class Requests extends _$Requests with AutoDisposeNotifierMixin {
   }
 
   void addRequest(Connection value) {
-    state = state.copyWith()..add(value);
+    state = state.copyWithAdded([value]);
+  }
+
+  void addRequests(List<Connection> values) {
+    if (values.isEmpty) return;
+    state = state.copyWithAdded(values);
   }
 }
 

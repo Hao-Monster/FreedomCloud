@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"runtime"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -17,6 +18,7 @@ import (
 	"github.com/metacubex/mihomo/adapter/outboundgroup"
 	"github.com/metacubex/mihomo/adapter/provider"
 	"github.com/metacubex/mihomo/component/dialer"
+	P "github.com/metacubex/mihomo/component/process"
 	"github.com/metacubex/mihomo/component/resolver"
 	"github.com/metacubex/mihomo/config"
 	"github.com/metacubex/mihomo/constant"
@@ -30,17 +32,48 @@ import (
 )
 
 var (
-	currentConfig          *config.Config
-	version                atomic.Int32
-	isRunning              = false
-	runLock                contextMutex
-	testDelaySem           = semaphore.NewWeighted(50)
-	proxyDescMu            sync.RWMutex
-	proxyDescriptions      = map[string]string{}
-	pendingTunEnable       = false
-	currentTestURL         = "https://www.gstatic.com/generate_204"
-	minHealthCheckInterval = 5 * time.Second
+	currentConfig               *config.Config
+	version                     atomic.Int32
+	isRunning                   = false
+	runLock                     contextMutex
+	proxyStateMu                sync.RWMutex
+	configuredFindProcessMode   atomic.Int32
+	externalControllerListening atomic.Bool
+	testDelaySem                = semaphore.NewWeighted(50)
+	proxyDescMu                 sync.RWMutex
+	proxyDescriptions           = map[string]string{}
+	pendingTunEnable            = false
+	currentTestURL              = "https://www.gstatic.com/generate_204"
+	minHealthCheckInterval      = 5 * time.Second
 )
+
+func applyRuntimeConfigLocked(cfg *config.Config, force bool) {
+	proxyStateMu.Lock()
+	defer proxyStateMu.Unlock()
+	applyRuntimeConfig(cfg, force)
+}
+
+func controllerHasActiveEndpoint(cfg *config.Config, enabled bool) bool {
+	if !enabled || cfg == nil || cfg.Controller == nil {
+		return false
+	}
+	c := cfg.Controller
+	return c.ExternalController != "" ||
+		c.ExternalControllerTLS != "" ||
+		c.ExternalControllerUnix != "" ||
+		c.ExternalControllerPipe != ""
+}
+
+func syncEffectiveFindProcessMode() {
+	configured := P.FindProcessMode(configuredFindProcessMode.Load())
+	effective := configured
+	if configured == P.FindProcessAlways &&
+		!uiActive.Load() &&
+		!externalControllerListening.Load() {
+		effective = P.FindProcessStrict
+	}
+	tunnel.SetFindProcessMode(effective)
+}
 
 type ExternalProviders []ExternalProvider
 
@@ -131,22 +164,25 @@ func extractProxyDescriptionsFromRaw(rawConfig *config.RawConfig) {
 
 // proxiesWithDescriptions injects serverDescription for each proxy in API response.
 func proxiesWithDescriptions() map[string]interface{} {
-	result := make(map[string]interface{})
-	for name, proxy := range proxiesWithProviders() {
+	all := proxiesWithProviders()
+	result := make(map[string]interface{}, len(all))
+	for name, proxy := range all {
 		data, err := json.Marshal(proxy)
 		if err != nil {
+			continue
+		}
+		proxyDescMu.RLock()
+		desc, hasDesc := proxyDescriptions[name]
+		proxyDescMu.RUnlock()
+		if !hasDesc || desc == "" {
+			result[name] = json.RawMessage(data)
 			continue
 		}
 		item := make(map[string]interface{})
 		if err := json.Unmarshal(data, &item); err != nil {
 			continue
 		}
-		proxyDescMu.RLock()
-		desc, hasDesc := proxyDescriptions[name]
-		proxyDescMu.RUnlock()
-		if hasDesc && desc != "" {
-			item["serverDescription"] = desc
-		}
+		item["serverDescription"] = desc
 		result[name] = item
 	}
 	return result
@@ -344,10 +380,18 @@ func updateConfig(params *UpdateParams) error {
 		}
 		currentConfig.Controller = &controller
 		runtimeControllerEnabled = enabled
+		externalControllerListening.Store(controllerHasActiveEndpoint(currentConfig, enabled))
+		syncEffectiveFindProcessMode()
 	}
 	general := currentConfig.General
-	if params.MixedPort != nil {
+	listenersChanged := activeStrictIngress != nil || macStrictIngressIntent != nil
+	if params.AllowLan != nil && general.AllowLan != *params.AllowLan {
+		general.AllowLan = *params.AllowLan
+		listenersChanged = true
+	}
+	if params.MixedPort != nil && general.MixedPort != *params.MixedPort {
 		general.MixedPort = *params.MixedPort
+		listenersChanged = true
 	}
 	if params.Sniffing != nil {
 		general.Sniffing = *params.Sniffing
@@ -355,7 +399,8 @@ func updateConfig(params *UpdateParams) error {
 	}
 	if params.FindProcessMode != nil {
 		general.FindProcessMode = *params.FindProcessMode
-		tunnel.SetFindProcessMode(general.FindProcessMode)
+		configuredFindProcessMode.Store(int32(general.FindProcessMode))
+		syncEffectiveFindProcessMode()
 	}
 	if params.TCPConcurrent != nil {
 		general.TCPConcurrent = *params.TCPConcurrent
@@ -382,26 +427,36 @@ func updateConfig(params *UpdateParams) error {
 		resolver.DisableIPv6 = !general.IPv6
 	}
 	if params.Tun != nil {
+		if general.Tun.Enable != params.Tun.Enable || pendingTunEnable != params.Tun.Enable {
+			listenersChanged = true
+		}
 		general.Tun.Enable = params.Tun.Enable
 		pendingTunEnable = params.Tun.Enable
-		if params.Tun.AutoRoute != nil {
+		if params.Tun.AutoRoute != nil && general.Tun.AutoRoute != *params.Tun.AutoRoute {
 			general.Tun.AutoRoute = *params.Tun.AutoRoute
+			listenersChanged = true
 		}
-		if params.Tun.Device != nil {
+		if params.Tun.Device != nil && general.Tun.Device != *params.Tun.Device {
 			general.Tun.Device = *params.Tun.Device
+			listenersChanged = true
 		}
-		if params.Tun.RouteAddress != nil {
+		if params.Tun.RouteAddress != nil && !slices.Equal(general.Tun.RouteAddress, *params.Tun.RouteAddress) {
 			general.Tun.RouteAddress = *params.Tun.RouteAddress
+			listenersChanged = true
 		}
-		if params.Tun.DNSHijack != nil {
+		if params.Tun.DNSHijack != nil && !slices.Equal(general.Tun.DNSHijack, *params.Tun.DNSHijack) {
 			general.Tun.DNSHijack = *params.Tun.DNSHijack
+			listenersChanged = true
 		}
-		if params.Tun.Stack != nil {
+		if params.Tun.Stack != nil && general.Tun.Stack != *params.Tun.Stack {
 			general.Tun.Stack = *params.Tun.Stack
+			listenersChanged = true
 		}
 	}
 
-	refreshRuntimeListeners()
+	if listenersChanged {
+		refreshRuntimeListeners()
+	}
 	if err := restoreRuntimeStrictIngress(); err != nil {
 		return errors.New("macOS strict ingress could not be restored after configuration update")
 	}
@@ -446,7 +501,7 @@ func setupConfig(params *SetupParams) error {
 		candidate.General.Tun.Enable = false
 	}
 	applyStart := time.Now()
-	applyRuntimeConfig(candidate, true)
+	applyRuntimeConfigLocked(candidate, true)
 	log.Infoln("[Setup] executor.ApplyConfig took %s", time.Since(applyStart))
 	candidate.General.Tun.Enable = candidatePending
 	pendingTunEnable = candidatePending
@@ -461,24 +516,33 @@ func setupConfig(params *SetupParams) error {
 			// proxy listeners even though there is no previous generation.
 			dormant, cleanupErr := config.ParseRawConfig(defaultCoreRawConfig())
 			if cleanupErr == nil {
-				applyRuntimeConfig(dormant, true)
+				applyRuntimeConfigLocked(dormant, true)
 				cleanupErr = recreateRuntimeController(effectiveControllerConfig(dormant, false))
 			}
+			configuredFindProcessMode.Store(int32(P.FindProcessStrict))
+			externalControllerListening.Store(false)
+			syncEffectiveFindProcessMode()
 			return errors.Join(fmt.Errorf("initial configuration strict ingress failed: %w", restoreErr), cleanupErr)
 		}
 		previousTun := previous.General.Tun.Enable
 		if runtime.GOOS == "android" || !isRunning {
 			previous.General.Tun.Enable = false
 		}
-		applyRuntimeConfig(previous, true)
+		applyRuntimeConfigLocked(previous, true)
 		previous.General.Tun.Enable = previousTun
 		controllerErr := recreateRuntimeController(effectiveControllerConfig(previous, previousControllerEnabled))
+		configuredFindProcessMode.Store(int32(previous.General.FindProcessMode))
+		externalControllerListening.Store(controllerHasActiveEndpoint(previous, previousControllerEnabled))
+		syncEffectiveFindProcessMode()
 		refreshRuntimeListeners()
 		strictErr := restoreRuntimeStrictIngress()
 		return errors.Join(fmt.Errorf("configuration strict ingress failed: %w", restoreErr), controllerErr, strictErr)
 	}
 	appliedRawConfig = raw
 	runtimeControllerEnabled = controllerEnabled
+	configuredFindProcessMode.Store(int32(candidate.General.FindProcessMode))
+	externalControllerListening.Store(controllerHasActiveEndpoint(candidate, controllerEnabled))
+	syncEffectiveFindProcessMode()
 	extractProxyDescriptionsFromRaw(params.Config)
 	computeMinHealthCheckInterval(params.Config)
 	resetHealthCheckForwarderState()

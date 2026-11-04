@@ -22,6 +22,7 @@ import (
 	"github.com/metacubex/mihomo/common/observable"
 	"github.com/metacubex/mihomo/common/utils"
 	"github.com/metacubex/mihomo/component/mmdb"
+	P "github.com/metacubex/mihomo/component/process"
 	"github.com/metacubex/mihomo/component/resolver"
 	"github.com/metacubex/mihomo/component/updater"
 	"github.com/metacubex/mihomo/config"
@@ -128,6 +129,7 @@ func handleInitClash(paramsString string) bool {
 	// backgrounds. A headless cold-start has no UI but keeping the foreground
 	// cadence here preserves the previous behaviour (no regression).
 	uiActive.Store(true)
+	syncEffectiveFindProcessMode()
 	// Screen assumed on until the SuspendModule pushes the real state.
 	screenActive.Store(true)
 	isInit.Store(true)
@@ -272,7 +274,12 @@ func handleShutdown() bool {
 	// and guarded by its own logMu (never takes runLock), so calling it here is safe.
 	handleStopLog()
 	stopListeners()
+	proxyStateMu.Lock()
 	executor.Shutdown()
+	proxyStateMu.Unlock()
+	configuredFindProcessMode.Store(int32(P.FindProcessStrict))
+	externalControllerListening.Store(false)
+	syncEffectiveFindProcessMode()
 	runtime.GC()
 	isInit.Store(false)
 	isRunning = false
@@ -510,6 +517,7 @@ func handleSetUiActive(active bool) {
 	// startRequestForwarder/stopRequestForwarder are both no-ops when already in the
 	// target state, so re-running on a redundant call is cheap.
 	wasActive := uiActive.Swap(active)
+	syncEffectiveFindProcessMode()
 	if active {
 		runLock.Lock()
 		running := isRunning
@@ -667,8 +675,8 @@ func handleValidateConfig(bytes []byte) string {
 }
 
 func handleGetProxies() interface{} {
-	runLock.Lock()
-	defer runLock.Unlock()
+	proxyStateMu.RLock()
+	defer proxyStateMu.RUnlock()
 	return proxiesWithDescriptions()
 }
 
@@ -687,28 +695,26 @@ func handleChangeProxy(data string, fn func(string string)) {
 		groupName := *params.GroupName
 		proxyName := *params.ProxyName
 
-		// Hold runLock only across the proxy lookup + selector mutation, then
-		// release it BEFORE invoking fn (a JNI upcall): calling into the JVM while
-		// holding runLock risks a re-entrant deadlock. Acquire and release on this
-		// same goroutine — the old code locked on the caller and unlocked here, a
-		// cross-goroutine handoff.
-		runLock.Lock()
+		// Hold proxyStateMu.RLock only across the proxy lookup + selector mutation,
+		// so proxy queries/switches do not stall behind a multi-second listener/Wintun
+		// bring-up on runLock, while remaining race-free against ApplyConfig/Shutdown.
+		proxyStateMu.RLock()
 		proxies := proxiesWithProviders()
 		group, ok := proxies[groupName]
 		if !ok {
-			runLock.Unlock()
+			proxyStateMu.RUnlock()
 			fn("Not found group")
 			return
 		}
 		adapterProxy, ok := group.(*adapter.Proxy)
 		if !ok {
-			runLock.Unlock()
+			proxyStateMu.RUnlock()
 			fn("Group is not a proxy adapter")
 			return
 		}
 		selector, ok := adapterProxy.ProxyAdapter.(outboundgroup.SelectAble)
 		if !ok {
-			runLock.Unlock()
+			proxyStateMu.RUnlock()
 			fn("Group is not selectable")
 			return
 		}
@@ -717,7 +723,7 @@ func handleChangeProxy(data string, fn func(string string)) {
 		} else {
 			err = selector.Set(proxyName)
 		}
-		runLock.Unlock()
+		proxyStateMu.RUnlock()
 		if err != nil {
 			fn(err.Error())
 			return
@@ -760,8 +766,6 @@ func handleResetTraffic() {
 }
 
 func handleGetConnections() string {
-	runLock.Lock()
-	defer runLock.Unlock()
 	snapshot := statistic.DefaultManager.Snapshot()
 	data, err := json.Marshal(snapshot)
 	if err != nil {
@@ -772,8 +776,6 @@ func handleGetConnections() string {
 }
 
 func handleCloseConnections() bool {
-	runLock.Lock()
-	defer runLock.Unlock()
 	closeConnections()
 	return true
 }
@@ -793,8 +795,6 @@ func handleResetConnections() bool {
 }
 
 func handleCloseConnection(connectionId string) bool {
-	runLock.Lock()
-	defer runLock.Unlock()
 	c := statistic.DefaultManager.Get(connectionId)
 	if c == nil {
 		return false
@@ -947,11 +947,11 @@ func handleStopLog() {
 
 func handleGetCountryCode(ip string, fn func(value string)) {
 	go func() {
-		// Look up under runLock, release, then call fn (a JNI upcall) outside the
-		// lock to avoid a re-entrant deadlock through the JVM callback.
-		runLock.Lock()
+		// Look up under proxyStateMu.RLock, release, then call fn (a JNI upcall)
+		// outside the lock to avoid a re-entrant deadlock through the JVM callback.
+		proxyStateMu.RLock()
 		codes := mmdb.IPInstance().LookupCode(net.ParseIP(ip))
-		runLock.Unlock()
+		proxyStateMu.RUnlock()
 		if len(codes) == 0 {
 			fn("")
 			return

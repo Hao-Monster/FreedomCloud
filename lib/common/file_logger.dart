@@ -6,7 +6,6 @@ import 'dart:io';
 import 'package:flclashx/common/log_redaction.dart';
 import 'package:flclashx/common/path.dart';
 import 'package:flutter/widgets.dart';
-import 'package:intl/intl.dart';
 import 'package:path/path.dart';
 
 class FileLogger {
@@ -98,7 +97,21 @@ class FileLogger {
     return logsDir;
   }
 
-  String _getTodayDate() => DateFormat('yyyy-MM-dd').format(_now());
+  static String _twoDigits(int n) => n >= 10 ? '$n' : '0$n';
+
+  static String _threeDigits(int n) {
+    if (n >= 100) return '$n';
+    if (n >= 10) return '0$n';
+    return '00$n';
+  }
+
+  static String _formatDate(DateTime dt) =>
+      '${dt.year.toString().padLeft(4, '0')}-${_twoDigits(dt.month)}-${_twoDigits(dt.day)}';
+
+  static String _formatTimestamp(DateTime dt) =>
+      '${_formatDate(dt)} ${_twoDigits(dt.hour)}:${_twoDigits(dt.minute)}:${_twoDigits(dt.second)}.${_threeDigits(dt.millisecond)}';
+
+  String _getTodayDate() => _formatDate(_now());
 
   String _getLogFileName(String date, {int index = 0}) {
     if (index == 0) {
@@ -214,7 +227,7 @@ class FileLogger {
   }
 
   Future<void> _writeLine(String message) async {
-    final timestamp = DateFormat('yyyy-MM-dd HH:mm:ss.SSS').format(_now());
+    final timestamp = _formatTimestamp(_now());
     final bytes = utf8.encode('[$timestamp] $message\n');
     await _ensureSink(bytes.length);
     _currentSink!.add(bytes);

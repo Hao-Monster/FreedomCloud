@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flclashx/clash/clash.dart';
 import 'package:flclashx/common/common.dart';
 import 'package:flclashx/common/tun_runtime.dart';
@@ -26,6 +28,36 @@ class ClashManager extends ConsumerStatefulWidget {
 
 class _ClashContainerState extends ConsumerState<ClashManager>
     with AppMessageListener {
+  static const int _telemetryBatchFlushLimit = 128;
+  static const Duration _telemetryBatchWindow = Duration(milliseconds: 64);
+  final List<Log> _pendingLogs = [];
+  final List<Connection> _pendingRequests = [];
+  Timer? _telemetryFlushTimer;
+
+  void _scheduleTelemetryFlush() {
+    _telemetryFlushTimer ??= Timer(_telemetryBatchWindow, _flushPendingTelemetry);
+  }
+
+  void _flushPendingTelemetry() {
+    _telemetryFlushTimer?.cancel();
+    _telemetryFlushTimer = null;
+    if (!mounted) {
+      _pendingLogs.clear();
+      _pendingRequests.clear();
+      return;
+    }
+    if (_pendingLogs.isNotEmpty) {
+      final batch = List<Log>.of(_pendingLogs, growable: false);
+      _pendingLogs.clear();
+      ref.read(logsProvider.notifier).addLogs(batch);
+    }
+    if (_pendingRequests.isNotEmpty) {
+      final batch = List<Connection>.of(_pendingRequests, growable: false);
+      _pendingRequests.clear();
+      ref.read(requestsProvider.notifier).addRequests(batch);
+    }
+  }
+
   @override
   Widget build(BuildContext context) => ClashConfigUpdateListener(
     runtime: tunRuntime,
@@ -98,6 +130,10 @@ class _ClashContainerState extends ConsumerState<ClashManager>
 
   @override
   Future<void> dispose() async {
+    _telemetryFlushTimer?.cancel();
+    _telemetryFlushTimer = null;
+    _pendingLogs.clear();
+    _pendingRequests.clear();
     connectionDiagnostics.log(
       '[ConnectionsDiag] clashManager.dispose '
       'managerRunning=${connectionManager.running}',
@@ -122,7 +158,12 @@ class _ClashContainerState extends ConsumerState<ClashManager>
 
   @override
   void onLog(Log log) {
-    ref.read(logsProvider.notifier).addLog(log);
+    _pendingLogs.add(log);
+    if (_pendingLogs.length >= _telemetryBatchFlushLimit) {
+      _flushPendingTelemetry();
+    } else {
+      _scheduleTelemetryFlush();
+    }
 
     // Write core logs to file
     fileLogger.log("[${log.logLevel.name.toUpperCase()}] ${log.payload}");
@@ -134,8 +175,13 @@ class _ClashContainerState extends ConsumerState<ClashManager>
   }
 
   @override
-  void onRequest(Connection connection) async {
-    ref.read(requestsProvider.notifier).addRequest(connection);
+  void onRequest(Connection connection) {
+    _pendingRequests.add(connection);
+    if (_pendingRequests.length >= _telemetryBatchFlushLimit) {
+      _flushPendingTelemetry();
+    } else {
+      _scheduleTelemetryFlush();
+    }
     super.onRequest(connection);
   }
 

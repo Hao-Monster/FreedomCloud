@@ -21,6 +21,7 @@ import 'package:path/path.dart' as p;
 import 'package:url_launcher/url_launcher.dart';
 
 import 'common/common.dart';
+import 'common/ui_activity.dart';
 import 'controller.dart';
 import 'core_version.dart';
 import 'models/models.dart';
@@ -261,6 +262,9 @@ class GlobalState {
     if (tasks != null) {
       this.tasks = tasks;
     }
+    if (!Platform.isMacOS && !uiActivity.value) {
+      return Future.value();
+    }
     _tasksRunning = true;
     final inFlight = _tasksCycle;
     if (inFlight != null) return inFlight;
@@ -270,6 +274,10 @@ class GlobalState {
     _tasksCycle = cycle.whenComplete(() {
       _tasksCycle = null;
       if (!_tasksRunning) return;
+      if (!Platform.isMacOS && !uiActivity.value) {
+        _tasksRunning = false;
+        return;
+      }
       if (epoch != _tasksEpoch) {
         unawaited(startUpdateTasks());
         return;
@@ -277,6 +285,10 @@ class GlobalState {
       timer = Timer(const Duration(seconds: 3), () {
         if (!_tasksRunning || epoch != _tasksEpoch) return;
         timer = null;
+        if (!Platform.isMacOS && !uiActivity.value) {
+          _tasksRunning = false;
+          return;
+        }
         unawaited(startUpdateTasks());
       });
     });
@@ -310,7 +322,11 @@ class GlobalState {
   // is hidden. Android explicitly pauses this loop with its UI.
   void startGroupsUpdateTask() {
     if (groupsUpdateTimer != null && groupsUpdateTimer!.isActive) return;
-    groupsUpdateTimer = Timer(const Duration(seconds: 60), () {
+    final interval = uiActivity.value
+        ? const Duration(seconds: 60)
+        : const Duration(seconds: 180);
+    groupsUpdateTimer = Timer(interval, () {
+      groupsUpdateTimer = null;
       if (isAppControllerReady) appController.updateGroupsDebounce();
       startGroupsUpdateTask();
     });
