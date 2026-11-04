@@ -7,10 +7,98 @@
 #include <raserror.h>
 
 #include <array>
+#include <condition_variable>
+#include <deque>
+#include <memory>
+#include <mutex>
 #include <string>
+#include <thread>
+#include <utility>
 #include <vector>
 
 namespace proxy {
+
+/// Runs WinInet/RAS mutations in strict FIFO order on a single background
+/// thread so `InternetSetOptionW(INTERNET_OPTION_SETTINGS_CHANGED / REFRESH)`
+/// and `RasEnumEntriesW` never block Flutter's Win32 UI message pump.
+class SerialTaskRunner {
+ public:
+  SerialTaskRunner() = default;
+  SerialTaskRunner(const SerialTaskRunner&) = delete;
+  SerialTaskRunner& operator=(const SerialTaskRunner&) = delete;
+
+  ~SerialTaskRunner() { Shutdown(); }
+
+  template <typename Fn>
+  void Post(Fn&& fn) {
+    using Decayed = typename std::decay<Fn>::type;
+    auto task = std::unique_ptr<Task>(new TaskImpl<Decayed>(std::forward<Fn>(fn)));
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      if (stopping_) return;
+      if (!started_) {
+        started_ = true;
+        worker_ = std::thread([this]() { RunLoop(); });
+      }
+      queue_.push_back(std::move(task));
+    }
+    cv_.notify_one();
+  }
+
+  void Shutdown() {
+    bool join_worker = false;
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      if (!stopping_) {
+        stopping_ = true;
+        join_worker = started_;
+      }
+    }
+    if (join_worker) {
+      cv_.notify_all();
+      if (worker_.joinable()) {
+        worker_.join();
+      }
+    }
+  }
+
+ private:
+  struct Task {
+    virtual ~Task() = default;
+    virtual void Run() = 0;
+  };
+
+  template <typename Fn>
+  struct TaskImpl final : Task {
+    explicit TaskImpl(Fn&& fn) : fn_(std::move(fn)) {}
+    explicit TaskImpl(const Fn& fn) : fn_(fn) {}
+    void Run() override { fn_(); }
+    Fn fn_;
+  };
+
+  void RunLoop() {
+    for (;;) {
+      std::unique_ptr<Task> next;
+      {
+        std::unique_lock<std::mutex> lock(mutex_);
+        cv_.wait(lock, [this]() { return stopping_ || !queue_.empty(); });
+        if (queue_.empty()) {
+          return;
+        }
+        next = std::move(queue_.front());
+        queue_.pop_front();
+      }
+      next->Run();
+    }
+  }
+
+  std::mutex mutex_;
+  std::condition_variable cv_;
+  std::deque<std::unique_ptr<Task>> queue_;
+  std::thread worker_;
+  bool started_ = false;
+  bool stopping_ = false;
+};
 
 struct ProxyResult {
   DWORD error = ERROR_SUCCESS;

@@ -24,7 +24,7 @@ class Windows {
   static Windows? _instance;
   late DynamicLibrary _shell32;
 
-  bool _readThemeValue(String valueName) {
+  bool? tryReadThemeDark(String valueName) {
     try {
       return using((arena) {
         final keyPath =
@@ -35,7 +35,7 @@ class Windows {
 
         var result =
             RegOpenKeyEx(HKEY_CURRENT_USER, keyPath, 0, KEY_READ, phkResult);
-        if (result != ERROR_SUCCESS) return false;
+        if (result != ERROR_SUCCESS) return null;
 
         final hKey = phkResult.value;
         final data = arena<DWORD>();
@@ -45,14 +45,16 @@ class Windows {
         result = RegQueryValueEx(
             hKey, valueNamePtr, nullptr, nullptr, data.cast(), dataSize);
         RegCloseKey(hKey);
-        if (result != ERROR_SUCCESS) return false;
+        if (result != ERROR_SUCCESS) return null;
 
         return data.value == 0;
       });
-    } catch (e) {
-      return false;
+    } catch (_) {
+      return null;
     }
   }
+
+  bool _readThemeValue(String valueName) => tryReadThemeDark(valueName) ?? false;
 
   bool isDarkMode() => _readThemeValue('AppsUseLightTheme');
 

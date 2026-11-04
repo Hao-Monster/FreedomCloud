@@ -628,7 +628,14 @@ class AppController {
     _adminAuthorization.clearFailure();
     _tunRepairAttempts.clear();
     if (enabled) {
-      await _startWindowsTun();
+      try {
+        await _startWindowsTun();
+      } finally {
+        detectionState.notifyRoutingChanged();
+        if (globalState.isAppStateInitialized && context.mounted) {
+          _ref.read(checkIpNumProvider.notifier).add();
+        }
+      }
       if (_windowsStartupEffects == null) await updateTray();
       return;
     }
@@ -671,7 +678,14 @@ class AppController {
       _ref.read(patchClashConfigProvider.notifier).updateState(
         (state) => state.copyWith.tun(enable: value));
     });
-    await operation;
+    try {
+      await operation;
+    } finally {
+      detectionState.notifyRoutingChanged();
+      if (globalState.isAppStateInitialized && context.mounted) {
+        _ref.read(checkIpNumProvider.notifier).add();
+      }
+    }
     if (_windowsStartupEffects == null) await updateTray();
   }
 
@@ -2663,14 +2677,19 @@ class AppController {
     autoLaunch?.updateStatus(
       _ref.read(appSettingProvider).autoLaunch,
     );
-    // Delay subscription update to ensure network is ready after app initialization
-    Future.delayed(
-        const Duration(seconds: 1), _updateCurrentProfileSubscription);
-    autoUpdateProfiles();
-    autoCheckUpdate();
     await _handlePreference();
     await _handlerDisclaimer();
     _ref.read(initProvider.notifier).value = true;
+    // Defer background subscription and release checks briefly so the initial
+    // dashboard exit-IP probe gets uncontested DNS and proxy bandwidth.
+    Future.delayed(
+      const Duration(seconds: 4),
+      () {
+        _updateCurrentProfileSubscription();
+        autoUpdateProfiles();
+        autoCheckUpdate();
+      },
+    );
   }
 
   Future<void> _initStatus() async {

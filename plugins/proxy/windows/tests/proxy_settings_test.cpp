@@ -1,7 +1,11 @@
 #include "../proxy_settings.h"
 
+#include <atomic>
+#include <chrono>
 #include <iostream>
+#include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -94,7 +98,40 @@ int main() {
   FakeApi::Reset();
   CHECK(!proxy::ApplySystemProxy<FakeApi>(true, 0, {}).ok());
   CHECK(FakeApi::calls.empty());
+
+  // Verify SerialTaskRunner executes move-only work off the caller thread in
+  // strict FIFO order and drains all queued tasks before Shutdown() returns.
+  {
+    const auto caller_thread = std::this_thread::get_id();
+    std::mutex log_mutex;
+    std::vector<int> order;
+    std::atomic<bool> ran_off_caller{true};
+    {
+      proxy::SerialTaskRunner runner;
+      for (int i = 0; i < 16; ++i) {
+        auto payload = std::make_unique<int>(i);
+        runner.Post([&, item = std::move(payload)]() {
+          if (std::this_thread::get_id() == caller_thread) {
+            ran_off_caller.store(false);
+          }
+          if (*item == 0) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(15));
+          }
+          std::lock_guard<std::mutex> guard(log_mutex);
+          order.push_back(*item);
+        });
+      }
+      runner.Shutdown();
+    }
+    CHECK(ran_off_caller.load());
+    CHECK(order.size() == 16);
+    for (int i = 0; i < 16; ++i) {
+      CHECK(order[static_cast<size_t>(i)] == i);
+    }
+  }
+
   std::cout << "PASS: Unicode/ASCII/Punycode, start/stop, 2000 RAS failure cycles, "
-               "8 write/notify failures, invalid UTF-8/NUL/port; OS settings unchanged\n";
+               "8 write/notify failures, invalid UTF-8/NUL/port, SerialTaskRunner FIFO; "
+               "OS settings unchanged\n";
   return 0;
 }

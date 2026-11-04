@@ -861,6 +861,12 @@ class GlobalState {
             entry.value.splitByMultipleSeparators;
       }
     }
+    if (rawConfig["dns"] is Map &&
+        rawConfig["dns"]["enhanced-mode"] == DnsMode.fakeIp.name) {
+      rawConfig["dns"]["fake-ip-filter"] = mergeEssentialFakeIpFilter(
+        (rawConfig["dns"]["fake-ip-filter"] as Iterable?) ?? const [],
+      );
+    }
     var rules = [];
     if (rawConfig["rules"] != null) {
       rules = rawConfig["rules"];
@@ -885,9 +891,14 @@ class GlobalState {
         perAppPoliciesRequireProcessLookup(perAppPolicyStore.entries)) {
       rawConfig["find-process-mode"] = FindProcessMode.always.name;
     }
+    final effectiveRules = applyDesktopBypassPrivateRules(
+      rules.cast<Object?>(),
+      isDesktop: system.isDesktop,
+      routeMode: config.networkProps.routeMode,
+    );
     rawConfig["rule"] = mergePerAppPolicyRules(
       perAppPolicyStore.entries,
-      rules.cast<Object?>(),
+      effectiveRules,
       availableTargetGroups: {
         GroupName.GLOBAL.name,
         ...((rawConfig['proxy-groups'] as List?) ?? const [])
@@ -954,12 +965,20 @@ class DetectionState {
     return _instance!;
   }
 
-  DetectionState._internal() : _request = request;
+  DetectionState._internal()
+      : _request = request,
+        _warmupRetryDelay = const Duration(milliseconds: 1500);
   @visibleForTesting
-  DetectionState.forTesting(this._request);
+  DetectionState.forTesting(
+    this._request, {
+    Duration warmupRetryDelay = Duration.zero,
+  }) : _warmupRetryDelay = warmupRetryDelay;
   final Request _request;
+  final Duration _warmupRetryDelay;
   static DetectionState? _instance;
   (int, bool, Mode)? _activeRoute;
+  (int, bool, Mode)? _warmupRetriedRoute;
+  Timer? _warmupRetryTimer;
   CancelToken? _cancelToken;
   DateTime? _lastManualCheck;
   int _routingEpoch = 0;
@@ -1006,6 +1025,8 @@ class DetectionState {
   /// Advances the central proxy/profile/mode routing epoch so any in-flight
   /// exit-IP check started under a previous route cannot calibrate the new node.
   void notifyRoutingChanged() {
+    _warmupRetryTimer?.cancel();
+    _warmupRetryTimer = null;
     _routingEpoch++;
   }
 
@@ -1055,6 +1076,8 @@ class DetectionState {
     if (_activeRoute == route) return;
     _activeRoute = route;
     final requestGen = ++_requestGeneration;
+    _warmupRetryTimer?.cancel();
+    _warmupRetryTimer = null;
     _cancelToken?.cancel();
     final token = _cancelToken = CancelToken();
     final checkStartedAt = DateTime.now();
@@ -1093,6 +1116,20 @@ class DetectionState {
       _lastCheckStartedAt = checkStartedAt;
       _lastCheckCompletedAt = DateTime.now();
       _lastCheckProxyEligible = proxyEligible;
+    } else if (_warmupRetryDelay > Duration.zero &&
+        isStart &&
+        !res.isError &&
+        _warmupRetriedRoute != route) {
+      // Right after Wintun/listener bring-up, Windows NDIS routing or upstream
+      // DNS can fail the initial probe once before stabilizing. Schedule a
+      // single bounded warm-up retry so the dashboard self-heals.
+      _warmupRetriedRoute = route;
+      _warmupRetryTimer = Timer(_warmupRetryDelay, () {
+        _warmupRetryTimer = null;
+        if (requestGen == _requestGeneration) {
+          startCheck();
+        }
+      });
     }
     state.value = state.value.copyWith(
       isLoading: false,

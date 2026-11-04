@@ -145,7 +145,14 @@ Future<void> startWindowsTunOnLaunch({
           break;
         }
         if (attempt + 1 >= settleAttempts) break;
-        if (settleDelay > Duration.zero) await Future.delayed(settleDelay);
+        if (settleDelay > Duration.zero) {
+          final step = switch (attempt) {
+            0 => const Duration(milliseconds: 150),
+            1 => const Duration(milliseconds: 250),
+            _ => settleDelay,
+          };
+          await Future.delayed(step < settleDelay ? step : settleDelay);
+        }
         if (!current()) return;
       }
       if (observed == null) throw const TunFailure('statusUnavailable');

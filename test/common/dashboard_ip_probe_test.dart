@@ -146,4 +146,27 @@ void main() {
     expect(res.data?.sourcePorts, {'$fallbackPort'});
     await stalledClosed.future.timeout(const Duration(seconds: 1));
   });
+
+  test(
+      'transient null probe right after tunnel bring-up schedules one warm-up retry',
+      () async {
+    globalState.appState = globalState.appState.copyWith(runTime: 0);
+    final probe = _Probe();
+    final detection = DetectionState.forTesting(
+      probe,
+      warmupRetryDelay: const Duration(milliseconds: 25),
+    )..startCheck();
+
+    expect(probe.calls, hasLength(1));
+    probe.calls[0].complete(Result.success(null));
+    await Future<void>.delayed(Duration.zero);
+    expect(detection.state.value.ipInfo, isNull);
+
+    await Future<void>.delayed(const Duration(milliseconds: 45));
+    expect(probe.calls, hasLength(2));
+    probe.succeed(1, '203.0.113.99');
+    await Future<void>.delayed(Duration.zero);
+    expect(detection.state.value.ipInfo?.ip, '203.0.113.99');
+    expect(detection.state.value.isTesting, isFalse);
+  });
 }

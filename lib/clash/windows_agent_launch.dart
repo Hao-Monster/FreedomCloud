@@ -1,6 +1,6 @@
 import 'dart:io';
 
-import 'package:crypto/crypto.dart';
+import 'package:flclashx/common/file_digest.dart';
 import 'package:path/path.dart' as p;
 
 typedef AgentLaunchPaths = ({String agent, String core});
@@ -45,9 +45,11 @@ Future<AgentLaunchPaths> windowsAgentLaunchPaths({
   final agent = p.join(serviceDirectory, 'FlClashAgent.exe');
   final core = p.join(serviceDirectory, 'FlClashCore.exe');
   for (final pair in [(bundledAgent, agent), (bundledCore, core)]) {
-    final bundled = await sha256.bind(File(pair.$1).openRead()).first;
-    final installed = await sha256.bind(File(pair.$2).openRead()).first;
-    if (bundled != installed) {
+    final digests = await Future.wait([
+      fileSha256(pair.$1),
+      fileSha256(pair.$2),
+    ]);
+    if (digests[0] != digests[1]) {
       throw StateError(
         'Strict component does not match this portable package: '
         '${pair.$2}. Update the protected installation before launching.',

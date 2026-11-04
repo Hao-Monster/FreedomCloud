@@ -6,6 +6,8 @@
 
 #include <memory>
 
+#include "proxy_settings.h"
+
 namespace proxy {
 
 class ProxyPlugin : public flutter::Plugin {
@@ -24,6 +26,9 @@ class ProxyPlugin : public flutter::Plugin {
   void HandleMethodCall(
       const flutter::MethodCall<flutter::EncodableValue> &method_call,
       std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result);
+
+ private:
+  SerialTaskRunner worker_;
 };
 
 }  // namespace proxy

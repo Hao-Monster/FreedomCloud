@@ -13,26 +13,12 @@ class CoreUpdater {
 
   static CoreUpdater? _instance;
 
-  String? _cachedHash;
-  DateTime? _cachedMtime;
-  int? _cachedSize;
-
-  /// SHA-256 of the core binary currently on disk. Cached by mtime+size so
-  /// repeated helper pings don't rehash the file.
+  /// SHA-256 of the core binary currently on disk. Shared with component
+  /// preflight checks via [fileSha256] so repeated helper/agent checks neither
+  /// rehash the binary nor block the UI isolate.
   Future<String?> calcCoreSha256() async {
     try {
-      final file = File(appPath.corePath);
-      final stat = await file.stat();
-      if (_cachedHash != null &&
-          stat.modified == _cachedMtime &&
-          stat.size == _cachedSize) {
-        return _cachedHash;
-      }
-      final digest = await fileSha256(file.path);
-      _cachedMtime = stat.modified;
-      _cachedSize = stat.size;
-      _cachedHash = digest;
-      return _cachedHash;
+      return await fileSha256(appPath.corePath);
     } catch (e) {
       commonPrint.log("calcCoreSha256 failed: $e");
       return null;
