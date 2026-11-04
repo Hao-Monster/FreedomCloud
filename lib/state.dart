@@ -954,11 +954,13 @@ class DetectionState {
     return _instance!;
   }
 
-  DetectionState._internal();
+  DetectionState._internal() : _request = request;
+  @visibleForTesting
+  DetectionState.forTesting(this._request);
+  final Request _request;
   static DetectionState? _instance;
-  bool? _preIsStart;
-  Timer? _setTimeoutTimer;
-  CancelToken? cancelToken;
+  (int, bool, Mode)? _activeRoute;
+  CancelToken? _cancelToken;
   DateTime? _lastManualCheck;
   int _routingEpoch = 0;
   int _requestGeneration = 0;
@@ -1016,16 +1018,12 @@ class DetectionState {
   );
 
   void startCheck() {
-    debouncer.call(
-      FunctionTag.checkIp,
-      _checkIp,
-      duration: const Duration(
-        milliseconds: 1200,
-      ),
-    );
+    unawaited(_checkIp());
   }
 
   bool forceCheck() {
+    // The readiness listener will submit the first check as initialization ends.
+    if (!globalState.appState.isInit) return true;
     if (_lastManualCheck != null) {
       final timeSinceLastCheck = DateTime.now().difference(_lastManualCheck!);
       if (timeSinceLastCheck.inSeconds < 15) {
@@ -1033,15 +1031,13 @@ class DetectionState {
       }
     }
     _lastManualCheck = DateTime.now();
-    _checkIp();
+    debouncer.cancel(FunctionTag.addCheckIpNum);
+    startCheck();
     return true;
   }
 
-  /// Drop any stale exit-IP immediately (e.g. the instant the tunnel starts) so the
-  /// UI shows the "determining" state right away instead of flashing the previous IP
-  /// during the ~1.2s debounce before the next [_checkIp] runs.
+  /// Clear the previous route's exit IP while its new listener starts.
   void markChecking() {
-    _clearSetTimeoutTimer();
     state.value = state.value.copyWith(
       isLoading: true,
       isTesting: false,
@@ -1051,92 +1047,58 @@ class DetectionState {
 
   Future<void> _checkIp() async {
     final appState = globalState.appState;
-    final isInit = appState.isInit;
-    if (!isInit) return;
+    if (!appState.isInit) return;
     final isStart = appState.runTime != null;
-    if (_preIsStart == false &&
-        _preIsStart == isStart &&
-        state.value.ipInfo != null) {
-      return;
-    }
-    final justStarted = _preIsStart == false && isStart;
-    _clearSetTimeoutTimer();
-    state.value = state.value.copyWith(
-      isLoading: true,
-      ipInfo: null,
-    );
-    _preIsStart = isStart;
-    if (cancelToken != null) {
-      cancelToken!.cancel();
-      cancelToken = null;
-    }
-    if (justStarted) {
-      await Future.delayed(const Duration(milliseconds: 2000));
-    }
-    cancelToken = CancelToken();
-    final requestGen = ++_requestGeneration;
     final startRoutingEpoch = _routingEpoch;
-    final wasStartAtBegin = isStart;
     final modeAtBegin = globalState.config.patchClashConfig.mode;
+    final route = (startRoutingEpoch, isStart, modeAtBegin);
+    if (_activeRoute == route) return;
+    _activeRoute = route;
+    final requestGen = ++_requestGeneration;
+    _cancelToken?.cancel();
+    final token = _cancelToken = CancelToken();
     final checkStartedAt = DateTime.now();
     state.value = state.value.copyWith(
+      isLoading: true,
       isTesting: true,
+      ipInfo: null,
     );
-    final res = await request.checkIpWithHost(cancelToken: cancelToken);
-    if (requestGen != _requestGeneration) {
-      return;
-    }
-    if (res.isError) {
-      state.value = state.value.copyWith(
-        isLoading: true,
-        ipInfo: null,
-      );
+    final res = await _request.checkIpWithHost(
+      cancelToken: token,
+      attemptTimeout: const Duration(seconds: 3),
+    );
+    if (requestGen != _requestGeneration) return;
+    _activeRoute = null;
+    final currentRoute = (
+      _routingEpoch,
+      globalState.appState.runTime != null,
+      globalState.config.patchClashConfig.mode,
+    );
+    if (route != currentRoute) {
+      // The route changed before its debounced notification was delivered.
+      // Discard the old IP; the next request must use the current route.
+      startCheck();
       return;
     }
     final ipInfo = res.data?.ipInfo;
-    final checkCompletedAt = DateTime.now();
-    final isStartAtEnd =
-        globalState.isAppStateInitialized && globalState.appState.runTime != null;
-    final modeAtEnd = globalState.config.patchClashConfig.mode;
-    state.value = state.value.copyWith(
-      isTesting: false,
-    );
     if (ipInfo != null) {
-      final sameRoute = startRoutingEpoch == _routingEpoch;
-      final proxyEligible = sameRoute &&
-          wasStartAtBegin &&
-          isStartAtEnd &&
+      final proxyEligible = isStart &&
           modeAtBegin != Mode.direct &&
-          modeAtEnd != Mode.direct &&
           (res.data?.routedViaClash ?? false);
       _lastCompletedIpInfo = ipInfo;
       _lastCompletedGeneration = requestGen;
-      _lastCompletedRoutingEpoch = sameRoute ? startRoutingEpoch : null;
+      _lastCompletedRoutingEpoch = startRoutingEpoch;
       _lastMatchedHost = res.data?.host;
       _lastProbeSourcePorts = res.data?.sourcePorts;
       _lastCheckStartedAt = checkStartedAt;
-      _lastCheckCompletedAt = checkCompletedAt;
+      _lastCheckCompletedAt = DateTime.now();
       _lastCheckProxyEligible = proxyEligible;
-      state.value = state.value.copyWith(
-        isLoading: false,
-        ipInfo: ipInfo,
-      );
-      return;
     }
-    _clearSetTimeoutTimer();
-    _setTimeoutTimer = Timer(const Duration(milliseconds: 300), () {
-      state.value = state.value.copyWith(
-        isLoading: false,
-        ipInfo: null,
-      );
-    });
-  }
-
-  void _clearSetTimeoutTimer() {
-    if (_setTimeoutTimer != null) {
-      _setTimeoutTimer?.cancel();
-      _setTimeoutTimer = null;
-    }
+    state.value = state.value.copyWith(
+      isLoading: false,
+      isTesting: false,
+      ipInfo: ipInfo,
+    );
   }
 }
 

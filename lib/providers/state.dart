@@ -678,6 +678,7 @@ VM2? layoutChange(Ref ref) {
 
 @riverpod
 VM2<int, bool> checkIp(Ref ref) {
+  final ready = ref.watch(initProvider);
   final checkIpNum = ref.watch(checkIpNumProvider);
   final containsDetection = ref.watch(
     dashboardStateProvider.select(
@@ -690,7 +691,7 @@ VM2<int, bool> checkIp(Ref ref) {
   final newDashboard = ref.watch(newDashboardEnabledProvider);
   return VM2(
     a: checkIpNum,
-    b: containsDetection || newDashboard,
+    b: ready && (containsDetection || newDashboard),
   );
 }
 

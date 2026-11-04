@@ -147,16 +147,10 @@ class Request {
     return data;
   }
 
-  // Tried in order, first success wins. All return a dead-simple JSON with an
-  // IPv4 exit IP + country code:
-  //   ip.sb     — `api-ipv4` host is A-only, so the exit is forced over IPv4
-  //   ip-api.com — IPv4-only on the free tier
-  //   ipinfo.io — plain {ip, country}, used as a last-resort fallback
+  // Prefer the IPv4 endpoint. Contact the HTTPS fallback only if it fails.
   static final Map<String, IpInfo Function(Map<String, dynamic>)>
       _defaultIpInfoSources = {
     "https://api-ipv4.ip.sb/geoip": IpInfo.fromIpSbJson,
-    "http://ip-api.com/json/?fields=status,countryCode,query":
-        IpInfo.fromIpApiComJson,
     "https://ipinfo.io/json": IpInfo.fromIpInfoIoJson,
   };
   final Map<String, IpInfo Function(Map<String, dynamic>)> _ipInfoSources;
@@ -178,6 +172,7 @@ class Request {
     CancelToken? cancelToken,
     Duration keepAliveHold = const Duration(milliseconds: 4500),
     Duration connectTimeout = const Duration(seconds: 5),
+    Duration? attemptTimeout,
     String Function(Uri uri)? proxyResolver,
     bool forceHoldSocket = false,
     void Function(Set<String> activePorts)? onSocketConnected,
@@ -207,6 +202,7 @@ class Request {
       )..httpClientAdapter = IOHttpClientAdapter(
         createHttpClient: () {
           final client = HttpClient()
+            ..badCertificateCallback = null
             ..connectionTimeout = connectTimeout
             ..idleTimeout = keepAliveHold > Duration.zero
                 ? keepAliveHold
@@ -259,14 +255,20 @@ class Request {
         },
       );
       try {
-        final res = await attemptDio.get<Map<String, dynamic>>(
+        final response = attemptDio.get<Map<String, dynamic>>(
           source.key,
           cancelToken: cancelToken,
           options: Options(
             responseType: ResponseType.json,
+            followRedirects: false,
             receiveTimeout: const Duration(seconds: 3),
           ),
         );
+        // A peer can trickle headers or body bytes without hitting an idle
+        // timeout. The finally block aborts its sockets before the next source.
+        final res = await (attemptTimeout == null
+            ? response
+            : response.timeout(attemptTimeout));
         if (res.statusCode == HttpStatus.ok && res.data != null) {
           final ipInfo = source.value(res.data!);
           final host = Uri.tryParse(source.key)?.host.toLowerCase() ?? '';

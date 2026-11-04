@@ -699,7 +699,7 @@ class AppController {
   void addCheckIpNumDebounce() {
     debouncer.call(FunctionTag.addCheckIpNum, () {
       _ref.read(checkIpNumProvider.notifier).add();
-    });
+    }, duration: const Duration(milliseconds: 180));
   }
 
   void applyProfileDebounce({
