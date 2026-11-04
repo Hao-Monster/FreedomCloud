@@ -18,6 +18,14 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'controller.dart';
 import 'pages/pages.dart';
 
+// Windows reports internet-connected adapter types. Adapter notifications can
+// omit the TUN even while existing Core connections are still healthy.
+bool shouldCloseConnectionsOnNetworkChange(
+  List<ConnectivityResult> results, {
+  required bool isWindows,
+}) =>
+    !isWindows && !results.contains(ConnectivityResult.vpn);
+
 class Application extends ConsumerStatefulWidget {
   const Application({
     super.key,
@@ -107,11 +115,15 @@ class ApplicationState extends ConsumerState<Application> {
   Widget _buildState(Widget child) => AppStateManager(
         child: ClashManager(
           child: ConnectivityManager(
-            onConnectivityChanged: (results) async {
-              if (!results.contains(ConnectivityResult.vpn)) {
+            onConnectivityChanged: (results) {
+              detectionState.notifyRoutingChanged();
+              if (shouldCloseConnectionsOnNetworkChange(
+                results,
+                isWindows: Platform.isWindows,
+              )) {
                 clashCore.closeConnections();
               }
-              globalState.appController.updateLocalIp();
+              unawaited(globalState.appController.updateLocalIp());
               globalState.appController.addCheckIpNumDebounce();
             },
             child: child,
