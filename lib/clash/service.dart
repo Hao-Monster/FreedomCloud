@@ -9,6 +9,7 @@ import 'package:flclashx/clash/agent_lifecycle.dart';
 import 'package:flclashx/clash/interface.dart';
 import 'package:flclashx/clash/windows_agent_launch.dart';
 import 'package:flclashx/common/common.dart';
+import 'package:flclashx/common/file_digest.dart';
 import 'package:flclashx/common/tun_runtime.dart';
 import 'package:flclashx/models/core.dart';
 import 'package:flclashx/state.dart';
@@ -756,8 +757,8 @@ class ClashService extends ClashHandlerInterface {
         (appPath.agentPath, identity.agentExecutable!),
         (appPath.corePath, identity.coreExecutable!),
       ]) {
-        final bundled = await crypto.sha256.bind(File(pair.$1).openRead()).first;
-        final running = await crypto.sha256.bind(File(pair.$2).openRead()).first;
+        final (bundled, running) =
+            await (fileSha256(pair.$1), fileSha256(pair.$2)).wait;
         if (bundled != running) return false;
       }
       final helperMatches = identity.backendSource != 'helper' || await request.pingHelper();

@@ -1,7 +1,7 @@
 import 'dart:io';
 
-import 'package:crypto/crypto.dart';
 import 'package:flclashx/common/common.dart';
+import 'package:flclashx/common/file_digest.dart';
 
 class CoreUpdater {
   factory CoreUpdater() {
@@ -28,10 +28,10 @@ class CoreUpdater {
           stat.size == _cachedSize) {
         return _cachedHash;
       }
-      final digest = await sha256.bind(file.openRead()).first;
+      final digest = await fileSha256(file.path);
       _cachedMtime = stat.modified;
       _cachedSize = stat.size;
-      _cachedHash = digest.toString();
+      _cachedHash = digest;
       return _cachedHash;
     } catch (e) {
       commonPrint.log("calcCoreSha256 failed: $e");

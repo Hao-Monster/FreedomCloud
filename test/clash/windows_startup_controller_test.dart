@@ -247,6 +247,7 @@ void main() {
             'listener',
             'reflect'
           ]));
+      expect(effects.calls.where((call) => call == 'match'), hasLength(1));
       expect(effects.running, isTrue);
       expect(runtime.observed, TunObservedState.on);
       expect(globalState.config.patchClashConfig.tun.enable, isTrue);
@@ -384,7 +385,7 @@ void main() {
     final controller = await controllerFixture(tester, effects, runtime);
     await controller.initializeRuntime();
     expect(runtime.failure, 'profileRequired');
-    expect(effects.calls, ['observe', 'match', 'profile']);
+    expect(effects.calls, ['observe', 'profile']);
     expect(effects.backgroundConfigurations, 0);
   });
 
@@ -437,6 +438,7 @@ void main() {
     final runtime = TunRuntimeController();
     final controller = await controllerFixture(tester, effects, runtime);
     await controller.setTunEnabled(true);
+    expect(effects.calls.where((call) => call == 'match'), hasLength(1));
     expect(effects.calls, contains('incremental'));
     expect(effects.calls, isNot(contains('configure')));
     expect(effects.calls, isNot(contains('listener')));

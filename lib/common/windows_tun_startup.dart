@@ -74,7 +74,11 @@ Future<void> startWindowsTunOnLaunch({
       final initial = await observe();
       if (!current()) return;
       final initialEpoch = runtime.observationEpoch;
-      final matching = await effects.componentsMatch();
+      // Starting from off already verifies the binaries during backend
+      // preparation. Read them here only for the read-only adoption path.
+      final canAdopt = initial?.observed == TunObservedState.on &&
+          effects.proxyRunning &&
+          await effects.componentsMatch();
       if (!current()) return;
       if (initialEpoch != runtime.observationEpoch ||
           (initial != null &&
@@ -82,9 +86,7 @@ Future<void> startWindowsTunOnLaunch({
                   runtime.status?.revision != initial.revision))) {
         throw const TunFailure('statusUnavailable');
       }
-      if (matching &&
-          initial?.observed == TunObservedState.on &&
-          effects.proxyRunning) {
+      if (canAdopt && effects.proxyRunning) {
         await reflectObserved(initial!);
         return;
       }
