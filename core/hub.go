@@ -242,8 +242,10 @@ func handleStopListener() bool {
 	defer runLock.Unlock()
 	isRunning = false
 	cancelAllDelayTasks("cancelled")
-	// Keep health-check forwarder running so proxy pings stay fresh in the UI
-	// while the VPN is off. It is torn down only on full shutdown.
+	// Stop both background forwarders while proxy listeners are stopped so the
+	// Core does not wake providers to dial remote URLTests behind a stopped UI;
+	// handleStartListener restarts them when the user starts the proxy again.
+	stopHealthCheckForwarder()
 	stopRequestForwarder()
 	stopListeners()
 	return true

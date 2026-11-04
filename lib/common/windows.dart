@@ -24,6 +24,25 @@ class Windows {
   static Windows? _instance;
   late DynamicLibrary _shell32;
 
+  DynamicLibrary? _dnsapi;
+  int Function()? _dnsFlushResolverCache;
+
+  /// Flushes the Windows DNS Client resolver cache in-process (<1ms, zero
+  /// subprocess or console flash) so Fake-IP (198.18.0.0/16) entries cached
+  /// while TUN was active cannot blackhole direct connections after TUN stops.
+  bool tryFlushDnsResolverCache() {
+    try {
+      final flush = _dnsFlushResolverCache ??= (_dnsapi ??=
+              DynamicLibrary.open('dnsapi.dll'))
+          .lookupFunction<Int32 Function(), int Function()>(
+        'DnsFlushResolverCache',
+      );
+      return flush() != 0;
+    } catch (_) {
+      return false;
+    }
+  }
+
   bool? tryReadThemeDark(String valueName) {
     try {
       return using((arena) {

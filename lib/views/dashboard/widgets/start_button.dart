@@ -1,7 +1,7 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flclashx/common/common.dart';
-import 'package:flclashx/enum/enum.dart';
 import 'package:flclashx/providers/providers.dart';
 import 'package:flclashx/state.dart';
 import 'package:flutter/material.dart';
@@ -22,6 +22,8 @@ class _StartButtonState extends ConsumerState<StartButton>
   late Animation<double> _animation;
   late Animation<double> _scaleAnimation;
   bool isStart = false;
+  bool _localPending = false;
+  bool? _localTargetStart;
 
   @override
   void initState() {
@@ -67,23 +69,36 @@ class _StartButtonState extends ConsumerState<StartButton>
     super.dispose();
   }
 
-  void handleSwitchStart() {
-    if (Platform.isAndroid) {
-      HapticFeedback.mediumImpact();
+  Future<void> handleSwitchStart() async {
+    if (_localPending || ref.read(statusSwitchPendingProvider) != null) {
+      return;
     }
-    isStart = !isStart;
-    updateController();
-    debouncer.call(
-      FunctionTag.updateStatus,
-      () {
-        globalState.appController.updateStatus(isStart);
-      },
-      duration: commonDuration,
-    );
+    if (Platform.isAndroid) {
+      unawaited(HapticFeedback.mediumImpact());
+    }
+    final targetStart = !isStart;
+    setState(() {
+      _localPending = true;
+      _localTargetStart = targetStart;
+    });
+    try {
+      await globalState.appController.updateStatus(targetStart);
+    } finally {
+      if (mounted) {
+        final actualStart = ref.read(runTimeProvider) != null;
+        setState(() {
+          _localPending = false;
+          _localTargetStart = null;
+          isStart = actualStart;
+        });
+        updateController();
+      }
+    }
   }
 
   void updateController() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
       if (isStart) {
         _controller.forward();
       } else {
@@ -110,110 +125,133 @@ class _StartButtonState extends ConsumerState<StartButton>
     if (!state.isInit || !state.hasProfile) {
       return Container();
     }
+    final providerPending = ref.watch(statusSwitchPendingProvider);
+    final runTime = ref.watch(runTimeProvider);
+    final effectiveStart = runTime != null;
+    final pendingTarget = providerPending ?? (_localPending ? _localTargetStart : null);
+    final isBusy = pendingTarget != null;
 
     final colorScheme = Theme.of(context).colorScheme;
     final activeColor = Colors.green.shade600.withValues(alpha: 0.9);
     final inactiveColor = colorScheme.secondaryContainer.withValues(alpha: 0.85);
+    final showActivePalette =
+        isBusy ? (!pendingTarget && effectiveStart) : effectiveStart;
+    final foregroundColor = showActivePalette
+        ? Colors.white
+        : colorScheme.onSecondaryContainer;
+
+    final Widget? statusLabelWidget;
+    if (isBusy) {
+      final pendingText = pendingTarget
+          ? appLocalizations.tunStatusStarting
+          : appLocalizations.tunStatusStopping;
+      statusLabelWidget = Text(
+        pendingText,
+        key: ValueKey('pending_$pendingTarget'),
+        style: context.textTheme.titleMedium?.toSoftBold.copyWith(
+          color: foregroundColor,
+        ),
+      );
+    } else if (runTime != null) {
+      final text = utils.getTimeText(runTime);
+      statusLabelWidget = Text(
+        text,
+        key: ValueKey('time_$text'),
+        style: context.textTheme.titleMedium?.toSoftBold.copyWith(
+          color: Colors.white,
+        ),
+      );
+    } else {
+      statusLabelWidget = null;
+    }
 
     return Padding(
       padding: const EdgeInsets.all(16.0),
       child: AnimatedBuilder(
         animation: Listenable.merge([_controller, _pressController]),
-        builder: (_, child) => Transform.scale(
-            scale: _scaleAnimation.value,
-            child: SizedBox(
-              width: double.infinity,
-              height: 56,
-              child: GestureDetector(
-                onTapDown: _onTapDown,
-                onTapUp: _onTapUp,
-                onTapCancel: _onTapCancel,
-                child: FilledButton(
-                  onPressed: handleSwitchStart,
-                  style: FilledButton.styleFrom(
-                    backgroundColor: isStart ? activeColor : inactiveColor,
-                    foregroundColor: isStart
-                        ? Colors.white
-                        : colorScheme.onSecondaryContainer,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    elevation: isStart ? 4 : 0,
+        builder: (_, __) => Transform.scale(
+          scale: _scaleAnimation.value,
+          child: SizedBox(
+            width: double.infinity,
+            height: 56,
+            child: GestureDetector(
+              onTapDown: isBusy ? null : _onTapDown,
+              onTapUp: isBusy ? null : _onTapUp,
+              onTapCancel: _onTapCancel,
+              child: FilledButton(
+                onPressed: handleSwitchStart,
+                style: FilledButton.styleFrom(
+                  backgroundColor: showActivePalette ? activeColor : inactiveColor,
+                  foregroundColor: foregroundColor,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
                   ),
-                  child: Center(
-                    child: AnimatedSize(
-                      duration: const Duration(milliseconds: 300),
-                      curve: Curves.easeOutCubic,
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
+                  elevation: showActivePalette ? 4 : 0,
+                ),
+                child: Center(
+                  child: AnimatedSize(
+                    duration: const Duration(milliseconds: 240),
+                    curve: Curves.easeOutCubic,
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (isBusy)
+                          SizedBox(
+                            width: 22,
+                            height: 22,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2.4,
+                              color: foregroundColor,
+                            ),
+                          )
+                        else
                           AnimatedIcon(
                             icon: AnimatedIcons.play_pause,
                             progress: _animation,
                             size: 36,
-                            color: isStart
-                                ? Colors.white
-                                : colorScheme.onSecondaryContainer,
+                            color: foregroundColor,
                           ),
-                          if (child != null) ...[
-                            const SizedBox(width: 12),
-                            AnimatedSwitcher(
-                              duration: const Duration(milliseconds: 300),
-                              switchInCurve: Curves.easeOutCubic,
-                              switchOutCurve: Curves.easeInCubic,
-                              transitionBuilder: (childWidget, animation) {
-                                final offsetAnimation = Tween<Offset>(
-                                  begin: const Offset(0, 0.3),
-                                  end: Offset.zero,
-                                ).animate(CurvedAnimation(
-                                  parent: animation,
-                                  curve: Curves.easeOutCubic,
-                                ));
+                        if (statusLabelWidget != null) ...[
+                          const SizedBox(width: 12),
+                          AnimatedSwitcher(
+                            duration: const Duration(milliseconds: 240),
+                            switchInCurve: Curves.easeOutCubic,
+                            switchOutCurve: Curves.easeInCubic,
+                            transitionBuilder: (childWidget, animation) {
+                              final offsetAnimation = Tween<Offset>(
+                                begin: const Offset(0, 0.3),
+                                end: Offset.zero,
+                              ).animate(CurvedAnimation(
+                                parent: animation,
+                                curve: Curves.easeOutCubic,
+                              ));
 
-                                return SlideTransition(
-                                  position: offsetAnimation,
-                                  child: FadeTransition(
-                                    opacity: animation,
-                                    child: childWidget,
-                                  ),
-                                );
-                              },
-                              layoutBuilder: (currentChild, previousChildren) => Stack(
-                                  alignment: Alignment.center,
-                                  children: [
-                                    ...previousChildren,
-                                    if (currentChild != null) currentChild,
-                                  ],
+                              return SlideTransition(
+                                position: offsetAnimation,
+                                child: FadeTransition(
+                                  opacity: animation,
+                                  child: childWidget,
                                 ),
-                              child: child,
+                              );
+                            },
+                            layoutBuilder: (currentChild, previousChildren) =>
+                                Stack(
+                              alignment: Alignment.center,
+                              children: [
+                                ...previousChildren,
+                                if (currentChild != null) currentChild,
+                              ],
                             ),
-                          ],
+                            child: statusLabelWidget,
+                          ),
                         ],
-                      ),
+                      ],
                     ),
                   ),
                 ),
               ),
             ),
           ),
-        child: Consumer(
-          builder: (_, ref, __) {
-            final runTime = ref.watch(runTimeProvider);
-            if (runTime != null) {
-              final text = utils.getTimeText(runTime);
-              return Text(
-                text,
-                key: ValueKey('time_$text'),
-                style: context.textTheme.titleMedium?.toSoftBold.copyWith(
-                  color: Colors.white,
-                ),
-              );
-            } else {
-              return const SizedBox.shrink(
-                key: ValueKey('empty'),
-              );
-            }
-          },
         ),
       ),
     );

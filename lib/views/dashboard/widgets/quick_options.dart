@@ -1,12 +1,14 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flclashx/common/common.dart';
+import 'package:flclashx/providers/app.dart';
 import 'package:flclashx/providers/config.dart';
 import 'package:flclashx/providers/tun.dart';
 import 'package:flclashx/state.dart';
+import 'package:flclashx/views/config/network.dart';
 import 'package:flclashx/views/tools/health_check_view.dart';
 import 'package:flclashx/widgets/tun_status.dart';
-import 'package:flclashx/views/config/network.dart';
 import 'package:flclashx/widgets/widgets.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -54,11 +56,26 @@ class TUNButton extends StatelessWidget {
                 flex: 1,
                 child: Platform.isWindows ? Consumer(builder: (_, ref, __) {
                   final runtime = ref.watch(tunRuntimeProvider);
-                  final label = tunStatusLabel(runtime,
-                    waiting: runtime.desiredEnabled && globalState.appState.runTime == null);
-                  return Tooltip(message: label, child: Text(
-                    label, maxLines: 2, overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context).textTheme.titleSmall?.adjustSize(-2).toLight));
+                  final isStopped = ref.watch(
+                    runTimeProvider.select((state) => state == null),
+                  );
+                  final label = tunStatusLabel(
+                    runtime,
+                    waiting: runtime.desiredEnabled && isStopped,
+                  );
+                  return Tooltip(
+                    message: label,
+                    child: Text(
+                      label,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context)
+                          .textTheme
+                          .titleSmall
+                          ?.adjustSize(-2)
+                          .toLight,
+                    ),
+                  );
                 }) : TooltipText(
                   text: Text(
                     appLocalizations.options,
@@ -109,6 +126,26 @@ class TUNButton extends StatelessWidget {
 class SystemProxyButton extends StatelessWidget {
   const SystemProxyButton({super.key});
 
+  static String _statusLabel({
+    required bool configured,
+    required bool isStart,
+    required bool? pending,
+  }) {
+    if (pending != null && !pending && isStart && configured) {
+      return appLocalizations.tunStatusStopping;
+    }
+    if ((pending ?? false) && configured) {
+      return appLocalizations.tunStatusStarting;
+    }
+    if (isStart && configured) {
+      return appLocalizations.tunStatusOn;
+    }
+    if (!isStart && configured) {
+      return appLocalizations.tunStatusWaiting;
+    }
+    return appLocalizations.tunStatusOff;
+  }
+
   @override
   Widget build(BuildContext context) => SizedBox(
       height: getWidgetHeight(1),
@@ -140,43 +177,94 @@ class SystemProxyButton extends StatelessWidget {
             bottom: 8,
             right: 8,
           ),
-          child: Row(
-            mainAxisSize: MainAxisSize.max,
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Flexible(
-                flex: 1,
-                child: TooltipText(
-                  text: Text(
-                    appLocalizations.options,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context)
-                        .textTheme
-                        .titleSmall
-                        ?.adjustSize(-2)
-                        .toLight,
+          child: Consumer(
+            builder: (_, ref, __) {
+              final systemProxy = ref.watch(
+                networkSettingProvider.select((state) => state.systemProxy),
+              );
+              final mixedPort = ref.watch(
+                patchClashConfigProvider.select((state) => state.mixedPort),
+              );
+              final isStart = ref.watch(
+                runTimeProvider.select((state) => state != null),
+              );
+              final pending = ref.watch(statusSwitchPendingProvider);
+              final configured = systemProxy && mixedPort > 0;
+              final isStopping = pending != null && !pending;
+              final isActive = isStart && configured && !isStopping;
+              final isWaiting = !isStart && configured && pending == null;
+              final label = _statusLabel(
+                configured: configured,
+                isStart: isStart,
+                pending: pending,
+              );
+
+              return Row(
+                mainAxisSize: MainAxisSize.max,
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Flexible(
+                    flex: 1,
+                    child: Tooltip(
+                      message: label,
+                      child: Text(
+                        label,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context)
+                            .textTheme
+                            .titleSmall
+                            ?.adjustSize(-2)
+                            .toLight,
+                      ),
+                    ),
                   ),
-                ),
-              ),
-              Consumer(
-                builder: (_, ref, __) {
-                  final systemProxy = ref.watch(networkSettingProvider
-                      .select((state) => state.systemProxy));
-                  return Switch(
-                    materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                    value: systemProxy,
-                    onChanged: (value) {
-                      ref.read(networkSettingProvider.notifier).updateState(
-                            (state) => state.copyWith(
-                              systemProxy: value,
-                            ),
-                          );
-                    },
-                  );
-                },
-              )
-            ],
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (isWaiting)
+                        IconButton(
+                          tooltip: appLocalizations.tunDisableAction,
+                          onPressed: () {
+                            ref
+                                .read(networkSettingProvider.notifier)
+                                .updateState(
+                                  (state) =>
+                                      state.copyWith(systemProxy: false),
+                                );
+                          },
+                          icon: const Icon(Icons.close),
+                        ),
+                      Semantics(
+                        label: label,
+                        child: Switch(
+                          materialTapTargetSize:
+                              MaterialTapTargetSize.shrinkWrap,
+                          value: isActive,
+                          onChanged: pending != null
+                              ? null
+                              : (value) {
+                                  ref
+                                      .read(networkSettingProvider.notifier)
+                                      .updateState(
+                                        (state) => state.copyWith(
+                                          systemProxy: value,
+                                        ),
+                                      );
+                                  if (value && !isStart) {
+                                    unawaited(
+                                      globalState.appController
+                                          .updateStatus(true),
+                                    );
+                                  }
+                                },
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              );
+            },
           ),
         ),
       ),

@@ -131,6 +131,30 @@ class TunRuntimeController extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Revokes pending enabling work without altering [desiredEnabled] and keeps
+  /// [operation] in [TunOperation.disabling] until [endProxyStop] completes so
+  /// epoch invalidation during teardown never flashes `"状态未知"`.
+  int beginProxyStop() {
+    final intent = ++_intent;
+    if (observed != TunObservedState.off ||
+        operation == TunOperation.enabling ||
+        operation == TunOperation.disabling) {
+      operation = TunOperation.disabling;
+    } else {
+      operation = TunOperation.idle;
+    }
+    notifyListeners();
+    return intent;
+  }
+
+  void endProxyStop(int intent) {
+    if (_closing || intent != _intent) return;
+    if (operation == TunOperation.disabling) {
+      operation = TunOperation.idle;
+      notifyListeners();
+    }
+  }
+
   void invalidate([String? reason]) {
     _observationEpoch++;
     _status = null;

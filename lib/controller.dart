@@ -29,6 +29,7 @@ import 'common/tun_runtime.dart';
 import 'common/ui_activity.dart';
 import 'common/windows_tun_prepare.dart';
 import 'common/windows_tun_startup.dart';
+import 'manager/proxy_manager.dart';
 import 'models/models.dart';
 import 'plugins/vpn.dart';
 import 'providers/node_overview.dart';
@@ -39,14 +40,17 @@ class AppController {
     WindowsTunStartupEffects? windowsStartupEffects,
     TunRuntimeController? tunRuntimeController,
     Future<DateTime?> Function()? nativeRunTimeProbe,
+    Future<void> Function()? flushSystemDnsCache,
     Duration tunSettleDelay = const Duration(milliseconds: 500),
   }) : _ref = ref,
        _windowsStartupEffects = windowsStartupEffects,
        _nativeRunTimeProbe = nativeRunTimeProbe,
+       _flushSystemDnsCacheOverride = flushSystemDnsCache,
        _tunSettleDelay = tunSettleDelay,
        _tunRuntime = tunRuntimeController ?? tunRuntime;
   final WindowsTunStartupEffects? _windowsStartupEffects;
   final Future<DateTime?> Function()? _nativeRunTimeProbe;
+  final Future<void> Function()? _flushSystemDnsCacheOverride;
   final Duration _tunSettleDelay;
   final TunRuntimeController _tunRuntime;
   Future<void>? _runtimeInitialization;
@@ -96,6 +100,24 @@ class AppController {
       this,
       syncProviderSettings: syncProviderSettings,
     );
+  }
+
+  Future<void> _flushSystemDnsCache() async {
+    final override = _flushSystemDnsCacheOverride;
+    if (override != null) {
+      await override();
+      return;
+    }
+    if (Platform.isWindows && _windowsStartupEffects == null) {
+      windows?.tryFlushDnsResolverCache();
+    }
+  }
+
+  void _setStatusSwitchPending(bool? pending) {
+    if (!context.mounted) return;
+    try {
+      _ref.read(statusSwitchPendingProvider.notifier).state = pending;
+    } catch (_) {}
   }
 
   Duration _nextTunObservationDelay() {
@@ -709,6 +731,7 @@ class AppController {
       if (status.observed != TunObservedState.off) {
         throw const TunFailure('closeFailed');
       }
+      await _flushSystemDnsCache();
     }, writeIntent: (value) {
       _ref.read(patchClashConfigProvider.notifier).updateState(
         (state) => state.copyWith.tun(enable: value));
@@ -866,13 +889,18 @@ class AppController {
 
   Future<void> updateStatus(bool isStart) {
     final windowsTun = Platform.isWindows || _windowsStartupEffects != null;
+    int? stopIntent;
+    final tunMayHaveCachedFakeIp = windowsTun &&
+        (_tunRuntime.observed != TunObservedState.off ||
+            _tunRuntime.desiredEnabled);
     if (windowsTun) {
       _pendingWindowsProxyStop = !isStart;
       if (!isStart) {
-        _tunRuntime.cancelPendingIntent();
+        stopIntent = _tunRuntime.beginProxyStop();
       }
     }
     final epoch = ++_statusEpoch;
+    _setStatusSwitchPending(isStart);
     final op = _statusOp.then((_) async {
       try {
         // Superseded by a newer toggle (rapid double-tap, start-then-stop): make
@@ -885,26 +913,77 @@ class AppController {
               if (epoch != _statusEpoch) return;
               _tunRuntime.invalidate();
               if (isStart) _applyingWindowsConfigDepth++;
+              var observedAfterStop = false;
               try {
                 if (!isStart) {
-                  await _startupEffects().stopProxy();
+                  await systemProxyCoordinator.disarmBeforeStop();
+                  try {
+                    final effects = _startupEffects();
+                    await effects.stopProxy();
+                    var status = await refreshWindowsTunStatus(fresh: true);
+                    observedAfterStop = true;
+                    if (epoch == _statusEpoch &&
+                        status?.errorCode == 'closeFailed') {
+                      effects.log(
+                        'TUN reported closeFailed on stop; restarting Core via Helper to reclaim adapter handle',
+                      );
+                      try {
+                        await effects.restartCore();
+                        if (epoch == _statusEpoch) {
+                          await effects.initialize(
+                            () => epoch == _statusEpoch,
+                          );
+                        }
+                      } catch (error) {
+                        effects.log('TUN stop Core reclaim failed: $error');
+                      }
+                      status = await refreshWindowsTunStatus(fresh: true);
+                      if (epoch == _statusEpoch &&
+                          (status?.errorCode == 'closeFailed' ||
+                              status?.observed == TunObservedState.on)) {
+                        _tunRuntime.fail(status?.errorCode ?? 'closeFailed');
+                      }
+                    }
+                    if (tunMayHaveCachedFakeIp) {
+                      await _flushSystemDnsCache();
+                    }
+                  } finally {
+                    systemProxyCoordinator.finishStopDisarm();
+                  }
                 } else {
                   await _updateStatus(true);
                 }
               } finally {
                 if (isStart) _applyingWindowsConfigDepth--;
-                await refreshWindowsTunStatus(fresh: true);
+                if (!observedAfterStop) {
+                  await refreshWindowsTunStatus(fresh: true);
+                }
               }
             });
           } else {
-            await _updateStatus(isStart);
+            if (!isStart) {
+              await systemProxyCoordinator.disarmBeforeStop();
+              try {
+                await _updateStatus(false);
+              } finally {
+                systemProxyCoordinator.finishStopDisarm();
+              }
+            } else {
+              await _updateStatus(true);
+            }
           }
         } finally {
           _statusOpInFlight = false;
         }
       } finally {
-        if (windowsTun && !isStart && epoch == _statusEpoch) {
-          _pendingWindowsProxyStop = false;
+        if (stopIntent != null) {
+          _tunRuntime.endProxyStop(stopIntent);
+        }
+        if (epoch == _statusEpoch) {
+          if (windowsTun && !isStart) {
+            _pendingWindowsProxyStop = false;
+          }
+          _setStatusSwitchPending(null);
         }
       }
     });
@@ -915,9 +994,8 @@ class AppController {
   }
 
   Future<void> _updateStatus(bool isStart) async {
-    await StatusBarManager.updateIcon(isConnected: isStart);
-
     if (isStart) {
+      await StatusBarManager.updateIcon(isConnected: true);
       if (Platform.isWindows && clashService?.usesAgent == true &&
           clashService?.agentCoreReady != true) {
         await clashService!.recoverCoreForUser();
@@ -985,9 +1063,11 @@ class AppController {
       }
       applyProfileDebounce();
     } else {
+      await systemProxyCoordinator.disarmBeforeStop();
       detectionState.notifyRoutingChanged();
       stopRunTimeTimer();
       await globalState.handleStop();
+      await StatusBarManager.updateIcon(isConnected: false);
       _windowsCoreRestoreNeedsListener = false;
       if (_hasAppliedWindowsProfile) {
         _needsWindowsCoreRestore = false;
@@ -2357,6 +2437,7 @@ class AppController {
 
   Future<void> _handleExit() async {
     _stopTunObservation();
+    stopRunTimeTimer();
     // Bound the cleanup instead of pre-arming a 300ms hard-exit timer. On macOS the
     // DNS/proxy teardown is several slow networksetup/route subprocesses that easily
     // overrun 300ms, so the old timer fired mid-cleanup and exit(0) skipped the DNS
@@ -2373,7 +2454,21 @@ class AppController {
             await system.setMacOSDns(true);
           } catch (_) {}
           try {
-            await proxy?.stopProxy();
+            if (systemProxyCoordinator.isAttached) {
+              await systemProxyCoordinator.disarmBeforeStop();
+            } else {
+              await proxy?.stopProxy();
+            }
+          } catch (_) {}
+          try {
+            // Gracefully drain active connections, tear down Wintun/routes, and
+            // persist Fake-IP state BEFORE shutdown() hard-kills FlClashCore.exe.
+            await clashCore
+                .stopListener()
+                .timeout(const Duration(seconds: 3));
+          } catch (_) {}
+          try {
+            await _flushSystemDnsCache();
           } catch (_) {}
           try {
             await clashCore.shutdown();
@@ -2385,6 +2480,7 @@ class AppController {
         Future.delayed(const Duration(seconds: 8)),
       ]);
     } finally {
+      systemProxyCoordinator.finishStopDisarm();
       system.exit();
     }
   }

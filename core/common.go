@@ -297,6 +297,7 @@ func updateListeners() {
 	listeners := inboundListenersWithStrictLocked()
 	general := currentConfig.General
 	listener.PatchInboundListeners(listeners, tunnel.Tunnel, true)
+	listener.PatchTunnel(currentConfig.Tunnels, tunnel.Tunnel)
 	listener.SetAllowLan(general.AllowLan)
 	inbound.SetSkipAuthPrefixes(general.SkipAuthPrefixes)
 	inbound.SetAllowedIPs(general.LanAllowedIPs)
@@ -316,9 +317,13 @@ func updateListeners() {
 	}
 }
 
-// stopListeners stops all active listeners
+// stopListeners stops all active listeners, drains tracked active connections
+// while the TUN stack is still alive so local sockets receive clean FIN/RST
+// instead of hanging, and tears down TUN in a single deterministic pass.
 func stopListeners() {
 	clearStrictIngressForConfigChangeLocked()
+	listener.PatchInboundListeners(map[string]constant.InboundListener{}, tunnel.Tunnel, true)
+	listener.PatchTunnel(nil, tunnel.Tunnel)
 	listener.ReCreateHTTP(0, tunnel.Tunnel)
 	listener.ReCreateSocks(0, tunnel.Tunnel)
 	listener.ReCreateRedir(0, tunnel.Tunnel)
@@ -327,10 +332,13 @@ func stopListeners() {
 	listener.ReCreateShadowSocks("", tunnel.Tunnel)
 	listener.ReCreateVmess("", tunnel.Tunnel)
 	listener.ReCreateTuic(LC.TuicServer{}, tunnel.Tunnel)
-	if runtime.GOOS != "android" {
-		listener.ReCreateTun(LC.Tun{}, tunnel.Tunnel)
-	}
+	// Drain tracked TCP/UDP connections and upstream DNS pools BEFORE closing
+	// Wintun/gVisor so active packet pumps release cleanly without closeFailed.
+	closeConnections()
+	resolver.ResetConnection()
 	listener.Cleanup()
+	closeConnections()
+	resolver.StoreFakePoolState()
 }
 
 func patchSelectGroup(mapping map[string]string) {

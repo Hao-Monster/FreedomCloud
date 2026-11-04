@@ -1042,7 +1042,9 @@ class _ConnectButton extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final colorScheme = context.colorScheme;
     final runTime = ref.watch(runTimeProvider);
+    final pending = ref.watch(statusSwitchPendingProvider);
     final isStart = runTime != null;
+    final isBusy = pending != null;
 
     final Color bg;
     final Color fg;
@@ -1060,7 +1062,7 @@ class _ConnectButton extends ConsumerWidget {
     return _FocusableTap(
       autofocus: true,
       borderRadius: 24,
-      onTap: isReady
+      onTap: (isReady && !isBusy)
           ? () {
               if (Platform.isAndroid) {
                 HapticFeedback.mediumImpact();
@@ -1080,18 +1082,41 @@ class _ConnectButton extends ConsumerWidget {
               ? Border.all(color: colorScheme.primary.withValues(alpha: 0.4))
               : null,
         ),
-        // Running: uptime only. Stopped: just a Play glyph (no "Start" label).
-        child: isStart
-            ? Text(
-                utils.getTimeText(runTime),
-                style: context.textTheme.titleSmall?.copyWith(
-                  color: fg,
-                  fontWeight: FontWeight.w700,
-                  letterSpacing: 0.5,
-                  fontFamily: FontFamily.jetBrainsMono.value,
-                ),
+        child: isBusy
+            ? Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2.2,
+                      color: fg,
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Text(
+                    pending
+                        ? appLocalizations.tunStatusStarting
+                        : appLocalizations.tunStatusStopping,
+                    style: context.textTheme.titleSmall?.copyWith(
+                      color: fg,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
               )
-            : Icon(Icons.play_arrow_rounded, size: 30, color: fg),
+            : isStart
+                ? Text(
+                    utils.getTimeText(runTime),
+                    style: context.textTheme.titleSmall?.copyWith(
+                      color: fg,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 0.5,
+                      fontFamily: FontFamily.jetBrainsMono.value,
+                    ),
+                  )
+                : Icon(Icons.play_arrow_rounded, size: 30, color: fg),
       ),
     );
   }
