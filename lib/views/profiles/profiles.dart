@@ -90,6 +90,31 @@ class _ProfilesViewState extends State<ProfilesView> with PageMixin {
           icon: const Icon(Icons.sync),
         ),
         IconButton(
+          key: const ValueKey('profiles-global-override-button'),
+          tooltip: appLocalizations.globalOverride,
+          onPressed: () {
+            showExtend(
+              context,
+              builder: (_, type) => const GlobalOverrideView(),
+            );
+          },
+          icon: Consumer(
+            builder: (context, ref, __) {
+              final hasActiveGlobalOverride = ref.watch(
+                globalOverrideProvider.select(
+                  (state) => state.enable && state.runningRule.isNotEmpty,
+                ),
+              );
+              return Icon(
+                Icons.public,
+                color: hasActiveGlobalOverride
+                    ? context.colorScheme.primary
+                    : null,
+              );
+            },
+          ),
+        ),
+        IconButton(
           tooltip: appLocalizations.script,
           onPressed: () {
             showExtend(

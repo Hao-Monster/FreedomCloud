@@ -33,6 +33,7 @@ const defaultBypassDomain = [
 const defaultAppSettingProps = AppSettingProps();
 const defaultVpnProps = VpnProps();
 const defaultNetworkProps = NetworkProps();
+const defaultGlobalOverrideData = OverrideData(enable: true);
 const defaultProxiesStyle = ProxiesStyle();
 const defaultWindowProps = WindowProps();
 const defaultAccessControl = AccessControl();
@@ -213,6 +214,9 @@ class NetworkProps with _$NetworkProps {
     @Default(false) bool systemProxy,
     @Default(defaultBypassDomain) List<String> bypassDomain,
     @Default(RouteMode.config) RouteMode routeMode,
+    @JsonKey(unknownEnumValue: LocalSplitMode.auto)
+    @Default(LocalSplitMode.auto)
+    LocalSplitMode localSplitMode,
     @Default(true) bool autoSetSystemDns,
   }) = _NetworkProps;
 
@@ -322,6 +326,7 @@ class Config with _$Config {
     @Default(defaultWindowProps) WindowProps windowProps,
     @Default(defaultClashConfig) ClashConfig patchClashConfig,
     @Default(ScriptProps()) ScriptProps scriptProps,
+    @Default(defaultGlobalOverrideData) OverrideData globalOverrideData,
   }) = _Config;
 
   factory Config.fromJson(Map<String, Object?> json) => _$ConfigFromJson(json);
@@ -421,6 +426,13 @@ class Config with _$Config {
             else
               p,
         ];
+      }
+    } catch (_) {}
+
+    try {
+      final globalOverride = normalizedJson["globalOverrideData"];
+      if (globalOverride != null && globalOverride is! Map) {
+        normalizedJson.remove("globalOverrideData");
       }
     } catch (_) {}
 

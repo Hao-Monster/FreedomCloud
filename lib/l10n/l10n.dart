@@ -7818,6 +7818,101 @@ class AppLocalizations {
       args: [],
     );
   }
+
+  /// `Global Rule Override`
+  String get globalOverride {
+    return Intl.message(
+      'Global Rule Override',
+      name: 'globalOverride',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Persists across all profiles without re-editing on switch or update`
+  String get globalOverrideDesc {
+    return Intl.message(
+      'Persists across all profiles without re-editing on switch or update',
+      name: 'globalOverrideDesc',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Enable Global Override`
+  String get enableGlobalOverride {
+    return Intl.message(
+      'Enable Global Override',
+      name: 'enableGlobalOverride',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Default Proxy (Auto-adapt)`
+  String get defaultProxyAutoTarget {
+    return Intl.message(
+      'Default Proxy (Auto-adapt)',
+      name: 'defaultProxyAutoTarget',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Domestic & LAN Local Split`
+  String get localSplitMode {
+    return Intl.message(
+      'Domestic & LAN Local Split',
+      name: 'localSplitMode',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Automatically bypass domestic & LAN traffic when subscription lacks routing rules`
+  String get localSplitModeDesc {
+    return Intl.message(
+      'Automatically bypass domestic & LAN traffic when subscription lacks routing rules',
+      name: 'localSplitModeDesc',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Smart Bare-Profile Detection (Auto)`
+  String get localSplitMode_auto {
+    return Intl.message(
+      'Smart Bare-Profile Detection (Auto)',
+      name: 'localSplitMode_auto',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Always Add Domestic Direct`
+  String get localSplitMode_always {
+    return Intl.message(
+      'Always Add Domestic Direct',
+      name: 'localSplitMode_always',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Off`
+  String get localSplitMode_off {
+    return Intl.message('Off', name: 'localSplitMode_off', desc: '', args: []);
+  }
+
+  /// `Rule changes auto-save and hot-reload immediately`
+  String get overrideAutoSavedHint {
+    return Intl.message(
+      'Rule changes auto-save and hot-reload immediately',
+      name: 'overrideAutoSavedHint',
+      desc: '',
+      args: [],
+    );
+  }
 }
 
 class AppLocalizationDelegate extends LocalizationsDelegate<AppLocalizations> {

@@ -247,6 +247,10 @@ _$NetworkPropsImpl _$$NetworkPropsImplFromJson(Map<String, dynamic> json) =>
           defaultBypassDomain,
       routeMode: $enumDecodeNullable(_$RouteModeEnumMap, json['routeMode']) ??
           RouteMode.config,
+      localSplitMode: $enumDecodeNullable(
+              _$LocalSplitModeEnumMap, json['localSplitMode'],
+              unknownValue: LocalSplitMode.auto) ??
+          LocalSplitMode.auto,
       autoSetSystemDns: json['autoSetSystemDns'] as bool? ?? true,
     );
 
@@ -254,13 +258,20 @@ Map<String, dynamic> _$$NetworkPropsImplToJson(_$NetworkPropsImpl instance) =>
     <String, dynamic>{
       'systemProxy': instance.systemProxy,
       'bypassDomain': instance.bypassDomain,
-      'routeMode': _$RouteModeEnumMap[instance.routeMode]!,
+            'routeMode': _$RouteModeEnumMap[instance.routeMode]!,
+      'localSplitMode': _$LocalSplitModeEnumMap[instance.localSplitMode]!,
       'autoSetSystemDns': instance.autoSetSystemDns,
     };
 
 const _$RouteModeEnumMap = {
   RouteMode.bypassPrivate: 'bypassPrivate',
   RouteMode.config: 'config',
+};
+
+const _$LocalSplitModeEnumMap = {
+  LocalSplitMode.auto: 'auto',
+  LocalSplitMode.always: 'always',
+  LocalSplitMode.off: 'off',
 };
 
 _$ProxiesStyleImpl _$$ProxiesStyleImplFromJson(Map<String, dynamic> json) =>
@@ -440,6 +451,10 @@ _$ConfigImpl _$$ConfigImplFromJson(Map<String, dynamic> json) => _$ConfigImpl(
       scriptProps: json['scriptProps'] == null
           ? const ScriptProps()
           : ScriptProps.fromJson(json['scriptProps'] as Map<String, dynamic>),
+      globalOverrideData: json['globalOverrideData'] == null
+          ? defaultGlobalOverrideData
+          : OverrideData.fromJson(
+              json['globalOverrideData'] as Map<String, dynamic>),
     );
 
 Map<String, dynamic> _$$ConfigImplToJson(_$ConfigImpl instance) =>
@@ -456,5 +471,6 @@ Map<String, dynamic> _$$ConfigImplToJson(_$ConfigImpl instance) =>
       'proxiesStyle': instance.proxiesStyle,
       'windowProps': instance.windowProps,
       'patchClashConfig': instance.patchClashConfig,
-      'scriptProps': instance.scriptProps,
+            'scriptProps': instance.scriptProps,
+      'globalOverrideData': instance.globalOverrideData,
     };

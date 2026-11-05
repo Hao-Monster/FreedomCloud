@@ -1162,5 +1162,15 @@
     }
   },
   "healthVerdictCancelledTitle": "健康检查已取消",
-  "healthDetailCancelled": "已取消"
+  "healthDetailCancelled": "已取消",
+  "globalOverride": "全局规则覆写",
+  "globalOverrideDesc": "跨订阅配置持久生效，切换或更新订阅无需重复编辑",
+  "enableGlobalOverride": "启用全局规则覆写",
+  "defaultProxyAutoTarget": "默认代理 (自动适配各配置)",
+  "localSplitMode": "国内与局域网智能分流",
+  "localSplitModeDesc": "当订阅未下发分流规则（裸配置）时自动补充国内直连与局域网绕过",
+  "localSplitMode_auto": "智能识别裸配置 (自动)",
+  "localSplitMode_always": "始终补充国内直连",
+  "localSplitMode_off": "关闭",
+  "overrideAutoSavedHint": "规则变更自动保存并即时热重载生效"
 }

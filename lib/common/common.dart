@@ -41,6 +41,7 @@ export 'protocol.dart';
 export 'proxy.dart';
 export 'render.dart';
 export 'request.dart';
+export 'rule_compiler.dart';
 export 'scroll.dart';
 export 'statusbar.dart';
 export 'string.dart';

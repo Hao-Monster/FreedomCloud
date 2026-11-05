@@ -1922,10 +1922,19 @@ class AppController {
 
   Future<void> setupClashConfig() async {
     final commonScaffoldState = globalState.homeScaffoldKey.currentState;
-    if (commonScaffoldState?.mounted != true) return;
-    await commonScaffoldState?.loadingRun(() async {
+    if (commonScaffoldState?.mounted == true) {
+      await commonScaffoldState!.loadingRun(() async {
+        await _setupClashConfig();
+      });
+    } else {
+      if (!_runtimeInitialized && !_ref.read(initProvider)) {
+        return;
+      }
       await _setupClashConfig();
-    });
+    }
+    detectionState.notifyRoutingChanged();
+    addCheckIpNumDebounce();
+    unawaited(_persistColdStartParams());
   }
 
   Future<void> _setupClashConfig() async {
@@ -3766,6 +3775,8 @@ class AppController {
       _ref.read(proxiesStyleSettingProvider.notifier).value =
           config.proxiesStyle;
       _ref.read(overrideDnsProvider.notifier).value = config.overrideDns;
+      _ref.read(globalOverrideProvider.notifier).value =
+          config.globalOverrideData;
       _ref.read(networkSettingProvider.notifier).value = config.networkProps;
       _ref.read(hotKeyActionsProvider.notifier).value = config.hotKeyActions;
       _ref.read(scriptStateProvider.notifier).value = config.scriptProps;

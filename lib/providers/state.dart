@@ -30,6 +30,7 @@ Config configState(Ref ref) {
   final hotKeyActions = ref.watch(hotKeyActionsProvider);
   final dav = ref.watch(appDAVSettingProvider);
   final windowProps = ref.watch(windowSettingProvider);
+  final globalOverrideData = ref.watch(globalOverrideProvider);
   return Config(
     dav: dav,
     windowProps: windowProps,
@@ -44,6 +45,7 @@ Config configState(Ref ref) {
     appSetting: appSetting,
     themeProps: themeProps,
     patchClashConfig: patchClashConfig,
+    globalOverrideData: globalOverrideData,
   );
 }
 
@@ -762,5 +764,31 @@ VM2<bool, bool> autoSetSystemDnsState(Ref ref) {
   return VM2(
     a: isStart ? realTunEnable : false,
     b: autoSetSystemDns,
+  );
+}
+
+
+@riverpod
+VM5<String?, OverrideData, OverrideData?, RouteMode, LocalSplitMode>
+    routingRuleSetup(Ref ref) {
+  final currentProfileId = ref.watch(currentProfileIdProvider);
+  final globalOverride = ref.watch(globalOverrideProvider);
+  final profileOverride = currentProfileId == null
+      ? null
+      : ref.watch(getProfileOverrideDataProvider(currentProfileId));
+  final vm2 = ref.watch(
+    networkSettingProvider.select(
+      (state) => VM2(
+        a: state.routeMode,
+        b: state.localSplitMode,
+      ),
+    ),
+  );
+  return VM5(
+    a: currentProfileId,
+    b: globalOverride,
+    c: profileOverride,
+    d: vm2.a,
+    e: vm2.b,
   );
 }

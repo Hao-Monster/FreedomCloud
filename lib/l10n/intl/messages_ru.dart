@@ -365,6 +365,9 @@ class MessageLookup extends MessageLookupByLibrary {
     "defaultNameserverDesc": MessageLookupByLibrary.simpleMessage(
       "Для разрешения DNS-сервера",
     ),
+    "defaultProxyAutoTarget": MessageLookupByLibrary.simpleMessage(
+      "Прокси по умолчанию (авто)",
+    ),
     "defaultSort": MessageLookupByLibrary.simpleMessage(
       "Сортировка по умолчанию",
     ),
@@ -413,6 +416,9 @@ class MessageLookup extends MessageLookupByLibrary {
     "edit": MessageLookupByLibrary.simpleMessage("Редактировать"),
     "emptyTip": m5,
     "en": MessageLookupByLibrary.simpleMessage("Английский"),
+    "enableGlobalOverride": MessageLookupByLibrary.simpleMessage(
+      "Включить глобальные правила",
+    ),
     "enableOverride": MessageLookupByLibrary.simpleMessage(
       "Включить переопределение",
     ),
@@ -491,6 +497,12 @@ class MessageLookup extends MessageLookupByLibrary {
       "Получить оригинальные правила",
     ),
     "global": MessageLookupByLibrary.simpleMessage("Глобальный"),
+    "globalOverride": MessageLookupByLibrary.simpleMessage(
+      "Глобальные правила",
+    ),
+    "globalOverrideDesc": MessageLookupByLibrary.simpleMessage(
+      "Действует для всех профилей без повторной настройки",
+    ),
     "go": MessageLookupByLibrary.simpleMessage("Перейти"),
     "goDownload": MessageLookupByLibrary.simpleMessage("Перейти к загрузке"),
     "goToSelected": MessageLookupByLibrary.simpleMessage("К выбранному"),
@@ -843,6 +855,19 @@ class MessageLookup extends MessageLookupByLibrary {
     "localRecoveryDesc": MessageLookupByLibrary.simpleMessage(
       "Восстановление данных из файла",
     ),
+    "localSplitMode": MessageLookupByLibrary.simpleMessage(
+      "Локальное разделение трафика",
+    ),
+    "localSplitModeDesc": MessageLookupByLibrary.simpleMessage(
+      "Автоматически направлять локальный трафик напрямую для голых подписок",
+    ),
+    "localSplitMode_always": MessageLookupByLibrary.simpleMessage(
+      "Всегда добавлять прямой маршрут",
+    ),
+    "localSplitMode_auto": MessageLookupByLibrary.simpleMessage(
+      "Автоопределение (Авто)",
+    ),
+    "localSplitMode_off": MessageLookupByLibrary.simpleMessage("Выкл"),
     "locations": MessageLookupByLibrary.simpleMessage("Локации"),
     "logLevel": MessageLookupByLibrary.simpleMessage("Уровень логов"),
     "logcat": MessageLookupByLibrary.simpleMessage("Журналирование"),
@@ -1132,6 +1157,9 @@ class MessageLookup extends MessageLookupByLibrary {
       "Режим исходящих подключений",
     ),
     "override": MessageLookupByLibrary.simpleMessage("Переопределение"),
+    "overrideAutoSavedHint": MessageLookupByLibrary.simpleMessage(
+      "Изменения сохраняются и применяются автоматически",
+    ),
     "overrideDesc": MessageLookupByLibrary.simpleMessage(
       "Переопределение конфигурации прокси",
     ),

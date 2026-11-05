@@ -1079,5 +1079,15 @@
     }
   },
   "healthVerdictCancelledTitle": "Проверка остановлена",
-  "healthDetailCancelled": "Отменено"
+  "healthDetailCancelled": "Отменено",
+  "globalOverride": "Глобальные правила",
+  "globalOverrideDesc": "Действует для всех профилей без повторной настройки",
+  "enableGlobalOverride": "Включить глобальные правила",
+  "defaultProxyAutoTarget": "Прокси по умолчанию (авто)",
+  "localSplitMode": "Локальное разделение трафика",
+  "localSplitModeDesc": "Автоматически направлять локальный трафик напрямую для голых подписок",
+  "localSplitMode_auto": "Автоопределение (Авто)",
+  "localSplitMode_always": "Всегда добавлять прямой маршрут",
+  "localSplitMode_off": "Выкл",
+  "overrideAutoSavedHint": "Изменения сохраняются и применяются автоматически"
 }

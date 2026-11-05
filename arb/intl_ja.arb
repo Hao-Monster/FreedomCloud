@@ -1028,5 +1028,15 @@
     }
   },
   "healthVerdictCancelledTitle": "ヘルスチェックはキャンセルされました",
-  "healthDetailCancelled": "キャンセル済み"
+  "healthDetailCancelled": "キャンセル済み",
+  "globalOverride": "グローバルルール上書き",
+  "globalOverrideDesc": "すべてのプロファイルで共通して適用されます",
+  "enableGlobalOverride": "グローバル上書きを有効化",
+  "defaultProxyAutoTarget": "デフォルトプロキシ (自動適応)",
+  "localSplitMode": "国内・LAN スマート振り分け",
+  "localSplitModeDesc": "購読に分流ルールがない場合、国内・LAN 直接接続を自動補完します",
+  "localSplitMode_auto": "裸設定を自動判定 (自動)",
+  "localSplitMode_always": "常に国内直接接続を追加",
+  "localSplitMode_off": "オフ",
+  "overrideAutoSavedHint": "変更は自動保存され即座に反映されます"
 }

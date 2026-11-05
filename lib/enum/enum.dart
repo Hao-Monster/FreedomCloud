@@ -245,6 +245,12 @@ enum RouteMode {
   config,
 }
 
+enum LocalSplitMode {
+  auto,
+  always,
+  off,
+}
+
 enum ActionMethod {
   configureStrictIngress,
   message,

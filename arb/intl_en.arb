@@ -1224,5 +1224,15 @@
     }
   },
   "healthVerdictCancelledTitle": "Health check cancelled",
-  "healthDetailCancelled": "Cancelled"
+  "healthDetailCancelled": "Cancelled",
+  "globalOverride": "Global Rule Override",
+  "globalOverrideDesc": "Persists across all profiles without re-editing on switch or update",
+  "enableGlobalOverride": "Enable Global Override",
+  "defaultProxyAutoTarget": "Default Proxy (Auto-adapt)",
+  "localSplitMode": "Domestic & LAN Local Split",
+  "localSplitModeDesc": "Automatically bypass domestic & LAN traffic when subscription lacks routing rules",
+  "localSplitMode_auto": "Smart Bare-Profile Detection (Auto)",
+  "localSplitMode_always": "Always Add Domestic Direct",
+  "localSplitMode_off": "Off",
+  "overrideAutoSavedHint": "Rule changes auto-save and hot-reload immediately"
 }

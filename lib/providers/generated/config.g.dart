@@ -209,5 +209,21 @@ final patchClashConfigProvider =
 );
 
 typedef _$PatchClashConfig = AutoDisposeNotifier<ClashConfig>;
+String _$globalOverrideHash() => r'a4e91c7b82f03d5e6192ab34c5d6e7f801234567';
+
+/// See also [GlobalOverride].
+@ProviderFor(GlobalOverride)
+final globalOverrideProvider =
+    AutoDisposeNotifierProvider<GlobalOverride, OverrideData>.internal(
+  GlobalOverride.new,
+  name: r'globalOverrideProvider',
+  debugGetCreateSourceHash: const bool.fromEnvironment('dart.vm.product')
+      ? null
+      : _$globalOverrideHash,
+  dependencies: null,
+  allTransitiveDependencies: null,
+);
+
+typedef _$GlobalOverride = AutoDisposeNotifier<OverrideData>;
 // ignore_for_file: type=lint
 // ignore_for_file: subtype_of_sealed_class, invalid_use_of_internal_member, invalid_use_of_visible_for_testing_member, deprecated_member_use_from_same_package

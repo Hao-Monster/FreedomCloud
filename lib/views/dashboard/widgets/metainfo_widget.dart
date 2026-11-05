@@ -660,8 +660,12 @@ class _MetainfoWidgetState extends ConsumerState<MetainfoWidget> {
       updatePolicyText = appLocalizations.nodeOverviewLocalProfile;
     }
 
+    final globalOverrideRulesCount = ref.watch(
+      globalOverrideProvider.select((state) => state.runningRule.length),
+    );
     final activeOverrideRulesCount =
-        currentProfile.overrideData.runningRule.length;
+        currentProfile.overrideData.runningRule.length +
+            globalOverrideRulesCount;
 
     final sub = currentProfile.subscriptionInfo;
     final allGroups = ref.watch(groupsProvider);

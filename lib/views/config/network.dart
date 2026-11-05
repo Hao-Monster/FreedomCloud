@@ -368,6 +368,45 @@ class BypassDomainItem extends StatelessWidget {
     );
 }
 
+String _localSplitModeText(LocalSplitMode mode) => switch (mode) {
+      LocalSplitMode.auto => appLocalizations.localSplitMode_auto,
+      LocalSplitMode.always => appLocalizations.localSplitMode_always,
+      LocalSplitMode.off => appLocalizations.localSplitMode_off,
+    };
+
+class LocalSplitModeItem extends ConsumerWidget {
+  const LocalSplitModeItem({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final localSplitMode = ref.watch(
+      networkSettingProvider.select((state) => state.localSplitMode),
+    );
+    return ListItem<LocalSplitMode>.options(
+      title: Text(appLocalizations.localSplitMode),
+      subtitle: Text(_localSplitModeText(localSplitMode)),
+      delegate: OptionsDelegate<LocalSplitMode>(
+        title: appLocalizations.localSplitMode,
+        options: LocalSplitMode.values,
+        onChanged: (value) {
+          if (value == null || value == localSplitMode) {
+            return;
+          }
+          ref.read(networkSettingProvider.notifier).updateState(
+                (state) => state.copyWith(
+                  localSplitMode: value,
+                ),
+              );
+          globalState.appController.setupClashConfigDebounce();
+          globalState.appController.savePreferencesDebounce();
+        },
+        textBuilder: _localSplitModeText,
+        value: localSplitMode,
+      ),
+    );
+  }
+}
+
 class RouteModeItem extends ConsumerWidget {
   const RouteModeItem({super.key});
 
@@ -472,10 +511,9 @@ final networkItems = [
       if (system.isDesktop) const TUNItem(),
       if (Platform.isMacOS) const AutoSetSystemDnsItem(),
       const TunStackItem(),
-      if (!system.isDesktop) ...[
-        const RouteModeItem(),
-        const RouteAddressItem(),
-      ]
+      const LocalSplitModeItem(),
+      const RouteModeItem(),
+      const RouteAddressItem(),
     ],
   ),
 ];

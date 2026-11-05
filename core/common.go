@@ -499,7 +499,11 @@ func updateConfig(params *UpdateParams) error {
 		general.UnifiedDelay = *params.UnifiedDelay
 		adapter.UnifiedDelay.Store(general.UnifiedDelay)
 	}
+	modeChanged := false
 	if params.Mode != nil {
+		if general.Mode != *params.Mode {
+			modeChanged = true
+		}
 		general.Mode = *params.Mode
 		tunnel.SetMode(general.Mode)
 	}
@@ -544,6 +548,9 @@ func updateConfig(params *UpdateParams) error {
 	}
 	if err := restoreRuntimeStrictIngress(); err != nil {
 		return errors.New("macOS strict ingress could not be restored after configuration update")
+	}
+	if modeChanged {
+		reconcileActiveConnectionsLocked(nil, currentConfig)
 	}
 	return nil
 }
@@ -628,6 +635,9 @@ func setupConfig(params *SetupParams) error {
 	}
 	appliedRawConfig = raw
 	runtimeControllerEnabled = controllerEnabled
+	if previous != nil {
+		reconcileActiveConnectionsLocked(previous, candidate)
+	}
 	computeMinHealthCheckInterval(params.Config)
 	resetHealthCheckForwarderState()
 	if params.TestURL != "" {

@@ -468,6 +468,9 @@ class MessageLookup extends MessageLookupByLibrary {
     "defaultNameserverDesc": MessageLookupByLibrary.simpleMessage(
       "For resolving DNS server",
     ),
+    "defaultProxyAutoTarget": MessageLookupByLibrary.simpleMessage(
+      "Default Proxy (Auto-adapt)",
+    ),
     "defaultSort": MessageLookupByLibrary.simpleMessage("Sort by default"),
     "defaultText": MessageLookupByLibrary.simpleMessage("Default"),
     "delay": MessageLookupByLibrary.simpleMessage("Delay"),
@@ -512,6 +515,9 @@ class MessageLookup extends MessageLookupByLibrary {
     "edit": MessageLookupByLibrary.simpleMessage("Edit"),
     "emptyTip": m5,
     "en": MessageLookupByLibrary.simpleMessage("English"),
+    "enableGlobalOverride": MessageLookupByLibrary.simpleMessage(
+      "Enable Global Override",
+    ),
     "enableOverride": MessageLookupByLibrary.simpleMessage("Enable override"),
     "entries": MessageLookupByLibrary.simpleMessage(" entries"),
     "errorTitle": MessageLookupByLibrary.simpleMessage("Error"),
@@ -580,6 +586,12 @@ class MessageLookup extends MessageLookupByLibrary {
       "Get original rules",
     ),
     "global": MessageLookupByLibrary.simpleMessage("Global"),
+    "globalOverride": MessageLookupByLibrary.simpleMessage(
+      "Global Rule Override",
+    ),
+    "globalOverrideDesc": MessageLookupByLibrary.simpleMessage(
+      "Persists across all profiles without re-editing on switch or update",
+    ),
     "go": MessageLookupByLibrary.simpleMessage("Go"),
     "goDownload": MessageLookupByLibrary.simpleMessage("Go to download"),
     "goToSelected": MessageLookupByLibrary.simpleMessage("Go to selected"),
@@ -926,6 +938,19 @@ class MessageLookup extends MessageLookupByLibrary {
     "localRecoveryDesc": MessageLookupByLibrary.simpleMessage(
       "Recovery data from file",
     ),
+    "localSplitMode": MessageLookupByLibrary.simpleMessage(
+      "Domestic & LAN Local Split",
+    ),
+    "localSplitModeDesc": MessageLookupByLibrary.simpleMessage(
+      "Automatically bypass domestic & LAN traffic when subscription lacks routing rules",
+    ),
+    "localSplitMode_always": MessageLookupByLibrary.simpleMessage(
+      "Always Add Domestic Direct",
+    ),
+    "localSplitMode_auto": MessageLookupByLibrary.simpleMessage(
+      "Smart Bare-Profile Detection (Auto)",
+    ),
+    "localSplitMode_off": MessageLookupByLibrary.simpleMessage("Off"),
     "locations": MessageLookupByLibrary.simpleMessage("Locations"),
     "logLevel": MessageLookupByLibrary.simpleMessage("LogLevel"),
     "logcat": MessageLookupByLibrary.simpleMessage("Logcat"),
@@ -1199,6 +1224,9 @@ class MessageLookup extends MessageLookupByLibrary {
     "otherContributors": MessageLookupByLibrary.simpleMessage("Contributors"),
     "outboundMode": MessageLookupByLibrary.simpleMessage("Outbound mode"),
     "override": MessageLookupByLibrary.simpleMessage("Override"),
+    "overrideAutoSavedHint": MessageLookupByLibrary.simpleMessage(
+      "Rule changes auto-save and hot-reload immediately",
+    ),
     "overrideDesc": MessageLookupByLibrary.simpleMessage(
       "Override Proxy related config",
     ),

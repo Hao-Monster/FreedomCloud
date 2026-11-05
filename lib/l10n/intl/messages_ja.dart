@@ -272,6 +272,9 @@ class MessageLookup extends MessageLookupByLibrary {
     "defaultNameserverDesc": MessageLookupByLibrary.simpleMessage(
       "DNSサーバーの解決用",
     ),
+    "defaultProxyAutoTarget": MessageLookupByLibrary.simpleMessage(
+      "デフォルトプロキシ (自動適応)",
+    ),
     "defaultSort": MessageLookupByLibrary.simpleMessage("デフォルト順"),
     "defaultText": MessageLookupByLibrary.simpleMessage("デフォルト"),
     "delay": MessageLookupByLibrary.simpleMessage("遅延"),
@@ -306,6 +309,9 @@ class MessageLookup extends MessageLookupByLibrary {
     "edit": MessageLookupByLibrary.simpleMessage("編集"),
     "emptyTip": m5,
     "en": MessageLookupByLibrary.simpleMessage("英語"),
+    "enableGlobalOverride": MessageLookupByLibrary.simpleMessage(
+      "グローバル上書きを有効化",
+    ),
     "enableOverride": MessageLookupByLibrary.simpleMessage("上書きを有効化"),
     "entries": MessageLookupByLibrary.simpleMessage(" エントリ"),
     "exclude": MessageLookupByLibrary.simpleMessage("最近のタスクから非表示"),
@@ -357,6 +363,10 @@ class MessageLookup extends MessageLookupByLibrary {
     "geoipCode": MessageLookupByLibrary.simpleMessage("GeoIPコード"),
     "getOriginRules": MessageLookupByLibrary.simpleMessage("元のルールを取得"),
     "global": MessageLookupByLibrary.simpleMessage("グローバル"),
+    "globalOverride": MessageLookupByLibrary.simpleMessage("グローバルルール上書き"),
+    "globalOverrideDesc": MessageLookupByLibrary.simpleMessage(
+      "すべてのプロファイルで共通して適用されます",
+    ),
     "go": MessageLookupByLibrary.simpleMessage("移動"),
     "goDownload": MessageLookupByLibrary.simpleMessage("ダウンロードへ"),
     "gratitude": MessageLookupByLibrary.simpleMessage("感謝"),
@@ -620,6 +630,17 @@ class MessageLookup extends MessageLookupByLibrary {
     "local": MessageLookupByLibrary.simpleMessage("ローカル"),
     "localBackupDesc": MessageLookupByLibrary.simpleMessage("ローカルにデータをバックアップ"),
     "localRecoveryDesc": MessageLookupByLibrary.simpleMessage("ファイルからデータを復元"),
+    "localSplitMode": MessageLookupByLibrary.simpleMessage("国内・LAN スマート振り分け"),
+    "localSplitModeDesc": MessageLookupByLibrary.simpleMessage(
+      "購読に分流ルールがない場合、国内・LAN 直接接続を自動補完します",
+    ),
+    "localSplitMode_always": MessageLookupByLibrary.simpleMessage(
+      "常に国内直接接続を追加",
+    ),
+    "localSplitMode_auto": MessageLookupByLibrary.simpleMessage(
+      "裸設定を自動判定 (自動)",
+    ),
+    "localSplitMode_off": MessageLookupByLibrary.simpleMessage("オフ"),
     "locations": MessageLookupByLibrary.simpleMessage("ロケーション"),
     "logLevel": MessageLookupByLibrary.simpleMessage("ログレベル"),
     "logcat": MessageLookupByLibrary.simpleMessage("ログキャット"),
@@ -850,6 +871,9 @@ class MessageLookup extends MessageLookupByLibrary {
     "otherContributors": MessageLookupByLibrary.simpleMessage("貢献者"),
     "outboundMode": MessageLookupByLibrary.simpleMessage("アウトバウンドモード"),
     "override": MessageLookupByLibrary.simpleMessage("上書き"),
+    "overrideAutoSavedHint": MessageLookupByLibrary.simpleMessage(
+      "変更は自動保存され即座に反映されます",
+    ),
     "overrideDesc": MessageLookupByLibrary.simpleMessage("プロキシ関連設定を上書き"),
     "overrideDns": MessageLookupByLibrary.simpleMessage("DNS上書き"),
     "overrideDnsDesc": MessageLookupByLibrary.simpleMessage(

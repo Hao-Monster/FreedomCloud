@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:ffi' show Pointer;
-import 'dart:io' show Platform;
+import 'dart:io' show File, Platform;
 
 import 'package:animations/animations.dart';
 import 'package:dio/dio.dart';
@@ -44,6 +44,7 @@ class GlobalState {
   Timer? timer;
   Timer? groupsUpdateTimer;
   late Config config;
+  CompiledRuleResult? lastCompiledRuleResult;
   late AppState _appState;
   bool _appStateInitialized = false;
   List<Group>? _groupsSnapshot;
@@ -900,20 +901,9 @@ class GlobalState {
         (rawConfig["dns"]["fake-ip-filter"] as Iterable?) ?? const [],
       );
     }
-    var rules = [];
-    if (rawConfig["rules"] != null) {
-      rules = rawConfig["rules"];
-    }
+    final rawRules = (rawConfig["rules"] as Iterable?) ?? const [];
     rawConfig.remove("rules");
 
-    final overrideData = profile.overrideData;
-    if (overrideData.enable && config.scriptProps.currentScript == null) {
-      if (overrideData.rule.type == OverrideRuleType.override) {
-        rules = overrideData.runningRule;
-      } else {
-        rules = [...overrideData.runningRule, ...rules];
-      }
-    }
     await perAppPolicyStore.ensureLoaded();
     var unavailablePerAppTargets = 0;
     // PROCESS-PATH rules are meaningful only when the core resolves process
@@ -924,21 +914,36 @@ class GlobalState {
         perAppPoliciesRequireProcessLookup(perAppPolicyStore.entries)) {
       rawConfig["find-process-mode"] = FindProcessMode.always.name;
     }
-    final effectiveRules = applyDesktopBypassPrivateRules(
-      rules.cast<Object?>(),
-      isDesktop: system.isDesktop,
+    final homeDirPath = await appPath.homeDirPath;
+    Future<bool> hasNonEmptyDataFile(String fileName) async {
+      try {
+        final file = File(p.join(homeDirPath, fileName));
+        return await file.exists() && await file.length() > 0;
+      } catch (_) {
+        return false;
+      }
+    }
+
+    final compiledRules = compileEffectiveRules(
+      rawProfileRules: rawRules,
+      ruleProviders: rawConfig["rule-providers"] is Map
+          ? rawConfig["rule-providers"] as Map<Object?, Object?>
+          : null,
+      proxyGroups: (rawConfig["proxy-groups"] as Iterable?) ?? const [],
+      proxies: (rawConfig["proxies"] as Iterable?) ?? const [],
+      perAppPolicies: perAppPolicyStore.entries,
+      globalOverrideData: config.globalOverrideData,
+      profileOverrideData: profile.overrideData,
+      scriptActive: config.scriptProps.currentScript != null,
+      localSplitMode: config.networkProps.localSplitMode,
       routeMode: config.networkProps.routeMode,
+      isDesktop: system.isDesktop,
+      hasGeoSite: await hasNonEmptyDataFile(geoSiteFileName),
+      hasGeoIp: await hasNonEmptyDataFile(mmdbFileName),
+      onUnavailablePerAppTarget: (_) => unavailablePerAppTargets++,
     );
-    rawConfig["rule"] = mergePerAppPolicyRules(
-      perAppPolicyStore.entries,
-      effectiveRules,
-      availableTargetGroups: {
-        GroupName.GLOBAL.name,
-        ...((rawConfig['proxy-groups'] as List?) ?? const [])
-          .whereType<Map>().map((group) => group['name']).whereType<String>(),
-      },
-      onUnavailableTarget: (_) => unavailablePerAppTargets++,
-    );
+    lastCompiledRuleResult = compiledRules;
+    rawConfig["rule"] = compiledRules.rules;
     if (unavailablePerAppTargets > 0) {
       connectionDiagnostics.log(
         '[ConnectionsDiag] perApp.compile status=blocked '

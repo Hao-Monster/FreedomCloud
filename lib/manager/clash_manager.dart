@@ -80,6 +80,12 @@ class _ClashContainerState extends ConsumerState<ClashManager>
         globalState.appController.handleChangeProfile();
       }
     });
+    ref.listenManual(routingRuleSetupProvider, (prev, next) {
+      if (prev != null && prev != next && prev.a == next.a) {
+        globalState.appController.setupClashConfigDebounce();
+        globalState.appController.savePreferencesDebounce();
+      }
+    });
     ref.listenManual(coreStateProvider, (prev, next) async {
       if (prev != next) {
         await clashCore.setState(next);
