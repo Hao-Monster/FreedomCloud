@@ -46,6 +46,8 @@ var (
 	proxyDescMu                 sync.RWMutex
 	proxyDescriptions           = map[string]string{}
 	pendingTunEnable            = false
+	currentRawListeners         []map[string]any
+	currentListenersClosed      = false
 	currentTestURL              = "https://www.gstatic.com/generate_204"
 	minHealthCheckInterval      = 5 * time.Second
 )
@@ -54,6 +56,32 @@ func applyRuntimeConfigLocked(cfg *config.Config, force bool) {
 	proxyStateMu.Lock()
 	defer proxyStateMu.Unlock()
 	applyRuntimeConfig(cfg, force)
+}
+
+func applyConfigForRuntimeStateLocked(cfg *config.Config) {
+	if cfg == nil || cfg.General == nil {
+		applyRuntimeConfigLocked(cfg, true)
+		return
+	}
+	effective := *cfg
+	general := *cfg.General
+	if runtime.GOOS == "android" || !isRunning {
+		general.Tun.Enable = false
+	}
+	if runtime.GOOS != "android" && !isRunning {
+		general.Port = 0
+		general.SocksPort = 0
+		general.RedirPort = 0
+		general.TProxyPort = 0
+		general.MixedPort = 0
+		general.ShadowSocksConfig = ""
+		general.VmessConfig = ""
+		general.TuicServer = LC.TuicServer{}
+		effective.Listeners = map[string]constant.InboundListener{}
+		effective.Tunnels = nil
+	}
+	effective.General = &general
+	applyRuntimeConfigLocked(&effective, true)
 }
 
 func controllerHasActiveEndpoint(cfg *config.Config, enabled bool) bool {
@@ -294,6 +322,22 @@ func updateListeners() {
 	if currentConfig == nil {
 		return
 	}
+	if currentListenersClosed && len(currentRawListeners) > 0 {
+		rebuilt := make(map[string]constant.InboundListener, len(currentRawListeners))
+		allParsed := true
+		for _, mapping := range currentRawListeners {
+			inboundListener, err := listener.ParseListener(mapping)
+			if err != nil {
+				allParsed = false
+				break
+			}
+			rebuilt[inboundListener.Name()] = inboundListener
+		}
+		if allParsed {
+			currentConfig.Listeners = rebuilt
+			currentListenersClosed = false
+		}
+	}
 	listeners := inboundListenersWithStrictLocked()
 	general := currentConfig.General
 	listener.PatchInboundListeners(listeners, tunnel.Tunnel, true)
@@ -323,6 +367,9 @@ func updateListeners() {
 func stopListeners() {
 	clearStrictIngressForConfigChangeLocked()
 	listener.PatchInboundListeners(map[string]constant.InboundListener{}, tunnel.Tunnel, true)
+	if currentConfig != nil && len(currentConfig.Listeners) > 0 {
+		currentListenersClosed = true
+	}
 	listener.PatchTunnel(nil, tunnel.Tunnel)
 	listener.ReCreateHTTP(0, tunnel.Tunnel)
 	listener.ReCreateSocks(0, tunnel.Tunnel)
@@ -532,18 +579,17 @@ func setupConfig(params *SetupParams) error {
 		return err
 	}
 	previous, previousPending, previousControllerEnabled := currentConfig, pendingTunEnable, runtimeControllerEnabled
+	previousRawListeners, previousListenersClosed := currentRawListeners, currentListenersClosed
 	previousDescriptions := currentProxyDescriptions()
 	candidateDescriptions := buildProxyDescriptionsFromRaw(params.Config)
 	clearRuntimeStrictIngress()
 	currentConfig = candidate
+	currentRawListeners = slices.Clone(params.Config.Listeners)
+	currentListenersClosed = false
 	candidatePending := candidate.General.Tun.Enable
-	if runtime.GOOS == "android" || !isRunning {
-		candidate.General.Tun.Enable = false
-	}
 	applyStart := time.Now()
-	applyRuntimeConfigLocked(candidate, true)
+	applyConfigForRuntimeStateLocked(candidate)
 	log.Infoln("[Setup] executor.ApplyConfig took %s", time.Since(applyStart))
-	candidate.General.Tun.Enable = candidatePending
 	pendingTunEnable = candidatePending
 	setProxyDescriptions(candidateDescriptions)
 	configuredFindProcessMode.Store(int32(candidate.General.FindProcessMode))
@@ -554,6 +600,7 @@ func setupConfig(params *SetupParams) error {
 	if restoreErr := restoreRuntimeStrictIngress(); restoreErr != nil {
 		clearRuntimeStrictIngress()
 		currentConfig, pendingTunEnable = previous, previousPending
+		currentRawListeners, currentListenersClosed = previousRawListeners, previousListenersClosed
 		if previous == nil {
 			// This is rollback after an apply failure, never an invalid-input
 			// fallback. A dormant config releases candidate DNS/NTP/providers and
@@ -569,12 +616,7 @@ func setupConfig(params *SetupParams) error {
 			syncEffectiveFindProcessMode()
 			return errors.Join(fmt.Errorf("initial configuration strict ingress failed: %w", restoreErr), cleanupErr)
 		}
-		previousTun := previous.General.Tun.Enable
-		if runtime.GOOS == "android" || !isRunning {
-			previous.General.Tun.Enable = false
-		}
-		applyRuntimeConfigLocked(previous, true)
-		previous.General.Tun.Enable = previousTun
+		applyConfigForRuntimeStateLocked(previous)
 		controllerErr := recreateRuntimeController(effectiveControllerConfig(previous, previousControllerEnabled))
 		setProxyDescriptions(previousDescriptions)
 		configuredFindProcessMode.Store(int32(previous.General.FindProcessMode))

@@ -62,4 +62,11 @@ var refreshRuntimeListeners = updateListeners
 var clearRuntimeStrictIngress = clearStrictIngressForConfigChangeLocked
 var restoreRuntimeStrictIngress = restoreMacStrictIngressLocked
 var selectRuntimeGroups = patchSelectGroup
-var startRuntimeHealthChecks = func() { runInitialProviderHealthChecks(); startHealthCheckForwarder() }
+var startRuntimeHealthChecks = func() {
+	if !isRunning && !tunUp.Load() {
+		stopHealthCheckForwarder()
+		return
+	}
+	runInitialProviderHealthChecks()
+	startHealthCheckForwarder()
+}

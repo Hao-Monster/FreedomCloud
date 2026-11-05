@@ -22,36 +22,56 @@ const _AppliedProxySignature _disarmedProxySignature = (false, false, '', 0, '')
 /// and avoiding duplicate WinInet broadcasts when `runTimeProvider` clears.
 class SystemProxyCoordinator {
   _ProxyManagerState? _attached;
-  bool _disarmingForStop = false;
+  int _disarmDepth = 0;
 
   bool get isAttached => _attached?.mounted ?? false;
 
+  bool get isDisarmingForStop => _disarmDepth > 0;
+
   void _attach(_ProxyManagerState state) {
     _attached = state;
-    _disarmingForStop = false;
+    _disarmDepth = 0;
   }
 
   void _detach(_ProxyManagerState state) {
     if (identical(_attached, state)) {
       _attached = null;
-      _disarmingForStop = false;
+      _disarmDepth = 0;
     }
   }
 
-  /// Disarms the OS system proxy through the same serialized queue as
-  /// [ProxyManager] before Core listeners close. No-op when [ProxyManager] is
-  /// not mounted (e.g., isolated controller unit tests).
-  Future<void> disarmBeforeStop() {
+  /// Acquires an idempotent pre-stop disarm lease through the same serialized
+  /// queue as [ProxyManager] before Core listeners close. Releasing the outermost
+  /// lease with `reconcile: true` automatically re-arms or retries cleanup if
+  /// `stopProxy()` failed while the proxy remained active.
+  Future<void Function({bool reconcile})> acquireStopDisarm() async {
     final manager = _attached;
     if (manager == null || !manager.mounted) {
-      return Future.value();
+      return ({reconcile = true}) {};
     }
-    _disarmingForStop = true;
-    return manager._disarmNow();
-  }
-
-  void finishStopDisarm() {
-    _disarmingForStop = false;
+    _disarmDepth++;
+    try {
+      await manager._disarmNow();
+    } catch (_) {
+      if (_disarmDepth > 0) {
+        _disarmDepth--;
+      }
+      rethrow;
+    }
+    var released = false;
+    return ({reconcile = true}) {
+      if (released) return;
+      released = true;
+      if (_disarmDepth > 0) {
+        _disarmDepth--;
+      }
+      if (_disarmDepth == 0 && reconcile) {
+        final currentManager = _attached;
+        if (currentManager != null && currentManager.mounted) {
+          currentManager._reconcileAfterStopDisarm();
+        }
+      }
+    };
   }
 }
 
@@ -87,6 +107,14 @@ class _ProxyManagerState extends ConsumerState<ProxyManager> {
     return op;
   }
 
+  void _reconcileAfterStopDisarm() {
+    if (!mounted) return;
+    final state = ref.read(proxyStateProvider);
+    if (state.isStart || _lastApplied != _disarmedProxySignature) {
+      _scheduleUpdate();
+    }
+  }
+
   void _scheduleUpdate() {
     // Serialize OS mutations and read latest state after earlier work completes.
     _pending = _pending.then((_) async {
@@ -102,7 +130,7 @@ class _ProxyManagerState extends ConsumerState<ProxyManager> {
 
   Future<void> _updateProxy(ProxyState proxyState) async {
     final isStart =
-        proxyState.isStart && !systemProxyCoordinator._disarmingForStop;
+        proxyState.isStart && !systemProxyCoordinator.isDisarmingForStop;
     final systemProxy = proxyState.systemProxy;
     final port = proxyState.port;
     if (isStart && systemProxy) {

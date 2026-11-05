@@ -225,6 +225,7 @@ func handleStartListener() bool {
 			runLock.Unlock()
 			return
 		}
+		runInitialProviderHealthChecks()
 		startHealthCheckForwarder()
 		runLock.Unlock()
 		// The request forwarder only feeds the connections UI; skip it while the
@@ -288,6 +289,8 @@ func handleShutdown() bool {
 	isRunning = false
 	tunUp.Store(false)
 	currentConfig = nil
+	currentRawListeners = nil
+	currentListenersClosed = false
 	return true
 }
 
@@ -392,6 +395,10 @@ func forwardHealthCheckDelays() {
 }
 
 func forwardHealthCheckDelaysForRun(stopCh <-chan struct{}) {
+	forwardHealthCheckDelaysWithTouch(stopCh, true)
+}
+
+func forwardHealthCheckDelaysWithTouch(stopCh <-chan struct{}, shouldTouch bool) {
 	// Foreground flushes and timer ticks must not overtake one another: an old
 	// provider snapshot must never prune a newer one. Lock order is sweep -> run
 	// -> state; reset/start/stop take state but never sweep. No run/state lock is
@@ -413,7 +420,9 @@ func forwardHealthCheckDelaysForRun(stopCh <-chan struct{}) {
 	}
 	generation := healthCheckGeneration
 	healthCheckMu.Unlock()
-	touchProviders()
+	if shouldTouch {
+		touchProviders()
+	}
 	proxies := proxiesWithProviders()
 	runLock.Unlock()
 
@@ -525,7 +534,8 @@ func handleSetUiActive(active bool) {
 		runLock.Lock()
 		running := isRunning
 		runLock.Unlock()
-		if running || tunUp.Load() {
+		activeTunnel := running || tunUp.Load()
+		if activeTunnel {
 			startRequestForwarder()
 		}
 		// Clear the health-check de-dup before flushing. While the tunnel ran headless
@@ -535,7 +545,7 @@ func handleSetUiActive(active bool) {
 		// NOTHING to the just-attached UI (the "no pings after a tile start" bug). Reset
 		// so the current delay histories re-emit on foreground.
 		resetHealthCheckForwarderState()
-		go forwardHealthCheckDelays()
+		go forwardHealthCheckDelaysWithTouch(nil, activeTunnel)
 	} else {
 		if wasActive {
 			cancelAllDelayTasks("uiInactive")
@@ -559,10 +569,11 @@ func handleSetScreenActive(active bool) {
 		return
 	}
 	runLock.Lock()
+	running := isRunning
 	hasConfig := currentConfig != nil
 	minInterval := minHealthCheckInterval
 	runLock.Unlock()
-	if !hasConfig {
+	if !hasConfig || (!running && !tunUp.Load()) {
 		return
 	}
 	if time.Since(time.Unix(0, lastProviderTouchNs.Load())) < minInterval {

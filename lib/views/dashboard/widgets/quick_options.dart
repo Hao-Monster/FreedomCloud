@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flclashx/common/common.dart';
 import 'package:flclashx/providers/app.dart';
 import 'package:flclashx/providers/config.dart';
+import 'package:flclashx/providers/state.dart';
 import 'package:flclashx/providers/tun.dart';
 import 'package:flclashx/state.dart';
 import 'package:flclashx/views/config/network.dart';
@@ -188,6 +189,9 @@ class SystemProxyButton extends StatelessWidget {
               final isStart = ref.watch(
                 runTimeProvider.select((state) => state != null),
               );
+              final hasProfile = ref.watch(
+                currentProfileProvider.select((profile) => profile != null),
+              );
               final pending = ref.watch(statusSwitchPendingProvider);
               final configured = systemProxy && mixedPort > 0;
               final isStopping = pending != null && !pending;
@@ -224,6 +228,13 @@ class SystemProxyButton extends StatelessWidget {
                     children: [
                       if (isWaiting)
                         IconButton(
+                          visualDensity: VisualDensity.compact,
+                          constraints: const BoxConstraints(
+                            minWidth: 32,
+                            minHeight: 32,
+                          ),
+                          padding: const EdgeInsets.all(4),
+                          iconSize: 18,
                           tooltip: appLocalizations.tunDisableAction,
                           onPressed: () {
                             ref
@@ -241,7 +252,7 @@ class SystemProxyButton extends StatelessWidget {
                           materialTapTargetSize:
                               MaterialTapTargetSize.shrinkWrap,
                           value: isActive,
-                          onChanged: pending != null
+                          onChanged: (pending != null || mixedPort <= 0)
                               ? null
                               : (value) {
                                   ref
@@ -251,7 +262,7 @@ class SystemProxyButton extends StatelessWidget {
                                           systemProxy: value,
                                         ),
                                       );
-                                  if (value && !isStart) {
+                                  if (value && !isStart && hasProfile) {
                                     unawaited(
                                       globalState.appController
                                           .updateStatus(true),

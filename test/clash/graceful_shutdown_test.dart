@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flclashx/common/common.dart';
 import 'package:flclashx/common/theme.dart';
@@ -18,8 +19,20 @@ import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
 import 'package:proxy/proxy_platform_interface.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+class _TestPaths extends PathProviderPlatform {
+  _TestPaths(this.root);
+  final String root;
+  @override
+  Future<String> getApplicationSupportPath() async => root;
+  @override
+  Future<String> getTemporaryPath() async => root;
+  @override
+  Future<String> getDownloadsPath() async => root;
+}
 
 class _RecordingProxyPlatform extends ProxyPlatform {
   _RecordingProxyPlatform(this.events);
@@ -53,6 +66,7 @@ class _GracefulStopEffects implements WindowsTunStartupEffects {
   String instanceId = 'core-initial';
   bool failStopWithCloseFailed = false;
   bool keepCloseFailedAfterRestart = false;
+  Object? throwOnStopProxy;
   Completer<void>? pauseStopProxy;
   VoidCallback? onStopProxyCompleted;
 
@@ -83,6 +97,9 @@ class _GracefulStopEffects implements WindowsTunStartupEffects {
     events.add('core:stopProxy');
     if (pauseStopProxy != null) {
       await pauseStopProxy!.future;
+    }
+    if (throwOnStopProxy != null) {
+      Error.throwWithStackTrace(throwOnStopProxy!, StackTrace.current);
     }
     running = false;
     globalState.startTime = null;
@@ -152,18 +169,21 @@ void _seedBaseState({
   bool tunEnabled = true,
   bool systemProxy = true,
   int mixedPort = 7890,
+  bool hasProfile = true,
 }) {
   globalState.config = Config(
     themeProps: defaultThemeProps,
-    profiles: const [
-      Profile(
-        id: 'p1',
-        label: 'Test Profile',
-        url: 'https://example.com/sub',
-        autoUpdateDuration: Duration(hours: 24),
-      ),
-    ],
-    currentProfileId: 'p1',
+    profiles: hasProfile
+        ? const [
+            Profile(
+              id: 'p1',
+              label: 'Test Profile',
+              url: 'https://example.com/sub',
+              autoUpdateDuration: Duration(hours: 24),
+            ),
+          ]
+        : const [],
+    currentProfileId: hasProfile ? 'p1' : null,
     networkProps: NetworkProps(systemProxy: systemProxy),
     patchClashConfig: defaultClashConfig.copyWith(
       mixedPort: mixedPort,
@@ -213,10 +233,25 @@ Widget _wrapMaterial({
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   late ProxyPlatform originalProxyPlatform;
+  late PathProviderPlatform originalPaths;
+  late Directory testRootDir;
 
   setUpAll(() async {
+    SharedPreferences.setMockInitialValues({});
+    originalPaths = PathProviderPlatform.instance;
+    testRootDir = Directory.systemTemp.createTempSync('fcx_graceful_stop_');
+    PathProviderPlatform.instance = _TestPaths(testRootDir.path);
     await AppLocalizations.load(const Locale('zh', 'CN'));
     originalProxyPlatform = ProxyPlatform.instance;
+  });
+
+  tearDownAll(() {
+    PathProviderPlatform.instance = originalPaths;
+    if (testRootDir.existsSync()) {
+      try {
+        testRootDir.deleteSync(recursive: true);
+      } catch (_) {}
+    }
   });
 
   setUp(() {
@@ -548,4 +583,545 @@ void main() {
               'Neither TUN switch nor SystemProxy switch may remain checked while proxy is stopped');
     },
   );
+
+  testWidgets(
+    'CR-GS-01: updateStatus(false) throwing before clearing runTimeProvider automatically re-arms System Proxy via lease reconcile',
+    (tester) async {
+      _seedBaseState(running: true, tunEnabled: true, systemProxy: true);
+      final events = <String>[];
+      ProxyPlatform.instance = _RecordingProxyPlatform(events);
+
+      final runtime = TunRuntimeController()..desiredEnabled = true;
+      runtime.accept(
+        const TunStatus(
+          instanceId: 'core-initial',
+          revision: 1,
+          state: 'on',
+          listenerActive: true,
+          interfaceState: 'up',
+          privilege: 'elevated',
+          requestedEnabled: true,
+        ),
+        runtime.observationEpoch,
+      );
+
+      final container = ProviderContainer(
+        overrides: [
+          tunRuntimeProvider.overrideWith((ref) => runtime),
+        ],
+      );
+      addTearDown(container.dispose);
+
+      final effects = _GracefulStopEffects(events)
+        ..throwOnStopProxy = StateError('simulated stopProxy failure');
+
+      AppController? controller;
+      await tester.pumpWidget(
+        _wrapMaterial(
+          container: container,
+          child: ProxyManager(
+            child: Consumer(
+              builder: (context, ref, _) {
+                controller ??= AppController(
+                  context,
+                  ref,
+                  windowsStartupEffects: effects,
+                  tunRuntimeController: runtime,
+                  tunSettleDelay: Duration.zero,
+                );
+                return const SizedBox.shrink();
+              },
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(events, contains('plugin:startProxy:7890'));
+      events.clear();
+
+      await expectLater(controller!.updateStatus(false), throwsStateError);
+      await tester.pumpAndSettle();
+
+      final stopIdx = events.indexOf('plugin:stopProxy');
+      final rearmIdx = events.lastIndexOf('plugin:startProxy:7890');
+      expect(stopIdx, greaterThanOrEqualTo(0));
+      expect(
+        rearmIdx,
+        greaterThan(stopIdx),
+        reason:
+            'Because stopProxy failed while proxy is still running (runTimeProvider != null), SystemProxyCoordinator must re-arm System Proxy upon releasing the disarm lease',
+      );
+    },
+  );
+
+  testWidgets(
+    'CR-GS-02a: StartButton ignores <500ms accidental double-click during start, then allows >=500ms tap to cancel a hung start',
+    (tester) async {
+      _seedBaseState(running: false, tunEnabled: true, systemProxy: true);
+      final events = <String>[];
+      final hangGate = Completer<void>();
+
+      final runtime = TunRuntimeController()..desiredEnabled = true;
+      // Hold serialize lock so updateStatus(true) enters pending state without touching native FFI.
+      final holdFuture = runtime.serialize(() => hangGate.future);
+
+      final container = ProviderContainer(
+        overrides: [
+          tunRuntimeProvider.overrideWith((ref) => runtime),
+        ],
+      );
+      addTearDown(container.dispose);
+
+      final effects = _GracefulStopEffects(events)
+        ..running = false
+        ..onStopProxyCompleted = () {
+          container.read(runTimeProvider.notifier).value = null;
+        };
+
+      AppController? controller;
+      await tester.pumpWidget(
+        _wrapMaterial(
+          container: container,
+          child: Consumer(
+            builder: (context, ref, _) {
+              controller ??= AppController(
+                context,
+                ref,
+                windowsStartupEffects: effects,
+                tunRuntimeController: runtime,
+                tunSettleDelay: Duration.zero,
+              );
+              globalState.appController = controller!;
+              return const StartButton();
+            },
+          ),
+        ),
+      );
+      await tester.pump();
+
+      // Tap 1: initiates Start -> pending == true ("正在开启...").
+      await tester.tap(find.byType(FilledButton));
+      await tester.pump();
+      expect(container.read(statusSwitchPendingProvider), isTrue);
+      expect(find.text(appLocalizations.tunStatusStarting), findsOneWidget);
+
+      // Tap 2 at 120ms (<500ms accidental double-click window): MUST be ignored!
+      await tester.pump(const Duration(milliseconds: 120));
+      await tester.tap(find.byType(FilledButton));
+      await tester.pump();
+      expect(
+        container.read(statusSwitchPendingProvider),
+        isTrue,
+        reason:
+            'Accidental double-click within 500ms of Start must NOT cancel the in-flight Start',
+      );
+
+      // Advance past 500ms (total 560ms >= 500ms): Tap 3 MUST cancel the hung Start!
+      await tester.pump(const Duration(milliseconds: 440));
+      await tester.tap(find.byType(FilledButton));
+      await tester.pump();
+      expect(
+        container.read(statusSwitchPendingProvider),
+        isFalse,
+        reason:
+            'Tapping StartButton after >=500ms while still starting must dispatch updateStatus(false) to abort the hung Start',
+      );
+      expect(find.text(appLocalizations.tunStatusStopping), findsOneWidget);
+
+      // Release serialize queue and settle cleanly.
+      hangGate.complete();
+      await holdFuture;
+      await tester.pumpAndSettle();
+      expect(container.read(statusSwitchPendingProvider), isNull);
+    },
+  );
+
+  testWidgets(
+    'CR-GS-02b: concurrent updateStatus(true) queued while updateStatus(false) is tearing down does not trigger spurious _repairVanishedAdapter',
+    (tester) async {
+      _seedBaseState(running: true, tunEnabled: true, systemProxy: true);
+      final events = <String>[];
+      final stopGate = Completer<void>();
+
+      final runtime = TunRuntimeController()..desiredEnabled = true;
+      runtime.accept(
+        const TunStatus(
+          instanceId: 'core-initial',
+          revision: 1,
+          state: 'on',
+          listenerActive: true,
+          interfaceState: 'up',
+          privilege: 'elevated',
+          requestedEnabled: true,
+        ),
+        runtime.observationEpoch,
+      );
+
+      final container = ProviderContainer(
+        overrides: [
+          tunRuntimeProvider.overrideWith((ref) => runtime),
+        ],
+      );
+      addTearDown(container.dispose);
+
+      var returnMissingWhileStopping = false;
+      final effects = _GracefulStopEffects(events)..pauseStopProxy = stopGate;
+
+      AppController? controller;
+      await tester.pumpWidget(
+        _wrapMaterial(
+          container: container,
+          child: Consumer(
+            builder: (context, ref, _) {
+              controller ??= AppController(
+                context,
+                ref,
+                windowsStartupEffects: _InterceptObserveEffects(
+                  effects,
+                  () => returnMissingWhileStopping
+                      ? const TunStatus(
+                          instanceId: 'core-initial',
+                          revision: 99,
+                          state: 'degraded',
+                          listenerActive: true,
+                          interfaceState: 'missing',
+                          privilege: 'elevated',
+                          requestedEnabled: true,
+                          errorCode: 'interfaceMissing',
+                        )
+                      : null,
+                ),
+                tunRuntimeController: runtime,
+                tunSettleDelay: Duration.zero,
+              );
+              return const SizedBox.shrink();
+            },
+          ),
+        ),
+      );
+      await tester.pump();
+      // Mark runtime initialized via a no-op observe check.
+      await controller!.refreshWindowsTunStatus(fresh: true);
+
+      // Begin stop (paused inside stopProxy), then enqueue Start (which clears _pendingWindowsProxyStop)
+      // followed by a final Stop so Start itself won't touch FFI when stopGate releases.
+      final stop1 = controller!.updateStatus(false);
+      await tester.pump();
+      final queuedStart = controller!.updateStatus(true);
+      returnMissingWhileStopping = true;
+      await controller!.refreshWindowsTunStatus(fresh: true);
+      returnMissingWhileStopping = false;
+      final stop2 = controller!.updateStatus(false);
+
+      stopGate.complete();
+      await Future.wait([stop1, queuedStart, stop2]);
+      await tester.pumpAndSettle();
+
+      expect(
+        events.where((e) => e.startsWith('core:applyConfig')),
+        isEmpty,
+        reason:
+            '_applyingWindowsConfigDepth must guard !isStart teardown so background observations never trigger _repairVanishedAdapter mid-stop',
+      );
+    },
+  );
+
+  testWidgets(
+    'CR-GS-05: SystemProxyButton disables Switch when mixedPort == 0, skips updateStatus(true) without profile, and StartButton keeps active green palette throughout stopping',
+    (tester) async {
+      // Case 1: mixedPort == 0 -> Switch must be disabled (onChanged == null).
+      _seedBaseState(
+        running: false,
+        tunEnabled: false,
+        systemProxy: false,
+        mixedPort: 0,
+      );
+      final container1 = ProviderContainer();
+      addTearDown(container1.dispose);
+      final fakeController1 = _WidgetToggleController()..container = container1;
+      globalState.appController = fakeController1;
+
+      await tester.pumpWidget(
+        _wrapMaterial(
+          container: container1,
+          child: const SystemProxyButton(),
+        ),
+      );
+      await tester.pump();
+      final disabledSwitch = tester.widget<Switch>(find.byType(Switch));
+      expect(
+        disabledSwitch.onChanged,
+        isNull,
+        reason: 'SystemProxyButton Switch must be disabled when mixedPort <= 0',
+      );
+
+      // Case 2: mixedPort == 7890 but hasProfile == false -> toggling Switch updates preference ONLY and does NOT call updateStatus(true).
+      _seedBaseState(
+        running: false,
+        tunEnabled: false,
+        systemProxy: false,
+        mixedPort: 7890,
+        hasProfile: false,
+      );
+      final container2 = ProviderContainer();
+      addTearDown(container2.dispose);
+      final fakeController2 = _WidgetToggleController()..container = container2;
+      globalState.appController = fakeController2;
+
+      await tester.pumpWidget(
+        _wrapMaterial(
+          container: container2,
+          child: const SystemProxyButton(),
+        ),
+      );
+      await tester.pump();
+      await tester.tap(find.byType(Switch));
+      await tester.pump();
+      expect(container2.read(networkSettingProvider).systemProxy, isTrue);
+      expect(
+        fakeController2.updateStatusCalls,
+        0,
+        reason:
+            'SystemProxyButton must not invoke updateStatus(true) when no profile is selected',
+      );
+
+      // Case 3: StartButton keeps active green palette while statusSwitchPendingProvider == false even after runTimeProvider clears to null.
+      _seedBaseState(running: true, tunEnabled: true, systemProxy: true);
+      final container3 = ProviderContainer();
+      addTearDown(container3.dispose);
+      final fakeController3 = _WidgetToggleController()..container = container3;
+      globalState.appController = fakeController3;
+
+      container3.read(statusSwitchPendingProvider.notifier).state = false;
+      container3.read(runTimeProvider.notifier).value = null;
+
+      await tester.pumpWidget(
+        _wrapMaterial(
+          container: container3,
+          child: const StartButton(),
+        ),
+      );
+      await tester.pump();
+
+      final button = tester.widget<FilledButton>(find.byType(FilledButton));
+      final bgColor = button.style?.backgroundColor?.resolve(const <WidgetState>{});
+      expect(
+        bgColor,
+        Colors.green.shade600.withValues(alpha: 0.9),
+        reason:
+            'StartButton must retain active green palette throughout "正在关闭..." without flashing grey mid-teardown',
+      );
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump(const Duration(milliseconds: 50));
+    },
+  );
+
+  testWidgets(
+    'CR-GS-04: handleExit skips stopListener 3s wait when Agent Core is already stopped without re-arming System Proxy, and handleClear disarms System Proxy + flushes DNS',
+    (tester) async {
+      _seedBaseState(running: true, tunEnabled: true, systemProxy: true);
+      final events = <String>[];
+      ProxyPlatform.instance = _RecordingProxyPlatform(events);
+
+      final runtime = TunRuntimeController()..desiredEnabled = true;
+      final container = ProviderContainer(
+        overrides: [
+          tunRuntimeProvider.overrideWith((ref) => runtime),
+        ],
+      );
+      addTearDown(container.dispose);
+
+      var stopListenerCalled = false;
+      final effects = _GracefulStopEffects(events);
+
+      AppController? controller;
+      var agentCoreReady = false;
+      await tester.pumpWidget(
+        _wrapMaterial(
+          container: container,
+          child: ProxyManager(
+            child: Consumer(
+              builder: (context, ref, _) {
+                controller ??= AppController(
+                  context,
+                  ref,
+                  windowsStartupEffects: effects,
+                  tunRuntimeController: runtime,
+                  tunSettleDelay: Duration.zero,
+                  flushSystemDnsCache: () async {
+                    events.add('os:flushDnsCache');
+                  },
+                  shutdownEffects: AppShutdownEffects(
+                    usesAgent: () => true,
+                    agentCoreReady: () => agentCoreReady,
+                    stopListener: () async {
+                      stopListenerCalled = true;
+                      events.add('core:stopListener');
+                      if (!agentCoreReady) {
+                        // Would hang forever if called while Agent Core is not ready!
+                        await Completer<void>().future;
+                      }
+                    },
+                    stopVpn: () async {
+                      events.add('os:stopVpn');
+                    },
+                    shutdownCore: () async {
+                      events.add('core:shutdown');
+                    },
+                    destroyService: () async {
+                      events.add('service:destroy');
+                    },
+                    detachService: () async {},
+                    exitApp: () async {
+                      events.add('app:exit');
+                    },
+                    clearLocalState: () async {
+                      events.add('local:clear');
+                    },
+                  ),
+                );
+                return const SizedBox.shrink();
+              },
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      events.clear();
+
+      // Part A: handleExit when usesAgent && !agentCoreReady must NOT call stopListener
+      // (avoiding 3s timeout) and must NOT re-arm System Proxy after releasing lease.
+      final exitFuture = controller!.handleExit();
+      await tester.pump(const Duration(seconds: 3));
+      await exitFuture;
+      await tester.pumpAndSettle();
+
+      expect(stopListenerCalled, isFalse);
+      expect(events, contains('plugin:stopProxy'));
+      expect(events, contains('os:flushDnsCache'));
+      expect(events, contains('app:exit'));
+      expect(
+        events.where((e) => e.startsWith('plugin:startProxy')),
+        isEmpty,
+        reason: 'System proxy must NEVER re-arm during terminal handleExit',
+      );
+
+      // Part B: handleClear on a fresh controller with agentCoreReady == true disarms
+      // System Proxy, stops listeners, flushes DNS cache, and shuts down Core cleanly.
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+      _seedBaseState(running: true, tunEnabled: true, systemProxy: true);
+      events.clear();
+      agentCoreReady = true;
+      final runtime2 = TunRuntimeController()..desiredEnabled = true;
+      final container2 = ProviderContainer(
+        overrides: [
+          tunRuntimeProvider.overrideWith((ref) => runtime2),
+        ],
+      );
+      addTearDown(container2.dispose);
+
+      AppController? controller2;
+      await tester.pumpWidget(
+        _wrapMaterial(
+          container: container2,
+          child: ProxyManager(
+            child: Consumer(
+              builder: (context, ref, _) {
+                controller2 ??= AppController(
+                  context,
+                  ref,
+                  windowsStartupEffects: effects,
+                  tunRuntimeController: runtime2,
+                  tunSettleDelay: Duration.zero,
+                  flushSystemDnsCache: () async {
+                    events.add('os:flushDnsCache');
+                  },
+                  shutdownEffects: AppShutdownEffects(
+                    usesAgent: () => true,
+                    agentCoreReady: () => true,
+                    stopListener: () async {
+                      events.add('core:stopListener');
+                    },
+                    stopVpn: () async {
+                      events.add('os:stopVpn');
+                    },
+                    shutdownCore: () async {
+                      events.add('core:shutdown');
+                    },
+                    destroyService: () async {},
+                    detachService: () async {},
+                    exitApp: () async {
+                      events.add('app:exit');
+                    },
+                    clearLocalState: () async {
+                      events.add('local:clear');
+                    },
+                  ),
+                );
+                return const SizedBox.shrink();
+              },
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      events.clear();
+
+      final clearFuture = controller2!.handleClear();
+      await tester.pump(const Duration(milliseconds: 600));
+      await clearFuture;
+      await tester.pumpAndSettle();
+
+      final proxyStopIdx = events.indexOf('plugin:stopProxy');
+      final stopListenerIdx = events.indexOf('core:stopListener');
+      final dnsFlushIdx = events.indexOf('os:flushDnsCache');
+      final shutdownIdx = events.indexOf('core:shutdown');
+      final clearLocalIdx = events.indexOf('local:clear');
+      expect(proxyStopIdx, greaterThanOrEqualTo(0));
+      expect(stopListenerIdx, greaterThan(proxyStopIdx));
+      expect(dnsFlushIdx, greaterThan(stopListenerIdx));
+      expect(shutdownIdx, greaterThan(dnsFlushIdx));
+      expect(clearLocalIdx, greaterThan(shutdownIdx));
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump(const Duration(milliseconds: 50));
+    },
+  );
+}
+
+class _InterceptObserveEffects extends _GracefulStopEffects {
+  _InterceptObserveEffects(this._inner, this._overrideObserve)
+      : super(_inner.events);
+
+  final _GracefulStopEffects _inner;
+  final TunStatus? Function() _overrideObserve;
+
+  @override
+  bool get proxyRunning => _inner.proxyRunning;
+
+  @override
+  Future<TunStatus?> observe() async {
+    final custom = _overrideObserve();
+    if (custom != null) return custom;
+    return _inner.observe();
+  }
+
+  @override
+  Future<void> stopProxy() => _inner.stopProxy();
+
+  @override
+  Future<void> applyConfiguration({
+    required bool full,
+    required bool Function() isCurrent,
+  }) =>
+      _inner.applyConfiguration(full: full, isCurrent: isCurrent);
+
+  @override
+  Future<void> restartCore() => _inner.restartCore();
+
+  @override
+  Future<void> initialize(bool Function() isCurrent) =>
+      _inner.initialize(isCurrent);
 }

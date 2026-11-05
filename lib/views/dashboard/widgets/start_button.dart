@@ -70,7 +70,19 @@ class _StartButtonState extends ConsumerState<StartButton>
   }
 
   Future<void> handleSwitchStart() async {
-    if (_localPending || ref.read(statusSwitchPendingProvider) != null) {
+    _pressController.reverse();
+    final providerPending = ref.read(statusSwitchPendingProvider);
+    final startCancelable = ref.read(statusStartCancelableProvider);
+    if (providerPending != null) {
+      if (providerPending && startCancelable) {
+        if (Platform.isAndroid) {
+          unawaited(HapticFeedback.mediumImpact());
+        }
+        await globalState.appController.updateStatus(false);
+      }
+      return;
+    }
+    if (_localPending) {
       return;
     }
     if (Platform.isAndroid) {
@@ -126,16 +138,17 @@ class _StartButtonState extends ConsumerState<StartButton>
       return Container();
     }
     final providerPending = ref.watch(statusSwitchPendingProvider);
+    final startCancelable = ref.watch(statusStartCancelableProvider);
     final runTime = ref.watch(runTimeProvider);
     final effectiveStart = runTime != null;
     final pendingTarget = providerPending ?? (_localPending ? _localTargetStart : null);
     final isBusy = pendingTarget != null;
+    final canTapPress = !isBusy || (pendingTarget && startCancelable);
 
     final colorScheme = Theme.of(context).colorScheme;
     final activeColor = Colors.green.shade600.withValues(alpha: 0.9);
     final inactiveColor = colorScheme.secondaryContainer.withValues(alpha: 0.85);
-    final showActivePalette =
-        isBusy ? (!pendingTarget && effectiveStart) : effectiveStart;
+    final showActivePalette = isBusy ? !pendingTarget : effectiveStart;
     final foregroundColor = showActivePalette
         ? Colors.white
         : colorScheme.onSecondaryContainer;
@@ -175,8 +188,8 @@ class _StartButtonState extends ConsumerState<StartButton>
             width: double.infinity,
             height: 56,
             child: GestureDetector(
-              onTapDown: isBusy ? null : _onTapDown,
-              onTapUp: isBusy ? null : _onTapUp,
+              onTapDown: canTapPress ? _onTapDown : null,
+              onTapUp: canTapPress ? _onTapUp : null,
               onTapCancel: _onTapCancel,
               child: FilledButton(
                 onPressed: handleSwitchStart,

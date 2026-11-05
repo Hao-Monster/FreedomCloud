@@ -9,6 +9,7 @@ import 'package:flclashx/common/archive.dart';
 import 'package:flclashx/services/subscription_notification_service.dart';
 import 'package:flclashx/enum/enum.dart';
 import 'package:flclashx/plugins/app.dart';
+import 'package:flclashx/plugins/service.dart';
 import 'package:flclashx/providers/providers.dart';
 import 'package:flclashx/state.dart';
 import 'package:flclashx/widgets/dialog.dart';
@@ -35,20 +36,48 @@ import 'plugins/vpn.dart';
 import 'providers/node_overview.dart';
 import 'views/profiles/override_profile.dart';
 
+@visibleForTesting
+class AppShutdownEffects {
+  const AppShutdownEffects({
+    required this.usesAgent,
+    required this.agentCoreReady,
+    required this.stopListener,
+    required this.stopVpn,
+    required this.shutdownCore,
+    required this.destroyService,
+    required this.detachService,
+    this.exitApp,
+    this.clearLocalState,
+  });
+
+  final bool Function() usesAgent;
+  final bool Function() agentCoreReady;
+  final Future<void> Function() stopListener;
+  final Future<void> Function() stopVpn;
+  final Future<void> Function() shutdownCore;
+  final Future<void> Function() destroyService;
+  final Future<void> Function() detachService;
+  final Future<void> Function()? exitApp;
+  final Future<void> Function()? clearLocalState;
+}
+
 class AppController {
   AppController(this.context, WidgetRef ref, {
     WindowsTunStartupEffects? windowsStartupEffects,
+    AppShutdownEffects? shutdownEffects,
     TunRuntimeController? tunRuntimeController,
     Future<DateTime?> Function()? nativeRunTimeProbe,
     Future<void> Function()? flushSystemDnsCache,
     Duration tunSettleDelay = const Duration(milliseconds: 500),
   }) : _ref = ref,
        _windowsStartupEffects = windowsStartupEffects,
+       _shutdownEffects = shutdownEffects,
        _nativeRunTimeProbe = nativeRunTimeProbe,
        _flushSystemDnsCacheOverride = flushSystemDnsCache,
        _tunSettleDelay = tunSettleDelay,
        _tunRuntime = tunRuntimeController ?? tunRuntime;
   final WindowsTunStartupEffects? _windowsStartupEffects;
+  final AppShutdownEffects? _shutdownEffects;
   final Future<DateTime?> Function()? _nativeRunTimeProbe;
   final Future<void> Function()? _flushSystemDnsCacheOverride;
   final Duration _tunSettleDelay;
@@ -113,11 +142,29 @@ class AppController {
     }
   }
 
-  void _setStatusSwitchPending(bool? pending) {
+  Timer? _startCancelableTimer;
+
+  void _setStatusSwitchPending(bool? pending, {int? epoch}) {
+    _startCancelableTimer?.cancel();
+    _startCancelableTimer = null;
     if (!context.mounted) return;
     try {
+      _ref.read(statusStartCancelableProvider.notifier).state = false;
       _ref.read(statusSwitchPendingProvider.notifier).state = pending;
-    } catch (_) {}
+    } catch (_) {
+      return;
+    }
+    if (pending == true && epoch != null) {
+      _startCancelableTimer = Timer(const Duration(milliseconds: 500), () {
+        _startCancelableTimer = null;
+        if (!context.mounted || epoch != _statusEpoch) return;
+        try {
+          if (_ref.read(statusSwitchPendingProvider) == true) {
+            _ref.read(statusStartCancelableProvider.notifier).state = true;
+          }
+        } catch (_) {}
+      });
+    }
   }
 
   Duration _nextTunObservationDelay() {
@@ -153,6 +200,8 @@ class AppController {
     _tunObservationActive = false;
     _tunObservationTimer?.cancel();
     _tunObservationTimer = null;
+    _startCancelableTimer?.cancel();
+    _startCancelableTimer = null;
   }
 
   void startTunObservation() {
@@ -890,7 +939,7 @@ class AppController {
   Future<void> updateStatus(bool isStart) {
     final windowsTun = Platform.isWindows || _windowsStartupEffects != null;
     int? stopIntent;
-    final tunMayHaveCachedFakeIp = windowsTun &&
+    final initialTunMayHaveCachedFakeIp = windowsTun &&
         (_tunRuntime.observed != TunObservedState.off ||
             _tunRuntime.desiredEnabled);
     if (windowsTun) {
@@ -900,7 +949,7 @@ class AppController {
       }
     }
     final epoch = ++_statusEpoch;
-    _setStatusSwitchPending(isStart);
+    _setStatusSwitchPending(isStart, epoch: epoch);
     final op = _statusOp.then((_) async {
       try {
         // Superseded by a newer toggle (rapid double-tap, start-then-stop): make
@@ -911,12 +960,17 @@ class AppController {
           if (windowsTun) {
             await _tunRuntime.serialize(() async {
               if (epoch != _statusEpoch) return;
+              final shouldFlushFakeIpDns = initialTunMayHaveCachedFakeIp ||
+                  _tunRuntime.observed != TunObservedState.off ||
+                  _tunRuntime.desiredEnabled;
               _tunRuntime.invalidate();
-              if (isStart) _applyingWindowsConfigDepth++;
+              _applyingWindowsConfigDepth++;
+              var depthReleased = false;
               var observedAfterStop = false;
               try {
                 if (!isStart) {
-                  await systemProxyCoordinator.disarmBeforeStop();
+                  final releaseDisarm =
+                      await systemProxyCoordinator.acquireStopDisarm();
                   try {
                     final effects = _startupEffects();
                     await effects.stopProxy();
@@ -927,15 +981,30 @@ class AppController {
                       effects.log(
                         'TUN reported closeFailed on stop; restarting Core via Helper to reclaim adapter handle',
                       );
+                      var coreReclaimed = false;
                       try {
                         await effects.restartCore();
                         if (epoch == _statusEpoch) {
                           await effects.initialize(
                             () => epoch == _statusEpoch,
                           );
+                          coreReclaimed = true;
                         }
                       } catch (error) {
                         effects.log('TUN stop Core reclaim failed: $error');
+                      }
+                      if (coreReclaimed &&
+                          epoch == _statusEpoch &&
+                          _windowsStartupEffects == null) {
+                        try {
+                          await _restoreStoppedProjectionAfterCoreReclaim(
+                            () => epoch == _statusEpoch,
+                          );
+                        } catch (error) {
+                          effects.log(
+                            'TUN stop post-reclaim projection sync failed: $error',
+                          );
+                        }
                       }
                       status = await refreshWindowsTunStatus(fresh: true);
                       if (epoch == _statusEpoch &&
@@ -944,17 +1013,20 @@ class AppController {
                         _tunRuntime.fail(status?.errorCode ?? 'closeFailed');
                       }
                     }
-                    if (tunMayHaveCachedFakeIp) {
+                    if (shouldFlushFakeIpDns) {
                       await _flushSystemDnsCache();
                     }
                   } finally {
-                    systemProxyCoordinator.finishStopDisarm();
+                    releaseDisarm();
                   }
                 } else {
                   await _updateStatus(true);
                 }
               } finally {
-                if (isStart) _applyingWindowsConfigDepth--;
+                if (!depthReleased) {
+                  depthReleased = true;
+                  _applyingWindowsConfigDepth--;
+                }
                 if (!observedAfterStop) {
                   await refreshWindowsTunStatus(fresh: true);
                 }
@@ -962,11 +1034,12 @@ class AppController {
             });
           } else {
             if (!isStart) {
-              await systemProxyCoordinator.disarmBeforeStop();
+              final releaseDisarm =
+                  await systemProxyCoordinator.acquireStopDisarm();
               try {
                 await _updateStatus(false);
               } finally {
-                systemProxyCoordinator.finishStopDisarm();
+                releaseDisarm();
               }
             } else {
               await _updateStatus(true);
@@ -991,6 +1064,40 @@ class AppController {
     // this caller.
     _statusOp = op.catchError((_) {});
     return op;
+  }
+
+  Future<void> _restoreStoppedProjectionAfterCoreReclaim(
+    bool Function() isCurrent,
+  ) async {
+    if (!isCurrent()) return;
+    await clashCore.setUiActive(uiActivity.value);
+    if (!isCurrent()) return;
+    if (_ref.read(appSettingProvider).openLogs) {
+      clashCore.startLog();
+    } else {
+      clashCore.stopLog();
+    }
+    if (!isCurrent()) return;
+    if (clashService?.usesAgent != true &&
+        _ref.read(currentProfileProvider) != null) {
+      await _setupClashConfigImpl(isCurrent: isCurrent);
+      if (!isCurrent()) return;
+      _hasAppliedWindowsProfile = true;
+      _lastAppliedWindowsProfileId = _ref.read(currentProfileIdProvider);
+      _needsWindowsCoreRestore = false;
+      _windowsCoreRestoreNeedsListener = false;
+    } else if (clashService?.usesAgent == true &&
+        _ref.read(currentProfileProvider) != null) {
+      _hasAppliedWindowsProfile = true;
+      _lastAppliedWindowsProfileId = _ref.read(currentProfileIdProvider);
+      _needsWindowsCoreRestore = false;
+      _windowsCoreRestoreNeedsListener = false;
+    }
+    await updateGroups();
+    if (!isCurrent()) return;
+    await updateProviders();
+    if (!isCurrent()) return;
+    initForegroundCache();
   }
 
   Future<void> _updateStatus(bool isStart) async {
@@ -1063,20 +1170,25 @@ class AppController {
       }
       applyProfileDebounce();
     } else {
-      await systemProxyCoordinator.disarmBeforeStop();
-      detectionState.notifyRoutingChanged();
-      stopRunTimeTimer();
-      await globalState.handleStop();
-      await StatusBarManager.updateIcon(isConnected: false);
-      _windowsCoreRestoreNeedsListener = false;
-      if (_hasAppliedWindowsProfile) {
-        _needsWindowsCoreRestore = false;
+      final releaseDisarm =
+          await systemProxyCoordinator.acquireStopDisarm();
+      try {
+        detectionState.notifyRoutingChanged();
+        stopRunTimeTimer();
+        await globalState.handleStop();
+        await StatusBarManager.updateIcon(isConnected: false);
+        _windowsCoreRestoreNeedsListener = false;
+        if (_hasAppliedWindowsProfile) {
+          _needsWindowsCoreRestore = false;
+        }
+        clashCore.resetTraffic();
+        _ref.read(trafficsProvider.notifier).clear();
+        _ref.read(totalTrafficProvider.notifier).value = Traffic();
+        _ref.read(runTimeProvider.notifier).value = null;
+        addCheckIpNumDebounce();
+      } finally {
+        releaseDisarm();
       }
-      clashCore.resetTraffic();
-      _ref.read(trafficsProvider.notifier).clear();
-      _ref.read(totalTrafficProvider.notifier).value = Traffic();
-      _ref.read(runTimeProvider.notifier).value = null;
-      addCheckIpNumDebounce();
     }
   }
 
@@ -2433,11 +2545,64 @@ class AppController {
     await _tunRuntime.quiesce(action);
   }
 
+  Future<void Function({bool reconcile})> _gracefulStopBeforeShutdown({
+    Duration listenerTimeout = const Duration(seconds: 3),
+  }) async {
+    final shutdown = _shutdownEffects;
+    stopRunTimeTimer();
+    globalState.startTime = null;
+    globalState.stopUpdateTasks();
+
+    void Function({bool reconcile}) releaseDisarm = ({bool reconcile = true}) {};
+    try {
+      if (systemProxyCoordinator.isAttached) {
+        releaseDisarm = await systemProxyCoordinator.acquireStopDisarm();
+      } else {
+        await proxy?.stopProxy();
+      }
+    } catch (_) {}
+
+    try {
+      _ref.read(runTimeProvider.notifier).value = null;
+    } catch (_) {}
+
+    final usesAgent = shutdown != null
+        ? shutdown.usesAgent()
+        : (clashService?.usesAgent == true);
+    final coreReady = shutdown != null
+        ? shutdown.agentCoreReady()
+        : (clashService?.agentCoreReady == true);
+    if (!usesAgent || coreReady) {
+      try {
+        final stopOp = shutdown != null
+            ? shutdown.stopListener()
+            : clashCore.stopListener();
+        await stopOp.timeout(listenerTimeout);
+      } catch (_) {}
+    }
+
+    try {
+      if (shutdown != null) {
+        await shutdown.stopVpn();
+      } else {
+        await service?.stopVpn();
+      }
+    } catch (_) {}
+
+    try {
+      await _flushSystemDnsCache();
+    } catch (_) {}
+
+    return releaseDisarm;
+  }
+
   Future<void> handleExit() => _quiesceWindows(_handleExit);
 
   Future<void> _handleExit() async {
     _stopTunObservation();
     stopRunTimeTimer();
+    final shutdown = _shutdownEffects;
+    void Function({bool reconcile}) releaseDisarm = ({bool reconcile = true}) {};
     // Bound the cleanup instead of pre-arming a 300ms hard-exit timer. On macOS the
     // DNS/proxy teardown is several slow networksetup/route subprocesses that easily
     // overrun 300ms, so the old timer fired mid-cleanup and exit(0) skipped the DNS
@@ -2445,43 +2610,34 @@ class AppController {
     // proxy, and orphaning the root core. Mirror handleRestart: run cleanup under a
     // generous deadline, each step isolated, then always exit.
     try {
-      await Future.any([
-        Future(() async {
-          try {
-            await savePreferences();
-          } catch (_) {}
-          try {
-            await system.setMacOSDns(true);
-          } catch (_) {}
-          try {
-            if (systemProxyCoordinator.isAttached) {
-              await systemProxyCoordinator.disarmBeforeStop();
-            } else {
-              await proxy?.stopProxy();
-            }
-          } catch (_) {}
-          try {
-            // Gracefully drain active connections, tear down Wintun/routes, and
-            // persist Fake-IP state BEFORE shutdown() hard-kills FlClashCore.exe.
-            await clashCore
-                .stopListener()
-                .timeout(const Duration(seconds: 3));
-          } catch (_) {}
-          try {
-            await _flushSystemDnsCache();
-          } catch (_) {}
-          try {
+      await (() async {
+        try {
+          await savePreferences().timeout(const Duration(seconds: 2));
+        } catch (_) {}
+        try {
+          await system.setMacOSDns(true).timeout(const Duration(seconds: 2));
+        } catch (_) {}
+        releaseDisarm = await _gracefulStopBeforeShutdown(
+          listenerTimeout: const Duration(seconds: 3),
+        );
+        try {
+          if (shutdown != null) {
+            await shutdown.shutdownCore();
+          } else {
             await clashCore.shutdown();
-          } catch (_) {}
-          try {
+          }
+        } catch (_) {}
+        try {
+          if (shutdown != null) {
+            await shutdown.destroyService();
+          } else {
             await clashService?.destroy();
-          } catch (_) {}
-        }),
-        Future.delayed(const Duration(seconds: 8)),
-      ]);
+          }
+        } catch (_) {}
+      })().timeout(const Duration(seconds: 8), onTimeout: () {});
     } finally {
-      systemProxyCoordinator.finishStopDisarm();
-      system.exit();
+      releaseDisarm(reconcile: false);
+      await (shutdown?.exitApp?.call() ?? system.exit());
     }
   }
 
@@ -2490,31 +2646,50 @@ class AppController {
   Future<void> _handleRestart() async {
     await cancelDelayTests(reason: 'sessionClosed');
     commonPrint.log("Starting application restart...");
+    final shutdown = _shutdownEffects;
+    final usesAgent = shutdown != null
+        ? shutdown.usesAgent()
+        : (clashService?.usesAgent == true);
 
-    if (clashService?.usesAgent == true) {
+    if (usesAgent) {
       // A UI restart is an Agent detach/reattach, not a proxy restart. This is
       // the same path used by reopening after Close UI and does not interrupt
       // existing connections.
       try {
         await savePreferences();
-        await clashService?.detach();
+        if (shutdown != null) {
+          await shutdown.detachService();
+        } else {
+          await clashService?.detach();
+        }
       } catch (_) {}
     } else {
       // Compatibility path for source/debug bundles without FlClashAgent.
-      await Future.any([
-        Future(() async {
+      void Function({bool reconcile}) releaseDisarm =
+          ({bool reconcile = true}) {};
+      try {
+        await (() async {
+          releaseDisarm = await _gracefulStopBeforeShutdown(
+            listenerTimeout: const Duration(seconds: 2),
+          );
           try {
-            await proxy?.stopProxy();
+            if (shutdown != null) {
+              await shutdown.shutdownCore();
+            } else {
+              await clashCore.shutdown();
+            }
           } catch (_) {}
           try {
-            await clashCore.shutdown();
+            if (shutdown != null) {
+              await shutdown.destroyService();
+            } else {
+              await clashService?.destroy();
+            }
           } catch (_) {}
-          try {
-            await clashService?.destroy();
-          } catch (_) {}
-        }),
-        Future.delayed(const Duration(seconds: 3)),
-      ]);
+        })().timeout(const Duration(seconds: 4), onTimeout: () {});
+      } finally {
+        releaseDisarm(reconcile: false);
+      }
     }
 
     if (Platform.isLinux || Platform.isMacOS || Platform.isWindows) {
@@ -2532,24 +2707,34 @@ class AppController {
         commonPrint.log("Failed to start new process: $e");
         // The Windows UI has already detached and revoked pending operations.
         // End this instance; reusing it would silently ignore future requests.
-        if (Platform.isWindows) system.exit();
+        if (Platform.isWindows) {
+          await (shutdown?.exitApp?.call() ?? system.exit());
+        }
         return;
       }
     }
 
-    system.exit();
+    await (shutdown?.exitApp?.call() ?? system.exit());
   }
 
   Future<void> handleClear() => _quiesceWindows(_handleClear);
 
   Future<void> _handleClear() async {
+    final shutdown = _shutdownEffects;
+    void Function({bool reconcile}) releaseDisarm = ({bool reconcile = true}) {};
     try {
-      // Stop proxy/VPN first
-      await globalState.handleStop();
+      // Disarm system proxy, stop listeners/VPN, and flush Fake-IP DNS first
+      releaseDisarm = await _gracefulStopBeforeShutdown(
+        listenerTimeout: const Duration(seconds: 3),
+      );
       commonPrint.log("stopped proxy/VPN");
 
       // Stop core
-      await clashCore.shutdown();
+      if (shutdown != null) {
+        await shutdown.shutdownCore();
+      } else {
+        await clashCore.shutdown();
+      }
       commonPrint.log("shutdown core");
 
       // Wait a bit for all file handles to close
@@ -2559,36 +2744,40 @@ class AppController {
       await preferences.clearPreferences();
       commonPrint.log("cleared preferences");
 
-      // Get paths
-      final homePath = await appPath.homeDirPath;
-      final profilesPath = await appPath.profilesPath;
+      if (shutdown?.clearLocalState != null) {
+        await shutdown!.clearLocalState!();
+      } else {
+        // Get paths
+        final homePath = await appPath.homeDirPath;
+        final profilesPath = await appPath.profilesPath;
 
-      // Delete profiles directory
-      final profilesDir = Directory(profilesPath);
-      if (await profilesDir.exists()) {
-        try {
-          await profilesDir.delete(recursive: true);
-          commonPrint.log("deleted profiles directory");
-        } catch (e) {
-          commonPrint.log("failed to delete profiles directory: $e");
-        }
-      }
-
-      // Delete cache and temporary files
-      final filesToDelete = [
-        'cache.db',
-        'libCachedImageData.json',
-        'FlClashX.lock',
-      ];
-
-      for (final fileName in filesToDelete) {
-        final file = File(join(homePath, fileName));
-        if (await file.exists()) {
+        // Delete profiles directory
+        final profilesDir = Directory(profilesPath);
+        if (await profilesDir.exists()) {
           try {
-            await file.delete();
-            commonPrint.log("deleted $fileName");
+            await profilesDir.delete(recursive: true);
+            commonPrint.log("deleted profiles directory");
           } catch (e) {
-            commonPrint.log("failed to delete $fileName: $e");
+            commonPrint.log("failed to delete profiles directory: $e");
+          }
+        }
+
+        // Delete cache and temporary files
+        final filesToDelete = [
+          'cache.db',
+          'libCachedImageData.json',
+          'FlClashX.lock',
+        ];
+
+        for (final fileName in filesToDelete) {
+          final file = File(join(homePath, fileName));
+          if (await file.exists()) {
+            try {
+              await file.delete();
+              commonPrint.log("deleted $fileName");
+            } catch (e) {
+              commonPrint.log("failed to delete $fileName: $e");
+            }
           }
         }
       }
@@ -2600,13 +2789,21 @@ class AppController {
 
       commonPrint.log("handleClear completed");
 
-      // Close file logger to release file handles (MUST be last step)
-      await fileLogger.dispose();
-      if (Platform.isWindows) system.exit();
+      if (shutdown?.clearLocalState == null) {
+        // Close file logger to release file handles (MUST be last step)
+        await fileLogger.dispose();
+      }
+      if (Platform.isWindows) {
+        await (shutdown?.exitApp?.call() ?? system.exit());
+      }
     } catch (e) {
       commonPrint.log("handleClear error: $e");
-      await fileLogger.dispose();
+      if (shutdown?.clearLocalState == null) {
+        await fileLogger.dispose();
+      }
       rethrow;
+    } finally {
+      releaseDisarm(reconcile: false);
     }
   }
 

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -1043,8 +1044,10 @@ class _ConnectButton extends ConsumerWidget {
     final colorScheme = context.colorScheme;
     final runTime = ref.watch(runTimeProvider);
     final pending = ref.watch(statusSwitchPendingProvider);
+    final startCancelable = ref.watch(statusStartCancelableProvider);
     final isStart = runTime != null;
     final isBusy = pending != null;
+    final canTap = isReady && (!isBusy || (pending && startCancelable));
 
     final Color bg;
     final Color fg;
@@ -1062,12 +1065,13 @@ class _ConnectButton extends ConsumerWidget {
     return _FocusableTap(
       autofocus: true,
       borderRadius: 24,
-      onTap: (isReady && !isBusy)
+      onTap: canTap
           ? () {
               if (Platform.isAndroid) {
-                HapticFeedback.mediumImpact();
+                unawaited(HapticFeedback.mediumImpact());
               }
-              globalState.appController.updateStatus(!isStart);
+              final shouldStart = isBusy ? false : !isStart;
+              unawaited(globalState.appController.updateStatus(shouldStart));
             }
           : null,
       child: AnimatedContainer(
