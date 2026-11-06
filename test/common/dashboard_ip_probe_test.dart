@@ -182,6 +182,7 @@ void main() {
   test(
       'IP probe uses the Windows System Proxy when TUN is only observed active',
       () async {
+    if (!Platform.isWindows) return;
     final proxy = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     addTearDown(() => proxy.close(force: true));
     proxy.listen((request) async {
