@@ -1,5 +1,7 @@
+import 'package:flclashx/common/health/health_environment.dart';
 import 'package:flclashx/common/proxy.dart';
 import 'package:flclashx/models/models.dart';
+import 'package:flclashx/providers/config.dart';
 import 'package:flclashx/providers/pac.dart';
 import 'package:flclashx/providers/state.dart';
 import 'package:flclashx/state.dart';
@@ -41,11 +43,13 @@ class SystemProxyCoordinator {
       return false;
     }
     final net = globalState.config.networkProps;
-    final rawRuntimePort = globalState.lastRuntimeConfig?['mixed-port'];
-    final port = (rawRuntimePort is int && rawRuntimePort >= 0)
-        ? rawRuntimePort
-        : globalState.config.patchClashConfig.mixedPort;
-    if (!net.systemProxy || port <= 0) {
+    final port = resolveEffectiveMixedPort(
+      configuredMixedPort: globalState.config.patchClashConfig.mixedPort,
+      lastRuntimeConfig: globalState.lastRuntimeConfig,
+      lastRuntimeProfileId: globalState.lastRuntimeProfileId,
+      currentProfileId: globalState.config.currentProfileId,
+    );
+    if (!net.systemProxy || port <= 0 || port > 65535) {
       return false;
     }
     return (await proxy?.startProxy(port, net.bypassDomain)) ?? false;
@@ -133,10 +137,45 @@ class _ProxyManagerState extends ConsumerState<ProxyManager> {
   Future<bool> _forceReapplyNow() {
     final op = _pending.then<bool>((_) async {
       if (!mounted) return false;
+      final state = ref.read(proxyStateProvider);
+      final desiredSystemProxy = ref.read(networkSettingProvider).systemProxy;
+      if (!state.isStart ||
+          !desiredSystemProxy ||
+          systemProxyCoordinator.isDisarmingForStop) {
+        return false;
+      }
+      final effectivePort = resolveEffectiveMixedPort(
+        configuredMixedPort: state.port,
+        lastRuntimeConfig: globalState.lastRuntimeConfig,
+        lastRuntimeProfileId: globalState.lastRuntimeProfileId,
+        currentProfileId: ref.read(currentProfileIdProvider),
+      );
+      final pacAsync = ref.read(pacSettingsProvider);
+      var pac = pacAsync.valueOrNull;
+      if (pac == null) {
+        if (pacAsync.hasError) {
+          pac = const PacSettings();
+        } else {
+          try {
+            pac = await ref
+                .read(pacSettingsProvider.future)
+                .timeout(const Duration(seconds: 1));
+          } catch (_) {
+            pac = ref.read(pacSettingsProvider).valueOrNull ??
+                const PacSettings();
+          }
+        }
+      }
+      if (!pac.enabled && (effectivePort <= 0 || effectivePort > 65535)) {
+        return false;
+      }
       _lastApplied = null;
       try {
         await _updateProxy(
-          ref.read(proxyStateProvider),
+          state.copyWith(
+            systemProxy: true,
+            port: effectivePort,
+          ),
           awaitPacIfLoading: true,
         );
         return true;

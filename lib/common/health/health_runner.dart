@@ -1426,6 +1426,7 @@ class HealthCheckController extends ChangeNotifier {
   HealthCancellationToken? _activeToken;
   Future<HealthReport?>? _inFlightFuture;
   bool _running = false;
+  bool _restarting = false;
   bool _wasCancelledWithoutReport = false;
   bool _disposed = false;
 
@@ -1472,6 +1473,23 @@ class HealthCheckController extends ChangeNotifier {
     return future;
   }
 
+  Future<HealthReport?> restart() async {
+    if (_disposed) return _lastReport;
+    _restarting = true;
+    try {
+      await cancelActive();
+      final dyingFuture = _inFlightFuture;
+      if (dyingFuture != null) {
+        try {
+          await dyingFuture;
+        } catch (_) {}
+      }
+    } finally {
+      _restarting = false;
+    }
+    return startOrAttach();
+  }
+
   Future<HealthReport?> _executeRun() async {
     if (_lastReport != null) {
       _previousById = {
@@ -1514,7 +1532,7 @@ class HealthCheckController extends ChangeNotifier {
       // Cancelled or interrupted: restore previous completed snapshot if any,
       // or settle remaining running items to skipped/cancelled so UI never
       // spins indefinitely when the first-ever check is cancelled.
-      if (!_disposed && identical(_activeToken, token)) {
+      if (!_disposed && identical(_activeToken, token) && !_restarting) {
         if (_previousById.isNotEmpty) {
           _liveSnapshot = _previousById;
         } else {
@@ -1539,7 +1557,7 @@ class HealthCheckController extends ChangeNotifier {
         _activeToken = null;
         _inFlightFuture = null;
         _running = false;
-        if (!_disposed) notifyListeners();
+        if (!_disposed && !_restarting) notifyListeners();
       }
     }
   }

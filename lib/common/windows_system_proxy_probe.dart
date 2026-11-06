@@ -188,6 +188,14 @@ Map<String, ParsedProxyEndpoint> parseWindowsProxyServer(String? raw) {
 
   if (expectedPacEnabled) {
     if (_pacUrlsMatch(expectedPacUrl, snapshot.autoConfigUrl)) {
+      if (snapshot.autoConfigActive == false) {
+        return (
+          status: HealthStatus.failed,
+          reasonCode: 'systemProxyDisabledExternally',
+          localDetail: null,
+          verifiedProxyDirective: null,
+        );
+      }
       if (snapshot.proxyEnabled && !manualSnapshotMatchesExpected()) {
         return (
           status: HealthStatus.warning,
@@ -210,7 +218,8 @@ Map<String, ParsedProxyEndpoint> parseWindowsProxyServer(String? raw) {
             : null,
       );
     }
-    final hasOtherPac = (snapshot.autoConfigUrl?.trim().isNotEmpty ?? false);
+    final hasOtherPac = (snapshot.autoConfigActive ?? true) &&
+        (snapshot.autoConfigUrl?.trim().isNotEmpty ?? false);
     return (
       status: HealthStatus.failed,
       reasonCode: hasOtherPac ? 'systemProxyHijacked' : 'systemProxyNotApplied',

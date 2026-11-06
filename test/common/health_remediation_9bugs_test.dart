@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flclashx/clash/core.dart';
+import 'package:flclashx/clash/interface.dart';
 import 'package:flclashx/common/common.dart';
 import 'package:flclashx/common/delay_test_coordinator.dart';
 import 'package:flclashx/common/health/health_environment.dart';
@@ -22,6 +24,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
+import 'package:proxy/proxy_platform_interface.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class _RealHttpOverrides extends HttpOverrides {}
@@ -931,4 +934,273 @@ void main() {
       }, _RealHttpOverrides());
     });
   });
+
+  group('Code Review Remediation (CR-1..CR-4)', () {
+    test('CR-1: readConfigSnapshot bounds hung clashCore.isInit within 1.5s instead of blocking 30s', () async {
+      final hungTransport = _HungInitTransport();
+      final testCore = ClashCore.forTesting(hungTransport);
+      ClashCore.instanceForTesting = testCore;
+      addTearDown(() async {
+        ClashCore.instanceForTesting = null;
+        await testCore.destroy();
+      });
+
+      const fallbackGroup = Group(
+        type: GroupType.Selector,
+        name: 'Proxy',
+        now: 'HK-01',
+        all: [Proxy(name: 'HK-01', type: 'Trojan')],
+      );
+      globalState.config = const Config(themeProps: defaultThemeProps);
+      globalState.appState = AppState(
+        pageLabel: PageLabel.dashboard,
+        viewSize: const Size(960, 760),
+        isInit: true,
+        runTime: 5000,
+        version: 1,
+        requests: FixedList(10),
+        logs: FixedList(10),
+        traffics: FixedList(10),
+        totalTraffic: Traffic(),
+        groups: const [fallbackGroup],
+        delayMap: const {},
+      );
+
+      final container = ProviderContainer(
+        overrides: [
+          tunRuntimeProvider.overrideWith((ref) => TunRuntimeController()),
+        ],
+      );
+      addTearDown(container.dispose);
+
+      final env = container.read(healthProbeEnvironmentProvider);
+      final watch = Stopwatch()..start();
+      final snap = await env
+          .readConfigSnapshot()
+          .timeout(const Duration(milliseconds: 2200));
+      watch.stop();
+
+      expect(watch.elapsedMilliseconds, lessThan(2000));
+      expect(snap.allGroups.map((g) => g.name).toList(), ['Proxy']);
+    });
+
+    test('CR-2: live mixed-port update via ClashCore.updateConfig syncs lastRuntimeConfig mixed-port', () async {
+      final transport = _ConfigurableUpdateTransport();
+      final core = ClashCore.forTesting(transport);
+      addTearDown(() async {
+        globalState.clearRuntimeSetup();
+        await core.destroy();
+      });
+
+      await core.setupConfig(
+        const SetupParams(
+          config: <String, dynamic>{'mixed-port': 7890},
+          selectedMap: <String, String>{},
+          testUrl: 'https://www.gstatic.com/generate_204',
+        ),
+        profileId: 'p-live',
+      );
+      expect(
+        resolveEffectiveMixedPort(
+          configuredMixedPort: 7890,
+          lastRuntimeConfig: globalState.lastRuntimeConfig,
+          lastRuntimeProfileId: globalState.lastRuntimeProfileId,
+          currentProfileId: 'p-live',
+        ),
+        7890,
+      );
+
+      const update7892 = UpdateParams(
+        tun: Tun(enable: false),
+        mixedPort: 7892,
+        allowLan: false,
+        findProcessMode: FindProcessMode.off,
+        mode: Mode.rule,
+        logLevel: LogLevel.info,
+        ipv6: false,
+        tcpConcurrent: false,
+        externalController: ExternalControllerStatus.close,
+        unifiedDelay: false,
+      );
+      expect(await core.updateConfig(update7892), isEmpty);
+      expect(
+        resolveEffectiveMixedPort(
+          configuredMixedPort: 7892,
+          lastRuntimeConfig: globalState.lastRuntimeConfig,
+          lastRuntimeProfileId: globalState.lastRuntimeProfileId,
+          currentProfileId: 'p-live',
+        ),
+        7892,
+      );
+
+      // Failed updateConfig must NOT overwrite the live port in lastRuntimeConfig
+      transport.updateResult = 'listen tcp 127.0.0.1:80: bind: permission denied';
+      expect(
+        await core.updateConfig(update7892.copyWith(mixedPort: 80)),
+        isNotEmpty,
+      );
+      expect(
+        resolveEffectiveMixedPort(
+          configuredMixedPort: 80,
+          lastRuntimeConfig: globalState.lastRuntimeConfig,
+          lastRuntimeProfileId: globalState.lastRuntimeProfileId,
+          currentProfileId: 'p-live',
+        ),
+        7892,
+      );
+    });
+
+    testWidgets('CR-3b: ProxyManager forceReapply returns false when stopped or systemProxy disabled, and applies runtime effective port when active', (tester) async {
+      final originalPlatform = ProxyPlatform.instance;
+      final events = <String>[];
+      ProxyPlatform.instance = _RecordingProxyPlatform(events);
+      addTearDown(() {
+        ProxyPlatform.instance = originalPlatform;
+        globalState.clearRuntimeSetup();
+      });
+
+      globalState.config = Config(
+        themeProps: defaultThemeProps,
+        currentProfileId: 'p-reapply',
+        networkProps: const NetworkProps(systemProxy: true),
+        patchClashConfig: defaultClashConfig.copyWith(mixedPort: 7890),
+      );
+      globalState.appState = AppState(
+        pageLabel: PageLabel.dashboard,
+        viewSize: const Size(960, 760),
+        isInit: true,
+        runTime: null, // Proxy is STOPPED
+        version: 1,
+        requests: FixedList(5),
+        logs: FixedList(5),
+        traffics: FixedList(5),
+        totalTraffic: Traffic(),
+        groups: const [],
+        delayMap: const {},
+      );
+      globalState.lastRuntimeProfileId = 'p-reapply';
+      globalState.lastRuntimeConfig = <String, dynamic>{'mixed-port': 7893};
+
+      late ProviderContainer container;
+      await tester.pumpWidget(
+        ProviderScope(
+          child: Builder(
+            builder: (context) {
+              container = ProviderScope.containerOf(context, listen: false);
+              return const ProxyManager(child: SizedBox.shrink());
+            },
+          ),
+        ),
+      );
+      await tester.pump();
+      events.clear();
+
+      // Stopped proxy -> forceReapply MUST return false (not stopProxy + true!)
+      expect(await systemProxyCoordinator.forceReapply(), isFalse);
+      expect(events, isEmpty);
+
+      // Start proxy, disable systemProxy preference -> forceReapply MUST return false
+      container.read(runTimeProvider.notifier).value = 1000;
+      container.read(networkSettingProvider.notifier).updateState(
+            (s) => s.copyWith(systemProxy: false),
+          );
+      await tester.pump();
+      events.clear();
+      expect(await systemProxyCoordinator.forceReapply(), isFalse);
+
+      // Enable systemProxy preference -> forceReapply MUST apply runtime effective port 7893 and return true
+      container.read(networkSettingProvider.notifier).updateState(
+            (s) => s.copyWith(systemProxy: true),
+          );
+      await tester.pump();
+      events.clear();
+      expect(await systemProxyCoordinator.forceReapply(), isTrue);
+      expect(events, contains('startProxy:7893'));
+    });
+
+    test('CR-4: evaluateWindowsSystemProxy fails PAC check when autoConfigActive is false despite residual matching AutoConfigURL', () {
+      final eval = evaluateWindowsSystemProxy(
+        expectedEnabled: true,
+        expectedPort: 7890,
+        expectedPacEnabled: true,
+        expectedPacUrl: 'http://127.0.0.1:7890/pac',
+        snapshot: const WindowsSystemProxySnapshot(
+          proxyEnabled: false,
+          proxyServer: null,
+          autoConfigUrl: 'http://127.0.0.1:7890/pac',
+          autoConfigActive: false,
+        ),
+      );
+      expect(eval.status, HealthStatus.failed);
+      expect(eval.reasonCode, 'systemProxyDisabledExternally');
+      expect(eval.verifiedProxyDirective, isNull);
+    });
+  });
+}
+
+class _HungInitTransport extends ClashHandlerInterface {
+  final Completer<bool> _never = Completer<bool>();
+
+  @override
+  Future<bool> get isInit => _never.future;
+
+  @override
+  Future<bool> destroy() async => true;
+
+  @override
+  void sendMessage(String message) {}
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class _ConfigurableUpdateTransport extends ClashHandlerInterface {
+  String setupResult = '';
+  String updateResult = '';
+
+  @override
+  Future<String> setupConfig(SetupParams params) async => setupResult;
+
+  @override
+  Future<String> updateConfig(
+    UpdateParams updateParams, {
+    String? controllerAddress,
+    bool? controllerEnabled,
+  }) async =>
+      updateResult;
+
+  @override
+  Future<bool> cancelTestDelay(String requestId) async => true;
+
+  @override
+  Future<bool> destroy() async => true;
+
+  @override
+  void sendMessage(String message) {}
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class _RecordingProxyPlatform extends ProxyPlatform {
+  _RecordingProxyPlatform(this.events);
+  final List<String> events;
+
+  @override
+  Future<bool?> startProxy(int port, List<String> bypassDomain) async {
+    events.add('startProxy:$port');
+    return true;
+  }
+
+  @override
+  Future<bool?> stopProxy() async {
+    events.add('stopProxy');
+    return true;
+  }
+
+  @override
+  Future<bool?> startPac(String url) async {
+    events.add('startPac:$url');
+    return true;
+  }
 }

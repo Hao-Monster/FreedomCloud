@@ -369,30 +369,32 @@ class _HealthCheckViewState extends ConsumerState<HealthCheckView> {
           );
         case HealthAction.reapplySystemProxy:
           final restored = await systemProxyCoordinator.forceReapply();
-          if (!restored && hostContext.mounted) {
-            popOverlaysToRoot();
-            await showExtend<void>(
-              hostContext,
-              builder: (_, type) => AdaptiveSheetScaffold(
-                type: type,
-                title: appLocalizations.network,
-                body: const NetworkListView(),
-              ),
-            );
+          if (!restored) {
+            if (hostContext.mounted) {
+              popOverlaysToRoot();
+              await showExtend<void>(
+                hostContext,
+                builder: (_, type) => AdaptiveSheetScaffold(
+                  type: type,
+                  title: appLocalizations.network,
+                  body: const NetworkListView(),
+                ),
+              );
+            }
             return;
           }
           if (mounted) {
-            unawaited(_controller.startOrAttach());
+            unawaited(_controller.restart());
           }
         case HealthAction.startProxy:
           await globalState.appController.updateStatus(true);
           if (mounted) {
-            unawaited(_controller.startOrAttach());
+            unawaited(_controller.restart());
           }
         case HealthAction.restartCore:
           await globalState.appController.restartCore();
           if (mounted) {
-            unawaited(_controller.startOrAttach());
+            unawaited(_controller.restart());
           }
       }
     } finally {

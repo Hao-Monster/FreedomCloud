@@ -270,10 +270,14 @@ class DefaultHealthProbeEnvironment implements HealthProbeEnvironment {
     var allGroups = _ref.read(groupsProvider);
     var visibleGroups = _ref.read(currentGroupsStateProvider).value;
     try {
-      if (ClashCore.existingInterface != null && await clashCore.isInit) {
-        final liveGroups = await clashCore
-            .getProxiesGroups()
-            .timeout(const Duration(milliseconds: 1200));
+      final activeCore = ClashCore.existingCore;
+      if (activeCore != null) {
+        final liveGroups = await (() async {
+          if (!await Future.value(activeCore.isInit)) {
+            return const <Group>[];
+          }
+          return activeCore.getProxiesGroups();
+        })().timeout(const Duration(milliseconds: 1200));
         if (liveGroups.isNotEmpty) {
           allGroups = liveGroups;
           visibleGroups = switch (patchClash.mode) {
@@ -367,14 +371,15 @@ class DefaultHealthProbeEnvironment implements HealthProbeEnvironment {
 
   @override
   Future<CoreLivenessObservation> checkCoreLiveness() async {
-    if (ClashCore.existingInterface == null) {
+    final activeCore = ClashCore.existingCore;
+    if (activeCore == null) {
       return const CoreLivenessObservation(
         isInit: false,
         memoryBytes: null,
         trafficValid: false,
       );
     }
-    final init = await clashCore.isInit;
+    final init = await activeCore.isInit;
     if (!init) {
       return const CoreLivenessObservation(
         isInit: false,
@@ -382,9 +387,9 @@ class DefaultHealthProbeEnvironment implements HealthProbeEnvironment {
         trafficValid: false,
       );
     }
-    final memRaw = await clashCore.clashInterface.getMemory();
+    final memRaw = await activeCore.clashInterface.getMemory();
     final memBytes = int.tryParse(memRaw);
-    final trafficRaw = await clashCore.clashInterface.getTraffic();
+    final trafficRaw = await activeCore.clashInterface.getTraffic();
     var trafficOk = false;
     if (trafficRaw.isNotEmpty) {
       final decoded = jsonDecode(trafficRaw);
@@ -400,8 +405,9 @@ class DefaultHealthProbeEnvironment implements HealthProbeEnvironment {
 
   @override
   Future<TunStatus?> readTunStatus() async {
-    if (!Platform.isWindows || ClashCore.existingInterface == null) return null;
-    return clashCore.getTunStatus();
+    final activeCore = ClashCore.existingCore;
+    if (!Platform.isWindows || activeCore == null) return null;
+    return activeCore.getTunStatus();
   }
 
   @override
@@ -445,10 +451,11 @@ class DefaultHealthProbeEnvironment implements HealthProbeEnvironment {
     });
 
     Future<List<Connection>> snapshotCoreConnections() {
-      if (ClashCore.existingInterface == null) {
+      final activeCore = ClashCore.existingCore;
+      if (activeCore == null) {
         return Future.value(const <Connection>[]);
       }
-      return clashCore
+      return activeCore
           .getConnections()
           .timeout(const Duration(milliseconds: 1500))
           .catchError((Object _) => const <Connection>[]);

@@ -11,6 +11,7 @@ import 'package:flclashx/common/windows_system_proxy_probe.dart';
 import 'package:flclashx/controller.dart';
 import 'package:flclashx/enum/enum.dart';
 import 'package:flclashx/l10n/l10n.dart';
+import 'package:flclashx/manager/proxy_manager.dart';
 import 'package:flclashx/models/models.dart';
 import 'package:flclashx/providers/providers.dart';
 import 'package:flclashx/state.dart';
@@ -27,6 +28,8 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
+import 'package:proxy/proxy_platform_interface.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class _TestPaths extends PathProviderPlatform {
   _TestPaths(this.root);
@@ -299,6 +302,7 @@ void main() {
   late Directory tempDir;
 
   setUpAll(() async {
+    SharedPreferences.setMockInitialValues({});
     tempDir = await Directory.systemTemp.createTemp('flclashx_health_test_');
     PathProviderPlatform.instance = _TestPaths(tempDir.path);
   });
@@ -959,6 +963,137 @@ void main() {
     startProxyGate.complete();
     await tester.pumpAndSettle();
   });
+
+  testWidgets(
+      'CR-3a: clicking reapplySystemProxy while check is still in-flight in Phase 2 cancels stale run and settles to healthy post-repair report',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(460, 900));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    final originalPlatform = ProxyPlatform.instance;
+    final outboundGate = Completer<DelayTestResult>();
+    final env = _TestHealthEnvironment(
+      initialClock: DateTime(2026, 11, 6, 11, 30, 0),
+      tunStatus: const TunStatus(
+        instanceId: 'core-1',
+        revision: 1,
+        state: 'off',
+        listenerActive: false,
+        interfaceState: 'missing',
+        privilege: 'none',
+        requestedEnabled: false,
+      ),
+    )
+      ..outboundGate = outboundGate
+      ..tunDesiredEnabled = false
+      ..systemProxyEnabled = true
+      ..windowsProxy = const WindowsSystemProxySnapshot(
+        proxyEnabled: true,
+        proxyServer: '127.0.0.1:7890',
+        autoConfigUrl: null,
+      );
+
+    var restoreArmed = false;
+    ProxyPlatform.instance = _RestoringProxyPlatform(
+      onStartProxy: (port) {
+        if (!restoreArmed) return;
+        env
+          ..windowsProxy = WindowsSystemProxySnapshot(
+            proxyEnabled: true,
+            proxyServer: '127.0.0.1:$port',
+            autoConfigUrl: null,
+          )
+          ..outboundGate = null
+          ..clock = DateTime(2026, 11, 6, 11, 30, 5);
+      },
+    );
+    addTearDown(() => ProxyPlatform.instance = originalPlatform);
+
+    _seedTestAppState(runTime: 5000);
+    globalState.config = globalState.config.copyWith(
+      networkProps: const NetworkProps(systemProxy: true),
+      patchClashConfig: defaultClashConfig.copyWith(mixedPort: 7890),
+    );
+    globalState.lastRuntimeProfileId = 'sub-main';
+    globalState.lastRuntimeConfig = <String, dynamic>{'mixed-port': 7890};
+    addTearDown(globalState.clearRuntimeSetup);
+
+    final showView = ValueNotifier<bool>(false);
+    await tester.pumpWidget(
+      _wrapWithApp(
+        env: env,
+        viewSize: const Size(460, 900),
+        child: ProxyManager(
+          child: ValueListenableBuilder<bool>(
+            valueListenable: showView,
+            builder: (_, visible, __) => visible
+                ? const HealthCheckView(type: SheetType.sideSheet)
+                : const SizedBox.shrink(),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 20));
+
+    // Simulate external hijack AFTER ProxyManager already cached its signature!
+    env.windowsProxy = const WindowsSystemProxySnapshot(
+      proxyEnabled: true,
+      proxyServer: '127.0.0.1:10809',
+      autoConfigUrl: null,
+    );
+    restoreArmed = true;
+    showView.value = true;
+
+    // Let Phase 1 complete (C3 fails with systemProxyHijacked) while Phase 2 is still blocked on outboundGate!
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+
+    expect(find.text('取消检查'), findsOneWidget);
+    final reapplyBtn = find.descendant(
+      of: find.byKey(const ValueKey('health-row-systemProxyTakeover')),
+      matching: find.text('一键恢复系统代理'),
+    );
+    await tester.scrollUntilVisible(
+      reapplyBtn,
+      120,
+      scrollable: find.byType(Scrollable).first,
+    );
+    expect(reapplyBtn, findsOneWidget);
+
+    // Click "一键恢复系统代理" while Run #1 is still in Phase 2!
+    await tester.tap(reapplyBtn);
+    await tester.pump();
+    if (!outboundGate.isCompleted) {
+      outboundGate.complete(const DelayTestResult(42));
+    }
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(
+      find.byKey(const ValueKey('health-verdict-card')),
+      -120,
+      scrollable: find.byType(Scrollable).first,
+    );
+
+    expect(find.text('连接正常'), findsOneWidget);
+    expect(find.textContaining('11:30:05'), findsOneWidget);
+  });
+}
+
+class _RestoringProxyPlatform extends ProxyPlatform {
+  _RestoringProxyPlatform({required this.onStartProxy});
+  final void Function(int port) onStartProxy;
+
+  @override
+  Future<bool?> startProxy(int port, List<String> bypassDomain) async {
+    onStartProxy(port);
+    return true;
+  }
+
+  @override
+  Future<bool?> stopProxy() async => true;
+
+  @override
+  Future<bool?> startPac(String url) async => true;
 }
 
 class _SlowStartAppController extends _StubAppController {

@@ -31,6 +31,11 @@ class ClashCore {
   }
   @visibleForTesting
   ClashCore.forTesting(this.clashInterface);
+  @visibleForTesting
+  static set instanceForTesting(ClashCore? instance) {
+    _instance = instance;
+  }
+  static ClashCore? get existingCore => _instance;
   static ClashCore? _instance;
   /// Passive readers must not construct the service as a side effect.
   static ClashHandlerInterface? get existingInterface => _instance?.clashInterface;
@@ -127,7 +132,10 @@ class ClashCore {
   }) async {
     final result = await clashInterface.updateConfig(updateParams,
       controllerAddress: controllerAddress, controllerEnabled: controllerEnabled);
-    if (result.isEmpty) await cancelDelayTests(reason: 'configChanged');
+    if (result.isEmpty) {
+      globalState.commitRuntimeUpdate(updateParams);
+      await cancelDelayTests(reason: 'configChanged');
+    }
     return result;
   }
 

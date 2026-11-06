@@ -581,6 +581,25 @@ class GlobalState {
     _commitGroupMetadata(rawConfig);
   }
 
+  void commitRuntimeUpdate(UpdateParams params) {
+    final runtimeConfig = lastRuntimeConfig;
+    if (runtimeConfig != null) {
+      lastRuntimeConfig = <String, dynamic>{
+        ...runtimeConfig,
+        'mixed-port': params.mixedPort,
+        'mode': params.mode.name,
+        'allow-lan': params.allowLan,
+        'ipv6': params.ipv6,
+        'log-level': params.logLevel.name,
+        'tcp-concurrent': params.tcpConcurrent,
+        'unified-delay': params.unifiedDelay,
+      };
+    }
+    effectiveTcpConcurrent.value = params.tcpConcurrent;
+    effectiveUnifiedDelay.value = params.unifiedDelay;
+    effectiveLogLevel.value = params.logLevel.name;
+  }
+
   void _commitGroupMetadata(Map<String, dynamic> rawConfig) {
     final descriptions = <String, String>{};
     final globalOrder = <String>[];
