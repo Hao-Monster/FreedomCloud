@@ -742,7 +742,18 @@ class ClashService extends ClashHandlerInterface {
   }
 
   Future<bool> windowsComponentsMatch() async {
-    if (!Platform.isWindows) return true;
+    final watch = Stopwatch()..start();
+    void report(bool matching, {String? outcome}) {
+      logStartupTiming(
+        'componentsMatch',
+        watch,
+        outcome: outcome ?? (matching ? 'match' : 'mismatch'),
+      );
+    }
+    if (!Platform.isWindows) {
+      report(true);
+      return true;
+    }
     final identity = _agentIdentity;
     final connectionEpoch = _connectionEpoch;
     final generation = _agentGeneration;
@@ -750,6 +761,7 @@ class ClashService extends ClashHandlerInterface {
         identity.agentInstanceId == null ||
         !RegExp(r'^[0-9a-f]{64}$').hasMatch(identity.agentInstanceId!) ||
         identity.agentExecutable == null || identity.coreExecutable == null) {
+      report(false);
       return false;
     }
     try {
@@ -759,13 +771,21 @@ class ClashService extends ClashHandlerInterface {
       ]) {
         final (bundled, running) =
             await (fileSha256(pair.$1), fileSha256(pair.$2)).wait;
-        if (bundled != running) return false;
+        if (bundled != running) {
+          report(false);
+          return false;
+        }
       }
       final helperMatches = identity.backendSource != 'helper' || await request.pingHelper();
-      return helperMatches && connectionEpoch == _connectionEpoch &&
+      final matching = helperMatches && connectionEpoch == _connectionEpoch &&
         generation == _agentGeneration &&
         identity.agentInstanceId == _agentIdentity?.agentInstanceId;
-    } catch (_) { return false; }
+      report(matching);
+      return matching;
+    } catch (_) {
+      report(false, outcome: 'error');
+      return false;
+    }
   }
 
   /// Called only after an explicit user request prepared a matching Helper.

@@ -389,13 +389,26 @@ abstract class ClashHandlerInterface with ClashInterface {
   }
 
   Future<TunStatus> getTunStatus() async {
-    final result = await invoke<Result>(
-      method: ActionMethod.getTunStatus,
-      timeout: const Duration(seconds: 3),
-      defaultValue: Result.error('statusUnavailable'),
-    );
-    if (result.isError) throw const TunFailure('statusUnavailable');
-    return TunStatus.fromJson(result.data);
+    final watch = Stopwatch()..start();
+    try {
+      final result = await invoke<Result>(
+        method: ActionMethod.getTunStatus,
+        timeout: const Duration(seconds: 3),
+        defaultValue: Result.error('statusUnavailable'),
+      );
+      if (result.isError) throw const TunFailure('statusUnavailable');
+      final status = TunStatus.fromJson(result.data);
+      logStartupTiming(
+        'getTunStatus',
+        watch,
+        outcome: status.observed.name,
+        detail: 'state=${status.state} revision=${status.revision}',
+      );
+      return status;
+    } catch (_) {
+      logStartupTiming('getTunStatus', watch, outcome: 'error');
+      rethrow;
+    }
   }
 
   @override

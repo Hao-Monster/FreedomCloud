@@ -48,7 +48,21 @@ class ClashCore {
   bool? _wantedUiActive;
   Future<bool>? _uiActivityUpdate;
 
-  Future<bool> preload() => clashInterface.preload();
+  Future<bool> preload() async {
+    final watch = Stopwatch()..start();
+    try {
+      final ready = await clashInterface.preload();
+      logStartupTiming(
+        'preload',
+        watch,
+        outcome: ready ? 'ready' : 'unavailable',
+      );
+      return ready;
+    } catch (_) {
+      logStartupTiming('preload', watch, outcome: 'error');
+      rethrow;
+    }
+  }
 
   static Future<void> initGeo() async {
     final homePath = await appPath.homeDirPath;
@@ -139,13 +153,25 @@ class ClashCore {
     return result;
   }
 
-  Future<String> setupConfig(SetupParams setupParams, {required String? profileId}) async {
-    final result = await clashInterface.setupConfig(setupParams);
-    if (result.isEmpty) {
-      globalState.commitRuntimeSetup(setupParams, profileId);
-      await cancelDelayTests(reason: 'configChanged');
+  Future<String> setupConfig(SetupParams setupParams,
+      {required String? profileId}) async {
+    final watch = Stopwatch()..start();
+    try {
+      final result = await clashInterface.setupConfig(setupParams);
+      if (result.isEmpty) {
+        globalState.commitRuntimeSetup(setupParams, profileId);
+        await cancelDelayTests(reason: 'configChanged');
+      }
+      logStartupTiming(
+        'setupConfig',
+        watch,
+        outcome: result.isEmpty ? 'ok' : 'rejected',
+      );
+      return result;
+    } catch (_) {
+      logStartupTiming('setupConfig', watch, outcome: 'error');
+      rethrow;
     }
-    return result;
   }
 
   Future<TunStatus> getTunStatus() => clashInterface.getTunStatus();
@@ -354,7 +380,21 @@ class ClashCore {
   }) async =>
       clashInterface.updateExternalProvider(providerName);
 
-  Future<bool> startListener() => clashInterface.startListener();
+  Future<bool> startListener() async {
+    final watch = Stopwatch()..start();
+    try {
+      final started = await clashInterface.startListener();
+      logStartupTiming(
+        'startListener',
+        watch,
+        outcome: started ? 'started' : 'rejected',
+      );
+      return started;
+    } catch (_) {
+      logStartupTiming('startListener', watch, outcome: 'error');
+      rethrow;
+    }
+  }
 
   Future<void> stopListener() async {
     await cancelDelayTests(reason: 'sessionClosed');

@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 
+import 'startup_timing.dart';
 import 'tun_runtime.dart';
 import 'windows_tun_prepare.dart';
 
@@ -136,24 +137,36 @@ Future<void> startWindowsTunOnLaunch({
       // Adapter creation and interface publication are asynchronous at the OS
       // level. Retry only unavailable/transitional reads within a short bound;
       // a definite off/failed observation still fails immediately.
+      final settleWatch = Stopwatch()..start();
       TunStatus? observed;
-      for (var attempt = 0;; attempt++) {
-        observed = await observe();
-        if (!current()) return;
-        if (observed != null &&
-            observed.observed != TunObservedState.unknown) {
-          break;
+      var attempts = 0;
+      try {
+        for (var attempt = 0;; attempt++) {
+          attempts = attempt + 1;
+          observed = await observe();
+          if (!current()) return;
+          if (observed != null &&
+              observed.observed != TunObservedState.unknown) {
+            break;
+          }
+          if (attempt + 1 >= settleAttempts) break;
+          if (settleDelay > Duration.zero) {
+            final step = switch (attempt) {
+              0 => const Duration(milliseconds: 150),
+              1 => const Duration(milliseconds: 250),
+              _ => settleDelay,
+            };
+            await Future.delayed(step < settleDelay ? step : settleDelay);
+          }
+          if (!current()) return;
         }
-        if (attempt + 1 >= settleAttempts) break;
-        if (settleDelay > Duration.zero) {
-          final step = switch (attempt) {
-            0 => const Duration(milliseconds: 150),
-            1 => const Duration(milliseconds: 250),
-            _ => settleDelay,
-          };
-          await Future.delayed(step < settleDelay ? step : settleDelay);
-        }
-        if (!current()) return;
+      } finally {
+        logStartupTiming(
+          'settle',
+          settleWatch,
+          outcome: observed?.observed.name ?? 'unavailable',
+          attempt: attempts,
+        );
       }
       if (observed == null) throw const TunFailure('statusUnavailable');
       if (observed.observed != TunObservedState.on) {

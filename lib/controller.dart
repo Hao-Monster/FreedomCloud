@@ -3924,27 +3924,55 @@ class _ControllerWindowsTunStartupEffects implements WindowsTunStartupEffects {
   @override
   Future<TunStatus?> observe() => controller.refreshWindowsTunStatus(fresh: true);
   @override
-  Future<bool> componentsMatch() async => await clashService?.windowsComponentsMatch() ?? false;
+  Future<bool> componentsMatch() async =>
+      await clashService?.windowsComponentsMatch() ?? false;
   @override
   bool canMigrate() => clashService?.windowsAgentSupportsMigration ?? false;
   @override
-  Future<bool> authorize() async => await controller._adminAuthorization.request(system.authorizeCore) != AuthorizeCode.error;
+  Future<bool> authorize() async {
+    final watch = Stopwatch()..start();
+    try {
+      final code =
+          await controller._adminAuthorization.request(system.authorizeCore);
+      final authorized = code != AuthorizeCode.error;
+      logStartupTiming(
+        'authorize',
+        watch,
+        outcome: authorized ? code.name : 'error',
+      );
+      return authorized;
+    } catch (_) {
+      logStartupTiming('authorize', watch, outcome: 'error');
+      rethrow;
+    }
+  }
   @override
   Future<bool> ensureBackend(bool Function() isCurrent) async {
+    final watch = Stopwatch()..start();
     final wasRunning = globalState.isStart || proxyRunning;
-    final replaced =
-        await clashService?.ensureWindowsTunBackend(isCurrent: isCurrent) ??
-            false;
-    if (replaced) {
-      controller._tunRuntime.clearCoreRuntimeFailure();
-      globalState.clearRuntimeSetup();
-      controller._hasAppliedWindowsProfile = false;
-      controller._needsWindowsCoreRestore = true;
-      controller._windowsCoreRestoreNeedsListener =
-          controller._windowsCoreRestoreNeedsListener || wasRunning;
-      controller._ref.invalidate(nodeRuntimeReadProvider);
+    try {
+      final replaced =
+          await clashService?.ensureWindowsTunBackend(isCurrent: isCurrent) ??
+              false;
+      if (replaced) {
+        controller._tunRuntime.clearCoreRuntimeFailure();
+        globalState.clearRuntimeSetup();
+        controller._hasAppliedWindowsProfile = false;
+        controller._needsWindowsCoreRestore = true;
+        controller._windowsCoreRestoreNeedsListener =
+            controller._windowsCoreRestoreNeedsListener || wasRunning;
+        controller._ref.invalidate(nodeRuntimeReadProvider);
+      }
+      logStartupTiming(
+        'ensureBackend',
+        watch,
+        outcome: replaced ? 'replaced' : 'reused',
+      );
+      return replaced;
+    } catch (_) {
+      logStartupTiming('ensureBackend', watch, outcome: 'error');
+      rethrow;
     }
-    return replaced;
   }
   @override
   Future<void> initialize(bool Function() isCurrent) async {

@@ -1,9 +1,17 @@
 func ReCreateTun(tunConf LC.Tun, tunnel C.Tunnel) {
+	startedAt := fcxStartupTimingStart()
 	tunConf = fcxCloneTunConfig(tunConf)
 	tunConf.Sort()
 	tunMux.Lock()
 	defer tunMux.Unlock()
 	defer fcxPublishTunStatus()
+	defer func() {
+		outcome := fcxTunStatus.State
+		if fcxTunStatus.ErrorCode != "" {
+			outcome = "error"
+		}
+		fcxLogTunTiming("ReCreateTun", startedAt, outcome)
+	}()
 	fcxTunStatus.Revision++
 	fcxTunStatus.RequestedEnabled = tunConf.Enable
 	fcxTunStatus.ErrorCode = ""

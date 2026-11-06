@@ -44,6 +44,7 @@ export 'request.dart';
 export 'rule_compiler.dart';
 export 'scroll.dart';
 export 'statusbar.dart';
+export 'startup_timing.dart';
 export 'string.dart';
 export 'system.dart';
 export 'text.dart';
