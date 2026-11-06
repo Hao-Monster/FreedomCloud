@@ -1135,6 +1135,103 @@ void main() {
       expect(eval.reasonCode, 'systemProxyDisabledExternally');
       expect(eval.verifiedProxyDirective, isNull);
     });
+
+    test(
+        'CR-5: DefaultHealthProbeEnvironment.lastFailedProbeObservedInCore distinguishes TUN-captured upstream failure from uncaptured socket failure',
+        () async {
+      await HttpOverrides.runWithHttpOverrides(() async {
+        var recordPortInCore = false;
+        final deadNodeServer = await ServerSocket.bind(
+          InternetAddress.loopbackIPv4,
+          0,
+        );
+        addTearDown(deadNodeServer.close);
+        deadNodeServer.listen((socket) {
+          final clientPort = socket.remotePort.toString();
+          if (recordPortInCore) {
+            final conn = Connection(
+              id: 'tun-dead-node-1',
+              start: DateTime.now(),
+              chains: const ['Dead-Node', 'Proxy'],
+              metadata: Metadata(
+                uid: 0,
+                network: 'tcp',
+                sourceIP: '198.18.0.1',
+                sourcePort: clientPort,
+                destinationIP: '127.0.0.1',
+                destinationPort: '${deadNodeServer.port}',
+                host: '127.0.0.1',
+                process: 'FlClashX.exe',
+                remoteDestination: '',
+              ),
+            );
+            globalState.appState = globalState.appState.copyWith(
+              requests: FixedList<Connection>(10)..add(conn),
+            );
+          }
+          socket.destroy();
+        });
+
+        globalState.config = const Config(themeProps: defaultThemeProps);
+        globalState.appState = AppState(
+          pageLabel: PageLabel.dashboard,
+          viewSize: const Size(960, 760),
+          isInit: true,
+          runTime: 5000,
+          version: 1,
+          requests: FixedList(10),
+          logs: FixedList(10),
+          traffics: FixedList(10),
+          totalTraffic: Traffic(),
+          groups: const [
+            Group(
+              type: GroupType.Selector,
+              name: 'Proxy',
+              now: 'Dead-Node',
+              all: [Proxy(name: 'Dead-Node', type: 'Trojan')],
+            ),
+          ],
+          delayMap: const {},
+        );
+
+        final customReq = Request(
+          ipInfoSources: {
+            'http://127.0.0.1:${deadNodeServer.port}/fail': IpInfo.fromIpSbJson,
+          },
+        );
+        final container = ProviderContainer(
+          overrides: [
+            tunRuntimeProvider.overrideWith((ref) => TunRuntimeController()),
+            healthProbeEnvironmentProvider.overrideWith(
+              (ref) =>
+                  DefaultHealthProbeEnvironment(ref, probeRequest: customReq),
+            ),
+          ],
+        );
+        addTearDown(container.dispose);
+
+        final env = container.read(healthProbeEnvironmentProvider)
+            as DefaultHealthProbeEnvironment;
+
+        // 1. Socket fails WITHOUT being observed in Core -> false
+        final uncapturedObs = await env.probeEndToEnd(
+          cancelToken: HealthCancellationToken(),
+          explicitProxyDirective: 'DIRECT',
+        );
+        expect(uncapturedObs, isNull);
+        expect(env.lastFailedProbeObservedInCore, isFalse);
+
+        // 2. Socket enters Core (`requests` records matching sourcePort) then
+        // upstream closes/fails -> `lastFailedProbeObservedInCore` is true!
+        recordPortInCore = true;
+        final capturedObs = await env.probeEndToEnd(
+          cancelToken: HealthCancellationToken(),
+          explicitProxyDirective: 'DIRECT',
+        );
+        expect(capturedObs, isNull);
+        expect(env.lastFailedProbeObservedInCore, isTrue);
+      }, _RealHttpOverrides());
+    });
   });
 }
 

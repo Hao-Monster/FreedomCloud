@@ -142,6 +142,13 @@ abstract class HealthProbeEnvironment {
   });
 }
 
+/// Optional telemetry capability allowing `HealthRunner` to distinguish
+/// "socket never entered Core (TUN bypass/blackhole)" from "socket entered
+/// Core via TUN and failed upstream on the selected proxy node".
+abstract interface class CoreFailedProbeTelemetry {
+  bool get lastFailedProbeObservedInCore;
+}
+
 bool isVerifiedLoopbackProxyDirective(String? directive) {
   if (directive == null) return false;
   final trimmed = directive.trim();
@@ -195,11 +202,16 @@ bool isVerifiedLoopbackProxyDirective(String? directive) {
   return (observedInCore: false, matchedLeafProxy: null);
 }
 
-class DefaultHealthProbeEnvironment implements HealthProbeEnvironment {
+class DefaultHealthProbeEnvironment
+    implements HealthProbeEnvironment, CoreFailedProbeTelemetry {
   DefaultHealthProbeEnvironment(this._ref, {Request? probeRequest})
       : _probeRequest = probeRequest;
   final Ref _ref;
   final Request? _probeRequest;
+  bool _lastFailedProbeObservedInCore = false;
+
+  @override
+  bool get lastFailedProbeObservedInCore => _lastFailedProbeObservedInCore;
 
   @override
   DateTime now() => DateTime.now();
@@ -472,8 +484,24 @@ class DefaultHealthProbeEnvironment implements HealthProbeEnvironment {
       return results;
     }
 
+    _lastFailedProbeObservedInCore = false;
     final startedAt = DateTime.now();
     final inFlightFutures = <Future<List<Connection>>>[];
+    final observedAttemptPorts = <String>{};
+
+    bool anyAttemptObservedInCore(Iterable<Connection> connections) {
+      if (observedAttemptPorts.isEmpty) return false;
+      return resolveEndToEndCoreObservation(
+        explicitProxyDirective: 'DIRECT',
+        sourcePorts: observedAttemptPorts,
+        probeHost: '',
+        minStart: startedAt.subtract(const Duration(seconds: 2)),
+        maxStart: DateTime.now().add(const Duration(seconds: 2)),
+        connections: connections.toList(growable: false),
+        groupNames: const <String>{},
+      ).observedInCore;
+    }
+
     try {
       final activeRequest = _probeRequest ?? request;
       final res = await activeRequest.checkIpWithHost(
@@ -485,14 +513,63 @@ class DefaultHealthProbeEnvironment implements HealthProbeEnvironment {
         proxyResolver: explicitProxyDirective != null
             ? (_) => explicitProxyDirective
             : null,
-        onSocketConnected: (_) {
+        onSocketConnected: (activePorts) {
           if (cancelToken.isCancelled) return;
-          inFlightFutures.add(snapshotCoreConnections());
+          observedAttemptPorts.addAll(activePorts);
+          if (!_lastFailedProbeObservedInCore &&
+              anyAttemptObservedInCore(readRecentRecordedConnections())) {
+            _lastFailedProbeObservedInCore = true;
+          }
+          final snapFuture = snapshotCoreConnections();
+          inFlightFutures.add(snapFuture);
+          unawaited(
+            snapFuture.then((conns) {
+              if (!_lastFailedProbeObservedInCore &&
+                  anyAttemptObservedInCore([
+                    ...conns,
+                    ...readRecentRecordedConnections(),
+                  ])) {
+                _lastFailedProbeObservedInCore = true;
+              }
+            }),
+          );
         },
       );
-      if (cancelToken.isCancelled || res.isError) return null;
-      final probe = res.data;
-      if (probe == null) return null;
+      if (cancelToken.isCancelled) {
+        _lastFailedProbeObservedInCore = false;
+        return null;
+      }
+      if (res.isError || res.data == null) {
+        if (!_lastFailedProbeObservedInCore &&
+            observedAttemptPorts.isNotEmpty) {
+          final mergedOnFailure = <Connection>[
+            ...readRecentRecordedConnections(),
+          ];
+          for (final f in inFlightFutures) {
+            if (cancelToken.isCancelled) break;
+            mergedOnFailure.addAll(await f);
+          }
+          if (!_lastFailedProbeObservedInCore &&
+              !cancelToken.isCancelled &&
+              !anyAttemptObservedInCore(mergedOnFailure)) {
+            final activeCore = ClashCore.existingCore;
+            if (activeCore != null) {
+              mergedOnFailure.addAll(
+                await activeCore
+                    .getConnections()
+                    .timeout(const Duration(milliseconds: 300))
+                    .catchError((Object _) => const <Connection>[]),
+              );
+            }
+          }
+          if (anyAttemptObservedInCore(mergedOnFailure)) {
+            _lastFailedProbeObservedInCore = true;
+          }
+        }
+        return null;
+      }
+      _lastFailedProbeObservedInCore = false;
+      final probe = res.data!;
 
       final allGroups = _ref.read(groupsProvider);
       final groupNames = <String>{

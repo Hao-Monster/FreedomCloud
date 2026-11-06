@@ -960,6 +960,7 @@
   "healthVerdictLocalNetworkDown": "Локальная сеть недоступна (не связано с узлом)",
   "healthVerdictOutboundFailed": "Локальная сеть работает, но узел недоступен",
   "healthVerdictTrafficBypassed": "Сеть доступна, но трафик обошёл ядро прокси",
+  "healthVerdictTunBypassedTitle": "TUN не перехватывает трафик; работает только системный прокси",
   "healthVerdictEndToEndFailed": "Сквозная проверка не удалась, смените узел",
   "healthVerdictDnsFailed": "Ошибка разрешения DNS или подмена адреса",
   "healthVerdictWarningsTitle": "Соединение работает, но есть предупреждения",
@@ -1095,5 +1096,6 @@
   "healthDetailSysProxyInvalidPort": "Локальный mixed-port отключён (0)",
   "healthDetailSysProxyNotApplied": "Системный прокси ещё не применён",
   "healthDetailSysProxyDisabledExternally": "Системный прокси выключен в ОС",
-  "healthDetailDnsStaleFakeIp": "Обнаружен устаревший кэш Fake-IP при выключенном TUN"
+  "healthDetailDnsStaleFakeIp": "Обнаружен устаревший кэш Fake-IP при выключенном TUN",
+  "healthDetailTunBypassedSystemProxyOk": "Маршрут TUN не работает; проверено через системный прокси"
 }

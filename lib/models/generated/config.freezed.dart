@@ -25,7 +25,7 @@ mixin _$AppSettingProps {
   List<DashboardWidget> get dashboardWidgets =>
       throw _privateConstructorUsedError;
   bool get dashboardDefaultV2Migrated => throw _privateConstructorUsedError;
-  bool get tunDesktopStackMixedMigrated => throw _privateConstructorUsedError;
+  bool get tunDesktopStackGvisorRestored => throw _privateConstructorUsedError;
   bool get onlyStatisticsProxy => throw _privateConstructorUsedError;
   bool get autoLaunch => throw _privateConstructorUsedError;
   bool get silentLaunch => throw _privateConstructorUsedError;
@@ -85,7 +85,7 @@ abstract class $AppSettingPropsCopyWith<$Res> {
       @JsonKey(fromJson: dashboardWidgetsSafeFormJson)
       List<DashboardWidget> dashboardWidgets,
       bool dashboardDefaultV2Migrated,
-      bool tunDesktopStackMixedMigrated,
+      bool tunDesktopStackGvisorRestored,
       bool onlyStatisticsProxy,
       bool autoLaunch,
       bool silentLaunch,
@@ -139,7 +139,7 @@ class _$AppSettingPropsCopyWithImpl<$Res, $Val extends AppSettingProps>
     Object? locale = freezed,
     Object? dashboardWidgets = null,
     Object? dashboardDefaultV2Migrated = null,
-    Object? tunDesktopStackMixedMigrated = null,
+    Object? tunDesktopStackGvisorRestored = null,
     Object? onlyStatisticsProxy = null,
     Object? autoLaunch = null,
     Object? silentLaunch = null,
@@ -183,9 +183,9 @@ class _$AppSettingPropsCopyWithImpl<$Res, $Val extends AppSettingProps>
           ? _value.dashboardDefaultV2Migrated
           : dashboardDefaultV2Migrated // ignore: cast_nullable_to_non_nullable
               as bool,
-      tunDesktopStackMixedMigrated: null == tunDesktopStackMixedMigrated
-          ? _value.tunDesktopStackMixedMigrated
-          : tunDesktopStackMixedMigrated // ignore: cast_nullable_to_non_nullable
+      tunDesktopStackGvisorRestored: null == tunDesktopStackGvisorRestored
+          ? _value.tunDesktopStackGvisorRestored
+          : tunDesktopStackGvisorRestored // ignore: cast_nullable_to_non_nullable
               as bool,
       onlyStatisticsProxy: null == onlyStatisticsProxy
           ? _value.onlyStatisticsProxy
@@ -320,7 +320,7 @@ abstract class _$$AppSettingPropsImplCopyWith<$Res>
       @JsonKey(fromJson: dashboardWidgetsSafeFormJson)
       List<DashboardWidget> dashboardWidgets,
       bool dashboardDefaultV2Migrated,
-      bool tunDesktopStackMixedMigrated,
+      bool tunDesktopStackGvisorRestored,
       bool onlyStatisticsProxy,
       bool autoLaunch,
       bool silentLaunch,
@@ -372,7 +372,7 @@ class __$$AppSettingPropsImplCopyWithImpl<$Res>
     Object? locale = freezed,
     Object? dashboardWidgets = null,
     Object? dashboardDefaultV2Migrated = null,
-    Object? tunDesktopStackMixedMigrated = null,
+    Object? tunDesktopStackGvisorRestored = null,
     Object? onlyStatisticsProxy = null,
     Object? autoLaunch = null,
     Object? silentLaunch = null,
@@ -416,9 +416,9 @@ class __$$AppSettingPropsImplCopyWithImpl<$Res>
           ? _value.dashboardDefaultV2Migrated
           : dashboardDefaultV2Migrated // ignore: cast_nullable_to_non_nullable
               as bool,
-      tunDesktopStackMixedMigrated: null == tunDesktopStackMixedMigrated
-          ? _value.tunDesktopStackMixedMigrated
-          : tunDesktopStackMixedMigrated // ignore: cast_nullable_to_non_nullable
+      tunDesktopStackGvisorRestored: null == tunDesktopStackGvisorRestored
+          ? _value.tunDesktopStackGvisorRestored
+          : tunDesktopStackGvisorRestored // ignore: cast_nullable_to_non_nullable
               as bool,
       onlyStatisticsProxy: null == onlyStatisticsProxy
           ? _value.onlyStatisticsProxy
@@ -548,7 +548,7 @@ class _$AppSettingPropsImpl implements _AppSettingProps {
       @JsonKey(fromJson: dashboardWidgetsSafeFormJson)
       final List<DashboardWidget> dashboardWidgets = defaultDashboardWidgets,
       this.dashboardDefaultV2Migrated = true,
-      this.tunDesktopStackMixedMigrated = true,
+      this.tunDesktopStackGvisorRestored = true,
       this.onlyStatisticsProxy = false,
       this.autoLaunch = false,
       this.silentLaunch = false,
@@ -606,7 +606,7 @@ class _$AppSettingPropsImpl implements _AppSettingProps {
   final bool dashboardDefaultV2Migrated;
   @override
   @JsonKey()
-  final bool tunDesktopStackMixedMigrated;
+  final bool tunDesktopStackGvisorRestored;
   @override
   @JsonKey()
   final bool onlyStatisticsProxy;
@@ -710,7 +710,7 @@ class _$AppSettingPropsImpl implements _AppSettingProps {
 
   @override
   String toString() {
-    return 'AppSettingProps(locale: $locale, dashboardWidgets: $dashboardWidgets, dashboardDefaultV2Migrated: $dashboardDefaultV2Migrated, tunDesktopStackMixedMigrated: $tunDesktopStackMixedMigrated, onlyStatisticsProxy: $onlyStatisticsProxy, autoLaunch: $autoLaunch, silentLaunch: $silentLaunch, autoRun: $autoRun, openLogs: $openLogs, closeConnections: $closeConnections, testUrl: $testUrl, isAnimateToPage: $isAnimateToPage, autoCheckUpdate: $autoCheckUpdate, showLabel: $showLabel, disclaimerAccepted: $disclaimerAccepted, minimizeOnExit: $minimizeOnExit, hidden: $hidden, developerMode: $developerMode, crashlytics: $crashlytics, zashboardInApp: $zashboardInApp, overrideProviderSettings: $overrideProviderSettings, overrideNetworkSettings: $overrideNetworkSettings, recoveryStrategy: $recoveryStrategy, connectionListMode: $connectionListMode, connectionViewMode: $connectionViewMode, connectionSort: $connectionSort, connectionSortDirection: $connectionSortDirection, connectionShowIcon: $connectionShowIcon, connectionUseApplicationName: $connectionUseApplicationName, connectionRefreshInterval: $connectionRefreshInterval, connectionTableColumns: $connectionTableColumns, connectionTableColumnWidths: $connectionTableColumnWidths, newDashboard: $newDashboard)';
+    return 'AppSettingProps(locale: $locale, dashboardWidgets: $dashboardWidgets, dashboardDefaultV2Migrated: $dashboardDefaultV2Migrated, tunDesktopStackGvisorRestored: $tunDesktopStackGvisorRestored, onlyStatisticsProxy: $onlyStatisticsProxy, autoLaunch: $autoLaunch, silentLaunch: $silentLaunch, autoRun: $autoRun, openLogs: $openLogs, closeConnections: $closeConnections, testUrl: $testUrl, isAnimateToPage: $isAnimateToPage, autoCheckUpdate: $autoCheckUpdate, showLabel: $showLabel, disclaimerAccepted: $disclaimerAccepted, minimizeOnExit: $minimizeOnExit, hidden: $hidden, developerMode: $developerMode, crashlytics: $crashlytics, zashboardInApp: $zashboardInApp, overrideProviderSettings: $overrideProviderSettings, overrideNetworkSettings: $overrideNetworkSettings, recoveryStrategy: $recoveryStrategy, connectionListMode: $connectionListMode, connectionViewMode: $connectionViewMode, connectionSort: $connectionSort, connectionSortDirection: $connectionSortDirection, connectionShowIcon: $connectionShowIcon, connectionUseApplicationName: $connectionUseApplicationName, connectionRefreshInterval: $connectionRefreshInterval, connectionTableColumns: $connectionTableColumns, connectionTableColumnWidths: $connectionTableColumnWidths, newDashboard: $newDashboard)';
   }
 
   @override
@@ -725,10 +725,10 @@ class _$AppSettingPropsImpl implements _AppSettingProps {
                     dashboardDefaultV2Migrated) ||
                 other.dashboardDefaultV2Migrated ==
                     dashboardDefaultV2Migrated) &&
-            (identical(other.tunDesktopStackMixedMigrated,
-                    tunDesktopStackMixedMigrated) ||
-                other.tunDesktopStackMixedMigrated ==
-                    tunDesktopStackMixedMigrated) &&
+            (identical(other.tunDesktopStackGvisorRestored,
+                    tunDesktopStackGvisorRestored) ||
+                other.tunDesktopStackGvisorRestored ==
+                    tunDesktopStackGvisorRestored) &&
             (identical(other.onlyStatisticsProxy, onlyStatisticsProxy) ||
                 other.onlyStatisticsProxy == onlyStatisticsProxy) &&
             (identical(other.autoLaunch, autoLaunch) ||
@@ -796,7 +796,7 @@ class _$AppSettingPropsImpl implements _AppSettingProps {
         locale,
         const DeepCollectionEquality().hash(_dashboardWidgets),
         dashboardDefaultV2Migrated,
-        tunDesktopStackMixedMigrated,
+        tunDesktopStackGvisorRestored,
         onlyStatisticsProxy,
         autoLaunch,
         silentLaunch,
@@ -851,7 +851,7 @@ abstract class _AppSettingProps implements AppSettingProps {
       @JsonKey(fromJson: dashboardWidgetsSafeFormJson)
       final List<DashboardWidget> dashboardWidgets,
       final bool dashboardDefaultV2Migrated,
-      final bool tunDesktopStackMixedMigrated,
+      final bool tunDesktopStackGvisorRestored,
       final bool onlyStatisticsProxy,
       final bool autoLaunch,
       final bool silentLaunch,
@@ -897,7 +897,7 @@ abstract class _AppSettingProps implements AppSettingProps {
   @override
   bool get dashboardDefaultV2Migrated;
   @override
-  bool get tunDesktopStackMixedMigrated;
+  bool get tunDesktopStackGvisorRestored;
   @override
   bool get onlyStatisticsProxy;
   @override

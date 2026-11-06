@@ -177,6 +177,50 @@ class Request {
     bool forceHoldSocket = false,
     void Function(Set<String> activePorts)? onSocketConnected,
   }) async {
+    final primaryResult = await _checkIpWithHostSinglePass(
+      cancelToken: cancelToken,
+      keepAliveHold: keepAliveHold,
+      connectTimeout: connectTimeout,
+      attemptTimeout: attemptTimeout,
+      proxyResolver: proxyResolver,
+      forceHoldSocket: forceHoldSocket,
+      onSocketConnected: onSocketConnected,
+    );
+    if (proxyResolver != null ||
+        primaryResult.isError ||
+        primaryResult.data != null ||
+        (cancelToken?.isCancelled ?? false)) {
+      return primaryResult;
+    }
+    final canFallbackViaWindowsMixedPort = _ipInfoSources.keys.any((rawUrl) {
+      final parsed = Uri.tryParse(rawUrl);
+      return parsed != null &&
+          FlClashHttpOverrides.windowsTunLoopbackFallbackProxy(parsed) != null;
+    });
+    if (!canFallbackViaWindowsMixedPort) {
+      return primaryResult;
+    }
+    return _checkIpWithHostSinglePass(
+      cancelToken: cancelToken,
+      keepAliveHold: keepAliveHold,
+      connectTimeout: connectTimeout,
+      attemptTimeout: attemptTimeout,
+      proxyResolver: (uri) =>
+          FlClashHttpOverrides.windowsTunLoopbackFallbackProxy(uri) ?? 'DIRECT',
+      forceHoldSocket: forceHoldSocket,
+      onSocketConnected: onSocketConnected,
+    );
+  }
+
+  Future<Result<IpCheckProbeResult?>> _checkIpWithHostSinglePass({
+    CancelToken? cancelToken,
+    Duration keepAliveHold = const Duration(milliseconds: 4500),
+    Duration connectTimeout = const Duration(seconds: 5),
+    Duration? attemptTimeout,
+    String Function(Uri uri)? proxyResolver,
+    bool forceHoldSocket = false,
+    void Function(Set<String> activePorts)? onSocketConnected,
+  }) async {
     for (final source in _ipInfoSources.entries) {
       if (cancelToken?.isCancelled ?? false) {
         return Result.error("cancelled");

@@ -1043,6 +1043,7 @@
   "healthVerdictLocalNetworkDown": "本机物理网络不可用，与代理节点无关",
   "healthVerdictOutboundFailed": "本机网络正常，但当前节点无法连通外网",
   "healthVerdictTrafficBypassed": "外网可达，但探测连接未经过代理核心（流量绕过）",
+  "healthVerdictTunBypassedTitle": "TUN 虚拟网卡未接管流量，当前仅系统代理可用",
   "healthVerdictEndToEndFailed": "端到端出口探测失败，请切换节点或检查规则",
   "healthVerdictDnsFailed": "DNS 域名解析异常或遭到污染",
   "healthVerdictWarningsTitle": "连接可用，但存在需关注的告警项",
@@ -1178,5 +1179,6 @@
   "healthDetailSysProxyInvalidPort": "本地混合端口未启用 (mixed-port = 0)",
   "healthDetailSysProxyNotApplied": "系统代理尚未写入本机设置",
   "healthDetailSysProxyDisabledExternally": "系统代理开关处于关闭状态",
-  "healthDetailDnsStaleFakeIp": "检测到残留 Fake-IP 缓存，可能导致直连断网"
+  "healthDetailDnsStaleFakeIp": "检测到残留 Fake-IP 缓存，可能导致直连断网",
+  "healthDetailTunBypassedSystemProxyOk": "TUN 通道未接管流量，系统代理通道正常"
 }

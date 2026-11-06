@@ -705,6 +705,10 @@ class MessageLookup extends MessageLookupByLibrary {
     "healthDetailTakeoverTun": MessageLookupByLibrary.simpleMessage(
       "Перехват через адаптер TUN",
     ),
+    "healthDetailTunBypassedSystemProxyOk":
+        MessageLookupByLibrary.simpleMessage(
+          "Маршрут TUN не работает; проверено через системный прокси",
+        ),
     "healthDetailTunDisabled": MessageLookupByLibrary.simpleMessage(
       "Выключен в настройках",
     ),
@@ -804,6 +808,9 @@ class MessageLookup extends MessageLookupByLibrary {
     ),
     "healthVerdictTrafficBypassed": MessageLookupByLibrary.simpleMessage(
       "Сеть доступна, но трафик обошёл ядро прокси",
+    ),
+    "healthVerdictTunBypassedTitle": MessageLookupByLibrary.simpleMessage(
+      "TUN не перехватывает трафик; работает только системный прокси",
     ),
     "healthVerdictWarningsTitle": MessageLookupByLibrary.simpleMessage(
       "Соединение работает, но есть предупреждения",

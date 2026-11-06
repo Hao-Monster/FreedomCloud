@@ -166,9 +166,7 @@ class HealthRunner {
         // so D3 delay-tests the group itself through Core.
         return (leaf: current.name, failureReason: null);
       }
-      if (picked == 'DIRECT' ||
-          picked == 'REJECT' ||
-          picked == 'REJECT-DROP') {
+      if (picked == 'DIRECT' || picked == 'REJECT' || picked == 'REJECT-DROP') {
         return (leaf: picked, failureReason: null);
       }
       final nextGroup = allGroups.getGroup(picked);
@@ -181,7 +179,9 @@ class HealthRunner {
   }
 
   static String _mapTunFailureReason(String? code) => switch (code) {
-        'permissionDenied' || 'authorizationRequired' => 'tunAuthorizationRequired',
+        'permissionDenied' ||
+        'authorizationRequired' =>
+          'tunAuthorizationRequired',
         'componentsMismatch' => 'tunComponentsMismatch',
         'legacyAgent' => 'tunLegacyAgent',
         'interfaceMissing' => 'tunInterfaceMissing',
@@ -261,7 +261,8 @@ class HealthRunner {
 
     Future<T> raceCancel<T>(Future<T> future) => Future.any<T>([
           future,
-          token.onCancelled.then<T>((_) => throw const _HealthCancelledException()),
+          token.onCancelled
+              .then<T>((_) => throw const _HealthCancelledException()),
         ]);
 
     try {
@@ -367,10 +368,10 @@ class HealthRunner {
             final daysLeft = remainingDuration != null
                 ? math.max(0, (remainingDuration.inHours / 24).ceil())
                 : null;
-            final hwidMax =
-                profile.providerHeaders['x-hwid-max-devices-reached']
-                    ?.trim()
-                    .toLowerCase();
+            final hwidMax = profile
+                .providerHeaders['x-hwid-max-devices-reached']
+                ?.trim()
+                .toLowerCase();
 
             if (expireUtc != null && !expireUtc.isAfter(nowUtc)) {
               a2 = const HealthCheckResult(
@@ -465,9 +466,7 @@ class HealthRunner {
         final watch = Stopwatch()..start();
         try {
           final obs = await raceCancel(
-            environment
-                .checkCoreLiveness()
-                .timeout(const Duration(seconds: 3)),
+            environment.checkCoreLiveness().timeout(const Duration(seconds: 3)),
           );
           final ms = watch.elapsedMilliseconds;
           if (!obs.isInit) {
@@ -730,7 +729,8 @@ class HealthRunner {
           );
         }
       } else {
-        final matchesExplicit = cfg.lastRuntimeProfileId == cfg.currentProfileId;
+        final matchesExplicit =
+            cfg.lastRuntimeProfileId == cfg.currentProfileId;
         final matchesTakeover = cfg.lastRuntimeProfileId == null &&
             (cfg.groupsSnapshotProfileId == null ||
                 cfg.groupsSnapshotProfileId == cfg.currentProfileId);
@@ -769,8 +769,8 @@ class HealthRunner {
           reasonCode: 'proxyNotRunning',
         );
       } else {
-        final sysOk =
-            c3.status == HealthStatus.passed || c3.status == HealthStatus.warning;
+        final sysOk = c3.status == HealthStatus.passed ||
+            c3.status == HealthStatus.warning;
         final tunAbnormal =
             c2.status.isFailure || c2.status == HealthStatus.warning;
         final sysFailed = c3.status.isFailure;
@@ -889,7 +889,8 @@ class HealthRunner {
                     requestId: reqId,
                     timeout: perAttemptTimeout,
                   )
-                  .timeout(perAttemptTimeout + const Duration(milliseconds: 600)),
+                  .timeout(
+                      perAttemptTimeout + const Duration(milliseconds: 600)),
             );
             final ms = watch.elapsedMilliseconds;
             if (res.value > 0) {
@@ -1155,7 +1156,8 @@ class HealthRunner {
               id: HealthCheckId.outboundConnectivity,
               status: HealthStatus.warning,
               elapsedMs: ms,
-              reasonCode: res.value <= 800 ? 'outboundSlow' : 'outboundVerySlow',
+              reasonCode:
+                  res.value <= 800 ? 'outboundSlow' : 'outboundVerySlow',
               nodeName: leaf,
               delayMs: res.value,
               localDetail: detail,
@@ -1277,13 +1279,82 @@ class HealthRunner {
         );
       } else {
         final tunActive = tunCapturingTraffic;
-        // Prefer a verified Windows System Proxy when it is available. A
-        // listener/interface observation alone cannot prove that this process's
-        // direct socket is actually captured by TUN; forcing DIRECT here made
-        // D4 fail while the same local Core path was healthy for browser traffic.
-        final directive =
-            verifiedSysProxyDirective ?? (tunActive ? 'DIRECT' : null);
-        if (!tunActive && directive == null) {
+        final systemProxyDirective = verifiedSysProxyDirective;
+
+        HealthCheckResult classifyObservation(
+          EndToEndProbeObservation obs,
+          int elapsedMs, {
+          bool acceptLoopbackProxy = false,
+          bool tunBypassedSystemProxyFallback = false,
+        }) {
+          final normalizedCountry =
+              obs.exitCountryCode.length == 2 ? obs.exitCountryCode : null;
+          final observedInCore = obs.observedInCore || acceptLoopbackProxy;
+          if (!observedInCore) {
+            return HealthCheckResult(
+              id: HealthCheckId.endToEndConnectivity,
+              status: HealthStatus.warning,
+              elapsedMs: elapsedMs,
+              reasonCode: 'trafficBypassedCore',
+              exitCountryCode: normalizedCountry,
+              action: HealthAction.openTunSettings,
+            );
+          }
+          if (obs.matchedLeafProxy == 'REJECT' ||
+              obs.matchedLeafProxy == 'REJECT-DROP') {
+            return HealthCheckResult(
+              id: HealthCheckId.endToEndConnectivity,
+              status: HealthStatus.failed,
+              elapsedMs: elapsedMs,
+              reasonCode: 'e2eRejectedByRule',
+              action: HealthAction.openProxies,
+            );
+          }
+          exitCountryCode = normalizedCountry;
+          if (tunBypassedSystemProxyFallback) {
+            return HealthCheckResult(
+              id: HealthCheckId.endToEndConnectivity,
+              status: HealthStatus.warning,
+              elapsedMs: elapsedMs,
+              reasonCode: 'tunBypassedSystemProxyOk',
+              exitCountryCode: exitCountryCode,
+              nodeName: obs.matchedLeafProxy,
+              action: HealthAction.openTunSettings,
+            );
+          }
+          if (obs.matchedLeafProxy == 'DIRECT') {
+            return HealthCheckResult(
+              id: HealthCheckId.endToEndConnectivity,
+              status: HealthStatus.passed,
+              elapsedMs: elapsedMs,
+              reasonCode: 'routedDirectByRule',
+              exitCountryCode: exitCountryCode,
+            );
+          }
+          return HealthCheckResult(
+            id: HealthCheckId.endToEndConnectivity,
+            status: HealthStatus.passed,
+            elapsedMs: elapsedMs,
+            reasonCode: 'ok',
+            exitCountryCode: exitCountryCode,
+            nodeName: obs.matchedLeafProxy,
+          );
+        }
+
+        HealthCheckResult failedProbeResult(
+          String reasonCode,
+          int elapsedMs,
+        ) => HealthCheckResult(
+            id: HealthCheckId.endToEndConnectivity,
+            status: reasonCode == 'e2eTimeout'
+                ? HealthStatus.timeout
+                : HealthStatus.failed,
+            elapsedMs: elapsedMs,
+            reasonCode: reasonCode,
+            action: HealthAction.openProxies,
+          );
+
+        if (!tunActive && systemProxyDirective == null) {
           if (environment.platform == 'windows' &&
               c3.status == HealthStatus.warning) {
             d4 = const HealthCheckResult(
@@ -1304,85 +1375,92 @@ class HealthRunner {
             );
           }
         } else {
-          final watch = Stopwatch()..start();
+          final primaryDirective = tunActive ? 'DIRECT' : systemProxyDirective!;
+          final primaryWatch = Stopwatch()..start();
+          EndToEndProbeObservation? primaryObservation;
+          String? primaryFailureReason;
           try {
-            final obs = await raceCancel(
+            primaryObservation = await raceCancel(
               environment
                   .probeEndToEnd(
                     cancelToken: token,
-                    explicitProxyDirective: directive,
+                    explicitProxyDirective: primaryDirective,
                   )
                   .timeout(const Duration(seconds: 10)),
             );
-            final ms = watch.elapsedMilliseconds;
-            if (obs == null) {
-              d4 = HealthCheckResult(
-                id: HealthCheckId.endToEndConnectivity,
-                status: HealthStatus.failed,
-                elapsedMs: ms,
-                reasonCode: 'e2eAllSourcesFailed',
-                action: HealthAction.openProxies,
-              );
-            } else {
-              exitCountryCode =
-                  obs.exitCountryCode.length == 2 ? obs.exitCountryCode : null;
-              final observedInCore = obs.observedInCore ||
-                  isVerifiedLoopbackProxyDirective(directive);
-              if (!observedInCore) {
-                d4 = HealthCheckResult(
-                  id: HealthCheckId.endToEndConnectivity,
-                  status: HealthStatus.warning,
-                  elapsedMs: ms,
-                  reasonCode: 'trafficBypassedCore',
-                  exitCountryCode: exitCountryCode,
-                  action: HealthAction.openTunSettings,
-                );
-              } else if (obs.matchedLeafProxy == 'REJECT' ||
-                  obs.matchedLeafProxy == 'REJECT-DROP') {
-                d4 = HealthCheckResult(
-                  id: HealthCheckId.endToEndConnectivity,
-                  status: HealthStatus.failed,
-                  elapsedMs: ms,
-                  reasonCode: 'e2eRejectedByRule',
-                  action: HealthAction.openProxies,
-                );
-              } else if (obs.matchedLeafProxy == 'DIRECT') {
-                d4 = HealthCheckResult(
-                  id: HealthCheckId.endToEndConnectivity,
-                  status: HealthStatus.passed,
-                  elapsedMs: ms,
-                  reasonCode: 'routedDirectByRule',
-                  exitCountryCode: exitCountryCode,
-                );
-              } else {
-                d4 = HealthCheckResult(
-                  id: HealthCheckId.endToEndConnectivity,
-                  status: HealthStatus.passed,
-                  elapsedMs: ms,
-                  reasonCode: 'ok',
-                  exitCountryCode: exitCountryCode,
-                  nodeName: obs.matchedLeafProxy,
-                );
-              }
-            }
           } on _HealthCancelledException {
             rethrow;
           } on TimeoutException {
-            d4 = HealthCheckResult(
-              id: HealthCheckId.endToEndConnectivity,
-              status: HealthStatus.timeout,
-              elapsedMs: watch.elapsedMilliseconds,
-              reasonCode: 'e2eTimeout',
-              action: HealthAction.openProxies,
-            );
+            primaryFailureReason = 'e2eTimeout';
           } catch (_) {
-            d4 = HealthCheckResult(
-              id: HealthCheckId.endToEndConnectivity,
-              status: HealthStatus.failed,
-              elapsedMs: watch.elapsedMilliseconds,
-              reasonCode: 'e2eAllSourcesFailed',
-              action: HealthAction.openProxies,
-            );
+            primaryFailureReason = 'e2eAllSourcesFailed';
+          }
+          final primaryMs = primaryWatch.elapsedMilliseconds;
+          final failedAttemptCapturedByCore = switch (environment) {
+            CoreFailedProbeTelemetry(:final lastFailedProbeObservedInCore) =>
+              lastFailedProbeObservedInCore,
+            _ => false,
+          };
+          final primaryFailedOutsideCore =
+              (primaryFailureReason != null || primaryObservation == null) &&
+                  !failedAttemptCapturedByCore;
+          final needsSystemProxyFallback = tunActive &&
+              systemProxyDirective != null &&
+              (primaryFailedOutsideCore ||
+                  (primaryObservation != null &&
+                      !primaryObservation.observedInCore));
+          if (!needsSystemProxyFallback) {
+            d4 = primaryObservation != null
+                ? classifyObservation(
+                    primaryObservation,
+                    primaryMs,
+                    acceptLoopbackProxy: !tunActive,
+                  )
+                : failedProbeResult(
+                    primaryFailureReason ?? 'e2eAllSourcesFailed',
+                    primaryMs,
+                  );
+          } else {
+            final fallbackWatch = Stopwatch()..start();
+            EndToEndProbeObservation? fallbackObservation;
+            String? fallbackFailureReason;
+            try {
+              fallbackObservation = await raceCancel(
+                environment
+                    .probeEndToEnd(
+                      cancelToken: token,
+                      explicitProxyDirective: systemProxyDirective,
+                    )
+                    .timeout(const Duration(seconds: 10)),
+              );
+            } on _HealthCancelledException {
+              rethrow;
+            } on TimeoutException {
+              fallbackFailureReason = 'e2eTimeout';
+            } catch (_) {
+              fallbackFailureReason = 'e2eAllSourcesFailed';
+            }
+            final fallbackMs = fallbackWatch.elapsedMilliseconds;
+            if (fallbackObservation != null) {
+              d4 = classifyObservation(
+                fallbackObservation,
+                primaryMs + fallbackMs,
+                acceptLoopbackProxy: true,
+                tunBypassedSystemProxyFallback: true,
+              );
+            } else if (primaryObservation != null) {
+              d4 = classifyObservation(
+                primaryObservation,
+                primaryMs + fallbackMs,
+              );
+            } else {
+              d4 = failedProbeResult(
+                fallbackFailureReason ??
+                    primaryFailureReason ??
+                    'e2eAllSourcesFailed',
+                primaryMs + fallbackMs,
+              );
+            }
           }
         }
       }

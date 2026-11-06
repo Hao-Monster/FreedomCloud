@@ -180,12 +180,26 @@ void main() {
   });
 
   test(
-      'IP probe uses the Windows System Proxy when TUN is only observed active',
+      'IP probe tries real TUN (DIRECT) first and falls back to Windows Mixed Port only when DIRECT fails',
       () async {
-    if (!Platform.isWindows) return;
+    var directHits = 0;
+    final directServer =
+        await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    addTearDown(() => directServer.close(force: true));
+    directServer.listen((request) async {
+      directHits++;
+      await request.drain();
+      request.response
+        ..headers.contentType = ContentType.json
+        ..write('{"ip":"203.0.113.77","country_code":"GB"}');
+      await request.response.close();
+    });
+
+    var proxyHits = 0;
     final proxy = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     addTearDown(() => proxy.close(force: true));
     proxy.listen((request) async {
+      proxyHits++;
       await request.drain();
       request.response
         ..headers.contentType = ContentType.json
@@ -217,19 +231,52 @@ void main() {
     );
     addTearDown(tunRuntime.invalidate);
 
+    // 1. Primary `handleFindProxy` stays `DIRECT` when TUN is observed active,
+    // so when TUN works, `checkIpWithHost` succeeds over `DIRECT` without
+    // detouring through Mixed Port.
     expect(
       FlClashHttpOverrides.handleFindProxy(
-          Uri.parse('http://probe.invalid/ip')),
-      'PROXY 127.0.0.1:${proxy.port}',
+        Uri.parse('http://localhost:${directServer.port}/ip'),
+      ),
+      'DIRECT',
     );
-    final result = await Request(ipInfoSources: {
-      'http://probe.invalid/ip': IpInfo.fromIpSbJson,
+    final healthyTunResult = await Request(ipInfoSources: {
+      'http://localhost:${directServer.port}/ip': IpInfo.fromIpSbJson,
     }).checkIpWithHost(
       attemptTimeout: const Duration(seconds: 1),
       keepAliveHold: Duration.zero,
     );
+    expect(healthyTunResult.data?.ipInfo.ip, '203.0.113.77');
+    expect(healthyTunResult.data?.ipInfo.countryCode, 'GB');
+    expect(directHits, 1);
+    expect(proxyHits, 0);
 
-    expect(result.data?.ipInfo.ip, '198.51.100.42');
-    expect(result.data?.ipInfo.countryCode, 'SG');
-  });
+    // 2. When primary `DIRECT` fails (`probe.invalid`) and System Proxy is
+    // enabled on Windows, Pass 2 falls back to `PROXY 127.0.0.1:<mixedPort>`.
+    final fallbackResult = await Request(ipInfoSources: {
+      'http://probe.invalid/ip': IpInfo.fromIpSbJson,
+    }).checkIpWithHost(
+      connectTimeout: const Duration(milliseconds: 500),
+      attemptTimeout: const Duration(seconds: 1),
+      keepAliveHold: Duration.zero,
+    );
+    expect(fallbackResult.data?.ipInfo.ip, '198.51.100.42');
+    expect(fallbackResult.data?.ipInfo.countryCode, 'SG');
+    expect(proxyHits, 1);
+
+    // 3. When System Proxy is disabled (TUN-only mode) and `DIRECT` fails,
+    // `checkIpWithHost` must NOT silently detour through Mixed Port.
+    globalState.config = globalState.config.copyWith(
+      networkProps: const NetworkProps(systemProxy: false),
+    );
+    final tunOnlyFailedResult = await Request(ipInfoSources: {
+      'http://probe.invalid/ip': IpInfo.fromIpSbJson,
+    }).checkIpWithHost(
+      connectTimeout: const Duration(milliseconds: 500),
+      attemptTimeout: const Duration(seconds: 1),
+      keepAliveHold: Duration.zero,
+    );
+    expect(tunOnlyFailedResult.data, isNull);
+    expect(proxyHits, 1);
+  }, skip: !Platform.isWindows);
 }

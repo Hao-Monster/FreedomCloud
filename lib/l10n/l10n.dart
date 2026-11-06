@@ -7973,6 +7973,26 @@ class AppLocalizations {
       args: [],
     );
   }
+
+  /// `TUN capture failed; only System Proxy is working`
+  String get healthVerdictTunBypassedTitle {
+    return Intl.message(
+      'TUN capture failed; only System Proxy is working',
+      name: 'healthVerdictTunBypassedTitle',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `TUN path failed; verified via System Proxy`
+  String get healthDetailTunBypassedSystemProxyOk {
+    return Intl.message(
+      'TUN path failed; verified via System Proxy',
+      name: 'healthDetailTunBypassedSystemProxyOk',
+      desc: '',
+      args: [],
+    );
+  }
 }
 
 class AppLocalizationDelegate extends LocalizationsDelegate<AppLocalizations> {

@@ -19,7 +19,8 @@ import 'package:flclashx/views/tools/health_check_view.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-class _FakeProbeEnvironment implements HealthProbeEnvironment {
+class _FakeProbeEnvironment
+    implements HealthProbeEnvironment, CoreFailedProbeTelemetry {
   _FakeProbeEnvironment({
     DateTime? initialNow,
     HealthConfigSnapshot? configSnapshot,
@@ -31,6 +32,8 @@ class _FakeProbeEnvironment implements HealthProbeEnvironment {
       observedInCore: true,
       matchedLeafProxy: 'HK-Node-01',
     ),
+    this.e2eObservationByDirective,
+    this.lastFailedProbeObservedInCore = false,
   })  : _now = initialNow ?? DateTime.utc(2026, 11, 1, 10, 0, 0),
         _configSnapshot = configSnapshot ?? _defaultHealthySnapshot(),
         _delayResults = delayResults ??
@@ -39,8 +42,8 @@ class _FakeProbeEnvironment implements HealthProbeEnvironment {
               'Proxy': DelayTestResult(128),
               'GLOBAL': DelayTestResult(128),
             },
-        _dnsAddresses =
-            dnsAddresses ?? [InternetAddress('198.18.0.2', type: InternetAddressType.IPv4)];
+        _dnsAddresses = dnsAddresses ??
+            [InternetAddress('198.18.0.2', type: InternetAddressType.IPv4)];
 
   DateTime _now;
   @override
@@ -73,17 +76,22 @@ class _FakeProbeEnvironment implements HealthProbeEnvironment {
   Exception? dnsError;
   Duration dnsDuration = Duration.zero;
   EndToEndProbeObservation? e2eObservation;
+  final Map<String, EndToEndProbeObservation?>? e2eObservationByDirective;
+  @override
+  bool lastFailedProbeObservedInCore;
   Completer<EndToEndProbeObservation?>? e2eCompleter;
 
   final List<String> cancelledRequestIds = [];
   String? lastExplicitProxyDirective;
+  final List<String?> explicitProxyDirectives = [];
   bool e2eCancelObserved = false;
 
   static HealthConfigSnapshot _defaultHealthySnapshot() {
     final profile = Profile(
       id: 'prof-1',
       label: 'ceo@corp-secret.internal',
-      url: 'https://secret-sub.example.org/api/v1/client/subscribe?token=abc123',
+      url:
+          'https://secret-sub.example.org/api/v1/client/subscribe?token=abc123',
       currentGroupName: 'Proxy',
       lastUpdateDate: DateTime.utc(2026, 11, 1, 9, 30, 0),
       autoUpdateDuration: const Duration(hours: 24),
@@ -122,8 +130,9 @@ class _FakeProbeEnvironment implements HealthProbeEnvironment {
       mode: Mode.rule,
       mixedPort: 7890,
       testUrl: 'https://www.gstatic.com/generate_204',
-      resolveGroupTestUrl: (url) =>
-          (url != null && url.isNotEmpty) ? url : 'https://www.gstatic.com/generate_204',
+      resolveGroupTestUrl: (url) => (url != null && url.isNotEmpty)
+          ? url
+          : 'https://www.gstatic.com/generate_204',
       systemProxyEnabled: false,
       pacEnabled: false,
       pacUrl: null,
@@ -182,7 +191,8 @@ class _FakeProbeEnvironment implements HealthProbeEnvironment {
     if (delayDuration > Duration.zero) {
       await Future<void>.delayed(delayDuration);
     }
-    return _delayResults[proxyName] ?? const DelayTestResult(-1, reason: 'testFailed');
+    return _delayResults[proxyName] ??
+        const DelayTestResult(-1, reason: 'testFailed');
   }
 
   @override
@@ -205,11 +215,16 @@ class _FakeProbeEnvironment implements HealthProbeEnvironment {
     required String? explicitProxyDirective,
   }) async {
     lastExplicitProxyDirective = explicitProxyDirective;
+    explicitProxyDirectives.add(explicitProxyDirective);
     cancelToken.register(() {
       e2eCancelObserved = true;
     });
     if (e2eCompleter != null) {
       return e2eCompleter!.future;
+    }
+    if (e2eObservationByDirective != null &&
+        e2eObservationByDirective!.containsKey(explicitProxyDirective)) {
+      return e2eObservationByDirective![explicitProxyDirective];
     }
     return e2eObservation;
   }
@@ -221,7 +236,8 @@ void main() {
   });
 
   group('WindowsSystemProxyProbe pure parser & evaluator', () {
-    test('parses single host:port, URL-prefixed, IPv6, and per-scheme formats', () {
+    test('parses single host:port, URL-prefixed, IPv6, and per-scheme formats',
+        () {
       final single = parseWindowsProxyServer('127.0.0.1:7890');
       expect(single['*']?.host, '127.0.0.1');
       expect(single['*']?.port, 7890);
@@ -242,7 +258,9 @@ void main() {
       expect(perScheme['socks']?.port, 7891);
     });
 
-    test('evaluates disabled preference, hijacked port, unexpected PAC, and valid PAC', () {
+    test(
+        'evaluates disabled preference, hijacked port, unexpected PAC, and valid PAC',
+        () {
       final skipped = evaluateWindowsSystemProxy(
         expectedEnabled: false,
         expectedPort: 7890,
@@ -323,8 +341,11 @@ void main() {
     });
   });
 
-  group('HealthRunner 12-item checks, root-cause verdict, and privacy export', () {
-    test('all-healthy run passes 11 active checks, skips disabled system proxy, and exports closed schema without sensitive strings', () async {
+  group('HealthRunner 12-item checks, root-cause verdict, and privacy export',
+      () {
+    test(
+        'all-healthy run passes 11 active checks, skips disabled system proxy, and exports closed schema without sensitive strings',
+        () async {
       final env = _FakeProbeEnvironment();
       final runner = HealthRunner(env);
 
@@ -374,7 +395,9 @@ void main() {
       expect(summary, contains('连接正常'));
     });
 
-    test('subscription expiry (seconds & ms), quota exhaustion, 3-day/90% warning, and Windows takeover A3 compatibility', () async {
+    test(
+        'subscription expiry (seconds & ms), quota exhaustion, 3-day/90% warning, and Windows takeover A3 compatibility',
+        () async {
       final now = DateTime.utc(2026, 11, 1, 10, 0, 0);
       final expiredSec =
           now.subtract(const Duration(hours: 2)).millisecondsSinceEpoch ~/ 1000;
@@ -474,7 +497,9 @@ void main() {
       expect(warnReport.verdict.primaryAction, HealthAction.openPurchase);
     });
 
-    test('distinguishes local network down (D1 failed) from active proxy node failure (D1 passed, D3 failed)', () async {
+    test(
+        'distinguishes local network down (D1 failed) from active proxy node failure (D1 passed, D3 failed)',
+        () async {
       // Scenario 1: Local network down -> D1 failed AND D3 failed, verdict must blame local network, NOT proxy node!
       final offlineEnv = _FakeProbeEnvironment(
         delayResults: const {
@@ -512,9 +537,13 @@ void main() {
       );
     });
 
-    test('detects DNS loopback poisoning (0.0.0.0 / 127.0.0.1) and E2E traffic bypassing Core', () async {
+    test(
+        'detects DNS loopback poisoning (0.0.0.0 / 127.0.0.1) and E2E traffic bypassing Core',
+        () async {
       final bypassedEnv = _FakeProbeEnvironment(
-        dnsAddresses: [InternetAddress('127.0.0.1', type: InternetAddressType.IPv4)],
+        dnsAddresses: [
+          InternetAddress('127.0.0.1', type: InternetAddressType.IPv4)
+        ],
         e2eObservation: const EndToEndProbeObservation(
           exitCountryCode: 'CN',
           observedInCore: false,
@@ -542,7 +571,9 @@ void main() {
       expect(report.verdict.primaryAction, HealthAction.openTunSettings);
     });
 
-    test('proxy stopped skips C2-C4 and D3-D4 without false runtime mismatch warning', () async {
+    test(
+        'proxy stopped skips C2-C4 and D3-D4 without false runtime mismatch warning',
+        () async {
       final base = _FakeProbeEnvironment._defaultHealthySnapshot();
       final stoppedEnv = _FakeProbeEnvironment(
         configSnapshot: HealthConfigSnapshot(
@@ -592,7 +623,9 @@ void main() {
       );
     });
 
-    test('cancellation aborts in-flight Core delay requests and single-flight rejects concurrent run', () async {
+    test(
+        'cancellation aborts in-flight Core delay requests and single-flight rejects concurrent run',
+        () async {
       final directCompleter = Completer<DelayTestResult>();
       final outboundCompleter = Completer<DelayTestResult>();
       final env = _FakeProbeEnvironment(
@@ -614,14 +647,17 @@ void main() {
       expect(env.cancelledRequestIds, isNotEmpty);
 
       directCompleter.complete(const DelayTestResult(-1, reason: 'cancelled'));
-      outboundCompleter.complete(const DelayTestResult(-1, reason: 'cancelled'));
+      outboundCompleter
+          .complete(const DelayTestResult(-1, reason: 'cancelled'));
       await cancelledExpectation;
       expect(runner.isRunning, isFalse);
     });
   });
 
   group('computeHealthVerdict priority order', () {
-    test('Core unresponsive (P1) wins over profile missing (P2) and proxy stopped (P4)', () {
+    test(
+        'Core unresponsive (P1) wins over profile missing (P2) and proxy stopped (P4)',
+        () {
       final verdict = computeHealthVerdict([
         const HealthCheckResult(
           id: HealthCheckId.profileSelected,
@@ -786,16 +822,17 @@ void main() {
         );
 
       final report = await HealthRunner(sysProxyOnlyEnv).run();
-      expect(sysProxyOnlyEnv.lastExplicitProxyDirective, 'PROXY 127.0.0.1:7890');
+      expect(
+          sysProxyOnlyEnv.lastExplicitProxyDirective, 'PROXY 127.0.0.1:7890');
       expect(
         report.checkById(HealthCheckId.endToEndConnectivity)?.status,
         HealthStatus.passed,
       );
       expect(report.verdict.code, 'healthy');
 
-      // TUN's listener can be healthy while this process's direct socket is
-      // not captured. Prefer the verified local System Proxy in that combined
-      // state so D4 validates the same Core path used by browser traffic.
+      // A healthy TUN listener does not prove that this process's direct socket
+      // is captured. D4 must try DIRECT first, then report a system-proxy
+      // fallback as a warning instead of turning it into a healthy result.
       final tunAndSysProxyEnv = _FakeProbeEnvironment(
         configSnapshot: HealthConfigSnapshot(
           currentProfileId: base.currentProfileId,
@@ -823,6 +860,13 @@ void main() {
           exitCountryCode: 'SG',
           observedInCore: false,
         ),
+        e2eObservationByDirective: const {
+          'DIRECT': null,
+          'PROXY 127.0.0.1:7890': EndToEndProbeObservation(
+            exitCountryCode: 'SG',
+            observedInCore: false,
+          ),
+        },
       )
         ..tunStatus = const TunStatus(
           instanceId: 'core-1',
@@ -838,15 +882,138 @@ void main() {
           proxyServer: '127.0.0.1:7890',
         );
       final tunAndSysProxyReport = await HealthRunner(tunAndSysProxyEnv).run();
+      final zhL10n = await AppLocalizations.load(const Locale('zh', 'CN'));
       expect(
-        tunAndSysProxyEnv.lastExplicitProxyDirective,
-        'PROXY 127.0.0.1:7890',
+        tunAndSysProxyEnv.explicitProxyDirectives,
+        ['DIRECT', 'PROXY 127.0.0.1:7890'],
       );
+      final fallbackD4 = tunAndSysProxyReport.checkById(
+        HealthCheckId.endToEndConnectivity,
+      )!;
+      expect(fallbackD4.status, HealthStatus.warning);
+      expect(fallbackD4.reasonCode, 'tunBypassedSystemProxyOk');
+      expect(fallbackD4.localDetail, isNull);
+      expect(fallbackD4.exitCountryCode, 'SG');
+      expect(tunAndSysProxyReport.verdict.code, 'tunBypassedSystemProxyOk');
+      expect(tunAndSysProxyReport.verdict.exitCountryCode, 'SG');
+      final localizedFallbackDetail = healthCheckItemDetail(fallbackD4, zhL10n);
+      expect(localizedFallbackDetail, isNot(contains('TUN path failed')));
+      expect(localizedFallbackDetail, contains('SG'));
       expect(
-        tunAndSysProxyReport.checkById(HealthCheckId.endToEndConnectivity)
-            ?.status,
-        HealthStatus.passed,
+        healthVerdictHeadline(tunAndSysProxyReport.verdict, zhL10n),
+        isNot(equals(zhL10n.healthVerdictWarningsTitle)),
       );
+
+      // When TUN already captured the socket in Core (`lastFailedProbeObservedInCore == true`)
+      // and the upstream node failed, D4 must NOT run a redundant second timeout
+      // over `PROXY 127.0.0.1:7890`.
+      final tunCapturedUpstreamDeadEnv = _FakeProbeEnvironment(
+        configSnapshot: HealthConfigSnapshot(
+          currentProfileId: base.currentProfileId,
+          currentProfile: base.currentProfile,
+          profileFileExists: true,
+          profileFileBytes: 4096,
+          mode: Mode.rule,
+          mixedPort: 7890,
+          testUrl: base.testUrl,
+          resolveGroupTestUrl: base.resolveGroupTestUrl,
+          systemProxyEnabled: true,
+          pacEnabled: false,
+          pacUrl: null,
+          tunDesiredEnabled: true,
+          tunFailureCode: null,
+          realTunEnable: true,
+          proxyStarted: true,
+          lastRuntimeProfileId: base.lastRuntimeProfileId,
+          groupsSnapshotProfileId: base.groupsSnapshotProfileId,
+          allGroups: base.allGroups,
+          visibleGroups: base.visibleGroups,
+          selectedMap: base.selectedMap,
+        ),
+        e2eObservationByDirective: const {
+          'DIRECT': null,
+          'PROXY 127.0.0.1:7890': null,
+        },
+        lastFailedProbeObservedInCore: true,
+      )
+        ..tunStatus = const TunStatus(
+          instanceId: 'core-1',
+          revision: 1,
+          state: 'on',
+          listenerActive: true,
+          interfaceState: 'up',
+          privilege: 'elevated',
+          requestedEnabled: true,
+        )
+        ..windowsSystemProxy = const WindowsSystemProxySnapshot(
+          proxyEnabled: true,
+          proxyServer: '127.0.0.1:7890',
+        );
+      final upstreamDeadReport =
+          await HealthRunner(tunCapturedUpstreamDeadEnv).run();
+      expect(tunCapturedUpstreamDeadEnv.explicitProxyDirectives, ['DIRECT']);
+      final upstreamDeadD4 = upstreamDeadReport.checkById(
+        HealthCheckId.endToEndConnectivity,
+      )!;
+      expect(upstreamDeadD4.status, HealthStatus.failed);
+      expect(upstreamDeadD4.reasonCode, 'e2eAllSourcesFailed');
+      expect(upstreamDeadD4.localDetail, isNull);
+
+      // When DIRECT leaks outside Core (`CN`, observedInCore: false) and System
+      // Proxy fallback fails (`null`), report-level exitCountryCode must remain
+      // null instead of misattributing the physical ISP country to the node.
+      final leakedDirectEnv = _FakeProbeEnvironment(
+        configSnapshot: HealthConfigSnapshot(
+          currentProfileId: base.currentProfileId,
+          currentProfile: base.currentProfile,
+          profileFileExists: true,
+          profileFileBytes: 4096,
+          mode: Mode.rule,
+          mixedPort: 7890,
+          testUrl: base.testUrl,
+          resolveGroupTestUrl: base.resolveGroupTestUrl,
+          systemProxyEnabled: true,
+          pacEnabled: false,
+          pacUrl: null,
+          tunDesiredEnabled: true,
+          tunFailureCode: null,
+          realTunEnable: true,
+          proxyStarted: true,
+          lastRuntimeProfileId: base.lastRuntimeProfileId,
+          groupsSnapshotProfileId: base.groupsSnapshotProfileId,
+          allGroups: base.allGroups,
+          visibleGroups: base.visibleGroups,
+          selectedMap: base.selectedMap,
+        ),
+        e2eObservationByDirective: const {
+          'DIRECT': EndToEndProbeObservation(
+            exitCountryCode: 'CN',
+            observedInCore: false,
+          ),
+          'PROXY 127.0.0.1:7890': null,
+        },
+      )
+        ..tunStatus = const TunStatus(
+          instanceId: 'core-1',
+          revision: 1,
+          state: 'on',
+          listenerActive: true,
+          interfaceState: 'up',
+          privilege: 'elevated',
+          requestedEnabled: true,
+        )
+        ..windowsSystemProxy = const WindowsSystemProxySnapshot(
+          proxyEnabled: true,
+          proxyServer: '127.0.0.1:7890',
+        );
+      final leakedReport = await HealthRunner(leakedDirectEnv).run();
+      final leakedD4 = leakedReport.checkById(
+        HealthCheckId.endToEndConnectivity,
+      )!;
+      expect(leakedD4.status, HealthStatus.warning);
+      expect(leakedD4.reasonCode, 'trafficBypassedCore');
+      expect(leakedD4.localDetail, isNull);
+      expect(leakedReport.verdict.exitCountryCode, isNull);
     });
 
     test(
@@ -928,8 +1095,7 @@ void main() {
         'CR-HC05: flclashx-serverinfo selects active group, Core realNow wins over stale selectedMap, and cyclic groups fail cleanly',
         () async {
       final base = _FakeProbeEnvironment._defaultHealthySnapshot();
-      final encodedGroup =
-          'base64:${base64.encode(utf8.encode('VIP-Entry'))}';
+      final encodedGroup = 'base64:${base64.encode(utf8.encode('VIP-Entry'))}';
       final groups = [
         const Group(
           type: GroupType.Selector,
@@ -1008,7 +1174,8 @@ void main() {
       final cyclicEnv = _FakeProbeEnvironment(
         configSnapshot: HealthConfigSnapshot(
           currentProfileId: 'prof-1',
-          currentProfile: base.currentProfile!.copyWith(currentGroupName: 'LoopA'),
+          currentProfile:
+              base.currentProfile!.copyWith(currentGroupName: 'LoopA'),
           profileFileExists: true,
           profileFileBytes: 2048,
           mode: Mode.rule,
@@ -1068,7 +1235,9 @@ void main() {
     });
   });
 
-  group('Code Review Round 2 regressions (CR2-HC01, CR2-HC03, CR2-HC04, CR2-HC05)', () {
+  group(
+      'Code Review Round 2 regressions (CR2-HC01, CR2-HC03, CR2-HC04, CR2-HC05)',
+      () {
     test(
         'CR2-HC01: LoadBalance, Relay, and unprobed URLTest groups (now == "") pass D3 via group delay test while empty groups still fail',
         () async {
@@ -1093,7 +1262,8 @@ void main() {
       final lbEnv = _FakeProbeEnvironment(
         configSnapshot: HealthConfigSnapshot(
           currentProfileId: 'prof-1',
-          currentProfile: base.currentProfile!.copyWith(currentGroupName: 'Proxy'),
+          currentProfile:
+              base.currentProfile!.copyWith(currentGroupName: 'Proxy'),
           profileFileExists: true,
           profileFileBytes: 2048,
           mode: Mode.rule,
@@ -1136,7 +1306,8 @@ void main() {
       final lazyEnv = _FakeProbeEnvironment(
         configSnapshot: HealthConfigSnapshot(
           currentProfileId: 'prof-1',
-          currentProfile: base.currentProfile!.copyWith(currentGroupName: 'Auto'),
+          currentProfile:
+              base.currentProfile!.copyWith(currentGroupName: 'Auto'),
           profileFileExists: true,
           profileFileBytes: 2048,
           mode: Mode.rule,

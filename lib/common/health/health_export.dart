@@ -71,6 +71,7 @@ String healthVerdictHeadline(HealthVerdict verdict, AppLocalizations l10n) =>
       'takeoverFailed' => l10n.healthVerdictTakeoverFailed,
       'localNetworkDown' => l10n.healthVerdictLocalNetworkDown,
       'outboundNodeFailed' => l10n.healthVerdictOutboundFailed,
+      'tunBypassedSystemProxyOk' => l10n.healthVerdictTunBypassedTitle,
       'trafficBypassed' => l10n.healthVerdictTrafficBypassed,
       'endToEndFailed' => l10n.healthVerdictEndToEndFailed,
       'dnsFailed' => l10n.healthVerdictDnsFailed,

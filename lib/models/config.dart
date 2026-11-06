@@ -112,7 +112,7 @@ class AppSettingProps with _$AppSettingProps {
     @JsonKey(fromJson: dashboardWidgetsSafeFormJson)
     List<DashboardWidget> dashboardWidgets,
     @Default(true) bool dashboardDefaultV2Migrated,
-    @Default(true) bool tunDesktopStackMixedMigrated,
+    @Default(true) bool tunDesktopStackGvisorRestored,
     @Default(false) bool onlyStatisticsProxy,
     @Default(false) bool autoLaunch,
     @Default(false) bool silentLaunch,
@@ -435,31 +435,46 @@ class Config with _$Config {
     } catch (_) {}
 
     try {
-      // One-shot reversible migration on desktop: legacy installs stored
-      // patchClashConfig.tun.stack = "gvisor" before TunStack.mixed became the
-      // desktop default. Migrate unmigrated desktop configs once to "mixed" and
-      // persist tunDesktopStackMixedMigrated = true so subsequent manual switches
-      // back to "gvisor" are respected.
+      // One-shot desktop recovery migration: both f329535-migrated configs and
+      // legacy desktop installs created when `const Tun()` defaulted to `mixed`
+      // are upgraded once to `gvisor` while preserving explicit `system`/`mips`
+      // and any manual `mixed` choice saved after `tunDesktopStackGvisorRestored`.
       if (effectiveIsDesktop) {
         final rawAppSetting = normalizedJson["appSetting"];
-        final alreadyMigrated = rawAppSetting is Map &&
-            rawAppSetting["tunDesktopStackMixedMigrated"] == true;
-        if (!alreadyMigrated) {
+        final alreadyRestored = rawAppSetting is Map &&
+            rawAppSetting["tunDesktopStackGvisorRestored"] == true;
+        if (!alreadyRestored) {
           final rawPatchClash = normalizedJson["patchClashConfig"];
           if (rawPatchClash is Map) {
             final rawTun = rawPatchClash["tun"];
-            if (rawTun is Map && rawTun["stack"] == "gvisor") {
-              final nextTun = Map<String, Object?>.from(rawTun);
-              nextTun["stack"] = "mixed";
+            if (rawTun is Map) {
+              final rawStack = rawTun["stack"];
+              if (rawStack == null || rawStack == "mixed") {
+                final nextTun = Map<String, Object?>.from(rawTun);
+                nextTun["stack"] = "gvisor";
+                final nextPatchClash = Map<String, Object?>.from(rawPatchClash);
+                nextPatchClash["tun"] = nextTun;
+                normalizedJson["patchClashConfig"] = nextPatchClash;
+              }
+            } else if (rawTun == null) {
               final nextPatchClash = Map<String, Object?>.from(rawPatchClash);
-              nextPatchClash["tun"] = nextTun;
+              nextPatchClash["tun"] = <String, Object?>{"stack": "gvisor"};
               normalizedJson["patchClashConfig"] = nextPatchClash;
             }
+          } else if (rawPatchClash == null) {
+            normalizedJson["patchClashConfig"] = <String, Object?>{
+              "tun": <String, Object?>{"stack": "gvisor"},
+            };
           }
           if (rawAppSetting is Map) {
             final nextAppSetting = Map<String, Object?>.from(rawAppSetting);
-            nextAppSetting["tunDesktopStackMixedMigrated"] = true;
+            nextAppSetting.remove("tunDesktopStackMixedMigrated");
+            nextAppSetting["tunDesktopStackGvisorRestored"] = true;
             normalizedJson["appSetting"] = nextAppSetting;
+          } else if (rawAppSetting == null) {
+            normalizedJson["appSetting"] = <String, Object?>{
+              "tunDesktopStackGvisorRestored": true,
+            };
           }
         }
       }

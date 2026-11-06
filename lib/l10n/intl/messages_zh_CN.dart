@@ -568,6 +568,8 @@ class MessageLookup extends MessageLookupByLibrary {
     "healthDetailTakeoverTun": MessageLookupByLibrary.simpleMessage(
       "TUN 全局虚拟网卡接管",
     ),
+    "healthDetailTunBypassedSystemProxyOk":
+        MessageLookupByLibrary.simpleMessage("TUN 通道未接管流量，系统代理通道正常"),
     "healthDetailTunDisabled": MessageLookupByLibrary.simpleMessage(
       "未开启（按设置跳过）",
     ),
@@ -639,6 +641,9 @@ class MessageLookup extends MessageLookupByLibrary {
     ),
     "healthVerdictTrafficBypassed": MessageLookupByLibrary.simpleMessage(
       "外网可达，但探测连接未经过代理核心（流量绕过）",
+    ),
+    "healthVerdictTunBypassedTitle": MessageLookupByLibrary.simpleMessage(
+      "TUN 虚拟网卡未接管流量，当前仅系统代理可用",
     ),
     "healthVerdictWarningsTitle": MessageLookupByLibrary.simpleMessage(
       "连接可用，但存在需关注的告警项",

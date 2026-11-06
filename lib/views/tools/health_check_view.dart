@@ -201,7 +201,17 @@ String healthCheckItemDetail(HealthCheckResult result, AppLocalizations l10n) {
             return l10n.healthDetailE2eVerified(exitPart);
           }(),
         'routedDirectByRule' => l10n.healthDetailE2eDirectRule,
-        'trafficBypassedCore' => l10n.healthDetailE2eBypassed,
+        'tunBypassedSystemProxyOk' => () {
+            final cc = result.exitCountryCode;
+            final exitPart = (cc != null && cc.length == 2)
+                ? l10n.healthExitCountryPart('${_countryCodeToFlag(cc)} $cc')
+                : '';
+            return '${l10n.healthDetailTunBypassedSystemProxyOk}$exitPart';
+          }(),
+        'trafficBypassedCore' => _withOptionalDetail(
+            l10n.healthDetailE2eBypassed,
+            result.localDetail,
+          ),
         'e2eRejectedByRule' => l10n.healthDetailOutboundRejectSelected,
         'takeoverFailed' ||
         'outboundFailed' ||
@@ -577,7 +587,9 @@ class _VerdictBanner extends StatelessWidget {
 
     String? subtitle;
     if (verdict != null &&
-        (verdict.code == 'healthy' || verdict.code == 'healthyWithWarnings')) {
+        (verdict.code == 'healthy' ||
+            verdict.code == 'healthyWithWarnings' ||
+            verdict.code == 'tunBypassedSystemProxyOk')) {
       if (report?.mode == Mode.direct && verdict.directDelayMs != null) {
         subtitle = l10n.healthVerdictHealthyDirectSubtitle(
           verdict.directDelayMs!,

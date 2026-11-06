@@ -81,6 +81,49 @@ class _RecordingTransport extends ClashHandlerInterface {
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
+Map<String, dynamic> _mihomoDefaultRawConfigJson({
+  Map<String, dynamic>? overrides,
+}) {
+  final base = <String, dynamic>{
+    'allow-lan': false,
+    'bind-address': '*',
+    'ipv6': true,
+    'mode': 'rule',
+    'unified-delay': false,
+    'tcp-concurrent': false,
+    'keep-alive-idle': 0,
+    'keep-alive-interval': 0,
+    'find-process-mode': 'strict',
+    'tun': <String, dynamic>{
+      'enable': false,
+      'device': '',
+      'stack': 'Mips',
+      'dns-hijack': <String>['0.0.0.0:53'],
+      'auto-route': true,
+      'auto-detect-interface': true,
+    },
+    'profile': <String, dynamic>{
+      'store-selected': true,
+      'store-fake-ip': false,
+    },
+    'sniffer': <String, dynamic>{
+      'enable': false,
+      'override-destination': true,
+      'force-domain': <String>[],
+      'skip-domain': <String>[],
+      'port-whitelist': <String>[],
+      'force-dns-mapping': true,
+      'parse-pure-ip': true,
+      'sniff': <String, dynamic>{},
+    },
+    'rules': <String>['MATCH,DIRECT'],
+  };
+  if (overrides != null) {
+    base.addAll(overrides);
+  }
+  return base;
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -106,7 +149,7 @@ void main() {
 
   group('Item 1: Fake-IP persistence & missing-Fake-IP sniffer recovery', () {
     test(
-        'patchRawConfig enables profile.store-fake-ip and injects missing-Fake-IP sniffer when dns.enhanced-mode == fake-ip',
+        'patchRawConfig enables profile.store-fake-ip and injects missing-Fake-IP sniffer even over Mihomo DefaultRawConfig zero-values when dns.enhanced-mode == fake-ip',
         () async {
       const profile = Profile(
         id: 'fake-ip-default',
@@ -119,30 +162,32 @@ void main() {
         currentProfileId: profile.id,
       );
       final state = _StabilityTestState({
-        profile.id: {
-          'proxies': [
-            {'name': 'n1', 'type': 'ss', 'server': 'a.example', 'port': 443},
-          ],
-          'proxy-groups': [
-            {
-              'name': 'PROXY',
-              'type': 'select',
-              'proxies': ['n1', 'DIRECT'],
+        profile.id: _mihomoDefaultRawConfigJson(
+          overrides: {
+            'proxies': [
+              {'name': 'n1', 'type': 'ss', 'server': 'a.example', 'port': 443},
+            ],
+            'proxy-groups': [
+              {
+                'name': 'PROXY',
+                'type': 'select',
+                'proxies': ['n1', 'DIRECT'],
+              },
+            ],
+            'dns': {
+              'enable': true,
+              'enhanced-mode': 'fake-ip',
+              'nameserver': ['223.5.5.5'],
             },
-          ],
-          'dns': {
-            'enable': true,
-            'enhanced-mode': 'fake-ip',
-            'nameserver': ['223.5.5.5'],
+            'rules': ['MATCH,PROXY'],
           },
-          'rules': ['MATCH,PROXY'],
-        },
+        ),
       })
         ..config = config;
       globalState.config = config;
 
       final patched = await state.patchRawConfig(
-        patchConfig: const ClashConfig(),
+        patchConfig: desktopDefaultClashConfig(),
         profile: profile,
       );
 
@@ -176,7 +221,7 @@ void main() {
     });
 
     test(
-        'patchRawConfig preserves explicit store-fake-ip=false, custom sniffer, and skips sniffer when not fake-ip',
+        'patchRawConfig preserves explicit custom sniffer and does not enable sniffer when enhanced-mode != fake-ip',
         () async {
       const explicitProfile = Profile(
         id: 'explicit-sniffer',
@@ -194,31 +239,32 @@ void main() {
         currentProfileId: explicitProfile.id,
       );
       final state = _StabilityTestState({
-        explicitProfile.id: {
-          'profile': {'store-fake-ip': false},
-          'sniffer': {
-            'enable': false,
-            'sniff': {
-              'TLS': {
-                'ports': [443],
+        explicitProfile.id: _mihomoDefaultRawConfigJson(
+          overrides: {
+            'sniffer': {
+              'enable': false,
+              'sniff': {
+                'TLS': {
+                  'ports': [443],
+                },
               },
             },
+            'dns': {
+              'enable': true,
+              'enhanced-mode': 'fake-ip',
+              'nameserver': ['223.5.5.5'],
+            },
           },
-          'dns': {
-            'enable': true,
-            'enhanced-mode': 'fake-ip',
-            'nameserver': ['223.5.5.5'],
+        ),
+        normalDnsProfile.id: _mihomoDefaultRawConfigJson(
+          overrides: {
+            'dns': {
+              'enable': true,
+              'enhanced-mode': 'normal',
+              'nameserver': ['223.5.5.5'],
+            },
           },
-          'rules': ['MATCH,DIRECT'],
-        },
-        normalDnsProfile.id: {
-          'dns': {
-            'enable': true,
-            'enhanced-mode': 'normal',
-            'nameserver': ['223.5.5.5'],
-          },
-          'rules': ['MATCH,DIRECT'],
-        },
+        ),
       })
         ..config = config;
       globalState.config = config;
@@ -227,7 +273,7 @@ void main() {
         patchConfig: const ClashConfig(),
         profile: explicitProfile,
       );
-      expect((patchedExplicit['profile'] as Map)['store-fake-ip'], isFalse);
+      expect((patchedExplicit['profile'] as Map)['store-fake-ip'], isTrue);
       expect((patchedExplicit['sniffer'] as Map)['enable'], isFalse);
       expect(
         (((patchedExplicit['sniffer'] as Map)['sniff'] as Map)['TLS']
@@ -239,110 +285,187 @@ void main() {
         patchConfig: const ClashConfig(),
         profile: normalDnsProfile,
       );
-      expect(patchedNormalDns['sniffer'], isNull);
+      expect((patchedNormalDns['sniffer'] as Map)['enable'], isFalse);
     });
   });
 
-  group('Item 3: Safe TUN MTU 1500 & one-shot desktop gvisor -> mixed migration',
+  group(
+      'Item 3: Safe TUN MTU 1500, DefaultRawConfig Mips guard & desktop gvisor recovery',
       () {
     test(
-        'patchRawConfig defaults tun.mtu to 1500 when absent and preserves explicit subscription mtu',
+        'syncNetworkSettingsFromProvider and patchRawConfig ignore unconfigured DefaultRawConfig TunMips while preserving explicit provider stack and MTU',
         () async {
-      const defaultMtuProfile = Profile(
-        id: 'default-mtu',
-        label: 'DefaultMtu',
+      const bareProfile = Profile(
+        id: 'bare-tun',
+        label: 'BareTun',
         autoUpdateDuration: Duration.zero,
       );
-      const customMtuProfile = Profile(
-        id: 'custom-mtu',
-        label: 'CustomMtu',
+      const customTunProfile = Profile(
+        id: 'custom-tun',
+        label: 'CustomTun',
         autoUpdateDuration: Duration.zero,
       );
       final config = Config(
         themeProps: defaultThemeProps,
-        profiles: const [defaultMtuProfile, customMtuProfile],
-        currentProfileId: defaultMtuProfile.id,
+        profiles: const [bareProfile, customTunProfile],
+        currentProfileId: bareProfile.id,
       );
       final state = _StabilityTestState({
-        defaultMtuProfile.id: {
-          'rules': ['MATCH,DIRECT'],
-        },
-        customMtuProfile.id: {
-          'tun': {'mtu': 1400},
-          'rules': ['MATCH,DIRECT'],
-        },
+        bareProfile.id: _mihomoDefaultRawConfigJson(
+          overrides: {
+            'tun': {
+              'enable': false,
+              'device': '',
+              'stack': 'Mips',
+              'mtu': 0,
+            },
+          },
+        ),
+        customTunProfile.id: _mihomoDefaultRawConfigJson(
+          overrides: {
+            'tun': {
+              'enable': true,
+              'device': 'utun9',
+              'stack': 'system',
+              'mtu': 1400,
+            },
+          },
+        ),
       })
         ..config = config;
       globalState.config = config;
 
-      final patchedDefault = await state.patchRawConfig(
-        patchConfig: const ClashConfig(),
-        profile: defaultMtuProfile,
+      final desktopPatch = desktopDefaultClashConfig();
+
+      final syncedBare = await state.syncNetworkSettingsFromProvider(
+        desktopPatch,
+        profile: bareProfile,
       );
-      expect((patchedDefault['tun'] as Map)['mtu'], 1500);
+      expect(syncedBare.tun.stack, TunStack.gvisor);
+
+      final patchedBare = await state.patchRawConfig(
+        patchConfig: syncedBare,
+        profile: bareProfile,
+      );
+      expect((patchedBare['tun'] as Map)['stack'], 'gvisor');
+      expect((patchedBare['tun'] as Map)['mtu'], 1500);
+
+      final syncedCustom = await state.syncNetworkSettingsFromProvider(
+        desktopPatch,
+        profile: customTunProfile,
+      );
+      expect(syncedCustom.tun.stack, TunStack.system);
 
       final patchedCustom = await state.patchRawConfig(
-        patchConfig: const ClashConfig(),
-        profile: customMtuProfile,
+        patchConfig: syncedCustom,
+        profile: customTunProfile,
       );
+      expect((patchedCustom['tun'] as Map)['stack'], 'system');
       expect((patchedCustom['tun'] as Map)['mtu'], 1400);
     });
 
     test(
-        'Config.compatibleFromJson migrates legacy desktop gvisor to mixed once while respecting subsequent manual gvisor and mobile',
+        'Config.compatibleFromJson defaults and restores desktop tun.stack to gvisor (including broken tunDesktopStackMixedMigrated configs) while respecting subsequent manual mixed/system and mobile',
         () {
-      final legacyUnmigratedJson = <String, Object?>{
+      // 1. Fresh empty desktop JSON -> defaults to gvisor
+      final freshDesktop = Config.compatibleFromJson(
+        <String, Object?>{'themeProps': defaultThemeProps.toJson()},
+        isDesktop: true,
+      );
+      expect(freshDesktop.patchClashConfig.tun.stack, TunStack.gvisor);
+      expect(
+        freshDesktop.appSetting.tunDesktopStackGvisorRestored,
+        isTrue,
+      );
+
+      // 2. Regression config previously migrated by f329535 (tunDesktopStackMixedMigrated: true, stack: mixed) -> restored once to gvisor!
+      final brokenMixedMigratedJson = <String, Object?>{
         'themeProps': defaultThemeProps.toJson(),
         'appSetting': <String, Object?>{
           'dashboardDefaultV2Migrated': true,
+          'tunDesktopStackMixedMigrated': true,
         },
         'patchClashConfig': <String, Object?>{
           'tun': <String, Object?>{
             'enable': true,
-            'stack': 'gvisor',
+            'stack': 'mixed',
           },
         },
       };
-
-      // 1. Desktop legacy config without tunDesktopStackMixedMigrated -> migrated once to mixed
-      final desktopMigrated = Config.compatibleFromJson(
-        legacyUnmigratedJson,
+      final recoveredDesktop = Config.compatibleFromJson(
+        brokenMixedMigratedJson,
         isDesktop: true,
       );
-      expect(desktopMigrated.patchClashConfig.tun.stack, TunStack.mixed);
+      expect(recoveredDesktop.patchClashConfig.tun.stack, TunStack.gvisor);
       expect(
-        desktopMigrated.appSetting.tunDesktopStackMixedMigrated,
+        recoveredDesktop.appSetting.tunDesktopStackGvisorRestored,
         isTrue,
       );
 
-      // 2. User manually switches back to gvisor after migration -> preserved!
-      final manualGvisor = desktopMigrated.copyWith(
-        patchClashConfig: desktopMigrated.patchClashConfig.copyWith.tun(
-          stack: TunStack.gvisor,
+      // 3. Explicit legacy 'system' stack is respected
+      final explicitSystemDesktop = Config.compatibleFromJson(
+        <String, Object?>{
+          'themeProps': defaultThemeProps.toJson(),
+          'patchClashConfig': <String, Object?>{
+            'tun': <String, Object?>{
+              'enable': true,
+              'stack': 'system',
+            },
+          },
+        },
+        isDesktop: true,
+      );
+      expect(explicitSystemDesktop.patchClashConfig.tun.stack, TunStack.system);
+
+      // 4a. Legacy pre-f329535 desktop config with `stack: mixed` (from older
+      // `const Tun()` default without any migration marker) MUST recover once
+      // to `TunStack.gvisor` and record `tunDesktopStackGvisorRestored: true`.
+      final legacyMixedDesktop = Config.compatibleFromJson(
+        <String, Object?>{
+          'themeProps': defaultThemeProps.toJson(),
+          'patchClashConfig': <String, Object?>{
+            'tun': <String, Object?>{
+              'enable': true,
+              'stack': 'mixed',
+            },
+          },
+        },
+        isDesktop: true,
+      );
+      expect(legacyMixedDesktop.patchClashConfig.tun.stack, TunStack.gvisor);
+      expect(
+        legacyMixedDesktop.appSetting.tunDesktopStackGvisorRestored,
+        isTrue,
+      );
+
+      // 5. User manually switches to mixed AFTER restoration -> preserved across reload!
+      final manualMixed = recoveredDesktop.copyWith(
+        patchClashConfig: recoveredDesktop.patchClashConfig.copyWith.tun(
+          stack: TunStack.mixed,
         ),
       );
-      final reloadedManualGvisor = Config.compatibleFromJson(
-        jsonDecode(jsonEncode(manualGvisor.toJson())) as Map<String, Object?>,
+      final reloadedManualMixed = Config.compatibleFromJson(
+        jsonDecode(jsonEncode(manualMixed.toJson())) as Map<String, Object?>,
         isDesktop: true,
       );
-      expect(reloadedManualGvisor.patchClashConfig.tun.stack, TunStack.gvisor);
+      expect(reloadedManualMixed.patchClashConfig.tun.stack, TunStack.mixed);
       expect(
-        reloadedManualGvisor.appSetting.tunDesktopStackMixedMigrated,
+        reloadedManualMixed.appSetting.tunDesktopStackGvisorRestored,
         isTrue,
       );
 
-      // 3. Mobile (isDesktop: false) never rewrites gvisor
-      final mobileLoaded = Config.compatibleFromJson(
-        legacyUnmigratedJson,
+      // 6. Mobile (isDesktop: false) keeps mixed default
+      final mobileFresh = Config.compatibleFromJson(
+        <String, Object?>{'themeProps': defaultThemeProps.toJson()},
         isDesktop: false,
       );
-      expect(mobileLoaded.patchClashConfig.tun.stack, TunStack.gvisor);
+      expect(mobileFresh.patchClashConfig.tun.stack, TunStack.mixed);
     });
   });
 
   group('Item 4: Aggressive TCP keep-alive (idle=15, interval=15)', () {
     test(
-        'defaultKeepAliveInterval is 15 and patchRawConfig writes both keep-alive-interval and keep-alive-idle respecting overrideNetworkSettings',
+        'defaultKeepAliveInterval is 15 and patchRawConfig treats DefaultRawConfig 0 as unset while preserving positive provider values',
         () async {
       expect(defaultKeepAliveInterval, 15);
       expect(const ClashConfig().keepAliveInterval, 15);
@@ -367,19 +490,18 @@ void main() {
         currentProfileId: bareProfile.id,
       );
       final state = _StabilityTestState({
-        bareProfile.id: {
-          'rules': ['MATCH,DIRECT'],
-        },
-        customProfile.id: {
-          'keep-alive-interval': 45,
-          'keep-alive-idle': 60,
-          'rules': ['MATCH,DIRECT'],
-        },
+        bareProfile.id: _mihomoDefaultRawConfigJson(),
+        customProfile.id: _mihomoDefaultRawConfigJson(
+          overrides: {
+            'keep-alive-interval': 45,
+            'keep-alive-idle': 60,
+          },
+        ),
       })
         ..config = baseConfig;
       globalState.config = baseConfig;
 
-      // Default bare profile -> both 15
+      // Default bare profile (even with DefaultRawConfig 0 values) -> both 15
       final patchedBare = await state.patchRawConfig(
         patchConfig: const ClashConfig(),
         profile: bareProfile,
@@ -451,8 +573,8 @@ void main() {
 
       // Freshly decoded deep clone with identical contents matches!
       final clonedIdentical = SetupParams(
-        config:
-            jsonDecode(jsonEncode(initialParams.config)) as Map<String, dynamic>,
+        config: jsonDecode(jsonEncode(initialParams.config))
+            as Map<String, dynamic>,
         selectedMap: <String, String>{'GLOBAL': 'NodeA'},
         testUrl: 'https://www.gstatic.com/generate_204',
       );

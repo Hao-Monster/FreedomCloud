@@ -790,6 +790,10 @@ class MessageLookup extends MessageLookupByLibrary {
     "healthDetailTakeoverTun": MessageLookupByLibrary.simpleMessage(
       "Captured via TUN adapter",
     ),
+    "healthDetailTunBypassedSystemProxyOk":
+        MessageLookupByLibrary.simpleMessage(
+          "TUN path failed; verified via System Proxy",
+        ),
     "healthDetailTunDisabled": MessageLookupByLibrary.simpleMessage(
       "Disabled in settings",
     ),
@@ -891,6 +895,9 @@ class MessageLookup extends MessageLookupByLibrary {
     ),
     "healthVerdictTrafficBypassed": MessageLookupByLibrary.simpleMessage(
       "Probe reached internet without traversing proxy core",
+    ),
+    "healthVerdictTunBypassedTitle": MessageLookupByLibrary.simpleMessage(
+      "TUN capture failed; only System Proxy is working",
     ),
     "healthVerdictWarningsTitle": MessageLookupByLibrary.simpleMessage(
       "Connected with warnings",

@@ -12,6 +12,11 @@ typedef HostsMap = Map<String, String>;
 const defaultClashConfig = ClashConfig();
 
 const defaultTun = Tun();
+
+ClashConfig desktopDefaultClashConfig() => defaultClashConfig.copyWith(
+      tun: defaultTun.copyWith(stack: TunStack.gvisor),
+    );
+
 const defaultDns = Dns();
 const defaultGeoXUrl = GeoXUrl();
 

@@ -37,16 +37,6 @@ class FlClashHttpOverrides extends HttpOverrides {
     // Subscription credentials may live in either the path or query string.
     commonPrint.log("find ${url.host} proxy:$isStart");
     if (!isStart) return "DIRECT";
-    final port = _effectiveMixedPort();
-    final canUseWindowsSystemProxy = Platform.isWindows &&
-        globalState.config.networkProps.systemProxy &&
-        port > 0 &&
-        !_runtimeMixedPortRequiresAuthentication();
-
-    // A TUN listener being up is not proof that this process's direct socket
-    // will be captured. When Windows System Proxy is enabled, use the verified
-    // local mixed port for app-owned requests so IP checks and subscription
-    // requests do not silently bypass the working Core path.
     // Loop prevention: clash-core outbound sockets are protected/bound outside
     // TUN (on Android via TunInterface.protect, on desktop via binding the
     // physical interface).
@@ -58,14 +48,37 @@ class FlClashHttpOverrides extends HttpOverrides {
         (Platform.isWindows
             ? tunRuntime.isEnabled
             : globalState.appState.realTunEnable);
-    if (tunHandlesTraffic && !canUseWindowsSystemProxy) {
+    if (tunHandlesTraffic) {
       return "DIRECT";
     }
-    if (port == 0) {
-      // Mixed-port is disabled and TUN isn't handling traffic — we have no
-      // inbound to route through. Go DIRECT; at worst the request leaks, but
-      // that's strictly better than trying PROXY localhost:0 which hangs.
+    final port = _effectiveMixedPort();
+    if (port == 0 || _runtimeMixedPortRequiresAuthentication()) {
+      // Mixed-port is disabled or requires credentials that Dart's bare
+      // `PROXY host:port` directive cannot supply without 407 loops, and TUN
+      // isn't handling traffic. Go DIRECT rather than hanging on port 0/407.
       return "DIRECT";
+    }
+    return "PROXY localhost:$port";
+  }
+
+  /// Bounded fallback proxy directive for Dashboard self-probes on Windows
+  /// ONLY after a primary `DIRECT` pass over observed-active TUN has failed.
+  static String? windowsTunLoopbackFallbackProxy(Uri url) {
+    if ([localhost].contains(url.host)) {
+      return null;
+    }
+    if (!Platform.isWindows || !globalState.isAppStateInitialized) {
+      return null;
+    }
+    final isStart = globalState.appState.runTime != null;
+    if (!isStart || !tunRuntime.isEnabled) {
+      return null;
+    }
+    final port = _effectiveMixedPort();
+    if (!globalState.config.networkProps.systemProxy ||
+        port <= 0 ||
+        _runtimeMixedPortRequiresAuthentication()) {
+      return null;
     }
     return "PROXY 127.0.0.1:$port";
   }

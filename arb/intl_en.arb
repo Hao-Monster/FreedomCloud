@@ -1105,6 +1105,7 @@
   "healthVerdictLocalNetworkDown": "Local network is unreachable (unrelated to proxy node)",
   "healthVerdictOutboundFailed": "Local network is OK, but active proxy node failed",
   "healthVerdictTrafficBypassed": "Probe reached internet without traversing proxy core",
+  "healthVerdictTunBypassedTitle": "TUN capture failed; only System Proxy is working",
   "healthVerdictEndToEndFailed": "End-to-end exit check failed; try switching nodes",
   "healthVerdictDnsFailed": "DNS resolution failed or returned sinkhole address",
   "healthVerdictWarningsTitle": "Connected with warnings",
@@ -1240,5 +1241,6 @@
   "healthDetailSysProxyInvalidPort": "Local mixed-port is disabled (0)",
   "healthDetailSysProxyNotApplied": "System proxy has not been applied to OS yet",
   "healthDetailSysProxyDisabledExternally": "System proxy switch is turned off in OS",
-  "healthDetailDnsStaleFakeIp": "Stale Fake-IP cache detected while TUN is inactive"
+  "healthDetailDnsStaleFakeIp": "Stale Fake-IP cache detected while TUN is inactive",
+  "healthDetailTunBypassedSystemProxyOk": "TUN path failed; verified via System Proxy"
 }

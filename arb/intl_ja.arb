@@ -909,6 +909,7 @@
   "healthVerdictLocalNetworkDown": "端末のネットワークが利用できません（ノードの問題ではありません）",
   "healthVerdictOutboundFailed": "端末の通信は正常ですが、現在のノードに接続できません",
   "healthVerdictTrafficBypassed": "外部通信は可能ですがプロキシコアを経由していません",
+  "healthVerdictTunBypassedTitle": "TUN 仮想アダプタが通信を捕捉できず、システムプロキシのみ稼働中",
   "healthVerdictEndToEndFailed": "エンドツーエンド検証に失敗しました",
   "healthVerdictDnsFailed": "DNS 名前解決に失敗したか不正な応答を検出しました",
   "healthVerdictWarningsTitle": "利用可能ですが確認が必要な項目があります",
@@ -1044,5 +1045,6 @@
   "healthDetailSysProxyInvalidPort": "混合ポートが無効です (mixed-port = 0)",
   "healthDetailSysProxyNotApplied": "システムプロキシがまだ適用されていません",
   "healthDetailSysProxyDisabledExternally": "OSのシステムプロキシがオフになっています",
-  "healthDetailDnsStaleFakeIp": "TUN無効時に残留Fake-IPキャッシュを検出しました"
+  "healthDetailDnsStaleFakeIp": "TUN無効時に残留Fake-IPキャッシュを検出しました",
+  "healthDetailTunBypassedSystemProxyOk": "TUN 経路が失敗し、システムプロキシ経由で確認済み"
 }

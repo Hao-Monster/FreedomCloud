@@ -553,7 +553,9 @@ class NetworkListView extends ConsumerWidget {
                 );
             ref.read(patchClashConfigProvider.notifier).updateState(
                   (state) => state.copyWith(
-                    tun: defaultTun,
+                    tun: system.isDesktop
+                        ? desktopDefaultClashConfig().tun
+                        : defaultTun,
                   ),
                 );
           },

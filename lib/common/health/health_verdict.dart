@@ -85,10 +85,13 @@ HealthVerdict computeHealthVerdict(
   // Priority 6: Local physical network down (only when proxy outbound / E2E has
   // not already proven that physical uplink reaches remote servers).
   final outboundStatus = get(HealthCheckId.outboundConnectivity)?.status;
-  final e2eStatus = get(HealthCheckId.endToEndConnectivity)?.status;
+  final e2eResult = get(HealthCheckId.endToEndConnectivity);
+  final e2eStatus = e2eResult?.status;
   final uplinkProvenByProxy = outboundStatus == HealthStatus.passed ||
       outboundStatus == HealthStatus.warning ||
-      e2eStatus == HealthStatus.passed;
+      e2eStatus == HealthStatus.passed ||
+      (e2eStatus == HealthStatus.warning &&
+          e2eResult?.reasonCode == 'tunBypassedSystemProxyOk');
   if (failed(HealthCheckId.directConnectivity) && !uplinkProvenByProxy) {
     return HealthVerdict(
       code: 'localNetworkDown',
@@ -123,6 +126,19 @@ HealthVerdict computeHealthVerdict(
         primaryAction: e2e.action ?? HealthAction.openProxies,
         activeNodeName: activeNodeName,
         outboundDelayMs: outboundDelayMs,
+        mode: mode,
+      );
+    }
+    if (e2e.status == HealthStatus.warning &&
+        e2e.reasonCode == 'tunBypassedSystemProxyOk') {
+      return HealthVerdict(
+        code: 'tunBypassedSystemProxyOk',
+        severity: HealthVerdictSeverity.warning,
+        primaryCheckId: HealthCheckId.endToEndConnectivity,
+        primaryAction: e2e.action ?? HealthAction.openTunSettings,
+        activeNodeName: activeNodeName,
+        outboundDelayMs: outboundDelayMs,
+        exitCountryCode: exitCountryCode,
         mode: mode,
       );
     }

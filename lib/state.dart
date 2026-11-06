@@ -238,8 +238,11 @@ class GlobalState {
   Future<void> init() async {
     packageInfo = await PackageInfo.fromPlatform();
     config = await preferences.getConfig() ??
-        const Config(
+        Config(
           themeProps: defaultThemeProps,
+          patchClashConfig: system.isDesktop
+              ? desktopDefaultClashConfig()
+              : defaultClashConfig,
         );
     await globalState.migrateOldData(config);
     await AppLocalizations.load(
@@ -584,9 +587,12 @@ class GlobalState {
     effectiveTcpConcurrent.value = rawConfig['tcp-concurrent'] as bool? ?? false;
     effectiveUnifiedDelay.value = rawConfig['unified-delay'] as bool? ?? false;
     effectiveLogLevel.value = rawConfig['log-level'] as String? ?? 'info';
+    final committedKeepAlive =
+        (rawConfig['keep-alive-interval'] as num?)?.toInt();
     effectiveKeepAliveInterval.value =
-        (rawConfig['keep-alive-interval'] as num?)?.toInt() ??
-            defaultKeepAliveInterval;
+        (committedKeepAlive != null && committedKeepAlive > 0)
+            ? committedKeepAlive
+            : defaultKeepAliveInterval;
     _commitGroupMetadata(rawConfig);
   }
 
@@ -677,6 +683,34 @@ class GlobalState {
     globalOverrideEnabled.value = globalOverride;
   }
 
+  static bool _isUnconfiguredDefaultRawTun(Object? rawTun) {
+    if (rawTun is! Map) return true;
+    if (rawTun['enable'] == true) return false;
+    final device = rawTun['device']?.toString().trim() ?? '';
+    final stack = rawTun['stack']?.toString().trim().toLowerCase();
+    return device.isEmpty && (stack == null || stack == 'mips');
+  }
+
+  static bool _isUnconfiguredDefaultRawSniffer(Object? rawSniffer) {
+    if (rawSniffer == null) return true;
+    if (rawSniffer is! Map) return true;
+    if (rawSniffer['enable'] == true) return false;
+    final sniff = rawSniffer['sniff'];
+    if (sniff is Map && sniff.isNotEmpty) return false;
+    for (final listKey in const [
+      'sniffing',
+      'force-domain',
+      'skip-src-address',
+      'skip-dst-address',
+      'skip-domain',
+      'port-whitelist',
+    ]) {
+      final value = rawSniffer[listKey];
+      if (value is Iterable && value.isNotEmpty) return false;
+    }
+    return true;
+  }
+
   Future<ClashConfig> syncNetworkSettingsFromProvider(ClashConfig patchConfig, {
     required Profile? profile,
   }) async {
@@ -704,7 +738,10 @@ class GlobalState {
             )
           : patchConfig.findProcessMode;
       
-      final providerTunStackStr = rawConfig['tun']?['stack'] as String?;
+      final rawTun = rawConfig['tun'];
+      final providerTunStackStr = !_isUnconfiguredDefaultRawTun(rawTun)
+          ? (rawTun as Map)['stack']?.toString().trim()
+          : null;
       final providerTunStack = providerTunStackStr != null
           ? TunStack.values.firstWhere(
               (e) => e.name.toLowerCase() == providerTunStackStr.toLowerCase(),
@@ -776,8 +813,14 @@ class GlobalState {
     final profileTcpConcurrent = rawConfig["tcp-concurrent"] as bool?;
     final profileUnifiedDelay = rawConfig["unified-delay"] as bool?;
     final profileLogLevel = rawConfig["log-level"] as String?;
-    final profileKeepAlive = (rawConfig["keep-alive-interval"] as num?)?.toInt();
-    final profileKeepAliveIdle = (rawConfig["keep-alive-idle"] as num?)?.toInt();
+    final rawKeepAlive = (rawConfig["keep-alive-interval"] as num?)?.toInt();
+    final profileKeepAlive =
+        (rawKeepAlive != null && rawKeepAlive > 0) ? rawKeepAlive : null;
+    final rawKeepAliveIdle = (rawConfig["keep-alive-idle"] as num?)?.toInt();
+    final profileKeepAliveIdle =
+        (rawKeepAliveIdle != null && rawKeepAliveIdle > 0)
+            ? rawKeepAliveIdle
+            : null;
     final isOverride = config.appSetting.overrideNetworkSettings;
     final effTcpConcurrent = isOverride
         ? realPatchConfig.tcpConcurrent
@@ -851,28 +894,35 @@ class GlobalState {
       }
     }
     
-    if (rawConfig["tun"] == null) {
-      rawConfig["tun"] = {};
-    }
-    rawConfig["tun"]["enable"] = Platform.isAndroid ? true : realPatchConfig.tun.enable;
-    rawConfig["tun"]["device"] = realPatchConfig.tun.device;
-    rawConfig["tun"]["dns-hijack"] = realPatchConfig.tun.dnsHijack;
+    final rawTun = rawConfig["tun"];
+    final hasExplicitProviderTun = !_isUnconfiguredDefaultRawTun(rawTun);
+    final tunConfig = rawTun is Map
+        ? Map<String, dynamic>.from(rawTun)
+        : <String, dynamic>{};
+    rawConfig["tun"] = tunConfig;
+    tunConfig["enable"] =
+        Platform.isAndroid ? true : realPatchConfig.tun.enable;
+    tunConfig["device"] = realPatchConfig.tun.device;
+    tunConfig["dns-hijack"] = realPatchConfig.tun.dnsHijack;
     
     // Set TUN stack
     if (config.appSetting.overrideNetworkSettings) {
       // User wants to override - use value from UI (always write)
-      rawConfig["tun"]["stack"] = realPatchConfig.tun.stack.name;
+      tunConfig["stack"] = realPatchConfig.tun.stack.name;
     } else {
       // Use provider value - only set if not already in rawConfig, use patchConfig value (which is synced from provider)
-      final currentStack = rawConfig["tun"]["stack"];
-      if (currentStack == null) {
-        rawConfig["tun"]["stack"] = realPatchConfig.tun.stack.name;
+      final currentStack = tunConfig["stack"];
+      if (!hasExplicitProviderTun || currentStack == null) {
+        tunConfig["stack"] = realPatchConfig.tun.stack.name;
       }
     }
     
-    rawConfig["tun"]["route-address"] = realPatchConfig.tun.routeAddress;
-    rawConfig["tun"]["auto-route"] = realPatchConfig.tun.autoRoute;
-    rawConfig["tun"]["mtu"] ??= 1500;
+    tunConfig["route-address"] = realPatchConfig.tun.routeAddress;
+    tunConfig["auto-route"] = realPatchConfig.tun.autoRoute;
+    final currentMtu = (tunConfig["mtu"] as num?)?.toInt();
+    if (currentMtu == null || currentMtu <= 0) {
+      tunConfig["mtu"] = 1500;
+    }
     rawConfig["geodata-loader"] = realPatchConfig.geodataLoader.name;
     if (rawConfig["sniffer"]?["sniff"] != null) {
       for (final value in (rawConfig["sniffer"]?["sniff"] as Map).values) {
@@ -920,7 +970,7 @@ class GlobalState {
     }
 
     rawConfig["profile"]["store-selected"] = false;
-    rawConfig["profile"]["store-fake-ip"] ??= true;
+    rawConfig["profile"]["store-fake-ip"] = true;
     
     final mergedGeoXUrl = <String, dynamic>{};
     final patchGeoX = realPatchConfig.geoXUrl.toJson();
@@ -974,36 +1024,38 @@ class GlobalState {
       rawConfig["dns"]["fake-ip-filter"] = mergeEssentialFakeIpFilter(
         (rawConfig["dns"]["fake-ip-filter"] as Iterable?) ?? const [],
       );
-      rawConfig["sniffer"] ??= <String, dynamic>{
-        'enable': true,
-        'force-dns-mapping': false,
-        'parse-pure-ip': true,
-        'override-destination': true,
-        'skip-dst-address': <String>[
-          '127.0.0.0/8',
-          '10.0.0.0/8',
-          '100.64.0.0/10',
-          '169.254.0.0/16',
-          '172.16.0.0/12',
-          '192.168.0.0/16',
-          'fc00::/7',
-          'fe80::/10',
-        ],
-        'sniff': <String, dynamic>{
-          'HTTP': <String, dynamic>{
-            'ports': <String>['80', '8080-8880'],
-            'override-destination': true,
+      if (_isUnconfiguredDefaultRawSniffer(rawConfig["sniffer"])) {
+        rawConfig["sniffer"] = <String, dynamic>{
+          'enable': true,
+          'force-dns-mapping': false,
+          'parse-pure-ip': true,
+          'override-destination': true,
+          'skip-dst-address': <String>[
+            '127.0.0.0/8',
+            '10.0.0.0/8',
+            '100.64.0.0/10',
+            '169.254.0.0/16',
+            '172.16.0.0/12',
+            '192.168.0.0/16',
+            'fc00::/7',
+            'fe80::/10',
+          ],
+          'sniff': <String, dynamic>{
+            'HTTP': <String, dynamic>{
+              'ports': <String>['80', '8080-8880'],
+              'override-destination': true,
+            },
+            'TLS': <String, dynamic>{
+              'ports': <String>['443', '8443'],
+              'override-destination': true,
+            },
+            'QUIC': <String, dynamic>{
+              'ports': <String>['443', '8443'],
+              'override-destination': true,
+            },
           },
-          'TLS': <String, dynamic>{
-            'ports': <String>['443', '8443'],
-            'override-destination': true,
-          },
-          'QUIC': <String, dynamic>{
-            'ports': <String>['443', '8443'],
-            'override-destination': true,
-          },
-        },
-      };
+        };
+      }
     }
     final rawRules = (rawConfig["rules"] as Iterable?) ?? const [];
     rawConfig.remove("rules");

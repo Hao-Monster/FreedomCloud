@@ -530,6 +530,10 @@ class MessageLookup extends MessageLookupByLibrary {
     "healthDetailTakeoverTun": MessageLookupByLibrary.simpleMessage(
       "TUN 仮想アダプタで制御中",
     ),
+    "healthDetailTunBypassedSystemProxyOk":
+        MessageLookupByLibrary.simpleMessage(
+          "TUN 経路が失敗し、システムプロキシ経由で確認済み",
+        ),
     "healthDetailTunDisabled": MessageLookupByLibrary.simpleMessage("設定でオフ"),
     "healthDetailTunReady": MessageLookupByLibrary.simpleMessage("仮想アダプタ稼働中"),
     "healthDetailTunReadyElevated": MessageLookupByLibrary.simpleMessage(
@@ -605,6 +609,9 @@ class MessageLookup extends MessageLookupByLibrary {
     ),
     "healthVerdictTrafficBypassed": MessageLookupByLibrary.simpleMessage(
       "外部通信は可能ですがプロキシコアを経由していません",
+    ),
+    "healthVerdictTunBypassedTitle": MessageLookupByLibrary.simpleMessage(
+      "TUN 仮想アダプタが通信を捕捉できず、システムプロキシのみ稼働中",
     ),
     "healthVerdictWarningsTitle": MessageLookupByLibrary.simpleMessage(
       "利用可能ですが確認が必要な項目があります",
