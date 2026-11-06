@@ -528,6 +528,9 @@ class MessageLookup extends MessageLookupByLibrary {
     "healthActionOpenTun": MessageLookupByLibrary.simpleMessage(
       "Настройки TUN",
     ),
+    "healthActionReapplySystemProxy": MessageLookupByLibrary.simpleMessage(
+      "Восстановить прокси",
+    ),
     "healthActionRestartCore": MessageLookupByLibrary.simpleMessage(
       "Перезапуск ядра",
     ),
@@ -597,6 +600,9 @@ class MessageLookup extends MessageLookupByLibrary {
     "healthDetailDnsPoisoned": MessageLookupByLibrary.simpleMessage(
       "DNS вернул некорректный адрес-заглушку",
     ),
+    "healthDetailDnsStaleFakeIp": MessageLookupByLibrary.simpleMessage(
+      "Обнаружен устаревший кэш Fake-IP при выключенном TUN",
+    ),
     "healthDetailE2eBypassed": MessageLookupByLibrary.simpleMessage(
       "Доступ есть, но соединение обошло ядро",
     ),
@@ -664,8 +670,19 @@ class MessageLookup extends MessageLookupByLibrary {
     "healthDetailSysProxyDisabled": MessageLookupByLibrary.simpleMessage(
       "Выключен в настройках",
     ),
+    "healthDetailSysProxyDisabledExternally":
+        MessageLookupByLibrary.simpleMessage("Системный прокси выключен в ОС"),
     "healthDetailSysProxyHijacked": MessageLookupByLibrary.simpleMessage(
       "Системный прокси изменён извне",
+    ),
+    "healthDetailSysProxyInvalidPort": MessageLookupByLibrary.simpleMessage(
+      "Локальный mixed-port отключён (0)",
+    ),
+    "healthDetailSysProxyNotApplied": MessageLookupByLibrary.simpleMessage(
+      "Системный прокси ещё не применён",
+    ),
+    "healthDetailSysProxyReadFailed": MessageLookupByLibrary.simpleMessage(
+      "Не удалось прочитать настройки прокси",
     ),
     "healthDetailSysProxyUnexpectedPac": MessageLookupByLibrary.simpleMessage(
       "Обнаружен сторонний PAC-адрес",

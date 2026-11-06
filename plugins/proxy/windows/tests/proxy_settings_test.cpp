@@ -17,9 +17,10 @@ struct FakeApi {
   inline static std::vector<DWORD> calls;
   inline static std::wstring bypass;
   inline static std::vector<DWORD> flags;
+  inline static std::vector<bool> cleared_autoconfig;
   static void Reset() {
     enumerations = fail_enumeration = fail_option = ras_count = 0;
-    calls.clear(); bypass.clear(); flags.clear();
+    calls.clear(); bypass.clear(); flags.clear(); cleared_autoconfig.clear();
   }
   static DWORD Enumerate(RASENTRYNAMEW* entries, DWORD* bytes, DWORD* count) {
     ++enumerations;
@@ -39,7 +40,19 @@ struct FakeApi {
     if (option == INTERNET_OPTION_PER_CONNECTION_OPTION) {
       const auto* list = static_cast<INTERNET_PER_CONN_OPTION_LISTW*>(data);
       flags.push_back(list->pOptions[0].Value.dwValue);
-      if (list->dwOptionCount == 3) bypass = list->pOptions[2].Value.pszValue;
+      bool saw_empty_pac = false;
+      for (DWORD i = 0; i < list->dwOptionCount; ++i) {
+        if (list->pOptions[i].dwOption == INTERNET_PER_CONN_PROXY_BYPASS &&
+            list->pOptions[i].Value.pszValue != nullptr) {
+          bypass = list->pOptions[i].Value.pszValue;
+        }
+        if (list->pOptions[i].dwOption == INTERNET_PER_CONN_AUTOCONFIG_URL &&
+            (list->pOptions[i].Value.pszValue == nullptr ||
+             list->pOptions[i].Value.pszValue[0] == L'\0')) {
+          saw_empty_pac = true;
+        }
+      }
+      cleared_autoconfig.push_back(saw_empty_pac);
     }
     return static_cast<int>(calls.size()) != fail_option;
   }
@@ -61,12 +74,14 @@ int main() {
   CHECK(FakeApi::bypass == L"example.com;xn--fsqu00a.xn--0zwm56d;\u4F8B\u5B50.\u6D4B\u8BD5;*.\u4F8B\u5B50;<local>");
   CHECK(FakeApi::calls.size() == 3);
   CHECK(FakeApi::flags[0] == (PROXY_TYPE_DIRECT | PROXY_TYPE_PROXY));
+  CHECK(FakeApi::cleared_autoconfig.size() == 1 && FakeApi::cleared_autoconfig[0]);
 
   FakeApi::Reset();
   FakeApi::ras_count = 3;
   CHECK(proxy::ApplySystemProxy<FakeApi>(false, 0, {}).ok());
   CHECK(FakeApi::enumerations == 2 && FakeApi::calls.size() == 6);
   for (const auto flag : FakeApi::flags) CHECK(flag == PROXY_TYPE_DIRECT);
+  for (const bool cleared : FakeApi::cleared_autoconfig) CHECK(cleared);
 
   for (int fail = 1; fail <= 2; ++fail) {
     for (int repeat = 0; repeat < 1000; ++repeat) {

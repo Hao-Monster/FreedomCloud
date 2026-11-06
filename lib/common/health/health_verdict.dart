@@ -82,8 +82,14 @@ HealthVerdict computeHealthVerdict(
     );
   }
 
-  // Priority 6: Local physical network down (unrelated to proxy node)
-  if (failed(HealthCheckId.directConnectivity)) {
+  // Priority 6: Local physical network down (only when proxy outbound / E2E has
+  // not already proven that physical uplink reaches remote servers).
+  final outboundStatus = get(HealthCheckId.outboundConnectivity)?.status;
+  final e2eStatus = get(HealthCheckId.endToEndConnectivity)?.status;
+  final uplinkProvenByProxy = outboundStatus == HealthStatus.passed ||
+      outboundStatus == HealthStatus.warning ||
+      e2eStatus == HealthStatus.passed;
+  if (failed(HealthCheckId.directConnectivity) && !uplinkProvenByProxy) {
     return HealthVerdict(
       code: 'localNetworkDown',
       severity: HealthVerdictSeverity.failed,
@@ -145,7 +151,8 @@ HealthVerdict computeHealthVerdict(
     );
   }
 
-  // Priority 10: Any warning present
+  // Priority 10: Any warning present (or direct probe failed/timed out while
+  // physical uplink is already proven healthy by proxy outbound / E2E).
   for (final item in checks) {
     if (item.status == HealthStatus.warning) {
       return HealthVerdict(
@@ -160,6 +167,19 @@ HealthVerdict computeHealthVerdict(
         mode: mode,
       );
     }
+  }
+  if (failed(HealthCheckId.directConnectivity) && uplinkProvenByProxy) {
+    return HealthVerdict(
+      code: 'healthyWithWarnings',
+      severity: HealthVerdictSeverity.warning,
+      primaryCheckId: HealthCheckId.directConnectivity,
+      primaryAction: get(HealthCheckId.directConnectivity)?.action,
+      activeNodeName: activeNodeName,
+      outboundDelayMs: outboundDelayMs,
+      directDelayMs: directDelayMs,
+      exitCountryCode: exitCountryCode,
+      mode: mode,
+    );
   }
 
   // Priority 11: All applicable checks passed

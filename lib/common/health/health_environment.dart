@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:isolate';
 
 import 'package:dio/dio.dart';
 import 'package:flclashx/clash/clash.dart';
@@ -14,7 +13,6 @@ import 'package:flclashx/enum/enum.dart';
 import 'package:flclashx/models/models.dart';
 import 'package:flclashx/providers/pac.dart';
 import 'package:flclashx/providers/providers.dart';
-import 'package:flclashx/providers/tun.dart';
 import 'package:flclashx/state.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -40,6 +38,7 @@ class HealthConfigSnapshot {
     required this.allGroups,
     required this.visibleGroups,
     required this.selectedMap,
+    this.primaryRuleTargetGroup,
   });
 
   final String? currentProfileId;
@@ -62,6 +61,38 @@ class HealthConfigSnapshot {
   final List<Group> allGroups;
   final List<Group> visibleGroups;
   final Map<String, String> selectedMap;
+  final String? primaryRuleTargetGroup;
+}
+
+int resolveEffectiveMixedPort({
+  required int configuredMixedPort,
+  required Map<String, dynamic>? lastRuntimeConfig,
+  required String? lastRuntimeProfileId,
+  required String? currentProfileId,
+}) {
+  final profileMatches = lastRuntimeProfileId == null ||
+      (currentProfileId != null && lastRuntimeProfileId == currentProfileId);
+  if (profileMatches &&
+      lastRuntimeConfig != null &&
+      lastRuntimeConfig.containsKey('mixed-port')) {
+    final raw = lastRuntimeConfig['mixed-port'];
+    if (raw is int && raw >= 0 && raw <= 65535) {
+      return raw;
+    }
+    if (raw is num) {
+      final asInt = raw.toInt();
+      if (asInt >= 0 && asInt <= 65535) {
+        return asInt;
+      }
+    }
+    if (raw is String) {
+      final parsed = int.tryParse(raw.trim());
+      if (parsed != null && parsed >= 0 && parsed <= 65535) {
+        return parsed;
+      }
+    }
+  }
+  return configuredMixedPort;
 }
 
 class CoreLivenessObservation {
@@ -165,8 +196,10 @@ bool isVerifiedLoopbackProxyDirective(String? directive) {
 }
 
 class DefaultHealthProbeEnvironment implements HealthProbeEnvironment {
-  DefaultHealthProbeEnvironment(this._ref);
+  DefaultHealthProbeEnvironment(this._ref, {Request? probeRequest})
+      : _probeRequest = probeRequest;
   final Ref _ref;
+  final Request? _probeRequest;
 
   @override
   DateTime now() => DateTime.now();
@@ -193,13 +226,15 @@ class DefaultHealthProbeEnvironment implements HealthProbeEnvironment {
     if (currentProfileId != null && currentProfileId.isNotEmpty) {
       try {
         final profilePath = await appPath.getProfilePath(currentProfileId);
-        final statResult = await Isolate.run(() {
-          final stat = File(profilePath).statSync();
-          final exists = stat.type != FileSystemEntityType.notFound;
-          return (exists: exists, bytes: exists ? stat.size : 0);
-        });
-        fileExists = statResult.exists;
-        fileBytes = statResult.bytes;
+        // Never use Isolate.run here: Dart closures in the same lexical scope
+        // share a single Context that captures `_ref` (ProviderContainer /
+        // ReceivePort / Timer), throwing ArgumentError on Isolate message send.
+        final stat = File(profilePath).statSync();
+        fileExists = stat.type != FileSystemEntityType.notFound;
+        fileBytes = fileExists ? stat.size : 0;
+      } on FileSystemException {
+        fileExists = false;
+        fileBytes = 0;
       } catch (_) {
         fileExists = false;
         fileBytes = 0;
@@ -232,8 +267,74 @@ class DefaultHealthProbeEnvironment implements HealthProbeEnvironment {
       tunDesired = patchClash.tun.enable;
     }
 
-    final allGroups = _ref.read(groupsProvider);
-    final visibleGroups = _ref.read(currentGroupsStateProvider).value;
+    var allGroups = _ref.read(groupsProvider);
+    var visibleGroups = _ref.read(currentGroupsStateProvider).value;
+    try {
+      if (ClashCore.existingInterface != null && await clashCore.isInit) {
+        final liveGroups = await clashCore
+            .getProxiesGroups()
+            .timeout(const Duration(milliseconds: 1200));
+        if (liveGroups.isNotEmpty) {
+          allGroups = liveGroups;
+          visibleGroups = switch (patchClash.mode) {
+            Mode.direct => const <Group>[],
+            Mode.global => liveGroups
+                .where((g) => g.name == GroupName.GLOBAL.name)
+                .toList(),
+            Mode.rule => liveGroups
+                .where(
+                  (g) => g.hidden != true && g.name != GroupName.GLOBAL.name,
+                )
+                .toList(),
+          };
+        }
+      }
+    } catch (_) {
+      // Retain Riverpod snapshot if live IPC group fetch times out.
+    }
+
+    final lastRuntimeProfileId = globalState.lastRuntimeProfileId;
+    final runtimeProfileMatches = lastRuntimeProfileId == null ||
+        (currentProfileId != null && lastRuntimeProfileId == currentProfileId);
+    final effectiveMixedPort = resolveEffectiveMixedPort(
+      configuredMixedPort: patchClash.mixedPort,
+      lastRuntimeConfig: globalState.lastRuntimeConfig,
+      lastRuntimeProfileId: lastRuntimeProfileId,
+      currentProfileId: currentProfileId,
+    );
+
+    String? primaryRuleTargetGroup;
+    if (runtimeProfileMatches && allGroups.isNotEmpty) {
+      final compiledTarget =
+          globalState.lastCompiledRuleResult?.primaryProxyTarget.trim();
+      if (compiledTarget != null &&
+          compiledTarget.isNotEmpty &&
+          allGroups.any((g) => g.name == compiledTarget)) {
+        primaryRuleTargetGroup = compiledTarget;
+      } else if (globalState.lastRuntimeConfig case final runtimeCfg?) {
+        final rawRules = runtimeCfg['rules'];
+        final rawProxyGroups = runtimeCfg['proxy-groups'];
+        final rawProxies = runtimeCfg['proxies'];
+        if (rawRules is Iterable) {
+          final synthesizedGroups = rawProxyGroups is Iterable
+              ? rawProxyGroups
+              : <Map<String, Object?>>[
+                  for (final g in allGroups)
+                    <String, Object?>{'name': g.name, 'hidden': g.hidden},
+                ];
+          final candidate = resolvePrimaryProxyTarget(
+            rawRules: rawRules,
+            proxyGroups: synthesizedGroups,
+            proxies: rawProxies is Iterable ? rawProxies : const [],
+          );
+          if (candidate.isNotEmpty &&
+              allGroups.any((g) => g.name == candidate)) {
+            primaryRuleTargetGroup = candidate;
+          }
+        }
+      }
+    }
+
     final selectedMap = _ref.read(selectedMapProvider);
     final testUrl = _ref.read(appSettingProvider).testUrl;
 
@@ -243,7 +344,7 @@ class DefaultHealthProbeEnvironment implements HealthProbeEnvironment {
       profileFileExists: fileExists,
       profileFileBytes: fileBytes,
       mode: patchClash.mode,
-      mixedPort: patchClash.mixedPort,
+      mixedPort: effectiveMixedPort,
       testUrl: testUrl,
       resolveGroupTestUrl: (groupUrl) => _ref.read(getRealTestUrlProvider(groupUrl)),
       systemProxyEnabled: networkProps.systemProxy,
@@ -255,16 +356,24 @@ class DefaultHealthProbeEnvironment implements HealthProbeEnvironment {
           ? globalState.appState.realTunEnable
           : false,
       proxyStarted: _ref.read(runTimeProvider) != null,
-      lastRuntimeProfileId: globalState.lastRuntimeProfileId,
+      lastRuntimeProfileId: lastRuntimeProfileId,
       groupsSnapshotProfileId: globalState.groupsSnapshotProfileId,
       allGroups: allGroups,
       visibleGroups: visibleGroups,
       selectedMap: selectedMap,
+      primaryRuleTargetGroup: primaryRuleTargetGroup,
     );
   }
 
   @override
   Future<CoreLivenessObservation> checkCoreLiveness() async {
+    if (ClashCore.existingInterface == null) {
+      return const CoreLivenessObservation(
+        isInit: false,
+        memoryBytes: null,
+        trafficValid: false,
+      );
+    }
     final init = await clashCore.isInit;
     if (!init) {
       return const CoreLivenessObservation(
@@ -291,18 +400,14 @@ class DefaultHealthProbeEnvironment implements HealthProbeEnvironment {
 
   @override
   Future<TunStatus?> readTunStatus() async {
-    if (!Platform.isWindows) return null;
+    if (!Platform.isWindows || ClashCore.existingInterface == null) return null;
     return clashCore.getTunStatus();
   }
 
   @override
   Future<WindowsSystemProxySnapshot?> readWindowsSystemProxy() async {
     if (!Platform.isWindows) return null;
-    try {
-      return await Isolate.run(readWindowsSystemProxyRegistry);
-    } catch (_) {
-      return readWindowsSystemProxyRegistry();
-    }
+    return readWindowsSystemProxyRegistry();
   }
 
   @override
@@ -339,18 +444,36 @@ class DefaultHealthProbeEnvironment implements HealthProbeEnvironment {
       }
     });
 
-    Future<List<Connection>> snapshotCoreConnections() => clashCore
-        .getConnections()
-        .timeout(const Duration(milliseconds: 1500))
-        .catchError((Object _) => const <Connection>[]);
+    Future<List<Connection>> snapshotCoreConnections() {
+      if (ClashCore.existingInterface == null) {
+        return Future.value(const <Connection>[]);
+      }
+      return clashCore
+          .getConnections()
+          .timeout(const Duration(milliseconds: 1500))
+          .catchError((Object _) => const <Connection>[]);
+    }
+
+    List<Connection> readRecentRecordedConnections() {
+      final results = <Connection>[];
+      try {
+        results.addAll(_ref.read(requestsProvider).list);
+      } catch (_) {}
+      if (globalState.isAppStateInitialized) {
+        results.addAll(globalState.appState.requests.list);
+      }
+      return results;
+    }
 
     final startedAt = DateTime.now();
     final inFlightFutures = <Future<List<Connection>>>[];
     try {
-      final res = await request.checkIpWithHost(
+      final activeRequest = _probeRequest ?? request;
+      final res = await activeRequest.checkIpWithHost(
         cancelToken: dioCancel,
         keepAliveHold: const Duration(milliseconds: 1800),
-        connectTimeout: const Duration(seconds: 4),
+        connectTimeout: const Duration(milliseconds: 2800),
+        attemptTimeout: const Duration(milliseconds: 3200),
         forceHoldSocket: true,
         proxyResolver: explicitProxyDirective != null
             ? (_) => explicitProxyDirective
@@ -376,10 +499,12 @@ class DefaultHealthProbeEnvironment implements HealthProbeEnvironment {
         mergedConnections.addAll(await f);
       }
       if (!cancelToken.isCancelled) {
-        mergedConnections.addAll(await snapshotCoreConnections());
+        mergedConnections
+          ..addAll(await snapshotCoreConnections())
+          ..addAll(readRecentRecordedConnections());
       }
 
-      final resolved = resolveEndToEndCoreObservation(
+      var resolved = resolveEndToEndCoreObservation(
         explicitProxyDirective: explicitProxyDirective,
         sourcePorts: probe.sourcePorts,
         probeHost: probe.host,
@@ -388,6 +513,25 @@ class DefaultHealthProbeEnvironment implements HealthProbeEnvironment {
         connections: mergedConnections,
         groupNames: groupNames,
       );
+
+      if ((!resolved.observedInCore || resolved.matchedLeafProxy == null) &&
+          !cancelToken.isCancelled) {
+        await Future<void>.delayed(const Duration(milliseconds: 80));
+        if (!cancelToken.isCancelled) {
+          mergedConnections
+            ..addAll(await snapshotCoreConnections())
+            ..addAll(readRecentRecordedConnections());
+          resolved = resolveEndToEndCoreObservation(
+            explicitProxyDirective: explicitProxyDirective,
+            sourcePorts: probe.sourcePorts,
+            probeHost: probe.host,
+            minStart: startedAt.subtract(const Duration(seconds: 2)),
+            maxStart: DateTime.now().add(const Duration(seconds: 2)),
+            connections: mergedConnections,
+            groupNames: groupNames,
+          );
+        }
+      }
 
       return EndToEndProbeObservation(
         exitCountryCode: probe.ipInfo.countryCode.trim().toUpperCase(),

@@ -1038,5 +1038,11 @@
   "localSplitMode_auto": "裸設定を自動判定 (自動)",
   "localSplitMode_always": "常に国内直接接続を追加",
   "localSplitMode_off": "オフ",
-  "overrideAutoSavedHint": "変更は自動保存され即座に反映されます"
+  "overrideAutoSavedHint": "変更は自動保存され即座に反映されます",
+  "healthActionReapplySystemProxy": "システムプロキシを復元",
+  "healthDetailSysProxyReadFailed": "システムプロキシ設定を読み取れません",
+  "healthDetailSysProxyInvalidPort": "混合ポートが無効です (mixed-port = 0)",
+  "healthDetailSysProxyNotApplied": "システムプロキシがまだ適用されていません",
+  "healthDetailSysProxyDisabledExternally": "OSのシステムプロキシがオフになっています",
+  "healthDetailDnsStaleFakeIp": "TUN無効時に残留Fake-IPキャッシュを検出しました"
 }

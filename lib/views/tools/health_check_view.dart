@@ -8,6 +8,7 @@ import 'package:flclashx/common/health/health_models.dart';
 import 'package:flclashx/common/health/health_runner.dart';
 import 'package:flclashx/enum/enum.dart';
 import 'package:flclashx/l10n/l10n.dart';
+import 'package:flclashx/manager/proxy_manager.dart';
 import 'package:flclashx/state.dart';
 import 'package:flclashx/views/config/dns.dart';
 import 'package:flclashx/views/config/network.dart';
@@ -47,6 +48,7 @@ String healthActionLabel(HealthAction action, AppLocalizations l10n) =>
       HealthAction.openTunSettings => l10n.healthActionOpenTun,
       HealthAction.openNetworkSettings => l10n.healthActionOpenNetwork,
       HealthAction.openDnsSettings => l10n.healthActionOpenDns,
+      HealthAction.reapplySystemProxy => l10n.healthActionReapplySystemProxy,
       HealthAction.startProxy => l10n.healthActionStartProxy,
       HealthAction.restartCore => l10n.healthActionRestartCore,
     };
@@ -133,6 +135,11 @@ String healthCheckItemDetail(HealthCheckResult result, AppLocalizations l10n) {
         'ok' || 'pacMatched' => (result.localDetail?.trim().isNotEmpty ?? false)
             ? result.localDetail!.trim()
             : l10n.healthStatusPassed,
+        'systemProxyReadFailed' => l10n.healthDetailSysProxyReadFailed,
+        'systemProxyInvalidPort' => l10n.healthDetailSysProxyInvalidPort,
+        'systemProxyNotApplied' => l10n.healthDetailSysProxyNotApplied,
+        'systemProxyDisabledExternally' =>
+          l10n.healthDetailSysProxyDisabledExternally,
         'systemProxyUnexpectedPac' || 'unexpectedPacUrl' => _withOptionalDetail(
             l10n.healthDetailSysProxyUnexpectedPac,
             result.localDetail,
@@ -168,6 +175,7 @@ String healthCheckItemDetail(HealthCheckResult result, AppLocalizations l10n) {
         'ok' => l10n.healthDetailDnsOk,
         'dnsFakeIpActive' => l10n.healthDetailDnsFakeIp,
         'dnsPoisonedLoopback' => l10n.healthDetailDnsPoisoned,
+        'dnsStaleFakeIp' => l10n.healthDetailDnsStaleFakeIp,
         _ => l10n.healthDetailDnsFailed,
       },
     HealthCheckId.outboundConnectivity => switch (result.reasonCode) {
@@ -237,6 +245,7 @@ class _HealthCheckViewState extends ConsumerState<HealthCheckView> {
   late final HealthCheckController _controller;
   Object? _viewLease;
   Animation<double>? _routeAnimation;
+  bool _actionInFlight = false;
 
   @override
   void initState() {
@@ -294,77 +303,100 @@ class _HealthCheckViewState extends ConsumerState<HealthCheckView> {
   }
 
   Future<void> _handleAction(BuildContext context, HealthAction action) async {
-    if (widget.onAction != null) {
-      widget.onAction!(action);
-      return;
-    }
-    final navigator = Navigator.maybeOf(context);
-    final hostContext = navigator?.context ?? context;
-
-    void popOverlaysToRoot() {
-      if (navigator != null && navigator.canPop()) {
-        navigator.popUntil((route) => route.isFirst);
+    if (_actionInFlight) return;
+    _actionInFlight = true;
+    try {
+      if (widget.onAction != null) {
+        widget.onAction!(action);
+        return;
       }
-    }
+      final navigator = Navigator.maybeOf(context);
+      final hostContext = navigator?.context ?? context;
 
-    switch (action) {
-      case HealthAction.openProfiles:
-        popOverlaysToRoot();
-        globalState.appController.toPage(PageLabel.profiles);
-      case HealthAction.openPurchase:
-        popOverlaysToRoot();
-        globalState.appController.toPage(PageLabel.purchase);
-      case HealthAction.openProxies:
-        popOverlaysToRoot();
-        globalState.appController.toPage(PageLabel.proxies);
-      case HealthAction.openTunSettings:
-        popOverlaysToRoot();
-        await showSheet<void>(
-          context: hostContext,
-          builder: (_, type) => AdaptiveSheetScaffold(
-            type: type,
-            title: appLocalizations.tun,
-            body: generateListView(
-              generateSection(
-                items: [
-                  if (system.isDesktop) const TUNItem(),
-                  if (Platform.isMacOS) const AutoSetSystemDnsItem(),
-                  const TunStackItem(),
-                ],
+      void popOverlaysToRoot() {
+        if (navigator != null && navigator.canPop()) {
+          navigator.popUntil((route) => route.isFirst);
+        }
+      }
+
+      switch (action) {
+        case HealthAction.openProfiles:
+          popOverlaysToRoot();
+          globalState.appController.toPage(PageLabel.profiles);
+        case HealthAction.openPurchase:
+          popOverlaysToRoot();
+          globalState.appController.toPage(PageLabel.purchase);
+        case HealthAction.openProxies:
+          popOverlaysToRoot();
+          globalState.appController.toPage(PageLabel.proxies);
+        case HealthAction.openTunSettings:
+          popOverlaysToRoot();
+          await showSheet<void>(
+            context: hostContext,
+            builder: (_, type) => AdaptiveSheetScaffold(
+              type: type,
+              title: appLocalizations.tun,
+              body: generateListView(
+                generateSection(
+                  items: [
+                    if (system.isDesktop) const TUNItem(),
+                    if (Platform.isMacOS) const AutoSetSystemDnsItem(),
+                    const TunStackItem(),
+                  ],
+                ),
               ),
             ),
-          ),
-        );
-      case HealthAction.openNetworkSettings:
-        popOverlaysToRoot();
-        await showExtend<void>(
-          hostContext,
-          builder: (_, type) => AdaptiveSheetScaffold(
-            type: type,
-            title: appLocalizations.network,
-            body: const NetworkListView(),
-          ),
-        );
-      case HealthAction.openDnsSettings:
-        popOverlaysToRoot();
-        await showExtend<void>(
-          hostContext,
-          builder: (_, type) => AdaptiveSheetScaffold(
-            type: type,
-            title: 'DNS',
-            body: const DnsListView(),
-          ),
-        );
-      case HealthAction.startProxy:
-        await globalState.appController.updateStatus(true);
-        if (mounted) {
-          unawaited(_controller.startOrAttach());
-        }
-      case HealthAction.restartCore:
-        await globalState.appController.restartCore();
-        if (mounted) {
-          unawaited(_controller.startOrAttach());
-        }
+          );
+        case HealthAction.openNetworkSettings:
+          popOverlaysToRoot();
+          await showExtend<void>(
+            hostContext,
+            builder: (_, type) => AdaptiveSheetScaffold(
+              type: type,
+              title: appLocalizations.network,
+              body: const NetworkListView(),
+            ),
+          );
+        case HealthAction.openDnsSettings:
+          popOverlaysToRoot();
+          await showExtend<void>(
+            hostContext,
+            builder: (_, type) => AdaptiveSheetScaffold(
+              type: type,
+              title: 'DNS',
+              body: const DnsListView(),
+            ),
+          );
+        case HealthAction.reapplySystemProxy:
+          final restored = await systemProxyCoordinator.forceReapply();
+          if (!restored && hostContext.mounted) {
+            popOverlaysToRoot();
+            await showExtend<void>(
+              hostContext,
+              builder: (_, type) => AdaptiveSheetScaffold(
+                type: type,
+                title: appLocalizations.network,
+                body: const NetworkListView(),
+              ),
+            );
+            return;
+          }
+          if (mounted) {
+            unawaited(_controller.startOrAttach());
+          }
+        case HealthAction.startProxy:
+          await globalState.appController.updateStatus(true);
+          if (mounted) {
+            unawaited(_controller.startOrAttach());
+          }
+        case HealthAction.restartCore:
+          await globalState.appController.restartCore();
+          if (mounted) {
+            unawaited(_controller.startOrAttach());
+          }
+      }
+    } finally {
+      _actionInFlight = false;
     }
   }
 
@@ -981,7 +1013,7 @@ class _BottomActionBar extends StatelessWidget {
     final scale = MediaQuery.textScalerOf(context).scale(14) / 14;
 
     return Container(
-      padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
       decoration: BoxDecoration(
         color: cs.surface,
         border: Border(
@@ -991,12 +1023,22 @@ class _BottomActionBar extends StatelessWidget {
       child: LayoutBuilder(
         builder: (context, constraints) {
           final compact = constraints.maxWidth < 380 || scale > 1.25;
+          final secondaryStyle = OutlinedButton.styleFrom(
+            visualDensity: VisualDensity.compact,
+            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          );
           final recheckBtn = FilledButton.icon(
             key: const ValueKey('health-recheck-button'),
+            style: FilledButton.styleFrom(
+              visualDensity: VisualDensity.compact,
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            ),
             onPressed: onRecheckOrCancel,
             icon: Icon(
               isRunning ? Icons.stop_circle_outlined : Icons.refresh_rounded,
-              size: 18,
+              size: 17,
             ),
             label: Text(
               isRunning ? l10n.healthCheckCancel : l10n.healthCheckRecheck,
@@ -1006,8 +1048,9 @@ class _BottomActionBar extends StatelessWidget {
           );
           final copyBtn = OutlinedButton.icon(
             key: const ValueKey('health-copy-button'),
+            style: secondaryStyle,
             onPressed: onCopy,
-            icon: const Icon(Icons.copy_rounded, size: 16),
+            icon: const Icon(Icons.copy_rounded, size: 15),
             label: Text(
               l10n.healthCheckCopySummary,
               maxLines: 1,
@@ -1016,8 +1059,9 @@ class _BottomActionBar extends StatelessWidget {
           );
           final exportBtn = OutlinedButton.icon(
             key: const ValueKey('health-export-button'),
+            style: secondaryStyle,
             onPressed: onExport,
-            icon: const Icon(Icons.download_outlined, size: 16),
+            icon: const Icon(Icons.download_outlined, size: 15),
             label: Text(
               l10n.healthCheckExport,
               maxLines: 1,
@@ -1045,11 +1089,19 @@ class _BottomActionBar extends StatelessWidget {
           }
 
           return Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
-              Flexible(child: copyBtn),
+              Expanded(
+                child: Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    copyBtn,
+                    exportBtn,
+                  ],
+                ),
+              ),
               const SizedBox(width: 8),
-              Flexible(child: exportBtn),
-              const Spacer(),
               recheckBtn,
             ],
           );

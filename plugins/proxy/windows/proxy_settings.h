@@ -271,16 +271,19 @@ ProxyResult ApplySystemProxy(bool enabled, int port,
   if (count > entries.size()) return {ERROR_INVALID_DATA, "ras_count"};
 
   std::wstring address = L"127.0.0.1:" + std::to_wstring(port);
-  std::array<INTERNET_PER_CONN_OPTIONW, 3> options{};
+  std::wstring empty_pac;
+  std::array<INTERNET_PER_CONN_OPTIONW, 4> options{};
   options[0].dwOption = INTERNET_PER_CONN_FLAGS;
   options[0].Value.dwValue = enabled ? PROXY_TYPE_DIRECT | PROXY_TYPE_PROXY : PROXY_TYPE_DIRECT;
-  options[1].dwOption = INTERNET_PER_CONN_PROXY_SERVER;
-  options[1].Value.pszValue = address.data();
-  options[2].dwOption = INTERNET_PER_CONN_PROXY_BYPASS;
-  options[2].Value.pszValue = bypass_list.data();
+  options[1].dwOption = INTERNET_PER_CONN_AUTOCONFIG_URL;
+  options[1].Value.pszValue = empty_pac.data();
+  options[2].dwOption = INTERNET_PER_CONN_PROXY_SERVER;
+  options[2].Value.pszValue = address.data();
+  options[3].dwOption = INTERNET_PER_CONN_PROXY_BYPASS;
+  options[3].Value.pszValue = bypass_list.data();
   INTERNET_PER_CONN_OPTION_LISTW list{};
   list.dwSize = sizeof(list);
-  list.dwOptionCount = enabled ? 3 : 1;
+  list.dwOptionCount = enabled ? 4 : 2;
   list.pOptions = options.data();
 
   ProxyResult result;

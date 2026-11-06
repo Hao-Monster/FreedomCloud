@@ -417,6 +417,9 @@ class MessageLookup extends MessageLookupByLibrary {
     "healthActionOpenProxies": MessageLookupByLibrary.simpleMessage("切换代理节点"),
     "healthActionOpenPurchase": MessageLookupByLibrary.simpleMessage("前往兑换续费"),
     "healthActionOpenTun": MessageLookupByLibrary.simpleMessage("打开 TUN 设置"),
+    "healthActionReapplySystemProxy": MessageLookupByLibrary.simpleMessage(
+      "一键恢复系统代理",
+    ),
     "healthActionRestartCore": MessageLookupByLibrary.simpleMessage("重启核心"),
     "healthActionStartProxy": MessageLookupByLibrary.simpleMessage("启动代理"),
     "healthCheckCancel": MessageLookupByLibrary.simpleMessage("取消检查"),
@@ -469,6 +472,9 @@ class MessageLookup extends MessageLookupByLibrary {
     "healthDetailDnsOk": MessageLookupByLibrary.simpleMessage("域名解析正常"),
     "healthDetailDnsPoisoned": MessageLookupByLibrary.simpleMessage(
       "解析返回黑洞/回环地址，疑似 DNS 污染",
+    ),
+    "healthDetailDnsStaleFakeIp": MessageLookupByLibrary.simpleMessage(
+      "检测到残留 Fake-IP 缓存，可能导致直连断网",
     ),
     "healthDetailE2eBypassed": MessageLookupByLibrary.simpleMessage(
       "出口探测成功，但核心连接表中未见该请求",
@@ -527,8 +533,19 @@ class MessageLookup extends MessageLookupByLibrary {
     "healthDetailSysProxyDisabled": MessageLookupByLibrary.simpleMessage(
       "未开启（按设置跳过）",
     ),
+    "healthDetailSysProxyDisabledExternally":
+        MessageLookupByLibrary.simpleMessage("系统代理开关处于关闭状态"),
     "healthDetailSysProxyHijacked": MessageLookupByLibrary.simpleMessage(
       "系统代理已被其他软件关闭或改写",
+    ),
+    "healthDetailSysProxyInvalidPort": MessageLookupByLibrary.simpleMessage(
+      "本地混合端口未启用 (mixed-port = 0)",
+    ),
+    "healthDetailSysProxyNotApplied": MessageLookupByLibrary.simpleMessage(
+      "系统代理尚未写入本机设置",
+    ),
+    "healthDetailSysProxyReadFailed": MessageLookupByLibrary.simpleMessage(
+      "无法读取系统代理设置",
     ),
     "healthDetailSysProxyUnexpectedPac": MessageLookupByLibrary.simpleMessage(
       "检测到残留 PAC 地址，可能抢占系统代理",

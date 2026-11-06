@@ -1089,5 +1089,11 @@
   "localSplitMode_auto": "Автоопределение (Авто)",
   "localSplitMode_always": "Всегда добавлять прямой маршрут",
   "localSplitMode_off": "Выкл",
-  "overrideAutoSavedHint": "Изменения сохраняются и применяются автоматически"
+  "overrideAutoSavedHint": "Изменения сохраняются и применяются автоматически",
+  "healthActionReapplySystemProxy": "Восстановить прокси",
+  "healthDetailSysProxyReadFailed": "Не удалось прочитать настройки прокси",
+  "healthDetailSysProxyInvalidPort": "Локальный mixed-port отключён (0)",
+  "healthDetailSysProxyNotApplied": "Системный прокси ещё не применён",
+  "healthDetailSysProxyDisabledExternally": "Системный прокси выключен в ОС",
+  "healthDetailDnsStaleFakeIp": "Обнаружен устаревший кэш Fake-IP при выключенном TUN"
 }

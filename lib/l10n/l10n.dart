@@ -7913,6 +7913,66 @@ class AppLocalizations {
       args: [],
     );
   }
+
+  /// `Restore System Proxy`
+  String get healthActionReapplySystemProxy {
+    return Intl.message(
+      'Restore System Proxy',
+      name: 'healthActionReapplySystemProxy',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Could not read system proxy settings`
+  String get healthDetailSysProxyReadFailed {
+    return Intl.message(
+      'Could not read system proxy settings',
+      name: 'healthDetailSysProxyReadFailed',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Local mixed-port is disabled (0)`
+  String get healthDetailSysProxyInvalidPort {
+    return Intl.message(
+      'Local mixed-port is disabled (0)',
+      name: 'healthDetailSysProxyInvalidPort',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `System proxy has not been applied to OS yet`
+  String get healthDetailSysProxyNotApplied {
+    return Intl.message(
+      'System proxy has not been applied to OS yet',
+      name: 'healthDetailSysProxyNotApplied',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `System proxy switch is turned off in OS`
+  String get healthDetailSysProxyDisabledExternally {
+    return Intl.message(
+      'System proxy switch is turned off in OS',
+      name: 'healthDetailSysProxyDisabledExternally',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Stale Fake-IP cache detected while TUN is inactive`
+  String get healthDetailDnsStaleFakeIp {
+    return Intl.message(
+      'Stale Fake-IP cache detected while TUN is inactive',
+      name: 'healthDetailDnsStaleFakeIp',
+      desc: '',
+      args: [],
+    );
+  }
 }
 
 class AppLocalizationDelegate extends LocalizationsDelegate<AppLocalizations> {

@@ -28,6 +28,29 @@ class SystemProxyCoordinator {
 
   bool get isDisarmingForStop => _disarmDepth > 0;
 
+  /// Forces [ProxyManager] to invalidate its cached signature and re-apply the
+  /// desired OS-level System Proxy / PAC configuration through its serialized
+  /// worker queue (recovering from external port/switch hijacks without toggling).
+  Future<bool> forceReapply() async {
+    final manager = _attached;
+    if (manager != null && manager.mounted) {
+      return manager._forceReapplyNow();
+    }
+    if (!globalState.isAppStateInitialized ||
+        globalState.appState.runTime == null) {
+      return false;
+    }
+    final net = globalState.config.networkProps;
+    final rawRuntimePort = globalState.lastRuntimeConfig?['mixed-port'];
+    final port = (rawRuntimePort is int && rawRuntimePort >= 0)
+        ? rawRuntimePort
+        : globalState.config.patchClashConfig.mixedPort;
+    if (!net.systemProxy || port <= 0) {
+      return false;
+    }
+    return (await proxy?.startProxy(port, net.bypassDomain)) ?? false;
+  }
+
   void _attach(_ProxyManagerState state) {
     _attached = state;
     _disarmDepth = 0;
@@ -107,6 +130,25 @@ class _ProxyManagerState extends ConsumerState<ProxyManager> {
     return op;
   }
 
+  Future<bool> _forceReapplyNow() {
+    final op = _pending.then<bool>((_) async {
+      if (!mounted) return false;
+      _lastApplied = null;
+      try {
+        await _updateProxy(
+          ref.read(proxyStateProvider),
+          awaitPacIfLoading: true,
+        );
+        return true;
+      } catch (_) {
+        _lastApplied = null;
+        return false;
+      }
+    });
+    _pending = op.then((_) {}, onError: (Object _) {});
+    return op;
+  }
+
   void _reconcileAfterStopDisarm() {
     if (!mounted) return;
     final state = ref.read(proxyStateProvider);
@@ -128,14 +170,33 @@ class _ProxyManagerState extends ConsumerState<ProxyManager> {
     });
   }
 
-  Future<void> _updateProxy(ProxyState proxyState) async {
+  Future<void> _updateProxy(
+    ProxyState proxyState, {
+    bool awaitPacIfLoading = false,
+  }) async {
     final isStart =
         proxyState.isStart && !systemProxyCoordinator.isDisarmingForStop;
     final systemProxy = proxyState.systemProxy;
     final port = proxyState.port;
     if (isStart && systemProxy) {
-      final pac = ref.read(pacSettingsProvider).valueOrNull;
-      if (pac == null) return;
+      final pacAsync = ref.read(pacSettingsProvider);
+      var pac = pacAsync.valueOrNull;
+      if (pac == null) {
+        if (pacAsync.hasError) {
+          pac = const PacSettings();
+        } else if (awaitPacIfLoading) {
+          try {
+            pac = await ref
+                .read(pacSettingsProvider.future)
+                .timeout(const Duration(seconds: 1));
+          } catch (_) {
+            pac = ref.read(pacSettingsProvider).valueOrNull ??
+                const PacSettings();
+          }
+        } else {
+          return;
+        }
+      }
       final signature = (
         true,
         pac.enabled,

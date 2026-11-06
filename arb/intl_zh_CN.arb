@@ -1172,5 +1172,11 @@
   "localSplitMode_auto": "智能识别裸配置 (自动)",
   "localSplitMode_always": "始终补充国内直连",
   "localSplitMode_off": "关闭",
-  "overrideAutoSavedHint": "规则变更自动保存并即时热重载生效"
+  "overrideAutoSavedHint": "规则变更自动保存并即时热重载生效",
+  "healthActionReapplySystemProxy": "一键恢复系统代理",
+  "healthDetailSysProxyReadFailed": "无法读取系统代理设置",
+  "healthDetailSysProxyInvalidPort": "本地混合端口未启用 (mixed-port = 0)",
+  "healthDetailSysProxyNotApplied": "系统代理尚未写入本机设置",
+  "healthDetailSysProxyDisabledExternally": "系统代理开关处于关闭状态",
+  "healthDetailDnsStaleFakeIp": "检测到残留 Fake-IP 缓存，可能导致直连断网"
 }

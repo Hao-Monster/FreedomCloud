@@ -13,7 +13,6 @@ import 'package:flclashx/enum/enum.dart';
 import 'package:flclashx/l10n/l10n.dart';
 import 'package:flclashx/models/models.dart';
 import 'package:flclashx/providers/providers.dart';
-import 'package:flclashx/providers/tun.dart';
 import 'package:flclashx/state.dart';
 import 'package:flclashx/views/dashboard/dashboard.dart';
 import 'package:flclashx/views/dashboard/widgets/network_detection.dart';
@@ -74,6 +73,8 @@ class _TestHealthEnvironment implements HealthProbeEnvironment {
   TunStatus? tunStatus;
   bool systemProxyEnabled = false;
   bool tunDesiredEnabled = true;
+  bool proxyStarted = true;
+  int mixedPort = 7890;
   WindowsSystemProxySnapshot? windowsProxy;
   int subscriptionExpireSec = 1796000000;
   EndToEndProbeObservation? e2e = const EndToEndProbeObservation(
@@ -124,7 +125,7 @@ class _TestHealthEnvironment implements HealthProbeEnvironment {
       profileFileExists: true,
       profileFileBytes: 4096,
       mode: Mode.rule,
-      mixedPort: 7890,
+      mixedPort: mixedPort,
       testUrl: 'https://www.gstatic.com/generate_204',
       resolveGroupTestUrl: (u) => u ?? 'https://www.gstatic.com/generate_204',
       systemProxyEnabled: systemProxyEnabled,
@@ -133,7 +134,7 @@ class _TestHealthEnvironment implements HealthProbeEnvironment {
       tunDesiredEnabled: tunDesiredEnabled,
       tunFailureCode: tunStatus?.errorCode,
       realTunEnable: tunDesiredEnabled,
-      proxyStarted: true,
+      proxyStarted: proxyStarted,
       lastRuntimeProfileId: 'sub-main',
       groupsSnapshotProfileId: 'sub-main',
       allGroups: const [group],
@@ -186,7 +187,9 @@ class _TestHealthEnvironment implements HealthProbeEnvironment {
 
   @override
   Future<List<InternetAddress>> lookupHost(String host) async => [
-        InternetAddress('198.18.0.10'),
+        InternetAddress(
+          proxyStarted && tunDesiredEnabled ? '198.18.0.10' : '203.0.113.10',
+        ),
       ];
 
   @override
@@ -689,8 +692,9 @@ void main() {
     expect(find.text('Intermediate Sheet'), findsNothing);
 
     // 2. openNetworkSettings must NOT overwrite CommonScaffold.actions on DashboardView, and must pop HealthCheckView
-    final sysProxyHijackedEnv = _TestHealthEnvironment()
+    final sysProxyInvalidPortEnv = _TestHealthEnvironment()
       ..systemProxyEnabled = true
+      ..mixedPort = 0
       ..tunDesiredEnabled = false
       ..tunStatus = const TunStatus(
         instanceId: 'core-1',
@@ -708,7 +712,7 @@ void main() {
 
     await tester.pumpWidget(
       _wrapWithApp(
-        env: sysProxyHijackedEnv,
+        env: sysProxyInvalidPortEnv,
         withCommonScaffold: true,
         newDashboardOverride: false,
         child: const DashboardView(),
@@ -723,7 +727,7 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('dashboard-health-check-action')));
     await tester.pumpAndSettle();
 
-    // Verdict is systemProxyHijacked -> primary action is openNetworkSettings
+    // Verdict is systemProxyInvalidPort -> primary action is openNetworkSettings
     await tester.tap(find.byKey(const ValueKey('health-verdict-action-button')));
     await tester.pumpAndSettle();
 
@@ -898,4 +902,69 @@ void main() {
     expect(find.textContaining('15:05:30'), findsOneWidget);
     expect(find.text('本机网络正常，但当前节点无法连通外网'), findsOneWidget);
   });
+
+  testWidgets(
+      'Bug 4 & Bug 9b: 420px SideSheet bottom buttons never truncate with ellipsis, and async verdict actions ignore rapid double-taps',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(420, 900));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    var startProxyCount = 0;
+    final startProxyGate = Completer<void>();
+    final slowCtrl = _SlowStartAppController(
+      onStartProxy: () {
+        startProxyCount++;
+        return startProxyGate.future;
+      },
+    );
+    globalState.appController = slowCtrl;
+
+    final env = _TestHealthEnvironment()..proxyStarted = false;
+    _seedTestAppState();
+
+    await tester.pumpWidget(
+      _wrapWithApp(
+        env: env,
+        viewSize: const Size(420, 900),
+        child: const HealthCheckView(type: SheetType.sideSheet),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // Bug 4: At 420px SideSheet width, "复制摘要" and "导出脱敏报告" must NOT truncate to "复..." / "导..."!
+    final copyTextFinder = find.descendant(
+      of: find.byKey(const ValueKey('health-copy-button')),
+      matching: find.byType(RichText),
+    );
+    final exportTextFinder = find.descendant(
+      of: find.byKey(const ValueKey('health-export-button')),
+      matching: find.byType(RichText),
+    );
+    final copyParagraph = tester.renderObject(copyTextFinder.last) as dynamic;
+    final exportParagraph =
+        tester.renderObject(exportTextFinder.last) as dynamic;
+    expect(copyParagraph.didExceedMaxLines, isFalse);
+    expect(exportParagraph.didExceedMaxLines, isFalse);
+
+    // Bug 9b: Rapid double-tap on async startProxy action must invoke updateStatus(true) only ONCE!
+    final actionBtn = find.byKey(const ValueKey('health-verdict-action-button'));
+    await tester.tap(actionBtn);
+    await tester.pump();
+    await tester.tap(actionBtn, warnIfMissed: false);
+    await tester.pump();
+
+    expect(startProxyCount, 1);
+
+    env.proxyStarted = true;
+    startProxyGate.complete();
+    await tester.pumpAndSettle();
+  });
+}
+
+class _SlowStartAppController extends _StubAppController {
+  _SlowStartAppController({required this.onStartProxy});
+  final Future<void> Function() onStartProxy;
+
+  @override
+  Future<void> updateStatus(bool isStart) => onStartProxy();
 }

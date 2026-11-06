@@ -1234,5 +1234,11 @@
   "localSplitMode_auto": "Smart Bare-Profile Detection (Auto)",
   "localSplitMode_always": "Always Add Domestic Direct",
   "localSplitMode_off": "Off",
-  "overrideAutoSavedHint": "Rule changes auto-save and hot-reload immediately"
+  "overrideAutoSavedHint": "Rule changes auto-save and hot-reload immediately",
+  "healthActionReapplySystemProxy": "Restore System Proxy",
+  "healthDetailSysProxyReadFailed": "Could not read system proxy settings",
+  "healthDetailSysProxyInvalidPort": "Local mixed-port is disabled (0)",
+  "healthDetailSysProxyNotApplied": "System proxy has not been applied to OS yet",
+  "healthDetailSysProxyDisabledExternally": "System proxy switch is turned off in OS",
+  "healthDetailDnsStaleFakeIp": "Stale Fake-IP cache detected while TUN is inactive"
 }

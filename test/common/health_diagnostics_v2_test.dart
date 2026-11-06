@@ -763,6 +763,9 @@ void main() {
           visibleGroups: base.visibleGroups,
           selectedMap: base.selectedMap,
         ),
+        dnsAddresses: [
+          InternetAddress('203.0.113.10', type: InternetAddressType.IPv4),
+        ],
         e2eObservation: const EndToEndProbeObservation(
           exitCountryCode: 'SG',
           observedInCore: false,
@@ -1179,6 +1182,9 @@ void main() {
           visibleGroups: base.visibleGroups,
           selectedMap: base.selectedMap,
         ),
+        dnsAddresses: [
+          InternetAddress('203.0.113.10', type: InternetAddressType.IPv4),
+        ],
       )
         ..tunStatus = const TunStatus(
           instanceId: 'core-1',

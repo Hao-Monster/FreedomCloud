@@ -377,6 +377,9 @@ class MessageLookup extends MessageLookupByLibrary {
     "healthActionOpenProxies": MessageLookupByLibrary.simpleMessage("ノード切替"),
     "healthActionOpenPurchase": MessageLookupByLibrary.simpleMessage("更新・引き換え"),
     "healthActionOpenTun": MessageLookupByLibrary.simpleMessage("TUN 設定"),
+    "healthActionReapplySystemProxy": MessageLookupByLibrary.simpleMessage(
+      "システムプロキシを復元",
+    ),
     "healthActionRestartCore": MessageLookupByLibrary.simpleMessage("コア再起動"),
     "healthActionStartProxy": MessageLookupByLibrary.simpleMessage("プロキシ開始"),
     "healthCheckCancel": MessageLookupByLibrary.simpleMessage("キャンセル"),
@@ -434,6 +437,9 @@ class MessageLookup extends MessageLookupByLibrary {
     "healthDetailDnsPoisoned": MessageLookupByLibrary.simpleMessage(
       "DNS が無効なアドレスを返しました",
     ),
+    "healthDetailDnsStaleFakeIp": MessageLookupByLibrary.simpleMessage(
+      "TUN無効時に残留Fake-IPキャッシュを検出しました",
+    ),
     "healthDetailE2eBypassed": MessageLookupByLibrary.simpleMessage(
       "外部到達しましたがコアを経由していません",
     ),
@@ -489,8 +495,19 @@ class MessageLookup extends MessageLookupByLibrary {
     "healthDetailSysProxyDisabled": MessageLookupByLibrary.simpleMessage(
       "設定でオフ",
     ),
+    "healthDetailSysProxyDisabledExternally":
+        MessageLookupByLibrary.simpleMessage("OSのシステムプロキシがオフになっています"),
     "healthDetailSysProxyHijacked": MessageLookupByLibrary.simpleMessage(
       "システムプロキシが外部で変更または無効化されています",
+    ),
+    "healthDetailSysProxyInvalidPort": MessageLookupByLibrary.simpleMessage(
+      "混合ポートが無効です (mixed-port = 0)",
+    ),
+    "healthDetailSysProxyNotApplied": MessageLookupByLibrary.simpleMessage(
+      "システムプロキシがまだ適用されていません",
+    ),
+    "healthDetailSysProxyReadFailed": MessageLookupByLibrary.simpleMessage(
+      "システムプロキシ設定を読み取れません",
     ),
     "healthDetailSysProxyUnexpectedPac": MessageLookupByLibrary.simpleMessage(
       "残存する PAC URL を検出しました",

@@ -20,6 +20,17 @@ class _HealthCancelledException implements Exception {
 class HealthRunner {
   HealthRunner(this.environment);
 
+  static const List<String> directConnectivityProbeUrls = [
+    'http://connectivitycheck.platform.hicloud.com/generate_204',
+    'http://connect.rom.miui.com/generate_204',
+    'http://www.msftconnecttest.com/connecttest.txt',
+  ];
+
+  static const List<String> systemDnsProbeHosts = [
+    'connectivitycheck.platform.hicloud.com',
+    'www.msftconnecttest.com',
+  ];
+
   final HealthProbeEnvironment environment;
   bool _running = false;
   int _sequence = 0;
@@ -49,7 +60,10 @@ class HealthRunner {
     }
   }
 
-  static Group? _selectActiveGroup(HealthConfigSnapshot cfg) {
+  static Group? _selectActiveGroup(
+    HealthConfigSnapshot cfg, {
+    required bool preferRuntimeNow,
+  }) {
     if (cfg.mode == Mode.global) {
       return cfg.allGroups.getGroup(GroupName.GLOBAL.name) ??
           (cfg.visibleGroups.isNotEmpty ? cfg.visibleGroups.first : null);
@@ -61,12 +75,61 @@ class HealthRunner {
       final found = cfg.allGroups.getGroup(serverInfoGroup);
       if (found != null) return found;
     }
-    final preferred = cfg.currentProfile?.currentGroupName;
-    if (preferred != null && preferred.isNotEmpty) {
-      final foundVisible = cfg.visibleGroups.getGroup(preferred);
-      if (foundVisible != null) return foundVisible;
-      final foundAll = cfg.allGroups.getGroup(preferred);
-      if (foundAll != null && foundAll.hidden != true) return foundAll;
+
+    final ruleTarget = cfg.primaryRuleTargetGroup?.trim();
+    if (ruleTarget != null &&
+        ruleTarget.isNotEmpty &&
+        ruleTarget.toUpperCase() != GroupName.GLOBAL.name) {
+      final found = cfg.allGroups.getGroup(ruleTarget);
+      if (found != null) return found;
+    }
+
+    bool resolvesToRealProxy(Group group) {
+      final res = _resolveSelectedLeaf(
+        group,
+        cfg.allGroups,
+        cfg.selectedMap,
+        preferRuntimeNow: preferRuntimeNow,
+      );
+      final leaf = res.leaf;
+      return leaf != null &&
+          leaf != 'DIRECT' &&
+          leaf != 'REJECT' &&
+          leaf != 'REJECT-DROP';
+    }
+
+    Group? preferredGroup;
+    final preferred = cfg.currentProfile?.currentGroupName?.trim();
+    if (preferred != null &&
+        preferred.isNotEmpty &&
+        preferred.toUpperCase() != GroupName.GLOBAL.name) {
+      preferredGroup = cfg.visibleGroups.getGroup(preferred);
+      if (preferredGroup == null) {
+        final foundAll = cfg.allGroups.getGroup(preferred);
+        if (foundAll != null && foundAll.hidden != true) {
+          preferredGroup = foundAll;
+        }
+      }
+      if (preferredGroup != null && resolvesToRealProxy(preferredGroup)) {
+        return preferredGroup;
+      }
+    }
+
+    for (final group in cfg.visibleGroups) {
+      if (group.name != GroupName.GLOBAL.name && resolvesToRealProxy(group)) {
+        return group;
+      }
+    }
+    for (final group in cfg.allGroups) {
+      if (group.name != GroupName.GLOBAL.name &&
+          group.hidden != true &&
+          resolvesToRealProxy(group)) {
+        return group;
+      }
+    }
+
+    if (preferredGroup != null) {
+      return preferredGroup;
     }
     if (cfg.visibleGroups.isNotEmpty) {
       return cfg.visibleGroups.first;
@@ -396,6 +459,7 @@ class HealthRunner {
 
       // Run B1 (Core), C2 (TUN), and C3 (System Proxy) in parallel
       String? verifiedSysProxyDirective;
+      var observedTunListenerActive = false;
 
       Future<HealthCheckResult> runB1() async {
         final watch = Stopwatch()..start();
@@ -490,8 +554,11 @@ class HealthRunner {
             probeError = 'statusUnavailable';
           }
           final ms = watch.elapsedMilliseconds;
+          observedTunListenerActive =
+              tun != null && tun.listenerActive && tun.interfaceState == 'up';
           if (!cfg.tunDesiredEnabled) {
-            if (tun?.observed == TunObservedState.on) {
+            if (tun?.observed == TunObservedState.on ||
+                tun?.errorCode == 'closeFailed') {
               return HealthCheckResult(
                 id: HealthCheckId.tunTakeover,
                 status: HealthStatus.warning,
@@ -596,16 +663,23 @@ class HealthRunner {
           snapshot: snap,
         );
         verifiedSysProxyDirective = eval.verifiedProxyDirective;
+        final HealthAction? c3Action;
+        if (eval.status == HealthStatus.passed ||
+            eval.status == HealthStatus.skipped) {
+          c3Action = null;
+        } else if (eval.reasonCode == 'systemProxyInvalidPort' ||
+            eval.reasonCode == 'systemProxyReadFailed') {
+          c3Action = HealthAction.openNetworkSettings;
+        } else {
+          c3Action = HealthAction.reapplySystemProxy;
+        }
         return HealthCheckResult(
           id: HealthCheckId.systemProxyTakeover,
           status: eval.status,
           elapsedMs: watch.elapsedMilliseconds,
           reasonCode: eval.reasonCode,
           localDetail: eval.localDetail,
-          action: (eval.status == HealthStatus.passed ||
-                  eval.status == HealthStatus.skipped)
-              ? null
-              : HealthAction.openNetworkSettings,
+          action: c3Action,
         );
       }
 
@@ -681,6 +755,11 @@ class HealthRunner {
       record(a3);
 
       // C4: Traffic Takeover Summary
+      final tunCapturingTraffic = environment.platform == 'windows'
+          ? (c2.status == HealthStatus.passed ||
+              (c2.status == HealthStatus.warning && observedTunListenerActive))
+          : (c2.status == HealthStatus.passed ||
+              c2.status == HealthStatus.warning);
       final HealthCheckResult c4;
       if (c1.status.isFailure) {
         c4 = const HealthCheckResult(
@@ -690,14 +769,15 @@ class HealthRunner {
           reasonCode: 'proxyNotRunning',
         );
       } else {
-        final tunOk =
-            c2.status == HealthStatus.passed || c2.status == HealthStatus.warning;
         final sysOk =
             c3.status == HealthStatus.passed || c3.status == HealthStatus.warning;
-        final tunFailed = c2.status.isFailure;
+        final tunAbnormal =
+            c2.status.isFailure || c2.status == HealthStatus.warning;
         final sysFailed = c3.status.isFailure;
+        final tunRepairAction = c2.action ?? HealthAction.openTunSettings;
+        final sysRepairAction = c3.action ?? HealthAction.openNetworkSettings;
 
-        if (tunOk && sysOk) {
+        if (tunCapturingTraffic && sysOk) {
           c4 = (c2.status == HealthStatus.warning ||
                   c3.status == HealthStatus.warning)
               ? HealthCheckResult(
@@ -706,8 +786,8 @@ class HealthRunner {
                   elapsedMs: 0,
                   reasonCode: 'partialTakeover',
                   action: c2.status == HealthStatus.warning
-                      ? HealthAction.openTunSettings
-                      : HealthAction.openNetworkSettings,
+                      ? tunRepairAction
+                      : sysRepairAction,
                 )
               : const HealthCheckResult(
                   id: HealthCheckId.trafficTakeover,
@@ -715,16 +795,14 @@ class HealthRunner {
                   elapsedMs: 0,
                   reasonCode: 'takeoverBoth',
                 );
-        } else if (tunOk) {
+        } else if (tunCapturingTraffic) {
           c4 = (sysFailed || c2.status == HealthStatus.warning)
               ? HealthCheckResult(
                   id: HealthCheckId.trafficTakeover,
                   status: HealthStatus.warning,
                   elapsedMs: 0,
                   reasonCode: 'partialTakeover',
-                  action: sysFailed
-                      ? HealthAction.openNetworkSettings
-                      : HealthAction.openTunSettings,
+                  action: sysFailed ? sysRepairAction : tunRepairAction,
                 )
               : const HealthCheckResult(
                   id: HealthCheckId.trafficTakeover,
@@ -733,15 +811,13 @@ class HealthRunner {
                   reasonCode: 'takeoverTun',
                 );
         } else if (sysOk) {
-          c4 = (tunFailed || c3.status == HealthStatus.warning)
+          c4 = (tunAbnormal || c3.status == HealthStatus.warning)
               ? HealthCheckResult(
                   id: HealthCheckId.trafficTakeover,
                   status: HealthStatus.warning,
                   elapsedMs: 0,
                   reasonCode: 'partialTakeover',
-                  action: tunFailed
-                      ? HealthAction.openTunSettings
-                      : HealthAction.openNetworkSettings,
+                  action: tunAbnormal ? tunRepairAction : sysRepairAction,
                 )
               : const HealthCheckResult(
                   id: HealthCheckId.trafficTakeover,
@@ -758,7 +834,9 @@ class HealthRunner {
             elapsedMs: 0,
             reasonCode: 'takeoverUnverifiedPlatform',
           );
-        } else if (!cfg.tunDesiredEnabled && !cfg.systemProxyEnabled) {
+        } else if (!cfg.tunDesiredEnabled &&
+            !cfg.systemProxyEnabled &&
+            !tunAbnormal) {
           c4 = const HealthCheckResult(
             id: HealthCheckId.trafficTakeover,
             status: HealthStatus.failed,
@@ -772,9 +850,7 @@ class HealthRunner {
             status: HealthStatus.failed,
             elapsedMs: 0,
             reasonCode: 'takeoverFailed',
-            action: tunFailed
-                ? HealthAction.openTunSettings
-                : HealthAction.openNetworkSettings,
+            action: tunAbnormal ? tunRepairAction : sysRepairAction,
           );
         }
       }
@@ -796,143 +872,170 @@ class HealthRunner {
             reasonCode: 'coreUnavailable',
           );
         }
-        final reqId = 'hc-direct-$seq';
-        token.register(() => environment.cancelProxyDelay(reqId));
         final watch = Stopwatch()..start();
-        try {
-          final res = await raceCancel(
-            environment
-                .testProxyDelay(
-                  proxyName: 'DIRECT',
-                  testUrl: cfg.testUrl,
-                  requestId: reqId,
-                  timeout: const Duration(seconds: 5),
-                )
-                .timeout(const Duration(seconds: 6)),
-          );
-          final ms = watch.elapsedMilliseconds;
-          if (res.value > 0) {
-            return res.value >= 800
-                ? HealthCheckResult(
-                    id: HealthCheckId.directConnectivity,
-                    status: HealthStatus.warning,
-                    elapsedMs: ms,
-                    reasonCode: 'directSlow',
-                    delayMs: res.value,
-                    localDetail: '${res.value} ms',
+        var sawTimeout = false;
+        for (var i = 0; i < directConnectivityProbeUrls.length; i++) {
+          final reqId = 'hc-direct-$seq-$i';
+          token.register(() => environment.cancelProxyDelay(reqId));
+          final perAttemptTimeout = i == 0
+              ? const Duration(milliseconds: 2200)
+              : const Duration(milliseconds: 1800);
+          try {
+            final res = await raceCancel(
+              environment
+                  .testProxyDelay(
+                    proxyName: 'DIRECT',
+                    testUrl: directConnectivityProbeUrls[i],
+                    requestId: reqId,
+                    timeout: perAttemptTimeout,
                   )
-                : HealthCheckResult(
-                    id: HealthCheckId.directConnectivity,
-                    status: HealthStatus.passed,
-                    elapsedMs: ms,
-                    reasonCode: 'ok',
-                    delayMs: res.value,
-                    localDetail: '${res.value} ms',
-                  );
-          }
-          return switch (res.reason) {
-            'notFound' => HealthCheckResult(
+                  .timeout(perAttemptTimeout + const Duration(milliseconds: 600)),
+            );
+            final ms = watch.elapsedMilliseconds;
+            if (res.value > 0) {
+              return res.value >= 800
+                  ? HealthCheckResult(
+                      id: HealthCheckId.directConnectivity,
+                      status: HealthStatus.warning,
+                      elapsedMs: ms,
+                      reasonCode: 'directSlow',
+                      delayMs: res.value,
+                      localDetail: '${res.value} ms',
+                    )
+                  : HealthCheckResult(
+                      id: HealthCheckId.directConnectivity,
+                      status: HealthStatus.passed,
+                      elapsedMs: ms,
+                      reasonCode: 'ok',
+                      delayMs: res.value,
+                      localDetail: '${res.value} ms',
+                    );
+            }
+            if (res.reason == 'notFound') {
+              return HealthCheckResult(
                 id: HealthCheckId.directConnectivity,
                 status: HealthStatus.skipped,
                 elapsedMs: ms,
                 reasonCode: 'runtimeNotLoaded',
-              ),
-            'overloaded' => HealthCheckResult(
+              );
+            }
+            if (res.reason == 'overloaded') {
+              return HealthCheckResult(
                 id: HealthCheckId.directConnectivity,
                 status: HealthStatus.warning,
                 elapsedMs: ms,
                 reasonCode: 'coreDelayBusy',
-              ),
-            'deadlineExceeded' => HealthCheckResult(
+              );
+            }
+            if (res.reason == 'deadlineExceeded') {
+              sawTimeout = true;
+            }
+          } on _HealthCancelledException {
+            rethrow;
+          } on TimeoutException {
+            sawTimeout = true;
+          } catch (_) {
+            // Fall through to secondary captive-portal endpoint.
+          }
+        }
+        final totalMs = watch.elapsedMilliseconds;
+        return sawTimeout
+            ? HealthCheckResult(
                 id: HealthCheckId.directConnectivity,
                 status: HealthStatus.timeout,
-                elapsedMs: ms,
+                elapsedMs: totalMs,
                 reasonCode: 'directTimeout',
-              ),
-            _ => HealthCheckResult(
+              )
+            : HealthCheckResult(
                 id: HealthCheckId.directConnectivity,
                 status: HealthStatus.failed,
-                elapsedMs: ms,
+                elapsedMs: totalMs,
                 reasonCode: 'directFailed',
-              ),
-          };
-        } on _HealthCancelledException {
-          rethrow;
-        } on TimeoutException {
-          return HealthCheckResult(
-            id: HealthCheckId.directConnectivity,
-            status: HealthStatus.timeout,
-            elapsedMs: watch.elapsedMilliseconds,
-            reasonCode: 'directTimeout',
-          );
-        } catch (_) {
-          return HealthCheckResult(
-            id: HealthCheckId.directConnectivity,
-            status: HealthStatus.failed,
-            elapsedMs: watch.elapsedMilliseconds,
-            reasonCode: 'directFailed',
-          );
-        }
+              );
       }
 
       Future<HealthCheckResult> runD2() async {
-        final parsedHost = Uri.tryParse(cfg.testUrl)?.host.trim() ?? '';
-        final probeHost = (parsedHost.isEmpty ||
-                InternetAddress.tryParse(parsedHost) != null)
-            ? 'www.gstatic.com'
-            : parsedHost;
+        final tunCapturingDns =
+            c1.status == HealthStatus.passed && tunCapturingTraffic;
+        final List<String> candidateHosts;
+        if (tunCapturingDns) {
+          final parsedHost = Uri.tryParse(cfg.testUrl)?.host.trim() ?? '';
+          final primary = (parsedHost.isEmpty ||
+                  InternetAddress.tryParse(parsedHost) != null)
+              ? 'www.gstatic.com'
+              : parsedHost;
+          candidateHosts = <String>[primary];
+        } else {
+          // Without TUN DNS interception, InternetAddress.lookup goes directly
+          // to ISP/OS DNS; never query GFW-poisoned overseas hosts like gstatic.
+          candidateHosts = systemDnsProbeHosts;
+        }
+
         final watch = Stopwatch()..start();
-        try {
-          final addresses = await raceCancel(
-            environment
-                .lookupHost(probeHost)
-                .timeout(const Duration(seconds: 3)),
-          );
-          final ms = watch.elapsedMilliseconds;
-          if (addresses.isEmpty) {
-            return HealthCheckResult(
-              id: HealthCheckId.dnsResolution,
-              status: HealthStatus.failed,
-              elapsedMs: ms,
-              reasonCode: 'dnsLookupFailed',
-              action: HealthAction.openDnsSettings,
+        var sawTimeout = false;
+        var addresses = const <InternetAddress>[];
+        for (final probeHost in candidateHosts) {
+          try {
+            final resolved = await raceCancel(
+              environment
+                  .lookupHost(probeHost)
+                  .timeout(const Duration(seconds: 3)),
             );
+            if (resolved.isNotEmpty) {
+              addresses = resolved;
+              break;
+            }
+          } on _HealthCancelledException {
+            rethrow;
+          } on TimeoutException {
+            sawTimeout = true;
+          } catch (_) {
+            // Try next system DNS host if any.
           }
-          if (addresses.any(_isPoisonedAddress)) {
-            return HealthCheckResult(
-              id: HealthCheckId.dnsResolution,
-              status: HealthStatus.failed,
-              elapsedMs: ms,
-              reasonCode: 'dnsPoisonedLoopback',
-              action: HealthAction.openDnsSettings,
-            );
-          }
-          final fakeIp = addresses.any(_isFakeIpAddress);
-          return HealthCheckResult(
-            id: HealthCheckId.dnsResolution,
-            status: HealthStatus.passed,
-            elapsedMs: ms,
-            reasonCode: fakeIp ? 'dnsFakeIpActive' : 'ok',
-          );
-        } on _HealthCancelledException {
-          rethrow;
-        } on TimeoutException {
-          return HealthCheckResult(
-            id: HealthCheckId.dnsResolution,
-            status: HealthStatus.timeout,
-            elapsedMs: watch.elapsedMilliseconds,
-            reasonCode: 'dnsTimeout',
-            action: HealthAction.openDnsSettings,
-          );
-        } catch (_) {
+        }
+        final ms = watch.elapsedMilliseconds;
+        if (addresses.isEmpty) {
+          return sawTimeout
+              ? HealthCheckResult(
+                  id: HealthCheckId.dnsResolution,
+                  status: HealthStatus.timeout,
+                  elapsedMs: ms,
+                  reasonCode: 'dnsTimeout',
+                  action: HealthAction.openDnsSettings,
+                )
+              : HealthCheckResult(
+                  id: HealthCheckId.dnsResolution,
+                  status: HealthStatus.failed,
+                  elapsedMs: ms,
+                  reasonCode: 'dnsLookupFailed',
+                  action: HealthAction.openDnsSettings,
+                );
+        }
+        if (addresses.any(_isPoisonedAddress)) {
           return HealthCheckResult(
             id: HealthCheckId.dnsResolution,
             status: HealthStatus.failed,
-            elapsedMs: watch.elapsedMilliseconds,
-            reasonCode: 'dnsLookupFailed',
+            elapsedMs: ms,
+            reasonCode: 'dnsPoisonedLoopback',
             action: HealthAction.openDnsSettings,
           );
         }
+        final fakeIp = addresses.any(_isFakeIpAddress);
+        if (fakeIp && !tunCapturingDns) {
+          return HealthCheckResult(
+            id: HealthCheckId.dnsResolution,
+            status: HealthStatus.failed,
+            elapsedMs: ms,
+            reasonCode: 'dnsStaleFakeIp',
+            action: HealthAction.openDnsSettings,
+          );
+        }
+        return HealthCheckResult(
+          id: HealthCheckId.dnsResolution,
+          status: HealthStatus.passed,
+          elapsedMs: ms,
+          reasonCode: fakeIp ? 'dnsFakeIpActive' : 'ok',
+        );
       }
 
       String? resolvedActiveLeaf;
@@ -963,7 +1066,12 @@ class HealthRunner {
             reasonCode: 'directModeActive',
           );
         }
-        final group = _selectActiveGroup(cfg);
+        final preferRuntimeNow =
+            cfg.proxyStarted && a3.status == HealthStatus.passed;
+        final group = _selectActiveGroup(
+          cfg,
+          preferRuntimeNow: preferRuntimeNow,
+        );
         if (group == null) {
           return const HealthCheckResult(
             id: HealthCheckId.outboundConnectivity,
@@ -977,7 +1085,7 @@ class HealthRunner {
           group,
           cfg.allGroups,
           cfg.selectedMap,
-          preferRuntimeNow: cfg.proxyStarted && a3.status == HealthStatus.passed,
+          preferRuntimeNow: preferRuntimeNow,
         );
         final leaf = leafResult.leaf;
         if (leaf == null) {
@@ -1168,8 +1276,7 @@ class HealthRunner {
           reasonCode: 'outboundFailed',
         );
       } else {
-        final tunActive =
-            c2.status == HealthStatus.passed || c2.status == HealthStatus.warning;
+        final tunActive = tunCapturingTraffic;
         final directive = tunActive ? 'DIRECT' : verifiedSysProxyDirective;
         if (!tunActive && directive == null) {
           if (environment.platform == 'windows' &&
@@ -1200,7 +1307,7 @@ class HealthRunner {
                     cancelToken: token,
                     explicitProxyDirective: directive,
                   )
-                  .timeout(const Duration(seconds: 8)),
+                  .timeout(const Duration(seconds: 10)),
             );
             final ms = watch.elapsedMilliseconds;
             if (obs == null) {

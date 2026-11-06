@@ -46,6 +46,7 @@ enum HealthAction {
   openTunSettings,
   openNetworkSettings,
   openDnsSettings,
+  reapplySystemProxy,
   startProxy,
   restartCore,
 }

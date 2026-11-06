@@ -613,6 +613,9 @@ class MessageLookup extends MessageLookupByLibrary {
       "Renew / Redeem",
     ),
     "healthActionOpenTun": MessageLookupByLibrary.simpleMessage("TUN Settings"),
+    "healthActionReapplySystemProxy": MessageLookupByLibrary.simpleMessage(
+      "Restore System Proxy",
+    ),
     "healthActionRestartCore": MessageLookupByLibrary.simpleMessage(
       "Restart Core",
     ),
@@ -682,6 +685,9 @@ class MessageLookup extends MessageLookupByLibrary {
     "healthDetailDnsPoisoned": MessageLookupByLibrary.simpleMessage(
       "DNS returned loopback/sinkhole IP",
     ),
+    "healthDetailDnsStaleFakeIp": MessageLookupByLibrary.simpleMessage(
+      "Stale Fake-IP cache detected while TUN is inactive",
+    ),
     "healthDetailE2eBypassed": MessageLookupByLibrary.simpleMessage(
       "Reached internet, but connection bypassed Core",
     ),
@@ -747,8 +753,21 @@ class MessageLookup extends MessageLookupByLibrary {
     "healthDetailSysProxyDisabled": MessageLookupByLibrary.simpleMessage(
       "Disabled in settings",
     ),
+    "healthDetailSysProxyDisabledExternally":
+        MessageLookupByLibrary.simpleMessage(
+          "System proxy switch is turned off in OS",
+        ),
     "healthDetailSysProxyHijacked": MessageLookupByLibrary.simpleMessage(
       "System proxy disabled or overwritten externally",
+    ),
+    "healthDetailSysProxyInvalidPort": MessageLookupByLibrary.simpleMessage(
+      "Local mixed-port is disabled (0)",
+    ),
+    "healthDetailSysProxyNotApplied": MessageLookupByLibrary.simpleMessage(
+      "System proxy has not been applied to OS yet",
+    ),
+    "healthDetailSysProxyReadFailed": MessageLookupByLibrary.simpleMessage(
+      "Could not read system proxy settings",
     ),
     "healthDetailSysProxyUnexpectedPac": MessageLookupByLibrary.simpleMessage(
       "Residual PAC URL detected in system settings",

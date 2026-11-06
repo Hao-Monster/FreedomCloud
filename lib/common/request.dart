@@ -210,7 +210,9 @@ class Request {
           client.findProxy = (uri) {
             if (proxyResolver != null) {
               if (globalState.isAppStateInitialized) {
-                client.userAgent = globalState.ua;
+                try {
+                  client.userAgent = globalState.ua;
+                } catch (_) {}
               }
               final customDirective = proxyResolver(uri);
               final isStart = globalState.isAppStateInitialized &&
@@ -229,7 +231,9 @@ class Request {
               attemptRoutedViaClash = forceHoldSocket;
               return 'DIRECT';
             }
-            client.userAgent = globalState.ua;
+            try {
+              client.userAgent = globalState.ua;
+            } catch (_) {}
             final directive = FlClashHttpOverrides.handleFindProxy(uri);
             final isStart = globalState.appState.runTime != null;
             final tunHandlesTraffic = isStart &&

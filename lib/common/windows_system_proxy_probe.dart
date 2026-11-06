@@ -8,11 +8,13 @@ class WindowsSystemProxySnapshot {
     required this.proxyEnabled,
     this.proxyServer,
     this.autoConfigUrl,
+    this.autoConfigActive,
   });
 
   final bool proxyEnabled;
   final String? proxyServer;
   final String? autoConfigUrl;
+  final bool? autoConfigActive;
 }
 
 class ParsedProxyEndpoint {
@@ -159,10 +161,29 @@ Map<String, ParsedProxyEndpoint> parseWindowsProxyServer(String? raw) {
   String? sanitizedManualDetail() {
     final parsed = parseWindowsProxyServer(snapshot.proxyServer);
     if (parsed.isEmpty) return null;
-    final ep =
-        parsed['*'] ?? parsed['https'] ?? parsed['http'] ?? parsed.values.first;
+    ParsedProxyEndpoint? mismatched;
+    for (final entry in parsed.entries) {
+      if (!matchesExpected(entry.value)) {
+        mismatched = entry.value;
+        break;
+      }
+    }
+    final ep = mismatched ??
+        parsed['*'] ??
+        parsed['https'] ??
+        parsed['http'] ??
+        parsed.values.first;
     final formattedHost = ep.host.contains(':') ? '[${ep.host}]' : ep.host;
     return '$formattedHost:${ep.port}';
+  }
+
+  String? sanitizedPacHostDetail(String? rawUrl) {
+    final trimmed = rawUrl?.trim() ?? '';
+    if (trimmed.isEmpty) return null;
+    final uri = Uri.tryParse(trimmed);
+    if (uri == null || uri.host.isEmpty) return null;
+    final formattedHost = uri.host.contains(':') ? '[${uri.host}]' : uri.host;
+    return uri.hasPort ? 'PAC $formattedHost:${uri.port}' : 'PAC $formattedHost';
   }
 
   if (expectedPacEnabled) {
@@ -193,7 +214,8 @@ Map<String, ParsedProxyEndpoint> parseWindowsProxyServer(String? raw) {
     return (
       status: HealthStatus.failed,
       reasonCode: hasOtherPac ? 'systemProxyHijacked' : 'systemProxyNotApplied',
-      localDetail: null,
+      localDetail:
+          hasOtherPac ? sanitizedPacHostDetail(snapshot.autoConfigUrl) : null,
       verifiedProxyDirective: null,
     );
   }
@@ -231,7 +253,7 @@ Map<String, ParsedProxyEndpoint> parseWindowsProxyServer(String? raw) {
       return (
         status: HealthStatus.failed,
         reasonCode: 'systemProxyHijacked',
-        localDetail: null,
+        localDetail: sanitizedManualDetail(),
         verifiedProxyDirective: null,
       );
     }
@@ -242,7 +264,7 @@ Map<String, ParsedProxyEndpoint> parseWindowsProxyServer(String? raw) {
       return (
         status: HealthStatus.failed,
         reasonCode: 'systemProxyHijacked',
-        localDetail: null,
+        localDetail: sanitizedManualDetail(),
         verifiedProxyDirective: null,
       );
     }
@@ -252,7 +274,7 @@ Map<String, ParsedProxyEndpoint> parseWindowsProxyServer(String? raw) {
       return (
         status: HealthStatus.failed,
         reasonCode: 'systemProxyHijacked',
-        localDetail: null,
+        localDetail: sanitizedManualDetail(),
         verifiedProxyDirective: null,
       );
     }
@@ -267,7 +289,8 @@ Map<String, ParsedProxyEndpoint> parseWindowsProxyServer(String? raw) {
     }
   }
 
-  if (snapshot.autoConfigUrl?.trim().isNotEmpty ?? false) {
+  if ((snapshot.autoConfigActive ?? true) &&
+      (snapshot.autoConfigUrl?.trim().isNotEmpty ?? false)) {
     return (
       status: HealthStatus.warning,
       reasonCode: 'systemProxyUnexpectedPac',
@@ -288,7 +311,10 @@ WindowsSystemProxySnapshot? readWindowsSystemProxyRegistry() {
   if (!Platform.isWindows) return null;
   const internetSettingsPath =
       r'Software\Microsoft\Windows\CurrentVersion\Internet Settings';
+  const connectionsPath =
+      r'Software\Microsoft\Windows\CurrentVersion\Internet Settings\Connections';
   RegistryKey? key;
+  RegistryKey? connKey;
   try {
     key = Registry.openPath(
       RegistryHive.currentUser,
@@ -297,14 +323,36 @@ WindowsSystemProxySnapshot? readWindowsSystemProxyRegistry() {
     final proxyEnable = key.getIntValue('ProxyEnable') ?? 0;
     final proxyServer = key.getStringValue('ProxyServer');
     final autoConfigUrl = key.getStringValue('AutoConfigURL');
+
+    bool? autoConfigActive;
+    try {
+      connKey = Registry.openPath(
+        RegistryHive.currentUser,
+        path: connectionsPath,
+      );
+      final blob = connKey.getBinaryValue('DefaultConnectionSettings');
+      if (blob != null && blob.length >= 12) {
+        final flags = blob[8] |
+            (blob[9] << 8) |
+            (blob[10] << 16) |
+            (blob[11] << 24);
+        // WinInet PROXY_TYPE_AUTO_PROXY_URL = 0x00000004
+        autoConfigActive = (flags & 0x04) != 0;
+      }
+    } catch (_) {
+      autoConfigActive = null;
+    }
+
     return WindowsSystemProxySnapshot(
       proxyEnabled: proxyEnable != 0,
       proxyServer: proxyServer,
       autoConfigUrl: autoConfigUrl,
+      autoConfigActive: autoConfigActive,
     );
   } catch (_) {
     return null;
   } finally {
+    connKey?.close();
     key?.close();
   }
 }
