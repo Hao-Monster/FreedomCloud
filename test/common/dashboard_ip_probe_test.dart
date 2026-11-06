@@ -3,7 +3,9 @@ import 'dart:io';
 
 import 'package:dio/dio.dart';
 import 'package:flclashx/common/fixed.dart';
+import 'package:flclashx/common/http.dart';
 import 'package:flclashx/common/request.dart';
+import 'package:flclashx/common/tun_runtime.dart';
 import 'package:flclashx/models/models.dart';
 import 'package:flclashx/providers/providers.dart';
 import 'package:flclashx/state.dart';
@@ -54,7 +56,9 @@ void main() {
         logs: FixedList(2),
         traffics: FixedList(2),
         totalTraffic: Traffic(),
-      );
+      )
+      ..lastRuntimeConfig = null
+      ..lastRuntimeProfileId = null;
   });
 
   test('dashboard requests the first IP when initialization finishes', () {
@@ -173,5 +177,58 @@ void main() {
     expect(detection.state.value.ipInfo?.ip, '203.0.113.99');
     expect(detection.state.value.isLoading, isFalse);
     expect(detection.state.value.isTesting, isFalse);
+  });
+
+  test(
+      'IP probe uses the Windows System Proxy when TUN is only observed active',
+      () async {
+    final proxy = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    addTearDown(() => proxy.close(force: true));
+    proxy.listen((request) async {
+      await request.drain();
+      request.response
+        ..headers.contentType = ContentType.json
+        ..write('{"ip":"198.51.100.42","country_code":"SG"}');
+      await request.response.close();
+    });
+
+    globalState
+      ..config = Config(
+        themeProps: defaultThemeProps,
+        networkProps: const NetworkProps(systemProxy: true),
+        patchClashConfig: ClashConfig(mixedPort: proxy.port),
+      )
+      ..appState = globalState.appState.copyWith(runTime: 0)
+      ..lastRuntimeConfig = <String, dynamic>{'mixed-port': proxy.port}
+      ..lastRuntimeProfileId = null;
+    final epoch = tunRuntime.observationEpoch;
+    tunRuntime.accept(
+      const TunStatus(
+        instanceId: 'probe',
+        revision: 1,
+        state: 'on',
+        listenerActive: true,
+        interfaceState: 'up',
+        privilege: 'elevated',
+        requestedEnabled: true,
+      ),
+      epoch,
+    );
+    addTearDown(tunRuntime.invalidate);
+
+    expect(
+      FlClashHttpOverrides.handleFindProxy(
+          Uri.parse('http://probe.invalid/ip')),
+      'PROXY 127.0.0.1:${proxy.port}',
+    );
+    final result = await Request(ipInfoSources: {
+      'http://probe.invalid/ip': IpInfo.fromIpSbJson,
+    }).checkIpWithHost(
+      attemptTimeout: const Duration(seconds: 1),
+      keepAliveHold: Duration.zero,
+    );
+
+    expect(result.data?.ipInfo.ip, '198.51.100.42');
+    expect(result.data?.ipInfo.countryCode, 'SG');
   });
 }

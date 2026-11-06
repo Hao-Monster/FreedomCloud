@@ -1277,7 +1277,12 @@ class HealthRunner {
         );
       } else {
         final tunActive = tunCapturingTraffic;
-        final directive = tunActive ? 'DIRECT' : verifiedSysProxyDirective;
+        // Prefer a verified Windows System Proxy when it is available. A
+        // listener/interface observation alone cannot prove that this process's
+        // direct socket is actually captured by TUN; forcing DIRECT here made
+        // D4 fail while the same local Core path was healthy for browser traffic.
+        final directive =
+            verifiedSysProxyDirective ?? (tunActive ? 'DIRECT' : null);
         if (!tunActive && directive == null) {
           if (environment.platform == 'windows' &&
               c3.status == HealthStatus.warning) {

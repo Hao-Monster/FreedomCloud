@@ -792,6 +792,61 @@ void main() {
         HealthStatus.passed,
       );
       expect(report.verdict.code, 'healthy');
+
+      // TUN's listener can be healthy while this process's direct socket is
+      // not captured. Prefer the verified local System Proxy in that combined
+      // state so D4 validates the same Core path used by browser traffic.
+      final tunAndSysProxyEnv = _FakeProbeEnvironment(
+        configSnapshot: HealthConfigSnapshot(
+          currentProfileId: base.currentProfileId,
+          currentProfile: base.currentProfile,
+          profileFileExists: true,
+          profileFileBytes: 4096,
+          mode: Mode.rule,
+          mixedPort: 7890,
+          testUrl: base.testUrl,
+          resolveGroupTestUrl: base.resolveGroupTestUrl,
+          systemProxyEnabled: true,
+          pacEnabled: false,
+          pacUrl: null,
+          tunDesiredEnabled: true,
+          tunFailureCode: null,
+          realTunEnable: true,
+          proxyStarted: true,
+          lastRuntimeProfileId: base.lastRuntimeProfileId,
+          groupsSnapshotProfileId: base.groupsSnapshotProfileId,
+          allGroups: base.allGroups,
+          visibleGroups: base.visibleGroups,
+          selectedMap: base.selectedMap,
+        ),
+        e2eObservation: const EndToEndProbeObservation(
+          exitCountryCode: 'SG',
+          observedInCore: false,
+        ),
+      )
+        ..tunStatus = const TunStatus(
+          instanceId: 'core-1',
+          revision: 1,
+          state: 'on',
+          listenerActive: true,
+          interfaceState: 'up',
+          privilege: 'elevated',
+          requestedEnabled: true,
+        )
+        ..windowsSystemProxy = const WindowsSystemProxySnapshot(
+          proxyEnabled: true,
+          proxyServer: '127.0.0.1:7890',
+        );
+      final tunAndSysProxyReport = await HealthRunner(tunAndSysProxyEnv).run();
+      expect(
+        tunAndSysProxyEnv.lastExplicitProxyDirective,
+        'PROXY 127.0.0.1:7890',
+      );
+      expect(
+        tunAndSysProxyReport.checkById(HealthCheckId.endToEndConnectivity)
+            ?.status,
+        HealthStatus.passed,
+      );
     });
 
     test(
