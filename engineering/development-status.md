@@ -2,6 +2,20 @@
 
 更新日期：2026-11-06。当前阶段是快速开发、快速迭代和部分功能预览。本文记录来源与验收边界；每次继续开发仍需核实实际 Git/PR/CI 状态，不能把历史报告视为当前通过证明。
 
+## 健康检查修复二阶 Code Review 4 项问题最小范围 TDD 收口（2026-11-06）
+
+- 来源：针对提交 `1bec1ef952e94cccbe655a251b4b62ca21117164` 的严格范围 Code Review 检出的 4 项真实缺陷（`CR-1`–`CR-4`），按 TDD（前置真实 Red → 最小范围生产代码 Green → 回归与静态校验）在本地 `development` 一次性闭环修复（代码提交 `48e1a69a064c8e7cab149246f0f907a6a9565ccf`）。
+- 核心修复：
+  1. **[CR-1 / P1] 收敛 `readConfigSnapshot` 中 `clashCore.isInit` 的 IPC 超时边界（[`DefaultHealthProbeEnvironment.readConfigSnapshot`](file:///E:/CodeWorkstation/FlClashX/lib/common/health/health_environment.dart) / [`ClashCore.existingCore`](file:///E:/CodeWorkstation/FlClashX/lib/clash/core.dart)）**：将 `Future.value(activeCore.isInit)` 与 `activeCore.getProxiesGroups()` 合并入同一 `1200ms` 超时闭包，消除 Go Core 假死时默认 `30s` `safeFuture` 在 `B1` 探活前阻塞整轮健康检查的回归。
+  2. **[CR-2 / P1] 热更新混合端口同步刷新运行时生效快照（[`GlobalState.commitRuntimeUpdate`](file:///E:/CodeWorkstation/FlClashX/lib/state.dart) / [`ClashCore.updateConfig`](file:///E:/CodeWorkstation/FlClashX/lib/clash/core.dart)）**：在 `clashCore.updateConfig` 返回成功（`result.isEmpty`）时以不可变拷贝同步更新 `lastRuntimeConfig['mixed-port']` 等热更新字段（失败时保留原生效端口），根除运行中修改 `Mixed Port` 后 `C3` 误报劫持与“一键恢复”死循环。
+  3. **[CR-3 / P1] 修复在途检查期间点击原位修复按钮不重跑及停机/禁用态误返 `true`（[`HealthCheckController.restart`](file:///E:/CodeWorkstation/FlClashX/lib/common/health/health_runner.dart) / [`_HealthCheckViewState._handleAction`](file:///E:/CodeWorkstation/FlClashX/lib/views/tools/health_check_view.dart) / [`_ProxyManagerState._forceReapplyNow`](file:///E:/CodeWorkstation/FlClashX/lib/manager/proxy_manager.dart)）**：新增无取消闪烁过渡的 `HealthCheckController.restart()` 供 `reapplySystemProxy` / `startProxy` / `restartCore` 完成后取消旧批次并启动新检；`_forceReapplyNow` 严格校验 `isStart && desiredSystemProxy && !isDisarmingForStop` 与有效端口并对齐 `resolveEffectiveMixedPort`，未满足条件直接返回 `false` 触发打开网络设置兜底。
+  4. **[CR-4 / P2] 补齐 PAC 模式对 WinInet `autoConfigActive == false` 的失活检测（[`evaluateWindowsSystemProxy`](file:///E:/CodeWorkstation/FlClashX/lib/common/windows_system_proxy_probe.dart)）**：当 `expectedPacEnabled == true` 且注册表残留匹配的 `AutoConfigURL` 字符串但 `DefaultConnectionSettings` 标志位 `0x04` 已关闭（`autoConfigActive == false`）时，准确判定 `HealthStatus.failed ('systemProxyDisabledExternally')` 且不再向 `D4` 传递假阳性回环代理指令。
+- 验证记录（本机 `Flutter 3.47.4` / `Dart 3.13.3`，CI 配置 `Flutter 3.41.7`）：
+  - 前置有效 Red（扩展 [`test/common/health_remediation_9bugs_test.dart`](file:///E:/CodeWorkstation/FlClashX/test/common/health_remediation_9bugs_test.dart) `CR-1`/`CR-2`/`CR-3b`/`CR-4` 与 [`test/views/health_check_view_test.dart`](file:///E:/CodeWorkstation/FlClashX/test/views/health_check_view_test.dart) `CR-3a`）：**PASS（5 项新增用例在修复前均按预期断言失败，退出码 `1,1`；修复后全部转绿）**；
+  - Flutter 回归套件（`health_remediation_9bugs_test.dart`、`health_check_view_test.dart`、`health_diagnostics_v2_test.dart`、`controller_config_protocol_test.dart`、`graceful_shutdown_test.dart`）：**PASS（55 PASS / 0 FAIL）**；
+  - 静态与格式检查（`dart analyze` 修改文件 `No issues found!`，`git diff --cached --check` 零空白错误）：**PASS**；未新增外部依赖，本机运行中代理与系统代理零触碰。
+- 交付状态：**已实现 / 已本地验证 / 已提交至本地 `development`（代码提交 `48e1a69a064c8e7cab149246f0f907a6a9565ccf`）**；未推送远端（待授权） / 未创建或合并 PR / 远端 CI **NOT RUN** / 新预览包构建与真实窗口验收 **NOT RUN**。
+
 ## 健康检查全链路 9 项缺陷一次性 TDD 修复（2026-11-06）
 
 - 来源：针对用户实机截图反馈“当前订阅已在正常跑流量，但健康检查显示缺少本地配置文件（且系统代理异常、本机直连外网 5001 ms 超时、底部按钮截断为 `复...` / `导...`）”及全链路穿透审计检出的全部 9 项缺陷，按严格 TDD（前置真实 Red → 生产代码 Green → 多层回归验证）在本地 `development` 一次性闭环修复（代码提交 `1bec1ef952e94cccbe655a251b4b62ca21117164`）。
