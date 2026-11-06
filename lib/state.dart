@@ -4,6 +4,7 @@ import 'dart:ffi' show Pointer;
 import 'dart:io' show File, Platform;
 
 import 'package:animations/animations.dart';
+import 'package:collection/collection.dart' show DeepCollectionEquality;
 import 'package:dio/dio.dart';
 import 'package:dynamic_color/dynamic_color.dart';
 import 'package:flclashx/clash/clash.dart';
@@ -145,6 +146,8 @@ class GlobalState {
   UpdateTasks tasks = [];
   Map<String, dynamic>? lastRuntimeConfig;
   String? lastRuntimeProfileId;
+  Map<String, String>? lastRuntimeSelectedMap;
+  String? lastRuntimeTestUrl;
   int runtimeConfigEpoch = 0;
   // Effective external-controller endpoint after merging subscription value
   // over UI defaults. Empty string means disabled. Subscription value wins if
@@ -162,7 +165,7 @@ class GlobalState {
   final effectiveTcpConcurrent = ValueNotifier<bool>(false);
   final effectiveUnifiedDelay = ValueNotifier<bool>(false);
   final effectiveLogLevel = ValueNotifier<String>("info");
-  final effectiveKeepAliveInterval = ValueNotifier<int>(30);
+  final effectiveKeepAliveInterval = ValueNotifier<int>(defaultKeepAliveInterval);
   // Custom per-group descriptions parsed from the profile YAML
   // (proxy-groups[*].description). Shown as the subtitle of a nested group
   // card instead of its type (Fallback/URLTest/Selector).
@@ -563,6 +566,8 @@ class GlobalState {
     runtimeConfigEpoch++;
     lastRuntimeConfig = null;
     lastRuntimeProfileId = null;
+    lastRuntimeSelectedMap = null;
+    lastRuntimeTestUrl = null;
     _groupsSnapshotProfileId = null;
   }
 
@@ -571,14 +576,43 @@ class GlobalState {
     final rawConfig = params.config;
     lastRuntimeConfig = rawConfig;
     lastRuntimeProfileId = profileId;
+    lastRuntimeSelectedMap = Map<String, String>.from(params.selectedMap);
+    lastRuntimeTestUrl = params.testUrl;
     effectiveExternalController.value = (rawConfig['external-controller'] as String?) ?? '';
     effectiveSecret.value = (rawConfig['secret'] as String?) ?? '';
     effectiveExternalUi.value = (rawConfig['external-ui'] as String?) ?? '';
     effectiveTcpConcurrent.value = rawConfig['tcp-concurrent'] as bool? ?? false;
     effectiveUnifiedDelay.value = rawConfig['unified-delay'] as bool? ?? false;
     effectiveLogLevel.value = rawConfig['log-level'] as String? ?? 'info';
-    effectiveKeepAliveInterval.value = (rawConfig['keep-alive-interval'] as num?)?.toInt() ?? 30;
+    effectiveKeepAliveInterval.value =
+        (rawConfig['keep-alive-interval'] as num?)?.toInt() ??
+            defaultKeepAliveInterval;
     _commitGroupMetadata(rawConfig);
+  }
+
+  void commitRuntimeChangeProxy(ChangeProxyParams params) {
+    final currentSelected = lastRuntimeSelectedMap;
+    if (currentSelected == null) return;
+    lastRuntimeSelectedMap = <String, String>{
+      ...currentSelected,
+      params.groupName: params.proxyName,
+    };
+  }
+
+  bool matchesCommittedRuntimeSetup(
+    SetupParams candidate, {
+    required String? profileId,
+  }) {
+    if (profileId == null ||
+        lastRuntimeProfileId != profileId ||
+        lastRuntimeConfig == null ||
+        lastRuntimeSelectedMap == null ||
+        lastRuntimeTestUrl != candidate.testUrl) {
+      return false;
+    }
+    const deepEq = DeepCollectionEquality();
+    return deepEq.equals(lastRuntimeSelectedMap, candidate.selectedMap) &&
+        deepEq.equals(lastRuntimeConfig, candidate.config);
   }
 
   void commitRuntimeUpdate(UpdateParams params) {
@@ -593,6 +627,16 @@ class GlobalState {
         'log-level': params.logLevel.name,
         'tcp-concurrent': params.tcpConcurrent,
         'unified-delay': params.unifiedDelay,
+        if (runtimeConfig['tun'] is Map)
+          'tun': <String, dynamic>{
+            ...Map<String, dynamic>.from(runtimeConfig['tun'] as Map),
+            'enable': params.tun.enable,
+            'device': params.tun.device,
+            'stack': params.tun.stack.name,
+            'dns-hijack': params.tun.dnsHijack,
+            'auto-route': params.tun.autoRoute,
+            'route-address': params.tun.routeAddress,
+          },
       };
     }
     effectiveTcpConcurrent.value = params.tcpConcurrent;
@@ -733,6 +777,7 @@ class GlobalState {
     final profileUnifiedDelay = rawConfig["unified-delay"] as bool?;
     final profileLogLevel = rawConfig["log-level"] as String?;
     final profileKeepAlive = (rawConfig["keep-alive-interval"] as num?)?.toInt();
+    final profileKeepAliveIdle = (rawConfig["keep-alive-idle"] as num?)?.toInt();
     final isOverride = config.appSetting.overrideNetworkSettings;
     final effTcpConcurrent = isOverride
         ? realPatchConfig.tcpConcurrent
@@ -750,6 +795,9 @@ class GlobalState {
     rawConfig["unified-delay"] = effUnifiedDelay;
     rawConfig["log-level"] = effLogLevel;
     rawConfig["keep-alive-interval"] = effKeepAlive;
+    rawConfig["keep-alive-idle"] = isOverride
+        ? realPatchConfig.keepAliveInterval
+        : (profileKeepAliveIdle ?? effKeepAlive);
     rawConfig["port"] = 0;
     rawConfig["socks-port"] = 0;
     rawConfig["port"] = realPatchConfig.port;
@@ -824,6 +872,7 @@ class GlobalState {
     
     rawConfig["tun"]["route-address"] = realPatchConfig.tun.routeAddress;
     rawConfig["tun"]["auto-route"] = realPatchConfig.tun.autoRoute;
+    rawConfig["tun"]["mtu"] ??= 1500;
     rawConfig["geodata-loader"] = realPatchConfig.geodataLoader.name;
     if (rawConfig["sniffer"]?["sniff"] != null) {
       for (final value in (rawConfig["sniffer"]?["sniff"] as Map).values) {
@@ -871,6 +920,7 @@ class GlobalState {
     }
 
     rawConfig["profile"]["store-selected"] = false;
+    rawConfig["profile"]["store-fake-ip"] ??= true;
     
     final mergedGeoXUrl = <String, dynamic>{};
     final patchGeoX = realPatchConfig.geoXUrl.toJson();
@@ -914,11 +964,46 @@ class GlobalState {
             entry.value.splitByMultipleSeparators;
       }
     }
+    final enhancedMode =
+        (rawConfig["dns"] is Map ? rawConfig["dns"]["enhanced-mode"] : null)
+            ?.toString()
+            .trim()
+            .toLowerCase();
     if (rawConfig["dns"] is Map &&
-        rawConfig["dns"]["enhanced-mode"] == DnsMode.fakeIp.name) {
+        (enhancedMode == 'fake-ip' || enhancedMode == 'fakeip')) {
       rawConfig["dns"]["fake-ip-filter"] = mergeEssentialFakeIpFilter(
         (rawConfig["dns"]["fake-ip-filter"] as Iterable?) ?? const [],
       );
+      rawConfig["sniffer"] ??= <String, dynamic>{
+        'enable': true,
+        'force-dns-mapping': false,
+        'parse-pure-ip': true,
+        'override-destination': true,
+        'skip-dst-address': <String>[
+          '127.0.0.0/8',
+          '10.0.0.0/8',
+          '100.64.0.0/10',
+          '169.254.0.0/16',
+          '172.16.0.0/12',
+          '192.168.0.0/16',
+          'fc00::/7',
+          'fe80::/10',
+        ],
+        'sniff': <String, dynamic>{
+          'HTTP': <String, dynamic>{
+            'ports': <String>['80', '8080-8880'],
+            'override-destination': true,
+          },
+          'TLS': <String, dynamic>{
+            'ports': <String>['443', '8443'],
+            'override-destination': true,
+          },
+          'QUIC': <String, dynamic>{
+            'ports': <String>['443', '8443'],
+            'override-destination': true,
+          },
+        },
+      };
     }
     final rawRules = (rawConfig["rules"] as Iterable?) ?? const [];
     rawConfig.remove("rules");

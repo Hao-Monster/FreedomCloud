@@ -112,6 +112,7 @@ class AppSettingProps with _$AppSettingProps {
     @JsonKey(fromJson: dashboardWidgetsSafeFormJson)
     List<DashboardWidget> dashboardWidgets,
     @Default(true) bool dashboardDefaultV2Migrated,
+    @Default(true) bool tunDesktopStackMixedMigrated,
     @Default(false) bool onlyStatisticsProxy,
     @Default(false) bool autoLaunch,
     @Default(false) bool silentLaunch,
@@ -331,7 +332,11 @@ class Config with _$Config {
 
   factory Config.fromJson(Map<String, Object?> json) => _$ConfigFromJson(json);
 
-  factory Config.compatibleFromJson(Map<String, Object?> json) {
+  factory Config.compatibleFromJson(
+    Map<String, Object?> json, {
+    bool? isDesktop,
+  }) {
+    final effectiveIsDesktop = isDesktop ?? system.isDesktop;
     final normalizedJson = Map<String, Object?>.from(json);
     try {
       final accessControlMap = normalizedJson["accessControl"];
@@ -426,6 +431,37 @@ class Config with _$Config {
             else
               p,
         ];
+      }
+    } catch (_) {}
+
+    try {
+      // One-shot reversible migration on desktop: legacy installs stored
+      // patchClashConfig.tun.stack = "gvisor" before TunStack.mixed became the
+      // desktop default. Migrate unmigrated desktop configs once to "mixed" and
+      // persist tunDesktopStackMixedMigrated = true so subsequent manual switches
+      // back to "gvisor" are respected.
+      if (effectiveIsDesktop) {
+        final rawAppSetting = normalizedJson["appSetting"];
+        final alreadyMigrated = rawAppSetting is Map &&
+            rawAppSetting["tunDesktopStackMixedMigrated"] == true;
+        if (!alreadyMigrated) {
+          final rawPatchClash = normalizedJson["patchClashConfig"];
+          if (rawPatchClash is Map) {
+            final rawTun = rawPatchClash["tun"];
+            if (rawTun is Map && rawTun["stack"] == "gvisor") {
+              final nextTun = Map<String, Object?>.from(rawTun);
+              nextTun["stack"] = "mixed";
+              final nextPatchClash = Map<String, Object?>.from(rawPatchClash);
+              nextPatchClash["tun"] = nextTun;
+              normalizedJson["patchClashConfig"] = nextPatchClash;
+            }
+          }
+          if (rawAppSetting is Map) {
+            final nextAppSetting = Map<String, Object?>.from(rawAppSetting);
+            nextAppSetting["tunDesktopStackMixedMigrated"] = true;
+            normalizedJson["appSetting"] = nextAppSetting;
+          }
+        }
       }
     } catch (_) {}
 

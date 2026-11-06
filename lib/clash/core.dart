@@ -199,8 +199,14 @@ class ClashCore {
         .toList();
   }
 
-  FutureOr<String> changeProxy(ChangeProxyParams changeProxyParams) async =>
-      await clashInterface.changeProxy(changeProxyParams);
+
+  Future<String> changeProxy(ChangeProxyParams changeProxyParams) async {
+    final result = await clashInterface.changeProxy(changeProxyParams);
+    if (result.isEmpty) {
+      globalState.commitRuntimeChangeProxy(changeProxyParams);
+    }
+    return result;
+  }
 
   Future<ConnectionSnapshot> getConnectionsSnapshot() async {
     final requestNumber = ++_connectionSnapshotRequestCount;

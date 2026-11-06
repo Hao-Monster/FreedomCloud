@@ -37,6 +37,39 @@ import 'providers/node_overview.dart';
 import 'views/profiles/override_profile.dart';
 
 @visibleForTesting
+bool shouldSkipUnchangedSilentSetup({
+  required bool skipIfUnchanged,
+  required bool isAndroid,
+  required bool isWindows,
+  required bool explicitTunOperation,
+  required bool needsWindowsCoreRestore,
+  required bool hasAppliedWindowsProfile,
+  required String? lastAppliedWindowsProfileId,
+  required String? applyingProfileId,
+  required bool hasActiveTunRepair,
+  required bool hasTunRequestFailure,
+  required bool isCoreInit,
+  required bool matchesCommittedSetup,
+}) {
+  if (!skipIfUnchanged ||
+      isAndroid ||
+      explicitTunOperation ||
+      !isCoreInit ||
+      !matchesCommittedSetup) {
+    return false;
+  }
+  if (isWindows &&
+      (needsWindowsCoreRestore ||
+          !hasAppliedWindowsProfile ||
+          lastAppliedWindowsProfileId != applyingProfileId ||
+          hasActiveTunRepair ||
+          hasTunRequestFailure)) {
+    return false;
+  }
+  return true;
+}
+
+@visibleForTesting
 class AppShutdownEffects {
   const AppShutdownEffects({
     required this.usesAgent,
@@ -825,10 +858,18 @@ class AppController {
 
   void applyProfileDebounce({
     bool silence = false,
+    bool skipIfUnchanged = false,
   }) {
-    debouncer.call(FunctionTag.applyProfile, (silence) {
-      applyProfile(silence: silence);
-    }, args: [silence]);
+    debouncer.call(
+      FunctionTag.applyProfile,
+      (bool silence, bool skipIfUnchanged) {
+        applyProfile(
+          silence: silence,
+          skipIfUnchanged: skipIfUnchanged,
+        );
+      },
+      args: [silence, skipIfUnchanged],
+    );
   }
 
   void savePreferencesDebounce() {
@@ -1532,7 +1573,7 @@ class AppController {
       _ref.read(profilesProvider.notifier).setProfile(mergedProfile);
 
       if (starting.id == _ref.read(currentProfileIdProvider)) {
-        applyProfileDebounce(silence: true);
+        applyProfileDebounce(silence: true, skipIfUnchanged: true);
       }
 
       // Check subscription expiration and show notification if needed
@@ -1937,8 +1978,11 @@ class AppController {
     unawaited(_persistColdStartParams());
   }
 
-  Future<void> _setupClashConfig() async {
+  Future<bool> _setupClashConfig({
+    bool skipIfUnchanged = false,
+  }) async {
     if (Platform.isWindows) {
+      var skippedUnchanged = false;
       TunStatus? preApplyRepairStatus;
       var repairFailedOrCancelled = false;
       for (var pass = 0; pass < 3; pass++) {
@@ -1971,7 +2015,9 @@ class AppController {
           }
           try {
             try {
-              await _setupClashConfigImpl();
+              skippedUnchanged = await _setupClashConfigImpl(
+                skipIfUnchanged: skipIfUnchanged && pass == 0,
+              );
             } finally {
               if (_needsWindowsCoreRestore &&
                   !_pendingWindowsProxyStop &&
@@ -2035,17 +2081,19 @@ class AppController {
         }
         if (!needsFollowUpApply) break;
       }
-      return;
+      return skippedUnchanged;
     }
-    return _setupClashConfigImpl();
+    return _setupClashConfigImpl(skipIfUnchanged: skipIfUnchanged);
   }
 
-  Future<void> _setupClashConfigImpl({
+  Future<bool> _setupClashConfigImpl({
     bool Function()? isCurrent,
     bool syncProviderSettings = true,
+    bool skipIfUnchanged = false,
   }) async {
     final isWindows = Platform.isWindows;
     var configApplied = false;
+    var skippedUnchangedSetup = false;
     if (isWindows) _applyingWindowsConfigDepth++;
     try {
       for (var profileAttempt = 0; profileAttempt < 4; profileAttempt++) {
@@ -2055,12 +2103,12 @@ class AppController {
         bool configurationIsCurrent() =>
             intentIsCurrent() &&
             _ref.read(currentProfileProvider)?.id == applyingProfileId;
-        if (!intentIsCurrent()) return;
+        if (!intentIsCurrent()) return false;
         await applyingProfile?.checkAndUpdate();
-        if (!intentIsCurrent()) return;
+        if (!intentIsCurrent()) return false;
         if (!configurationIsCurrent()) {
           if (isCurrent != null) continue;
-          return;
+          return false;
         }
         var patchConfig = _ref.read(patchClashConfigProvider);
 
@@ -2071,10 +2119,10 @@ class AppController {
           syncedConfig =
               await globalState.syncNetworkSettingsFromProvider(patchConfig,
                   profile: applyingProfile);
-          if (!intentIsCurrent()) return;
+          if (!intentIsCurrent()) return false;
           if (!configurationIsCurrent()) {
             if (isCurrent != null) continue;
-            return;
+            return false;
           }
         }
 
@@ -2135,10 +2183,10 @@ class AppController {
 
         try {
           final applyingModified = await applyingProfile?.profileLastModified;
-          if (!intentIsCurrent()) return;
+          if (!intentIsCurrent()) return false;
           if (!configurationIsCurrent()) {
             if (isCurrent != null) continue;
-            return;
+            return false;
           }
 
           if (isWindows) {
@@ -2159,6 +2207,32 @@ class AppController {
                 if (_ref.read(patchClashConfigProvider) == currentPatchConfig) {
                   debouncer.cancel(FunctionTag.updateClashConfig);
                 }
+                final coreInitialized = await clashCore.isInit == true;
+                if (!configurationIsCurrent()) return '';
+                if (shouldSkipUnchangedSilentSetup(
+                  skipIfUnchanged: skipIfUnchanged,
+                  isAndroid: false,
+                  isWindows: true,
+                  explicitTunOperation: isCurrent != null,
+                  needsWindowsCoreRestore: _needsWindowsCoreRestore,
+                  hasAppliedWindowsProfile: _hasAppliedWindowsProfile,
+                  lastAppliedWindowsProfileId: _lastAppliedWindowsProfileId,
+                  applyingProfileId: applyingProfileId,
+                  hasActiveTunRepair: _activeTunRepair != null,
+                  hasTunRequestFailure: _tunRuntime.requestFailure != null,
+                  isCoreInit: coreInitialized,
+                  matchesCommittedSetup: globalState.matchesCommittedRuntimeSetup(
+                    params,
+                    profileId: applyingProfileId,
+                  ),
+                )) {
+                  setupExecuted = true;
+                  skippedUnchangedSetup = true;
+                  commonPrint.log(
+                    '[config] skipped idempotent setupConfig for unchanged profile=$applyingProfileId',
+                  );
+                  return '';
+                }
                 setupExecuted = true;
                 final message = await clashCore.setupConfig(
                   params,
@@ -2177,29 +2251,54 @@ class AppController {
             );
             if (!setupExecuted) {
               if (isCurrent != null && intentIsCurrent()) continue;
-              return;
+              return false;
             }
             configApplied = true;
           } else {
             final res = await _requestAdmin(patchConfig.tun.enable);
-            if (res.isError || !configurationIsCurrent()) return;
+            if (res.isError || !configurationIsCurrent()) return false;
             final currentPatchConfig = _ref.read(patchClashConfigProvider);
             final realTunEnable = _ref.read(realTunEnableProvider);
             final realPatchConfig =
                 currentPatchConfig.copyWith.tun(enable: realTunEnable);
             final params = await globalState.getSetupParams(
                 pathConfig: realPatchConfig, profile: applyingProfile);
-            if (!configurationIsCurrent()) return;
+            if (!configurationIsCurrent()) return false;
             if (_ref.read(patchClashConfigProvider) == currentPatchConfig) {
               debouncer.cancel(FunctionTag.updateClashConfig);
             }
-            final message = await clashCore.setupConfig(params,
-                profileId: applyingProfileId);
-            if (message.isNotEmpty) {
-              // Don't advance lastProfileModified on a failed/timed-out setup: doing so
-              // would make the next start's recovery re-apply think the profile is
-              // already applied and skip it, leaving a degraded executor in place.
-              throw message;
+            final coreInitialized = await clashCore.isInit == true;
+            if (!configurationIsCurrent()) return false;
+            if (shouldSkipUnchangedSilentSetup(
+              skipIfUnchanged: skipIfUnchanged,
+              isAndroid: Platform.isAndroid,
+              isWindows: false,
+              explicitTunOperation: isCurrent != null,
+              needsWindowsCoreRestore: false,
+              hasAppliedWindowsProfile: true,
+              lastAppliedWindowsProfileId: applyingProfileId,
+              applyingProfileId: applyingProfileId,
+              hasActiveTunRepair: false,
+              hasTunRequestFailure: false,
+              isCoreInit: coreInitialized,
+              matchesCommittedSetup: globalState.matchesCommittedRuntimeSetup(
+                params,
+                profileId: applyingProfileId,
+              ),
+            )) {
+              skippedUnchangedSetup = true;
+              commonPrint.log(
+                '[config] skipped idempotent setupConfig for unchanged profile=$applyingProfileId',
+              );
+            } else {
+              final message = await clashCore.setupConfig(params,
+                  profileId: applyingProfileId);
+              if (message.isNotEmpty) {
+                // Don't advance lastProfileModified on a failed/timed-out setup: doing so
+                // would make the next start's recovery re-apply think the profile is
+                // already applied and skip it, leaving a degraded executor in place.
+                throw message;
+              }
             }
           }
           if (configurationIsCurrent()) lastProfileModified = applyingModified;
@@ -2222,27 +2321,42 @@ class AppController {
     if (isWindows && configApplied) {
       _handlePostConfigTunStatus(_tunRuntime.status);
     }
+    return skippedUnchangedSetup;
   }
 
-  Future _applyProfile({bool silence = false}) async {
+  Future<bool> _applyProfile({
+    bool silence = false,
+    bool skipIfUnchanged = false,
+  }) async {
     clashCore.requestGc();
+    var skippedSetup = false;
     if (silence) {
       // Silent/headless/early-start recovery: bypass the PUBLIC setupClashConfig()
       // scaffold gate + loadingRun (which no-ops when the home scaffold isn't
       // mounted — exactly when recovery is needed — and shows a loading overlay
       // when it is) by re-applying through the private path directly.
-      await _setupClashConfig();
+      skippedSetup = await _setupClashConfig(
+        skipIfUnchanged: skipIfUnchanged,
+      );
     } else {
       await setupClashConfig();
     }
     await updateGroups();
     await updateProviders();
     initForegroundCache();
+    return skippedSetup;
   }
 
-  Future applyProfile({bool silence = false}) async {
+  Future applyProfile({
+    bool silence = false,
+    bool skipIfUnchanged = false,
+  }) async {
+    var skippedSetup = false;
     if (silence) {
-      await _applyProfile(silence: true);
+      skippedSetup = await _applyProfile(
+        silence: true,
+        skipIfUnchanged: skipIfUnchanged,
+      );
     } else {
       final commonScaffoldState = globalState.homeScaffoldKey.currentState;
       if (commonScaffoldState?.mounted != true) return;
@@ -2250,7 +2364,9 @@ class AppController {
         await _applyProfile();
       });
     }
-    addCheckIpNumDebounce();
+    if (!skippedSetup) {
+      addCheckIpNumDebounce();
+    }
     // Re-persist cold-start params so tile/widget/Always-on headless restarts reflect
     // the currently active profile, not a stale one from app init.
     unawaited(_persistColdStartParams());

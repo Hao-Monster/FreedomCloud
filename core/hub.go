@@ -90,17 +90,26 @@ type healthCheckSignature struct {
 }
 
 const (
-	runtimeGCPercent       = 100
-	runtimeMemoryLimitByte = 96 * 1024 * 1024
+	runtimeGCPercent              = 100
+	androidRuntimeMemoryLimitByte = 96 * 1024 * 1024
+	desktopRuntimeMemoryLimitByte = 512 * 1024 * 1024
 )
+
+func runtimeMemoryLimitForGOOS(goos string) int64 {
+	if goos == "android" {
+		return androidRuntimeMemoryLimitByte
+	}
+	return desktopRuntimeMemoryLimitByte
+}
 
 func configureRuntimeMemory() {
 	// GOGC=off retained every allocation until the soft limit, so the core sat
 	// close to its cap even while idle. Go's default proportional collector is a
-	// better throughput/RSS balance; the soft limit remains a last-resort bound
-	// for GEOIP/GEOSITE-heavy profiles.
+	// better throughput/RSS balance; Android keeps a 96 MiB bound against OEM
+	// background killers, whereas desktop uses 512 MiB so GeoSite/GeoIP + Wintun
+	// (~100-140 MiB steady RSS) never triggers continuous soft-limit GC thrashing.
 	debug.SetGCPercent(runtimeGCPercent)
-	debug.SetMemoryLimit(runtimeMemoryLimitByte)
+	debug.SetMemoryLimit(runtimeMemoryLimitForGOOS(runtime.GOOS))
 }
 
 func handleInitClash(paramsString string) bool {
