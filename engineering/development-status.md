@@ -2,6 +2,14 @@
 
 更新日期：2026-11-06。当前阶段是快速开发、快速迭代和部分功能预览。本文记录来源与验收边界；每次继续开发仍需核实实际 Git/PR/CI 状态，不能把历史报告视为当前通过证明。
 
+## Windows 自身探测绕过 TUN 的回归修复与预览包（2026-11-06）
+
+- 来源与根因：用户反馈 `stability-f3295357388a` 的健康检查 D4 报“端到端出口探测失败”，仪表盘第三方 IP 也超时。只读核对确认 Core 能看到 Chrome 的代理连接，但 `FlClashX.exe` 的 IP 请求在 TUN 状态显示开启时被 `FlClashHttpOverrides` 强制返回 `DIRECT`，因此没有进入已工作的本地 Mixed Port；这不能证明节点或 IP JSON 解析坏了。
+- 实现：提交 `fe14dd3abfac37203dd35b860f6a01d320680a21`。Windows 系统代理已启用、运行时 Mixed Port 有效且未配置入站认证时，应用自身请求走 `PROXY 127.0.0.1:<runtime mixed-port>`；端口关闭或存在认证时保留 `DIRECT`。健康检查 D4 优先使用已经核实的 Windows 系统代理入口，不再把“监听器显示 on”当作当前进程直连一定被 TUN 捕获的证据。
+- 验证：Flutter 定向 analyzer **PASS（0 issues）**；仪表盘 IP/健康诊断 **23 PASS / 0 FAIL**；稳定性与 9 项健康修复 **21 PASS / 0 FAIL**；Windows Core/Agent/Helper/UI/native plugin 全量构建、组件绑定及 ZIP 往返审计 **PASS（73 files）**。真实窗口、TUN、节点、系统代理和物理网络验收 **NOT RUN**。
+- 预览包：[`dist/FreedomCloud-windows-amd64-self-probe-fix-fe14dd3abfac`](../dist/FreedomCloud-windows-amd64-self-probe-fix-fe14dd3abfac/)；归档 [`FreedomCloud-windows-amd64-self-probe-fix-fe14dd3abfac.zip`](../dist/FreedomCloud-windows-amd64-self-probe-fix-fe14dd3abfac.zip)，SHA256 `f062b196cbdac423d291acf95dceceb1f566cc5a1b98cc1b6f56d18842539797`。Core SHA256 `e41b3bd4c12cdd8e8126fde2a3c7362efef9bc309503bfb56a700f7245988c37`；完整来源、校验和运行边界见包内 `BUILD-INFO.txt` / `PREVIEW-README.txt` / `COMPONENTS.json`。
+- 交付状态：代码已提交本地 `development`，未推送远端、未创建或合并 PR、远端 CI **NOT RUN**；原 `stability-f3295357388a` 包与用户现有脏文件均保留未覆盖。
+
 ## 数据面长连接稳定性 5 项根因 TDD 修复与全栈预览包交付（2026-11-06）
 
 - 来源：针对用户实机截图反馈在蜂窝热点/长时开发会话（Codex SSE/WebSocket 与 Chrome 集成）下频繁出现 `Reconnecting 1/5`–`5/5` 断流重连，经全栈日志与 Mihomo `v1.19.32` 源码穿透审计确认 5 项数据面根因并完成独立可行性复审，在本地 `development` 按严格 TDD（前置真实 Red → 生产代码 Green → 多层并发竞态与回归校验）一次性闭环实现（代码提交 `f3295357388a2daeaba5e4607bd75cfd31453f9f`）并从干净 `git archive` 全量重编 Windows x64 Release 免安装预览包。
