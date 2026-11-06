@@ -6,7 +6,7 @@
 
 - 实现：本地 `development` 提交 `0152063`。新增稳定、无凭据的 `[startup-timing]` 日志格式，覆盖 `preload`、`componentsMatch`、`authorize`、`ensureBackend`、`setupConfig`、`startListener`、统一实现中的每次 `getTunStatus`、最终 `settle`，以及 Core overlay 中的 `ReCreateTun` 和 `sing_tun.New`。`ReCreateTun` 与 `sing_tun.New` 分开计时，可直接区分 TUN 创建本体和外围生命周期开销。
 - 行为边界：只增加 Stopwatch 和日志，不改变启动顺序、权限请求、超时、状态判断、Agent/Helper 迁移或 TUN 配置。日志只输出固定阶段、耗时、结果、状态和 revision，不输出路径、令牌、订阅或凭据。
-- 验证：`go run ./tools/mihomo-overlay` **PASS**；`go test ./tools/mihomo-overlay -count=1` **PASS**；overlay listener TUN 生命周期测试 **PASS**（`TestFCXTun`，`with_gvisor`）；Core 全包测试 **FAIL/环境阻断**（本机 `cgo.exe` 在 `core/main_cgo.go` 构建阶段退出码 `2`，没有产生有效 C 编译诊断）；Flutter/Dart analyzer 与 Dart 测试 **NOT RUN**（当前 PATH 没有 `flutter`/`dart`）；真实 Windows 窗口、UAC、虚拟网卡启动验收 **NOT RUN**。
+- 验证：`go run ./tools/mihomo-overlay` **PASS**；`go test ./tools/mihomo-overlay -count=1` **PASS**；overlay listener TUN 生命周期测试 **PASS**（`TestFCXTun`，`with_gvisor`）；同一 listener 的 `-race` 链接 **FAIL/环境阻断**（MinGW `gcc.exe` 在链接 `listener.test.exe` 时退出码 `1`，无链接诊断）；Core 全包测试 **FAIL/环境阻断**（本机 `cgo.exe` 在 `core/main_cgo.go` 构建阶段退出码 `2`，没有产生有效 C 编译诊断）；Flutter/Dart analyzer 与 Dart 测试 **NOT RUN**（当前 PATH 没有 `flutter`/`dart`）；真实 Windows 窗口、UAC、虚拟网卡启动验收 **NOT RUN**。
 - 交付状态：已本地提交，未推送远端、未创建或合并 PR。用户原有 `test/views/dashboard_render_test.dart` 修改及 `coverage/`、`engineering/testing/` 未跟踪内容均未暂存、未修改。
 
 ## 桌面端 `gVisor` TUN 恢复、`DefaultRawConfig()` 零值校准与联合 Code Review 5 项缺陷 TDD 收口（2026-11-07）
