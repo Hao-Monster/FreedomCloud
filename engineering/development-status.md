@@ -2,6 +2,13 @@
 
 更新日期：2026-11-07。当前阶段是快速开发、快速迭代和部分功能预览。本文记录来源与验收边界；每次继续开发仍需核实实际 Git/PR/CI 状态，不能把历史报告视为当前通过证明。
 
+## 启动 TUN 分段 Stopwatch 埋点（2026-11-07）
+
+- 实现：本地 `development` 提交 `0152063`。新增稳定、无凭据的 `[startup-timing]` 日志格式，覆盖 `preload`、`componentsMatch`、`authorize`、`ensureBackend`、`setupConfig`、`startListener`、统一实现中的每次 `getTunStatus`、最终 `settle`，以及 Core overlay 中的 `ReCreateTun` 和 `sing_tun.New`。`ReCreateTun` 与 `sing_tun.New` 分开计时，可直接区分 TUN 创建本体和外围生命周期开销。
+- 行为边界：只增加 Stopwatch 和日志，不改变启动顺序、权限请求、超时、状态判断、Agent/Helper 迁移或 TUN 配置。日志只输出固定阶段、耗时、结果、状态和 revision，不输出路径、令牌、订阅或凭据。
+- 验证：`go run ./tools/mihomo-overlay` **PASS**；`go test ./tools/mihomo-overlay -count=1` **PASS**；overlay listener TUN 生命周期测试 **PASS**（`TestFCXTun`，`with_gvisor`）；Core 全包测试 **FAIL/环境阻断**（本机 `cgo.exe` 在 `core/main_cgo.go` 构建阶段退出码 `2`，没有产生有效 C 编译诊断）；Flutter/Dart analyzer 与 Dart 测试 **NOT RUN**（当前 PATH 没有 `flutter`/`dart`）；真实 Windows 窗口、UAC、虚拟网卡启动验收 **NOT RUN**。
+- 交付状态：已本地提交，未推送远端、未创建或合并 PR。用户原有 `test/views/dashboard_render_test.dart` 修改及 `coverage/`、`engineering/testing/` 未跟踪内容均未暂存、未修改。
+
 ## 桌面端 `gVisor` TUN 恢复、`DefaultRawConfig()` 零值校准与联合 Code Review 5 项缺陷 TDD 收口（2026-11-07）
 
 - 来源与根因穿透：针对 `stability-f3295357388a` 实机出现 TUN 开启后非系统代理应用（如 `agy.exe`、健康检查 `D4` 与仪表盘 `DIRECT` 探测）断网超时，以及并发提交 `fe14dd3`–`0afd6b2` 遗留的 5 项架构与实现缺陷（`CR-1`–`CR-5`），经穿透 `FlClashHelperService.log`、Windows Defender 防火墙策略与 Mihomo `v1.19.32` `config.DefaultRawConfig()` 源码确认两项底层根因并完成全量收口（代码提交 `3d9853ca72f0eaed119e6d2e6296cea9e0b2498b`）：
