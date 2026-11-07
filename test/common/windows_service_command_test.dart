@@ -39,7 +39,7 @@ void main() {
         command.indexOf('copy /b /y'), lessThan(command.indexOf('sc create')));
   });
 
-  test('existing helper is repaired in place without deleting it', () {
+  test('existing helper attempts in-place repair first and only recreates on access denied', () {
     final command = buildWindowsHelperRepairCommand(
       serviceExists: true,
       helperPath: helperPath,
@@ -50,8 +50,18 @@ void main() {
     );
 
     expect(command, contains('sc config FlClashHelperService'));
-    expect(command, isNot(contains('sc delete')));
-    expect(command, isNot(contains('sc create')));
+    expect(command, contains('if !fcx_cfg! equ 5 (set fcx_recreate=1)'));
+    expect(command,
+        contains('if !fcx_cfg! equ 0 if !fcx_acl! equ 5 (set fcx_recreate=1)'));
+    expect(command, contains('if !fcx_recreate! equ 1'));
+    expect(
+      command.indexOf('sc config FlClashHelperService'),
+      lessThan(command.indexOf('sc delete FlClashHelperService')),
+    );
+    expect(
+      command.indexOf('sc delete FlClashHelperService'),
+      lessThan(command.indexOf('sc create FlClashHelperService')),
+    );
     // net stop waits for STOPPED so the running helper binary can be replaced.
     expect(command, contains('net stop FlClashHelperService'));
     expect(
@@ -180,7 +190,98 @@ void main() {
       final log = File('${logs.path}\\helper-install.log').readAsStringSync();
       expect(log, contains('begin'));
       expect(log, contains('copy-helper exit=0'));
+      expect(log, isNot(contains('recreate-delete')));
       expect(log, contains('end'));
+    },
+    skip: Platform.isWindows ? false : 'requires cmd.exe',
+  );
+
+  test(
+    'self-locked service SDDL (exit=5) triggers delete-and-recreate fallback while exit=0 stays in place',
+    () async {
+      final root = await Directory.systemTemp.createTemp('flclash-sddl-heal-');
+      addTearDown(() => root.delete(recursive: true));
+      final bin = Directory('${root.path}\\mockbin')..createSync();
+      final source = Directory('${root.path}\\source')..createSync();
+      final service = Directory('${root.path}\\service')..createSync();
+      final logs = Directory('${root.path}\\logs')..createSync();
+      final scTrace = File('${root.path}\\sc-calls.txt');
+
+      File('${source.path}\\FlClashHelperService.exe').writeAsStringSync('new');
+      File('${source.path}\\FlClashCore.exe').writeAsStringSync('core');
+      File('${bin.path}\\net.cmd').writeAsStringSync('@exit /b 0\r\n');
+      File('${bin.path}\\sc.cmd').writeAsStringSync(
+        '@echo %1>>"${scTrace.path}"\r\n'
+        '@if /i "%1"=="config" exit /b %MOCK_SC_CONFIG_EXIT%\r\n'
+        '@if /i "%1"=="sdset" (\r\n'
+        '  if not exist "${root.path}\\recreated.flag" exit /b %MOCK_SC_SDSET_EXIT%\r\n'
+        '  exit /b 0\r\n'
+        ')\r\n'
+        '@if /i "%1"=="create" (\r\n'
+        '  echo ok>"${root.path}\\recreated.flag"\r\n'
+        '  exit /b 0\r\n'
+        ')\r\n'
+        '@exit /b 0\r\n',
+      );
+
+      final command = buildWindowsHelperRepairCommand(
+        serviceExists: true,
+        helperPath: '${source.path}\\FlClashHelperService.exe',
+        corePath: '${source.path}\\FlClashCore.exe',
+        serviceDirectory: service.path,
+        serviceHelperPath: '${service.path}\\FlClashHelperService.exe',
+        serviceCorePath: '${service.path}\\FlClashCore.exe',
+        serviceName: 'FlClashRepairMockService',
+        logDirectory: logs.path,
+      );
+
+      Future<void> runMockRepair({
+        required String configExit,
+        required String sdsetExit,
+      }) async {
+        if (scTrace.existsSync()) scTrace.deleteSync();
+        final recreated = File('${root.path}\\recreated.flag');
+        if (recreated.existsSync()) recreated.deleteSync();
+        final result = await Process.run(
+          'powershell.exe',
+          [
+            '-NoProfile',
+            '-NonInteractive',
+            '-Command',
+            [
+              r'$p = Start-Process -FilePath cmd.exe',
+              r'-ArgumentList $env:FLCLASH_REPAIR_ARGS',
+              r'-WindowStyle Hidden -Wait -PassThru; exit $p.ExitCode',
+            ].join(' '),
+          ],
+          environment: {
+            'PATH': '${bin.path};${Platform.environment['PATH'] ?? ''}',
+            'MOCK_SC_CONFIG_EXIT': configExit,
+            'MOCK_SC_SDSET_EXIT': sdsetExit,
+            'FLCLASH_REPAIR_ARGS': '/d /v:on /s /c "$command"',
+          },
+        );
+        expect(result.stderr.toString().trim(), isEmpty);
+      }
+
+      await runMockRepair(configExit: '0', sdsetExit: '0');
+      final healthyCalls = scTrace
+          .readAsLinesSync()
+          .map((line) => line.trim())
+          .where((line) => line.isNotEmpty)
+          .toList();
+      expect(healthyCalls, ['config', 'sdset', 'start', 'queryex']);
+
+      await runMockRepair(configExit: '5', sdsetExit: '5');
+      final lockedCalls = scTrace
+          .readAsLinesSync()
+          .map((line) => line.trim())
+          .where((line) => line.isNotEmpty)
+          .toList();
+      expect(
+        lockedCalls,
+        ['config', 'sdset', 'delete', 'create', 'sdset', 'start', 'queryex'],
+      );
     },
     skip: Platform.isWindows ? false : 'requires cmd.exe',
   );

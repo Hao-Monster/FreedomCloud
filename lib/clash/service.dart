@@ -227,7 +227,24 @@ class ClashService extends ClashHandlerInterface {
           '--core',
           corePath,
         ];
-        if (Platform.isWindows && await system.checkIsAdmin()) {
+        var tunDesired = false;
+        try {
+          tunDesired = tunRuntime.desiredEnabled ||
+              globalState.config.patchClashConfig.tun.enable;
+        } catch (_) {}
+        if (Platform.isWindows &&
+            await shouldLaunchWindowsAgentWithHelper(
+              tunDesired: tunDesired,
+              isHelperRunning: system.checkIsAdmin,
+              installedFilesMatch: () => windowsInstalledHelperFilesMatch(
+                bundledHelper: appPath.helperPath,
+                bundledCore: appPath.corePath,
+                installedHelper: appPath.windowsServiceHelperPath,
+                installedCore: appPath.windowsServiceCorePath,
+              ),
+              tryStartExistingHelper: () async =>
+                  (await windows?.tryStartExistingService()) ?? false,
+            )) {
           arguments.addAll([
             '--service-core',
             appPath.windowsServiceCorePath,

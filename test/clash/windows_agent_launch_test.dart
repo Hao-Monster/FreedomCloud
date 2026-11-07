@@ -137,4 +137,78 @@ void main() {
       expect(errors, [isA<ProcessException>()]);
     });
   });
+
+  group('cold-start Helper selection boundary', () {
+    test('uses already-running compatible Helper regardless of tunDesired',
+        () async {
+      var startAttempts = 0;
+      expect(
+        await shouldLaunchWindowsAgentWithHelper(
+          tunDesired: false,
+          isHelperRunning: () async => true,
+          installedFilesMatch: () async => fail('need not re-hash on running'),
+          tryStartExistingHelper: () async {
+            startAttempts++;
+            return true;
+          },
+        ),
+        isTrue,
+      );
+      expect(startAttempts, 0);
+    });
+
+    test('does not start stopped Helper when tunDesired is false', () async {
+      var startAttempts = 0;
+      expect(
+        await shouldLaunchWindowsAgentWithHelper(
+          tunDesired: false,
+          isHelperRunning: () async => false,
+          installedFilesMatch: () async => true,
+          tryStartExistingHelper: () async {
+            startAttempts++;
+            return true;
+          },
+        ),
+        isFalse,
+      );
+      expect(startAttempts, 0);
+    });
+
+    test('does not start stopped Helper when installed binaries mismatch',
+        () async {
+      var startAttempts = 0;
+      expect(
+        await shouldLaunchWindowsAgentWithHelper(
+          tunDesired: true,
+          isHelperRunning: () async => false,
+          installedFilesMatch: () async => false,
+          tryStartExistingHelper: () async {
+            startAttempts++;
+            return true;
+          },
+        ),
+        isFalse,
+      );
+      expect(startAttempts, 0);
+    });
+
+    test(
+        'starts stopped compatible Helper without UAC when tunDesired is true',
+        () async {
+      var startAttempts = 0;
+      expect(
+        await shouldLaunchWindowsAgentWithHelper(
+          tunDesired: true,
+          isHelperRunning: () async => false,
+          installedFilesMatch: () async => true,
+          tryStartExistingHelper: () async {
+            startAttempts++;
+            return true;
+          },
+        ),
+        isTrue,
+      );
+      expect(startAttempts, 1);
+    });
+  });
 }

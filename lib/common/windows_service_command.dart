@@ -63,11 +63,30 @@ String buildWindowsHelperRepairCommand({
           '"$serviceDirectory\\$name" $logRedirect')
       .join(' && ');
 
-  final configure = serviceExists
+  final configureAndAcl = serviceExists
       ? 'sc config $serviceName '
-          'binPath= "$serviceHelperPath" start= auto'
+          'binPath= "$serviceHelperPath" start= auto $logRedirect & '
+          '(set fcx_cfg=!errorlevel!) & '
+          '$logMarker configure-service exit=!fcx_cfg! >> "$installLog" 2>&1 & '
+          'sc sdset $serviceName "$serviceSecurity" $logRedirect & '
+          '(set fcx_acl=!errorlevel!) & '
+          '$logMarker set-service-acl exit=!fcx_acl! >> "$installLog" 2>&1 & '
+          '(set fcx_recreate=0) & '
+          '(if !fcx_cfg! equ 5 (set fcx_recreate=1)) & '
+          '(if !fcx_cfg! equ 0 if !fcx_acl! equ 5 (set fcx_recreate=1)) & '
+          '(if !fcx_recreate! equ 1 '
+          'sc delete $serviceName $logRedirect & '
+          '$logMarker recreate-delete exit=!errorlevel! >> "$installLog" 2>&1 & '
+          'sc create $serviceName binPath= "$serviceHelperPath" start= auto '
+          '$logRedirect & '
+          '$logMarker recreate-create exit=!errorlevel! >> "$installLog" 2>&1 & '
+          'sc sdset $serviceName "$serviceSecurity" $logRedirect & '
+          '$logMarker recreate-acl exit=!errorlevel! >> "$installLog" 2>&1)'
       : 'sc create $serviceName '
-          'binPath= "$serviceHelperPath" start= auto';
+          'binPath= "$serviceHelperPath" start= auto $logRedirect & '
+          '$logMarker configure-service exit=!errorlevel! >> "$installLog" 2>&1 & '
+          'sc sdset $serviceName "$serviceSecurity" $logRedirect & '
+          '$logMarker set-service-acl exit=!errorlevel! >> "$installLog" 2>&1';
 
   // cmd.exe treats everything after `if <cond> <command>` on the same line,
   // including `& next`, as the IF body. Unparenthesized, an existing log or
@@ -86,10 +105,7 @@ String buildWindowsHelperRepairCommand({
       '$logMarker copy-core exit=!errorlevel! >> "$installLog" 2>&1 & '
       '$runtimeCopies & '
       '$logMarker copy-runtime exit=!errorlevel! >> "$installLog" 2>&1 & '
-      '$configure $logRedirect & '
-      '$logMarker configure-service exit=!errorlevel! >> "$installLog" 2>&1 & '
-      'sc sdset $serviceName "$serviceSecurity" $logRedirect & '
-      '$logMarker set-service-acl exit=!errorlevel! >> "$installLog" 2>&1 & '
+      '$configureAndAcl & '
       'sc start $serviceName $logRedirect & '
       '$logMarker start-service exit=!errorlevel! >> "$installLog" 2>&1 & '
       'sc queryex $serviceName $logRedirect & '
