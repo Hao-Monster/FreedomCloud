@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flclashx/common/windows_service_command.dart';
+import 'package:flclashx/enum/enum.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -406,6 +407,137 @@ void main() {
     expect(
       windowsServiceConfigReferencesHelper(moved, serviceHelperPath),
       isFalse,
+    );
+    expect(
+      windowsServiceConfigReferencesHelper(
+        r'BINARY_PATH_NAME   : C:\Program Files\FlClashX Service\FlClashHelperService.exe',
+        serviceHelperPath,
+      ),
+      isFalse,
+      reason: 'Unquoted path containing spaces must trigger UAC self-heal',
+    );
+    expect(
+      windowsServiceConfigReferencesHelper(
+        r'BINARY_PATH_NAME   : "C:\Program Files\FlClashX Service\FlClashHelperService.exe.bak"',
+        serviceHelperPath,
+      ),
+      isFalse,
+    );
+    expect(
+      windowsServiceConfigReferencesHelper(
+        r'BINARY_PATH_NAME   : "D:\Wrapper\svc.exe" "C:\Program Files\FlClashX Service\FlClashHelperService.exe"',
+        serviceHelperPath,
+      ),
+      isFalse,
+    );
+    expect(
+      windowsServiceConfigReferencesHelper(
+        r'BINARY_PATH_NAME   : "C:\Program Files\FlClashX Service\FlClashHelperService.exe" --unexpected',
+        serviceHelperPath,
+      ),
+      isFalse,
+    );
+    expect(
+      windowsServiceConfigReferencesHelper(
+        r'二进制路径名称        : "\\?\c:/program files/flclashx service/flclashhelperservice.exe"',
+        serviceHelperPath,
+      ),
+      isTrue,
+    );
+    expect(
+      windowsServiceBinaryPathMatchesHelper(
+        r'C:\FlClashX\FlClashHelperService.exe',
+        r'C:\FlClashX\FlClashHelperService.exe',
+      ),
+      isTrue,
+    );
+  });
+
+  test('SDDL admin repair validator detects self-locked BA/LA DACLs and accepts unlocked DACLs', () {
+    const lockedBa =
+        'D:(A;;CCLCSWRPWPDTLOCRRC;;;SY)(A;;CCLCSWRPWPDTLOCRRC;;;BA)(A;;CCLCSWRPWPLOCRRC;;;IU)(A;;CCLCSWLOCRRC;;;SU)';
+    const lockedLaOnly =
+        'D:(A;;CCLCSWRPWPDTLOCRRC;;;SY)(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;LA)(A;;CCLCSWRPLOCRRC;;;IU)(A;;CCLCSWRPLOCRRC;;;SU)';
+    const explicitDenyBa =
+        'D:(D;;DC;;;BA)(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;SY)(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;BA)';
+    const unlockedHealthy =
+        'D:(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;SY)(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;BA)(A;;CCLCSWRPWPLOCRRC;;;IU)(A;;CCLCSWLOCRRC;;;SU)';
+    const genericAllBa = 'D:(A;;GA;;;SY)(A;;GA;;;BA)';
+    const hexServiceAllAccessBa = 'D:(A;;0xf01ff;;;SY)(A;;0xf01ff;;;BA)';
+
+    expect(windowsServiceSddlAllowsAdminRepair(lockedBa), isFalse);
+    expect(windowsServiceSddlAllowsAdminRepair(lockedLaOnly), isFalse);
+    expect(windowsServiceSddlAllowsAdminRepair(explicitDenyBa), isFalse);
+    expect(windowsServiceSddlAllowsAdminRepair(''), isFalse);
+    expect(windowsServiceSddlAllowsAdminRepair(unlockedHealthy), isTrue);
+    expect(windowsServiceSddlAllowsAdminRepair(genericAllBa), isTrue);
+    expect(windowsServiceSddlAllowsAdminRepair(hexServiceAllAccessBa), isTrue);
+  });
+
+  test('evaluateWindowsHelperServiceHealth downgrades unquoted space binPath or self-locked SDDL to presence', () async {
+    const unlockedHealthy =
+        'D:(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;SY)(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;BA)(A;;CCLCSWRPWPLOCRRC;;;IU)(A;;CCLCSWLOCRRC;;;SU)';
+    const lockedBa =
+        'D:(A;;CCLCSWRPWPDTLOCRRC;;;SY)(A;;CCLCSWRPWPDTLOCRRC;;;BA)(A;;CCLCSWRPWPLOCRRC;;;IU)(A;;CCLCSWLOCRRC;;;SU)';
+
+    expect(
+      await evaluateWindowsHelperServiceHealth(
+        exists: false,
+        isRunning: false,
+        rawBinaryPathName: null,
+        daclSddl: null,
+        expectedHelperPath: serviceHelperPath,
+        pingHelper: () async => true,
+      ),
+      WindowsHelperServiceStatus.none,
+    );
+
+    expect(
+      await evaluateWindowsHelperServiceHealth(
+        exists: true,
+        isRunning: true,
+        rawBinaryPathName: serviceHelperPath, // unquoted with spaces
+        daclSddl: unlockedHealthy,
+        expectedHelperPath: serviceHelperPath,
+        pingHelper: () async => true,
+      ),
+      WindowsHelperServiceStatus.presence,
+    );
+
+    expect(
+      await evaluateWindowsHelperServiceHealth(
+        exists: true,
+        isRunning: true,
+        rawBinaryPathName: '"$serviceHelperPath"',
+        daclSddl: lockedBa,
+        expectedHelperPath: serviceHelperPath,
+        pingHelper: () async => true,
+      ),
+      WindowsHelperServiceStatus.presence,
+    );
+
+    expect(
+      await evaluateWindowsHelperServiceHealth(
+        exists: true,
+        isRunning: true,
+        rawBinaryPathName: '"$serviceHelperPath"',
+        daclSddl: null,
+        expectedHelperPath: serviceHelperPath,
+        pingHelper: () async => true,
+      ),
+      WindowsHelperServiceStatus.presence,
+    );
+
+    expect(
+      await evaluateWindowsHelperServiceHealth(
+        exists: true,
+        isRunning: true,
+        rawBinaryPathName: '"$serviceHelperPath"',
+        daclSddl: unlockedHealthy,
+        expectedHelperPath: serviceHelperPath,
+        pingHelper: () async => true,
+      ),
+      WindowsHelperServiceStatus.running,
     );
   });
 

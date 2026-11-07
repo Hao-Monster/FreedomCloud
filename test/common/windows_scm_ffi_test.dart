@@ -11,12 +11,17 @@ void main() {
       if (!Platform.isWindows) return;
       final win = Windows();
 
-      final eventLog = win.tryQueryServiceSnapshot('EventLog');
+      final eventLog = win.tryQueryServiceSnapshot(
+        'EventLog',
+        includeDaclSddl: true,
+      );
       expect(eventLog, isNotNull);
       expect(eventLog!.exists, isTrue);
       expect(eventLog.state, SERVICE_RUNNING);
       expect(eventLog.binaryPathName, isNotNull);
       expect(eventLog.binaryPathName!.toLowerCase(), contains('svchost'));
+      expect(eventLog.daclSddl, isNotNull);
+      expect(eventLog.daclSddl, startsWith('D:'));
 
       final missing = win.tryQueryServiceSnapshot(
         'FlClashX_Missing_Service_Probe_88421',

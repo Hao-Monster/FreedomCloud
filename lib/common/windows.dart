@@ -12,6 +12,50 @@ import 'package:win32/win32.dart';
 /// failure codes; any value above 32 means the elevated process was launched.
 bool windowsShellExecuteSucceeded(int result) => result > 32;
 
+typedef WindowsShellExecuteNative = Int32 Function(
+  Pointer<Utf16> hwnd,
+  Pointer<Utf16> lpOperation,
+  Pointer<Utf16> lpFile,
+  Pointer<Utf16> lpParameters,
+  Pointer<Utf16> lpDirectory,
+  Int32 nShowCmd,
+);
+
+typedef WindowsShellExecuteDart = int Function(
+  Pointer<Utf16> hwnd,
+  Pointer<Utf16> lpOperation,
+  Pointer<Utf16> lpFile,
+  Pointer<Utf16> lpParameters,
+  Pointer<Utf16> lpDirectory,
+  int nShowCmd,
+);
+
+bool runWindowsShellExecute({
+  required String command,
+  required String arguments,
+  required WindowsShellExecuteDart Function() resolveShellExecute,
+  Allocator allocator = calloc,
+  String operation = 'runas',
+}) {
+  final result = using((arena) {
+    final commandPtr = command.toNativeUtf16(allocator: arena);
+    final argumentsPtr = arguments.toNativeUtf16(allocator: arena);
+    final operationPtr = operation.toNativeUtf16(allocator: arena);
+    final shellExecute = resolveShellExecute();
+    return shellExecute(
+      nullptr,
+      operationPtr,
+      commandPtr,
+      argumentsPtr,
+      nullptr,
+      0,
+    );
+  }, allocator);
+
+  commonPrint.log("windows runas: $command $arguments resultCode:$result");
+  return windowsShellExecuteSucceeded(result);
+}
+
 class Windows {
   factory Windows() {
     _instance ??= Windows._internal();
@@ -145,52 +189,141 @@ class Windows {
     }
   }
 
-  bool runas(String command, String arguments) {
-    final commandPtr = command.toNativeUtf16();
-    final argumentsPtr = arguments.toNativeUtf16();
-    final operationPtr = 'runas'.toNativeUtf16();
-
-    final shellExecute = _shell32.lookupFunction<
-        Int32 Function(
-            Pointer<Utf16> hwnd,
-            Pointer<Utf16> lpOperation,
-            Pointer<Utf16> lpFile,
-            Pointer<Utf16> lpParameters,
-            Pointer<Utf16> lpDirectory,
-            Int32 nShowCmd),
-        int Function(
-            Pointer<Utf16> hwnd,
-            Pointer<Utf16> lpOperation,
-            Pointer<Utf16> lpFile,
-            Pointer<Utf16> lpParameters,
-            Pointer<Utf16> lpDirectory,
-            int nShowCmd)>('ShellExecuteW');
-
-    final result = shellExecute(
-      nullptr,
-      operationPtr,
-      commandPtr,
-      argumentsPtr,
-      nullptr,
-      0,
-    );
-
-    calloc.free(commandPtr);
-    calloc.free(argumentsPtr);
-    calloc.free(operationPtr);
-
-    commonPrint.log("windows runas: $command $arguments resultCode:$result");
-
-    return windowsShellExecuteSucceeded(result);
-  }
+  bool runas(String command, String arguments) => runWindowsShellExecute(
+        command: command,
+        arguments: arguments,
+        resolveShellExecute: () => _shell32.lookupFunction<
+            WindowsShellExecuteNative,
+            WindowsShellExecuteDart>('ShellExecuteW'),
+      );
 
   static const int _scManagerConnect = 0x0001;
   static const int _serviceQueryConfig = 0x0001;
   static const int _serviceQueryStatus = 0x0004;
+  static const int _readControl = 0x00020000;
+  static const int _daclSecurityInformation = 0x00000004;
+  static const int _sddlRevision1 = 1;
 
-  ({bool exists, int? state, String? binaryPathName})? tryQueryServiceSnapshot(
+  DynamicLibrary? _advapi32;
+  DynamicLibrary? _kernel32;
+
+  int Function(
+    int hService,
+    int dwSecurityInformation,
+    Pointer<Uint8> lpSecurityDescriptor,
+    int cbBufSize,
+    Pointer<Uint32> pcbBytesNeeded,
+  )? _queryServiceObjectSecurity;
+
+  int Function(
+    Pointer<Uint8> securityDescriptor,
+    int requestedStringSdRevision,
+    int securityInformation,
+    Pointer<Pointer<Utf16>> stringSecurityDescriptor,
+    Pointer<Uint32> stringSecurityDescriptorLen,
+  )? _convertSdToStringSd;
+
+  int Function(Pointer<NativeType> hMem)? _localFree;
+
+  String? _tryQueryServiceDaclSddl(
+    int scm,
+    Pointer<Utf16> serviceNamePtr,
+    Arena arena,
+  ) {
+    final secService = OpenService(scm, serviceNamePtr, _readControl);
+    if (secService == 0) return null;
+    try {
+      final advapi = _advapi32 ??= DynamicLibrary.open('advapi32.dll');
+      final querySecurity = _queryServiceObjectSecurity ??= advapi
+          .lookupFunction<
+              Int32 Function(
+                IntPtr hService,
+                Uint32 dwSecurityInformation,
+                Pointer<Uint8> lpSecurityDescriptor,
+                Uint32 cbBufSize,
+                Pointer<Uint32> pcbBytesNeeded,
+              ),
+              int Function(
+                int hService,
+                int dwSecurityInformation,
+                Pointer<Uint8> lpSecurityDescriptor,
+                int cbBufSize,
+                Pointer<Uint32> pcbBytesNeeded,
+              )>('QueryServiceObjectSecurity');
+      final convertSd = _convertSdToStringSd ??= advapi.lookupFunction<
+          Int32 Function(
+            Pointer<Uint8> securityDescriptor,
+            Uint32 requestedStringSdRevision,
+            Uint32 securityInformation,
+            Pointer<Pointer<Utf16>> stringSecurityDescriptor,
+            Pointer<Uint32> stringSecurityDescriptorLen,
+          ),
+          int Function(
+            Pointer<Uint8> securityDescriptor,
+            int requestedStringSdRevision,
+            int securityInformation,
+            Pointer<Pointer<Utf16>> stringSecurityDescriptor,
+            Pointer<Uint32> stringSecurityDescriptorLen,
+          )>('ConvertSecurityDescriptorToStringSecurityDescriptorW');
+      final freeLocal = _localFree ??=
+          (_kernel32 ??= DynamicLibrary.open('kernel32.dll')).lookupFunction<
+              IntPtr Function(Pointer<NativeType> hMem),
+              int Function(Pointer<NativeType> hMem)>('LocalFree');
+
+      final probeBuf = arena<Uint8>(4);
+      final bytesNeeded = arena<Uint32>();
+      querySecurity(
+        secService,
+        _daclSecurityInformation,
+        probeBuf,
+        0,
+        bytesNeeded,
+      );
+      final needed = bytesNeeded.value;
+      if (needed == 0 || needed > 65536) return null;
+
+      final sdBuffer = arena<Uint8>(needed);
+      if (querySecurity(
+            secService,
+            _daclSecurityInformation,
+            sdBuffer,
+            needed,
+            bytesNeeded,
+          ) ==
+          0) {
+        return null;
+      }
+
+      final outStringPtr = arena<Pointer<Utf16>>();
+      if (convertSd(
+            sdBuffer,
+            _sddlRevision1,
+            _daclSecurityInformation,
+            outStringPtr,
+            nullptr,
+          ) ==
+          0) {
+        return null;
+      }
+      final sddlPtr = outStringPtr.value;
+      if (sddlPtr == nullptr) return null;
+      try {
+        return sddlPtr.toDartString();
+      } finally {
+        freeLocal(sddlPtr);
+      }
+    } catch (_) {
+      return null;
+    } finally {
+      CloseServiceHandle(secService);
+    }
+  }
+
+  ({bool exists, int? state, String? binaryPathName, String? daclSddl})?
+      tryQueryServiceSnapshot(
     String serviceName, {
     bool includeConfig = true,
+    bool includeDaclSddl = false,
   }) {
     try {
       return using((arena) {
@@ -216,7 +349,12 @@ class Windows {
                 phkResult,
               );
               if (regStatus == ERROR_FILE_NOT_FOUND) {
-                return (exists: false, state: null, binaryPathName: null);
+                return (
+                  exists: false,
+                  state: null,
+                  binaryPathName: null,
+                  daclSddl: null,
+                );
               }
               if (regStatus == ERROR_SUCCESS) {
                 RegCloseKey(phkResult.value);
@@ -230,8 +368,16 @@ class Windows {
               return null;
             }
             final state = statusPtr.ref.dwCurrentState;
+            final daclSddl = includeDaclSddl
+                ? _tryQueryServiceDaclSddl(scm, namePtr, arena)
+                : null;
             if (!includeConfig) {
-              return (exists: true, state: state, binaryPathName: null);
+              return (
+                exists: true,
+                state: state,
+                binaryPathName: null,
+                daclSddl: daclSddl,
+              );
             }
             final bytesNeeded = arena<Uint32>();
             QueryServiceConfig(service, nullptr, 0, bytesNeeded);
@@ -248,7 +394,12 @@ class Windows {
             final binaryPtr = configPtr.ref.lpBinaryPathName;
             final binaryPath =
                 binaryPtr == nullptr ? '' : binaryPtr.toDartString();
-            return (exists: true, state: state, binaryPathName: binaryPath);
+            return (
+              exists: true,
+              state: state,
+              binaryPathName: binaryPath,
+              daclSddl: daclSddl,
+            );
           } finally {
             CloseServiceHandle(service);
           }
@@ -262,22 +413,19 @@ class Windows {
   }
 
   Future<WindowsHelperServiceStatus> checkService() async {
-    final snapshot = tryQueryServiceSnapshot(appHelperService);
+    final snapshot = tryQueryServiceSnapshot(
+      appHelperService,
+      includeDaclSddl: true,
+    );
     if (snapshot != null) {
-      if (!snapshot.exists) {
-        return WindowsHelperServiceStatus.none;
-      }
-      final binaryPath = snapshot.binaryPathName ?? '';
-      if (!windowsServiceConfigReferencesHelper(
-        'BINARY_PATH_NAME   : $binaryPath',
-        appPath.windowsServiceHelperPath,
-      )) {
-        return WindowsHelperServiceStatus.presence;
-      }
-      if (snapshot.state == SERVICE_RUNNING && await request.pingHelper()) {
-        return WindowsHelperServiceStatus.running;
-      }
-      return WindowsHelperServiceStatus.presence;
+      return evaluateWindowsHelperServiceHealth(
+        exists: snapshot.exists,
+        isRunning: snapshot.state == SERVICE_RUNNING,
+        rawBinaryPathName: snapshot.binaryPathName ?? '',
+        daclSddl: snapshot.daclSddl,
+        expectedHelperPath: appPath.windowsServiceHelperPath,
+        pingHelper: request.pingHelper,
+      );
     }
 
     final result = await Process.run('sc', ['query', appHelperService]);
@@ -285,18 +433,16 @@ class Windows {
       return WindowsHelperServiceStatus.none;
     }
     final configuration = await Process.run('sc', ['qc', appHelperService]);
-    if (configuration.exitCode != 0 ||
-        !windowsServiceConfigReferencesHelper(
-          configuration.stdout.toString(),
-          appPath.windowsServiceHelperPath,
-        )) {
-      return WindowsHelperServiceStatus.presence;
-    }
-    final output = result.stdout.toString();
-    if (windowsServiceQueryIsRunning(output) && await request.pingHelper()) {
-      return WindowsHelperServiceStatus.running;
-    }
-    return WindowsHelperServiceStatus.presence;
+    final sdshow = await Process.run('sc', ['sdshow', appHelperService]);
+    return evaluateWindowsHelperServiceHealth(
+      exists: true,
+      isRunning: windowsServiceQueryIsRunning(result.stdout.toString()),
+      qcOutput:
+          configuration.exitCode == 0 ? configuration.stdout.toString() : '',
+      daclSddl: sdshow.exitCode == 0 ? sdshow.stdout.toString() : null,
+      expectedHelperPath: appPath.windowsServiceHelperPath,
+      pingHelper: request.pingHelper,
+    );
   }
 
   /// Install the helper service (requires UAC elevation).

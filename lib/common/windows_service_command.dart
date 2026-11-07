@@ -2,6 +2,8 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:flclashx/enum/enum.dart';
+
 const windowsHelperServiceName = 'FlClashHelperService';
 
 /// Win32 Advapi32 routine that recovers a legacy self-locked service whose SDDL
@@ -237,11 +239,183 @@ void _validateWindowsPath(String value, String name) {
   }
 }
 
-bool windowsServiceConfigReferencesHelper(String output, String helperPath) {
-  String normalize(String value) =>
-      value.replaceAll('/', r'\').replaceAll(r'\\?\', '').toLowerCase();
+String _normalizeWindowsComparablePath(String value) {
+  var normalized = value.trim().replaceAll('/', r'\');
+  if (normalized.toLowerCase().startsWith(r'\\?\unc\')) {
+    normalized = r'\\' + normalized.substring(8);
+  } else if (normalized.startsWith(r'\\?\')) {
+    normalized = normalized.substring(4);
+  }
+  if (normalized.startsWith(r'\\')) {
+    normalized =
+        r'\\' + normalized.substring(2).replaceAll(RegExp(r'\\+'), r'\');
+  } else {
+    normalized = normalized.replaceAll(RegExp(r'\\+'), r'\');
+  }
+  return normalized.toLowerCase();
+}
 
-  return normalize(output).contains(normalize(helperPath));
+/// Validates that SCM's raw `BINARY_PATH_NAME` value points to the exact
+/// helper executable without extra arguments, suffix collisions, or unquoted
+/// whitespace paths (which require one-time UAC self-heal to quote `binPath`).
+bool windowsServiceBinaryPathMatchesHelper(
+  String rawBinaryPathName,
+  String helperPath,
+) {
+  final trimmed = rawBinaryPathName.trim();
+  if (trimmed.isEmpty) return false;
+  final normalizedExpected = _normalizeWindowsComparablePath(helperPath);
+  if (normalizedExpected.isEmpty) return false;
+
+  if (trimmed.startsWith('"')) {
+    final closingQuote = trimmed.indexOf('"', 1);
+    if (closingQuote < 0) return false;
+    if (trimmed.substring(closingQuote + 1).trim().isNotEmpty) {
+      return false;
+    }
+    final executable = trimmed.substring(1, closingQuote);
+    return _normalizeWindowsComparablePath(executable) == normalizedExpected;
+  }
+
+  if (RegExp(r'\s').hasMatch(trimmed)) {
+    return false;
+  }
+  return _normalizeWindowsComparablePath(trimmed) == normalizedExpected;
+}
+
+bool windowsServiceConfigReferencesHelper(String output, String helperPath) {
+  final lines = const LineSplitter().convert(output);
+  final englishMatch = RegExp(
+    r'^\s*BINARY_PATH_NAME\s*:\s*(.*)$',
+    caseSensitive: false,
+  );
+  for (final line in lines) {
+    final match = englishMatch.firstMatch(line);
+    if (match != null) {
+      return windowsServiceBinaryPathMatchesHelper(
+        match.group(1) ?? '',
+        helperPath,
+      );
+    }
+  }
+
+  final localizedPathLine = RegExp(
+    r'^[^:\r\n]+:\s*("?(?:\\\\\?\\)?[a-zA-Z]:[\\/].*|"?\\\\[^?].*)$',
+  );
+  for (final line in lines) {
+    final match = localizedPathLine.firstMatch(line);
+    if (match != null) {
+      return windowsServiceBinaryPathMatchesHelper(
+        match.group(1) ?? '',
+        helperPath,
+      );
+    }
+  }
+  return false;
+}
+
+const int _sddlCapChangeConfig = 1 << 0;
+const int _sddlCapWriteDac = 1 << 1;
+const int _sddlCapDelete = 1 << 2;
+const int _sddlCapRequiredMask =
+    _sddlCapChangeConfig | _sddlCapWriteDac | _sddlCapDelete;
+
+int _parseSddlRepairRightsMask(String rawRights) {
+  final rights = rawRights.trim().toUpperCase();
+  if (rights.isEmpty) return 0;
+  if (rights.startsWith('0X')) {
+    final bitmask = int.tryParse(rights.substring(2), radix: 16) ?? 0;
+    if ((bitmask & 0x10000000) != 0) {
+      return _sddlCapRequiredMask;
+    }
+    var granted = 0;
+    if ((bitmask & 0x00000002) != 0) granted |= _sddlCapChangeConfig;
+    if ((bitmask & 0x00040000) != 0) granted |= _sddlCapWriteDac;
+    if ((bitmask & 0x00010000) != 0) granted |= _sddlCapDelete;
+    return granted;
+  }
+
+  var granted = 0;
+  for (var i = 0; i + 2 <= rights.length; i += 2) {
+    switch (rights.substring(i, i + 2)) {
+      case 'GA':
+        return _sddlCapRequiredMask;
+      case 'DC':
+        granted |= _sddlCapChangeConfig;
+      case 'WD':
+        granted |= _sddlCapWriteDac;
+      case 'SD':
+        granted |= _sddlCapDelete;
+    }
+  }
+  return granted;
+}
+
+/// Checks that the service DACL grants Built-in Administrators (`BA` /
+/// `S-1-5-32-544`) `SERVICE_CHANGE_CONFIG` (`DC`), `WRITE_DAC` (`WD`), and
+/// `DELETE` (`SD`) without a conflicting Deny ACE. Legacy self-locked SDDLs
+/// return `false` so `checkService()` downgrades to `presence` for self-heal.
+bool windowsServiceSddlAllowsAdminRepair(String sddl) {
+  final trimmed = sddl.trim();
+  final daclIndex = trimmed.toUpperCase().indexOf('D:');
+  if (daclIndex < 0) return false;
+  var daclSection = trimmed.substring(daclIndex + 2);
+  final saclMatch = RegExp(r'(?:^|\))S:', caseSensitive: false)
+      .firstMatch(daclSection);
+  if (saclMatch != null) {
+    final cut = daclSection[saclMatch.start] == ')'
+        ? saclMatch.start + 1
+        : saclMatch.start;
+    daclSection = daclSection.substring(0, cut);
+  }
+
+  var granted = 0;
+  for (final aceMatch in RegExp(r'\(([^)]*)\)').allMatches(daclSection)) {
+    final parts = (aceMatch.group(1) ?? '').split(';');
+    if (parts.length != 6) continue;
+    final trustee = parts[5].trim().toUpperCase();
+    if (trustee != 'BA' && trustee != 'S-1-5-32-544') continue;
+    final aceType = parts[0].trim().toUpperCase();
+    final mask = _parseSddlRepairRightsMask(parts[2]);
+    if (aceType == 'D' && (mask & _sddlCapRequiredMask) != 0) {
+      return false;
+    }
+    if (aceType == 'A') {
+      granted |= mask;
+    }
+  }
+  return (granted & _sddlCapRequiredMask) == _sddlCapRequiredMask;
+}
+
+Future<WindowsHelperServiceStatus> evaluateWindowsHelperServiceHealth({
+  required bool exists,
+  required bool isRunning,
+  String? rawBinaryPathName,
+  String? qcOutput,
+  required String? daclSddl,
+  required String expectedHelperPath,
+  required Future<bool> Function() pingHelper,
+}) async {
+  if (!exists) {
+    return WindowsHelperServiceStatus.none;
+  }
+  final pathValid = rawBinaryPathName != null
+      ? windowsServiceBinaryPathMatchesHelper(
+          rawBinaryPathName,
+          expectedHelperPath,
+        )
+      : (qcOutput != null &&
+          windowsServiceConfigReferencesHelper(qcOutput, expectedHelperPath));
+  if (!pathValid) {
+    return WindowsHelperServiceStatus.presence;
+  }
+  if (daclSddl == null || !windowsServiceSddlAllowsAdminRepair(daclSddl)) {
+    return WindowsHelperServiceStatus.presence;
+  }
+  if (isRunning && await pingHelper()) {
+    return WindowsHelperServiceStatus.running;
+  }
+  return WindowsHelperServiceStatus.presence;
 }
 
 bool windowsServiceQueryIsRunning(String output) =>
