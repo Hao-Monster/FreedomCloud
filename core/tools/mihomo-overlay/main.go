@@ -33,6 +33,8 @@ const controllerSHA256 = "01724bd82002cf80b85448ef664ca53a7cb82f529ccf2b7f4a6383
 const adapterSHA256 = "0a0524f342ff1672fdb94ad675d176d069b1f6e16ddfe462ece2f55b9e10212c"
 const dnsDoHSHA256 = "1ba0170bed4aabf6b295471f9fddb03da20122d339526a97170dff537fbde57b"
 const converterSHA256 = "503aac2968628ab826f8208d620bcd5939ca67219426cf0189fab76346626ede"
+const ifaceSHA256 = "67d3d4f54999bdb6875ef87cdbb87c61d5f9e299aa20c1108de3e391eac18605"
+const singTunServerSHA256 = "8b0d766e346aa5a36ec40dc66c1fe7cd3466ead48a687cfb4a262342ca9a3335"
 
 func patchController(source []byte) ([]byte, error) {
 	fset := token.NewFileSet()
@@ -225,6 +227,183 @@ func patchDNSDoH(source []byte) ([]byte, error) {
 	return format.Source([]byte(patched))
 }
 
+func patchIface(source []byte) ([]byte, error) {
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "iface.go", source, 0)
+	if err != nil {
+		return nil, err
+	}
+	var changes []replacement
+	for _, declaration := range file.Decls {
+		fn, ok := declaration.(*ast.FuncDecl)
+		if !ok || fn.Name.Name != "getCache" {
+			continue
+		}
+		if fn.Recv != nil {
+			return nil, fmt.Errorf("upstream iface getCache became a method")
+		}
+		changes = append(changes, replacement{
+			fset.Position(fn.Pos()).Offset,
+			fset.Position(fn.End()).Offset,
+			`func getCache() (*ifaceCache, error) {
+	value, err, _ := caches.Do(func() (*ifaceCache, error) {
+		return fcxBuildIfaceCache()
+	})
+	return value, err
+}`,
+		})
+	}
+	if len(changes) != 1 {
+		return nil, fmt.Errorf("upstream iface getCache declaration changed")
+	}
+	patched := string(source)
+	for _, change := range changes {
+		patched = patched[:change.start] + change.text + patched[change.end:]
+	}
+	const anetImport = "\t\"github.com/metacubex/mihomo/component/iface/anet\"\n"
+	if strings.Count(patched, anetImport) != 1 {
+		return nil, fmt.Errorf("upstream iface anet import changed")
+	}
+	patched = strings.Replace(patched, anetImport, "", 1)
+	return format.Source([]byte(patched))
+}
+
+func patchSingTunServer(source []byte) ([]byte, error) {
+	fset := token.NewFileSet()
+	if _, err := parser.ParseFile(fset, "server.go", source, 0); err != nil {
+		return nil, err
+	}
+	patched := string(source)
+
+	const monitorAnchor = `		networkUpdateMonitor, err = tun.NewNetworkUpdateMonitor(log.SingLogger)
+		if err != nil {
+			err = E.Cause(err, "create NetworkUpdateMonitor")
+			return
+		}
+		l.networkUpdateMonitor = networkUpdateMonitor
+		err = networkUpdateMonitor.Start()
+		if err != nil {
+			err = E.Cause(err, "start NetworkUpdateMonitor")
+			return
+		}
+
+		overrideAndroidVPN := true
+		if disable, _ := strconv.ParseBool(os.Getenv("DISABLE_OVERRIDE_ANDROID_VPN")); disable {
+			overrideAndroidVPN = false
+		}
+		defaultInterfaceMonitor, err = tun.NewDefaultInterfaceMonitor(networkUpdateMonitor, log.SingLogger, tun.DefaultInterfaceMonitorOptions{InterfaceFinder: interfaceFinder, OverrideAndroidVPN: overrideAndroidVPN})
+		if err != nil {
+			err = E.Cause(err, "create DefaultInterfaceMonitor")
+			return
+		}
+		l.defaultInterfaceMonitor = defaultInterfaceMonitor
+		defaultInterfaceMonitor.RegisterCallback(func(defaultInterface *control.Interface, event int) {
+			if defaultInterface != nil {
+				log.Warnln("[TUN] default interface changed by monitor, => %s", defaultInterface.Name)
+			} else {
+				log.Errorln("[TUN] default interface lost by monitor")
+			}
+			iface.FlushCache()
+			resolver.ResetConnection() // reset resolver's connection after default interface changed
+		})
+		err = defaultInterfaceMonitor.Start()
+		if err != nil {
+			err = E.Cause(err, "start DefaultInterfaceMonitor")
+			return
+		}`
+	const monitorReplacement = `		monitorsStartedAt := fcxSingTunTimingStart()
+		networkUpdateMonitor, err = tun.NewNetworkUpdateMonitor(log.SingLogger)
+		if err != nil {
+			fcxLogSingTunStage("sing_tun.monitors", monitorsStartedAt, err)
+			err = E.Cause(err, "create NetworkUpdateMonitor")
+			return
+		}
+		l.networkUpdateMonitor = networkUpdateMonitor
+		err = networkUpdateMonitor.Start()
+		if err != nil {
+			fcxLogSingTunStage("sing_tun.monitors", monitorsStartedAt, err)
+			err = E.Cause(err, "start NetworkUpdateMonitor")
+			return
+		}
+
+		overrideAndroidVPN := true
+		if disable, _ := strconv.ParseBool(os.Getenv("DISABLE_OVERRIDE_ANDROID_VPN")); disable {
+			overrideAndroidVPN = false
+		}
+		defaultInterfaceMonitor, err = tun.NewDefaultInterfaceMonitor(networkUpdateMonitor, log.SingLogger, tun.DefaultInterfaceMonitorOptions{InterfaceFinder: interfaceFinder, OverrideAndroidVPN: overrideAndroidVPN})
+		if err != nil {
+			fcxLogSingTunStage("sing_tun.monitors", monitorsStartedAt, err)
+			err = E.Cause(err, "create DefaultInterfaceMonitor")
+			return
+		}
+		l.defaultInterfaceMonitor = defaultInterfaceMonitor
+		err = defaultInterfaceMonitor.Start()
+		if err != nil {
+			fcxLogSingTunStage("sing_tun.monitors", monitorsStartedAt, err)
+			err = E.Cause(err, "start DefaultInterfaceMonitor")
+			return
+		}
+		defaultInterfaceMonitor.RegisterCallback(func(defaultInterface *control.Interface, event int) {
+			if defaultInterface != nil {
+				log.Warnln("[TUN] default interface changed by monitor, => %s", defaultInterface.Name)
+			} else {
+				log.Errorln("[TUN] default interface lost by monitor")
+			}
+			iface.FlushCache()
+			resolver.ResetConnection() // reset resolver's connection after default interface changed
+		})
+		fcxLogSingTunStage("sing_tun.monitors", monitorsStartedAt, nil)`
+
+	const deviceAnchor = `	tunIf, err := tunNew(tunOptions)
+	if err != nil {
+		err = E.Cause(err, "configure tun interface")
+		return
+	}`
+	const deviceReplacement = `	tunDeviceStartedAt := fcxSingTunTimingStart()
+	tunIf, err := tunNew(tunOptions)
+	fcxLogSingTunStage("sing_tun.device", tunDeviceStartedAt, err)
+	if err != nil {
+		err = E.Cause(err, "configure tun interface")
+		return
+	}`
+
+	const stackAnchor = `	tunStack, err := tun.NewStack(strings.ToLower(options.Stack.String()), stackOptions)
+	if err != nil {
+		return
+	}
+
+	err = tunStack.Start()
+	if err != nil {
+		return
+	}`
+	const stackReplacement = `	tunStackStartedAt := fcxSingTunTimingStart()
+	tunStack, err := tun.NewStack(strings.ToLower(options.Stack.String()), stackOptions)
+	if err != nil {
+		fcxLogSingTunStage("sing_tun.stack", tunStackStartedAt, err)
+		return
+	}
+
+	err = tunStack.Start()
+	fcxLogSingTunStage("sing_tun.stack", tunStackStartedAt, err)
+	if err != nil {
+		return
+	}`
+
+	for _, pair := range []struct {
+		name, anchor, replacement string
+	}{
+		{"monitors", monitorAnchor, monitorReplacement},
+		{"device", deviceAnchor, deviceReplacement},
+		{"stack", stackAnchor, stackReplacement},
+	} {
+		if strings.Count(patched, pair.anchor) != 1 {
+			return nil, fmt.Errorf("upstream sing_tun %s block changed", pair.name)
+		}
+		patched = strings.Replace(patched, pair.anchor, pair.replacement, 1)
+	}
+	return format.Source([]byte(patched))
+}
+
 func generate(out string) error {
 	command := exec.Command("go", "list", "-m", "-json", "github.com/metacubex/mihomo")
 	data, err := command.Output()
@@ -321,6 +500,22 @@ func convertsV2RayFCX(buf []byte, diagnostics bool) ([]map[string]any, error) {`
 	if err != nil {
 		return err
 	}
+	ifaceSource, err := checkedSource(filepath.Join(module.Dir, "component", "iface", "iface.go"), ifaceSHA256)
+	if err != nil {
+		return err
+	}
+	patchedIface, err := patchIface(ifaceSource)
+	if err != nil {
+		return err
+	}
+	singTunServerSource, err := checkedSource(filepath.Join(module.Dir, "listener", "sing_tun", "server.go"), singTunServerSHA256)
+	if err != nil {
+		return err
+	}
+	patchedSingTunServer, err := patchSingTunServer(singTunServerSource)
+	if err != nil {
+		return err
+	}
 	out, err = filepath.Abs(out)
 	if err != nil {
 		return err
@@ -375,6 +570,42 @@ func convertsV2RayFCX(buf []byte, diagnostics bool) ([]map[string]any, error) {`
 	if err := write(filepath.Join(sourceDirectory, "common", "convert", "converter.go"), "catalog_converter.go", converterSource); err != nil {
 		return err
 	}
+	if err := write(filepath.Join(sourceDirectory, "component", "iface", "iface.go"), "iface.go", patchedIface); err != nil {
+		return err
+	}
+	if err := write(filepath.Join(sourceDirectory, "listener", "sing_tun", "server.go"), "sing_tun_server.go", patchedSingTunServer); err != nil {
+		return err
+	}
+	for _, name := range []string{
+		"iface_cache_fcx.go",
+		"iface_other_fcx.go",
+		"iface_windows_fcx.go",
+		"iface_fcx_test.go",
+		"iface_windows_fcx_test.go",
+	} {
+		contents, err := patchFiles.ReadFile("patches/" + name + ".txt")
+		if err != nil {
+			return err
+		}
+		contents, err = format.Source(contents)
+		if err != nil {
+			return err
+		}
+		if err := write(filepath.Join(sourceDirectory, "component", "iface", name), name, contents); err != nil {
+			return err
+		}
+	}
+	singTunTiming, err := patchFiles.ReadFile("patches/sing_tun_timing_fcx.go.txt")
+	if err != nil {
+		return err
+	}
+	singTunTiming, err = format.Source(singTunTiming)
+	if err != nil {
+		return err
+	}
+	if err := write(filepath.Join(sourceDirectory, "listener", "sing_tun", "sing_tun_timing_fcx.go"), "sing_tun_timing_fcx.go", singTunTiming); err != nil {
+		return err
+	}
 	dnsTests, err := patchFiles.ReadFile("patches/dns_doh_lifecycle_fcx_test.go.txt")
 	if err != nil {
 		return err
@@ -423,7 +654,7 @@ func convertsV2RayFCX(buf []byte, diagnostics bool) ([]map[string]any, error) {`
 			return err
 		}
 	}
-	for _, name := range []string{"tun_status_fcx.go", "tun_status_fcx_test.go"} {
+	for _, name := range []string{"tun_status_fcx.go", "tun_usable_other_fcx.go", "tun_usable_windows_fcx.go", "tun_status_fcx_test.go"} {
 		contents, err := patchFiles.ReadFile("patches/" + name + ".txt")
 		if err != nil {
 			return err
@@ -518,7 +749,7 @@ func convertsV2RayFCX(buf []byte, diagnostics bool) ([]map[string]any, error) {`
 	manifest, err := json.MarshalIndent(map[string]any{
 		"schemaVersion": 1, "module": "github.com/metacubex/mihomo", "version": upstreamVersion,
 		"commit": upstreamCommit, "moduleSum": module.Sum,
-		"upstreamSourceSHA256": map[string]string{"listener/listener.go": listenerSHA256, "hub/route/configs.go": configsSHA256, "hub/route/server.go": controllerSHA256, "adapter/adapter.go": adapterSHA256, "dns/doh.go": dnsDoHSHA256, "common/convert/converter.go": converterSHA256},
+		"upstreamSourceSHA256": map[string]string{"listener/listener.go": listenerSHA256, "listener/sing_tun/server.go": singTunServerSHA256, "component/iface/iface.go": ifaceSHA256, "hub/route/configs.go": configsSHA256, "hub/route/server.go": controllerSHA256, "adapter/adapter.go": adapterSHA256, "dns/doh.go": dnsDoHSHA256, "common/convert/converter.go": converterSHA256},
 		"patchesSHA256":        patchHashes, "generatorSHA256": digest(generatorSource), "projectGoModSHA256": digest(rootMod),
 		"effectiveModuleSHA256": aggregateHashes(moduleHashes), "effectiveModuleFiles": moduleHashes,
 	}, "", "  ")

@@ -1,0 +1,25 @@
+package sing_tun
+
+import (
+	"time"
+
+	"github.com/metacubex/mihomo/log"
+)
+
+var fcxSingTunTimingHook func(stage string, elapsed time.Duration, outcome string)
+
+func fcxSingTunTimingStart() time.Time {
+	return time.Now()
+}
+
+func fcxLogSingTunStage(stage string, startedAt time.Time, err error) {
+	outcome := "ok"
+	if err != nil {
+		outcome = "error"
+	}
+	elapsed := time.Since(startedAt)
+	if hook := fcxSingTunTimingHook; hook != nil {
+		hook(stage, elapsed, outcome)
+	}
+	log.Infoln("[startup-timing] stage=%s elapsedMs=%d outcome=%s", stage, elapsed.Milliseconds(), outcome)
+}

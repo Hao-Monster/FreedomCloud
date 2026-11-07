@@ -100,6 +100,10 @@ func observeTunInterface(name string) string {
 	if name == "" {
 		return "unknown"
 	}
+	return observePlatformTunInterface(name)
+}
+
+func observeTunInterfaceByEnumeration(name string) string {
 	interfaces, err := net.Interfaces()
 	if err != nil {
 		return "unknown"

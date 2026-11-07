@@ -166,3 +166,156 @@ func TestContentAddressedPublicationRejectsInjectedFilesAndRetainsEvidence(t *te
 		t.Fatal("untrusted existing source was changed or deleted")
 	}
 }
+
+const minimalIface = `package iface
+
+import (
+	"net"
+	"net/netip"
+	"time"
+
+	"github.com/metacubex/mihomo/common/singledo"
+	"github.com/metacubex/mihomo/component/iface/anet"
+
+	"github.com/metacubex/bart"
+)
+
+type ifaceCache struct {
+	ifMapByName map[string]*Interface
+	ifMapByAddr map[netip.Addr]*Interface
+	ifTable     bart.Table[*Interface]
+}
+
+var caches = singledo.NewSingle[*ifaceCache](time.Second * 20)
+
+func getCache() (*ifaceCache, error) {
+	value, err, _ := caches.Do(func() (*ifaceCache, error) {
+		_, _ = anet.Interfaces()
+		var dummy net.Flags
+		_ = dummy
+		return nil, nil
+	})
+	return value, err
+}
+`
+
+func TestIfacePatchIsDeterministicAndRejectsChangedShape(t *testing.T) {
+	first, err := patchIface([]byte(minimalIface))
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := patchIface([]byte(minimalIface))
+	if err != nil || !bytes.Equal(first, second) {
+		t.Fatalf("iface patch is nondeterministic: %v", err)
+	}
+	if !bytes.Contains(first, []byte("fcxBuildIfaceCache()")) {
+		t.Fatal("iface patch missing fcxBuildIfaceCache call")
+	}
+	if bytes.Contains(first, []byte("component/iface/anet")) {
+		t.Fatal("iface patch retained unused anet import")
+	}
+	for name, source := range map[string]string{
+		"missing getCache":   strings.Replace(minimalIface, "func getCache()", "func otherCache()", 1),
+		"duplicate getCache": minimalIface + "\nfunc getCache() (*ifaceCache, error) { return nil, nil }\n",
+		"missing anet":       strings.Replace(minimalIface, "\t\"github.com/metacubex/mihomo/component/iface/anet\"\n", "", 1),
+		"invalid syntax":     "package iface\nfunc (",
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := patchIface([]byte(source)); err == nil {
+				t.Fatal("changed upstream iface shape accepted")
+			}
+		})
+	}
+}
+
+const minimalSingTunServer = `package sing_tun
+
+func New() (l *Listener, err error) {
+	if options.AutoRoute || options.AutoDetectInterface { // don't start NetworkUpdateMonitor because netlink banned by google on Android14+
+		networkUpdateMonitor, err = tun.NewNetworkUpdateMonitor(log.SingLogger)
+		if err != nil {
+			err = E.Cause(err, "create NetworkUpdateMonitor")
+			return
+		}
+		l.networkUpdateMonitor = networkUpdateMonitor
+		err = networkUpdateMonitor.Start()
+		if err != nil {
+			err = E.Cause(err, "start NetworkUpdateMonitor")
+			return
+		}
+
+		overrideAndroidVPN := true
+		if disable, _ := strconv.ParseBool(os.Getenv("DISABLE_OVERRIDE_ANDROID_VPN")); disable {
+			overrideAndroidVPN = false
+		}
+		defaultInterfaceMonitor, err = tun.NewDefaultInterfaceMonitor(networkUpdateMonitor, log.SingLogger, tun.DefaultInterfaceMonitorOptions{InterfaceFinder: interfaceFinder, OverrideAndroidVPN: overrideAndroidVPN})
+		if err != nil {
+			err = E.Cause(err, "create DefaultInterfaceMonitor")
+			return
+		}
+		l.defaultInterfaceMonitor = defaultInterfaceMonitor
+		defaultInterfaceMonitor.RegisterCallback(func(defaultInterface *control.Interface, event int) {
+			if defaultInterface != nil {
+				log.Warnln("[TUN] default interface changed by monitor, => %s", defaultInterface.Name)
+			} else {
+				log.Errorln("[TUN] default interface lost by monitor")
+			}
+			iface.FlushCache()
+			resolver.ResetConnection() // reset resolver's connection after default interface changed
+		})
+		err = defaultInterfaceMonitor.Start()
+		if err != nil {
+			err = E.Cause(err, "start DefaultInterfaceMonitor")
+			return
+		}
+	}
+	tunIf, err := tunNew(tunOptions)
+	if err != nil {
+		err = E.Cause(err, "configure tun interface")
+		return
+	}
+	tunStack, err := tun.NewStack(strings.ToLower(options.Stack.String()), stackOptions)
+	if err != nil {
+		return
+	}
+
+	err = tunStack.Start()
+	if err != nil {
+		return
+	}
+	return l, nil
+}
+`
+
+func TestSingTunServerPatchIsDeterministicAndRejectsChangedShape(t *testing.T) {
+	first, err := patchSingTunServer([]byte(minimalSingTunServer))
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := patchSingTunServer([]byte(minimalSingTunServer))
+	if err != nil || !bytes.Equal(first, second) {
+		t.Fatalf("sing_tun server patch is nondeterministic: %v", err)
+	}
+	patched := string(first)
+	startIdx := strings.Index(patched, "err = defaultInterfaceMonitor.Start()")
+	registerIdx := strings.Index(patched, "defaultInterfaceMonitor.RegisterCallback(")
+	if startIdx < 0 || registerIdx < 0 || startIdx > registerIdx {
+		t.Fatalf("defaultInterfaceMonitor.Start must precede RegisterCallback: start=%d register=%d", startIdx, registerIdx)
+	}
+	for _, stage := range []string{"sing_tun.monitors", "sing_tun.device", "sing_tun.stack"} {
+		if !strings.Contains(patched, stage) {
+			t.Fatalf("missing timing stage %q", stage)
+		}
+	}
+	for name, source := range map[string]string{
+		"missing monitor block": strings.Replace(minimalSingTunServer, "defaultInterfaceMonitor.RegisterCallback(", "otherRegisterCallback(", 1),
+		"missing tunNew":        strings.Replace(minimalSingTunServer, "tunIf, err := tunNew(tunOptions)", "tunIf, err := otherTunNew(tunOptions)", 1),
+		"missing tunStack":      strings.Replace(minimalSingTunServer, "err = tunStack.Start()", "err = otherStackStart()", 1),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := patchSingTunServer([]byte(source)); err == nil {
+				t.Fatal("changed upstream sing_tun server shape accepted")
+			}
+		})
+	}
+}

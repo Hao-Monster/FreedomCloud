@@ -1,0 +1,24 @@
+//go:build !windows
+
+package iface
+
+import "github.com/metacubex/mihomo/component/iface/anet"
+
+func fcxLoadPlatformInterfaces() ([]fcxRawInterface, error) {
+	ifaces, err := anet.Interfaces()
+	if err != nil {
+		return nil, err
+	}
+	entries := make([]fcxRawInterface, 0, len(ifaces))
+	for _, item := range ifaces {
+		addrs, err := anet.InterfaceAddrsByInterface(&item)
+		if err != nil {
+			continue
+		}
+		entries = append(entries, fcxRawInterface{
+			iface: item,
+			addrs: addrs,
+		})
+	}
+	return entries, nil
+}

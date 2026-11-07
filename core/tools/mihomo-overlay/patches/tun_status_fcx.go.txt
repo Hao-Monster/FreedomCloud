@@ -2,10 +2,7 @@ package listener
 
 import (
 	"errors"
-	"net"
 	"os"
-	"runtime"
-	"strings"
 	"sync/atomic"
 	"time"
 
@@ -70,13 +67,7 @@ func fcxTunErrorCode(err error) string {
 // must then rebuild instead of only calling OnReload. Enumeration failure is
 // not evidence of loss, so it keeps the existing listener.
 var fcxTunInterfaceUsable = func(device string) bool {
-	if runtime.GOOS != "windows" || device == "" { return true }
-	interfaces, err := net.Interfaces()
-	if err != nil { return true }
-	for _, adapter := range interfaces {
-		if strings.EqualFold(adapter.Name, device) { return adapter.Flags&net.FlagUp != 0 }
-	}
-	return false
+	return fcxPlatformTunInterfaceUsable(device)
 }
 
 // Caller owns tunMux. Publishes an immutable copy for lock-free readers.
