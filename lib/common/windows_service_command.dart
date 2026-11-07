@@ -1,4 +1,104 @@
+import 'dart:convert';
+import 'dart:io';
+import 'dart:typed_data';
+
 const windowsHelperServiceName = 'FlClashHelperService';
+
+/// Win32 Advapi32 routine that recovers a legacy self-locked service whose SDDL
+/// stripped `DC`, `SD`, `WD`, and `WO` from `Administrators`/`SY` (making
+/// `sc config`, `sc sdset`, and `sc delete` all fail with error 5).
+/// An elevated administrator token still holds `SeTakeOwnershipPrivilege`:
+/// enabling it permits `OpenServiceW(WRITE_OWNER)` -> setting Owner to `BA`,
+/// which implicitly grants `WRITE_DAC` to restore the full-control DACL in place.
+/// Reads service name and target SDDL from `FCX_SVC` / `FCX_SDDL` env vars so
+/// the payload is a compile-time constant with zero string interpolation.
+const _scmOwnershipUnlockScript = r'''
+$ErrorActionPreference = 'Stop'
+Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+public static class FcxScmUnlock {
+  [StructLayout(LayoutKind.Sequential)] struct LUID { public uint Low; public int High; }
+  [StructLayout(LayoutKind.Sequential)] struct TP { public uint Count; public LUID Luid; public uint Attr; }
+  [DllImport("kernel32.dll")] static extern IntPtr GetCurrentProcess();
+  [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr h);
+  [DllImport("kernel32.dll")] static extern IntPtr LocalFree(IntPtr h);
+  [DllImport("advapi32.dll", SetLastError=true)] static extern bool OpenProcessToken(IntPtr p, uint a, out IntPtr t);
+  [DllImport("advapi32.dll", CharSet=CharSet.Unicode, SetLastError=true)] static extern bool LookupPrivilegeValueW(string s, string n, out LUID l);
+  [DllImport("advapi32.dll", SetLastError=true)] static extern bool AdjustTokenPrivileges(IntPtr t, bool d, ref TP n, int l, IntPtr p, IntPtr r);
+  [DllImport("advapi32.dll", CharSet=CharSet.Unicode, SetLastError=true)] static extern bool ConvertStringSecurityDescriptorToSecurityDescriptorW(string s, uint r, out IntPtr sd, out uint sz);
+  [DllImport("advapi32.dll", CharSet=CharSet.Unicode, SetLastError=true)] static extern IntPtr OpenSCManagerW(string m, string d, uint a);
+  [DllImport("advapi32.dll", CharSet=CharSet.Unicode, SetLastError=true)] static extern IntPtr OpenServiceW(IntPtr scm, string n, uint a);
+  [DllImport("advapi32.dll", SetLastError=true)] static extern bool SetServiceObjectSecurity(IntPtr s, uint i, IntPtr sd);
+  [DllImport("advapi32.dll")] static extern bool CloseServiceHandle(IntPtr h);
+  public static int Run(string svc, string sddl, out string step) {
+    IntPtr tok = IntPtr.Zero, scm = IntPtr.Zero, hSvc = IntPtr.Zero, oSd = IntPtr.Zero, dSd = IntPtr.Zero;
+    try {
+      step = "OpenProcessToken";
+      if (!OpenProcessToken(GetCurrentProcess(), 0x28, out tok)) return Marshal.GetLastWin32Error();
+      LUID luid; step = "LookupPrivilegeValueW";
+      if (!LookupPrivilegeValueW(null, "SeTakeOwnershipPrivilege", out luid)) return Marshal.GetLastWin32Error();
+      TP tp = new TP { Count = 1, Luid = luid, Attr = 2 };
+      step = "AdjustTokenPrivileges";
+      if (!AdjustTokenPrivileges(tok, false, ref tp, 0, IntPtr.Zero, IntPtr.Zero)) return Marshal.GetLastWin32Error();
+      int adjErr = Marshal.GetLastWin32Error();
+      if (adjErr != 0) return adjErr;
+      uint sz; step = "ConvertOwnerSddl";
+      if (!ConvertStringSecurityDescriptorToSecurityDescriptorW("O:BA", 1, out oSd, out sz)) return Marshal.GetLastWin32Error();
+      step = "ConvertDaclSddl";
+      if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl, 1, out dSd, out sz)) return Marshal.GetLastWin32Error();
+      step = "OpenSCManagerW";
+      scm = OpenSCManagerW(null, null, 0x0001);
+      if (scm == IntPtr.Zero) return Marshal.GetLastWin32Error();
+      step = "OpenServiceW(WRITE_OWNER)";
+      hSvc = OpenServiceW(scm, svc, 0x00080000);
+      if (hSvc == IntPtr.Zero) return Marshal.GetLastWin32Error();
+      step = "SetServiceObjectSecurity(OWNER)";
+      if (!SetServiceObjectSecurity(hSvc, 1, oSd)) return Marshal.GetLastWin32Error();
+      CloseServiceHandle(hSvc); hSvc = IntPtr.Zero;
+      step = "OpenServiceW(WRITE_DAC)";
+      hSvc = OpenServiceW(scm, svc, 0x00040000);
+      if (hSvc == IntPtr.Zero) return Marshal.GetLastWin32Error();
+      step = "SetServiceObjectSecurity(DACL)";
+      if (!SetServiceObjectSecurity(hSvc, 4, dSd)) return Marshal.GetLastWin32Error();
+      step = "ok"; return 0;
+    } finally {
+      if (hSvc != IntPtr.Zero) CloseServiceHandle(hSvc);
+      if (scm != IntPtr.Zero) CloseServiceHandle(scm);
+      if (oSd != IntPtr.Zero) LocalFree(oSd);
+      if (dSd != IntPtr.Zero) LocalFree(dSd);
+      if (tok != IntPtr.Zero) CloseHandle(tok);
+    }
+  }
+}
+"@
+$step = ''
+$rc = [FcxScmUnlock]::Run($env:FCX_SVC, $env:FCX_SDDL, [ref]$step)
+Write-Output "[helper-install] scm-unlock step=$step win32=$rc"
+if ($rc -ne 0) { exit 1 }
+''';
+
+/// GZip+Base64 keeps the elevated cmd.exe line ~3.8 KB (well below cmd.exe's
+/// 8191-char hard limit, which raw UTF-16LE -EncodedCommand would exceed).
+final String _gzippedScmOwnershipUnlock = base64.encode(
+  gzip.encode(utf8.encode(_scmOwnershipUnlockScript)),
+);
+
+final String _encodedScmUnlockBootstrap = _encodePowerShellUtf16LeBase64(
+  r'$s=New-Object IO.StreamReader((New-Object IO.Compression.GZipStream('
+  r'[IO.MemoryStream][Convert]::FromBase64String($env:FCX_Z),'
+  r'[IO.Compression.CompressionMode]::Decompress)),[Text.Encoding]::UTF8);'
+  r'&([scriptblock]::Create($s.ReadToEnd()))',
+);
+
+String _encodePowerShellUtf16LeBase64(String script) {
+  final bytes = Uint8List(script.length * 2);
+  final view = ByteData.sublistView(bytes);
+  for (var i = 0; i < script.length; i++) {
+    view.setUint16(i * 2, script.codeUnitAt(i), Endian.little);
+  }
+  return base64.encode(bytes);
+}
 
 final _unsafeCmdValuePattern = RegExp(r'["\r\n&|<>%^!]');
 final _absoluteWindowsPathPattern = RegExp(r'^(?:[a-zA-Z]:\\|\\\\)');
@@ -47,7 +147,9 @@ String buildWindowsHelperRepairCommand({
 
   final sourceDirectory = helperPath.substring(0, helperPath.lastIndexOf(r'\'));
   final installLog = '$logDirectory\\helper-install.log';
-  final logRedirect = '>> "$installLog" 2>&1';
+  // Store log path and helper binary path in cmd variables so 26 redirects and
+  // `(x86)` parentheses never bloat the 8191-char cmd.exe limit or break `(...)`.
+  const logRedirect = '>> "!fcx_l!" 2>&1';
   const logMarker = 'echo [helper-install] [%date% %time%]';
   // Keep LocalSystem and Administrators full control (including change-config,
   // delete and security rights, so a later elevated repair can still run
@@ -63,54 +165,65 @@ String buildWindowsHelperRepairCommand({
           '"$serviceDirectory\\$name" $logRedirect')
       .join(' && ');
 
+  // Escape inner quotes (`"\"!fcx_p!\""`) so sc.exe's MSVCRT argv parser
+  // preserves surrounding quotes in SCM BINARY_PATH_NAME while delayed
+  // expansion hides any `(x86)` parentheses from cmd.exe's `(...)` parser.
+  const quotedHelperBinPath = r'"\"!fcx_p!\""';
   final configureAndAcl = serviceExists
       ? 'sc config $serviceName '
-          'binPath= "$serviceHelperPath" start= auto $logRedirect & '
+          'binPath= $quotedHelperBinPath start= auto $logRedirect & '
           '(set fcx_cfg=!errorlevel!) & '
-          '$logMarker configure-service exit=!fcx_cfg! >> "$installLog" 2>&1 & '
+          '$logMarker configure-service exit=!fcx_cfg! $logRedirect & '
           'sc sdset $serviceName "$serviceSecurity" $logRedirect & '
           '(set fcx_acl=!errorlevel!) & '
-          '$logMarker set-service-acl exit=!fcx_acl! >> "$installLog" 2>&1 & '
-          '(set fcx_recreate=0) & '
-          '(if !fcx_cfg! equ 5 (set fcx_recreate=1)) & '
-          '(if !fcx_cfg! equ 0 if !fcx_acl! equ 5 (set fcx_recreate=1)) & '
-          '(if !fcx_recreate! equ 1 '
-          'sc delete $serviceName $logRedirect & '
-          '$logMarker recreate-delete exit=!errorlevel! >> "$installLog" 2>&1 & '
-          'sc create $serviceName binPath= "$serviceHelperPath" start= auto '
+          '$logMarker set-service-acl exit=!fcx_acl! $logRedirect & '
+          '(set fcx_need_unlock=0) & '
+          '(if !fcx_cfg! equ 5 (set fcx_need_unlock=1)) & '
+          '(if !fcx_acl! equ 5 (set fcx_need_unlock=1)) & '
+          '(if !fcx_need_unlock! equ 1 '
+          '(set "FCX_SVC=$serviceName") & '
+          '(set "FCX_SDDL=$serviceSecurity") & '
+          '(set "FCX_Z=$_gzippedScmOwnershipUnlock") & '
+          'powershell -NoProfile -NonInteractive -EncodedCommand '
+          '$_encodedScmUnlockBootstrap $logRedirect & '
+          '(set fcx_unlock=!errorlevel!) & '
+          '$logMarker unlock-service-acl exit=!fcx_unlock! $logRedirect & '
+          'sc config $serviceName binPath= $quotedHelperBinPath start= auto '
           '$logRedirect & '
-          '$logMarker recreate-create exit=!errorlevel! >> "$installLog" 2>&1 & '
+          '$logMarker reconfigure-service exit=!errorlevel! $logRedirect & '
           'sc sdset $serviceName "$serviceSecurity" $logRedirect & '
-          '$logMarker recreate-acl exit=!errorlevel! >> "$installLog" 2>&1)'
+          '$logMarker reapply-service-acl exit=!errorlevel! $logRedirect)'
       : 'sc create $serviceName '
-          'binPath= "$serviceHelperPath" start= auto $logRedirect & '
-          '$logMarker configure-service exit=!errorlevel! >> "$installLog" 2>&1 & '
+          'binPath= $quotedHelperBinPath start= auto $logRedirect & '
+          '$logMarker configure-service exit=!errorlevel! $logRedirect & '
           'sc sdset $serviceName "$serviceSecurity" $logRedirect & '
-          '$logMarker set-service-acl exit=!errorlevel! >> "$installLog" 2>&1';
+          '$logMarker set-service-acl exit=!errorlevel! $logRedirect';
 
   // cmd.exe treats everything after `if <cond> <command>` on the same line,
   // including `& next`, as the IF body. Unparenthesized, an existing log or
   // service directory silently skipped the entire repair after UAC consent.
   // `net stop` waits for the service to stop so its binaries can be replaced.
   return '(if not exist "$logDirectory" mkdir "$logDirectory") >nul 2>&1 & '
+      '(set "fcx_l=$installLog") & '
+      '(set "fcx_p=$serviceHelperPath") & '
       '$logMarker begin >> "$installLog" 2>&1 & '
       'net stop $serviceName $logRedirect & '
-      '$logMarker service-stop exit=!errorlevel! >> "$installLog" 2>&1 & '
+      '$logMarker service-stop exit=!errorlevel! $logRedirect & '
       '(if not exist "$serviceDirectory" mkdir "$serviceDirectory") '
       '$logRedirect & '
-      '$logMarker mkdir-service exit=!errorlevel! >> "$installLog" 2>&1 & '
+      '$logMarker mkdir-service exit=!errorlevel! $logRedirect & '
       'copy /b /y "$helperPath" "$serviceHelperPath" $logRedirect & '
-      '$logMarker copy-helper exit=!errorlevel! >> "$installLog" 2>&1 & '
+      '$logMarker copy-helper exit=!errorlevel! $logRedirect & '
       'copy /b /y "$corePath" "$serviceCorePath" $logRedirect & '
-      '$logMarker copy-core exit=!errorlevel! >> "$installLog" 2>&1 & '
+      '$logMarker copy-core exit=!errorlevel! $logRedirect & '
       '$runtimeCopies & '
-      '$logMarker copy-runtime exit=!errorlevel! >> "$installLog" 2>&1 & '
+      '$logMarker copy-runtime exit=!errorlevel! $logRedirect & '
       '$configureAndAcl & '
       'sc start $serviceName $logRedirect & '
-      '$logMarker start-service exit=!errorlevel! >> "$installLog" 2>&1 & '
+      '$logMarker start-service exit=!errorlevel! $logRedirect & '
       'sc queryex $serviceName $logRedirect & '
-      '$logMarker query-service exit=!errorlevel! >> "$installLog" 2>&1 & '
-      '$logMarker end >> "$installLog" 2>&1';
+      '$logMarker query-service exit=!errorlevel! $logRedirect & '
+      '$logMarker end $logRedirect';
 }
 
 void _validateWindowsPath(String value, String name) {

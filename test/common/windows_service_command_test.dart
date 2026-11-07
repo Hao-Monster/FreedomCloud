@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flclashx/common/windows_service_command.dart';
@@ -22,6 +23,8 @@ void main() {
     );
 
     expect(command, contains('sc create FlClashHelperService'));
+    expect(command, contains('(set "fcx_p=$serviceHelperPath")'));
+    expect(command, contains(r'binPath= "\"!fcx_p!\""'));
     expect(command, isNot(contains('sc delete')));
     expect(command, contains('copy /b /y "$helperPath" "$serviceHelperPath"'));
     expect(command, contains('copy /b /y "$corePath" "$serviceCorePath"'));
@@ -39,7 +42,9 @@ void main() {
         command.indexOf('copy /b /y'), lessThan(command.indexOf('sc create')));
   });
 
-  test('existing helper attempts in-place repair first and only recreates on access denied', () {
+  test(
+      'existing helper attempts in-place repair first and unlocks ownership/DACL on access denied',
+      () {
     final command = buildWindowsHelperRepairCommand(
       serviceExists: true,
       helperPath: helperPath,
@@ -50,18 +55,17 @@ void main() {
     );
 
     expect(command, contains('sc config FlClashHelperService'));
-    expect(command, contains('if !fcx_cfg! equ 5 (set fcx_recreate=1)'));
-    expect(command,
-        contains('if !fcx_cfg! equ 0 if !fcx_acl! equ 5 (set fcx_recreate=1)'));
-    expect(command, contains('if !fcx_recreate! equ 1'));
-    expect(
-      command.indexOf('sc config FlClashHelperService'),
-      lessThan(command.indexOf('sc delete FlClashHelperService')),
-    );
-    expect(
-      command.indexOf('sc delete FlClashHelperService'),
-      lessThan(command.indexOf('sc create FlClashHelperService')),
-    );
+    expect(command, contains('(set "fcx_p=$serviceHelperPath")'));
+    expect(command, contains(r'binPath= "\"!fcx_p!\""'));
+    // Legacy locked SDDL strips SD (DELETE) from BA/SY, so `sc delete` fails
+    // with exit=5 too. Self-healing must take ownership + rewrite DACL in place.
+    expect(command, isNot(contains('sc delete')));
+    expect(command, contains('if !fcx_cfg! equ 5 (set fcx_need_unlock=1)'));
+    expect(command, contains('if !fcx_acl! equ 5 (set fcx_need_unlock=1)'));
+    expect(command, contains('if !fcx_need_unlock! equ 1'));
+    expect(command, contains('-EncodedCommand '));
+    // Must stay safely under cmd.exe's 8191-character command-line ceiling.
+    expect(command.length, lessThan(7500));
     // net stop waits for STOPPED so the running helper binary can be replaced.
     expect(command, contains('net stop FlClashHelperService'));
     expect(
@@ -197,40 +201,49 @@ void main() {
   );
 
   test(
-    'self-locked service SDDL (exit=5) triggers delete-and-recreate fallback while exit=0 stays in place',
+    'self-locked service SDDL (exit=5) unlocks ownership/DACL in place while exit=0 skips PowerShell',
     () async {
       final root = await Directory.systemTemp.createTemp('flclash-sddl-heal-');
       addTearDown(() => root.delete(recursive: true));
       final bin = Directory('${root.path}\\mockbin')..createSync();
       final source = Directory('${root.path}\\source')..createSync();
-      final service = Directory('${root.path}\\service')..createSync();
       final logs = Directory('${root.path}\\logs')..createSync();
       final scTrace = File('${root.path}\\sc-calls.txt');
+      final psTrace = File('${root.path}\\ps-calls.txt');
 
       File('${source.path}\\FlClashHelperService.exe').writeAsStringSync('new');
       File('${source.path}\\FlClashCore.exe').writeAsStringSync('core');
       File('${bin.path}\\net.cmd').writeAsStringSync('@exit /b 0\r\n');
+      File('${bin.path}\\powershell.cmd').writeAsStringSync(
+        '@echo svc=%FCX_SVC%>>"${psTrace.path}"\r\n'
+        '@echo sddl=%FCX_SDDL%>>"${psTrace.path}"\r\n'
+        '@echo ok>"${root.path}\\unlocked.flag"\r\n'
+        '@exit /b 0\r\n',
+      );
       File('${bin.path}\\sc.cmd').writeAsStringSync(
-        '@echo %1>>"${scTrace.path}"\r\n'
-        '@if /i "%1"=="config" exit /b %MOCK_SC_CONFIG_EXIT%\r\n'
-        '@if /i "%1"=="sdset" (\r\n'
-        '  if not exist "${root.path}\\recreated.flag" exit /b %MOCK_SC_SDSET_EXIT%\r\n'
+        '@echo %*>>"${scTrace.path}"\r\n'
+        '@if /i "%1"=="config" (\r\n'
+        '  if not exist "${root.path}\\unlocked.flag" exit /b %MOCK_SC_CONFIG_EXIT%\r\n'
         '  exit /b 0\r\n'
         ')\r\n'
-        '@if /i "%1"=="create" (\r\n'
-        '  echo ok>"${root.path}\\recreated.flag"\r\n'
+        '@if /i "%1"=="sdset" (\r\n'
+        '  if not exist "${root.path}\\unlocked.flag" exit /b %MOCK_SC_SDSET_EXIT%\r\n'
         '  exit /b 0\r\n'
         ')\r\n'
         '@exit /b 0\r\n',
       );
 
+      final serviceX86 =
+          Directory('${root.path}\\Program Files (x86)\\FlClashX Service')
+            ..createSync(recursive: true);
+      final expectedServiceHelper = '${serviceX86.path}\\FlClashHelperService.exe';
       final command = buildWindowsHelperRepairCommand(
         serviceExists: true,
         helperPath: '${source.path}\\FlClashHelperService.exe',
         corePath: '${source.path}\\FlClashCore.exe',
-        serviceDirectory: service.path,
-        serviceHelperPath: '${service.path}\\FlClashHelperService.exe',
-        serviceCorePath: '${service.path}\\FlClashCore.exe',
+        serviceDirectory: serviceX86.path,
+        serviceHelperPath: expectedServiceHelper,
+        serviceCorePath: '${serviceX86.path}\\FlClashCore.exe',
         serviceName: 'FlClashRepairMockService',
         logDirectory: logs.path,
       );
@@ -239,11 +252,18 @@ void main() {
         required String configExit,
         required String sdsetExit,
       }) async {
-        if (scTrace.existsSync()) scTrace.deleteSync();
-        final recreated = File('${root.path}\\recreated.flag');
-        if (recreated.existsSync()) recreated.deleteSync();
+        for (final file in [
+          scTrace,
+          psTrace,
+          File('${root.path}\\unlocked.flag'),
+          File('${logs.path}\\helper-install.log'),
+        ]) {
+          if (file.existsSync()) file.deleteSync();
+        }
+        const systemPowerShell =
+            r'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe';
         final result = await Process.run(
-          'powershell.exe',
+          systemPowerShell,
           [
             '-NoProfile',
             '-NonInteractive',
@@ -265,25 +285,87 @@ void main() {
       }
 
       await runMockRepair(configExit: '0', sdsetExit: '0');
-      final healthyCalls = scTrace
-          .readAsLinesSync()
-          .map((line) => line.trim())
-          .where((line) => line.isNotEmpty)
-          .toList();
-      expect(healthyCalls, ['config', 'sdset', 'start', 'queryex']);
-
-      await runMockRepair(configExit: '5', sdsetExit: '5');
-      final lockedCalls = scTrace
+      final healthyLines = scTrace
           .readAsLinesSync()
           .map((line) => line.trim())
           .where((line) => line.isNotEmpty)
           .toList();
       expect(
-        lockedCalls,
-        ['config', 'sdset', 'delete', 'create', 'sdset', 'start', 'queryex'],
+        healthyLines.map((line) => line.split(' ').first).toList(),
+        ['config', 'sdset', 'start', 'queryex'],
       );
+      expect(healthyLines.first, contains('binPath= "\\"$expectedServiceHelper\\""'));
+      expect(psTrace.existsSync(), isFalse);
+
+      await runMockRepair(configExit: '5', sdsetExit: '5');
+      final lockedLines = scTrace
+          .readAsLinesSync()
+          .map((line) => line.trim())
+          .where((line) => line.isNotEmpty)
+          .toList();
+      expect(
+        lockedLines.map((line) => line.split(' ').first).toList(),
+        ['config', 'sdset', 'config', 'sdset', 'start', 'queryex'],
+      );
+      expect(lockedLines[0], contains('binPath= "\\"$expectedServiceHelper\\""'));
+      expect(lockedLines[2], contains('binPath= "\\"$expectedServiceHelper\\""'));
+      expect(psTrace.existsSync(), isTrue);
+      final psInput = psTrace.readAsStringSync();
+      expect(psInput, contains('svc=FlClashRepairMockService'));
+      expect(psInput, contains('(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;BA)'));
+      final installLog =
+          File('${logs.path}\\helper-install.log').readAsStringSync();
+      expect(installLog, contains('unlock-service-acl exit=0'));
+      expect(installLog, contains('reconfigure-service exit=0'));
+      expect(installLog, contains('reapply-service-acl exit=0'));
     },
     skip: Platform.isWindows ? false : 'requires cmd.exe',
+  );
+
+  test(
+    'embedded SDDL ownership unlock script compiles in PowerShell and rejects non-existent service cleanly',
+    () async {
+      final command = buildWindowsHelperRepairCommand(
+        serviceExists: true,
+        helperPath: helperPath,
+        corePath: corePath,
+        serviceDirectory: serviceDirectory,
+        serviceHelperPath: serviceHelperPath,
+        serviceCorePath: serviceCorePath,
+        serviceName: 'FlClashRepairTestNoSuchService',
+      );
+      final gzMatch =
+          RegExp(r'set "FCX_Z=([A-Za-z0-9+/=]+)"').firstMatch(command);
+      final encodedMatch =
+          RegExp(r'-EncodedCommand\s+([A-Za-z0-9+/=]+)').firstMatch(command);
+      expect(gzMatch, isNotNull);
+      expect(encodedMatch, isNotNull);
+      final gzPayload = gzMatch!.group(1)!;
+      final encoded = encodedMatch!.group(1)!;
+      final decodedScript = utf8.decode(gzip.decode(base64.decode(gzPayload)));
+      expect(decodedScript, contains('SeTakeOwnershipPrivilege'));
+      expect(decodedScript, contains('SetServiceObjectSecurity'));
+      expect(decodedScript, isNot(contains('FlClashRepairTestNoSuchService')));
+
+      final result = await Process.run(
+        'powershell.exe',
+        ['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded],
+        environment: {
+          'FCX_Z': gzPayload,
+          'FCX_SVC': 'FlClashRepairTestNoSuchService',
+          'FCX_SDDL': 'D:(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;SY)'
+              '(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;BA)'
+              '(A;;CCLCSWRPWPLOCRRC;;;IU)(A;;CCLCSWLOCRRC;;;SU)',
+        },
+      );
+      final combined = '${result.stdout}\n${result.stderr}';
+      expect(result.exitCode, isNonZero);
+      // 1060 = ERROR_SERVICE_DOES_NOT_EXIST or 1300 = ERROR_NOT_ALL_ASSIGNED
+      // when running unprivileged in unit tests — proves clean C# compilation,
+      // SDDL parsing, and Win32 P/Invoke execution without touching real SCM.
+      expect(combined, matches(RegExp(r'win32=(1060|1300|5)\b')));
+    },
+    skip: Platform.isWindows ? false : 'requires powershell.exe',
   );
 
   test('command rejects values that could escape cmd quoting', () {
