@@ -2,6 +2,17 @@
 
 更新日期：2026-11-07。当前阶段是快速开发、快速迭代和部分功能预览。本文记录来源与验收边界；每次继续开发仍需核实实际 Git/PR/CI 状态，不能把历史报告视为当前通过证明。
 
+## `GlobalState.migrateOldData` 内存配置同步与崩溃安全持久化 TDD 收口（2026-11-07）
+
+- 原始来源与根因穿透：针对上一轮单独报告的范围外隐藏缺陷（[`GlobalState.init`](file:///E:/CodeWorkstation/FlClashX/lib/state.dart#L238-L252) / [`GlobalState.migrateOldData`](file:///E:/CodeWorkstation/FlClashX/lib/state.dart#L520-L532)），按严格 TDD（前置有效 Red → 最小实现 Green → 消除 `parameter_assignments` 重构 Refactor）落入本地 `development`（提交 `8eb5d91`）：
+  - 根因：`GlobalState.init()` 第 `247` 行误调全局单例 `globalState.migrateOldData(config)`（破坏多实例测试隔离）且按值传入 `config`；`migrateOldData` 内部仅重赋值局部形参 `config = config.copyWith(patchClashConfig: clashConfig)` 未写回 `this.config`（导致从早期独立 `clash_config` 键升级的首个运行周期内存 `patchClashConfig` 未生效直至二次重启），同时 `preferences.clearClashConfig()` 与 `preferences.saveConfig(config)` 既未 `await` 又先删除旧键再写新键（写盘失败将永久丢失旧配置）。
+  - 修复：`init()` 改为实例方法调用 `await migrateOldData(config)`；`migrateOldData` 使用局部变量 `migratedConfig` 同步写回 `this.config = migratedConfig`，先 `final saved = await preferences.saveConfig(migratedConfig)` 等待持久化完成，仅当 `saved == true` 时再 `await preferences.clearClashConfig()`，兼具首启内存即时生效、进程崩溃幂等恢复与写盘失败零丢数保护。
+- 验证记录：
+  - 前置有效 Red：**PASS**（[`migrate_old_data_test.dart`](file:///E:/CodeWorkstation/FlClashX/test/common/migrate_old_data_test.dart) 3 项行为断言在修复前确定性失败退出码 `1`，基线用例通过）；
+  - Green 与关联状态/存储套件回归（`migrate_old_data_test`、`preferences_save_test`、`startup_subscription_and_dns_test`、`config_snapshot_test`）：**PASS（15 PASS / 0 FAIL）**；
+  - 静态与空白检查（`dart analyze test/common/migrate_old_data_test.dart` `No issues found!`，同步消除 `lib/state.dart` 中 `migrateOldData` 的 `unawaited_futures` 与 `parameter_assignments` lint，`git diff --cached --check` 零空白错误）：**PASS**。
+- 交付状态：**已实现 / 已本地单元测试验证 / 已提交本地 `development`（`8eb5d91`）**；未构建新预览包（待指令） / 未推送远端（待授权） / 未创建或合并 PR / 远端 CI **NOT RUN**。
+
 ## 5 项原代码隐藏缺陷与范围外独立问题 TDD 收口（2026-11-07）
 
 - 原始来源与根因穿透：针对上一轮单独归档的 5 项原代码隐藏缺陷（问题 1–5），按用户确认的策略选项（`A1`、`A2`、`A3`）与严格 TDD（前置真实 Red → 最小生产实现 Green → 全栈回归）拆分为 4 个独立原子提交落入本地 `development`：
