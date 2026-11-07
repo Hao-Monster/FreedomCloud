@@ -1289,12 +1289,16 @@ class AppController {
   Future<void> updateProviders() async {
     final configEpoch = globalState.runtimeConfigEpoch;
     final profileId = _ref.read(currentProfileIdProvider);
-    final providers = await clashCore.getExternalProviders();
-    if (configEpoch != globalState.runtimeConfigEpoch ||
-        profileId != _ref.read(currentProfileIdProvider)) {
-      return;
+    try {
+      final providers = await clashCore.getExternalProviders();
+      if (configEpoch != globalState.runtimeConfigEpoch ||
+          profileId != _ref.read(currentProfileIdProvider)) {
+        return;
+      }
+      _ref.read(providersProvider.notifier).value = providers;
+    } catch (e) {
+      commonPrint.log("updateProviders error: $e, keeping old providers");
     }
-    _ref.read(providersProvider.notifier).value = providers;
   }
 
   Future<void> updateLocalIp() async {
