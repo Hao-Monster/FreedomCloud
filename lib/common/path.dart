@@ -12,6 +12,9 @@ class AppPath {
   }
 
   AppPath._internal() {
+    dataDir.future.ignore();
+    downloadDir.future.ignore();
+    tempDir.future.ignore();
     appDirPath = join(dirname(Platform.resolvedExecutable));
     getApplicationSupportDirectory().then((value) {
       dataDir.complete(value);

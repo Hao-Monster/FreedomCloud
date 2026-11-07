@@ -398,12 +398,16 @@ abstract class ClashHandlerInterface with ClashInterface {
       );
       if (result.isError) throw const TunFailure('statusUnavailable');
       final status = TunStatus.fromJson(result.data);
-      logStartupTiming(
-        'getTunStatus',
-        watch,
-        outcome: status.observed.name,
-        detail: 'state=${status.state} revision=${status.revision}',
-      );
+      if (tunRuntime.busy ||
+          watch.elapsedMilliseconds >= 200 ||
+          status.observed != TunObservedState.on) {
+        logStartupTiming(
+          'getTunStatus',
+          watch,
+          outcome: status.observed.name,
+          detail: 'state=${status.state} revision=${status.revision}',
+        );
+      }
       return status;
     } catch (_) {
       logStartupTiming('getTunStatus', watch, outcome: 'error');

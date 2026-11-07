@@ -288,6 +288,24 @@ class TunRuntimeController extends ChangeNotifier {
 
 final tunRuntime = TunRuntimeController();
 
+Duration nextTunObservationDelay({
+  required TunRuntimeController runtime,
+  required bool uiActive,
+  required bool repairActive,
+}) {
+  if (runtime.busy ||
+      runtime.closing ||
+      repairActive ||
+      runtime.failure != null ||
+      (runtime.desiredEnabled && runtime.observed != TunObservedState.on) ||
+      (!runtime.desiredEnabled && runtime.observed == TunObservedState.on)) {
+    return const Duration(seconds: 3);
+  }
+  return uiActive
+      ? const Duration(seconds: 10)
+      : const Duration(seconds: 15);
+}
+
 /// Serializes fresh reads as well as coalescing periodic reads. A response from
 /// a pre-disconnect epoch can never restore an old Core's enabled claim.
 class TunStatusObserver {

@@ -200,17 +200,11 @@ class AppController {
     }
   }
 
-  Duration _nextTunObservationDelay() {
-    if (uiActivity.value ||
-        _tunRuntime.busy ||
-        _tunRuntime.closing ||
-        _activeTunRepair != null ||
-        (_tunRuntime.desiredEnabled &&
-            _tunRuntime.observed != TunObservedState.on)) {
-      return const Duration(seconds: 3);
-    }
-    return const Duration(seconds: 15);
-  }
+  Duration _nextTunObservationDelay() => nextTunObservationDelay(
+        runtime: _tunRuntime,
+        uiActive: uiActivity.value,
+        repairActive: _activeTunRepair != null,
+      );
 
   void _scheduleNextTunObservation() {
     _tunObservationTimer?.cancel();

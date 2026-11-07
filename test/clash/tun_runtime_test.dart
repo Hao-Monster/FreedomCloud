@@ -193,4 +193,81 @@ void main() {
     expect(runtime.requestFailure, 'interfaceDown');
     expect(runtime.failure, 'interfaceDown');
   });
+  test(
+      'nextTunObservationDelay calms steady-state polling while keeping transitions fast',
+      () {
+    final healthyOn = TunRuntimeController()
+      ..desiredEnabled = true
+      ..accept(TunStatus.fromJson(status(revision: 1)), 0);
+    expect(
+      nextTunObservationDelay(
+        runtime: healthyOn,
+        uiActive: true,
+        repairActive: false,
+      ),
+      const Duration(seconds: 10),
+    );
+    expect(
+      nextTunObservationDelay(
+        runtime: healthyOn,
+        uiActive: false,
+        repairActive: false,
+      ),
+      const Duration(seconds: 15),
+    );
+
+    final settledOff = TunRuntimeController()
+      ..desiredEnabled = false
+      ..accept(
+        TunStatus.fromJson(status(state: 'off', listener: false, revision: 1)),
+        0,
+      );
+    expect(
+      nextTunObservationDelay(
+        runtime: settledOff,
+        uiActive: true,
+        repairActive: false,
+      ),
+      const Duration(seconds: 10),
+    );
+
+    final mismatch = TunRuntimeController()
+      ..desiredEnabled = true
+      ..accept(
+        TunStatus.fromJson(status(state: 'off', listener: false, revision: 1)),
+        0,
+      );
+    expect(
+      nextTunObservationDelay(
+        runtime: mismatch,
+        uiActive: false,
+        repairActive: false,
+      ),
+      const Duration(seconds: 3),
+    );
+
+    final repairing = TunRuntimeController()
+      ..desiredEnabled = true
+      ..accept(TunStatus.fromJson(status(revision: 1)), 0);
+    expect(
+      nextTunObservationDelay(
+        runtime: repairing,
+        uiActive: false,
+        repairActive: true,
+      ),
+      const Duration(seconds: 3),
+    );
+
+    final unavailable = TunRuntimeController()
+      ..desiredEnabled = true
+      ..invalidate('statusUnavailable');
+    expect(
+      nextTunObservationDelay(
+        runtime: unavailable,
+        uiActive: true,
+        repairActive: false,
+      ),
+      const Duration(seconds: 3),
+    );
+  });
 }
