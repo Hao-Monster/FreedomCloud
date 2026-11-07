@@ -244,7 +244,7 @@ class GlobalState {
               ? desktopDefaultClashConfig()
               : defaultClashConfig,
         );
-    await globalState.migrateOldData(config);
+    await migrateOldData(config);
     await AppLocalizations.load(
       utils.getLocaleForString(config.appSetting.locale) ??
           WidgetsBinding.instance.platformDispatcher.locale,
@@ -520,11 +520,14 @@ class GlobalState {
   Future<void> migrateOldData(Config config) async {
     final clashConfig = await preferences.getClashConfig();
     if (clashConfig != null) {
-      config = config.copyWith(
+      final migratedConfig = config.copyWith(
         patchClashConfig: clashConfig,
       );
-      preferences.clearClashConfig();
-      preferences.saveConfig(config);
+      this.config = migratedConfig;
+      final saved = await preferences.saveConfig(migratedConfig);
+      if (saved) {
+        await preferences.clearClashConfig();
+      }
     }
   }
 
