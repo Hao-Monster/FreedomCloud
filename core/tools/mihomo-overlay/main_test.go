@@ -367,6 +367,21 @@ func (t *NativeTun) configure() error {
 		_ = luid.DisableDNSRegistration()
 	}
 	if t.options.AutoRoute {
+		gateway4, gateway6 := t.options.Inet4GatewayAddr(), t.options.Inet6GatewayAddr()
+		routeRanges, err := t.options.BuildAutoRouteRanges(false)
+		if err != nil {
+			return err
+		}
+		for _, routeRange := range routeRanges {
+			if routeRange.Addr().Is4() {
+				err = luid.AddRoute(routeRange, gateway4, 0)
+			} else {
+				err = luid.AddRoute(routeRange, gateway6, 0)
+			}
+		}
+		if err != nil {
+			return err
+		}
 		if err := windnsapi.FlushResolverCache(); err != nil {
 			return err
 		}
@@ -416,10 +431,17 @@ func TestSingTunWindowsPatchIsDeterministicAndRejectsChangedShape(t *testing.T) 
 	if !strings.Contains(patched, "session.End()") || !strings.Contains(patched, "adapter.Close()") {
 		t.Fatal("lost session/adapter cleanup on configure failure")
 	}
+	if !strings.Contains(patched, "FCXAddAutoRoutes(routeRanges, gateway4, gateway6, luid.AddRoute,") {
+		t.Fatal("missing FCXAddAutoRoutes replacement for routeRanges loop")
+	}
+	if strings.Contains(patched, "for _, routeRange := range routeRanges") {
+		t.Fatal("retained upstream error-swallowing routeRanges loop")
+	}
 	for name, source := range map[string]string{
 		"missing CreateAdapter": strings.Replace(minimalSingTunWindows, "wintun.CreateAdapter(", "wintun.OtherCreate(", 1),
 		"missing StartSession":  strings.Replace(minimalSingTunWindows, "adapter.StartSession(0x800000)", "adapter.OtherSession()", 1),
 		"missing DisableDNS":    strings.Replace(minimalSingTunWindows, "_ = luid.DisableDNSRegistration()", "_ = luid.OtherDNS()", 1),
+		"missing RouteLoop":     strings.Replace(minimalSingTunWindows, "err = luid.AddRoute(routeRange, gateway4, 0)", "err = luid.OtherAddRoute(routeRange)", 1),
 		"missing ipv6 options":  strings.Replace(minimalSingTunWindows, `return E.Cause(err, "set ipv6 options")`, `return err`, 1),
 		"missing StrictRoute":   strings.Replace(minimalSingTunWindows, "if t.options.AutoRoute && t.options.StrictRoute {", "if t.options.StrictRoute {", 1),
 		"invalid syntax":        "package tun\nfunc (",

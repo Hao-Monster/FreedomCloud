@@ -1,6 +1,10 @@
 package tun
 
-import "time"
+import (
+	"fmt"
+	"net/netip"
+	"time"
+)
 
 // FCXDeviceTimingHook receives sub-stage durations from Windows NativeTun setup
 // without requiring upstream callers to thread a custom logger through Options.
@@ -14,4 +18,29 @@ func fcxLogDeviceStage(stage string, startedAt time.Time, err error) {
 	if hook := FCXDeviceTimingHook; hook != nil {
 		hook(stage, startedAt, err)
 	}
+}
+
+// FCXAddAutoRoutes adds each prefix route without letting a succeeding tail
+// route overwrite an earlier failure, while tolerating benign duplicate-route
+// errors reported by isBenignError.
+func FCXAddAutoRoutes(
+	routeRanges []netip.Prefix,
+	gateway4 netip.Addr,
+	gateway6 netip.Addr,
+	addRoute func(netip.Prefix, netip.Addr, uint32) error,
+	isBenignError func(error) bool,
+) error {
+	for _, routeRange := range routeRanges {
+		gateway := gateway6
+		if routeRange.Addr().Is4() {
+			gateway = gateway4
+		}
+		if err := addRoute(routeRange, gateway, 0); err != nil {
+			if isBenignError != nil && isBenignError(err) {
+				continue
+			}
+			return fmt.Errorf("add route %s: %w", routeRange.String(), err)
+		}
+	}
+	return nil
 }

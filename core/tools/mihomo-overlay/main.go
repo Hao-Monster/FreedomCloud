@@ -516,6 +516,23 @@ func patchSingTunWindows(source []byte) ([]byte, error) {
 	if err := func() error {
 	if t.options.AutoRoute {`
 
+	const routeLoopAnchor = `		for _, routeRange := range routeRanges {
+			if routeRange.Addr().Is4() {
+				err = luid.AddRoute(routeRange, gateway4, 0)
+			} else {
+				err = luid.AddRoute(routeRange, gateway6, 0)
+			}
+		}
+		if err != nil {
+			return err
+		}`
+	const routeLoopReplacement = `		err = FCXAddAutoRoutes(routeRanges, gateway4, gateway6, luid.AddRoute, func(routeErr error) bool {
+			return errors.Is(routeErr, windows.ERROR_OBJECT_ALREADY_EXISTS)
+		})
+		if err != nil {
+			return err
+		}`
+
 	const routeToStrictAnchor = `		err = inet6If.Set()
 		if err != nil {
 			return E.Cause(err, "set ipv6 options")
@@ -556,6 +573,7 @@ func patchSingTunWindows(source []byte) ([]byte, error) {
 	}{
 		{"configure_header", configureHeaderAnchor, configureHeaderReplacement},
 		{"ip_to_route", ipToRouteAnchor, ipToRouteReplacement},
+		{"route_loop", routeLoopAnchor, routeLoopReplacement},
 		{"route_to_strict", routeToStrictAnchor, routeToStrictReplacement},
 	} {
 		if strings.Count(configureText, pair.anchor) != 1 {
