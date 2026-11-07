@@ -113,6 +113,7 @@ class AppSettingProps with _$AppSettingProps {
     List<DashboardWidget> dashboardWidgets,
     @Default(true) bool dashboardDefaultV2Migrated,
     @Default(true) bool tunDesktopStackGvisorRestored,
+    @Default(true) bool dnsRespectRulesDefaultMigrated,
     @Default(false) bool onlyStatisticsProxy,
     @Default(false) bool autoLaunch,
     @Default(false) bool silentLaunch,
@@ -476,6 +477,40 @@ class Config with _$Config {
               "tunDesktopStackGvisorRestored": true,
             };
           }
+        }
+      }
+    } catch (_) {}
+
+    try {
+      final rawAppSetting = normalizedJson["appSetting"];
+      final alreadyMigratedDns = rawAppSetting is Map &&
+          rawAppSetting["dnsRespectRulesDefaultMigrated"] == true;
+      if (!alreadyMigratedDns) {
+        final rawPatchClash = normalizedJson["patchClashConfig"];
+        if (rawPatchClash is Map) {
+          final rawDns = rawPatchClash["dns"];
+          if (rawDns is Map) {
+            final parsedDns = Dns.safeDnsFromJson(
+              Map<String, Object?>.from(rawDns),
+            );
+            if (parsedDns == const Dns(respectRules: false)) {
+              final nextDns = Map<String, Object?>.from(rawDns);
+              nextDns["respect-rules"] = true;
+              final nextPatchClash = Map<String, Object?>.from(rawPatchClash);
+              nextPatchClash["dns"] = nextDns;
+              normalizedJson["patchClashConfig"] = nextPatchClash;
+            }
+          }
+        }
+        final latestAppSetting = normalizedJson["appSetting"];
+        if (latestAppSetting is Map) {
+          final nextAppSetting = Map<String, Object?>.from(latestAppSetting);
+          nextAppSetting["dnsRespectRulesDefaultMigrated"] = true;
+          normalizedJson["appSetting"] = nextAppSetting;
+        } else if (latestAppSetting == null) {
+          normalizedJson["appSetting"] = <String, Object?>{
+            "dnsRespectRulesDefaultMigrated": true,
+          };
         }
       }
     } catch (_) {}

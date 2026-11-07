@@ -137,6 +137,20 @@ extension ProfilesExt on List<Profile> {
   }
 }
 
+bool isProfileAutoUpdateDue(Profile profile, {DateTime? now}) {
+  if (!profile.autoUpdate ||
+      profile.isUpdating ||
+      profile.type == ProfileType.file) {
+    return false;
+  }
+  final lastUpdate = profile.lastUpdateDate;
+  if (lastUpdate == null) {
+    return true;
+  }
+  final referenceNow = now ?? DateTime.now();
+  return !lastUpdate.add(profile.autoUpdateDuration).isAfter(referenceNow);
+}
+
 extension ProfileExtension on Profile {
   ProfileType get type =>
       url.isEmpty == true ? ProfileType.file : ProfileType.url;

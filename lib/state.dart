@@ -1008,6 +1008,10 @@ class GlobalState {
         false => realPatchConfig.dns,
       };
       rawConfig["dns"] = dns.toJson();
+      if (dns.respectRules && dns.proxyServerNameserver.isEmpty) {
+        rawConfig["dns"]["proxy-server-nameserver"] =
+            List<String>.from(defaultDns.proxyServerNameserver);
+      }
       rawConfig["dns"]["nameserver-policy"] = {};
       for (final entry in dns.nameserverPolicy.entries) {
         rawConfig["dns"]["nameserver-policy"][entry.key] =

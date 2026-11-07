@@ -26,6 +26,7 @@ mixin _$AppSettingProps {
       throw _privateConstructorUsedError;
   bool get dashboardDefaultV2Migrated => throw _privateConstructorUsedError;
   bool get tunDesktopStackGvisorRestored => throw _privateConstructorUsedError;
+  bool get dnsRespectRulesDefaultMigrated => throw _privateConstructorUsedError;
   bool get onlyStatisticsProxy => throw _privateConstructorUsedError;
   bool get autoLaunch => throw _privateConstructorUsedError;
   bool get silentLaunch => throw _privateConstructorUsedError;
@@ -86,6 +87,7 @@ abstract class $AppSettingPropsCopyWith<$Res> {
       List<DashboardWidget> dashboardWidgets,
       bool dashboardDefaultV2Migrated,
       bool tunDesktopStackGvisorRestored,
+      bool dnsRespectRulesDefaultMigrated,
       bool onlyStatisticsProxy,
       bool autoLaunch,
       bool silentLaunch,
@@ -140,6 +142,7 @@ class _$AppSettingPropsCopyWithImpl<$Res, $Val extends AppSettingProps>
     Object? dashboardWidgets = null,
     Object? dashboardDefaultV2Migrated = null,
     Object? tunDesktopStackGvisorRestored = null,
+    Object? dnsRespectRulesDefaultMigrated = null,
     Object? onlyStatisticsProxy = null,
     Object? autoLaunch = null,
     Object? silentLaunch = null,
@@ -186,6 +189,10 @@ class _$AppSettingPropsCopyWithImpl<$Res, $Val extends AppSettingProps>
       tunDesktopStackGvisorRestored: null == tunDesktopStackGvisorRestored
           ? _value.tunDesktopStackGvisorRestored
           : tunDesktopStackGvisorRestored // ignore: cast_nullable_to_non_nullable
+              as bool,
+      dnsRespectRulesDefaultMigrated: null == dnsRespectRulesDefaultMigrated
+          ? _value.dnsRespectRulesDefaultMigrated
+          : dnsRespectRulesDefaultMigrated // ignore: cast_nullable_to_non_nullable
               as bool,
       onlyStatisticsProxy: null == onlyStatisticsProxy
           ? _value.onlyStatisticsProxy
@@ -321,6 +328,7 @@ abstract class _$$AppSettingPropsImplCopyWith<$Res>
       List<DashboardWidget> dashboardWidgets,
       bool dashboardDefaultV2Migrated,
       bool tunDesktopStackGvisorRestored,
+      bool dnsRespectRulesDefaultMigrated,
       bool onlyStatisticsProxy,
       bool autoLaunch,
       bool silentLaunch,
@@ -373,6 +381,7 @@ class __$$AppSettingPropsImplCopyWithImpl<$Res>
     Object? dashboardWidgets = null,
     Object? dashboardDefaultV2Migrated = null,
     Object? tunDesktopStackGvisorRestored = null,
+    Object? dnsRespectRulesDefaultMigrated = null,
     Object? onlyStatisticsProxy = null,
     Object? autoLaunch = null,
     Object? silentLaunch = null,
@@ -419,6 +428,10 @@ class __$$AppSettingPropsImplCopyWithImpl<$Res>
       tunDesktopStackGvisorRestored: null == tunDesktopStackGvisorRestored
           ? _value.tunDesktopStackGvisorRestored
           : tunDesktopStackGvisorRestored // ignore: cast_nullable_to_non_nullable
+              as bool,
+      dnsRespectRulesDefaultMigrated: null == dnsRespectRulesDefaultMigrated
+          ? _value.dnsRespectRulesDefaultMigrated
+          : dnsRespectRulesDefaultMigrated // ignore: cast_nullable_to_non_nullable
               as bool,
       onlyStatisticsProxy: null == onlyStatisticsProxy
           ? _value.onlyStatisticsProxy
@@ -549,6 +562,7 @@ class _$AppSettingPropsImpl implements _AppSettingProps {
       final List<DashboardWidget> dashboardWidgets = defaultDashboardWidgets,
       this.dashboardDefaultV2Migrated = true,
       this.tunDesktopStackGvisorRestored = true,
+      this.dnsRespectRulesDefaultMigrated = true,
       this.onlyStatisticsProxy = false,
       this.autoLaunch = false,
       this.silentLaunch = false,
@@ -607,6 +621,9 @@ class _$AppSettingPropsImpl implements _AppSettingProps {
   @override
   @JsonKey()
   final bool tunDesktopStackGvisorRestored;
+  @override
+  @JsonKey()
+  final bool dnsRespectRulesDefaultMigrated;
   @override
   @JsonKey()
   final bool onlyStatisticsProxy;
@@ -710,7 +727,7 @@ class _$AppSettingPropsImpl implements _AppSettingProps {
 
   @override
   String toString() {
-    return 'AppSettingProps(locale: $locale, dashboardWidgets: $dashboardWidgets, dashboardDefaultV2Migrated: $dashboardDefaultV2Migrated, tunDesktopStackGvisorRestored: $tunDesktopStackGvisorRestored, onlyStatisticsProxy: $onlyStatisticsProxy, autoLaunch: $autoLaunch, silentLaunch: $silentLaunch, autoRun: $autoRun, openLogs: $openLogs, closeConnections: $closeConnections, testUrl: $testUrl, isAnimateToPage: $isAnimateToPage, autoCheckUpdate: $autoCheckUpdate, showLabel: $showLabel, disclaimerAccepted: $disclaimerAccepted, minimizeOnExit: $minimizeOnExit, hidden: $hidden, developerMode: $developerMode, crashlytics: $crashlytics, zashboardInApp: $zashboardInApp, overrideProviderSettings: $overrideProviderSettings, overrideNetworkSettings: $overrideNetworkSettings, recoveryStrategy: $recoveryStrategy, connectionListMode: $connectionListMode, connectionViewMode: $connectionViewMode, connectionSort: $connectionSort, connectionSortDirection: $connectionSortDirection, connectionShowIcon: $connectionShowIcon, connectionUseApplicationName: $connectionUseApplicationName, connectionRefreshInterval: $connectionRefreshInterval, connectionTableColumns: $connectionTableColumns, connectionTableColumnWidths: $connectionTableColumnWidths, newDashboard: $newDashboard)';
+    return 'AppSettingProps(locale: $locale, dashboardWidgets: $dashboardWidgets, dashboardDefaultV2Migrated: $dashboardDefaultV2Migrated, tunDesktopStackGvisorRestored: $tunDesktopStackGvisorRestored, dnsRespectRulesDefaultMigrated: $dnsRespectRulesDefaultMigrated, onlyStatisticsProxy: $onlyStatisticsProxy, autoLaunch: $autoLaunch, silentLaunch: $silentLaunch, autoRun: $autoRun, openLogs: $openLogs, closeConnections: $closeConnections, testUrl: $testUrl, isAnimateToPage: $isAnimateToPage, autoCheckUpdate: $autoCheckUpdate, showLabel: $showLabel, disclaimerAccepted: $disclaimerAccepted, minimizeOnExit: $minimizeOnExit, hidden: $hidden, developerMode: $developerMode, crashlytics: $crashlytics, zashboardInApp: $zashboardInApp, overrideProviderSettings: $overrideProviderSettings, overrideNetworkSettings: $overrideNetworkSettings, recoveryStrategy: $recoveryStrategy, connectionListMode: $connectionListMode, connectionViewMode: $connectionViewMode, connectionSort: $connectionSort, connectionSortDirection: $connectionSortDirection, connectionShowIcon: $connectionShowIcon, connectionUseApplicationName: $connectionUseApplicationName, connectionRefreshInterval: $connectionRefreshInterval, connectionTableColumns: $connectionTableColumns, connectionTableColumnWidths: $connectionTableColumnWidths, newDashboard: $newDashboard)';
   }
 
   @override
@@ -729,6 +746,10 @@ class _$AppSettingPropsImpl implements _AppSettingProps {
                     tunDesktopStackGvisorRestored) ||
                 other.tunDesktopStackGvisorRestored ==
                     tunDesktopStackGvisorRestored) &&
+            (identical(other.dnsRespectRulesDefaultMigrated,
+                    dnsRespectRulesDefaultMigrated) ||
+                other.dnsRespectRulesDefaultMigrated ==
+                    dnsRespectRulesDefaultMigrated) &&
             (identical(other.onlyStatisticsProxy, onlyStatisticsProxy) ||
                 other.onlyStatisticsProxy == onlyStatisticsProxy) &&
             (identical(other.autoLaunch, autoLaunch) ||
@@ -797,6 +818,7 @@ class _$AppSettingPropsImpl implements _AppSettingProps {
         const DeepCollectionEquality().hash(_dashboardWidgets),
         dashboardDefaultV2Migrated,
         tunDesktopStackGvisorRestored,
+        dnsRespectRulesDefaultMigrated,
         onlyStatisticsProxy,
         autoLaunch,
         silentLaunch,
@@ -852,6 +874,7 @@ abstract class _AppSettingProps implements AppSettingProps {
       final List<DashboardWidget> dashboardWidgets,
       final bool dashboardDefaultV2Migrated,
       final bool tunDesktopStackGvisorRestored,
+      final bool dnsRespectRulesDefaultMigrated,
       final bool onlyStatisticsProxy,
       final bool autoLaunch,
       final bool silentLaunch,
@@ -898,6 +921,8 @@ abstract class _AppSettingProps implements AppSettingProps {
   bool get dashboardDefaultV2Migrated;
   @override
   bool get tunDesktopStackGvisorRestored;
+  @override
+  bool get dnsRespectRulesDefaultMigrated;
   @override
   bool get onlyStatisticsProxy;
   @override
