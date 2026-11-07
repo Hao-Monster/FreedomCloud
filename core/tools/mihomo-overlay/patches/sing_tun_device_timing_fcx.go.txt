@@ -1,0 +1,17 @@
+package tun
+
+import "time"
+
+// FCXDeviceTimingHook receives sub-stage durations from Windows NativeTun setup
+// without requiring upstream callers to thread a custom logger through Options.
+var FCXDeviceTimingHook func(stage string, startedAt time.Time, err error)
+
+func fcxDeviceTimingStart() time.Time {
+	return time.Now()
+}
+
+func fcxLogDeviceStage(stage string, startedAt time.Time, err error) {
+	if hook := FCXDeviceTimingHook; hook != nil {
+		hook(stage, startedAt, err)
+	}
+}

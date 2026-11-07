@@ -35,6 +35,9 @@ const dnsDoHSHA256 = "1ba0170bed4aabf6b295471f9fddb03da20122d339526a97170dff537f
 const converterSHA256 = "503aac2968628ab826f8208d620bcd5939ca67219426cf0189fab76346626ede"
 const ifaceSHA256 = "67d3d4f54999bdb6875ef87cdbb87c61d5f9e299aa20c1108de3e391eac18605"
 const singTunServerSHA256 = "8b0d766e346aa5a36ec40dc66c1fe7cd3466ead48a687cfb4a262342ca9a3335"
+const singTunVersion = "v0.4.27"
+const singTunModuleSum = "h1:dWCpFDlWelQrhH3y5KkMrJXEXYeJ0V2LROP8Cxv96MI="
+const singTunWindowsSHA256 = "e463b674d33694dbaa02d165e6a1e24d310a6f12066aab4d3bbe10683be9aff0"
 
 func patchController(source []byte) ([]byte, error) {
 	fset := token.NewFileSet()
@@ -404,6 +407,179 @@ func patchSingTunServer(source []byte) ([]byte, error) {
 	return format.Source([]byte(patched))
 }
 
+func patchSingTunWindows(source []byte) ([]byte, error) {
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "tun_windows.go", source, 0)
+	if err != nil {
+		return nil, err
+	}
+	var newFn, configureFn *ast.FuncDecl
+	for _, declaration := range file.Decls {
+		fn, ok := declaration.(*ast.FuncDecl)
+		if !ok {
+			continue
+		}
+		switch fn.Name.Name {
+		case "New":
+			if fn.Recv == nil {
+				if newFn != nil {
+					return nil, fmt.Errorf("duplicate sing-tun New function")
+				}
+				newFn = fn
+			}
+		case "configure":
+			if fn.Recv != nil {
+				if configureFn != nil {
+					return nil, fmt.Errorf("duplicate sing-tun configure method")
+				}
+				configureFn = fn
+			}
+		}
+	}
+	if newFn == nil || configureFn == nil {
+		return nil, fmt.Errorf("upstream sing-tun windows functions missing")
+	}
+
+	newText := string(source[fset.Position(newFn.Pos()).Offset:fset.Position(newFn.End()).Offset])
+	const createAnchor = `	adapter, err := wintun.CreateAdapter(options.Name, TunnelType, generateGUIDByDeviceName(options.Name))
+	if err != nil {
+		if !errors.Is(err, os.ErrExist) {
+			return nil, err
+		}
+		createErr := err
+		adapter, err = wintun.OpenAdapter(options.Name)
+		if err != nil {
+			return nil, E.Errors(E.Cause(createErr, "create adapter"), E.Cause(err, "open existing adapter"))
+		}
+	}`
+	const createReplacement = `	wintunCreateStartedAt := fcxDeviceTimingStart()
+	adapter, err := wintun.CreateAdapter(options.Name, TunnelType, generateGUIDByDeviceName(options.Name))
+	if err != nil {
+		if !errors.Is(err, os.ErrExist) {
+			fcxLogDeviceStage("sing_tun.device.wintun_create", wintunCreateStartedAt, err)
+			return nil, err
+		}
+		createErr := err
+		adapter, err = wintun.OpenAdapter(options.Name)
+		if err != nil {
+			err = E.Errors(E.Cause(createErr, "create adapter"), E.Cause(err, "open existing adapter"))
+			fcxLogDeviceStage("sing_tun.device.wintun_create", wintunCreateStartedAt, err)
+			return nil, err
+		}
+	}
+	fcxLogDeviceStage("sing_tun.device.wintun_create", wintunCreateStartedAt, nil)`
+
+	const sessionAnchor = `	session, err := adapter.StartSession(0x800000)
+	if err != nil {
+		return nil, err
+	}`
+	const sessionReplacement = `	sessionStartedAt := fcxDeviceTimingStart()
+	session, err := adapter.StartSession(0x800000)
+	fcxLogDeviceStage("sing_tun.device.session_start", sessionStartedAt, err)
+	if err != nil {
+		return nil, err
+	}`
+
+	for _, pair := range []struct {
+		name, anchor, replacement string
+	}{
+		{"wintun_create", createAnchor, createReplacement},
+		{"session_start", sessionAnchor, sessionReplacement},
+	} {
+		if strings.Count(newText, pair.anchor) != 1 {
+			return nil, fmt.Errorf("upstream sing-tun New %s block changed", pair.name)
+		}
+		newText = strings.Replace(newText, pair.anchor, pair.replacement, 1)
+	}
+
+	configureText := string(source[fset.Position(configureFn.Pos()).Offset:fset.Position(configureFn.End()).Offset])
+	const configureHeaderAnchor = "func (t *NativeTun) configure() error {\n\tluid := winipcfg.LUID(t.adapter.LUID())\n"
+	const configureHeaderReplacement = `func (t *NativeTun) configure() error {
+	luid := winipcfg.LUID(t.adapter.LUID())
+	ipDnsStartedAt := fcxDeviceTimingStart()
+	if err := func() error {
+`
+	const ipToRouteAnchor = `	if len(t.options.Inet4Address) > 0 || len(t.options.Inet6Address) > 0 {
+		_ = luid.DisableDNSRegistration()
+	}
+	if t.options.AutoRoute {`
+	const ipToRouteReplacement = `	if len(t.options.Inet4Address) > 0 || len(t.options.Inet6Address) > 0 {
+		_ = luid.DisableDNSRegistration()
+	}
+	return nil
+	}(); err != nil {
+		fcxLogDeviceStage("sing_tun.device.ip_dns_config", ipDnsStartedAt, err)
+		return err
+	}
+	fcxLogDeviceStage("sing_tun.device.ip_dns_config", ipDnsStartedAt, nil)
+	routeStartedAt := fcxDeviceTimingStart()
+	if err := func() error {
+	if t.options.AutoRoute {`
+
+	const routeToStrictAnchor = `		err = inet6If.Set()
+		if err != nil {
+			return E.Cause(err, "set ipv6 options")
+		}
+	}
+
+	if t.options.AutoRoute && t.options.StrictRoute {`
+	const routeToStrictReplacement = `		err = inet6If.Set()
+		if err != nil {
+			return E.Cause(err, "set ipv6 options")
+		}
+	}
+	return nil
+	}(); err != nil {
+		fcxLogDeviceStage("sing_tun.device.route_config", routeStartedAt, err)
+		return err
+	}
+	fcxLogDeviceStage("sing_tun.device.route_config", routeStartedAt, nil)
+
+	if t.options.AutoRoute && t.options.StrictRoute {
+		strictRouteStartedAt := fcxDeviceTimingStart()
+		if err := func() error {`
+
+	const configureTailAnchor = "\t}\n\n\treturn nil\n}"
+	const configureTailReplacement = `			return nil
+		}(); err != nil {
+			fcxLogDeviceStage("sing_tun.device.strict_route", strictRouteStartedAt, err)
+			return err
+		}
+		fcxLogDeviceStage("sing_tun.device.strict_route", strictRouteStartedAt, nil)
+	}
+
+	return nil
+}`
+
+	for _, pair := range []struct {
+		name, anchor, replacement string
+	}{
+		{"configure_header", configureHeaderAnchor, configureHeaderReplacement},
+		{"ip_to_route", ipToRouteAnchor, ipToRouteReplacement},
+		{"route_to_strict", routeToStrictAnchor, routeToStrictReplacement},
+	} {
+		if strings.Count(configureText, pair.anchor) != 1 {
+			return nil, fmt.Errorf("upstream sing-tun configure %s block changed", pair.name)
+		}
+		configureText = strings.Replace(configureText, pair.anchor, pair.replacement, 1)
+	}
+	if !strings.HasSuffix(configureText, configureTailAnchor) {
+		return nil, fmt.Errorf("upstream sing-tun configure tail changed")
+	}
+	configureText = configureText[:len(configureText)-len(configureTailAnchor)] + configureTailReplacement
+
+	changes := []replacement{
+		{fset.Position(newFn.Pos()).Offset, fset.Position(newFn.End()).Offset, newText},
+		{fset.Position(configureFn.Pos()).Offset, fset.Position(configureFn.End()).Offset, configureText},
+	}
+	sort.Slice(changes, func(i, j int) bool { return changes[i].start > changes[j].start })
+	patched := string(source)
+	for _, change := range changes {
+		patched = patched[:change.start] + change.text + patched[change.end:]
+	}
+	return format.Source([]byte(patched))
+}
+
 func generate(out string) error {
 	command := exec.Command("go", "list", "-m", "-json", "github.com/metacubex/mihomo")
 	data, err := command.Output()
@@ -430,6 +606,30 @@ func generate(out string) error {
 	}
 	if module.Dir == "" || module.Sum != upstreamModuleSum {
 		return fmt.Errorf("pinned mihomo module checksum mismatch")
+	}
+	var singTunModule struct {
+		Version, Dir, Sum string
+		Replace           json.RawMessage
+	}
+	data, err = exec.Command("go", "list", "-m", "-json", "github.com/metacubex/sing-tun").Output()
+	if err != nil {
+		return fmt.Errorf("resolve pinned sing-tun module: %w", err)
+	}
+	if err := json.Unmarshal(data, &singTunModule); err != nil {
+		return err
+	}
+	if singTunModule.Version != singTunVersion || len(singTunModule.Replace) != 0 {
+		return fmt.Errorf("expected unmodified sing-tun %s module", singTunVersion)
+	}
+	data, err = exec.Command("go", "mod", "download", "-json", "github.com/metacubex/sing-tun@"+singTunVersion).Output()
+	if err != nil {
+		return fmt.Errorf("download pinned sing-tun module: %w", err)
+	}
+	if err := json.Unmarshal(data, &singTunModule); err != nil {
+		return err
+	}
+	if singTunModule.Dir == "" || singTunModule.Sum != singTunModuleSum {
+		return fmt.Errorf("pinned sing-tun module checksum mismatch")
 	}
 	if output, err := exec.Command("go", "mod", "verify").CombinedOutput(); err != nil {
 		return fmt.Errorf("module integrity verification failed: %w: %s", err, output)
@@ -516,6 +716,14 @@ func convertsV2RayFCX(buf []byte, diagnostics bool) ([]map[string]any, error) {`
 	if err != nil {
 		return err
 	}
+	singTunWindowsSource, err := checkedSource(filepath.Join(singTunModule.Dir, "tun_windows.go"), singTunWindowsSHA256)
+	if err != nil {
+		return err
+	}
+	patchedSingTunWindows, err := patchSingTunWindows(singTunWindowsSource)
+	if err != nil {
+		return err
+	}
 	out, err = filepath.Abs(out)
 	if err != nil {
 		return err
@@ -539,6 +747,21 @@ func convertsV2RayFCX(buf []byte, diagnostics bool) ([]map[string]any, error) {`
 	}
 	sourceDirectory := filepath.Join(filepath.Dir(out), "mihomo-"+upstreamVersion+"-source-"+aggregateHashes(stagingHashes))
 	if err := publishModuleCopy(stagingDirectory, sourceDirectory, stagingHashes); err != nil {
+		return err
+	}
+	singTunStagingDirectory, err := os.MkdirTemp(filepath.Dir(out), "sing-tun-"+singTunVersion+"-staging-")
+	if err != nil {
+		return err
+	}
+	if err := copyModule(singTunModule.Dir, singTunStagingDirectory); err != nil {
+		return err
+	}
+	singTunStagingHashes, err := treeHashes(singTunStagingDirectory)
+	if err != nil {
+		return err
+	}
+	singTunSourceDirectory := filepath.Join(filepath.Dir(out), "sing-tun-"+singTunVersion+"-source-"+aggregateHashes(singTunStagingHashes))
+	if err := publishModuleCopy(singTunStagingDirectory, singTunSourceDirectory, singTunStagingHashes); err != nil {
 		return err
 	}
 	listenerPath = filepath.Join(sourceDirectory, "listener", "listener.go")
@@ -595,15 +818,31 @@ func convertsV2RayFCX(buf []byte, diagnostics bool) ([]map[string]any, error) {`
 			return err
 		}
 	}
-	singTunTiming, err := patchFiles.ReadFile("patches/sing_tun_timing_fcx.go.txt")
+	for _, name := range []string{"sing_tun_timing_fcx.go", "sing_tun_timing_fcx_test.go"} {
+		contents, err := patchFiles.ReadFile("patches/" + name + ".txt")
+		if err != nil {
+			return err
+		}
+		contents, err = format.Source(contents)
+		if err != nil {
+			return err
+		}
+		if err := write(filepath.Join(sourceDirectory, "listener", "sing_tun", name), name, contents); err != nil {
+			return err
+		}
+	}
+	if err := write(filepath.Join(singTunSourceDirectory, "tun_windows.go"), "sing_tun_windows.go", patchedSingTunWindows); err != nil {
+		return err
+	}
+	singTunDeviceTiming, err := patchFiles.ReadFile("patches/sing_tun_device_timing_fcx.go.txt")
 	if err != nil {
 		return err
 	}
-	singTunTiming, err = format.Source(singTunTiming)
+	singTunDeviceTiming, err = format.Source(singTunDeviceTiming)
 	if err != nil {
 		return err
 	}
-	if err := write(filepath.Join(sourceDirectory, "listener", "sing_tun", "sing_tun_timing_fcx.go"), "sing_tun_timing_fcx.go", singTunTiming); err != nil {
+	if err := write(filepath.Join(singTunSourceDirectory, "sing_tun_device_timing_fcx.go"), "sing_tun_device_timing_fcx.go", singTunDeviceTiming); err != nil {
 		return err
 	}
 	dnsTests, err := patchFiles.ReadFile("patches/dns_doh_lifecycle_fcx_test.go.txt")
@@ -707,7 +946,22 @@ func convertsV2RayFCX(buf []byte, diagnostics bool) ([]map[string]any, error) {`
 	if !strings.HasPrefix(relativeSource, "../") {
 		relativeSource = "./" + relativeSource
 	}
-	command = exec.Command("go", "mod", "edit", "-modfile="+modfile, "-replace=github.com/metacubex/mihomo="+relativeSource)
+	relativeSingTunSource, err := filepath.Rel(workingDirectory, singTunSourceDirectory)
+	if err != nil {
+		return err
+	}
+	relativeSingTunSource = filepath.ToSlash(relativeSingTunSource)
+	if !strings.HasPrefix(relativeSingTunSource, "../") {
+		relativeSingTunSource = "./" + relativeSingTunSource
+	}
+	command = exec.Command(
+		"go",
+		"mod",
+		"edit",
+		"-modfile="+modfile,
+		"-replace=github.com/metacubex/mihomo="+relativeSource,
+		"-replace=github.com/metacubex/sing-tun="+relativeSingTunSource,
+	)
 	if output, err := command.CombinedOutput(); err != nil {
 		return fmt.Errorf("create isolated module file: %w: %s", err, output)
 	}
@@ -727,16 +981,24 @@ func convertsV2RayFCX(buf []byte, diagnostics bool) ([]map[string]any, error) {`
 	if err != nil {
 		return err
 	}
+	singTunModuleHashes, err := treeHashes(singTunSourceDirectory)
+	if err != nil {
+		return err
+	}
 	for original, overlay := range replacements {
-		relative, err := filepath.Rel(sourceDirectory, original)
-		if err != nil {
-			return err
-		}
 		contents, err := os.ReadFile(overlay)
 		if err != nil {
 			return err
 		}
-		moduleHashes[filepath.ToSlash(relative)] = digest(contents)
+		if relative, err := filepath.Rel(sourceDirectory, original); err == nil && !strings.HasPrefix(filepath.ToSlash(relative), "../") {
+			moduleHashes[filepath.ToSlash(relative)] = digest(contents)
+			continue
+		}
+		relative, err := filepath.Rel(singTunSourceDirectory, original)
+		if err != nil || strings.HasPrefix(filepath.ToSlash(relative), "../") {
+			return fmt.Errorf("unexpected overlay target outside generated module trees: %s", original)
+		}
+		singTunModuleHashes[filepath.ToSlash(relative)] = digest(contents)
 	}
 	generatorSource, err := os.ReadFile(filepath.Join("tools", "mihomo-overlay", "main.go"))
 	if err != nil {
@@ -750,7 +1012,14 @@ func convertsV2RayFCX(buf []byte, diagnostics bool) ([]map[string]any, error) {`
 		"schemaVersion": 1, "module": "github.com/metacubex/mihomo", "version": upstreamVersion,
 		"commit": upstreamCommit, "moduleSum": module.Sum,
 		"upstreamSourceSHA256": map[string]string{"listener/listener.go": listenerSHA256, "listener/sing_tun/server.go": singTunServerSHA256, "component/iface/iface.go": ifaceSHA256, "hub/route/configs.go": configsSHA256, "hub/route/server.go": controllerSHA256, "adapter/adapter.go": adapterSHA256, "dns/doh.go": dnsDoHSHA256, "common/convert/converter.go": converterSHA256},
-		"patchesSHA256":        patchHashes, "generatorSHA256": digest(generatorSource), "projectGoModSHA256": digest(rootMod),
+		"singTunOverlay": map[string]any{
+			"module":               "github.com/metacubex/sing-tun",
+			"version":              singTunVersion,
+			"moduleSum":            singTunModule.Sum,
+			"upstreamSourceSHA256": map[string]string{"tun_windows.go": singTunWindowsSHA256},
+			"effectiveModuleSHA256": aggregateHashes(singTunModuleHashes),
+		},
+		"patchesSHA256":         patchHashes, "generatorSHA256": digest(generatorSource), "projectGoModSHA256": digest(rootMod),
 		"effectiveModuleSHA256": aggregateHashes(moduleHashes), "effectiveModuleFiles": moduleHashes,
 	}, "", "  ")
 	if err != nil {

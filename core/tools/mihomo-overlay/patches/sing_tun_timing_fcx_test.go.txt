@@ -1,0 +1,41 @@
+package sing_tun
+
+import (
+	"errors"
+	"testing"
+	"time"
+
+	tun "github.com/metacubex/sing-tun"
+)
+
+func TestFCXDeviceTimingHookForwardsSubStages(t *testing.T) {
+	if tun.FCXDeviceTimingHook == nil {
+		t.Fatal("expected tun.FCXDeviceTimingHook to be wired by sing_tun init")
+	}
+	type record struct {
+		stage   string
+		outcome string
+	}
+	var got []record
+	previous := fcxSingTunTimingHook
+	fcxSingTunTimingHook = func(stage string, _ time.Duration, outcome string) {
+		got = append(got, record{stage: stage, outcome: outcome})
+	}
+	defer func() {
+		fcxSingTunTimingHook = previous
+	}()
+
+	started := time.Now().Add(-15 * time.Millisecond)
+	tun.FCXDeviceTimingHook("sing_tun.device.wintun_create", started, nil)
+	tun.FCXDeviceTimingHook("sing_tun.device.ip_dns_config", started, errors.New("boom"))
+
+	if len(got) != 2 {
+		t.Fatalf("expected 2 timing events, got %d", len(got))
+	}
+	if got[0].stage != "sing_tun.device.wintun_create" || got[0].outcome != "ok" {
+		t.Fatalf("unexpected first record: %+v", got[0])
+	}
+	if got[1].stage != "sing_tun.device.ip_dns_config" || got[1].outcome != "error" {
+		t.Fatalf("unexpected second record: %+v", got[1])
+	}
+}

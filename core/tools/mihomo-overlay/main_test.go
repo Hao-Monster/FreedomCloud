@@ -319,3 +319,115 @@ func TestSingTunServerPatchIsDeterministicAndRejectsChangedShape(t *testing.T) {
 		})
 	}
 }
+
+const minimalSingTunWindows = `package tun
+
+func New(options Options) (WinTun, error) {
+	if options.FileDescriptor != 0 {
+		return nil, os.ErrInvalid
+	}
+	adapter, err := wintun.CreateAdapter(options.Name, TunnelType, generateGUIDByDeviceName(options.Name))
+	if err != nil {
+		if !errors.Is(err, os.ErrExist) {
+			return nil, err
+		}
+		createErr := err
+		adapter, err = wintun.OpenAdapter(options.Name)
+		if err != nil {
+			return nil, E.Errors(E.Cause(createErr, "create adapter"), E.Cause(err, "open existing adapter"))
+		}
+	}
+	nativeTun := &NativeTun{
+		adapter: adapter,
+		options: options,
+	}
+	session, err := adapter.StartSession(0x800000)
+	if err != nil {
+		return nil, err
+	}
+	nativeTun.session = session
+	nativeTun.readWait = session.ReadWaitEvent()
+	err = nativeTun.configure()
+	if err != nil {
+		session.End()
+		adapter.Close()
+		return nil, err
+	}
+	return nativeTun, nil
+}
+
+func (t *NativeTun) configure() error {
+	luid := winipcfg.LUID(t.adapter.LUID())
+	if len(t.options.Inet4Address) > 0 {
+		if err := luid.SetIPAddressesForFamily(0, t.options.Inet4Address); err != nil {
+			return err
+		}
+	}
+	if len(t.options.Inet4Address) > 0 || len(t.options.Inet6Address) > 0 {
+		_ = luid.DisableDNSRegistration()
+	}
+	if t.options.AutoRoute {
+		if err := windnsapi.FlushResolverCache(); err != nil {
+			return err
+		}
+	}
+	if len(t.options.Inet6Address) > 0 {
+		inet6If, err := luid.IPInterface(winipcfg.AddressFamily(windows.AF_INET6))
+		if err != nil {
+			return err
+		}
+		err = inet6If.Set()
+		if err != nil {
+			return E.Cause(err, "set ipv6 options")
+		}
+	}
+
+	if t.options.AutoRoute && t.options.StrictRoute {
+		if err := configureStrictWFP(); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+`
+
+func TestSingTunWindowsPatchIsDeterministicAndRejectsChangedShape(t *testing.T) {
+	first, err := patchSingTunWindows([]byte(minimalSingTunWindows))
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := patchSingTunWindows([]byte(minimalSingTunWindows))
+	if err != nil || !bytes.Equal(first, second) {
+		t.Fatalf("sing-tun windows patch is nondeterministic: %v", err)
+	}
+	patched := string(first)
+	for _, stage := range []string{
+		"sing_tun.device.wintun_create",
+		"sing_tun.device.session_start",
+		"sing_tun.device.ip_dns_config",
+		"sing_tun.device.route_config",
+		"sing_tun.device.strict_route",
+	} {
+		if !strings.Contains(patched, stage) {
+			t.Fatalf("missing sing-tun windows sub-stage %q", stage)
+		}
+	}
+	if !strings.Contains(patched, "session.End()") || !strings.Contains(patched, "adapter.Close()") {
+		t.Fatal("lost session/adapter cleanup on configure failure")
+	}
+	for name, source := range map[string]string{
+		"missing CreateAdapter": strings.Replace(minimalSingTunWindows, "wintun.CreateAdapter(", "wintun.OtherCreate(", 1),
+		"missing StartSession":  strings.Replace(minimalSingTunWindows, "adapter.StartSession(0x800000)", "adapter.OtherSession()", 1),
+		"missing DisableDNS":    strings.Replace(minimalSingTunWindows, "_ = luid.DisableDNSRegistration()", "_ = luid.OtherDNS()", 1),
+		"missing ipv6 options":  strings.Replace(minimalSingTunWindows, `return E.Cause(err, "set ipv6 options")`, `return err`, 1),
+		"missing StrictRoute":   strings.Replace(minimalSingTunWindows, "if t.options.AutoRoute && t.options.StrictRoute {", "if t.options.StrictRoute {", 1),
+		"invalid syntax":        "package tun\nfunc (",
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := patchSingTunWindows([]byte(source)); err == nil {
+				t.Fatal("changed upstream sing-tun windows shape accepted")
+			}
+		})
+	}
+}
