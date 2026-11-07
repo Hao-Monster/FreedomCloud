@@ -786,9 +786,7 @@ class ClashService extends ClashHandlerInterface {
         (appPath.agentPath, identity.agentExecutable!),
         (appPath.corePath, identity.coreExecutable!),
       ]) {
-        final (bundled, running) =
-            await (fileSha256(pair.$1), fileSha256(pair.$2)).wait;
-        if (bundled != running) {
+        if (!await binaryFilesMatch(pair.$1, pair.$2)) {
           report(false);
           return false;
         }

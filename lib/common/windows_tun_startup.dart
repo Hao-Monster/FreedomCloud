@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
@@ -174,6 +175,59 @@ Future<void> startWindowsTunOnLaunch({
       }
       await reflectObserved(observed);
     }, writeIntent: writeIntent);
+
+/// Marks the Windows runtime connected immediately once TUN has settled, while
+/// hydrating proxy groups and external providers concurrently in the background
+/// so slow provider/group IPC cannot hold the TUN operation queue busy.
+Future<void> reflectWindowsTunRunning({
+  required bool Function() isCurrent,
+  required Future<void> Function() syncUiActive,
+  required void Function() syncLogStream,
+  required void Function() initForegroundCache,
+  required Future<void> Function() showConnectedIcon,
+  required void Function() markRunningNow,
+  required Future<void> Function() updateGroups,
+  required Future<void> Function() updateProviders,
+}) async {
+  final watch = Stopwatch()..start();
+  if (!isCurrent()) {
+    logStartupTiming('reflectRunning', watch, outcome: 'cancelled');
+    return;
+  }
+  await syncUiActive();
+  if (!isCurrent()) {
+    logStartupTiming('reflectRunning', watch, outcome: 'cancelled');
+    return;
+  }
+  syncLogStream();
+  initForegroundCache();
+  await showConnectedIcon();
+  if (!isCurrent()) {
+    logStartupTiming('reflectRunning', watch, outcome: 'cancelled');
+    return;
+  }
+  markRunningNow();
+  logStartupTiming('reflectRunning', watch, outcome: 'ok');
+
+  unawaited(() async {
+    final hydrateWatch = Stopwatch()..start();
+    try {
+      await (updateGroups(), updateProviders()).wait;
+      logStartupTiming(
+        'hydrateProjections',
+        hydrateWatch,
+        outcome: isCurrent() ? 'ok' : 'superseded',
+      );
+    } catch (error) {
+      logStartupTiming(
+        'hydrateProjections',
+        hydrateWatch,
+        outcome: 'error',
+        detail: error.runtimeType.toString().replaceAll(RegExp(r'\s+'), ''),
+      );
+    }
+  }());
+}
 
 /// Validate only what can be checked locally before prompting for privileges.
 /// YAML semantics and script output still require Core configuration acceptance.

@@ -4052,27 +4052,27 @@ class _ControllerWindowsTunStartupEffects implements WindowsTunStartupEffects {
   @override
   void log(String message) => commonPrint.log(message);
   @override
-  Future<void> reflectRunning(bool Function() isCurrent) async {
-    if (!isCurrent()) return;
-    await clashCore.setUiActive(uiActivity.value);
-    if (!isCurrent()) return;
-    if (controller._ref.read(appSettingProvider).openLogs) {
-      clashCore.startLog();
-    } else {
-      clashCore.stopLog();
-    }
-    if (!isCurrent()) return;
-    await controller.updateGroups();
-    if (!isCurrent()) return;
-    await controller.updateProviders();
-    if (!isCurrent()) return;
-    controller.initForegroundCache();
-    await StatusBarManager.updateIcon(isConnected: true);
-    if (!isCurrent()) return;
-    globalState.startTime ??= DateTime.now();
-    unawaited(globalState.startUpdateTasks([controller.updateTraffic]));
-    controller.startRunTimeTimer();
-  }
+  Future<void> reflectRunning(bool Function() isCurrent) =>
+      reflectWindowsTunRunning(
+        isCurrent: isCurrent,
+        syncUiActive: () => clashCore.setUiActive(uiActivity.value),
+        syncLogStream: () {
+          if (controller._ref.read(appSettingProvider).openLogs) {
+            clashCore.startLog();
+          } else {
+            clashCore.stopLog();
+          }
+        },
+        initForegroundCache: controller.initForegroundCache,
+        showConnectedIcon: () => StatusBarManager.updateIcon(isConnected: true),
+        markRunningNow: () {
+          globalState.startTime ??= DateTime.now();
+          unawaited(globalState.startUpdateTasks([controller.updateTraffic]));
+          controller.startRunTimeTimer();
+        },
+        updateGroups: controller.updateGroups,
+        updateProviders: controller.updateProviders,
+      );
 }
 
 class _TrackedWindowsTunStartupEffects implements WindowsTunStartupEffects {
