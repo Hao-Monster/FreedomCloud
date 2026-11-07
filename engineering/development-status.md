@@ -2,6 +2,30 @@
 
 更新日期：2026-11-07。当前阶段是快速开发、快速迭代和部分功能预览。本文记录来源与验收边界；每次继续开发仍需核实实际 Git/PR/CI 状态，不能把历史报告视为当前通过证明。
 
+## 5 项原代码隐藏缺陷与范围外独立问题 TDD 收口（2026-11-07）
+
+- 原始来源与根因穿透：针对上一轮单独归档的 5 项原代码隐藏缺陷（问题 1–5），按用户确认的策略选项（`A1`、`A2`、`A3`）与严格 TDD（前置真实 Red → 最小生产实现 Green → 全栈回归）拆分为 4 个独立原子提交落入本地 `development`：
+  1. **[问题 2 & 问题 3：SCM `binPath`/自锁 SDDL 精确健康门控与 `Windows.runas` `Arena` 内存安全] 提交 `823f043`（[`windowsServiceBinaryPathMatchesHelper` / `windowsServiceConfigReferencesHelper` / `windowsServiceSddlAllowsAdminRepair` / `evaluateWindowsHelperServiceHealth`](file:///E:/CodeWorkstation/FlClashX/lib/common/windows_service_command.dart#L261-L419)、[`runWindowsShellExecute` / `Windows.tryQueryServiceSnapshot` / `Windows.checkService`](file:///E:/CodeWorkstation/FlClashX/lib/common/windows.dart#L33-L446)）**：
+     - 问题 2：将 `windowsServiceConfigReferencesHelper` 从 `.contains(...)` 子串匹配收紧为精确可执行文件 token 校验（支持 `\\?\` / `\\?\UNC\` 规范化与本地化 `sc qc` 输出，拒绝后缀伪造、附加参数、包裹进程及含空格未加引号的旧 `BINARY_PATH_NAME`）；同时在 `tryQueryServiceSnapshot(..., includeDaclSddl: true)` 内通过进程内 FFI `advapi32.dll!QueryServiceObjectSecurity(DACL_SECURITY_INFORMATION)` + `ConvertSecurityDescriptorToStringSecurityDescriptorW` + `LocalFree` 免 UAC 读取当前服务 DACL（`sc` CLI 回退同步执行 `sc sdshow`），一旦检出 `BA`（`S-1-5-32-544`）缺失 `DC` / `WD` / `SD` 或存在 Deny ACE 的历史自锁 SDDL、或含空格未加引号 `binPath`，立即降级为 `WindowsHelperServiceStatus.presence`，触发下次启动一次性 UAC 原位自愈。
+     - 问题 3：提取 `runWindowsShellExecute` 并通过 `using((arena) => ..., allocator)` 托管 `command`、`arguments`、`runas` 三个 UTF-16 原生缓冲区，保证 `ShellExecuteW` 符号查找或 FFI 调用抛异常时 `100%` 释放原生堆内存。
+  2. **[问题 5：上游 `sing-tun@v0.4.27` Windows `AutoRoute` 循环吞错修复] 提交 `f1de163`（[`FCXAddAutoRoutes`](file:///E:/CodeWorkstation/FlClashX/core/tools/mihomo-overlay/patches/sing_tun_device_timing_fcx.go.txt#L26-L46)、[`patchSingTunWindows`](file:///E:/CodeWorkstation/FlClashX/core/tools/mihomo-overlay/main.go#L519-L534)）**：
+     - 通过 `mihomo-overlay` 校验哈希后将 `tun_windows.go` 中末尾路由成功会覆盖前序失败 `err` 的 `for _, routeRange := range routeRanges` 循环替换为 `FCXAddAutoRoutes`，中间任意前缀（如 IPv4 `0.0.0.0/0`）添加失败立即带前缀返回错误，同时幂等容忍 `windows.ERROR_OBJECT_ALREADY_EXISTS`。
+  3. **[问题 1a & 问题 1b：冷启动 `+4s` 按到期窗口刷新订阅与默认 `Dns.respectRules = true` 迁移] 提交 `4bf5496`（[`isProfileAutoUpdateDue`](file:///E:/CodeWorkstation/FlClashX/lib/models/profile.dart#L140-L152)、[`AppController.autoUpdateProfiles` / `runDeferredStartupChecks`](file:///E:/CodeWorkstation/FlClashX/lib/controller.dart#L2400-L2426)、[`Dns`](file:///E:/CodeWorkstation/FlClashX/lib/models/clash_config.dart#L251)、[`AppSettingProps.dnsRespectRulesDefaultMigrated` & `Config.compatibleFromJson`](file:///E:/CodeWorkstation/FlClashX/lib/models/config.dart#L484-L516)、[`GlobalState.patchRawConfig`](file:///E:/CodeWorkstation/FlClashX/lib/state.dart#L1011-L1014)）**：
+     - 问题 1a：移除启动 `+4s` 强制重拉未到期当前订阅的 `_updateCurrentProfileSubscription()`，统一由 `runDeferredStartupChecks()` -> `autoUpdateProfiles()` 按 `isProfileAutoUpdateDue` 到期窗口执行（仅首次 `lastUpdateDate == null` 或已达 `autoUpdateDuration` 时拉取，到期时优先刷新 `currentProfileId`），消除每次冷启动 `+4s` 无条件触发二次全量 `setupConfig` 导致的连接与 Provider 抖动；
+     - 问题 1b：将默认 `Dns.respectRules`（`respect-rules`）调整为 `true`，使 `defaultDns` 中的 `tls://8.8.4.4` / `tls://1.1.1.1` 按代理规则经节点出站而非直连 `:853` 阻断超时；在 `patchRawConfig` 兜底保证开启 `respect-rules` 时 `proxy-server-nameserver` 非空（回退 `defaultDns.proxyServerNameserver`），防止触发 Mihomo `config.go:1420` 拒绝加载；并通过 `dnsRespectRulesDefaultMigrated` 一次性迁移升级本地未改动的旧默认 `Dns(respectRules: false)`，完整保留用户自定义 `Dns` 或迁移后手动关闭 `respect-rules` 的偏好。
+  4. **[问题 4：`AppController.updateProviders` IPC 异常防御] 提交 `a4a408e`（[`AppController.updateProviders`](file:///E:/CodeWorkstation/FlClashX/lib/controller.dart#L1289-L1302)）**：
+     - 对齐 `updateGroups()`，包裹 `try/catch` 捕获 Core 重启/关闭瞬态下的 `clashCore.getExternalProviders()` IPC 异常并保留既有 `providersProvider` 状态及 `runtimeConfigEpoch` / `currentProfileId` 陈旧响应门控，阻断后台 `hydrateProjections` / `_postSetup` 产生未处理异步异常。
+- 验证记录（本机 `Flutter 3.47.4` / `Dart 3.13.3` / `Go 1.26.9`；CI 配置 `Flutter 3.41.7` / `Go 1.26.0`）：
+  - 前置有效 Red：**PASS**（4 个 TDD 单元的测试在生产代码修改前均确定性失败退出码 `1`，实现后全部转绿）；
+  - Flutter 31 套件回归（全部 `test/clash/*` 20 套件 + `startup_subscription_and_dns_test`、`update_providers_safety_test`、`windows_service_command_test`、`windows_scm_ffi_test`、`windows_runas_test`、`file_digest_test`、`windows_tun_startup_stability_test`、`windows_helper_compatibility_test`、`admin_authorization_test`、`helper_diagnostics_test`、`stability_remediation_test`、`health_diagnostics_v2_test`）：**PASS（248 PASS / 0 FAIL）**；
+  - Go Core 与 Overlay 全套验证：**PASS**（`go test -v ./tools/mihomo-overlay` **PASS**；`go run ./tools/mihomo-overlay` **PASS**；`CGO_ENABLED=0 go test "-modfile=.generated/go.mod" "-overlay=.generated/mihomo-overlay.json" "-tags=with_gvisor" -count=1 ./...` **PASS** `14.178s`；overlay 6 包 `-run '^TestFCX'` **PASS**；`GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build` 交叉编译 `listener/sing_tun` **PASS**）；
+  - M3 打包与严格完整性校验（`Test-M3PackageTools.ps1`、`Test-M3ManifestAssemblyOrder.ps1`、`Test-M3EvidenceValidator.ps1`、`Test-StrictTestValidation.ps1` `68` 用例）：**PASS**；
+  - 静态与空白检查（`dart analyze` 新增/改动模块 `No issues found!`，`git diff --cached --check` 零空白错误）：**PASS**；本机现役运行进程、代理与 TUN 零触碰，既有未提交文件原样保留。
+- 交付状态：**已实现 / 已本地单元测试验证 / 已分 4 个原子提交落入本地 `development`（`823f043`、`f1de163`、`4bf5496`、`a4a408e`）**；未构建新预览包（待指令） / 未推送远端（待授权） / 未创建或合并 PR / 远端 CI **NOT RUN** / 实机窗口与 UAC 原位自愈验收 **NOT RUN**。
+- 待处理问题与下一步：
+  - 代码审阅期间另发现范围外独立小缺陷：`GlobalState.migrateOldData(Config config)`（[`lib/state.dart`](file:///E:/CodeWorkstation/FlClashX/lib/state.dart#L520-L529)）仅重赋值局部形参 `config` 并异步写盘（未 `await`），未同步更新内存 `this.config`，已单独报告未混入本轮提交；
+  - 下一步可按指令从最新干净 `HEAD` 构建包含 `0bdfbbe`–`a4a408e` 全部修复的全栈 Windows x64 预览包进行实机验收。
+
 ## Helper 服务 `SeTakeOwnershipPrivilege` 原位自愈、TUN 启动链路优化与 `sing_tun.device` 子阶段埋点 TDD 收口（2026-11-07）
 
 - 原始来源与根因穿透：针对 `tun-faststart-ba00b57608cd` 实机测试报告暴露的两项核心问题，按对齐确认的范围与严格 TDD（前置真实 Red → 最小生产实现 Green → 全量回归）拆分为 3 个独立提交落入本地 `development`：
