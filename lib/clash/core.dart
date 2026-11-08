@@ -51,7 +51,9 @@ class ClashCore {
   bool? _wantedUiActive;
   Future<bool>? _uiActivityUpdate;
   bool? _wantedRequestsActive;
+  bool? _lastAppliedRequestsActive;
   Future<bool>? _requestsActivityUpdate;
+  final Set<String> _requestsConsumers = <String>{};
   Future<bool>? _preloadFuture;
 
   Future<bool> preload() => _preloadFuture ??= _preloadImpl().catchError((Object e) {
@@ -117,12 +119,17 @@ class ClashCore {
       clashCore.stopLog();
     }
     final homeDirPath = await appPath.homeDirPath;
-    return clashInterface.init(
+    final initialized = await clashInterface.init(
       InitParams(
         homeDir: homeDirPath,
         version: globalState.appState.version,
       ),
     );
+    if (initialized && _requestsConsumers.isNotEmpty) {
+      _lastAppliedRequestsActive = null;
+      unawaited(setRequestsActive(true));
+    }
+    return initialized;
   }
 
   Future<bool> setState(CoreState state) => clashInterface.setState(state);
@@ -144,6 +151,28 @@ class ClashCore {
     return applied;
   }
 
+  Future<bool> acquireRequestsConsumer(String consumerKey) {
+    final wasActive = _requestsConsumers.isNotEmpty;
+    _requestsConsumers.add(consumerKey);
+    if (wasActive && _lastAppliedRequestsActive == true) {
+      return Future.value(true);
+    }
+    return setRequestsActive(true);
+  }
+
+  Future<bool> releaseRequestsConsumer(String consumerKey) {
+    if (!_requestsConsumers.remove(consumerKey)) {
+      return Future.value(true);
+    }
+    if (_requestsConsumers.isNotEmpty) {
+      return Future.value(true);
+    }
+    if (_lastAppliedRequestsActive == false) {
+      return Future.value(true);
+    }
+    return setRequestsActive(false);
+  }
+
   Future<bool> setRequestsActive(bool active) {
     _wantedRequestsActive = active;
     return _requestsActivityUpdate ??=
@@ -158,11 +187,15 @@ class ClashCore {
       final active = _wantedRequestsActive!;
       _wantedRequestsActive = null;
       applied = await clashInterface.setRequestsActive(active);
+      if (applied) {
+        _lastAppliedRequestsActive = active;
+      }
     }
     return applied;
   }
 
   Future<void> shutdown() async {
+    _lastAppliedRequestsActive = null;
     globalState.clearRuntimeSetup();
     await cancelDelayTests(reason: 'sessionClosed');
     await clashInterface.shutdown();

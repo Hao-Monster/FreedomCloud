@@ -41,19 +41,29 @@ class ProcessIconQueue<V extends Object> extends ChangeNotifier {
     required Future<V?> Function(String source) load,
     this.maxWaiting = 64,
     this.maxCached = 64,
+    this.negativeCacheTtl = Duration.zero,
+    DateTime Function()? now,
     void Function(V value)? onEvict,
   })  : assert(maxWaiting >= 0, 'Waiting capacity must not be negative'),
         assert(maxCached > 0, 'Cache capacity must be positive'),
+        assert(!negativeCacheTtl.isNegative,
+            'Negative cache TTL must not be negative'),
         _load = load,
+        _now = now ?? DateTime.now,
         _onEvict = onEvict;
+
+  static const _maxNegativeCached = 128;
 
   final int maxWaiting;
   final int maxCached;
+  final Duration negativeCacheTtl;
   final Future<V?> Function(String source) _load;
+  final DateTime Function() _now;
   final void Function(V value)? _onEvict;
   final _jobs = <String, _IconJob<V>>{};
   final _waiting = ListQueue<_IconJob<V>>();
   final _cache = <String, V>{};
+  final _negativeCache = <String, DateTime>{};
   _IconJob<V>? _active;
   bool _notificationScheduled = false;
   bool _disposed = false;
@@ -70,6 +80,15 @@ class ProcessIconQueue<V extends Object> extends ChangeNotifier {
     if (cached != null) {
       _cache[key] = cached;
       return ProcessIconLease<V>._().._complete(cached);
+    }
+    if (negativeCacheTtl > Duration.zero) {
+      final expiresAt = _negativeCache[key];
+      if (expiresAt != null) {
+        if (_now().isBefore(expiresAt)) {
+          return ProcessIconLease<V>._().._complete(null);
+        }
+        _negativeCache.remove(key);
+      }
     }
     final existing = _jobs[key];
     if (existing != null) return _attach(existing);
@@ -108,20 +127,33 @@ class ProcessIconQueue<V extends Object> extends ChangeNotifier {
 
   Future<void> _run(_IconJob<V> job) async {
     V? value;
+    var attempted = false;
+    var failed = false;
     try {
       if (!_disposed && job.consumers.isNotEmpty) {
+        attempted = true;
         value = await _load(job.source);
       }
     } catch (_) {
+      failed = true;
       // Icon lookup is best effort. A failure belongs to this attempt and must
       // neither poison the queue nor become a permanent negative cache entry.
     } finally {
       _jobs.remove(job.key);
-      if (value != null && !_disposed && job.consumers.isNotEmpty) {
-        _cache[job.key] = value;
-        if (_cache.length > maxCached) {
-          final oldest = _cache.remove(_cache.keys.first)!;
-          _onEvict?.call(oldest);
+      if (!_disposed && job.consumers.isNotEmpty) {
+        if (value != null) {
+          _negativeCache.remove(job.key);
+          _cache[job.key] = value;
+          if (_cache.length > maxCached) {
+            final oldest = _cache.remove(_cache.keys.first)!;
+            _onEvict?.call(oldest);
+          }
+        } else if (attempted && !failed && negativeCacheTtl > Duration.zero) {
+          _negativeCache.remove(job.key);
+          if (_negativeCache.length >= _maxNegativeCached) {
+            _negativeCache.remove(_negativeCache.keys.first);
+          }
+          _negativeCache[job.key] = _now().add(negativeCacheTtl);
         }
       }
       for (final lease in job.consumers) {
@@ -165,6 +197,7 @@ class ProcessIconQueue<V extends Object> extends ChangeNotifier {
       _onEvict?.call(value);
     }
     _cache.clear();
+    _negativeCache.clear();
     super.dispose();
   }
 }

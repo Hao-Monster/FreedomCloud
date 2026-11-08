@@ -355,6 +355,34 @@ class DelayDataSource extends _$DelayDataSource with AutoDisposeNotifierMixin {
       state = newDelayMap;
     }
   }
+
+  void setDelays(Iterable<Delay> delays) {
+    Map<String, Map<String, int?>>? nextMap;
+    final clonedBuckets = <String, Map<String, int?>>{};
+    for (final delay in delays) {
+      final currentBucket = (nextMap ?? state)[delay.url];
+      if (currentBucket != null &&
+          currentBucket.containsKey(delay.name) &&
+          currentBucket[delay.name] == delay.value) {
+        continue;
+      }
+      nextMap ??= Map<String, Map<String, int?>>.from(state);
+      final mutableBucket = clonedBuckets.putIfAbsent(
+        delay.url,
+        () {
+          final copy = Map<String, int?>.from(
+            nextMap![delay.url] ?? const <String, int?>{},
+          );
+          nextMap[delay.url] = copy;
+          return copy;
+        },
+      );
+      mutableBucket[delay.name] = delay.value;
+    }
+    if (nextMap != null) {
+      state = nextMap;
+    }
+  }
 }
 
 @riverpod

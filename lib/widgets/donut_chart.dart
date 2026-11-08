@@ -1,11 +1,11 @@
 import 'dart:math';
 
 import 'package:flclashx/common/common.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 @immutable
 class DonutChartData {
-
   const DonutChartData({
     required double value,
     required this.color,
@@ -31,7 +31,6 @@ class DonutChartData {
 }
 
 class DonutChart extends StatefulWidget {
-
   const DonutChart({
     super.key,
     required this.data,
@@ -62,7 +61,10 @@ class _DonutChartState extends State<DonutChart>
   @override
   void didUpdateWidget(DonutChart oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.data != widget.data) {
+    if (oldWidget.duration != widget.duration) {
+      _animationController.duration = widget.duration;
+    }
+    if (!listEquals(oldWidget.data, widget.data)) {
       _oldData = oldWidget.data;
       _animationController.forward(from: 0);
     }
@@ -75,20 +77,21 @@ class _DonutChartState extends State<DonutChart>
   }
 
   @override
-  Widget build(BuildContext context) => AnimatedBuilder(
-      animation: _animationController,
-      builder: (context, child) => CustomPaint(
-          painter: DonutChartPainter(
-            _oldData,
-            widget.data,
-            _animationController.value,
+  Widget build(BuildContext context) => RepaintBoundary(
+        child: AnimatedBuilder(
+          animation: _animationController,
+          builder: (context, child) => CustomPaint(
+            painter: DonutChartPainter(
+              _oldData,
+              widget.data,
+              _animationController.value,
+            ),
           ),
         ),
-    );
+      );
 }
 
 class DonutChartPainter extends CustomPainter {
-
   DonutChartPainter(this.oldData, this.newData, this.progress);
   final List<DonutChartData> oldData;
   final List<DonutChartData> newData;
@@ -133,8 +136,9 @@ class DonutChartPainter extends CustomPainter {
     final center = Offset(size.width / 2, size.height / 2);
     final strokeWidth = 10.0.ap;
     final radius = min(size.width / 2, size.height / 2) - strokeWidth / 2;
+    if (radius <= 0) return;
 
-    final gapAngle = 2 * asin(strokeWidth * 1 / (2 * radius)) * 1.2;
+    final gapAngle = 2 * asin((strokeWidth * 1 / (2 * radius)).clamp(-1.0, 1.0)) * 1.2;
 
     final data = interpolatedData;
     final total = data.fold<double>(
@@ -171,7 +175,8 @@ class DonutChartPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(DonutChartPainter oldDelegate) => oldDelegate.progress != progress ||
-        oldDelegate.oldData != oldData ||
-        oldDelegate.newData != newData;
+  bool shouldRepaint(DonutChartPainter oldDelegate) =>
+      oldDelegate.progress != progress ||
+      !listEquals(oldDelegate.oldData, oldData) ||
+      !listEquals(oldDelegate.newData, newData);
 }

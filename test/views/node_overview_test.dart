@@ -72,7 +72,10 @@ class _ProxyController implements AppController {
       changes.add((groupName, proxyName));
 
   @override
-  void applyProfileDebounce({bool silence = false}) =>
+  void applyProfileDebounce({
+    bool silence = false,
+    bool skipIfUnchanged = false,
+  }) =>
       applyDebounces.add(silence);
 
   @override
@@ -118,6 +121,7 @@ class _CatalogTester extends ChangeNotifier implements NodeCatalogTester {
   final current = <List<DelayTestTarget>>[];
   final all = <List<Profile>>[];
   final pendingKeys = <(String, String)>{};
+  final _snapshotCache = <String, Set<String>>{};
   String? reason;
   DelayBatchResult? allResult;
   Future<DelayBatchResult> Function(List<DelayTestTarget> targets)?
@@ -130,6 +134,21 @@ class _CatalogTester extends ChangeNotifier implements NodeCatalogTester {
   int total = 0;
   @override
   int completed = 0;
+  @override
+  Set<String> pendingIdentitySnapshot(String profileId) {
+    final currentForProfile = {
+      for (final (p, key) in pendingKeys)
+        if (p == profileId) key,
+    };
+    final cached = _snapshotCache[profileId];
+    if (cached != null && stringSetEquality.equals(cached, currentForProfile)) {
+      return cached;
+    }
+    final frozen = Set<String>.unmodifiable(currentForProfile);
+    _snapshotCache[profileId] = frozen;
+    return frozen;
+  }
+
   @override
   bool pending(String profileId, String identityKey) =>
       pendingKeys.contains((profileId, identityKey));

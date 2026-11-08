@@ -169,9 +169,10 @@ class _StartButtonState extends ConsumerState<StartButton>
       final text = utils.getTimeText(runTime);
       statusLabelWidget = Text(
         text,
-        key: ValueKey('time_$text'),
+        key: const ValueKey('running_uptime'),
         style: context.textTheme.titleMedium?.toSoftBold.copyWith(
           color: Colors.white,
+          fontFeatures: const [FontFeature.tabularFigures()],
         ),
       );
     } else {

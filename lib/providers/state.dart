@@ -15,6 +15,10 @@ import 'tun.dart';
 
 part 'generated/state.g.dart';
 
+final Set<String> _groupTypeNames = {
+  for (final groupType in GroupType.values) groupType.name,
+};
+
 @riverpod
 Config configState(Ref ref) {
   final themeProps = ref.watch(themeSettingProvider);
@@ -73,7 +77,8 @@ GroupsState currentGroupsState(Ref ref) {
 
 @riverpod
 NavigationItemsState navigationsState(Ref ref) {
-  final openLogs = ref.watch(appSettingProvider).openLogs;
+  final openLogs =
+      ref.watch(appSettingProvider.select((state) => state.openLogs));
   final hasProxies = ref.watch(
       currentGroupsStateProvider.select((state) => state.value.isNotEmpty));
   return NavigationItemsState(
@@ -181,33 +186,33 @@ ProxyState proxyState(Ref ref) {
 @riverpod
 TrayState trayState(Ref ref) {
   final isStart = ref.watch(runTimeProvider.select((state) => state != null));
-  final networkProps = ref.watch(networkSettingProvider);
-  final clashConfig = ref.watch(
-    patchClashConfigProvider,
+  final systemProxy = ref.watch(
+    networkSettingProvider.select((state) => state.systemProxy),
   );
-  final appSetting = ref.watch(
-    appSettingProvider,
+  final (mode, mixedPort, configTunEnable) = ref.watch(
+    patchClashConfigProvider.select(
+      (state) => (state.mode, state.mixedPort, state.tun.enable),
+    ),
   );
-  final groups = ref
-      .watch(
-        currentGroupsStateProvider,
-      )
-      .value;
-  final brightness = ref.watch(
-    appBrightnessProvider,
+  final (autoLaunch, locale) = ref.watch(
+    appSettingProvider.select((state) => (state.autoLaunch, state.locale)),
   );
-
+  final groups = ref.watch(currentGroupsStateProvider).value;
+  final brightness = ref.watch(appBrightnessProvider);
   final selectedMap = ref.watch(selectedMapProvider);
   final globalModeEnabled = ref.watch(globalModeEnabledProvider);
+  final tunEnable = Platform.isWindows
+      ? ref.watch(tunRuntimeProvider.select((runtime) => runtime.isEnabled))
+      : configTunEnable;
 
   return TrayState(
-    mode: clashConfig.mode,
-    port: clashConfig.mixedPort,
-    autoLaunch: appSetting.autoLaunch,
-    systemProxy: networkProps.systemProxy,
-    tunEnable: Platform.isWindows ? ref.watch(tunRuntimeProvider).isEnabled : clashConfig.tun.enable,
+    mode: mode,
+    port: mixedPort,
+    autoLaunch: autoLaunch,
+    systemProxy: systemProxy,
+    tunEnable: tunEnable,
     isStart: isStart,
-    locale: appSetting.locale,
+    locale: locale,
     brightness: brightness,
     groups: groups,
     selectedMap: selectedMap,
@@ -233,7 +238,7 @@ HomeState homeState(Ref ref) {
   final pageLabel = ref.watch(currentPageLabelProvider);
   final navigationItems = ref.watch(currentNavigationsStateProvider).value;
   final viewMode = ref.watch(viewModeProvider);
-  final locale = ref.watch(appSettingProvider).locale;
+  final locale = ref.watch(appSettingProvider.select((state) => state.locale));
   return HomeState(
     pageLabel: pageLabel,
     navigationItems: navigationItems,
@@ -301,9 +306,15 @@ ProfilesSelectorState profilesSelectorState(Ref ref) {
 
 @riverpod
 ProxiesListSelectorState proxiesListSelectorState(Ref ref) {
-  final groupNames = ref.watch(currentGroupsStateProvider.select((state) => state.value.map((e) => e.name).toList()));
+  final groupNames = ref.watch(
+    currentGroupsStateProvider
+        .select((state) => state.value.map((e) => e.name).toList()),
+  );
   final currentUnfoldSet = ref.watch(unfoldSetProvider);
-  final proxiesStyle = ref.watch(proxiesStyleSettingProvider);
+  final (sortType, cardType) = ref.watch(
+    proxiesStyleSettingProvider
+        .select((state) => (state.sortType, state.cardType)),
+  );
   final sortNum = ref.watch(sortNumProvider);
   final columns = ref.watch(getProxiesColumnsProvider);
   final query = ref.watch(
@@ -314,8 +325,8 @@ ProxiesListSelectorState proxiesListSelectorState(Ref ref) {
   return ProxiesListSelectorState(
     groupNames: groupNames,
     currentUnfoldSet: currentUnfoldSet,
-    proxiesSortType: proxiesStyle.sortType,
-    proxyCardType: proxiesStyle.cardType,
+    proxiesSortType: sortType,
+    proxyCardType: cardType,
     sortNum: sortNum,
     columns: columns,
     query: query,
@@ -340,17 +351,18 @@ ProxiesSelectorState proxiesSelectorState(Ref ref) {
 
 @riverpod
 GroupNamesState groupNamesState(Ref ref) => GroupNamesState(
-    groupNames: ref.watch(
-      currentGroupsStateProvider.select(
-        (state) => state.value.map((e) => e.name).toList(),
+      groupNames: ref.watch(
+        currentGroupsStateProvider.select(
+          (state) => state.value.map((e) => e.name).toList(),
+        ),
       ),
-    ),
-  );
+    );
 
 @riverpod
 ProxyGroupSelectorState proxyGroupSelectorState(Ref ref, String groupName) {
-  final proxiesStyle = ref.watch(
-    proxiesStyleSettingProvider,
+  final (sortType, cardType) = ref.watch(
+    proxiesStyleSettingProvider
+        .select((state) => (state.sortType, state.cardType)),
   );
   final group = ref.watch(
     currentGroupsStateProvider.select(
@@ -361,12 +373,14 @@ ProxyGroupSelectorState proxyGroupSelectorState(Ref ref, String groupName) {
   final columns = ref.watch(getProxiesColumnsProvider);
   final query =
       ref.watch(proxiesQueryProvider.select((state) => state.toLowerCase()));
-  final proxies = group?.all.where((item) => item.name.toLowerCase().contains(query)).toList() ??
+  final proxies = group?.all
+          .where((item) => item.name.toLowerCase().contains(query))
+          .toList() ??
       [];
   return ProxyGroupSelectorState(
     testUrl: group?.testUrl,
-    proxiesSortType: proxiesStyle.sortType,
-    proxyCardType: proxiesStyle.cardType,
+    proxiesSortType: sortType,
+    proxyCardType: cardType,
     sortNum: sortNum,
     groupType: group?.type ?? GroupType.Selector,
     proxies: proxies,
@@ -388,15 +402,17 @@ PackageListSelectorState packageListSelectorState(Ref ref) {
 @riverpod
 MoreToolsSelectorState moreToolsSelectorState(Ref ref) {
   final viewMode = ref.watch(viewModeProvider);
-  final navigationItems = ref.watch(navigationsStateProvider.select((state) => state.value.where((element) {
-      final isMore = element.modes.contains(NavigationItemMode.more);
-      final isDesktop = element.modes.contains(NavigationItemMode.desktop);
-      if (isMore && !isDesktop) return true;
-      if (viewMode != ViewMode.mobile || !isMore) {
-        return false;
-      }
-      return true;
-    }).toList()));
+  final navigationItems =
+      ref.watch(navigationsStateProvider.select((state) => state.value.where((element) {
+            final isMore = element.modes.contains(NavigationItemMode.more);
+            final isDesktop =
+                element.modes.contains(NavigationItemMode.desktop);
+            if (isMore && !isDesktop) return true;
+            if (viewMode != ViewMode.mobile || !isMore) {
+              return false;
+            }
+            return true;
+          }).toList()));
 
   return MoreToolsSelectorState(navigationItems: navigationItems);
 }
@@ -420,7 +436,8 @@ bool isCurrentPage(
 
 @riverpod
 String getRealTestUrl(Ref ref, [String? testUrl]) {
-  final currentTestUrl = ref.watch(appSettingProvider).testUrl;
+  final currentTestUrl =
+      ref.watch(appSettingProvider.select((state) => state.testUrl));
   return testUrl.getSafeValue(currentTestUrl);
 }
 
@@ -466,17 +483,17 @@ Set<String> unfoldSet(Ref ref) {
 
 @riverpod
 HotKeyAction getHotKeyAction(Ref ref, HotAction hotAction) => ref.watch(
-    hotKeyActionsProvider.select(
-      (state) {
-        final index = state.indexWhere((item) => item.action == hotAction);
-        return index != -1
-            ? state[index]
-            : HotKeyAction(
-                action: hotAction,
-              );
-      },
-    ),
-  );
+      hotKeyActionsProvider.select(
+        (state) {
+          final index = state.indexWhere((item) => item.action == hotAction);
+          return index != -1
+              ? state[index]
+              : HotKeyAction(
+                  action: hotAction,
+                );
+        },
+      ),
+    );
 
 @riverpod
 Profile? currentProfile(Ref ref) {
@@ -545,7 +562,8 @@ int? backgroundOpacityFromHeader(String? raw) {
 @riverpod
 String? backgroundUrl(Ref ref) {
   final profile = ref.watch(currentProfileProvider);
-  return backgroundUrlFromHeader(profile?.providerHeaders['flclashx-background']);
+  return backgroundUrlFromHeader(
+      profile?.providerHeaders['flclashx-background']);
 }
 
 /// Background image opacity (1-100, higher = more visible) parsed from the optional
@@ -553,7 +571,8 @@ String? backgroundUrl(Ref ref) {
 @riverpod
 int? backgroundOpacity(Ref ref) {
   final profile = ref.watch(currentProfileProvider);
-  return backgroundOpacityFromHeader(profile?.providerHeaders['flclashx-background']);
+  return backgroundOpacityFromHeader(
+      profile?.providerHeaders['flclashx-background']);
 }
 
 @riverpod
@@ -621,13 +640,15 @@ String? getSelectedProxyName(Ref ref, String groupName) {
 
 @riverpod
 String getProxyDesc(Ref ref, Proxy proxy) {
-  final groupTypeNamesList = GroupType.values.map((e) => e.name).toList();
-  if (!groupTypeNamesList.contains(proxy.type)) {
+  if (!_groupTypeNames.contains(proxy.type)) {
     return proxy.serverDescription ?? proxy.type;
   } else {
-    final groups = ref.watch(groupsProvider);
-    final index = groups.indexWhere((element) => element.name == proxy.name);
-    if (index == -1) return proxy.serverDescription ?? proxy.type;
+    final hasGroup = ref.watch(
+      groupsProvider.select(
+        (groups) => groups.any((element) => element.name == proxy.name),
+      ),
+    );
+    if (!hasGroup) return proxy.serverDescription ?? proxy.type;
     // Custom description from YAML wins over the group type when present.
     // Otherwise show the currently selected proxy instead of "Type(selection)".
     final customDesc = globalState.groupDescriptions.value[proxy.name];
@@ -645,8 +666,8 @@ String getProxyDesc(Ref ref, Proxy proxy) {
 class ProfileOverrideState extends _$ProfileOverrideState {
   @override
   ProfileOverrideStateModel build() => const ProfileOverrideStateModel(
-      selectedRules: {},
-    );
+        selectedRules: {},
+      );
 
   void updateState(
     ProfileOverrideStateModel? Function(ProfileOverrideStateModel state)
@@ -662,10 +683,10 @@ class ProfileOverrideState extends _$ProfileOverrideState {
 
 @riverpod
 OverrideData? getProfileOverrideData(Ref ref, String profileId) => ref.watch(
-    profilesProvider.select(
-      (state) => state.getProfile(profileId)?.overrideData,
-    ),
-  );
+      profilesProvider.select(
+        (state) => state.getProfile(profileId)?.overrideData,
+      ),
+    );
 
 @riverpod
 VM2? layoutChange(Ref ref) {
@@ -713,9 +734,6 @@ ColorScheme genColorScheme(
     ),
   );
   if (color == null && (ignoreConfig == true || vm2.a == null)) {
-    // if (globalState.corePalette != null) {
-    //   return globalState.corePalette!.toColorScheme(brightness: brightness);
-    // }
     return ColorScheme.fromSeed(
       seedColor: globalState.corePalette
               ?.toColorScheme(brightness: brightness)
@@ -754,7 +772,7 @@ VM3<String?, String?, Dns?> needSetup(Ref ref) {
 VM2<bool, bool> autoSetSystemDnsState(Ref ref) {
   final isStart = ref.watch(runTimeProvider.select((state) => state != null));
   final realTunEnable = Platform.isWindows
-      ? ref.watch(tunRuntimeProvider).isEnabled
+      ? ref.watch(tunRuntimeProvider.select((runtime) => runtime.isEnabled))
       : ref.watch(realTunEnableProvider);
   final autoSetSystemDns = ref.watch(
     networkSettingProvider.select(
@@ -766,7 +784,6 @@ VM2<bool, bool> autoSetSystemDnsState(Ref ref) {
     b: autoSetSystemDns,
   );
 }
-
 
 @riverpod
 VM5<String?, OverrideData, OverrideData?, RouteMode, LocalSplitMode>

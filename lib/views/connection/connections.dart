@@ -159,33 +159,59 @@ class _ConnectionsViewState extends ConsumerState<ConnectionsView>
 
   @override
   Widget build(BuildContext context) {
-    final settings = ref.watch(appSettingProvider);
+    final (
+      connectionListMode,
+      connectionViewMode,
+      connectionSort,
+      connectionSortDirection,
+      connectionShowIcon,
+      connectionUseApplicationName,
+      connectionTableColumns,
+      connectionTableColumnWidths,
+    ) = ref.watch(
+      appSettingProvider.select(
+        (s) => (
+          s.connectionListMode,
+          s.connectionViewMode,
+          s.connectionSort,
+          s.connectionSortDirection,
+          s.connectionShowIcon,
+          s.connectionUseApplicationName,
+          s.connectionTableColumns,
+          s.connectionTableColumnWidths,
+        ),
+      ),
+    );
     return ProcessIconActivityScope(
       activity: _iconActivity,
       child: ListenableBuilder(
         listenable: connectionManager,
         builder: (_, __) {
-          final groups = sortProcessConnectionGroups(
-            _filteredGroups(connectionManager.processGroups, _query),
-            settings.connectionSort,
-            direction: settings.connectionSortDirection,
-          );
           final selectedGroup = _selectedProcessKey == null
               ? null
               : connectionManager.processGroups
                     .where((group) => group.key == _selectedProcessKey)
                     .firstOrNull;
           final showProcessOverview =
-              settings.connectionListMode == ConnectionListMode.process &&
+              connectionListMode == ConnectionListMode.process &&
               selectedGroup == null;
-          final source = showProcessOverview
+          final groups = showProcessOverview
+              ? sortProcessConnectionGroups(
+                  _filteredGroups(connectionManager.processGroups, _query),
+                  connectionSort,
+                  direction: connectionSortDirection,
+                )
+              : const <ProcessConnectionGroup>[];
+          final filtered = showProcessOverview
               ? const <TrackedConnection>[]
-              : _connectionsFor(selectedGroup);
-          final filtered = sortTrackedConnections(
-            filterTrackedConnections(source, _query),
-            settings.connectionSort,
-            direction: settings.connectionSortDirection,
-          );
+              : sortTrackedConnections(
+                  filterTrackedConnections(
+                    _connectionsFor(selectedGroup),
+                    _query,
+                  ),
+                  connectionSort,
+                  direction: connectionSortDirection,
+                );
           final closeable = closeableConnectionItemsForView(
             showProcessOverview: showProcessOverview,
             isActiveTab: _status == _ConnectionStatusTab.active,
@@ -240,7 +266,7 @@ class _ConnectionsViewState extends ConsumerState<ConnectionsView>
                           label: Text(appLocalizations.connectionsClassicMode),
                         ),
                       ],
-                      selected: {settings.connectionListMode},
+                      selected: {connectionListMode},
                       onSelectionChanged: (values) {
                         setState(() => _selectedProcessKey = null);
                         ref
@@ -281,13 +307,30 @@ class _ConnectionsViewState extends ConsumerState<ConnectionsView>
               ),
               if (!showProcessOverview) _statusBar(selectedGroup),
               if (selectedGroup != null)
-                _processBreadcrumb(selectedGroup, settings),
+                _processBreadcrumb(
+                  selectedGroup,
+                  showIcon: connectionShowIcon,
+                  useApplicationName: connectionUseApplicationName,
+                ),
               Expanded(
                 child: connectionManager.loading
                     ? const Center(child: CircularProgressIndicator())
                     : showProcessOverview
-                    ? _processList(groups, settings)
-                    : _connectionList(filtered, settings),
+                    ? _processList(
+                        groups,
+                        showIcon: connectionShowIcon,
+                        useApplicationName: connectionUseApplicationName,
+                      )
+                    : _connectionList(
+                        filtered,
+                        viewMode: connectionViewMode,
+                        showIcon: connectionShowIcon,
+                        useApplicationName: connectionUseApplicationName,
+                        tableColumns: connectionTableColumns,
+                        tableColumnWidths: connectionTableColumnWidths,
+                        sort: connectionSort,
+                        sortDirection: connectionSortDirection,
+                      ),
               ),
             ],
           );
@@ -349,9 +392,10 @@ class _ConnectionsViewState extends ConsumerState<ConnectionsView>
   }
 
   Widget _processBreadcrumb(
-    ProcessConnectionGroup group,
-    AppSettingProps settings,
-  ) {
+    ProcessConnectionGroup group, {
+    required bool showIcon,
+    required bool useApplicationName,
+  }) {
     final first = group.activeConnections.firstOrNull?.connection ??
         group.closedConnections.first.connection;
     return Padding(
@@ -367,7 +411,7 @@ class _ConnectionsViewState extends ConsumerState<ConnectionsView>
             process: group.name,
             processPath: group.processPath,
             connectionType: first.metadata.type,
-            enabled: settings.connectionShowIcon,
+            enabled: showIcon,
             size: 32,
           ),
           const SizedBox(width: 8),
@@ -375,7 +419,7 @@ class _ConnectionsViewState extends ConsumerState<ConnectionsView>
             child: Text(
               connectionProcessName(
                 first.metadata,
-                applicationName: settings.connectionUseApplicationName,
+                applicationName: useApplicationName,
               ),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
@@ -388,9 +432,10 @@ class _ConnectionsViewState extends ConsumerState<ConnectionsView>
   }
 
   Widget _processList(
-    List<ProcessConnectionGroup> groups,
-    AppSettingProps settings,
-  ) {
+    List<ProcessConnectionGroup> groups, {
+    required bool showIcon,
+    required bool useApplicationName,
+  }) {
     if (groups.isEmpty) {
       return NullStatus(
         label: appLocalizations.nullTip(appLocalizations.connectionsProcess),
@@ -404,8 +449,8 @@ class _ConnectionsViewState extends ConsumerState<ConnectionsView>
         return ProcessConnectionCard(
           key: ValueKey(group.key),
           group: group,
-          showIcon: settings.connectionShowIcon,
-          useApplicationName: settings.connectionUseApplicationName,
+          showIcon: showIcon,
+          useApplicationName: useApplicationName,
           policy: configuredPolicy?.policy ??
               ApplicationRoutingPolicy.inherit,
           policyTargetGroup: configuredPolicy?.targetGroup,
@@ -464,9 +509,15 @@ class _ConnectionsViewState extends ConsumerState<ConnectionsView>
   }
 
   Widget _connectionList(
-    List<TrackedConnection> items,
-    AppSettingProps settings,
-  ) {
+    List<TrackedConnection> items, {
+    required ConnectionViewMode viewMode,
+    required bool showIcon,
+    required bool useApplicationName,
+    required List<String> tableColumns,
+    required Map<String, double> tableColumnWidths,
+    required ConnectionSort sort,
+    required ConnectionSortDirection sortDirection,
+  }) {
     if (items.isEmpty) {
       return NullStatus(
         label: appLocalizations.nullTip(
@@ -476,13 +527,14 @@ class _ConnectionsViewState extends ConsumerState<ConnectionsView>
         ),
       );
     }
-    if (settings.connectionViewMode == ConnectionViewMode.table) {
+    if (viewMode == ConnectionViewMode.table) {
       return ConnectionTable(
         items: items,
-        columns: settings.connectionTableColumns,
-        columnWidths: settings.connectionTableColumnWidths,
-        sort: settings.connectionSort,
-        sortDirection: settings.connectionSortDirection,
+        itemsPreSorted: true,
+        columns: tableColumns,
+        columnWidths: tableColumnWidths,
+        sort: sort,
+        sortDirection: sortDirection,
         onColumnWidthsChanged: (widths) {
           ref.read(appSettingProvider.notifier).updateState(
                 (value) => value.copyWith(connectionTableColumnWidths: widths),
@@ -500,8 +552,8 @@ class _ConnectionsViewState extends ConsumerState<ConnectionsView>
         return TrackedConnectionRow(
           key: ValueKey(item.connection.id),
           item: item,
-          showIcon: settings.connectionShowIcon,
-          useApplicationName: settings.connectionUseApplicationName,
+          showIcon: showIcon,
+          useApplicationName: useApplicationName,
           onTap: () => _showDetail(item),
           onClose: () => _closeItem(item),
         );

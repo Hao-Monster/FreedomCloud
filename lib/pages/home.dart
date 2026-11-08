@@ -51,7 +51,7 @@ class HomePage extends StatelessWidget {
               bottomNavigationBar: bottomNavigationBar,
             );
           },
-          child: _HomePageView(),
+          child: const _HomePageView(),
         ),
       );
 }
@@ -92,7 +92,7 @@ class _HomePageViewState extends ConsumerState<_HomePageView> {
     );
   }
 
-  _toPage(PageLabel pageLabel, [bool ignoreAnimateTo = false]) async {
+  Future<void> _toPage(PageLabel pageLabel, [bool ignoreAnimateTo = false]) async {
     if (!mounted) {
       return;
     }
@@ -123,7 +123,7 @@ class _HomePageViewState extends ConsumerState<_HomePageView> {
     });
   }
 
-  _updatePageController() {
+  void _updatePageController() {
     final pageLabel = globalState.appState.pageLabel;
     _toPage(pageLabel, true);
   }
@@ -147,10 +147,13 @@ class _HomePageViewState extends ConsumerState<_HomePageView> {
         final isActive = navigationItem.label == currentLabel;
         return ExcludeFocus(
           excluding: !isActive,
-          child: KeepScope(
-            keep: navigationItem.keep,
-            key: Key(navigationItem.label.name),
-            child: navigationItem.view,
+          child: TickerMode(
+            enabled: isActive,
+            child: KeepScope(
+              keep: navigationItem.keep,
+              key: Key(navigationItem.label.name),
+              child: navigationItem.view,
+            ),
           ),
         );
       },
@@ -171,7 +174,7 @@ class CommonNavigationBar extends ConsumerWidget {
   });
 
   @override
-  Widget build(BuildContext context, ref) {
+  Widget build(BuildContext context, WidgetRef ref) {
     if (viewMode == ViewMode.mobile) {
       return NavigationBarTheme(
         data: _NavigationBarDefaultsM3(context),
@@ -191,7 +194,8 @@ class CommonNavigationBar extends ConsumerWidget {
         ),
       );
     }
-    final showLabel = ref.watch(appSettingProvider).showLabel;
+    final showLabel =
+        ref.watch(appSettingProvider.select((state) => state.showLabel));
     return Material(
       color: context.colorScheme.surfaceContainer,
       // SafeArea: the app draws edge-to-edge, so on tablets/foldables (which

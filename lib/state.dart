@@ -1666,10 +1666,26 @@ class DetectionState {
       isTesting: true,
       ipInfo: null,
     );
-    final res = await _request.checkIpWithHost(
-      cancelToken: token,
-      attemptTimeout: const Duration(seconds: 3),
-    );
+    final probeConsumerKey =
+        isStart && modeAtBegin != Mode.direct ? 'ip_probe_$requestGen' : null;
+    final activeCore =
+        probeConsumerKey == null ? null : ClashCore.existingCore;
+    if (activeCore != null && probeConsumerKey != null) {
+      await activeCore.acquireRequestsConsumer(probeConsumerKey);
+    }
+    late final Result<IpCheckProbeResult?> res;
+    try {
+      res = await _request.checkIpWithHost(
+        cancelToken: token,
+        attemptTimeout: const Duration(seconds: 3),
+      );
+    } finally {
+      if (activeCore != null && probeConsumerKey != null) {
+        scheduleMicrotask(() {
+          unawaited(activeCore.releaseRequestsConsumer(probeConsumerKey));
+        });
+      }
+    }
     if (requestGen != _requestGeneration) return;
     _activeRoute = null;
     final currentRoute = (

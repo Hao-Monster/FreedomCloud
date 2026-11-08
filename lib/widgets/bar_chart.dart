@@ -2,21 +2,31 @@ import 'dart:math';
 import 'dart:ui';
 
 import 'package:flclashx/common/constant.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 @immutable
 class BarChartData {
-
   const BarChartData({
     required this.value,
     required this.label,
   });
   final double value;
   final String label;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is BarChartData &&
+          runtimeType == other.runtimeType &&
+          value == other.value &&
+          label == other.label;
+
+  @override
+  int get hashCode => Object.hash(value, label);
 }
 
 class BarChart extends StatefulWidget {
-
   const BarChart({
     super.key,
     required this.data,
@@ -32,7 +42,6 @@ class BarChart extends StatefulWidget {
 class _BarChartState extends State<BarChart>
     with SingleTickerProviderStateMixin {
   late AnimationController _animationController;
-
   late List<BarChartData> _oldData;
 
   @override
@@ -48,7 +57,10 @@ class _BarChartState extends State<BarChart>
   @override
   void didUpdateWidget(BarChart oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.data != widget.data) {
+    if (oldWidget.duration != widget.duration) {
+      _animationController.duration = widget.duration;
+    }
+    if (!listEquals(oldWidget.data, widget.data)) {
       _oldData = oldWidget.data;
       _animationController.forward(from: 0);
     }
@@ -61,27 +73,31 @@ class _BarChartState extends State<BarChart>
   }
 
   @override
-  Widget build(BuildContext context) => LayoutBuilder(builder: (_, container) => AnimatedBuilder(
-        animation: _animationController,
-        builder: (context, child) => CustomPaint(
-            painter: BarChartPainter(
-              _oldData,
-              widget.data,
-              _animationController.value,
+  Widget build(BuildContext context) => LayoutBuilder(
+        builder: (_, container) => RepaintBoundary(
+          child: AnimatedBuilder(
+            animation: _animationController,
+            builder: (context, child) => CustomPaint(
+              painter: BarChartPainter(
+                _oldData,
+                widget.data,
+                _animationController.value,
+              ),
+              size: Size(container.maxWidth, container.maxHeight),
             ),
-            size: Size(container.maxWidth, container.maxHeight),
           ),
-      ));
+        ),
+      );
 }
 
 class BarChartPainter extends CustomPainter {
-
   BarChartPainter(this.oldData, this.newData, this.progress);
   final List<BarChartData> oldData;
   final List<BarChartData> newData;
   final double progress;
 
   Map<String, Rect> getRectMap(List<BarChartData> dataList, Size size) {
+    if (dataList.isEmpty) return const {};
     final spacing = size.width * 0.05;
     const maxBarWidth = 30;
     final barWidth =
@@ -91,7 +107,8 @@ class BarChartPainter extends CustomPainter {
     final rects = <String, Rect>{};
     for (var i = 0; i < dataList.length; i++) {
       final data = dataList[i];
-      final barHeight = (data.value / maxValue) * size.height;
+      final barHeight =
+          maxValue <= 0 ? 0.0 : (data.value / maxValue) * size.height;
 
       final adjustLeft =
           barWidth > maxBarWidth ? (barWidth - maxBarWidth) / 2 : 0;
@@ -109,6 +126,7 @@ class BarChartPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
+    if (newData.isEmpty && oldData.isEmpty) return;
     final oldRectMap = getRectMap(oldData, size);
     final newRectMap = getRectMap(newData, size);
 
@@ -134,7 +152,8 @@ class BarChartPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(BarChartPainter oldDelegate) => oldDelegate.progress != progress ||
-        oldDelegate.oldData != oldData ||
-        oldDelegate.newData != newData;
+  bool shouldRepaint(BarChartPainter oldDelegate) =>
+      oldDelegate.progress != progress ||
+      !listEquals(oldDelegate.oldData, oldData) ||
+      !listEquals(oldDelegate.newData, newData);
 }

@@ -707,8 +707,9 @@ final nodeHealthEntriesProvider = Provider.autoDispose
     .family<Map<String, NodeHealthRecord>, String>((ref, profileId) {
   if (!ref.watch(nodeOverviewEnabledProvider)) return const {};
   final url = ref.watch(nodeOverviewTestUrlProvider);
+  ref.watch(nodeHealthStoreProvider.select((s) => s.profileRevision(profileId)));
   return ref
-      .watch(nodeHealthStoreProvider)
+      .read(nodeHealthStoreProvider)
       .readProfile(profileId, testUrl: url);
 });
 

@@ -7,6 +7,7 @@ import 'package:flclashx/common/delay_test_coordinator.dart';
 import 'package:flclashx/common/node_catalog_tester.dart';
 import 'package:flclashx/common/node_country.dart';
 import 'package:flclashx/common/node_health_store.dart';
+import 'package:flclashx/common/ui_activity.dart';
 import 'package:flclashx/enum/enum.dart';
 import 'package:flclashx/models/models.dart';
 import 'package:flclashx/models/node_catalog.dart';
@@ -325,6 +326,8 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
   _IndexScanEpochState _scanEpoch = _IndexScanEpochState(0);
   bool _disposed = false;
   Timer? _clock;
+  bool _tickerEnabled = true;
+  bool _clockPaused = false;
   late final NodeCatalogTester _tester;
   String? _feedback;
 
@@ -552,20 +555,55 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
         if (mounted && !_disposed) _scheduleCountryIndexScan();
       });
     });
-    _clock = Timer.periodic(const Duration(minutes: 1), (_) {
+    uiActivity.addListener(_handleClockActivityChange);
+    _syncClockState();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final enabled = TickerMode.valuesOf(context).enabled;
+    if (_tickerEnabled != enabled) {
+      _tickerEnabled = enabled;
+      _syncClockState(refreshOnResume: true);
+    }
+  }
+
+  void _handleClockActivityChange() {
+    _syncClockState(refreshOnResume: true);
+  }
+
+  void _syncClockState({bool refreshOnResume = false}) {
+    final shouldRun = !_disposed && _tickerEnabled && uiActivity.value;
+    if (!shouldRun) {
+      if (_clock != null) {
+        _clock?.cancel();
+        _clock = null;
+        _clockPaused = true;
+      }
+      return;
+    }
+    final resumed = _clockPaused;
+    _clockPaused = false;
+    _clock ??= Timer.periodic(const Duration(minutes: 1), (_) {
       if (mounted) setState(() {});
     });
+    if (resumed && refreshOnResume && mounted) {
+      setState(() {});
+    }
   }
 
   @override
   void dispose() {
     _disposed = true;
+    uiActivity.removeListener(_handleClockActivityChange);
     _scanEpoch.cancel();
     for (final sub in _lifecycleSubscriptions) {
       sub.close();
     }
     _lifecycleSubscriptions.clear();
     _clock?.cancel();
+    _clock = null;
     _tester.disposeScope();
     super.dispose();
   }
@@ -881,7 +919,9 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
   @override
   Widget build(BuildContext context) {
     final profiles = ref.watch(profilesProvider);
-    final tester = ref.watch(nodeCatalogTesterProvider);
+    final testerBusy =
+        ref.watch(nodeCatalogTesterProvider.select((t) => t.busy));
+    final tester = ref.read(nodeCatalogTesterProvider);
     final activeId = ref.watch(currentProfileIdProvider);
     final groups = ref.watch(groupsProvider);
     final version = ref.watch(versionProvider);
@@ -1126,7 +1166,7 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
     _updatingOrderFreezeIds.retainAll(originalIndexes.keys);
     final List<Profile> orderedProfiles;
     if (_stableProfileOrderIds.isNotEmpty &&
-        (tester.busy || _updatingOrderFreezeIds.isNotEmpty)) {
+        (testerBusy || _updatingOrderFreezeIds.isNotEmpty)) {
       final byId = <String, Profile>{
         for (final profile in profiles) profile.id: profile,
       };
@@ -1180,7 +1220,7 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
     final targetTestProfile = selected != null
         ? visible.firstOrNull
         : (activeId == null ? null : profiles.getProfile(activeId));
-    final testCurrentAction = tester.busy ||
+    final testCurrentAction = testerBusy ||
             (targetTestProfile?.isUpdating ?? false) ||
             (selected != null && targetTestProfile == null) ||
             (selected == null && (activeId == null || currentGroups.isEmpty))
@@ -1253,7 +1293,8 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
           }
           return null;
         }
-        final health = ref.watch(nodeHealthEntriesProvider(profile.id));
+        final health =
+            healthByProfile[profile.id] ?? const <String, NodeHealthRecord>{};
         final nodes = catalog.nodes.where((node) {
           final matches = profileMatches || _matches(node, query);
           if (!matches ||
@@ -1341,7 +1382,7 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
                 ),
                 TextButton.icon(
                     key: const ValueKey('overview-test-all'),
-                    onPressed: tester.busy || profiles.isEmpty
+                    onPressed: testerBusy || profiles.isEmpty
                         ? null
                         : () => _testAll(profiles),
                     icon: const Icon(Icons.bolt),
@@ -1359,9 +1400,19 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
                       _selectedCountry = value ? code : null;
                     }),
                   ),
-                if (tester.busy) ...[
-                  Text(appLocalizations.nodeOverviewProgress(
-                      tester.completed, tester.total)),
+                if (testerBusy) ...[
+                  Consumer(
+                    builder: (context, ref, _) {
+                      final (completed, total) = ref.watch(
+                        nodeCatalogTesterProvider.select(
+                          (t) => (t.completed, t.total),
+                        ),
+                      );
+                      return Text(
+                        appLocalizations.nodeOverviewProgress(completed, total),
+                      );
+                    },
+                  ),
                   TextButton.icon(
                       key: const ValueKey('overview-cancel'),
                       onPressed: () => unawaited(tester.cancel()),
@@ -1372,11 +1423,20 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
             ),
           ),
         ),
-        if (tester.busy)
-          LinearProgressIndicator(
-              value: tester.total == 0
-                  ? null
-                  : (tester.completed / tester.total).clamp(0.0, 1.0)),
+        if (testerBusy)
+          Consumer(
+            builder: (context, ref, _) {
+              final (completed, total) = ref.watch(
+                nodeCatalogTesterProvider.select(
+                  (t) => (t.completed, t.total),
+                ),
+              );
+              return LinearProgressIndicator(
+                  value: total == 0
+                      ? null
+                      : (completed / total).clamp(0.0, 1.0));
+            },
+          ),
         if (feedback != null)
           Padding(
               padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
@@ -3326,7 +3386,13 @@ class _ProfileNodesSliverState extends ConsumerState<_ProfileNodesSliver> {
     final catalog = loaded?.valueOrNull ??
         ref.watch(cachedProfileCatalogsProvider)[profile.id];
     final health = ref.watch(nodeHealthEntriesProvider(profile.id));
-    final tester = ref.watch(nodeCatalogTesterProvider);
+    final testerBusy =
+        ref.watch(nodeCatalogTesterProvider.select((t) => t.busy));
+    final pendingIdentities = ref.watch(
+      nodeCatalogTesterProvider.select(
+        (t) => t.pendingIdentitySnapshot(profile.id),
+      ),
+    );
     final countryResolver = ref.watch(nodeCountryResolverProvider);
     final locale = Localizations.localeOf(context);
     final query = ref.watch(proxiesQueryProvider).trim().toLowerCase();
@@ -3500,10 +3566,10 @@ class _ProfileNodesSliverState extends ConsumerState<_ProfileNodesSliver> {
                         countryName: badgeCode == null
                             ? null
                             : nodeCountryName(badgeCode, locale: locale),
-                        pending: tester.pending(profile.id, node.identityKey),
+                        pending: pendingIdentities.contains(node.identityKey),
                         testKey: ValueKey(
                             'overview-test-${profile.id}-${node.identityKey}'),
-                        onTest: tester.busy ||
+                        onTest: testerBusy ||
                                 profile.isUpdating ||
                                 catalog?.status != ProfileCatalogStatus.ready
                             ? null
@@ -3980,7 +4046,8 @@ class _ActiveNodes extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final tester = ref.watch(nodeCatalogTesterProvider);
+    final testerBusy =
+        ref.watch(nodeCatalogTesterProvider.select((t) => t.busy));
     final countryResolver = ref.watch(nodeCountryResolverProvider);
     final locale = Localizations.localeOf(context);
     final rows =
@@ -4048,7 +4115,7 @@ class _ActiveNodes extends ConsumerWidget {
                   independent: entry.independent,
                   testKey: ValueKey(
                       'overview-test-${profile.id}-${entry.proxy.name}'),
-                  onTest: tester.busy || entry.delay == 0 || profile.isUpdating
+                  onTest: testerBusy || entry.delay == 0 || profile.isUpdating
                       ? null
                       : () => onTest(entry.proxy, entry.testUrl),
                   useKey: ValueKey(

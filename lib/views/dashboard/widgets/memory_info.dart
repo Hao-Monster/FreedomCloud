@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flclashx/clash/clash.dart';
 import 'package:flclashx/common/common.dart';
+import 'package:flclashx/common/ui_activity.dart';
 import 'package:flclashx/models/common.dart';
 import 'package:flclashx/state.dart';
 import 'package:flclashx/widgets/widgets.dart';
@@ -21,55 +22,88 @@ class MemoryInfo extends StatefulWidget {
 
 class _MemoryInfoState extends State<MemoryInfo> {
   Timer? timer;
+  bool _tickerEnabled = true;
+  bool _pollingInFlight = false;
+
+  bool get _shouldPoll => mounted && _tickerEnabled && uiActivity.value;
 
   @override
   void initState() {
     super.initState();
-    _updateMemory();
+    uiActivity.addListener(_syncPollingState);
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _tickerEnabled = TickerMode.valuesOf(context).enabled;
+    _syncPollingState();
+  }
+
+  void _syncPollingState() {
+    if (_shouldPoll) {
+      if (timer == null && !_pollingInFlight) {
+        _scheduleImmediateUpdate();
+      }
+    } else {
+      timer?.cancel();
+      timer = null;
+    }
   }
 
   @override
   void dispose() {
+    uiActivity.removeListener(_syncPollingState);
     timer?.cancel();
+    timer = null;
     super.dispose();
   }
 
-  Future<void> _updateMemory() async {
+  void _scheduleImmediateUpdate() {
+    if (_pollingInFlight || !_shouldPoll) return;
+    _pollingInFlight = true;
     WidgetsBinding.instance.addPostFrameCallback((_) async {
-      if (!mounted) return;
-      final rss = ProcessInfo.currentRss;
-      _memoryInfoStateNotifier.value = TrafficValue(
-        value: clashLib != null ? rss : await clashCore.getMemory() + rss,
-      );
-      timer = Timer(const Duration(seconds: 2), () async {
-        _updateMemory();
-      });
+      try {
+        if (!_shouldPoll) return;
+        final rss = ProcessInfo.currentRss;
+        final total = clashLib != null ? rss : await clashCore.getMemory() + rss;
+        if (!mounted) return;
+        _memoryInfoStateNotifier.value = TrafficValue(value: total);
+      } finally {
+        _pollingInFlight = false;
+      }
+      if (_shouldPoll && timer == null) {
+        timer = Timer(const Duration(seconds: 2), () {
+          timer = null;
+          _scheduleImmediateUpdate();
+        });
+      }
     });
   }
 
   @override
   Widget build(BuildContext context) => SizedBox(
-      height: getWidgetHeight(1),
-      child: CommonCard(
-        info: Info(
-          iconData: Icons.memory,
-          label: appLocalizations.memoryInfo,
-        ),
-        onPressed: clashCore.requestGc,
-        child: Container(
-          padding: baseInfoEdgeInsets.copyWith(
-            top: 0,
+        height: getWidgetHeight(1),
+        child: CommonCard(
+          info: Info(
+            iconData: Icons.memory,
+            label: appLocalizations.memoryInfo,
           ),
-          child: Column(
-            mainAxisSize: MainAxisSize.max,
-            mainAxisAlignment: MainAxisAlignment.end,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              SizedBox(
-                height: globalState.measure.bodyMediumHeight + 2,
-                child: ValueListenableBuilder(
-                  valueListenable: _memoryInfoStateNotifier,
-                  builder: (_, trafficValue, __) => Row(
+          onPressed: clashCore.requestGc,
+          child: Container(
+            padding: baseInfoEdgeInsets.copyWith(
+              top: 0,
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.max,
+              mainAxisAlignment: MainAxisAlignment.end,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                SizedBox(
+                  height: globalState.measure.bodyMediumHeight + 2,
+                  child: ValueListenableBuilder(
+                    valueListenable: _memoryInfoStateNotifier,
+                    builder: (_, trafficValue, __) => Row(
                       mainAxisAlignment: MainAxisAlignment.start,
                       children: [
                         Text(
@@ -87,11 +121,11 @@ class _MemoryInfoState extends State<MemoryInfo> {
                         )
                       ],
                     ),
-                ),
-              )
-            ],
+                  ),
+                )
+              ],
+            ),
           ),
         ),
-      ),
-    );
+      );
 }

@@ -1,25 +1,81 @@
 import 'dart:async';
 import 'dart:ffi';
 import 'dart:io';
+import 'dart:isolate';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:ffi/ffi.dart';
 import 'package:flclashx/common/bounded_cache.dart';
 import 'package:flclashx/common/process_icon_queue.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 import 'package:path/path.dart' as p;
 import 'package:win32/win32.dart';
 
 const _maxProcessIconEntries = 64;
+final _multiSlashIconRegex = RegExp(r'/+');
+final _whitespaceTokenRegex = RegExp(r'\s+');
 
 // exePath -> decoded icon, cached so polling doesn't re-extract via Win32.
 final windowsProcessIconLoader = WindowsProcessIconLoader(
   load: (path) async {
-    final bytes = await _extractIconBytes(path);
-    return bytes == null ? null : MemoryImage(bytes);
+    final pixels = await Isolate.run(() => _extractIconPixels(path));
+    if (pixels == null) return null;
+    return BgraProcessIconImage(
+      bytes: pixels.bytes,
+      width: pixels.width,
+      height: pixels.height,
+    );
   },
 );
+
+/// Decodes raw BGRA8888 icon pixels directly into an engine [ui.Image] frame
+/// without intermediate PNG encoding/decoding.
+@immutable
+class BgraProcessIconImage extends ImageProvider<BgraProcessIconImage> {
+  const BgraProcessIconImage({
+    required this.bytes,
+    required this.width,
+    required this.height,
+  });
+
+  final Uint8List bytes;
+  final int width;
+  final int height;
+
+  @override
+  Future<BgraProcessIconImage> obtainKey(ImageConfiguration configuration) =>
+      SynchronousFuture<BgraProcessIconImage>(this);
+
+  @override
+  ImageStreamCompleter loadImage(
+    BgraProcessIconImage key,
+    ImageDecoderCallback decode,
+  ) =>
+      OneFrameImageStreamCompleter(_loadFrame());
+
+  Future<ImageInfo> _loadFrame() async {
+    final buffer = await ui.ImmutableBuffer.fromUint8List(bytes);
+    ui.ImageDescriptor? descriptor;
+    ui.Codec? codec;
+    try {
+      descriptor = ui.ImageDescriptor.raw(
+        buffer,
+        width: width,
+        height: height,
+        pixelFormat: ui.PixelFormat.bgra8888,
+      );
+      codec = await descriptor.instantiateCodec();
+      final frame = await codec.getNextFrame();
+      return ImageInfo(image: frame.image);
+    } finally {
+      codec?.dispose();
+      descriptor?.dispose();
+      buffer.dispose();
+    }
+  }
+}
 
 /// Keeps the native extraction boundary injectable without touching Win32 in
 /// component tests.
@@ -28,10 +84,12 @@ class WindowsProcessIconLoader {
     required Future<ImageProvider?> Function(String path) load,
     int maxWaiting = 64,
     int maxCached = _maxProcessIconEntries,
+    Duration negativeCacheTtl = const Duration(seconds: 60),
   }) : _queue = ProcessIconQueue<ImageProvider>(
           load: load,
           maxWaiting: maxWaiting,
           maxCached: maxCached,
+          negativeCacheTtl: negativeCacheTtl,
           onEvict: _evictWindowsImage,
         );
 
@@ -39,7 +97,8 @@ class WindowsProcessIconLoader {
 
   Listenable get capacityChanges => _queue;
 
-  ProcessIconLease<ImageProvider>? acquire(String processPath) => _queue.acquire(
+  ProcessIconLease<ImageProvider>? acquire(String processPath) =>
+      _queue.acquire(
         normalizeWindowsIconPath(processPath),
         source: processPath.trim(),
       );
@@ -49,7 +108,7 @@ class WindowsProcessIconLoader {
 
 String normalizeWindowsIconPath(String path) {
   final slashes = path.trim().replaceAll('\\', '/');
-  final collapsed = slashes.replaceAll(RegExp(r'/+'), '/').toLowerCase();
+  final collapsed = slashes.replaceAll(_multiSlashIconRegex, '/').toLowerCase();
   // UNC paths and paths rooted on the current drive refer to different files.
   return slashes.startsWith('//') ? '/$collapsed' : collapsed;
 }
@@ -94,7 +153,9 @@ Future<ImageProvider?>? linuxProcessIcon(String processPath, String process) {
   final base = processPath.isNotEmpty ? p.basename(processPath) : process;
   if (base.isEmpty) return null;
   return _linuxIconCache.putIfAbsent(
-      base, () => _resolveLinuxIcon(base, process));
+    base,
+    () => _resolveLinuxIcon(base, process),
+  );
 }
 
 Future<ImageProvider?> _resolveLinuxIcon(String binary, String process) async {
@@ -157,7 +218,7 @@ Future<Map<String, String>> _buildDesktopIndex() async {
 
 // First whitespace token of Exec, minus quotes and %-field-codes, as a basename.
 String _execBinary(String exec) {
-  for (final token in exec.split(RegExp(r'\s+'))) {
+  for (final token in exec.split(_whitespaceTokenRegex)) {
     final t = token.replaceAll('"', '');
     if (t.isEmpty || t.startsWith('%') || t.contains('=')) continue;
     return p.basename(t);
@@ -194,30 +255,6 @@ Future<File?> _findIconFile(String name) async {
     if (await f.exists()) return f;
   }
   return null;
-}
-
-// SHGetFileInfo(exe) -> HICON -> GetIconInfo -> GetDIBits(32bpp) -> BGRA pixels ->
-// ui.Image -> PNG bytes.
-Future<Uint8List?> _extractIconBytes(String exePath) async {
-  final pixels = _extractIconPixels(exePath);
-  if (pixels == null) return null;
-  // All Win32 resources have been released before asynchronous engine work.
-  final buffer = await ui.ImmutableBuffer.fromUint8List(pixels.bytes);
-  ui.ImageDescriptor? descriptor;
-  ui.Codec? codec;
-  try {
-    descriptor = ui.ImageDescriptor.raw(buffer,
-        width: pixels.width,
-        height: pixels.height,
-        pixelFormat: ui.PixelFormat.bgra8888);
-    codec = await descriptor.instantiateCodec();
-    final frame = await codec.getNextFrame();
-    return await encodeProcessIconImage(frame.image);
-  } finally {
-    codec?.dispose();
-    descriptor?.dispose();
-    buffer.dispose();
-  }
 }
 
 ({Uint8List bytes, int width, int height})? _extractIconPixels(String exePath) {

@@ -47,10 +47,12 @@ class _ClashContainerState extends ConsumerState<ClashManager>
   static const Duration _telemetryBatchWindow = Duration(milliseconds: 64);
   final List<Log> _pendingLogs = [];
   final List<Connection> _pendingRequests = [];
+  final List<Delay> _pendingDelays = [];
   Timer? _telemetryFlushTimer;
 
   void _scheduleTelemetryFlush() {
-    _telemetryFlushTimer ??= Timer(_telemetryBatchWindow, _flushPendingTelemetry);
+    _telemetryFlushTimer ??=
+        Timer(_telemetryBatchWindow, _flushPendingTelemetry);
   }
 
   void _flushPendingTelemetry() {
@@ -59,6 +61,7 @@ class _ClashContainerState extends ConsumerState<ClashManager>
     if (!mounted) {
       _pendingLogs.clear();
       _pendingRequests.clear();
+      _pendingDelays.clear();
       return;
     }
     if (_pendingLogs.isNotEmpty) {
@@ -71,14 +74,27 @@ class _ClashContainerState extends ConsumerState<ClashManager>
       _pendingRequests.clear();
       ref.read(requestsProvider.notifier).addRequests(batch);
     }
+    if (_pendingDelays.isNotEmpty) {
+      final batch = List<Delay>.of(_pendingDelays, growable: false);
+      _pendingDelays.clear();
+      ref.read(delayDataSourceProvider.notifier).setDelays(batch);
+      debouncer.call(
+        FunctionTag.updateDelay,
+        () async {
+          globalState.appController.updateGroupsDebounce();
+        },
+        duration: const Duration(milliseconds: 5000),
+      );
+    }
   }
 
   @override
   Widget build(BuildContext context) => ClashConfigUpdateListener(
-    runtime: tunRuntime,
-    onConfigChanged: () => globalState.appController.updateClashConfigDebounce(),
-    child: widget.child,
-  );
+        runtime: tunRuntime,
+        onConfigChanged: () =>
+            globalState.appController.updateClashConfigDebounce(),
+        child: widget.child,
+      );
 
   @override
   void initState() {
@@ -155,6 +171,7 @@ class _ClashContainerState extends ConsumerState<ClashManager>
     _telemetryFlushTimer = null;
     _pendingLogs.clear();
     _pendingRequests.clear();
+    _pendingDelays.clear();
     connectionDiagnostics.log(
       '[ConnectionsDiag] clashManager.dispose '
       'managerRunning=${connectionManager.running}',
@@ -166,15 +183,12 @@ class _ClashContainerState extends ConsumerState<ClashManager>
   @override
   Future<void> onDelay(Delay delay) async {
     super.onDelay(delay);
-    final appController = globalState.appController;
-    appController.setDelay(delay);
-    debouncer.call(
-      FunctionTag.updateDelay,
-      () async {
-        appController.updateGroupsDebounce();
-      },
-      duration: const Duration(milliseconds: 5000),
-    );
+    _pendingDelays.add(delay);
+    if (_pendingDelays.length >= _telemetryBatchFlushLimit) {
+      _flushPendingTelemetry();
+    } else {
+      _scheduleTelemetryFlush();
+    }
   }
 
   @override
