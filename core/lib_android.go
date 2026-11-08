@@ -311,7 +311,7 @@ func nextHandle(action *Action, result ActionResult) bool {
 		result.success(handleGetAndroidVpnOptions())
 		return true
 	case updateDnsMethod:
-		data, ok := action.Data.(string)
+		data, ok := actionDataJSONOrString(action.Data)
 		if !ok {
 			result.error("invalid data type")
 			return true

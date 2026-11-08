@@ -126,3 +126,13 @@ func FCXParseCatalogProvider(buf []byte, definition map[string]any) (proxies []m
 	}
 	return proxies, rejected, nil
 }
+
+// SubscriptionInfoFCX returns the cached subscription metadata in O(1) without
+// marshaling all proxy adapters and delay histories to JSON.
+func (pp *ProxySetProvider) SubscriptionInfoFCX() *SubscriptionInfo {
+	if pp == nil || pp.proxySetProvider == nil {
+		return nil
+	}
+	return pp.subscriptionInfo
+}
+

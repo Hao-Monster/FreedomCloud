@@ -48,7 +48,9 @@ var (
 	requestStopCh         chan struct{}
 	requestChMu           sync.Mutex
 	requestMu             sync.Mutex
-	requestSeen           = map[string]bool{}
+	requestEpoch          uint64
+	requestSeen           = map[string]uint64{}
+	requestsActive        atomic.Bool
 	// uiActive reflects whether the Flutter UI is in the foreground. When false
 	// (app backgrounded) the request forwarder is paused and the health-check
 	// forwarder slows to backgroundHealthCheckInterval, so the core stops pinging
@@ -138,6 +140,7 @@ func handleInitClash(paramsString string) bool {
 	// backgrounds. A headless cold-start has no UI but keeping the foreground
 	// cadence here preserves the previous behaviour (no regression).
 	uiActive.Store(true)
+	requestsActive.Store(false)
 	syncEffectiveFindProcessMode()
 	// Screen assumed on until the SuspendModule pushes the real state.
 	screenActive.Store(true)
@@ -295,6 +298,7 @@ func handleShutdown() bool {
 	syncEffectiveFindProcessMode()
 	runtime.GC()
 	isInit.Store(false)
+	requestsActive.Store(false)
 	isRunning = false
 	tunUp.Store(false)
 	currentConfig = nil
@@ -595,6 +599,18 @@ func handleSetScreenActive(active bool) {
 	}
 }
 
+func handleSetRequestsActive(active bool) {
+	requestsActive.Store(active)
+	if active {
+		if uiActive.Load() {
+			startRequestForwarder()
+			go forwardNewRequests()
+		}
+	} else {
+		stopRequestForwarder()
+	}
+}
+
 // startRequestForwarder polls the statistic manager for newly opened trackers
 // and pushes each one to Flutter via a RequestMessage. Upstream mihomo does
 // not expose the statistic.DefaultRequestNotify hook our old Clash.Meta fork
@@ -609,8 +625,8 @@ func startRequestForwarder() {
 	defer runLock.Unlock()
 	// isRunning covers an app-driven start (startListener); tunUp covers a headless
 	// tile/boot start (Core.startTun without startListener). Either means the tunnel is
-	// up and the connections it carries should feed the Journal.
-	if !isRunning && !tunUp.Load() {
+	// up and the connections it carries should feed the Journal once RequestLogView is open.
+	if (!isRunning && !tunUp.Load()) || !uiActive.Load() || !requestsActive.Load() {
 		return
 	}
 	requestChMu.Lock()
@@ -619,15 +635,13 @@ func startRequestForwarder() {
 		return
 	}
 	requestMu.Lock()
-	requestSeen = map[string]bool{}
+	requestEpoch = 0
+	requestSeen = map[string]uint64{}
 	requestMu.Unlock()
 	requestStopCh = make(chan struct{})
 	stopCh := requestStopCh
 	requestChMu.Unlock()
 	go func(stopCh chan struct{}) {
-		// 4s (was 2s): this only feeds the Requests live-log; halving the poll rate
-		// halves the foreground O(connections) scan + IPC churn that runs even when
-		// that page isn't open, with no user-visible loss on a log view.
 		ticker := time.NewTicker(4 * time.Second)
 		defer ticker.Stop()
 		for {
@@ -650,29 +664,34 @@ func stopRequestForwarder() {
 	close(requestStopCh)
 	requestStopCh = nil
 	requestMu.Lock()
-	requestSeen = map[string]bool{}
+	requestEpoch = 0
+	requestSeen = map[string]uint64{}
 	requestMu.Unlock()
 }
 
 func forwardNewRequests() {
+	if !requestsActive.Load() || !uiActive.Load() {
+		return
+	}
 	requestMu.Lock()
 	defer requestMu.Unlock()
-	alive := make(map[string]bool, len(requestSeen))
+	requestEpoch++
+	epoch := requestEpoch
 	statistic.DefaultManager.Range(func(c statistic.Tracker) bool {
 		id := c.ID()
-		alive[id] = true
-		if requestSeen[id] {
+		_, seen := requestSeen[id]
+		requestSeen[id] = epoch
+		if seen {
 			return true
 		}
-		requestSeen[id] = true
 		sendMessage(Message{
 			Type: RequestMessage,
 			Data: c.Info(),
 		})
 		return true
 	})
-	for id := range requestSeen {
-		if !alive[id] {
+	for id, seenEpoch := range requestSeen {
+		if seenEpoch != epoch {
 			delete(requestSeen, id)
 		}
 	}
@@ -756,13 +775,18 @@ func handleChangeProxy(data string, fn func(string string)) {
 	}()
 }
 
-func handleGetTraffic() string {
+type trafficSnapshot struct {
+	Up   int64 `json:"up"`
+	Down int64 `json:"down"`
+}
+
+func handleGetTrafficPayload() trafficSnapshot {
 	up, down := statistic.DefaultManager.Now()
-	traffic := map[string]int64{
-		"up":   up,
-		"down": down,
-	}
-	data, err := json.Marshal(traffic)
+	return trafficSnapshot{Up: up, Down: down}
+}
+
+func handleGetTraffic() string {
+	data, err := json.Marshal(handleGetTrafficPayload())
 	if err != nil {
 		log.Errorln("Error: %v", err)
 		return ""
@@ -770,13 +794,13 @@ func handleGetTraffic() string {
 	return string(data)
 }
 
-func handleGetTotalTraffic() string {
+func handleGetTotalTrafficPayload() trafficSnapshot {
 	up, down := statistic.DefaultManager.Total()
-	traffic := map[string]int64{
-		"up":   up,
-		"down": down,
-	}
-	data, err := json.Marshal(traffic)
+	return trafficSnapshot{Up: up, Down: down}
+}
+
+func handleGetTotalTraffic() string {
+	data, err := json.Marshal(handleGetTotalTrafficPayload())
 	if err != nil {
 		log.Errorln("Error: %v", err)
 		return ""
@@ -788,14 +812,18 @@ func handleResetTraffic() {
 	statistic.DefaultManager.ResetStatistic()
 }
 
-func handleGetConnections() string {
+func handleGetConnectionsRaw() json.RawMessage {
 	snapshot := statistic.DefaultManager.Snapshot()
 	data, err := json.Marshal(snapshot)
 	if err != nil {
 		log.Errorln("Error: %v", err)
-		return ""
+		return json.RawMessage(`{"downloadTotal":0,"uploadTotal":0,"connections":[],"memory":0}`)
 	}
-	return string(data)
+	return json.RawMessage(data)
+}
+
+func handleGetConnections() string {
+	return string(handleGetConnectionsRaw())
 }
 
 func handleCloseConnections() bool {
@@ -826,11 +854,11 @@ func handleCloseConnection(connectionId string) bool {
 	return true
 }
 
-func handleGetExternalProviders() string {
+func handleGetExternalProvidersPayload() []ExternalProvider {
 	runLock.Lock()
 	defer runLock.Unlock()
 	externalProviders = getExternalProvidersRaw()
-	eps := make([]ExternalProvider, 0)
+	eps := make([]ExternalProvider, 0, len(externalProviders))
 	for _, p := range externalProviders {
 		externalProvider, err := toExternalProvider(p)
 		if err != nil {
@@ -839,22 +867,34 @@ func handleGetExternalProviders() string {
 		eps = append(eps, *externalProvider)
 	}
 	sort.Sort(ExternalProviders(eps))
-	data, err := json.Marshal(eps)
+	return eps
+}
+
+func handleGetExternalProviders() string {
+	data, err := json.Marshal(handleGetExternalProvidersPayload())
 	if err != nil {
 		return ""
 	}
 	return string(data)
 }
 
-func handleGetExternalProvider(externalProviderName string) string {
+func handleGetExternalProviderPayload(externalProviderName string) *ExternalProvider {
 	runLock.Lock()
 	defer runLock.Unlock()
 	externalProvider, exist := externalProviders[externalProviderName]
 	if !exist {
-		return ""
+		return nil
 	}
 	e, err := toExternalProvider(externalProvider)
 	if err != nil {
+		return nil
+	}
+	return e
+}
+
+func handleGetExternalProvider(externalProviderName string) string {
+	e := handleGetExternalProviderPayload(externalProviderName)
+	if e == nil {
 		return ""
 	}
 	data, err := json.Marshal(e)

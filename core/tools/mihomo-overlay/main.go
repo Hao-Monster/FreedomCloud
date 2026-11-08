@@ -35,9 +35,15 @@ const dnsDoHSHA256 = "1ba0170bed4aabf6b295471f9fddb03da20122d339526a97170dff537f
 const converterSHA256 = "503aac2968628ab826f8208d620bcd5939ca67219426cf0189fab76346626ede"
 const ifaceSHA256 = "67d3d4f54999bdb6875ef87cdbb87c61d5f9e299aa20c1108de3e391eac18605"
 const singTunServerSHA256 = "8b0d766e346aa5a36ec40dc66c1fe7cd3466ead48a687cfb4a262342ca9a3335"
+const cacheFileSHA256 = "cf48b5ba8d034847073c189a755b63bfbce43e1d1e0cebe3c2ce72267fd8cb65"
+const fakeIpSHA256 = "1f98752ff24228483d6a52bc9902d5607762a6a0990d203a9e7bf35acf70ebbc"
+const processWindowsSHA256 = "a4d41ae370ca76690b5594f81c051bc856d8adbf10d9cc897ab1958d84b8d794"
+const memConservativeSHA256 = "c4b9c920b5ff6e0f5098a639df0bda013696f54f1a28962e498301bc5645fc3d"
+const configSHA256 = "a242e1fd06378e01371153122d51b20862af24b4904fdec2a7b54843e70b1203"
 const singTunVersion = "v0.4.27"
 const singTunModuleSum = "h1:dWCpFDlWelQrhH3y5KkMrJXEXYeJ0V2LROP8Cxv96MI="
 const singTunWindowsSHA256 = "e463b674d33694dbaa02d165e6a1e24d310a6f12066aab4d3bbe10683be9aff0"
+const singTunStackGvisorSHA256 = "45fb9d63e825c40f90797535d299e44cd1a9737ec08e112cc3d4b53b6fa89180"
 
 func patchController(source []byte) ([]byte, error) {
 	fset := token.NewFileSet()
@@ -598,6 +604,274 @@ func patchSingTunWindows(source []byte) ([]byte, error) {
 	return format.Source([]byte(patched))
 }
 
+func patchSingTunStackGvisor(source []byte) ([]byte, error) {
+	fset := token.NewFileSet()
+	if _, err := parser.ParseFile(fset, "stack_gvisor.go", source, 0); err != nil {
+		return nil, err
+	}
+	patched := string(source)
+	const anchor = `	bufSize := 20 * 1024
+	ipStack.SetTransportProtocolOption(tcp.ProtocolNumber, &tcpip.TCPReceiveBufferSizeRangeOption{
+		Min:     1,
+		Default: bufSize,
+		Max:     bufSize,
+	})
+	ipStack.SetTransportProtocolOption(tcp.ProtocolNumber, &tcpip.TCPSendBufferSizeRangeOption{
+		Min:     1,
+		Default: bufSize,
+		Max:     bufSize,
+	})`
+	const expanded = `	const (
+		fcxTCPMinBuf     = 4 * 1024
+		fcxTCPDefaultBuf = 256 * 1024
+		fcxTCPMaxBuf     = 4 * 1024 * 1024
+	)
+	ipStack.SetTransportProtocolOption(tcp.ProtocolNumber, &tcpip.TCPReceiveBufferSizeRangeOption{
+		Min:     fcxTCPMinBuf,
+		Default: fcxTCPDefaultBuf,
+		Max:     fcxTCPMaxBuf,
+	})
+	ipStack.SetTransportProtocolOption(tcp.ProtocolNumber, &tcpip.TCPSendBufferSizeRangeOption{
+		Min:     fcxTCPMinBuf,
+		Default: fcxTCPDefaultBuf,
+		Max:     fcxTCPMaxBuf,
+	})`
+	if strings.Count(patched, anchor) != 1 {
+		return nil, fmt.Errorf("upstream sing-tun stack_gvisor TCP buffer block changed")
+	}
+	patched = strings.Replace(patched, anchor, expanded, 1)
+	return format.Source([]byte(patched))
+}
+
+func patchMemConservative(source []byte) ([]byte, error) {
+	fset := token.NewFileSet()
+	if _, err := parser.ParseFile(fset, "memc.go", source, 0); err != nil {
+		return nil, err
+	}
+	patched := string(source)
+	const gcStmt = "\tdefer runtime.GC()\n"
+	const runtimeImport = "\t\"runtime\"\n"
+	if strings.Count(patched, gcStmt) != 2 || strings.Count(patched, runtimeImport) != 1 {
+		return nil, fmt.Errorf("upstream memconservative runtime.GC shape changed")
+	}
+	patched = strings.ReplaceAll(patched, gcStmt, "")
+	patched = strings.Replace(patched, runtimeImport, "", 1)
+	return format.Source([]byte(patched))
+}
+
+func patchConfigGeoCleanup(source []byte) ([]byte, error) {
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "config.go", source, 0)
+	if err != nil {
+		return nil, err
+	}
+	var parseFn *ast.FuncDecl
+	for _, decl := range file.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if ok && fn.Recv == nil && fn.Name.Name == "ParseRawConfig" {
+			if parseFn != nil {
+				return nil, fmt.Errorf("duplicate ParseRawConfig function")
+			}
+			parseFn = fn
+		}
+	}
+	if parseFn == nil {
+		return nil, fmt.Errorf("upstream ParseRawConfig missing")
+	}
+	fnText := string(source[fset.Position(parseFn.Pos()).Offset:fset.Position(parseFn.End()).Offset])
+	const anchor = "\trollback := temporaryUpdateGeneral(config.General)\n\tdefer rollback()\n"
+	const withCleanup = "\trollback := temporaryUpdateGeneral(config.General)\n\tdefer rollback()\n\tdefer func() {\n\t\tgeodata.ClearGeoSiteCache()\n\t\tgeodata.ClearGeoIPCache()\n\t}()\n"
+	if strings.Count(fnText, anchor) != 1 {
+		return nil, fmt.Errorf("upstream ParseRawConfig rollback anchor changed")
+	}
+	fnText = strings.Replace(fnText, anchor, withCleanup, 1)
+	patched := string(source[:fset.Position(parseFn.Pos()).Offset]) + fnText + string(source[fset.Position(parseFn.End()).Offset:])
+	return format.Source([]byte(patched))
+}
+
+func patchCacheFile(source []byte) ([]byte, error) {
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "cache.go", source, 0)
+	if err != nil {
+		return nil, err
+	}
+	var closeFn *ast.FuncDecl
+	for _, decl := range file.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if !ok || fn.Name.Name != "Close" || fn.Recv == nil || len(fn.Recv.List) != 1 {
+			continue
+		}
+		ptr, ok := fn.Recv.List[0].Type.(*ast.StarExpr)
+		if !ok {
+			continue
+		}
+		ident, ok := ptr.X.(*ast.Ident)
+		if ok && ident.Name == "CacheFile" {
+			if closeFn != nil {
+				return nil, fmt.Errorf("duplicate CacheFile.Close method")
+			}
+			closeFn = fn
+		}
+	}
+	if closeFn == nil {
+		return nil, fmt.Errorf("upstream CacheFile.Close method missing")
+	}
+	const replacementText = `func (c *CacheFile) Close() error {
+	if c == nil || c.DB == nil {
+		return nil
+	}
+	fcxCloseFakeIPCache(c.DB)
+	return c.DB.Close()
+}`
+	patched := string(source[:fset.Position(closeFn.Pos()).Offset]) + replacementText + string(source[fset.Position(closeFn.End()).Offset:])
+	return format.Source([]byte(patched))
+}
+
+func patchFakeIpStore(source []byte) ([]byte, error) {
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "fakeip.go", source, 0)
+	if err != nil {
+		return nil, err
+	}
+	methods := map[string]string{
+		"GetByHost": `func (c *FakeIpStore) GetByHost(host string) (ip netip.Addr, exist bool) {
+	return c.fcxGetByHost(host)
+}`,
+		"PutByHost": `func (c *FakeIpStore) PutByHost(host string, ip netip.Addr) {
+	c.fcxPutByHost(host, ip)
+}`,
+		"GetByIP": `func (c *FakeIpStore) GetByIP(ip netip.Addr) (host string, exist bool) {
+	return c.fcxGetByIP(ip)
+}`,
+		"PutByIP": `func (c *FakeIpStore) PutByIP(ip netip.Addr, host string) {
+	c.fcxPutByIP(ip, host)
+}`,
+		"DelByIP": `func (c *FakeIpStore) DelByIP(ip netip.Addr) {
+	c.fcxDelByIP(ip)
+}`,
+		"FlushFakeIP": `func (c *FakeIpStore) FlushFakeIP() error {
+	return c.fcxFlushFakeIP()
+}`,
+	}
+	seen := map[string]bool{}
+	var changes []replacement
+	for _, decl := range file.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if !ok {
+			continue
+		}
+		text, wanted := methods[fn.Name.Name]
+		if !wanted {
+			continue
+		}
+		if seen[fn.Name.Name] || fn.Recv == nil || len(fn.Recv.List) != 1 {
+			return nil, fmt.Errorf("upstream FakeIpStore method changed: %s", fn.Name.Name)
+		}
+		ptr, ok := fn.Recv.List[0].Type.(*ast.StarExpr)
+		if !ok {
+			return nil, fmt.Errorf("upstream FakeIpStore receiver changed: %s", fn.Name.Name)
+		}
+		ident, ok := ptr.X.(*ast.Ident)
+		if !ok || ident.Name != "FakeIpStore" {
+			return nil, fmt.Errorf("upstream FakeIpStore receiver changed: %s", fn.Name.Name)
+		}
+		seen[fn.Name.Name] = true
+		changes = append(changes, replacement{
+			fset.Position(fn.Pos()).Offset,
+			fset.Position(fn.End()).Offset,
+			text,
+		})
+	}
+	if len(changes) != len(methods) {
+		return nil, fmt.Errorf("upstream FakeIpStore method set changed")
+	}
+	sort.Slice(changes, func(i, j int) bool { return changes[i].start > changes[j].start })
+	patched := string(source)
+	for _, change := range changes {
+		patched = patched[:change.start] + change.text + patched[change.end:]
+	}
+	for _, unused := range []string{"\t\"github.com/metacubex/mihomo/log\"\n", "\t\"github.com/metacubex/bbolt\"\n"} {
+		if strings.Count(patched, unused) != 1 {
+			return nil, fmt.Errorf("upstream FakeIpStore import changed: %s", strings.TrimSpace(unused))
+		}
+		patched = strings.Replace(patched, unused, "", 1)
+	}
+	return format.Source([]byte(patched))
+}
+
+func patchProcessWindows(source []byte) ([]byte, error) {
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "process_windows.go", source, 0)
+	if err != nil {
+		return nil, err
+	}
+	var findFn, tableFn, execFn *ast.FuncDecl
+	for _, decl := range file.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if !ok || fn.Recv != nil {
+			continue
+		}
+		switch fn.Name.Name {
+		case "findProcessName":
+			if findFn != nil {
+				return nil, fmt.Errorf("duplicate findProcessName")
+			}
+			findFn = fn
+		case "getTransportTable":
+			if tableFn != nil {
+				return nil, fmt.Errorf("duplicate getTransportTable")
+			}
+			tableFn = fn
+		case "getExecPathFromPID":
+			if execFn != nil {
+				return nil, fmt.Errorf("duplicate getExecPathFromPID")
+			}
+			execFn = fn
+		}
+	}
+	if findFn == nil || tableFn == nil || execFn == nil {
+		return nil, fmt.Errorf("upstream process_windows functions changed")
+	}
+	findText := string(source[fset.Position(findFn.Pos()).Offset:fset.Position(findFn.End()).Offset])
+	const tableCallAnchor = "\tbuf, err := getTransportTable(fn, family, class)\n\tif err != nil {\n\t\treturn 0, \"\", err\n\t}"
+	const tableCallReplacement = "\tbuf, releaseTable, err := fcxAcquireTransportTable(fn, family, class)\n\tif err != nil {\n\t\treturn 0, \"\", err\n\t}\n\tdefer releaseTable()"
+	const execCallAnchor = "\tpp, err := getExecPathFromPID(pid)\n"
+	if strings.Count(findText, tableCallAnchor) != 1 || strings.Count(findText, execCallAnchor) != 1 {
+		return nil, fmt.Errorf("upstream findProcessName lookup shape changed")
+	}
+	findText = strings.Replace(findText, tableCallAnchor, tableCallReplacement, 1)
+
+	changes := []replacement{
+		{fset.Position(findFn.Pos()).Offset, fset.Position(findFn.End()).Offset, findText},
+		{
+			fset.Position(tableFn.Pos()).Offset,
+			fset.Position(tableFn.End()).Offset,
+			`func getTransportTable(fn uintptr, family int, class int) ([]byte, error) {
+	buf, release, err := fcxAcquireTransportTable(fn, family, class)
+	if err != nil {
+		return nil, err
+	}
+	copied := append([]byte(nil), buf...)
+	release()
+	return copied, nil
+}`,
+		},
+		{
+			fset.Position(execFn.Pos()).Offset,
+			fset.Position(execFn.End()).Offset,
+			`func getExecPathFromPID(pid uint32) (string, error) {
+	return fcxGetExecPathFromPID(pid)
+}`,
+		},
+	}
+	sort.Slice(changes, func(i, j int) bool { return changes[i].start > changes[j].start })
+	patched := string(source)
+	for _, change := range changes {
+		patched = patched[:change.start] + change.text + patched[change.end:]
+	}
+	return format.Source([]byte(patched))
+}
+
 func generate(out string) error {
 	command := exec.Command("go", "list", "-m", "-json", "github.com/metacubex/mihomo")
 	data, err := command.Output()
@@ -739,6 +1013,54 @@ func convertsV2RayFCX(buf []byte, diagnostics bool) ([]map[string]any, error) {`
 		return err
 	}
 	patchedSingTunWindows, err := patchSingTunWindows(singTunWindowsSource)
+	if err != nil {
+		return err
+	}
+	singTunStackGvisorSource, err := checkedSource(filepath.Join(singTunModule.Dir, "stack_gvisor.go"), singTunStackGvisorSHA256)
+	if err != nil {
+		return err
+	}
+	patchedSingTunStackGvisor, err := patchSingTunStackGvisor(singTunStackGvisorSource)
+	if err != nil {
+		return err
+	}
+	cacheFileSource, err := checkedSource(filepath.Join(module.Dir, "component", "profile", "cachefile", "cache.go"), cacheFileSHA256)
+	if err != nil {
+		return err
+	}
+	patchedCacheFile, err := patchCacheFile(cacheFileSource)
+	if err != nil {
+		return err
+	}
+	fakeIpSource, err := checkedSource(filepath.Join(module.Dir, "component", "profile", "cachefile", "fakeip.go"), fakeIpSHA256)
+	if err != nil {
+		return err
+	}
+	patchedFakeIp, err := patchFakeIpStore(fakeIpSource)
+	if err != nil {
+		return err
+	}
+	processWindowsSource, err := checkedSource(filepath.Join(module.Dir, "component", "process", "process_windows.go"), processWindowsSHA256)
+	if err != nil {
+		return err
+	}
+	patchedProcessWindows, err := patchProcessWindows(processWindowsSource)
+	if err != nil {
+		return err
+	}
+	memcSource, err := checkedSource(filepath.Join(module.Dir, "component", "geodata", "memconservative", "memc.go"), memConservativeSHA256)
+	if err != nil {
+		return err
+	}
+	patchedMemc, err := patchMemConservative(memcSource)
+	if err != nil {
+		return err
+	}
+	configSource, err := checkedSource(filepath.Join(module.Dir, "config", "config.go"), configSHA256)
+	if err != nil {
+		return err
+	}
+	patchedConfig, err := patchConfigGeoCleanup(configSource)
 	if err != nil {
 		return err
 	}
@@ -935,6 +1257,61 @@ func convertsV2RayFCX(buf []byte, diagnostics bool) ([]map[string]any, error) {`
 	if err := write(filepath.Join(sourceDirectory, "adapter", "provider", "catalog_provider_fcx.go"), "catalog_provider_fcx.go", catalogParser); err != nil {
 		return err
 	}
+	if err := write(filepath.Join(singTunSourceDirectory, "stack_gvisor.go"), "sing_tun_stack_gvisor.go", patchedSingTunStackGvisor); err != nil {
+		return err
+	}
+	singTunGvisorTest, err := patchFiles.ReadFile("patches/sing_tun_gvisor_window_fcx_test.go.txt")
+	if err != nil {
+		return err
+	}
+	singTunGvisorTest, err = format.Source(singTunGvisorTest)
+	if err != nil {
+		return err
+	}
+	if err := write(filepath.Join(sourceDirectory, "listener", "sing_tun", "sing_tun_gvisor_window_fcx_test.go"), "sing_tun_gvisor_window_fcx_test.go", singTunGvisorTest); err != nil {
+		return err
+	}
+	if err := write(filepath.Join(sourceDirectory, "component", "profile", "cachefile", "cache.go"), "cachefile_cache.go", patchedCacheFile); err != nil {
+		return err
+	}
+	if err := write(filepath.Join(sourceDirectory, "component", "profile", "cachefile", "fakeip.go"), "cachefile_fakeip.go", patchedFakeIp); err != nil {
+		return err
+	}
+	for _, name := range []string{"fakeip_cache_fcx.go", "fakeip_cache_fcx_test.go"} {
+		contents, err := patchFiles.ReadFile("patches/" + name + ".txt")
+		if err != nil {
+			return err
+		}
+		contents, err = format.Source(contents)
+		if err != nil {
+			return err
+		}
+		if err := write(filepath.Join(sourceDirectory, "component", "profile", "cachefile", name), name, contents); err != nil {
+			return err
+		}
+	}
+	if err := write(filepath.Join(sourceDirectory, "component", "process", "process_windows.go"), "process_windows.go", patchedProcessWindows); err != nil {
+		return err
+	}
+	for _, name := range []string{"process_windows_fcx.go", "process_windows_fcx_test.go"} {
+		contents, err := patchFiles.ReadFile("patches/" + name + ".txt")
+		if err != nil {
+			return err
+		}
+		contents, err = format.Source(contents)
+		if err != nil {
+			return err
+		}
+		if err := write(filepath.Join(sourceDirectory, "component", "process", name), name, contents); err != nil {
+			return err
+		}
+	}
+	if err := write(filepath.Join(sourceDirectory, "component", "geodata", "memconservative", "memc.go"), "geodata_memc.go", patchedMemc); err != nil {
+		return err
+	}
+	if err := write(filepath.Join(sourceDirectory, "config", "config.go"), "config.go", patchedConfig); err != nil {
+		return err
+	}
 	encoded, err := json.MarshalIndent(struct{ Replace map[string]string }{replacements}, "", "  ")
 	if err != nil {
 		return err
@@ -1029,12 +1406,26 @@ func convertsV2RayFCX(buf []byte, diagnostics bool) ([]map[string]any, error) {`
 	manifest, err := json.MarshalIndent(map[string]any{
 		"schemaVersion": 1, "module": "github.com/metacubex/mihomo", "version": upstreamVersion,
 		"commit": upstreamCommit, "moduleSum": module.Sum,
-		"upstreamSourceSHA256": map[string]string{"listener/listener.go": listenerSHA256, "listener/sing_tun/server.go": singTunServerSHA256, "component/iface/iface.go": ifaceSHA256, "hub/route/configs.go": configsSHA256, "hub/route/server.go": controllerSHA256, "adapter/adapter.go": adapterSHA256, "dns/doh.go": dnsDoHSHA256, "common/convert/converter.go": converterSHA256},
+		"upstreamSourceSHA256": map[string]string{
+			"listener/listener.go":                         listenerSHA256,
+			"listener/sing_tun/server.go":                  singTunServerSHA256,
+			"component/iface/iface.go":                     ifaceSHA256,
+			"component/profile/cachefile/cache.go":         cacheFileSHA256,
+			"component/profile/cachefile/fakeip.go":        fakeIpSHA256,
+			"component/process/process_windows.go":         processWindowsSHA256,
+			"component/geodata/memconservative/memc.go":    memConservativeSHA256,
+			"config/config.go":                             configSHA256,
+			"hub/route/configs.go":                         configsSHA256,
+			"hub/route/server.go":                          controllerSHA256,
+			"adapter/adapter.go":                           adapterSHA256,
+			"dns/doh.go":                                   dnsDoHSHA256,
+			"common/convert/converter.go":                  converterSHA256,
+		},
 		"singTunOverlay": map[string]any{
 			"module":               "github.com/metacubex/sing-tun",
 			"version":              singTunVersion,
 			"moduleSum":            singTunModule.Sum,
-			"upstreamSourceSHA256": map[string]string{"tun_windows.go": singTunWindowsSHA256},
+			"upstreamSourceSHA256": map[string]string{"tun_windows.go": singTunWindowsSHA256, "stack_gvisor.go": singTunStackGvisorSHA256},
 			"effectiveModuleSHA256": aggregateHashes(singTunModuleHashes),
 		},
 		"patchesSHA256":         patchHashes, "generatorSHA256": digest(generatorSource), "projectGoModSHA256": digest(rootMod),

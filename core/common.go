@@ -215,6 +215,35 @@ func extractProxyDescriptionsFromRaw(rawConfig *config.RawConfig) {
 	setProxyDescriptions(buildProxyDescriptionsFromRaw(rawConfig))
 }
 
+// injectJSONStringField splices `"<key>":"<escapedValue>"` into a serialized JSON
+// object without unmarshaling it into a dynamic map[string]any.
+func injectJSONStringField(rawObject []byte, key string, value string) ([]byte, bool) {
+	trimmed := b.TrimSpace(rawObject)
+	if len(trimmed) < 2 || trimmed[0] != '{' || trimmed[len(trimmed)-1] != '}' {
+		return nil, false
+	}
+	encodedKey, err := json.Marshal(key)
+	if err != nil {
+		return nil, false
+	}
+	encodedValue, err := json.Marshal(value)
+	if err != nil {
+		return nil, false
+	}
+	body := b.TrimSpace(trimmed[1 : len(trimmed)-1])
+	extra := len(encodedKey) + 1 + len(encodedValue) + 2
+	out := make([]byte, 0, len(trimmed)+extra)
+	out = append(out, trimmed[:len(trimmed)-1]...)
+	if len(body) > 0 {
+		out = append(out, ',')
+	}
+	out = append(out, encodedKey...)
+	out = append(out, ':')
+	out = append(out, encodedValue...)
+	out = append(out, '}')
+	return out, true
+}
+
 // proxiesWithDescriptions injects serverDescription for each proxy in API response.
 func proxiesWithDescriptions() map[string]interface{} {
 	all := proxiesWithProviders()
@@ -232,6 +261,10 @@ func proxiesWithDescriptions() map[string]interface{} {
 		desc, hasDesc := descMap[name]
 		if !hasDesc || desc == "" {
 			result[name] = json.RawMessage(data)
+			continue
+		}
+		if injected, ok := injectJSONStringField(data, "serverDescription", desc); ok {
+			result[name] = json.RawMessage(injected)
 			continue
 		}
 		item := make(map[string]interface{})
@@ -262,16 +295,6 @@ func getExternalProvidersRaw() map[string]cp.Provider {
 func toExternalProvider(p cp.Provider) (*ExternalProvider, error) {
 	switch pp := p.(type) {
 	case *provider.ProxySetProvider:
-		// Get SubscriptionInfo via JSON marshal (field is unexported in original mihomo)
-		var subInfo *provider.SubscriptionInfo
-		data, err := json.Marshal(pp)
-		if err == nil {
-			var apiData struct {
-				SubscriptionInfo *provider.SubscriptionInfo `json:"subscriptionInfo"`
-			}
-			_ = json.Unmarshal(data, &apiData)
-			subInfo = apiData.SubscriptionInfo
-		}
 		return &ExternalProvider{
 			Name:             pp.Name(),
 			Type:             pp.Type().String(),
@@ -279,7 +302,7 @@ func toExternalProvider(p cp.Provider) (*ExternalProvider, error) {
 			Count:            pp.Count(),
 			UpdateAt:         pp.UpdatedAt(),
 			Path:             pp.Vehicle().Path(),
-			SubscriptionInfo: subInfo,
+			SubscriptionInfo: pp.SubscriptionInfoFCX(),
 		}, nil
 	case *rp.RuleSetProvider:
 		return &ExternalProvider{

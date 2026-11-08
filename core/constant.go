@@ -119,6 +119,7 @@ const (
 	configureStrictIngressMethod   Method = "configureStrictIngress"
 	setUiActiveMethod              Method = "setUiActive"
 	setScreenActiveMethod          Method = "setScreenActive"
+	setRequestsActiveMethod        Method = "setRequestsActive"
 )
 
 type Method string

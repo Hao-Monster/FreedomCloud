@@ -1,10 +1,11 @@
 package main
 
 import (
- "encoding/json"
- "fmt"
+	"encoding/json"
+	"fmt"
+	"slices"
 
- "github.com/metacubex/mihomo/config"
+	"github.com/metacubex/mihomo/config"
 )
 
 // Protected by runLock. Captured from the config actually passed to ApplyConfig,
@@ -12,30 +13,69 @@ import (
 var appliedRawConfig []byte
 
 func runtimeConfigSnapshot() (*config.RawConfig, error) {
- runLock.Lock()
- defer runLock.Unlock()
- if len(appliedRawConfig) == 0 || currentConfig == nil {
-  return nil, fmt.Errorf("Core has no applied configuration snapshot")
- }
- var values map[string]json.RawMessage
- if err := json.Unmarshal(appliedRawConfig, &values); err != nil { return nil, err }
- general, err := json.Marshal(currentConfig.General)
- if err != nil { return nil, err }
- var live map[string]json.RawMessage
- if err = json.Unmarshal(general, &live); err != nil { return nil, err }
- for key, value := range live { values[key] = value }
- // General.Tun.Enable stores the pending preference, while the listener is
- // intentionally stopped when the proxy is stopped.
- var tun map[string]json.RawMessage
- if err = json.Unmarshal(values["tun"], &tun); err == nil && tun != nil {
-  tun["enable"], _ = json.Marshal(isRunning && pendingTunEnable)
-  values["tun"], _ = json.Marshal(tun)
- }
- values["external-controller"], err = json.Marshal(currentConfig.Controller.ExternalController)
- if err != nil { return nil, err }
- data, err := json.Marshal(values)
- if err != nil { return nil, err }
- result := &config.RawConfig{}
- if err = json.Unmarshal(data, result); err != nil { return nil, err }
- return result, nil
+	runLock.Lock()
+	if len(appliedRawConfig) == 0 || currentConfig == nil || currentConfig.General == nil || currentConfig.Controller == nil {
+		runLock.Unlock()
+		return nil, fmt.Errorf("Core has no applied configuration snapshot")
+	}
+	raw := appliedRawConfig
+	general := *currentConfig.General
+	general.SkipAuthPrefixes = slices.Clone(general.SkipAuthPrefixes)
+	general.LanAllowedIPs = slices.Clone(general.LanAllowedIPs)
+	general.LanDisAllowedIPs = slices.Clone(general.LanDisAllowedIPs)
+	externalController := currentConfig.Controller.ExternalController
+	tunActive := isRunning && pendingTunEnable
+	runLock.Unlock()
+
+	result := &config.RawConfig{}
+	if err := json.Unmarshal(raw, result); err != nil {
+		return nil, err
+	}
+
+	result.Port = general.Port
+	result.SocksPort = general.SocksPort
+	result.RedirPort = general.RedirPort
+	result.TProxyPort = general.TProxyPort
+	result.MixedPort = general.MixedPort
+	result.ShadowSocksConfig = general.ShadowSocksConfig
+	result.VmessConfig = general.VmessConfig
+	result.InboundTfo = general.InboundTfo
+	result.InboundMPTCP = general.InboundMPTCP
+	result.SkipAuthPrefixes = general.SkipAuthPrefixes
+	result.LanAllowedIPs = general.LanAllowedIPs
+	result.LanDisAllowedIPs = general.LanDisAllowedIPs
+	result.AllowLan = general.AllowLan
+	result.BindAddress = general.BindAddress
+	result.Mode = general.Mode
+	result.UnifiedDelay = general.UnifiedDelay
+	result.LogLevel = general.LogLevel
+	result.IPv6 = general.IPv6
+	result.ExternalController = externalController
+	result.Interface = general.Interface
+	result.RoutingMark = general.RoutingMark
+	result.GeoAutoUpdate = general.GeoAutoUpdate
+	result.GeoUpdateInterval = general.GeoUpdateInterval
+	result.GeodataMode = general.GeodataMode
+	result.GeodataLoader = general.GeodataLoader
+	result.GeositeMatcher = general.GeositeMatcher
+	result.TCPConcurrent = general.TCPConcurrent
+	result.FindProcessMode = general.FindProcessMode
+	result.GlobalUA = general.GlobalUA
+	result.ETagSupport = general.ETagSupport
+	result.KeepAliveIdle = general.KeepAliveIdle
+	result.KeepAliveInterval = general.KeepAliveInterval
+	result.DisableKeepAlive = general.DisableKeepAlive
+	result.GeoXUrl = config.RawGeoXUrl{
+		GeoIp:   general.GeoXUrl.GeoIp,
+		Mmdb:    general.GeoXUrl.Mmdb,
+		ASN:     general.GeoXUrl.ASN,
+		GeoSite: general.GeoXUrl.GeoSite,
+	}
+
+	// Copy small live Tun (~300 B) into RawTun and reflect runtime listener state.
+	if tunBytes, err := json.Marshal(general.Tun); err == nil {
+		_ = json.Unmarshal(tunBytes, &result.Tun)
+	}
+	result.Tun.Enable = tunActive
+	return result, nil
 }

@@ -1,0 +1,196 @@
+//go:build windows
+
+package process
+
+import (
+	"fmt"
+	"sync"
+	"syscall"
+	"time"
+	"unsafe"
+
+	"golang.org/x/sys/windows"
+)
+
+const (
+	fcxDefaultSocketTableBytes = 64 * 1024
+	fcxMaxPooledTableBytes     = 1024 * 1024
+	fcxProcCacheTTL            = 60 * time.Second
+	fcxProcCacheMaxEntries     = 2048
+	fcxStackPathCodeUnits      = 1024
+)
+
+var fcxSocketTablePool = sync.Pool{
+	New: func() any {
+		buf := make([]byte, fcxDefaultSocketTableBytes)
+		return &buf
+	},
+}
+
+type fcxProcCacheEntry struct {
+	creationTime uint64
+	path         string
+	expiresAtNs  int64
+}
+
+var (
+	fcxProcCacheMu sync.RWMutex
+	fcxProcCache   = make(map[uint32]fcxProcCacheEntry, 256)
+)
+
+func fcxAcquireTransportTable(fn uintptr, family int, class int) ([]byte, func(), error) {
+	pooled := fcxSocketTablePool.Get().(*[]byte)
+	buf := *pooled
+	if cap(buf) < fcxDefaultSocketTableBytes {
+		buf = make([]byte, fcxDefaultSocketTableBytes)
+	} else {
+		buf = buf[:cap(buf)]
+	}
+
+	release := func() {
+		if cap(buf) <= fcxMaxPooledTableBytes {
+			*pooled = buf[:cap(buf)]
+			fcxSocketTablePool.Put(pooled)
+		}
+	}
+
+	for {
+		size := uint32(len(buf))
+		ptr := unsafe.Pointer(&buf[0])
+		err, _, _ := syscall.Syscall6(
+			fn,
+			6,
+			uintptr(ptr),
+			uintptr(unsafe.Pointer(&size)),
+			0,
+			uintptr(family),
+			uintptr(class),
+			0,
+		)
+		switch err {
+		case 0:
+			if size < 4 || int(size) > len(buf) {
+				release()
+				return nil, func() {}, fmt.Errorf("invalid socket table size: %d", size)
+			}
+			return buf[:size], release, nil
+		case uintptr(syscall.ERROR_INSUFFICIENT_BUFFER):
+			nextSize := int(size) + 4096
+			if nextSize <= len(buf) {
+				nextSize = len(buf) * 2
+			}
+			buf = make([]byte, nextSize)
+		default:
+			release()
+			return nil, func() {}, fmt.Errorf("syscall error: %d", err)
+		}
+	}
+}
+
+func fcxLookupCachedExecPath(pid uint32, creationTime uint64, nowNs int64) (string, bool) {
+	if creationTime == 0 {
+		return "", false
+	}
+	fcxProcCacheMu.RLock()
+	entry, ok := fcxProcCache[pid]
+	fcxProcCacheMu.RUnlock()
+	if !ok || entry.creationTime != creationTime || nowNs >= entry.expiresAtNs {
+		return "", false
+	}
+	return entry.path, true
+}
+
+func fcxStoreCachedExecPath(pid uint32, creationTime uint64, path string, nowNs int64) {
+	if creationTime == 0 || path == "" {
+		return
+	}
+	fcxProcCacheMu.Lock()
+	if len(fcxProcCache) >= fcxProcCacheMaxEntries {
+		for k, v := range fcxProcCache {
+			if nowNs >= v.expiresAtNs {
+				delete(fcxProcCache, k)
+			}
+		}
+		if len(fcxProcCache) >= fcxProcCacheMaxEntries {
+			// Bound memory strictly even during a burst of distinct short-lived PIDs.
+			removed := 0
+			for k := range fcxProcCache {
+				delete(fcxProcCache, k)
+				removed++
+				if removed >= fcxProcCacheMaxEntries/2 {
+					break
+				}
+			}
+		}
+	}
+	fcxProcCache[pid] = fcxProcCacheEntry{
+		creationTime: creationTime,
+		path:         path,
+		expiresAtNs:  nowNs + int64(fcxProcCacheTTL),
+	}
+	fcxProcCacheMu.Unlock()
+}
+
+func fcxGetExecPathFromPID(pid uint32) (string, error) {
+	switch pid {
+	case 0:
+		return ":System Idle Process", nil
+	case 4:
+		return ":System", nil
+	}
+	h, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, pid)
+	if err != nil {
+		return "", err
+	}
+	defer windows.CloseHandle(h)
+
+	var createTime, exitTime, kernelTime, userTime windows.Filetime
+	var creationKey uint64
+	nowNs := time.Now().UnixNano()
+	if timeErr := windows.GetProcessTimes(h, &createTime, &exitTime, &kernelTime, &userTime); timeErr == nil {
+		creationKey = (uint64(createTime.HighDateTime) << 32) | uint64(createTime.LowDateTime)
+		if cached, ok := fcxLookupCachedExecPath(pid, creationKey, nowNs); ok {
+			return cached, nil
+		}
+	}
+
+	var stackBuf [fcxStackPathCodeUnits]uint16
+	size := uint32(len(stackBuf))
+	r1, _, sysErr := syscall.Syscall6(
+		queryProcName,
+		4,
+		uintptr(h),
+		uintptr(0),
+		uintptr(unsafe.Pointer(&stackBuf[0])),
+		uintptr(unsafe.Pointer(&size)),
+		0,
+		0,
+	)
+	if r1 != 0 {
+		path := windows.UTF16ToString(stackBuf[:size])
+		fcxStoreCachedExecPath(pid, creationKey, path, nowNs)
+		return path, nil
+	}
+	if sysErr != windows.ERROR_INSUFFICIENT_BUFFER {
+		return "", sysErr
+	}
+
+	heapBuf := make([]uint16, syscall.MAX_LONG_PATH)
+	size = uint32(len(heapBuf))
+	r1, _, sysErr = syscall.Syscall6(
+		queryProcName,
+		4,
+		uintptr(h),
+		uintptr(0),
+		uintptr(unsafe.Pointer(&heapBuf[0])),
+		uintptr(unsafe.Pointer(&size)),
+		0,
+		0,
+	)
+	if r1 == 0 {
+		return "", sysErr
+	}
+	path := windows.UTF16ToString(heapBuf[:size])
+	fcxStoreCachedExecPath(pid, creationKey, path, nowNs)
+	return path, nil
+}

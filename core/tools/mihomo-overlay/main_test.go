@@ -453,3 +453,223 @@ func TestSingTunWindowsPatchIsDeterministicAndRejectsChangedShape(t *testing.T) 
 		})
 	}
 }
+
+const minimalSingTunStackGvisor = `//go:build with_gvisor
+
+package tun
+
+func NewGVisorStackWithOptions(ep stack.LinkEndpoint, opts stack.NICOptions) (*stack.Stack, error) {
+	ipStack.SetSpoofing(DefaultNIC, true)
+	ipStack.SetPromiscuousMode(DefaultNIC, true)
+	bufSize := 20 * 1024
+	ipStack.SetTransportProtocolOption(tcp.ProtocolNumber, &tcpip.TCPReceiveBufferSizeRangeOption{
+		Min:     1,
+		Default: bufSize,
+		Max:     bufSize,
+	})
+	ipStack.SetTransportProtocolOption(tcp.ProtocolNumber, &tcpip.TCPSendBufferSizeRangeOption{
+		Min:     1,
+		Default: bufSize,
+		Max:     bufSize,
+	})
+	sOpt := tcpip.TCPSACKEnabled(true)
+	return ipStack, nil
+}
+`
+
+func TestSingTunStackGvisorPatchIsDeterministicAndRejectsChangedShape(t *testing.T) {
+	first, err := patchSingTunStackGvisor([]byte(minimalSingTunStackGvisor))
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := patchSingTunStackGvisor([]byte(minimalSingTunStackGvisor))
+	if err != nil || !bytes.Equal(first, second) {
+		t.Fatalf("sing-tun stack_gvisor patch is nondeterministic: %v", err)
+	}
+	patched := string(first)
+	for _, want := range []string{"4 * 1024", "256 * 1024", "4 * 1024 * 1024"} {
+		if !strings.Contains(patched, want) {
+			t.Fatalf("patched stack_gvisor missing %q", want)
+		}
+	}
+	if strings.Contains(patched, "20 * 1024") {
+		t.Fatal("patched stack_gvisor retained 20 KiB cap")
+	}
+	mutated := strings.Replace(minimalSingTunStackGvisor, "bufSize := 20 * 1024", "bufSize := 32 * 1024", 1)
+	if _, err := patchSingTunStackGvisor([]byte(mutated)); err == nil {
+		t.Fatal("changed upstream stack_gvisor shape accepted")
+	}
+}
+
+const minimalMemConservative = `package memconservative
+
+import (
+	"errors"
+	"fmt"
+	"runtime"
+
+	"github.com/metacubex/mihomo/component/geodata"
+	"github.com/metacubex/mihomo/component/geodata/router"
+)
+
+type memConservativeLoader struct{}
+
+func (m *memConservativeLoader) LoadIPByPath(filename, country string) ([]*router.CIDR, error) {
+	defer runtime.GC()
+	return nil, fmt.Errorf("failed: %s", filename)
+}
+
+func (m *memConservativeLoader) LoadSiteByPath(filename, list string) ([]*router.Domain, error) {
+	defer runtime.GC()
+	return nil, errors.New("unsupported")
+}
+`
+
+const minimalConfigGeoCleanup = `package config
+
+func ParseRawConfig(rawCfg *RawConfig) (*Config, error) {
+	rollback := temporaryUpdateGeneral(config.General)
+	defer rollback()
+	return config, nil
+}
+`
+
+func TestMemConservativeAndConfigGeoCleanupPatchesAreDeterministic(t *testing.T) {
+	patchedMemc, err := patchMemConservative([]byte(minimalMemConservative))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(patchedMemc, []byte("runtime.GC()")) || bytes.Contains(patchedMemc, []byte(`"runtime"`)) {
+		t.Fatal("memconservative patch retained per-rule runtime.GC()")
+	}
+	if _, err := patchMemConservative([]byte(strings.Replace(minimalMemConservative, "defer runtime.GC()", "", 1))); err == nil {
+		t.Fatal("changed memconservative shape accepted")
+	}
+
+	patchedCfg, err := patchConfigGeoCleanup([]byte(minimalConfigGeoCleanup))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"geodata.ClearGeoSiteCache()", "geodata.ClearGeoIPCache()"} {
+		if !bytes.Contains(patchedCfg, []byte(want)) {
+			t.Fatalf("config geo cleanup patch missing %q", want)
+		}
+	}
+	if _, err := patchConfigGeoCleanup([]byte("package config\nfunc Other() {}\n")); err == nil {
+		t.Fatal("changed config ParseRawConfig shape accepted")
+	}
+}
+
+const minimalCacheFile = `package cachefile
+
+type CacheFile struct {
+	DB *bbolt.DB
+}
+
+func (c *CacheFile) Close() error {
+	return c.DB.Close()
+}
+`
+
+const minimalFakeIp = `package cachefile
+
+import (
+	"net/netip"
+
+	"github.com/metacubex/mihomo/log"
+
+	"github.com/metacubex/bbolt"
+)
+
+type FakeIpStore struct {
+	*CacheFile
+	bucketName []byte
+}
+
+func (c *FakeIpStore) GetByHost(host string) (ip netip.Addr, exist bool) { return }
+func (c *FakeIpStore) PutByHost(host string, ip netip.Addr) { _ = log.Warnln; var _ *bbolt.Tx }
+func (c *FakeIpStore) GetByIP(ip netip.Addr) (host string, exist bool) { return }
+func (c *FakeIpStore) PutByIP(ip netip.Addr, host string) {}
+func (c *FakeIpStore) DelByIP(ip netip.Addr) {}
+func (c *FakeIpStore) FlushFakeIP() error { return nil }
+`
+
+func TestFakeIpCachePatchIsDeterministicAndRejectsChangedShape(t *testing.T) {
+	firstCache, err := patchCacheFile([]byte(minimalCacheFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondCache, err := patchCacheFile([]byte(minimalCacheFile))
+	if err != nil || !bytes.Equal(firstCache, secondCache) {
+		t.Fatalf("cache.go patch is nondeterministic: %v", err)
+	}
+	if !bytes.Contains(firstCache, []byte("fcxCloseFakeIPCache(c.DB)")) {
+		t.Fatal("cache.go patch missing fcxCloseFakeIPCache(c.DB)")
+	}
+	if _, err := patchCacheFile([]byte("package cachefile\nfunc Other() {}\n")); err == nil {
+		t.Fatal("changed cache.go shape accepted")
+	}
+
+	firstFake, err := patchFakeIpStore([]byte(minimalFakeIp))
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondFake, err := patchFakeIpStore([]byte(minimalFakeIp))
+	if err != nil || !bytes.Equal(firstFake, secondFake) {
+		t.Fatalf("fakeip.go patch is nondeterministic: %v", err)
+	}
+	for _, want := range []string{"fcxGetByHost", "fcxPutByHost", "fcxGetByIP", "fcxPutByIP", "fcxDelByIP", "fcxFlushFakeIP"} {
+		if !bytes.Contains(firstFake, []byte(want)) {
+			t.Fatalf("fakeip.go patch missing %q", want)
+		}
+	}
+	if _, err := patchFakeIpStore([]byte(strings.Replace(minimalFakeIp, "FlushFakeIP()", "OtherFlush()", 1))); err == nil {
+		t.Fatal("changed fakeip.go shape accepted")
+	}
+}
+
+const minimalProcessWindows = `package process
+
+func findProcessName(network string, ip netip.Addr, srcPort int) (uint32, string, error) {
+	buf, err := getTransportTable(fn, family, class)
+	if err != nil {
+		return 0, "", err
+	}
+	s := newSearcher(family == windows.AF_INET, network == TCP)
+	pid, err := s.Search(buf, ip, uint16(srcPort))
+	if err != nil {
+		return 0, "", err
+	}
+	pp, err := getExecPathFromPID(pid)
+	return 0, pp, err
+}
+
+func getTransportTable(fn uintptr, family int, class int) ([]byte, error) {
+	return nil, nil
+}
+
+func getExecPathFromPID(pid uint32) (string, error) {
+	return "", nil
+}
+`
+
+func TestProcessWindowsPatchIsDeterministicAndRejectsChangedShape(t *testing.T) {
+	first, err := patchProcessWindows([]byte(minimalProcessWindows))
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := patchProcessWindows([]byte(minimalProcessWindows))
+	if err != nil || !bytes.Equal(first, second) {
+		t.Fatalf("process_windows.go patch is nondeterministic: %v", err)
+	}
+	for _, want := range []string{"fcxAcquireTransportTable", "fcxGetExecPathFromPID"} {
+		if !bytes.Contains(first, []byte(want)) {
+			t.Fatalf("process_windows.go patch missing %q", want)
+		}
+	}
+	if _, err := patchProcessWindows([]byte(strings.Replace(minimalProcessWindows, "getExecPathFromPID", "otherExecPath", 1))); err == nil {
+		t.Fatal("changed process_windows.go shape accepted")
+	}
+}
+
+

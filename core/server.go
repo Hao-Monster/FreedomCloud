@@ -90,6 +90,11 @@ func startServer(arg string, authToken string) {
 		c, err = net.Dial("unix", arg)
 	} else {
 		c, err = net.Dial("tcp", fmt.Sprintf("127.0.0.1:%s", arg))
+		if err == nil {
+			if tcpConn, ok := c.(*net.TCPConn); ok {
+				_ = tcpConn.SetNoDelay(true)
+			}
+		}
 	}
 	if err != nil {
 		fmt.Printf("startServer: connection failed: %v\n", err)
@@ -158,7 +163,7 @@ func dispatchCoreAction(output *coreOutput, action *Action, handler func(*Action
 	slots := output.actions
 	// A full batch of asynchronous work must not exclude its cancellation.
 	switch action.Method {
-	case cancelTestDelayMethod, catalogReleaseMethod, setUiActiveMethod, stopListenerMethod, shutdownMethod:
+	case cancelTestDelayMethod, catalogReleaseMethod, setUiActiveMethod, setRequestsActiveMethod, stopListenerMethod, shutdownMethod:
 		slots = output.controls
 	}
 	select {

@@ -1,0 +1,352 @@
+package cachefile
+
+import (
+	"net/netip"
+	"sync"
+	"time"
+
+	"github.com/metacubex/mihomo/log"
+
+	"github.com/metacubex/bbolt"
+)
+
+const (
+	fcxFakeIPFlushInterval = 100 * time.Millisecond
+	fcxFakeIPMaxDirtyBatch = 256
+)
+
+type fcxFakeIPBucketCache struct {
+	db      *bbolt.DB
+	bucket  []byte
+	mu      sync.RWMutex
+	flushMu sync.Mutex
+
+	hydrated bool
+	closed   bool
+	kv       map[string]string
+	dirty    map[string]*string
+	timer    *time.Timer
+}
+
+var (
+	fcxFakeIPRegistryMu sync.Mutex
+	fcxFakeIPRegistry   = map[*bbolt.DB]map[string]*fcxFakeIPBucketCache{}
+)
+
+func fcxGetBucketCache(db *bbolt.DB, bucketName []byte) *fcxFakeIPBucketCache {
+	if db == nil || len(bucketName) == 0 {
+		return nil
+	}
+	key := string(bucketName)
+	fcxFakeIPRegistryMu.Lock()
+	defer fcxFakeIPRegistryMu.Unlock()
+	byBucket := fcxFakeIPRegistry[db]
+	if byBucket == nil {
+		byBucket = make(map[string]*fcxFakeIPBucketCache, 2)
+		fcxFakeIPRegistry[db] = byBucket
+	}
+	cache := byBucket[key]
+	if cache == nil {
+		bucketCopy := append([]byte(nil), bucketName...)
+		cache = &fcxFakeIPBucketCache{
+			db:     db,
+			bucket: bucketCopy,
+			kv:     make(map[string]string),
+			dirty:  make(map[string]*string),
+		}
+		byBucket[key] = cache
+	}
+	return cache
+}
+
+func (b *fcxFakeIPBucketCache) ensureHydratedLocked() {
+	if b.hydrated || b.closed {
+		return
+	}
+	_ = b.db.View(func(t *bbolt.Tx) error {
+		bucket := t.Bucket(b.bucket)
+		if bucket == nil {
+			return nil
+		}
+		cursor := bucket.Cursor()
+		for k, v := cursor.First(); k != nil; k, v = cursor.Next() {
+			rawKey := string(k)
+			if pending, isDirty := b.dirty[rawKey]; isDirty {
+				if pending != nil {
+					b.kv[rawKey] = *pending
+				}
+				continue
+			}
+			b.kv[rawKey] = string(v)
+		}
+		return nil
+	})
+	b.hydrated = true
+}
+
+func (b *fcxFakeIPBucketCache) scheduleFlushLocked() bool {
+	if b.closed {
+		return false
+	}
+	if len(b.dirty) >= fcxFakeIPMaxDirtyBatch {
+		if b.timer != nil {
+			b.timer.Stop()
+			b.timer = nil
+		}
+		return true
+	}
+	if b.timer == nil {
+		b.timer = time.AfterFunc(fcxFakeIPFlushInterval, func() {
+			_ = b.flushSync()
+		})
+	}
+	return false
+}
+
+func (b *fcxFakeIPBucketCache) flushSync() error {
+	b.flushMu.Lock()
+	defer b.flushMu.Unlock()
+
+	b.mu.Lock()
+	if b.timer != nil {
+		b.timer.Stop()
+		b.timer = nil
+	}
+	if b.closed || len(b.dirty) == 0 {
+		b.mu.Unlock()
+		return nil
+	}
+	batch := b.dirty
+	b.dirty = make(map[string]*string)
+	b.mu.Unlock()
+
+	err := b.db.Update(func(t *bbolt.Tx) error {
+		bucket, createErr := t.CreateBucketIfNotExists(b.bucket)
+		if createErr != nil {
+			return createErr
+		}
+		for k, v := range batch {
+			if v == nil {
+				if delErr := bucket.Delete([]byte(k)); delErr != nil {
+					return delErr
+				}
+			} else {
+				if putErr := bucket.Put([]byte(k), []byte(*v)); putErr != nil {
+					return putErr
+				}
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		b.mu.Lock()
+		if !b.closed {
+			for k, v := range batch {
+				if _, superseded := b.dirty[k]; !superseded {
+					b.dirty[k] = v
+				}
+			}
+		}
+		b.mu.Unlock()
+		log.Warnln("[CacheFile] write cache to %s failed: %s", b.db.Path(), err.Error())
+	}
+	return err
+}
+
+func fcxIsFakeIPPoolStateKey(host string) bool {
+	return host == "key-offset-fake-ip" || host == "key-cycle-fake-ip"
+}
+
+func (c *FakeIpStore) fcxGetByHost(host string) (ip netip.Addr, exist bool) {
+	if c == nil || c.CacheFile == nil || c.DB == nil {
+		return netip.Addr{}, false
+	}
+	cache := fcxGetBucketCache(c.DB, c.bucketName)
+	if cache == nil {
+		return netip.Addr{}, false
+	}
+	cache.mu.RLock()
+	if cache.hydrated {
+		raw, ok := cache.kv[host]
+		cache.mu.RUnlock()
+		if !ok {
+			return netip.Addr{}, false
+		}
+		return netip.AddrFromSlice([]byte(raw))
+	}
+	cache.mu.RUnlock()
+
+	cache.mu.Lock()
+	cache.ensureHydratedLocked()
+	raw, ok := cache.kv[host]
+	cache.mu.Unlock()
+	if !ok {
+		return netip.Addr{}, false
+	}
+	return netip.AddrFromSlice([]byte(raw))
+}
+
+func (c *FakeIpStore) fcxPutByHost(host string, ip netip.Addr) {
+	if c == nil || c.CacheFile == nil || c.DB == nil {
+		return
+	}
+	cache := fcxGetBucketCache(c.DB, c.bucketName)
+	if cache == nil {
+		return
+	}
+	rawIP := string(ip.AsSlice())
+	syncNow := fcxIsFakeIPPoolStateKey(host)
+
+	cache.mu.Lock()
+	if cache.closed {
+		cache.mu.Unlock()
+		return
+	}
+	cache.ensureHydratedLocked()
+	cache.kv[host] = rawIP
+	val := rawIP
+	cache.dirty[host] = &val
+	flushAsync := !syncNow && cache.scheduleFlushLocked()
+	cache.mu.Unlock()
+
+	if syncNow {
+		_ = cache.flushSync()
+	} else if flushAsync {
+		go func() { _ = cache.flushSync() }()
+	}
+}
+
+func (c *FakeIpStore) fcxGetByIP(ip netip.Addr) (host string, exist bool) {
+	if c == nil || c.CacheFile == nil || c.DB == nil {
+		return "", false
+	}
+	cache := fcxGetBucketCache(c.DB, c.bucketName)
+	if cache == nil {
+		return "", false
+	}
+	rawIP := string(ip.AsSlice())
+	cache.mu.RLock()
+	if cache.hydrated {
+		val, ok := cache.kv[rawIP]
+		cache.mu.RUnlock()
+		return val, ok
+	}
+	cache.mu.RUnlock()
+
+	cache.mu.Lock()
+	cache.ensureHydratedLocked()
+	val, ok := cache.kv[rawIP]
+	cache.mu.Unlock()
+	return val, ok
+}
+
+func (c *FakeIpStore) fcxPutByIP(ip netip.Addr, host string) {
+	if c == nil || c.CacheFile == nil || c.DB == nil {
+		return
+	}
+	cache := fcxGetBucketCache(c.DB, c.bucketName)
+	if cache == nil {
+		return
+	}
+	rawIP := string(ip.AsSlice())
+
+	cache.mu.Lock()
+	if cache.closed {
+		cache.mu.Unlock()
+		return
+	}
+	cache.ensureHydratedLocked()
+	cache.kv[rawIP] = host
+	val := host
+	cache.dirty[rawIP] = &val
+	flushAsync := cache.scheduleFlushLocked()
+	cache.mu.Unlock()
+
+	if flushAsync {
+		go func() { _ = cache.flushSync() }()
+	}
+}
+
+func (c *FakeIpStore) fcxDelByIP(ip netip.Addr) {
+	if c == nil || c.CacheFile == nil || c.DB == nil {
+		return
+	}
+	cache := fcxGetBucketCache(c.DB, c.bucketName)
+	if cache == nil {
+		return
+	}
+	rawIP := string(ip.AsSlice())
+
+	cache.mu.Lock()
+	if cache.closed {
+		cache.mu.Unlock()
+		return
+	}
+	cache.ensureHydratedLocked()
+	oldHost, hasHost := cache.kv[rawIP]
+	delete(cache.kv, rawIP)
+	cache.dirty[rawIP] = nil
+	if hasHost && len(oldHost) > 0 {
+		delete(cache.kv, oldHost)
+		cache.dirty[oldHost] = nil
+	}
+	flushAsync := cache.scheduleFlushLocked()
+	cache.mu.Unlock()
+
+	if flushAsync {
+		go func() { _ = cache.flushSync() }()
+	}
+}
+
+func (c *FakeIpStore) fcxFlushFakeIP() error {
+	if c == nil || c.CacheFile == nil || c.DB == nil {
+		return nil
+	}
+	cache := fcxGetBucketCache(c.DB, c.bucketName)
+	if cache == nil {
+		return nil
+	}
+	cache.flushMu.Lock()
+	defer cache.flushMu.Unlock()
+
+	cache.mu.Lock()
+	if cache.timer != nil {
+		cache.timer.Stop()
+		cache.timer = nil
+	}
+	cache.kv = make(map[string]string)
+	cache.dirty = make(map[string]*string)
+	cache.hydrated = true
+	closed := cache.closed
+	cache.mu.Unlock()
+	if closed {
+		return nil
+	}
+	return cache.db.Update(func(t *bbolt.Tx) error {
+		if t.Bucket(cache.bucket) == nil {
+			return nil
+		}
+		return t.DeleteBucket(cache.bucket)
+	})
+}
+
+func fcxCloseFakeIPCache(db *bbolt.DB) {
+	if db == nil {
+		return
+	}
+	fcxFakeIPRegistryMu.Lock()
+	byBucket := fcxFakeIPRegistry[db]
+	delete(fcxFakeIPRegistry, db)
+	fcxFakeIPRegistryMu.Unlock()
+
+	for _, cache := range byBucket {
+		_ = cache.flushSync()
+		cache.mu.Lock()
+		if cache.timer != nil {
+			cache.timer.Stop()
+			cache.timer = nil
+		}
+		cache.closed = true
+		cache.mu.Unlock()
+	}
+}
