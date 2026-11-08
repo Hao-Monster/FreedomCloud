@@ -3864,6 +3864,7 @@ class AppController {
     await tray.update(
       trayState: _ref.read(trayStateProvider),
       focus: focus,
+      includeMenu: focus || !Platform.isWindows,
     );
   }
 

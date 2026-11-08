@@ -2,6 +2,7 @@
 
 // This must be included before many other Windows headers.
 #include <stdio.h>
+#include <wchar.h>
 #include <windows.h>
 
 #include <shellapi.h>
@@ -12,18 +13,47 @@
 #include <flutter/standard_method_codec.h>
 
 #include <algorithm>
-#include <codecvt>
+#include <limits>
 #include <map>
 #include <memory>
-#include <limits>
 #include <sstream>
+#include <string>
 
-#include "tray_menu_win32.h"
 #include "tray_icon_registration.h"
+#include "tray_menu_win32.h"
 
 #define WM_MYMESSAGE (WM_USER + 1)
 
 namespace {
+
+struct Win32IconApi {
+  using Handle = HICON;
+  static HICON Null() { return nullptr; }
+  static void Destroy(HICON icon) {
+    if (icon != nullptr) {
+      DestroyIcon(icon);
+    }
+  }
+};
+
+bool Utf8ToWide(const std::string& utf8, std::wstring* wide) {
+  wide->clear();
+  if (utf8.empty()) {
+    return true;
+  }
+  if (utf8.size() > static_cast<size_t>((std::numeric_limits<int>::max)())) {
+    return false;
+  }
+  const int source_size = static_cast<int>(utf8.size());
+  const int wide_size = MultiByteToWideChar(
+      CP_UTF8, MB_ERR_INVALID_CHARS, utf8.data(), source_size, nullptr, 0);
+  if (wide_size <= 0) {
+    return false;
+  }
+  wide->resize(static_cast<size_t>(wide_size));
+  return MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, utf8.data(),
+                             source_size, wide->data(), wide_size) == wide_size;
+}
 
 const flutter::EncodableValue* ValueOrNull(const flutter::EncodableMap& map,
                                            const char* key) {
@@ -33,6 +63,7 @@ const flutter::EncodableValue* ValueOrNull(const flutter::EncodableMap& map,
   }
   return &(it->second);
 }
+
 std::unique_ptr<
     flutter::MethodChannel<flutter::EncodableValue>,
     std::default_delete<flutter::MethodChannel<flutter::EncodableValue>>>
@@ -52,40 +83,41 @@ class TrayManagerPlugin : public flutter::Plugin {
   NOTIFYICONIDENTIFIER niif{};
   std::shared_ptr<tray_manager::MenuLifetime<tray_manager::Win32MenuApi>> menu_lifetime =
       std::make_shared<tray_manager::MenuLifetime<tray_manager::Win32MenuApi>>();
+  tray_manager::IconHandleCache<Win32IconApi> icon_cache_;
   bool tray_icon_setted = false;
   UINT windows_taskbar_created_message_id = 0;
 
   // The ID of the WindowProc delegate registration.
   int window_proc_id = -1;
 
-  bool TrayManagerPlugin::_ParseMenu(
+  bool _ParseMenu(
       const flutter::EncodableMap& args,
       std::vector<tray_manager::MenuEntry>* entries);
-  void TrayManagerPlugin::_DestroyIcon();
-  bool TrayManagerPlugin::_ApplyIcon();
+  void _DestroyIcon();
+  bool _ApplyIcon();
 
   // Called for top-level WindowProc delegation.
-  std::optional<LRESULT> TrayManagerPlugin::HandleWindowProc(HWND hwnd,
-                                                             UINT message,
-                                                             WPARAM wparam,
-                                                             LPARAM lparam);
-  HWND TrayManagerPlugin::GetMainWindow();
-  void TrayManagerPlugin::Destroy(
+  std::optional<LRESULT> HandleWindowProc(HWND hwnd,
+                                          UINT message,
+                                          WPARAM wparam,
+                                          LPARAM lparam);
+  HWND GetMainWindow();
+  void Destroy(
       const flutter::MethodCall<flutter::EncodableValue>& method_call,
       std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result);
-  void TrayManagerPlugin::SetIcon(
+  void SetIcon(
       const flutter::MethodCall<flutter::EncodableValue>& method_call,
       std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result);
-  void TrayManagerPlugin::SetToolTip(
+  void SetToolTip(
       const flutter::MethodCall<flutter::EncodableValue>& method_call,
       std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result);
-  void TrayManagerPlugin::SetContextMenu(
+  void SetContextMenu(
       const flutter::MethodCall<flutter::EncodableValue>& method_call,
       std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result);
-  void TrayManagerPlugin::PopUpContextMenu(
+  void PopUpContextMenu(
       const flutter::MethodCall<flutter::EncodableValue>& method_call,
       std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result);
-  void TrayManagerPlugin::GetBounds(
+  void GetBounds(
       const flutter::MethodCall<flutter::EncodableValue>& method_call,
       std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result);
   // Called when a method is called on this plugin's channel from Dart.
@@ -132,6 +164,7 @@ TrayManagerPlugin::TrayManagerPlugin(flutter::PluginRegistrarWindows* registrar)
 TrayManagerPlugin::~TrayManagerPlugin() {
   menu_lifetime->Dispose();
   _DestroyIcon();
+  icon_cache_.Clear();
   registrar->UnregisterTopLevelWindowProcDelegate(window_proc_id);
 }
 
@@ -148,22 +181,13 @@ bool TrayManagerPlugin::_ParseMenu(
     const auto* type = std::get_if<std::string>(ValueOrNull(*item_map, "type"));
     const auto* label = std::get_if<std::string>(ValueOrNull(*item_map, "label"));
     const auto* disabled = std::get_if<bool>(ValueOrNull(*item_map, "disabled"));
-    if (!id || !type || !label || !disabled ||
-        label->size() > static_cast<size_t>((std::numeric_limits<int>::max)())) {
+    if (!id || !type || !label || !disabled) {
       return false;
     }
     tray_manager::MenuEntry entry;
     entry.id = *id;
-    if (!label->empty()) {
-      const int source_size = static_cast<int>(label->size());
-      const int wide_size = MultiByteToWideChar(
-          CP_UTF8, MB_ERR_INVALID_CHARS, label->data(), source_size, nullptr, 0);
-      if (!wide_size) return false;
-      entry.label.resize(wide_size);
-      if (MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, label->data(),
-                              source_size, entry.label.data(), wide_size) != wide_size) {
-        return false;
-      }
+    if (!Utf8ToWide(*label, &entry.label)) {
+      return false;
     }
     const auto* checked = std::get_if<bool>(ValueOrNull(*item_map, "checked"));
     entry.checked = checked && *checked;
@@ -185,9 +209,13 @@ bool TrayManagerPlugin::_ParseMenu(
 
 void TrayManagerPlugin::_DestroyIcon() {
   // A previous failed registration may still leave an existing Shell entry.
-  if (nid.cbSize != 0 && nid.hWnd != nullptr) Shell_NotifyIcon(NIM_DELETE, &nid);
+  if (nid.cbSize != 0 && nid.hWnd != nullptr) {
+    Shell_NotifyIcon(NIM_DELETE, &nid);
+  }
   if (nid.hIcon != nullptr) {
-    DestroyIcon(nid.hIcon);
+    if (!icon_cache_.ContainsHandle(nid.hIcon)) {
+      DestroyIcon(nid.hIcon);
+    }
     nid.hIcon = nullptr;
   }
   tray_icon_setted = false;
@@ -200,6 +228,7 @@ std::optional<LRESULT> TrayManagerPlugin::HandleWindowProc(HWND hWnd,
   std::optional<LRESULT> result;
   if (message == WM_DESTROY) {
     _DestroyIcon();
+    icon_cache_.Clear();
     menu_lifetime->Dispose();
   } else if (message == WM_COMMAND) {
     flutter::EncodableMap eventData = flutter::EncodableMap();
@@ -265,36 +294,57 @@ void TrayManagerPlugin::SetIcon(
   const flutter::EncodableMap& args =
       std::get<flutter::EncodableMap>(*method_call.arguments());
 
-  std::string iconPath =
+  const std::string& iconPath =
       std::get<std::string>(args.at(flutter::EncodableValue("iconPath")));
 
-  std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>> converter;
-
-  HICON new_icon = static_cast<HICON>(
-      LoadImage(nullptr, (LPCWSTR)(converter.from_bytes(iconPath).c_str()),
-                IMAGE_ICON, GetSystemMetrics(SM_CXSMICON),
-                GetSystemMetrics(SM_CYSMICON), LR_LOADFROMFILE));
-  if (new_icon == nullptr) {
-    result->Error("icon_load_failed", "LoadImage failed.",
-                  flutter::EncodableValue(static_cast<int64_t>(GetLastError())));
-    return;
+  HICON target_icon = icon_cache_.Get(iconPath);
+  bool newly_loaded = false;
+  if (target_icon != nullptr) {
+    if (tray_icon_setted && nid.hIcon == target_icon) {
+      result->Success(flutter::EncodableValue(true));
+      return;
+    }
+  } else {
+    std::wstring wide_path;
+    if (!Utf8ToWide(iconPath, &wide_path)) {
+      result->Error("icon_load_failed", "Invalid UTF-8 iconPath.");
+      return;
+    }
+    target_icon = static_cast<HICON>(
+        LoadImageW(nullptr, wide_path.c_str(), IMAGE_ICON,
+                   GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON),
+                   LR_LOADFROMFILE));
+    if (target_icon == nullptr) {
+      result->Error("icon_load_failed", "LoadImage failed.",
+                    flutter::EncodableValue(static_cast<int64_t>(GetLastError())));
+      return;
+    }
+    newly_loaded = true;
   }
+
   HICON old_icon = nid.hIcon;
-  nid.hIcon = new_icon;
+  nid.hIcon = target_icon;
 
   if (!_ApplyIcon()) {
     const DWORD error = GetLastError();
     if (old_icon != nullptr) {
       nid.hIcon = old_icon;
-      DestroyIcon(new_icon);
+      if (newly_loaded) {
+        DestroyIcon(target_icon);
+      }
+    } else if (newly_loaded) {
+      // On first registration failure, retain the loaded icon in the cache for
+      // a later TaskbarCreated/resume retry; cleanup owns and releases it.
+      icon_cache_.Put(iconPath, target_icon, nid.hIcon);
     }
-    // On first registration failure, retain the loaded icon for a later
-    // TaskbarCreated/resume retry; cleanup still owns and releases this HICON.
     result->Error("icon_registration_failed", "Shell_NotifyIcon failed.",
                   flutter::EncodableValue(static_cast<int64_t>(error)));
     return;
   }
-  if (old_icon != nullptr) DestroyIcon(old_icon);
+
+  if (newly_loaded) {
+    icon_cache_.Put(iconPath, target_icon, nid.hIcon);
+  }
 
   result->Success(flutter::EncodableValue(true));
 }
@@ -336,14 +386,26 @@ void TrayManagerPlugin::SetToolTip(
   const flutter::EncodableMap& args =
       std::get<flutter::EncodableMap>(*method_call.arguments());
 
-  std::string toolTip =
+  const std::string& toolTip =
       std::get<std::string>(args.at(flutter::EncodableValue("toolTip")));
 
-  std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>> converter;
+  std::wstring wide_tip;
+  if (!Utf8ToWide(toolTip, &wide_tip)) {
+    result->Error("invalid_tooltip", "Invalid UTF-8 toolTip.");
+    return;
+  }
+  WCHAR truncated_tip[128]{};
+  StringCchCopy(truncated_tip, _countof(truncated_tip), wide_tip.c_str());
+  if (tray_icon_setted && wcscmp(nid.szTip, truncated_tip) == 0) {
+    result->Success(flutter::EncodableValue(true));
+    return;
+  }
+
   nid.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
-  StringCchCopy(nid.szTip, _countof(nid.szTip),
-                converter.from_bytes(toolTip).c_str());
-  Shell_NotifyIcon(NIM_MODIFY, &nid);
+  StringCchCopy(nid.szTip, _countof(nid.szTip), truncated_tip);
+  if (nid.cbSize != 0 && nid.hWnd != nullptr) {
+    Shell_NotifyIcon(NIM_MODIFY, &nid);
+  }
 
   result->Success(flutter::EncodableValue(true));
 }

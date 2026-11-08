@@ -2,12 +2,12 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flclashx/common/system.dart';
-import 'package:flclashx/views/proxies/common.dart';
+import 'package:flclashx/common/tun_runtime.dart';
 import 'package:flclashx/common/utils.dart';
 import 'package:flclashx/enum/enum.dart';
 import 'package:flclashx/models/models.dart';
 import 'package:flclashx/state.dart';
-import 'package:flclashx/common/tun_runtime.dart';
+import 'package:flclashx/views/proxies/common.dart';
 import 'package:flclashx/widgets/tun_status.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -16,15 +16,20 @@ import 'package:tray_manager/tray_manager.dart';
 
 import 'app_localizations.dart';
 import 'constant.dart';
-import 'window.dart';
 import 'statusbar.dart';
+import 'window.dart';
 
 class _TrayUpdate {
-  _TrayUpdate(this.state, {required this.focus, required Completer<void> waiter})
-      : waiters = [waiter];
+  _TrayUpdate(
+    this.state, {
+    required this.focus,
+    required this.includeMenu,
+    required Completer<void> waiter,
+  }) : waiters = [waiter];
 
   TrayState state;
   bool focus;
+  bool includeMenu;
   final List<Completer<void>> waiters;
 }
 
@@ -32,17 +37,30 @@ class Tray {
   void Function(String)? selectProfile;
   _TrayUpdate? _pendingUpdate;
   bool _updating = false;
+  String? _lastIconPath;
+  String? _lastToolTip;
 
-  Future<void> update({required TrayState trayState, bool focus = false}) {
+  Future<void> update({
+    required TrayState trayState,
+    bool focus = false,
+    bool includeMenu = true,
+  }) {
     final waiter = Completer<void>();
     final pending = _pendingUpdate;
     if (pending == null) {
-      _pendingUpdate = _TrayUpdate(trayState, focus: focus, waiter: waiter);
+      _pendingUpdate = _TrayUpdate(
+        trayState,
+        focus: focus,
+        includeMenu: includeMenu,
+        waiter: waiter,
+      );
     } else {
       final needsFocus = pending.focus || focus;
+      final needsMenu = pending.includeMenu || includeMenu;
       pending
         ..state = trayState
         ..focus = needsFocus
+        ..includeMenu = needsMenu
         ..waiters.add(waiter);
     }
     if (!_updating) {
@@ -59,7 +77,11 @@ class Tray {
       final update = _pendingUpdate!;
       _pendingUpdate = null;
       try {
-        await _renderUpdate(trayState: update.state, focus: update.focus);
+        await _renderUpdate(
+          trayState: update.state,
+          focus: update.focus,
+          includeMenu: update.includeMenu,
+        );
         for (final waiter in update.waiters) {
           waiter.complete();
         }
@@ -90,11 +112,17 @@ class Tray {
         ? controller.getRealTestUrl(group.testUrl)
         : state.testUrl!;
     final delay = globalState.appState.delayMap[url]?[state.proxyName];
-    final value = delay == null ? '—' : delay == 0 ? '…' : delay < 0 ? 'Timeout' : '$delay ms';
+    final value = delay == null
+        ? '—'
+        : delay == 0
+            ? '…'
+            : delay < 0
+                ? 'Timeout'
+                : '$delay ms';
     return '${proxy.name} · $value';
   }
 
-  Future _updateSystemTray({
+  Future<void> _updateSystemTray({
     required Brightness? brightness,
     required bool isRunning,
     bool force = false,
@@ -104,39 +132,32 @@ class Tray {
       return;
     }
     if (Platform.isLinux || force) {
+      _lastIconPath = null;
+      _lastToolTip = null;
       await trayManager.destroy();
     }
-    await trayManager.setIcon(
-      utils.getTrayIconPath(
-        brightness: brightness ??
-            WidgetsBinding.instance.platformDispatcher.platformBrightness,
-        isRunning: isRunning,
-        isSystemDark: Platform.isWindows ? system.isWindowsSystemDark : null,
-      ),
-      isTemplate: true,
+    final iconPath = utils.getTrayIconPath(
+      brightness: brightness ??
+          WidgetsBinding.instance.platformDispatcher.platformBrightness,
+      isRunning: isRunning,
+      isSystemDark: Platform.isWindows ? system.isWindowsSystemDark : null,
     );
-    if (!Platform.isLinux) {
+    if (Platform.isLinux || force || _lastIconPath != iconPath) {
+      await trayManager.setIcon(
+        iconPath,
+        isTemplate: true,
+      );
+      _lastIconPath = iconPath;
+    }
+    if (!Platform.isLinux && (force || _lastToolTip == null)) {
       await trayManager.setToolTip(
         appName,
       );
+      _lastToolTip = appName;
     }
   }
 
-  Future<void> _renderUpdate({
-    required TrayState trayState,
-    bool focus = false,
-  }) async {
-    if (Platform.isAndroid) {
-      // Android has no desktop tray.
-      return;
-    }
-    if (!Platform.isLinux) {
-      await _updateSystemTray(
-        brightness: trayState.brightness,
-        isRunning: trayState.isStart,
-        force: focus,
-      );
-    }
+  Menu _buildContextMenu(TrayState trayState) {
     final menuItems = <MenuItem>[];
     final showMenuItem = MenuItem(
       key: 'show',
@@ -153,7 +174,9 @@ class Tray {
         submenu: Menu(items: [
           for (final profile in profiles)
             MenuItem.checkbox(
-              label: profile.label == null || profile.label!.isEmpty ? profile.id : profile.label!,
+              label: profile.label == null || profile.label!.isEmpty
+                  ? profile.id
+                  : profile.label!,
               checked: profile.id == globalState.config.currentProfileId,
               onClick: (_) => selectProfile?.call(profile.id),
             ),
@@ -168,9 +191,13 @@ class Tray {
           disabled: true,
         ));
       }
-      for (final group in trayState.groups.where((group) => group.hidden != true)) {
-        final selected = group.getCurrentSelectedName(trayState.selectedMap[group.name] ?? '');
-        final selectable = group.type == GroupType.Selector || group.type.isComputedSelected;
+      for (final group
+          in trayState.groups.where((group) => group.hidden != true)) {
+        final selected = group.getCurrentSelectedName(
+          trayState.selectedMap[group.name] ?? '',
+        );
+        final selectable =
+            group.type == GroupType.Selector || group.type.isComputedSelected;
         menuItems.add(MenuItem.submenu(
           label: '${group.name} → $selected',
           submenu: Menu(items: [
@@ -219,11 +246,15 @@ class Tray {
     if (trayState.isStart) {
       menuItems.add(
         MenuItem.checkbox(
-          label: Platform.isWindows ? '${appLocalizations.tun}: ${tunStatusLabel(tunRuntime)}' : appLocalizations.tun,
+          label: Platform.isWindows
+              ? '${appLocalizations.tun}: ${tunStatusLabel(tunRuntime)}'
+              : appLocalizations.tun,
           disabled: Platform.isWindows && tunRuntime.busy,
           onClick: (_) {
             if (Platform.isWindows) {
-              unawaited(globalState.appController.setTunEnabled(!tunRuntime.isEnabled));
+              unawaited(
+                globalState.appController.setTunEnabled(!tunRuntime.isEnabled),
+              );
             } else {
               globalState.appController.updateTun();
             }
@@ -231,11 +262,14 @@ class Tray {
           checked: trayState.tunEnable,
         ),
       );
-      if (Platform.isWindows && (tunRuntime.observed == TunObservedState.unknown ||
-          (tunRuntime.desiredEnabled && !tunRuntime.isEnabled))) {
-        menuItems.add(MenuItem(label: appLocalizations.tunDisableAction,
+      if (Platform.isWindows &&
+          (tunRuntime.observed == TunObservedState.unknown ||
+              (tunRuntime.desiredEnabled && !tunRuntime.isEnabled))) {
+        menuItems.add(MenuItem(
+          label: appLocalizations.tunDisableAction,
           disabled: tunRuntime.busy,
-          onClick: (_) => globalState.appController.setTunEnabled(false)));
+          onClick: (_) => globalState.appController.setTunEnabled(false),
+        ));
       }
       menuItems.add(
         MenuItem.checkbox(
@@ -278,11 +312,32 @@ class Tray {
       },
     );
     menuItems.add(exitMenuItem);
-    final menu = Menu(items: menuItems);
-    if (Platform.isMacOS) {
-      await StatusBarManager.updateMenu(menu);
-    } else {
-      await trayManager.setContextMenu(menu);
+    return Menu(items: menuItems);
+  }
+
+  Future<void> _renderUpdate({
+    required TrayState trayState,
+    bool focus = false,
+    bool includeMenu = true,
+  }) async {
+    if (Platform.isAndroid) {
+      // Android has no desktop tray.
+      return;
+    }
+    if (!Platform.isLinux) {
+      await _updateSystemTray(
+        brightness: trayState.brightness,
+        isRunning: trayState.isStart,
+        force: focus,
+      );
+    }
+    if (includeMenu || Platform.isLinux) {
+      final menu = _buildContextMenu(trayState);
+      if (Platform.isMacOS) {
+        await StatusBarManager.updateMenu(menu);
+      } else {
+        await trayManager.setContextMenu(menu);
+      }
     }
     if (Platform.isLinux) {
       await _updateSystemTray(
@@ -296,15 +351,19 @@ class Tray {
   Future<void> updateTrayTitle([Traffic? traffic]) async {
     if (traffic == null) return;
     if (Platform.isMacOS) {
-      await StatusBarManager.updateRates('↑ ${traffic.up.show}/s ↓ ${traffic.down.show}/s');
+      final rateText = '↑ ${traffic.up.show}/s ↓ ${traffic.down.show}/s';
+      if (_lastToolTip == rateText) return;
+      _lastToolTip = rateText;
+      await StatusBarManager.updateRates(rateText);
       return;
     }
     if (!Platform.isWindows) return;
-    await trayManager.setToolTip(
-      '$appName · ↑ ${traffic.up.show}/s ↓ ${traffic.down.show}/s',
-    );
+    final nextToolTip =
+        '$appName · ↑ ${traffic.up.show}/s ↓ ${traffic.down.show}/s';
+    if (_lastToolTip == nextToolTip) return;
+    _lastToolTip = nextToolTip;
+    await trayManager.setToolTip(nextToolTip);
   }
-
 
   Future<void> _copyEnv(int port) async {
     final url = "http://127.0.0.1:$port";

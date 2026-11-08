@@ -253,6 +253,67 @@ void IconRegistrationFailures() {
                "and missing/duplicate identity recovery\n";
 }
 
+struct FakeIconApi {
+  using Handle = int;
+  inline static int next_handle = 1;
+  inline static std::map<Handle, bool> live_icons;
+
+  static Handle Null() { return 0; }
+  static void Reset() {
+    Require(live_icons.empty(), "previous test leaked an icon handle");
+    next_handle = 1;
+  }
+  static Handle Load() {
+    const Handle h = next_handle++;
+    live_icons[h] = true;
+    return h;
+  }
+  static void Destroy(Handle h) {
+    const auto found = live_icons.find(h);
+    Require(found != live_icons.end(), "icon destroyed twice or invalid handle");
+    live_icons.erase(found);
+  }
+};
+
+void IconCacheReuseEvictionAndCleanup() {
+  FakeIconApi::Reset();
+  {
+    tray_manager::IconHandleCache<FakeIconApi, 3> cache;
+    const auto dark_idle = FakeIconApi::Load();
+    const auto dark_active = FakeIconApi::Load();
+    cache.Put("icon_dark_idle.ico", dark_idle, dark_idle);
+    cache.Put("icon_dark_active.ico", dark_active, dark_active);
+
+    // 100 state toggles reuse cached handles with zero reloads or destroys.
+    for (int i = 0; i < 100; ++i) {
+      Require(cache.Get("icon_dark_idle.ico") == dark_idle, "missing dark_idle");
+      Require(cache.Get("icon_dark_active.ico") == dark_active,
+              "missing dark_active");
+    }
+    Require(FakeIconApi::live_icons.size() == 2,
+            "cache hits mutated live icon count");
+
+    const auto light_idle = FakeIconApi::Load();
+    cache.Put("icon_light_idle.ico", light_idle, dark_active);
+    Require(cache.Size() == 3, "cache should hold 3 entries at capacity");
+
+    // Eviction when inserting 4th entry must preserve active icon (dark_active).
+    const auto light_active = FakeIconApi::Load();
+    cache.Put("icon_light_active.ico", light_active, dark_active);
+    Require(cache.Size() == 3, "cache exceeded capacity");
+    Require(cache.ContainsHandle(dark_active),
+            "eviction destroyed currently displayed tray icon");
+    Require(cache.ContainsHandle(light_active),
+            "newly cached icon missing after eviction");
+    Require(FakeIconApi::live_icons.size() == 3,
+            "evicted icon handle was not destroyed");
+  }
+  Require(FakeIconApi::live_icons.empty(),
+          "IconHandleCache destructor leaked cached HICON handles");
+  std::cout << "PASS P1-3: bounded HICON cache reuses handles, protects active "
+               "icon on eviction, and releases all handles on teardown\n";
+}
+
 }  // namespace
 
 int main() {
@@ -264,6 +325,7 @@ int main() {
   FailureWhileTracking();
   OwnerDestroyedWhileTracking();
   IconRegistrationFailures();
-  std::cout << "PASS: 8 test groups; no live menu handles, no double destruction\n";
+  IconCacheReuseEvictionAndCleanup();
+  std::cout << "PASS: 9 test groups; no live menu/icon handles, no double destruction\n";
   return 0;
 }
