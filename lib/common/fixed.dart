@@ -1,3 +1,5 @@
+import 'dart:collection';
+
 import 'iterable.dart';
 
 class FixedList<T> {
@@ -73,6 +75,9 @@ class FixedMap<K, V> {
   int maxLength;
   late Map<K, V> _map;
 
+  late final UnmodifiableMapView<K, V> _unmodifiableView =
+      UnmodifiableMapView<K, V>(_map);
+
   V? updateCacheValue(K key, V Function() callback) {
     final realValue = _map.updateCacheValue(
       key,
@@ -92,15 +97,19 @@ class FixedMap<K, V> {
   }
 
   void updateMap(Map<K, V> map) {
-    _map = map;
+    _map
+      ..clear()
+      ..addAll(map);
     _adjustMap();
   }
 
   void _adjustMap() {
-    if (_map.length > maxLength) {
-      _map = Map.fromEntries(
-        map.entries.toList()..truncate(maxLength),
-      );
+    if (maxLength <= 0) {
+      _map.clear();
+      return;
+    }
+    while (_map.length > maxLength) {
+      _map.remove(_map.keys.first);
     }
   }
 
@@ -110,5 +119,5 @@ class FixedMap<K, V> {
 
   int get length => _map.length;
 
-  Map<K, V> get map => Map.unmodifiable(_map);
+  Map<K, V> get map => _unmodifiableView;
 }

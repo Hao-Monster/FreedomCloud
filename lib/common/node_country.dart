@@ -1094,6 +1094,7 @@ class NodeCountryResolver extends ChangeNotifier {
     this.resolveConnectionTarget,
     this.evaluateConnectionEvidence,
     this.maxConcurrency = 4,
+    this.maxCachedEndpoints = 4096,
     DateTime Function()? clock,
   })  : _resolveServerCountry =
             resolveServerCountry ?? defaultResolveServerCountry,
@@ -1121,6 +1122,7 @@ class NodeCountryResolver extends ChangeNotifier {
   final ConnectionOutboundTarget? Function()? resolveConnectionTarget;
   final ConnectionEvidenceEvaluation Function()? evaluateConnectionEvidence;
   final int maxConcurrency;
+  final int maxCachedEndpoints;
   final DateTime Function() _clock;
 
   final Map<String, String> _endpointServers = <String, String>{};
@@ -1132,6 +1134,24 @@ class NodeCountryResolver extends ChangeNotifier {
   final Queue<String> _lookupQueue = Queue<String>();
   int _activeLookups = 0;
   bool _disposed = false;
+
+  @visibleForTesting
+  int get cachedEndpointCount => _endpointServers.length;
+
+  @visibleForTesting
+  int get cachedServerCountryCount => _serverCountryCache.length;
+
+  void _putBounded<K, V>(Map<K, V> map, K key, V value) {
+    if (maxCachedEndpoints <= 0) return;
+    if (map.containsKey(key)) {
+      map.remove(key);
+    } else {
+      while (map.length >= maxCachedEndpoints) {
+        map.remove(map.keys.first);
+      }
+    }
+    map[key] = value;
+  }
 
   final Map<String, ExitCalibrationEntry> _exitCountryByNodeKey =
       <String, ExitCalibrationEntry>{};
@@ -1702,8 +1722,8 @@ class NodeCountryResolver extends ChangeNotifier {
       final previousEndpointKey = _nameEndpointKeys[nodeKey];
       final previousFingerprint = _nameConfigFingerprints[nodeKey];
       final configFingerprint = _computeProxyConfigFingerprint(item);
-      _nameServers[nodeKey] = normalizedServer;
-      _nameConfigFingerprints[nodeKey] = configFingerprint;
+      _putBounded(_nameServers, nodeKey, normalizedServer);
+      _putBounded(_nameConfigFingerprints, nodeKey, configFingerprint);
       String? endpointKey;
       if (port != null && port >= 1 && port <= 65535) {
         final endpoint = '$type|${server.toLowerCase()}|$port';
@@ -1711,8 +1731,8 @@ class NodeCountryResolver extends ChangeNotifier {
             .convert(utf8.encode('v1|$endpoint'))
             .toString()
             .substring(0, 32);
-        _endpointServers[endpointKey] = normalizedServer;
-        _nameEndpointKeys[nodeKey] = endpointKey;
+        _putBounded(_endpointServers, endpointKey, normalizedServer);
+        _putBounded(_nameEndpointKeys, nodeKey, endpointKey);
       } else {
         _nameEndpointKeys.remove(nodeKey);
       }
@@ -1780,7 +1800,7 @@ class NodeCountryResolver extends ChangeNotifier {
       if (_disposed) return;
       if (code != null) {
         final changed = _serverCountryCache[server] != code;
-        _serverCountryCache[server] = code;
+        _putBounded(_serverCountryCache, server, code);
         if (changed) {
           _notify();
         }

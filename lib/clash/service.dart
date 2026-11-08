@@ -4,8 +4,8 @@ import 'dart:io';
 import 'dart:math';
 import 'package:crypto/crypto.dart' as crypto;
 
-import 'package:flclashx/clash/agent_protocol.dart';
 import 'package:flclashx/clash/agent_lifecycle.dart';
+import 'package:flclashx/clash/agent_protocol.dart';
 import 'package:flclashx/clash/interface.dart';
 import 'package:flclashx/clash/windows_agent_launch.dart';
 import 'package:flclashx/common/common.dart';
@@ -13,6 +13,18 @@ import 'package:flclashx/common/file_digest.dart';
 import 'package:flclashx/common/tun_runtime.dart';
 import 'package:flclashx/models/core.dart';
 import 'package:flclashx/state.dart';
+
+void _writeSocketLine(Socket socket, String line) {
+  socket.add(utf8.encode('$line\n'));
+}
+
+void _enableTcpNoDelayBestEffort(Socket socket) {
+  try {
+    socket.setOption(SocketOption.tcpNoDelay, true);
+  } catch (_) {
+    // Unix domain sockets do not support TCP_NODELAY; ignore safely.
+  }
+}
 
 class ClashService extends ClashHandlerInterface {
   factory ClashService() {
@@ -50,18 +62,29 @@ class ClashService extends ClashHandlerInterface {
     if (frame is! Map || key == null || frame['protocol'] != 1) return false;
     final nonce = frame['nonce'];
     final proof = frame['proof'];
-    if (nonce is! String || proof is! String ||
+    if (nonce is! String ||
+        proof is! String ||
         !RegExp(r'^[0-9a-f]{64}$').hasMatch(nonce) ||
         !RegExp(r'^[0-9a-f]{64}$').hasMatch(proof)) return false;
     final mac = crypto.Hmac(crypto.sha256, key);
-    final expected = mac.convert(utf8.encode('FCX-MAC-CORE/1/core/$nonce')).toString();
+    final expected =
+        mac.convert(utf8.encode('FCX-MAC-CORE/1/core/$nonce')).toString();
     var difference = 0;
     for (var i = 0; i < expected.length; i++) {
       difference |= expected.codeUnitAt(i) ^ proof.codeUnitAt(i);
     }
     if (difference != 0) return false;
-    socket.writeln(jsonEncode({'_macCore': {'protocol': 1, 'nonce': nonce,
-      'proof': mac.convert(utf8.encode('FCX-MAC-CORE/1/host/$nonce')).toString()}}));
+    _writeSocketLine(
+      socket,
+      jsonEncode({
+        '_macCore': {
+          'protocol': 1,
+          'nonce': nonce,
+          'proof':
+              mac.convert(utf8.encode('FCX-MAC-CORE/1/host/$nonce')).toString()
+        }
+      }),
+    );
     return true;
   }
 
@@ -253,14 +276,17 @@ class ClashService extends ClashHandlerInterface {
         }
         return arguments;
       },
-      onError: (error) => commonPrint.log('unable to launch FlClashAgent: $error'),
+      onError: (error) =>
+          commonPrint.log('unable to launch FlClashAgent: $error'),
     );
     if (!launched) return false;
 
     for (var attempt = 0; attempt < 80; attempt++) {
       await Future.delayed(const Duration(milliseconds: 100));
       if (await _tryConnectAgent()) {
-        return Platform.isWindows ? _observeAgentCoreReady() : _ensureAgentCoreReady();
+        return Platform.isWindows
+            ? _observeAgentCoreReady()
+            : _ensureAgentCoreReady();
       }
     }
     commonPrint.log('FlClashAgent did not publish a usable endpoint');
@@ -279,6 +305,7 @@ class ClashService extends ClashHandlerInterface {
         endpoint.port,
         timeout: const Duration(milliseconds: 750),
       );
+      _enableTcpNoDelayBestEffort(socket);
       await _socketSubscription?.cancel();
       _socketSubscription = null;
       if (socketCompleter.isCompleted) {
@@ -299,27 +326,36 @@ class ClashService extends ClashHandlerInterface {
           .transform(utf8.decoder)
           .transform(const LineSplitter())
           .listen(
-            (line) { if (connectionEpoch == _connectionEpoch) _handleAgentLine(line); },
+            (line) {
+              if (connectionEpoch == _connectionEpoch) _handleAgentLine(line);
+            },
             onError: (Object error) {
               if (!disconnected.isCompleted) disconnected.complete();
-              if (connectionEpoch == _connectionEpoch) _onAgentLost('socket error: $error');
+              if (connectionEpoch == _connectionEpoch) {
+                _onAgentLost('socket error: $error');
+              }
             },
             onDone: () {
               if (!disconnected.isCompleted) disconnected.complete();
-              if (connectionEpoch == _connectionEpoch) _onAgentLost('socket closed');
+              if (connectionEpoch == _connectionEpoch) {
+                _onAgentLost('socket closed');
+              }
             },
             cancelOnError: true,
           );
-      socket.writeln(json.encode({
-        'token': endpoint.token,
-        'protocol': agentProtocolVersion,
-      }));
+      _writeSocketLine(
+        socket,
+        json.encode({
+          'token': endpoint.token,
+          'protocol': agentProtocolVersion,
+        }),
+      );
       await _agentAttachedCompleter.future.timeout(
         const Duration(seconds: 2),
       );
       if (endpoint.instanceId != null &&
           (_agentIdentity?.agentInstanceId != endpoint.instanceId ||
-           _agentIdentity?.agentPid != endpoint.pid)) {
+              _agentIdentity?.agentPid != endpoint.pid)) {
         await _socketSubscription?.cancel();
         socket.destroy();
         return false;
@@ -333,6 +369,7 @@ class ClashService extends ClashHandlerInterface {
 
   void _handleAgentLine(String line) {
     try {
+      if (tryHandleRawActionResultLine(line)) return;
       final value = json.decode(line.trim());
       if (value is! Map<String, dynamic>) return;
       final event = AgentEvent.tryParse(value);
@@ -354,7 +391,7 @@ class ClashService extends ClashHandlerInterface {
     final identity = _agentIdentity;
     if (identity?.agentInstanceId != null &&
         (event.agentInstanceId != identity!.agentInstanceId ||
-         event.generation < (_agentGeneration ?? 0))) {
+            event.generation < (_agentGeneration ?? 0))) {
       return;
     }
     if (_agentGeneration != event.generation ||
@@ -427,14 +464,15 @@ class ClashService extends ClashHandlerInterface {
   Future<bool> _observeAgentCoreReady({bool explicitRecovery = false}) =>
       reconcileAgentCore(
         state: () => _agentCoreState,
-        waitReady: () => _coreReadyCompleter.future.timeout(const Duration(seconds: 20)),
+        waitReady: () =>
+            _coreReadyCompleter.future.timeout(const Duration(seconds: 20)),
         restart: () => _agentCommand(AgentCommand.restartCore),
         explicitRecovery: explicitRecovery,
       );
 
   Future<void> recoverCoreForUser() async {
-    final ready = await _agentConnections.connect(
-      () => _observeAgentCoreReady(explicitRecovery: true));
+    final ready = await _agentConnections
+        .connect(() => _observeAgentCoreReady(explicitRecovery: true));
     if (!ready) throw const TunFailure('startFailed');
   }
 
@@ -448,7 +486,8 @@ class ClashService extends ClashHandlerInterface {
     _agentCommandCompleters[id] = completer;
     try {
       final socket = await socketCompleter.future;
-      socket.writeln(
+      _writeSocketLine(
+        socket,
         encodeAgentCommand(
           id: id,
           command: command,
@@ -498,24 +537,29 @@ class ClashService extends ClashHandlerInterface {
   Future<bool> migrateStrictIdentity(
     String previousPath,
     StrictIdentityResolution replacement,
-  ) => _agentCommand(
-    AgentCommand.migrateStrictPolicy,
-    path: previousPath,
-    policy: {
-      'revision': DateTime.now().microsecondsSinceEpoch,
-      'replacement': {
-        'identityId': replacement.identityId,
-        'canonicalPath': replacement.canonicalPath,
-        'wfpAppIdSha256': replacement.wfpAppIdSha256,
-        'publisherCertificateSha256': replacement.publisherCertificateSha256,
-        'verifiedChildren': replacement.verifiedChildren.map((child) => {
-          'canonicalPath': child.canonicalPath,
-          'wfpAppIdSha256': child.wfpAppIdSha256,
-          'publisherCertificateSha256': child.publisherCertificateSha256,
-        }).toList(growable: false),
-      },
-    },
-  );
+  ) =>
+      _agentCommand(
+        AgentCommand.migrateStrictPolicy,
+        path: previousPath,
+        policy: {
+          'revision': DateTime.now().microsecondsSinceEpoch,
+          'replacement': {
+            'identityId': replacement.identityId,
+            'canonicalPath': replacement.canonicalPath,
+            'wfpAppIdSha256': replacement.wfpAppIdSha256,
+            'publisherCertificateSha256':
+                replacement.publisherCertificateSha256,
+            'verifiedChildren': replacement.verifiedChildren
+                .map((child) => {
+                      'canonicalPath': child.canonicalPath,
+                      'wfpAppIdSha256': child.wfpAppIdSha256,
+                      'publisherCertificateSha256':
+                          child.publisherCertificateSha256,
+                    })
+                .toList(growable: false),
+          },
+        },
+      );
 
   /// Disables strict capture and revokes Core ingress before filter cleanup.
   Future<bool> clearStrictPolicy() =>
@@ -532,7 +576,8 @@ class ClashService extends ClashHandlerInterface {
     _strictIdentityCompleters[id] = completer;
     try {
       final socket = await socketCompleter.future;
-      socket.writeln(
+      _writeSocketLine(
+        socket,
         encodeAgentCommand(
           id: id,
           command: AgentCommand.inspectStrictIdentity,
@@ -574,9 +619,13 @@ class ClashService extends ClashHandlerInterface {
           await Future.delayed(
             Duration(milliseconds: 250 * (1 << attempt).clamp(1, 16)),
           );
-          if (_stopping || _detaching || recoveryEpoch != _agentConnections.epoch) return;
+          if (_stopping ||
+              _detaching ||
+              recoveryEpoch != _agentConnections.epoch) return;
           if (await _connectOrLaunchAgent(recovery: true)) {
-            if (_stopping || _detaching || recoveryEpoch != _agentConnections.epoch) return;
+            if (_stopping ||
+                _detaching ||
+                recoveryEpoch != _agentConnections.epoch) return;
             // A transport interruption to the same Agent requires no Core
             // restart: Agent still owns and has replayed its state. A new PID
             // means the Agent journal was lost, so rebuild Core from Flutter's
@@ -614,6 +663,7 @@ class ClashService extends ClashHandlerInterface {
       );
       serverCompleter.complete(server);
       await for (final socket in server) {
+        _enableTcpNoDelayBestEffort(socket);
         await _destroySocket();
         _macCoreVerified = false;
         if (!Platform.isMacOS) socketCompleter.complete(socket);
@@ -630,15 +680,20 @@ class ClashService extends ClashHandlerInterface {
           (data) {
             try {
               if (Platform.isMacOS && !_macCoreVerified) {
-                if (data.length > 4096 || !_acceptMacCoreHandshake(
-                    Map<String, dynamic>.from(jsonDecode(data) as Map), socket)) {
+                if (data.length > 4096 ||
+                    !_acceptMacCoreHandshake(
+                        Map<String, dynamic>.from(jsonDecode(data) as Map),
+                        socket)) {
                   socket.destroy();
                   return;
                 }
                 _macCoreVerified = true;
-                if (!socketCompleter.isCompleted) socketCompleter.complete(socket);
+                if (!socketCompleter.isCompleted) {
+                  socketCompleter.complete(socket);
+                }
                 return;
               }
+              if (tryHandleRawActionResultLine(data)) return;
               handleResult(ActionResult.fromJson(json.decode(data.trim())));
             } catch (e) {
               commonPrint.log('socket parse error: $e');
@@ -683,7 +738,9 @@ class ClashService extends ClashHandlerInterface {
           await _coreReadyCompleter.future.timeout(const Duration(seconds: 20));
           return _agentCoreState == AgentCoreState.ready;
         });
-        if (!restarted && Platform.isWindows) throw const TunFailure('startFailed');
+        if (!restarted && Platform.isWindows) {
+          throw const TunFailure('startFailed');
+        }
         return;
       }
       if (process != null) {
@@ -722,7 +779,9 @@ class ClashService extends ClashHandlerInterface {
       if (Platform.isMacOS) {
         final random = Random.secure();
         _macCoreKey = List.generate(32, (_) => random.nextInt(256));
-        macToken = _macCoreKey!.map((byte) => byte.toRadixString(16).padLeft(2, '0')).join();
+        macToken = _macCoreKey!
+            .map((byte) => byte.toRadixString(16).padLeft(2, '0'))
+            .join();
       }
       final started = await Process.start(
         appPath.corePath,
@@ -744,8 +803,8 @@ class ClashService extends ClashHandlerInterface {
           .transform(utf8.decoder)
           .transform(const LineSplitter())
           .listen((line) {
-            fileLogger.log('[FlClashCore stdout] $line');
-          });
+        fileLogger.log('[FlClashCore stdout] $line');
+      });
       _stderrSubscription = started.stderr.listen((e) {
         final error = utf8.decode(e);
         if (error.isNotEmpty) {
@@ -767,6 +826,7 @@ class ClashService extends ClashHandlerInterface {
         outcome: outcome ?? (matching ? 'match' : 'mismatch'),
       );
     }
+
     if (!Platform.isWindows) {
       report(true);
       return true;
@@ -774,10 +834,13 @@ class ClashService extends ClashHandlerInterface {
     final identity = _agentIdentity;
     final connectionEpoch = _connectionEpoch;
     final generation = _agentGeneration;
-    if (!_agentMode || identity == null || identity.agentPid != _agentPid ||
+    if (!_agentMode ||
+        identity == null ||
+        identity.agentPid != _agentPid ||
         identity.agentInstanceId == null ||
         !RegExp(r'^[0-9a-f]{64}$').hasMatch(identity.agentInstanceId!) ||
-        identity.agentExecutable == null || identity.coreExecutable == null) {
+        identity.agentExecutable == null ||
+        identity.coreExecutable == null) {
       report(false);
       return false;
     }
@@ -791,10 +854,12 @@ class ClashService extends ClashHandlerInterface {
           return false;
         }
       }
-      final helperMatches = identity.backendSource != 'helper' || await request.pingHelper();
-      final matching = helperMatches && connectionEpoch == _connectionEpoch &&
-        generation == _agentGeneration &&
-        identity.agentInstanceId == _agentIdentity?.agentInstanceId;
+      final helperMatches =
+          identity.backendSource != 'helper' || await request.pingHelper();
+      final matching = helperMatches &&
+          connectionEpoch == _connectionEpoch &&
+          generation == _agentGeneration &&
+          identity.agentInstanceId == _agentIdentity?.agentInstanceId;
       report(matching);
       return matching;
     } catch (_) {
@@ -815,20 +880,31 @@ class ClashService extends ClashHandlerInterface {
       if (!current()) return false;
       try {
         if ((await getTunStatus()).privilege == 'elevated') return false;
-      } on TunFailure { /* Reconcile a claimed Helper with the actual Core. */ }
+      } on TunFailure {
+        /* Reconcile a claimed Helper with the actual Core. */
+      }
     }
-    if (!await system.checkIsAdmin()) throw const TunFailure('permissionDenied');
+    if (!await system.checkIsAdmin()) {
+      throw const TunFailure('permissionDenied');
+    }
     if (!current()) return false;
     // Old Agents acknowledged shutdown before confirming Core exit. Never
     // use that acknowledgement to replace a potentially still-live Core.
     if (!windowsAgentSupportsMigration) throw const TunFailure('legacyAgent');
-    if (!await request.pingHelper()) throw const TunFailure('componentsMismatch');
+    if (!await request.pingHelper()) {
+      throw const TunFailure('componentsMismatch');
+    }
     if (!current()) return false;
     // Verify the replacement can be selected before stopping a usable backend.
     try {
-      await windowsAgentLaunchPaths(bundledAgent: appPath.agentPath,
-        bundledCore: appPath.corePath, serviceDirectory: appPath.windowsServiceDirectory);
-    } catch (_) { throw const TunFailure('componentsMismatch'); }
+      await windowsAgentLaunchPaths(
+        bundledAgent: appPath.agentPath,
+        bundledCore: appPath.corePath,
+        serviceDirectory: appPath.windowsServiceDirectory,
+      );
+    } catch (_) {
+      throw const TunFailure('componentsMismatch');
+    }
     if (!current()) return false;
     _stopping = true;
     try {
@@ -836,10 +912,14 @@ class ClashService extends ClashHandlerInterface {
         if (!current()) return false;
         return _replaceWindowsTunBackend(isCurrent: current);
       });
-    } finally { _stopping = false; }
+    } finally {
+      _stopping = false;
+    }
   }
 
-  Future<bool> _replaceWindowsTunBackend({required bool Function() isCurrent}) async {
+  Future<bool> _replaceWindowsTunBackend({
+    required bool Function() isCurrent,
+  }) async {
     if (!windowsAgentSupportsMigration || !await request.pingHelper()) {
       throw const TunFailure('componentsMismatch');
     }
@@ -858,19 +938,31 @@ class ClashService extends ClashHandlerInterface {
       var endpointReleased = false;
       while (DateTime.now().isBefore(deadline)) {
         final file = File(await appPath.agentEndpointPath);
-        if (!await file.exists()) { endpointReleased = true; break; }
+        if (!await file.exists()) {
+          endpointReleased = true;
+          break;
+        }
         try {
-          final endpoint = AgentEndpoint.fromJson(jsonDecode(await file.readAsString()));
-          if (endpoint.pid != previousPid) { endpointReleased = true; break; }
-        } catch (_) { /* A partial endpoint is not proof of ownership release. */ }
+          final endpoint =
+              AgentEndpoint.fromJson(jsonDecode(await file.readAsString()));
+          if (endpoint.pid != previousPid) {
+            endpointReleased = true;
+            break;
+          }
+        } catch (_) {
+          /* A partial endpoint is not proof of ownership release. */
+        }
         await Future<void>.delayed(const Duration(milliseconds: 100));
       }
       if (!endpointReleased) throw const TunFailure('backendStopFailed');
       await _detachAgentSocket();
       _coreReadyCompleter = Completer<void>();
-      if (!await _connectOrLaunchAgentImpl() || _agentPid == previousPid ||
-          (previousInstance != null && _agentIdentity?.agentInstanceId == previousInstance) ||
-          !_agentUsingHelper || !await windowsComponentsMatch()) {
+      if (!await _connectOrLaunchAgentImpl() ||
+          _agentPid == previousPid ||
+          (previousInstance != null &&
+              _agentIdentity?.agentInstanceId == previousInstance) ||
+          !_agentUsingHelper ||
+          !await windowsComponentsMatch()) {
         throw const TunFailure('componentsMismatch');
       }
       return true;
@@ -917,7 +1009,7 @@ class ClashService extends ClashHandlerInterface {
         await _coreReadyCompleter.future.timeout(const Duration(seconds: 20));
       }
       final socket = await socketCompleter.future;
-      socket.writeln(message);
+      _writeSocketLine(socket, message);
     } catch (e) {
       // Writing to a dead socket used to throw into an unawaited future and
       // strand this call until its 30s safeFuture timeout. Fail it fast with the
@@ -987,6 +1079,11 @@ class ClashService extends ClashHandlerInterface {
   }
 
   void _failPendingCompleter(String message, String reason) {
+    final fastId = extractActionIdFast(message);
+    if (fastId != null) {
+      _completePendingWithDefault(fastId, reason);
+      return;
+    }
     try {
       final decoded = json.decode(message);
       if (decoded is Map<String, dynamic>) {
@@ -1054,7 +1151,8 @@ class ClashService extends ClashHandlerInterface {
     _stopping = true;
     try {
       if (_agentMode) {
-        return await _agentConnections.replace(() => _agentCommand(AgentCommand.stopCore));
+        return await _agentConnections
+            .replace(() => _agentCommand(AgentCommand.stopCore));
       }
       if (Platform.isWindows) {
         await request.stopCoreByHelper();
@@ -1099,7 +1197,9 @@ class ClashService extends ClashHandlerInterface {
       socketCompleter = Completer<Socket>();
       _flushPendingCompleters();
       return true;
-    } finally { onTunTransportChanged?.call(); }
+    } finally {
+      onTunTransportChanged?.call();
+    }
   }
 }
 

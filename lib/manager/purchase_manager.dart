@@ -388,16 +388,64 @@ class PurchaseManager extends ChangeNotifier {
   }
 
   Future<void> _refreshData() async {
-    subscription = await api.getSubscription(_authorization!);
-    await _readHistory(1);
-    channelError = null;
-    try {
-      cardStoreUrl = await api.getCardStore(_authorization!);
-    } on XboardException catch (cause) {
-      if (cause.isUnauthorized) rethrow;
-      cardStoreUrl = null;
-      channelError = cause;
-    }
+    final authorization = _authorization!;
+    XboardException? unauthorizedFailure;
+    Exception? otherFailure;
+    XboardSubscription? nextSubscription;
+
+    final subscriptionFuture = () async {
+      try {
+        nextSubscription = await api.getSubscription(authorization);
+      } on XboardException catch (cause) {
+        if (cause.isUnauthorized) {
+          unauthorizedFailure ??= cause;
+        } else {
+          otherFailure ??= cause;
+        }
+      } on Exception catch (cause) {
+        otherFailure ??= cause;
+      }
+    }();
+
+    final historyFuture = () async {
+      historyError = null;
+      try {
+        history = await api.getGiftHistory(authorization, page: 1);
+      } on XboardException catch (cause) {
+        if (cause.isUnauthorized) {
+          unauthorizedFailure ??= cause;
+        } else {
+          historyError = cause;
+        }
+      } on Exception catch (cause) {
+        otherFailure ??= cause;
+      }
+    }();
+
+    final cardStoreFuture = () async {
+      channelError = null;
+      try {
+        cardStoreUrl = await api.getCardStore(authorization);
+      } on XboardException catch (cause) {
+        if (cause.isUnauthorized) {
+          unauthorizedFailure ??= cause;
+        } else {
+          cardStoreUrl = null;
+          channelError = cause;
+        }
+      } on Exception catch (cause) {
+        otherFailure ??= cause;
+      }
+    }();
+
+    await Future.wait<void>([
+      subscriptionFuture,
+      historyFuture,
+      cardStoreFuture,
+    ]);
+    if (unauthorizedFailure != null) throw unauthorizedFailure!;
+    if (otherFailure != null) throw otherFailure!;
+    subscription = nextSubscription;
   }
 
   Future<void> loadHistory(int page) => _run(() async {

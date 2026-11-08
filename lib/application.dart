@@ -75,7 +75,7 @@ class ApplicationState extends ConsumerState<Application> {
     WidgetsBinding.instance.addPostFrameCallback((timeStamp) async {
       final currentContext = globalState.navigatorKey.currentContext;
       if (currentContext != null) {
-        globalState.appController = AppController(currentContext, ref);
+        globalState.appController.updateContext(currentContext);
       }
       await globalState.appController.init();
       globalState.appController.initLink();

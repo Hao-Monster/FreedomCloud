@@ -30,13 +30,50 @@ bool _containsAsciiIgnoreCase(String haystack, String lowerNeedle) {
   return false;
 }
 
+({bool hasUrlScheme, bool hasAssignment, bool hasAuthSchemeCandidate})
+    _scanSensitiveCandidates(String text) {
+  var hasUrlScheme = false;
+  var hasAssignment = false;
+  var hasAuthSchemeCandidate = false;
+  final len = text.length;
+  for (var i = 0; i < len; i++) {
+    final c = text.codeUnitAt(i);
+    if (c == 0x3A /* ':' */) {
+      hasAssignment = true;
+      if (!hasUrlScheme &&
+          i + 2 < len &&
+          text.codeUnitAt(i + 1) == 0x2F &&
+          text.codeUnitAt(i + 2) == 0x2F) {
+        hasUrlScheme = true;
+      }
+    } else if (c == 0x3D /* '=' */) {
+      hasAssignment = true;
+    } else if (!hasAuthSchemeCandidate && (c | 0x20) == 0x62 /* 'b' */) {
+      if (i + 5 < len) {
+        final next = text.codeUnitAt(i + 1) | 0x20;
+        if (next == 0x65 /* 'e' -> bearer */ ||
+            next == 0x61 /* 'a' -> basic */) {
+          hasAuthSchemeCandidate = true;
+        }
+      }
+    }
+    if (hasUrlScheme && hasAssignment && hasAuthSchemeCandidate) {
+      break;
+    }
+  }
+  return (
+    hasUrlScheme: hasUrlScheme,
+    hasAssignment: hasAssignment,
+    hasAuthSchemeCandidate: hasAuthSchemeCandidate,
+  );
+}
+
 bool _mayContainCredentialKeyword(String text) =>
-    (text.contains(':') || text.contains('=')) &&
-    (_containsAsciiIgnoreCase(text, 'token') ||
-        _containsAsciiIgnoreCase(text, 'auth') ||
-        _containsAsciiIgnoreCase(text, 'pass') ||
-        _containsAsciiIgnoreCase(text, 'secret') ||
-        _containsAsciiIgnoreCase(text, 'key'));
+    _containsAsciiIgnoreCase(text, 'token') ||
+    _containsAsciiIgnoreCase(text, 'auth') ||
+    _containsAsciiIgnoreCase(text, 'pass') ||
+    _containsAsciiIgnoreCase(text, 'secret') ||
+    _containsAsciiIgnoreCase(text, 'key');
 
 /// Removes credentials and remotely identifying URLs before they reach any
 /// application log sink. Core and service output also passes through this
@@ -44,19 +81,27 @@ bool _mayContainCredentialKeyword(String text) =>
 String redactSensitiveLogData(String? text) {
   if (text == null || text.isEmpty) return text ?? '';
 
+  final candidates = _scanSensitiveCandidates(text);
+  if (!candidates.hasUrlScheme &&
+      !candidates.hasAssignment &&
+      !candidates.hasAuthSchemeCandidate) {
+    return text;
+  }
+
   var redacted = text;
-  if (redacted.contains('://')) {
+  if (candidates.hasUrlScheme) {
     redacted =
         redacted.replaceAllMapped(_logUrlPattern, (_) => '<redacted-url>');
   }
-  if (_containsAsciiIgnoreCase(redacted, 'bearer') ||
-      _containsAsciiIgnoreCase(redacted, 'basic')) {
+  if (candidates.hasAuthSchemeCandidate &&
+      (_containsAsciiIgnoreCase(redacted, 'bearer') ||
+          _containsAsciiIgnoreCase(redacted, 'basic'))) {
     redacted = redacted.replaceAllMapped(
       _logBearerPattern,
       (_) => '<redacted-authorization>',
     );
   }
-  if (_mayContainCredentialKeyword(redacted)) {
+  if (candidates.hasAssignment && _mayContainCredentialKeyword(redacted)) {
     redacted = redacted.replaceAllMapped(
       _logCredentialPattern,
       (match) => '${match.group(1)}<redacted>',

@@ -156,10 +156,13 @@ class TunRuntimeController extends ChangeNotifier {
   }
 
   void invalidate([String? reason]) {
+    final before = displayState;
     _observationEpoch++;
     _status = null;
     if (reason != null) failure = reason;
-    notifyListeners();
+    if (displayState != before) {
+      notifyListeners();
+    }
   }
 
   bool accept(TunStatus value, int epoch) {
@@ -168,6 +171,7 @@ class TunRuntimeController extends ChangeNotifier {
     if (previous != null &&
         previous.instanceId == value.instanceId &&
         value.revision < previous.revision) return false;
+    final before = displayState;
     _status = value;
     const clearableOnHealthyTun = [
       'permissionDenied',
@@ -195,7 +199,9 @@ class TunRuntimeController extends ChangeNotifier {
     } else if (failure == 'statusUnavailable' || failure == 'invalidStatus') {
       failure = _requestFailure;
     }
-    notifyListeners();
+    if (displayState != before) {
+      notifyListeners();
+    }
     return true;
   }
 
@@ -223,9 +229,12 @@ class TunRuntimeController extends ChangeNotifier {
   }
 
   void fail(String reason) {
+    final before = displayState;
     failure = reason;
     if (!_observationFailures.contains(reason)) _requestFailure = reason;
-    notifyListeners();
+    if (displayState != before) {
+      notifyListeners();
+    }
   }
 
   Future<void> serialize(Future<void> Function() operation) {
@@ -288,15 +297,23 @@ class TunRuntimeController extends ChangeNotifier {
 
 final tunRuntime = TunRuntimeController();
 
-Duration nextTunObservationDelay({
+/// Computes the next Windows TUN status poll delay, or `null` when background
+/// tray polling should pause completely (e.g. proxy manually stopped, session
+/// suppressed, or latched UAC/request failure while window is hidden).
+Duration? nextTunObservationSchedule({
   required TunRuntimeController runtime,
   required bool uiActive,
   required bool repairActive,
+  bool proxyRunning = true,
+  bool sessionSuppressed = false,
 }) {
-  if (runtime.busy ||
-      runtime.closing ||
-      repairActive ||
-      runtime.failure != null ||
+  if (runtime.busy || runtime.closing || repairActive) {
+    return const Duration(seconds: 3);
+  }
+  if (!proxyRunning || sessionSuppressed || runtime.requestFailure != null) {
+    return uiActive ? const Duration(seconds: 30) : null;
+  }
+  if (runtime.failure != null ||
       (runtime.desiredEnabled && runtime.observed != TunObservedState.on) ||
       (!runtime.desiredEnabled && runtime.observed == TunObservedState.on)) {
     return const Duration(seconds: 3);
@@ -305,6 +322,22 @@ Duration nextTunObservationDelay({
       ? const Duration(seconds: 10)
       : const Duration(seconds: 15);
 }
+
+Duration nextTunObservationDelay({
+  required TunRuntimeController runtime,
+  required bool uiActive,
+  required bool repairActive,
+  bool proxyRunning = true,
+  bool sessionSuppressed = false,
+}) =>
+    nextTunObservationSchedule(
+      runtime: runtime,
+      uiActive: uiActive,
+      repairActive: repairActive,
+      proxyRunning: proxyRunning,
+      sessionSuppressed: sessionSuppressed,
+    ) ??
+    const Duration(seconds: 60);
 
 /// Serializes fresh reads as well as coalescing periodic reads. A response from
 /// a pre-disconnect epoch can never restore an old Core's enabled claim.

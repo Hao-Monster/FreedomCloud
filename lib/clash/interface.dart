@@ -1,14 +1,15 @@
 import 'dart:async';
 import 'dart:convert';
-import 'package:flclashx/common/node_catalog_codec.dart';
 import 'dart:isolate';
 
 import 'package:flclashx/clash/message.dart';
 import 'package:flclashx/common/common.dart';
 import 'package:flclashx/common/delay_test_coordinator.dart';
+import 'package:flclashx/common/node_catalog_codec.dart';
 import 'package:flclashx/common/tun_runtime.dart';
 import 'package:flclashx/enum/enum.dart';
 import 'package:flclashx/models/models.dart';
+import 'package:flutter/foundation.dart';
 
 /// Protocol failures carry only fixed categories, never remote/parser text.
 class CatalogCoreException implements Exception {
@@ -56,6 +57,191 @@ bool _isCatalogMethod(ActionMethod method) => const {
       ActionMethod.catalogTestDelay,
       ActionMethod.catalogRelease,
     }.contains(method);
+
+int? _scanJsonStringEnd(String s, int openQuoteIndex) {
+  var i = openQuoteIndex + 1;
+  final len = s.length;
+  while (i < len) {
+    final ch = s.codeUnitAt(i);
+    if (ch == 0x5C /* \ */) {
+      i += 2;
+      continue;
+    }
+    if (ch == 0x22 /* " */) {
+      return i;
+    }
+    i++;
+  }
+  return null;
+}
+
+int? _scanJsonValueEnd(String s, int startIndex) {
+  final len = s.length;
+  if (startIndex >= len) return null;
+  final first = s.codeUnitAt(startIndex);
+  if (first == 0x22 /* " */) {
+    final end = _scanJsonStringEnd(s, startIndex);
+    return end == null ? null : end + 1;
+  }
+  if (first == 0x7B /* { */ || first == 0x5B /* [ */) {
+    var depth = 0;
+    var i = startIndex;
+    while (i < len) {
+      final ch = s.codeUnitAt(i);
+      if (ch == 0x22 /* " */) {
+        final strEnd = _scanJsonStringEnd(s, i);
+        if (strEnd == null) return null;
+        i = strEnd + 1;
+        continue;
+      }
+      if (ch == 0x7B || ch == 0x5B) {
+        depth++;
+      } else if (ch == 0x7D || ch == 0x5D) {
+        depth--;
+        if (depth == 0) return i + 1;
+        if (depth < 0) return null;
+      }
+      i++;
+    }
+    return null;
+  }
+  var i = startIndex;
+  while (i < len) {
+    final ch = s.codeUnitAt(i);
+    if (ch <= 0x20 || ch == 0x2C /* , */ || ch == 0x7D /* } */ || ch == 0x5D) {
+      break;
+    }
+    i++;
+  }
+  return i > startIndex ? i : null;
+}
+
+String? _decodeJsonStringSlice(String s, int startQuote, int endExclusive) {
+  if (endExclusive - startQuote < 2 ||
+      s.codeUnitAt(startQuote) != 0x22 ||
+      s.codeUnitAt(endExclusive - 1) != 0x22) {
+    return null;
+  }
+  final inner = s.substring(startQuote + 1, endExclusive - 1);
+  if (!inner.contains(r'\')) return inner;
+  try {
+    return jsonDecode(s.substring(startQuote, endExclusive)) as String;
+  } catch (_) {
+    return null;
+  }
+}
+
+/// Fast single-pass wire scanner for unescaped `ActionResult` frames carrying
+/// large JSON objects/arrays (`getConnections`, `getExternalProviders`).
+/// Avoids UI-isolate `json.decode` DOM allocation so raw JSON slices go
+/// directly to worker isolates.
+@visibleForTesting
+({String id, ActionMethod method, int code, String rawData})?
+    tryExtractRawDataActionResult(String line) {
+  final s = line.trim();
+  final len = s.length;
+  if (len < 2 ||
+      s.codeUnitAt(0) != 0x7B /* { */ ||
+      s.codeUnitAt(len - 1) != 0x7D /* } */) {
+    return null;
+  }
+  if (!s.contains('"getConnections"') &&
+      !s.contains('"getExternalProviders"')) {
+    return null;
+  }
+
+  String? id;
+  ActionMethod? method;
+  int? code;
+  String? rawData;
+
+  var pos = 1;
+  while (pos < len) {
+    while (pos < len && s.codeUnitAt(pos) <= 0x20) {
+      pos++;
+    }
+    if (pos >= len) return null;
+    if (s.codeUnitAt(pos) == 0x7D /* } */) {
+      pos++;
+      break;
+    }
+    if (s.codeUnitAt(pos) != 0x22 /* " */) return null;
+    final keyClose = _scanJsonStringEnd(s, pos);
+    if (keyClose == null) return null;
+    final key = _decodeJsonStringSlice(s, pos, keyClose + 1);
+    if (key == null) return null;
+    if (key == 'type') {
+      // Agent control/state event frame, never an ActionResult.
+      return null;
+    }
+    pos = keyClose + 1;
+    while (pos < len && s.codeUnitAt(pos) <= 0x20) {
+      pos++;
+    }
+    if (pos >= len || s.codeUnitAt(pos) != 0x3A /* : */) return null;
+    pos++;
+    while (pos < len && s.codeUnitAt(pos) <= 0x20) {
+      pos++;
+    }
+    final valStart = pos;
+    final valEnd = _scanJsonValueEnd(s, valStart);
+    if (valEnd == null) return null;
+
+    switch (key) {
+      case 'id':
+        id = _decodeJsonStringSlice(s, valStart, valEnd);
+        if (id == null) return null;
+      case 'method':
+        final methodName = _decodeJsonStringSlice(s, valStart, valEnd);
+        if (methodName == 'getConnections') {
+          method = ActionMethod.getConnections;
+        } else if (methodName == 'getExternalProviders') {
+          method = ActionMethod.getExternalProviders;
+        } else {
+          return null;
+        }
+      case 'code':
+        code = int.tryParse(s.substring(valStart, valEnd));
+        if (code == null) return null;
+      case 'data':
+        final first = s.codeUnitAt(valStart);
+        if (first != 0x7B /* { */ && first != 0x5B /* [ */) {
+          return null;
+        }
+        rawData = s.substring(valStart, valEnd);
+    }
+
+    pos = valEnd;
+    while (pos < len && s.codeUnitAt(pos) <= 0x20) {
+      pos++;
+    }
+    if (pos < len && s.codeUnitAt(pos) == 0x2C /* , */) {
+      pos++;
+    } else if (pos < len && s.codeUnitAt(pos) == 0x7D /* } */) {
+      pos++;
+      break;
+    } else {
+      return null;
+    }
+  }
+
+  while (pos < len && s.codeUnitAt(pos) <= 0x20) {
+    pos++;
+  }
+  if (pos != len ||
+      id == null ||
+      method == null ||
+      code == null ||
+      rawData == null) {
+    return null;
+  }
+  return (id: id, method: method, code: code, rawData: rawData);
+}
+
+final RegExp _actionIdExtractPattern = RegExp(r'"id"\s*:\s*"([^"\\]+)"');
+
+String? extractActionIdFast(String message) =>
+    _actionIdExtractPattern.firstMatch(message)?.group(1);
 
 mixin ClashInterface {
   Future<bool> init(InitParams params);
@@ -114,7 +300,7 @@ mixin ClashInterface {
 
   FutureOr<String> getExternalProviders();
 
-  FutureOr<String>? getExternalProvider(String externalProviderName);
+  FutureOr<Object?>? getExternalProvider(String externalProviderName);
 
   Future<String> updateGeoData(UpdateGeoDataParams params);
 
@@ -125,9 +311,9 @@ mixin ClashInterface {
 
   Future<String> updateExternalProvider(String providerName);
 
-  FutureOr<String> getTraffic();
+  FutureOr<Object?> getTraffic();
 
-  FutureOr<String> getTotalTraffic();
+  FutureOr<Object?> getTotalTraffic();
 
   FutureOr<String> getCountryCode(String ip);
 
@@ -154,6 +340,8 @@ mixin ClashInterface {
   Future<bool> setState(CoreState state);
 
   Future<bool> setUiActive(bool active);
+
+  Future<bool> setRequestsActive(bool active);
 }
 
 mixin AndroidClashInterface {
@@ -173,6 +361,27 @@ abstract class ClashHandlerInterface with ClashInterface {
   /// typed completer with the right default instead of `null` (which throws a
   /// TypeError on a non-nullable type and strands the caller until timeout).
   Map<String, dynamic> callbackDefaultMap = {};
+
+  bool tryHandleRawActionResultLine(String line) {
+    final extracted = tryExtractRawDataActionResult(line);
+    if (extracted == null) return false;
+    final completer = callbackCompleterMap.remove(extracted.id);
+    final defaultValue = callbackDefaultMap.remove(extracted.id);
+    if (completer == null || completer.isCompleted) return true;
+    try {
+      if (extracted.code == ResultType.success.index || extracted.code == 0) {
+        completer.complete(extracted.rawData);
+      } else {
+        completer.complete(defaultValue);
+      }
+    } catch (e) {
+      commonPrint.log('${extracted.id} raw fast-path error $e');
+      if (!completer.isCompleted) {
+        completer.complete(defaultValue);
+      }
+    }
+    return true;
+  }
 
   Future<void> handleResult(ActionResult result) async {
     final completer = callbackCompleterMap.remove(result.id);
@@ -213,7 +422,13 @@ abstract class ClashHandlerInterface with ClashInterface {
           completer?.complete(result.toResult);
           return;
         default:
-          completer?.complete(result.data);
+          if (completer is Completer<String> &&
+              result.data != null &&
+              result.data is! String) {
+            completer.complete(json.encode(result.data));
+          } else {
+            completer?.complete(result.data);
+          }
           return;
       }
     } catch (e) {
@@ -240,6 +455,7 @@ abstract class ClashHandlerInterface with ClashInterface {
     Duration? timeout,
     FutureOr<T> Function()? onTimeout,
     T? defaultValue,
+    FutureOr<String> Function(String id)? encodeMessage,
   }) async {
     final id = "${method.name}#${utils.id}";
 
@@ -280,13 +496,18 @@ abstract class ClashHandlerInterface with ClashInterface {
     }
 
     try {
-      final sent = sendMessage(json.encode(Action(
-        id: id,
-        method: method,
-        data: data,
-      )));
-      if (sent is Future) {
-        unawaited(sent.then<void>((_) {}, onError: failSend));
+      final encoded = encodeMessage != null
+          ? await encodeMessage(id)
+          : json.encode(Action(
+              id: id,
+              method: method,
+              data: data,
+            ));
+      if (!completer.isCompleted) {
+        final sent = sendMessage(encoded);
+        if (sent is Future) {
+          unawaited(sent.then<void>((_) {}, onError: failSend));
+        }
       }
     } catch (error) {
       failSend(error);
@@ -297,13 +518,13 @@ abstract class ClashHandlerInterface with ClashInterface {
   @override
   Future<bool> init(InitParams params) => invoke<bool>(
         method: ActionMethod.initClash,
-        data: json.encode(params),
+        data: params.toJson(),
       );
 
   @override
   Future<bool> setState(CoreState state) => invoke<bool>(
         method: ActionMethod.setState,
-        data: json.encode(state),
+        data: state.toJson(),
       );
 
   @override
@@ -312,6 +533,13 @@ abstract class ClashHandlerInterface with ClashInterface {
         data: active,
         // Short timeout so an older core without this handler degrades silently
         // instead of leaving a pending completer.
+        timeout: const Duration(seconds: 2),
+      );
+
+  @override
+  Future<bool> setRequestsActive(bool active) => invoke<bool>(
+        method: ActionMethod.setRequestsActive,
+        data: active,
         timeout: const Duration(seconds: 2),
       );
 
@@ -374,19 +602,24 @@ abstract class ClashHandlerInterface with ClashInterface {
       );
 
   @override
-  Future<String> setupConfig(SetupParams setupParams) async {
-    final data = await Isolate.run(() => json.encode(setupParams));
-    return invoke<String>(
-      method: ActionMethod.setupConfig,
-      data: data,
-      defaultValue: 'setupConfig transport unavailable',
-      timeout: const Duration(minutes: 2),
-      // Non-empty = error to callers; the default "" would mask a 2-minute hang
-      // as a successful setup (and falsely advance lastProfileModified), so the
-      // recovery re-apply would silently no-op against a still-broken executor.
-      onTimeout: () => 'setupConfig timed out',
-    );
-  }
+  Future<String> setupConfig(SetupParams setupParams) => invoke<String>(
+        method: ActionMethod.setupConfig,
+        encodeMessage: (id) => Isolate.run(
+          () => json.encode(
+            Action(
+              id: id,
+              method: ActionMethod.setupConfig,
+              data: setupParams,
+            ),
+          ),
+        ),
+        defaultValue: 'setupConfig transport unavailable',
+        timeout: const Duration(minutes: 2),
+        // Non-empty = error to callers; the default "" would mask a 2-minute hang
+        // as a successful setup (and falsely advance lastProfileModified), so the
+        // recovery re-apply would silently no-op against a still-broken executor.
+        onTimeout: () => 'setupConfig timed out',
+      );
 
   Future<TunStatus> getTunStatus() async {
     final watch = Stopwatch()..start();
@@ -430,7 +663,7 @@ abstract class ClashHandlerInterface with ClashInterface {
   FutureOr<String> changeProxy(ChangeProxyParams changeProxyParams) =>
       invoke<String>(
         method: ActionMethod.changeProxy,
-        data: json.encode(changeProxyParams),
+        data: changeProxyParams.toJson(),
       );
 
   @override
@@ -439,16 +672,17 @@ abstract class ClashHandlerInterface with ClashInterface {
       );
 
   @override
-  FutureOr<String> getExternalProvider(String externalProviderName) =>
-      invoke<String>(
+  FutureOr<Object?> getExternalProvider(String externalProviderName) =>
+      invoke<Object?>(
         method: ActionMethod.getExternalProvider,
         data: externalProviderName,
+        defaultValue: '',
       );
 
   @override
   Future<String> updateGeoData(UpdateGeoDataParams params) => invoke<String>(
       method: ActionMethod.updateGeoData,
-      data: json.encode(params),
+      data: params.toJson(),
       timeout: const Duration(seconds: 100));
 
   @override
@@ -458,10 +692,10 @@ abstract class ClashHandlerInterface with ClashInterface {
   }) =>
       invoke<String>(
         method: ActionMethod.sideLoadExternalProvider,
-        data: json.encode({
+        data: {
           "providerName": providerName,
           "data": data,
-        }),
+        },
       );
 
   @override
@@ -493,13 +727,15 @@ abstract class ClashHandlerInterface with ClashInterface {
       );
 
   @override
-  FutureOr<String> getTotalTraffic() => invoke<String>(
+  FutureOr<Object?> getTotalTraffic() => invoke<Object?>(
         method: ActionMethod.getTotalTraffic,
+        defaultValue: '',
       );
 
   @override
-  FutureOr<String> getTraffic() => invoke<String>(
+  FutureOr<Object?> getTraffic() => invoke<Object?>(
         method: ActionMethod.getTraffic,
+        defaultValue: '',
       );
 
   @override

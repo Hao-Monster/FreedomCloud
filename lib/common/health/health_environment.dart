@@ -403,7 +403,9 @@ class DefaultHealthProbeEnvironment
     final memBytes = int.tryParse(memRaw);
     final trafficRaw = await activeCore.clashInterface.getTraffic();
     var trafficOk = false;
-    if (trafficRaw.isNotEmpty) {
+    if (trafficRaw is Map) {
+      trafficOk = trafficRaw['up'] is num && trafficRaw['down'] is num;
+    } else if (trafficRaw is String && trafficRaw.isNotEmpty) {
       final decoded = jsonDecode(trafficRaw);
       trafficOk =
           decoded is Map && decoded['up'] is num && decoded['down'] is num;

@@ -48,9 +48,19 @@ Future<void> main(List<String> args) async {
   if (Platform.isWindows || Platform.isLinux) {
     DartPluginRegistrant.ensureInitialized();
   }
+  if (system.isDesktop) {
+    final acquire = await singleInstanceLock.acquire();
+    if (!acquire) {
+      exit(0);
+    }
+  }
 
   final version = await system.version;
-  await clashCore.preload();
+  if (Platform.isAndroid) {
+    await clashCore.preload();
+  } else {
+    unawaited(clashCore.preload().catchError((_) => false));
+  }
   await globalState.initApp(version);
   await android?.init();
   await window?.init(version);

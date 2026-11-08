@@ -15,6 +15,21 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'clash_config_update_listener.dart';
 import 'connection_manager.dart';
 
+/// When desktop Agent/Helper owns the Core process, Core stdout is already
+/// persisted in the native service log. Persist only warning/error/app lines on
+/// the UI side to eliminate duplicate disk amplification while keeping all logs
+/// in memory for [LogsView].
+@visibleForTesting
+bool shouldPersistCoreLogOnUiSide(
+  LogLevel level, {
+  required bool usesAgent,
+}) {
+  if (!usesAgent) return true;
+  return level == LogLevel.warning ||
+      level == LogLevel.error ||
+      level == LogLevel.app;
+}
+
 class ClashManager extends ConsumerStatefulWidget {
   const ClashManager({
     super.key,
@@ -172,7 +187,12 @@ class _ClashContainerState extends ConsumerState<ClashManager>
     }
 
     // Write core logs to file
-    fileLogger.log("[${log.logLevel.name.toUpperCase()}] ${log.payload}");
+    if (shouldPersistCoreLogOnUiSide(
+      log.logLevel,
+      usesAgent: clashService?.usesAgent == true,
+    )) {
+      fileLogger.log("[${log.logLevel.name.toUpperCase()}] ${log.payload}");
+    }
 
     if (log.logLevel == LogLevel.error) {
       globalState.showNotifier(log.payload);

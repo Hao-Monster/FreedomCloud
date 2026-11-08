@@ -37,6 +37,33 @@ import 'providers/node_overview.dart';
 import 'views/profiles/override_profile.dart';
 
 @visibleForTesting
+Future<void> deleteProfileFilesInIsolate(
+  String profilePath,
+  String providersDirPath,
+) =>
+    Isolate.run(() async {
+      Future<void> removePath(String targetPath) async {
+        final entityType =
+            await FileSystemEntity.type(targetPath, followLinks: false);
+        switch (entityType) {
+          case FileSystemEntityType.notFound:
+            return;
+          case FileSystemEntityType.directory:
+            await Directory(targetPath).delete(recursive: true);
+            return;
+          default:
+            await File(targetPath).delete(recursive: true);
+            return;
+        }
+      }
+
+      await Future.wait([
+        removePath(profilePath),
+        removePath(providersDirPath),
+      ]);
+    });
+
+@visibleForTesting
 bool shouldSkipUnchangedSilentSetup({
   required bool skipIfUnchanged,
   required bool isAndroid,
@@ -95,14 +122,15 @@ class AppShutdownEffects {
 }
 
 class AppController {
-  AppController(this.context, WidgetRef ref, {
+  AppController(BuildContext context, WidgetRef ref, {
     WindowsTunStartupEffects? windowsStartupEffects,
     AppShutdownEffects? shutdownEffects,
     TunRuntimeController? tunRuntimeController,
     Future<DateTime?> Function()? nativeRunTimeProbe,
     Future<void> Function()? flushSystemDnsCache,
     Duration tunSettleDelay = const Duration(milliseconds: 500),
-  }) : _ref = ref,
+  }) : _context = context,
+       _ref = ref,
        _windowsStartupEffects = windowsStartupEffects,
        _shutdownEffects = shutdownEffects,
        _nativeRunTimeProbe = nativeRunTimeProbe,
@@ -127,10 +155,15 @@ class AppController {
   bool _windowsCoreRestoreNeedsListener = false;
   String? _lastAppliedWindowsProfileId;
   UpdateParams? _syncingProfileUpdateParams;
+  ({String? profileId, SetupParams params})? _lastComputedSetupParams;
   static const _maxTunRepairAttempts = 2;
   final Map<String, int> _tunRepairAttempts = {};
   int? lastProfileModified;
-  final BuildContext context;
+  BuildContext _context;
+  BuildContext get context => _context;
+  void updateContext(BuildContext value) {
+    _context = value;
+  }
   final WidgetRef _ref;
   final _nodeHealthWrites = <Future<void>>{};
   int _nextProfileUpdateToken = 0;
@@ -200,17 +233,33 @@ class AppController {
     }
   }
 
-  Duration _nextTunObservationDelay() => nextTunObservationDelay(
+  bool get _isWindowsProxyRunningForTunPoll =>
+      !_pendingWindowsProxyStop &&
+      (globalState.isStart || _startupEffects().proxyRunning);
+
+  Duration? _nextTunObservationSchedule() => nextTunObservationSchedule(
         runtime: _tunRuntime,
         uiActive: uiActivity.value,
         repairActive: _activeTunRepair != null,
+        proxyRunning: _isWindowsProxyRunningForTunPoll,
+        sessionSuppressed: _adminAuthorization.isFailureLatched,
       );
+
+  void _onTunPollWakeup() {
+    if (!Platform.isWindows || !_tunObservationActive) return;
+    if (_tunObservationTimer == null && _nextTunObservationSchedule() != null) {
+      _scheduleNextTunObservation();
+      unawaited(refreshWindowsTunStatus());
+    }
+  }
 
   void _scheduleNextTunObservation() {
     _tunObservationTimer?.cancel();
     _tunObservationTimer = null;
     if (!Platform.isWindows || !_tunObservationActive) return;
-    _tunObservationTimer = Timer(_nextTunObservationDelay(), () async {
+    final delay = _nextTunObservationSchedule();
+    if (delay == null) return;
+    _tunObservationTimer = Timer(delay, () async {
       _tunObservationTimer = null;
       if (!Platform.isWindows || !_tunObservationActive) return;
       try {
@@ -224,6 +273,10 @@ class AppController {
   }
 
   void _stopTunObservation() {
+    if (_tunObservationActive) {
+      uiActivity.removeListener(_onTunPollWakeup);
+      _tunRuntime.removeListener(_onTunPollWakeup);
+    }
     _tunObservationActive = false;
     _tunObservationTimer?.cancel();
     _tunObservationTimer = null;
@@ -234,6 +287,8 @@ class AppController {
   void startTunObservation() {
     if (!Platform.isWindows || _tunObservationActive) return;
     _tunObservationActive = true;
+    uiActivity.addListener(_onTunPollWakeup);
+    _tunRuntime.addListener(_onTunPollWakeup);
     _tunRuntime.desiredEnabled = _ref.read(patchClashConfigProvider).tun.enable;
     clashService?.onTunTransportChanged = () {
       _tunRuntime.invalidate('statusUnavailable');
@@ -1177,6 +1232,7 @@ class AppController {
       _needsWindowsCoreRestore = false;
       _windowsCoreRestoreNeedsListener = false;
       startRunTimeTimer();
+      _onTunPollWakeup();
       // Android: the long-lived mihomo executor (DNS resolver, fake-ip pool,
       // providers) survives a plain stop→start — only setupConfig/ApplyConfig
       // rebuilds it. After a long session that state degrades, so a toggle
@@ -2110,17 +2166,43 @@ class AppController {
         }
         var patchConfig = _ref.read(patchClashConfigProvider);
 
-        // Sync network settings from provider config if not overriding
-        final appSetting = _ref.read(appSettingProvider);
-        ClashConfig? syncedConfig;
-        if (syncProviderSettings && !appSetting.overrideNetworkSettings) {
-          syncedConfig =
-              await globalState.syncNetworkSettingsFromProvider(patchConfig,
-                  profile: applyingProfile);
+        // Load and evaluate the profile YAML/QuickJS once per attempt so
+        // provider network-setting sync and patchRawConfig share a single pass.
+        ({Map<String, dynamic> rawConfig, bool hasExplicitLogLevel})? loadedProfile;
+        var preloadedConsumed = false;
+        if (applyingProfile != null) {
+          try {
+            loadedProfile =
+                await globalState.loadEvaluatedProfileConfig(applyingProfile);
+          } catch (e) {
+            commonPrint.log('Error loading profile config ($applyingProfileId): $e');
+          }
           if (!intentIsCurrent()) return false;
           if (!configurationIsCurrent()) {
             if (isCurrent != null) continue;
             return false;
+          }
+        }
+
+        // Sync network settings from provider config if not overriding
+        final appSetting = _ref.read(appSettingProvider);
+        ClashConfig? syncedConfig;
+        if (syncProviderSettings && !appSetting.overrideNetworkSettings) {
+          if (loadedProfile != null) {
+            syncedConfig = globalState.extractSyncedNetworkSettings(
+              patchConfig,
+              loadedProfile.rawConfig,
+            );
+          } else {
+            syncedConfig = await globalState.syncNetworkSettingsFromProvider(
+              patchConfig,
+              profile: applyingProfile,
+            );
+            if (!intentIsCurrent()) return false;
+            if (!configurationIsCurrent()) {
+              if (isCurrent != null) continue;
+              return false;
+            }
           }
         }
 
@@ -2194,9 +2276,18 @@ class AppController {
               (enabled) async {
                 applyEntered = true;
                 final currentPatchConfig = _ref.read(patchClashConfigProvider);
+                final usePreloaded = !preloadedConsumed && loadedProfile != null;
+                preloadedConsumed = true;
                 final params = await globalState.getSetupParams(
                   pathConfig: currentPatchConfig.copyWith.tun(enable: enabled),
                   profile: applyingProfile,
+                  preloadedRawConfig: usePreloaded ? loadedProfile.rawConfig : null,
+                  preloadedHasExplicitLogLevel:
+                      usePreloaded ? loadedProfile.hasExplicitLogLevel : null,
+                );
+                _lastComputedSetupParams = (
+                  profileId: applyingProfileId,
+                  params: params,
                 );
                 if (!configurationIsCurrent()) return '';
                 if (isCurrent != null && params.config.isEmpty) {
@@ -2259,8 +2350,19 @@ class AppController {
             final realTunEnable = _ref.read(realTunEnableProvider);
             final realPatchConfig =
                 currentPatchConfig.copyWith.tun(enable: realTunEnable);
+            final usePreloaded = !preloadedConsumed && loadedProfile != null;
+            preloadedConsumed = true;
             final params = await globalState.getSetupParams(
-                pathConfig: realPatchConfig, profile: applyingProfile);
+              pathConfig: realPatchConfig,
+              profile: applyingProfile,
+              preloadedRawConfig: usePreloaded ? loadedProfile.rawConfig : null,
+              preloadedHasExplicitLogLevel:
+                  usePreloaded ? loadedProfile.hasExplicitLogLevel : null,
+            );
+            _lastComputedSetupParams = (
+              profileId: applyingProfileId,
+              params: params,
+            );
             if (!configurationIsCurrent()) return false;
             if (_ref.read(patchClashConfigProvider) == currentPatchConfig) {
               debouncer.cancel(FunctionTag.updateClashConfig);
@@ -2365,9 +2467,11 @@ class AppController {
     if (!skippedSetup) {
       addCheckIpNumDebounce();
     }
-    // Re-persist cold-start params so tile/widget/Always-on headless restarts reflect
-    // the currently active profile, not a stale one from app init.
-    unawaited(_persistColdStartParams());
+    // setupClashConfig() (invoked when silence == false) already persists
+    // cold-start params; only silent re-applies need an explicit persist here.
+    if (silence) {
+      unawaited(_persistColdStartParams());
+    }
   }
 
   void handleChangeProfile() {
@@ -2987,13 +3091,32 @@ class AppController {
   Future<void> _persistColdStartParams() async {
     if (clashLib == null) return;
     try {
-      final clashConfig = globalState.config.patchClashConfig.copyWith.tun(
-        enable: false,
-      );
-      final setupParams = await globalState.getSetupParams(
-        pathConfig: clashConfig,
-        profile: globalState.config.currentProfile,
-      );
+      final currentProfile = globalState.config.currentProfile;
+      final cached = _lastComputedSetupParams;
+      final SetupParams setupParams;
+      if (cached != null && cached.profileId == currentProfile?.id) {
+        final rawTun = cached.params.config['tun'];
+        final tunMap = rawTun is Map
+            ? <String, dynamic>{
+                ...Map<String, dynamic>.from(rawTun),
+                'enable': false,
+              }
+            : <String, dynamic>{'enable': false};
+        setupParams = cached.params.copyWith(
+          config: <String, dynamic>{
+            ...cached.params.config,
+            'tun': tunMap,
+          },
+        );
+      } else {
+        final clashConfig = globalState.config.patchClashConfig.copyWith.tun(
+          enable: false,
+        );
+        setupParams = await globalState.getSetupParams(
+          pathConfig: clashConfig,
+          profile: currentProfile,
+        );
+      }
       unawaited(clashLib?.saveParamsForColdStart(
         initParams: InitParams(
           homeDir: await appPath.homeDirPath,
@@ -3049,14 +3172,10 @@ class AppController {
   }
 
   Future<void> init() async {
-    startTunObservation();
     FlutterError.onError = (details) {
       commonPrint.log(details.stack.toString());
     };
     updateTray(true);
-    // Desktop only (clashService is null on Android): on an unexpected core-process
-    // death, respawn it AND re-init/re-apply (and re-start the tunnel if it was up).
-    clashService?.onCoreCrash = (_) => restartCore();
     // Show (or hide) the window before runtime startup. On Windows startup may
     // wait for a UAC reply or a backend handover; the native window is created
     // hidden, so awaiting first left the user with no app window meanwhile.
@@ -3067,6 +3186,13 @@ class AppController {
         window?.hide();
       }
     }
+    if (_windowsStartupEffects == null) {
+      await clashCore.preload();
+    }
+    // Desktop only (clashService is null on Android): on an unexpected core-process
+    // death, respawn it AND re-init/re-apply (and re-start the tunnel if it was up).
+    clashService?.onCoreCrash = (_) => restartCore();
+    startTunObservation();
     await initializeRuntime();
     autoLaunch?.updateStatus(
       _ref.read(appSettingProvider).autoLaunch,
@@ -3445,18 +3571,11 @@ class AppController {
     }
     final profilePath = await appPath.getProfilePath(profileId);
     final providersDirPath = await appPath.getProvidersDirPath(profileId);
-    return Isolate.run(() async {
-      final profileFile = File(profilePath);
-      final isExists = await profileFile.exists();
-      if (isExists) {
-        unawaited(profileFile.delete(recursive: true));
-      }
-      final providersFileDir = File(providersDirPath);
-      final providersFileIsExists = await providersFileDir.exists();
-      if (providersFileIsExists) {
-        unawaited(providersFileDir.delete(recursive: true));
-      }
-    });
+    if (_lastComputedSetupParams?.profileId == profileId) {
+      _lastComputedSetupParams = null;
+    }
+    await deleteProfileFilesInIsolate(profilePath, providersDirPath);
+    return null;
   }
 
   void updateTun() {

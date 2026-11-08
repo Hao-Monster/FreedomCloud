@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:collection';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flclashx/common/log_redaction.dart';
 import 'package:flclashx/common/path.dart';
@@ -273,17 +274,48 @@ class FileLogger {
       }
 
       while (_writeQueue.isNotEmpty) {
-        final message = _writeQueue.removeFirst();
+        final firstMessage = _writeQueue.removeFirst();
+        final timestamp = _formatTimestamp(_now());
+        final firstBytes = utf8.encode('[$timestamp] $firstMessage\n');
         try {
-          await _writeLine(message);
+          await _ensureSink(firstBytes.length);
         } catch (_) {
           if (_writeQueue.length < maxPendingMessages) {
-            _writeQueue.addFirst(message);
+            _writeQueue.addFirst(firstMessage);
           } else {
             _droppedMessages++;
           }
           rethrow;
         }
+
+        if (_writeQueue.isEmpty ||
+            _currentBytes + firstBytes.length >= _fileSizeLimit) {
+          _currentSink!.add(firstBytes);
+          _currentBytes += firstBytes.length;
+          continue;
+        }
+
+        final batch = BytesBuilder(copy: false)..add(firstBytes);
+        var batchBytes = firstBytes.length;
+        final batchDate = _currentDate;
+        while (_writeQueue.isNotEmpty) {
+          final now = _now();
+          if (_formatDate(now) != batchDate) {
+            break;
+          }
+          final nextMessage = _writeQueue.first;
+          final nextLineBytes =
+              utf8.encode('[${_formatTimestamp(now)}] $nextMessage\n');
+          if (_currentBytes + batchBytes + nextLineBytes.length >
+              _fileSizeLimit) {
+            break;
+          }
+          _writeQueue.removeFirst();
+          batch.add(nextLineBytes);
+          batchBytes += nextLineBytes.length;
+        }
+        _currentSink!.add(batch.takeBytes());
+        _currentBytes += batchBytes;
       }
 
       await _currentSink?.flush();

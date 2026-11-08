@@ -2,9 +2,10 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:ffi' show Pointer;
 import 'dart:io' show File, Platform;
+import 'dart:typed_data' show BytesBuilder;
 
 import 'package:animations/animations.dart';
-import 'package:collection/collection.dart' show DeepCollectionEquality;
+import 'package:crypto/crypto.dart';
 import 'package:dio/dio.dart';
 import 'package:dynamic_color/dynamic_color.dart';
 import 'package:flclashx/clash/clash.dart';
@@ -28,6 +29,302 @@ import 'core_version.dart';
 import 'models/models.dart';
 
 typedef UpdateTasks = List<FutureOr Function()>;
+
+final RegExp _yamlTopLevelLogLevelLine = RegExp(
+  r'''^(?:"log-level"|'log-level'|log-level)\s*:\s*([^\s#]+)?''',
+);
+
+bool _hasTopLevelJsonLogLevel(String text) {
+  final len = text.length;
+  var depth = 0;
+  var i = 0;
+  while (i < len) {
+    final c = text.codeUnitAt(i);
+    if (c == 0x22 /* " */) {
+      final start = i + 1;
+      i++;
+      var hasEscape = false;
+      while (i < len) {
+        final sc = text.codeUnitAt(i);
+        if (sc == 0x5C /* \ */) {
+          hasEscape = true;
+          i += 2;
+          continue;
+        }
+        if (sc == 0x22 /* " */) {
+          break;
+        }
+        i++;
+      }
+      if (i >= len) return false;
+      final end = i;
+      i++; // closing quote
+      if (depth == 1) {
+        var j = i;
+        while (j < len && text.codeUnitAt(j) <= 0x20) {
+          j++;
+        }
+        if (j < len && text.codeUnitAt(j) == 0x3A /* : */) {
+          final rawKey = text.substring(start, end);
+          final key = hasEscape ? (jsonDecode('"$rawKey"') as String) : rawKey;
+          if (key == 'log-level') {
+            var v = j + 1;
+            while (v < len && text.codeUnitAt(v) <= 0x20) {
+              v++;
+            }
+            if (v + 4 <= len && text.startsWith('null', v)) {
+              final next = v + 4;
+              if (next == len ||
+                  text.codeUnitAt(next) <= 0x20 ||
+                  text.codeUnitAt(next) == 0x2C /* , */ ||
+                  text.codeUnitAt(next) == 0x7D /* } */) {
+                i = next;
+                continue;
+              }
+            }
+            return true;
+          }
+        }
+      }
+      continue;
+    }
+    if (c == 0x7B /* { */ || c == 0x5B /* [ */) {
+      depth++;
+    } else if (c == 0x7D /* } */ || c == 0x5D /* ] */) {
+      depth--;
+    }
+    i++;
+  }
+  return false;
+}
+
+@visibleForTesting
+bool hasExplicitTopLevelLogLevel(String rawText) {
+  final stripped = rawText.startsWith('\uFEFF') ? rawText.substring(1) : rawText;
+  final trimmed = stripped.trimLeft();
+  if (trimmed.startsWith('{')) {
+    return _hasTopLevelJsonLogLevel(trimmed);
+  }
+  for (final line in const LineSplitter().convert(stripped)) {
+    final match = _yamlTopLevelLogLevelLine.firstMatch(line);
+    if (match != null) {
+      final rawVal = match.group(1)?.trim().toLowerCase();
+      if (rawVal != null &&
+          rawVal.isNotEmpty &&
+          rawVal != 'null' &&
+          rawVal != '~') {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+@visibleForTesting
+Future<bool?> probeProfileFileHasExplicitTopLevelLogLevel(String path) async {
+  try {
+    final file = File(path);
+    if (!await file.exists()) {
+      return null;
+    }
+    var checkedFirstNonEmpty = false;
+    var isFirstLine = true;
+    await for (var line in file
+        .openRead()
+        .transform(utf8.decoder)
+        .transform(const LineSplitter())) {
+      if (isFirstLine) {
+        isFirstLine = false;
+        if (line.startsWith('\uFEFF')) {
+          line = line.substring(1);
+        }
+      }
+      if (!checkedFirstNonEmpty) {
+        final trimmed = line.trimLeft();
+        if (trimmed.isNotEmpty && !trimmed.startsWith('#')) {
+          checkedFirstNonEmpty = true;
+          if (trimmed.startsWith('{')) {
+            final fullText = await file.readAsString();
+            return hasExplicitTopLevelLogLevel(fullText);
+          }
+        }
+      }
+      final match = _yamlTopLevelLogLevelLine.firstMatch(line);
+      if (match != null) {
+        final rawVal = match.group(1)?.trim().toLowerCase();
+        if (rawVal != null &&
+            rawVal.isNotEmpty &&
+            rawVal != 'null' &&
+            rawVal != '~') {
+          return true;
+        }
+      }
+    }
+    return false;
+  } catch (_) {
+    return null;
+  }
+}
+
+/// Resolves the effective Mihomo `log-level`:
+/// - When [isOverride] is true, [userLogLevel] wins unconditionally.
+/// - When the profile did not explicitly declare top-level `log-level` (so
+///   Mihomo's `DefaultRawConfig` filled `"info"`), [userLogLevel] wins.
+/// - When the profile explicitly sets `debug` or `info` while [isOverride] is
+///   off, clamp to `warning` unless the user also configured [userLogLevel] to
+///   a verbose level (`debug` / `info`).
+@visibleForTesting
+String resolveEffectiveLogLevel({
+  required bool isOverride,
+  required bool hasExplicitProfileLogLevel,
+  required String? profileLogLevel,
+  required LogLevel userLogLevel,
+}) {
+  if (isOverride || !hasExplicitProfileLogLevel || profileLogLevel == null) {
+    return userLogLevel.name;
+  }
+  final normalized = profileLogLevel.trim().toLowerCase();
+  if (normalized.isEmpty) {
+    return userLogLevel.name;
+  }
+  LogLevel? parsed;
+  for (final candidate in LogLevel.values) {
+    if (candidate.name == normalized) {
+      parsed = candidate;
+      break;
+    }
+  }
+  if (parsed == null) {
+    return normalized;
+  }
+  if (parsed.index < LogLevel.warning.index) {
+    return userLogLevel.index < LogLevel.warning.index
+        ? (userLogLevel.index > parsed.index ? userLogLevel.name : parsed.name)
+        : LogLevel.warning.name;
+  }
+  return parsed.name;
+}
+
+class _SingleDigestSink implements Sink<Digest> {
+  Digest? value;
+
+  @override
+  void add(Digest data) {
+    value = data;
+  }
+
+  @override
+  void close() {}
+}
+
+class _CanonicalHashWriter {
+  _CanonicalHashWriter(this._byteSink);
+
+  static const int _flushThreshold = 8192;
+  final ByteConversionSink _byteSink;
+  final BytesBuilder _buffer = BytesBuilder(copy: false);
+
+  void _maybeFlush() {
+    if (_buffer.length >= _flushThreshold) {
+      _byteSink.add(_buffer.takeBytes());
+    }
+  }
+
+  void writeAscii(String ascii) {
+    _buffer.add(ascii.codeUnits);
+    _maybeFlush();
+  }
+
+  void writeUtf8String(String s) {
+    final encoded = utf8.encode(s);
+    _buffer
+      ..add('S:${encoded.length}:'.codeUnits)
+      ..add(encoded)
+      ..addByte(0x3B /* ; */);
+    _maybeFlush();
+  }
+
+  void writeValue(Object? value) {
+    if (value == null) {
+      writeAscii('N;');
+      return;
+    }
+    if (value is bool) {
+      writeAscii(value ? 'T;' : 'F;');
+      return;
+    }
+    if (value is int) {
+      writeAscii('I:$value;');
+      return;
+    }
+    if (value is double) {
+      final normalized = value == 0.0 ? 0.0 : value;
+      writeAscii('D:$normalized;');
+      return;
+    }
+    if (value is String) {
+      writeUtf8String(value);
+      return;
+    }
+    if (value is Map) {
+      writeAscii('M:{');
+      if (value.isNotEmpty) {
+        final entries = value.entries
+            .map((e) => (key: e.key.toString(), value: e.value))
+            .toList(growable: false)
+          ..sort((a, b) => a.key.compareTo(b.key));
+        for (final entry in entries) {
+          writeUtf8String(entry.key);
+          writeAscii(':');
+          writeValue(entry.value);
+          writeAscii(',');
+        }
+      }
+      writeAscii('};');
+      return;
+    }
+    if (value is Iterable) {
+      writeAscii('L:[');
+      for (final element in value) {
+        writeValue(element);
+        writeAscii(',');
+      }
+      writeAscii('];');
+      return;
+    }
+    writeUtf8String(value.toString());
+  }
+
+  void finish() {
+    if (_buffer.isNotEmpty) {
+      _byteSink.add(_buffer.takeBytes());
+    }
+    _byteSink.close();
+  }
+}
+
+/// Computes a deterministic SHA-256 hex digest over nested JSON-like values
+/// (`Map`, `Iterable`, primitives) independent of map key insertion order and
+/// without allocating a multi-megabyte intermediate JSON string.
+@visibleForTesting
+String computeCanonicalConfigDigest(Object? value) {
+  final sink = _SingleDigestSink();
+  _CanonicalHashWriter(sha256.startChunkedConversion(sink))
+    ..writeValue(value)
+    ..finish();
+  return sink.value!.toString();
+}
+
+bool _shallowStringMapEquals(Map<String, String> a, Map<String, String> b) {
+  if (identical(a, b)) return true;
+  if (a.length != b.length) return false;
+  for (final entry in a.entries) {
+    if (b[entry.key] != entry.value || !b.containsKey(entry.key)) {
+      return false;
+    }
+  }
+  return true;
+}
 
 class GlobalState {
 
@@ -145,6 +442,7 @@ class GlobalState {
   DateTime? startTime;
   UpdateTasks tasks = [];
   Map<String, dynamic>? lastRuntimeConfig;
+  String? _lastRuntimeConfigDigest;
   String? lastRuntimeProfileId;
   Map<String, String>? lastRuntimeSelectedMap;
   String? lastRuntimeTestUrl;
@@ -544,11 +842,15 @@ class GlobalState {
   Future<SetupParams> getSetupParams({
     required ClashConfig pathConfig,
     required Profile? profile,
+    Map<String, dynamic>? preloadedRawConfig,
+    bool? preloadedHasExplicitLogLevel,
   }) async {
     final testUrl = config.appSetting.testUrl;
     final clashConfig = await patchRawConfig(
       patchConfig: pathConfig,
       profile: profile,
+      preloadedRawConfig: preloadedRawConfig,
+      preloadedHasExplicitLogLevel: preloadedHasExplicitLogLevel,
     );
     final params = SetupParams(
       config: clashConfig,
@@ -571,6 +873,7 @@ class GlobalState {
   void clearRuntimeSetup() {
     runtimeConfigEpoch++;
     lastRuntimeConfig = null;
+    _lastRuntimeConfigDigest = null;
     lastRuntimeProfileId = null;
     lastRuntimeSelectedMap = null;
     lastRuntimeTestUrl = null;
@@ -581,6 +884,7 @@ class GlobalState {
     runtimeConfigEpoch++;
     final rawConfig = params.config;
     lastRuntimeConfig = rawConfig;
+    _lastRuntimeConfigDigest = null;
     lastRuntimeProfileId = profileId;
     lastRuntimeSelectedMap = Map<String, String>.from(params.selectedMap);
     lastRuntimeTestUrl = params.testUrl;
@@ -619,9 +923,18 @@ class GlobalState {
         lastRuntimeTestUrl != candidate.testUrl) {
       return false;
     }
-    const deepEq = DeepCollectionEquality();
-    return deepEq.equals(lastRuntimeSelectedMap, candidate.selectedMap) &&
-        deepEq.equals(lastRuntimeConfig, candidate.config);
+    if (!_shallowStringMapEquals(
+      lastRuntimeSelectedMap!,
+      candidate.selectedMap,
+    )) {
+      return false;
+    }
+    if (identical(lastRuntimeConfig, candidate.config)) {
+      return true;
+    }
+    final committedDigest =
+        _lastRuntimeConfigDigest ??= computeCanonicalConfigDigest(lastRuntimeConfig);
+    return committedDigest == computeCanonicalConfigDigest(candidate.config);
   }
 
   void commitRuntimeUpdate(UpdateParams params) {
@@ -647,6 +960,7 @@ class GlobalState {
             'route-address': params.tun.routeAddress,
           },
       };
+      _lastRuntimeConfigDigest = null;
     }
     effectiveTcpConcurrent.value = params.tcpConcurrent;
     effectiveUnifiedDelay.value = params.unifiedDelay;
@@ -714,6 +1028,80 @@ class GlobalState {
     return true;
   }
 
+  ClashConfig extractSyncedNetworkSettings(
+    ClashConfig patchConfig,
+    Map<String, dynamic> rawConfig,
+  ) {
+    final providerIpv6 = rawConfig['ipv6'] as bool? ?? patchConfig.ipv6;
+    final providerAllowLan =
+        rawConfig['allow-lan'] as bool? ?? patchConfig.allowLan;
+    final providerMixedPort =
+        rawConfig['mixed-port'] as int? ?? patchConfig.mixedPort;
+    final providerFindProcessModeStr = rawConfig['find-process-mode'] as String?;
+    final providerFindProcessMode = providerFindProcessModeStr != null
+        ? FindProcessMode.values.firstWhere(
+            (e) =>
+                e.name.toLowerCase() ==
+                providerFindProcessModeStr.toLowerCase(),
+            orElse: () => patchConfig.findProcessMode,
+          )
+        : patchConfig.findProcessMode;
+
+    final rawTun = rawConfig['tun'];
+    final providerTunStackStr = !_isUnconfiguredDefaultRawTun(rawTun)
+        ? (rawTun as Map)['stack']?.toString().trim()
+        : null;
+    final providerTunStack = providerTunStackStr != null
+        ? TunStack.values.firstWhere(
+            (e) => e.name.toLowerCase() == providerTunStackStr.toLowerCase(),
+            orElse: () => patchConfig.tun.stack,
+          )
+        : patchConfig.tun.stack;
+
+    return patchConfig
+        .copyWith(
+          ipv6: providerIpv6,
+          allowLan: providerAllowLan,
+          mixedPort: providerMixedPort,
+          findProcessMode: providerFindProcessMode,
+        )
+        .copyWith
+        .tun(stack: providerTunStack);
+  }
+
+  Future<({Map<String, dynamic> rawConfig, bool hasExplicitLogLevel})>
+      loadEvaluatedProfileConfig(Profile profile) async {
+    final profileId = profile.id;
+    String? profilePath;
+    try {
+      profilePath = await appPath.getProfilePath(profileId);
+    } catch (_) {
+      profilePath = null;
+    }
+    final (fileExplicit, configMap) = await (
+      profilePath != null
+          ? probeProfileFileHasExplicitTopLevelLogLevel(profilePath)
+          : Future<bool?>.value(null),
+      getProfileConfig(profileId),
+    ).wait;
+    final preEvalLogLevel = configMap['log-level'];
+    final rawConfig = await handleEvaluate(configMap);
+    final postEvalLogLevel = rawConfig['log-level'];
+    final scriptChangedLogLevel =
+        postEvalLogLevel != null && postEvalLogLevel != preEvalLogLevel;
+    final bool hasExplicitLogLevel;
+    if (scriptChangedLogLevel) {
+      hasExplicitLogLevel = true;
+    } else if (fileExplicit != null) {
+      hasExplicitLogLevel = fileExplicit;
+    } else {
+      hasExplicitLogLevel = postEvalLogLevel is String &&
+          postEvalLogLevel.isNotEmpty &&
+          postEvalLogLevel.toLowerCase() != 'info';
+    }
+    return (rawConfig: rawConfig, hasExplicitLogLevel: hasExplicitLogLevel);
+  }
+
   Future<ClashConfig> syncNetworkSettingsFromProvider(ClashConfig patchConfig, {
     required Profile? profile,
   }) async {
@@ -729,35 +1117,7 @@ class GlobalState {
       final profileId = profile.id;
       final configMap = await getProfileConfig(profileId);
       final rawConfig = await handleEvaluate(configMap);
-
-      final providerIpv6 = rawConfig['ipv6'] as bool? ?? patchConfig.ipv6;
-      final providerAllowLan = rawConfig['allow-lan'] as bool? ?? patchConfig.allowLan;
-      final providerMixedPort = rawConfig['mixed-port'] as int? ?? patchConfig.mixedPort;
-      final providerFindProcessModeStr = rawConfig['find-process-mode'] as String?;
-      final providerFindProcessMode = providerFindProcessModeStr != null 
-          ? FindProcessMode.values.firstWhere(
-              (e) => e.name.toLowerCase() == providerFindProcessModeStr.toLowerCase(),
-              orElse: () => patchConfig.findProcessMode,
-            )
-          : patchConfig.findProcessMode;
-      
-      final rawTun = rawConfig['tun'];
-      final providerTunStackStr = !_isUnconfiguredDefaultRawTun(rawTun)
-          ? (rawTun as Map)['stack']?.toString().trim()
-          : null;
-      final providerTunStack = providerTunStackStr != null
-          ? TunStack.values.firstWhere(
-              (e) => e.name.toLowerCase() == providerTunStackStr.toLowerCase(),
-              orElse: () => patchConfig.tun.stack,
-            )
-          : patchConfig.tun.stack;
-
-      return patchConfig.copyWith(
-        ipv6: providerIpv6,
-        allowLan: providerAllowLan,
-        mixedPort: providerMixedPort,
-        findProcessMode: providerFindProcessMode,
-      ).copyWith.tun(stack: providerTunStack);
+      return extractSyncedNetworkSettings(patchConfig, rawConfig);
     } catch (e) {
       commonPrint.log("Error syncing network settings from provider: $e");
       return patchConfig;
@@ -767,13 +1127,25 @@ class GlobalState {
   Future<Map<String, dynamic>> patchRawConfig({
     required ClashConfig patchConfig,
     required Profile? profile,
+    Map<String, dynamic>? preloadedRawConfig,
+    bool? preloadedHasExplicitLogLevel,
   }) async {
     if (profile == null) {
       return {};
     }
-    final profileId = profile.id;
-    final configMap = await getProfileConfig(profileId);
-    final rawConfig = await handleEvaluate(configMap);
+    final Map<String, dynamic> rawConfig;
+    final bool hasExplicitLogLevel;
+    if (preloadedRawConfig != null) {
+      rawConfig = preloadedRawConfig;
+      hasExplicitLogLevel = preloadedHasExplicitLogLevel ??
+          (rawConfig['log-level'] is String &&
+              (rawConfig['log-level'] as String).isNotEmpty &&
+              (rawConfig['log-level'] as String).toLowerCase() != 'info');
+    } else {
+      final loaded = await loadEvaluatedProfileConfig(profile);
+      rawConfig = loaded.rawConfig;
+      hasExplicitLogLevel = loaded.hasExplicitLogLevel;
+    }
     migrateDeprecatedGlobalClientFingerprint(rawConfig);
     
     final realPatchConfig = patchConfig.copyWith(
@@ -831,9 +1203,12 @@ class GlobalState {
     final effUnifiedDelay = isOverride
         ? realPatchConfig.unifiedDelay
         : (profileUnifiedDelay ?? realPatchConfig.unifiedDelay);
-    final effLogLevel = isOverride
-        ? realPatchConfig.logLevel.name
-        : (profileLogLevel ?? realPatchConfig.logLevel.name);
+    final effLogLevel = resolveEffectiveLogLevel(
+      isOverride: isOverride,
+      hasExplicitProfileLogLevel: hasExplicitLogLevel,
+      profileLogLevel: profileLogLevel,
+      userLogLevel: realPatchConfig.logLevel,
+    );
     final effKeepAlive = isOverride
         ? realPatchConfig.keepAliveInterval
         : (profileKeepAlive ?? realPatchConfig.keepAliveInterval);
@@ -913,7 +1288,7 @@ class GlobalState {
       // User wants to override - use value from UI (always write)
       tunConfig["stack"] = realPatchConfig.tun.stack.name;
     } else {
-      // Use provider value - only set if not already in rawConfig, use patchConfig value (which is synced from provider)
+      // Use provider value - only set if not already in rawConfig, use patchConfig value (which are synced from provider)
       final currentStack = tunConfig["stack"];
       if (!hasExplicitProviderTun || currentStack == null) {
         tunConfig["stack"] = realPatchConfig.tun.stack.name;

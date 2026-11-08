@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
@@ -234,8 +235,11 @@ Future<void> reflectWindowsTunRunning({
 Future<bool> isReadableWindowsStartupProfile(String? path) async {
   if (path == null) return false;
   try {
-    final content = await File(path).readAsString();
-    return content.trim().isNotEmpty;
+    await for (final chunk in File(path).openRead().transform(utf8.decoder)) {
+      if (chunk.trim().isNotEmpty) return true;
+    }
+    return false;
+
   } on FileSystemException {
     return false;
   } on FormatException {
