@@ -15,6 +15,7 @@ import 'package:flclashx/controller.dart';
 import 'package:flclashx/enum/enum.dart';
 import 'package:flclashx/l10n/l10n.dart';
 import 'package:flclashx/models/models.dart';
+import 'package:flclashx/providers/node_overview.dart';
 import 'package:flclashx/providers/providers.dart';
 import 'package:flclashx/state.dart';
 import 'package:flclashx/views/connection/table.dart';
@@ -608,6 +609,76 @@ void main() {
       expect(info.image.height, 1);
       await provider.evict();
     });
+  });
+
+  group('P1-2: nodeRuntimeReadProvider 60s versionProvider decoupling', () {
+    test(
+      '60-second versionProvider group refresh does not re-read fcx://runtime, while runtimeConfigEpoch change does',
+      () async {
+        const profile = Profile(id: 'p1', autoUpdateDuration: Duration.zero);
+        final rawConfig = <String, dynamic>{
+          'proxies': [
+            {
+              'name': 'HK-01',
+              'type': 'ss',
+              'server': 'hk1.example.com',
+              'port': 443,
+              'password': 'secret',
+            },
+          ],
+        };
+        globalState.config = const Config(
+          themeProps: defaultThemeProps,
+          profiles: [profile],
+          currentProfileId: 'p1',
+        );
+        var runtimeReads = 0;
+        final container = ProviderContainer(
+          overrides: [
+            nodeOverviewEnabledProvider.overrideWithValue(true),
+            nodeRuntimeReaderProvider.overrideWithValue(() async {
+              runtimeReads++;
+              return rawConfig;
+            }),
+            nodeCatalogServiceFactoryProvider.overrideWithValue(
+              () => NodeCatalogService(
+                readProfileConfig: (_) async => rawConfig,
+                evaluate: (raw) async => raw,
+                fileMetadata: (_) async => (modifiedMicros: 1, size: 1),
+                scriptFingerprint: () => '',
+              ),
+            ),
+          ],
+        );
+        addTearDown(container.dispose);
+
+        final sub = container.listen(activeNodeCatalogProvider, (_, __) {});
+        addTearDown(sub.close);
+
+        await container.read(verifiedNodeRuntimeProvider.future);
+        expect(runtimeReads, 1);
+        expect(container.read(activeNodeCatalogProvider)?.profileId, 'p1');
+
+        // Simulate 5 periodic 60s updateGroups() ticks advancing versionProvider.
+        for (var i = 0; i < 5; i++) {
+          container.read(versionProvider.notifier).value =
+              container.read(versionProvider) + 1;
+          await Future<void>.delayed(Duration.zero);
+        }
+        expect(
+          runtimeReads,
+          1,
+          reason:
+              'Periodic 60s group refreshes (versionProvider) must not re-pull fcx://runtime or re-hash catalog nodes',
+        );
+
+        // Actual runtime config commit/clear advances runtimeConfigEpoch -> must refresh.
+        globalState.clearRuntimeSetup();
+        await Future<void>.delayed(Duration.zero);
+        await container.read(verifiedNodeRuntimeProvider.future);
+        expect(runtimeReads, 2);
+      },
+    );
   });
 }
 

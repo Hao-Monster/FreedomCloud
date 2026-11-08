@@ -328,6 +328,7 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
   Timer? _clock;
   bool _tickerEnabled = true;
   bool _clockPaused = false;
+  bool _pendingCountryScanOnResume = false;
   late final NodeCatalogTester _tester;
   String? _feedback;
 
@@ -390,6 +391,11 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
   void _scheduleCountryIndexScan() {
     if (_disposed || !mounted) return;
     if (!ref.read(nodeOverviewEnabledProvider)) return;
+    if (!_tickerEnabled || !uiActivity.value) {
+      _pendingCountryScanOnResume = true;
+      return;
+    }
+    _pendingCountryScanOnResume = false;
     _pumpCountryIndexWorkers(_scanEpoch);
   }
 
@@ -398,6 +404,10 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
         !mounted ||
         epoch.cancelled ||
         !identical(epoch, _scanEpoch)) {
+      return;
+    }
+    if (!_tickerEnabled || !uiActivity.value) {
+      _pendingCountryScanOnResume = true;
       return;
     }
     final profiles = ref.read(profilesProvider);
@@ -590,6 +600,9 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
     });
     if (resumed && refreshOnResume && mounted) {
       setState(() {});
+    }
+    if (_pendingCountryScanOnResume && mounted) {
+      _scheduleCountryIndexScan();
     }
   }
 

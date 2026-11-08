@@ -446,7 +446,11 @@ class GlobalState {
   String? lastRuntimeProfileId;
   Map<String, String>? lastRuntimeSelectedMap;
   String? lastRuntimeTestUrl;
-  int runtimeConfigEpoch = 0;
+  final ValueNotifier<int> runtimeConfigEpochNotifier = ValueNotifier<int>(0);
+  int get runtimeConfigEpoch => runtimeConfigEpochNotifier.value;
+  set runtimeConfigEpoch(int value) {
+    runtimeConfigEpochNotifier.value = value;
+  }
   // Effective external-controller endpoint after merging subscription value
   // over UI defaults. Empty string means disabled. Subscription value wins if
   // present, otherwise falls back to the UI toggle default.

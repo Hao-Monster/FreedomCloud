@@ -610,6 +610,14 @@ final nodeRuntimeReaderProvider =
           return Map<String, dynamic>.from(result.data as Map);
         });
 
+final runtimeConfigEpochProvider = Provider<int>((ref) {
+  final notifier = globalState.runtimeConfigEpochNotifier;
+  void handleEpochChanged() => ref.invalidateSelf();
+  notifier.addListener(handleEpochChanged);
+  ref.onDispose(() => notifier.removeListener(handleEpochChanged));
+  return notifier.value;
+});
+
 // Keep the exact read future separate from AsyncValue: a request must complete
 // with its original read even when Riverpod replaces the displayed future.
 final Provider<NodeRuntimeRead> nodeRuntimeReadProvider =
@@ -622,7 +630,7 @@ final Provider<NodeRuntimeRead> nodeRuntimeReadProvider =
       ref.watch(profilesProvider.select((profiles) => profiles.getProfile(id)));
   ref
     ..watch(scriptStateProvider.select((state) => state.currentScript))
-    ..watch(versionProvider);
+    ..watch(runtimeConfigEpochProvider);
   if (profile == null || profile.isUpdating) {
     return NodeRuntimeRead((_) => Future.value());
   }
@@ -649,8 +657,13 @@ final Provider<NodeRuntimeRead> nodeRuntimeReadProvider =
   });
   // Revoke immediately, even before Riverpod schedules a rebuild/frame. This
   // also catches A -> B -> A and deletion/recreation with the same profile id.
+  final epochNotifier = globalState.runtimeConfigEpochNotifier;
+  epochNotifier.addListener(read.invalidate);
   ref
-    ..onDispose(read.invalidate)
+    ..onDispose(() {
+      epochNotifier.removeListener(read.invalidate);
+      read.invalidate();
+    })
     ..listen(currentProfileIdProvider, (_, __) => read.invalidate())
     ..listen(profilesProvider, (previous, next) {
       if (previous?.getProfile(id) != next.getProfile(id)) read.invalidate();
@@ -658,7 +671,7 @@ final Provider<NodeRuntimeRead> nodeRuntimeReadProvider =
     ..listen(scriptStateProvider, (previous, next) {
       if (previous?.currentScript != next.currentScript) read.invalidate();
     })
-    ..listen(versionProvider, (_, __) => read.invalidate());
+    ..listen(runtimeConfigEpochProvider, (_, __) => read.invalidate());
   return read;
 });
 
