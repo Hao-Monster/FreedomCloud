@@ -5,6 +5,19 @@ use std::time::{Duration, Instant};
 pub(super) trait ManagedProcess {
     fn has_exited(&mut self) -> io::Result<bool>;
     fn request_kill(&mut self) -> io::Result<()>;
+    fn wait_for_exit(&mut self, timeout: Duration) -> io::Result<bool> {
+        let deadline = Instant::now() + timeout;
+        loop {
+            if self.has_exited()? {
+                return Ok(true);
+            }
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Ok(false);
+            }
+            std::thread::sleep(remaining.min(Duration::from_millis(10)));
+        }
+    }
 }
 
 impl ManagedProcess for Child {
@@ -14,6 +27,31 @@ impl ManagedProcess for Child {
 
     fn request_kill(&mut self) -> io::Result<()> {
         self.kill()
+    }
+
+    #[cfg(windows)]
+    fn wait_for_exit(&mut self, timeout: Duration) -> io::Result<bool> {
+        use std::os::windows::io::AsRawHandle;
+        use windows_sys::Win32::Foundation::{WAIT_FAILED, WAIT_OBJECT_0, WAIT_TIMEOUT};
+        use windows_sys::Win32::System::Threading::WaitForSingleObject;
+
+        if self.has_exited()? {
+            return Ok(true);
+        }
+        let wait_ms = u32::try_from(timeout.as_millis()).unwrap_or(u32::MAX - 1);
+        // SAFETY: `self` owns a valid Windows process handle for the duration of the wait.
+        let wait_status = unsafe { WaitForSingleObject(self.as_raw_handle() as _, wait_ms) };
+        match wait_status {
+            WAIT_OBJECT_0 => {
+                let _ = self.try_wait()?;
+                Ok(true)
+            }
+            WAIT_TIMEOUT => self.has_exited(),
+            WAIT_FAILED => Err(io::Error::last_os_error()),
+            other => Err(io::Error::other(format!(
+                "unexpected WaitForSingleObject status 0x{other:08x}"
+            ))),
+        }
     }
 }
 
@@ -134,20 +172,14 @@ pub(super) fn stop_managed_process<P: ManagedProcess>(
         }
         return Err(format!("Core kill failed: {error}"));
     }
-    let deadline = Instant::now() + wait_limit;
-    loop {
-        if child
-            .has_exited()
-            .map_err(|error| format!("wait for Core exit failed: {error}"))?
-        {
-            *process = None;
-            return Ok(());
-        }
-        if Instant::now() >= deadline {
-            return Err("Core stop timed out; exit remains unconfirmed".to_owned());
-        }
-        std::thread::sleep(Duration::from_millis(10));
+    if child
+        .wait_for_exit(wait_limit)
+        .map_err(|error| format!("wait for Core exit failed: {error}"))?
+    {
+        *process = None;
+        return Ok(());
     }
+    Err("Core stop timed out; exit remains unconfirmed".to_owned())
 }
 
 #[cfg(test)]
@@ -168,6 +200,17 @@ mod tests {
         fn request_kill(&mut self) -> io::Result<()> {
             self.kill_calls += 1;
             std::mem::replace(&mut self.kill_result, Ok(()))
+        }
+        fn wait_for_exit(&mut self, timeout: Duration) -> io::Result<bool> {
+            let deadline = Instant::now() + timeout;
+            loop {
+                if self.has_exited()? {
+                    return Ok(true);
+                }
+                if Instant::now() >= deadline || self.observations.is_empty() {
+                    return Ok(false);
+                }
+            }
         }
     }
 
@@ -309,5 +352,17 @@ mod tests {
             assert!(core.prepare_start(Some(&format!("{}-2", "a".repeat(64))), Duration::ZERO).is_err());
             assert!(core.stop_for_service(Duration::ZERO).is_ok());
         }
+    }
+
+    #[test]
+    fn stop_managed_process_wakes_immediately_without_fixed_10ms_polling_sleep() {
+        let mut process = fixture(vec![Ok(false), Ok(false), Ok(true)], Ok(()));
+        let started = Instant::now();
+        assert!(stop_managed_process(&mut process, Duration::from_millis(250)).is_ok());
+        assert!(
+            started.elapsed() < Duration::from_millis(5),
+            "process exit wait slept {:?} instead of event-driven wakeup",
+            started.elapsed()
+        );
     }
 }

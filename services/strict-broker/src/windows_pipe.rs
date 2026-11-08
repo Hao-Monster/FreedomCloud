@@ -44,7 +44,7 @@ use windows_sys::Win32::System::Pipes::{
 };
 use windows_sys::Win32::System::Threading::{
     CreateEventW, GetCurrentProcess, GetCurrentThread, OpenProcessToken, OpenThreadToken,
-    WaitForSingleObject,
+    ResetEvent, WaitForSingleObject,
 };
 use windows_sys::Win32::System::IO::{CancelIoEx, GetOverlappedResult, OVERLAPPED};
 
@@ -656,19 +656,42 @@ enum IoCompletion {
     MoreData(u32),
 }
 
-fn run_overlapped(
-    handle: *mut c_void,
-    timeout: Duration,
-    label: &str,
-    operation: impl FnOnce(*mut OVERLAPPED, *mut u32) -> i32,
-) -> Result<IoCompletion> {
+thread_local! {
+    static OVERLAPPED_EVENT: std::cell::RefCell<Option<OwnedHandle>> = const { std::cell::RefCell::new(None) };
+}
+
+fn checkout_overlapped_event() -> Result<OwnedHandle> {
+    if let Some(cached) = OVERLAPPED_EVENT.with(|slot| slot.borrow_mut().take()) {
+        // SAFETY: `cached` is a valid manual-reset event owned exclusively by this thread.
+        if unsafe { ResetEvent(raw_handle(&cached)) } != 0 {
+            return Ok(cached);
+        }
+    }
     // SAFETY: no custom security descriptor or name is supplied.
     let event = unsafe { CreateEventW(null(), 1, 0, null()) };
     if event.is_null() {
         return Err(io::Error::last_os_error()).context("create strict Broker I/O event");
     }
     // SAFETY: CreateEventW returned a unique owned handle.
-    let event = unsafe { OwnedHandle::from_raw_handle(event) };
+    Ok(unsafe { OwnedHandle::from_raw_handle(event) })
+}
+
+fn return_overlapped_event(event: OwnedHandle) {
+    OVERLAPPED_EVENT.with(|slot| {
+        let mut cached = slot.borrow_mut();
+        if cached.is_none() {
+            *cached = Some(event);
+        }
+    });
+}
+
+fn run_overlapped(
+    handle: *mut c_void,
+    timeout: Duration,
+    label: &str,
+    operation: impl FnOnce(*mut OVERLAPPED, *mut u32) -> i32,
+) -> Result<IoCompletion> {
+    let event = checkout_overlapped_event()?;
     let mut overlapped = OVERLAPPED {
         hEvent: raw_handle(&event),
         ..OVERLAPPED::default()
@@ -676,14 +699,22 @@ fn run_overlapped(
     let mut immediate_bytes = 0_u32;
     let result = operation(&mut overlapped, &mut immediate_bytes);
     if result != 0 {
+        return_overlapped_event(event);
         return Ok(IoCompletion::Complete(immediate_bytes));
     }
     let error = io::Error::last_os_error();
     match error.raw_os_error().map(|value| value as u32) {
-        Some(ERROR_PIPE_CONNECTED) => return Ok(IoCompletion::Complete(0)),
-        Some(ERROR_MORE_DATA) => return Ok(IoCompletion::MoreData(immediate_bytes)),
+        Some(ERROR_PIPE_CONNECTED) => {
+            return_overlapped_event(event);
+            return Ok(IoCompletion::Complete(0));
+        }
+        Some(ERROR_MORE_DATA) => {
+            return_overlapped_event(event);
+            return Ok(IoCompletion::MoreData(immediate_bytes));
+        }
         Some(ERROR_IO_PENDING) => {}
         _ => {
+            return_overlapped_event(event);
             return Err(error).with_context(|| format!("start strict Broker named-pipe {label}"));
         }
     }
@@ -705,7 +736,9 @@ fn run_overlapped(
         return Err(wait_error)
             .with_context(|| format!("wait for strict Broker named-pipe {label}"));
     }
-    overlapped_completion(handle, &overlapped, label)
+    let completion = overlapped_completion(handle, &overlapped, label);
+    return_overlapped_event(event);
+    completion
 }
 
 #[derive(Debug)]

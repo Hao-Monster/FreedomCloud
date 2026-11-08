@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::process::Stdio;
@@ -6,8 +7,13 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{anyhow, bail, Context, Result};
+use serde::de::IgnoredAny;
+use serde::Deserialize;
 use serde_json::{json, Value};
-use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader};
+use tokio::io::{
+    AsyncBufRead, AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader,
+    BufWriter,
+};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::process::{Child, Command};
 use tokio::sync::{mpsc, oneshot, Mutex, Notify, OwnedSemaphorePermit, RwLock, Semaphore};
@@ -158,6 +164,8 @@ struct Shared {
     #[cfg(windows)]
     strict_runtime: Mutex<Option<Arc<StrictRuntime>>>,
     #[cfg(windows)]
+    strict_wakeup: Notify,
+    #[cfg(windows)]
     strict_store: Mutex<Option<crate::strict_store::StrictIntentStore>>,
 }
 
@@ -250,6 +258,8 @@ async fn apply_supervisor_end(
 fn signal_shutdown(shared: &Shared) {
     shared.shutting_down.store(true, Ordering::Release);
     shared.shutdown.notify_waiters();
+    #[cfg(windows)]
+    shared.strict_wakeup.notify_waiters();
 }
 
 async fn set_strict_policy(
@@ -262,6 +272,8 @@ async fn set_strict_policy(
     status.state = state;
     status.failure_reason = failure_reason;
     drop(status);
+    #[cfg(windows)]
+    shared.strict_wakeup.notify_waiters();
     publish_strict_status(shared).await;
 }
 
@@ -587,6 +599,7 @@ async fn apply_strict_policy(shared: &Arc<Shared>, raw: Option<Value>) -> bool {
         }
         *current = Some(runtime.clone());
     }
+    shared.strict_wakeup.notify_waiters();
     set_strict_policy(shared, crate::protocol::StrictPolicyState::Preparing, None).await;
     drive_strict_action(shared, runtime, action).await
 }
@@ -608,6 +621,7 @@ async fn restore_strict_intent(shared: &Arc<Shared>, intent: crate::strict_store
     let action = runtime.orchestrator.lock().await.restore_disable(intent.policy);
     if let Ok(action) = action {
         *shared.strict_runtime.lock().await = Some(runtime.clone());
+        shared.strict_wakeup.notify_waiters();
         let _ = drive_strict_action(shared, runtime, action).await;
     } else {
         shared.logger.log("persisted strict disable intent could not be restored");
@@ -907,13 +921,37 @@ fn strict_target_key(path: &str) -> String {
 #[cfg(windows)]
 async fn supervise_strict_recovery(shared: Arc<Shared>) {
     let mut last_health_check = Instant::now();
-    let mut timer = tokio::time::interval(Duration::from_secs(1));
-    timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     loop {
-        timer.tick().await;
-        if shared.shutting_down.load(Ordering::Acquire) { break; }
-        if *shared.status.read().await != CoreStatus::Ready { continue; }
-        let Some(runtime) = shared.strict_runtime.lock().await.clone() else { continue; };
+        if shared.shutting_down.load(Ordering::Acquire) {
+            break;
+        }
+        let wakeup = shared.strict_wakeup.notified();
+        tokio::pin!(wakeup);
+        wakeup.as_mut().enable();
+        if shared.shutting_down.load(Ordering::Acquire) {
+            break;
+        }
+        if shared.strict_runtime.lock().await.is_none() {
+            wakeup.await;
+            continue;
+        }
+        if *shared.status.read().await != CoreStatus::Ready {
+            let _ = timeout(Duration::from_secs(1), wakeup).await;
+            continue;
+        }
+        tokio::select! {
+            _ = tokio::time::sleep(Duration::from_secs(1)) => {}
+            _ = &mut wakeup => {}
+        }
+        if shared.shutting_down.load(Ordering::Acquire) {
+            break;
+        }
+        if *shared.status.read().await != CoreStatus::Ready {
+            continue;
+        }
+        let Some(runtime) = shared.strict_runtime.lock().await.clone() else {
+            continue;
+        };
         let mut orchestrator = runtime.orchestrator.lock().await;
         let status = orchestrator.status();
         if status.state == StrictState::Armed && last_health_check.elapsed() >= Duration::from_secs(5) {
@@ -1108,6 +1146,8 @@ pub async fn run(config: AgentConfig) -> Result<()> {
         #[cfg(windows)]
         strict_runtime: Mutex::new(None),
         #[cfg(windows)]
+        strict_wakeup: Notify::new(),
+        #[cfg(windows)]
         strict_store: Mutex::new(strict_store),
     });
     #[cfg(windows)]
@@ -1207,6 +1247,7 @@ async fn handle_ui_admitted(
     shared: Arc<Shared>,
     auth_permit: Option<OwnedSemaphorePermit>,
 ) -> Result<()> {
+    let _ = stream.set_nodelay(true);
     let mut reader = BufReader::new(stream);
     let auth = timeout(UI_AUTH_TIMEOUT, read_bounded_line(&mut reader, MAX_AUTH_LINE_BYTES))
         .await.context("UI authentication timed out")??
@@ -1237,7 +1278,7 @@ async fn handle_ui_admitted(
     }
 
     let session_result: Result<()> = {
-      let writer = write_ui_output(write_half, output_rx, IPC_WRITE_TIMEOUT);
+      let writer = write_ui_output(BufWriter::new(write_half), output_rx, IPC_WRITE_TIMEOUT);
       let handler = async {
         output_tx.send(UiOutput::new(ready_envelope(&shared).await)).await?;
         send_ui_activity(&shared, true).await;
@@ -1366,17 +1407,26 @@ async fn handle_ui_admitted(
                 continue;
             }
 
-            let action = serde_json::from_str::<Value>(line).context("invalid Core action JSON")?;
-            if action.get("id").and_then(Value::as_str).is_none()
-                || action.get("method").and_then(Value::as_str).is_none()
-                || action.get("data").is_none()
-            {
-                bail!("invalid Core action envelope");
+            #[derive(Deserialize)]
+            struct CoreActionEnvelope<'a> {
+                #[serde(borrow)]
+                id: Cow<'a, str>,
+                #[serde(borrow)]
+                #[allow(dead_code)]
+                method: Cow<'a, str>,
+                #[allow(dead_code)]
+                data: IgnoredAny,
             }
+            let envelope = serde_json::from_str::<CoreActionEnvelope<'_>>(line)
+                .context("invalid Core action envelope")?;
             let core = shared.core.lock().await.clone();
             if let Some(core) = core {
                 #[cfg(target_os = "macos")]
-                shared.mac_strict_replay.lock().await.stage(&action)?;
+                {
+                    let action =
+                        serde_json::from_str::<Value>(line).context("invalid Core action JSON")?;
+                    shared.mac_strict_replay.lock().await.stage(&action)?;
+                }
                 shared.journal.lock().await.stage(line);
                 if !matches!(timeout(IPC_ENQUEUE_TIMEOUT, core.send(line.to_owned())).await, Ok(Ok(()))) {
                     #[cfg(target_os = "macos")]
@@ -1390,7 +1440,7 @@ async fn handle_ui_admitted(
                         "type": "coreUnavailable",
                         "protocol": PROTOCOL_VERSION,
                         "generation": shared.generation.load(Ordering::Acquire),
-                        "id": action["id"],
+                        "id": envelope.id.as_ref(),
                         "coreState": shared.status.read().await.as_str(),
                     }
                 });
@@ -1690,7 +1740,9 @@ async fn supervise_core(
             continue;
         }
 
-        let (read_half, mut write_half) = stream.into_split();
+        let buffered = stream.buffer().to_vec();
+        let (read_half, write_half) = stream.into_inner().into_split();
+        let mut write_half = BufWriter::new(write_half);
         let (core_tx, mut core_rx) = mpsc::channel::<String>(CHANNEL_CAPACITY);
         *shared.core.lock().await = Some(core_tx);
         shared.generation.fetch_add(1, Ordering::AcqRel);
@@ -1701,12 +1753,13 @@ async fn supervise_core(
             while let Some(line) = core_rx.recv().await {
                 timeout(IPC_WRITE_TIMEOUT, async {
                     write_half.write_all(line.as_bytes()).await?;
-                    write_half.write_all(b"\n").await
+                    write_half.write_all(b"\n").await?;
+                    write_half.flush().await
                 }).await.context("Core output timed out")??;
             }
             Result::<()>::Ok(())
         });
-        let mut reader = BufReader::new(read_half);
+        let mut reader = BufReader::new(std::io::Cursor::new(buffered).chain(read_half));
         let session_end = loop {
             tokio::select! {
                 result = &mut writer => {
@@ -1883,17 +1936,21 @@ async fn fail_closed_strict_core_loss(shared: &Arc<Shared>) {
 
 #[cfg(windows)]
 async fn handle_strict_core_line(shared: &Arc<Shared>, line: &str) -> bool {
-    let Ok(value) = serde_json::from_str::<Value>(line) else {
-        return false;
-    };
-    let Some(id) = value.get("id").and_then(Value::as_str) else {
-        return false;
-    };
     let Some(runtime) = shared.strict_runtime.lock().await.clone() else {
         return false;
     };
-    let pending = runtime.pending_core_id.lock().await.clone();
-    if pending.as_deref() != Some(id) {
+    let Some(expected_id) = runtime.pending_core_id.lock().await.clone() else {
+        return false;
+    };
+    #[derive(Deserialize)]
+    struct CoreIdProbe<'a> {
+        #[serde(borrow, default)]
+        id: Option<Cow<'a, str>>,
+    }
+    let Ok(probe) = serde_json::from_str::<CoreIdProbe<'_>>(line) else {
+        return false;
+    };
+    if probe.id.as_deref() != Some(expected_id.as_str()) {
         return false;
     }
     *runtime.pending_core_id.lock().await = None;
@@ -2132,6 +2189,7 @@ async fn helper_request_raw(port: u16, path: &str, body: Option<Value>) -> Resul
     )
     .await
     .context("Helper connection timed out")??;
+    let _ = stream.set_nodelay(true);
     let request = format!(
         "{method} {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
         body.len()
@@ -2163,7 +2221,7 @@ async fn helper_request_raw(port: u16, path: &str, body: Option<Value>) -> Resul
     Ok(body.to_owned())
 }
 
-async fn accept_core(listener: &TcpListener, expected_token: &str) -> Result<TcpStream> {
+async fn accept_core(listener: &TcpListener, expected_token: &str) -> Result<BufReader<TcpStream>> {
     let deadline = Instant::now() + CORE_CONNECT_TIMEOUT;
     loop {
         let remaining = deadline.saturating_duration_since(Instant::now());
@@ -2176,6 +2234,7 @@ async fn accept_core(listener: &TcpListener, expected_token: &str) -> Result<Tcp
         if !address.ip().is_loopback() {
             continue;
         }
+        let _ = stream.set_nodelay(true);
         let mut reader = BufReader::new(stream);
         let Some(line) = timeout(remaining, read_bounded_line(&mut reader, MAX_AUTH_LINE_BYTES))
             .await.context("Core authentication timed out")?? else {
@@ -2189,7 +2248,7 @@ async fn accept_core(listener: &TcpListener, expected_token: &str) -> Result<Tcp
             };
             timeout(remaining, reader.get_mut().write_all(reply.as_bytes()))
                 .await.context("macOS Core authentication reply timed out")??;
-            return Ok(reader.into_inner());
+            return Ok(reader);
         }
         #[cfg(not(target_os = "macos"))]
         let valid = serde_json::from_str::<Value>(line.trim_end())
@@ -2204,7 +2263,7 @@ async fn accept_core(listener: &TcpListener, expected_token: &str) -> Result<Tcp
             .is_some_and(|token| crate::protocol::constant_time_eq(&token, expected_token));
         #[cfg(not(target_os = "macos"))]
         if valid {
-            return Ok(reader.into_inner());
+            return Ok(reader);
         }
     }
 }
@@ -2239,7 +2298,7 @@ fn mac_core_handshake_reply(line: &str, token: &str) -> Result<String> {
     Ok(format!("{}\n", json!({"_macCore": {"protocol": 1, "nonce": nonce, "proof": proof}})))
 }
 
-async fn replay_journal(stream: &mut TcpStream, shared: &Arc<Shared>) -> Result<()> {
+async fn replay_journal(reader: &mut BufReader<TcpStream>, shared: &Arc<Shared>) -> Result<()> {
     let lines = shared.journal.lock().await.replay_lines();
     for line in lines {
         let action = serde_json::from_str::<Value>(&line)?;
@@ -2247,11 +2306,13 @@ async fn replay_journal(stream: &mut TcpStream, shared: &Arc<Shared>) -> Result<
             .as_str()
             .context("replay action has no id")?
             .to_owned();
-        stream.write_all(line.as_bytes()).await?;
-        stream.write_all(b"\n").await?;
+        let mut framed = Vec::with_capacity(line.len() + 1);
+        framed.extend_from_slice(line.as_bytes());
+        framed.push(b'\n');
+        reader.get_mut().write_all(&framed).await?;
         timeout(CORE_REPLAY_TIMEOUT, async {
             loop {
-                let response = read_line_bytewise(stream, MAX_MESSAGE_LINE_BYTES)
+                let response = read_bounded_line(reader, MAX_MESSAGE_LINE_BYTES)
                     .await?
                     .context("Core disconnected during replay")?;
                 let value = serde_json::from_str::<Value>(response.trim_end())?;
@@ -2275,11 +2336,13 @@ async fn replay_journal(stream: &mut TcpStream, shared: &Arc<Shared>) -> Result<
     };
     #[cfg(target_os = "macos")]
     if let Some(line) = strict_replay {
-        stream.write_all(line.as_bytes()).await?;
-        stream.write_all(b"\n").await?;
+        let mut framed = Vec::with_capacity(line.len() + 1);
+        framed.extend_from_slice(line.as_bytes());
+        framed.push(b'\n');
+        reader.get_mut().write_all(&framed).await?;
         let response = timeout(CORE_REPLAY_TIMEOUT, async {
             loop {
-                let line = read_line_bytewise(stream, MAX_MESSAGE_LINE_BYTES).await?
+                let line = read_bounded_line(reader, MAX_MESSAGE_LINE_BYTES).await?
                     .context("Core disconnected during strict ingress recovery")?;
                 let value: Value = serde_json::from_str(&line)?;
                 if value.get("id").and_then(Value::as_str) == Some(if strict_stopped { "_agent-macos-strict-intent" } else { "_agent-macos-strict-replay" }) {
@@ -2296,28 +2359,6 @@ async fn replay_journal(stream: &mut TcpStream, shared: &Arc<Shared>) -> Result<
         }
     }
     Ok(())
-}
-
-async fn read_line_bytewise(stream: &mut TcpStream, max: usize) -> Result<Option<String>> {
-    let mut bytes = Vec::new();
-    let mut byte = [0_u8; 1];
-    loop {
-        let count = stream.read(&mut byte).await?;
-        if count == 0 {
-            return if bytes.is_empty() {
-                Ok(None)
-            } else {
-                bail!("truncated IPC line")
-            };
-        }
-        bytes.push(byte[0]);
-        if bytes.len() > max {
-            bail!("IPC line exceeded {max} bytes");
-        }
-        if byte[0] == b'\n' {
-            return Ok(Some(String::from_utf8(bytes)?));
-        }
-    }
 }
 
 async fn read_bounded_line<R>(reader: &mut R, max: usize) -> Result<Option<String>>
@@ -2363,6 +2404,10 @@ async fn send_ui_activity(shared: &Arc<Shared>, active: bool) {
 
 async fn set_status(shared: &Arc<Shared>, status: CoreStatus) {
     *shared.status.write().await = status;
+    #[cfg(windows)]
+    if status == CoreStatus::Ready {
+        shared.strict_wakeup.notify_waiters();
+    }
     // `null` means no explicit listener decision has been observed yet, so a
     // first UI launch may still apply its auto-run preference. `false` is
     // reserved for an explicit stopListener action and must survive reattach.
@@ -2476,10 +2521,17 @@ async fn forward_to_ui(shared: &Arc<Shared>, line: String) {
 }
 
 fn is_unsolicited_message(line: &str) -> bool {
-    serde_json::from_str::<Value>(line)
+    if !line.contains("\"message\"") {
+        return false;
+    }
+    #[derive(Deserialize)]
+    struct MethodProbe<'a> {
+        #[serde(borrow, default)]
+        method: Option<Cow<'a, str>>,
+    }
+    serde_json::from_str::<MethodProbe<'_>>(line)
         .ok()
-        .and_then(|value| value.get("method")?.as_str().map(str::to_owned))
-        .is_some_and(|method| method == "message")
+        .is_some_and(|probe| probe.method.as_deref() == Some("message"))
 }
 
 fn crash_delay(attempt: u32) -> Duration {
@@ -2521,6 +2573,8 @@ mod tests {
             strict_blocks: Mutex::new(HashSet::new()),
             #[cfg(windows)]
             strict_runtime: Mutex::new(None),
+            #[cfg(windows)]
+            strict_wakeup: Notify::new(),
             #[cfg(windows)]
             strict_store: Mutex::new(None),
         })
@@ -2985,9 +3039,11 @@ mod tests {
                 .await
                 .record(&json!({"id":"accepted","method":method,"data":"{}"}).to_string());
             let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-            let mut client = TcpStream::connect(listener.local_addr().unwrap())
-                .await
-                .unwrap();
+            let mut client = BufReader::new(
+                TcpStream::connect(listener.local_addr().unwrap())
+                    .await
+                    .unwrap(),
+            );
             let (server, _) = listener.accept().await.unwrap();
             let core = tokio::spawn(async move {
                 let mut reader = BufReader::new(server);
@@ -3400,5 +3456,32 @@ mod tests {
         assert!(!complete_strict_mutation(&shared, async { false }).await);
         assert!(complete_strict_mutation(&shared, async { true }).await);
         assert_eq!(shared.strict_mutations.available_permits(), 1);
+    }
+
+    #[tokio::test]
+    async fn accept_core_preserves_pipelined_frames_sent_with_handshake() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let token = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        let core_client = tokio::spawn(async move {
+            let mut conn = TcpStream::connect(addr).await.unwrap();
+            let payload = format!(
+                "{{\"_agentCore\":{{\"token\":\"{token}\"}}}}\n{{\"id\":\"pipe-1\",\"method\":\"message\",\"code\":0,\"data\":{{\"type\":\"Log\"}}}}\n"
+            );
+            conn.write_all(payload.as_bytes()).await.unwrap();
+            conn
+        });
+
+        let mut reader = accept_core(&listener, token).await.unwrap();
+        let _peer = core_client.await.unwrap();
+        let pipelined = timeout(
+            Duration::from_millis(150),
+            read_bounded_line(&mut reader, MAX_MESSAGE_LINE_BYTES),
+        )
+        .await
+        .expect("pipelined frame after Core handshake was lost")
+        .unwrap()
+        .unwrap();
+        assert!(pipelined.contains("\"pipe-1\""));
     }
 }

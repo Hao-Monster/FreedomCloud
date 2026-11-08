@@ -1,7 +1,7 @@
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::fs::{self, File};
+use std::fs::File;
 use std::io::{BufRead, Error, Read};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -53,10 +53,12 @@ pub struct StrictBlockParams {
     pub helper_token: String,
 }
 
+const SHA256_BUFFER_BYTES: usize = 256 * 1024;
+
 fn sha256_file(path: impl AsRef<Path>) -> Result<String, Error> {
     let mut file = File::open(path)?;
     let mut hasher = Sha256::new();
-    let mut buffer = [0; 4096];
+    let mut buffer = vec![0_u8; SHA256_BUFFER_BYTES];
 
     loop {
         let bytes_read = file.read(&mut buffer)?;
@@ -148,16 +150,13 @@ pub(crate) fn validate_home_directory(value: Option<String>) -> Result<PathBuf, 
     Ok(canonical)
 }
 
-fn constant_time_eq(left: &str, right: &str) -> bool {
-    let left = left.as_bytes();
-    let right = right.as_bytes();
+fn constant_time_eq_ascii_case_insensitive(left: &[u8], right: &[u8]) -> bool {
     let mut difference = left.len() ^ right.len();
     let max_len = left.len().max(right.len());
     for index in 0..max_len {
-        difference |= usize::from(
-            left.get(index).copied().unwrap_or_default()
-                ^ right.get(index).copied().unwrap_or_default(),
-        );
+        let l = left.get(index).copied().unwrap_or_default().to_ascii_lowercase();
+        let r = right.get(index).copied().unwrap_or_default().to_ascii_lowercase();
+        difference |= usize::from(l ^ r);
     }
     difference == 0
 }
@@ -167,15 +166,19 @@ pub(crate) fn validate_helper_token(home_dir: &Path, provided: &str) -> Result<(
         return Err("invalid Helper credential".to_string());
     }
     let path = home_dir.join(HELPER_TOKEN_FILE_NAME);
-    let metadata = fs::metadata(&path).map_err(|_| "invalid Helper credential".to_string())?;
+    let mut file = File::open(&path).map_err(|_| "invalid Helper credential".to_string())?;
+    let metadata = file
+        .metadata()
+        .map_err(|_| "invalid Helper credential".to_string())?;
     if !metadata.is_file() || metadata.len() != 64 {
         return Err("invalid Helper credential".to_string());
     }
-    let expected = fs::read_to_string(path).map_err(|_| "invalid Helper credential".to_string())?;
-    if !constant_time_eq(
-        &provided.to_ascii_lowercase(),
-        &expected.to_ascii_lowercase(),
-    ) {
+    let mut expected = [0_u8; 64];
+    file.read_exact(&mut expected)
+        .map_err(|_| "invalid Helper credential".to_string())?;
+    if !expected.iter().all(|byte| byte.is_ascii_hexdigit())
+        || !constant_time_eq_ascii_case_insensitive(provided.as_bytes(), &expected)
+    {
         return Err("invalid Helper credential".to_string());
     }
     Ok(())
@@ -572,6 +575,21 @@ fn metadata_routes() -> impl Filter<Extract = (impl Reply,), Error = warp::Rejec
     ping.or(capabilities)
 }
 
+async fn run_blocking_reply<F, R>(operation: F) -> Result<warp::reply::Response, std::convert::Infallible>
+where
+    F: FnOnce() -> R + Send + 'static,
+    R: Reply + Send + 'static,
+{
+    match tokio::task::spawn_blocking(operation).await {
+        Ok(reply) => Ok(reply.into_response()),
+        Err(_) => Ok(warp::reply::with_status(
+            "helper worker failed",
+            warp::http::StatusCode::INTERNAL_SERVER_ERROR,
+        )
+        .into_response()),
+    }
+}
+
 fn control_routes(
     logger: Arc<ServiceLogger>,
 ) -> impl Filter<Extract = (impl Reply,), Error = warp::Rejection> + Clone {
@@ -581,7 +599,10 @@ fn control_routes(
         .and(warp::path::end())
         .and(warp::body::content_length_limit(MAX_REQUEST_BYTES))
         .and(warp::body::json())
-        .map(move |start_params: StartParams| start(start_params, start_logger.clone()));
+        .and_then(move |start_params: StartParams| {
+            let logger = start_logger.clone();
+            run_blocking_reply(move || start(start_params, logger).into_response())
+        });
 
     let stop_logger = logger.clone();
     let api_stop = warp::post()
@@ -589,7 +610,10 @@ fn control_routes(
         .and(warp::path::end())
         .and(warp::body::content_length_limit(MAX_REQUEST_BYTES))
         .and(warp::body::json())
-        .map(move |stop_params: StopParams| stop(stop_params, stop_logger.clone()));
+        .and_then(move |stop_params: StopParams| {
+            let logger = stop_logger.clone();
+            run_blocking_reply(move || stop(stop_params, logger).into_response())
+        });
 
     api_start.or(api_stop)
 }
@@ -616,9 +640,10 @@ pub async fn run_service(logger: Arc<ServiceLogger>) -> anyhow::Result<()> {
             .and(warp::path::end())
             .and(warp::body::content_length_limit(MAX_REQUEST_BYTES))
             .and(warp::body::json())
-            .map(
+            .and_then(
                 move |params: crate::service::identity::InspectStrictIdentityParams| {
-                    strict_inspect(params, inspect_logger.clone())
+                    let logger = inspect_logger.clone();
+                    run_blocking_reply(move || strict_inspect(params, logger))
                 },
             );
         let block_logger = logger.clone();
@@ -628,7 +653,10 @@ pub async fn run_service(logger: Arc<ServiceLogger>) -> anyhow::Result<()> {
             .and(warp::path::end())
             .and(warp::body::content_length_limit(MAX_REQUEST_BYTES))
             .and(warp::body::json())
-            .map(move |params: StrictBlockParams| strict_block(params, block_logger.clone()));
+            .and_then(move |params: StrictBlockParams| {
+                let logger = block_logger.clone();
+                run_blocking_reply(move || strict_block(params, logger).into_response())
+            });
         let clear_logger = logger.clone();
         let api_clear = warp::post()
             .and(warp::path("strict"))
@@ -636,7 +664,10 @@ pub async fn run_service(logger: Arc<ServiceLogger>) -> anyhow::Result<()> {
             .and(warp::path::end())
             .and(warp::body::content_length_limit(MAX_REQUEST_BYTES))
             .and(warp::body::json())
-            .map(move |params: StrictBlockParams| strict_clear(params, clear_logger.clone()));
+            .and_then(move |params: StrictBlockParams| {
+                let logger = clear_logger.clone();
+                run_blocking_reply(move || strict_clear(params, logger).into_response())
+            });
         api_metadata
             .or(api_control)
             .or(api_inspect)
@@ -999,7 +1030,26 @@ mod tests {
         fs::write(app_home.join(HELPER_TOKEN_FILE_NAME), &token).expect("write token");
 
         assert!(validate_helper_token(&app_home, &token).is_ok());
+        assert!(validate_helper_token(&app_home, &token.to_ascii_uppercase()).is_ok());
         assert!(validate_helper_token(&app_home, &"b".repeat(64)).is_err());
         assert!(validate_helper_token(&app_home, "short").is_err());
+    }
+
+    #[test]
+    fn sha256_file_hashes_multi_chunk_payloads_accurately() {
+        use sha2::{Digest, Sha256};
+
+        let root = TempDir::new();
+        let target = root.path().join("multi-chunk.bin");
+        let payload = (0..(SHA256_BUFFER_BYTES * 2 + 17_123))
+            .map(|index| ((index * 31 + 7) & 0xff) as u8)
+            .collect::<Vec<_>>();
+        fs::write(&target, &payload).expect("write test payload");
+
+        let mut expected_hasher = Sha256::new();
+        expected_hasher.update(&payload);
+        let expected = format!("{:x}", expected_hasher.finalize());
+
+        assert_eq!(sha256_file(&target).expect("hash file"), expected);
     }
 }

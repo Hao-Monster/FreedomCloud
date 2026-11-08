@@ -5,7 +5,7 @@ use std::ffi::OsString;
 use std::future::Future;
 use std::time::Duration;
 
-use tokio::runtime::Runtime;
+use tokio::runtime::Builder;
 
 use windows_service::{
     define_windows_service,
@@ -43,7 +43,11 @@ define_windows_service!(serveice, service_main);
 
 pub fn service_main(_arguments: Vec<OsString>) {
     let logger = ServiceLogger::new_default();
-    match Runtime::new() {
+    let runtime = Builder::new_current_thread()
+        .max_blocking_threads(4)
+        .enable_all()
+        .build();
+    match runtime {
         Ok(rt) => {
             if let Err(error) = rt.block_on(run_windows_service(logger.clone())) {
                 logger.log(format!("service main failed: {error:#}"));

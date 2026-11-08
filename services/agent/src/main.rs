@@ -1,6 +1,6 @@
 use flclash_agent::{config::AgentConfig, logging, runtime};
 
-#[tokio::main(flavor = "multi_thread", worker_threads = 2)]
+#[tokio::main(flavor = "current_thread")]
 async fn main() {
     let result = match AgentConfig::parse() {
         Ok(config) => runtime::run(config).await,
