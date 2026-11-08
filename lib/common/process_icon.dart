@@ -94,8 +94,24 @@ class WindowsProcessIconLoader {
         );
 
   final ProcessIconQueue<ImageProvider> _queue;
+  int _activeConsumers = 0;
 
   Listenable get capacityChanges => _queue;
+
+  void retainActiveConsumer() {
+    if (_activeConsumers == 0) {
+      _queue.clearNegativeCache();
+    }
+    _activeConsumers++;
+  }
+
+  void releaseActiveConsumer() {
+    if (_activeConsumers <= 0) return;
+    _activeConsumers--;
+    if (_activeConsumers == 0) {
+      _queue.clearNegativeCache();
+    }
+  }
 
   ProcessIconLease<ImageProvider>? acquire(String processPath) =>
       _queue.acquire(
@@ -103,7 +119,10 @@ class WindowsProcessIconLoader {
         source: processPath.trim(),
       );
 
-  void dispose() => _queue.dispose();
+  void dispose() {
+    _activeConsumers = 0;
+    _queue.dispose();
+  }
 }
 
 String normalizeWindowsIconPath(String path) {

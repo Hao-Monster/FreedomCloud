@@ -72,6 +72,10 @@ class ProcessIconQueue<V extends Object> extends ChangeNotifier {
   int get activeCount => _active == null ? 0 : 1;
   int get cachedCount => _cache.length;
 
+  void clearNegativeCache() {
+    _negativeCache.clear();
+  }
+
   /// Null means retry later, not a negative icon result. The caller owns any
   /// capacity listener and must remove it when no longer interested.
   ProcessIconLease<V>? acquire(String key, {String? source}) {

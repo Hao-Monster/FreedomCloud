@@ -18,6 +18,7 @@ import 'package:flclashx/models/models.dart';
 import 'package:flclashx/providers/node_overview.dart';
 import 'package:flclashx/providers/providers.dart';
 import 'package:flclashx/state.dart';
+import 'package:flclashx/views/connection/item.dart';
 import 'package:flclashx/views/connection/table.dart';
 import 'package:flclashx/views/dashboard/widgets/memory_info.dart';
 import 'package:flclashx/views/dashboard/widgets/start_button.dart';
@@ -609,6 +610,73 @@ void main() {
       expect(info.image.height, 1);
       await provider.evict();
     });
+
+    testWidgets(
+      'WindowsProcessIconLoader suppresses churning null rows while session stays active and retries after full session exit',
+      (tester) async {
+        var svchostCalls = 0;
+        var chromeCalls = 0;
+        final loader = WindowsProcessIconLoader(
+          load: (path) async {
+            if (path.toLowerCase().contains('svchost')) {
+              svchostCalls++;
+              return null;
+            }
+            chromeCalls++;
+            return null;
+          },
+        );
+        addTearDown(loader.dispose);
+
+        // Session open: anchor row keeps session active while svchost rows churn.
+        for (var tick = 0; tick < 4; tick++) {
+          await tester.pumpWidget(
+            MaterialApp(
+              home: Column(
+                children: [
+                  ProcessIcon.forTestingWindows(
+                    key: const ValueKey('anchor'),
+                    process: 'chrome',
+                    processPath: r'C:\Apps\chrome.exe',
+                    loader: loader,
+                  ),
+                  ProcessIcon.forTestingWindows(
+                    key: ValueKey('churn-$tick'),
+                    process: 'svchost',
+                    processPath: r'C:\Windows\System32\svchost.exe',
+                    loader: loader,
+                  ),
+                ],
+              ),
+            ),
+          );
+          await tester.pumpAndSettle();
+        }
+        expect(chromeCalls, 1);
+        expect(
+          svchostCalls,
+          1,
+          reason:
+              'Churning connection rows while page stays active must reuse negative cache',
+        );
+
+        // Full session exit clears negative cache so re-entry retries cleanly.
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pumpAndSettle();
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: ProcessIcon.forTestingWindows(
+              process: 'svchost',
+              processPath: r'C:\Windows\System32\svchost.exe',
+              loader: loader,
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        expect(svchostCalls, 2);
+      },
+    );
   });
 
   group('P1-2: nodeRuntimeReadProvider 60s versionProvider decoupling', () {
