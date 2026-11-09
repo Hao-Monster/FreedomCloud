@@ -695,10 +695,38 @@ class AppController {
     }
   }
 
+  Future<void> _ensureDeferredWindowsAgentInitialized({
+    bool Function()? isCurrent,
+  }) async {
+    bool current() => isCurrent == null || isCurrent();
+    if (!current()) return;
+    final service = clashService;
+    if (service == null || !service.hasDeferredAgentLaunch) return;
+    final ready = await service.materializeDeferredAgent();
+    if (!ready) throw const TunFailure('componentsMismatch');
+    if (!await clashCore.isInit) {
+      final accepted = await clashCore.init();
+      if (!accepted) throw const TunFailure('configurationFailed');
+    }
+    final stateAccepted = await clashCore.setState(globalState.getCoreState());
+    if (!stateAccepted) throw const TunFailure('configurationFailed');
+    await clashCore.setUiActive(uiActivity.value);
+    if (_ref.read(appSettingProvider).openLogs) {
+      clashCore.startLog();
+    } else {
+      clashCore.stopLog();
+    }
+  }
+
   Future<void> _applyWindowsConfig(Future<String> Function(bool enable) apply,
       {bool Function()? isCurrent, bool explicitTunOperation = false}) async {
     _applyingWindowsConfigDepth++;
     try {
+      if (_windowsStartupEffects == null &&
+          clashService?.hasDeferredAgentLaunch == true) {
+        await _ensureDeferredWindowsAgentInitialized(isCurrent: isCurrent);
+        if (isCurrent != null && !isCurrent()) return;
+      }
       await applyWindowsTunConfiguration(
         componentsMatch: () async =>
             await clashService?.windowsComponentsMatch() ?? false,

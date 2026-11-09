@@ -341,7 +341,19 @@ class GlobalState {
   Map<CacheTag, FixedMap<String, double>> cacheHeightMap = {};
   Timer? timer;
   Timer? groupsUpdateTimer;
-  late Config config;
+  Config? _config;
+  bool get isConfigInitialized => _config != null;
+  Config get config {
+    final value = _config;
+    if (value == null) {
+      throw StateError('GlobalState.config accessed before initialization');
+    }
+    return value;
+  }
+
+  set config(Config value) {
+    _config = value;
+  }
   CompiledRuleResult? lastCompiledRuleResult;
   late AppState _appState;
   bool _appStateInitialized = false;

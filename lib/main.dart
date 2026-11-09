@@ -56,12 +56,14 @@ Future<void> main(List<String> args) async {
   }
 
   final version = await system.version;
-  if (Platform.isAndroid) {
-    await clashCore.preload();
-  } else {
-    unawaited(clashCore.preload().catchError((_) => false));
-  }
-  await globalState.initApp(version);
+  await bootstrapCoreAndState(
+    isAndroid: Platform.isAndroid,
+    // Keep closure so lazy top-level `clashCore`/`clashService` is not evaluated
+    // before `initApp` initializes `globalState.config`.
+    // ignore: unnecessary_lambdas
+    preloadCore: () => clashCore.preload(),
+    initApp: () => globalState.initApp(version),
+  );
   await android?.init();
   await window?.init(version);
 
@@ -78,6 +80,21 @@ Future<void> main(List<String> args) async {
   runApp(const ProviderScope(
     child: Application(),
   ));
+}
+
+@visibleForTesting
+Future<void> bootstrapCoreAndState({
+  required bool isAndroid,
+  required Future<bool> Function() preloadCore,
+  required Future<void> Function() initApp,
+}) async {
+  if (isAndroid) {
+    await preloadCore();
+    await initApp();
+    return;
+  }
+  await initApp();
+  unawaited(preloadCore().catchError((_) => false));
 }
 
 /// Handles start/stop/mode intents coming from the quick-settings tile or the

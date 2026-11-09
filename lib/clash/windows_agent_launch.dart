@@ -1,9 +1,31 @@
 import 'dart:io';
 
 import 'package:flclashx/common/file_digest.dart';
+import 'package:flclashx/common/tun_runtime.dart';
 import 'package:path/path.dart' as p;
 
 typedef AgentLaunchPaths = ({String agent, String core});
+
+enum WindowsAgentColdStartAction {
+  launchWithHelper,
+  launchLocal,
+  deferForTunAuthorization,
+}
+
+bool resolveWindowsTunDesiredForLaunch({
+  required TunRuntimeController runtime,
+  required bool isConfigInitialized,
+  required bool Function() readPersistedTunEnabled,
+}) {
+  final hasRuntimeIntent = runtime.status != null || runtime.intentRevision > 0;
+  if (hasRuntimeIntent) {
+    return runtime.desiredEnabled;
+  }
+  if (!isConfigInitialized) {
+    return false;
+  }
+  return readPersistedTunEnabled();
+}
 
 /// Resolving protected files is part of launching, so failures follow the same
 /// retry/reporting path as Process.start, including background reconnection.
@@ -92,4 +114,26 @@ Future<bool> shouldLaunchWindowsAgentWithHelper({
   if (!tunDesired) return false;
   if (!await installedFilesMatch()) return false;
   return tryStartExistingHelper();
+}
+
+Future<WindowsAgentColdStartAction> planWindowsAgentColdStart({
+  required bool tunDesired,
+  required bool allowDeferForTunAuthorization,
+  required Future<bool> Function() isHelperRunning,
+  required Future<bool> Function() installedFilesMatch,
+  required Future<bool> Function() tryStartExistingHelper,
+}) async {
+  final useHelper = await shouldLaunchWindowsAgentWithHelper(
+    tunDesired: tunDesired,
+    isHelperRunning: isHelperRunning,
+    installedFilesMatch: installedFilesMatch,
+    tryStartExistingHelper: tryStartExistingHelper,
+  );
+  if (useHelper) {
+    return WindowsAgentColdStartAction.launchWithHelper;
+  }
+  if (tunDesired && allowDeferForTunAuthorization) {
+    return WindowsAgentColdStartAction.deferForTunAuthorization;
+  }
+  return WindowsAgentColdStartAction.launchLocal;
 }
