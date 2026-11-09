@@ -18,6 +18,11 @@ var fcxStartupTimingLineHook atomic.Pointer[func(string)]
 
 func init() {
 	tun.FCXDeviceTimingHook = fcxLogSingTunStage
+	tun.FCXDeviceTimingStartHook = func(stage string) {
+		line := fmt.Sprintf("[startup-timing] schema=2 event=stage_start correlationId=%s pid=%d seq=%d stage=%s", tun.FCXStartupCorrelationID(), os.Getpid(), tun.FCXNextDeviceStageSequence(), stage)
+		if hook := fcxStartupTimingLineHook.Load(); hook != nil && *hook != nil { (*hook)(line) }
+		log.Infoln("%s", line)
+	}
 }
 
 // SetFCXStartupTimingLineHookForTest installs an optional observer receiving

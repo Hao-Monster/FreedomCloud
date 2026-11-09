@@ -464,7 +464,7 @@ func patchSingTunWindows(source []byte) ([]byte, error) {
 		}
 	}`
 	const createReplacement = `	wintunCreateStartedAt := fcxDeviceTimingStart()
-	createAdapterStartedAt := fcxDeviceTimingStart()
+	createAdapterStartedAt := fcxDeviceTimingStartFor("tun.wintun_create_adapter")
 	adapter, err := wintun.CreateAdapter(options.Name, TunnelType, generateGUIDByDeviceName(options.Name))
 	fcxLogDeviceStage("tun.wintun_create_adapter", createAdapterStartedAt, err)
 	if err != nil {
@@ -473,7 +473,7 @@ func patchSingTunWindows(source []byte) ([]byte, error) {
 			return nil, err
 		}
 		createErr := err
-		openAdapterStartedAt := fcxDeviceTimingStart()
+		openAdapterStartedAt := fcxDeviceTimingStartFor("tun.wintun_open_adapter")
 		adapter, err = wintun.OpenAdapter(options.Name)
 		fcxLogDeviceStage("tun.wintun_open_adapter", openAdapterStartedAt, err)
 		if err != nil {
@@ -704,15 +704,15 @@ func patchSingTunWindows(source []byte) ([]byte, error) {
 		strictRouteStartedAt := fcxDeviceTimingStart()
 		if err := func() error {`
 	const routeRangesAnchor = `		routeRanges, err := t.options.BuildAutoRouteRanges(false)`
-	const routeRangesReplacement = `		routeRangesStartedAt := fcxDeviceTimingStart()
+	const routeRangesReplacement = `		routeRangesStartedAt := fcxDeviceTimingStartFor("tun.route_ranges_build")
 		routeRanges, err := t.options.BuildAutoRouteRanges(false)
 		fcxLogDeviceStage("tun.route_ranges_build", routeRangesStartedAt, err)`
 	const ipv4LookupAnchor = `		inetIf, err := luid.IPInterface(winipcfg.AddressFamily(windows.AF_INET))`
-	const ipv4LookupReplacement = `		ipv4LookupStartedAt := fcxDeviceTimingStart()
+	const ipv4LookupReplacement = `		ipv4LookupStartedAt := fcxDeviceTimingStartFor("tun.ipv4_interface_lookup")
 		inetIf, err := luid.IPInterface(winipcfg.AddressFamily(windows.AF_INET))
 		fcxLogDeviceStage("tun.ipv4_interface_lookup", ipv4LookupStartedAt, err)`
 	const ipv6LookupAnchor = `		inet6If, err := luid.IPInterface(winipcfg.AddressFamily(windows.AF_INET6))`
-	const ipv6LookupReplacement = `		ipv6LookupStartedAt := fcxDeviceTimingStart()
+	const ipv6LookupReplacement = `		ipv6LookupStartedAt := fcxDeviceTimingStartFor("tun.ipv6_interface_lookup")
 		inet6If, err := luid.IPInterface(winipcfg.AddressFamily(windows.AF_INET6))
 		fcxLogDeviceStage("tun.ipv6_interface_lookup", ipv6LookupStartedAt, err)`
 

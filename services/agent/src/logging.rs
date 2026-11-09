@@ -3,6 +3,7 @@ use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, SyncSender, TryRecvError, TrySendError};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -16,31 +17,32 @@ const LOG_BUFFER_BYTES: usize = 32 * 1024;
 #[derive(Clone)]
 pub struct AgentLogger {
     sender: SyncSender<String>,
+    dropped: Arc<AtomicU64>,
 }
 
 impl AgentLogger {
     pub fn new(home: &Path) -> Arc<Self> {
         let path = home.join("logs").join("FlClashAgent.log");
         let (sender, receiver) = mpsc::sync_channel(CHANNEL_CAPACITY);
+        let dropped = Arc::new(AtomicU64::new(0));
+        let writer_dropped = Arc::clone(&dropped);
         let writer_path = path.clone();
         let spawned = thread::Builder::new()
             .name("flclash-agent-log".to_owned())
-            .spawn(move || run_writer(writer_path, receiver))
+            .spawn(move || run_writer(writer_path, receiver, writer_dropped))
             .is_ok();
         if !spawned {
             eprintln!("FlClashAgent: unable to start persistent log writer");
         }
-        Arc::new(Self { sender })
+        Arc::new(Self { sender, dropped })
     }
 
     pub fn log(&self, message: impl AsRef<str>) {
         let line = sanitize(message.as_ref());
         match self.sender.try_send(line) {
-            Ok(()) | Err(TrySendError::Disconnected(_)) => {}
-            Err(TrySendError::Full(_)) => {
-                // The queue is intentionally bounded. Dropping the newest
-                // diagnostic is preferable to retaining unbounded memory on a
-                // noisy Core or a stalled filesystem.
+            Ok(()) => {}
+            Err(TrySendError::Disconnected(_) | TrySendError::Full(_)) => {
+                self.dropped.fetch_add(1, Ordering::Relaxed);
             }
         }
     }
@@ -116,12 +118,16 @@ struct BufferedLogFile {
     written_bytes: u64,
 }
 
-fn run_writer(path: PathBuf, receiver: mpsc::Receiver<String>) {
+fn run_writer(path: PathBuf, receiver: mpsc::Receiver<String>, dropped: Arc<AtomicU64>) {
     if let Some(parent) = path.parent() {
         let _ = fs::create_dir_all(parent);
     }
     let mut file = open_file(&path);
     while let Ok(first_message) = receiver.recv() {
+        let count = dropped.swap(0, Ordering::Relaxed);
+        if count > 0 {
+            write_log_line(&path, &mut file, &format!("event=logger_dropped count={count}"));
+        }
         write_log_line(&path, &mut file, &first_message);
         loop {
             match receiver.try_recv() {
@@ -191,4 +197,21 @@ fn unix_millis() -> u128 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |duration| duration.as_millis())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn counts_full_and_disconnected_queue_drops() {
+        let (sender, receiver) = mpsc::sync_channel(1);
+        let logger = AgentLogger { sender, dropped: Arc::new(AtomicU64::new(0)) };
+        logger.log("accepted");
+        logger.log("queue full");
+        assert_eq!(logger.dropped.load(Ordering::Relaxed), 1);
+        drop(receiver);
+        logger.log("disconnected");
+        assert_eq!(logger.dropped.load(Ordering::Relaxed), 2);
+    }
 }
