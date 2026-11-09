@@ -471,6 +471,11 @@ func TestSingTunWindowsPatchIsDeterministicAndRejectsChangedShape(t *testing.T) 
 	patched := string(first)
 	for _, stage := range []string{
 		"sing_tun.device.wintun_create",
+		"tun.wintun_create_adapter",
+		"tun.wintun_open_adapter",
+		"tun.route_ranges_build",
+		"tun.ipv4_interface_lookup",
+		"tun.ipv6_interface_lookup",
 		"sing_tun.device.session_start",
 		"sing_tun.device.ip_dns_config",
 		"sing_tun.device.route_config",

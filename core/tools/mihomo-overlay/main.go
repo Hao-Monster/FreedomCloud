@@ -464,14 +464,18 @@ func patchSingTunWindows(source []byte) ([]byte, error) {
 		}
 	}`
 	const createReplacement = `	wintunCreateStartedAt := fcxDeviceTimingStart()
+	createAdapterStartedAt := fcxDeviceTimingStart()
 	adapter, err := wintun.CreateAdapter(options.Name, TunnelType, generateGUIDByDeviceName(options.Name))
+	fcxLogDeviceStage("tun.wintun_create_adapter", createAdapterStartedAt, err)
 	if err != nil {
 		if !errors.Is(err, os.ErrExist) {
 			fcxLogDeviceStage("sing_tun.device.wintun_create", wintunCreateStartedAt, err)
 			return nil, err
 		}
 		createErr := err
+		openAdapterStartedAt := fcxDeviceTimingStart()
 		adapter, err = wintun.OpenAdapter(options.Name)
+		fcxLogDeviceStage("tun.wintun_open_adapter", openAdapterStartedAt, err)
 		if err != nil {
 			err = E.Errors(E.Cause(createErr, "create adapter"), E.Cause(err, "open existing adapter"))
 			fcxLogDeviceStage("sing_tun.device.wintun_create", wintunCreateStartedAt, err)
@@ -699,6 +703,18 @@ func patchSingTunWindows(source []byte) ([]byte, error) {
 	if t.options.AutoRoute && t.options.StrictRoute {
 		strictRouteStartedAt := fcxDeviceTimingStart()
 		if err := func() error {`
+	const routeRangesAnchor = `		routeRanges, err := t.options.BuildAutoRouteRanges(false)`
+	const routeRangesReplacement = `		routeRangesStartedAt := fcxDeviceTimingStart()
+		routeRanges, err := t.options.BuildAutoRouteRanges(false)
+		fcxLogDeviceStage("tun.route_ranges_build", routeRangesStartedAt, err)`
+	const ipv4LookupAnchor = `		inetIf, err := luid.IPInterface(winipcfg.AddressFamily(windows.AF_INET))`
+	const ipv4LookupReplacement = `		ipv4LookupStartedAt := fcxDeviceTimingStart()
+		inetIf, err := luid.IPInterface(winipcfg.AddressFamily(windows.AF_INET))
+		fcxLogDeviceStage("tun.ipv4_interface_lookup", ipv4LookupStartedAt, err)`
+	const ipv6LookupAnchor = `		inet6If, err := luid.IPInterface(winipcfg.AddressFamily(windows.AF_INET6))`
+	const ipv6LookupReplacement = `		ipv6LookupStartedAt := fcxDeviceTimingStart()
+		inet6If, err := luid.IPInterface(winipcfg.AddressFamily(windows.AF_INET6))
+		fcxLogDeviceStage("tun.ipv6_interface_lookup", ipv6LookupStartedAt, err)`
 
 	const configureTailAnchor = "\t}\n\n\treturn nil\n}"
 	const configureTailReplacement = `			return nil
@@ -720,6 +736,9 @@ func patchSingTunWindows(source []byte) ([]byte, error) {
 		{"ipv6_address_dns", ipv6BlockAnchor, ipv6BlockReplacement},
 		{"ip_to_route", ipToRouteAnchor, ipToRouteReplacement},
 		{"route_loop", routeLoopAnchor, routeLoopReplacement},
+		{"route_ranges", routeRangesAnchor, routeRangesReplacement},
+		{"ipv4_lookup", ipv4LookupAnchor, ipv4LookupReplacement},
+		{"ipv6_lookup", ipv6LookupAnchor, ipv6LookupReplacement},
 		{"ipv4_interface", ipv4InterfaceAnchor, ipv4InterfaceReplacement},
 		{"route_to_strict", routeToStrictAnchor, routeToStrictReplacement},
 	} {

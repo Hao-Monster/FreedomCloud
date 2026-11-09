@@ -2,6 +2,12 @@
 
 更新日期：2026-11-09。当前阶段是快速开发、快速迭代和部分功能预览。本文记录来源与验收边界；每次继续开发仍需核实实际 Git/PR/CI 状态，不能把历史报告视为当前通过证明。
 
+## Windows TUN 诊断补充（2026-11-09）
+
+- 在既有固定版本 sing-tun overlay 中，分别记录 Wintun CreateAdapter、OpenAdapter 回退、自动路由范围构造及 IPv4/IPv6 接口查询耗时和错误；不改变 TUN 行为。新增只读 Core schema-2 序号检查工具 `engineering/testing/check_startup_timing.py`；序号连续不等于全链路完整或已捕获末尾丢失。
+- 本机 `go test ./tools/mihomo-overlay -count=1`、overlay 生成及 `CGO_ENABLED=0 go test -modfile=.generated/go.mod -overlay=.generated/mihomo-overlay.json -tags=with_gvisor ./...` PASS。对现有日志的工具检查发现当前 Core 序号 1–25 连续。真实 Windows 新埋点、UI/Agent 端到端完整性、ETW 和隔离环境反复测试 NOT RUN。
+- 本次现场 UI/Agent 日志实际存在；先前根据滞后的文件时间误判未更新，已通过正文纠正。未操作当前代理、TUN、服务；未构建预览、推送、合并或部署。
+
 ## 全栈累积增量与 `schema=2` 启动埋点 Code Review 修复及 `startup-cr-c7802b869f10` 预览包（2026-11-09）
 
 - 审查范围：按用户指令对本地 `development` 已提交未推送增量（`94d5c8d..0823f18`，含 19 项性能与高可用改造、冷启动双 Agent/Core 缺陷 A/B、`getTunStatus` `not_ready` 分离与远端 Provider 非阻塞启动）及工作区未提交的 `schema=2` 跨进程启动耗时埋点改动进行全栈 Code Review。共检出并闭环修复 **5 类真实缺陷（`CR-01`..`CR-05`）**，分 2 个干净原子提交落入本地 `development`（`8cb3744`、`c7802b8`）：
