@@ -3,6 +3,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"embed"
 	"encoding/hex"
@@ -417,6 +418,7 @@ func patchSingTunServer(source []byte) ([]byte, error) {
 }
 
 func patchSingTunWindows(source []byte) ([]byte, error) {
+	source = bytes.ReplaceAll(source, []byte("\r\n"), []byte("\n"))
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, "tun_windows.go", source, 0)
 	if err != nil {
@@ -508,12 +510,120 @@ func patchSingTunWindows(source []byte) ([]byte, error) {
 	ipDnsStartedAt := fcxDeviceTimingStart()
 	if err := func() error {
 `
+	const ipv4BlockAnchor = `	if len(t.options.Inet4Address) > 0 {
+		err := luid.SetIPAddressesForFamily(winipcfg.AddressFamily(windows.AF_INET), t.options.Inet4Address)
+		if err != nil {
+			return E.Cause(err, "set ipv4 address")
+		}
+		if t.options.AutoRoute && !t.options.EXP_DisableDNSHijack {
+			dnsServers := common.Filter(t.options.DNSServers, netip.Addr.Is4)
+			if len(dnsServers) == 0 && HasNextAddress(t.options.Inet4Address[0], 1) {
+				dnsServers = []netip.Addr{t.options.Inet4Address[0].Addr().Next()}
+			}
+			if len(dnsServers) > 0 {
+				err = luid.SetDNS(winipcfg.AddressFamily(windows.AF_INET), dnsServers, nil)
+				if err != nil {
+					return E.Cause(err, "set ipv4 dns")
+				}
+			}
+		} else {
+			err = luid.SetDNS(winipcfg.AddressFamily(windows.AF_INET), nil, nil)
+			if err != nil {
+				return E.Cause(err, "set ipv4 dns")
+			}
+		}
+	}`
+	const ipv4BlockReplacement = `	if len(t.options.Inet4Address) > 0 {
+		ipv4StartedAt := fcxDeviceTimingStart()
+		err := luid.SetIPAddressesForFamily(winipcfg.AddressFamily(windows.AF_INET), t.options.Inet4Address)
+		fcxLogDeviceStage("tun.ipv4_address_set", ipv4StartedAt, err)
+		if err != nil {
+			return E.Cause(err, "set ipv4 address")
+		}
+		if t.options.AutoRoute && !t.options.EXP_DisableDNSHijack {
+			dnsServers := common.Filter(t.options.DNSServers, netip.Addr.Is4)
+			if len(dnsServers) == 0 && HasNextAddress(t.options.Inet4Address[0], 1) {
+				dnsServers = []netip.Addr{t.options.Inet4Address[0].Addr().Next()}
+			}
+			if len(dnsServers) > 0 {
+				ipv4DNSStartedAt := fcxDeviceTimingStart()
+				err = luid.SetDNS(winipcfg.AddressFamily(windows.AF_INET), dnsServers, nil)
+				fcxLogDeviceStage("tun.ipv4_dns_set", ipv4DNSStartedAt, err)
+				if err != nil {
+					return E.Cause(err, "set ipv4 dns")
+				}
+			}
+		} else {
+			ipv4DNSStartedAt := fcxDeviceTimingStart()
+			err = luid.SetDNS(winipcfg.AddressFamily(windows.AF_INET), nil, nil)
+			fcxLogDeviceStage("tun.ipv4_dns_set", ipv4DNSStartedAt, err)
+			if err != nil {
+				return E.Cause(err, "set ipv4 dns")
+			}
+		}
+	}`
+
+	const ipv6BlockAnchor = `	if len(t.options.Inet6Address) > 0 {
+		err := luid.SetIPAddressesForFamily(winipcfg.AddressFamily(windows.AF_INET6), t.options.Inet6Address)
+		if err != nil {
+			return E.Cause(err, "set ipv6 address")
+		}
+		if t.options.AutoRoute && !t.options.EXP_DisableDNSHijack {
+			dnsServers := common.Filter(t.options.DNSServers, netip.Addr.Is6)
+			if len(dnsServers) == 0 && HasNextAddress(t.options.Inet6Address[0], 1) {
+				dnsServers = []netip.Addr{t.options.Inet6Address[0].Addr().Next()}
+			}
+			if len(dnsServers) > 0 {
+				err = luid.SetDNS(winipcfg.AddressFamily(windows.AF_INET6), dnsServers, nil)
+				if err != nil {
+					return E.Cause(err, "set ipv6 dns")
+				}
+			}
+		} else {
+			err = luid.SetDNS(winipcfg.AddressFamily(windows.AF_INET6), nil, nil)
+			if err != nil {
+				return E.Cause(err, "set ipv6 dns")
+			}
+		}
+	}`
+	const ipv6BlockReplacement = `	if len(t.options.Inet6Address) > 0 {
+		ipv6AddrStartedAt := fcxDeviceTimingStart()
+		err := luid.SetIPAddressesForFamily(winipcfg.AddressFamily(windows.AF_INET6), t.options.Inet6Address)
+		fcxLogDeviceStage("tun.ipv6_address_set", ipv6AddrStartedAt, err)
+		if err != nil {
+			return E.Cause(err, "set ipv6 address")
+		}
+		if t.options.AutoRoute && !t.options.EXP_DisableDNSHijack {
+			dnsServers := common.Filter(t.options.DNSServers, netip.Addr.Is6)
+			if len(dnsServers) == 0 && HasNextAddress(t.options.Inet6Address[0], 1) {
+				dnsServers = []netip.Addr{t.options.Inet6Address[0].Addr().Next()}
+			}
+			if len(dnsServers) > 0 {
+				ipv6DNSStartedAt := fcxDeviceTimingStart()
+				err = luid.SetDNS(winipcfg.AddressFamily(windows.AF_INET6), dnsServers, nil)
+				fcxLogDeviceStage("tun.ipv6_dns_set", ipv6DNSStartedAt, err)
+				if err != nil {
+					return E.Cause(err, "set ipv6 dns")
+				}
+			}
+		} else {
+			ipv6DNSStartedAt := fcxDeviceTimingStart()
+			err = luid.SetDNS(winipcfg.AddressFamily(windows.AF_INET6), nil, nil)
+			fcxLogDeviceStage("tun.ipv6_dns_set", ipv6DNSStartedAt, err)
+			if err != nil {
+				return E.Cause(err, "set ipv6 dns")
+			}
+		}
+	}`
+
 	const ipToRouteAnchor = `	if len(t.options.Inet4Address) > 0 || len(t.options.Inet6Address) > 0 {
 		_ = luid.DisableDNSRegistration()
 	}
 	if t.options.AutoRoute {`
 	const ipToRouteReplacement = `	if len(t.options.Inet4Address) > 0 || len(t.options.Inet6Address) > 0 {
-		_ = luid.DisableDNSRegistration()
+		dnsRegistrationStartedAt := fcxDeviceTimingStart()
+		dnsRegistrationErr := luid.DisableDNSRegistration()
+		fcxLogDeviceStage("tun.disable_dns_registration", dnsRegistrationStartedAt, dnsRegistrationErr)
 	}
 	return nil
 	}(); err != nil {
@@ -534,12 +644,35 @@ func patchSingTunWindows(source []byte) ([]byte, error) {
 		}
 		if err != nil {
 			return err
-		}`
-	const routeLoopReplacement = `		err = FCXAddAutoRoutes(routeRanges, gateway4, gateway6, luid.AddRoute, func(routeErr error) bool {
-			return errors.Is(routeErr, windows.ERROR_OBJECT_ALREADY_EXISTS)
-		})
+		}
+		err = windnsapi.FlushResolverCache()
 		if err != nil {
 			return err
+		}`
+	const routeLoopReplacement = `		routesAddStartedAt := fcxDeviceTimingStart()
+		err = FCXAddAutoRoutes(routeRanges, gateway4, gateway6, luid.AddRoute, func(routeErr error) bool {
+			return errors.Is(routeErr, windows.ERROR_OBJECT_ALREADY_EXISTS)
+		})
+		fcxLogDeviceStage("tun.routes_add", routesAddStartedAt, err)
+		if err != nil {
+			return err
+		}
+		dnsFlushStartedAt := fcxDeviceTimingStart()
+		err = windnsapi.FlushResolverCache()
+		fcxLogDeviceStage("tun.dns_cache_flush", dnsFlushStartedAt, err)
+		if err != nil {
+			return err
+		}`
+
+	const ipv4InterfaceAnchor = `		err = inetIf.Set()
+		if err != nil {
+			return E.Cause(err, "set ipv4 options")
+		}`
+	const ipv4InterfaceReplacement = `		ipv4IfStartedAt := fcxDeviceTimingStart()
+		err = inetIf.Set()
+		fcxLogDeviceStage("tun.ipv4_interface_set", ipv4IfStartedAt, err)
+		if err != nil {
+			return E.Cause(err, "set ipv4 options")
 		}`
 
 	const routeToStrictAnchor = `		err = inet6If.Set()
@@ -549,7 +682,9 @@ func patchSingTunWindows(source []byte) ([]byte, error) {
 	}
 
 	if t.options.AutoRoute && t.options.StrictRoute {`
-	const routeToStrictReplacement = `		err = inet6If.Set()
+	const routeToStrictReplacement = `		ipv6IfStartedAt := fcxDeviceTimingStart()
+		err = inet6If.Set()
+		fcxLogDeviceStage("tun.ipv6_interface_set", ipv6IfStartedAt, err)
 		if err != nil {
 			return E.Cause(err, "set ipv6 options")
 		}
@@ -581,8 +716,11 @@ func patchSingTunWindows(source []byte) ([]byte, error) {
 		name, anchor, replacement string
 	}{
 		{"configure_header", configureHeaderAnchor, configureHeaderReplacement},
+		{"ipv4_address_dns", ipv4BlockAnchor, ipv4BlockReplacement},
+		{"ipv6_address_dns", ipv6BlockAnchor, ipv6BlockReplacement},
 		{"ip_to_route", ipToRouteAnchor, ipToRouteReplacement},
 		{"route_loop", routeLoopAnchor, routeLoopReplacement},
+		{"ipv4_interface", ipv4InterfaceAnchor, ipv4InterfaceReplacement},
 		{"route_to_strict", routeToStrictAnchor, routeToStrictReplacement},
 	} {
 		if strings.Count(configureText, pair.anchor) != 1 {
@@ -1672,31 +1810,31 @@ func convertsV2RayFCX(buf []byte, diagnostics bool) ([]map[string]any, error) {`
 		"schemaVersion": 1, "module": "github.com/metacubex/mihomo", "version": upstreamVersion,
 		"commit": upstreamCommit, "moduleSum": module.Sum,
 		"upstreamSourceSHA256": map[string]string{
-			"listener/listener.go":                         listenerSHA256,
-			"listener/sing_tun/server.go":                  singTunServerSHA256,
-			"component/iface/iface.go":                     ifaceSHA256,
-			"component/profile/cachefile/cache.go":         cacheFileSHA256,
-			"component/profile/cachefile/fakeip.go":        fakeIpSHA256,
-			"component/process/process_windows.go":         processWindowsSHA256,
-			"component/geodata/memconservative/memc.go":    memConservativeSHA256,
-			"component/resource/fetcher.go":                fetcherSHA256,
-			"rules/provider/provider.go":                   ruleProviderSHA256,
-			"adapter/provider/provider.go":                 proxyProviderSHA256,
-			"config/config.go":                             configSHA256,
-			"hub/route/configs.go":                         configsSHA256,
-			"hub/route/server.go":                          controllerSHA256,
-			"adapter/adapter.go":                           adapterSHA256,
-			"dns/doh.go":                                   dnsDoHSHA256,
-			"common/convert/converter.go":                  converterSHA256,
+			"listener/listener.go":                      listenerSHA256,
+			"listener/sing_tun/server.go":               singTunServerSHA256,
+			"component/iface/iface.go":                  ifaceSHA256,
+			"component/profile/cachefile/cache.go":      cacheFileSHA256,
+			"component/profile/cachefile/fakeip.go":     fakeIpSHA256,
+			"component/process/process_windows.go":      processWindowsSHA256,
+			"component/geodata/memconservative/memc.go": memConservativeSHA256,
+			"component/resource/fetcher.go":             fetcherSHA256,
+			"rules/provider/provider.go":                ruleProviderSHA256,
+			"adapter/provider/provider.go":              proxyProviderSHA256,
+			"config/config.go":                          configSHA256,
+			"hub/route/configs.go":                      configsSHA256,
+			"hub/route/server.go":                       controllerSHA256,
+			"adapter/adapter.go":                        adapterSHA256,
+			"dns/doh.go":                                dnsDoHSHA256,
+			"common/convert/converter.go":               converterSHA256,
 		},
 		"singTunOverlay": map[string]any{
-			"module":               "github.com/metacubex/sing-tun",
-			"version":              singTunVersion,
-			"moduleSum":            singTunModule.Sum,
-			"upstreamSourceSHA256": map[string]string{"tun_windows.go": singTunWindowsSHA256, "stack_gvisor.go": singTunStackGvisorSHA256},
+			"module":                "github.com/metacubex/sing-tun",
+			"version":               singTunVersion,
+			"moduleSum":             singTunModule.Sum,
+			"upstreamSourceSHA256":  map[string]string{"tun_windows.go": singTunWindowsSHA256, "stack_gvisor.go": singTunStackGvisorSHA256},
 			"effectiveModuleSHA256": aggregateHashes(singTunModuleHashes),
 		},
-		"patchesSHA256":         patchHashes, "generatorSHA256": digest(generatorSource), "projectGoModSHA256": digest(rootMod),
+		"patchesSHA256": patchHashes, "generatorSHA256": digest(generatorSource), "projectGoModSHA256": digest(rootMod),
 		"effectiveModuleSHA256": aggregateHashes(moduleHashes), "effectiveModuleFiles": moduleHashes,
 	}, "", "  ")
 	if err != nil {

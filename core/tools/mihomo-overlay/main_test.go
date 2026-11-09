@@ -359,8 +359,49 @@ func New(options Options) (WinTun, error) {
 func (t *NativeTun) configure() error {
 	luid := winipcfg.LUID(t.adapter.LUID())
 	if len(t.options.Inet4Address) > 0 {
-		if err := luid.SetIPAddressesForFamily(0, t.options.Inet4Address); err != nil {
-			return err
+		err := luid.SetIPAddressesForFamily(winipcfg.AddressFamily(windows.AF_INET), t.options.Inet4Address)
+		if err != nil {
+			return E.Cause(err, "set ipv4 address")
+		}
+		if t.options.AutoRoute && !t.options.EXP_DisableDNSHijack {
+			dnsServers := common.Filter(t.options.DNSServers, netip.Addr.Is4)
+			if len(dnsServers) == 0 && HasNextAddress(t.options.Inet4Address[0], 1) {
+				dnsServers = []netip.Addr{t.options.Inet4Address[0].Addr().Next()}
+			}
+			if len(dnsServers) > 0 {
+				err = luid.SetDNS(winipcfg.AddressFamily(windows.AF_INET), dnsServers, nil)
+				if err != nil {
+					return E.Cause(err, "set ipv4 dns")
+				}
+			}
+		} else {
+			err = luid.SetDNS(winipcfg.AddressFamily(windows.AF_INET), nil, nil)
+			if err != nil {
+				return E.Cause(err, "set ipv4 dns")
+			}
+		}
+	}
+	if len(t.options.Inet6Address) > 0 {
+		err := luid.SetIPAddressesForFamily(winipcfg.AddressFamily(windows.AF_INET6), t.options.Inet6Address)
+		if err != nil {
+			return E.Cause(err, "set ipv6 address")
+		}
+		if t.options.AutoRoute && !t.options.EXP_DisableDNSHijack {
+			dnsServers := common.Filter(t.options.DNSServers, netip.Addr.Is6)
+			if len(dnsServers) == 0 && HasNextAddress(t.options.Inet6Address[0], 1) {
+				dnsServers = []netip.Addr{t.options.Inet6Address[0].Addr().Next()}
+			}
+			if len(dnsServers) > 0 {
+				err = luid.SetDNS(winipcfg.AddressFamily(windows.AF_INET6), dnsServers, nil)
+				if err != nil {
+					return E.Cause(err, "set ipv6 dns")
+				}
+			}
+		} else {
+			err = luid.SetDNS(winipcfg.AddressFamily(windows.AF_INET6), nil, nil)
+			if err != nil {
+				return E.Cause(err, "set ipv6 dns")
+			}
 		}
 	}
 	if len(t.options.Inet4Address) > 0 || len(t.options.Inet6Address) > 0 {
@@ -382,8 +423,19 @@ func (t *NativeTun) configure() error {
 		if err != nil {
 			return err
 		}
-		if err := windnsapi.FlushResolverCache(); err != nil {
+		err = windnsapi.FlushResolverCache()
+		if err != nil {
 			return err
+		}
+	}
+	if len(t.options.Inet4Address) > 0 {
+		inetIf, err := luid.IPInterface(winipcfg.AddressFamily(windows.AF_INET))
+		if err != nil {
+			return err
+		}
+		err = inetIf.Set()
+		if err != nil {
+			return E.Cause(err, "set ipv4 options")
 		}
 	}
 	if len(t.options.Inet6Address) > 0 {
@@ -412,9 +464,9 @@ func TestSingTunWindowsPatchIsDeterministicAndRejectsChangedShape(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := patchSingTunWindows([]byte(minimalSingTunWindows))
+	second, err := patchSingTunWindows([]byte(strings.ReplaceAll(minimalSingTunWindows, "\n", "\r\n")))
 	if err != nil || !bytes.Equal(first, second) {
-		t.Fatalf("sing-tun windows patch is nondeterministic: %v", err)
+		t.Fatalf("sing-tun windows patch is nondeterministic across LF/CRLF: %v", err)
 	}
 	patched := string(first)
 	for _, stage := range []string{
@@ -423,6 +475,15 @@ func TestSingTunWindowsPatchIsDeterministicAndRejectsChangedShape(t *testing.T) 
 		"sing_tun.device.ip_dns_config",
 		"sing_tun.device.route_config",
 		"sing_tun.device.strict_route",
+		"tun.ipv4_address_set",
+		"tun.ipv4_dns_set",
+		"tun.ipv6_address_set",
+		"tun.ipv6_dns_set",
+		"tun.disable_dns_registration",
+		"tun.routes_add",
+		"tun.dns_cache_flush",
+		"tun.ipv4_interface_set",
+		"tun.ipv6_interface_set",
 	} {
 		if !strings.Contains(patched, stage) {
 			t.Fatalf("missing sing-tun windows sub-stage %q", stage)
@@ -440,8 +501,12 @@ func TestSingTunWindowsPatchIsDeterministicAndRejectsChangedShape(t *testing.T) 
 	for name, source := range map[string]string{
 		"missing CreateAdapter": strings.Replace(minimalSingTunWindows, "wintun.CreateAdapter(", "wintun.OtherCreate(", 1),
 		"missing StartSession":  strings.Replace(minimalSingTunWindows, "adapter.StartSession(0x800000)", "adapter.OtherSession()", 1),
+		"missing ipv4 address":  strings.Replace(minimalSingTunWindows, `return E.Cause(err, "set ipv4 address")`, `return err`, 1),
+		"missing ipv6 address":  strings.Replace(minimalSingTunWindows, `return E.Cause(err, "set ipv6 address")`, `return err`, 1),
 		"missing DisableDNS":    strings.Replace(minimalSingTunWindows, "_ = luid.DisableDNSRegistration()", "_ = luid.OtherDNS()", 1),
 		"missing RouteLoop":     strings.Replace(minimalSingTunWindows, "err = luid.AddRoute(routeRange, gateway4, 0)", "err = luid.OtherAddRoute(routeRange)", 1),
+		"missing FlushDNS":      strings.Replace(minimalSingTunWindows, "err = windnsapi.FlushResolverCache()", "err = windnsapi.OtherFlush()", 1),
+		"missing ipv4 options":  strings.Replace(minimalSingTunWindows, `return E.Cause(err, "set ipv4 options")`, `return err`, 1),
 		"missing ipv6 options":  strings.Replace(minimalSingTunWindows, `return E.Cause(err, "set ipv6 options")`, `return err`, 1),
 		"missing StrictRoute":   strings.Replace(minimalSingTunWindows, "if t.options.AutoRoute && t.options.StrictRoute {", "if t.options.StrictRoute {", 1),
 		"invalid syntax":        "package tun\nfunc (",

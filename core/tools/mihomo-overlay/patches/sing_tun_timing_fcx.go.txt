@@ -1,6 +1,12 @@
 package sing_tun
 
 import (
+	"errors"
+	"fmt"
+	"os"
+	"runtime"
+	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/metacubex/mihomo/log"
@@ -8,13 +14,65 @@ import (
 )
 
 var fcxSingTunTimingHook func(stage string, elapsed time.Duration, outcome string)
+var fcxStartupTimingLineHook atomic.Pointer[func(string)]
 
 func init() {
 	tun.FCXDeviceTimingHook = fcxLogSingTunStage
 }
 
+// SetFCXStartupTimingLineHookForTest installs an optional observer receiving
+// formatted schema=2 startup-timing lines for unit verification.
+func SetFCXStartupTimingLineHookForTest(hook func(string)) func() {
+	prev := fcxStartupTimingLineHook.Load()
+	if hook == nil {
+		fcxStartupTimingLineHook.Store(nil)
+	} else {
+		fn := hook
+		fcxStartupTimingLineHook.Store(&fn)
+	}
+	return func() {
+		fcxStartupTimingLineHook.Store(prev)
+	}
+}
+
 func fcxSingTunTimingStart() time.Time {
 	return time.Now()
+}
+
+func FCXFormatStageErrorFields(err error) string {
+	if err == nil {
+		return ""
+	}
+	fields := fmt.Sprintf(" errorType=%T error=%q", err, err.Error())
+	var errno syscall.Errno
+	if errors.As(err, &errno) {
+		if runtime.GOOS == "windows" {
+			fields += fmt.Sprintf(" win32Error=%d", uint32(errno))
+		} else {
+			fields += fmt.Sprintf(" osErrno=%d", uint32(errno))
+		}
+	}
+	return fields
+}
+
+// FCXEmitStartupTiming emits a unified schema=2 stage_end record sharing a
+// single process-wide monotonic sequence counter across sing-tun and listener.
+func FCXEmitStartupTiming(stage string, elapsed time.Duration, outcome string, extraFields string, err error) {
+	line := fmt.Sprintf(
+		"[startup-timing] schema=2 event=stage_end correlationId=%s pid=%d seq=%d stage=%s elapsedMs=%d outcome=%s%s%s",
+		tun.FCXStartupCorrelationID(),
+		os.Getpid(),
+		tun.FCXNextDeviceStageSequence(),
+		stage,
+		elapsed.Milliseconds(),
+		outcome,
+		extraFields,
+		FCXFormatStageErrorFields(err),
+	)
+	if hook := fcxStartupTimingLineHook.Load(); hook != nil && *hook != nil {
+		(*hook)(line)
+	}
+	log.Infoln("%s", line)
 }
 
 func fcxLogSingTunStage(stage string, startedAt time.Time, err error) {
@@ -26,5 +84,5 @@ func fcxLogSingTunStage(stage string, startedAt time.Time, err error) {
 	if hook := fcxSingTunTimingHook; hook != nil {
 		hook(stage, elapsed, outcome)
 	}
-	log.Infoln("[startup-timing] stage=%s elapsedMs=%d outcome=%s", stage, elapsed.Milliseconds(), outcome)
+	FCXEmitStartupTiming(stage, elapsed, outcome, "", err)
 }

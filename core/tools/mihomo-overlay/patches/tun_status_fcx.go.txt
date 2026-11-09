@@ -9,7 +9,6 @@ import (
 	C "github.com/metacubex/mihomo/constant"
 	LC "github.com/metacubex/mihomo/listener/config"
 	"github.com/metacubex/mihomo/listener/sing_tun"
-	"github.com/metacubex/mihomo/log"
 )
 
 // TunLifecycleStatus describes listener creation, not connectivity through a node.
@@ -38,11 +37,17 @@ var fcxTunStatusSnapshot atomic.Pointer[TunLifecycleStatus]
 
 func fcxStartupTimingStart() time.Time { return time.Now() }
 
-func fcxLogTunTiming(stage string, startedAt time.Time, outcome string) {
-	log.Infoln("[startup-timing] stage=%s elapsedMs=%d outcome=%s state=%s error=%s",
-		stage, time.Since(startedAt).Milliseconds(), outcome,
-		fcxTunStatus.State, fcxTunStatus.ErrorCode)
+func fcxLogTunTiming(stage string, startedAt time.Time, outcome string, state string, errorCode string, err error) {
+	extra := ""
+	if state != "" {
+		extra += " state=" + state
+	}
+	if errorCode != "" {
+		extra += " errorCode=" + errorCode
+	}
+	sing_tun.FCXEmitStartupTiming(stage, time.Since(startedAt), outcome, extra, err)
 }
+
 // A failed Close may leave OS resources behind. Only a new Core can discard
 // this uncertainty; repeated Cleanup must not turn the failure into success.
 var fcxTunCloseError error
@@ -50,10 +55,12 @@ var fcxCreateTun = func(config LC.Tun, target C.Tunnel) (fcxTunListener, error) 
 	startedAt := fcxStartupTimingStart()
 	created, err := sing_tun.New(config, target)
 	outcome := "ok"
+	errorCode := ""
 	if err != nil {
 		outcome = "error"
+		errorCode = fcxTunErrorCode(err)
 	}
-	fcxLogTunTiming("sing_tun.New", startedAt, outcome)
+	fcxLogTunTiming("sing_tun.New", startedAt, outcome, "", errorCode, err)
 	return created, err
 }
 

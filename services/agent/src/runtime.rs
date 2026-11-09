@@ -1026,8 +1026,8 @@ async fn retry_or_command(
 pub async fn run(config: AgentConfig) -> Result<()> {
     let logger = AgentLogger::new(&config.home);
     logger.log(format!(
-        "agent starting use_helper={} helper_port={}",
-        config.use_helper, config.helper_port
+        "agent starting agent_pid={} use_helper={} helper_port={}",
+        std::process::id(), config.use_helper, config.helper_port
     ));
     let ui_listener = match TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
         .await
@@ -1067,6 +1067,7 @@ pub async fn run(config: AgentConfig) -> Result<()> {
     let agent_instance_id = endpoint
         .agent_instance_id
         .context("Agent instance ID is unavailable")?;
+    logger.log(format!("agent correlation_id={agent_instance_id}"));
     let agent_executable = std::env::current_exe().context("Agent executable is unavailable")?;
     let core_executable = if config.use_helper {
         config
@@ -2021,6 +2022,7 @@ async fn start_backend(
                 "auth_token": token,
                 "helper_token": helper_token,
                 "ownerInstanceId": owner,
+                "correlationId": shared.agent_instance_id,
             }),
         )
         .await?;
@@ -2047,6 +2049,7 @@ async fn start_backend(
         .arg(core_port.to_string())
         .arg(launch_credential)
         .env("SAFE_PATHS", &config.home)
+        .env("FCX_STARTUP_ID", &shared.agent_instance_id)
         .stdin(if cfg!(target_os = "macos") {
             Stdio::piped()
         } else {

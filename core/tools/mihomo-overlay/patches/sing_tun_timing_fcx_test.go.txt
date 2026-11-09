@@ -2,43 +2,83 @@ package sing_tun
 
 import (
 	"errors"
+	"fmt"
 	"net/netip"
+	"runtime"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
 	tun "github.com/metacubex/sing-tun"
 )
 
-func TestFCXDeviceTimingHookForwardsSubStages(t *testing.T) {
+func TestFCXDeviceTimingHookForwardsSubStagesAndSchema2Fields(t *testing.T) {
 	if tun.FCXDeviceTimingHook == nil {
 		t.Fatal("expected tun.FCXDeviceTimingHook to be wired by sing_tun init")
 	}
+	t.Setenv("FCX_STARTUP_ID", "corr_ab12-CD34")
 	type record struct {
 		stage   string
 		outcome string
 	}
 	var got []record
+	var lines []string
 	previous := fcxSingTunTimingHook
 	fcxSingTunTimingHook = func(stage string, _ time.Duration, outcome string) {
 		got = append(got, record{stage: stage, outcome: outcome})
 	}
+	restoreLineHook := SetFCXStartupTimingLineHookForTest(func(line string) {
+		lines = append(lines, line)
+	})
 	defer func() {
 		fcxSingTunTimingHook = previous
+		restoreLineHook()
 	}()
 
 	started := time.Now().Add(-15 * time.Millisecond)
 	tun.FCXDeviceTimingHook("sing_tun.device.wintun_create", started, nil)
-	tun.FCXDeviceTimingHook("sing_tun.device.ip_dns_config", started, errors.New("boom"))
+	tun.FCXDeviceTimingHook("sing_tun.device.ip_dns_config", started, fmt.Errorf("dns fail: %w", syscall.Errno(5)))
 
-	if len(got) != 2 {
-		t.Fatalf("expected 2 timing events, got %d", len(got))
+	if len(got) != 2 || len(lines) != 2 {
+		t.Fatalf("expected 2 timing events and lines, got records=%d lines=%d", len(got), len(lines))
 	}
 	if got[0].stage != "sing_tun.device.wintun_create" || got[0].outcome != "ok" {
 		t.Fatalf("unexpected first record: %+v", got[0])
 	}
+	if !strings.Contains(lines[0], "schema=2 event=stage_end correlationId=corr_ab12-CD34 ") ||
+		strings.Contains(lines[0], "error=") {
+		t.Fatalf("unexpected ok schema=2 line: %s", lines[0])
+	}
 	if got[1].stage != "sing_tun.device.ip_dns_config" || got[1].outcome != "error" {
 		t.Fatalf("unexpected second record: %+v", got[1])
+	}
+	if !strings.Contains(lines[1], `outcome=error errorType=`) ||
+		!strings.Contains(lines[1], `dns fail:`) {
+		t.Fatalf("missing structured error fields on failure line: %s", lines[1])
+	}
+	if runtime.GOOS == "windows" && !strings.Contains(lines[1], "win32Error=5") {
+		t.Fatalf("expected win32Error=5 on windows, got: %s", lines[1])
+	}
+}
+
+func TestFCXSanitizeCorrelationIDRejectsUnsafeValues(t *testing.T) {
+	if got := tun.FCXSanitizeCorrelationID(""); got != "unknown" {
+		t.Fatalf("empty correlationId should normalize to unknown, got %q", got)
+	}
+	if got := tun.FCXSanitizeCorrelationID("  0123456789abcdef-_AZ  "); got != "0123456789abcdef-_AZ" {
+		t.Fatalf("valid correlationId rejected: %q", got)
+	}
+	for _, bad := range []string{
+		"bad space",
+		"bad\nnewline",
+		"bad=kv",
+		`"quoted"`,
+		strings.Repeat("a", 65),
+	} {
+		if got := tun.FCXSanitizeCorrelationID(bad); got != "invalid" {
+			t.Fatalf("unsafe correlationId %q accepted as %q", bad, got)
+		}
 	}
 }
 

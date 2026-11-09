@@ -413,6 +413,7 @@ class ClashService extends ClashHandlerInterface {
         _agentCoreState = AgentCoreState.stopped;
         _agentUsingHelper = false;
         _agentProxyRunning = null;
+        setStartupTimingCorrelationId(null);
         commonPrint.log(
           'FlClashAgent cold-start launch deferred until TUN authorization',
         );
@@ -494,6 +495,7 @@ class ClashService extends ClashHandlerInterface {
       _agentDisconnected = disconnected;
       _agentIdentity = null;
       _agentGeneration = null;
+      setStartupTimingCorrelationId(null);
       onTunTransportChanged?.call();
       _agentAttachedCompleter = Completer<void>();
       _socketSubscription = socket
@@ -579,6 +581,7 @@ class ClashService extends ClashHandlerInterface {
         _agentCoreState == AgentCoreState.ready;
     _agentGeneration = event.generation;
     _agentIdentity = event;
+    setStartupTimingCorrelationId(event.agentInstanceId);
     _agentCoreState = event.coreState;
     _agentProxyRunning = _mergeProxyRunning(event, sameReadyCore);
     _publishStrictPolicyStatus(
@@ -808,6 +811,7 @@ class ClashService extends ClashHandlerInterface {
   void _onAgentLost(String reason) {
     ++_connectionEpoch;
     _agentProxyRunning = null;
+    setStartupTimingCorrelationId(null);
     onTunTransportChanged?.call();
     // Socket loss invalidates any previously armed claim.  Keep the status
     // fail-closed while the bounded reconnect loop runs; never leave an armed
@@ -1496,6 +1500,7 @@ class ClashService extends ClashHandlerInterface {
         } catch (_) {}
       }
       socketCompleter = Completer<Socket>();
+      setStartupTimingCorrelationId(null);
       _flushPendingCompleters();
       return true;
     } finally {

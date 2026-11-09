@@ -3,12 +3,16 @@ package tun
 import (
 	"fmt"
 	"net/netip"
+	"os"
+	"strings"
+	"sync/atomic"
 	"time"
 )
 
 // FCXDeviceTimingHook receives sub-stage durations from Windows NativeTun setup
 // without requiring upstream callers to thread a custom logger through Options.
 var FCXDeviceTimingHook func(stage string, startedAt time.Time, err error)
+var fcxDeviceStageSequence atomic.Uint64
 
 func fcxDeviceTimingStart() time.Time {
 	return time.Now()
@@ -18,6 +22,38 @@ func fcxLogDeviceStage(stage string, startedAt time.Time, err error) {
 	if hook := FCXDeviceTimingHook; hook != nil {
 		hook(stage, startedAt, err)
 	}
+}
+
+func FCXNextDeviceStageSequence() uint64 {
+	return fcxDeviceStageSequence.Add(1)
+}
+
+// FCXSanitizeCorrelationID bounds an external correlation identifier so raw
+// environment variables can never inject spaces, quotes, or control characters
+// into structured startup-timing log lines.
+func FCXSanitizeCorrelationID(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return "unknown"
+	}
+	if len(trimmed) > 64 {
+		return "invalid"
+	}
+	for i := 0; i < len(trimmed); i++ {
+		ch := trimmed[i]
+		isHexOrAlphaNum := (ch >= '0' && ch <= '9') ||
+			(ch >= 'a' && ch <= 'z') ||
+			(ch >= 'A' && ch <= 'Z') ||
+			ch == '-' || ch == '_'
+		if !isHexOrAlphaNum {
+			return "invalid"
+		}
+	}
+	return trimmed
+}
+
+func FCXStartupCorrelationID() string {
+	return FCXSanitizeCorrelationID(os.Getenv("FCX_STARTUP_ID"))
 }
 
 // FCXAddAutoRoutes adds each prefix route without letting a succeeding tail

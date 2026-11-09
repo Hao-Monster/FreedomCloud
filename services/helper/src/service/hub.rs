@@ -35,6 +35,8 @@ pub struct StartParams {
     pub helper_token: String,
     #[serde(default, rename = "ownerInstanceId")]
     pub owner_instance_id: Option<String>,
+    #[serde(default, rename = "correlationId")]
+    pub correlation_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -127,6 +129,23 @@ fn validate_auth_token(value: Option<String>) -> Result<Option<String>, String> 
     Ok(Some(value.to_ascii_lowercase()))
 }
 
+fn validate_correlation_id(value: Option<String>) -> Result<Option<String>, String> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    if value.is_empty()
+        || value.len() > 64
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
+    {
+        return Err(
+            "correlationId must be 1 to 64 ASCII [0-9a-zA-Z_-] characters".to_string(),
+        );
+    }
+    Ok(Some(value))
+}
+
 pub(crate) fn validate_home_directory(value: Option<String>) -> Result<PathBuf, String> {
     let value = value.ok_or_else(|| "core home directory is required".to_string())?;
     let canonical = Path::new(&value)
@@ -217,6 +236,15 @@ fn start_core(start_params: StartParams, logger: Arc<ServiceLogger>) -> String {
         "event=core_start.begin request_id={request_id} port={} helper_credential=present",
         start_params.arg,
     ));
+    let correlation_id = match validate_correlation_id(start_params.correlation_id) {
+        Ok(value) => value,
+        Err(error) => {
+            logger.log(format!(
+                "event=core_start.reject request_id={request_id} stage=correlation_id error={error}"
+            ));
+            return error;
+        }
+    };
     let install_dir = match service_directory() {
         Ok(value) => value,
         Err(error) => {
@@ -295,6 +323,9 @@ fn start_core(start_params: StartParams, logger: Arc<ServiceLogger>) -> String {
         .arg(port.to_string())
         // The core needs provider access before its SetHomeDir IPC call.
         .env("SAFE_PATHS", home_dir);
+    if let Some(correlation_id) = correlation_id.as_deref() {
+        command.env("FCX_STARTUP_ID", correlation_id);
+    }
     if let Some(auth_token) = auth_token {
         command.arg(auth_token);
     }
@@ -996,6 +1027,72 @@ mod tests {
         );
         assert!(validate_auth_token(Some("a".repeat(63))).is_err());
         assert!(validate_auth_token(Some("g".repeat(64))).is_err());
+    }
+
+    #[test]
+    fn optional_correlation_id_is_strictly_bounded() {
+        assert!(validate_correlation_id(None).unwrap().is_none());
+        let valid_agent_id = "0123456789abcdef".repeat(4);
+        assert_eq!(
+            validate_correlation_id(Some(valid_agent_id.clone())).unwrap(),
+            Some(valid_agent_id)
+        );
+        assert_eq!(
+            validate_correlation_id(Some("corr_AZ-09".to_string())).unwrap(),
+            Some("corr_AZ-09".to_string())
+        );
+        for bad in [
+            String::new(),
+            "a".repeat(65),
+            "bad space".to_string(),
+            "bad\nnewline".to_string(),
+            "bad=kv".to_string(),
+            "\"quoted\"".to_string(),
+        ] {
+            assert!(
+                validate_correlation_id(Some(bad.clone())).is_err(),
+                "expected {bad:?} to be rejected"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn start_route_rejects_malformed_correlation_id_at_correlation_id_stage() {
+        use std::time::Duration;
+        let root = TempDir::new();
+        let log_path = root.path().join("helper.log");
+        let logger = ServiceLogger::new_at_path(log_path.clone());
+        let routes = control_routes(logger.clone());
+        let app_home = root.path().join("AppData/Roaming/com.follow/clashx");
+        fs::create_dir_all(&app_home).unwrap();
+        let token = "a".repeat(64);
+        fs::write(app_home.join(HELPER_TOKEN_FILE_NAME), &token).unwrap();
+        let owner = format!("{}-1", "b".repeat(64));
+        let invalid_corr = serde_json::json!({
+            "path": root.path().join("never-execute.exe"),
+            "arg": "47891",
+            "home_dir": app_home,
+            "helper_token": token,
+            "ownerInstanceId": owner,
+            "correlationId": "bad space\ninjection",
+        });
+        let response = warp::test::request()
+            .method("POST")
+            .path("/start")
+            .json(&invalid_corr)
+            .reply(&routes)
+            .await;
+        assert_eq!(response.status(), warp::http::StatusCode::OK);
+        let body: serde_json::Value = serde_json::from_slice(response.body()).unwrap();
+        assert_eq!(body["ownerInstanceId"], owner);
+        assert_eq!(body["outcome"], "rejected");
+        assert!(PROCESS.lock().unwrap().process.is_none());
+        logger.flush(Duration::from_secs(1)).unwrap();
+        let logs = fs::read_to_string(log_path).unwrap();
+        assert!(
+            logs.contains("stage=correlation_id"),
+            "expected correlation_id rejection stage in logs: {logs}"
+        );
     }
 
     #[test]

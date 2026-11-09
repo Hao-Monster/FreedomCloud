@@ -1,5 +1,6 @@
 func ReCreateTun(tunConf LC.Tun, tunnel C.Tunnel) {
 	startedAt := fcxStartupTimingStart()
+	var stageErr error
 	tunConf = fcxCloneTunConfig(tunConf)
 	tunConf.Sort()
 	tunMux.Lock()
@@ -10,7 +11,7 @@ func ReCreateTun(tunConf LC.Tun, tunnel C.Tunnel) {
 		if fcxTunStatus.ErrorCode != "" {
 			outcome = "error"
 		}
-		fcxLogTunTiming("ReCreateTun", startedAt, outcome)
+		fcxLogTunTiming("ReCreateTun", startedAt, outcome, fcxTunStatus.State, fcxTunStatus.ErrorCode, stageErr)
 	}()
 	fcxTunStatus.Revision++
 	fcxTunStatus.RequestedEnabled = tunConf.Enable
@@ -24,6 +25,7 @@ func ReCreateTun(tunConf LC.Tun, tunnel C.Tunnel) {
 		return
 	}
 	if err := closeTunListener(); err != nil {
+		stageErr = err
 		tunConf.Enable = false
 		fcxTunStatus.State = "failed"
 		fcxTunStatus.ErrorCode = "closeFailed"
@@ -39,6 +41,7 @@ func ReCreateTun(tunConf LC.Tun, tunnel C.Tunnel) {
 	fcxPublishTunTransition()
 	created, err := fcxCreateTun(tunConf, tunnel)
 	if err != nil {
+		stageErr = err
 		tunConf.Enable = false
 		fcxTunStatus.State = "failed"
 		fcxTunStatus.ErrorCode = fcxTunErrorCode(err)
