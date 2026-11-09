@@ -133,6 +133,26 @@ func (pp *ProxySetProvider) SubscriptionInfoFCX() *SubscriptionInfo {
 	if pp == nil || pp.proxySetProvider == nil {
 		return nil
 	}
+	return pp.getSubscriptionInfo()
+}
+
+func (pp *proxySetProvider) getSubscriptionInfo() *SubscriptionInfo {
+	pp.mutex.RLock()
+	defer pp.mutex.RUnlock()
 	return pp.subscriptionInfo
+}
+
+func (pp *proxySetProvider) setSubscriptionInfo(info *SubscriptionInfo) {
+	pp.mutex.Lock()
+	defer pp.mutex.Unlock()
+	pp.subscriptionInfo = info
+}
+
+func (pp *proxySetProvider) setSubscriptionInfoIfNil(info *SubscriptionInfo) {
+	pp.mutex.Lock()
+	defer pp.mutex.Unlock()
+	if pp.subscriptionInfo == nil {
+		pp.subscriptionInfo = info
+	}
 }
 

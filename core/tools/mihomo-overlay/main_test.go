@@ -672,4 +672,167 @@ func TestProcessWindowsPatchIsDeterministicAndRejectsChangedShape(t *testing.T) 
 	}
 }
 
+const minimalFetcher = `package resource
 
+type Fetcher[V any] struct{}
+
+func (f *Fetcher[V]) UpdatedAt() time.Time {
+	return f.updatedAt
+}
+
+func (f *Fetcher[V]) Initial() (V, error) {
+	if local {
+		f.updatedAt = modTime
+	}
+	if bundle {
+		f.updatedAt = modTime
+	}
+	contents, _, updateErr := f.Update()
+	if updateErr != nil {
+		return contents, updateErr
+	}
+	return contents, nil
+}
+
+func (f *Fetcher[V]) Update() (V, bool, error) {
+	return f.loadBuf(nil, f.hash, true)
+}
+
+func (f *Fetcher[V]) SideUpdate(buf []byte) (V, bool, error) {
+	return f.loadBuf(buf, f.hash, true)
+}
+
+func (f *Fetcher[V]) pullLoop(forceUpdate bool) {
+	initialInterval := f.interval - time.Since(f.updatedAt)
+	_ = initialInterval
+}
+`
+
+const minimalRuleProvider = `package provider
+
+type baseProvider struct {
+	behavior P.RuleBehavior
+	strategy ruleStrategy
+}
+
+func (bp *baseProvider) Count() int {
+	return bp.strategy.Count()
+}
+
+func (bp *baseProvider) Match(metadata *C.Metadata, helper C.RuleMatchHelper) bool {
+	return bp.strategy != nil && bp.strategy.Match(metadata, helper)
+}
+
+func (bp *baseProvider) Strategy() any {
+	return bp.strategy
+}
+
+func (rp *ruleSetProvider) MarshalJSON() ([]byte, error) {
+	return json.Marshal(providerForApi{
+		RuleCount:   rp.strategy.Count(),
+	})
+}
+
+func NewRuleSetProvider() {
+	onUpdate := func(strategy ruleStrategy) {
+		rp.strategy = strategy
+	}
+	_ = onUpdate
+	rp.strategy = newStrategy(behavior, parse)
+	if len(payload) > 0 { // using as fallback rules
+		rp.strategy = rulesParseInline(payload, rp.strategy)
+	}
+}
+
+func (i *inlineProvider) MarshalJSON() ([]byte, error) {
+	return json.Marshal(providerForApi{
+		RuleCount:   i.strategy.Count(),
+	})
+}
+
+func NewInlineProvider() {
+	ip := &inlineProvider{
+		baseProvider: baseProvider{
+			behavior: behavior,
+			strategy: newStrategy(behavior, parse),
+		},
+		payload:  payload,
+		name:     name,
+		updateAt: time.Now(),
+	}
+	ip.strategy = rulesParseInline(payload, ip.strategy)
+}
+`
+
+const minimalProxyProvider = `package provider
+
+func (pp *proxySetProvider) MarshalJSON() ([]byte, error) {
+	return json.Marshal(providerForApi{
+		SubscriptionInfo: pp.subscriptionInfo,
+	})
+}
+
+func (pp *proxySetProvider) Initial() error {
+	if subscriptionInfo != "" {
+		pp.subscriptionInfo = NewSubscriptionInfo(subscriptionInfo)
+	}
+	return nil
+}
+
+func NewProxySetProvider() {
+	if subscriptionInfo != "" {
+		pd.subscriptionInfo = NewSubscriptionInfo(subscriptionInfo)
+	}
+}
+`
+
+func TestProviderNonblockingPatchesAreDeterministicAndRejectChangedShape(t *testing.T) {
+	firstF, err := patchResourceFetcher([]byte(minimalFetcher))
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondF, err := patchResourceFetcher([]byte(minimalFetcher))
+	if err != nil || !bytes.Equal(firstF, secondF) {
+		t.Fatalf("fetcher.go patch is nondeterministic: %v", err)
+	}
+	for _, want := range []string{"fcxStartInitialRemotePull", "fcxNotifyProviderUpdated", "currentHash()", "setUpdatedAt(modTime)", "time.Since(f.UpdatedAt())"} {
+		if !bytes.Contains(firstF, []byte(want)) {
+			t.Fatalf("fetcher.go patch missing %q", want)
+		}
+	}
+	if _, err := patchResourceFetcher([]byte(strings.Replace(minimalFetcher, "SideUpdate", "OtherSideUpdate", 1))); err == nil {
+		t.Fatal("changed fetcher.go shape accepted")
+	}
+
+	firstR, err := patchRuleProvider([]byte(minimalRuleProvider))
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondR, err := patchRuleProvider([]byte(minimalRuleProvider))
+	if err != nil || !bytes.Equal(firstR, secondR) {
+		t.Fatalf("rules/provider/provider.go patch is nondeterministic: %v", err)
+	}
+	if !bytes.Contains(firstR, []byte("fcxAtomicRuleStrategy")) || !bytes.Contains(firstR, []byte("bp.strategy.load()")) {
+		t.Fatal("rules/provider/provider.go patch missing atomic strategy")
+	}
+	if _, err := patchRuleProvider([]byte(strings.Replace(minimalRuleProvider, "strategy ruleStrategy", "strategy any", 1))); err == nil {
+		t.Fatal("changed rules/provider/provider.go shape accepted")
+	}
+
+	firstP, err := patchProxyProvider([]byte(minimalProxyProvider))
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondP, err := patchProxyProvider([]byte(minimalProxyProvider))
+	if err != nil || !bytes.Equal(firstP, secondP) {
+		t.Fatalf("adapter/provider/provider.go patch is nondeterministic: %v", err)
+	}
+	for _, want := range []string{"pp.getSubscriptionInfo()", "pp.setSubscriptionInfoIfNil(", "pd.setSubscriptionInfo("} {
+		if !bytes.Contains(firstP, []byte(want)) {
+			t.Fatalf("adapter/provider/provider.go patch missing %q", want)
+		}
+	}
+	if _, err := patchProxyProvider([]byte(strings.Replace(minimalProxyProvider, "SubscriptionInfo: pp.subscriptionInfo,", "", 1))); err == nil {
+		t.Fatal("changed adapter/provider/provider.go shape accepted")
+	}
+}

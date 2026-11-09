@@ -878,10 +878,19 @@ func handleGetExternalProviders() string {
 	return string(data)
 }
 
+func lookupExternalProviderLocked(name string) (cp.Provider, bool) {
+	ep, exist := externalProviders[name]
+	if !exist {
+		externalProviders = getExternalProvidersRaw()
+		ep, exist = externalProviders[name]
+	}
+	return ep, exist
+}
+
 func handleGetExternalProviderPayload(externalProviderName string) *ExternalProvider {
 	runLock.Lock()
 	defer runLock.Unlock()
-	externalProvider, exist := externalProviders[externalProviderName]
+	externalProvider, exist := lookupExternalProviderLocked(externalProviderName)
 	if !exist {
 		return nil
 	}
@@ -930,7 +939,7 @@ func handleUpdateGeoData(geoType string, geoName string, fn func(value string)) 
 func handleUpdateExternalProvider(providerName string, fn func(value string)) {
 	go func() {
 		runLock.Lock()
-		externalProvider, exist := externalProviders[providerName]
+		externalProvider, exist := lookupExternalProviderLocked(providerName)
 		runLock.Unlock()
 		if !exist {
 			fn("external provider is not exist")
@@ -951,7 +960,7 @@ func handleSideLoadExternalProvider(providerName string, data []byte, fn func(va
 		// the fn (JNI) callback — mirrors handleUpdateExternalProvider and keeps the
 		// upcall off the lock. (externalProviders is only mutated under runLock.)
 		runLock.Lock()
-		externalProvider, exist := externalProviders[providerName]
+		externalProvider, exist := lookupExternalProviderLocked(providerName)
 		runLock.Unlock()
 		if !exist {
 			fn("external provider is not exist")

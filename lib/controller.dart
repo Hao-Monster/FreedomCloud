@@ -824,11 +824,7 @@ class AppController {
         } else {
           clashCore.stopLog();
         }
-        await updateGroups();
-        if (!current()) return;
-        await updateProviders();
-        if (!current()) return;
-        initForegroundCache();
+        _hydrateRuntimeProjectionsInBackground();
       }
     } else {
       _needsWindowsCoreRestore = false;
@@ -2473,10 +2469,13 @@ class AppController {
     } else {
       await setupClashConfig();
     }
-    await updateGroups();
-    await updateProviders();
-    initForegroundCache();
+    _hydrateRuntimeProjectionsInBackground();
     return skippedSetup;
+  }
+
+  void _hydrateRuntimeProjectionsInBackground() {
+    initForegroundCache();
+    unawaited((updateGroups(), updateProviders()).wait);
   }
 
   Future applyProfile({
@@ -3105,16 +3104,12 @@ class AppController {
       // setupConfig here rebuilds listeners/providers and can interrupt live
       // flows, defeating R-121. Refresh only the UI projections; configuration
       // remains owned by the Agent/Core journal until the user changes it.
-      await updateGroups();
-      await updateProviders();
-      initForegroundCache();
+      _hydrateRuntimeProjectionsInBackground();
     } else if (Platform.isWindows && ownsWindowsConfig) {
       // Restart already owns the Windows configuration queue. Re-entering
       // applyProfile would wait on ourselves and deadlock recovery.
       await _setupClashConfigImpl();
-      await updateGroups();
-      await updateProviders();
-      initForegroundCache();
+      _hydrateRuntimeProjectionsInBackground();
     } else {
       await applyProfile();
     }

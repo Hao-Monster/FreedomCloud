@@ -40,6 +40,9 @@ const fakeIpSHA256 = "1f98752ff24228483d6a52bc9902d5607762a6a0990d203a9e7bf35acf
 const processWindowsSHA256 = "a4d41ae370ca76690b5594f81c051bc856d8adbf10d9cc897ab1958d84b8d794"
 const memConservativeSHA256 = "c4b9c920b5ff6e0f5098a639df0bda013696f54f1a28962e498301bc5645fc3d"
 const configSHA256 = "a242e1fd06378e01371153122d51b20862af24b4904fdec2a7b54843e70b1203"
+const fetcherSHA256 = "647fdd5906c41202974577ff96a00ebc6bda441ae3e9d7717037cedff4eee903"
+const ruleProviderSHA256 = "ec6e3ec5314b09bb33206ae0f01d1865533a406f718697cfeb0979445c004295"
+const proxyProviderSHA256 = "69cb24313f68cc457c5f4e45ecab0d1355c1f5d22e3e2ec0559a7d753ee1672f"
 const singTunVersion = "v0.4.27"
 const singTunModuleSum = "h1:dWCpFDlWelQrhH3y5KkMrJXEXYeJ0V2LROP8Cxv96MI="
 const singTunWindowsSHA256 = "e463b674d33694dbaa02d165e6a1e24d310a6f12066aab4d3bbe10683be9aff0"
@@ -872,6 +875,211 @@ func patchProcessWindows(source []byte) ([]byte, error) {
 	return format.Source([]byte(patched))
 }
 
+func isFetcherMethod(fn *ast.FuncDecl) bool {
+	if fn == nil || fn.Recv == nil || len(fn.Recv.List) != 1 {
+		return false
+	}
+	ptr, ok := fn.Recv.List[0].Type.(*ast.StarExpr)
+	if !ok {
+		return false
+	}
+	idx, ok := ptr.X.(*ast.IndexExpr)
+	if !ok {
+		return false
+	}
+	ident, ok := idx.X.(*ast.Ident)
+	return ok && ident.Name == "Fetcher"
+}
+
+func patchResourceFetcher(source []byte) ([]byte, error) {
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "fetcher.go", source, 0)
+	if err != nil {
+		return nil, err
+	}
+	methods := map[string]*ast.FuncDecl{}
+	for _, decl := range file.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if !ok || !isFetcherMethod(fn) {
+			continue
+		}
+		switch fn.Name.Name {
+		case "UpdatedAt", "Initial", "Update", "SideUpdate", "pullLoop":
+			if methods[fn.Name.Name] != nil {
+				return nil, fmt.Errorf("duplicate Fetcher.%s method", fn.Name.Name)
+			}
+			methods[fn.Name.Name] = fn
+		}
+	}
+	for _, name := range []string{"UpdatedAt", "Initial", "Update", "SideUpdate", "pullLoop"} {
+		if methods[name] == nil {
+			return nil, fmt.Errorf("upstream Fetcher.%s method missing", name)
+		}
+	}
+
+	changes := []replacement{
+		{
+			fset.Position(methods["UpdatedAt"].Pos()).Offset,
+			fset.Position(methods["UpdatedAt"].End()).Offset,
+			`func (f *Fetcher[V]) UpdatedAt() time.Time {
+	f.loadBufMutex.Lock()
+	defer f.loadBufMutex.Unlock()
+	return f.updatedAt
+}`,
+		},
+		{
+			fset.Position(methods["Update"].Pos()).Offset,
+			fset.Position(methods["Update"].End()).Offset,
+			`func (f *Fetcher[V]) Update() (V, bool, error) {
+	buf, hash, err := f.vehicle.Read(f.ctx, f.currentHash())
+	if err != nil {
+		f.backoff.AddAttempt()
+		return lo.Empty[V](), false, err
+	}
+	contents, same, err := f.loadBuf(buf, hash, f.vehicle.Type() != P.File)
+	if err == nil && !same {
+		fcxNotifyProviderUpdated(f.Name())
+	}
+	return contents, same, err
+}`,
+		},
+		{
+			fset.Position(methods["SideUpdate"].Pos()).Offset,
+			fset.Position(methods["SideUpdate"].End()).Offset,
+			`func (f *Fetcher[V]) SideUpdate(buf []byte) (V, bool, error) {
+	contents, same, err := f.loadBuf(buf, utils.MakeHash(buf), true)
+	if err == nil && !same {
+		fcxNotifyProviderUpdated(f.Name())
+	}
+	return contents, same, err
+}`,
+		},
+	}
+
+	initialSrc := string(source[fset.Position(methods["Initial"].Pos()).Offset:fset.Position(methods["Initial"].End()).Offset])
+	const modTimeAssign = "f.updatedAt = modTime"
+	const remoteFallbackAnchor = "contents, _, updateErr := f.Update()"
+	if strings.Count(initialSrc, modTimeAssign) != 2 || strings.Count(initialSrc, remoteFallbackAnchor) != 1 {
+		return nil, fmt.Errorf("upstream Fetcher.Initial body changed")
+	}
+	patchedInitial := strings.ReplaceAll(initialSrc, modTimeAssign, "f.setUpdatedAt(modTime)")
+	patchedInitial = strings.Replace(
+		patchedInitial,
+		remoteFallbackAnchor,
+		`if f.vehicle.Type() != P.File {
+		f.fcxStartInitialRemotePull()
+		return lo.Empty[V](), nil
+	}
+	`+remoteFallbackAnchor,
+		1,
+	)
+	changes = append(changes, replacement{
+		fset.Position(methods["Initial"].Pos()).Offset,
+		fset.Position(methods["Initial"].End()).Offset,
+		patchedInitial,
+	})
+
+	pullLoopSrc := string(source[fset.Position(methods["pullLoop"].Pos()).Offset:fset.Position(methods["pullLoop"].End()).Offset])
+	const pullUpdatedAtAnchor = "time.Since(f.updatedAt)"
+	if strings.Count(pullLoopSrc, pullUpdatedAtAnchor) != 1 {
+		return nil, fmt.Errorf("upstream Fetcher.pullLoop body changed")
+	}
+	changes = append(changes, replacement{
+		fset.Position(methods["pullLoop"].Pos()).Offset,
+		fset.Position(methods["pullLoop"].End()).Offset,
+		strings.Replace(pullLoopSrc, pullUpdatedAtAnchor, "time.Since(f.UpdatedAt())", 1),
+	})
+
+	sort.Slice(changes, func(i, j int) bool { return changes[i].start > changes[j].start })
+	patched := string(source)
+	for _, change := range changes {
+		patched = patched[:change.start] + change.text + patched[change.end:]
+	}
+	return format.Source([]byte(patched))
+}
+
+func patchRuleProvider(source []byte) ([]byte, error) {
+	fset := token.NewFileSet()
+	if _, err := parser.ParseFile(fset, "provider.go", source, 0); err != nil {
+		return nil, err
+	}
+	patched := strings.ReplaceAll(string(source), "\r\n", "\n")
+	rewrites := [][2]string{
+		{
+			"type baseProvider struct {\n\tbehavior P.RuleBehavior\n\tstrategy ruleStrategy\n}",
+			"type baseProvider struct {\n\tbehavior P.RuleBehavior\n\tstrategy fcxAtomicRuleStrategy\n}",
+		},
+		{
+			"func (bp *baseProvider) Count() int {\n\treturn bp.strategy.Count()\n}",
+			"func (bp *baseProvider) Count() int {\n\ts := bp.strategy.load()\n\tif s == nil {\n\t\treturn 0\n\t}\n\treturn s.Count()\n}",
+		},
+		{
+			"func (bp *baseProvider) Match(metadata *C.Metadata, helper C.RuleMatchHelper) bool {\n\treturn bp.strategy != nil && bp.strategy.Match(metadata, helper)\n}",
+			"func (bp *baseProvider) Match(metadata *C.Metadata, helper C.RuleMatchHelper) bool {\n\ts := bp.strategy.load()\n\treturn s != nil && s.Match(metadata, helper)\n}",
+		},
+		{
+			"func (bp *baseProvider) Strategy() any {\n\treturn bp.strategy\n}",
+			"func (bp *baseProvider) Strategy() any {\n\treturn bp.strategy.load()\n}",
+		},
+		{
+			"RuleCount:   rp.strategy.Count(),",
+			"RuleCount:   rp.Count(),",
+		},
+		{
+			"rp.strategy = strategy",
+			"rp.strategy.store(strategy)",
+		},
+		{
+			"\trp.strategy = newStrategy(behavior, parse)\n\tif len(payload) > 0 { // using as fallback rules\n\t\trp.strategy = rulesParseInline(payload, rp.strategy)\n\t}",
+			"\tinitialStrategy := newStrategy(behavior, parse)\n\tif len(payload) > 0 { // using as fallback rules\n\t\tinitialStrategy = rulesParseInline(payload, initialStrategy)\n\t}\n\trp.strategy.store(initialStrategy)",
+		},
+		{
+			"RuleCount:   i.strategy.Count(),",
+			"RuleCount:   i.Count(),",
+		},
+		{
+			"\t\tbaseProvider: baseProvider{\n\t\t\tbehavior: behavior,\n\t\t\tstrategy: newStrategy(behavior, parse),\n\t\t},\n\t\tpayload:  payload,\n\t\tname:     name,\n\t\tupdateAt: time.Now(),\n\t}\n\tip.strategy = rulesParseInline(payload, ip.strategy)",
+			"\t\tbaseProvider: baseProvider{\n\t\t\tbehavior: behavior,\n\t\t},\n\t\tpayload:  payload,\n\t\tname:     name,\n\t\tupdateAt: time.Now(),\n\t}\n\tip.strategy.store(rulesParseInline(payload, newStrategy(behavior, parse)))",
+		},
+	}
+	for _, rw := range rewrites {
+		if strings.Count(patched, rw[0]) != 1 {
+			return nil, fmt.Errorf("upstream rules/provider/provider.go shape changed around %q", rw[0])
+		}
+		patched = strings.Replace(patched, rw[0], rw[1], 1)
+	}
+	return format.Source([]byte(patched))
+}
+
+func patchProxyProvider(source []byte) ([]byte, error) {
+	fset := token.NewFileSet()
+	if _, err := parser.ParseFile(fset, "provider.go", source, 0); err != nil {
+		return nil, err
+	}
+	patched := strings.ReplaceAll(string(source), "\r\n", "\n")
+	rewrites := [][2]string{
+		{
+			"SubscriptionInfo: pp.subscriptionInfo,",
+			"SubscriptionInfo: pp.getSubscriptionInfo(),",
+		},
+		{
+			"pp.subscriptionInfo = NewSubscriptionInfo(subscriptionInfo)",
+			"pp.setSubscriptionInfoIfNil(NewSubscriptionInfo(subscriptionInfo))",
+		},
+		{
+			"pd.subscriptionInfo = NewSubscriptionInfo(subscriptionInfo)",
+			"pd.setSubscriptionInfo(NewSubscriptionInfo(subscriptionInfo))",
+		},
+	}
+	for _, rw := range rewrites {
+		if strings.Count(patched, rw[0]) != 1 {
+			return nil, fmt.Errorf("upstream adapter/provider/provider.go shape changed around %q", rw[0])
+		}
+		patched = strings.Replace(patched, rw[0], rw[1], 1)
+	}
+	return format.Source([]byte(patched))
+}
+
 func generate(out string) error {
 	command := exec.Command("go", "list", "-m", "-json", "github.com/metacubex/mihomo")
 	data, err := command.Output()
@@ -1061,6 +1269,30 @@ func convertsV2RayFCX(buf []byte, diagnostics bool) ([]map[string]any, error) {`
 		return err
 	}
 	patchedConfig, err := patchConfigGeoCleanup(configSource)
+	if err != nil {
+		return err
+	}
+	fetcherSource, err := checkedSource(filepath.Join(module.Dir, "component", "resource", "fetcher.go"), fetcherSHA256)
+	if err != nil {
+		return err
+	}
+	patchedFetcher, err := patchResourceFetcher(fetcherSource)
+	if err != nil {
+		return err
+	}
+	ruleProviderSource, err := checkedSource(filepath.Join(module.Dir, "rules", "provider", "provider.go"), ruleProviderSHA256)
+	if err != nil {
+		return err
+	}
+	patchedRuleProvider, err := patchRuleProvider(ruleProviderSource)
+	if err != nil {
+		return err
+	}
+	proxyProviderSource, err := checkedSource(filepath.Join(module.Dir, "adapter", "provider", "provider.go"), proxyProviderSHA256)
+	if err != nil {
+		return err
+	}
+	patchedProxyProvider, err := patchProxyProvider(proxyProviderSource)
 	if err != nil {
 		return err
 	}
@@ -1312,6 +1544,39 @@ func convertsV2RayFCX(buf []byte, diagnostics bool) ([]map[string]any, error) {`
 	if err := write(filepath.Join(sourceDirectory, "config", "config.go"), "config.go", patchedConfig); err != nil {
 		return err
 	}
+	if err := write(filepath.Join(sourceDirectory, "component", "resource", "fetcher.go"), "resource_fetcher.go", patchedFetcher); err != nil {
+		return err
+	}
+	for _, name := range []string{"fetcher_fcx.go", "fetcher_fcx_test.go"} {
+		contents, err := patchFiles.ReadFile("patches/" + name + ".txt")
+		if err != nil {
+			return err
+		}
+		contents, err = format.Source(contents)
+		if err != nil {
+			return err
+		}
+		if err := write(filepath.Join(sourceDirectory, "component", "resource", name), name, contents); err != nil {
+			return err
+		}
+	}
+	if err := write(filepath.Join(sourceDirectory, "rules", "provider", "provider.go"), "rule_provider.go", patchedRuleProvider); err != nil {
+		return err
+	}
+	ruleProviderHelper, err := patchFiles.ReadFile("patches/rule_provider_fcx.go.txt")
+	if err != nil {
+		return err
+	}
+	ruleProviderHelper, err = format.Source(ruleProviderHelper)
+	if err != nil {
+		return err
+	}
+	if err := write(filepath.Join(sourceDirectory, "rules", "provider", "rule_provider_fcx.go"), "rule_provider_fcx.go", ruleProviderHelper); err != nil {
+		return err
+	}
+	if err := write(filepath.Join(sourceDirectory, "adapter", "provider", "provider.go"), "proxy_provider.go", patchedProxyProvider); err != nil {
+		return err
+	}
 	encoded, err := json.MarshalIndent(struct{ Replace map[string]string }{replacements}, "", "  ")
 	if err != nil {
 		return err
@@ -1414,6 +1679,9 @@ func convertsV2RayFCX(buf []byte, diagnostics bool) ([]map[string]any, error) {`
 			"component/profile/cachefile/fakeip.go":        fakeIpSHA256,
 			"component/process/process_windows.go":         processWindowsSHA256,
 			"component/geodata/memconservative/memc.go":    memConservativeSHA256,
+			"component/resource/fetcher.go":                fetcherSHA256,
+			"rules/provider/provider.go":                   ruleProviderSHA256,
+			"adapter/provider/provider.go":                 proxyProviderSHA256,
 			"config/config.go":                             configSHA256,
 			"hub/route/configs.go":                         configsSHA256,
 			"hub/route/server.go":                          controllerSHA256,

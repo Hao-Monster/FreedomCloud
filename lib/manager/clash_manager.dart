@@ -15,6 +15,40 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'clash_config_update_listener.dart';
 import 'connection_manager.dart';
 
+@visibleForTesting
+Future<void> dispatchLoadedProviderEvent({
+  required String providerName,
+  required bool Function() isCurrent,
+  required Future<ExternalProvider?> Function(String name) getExternalProvider,
+  required bool Function(String name) hasExistingProvider,
+  required void Function(ExternalProvider provider) setProvider,
+  required Future<void> Function() updateProviders,
+  required void Function() updateGroupsDebounce,
+}) async {
+  try {
+    if (providerName == 'all') {
+      if (!isCurrent()) return;
+      await updateProviders();
+      if (!isCurrent()) return;
+      updateGroupsDebounce();
+      return;
+    }
+    final provider = await getExternalProvider(providerName);
+    if (!isCurrent()) return;
+    if (provider != null) {
+      if (hasExistingProvider(provider.name)) {
+        setProvider(provider);
+      } else {
+        await updateProviders();
+        if (!isCurrent()) return;
+      }
+      updateGroupsDebounce();
+    }
+  } catch (e) {
+    commonPrint.log('onLoaded($providerName) skipped transient error: $e');
+  }
+}
+
 /// When desktop Agent/Helper owns the Core process, Core stdout is already
 /// persisted in the native service log. Persist only warning/error/app lines on
 /// the UI side to eliminate duplicate disk amplification while keeping all logs
@@ -229,16 +263,20 @@ class _ClashContainerState extends ConsumerState<ClashManager>
   Future<void> onLoaded(String providerName) async {
     final configEpoch = globalState.runtimeConfigEpoch;
     final profileId = ref.read(currentProfileIdProvider);
-    final provider = await clashCore.getExternalProvider(
-      providerName,
+    await dispatchLoadedProviderEvent(
+      providerName: providerName,
+      isCurrent: () =>
+          mounted &&
+          configEpoch == globalState.runtimeConfigEpoch &&
+          profileId == ref.read(currentProfileIdProvider),
+      getExternalProvider: clashCore.getExternalProvider,
+      hasExistingProvider: (name) =>
+          ref.read(providersProvider).any((item) => item.name == name),
+      setProvider: ref.read(providersProvider.notifier).setProvider,
+      updateProviders: globalState.appController.updateProviders,
+      updateGroupsDebounce: globalState.appController.updateGroupsDebounce,
     );
-    if (!mounted ||
-        configEpoch != globalState.runtimeConfigEpoch ||
-        profileId != ref.read(currentProfileIdProvider)) {
-      return;
-    }
-    ref.read(providersProvider.notifier).setProvider(provider);
-    globalState.appController.updateGroupsDebounce();
+    if (!mounted) return;
     super.onLoaded(providerName);
   }
 }

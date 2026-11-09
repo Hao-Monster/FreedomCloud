@@ -20,6 +20,7 @@ import (
 	"github.com/metacubex/mihomo/component/dialer"
 	P "github.com/metacubex/mihomo/component/process"
 	"github.com/metacubex/mihomo/component/resolver"
+	"github.com/metacubex/mihomo/component/resource"
 	"github.com/metacubex/mihomo/config"
 	"github.com/metacubex/mihomo/constant"
 	cp "github.com/metacubex/mihomo/constant/provider"
@@ -50,7 +51,22 @@ var (
 	currentListenersClosed      = false
 	currentTestURL              = "https://www.gstatic.com/generate_204"
 	minHealthCheckInterval      = 5 * time.Second
+	emitLoadedProviderMessage   = func(name string) {
+		sendMessage(Message{
+			Type: LoadedMessage,
+			Data: name,
+		})
+	}
 )
+
+func init() {
+	resource.SetFCXProviderUpdatedCallback(func(name string) {
+		if !isInit.Load() {
+			return
+		}
+		emitLoadedProviderMessage(name)
+	})
+}
 
 func applyRuntimeConfigLocked(cfg *config.Config, force bool) {
 	proxyStateMu.Lock()
@@ -619,6 +635,7 @@ func setupConfig(params *SetupParams) error {
 	candidatePending := candidate.General.Tun.Enable
 	applyStart := time.Now()
 	applyConfigForRuntimeStateLocked(candidate)
+	externalProviders = getExternalProvidersRaw()
 	log.Infoln("[Setup] executor.ApplyConfig took %s", time.Since(applyStart))
 	pendingTunEnable = candidatePending
 	setProxyDescriptions(candidateDescriptions)
@@ -640,6 +657,7 @@ func setupConfig(params *SetupParams) error {
 				applyRuntimeConfigLocked(dormant, true)
 				cleanupErr = recreateRuntimeController(effectiveControllerConfig(dormant, false))
 			}
+			externalProviders = getExternalProvidersRaw()
 			setProxyDescriptions(map[string]string{})
 			configuredFindProcessMode.Store(int32(P.FindProcessStrict))
 			externalControllerListening.Store(false)
@@ -647,6 +665,7 @@ func setupConfig(params *SetupParams) error {
 			return errors.Join(fmt.Errorf("initial configuration strict ingress failed: %w", restoreErr), cleanupErr)
 		}
 		applyConfigForRuntimeStateLocked(previous)
+		externalProviders = getExternalProvidersRaw()
 		controllerErr := recreateRuntimeController(effectiveControllerConfig(previous, previousControllerEnabled))
 		setProxyDescriptions(previousDescriptions)
 		configuredFindProcessMode.Store(int32(previous.General.FindProcessMode))
@@ -674,11 +693,9 @@ func setupConfig(params *SetupParams) error {
 	// here (not only on Start) and keeps running until shutdown.
 	startRuntimeHealthChecks()
 
-	// Notify Flutter that all providers are loaded
-	sendMessage(Message{
-		Type: LoadedMessage,
-		Data: "all",
-	})
+	// Notify Flutter that synchronous providers are loaded; uncached remote
+	// providers continue emitting LoadedMessage(name) as background pulls finish.
+	emitLoadedProviderMessage("all")
 
 	return nil
 }
