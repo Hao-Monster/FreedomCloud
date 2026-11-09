@@ -2,6 +2,25 @@
 
 更新日期：2026-11-08。当前阶段是快速开发、快速迭代和部分功能预览。本文记录来源与验收边界；每次继续开发仍需核实实际 Git/PR/CI 状态，不能把历史报告视为当前通过证明。
 
+## Windows 冷启动双 Agent/双 Core 生命周期缺陷（缺陷 A 与缺陷 B）TDD 收口（2026-11-08）
+
+- 原始来源与根因穿透：针对 `FlClashAgent.log`、`FlClashX_2026-11-08_2.log` 与 `helper-install.log` 实机取证检出的 Windows 冷启动双 `FlClashAgent` / 双 `FlClashCore` 生命周期缺陷，按用户指令（修复缺陷 A 与缺陷 B，暂不构建测试包）以严格 TDD 落入本地 `development`（代码提交 `2083c33`）：
+  1. **缺陷 A（桌面冷启动配置初始化与 `preload` 时序竞态）**：
+     - 根因：[`main`](file:///E:/CodeWorkstation/FlClashX/lib/main.dart) 原先在 `await globalState.initApp(version)` 之前触发桌面端 `clashCore.preload()`，首次读取惰性单例 `clashCore` -> `clashService` 立即执行 `_connectOrLaunchAgentImpl()`；此时 `tunRuntime` 尚未进入监听（`desiredEnabled == false`）且 `globalState.config` 尚未完成初始化，读取 `globalState.config.patchClashConfig.tun.enable` 抛出未初始化异常并被 `try/catch` 静默吞掉为 `tunDesired = false`，导致已安装且二进制哈希匹配但处于 `STOPPED` 状态的 `FlClashHelperService` 被 `shouldLaunchWindowsAgentWithHelper` 直接跳过免 UAC 启动，错误拉起无权限本地 `FlClashAgent` + 本地 `FlClashCore`，随后在 `ensureBackend` 被销毁替换。
+     - 修复：在 [`GlobalState`](file:///E:/CodeWorkstation/FlClashX/lib/state.dart) 将 `late Config config` 升级为显式可判定的 `_config` + `isConfigInitialized`；在 [`lib/main.dart`](file:///E:/CodeWorkstation/FlClashX/lib/main.dart) 提取 `bootstrapCoreAndState`，保证桌面端 `await globalState.initApp(version)`（含 `migrateOldData`）完成后再触发异步 `clashCore.preload()`（保留与窗口初始化并发，Android 维持原有预加载顺序）；在 [`lib/clash/windows_agent_launch.dart`](file:///E:/CodeWorkstation/FlClashX/lib/clash/windows_agent_launch.dart) 新增 `resolveWindowsTunDesiredForLaunch`，兼顾首启持久化偏好与同会话运行时显式开关覆盖。
+  2. **缺陷 B（需 UAC 安装/修复 Helper 时冷启动冗余预拉起无权限本地 Agent/Core）**：
+     - 根因：Windows 冷启动无现存 `FlClashAgent`、`tunDesired == true` 且 `FlClashHelperService` 无法免 UAC 直接启用（全新安装未注册、跨版本升级二进制哈希不匹配或历史自锁 SDDL）时，`preload()` 仍无条件预拉起注定在数秒后 `ensureBackend` 中被 `shutdownAgent` 销毁的无权限本地 `FlClashAgent` + 本地 `FlClashCore`，阻塞 `AppController.init()` 关键路径约 `4.1s–4.6s` 并制造两次完整进程/端口/配置生命周期。
+     - 修复：在 [`lib/clash/windows_agent_launch.dart`](file:///E:/CodeWorkstation/FlClashX/lib/clash/windows_agent_launch.dart) 新增 `WindowsAgentColdStartAction` 与 `planWindowsAgentColdStart`；在 [`ClashService`](file:///E:/CodeWorkstation/FlClashX/lib/clash/service.dart) 实现延迟启动态（`hasDeferredAgentLaunch`）：冷启动命中 `deferForTunAuthorization` 时跳过无权限本地进程预拉起并即时完成 `preload`，被动 `getTunStatus` / `sendMessage` 零阻塞快速结算，`ensureWindowsTunBackend` 在 `authorize()` 成功后直接一次性拉起 `FlClashAgent --use-helper` + Helper `FlClashCore`（严格保留现存旧版进程连接时的 `legacyAgent` 门禁）；若用户取消 UAC、缺少订阅（`profileRequired`）或手动切换非 TUN 路径，通过 `recoverCoreForUser`、`reStart`、`materializeDeferredAgent` 与 [`AppController._ensureDeferredWindowsAgentInitialized`](file:///E:/CodeWorkstation/FlClashX/lib/controller.dart) 按需拉起并初始化本地后端，同时补齐未连接态 `shutdown`/`destroy`/`_agentCommand` 防挂死保护。
+- 验证记录（本机 `Flutter 3.47.4` / `Dart 3.13.3`；CI 配置 `Flutter 3.41.7`）：
+  - 前置有效 Red：**PASS**（新增 [`windows_cold_start_backend_test.dart`](file:///E:/CodeWorkstation/FlClashX/test/clash/windows_cold_start_backend_test.dart) 在生产代码落地前确定性失败退出码 `1`）；
+  - 专项 7 套件与全仓 Flutter 单元测试回归（排除用户既有未提交草稿 `test/views/dashboard_render_test.dart` 外的全部 **110** 个测试套件）：**PASS（1,184 PASS / 0 FAIL）**；
+  - 静态与空白检查（`dart analyze lib/clash/windows_agent_launch.dart test/clash/windows_cold_start_backend_test.dart` `No issues found!`，全量改动文件 `dart analyze --fatal-warnings` 退出码 `0`，`git diff --cached --check` 零空白错误）：**PASS**；本机现役运行进程、服务、系统代理与 TUN 零触碰，既有未提交文件与 `stash@{0}` 原样保留。
+- 预览包与交付状态：
+  - **已实现 / 已本地全量单元测试验证 / 已提交本地 `development`（代码提交 `2083c33`）**；
+  - 预览测试包：**NOT RUN（按本轮明确指令暂不构建测试包，既有 `dist/` 产物原样保留）**；
+  - 远端推送 / PR / 云端 CI：**NOT RUN（未推送远端、未创建或合并 PR）**；
+  - 实机窗口与 UAC 冷启动验收：**NOT RUN（待后续按指令构建同源预览包后验收）**。
+
 ## 全栈性能与高可用深度优化（19 项 `P0`/`P1`/`P2` 全量 TDD 收口与预览包，2026-11-08）
 
 - 原始来源与用户对齐决策：针对全栈性能专项审计检出的 **19 项性能与高可用问题（`P0-1`–`P0-5`、`P1-1`–`P1-5`、`P2-1`–`P2-9`）**，按确认的四项架构策略（`A1` 本地 `logLevel` 优先 + 订阅 `debug`/`info` 默认钳制 `warning` + 桌面 Agent/Helper 模式 UI 侧仅落盘 `warning`/`error`/`app`；`A2` 保持 `tun.mtu = 1500` 并通过 `mihomo-overlay` 将 `gvisor` TCP 窗口扩展至 `4 KiB / 256 KiB / 4 MiB`；`A3` 保留 `ConnectionListMode.process` 下 `find-process-mode: always` 并通过 `mihomo-overlay` 池化套接字表与 `(PID, CreationTime)` 缓存根治内核开销；`A4` 本地原子提交 + 全套测试 + 全栈预览包且不推送远端）分 7 个原子提交落入本地 `development`（`94d5c8d`..`b753aaf`）：
