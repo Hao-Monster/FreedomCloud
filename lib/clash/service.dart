@@ -11,6 +11,7 @@ import 'package:flclashx/clash/windows_agent_launch.dart';
 import 'package:flclashx/common/common.dart';
 import 'package:flclashx/common/file_digest.dart';
 import 'package:flclashx/common/tun_runtime.dart';
+import 'package:flclashx/models/common.dart';
 import 'package:flclashx/models/core.dart';
 import 'package:flclashx/state.dart';
 import 'package:flutter/foundation.dart' show visibleForTesting;
@@ -193,6 +194,7 @@ class ClashService extends ClashHandlerInterface {
   bool _detaching = false;
   bool _agentRecovering = false;
   bool _agentLaunchDeferred = false;
+  bool _loggedDeferredTunNotReady = false;
   int? _agentPid;
   AgentCoreState _agentCoreState = AgentCoreState.starting;
   bool? _agentProxyRunning;
@@ -235,6 +237,42 @@ class ClashService extends ClashHandlerInterface {
       _agentLaunchDeferred &&
       _agentPid == null &&
       _agentIdentity == null;
+
+  /// True when the transport transition is an expected startup, deferral,
+  /// migration, or teardown state rather than an unexpected live Core loss.
+  bool get hasIntentionalOrInitialNotReady =>
+      _detaching ||
+      _stopping ||
+      !_preloadCompleter.isCompleted ||
+      hasDeferredAgentLaunch ||
+      (_agentMode &&
+          !_agentRecovering &&
+          _agentCoreState == AgentCoreState.starting);
+
+  @override
+  String? get tunTransportNotReadyReason {
+    if (_detaching) return 'ipc_detaching';
+    if (_stopping) {
+      return _agentMode ? 'backend_migrating' : 'backend_stopping';
+    }
+    if (!_preloadCompleter.isCompleted) return 'preload_initializing';
+    if (_agentMode) {
+      if (hasDeferredAgentLaunch) return 'deferred_cold_start';
+      if (_agentRecovering) return 'agent_recovering';
+      if (!socketCompleter.isCompleted) return 'ipc_disconnected';
+      if (_agentCoreState == AgentCoreState.starting ||
+          !_coreReadyCompleter.isCompleted) {
+        return 'core_starting';
+      }
+      if (_agentCoreState == AgentCoreState.stopped) return 'core_stopped';
+      if (_agentCoreState != AgentCoreState.ready) return 'core_unavailable';
+      return null;
+    }
+    if (_recovering) return 'core_recovering';
+    if (isStarting) return 'core_starting';
+    if (!socketCompleter.isCompleted) return 'ipc_disconnected';
+    return null;
+  }
   bool get windowsAgentSupportsMigration =>
       hasDeferredAgentLaunch ||
       (_agentIdentity?.agentInstanceId != null &&
@@ -1060,6 +1098,8 @@ class ClashService extends ClashHandlerInterface {
         if ((await getTunStatus()).privilege == 'elevated') return false;
       } on TunFailure {
         /* Reconcile a claimed Helper with the actual Core. */
+      } on TunNotReadyException {
+        /* Reconcile an unready Core with the expected elevated Helper. */
       }
     }
     if (!await _checkIsAdmin()) {
@@ -1209,6 +1249,16 @@ class ClashService extends ClashHandlerInterface {
   @override
   Future<TunStatus> getTunStatus() async {
     if (hasDeferredAgentLaunch) {
+      if (!_loggedDeferredTunNotReady || tunRuntime.busy) {
+        _loggedDeferredTunNotReady = true;
+        final watch = Stopwatch()..start();
+        logStartupTiming(
+          'getTunStatus',
+          watch,
+          outcome: 'not_ready',
+          detail: 'reason=deferred_cold_start',
+        );
+      }
       return const TunStatus(
         instanceId: 'deferred-cold-start',
         revision: 0,
@@ -1219,6 +1269,7 @@ class ClashService extends ClashHandlerInterface {
         requestedEnabled: false,
       );
     }
+    _loggedDeferredTunNotReady = false;
     return super.getTunStatus();
   }
 
@@ -1228,9 +1279,20 @@ class ClashService extends ClashHandlerInterface {
       _failPendingCompleter(message, 'Agent launch deferred');
       return;
     }
+    if (_stopping || _detaching) {
+      _failPendingCompleter(
+        message,
+        _detaching ? 'Agent socket detaching' : 'Backend stopping',
+      );
+      return;
+    }
     try {
       if (_agentMode) {
         await _coreReadyCompleter.future.timeout(const Duration(seconds: 20));
+        if (_stopping || _detaching || !socketCompleter.isCompleted) {
+          _failPendingCompleter(message, 'Agent socket unavailable');
+          return;
+        }
       }
       final socket = await socketCompleter.future;
       _writeSocketLine(socket, message);
@@ -1323,7 +1385,13 @@ class ClashService extends ClashHandlerInterface {
 
   void _completePendingWithDefault(String id, String reason) {
     final completer = callbackCompleterMap.remove(id);
-    final def = callbackDefaultMap.remove(id);
+    var def = callbackDefaultMap.remove(id);
+    if (def is Result &&
+        def.isError &&
+        def.message.startsWith('not_ready:') &&
+        reason == 'Agent Core unavailable') {
+      def = Result.error('not_ready:core_unavailable');
+    }
     if (completer != null && !completer.isCompleted) {
       commonPrint.log('_completePendingWithDefault: reason=$reason');
       completer.complete(def);

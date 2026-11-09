@@ -291,7 +291,11 @@ class AppController {
     _tunRuntime.addListener(_onTunPollWakeup);
     _tunRuntime.desiredEnabled = _ref.read(patchClashConfigProvider).tun.enable;
     clashService?.onTunTransportChanged = () {
-      _tunRuntime.invalidate('statusUnavailable');
+      if (clashService?.hasIntentionalOrInitialNotReady == true) {
+        _tunRuntime.markNotReady();
+      } else {
+        _tunRuntime.invalidate('statusUnavailable');
+      }
       _ref.invalidate(nodeRuntimeReadProvider);
       unawaited(updateTray());
     };

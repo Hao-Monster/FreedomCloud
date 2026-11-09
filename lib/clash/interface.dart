@@ -621,15 +621,47 @@ abstract class ClashHandlerInterface with ClashInterface {
         onTimeout: () => 'setupConfig timed out',
       );
 
+  /// Non-null when the backend or IPC channel is known to be unready before or
+  /// during an observation call (e.g. `core_starting`, `backend_migrating`).
+  @protected
+  String? get tunTransportNotReadyReason => null;
+
   Future<TunStatus> getTunStatus() async {
     final watch = Stopwatch()..start();
+    final preflightNotReady = tunTransportNotReadyReason;
+    if (preflightNotReady != null) {
+      logStartupTiming(
+        'getTunStatus',
+        watch,
+        outcome: 'not_ready',
+        detail: 'reason=$preflightNotReady',
+      );
+      throw TunNotReadyException(preflightNotReady);
+    }
+    var errorDetail = 'statusUnavailable';
     try {
       final result = await invoke<Result>(
         method: ActionMethod.getTunStatus,
         timeout: const Duration(seconds: 3),
-        defaultValue: Result.error('statusUnavailable'),
+        defaultValue: Result.error('not_ready:ipc_disconnected'),
+        onTimeout: () => Result.error('timeout'),
       );
-      if (result.isError) throw const TunFailure('statusUnavailable');
+      if (result.isError) {
+        final rawMessage = result.message.trim();
+        final postflightNotReady = tunTransportNotReadyReason;
+        if (rawMessage.startsWith('not_ready:')) {
+          final fallbackReason = rawMessage.substring('not_ready:'.length);
+          throw TunNotReadyException(
+            postflightNotReady ??
+                (fallbackReason.isEmpty ? 'ipc_disconnected' : fallbackReason),
+          );
+        }
+        if (postflightNotReady != null && rawMessage != 'timeout') {
+          throw TunNotReadyException(postflightNotReady);
+        }
+        errorDetail = rawMessage.isEmpty ? 'core_rejected' : rawMessage;
+        throw const TunFailure('statusUnavailable');
+      }
       final status = TunStatus.fromJson(result.data);
       if (tunRuntime.busy ||
           watch.elapsedMilliseconds >= 200 ||
@@ -642,8 +674,31 @@ abstract class ClashHandlerInterface with ClashInterface {
         );
       }
       return status;
-    } catch (_) {
-      logStartupTiming('getTunStatus', watch, outcome: 'error');
+    } on TunNotReadyException catch (notReady) {
+      logStartupTiming(
+        'getTunStatus',
+        watch,
+        outcome: 'not_ready',
+        detail: 'reason=${notReady.reason}',
+      );
+      rethrow;
+    } on TunFailure catch (failure) {
+      final detailReason =
+          failure.code == 'statusUnavailable' ? errorDetail : failure.code;
+      logStartupTiming(
+        'getTunStatus',
+        watch,
+        outcome: 'error',
+        detail: 'reason=$detailReason',
+      );
+      rethrow;
+    } catch (error) {
+      logStartupTiming(
+        'getTunStatus',
+        watch,
+        outcome: 'error',
+        detail: 'reason=${error.runtimeType}',
+      );
       rethrow;
     }
   }

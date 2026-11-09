@@ -13,6 +13,16 @@ class TunFailure implements Exception {
   String toString() => 'TUN: $code';
 }
 
+/// Signals that the backend or IPC channel is not yet ready to answer a TUN
+/// observation (e.g. cold-start preload, Agent/Core starting, or backend
+/// handover), distinct from a genuine Core or adapter error.
+class TunNotReadyException implements Exception {
+  const TunNotReadyException(this.reason);
+  final String reason;
+  @override
+  String toString() => 'TUN not ready: $reason';
+}
+
 /// A bounded, credential-free observation of the current Core's listener.
 /// Neither the persisted preference nor an accepted configuration is evidence
 /// that the operating system created the interface.
@@ -160,6 +170,21 @@ class TunRuntimeController extends ChangeNotifier {
     _observationEpoch++;
     _status = null;
     if (reason != null) failure = reason;
+    if (displayState != before) {
+      notifyListeners();
+    }
+  }
+
+  /// Revokes any stale live observation while the backend/IPC is transitioning
+  /// without stamping a false `'statusUnavailable'` error, while preserving any
+  /// latched explicit request failure.
+  void markNotReady() {
+    final before = displayState;
+    _observationEpoch++;
+    _status = null;
+    if (failure == 'statusUnavailable') {
+      failure = _requestFailure;
+    }
     if (displayState != before) {
       notifyListeners();
     }
@@ -357,6 +382,11 @@ class TunStatusObserver {
       try {
         final value = await read();
         return runtime.accept(value, epoch) ? value : null;
+      } on TunNotReadyException {
+        if (epoch == runtime.observationEpoch) {
+          runtime.markNotReady();
+        }
+        return null;
       } catch (_) {
         if (epoch == runtime.observationEpoch)
           runtime.invalidate('statusUnavailable');
