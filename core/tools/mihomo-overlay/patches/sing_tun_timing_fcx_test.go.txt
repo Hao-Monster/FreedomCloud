@@ -1,35 +1,58 @@
 package sing_tun
 
 import (
+	"bufio"
+	"context"
 	"errors"
 	"fmt"
 	"net/netip"
 	"os"
+	"os/exec"
 	"runtime"
 	"strings"
 	"syscall"
 	"testing"
 	"time"
 
-	tun "github.com/metacubex/sing-tun"
 	"github.com/metacubex/mihomo/log"
+	tun "github.com/metacubex/sing-tun"
 )
 
 func TestFCXTimingPersistsAtWarningLogLevel(t *testing.T) {
-	previousLevel := log.Level()
-	log.SetLevel(log.WARNING)
-	defer log.SetLevel(previousLevel)
-	reader, writer, err := os.Pipe()
-	if err != nil { t.Fatal(err) }
-	previous := os.Stdout
-	os.Stdout = writer
-	defer func() { os.Stdout = previous; reader.Close() }()
-	FCXEmitStartupTiming("test.stage", time.Millisecond, "ok", "", nil)
-	writer.Close()
-	data := make([]byte, 4096)
-	n, err := reader.Read(data)
-	if err != nil { t.Fatal(err) }
-	if !strings.Contains(string(data[:n]), "stage=test.stage") { t.Fatalf("missing timing output: %q", data[:n]) }
+	if os.Getenv("FCX_TEST_TIMING_STDERR") == "1" {
+		log.SetLevel(log.WARNING)
+		FCXEmitStartupTiming("test.stage", time.Millisecond, "ok", "", nil)
+		// The parent acknowledges after it sees the flushed timing line.
+		var ack [1]byte
+		if _, err := os.Stdin.Read(ack[:]); err != nil {
+			os.Exit(2)
+		}
+		os.Exit(0)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestFCXTimingPersistsAtWarningLogLevel$")
+	cmd.Env = append(os.Environ(), "FCX_TEST_TIMING_STDERR=1")
+	input, err := cmd.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	line, readErr := bufio.NewReader(stderr).ReadString('\n')
+	input.Write([]byte("x"))
+	input.Close()
+	if err = cmd.Wait(); err != nil {
+		t.Fatal(err)
+	}
+	if readErr != nil || !strings.Contains(line, "stage=test.stage") {
+		t.Fatalf("timing stderr: %q %v", line, readErr)
+	}
 }
 
 func TestFCXDeviceTimingHookForwardsSubStagesAndSchema2Fields(t *testing.T) {
@@ -161,19 +184,28 @@ func TestFCXAddAutoRoutesFailsOnIntermediateErrorAndIgnoresBenignExists(t *testi
 }
 
 func TestFCXTimingReportsPreviousOutputFailure(t *testing.T) {
- previous := os.Stdout
- reader, writer, err := os.Pipe()
- if err != nil { t.Fatal(err) }
- reader.Close()
- writer.Close()
- os.Stdout = writer
- prior := fcxStdoutWriteFailures.Load()
- defer func() { os.Stdout = previous; fcxStdoutWriteFailures.Store(prior) }()
- FCXStartTunTiming("test.failed")
- os.Stdout = previous
- var got string
- restore := SetFCXStartupTimingLineHookForTest(func(line string) { got=line })
- defer restore()
- FCXStartTunTiming("test.next")
- if !strings.Contains(got, fmt.Sprintf("priorWriteFailures=%d", prior+1)) { t.Fatal(got) }
+	output := fcxTimingOutput{lines: make(chan string, 2)}
+	output.enqueue("first")
+	output.enqueue("next")
+	output.enqueue("discarded")
+	close(output.lines)
+	w := new(fcxFailOnceWriter)
+	output.drain(w)
+	if !strings.Contains(w.String(), "next droppedTimingLines=1 priorWriteFailures=1") {
+		t.Fatalf("missing recovery counters: %s", w.String())
+	}
 }
+
+type fcxFailOnceWriter struct {
+	failed bool
+	text   strings.Builder
+}
+
+func (w *fcxFailOnceWriter) Write(p []byte) (int, error) {
+	if !w.failed {
+		w.failed = true
+		return 0, errors.New("test write failure")
+	}
+	return w.text.Write(p)
+}
+func (w *fcxFailOnceWriter) String() string { return w.text.String() }

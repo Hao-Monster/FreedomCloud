@@ -32,6 +32,10 @@ class TimingCheckTest(unittest.TestCase):
         self.assertEqual(self.check([self.line(1, "stage_end")], "--require-stage", "missing").returncode, 1)
         self.assertEqual(self.check([self.line(1, "stage_end")], "--require-stage", "call").returncode, 0)
 
+    def test_output_loss_is_incomplete_even_with_a_contiguous_prefix(self):
+        for counter in ("droppedTimingLines", "priorWriteFailures"):
+            self.assertEqual(self.check([self.line(1, "stage_end") + f" {counter}=2"]).returncode, 1)
+
     def test_required_pair_rejects_orphan_end_and_different_attempt(self):
         self.assertEqual(self.check([self.line(1, "stage_end")], "--require-pair", "call").returncode, 1)
         lines = [self.line(1, "stage_start") + " tunAttempt=1", self.line(2, "stage_end") + " tunAttempt=2"]

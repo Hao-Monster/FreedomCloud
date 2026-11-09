@@ -1,20 +1,22 @@
 import 'dart:io';
-import 'dart:math';
 
 import 'print.dart';
 
 final RegExp _correlationIdPattern = RegExp(r'^[0-9a-zA-Z_-]{1,64}$');
 String? _startupTimingCorrelationId;
-final String startupTimingUiRunId = _newUiRunId();
-
-String _newUiRunId() {
-  final random = Random.secure();
-  final nonce = List.generate(16, (_) => random.nextInt(256))
-      .map((byte) => byte.toRadixString(16).padLeft(2, '0')).join();
-  return '${pid}_$nonce';
-}
+// Diagnostic label only; the Agent instance ID still comes from the handshake.
+final String startupTimingUiRunId = '${pid}_${DateTime.now().microsecondsSinceEpoch}';
 
 String? get startupTimingCorrelationId => _startupTimingCorrelationId;
+
+void _writeTiming(String fields) {
+  try {
+    commonPrint.log('[startup-timing] $fields');
+  } catch (_) {
+    // The log sink can be unavailable during startup or shutdown.
+    // A diagnostic failure must not escape into the operation being timed.
+  }
+}
 
 void setStartupTimingCorrelationId(String? value) {
   final trimmed = value?.trim();
@@ -24,7 +26,7 @@ void setStartupTimingCorrelationId(String? value) {
           ? trimmed
           : null;
   if (_startupTimingCorrelationId != null && _startupTimingCorrelationId != previous) {
-    commonPrint.log('[startup-timing] event=correlation_bind uiRunId=$startupTimingUiRunId correlationId=$_startupTimingCorrelationId');
+    _writeTiming('event=correlation_bind uiRunId=$startupTimingUiRunId correlationId=$_startupTimingCorrelationId');
   }
 }
 
@@ -53,5 +55,5 @@ void logStartupTiming(
     if (detail != null && detail.isNotEmpty) 'detail=$detail',
     if (correlationId != null) 'correlationId=$correlationId',
   ];
-  commonPrint.log('[startup-timing] ${fields.join(' ')}');
+  _writeTiming(fields.join(' '));
 }

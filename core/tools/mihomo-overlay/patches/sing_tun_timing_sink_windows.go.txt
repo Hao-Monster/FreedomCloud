@@ -1,0 +1,5 @@
+package sing_tun
+
+import "os"
+
+func fcxTimingSink() (*os.File, error) { return os.Stderr, nil }

@@ -96,11 +96,11 @@ for path in files:
             for number, line in enumerate(stream, 1):
                 if "[startup-timing]" not in line or "schema=2" not in line:
                     continue
-                fields = dict(re.findall(r'\b(event|correlationId|pid|seq|stage|outcome|tunAttempt|elapsedMs|priorWriteFailures)=([^\s"\\]+)', line))
+                fields = dict(re.findall(r'\b(event|correlationId|pid|seq|stage|outcome|tunAttempt|elapsedMs|priorWriteFailures|droppedTimingLines)=([^\s"\\]+)', line))
                 if not {"event", "correlationId", "pid", "seq", "stage"} <= fields.keys():
                     malformed.append((path, number))
                     continue
-                if fields.get("priorWriteFailures", "0") != "0" or not fields["seq"].isdigit():
+                if fields.get("priorWriteFailures", "0") != "0" or fields.get("droppedTimingLines", "0") != "0" or not fields["seq"].isdigit():
                     malformed.append((path, number))
                     continue
                 if fields["event"] not in ("stage_start", "stage_end") or (fields["event"] == "stage_end" and ("outcome" not in fields or not fields.get("elapsedMs", "").isascii() or not fields.get("elapsedMs", "").isdecimal())):

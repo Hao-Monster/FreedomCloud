@@ -28,6 +28,35 @@ void _enableTcpNoDelayBestEffort(Socket socket) {
   }
 }
 
+/// Keep a split timing record together without buffering unlimited stderr
+/// when a directly launched Core prints a long message without a newline.
+@visibleForTesting
+Stream<String> coreStderrLines(Stream<List<int>> bytes) async* {
+  const limit = FileLogger.maxMessageLength;
+  final pending = StringBuffer();
+  await for (final chunk in bytes.transform(const Utf8Decoder(allowMalformed: true))) {
+    var start = 0;
+    while (start < chunk.length) {
+      final newline = chunk.indexOf('\n', start);
+      final end = newline < 0 ? chunk.length : newline;
+      while (start < end) {
+        final next = min(end, start + limit - pending.length);
+        pending.write(chunk.substring(start, next));
+        start = next;
+        if (pending.length == limit) {
+          yield pending.toString();
+          pending.clear();
+        }
+      }
+      if (newline < 0) break;
+      if (pending.isNotEmpty) yield pending.toString().replaceFirst(RegExp(r'\r$'), '');
+      pending.clear();
+      start = newline + 1;
+    }
+  }
+  if (pending.isNotEmpty) yield pending.toString();
+}
+
 class ClashService extends ClashHandlerInterface {
   factory ClashService() {
     _instance ??= ClashService._internal();
@@ -1025,10 +1054,11 @@ class ClashService extends ClashHandlerInterface {
           .listen((line) {
         fileLogger.log('[FlClashCore stdout] $line');
       });
-      _stderrSubscription = started.stderr.listen((e) {
-        final error = utf8.decode(e);
-        if (error.isNotEmpty) {
-          commonPrint.log(error);
+      _stderrSubscription = coreStderrLines(started.stderr).listen((line) {
+        if (line.startsWith('[startup-timing]')) {
+          fileLogger.log('[FlClashCore stderr] $line');
+        } else if (line.isNotEmpty) {
+          commonPrint.log(line);
         }
       });
       _watchProcess(started);

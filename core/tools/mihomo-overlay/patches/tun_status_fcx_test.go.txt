@@ -1,6 +1,8 @@
 package listener
 
 import (
+ "context"
+ "os/exec"
 	"errors"
 	"fmt"
 	"os"
@@ -279,4 +281,40 @@ func TestFCXQueuedRecreateIsVisibleBeforeLockAcquisition(t *testing.T) {
  _, startID, ok := strings.Cut(start, " tunAttempt=")
  _, endID, _ := strings.Cut(end, " tunAttempt=")
  if !ok || startID == "0" || startID != endID { t.Fatalf("mismatched lock events: %s / %s", start, end) }
+}
+
+func TestFCXTunLifecycleReturnsWithStalledLogPipes(t *testing.T) {
+	if mode := os.Getenv("FCX_TEST_TIMING_STALL"); mode != "" {
+		fcxTestReset(t) // In-memory listener; no real adapter or traffic.
+		for i := 0; i < 8192; i++ {
+			enable := mode == "toggle" && i%2 == 0
+			ReCreateTun(LC.Tun{Enable: enable, Device: "fcx-test"}, nil)
+			status := GetTunLifecycleStatus()
+			if status.ListenerActive != enable || status.ErrorCode != "" {
+				os.Exit(2)
+			}
+		}
+		os.Exit(0)
+	}
+	for _, mode := range []string{"off", "toggle"} {
+		t.Run(mode, func(t *testing.T) {
+			r, w, err := os.Pipe()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer r.Close()
+			defer w.Close()
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancel()
+			cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestFCXTunLifecycleReturnsWithStalledLogPipes$")
+			cmd.Env = append(os.Environ(), "FCX_TEST_TIMING_STALL="+mode)
+			cmd.Stderr = w // Deliberately never drained.
+			if mode == "off" {
+				cmd.Stdout = w // Also catches the former synchronous stdout path.
+			}
+			if err := cmd.Run(); err != nil {
+				t.Fatalf("TUN lifecycle stalled or failed: %v (deadline: %v)", err, ctx.Err())
+			}
+		})
+	}
 }

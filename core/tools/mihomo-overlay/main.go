@@ -1547,7 +1547,7 @@ func convertsV2RayFCX(buf []byte, diagnostics bool) ([]map[string]any, error) {`
 			return err
 		}
 	}
-	for _, name := range []string{"sing_tun_timing_fcx.go", "sing_tun_timing_fcx_test.go"} {
+	for _, name := range []string{"sing_tun_timing_fcx.go", "sing_tun_timing_sink_windows.go", "sing_tun_timing_sink_unix.go", "sing_tun_timing_fcx_test.go"} {
 		contents, err := patchFiles.ReadFile("patches/" + name + ".txt")
 		if err != nil {
 			return err

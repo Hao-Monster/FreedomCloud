@@ -3,6 +3,7 @@ package sing_tun
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"runtime"
 	"sync/atomic"
@@ -13,25 +14,72 @@ import (
 )
 
 var fcxSingTunTimingHook func(stage string, elapsed time.Duration, outcome string)
-var fcxStdoutWriteFailures atomic.Uint64
+
+// At most one writer and a fixed amount of queued data per Core process.
+// A stalled sink must never stall a caller holding tunMux.
+const fcxTimingQueueSize = 256
+const fcxMaxTimingLineBytes = 8 * 1024
+
+type fcxTimingOutput struct {
+	lines   chan string
+	dropped atomic.Uint64
+}
+
+var fcxOutput = fcxTimingOutput{lines: make(chan string, fcxTimingQueueSize)}
+
+func (s *fcxTimingOutput) enqueue(line string) {
+	if len(line) <= fcxMaxTimingLineBytes {
+		select {
+		case s.lines <- line:
+			return
+		default:
+		}
+	}
+	s.dropped.Add(1)
+}
+
+func (s *fcxTimingOutput) drain(w io.Writer) {
+	var writeFailures uint64
+	for line := range s.lines {
+		if dropped := s.dropped.Load(); dropped > 0 {
+			line += fmt.Sprintf(" droppedTimingLines=%d", dropped)
+		}
+		if writeFailures > 0 {
+			line += fmt.Sprintf(" priorWriteFailures=%d", writeFailures)
+		}
+		if _, err := fmt.Fprintln(w, line); err != nil {
+			writeFailures++
+		}
+	}
+}
+
 var fcxStartupTimingLineHook atomic.Pointer[func(string)]
 
 func init() {
+	go func() {
+		w, err := fcxTimingSink()
+		if err == nil {
+			fcxOutput.drain(w)
+		}
+	}()
+
 	tun.FCXDeviceTimingHook = fcxLogSingTunStage
 	tun.FCXDeviceTimingStartHook = func(stage string) { FCXStartAttemptStage(stage, tun.FCXTunAttempt()) }
 }
 
 func FCXStartAttemptStage(stage string, id uint64) {
-		line := fmt.Sprintf("[startup-timing] schema=2 event=stage_start correlationId=%s pid=%d seq=%d stage=%s tunAttempt=%d", tun.FCXStartupCorrelationID(), os.Getpid(), tun.FCXNextDeviceStageSequence(), stage, id)
-		fcxWriteTimingLine(line)
+	line := fmt.Sprintf("[startup-timing] schema=2 event=stage_start correlationId=%s pid=%d seq=%d stage=%s tunAttempt=%d", tun.FCXStartupCorrelationID(), os.Getpid(), tun.FCXNextDeviceStageSequence(), stage, id)
+	fcxWriteTimingLine(line)
 }
 
 func FCXStartTunTiming(stage string) {
-	if hook := tun.FCXDeviceTimingStartHook; hook != nil { hook(stage) }
+	if hook := tun.FCXDeviceTimingStartHook; hook != nil {
+		hook(stage)
+	}
 }
-func FCXReserveTunAttempt() uint64 { return tun.FCXReserveTunAttempt() }
+func FCXReserveTunAttempt() uint64    { return tun.FCXReserveTunAttempt() }
 func FCXActivateTunAttempt(id uint64) { tun.FCXActivateTunAttempt(id) }
-func FCXEndTunAttempt() { tun.FCXEndTunAttempt() }
+func FCXEndTunAttempt()               { tun.FCXEndTunAttempt() }
 
 // SetFCXStartupTimingLineHookForTest installs an optional observer receiving
 // formatted schema=2 startup-timing lines for unit verification.
@@ -87,13 +135,10 @@ func FCXEmitStartupTiming(stage string, elapsed time.Duration, outcome string, e
 }
 
 func fcxWriteTimingLine(line string) {
-	if failures := fcxStdoutWriteFailures.Load(); failures != 0 {
-		line += fmt.Sprintf(" priorWriteFailures=%d", failures)
-	}
 	if hook := fcxStartupTimingLineHook.Load(); hook != nil && *hook != nil {
 		(*hook)(line)
 	}
-	if _, err := fmt.Fprintln(os.Stdout, line); err != nil { fcxStdoutWriteFailures.Add(1) }
+	fcxOutput.enqueue(line)
 }
 
 func fcxLogSingTunStage(stage string, startedAt time.Time, err error) {
