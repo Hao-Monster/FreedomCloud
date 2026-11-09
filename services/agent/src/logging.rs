@@ -116,6 +116,7 @@ fn sanitize(message: &str) -> String {
 struct BufferedLogFile {
     writer: BufWriter<File>,
     written_bytes: u64,
+    pending_messages: u64,
 }
 
 fn run_writer(path: PathBuf, receiver: mpsc::Receiver<String>, dropped: Arc<AtomicU64>) {
@@ -126,20 +127,19 @@ fn run_writer(path: PathBuf, receiver: mpsc::Receiver<String>, dropped: Arc<Atom
     while let Ok(first_message) = receiver.recv() {
         let count = dropped.swap(0, Ordering::Relaxed);
         if count > 0 {
-            let written = write_log_line(&path, &mut file, &format!("event=logger_dropped count={count}"));
+            let written = write_log_line(&path, &mut file, &format!("event=logger_dropped count={count}"), &dropped, false);
             let flushed = written && file.as_mut().is_some_and(|current| current.writer.flush().is_ok());
             if !flushed {
                 dropped.fetch_add(count, Ordering::Relaxed);
                 file = open_file(&path);
             }
         }
-        let mut buffered = 0u64;
-        if write_log_line(&path, &mut file, &first_message) { buffered += 1; }
+        if write_log_line(&path, &mut file, &first_message, &dropped, true) { }
         else { dropped.fetch_add(1, Ordering::Relaxed); }
         loop {
             match receiver.try_recv() {
                 Ok(next_message) => {
-                    if write_log_line(&path, &mut file, &next_message) { buffered += 1; }
+                    if write_log_line(&path, &mut file, &next_message, &dropped, true) { }
                     else { dropped.fetch_add(1, Ordering::Relaxed); }
                 }
                 Err(TryRecvError::Empty | TryRecvError::Disconnected) => break,
@@ -147,14 +147,16 @@ fn run_writer(path: PathBuf, receiver: mpsc::Receiver<String>, dropped: Arc<Atom
         }
         if let Some(current) = file.as_mut() {
             if current.writer.flush().is_err() {
-                dropped.fetch_add(buffered, Ordering::Relaxed);
+                dropped.fetch_add(current.pending_messages, Ordering::Relaxed);
                 file = open_file(&path);
+            } else {
+                current.pending_messages = 0;
             }
         }
     }
 }
 
-fn write_log_line(path: &Path, file: &mut Option<BufferedLogFile>, message: &str) -> bool {
+fn write_log_line(path: &Path, file: &mut Option<BufferedLogFile>, message: &str, dropped: &AtomicU64, count_message: bool) -> bool {
     let line = format!("[unix_ms={}] {message}\n", unix_millis());
     let line_bytes = line.len() as u64;
     let should_rotate = file
@@ -162,7 +164,9 @@ fn write_log_line(path: &Path, file: &mut Option<BufferedLogFile>, message: &str
         .is_none_or(|current| current.written_bytes.saturating_add(line_bytes) > MAX_FILE_BYTES);
     if should_rotate {
         if let Some(mut previous) = file.take() {
-            let _ = previous.writer.flush();
+            if previous.writer.flush().is_err() {
+                dropped.fetch_add(previous.pending_messages, Ordering::Relaxed);
+            }
         }
         rotate(path);
         *file = open_file(path);
@@ -172,8 +176,10 @@ fn write_log_line(path: &Path, file: &mut Option<BufferedLogFile>, message: &str
     };
     if current.writer.write_all(line.as_bytes()).is_ok() {
         current.written_bytes = current.written_bytes.saturating_add(line_bytes);
+        if count_message { current.pending_messages += 1; }
         true
     } else {
+        dropped.fetch_add(current.pending_messages, Ordering::Relaxed);
         *file = open_file(path);
         false
     }
@@ -185,6 +191,7 @@ fn open_file(path: &Path) -> Option<BufferedLogFile> {
     Some(BufferedLogFile {
         writer: BufWriter::with_capacity(LOG_BUFFER_BYTES, file),
         written_bytes,
+        pending_messages: 0,
     })
 }
 
@@ -237,5 +244,17 @@ mod tests {
         let path = std::env::current_exe().unwrap().join("unwritable.log");
         run_writer(path, receiver, Arc::clone(&dropped));
         assert_eq!(dropped.load(Ordering::Relaxed), 5);
+    }
+
+    #[test]
+    fn counts_unflushed_messages_when_rotation_flush_fails() {
+        let executable = std::env::current_exe().unwrap();
+        let mut writer = BufWriter::new(File::open(&executable).unwrap());
+        writer.write_all(b"buffered").unwrap();
+        let mut file = Some(BufferedLogFile { writer, written_bytes: MAX_FILE_BYTES, pending_messages: 2 });
+        let dropped = AtomicU64::new(0);
+        let path = executable.join("unwritable.log");
+        assert!(!write_log_line(&path, &mut file, "next", &dropped, true));
+        assert_eq!(dropped.load(Ordering::Relaxed), 2);
     }
 }

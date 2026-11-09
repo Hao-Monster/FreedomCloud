@@ -36,6 +36,9 @@ var fcxTunStatus = TunLifecycleStatus{State: "off"}
 var fcxTunStatusSnapshot atomic.Pointer[TunLifecycleStatus]
 
 func fcxStartupTimingStart() time.Time { return time.Now() }
+func fcxBeginTunAttempt() { sing_tun.FCXBeginTunAttempt() }
+func fcxEndTunAttempt() { sing_tun.FCXEndTunAttempt() }
+func fcxStartTunTiming(stage string) { sing_tun.FCXStartTunTiming(stage) }
 
 func fcxLogTunTiming(stage string, startedAt time.Time, outcome string, state string, errorCode string, err error) {
 	extra := ""
@@ -53,6 +56,7 @@ func fcxLogTunTiming(stage string, startedAt time.Time, outcome string, state st
 var fcxTunCloseError error
 var fcxCreateTun = func(config LC.Tun, target C.Tunnel) (fcxTunListener, error) {
 	startedAt := fcxStartupTimingStart()
+	sing_tun.FCXStartTunTiming("sing_tun.New")
 	created, err := sing_tun.New(config, target)
 	outcome := "ok"
 	errorCode := ""

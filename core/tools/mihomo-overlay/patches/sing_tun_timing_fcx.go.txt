@@ -19,11 +19,17 @@ var fcxStartupTimingLineHook atomic.Pointer[func(string)]
 func init() {
 	tun.FCXDeviceTimingHook = fcxLogSingTunStage
 	tun.FCXDeviceTimingStartHook = func(stage string) {
-		line := fmt.Sprintf("[startup-timing] schema=2 event=stage_start correlationId=%s pid=%d seq=%d stage=%s", tun.FCXStartupCorrelationID(), os.Getpid(), tun.FCXNextDeviceStageSequence(), stage)
+		line := fmt.Sprintf("[startup-timing] schema=2 event=stage_start correlationId=%s pid=%d seq=%d stage=%s tunAttempt=%d", tun.FCXStartupCorrelationID(), os.Getpid(), tun.FCXNextDeviceStageSequence(), stage, tun.FCXTunAttempt())
 		if hook := fcxStartupTimingLineHook.Load(); hook != nil && *hook != nil { (*hook)(line) }
 		log.Infoln("%s", line)
 	}
 }
+
+func FCXStartTunTiming(stage string) {
+	if hook := tun.FCXDeviceTimingStartHook; hook != nil { hook(stage) }
+}
+func FCXBeginTunAttempt() { tun.FCXBeginTunAttempt() }
+func FCXEndTunAttempt() { tun.FCXEndTunAttempt() }
 
 // SetFCXStartupTimingLineHookForTest installs an optional observer receiving
 // formatted schema=2 startup-timing lines for unit verification.
@@ -64,7 +70,7 @@ func FCXFormatStageErrorFields(err error) string {
 // single process-wide monotonic sequence counter across sing-tun and listener.
 func FCXEmitStartupTiming(stage string, elapsed time.Duration, outcome string, extraFields string, err error) {
 	line := fmt.Sprintf(
-		"[startup-timing] schema=2 event=stage_end correlationId=%s pid=%d seq=%d stage=%s elapsedMs=%d outcome=%s%s%s",
+		"[startup-timing] schema=2 event=stage_end correlationId=%s pid=%d seq=%d stage=%s elapsedMs=%d outcome=%s%s%s tunAttempt=%d",
 		tun.FCXStartupCorrelationID(),
 		os.Getpid(),
 		tun.FCXNextDeviceStageSequence(),
@@ -73,6 +79,7 @@ func FCXEmitStartupTiming(stage string, elapsed time.Duration, outcome string, e
 		outcome,
 		extraFields,
 		FCXFormatStageErrorFields(err),
+		tun.FCXTunAttempt(),
 	)
 	if hook := fcxStartupTimingLineHook.Load(); hook != nil && *hook != nil {
 		(*hook)(line)

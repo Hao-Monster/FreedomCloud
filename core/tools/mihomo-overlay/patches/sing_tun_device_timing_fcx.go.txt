@@ -14,6 +14,17 @@ import (
 var FCXDeviceTimingHook func(stage string, startedAt time.Time, err error)
 var FCXDeviceTimingStartHook func(stage string)
 var fcxDeviceStageSequence atomic.Uint64
+var fcxTunAttemptSequence atomic.Uint64
+var fcxActiveTunAttempt atomic.Uint64
+
+// ReCreateTun holds its lifecycle mutex while this context is active.
+func FCXBeginTunAttempt() uint64 {
+	id := fcxTunAttemptSequence.Add(1)
+	fcxActiveTunAttempt.Store(id)
+	return id
+}
+func FCXEndTunAttempt() { fcxActiveTunAttempt.Store(0) }
+func FCXTunAttempt() uint64 { return fcxActiveTunAttempt.Load() }
 
 func fcxDeviceTimingStart() time.Time {
 	return time.Now()

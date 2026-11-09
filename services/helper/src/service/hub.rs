@@ -245,6 +245,9 @@ fn start_core(start_params: StartParams, logger: Arc<ServiceLogger>) -> String {
             return error;
         }
     };
+    if let Some(id) = correlation_id.as_deref() {
+        logger.log(format!("event=core_start.correlation request_id={request_id} correlationId={id}"));
+    }
     let install_dir = match service_directory() {
         Ok(value) => value,
         Err(error) => {

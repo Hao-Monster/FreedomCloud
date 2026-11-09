@@ -32,6 +32,21 @@ class TimingCheckTest(unittest.TestCase):
         self.assertEqual(self.check([self.line(1, "stage_end")], "--require-stage", "missing").returncode, 1)
         self.assertEqual(self.check([self.line(1, "stage_end")], "--require-stage", "call").returncode, 0)
 
+    def test_required_pair_rejects_orphan_end_and_different_attempt(self):
+        self.assertEqual(self.check([self.line(1, "stage_end")], "--require-pair", "call").returncode, 1)
+        lines = [self.line(1, "stage_start") + " tunAttempt=1", self.line(2, "stage_end") + " tunAttempt=2"]
+        self.assertEqual(self.check(lines, "--require-pair", "call").returncode, 1)
+        lines[1] = self.line(2, "stage_end") + " tunAttempt=1"
+        self.assertEqual(self.check(lines, "--require-pair", "call").returncode, 0)
+
+    def test_ui_binding_must_match_correlation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            ui = pathlib.Path(directory) / "ui.log"
+            ui.write_text("[startup-timing] event=correlation_bind uiRunId=ui1 correlationId=wrong\n", encoding="utf-8")
+            self.assertEqual(self.check([self.line(1, "stage_end")], "--ui-log", str(ui)).returncode, 1)
+            ui.write_text("[startup-timing] event=correlation_bind uiRunId=ui1 correlationId=test\n", encoding="utf-8")
+            self.assertEqual(self.check([self.line(1, "stage_end")], "--ui-log", str(ui)).returncode, 0)
+
 
 if __name__ == "__main__":
     unittest.main()

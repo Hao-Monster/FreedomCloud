@@ -197,8 +197,9 @@ func TestFCXTunStartupTimingSharesMonotonicSeqAndRecordsAccurateErrors(t *testin
 	fcxTestReset(t)
 	t.Setenv("FCX_STARTUP_ID", "corr-listener-seq-01")
 	var lines []string
+	var starts []string
 	restore := sing_tun.SetFCXStartupTimingLineHookForTest(func(line string) {
-		lines = append(lines, line)
+		if strings.Contains(line, "event=stage_start") { starts = append(starts, line) } else { lines = append(lines, line) }
 	})
 	defer restore()
 
@@ -214,6 +215,9 @@ func TestFCXTunStartupTimingSharesMonotonicSeqAndRecordsAccurateErrors(t *testin
 		return nil, err
 	}
 	ReCreateTun(LC.Tun{Enable: true, Device: "fcx-test-fail"}, nil)
+	if len(starts) != 2 || !strings.Contains(starts[0], "stage=ReCreateTun tunAttempt=") || !strings.Contains(starts[1], "stage=ReCreateTun tunAttempt=") || starts[0] == starts[1] {
+		t.Fatalf("expected distinct ReCreateTun starts: %v", starts)
+	}
 
 	if len(lines) != 4 {
 		t.Fatalf("expected 4 timing lines across success and failure runs, got %d: %v", len(lines), lines)

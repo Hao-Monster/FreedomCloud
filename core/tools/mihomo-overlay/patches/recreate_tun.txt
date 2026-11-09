@@ -5,6 +5,9 @@ func ReCreateTun(tunConf LC.Tun, tunnel C.Tunnel) {
 	tunConf.Sort()
 	tunMux.Lock()
 	defer tunMux.Unlock()
+	fcxBeginTunAttempt()
+	defer fcxEndTunAttempt()
+	fcxStartTunTiming("ReCreateTun")
 	defer fcxPublishTunStatus()
 	defer func() {
 		outcome := fcxTunStatus.State
