@@ -35,7 +35,7 @@ class TunStatus {
       required this.interfaceState,
       required this.privilege,
       required this.requestedEnabled,
-      this.errorCode});
+      this.corePid, this.tunAttempt, this.errorCode});
 
   factory TunStatus.fromJson(Object? value) {
     if (value is! Map ||
@@ -57,6 +57,8 @@ class TunStatus {
     }
     return TunStatus(
         instanceId: value['coreInstanceId'] as String,
+        corePid: value['corePid'] is int ? value['corePid'] as int : null,
+        tunAttempt: value['tunAttempt'] is int ? value['tunAttempt'] as int : null,
         revision: value['revision'] as int,
         state: value['state'] as String,
         listenerActive: value['listenerActive'] as bool,
@@ -68,6 +70,8 @@ class TunStatus {
   }
 
   final String instanceId;
+  final int? corePid;
+  final int? tunAttempt;
   final int revision;
   final String state;
   final bool listenerActive;

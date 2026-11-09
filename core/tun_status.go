@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"net"
+	"os"
 	"runtime"
 	"strings"
 	"time"
@@ -26,6 +27,8 @@ func newTunCoreInstanceID() string {
 }
 
 type TunStatus struct {
+	CorePID          int    `json:"corePid"`
+	TunAttempt       uint64 `json:"tunAttempt"`
 	SchemaVersion    int    `json:"schemaVersion"`
 	CoreInstanceID   string `json:"coreInstanceId"`
 	Revision         uint64 `json:"revision"`
@@ -70,6 +73,7 @@ func observeTunStatus(read func() listener.TunLifecycleStatus, probe func(string
 func makeTunStatus(observed listener.TunLifecycleStatus, interfaceState, platform, privilege string, now time.Time) TunStatus {
 	status := TunStatus{
 		SchemaVersion: tunStatusSchemaVersion, CoreInstanceID: tunCoreInstanceID,
+		CorePID: os.Getpid(), TunAttempt: observed.TunAttempt,
 		Revision: observed.Revision, ObservedAt: now.UnixMilli(),
 		RequestedEnabled: observed.RequestedEnabled, State: observed.State,
 		ListenerActive: observed.ListenerActive, Device: observed.Device,

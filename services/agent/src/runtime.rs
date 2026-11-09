@@ -2012,6 +2012,7 @@ async fn start_backend(
         let owner = format!("{}-{}", shared.agent_instance_id, session.attempt);
         // Persist before the request: a timeout is not proof that spawn failed.
         session.owner = Some(owner.clone());
+        logger.log(format!("event=core_start.request correlationId={} port={core_port}", shared.agent_instance_id));
         let response = helper_request_json(
             config.helper_port,
             "/start",

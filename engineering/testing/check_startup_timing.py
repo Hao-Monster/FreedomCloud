@@ -14,9 +14,68 @@ parser.add_argument("--attempt", help="evaluate required stages and pairs for th
 parser.add_argument("--require-success", action="append", default=[], help="require successful end outcome for this stage in the selected attempt")
 parser.add_argument("--require-pair-each", action="append", default=[], help="require a matching stage pair in every nonzero TUN attempt")
 parser.add_argument("--ui-log", action="append", default=[], help="UI log containing correlation_bind events")
+parser.add_argument("--cold-helper-run", metavar="UI_RUN_ID", help="verify one successful Windows cold Helper/TUN startup through UI settle")
+parser.add_argument("--agent-log", action="append", default=[])
+parser.add_argument("--helper-log", action="append", default=[])
 args = parser.parse_args()
+def fields_of(line):
+    return dict(re.findall(r"(?<![a-zA-Z0-9_])([a-zA-Z][a-zA-Z0-9_]*)=([^\s\"\\]+)", line))
+
+def read_lines(paths):
+    for pattern in paths:
+        for path in sorted(glob.glob(pattern) or [pattern]):
+            with open(path, encoding="utf-8", errors="replace") as stream:
+                yield from stream
+
+target = None
+if args.cold_helper_run:
+    try:
+        ui = []
+        for line in read_lines(args.ui_log):
+            if "[startup-timing]" in line:
+                event = fields_of(line)
+                if event.get("uiRunId") == args.cold_helper_run:
+                    ui.append(event)
+        settled = [e for e in ui if e.get("stage") == "settle" and e.get("outcome") == "on"]
+        if len(settled) != 1:
+            raise ValueError("expected exactly one successful UI settle for this run")
+        end = settled[0]
+        pid, attempt, corr = end.get("corePid"), end.get("tunAttempt"), end.get("correlationId")
+        if not (pid and pid.isdecimal() and int(pid) > 0 and attempt and attempt.isdecimal() and int(attempt) > 0 and corr):
+            raise ValueError("settle lacks Core PID, attempt, or correlation")
+        expected = {
+            "preload": ("ready",), "authorize": ("success",),
+            "componentsMatch": ("match",), "ensureBackend": ("replaced", "reused"),
+            "setupConfig": ("ok",), "startListener": ("started",),
+            "getTunStatus": ("on",), "settle": ("on",),
+        }
+        for stage, outcomes in expected.items():
+            candidates = (e for e in ui if e.get("stage") == stage and e.get("outcome") in outcomes)
+            if stage not in ("preload", "authorize"):
+                candidates = (e for e in candidates if e.get("correlationId") == corr)
+            if stage == "getTunStatus":
+                candidates = (e for e in candidates if e.get("corePid") == pid and e.get("tunAttempt") == attempt)
+            if not any(e.get("elapsedMs", "").isdecimal() for e in candidates):
+                raise ValueError(f"missing UI stage {stage} with an accepted outcome and duration")
+        if not any(e.get("event") == "correlation_bind" and e.get("correlationId") == corr for e in ui):
+            raise ValueError("missing UI binding")
+        helpers = [fields_of(l) for l in read_lines(args.helper_log) if "event=core_start.success " in l]
+        ports = {e["port"] for e in helpers if e.get("corePid") == pid and e.get("correlationId") == corr and e.get("port","").isdecimal()}
+        if not ports:
+            raise ValueError("missing matching Helper spawn")
+        requests = (fields_of(l) for l in read_lines(args.agent_log) if "event=core_start.request " in l)
+        if not any(e.get("correlationId") == corr and e.get("port") in ports for e in requests):
+            raise ValueError("missing matching Agent request")
+        target = (corr, pid)
+        args.attempt = attempt
+        required = ["ReCreateTun","tun.lock_wait","sing_tun.New","sing_tun.device.wintun_create","sing_tun.device.session_start","sing_tun.device.ip_dns_config","sing_tun.device.route_config"]
+        args.require_pair.extend(required)
+        args.require_success.extend(required)
+    except (OSError, ValueError) as error:
+        print(f"cold_helper_evidence_incomplete: {error}", file=sys.stderr)
+        sys.exit(1)
 ui_bindings = collections.defaultdict(set)
-for path in args.ui_log:
+for path in sorted({p for pattern in args.ui_log for p in (glob.glob(pattern) or [pattern])}):
     try:
         with open(path, encoding="utf-8", errors="replace") as stream:
             for line in stream:
@@ -37,14 +96,14 @@ for path in files:
             for number, line in enumerate(stream, 1):
                 if "[startup-timing]" not in line or "schema=2" not in line:
                     continue
-                fields = dict(re.findall(r'\b(event|correlationId|pid|seq|stage|outcome|tunAttempt)=([^\s"\\]+)', line))
+                fields = dict(re.findall(r'\b(event|correlationId|pid|seq|stage|outcome|tunAttempt|elapsedMs|priorWriteFailures)=([^\s"\\]+)', line))
                 if not {"event", "correlationId", "pid", "seq", "stage"} <= fields.keys():
                     malformed.append((path, number))
                     continue
-                if not fields["seq"].isdigit():
+                if fields.get("priorWriteFailures", "0") != "0" or not fields["seq"].isdigit():
                     malformed.append((path, number))
                     continue
-                if fields["event"] not in ("stage_start", "stage_end") or (fields["event"] == "stage_end" and "outcome" not in fields):
+                if fields["event"] not in ("stage_start", "stage_end") or (fields["event"] == "stage_end" and ("outcome" not in fields or not fields.get("elapsedMs", "").isascii() or not fields.get("elapsedMs", "").isdecimal())):
                     malformed.append((path, number))
                     continue
                 groups[(fields["correlationId"], fields["pid"])].append(
@@ -53,6 +112,8 @@ for path in files:
     except OSError as error:
         print(f"read_error path={path!r} error={error}", file=sys.stderr)
         sys.exit(2)
+if target:
+    groups = {target: groups[target]} if target in groups else {}
 if not groups:
     print("no schema=2 Core timing records found")
     sys.exit(1)

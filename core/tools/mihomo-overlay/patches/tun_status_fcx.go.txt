@@ -18,6 +18,7 @@ import (
 // "unavailable" instead of the real "starting" transition.
 type TunLifecycleStatus struct {
 	Revision uint64
+ TunAttempt uint64
 	RequestedEnabled bool
 	State string
 	ListenerActive bool
@@ -36,9 +37,18 @@ var fcxTunStatus = TunLifecycleStatus{State: "off"}
 var fcxTunStatusSnapshot atomic.Pointer[TunLifecycleStatus]
 
 func fcxStartupTimingStart() time.Time { return time.Now() }
-func fcxBeginTunAttempt() { sing_tun.FCXBeginTunAttempt() }
+func fcxBeforeTunLock() uint64 {
+ id := sing_tun.FCXReserveTunAttempt()
+ sing_tun.FCXStartAttemptStage("ReCreateTun", id)
+ sing_tun.FCXStartAttemptStage("tun.lock_wait", id)
+ return id
+}
+func fcxAfterTunLock(id uint64, started time.Time) {
+ wait := time.Since(started)
+ sing_tun.FCXActivateTunAttempt(id)
+ sing_tun.FCXEmitStartupTiming("tun.lock_wait", wait, "ok", "", nil)
+}
 func fcxEndTunAttempt() { sing_tun.FCXEndTunAttempt() }
-func fcxStartTunTiming(stage string) { sing_tun.FCXStartTunTiming(stage) }
 
 func fcxLogTunTiming(stage string, startedAt time.Time, outcome string, state string, errorCode string, err error) {
 	extra := ""

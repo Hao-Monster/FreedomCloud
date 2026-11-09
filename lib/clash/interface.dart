@@ -676,6 +676,8 @@ abstract class ClashHandlerInterface with ClashInterface {
           'getTunStatus',
           watch,
           outcome: status.observed.name,
+          corePid: status.corePid,
+          tunAttempt: status.tunAttempt,
           detail: 'state=${status.state} revision=${status.revision}',
         );
       }

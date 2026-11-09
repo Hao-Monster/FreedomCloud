@@ -37,6 +37,8 @@ void logStartupTiming(
   Stopwatch watch, {
   String? outcome,
   int? attempt,
+  int? corePid,
+  int? tunAttempt,
   String? detail,
 }) {
   final correlationId = _startupTimingCorrelationId;
@@ -46,6 +48,8 @@ void logStartupTiming(
     'elapsedMs=${watch.elapsedMilliseconds}',
     if (outcome != null) 'outcome=$outcome',
     if (attempt != null) 'attempt=$attempt',
+    if (corePid != null) 'corePid=$corePid',
+    if (tunAttempt != null) 'tunAttempt=$tunAttempt',
     if (detail != null && detail.isNotEmpty) 'detail=$detail',
     if (correlationId != null) 'correlationId=$correlationId',
   ];

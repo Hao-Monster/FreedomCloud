@@ -3,11 +3,13 @@ func ReCreateTun(tunConf LC.Tun, tunnel C.Tunnel) {
 	var stageErr error
 	tunConf = fcxCloneTunConfig(tunConf)
 	tunConf.Sort()
+	id := fcxBeforeTunLock()
+	wait := fcxStartupTimingStart()
 	tunMux.Lock()
 	defer tunMux.Unlock()
-	fcxBeginTunAttempt()
+	fcxAfterTunLock(id, wait)
+ fcxTunStatus.TunAttempt = id
 	defer fcxEndTunAttempt()
-	fcxStartTunTiming("ReCreateTun")
 	defer fcxPublishTunStatus()
 	defer func() {
 		outcome := fcxTunStatus.State

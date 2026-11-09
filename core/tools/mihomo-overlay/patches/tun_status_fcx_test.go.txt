@@ -199,7 +199,8 @@ func TestFCXTunStartupTimingSharesMonotonicSeqAndRecordsAccurateErrors(t *testin
 	var lines []string
 	var starts []string
 	restore := sing_tun.SetFCXStartupTimingLineHookForTest(func(line string) {
-		if strings.Contains(line, "event=stage_start") { starts = append(starts, line) } else { lines = append(lines, line) }
+		if strings.Contains(line, "stage=tun.lock_wait") { return }
+  if strings.Contains(line, "event=stage_start") { starts = append(starts, line) } else { lines = append(lines, line) }
 	})
 	defer restore()
 
@@ -252,4 +253,30 @@ func TestFCXTunStartupTimingSharesMonotonicSeqAndRecordsAccurateErrors(t *testin
 		!strings.Contains(lines[3], "adapter open failed") {
 		t.Fatalf("ReCreateTun failure line lost terminal state/error details: %s", lines[3])
 	}
+}
+
+
+func TestFCXQueuedRecreateIsVisibleBeforeLockAcquisition(t *testing.T) {
+ fcxTestReset(t)
+ waiting := make(chan string, 1)
+ ended := make(chan string, 1)
+ restore := sing_tun.SetFCXStartupTimingLineHookForTest(func(line string) {
+  if !strings.Contains(line, "stage=tun.lock_wait ") { return }
+  if strings.Contains(line, "event=stage_start ") { waiting <- line } else { ended <- line }
+ })
+ defer restore()
+ done := make(chan struct{})
+ tunMux.Lock()
+ go func() { ReCreateTun(LC.Tun{}, nil); close(done) }()
+ var start string
+ select {
+ case start = <-waiting:
+ case <-time.After(2*time.Second): tunMux.Unlock(); <-done; t.Fatal("no event while waiting for tunMux")
+ }
+ tunMux.Unlock()
+ <-done
+ end := <-ended
+ _, startID, ok := strings.Cut(start, " tunAttempt=")
+ _, endID, _ := strings.Cut(end, " tunAttempt=")
+ if !ok || startID == "0" || startID != endID { t.Fatalf("mismatched lock events: %s / %s", start, end) }
 }

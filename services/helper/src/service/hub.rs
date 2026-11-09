@@ -335,6 +335,7 @@ fn start_core(start_params: StartParams, logger: Arc<ServiceLogger>) -> String {
 
     match command.spawn() {
         Ok(child) => {
+            let core_pid = child.id();
             process.process = Some(child);
             if let Some(ref mut child) = process.process {
                 let stdout = child.stdout.take().unwrap();
@@ -342,7 +343,7 @@ fn start_core(start_params: StartParams, logger: Arc<ServiceLogger>) -> String {
                 spawn_core_output_logger(stdout, logger.clone(), "stdout");
                 spawn_core_output_logger(stderr, logger.clone(), "stderr");
             }
-            logger.log(format!("event=core_start.success request_id={request_id}"));
+            logger.log(format!("event=core_start.success request_id={request_id} port={port} corePid={core_pid} correlationId={}", correlation_id.as_deref().unwrap_or("unknown")));
             "".to_string()
         }
         Err(e) => {

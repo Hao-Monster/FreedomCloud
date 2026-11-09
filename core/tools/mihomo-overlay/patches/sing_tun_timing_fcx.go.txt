@@ -13,21 +13,24 @@ import (
 )
 
 var fcxSingTunTimingHook func(stage string, elapsed time.Duration, outcome string)
+var fcxStdoutWriteFailures atomic.Uint64
 var fcxStartupTimingLineHook atomic.Pointer[func(string)]
 
 func init() {
 	tun.FCXDeviceTimingHook = fcxLogSingTunStage
-	tun.FCXDeviceTimingStartHook = func(stage string) {
-		line := fmt.Sprintf("[startup-timing] schema=2 event=stage_start correlationId=%s pid=%d seq=%d stage=%s tunAttempt=%d", tun.FCXStartupCorrelationID(), os.Getpid(), tun.FCXNextDeviceStageSequence(), stage, tun.FCXTunAttempt())
-		if hook := fcxStartupTimingLineHook.Load(); hook != nil && *hook != nil { (*hook)(line) }
-		_, _ = fmt.Fprintln(os.Stdout, line)
-	}
+	tun.FCXDeviceTimingStartHook = func(stage string) { FCXStartAttemptStage(stage, tun.FCXTunAttempt()) }
+}
+
+func FCXStartAttemptStage(stage string, id uint64) {
+		line := fmt.Sprintf("[startup-timing] schema=2 event=stage_start correlationId=%s pid=%d seq=%d stage=%s tunAttempt=%d", tun.FCXStartupCorrelationID(), os.Getpid(), tun.FCXNextDeviceStageSequence(), stage, id)
+		fcxWriteTimingLine(line)
 }
 
 func FCXStartTunTiming(stage string) {
 	if hook := tun.FCXDeviceTimingStartHook; hook != nil { hook(stage) }
 }
-func FCXBeginTunAttempt() { tun.FCXBeginTunAttempt() }
+func FCXReserveTunAttempt() uint64 { return tun.FCXReserveTunAttempt() }
+func FCXActivateTunAttempt(id uint64) { tun.FCXActivateTunAttempt(id) }
 func FCXEndTunAttempt() { tun.FCXEndTunAttempt() }
 
 // SetFCXStartupTimingLineHookForTest installs an optional observer receiving
@@ -80,10 +83,17 @@ func FCXEmitStartupTiming(stage string, elapsed time.Duration, outcome string, e
 		FCXFormatStageErrorFields(err),
 		tun.FCXTunAttempt(),
 	)
+	fcxWriteTimingLine(line)
+}
+
+func fcxWriteTimingLine(line string) {
+	if failures := fcxStdoutWriteFailures.Load(); failures != 0 {
+		line += fmt.Sprintf(" priorWriteFailures=%d", failures)
+	}
 	if hook := fcxStartupTimingLineHook.Load(); hook != nil && *hook != nil {
 		(*hook)(line)
 	}
-	_, _ = fmt.Fprintln(os.Stdout, line)
+	if _, err := fmt.Fprintln(os.Stdout, line); err != nil { fcxStdoutWriteFailures.Add(1) }
 }
 
 func fcxLogSingTunStage(stage string, startedAt time.Time, err error) {

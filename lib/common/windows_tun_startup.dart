@@ -168,6 +168,8 @@ Future<void> startWindowsTunOnLaunch({
           settleWatch,
           outcome: observed?.observed.name ?? 'unavailable',
           attempt: attempts,
+          corePid: observed?.corePid,
+          tunAttempt: observed?.tunAttempt,
         );
       }
       if (observed == null) throw const TunFailure('statusUnavailable');

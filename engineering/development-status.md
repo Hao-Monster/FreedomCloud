@@ -4,6 +4,9 @@
 
 ## Windows TUN 诊断补充（2026-11-09）
 
+- 在 `30cf91e` 基础上，TUN 尝试在等待生命周期锁之前获得编号，`tun.lock_wait` 单独计时。Core 状态快照新增可选诊断字段 corePid/tunAttempt，UI 的状态查询和最终 settle 记录沿用同一快照。Agent 启动请求与 Helper 成功响应通过关联 ID、端口和 Core PID 串联。Core stdout 写入失败累计数在后续可写事件中报告。
+- 成功的 Windows Helper 冷启动可用 `python engineering/testing/check_startup_timing.py --cold-helper-run UI_RUN_ID --ui-log UI_LOG --agent-log AGENT_LOG --helper-log HELPER_LOG HELPER_LOG` 验证（替换各占位值）。要求 UI 成功阶段、有耗时的 Core 记录、匹配的启动请求与进程，以及与 settle 一致的尝试。通用检查仍支持旧日志。该模式专门验证冷启动成功样本；缺少证据、旧包缺字段或启动失败时，应根据输出判断，不能将非零退出码单独解释为 TUN 故障。
+- 验证：Core/overlay/listener Go 测试 PASS，Python 检查器 8 项 PASS，Flutter TUN/冷启动 27 项 PASS，Agent/Helper cargo check PASS。当前包未替换，真实 Windows 新日志及 ETW 验收 NOT RUN。
 - 诊断阻断修正：Core TUN 计时事件直接输出到 Core stdout，不再被 Mihomo 的 info 等级过滤；Windows 子调用起点在开始事件输出后取时。检查器支持按 tunAttempt 校验阶段配对/成功及每次尝试的指定配对。Go overlay 与监听器 FCX 测试、warning 日志等级测试、Python 合成日志测试 PASS。stdout/Helper 队列仍可能阻塞或丢失；父阶段仍包含日志开销，崩溃后的末尾数据、完整跨进程生命周期、系统 ETW 及真实运行验收 NOT RUN。
 - 关联及丢失诊断增量：UI 按进程生成 uiRunId 并记录 Agent 关联绑定；Helper 记录经过校验的 Core 启动关联；Core 在生命周期锁内分配 tunAttempt，重建及 sing_tun.New 增加开始事件；检查器按尝试检查指定配对并可验证 UI 绑定。Agent 轮转/写入 flush 失败会计数未确认缓冲记录。Go overlay/FCX 测试、Agent 日志测试、Helper 关联校验测试、Dart 静态检查及 Windows 冷启动模拟测试通过。仅源码及模拟验证；日志关闭/崩溃仍可能丢失，检查器需显式指定期望并提供所有文件，尚无 ETW、真实环境运行、完整后端生命周期校验或日志持久性证明。
 - 再次补充：Windows TUN 已有设备与配置计时阶段增配开始事件；Core 检查器对格式错误报失败，并支持指定必须出现的结束阶段；Agent 丢弃报告写入或 flush 失败时恢复计数。Agent 错误注入测试和 Python 检查器测试 PASS。计数仍在内存中，崩溃时无法保证落盘；启动前跨进程 ID、逐次 TUN 尝试 ID、完整跨进程检查、ETW 和真实运行验证仍未完成。
