@@ -8,9 +8,11 @@ import sys
 
 parser = argparse.ArgumentParser()
 parser.add_argument("paths", nargs="+", help="log paths or glob patterns")
+parser.add_argument("--require-stage", action="append", default=[], help="require a completed stage in each Core group")
 args = parser.parse_args()
 files = sorted({p for pattern in args.paths for p in (glob.glob(pattern) or [pattern])})
 groups = collections.defaultdict(list)
+malformed = []
 for path in files:
     try:
         with open(path, encoding="utf-8", errors="replace") as stream:
@@ -19,8 +21,13 @@ for path in files:
                     continue
                 fields = dict(re.findall(r'\b(event|correlationId|pid|seq|stage|outcome)=([^\s"\\]+)', line))
                 if not {"event", "correlationId", "pid", "seq", "stage"} <= fields.keys():
+                    malformed.append((path, number))
                     continue
                 if not fields["seq"].isdigit():
+                    malformed.append((path, number))
+                    continue
+                if fields["event"] not in ("stage_start", "stage_end") or (fields["event"] == "stage_end" and "outcome" not in fields):
+                    malformed.append((path, number))
                     continue
                 groups[(fields["correlationId"], fields["pid"])].append(
                     (int(fields["seq"]), fields["stage"], fields["event"], fields.get("outcome", ""), path, number)
@@ -31,7 +38,9 @@ for path in files:
 if not groups:
     print("no schema=2 Core timing records found")
     sys.exit(1)
-failed = False
+failed = bool(malformed)
+if malformed:
+    print(f"malformed={malformed}")
 for (correlation, pid), records in sorted(groups.items()):
     numbers = collections.Counter(item[0] for item in records)
     low, high = min(numbers), max(numbers)
@@ -45,9 +54,12 @@ for (correlation, pid), records in sorted(groups.items()):
         elif event == "stage_end" and pending[stage] > 0:
             pending[stage] -= 1
     incomplete = {stage: count for stage, count in pending.items() if count}
-    failed |= bool(low != 1 or missing or duplicates or incomplete)
+    completed = {stage for _, stage, event, _, _, _ in records if event == "stage_end"}
+    missing_required = sorted(set(args.require_stage) - completed)
+    failed |= bool(low != 1 or missing or duplicates or incomplete or missing_required)
     print(f"correlationId={correlation} pid={pid} count={len(records)} first={low} last={high} missing={missing} duplicates={duplicates} prefixMissing={low != 1}")
     print(f"unclosedStarts={incomplete}")
+    print(f"missingRequiredStages={missing_required}")
     print("stages=" + ",".join(f"{n}:{stage}:{event}:{outcome}" for n, stage, event, outcome, _, _ in sorted(records)))
     print("note=sequence coverage does not prove that an unrecorded final event or another process log exists")
 if failed:

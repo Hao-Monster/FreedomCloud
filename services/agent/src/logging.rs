@@ -126,24 +126,35 @@ fn run_writer(path: PathBuf, receiver: mpsc::Receiver<String>, dropped: Arc<Atom
     while let Ok(first_message) = receiver.recv() {
         let count = dropped.swap(0, Ordering::Relaxed);
         if count > 0 {
-            write_log_line(&path, &mut file, &format!("event=logger_dropped count={count}"));
+            let written = write_log_line(&path, &mut file, &format!("event=logger_dropped count={count}"));
+            let flushed = written && file.as_mut().is_some_and(|current| current.writer.flush().is_ok());
+            if !flushed {
+                dropped.fetch_add(count, Ordering::Relaxed);
+                file = open_file(&path);
+            }
         }
-        write_log_line(&path, &mut file, &first_message);
+        let mut buffered = 0u64;
+        if write_log_line(&path, &mut file, &first_message) { buffered += 1; }
+        else { dropped.fetch_add(1, Ordering::Relaxed); }
         loop {
             match receiver.try_recv() {
-                Ok(next_message) => write_log_line(&path, &mut file, &next_message),
+                Ok(next_message) => {
+                    if write_log_line(&path, &mut file, &next_message) { buffered += 1; }
+                    else { dropped.fetch_add(1, Ordering::Relaxed); }
+                }
                 Err(TryRecvError::Empty | TryRecvError::Disconnected) => break,
             }
         }
         if let Some(current) = file.as_mut() {
             if current.writer.flush().is_err() {
+                dropped.fetch_add(buffered, Ordering::Relaxed);
                 file = open_file(&path);
             }
         }
     }
 }
 
-fn write_log_line(path: &Path, file: &mut Option<BufferedLogFile>, message: &str) {
+fn write_log_line(path: &Path, file: &mut Option<BufferedLogFile>, message: &str) -> bool {
     let line = format!("[unix_ms={}] {message}\n", unix_millis());
     let line_bytes = line.len() as u64;
     let should_rotate = file
@@ -157,12 +168,14 @@ fn write_log_line(path: &Path, file: &mut Option<BufferedLogFile>, message: &str
         *file = open_file(path);
     }
     let Some(current) = file.as_mut() else {
-        return;
+        return false;
     };
     if current.writer.write_all(line.as_bytes()).is_ok() {
         current.written_bytes = current.written_bytes.saturating_add(line_bytes);
+        true
     } else {
         *file = open_file(path);
+        false
     }
 }
 
@@ -213,5 +226,16 @@ mod tests {
         drop(receiver);
         logger.log("disconnected");
         assert_eq!(logger.dropped.load(Ordering::Relaxed), 2);
+    }
+
+    #[test]
+    fn retains_drop_count_when_report_cannot_be_written() {
+        let (sender, receiver) = mpsc::sync_channel(1);
+        sender.send("message".to_owned()).unwrap();
+        drop(sender);
+        let dropped = Arc::new(AtomicU64::new(4));
+        let path = std::env::current_exe().unwrap().join("unwritable.log");
+        run_writer(path, receiver, Arc::clone(&dropped));
+        assert_eq!(dropped.load(Ordering::Relaxed), 5);
     }
 }

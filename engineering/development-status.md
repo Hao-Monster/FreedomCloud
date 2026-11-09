@@ -4,6 +4,7 @@
 
 ## Windows TUN 诊断补充（2026-11-09）
 
+- 再次补充：Windows TUN 已有设备与配置计时阶段增配开始事件；Core 检查器对格式错误报失败，并支持指定必须出现的结束阶段；Agent 丢弃报告写入或 flush 失败时恢复计数。Agent 错误注入测试和 Python 检查器测试 PASS。计数仍在内存中，崩溃时无法保证落盘；启动前跨进程 ID、逐次 TUN 尝试 ID、完整跨进程检查、ETW 和真实运行验证仍未完成。
 - 增量：Wintun 创建/打开、路由范围构造及接口查询增加开始事件；Core 序号检查工具对缺号、重复和已记录开始但缺少结束返回失败；Agent 有界日志队列丢弃计数在后续写入时报告。Go overlay 生成/测试、Core gVisor 测试、Agent 定向测试及 Python 检查工具测试 PASS。开始事件尚未覆盖所有阶段；进程崩溃、磁盘失败或队列无后续消息时丢弃计数不能保证落盘，UI 提前关联、每次 TUN 尝试 ID、ETW、真实运行和完整跨进程校验仍未完成。
 - 在既有固定版本 sing-tun overlay 中，分别记录 Wintun CreateAdapter、OpenAdapter 回退、自动路由范围构造及 IPv4/IPv6 接口查询耗时和错误；不改变 TUN 行为。新增只读 Core schema-2 序号检查工具 `engineering/testing/check_startup_timing.py`；序号连续不等于全链路完整或已捕获末尾丢失。
 - 本机 `go test ./tools/mihomo-overlay -count=1`、overlay 生成及 `CGO_ENABLED=0 go test -modfile=.generated/go.mod -overlay=.generated/mihomo-overlay.json -tags=with_gvisor ./...` PASS。对现有日志的工具检查发现当前 Core 序号 1–25 连续。真实 Windows 新埋点、UI/Agent 端到端完整性、ETW 和隔离环境反复测试 NOT RUN。

@@ -463,7 +463,7 @@ func patchSingTunWindows(source []byte) ([]byte, error) {
 			return nil, E.Errors(E.Cause(createErr, "create adapter"), E.Cause(err, "open existing adapter"))
 		}
 	}`
-	const createReplacement = `	wintunCreateStartedAt := fcxDeviceTimingStart()
+	const createReplacement = `	wintunCreateStartedAt := fcxDeviceTimingStartFor("sing_tun.device.wintun_create")
 	createAdapterStartedAt := fcxDeviceTimingStartFor("tun.wintun_create_adapter")
 	adapter, err := wintun.CreateAdapter(options.Name, TunnelType, generateGUIDByDeviceName(options.Name))
 	fcxLogDeviceStage("tun.wintun_create_adapter", createAdapterStartedAt, err)
@@ -488,7 +488,7 @@ func patchSingTunWindows(source []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}`
-	const sessionReplacement = `	sessionStartedAt := fcxDeviceTimingStart()
+	const sessionReplacement = `	sessionStartedAt := fcxDeviceTimingStartFor("sing_tun.device.session_start")
 	session, err := adapter.StartSession(0x800000)
 	fcxLogDeviceStage("sing_tun.device.session_start", sessionStartedAt, err)
 	if err != nil {
@@ -511,7 +511,7 @@ func patchSingTunWindows(source []byte) ([]byte, error) {
 	const configureHeaderAnchor = "func (t *NativeTun) configure() error {\n\tluid := winipcfg.LUID(t.adapter.LUID())\n"
 	const configureHeaderReplacement = `func (t *NativeTun) configure() error {
 	luid := winipcfg.LUID(t.adapter.LUID())
-	ipDnsStartedAt := fcxDeviceTimingStart()
+	ipDnsStartedAt := fcxDeviceTimingStartFor("sing_tun.device.ip_dns_config")
 	if err := func() error {
 `
 	const ipv4BlockAnchor = `	if len(t.options.Inet4Address) > 0 {
@@ -538,7 +538,7 @@ func patchSingTunWindows(source []byte) ([]byte, error) {
 		}
 	}`
 	const ipv4BlockReplacement = `	if len(t.options.Inet4Address) > 0 {
-		ipv4StartedAt := fcxDeviceTimingStart()
+		ipv4StartedAt := fcxDeviceTimingStartFor("tun.ipv4_address_set")
 		err := luid.SetIPAddressesForFamily(winipcfg.AddressFamily(windows.AF_INET), t.options.Inet4Address)
 		fcxLogDeviceStage("tun.ipv4_address_set", ipv4StartedAt, err)
 		if err != nil {
@@ -550,7 +550,7 @@ func patchSingTunWindows(source []byte) ([]byte, error) {
 				dnsServers = []netip.Addr{t.options.Inet4Address[0].Addr().Next()}
 			}
 			if len(dnsServers) > 0 {
-				ipv4DNSStartedAt := fcxDeviceTimingStart()
+				ipv4DNSStartedAt := fcxDeviceTimingStartFor("tun.ipv4_dns_set")
 				err = luid.SetDNS(winipcfg.AddressFamily(windows.AF_INET), dnsServers, nil)
 				fcxLogDeviceStage("tun.ipv4_dns_set", ipv4DNSStartedAt, err)
 				if err != nil {
@@ -558,7 +558,7 @@ func patchSingTunWindows(source []byte) ([]byte, error) {
 				}
 			}
 		} else {
-			ipv4DNSStartedAt := fcxDeviceTimingStart()
+			ipv4DNSStartedAt := fcxDeviceTimingStartFor("tun.ipv4_dns_set")
 			err = luid.SetDNS(winipcfg.AddressFamily(windows.AF_INET), nil, nil)
 			fcxLogDeviceStage("tun.ipv4_dns_set", ipv4DNSStartedAt, err)
 			if err != nil {
@@ -591,7 +591,7 @@ func patchSingTunWindows(source []byte) ([]byte, error) {
 		}
 	}`
 	const ipv6BlockReplacement = `	if len(t.options.Inet6Address) > 0 {
-		ipv6AddrStartedAt := fcxDeviceTimingStart()
+		ipv6AddrStartedAt := fcxDeviceTimingStartFor("tun.ipv6_address_set")
 		err := luid.SetIPAddressesForFamily(winipcfg.AddressFamily(windows.AF_INET6), t.options.Inet6Address)
 		fcxLogDeviceStage("tun.ipv6_address_set", ipv6AddrStartedAt, err)
 		if err != nil {
@@ -603,7 +603,7 @@ func patchSingTunWindows(source []byte) ([]byte, error) {
 				dnsServers = []netip.Addr{t.options.Inet6Address[0].Addr().Next()}
 			}
 			if len(dnsServers) > 0 {
-				ipv6DNSStartedAt := fcxDeviceTimingStart()
+				ipv6DNSStartedAt := fcxDeviceTimingStartFor("tun.ipv6_dns_set")
 				err = luid.SetDNS(winipcfg.AddressFamily(windows.AF_INET6), dnsServers, nil)
 				fcxLogDeviceStage("tun.ipv6_dns_set", ipv6DNSStartedAt, err)
 				if err != nil {
@@ -611,7 +611,7 @@ func patchSingTunWindows(source []byte) ([]byte, error) {
 				}
 			}
 		} else {
-			ipv6DNSStartedAt := fcxDeviceTimingStart()
+			ipv6DNSStartedAt := fcxDeviceTimingStartFor("tun.ipv6_dns_set")
 			err = luid.SetDNS(winipcfg.AddressFamily(windows.AF_INET6), nil, nil)
 			fcxLogDeviceStage("tun.ipv6_dns_set", ipv6DNSStartedAt, err)
 			if err != nil {
@@ -625,7 +625,7 @@ func patchSingTunWindows(source []byte) ([]byte, error) {
 	}
 	if t.options.AutoRoute {`
 	const ipToRouteReplacement = `	if len(t.options.Inet4Address) > 0 || len(t.options.Inet6Address) > 0 {
-		dnsRegistrationStartedAt := fcxDeviceTimingStart()
+		dnsRegistrationStartedAt := fcxDeviceTimingStartFor("tun.disable_dns_registration")
 		dnsRegistrationErr := luid.DisableDNSRegistration()
 		fcxLogDeviceStage("tun.disable_dns_registration", dnsRegistrationStartedAt, dnsRegistrationErr)
 	}
@@ -635,7 +635,7 @@ func patchSingTunWindows(source []byte) ([]byte, error) {
 		return err
 	}
 	fcxLogDeviceStage("sing_tun.device.ip_dns_config", ipDnsStartedAt, nil)
-	routeStartedAt := fcxDeviceTimingStart()
+	routeStartedAt := fcxDeviceTimingStartFor("sing_tun.device.route_config")
 	if err := func() error {
 	if t.options.AutoRoute {`
 
@@ -653,7 +653,7 @@ func patchSingTunWindows(source []byte) ([]byte, error) {
 		if err != nil {
 			return err
 		}`
-	const routeLoopReplacement = `		routesAddStartedAt := fcxDeviceTimingStart()
+	const routeLoopReplacement = `		routesAddStartedAt := fcxDeviceTimingStartFor("tun.routes_add")
 		err = FCXAddAutoRoutes(routeRanges, gateway4, gateway6, luid.AddRoute, func(routeErr error) bool {
 			return errors.Is(routeErr, windows.ERROR_OBJECT_ALREADY_EXISTS)
 		})
@@ -661,7 +661,7 @@ func patchSingTunWindows(source []byte) ([]byte, error) {
 		if err != nil {
 			return err
 		}
-		dnsFlushStartedAt := fcxDeviceTimingStart()
+		dnsFlushStartedAt := fcxDeviceTimingStartFor("tun.dns_cache_flush")
 		err = windnsapi.FlushResolverCache()
 		fcxLogDeviceStage("tun.dns_cache_flush", dnsFlushStartedAt, err)
 		if err != nil {
@@ -672,7 +672,7 @@ func patchSingTunWindows(source []byte) ([]byte, error) {
 		if err != nil {
 			return E.Cause(err, "set ipv4 options")
 		}`
-	const ipv4InterfaceReplacement = `		ipv4IfStartedAt := fcxDeviceTimingStart()
+	const ipv4InterfaceReplacement = `		ipv4IfStartedAt := fcxDeviceTimingStartFor("tun.ipv4_interface_set")
 		err = inetIf.Set()
 		fcxLogDeviceStage("tun.ipv4_interface_set", ipv4IfStartedAt, err)
 		if err != nil {
@@ -686,7 +686,7 @@ func patchSingTunWindows(source []byte) ([]byte, error) {
 	}
 
 	if t.options.AutoRoute && t.options.StrictRoute {`
-	const routeToStrictReplacement = `		ipv6IfStartedAt := fcxDeviceTimingStart()
+	const routeToStrictReplacement = `		ipv6IfStartedAt := fcxDeviceTimingStartFor("tun.ipv6_interface_set")
 		err = inet6If.Set()
 		fcxLogDeviceStage("tun.ipv6_interface_set", ipv6IfStartedAt, err)
 		if err != nil {
@@ -701,7 +701,7 @@ func patchSingTunWindows(source []byte) ([]byte, error) {
 	fcxLogDeviceStage("sing_tun.device.route_config", routeStartedAt, nil)
 
 	if t.options.AutoRoute && t.options.StrictRoute {
-		strictRouteStartedAt := fcxDeviceTimingStart()
+		strictRouteStartedAt := fcxDeviceTimingStartFor("sing_tun.device.strict_route")
 		if err := func() error {`
 	const routeRangesAnchor = `		routeRanges, err := t.options.BuildAutoRouteRanges(false)`
 	const routeRangesReplacement = `		routeRangesStartedAt := fcxDeviceTimingStartFor("tun.route_ranges_build")
