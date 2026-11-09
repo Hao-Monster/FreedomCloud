@@ -625,19 +625,25 @@ abstract class ClashHandlerInterface with ClashInterface {
   /// during an observation call (e.g. `core_starting`, `backend_migrating`).
   @protected
   String? get tunTransportNotReadyReason => null;
+  String? _lastLoggedPreflightNotReadyReason;
 
   Future<TunStatus> getTunStatus() async {
     final watch = Stopwatch()..start();
     final preflightNotReady = tunTransportNotReadyReason;
     if (preflightNotReady != null) {
-      logStartupTiming(
-        'getTunStatus',
-        watch,
-        outcome: 'not_ready',
-        detail: 'reason=$preflightNotReady',
-      );
+      if (tunRuntime.busy ||
+          _lastLoggedPreflightNotReadyReason != preflightNotReady) {
+        _lastLoggedPreflightNotReadyReason = preflightNotReady;
+        logStartupTiming(
+          'getTunStatus',
+          watch,
+          outcome: 'not_ready',
+          detail: 'reason=$preflightNotReady',
+        );
+      }
       throw TunNotReadyException(preflightNotReady);
     }
+    _lastLoggedPreflightNotReadyReason = null;
     var errorDetail = 'statusUnavailable';
     try {
       final result = await invoke<Result>(

@@ -5,6 +5,7 @@ import 'dart:isolate';
 
 import 'package:archive/archive.dart';
 import 'package:flclashx/clash/clash.dart';
+import 'package:flclashx/clash/windows_agent_launch.dart';
 import 'package:flclashx/common/archive.dart';
 import 'package:flclashx/services/subscription_notification_service.dart';
 import 'package:flclashx/enum/enum.dart';
@@ -1372,8 +1373,8 @@ class AppController {
 
   Future<void> updateProviders() async {
     final configEpoch = globalState.runtimeConfigEpoch;
-    final profileId = _ref.read(currentProfileIdProvider);
     try {
+      final profileId = _ref.read(currentProfileIdProvider);
       final providers = await clashCore.getExternalProviders();
       if (configEpoch != globalState.runtimeConfigEpoch ||
           profileId != _ref.read(currentProfileIdProvider)) {
@@ -2475,7 +2476,11 @@ class AppController {
 
   void _hydrateRuntimeProjectionsInBackground() {
     initForegroundCache();
-    unawaited((updateGroups(), updateProviders()).wait);
+    unawaited(
+      (updateGroups(), updateProviders())
+          .wait
+          .catchError((Object _) => (null, null)),
+    );
   }
 
   Future applyProfile({
@@ -2599,8 +2604,8 @@ class AppController {
 
   Future<void> updateGroups() async {
     final configEpoch = globalState.runtimeConfigEpoch;
-    final profileId = _ref.read(currentProfileIdProvider);
     try {
+      final profileId = _ref.read(currentProfileIdProvider);
       final newGroups = await retry(
         task: () async => clashCore.getProxiesGroups(),
         retryIf: (res) =>
@@ -3188,6 +3193,15 @@ class AppController {
       final failure = _tunRuntime.failure;
       effects.log('startup: TUN observed=${_tunRuntime.observed.name}'
           '${failure == null ? '' : ', failure=$failure (TUN not enabled; retry from the TUN switch)'}');
+      if (_windowsStartupEffects == null) {
+        await reconcileDeferredWindowsAgentAfterStartup(
+          pendingProxyStop: _pendingWindowsProxyStop,
+          hasDeferredAgentLaunch: () =>
+              clashService?.hasDeferredAgentLaunch == true,
+          initializeDeferredAgent: _ensureDeferredWindowsAgentInitialized,
+          log: effects.log,
+        );
+      }
       return;
     }
     try {

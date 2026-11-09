@@ -52,7 +52,7 @@ class ConnectionDiagnostics {
     try {
       final homeDir = await appPath.homeDirPath;
       final file = File(join(homeDir, 'logs', fileName));
-      if (await file.exists()) return file.readAsBytes();
+      if (await file.exists()) return await file.readAsBytes();
     } catch (_) {
       // Export remains useful even when the diagnostic directory is missing.
     }

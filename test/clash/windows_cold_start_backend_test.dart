@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:flclashx/clash/agent_protocol.dart';
 import 'package:flclashx/clash/service.dart';
 import 'package:flclashx/clash/windows_agent_launch.dart';
+import 'package:flclashx/common/startup_timing.dart';
 import 'package:flclashx/common/tun_runtime.dart';
 import 'package:flclashx/main.dart';
 import 'package:flclashx/models/models.dart';
@@ -733,6 +734,100 @@ void main() {
         await service.reStart();
         expect(spawnedArgs, hasLength(1));
         expect(servers.single.agentCommands, contains('restartCore'));
+      },
+    );
+
+    test(
+      'post-startup fallback materializes local Agent after profileRequired or permissionDenied while preserving TUN failure and correlationId',
+      () async {
+        const expectedInstanceId =
+            'abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789';
+        final spawnedArgs = <List<String>>[];
+        final runtime = TunRuntimeController()..desiredEnabled = true;
+
+        final service = ClashService.forTesting(
+          isWindowsPlatform: true,
+          agentBinaryExists: () async => true,
+          applyPendingCoreUpdate: () async {},
+          resolveEndpointPath: () async => endpointPath,
+          resolveHomeDirPath: () async => tempDir.path,
+          resolveBundledAgentPath: () => bundledAgent,
+          resolveBundledCorePath: () => bundledCore,
+          resolveBundledHelperPath: () => bundledHelper,
+          resolveServiceDirectory: () => serviceDir,
+          resolveServiceHelperPath: () => serviceHelper,
+          resolveServiceCorePath: () => serviceCore,
+          checkIsAdmin: () async => false,
+          tryStartExistingHelper: () async => false,
+          pingHelper: () async => false,
+          readTunDesired: () => true,
+          endpointPollInterval: const Duration(milliseconds: 5),
+          startAgentProcess: (agentPath, arguments) async {
+            spawnedArgs.add(arguments);
+            final server = _FakeAgentServer(
+              endpointPath: endpointPath,
+              pid: 9100,
+              agentExecutable: agentPath,
+              coreExecutable: bundledCore,
+              privilegedBackend: false,
+              backendSource: 'local',
+              instanceId: expectedInstanceId,
+            );
+            servers.add(server);
+            await server.start();
+          },
+        );
+        service.onTunTransportChanged = () {
+          if (service.hasIntentionalOrInitialNotReady) {
+            runtime.markNotReady();
+          } else {
+            runtime.invalidate('statusUnavailable');
+          }
+        };
+
+        expect(await service.preload(), isTrue);
+        expect(service.hasDeferredAgentLaunch, isTrue);
+        expect(startupTimingCorrelationId, isNull);
+
+        // Simulate fresh-install startup failing with profileRequired before UAC.
+        await runtime.request(true, (_) async {
+          throw const TunFailure('profileRequired');
+        });
+        expect(runtime.failure, 'profileRequired');
+        expect(runtime.requestFailure, 'profileRequired');
+        expect(runtime.desiredEnabled, isTrue);
+
+        final logs = <String>[];
+        await reconcileDeferredWindowsAgentAfterStartup(
+          pendingProxyStop: false,
+          hasDeferredAgentLaunch: () => service.hasDeferredAgentLaunch,
+          initializeDeferredAgent: () async {
+            expect(await service.materializeDeferredAgent(), isTrue);
+            expect(await service.init(InitParams(homeDir: tempDir.path, version: 1)), isTrue);
+          },
+          log: logs.add,
+        );
+
+        expect(logs, isEmpty);
+        expect(spawnedArgs, hasLength(1));
+        expect(spawnedArgs.single, isNot(contains('--use-helper')));
+        expect(service.hasDeferredAgentLaunch, isFalse);
+        expect(service.agentCoreReady, isTrue);
+        expect(startupTimingCorrelationId, expectedInstanceId);
+        // Latched profileRequired and desiredEnabled=true must remain intact!
+        expect(runtime.failure, 'profileRequired');
+        expect(runtime.requestFailure, 'profileRequired');
+        expect(runtime.desiredEnabled, isTrue);
+
+        // Unprivileged status poll also preserves profileRequired.
+        final observed = await service.getTunStatus();
+        expect(runtime.accept(observed, runtime.observationEpoch), isTrue);
+        expect(runtime.observed, TunObservedState.off);
+        expect(runtime.failure, 'profileRequired');
+        expect(runtime.requestFailure, 'profileRequired');
+
+        await service.destroy();
+        expect(startupTimingCorrelationId, isNull);
       },
     );
   });

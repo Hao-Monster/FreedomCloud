@@ -264,6 +264,34 @@ void main() {
         expect(timingLogs.single, contains('outcome=not_ready'));
         expect(timingLogs.single, contains('detail=reason=core_starting'));
         expect(timingLogs.single, isNot(contains('outcome=error')));
+
+        // Repeated idle preflight polls with identical reason are deduplicated.
+        await expectLater(
+          transport.getTunStatus(),
+          throwsA(isA<TunNotReadyException>()),
+        );
+        expect(
+          capturedLogs
+              .where((line) => line.contains('[startup-timing] stage=getTunStatus'))
+              .length,
+          1,
+        );
+
+        // Changing the preflight reason logs immediately.
+        transport.notReadyReason = 'ipc_disconnected';
+        await expectLater(
+          transport.getTunStatus(),
+          throwsA(
+            isA<TunNotReadyException>()
+                .having((e) => e.reason, 'reason', 'ipc_disconnected'),
+          ),
+        );
+        expect(
+          capturedLogs
+              .where((line) => line.contains('[startup-timing] stage=getTunStatus'))
+              .length,
+          2,
+        );
       },
     );
 

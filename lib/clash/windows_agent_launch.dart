@@ -137,3 +137,25 @@ Future<WindowsAgentColdStartAction> planWindowsAgentColdStart({
   }
   return WindowsAgentColdStartAction.launchLocal;
 }
+
+/// Materializes the unprivileged local Agent when a Windows cold-start TUN
+/// launch exits without starting the elevated Helper Agent (e.g. fresh install
+/// with zero profiles `profileRequired`, or UAC cancellation
+/// `permissionDenied`). This restores Core availability for `validateConfig`
+/// and `catalogPrepare` without prompting for UAC or altering `tunRuntime`
+/// failure / preference state.
+Future<void> reconcileDeferredWindowsAgentAfterStartup({
+  required bool pendingProxyStop,
+  required bool Function() hasDeferredAgentLaunch,
+  required Future<void> Function() initializeDeferredAgent,
+  required void Function(String message) log,
+}) async {
+  if (pendingProxyStop || !hasDeferredAgentLaunch()) {
+    return;
+  }
+  try {
+    await initializeDeferredAgent();
+  } catch (error) {
+    log('startup: deferred local Agent fallback failed: $error');
+  }
+}
