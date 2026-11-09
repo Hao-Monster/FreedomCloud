@@ -4,6 +4,7 @@
 
 ## Windows TUN 诊断补充（2026-11-09）
 
+- 诊断阻断修正：Core TUN 计时事件直接输出到 Core stdout，不再被 Mihomo 的 info 等级过滤；Windows 子调用起点在开始事件输出后取时。检查器支持按 tunAttempt 校验阶段配对/成功及每次尝试的指定配对。Go overlay 与监听器 FCX 测试、warning 日志等级测试、Python 合成日志测试 PASS。stdout/Helper 队列仍可能阻塞或丢失；父阶段仍包含日志开销，崩溃后的末尾数据、完整跨进程生命周期、系统 ETW 及真实运行验收 NOT RUN。
 - 关联及丢失诊断增量：UI 按进程生成 uiRunId 并记录 Agent 关联绑定；Helper 记录经过校验的 Core 启动关联；Core 在生命周期锁内分配 tunAttempt，重建及 sing_tun.New 增加开始事件；检查器按尝试检查指定配对并可验证 UI 绑定。Agent 轮转/写入 flush 失败会计数未确认缓冲记录。Go overlay/FCX 测试、Agent 日志测试、Helper 关联校验测试、Dart 静态检查及 Windows 冷启动模拟测试通过。仅源码及模拟验证；日志关闭/崩溃仍可能丢失，检查器需显式指定期望并提供所有文件，尚无 ETW、真实环境运行、完整后端生命周期校验或日志持久性证明。
 - 再次补充：Windows TUN 已有设备与配置计时阶段增配开始事件；Core 检查器对格式错误报失败，并支持指定必须出现的结束阶段；Agent 丢弃报告写入或 flush 失败时恢复计数。Agent 错误注入测试和 Python 检查器测试 PASS。计数仍在内存中，崩溃时无法保证落盘；启动前跨进程 ID、逐次 TUN 尝试 ID、完整跨进程检查、ETW 和真实运行验证仍未完成。
 - 增量：Wintun 创建/打开、路由范围构造及接口查询增加开始事件；Core 序号检查工具对缺号、重复和已记录开始但缺少结束返回失败；Agent 有界日志队列丢弃计数在后续写入时报告。Go overlay 生成/测试、Core gVisor 测试、Agent 定向测试及 Python 检查工具测试 PASS。开始事件尚未覆盖所有阶段；进程崩溃、磁盘失败或队列无后续消息时丢弃计数不能保证落盘，UI 提前关联、每次 TUN 尝试 ID、ETW、真实运行和完整跨进程校验仍未完成。

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
+	"os"
 	"runtime"
 	"strings"
 	"syscall"
@@ -11,7 +12,25 @@ import (
 	"time"
 
 	tun "github.com/metacubex/sing-tun"
+	"github.com/metacubex/mihomo/log"
 )
+
+func TestFCXTimingPersistsAtWarningLogLevel(t *testing.T) {
+	previousLevel := log.Level()
+	log.SetLevel(log.WARNING)
+	defer log.SetLevel(previousLevel)
+	reader, writer, err := os.Pipe()
+	if err != nil { t.Fatal(err) }
+	previous := os.Stdout
+	os.Stdout = writer
+	defer func() { os.Stdout = previous; reader.Close() }()
+	FCXEmitStartupTiming("test.stage", time.Millisecond, "ok", "", nil)
+	writer.Close()
+	data := make([]byte, 4096)
+	n, err := reader.Read(data)
+	if err != nil { t.Fatal(err) }
+	if !strings.Contains(string(data[:n]), "stage=test.stage") { t.Fatalf("missing timing output: %q", data[:n]) }
+}
 
 func TestFCXDeviceTimingHookForwardsSubStagesAndSchema2Fields(t *testing.T) {
 	if tun.FCXDeviceTimingHook == nil {

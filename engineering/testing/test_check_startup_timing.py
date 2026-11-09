@@ -47,6 +47,21 @@ class TimingCheckTest(unittest.TestCase):
             ui.write_text("[startup-timing] event=correlation_bind uiRunId=ui1 correlationId=test\n", encoding="utf-8")
             self.assertEqual(self.check([self.line(1, "stage_end")], "--ui-log", str(ui)).returncode, 0)
 
+    def test_requirements_and_outcome_apply_to_selected_attempt(self):
+        lines = [self.line(1, "stage_start") + " tunAttempt=1",
+                 self.line(2, "stage_end").replace("outcome=ok", "outcome=error") + " tunAttempt=1",
+                 self.line(3, "stage_start") + " tunAttempt=2",
+                 self.line(4, "stage_end") + " tunAttempt=2"]
+        self.assertEqual(self.check(lines, "--attempt", "1", "--require-pair", "call", "--require-success", "call").returncode, 1)
+        self.assertEqual(self.check(lines, "--attempt", "2", "--require-pair", "call", "--require-success", "call").returncode, 0)
+        self.assertEqual(self.check(lines, "--attempt", "3", "--require-stage", "call").returncode, 1)
+
+    def test_required_pair_for_each_attempt(self):
+        lines = [self.line(1, "stage_start") + " tunAttempt=1", self.line(2, "stage_end") + " tunAttempt=1",
+                 self.line(3, "stage_start", "other") + " tunAttempt=2", self.line(4, "stage_end", "other") + " tunAttempt=2"]
+        self.assertEqual(self.check(lines, "--require-pair-each", "call").returncode, 1)
+        self.assertEqual(self.check(lines[:2], "--require-pair-each", "call").returncode, 0)
+
 
 if __name__ == "__main__":
     unittest.main()

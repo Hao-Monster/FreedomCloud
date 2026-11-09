@@ -31,9 +31,8 @@ func fcxDeviceTimingStart() time.Time {
 }
 
 func fcxDeviceTimingStartFor(stage string) time.Time {
-	startedAt := time.Now()
 	if hook := FCXDeviceTimingStartHook; hook != nil { hook(stage) }
-	return startedAt
+	return time.Now()
 }
 
 func fcxLogDeviceStage(stage string, startedAt time.Time, err error) {
