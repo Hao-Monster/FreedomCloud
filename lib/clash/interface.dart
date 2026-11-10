@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:isolate';
 
 import 'package:flclashx/clash/message.dart';
@@ -13,20 +14,29 @@ import 'package:flutter/foundation.dart';
 
 /// On Windows `startListener` synchronously (re)creates the Wintun adapter
 /// inside the Core while it holds its run lock. A device Windows refuses takes
-/// ~15.5s, other slow failures keep upstream's three attempts (~47s), and the
-/// request may first wait behind another lock holder. The old 30s default
-/// reported failure while the Core was still creating the adapter, which also
-/// let background repair queue further full TUN cycles behind it.
-const startListenerRpcTimeout = Duration(minutes: 2);
+/// ~15.5s, other slow adapter failures keep upstream's three attempts (~47s),
+/// and the request may first wait behind another lock holder. The old 30s
+/// default reported failure while the Core was still creating the adapter,
+/// which also let background repair queue further full TUN cycles behind it.
+const windowsStartListenerRpcTimeout = Duration(minutes: 2);
+
+/// Platforms that do not create a Wintun adapter in `startListener` keep the
+/// generic IPC deadline, so a hung Core is still surfaced promptly.
+const defaultStartListenerRpcTimeout = Duration(seconds: 30);
+
+Duration startListenerRpcTimeoutFor({required bool isWindows}) => isWindows
+    ? windowsStartListenerRpcTimeout
+    : defaultStartListenerRpcTimeout;
 
 /// Distinguishes a transport deadline from an explicit Core rejection in the
 /// `[startup-timing] stage=startListener` record.
 String startListenerTimingOutcome({
   required bool started,
   required Duration elapsed,
+  required Duration timeout,
 }) {
   if (started) return 'started';
-  return elapsed >= startListenerRpcTimeout ? 'timeout' : 'rejected';
+  return elapsed >= timeout ? 'timeout' : 'rejected';
 }
 
 /// Protocol failures carry only fixed categories, never remote/parser text.
@@ -839,10 +849,16 @@ abstract class ClashHandlerInterface with ClashInterface {
     );
   }
 
+  /// Whether `startListener` creates the Windows Wintun adapter in the Core.
+  @protected
+  bool get startListenerCreatesWindowsTun => Platform.isWindows;
+
   @override
   Future<bool> startListener() => invoke<bool>(
         method: ActionMethod.startListener,
-        timeout: startListenerRpcTimeout,
+        timeout: startListenerRpcTimeoutFor(
+          isWindows: startListenerCreatesWindowsTun,
+        ),
         onTimeout: () => false,
       );
 

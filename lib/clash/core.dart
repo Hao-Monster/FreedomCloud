@@ -514,6 +514,7 @@ class ClashCore {
         outcome: startListenerTimingOutcome(
           started: started,
           elapsed: watch.elapsed,
+          timeout: startListenerRpcTimeoutFor(isWindows: Platform.isWindows),
         ),
       );
       return started;

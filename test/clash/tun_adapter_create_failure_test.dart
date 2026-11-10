@@ -2,18 +2,27 @@ import 'dart:async';
 
 import 'package:flclashx/clash/interface.dart';
 import 'package:flclashx/common/app_localizations.dart';
+import 'package:flclashx/common/health/health_models.dart';
+import 'package:flclashx/common/health/health_runner.dart';
 import 'package:flclashx/common/tun_runtime.dart';
 import 'package:flclashx/common/windows_tun_prepare.dart';
 import 'package:flclashx/enum/enum.dart';
 import 'package:flclashx/l10n/l10n.dart';
+import 'package:flclashx/views/tools/health_check_view.dart';
 import 'package:flclashx/widgets/tun_status.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 class _RecordingTransport extends ClashHandlerInterface {
+  _RecordingTransport({required this.windows});
+
+  final bool windows;
   ActionMethod? method;
   Duration? timeout;
   Object? timeoutResult;
+
+  @override
+  bool get startListenerCreatesWindowsTun => windows;
 
   @override
   Future<T> invoke<T>({
@@ -62,39 +71,84 @@ void main() {
     test(
       'startListener waits for the Core terminal TUN result instead of the 30s default',
       () async {
-        final transport = _RecordingTransport();
+        final transport = _RecordingTransport(windows: true);
         expect(await transport.startListener(), isTrue);
         expect(transport.method, ActionMethod.startListener);
-        expect(transport.timeout, startListenerRpcTimeout);
-        // One refused Wintun device takes ~15.5s; non-adapter slow failures
+        expect(transport.timeout, windowsStartListenerRpcTimeout);
+        // One refused Wintun device takes ~15.5s; other slow adapter failures
         // keep upstream's three attempts (~47s) and the request can also wait
         // behind the Core runLock. 30s reported failure while TUN was running.
         expect(
-          startListenerRpcTimeout,
+          windowsStartListenerRpcTimeout,
           greaterThanOrEqualTo(const Duration(minutes: 2)),
         );
         expect(transport.timeoutResult, isFalse);
       },
     );
 
+    test(
+      'platforms that do not create a Wintun adapter keep the 30s listener deadline',
+      () async {
+        final transport = _RecordingTransport(windows: false);
+        expect(await transport.startListener(), isTrue);
+        expect(transport.timeout, const Duration(seconds: 30));
+        expect(
+          startListenerRpcTimeoutFor(isWindows: false),
+          const Duration(seconds: 30),
+        );
+        expect(
+          startListenerRpcTimeoutFor(isWindows: true),
+          windowsStartListenerRpcTimeout,
+        );
+      },
+    );
+
     test('startListener timing distinguishes timeout from Core rejection', () {
+      const timeout = Duration(seconds: 30);
       expect(
-        startListenerTimingOutcome(started: true, elapsed: Duration.zero),
+        startListenerTimingOutcome(
+          started: true,
+          elapsed: Duration.zero,
+          timeout: timeout,
+        ),
         'started',
       );
       expect(
         startListenerTimingOutcome(
           started: false,
           elapsed: const Duration(seconds: 1),
+          timeout: timeout,
         ),
         'rejected',
       );
       expect(
         startListenerTimingOutcome(
           started: false,
-          elapsed: startListenerRpcTimeout,
+          elapsed: timeout,
+          timeout: timeout,
         ),
         'timeout',
+      );
+    });
+
+    test('health check reports a refused adapter specifically', () async {
+      final l10n = await AppLocalizations.load(const Locale('zh', 'CN'));
+      expect(
+        HealthRunner.mapTunFailureReason('adapterCreateFailed'),
+        'tunAdapterCreateFailed',
+      );
+      expect(HealthRunner.mapTunFailureReason('startFailed'), 'tunStartFailed');
+      expect(
+        healthCheckItemDetail(
+          const HealthCheckResult(
+            id: HealthCheckId.tunTakeover,
+            status: HealthStatus.failed,
+            elapsedMs: 1,
+            reasonCode: 'tunAdapterCreateFailed',
+          ),
+          l10n,
+        ),
+        l10n.tunErrorAdapterCreate,
       );
     });
 

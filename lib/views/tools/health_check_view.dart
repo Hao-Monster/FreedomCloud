@@ -125,6 +125,7 @@ String healthCheckItemDetail(HealthCheckResult result, AppLocalizations l10n) {
         'tunComponentsMismatch' => l10n.tunErrorComponents,
         'tunLegacyAgent' => l10n.tunErrorLegacyAgent,
         'tunConfigurationFailed' => l10n.tunErrorConfiguration,
+        'tunAdapterCreateFailed' => l10n.tunErrorAdapterCreate,
         'tunStatusUnavailable' => l10n.tunErrorUnavailable,
         'tunCloseFailed' => l10n.tunErrorStop,
         _ => l10n.tunErrorStart,

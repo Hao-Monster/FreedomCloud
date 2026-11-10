@@ -178,7 +178,8 @@ class HealthRunner {
     return (leaf: null, failureReason: 'outboundGroupLoop');
   }
 
-  static String _mapTunFailureReason(String? code) => switch (code) {
+  @visibleForTesting
+  static String mapTunFailureReason(String? code) => switch (code) {
         'permissionDenied' ||
         'authorizationRequired' =>
           'tunAuthorizationRequired',
@@ -187,6 +188,7 @@ class HealthRunner {
         'interfaceMissing' => 'tunInterfaceMissing',
         'interfaceDown' => 'tunInterfaceDown',
         'configurationFailed' => 'tunConfigurationFailed',
+        'adapterCreateFailed' => 'tunAdapterCreateFailed',
         'statusUnavailable' || 'invalidStatus' => 'tunStatusUnavailable',
         _ => 'tunStartFailed',
       };
@@ -597,7 +599,7 @@ class HealthRunner {
               action: HealthAction.openTunSettings,
             );
           }
-          final reason = _mapTunFailureReason(
+          final reason = mapTunFailureReason(
             tun?.errorCode ?? cfg.tunFailureCode ?? probeError,
           );
           return HealthCheckResult(
