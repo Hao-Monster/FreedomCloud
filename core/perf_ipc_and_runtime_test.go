@@ -5,12 +5,18 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"runtime"
+	"strings"
 	"testing"
+	"time"
 
 	P "github.com/metacubex/mihomo/component/process"
+	"github.com/metacubex/mihomo/config"
 	"github.com/metacubex/mihomo/constant"
+	LC "github.com/metacubex/mihomo/listener/config"
 	"github.com/metacubex/mihomo/log"
 	"github.com/metacubex/mihomo/tunnel"
+	logrus "github.com/sirupsen/logrus"
 )
 
 func invokeWireActionForTest(t *testing.T, wireJSON string) ([]byte, ActionResult) {
@@ -177,5 +183,87 @@ func TestRuntimeConfigSnapshotReflectsLiveGeneralAndTunState(t *testing.T) {
 	}
 	if !snapRunning.Tun.Enable || snapRunning.Tun.Stack != constant.TunGvisor {
 		t.Fatalf("snapshot missed running TUN state: %+v", snapRunning.Tun)
+	}
+}
+
+func TestCoreStdoutSuppressesDebugWhilePreservingSubscriberStream(t *testing.T) {
+	oldLevel := log.Level()
+	oldOut := logrus.StandardLogger().Out
+	oldLogrusLevel := logrus.GetLevel()
+	var stdoutBuf bytes.Buffer
+	logrus.SetOutput(&stdoutBuf)
+	log.SetLevel(log.DEBUG)
+	t.Cleanup(func() {
+		log.SetLevel(oldLevel)
+		logrus.SetOutput(oldOut)
+		logrus.SetLevel(oldLogrusLevel)
+	})
+
+	sub := log.Subscribe()
+	defer log.UnSubscribe(sub)
+
+	const debugMsg = "XTLS Vision read padding: command=0, payloadLen=1300, paddingLen=176"
+	const infoMsg = "[TUN] Tun adapter listening at: 198.18.0.1/16"
+	log.Debugln("%s", debugMsg)
+	log.Infoln("%s", infoMsg)
+
+	var gotDebugSub, gotInfoSub bool
+	deadline := time.After(time.Second)
+	for !(gotDebugSub && gotInfoSub) {
+		select {
+		case ev := <-sub:
+			if ev.LogLevel == log.DEBUG && strings.Contains(ev.Payload, debugMsg) {
+				gotDebugSub = true
+			}
+			if ev.LogLevel == log.INFO && strings.Contains(ev.Payload, infoMsg) {
+				gotInfoSub = true
+			}
+		case <-deadline:
+			t.Fatalf("timed out waiting for log subscriber events (gotDebug=%v gotInfo=%v)", gotDebugSub, gotInfoSub)
+		}
+	}
+
+	out := stdoutBuf.String()
+	if !strings.Contains(out, infoMsg) {
+		t.Fatalf("expected Core stdout to preserve info log %q, got: %s", infoMsg, out)
+	}
+	if strings.Contains(out, debugMsg) {
+		t.Fatalf("expected Core stdout to suppress per-packet debug log %q, got: %s", debugMsg, out)
+	}
+}
+
+func TestSetupConfigWhileRunningDoesNotRecreateTunTwice(t *testing.T) {
+	if runtime.GOOS == "android" {
+		t.Skip("desktop TUN lifecycle test")
+	}
+	isolateConfigRuntime(t)
+	oldRunning := isRunning
+	oldRecreateTun := recreateRuntimeTun
+	t.Cleanup(func() {
+		isRunning = oldRunning
+		recreateRuntimeTun = oldRecreateTun
+	})
+
+	isRunning = true
+	tunRecreateCalls := 0
+	recreateRuntimeTun = func(LC.Tun, constant.Tunnel) {
+		tunRecreateCalls++
+	}
+	applyRuntimeConfig = func(cfg *config.Config, _ bool) {
+		// Mirror mihomo executor.ApplyConfig -> updateTun(cfg.General).
+		if runtime.GOOS != "android" {
+			recreateRuntimeTun(cfg.General.Tun, tunnel.Tunnel)
+		}
+	}
+	refreshRuntimeListeners = updateListeners
+
+	params := defaultSetupParams()
+	params.Config.Tun.Enable = true
+	params.Config.Tun.Stack = constant.TunGvisor
+	if err := setupConfig(params); err != nil {
+		t.Fatalf("setupConfig failed: %v", err)
+	}
+	if tunRecreateCalls != 1 {
+		t.Fatalf("expected 1 TUN recreate call during running setupConfig, got %d", tunRecreateCalls)
 	}
 }

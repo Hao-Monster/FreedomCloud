@@ -6,12 +6,14 @@ import (
 	"github.com/metacubex/mihomo/config"
 	"github.com/metacubex/mihomo/hub/executor"
 	"github.com/metacubex/mihomo/hub/route"
+	"github.com/metacubex/mihomo/listener"
 	"github.com/metacubex/mihomo/log"
 )
 
 // These are the actual operating-system boundaries. Tests replace them rather
 // than launching proxy listeners, controller sockets or provider probes.
 var applyRuntimeConfig = executor.ApplyConfig
+var recreateRuntimeTun = listener.ReCreateTun
 var runtimeControllerEnabled = true
 
 func effectiveControllerConfig(cfg *config.Config, enabled bool) *config.Config {

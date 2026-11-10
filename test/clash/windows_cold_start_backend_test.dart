@@ -830,5 +830,102 @@ void main() {
         expect(startupTimingCorrelationId, isNull);
       },
     );
+
+    test(
+      'in-flight IPC calls started before preload decides deferForTunAuthorization do not hang on orphaned _coreReadyCompleter',
+      () async {
+        final checkIsAdminEntered = Completer<void>();
+        final allowCheckIsAdminToFinish = Completer<bool>();
+        var helperRunning = false;
+        final spawnedArgs = <List<String>>[];
+
+        final service = ClashService.forTesting(
+          isWindowsPlatform: true,
+          agentBinaryExists: () async => true,
+          applyPendingCoreUpdate: () async {},
+          resolveEndpointPath: () async => endpointPath,
+          resolveHomeDirPath: () async => tempDir.path,
+          resolveBundledAgentPath: () => bundledAgent,
+          resolveBundledCorePath: () => bundledCore,
+          resolveBundledHelperPath: () => bundledHelper,
+          resolveServiceDirectory: () => serviceDir,
+          resolveServiceHelperPath: () => serviceHelper,
+          resolveServiceCorePath: () => serviceCore,
+          checkIsAdmin: () async {
+            if (!checkIsAdminEntered.isCompleted) {
+              checkIsAdminEntered.complete();
+              return allowCheckIsAdminToFinish.future;
+            }
+            return helperRunning;
+          },
+          tryStartExistingHelper: () async => false,
+          pingHelper: () async => helperRunning,
+          readTunDesired: () => true,
+          endpointPollInterval: const Duration(milliseconds: 5),
+          startAgentProcess: (agentPath, arguments) async {
+            spawnedArgs.add(arguments);
+            final useHelper = arguments.contains('--use-helper');
+            final server = _FakeAgentServer(
+              endpointPath: endpointPath,
+              pid: 9500 + spawnedArgs.length,
+              agentExecutable: agentPath,
+              coreExecutable: useHelper ? serviceCore : bundledCore,
+              privilegedBackend: useHelper,
+              backendSource: useHelper ? 'helper' : 'local',
+              tunPrivilege: useHelper ? 'elevated' : 'unprivileged',
+            );
+            servers.add(server);
+            await server.start();
+          },
+        );
+        addTearDown(service.destroy);
+
+        // Wait until preload() is inside planWindowsAgentColdStart (before
+        // hasDeferredAgentLaunch becomes true).
+        await checkIsAdminEntered.future;
+        expect(service.hasDeferredAgentLaunch, isFalse);
+
+        // Issue early IPC calls in the exact window where AppStateManager
+        // calls setUiActive(true) before preload() finishes.
+        final earlyUiActiveFuture = service.setUiActive(true);
+        final earlySendMessageFuture = service.sendMessage(
+          jsonEncode({
+            'id': 'early-msg-1',
+            'method': 'setUiActive',
+            'data': true,
+          }),
+        );
+
+        // Let preload() decide deferForTunAuthorization.
+        allowCheckIsAdminToFinish.complete(false);
+        expect(await service.preload(), isTrue);
+        expect(service.hasDeferredAgentLaunch, isTrue);
+
+        // Both the RPC completer and the sendMessage Future itself must settle
+        // immediately on deferral rather than hanging for 20s on an orphaned
+        // _coreReadyCompleter.
+        await expectLater(
+          earlyUiActiveFuture.timeout(const Duration(milliseconds: 500)),
+          completion(isFalse),
+        );
+        await expectLater(
+          earlySendMessageFuture.timeout(const Duration(milliseconds: 500)),
+          completes,
+        );
+
+        // Now materialize via ensureWindowsTunBackend and verify an in-flight
+        // sendMessage started during materialization also completes as soon as
+        // the new Core is ready.
+        await File(bundledHelper).copy(serviceHelper);
+        await File(bundledCore).copy(serviceCore);
+        helperRunning = true;
+
+        expect(
+          await service.ensureWindowsTunBackend(isCurrent: () => true),
+          isTrue,
+        );
+        expect(await service.setUiActive(true), isTrue);
+      },
+    );
   });
 }

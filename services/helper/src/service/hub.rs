@@ -403,7 +403,9 @@ where
                 match read_core_output_line(&mut reader) {
                     Ok(None) => break,
                     Ok(Some(output)) => {
-                        thread_logger.log(format!("Core {channel}: {}", output.trim_end()))
+                        if should_persist_core_output_line(channel, &output) {
+                            thread_logger.log(format!("Core {channel}: {}", output.trim_end()))
+                        }
                     }
                     Err(error) => {
                         thread_logger.record_core_output_failure();
@@ -418,6 +420,14 @@ where
         logger.log(format!("Core {channel} reader could not start: {error}"));
         eprintln!("FlClashHelperService: Core {channel} reader could not start: {error}");
     }
+}
+
+fn should_persist_core_output_line(channel: &str, line: &str) -> bool {
+    if channel != "stdout" {
+        return true;
+    }
+    let trimmed = line.trim_start();
+    !(trimmed.starts_with("time=\"") && trimmed.contains("\" level=debug "))
 }
 
 fn read_core_output_line<R: BufRead>(reader: &mut R) -> io::Result<Option<String>> {
@@ -889,6 +899,40 @@ mod tests {
             fn read(&mut self, _buffer: &mut [u8]) -> io::Result<usize> { Err(io::Error::other("fixture read failure")) }
         }
         assert!(read_core_output_line(&mut io::BufReader::new(Broken)).is_err());
+    }
+
+    #[test]
+    fn core_stdout_logger_suppresses_logrus_debug_lines_while_keeping_info_and_stderr() {
+        use std::time::Duration;
+        let root = TempDir::new();
+        let path = root.path().join("helper.log");
+        let logger = ServiceLogger::new_at_path(path.clone());
+        let stdout_payload = concat!(
+            "time=\"2026-11-10T18:37:18.138704900+08:00\" level=debug msg=\"XTLS Vision read padding\"\n",
+            "time=\"2026-11-10T18:37:18.482077300+08:00\" level=info msg=\"Load MMDB file\"\n",
+        );
+        let stderr_payload =
+            "time=\"2026-11-10T18:37:18.138704900+08:00\" level=debug msg=\"stderr diagnostic\"\n";
+        spawn_core_output_logger(
+            io::Cursor::new(stdout_payload.as_bytes()),
+            logger.clone(),
+            "stdout",
+        );
+        spawn_core_output_logger(
+            io::Cursor::new(stderr_payload.as_bytes()),
+            logger.clone(),
+            "stderr",
+        );
+        logger
+            .finish_core_output(Duration::from_secs(1), Duration::from_secs(1))
+            .unwrap();
+        let text = fs::read_to_string(path).unwrap();
+        assert!(
+            !text.contains("XTLS Vision read padding"),
+            "expected Core stdout level=debug spam to be suppressed, got: {text}"
+        );
+        assert!(text.contains("Core stdout: time=\"2026-11-10T18:37:18.482077300+08:00\" level=info msg=\"Load MMDB file\""));
+        assert!(text.contains("Core stderr: time=\"2026-11-10T18:37:18.138704900+08:00\" level=debug msg=\"stderr diagnostic\""));
     }
 
     #[tokio::test]

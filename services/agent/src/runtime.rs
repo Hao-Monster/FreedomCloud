@@ -2140,6 +2140,14 @@ async fn stop_backend(
     Ok(())
 }
 
+fn should_persist_core_output_line(channel: &str, line: &str) -> bool {
+    if channel != "stdout" {
+        return true;
+    }
+    let trimmed = line.trim_start();
+    !(trimmed.starts_with("time=\"") && trimmed.contains("\" level=debug "))
+}
+
 fn spawn_core_output_logger<R>(stream: R, logger: Arc<AgentLogger>, channel: &'static str)
 where
     R: AsyncRead + Unpin + Send + 'static,
@@ -2149,7 +2157,11 @@ where
         loop {
             match read_core_output_line(&mut reader).await {
                 Ok(None) => break,
-                Ok(Some(line)) => logger.log(format!("Core {channel}: {}", line.trim_end())),
+                Ok(Some(line)) => {
+                    if should_persist_core_output_line(channel, &line) {
+                        logger.log(format!("Core {channel}: {}", line.trim_end()));
+                    }
+                }
                 Err(error) => {
                     logger.log(format!("Core {channel} read error: {error}"));
                     break;
@@ -3487,5 +3499,21 @@ mod tests {
         .unwrap()
         .unwrap();
         assert!(pipelined.contains("\"pipe-1\""));
+    }
+
+    #[test]
+    fn core_stdout_logger_suppresses_logrus_debug_lines_while_keeping_info_and_stderr() {
+        assert!(!should_persist_core_output_line(
+            "stdout",
+            "time=\"2026-11-10T18:37:18.138704900+08:00\" level=debug msg=\"XTLS Vision read padding\"\n"
+        ));
+        assert!(should_persist_core_output_line(
+            "stdout",
+            "time=\"2026-11-10T18:37:18.482077300+08:00\" level=info msg=\"Load MMDB file\"\n"
+        ));
+        assert!(should_persist_core_output_line(
+            "stderr",
+            "time=\"2026-11-10T18:37:18.138704900+08:00\" level=debug msg=\"stderr diagnostic\"\n"
+        ));
     }
 }

@@ -29,6 +29,7 @@ import (
 	"github.com/metacubex/mihomo/log"
 	rp "github.com/metacubex/mihomo/rules/provider"
 	"github.com/metacubex/mihomo/tunnel"
+	"github.com/sirupsen/logrus"
 	"golang.org/x/sync/semaphore"
 )
 
@@ -47,6 +48,7 @@ var (
 	proxyDescMu                 sync.RWMutex
 	proxyDescriptions           = map[string]string{}
 	pendingTunEnable            = false
+	skipListenerTunRecreate     = false
 	currentRawListeners         []map[string]any
 	currentListenersClosed      = false
 	currentTestURL              = "https://www.gstatic.com/generate_204"
@@ -60,6 +62,7 @@ var (
 )
 
 func init() {
+	configureCoreStdoutLogLevel()
 	resource.SetFCXProviderUpdatedCallback(func(name string) {
 		if !isInit.Load() {
 			return
@@ -68,10 +71,33 @@ func init() {
 	})
 }
 
+// configureCoreStdoutLogLevel keeps mihomo's stdout logrus sink at InfoLevel by
+// default even when the profile or UI sets `log-level: debug`. UI log
+// subscribers (`log.Subscribe()`) continue to receive every debug event via
+// `mihomo/log`, while Helper/Agent disk log files are protected from
+// per-packet debug log floods (`XTLS Vision padding`, `[DNS] cache hit`, etc.).
+func configureCoreStdoutLogLevel() {
+	if os.Getenv("FCX_CORE_STDOUT_DEBUG") == "1" {
+		logrus.SetLevel(logrus.DebugLevel)
+		return
+	}
+	logrus.SetLevel(logrus.InfoLevel)
+}
+
+func refreshRuntimeListenersWithoutTun() {
+	previousSkip := skipListenerTunRecreate
+	skipListenerTunRecreate = true
+	defer func() {
+		skipListenerTunRecreate = previousSkip
+	}()
+	refreshRuntimeListeners()
+}
+
 func applyRuntimeConfigLocked(cfg *config.Config, force bool) {
 	proxyStateMu.Lock()
 	defer proxyStateMu.Unlock()
 	applyRuntimeConfig(cfg, force)
+	configureCoreStdoutLogLevel()
 }
 
 func applyConfigForRuntimeStateLocked(cfg *config.Config) {
@@ -395,8 +421,8 @@ func updateListeners() {
 	listener.ReCreateVmess(general.VmessConfig, tunnel.Tunnel)
 	listener.ReCreateTuic(general.TuicServer, tunnel.Tunnel)
 	// Desktop builds may include the `cmfa` tag, so gate TUN only on Android.
-	if runtime.GOOS != "android" {
-		listener.ReCreateTun(general.Tun, tunnel.Tunnel)
+	if runtime.GOOS != "android" && !skipListenerTunRecreate {
+		recreateRuntimeTun(general.Tun, tunnel.Tunnel)
 	}
 }
 
@@ -549,41 +575,53 @@ func updateConfig(params *UpdateParams) error {
 	if params.LogLevel != nil {
 		general.LogLevel = *params.LogLevel
 		log.SetLevel(general.LogLevel)
+		configureCoreStdoutLogLevel()
 	}
 	if params.IPv6 != nil {
 		general.IPv6 = *params.IPv6
 		resolver.DisableIPv6 = !general.IPv6
 	}
+	tunChanged := false
 	if params.Tun != nil {
 		if general.Tun.Enable != params.Tun.Enable || pendingTunEnable != params.Tun.Enable {
 			listenersChanged = true
+			tunChanged = true
 		}
 		general.Tun.Enable = params.Tun.Enable
 		pendingTunEnable = params.Tun.Enable
 		if params.Tun.AutoRoute != nil && general.Tun.AutoRoute != *params.Tun.AutoRoute {
 			general.Tun.AutoRoute = *params.Tun.AutoRoute
 			listenersChanged = true
+			tunChanged = true
 		}
 		if params.Tun.Device != nil && general.Tun.Device != *params.Tun.Device {
 			general.Tun.Device = *params.Tun.Device
 			listenersChanged = true
+			tunChanged = true
 		}
 		if params.Tun.RouteAddress != nil && !slices.Equal(general.Tun.RouteAddress, *params.Tun.RouteAddress) {
 			general.Tun.RouteAddress = *params.Tun.RouteAddress
 			listenersChanged = true
+			tunChanged = true
 		}
 		if params.Tun.DNSHijack != nil && !slices.Equal(general.Tun.DNSHijack, *params.Tun.DNSHijack) {
 			general.Tun.DNSHijack = *params.Tun.DNSHijack
 			listenersChanged = true
+			tunChanged = true
 		}
 		if params.Tun.Stack != nil && general.Tun.Stack != *params.Tun.Stack {
 			general.Tun.Stack = *params.Tun.Stack
 			listenersChanged = true
+			tunChanged = true
 		}
 	}
 
 	if listenersChanged {
-		refreshRuntimeListeners()
+		if tunChanged {
+			refreshRuntimeListeners()
+		} else {
+			refreshRuntimeListenersWithoutTun()
+		}
 	}
 	if err := restoreRuntimeStrictIngress(); err != nil {
 		return errors.New("macOS strict ingress could not be restored after configuration update")
@@ -633,17 +671,18 @@ func setupConfig(params *SetupParams) error {
 	currentRawListeners = slices.Clone(params.Config.Listeners)
 	currentListenersClosed = false
 	candidatePending := candidate.General.Tun.Enable
+	setProxyDescriptions(candidateDescriptions)
+	configuredFindProcessMode.Store(int32(candidate.General.FindProcessMode))
+	externalControllerListening.Store(controllerHasActiveEndpoint(candidate, controllerEnabled))
+	syncEffectiveFindProcessMode()
 	applyStart := time.Now()
 	applyConfigForRuntimeStateLocked(candidate)
 	externalProviders = getExternalProvidersRaw()
 	log.Infoln("[Setup] executor.ApplyConfig took %s", time.Since(applyStart))
 	pendingTunEnable = candidatePending
-	setProxyDescriptions(candidateDescriptions)
-	configuredFindProcessMode.Store(int32(candidate.General.FindProcessMode))
-	externalControllerListening.Store(controllerHasActiveEndpoint(candidate, controllerEnabled))
 	syncEffectiveFindProcessMode()
 	selectRuntimeGroups(params.SelectedMap)
-	refreshRuntimeListeners()
+	refreshRuntimeListenersWithoutTun()
 	if restoreErr := restoreRuntimeStrictIngress(); restoreErr != nil {
 		clearRuntimeStrictIngress()
 		currentConfig, pendingTunEnable = previous, previousPending
@@ -664,14 +703,15 @@ func setupConfig(params *SetupParams) error {
 			syncEffectiveFindProcessMode()
 			return errors.Join(fmt.Errorf("initial configuration strict ingress failed: %w", restoreErr), cleanupErr)
 		}
-		applyConfigForRuntimeStateLocked(previous)
-		externalProviders = getExternalProvidersRaw()
-		controllerErr := recreateRuntimeController(effectiveControllerConfig(previous, previousControllerEnabled))
 		setProxyDescriptions(previousDescriptions)
 		configuredFindProcessMode.Store(int32(previous.General.FindProcessMode))
 		externalControllerListening.Store(controllerHasActiveEndpoint(previous, previousControllerEnabled))
 		syncEffectiveFindProcessMode()
-		refreshRuntimeListeners()
+		applyConfigForRuntimeStateLocked(previous)
+		externalProviders = getExternalProvidersRaw()
+		controllerErr := recreateRuntimeController(effectiveControllerConfig(previous, previousControllerEnabled))
+		syncEffectiveFindProcessMode()
+		refreshRuntimeListenersWithoutTun()
 		strictErr := restoreRuntimeStrictIngress()
 		return errors.Join(fmt.Errorf("configuration strict ingress failed: %w", restoreErr), controllerErr, strictErr)
 	}

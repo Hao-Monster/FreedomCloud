@@ -234,6 +234,19 @@ class ClashService extends ClashHandlerInterface {
   Completer<void> _agentDisconnected = Completer<void>();
   void Function()? onTunTransportChanged;
 
+  void _resetCoreReadyCompleter() {
+    if (_coreReadyCompleter.isCompleted) {
+      _coreReadyCompleter = Completer<void>();
+    }
+  }
+
+  void _releaseCoreReadyWaitersForDeferOrTeardown() {
+    if (!_coreReadyCompleter.isCompleted) {
+      _coreReadyCompleter.complete();
+    }
+    _coreReadyCompleter = Completer<void>();
+  }
+
   bool isStarting = false;
 
   Process? process;
@@ -443,6 +456,8 @@ class ClashService extends ClashHandlerInterface {
         _agentUsingHelper = false;
         _agentProxyRunning = null;
         setStartupTimingCorrelationId(null);
+        _releaseCoreReadyWaitersForDeferOrTeardown();
+        _flushPendingCompleters();
         commonPrint.log(
           'FlClashAgent cold-start launch deferred until TUN authorization',
         );
@@ -628,8 +643,8 @@ class ClashService extends ClashHandlerInterface {
       if (!_coreReadyCompleter.isCompleted) {
         _coreReadyCompleter.complete();
       }
-    } else if (_coreReadyCompleter.isCompleted) {
-      _coreReadyCompleter = Completer<void>();
+    } else {
+      _resetCoreReadyCompleter();
     }
     if (event.type == AgentEventType.commandResult && event.id != null) {
       final completer = _agentCommandCompleters.remove(event.id);
@@ -690,7 +705,7 @@ class ClashService extends ClashHandlerInterface {
   Future<bool> _materializeDeferredAgentLocked() async {
     _agentLaunchDeferred = false;
     _agentCoreState = AgentCoreState.starting;
-    _coreReadyCompleter = Completer<void>();
+    _resetCoreReadyCompleter();
     onTunTransportChanged?.call();
     final connected = await _connectOrLaunchAgentImpl(
       allowDeferForTunAuthorization: false,
@@ -698,6 +713,8 @@ class ClashService extends ClashHandlerInterface {
     if (!connected && _agentPid == null && _agentIdentity == null) {
       _agentLaunchDeferred = true;
       _agentCoreState = AgentCoreState.stopped;
+      _releaseCoreReadyWaitersForDeferOrTeardown();
+      _flushPendingCompleters();
       onTunTransportChanged?.call();
     }
     return connected;
@@ -1179,7 +1196,7 @@ class ClashService extends ClashHandlerInterface {
     if (hasDeferredAgentLaunch) {
       _agentLaunchDeferred = false;
       _agentCoreState = AgentCoreState.starting;
-      _coreReadyCompleter = Completer<void>();
+      _resetCoreReadyCompleter();
       onTunTransportChanged?.call();
       final connected = await _connectOrLaunchAgentImpl(
         allowDeferForTunAuthorization: false,
@@ -1191,6 +1208,8 @@ class ClashService extends ClashHandlerInterface {
         if (_agentPid == null && _agentIdentity == null) {
           _agentLaunchDeferred = true;
           _agentCoreState = AgentCoreState.stopped;
+          _releaseCoreReadyWaitersForDeferOrTeardown();
+          _flushPendingCompleters();
           onTunTransportChanged?.call();
         }
         throw const TunFailure('componentsMismatch');
@@ -1229,7 +1248,7 @@ class ClashService extends ClashHandlerInterface {
       }
       if (!endpointReleased) throw const TunFailure('backendStopFailed');
       await _detachAgentSocket();
-      _coreReadyCompleter = Completer<void>();
+      _resetCoreReadyCompleter();
       if (!await _connectOrLaunchAgentImpl() ||
           _agentPid == previousPid ||
           (previousInstance != null &&
@@ -1323,7 +1342,14 @@ class ClashService extends ClashHandlerInterface {
     try {
       if (_agentMode) {
         await _coreReadyCompleter.future.timeout(const Duration(seconds: 20));
-        if (_stopping || _detaching || !socketCompleter.isCompleted) {
+        if (hasDeferredAgentLaunch) {
+          _failPendingCompleter(message, 'Agent launch deferred');
+          return;
+        }
+        if (_stopping ||
+            _detaching ||
+            !socketCompleter.isCompleted ||
+            !agentCoreReady) {
           _failPendingCompleter(message, 'Agent socket unavailable');
           return;
         }
@@ -1531,6 +1557,7 @@ class ClashService extends ClashHandlerInterface {
       }
       socketCompleter = Completer<Socket>();
       setStartupTimingCorrelationId(null);
+      _releaseCoreReadyWaitersForDeferOrTeardown();
       _flushPendingCompleters();
       return true;
     } finally {
