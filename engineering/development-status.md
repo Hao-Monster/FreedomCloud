@@ -2,6 +2,29 @@
 
 更新日期：2026-11-10。当前阶段是快速开发、快速迭代和部分功能预览。本文记录来源与验收边界；每次继续开发仍需核实实际 Git/PR/CI 状态，不能把历史报告视为当前通过证明。
 
+## 启动埋点体系工程收敛：恢复 CI 门禁、稳态静默、状态/计数防失真与端到端 KPI 量化输出（2026-11-10）
+
+- 原始来源与收敛范围：针对前序多轮日志与埋点提交（`0152063`、`707c95a`、`8cb3744` 及 `85d3112..6e1bd33`）专项审查检出的 CI 破坏、稳态噪声、指标失真与校验模型脱节问题，按用户确认的三项工程收敛建议以严格 TDD（前置有效 Red → 最小生产实现 Green → 全套回归）落入本地 `development`（代码提交 `af95582`）：
+  1. **[收敛项 1 — 恢复 CI 绿灯、统一 `schema=2` 客户端格式与稳态关闭 TUN 轮询静默]**：
+     - [`lib/common/startup_timing.dart`](file:///E:/CodeWorkstation/FlClashX/lib/common/startup_timing.dart)：将客户端 `[startup-timing]` 记录固定为 `stage=<stage> elapsedMs=<ms> ... schema=2 source=ui uiRunId=<uiRunId> [correlationId=...]`（`event=correlation_bind` 同步携带 `schema=2 source=ui`），恢复 [`tun_not_ready_status_test.dart`](file:///E:/CodeWorkstation/FlClashX/test/clash/tun_not_ready_status_test.dart) 因 `4fd0395` 前缀变更而失败的 3 项 CI 门禁用例；
+     - [`lib/clash/interface.dart`](file:///E:/CodeWorkstation/FlClashX/lib/clash/interface.dart)：将 `getTunStatus` 稳态抑制条件从 `status.observed != TunObservedState.on` 收窄为对比当前预期稳态 `expectedObserved`（`tunRuntime.desiredEnabled ? on : off`），彻底消除关闭 TUN 仅开系统代理时每 `10–15s` 持续落盘的稳态噪声，同时完整保留 `busy`、慢查询（`>= 200ms`）与非预期状态偏移时的诊断记录（新增单测覆盖）。
+  2. **[收敛项 2 — 修正 `OnReload()` 尝试号覆盖、Core 丢行计数永久污染与免 UAC 冷启动误报]**：
+     - [`recreate_tun.txt`](file:///E:/CodeWorkstation/FlClashX/core/tools/mihomo-overlay/patches/recreate_tun.txt) 与 [`tun_status_fcx_test.go.txt`](file:///E:/CodeWorkstation/FlClashX/core/tools/mihomo-overlay/patches/tun_status_fcx_test.go.txt)：当等配置 `ReCreateTun` 命中 `tunLister.OnReload()` 快路径且未重建适配器时保留原创建成功的 `fcxTunStatus.TunAttempt`，避免无变更重载覆盖活跃适配器的创建尝试号；
+     - [`sing_tun_timing_fcx.go.txt`](file:///E:/CodeWorkstation/FlClashX/core/tools/mihomo-overlay/patches/sing_tun_timing_fcx.go.txt) 与 [`sing_tun_timing_fcx_test.go.txt`](file:///E:/CodeWorkstation/FlClashX/core/tools/mihomo-overlay/patches/sing_tun_timing_fcx_test.go.txt)：`fcxTimingOutput.drain` 改为 `s.dropped.Swap(0)` 按增量上报（写出失败时回滚累加，写出成功后清零 `writeFailures`），消除单次早期瞬态丢行永久作废后续全部 `tunAttempt` 的问题；
+     - [`engineering/testing/check_startup_timing.py`](file:///E:/CodeWorkstation/FlClashX/engineering/testing/check_startup_timing.py) 与 [`test_check_startup_timing.py`](file:///E:/CodeWorkstation/FlClashX/engineering/testing/test_check_startup_timing.py)：`--cold-helper-run` 同时兼容免 UAC 预加载直连 Helper 路径（`correlation_bind` 早于 `preload=ready` 且 `prepareWindowsTunBackend` 正常短路跳过 `authorize`/`ensureBackend`）与授权迁移路径（支持 `AuthorizeCode.none` / `success` + `ensureBackend` `replaced` / `reused`，同时拒绝未授权的延迟 `preload`），并在扫描通配路径时区分 `source=ui` 与 Core 记录、按目标 `(correlationId, pid)` 隔离历史进程噪声。
+  3. **[收敛项 3 — 补齐端到端启动总耗时里程碑与量化瀑布指标输出]**：
+     - [`lib/common/startup_timing.dart`](file:///E:/CodeWorkstation/FlClashX/lib/common/startup_timing.dart)、[`lib/main.dart`](file:///E:/CodeWorkstation/FlClashX/lib/main.dart)、[`lib/application.dart`](file:///E:/CodeWorkstation/FlClashX/lib/application.dart)、[`lib/controller.dart`](file:///E:/CodeWorkstation/FlClashX/lib/controller.dart) 及新增单测 [`startup_e2e_timing_test.dart`](file:///E:/CodeWorkstation/FlClashX/test/common/startup_e2e_timing_test.dart)：在 `main()` 入口建立进程级计时器，通过单次幂等的 `logStartupFirstFrameOnce` 与 `logStartupTunnelReadyOnce` 输出 `e2e.first_frame` 与 `e2e.tunnel_ready`（覆盖 `tun`、`proxy_only`、降级与跨平台分支）；
+     - [`engineering/testing/check_startup_timing.py`](file:///E:/CodeWorkstation/FlClashX/engineering/testing/check_startup_timing.py)：新增量化指标汇总行 `metrics.e2e`、`metrics.ui_stages`、`metrics.core`（含 `recreateTunMs`、`lockWaitMs`、`singTunNewMs`、`deviceTotalMs` 与 `stackAndMonitorOverheadMs`）、`metrics.top_device_stages` 与 Top 5 `metrics.top_leaf_calls`。
+- 验证记录（本机 `Flutter 3.47.4` / `Dart 3.13.3` / `Go 1.26.9`；CI 配置 `Flutter 3.41.7` / `Go 1.26.0`）：
+  - 前置有效 Red：**PASS**（Python 校验器、Go `listener`/`sing_tun` 2 项回归及 Flutter `tun_not_ready_status_test` + `startup_e2e_timing_test` 在生产代码合入前均确定性失败退出码 `1`）；
+  - Python 埋点与量化指标校验套件（[`test_check_startup_timing.py`](file:///E:/CodeWorkstation/FlClashX/engineering/testing/test_check_startup_timing.py) `10` 项）：**PASS**；
+  - Go Core、Mihomo Overlay 9 包 `-run '^TestFCX'` 与 Linux `amd64` / macOS `arm64` 交叉编译：**PASS**（本机 `CGO_ENABLED=1` / `-race` 受宿主 MinGW 限制 **NOT RUN**，待云端 Linux CI 覆盖）；
+  - Flutter `test/clash` 全量套件（`187` 项）+ `startup_e2e_timing_test.dart` + `dart analyze --fatal-warnings`（`startup_timing.dart`、`startup_e2e_timing_test.dart` `No issues found!`，全部改动文件 `0 error / 0 warning`）：**PASS**；本机现役运行进程、服务、系统代理与 TUN 零触碰，既有未提交文件与 `stash@{0}` 原样保留。
+- 预览包与交付状态：
+  - **已实现 / 已本地单元与集成测试验证 / 已提交本地 `development`（代码提交 `af95582` + 台账提交）**；
+  - 预览测试包：**NOT RUN（本轮按指令聚焦工程收敛开发；注意 `85d3112..af95582` 变更了 `core/` 与 UI，现有上一版可用预览包仍为 `dist/FreedomCloud-windows-amd64-startup-cr-c7802b869f10`，下次构建新预览包须全栈同源重编 `FlClashCore.exe`、`FlClashHelperService.exe` 与 UI 以对齐 `CORE_SHA256`）**；
+  - 远端推送 / PR / 云端 CI / 实机窗口验收：**NOT RUN（未推送远端、未创建或合并 PR）**。
+
 ## Windows TUN 埋点与业务线程隔离（2026-11-10）
 
 - 从 `d7a4c65` 在本地 development 修复同步写管道导致的 TUN 阻塞。Core 埋点生产端仅尝试入队，一个后台写入器通过 stderr 发送记录，Agent 和 Helper 沿用原有独立管道读取。最多缓存 256 条，每条上限 8 KiB；满队列或超限时累计 droppedTimingLines，输出失败累计 priorWriteFailures，检查器看到任一非零计数即报告数据不完整。UI 诊断编号使用 PID 和启动时间，日志写入异常不会从 UI 的计时函数传播。直接启动 Core 时，UI 按有界记录读取 stderr。
