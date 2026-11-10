@@ -10,6 +10,10 @@
   2. 提交 `a66d28e`（UI）：`startListener` 使用 `startListenerRpcTimeout = 2 min`，超时返回 `false` 并在埋点中记为 `outcome=timeout`（区别于 Core 拒绝 `rejected`）；修复判定提取为 `isRepairableWindowsTunFailure` 且排除 `adapterCreateFailed`，避免后台立即排队重跑；新增本地化提示 `tunErrorAdapterCreate`（中/英/日/俄），健康 TUN 自动清除该失败。
 - 验证（本机 `Flutter 3.47.4` / `Go 1.26.9`；CI 配置 `Flutter 3.41.7` / `Go 1.26.0`）：前置 Red **PASS**（overlay 工具、`listener/sing_tun` 编译失败，Flutter 新测试编译失败）；`go test ./tools/mihomo-overlay`、overlay 生成、Core 全量 `-tags=with_gvisor`、9 个 overlay 包 `^TestFCX`、Linux amd64 / macOS arm64 交叉编译、Windows `go vet` 与构建 **PASS**；Flutter `test/clash` 全量 + 新增 `tun_adapter_create_failure_test.dart` 等共 209 项 **PASS**；Python 校验器 10 项、M3 与严格门禁 68 用例 **PASS**；`-race` **NOT RUN**（本机 MinGW 限制）。
 - 未完成与边界：未构建新预览包（Core 已变更，下次出包须全栈重编对齐 `CORE_SHA256`）；实机网卡失败场景复现验收 **NOT RUN**（当前故障已自愈，无法按需复现）；后台有界退避自动重试、Helper 读取设备问题码、`runLock` 等待埋点、Helper 日志降噪留作后续；未推送、未建 PR。
+- Code Review 跟进（TDD，提交 `67173d0`、`98476cd`）：
+  - P2：不重试范围收窄为“网卡创建失败且 Win32 错误 2”（`FCXIsRefusedAdapterCreate`）；其他网卡创建慢失败（如到达超时）恢复上游最多 3 次重试；跳过重试时记录 `Wintun adapter refused by Windows; not retrying` 警告。
+  - P3：`startListener` 仅 Windows 使用 2 分钟期限（`windowsStartListenerRpcTimeout`），其他平台保持 30 秒；埋点 `timeout` 判定按实际平台期限；健康检查新增 `tunAdapterCreateFailed` 并显示专用文案。
+  - 验证：前置 Red **PASS**（overlay 断言失败、`listener/sing_tun` 与 Flutter 新用例编译失败）；Go overlay/Core/9 个 FCX 包、Linux/macOS 交叉编译、Windows vet/构建 **PASS**，Windows 二进制已含拒绝分支日志闭包与 `FCXIsRefusedAdapterCreate`；Flutter `test/clash` + 健康检查相关 236 项 **PASS**；M3/Python 门禁本轮未涉及、未重跑。
 
 ## 启动埋点体系工程收敛：恢复 CI 门禁、稳态静默、状态/计数防失真与端到端 KPI 量化输出（2026-11-10）
 
