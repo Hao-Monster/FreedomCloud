@@ -223,3 +223,73 @@ func (w *fcxFailOnceWriter) Write(p []byte) (int, error) {
 	return w.text.Write(p)
 }
 func (w *fcxFailOnceWriter) String() string { return w.text.String() }
+
+type fcxRetryClock struct {
+	now  time.Time
+	step time.Duration
+}
+
+func (c *fcxRetryClock) Now() time.Time {
+	current := c.now
+	c.now = c.now.Add(c.step)
+	return current
+}
+
+func TestFCXTunNewDoesNotRepeatWintunAdapterCreateFailure(t *testing.T) {
+	// Each Wintun CreateAdapter call that Windows refuses (CM_PROB_FAILED_ADD)
+	// returns only after ~15s; upstream classified that as a timeout and ran
+	// it three times while ReCreateTun held tunMux and the Core runLock.
+	clock := &fcxRetryClock{now: time.Unix(0, 0), step: 15 * time.Second}
+	adapterErr := FCXWrapAdapterCreateError(syscall.Errno(2))
+	calls, warnings := 0, 0
+	_, err := fcxTunNewWithRetry(func() (tun.Tun, error) {
+		calls++
+		return nil, adapterErr
+	}, clock.Now, func(error, int, int) { warnings++ })
+	if calls != 1 || warnings != 0 {
+		t.Fatalf("adapter create failure retried: calls=%d warnings=%d", calls, warnings)
+	}
+	wrapped := fmt.Errorf("configure tun interface: %w", err)
+	if !FCXIsAdapterCreateFailure(wrapped) {
+		t.Fatalf("adapter create classification lost through wrapping: %v", wrapped)
+	}
+	var errno syscall.Errno
+	if !errors.As(wrapped, &errno) || errno != 2 || wrapped.Error() != "configure tun interface: "+syscall.Errno(2).Error() {
+		t.Fatalf("typed adapter error changed message or hid Win32 code: %q", wrapped.Error())
+	}
+}
+
+func TestFCXTunNewKeepsUpstreamRetryForOtherSlowFailures(t *testing.T) {
+	clock := &fcxRetryClock{now: time.Unix(0, 0), step: 2 * time.Second}
+	calls, warnings := 0, 0
+	_, err := fcxTunNewWithRetry(func() (tun.Tun, error) {
+		calls++
+		return nil, errors.New("slow configure failure")
+	}, clock.Now, func(error, int, int) { warnings++ })
+	if err == nil || calls != 3 || warnings != 3 || FCXIsAdapterCreateFailure(err) {
+		t.Fatalf("upstream slow-failure retry changed: calls=%d warnings=%d err=%v", calls, warnings, err)
+	}
+
+	fast := &fcxRetryClock{now: time.Unix(0, 0), step: 10 * time.Millisecond}
+	calls = 0
+	if _, err := fcxTunNewWithRetry(func() (tun.Tun, error) {
+		calls++
+		return nil, errors.New("Cannot create a file when that file already exists.")
+	}, fast.Now, nil); err == nil || calls != 1 {
+		t.Fatalf("fast failure must return immediately: calls=%d err=%v", calls, err)
+	}
+
+	calls = 0
+	if _, err := fcxTunNewWithRetry(func() (tun.Tun, error) {
+		calls++
+		if calls == 1 {
+			return nil, errors.New("transient slow failure")
+		}
+		return nil, nil
+	}, clock.Now, nil); err != nil || calls != 2 {
+		t.Fatalf("slow transient failure must still retry once and succeed: calls=%d err=%v", calls, err)
+	}
+	if FCXIsAdapterCreateFailure(nil) || FCXWrapAdapterCreateError(nil) != nil {
+		t.Fatal("nil error must stay untyped")
+	}
+}

@@ -344,3 +344,23 @@ func TestFCXIdenticalReloadPreservesActiveTunAttempt(t *testing.T) {
 		t.Fatalf("expected disable to advance TunAttempt past %d, got %+v", initialAttempt, disabledStatus)
 	}
 }
+
+func TestFCXTunAdapterCreateFailureHasDedicatedErrorCode(t *testing.T) {
+	fcxTestReset(t)
+	fcxCreateTun = func(LC.Tun, C.Tunnel) (fcxTunListener, error) {
+		return nil, fmt.Errorf("configure tun interface: %w", sing_tun.FCXWrapAdapterCreateError(errors.New("The system cannot find the file specified.")))
+	}
+	ReCreateTun(LC.Tun{Enable: true, Device: "fcx-test"}, nil)
+	status := GetTunLifecycleStatus()
+	if status.State != "failed" || status.ListenerActive || status.ErrorCode != "adapterCreateFailed" {
+		t.Fatalf("Wintun adapter creation failure was not reported distinctly: %+v", status)
+	}
+
+	fcxCreateTun = func(LC.Tun, C.Tunnel) (fcxTunListener, error) {
+		return nil, errors.New("configure tun interface: set ipv4 address: denied")
+	}
+	ReCreateTun(LC.Tun{Enable: true, Device: "fcx-test-other"}, nil)
+	if status := GetTunLifecycleStatus(); status.ErrorCode != "startFailed" {
+		t.Fatalf("non-adapter failures must keep startFailed: %+v", status)
+	}
+}

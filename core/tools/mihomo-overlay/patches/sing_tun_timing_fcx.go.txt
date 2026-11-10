@@ -88,6 +88,36 @@ func FCXReserveTunAttempt() uint64    { return tun.FCXReserveTunAttempt() }
 func FCXActivateTunAttempt(id uint64) { tun.FCXActivateTunAttempt(id) }
 func FCXEndTunAttempt()               { tun.FCXEndTunAttempt() }
 
+func FCXWrapAdapterCreateError(err error) error { return tun.FCXWrapAdapterCreateError(err) }
+func FCXIsAdapterCreateFailure(err error) bool  { return tun.FCXIsAdapterCreateFailure(err) }
+
+const fcxTunNewMaxRetry = 3
+
+// fcxTunNewWithRetry keeps upstream's Windows tun.New retry policy (fast
+// failures return at once; slow failures are retried up to three times) except
+// for a refused Wintun adapter. That failure already includes Wintun's own
+// device-arrival wait, and repeating the same request immediately only kept
+// ReCreateTun holding tunMux and the Core runLock for ~47s.
+func fcxTunNewWithRetry(open func() (tun.Tun, error), now func() time.Time, warn func(err error, attempt, maxRetry int)) (tunIf tun.Tun, err error) {
+	for i := 0; i < fcxTunNewMaxRetry; i++ {
+		timeBegin := now()
+		tunIf, err = open()
+		if err == nil {
+			return
+		}
+		if now().Sub(timeBegin) < 1*time.Second { // retrying for "Cannot create a file when that file already exists."
+			return
+		}
+		if tun.FCXIsAdapterCreateFailure(err) {
+			return
+		}
+		if warn != nil {
+			warn(err, i+1, fcxTunNewMaxRetry)
+		}
+	}
+	return
+}
+
 // SetFCXStartupTimingLineHookForTest installs an optional observer receiving
 // formatted schema=2 startup-timing lines for unit verification.
 func SetFCXStartupTimingLineHookForTest(hook func(string)) func() {

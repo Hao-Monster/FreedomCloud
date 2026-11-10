@@ -1,6 +1,7 @@
 package tun
 
 import (
+	"errors"
 	"fmt"
 	"net/netip"
 	"os"
@@ -8,6 +9,28 @@ import (
 	"sync/atomic"
 	"time"
 )
+
+// FCXAdapterCreateError marks a failure to create (or fall back to opening)
+// the Wintun adapter itself, before any interface configuration ran. Windows
+// reports a refused device (e.g. CM_PROB_FAILED_ADD) only after Wintun's own
+// device-arrival wait, so callers must not treat it as a retryable timeout.
+// The message and wrapped Win32 error are preserved unchanged.
+type FCXAdapterCreateError struct{ Err error }
+
+func (e *FCXAdapterCreateError) Error() string { return e.Err.Error() }
+func (e *FCXAdapterCreateError) Unwrap() error { return e.Err }
+
+func FCXWrapAdapterCreateError(err error) error {
+	if err == nil {
+		return nil
+	}
+	return &FCXAdapterCreateError{Err: err}
+}
+
+func FCXIsAdapterCreateFailure(err error) bool {
+	var target *FCXAdapterCreateError
+	return errors.As(err, &target)
+}
 
 // FCXDeviceTimingHook receives sub-stage durations from Windows NativeTun setup
 // without requiring upstream callers to thread a custom logger through Options.

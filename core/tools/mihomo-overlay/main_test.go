@@ -503,6 +503,9 @@ func TestSingTunWindowsPatchIsDeterministicAndRejectsChangedShape(t *testing.T) 
 	if strings.Contains(patched, "for _, routeRange := range routeRanges") {
 		t.Fatal("retained upstream error-swallowing routeRanges loop")
 	}
+	if count := strings.Count(patched, "return nil, FCXWrapAdapterCreateError(err)"); count != 2 {
+		t.Fatalf("adapter create/open failures must be typed on both return paths, got %d", count)
+	}
 	for name, source := range map[string]string{
 		"missing CreateAdapter": strings.Replace(minimalSingTunWindows, "wintun.CreateAdapter(", "wintun.OtherCreate(", 1),
 		"missing StartSession":  strings.Replace(minimalSingTunWindows, "adapter.StartSession(0x800000)", "adapter.OtherSession()", 1),
@@ -904,5 +907,75 @@ func TestProviderNonblockingPatchesAreDeterministicAndRejectChangedShape(t *test
 	}
 	if _, err := patchProxyProvider([]byte(strings.Replace(minimalProxyProvider, "SubscriptionInfo: pp.subscriptionInfo,", "", 1))); err == nil {
 		t.Fatal("changed adapter/provider/provider.go shape accepted")
+	}
+}
+
+const minimalSingTunServerWindows = `package sing_tun
+
+import (
+	"time"
+
+	"github.com/metacubex/mihomo/constant/features"
+	"github.com/metacubex/mihomo/log"
+
+	tun "github.com/metacubex/sing-tun"
+)
+
+func tunNew(options tun.Options) (tunIf tun.Tun, err error) {
+	maxRetry := 3
+	for i := 0; i < maxRetry; i++ {
+		timeBegin := time.Now()
+		tunIf, err = tun.New(options)
+		if err == nil {
+			return
+		}
+		timeEnd := time.Now()
+		if timeEnd.Sub(timeBegin) < 1*time.Second { // retrying for "Cannot create a file when that file already exists."
+			return
+		}
+		log.Warnln("Start Tun interface timeout: %s [retrying %d/%d]", err, i+1, maxRetry)
+	}
+	return
+}
+
+func init() {
+	tun.TunnelType = InterfaceName
+
+	if features.WindowsMajorVersion < 10 {
+		// to resolve "bind: The requested address is not valid in its context"
+		EnforceBindInterface = true
+	}
+}
+`
+
+func TestSingTunServerWindowsPatchStopsRetryingAdapterCreateFailures(t *testing.T) {
+	first, err := patchSingTunServerWindows([]byte(minimalSingTunServerWindows))
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := patchSingTunServerWindows([]byte(strings.ReplaceAll(minimalSingTunServerWindows, "\n", "\r\n")))
+	if err != nil || !bytes.Equal(first, second) {
+		t.Fatalf("server_windows.go patch is nondeterministic across LF/CRLF: %v", err)
+	}
+	patched := string(first)
+	if !strings.Contains(patched, "return fcxTunNewWithRetry(") {
+		t.Fatal("tunNew does not delegate to the classified retry policy")
+	}
+	if strings.Contains(patched, "maxRetry := 3") {
+		t.Fatal("retained upstream unconditional slow-failure retry loop")
+	}
+	if !strings.Contains(patched, "tun.TunnelType = InterfaceName") || !strings.Contains(patched, "EnforceBindInterface = true") {
+		t.Fatal("lost upstream Windows init behaviour")
+	}
+	for name, source := range map[string]string{
+		"missing retry loop": strings.Replace(minimalSingTunServerWindows, "maxRetry := 3", "maxRetry := 5", 1),
+		"missing tun.New":    strings.Replace(minimalSingTunServerWindows, "tunIf, err = tun.New(options)", "tunIf, err = other(options)", 1),
+		"invalid syntax":     "package sing_tun\nfunc (",
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := patchSingTunServerWindows([]byte(source)); err == nil {
+				t.Fatal("changed upstream server_windows.go shape accepted")
+			}
+		})
 	}
 }

@@ -36,6 +36,7 @@ const dnsDoHSHA256 = "1ba0170bed4aabf6b295471f9fddb03da20122d339526a97170dff537f
 const converterSHA256 = "503aac2968628ab826f8208d620bcd5939ca67219426cf0189fab76346626ede"
 const ifaceSHA256 = "67d3d4f54999bdb6875ef87cdbb87c61d5f9e299aa20c1108de3e391eac18605"
 const singTunServerSHA256 = "8b0d766e346aa5a36ec40dc66c1fe7cd3466ead48a687cfb4a262342ca9a3335"
+const singTunServerWindowsSHA256 = "9e4604f9691915bb7968097b73c945f64136398c92e0c34c12bbd4c43f17863c"
 const cacheFileSHA256 = "cf48b5ba8d034847073c189a755b63bfbce43e1d1e0cebe3c2ce72267fd8cb65"
 const fakeIpSHA256 = "1f98752ff24228483d6a52bc9902d5607762a6a0990d203a9e7bf35acf70ebbc"
 const processWindowsSHA256 = "a4d41ae370ca76690b5594f81c051bc856d8adbf10d9cc897ab1958d84b8d794"
@@ -417,6 +418,46 @@ func patchSingTunServer(source []byte) ([]byte, error) {
 	return format.Source([]byte(patched))
 }
 
+func patchSingTunServerWindows(source []byte) ([]byte, error) {
+	source = bytes.ReplaceAll(source, []byte("\r\n"), []byte("\n"))
+	fset := token.NewFileSet()
+	if _, err := parser.ParseFile(fset, "server_windows.go", source, 0); err != nil {
+		return nil, err
+	}
+	// Upstream retries every tun.New failure that took >= 1s. A Wintun adapter
+	// Windows refused to add fails only after Wintun's ~15s arrival wait, so the
+	// loop held tunMux and the Core runLock for ~47s with the same outcome.
+	const retryAnchor = `func tunNew(options tun.Options) (tunIf tun.Tun, err error) {
+	maxRetry := 3
+	for i := 0; i < maxRetry; i++ {
+		timeBegin := time.Now()
+		tunIf, err = tun.New(options)
+		if err == nil {
+			return
+		}
+		timeEnd := time.Now()
+		if timeEnd.Sub(timeBegin) < 1*time.Second { // retrying for "Cannot create a file when that file already exists."
+			return
+		}
+		log.Warnln("Start Tun interface timeout: %s [retrying %d/%d]", err, i+1, maxRetry)
+	}
+	return
+}`
+	const retryReplacement = `func tunNew(options tun.Options) (tunIf tun.Tun, err error) {
+	return fcxTunNewWithRetry(func() (tun.Tun, error) {
+		return tun.New(options)
+	}, time.Now, func(err error, attempt, maxRetry int) {
+		log.Warnln("Start Tun interface timeout: %s [retrying %d/%d]", err, attempt, maxRetry)
+	})
+}`
+	patched := string(source)
+	if strings.Count(patched, retryAnchor) != 1 {
+		return nil, fmt.Errorf("upstream sing_tun server_windows tunNew block changed")
+	}
+	patched = strings.Replace(patched, retryAnchor, retryReplacement, 1)
+	return format.Source([]byte(patched))
+}
+
 func patchSingTunWindows(source []byte) ([]byte, error) {
 	source = bytes.ReplaceAll(source, []byte("\r\n"), []byte("\n"))
 	fset := token.NewFileSet()
@@ -470,7 +511,7 @@ func patchSingTunWindows(source []byte) ([]byte, error) {
 	if err != nil {
 		if !errors.Is(err, os.ErrExist) {
 			fcxLogDeviceStage("sing_tun.device.wintun_create", wintunCreateStartedAt, err)
-			return nil, err
+			return nil, FCXWrapAdapterCreateError(err)
 		}
 		createErr := err
 		openAdapterStartedAt := fcxDeviceTimingStartFor("tun.wintun_open_adapter")
@@ -479,7 +520,7 @@ func patchSingTunWindows(source []byte) ([]byte, error) {
 		if err != nil {
 			err = E.Errors(E.Cause(createErr, "create adapter"), E.Cause(err, "open existing adapter"))
 			fcxLogDeviceStage("sing_tun.device.wintun_create", wintunCreateStartedAt, err)
-			return nil, err
+			return nil, FCXWrapAdapterCreateError(err)
 		}
 	}
 	fcxLogDeviceStage("sing_tun.device.wintun_create", wintunCreateStartedAt, nil)`
@@ -1373,6 +1414,14 @@ func convertsV2RayFCX(buf []byte, diagnostics bool) ([]map[string]any, error) {`
 	if err != nil {
 		return err
 	}
+	singTunServerWindowsSource, err := checkedSource(filepath.Join(module.Dir, "listener", "sing_tun", "server_windows.go"), singTunServerWindowsSHA256)
+	if err != nil {
+		return err
+	}
+	patchedSingTunServerWindows, err := patchSingTunServerWindows(singTunServerWindowsSource)
+	if err != nil {
+		return err
+	}
 	singTunWindowsSource, err := checkedSource(filepath.Join(singTunModule.Dir, "tun_windows.go"), singTunWindowsSHA256)
 	if err != nil {
 		return err
@@ -1526,6 +1575,9 @@ func convertsV2RayFCX(buf []byte, diagnostics bool) ([]map[string]any, error) {`
 		return err
 	}
 	if err := write(filepath.Join(sourceDirectory, "listener", "sing_tun", "server.go"), "sing_tun_server.go", patchedSingTunServer); err != nil {
+		return err
+	}
+	if err := write(filepath.Join(sourceDirectory, "listener", "sing_tun", "server_windows.go"), "sing_tun_server_windows.go", patchedSingTunServerWindows); err != nil {
 		return err
 	}
 	for _, name := range []string{
@@ -1831,6 +1883,7 @@ func convertsV2RayFCX(buf []byte, diagnostics bool) ([]map[string]any, error) {`
 		"upstreamSourceSHA256": map[string]string{
 			"listener/listener.go":                      listenerSHA256,
 			"listener/sing_tun/server.go":               singTunServerSHA256,
+			"listener/sing_tun/server_windows.go":       singTunServerWindowsSHA256,
 			"component/iface/iface.go":                  ifaceSHA256,
 			"component/profile/cachefile/cache.go":      cacheFileSHA256,
 			"component/profile/cachefile/fakeip.go":     fakeIpSHA256,

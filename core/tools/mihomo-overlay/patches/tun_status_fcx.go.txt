@@ -80,6 +80,7 @@ var fcxCreateTun = func(config LC.Tun, target C.Tunnel) (fcxTunListener, error) 
 
 func fcxTunErrorCode(err error) string {
 	if errors.Is(err, os.ErrPermission) { return "permissionDenied" }
+	if sing_tun.FCXIsAdapterCreateFailure(err) { return "adapterCreateFailed" }
 	return "startFailed"
 }
 
