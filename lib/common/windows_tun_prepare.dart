@@ -1,5 +1,27 @@
 import 'tun_runtime.dart';
 
+/// Background adapter repair is limited to states an immediate incremental
+/// rebuild (or a UAC-free Core restart) can plausibly fix: a live listener
+/// whose interface vanished, a reload that failed while recreating the
+/// listener, or a latched close failure. `adapterCreateFailed` is excluded:
+/// Windows refused the Wintun device after Wintun's own arrival wait, and
+/// re-running it at once only queues further ~15s+ TUN cycles behind the Core
+/// run lock. The user retries explicitly from the TUN switch.
+bool isRepairableWindowsTunFailure(
+  TunStatus status, {
+  required bool proxyRunning,
+}) {
+  if (status.privilege != 'elevated') return false;
+  if (status.listenerActive) {
+    return status.errorCode == 'interfaceMissing' ||
+        status.errorCode == 'interfaceDown';
+  }
+  if (!proxyRunning) return false;
+  if (status.state != 'failed') return false;
+  return (status.requestedEnabled && status.errorCode == 'startFailed') ||
+      status.errorCode == 'closeFailed';
+}
+
 /// The authorization result only says that the Helper is available. Reconcile
 /// the actual backend even when authorization itself required no prompt.
 Future<bool> prepareWindowsTunBackend({

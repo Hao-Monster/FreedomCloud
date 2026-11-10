@@ -625,6 +625,7 @@
   "tunDisableAction": "请求关闭",
   "tunErrorLegacyAgent": "请先退出旧版后台，再重新打开本版本",
   "tunErrorProfileRequired": "请先选择可读取且非空的配置，再重试连接",
+  "tunErrorAdapterCreate": "Windows 未能添加虚拟网卡，请稍后重新开启重试",
   "nodeOverviewCurrentProfile": "当前配置",
   "nodeOverviewAllProfiles": "全部配置",
   "nodeOverviewActive": "活动配置",

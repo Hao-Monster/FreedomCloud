@@ -20,6 +20,7 @@ String tunStatusLabel(TunRuntimeController runtime, {bool waiting = false}) {
         appLocalizations.tunErrorUnavailable,
       'configurationFailed' => appLocalizations.tunErrorConfiguration,
       'profileRequired' => appLocalizations.tunErrorProfileRequired,
+      'adapterCreateFailed' => appLocalizations.tunErrorAdapterCreate,
       _ => appLocalizations.tunErrorStart,
     };
     return appLocalizations.tunStatusFailure(reason);

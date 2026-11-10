@@ -5594,6 +5594,16 @@ class AppLocalizations {
     );
   }
 
+  /// `Windows could not add the virtual adapter; try again later`
+  String get tunErrorAdapterCreate {
+    return Intl.message(
+      'Windows could not add the virtual adapter; try again later',
+      name: 'tunErrorAdapterCreate',
+      desc: '',
+      args: [],
+    );
+  }
+
   /// `Request stop`
   String get tunDisableAction {
     return Intl.message(

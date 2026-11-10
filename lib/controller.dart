@@ -329,17 +329,11 @@ class AppController {
   }
 
   bool _isRepairableTunFailure(
-      TunStatus status, WindowsTunStartupEffects effects) {
-    if (status.privilege != 'elevated') return false;
-    if (status.listenerActive) {
-      return status.errorCode == 'interfaceMissing' ||
-          status.errorCode == 'interfaceDown';
-    }
-    if (!effects.proxyRunning && !globalState.isStart) return false;
-    if (status.state != 'failed') return false;
-    return (status.requestedEnabled && status.errorCode == 'startFailed') ||
-        status.errorCode == 'closeFailed';
-  }
+          TunStatus status, WindowsTunStartupEffects effects) =>
+      isRepairableWindowsTunFailure(
+        status,
+        proxyRunning: effects.proxyRunning || globalState.isStart,
+      );
 
   bool _canRepairVanishedAdapter(TunStatus status) {
     if (status.observed == TunObservedState.on) return false;

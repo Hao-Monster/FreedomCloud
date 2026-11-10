@@ -511,7 +511,10 @@ class ClashCore {
       logStartupTiming(
         'startListener',
         watch,
-        outcome: started ? 'started' : 'rejected',
+        outcome: startListenerTimingOutcome(
+          started: started,
+          elapsed: watch.elapsed,
+        ),
       );
       return started;
     } catch (_) {

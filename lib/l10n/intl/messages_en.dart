@@ -1858,6 +1858,9 @@ class MessageLookup extends MessageLookupByLibrary {
     "tunErrorProfileRequired": MessageLookupByLibrary.simpleMessage(
       "Select a readable, non-empty profile before connecting",
     ),
+    "tunErrorAdapterCreate": MessageLookupByLibrary.simpleMessage(
+      "Windows could not add the virtual adapter; try again later",
+    ),
     "tunErrorStart": MessageLookupByLibrary.simpleMessage(
       "Interface could not start; enable to retry",
     ),

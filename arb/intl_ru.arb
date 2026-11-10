@@ -544,6 +544,7 @@
   "tunDisableAction": "Запросить остановку",
   "tunErrorLegacyAgent": "Завершите старое фоновое приложение и снова откройте эту версию",
   "tunErrorProfileRequired": "Перед подключением выберите читаемый непустой профиль",
+  "tunErrorAdapterCreate": "Windows не смогла добавить виртуальный адаптер; повторите попытку позже",
   "nodeOverviewCurrentProfile": "Текущий профиль",
   "nodeOverviewAllProfiles": "Все профили",
   "nodeOverviewActive": "Активный",

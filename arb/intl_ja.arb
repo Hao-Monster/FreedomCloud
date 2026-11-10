@@ -490,6 +490,7 @@
   "tunDisableAction": "停止を要求",
   "tunErrorLegacyAgent": "古いバックグラウンドアプリを終了してから、このバージョンを開き直してください",
   "tunErrorProfileRequired": "接続する前に、読み取り可能な空でない設定を選択してください",
+  "tunErrorAdapterCreate": "Windows が仮想アダプターを追加できませんでした。しばらくしてから再試行してください",
   "nodeOverviewCurrentProfile": "現在の設定",
   "nodeOverviewAllProfiles": "すべての設定",
   "nodeOverviewActive": "使用中",

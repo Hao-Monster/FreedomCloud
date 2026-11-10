@@ -1619,6 +1619,9 @@ class MessageLookup extends MessageLookupByLibrary {
     "tunErrorProfileRequired": MessageLookupByLibrary.simpleMessage(
       "Перед подключением выберите читаемый непустой профиль",
     ),
+    "tunErrorAdapterCreate": MessageLookupByLibrary.simpleMessage(
+      "Windows не смогла добавить виртуальный адаптер; повторите попытку позже",
+    ),
     "tunErrorStart": MessageLookupByLibrary.simpleMessage(
       "Не удалось запустить интерфейс; включите повторно",
     ),

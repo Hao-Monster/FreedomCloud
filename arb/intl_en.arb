@@ -690,6 +690,7 @@
   },
   "tunErrorLegacyAgent": "Exit the old background app, then reopen this version",
   "tunErrorProfileRequired": "Select a readable, non-empty profile before connecting",
+  "tunErrorAdapterCreate": "Windows could not add the virtual adapter; try again later",
   "nodeOverviewCurrentProfile": "Current profile",
   "nodeOverviewAllProfiles": "All profiles",
   "nodeOverviewActive": "Active",

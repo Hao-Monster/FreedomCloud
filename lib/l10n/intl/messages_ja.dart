@@ -1202,6 +1202,9 @@ class MessageLookup extends MessageLookupByLibrary {
     "tunErrorProfileRequired": MessageLookupByLibrary.simpleMessage(
       "接続する前に、読み取り可能な空でない設定を選択してください",
     ),
+    "tunErrorAdapterCreate": MessageLookupByLibrary.simpleMessage(
+      "Windows が仮想アダプターを追加できませんでした。しばらくしてから再試行してください",
+    ),
     "tunErrorStart": MessageLookupByLibrary.simpleMessage(
       "インターフェースを起動できません。再度有効にしてください",
     ),

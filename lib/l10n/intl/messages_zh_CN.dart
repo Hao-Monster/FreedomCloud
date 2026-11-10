@@ -1272,6 +1272,9 @@ class MessageLookup extends MessageLookupByLibrary {
     "tunErrorProfileRequired": MessageLookupByLibrary.simpleMessage(
       "请先选择可读取且非空的配置，再重试连接",
     ),
+    "tunErrorAdapterCreate": MessageLookupByLibrary.simpleMessage(
+      "Windows 未能添加虚拟网卡，请稍后重新开启重试",
+    ),
     "tunErrorStart": MessageLookupByLibrary.simpleMessage("网卡启动失败，可重新开启重试"),
     "tunErrorStop": MessageLookupByLibrary.simpleMessage("关闭失败，请核对当前运行状态"),
     "tunErrorUnavailable": MessageLookupByLibrary.simpleMessage(

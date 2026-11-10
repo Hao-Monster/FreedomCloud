@@ -206,6 +206,7 @@ class TunRuntimeController extends ChangeNotifier {
       'permissionDenied',
       'authorizationRequired',
       'startFailed',
+      'adapterCreateFailed',
       'closeFailed',
       'configurationFailed',
       'operationFailed',
