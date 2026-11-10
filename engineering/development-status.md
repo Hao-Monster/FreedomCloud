@@ -16,11 +16,16 @@
      - 修复：在 [`core/config_runtime.go`](file:///E:/CodeWorkstation/FlClashX/core/config_runtime.go) 与 [`core/common.go`](file:///E:/CodeWorkstation/FlClashX/core/common.go) 引入 `recreateRuntimeTun` 可测试接缝与 `refreshRuntimeListenersWithoutTun()`，在 `setupConfig` 执行 `applyConfigForRuntimeStateLocked` 前先行同步 `configuredFindProcessMode` / `externalControllerListening` / `syncEffectiveFindProcessMode()`，随后通过 `refreshRuntimeListenersWithoutTun()` 刷新常规入站监听器而不重复调用 `recreateRuntimeTun`（`updateConfig` 亦区分 `tunChanged` 与普通端口变更），并在 [`core/perf_ipc_and_runtime_test.go`](file:///E:/CodeWorkstation/FlClashX/core/perf_ipc_and_runtime_test.go) 新增单测验证运行态 `setupConfig` 仅触发 `1` 次 `ReCreateTun`。
 - 验证记录（本机 `Flutter 3.47.4` / `Dart 3.13.3` / `Go 1.26.9` / `Rust 1.98.1` / `MSVC 14.44.35207` + `Windows SDK 10.0.26100.0`）：
   - 前置有效 Red：**PASS**（Flutter `windows_cold_start_backend_test.dart` 新用例、Go `TestCoreStdoutSuppressesDebugWhilePreservingSubscriberStream` + `TestSetupConfigWhileRunningDoesNotRecreateTunTwice`、Rust `core_stdout_logger_suppresses_logrus_debug_lines_while_keeping_info_and_stderr` 在生产代码合入前均确定性失败退出码 `1`）；
-  - Flutter 回归验证（`test/clash` 全套 + `test/perf/batch3_core_ipc_startup_test.dart` 共 `208` 项 + `dart analyze --fatal-warnings` `0 error / 0 warning`）：**PASS**；
+  - Flutter 回归验证（`test/clash` 全套 + `test/perf/batch3_core_ipc_startup_test.dart` 共 `209` 项 + `dart analyze --fatal-warnings` `0 error / 0 warning`）：**PASS**；
   - Go Core 全量验证（`CGO_ENABLED=0 go test "-modfile=.generated/go.mod" "-overlay=.generated/mihomo-overlay.json" "-tags=with_gvisor" -count=1 ./...`）：**PASS**（本机 `-race` 受宿主 MinGW 限制 **NOT RUN**）；
   - Rust 服务全量测试（`services/helper --features windows-service --locked` `53 passed; 0 failed`；`services/agent --locked` `89 passed; 0 failed`）：**PASS**；
   - 本机现役运行进程、服务、系统代理与 TUN 零触碰，既有未提交文件与 `stash@{0}` 原样保留。
-- 交付状态：**已实现 / 已完成本地单元与集成门禁验证 / 已落入本地 `development`（代码提交 `37c3237` + 台账提交）**；预览包构建 **NOT RUN（待按需指令触发）** / 远端推送 **NOT RUN** / PR 与合并 **NOT RUN** / 云端 CI **NOT RUN**。
+- Code Review 跟进（TDD，提交 `2ba672b`）：
+  - `CR-01`（P2）：[`applyConfigForRuntimeStateLocked`](file:///E:/CodeWorkstation/FlClashX/core/common.go#L103-L132) 向 `executor.ApplyConfig` 直接传入收敛后的有效 `FindProcessMode`（后台 UI 下抑制 `FindProcessAlways -> FindProcessStrict` 瞬态回退），并在 [`setupConfig`](file:///E:/CodeWorkstation/FlClashX/core/common.go#L679-L695) 调用 `ApplyConfig` 前通过 `patchSelectGroupOnProxies(candidate.Proxies, params.SelectedMap)` 预应用策略组选择，确保 `ApplyConfig` 内唯一一次 `ReCreateTun` 拉起时即命中目标节点；
+  - `CR-02`（P2）：[`_handleAgentEvent`](file:///E:/CodeWorkstation/FlClashX/lib/clash/service.dart#L641-L651) 在 `coreState` 从 `starting` 转为 `failed`/`stopped` 时立即调用 `_releaseCoreReadyWaitersForDeferOrTeardown()` 唤醒所有 `_coreReadyCompleter` 等待者（消除 20s 悬挂），[`_onAgentLost`](file:///E:/CodeWorkstation/FlClashX/lib/clash/service.dart#L860-L875) 在断连瞬间将 `_agentCoreState` 置为 `stopped`、重置 `socketCompleter` 并释放等待者，防止 250ms 退避窗口内向死 Socket 写入；
+  - `CR-03`（P3）：[`services/helper/src/service/hub.rs`](file:///E:/CodeWorkstation/FlClashX/services/helper/src/service/hub.rs#L425-L441) 与 [`services/agent/src/runtime.rs`](file:///E:/CodeWorkstation/FlClashX/services/agent/src/runtime.rs#L2143-L2159) 新增 `should_persist_core_output_line_with_debug_flag` 并读取 `FCX_CORE_STDOUT_DEBUG=1` 逃生开关，与 Go 侧 `configureCoreStdoutLogLevel()` 跨层契约完全对齐；
+  - 验证：三端前置 Red 均确定性失败退出码 `1`，合入后 Go Core 全量、Rust 双端与 Flutter `209` 项回归全部 **PASS**。
+- 交付状态：**已实现 / 已完成 Code Review 跟进与本地单元集成门禁验证 / 已落入本地 `development`（代码提交 `37c3237`、`2ba672b` + 台账提交）**；预览包构建 **NOT RUN（待按需指令触发）** / 远端推送 **NOT RUN** / PR 与合并 **NOT RUN** / 云端 CI **NOT RUN**。
 
 ## Windows Wintun 网卡创建失败：UI 30 秒误判、Core 无效三连重试与排队重跑 TDD 修复（2026-11-10）
 
