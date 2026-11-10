@@ -2,6 +2,15 @@
 
 更新日期：2026-11-10。当前阶段是快速开发、快速迭代和部分功能预览。本文记录来源与验收边界；每次继续开发仍需核实实际 Git/PR/CI 状态，不能把历史报告视为当前通过证明。
 
+## Windows Wintun 网卡创建失败：UI 30 秒误判、Core 无效三连重试与排队重跑 TDD 修复（2026-11-10）
+
+- 原始来源：2026-11-10 16:13–16:21 实机日志与 Kernel-PnP 事件。同一 GUID `{78015B12-6764-C1D0-89E5-0F26A1BEC4AD}` 连续 19 次事件 411（`0xC00002F0` `STATUS_OBJECTID_NOT_FOUND` → Win32 2，问题码 0x1F `CM_PROB_FAILED_ADD`）；每次 `wintun_create_adapter` 约 15.5 s，上游 mihomo `tunNew` 把“耗时 ≥1 s 的失败”一律当超时重试 3 次，单次 `sing_tun.New` 46.4–47.2 s；UI `startListener` 用默认 30 s 超时，4 次在 Core 仍执行时记为 `rejected`/`startFailed`，后台修复随即排队，在 `runLock` 后背靠背重跑完整周期。同一 GUID 在 17:08/17:22/17:23 未做任何改动即恢复（本机 Tailscale 的 Wintun 网卡 10/8–11/4 亦有 11 次同类失败并自愈），因此本轮**不采用“切换备用 GUID”方案**。原始日志快照保存在会话私有 scratch 目录 `wintun-evidence-20261110`（Helper 日志约每小时轮转）。
+- 实现（本地 `development`）：
+  1. 提交 `107b76a`（Core）：`patchSingTunWindows` 将 Wintun 创建/打开失败包装为保持原消息与 Win32 码的 `FCXAdapterCreateError`；新增受 SHA256 校验的 `listener/sing_tun/server_windows.go` 补丁，`tunNew` 改为 `fcxTunNewWithRetry`：保留上游快速失败直接返回、其他慢失败最多 3 次重试，仅对网卡创建失败不再重试；`fcxTunErrorCode` 新增 `adapterCreateFailed`（权限错误仍优先 `permissionDenied`），清单登记新上游文件哈希。
+  2. 提交 `a66d28e`（UI）：`startListener` 使用 `startListenerRpcTimeout = 2 min`，超时返回 `false` 并在埋点中记为 `outcome=timeout`（区别于 Core 拒绝 `rejected`）；修复判定提取为 `isRepairableWindowsTunFailure` 且排除 `adapterCreateFailed`，避免后台立即排队重跑；新增本地化提示 `tunErrorAdapterCreate`（中/英/日/俄），健康 TUN 自动清除该失败。
+- 验证（本机 `Flutter 3.47.4` / `Go 1.26.9`；CI 配置 `Flutter 3.41.7` / `Go 1.26.0`）：前置 Red **PASS**（overlay 工具、`listener/sing_tun` 编译失败，Flutter 新测试编译失败）；`go test ./tools/mihomo-overlay`、overlay 生成、Core 全量 `-tags=with_gvisor`、9 个 overlay 包 `^TestFCX`、Linux amd64 / macOS arm64 交叉编译、Windows `go vet` 与构建 **PASS**；Flutter `test/clash` 全量 + 新增 `tun_adapter_create_failure_test.dart` 等共 209 项 **PASS**；Python 校验器 10 项、M3 与严格门禁 68 用例 **PASS**；`-race` **NOT RUN**（本机 MinGW 限制）。
+- 未完成与边界：未构建新预览包（Core 已变更，下次出包须全栈重编对齐 `CORE_SHA256`）；实机网卡失败场景复现验收 **NOT RUN**（当前故障已自愈，无法按需复现）；后台有界退避自动重试、Helper 读取设备问题码、`runLock` 等待埋点、Helper 日志降噪留作后续；未推送、未建 PR。
+
 ## 启动埋点体系工程收敛：恢复 CI 门禁、稳态静默、状态/计数防失真与端到端 KPI 量化输出（2026-11-10）
 
 - 原始来源与收敛范围：针对前序多轮日志与埋点提交（`0152063`、`707c95a`、`8cb3744` 及 `85d3112..6e1bd33`）专项审查检出的 CI 破坏、稳态噪声、指标失真与校验模型脱节问题，按用户确认的三项工程收敛建议以严格 TDD（前置有效 Red → 最小生产实现 Green → 全套回归）落入本地 `development`（代码提交 `af95582`）：
