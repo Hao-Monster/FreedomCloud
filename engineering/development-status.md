@@ -19,11 +19,14 @@
   - 前置有效 Red：**PASS**（Python 校验器、Go `listener`/`sing_tun` 2 项回归及 Flutter `tun_not_ready_status_test` + `startup_e2e_timing_test` 在生产代码合入前均确定性失败退出码 `1`）；
   - Python 埋点与量化指标校验套件（[`test_check_startup_timing.py`](file:///E:/CodeWorkstation/FlClashX/engineering/testing/test_check_startup_timing.py) `10` 项）：**PASS**；
   - Go Core、Mihomo Overlay 9 包 `-run '^TestFCX'` 与 Linux `amd64` / macOS `arm64` 交叉编译：**PASS**（本机 `CGO_ENABLED=1` / `-race` 受宿主 MinGW 限制 **NOT RUN**，待云端 Linux CI 覆盖）；
+  - M3 打包与严格完整性门禁（`Test-M3PackageTools.ps1`、`Test-M3ManifestAssemblyOrder.ps1`、`Test-M3EvidenceValidator.ps1`、`Test-StrictTestValidation.ps1` `68` 用例）：**PASS**；
   - Flutter `test/clash` 全量套件（`187` 项）+ `startup_e2e_timing_test.dart` + `dart analyze --fatal-warnings`（`startup_timing.dart`、`startup_e2e_timing_test.dart` `No issues found!`，全部改动文件 `0 error / 0 warning`）：**PASS**；本机现役运行进程、服务、系统代理与 TUN 零触碰，既有未提交文件与 `stash@{0}` 原样保留。
-- 预览包与交付状态：
-  - **已实现 / 已本地单元与集成测试验证 / 已提交本地 `development`（代码提交 `af95582` + 台账提交）**；
-  - 预览测试包：**NOT RUN（本轮按指令聚焦工程收敛开发；注意 `85d3112..af95582` 变更了 `core/` 与 UI，现有上一版可用预览包仍为 `dist/FreedomCloud-windows-amd64-startup-cr-c7802b869f10`，下次构建新预览包须全栈同源重编 `FlClashCore.exe`、`FlClashHelperService.exe` 与 UI 以对齐 `CORE_SHA256`）**；
-  - 远端推送 / PR / 云端 CI / 实机窗口验收：**NOT RUN（未推送远端、未创建或合并 PR）**。
+- Windows x64 全栈免安装同源预览包（从干净提交 `5f9f4304b435bd2c5fb33490b3a2e42b99915faa`、对应代码提交 `af9558293deebb6f5316fd6d49e0e0da966f0726` 的 `git archive` 全量重编，`sourceTree = 0f5256bf2e235e18c40776fdcd773af7d25476df`，`sourceArchiveSha256 = 9277df0b22df13e0e38d902acbe7b968d23e61232e07998b5f76256c9442b10b`）：
+  - 可直接运行解压目录：[`dist/FreedomCloud-windows-amd64-telemetry-kpi-5f9f4304b435`](../dist/FreedomCloud-windows-amd64-telemetry-kpi-5f9f4304b435/)（主程序 [`FlClashX.exe`](../dist/FreedomCloud-windows-amd64-telemetry-kpi-5f9f4304b435/FlClashX.exe)，构建说明 [`BUILD-INFO.txt`](../dist/FreedomCloud-windows-amd64-telemetry-kpi-5f9f4304b435/BUILD-INFO.txt)，构建报告 [`telemetry-kpi-build-5f9f4304b435.json`](../dist/telemetry-kpi-build-5f9f4304b435.json)，73 文件 `SHA256SUMS.txt` 与 zip 解压往返逐项校验 **PASS**）；
+  - 预览归档：[`FreedomCloud-windows-amd64-telemetry-kpi-5f9f4304b435.zip`](../dist/FreedomCloud-windows-amd64-telemetry-kpi-5f9f4304b435.zip)（`167,503,424` bytes，SHA256 `9734ec9ef6df098e9575aac090427b25013ee298ae02c63540c3f4c6360d0bf0`）及校验文件 [`FreedomCloud-windows-amd64-telemetry-kpi-5f9f4304b435.zip.sha256`](../dist/FreedomCloud-windows-amd64-telemetry-kpi-5f9f4304b435.zip.sha256)；
+  - 核心重编组件 SHA256：`FlClashCore.exe` `8b2f414c3df8fc99e61b2c56cb3e6fe43071c07805bf12a7041cec9b9faa5b66`（`FlClashHelperService.exe` 编译期 `TOKEN` 与 UI `--dart-define=CORE_SHA256` 严格绑定同一新哈希）、`FlClashHelperService.exe` `3571e39ba4252293bc2f1b256d559f1b32860ffb7c1bf684fa51d37fb6560b45`、`FlClashAgent.exe` `5a205b6baea402985f4948eb6a43a18f93fcfb32a40a2a4b32800c8f633743c7`、`FlClashX.exe` `56cdc4575dd4e732ee092006c842bf289ec754c487b7f60020bd3adcc6250b62`、`data/app.so` `d1d2243baeaee1999d53d83077f0a46ff33706ddd04a42c077d227dda14cb8e7`、`CORE-PATCH.json` `1095d0b6e845e4855d1ae5146db273d0069e1f81e169b0035abce72f3f590aa7`、`tray_manager_plugin.dll` `c77164f307a2f1ed286d17340d72dcbb9a1f114a5a6786bda358c26c592aa84c`、`proxy_plugin.dll` `f7a2cd07fb3ffa2ad5855d653119317e9659628f630bb40be39118be97780adf`；
+  - 既有可用回退包 `startup-cr-c7802b869f10`、`perf-overhaul-b753aafb6203`、`tun-faststart-ba00b57608cd`、`startup-timing-0d6ffdc-r2`、`stability-v2-3d9853ca72f0` 原样保留未覆盖。
+- 交付状态：**已实现 / 已本地单元与集成门禁验证 / 已落入本地 `development`（代码提交 `af95582` + 台账提交） / 已构建并校验全栈 Windows x64 同源预览包 `telemetry-kpi-5f9f4304b435`**；远端推送 **NOT RUN** / PR 与合并 **NOT RUN** / 云端 CI **NOT RUN** / 实机运行与埋点采样分析 **待用户运行后执行**。
 
 ## Windows TUN 埋点与业务线程隔离（2026-11-10）
 
