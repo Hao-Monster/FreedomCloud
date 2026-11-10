@@ -318,3 +318,29 @@ func TestFCXTunLifecycleReturnsWithStalledLogPipes(t *testing.T) {
 		})
 	}
 }
+
+func TestFCXIdenticalReloadPreservesActiveTunAttempt(t *testing.T) {
+	fcxTestReset(t)
+	cfg := LC.Tun{Enable: true, Device: "fcx-reload-test"}
+	ReCreateTun(cfg, nil)
+	createdStatus := GetTunLifecycleStatus()
+	if createdStatus.State != "on" || createdStatus.TunAttempt == 0 {
+		t.Fatalf("expected active TUN attempt after initial create, got %+v", createdStatus)
+	}
+	initialAttempt := createdStatus.TunAttempt
+
+	// Identical reload hits OnReload() without recreating sing_tun; the status
+	// snapshot must continue referencing the attempt that created the live adapter.
+	ReCreateTun(cfg, nil)
+	reloadedStatus := GetTunLifecycleStatus()
+	if reloadedStatus.State != "on" || reloadedStatus.TunAttempt != initialAttempt {
+		t.Fatalf("expected identical OnReload to preserve TunAttempt=%d, got %+v", initialAttempt, reloadedStatus)
+	}
+
+	// An actual disable transition advances TunAttempt to the new operation.
+	ReCreateTun(LC.Tun{Enable: false, Device: "fcx-reload-test"}, nil)
+	disabledStatus := GetTunLifecycleStatus()
+	if disabledStatus.State != "off" || disabledStatus.TunAttempt <= initialAttempt {
+		t.Fatalf("expected disable to advance TunAttempt past %d, got %+v", initialAttempt, disabledStatus)
+	}
+}

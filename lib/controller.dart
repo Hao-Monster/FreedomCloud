@@ -3183,7 +3183,18 @@ class AppController {
         effects.log('startup: saved TUN preference is off; starting proxy without TUN');
         try {
           await effects.startProxyWithoutTun();
+          logStartupTunnelReadyOnce(
+            mode: 'proxy_only',
+            outcome: (globalState.isStart || effects.proxyRunning)
+                ? 'ready'
+                : 'idle',
+          );
         } catch (e) {
+          logStartupTunnelReadyOnce(
+            mode: 'proxy_only',
+            outcome: 'error',
+            detail: 'reason=${e.runtimeType}',
+          );
           effects.log('startup: proxy start failed: $e');
         }
         return;
@@ -3191,6 +3202,13 @@ class AppController {
       effects.log('startup: saved TUN preference is on; starting proxy and TUN');
       await _startWindowsTun();
       final failure = _tunRuntime.failure;
+      logStartupTunnelReadyOnce(
+        mode: 'tun',
+        outcome: failure == null ? _tunRuntime.observed.name : 'degraded',
+        corePid: _tunRuntime.status?.corePid,
+        tunAttempt: _tunRuntime.status?.tunAttempt,
+        detail: failure != null ? 'failure=$failure' : null,
+      );
       effects.log('startup: TUN observed=${_tunRuntime.observed.name}'
           '${failure == null ? '' : ', failure=$failure (TUN not enabled; retry from the TUN switch)'}');
       if (_windowsStartupEffects == null) {
@@ -3210,6 +3228,10 @@ class AppController {
       commonPrint.log('initCore failed (will retry on profile change): $e');
     }
     await _initStatus();
+    logStartupTunnelReadyOnce(
+      mode: Platform.operatingSystem,
+      outcome: globalState.isStart ? 'ready' : 'idle',
+    );
   }
 
   Future<void> init() async {

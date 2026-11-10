@@ -553,5 +553,72 @@ void main() {
         await destroyFuture;
       },
     );
+
+    test(
+      'steady-state getTunStatus stays silent when desiredEnabled=false and observed=off, but logs unexpected states',
+      () async {
+        final previousDesired = tunRuntime.desiredEnabled;
+        final previousOp = tunRuntime.operation;
+        addTearDown(() {
+          tunRuntime.desiredEnabled = previousDesired;
+          tunRuntime.operation = previousOp;
+        });
+
+        tunRuntime.desiredEnabled = false;
+        tunRuntime.operation = TunOperation.idle;
+        var reportedState = 'off';
+        var listenerActive = false;
+        var interfaceState = 'missing';
+
+        final transport = _FakeTransport(
+          onSend: (self, action) {
+            scheduleMicrotask(() {
+              self.handleResult(
+                ActionResult(
+                  method: action.method,
+                  id: action.id,
+                  data: {
+                    'schemaVersion': 1,
+                    'coreInstanceId': 'steady-core-1',
+                    'corePid': 4321,
+                    'tunAttempt': 2,
+                    'revision': 5,
+                    'observedAt': 1700000000000,
+                    'requestedEnabled': false,
+                    'state': reportedState,
+                    'listenerActive': listenerActive,
+                    'device': 'Meta',
+                    'interfaceState': interfaceState,
+                    'privilege': 'unprivileged',
+                  },
+                  code: ResultType.success,
+                ),
+              );
+            });
+          },
+        );
+
+        capturedLogs.clear();
+        final offStatus = await transport.getTunStatus();
+        expect(offStatus.observed, TunObservedState.off);
+        expect(
+          capturedLogs.where((l) => l.contains('stage=getTunStatus')),
+          isEmpty,
+        );
+
+        // Unexpected live TUN while desiredEnabled=false must still be logged.
+        reportedState = 'on';
+        listenerActive = true;
+        interfaceState = 'up';
+        final unexpectedOn = await transport.getTunStatus();
+        expect(unexpectedOn.observed, TunObservedState.on);
+        expect(
+          capturedLogs.where(
+            (l) => l.contains('[startup-timing] stage=getTunStatus'),
+          ),
+          hasLength(1),
+        );
+      },
+    );
   });
 }

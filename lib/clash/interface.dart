@@ -669,9 +669,12 @@ abstract class ClashHandlerInterface with ClashInterface {
         throw const TunFailure('statusUnavailable');
       }
       final status = TunStatus.fromJson(result.data);
+      final expectedObserved = tunRuntime.desiredEnabled
+          ? TunObservedState.on
+          : TunObservedState.off;
       if (tunRuntime.busy ||
           watch.elapsedMilliseconds >= 200 ||
-          status.observed != TunObservedState.on) {
+          status.observed != expectedObserved) {
         logStartupTiming(
           'getTunStatus',
           watch,

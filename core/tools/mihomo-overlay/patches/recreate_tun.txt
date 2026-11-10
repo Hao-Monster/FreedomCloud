@@ -8,7 +8,6 @@ func ReCreateTun(tunConf LC.Tun, tunnel C.Tunnel) {
 	tunMux.Lock()
 	defer tunMux.Unlock()
 	fcxAfterTunLock(id, wait)
- fcxTunStatus.TunAttempt = id
 	defer fcxEndTunAttempt()
 	defer fcxPublishTunStatus()
 	defer func() {
@@ -24,11 +23,15 @@ func ReCreateTun(tunConf LC.Tun, tunnel C.Tunnel) {
 	defer func() { LastTunConf = tunConf }()
 	if tunConf.Equal(LastTunConf) && tunLister != nil && fcxTunInterfaceUsable(tunLister.Config().Device) {
 		tunLister.OnReload()
+		if fcxTunStatus.TunAttempt == 0 {
+			fcxTunStatus.TunAttempt = id
+		}
 		fcxTunStatus.State = "on"
 		fcxTunStatus.ListenerActive = true
 		fcxTunStatus.Device = tunLister.Config().Device
 		return
 	}
+	fcxTunStatus.TunAttempt = id
 	if err := closeTunListener(); err != nil {
 		stageErr = err
 		tunConf.Enable = false

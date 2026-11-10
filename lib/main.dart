@@ -20,6 +20,7 @@ import 'models/models.dart';
 import 'pages/editor_window.dart';
 
 Future<void> main(List<String> args) async {
+  markStartupLaunchEntry();
   WidgetsFlutterBinding.ensureInitialized();
   fileLogger.flushPendingLogs();
   FlutterError.onError = (details) {

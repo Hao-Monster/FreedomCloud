@@ -41,15 +41,22 @@ func (s *fcxTimingOutput) enqueue(line string) {
 func (s *fcxTimingOutput) drain(w io.Writer) {
 	var writeFailures uint64
 	for line := range s.lines {
-		if dropped := s.dropped.Load(); dropped > 0 {
-			line += fmt.Sprintf(" droppedTimingLines=%d", dropped)
+		dropped := s.dropped.Swap(0)
+		formatted := line
+		if dropped > 0 {
+			formatted += fmt.Sprintf(" droppedTimingLines=%d", dropped)
 		}
 		if writeFailures > 0 {
-			line += fmt.Sprintf(" priorWriteFailures=%d", writeFailures)
+			formatted += fmt.Sprintf(" priorWriteFailures=%d", writeFailures)
 		}
-		if _, err := fmt.Fprintln(w, line); err != nil {
+		if _, err := fmt.Fprintln(w, formatted); err != nil {
+			if dropped > 0 {
+				s.dropped.Add(dropped)
+			}
 			writeFailures++
+			continue
 		}
+		writeFailures = 0
 	}
 }
 

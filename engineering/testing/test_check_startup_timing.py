@@ -94,5 +94,62 @@ class TimingCheckTest(unittest.TestCase):
                 self.assertEqual(self.check(core,*options).returncode,1)
                 path.write_text(saved)
 
+    def test_cold_helper_chain_accepts_uac_free_preload_and_authorize_none(self):
+        with tempfile.TemporaryDirectory() as d:
+            ui, agent, helper = [pathlib.Path(d) / n for n in ("ui", "agent", "helper")]
+            agent.write_text("event=core_start.request correlationId=test port=1234")
+            helper.write_text("event=core_start.success corePid=1 correlationId=test port=1234")
+            core = []
+            for stage in ("ReCreateTun","tun.lock_wait","sing_tun.New","sing_tun.device.wintun_create","sing_tun.device.session_start","sing_tun.device.ip_dns_config","sing_tun.device.route_config"):
+                core.append(self.line(len(core)+1,"stage_start",stage)+" tunAttempt=9")
+                core.append(self.line(len(core)+1,"stage_end",stage).replace("elapsedMs=1", "elapsedMs=12")+" tunAttempt=9")
+            core.append(self.line(len(core)+1,"stage_start","tun.wintun_create_adapter")+" tunAttempt=9")
+            core.append(self.line(len(core)+1,"stage_end","tun.wintun_create_adapter").replace("elapsedMs=1", "elapsedMs=10")+" tunAttempt=9")
+
+            # Path A: UAC-free cold start where preload bound correlationId directly
+            # and prepareWindowsTunBackend short-circuited without authorize/ensureBackend.
+            uac_free_ui = [
+                "[startup-timing] schema=2 source=ui event=correlation_bind uiRunId=u correlationId=test",
+                "[startup-timing] stage=e2e.first_frame elapsedMs=180 outcome=rendered schema=2 source=ui uiRunId=u",
+                "[startup-timing] stage=preload elapsedMs=95 outcome=ready schema=2 source=ui uiRunId=u correlationId=test",
+                "[startup-timing] stage=componentsMatch elapsedMs=4 outcome=match schema=2 source=ui uiRunId=u correlationId=test",
+                "[startup-timing] stage=setupConfig elapsedMs=35 outcome=ok schema=2 source=ui uiRunId=u correlationId=test",
+                "[startup-timing] stage=startListener elapsedMs=55 outcome=started schema=2 source=ui uiRunId=u correlationId=test",
+                "[startup-timing] stage=getTunStatus elapsedMs=2 outcome=on corePid=1 tunAttempt=9 detail=state=on revision=2 schema=2 source=ui uiRunId=u correlationId=test",
+                "[startup-timing] stage=settle elapsedMs=3 outcome=on attempt=1 corePid=1 tunAttempt=9 schema=2 source=ui uiRunId=u correlationId=test",
+                "[startup-timing] stage=e2e.tunnel_ready elapsedMs=390 outcome=on corePid=1 tunAttempt=9 detail=mode=tun schema=2 source=ui uiRunId=u correlationId=test",
+            ]
+            ui.write_text("\n".join(uac_free_ui), encoding="utf-8")
+            options = ["--cold-helper-run","u","--ui-log",str(ui),"--agent-log",str(agent),"--helper-log",str(helper)]
+            res = self.check(core, *options)
+            self.assertEqual(res.returncode, 0, msg=res.stdout + res.stderr)
+            self.assertIn("metrics.e2e uiRunId=u firstFrameMs=180 tunnelReadyMs=390", res.stdout)
+            self.assertIn("metrics.core ", res.stdout)
+            self.assertIn("metrics.top_leaf_calls ", res.stdout)
+
+            # Passing UI schema=2 lines in positional paths (e.g. logs/*.log) must not fail as malformed Core records.
+            combined = self.check(uac_free_ui + core)
+            self.assertEqual(combined.returncode, 0, msg=combined.stdout + combined.stderr)
+
+            # Deferred preload (correlation_bind AFTER preload) without authorize/ensureBackend must still fail!
+            bad_deferred_ui = [
+                "[startup-timing] stage=preload elapsedMs=5 outcome=ready schema=2 source=ui uiRunId=u",
+                "[startup-timing] schema=2 source=ui event=correlation_bind uiRunId=u correlationId=test",
+                *uac_free_ui[3:],
+            ]
+            ui.write_text("\n".join(bad_deferred_ui), encoding="utf-8")
+            self.assertEqual(self.check(core, *options).returncode, 1)
+
+            # Path B: authorize outcome=none with ensureBackend=reused must succeed.
+            auth_none_ui = [
+                "[startup-timing] stage=preload elapsedMs=5 outcome=ready schema=2 source=ui uiRunId=u",
+                "[startup-timing] stage=authorize elapsedMs=12 outcome=none schema=2 source=ui uiRunId=u",
+                "[startup-timing] schema=2 source=ui event=correlation_bind uiRunId=u correlationId=test",
+                "[startup-timing] stage=ensureBackend elapsedMs=40 outcome=reused schema=2 source=ui uiRunId=u correlationId=test",
+                *uac_free_ui[3:],
+            ]
+            ui.write_text("\n".join(auth_none_ui), encoding="utf-8")
+            self.assertEqual(self.check(core, *options).returncode, 0)
+
 if __name__ == "__main__":
     unittest.main()

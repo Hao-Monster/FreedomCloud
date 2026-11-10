@@ -188,11 +188,25 @@ func TestFCXTimingReportsPreviousOutputFailure(t *testing.T) {
 	output.enqueue("first")
 	output.enqueue("next")
 	output.enqueue("discarded")
-	close(output.lines)
 	w := new(fcxFailOnceWriter)
-	output.drain(w)
-	if !strings.Contains(w.String(), "next droppedTimingLines=1 priorWriteFailures=1") {
-		t.Fatalf("missing recovery counters: %s", w.String())
+	done := make(chan struct{})
+	go func() {
+		output.drain(w)
+		close(done)
+	}()
+	deadline := time.Now().Add(2 * time.Second)
+	for len(output.lines) > 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	output.enqueue("clean-after-recovery")
+	close(output.lines)
+	<-done
+	got := w.String()
+	if !strings.Contains(got, "next droppedTimingLines=1 priorWriteFailures=1\n") {
+		t.Fatalf("missing recovery counters: %s", got)
+	}
+	if !strings.Contains(got, "clean-after-recovery\n") {
+		t.Fatalf("subsequent clean record remained poisoned by prior counters: %s", got)
 	}
 }
 

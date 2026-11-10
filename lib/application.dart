@@ -73,6 +73,7 @@ class ApplicationState extends ConsumerState<Application> {
     _autoUpdateProfilesTask();
     globalState.appController = AppController(context, ref);
     WidgetsBinding.instance.addPostFrameCallback((timeStamp) async {
+      logStartupFirstFrameOnce();
       final currentContext = globalState.navigatorKey.currentContext;
       if (currentContext != null) {
         globalState.appController.updateContext(currentContext);
