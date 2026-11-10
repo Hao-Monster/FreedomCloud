@@ -5,6 +5,8 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
+	"net"
 	"runtime"
 	"strings"
 	"testing"
@@ -319,5 +321,98 @@ func TestSetupConfigWhileRunningDoesNotRecreateTunTwice(t *testing.T) {
 	}
 	if selectedProxyDuringTunBringUp != "NodeB" {
 		t.Fatalf("expected SelectedMap target NodeB to be applied before ApplyConfig TUN bring-up, got %q", selectedProxyDuringTunBringUp)
+	}
+}
+
+func TestSetupConfigRollbackWhileRunningRebuildsClosedPreviousCustomListeners(t *testing.T) {
+	if runtime.GOOS == "android" {
+		t.Skip("desktop listener lifecycle test")
+	}
+	isolateHealthCheckForwarder(t)
+	oldController := recreateRuntimeController
+	oldRestoreStrict := restoreRuntimeStrictIngress
+	oldRecreateTun := recreateRuntimeTun
+	recreateRuntimeController = func(*config.Config) error { return nil }
+	recreateRuntimeTun = func(LC.Tun, constant.Tunnel) {}
+
+	runLock.Lock()
+	previousRunning := isRunning
+	previousConfig := currentConfig
+	previousRaw := appliedRawConfig
+	previousPending := pendingTunEnable
+	isRunning = true
+	stopListeners()
+	runLock.Unlock()
+
+	t.Cleanup(func() {
+		stopHealthCheckForwarder()
+		stopRequestForwarder()
+		recreateRuntimeController = oldController
+		restoreRuntimeStrictIngress = oldRestoreStrict
+		recreateRuntimeTun = oldRecreateTun
+		runLock.Lock()
+		isRunning = previousRunning
+		currentConfig = previousConfig
+		appliedRawConfig = previousRaw
+		pendingTunEnable = previousPending
+		stopListeners()
+		runLock.Unlock()
+	})
+
+	customPort := allocateFreeLoopbackPort(t)
+	customAddr := net.JoinHostPort("127.0.0.1", itoaPort(customPort))
+
+	first := defaultSetupParams()
+	first.Config.Tun.Enable = false
+	first.Config.Listeners = []map[string]any{
+		{
+			"name":   "fcx-rollback-custom-socks",
+			"type":   "socks",
+			"listen": "127.0.0.1",
+			"port":   customPort,
+			"udp":    false,
+		},
+	}
+	if err := setupConfig(first); err != nil {
+		t.Fatalf("initial setupConfig failed: %v", err)
+	}
+	conn, err := net.DialTimeout("tcp", customAddr, 200*time.Millisecond)
+	if err != nil {
+		t.Fatalf("expected custom listener %s to be open after initial setupConfig: %v", customAddr, err)
+	}
+	_ = conn.Close()
+
+	// Make candidate fail at restoreRuntimeStrictIngress after candidate's
+	// ApplyConfig has closed first.Listeners's single-use InboundListener.
+	failOnce := true
+	restoreRuntimeStrictIngress = func() error {
+		if failOnce {
+			failOnce = false
+			return errors.New("synthetic strict ingress failure")
+		}
+		return nil
+	}
+
+	second := defaultSetupParams()
+	second.Config.Tun.Enable = false
+	second.Config.Listeners = nil
+	if err := setupConfig(second); err == nil {
+		t.Fatal("expected second setupConfig to fail on strict ingress restore")
+	}
+
+	connAfterRollback, err := net.DialTimeout("tcp", customAddr, 200*time.Millisecond)
+	if err != nil {
+		t.Fatalf("expected custom listener %s to be rebuilt and open after rollback to previous config, got: %v", customAddr, err)
+	}
+	_ = connAfterRollback.Close()
+
+	runLock.Lock()
+	rebuiltListener := currentConfig.Listeners["fcx-rollback-custom-socks"]
+	runLock.Unlock()
+	if rebuiltListener == nil {
+		t.Fatal("expected fcx-rollback-custom-socks listener to exist on currentConfig after rollback")
+	}
+	if gotAddr := rebuiltListener.Address(); gotAddr != customAddr {
+		t.Fatalf("expected fresh rebuilt InboundListener with Address() == %q after rollback, got corrupted %q", customAddr, gotAddr)
 	}
 }

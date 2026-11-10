@@ -513,14 +513,36 @@ class ClashService extends ClashHandlerInterface {
     return false;
   }
 
+  Future<void> _abortConnectAttempt(Socket? socket) async {
+    ++_connectionEpoch;
+    await _socketSubscription?.cancel();
+    _socketSubscription = null;
+    try {
+      socket?.destroy();
+    } catch (_) {}
+    socketCompleter = Completer<Socket>();
+    _agentPid = null;
+    _agentIdentity = null;
+    _agentGeneration = null;
+    _agentProxyRunning = null;
+    if (!hasDeferredAgentLaunch) {
+      _agentCoreState = AgentCoreState.stopped;
+    }
+    setStartupTimingCorrelationId(null);
+    _releaseCoreReadyWaitersForDeferOrTeardown();
+    _flushPendingCompleters();
+    onTunTransportChanged?.call();
+  }
+
   Future<bool> _tryConnectAgent() async {
+    Socket? socket;
     try {
       final endpointFile = File(await _resolveEndpointPath());
       if (!await endpointFile.exists()) return false;
       final endpoint = AgentEndpoint.fromJson(
         json.decode(await endpointFile.readAsString()) as Map<String, dynamic>,
       );
-      final socket = await Socket.connect(
+      socket = await Socket.connect(
         InternetAddress.loopbackIPv4,
         endpoint.port,
         timeout: const Duration(milliseconds: 750),
@@ -577,13 +599,15 @@ class ClashService extends ClashHandlerInterface {
       if (endpoint.instanceId != null &&
           (_agentIdentity?.agentInstanceId != endpoint.instanceId ||
               _agentIdentity?.agentPid != endpoint.pid)) {
-        await _socketSubscription?.cancel();
-        socket.destroy();
+        await _abortConnectAttempt(socket);
         return false;
       }
       _agentPid = endpoint.pid;
       return true;
     } catch (_) {
+      if (socket != null) {
+        await _abortConnectAttempt(socket);
+      }
       return false;
     }
   }
@@ -727,6 +751,11 @@ class ClashService extends ClashHandlerInterface {
     final ready = await _agentConnections.connect(() async {
       if (hasDeferredAgentLaunch) {
         return _materializeDeferredAgentLocked();
+      }
+      if (!socketCompleter.isCompleted) {
+        return _connectOrLaunchAgentImpl(
+          allowDeferForTunAuthorization: false,
+        );
       }
       return _observeAgentCoreReady(explicitRecovery: true);
     });
@@ -1489,6 +1518,10 @@ class ClashService extends ClashHandlerInterface {
   }
 
   void _flushPendingCompleters() {
+    for (final completer in _agentCommandCompleters.values) {
+      if (!completer.isCompleted) completer.complete(false);
+    }
+    _agentCommandCompleters.clear();
     for (final completer in _strictIdentityCompleters.values) {
       if (!completer.isCompleted) completer.complete(null);
     }

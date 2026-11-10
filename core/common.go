@@ -384,6 +384,22 @@ func sideUpdateExternalProvider(p cp.Provider, bytes []byte) error {
 	}
 }
 
+func rebuildCurrentListenersFromRawLocked() {
+	if currentConfig == nil || len(currentRawListeners) == 0 {
+		return
+	}
+	rebuilt := make(map[string]constant.InboundListener, len(currentRawListeners))
+	for _, mapping := range currentRawListeners {
+		inboundListener, err := listener.ParseListener(mapping)
+		if err != nil {
+			return
+		}
+		rebuilt[inboundListener.Name()] = inboundListener
+	}
+	currentConfig.Listeners = rebuilt
+	currentListenersClosed = false
+}
+
 // updateListeners recreates all listeners from current config
 func updateListeners() {
 	if !isRunning {
@@ -393,20 +409,7 @@ func updateListeners() {
 		return
 	}
 	if currentListenersClosed && len(currentRawListeners) > 0 {
-		rebuilt := make(map[string]constant.InboundListener, len(currentRawListeners))
-		allParsed := true
-		for _, mapping := range currentRawListeners {
-			inboundListener, err := listener.ParseListener(mapping)
-			if err != nil {
-				allParsed = false
-				break
-			}
-			rebuilt[inboundListener.Name()] = inboundListener
-		}
-		if allParsed {
-			currentConfig.Listeners = rebuilt
-			currentListenersClosed = false
-		}
+		rebuildCurrentListenersFromRawLocked()
 	}
 	listeners := inboundListenersWithStrictLocked()
 	general := currentConfig.General
@@ -720,6 +723,9 @@ func setupConfig(params *SetupParams) error {
 		configuredFindProcessMode.Store(int32(previous.General.FindProcessMode))
 		externalControllerListening.Store(controllerHasActiveEndpoint(previous, previousControllerEnabled))
 		syncEffectiveFindProcessMode()
+		if (isRunning || currentListenersClosed) && len(currentRawListeners) > 0 {
+			rebuildCurrentListenersFromRawLocked()
+		}
 		applyConfigForRuntimeStateLocked(previous)
 		externalProviders = getExternalProvidersRaw()
 		controllerErr := recreateRuntimeController(effectiveControllerConfig(previous, previousControllerEnabled))

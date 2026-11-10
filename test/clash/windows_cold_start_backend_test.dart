@@ -33,6 +33,9 @@ class _FakeAgentServer {
   final bool privilegedBackend;
   final String backendSource;
   final String? instanceId;
+  String? reportedEventInstanceId;
+  bool stallStopCore = false;
+  final Completer<void> stopCoreReceived = Completer<void>();
   AgentCoreState coreState = AgentCoreState.ready;
   String tunPrivilege;
 
@@ -100,6 +103,12 @@ class _FakeAgentServer {
             return;
           }
           if (command == AgentCommand.stopCore.name) {
+            if (!stopCoreReceived.isCompleted) {
+              stopCoreReceived.complete();
+            }
+            if (stallStopCore) {
+              return;
+            }
             coreState = AgentCoreState.stopped;
             _sendEvent(
               client,
@@ -183,7 +192,8 @@ class _FakeAgentServer {
           if (type == AgentEventType.ready || type == AgentEventType.coreState)
             'proxyRunning': false,
           'privilegedBackend': privilegedBackend,
-          if (instanceId != null) 'agentInstanceId': instanceId,
+          if ((reportedEventInstanceId ?? instanceId) != null)
+            'agentInstanceId': reportedEventInstanceId ?? instanceId,
           'agentPid': pid,
           'agentExecutable': agentExecutable,
           'coreExecutable': coreExecutable,
@@ -1021,6 +1031,77 @@ void main() {
         // Immediately after socket loss (during the 250ms reconnect backoff),
         // agentCoreReady must be false so new RPCs do not write to a dead socket.
         expect(service.agentCoreReady, isFalse);
+      },
+    );
+
+    test(
+      'rejected Agent instanceId mismatch and in-flight _agentCommand during socket loss clean up socketCompleter, agentCoreReady, and _agentCommandCompleters immediately',
+      () async {
+        final mismatchedServer = _FakeAgentServer(
+          endpointPath: endpointPath,
+          pid: 9701,
+          agentExecutable: bundledAgent,
+          coreExecutable: bundledCore,
+          privilegedBackend: false,
+          backendSource: 'local',
+          instanceId:
+              'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        )..reportedEventInstanceId =
+            'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+        servers.add(mismatchedServer);
+        await mismatchedServer.start();
+
+        final service = ClashService.forTesting(
+          isWindowsPlatform: true,
+          agentBinaryExists: () async => true,
+          applyPendingCoreUpdate: () async {},
+          resolveEndpointPath: () async => endpointPath,
+          resolveHomeDirPath: () async => tempDir.path,
+          resolveBundledAgentPath: () => bundledAgent,
+          resolveBundledCorePath: () => bundledCore,
+          resolveBundledHelperPath: () => bundledHelper,
+          resolveServiceDirectory: () => serviceDir,
+          resolveServiceHelperPath: () => serviceHelper,
+          resolveServiceCorePath: () => serviceCore,
+          checkIsAdmin: () async => false,
+          tryStartExistingHelper: () async => false,
+          pingHelper: () async => false,
+          readTunDesired: () => false,
+          endpointPollInterval: const Duration(milliseconds: 1),
+          startAgentProcess: (_, __) async {},
+        );
+        addTearDown(service.destroy);
+
+        expect(await service.preload(), isFalse);
+        expect(service.socketCompleter.isCompleted, isFalse);
+        expect(service.agentCoreReady, isFalse);
+        expect(startupTimingCorrelationId, isNull);
+
+        await mismatchedServer.close();
+        final validServer = _FakeAgentServer(
+          endpointPath: endpointPath,
+          pid: 9702,
+          agentExecutable: bundledAgent,
+          coreExecutable: bundledCore,
+          privilegedBackend: false,
+          backendSource: 'local',
+        )..stallStopCore = true;
+        servers.add(validServer);
+        await validServer.start();
+
+        await service.recoverCoreForUser();
+        expect(service.agentCoreReady, isTrue);
+
+        final shutdownFuture = service.shutdown();
+        await validServer.stopCoreReceived.future;
+        await validServer.close();
+
+        // Socket loss while stopCore is in-flight must immediately settle
+        // _agentCommandCompleters with false rather than hanging for 10s.
+        await expectLater(
+          shutdownFuture.timeout(const Duration(milliseconds: 500)),
+          completion(isFalse),
+        );
       },
     );
   });
