@@ -40,6 +40,7 @@ class _FakeAgentServer {
   final List<Socket> _clients = [];
   final List<String> agentCommands = [];
   final List<String> coreMethods = [];
+  final Completer<void> clientAuthenticated = Completer<void>();
 
   static const _token =
       'fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210';
@@ -72,6 +73,9 @@ class _FakeAgentServer {
           }
           authenticated = true;
           _sendEvent(client, type: AgentEventType.ready);
+          if (!clientAuthenticated.isCompleted) {
+            clientAuthenticated.complete();
+          }
           return;
         }
         final agentCmd = decoded['_agent'];
@@ -198,6 +202,17 @@ class _FakeAgentServer {
     _clients.clear();
     await _server?.close();
     _server = null;
+  }
+
+  void broadcastCoreState(AgentCoreState nextState) {
+    coreState = nextState;
+    for (final client in List<Socket>.of(_clients)) {
+      _sendEvent(
+        client,
+        type: AgentEventType.coreState,
+        stateOverride: nextState,
+      );
+    }
   }
 }
 
@@ -925,6 +940,87 @@ void main() {
           isTrue,
         );
         expect(await service.setUiActive(true), isTrue);
+      },
+    );
+
+    test(
+      'coreState transition from starting to failed and _onAgentLost immediately wake _coreReadyCompleter waiters and invalidate agentCoreReady',
+      () async {
+        final server = _FakeAgentServer(
+          endpointPath: endpointPath,
+          pid: 9601,
+          agentExecutable: bundledAgent,
+          coreExecutable: bundledCore,
+          privilegedBackend: false,
+          backendSource: 'local',
+        )..coreState = AgentCoreState.starting;
+        servers.add(server);
+        await server.start();
+
+        final service = ClashService.forTesting(
+          isWindowsPlatform: true,
+          agentBinaryExists: () async => true,
+          applyPendingCoreUpdate: () async {},
+          resolveEndpointPath: () async => endpointPath,
+          resolveHomeDirPath: () async => tempDir.path,
+          resolveBundledAgentPath: () => bundledAgent,
+          resolveBundledCorePath: () => bundledCore,
+          resolveBundledHelperPath: () => bundledHelper,
+          resolveServiceDirectory: () => serviceDir,
+          resolveServiceHelperPath: () => serviceHelper,
+          resolveServiceCorePath: () => serviceCore,
+          checkIsAdmin: () async => false,
+          tryStartExistingHelper: () async => false,
+          pingHelper: () async => false,
+          readTunDesired: () => false,
+          endpointPollInterval: const Duration(milliseconds: 5),
+          startAgentProcess: (_, __) async {},
+        );
+        addTearDown(service.destroy);
+
+        await server.clientAuthenticated.future;
+        final pendingRpcFuture = service.setUiActive(true);
+        final pendingSendFuture = service.sendMessage(
+          jsonEncode({
+            'id': 'starting-to-failed-msg',
+            'method': 'setUiActive',
+            'data': true,
+          }),
+        );
+
+        // Transition Core from starting -> failed; preload() and in-flight IPC
+        // waiters must wake immediately instead of hanging for 20s.
+        server.broadcastCoreState(AgentCoreState.failed);
+
+        await expectLater(
+          service.preload().timeout(const Duration(milliseconds: 500)),
+          completion(isTrue),
+        );
+        await expectLater(
+          pendingRpcFuture.timeout(const Duration(milliseconds: 500)),
+          completion(isFalse),
+        );
+        await expectLater(
+          pendingSendFuture.timeout(const Duration(milliseconds: 500)),
+          completes,
+        );
+        expect(service.agentCoreReady, isFalse);
+
+        // Now transition Core to ready, then drop the Agent socket (_onAgentLost).
+        server.broadcastCoreState(AgentCoreState.ready);
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+        expect(service.agentCoreReady, isTrue);
+
+        final file = File(endpointPath);
+        if (file.existsSync()) {
+          await file.delete();
+        }
+        await server.close();
+        await Future<void>.delayed(const Duration(milliseconds: 30));
+
+        // Immediately after socket loss (during the 250ms reconnect backoff),
+        // agentCoreReady must be false so new RPCs do not write to a dead socket.
+        expect(service.agentCoreReady, isFalse);
       },
     );
   });

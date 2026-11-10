@@ -239,18 +239,41 @@ func TestSetupConfigWhileRunningDoesNotRecreateTunTwice(t *testing.T) {
 	isolateConfigRuntime(t)
 	oldRunning := isRunning
 	oldRecreateTun := recreateRuntimeTun
+	oldUi := uiActive.Load()
+	oldConfigured := configuredFindProcessMode.Load()
+	oldCtrl := externalControllerListening.Load()
+	oldMode := tunnel.FindProcessMode()
 	t.Cleanup(func() {
 		isRunning = oldRunning
 		recreateRuntimeTun = oldRecreateTun
+		uiActive.Store(oldUi)
+		configuredFindProcessMode.Store(oldConfigured)
+		externalControllerListening.Store(oldCtrl)
+		tunnel.SetFindProcessMode(oldMode)
 	})
 
 	isRunning = true
+	uiActive.Store(false)
 	tunRecreateCalls := 0
+	var findProcessModeDuringTunBringUp P.FindProcessMode
+	var selectedProxyDuringTunBringUp string
+
+	var lastAppliedCfg *config.Config
 	recreateRuntimeTun = func(LC.Tun, constant.Tunnel) {
 		tunRecreateCalls++
+		findProcessModeDuringTunBringUp = tunnel.FindProcessMode()
+		if lastAppliedCfg != nil {
+			if proxy, ok := lastAppliedCfg.Proxies["Proxy"]; ok {
+				if unwrapped := proxy.Unwrap(nil, false); unwrapped != nil {
+					selectedProxyDuringTunBringUp = unwrapped.Name()
+				}
+			}
+		}
 	}
 	applyRuntimeConfig = func(cfg *config.Config, _ bool) {
-		// Mirror mihomo executor.ApplyConfig -> updateTun(cfg.General).
+		lastAppliedCfg = cfg
+		// Mirror mihomo executor.ApplyConfig -> updateGeneral + updateTun(cfg.General).
+		tunnel.SetFindProcessMode(cfg.General.FindProcessMode)
 		if runtime.GOOS != "android" {
 			recreateRuntimeTun(cfg.General.Tun, tunnel.Tunnel)
 		}
@@ -260,10 +283,41 @@ func TestSetupConfigWhileRunningDoesNotRecreateTunTwice(t *testing.T) {
 	params := defaultSetupParams()
 	params.Config.Tun.Enable = true
 	params.Config.Tun.Stack = constant.TunGvisor
+	params.Config.FindProcessMode = P.FindProcessAlways
+	params.Config.Proxy = []map[string]any{
+		{
+			"name":   "NodeA",
+			"type":   "socks5",
+			"server": "127.0.0.1",
+			"port":   1080,
+		},
+		{
+			"name":   "NodeB",
+			"type":   "socks5",
+			"server": "127.0.0.1",
+			"port":   1081,
+		},
+	}
+	params.Config.ProxyGroup = []map[string]any{
+		{
+			"name":    "Proxy",
+			"type":    "select",
+			"proxies": []string{"NodeA", "NodeB"},
+		},
+	}
+	params.SelectedMap = map[string]string{
+		"Proxy": "NodeB",
+	}
 	if err := setupConfig(params); err != nil {
 		t.Fatalf("setupConfig failed: %v", err)
 	}
 	if tunRecreateCalls != 1 {
 		t.Fatalf("expected 1 TUN recreate call during running setupConfig, got %d", tunRecreateCalls)
+	}
+	if findProcessModeDuringTunBringUp != P.FindProcessStrict {
+		t.Fatalf("expected effective FindProcessStrict during ApplyConfig TUN bring-up when UI is hidden, got %v", findProcessModeDuringTunBringUp)
+	}
+	if selectedProxyDuringTunBringUp != "NodeB" {
+		t.Fatalf("expected SelectedMap target NodeB to be applied before ApplyConfig TUN bring-up, got %q", selectedProxyDuringTunBringUp)
 	}
 }

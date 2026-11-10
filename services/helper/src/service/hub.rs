@@ -423,7 +423,17 @@ where
 }
 
 fn should_persist_core_output_line(channel: &str, line: &str) -> bool {
-    if channel != "stdout" {
+    let allow_stdout_debug =
+        std::env::var("FCX_CORE_STDOUT_DEBUG").ok().as_deref() == Some("1");
+    should_persist_core_output_line_with_debug_flag(channel, line, allow_stdout_debug)
+}
+
+fn should_persist_core_output_line_with_debug_flag(
+    channel: &str,
+    line: &str,
+    allow_stdout_debug: bool,
+) -> bool {
+    if channel != "stdout" || allow_stdout_debug {
         return true;
     }
     let trimmed = line.trim_start();
@@ -933,6 +943,11 @@ mod tests {
         );
         assert!(text.contains("Core stdout: time=\"2026-11-10T18:37:18.482077300+08:00\" level=info msg=\"Load MMDB file\""));
         assert!(text.contains("Core stderr: time=\"2026-11-10T18:37:18.138704900+08:00\" level=debug msg=\"stderr diagnostic\""));
+        assert!(should_persist_core_output_line_with_debug_flag(
+            "stdout",
+            "time=\"2026-11-10T18:37:18.138704900+08:00\" level=debug msg=\"XTLS Vision read padding\"\n",
+            true,
+        ));
     }
 
     #[tokio::test]

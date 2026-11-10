@@ -110,6 +110,11 @@ func applyConfigForRuntimeStateLocked(cfg *config.Config) {
 	if runtime.GOOS == "android" || !isRunning {
 		general.Tun.Enable = false
 	}
+	if general.FindProcessMode == P.FindProcessAlways &&
+		!uiActive.Load() &&
+		!externalControllerListening.Load() {
+		general.FindProcessMode = P.FindProcessStrict
+	}
 	if runtime.GOOS != "android" && !isRunning {
 		general.Port = 0
 		general.SocksPort = 0
@@ -453,10 +458,11 @@ func stopListeners() {
 	resolver.StoreFakePoolState()
 }
 
-func patchSelectGroup(mapping map[string]string) {
-	proxyStateMu.Lock()
-	defer proxyStateMu.Unlock()
-	for name, proxy := range proxiesWithProviders() {
+func patchSelectGroupOnProxies(proxies map[string]constant.Proxy, mapping map[string]string) {
+	if len(proxies) == 0 || len(mapping) == 0 {
+		return
+	}
+	for name, proxy := range proxies {
 		outbound, ok := proxy.(*adapter.Proxy)
 		if !ok {
 			continue
@@ -474,6 +480,12 @@ func patchSelectGroup(mapping map[string]string) {
 
 		selector.ForceSet(selected)
 	}
+}
+
+func patchSelectGroup(mapping map[string]string) {
+	proxyStateMu.Lock()
+	defer proxyStateMu.Unlock()
+	patchSelectGroupOnProxies(proxiesWithProviders(), mapping)
 }
 
 // Dependency upgrades must not silently change the stack for an absent option
@@ -675,6 +687,7 @@ func setupConfig(params *SetupParams) error {
 	configuredFindProcessMode.Store(int32(candidate.General.FindProcessMode))
 	externalControllerListening.Store(controllerHasActiveEndpoint(candidate, controllerEnabled))
 	syncEffectiveFindProcessMode()
+	patchSelectGroupOnProxies(candidate.Proxies, params.SelectedMap)
 	applyStart := time.Now()
 	applyConfigForRuntimeStateLocked(candidate)
 	externalProviders = getExternalProvidersRaw()

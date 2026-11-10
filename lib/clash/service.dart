@@ -643,6 +643,9 @@ class ClashService extends ClashHandlerInterface {
       if (!_coreReadyCompleter.isCompleted) {
         _coreReadyCompleter.complete();
       }
+    } else if (event.coreState == AgentCoreState.failed ||
+        event.coreState == AgentCoreState.stopped) {
+      _releaseCoreReadyWaitersForDeferOrTeardown();
     } else {
       _resetCoreReadyCompleter();
     }
@@ -857,7 +860,15 @@ class ClashService extends ClashHandlerInterface {
   void _onAgentLost(String reason) {
     ++_connectionEpoch;
     _agentProxyRunning = null;
+    if (!hasDeferredAgentLaunch) {
+      _agentCoreState = AgentCoreState.stopped;
+    }
+    if (socketCompleter.isCompleted) {
+      socketCompleter = Completer<Socket>();
+    }
     setStartupTimingCorrelationId(null);
+    _releaseCoreReadyWaitersForDeferOrTeardown();
+    _flushPendingCompleters();
     onTunTransportChanged?.call();
     // Socket loss invalidates any previously armed claim.  Keep the status
     // fail-closed while the bounded reconnect loop runs; never leave an armed
@@ -874,7 +885,6 @@ class ClashService extends ClashHandlerInterface {
     _agentRecovering = true;
     final previousAgentPid = _agentPid;
     final recoveryEpoch = _agentConnections.epoch;
-    _flushPendingCompleters();
     unawaited(() async {
       commonPrint.log('FlClashAgent connection lost ($reason), reconnecting');
       try {
