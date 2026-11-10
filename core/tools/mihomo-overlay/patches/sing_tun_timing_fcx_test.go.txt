@@ -241,13 +241,13 @@ func TestFCXTunNewDoesNotRepeatWintunAdapterCreateFailure(t *testing.T) {
 	// it three times while ReCreateTun held tunMux and the Core runLock.
 	clock := &fcxRetryClock{now: time.Unix(0, 0), step: 15 * time.Second}
 	adapterErr := FCXWrapAdapterCreateError(syscall.Errno(2))
-	calls, warnings := 0, 0
+	calls, warnings, refused := 0, 0, 0
 	_, err := fcxTunNewWithRetry(func() (tun.Tun, error) {
 		calls++
 		return nil, adapterErr
-	}, clock.Now, func(error, int, int) { warnings++ })
-	if calls != 1 || warnings != 0 {
-		t.Fatalf("adapter create failure retried: calls=%d warnings=%d", calls, warnings)
+	}, clock.Now, func(error, int, int) { warnings++ }, func(error) { refused++ })
+	if calls != 1 || warnings != 0 || refused != 1 {
+		t.Fatalf("refused adapter retried or skip not reported: calls=%d warnings=%d refused=%d", calls, warnings, refused)
 	}
 	wrapped := fmt.Errorf("configure tun interface: %w", err)
 	if !FCXIsAdapterCreateFailure(wrapped) {
@@ -259,13 +259,41 @@ func TestFCXTunNewDoesNotRepeatWintunAdapterCreateFailure(t *testing.T) {
 	}
 }
 
+func TestFCXTunNewRetriesAdapterCreateFailuresWithoutRefusalEvidence(t *testing.T) {
+	// Only Win32 2 (devnode CM_PROB_FAILED_ADD status mapped by Wintun) is
+	// evidenced as non-transient. Other slow adapter errors, e.g. an arrival
+	// timeout right after a previous adapter teardown, keep upstream retries.
+	for name, cause := range map[string]error{
+		"timeout errno":     syscall.Errno(1460),
+		"untyped slow text": errors.New("device did not arrive in time"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			clock := &fcxRetryClock{now: time.Unix(0, 0), step: 15 * time.Second}
+			calls, warnings, refused := 0, 0, 0
+			_, err := fcxTunNewWithRetry(func() (tun.Tun, error) {
+				calls++
+				return nil, FCXWrapAdapterCreateError(cause)
+			}, clock.Now, func(error, int, int) { warnings++ }, func(error) { refused++ })
+			if err == nil || calls != 3 || warnings != 3 || refused != 0 || !FCXIsAdapterCreateFailure(err) {
+				t.Fatalf("non-refused adapter failure lost upstream retry: calls=%d warnings=%d refused=%d err=%v", calls, warnings, refused, err)
+			}
+		})
+	}
+	if !FCXIsRefusedAdapterCreate(fmt.Errorf("configure tun interface: %w", FCXWrapAdapterCreateError(syscall.Errno(2)))) {
+		t.Fatal("wrapped Win32 2 adapter failure must be classified as refused")
+	}
+	if FCXIsRefusedAdapterCreate(syscall.Errno(2)) {
+		t.Fatal("Win32 2 outside adapter creation must not be classified as refused")
+	}
+}
+
 func TestFCXTunNewKeepsUpstreamRetryForOtherSlowFailures(t *testing.T) {
 	clock := &fcxRetryClock{now: time.Unix(0, 0), step: 2 * time.Second}
 	calls, warnings := 0, 0
 	_, err := fcxTunNewWithRetry(func() (tun.Tun, error) {
 		calls++
 		return nil, errors.New("slow configure failure")
-	}, clock.Now, func(error, int, int) { warnings++ })
+	}, clock.Now, func(error, int, int) { warnings++ }, nil)
 	if err == nil || calls != 3 || warnings != 3 || FCXIsAdapterCreateFailure(err) {
 		t.Fatalf("upstream slow-failure retry changed: calls=%d warnings=%d err=%v", calls, warnings, err)
 	}
@@ -275,7 +303,7 @@ func TestFCXTunNewKeepsUpstreamRetryForOtherSlowFailures(t *testing.T) {
 	if _, err := fcxTunNewWithRetry(func() (tun.Tun, error) {
 		calls++
 		return nil, errors.New("Cannot create a file when that file already exists.")
-	}, fast.Now, nil); err == nil || calls != 1 {
+	}, fast.Now, nil, nil); err == nil || calls != 1 {
 		t.Fatalf("fast failure must return immediately: calls=%d err=%v", calls, err)
 	}
 
@@ -286,7 +314,7 @@ func TestFCXTunNewKeepsUpstreamRetryForOtherSlowFailures(t *testing.T) {
 			return nil, errors.New("transient slow failure")
 		}
 		return nil, nil
-	}, clock.Now, nil); err != nil || calls != 2 {
+	}, clock.Now, nil, nil); err != nil || calls != 2 {
 		t.Fatalf("slow transient failure must still retry once and succeed: calls=%d err=%v", calls, err)
 	}
 	if FCXIsAdapterCreateFailure(nil) || FCXWrapAdapterCreateError(nil) != nil {

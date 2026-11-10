@@ -961,6 +961,9 @@ func TestSingTunServerWindowsPatchStopsRetryingAdapterCreateFailures(t *testing.
 	if !strings.Contains(patched, "return fcxTunNewWithRetry(") {
 		t.Fatal("tunNew does not delegate to the classified retry policy")
 	}
+	if !strings.Contains(patched, "Wintun adapter refused by Windows; not retrying") {
+		t.Fatal("skipped retries for a refused adapter must be logged")
+	}
 	if strings.Contains(patched, "maxRetry := 3") {
 		t.Fatal("retained upstream unconditional slow-failure retry loop")
 	}

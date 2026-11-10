@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"time"
 )
 
@@ -30,6 +31,20 @@ func FCXWrapAdapterCreateError(err error) error {
 func FCXIsAdapterCreateFailure(err error) bool {
 	var target *FCXAdapterCreateError
 	return errors.As(err, &target)
+}
+
+// fcxErrorFileNotFound is the Win32 code Wintun returns when Windows refuses
+// the device node (e.g. NTSTATUS 0xC00002F0 with CM_PROB_FAILED_ADD). Field
+// evidence (19/19 immediate retries failed; recovery took minutes) only
+// covers this code, so only it is treated as not worth an immediate retry.
+const fcxErrorFileNotFound = syscall.Errno(2)
+
+func FCXIsRefusedAdapterCreate(err error) bool {
+	if !FCXIsAdapterCreateFailure(err) {
+		return false
+	}
+	var errno syscall.Errno
+	return errors.As(err, &errno) && errno == fcxErrorFileNotFound
 }
 
 // FCXDeviceTimingHook receives sub-stage durations from Windows NativeTun setup

@@ -448,6 +448,8 @@ func patchSingTunServerWindows(source []byte) ([]byte, error) {
 		return tun.New(options)
 	}, time.Now, func(err error, attempt, maxRetry int) {
 		log.Warnln("Start Tun interface timeout: %s [retrying %d/%d]", err, attempt, maxRetry)
+	}, func(err error) {
+		log.Warnln("Wintun adapter refused by Windows; not retrying: %s", err)
 	})
 }`
 	patched := string(source)
