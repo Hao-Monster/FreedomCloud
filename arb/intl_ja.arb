@@ -102,7 +102,8 @@
   "auto": "自動",
   "light": "ライト",
   "dark": "ダーク",
-  "importFromURL": "URLからインポート",
+  "importFromURL": "サブスクリプションURLを貼り付けて確定してください",
+  "pasteFromClipboard": "貼り付け",
   "submit": "送信",
   "doYouWantToPass": "プロファイルを追加中",
   "create": "作成",
@@ -769,7 +770,7 @@
   "nodeOverviewUpdateSubscription": "購読を更新",
   "nodeOverviewUpdatingShort": "更新中",
   "nodeOverviewAddSubscription": "購読を追加",
-  "nodeOverviewQuickUse": "すぐ使う",
+  "nodeOverviewQuickUse": "最速に接続",
   "nodeOverviewSelectProfileTitle": "プロファイル切替",
   "nodeOverviewProfileCountBadge": "全 {count} 件",
   "@nodeOverviewProfileCountBadge": {
@@ -1144,6 +1145,72 @@
     "placeholders": {
       "count": {
         "type": "int"
+      }
+    }
+  },
+  "subscriptionUrlEmptyError": "先にサブスクリプションURLを貼り付けてください",
+  "subscriptionUrlInvalidError": "有効な http(s):// サブスクリプションURLが見つかりません",
+  "subscriptionClipboardEmptyError": "クリップボードが空です。先にURLをコピーしてください",
+  "subscriptionImportTimeoutError": "サブスクリプションの取得がタイムアウトしました。通信環境を確認してください",
+  "subscriptionImportAuthOrNotFoundError": "サブスクリプションURLが無効または期限切れです",
+  "subscriptionImportInvalidConfigError": "有効なサブスクリプション設定ではありません（WebページのURLの可能性があります）",
+  "subscriptionImportGenericError": "サブスクリプションのインポートに失敗しました。URLを確認してください",
+  "nodeOverviewProxyConnectedWithNode": "プロキシ有効 · {profile} · {node}",
+  "@nodeOverviewProxyConnectedWithNode": {
+    "placeholders": {
+      "profile": {
+        "type": "String"
+      },
+      "node": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewProxyConnected": "プロキシ有効 · 接続済み",
+  "nodeOverviewProxyDisconnected": "プロキシ無効 · 有効化またはノードの「使用」を押して接続",
+  "nodeOverviewProxyStarting": "プロキシを起動中…",
+  "nodeOverviewProxyStopping": "プロキシを停止中…",
+  "nodeOverviewTurnOnProxy": "有効化",
+  "nodeOverviewTurnOffProxy": "停止",
+  "nodeOverviewEmptyTitle": "サブスクリプションがまだありません",
+  "nodeOverviewEmptySubtitle": "サブスクリプションURLを貼り付けて確定すると、自動で速度測定し最速ノードに接続します",
+  "nodeOverviewAvailableFilterEmpty": "現在利用可能な測定済みノードがありません（未測定またはタイムアウト）",
+  "nodeOverviewShowAllNodes": "すべてのノードを表示",
+  "nodeOverviewAutoConnectedBest": "最速ノードに自動接続しました：{profile} · {node}（{delay} ms）",
+  "@nodeOverviewAutoConnectedBest": {
+    "placeholders": {
+      "profile": {
+        "type": "String"
+      },
+      "node": {
+        "type": "String"
+      },
+      "delay": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewAutoSelectedExpiredWarning": "ノード {node} を選択しましたが、このサブスクリプションは期限切れです",
+  "@nodeOverviewAutoSelectedExpiredWarning": {
+    "placeholders": {
+      "node": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewAutoSelectedTrafficExhaustedWarning": "ノード {node} を選択しましたが、通信量が上限に達しています",
+  "@nodeOverviewAutoSelectedTrafficExhaustedWarning": {
+    "placeholders": {
+      "node": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewAutoSelectedAllFailedWarning": "ノード {node} を自動選択しました（全ノード応答なし。通信できない場合は更新または別ノードをお試しください）",
+  "@nodeOverviewAutoSelectedAllFailedWarning": {
+    "placeholders": {
+      "node": {
+        "type": "String"
       }
     }
   }

@@ -1019,10 +1019,10 @@ class AppLocalizations {
     return Intl.message('Dark', name: 'dark', desc: '', args: []);
   }
 
-  /// `Import from URL`
+  /// `Paste subscription link and tap Confirm`
   String get importFromURL {
     return Intl.message(
-      'Import from URL',
+      'Paste subscription link and tap Confirm',
       name: 'importFromURL',
       desc: '',
       args: [],
@@ -6559,10 +6559,10 @@ class AppLocalizations {
     );
   }
 
-  /// `Quick use`
+  /// `Connect fastest`
   String get nodeOverviewQuickUse {
     return Intl.message(
-      'Quick use',
+      'Connect fastest',
       name: 'nodeOverviewQuickUse',
       desc: '',
       args: [],
@@ -8131,6 +8131,226 @@ class AppLocalizations {
       name: 'nodeOverviewBandUntested',
       desc: '',
       args: [count],
+    );
+  }
+
+  /// `Please paste a subscription link first`
+  String get subscriptionUrlEmptyError {
+    return Intl.message(
+      'Please paste a subscription link first',
+      name: 'subscriptionUrlEmptyError',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `No valid http(s):// subscription link found`
+  String get subscriptionUrlInvalidError {
+    return Intl.message(
+      'No valid http(s):// subscription link found',
+      name: 'subscriptionUrlInvalidError',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Clipboard is empty. Copy a subscription link first`
+  String get subscriptionClipboardEmptyError {
+    return Intl.message(
+      'Clipboard is empty. Copy a subscription link first',
+      name: 'subscriptionClipboardEmptyError',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Timed out fetching subscription. Check your network and retry`
+  String get subscriptionImportTimeoutError {
+    return Intl.message(
+      'Timed out fetching subscription. Check your network and retry',
+      name: 'subscriptionImportTimeoutError',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Subscription link is invalid or expired. Verify the URL or contact support`
+  String get subscriptionImportAuthOrNotFoundError {
+    return Intl.message(
+      'Subscription link is invalid or expired. Verify the URL or contact support',
+      name: 'subscriptionImportAuthOrNotFoundError',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `This URL did not return a valid subscription config (it may be a webpage)`
+  String get subscriptionImportInvalidConfigError {
+    return Intl.message(
+      'This URL did not return a valid subscription config (it may be a webpage)',
+      name: 'subscriptionImportInvalidConfigError',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Failed to import subscription. Check the link and try again`
+  String get subscriptionImportGenericError {
+    return Intl.message(
+      'Failed to import subscription. Check the link and try again',
+      name: 'subscriptionImportGenericError',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Proxy on · Using {profile} · {node}`
+  String nodeOverviewProxyConnectedWithNode(String profile, String node) {
+    return Intl.message(
+      'Proxy on · Using $profile · $node',
+      name: 'nodeOverviewProxyConnectedWithNode',
+      desc: '',
+      args: [profile, node],
+    );
+  }
+
+  /// `Proxy on · Traffic connected`
+  String get nodeOverviewProxyConnected {
+    return Intl.message(
+      'Proxy on · Traffic connected',
+      name: 'nodeOverviewProxyConnected',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Proxy off · Tap Turn on or Use on any node to connect`
+  String get nodeOverviewProxyDisconnected {
+    return Intl.message(
+      'Proxy off · Tap Turn on or Use on any node to connect',
+      name: 'nodeOverviewProxyDisconnected',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Starting proxy…`
+  String get nodeOverviewProxyStarting {
+    return Intl.message(
+      'Starting proxy…',
+      name: 'nodeOverviewProxyStarting',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Stopping proxy…`
+  String get nodeOverviewProxyStopping {
+    return Intl.message(
+      'Stopping proxy…',
+      name: 'nodeOverviewProxyStopping',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Turn on`
+  String get nodeOverviewTurnOnProxy {
+    return Intl.message(
+      'Turn on',
+      name: 'nodeOverviewTurnOnProxy',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Turn off`
+  String get nodeOverviewTurnOffProxy {
+    return Intl.message(
+      'Turn off',
+      name: 'nodeOverviewTurnOffProxy',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `No subscription profile yet`
+  String get nodeOverviewEmptyTitle {
+    return Intl.message(
+      'No subscription profile yet',
+      name: 'nodeOverviewEmptyTitle',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Paste your subscription link and confirm to auto-test and connect to the fastest node`
+  String get nodeOverviewEmptySubtitle {
+    return Intl.message(
+      'Paste your subscription link and confirm to auto-test and connect to the fastest node',
+      name: 'nodeOverviewEmptySubtitle',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `No tested available nodes right now (untested or all timed out)`
+  String get nodeOverviewAvailableFilterEmpty {
+    return Intl.message(
+      'No tested available nodes right now (untested or all timed out)',
+      name: 'nodeOverviewAvailableFilterEmpty',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Show all nodes`
+  String get nodeOverviewShowAllNodes {
+    return Intl.message(
+      'Show all nodes',
+      name: 'nodeOverviewShowAllNodes',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Auto-connected to fastest node: {profile} · {node} ({delay} ms)`
+  String nodeOverviewAutoConnectedBest(String profile, String node, int delay) {
+    return Intl.message(
+      'Auto-connected to fastest node: $profile · $node ($delay ms)',
+      name: 'nodeOverviewAutoConnectedBest',
+      desc: '',
+      args: [profile, node, delay],
+    );
+  }
+
+  /// `Selected {node}, but this subscription has expired. Renew or replace it`
+  String nodeOverviewAutoSelectedExpiredWarning(String node) {
+    return Intl.message(
+      'Selected $node, but this subscription has expired. Renew or replace it',
+      name: 'nodeOverviewAutoSelectedExpiredWarning',
+      desc: '',
+      args: [node],
+    );
+  }
+
+  /// `Selected {node}, but subscription traffic is exhausted. Renew or replace it`
+  String nodeOverviewAutoSelectedTrafficExhaustedWarning(String node) {
+    return Intl.message(
+      'Selected $node, but subscription traffic is exhausted. Renew or replace it',
+      name: 'nodeOverviewAutoSelectedTrafficExhaustedWarning',
+      desc: '',
+      args: [node],
+    );
+  }
+
+  /// `Auto-selected {node} (all nodes failed latency check; update subscription or try another node if offline)`
+  String nodeOverviewAutoSelectedAllFailedWarning(String node) {
+    return Intl.message(
+      'Auto-selected $node (all nodes failed latency check; update subscription or try another node if offline)',
+      name: 'nodeOverviewAutoSelectedAllFailedWarning',
+      desc: '',
+      args: [node],
     );
   }
 }

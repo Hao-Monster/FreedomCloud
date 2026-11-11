@@ -60,6 +60,7 @@ class _ProxyController implements AppController {
   final updatedProfiles = <Profile>[];
   final addedUrls = <String>[];
   final deletedProfileIds = <String>[];
+  final statusUpdates = <bool>[];
   void Function(Profile profile)? onSetProfile;
   Future<void> Function(Profile profile)? onUpdateProfile;
   Future<void> Function(String url)? onAddProfileFormURL;
@@ -120,6 +121,11 @@ class _ProxyController implements AppController {
   }
 
   @override
+  Future<void> updateStatus(bool isStart) async {
+    statusUpdates.add(isStart);
+  }
+
+  @override
   List<Proxy> getSortProxies(List<Proxy> proxies, [String? url]) => proxies;
 
   @override
@@ -138,6 +144,8 @@ class _CatalogTester extends ChangeNotifier implements NodeCatalogTester {
   DelayBatchResult? allResult;
   Future<DelayBatchResult> Function(List<DelayTestTarget> targets)?
       onTestCurrent;
+  Future<DelayBatchResult> Function(List<Profile> profiles, String url)?
+      onTestAll;
   int cancellations = 0;
   int scopeDisposals = 0;
   @override
@@ -186,6 +194,9 @@ class _CatalogTester extends ChangeNotifier implements NodeCatalogTester {
   Future<DelayBatchResult> testAll(List<Profile> profiles, String url) async {
     all.add(profiles);
     urls.add(url);
+    if (onTestAll != null) {
+      return onTestAll!(profiles, url);
+    }
     return allResult ??
         DelayBatchResult(completed: 0, failed: 0, reason: reason);
   }
@@ -228,6 +239,8 @@ void main() {
         const Config(themeProps: defaultThemeProps, profiles: [_a, _b]);
     globalState.lastRuntimeConfig = null;
     globalState.lastRuntimeProfileId = null;
+    globalState.lastSubscriptionImportError = null;
+    globalState.suppressNextSubscriptionImportErrorDialog = false;
     globalState.appState = AppState(
       viewSize: const Size(400, 900),
       version: 1,
@@ -332,7 +345,14 @@ void main() {
       await tester
           .tap(find.widgetWithText(CheckedPopupMenuItem<ProxiesScope>, label));
     } else {
-      await tester.tap(find.text(label));
+      final segments = find.byKey(const ValueKey('overview-scope-segments'));
+      if (segments.evaluate().isNotEmpty) {
+        await tester.tap(
+          find.descendant(of: segments, matching: find.text(label)),
+        );
+      } else {
+        await tester.tap(find.text(label));
+      }
     }
     await tester.pumpAndSettle();
   }
@@ -1325,7 +1345,7 @@ void main() {
           of: find.byType(AppBar),
           matching: width > 840
               ? find.text('Current profile')
-              : find.byTooltip('Current profile'));
+              : find.byTooltip('All profiles'));
       expect(inBar, findsOneWidget);
       expect(tester.takeException(), isNull);
     });
@@ -1362,6 +1382,8 @@ void main() {
     globalState.config = globalState.config.copyWith(currentProfileId: 'a');
     globalState.lastRuntimeConfig = null;
     globalState.lastRuntimeProfileId = null;
+    globalState.lastSubscriptionImportError = null;
+    globalState.suppressNextSubscriptionImportErrorDialog = false;
     globalState.appState = globalState.appState.copyWith(groups: const [
       Group(
           name: 'Live',
@@ -1380,13 +1402,35 @@ void main() {
     expect(find.textContaining('Inline'), findsNothing);
   });
 
-  testWidgets('scope is hidden for one profile and when disabled',
+  testWidgets(
+      'scope shows overview for 0 and 1 profile, hides toolbar when 0, and falls back when disabled',
       (tester) async {
     const scope =
         NodeOverviewScopeView(currentView: Text('Existing proxy view'));
-    await mount(tester, child: scope, profiles: [_a], scopeToolbar: true);
-    expect(find.text('All profiles'), findsNothing);
-    expect(find.text('Existing proxy view'), findsOneWidget);
+    await mount(
+      tester,
+      width: 1200,
+      child: scope,
+      profiles: const [],
+      scopeToolbar: true,
+    );
+    expect(find.byKey(const ValueKey('overview-empty-profiles')), findsOneWidget);
+    expect(find.byKey(const ValueKey('overview-scope-segments')), findsNothing);
+    expect(find.text('Existing proxy view'), findsNothing);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await mount(
+      tester,
+      width: 1200,
+      child: scope,
+      profiles: [_a],
+      scopeToolbar: true,
+    );
+    expect(find.byKey(const ValueKey('overview-scope-segments')), findsOneWidget);
+    expect(find.text('Alpha profile'), findsWidgets);
+    expect(find.text('Existing proxy view'), findsNothing);
+
+    await tester.pumpWidget(const SizedBox.shrink());
     await mount(tester, child: scope, enabled: false, scopeToolbar: true);
     expect(find.text('All profiles'), findsNothing);
     expect(find.text('Existing proxy view'), findsOneWidget);
@@ -1497,7 +1541,7 @@ void main() {
   });
 
   testWidgets(
-      'defaults to existing view; opening overview loads visible profiles',
+      'defaults to All profiles overview; switching to Current profile shows existing view',
       (tester) async {
     final loaded = <String>[];
     final container = await mount(tester,
@@ -1505,12 +1549,11 @@ void main() {
             currentView: Text('Existing proxy view')),
         scopeToolbar: true,
         onLoad: loaded.add);
-    expect(find.text('Existing proxy view'), findsOneWidget);
-    await selectScope(tester, 'All profiles');
     expect(find.text('Alpha profile'), findsOneWidget);
-    expect(loaded, containsAll(['a', 'b']));
-    expect(container.read(currentProfileIdProvider), isNull);
     expect(loaded, ['a', 'b']);
+    expect(container.read(currentProfileIdProvider), isNull);
+    await selectScope(tester, 'Current profile');
+    expect(find.text('Existing proxy view'), findsOneWidget);
     expect(container.read(currentProfileIdProvider), isNull);
   });
 
@@ -1740,11 +1783,9 @@ void main() {
           _a.copyWith(unfoldSet: {'Select'}),
           _b
         ]);
-    expect(find.byType(NodeOverviewView), findsNothing);
-    await selectScope(tester, 'All profiles');
+    expect(find.byType(NodeOverviewView), findsOneWidget);
     expect(container.read(currentProfileIdProvider), 'a');
     expect(container.read(currentGroupsStateProvider).value, isNotEmpty);
-    expect(find.byType(NodeOverviewView), findsOneWidget);
     await tester.tap(find.text('Selectable leaf', findRichText: true));
     await tester.pump();
     expect(controller.changes, isEmpty);
@@ -1755,6 +1796,8 @@ void main() {
     await tester.pump();
     expect(controller.changes, [('Select', 'Selectable leaf')]);
     expect(controller.selections, [('Select', 'Selectable leaf')]);
+    await selectScope(tester, 'All profiles');
+    expect(find.byType(NodeOverviewView), findsOneWidget);
     expect(container.read(currentProfileIdProvider), 'a');
     expect(tester.takeException(), isNull);
   });
@@ -2706,6 +2749,8 @@ void main() {
         ),
       },
     );
+    container.read(proxiesScopeProvider.notifier).state = ProxiesScope.current;
+    await tester.pumpAndSettle();
     expect(find.byType(ProxiesListView), findsOneWidget);
     expect(find.byType(NodeOverviewView), findsNothing);
 
@@ -5507,7 +5552,7 @@ void main() {
 
     expect(find.text('添加订阅'), findsOneWidget);
     expect(find.text('测试当前配置'), findsOneWidget);
-    expect(find.text('点击使用'), findsOneWidget);
+    expect(find.text('一键连最快'), findsOneWidget);
 
     // Moved out of top filter row into right-hand pane above node list.
     final sortRect =
@@ -5541,14 +5586,15 @@ void main() {
     // Step 1 opens URLFormDialog directly and forwards trimmed URL to addProfileFormURL.
     await tester.tap(addBtn);
     await tester.pumpAndSettle();
-    expect(find.text('从URL导入'), findsOneWidget);
+    expect(find.text('粘贴订阅链接，点击确定即可'), findsOneWidget);
+    expect(find.text('粘贴'), findsOneWidget);
     await tester.enterText(
       find.byType(TextField),
       '  https://sub.example.com/api/v1/client/subscribe?token=demo  ',
     );
-    await tester.tap(find.text('提交'));
+    await tester.tap(find.text('确定'));
     await tester.pumpAndSettle();
-    expect(find.text('从URL导入'), findsNothing);
+    expect(find.text('粘贴订阅链接，点击确定即可'), findsNothing);
     expect(
       controller.addedUrls,
       ['https://sub.example.com/api/v1/client/subscribe?token=demo'],
@@ -6112,7 +6158,7 @@ void main() {
       find.byType(TextField),
       'https://sub.example.com/import',
     );
-    await tester.tap(find.text('提交'));
+    await tester.tap(find.text('确定'));
     await tester.pump();
 
     // While import is still running in background, button stays disabled against re-entry.
@@ -7741,6 +7787,507 @@ void main() {
       }
     } finally {
       semanticsHandle.dispose();
+    }
+  });
+
+  testWidgets(
+      'onboarding defaults & helpers: AppState opens on proxies, Navigation keeps proxies permanently visible, URL extractor strips chat noise, and informational nodes are filtered cleanly',
+      (tester) async {
+    await AppLocalizations.load(const Locale('zh', 'CN'));
+    addTearDown(() => AppLocalizations.load(const Locale('en')));
+
+    expect(globalState.appState.pageLabel, PageLabel.proxies);
+
+    final emptyNav = navigation.getItems(hasProxies: false);
+    final proxiesItem =
+        emptyNav.firstWhere((item) => item.label == PageLabel.proxies);
+    expect(
+      proxiesItem.modes,
+      containsAll([NavigationItemMode.mobile, NavigationItemMode.desktop]),
+    );
+
+    final scopeCheck = ProviderContainer();
+    addTearDown(scopeCheck.dispose);
+    expect(scopeCheck.read(proxiesScopeProvider), ProxiesScope.all);
+
+    expect(
+      extractSubscriptionUrl(
+        '您的专属订阅链接：https://sub.example.com/api/v1/client/subscribe?token=abc&flag=clash，请勿泄露！',
+      ),
+      'https://sub.example.com/api/v1/client/subscribe?token=abc&flag=clash',
+    );
+    expect(extractSubscriptionUrl('   '), isNull);
+    expect(extractSubscriptionUrl('只有中文没有链接'), isNull);
+
+    expect(isInformationalProxyName('剩余流量：499.97 GB'), isTrue);
+    expect(isInformationalProxyName('套餐到期：2026-12-31'), isTrue);
+    expect(isInformationalProxyName('官网：https://example.com'), isTrue);
+    expect(isInformationalProxyName('公告：节点维护通知'), isTrue);
+    expect(isInformationalProxyName('DIRECT'), isTrue);
+    expect(isInformationalProxyName('香港 IPLC 大流量 01'), isFalse);
+    expect(isInformationalProxyName('美国无限流量专线'), isFalse);
+    expect(isInformationalProxyName('日本 BGP 01'), isFalse);
+
+    expect(
+      formatSubscriptionImportError(const SocketException('Failed host lookup')),
+      contains('网络'),
+    );
+    expect(
+      formatSubscriptionImportError(Exception('Status 404 Not Found')),
+      contains('无效'),
+    );
+    expect(
+      formatSubscriptionImportError(const FormatException('<!DOCTYPE html>')),
+      contains('不是有效的订阅配置'),
+    );
+  });
+
+  testWidgets(
+      'zero-profile cold start onboarding: auto-opens URL dialog, validates empty/clipboard, recovers from import failure, and auto-tests + selects lowest-delay real node + starts proxy on 1st import only',
+      (tester) async {
+    const mockClipboardText =
+        '客服发您的订阅地址：https://sub.example.com/v1/sub?token=first123，点击复制即可。';
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(SystemChannels.platform, (call) async {
+      if (call.method == 'Clipboard.getData') {
+        return <String, dynamic>{'text': mockClipboardText};
+      }
+      return null;
+    });
+    addTearDown(() {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(SystemChannels.platform, null);
+    });
+
+    final now = DateTime(2026, 11, 11, 19, 0);
+    final liveHealth = <String, Map<String, NodeHealthRecord>>{};
+    final liveCatalogs = <String, ProfileCatalog>{};
+    late ProviderContainer container;
+    var failFirstImport = true;
+
+    const firstProfile = Profile(
+      id: 'first-sub',
+      label: '新手订阅',
+      url: 'https://sub.example.com/v1/sub?token=first123',
+      autoUpdateDuration: defaultUpdateDuration,
+    );
+    const secondProfile = Profile(
+      id: 'second-sub',
+      label: '备用订阅',
+      url: 'https://sub.example.com/v1/sub?token=second456',
+      autoUpdateDuration: defaultUpdateDuration,
+    );
+
+    final backend = _CatalogTester()
+      ..onTestAll = (testedProfiles, url) async {
+        expect(testedProfiles.map((p) => p.id), ['first-sub']);
+        liveHealth['first-sub'] = {
+          // Fake billing notice node has artificially tiny 12ms latency — must STILL be skipped!
+          'notice-1': NodeHealthRecord(
+            delayMs: 12,
+            testedAt: now,
+            testUrlHash: 'h',
+          ),
+          'jp-slow': NodeHealthRecord(
+            delayMs: 185,
+            testedAt: now,
+            testUrlHash: 'h',
+          ),
+          'hk-fast': NodeHealthRecord(
+            delayMs: 46,
+            testedAt: now,
+            testUrlHash: 'h',
+          ),
+        };
+        container.invalidate(nodeHealthEntriesProvider('first-sub'));
+        return const DelayBatchResult(completed: 3, failed: 0);
+      };
+
+    final controller = _ProxyController()
+      ..onAddProfileFormURL = (url) async {
+        if (failFirstImport) {
+          failFirstImport = false;
+          globalState.lastSubscriptionImportError =
+              '该链接不是有效的订阅配置（可能误粘了网页地址），请复制正确的订阅链接';
+          return;
+        }
+        if (url.contains('first123')) {
+          liveCatalogs['first-sub'] = ProfileCatalog(
+            profileId: 'first-sub',
+            fingerprint: 'f1',
+            status: ProfileCatalogStatus.ready,
+            nodes: [
+              _node('notice-1', '剩余流量：100 GB')
+                  .copyWith(selectGroups: const ['Proxy']),
+              _node('jp-slow', '日本 01')
+                  .copyWith(selectGroups: const ['Proxy']),
+              _node('hk-fast', '香港 01')
+                  .copyWith(selectGroups: const ['Proxy']),
+            ],
+          );
+          container.read(profilesProvider.notifier).setProfile(firstProfile);
+          container.read(currentProfileIdProvider.notifier).value =
+              firstProfile.id;
+        } else {
+          liveCatalogs['second-sub'] = ProfileCatalog(
+            profileId: 'second-sub',
+            fingerprint: 'f2',
+            status: ProfileCatalogStatus.ready,
+            nodes: [
+              _node('us-1', '美国 01').copyWith(selectGroups: const ['Proxy']),
+            ],
+          );
+          container.read(profilesProvider.notifier).setProfile(secondProfile);
+        }
+      };
+    globalState.appController = controller;
+
+    container = await mount(
+      tester,
+      width: 1200,
+      locale: const Locale('zh', 'CN'),
+      attachNavigatorKey: true,
+      profiles: const [],
+      catalogs: liveCatalogs,
+      health: liveHealth,
+      catalogTester: backend,
+    );
+
+    // Before initProvider completes (e.g. while disclaimer is pending), dialog has not popped yet.
+    expect(find.byType(URLFormDialog), findsNothing);
+    expect(find.byKey(const ValueKey('overview-empty-profiles')), findsOneWidget);
+
+    // Simulate cold-start init completion -> URLFormDialog pops automatically!
+    container.read(initProvider.notifier).value = true;
+    await tester.pumpAndSettle();
+    expect(find.byType(URLFormDialog), findsOneWidget);
+    expect(find.text('粘贴订阅链接，点击确定即可'), findsOneWidget);
+    expect(find.text('粘贴'), findsOneWidget);
+    expect(find.text('确定'), findsOneWidget);
+
+    // Clicking 确定 with empty input stays in dialog and shows inline validation error.
+    await tester.tap(find.byKey(const ValueKey('url-dialog-confirm')));
+    await tester.pumpAndSettle();
+    expect(find.byType(URLFormDialog), findsOneWidget);
+    expect(find.text('请先粘贴订阅链接'), findsOneWidget);
+
+    // Clicking 粘贴 extracts clean URL from noisy customer-service message.
+    await tester.tap(find.byKey(const ValueKey('url-dialog-paste')));
+    await tester.pumpAndSettle();
+    expect(find.text('请先粘贴订阅链接'), findsNothing);
+    expect(
+      tester.widget<TextField>(find.byType(TextField)).controller?.text,
+      'https://sub.example.com/v1/sub?token=first123',
+    );
+
+    // First submit fails -> dialog re-opens preserving the URL and showing friendly error!
+    await tester.tap(find.byKey(const ValueKey('url-dialog-confirm')));
+    await tester.pumpAndSettle();
+    expect(find.byType(URLFormDialog), findsOneWidget);
+    expect(find.textContaining('不是有效的订阅配置'), findsOneWidget);
+    expect(
+      tester.widget<TextField>(find.byType(TextField)).controller?.text,
+      'https://sub.example.com/v1/sub?token=first123',
+    );
+
+    // Second submit succeeds -> auto-runs testAll, skips 剩余流量 12ms dummy, selects 香港 01 (46ms), and starts proxy!
+    await tester.tap(find.byKey(const ValueKey('url-dialog-confirm')));
+    await tester.pumpAndSettle();
+    expect(find.byType(URLFormDialog), findsNothing);
+    expect(backend.all, hasLength(1));
+    expect(container.read(currentProfileIdProvider), 'first-sub');
+    expect(
+      container.read(profilesProvider).getProfile('first-sub')?.selectedMap,
+      {'Proxy': '香港 01'},
+    );
+    expect(controller.statusUpdates, contains(true));
+    expect(
+      find.text('已自动连接最快节点：新手订阅 · 香港 01（46 ms）'),
+      findsOneWidget,
+    );
+
+    // Adding a 2nd subscription when profiles already exist only adds it without switching active profile or re-testing.
+    await tester.tap(find.byKey(const ValueKey('overview-add-subscription')));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byType(TextField),
+      'https://sub.example.com/v1/sub?token=second456',
+    );
+    await tester.tap(find.byKey(const ValueKey('url-dialog-confirm')));
+    await tester.pumpAndSettle();
+    expect(backend.all, hasLength(1));
+    expect(container.read(currentProfileIdProvider), 'first-sub');
+    expect(
+      container.read(profilesProvider).getProfile('first-sub')?.selectedMap,
+      {'Proxy': '香港 01'},
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'zero-profile fallback & mid-session delete: selects 1st real node even when all tests fail ("即使可能不可用"), surfaces expiry reason, and deleting last profile stays on empty card without re-popping dialog',
+      (tester) async {
+    final now = DateTime(2026, 11, 11, 19, 0);
+    final expiredSec =
+        now.subtract(const Duration(days: 5)).millisecondsSinceEpoch ~/ 1000;
+    final liveHealth = <String, Map<String, NodeHealthRecord>>{};
+    final liveCatalogs = <String, ProfileCatalog>{};
+    late ProviderContainer container;
+
+    final expiredSub = Profile(
+      id: 'dead-sub',
+      label: '过期订阅',
+      url: 'https://sub.example.com/dead',
+      autoUpdateDuration: defaultUpdateDuration,
+      subscriptionInfo: SubscriptionInfo(
+        total: 100 * 1024 * 1024 * 1024,
+        upload: 0,
+        download: 10 * 1024 * 1024 * 1024,
+        expire: expiredSec,
+      ),
+    );
+
+    final backend = _CatalogTester()
+      ..onTestAll = (testedProfiles, url) async {
+        liveHealth['dead-sub'] = {
+          'exp-tip': NodeHealthRecord(
+            delayMs: -1,
+            testedAt: now,
+            testUrlHash: 'h',
+          ),
+          'dead-1': NodeHealthRecord(
+            delayMs: -1,
+            testedAt: now,
+            testUrlHash: 'h',
+          ),
+          'dead-2': NodeHealthRecord(
+            delayMs: -1,
+            testedAt: now,
+            testUrlHash: 'h',
+          ),
+        };
+        container.invalidate(nodeHealthEntriesProvider('dead-sub'));
+        return const DelayBatchResult(completed: 3, failed: 3);
+      };
+
+    final controller = _ProxyController()
+      ..onAddProfileFormURL = (url) async {
+        liveCatalogs['dead-sub'] = ProfileCatalog(
+          profileId: 'dead-sub',
+          fingerprint: 'fd',
+          status: ProfileCatalogStatus.ready,
+          nodes: [
+            _node('exp-tip', '套餐到期：2026-11-06')
+                .copyWith(selectGroups: const ['Proxy']),
+            _node('dead-1', '香港备用 A')
+                .copyWith(selectGroups: const ['Proxy']),
+            _node('dead-2', '新加坡备用 B')
+                .copyWith(selectGroups: const ['Proxy']),
+          ],
+        );
+        container.read(profilesProvider.notifier).setProfile(expiredSub);
+        container.read(currentProfileIdProvider.notifier).value = expiredSub.id;
+      }
+      ..onDeleteProfile = (id) async {
+        container.read(profilesProvider.notifier).deleteProfileById(id);
+        container.read(currentProfileIdProvider.notifier).value = null;
+      };
+    globalState.appController = controller;
+    globalState.appState = globalState.appState.copyWith(isInit: true);
+
+    container = await mount(
+      tester,
+      width: 1200,
+      locale: const Locale('zh', 'CN'),
+      attachNavigatorKey: true,
+      profiles: const [],
+      catalogs: liveCatalogs,
+      health: liveHealth,
+      catalogTester: backend,
+    );
+
+    // Auto-popped on mount since isInit == true and profiles is empty; user dismisses it first.
+    expect(find.byType(URLFormDialog), findsOneWidget);
+    await tester.tapAt(const Offset(10, 10));
+    await tester.pumpAndSettle();
+    expect(find.byType(URLFormDialog), findsNothing);
+    expect(find.byKey(const ValueKey('overview-empty-profiles')), findsOneWidget);
+
+    // User clicks empty-state CTA button and imports the expired/all-failed subscription.
+    await tester.tap(
+      find.byKey(const ValueKey('overview-empty-add-subscription')),
+    );
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), 'https://sub.example.com/dead');
+    await tester.tap(find.byKey(const ValueKey('url-dialog-confirm')));
+    await tester.pumpAndSettle();
+
+    // Even though ALL nodes failed (-1), skips 套餐到期 dummy ('套' U+5957 < '新' U+65B0),
+    // selects #1 sorted real node 新加坡备用 B, starts proxy, and warns about expiry!
+    expect(
+      container.read(profilesProvider).getProfile('dead-sub')?.selectedMap,
+      {'Proxy': '新加坡备用 B'},
+    );
+    expect(controller.statusUpdates, contains(true));
+    expect(find.textContaining('但该订阅已过期'), findsOneWidget);
+
+    // Delete the expired profile mid-session -> returns to empty card WITHOUT forcibly re-opening URLFormDialog!
+    await tester.tap(
+      find.byKey(const ValueKey('overview-delete-dead-sub')),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('确定'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('overview-empty-profiles')), findsOneWidget);
+    expect(find.byType(URLFormDialog), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'connection status bar, auto-start on Use, and available-only empty recovery render cleanly across 320px/1200px @ 2.0x text scale',
+      (tester) async {
+    final controller = _ProxyController();
+    globalState.appController = controller;
+    const profileA = Profile(
+      id: 'a',
+      label: '主力订阅',
+      url: 'https://sub.example.com/a',
+      autoUpdateDuration: defaultUpdateDuration,
+      currentGroupName: 'Proxy',
+      selectedMap: {'Proxy': '香港 01'},
+    );
+    const profileB = Profile(
+      id: 'b',
+      label: '备用订阅',
+      url: 'https://sub.example.com/b',
+      autoUpdateDuration: defaultUpdateDuration,
+    );
+    globalState.config = globalState.config.copyWith(
+      currentProfileId: 'a',
+      profiles: const [profileA, profileB],
+    );
+    globalState.appState = globalState.appState.copyWith(
+      groups: const [
+        Group(
+          name: 'Proxy',
+          type: GroupType.Selector,
+          hidden: false,
+          now: '香港 01',
+          all: [
+            Proxy(name: '香港 01', type: 'Shadowsocks'),
+            Proxy(name: '新加坡 01', type: 'Shadowsocks'),
+          ],
+        ),
+      ],
+    );
+
+    final container = await mount(
+      tester,
+      width: 1200,
+      locale: const Locale('zh', 'CN'),
+      profiles: const [profileA, profileB],
+      catalogs: {
+        'a': ProfileCatalog(
+          profileId: 'a',
+          fingerprint: 'fa',
+          status: ProfileCatalogStatus.ready,
+          nodes: [
+            _node('hk-1', '香港 01').copyWith(selectGroups: const ['Proxy']),
+            _node('sg-1', '新加坡 01').copyWith(selectGroups: const ['Proxy']),
+          ],
+        ),
+        'b': ProfileCatalog(
+          profileId: 'b',
+          fingerprint: 'fb',
+          status: ProfileCatalogStatus.ready,
+          nodes: [
+            _node('us-1', '美国 01').copyWith(selectGroups: const ['Proxy']),
+          ],
+        ),
+      },
+    );
+
+    // Disconnected state shows 代理未开启 + 开启代理 button.
+    expect(find.byKey(const ValueKey('overview-connection-bar')), findsOneWidget);
+    expect(find.textContaining('代理未开启'), findsOneWidget);
+    expect(find.text('开启代理'), findsOneWidget);
+
+    // Tapping an active node's 使用 while proxy is off automatically starts proxy!
+    await tester.tap(find.byKey(const ValueKey('overview-use-a-新加坡 01')));
+    await tester.pumpAndSettle();
+    expect(controller.statusUpdates, [true]);
+
+    // Tapping an inactive catalog node's 使用 while proxy is still off ALSO starts proxy & switches profile!
+    await tester.tap(find.byKey(const ValueKey('overview-use-b-us-1')));
+    await tester.pumpAndSettle();
+    expect(controller.statusUpdates, [true, true]);
+    expect(container.read(currentProfileIdProvider), 'b');
+
+    // Simulate runtime running -> bar turns green showing active profile & node + 关闭代理 button!
+    container.read(runTimeProvider.notifier).value = 1000;
+    await tester.pumpAndSettle();
+    expect(find.text('代理已开启 · 正在使用 备用订阅 · 美国 01'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('overview-proxy-toggle')));
+    await tester.pumpAndSettle();
+    expect(controller.statusUpdates, [true, true, false]);
+
+    // Turning on 仅显示可用 when all nodes are untested surfaces one-click 显示全部节点 recovery!
+    await tester.tap(find.byKey(const ValueKey('overview-available-only')));
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey('overview-available-only-empty')),
+      findsOneWidget,
+    );
+    await tester.tap(
+      find.byKey(const ValueKey('overview-reset-available-filter')),
+    );
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey('overview-available-only-empty')),
+      findsNothing,
+    );
+    expect(find.text('美国 01'), findsWidgets);
+
+    // Verify 2.0x text scaling at 320px and 1200px across locales (both empty & populated states).
+    for (final (width, locale, profs) in [
+      (320.0, const Locale('zh', 'CN'), const <Profile>[]),
+      (320.0, const Locale('zh', 'CN'), const <Profile>[profileA, profileB]),
+      (1200.0, const Locale('ru'), const <Profile>[profileA, profileB]),
+      (1200.0, const Locale('ja'), const <Profile>[profileA, profileB]),
+    ]) {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await mount(
+        tester,
+        width: width,
+        locale: locale,
+        profiles: profs,
+        child: MediaQuery(
+          data: MediaQueryData(
+            size: Size(width, 1000),
+            textScaler: const TextScaler.linear(2.0),
+          ),
+          child: const NodeOverviewView(),
+        ),
+        catalogs: {
+          'a': ProfileCatalog(
+            profileId: 'a',
+            fingerprint: 'fa',
+            status: ProfileCatalogStatus.ready,
+            nodes: [
+              _node('hk-1', '香港 01').copyWith(selectGroups: const ['Proxy']),
+            ],
+          ),
+          'b': ProfileCatalog(
+            profileId: 'b',
+            fingerprint: 'fb',
+            status: ProfileCatalogStatus.ready,
+            nodes: [
+              _node('us-1', '美国 01').copyWith(selectGroups: const ['Proxy']),
+            ],
+          ),
+        },
+      );
+      expect(tester.takeException(), isNull);
     }
   });
 }

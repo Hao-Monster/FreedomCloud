@@ -102,7 +102,8 @@
   "auto": "自动",
   "light": "浅色",
   "dark": "深色",
-  "importFromURL": "从URL导入",
+  "importFromURL": "粘贴订阅链接，点击确定即可",
+  "pasteFromClipboard": "粘贴",
   "submit": "提交",
   "doYouWantToPass": "添加配置文件从",
   "create": "创建",
@@ -903,7 +904,7 @@
   "nodeOverviewUpdateSubscription": "更新订阅",
   "nodeOverviewUpdatingShort": "更新中",
   "nodeOverviewAddSubscription": "添加订阅",
-  "nodeOverviewQuickUse": "点击使用",
+  "nodeOverviewQuickUse": "一键连最快",
   "nodeOverviewSelectProfileTitle": "切换配置",
   "nodeOverviewProfileCountBadge": "共 {count} 个",
   "@nodeOverviewProfileCountBadge": {
@@ -1278,6 +1279,72 @@
     "placeholders": {
       "count": {
         "type": "int"
+      }
+    }
+  },
+  "subscriptionUrlEmptyError": "请先粘贴订阅链接",
+  "subscriptionUrlInvalidError": "未识别到有效的 http(s):// 订阅链接，请检查复制内容",
+  "subscriptionClipboardEmptyError": "剪贴板为空，请先复制订阅链接",
+  "subscriptionImportTimeoutError": "拉取订阅超时或网络不通，请检查网络连接后重试",
+  "subscriptionImportAuthOrNotFoundError": "订阅链接无效或已失效，请确认复制完整或联系服务商",
+  "subscriptionImportInvalidConfigError": "该链接不是有效的订阅配置（可能误粘了网页地址），请复制正确的订阅链接",
+  "subscriptionImportGenericError": "导入订阅失败，请检查订阅链接是否正确后重试",
+  "nodeOverviewProxyConnectedWithNode": "代理已开启 · 正在使用 {profile} · {node}",
+  "@nodeOverviewProxyConnectedWithNode": {
+    "placeholders": {
+      "profile": {
+        "type": "String"
+      },
+      "node": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewProxyConnected": "代理已开启 · 网络流量已接管",
+  "nodeOverviewProxyDisconnected": "代理未开启 · 点击右侧按钮或任一节点「使用」即可上网",
+  "nodeOverviewProxyStarting": "正在开启代理…",
+  "nodeOverviewProxyStopping": "正在关闭代理…",
+  "nodeOverviewTurnOnProxy": "开启代理",
+  "nodeOverviewTurnOffProxy": "关闭代理",
+  "nodeOverviewEmptyTitle": "还没有添加订阅配置",
+  "nodeOverviewEmptySubtitle": "粘贴订阅链接并点击确定，软件将自动测速并连接最快节点",
+  "nodeOverviewAvailableFilterEmpty": "当前没有测速可用的节点（可能尚未测速或节点全部超时）",
+  "nodeOverviewShowAllNodes": "显示全部节点",
+  "nodeOverviewAutoConnectedBest": "已自动连接最快节点：{profile} · {node}（{delay} ms）",
+  "@nodeOverviewAutoConnectedBest": {
+    "placeholders": {
+      "profile": {
+        "type": "String"
+      },
+      "node": {
+        "type": "String"
+      },
+      "delay": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewAutoSelectedExpiredWarning": "已选中节点 {node}，但该订阅已过期，请更换订阅或续费后点击更新订阅",
+  "@nodeOverviewAutoSelectedExpiredWarning": {
+    "placeholders": {
+      "node": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewAutoSelectedTrafficExhaustedWarning": "已选中节点 {node}，但该订阅剩余流量已用尽，请续费或更换订阅",
+  "@nodeOverviewAutoSelectedTrafficExhaustedWarning": {
+    "placeholders": {
+      "node": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewAutoSelectedAllFailedWarning": "已自动选中 {node}（当前节点测速均未连通，若无法上网请更新订阅或切换其他节点）",
+  "@nodeOverviewAutoSelectedAllFailedWarning": {
+    "placeholders": {
+      "node": {
+        "type": "String"
       }
     }
   }

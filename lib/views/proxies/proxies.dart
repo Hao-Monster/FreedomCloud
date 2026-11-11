@@ -214,10 +214,11 @@ class _ProxiesViewState extends ConsumerState<ProxiesView> with PageMixin {
   }
 }
 
-bool _showAllProfiles(WidgetRef ref) =>
-    ref.watch(nodeOverviewEnabledProvider) &&
-    ref.watch(profilesProvider.select((profiles) => profiles.length)) >= 2 &&
-    ref.watch(proxiesScopeProvider) == ProxiesScope.all;
+bool _showAllProfiles(WidgetRef ref) {
+  if (!ref.watch(nodeOverviewEnabledProvider)) return false;
+  final count = ref.watch(profilesProvider.select((profiles) => profiles.length));
+  return count == 0 || ref.watch(proxiesScopeProvider) == ProxiesScope.all;
+}
 
 class _ModeSelectorAction extends ConsumerWidget {
   const _ModeSelectorAction();

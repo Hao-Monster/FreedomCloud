@@ -5,7 +5,7 @@ import 'dart:io';
 import 'package:crypto/crypto.dart';
 import 'package:flclashx/clash/core.dart';
 import 'package:flclashx/clash/interface.dart';
-import 'package:flclashx/common/constant.dart';
+import 'package:flclashx/common/common.dart';
 import 'package:flclashx/common/delay_test_coordinator.dart';
 import 'package:flclashx/common/delay_tests.dart';
 import 'package:flclashx/common/fixed.dart';
@@ -35,11 +35,61 @@ enum ProxiesScope { current, all }
 final nodeOverviewEnabledProvider =
     Provider<bool>((ref) => nodeOverviewEnabled);
 final proxiesScopeProvider =
-    StateProvider<ProxiesScope>((ref) => ProxiesScope.current);
+    StateProvider<ProxiesScope>((ref) => ProxiesScope.all);
+final coldStartZeroProfilePromptedProvider =
+    StateProvider<bool>((ref) => false);
 final cachedProfileCatalogsProvider =
     StateProvider<Map<String, ProfileCatalog>>((ref) => const {});
 final nodeOverviewTestUrlProvider =
     Provider<String>((ref) => ref.watch(getRealTestUrlProvider(null)));
+
+final RegExp _informationalProxyPattern = RegExp(
+  r'(剩余流量|可用流量|已用流量|总流量|流量剩余|流量已用|流量重置|距离下次重置|下次重置|重置剩余'
+  r'|套餐到期|到期时间|过期时间|有效期限|有效期至|订阅到期'
+  r'|官网|官方网址|最新网址|备用网址|发布页|防失联|机场地址'
+  r'|公告\s*[:：]|通知\s*[:：]|群组|客服|售后|请更新订阅'
+  r'|^(DIRECT|REJECT|REJECT-DROP|PASS)$'
+  r'|\b(remaining\s+traffic|traffic\s+reset|expire\s*date|official\s+website)\b)',
+  caseSensitive: false,
+);
+
+/// Identifies provider billing/announcement placeholder entries commonly placed
+/// at the top of subscription node lists so auto-selection prefers real proxies.
+bool isInformationalProxyName(String name) {
+  final trimmed = name.trim();
+  if (trimmed.isEmpty) return true;
+  return _informationalProxyPattern.hasMatch(trimmed);
+}
+
+String formatSubscriptionImportError(Object error) {
+  final text = error.toString().toLowerCase();
+  if (text.contains('timeout') ||
+      text.contains('timed out') ||
+      text.contains('socketexception') ||
+      text.contains('connection error') ||
+      text.contains('failed host lookup') ||
+      text.contains('handshakeexception') ||
+      text.contains('network is unreachable')) {
+    return appLocalizations.subscriptionImportTimeoutError;
+  }
+  if (text.contains('401') ||
+      text.contains('403') ||
+      text.contains('404') ||
+      text.contains('unauthorized') ||
+      text.contains('forbidden') ||
+      text.contains('not found')) {
+    return appLocalizations.subscriptionImportAuthOrNotFoundError;
+  }
+  if (text.contains('formatexception') ||
+      text.contains('yaml') ||
+      text.contains('<!doctype') ||
+      text.contains('<html') ||
+      text.contains('invalid') ||
+      text.contains('validate')) {
+    return appLocalizations.subscriptionImportInvalidConfigError;
+  }
+  return appLocalizations.subscriptionImportGenericError;
+}
 
 bool _isRuntimeSnapshotLiveForProfile({
   required String? verifiedRuntimeProfileId,

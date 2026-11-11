@@ -128,7 +128,7 @@
   "auto": "Авто",
   "light": "Светлый",
   "dark": "Темный",
-  "importFromURL": "Импорт из URL",
+  "importFromURL": "Вставьте ссылку подписки и нажмите ОК",
   "submit": "Отправить",
   "doYouWantToPass": "Добавляем профиль по адресу",
   "create": "Создать",
@@ -823,7 +823,7 @@
   "nodeOverviewUpdateSubscription": "Обновить",
   "nodeOverviewUpdatingShort": "Обновление",
   "nodeOverviewAddSubscription": "Добавить подписку",
-  "nodeOverviewQuickUse": "Использовать",
+  "nodeOverviewQuickUse": "Быстрейший",
   "nodeOverviewSelectProfileTitle": "Выбор профиля",
   "nodeOverviewProfileCountBadge": "Профилей: {count}",
   "@nodeOverviewProfileCountBadge": {
@@ -1195,6 +1195,72 @@
     "placeholders": {
       "count": {
         "type": "int"
+      }
+    }
+  },
+  "subscriptionUrlEmptyError": "Сначала вставьте ссылку подписки",
+  "subscriptionUrlInvalidError": "Не найдена корректная http(s):// ссылка подписки",
+  "subscriptionClipboardEmptyError": "Буфер обмена пуст. Сначала скопируйте ссылку",
+  "subscriptionImportTimeoutError": "Превышено время ожидания загрузки подписки. Проверьте сеть",
+  "subscriptionImportAuthOrNotFoundError": "Ссылка подписки недействительна или устарела",
+  "subscriptionImportInvalidConfigError": "Ссылка не содержит корректной конфигурации подписки",
+  "subscriptionImportGenericError": "Не удалось импортировать подписку. Проверьте ссылку",
+  "nodeOverviewProxyConnectedWithNode": "Прокси включён · {profile} · {node}",
+  "@nodeOverviewProxyConnectedWithNode": {
+    "placeholders": {
+      "profile": {
+        "type": "String"
+      },
+      "node": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewProxyConnected": "Прокси включён · Подключено",
+  "nodeOverviewProxyDisconnected": "Прокси выключен · Нажмите Включить или Использовать у узла",
+  "nodeOverviewProxyStarting": "Запуск прокси…",
+  "nodeOverviewProxyStopping": "Остановка прокси…",
+  "nodeOverviewTurnOnProxy": "Включить",
+  "nodeOverviewTurnOffProxy": "Выключить",
+  "nodeOverviewEmptyTitle": "Нет добавленных подписок",
+  "nodeOverviewEmptySubtitle": "Вставьте ссылку подписки — приложение автоматически проверит задержку и подключит лучший узел",
+  "nodeOverviewAvailableFilterEmpty": "Сейчас нет проверенных доступных узлов (не проверены или недоступны)",
+  "nodeOverviewShowAllNodes": "Показать все узлы",
+  "nodeOverviewAutoConnectedBest": "Автоподключение к лучшему узлу: {profile} · {node} ({delay} мс)",
+  "@nodeOverviewAutoConnectedBest": {
+    "placeholders": {
+      "profile": {
+        "type": "String"
+      },
+      "node": {
+        "type": "String"
+      },
+      "delay": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewAutoSelectedExpiredWarning": "Выбран узел {node}, но срок подписки истёк. Продлите или замените подписку",
+  "@nodeOverviewAutoSelectedExpiredWarning": {
+    "placeholders": {
+      "node": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewAutoSelectedTrafficExhaustedWarning": "Выбран узел {node}, но трафик подписки исчерпан",
+  "@nodeOverviewAutoSelectedTrafficExhaustedWarning": {
+    "placeholders": {
+      "node": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewAutoSelectedAllFailedWarning": "Выбран узел {node} (все узлы не прошли проверку задержки; обновите подписку или смените узел)",
+  "@nodeOverviewAutoSelectedAllFailedWarning": {
+    "placeholders": {
+      "node": {
+        "type": "String"
       }
     }
   }

@@ -25,17 +25,15 @@ class Navigation {
           key: GlobalObjectKey(PageLabel.dashboard),
         ),
       ),
-      NavigationItem(
-        icon: const Icon(Icons.travel_explore_rounded),
+      const NavigationItem(
+        icon: Icon(Icons.travel_explore_rounded),
         label: PageLabel.proxies,
-        view: const ProxiesView(
+        view: ProxiesView(
           key: GlobalObjectKey(
             PageLabel.proxies,
           ),
         ),
-        modes: hasProxies
-            ? [NavigationItemMode.mobile, NavigationItemMode.desktop]
-            : [],
+        modes: [NavigationItemMode.mobile, NavigationItemMode.desktop],
       ),
       const NavigationItem(
         icon: Icon(Icons.account_circle_rounded),

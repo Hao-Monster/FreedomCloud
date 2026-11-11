@@ -350,7 +350,7 @@ class _$AppStateImpl implements _AppState {
   const _$AppStateImpl(
       {this.isInit = false,
       this.backBlock = false,
-      this.pageLabel = PageLabel.dashboard,
+      this.pageLabel = PageLabel.proxies,
       final List<Package> packages = const [],
       this.sortNum = 0,
       required this.viewSize,

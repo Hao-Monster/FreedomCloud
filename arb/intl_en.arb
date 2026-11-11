@@ -128,7 +128,7 @@
   "auto": "Auto",
   "light": "Light",
   "dark": "Dark",
-  "importFromURL": "Import from URL",
+  "importFromURL": "Paste subscription link and tap Confirm",
   "submit": "Submit",
   "doYouWantToPass": "Adding profile from",
   "create": "Create",
@@ -968,7 +968,7 @@
   "nodeOverviewUpdateSubscription": "Update",
   "nodeOverviewUpdatingShort": "Updating",
   "nodeOverviewAddSubscription": "Add subscription",
-  "nodeOverviewQuickUse": "Quick use",
+  "nodeOverviewQuickUse": "Connect fastest",
   "nodeOverviewSelectProfileTitle": "Switch profile",
   "nodeOverviewProfileCountBadge": "{count} profiles",
   "@nodeOverviewProfileCountBadge": {
@@ -1340,6 +1340,72 @@
     "placeholders": {
       "count": {
         "type": "int"
+      }
+    }
+  },
+  "subscriptionUrlEmptyError": "Please paste a subscription link first",
+  "subscriptionUrlInvalidError": "No valid http(s):// subscription link found",
+  "subscriptionClipboardEmptyError": "Clipboard is empty. Copy a subscription link first",
+  "subscriptionImportTimeoutError": "Timed out fetching subscription. Check your network and retry",
+  "subscriptionImportAuthOrNotFoundError": "Subscription link is invalid or expired. Verify the URL or contact support",
+  "subscriptionImportInvalidConfigError": "This URL did not return a valid subscription config (it may be a webpage)",
+  "subscriptionImportGenericError": "Failed to import subscription. Check the link and try again",
+  "nodeOverviewProxyConnectedWithNode": "Proxy on · Using {profile} · {node}",
+  "@nodeOverviewProxyConnectedWithNode": {
+    "placeholders": {
+      "profile": {
+        "type": "String"
+      },
+      "node": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewProxyConnected": "Proxy on · Traffic connected",
+  "nodeOverviewProxyDisconnected": "Proxy off · Tap Turn on or Use on any node to connect",
+  "nodeOverviewProxyStarting": "Starting proxy…",
+  "nodeOverviewProxyStopping": "Stopping proxy…",
+  "nodeOverviewTurnOnProxy": "Turn on",
+  "nodeOverviewTurnOffProxy": "Turn off",
+  "nodeOverviewEmptyTitle": "No subscription profile yet",
+  "nodeOverviewEmptySubtitle": "Paste your subscription link and confirm to auto-test and connect to the fastest node",
+  "nodeOverviewAvailableFilterEmpty": "No tested available nodes right now (untested or all timed out)",
+  "nodeOverviewShowAllNodes": "Show all nodes",
+  "nodeOverviewAutoConnectedBest": "Auto-connected to fastest node: {profile} · {node} ({delay} ms)",
+  "@nodeOverviewAutoConnectedBest": {
+    "placeholders": {
+      "profile": {
+        "type": "String"
+      },
+      "node": {
+        "type": "String"
+      },
+      "delay": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewAutoSelectedExpiredWarning": "Selected {node}, but this subscription has expired. Renew or replace it",
+  "@nodeOverviewAutoSelectedExpiredWarning": {
+    "placeholders": {
+      "node": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewAutoSelectedTrafficExhaustedWarning": "Selected {node}, but subscription traffic is exhausted. Renew or replace it",
+  "@nodeOverviewAutoSelectedTrafficExhaustedWarning": {
+    "placeholders": {
+      "node": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewAutoSelectedAllFailedWarning": "Auto-selected {node} (all nodes failed latency check; update subscription or try another node if offline)",
+  "@nodeOverviewAutoSelectedAllFailedWarning": {
+    "placeholders": {
+      "node": {
+        "type": "String"
       }
     }
   }

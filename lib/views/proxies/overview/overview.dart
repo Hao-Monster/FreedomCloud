@@ -34,8 +34,9 @@ class NodeOverviewScopeView extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final enabled = ref.watch(nodeOverviewEnabledProvider);
     final count = ref.watch(profilesProvider.select((value) => value.length));
-    if (!enabled || count < 2) return currentView;
+    if (!enabled) return currentView;
     ref.watch(_overviewSwitchTrackerProvider);
+    if (count == 0) return const NodeOverviewView();
     final scope = ref.watch(proxiesScopeProvider);
     return scope == ProxiesScope.all ? const NodeOverviewView() : currentView;
   }
@@ -48,7 +49,7 @@ class NodeOverviewScopeAction extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final enabled = ref.watch(nodeOverviewEnabledProvider);
     final count = ref.watch(profilesProvider.select((value) => value.length));
-    if (!enabled || count < 2) return const SizedBox.shrink();
+    if (!enabled || count == 0) return const SizedBox.shrink();
     final scope = ref.watch(proxiesScopeProvider);
     final labels = {
       ProxiesScope.current: appLocalizations.nodeOverviewCurrentProfile,
@@ -326,6 +327,7 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
   final Set<String> _deletingProfileIds = <String>{};
   bool _syncingAll = false;
   bool _importingSubscription = false;
+  bool _localProxyTogglePending = false;
   _IndexScanEpochState _scanEpoch = _IndexScanEpochState(0);
   bool _disposed = false;
   Timer? _clock;
@@ -558,6 +560,25 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
             if (mounted && !_disposed) _scheduleCountryIndexScan();
           });
         }),
+      )
+      ..add(
+        ref.listenManual<bool>(
+          initProvider,
+          (previous, isInit) {
+            if (!isInit) return;
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (!mounted || _disposed) return;
+              if (ref.read(coldStartZeroProfilePromptedProvider)) return;
+              ref.read(coldStartZeroProfilePromptedProvider.notifier).state =
+                  true;
+              if (ref.read(appSettingProvider).silentLaunch) return;
+              if (!_tickerEnabled) return;
+              if (ref.read(profilesProvider).isNotEmpty) return;
+              unawaited(_openUrlSubscriptionImport());
+            });
+          },
+          fireImmediately: true,
+        ),
       );
     // Schedule background country indexing one frame after initial sliver
     // visibility settles so visible slivers attach their own catalog watches
@@ -763,6 +784,46 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
     );
   }
 
+  void _ensureProxyStartedIfStopped() {
+    if (!globalState.isAppControllerReady) return;
+    final isRunning = ref.read(runTimeProvider) != null;
+    final pending = ref.read(statusSwitchPendingProvider);
+    if (!isRunning && pending != true) {
+      unawaited(
+        globalState.appController
+            .updateStatus(true)
+            .catchError((Object _) {}),
+      );
+    }
+  }
+
+  Future<void> _toggleProxyMasterSwitch() async {
+    if (!globalState.isAppControllerReady || _localProxyTogglePending) return;
+    final providerPending = ref.read(statusSwitchPendingProvider);
+    final startCancelable = ref.read(statusStartCancelableProvider);
+    if (providerPending != null) {
+      if (providerPending && startCancelable) {
+        await globalState.appController.updateStatus(false);
+      }
+      return;
+    }
+    final isStart = ref.read(runTimeProvider) != null;
+    setState(() {
+      _localProxyTogglePending = true;
+    });
+    try {
+      await globalState.appController.updateStatus(!isStart);
+    } finally {
+      if (mounted) {
+        setState(() {
+          _localProxyTogglePending = false;
+        });
+      } else {
+        _localProxyTogglePending = false;
+      }
+    }
+  }
+
   void _useActiveNode(Profile profile, String groupName, String proxyName) {
     detectionState.notifyRoutingChanged();
     ref.read(nodeCountryResolverProvider).markSwitchingNode();
@@ -771,6 +832,7 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
         ..updateCurrentSelectedMap(groupName, proxyName)
         ..changeProxyDebounce(groupName, proxyName);
     }
+    _ensureProxyStartedIfStopped();
     final current =
         ref.read(profilesProvider).getProfile(profile.id) ?? profile;
     if (current.selectedMap[groupName] != proxyName ||
@@ -859,6 +921,7 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
       tracker.feedback = appLocalizations.nodeOverviewSwitchedToNode(
           updated.label ?? updated.id, node.name);
     }
+    _ensureProxyStartedIfStopped();
     if (mounted) {
       setState(() {
         _feedback = tracker.feedback;
@@ -1018,26 +1081,167 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
     }
   }
 
-  Future<void> _openUrlSubscriptionImport() async {
+  bool _isTrafficExhausted(Profile profile) {
+    final info = profile.subscriptionInfo;
+    if (info == null || info.total <= 0) return false;
+    return info.upload + info.download >= info.total;
+  }
+
+  Future<void> _autoTestAndActivateFirstProfile(Profile imported) async {
+    if (!mounted || _disposed) return;
+    if (ref.read(currentProfileIdProvider) == null) {
+      ref.read(currentProfileIdProvider.notifier).value = imported.id;
+    }
+    final testUrl = ref.read(nodeOverviewTestUrlProvider);
+    try {
+      await _tester.testAll([imported], testUrl);
+    } catch (_) {
+      // Proceed to fallback node selection even if latency test could not run.
+    }
+    if (!mounted || _disposed) return;
+    final latest = ref.read(profilesProvider).getProfile(imported.id);
+    if (latest == null) return;
+
+    ProfileCatalog? catalog =
+        ref.read(cachedProfileCatalogsProvider)[latest.id];
+    if (catalog == null || catalog.status == ProfileCatalogStatus.loading) {
+      try {
+        catalog = await ref.read(profileCatalogProvider(latest.id).future);
+      } catch (_) {
+        catalog = null;
+      }
+    }
+    if (!mounted || _disposed) return;
+
+    final configuredMode = ref.read(patchClashConfigProvider).mode;
+    final effectiveMode =
+        configuredMode == Mode.direct ? Mode.rule : configuredMode;
+    final health = ref.read(nodeHealthEntriesProvider(latest.id));
+
+    if (catalog != null && catalog.nodes.isNotEmpty) {
+      final selectable = <(CatalogNode, String)>[];
+      for (final node in catalog.nodes) {
+        final group = _targetGroupForCatalogNode(latest, node, effectiveMode);
+        if (group != null) {
+          selectable.add((node, group));
+        }
+      }
+      if (selectable.isNotEmpty) {
+        final nonInfo = selectable
+            .where((pair) => !isInformationalProxyName(pair.$1.name))
+            .toList();
+        final pool = nonInfo.isNotEmpty ? nonInfo : selectable;
+        final candidateNodes = [for (final pair in pool) pair.$1];
+        _sortNodes(candidateNodes, health, ProxiesSortType.delay);
+        final chosenNode = candidateNodes.first;
+        final chosenGroup =
+            pool.firstWhere((pair) => identical(pair.$1, chosenNode)).$2;
+        final chosenDelay = _nodeHealth(chosenNode, health)?.delayMs;
+
+        if (configuredMode == Mode.direct) {
+          ref
+              .read(patchClashConfigProvider.notifier)
+              .updateState((s) => s.copyWith(mode: Mode.rule));
+        }
+        _useCatalogNode(latest, chosenNode, chosenGroup);
+
+        final String postFeedback;
+        if (chosenDelay != null && chosenDelay > 0) {
+          postFeedback = appLocalizations.nodeOverviewAutoConnectedBest(
+            latest.label ?? latest.id,
+            chosenNode.name,
+            chosenDelay,
+          );
+        } else if (_expired(latest, DateTime.now())) {
+          postFeedback = appLocalizations
+              .nodeOverviewAutoSelectedExpiredWarning(chosenNode.name);
+        } else if (_isTrafficExhausted(latest)) {
+          postFeedback = appLocalizations
+              .nodeOverviewAutoSelectedTrafficExhaustedWarning(chosenNode.name);
+        } else {
+          postFeedback = appLocalizations
+              .nodeOverviewAutoSelectedAllFailedWarning(chosenNode.name);
+        }
+        ref.read(_overviewSwitchTrackerProvider).feedback = postFeedback;
+        if (mounted) {
+          setState(() {
+            _feedback = postFeedback;
+          });
+        }
+        return;
+      }
+    }
+
+    final groups = ref.read(currentGroupsStateProvider).value;
+    final groupNames = {for (final g in ref.read(groupsProvider)) g.name};
+    for (final group in groups) {
+      if (group.type != GroupType.Selector) continue;
+      final leaves = group.all.where((p) => _isLeaf(p, groupNames)).toList();
+      if (leaves.isEmpty) continue;
+      final realLeaves =
+          leaves.where((p) => !isInformationalProxyName(p.name)).toList();
+      final chosen = (realLeaves.isNotEmpty ? realLeaves : leaves).first;
+      _useActiveNode(latest, group.name, chosen.name);
+      return;
+    }
+    _ensureProxyStartedIfStopped();
+  }
+
+  Future<void> _openUrlSubscriptionImport({
+    String? initialUrl,
+    String? initialErrorText,
+  }) async {
     if (_importingSubscription) return;
     setState(() {
       _importingSubscription = true;
     });
     try {
-      final String? url;
-      if (globalState.navigatorKey.currentState != null) {
-        url = await globalState.showCommonDialog<String>(
-          child: const URLFormDialog(),
+      var nextInitialUrl = initialUrl;
+      var nextInitialError = initialErrorText;
+      while (mounted && !_disposed) {
+        final String? url;
+        final dialog = URLFormDialog(
+          initialUrl: nextInitialUrl,
+          initialErrorText: nextInitialError,
         );
-      } else {
-        if (!mounted) return;
-        url = await showDialog<String>(
-          context: context,
-          builder: (_) => const URLFormDialog(),
-        );
-      }
-      if (url != null && url.isNotEmpty && globalState.isAppControllerReady) {
-        await globalState.appController.addProfileFormURL(url);
+        if (globalState.navigatorKey.currentState != null) {
+          url = await globalState.showCommonDialog<String>(
+            child: dialog,
+          );
+        } else {
+          if (!mounted) return;
+          url = await showDialog<String>(
+            context: context,
+            builder: (_) => dialog,
+          );
+        }
+        if (url == null || url.isEmpty || !globalState.isAppControllerReady) {
+          return;
+        }
+        final wasZeroProfiles = ref.read(profilesProvider).isEmpty;
+        globalState.lastSubscriptionImportError = null;
+        globalState.suppressNextSubscriptionImportErrorDialog = true;
+        String? importError;
+        try {
+          await globalState.appController.addProfileFormURL(url);
+          importError = globalState.lastSubscriptionImportError;
+        } catch (err) {
+          importError = formatSubscriptionImportError(err);
+        } finally {
+          globalState.suppressNextSubscriptionImportErrorDialog = false;
+        }
+        if (importError != null) {
+          nextInitialUrl = url;
+          nextInitialError = importError;
+          continue;
+        }
+        if (wasZeroProfiles && mounted && !_disposed) {
+          final imported = ref.read(profilesProvider).firstOrNull;
+          if (imported != null) {
+            unawaited(_autoTestAndActivateFirstProfile(imported));
+          }
+        }
+        return;
       }
     } finally {
       if (mounted) {
@@ -1080,7 +1284,7 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
               version != tracker.pendingVersion)) {
         if (tracker.pendingProfileLabel != null &&
             tracker.pendingNodeName != null) {
-          tracker.feedback = appLocalizations.nodeOverviewSwitchedToNode(
+          tracker.feedback ??= appLocalizations.nodeOverviewSwitchedToNode(
               tracker.pendingProfileLabel!, tracker.pendingNodeName!);
           _feedback = tracker.feedback;
         }
@@ -1406,12 +1610,18 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
                   .compareTo(b.proxy.name.toLowerCase());
             });
           }
-          for (final entry in rows) {
-            if (entry.selectGroup != null &&
-                (entry.delay == null || entry.delay! >= 0)) {
-              final targetGroup = entry.selectGroup!;
-              final targetProxy = entry.proxy.name;
-              return () => _useActiveNode(profile, targetGroup, targetProxy);
+          for (final allowInformational in const [false, true]) {
+            for (final entry in rows) {
+              if (!allowInformational &&
+                  isInformationalProxyName(entry.proxy.name)) {
+                continue;
+              }
+              if (entry.selectGroup != null &&
+                  (entry.delay == null || entry.delay! >= 0)) {
+                final targetGroup = entry.selectGroup!;
+                final targetProxy = entry.proxy.name;
+                return () => _useActiveNode(profile, targetGroup, targetProxy);
+              }
             }
           }
           return null;
@@ -1451,14 +1661,19 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
           continue;
         }
         _sortNodes(nodes, health, sort);
-        for (final node in nodes) {
-          final delayMs = _nodeHealth(node, health)?.delayMs;
-          if (delayMs != null && delayMs < 0) {
-            continue;
-          }
-          final targetGroup = _targetGroupForCatalogNode(profile, node, mode);
-          if (targetGroup != null) {
-            return () => _useCatalogNode(profile, node, targetGroup);
+        for (final allowInformational in const [false, true]) {
+          for (final node in nodes) {
+            if (!allowInformational && isInformationalProxyName(node.name)) {
+              continue;
+            }
+            final delayMs = _nodeHealth(node, health)?.delayMs;
+            if (delayMs != null && delayMs < 0) {
+              continue;
+            }
+            final targetGroup = _targetGroupForCatalogNode(profile, node, mode);
+            if (targetGroup != null) {
+              return () => _useCatalogNode(profile, node, targetGroup);
+            }
           }
         }
         return null;
@@ -1467,6 +1682,45 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
     }
 
     final quickUseAction = resolveQuickUseAction();
+    final isProxyRunning = ref.watch(runTimeProvider.select((s) => s != null));
+    final statusSwitchPending = ref.watch(statusSwitchPendingProvider);
+    final statusStartCancelable = ref.watch(statusStartCancelableProvider);
+    final activeProfileObj =
+        activeId == null ? null : profiles.getProfile(activeId);
+    String? activeNodeLabel;
+    if (activeProfileObj != null) {
+      final preferredGroup = activeProfileObj.currentGroupName;
+      if (currentGroups.isNotEmpty && isLiveActive(activeProfileObj)) {
+        Group? targetGroup;
+        if (preferredGroup != null) {
+          targetGroup = currentGroups
+              .where((g) => g.name == preferredGroup)
+              .firstOrNull;
+        }
+        targetGroup ??= currentGroups
+            .where((g) => g.type == GroupType.Selector)
+            .firstOrNull;
+        if (targetGroup != null) {
+          activeNodeLabel = (targetGroup.type == GroupType.Selector
+                  ? activeProfileObj.selectedMap[targetGroup.name]
+                  : null) ??
+              targetGroup.now ??
+              activeProfileObj.selectedMap[targetGroup.name];
+        }
+      }
+      activeNodeLabel ??= preferredGroup != null
+          ? activeProfileObj.selectedMap[preferredGroup]
+          : activeProfileObj.selectedMap.values.firstOrNull;
+    }
+    final visibleMatchingNodeCount =
+        countryCounts.values.fold<int>(0, (sum, count) => sum + count);
+    final availableFilterHidAllNodes = profiles.isNotEmpty &&
+        _availableOnly &&
+        !searching &&
+        activeCountry == null &&
+        scopeCountries.isNotEmpty &&
+        visibleMatchingNodeCount == 0 &&
+        !anyVisibleCatalogLoading;
     final now = DateTime.now();
     return LayoutBuilder(builder: (context, constraints) {
       final wide = !isMobile && constraints.maxWidth > maxLaptopWidth;
@@ -1662,6 +1916,20 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
+                  if (profiles.isNotEmpty)
+                    _OverviewConnectionStatusBar(
+                      key: const ValueKey('overview-connection-bar'),
+                      isRunning: isProxyRunning,
+                      pendingTarget: statusSwitchPending ??
+                          (_localProxyTogglePending ? !isProxyRunning : null),
+                      startCancelable: statusStartCancelable,
+                      activeProfileLabel:
+                          activeProfileObj?.label ?? activeProfileObj?.id,
+                      activeNodeName: activeNodeLabel,
+                      onToggle: globalState.isAppControllerReady
+                          ? () => unawaited(_toggleProxyMasterSwitch())
+                          : null,
+                    ),
                   _OverviewQuickWorkflowBar(
                     key: const ValueKey('overview-workflow-bar'),
                     onAddSubscription: _importingSubscription
@@ -1720,6 +1988,25 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
                               onUseActive: _useActiveNode,
                               onUseCatalog: _useCatalogNode,
                               now: now),
+                        if (profiles.isEmpty)
+                          SliverToBoxAdapter(
+                            child: _OverviewEmptyProfilesCard(
+                              key: const ValueKey('overview-empty-profiles'),
+                              onAddSubscription: _importingSubscription
+                                  ? null
+                                  : () =>
+                                      unawaited(_openUrlSubscriptionImport()),
+                            ),
+                          ),
+                        if (availableFilterHidAllNodes)
+                          SliverToBoxAdapter(
+                            child: _OverviewAvailableFilterEmptyBanner(
+                              key: const ValueKey(
+                                  'overview-available-only-empty'),
+                              onShowAllNodes: () =>
+                                  setState(() => _availableOnly = false),
+                            ),
+                          ),
                         if (selected == null &&
                             activeCountry != null &&
                             activeCountryMatchCount == 0 &&
@@ -1742,6 +2029,252 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
         )),
       ]);
     });
+  }
+}
+
+class _OverviewConnectionStatusBar extends StatelessWidget {
+  const _OverviewConnectionStatusBar({
+    super.key,
+    required this.isRunning,
+    required this.pendingTarget,
+    required this.startCancelable,
+    required this.activeProfileLabel,
+    required this.activeNodeName,
+    required this.onToggle,
+  });
+
+  final bool isRunning;
+  final bool? pendingTarget;
+  final bool startCancelable;
+  final String? activeProfileLabel;
+  final String? activeNodeName;
+  final VoidCallback? onToggle;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
+    final isBusy = pendingTarget != null;
+    final effectiveConnected = pendingTarget ?? isRunning;
+    final green = isDark ? const Color(0xFF4ADE80) : const Color(0xFF15803D);
+
+    final String statusText;
+    if (pendingTarget == true) {
+      statusText = appLocalizations.nodeOverviewProxyStarting;
+    } else if (pendingTarget == false) {
+      statusText = appLocalizations.nodeOverviewProxyStopping;
+    } else if (isRunning) {
+      final hasNode = activeProfileLabel != null &&
+          activeNodeName != null &&
+          activeNodeName!.trim().isNotEmpty;
+      statusText = hasNode
+          ? appLocalizations.nodeOverviewProxyConnectedWithNode(
+              activeProfileLabel!,
+              activeNodeName!,
+            )
+          : appLocalizations.nodeOverviewProxyConnected;
+    } else {
+      statusText = appLocalizations.nodeOverviewProxyDisconnected;
+    }
+
+    final bgColor = effectiveConnected
+        ? green.withValues(alpha: isDark ? 0.14 : 0.09)
+        : colors.surfaceContainerLow.withValues(alpha: isDark ? 0.72 : 0.88);
+    final borderColor = effectiveConnected
+        ? green.withValues(alpha: isDark ? 0.42 : 0.32)
+        : colors.outlineVariant.withValues(alpha: isDark ? 0.55 : 0.70);
+
+    final canPress = onToggle != null &&
+        (!isBusy || (pendingTarget == true && startCancelable));
+    final buttonLabel = (isRunning || (pendingTarget == true && startCancelable))
+        ? appLocalizations.nodeOverviewTurnOffProxy
+        : appLocalizations.nodeOverviewTurnOnProxy;
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: bgColor,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: borderColor),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          child: Row(
+            children: [
+              if (isBusy)
+                SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: effectiveConnected ? green : colors.primary,
+                  ),
+                )
+              else
+                Icon(
+                  isRunning
+                      ? Icons.shield_rounded
+                      : Icons.power_settings_new_rounded,
+                  size: 18,
+                  color: isRunning ? green : colors.onSurfaceVariant,
+                ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  statusText,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    fontWeight:
+                        isRunning ? FontWeight.w600 : FontWeight.w500,
+                    color: colors.onSurface,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              if (isRunning || (pendingTarget == true && startCancelable))
+                OutlinedButton(
+                  key: const ValueKey('overview-proxy-toggle'),
+                  onPressed: canPress ? onToggle : null,
+                  style: OutlinedButton.styleFrom(
+                    visualDensity: VisualDensity.compact,
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  ),
+                  child: Text(buttonLabel),
+                )
+              else
+                FilledButton(
+                  key: const ValueKey('overview-proxy-toggle'),
+                  onPressed: canPress ? onToggle : null,
+                  style: FilledButton.styleFrom(
+                    visualDensity: VisualDensity.compact,
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  ),
+                  child: Text(buttonLabel),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _OverviewEmptyProfilesCard extends StatelessWidget {
+  const _OverviewEmptyProfilesCard({
+    super.key,
+    required this.onAddSubscription,
+  });
+
+  final VoidCallback? onAddSubscription;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 24, 16, 16),
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: colors.surfaceContainerLow,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(
+            color: colors.outlineVariant.withValues(alpha: 0.6),
+          ),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                Icons.add_link_rounded,
+                size: 40,
+                color: colors.primary,
+              ),
+              const SizedBox(height: 12),
+              Text(
+                appLocalizations.nodeOverviewEmptyTitle,
+                textAlign: TextAlign.center,
+                style: theme.textTheme.titleMedium?.copyWith(
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                appLocalizations.nodeOverviewEmptySubtitle,
+                textAlign: TextAlign.center,
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: colors.onSurfaceVariant,
+                ),
+              ),
+              const SizedBox(height: 20),
+              FilledButton.icon(
+                key: const ValueKey('overview-empty-add-subscription'),
+                onPressed: onAddSubscription,
+                icon: const Icon(Icons.content_paste_go_rounded, size: 18),
+                label: Text(appLocalizations.nodeOverviewAddSubscription),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _OverviewAvailableFilterEmptyBanner extends StatelessWidget {
+  const _OverviewAvailableFilterEmptyBanner({
+    super.key,
+    required this.onShowAllNodes,
+  });
+
+  final VoidCallback onShowAllNodes;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: colors.surfaceContainerLow,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: colors.outlineVariant),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          child: Wrap(
+            spacing: 12,
+            runSpacing: 8,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            alignment: WrapAlignment.spaceBetween,
+            children: [
+              Text(
+                appLocalizations.nodeOverviewAvailableFilterEmpty,
+                style: theme.textTheme.bodyMedium,
+              ),
+              FilledButton.tonal(
+                key: const ValueKey('overview-reset-available-filter'),
+                onPressed: onShowAllNodes,
+                style: FilledButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+                child: Text(appLocalizations.nodeOverviewShowAllNodes),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }
 

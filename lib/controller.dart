@@ -3507,6 +3507,7 @@ class AppController {
   }
 
   Future<void> addProfileFormURL(String url) async {
+    globalState.lastSubscriptionImportError = null;
     if (globalState.navigatorKey.currentState?.canPop() ?? false) {
       globalState.navigatorKey.currentState?.popUntil((route) => route.isFirst);
     }
@@ -3540,8 +3541,13 @@ class AppController {
       }
     } catch (err) {
       commonPrint.log('Add Profile Failed: $err');
-      unawaited(
-          globalState.showMessage(message: TextSpan(text: err.toString())));
+      final friendlyMessage = formatSubscriptionImportError(err);
+      globalState.lastSubscriptionImportError = friendlyMessage;
+      if (!globalState.suppressNextSubscriptionImportErrorDialog) {
+        unawaited(
+          globalState.showMessage(message: TextSpan(text: friendlyMessage)),
+        );
+      }
     }
   }
 
@@ -3576,7 +3582,7 @@ class AppController {
     }
     if (!context.mounted) return;
     globalState.navigatorKey.currentState?.popUntil((route) => route.isFirst);
-    toPage(PageLabel.dashboard);
+    toPage(PageLabel.proxies);
     final commonScaffoldState = globalState.homeScaffoldKey.currentState;
     if (commonScaffoldState?.mounted != true) return;
     final profile = await commonScaffoldState?.loadingRun<Profile?>(

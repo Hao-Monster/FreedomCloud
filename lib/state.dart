@@ -456,6 +456,8 @@ class GlobalState {
   Map<String, dynamic>? lastRuntimeConfig;
   String? _lastRuntimeConfigDigest;
   String? lastRuntimeProfileId;
+  String? lastSubscriptionImportError;
+  bool suppressNextSubscriptionImportErrorDialog = false;
   Map<String, String>? lastRuntimeSelectedMap;
   String? lastRuntimeTestUrl;
   final ValueNotifier<int> runtimeConfigEpochNotifier = ValueNotifier<int>(0);
