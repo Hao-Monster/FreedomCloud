@@ -765,3 +765,87 @@ func TestFCXDoHLogRedactsPathAndQuery(t *testing.T) {
 		t.Fatalf("redaction dropped diagnostics: %q", got)
 	}
 }
+
+type fcxTestDomainMatcher struct {
+	target string
+}
+
+func (m fcxTestDomainMatcher) MatchDomain(domain string) bool {
+	return domain == m.target
+}
+
+func TestFCXDoHResolverResetConnectionResetsPolicyAndHealth(t *testing.T) {
+	rs := NewResolver(Config{
+		Main: []NameServer{
+			{Net: "https", Addr: "https://main.doh.invalid/dns-query"},
+		},
+		Policy: []Policy{
+			{
+				Domain: "+.qq.com",
+				NameServers: []NameServer{
+					{Net: "https", Addr: "https://trie-policy.doh.invalid/dns-query"},
+				},
+			},
+			{
+				Matcher: fcxTestDomainMatcher{target: "matched.cn.invalid"},
+				NameServers: []NameServer{
+					{Net: "https", Addr: "https://matcher-policy.doh.invalid/dns-query"},
+				},
+			},
+		},
+	})
+
+	extractDoH := func(clients []dnsClient) *dnsOverHTTPS {
+		t.Helper()
+		if len(clients) != 1 {
+			t.Fatalf("expected 1 policy dnsClient, got %d", len(clients))
+		}
+		c := clients[0]
+		for {
+			u, ok := c.(interface{ Unwrap() dnsClient })
+			if !ok {
+				break
+			}
+			c = u.Unwrap()
+		}
+		doh, ok := c.(*dnsOverHTTPS)
+		if !ok {
+			t.Fatalf("expected *dnsOverHTTPS, got %T", c)
+		}
+		return doh
+	}
+
+	var trieDoH, matcherDoH *dnsOverHTTPS
+	for _, p := range rs.Resolver.policy {
+		if matched := p.Match("yybadaccessuse.3g.qq.com"); len(matched) > 0 {
+			trieDoH = extractDoH(matched)
+		}
+		if matched := p.Match("matched.cn.invalid"); len(matched) > 0 {
+			matcherDoH = extractDoH(matched)
+		}
+	}
+	if trieDoH == nil || matcherDoH == nil {
+		t.Fatalf("expected both trie and matcher policies to match: trie=%v matcher=%v", trieDoH != nil, matcherDoH != nil)
+	}
+
+	trieTr := &fcxDoHTransport{roundTrip: fcxDoHAnswer}
+	trieClient := &http.Client{Transport: trieTr}
+	trieDoH.client = trieClient
+	trieDoH.fcxHealth.adopt(trieClient)
+
+	matcherTr := &fcxDoHTransport{roundTrip: fcxDoHAnswer}
+	matcherClient := &http.Client{Transport: matcherTr}
+	matcherDoH.client = matcherClient
+	matcherDoH.fcxHealth.adopt(matcherClient)
+
+	rs.ResetConnection()
+
+	if trieDoH.client != nil || trieTr.closed.Load() != 1 || trieDoH.fcxHealth.client.Load() != nil {
+		t.Fatalf("trie nameserver-policy DoH was not fully reset: client=%v closes=%d health=%v",
+			trieDoH.client, trieTr.closed.Load(), trieDoH.fcxHealth.client.Load())
+	}
+	if matcherDoH.client != nil || matcherTr.closed.Load() != 1 || matcherDoH.fcxHealth.client.Load() != nil {
+		t.Fatalf("matcher nameserver-policy DoH was not fully reset: client=%v closes=%d health=%v",
+			matcherDoH.client, matcherTr.closed.Load(), matcherDoH.fcxHealth.client.Load())
+	}
+}

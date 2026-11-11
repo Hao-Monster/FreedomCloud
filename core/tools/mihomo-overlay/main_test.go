@@ -74,10 +74,13 @@ func TestDNSPatchIsDeterministicAndRejectsChangedShape(t *testing.T) {
 	if err != nil || !bytes.Equal(first, second) {
 		t.Fatalf("DoH patch is nondeterministic: %v", err)
 	}
-	for _, required := range []string{"failedClient *http.Client", "ctx.Err()", "originalReset()", "fcxHealth fcxDoHHealth", "fcxNoteCallerTimeout"} {
+	for _, required := range []string{"failedClient *http.Client", "ctx.Err()", "doh.fcxHealth.adopt(nil)", "doh.resetQUICConfig()", "fcxHealth fcxDoHHealth", "fcxNoteCallerTimeout"} {
 		if !bytes.Contains(first, []byte(required)) {
 			t.Fatalf("DoH recovery patch lost %q", required)
 		}
+	}
+	if bytes.Contains(first, []byte("originalReset()")) {
+		t.Fatal("DoH ResetConnection was not patched")
 	}
 	for name, source := range map[string]string{
 		"missing":        strings.Replace(minimalDNSDoH, " getClient(", " removedClient(", 1),
@@ -980,5 +983,84 @@ func TestSingTunServerWindowsPatchStopsRetryingAdapterCreateFailures(t *testing.
 				t.Fatal("changed upstream server_windows.go shape accepted")
 			}
 		})
+	}
+}
+
+func TestNetworkSwitchPatchesAreDeterministicAndRejectChangedShapes(t *testing.T) {
+	const minimalPolicy = `package dns
+type dnsPolicy interface {
+	Match(domain string) []dnsClient
+}
+type domainTriePolicy struct {
+	*trie.DomainTrie[[]dnsClient]
+}
+func (p domainMatcherPolicy) Match(domain string) []dnsClient {
+	if p.matcher.MatchDomain(domain) {
+		return p.dnsClients
+	}
+	return nil
+}
+`
+	firstPolicy, err := patchDNSPolicy([]byte(minimalPolicy))
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondPolicy, err := patchDNSPolicy([]byte(strings.ReplaceAll(minimalPolicy, "\n", "\r\n")))
+	if err != nil || !bytes.Equal(firstPolicy, secondPolicy) {
+		t.Fatalf("policy.go patch nondeterministic: %v", err)
+	}
+	if !bytes.Contains(firstPolicy, []byte("func (p domainTriePolicy) ResetConnection()")) ||
+		!bytes.Contains(firstPolicy, []byte("func (p domainMatcherPolicy) ResetConnection()")) {
+		t.Fatal("policy.go ResetConnection methods missing")
+	}
+	if _, err := patchDNSPolicy([]byte(strings.Replace(minimalPolicy, "Match(domain string)", "Other(domain string)", 1))); err == nil {
+		t.Fatal("changed policy.go shape accepted")
+	}
+
+	const minimalDialerBind = `package dialer
+
+import (
+	"net"
+	"net/netip"
+	"syscall"
+)
+
+func bindIfaceToDialer(ifaceName string, dialer *net.Dialer, _ string, destination netip.Addr) error {
+	ifaceObj, err := iface.ResolveInterface(ifaceName)
+	if err != nil {
+		return err
+	}
+
+	addControlToDialer(dialer, bindControl(ifaceObj.Index, netip.AddrPortFrom(destination, 0)))
+	return nil
+}
+`
+	firstDialer, err := patchDialerBindWindows([]byte(minimalDialerBind))
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondDialer, err := patchDialerBindWindows([]byte(strings.ReplaceAll(minimalDialerBind, "\n", "\r\n")))
+	if err != nil || !bytes.Equal(firstDialer, secondDialer) {
+		t.Fatalf("bind_windows.go patch nondeterministic: %v", err)
+	}
+	if !bytes.Contains(firstDialer, []byte("LookupLocalAddrFromIfaceName")) {
+		t.Fatal("bind_windows.go missing LookupLocalAddrFromIfaceName")
+	}
+	if _, err := patchDialerBindWindows([]byte(strings.Replace(minimalDialerBind, "addControlToDialer", "otherControl", 1))); err == nil {
+		t.Fatal("changed bind_windows.go shape accepted")
+	}
+
+	const minimalURLTest = `package outboundgroup
+func (u *URLTest) ForceSet(name string) {
+	u.selected = name
+	u.fastSingle.Reset()
+}
+`
+	firstURLTest, err := patchURLTestGroup([]byte(minimalURLTest))
+	if err != nil || !bytes.Contains(firstURLTest, []byte("ResetFastCacheFCX")) {
+		t.Fatalf("urltest.go patch failed: %v", err)
+	}
+	if _, err := patchURLTestGroup([]byte("package outboundgroup\n")); err == nil {
+		t.Fatal("changed urltest.go shape accepted")
 	}
 }

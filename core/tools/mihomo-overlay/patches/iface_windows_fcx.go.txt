@@ -63,7 +63,7 @@ func fcxAdapterAddrs(adapters []*windows.IpAdapterAddresses, targetIndex int) ([
 			continue
 		}
 		for puni := aa.FirstUnicastAddress; puni != nil; puni = puni.Next {
-			if puni.Address.Sockaddr == nil {
+			if puni.Address.Sockaddr == nil || puni.DadState != windows.IpDadStatePreferred {
 				continue
 			}
 			sa, err := puni.Address.Sockaddr.Sockaddr()

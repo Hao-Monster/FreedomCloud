@@ -1,0 +1,15 @@
+func (doh *dnsOverHTTPS) ResetConnection() {
+	doh.clientMu.Lock()
+	defer doh.clientMu.Unlock()
+
+	if doh.quicConfig != nil {
+		doh.resetQUICConfig()
+	}
+	doh.fcxHealth.adopt(nil)
+	if doh.client == nil {
+		return
+	}
+
+	_ = doh.closeClient(doh.client)
+	doh.client = nil
+}

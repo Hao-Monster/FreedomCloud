@@ -32,9 +32,13 @@ const listenerSHA256 = "1a11cda3fb4a87875d817fe29f1e79973cb8cb6eeccc0ae5e22db15d
 const configsSHA256 = "d11710296ea68a8d12f7593ec50cec9fef830272b3a54f64f707ec86920baf9f"
 const controllerSHA256 = "01724bd82002cf80b85448ef664ca53a7cb82f529ccf2b7f4a6383282768d256"
 const adapterSHA256 = "0a0524f342ff1672fdb94ad675d176d069b1f6e16ddfe462ece2f55b9e10212c"
+const urlTestGroupSHA256 = "6d58af720ff6bcb368b2d43253a784865fd040d6871598cd2cc7eb8237083565"
 const dnsDoHSHA256 = "1ba0170bed4aabf6b295471f9fddb03da20122d339526a97170dff537fbde57b"
+const dnsResolverSHA256 = "400765c7dde15950c324ab8fce1a7dc1d7730b3c7f3bff6a85fd64e4238e2b48"
+const dnsPolicySHA256 = "a46f9e8cb408b0ea1863fc5bf926e7ce461afb3b6a842394421b5c9951b10116"
 const converterSHA256 = "503aac2968628ab826f8208d620bcd5939ca67219426cf0189fab76346626ede"
 const ifaceSHA256 = "67d3d4f54999bdb6875ef87cdbb87c61d5f9e299aa20c1108de3e391eac18605"
+const dialerBindWindowsSHA256 = "75af61a7176ed1a0dbcb53cf9a93fe532b7a7be2d01b374c89ba9be8c23c6926"
 const singTunServerSHA256 = "8b0d766e346aa5a36ec40dc66c1fe7cd3466ead48a687cfb4a262342ca9a3335"
 const singTunServerWindowsSHA256 = "9e4604f9691915bb7968097b73c945f64136398c92e0c34c12bbd4c43f17863c"
 const cacheFileSHA256 = "cf48b5ba8d034847073c189a755b63bfbce43e1d1e0cebe3c2ce72267fd8cb65"
@@ -49,6 +53,8 @@ const singTunVersion = "v0.4.27"
 const singTunModuleSum = "h1:dWCpFDlWelQrhH3y5KkMrJXEXYeJ0V2LROP8Cxv96MI="
 const singTunWindowsSHA256 = "e463b674d33694dbaa02d165e6a1e24d310a6f12066aab4d3bbe10683be9aff0"
 const singTunStackGvisorSHA256 = "45fb9d63e825c40f90797535d299e44cd1a9737ec08e112cc3d4b53b6fa89180"
+const singTunMonitorWindowsSHA256 = "afb6d993c87203594336266933cc373a4db1ed6078d76212be281aa33886f8da"
+const singTunMonitorSharedSHA256 = "c0a043a2f419ffd8adf278852c8f60795e17131995a0cc112941f0fa63e187a9"
 
 func patchController(source []byte) ([]byte, error) {
 	fset := token.NewFileSet()
@@ -166,6 +172,7 @@ func patchDNSDoH(source []byte) ([]byte, error) {
 	}
 	names := map[string]string{
 		"ExchangeContext": "dns_exchange_context.txt",
+		"ResetConnection": "dns_reset_connection.txt",
 		"resetClient":     "dns_reset_client.txt",
 		"getClient":       "dns_get_client.txt",
 	}
@@ -365,6 +372,7 @@ func patchSingTunServer(source []byte) ([]byte, error) {
 			}
 			iface.FlushCache()
 			resolver.ResetConnection() // reset resolver's connection after default interface changed
+			fcxNotifyDefaultInterfaceChanged(defaultInterface, event)
 		})
 		fcxLogSingTunStage("sing_tun.monitors", monitorsStartedAt, nil)`
 
@@ -843,6 +851,427 @@ func patchSingTunStackGvisor(source []byte) ([]byte, error) {
 		return nil, fmt.Errorf("upstream sing-tun stack_gvisor TCP buffer block changed")
 	}
 	patched = strings.Replace(patched, anchor, expanded, 1)
+	return format.Source([]byte(patched))
+}
+
+func patchDNSPolicy(source []byte) ([]byte, error) {
+	source = bytes.ReplaceAll(source, []byte("\r\n"), []byte("\n"))
+	fset := token.NewFileSet()
+	if _, err := parser.ParseFile(fset, "policy.go", source, 0); err != nil {
+		return nil, err
+	}
+	patched := string(source)
+	const ifaceAnchor = `type dnsPolicy interface {
+	Match(domain string) []dnsClient
+}`
+	const ifaceReplacement = `type dnsPolicy interface {
+	Match(domain string) []dnsClient
+	ResetConnection()
+}`
+	const trieAnchor = `type domainTriePolicy struct {
+	*trie.DomainTrie[[]dnsClient]
+}`
+	const trieReplacement = `type domainTriePolicy struct {
+	*trie.DomainTrie[[]dnsClient]
+	dnsClients []dnsClient
+}
+
+func (p domainTriePolicy) ResetConnection() {
+	for _, c := range p.dnsClients {
+		c.ResetConnection()
+	}
+}`
+	const matcherTailAnchor = `func (p domainMatcherPolicy) Match(domain string) []dnsClient {
+	if p.matcher.MatchDomain(domain) {
+		return p.dnsClients
+	}
+	return nil
+}`
+	const matcherTailReplacement = `func (p domainMatcherPolicy) Match(domain string) []dnsClient {
+	if p.matcher.MatchDomain(domain) {
+		return p.dnsClients
+	}
+	return nil
+}
+
+func (p domainMatcherPolicy) ResetConnection() {
+	for _, c := range p.dnsClients {
+		c.ResetConnection()
+	}
+}`
+	for _, pair := range []struct {
+		name, anchor, replacement string
+	}{
+		{"dnsPolicy", ifaceAnchor, ifaceReplacement},
+		{"domainTriePolicy", trieAnchor, trieReplacement},
+		{"domainMatcherPolicy", matcherTailAnchor, matcherTailReplacement},
+	} {
+		if strings.Count(patched, pair.anchor) != 1 {
+			return nil, fmt.Errorf("upstream dns/policy.go %s block changed", pair.name)
+		}
+		patched = strings.Replace(patched, pair.anchor, pair.replacement, 1)
+	}
+	return format.Source([]byte(patched))
+}
+
+func patchDNSResolver(source []byte) ([]byte, error) {
+	source = bytes.ReplaceAll(source, []byte("\r\n"), []byte("\n"))
+	fset := token.NewFileSet()
+	if _, err := parser.ParseFile(fset, "resolver.go", source, 0); err != nil {
+		return nil, err
+	}
+	patched := string(source)
+	const resetAnchor = `func (r *Resolver) ResetConnection() {
+	if r != nil {
+		for _, c := range r.main {
+			c.ResetConnection()
+		}
+		for _, c := range r.fallback {
+			c.ResetConnection()
+		}
+		if dr := r.defaultResolver; dr != nil {
+			dr.ResetConnection()
+		}
+	}
+}`
+	const resetReplacement = `func (r *Resolver) ResetConnection() {
+	if r != nil {
+		for _, c := range r.main {
+			c.ResetConnection()
+		}
+		for _, c := range r.fallback {
+			c.ResetConnection()
+		}
+		for _, p := range r.policy {
+			p.ResetConnection()
+		}
+		if dr := r.defaultResolver; dr != nil {
+			dr.ResetConnection()
+		}
+	}
+}`
+	const makePolicyAnchor = `	makePolicy := func(policies []Policy) (dnsPolicies []dnsPolicy) {
+		var triePolicy *trie.DomainTrie[[]dnsClient]
+		insertPolicy := func(policy dnsPolicy) {
+			if triePolicy != nil {
+				triePolicy.Optimize()
+				dnsPolicies = append(dnsPolicies, domainTriePolicy{triePolicy})
+				triePolicy = nil
+			}
+			if policy != nil {
+				dnsPolicies = append(dnsPolicies, policy)
+			}
+		}
+
+		for _, policy := range policies {
+			if policy.Matcher != nil {
+				insertPolicy(domainMatcherPolicy{matcher: policy.Matcher, dnsClients: cacheTransform(policy.NameServers)})
+			} else {
+				if triePolicy == nil {
+					triePolicy = trie.New[[]dnsClient]()
+				}
+				if err := triePolicy.Insert(policy.Domain, cacheTransform(policy.NameServers)); err != nil {
+					log.Warnln("[DNS] skip invalid nameserver policy: %s", err)
+				}
+			}
+		}
+		insertPolicy(nil)
+		return
+	}`
+	const makePolicyReplacement = `	makePolicy := func(policies []Policy) (dnsPolicies []dnsPolicy) {
+		var triePolicy *trie.DomainTrie[[]dnsClient]
+		var trieClients []dnsClient
+		insertPolicy := func(policy dnsPolicy) {
+			if triePolicy != nil {
+				triePolicy.Optimize()
+				dnsPolicies = append(dnsPolicies, domainTriePolicy{
+					DomainTrie: triePolicy,
+					dnsClients: trieClients,
+				})
+				triePolicy = nil
+				trieClients = nil
+			}
+			if policy != nil {
+				dnsPolicies = append(dnsPolicies, policy)
+			}
+		}
+
+		for _, policy := range policies {
+			if policy.Matcher != nil {
+				insertPolicy(domainMatcherPolicy{matcher: policy.Matcher, dnsClients: cacheTransform(policy.NameServers)})
+			} else {
+				if triePolicy == nil {
+					triePolicy = trie.New[[]dnsClient]()
+				}
+				clients := cacheTransform(policy.NameServers)
+				if err := triePolicy.Insert(policy.Domain, clients); err != nil {
+					log.Warnln("[DNS] skip invalid nameserver policy: %s", err)
+				} else {
+					trieClients = append(trieClients, clients...)
+				}
+			}
+		}
+		insertPolicy(nil)
+		return
+	}`
+	for _, pair := range []struct {
+		name, anchor, replacement string
+	}{
+		{"ResetConnection", resetAnchor, resetReplacement},
+		{"makePolicy", makePolicyAnchor, makePolicyReplacement},
+	} {
+		if strings.Count(patched, pair.anchor) != 1 {
+			return nil, fmt.Errorf("upstream dns/resolver.go %s block changed", pair.name)
+		}
+		patched = strings.Replace(patched, pair.anchor, pair.replacement, 1)
+	}
+	return format.Source([]byte(patched))
+}
+
+func patchDialerBindWindows(source []byte) ([]byte, error) {
+	source = bytes.ReplaceAll(source, []byte("\r\n"), []byte("\n"))
+	fset := token.NewFileSet()
+	if _, err := parser.ParseFile(fset, "bind_windows.go", source, 0); err != nil {
+		return nil, err
+	}
+	patched := string(source)
+	const importAnchor = "\t\"net/netip\"\n\t\"syscall\""
+	const importReplacement = "\t\"net/netip\"\n\t\"strings\"\n\t\"syscall\""
+	const fnAnchor = `func bindIfaceToDialer(ifaceName string, dialer *net.Dialer, _ string, destination netip.Addr) error {
+	ifaceObj, err := iface.ResolveInterface(ifaceName)
+	if err != nil {
+		return err
+	}
+
+	addControlToDialer(dialer, bindControl(ifaceObj.Index, netip.AddrPortFrom(destination, 0)))
+	return nil
+}`
+	const fnReplacement = `func bindIfaceToDialer(ifaceName string, dialer *net.Dialer, network string, destination netip.Addr) error {
+	ifaceObj, err := iface.ResolveInterface(ifaceName)
+	if err != nil {
+		return err
+	}
+	if dialer.LocalAddr == nil && destination.IsGlobalUnicast() && (strings.HasPrefix(network, "tcp") || strings.HasPrefix(network, "udp")) {
+		localAddr, err := LookupLocalAddrFromIfaceName(ifaceName, network, destination, 0)
+		if err != nil {
+			return err
+		}
+		dialer.LocalAddr = localAddr
+	}
+
+	addControlToDialer(dialer, bindControl(ifaceObj.Index, netip.AddrPortFrom(destination, 0)))
+	return nil
+}`
+	if strings.Count(patched, importAnchor) != 1 || strings.Count(patched, fnAnchor) != 1 {
+		return nil, fmt.Errorf("upstream component/dialer/bind_windows.go shape changed")
+	}
+	patched = strings.Replace(patched, importAnchor, importReplacement, 1)
+	patched = strings.Replace(patched, fnAnchor, fnReplacement, 1)
+	return format.Source([]byte(patched))
+}
+
+func patchURLTestGroup(source []byte) ([]byte, error) {
+	source = bytes.ReplaceAll(source, []byte("\r\n"), []byte("\n"))
+	fset := token.NewFileSet()
+	if _, err := parser.ParseFile(fset, "urltest.go", source, 0); err != nil {
+		return nil, err
+	}
+	patched := string(source)
+	const forceSetAnchor = `func (u *URLTest) ForceSet(name string) {
+	u.selected = name
+	u.fastSingle.Reset()
+}`
+	const forceSetReplacement = `func (u *URLTest) ForceSet(name string) {
+	u.selected = name
+	u.fastSingle.Reset()
+}
+
+func (u *URLTest) ResetFastCacheFCX() {
+	u.fastSingle.Reset()
+}`
+	if strings.Count(patched, forceSetAnchor) != 1 {
+		return nil, fmt.Errorf("upstream outboundgroup/urltest.go ForceSet changed")
+	}
+	patched = strings.Replace(patched, forceSetAnchor, forceSetReplacement, 1)
+	return format.Source([]byte(patched))
+}
+
+func patchSingTunMonitorWindows(source []byte) ([]byte, error) {
+	source = bytes.ReplaceAll(source, []byte("\r\n"), []byte("\n"))
+	fset := token.NewFileSet()
+	if _, err := parser.ParseFile(fset, "monitor_windows.go", source, 0); err != nil {
+		return nil, err
+	}
+	patched := string(source)
+	const structAnchor = `type networkUpdateMonitor struct {
+	routeListener     *winipcfg.RouteChangeCallback
+	interfaceListener *winipcfg.InterfaceChangeCallback
+	errorHandler      E.Handler`
+	const structReplacement = `type networkUpdateMonitor struct {
+	routeListener     *winipcfg.RouteChangeCallback
+	interfaceListener *winipcfg.InterfaceChangeCallback
+	unicastListener   *winipcfg.UnicastAddressChangeCallback
+	errorHandler      E.Handler`
+	const startCloseAnchor = `	m.interfaceListener = interfaceListener
+	return nil
+}
+
+func (m *networkUpdateMonitor) Close() error {
+	if m.routeListener != nil {
+		m.routeListener.Unregister()
+		m.routeListener = nil
+	}
+	if m.interfaceListener != nil {
+		m.interfaceListener.Unregister()
+		m.interfaceListener = nil
+	}
+	return nil
+}`
+	const startCloseReplacement = `	m.interfaceListener = interfaceListener
+	unicastListener, err := winipcfg.RegisterUnicastAddressChangeCallback(func(notificationType winipcfg.MibNotificationType, unicastAddress *winipcfg.MibUnicastIPAddressRow) {
+		m.emit()
+	})
+	if err != nil {
+		interfaceListener.Unregister()
+		routeListener.Unregister()
+		m.interfaceListener = nil
+		m.routeListener = nil
+		return err
+	}
+	m.unicastListener = unicastListener
+	return nil
+}
+
+func (m *networkUpdateMonitor) Close() error {
+	if m.routeListener != nil {
+		m.routeListener.Unregister()
+		m.routeListener = nil
+	}
+	if m.interfaceListener != nil {
+		m.interfaceListener.Unregister()
+		m.interfaceListener = nil
+	}
+	if m.unicastListener != nil {
+		m.unicastListener.Unregister()
+		m.unicastListener = nil
+	}
+	return nil
+}`
+	for _, pair := range []struct {
+		name, anchor, replacement string
+	}{
+		{"struct", structAnchor, structReplacement},
+		{"start_close", startCloseAnchor, startCloseReplacement},
+	} {
+		if strings.Count(patched, pair.anchor) != 1 {
+			return nil, fmt.Errorf("upstream sing-tun monitor_windows %s block changed", pair.name)
+		}
+		patched = strings.Replace(patched, pair.anchor, pair.replacement, 1)
+	}
+	return format.Source([]byte(patched))
+}
+
+func patchSingTunMonitorShared(source []byte) ([]byte, error) {
+	source = bytes.ReplaceAll(source, []byte("\r\n"), []byte("\n"))
+	fset := token.NewFileSet()
+	if _, err := parser.ParseFile(fset, "monitor_shared.go", source, 0); err != nil {
+		return nil, err
+	}
+	patched := string(source)
+	const structAnchor = `	networkMonitor        NetworkUpdateMonitor
+	checkUpdateTimer      *time.Timer
+	checkAccess           sync.Mutex`
+	const structReplacement = `	networkMonitor        NetworkUpdateMonitor
+	checkUpdateTimer      *time.Timer
+	debounceBurstStart    time.Time
+	debouncePending       bool
+	closed                atomic.Bool
+	checkAccess           sync.Mutex`
+	const delayAnchor = `func (m *defaultInterfaceMonitor) delayCheckUpdate() {
+	m.access.Lock()
+	defer m.access.Unlock()
+	if m.checkUpdateTimer == nil {
+		m.checkUpdateTimer = time.AfterFunc(time.Second, m.postCheckUpdate)
+	} else {
+		m.checkUpdateTimer.Reset(time.Second)
+	}
+}`
+	const delayReplacement = `const (
+	fcxMonitorDebounceDelay = 250 * time.Millisecond
+	fcxMonitorMaxBurstDelay = 1000 * time.Millisecond
+)
+
+func (m *defaultInterfaceMonitor) delayCheckUpdate() {
+	m.access.Lock()
+	defer m.access.Unlock()
+	if m.closed.Load() {
+		return
+	}
+	now := time.Now()
+	if !m.debouncePending {
+		m.debouncePending = true
+		m.debounceBurstStart = now
+		if m.checkUpdateTimer == nil {
+			m.checkUpdateTimer = time.AfterFunc(fcxMonitorDebounceDelay, m.runScheduledCheckUpdate)
+		} else {
+			m.checkUpdateTimer.Reset(fcxMonitorDebounceDelay)
+		}
+		return
+	}
+	remaining := fcxMonitorMaxBurstDelay - now.Sub(m.debounceBurstStart)
+	if remaining <= 0 {
+		return
+	}
+	delay := fcxMonitorDebounceDelay
+	if remaining < delay {
+		delay = remaining
+	}
+	m.checkUpdateTimer.Reset(delay)
+}
+
+func (m *defaultInterfaceMonitor) runScheduledCheckUpdate() {
+	m.access.Lock()
+	if m.closed.Load() {
+		m.debouncePending = false
+		m.access.Unlock()
+		return
+	}
+	m.debouncePending = false
+	m.debounceBurstStart = time.Time{}
+	m.access.Unlock()
+	m.postCheckUpdate()
+}`
+	const closeAnchor = `func (m *defaultInterfaceMonitor) Close() error {
+	if m.element != nil {
+		m.networkMonitor.UnregisterCallback(m.element)
+	}
+	return nil
+}`
+	const closeReplacement = `func (m *defaultInterfaceMonitor) Close() error {
+	m.closed.Store(true)
+	m.access.Lock()
+	if m.checkUpdateTimer != nil {
+		m.checkUpdateTimer.Stop()
+	}
+	m.debouncePending = false
+	m.access.Unlock()
+	if m.element != nil {
+		m.networkMonitor.UnregisterCallback(m.element)
+	}
+	return nil
+}`
+	for _, pair := range []struct {
+		name, anchor, replacement string
+	}{
+		{"struct", structAnchor, structReplacement},
+		{"delayCheckUpdate", delayAnchor, delayReplacement},
+		{"Close", closeAnchor, closeReplacement},
+	} {
+		if strings.Count(patched, pair.anchor) != 1 {
+			return nil, fmt.Errorf("upstream sing-tun monitor_shared %s block changed", pair.name)
+		}
+		patched = strings.Replace(patched, pair.anchor, pair.replacement, 1)
+	}
 	return format.Source([]byte(patched))
 }
 
@@ -1504,6 +1933,54 @@ func convertsV2RayFCX(buf []byte, diagnostics bool) ([]map[string]any, error) {`
 	if err != nil {
 		return err
 	}
+	dnsPolicySource, err := checkedSource(filepath.Join(module.Dir, "dns", "policy.go"), dnsPolicySHA256)
+	if err != nil {
+		return err
+	}
+	patchedDNSPolicy, err := patchDNSPolicy(dnsPolicySource)
+	if err != nil {
+		return err
+	}
+	dnsResolverSource, err := checkedSource(filepath.Join(module.Dir, "dns", "resolver.go"), dnsResolverSHA256)
+	if err != nil {
+		return err
+	}
+	patchedDNSResolver, err := patchDNSResolver(dnsResolverSource)
+	if err != nil {
+		return err
+	}
+	dialerBindWindowsSource, err := checkedSource(filepath.Join(module.Dir, "component", "dialer", "bind_windows.go"), dialerBindWindowsSHA256)
+	if err != nil {
+		return err
+	}
+	patchedDialerBindWindows, err := patchDialerBindWindows(dialerBindWindowsSource)
+	if err != nil {
+		return err
+	}
+	urlTestGroupSource, err := checkedSource(filepath.Join(module.Dir, "adapter", "outboundgroup", "urltest.go"), urlTestGroupSHA256)
+	if err != nil {
+		return err
+	}
+	patchedURLTestGroup, err := patchURLTestGroup(urlTestGroupSource)
+	if err != nil {
+		return err
+	}
+	singTunMonitorWindowsSource, err := checkedSource(filepath.Join(singTunModule.Dir, "monitor_windows.go"), singTunMonitorWindowsSHA256)
+	if err != nil {
+		return err
+	}
+	patchedSingTunMonitorWindows, err := patchSingTunMonitorWindows(singTunMonitorWindowsSource)
+	if err != nil {
+		return err
+	}
+	singTunMonitorSharedSource, err := checkedSource(filepath.Join(singTunModule.Dir, "monitor_shared.go"), singTunMonitorSharedSHA256)
+	if err != nil {
+		return err
+	}
+	patchedSingTunMonitorShared, err := patchSingTunMonitorShared(singTunMonitorSharedSource)
+	if err != nil {
+		return err
+	}
 	out, err = filepath.Abs(out)
 	if err != nil {
 		return err
@@ -1570,6 +2047,18 @@ func convertsV2RayFCX(buf []byte, diagnostics bool) ([]map[string]any, error) {`
 	if err := write(filepath.Join(sourceDirectory, "dns", "doh.go"), "doh.go", patchedDNSDoH); err != nil {
 		return err
 	}
+	if err := write(filepath.Join(sourceDirectory, "dns", "policy.go"), "dns_policy.go", patchedDNSPolicy); err != nil {
+		return err
+	}
+	if err := write(filepath.Join(sourceDirectory, "dns", "resolver.go"), "dns_resolver.go", patchedDNSResolver); err != nil {
+		return err
+	}
+	if err := write(filepath.Join(sourceDirectory, "component", "dialer", "bind_windows.go"), "dialer_bind_windows.go", patchedDialerBindWindows); err != nil {
+		return err
+	}
+	if err := write(filepath.Join(sourceDirectory, "adapter", "outboundgroup", "urltest.go"), "outboundgroup_urltest.go", patchedURLTestGroup); err != nil {
+		return err
+	}
 	if err := write(filepath.Join(sourceDirectory, "common", "convert", "converter.go"), "catalog_converter.go", converterSource); err != nil {
 		return err
 	}
@@ -1601,6 +2090,17 @@ func convertsV2RayFCX(buf []byte, diagnostics bool) ([]map[string]any, error) {`
 			return err
 		}
 	}
+	dialerBindWindowsTest, err := patchFiles.ReadFile("patches/dialer_bind_windows_fcx_test.go.txt")
+	if err != nil {
+		return err
+	}
+	dialerBindWindowsTest, err = format.Source(dialerBindWindowsTest)
+	if err != nil {
+		return err
+	}
+	if err := write(filepath.Join(sourceDirectory, "component", "dialer", "dialer_bind_windows_fcx_test.go"), "dialer_bind_windows_fcx_test.go", dialerBindWindowsTest); err != nil {
+		return err
+	}
 	for _, name := range []string{"sing_tun_timing_fcx.go", "sing_tun_timing_sink_windows.go", "sing_tun_timing_sink_unix.go", "sing_tun_timing_fcx_test.go"} {
 		contents, err := patchFiles.ReadFile("patches/" + name + ".txt")
 		if err != nil {
@@ -1617,6 +2117,12 @@ func convertsV2RayFCX(buf []byte, diagnostics bool) ([]map[string]any, error) {`
 	if err := write(filepath.Join(singTunSourceDirectory, "tun_windows.go"), "sing_tun_windows.go", patchedSingTunWindows); err != nil {
 		return err
 	}
+	if err := write(filepath.Join(singTunSourceDirectory, "monitor_windows.go"), "sing_tun_monitor_windows.go", patchedSingTunMonitorWindows); err != nil {
+		return err
+	}
+	if err := write(filepath.Join(singTunSourceDirectory, "monitor_shared.go"), "sing_tun_monitor_shared.go", patchedSingTunMonitorShared); err != nil {
+		return err
+	}
 	singTunDeviceTiming, err := patchFiles.ReadFile("patches/sing_tun_device_timing_fcx.go.txt")
 	if err != nil {
 		return err
@@ -1626,6 +2132,17 @@ func convertsV2RayFCX(buf []byte, diagnostics bool) ([]map[string]any, error) {`
 		return err
 	}
 	if err := write(filepath.Join(singTunSourceDirectory, "sing_tun_device_timing_fcx.go"), "sing_tun_device_timing_fcx.go", singTunDeviceTiming); err != nil {
+		return err
+	}
+	singTunMonitorTest, err := patchFiles.ReadFile("patches/sing_tun_monitor_fcx_test.go.txt")
+	if err != nil {
+		return err
+	}
+	singTunMonitorTest, err = format.Source(singTunMonitorTest)
+	if err != nil {
+		return err
+	}
+	if err := write(filepath.Join(sourceDirectory, "listener", "sing_tun", "sing_tun_monitor_fcx_test.go"), "sing_tun_monitor_fcx_test.go", singTunMonitorTest); err != nil {
 		return err
 	}
 	dnsTests, err := patchFiles.ReadFile("patches/dns_doh_lifecycle_fcx_test.go.txt")
@@ -1887,6 +2404,7 @@ func convertsV2RayFCX(buf []byte, diagnostics bool) ([]map[string]any, error) {`
 			"listener/sing_tun/server.go":               singTunServerSHA256,
 			"listener/sing_tun/server_windows.go":       singTunServerWindowsSHA256,
 			"component/iface/iface.go":                  ifaceSHA256,
+			"component/dialer/bind_windows.go":          dialerBindWindowsSHA256,
 			"component/profile/cachefile/cache.go":      cacheFileSHA256,
 			"component/profile/cachefile/fakeip.go":     fakeIpSHA256,
 			"component/process/process_windows.go":      processWindowsSHA256,
@@ -1894,18 +2412,26 @@ func convertsV2RayFCX(buf []byte, diagnostics bool) ([]map[string]any, error) {`
 			"component/resource/fetcher.go":             fetcherSHA256,
 			"rules/provider/provider.go":                ruleProviderSHA256,
 			"adapter/provider/provider.go":              proxyProviderSHA256,
+			"adapter/outboundgroup/urltest.go":          urlTestGroupSHA256,
 			"config/config.go":                          configSHA256,
 			"hub/route/configs.go":                      configsSHA256,
 			"hub/route/server.go":                       controllerSHA256,
 			"adapter/adapter.go":                        adapterSHA256,
 			"dns/doh.go":                                dnsDoHSHA256,
+			"dns/policy.go":                             dnsPolicySHA256,
+			"dns/resolver.go":                           dnsResolverSHA256,
 			"common/convert/converter.go":               converterSHA256,
 		},
 		"singTunOverlay": map[string]any{
-			"module":                "github.com/metacubex/sing-tun",
-			"version":               singTunVersion,
-			"moduleSum":             singTunModule.Sum,
-			"upstreamSourceSHA256":  map[string]string{"tun_windows.go": singTunWindowsSHA256, "stack_gvisor.go": singTunStackGvisorSHA256},
+			"module":    "github.com/metacubex/sing-tun",
+			"version":   singTunVersion,
+			"moduleSum": singTunModule.Sum,
+			"upstreamSourceSHA256": map[string]string{
+				"tun_windows.go":     singTunWindowsSHA256,
+				"stack_gvisor.go":    singTunStackGvisorSHA256,
+				"monitor_windows.go": singTunMonitorWindowsSHA256,
+				"monitor_shared.go":  singTunMonitorSharedSHA256,
+			},
 			"effectiveModuleSHA256": aggregateHashes(singTunModuleHashes),
 		},
 		"patchesSHA256": patchHashes, "generatorSHA256": digest(generatorSource), "projectGoModSHA256": digest(rootMod),

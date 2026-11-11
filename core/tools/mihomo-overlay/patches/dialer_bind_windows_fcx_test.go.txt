@@ -1,0 +1,91 @@
+//go:build windows
+
+package dialer
+
+import (
+	"errors"
+	"net"
+	"net/netip"
+	"testing"
+
+	"github.com/metacubex/mihomo/component/iface"
+)
+
+func TestFCXBindIfaceToDialerBindsPreferredLocalAddrAndRejectsMissingIPv6(t *testing.T) {
+	restore := iface.FCXOverrideInterfacesForTest([]*iface.Interface{
+		{
+			Index: 30,
+			MTU:   1500,
+			Name:  "wlan-v4-only",
+			Flags: net.FlagUp | net.FlagBroadcast,
+			Addresses: []netip.Prefix{
+				netip.MustParsePrefix("172.23.104.177/24"),
+				netip.MustParsePrefix("fe80::1234/64"),
+			},
+		},
+		{
+			Index: 31,
+			MTU:   1500,
+			Name:  "wlan-dual",
+			Flags: net.FlagUp | net.FlagBroadcast,
+			Addresses: []netip.Prefix{
+				netip.MustParsePrefix("172.23.104.177/24"),
+				netip.MustParsePrefix("240a:4283:fe00::88/64"),
+			},
+		},
+	})
+	defer restore()
+
+	dTCP4 := &net.Dialer{}
+	if err := bindIfaceToDialer("wlan-v4-only", dTCP4, "tcp", netip.MustParseAddr("16.5.119.97")); err != nil {
+		t.Fatalf("expected IPv4 TCP bind to succeed, got %v", err)
+	}
+	tcpAddr, ok := dTCP4.LocalAddr.(*net.TCPAddr)
+	if !ok || tcpAddr == nil || !tcpAddr.IP.Equal(net.IPv4(172, 23, 104, 177)) {
+		t.Fatalf("expected dialer.LocalAddr=172.23.104.177:0, got %#v", dTCP4.LocalAddr)
+	}
+	if dTCP4.ControlContext == nil {
+		t.Fatal("expected ControlContext interface index binding to remain installed")
+	}
+
+	dUDP4 := &net.Dialer{}
+	if err := bindIfaceToDialer("wlan-v4-only", dUDP4, "udp", netip.MustParseAddr("223.5.5.5")); err != nil {
+		t.Fatalf("expected IPv4 UDP bind to succeed, got %v", err)
+	}
+	udpAddr, ok := dUDP4.LocalAddr.(*net.UDPAddr)
+	if !ok || udpAddr == nil || !udpAddr.IP.Equal(net.IPv4(172, 23, 104, 177)) {
+		t.Fatalf("expected UDP dialer.LocalAddr=172.23.104.177:0, got %#v", dUDP4.LocalAddr)
+	}
+
+	dTCP6Missing := &net.Dialer{}
+	err := bindIfaceToDialer("wlan-v4-only", dTCP6Missing, "tcp", netip.MustParseAddr("240e:ff:e020::1"))
+	if !errors.Is(err, iface.ErrAddrNotFound) {
+		t.Fatalf("expected immediate ErrAddrNotFound on global IPv6 dial without global IPv6 address, got %v", err)
+	}
+
+	dTCP6Dual := &net.Dialer{}
+	if err := bindIfaceToDialer("wlan-dual", dTCP6Dual, "tcp", netip.MustParseAddr("240e:ff:e020::1")); err != nil {
+		t.Fatalf("expected dual-stack IPv6 bind to succeed, got %v", err)
+	}
+	tcp6Addr, ok := dTCP6Dual.LocalAddr.(*net.TCPAddr)
+	if !ok || tcp6Addr == nil || !tcp6Addr.IP.Equal(net.ParseIP("240a:4283:fe00::88")) {
+		t.Fatalf("expected IPv6 dialer.LocalAddr=240a:4283:fe00::88, got %#v", dTCP6Dual.LocalAddr)
+	}
+
+	dICMP := &net.Dialer{}
+	if err := bindIfaceToDialer("wlan-v4-only", dICMP, "ip4:icmp", netip.MustParseAddr("223.5.5.5")); err != nil {
+		t.Fatalf("expected raw ICMP bind to succeed without TCP/UDP LocalAddr error, got %v", err)
+	}
+	if dICMP.LocalAddr != nil || dICMP.ControlContext == nil {
+		t.Fatalf("unexpected ICMP dialer state: LocalAddr=%#v hasControl=%v", dICMP.LocalAddr, dICMP.ControlContext != nil)
+	}
+
+	preset := &net.TCPAddr{IP: net.IPv4(172, 23, 104, 177), Port: 54321}
+	dPreset := &net.Dialer{LocalAddr: preset}
+	if err := bindIfaceToDialer("wlan-v4-only", dPreset, "tcp", netip.MustParseAddr("16.5.119.97")); err != nil {
+		t.Fatalf("expected preset LocalAddr bind to succeed, got %v", err)
+	}
+	if dPreset.LocalAddr != preset {
+		t.Fatalf("expected preset LocalAddr to be preserved, got %#v", dPreset.LocalAddr)
+	}
+}

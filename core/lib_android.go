@@ -12,7 +12,6 @@ import (
 	"errors"
 	"github.com/metacubex/mihomo/component/dialer"
 	"github.com/metacubex/mihomo/component/process"
-	"github.com/metacubex/mihomo/component/resolver"
 	"github.com/metacubex/mihomo/constant"
 	"github.com/metacubex/mihomo/dns"
 	"github.com/metacubex/mihomo/listener/sing_tun"
@@ -387,10 +386,6 @@ func updateDns(s *C.char) {
 //export resetConnections
 func resetConnections() {
 	go func() {
-		runLock.Lock()
-		defer runLock.Unlock()
-		resolver.ResetConnection()
-		closeConnections()
-		log.Infoln("[Network] connections reset after network change")
+		handleResetConnections()
 	}()
 }

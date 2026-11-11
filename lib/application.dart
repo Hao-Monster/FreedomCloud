@@ -10,6 +10,7 @@ import 'package:flclashx/manager/manager.dart';
 import 'package:flclashx/plugins/app.dart';
 import 'package:flclashx/providers/providers.dart';
 import 'package:flclashx/state.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_displaymode/flutter_displaymode.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
@@ -26,6 +27,147 @@ bool shouldCloseConnectionsOnNetworkChange(
 }) =>
     !isWindows && !results.contains(ConnectivityResult.vpn);
 
+class NetworkChangeCoordinator {
+  NetworkChangeCoordinator({
+    required this.isWindows,
+    required this.readLocalIp,
+    required this.resetConnections,
+    required this.closeConnections,
+    this.onLocalIpChanged,
+    this.probeDelays = const [
+      Duration(milliseconds: 250),
+      Duration(milliseconds: 1200),
+      Duration(milliseconds: 2800),
+    ],
+  });
+
+  final bool isWindows;
+  final Future<String?> Function() readLocalIp;
+  final VoidCallback resetConnections;
+  final VoidCallback closeConnections;
+  final ValueChanged<String?>? onLocalIpChanged;
+  final List<Duration> probeDelays;
+
+  bool _disposed = false;
+  int _epoch = 0;
+  bool _hasSnapshot = false;
+  bool _wasOffline = false;
+  Set<ConnectivityResult> _lastTransports = const <ConnectivityResult>{};
+  String _lastLocalIp = '';
+
+  Future<void> handleConnectivityChanged(
+    List<ConnectivityResult> results,
+  ) async {
+    if (_disposed) {
+      return;
+    }
+    final epoch = ++_epoch;
+    final delays = probeDelays.isEmpty ? const [Duration.zero] : probeDelays;
+
+    if (!isWindows) {
+      if (shouldCloseConnectionsOnNetworkChange(results, isWindows: false)) {
+        resetConnections();
+        closeConnections();
+      }
+      final delay = delays.first;
+      if (delay > Duration.zero) {
+        await Future<void>.delayed(delay);
+      }
+      if (_disposed || epoch != _epoch) {
+        return;
+      }
+      final ip = await readLocalIp();
+      if (_disposed || epoch != _epoch) {
+        return;
+      }
+      onLocalIpChanged?.call(ip);
+      return;
+    }
+
+    final transports = results
+        .where(
+          (result) =>
+              result != ConnectivityResult.vpn &&
+              result != ConnectivityResult.none,
+        )
+        .toSet();
+
+    if (transports.isEmpty) {
+      if (_hasSnapshot) {
+        _wasOffline = true;
+      }
+      final delay = delays.first;
+      if (delay > Duration.zero) {
+        await Future<void>.delayed(delay);
+      }
+      if (_disposed || epoch != _epoch) {
+        return;
+      }
+      final ip = await readLocalIp();
+      if (_disposed || epoch != _epoch) {
+        return;
+      }
+      onLocalIpChanged?.call(ip);
+      return;
+    }
+
+    for (var i = 0; i < delays.length; i++) {
+      final delay = delays[i];
+      if (delay > Duration.zero) {
+        await Future<void>.delayed(delay);
+      }
+      if (_disposed || epoch != _epoch) {
+        return;
+      }
+      final rawIp = await readLocalIp();
+      if (_disposed || epoch != _epoch) {
+        return;
+      }
+      onLocalIpChanged?.call(rawIp);
+      final ip = (rawIp ?? '').trim();
+      final isLastProbe = i == delays.length - 1;
+
+      if (!_hasSnapshot) {
+        _lastTransports = transports;
+        if (ip.isNotEmpty || isLastProbe) {
+          _lastLocalIp = ip;
+          _hasSnapshot = true;
+          _wasOffline = false;
+          break;
+        }
+        continue;
+      }
+
+      final transportChanged = !setEquals(_lastTransports, transports);
+      final ipChanged = ip.isNotEmpty && ip != _lastLocalIp;
+      final shouldReset = _wasOffline || transportChanged || ipChanged;
+
+      if (shouldReset) {
+        if (ip.isNotEmpty || isLastProbe) {
+          resetConnections();
+          _wasOffline = false;
+          _lastTransports = transports;
+          if (ip.isNotEmpty) {
+            _lastLocalIp = ip;
+          }
+          break;
+        }
+        continue;
+      }
+
+      if (ip.isNotEmpty) {
+        _lastTransports = transports;
+        break;
+      }
+    }
+  }
+
+  void dispose() {
+    _disposed = true;
+    _epoch++;
+  }
+}
+
 class Application extends ConsumerStatefulWidget {
   const Application({
     super.key,
@@ -37,6 +179,7 @@ class Application extends ConsumerStatefulWidget {
 
 class ApplicationState extends ConsumerState<Application> {
   Timer? _autoUpdateProfilesTaskTimer;
+  late final NetworkChangeCoordinator _networkChangeCoordinator;
 
   final _pageTransitionsTheme = const PageTransitionsTheme(
     builders: <TargetPlatform, PageTransitionsBuilder>{
@@ -72,6 +215,17 @@ class ApplicationState extends ConsumerState<Application> {
     globalState.startGroupsUpdateTask();
     _autoUpdateProfilesTask();
     globalState.appController = AppController(context, ref);
+    _networkChangeCoordinator = NetworkChangeCoordinator(
+      isWindows: Platform.isWindows,
+      readLocalIp: utils.getLocalIpAddress,
+      resetConnections: clashCore.resetConnections,
+      closeConnections: clashCore.closeConnections,
+      onLocalIpChanged: (ip) {
+        if (mounted) {
+          ref.read(localIpProvider.notifier).value = ip;
+        }
+      },
+    );
     WidgetsBinding.instance.addPostFrameCallback((timeStamp) async {
       logStartupFirstFrameOnce();
       final currentContext = globalState.navigatorKey.currentContext;
@@ -118,13 +272,10 @@ class ApplicationState extends ConsumerState<Application> {
           child: ConnectivityManager(
             onConnectivityChanged: (results) {
               detectionState.notifyRoutingChanged();
-              if (shouldCloseConnectionsOnNetworkChange(
-                results,
-                isWindows: Platform.isWindows,
-              )) {
-                clashCore.closeConnections();
-              }
-              unawaited(globalState.appController.updateLocalIp());
+              ref.read(localIpProvider.notifier).value = null;
+              unawaited(
+                _networkChangeCoordinator.handleConnectivityChanged(results),
+              );
               globalState.appController.addCheckIpNumDebounce();
             },
             child: child,
@@ -225,6 +376,7 @@ class ApplicationState extends ConsumerState<Application> {
 
   @override
   void dispose() {
+    _networkChangeCoordinator.dispose();
     linkManager.destroy();
     globalState.stopGroupsUpdateTask();
     _autoUpdateProfilesTaskTimer?.cancel();

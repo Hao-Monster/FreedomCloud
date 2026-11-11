@@ -12,6 +12,39 @@ type fcxRawInterface struct {
 
 var fcxLoadInterfaces = fcxLoadPlatformInterfaces
 
+func FCXOverrideInterfacesForTest(ifaces []*Interface) func() {
+	previous := fcxLoadInterfaces
+	fcxLoadInterfaces = func() ([]fcxRawInterface, error) {
+		entries := make([]fcxRawInterface, 0, len(ifaces))
+		for _, item := range ifaces {
+			addrs := make([]net.Addr, 0, len(item.Addresses))
+			for _, prefix := range item.Addresses {
+				ip := net.IP(prefix.Addr().AsSlice())
+				addrs = append(addrs, &net.IPNet{
+					IP:   ip,
+					Mask: net.CIDRMask(prefix.Bits(), prefix.Addr().BitLen()),
+				})
+			}
+			entries = append(entries, fcxRawInterface{
+				iface: net.Interface{
+					Index:        item.Index,
+					MTU:          item.MTU,
+					Name:         item.Name,
+					HardwareAddr: item.HardwareAddr,
+					Flags:        item.Flags,
+				},
+				addrs: addrs,
+			})
+		}
+		return entries, nil
+	}
+	FlushCache()
+	return func() {
+		fcxLoadInterfaces = previous
+		FlushCache()
+	}
+}
+
 func fcxBuildIfaceCache() (*ifaceCache, error) {
 	entries, err := fcxLoadInterfaces()
 	if err != nil {

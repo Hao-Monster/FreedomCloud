@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/netip"
 	"os"
 	"runtime"
 	"sync/atomic"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	tun "github.com/metacubex/sing-tun"
+	"github.com/metacubex/sing/common/control"
 )
 
 var fcxSingTunTimingHook func(stage string, elapsed time.Duration, outcome string)
@@ -193,4 +195,40 @@ func fcxLogSingTunStage(stage string, startedAt time.Time, err error) {
 		hook(stage, elapsed, outcome)
 	}
 	FCXEmitStartupTiming(stage, elapsed, outcome, "", err)
+}
+
+type FCXDefaultInterfaceEvent struct {
+	Name      string
+	Index     int
+	Addresses []netip.Prefix
+	Lost      bool
+	Flags     int
+}
+
+var fcxDefaultInterfaceObserver atomic.Pointer[func(FCXDefaultInterfaceEvent)]
+
+func SetFCXDefaultInterfaceObserver(fn func(FCXDefaultInterfaceEvent)) {
+	if fn == nil {
+		fcxDefaultInterfaceObserver.Store(nil)
+		return
+	}
+	fcxDefaultInterfaceObserver.Store(&fn)
+}
+
+func fcxNotifyDefaultInterfaceChanged(defaultInterface *control.Interface, flags int) {
+	observer := fcxDefaultInterfaceObserver.Load()
+	if observer == nil || *observer == nil {
+		return
+	}
+	event := FCXDefaultInterfaceEvent{Flags: flags}
+	if defaultInterface == nil {
+		event.Lost = true
+	} else {
+		event.Name = defaultInterface.Name
+		event.Index = defaultInterface.Index
+		if len(defaultInterface.Addresses) > 0 {
+			event.Addresses = append([]netip.Prefix(nil), defaultInterface.Addresses...)
+		}
+	}
+	(*observer)(event)
 }

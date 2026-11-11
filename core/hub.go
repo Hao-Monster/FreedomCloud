@@ -254,6 +254,7 @@ func handleStopListener() bool {
 	runLock.Lock()
 	defer runLock.Unlock()
 	isRunning = false
+	cancelPendingNetworkRecoveryHealthChecks()
 	cancelAllDelayTasks("cancelled")
 	// Stop both background forwarders while proxy listeners are stopped so the
 	// Core does not wake providers to dial remote URLTests behind a stopped UI;
@@ -281,6 +282,7 @@ func handleShutdown() bool {
 	clearCatalogsForShutdown(true)
 	runLock.Lock()
 	defer runLock.Unlock()
+	cancelPendingNetworkRecoveryHealthChecks()
 	cancelAllDelayTasks("sessionClosed")
 	stopHealthCheckForwarder()
 	stopRequestForwarder()
@@ -839,9 +841,7 @@ func closeConnections() {
 }
 
 func handleResetConnections() bool {
-	runLock.Lock()
-	defer runLock.Unlock()
-	resolver.ResetConnection()
+	recoverFromIPCNetworkReset()
 	return true
 }
 
