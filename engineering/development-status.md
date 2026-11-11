@@ -2,6 +2,26 @@
 
 更新日期：2026-11-11。当前阶段是快速开发、快速迭代和部分功能预览。本文记录来源与验收边界；每次继续开发仍需核实实际 Git/PR/CI 状态，不能把历史报告视为当前通过证明。
 
+## 冷启动直达「代理 · 全部配置」与小白零门槛首次订阅全自动接入体验（2026-11-11）
+
+- 原始来源与设计对齐：按 `/grill-me` 需求对齐结论及用户确认的新手防坑补充项落入本地 `development`（代码提交 `ebe8f99`）：
+  1. **[冷启动默认直达「代理 · 全部配置」]**：
+     - 将 [`AppState.pageLabel`](file:///E:/CodeWorkstation/FlClashX/lib/models/app.dart#L18) 默认值由 `PageLabel.dashboard` 调整为 `PageLabel.proxies`（同一会话从托盘恢复窗口仍保留用户当前所在页面），并在 [`Navigation.getItems`](file:///E:/CodeWorkstation/FlClashX/lib/common/navigation.dart#L28-L37) 中移除 `hasProxies` 隐藏门禁，使 `代理` 菜单在 `0` 配置时常驻可见；
+     - 将 [`proxiesScopeProvider`](file:///E:/CodeWorkstation/FlClashX/lib/providers/node_overview.dart#L37-L38) 默认值设为 `ProxiesScope.all`，解除 [`NodeOverviewScopeView`](file:///E:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart#L28-L43)、[`NodeOverviewScopeAction`](file:///E:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart#L45-L91) 与 [`_showAllProfiles`](file:///E:/CodeWorkstation/FlClashX/lib/views/proxies/proxies.dart#L217-L221) 原有的 `count < 2` 限制，使 `0`、`1` 及多个配置下每次冷启动均直接展示 `全部配置` 概览视图（`count == 0` 时展示 [`_OverviewEmptyProfilesCard`](file:///E:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart#L2169-L2230) 空态引导卡片并隐藏范围切换器，`count >= 1` 时展示切换器）。
+  2. **[0 配置冷启动自动弹窗与订阅链接智能提取/错误自愈]**：
+     - 在 [`_NodeOverviewViewState.initState`](file:///E:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart#L564-L582) 监听 `initProvider == true`（确保首次安装免责声明关闭后再触发，且遵守 `!silentLaunch`），通过会话级 [`coldStartZeroProfilePromptedProvider`](file:///E:/CodeWorkstation/FlClashX/lib/providers/node_overview.dart#L39-L40) 在帧后回调中自动弹出 1 次 [`URLFormDialog`](file:///E:/CodeWorkstation/FlClashX/lib/views/profiles/add_profile.dart#L121-L234)（中途关闭弹窗或删除最后一个配置仅回到空态引导卡片，不在同会话重复强弹）；
+     - 升级 [`URLFormDialog`](file:///E:/CodeWorkstation/FlClashX/lib/views/profiles/add_profile.dart#L121-L234) 文案与交互：标题改为 `粘贴订阅链接，点击确定即可`，按钮本地化为 `粘贴` 与 `确定`；新增 [`extractSubscriptionUrl`](file:///E:/CodeWorkstation/FlClashX/lib/views/profiles/add_profile.dart#L107-L119) 自动从客服/微信整段混杂文本中剥离提取合法 `http(s)://` 链接并剔除尾部中文标点，拦截空输入/非 URL 输入内联报错；新增 [`formatSubscriptionImportError`](file:///E:/CodeWorkstation/FlClashX/lib/providers/node_overview.dart#L64-L92) 将超时、401/403/404、HTML/YAML 解析异常翻译为大白话中文，并在导入失败时自动重开弹窗保留原输入内容供用户原地修改重试。
+  3. **[首次导入自动测速 + 过滤公告假节点 + 兜底自动选节点并开启代理]**：
+     - 仅在从 `0` 配置导入第 `1` 个订阅时触发 [`_autoTestAndActivateFirstProfile`](file:///E:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart#L1090-L1178)（已有配置时新增第 2 个订阅仅添加配置、不抢切当前活动配置）：自动对该订阅执行延迟测速，通过 [`isInformationalProxyName`](file:///E:/CodeWorkstation/FlClashX/lib/providers/node_overview.dart#L58-L62) 过滤 `剩余流量`、`套餐到期`、`官网`、`公告` 等假节点（`resolveQuickUseAction` 同步过滤），优先选中最低延迟真实节点；即使全部节点测速超时失败也按要求兜底选中第 1 个真实节点（若处于 `Mode.direct` 自动切回 `Mode.rule`），自动开启代理连接，并在订阅已过期、流量耗尽或全部超时场景给出明确中文诊断提示。
+  4. **[代理总开关状态条、点击「使用」联动开代理与过滤空态一键恢复]**：
+     - 在右侧工作区顶部新增 [`_OverviewConnectionStatusBar`](file:///E:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart#L2035-L2167)（展示 `代理已开启 · 正在使用 {配置} · {节点}` / `代理未开启` 及主开关按钮，跨配置切换中隔离旧运行态组快照避免节点名串台），且在代理未开启时点击任意节点的 `使用` 或步骤 3 `一键连最快` 均通过 [`_ensureProxyStartedIfStopped`](file:///E:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart#L787-L798) 自动拉起代理；
+     - 新增 [`_OverviewAvailableFilterEmptyBanner`](file:///E:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart#L2232-L2279)，当勾选 `仅显示可用` 隐藏全部节点时提供一键 `显示全部节点` 恢复按钮；同步更新中/英/日/俄 4 语种 ARB 与 [`lib/l10n/`](file:///E:/CodeWorkstation/FlClashX/lib/l10n/l10n.dart)。
+- 验证记录（本机 `Flutter 3.47.4` / `Dart 3.13.3`）：
+  - 节点概览全套单元/组件/渲染/集成回归（[`node_overview_test.dart`](file:///E:/CodeWorkstation/FlClashX/test/views/node_overview_test.dart)、[`node_overview_render_test.dart`](file:///E:/CodeWorkstation/FlClashX/test/views/node_overview_render_test.dart)、[`node_overview_providers_test.dart`](file:///E:/CodeWorkstation/FlClashX/test/common/node_overview_providers_test.dart)、[`node_overview_integration_test.dart`](file:///E:/CodeWorkstation/FlClashX/test/common/node_overview_integration_test.dart) 共 `135` 项，含 0 配置冷启动自动弹窗、客服文本链接提取、导入失败自愈、首次自动测速+跳过假节点+开启代理、全失败过期兜底、主开关状态条与 4 语种 `320px/1200px @ 2.0x` 大字号校验）：**PASS**；
+  - 关联导航/托盘生命周期/仪表盘/健康检查/购买同步回归（`batch4_ui_virtualization_and_providers_test.dart`、`batch5_tray_and_window_lifecycle_test.dart`、`dashboard_widgets_test.dart`、`health_check_view_test.dart`、`purchase_profile_sync_test.dart`、`startup_subscription_and_dns_test.dart` 共 `46` 项）+ 全部改动文件 `dart analyze --fatal-warnings`（退出码 `0`，`0 error / 0 warning`）：**PASS**；
+  - 新预览包构建 **NOT RUN** / 真实 Windows 窗口交互验收 **NOT RUN（待用户授权或下一预览包验证）** / 远端推送 **NOT RUN** / PR 与合并 **NOT RUN** / 云端 CI **NOT RUN**。
+- 恢复位置与下一步：成果已保存在本地工作树 `E:\CodeWorkstation\FlClashX` 的 `development` 分支提交 `ebe8f99`（未推送至 `freedomcloud/development`）；本机运行态代理/TUN/服务零触碰，既有未提交文件与 `stash@{0}` 原样保留。下一步可按需构建 Windows 预览包供真实交互验收，或并入下一批次统一推送。
+
 ## 代理页节点概览：过期订阅原位删除入口与「全部配置」全局总览卡片升级（2026-11-11）
 
 - 原始来源与设计对齐：按用户确认的两项 UI/交互需求以严格 TDD（前置有效 Red → 最小生产实现 Green → 全套回归）落入本地 `development`（代码提交 `1024540`）：
