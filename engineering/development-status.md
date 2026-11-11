@@ -2,6 +2,21 @@
 
 更新日期：2026-11-11。当前阶段是快速开发、快速迭代和部分功能预览。本文记录来源与验收边界；每次继续开发仍需核实实际 Git/PR/CI 状态，不能把历史报告视为当前通过证明。
 
+## 代理页节点概览：过期订阅原位删除入口与「全部配置」全局总览卡片升级（2026-11-11）
+
+- 原始来源与设计对齐：按用户确认的两项 UI/交互需求以严格 TDD（前置有效 Red → 最小生产实现 Green → 全套回归）落入本地 `development`（代码提交 `1024540`）：
+  1. **[需求 1 — 过期订阅配置卡片原位删除入口]**：
+     - 在 [`_ProfileSubscriptionSummary`](file:///E:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart#L3741-L4080) 中，仅当订阅已过期（`_expired(profile, now) == true`）时，将原单行「到期时间」升级为浅红底色内联操作条（左侧展示 `订阅已过期` 与到期日期，右侧放置紧凑的 [`_ProfileDeleteButton`](file:///E:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart#L3593-L3739) 胶囊按钮），保留右上角 `更新订阅` 按钮供续费后刷新；未过期、长期有效及本地裸配置不展示删除按钮。
+     - 点击时隔离外层卡片选中的 `InkWell` 穿透，订阅同步进行中自动禁用删除按钮防止并发冲突，确认流程直接复用 `deleteTip` 二次确认弹窗与 [`AppController.deleteProfile`](file:///E:/CodeWorkstation/FlClashX/lib/controller.dart#L1352-L1366)，删除当前选中配置后自动回退至 `全部配置` 视图，同时收敛 [`_HealthSummary`](file:///E:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart#L5412-L5432) 与详情 Sliver 中的重复裸文字 `订阅已过期`。
+  2. **[需求 2 — 宽屏侧栏「全部配置」升级为全局总览卡片 + 右上角「全部更新」]**：
+     - 将宽屏侧栏顶部的裸 `ListTile` 替换为与订阅卡视觉同构的 [`_SidebarAllProfilesCard`](file:///E:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart#L2629-L3071)（保持 `overview-select-all` 键兼容）：右上角提供 `全部更新` 按钮（并发同步所有空闲远程 URL 订阅，单配置失败独立回滚不影响其余健康订阅，纯本地配置自动隐藏）；上半区展示 `共 N 个配置` 胶囊、按需出现的 `已过期` / `即将到期` 预警胶囊及 `当前活动` 配置名；下半区基于已缓存的 `resolvedCatalogs` / `_indexedProfiles` / `healthByProfile`（不额外触发离屏 `profileCatalogProvider` 解析）汇总全局 `节点：可用 / 已测 / 共`、`中位延迟 · 最快`、四色分档圆点计数（`流畅` / `偏慢` / `失败` / `未测`）及底部 `5px` 四色比例健康横条。
+  3. **[多语言覆盖]**：同步更新 [`intl_zh_CN.arb`](file:///E:/CodeWorkstation/FlClashX/arb/intl_zh_CN.arb)、[`intl_en.arb`](file:///E:/CodeWorkstation/FlClashX/arb/intl_en.arb)、[`intl_ja.arb`](file:///E:/CodeWorkstation/FlClashX/arb/intl_ja.arb)、[`intl_ru.arb`](file:///E:/CodeWorkstation/FlClashX/arb/intl_ru.arb) 并重新生成 [`lib/l10n/`](file:///E:/CodeWorkstation/FlClashX/lib/l10n/l10n.dart)。
+- 验证记录（本机 `Flutter 3.47.4` / `Dart 3.13.3`）：
+  - 前置有效 Red：**PASS**（[`node_overview_test.dart`](file:///E:/CodeWorkstation/FlClashX/test/views/node_overview_test.dart) 新增用例在生产代码合入前确定性失败退出码 `1`）；
+  - 节点概览全套单元/渲染/集成回归（[`node_overview_test.dart`](file:///E:/CodeWorkstation/FlClashX/test/views/node_overview_test.dart)、[`node_overview_render_test.dart`](file:///E:/CodeWorkstation/FlClashX/test/views/node_overview_render_test.dart)、[`node_overview_providers_test.dart`](file:///E:/CodeWorkstation/FlClashX/test/common/node_overview_providers_test.dart)、[`node_overview_integration_test.dart`](file:///E:/CodeWorkstation/FlClashX/test/common/node_overview_integration_test.dart) 共 `131` 项，含无障碍语义去重与中/英/日/俄 4 语种 `2.0x` 大字号防溢出校验）+ `dart analyze --fatal-warnings`（`0` 问题）：**PASS**；
+  - 新预览包构建 **NOT RUN** / 真实 Windows 窗口交互验收 **NOT RUN（待用户授权或下一预览包验证）** / 远端推送 **NOT RUN** / PR 与合并 **NOT RUN** / 云端 CI **NOT RUN**。
+- 恢复位置与下一步：成果已保存在本地工作树 `E:\CodeWorkstation\FlClashX` 的 `development` 分支提交 `1024540`（未推送至 `freedomcloud/development`）；既有未提交文件与 `stash@{0}` 原样保留。下一步可按需打包预览验证真实窗口效果，或并入下一批次统一推送。
+
 ## `runtime-fix-5764b81e3859` 实机运行验收与 P3 后台自动更新失败退避及瞬态落盘收敛（2026-11-11）
 
 - 原始来源与实机验收结论：
