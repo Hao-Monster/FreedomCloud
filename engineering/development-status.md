@@ -1,6 +1,22 @@
 # 开发、集成与预览台账
 
-更新日期：2026-11-10。当前阶段是快速开发、快速迭代和部分功能预览。本文记录来源与验收边界；每次继续开发仍需核实实际 Git/PR/CI 状态，不能把历史报告视为当前通过证明。
+更新日期：2026-11-11。当前阶段是快速开发、快速迭代和部分功能预览。本文记录来源与验收边界；每次继续开发仍需核实实际 Git/PR/CI 状态，不能把历史报告视为当前通过证明。
+
+## `runtime-fix-5764b81e3859` 实机运行验收与 P3 后台自动更新失败退避及瞬态落盘收敛（2026-11-11）
+
+- 原始来源与实机验收结论：
+  - 基于 `FreedomCloud-windows-amd64-runtime-fix-5764b81e3859` 跨夜 12h18m 连续运行会话（`uiRunId=59824_1794319336016359`）与重启后免 UAC 冷启动会话（`uiRunId=19628_1794363920493974`）执行实机日志与 `schema=2` 埋点验收：`check_startup_timing.py --cold-helper-run` 退出码 `0` **PASS**（`firstFrameMs=371`、`tunnelReadyMs=4017`、`seq=1..47` 单调连续无缺失、`dropped=0`、`writeFailures=0`），前序三项修复（`deferForTunAuthorization` 窗口期 IPC 20s 悬挂、`FlClashCore` stdout `level=debug` 洪泛、运行态 `setupConfig` 二次 `ReCreateTun`）在实机验证全部 **PASS**。
+  - 同时定位到两项 P3 客户端稳态优化空间并按最小范围原则以严格 TDD 落入本地 `development`（代码提交 `a229588`）：
+    1. **[P3-1 — 后台 `autoUpdateProfiles` 失效订阅无退避重复请求]**：
+       - 根因：[`AppController.autoUpdateProfiles`](file:///E:/CodeWorkstation/FlClashX/lib/controller.dart#L2542-L2582) 每 20 分钟定时器对所有满足 `isProfileAutoUpdateDue` 的历史失效/403/530 订阅无限重试，既不记录内存退避也不应伪造 `lastUpdateDate`，导致 3 个已过期背景订阅 12 小时产生 ~96 次无效请求与异常堆栈。
+       - 修复：在 [`lib/models/profile.dart`](file:///E:/CodeWorkstation/FlClashX/lib/models/profile.dart#L155-L231) 新增纯内存 [`ProfileAutoUpdateBackoff`](file:///E:/CodeWorkstation/FlClashX/lib/models/profile.dart#L159-L231)（退避阶梯 `40m -> 2h -> 6h -> 12h` 封顶，按 `(id, url, lastUpdateDate)` 绑定快照），仅作用于 [`AppController.autoUpdateProfiles`](file:///E:/CodeWorkstation/FlClashX/lib/controller.dart#L2542-L2582)；手动点击刷新 [`updateProfile`](file:///E:/CodeWorkstation/FlClashX/lib/controller.dart#L1542-L1574)、批量手动刷新 [`updateProfiles`](file:///E:/CodeWorkstation/FlClashX/lib/controller.dart#L2653-L2664)、URL 编辑、兑换/账号订阅同步（推进 `lastUpdateDate` 或轮换 `url`）以及删除配置均完全不受阻断并自动失效旧退避，且绝不篡改 `Profile.lastUpdateDate`。
+    2. **[P3-2 — `Profile.isUpdating` 瞬态翻转触发无意义 `save preferences` 双重磁盘写入]**：
+       - 根因：`Profile.isUpdating` 虽声明 `@JsonKey(includeToJson: false, includeFromJson: false)` 不参与 JSON 持久化，但 [`Preferences.hasUnsavedConfig`](file:///E:/CodeWorkstation/FlClashX/lib/common/preferences.dart#L61-L63) 与 [`Preferences.saveConfig`](file:///E:/CodeWorkstation/FlClashX/lib/common/preferences.dart#L96-L107) 直接对比含瞬态 `isUpdating` 的 `Config` 对象相等性，导致每次背景拉取开始（`isUpdating=true`）与失败回滚（`isUpdating=false`）各触发一次完全相同的 `shared_preferences.json` 序列化落盘。
+       - 修复：在 [`lib/common/preferences.dart`](file:///E:/CodeWorkstation/FlClashX/lib/common/preferences.dart#L38-L48) 新增 `_persistableConfig` 归一化 `Profile.isUpdating=false` 后再执行脏检查与落盘，保留 Riverpod `profilesProvider` 的 UI 加载态通知不变，使失败拉取产生 `0` 次磁盘写入、成功拉取从 `2` 次收敛为 `1` 次，且对 `isUpdating=true` 期间并发发生的真实配置修改仍正常落盘。
+- 验证记录（本机 `Flutter 3.47.4` / `Dart 3.13.3`）：
+  - 前置有效 Red：**PASS**（[`preferences_save_test.dart`](file:///E:/CodeWorkstation/FlClashX/test/common/preferences_save_test.dart) 与 `autoUpdateProfiles` 退避断言在生产代码合入前均确定性失败退出码 `1`）；
+  - 单元与回归验证（[`preferences_save_test.dart`](file:///E:/CodeWorkstation/FlClashX/test/common/preferences_save_test.dart)、[`profile_auto_update_backoff_test.dart`](file:///E:/CodeWorkstation/FlClashX/test/common/profile_auto_update_backoff_test.dart)、[`startup_subscription_and_dns_test.dart`](file:///E:/CodeWorkstation/FlClashX/test/common/startup_subscription_and_dns_test.dart)、[`purchase_profile_sync_test.dart`](file:///E:/CodeWorkstation/FlClashX/test/purchase/purchase_profile_sync_test.dart)、[`migrate_old_data_test.dart`](file:///E:/CodeWorkstation/FlClashX/test/common/migrate_old_data_test.dart) 共 `25` 项全绿 + `dart analyze --fatal-warnings` 退出码 `0`，新增代码 `--fatal-infos` `0` 问题）：**PASS**；
+  - 新预览包构建 **NOT RUN**（纯 UI Dart 小增量，待下一批次合并打包） / 远端推送 **NOT RUN** / PR 与合并 **NOT RUN** / 云端 CI **NOT RUN**。
 
 ## `wintun-fix-675bc95d4625` 实机运行日志与埋点分析优化项 TDD 收口（2026-11-10）
 
