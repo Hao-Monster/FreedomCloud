@@ -2,6 +2,20 @@
 
 更新日期：2026-11-11。当前阶段是快速开发、快速迭代和部分功能预览。本文记录来源与验收边界；每次继续开发仍需核实实际 Git/PR/CI 状态，不能把历史报告视为当前通过证明。
 
+## Windows 全新安装（0 配置）首次导入订阅自动补齐 `profileRequired` TUN 接管 TDD 修复（2026-11-11）
+
+- 原始来源与根因穿透：核查首次安装粘贴订阅全自动开启代理链路时定位到底层接管盲点，按用户指令以严格 TDD（前置有效 Red → 最小生产实现 Green → 全套回归）落入本地 `development`（代码提交 `51b84f2`）：
+  - **根因**：Windows 全新安装默认 `patchClashConfig.tun.enable = true` 且 `NetworkProps.systemProxy = false`。`0` 配置冷启动时，[`_initializeRuntime`](file:///E:/CodeWorkstation/FlClashX/lib/controller.dart#L3237-L3284) 执行 [`startWindowsTunOnLaunch`](file:///E:/CodeWorkstation/FlClashX/lib/common/windows_tun_startup.dart#L96-L98)，因 `hasProfile() == false` 在请求 UAC 前锁存 `requestFailure = 'profileRequired'` 并回退为非特权本地 Agent；随后用户粘贴首个订阅自动激活节点调用 [`AppController.updateStatus(true)`](file:///E:/CodeWorkstation/FlClashX/lib/controller.dart#L1064-L1223) 时，旧逻辑仅启动本地端口监听，未触发 [`_startWindowsTun`](file:///E:/CodeWorkstation/FlClashX/lib/controller.dart#L3229-L3235)，导致界面总开关变绿但虚拟网卡仍停留在 `profileRequired` 未启动态、浏览器流量未真正走代理。
+  - **修复**：
+    1. 在 [`AppController`](file:///E:/CodeWorkstation/FlClashX/lib/controller.dart#L1054-L1196) 新增 [`_shouldStartDeferredWindowsTunOnProxyStart`](file:///E:/CodeWorkstation/FlClashX/lib/controller.dart#L1054-L1062)，当处于 Windows、`patchClashConfig.tun.enable == true`、TUN 未开启、非忙/非关闭、未锁存 UAC 拒绝，且 `requestFailure == 'profileRequired'` 时，在 `updateStatus(true)` 排空前序 `_tunRuntime.serialize` 队列后自动晋升调用 `_startWindowsTun()`（一次性完成 UAC 授权、切换提权 Helper/Core、下发完整配置与目标节点、拉起 Wintun 虚拟网卡并 `reflectRunning` 点亮代理总开关）；
+    2. 严格遵守权限与偏好边界：若用户在该次延迟拉起中取消 UAC（转为 `'permissionDenied'`），保留开启偏好且后续 `updateStatus(true)` / 切节点绝不重复弹 UAC，仅手动拨动 TUN 开关时重试；若用户在导入前手动关闭了 TUN（`tun.enable == false`），保持纯代理启动不弹 UAC；启动期间触发 `updateStatus(false)` 立即通过 `beginProxyStop()` 撤销在途授权，不启动后端或监听器；
+    3. 在 [`_setupClashConfigImpl`](file:///E:/CodeWorkstation/FlClashX/lib/controller.dart#L2364-L2370) 下发同配置快照时同步取消冗余挂起的 `FunctionTag.applyProfile` 定时器避免二次重建，并在 [`_useActiveNode`](file:///E:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart#L827-L857) 先落盘 `selectedMap` / `currentGroupName` 再调用 [`_ensureProxyStartedIfStopped`](file:///E:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart#L787-L798)。
+- 验证记录（本机 `Flutter 3.47.4` / `Dart 3.13.3`）：
+  - 前置有效 Red：**PASS**（[`node_overview_test.dart`](file:///E:/CodeWorkstation/FlClashX/test/views/node_overview_test.dart) Windows 0 配置首次粘贴订阅端到端用例在生产代码合入前确定性失败退出码 `1`，`effects.calls` 仅观测到 `['observe']` 而缺失 `'authorize'..'reflect'`）；
+  - Green 与全量回归（[`windows_startup_controller_test.dart`](file:///E:/CodeWorkstation/FlClashX/test/clash/windows_startup_controller_test.dart) `47` 项含 4 项新增状态机/取消/UAC 拒绝不重弹/手动关闭尊重用例 + `test/clash` 全目录与 [`node_overview_test.dart`](file:///E:/CodeWorkstation/FlClashX/test/views/node_overview_test.dart) 共 `320` 项全绿）+ `dart analyze --fatal-warnings`（退出码 `0`，`0 error / 0 warning`，新增代码 `0 info`）：**PASS**；
+  - 新预览包构建 **NOT RUN** / 隔离 VM 真实 UAC + Wintun 网卡验收 **NOT RUN（待预览包或隔离 VM 验证）** / 远端推送 **NOT RUN** / PR 与合并 **NOT RUN** / 云端 CI **NOT RUN**。
+- 恢复位置与下一步：成果已保存在本地工作树 `E:\CodeWorkstation\FlClashX` 的 `development` 分支提交 `51b84f2`（未推送至 `freedomcloud/development`）；本机运行态代理/TUN/服务零触碰，既有未提交文件与 `stash@{0}` 原样保留。下一步可按需打包 Windows 预览包验证首次安装全链路体验，或并入下一批次统一推送。
+
 ## 冷启动直达「代理 · 全部配置」与小白零门槛首次订阅全自动接入体验（2026-11-11）
 
 - 原始来源与设计对齐：按 `/grill-me` 需求对齐结论及用户确认的新手防坑补充项落入本地 `development`（代码提交 `ebe8f99`）：
