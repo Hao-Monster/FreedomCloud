@@ -1043,11 +1043,126 @@ func bindIfaceToDialer(ifaceName string, dialer *net.Dialer, _ string, destinati
 	if err != nil || !bytes.Equal(firstDialer, secondDialer) {
 		t.Fatalf("bind_windows.go patch nondeterministic: %v", err)
 	}
-	if !bytes.Contains(firstDialer, []byte("LookupLocalAddrFromIfaceName")) {
-		t.Fatal("bind_windows.go missing LookupLocalAddrFromIfaceName")
+	if !bytes.Contains(firstDialer, []byte("LookupLocalAddrFromIfaceName")) || !bytes.Contains(firstDialer, []byte("destination.Unmap()")) {
+		t.Fatal("bind_windows.go missing LookupLocalAddrFromIfaceName or destination.Unmap()")
 	}
 	if _, err := patchDialerBindWindows([]byte(strings.Replace(minimalDialerBind, "addControlToDialer", "otherControl", 1))); err == nil {
 		t.Fatal("changed bind_windows.go shape accepted")
+	}
+
+	const minimalResolver = `package dns
+
+func (r *Resolver) ClearCache() {
+	if r != nil && r.cache != nil {
+		r.cache.Clear()
+	}
+}
+
+func (r *Resolver) ResetConnection() {
+	if r != nil {
+		for _, c := range r.main {
+			c.ResetConnection()
+		}
+		for _, c := range r.fallback {
+			c.ResetConnection()
+		}
+		if dr := r.defaultResolver; dr != nil {
+			dr.ResetConnection()
+		}
+	}
+}
+
+func newResolver() {
+	makePolicy := func(policies []Policy) (dnsPolicies []dnsPolicy) {
+		var triePolicy *trie.DomainTrie[[]dnsClient]
+		insertPolicy := func(policy dnsPolicy) {
+			if triePolicy != nil {
+				triePolicy.Optimize()
+				dnsPolicies = append(dnsPolicies, domainTriePolicy{triePolicy})
+				triePolicy = nil
+			}
+			if policy != nil {
+				dnsPolicies = append(dnsPolicies, policy)
+			}
+		}
+
+		for _, policy := range policies {
+			if policy.Matcher != nil {
+				insertPolicy(domainMatcherPolicy{matcher: policy.Matcher, dnsClients: cacheTransform(policy.NameServers)})
+			} else {
+				if triePolicy == nil {
+					triePolicy = trie.New[[]dnsClient]()
+				}
+				if err := triePolicy.Insert(policy.Domain, cacheTransform(policy.NameServers)); err != nil {
+					log.Warnln("[DNS] skip invalid nameserver policy: %s", err)
+				}
+			}
+		}
+		insertPolicy(nil)
+		return
+	}
+	_ = makePolicy
+}
+`
+	firstResolver, err := patchDNSResolver([]byte(minimalResolver))
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondResolver, err := patchDNSResolver([]byte(strings.ReplaceAll(minimalResolver, "\n", "\r\n")))
+	if err != nil || !bytes.Equal(firstResolver, secondResolver) {
+		t.Fatalf("dns/resolver.go patch nondeterministic: %v", err)
+	}
+	if !bytes.Contains(firstResolver, []byte("dr.ClearCache()")) || !bytes.Contains(firstResolver, []byte("p.ResetConnection()")) {
+		t.Fatal("dns/resolver.go missing defaultResolver.ClearCache() or policy.ResetConnection()")
+	}
+	if _, err := patchDNSResolver([]byte(strings.Replace(minimalResolver, "r.cache.Clear()", "r.cache.Purge()", 1))); err == nil {
+		t.Fatal("changed dns/resolver.go shape accepted")
+	}
+
+	const minimalSystemCommon = `package dns
+
+import "time"
+
+func (c *systemClient) ResetConnection() {}
+`
+	firstSys, err := patchDNSSystemCommon([]byte(minimalSystemCommon))
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondSys, err := patchDNSSystemCommon([]byte(strings.ReplaceAll(minimalSystemCommon, "\n", "\r\n")))
+	if err != nil || !bytes.Equal(firstSys, secondSys) {
+		t.Fatalf("dns/system_common.go patch nondeterministic: %v", err)
+	}
+	if !bytes.Contains(firstSys, []byte("c.lastFlush = time.Time{}")) {
+		t.Fatal("dns/system_common.go missing lastFlush reset")
+	}
+	if _, err := patchDNSSystemCommon([]byte("package dns\n")); err == nil {
+		t.Fatal("changed dns/system_common.go shape accepted")
+	}
+
+	const minimalDHCP = `package dns
+
+import "time"
+
+func (d *dhcpClient) ResetConnection() {
+	for _, client := range d.clients {
+		client.ResetConnection()
+	}
+}
+`
+	firstDHCP, err := patchDNSDHCP([]byte(minimalDHCP))
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondDHCP, err := patchDNSDHCP([]byte(strings.ReplaceAll(minimalDHCP, "\n", "\r\n")))
+	if err != nil || !bytes.Equal(firstDHCP, secondDHCP) {
+		t.Fatalf("dns/dhcp.go patch nondeterministic: %v", err)
+	}
+	if !bytes.Contains(firstDHCP, []byte("d.ifaceInvalidate = time.Time{}")) || !bytes.Contains(firstDHCP, []byte("d.dnsInvalidate = time.Time{}")) {
+		t.Fatal("dns/dhcp.go missing TTL invalidation")
+	}
+	if _, err := patchDNSDHCP([]byte("package dns\n")); err == nil {
+		t.Fatal("changed dns/dhcp.go shape accepted")
 	}
 
 	const minimalURLTest = `package outboundgroup

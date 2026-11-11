@@ -1,0 +1,7 @@
+package anytls
+
+func (c *Client) ResetConnectionsFCX() {
+	if c != nil && c.sessionClient != nil {
+		c.sessionClient.ResetConnectionsFCX()
+	}
+}

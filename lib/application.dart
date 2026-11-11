@@ -55,6 +55,43 @@ class NetworkChangeCoordinator {
   Set<ConnectivityResult> _lastTransports = const <ConnectivityResult>{};
   String _lastLocalIp = '';
 
+  Set<ConnectivityResult> _extractPhysicalTransports(
+    List<ConnectivityResult> results,
+  ) =>
+      results
+          .where(
+            (result) =>
+                result != ConnectivityResult.vpn &&
+                result != ConnectivityResult.none,
+          )
+          .toSet();
+
+  Future<void> seedInitialBaseline(List<ConnectivityResult> results) async {
+    if (_disposed || !isWindows || _hasSnapshot || _epoch != 0) {
+      return;
+    }
+    final seedEpoch = _epoch;
+    final transports = _extractPhysicalTransports(results);
+    if (transports.isEmpty) {
+      _hasSnapshot = true;
+      _wasOffline = true;
+      _lastTransports = const <ConnectivityResult>{};
+      return;
+    }
+    final rawIp = await readLocalIp();
+    if (_disposed || _hasSnapshot || _epoch != seedEpoch) {
+      return;
+    }
+    final ip = (rawIp ?? '').trim();
+    _lastTransports = transports;
+    _lastLocalIp = ip;
+    _hasSnapshot = true;
+    _wasOffline = false;
+    if (ip.isNotEmpty) {
+      onLocalIpChanged?.call(rawIp);
+    }
+  }
+
   Future<void> handleConnectivityChanged(
     List<ConnectivityResult> results,
   ) async {
@@ -84,18 +121,12 @@ class NetworkChangeCoordinator {
       return;
     }
 
-    final transports = results
-        .where(
-          (result) =>
-              result != ConnectivityResult.vpn &&
-              result != ConnectivityResult.none,
-        )
-        .toSet();
+    final transports = _extractPhysicalTransports(results);
 
     if (transports.isEmpty) {
-      if (_hasSnapshot) {
-        _wasOffline = true;
-      }
+      _hasSnapshot = true;
+      _wasOffline = true;
+      _lastTransports = const <ConnectivityResult>{};
       final delay = delays.first;
       if (delay > Duration.zero) {
         await Future<void>.delayed(delay);
@@ -270,6 +301,11 @@ class ApplicationState extends ConsumerState<Application> {
   Widget _buildState(Widget child) => AppStateManager(
         child: ClashManager(
           child: ConnectivityManager(
+            onInitialConnectivity: (results) {
+              unawaited(
+                _networkChangeCoordinator.seedInitialBaseline(results),
+              );
+            },
             onConnectivityChanged: (results) {
               detectionState.notifyRoutingChanged();
               ref.read(localIpProvider.notifier).value = null;

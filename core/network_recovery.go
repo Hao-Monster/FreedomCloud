@@ -8,6 +8,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/metacubex/mihomo/adapter"
+	"github.com/metacubex/mihomo/adapter/outbound"
 	"github.com/metacubex/mihomo/adapter/outboundgroup"
 	"github.com/metacubex/mihomo/component/iface"
 	"github.com/metacubex/mihomo/component/resolver"
@@ -23,10 +25,20 @@ var (
 	lastTunRecoveredNetworkKey  string
 	lastTunRecoveredAt          time.Time
 	networkHealthCheckTimer     *time.Timer
+	networkHealthCheckWG        sync.WaitGroup
 	networkHealthCheckEpoch     uint64
 	networkHealthCheckDebounce  = 250 * time.Millisecond
 	tunRecoveryDedupGraceWindow = 15 * time.Second
 )
+
+func stopNetworkHealthCheckTimerLocked() {
+	if networkHealthCheckTimer != nil {
+		if networkHealthCheckTimer.Stop() {
+			networkHealthCheckWG.Done()
+		}
+		networkHealthCheckTimer = nil
+	}
+}
 
 func init() {
 	sing_tun.SetFCXDefaultInterfaceObserver(onTunDefaultInterfaceChanged)
@@ -44,21 +56,35 @@ func resetNetworkCachesAndResolvers() {
 	}
 }
 
-func resetURLTestGroupCachesLocked() {
-	for _, proxy := range tunnel.Proxies() {
-		if proxy == nil {
+func resetOutboundAdapterPools() {
+	proxyStateMu.RLock()
+	proxies := proxiesWithProviders()
+	proxyStateMu.RUnlock()
+	for _, proxy := range proxies {
+		adapterProxy, ok := proxy.(*adapter.Proxy)
+		if !ok || adapterProxy == nil {
 			continue
 		}
-		if urlTest, ok := proxy.Adapter().(*outboundgroup.URLTest); ok {
+		outbound.ResetAdapterConnectionsFCX(adapterProxy.ProxyAdapter)
+	}
+}
+
+func resetURLTestGroupCachesLocked() {
+	for _, proxy := range tunnel.Proxies() {
+		adapterProxy, ok := proxy.(*adapter.Proxy)
+		if !ok || adapterProxy == nil {
+			continue
+		}
+		if urlTest, ok := adapterProxy.ProxyAdapter.(*outboundgroup.URLTest); ok {
 			urlTest.ResetFastCacheFCX()
 		}
 	}
 }
 
 func resetURLTestGroupCaches() {
-	runLock.Lock()
+	proxyStateMu.RLock()
 	resetURLTestGroupCachesLocked()
-	runLock.Unlock()
+	proxyStateMu.RUnlock()
 }
 
 func formatUsablePrefixes(prefixes []netip.Prefix) []string {
@@ -104,7 +130,7 @@ func computeActivePhysicalInterfacesKey() string {
 	if err != nil || len(ifaces) == 0 {
 		return ""
 	}
-	tunDevice := listener.GetTunConf().Device
+	tunDevice := listener.GetTunLifecycleStatus().Device
 	var parts []string
 	for _, item := range ifaces {
 		if item == nil || item.Flags&net.FlagUp == 0 {
@@ -143,15 +169,25 @@ func onTunDefaultInterfaceChanged(event sing_tun.FCXDefaultInterfaceEvent) {
 		lastTunRecoveredNetworkKey = "lost"
 		lastTunRecoveredAt = time.Now()
 		networkHealthCheckEpoch++
-		if networkHealthCheckTimer != nil {
-			networkHealthCheckTimer.Stop()
-		}
+		stopNetworkHealthCheckTimerLocked()
 		networkRecoveryMu.Unlock()
 		log.Infoln("[Network] default interface lost; flushed caches and closed stale connections")
 		return
 	}
 
 	key := computeActivePhysicalInterfacesKey()
+	usableEventAddrs := formatUsablePrefixes(event.Addresses)
+	if key == "" && len(usableEventAddrs) == 0 {
+		networkRecoveryMu.Lock()
+		lastTunRecoveredNetworkKey = ""
+		lastTunRecoveredAt = time.Time{}
+		networkHealthCheckEpoch++
+		stopNetworkHealthCheckTimerLocked()
+		networkRecoveryMu.Unlock()
+		resetURLTestGroupCaches()
+		log.Infoln("[Network] default interface %s acquiring usable address (DAD/DHCP in progress); closed stale connections and deferred health checks", event.Name)
+		return
+	}
 	if key == "" {
 		key = buildSingleInterfaceKey(event.Name, event.Addresses)
 	}
@@ -193,10 +229,7 @@ func recoverFromIPCNetworkReset() {
 func cancelPendingNetworkRecoveryHealthChecks() {
 	networkRecoveryMu.Lock()
 	networkHealthCheckEpoch++
-	if networkHealthCheckTimer != nil {
-		networkHealthCheckTimer.Stop()
-		networkHealthCheckTimer = nil
-	}
+	stopNetworkHealthCheckTimerLocked()
 	lastTunRecoveredNetworkKey = ""
 	lastTunRecoveredAt = time.Time{}
 	networkRecoveryMu.Unlock()
@@ -207,10 +240,10 @@ func scheduleNetworkRecoveryHealthChecks() {
 	networkHealthCheckEpoch++
 	epoch := networkHealthCheckEpoch
 	delay := networkHealthCheckDebounce
-	if networkHealthCheckTimer != nil {
-		networkHealthCheckTimer.Stop()
-	}
+	stopNetworkHealthCheckTimerLocked()
+	networkHealthCheckWG.Add(1)
 	networkHealthCheckTimer = time.AfterFunc(delay, func() {
+		defer networkHealthCheckWG.Done()
 		runNetworkRecoveryHealthChecks(epoch)
 	})
 	networkRecoveryMu.Unlock()
@@ -230,6 +263,7 @@ func runNetworkRecoveryHealthChecks(epoch uint64) {
 		return
 	}
 	touchProviders()
+	proxyStateMu.RLock()
 	resetURLTestGroupCachesLocked()
 	providerMap := tunnel.Providers()
 	providers := make([]cp.ProxyProvider, 0, len(providerMap))
@@ -238,6 +272,7 @@ func runNetworkRecoveryHealthChecks(epoch uint64) {
 			providers = append(providers, p)
 		}
 	}
+	proxyStateMu.RUnlock()
 	runLock.Unlock()
 
 	if len(providers) == 0 {

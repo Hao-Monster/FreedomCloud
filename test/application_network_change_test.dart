@@ -176,4 +176,46 @@ void main() {
     expect(resets, 2);
     coordinator.dispose();
   });
+
+  test('Windows coordinator resets Core on very first WiFi switch after startup baseline seeding', () async {
+    var resets = 0;
+    var currentIp = '172.20.10.2';
+    final coordinator = NetworkChangeCoordinator(
+      isWindows: true,
+      readLocalIp: () async => currentIp,
+      resetConnections: () => resets++,
+      closeConnections: () {},
+      probeDelays: const [Duration.zero],
+    );
+
+    // Startup checkConnectivity() seeds initial WiFi baseline without resetting.
+    await coordinator.seedInitialBaseline([ConnectivityResult.wifi]);
+    expect(resets, 0);
+
+    // Very first onConnectivityChanged event is a direct WiFi switch (e.g. System Proxy mode).
+    currentIp = '172.23.104.177';
+    await coordinator.handleConnectivityChanged([ConnectivityResult.wifi]);
+    expect(resets, 1);
+    coordinator.dispose();
+  });
+
+  test('Windows coordinator resets Core when initial event is offline followed by online WiFi', () async {
+    var resets = 0;
+    var currentIp = '';
+    final coordinator = NetworkChangeCoordinator(
+      isWindows: true,
+      readLocalIp: () async => currentIp,
+      resetConnections: () => resets++,
+      closeConnections: () {},
+      probeDelays: const [Duration.zero],
+    );
+
+    await coordinator.handleConnectivityChanged([ConnectivityResult.none]);
+    expect(resets, 0);
+
+    currentIp = '172.23.104.177';
+    await coordinator.handleConnectivityChanged([ConnectivityResult.wifi]);
+    expect(resets, 1);
+    coordinator.dispose();
+  });
 }

@@ -1,0 +1,76 @@
+package outbound
+
+import (
+	"errors"
+
+	C "github.com/metacubex/mihomo/constant"
+)
+
+var errFCXNetworkChanged = errors.New("network changed")
+
+// ResetAdapterConnectionsFCX evicts pooled or multiplexed carrier sessions bound
+// to a previous network interface without permanently closing the outbound
+// adapter, so subsequent dials open fresh sockets on the active route.
+func ResetAdapterConnectionsFCX(adapter C.ProxyAdapter) {
+	if adapter == nil {
+		return
+	}
+	switch a := adapter.(type) {
+	case *SingMux:
+		if a.client != nil {
+			a.client.Reset()
+		}
+		ResetAdapterConnectionsFCX(a.ProxyAdapter)
+	case *Hysteria2:
+		if a.client != nil {
+			_ = a.client.CloseWithError(errFCXNetworkChanged)
+		}
+	case *Hysteria:
+		if a.client != nil {
+			a.client.ResetConnectionsFCX()
+		}
+	case *Tuic:
+		if a.client != nil {
+			a.client.ResetConnectionsFCX()
+		}
+	case *AnyTLS:
+		if a.client != nil {
+			a.client.ResetConnectionsFCX()
+		}
+	case *ShadowQuic:
+		if a.client != nil {
+			a.client.ResetConnectionsFCX()
+		}
+	case *TrustTunnel:
+		if a.client != nil {
+			_ = a.client.Close()
+		}
+	case *Vless:
+		if a.gunClient != nil {
+			_ = a.gunClient.Close()
+		}
+		if a.xhttpClient != nil {
+			_ = a.xhttpClient.ResetConnectionsFCX()
+		}
+	case *Vmess:
+		if a.gunClient != nil {
+			_ = a.gunClient.Close()
+		}
+	case *Trojan:
+		if a.gunClient != nil {
+			_ = a.gunClient.Close()
+		}
+	case *Ssh:
+		a.cMutex.Lock()
+		client := a.client
+		a.client = nil
+		a.cMutex.Unlock()
+		if client != nil {
+			_ = client.Close()
+		}
+	case *Snell:
+		if a.pool != nil {
+			a.pool.ResetConnectionsFCX()
+		}
+	}
+}

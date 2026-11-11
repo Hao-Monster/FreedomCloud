@@ -36,6 +36,8 @@ const urlTestGroupSHA256 = "6d58af720ff6bcb368b2d43253a784865fd040d6871598cd2cc7
 const dnsDoHSHA256 = "1ba0170bed4aabf6b295471f9fddb03da20122d339526a97170dff537fbde57b"
 const dnsResolverSHA256 = "400765c7dde15950c324ab8fce1a7dc1d7730b3c7f3bff6a85fd64e4238e2b48"
 const dnsPolicySHA256 = "a46f9e8cb408b0ea1863fc5bf926e7ce461afb3b6a842394421b5c9951b10116"
+const dnsSystemCommonSHA256 = "c59c64d225d28747b41630a46dd28d14fdaba63418cb5607fb5fe9dc99418fbf"
+const dnsDHCPSHA256 = "0e3f4b9faae24e1c3b0928a5876cd6fe0986ebf8649f88e31c63ea492a07a5dc"
 const converterSHA256 = "503aac2968628ab826f8208d620bcd5939ca67219426cf0189fab76346626ede"
 const ifaceSHA256 = "67d3d4f54999bdb6875ef87cdbb87c61d5f9e299aa20c1108de3e391eac18605"
 const dialerBindWindowsSHA256 = "75af61a7176ed1a0dbcb53cf9a93fe532b7a7be2d01b374c89ba9be8c23c6926"
@@ -921,6 +923,21 @@ func patchDNSResolver(source []byte) ([]byte, error) {
 		return nil, err
 	}
 	patched := string(source)
+	const clearCacheAnchor = `func (r *Resolver) ClearCache() {
+	if r != nil && r.cache != nil {
+		r.cache.Clear()
+	}
+}`
+	const clearCacheReplacement = `func (r *Resolver) ClearCache() {
+	if r != nil {
+		if r.cache != nil {
+			r.cache.Clear()
+		}
+		if dr := r.defaultResolver; dr != nil {
+			dr.ClearCache()
+		}
+	}
+}`
 	const resetAnchor = `func (r *Resolver) ResetConnection() {
 	if r != nil {
 		for _, c := range r.main {
@@ -1017,6 +1034,7 @@ func patchDNSResolver(source []byte) ([]byte, error) {
 	for _, pair := range []struct {
 		name, anchor, replacement string
 	}{
+		{"ClearCache", clearCacheAnchor, clearCacheReplacement},
 		{"ResetConnection", resetAnchor, resetReplacement},
 		{"makePolicy", makePolicyAnchor, makePolicyReplacement},
 	} {
@@ -1025,6 +1043,65 @@ func patchDNSResolver(source []byte) ([]byte, error) {
 		}
 		patched = strings.Replace(patched, pair.anchor, pair.replacement, 1)
 	}
+	return format.Source([]byte(patched))
+}
+
+func patchDNSSystemCommon(source []byte) ([]byte, error) {
+	source = bytes.ReplaceAll(source, []byte("\r\n"), []byte("\n"))
+	fset := token.NewFileSet()
+	if _, err := parser.ParseFile(fset, "system_common.go", source, 0); err != nil {
+		return nil, err
+	}
+	patched := string(source)
+	const resetAnchor = "func (c *systemClient) ResetConnection() {}"
+	const resetReplacement = `func (c *systemClient) ResetConnection() {
+	c.mu.Lock()
+	c.lastFlush = time.Time{}
+	clients := make([]dnsClient, 0, len(c.dnsClients)+len(c.defaultNS))
+	for _, sdc := range c.dnsClients {
+		if sdc != nil && sdc.dnsClient != nil {
+			clients = append(clients, sdc.dnsClient)
+		}
+	}
+	clients = append(clients, c.defaultNS...)
+	c.mu.Unlock()
+	for _, client := range clients {
+		client.ResetConnection()
+	}
+}`
+	if strings.Count(patched, resetAnchor) != 1 {
+		return nil, fmt.Errorf("upstream dns/system_common.go ResetConnection changed")
+	}
+	patched = strings.Replace(patched, resetAnchor, resetReplacement, 1)
+	return format.Source([]byte(patched))
+}
+
+func patchDNSDHCP(source []byte) ([]byte, error) {
+	source = bytes.ReplaceAll(source, []byte("\r\n"), []byte("\n"))
+	fset := token.NewFileSet()
+	if _, err := parser.ParseFile(fset, "dhcp.go", source, 0); err != nil {
+		return nil, err
+	}
+	patched := string(source)
+	const resetAnchor = `func (d *dhcpClient) ResetConnection() {
+	for _, client := range d.clients {
+		client.ResetConnection()
+	}
+}`
+	const resetReplacement = `func (d *dhcpClient) ResetConnection() {
+	d.lock.Lock()
+	d.ifaceInvalidate = time.Time{}
+	d.dnsInvalidate = time.Time{}
+	clients := append([]dnsClient(nil), d.clients...)
+	d.lock.Unlock()
+	for _, client := range clients {
+		client.ResetConnection()
+	}
+}`
+	if strings.Count(patched, resetAnchor) != 1 {
+		return nil, fmt.Errorf("upstream dns/dhcp.go ResetConnection changed")
+	}
+	patched = strings.Replace(patched, resetAnchor, resetReplacement, 1)
 	return format.Source([]byte(patched))
 }
 
@@ -1051,8 +1128,9 @@ func patchDialerBindWindows(source []byte) ([]byte, error) {
 	if err != nil {
 		return err
 	}
-	if dialer.LocalAddr == nil && destination.IsGlobalUnicast() && (strings.HasPrefix(network, "tcp") || strings.HasPrefix(network, "udp")) {
-		localAddr, err := LookupLocalAddrFromIfaceName(ifaceName, network, destination, 0)
+	unmapped := destination.Unmap()
+	if dialer.LocalAddr == nil && unmapped.IsGlobalUnicast() && (strings.HasPrefix(network, "tcp") || strings.HasPrefix(network, "udp")) {
+		localAddr, err := LookupLocalAddrFromIfaceName(ifaceName, network, unmapped, 0)
 		if err != nil {
 			return err
 		}
@@ -1949,6 +2027,22 @@ func convertsV2RayFCX(buf []byte, diagnostics bool) ([]map[string]any, error) {`
 	if err != nil {
 		return err
 	}
+	dnsSystemCommonSource, err := checkedSource(filepath.Join(module.Dir, "dns", "system_common.go"), dnsSystemCommonSHA256)
+	if err != nil {
+		return err
+	}
+	patchedDNSSystemCommon, err := patchDNSSystemCommon(dnsSystemCommonSource)
+	if err != nil {
+		return err
+	}
+	dnsDHCPSource, err := checkedSource(filepath.Join(module.Dir, "dns", "dhcp.go"), dnsDHCPSHA256)
+	if err != nil {
+		return err
+	}
+	patchedDNSDHCP, err := patchDNSDHCP(dnsDHCPSource)
+	if err != nil {
+		return err
+	}
 	dialerBindWindowsSource, err := checkedSource(filepath.Join(module.Dir, "component", "dialer", "bind_windows.go"), dialerBindWindowsSHA256)
 	if err != nil {
 		return err
@@ -1995,6 +2089,7 @@ func convertsV2RayFCX(buf []byte, diagnostics bool) ([]map[string]any, error) {`
 	if err != nil {
 		return err
 	}
+	defer os.RemoveAll(stagingDirectory)
 	if err := copyModule(module.Dir, stagingDirectory); err != nil {
 		return err
 	}
@@ -2010,6 +2105,7 @@ func convertsV2RayFCX(buf []byte, diagnostics bool) ([]map[string]any, error) {`
 	if err != nil {
 		return err
 	}
+	defer os.RemoveAll(singTunStagingDirectory)
 	if err := copyModule(singTunModule.Dir, singTunStagingDirectory); err != nil {
 		return err
 	}
@@ -2051,6 +2147,12 @@ func convertsV2RayFCX(buf []byte, diagnostics bool) ([]map[string]any, error) {`
 		return err
 	}
 	if err := write(filepath.Join(sourceDirectory, "dns", "resolver.go"), "dns_resolver.go", patchedDNSResolver); err != nil {
+		return err
+	}
+	if err := write(filepath.Join(sourceDirectory, "dns", "system_common.go"), "dns_system_common.go", patchedDNSSystemCommon); err != nil {
+		return err
+	}
+	if err := write(filepath.Join(sourceDirectory, "dns", "dhcp.go"), "dns_dhcp.go", patchedDNSDHCP); err != nil {
 		return err
 	}
 	if err := write(filepath.Join(sourceDirectory, "component", "dialer", "bind_windows.go"), "dialer_bind_windows.go", patchedDialerBindWindows); err != nil {
@@ -2305,6 +2407,34 @@ func convertsV2RayFCX(buf []byte, diagnostics bool) ([]map[string]any, error) {`
 	if err := write(filepath.Join(sourceDirectory, "adapter", "provider", "provider.go"), "proxy_provider.go", patchedProxyProvider); err != nil {
 		return err
 	}
+	for _, sidecar := range []struct {
+		relDir   string
+		destFile string
+		patchTxt string
+	}{
+		{"component/pool", "pool_fcx.go", "patches/pool_fcx.go.txt"},
+		{"transport/snell", "snell_pool_fcx.go", "patches/snell_pool_fcx.go.txt"},
+		{"transport/tuic", "tuic_pool_client_fcx.go", "patches/tuic_pool_client_fcx.go.txt"},
+		{"transport/anytls/session", "anytls_session_client_fcx.go", "patches/anytls_session_client_fcx.go.txt"},
+		{"transport/anytls", "anytls_client_fcx.go", "patches/anytls_client_fcx.go.txt"},
+		{"transport/xhttp", "xhttp_client_fcx.go", "patches/xhttp_client_fcx.go.txt"},
+		{"transport/hysteria/core", "hysteria_client_fcx.go", "patches/hysteria_client_fcx.go.txt"},
+		{"transport/shadowquic", "shadowquic_client_fcx.go", "patches/shadowquic_client_fcx.go.txt"},
+		{"adapter/outbound", "outbound_reset_fcx.go", "patches/outbound_reset_fcx.go.txt"},
+		{"adapter/outbound", "outbound_reset_fcx_test.go", "patches/outbound_reset_fcx_test.go.txt"},
+	} {
+		contents, err := patchFiles.ReadFile(sidecar.patchTxt)
+		if err != nil {
+			return err
+		}
+		contents, err = format.Source(contents)
+		if err != nil {
+			return fmt.Errorf("format %s: %w", sidecar.patchTxt, err)
+		}
+		if err := write(filepath.Join(sourceDirectory, filepath.FromSlash(sidecar.relDir), sidecar.destFile), sidecar.destFile, contents); err != nil {
+			return err
+		}
+	}
 	encoded, err := json.MarshalIndent(struct{ Replace map[string]string }{replacements}, "", "  ")
 	if err != nil {
 		return err
@@ -2420,6 +2550,8 @@ func convertsV2RayFCX(buf []byte, diagnostics bool) ([]map[string]any, error) {`
 			"dns/doh.go":                                dnsDoHSHA256,
 			"dns/policy.go":                             dnsPolicySHA256,
 			"dns/resolver.go":                           dnsResolverSHA256,
+			"dns/system_common.go":                      dnsSystemCommonSHA256,
+			"dns/dhcp.go":                               dnsDHCPSHA256,
 			"common/convert/converter.go":               converterSHA256,
 		},
 		"singTunOverlay": map[string]any{

@@ -1,0 +1,30 @@
+package session
+
+func (c *Client) ResetConnectionsFCX() {
+	if c == nil {
+		return
+	}
+	c.idleSessionLock.Lock()
+	it := c.idleSession.Iterate()
+	var idleKeys []uint64
+	for it.IsNotEnd() {
+		idleKeys = append(idleKeys, it.Key())
+		it.MoveToNext()
+	}
+	for _, key := range idleKeys {
+		c.idleSession.Remove(key)
+	}
+	c.idleSessionLock.Unlock()
+
+	c.sessionsLock.Lock()
+	toClose := make([]*Session, 0, len(c.sessions))
+	for _, s := range c.sessions {
+		toClose = append(toClose, s)
+	}
+	c.sessions = make(map[uint64]*Session)
+	c.sessionsLock.Unlock()
+
+	for _, s := range toClose {
+		s.Close()
+	}
+}

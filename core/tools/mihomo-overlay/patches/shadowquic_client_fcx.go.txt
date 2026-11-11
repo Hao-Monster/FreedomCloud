@@ -1,0 +1,14 @@
+package shadowquic
+
+func (c *Client) ResetConnectionsFCX() {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	conn := c.conn
+	c.conn = nil
+	c.mu.Unlock()
+	if conn != nil {
+		_ = conn.closeWithError(0, "network changed")
+	}
+}

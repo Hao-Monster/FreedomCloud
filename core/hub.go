@@ -838,6 +838,7 @@ func closeConnections() {
 		_ = c.Close()
 		return true
 	})
+	resetOutboundAdapterPools()
 }
 
 func handleResetConnections() bool {

@@ -88,4 +88,23 @@ func TestFCXBindIfaceToDialerBindsPreferredLocalAddrAndRejectsMissingIPv6(t *tes
 	if dPreset.LocalAddr != preset {
 		t.Fatalf("expected preset LocalAddr to be preserved, got %#v", dPreset.LocalAddr)
 	}
+
+	for _, mappedLocal := range []string{"::ffff:127.0.0.1", "::ffff:169.254.10.20"} {
+		dMapped := &net.Dialer{}
+		if err := bindIfaceToDialer("wlan-v4-only", dMapped, "tcp", netip.MustParseAddr(mappedLocal)); err != nil {
+			t.Fatalf("expected mapped non-global %s bind not to error, got %v", mappedLocal, err)
+		}
+		if dMapped.LocalAddr != nil {
+			t.Fatalf("expected mapped non-global %s NOT to bind external WiFi LocalAddr, got %#v", mappedLocal, dMapped.LocalAddr)
+		}
+	}
+
+	dMappedGlobal := &net.Dialer{}
+	if err := bindIfaceToDialer("wlan-v4-only", dMappedGlobal, "tcp", netip.MustParseAddr("::ffff:16.5.119.97")); err != nil {
+		t.Fatalf("expected IPv4-mapped global destination ::ffff:16.5.119.97 to unmap and bind IPv4 LocalAddr on IPv4-only WiFi, got %v", err)
+	}
+	mappedTCPAddr, ok := dMappedGlobal.LocalAddr.(*net.TCPAddr)
+	if !ok || mappedTCPAddr == nil || !mappedTCPAddr.IP.Equal(net.IPv4(172, 23, 104, 177)) {
+		t.Fatalf("expected ::ffff:16.5.119.97 to bind 172.23.104.177:0, got %#v", dMappedGlobal.LocalAddr)
+	}
 }

@@ -2,12 +2,15 @@ package main
 
 import (
 	"context"
+	"io"
 	"net"
 	"net/netip"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/metacubex/mihomo/adapter"
+	"github.com/metacubex/mihomo/adapter/outbound"
 	"github.com/metacubex/mihomo/common/utils"
 	"github.com/metacubex/mihomo/component/iface"
 	"github.com/metacubex/mihomo/component/resolver"
@@ -70,6 +73,10 @@ func (p *networkRecoveryFakeProvider) SubscriptionInfo() any { return nil }
 
 func TestHandleResetConnectionsFlushesIfaceClearsDNSCacheAndTriggersProviderHealthCheck(t *testing.T) {
 	isolateHealthCheckForwarder(t)
+	t.Cleanup(func() {
+		cancelPendingNetworkRecoveryHealthChecks()
+		networkHealthCheckWG.Wait()
+	})
 
 	prevResolver := resolver.DefaultResolver
 	fakeRes := &networkRecoveryFakeResolver{}
@@ -78,13 +85,19 @@ func TestHandleResetConnectionsFlushesIfaceClearsDNSCacheAndTriggersProviderHeal
 		resolver.DefaultResolver = prevResolver
 	})
 
+	proxyStateMu.Lock()
 	prevProviders := tunnel.Providers()
 	fakeProv := &networkRecoveryFakeProvider{name: "auto-group-provider"}
 	tunnel.UpdateProxies(tunnel.Proxies(), map[string]cp.ProxyProvider{
 		fakeProv.name: fakeProv,
 	})
+	proxyStateMu.Unlock()
 	t.Cleanup(func() {
+		cancelPendingNetworkRecoveryHealthChecks()
+		networkHealthCheckWG.Wait()
+		proxyStateMu.Lock()
 		tunnel.UpdateProxies(tunnel.Proxies(), prevProviders)
+		proxyStateMu.Unlock()
 	})
 
 	runLock.Lock()
@@ -161,13 +174,19 @@ func TestTunDefaultInterfaceChangeClosesStaleConnectionsAndDeduplicatesLaggingIP
 		resolver.DefaultResolver = prevResolver
 	})
 
+	proxyStateMu.Lock()
 	prevProviders := tunnel.Providers()
 	fakeProv := &networkRecoveryFakeProvider{name: "tun-switch-provider"}
 	tunnel.UpdateProxies(tunnel.Proxies(), map[string]cp.ProxyProvider{
 		fakeProv.name: fakeProv,
 	})
+	proxyStateMu.Unlock()
 	t.Cleanup(func() {
+		cancelPendingNetworkRecoveryHealthChecks()
+		networkHealthCheckWG.Wait()
+		proxyStateMu.Lock()
 		tunnel.UpdateProxies(tunnel.Proxies(), prevProviders)
+		proxyStateMu.Unlock()
 	})
 
 	runLock.Lock()
@@ -231,5 +250,229 @@ func TestTunDefaultInterfaceChangeClosesStaleConnectionsAndDeduplicatesLaggingIP
 	}
 	if freshTracker.closed.Load() {
 		t.Fatal("lagging IPC resetConnections on already-recovered physical IP killed newly established connection")
+	}
+}
+
+func TestTunDefaultInterfaceChangeDefersHealthCheckWhileTentativeUntilPreferredAddressArrives(t *testing.T) {
+	isolateHealthCheckForwarder(t)
+	prevDebounce := networkHealthCheckDebounce
+	networkHealthCheckDebounce = 25 * time.Millisecond
+	t.Cleanup(func() {
+		networkHealthCheckDebounce = prevDebounce
+		cancelPendingNetworkRecoveryHealthChecks()
+	})
+
+	currentIfaces := []*iface.Interface{
+		{
+			Index: 30,
+			MTU:   1500,
+			Name:  "WLAN",
+			Flags: net.FlagUp | net.FlagBroadcast,
+			Addresses: []netip.Prefix{
+				netip.MustParsePrefix("fe80::abcd/64"),
+			},
+		},
+	}
+	restoreIface := iface.FCXOverrideInterfacesForTest(currentIfaces)
+	defer restoreIface()
+
+	proxyStateMu.Lock()
+	prevProviders := tunnel.Providers()
+	fakeProv := &networkRecoveryFakeProvider{name: "dad-tentative-provider"}
+	tunnel.UpdateProxies(tunnel.Proxies(), map[string]cp.ProxyProvider{
+		fakeProv.name: fakeProv,
+	})
+	proxyStateMu.Unlock()
+	t.Cleanup(func() {
+		cancelPendingNetworkRecoveryHealthChecks()
+		networkHealthCheckWG.Wait()
+		proxyStateMu.Lock()
+		tunnel.UpdateProxies(tunnel.Proxies(), prevProviders)
+		proxyStateMu.Unlock()
+	})
+
+	runLock.Lock()
+	prevRunning := isRunning
+	prevConfig := currentConfig
+	isRunning = true
+	currentConfig = &config.Config{}
+	runLock.Unlock()
+	t.Cleanup(func() {
+		runLock.Lock()
+		isRunning = prevRunning
+		currentConfig = prevConfig
+		runLock.Unlock()
+	})
+
+	// 1. Route switches to WLAN while DHCP/ARP DAD is still Tentative (only fe80:: link-local visible).
+	staleTracker := &gracefulStopTestTracker{id: "dad-stale-conn"}
+	statistic.DefaultManager.Join(staleTracker)
+	t.Cleanup(func() { statistic.DefaultManager.Leave(staleTracker) })
+
+	onTunDefaultInterfaceChanged(sing_tun.FCXDefaultInterfaceEvent{
+		Name:      "WLAN",
+		Index:     30,
+		Addresses: []netip.Prefix{netip.MustParsePrefix("fe80::abcd/64")},
+	})
+	if !staleTracker.closed.Load() {
+		t.Fatal("expected stale old-network connections to close immediately even while new IP is Tentative")
+	}
+	time.Sleep(80 * time.Millisecond)
+	if got := fakeProv.healthCheckCount.Load(); got != 0 {
+		t.Fatalf("expected HealthCheck to be deferred while new interface has no usable non-link-local IP (prevents Delay=0 pollution), got %d", got)
+	}
+
+	// 2. ARP DAD completes -> Preferred IPv4 172.23.104.177/20 arrives.
+	restorePreferred := iface.FCXOverrideInterfacesForTest([]*iface.Interface{
+		{
+			Index: 30,
+			MTU:   1500,
+			Name:  "WLAN",
+			Flags: net.FlagUp | net.FlagBroadcast,
+			Addresses: []netip.Prefix{
+				netip.MustParsePrefix("172.23.104.177/20"),
+				netip.MustParsePrefix("fe80::abcd/64"),
+			},
+		},
+	})
+	defer restorePreferred()
+
+	onTunDefaultInterfaceChanged(sing_tun.FCXDefaultInterfaceEvent{
+		Name:  "WLAN",
+		Index: 30,
+		Addresses: []netip.Prefix{
+			netip.MustParsePrefix("172.23.104.177/20"),
+			netip.MustParsePrefix("fe80::abcd/64"),
+		},
+	})
+
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) && fakeProv.healthCheckCount.Load() == 0 {
+		time.Sleep(15 * time.Millisecond)
+	}
+	if fakeProv.healthCheckCount.Load() != 1 {
+		t.Fatalf("expected HealthCheck to run once Preferred IPv4 arrives, got %d", fakeProv.healthCheckCount.Load())
+	}
+}
+
+func TestResetURLTestGroupCachesDoesNotStallBehindRunLock(t *testing.T) {
+	runLock.Lock()
+	var unlocked atomic.Bool
+	defer func() {
+		if !unlocked.Load() {
+			runLock.Unlock()
+		}
+	}()
+
+	done := make(chan struct{})
+	go func() {
+		resetURLTestGroupCaches()
+		closeConnections()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(250 * time.Millisecond):
+		unlocked.Store(true)
+		runLock.Unlock()
+		t.Fatal("resetURLTestGroupCaches / closeConnections stalled behind runLock")
+	}
+}
+
+type fakeCarrierConn struct {
+	net.Conn
+	onClose func()
+	closed  atomic.Bool
+}
+
+func (c *fakeCarrierConn) Close() error {
+	if c.closed.CompareAndSwap(false, true) && c.onClose != nil {
+		c.onClose()
+	}
+	return c.Conn.Close()
+}
+
+type fakeCarrierAdapter struct {
+	*outbound.Base
+	dials  atomic.Int32
+	closed atomic.Int32
+}
+
+func (a *fakeCarrierAdapter) DialContext(ctx context.Context, metadata *C.Metadata) (C.Conn, error) {
+	a.dials.Add(1)
+	c1, c2 := net.Pipe()
+	go func() {
+		_, _ = io.Copy(io.Discard, c2)
+	}()
+	wrapped := &fakeCarrierConn{
+		Conn: c1,
+		onClose: func() {
+			a.closed.Add(1)
+			_ = c2.Close()
+		},
+	}
+	return outbound.NewConn(wrapped, a), nil
+}
+
+func TestCloseConnectionsResetsPooledSingMuxCarrierSessions(t *testing.T) {
+	carrier := &fakeCarrierAdapter{
+		Base: outbound.NewBase(outbound.BaseOption{
+			Name: "carrier-node",
+			Type: C.Trojan,
+		}),
+	}
+	smuxAdapter, err := outbound.NewSingMux(outbound.SingMuxOption{
+		Enabled:  true,
+		Protocol: "smux",
+	}, carrier)
+	if err != nil {
+		t.Fatalf("NewSingMux failed: %v", err)
+	}
+	proxy := adapter.NewProxy(smuxAdapter)
+	t.Cleanup(func() { _ = proxy.Close() })
+
+	proxyStateMu.Lock()
+	prevProxies := tunnel.Proxies()
+	prevProviders := tunnel.Providers()
+	updated := make(map[string]C.Proxy, len(prevProxies)+2)
+	for k, v := range prevProxies {
+		updated[k] = v
+	}
+	updated["carrier-node"] = proxy
+	updated["synthetic-test-double"] = healthCheckProxy("synthetic-test-double")
+	tunnel.UpdateProxies(updated, prevProviders)
+	proxyStateMu.Unlock()
+	t.Cleanup(func() {
+		proxyStateMu.Lock()
+		tunnel.UpdateProxies(prevProxies, prevProviders)
+		proxyStateMu.Unlock()
+	})
+
+	stream1, err := proxy.DialContext(context.Background(), &C.Metadata{Host: "example.com", DstPort: 443})
+	if err != nil {
+		t.Fatalf("first SingMux DialContext failed: %v", err)
+	}
+	_ = stream1.Close()
+	if carrier.dials.Load() != 1 {
+		t.Fatalf("expected 1 carrier dial before reset, got %d", carrier.dials.Load())
+	}
+	if carrier.closed.Load() != 0 {
+		t.Fatalf("expected pooled SingMux carrier socket to remain open after logical stream close, got closed=%d", carrier.closed.Load())
+	}
+
+	resetURLTestGroupCaches()
+	closeConnections()
+	if carrier.closed.Load() != 1 {
+		t.Fatalf("expected closeConnections() to evict pooled SingMux carrier socket, got closed=%d", carrier.closed.Load())
+	}
+
+	stream2, err := proxy.DialContext(context.Background(), &C.Metadata{Host: "example.com", DstPort: 443})
+	if err != nil {
+		t.Fatalf("second SingMux DialContext after reset failed: %v", err)
+	}
+	_ = stream2.Close()
+	if carrier.dials.Load() != 2 {
+		t.Fatalf("expected fresh carrier socket #2 on new network after reset, got %d", carrier.dials.Load())
 	}
 }

@@ -1,0 +1,14 @@
+package core
+
+func (c *Client) ResetConnectionsFCX() {
+	if c == nil {
+		return
+	}
+	c.reconnectMutex.Lock()
+	qs := c.quicSession
+	c.quicSession = nil
+	c.reconnectMutex.Unlock()
+	if qs != nil {
+		_ = qs.CloseWithError(closeErrorCodeGeneric, "network changed")
+	}
+}

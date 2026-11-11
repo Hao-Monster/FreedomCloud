@@ -1,0 +1,7 @@
+package snell
+
+func (p *Pool) ResetConnectionsFCX() {
+	if p != nil && p.pool != nil {
+		p.pool.ResetConnectionsFCX()
+	}
+}

@@ -1,0 +1,33 @@
+package tuic
+
+func (t *PoolClient) ResetConnectionsFCX() {
+	if t == nil {
+		return
+	}
+	var toClose []Client
+	t.tcpClientsMutex.Lock()
+	for it := t.tcpClients.Front(); it != nil; {
+		if it.Value != nil {
+			toClose = append(toClose, it.Value)
+		}
+		next := it.Next()
+		t.tcpClients.Remove(it)
+		it = next
+	}
+	t.tcpClientsMutex.Unlock()
+
+	t.udpClientsMutex.Lock()
+	for it := t.udpClients.Front(); it != nil; {
+		if it.Value != nil {
+			toClose = append(toClose, it.Value)
+		}
+		next := it.Next()
+		t.udpClients.Remove(it)
+		it = next
+	}
+	t.udpClientsMutex.Unlock()
+
+	for _, client := range toClose {
+		client.Close()
+	}
+}

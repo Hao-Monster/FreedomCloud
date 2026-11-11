@@ -849,3 +849,75 @@ func TestFCXDoHResolverResetConnectionResetsPolicyAndHealth(t *testing.T) {
 			matcherDoH.client, matcherTr.closed.Load(), matcherDoH.fcxHealth.client.Load())
 	}
 }
+
+type fcxResetCountingDNSClient struct {
+	addr   string
+	resets atomic.Int32
+}
+
+func (c *fcxResetCountingDNSClient) ExchangeContext(ctx context.Context, m *D.Msg) (*D.Msg, error) {
+	return nil, errors.New("unused")
+}
+
+func (c *fcxResetCountingDNSClient) Address() string { return c.addr }
+
+func (c *fcxResetCountingDNSClient) ResetConnection() {
+	c.resets.Add(1)
+}
+
+func TestFCXDoHSystemDHCPAndDefaultResolverResetInvalidatesCaches(t *testing.T) {
+	// 1. systemClient.ResetConnection() must invalidate 5-minute SystemDnsFlushTime window and reset inner clients.
+	sysInner := &fcxResetCountingDNSClient{addr: "172.20.10.1:53"}
+	defInner := &fcxResetCountingDNSClient{addr: "114.114.114.114:53"}
+	sc := newSystemClient()
+	sc.lastFlush = time.Now()
+	sc.dnsClients["172.20.10.1"] = &systemDnsClient{disableTimes: 0, dnsClient: sysInner}
+	sc.defaultNS = []dnsClient{defInner}
+
+	sc.ResetConnection()
+
+	sc.mu.Lock()
+	flushedZero := sc.lastFlush.IsZero()
+	sc.mu.Unlock()
+	if !flushedZero {
+		t.Fatal("expected systemClient.ResetConnection() to zero lastFlush so new WiFi DNS is read immediately instead of waiting 5 minutes")
+	}
+	if sysInner.resets.Load() != 1 || defInner.resets.Load() != 1 {
+		t.Fatalf("expected systemClient.ResetConnection() to reset cached & defaultNS clients, got sys=%d def=%d",
+			sysInner.resets.Load(), defInner.resets.Load())
+	}
+
+	// 2. dhcpClient.ResetConnection() must invalidate 20s/1h TTLs under lock and reset inner clients.
+	dhcpInner := &fcxResetCountingDNSClient{addr: "172.20.10.1:53"}
+	dc := newDHCPClient("WLAN")
+	dc.ifaceInvalidate = time.Now().Add(IfaceTTL)
+	dc.dnsInvalidate = time.Now().Add(DHCPTTL)
+	dc.clients = []dnsClient{dhcpInner}
+
+	dc.ResetConnection()
+
+	dc.lock.Lock()
+	dhcpZero := dc.ifaceInvalidate.IsZero() && dc.dnsInvalidate.IsZero()
+	dc.lock.Unlock()
+	if !dhcpZero {
+		t.Fatal("expected dhcpClient.ResetConnection() to zero ifaceInvalidate and dnsInvalidate")
+	}
+	if dhcpInner.resets.Load() != 1 {
+		t.Fatalf("expected dhcpClient.ResetConnection() to reset inner client, got %d", dhcpInner.resets.Load())
+	}
+
+	// 3. Resolver.ClearCache() must also clear defaultResolver's bootstrap DNS cache.
+	rs := NewResolver(Config{
+		Default: []NameServer{{Net: "udp", Addr: "223.5.5.5:53"}},
+		Main:    []NameServer{{Net: "https", Addr: "https://dns.alidns.com/dns-query"}},
+	})
+	if rs.Resolver.defaultResolver == nil || rs.Resolver.defaultResolver.cache == nil {
+		t.Fatal("expected defaultResolver cache to exist")
+	}
+	cachedMsg := new(D.Msg)
+	rs.Resolver.defaultResolver.cache.SetWithExpire("dns.alidns.com.", cachedMsg, time.Now().Add(time.Minute))
+	rs.ClearCache()
+	if _, _, hit := rs.Resolver.defaultResolver.cache.GetWithExpire("dns.alidns.com."); hit {
+		t.Fatal("expected Resolver.ClearCache() to clear defaultResolver bootstrap cache")
+	}
+}
