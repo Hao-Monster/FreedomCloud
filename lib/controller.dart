@@ -1051,6 +1051,16 @@ class AppController {
   // would clobber the optimistic startTime, tearing down a live tunnel's UI.
   bool _statusOpInFlight = false;
 
+  bool _shouldStartDeferredWindowsTunOnProxyStart() =>
+      (Platform.isWindows || _windowsStartupEffects != null) &&
+      !_pendingWindowsProxyStop &&
+      !_tunRuntime.closing &&
+      !_tunRuntime.busy &&
+      !_tunRuntime.isEnabled &&
+      _ref.read(patchClashConfigProvider).tun.enable &&
+      _tunRuntime.requestFailure == 'profileRequired' &&
+      !_adminAuthorization.isFailureLatched;
+
   Future<void> updateStatus(bool isStart) {
     final windowsTun = Platform.isWindows || _windowsStartupEffects != null;
     int? stopIntent;
@@ -1073,8 +1083,13 @@ class AppController {
         _statusOpInFlight = true;
         try {
           if (windowsTun) {
+            var promoteDeferredTun = false;
             await _tunRuntime.serialize(() async {
               if (epoch != _statusEpoch) return;
+              if (isStart && _shouldStartDeferredWindowsTunOnProxyStart()) {
+                promoteDeferredTun = true;
+                return;
+              }
               final shouldFlushFakeIpDns = initialTunMayHaveCachedFakeIp ||
                   _tunRuntime.observed != TunObservedState.off ||
                   _tunRuntime.desiredEnabled;
@@ -1134,6 +1149,8 @@ class AppController {
                   } finally {
                     releaseDisarm();
                   }
+                } else if (_windowsStartupEffects != null) {
+                  await _startupEffects().startProxyWithoutTun();
                 } else {
                   await _updateStatus(true);
                 }
@@ -1147,6 +1164,30 @@ class AppController {
                 }
               }
             });
+            if (promoteDeferredTun &&
+                epoch == _statusEpoch &&
+                !_pendingWindowsProxyStop) {
+              try {
+                await _startWindowsTun();
+              } finally {
+                detectionState.notifyRoutingChanged();
+                _onTunPollWakeup();
+                if (globalState.isAppStateInitialized && context.mounted) {
+                  _ref.read(checkIpNumProvider.notifier).add();
+                }
+                if (_windowsStartupEffects == null) {
+                  await reconcileDeferredWindowsAgentAfterStartup(
+                    pendingProxyStop: _pendingWindowsProxyStop,
+                    hasDeferredAgentLaunch: () =>
+                        clashService?.hasDeferredAgentLaunch ?? false,
+                    initializeDeferredAgent:
+                        _ensureDeferredWindowsAgentInitialized,
+                    log: _startupEffects().log,
+                  );
+                  await updateTray();
+                }
+              }
+            }
           } else {
             if (!isStart) {
               final releaseDisarm =
@@ -2322,6 +2363,10 @@ class AppController {
                 }
                 if (_ref.read(patchClashConfigProvider) == currentPatchConfig) {
                   debouncer.cancel(FunctionTag.updateClashConfig);
+                  if (_ref.read(currentProfileIdProvider) ==
+                      applyingProfileId) {
+                    debouncer.cancel(FunctionTag.applyProfile);
+                  }
                 }
                 final coreInitialized = await clashCore.isInit == true;
                 if (!configurationIsCurrent()) return '';

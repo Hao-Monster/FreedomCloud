@@ -832,7 +832,6 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
         ..updateCurrentSelectedMap(groupName, proxyName)
         ..changeProxyDebounce(groupName, proxyName);
     }
-    _ensureProxyStartedIfStopped();
     final current =
         ref.read(profilesProvider).getProfile(profile.id) ?? profile;
     if (current.selectedMap[groupName] != proxyName ||
@@ -846,6 +845,7 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
             ),
           );
     }
+    _ensureProxyStartedIfStopped();
     final feedback = appLocalizations.nodeOverviewSwitchedToNode(
         current.label ?? current.id, proxyName);
     ref.read(_overviewSwitchTrackerProvider).feedback = feedback;

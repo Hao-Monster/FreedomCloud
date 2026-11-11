@@ -7,6 +7,8 @@ import 'package:flclashx/common/delay_test_coordinator.dart';
 import 'package:flclashx/common/node_catalog_service.dart';
 import 'package:flclashx/common/node_catalog_tester.dart';
 import 'package:flclashx/common/node_health_store.dart';
+import 'package:flclashx/common/tun_runtime.dart';
+import 'package:flclashx/common/windows_tun_startup.dart';
 import 'package:flclashx/controller.dart';
 import 'package:flclashx/enum/enum.dart';
 import 'package:flclashx/l10n/l10n.dart';
@@ -8290,4 +8292,258 @@ void main() {
       expect(tester.takeException(), isNull);
     }
   });
+
+  testWidgets(
+      'Windows fresh install (0 profiles): pasting first subscription auto-tests, selects fastest node, AND completes deferred TUN + proxy master switch bring-up',
+      (tester) async {
+    final now = DateTime(2026, 11, 11, 20, 0);
+    final liveHealth = <String, Map<String, NodeHealthRecord>>{};
+    final liveCatalogs = <String, ProfileCatalog>{};
+    late ProviderContainer container;
+    _WindowsOnboardingController? winController;
+
+    const firstSub = Profile(
+      id: 'win-first-sub',
+      label: '新手订阅',
+      url: 'https://sub.example.com/v1/win-fresh',
+      autoUpdateDuration: defaultUpdateDuration,
+    );
+
+    final effects = _OverviewWindowsTunEffects(
+      onReflectRunning: () {
+        globalState.startTime = DateTime.now();
+        container.read(runTimeProvider.notifier).value = 0;
+      },
+    )..profile = false;
+    final runtime = TunRuntimeController();
+
+    final backend = _CatalogTester()
+      ..onTestAll = (testedProfiles, url) async {
+        liveHealth['win-first-sub'] = {
+          'hk-fast': NodeHealthRecord(
+            delayMs: 46,
+            testedAt: now,
+            testUrlHash: 'h',
+          ),
+        };
+        container.invalidate(nodeHealthEntriesProvider('win-first-sub'));
+        return const DelayBatchResult(completed: 1, failed: 0);
+      };
+
+    globalState.config = const Config(
+      themeProps: defaultThemeProps,
+      profiles: [],
+      patchClashConfig: ClashConfig(tun: Tun(enable: true)),
+    );
+    globalState.appState = globalState.appState.copyWith(isInit: true);
+    addTearDown(() {
+      globalState.startTime = null;
+    });
+
+    container = await mount(
+      tester,
+      width: 1200,
+      locale: const Locale('zh', 'CN'),
+      attachNavigatorKey: true,
+      profiles: const [],
+      catalogs: liveCatalogs,
+      health: liveHealth,
+      catalogTester: backend,
+      child: Consumer(
+        builder: (context, ref, _) {
+          winController ??= _WindowsOnboardingController(
+            context,
+            ref,
+            windowsStartupEffects: effects,
+            tunRuntimeController: runtime,
+            onAddUrl: (url) async {
+              effects.profile = true;
+              liveCatalogs['win-first-sub'] = ProfileCatalog(
+                profileId: 'win-first-sub',
+                fingerprint: 'f-win',
+                status: ProfileCatalogStatus.ready,
+                nodes: [
+                  _node('hk-fast', '香港 01')
+                      .copyWith(selectGroups: const ['Proxy']),
+                ],
+              );
+              container.read(profilesProvider.notifier).setProfile(firstSub);
+              container.read(currentProfileIdProvider.notifier).value =
+                  firstSub.id;
+            },
+          );
+          globalState.appController = winController!;
+          return const NodeOverviewView();
+        },
+      ),
+    );
+
+    // Simulate cold-start Windows runtime initialization on 0 profiles -> latches profileRequired.
+    await winController!.initializeRuntime();
+    expect(runtime.failure, 'profileRequired');
+    expect(runtime.requestFailure, 'profileRequired');
+    expect(effects.calls, ['observe', 'profile']);
+
+    // Cold-start dialog popped automatically; paste subscription URL and click 确定!
+    expect(find.byType(URLFormDialog), findsOneWidget);
+    await tester.enterText(
+      find.byType(TextField),
+      'https://sub.example.com/v1/win-fresh',
+    );
+    await tester.tap(find.byKey(const ValueKey('url-dialog-confirm')));
+    await tester.pumpAndSettle();
+
+    // Verify full end-to-end chain: fastest node selected + Windows TUN elevated & on + master proxy switch green!
+    expect(
+      container.read(profilesProvider).getProfile('win-first-sub')?.selectedMap,
+      {'Proxy': '香港 01'},
+    );
+    expect(
+      effects.calls.sublist(2),
+      containsAllInOrder([
+        'profile',
+        'authorize',
+        'backend',
+        'initialize',
+        'configure',
+        'listener',
+        'reflect',
+      ]),
+    );
+    expect(runtime.observed, TunObservedState.on);
+    expect(runtime.failure, isNull);
+    expect(runtime.requestFailure, isNull);
+    expect(find.text('代理已开启 · 正在使用 新手订阅 · 香港 01'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+}
+
+class _OverviewWindowsTunEffects implements WindowsTunStartupEffects {
+  _OverviewWindowsTunEffects({this.onReflectRunning});
+
+  final VoidCallback? onReflectRunning;
+  final calls = <String>[];
+  bool running = false;
+  bool enabled = false;
+  bool elevated = false;
+  bool profile = false;
+
+  @override
+  bool get proxyRunning => running;
+
+  @override
+  Future<bool> hasProfile() async {
+    calls.add('profile');
+    return profile;
+  }
+
+  @override
+  Future<TunStatus?> observe() async {
+    calls.add('observe');
+    return TunStatus(
+      instanceId: 'win-core',
+      revision: calls.length,
+      state: enabled ? 'on' : 'off',
+      listenerActive: enabled,
+      interfaceState: enabled ? 'up' : 'missing',
+      privilege: elevated ? 'elevated' : 'unprivileged',
+      requestedEnabled: enabled,
+    );
+  }
+
+  @override
+  Future<bool> componentsMatch() async {
+    calls.add('match');
+    return true;
+  }
+
+  @override
+  bool canMigrate() => true;
+
+  @override
+  Future<bool> authorize() async {
+    calls.add('authorize');
+    return true;
+  }
+
+  @override
+  Future<bool> ensureBackend(bool Function() isCurrent) async {
+    calls.add('backend');
+    elevated = true;
+    return true;
+  }
+
+  @override
+  Future<void> initialize(bool Function() isCurrent) async {
+    calls.add('initialize');
+  }
+
+  @override
+  Future<void> applyConfiguration({
+    required bool full,
+    required bool Function() isCurrent,
+  }) async {
+    calls.add(full ? 'configure' : 'incremental');
+  }
+
+  @override
+  Future<bool> startListener() async {
+    calls.add('listener');
+    running = true;
+    enabled = true;
+    return true;
+  }
+
+  @override
+  Future<void> stopProxy() async {
+    calls.add('stop-proxy');
+    running = false;
+    enabled = false;
+  }
+
+  @override
+  Future<void> reflectRunning(bool Function() isCurrent) async {
+    if (isCurrent()) {
+      calls.add('reflect');
+      onReflectRunning?.call();
+    }
+  }
+
+  @override
+  Future<void> startProxyWithoutTun() async {
+    calls.add('proxy-only');
+    running = true;
+  }
+
+  @override
+  Future<void> restartCore() async {
+    calls.add('restart-core');
+  }
+
+  @override
+  void log(String message) {}
+}
+
+class _WindowsOnboardingController extends AppController {
+  _WindowsOnboardingController(
+    super.context,
+    super.ref, {
+    required super.windowsStartupEffects,
+    required super.tunRuntimeController,
+    required this.onAddUrl,
+  }) : super(tunSettleDelay: Duration.zero);
+
+  final Future<void> Function(String url) onAddUrl;
+
+  @override
+  Future<void> addProfileFormURL(String url) => onAddUrl(url);
+
+  @override
+  void applyProfileDebounce({
+    bool silence = false,
+    bool skipIfUnchanged = false,
+  }) {}
+
+  @override
+  void changeProxyDebounce(String groupName, String proxyName) {}
 }
