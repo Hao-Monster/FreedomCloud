@@ -1243,5 +1243,104 @@
   "healthDetailSysProxyNotApplied": "System proxy has not been applied to OS yet",
   "healthDetailSysProxyDisabledExternally": "System proxy switch is turned off in OS",
   "healthDetailDnsStaleFakeIp": "Stale Fake-IP cache detected while TUN is inactive",
-  "healthDetailTunBypassedSystemProxyOk": "TUN path failed; verified via System Proxy"
+  "healthDetailTunBypassedSystemProxyOk": "TUN path failed; verified via System Proxy",
+  "nodeOverviewUpdateAllSubscriptions": "Update all",
+  "nodeOverviewAllProfilesCount": "{count} profiles",
+  "@nodeOverviewAllProfilesCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewExpiredCountBadge": "{count} expired",
+  "@nodeOverviewExpiredCountBadge": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewExpiringSoonCountBadge": "{count} expiring soon",
+  "@nodeOverviewExpiringSoonCountBadge": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewCurrentActiveProfile": "Active: {name}",
+  "@nodeOverviewCurrentActiveProfile": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewNoActiveProfile": "Active: None",
+  "nodeOverviewAllHealthCounts": "Nodes: {available} available / {tested} tested / {total} total",
+  "@nodeOverviewAllHealthCounts": {
+    "placeholders": {
+      "available": {
+        "type": "int"
+      },
+      "tested": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewGlobalMedian": "Global median: {median}",
+  "@nodeOverviewGlobalMedian": {
+    "placeholders": {
+      "median": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewGlobalMedianAndBest": "Median: {median} · Best: {best}",
+  "@nodeOverviewGlobalMedianAndBest": {
+    "placeholders": {
+      "median": {
+        "type": "String"
+      },
+      "best": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewBandFast": "Fast {count}",
+  "@nodeOverviewBandFast": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewBandSlow": "Slow {count}",
+  "@nodeOverviewBandSlow": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewBandFailed": "Failed {count}",
+  "@nodeOverviewBandFailed": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewBandUntested": "Untested {count}",
+  "@nodeOverviewBandUntested": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  }
 }

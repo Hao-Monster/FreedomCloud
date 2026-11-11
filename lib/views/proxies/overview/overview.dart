@@ -15,6 +15,7 @@ import 'package:flclashx/providers/node_overview.dart';
 import 'package:flclashx/providers/providers.dart';
 import 'package:flclashx/state.dart';
 import 'package:flclashx/views/profiles/add_profile.dart';
+import 'package:flclashx/widgets/widgets.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
@@ -322,6 +323,8 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
   List<String> _stableProfileOrderIds = const <String>[];
   final Set<String> _updatingOrderFreezeIds = <String>{};
   final Set<String> _syncingProfileIds = <String>{};
+  final Set<String> _deletingProfileIds = <String>{};
+  bool _syncingAll = false;
   bool _importingSubscription = false;
   _IndexScanEpochState _scanEpoch = _IndexScanEpochState(0);
   bool _disposed = false;
@@ -894,6 +897,124 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
       });
     } finally {
       _syncingProfileIds.remove(current.id);
+    }
+  }
+
+  Future<void> _syncAllSubscriptions() async {
+    if (_syncingAll || !globalState.isAppControllerReady) return;
+    final targets = ref
+        .read(profilesProvider)
+        .where((p) =>
+            p.type == ProfileType.url &&
+            !p.isUpdating &&
+            !_syncingProfileIds.contains(p.id))
+        .toList();
+    if (targets.isEmpty) return;
+    final appController = globalState.appController;
+    final targetIds = targets.map((p) => p.id).toSet();
+    _syncingProfileIds.addAll(targetIds);
+    setState(() {
+      _syncingAll = true;
+    });
+    try {
+      await globalState.safeRun(silence: false, () async {
+        for (final target in targets) {
+          appController.setProfile(target.copyWith(isUpdating: true));
+        }
+        Object? firstError;
+        StackTrace? firstStack;
+        await Future.wait(targets.map((target) async {
+          try {
+            await appController.updateProfile(target);
+          } catch (e, st) {
+            firstError ??= e;
+            firstStack ??= st;
+            final latest = mounted
+                ? ref.read(profilesProvider).getProfile(target.id)
+                : globalState.config.profiles.getProfile(target.id);
+            final rollback = rollbackFailedProfileUpdate(latest);
+            if (rollback != null) {
+              appController.setProfile(rollback);
+            }
+          }
+        }));
+        if (firstError != null) {
+          Error.throwWithStackTrace(firstError!, firstStack!);
+        }
+      });
+    } finally {
+      _syncingProfileIds.removeAll(targetIds);
+      if (mounted) {
+        setState(() {
+          _syncingAll = false;
+        });
+      } else {
+        _syncingAll = false;
+      }
+    }
+  }
+
+  Future<void> _confirmAndDeleteProfile(Profile targetProfile) async {
+    if (_deletingProfileIds.contains(targetProfile.id) ||
+        targetProfile.isUpdating ||
+        !mounted) {
+      return;
+    }
+    final bool? confirmed;
+    if (globalState.navigatorKey.currentState != null) {
+      confirmed = await globalState.showMessage(
+        title: appLocalizations.tip,
+        message: TextSpan(
+          text: appLocalizations.deleteTip(appLocalizations.profile),
+        ),
+      );
+    } else {
+      confirmed = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => CommonDialog(
+          title: appLocalizations.tip,
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: Text(appLocalizations.cancel),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              child: Text(appLocalizations.confirm),
+            ),
+          ],
+          child: SizedBox(
+            width: 300,
+            child: Text(appLocalizations.deleteTip(appLocalizations.profile)),
+          ),
+        ),
+      );
+    }
+    if (confirmed != true || !mounted || !globalState.isAppControllerReady) {
+      return;
+    }
+    setState(() {
+      _deletingProfileIds.add(targetProfile.id);
+    });
+    try {
+      await globalState.safeRun(silence: false, () async {
+        await globalState.appController.deleteProfile(targetProfile.id);
+      });
+      _visibleProfileIds.remove(targetProfile.id);
+      _indexedProfiles.remove(targetProfile.id);
+      _updatingOrderFreezeIds.remove(targetProfile.id);
+      if (mounted) {
+        setState(() {
+          if (_selectedProfile == targetProfile.id) {
+            _selectedProfile = null;
+          }
+        });
+      }
+    } finally {
+      _deletingProfileIds.remove(targetProfile.id);
+      if (mounted) {
+        setState(() {});
+      }
     }
   }
 
@@ -1477,16 +1598,42 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
                     itemCount: orderedProfiles.length + 1,
                     itemBuilder: (context, index) {
                       if (index == 0) {
-                        return ListTile(
-                            key: const ValueKey('overview-select-all'),
-                            title:
-                                Text(appLocalizations.nodeOverviewAllProfiles),
-                            selected: selected == null,
-                            onTap: () =>
-                                setState(() => _selectedProfile = null));
+                        final urlProfiles = orderedProfiles
+                            .where((p) => p.type == ProfileType.url)
+                            .toList();
+                        final allUrlUpdating = urlProfiles.isNotEmpty &&
+                            (_syncingAll ||
+                                urlProfiles.every((p) => p.isUpdating));
+                        String? liveActiveId;
+                        for (final p in orderedProfiles) {
+                          if (isLiveActive(p)) {
+                            liveActiveId = p.id;
+                            break;
+                          }
+                        }
+                        return _SidebarAllProfilesCard(
+                          profiles: orderedProfiles,
+                          selected: selected == null,
+                          activeId: activeId,
+                          liveActiveProfileId: liveActiveId,
+                          resolvedCatalogs: resolvedCatalogs,
+                          indexedProfiles: _indexedProfiles,
+                          currentScript: currentScript,
+                          healthByProfile: healthByProfile,
+                          loadErrorIds: loadErrorIds,
+                          failedIndexIds: _scanEpoch.failedProfileIds,
+                          now: now,
+                          updatingAll: allUrlUpdating,
+                          onSyncAll: urlProfiles.isNotEmpty
+                              ? () => unawaited(_syncAllSubscriptions())
+                              : null,
+                          onSelect: () =>
+                              setState(() => _selectedProfile = null),
+                        );
                       }
                       final profile = orderedProfiles[index - 1];
                       final isCurrent = profile.id == activeId;
+                      final isExpired = _expired(profile, now);
                       return _SidebarProfileCard(
                           key: ValueKey('overview-sidebar-card-${profile.id}'),
                           profile: profile,
@@ -1496,6 +1643,12 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
                           now: now,
                           onSync: profile.type == ProfileType.url
                               ? () => unawaited(_syncSubscription(profile))
+                              : null,
+                          showDelete: isExpired,
+                          deleting: _deletingProfileIds.contains(profile.id),
+                          onDelete: isExpired && !profile.isUpdating
+                              ? () =>
+                                  unawaited(_confirmAndDeleteProfile(profile))
                               : null,
                           onVisible: () =>
                               _onProfileVisibilityChanged(profile.id, true),
@@ -1540,6 +1693,20 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
                                   ? ValueKey(
                                       'overview-detail-sync-${profile.id}')
                                   : ValueKey('overview-sync-${profile.id}'),
+                              showDeleteSubscription: _expired(profile, now) &&
+                                  (!wide || selected != null),
+                              deletingSubscription:
+                                  _deletingProfileIds.contains(profile.id),
+                              onDeleteSubscription: _expired(profile, now) &&
+                                      !profile.isUpdating &&
+                                      (!wide || selected != null)
+                                  ? () => unawaited(
+                                      _confirmAndDeleteProfile(profile))
+                                  : null,
+                              deleteButtonKey: wide
+                                  ? ValueKey(
+                                      'overview-detail-delete-${profile.id}')
+                                  : ValueKey('overview-delete-${profile.id}'),
                               loadImmediately: selected != null ||
                                   searching ||
                                   activeCountry != null,
@@ -2445,6 +2612,490 @@ class _OverviewSortOptionTileState extends State<_OverviewSortOptionTile> {
   }
 }
 
+typedef _AllProfilesOverviewSummary = ({
+  int usableProfileCount,
+  bool hasPendingProfiles,
+  int availableNodes,
+  int testedNodes,
+  int totalNodes,
+  int fastCount,
+  int slowCount,
+  int failedCount,
+  int untestedCount,
+  int? medianMs,
+  int? bestMs,
+  int expiredCount,
+  int expiringSoonCount,
+});
+
+class _SidebarAllProfilesCard extends ConsumerWidget {
+  const _SidebarAllProfilesCard({
+    required this.profiles,
+    required this.selected,
+    required this.activeId,
+    required this.liveActiveProfileId,
+    required this.resolvedCatalogs,
+    required this.indexedProfiles,
+    required this.currentScript,
+    required this.healthByProfile,
+    required this.loadErrorIds,
+    required this.failedIndexIds,
+    required this.now,
+    required this.updatingAll,
+    required this.onSyncAll,
+    required this.onSelect,
+  });
+
+  final List<Profile> profiles;
+  final bool selected;
+  final String? activeId;
+  final String? liveActiveProfileId;
+  final Map<String, ProfileCatalog?> resolvedCatalogs;
+  final Map<String, _IndexedProfileCountrySummary> indexedProfiles;
+  final Script? currentScript;
+  final Map<String, Map<String, NodeHealthRecord>> healthByProfile;
+  final Set<String> loadErrorIds;
+  final Set<String> failedIndexIds;
+  final DateTime now;
+  final bool updatingAll;
+  final VoidCallback? onSyncAll;
+  final VoidCallback onSelect;
+
+  _AllProfilesOverviewSummary _computeSummary(WidgetRef ref) {
+    var usableProfileCount = 0;
+    var hasPendingProfiles = false;
+    var availableNodes = 0;
+    var testedNodes = 0;
+    var totalNodes = 0;
+    var fastCount = 0;
+    var slowCount = 0;
+    var failedCount = 0;
+    var expiredCount = 0;
+    var expiringSoonCount = 0;
+    final positiveDelays = <int>[];
+
+    void accumulateDelay(int? delay) {
+      if (delay == null || delay == 0) return;
+      testedNodes++;
+      if (delay > 0) {
+        availableNodes++;
+        positiveDelays.add(delay);
+        if (delay < 600) {
+          fastCount++;
+        } else {
+          slowCount++;
+        }
+      } else {
+        failedCount++;
+      }
+    }
+
+    for (final profile in profiles) {
+      final sub = _hasMeaningfulSubscriptionInfo(profile.subscriptionInfo)
+          ? profile.subscriptionInfo
+          : null;
+      if (sub != null) {
+        final expiry = _resolveSubscriptionExpiryState(sub.expire, now);
+        if (expiry != null) {
+          if (expiry.isExpired) {
+            expiredCount++;
+          } else if (expiry.isExpiringSoon) {
+            expiringSoonCount++;
+          }
+        }
+      }
+
+      if (profile.id == liveActiveProfileId) {
+        final displays = _activeDisplays(
+          ref,
+          profile.id,
+          profile.isUpdating ? null : resolvedCatalogs[profile.id],
+        );
+        if (displays.isNotEmpty) {
+          usableProfileCount++;
+          totalNodes += displays.length;
+          for (final entry in displays.values) {
+            accumulateDelay(entry.delay);
+          }
+          continue;
+        }
+        if (profile.isUpdating) {
+          hasPendingProfiles = true;
+          continue;
+        }
+      }
+
+      if (profile.isUpdating) {
+        hasPendingProfiles = true;
+        continue;
+      }
+
+      final catalog = resolvedCatalogs[profile.id];
+      final indexed = indexedProfiles[profile.id];
+      final validIndexed =
+          indexed != null && indexed.matchesProfile(profile, currentScript)
+              ? indexed
+              : null;
+      final health =
+          healthByProfile[profile.id] ?? const <String, NodeHealthRecord>{};
+
+      if (catalog != null) {
+        if (catalog.status == ProfileCatalogStatus.loading ||
+            catalog.status == ProfileCatalogStatus.updating) {
+          hasPendingProfiles = true;
+        } else if (catalog.status == ProfileCatalogStatus.fileMissing ||
+            catalog.status == ProfileCatalogStatus.parseFailed) {
+          // Excluded from usable count without marking as pending.
+        } else {
+          usableProfileCount++;
+          for (final node in catalog.nodes) {
+            if (node.unsupported == CatalogUnsupportedReason.parseFailed) {
+              continue;
+            }
+            totalNodes++;
+            accumulateDelay(_nodeHealth(node, health)?.delayMs);
+          }
+        }
+      } else if (validIndexed != null) {
+        if (validIndexed.status == ProfileCatalogStatus.loading ||
+            validIndexed.status == ProfileCatalogStatus.updating) {
+          hasPendingProfiles = true;
+        } else if (validIndexed.status == ProfileCatalogStatus.fileMissing ||
+            validIndexed.status == ProfileCatalogStatus.parseFailed) {
+          // Excluded from usable count without marking as pending.
+        } else {
+          usableProfileCount++;
+          for (final node in validIndexed.nodes) {
+            if (node.parseFailed) continue;
+            totalNodes++;
+            accumulateDelay(health[node.identityKey]?.delayMs);
+          }
+        }
+      } else if (loadErrorIds.contains(profile.id) ||
+          failedIndexIds.contains(profile.id)) {
+        // Known load failure.
+      } else {
+        hasPendingProfiles = true;
+      }
+    }
+
+    positiveDelays.sort();
+    final int? medianMs;
+    final int? bestMs;
+    if (positiveDelays.isEmpty) {
+      medianMs = null;
+      bestMs = null;
+    } else {
+      bestMs = positiveDelays.first;
+      medianMs = positiveDelays.length.isOdd
+          ? positiveDelays[positiveDelays.length ~/ 2]
+          : ((positiveDelays[positiveDelays.length ~/ 2 - 1] +
+                      positiveDelays[positiveDelays.length ~/ 2]) /
+                  2)
+              .round();
+    }
+
+    return (
+      usableProfileCount: usableProfileCount,
+      hasPendingProfiles: hasPendingProfiles,
+      availableNodes: availableNodes,
+      testedNodes: testedNodes,
+      totalNodes: totalNodes,
+      fastCount: fastCount,
+      slowCount: slowCount,
+      failedCount: failedCount,
+      untestedCount: math.max(0, totalNodes - testedNodes),
+      medianMs: medianMs,
+      bestMs: bestMs,
+      expiredCount: expiredCount,
+      expiringSoonCount: expiringSoonCount,
+    );
+  }
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final summary = _computeSummary(ref);
+    Profile? activeProfile;
+    if (activeId != null) {
+      for (final p in profiles) {
+        if (p.id == activeId) {
+          activeProfile = p;
+          break;
+        }
+      }
+    }
+
+    final metaStyle = theme.textTheme.bodySmall?.copyWith(
+      fontSize: 11.5,
+      height: 1.35,
+      color: colors.onSurfaceVariant,
+    );
+
+    final syncAllButton = onSyncAll == null
+        ? null
+        : _ProfileSyncButton(
+            key: const ValueKey('overview-sync-all'),
+            updating: updatingAll,
+            selectedCard: selected,
+            maxWidth: 118,
+            idleLabel: appLocalizations.nodeOverviewUpdateAllSubscriptions,
+            tooltipIdleLabel:
+                appLocalizations.nodeOverviewUpdateAllSubscriptions,
+            onPressed: onSyncAll,
+          );
+
+    return Card(
+      color: selected ? colors.secondaryContainer : null,
+      child: InkWell(
+        key: const ValueKey('overview-select-all'),
+        borderRadius: BorderRadius.circular(12),
+        onTap: onSelect,
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  Icon(
+                    Icons.layers_rounded,
+                    size: 15,
+                    color: selected ? colors.primary : colors.onSurfaceVariant,
+                  ),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      appLocalizations.nodeOverviewAllProfiles,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.titleSmall?.copyWith(
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                  if (syncAllButton != null) ...[
+                    const SizedBox(width: 6),
+                    syncAllButton,
+                  ],
+                ],
+              ),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 6,
+                runSpacing: 4,
+                children: [
+                  _SubscriptionTagPill(
+                    icon: Icons.inventory_2_outlined,
+                    label: appLocalizations
+                        .nodeOverviewAllProfilesCount(profiles.length),
+                    foreground: colors.onSurfaceVariant,
+                    background:
+                        colors.surfaceContainerHighest.withValues(alpha: 0.65),
+                    border: colors.outlineVariant.withValues(alpha: 0.55),
+                  ),
+                  if (summary.expiredCount > 0)
+                    _SubscriptionTagPill(
+                      icon: Icons.event_busy_rounded,
+                      label: appLocalizations
+                          .nodeOverviewExpiredCountBadge(summary.expiredCount),
+                      foreground: colors.error,
+                      background: colors.error.withValues(alpha: 0.12),
+                      border: colors.error.withValues(alpha: 0.32),
+                    ),
+                  if (summary.expiringSoonCount > 0)
+                    _SubscriptionTagPill(
+                      icon: Icons.schedule_rounded,
+                      label: appLocalizations.nodeOverviewExpiringSoonCountBadge(
+                        summary.expiringSoonCount,
+                      ),
+                      foreground: Colors.orange,
+                      background: Colors.orange.withValues(alpha: 0.12),
+                      border: Colors.orange.withValues(alpha: 0.34),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 6),
+              Row(
+                children: [
+                  Icon(
+                    activeProfile != null
+                        ? Icons.check_circle_outline_rounded
+                        : Icons.radio_button_unchecked_rounded,
+                    size: 13.5,
+                    color: activeProfile != null
+                        ? colors.primary
+                        : colors.onSurfaceVariant,
+                  ),
+                  const SizedBox(width: 5),
+                  Expanded(
+                    child: Text(
+                      activeProfile != null
+                          ? appLocalizations.nodeOverviewCurrentActiveProfile(
+                              activeProfile.label ?? activeProfile.id,
+                            )
+                          : appLocalizations.nodeOverviewNoActiveProfile,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: metaStyle?.copyWith(
+                        color: colors.onSurface.withValues(alpha: 0.90),
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                child: Divider(
+                  height: 1,
+                  thickness: 0.6,
+                  color: colors.outlineVariant.withValues(alpha: 0.55),
+                ),
+              ),
+              if (summary.usableProfileCount == 0)
+                const Text('—')
+              else ...[
+                Text(
+                  summary.hasPendingProfiles
+                      ? '${appLocalizations.nodeOverviewAllHealthCounts(summary.availableNodes, summary.testedNodes, summary.totalNodes)}+'
+                      : appLocalizations.nodeOverviewAllHealthCounts(
+                          summary.availableNodes,
+                          summary.testedNodes,
+                          summary.totalNodes,
+                        ),
+                ),
+                Text(
+                  summary.medianMs != null && summary.bestMs != null
+                      ? appLocalizations.nodeOverviewGlobalMedianAndBest(
+                          '${summary.medianMs} ms',
+                          '${summary.bestMs} ms',
+                        )
+                      : appLocalizations.nodeOverviewGlobalMedian('—'),
+                ),
+                if (summary.totalNodes > 0) ...[
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: Wrap(
+                      spacing: 8,
+                      runSpacing: 3,
+                      children: [
+                        _DelayBandLegendItem(
+                          color: Colors.green,
+                          label: appLocalizations
+                              .nodeOverviewBandFast(summary.fastCount),
+                        ),
+                        _DelayBandLegendItem(
+                          color: const Color(0xFFC57F0A),
+                          label: appLocalizations
+                              .nodeOverviewBandSlow(summary.slowCount),
+                        ),
+                        _DelayBandLegendItem(
+                          color: Colors.red,
+                          label: appLocalizations
+                              .nodeOverviewBandFailed(summary.failedCount),
+                        ),
+                        _DelayBandLegendItem(
+                          color:
+                              colors.onSurfaceVariant.withValues(alpha: 0.55),
+                          label: appLocalizations
+                              .nodeOverviewBandUntested(summary.untestedCount),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.only(top: 6),
+                    child: Semantics(
+                      label: appLocalizations.nodeOverviewAllHealthCounts(
+                        summary.availableNodes,
+                        summary.testedNodes,
+                        summary.totalNodes,
+                      ),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(3),
+                        child: Row(
+                          children: [
+                            if (summary.fastCount > 0)
+                              Expanded(
+                                flex: summary.fastCount,
+                                child:
+                                    Container(height: 5, color: Colors.green),
+                              ),
+                            if (summary.slowCount > 0)
+                              Expanded(
+                                flex: summary.slowCount,
+                                child: Container(
+                                  height: 5,
+                                  color: const Color(0xFFC57F0A),
+                                ),
+                              ),
+                            if (summary.failedCount > 0)
+                              Expanded(
+                                flex: summary.failedCount,
+                                child: Container(height: 5, color: Colors.red),
+                              ),
+                            if (summary.untestedCount > 0)
+                              Expanded(
+                                flex: summary.untestedCount,
+                                child: Container(
+                                  height: 5,
+                                  color: colors.surfaceContainerHighest,
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _DelayBandLegendItem extends StatelessWidget {
+  const _DelayBandLegendItem({
+    required this.color,
+    required this.label,
+  });
+
+  final Color color;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 7,
+          height: 7,
+          decoration: BoxDecoration(
+            color: color,
+            shape: BoxShape.circle,
+          ),
+        ),
+        const SizedBox(width: 3.5),
+        Text(
+          label,
+          style: theme.textTheme.bodySmall?.copyWith(
+            fontSize: 11,
+            height: 1.25,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
 class _SidebarProfileCard extends ConsumerWidget {
   const _SidebarProfileCard(
       {super.key,
@@ -2454,6 +3105,9 @@ class _SidebarProfileCard extends ConsumerWidget {
       required this.liveActive,
       required this.now,
       this.onSync,
+      this.showDelete = false,
+      this.deleting = false,
+      this.onDelete,
       required this.onVisible,
       required this.onSelect});
   final Profile profile;
@@ -2462,6 +3116,9 @@ class _SidebarProfileCard extends ConsumerWidget {
   final bool liveActive;
   final DateTime now;
   final VoidCallback? onSync;
+  final bool showDelete;
+  final bool deleting;
+  final VoidCallback? onDelete;
   final VoidCallback onVisible;
   final VoidCallback onSelect;
 
@@ -2569,6 +3226,10 @@ class _SidebarProfileCard extends ConsumerWidget {
                     _ProfileSubscriptionSummary(
                       data: metadata,
                       now: now,
+                      showDeleteExpired: showDelete,
+                      deletingExpired: deleting,
+                      onDeleteExpired: onDelete,
+                      deleteButtonKey: ValueKey('overview-delete-${profile.id}'),
                     ),
                     Padding(
                       padding: const EdgeInsets.symmetric(vertical: 8),
@@ -2584,6 +3245,7 @@ class _SidebarProfileCard extends ConsumerWidget {
                       profile: profile,
                       catalog: catalog,
                       liveActive: liveActive,
+                      showExpiredNotice: metadata == null,
                       now: now),
                 ],
               )),
@@ -2598,12 +3260,16 @@ class _ProfileSyncButton extends StatefulWidget {
     required this.onPressed,
     this.selectedCard = false,
     this.maxWidth = 168,
+    this.idleLabel,
+    this.tooltipIdleLabel,
   });
 
   final bool updating;
   final VoidCallback? onPressed;
   final bool selectedCard;
   final double maxWidth;
+  final String? idleLabel;
+  final String? tooltipIdleLabel;
 
   @override
   State<_ProfileSyncButton> createState() => _ProfileSyncButtonState();
@@ -2622,10 +3288,12 @@ class _ProfileSyncButtonState extends State<_ProfileSyncButton> {
     final enabled = !updating && widget.onPressed != null;
     final label = updating
         ? appLocalizations.nodeOverviewUpdatingShort
-        : appLocalizations.nodeOverviewUpdateSubscription;
+        : (widget.idleLabel ?? appLocalizations.nodeOverviewUpdateSubscription);
     final tooltipMessage = updating
         ? appLocalizations.nodeOverviewUpdating
-        : appLocalizations.nodeOverviewUpdateSubscription;
+        : (widget.tooltipIdleLabel ??
+            widget.idleLabel ??
+            appLocalizations.nodeOverviewUpdateSubscription);
     final borderRadius = BorderRadius.circular(999);
 
     final Color backgroundColor;
@@ -2929,16 +3597,207 @@ String _formatOverviewTraffic(int bytes) {
   return '${value.showValue} ${value.showUnit}';
 }
 
+class _ProfileDeleteButton extends StatefulWidget {
+  const _ProfileDeleteButton({
+    super.key,
+    required this.deleting,
+    required this.onPressed,
+  });
+
+  final bool deleting;
+  final VoidCallback? onPressed;
+
+  @override
+  State<_ProfileDeleteButton> createState() => _ProfileDeleteButtonState();
+}
+
+class _ProfileDeleteButtonState extends State<_ProfileDeleteButton> {
+  bool _hovered = false;
+  bool _focused = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
+    final deleting = widget.deleting;
+    final enabled = !deleting && widget.onPressed != null;
+    final label = appLocalizations.delete;
+    final borderRadius = BorderRadius.circular(999);
+
+    final Color backgroundColor;
+    final Color borderColor;
+    final foregroundColor = enabled || deleting
+        ? colors.error
+        : colors.error.withValues(alpha: 0.45);
+
+    if (!enabled) {
+      backgroundColor = colors.error.withValues(alpha: isDark ? 0.10 : 0.06);
+      borderColor = colors.error.withValues(alpha: 0.28);
+    } else if (_hovered || _focused) {
+      backgroundColor = colors.error.withValues(alpha: isDark ? 0.26 : 0.16);
+      borderColor = colors.error.withValues(alpha: 0.78);
+    } else {
+      backgroundColor = colors.error.withValues(alpha: isDark ? 0.16 : 0.10);
+      borderColor = colors.error.withValues(alpha: 0.45);
+    }
+
+    return Semantics(
+      container: true,
+      button: true,
+      enabled: enabled,
+      label: label,
+      onTap: enabled ? widget.onPressed : null,
+      excludeSemantics: true,
+      child: Tooltip(
+        message: label,
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: enabled ? null : () {},
+          child: MouseRegion(
+            cursor:
+                enabled ? SystemMouseCursors.click : SystemMouseCursors.basic,
+            onEnter: (_) {
+              if (!_hovered) setState(() => _hovered = true);
+            },
+            onExit: (_) {
+              if (_hovered) setState(() => _hovered = false);
+            },
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 112),
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 140),
+                curve: Curves.easeOutCubic,
+                decoration: BoxDecoration(
+                  color: backgroundColor,
+                  borderRadius: borderRadius,
+                  border: Border.all(color: borderColor, width: 0.9),
+                ),
+                child: Material(
+                  color: Colors.transparent,
+                  child: InkWell(
+                    borderRadius: borderRadius,
+                    hoverColor: Colors.transparent,
+                    focusColor: Colors.transparent,
+                    splashColor: colors.error.withValues(alpha: 0.14),
+                    highlightColor: colors.error.withValues(alpha: 0.08),
+                    onFocusChange: (value) {
+                      if (mounted && _focused != value) {
+                        setState(() => _focused = value);
+                      }
+                    },
+                    onTap: enabled ? widget.onPressed : null,
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 3,
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (deleting)
+                            SizedBox(
+                              width: 11,
+                              height: 11,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 1.6,
+                                valueColor: AlwaysStoppedAnimation<Color>(
+                                  foregroundColor,
+                                ),
+                              ),
+                            )
+                          else
+                            Icon(
+                              Icons.delete_outline_rounded,
+                              size: 12.5,
+                              color: foregroundColor,
+                            ),
+                          const SizedBox(width: 3),
+                          Flexible(
+                            child: Text(
+                              label,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: theme.textTheme.labelSmall?.copyWith(
+                                fontSize: 11,
+                                height: 1.2,
+                                color: foregroundColor,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _ProfileSubscriptionSummary extends StatelessWidget {
   const _ProfileSubscriptionSummary({
     required this.data,
     required this.now,
     this.trailingAction,
+    this.showDeleteExpired = false,
+    this.deletingExpired = false,
+    this.onDeleteExpired,
+    this.deleteButtonKey,
   });
 
   final _ProfileMetadataViewData data;
   final DateTime now;
   final Widget? trailingAction;
+  final bool showDeleteExpired;
+  final bool deletingExpired;
+  final VoidCallback? onDeleteExpired;
+  final Key? deleteButtonKey;
+
+  Widget _buildExpiredInfoColumn({
+    required ColorScheme colors,
+    required TextStyle? metaStyle,
+    required String expireText,
+  }) =>
+      Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(
+            children: [
+              Icon(
+                Icons.event_busy_rounded,
+                size: 13.5,
+                color: colors.error,
+              ),
+              const SizedBox(width: 5),
+              Expanded(
+                child: Text(
+                  appLocalizations.nodeOverviewExpired,
+                  style: metaStyle?.copyWith(
+                    color: colors.error,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 1.5),
+          Text(
+            expireText,
+            style: metaStyle?.copyWith(
+              fontSize: 11,
+              color: colors.error.withValues(alpha: 0.88),
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ],
+      );
 
   @override
   Widget build(BuildContext context) {
@@ -3145,14 +4004,71 @@ class _ProfileSubscriptionSummary extends StatelessWidget {
             ],
           ),
         );
+      } else if (expiryState.isExpired) {
+        final expireText =
+            '${appLocalizations.nodeOverviewExpireAt(expiryState.dateStr)} · ${expiryState.countdownText}';
+        final isDark = theme.brightness == Brightness.dark;
+        final deleteAction =
+            (showDeleteExpired || onDeleteExpired != null)
+                ? _ProfileDeleteButton(
+                    key: deleteButtonKey,
+                    deleting: deletingExpired,
+                    onPressed: onDeleteExpired,
+                  )
+                : null;
+        final textScale = MediaQuery.textScalerOf(context).scale(1.0);
+        final stackActionBelow = deleteAction != null && textScale > 1.5;
+        children.add(
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+            decoration: BoxDecoration(
+              color: colors.error.withValues(alpha: isDark ? 0.12 : 0.08),
+              borderRadius: BorderRadius.circular(7),
+              border: Border.all(
+                color: colors.error.withValues(alpha: 0.32),
+                width: 0.8,
+              ),
+            ),
+            child: stackActionBelow
+                ? Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _buildExpiredInfoColumn(
+                        colors: colors,
+                        metaStyle: metaStyle,
+                        expireText: expireText,
+                      ),
+                      const SizedBox(height: 6),
+                      Align(
+                        alignment: AlignmentDirectional.centerEnd,
+                        child: deleteAction,
+                      ),
+                    ],
+                  )
+                : Row(
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      Expanded(
+                        child: _buildExpiredInfoColumn(
+                          colors: colors,
+                          metaStyle: metaStyle,
+                          expireText: expireText,
+                        ),
+                      ),
+                      if (deleteAction != null) ...[
+                        const SizedBox(width: 8),
+                        deleteAction,
+                      ],
+                    ],
+                  ),
+          ),
+        );
       } else {
         final expireText =
             '${appLocalizations.nodeOverviewExpireAt(expiryState.dateStr)} · ${expiryState.countdownText}';
-        final expireColor = expiryState.isExpired
-            ? colors.error
-            : expiryState.isExpiringSoon
-                ? Colors.orange
-                : colors.onSurfaceVariant;
+        final expireColor = expiryState.isExpiringSoon
+            ? Colors.orange
+            : colors.onSurfaceVariant;
         children.add(
           Row(
             children: [
@@ -3167,7 +4083,7 @@ class _ProfileSubscriptionSummary extends StatelessWidget {
                   expireText,
                   style: metaStyle?.copyWith(
                     color: expireColor,
-                    fontWeight: expiryState.isExpired || expiryState.isExpiringSoon
+                    fontWeight: expiryState.isExpiringSoon
                         ? FontWeight.w600
                         : FontWeight.w400,
                   ),
@@ -3341,6 +4257,10 @@ class _ProfileNodesSliver extends ConsumerStatefulWidget {
       required this.showSubscriptionSummary,
       this.onSyncSubscription,
       this.syncButtonKey,
+      this.showDeleteSubscription = false,
+      this.deletingSubscription = false,
+      this.onDeleteSubscription,
+      this.deleteButtonKey,
       required this.loadImmediately,
       required this.availableOnly,
       required this.countryFilter,
@@ -3357,6 +4277,10 @@ class _ProfileNodesSliver extends ConsumerStatefulWidget {
   final bool showSubscriptionSummary;
   final VoidCallback? onSyncSubscription;
   final Key? syncButtonKey;
+  final bool showDeleteSubscription;
+  final bool deletingSubscription;
+  final VoidCallback? onDeleteSubscription;
+  final Key? deleteButtonKey;
   final bool loadImmediately;
   final bool availableOnly;
   final String? countryFilter;
@@ -3500,6 +4424,11 @@ class _ProfileNodesSliverState extends ConsumerState<_ProfileNodesSliver> {
                   child: _ProfileSubscriptionSummary(
                     data: metadata,
                     now: widget.now,
+                    showDeleteExpired: widget.showDeleteSubscription,
+                    deletingExpired: widget.deletingSubscription,
+                    onDeleteExpired: widget.onDeleteSubscription,
+                    deleteButtonKey: widget.deleteButtonKey ??
+                        ValueKey('overview-delete-${profile.id}'),
                     trailingAction: widget.onSyncSubscription == null
                         ? null
                         : _ProfileSyncButton(
@@ -3518,7 +4447,7 @@ class _ProfileNodesSliverState extends ConsumerState<_ProfileNodesSliver> {
               child: Padding(
                   padding: EdgeInsets.all(16),
                   child: LinearProgressIndicator())),
-        if (_expired(profile, widget.now))
+        if (metadata == null && _expired(profile, widget.now))
           _notice(appLocalizations.nodeOverviewExpired),
         if (profile.isUpdating ||
             catalog?.status == ProfileCatalogStatus.updating)
@@ -4498,10 +5427,12 @@ class _HealthSummary extends ConsumerWidget {
       {required this.profile,
       required this.catalog,
       required this.liveActive,
+      this.showExpiredNotice = true,
       required this.now});
   final Profile profile;
   final ProfileCatalog? catalog;
   final bool liveActive;
+  final bool showExpiredNotice;
   final DateTime now;
 
   @override
@@ -4509,7 +5440,8 @@ class _HealthSummary extends ConsumerWidget {
     final entries = ref.watch(nodeHealthEntriesProvider(profile.id));
     final active = liveActive;
     final status = <Widget>[
-      if (_expired(profile, now)) Text(appLocalizations.nodeOverviewExpired),
+      if (showExpiredNotice && _expired(profile, now))
+        Text(appLocalizations.nodeOverviewExpired),
       if (profile.isUpdating ||
           catalog?.status == ProfileCatalogStatus.updating)
         Text(appLocalizations.nodeOverviewUpdating),

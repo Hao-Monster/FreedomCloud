@@ -59,9 +59,11 @@ class _ProxyController implements AppController {
   final applyDebounces = <bool>[];
   final updatedProfiles = <Profile>[];
   final addedUrls = <String>[];
+  final deletedProfileIds = <String>[];
   void Function(Profile profile)? onSetProfile;
   Future<void> Function(Profile profile)? onUpdateProfile;
   Future<void> Function(String url)? onAddProfileFormURL;
+  Future<void> Function(String id)? onDeleteProfile;
 
   @override
   void updateCurrentSelectedMap(String groupName, String proxyName) =>
@@ -105,6 +107,16 @@ class _ProxyController implements AppController {
     }
     addedUrls.add(url);
     await handler(url);
+  }
+
+  @override
+  Future<void> deleteProfile(String id) async {
+    final handler = onDeleteProfile;
+    if (handler == null) {
+      throw StateError('Unexpected controller effect: deleteProfile');
+    }
+    deletedProfileIds.add(id);
+    await handler(id);
   }
 
   @override
@@ -7150,5 +7162,585 @@ void main() {
     expect(find.text('Alpha node'), findsOneWidget);
     expect(find.text('Beta node'), findsNothing);
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'expired subscription delete button: appears only on expired profiles in inline callout, isolates card selection, confirms via dialog, and handles wide detail / narrow / 2.0x text scale',
+      (tester) async {
+    final now = DateTime.now();
+    final futureExpireSec =
+        now.add(const Duration(days: 20)).millisecondsSinceEpoch ~/ 1000;
+    final pastExpireSec =
+        now.subtract(const Duration(days: 5)).millisecondsSinceEpoch ~/ 1000;
+
+    final validProfile = Profile(
+      id: 'valid-sub',
+      label: 'Valid Sub',
+      url: 'https://sub.example.invalid/valid',
+      autoUpdateDuration: const Duration(hours: 12),
+      subscriptionInfo: SubscriptionInfo(
+        total: 100 * 1024 * 1024,
+        download: 20 * 1024 * 1024,
+        expire: futureExpireSec,
+      ),
+    );
+    const perpetualProfile = Profile(
+      id: 'perpetual-sub',
+      label: 'Perpetual Sub',
+      url: 'https://sub.example.invalid/perpetual',
+      autoUpdateDuration: Duration(hours: 6),
+      subscriptionInfo: SubscriptionInfo(
+        total: 0,
+        download: 1024,
+        expire: 0,
+      ),
+    );
+    final expiredProfile = Profile(
+      id: 'expired-sub',
+      label: '测试-261026-GHDXXK',
+      url: 'https://sub.example.invalid/expired',
+      autoUpdateDuration: const Duration(hours: 24),
+      subscriptionInfo: SubscriptionInfo(
+        total: 500 * 1024 * 1024,
+        download: 500 * 1024 * 1024,
+        expire: pastExpireSec,
+      ),
+    );
+
+    final controller = _ProxyController();
+    globalState.appController = controller;
+    late ProviderContainer container;
+    controller.onDeleteProfile = (id) async {
+      container.read(profilesProvider.notifier).deleteProfileById(id);
+    };
+
+    container = await mount(
+      tester,
+      width: 1200,
+      attachNavigatorKey: true,
+      locale: const Locale('zh', 'CN'),
+      profiles: [validProfile, perpetualProfile, expiredProfile],
+      catalogs: {
+        'valid-sub': ProfileCatalog(
+          profileId: 'valid-sub',
+          fingerprint: 'v',
+          status: ProfileCatalogStatus.ready,
+          nodes: [_node('v-1', 'Valid Node')],
+        ),
+        'perpetual-sub': ProfileCatalog(
+          profileId: 'perpetual-sub',
+          fingerprint: 'p',
+          status: ProfileCatalogStatus.ready,
+          nodes: [_node('p-1', 'Perpetual Node')],
+        ),
+        'expired-sub': ProfileCatalog(
+          profileId: 'expired-sub',
+          fingerprint: 'e',
+          status: ProfileCatalogStatus.ready,
+          nodes: [_node('e-1', 'Expired Node')],
+        ),
+      },
+    );
+
+    // Non-expired and perpetual cards must NOT show delete button.
+    expect(find.byKey(const ValueKey('overview-delete-valid-sub')), findsNothing);
+    expect(
+      find.byKey(const ValueKey('overview-delete-perpetual-sub')),
+      findsNothing,
+    );
+
+    // Scroll sidebar if needed to bring expired card into view.
+    await tester.ensureVisible(
+      find.byKey(const ValueKey('overview-sidebar-card-expired-sub')),
+    );
+    await tester.pumpAndSettle();
+
+    final expiredCard =
+        find.byKey(const ValueKey('overview-sidebar-card-expired-sub'));
+    final deleteBtn = find.byKey(const ValueKey('overview-delete-expired-sub'));
+    final syncBtn = find.byKey(const ValueKey('overview-sync-expired-sub'));
+
+    // Both top-right sync button AND inline expired delete button coexist cleanly.
+    expect(syncBtn, findsOneWidget);
+    expect(deleteBtn, findsOneWidget);
+    expect(
+      find.descendant(of: deleteBtn, matching: find.text('删除')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: expiredCard, matching: find.text('订阅已过期')),
+      findsOneWidget,
+    );
+
+    // Tapping delete opens confirmation dialog WITHOUT switching sidebar selection away from All profiles.
+    await tester.tap(deleteBtn);
+    await tester.pumpAndSettle();
+    expect(find.text('取消'), findsOneWidget);
+    expect(find.text('确定'), findsOneWidget);
+
+    // Cancel keeps the profile intact.
+    await tester.tap(find.text('取消'));
+    await tester.pumpAndSettle();
+    expect(controller.deletedProfileIds, isEmpty);
+    expect(find.byKey(const ValueKey('overview-header-valid-sub')), findsOneWidget);
+
+    // Selecting the expired card in wide mode renders detail delete button without duplicate key collision.
+    await tester.tap(find.byKey(const ValueKey('overview-select-expired-sub')));
+    await tester.pumpAndSettle();
+    expect(deleteBtn, findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('overview-detail-delete-expired-sub')),
+      findsOneWidget,
+    );
+    expect(tester.takeException(), isNull);
+
+    // Confirm deletion from detail delete button removes the profile and returns selection to All profiles.
+    await tester.tap(
+      find.byKey(const ValueKey('overview-detail-delete-expired-sub')),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('确定'));
+    await tester.pumpAndSettle();
+
+    expect(controller.deletedProfileIds, ['expired-sub']);
+    expect(
+      find.byKey(const ValueKey('overview-sidebar-card-expired-sub')),
+      findsNothing,
+    );
+    expect(find.text('Valid Node'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+
+    // Verify narrow mode & 2.0x text scaling without overflow.
+    await mount(
+      tester,
+      width: 390,
+      attachNavigatorKey: true,
+      locale: const Locale('zh', 'CN'),
+      profiles: [validProfile, expiredProfile],
+      child: const MediaQuery(
+        data: MediaQueryData(
+          size: Size(390, 1000),
+          textScaler: TextScaler.linear(2.0),
+        ),
+        child: NodeOverviewView(),
+      ),
+      catalogs: {
+        'valid-sub': ProfileCatalog(
+          profileId: 'valid-sub',
+          fingerprint: 'v',
+          status: ProfileCatalogStatus.ready,
+          nodes: [_node('v-1', 'Valid Node')],
+        ),
+        'expired-sub': ProfileCatalog(
+          profileId: 'expired-sub',
+          fingerprint: 'e',
+          status: ProfileCatalogStatus.ready,
+          nodes: [_node('e-1', 'Expired Node')],
+        ),
+      },
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'all profiles overview card: renders top-right batch update button, profile count & expiry warning pills, active profile, 4-color node breakdown & proportional health bar',
+      (tester) async {
+    final now = DateTime.now();
+    final soonExpireSec =
+        now.add(const Duration(days: 3)).millisecondsSinceEpoch ~/ 1000;
+    final pastExpireSec =
+        now.subtract(const Duration(days: 2)).millisecondsSinceEpoch ~/ 1000;
+
+    const adminProfile = Profile(
+      id: 'admin',
+      label: 'admin',
+      url: 'https://sub.example.invalid/admin',
+      autoUpdateDuration: Duration(hours: 1),
+      subscriptionInfo: SubscriptionInfo(
+        total: 0,
+        download: 1024 * 1024,
+        expire: 0,
+      ),
+    );
+    final soonProfile = Profile(
+      id: 'soon',
+      label: 'Soon Sub',
+      url: 'https://sub.example.invalid/soon',
+      autoUpdateDuration: const Duration(hours: 12),
+      subscriptionInfo: SubscriptionInfo(
+        total: 100 * 1024 * 1024,
+        download: 10 * 1024 * 1024,
+        expire: soonExpireSec,
+      ),
+    );
+    final expiredProfile = Profile(
+      id: 'exp',
+      label: 'Expired Sub',
+      url: 'https://sub.example.invalid/exp',
+      autoUpdateDuration: const Duration(hours: 24),
+      subscriptionInfo: SubscriptionInfo(
+        total: 100 * 1024 * 1024,
+        download: 100 * 1024 * 1024,
+        expire: pastExpireSec,
+      ),
+    );
+    const localProfile = Profile(
+      id: 'local',
+      label: 'Local Only',
+      url: '',
+      autoUpdateDuration: Duration.zero,
+    );
+
+    final controller = _ProxyController();
+    globalState.appController = controller;
+    globalState.config = globalState.config.copyWith(currentProfileId: 'admin');
+    late ProviderContainer container;
+    final syncAllCompleter = Completer<void>();
+
+    controller
+      ..onSetProfile = (updated) {
+        container.read(profilesProvider.notifier).setProfile(updated);
+      }
+      ..onUpdateProfile = (profile) async {
+        await syncAllCompleter.future;
+        container.read(profilesProvider.notifier).setProfile(
+              profile.copyWith(isUpdating: false),
+            );
+      };
+
+    final nFast1 = _node('a-1', 'Fast 1');
+    final nFast2 = _node('a-2', 'Fast 2');
+    final nSlow = _node('s-1', 'Slow 1');
+    final nFail = _node('e-1', 'Fail 1');
+    final nUntested = _node('l-1', 'Untested 1');
+
+    container = await mount(
+      tester,
+      width: 1200,
+      locale: const Locale('zh', 'CN'),
+      profiles: [adminProfile, soonProfile, expiredProfile, localProfile],
+      catalogs: {
+        'admin': ProfileCatalog(
+          profileId: 'admin',
+          fingerprint: 'a',
+          status: ProfileCatalogStatus.ready,
+          nodes: [nFast1, nFast2],
+        ),
+        'soon': ProfileCatalog(
+          profileId: 'soon',
+          fingerprint: 's',
+          status: ProfileCatalogStatus.ready,
+          nodes: [nSlow],
+        ),
+        'exp': ProfileCatalog(
+          profileId: 'exp',
+          fingerprint: 'e',
+          status: ProfileCatalogStatus.ready,
+          nodes: [nFail],
+        ),
+        'local': ProfileCatalog(
+          profileId: 'local',
+          fingerprint: 'l',
+          status: ProfileCatalogStatus.ready,
+          nodes: [nUntested],
+        ),
+      },
+      health: {
+        'admin': {
+          nFast1.identityKey: NodeHealthRecord(
+            delayMs: 80,
+            testedAt: now,
+            testUrlHash: 'h',
+          ),
+          nFast2.identityKey: NodeHealthRecord(
+            delayMs: 220,
+            testedAt: now,
+            testUrlHash: 'h',
+          ),
+        },
+        'soon': {
+          nSlow.identityKey: NodeHealthRecord(
+            delayMs: 760,
+            testedAt: now,
+            testUrlHash: 'h',
+          ),
+        },
+        'exp': {
+          nFail.identityKey: NodeHealthRecord(
+            delayMs: -1,
+            testedAt: now,
+            testUrlHash: 'h',
+          ),
+        },
+      },
+    );
+
+    final allCard = find.byKey(const ValueKey('overview-select-all'));
+    final syncAllBtn = find.byKey(const ValueKey('overview-sync-all'));
+
+    expect(allCard, findsOneWidget);
+    expect(syncAllBtn, findsOneWidget);
+    expect(
+      find.descendant(of: syncAllBtn, matching: find.text('全部更新')),
+      findsOneWidget,
+    );
+
+    // Top-right placement of "全部更新" button inside "全部配置" card.
+    final allCardRect = tester.getRect(allCard);
+    final syncAllRect = tester.getRect(syncAllBtn);
+    expect(syncAllRect.center.dx, greaterThan(allCardRect.center.dx));
+    expect(syncAllRect.top - allCardRect.top, lessThan(40));
+
+    // Upper section: profile count, expiry warnings, and active profile.
+    expect(
+      find.descendant(of: allCard, matching: find.text('共 4 个配置')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: allCard, matching: find.text('1 个已过期')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: allCard, matching: find.text('1 个即将到期')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: allCard, matching: find.text('当前活动：admin')),
+      findsOneWidget,
+    );
+
+    // Lower section: global node counts (3 available / 4 tested / 5 total), median + best, 4-color legend & 4-band bar.
+    expect(
+      find.descendant(
+        of: allCard,
+        matching: find.text('节点：可用 3 / 已测 4 / 共 5'),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: allCard,
+        matching: find.text('中位延迟：220 ms · 最快 80 ms'),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: allCard, matching: find.text('流畅 2')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: allCard, matching: find.text('偏慢 1')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: allCard, matching: find.text('失败 1')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: allCard, matching: find.text('未测 1')),
+      findsOneWidget,
+    );
+
+    final bands = tester
+        .widgetList<Container>(
+          find.descendant(of: allCard, matching: find.byType(Container)),
+        )
+        .where((c) => c.constraints?.maxHeight == 5)
+        .toList();
+    expect(bands, hasLength(4));
+    expect(bands.take(3).map((b) => b.color), [
+      utils.getDelayColor(80),
+      utils.getDelayColor(760),
+      utils.getDelayColor(-1),
+    ]);
+
+    // Tapping "全部更新" triggers updateProfile on all 3 URL subscriptions (skipping local file).
+    await tester.tap(syncAllBtn);
+    await tester.pump();
+    expect(
+      controller.updatedProfiles.map((p) => p.id).toSet(),
+      {'admin', 'soon', 'exp'},
+    );
+    expect(
+      find.descendant(of: syncAllBtn, matching: find.text('更新中')),
+      findsOneWidget,
+    );
+
+    syncAllCompleter.complete();
+    await tester.pumpAndSettle();
+    expect(
+      find.descendant(of: syncAllBtn, matching: find.text('全部更新')),
+      findsOneWidget,
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'all profiles & expired delete edge cases: deduplicates semantics, disables delete while syncing, rolls back partial batch failure without aborting peers, hides sync-all for local-only, and scales to 2.0x across locales',
+      (tester) async {
+    final semanticsHandle = tester.ensureSemantics();
+    try {
+      final pastExpireSec =
+          DateTime.now().subtract(const Duration(days: 3)).millisecondsSinceEpoch ~/
+              1000;
+      const healthyUrl = Profile(
+        id: 'ok-url',
+        label: 'Healthy URL',
+        url: 'https://sub.example.invalid/ok',
+        autoUpdateDuration: Duration(hours: 6),
+      );
+      final expiredUrl = Profile(
+        id: 'exp-url',
+        label: 'Expired URL',
+        url: 'https://sub.example.invalid/exp',
+        autoUpdateDuration: const Duration(hours: 12),
+        subscriptionInfo: SubscriptionInfo(
+          total: 1024 * 1024,
+          download: 1024 * 1024,
+          expire: pastExpireSec,
+        ),
+      );
+
+      final controller = _ProxyController();
+      globalState.appController = controller;
+      late ProviderContainer container;
+      final syncGate = Completer<void>();
+
+      controller
+        ..onSetProfile = (updated) {
+          container.read(profilesProvider.notifier).setProfile(updated);
+        }
+        ..onUpdateProfile = (profile) async {
+          await syncGate.future;
+          if (profile.id == 'exp-url') {
+            throw Exception('expired upstream 403');
+          }
+          container.read(profilesProvider.notifier).setProfile(
+                profile.copyWith(isUpdating: false),
+              );
+        }
+        ..onDeleteProfile = (id) async {
+          container.read(profilesProvider.notifier).deleteProfileById(id);
+        };
+
+      container = await mount(
+        tester,
+        width: 1200,
+        attachNavigatorKey: true,
+        locale: const Locale('zh', 'CN'),
+        profiles: [healthyUrl, expiredUrl],
+        catalogs: {
+          'ok-url': ProfileCatalog(
+            profileId: 'ok-url',
+            fingerprint: 'o',
+            status: ProfileCatalogStatus.ready,
+            nodes: [_node('o-1', 'Node OK')],
+          ),
+          'exp-url': ProfileCatalog(
+            profileId: 'exp-url',
+            fingerprint: 'e',
+            status: ProfileCatalogStatus.ready,
+            nodes: [_node('e-1', 'Node Exp')],
+          ),
+        },
+      );
+
+      final syncAllBtn = find.byKey(const ValueKey('overview-sync-all'));
+      final deleteExpBtn = find.byKey(const ValueKey('overview-delete-exp-url'));
+
+      expect(tester.getSemantics(syncAllBtn).label, '全部更新');
+      expect(
+        tester
+            .getSemantics(syncAllBtn)
+            .getSemanticsData()
+            .hasAction(SemanticsAction.tap),
+        isTrue,
+      );
+      expect(tester.getSemantics(deleteExpBtn).label, '删除');
+      expect(
+        tester
+            .getSemantics(deleteExpBtn)
+            .getSemanticsData()
+            .hasAction(SemanticsAction.tap),
+        isTrue,
+      );
+
+      // Start batch sync: delete button on expired card remains visible in disabled state without opening dialog or selecting card.
+      await tester.tap(syncAllBtn);
+      await tester.pump();
+      expect(deleteExpBtn, findsOneWidget);
+      expect(
+        tester
+            .getSemantics(deleteExpBtn)
+            .getSemanticsData()
+            .hasAction(SemanticsAction.tap),
+        isFalse,
+      );
+      await tester.tap(deleteExpBtn);
+      await tester.pump();
+      expect(find.text('取消'), findsNothing);
+      expect(find.byKey(const ValueKey('overview-header-ok-url')), findsOneWidget);
+
+      // Finish batch sync with partial error: healthy profile succeeds, failed profile rolls back cleanly, single error modal surfaces.
+      syncGate.complete();
+      await tester.pumpAndSettle();
+      expect(find.textContaining('expired upstream 403'), findsOneWidget);
+      expect(container.read(profilesProvider).getProfile('ok-url')!.isUpdating, isFalse);
+      expect(container.read(profilesProvider).getProfile('exp-url')!.isUpdating, isFalse);
+      await tester.tapAt(const Offset(10, 10));
+      await tester.pumpAndSettle();
+
+      // Local-only profiles hide "全部更新" cleanly.
+      await tester.pumpWidget(const SizedBox.shrink());
+      await mount(
+        tester,
+        width: 1200,
+        locale: const Locale('zh', 'CN'),
+        profiles: const [_a, _b],
+        catalogs: flatCatalogs(),
+      );
+      expect(find.byKey(const ValueKey('overview-sync-all')), findsNothing);
+      expect(find.byKey(const ValueKey('overview-select-all')), findsOneWidget);
+
+      // Verify 2.0x text scaling on wide sidebar across all 4 supported locales without overflow.
+      for (final locale in const [
+        Locale('zh', 'CN'),
+        Locale('en'),
+        Locale('ja'),
+        Locale('ru'),
+      ]) {
+        await tester.pumpWidget(const SizedBox.shrink());
+        await mount(
+          tester,
+          width: 1200,
+          locale: locale,
+          profiles: [healthyUrl, expiredUrl],
+          child: const MediaQuery(
+            data: MediaQueryData(
+              size: Size(1200, 1000),
+              textScaler: TextScaler.linear(2.0),
+            ),
+            child: NodeOverviewView(),
+          ),
+          catalogs: {
+            'ok-url': ProfileCatalog(
+              profileId: 'ok-url',
+              fingerprint: 'o',
+              status: ProfileCatalogStatus.ready,
+              nodes: [_node('o-1', 'Node OK')],
+            ),
+            'exp-url': ProfileCatalog(
+              profileId: 'exp-url',
+              fingerprint: 'e',
+              status: ProfileCatalogStatus.ready,
+              nodes: [_node('e-1', 'Node Exp')],
+            ),
+          },
+        );
+        expect(tester.takeException(), isNull);
+      }
+    } finally {
+      semanticsHandle.dispose();
+    }
   });
 }

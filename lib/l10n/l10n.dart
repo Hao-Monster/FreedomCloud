@@ -5594,16 +5594,6 @@ class AppLocalizations {
     );
   }
 
-  /// `Windows could not add the virtual adapter; try again later`
-  String get tunErrorAdapterCreate {
-    return Intl.message(
-      'Windows could not add the virtual adapter; try again later',
-      name: 'tunErrorAdapterCreate',
-      desc: '',
-      args: [],
-    );
-  }
-
   /// `Request stop`
   String get tunDisableAction {
     return Intl.message(
@@ -5629,6 +5619,16 @@ class AppLocalizations {
     return Intl.message(
       'Select a readable, non-empty profile before connecting',
       name: 'tunErrorProfileRequired',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Windows could not add the virtual adapter; try again later`
+  String get tunErrorAdapterCreate {
+    return Intl.message(
+      'Windows could not add the virtual adapter; try again later',
+      name: 'tunErrorAdapterCreate',
       desc: '',
       args: [],
     );
@@ -7189,6 +7189,16 @@ class AppLocalizations {
     );
   }
 
+  /// `TUN capture failed; only System Proxy is working`
+  String get healthVerdictTunBypassedTitle {
+    return Intl.message(
+      'TUN capture failed; only System Proxy is working',
+      name: 'healthVerdictTunBypassedTitle',
+      desc: '',
+      args: [],
+    );
+  }
+
   /// `End-to-end exit check failed; try switching nodes`
   String get healthVerdictEndToEndFailed {
     return Intl.message(
@@ -7984,16 +7994,6 @@ class AppLocalizations {
     );
   }
 
-  /// `TUN capture failed; only System Proxy is working`
-  String get healthVerdictTunBypassedTitle {
-    return Intl.message(
-      'TUN capture failed; only System Proxy is working',
-      name: 'healthVerdictTunBypassedTitle',
-      desc: '',
-      args: [],
-    );
-  }
-
   /// `TUN path failed; verified via System Proxy`
   String get healthDetailTunBypassedSystemProxyOk {
     return Intl.message(
@@ -8001,6 +8001,136 @@ class AppLocalizations {
       name: 'healthDetailTunBypassedSystemProxyOk',
       desc: '',
       args: [],
+    );
+  }
+
+  /// `Update all`
+  String get nodeOverviewUpdateAllSubscriptions {
+    return Intl.message(
+      'Update all',
+      name: 'nodeOverviewUpdateAllSubscriptions',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `{count} profiles`
+  String nodeOverviewAllProfilesCount(int count) {
+    return Intl.message(
+      '$count profiles',
+      name: 'nodeOverviewAllProfilesCount',
+      desc: '',
+      args: [count],
+    );
+  }
+
+  /// `{count} expired`
+  String nodeOverviewExpiredCountBadge(int count) {
+    return Intl.message(
+      '$count expired',
+      name: 'nodeOverviewExpiredCountBadge',
+      desc: '',
+      args: [count],
+    );
+  }
+
+  /// `{count} expiring soon`
+  String nodeOverviewExpiringSoonCountBadge(int count) {
+    return Intl.message(
+      '$count expiring soon',
+      name: 'nodeOverviewExpiringSoonCountBadge',
+      desc: '',
+      args: [count],
+    );
+  }
+
+  /// `Active: {name}`
+  String nodeOverviewCurrentActiveProfile(String name) {
+    return Intl.message(
+      'Active: $name',
+      name: 'nodeOverviewCurrentActiveProfile',
+      desc: '',
+      args: [name],
+    );
+  }
+
+  /// `Active: None`
+  String get nodeOverviewNoActiveProfile {
+    return Intl.message(
+      'Active: None',
+      name: 'nodeOverviewNoActiveProfile',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Nodes: {available} available / {tested} tested / {total} total`
+  String nodeOverviewAllHealthCounts(int available, int tested, int total) {
+    return Intl.message(
+      'Nodes: $available available / $tested tested / $total total',
+      name: 'nodeOverviewAllHealthCounts',
+      desc: '',
+      args: [available, tested, total],
+    );
+  }
+
+  /// `Global median: {median}`
+  String nodeOverviewGlobalMedian(String median) {
+    return Intl.message(
+      'Global median: $median',
+      name: 'nodeOverviewGlobalMedian',
+      desc: '',
+      args: [median],
+    );
+  }
+
+  /// `Median: {median} · Best: {best}`
+  String nodeOverviewGlobalMedianAndBest(String median, String best) {
+    return Intl.message(
+      'Median: $median · Best: $best',
+      name: 'nodeOverviewGlobalMedianAndBest',
+      desc: '',
+      args: [median, best],
+    );
+  }
+
+  /// `Fast {count}`
+  String nodeOverviewBandFast(int count) {
+    return Intl.message(
+      'Fast $count',
+      name: 'nodeOverviewBandFast',
+      desc: '',
+      args: [count],
+    );
+  }
+
+  /// `Slow {count}`
+  String nodeOverviewBandSlow(int count) {
+    return Intl.message(
+      'Slow $count',
+      name: 'nodeOverviewBandSlow',
+      desc: '',
+      args: [count],
+    );
+  }
+
+  /// `Failed {count}`
+  String nodeOverviewBandFailed(int count) {
+    return Intl.message(
+      'Failed $count',
+      name: 'nodeOverviewBandFailed',
+      desc: '',
+      args: [count],
+    );
+  }
+
+  /// `Untested {count}`
+  String nodeOverviewBandUntested(int count) {
+    return Intl.message(
+      'Untested $count',
+      name: 'nodeOverviewBandUntested',
+      desc: '',
+      args: [count],
     );
   }
 }

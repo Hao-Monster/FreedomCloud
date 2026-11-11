@@ -1098,5 +1098,104 @@
   "healthDetailSysProxyNotApplied": "Системный прокси ещё не применён",
   "healthDetailSysProxyDisabledExternally": "Системный прокси выключен в ОС",
   "healthDetailDnsStaleFakeIp": "Обнаружен устаревший кэш Fake-IP при выключенном TUN",
-  "healthDetailTunBypassedSystemProxyOk": "Маршрут TUN не работает; проверено через системный прокси"
+  "healthDetailTunBypassedSystemProxyOk": "Маршрут TUN не работает; проверено через системный прокси",
+  "nodeOverviewUpdateAllSubscriptions": "Обновить все",
+  "nodeOverviewAllProfilesCount": "Профилей: {count}",
+  "@nodeOverviewAllProfilesCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewExpiredCountBadge": "Истекло: {count}",
+  "@nodeOverviewExpiredCountBadge": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewExpiringSoonCountBadge": "Скоро истечёт: {count}",
+  "@nodeOverviewExpiringSoonCountBadge": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewCurrentActiveProfile": "Активный: {name}",
+  "@nodeOverviewCurrentActiveProfile": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewNoActiveProfile": "Активный: нет",
+  "nodeOverviewAllHealthCounts": "Узлы: дост. {available} / пров. {tested} / всего {total}",
+  "@nodeOverviewAllHealthCounts": {
+    "placeholders": {
+      "available": {
+        "type": "int"
+      },
+      "tested": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewGlobalMedian": "Медиана: {median}",
+  "@nodeOverviewGlobalMedian": {
+    "placeholders": {
+      "median": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewGlobalMedianAndBest": "Медиана: {median} · Лучший: {best}",
+  "@nodeOverviewGlobalMedianAndBest": {
+    "placeholders": {
+      "median": {
+        "type": "String"
+      },
+      "best": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewBandFast": "Быстр. {count}",
+  "@nodeOverviewBandFast": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewBandSlow": "Медл. {count}",
+  "@nodeOverviewBandSlow": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewBandFailed": "Ошибка {count}",
+  "@nodeOverviewBandFailed": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewBandUntested": "Не пров. {count}",
+  "@nodeOverviewBandUntested": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  }
 }

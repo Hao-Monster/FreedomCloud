@@ -57,74 +57,97 @@ class MessageLookup extends MessageLookupByLibrary {
   static String m17(node, delay, exitPart) =>
       "节点 ${node} · 出站 ${delay} ms${exitPart}";
 
-  static String m18(text) => "公告：${text}";
+  static String m18(available, tested, total) =>
+      "节点：可用 ${available} / 已测 ${tested} / 共 ${total}";
 
-  static String m19(hours) => "自动更新 ${hours}h";
+  static String m19(count) => "共 ${count} 个配置";
 
-  static String m20(minutes) => "自动更新 ${minutes}m";
+  static String m20(text) => "公告：${text}";
 
-  static String m21(completed, failed, untested, profiles) =>
+  static String m21(hours) => "自动更新 ${hours}h";
+
+  static String m22(minutes) => "自动更新 ${minutes}m";
+
+  static String m23(count) => "失败 ${count}";
+
+  static String m24(count) => "流畅 ${count}";
+
+  static String m25(count) => "偏慢 ${count}";
+
+  static String m26(count) => "未测 ${count}";
+
+  static String m27(completed, failed, untested, profiles) =>
       "已完成 ${completed} · 失败 ${failed} · 未测 ${untested} · 异常配置 ${profiles}";
 
-  static String m22(date) => "到期时间：${date}";
+  static String m28(name) => "当前活动：${name}";
 
-  static String m23(days) => "剩余 ${days} 天";
+  static String m29(date) => "到期时间：${date}";
 
-  static String m24(hours) => "剩余 ${hours} 小时";
+  static String m30(days) => "剩余 ${days} 天";
 
-  static String m25(provider) => "配置文件 · ${provider}";
+  static String m31(hours) => "剩余 ${hours} 小时";
 
-  static String m26(available, tested, total) =>
+  static String m32(count) => "${count} 个已过期";
+
+  static String m33(count) => "${count} 个即将到期";
+
+  static String m34(provider) => "配置文件 · ${provider}";
+
+  static String m35(median) => "全局中位：${median}";
+
+  static String m36(median, best) => "中位延迟：${median} · 最快 ${best}";
+
+  static String m37(available, tested, total) =>
       "可用 ${available} / 已测 ${tested} / 总数 ${total}";
 
-  static String m27(time) => "上次活动时测速：${time}";
+  static String m38(time) => "上次活动时测速：${time}";
 
-  static String m28(time) => "同步时间：${time}";
+  static String m39(time) => "同步时间：${time}";
 
-  static String m29(time) => "最近测速：${time}";
+  static String m40(time) => "最近测速：${time}";
 
-  static String m30(delay) => "中位延迟：${delay}";
+  static String m41(delay) => "中位延迟：${delay}";
 
-  static String m31(count) => "另有 ${count} 类问题";
+  static String m42(count) => "另有 ${count} 类问题";
 
-  static String m32(available, total) => "可用 ${available} / ${total}";
+  static String m43(available, total) => "可用 ${available} / ${total}";
 
-  static String m33(date) => "到期 ${date}";
+  static String m44(date) => "到期 ${date}";
 
-  static String m34(count) => "共 ${count} 个";
+  static String m45(count) => "共 ${count} 个";
 
-  static String m35(completed, total) => "${completed} / ${total}";
+  static String m46(completed, total) => "${completed} / ${total}";
 
-  static String m36(provider) => "${provider}：激活后可见节点";
+  static String m47(provider) => "${provider}：激活后可见节点";
 
-  static String m37(traffic) => "剩余流量：${traffic}";
+  static String m48(traffic) => "剩余流量：${traffic}";
 
-  static String m38(profile, node) => "已切换至 ${profile} · ${node}";
+  static String m49(profile, node) => "已切换至 ${profile} · ${node}";
 
-  static String m39(used, total) => "已用 ${used} / 共 ${total}";
+  static String m50(used, total) => "已用 ${used} / 共 ${total}";
 
-  static String m40(used) => "已用流量：${used}";
+  static String m51(used) => "已用流量：${used}";
 
-  static String m41(label) => "暂无${label}";
+  static String m52(label) => "暂无${label}";
 
-  static String m42(label) => "${label}必须为数字";
+  static String m53(label) => "${label}必须为数字";
 
-  static String m43(label) => "${label} 必须在 1024 到 49151 之间";
+  static String m54(label) => "${label} 必须在 1024 到 49151 之间";
 
-  static String m44(plan, quota, price) =>
+  static String m55(plan, quota, price) =>
       "您好，我想咨询购买【${plan} · ${quota} GiB（${price}）】兑换码。";
 
-  static String m45(count) => "仅剩 ${count} 席";
+  static String m56(count) => "仅剩 ${count} 席";
 
-  static String m46(code) => "未知规则（${code}）";
+  static String m57(code) => "未知规则（${code}）";
 
-  static String m47(count) => "已选择 ${count} 项";
+  static String m58(count) => "已选择 ${count} 项";
 
-  static String m48(days) => "您的订阅将在${days}天后到期";
+  static String m59(days) => "您的订阅将在${days}天后到期";
 
-  static String m49(reason) => "虚拟网卡：${reason}";
+  static String m60(reason) => "虚拟网卡：${reason}";
 
-  static String m50(label) => "${label}必须为URL";
+  static String m61(label) => "${label}必须为URL";
 
   final messages = _notInlinedMessages(_notInlinedMessages);
   static Map<String, Function> _notInlinedMessages(_) => <String, Function>{
@@ -738,33 +761,44 @@ class MessageLookup extends MessageLookupByLibrary {
     "noResolve": MessageLookupByLibrary.simpleMessage("不解析IP"),
     "nodeOverviewActive": MessageLookupByLibrary.simpleMessage("活动配置"),
     "nodeOverviewAddSubscription": MessageLookupByLibrary.simpleMessage("添加订阅"),
+    "nodeOverviewAllHealthCounts": m18,
     "nodeOverviewAllProfiles": MessageLookupByLibrary.simpleMessage("全部配置"),
+    "nodeOverviewAllProfilesCount": m19,
     "nodeOverviewAmbiguousNode": MessageLookupByLibrary.simpleMessage(
       "节点定义重复，无法确认归属",
     ),
-    "nodeOverviewAnnouncement": m18,
-    "nodeOverviewAutoUpdateHours": m19,
-    "nodeOverviewAutoUpdateMinutes": m20,
+    "nodeOverviewAnnouncement": m20,
+    "nodeOverviewAutoUpdateHours": m21,
+    "nodeOverviewAutoUpdateMinutes": m22,
     "nodeOverviewAvailableOnly": MessageLookupByLibrary.simpleMessage("仅显示可用"),
-    "nodeOverviewBatchSummary": m21,
+    "nodeOverviewBandFailed": m23,
+    "nodeOverviewBandFast": m24,
+    "nodeOverviewBandSlow": m25,
+    "nodeOverviewBandUntested": m26,
+    "nodeOverviewBatchSummary": m27,
     "nodeOverviewChainUnsupported": MessageLookupByLibrary.simpleMessage(
       "代理链暂不支持隔离测速",
     ),
+    "nodeOverviewCurrentActiveProfile": m28,
     "nodeOverviewCurrentProfile": MessageLookupByLibrary.simpleMessage("当前配置"),
     "nodeOverviewDeviceLimitReached": MessageLookupByLibrary.simpleMessage(
       "已达设备数量上限",
     ),
-    "nodeOverviewExpireAt": m22,
-    "nodeOverviewExpireDaysLeft": m23,
-    "nodeOverviewExpireHoursLeft": m24,
+    "nodeOverviewExpireAt": m29,
+    "nodeOverviewExpireDaysLeft": m30,
+    "nodeOverviewExpireHoursLeft": m31,
     "nodeOverviewExpireSoon": MessageLookupByLibrary.simpleMessage("不足 1 小时"),
     "nodeOverviewExpired": MessageLookupByLibrary.simpleMessage("订阅已过期"),
+    "nodeOverviewExpiredCountBadge": m32,
+    "nodeOverviewExpiringSoonCountBadge": m33,
     "nodeOverviewFileMissing": MessageLookupByLibrary.simpleMessage("配置文件缺失"),
-    "nodeOverviewFileSource": m25,
+    "nodeOverviewFileSource": m34,
+    "nodeOverviewGlobalMedian": m35,
+    "nodeOverviewGlobalMedianAndBest": m36,
     "nodeOverviewHealthCapacityExceeded": MessageLookupByLibrary.simpleMessage(
       "历史容量已满，部分结果未保存",
     ),
-    "nodeOverviewHealthCounts": m26,
+    "nodeOverviewHealthCounts": m37,
     "nodeOverviewHealthStoreUnavailable": MessageLookupByLibrary.simpleMessage(
       "部分延迟测试结果未能保存",
     ),
@@ -775,19 +809,22 @@ class MessageLookup extends MessageLookupByLibrary {
     "nodeOverviewIndependentTest": MessageLookupByLibrary.simpleMessage(
       "独立延迟测试",
     ),
-    "nodeOverviewLastActiveTest": m27,
-    "nodeOverviewLastSync": m28,
-    "nodeOverviewLastTest": m29,
+    "nodeOverviewLastActiveTest": m38,
+    "nodeOverviewLastSync": m39,
+    "nodeOverviewLastTest": m40,
     "nodeOverviewLive": MessageLookupByLibrary.simpleMessage("实时"),
     "nodeOverviewLocalProfile": MessageLookupByLibrary.simpleMessage("本地配置"),
     "nodeOverviewManageProfiles": MessageLookupByLibrary.simpleMessage(
       "管理配置 / 更新订阅",
     ),
     "nodeOverviewManualUpdate": MessageLookupByLibrary.simpleMessage("手动更新"),
-    "nodeOverviewMedian": m30,
-    "nodeOverviewMoreIssues": m31,
+    "nodeOverviewMedian": m41,
+    "nodeOverviewMoreIssues": m42,
     "nodeOverviewNeverExpires": MessageLookupByLibrary.simpleMessage(
       "到期时间：长期有效",
+    ),
+    "nodeOverviewNoActiveProfile": MessageLookupByLibrary.simpleMessage(
+      "当前活动：未选择",
     ),
     "nodeOverviewNoNodes": MessageLookupByLibrary.simpleMessage("没有符合条件的节点"),
     "nodeOverviewNodeUnidentified": MessageLookupByLibrary.simpleMessage(
@@ -797,14 +834,14 @@ class MessageLookup extends MessageLookupByLibrary {
     "nodeOverviewPartialSummary": MessageLookupByLibrary.simpleMessage(
       "摘要仅统计已加载的节点",
     ),
-    "nodeOverviewPickerAvailableNodes": m32,
-    "nodeOverviewPickerExpireDate": m33,
+    "nodeOverviewPickerAvailableNodes": m43,
+    "nodeOverviewPickerExpireDate": m44,
     "nodeOverviewPickerPerpetual": MessageLookupByLibrary.simpleMessage("长期有效"),
     "nodeOverviewPreviewUnsupported": MessageLookupByLibrary.simpleMessage(
       "本预览暂不支持订阅源缓存节点",
     ),
-    "nodeOverviewProfileCountBadge": m34,
-    "nodeOverviewProgress": m35,
+    "nodeOverviewProfileCountBadge": m45,
+    "nodeOverviewProgress": m46,
     "nodeOverviewProviderDownloadFailed": MessageLookupByLibrary.simpleMessage(
       "订阅源下载失败",
     ),
@@ -813,7 +850,7 @@ class MessageLookup extends MessageLookupByLibrary {
     ),
     "nodeOverviewProviderOptionsUnsupported":
         MessageLookupByLibrary.simpleMessage("此类订阅源选项暂不支持"),
-    "nodeOverviewProviderPending": m36,
+    "nodeOverviewProviderPending": m47,
     "nodeOverviewProviderTooLarge": MessageLookupByLibrary.simpleMessage(
       "订阅源超出大小或节点数量限制",
     ),
@@ -827,7 +864,7 @@ class MessageLookup extends MessageLookupByLibrary {
       "订阅源地址不符合安全要求",
     ),
     "nodeOverviewQuickUse": MessageLookupByLibrary.simpleMessage("点击使用"),
-    "nodeOverviewRemainingTraffic": m37,
+    "nodeOverviewRemainingTraffic": m48,
     "nodeOverviewRuntimeSource": MessageLookupByLibrary.simpleMessage("运行时节点"),
     "nodeOverviewSelectProfileTitle": MessageLookupByLibrary.simpleMessage(
       "切换配置",
@@ -837,7 +874,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "nodeOverviewStrictUnsupported": MessageLookupByLibrary.simpleMessage(
       "严格模式下不可使用隔离测速",
     ),
-    "nodeOverviewSwitchedToNode": m38,
+    "nodeOverviewSwitchedToNode": m49,
     "nodeOverviewTestAll": MessageLookupByLibrary.simpleMessage("测试全部节点延迟"),
     "nodeOverviewTestCurrent": MessageLookupByLibrary.simpleMessage("测试当前配置"),
     "nodeOverviewTestFailed": MessageLookupByLibrary.simpleMessage("测试失败"),
@@ -861,20 +898,23 @@ class MessageLookup extends MessageLookupByLibrary {
       "此协议暂不支持隔离测速",
     ),
     "nodeOverviewUntested": MessageLookupByLibrary.simpleMessage("未测"),
+    "nodeOverviewUpdateAllSubscriptions": MessageLookupByLibrary.simpleMessage(
+      "全部更新",
+    ),
     "nodeOverviewUpdateSubscription": MessageLookupByLibrary.simpleMessage(
       "更新订阅",
     ),
     "nodeOverviewUpdating": MessageLookupByLibrary.simpleMessage("正在更新订阅"),
     "nodeOverviewUpdatingShort": MessageLookupByLibrary.simpleMessage("更新中"),
     "nodeOverviewUseNode": MessageLookupByLibrary.simpleMessage("使用"),
-    "nodeOverviewUsedOfTotalTraffic": m39,
-    "nodeOverviewUsedTrafficOnly": m40,
+    "nodeOverviewUsedOfTotalTraffic": m50,
+    "nodeOverviewUsedTrafficOnly": m51,
     "none": MessageLookupByLibrary.simpleMessage("无"),
     "notSelectedTip": MessageLookupByLibrary.simpleMessage("当前代理组无法选中"),
     "nullProfileDesc": MessageLookupByLibrary.simpleMessage("没有配置文件,请先添加配置文件"),
     "nullScriptTip": MessageLookupByLibrary.simpleMessage("暂无脚本"),
-    "nullTip": m41,
-    "numberTip": m42,
+    "nullTip": m52,
+    "numberTip": m53,
     "oneColumn": MessageLookupByLibrary.simpleMessage("一列"),
     "oneline": MessageLookupByLibrary.simpleMessage("单行"),
     "onlyIcon": MessageLookupByLibrary.simpleMessage("仅图标"),
@@ -921,7 +961,7 @@ class MessageLookup extends MessageLookupByLibrary {
     ),
     "port": MessageLookupByLibrary.simpleMessage("端口"),
     "portConflictTip": MessageLookupByLibrary.simpleMessage("请输入不同的端口"),
-    "portTip": m43,
+    "portTip": m54,
     "preferH3Desc": MessageLookupByLibrary.simpleMessage("优先使用DOH的http/3"),
     "pressKeyboard": MessageLookupByLibrary.simpleMessage("请按下按键"),
     "preview": MessageLookupByLibrary.simpleMessage("预览"),
@@ -1013,7 +1053,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "purchaseHistoryPage": MessageLookupByLibrary.simpleMessage("页码"),
     "purchaseHistoryRetry": MessageLookupByLibrary.simpleMessage("重新加载记录"),
     "purchaseHistoryTotal": MessageLookupByLibrary.simpleMessage("总计"),
-    "purchaseInquiryTemplate": m44,
+    "purchaseInquiryTemplate": m55,
     "purchaseJumpToWorkbench": MessageLookupByLibrary.simpleMessage(
       "已有兑换码？直达核销",
     ),
@@ -1066,7 +1106,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "purchasePlanImageNotLoaded": MessageLookupByLibrary.simpleMessage(
       "未加载外部图片",
     ),
-    "purchasePlanLowStock": m45,
+    "purchasePlanLowStock": m56,
     "purchasePlanNotProvided": MessageLookupByLibrary.simpleMessage("未提供"),
     "purchasePlanResetMonthStart": MessageLookupByLibrary.simpleMessage(
       "每月 1 日",
@@ -1077,7 +1117,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "purchasePlanResetNever": MessageLookupByLibrary.simpleMessage("不自动重置"),
     "purchasePlanResetPrice": MessageLookupByLibrary.simpleMessage("流量重置标价"),
     "purchasePlanResetSystem": MessageLookupByLibrary.simpleMessage("跟随系统设置"),
-    "purchasePlanResetUnknown": m46,
+    "purchasePlanResetUnknown": m57,
     "purchasePlanResetYearStart": MessageLookupByLibrary.simpleMessage(
       "每年 1 月 1 日",
     ),
@@ -1196,7 +1236,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "seconds": MessageLookupByLibrary.simpleMessage("秒"),
     "selectAll": MessageLookupByLibrary.simpleMessage("全选"),
     "selected": MessageLookupByLibrary.simpleMessage("已选择"),
-    "selectedCountTitle": m47,
+    "selectedCountTitle": m58,
     "settings": MessageLookupByLibrary.simpleMessage("设置"),
     "show": MessageLookupByLibrary.simpleMessage("显示"),
     "shrink": MessageLookupByLibrary.simpleMessage("紧凑"),
@@ -1221,7 +1261,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "submit": MessageLookupByLibrary.simpleMessage("提交"),
     "subscriptionEternal": MessageLookupByLibrary.simpleMessage("长期有效"),
     "subscriptionExpired": MessageLookupByLibrary.simpleMessage("您的订阅已过期"),
-    "subscriptionExpiresInDays": m48,
+    "subscriptionExpiresInDays": m59,
     "subscriptionExpiresSoon": MessageLookupByLibrary.simpleMessage("订阅即将到期"),
     "subscriptionExpiresToday": MessageLookupByLibrary.simpleMessage(
       "您的订阅今天到期",
@@ -1259,6 +1299,9 @@ class MessageLookup extends MessageLookupByLibrary {
     "tun": MessageLookupByLibrary.simpleMessage("虚拟网卡"),
     "tunDesc": MessageLookupByLibrary.simpleMessage("仅在管理员模式生效"),
     "tunDisableAction": MessageLookupByLibrary.simpleMessage("请求关闭"),
+    "tunErrorAdapterCreate": MessageLookupByLibrary.simpleMessage(
+      "Windows 未能添加虚拟网卡，请稍后重新开启重试",
+    ),
     "tunErrorAuthorization": MessageLookupByLibrary.simpleMessage(
       "需要管理员授权，可重新开启重试",
     ),
@@ -1272,15 +1315,12 @@ class MessageLookup extends MessageLookupByLibrary {
     "tunErrorProfileRequired": MessageLookupByLibrary.simpleMessage(
       "请先选择可读取且非空的配置，再重试连接",
     ),
-    "tunErrorAdapterCreate": MessageLookupByLibrary.simpleMessage(
-      "Windows 未能添加虚拟网卡，请稍后重新开启重试",
-    ),
     "tunErrorStart": MessageLookupByLibrary.simpleMessage("网卡启动失败，可重新开启重试"),
     "tunErrorStop": MessageLookupByLibrary.simpleMessage("关闭失败，请核对当前运行状态"),
     "tunErrorUnavailable": MessageLookupByLibrary.simpleMessage(
       "无法确认状态，请检查后台版本",
     ),
-    "tunStatusFailure": m49,
+    "tunStatusFailure": m60,
     "tunStatusOff": MessageLookupByLibrary.simpleMessage("未启动"),
     "tunStatusOn": MessageLookupByLibrary.simpleMessage("已启动"),
     "tunStatusStarting": MessageLookupByLibrary.simpleMessage("正在开启…"),
@@ -1301,7 +1341,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "upload": MessageLookupByLibrary.simpleMessage("上传"),
     "url": MessageLookupByLibrary.simpleMessage("URL"),
     "urlDesc": MessageLookupByLibrary.simpleMessage("通过URL获取配置文件"),
-    "urlTip": m50,
+    "urlTip": m61,
     "useHosts": MessageLookupByLibrary.simpleMessage("使用Hosts"),
     "useSystemHosts": MessageLookupByLibrary.simpleMessage("使用系统Hosts"),
     "value": MessageLookupByLibrary.simpleMessage("值"),

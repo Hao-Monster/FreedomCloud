@@ -1047,5 +1047,104 @@
   "healthDetailSysProxyNotApplied": "システムプロキシがまだ適用されていません",
   "healthDetailSysProxyDisabledExternally": "OSのシステムプロキシがオフになっています",
   "healthDetailDnsStaleFakeIp": "TUN無効時に残留Fake-IPキャッシュを検出しました",
-  "healthDetailTunBypassedSystemProxyOk": "TUN 経路が失敗し、システムプロキシ経由で確認済み"
+  "healthDetailTunBypassedSystemProxyOk": "TUN 経路が失敗し、システムプロキシ経由で確認済み",
+  "nodeOverviewUpdateAllSubscriptions": "すべて更新",
+  "nodeOverviewAllProfilesCount": "計 {count} 件の設定",
+  "@nodeOverviewAllProfilesCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewExpiredCountBadge": "{count} 件期限切れ",
+  "@nodeOverviewExpiredCountBadge": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewExpiringSoonCountBadge": "{count} 件期限間近",
+  "@nodeOverviewExpiringSoonCountBadge": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewCurrentActiveProfile": "使用中：{name}",
+  "@nodeOverviewCurrentActiveProfile": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewNoActiveProfile": "使用中：未選択",
+  "nodeOverviewAllHealthCounts": "ノード：利用可能 {available} / 測定済 {tested} / 計 {total}",
+  "@nodeOverviewAllHealthCounts": {
+    "placeholders": {
+      "available": {
+        "type": "int"
+      },
+      "tested": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewGlobalMedian": "全体中央値：{median}",
+  "@nodeOverviewGlobalMedian": {
+    "placeholders": {
+      "median": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewGlobalMedianAndBest": "中央値：{median} · 最速 {best}",
+  "@nodeOverviewGlobalMedianAndBest": {
+    "placeholders": {
+      "median": {
+        "type": "String"
+      },
+      "best": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewBandFast": "快適 {count}",
+  "@nodeOverviewBandFast": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewBandSlow": "やや遅 {count}",
+  "@nodeOverviewBandSlow": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewBandFailed": "不可 {count}",
+  "@nodeOverviewBandFailed": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewBandUntested": "未測定 {count}",
+  "@nodeOverviewBandUntested": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  }
 }

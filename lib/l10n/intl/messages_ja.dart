@@ -57,74 +57,97 @@ class MessageLookup extends MessageLookupByLibrary {
   static String m17(node, delay, exitPart) =>
       "ノード ${node} · ${delay} ms${exitPart}";
 
-  static String m18(text) => "お知らせ：${text}";
+  static String m18(available, tested, total) =>
+      "ノード：利用可能 ${available} / 測定済 ${tested} / 計 ${total}";
 
-  static String m19(hours) => "自動更新 ${hours}h";
+  static String m19(count) => "計 ${count} 件の設定";
 
-  static String m20(minutes) => "自動更新 ${minutes}m";
+  static String m20(text) => "お知らせ：${text}";
 
-  static String m21(completed, failed, untested, profiles) =>
+  static String m21(hours) => "自動更新 ${hours}h";
+
+  static String m22(minutes) => "自動更新 ${minutes}m";
+
+  static String m23(count) => "不可 ${count}";
+
+  static String m24(count) => "快適 ${count}";
+
+  static String m25(count) => "やや遅 ${count}";
+
+  static String m26(count) => "未測定 ${count}";
+
+  static String m27(completed, failed, untested, profiles) =>
       "測定済み ${completed} · 失敗 ${failed} · 未測定 ${untested} · 問題のあるプロファイル ${profiles}";
 
-  static String m22(date) => "有効期限：${date}";
+  static String m28(name) => "使用中：${name}";
 
-  static String m23(days) => "残り ${days} 日";
+  static String m29(date) => "有効期限：${date}";
 
-  static String m24(hours) => "残り ${hours} 時間";
+  static String m30(days) => "残り ${days} 日";
 
-  static String m25(provider) => "設定ファイル · ${provider}";
+  static String m31(hours) => "残り ${hours} 時間";
 
-  static String m26(available, tested, total) =>
+  static String m32(count) => "${count} 件期限切れ";
+
+  static String m33(count) => "${count} 件期限間近";
+
+  static String m34(provider) => "設定ファイル · ${provider}";
+
+  static String m35(median) => "全体中央値：${median}";
+
+  static String m36(median, best) => "中央値：${median} · 最速 ${best}";
+
+  static String m37(available, tested, total) =>
       "利用可能 ${available} / 測定済み ${tested} / 合計 ${total}";
 
-  static String m27(time) => "前回使用時の測定：${time}";
+  static String m38(time) => "前回使用時の測定：${time}";
 
-  static String m28(time) => "同期日時：${time}";
+  static String m39(time) => "同期日時：${time}";
 
-  static String m29(time) => "最終測定：${time}";
+  static String m40(time) => "最終測定：${time}";
 
-  static String m30(delay) => "中央値：${delay}";
+  static String m41(delay) => "中央値：${delay}";
 
-  static String m31(count) => "ほかに ${count} 種類の問題";
+  static String m42(count) => "ほかに ${count} 種類の問題";
 
-  static String m32(available, total) => "利用可能 ${available} / ${total}";
+  static String m43(available, total) => "利用可能 ${available} / ${total}";
 
-  static String m33(date) => "期限 ${date}";
+  static String m44(date) => "期限 ${date}";
 
-  static String m34(count) => "全 ${count} 件";
+  static String m45(count) => "全 ${count} 件";
 
-  static String m35(completed, total) => "${completed} / ${total}";
+  static String m46(completed, total) => "${completed} / ${total}";
 
-  static String m36(provider) => "${provider}：有効化後にノードを表示";
+  static String m47(provider) => "${provider}：有効化後にノードを表示";
 
-  static String m37(traffic) => "残り通信量：${traffic}";
+  static String m48(traffic) => "残り通信量：${traffic}";
 
-  static String m38(profile, node) => "${profile} · ${node} に切り替えました";
+  static String m49(profile, node) => "${profile} · ${node} に切り替えました";
 
-  static String m39(used, total) => "使用済み ${used} / ${total}";
+  static String m50(used, total) => "使用済み ${used} / ${total}";
 
-  static String m40(used) => "使用済み：${used}";
+  static String m51(used) => "使用済み：${used}";
 
-  static String m41(label) => "現在${label}はありません";
+  static String m52(label) => "現在${label}はありません";
 
-  static String m42(label) => "${label}は数字でなければなりません";
+  static String m53(label) => "${label}は数字でなければなりません";
 
-  static String m43(label) => "${label} は 1024 から 49151 の間でなければなりません";
+  static String m54(label) => "${label} は 1024 から 49151 の間でなければなりません";
 
-  static String m44(plan, quota, price) =>
+  static String m55(plan, quota, price) =>
       "こんにちは。【${plan} · ${quota} GiB（${price}）】の引き換えコードを購入したいです。";
 
-  static String m45(count) => "残り ${count} 枠";
+  static String m56(count) => "残り ${count} 枠";
 
-  static String m46(code) => "不明なルール（${code}）";
+  static String m57(code) => "不明なルール（${code}）";
 
-  static String m47(count) => "${count} 項目が選択されています";
+  static String m58(count) => "${count} 項目が選択されています";
 
-  static String m48(days) => "サブスクリプションは${days}日後に期限切れになります";
+  static String m59(days) => "サブスクリプションは${days}日後に期限切れになります";
 
-  static String m49(reason) => "TUN: ${reason}";
+  static String m60(reason) => "TUN: ${reason}";
 
-  static String m50(label) => "${label}はURLである必要があります";
+  static String m61(label) => "${label}はURLである必要があります";
 
   final messages = _notInlinedMessages(_notInlinedMessages);
   static Map<String, Function> _notInlinedMessages(_) => <String, Function>{
@@ -531,9 +554,7 @@ class MessageLookup extends MessageLookupByLibrary {
       "TUN 仮想アダプタで制御中",
     ),
     "healthDetailTunBypassedSystemProxyOk":
-        MessageLookupByLibrary.simpleMessage(
-          "TUN 経路が失敗し、システムプロキシ経由で確認済み",
-        ),
+        MessageLookupByLibrary.simpleMessage("TUN 経路が失敗し、システムプロキシ経由で確認済み"),
     "healthDetailTunDisabled": MessageLookupByLibrary.simpleMessage("設定でオフ"),
     "healthDetailTunReady": MessageLookupByLibrary.simpleMessage("仮想アダプタ稼働中"),
     "healthDetailTunReadyElevated": MessageLookupByLibrary.simpleMessage(
@@ -724,37 +745,48 @@ class MessageLookup extends MessageLookupByLibrary {
     "nodeOverviewAddSubscription": MessageLookupByLibrary.simpleMessage(
       "購読を追加",
     ),
+    "nodeOverviewAllHealthCounts": m18,
     "nodeOverviewAllProfiles": MessageLookupByLibrary.simpleMessage("すべての設定"),
+    "nodeOverviewAllProfilesCount": m19,
     "nodeOverviewAmbiguousNode": MessageLookupByLibrary.simpleMessage(
       "ノード定義が重複しているため、識別できません",
     ),
-    "nodeOverviewAnnouncement": m18,
-    "nodeOverviewAutoUpdateHours": m19,
-    "nodeOverviewAutoUpdateMinutes": m20,
+    "nodeOverviewAnnouncement": m20,
+    "nodeOverviewAutoUpdateHours": m21,
+    "nodeOverviewAutoUpdateMinutes": m22,
     "nodeOverviewAvailableOnly": MessageLookupByLibrary.simpleMessage("利用可能のみ"),
-    "nodeOverviewBatchSummary": m21,
+    "nodeOverviewBandFailed": m23,
+    "nodeOverviewBandFast": m24,
+    "nodeOverviewBandSlow": m25,
+    "nodeOverviewBandUntested": m26,
+    "nodeOverviewBatchSummary": m27,
     "nodeOverviewChainUnsupported": MessageLookupByLibrary.simpleMessage(
       "プロキシチェーンの分離テストは未対応です",
     ),
+    "nodeOverviewCurrentActiveProfile": m28,
     "nodeOverviewCurrentProfile": MessageLookupByLibrary.simpleMessage("現在の設定"),
     "nodeOverviewDeviceLimitReached": MessageLookupByLibrary.simpleMessage(
       "端末数の上限に達しました",
     ),
-    "nodeOverviewExpireAt": m22,
-    "nodeOverviewExpireDaysLeft": m23,
-    "nodeOverviewExpireHoursLeft": m24,
+    "nodeOverviewExpireAt": m29,
+    "nodeOverviewExpireDaysLeft": m30,
+    "nodeOverviewExpireHoursLeft": m31,
     "nodeOverviewExpireSoon": MessageLookupByLibrary.simpleMessage("残り 1 時間未満"),
     "nodeOverviewExpired": MessageLookupByLibrary.simpleMessage(
       "サブスクリプションの有効期限切れ",
     ),
+    "nodeOverviewExpiredCountBadge": m32,
+    "nodeOverviewExpiringSoonCountBadge": m33,
     "nodeOverviewFileMissing": MessageLookupByLibrary.simpleMessage(
       "設定ファイルがありません",
     ),
-    "nodeOverviewFileSource": m25,
+    "nodeOverviewFileSource": m34,
+    "nodeOverviewGlobalMedian": m35,
+    "nodeOverviewGlobalMedianAndBest": m36,
     "nodeOverviewHealthCapacityExceeded": MessageLookupByLibrary.simpleMessage(
       "履歴の保存容量が不足し、一部の結果を保存できませんでした",
     ),
-    "nodeOverviewHealthCounts": m26,
+    "nodeOverviewHealthCounts": m37,
     "nodeOverviewHealthStoreUnavailable": MessageLookupByLibrary.simpleMessage(
       "一部の遅延テスト結果を保存できませんでした",
     ),
@@ -765,19 +797,22 @@ class MessageLookup extends MessageLookupByLibrary {
     "nodeOverviewIndependentTest": MessageLookupByLibrary.simpleMessage(
       "独立した遅延テスト",
     ),
-    "nodeOverviewLastActiveTest": m27,
-    "nodeOverviewLastSync": m28,
-    "nodeOverviewLastTest": m29,
+    "nodeOverviewLastActiveTest": m38,
+    "nodeOverviewLastSync": m39,
+    "nodeOverviewLastTest": m40,
     "nodeOverviewLive": MessageLookupByLibrary.simpleMessage("リアルタイム"),
     "nodeOverviewLocalProfile": MessageLookupByLibrary.simpleMessage("ローカル設定"),
     "nodeOverviewManageProfiles": MessageLookupByLibrary.simpleMessage(
       "設定管理 / サブスクリプション更新",
     ),
     "nodeOverviewManualUpdate": MessageLookupByLibrary.simpleMessage("手動更新"),
-    "nodeOverviewMedian": m30,
-    "nodeOverviewMoreIssues": m31,
+    "nodeOverviewMedian": m41,
+    "nodeOverviewMoreIssues": m42,
     "nodeOverviewNeverExpires": MessageLookupByLibrary.simpleMessage(
       "有効期限：無期限",
+    ),
+    "nodeOverviewNoActiveProfile": MessageLookupByLibrary.simpleMessage(
+      "使用中：未選択",
     ),
     "nodeOverviewNoNodes": MessageLookupByLibrary.simpleMessage(
       "一致するノードがありません",
@@ -791,14 +826,14 @@ class MessageLookup extends MessageLookupByLibrary {
     "nodeOverviewPartialSummary": MessageLookupByLibrary.simpleMessage(
       "概要は読み込み済みノードのみを集計します",
     ),
-    "nodeOverviewPickerAvailableNodes": m32,
-    "nodeOverviewPickerExpireDate": m33,
+    "nodeOverviewPickerAvailableNodes": m43,
+    "nodeOverviewPickerExpireDate": m44,
     "nodeOverviewPickerPerpetual": MessageLookupByLibrary.simpleMessage("無期限"),
     "nodeOverviewPreviewUnsupported": MessageLookupByLibrary.simpleMessage(
       "このプレビューではローカルプロバイダーノードは未対応です",
     ),
-    "nodeOverviewProfileCountBadge": m34,
-    "nodeOverviewProgress": m35,
+    "nodeOverviewProfileCountBadge": m45,
+    "nodeOverviewProgress": m46,
     "nodeOverviewProviderDownloadFailed": MessageLookupByLibrary.simpleMessage(
       "プロバイダーのダウンロードに失敗しました",
     ),
@@ -807,7 +842,7 @@ class MessageLookup extends MessageLookupByLibrary {
     ),
     "nodeOverviewProviderOptionsUnsupported":
         MessageLookupByLibrary.simpleMessage("これらのプロバイダー設定には対応していません"),
-    "nodeOverviewProviderPending": m36,
+    "nodeOverviewProviderPending": m47,
     "nodeOverviewProviderTooLarge": MessageLookupByLibrary.simpleMessage(
       "プロバイダーがサイズまたはノード数の上限を超えています",
     ),
@@ -821,7 +856,7 @@ class MessageLookup extends MessageLookupByLibrary {
       "プロバイダーのURLが安全要件を満たしていません",
     ),
     "nodeOverviewQuickUse": MessageLookupByLibrary.simpleMessage("すぐ使う"),
-    "nodeOverviewRemainingTraffic": m37,
+    "nodeOverviewRemainingTraffic": m48,
     "nodeOverviewRuntimeSource": MessageLookupByLibrary.simpleMessage(
       "実行中のノード",
     ),
@@ -833,7 +868,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "nodeOverviewStrictUnsupported": MessageLookupByLibrary.simpleMessage(
       "厳格モードでは分離テストを利用できません",
     ),
-    "nodeOverviewSwitchedToNode": m38,
+    "nodeOverviewSwitchedToNode": m49,
     "nodeOverviewTestAll": MessageLookupByLibrary.simpleMessage("全ノードの遅延を測定"),
     "nodeOverviewTestCurrent": MessageLookupByLibrary.simpleMessage(
       "現在のプロファイルをテスト",
@@ -859,6 +894,9 @@ class MessageLookup extends MessageLookupByLibrary {
       "このプロトコルの分離テストは未対応です",
     ),
     "nodeOverviewUntested": MessageLookupByLibrary.simpleMessage("未測定"),
+    "nodeOverviewUpdateAllSubscriptions": MessageLookupByLibrary.simpleMessage(
+      "すべて更新",
+    ),
     "nodeOverviewUpdateSubscription": MessageLookupByLibrary.simpleMessage(
       "購読を更新",
     ),
@@ -867,8 +905,8 @@ class MessageLookup extends MessageLookupByLibrary {
     ),
     "nodeOverviewUpdatingShort": MessageLookupByLibrary.simpleMessage("更新中"),
     "nodeOverviewUseNode": MessageLookupByLibrary.simpleMessage("使用"),
-    "nodeOverviewUsedOfTotalTraffic": m39,
-    "nodeOverviewUsedTrafficOnly": m40,
+    "nodeOverviewUsedOfTotalTraffic": m50,
+    "nodeOverviewUsedTrafficOnly": m51,
     "none": MessageLookupByLibrary.simpleMessage("なし"),
     "notSelectedTip": MessageLookupByLibrary.simpleMessage(
       "現在のプロキシグループは選択できません",
@@ -877,8 +915,8 @@ class MessageLookup extends MessageLookupByLibrary {
       "プロファイルがありません。追加してください",
     ),
     "nullScriptTip": MessageLookupByLibrary.simpleMessage("スクリプトはありません"),
-    "nullTip": m41,
-    "numberTip": m42,
+    "nullTip": m52,
+    "numberTip": m53,
     "oneColumn": MessageLookupByLibrary.simpleMessage("1列"),
     "oneline": MessageLookupByLibrary.simpleMessage("オンライン"),
     "onlyIcon": MessageLookupByLibrary.simpleMessage("アイコンのみ"),
@@ -937,7 +975,7 @@ class MessageLookup extends MessageLookupByLibrary {
     ),
     "port": MessageLookupByLibrary.simpleMessage("ポート"),
     "portConflictTip": MessageLookupByLibrary.simpleMessage("別のポートを入力してください"),
-    "portTip": m43,
+    "portTip": m54,
     "preferH3Desc": MessageLookupByLibrary.simpleMessage("DOHのHTTP/3を優先使用"),
     "pressKeyboard": MessageLookupByLibrary.simpleMessage("キーボードを押してください"),
     "preview": MessageLookupByLibrary.simpleMessage("プレビュー"),
@@ -992,7 +1030,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "purchaseFilterOnetime": MessageLookupByLibrary.simpleMessage("通信量パック"),
     "purchaseFilterPeriod": MessageLookupByLibrary.simpleMessage("定期プラン"),
     "purchaseHidePassword": MessageLookupByLibrary.simpleMessage("パスワードを隠す"),
-    "purchaseInquiryTemplate": m44,
+    "purchaseInquiryTemplate": m55,
     "purchaseJumpToWorkbench": MessageLookupByLibrary.simpleMessage(
       "コードをお持ちの方はこちら",
     ),
@@ -1014,7 +1052,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "purchasePlanImageNotLoaded": MessageLookupByLibrary.simpleMessage(
       "外部画像は読み込まれていません",
     ),
-    "purchasePlanLowStock": m45,
+    "purchasePlanLowStock": m56,
     "purchasePlanNotProvided": MessageLookupByLibrary.simpleMessage("未提供"),
     "purchasePlanResetMonthStart": MessageLookupByLibrary.simpleMessage("毎月1日"),
     "purchasePlanResetMonthlyExpiry": MessageLookupByLibrary.simpleMessage(
@@ -1027,7 +1065,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "purchasePlanResetSystem": MessageLookupByLibrary.simpleMessage(
       "システム設定に従う",
     ),
-    "purchasePlanResetUnknown": m46,
+    "purchasePlanResetUnknown": m57,
     "purchasePlanResetYearStart": MessageLookupByLibrary.simpleMessage(
       "毎年1月1日",
     ),
@@ -1116,7 +1154,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "seconds": MessageLookupByLibrary.simpleMessage("秒"),
     "selectAll": MessageLookupByLibrary.simpleMessage("すべて選択"),
     "selected": MessageLookupByLibrary.simpleMessage("選択済み"),
-    "selectedCountTitle": m47,
+    "selectedCountTitle": m58,
     "settings": MessageLookupByLibrary.simpleMessage("設定"),
     "show": MessageLookupByLibrary.simpleMessage("表示"),
     "shrink": MessageLookupByLibrary.simpleMessage("縮小"),
@@ -1143,7 +1181,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "subscriptionExpired": MessageLookupByLibrary.simpleMessage(
       "サブスクリプションが期限切れになりました",
     ),
-    "subscriptionExpiresInDays": m48,
+    "subscriptionExpiresInDays": m59,
     "subscriptionExpiresSoon": MessageLookupByLibrary.simpleMessage(
       "サブスクリプションがまもなく期限切れ",
     ),
@@ -1187,6 +1225,9 @@ class MessageLookup extends MessageLookupByLibrary {
     "tun": MessageLookupByLibrary.simpleMessage("TUN"),
     "tunDesc": MessageLookupByLibrary.simpleMessage("管理者モードでのみ有効"),
     "tunDisableAction": MessageLookupByLibrary.simpleMessage("停止を要求"),
+    "tunErrorAdapterCreate": MessageLookupByLibrary.simpleMessage(
+      "Windows が仮想アダプターを追加できませんでした。しばらくしてから再試行してください",
+    ),
     "tunErrorAuthorization": MessageLookupByLibrary.simpleMessage(
       "管理者の許可が必要です。再度有効にしてください",
     ),
@@ -1202,9 +1243,6 @@ class MessageLookup extends MessageLookupByLibrary {
     "tunErrorProfileRequired": MessageLookupByLibrary.simpleMessage(
       "接続する前に、読み取り可能な空でない設定を選択してください",
     ),
-    "tunErrorAdapterCreate": MessageLookupByLibrary.simpleMessage(
-      "Windows が仮想アダプターを追加できませんでした。しばらくしてから再試行してください",
-    ),
     "tunErrorStart": MessageLookupByLibrary.simpleMessage(
       "インターフェースを起動できません。再度有効にしてください",
     ),
@@ -1214,7 +1252,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "tunErrorUnavailable": MessageLookupByLibrary.simpleMessage(
       "状態を確認できません。バックグラウンドのバージョンを確認してください",
     ),
-    "tunStatusFailure": m49,
+    "tunStatusFailure": m60,
     "tunStatusOff": MessageLookupByLibrary.simpleMessage("停止中"),
     "tunStatusOn": MessageLookupByLibrary.simpleMessage("起動済み"),
     "tunStatusStarting": MessageLookupByLibrary.simpleMessage("起動しています…"),
@@ -1237,7 +1275,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "upload": MessageLookupByLibrary.simpleMessage("アップロード"),
     "url": MessageLookupByLibrary.simpleMessage("URL"),
     "urlDesc": MessageLookupByLibrary.simpleMessage("URL経由でプロファイルを取得"),
-    "urlTip": m50,
+    "urlTip": m61,
     "useHosts": MessageLookupByLibrary.simpleMessage("ホストを使用"),
     "useSystemHosts": MessageLookupByLibrary.simpleMessage("システムホストを使用"),
     "value": MessageLookupByLibrary.simpleMessage("値"),
