@@ -171,6 +171,8 @@ class AppController {
   final Map<String, int> _activeProfileUpdateTokens = {};
   final Map<String, ({int token, String url, Future<void> future})>
       _inFlightProfileUpdates = {};
+  final ProfileAutoUpdateBackoff _autoUpdateBackoff =
+      ProfileAutoUpdateBackoff();
   NodeHealthStore? get catalogHealthStore =>
       _ref.read(nodeOverviewEnabledProvider)
           ? _ref.read(nodeHealthRecorderProvider).store
@@ -1350,6 +1352,7 @@ class AppController {
   }
 
   Future<void> deleteProfile(String id) async {
+    _autoUpdateBackoff.clear(id);
     _ref.read(profilesProvider.notifier).deleteProfileById(id);
     clearEffect(id);
     if (globalState.config.currentProfileId == id) {
@@ -1647,6 +1650,7 @@ class AppController {
         _showHwidNotSupportedNotice();
       }
 
+      _autoUpdateBackoff.clear(starting.id);
       _ref.read(profilesProvider.notifier).setProfile(mergedProfile);
 
       if (starting.id == _ref.read(currentProfileIdProvider)) {
@@ -2535,7 +2539,7 @@ class AppController {
     _ref.read(appBrightnessProvider.notifier).value = brightness;
   }
 
-  Future<void> autoUpdateProfiles() async {
+  Future<void> autoUpdateProfiles({DateTime? now}) async {
     final profiles = _ref.read(profilesProvider);
     final currentId = _ref.read(currentProfileIdProvider);
     final orderedIds = <String>[
@@ -2545,14 +2549,35 @@ class AppController {
         if (profile.id != currentId) profile.id,
     ];
     for (final id in orderedIds) {
+      final referenceNow = now ?? DateTime.now();
       final profile = _ref.read(profilesProvider).getProfile(id);
-      if (profile == null || !isProfileAutoUpdateDue(profile)) {
+      if (profile == null ||
+          !isProfileAutoUpdateDue(profile, now: referenceNow) ||
+          !_autoUpdateBackoff.canAttempt(profile, now: referenceNow)) {
         continue;
       }
       try {
         await updateProfile(profile);
+        final refreshedNow = now ?? DateTime.now();
+        final refreshed = _ref.read(profilesProvider).getProfile(id);
+        if (refreshed != null &&
+            !isProfileAutoUpdateDue(refreshed, now: refreshedNow)) {
+          _autoUpdateBackoff.clear(id);
+        }
       } catch (e) {
-        commonPrint.log(e.toString());
+        final failedNow = now ?? DateTime.now();
+        final latest = _ref.read(profilesProvider).getProfile(id);
+        if (latest != null && latest.url == profile.url) {
+          final delay = _autoUpdateBackoff.recordFailure(
+            latest,
+            now: failedNow,
+          );
+          commonPrint.log(
+            'autoUpdateProfiles failed for $id (backoff ${delay.inMinutes}m): $e',
+          );
+        } else {
+          commonPrint.log(e.toString());
+        }
       }
     }
   }

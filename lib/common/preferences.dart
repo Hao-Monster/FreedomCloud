@@ -35,6 +35,18 @@ class Preferences {
 
   static String _defaultEncodeConfig(Config config) => json.encode(config);
 
+  static Config _persistableConfig(Config config) {
+    final profiles = config.profiles;
+    List<Profile>? normalized;
+    for (var i = 0; i < profiles.length; i++) {
+      if (profiles[i].isUpdating) {
+        normalized ??= List<Profile>.of(profiles, growable: false);
+        normalized[i] = profiles[i].copyWith(isUpdating: false);
+      }
+    }
+    return normalized == null ? config : config.copyWith(profiles: normalized);
+  }
+
   static Preferences? _instance;
   final String Function(Config) _encodeConfig;
   Completer<SharedPreferences?> sharedPreferencesCompleter = Completer();
@@ -47,7 +59,8 @@ class Preferences {
       await sharedPreferencesCompleter.future != null;
 
   bool hasUnsavedConfig(Config config) =>
-      _pendingConfig != null || _lastSavedConfig != config;
+      _pendingConfig != null ||
+      _lastSavedConfig != _persistableConfig(config);
 
   Future<ClashConfig?> getClashConfig() async {
     final preferences = await sharedPreferencesCompleter.future;
@@ -71,7 +84,7 @@ class Preferences {
       final configMap = json.decode(configString);
       final config = Config.compatibleFromJson(configMap);
       if (readEpoch == _epoch && _pendingConfig == null) {
-        _lastSavedConfig = config;
+        _lastSavedConfig = _persistableConfig(config);
       }
       return config;
     } catch (_) {
@@ -81,10 +94,11 @@ class Preferences {
   }
 
   Future<bool> saveConfig(Config config) {
-    if (_activeSave == null && _lastSavedConfig == config) {
+    final persistable = _persistableConfig(config);
+    if (_activeSave == null && _lastSavedConfig == persistable) {
       return Future<bool>.value(true);
     }
-    _pendingConfig = config;
+    _pendingConfig = persistable;
     final saveEpoch = _epoch;
     return _activeSave ??= _drainPendingSaves(saveEpoch).whenComplete(() {
       _activeSave = null;

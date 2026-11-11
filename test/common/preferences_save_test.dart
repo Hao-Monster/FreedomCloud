@@ -131,6 +131,60 @@ void main() {
     expect(encodeCount, 2);
     expect(store.getString(configKey), isNotNull);
   });
+
+  test('transient Profile.isUpdating toggles neither mark Config unsaved nor write disk',
+      () async {
+    var encodeCount = 0;
+    final prefs = Preferences.forTesting(
+      store: SharedPreferences.getInstance(),
+      encodeConfig: (config) {
+        encodeCount++;
+        return json.encode(config);
+      },
+    );
+
+    const p1 = Profile(
+      id: 'p1',
+      url: 'https://sub.example.com/p1',
+      autoUpdateDuration: Duration(hours: 24),
+    );
+    const initial = Config(
+      themeProps: defaultThemeProps,
+      profiles: [p1],
+      currentProfileId: 'p1',
+    );
+    expect(await prefs.saveConfig(initial), isTrue);
+    expect(encodeCount, 1);
+    expect(prefs.hasUnsavedConfig(initial), isFalse);
+
+    // Setting transient isUpdating=true must not mark Config dirty or write disk.
+    final updating = initial.copyWith(
+      profiles: [p1.copyWith(isUpdating: true)],
+    );
+    expect(prefs.hasUnsavedConfig(updating), isFalse);
+    expect(await prefs.saveConfig(updating), isTrue);
+    expect(encodeCount, 1);
+
+    // Rolling back isUpdating=false after a failed fetch must also remain clean.
+    final rolledBack = initial.copyWith(
+      profiles: [p1.copyWith(isUpdating: false)],
+    );
+    expect(prefs.hasUnsavedConfig(rolledBack), isFalse);
+    expect(await prefs.saveConfig(rolledBack), isTrue);
+    expect(encodeCount, 1);
+
+    // Persisted changes made while isUpdating=true still write once, and the
+    // subsequent isUpdating=false transition stays a no-op.
+    final dirtyWhileUpdating = updating.copyWith(overrideDns: true);
+    expect(prefs.hasUnsavedConfig(dirtyWhileUpdating), isTrue);
+    expect(await prefs.saveConfig(dirtyWhileUpdating), isTrue);
+    expect(encodeCount, 2);
+
+    final cleanAfterRollback = rolledBack.copyWith(overrideDns: true);
+    expect(prefs.hasUnsavedConfig(cleanAfterRollback), isFalse);
+    expect(await prefs.saveConfig(cleanAfterRollback), isTrue);
+    expect(encodeCount, 2);
+  });
 }
 
 class _SuspendingSharedPreferences extends Fake implements SharedPreferences {
