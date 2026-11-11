@@ -1347,5 +1347,73 @@
         "type": "String"
       }
     }
+  },
+  "nodeOverviewSmartSelectTitle": "智能选择节点",
+  "nodeOverviewSmartSelectSubtitle": "体验更好",
+  "nodeOverviewManualSelectTitle": "手动选择节点",
+  "nodeOverviewManualSelectSubtitle": "固定IP",
+  "nodeOverviewSmartInUse": "智能使用中",
+  "nodeOverviewProxyConnectedSmartWithNode": "代理已开启 · 智能选择：{profile} · {node}",
+  "@nodeOverviewProxyConnectedSmartWithNode": {
+    "placeholders": {
+      "profile": {
+        "type": "String"
+      },
+      "node": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewProxyConnectedSmart": "代理已开启 · 智能选择：{profile}（自动优选中）",
+  "@nodeOverviewProxyConnectedSmart": {
+    "placeholders": {
+      "profile": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewSwitchedToSmart": "已开启智能选择节点：{profile}",
+  "@nodeOverviewSwitchedToSmart": {
+    "placeholders": {
+      "profile": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewSwitchedToSmartWithNode": "已开启智能选择节点：{profile}（当前：{node}）",
+  "@nodeOverviewSwitchedToSmartWithNode": {
+    "placeholders": {
+      "profile": {
+        "type": "String"
+      },
+      "node": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewAutoConnectedSmartBest": "已开启智能选择节点：{profile}（当前最快：{node} · {delay} ms）",
+  "@nodeOverviewAutoConnectedSmartBest": {
+    "placeholders": {
+      "profile": {
+        "type": "String"
+      },
+      "node": {
+        "type": "String"
+      },
+      "delay": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewLockedManualNode": "已锁定固定节点：{profile} · {node}",
+  "@nodeOverviewLockedManualNode": {
+    "placeholders": {
+      "profile": {
+        "type": "String"
+      },
+      "node": {
+        "type": "String"
+      }
+    }
   }
 }

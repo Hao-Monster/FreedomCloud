@@ -19,6 +19,7 @@ typedef SelectedMap = Map<String, String>;
 // Local-only metadata; unlike provider headers this must survive every refresh.
 const xboardTlsMarker = 'local-xboard-tls';
 const xboardAccountMarker = 'local-xboard-account';
+const smartSelectionModeMarker = 'local-selection-mode';
 
 @freezed
 class SubscriptionInfo with _$SubscriptionInfo {
@@ -306,6 +307,10 @@ extension ProfileExtension on Profile {
     }
     final owner = this.providerHeaders[xboardAccountMarker];
     if (owner != null) providerHeaders[xboardAccountMarker] = owner;
+    final selectionMode = this.providerHeaders[smartSelectionModeMarker];
+    if (selectionMode != null) {
+      providerHeaders[smartSelectionModeMarker] = selectionMode;
+    }
     
     final headersToCollect = [
       'announce',

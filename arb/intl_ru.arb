@@ -1263,5 +1263,73 @@
         "type": "String"
       }
     }
+  },
+  "nodeOverviewSmartSelectTitle": "Умный выбор",
+  "nodeOverviewSmartSelectSubtitle": "Лучший опыт",
+  "nodeOverviewManualSelectTitle": "Ручной выбор",
+  "nodeOverviewManualSelectSubtitle": "Фикс. IP",
+  "nodeOverviewSmartInUse": "Авто",
+  "nodeOverviewProxyConnectedSmartWithNode": "Прокси вкл · Умный: {profile} · {node}",
+  "@nodeOverviewProxyConnectedSmartWithNode": {
+    "placeholders": {
+      "profile": {
+        "type": "String"
+      },
+      "node": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewProxyConnectedSmart": "Прокси вкл · Умный: {profile} (автоподбор)",
+  "@nodeOverviewProxyConnectedSmart": {
+    "placeholders": {
+      "profile": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewSwitchedToSmart": "Включён умный выбор: {profile}",
+  "@nodeOverviewSwitchedToSmart": {
+    "placeholders": {
+      "profile": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewSwitchedToSmartWithNode": "Включён умный выбор: {profile} ({node})",
+  "@nodeOverviewSwitchedToSmartWithNode": {
+    "placeholders": {
+      "profile": {
+        "type": "String"
+      },
+      "node": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewAutoConnectedSmartBest": "Умный выбор включён: {profile} (лучший: {node} · {delay} мс)",
+  "@nodeOverviewAutoConnectedSmartBest": {
+    "placeholders": {
+      "profile": {
+        "type": "String"
+      },
+      "node": {
+        "type": "String"
+      },
+      "delay": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewLockedManualNode": "Закреплён фиксированный узел: {profile} · {node}",
+  "@nodeOverviewLockedManualNode": {
+    "placeholders": {
+      "profile": {
+        "type": "String"
+      },
+      "node": {
+        "type": "String"
+      }
+    }
   }
 }

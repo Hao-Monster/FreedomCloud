@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:dynamic_color/dynamic_color.dart';
 import 'package:flclashx/common/common.dart';
+import 'package:flclashx/common/smart_node_selection.dart';
 import 'package:flclashx/enum/enum.dart';
 import 'package:flclashx/models/models.dart';
 import 'package:flclashx/state.dart';
@@ -66,7 +67,9 @@ GroupsState currentGroupsState(Ref ref) {
       // the original behaviour: every group.
       Mode.global => globalState.globalOverrideEnabled.value
           ? groups.where((item) => item.name == GroupName.GLOBAL.name).toList()
-          : groups.toList(),
+          : groups
+              .where((item) => !isManagedSmartGroupName(item.name))
+              .toList(),
       Mode.rule => groups
           .where((item) => item.hidden == false)
           .where((element) => element.name != GroupName.GLOBAL.name)

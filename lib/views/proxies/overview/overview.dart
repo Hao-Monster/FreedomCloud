@@ -7,6 +7,7 @@ import 'package:flclashx/common/delay_test_coordinator.dart';
 import 'package:flclashx/common/node_catalog_tester.dart';
 import 'package:flclashx/common/node_country.dart';
 import 'package:flclashx/common/node_health_store.dart';
+import 'package:flclashx/common/smart_node_selection.dart';
 import 'package:flclashx/common/ui_activity.dart';
 import 'package:flclashx/enum/enum.dart';
 import 'package:flclashx/models/models.dart';
@@ -824,7 +825,12 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
     }
   }
 
-  void _useActiveNode(Profile profile, String groupName, String proxyName) {
+  void _useActiveNode(
+    Profile profile,
+    String groupName,
+    String proxyName, {
+    String? feedbackOverride,
+  }) {
     detectionState.notifyRoutingChanged();
     ref.read(nodeCountryResolverProvider).markSwitchingNode();
     if (globalState.isAppControllerReady) {
@@ -834,20 +840,19 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
     }
     final current =
         ref.read(profilesProvider).getProfile(profile.id) ?? profile;
-    if (current.selectedMap[groupName] != proxyName ||
-        current.currentGroupName != groupName) {
-      final selectedMap = Map<String, String>.from(current.selectedMap)
-        ..[groupName] = proxyName;
-      ref.read(profilesProvider.notifier).setProfile(
-            current.copyWith(
-              selectedMap: selectedMap,
-              currentGroupName: groupName,
-            ),
-          );
+    final updated = markProfileSelectionMode(
+      current,
+      NodeSelectionMode.manual,
+      targetGroup: groupName,
+      manualNodeName: proxyName,
+    );
+    if (updated != current) {
+      ref.read(profilesProvider.notifier).setProfile(updated);
     }
     _ensureProxyStartedIfStopped();
-    final feedback = appLocalizations.nodeOverviewSwitchedToNode(
-        current.label ?? current.id, proxyName);
+    final feedback = feedbackOverride ??
+        appLocalizations.nodeOverviewSwitchedToNode(
+            updated.label ?? updated.id, proxyName);
     ref.read(_overviewSwitchTrackerProvider).feedback = feedback;
     if (mounted) {
       setState(() {
@@ -857,7 +862,11 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
   }
 
   void _useCatalogNode(
-      Profile profile, CatalogNode node, String targetGroup) {
+    Profile profile,
+    CatalogNode node,
+    String targetGroup, {
+    String? feedbackOverride,
+  }) {
     detectionState.notifyRoutingChanged();
     ref.read(nodeCountryResolverProvider).markSwitchingNode();
     if (_tester.busy) {
@@ -865,11 +874,11 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
     }
     final latest =
         ref.read(profilesProvider).getProfile(profile.id) ?? profile;
-    final selectedMap = Map<String, String>.from(latest.selectedMap)
-        ..[targetGroup] = node.name;
-    final updated = latest.copyWith(
-      selectedMap: selectedMap,
-      currentGroupName: targetGroup,
+    final updated = markProfileSelectionMode(
+      latest,
+      NodeSelectionMode.manual,
+      targetGroup: targetGroup,
+      manualNodeName: node.name,
     );
     ref.read(profilesProvider.notifier).setProfile(updated);
     final tracker = ref.read(_overviewSwitchTrackerProvider);
@@ -896,19 +905,19 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
       tracker
         ..pendingProfileId = updated.id
         ..pendingProfileLabel = updated.label ?? updated.id
-        ..pendingNodeName = node.name
+        ..pendingNodeName = feedbackOverride == null ? node.name : null
         ..pendingGroups = currentGroups
         ..pendingVersion = currentVersion
-        ..feedback = null;
+        ..feedback = feedbackOverride;
       ref.read(currentProfileIdProvider.notifier).value = updated.id;
     } else if (!isAlreadyLiveActive) {
       tracker
         ..pendingProfileId = updated.id
         ..pendingProfileLabel = updated.label ?? updated.id
-        ..pendingNodeName = node.name
+        ..pendingNodeName = feedbackOverride == null ? node.name : null
         ..pendingGroups = currentGroups
         ..pendingVersion = currentVersion
-        ..feedback = null;
+        ..feedback = feedbackOverride;
       if (globalState.isAppControllerReady) {
         globalState.appController
           ..applyProfileDebounce(silence: true)
@@ -918,8 +927,9 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
       if (globalState.isAppControllerReady) {
         globalState.appController.changeProxyDebounce(targetGroup, node.name);
       }
-      tracker.feedback = appLocalizations.nodeOverviewSwitchedToNode(
-          updated.label ?? updated.id, node.name);
+      tracker.feedback = feedbackOverride ??
+          appLocalizations.nodeOverviewSwitchedToNode(
+              updated.label ?? updated.id, node.name);
     }
     _ensureProxyStartedIfStopped();
     if (mounted) {
@@ -927,6 +937,350 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
         _feedback = tracker.feedback;
       });
     }
+  }
+
+  String _resolvePrimaryTargetGroupForProfile(
+    Profile profile,
+    ProfileCatalog? catalog,
+  ) {
+    final configuredMode = ref.read(patchClashConfigProvider).mode;
+    final globalModeAllowed =
+        profile.providerHeaders['flclashx-globalmode']?.toLowerCase() !=
+            'false';
+    final effectiveMode = configuredMode == Mode.direct
+        ? Mode.rule
+        : (configuredMode == Mode.global && !globalModeAllowed
+            ? Mode.rule
+            : configuredMode);
+    if (effectiveMode == Mode.global) {
+      return GroupName.GLOBAL.name;
+    }
+    final currentGroups = ref.read(currentGroupsStateProvider).value;
+    final currentActiveId = ref.read(currentProfileIdProvider);
+    if (currentActiveId == profile.id && currentGroups.isNotEmpty) {
+      final preferred = profile.currentGroupName;
+      if (preferred != null &&
+          preferred != GroupName.GLOBAL.name &&
+          currentGroups.any(
+            (g) => g.name == preferred && g.type == GroupType.Selector,
+          )) {
+        return preferred;
+      }
+      final selector = currentGroups
+          .where(
+            (g) =>
+                g.type == GroupType.Selector &&
+                g.name != GroupName.GLOBAL.name &&
+                !isManagedSmartGroupName(g.name),
+          )
+          .firstOrNull;
+      if (selector != null) return selector.name;
+    }
+    if (catalog != null && catalog.nodes.isNotEmpty) {
+      for (final allowInfo in const [false, true]) {
+        for (final node in catalog.nodes) {
+          if (!allowInfo && isInformationalProxyName(node.name)) continue;
+          final g = _targetGroupForCatalogNode(profile, node, effectiveMode);
+          if (g != null && g.isNotEmpty) return g;
+        }
+      }
+    }
+    final preferred = profile.currentGroupName;
+    if (preferred != null &&
+        preferred.isNotEmpty &&
+        preferred != GroupName.GLOBAL.name) {
+      return preferred;
+    }
+    final existingKey = profile.selectedMap.keys
+        .where((k) => k.isNotEmpty && k != GroupName.GLOBAL.name)
+        .firstOrNull;
+    return existingKey ?? 'Proxy';
+  }
+
+  void _activateSmartSelection(
+    Profile profile, {
+    String? targetGroupOverride,
+    bool silentFeedback = false,
+  }) {
+    detectionState.notifyRoutingChanged();
+    ref.read(nodeCountryResolverProvider).markSwitchingNode();
+    if (_tester.busy && !silentFeedback) {
+      unawaited(_tester.cancel());
+    }
+    if (ref.read(patchClashConfigProvider).mode == Mode.direct) {
+      ref
+          .read(patchClashConfigProvider.notifier)
+          .updateState((s) => s.copyWith(mode: Mode.rule));
+    }
+    final latest =
+        ref.read(profilesProvider).getProfile(profile.id) ?? profile;
+    final catalog = ref.read(profileCatalogProvider(latest.id)).valueOrNull ??
+        ref.read(cachedProfileCatalogsProvider)[latest.id];
+    final targetGroup = targetGroupOverride ??
+        _resolvePrimaryTargetGroupForProfile(latest, catalog);
+    final smartGroupName = managedSmartGroupNameFor(targetGroup);
+
+    final tracker = ref.read(_overviewSwitchTrackerProvider);
+    final currentActiveId = ref.read(currentProfileIdProvider);
+    final verifiedRuntimeProfileId = globalState.lastRuntimeProfileId ??
+        ref.read(activeNodeCatalogProvider)?.profileId;
+    final allGroups = ref.read(groupsProvider);
+    final currentVersion = ref.read(versionProvider);
+    final attestation = _resolveSnapshotAttestation(
+      tracker,
+      allGroups,
+      currentVersion,
+    );
+    final isAlreadyLiveActive = currentActiveId == latest.id &&
+        (verifiedRuntimeProfileId == null ||
+            verifiedRuntimeProfileId == latest.id) &&
+        _isSnapshotLiveForProfile(
+          profileId: latest.id,
+          groups: allGroups,
+          attestation: attestation,
+        ) &&
+        tracker.pendingProfileId != latest.id;
+
+    final updated = markProfileSelectionMode(
+      latest,
+      NodeSelectionMode.smart,
+      targetGroup: targetGroup,
+    );
+
+    if (currentActiveId != updated.id) {
+      ref.read(profilesProvider.notifier).setProfile(updated);
+      tracker
+        ..pendingProfileId = updated.id
+        ..pendingProfileLabel = updated.label ?? updated.id
+        ..pendingNodeName = null
+        ..pendingGroups = allGroups
+        ..pendingVersion = currentVersion;
+      ref.read(currentProfileIdProvider.notifier).value = updated.id;
+    } else if (!isAlreadyLiveActive) {
+      if (globalState.isAppControllerReady) {
+        globalState.appController
+            .updateCurrentSelectedMap(targetGroup, smartGroupName);
+      }
+      ref.read(profilesProvider.notifier).setProfile(updated);
+      tracker
+        ..pendingProfileId = updated.id
+        ..pendingProfileLabel = updated.label ?? updated.id
+        ..pendingNodeName = null
+        ..pendingGroups = allGroups
+        ..pendingVersion = currentVersion;
+      if (globalState.isAppControllerReady) {
+        globalState.appController
+          ..applyProfileDebounce(silence: true)
+          ..changeProxyDebounce(targetGroup, smartGroupName);
+      }
+    } else {
+      if (globalState.isAppControllerReady) {
+        globalState.appController
+          ..updateCurrentSelectedMap(targetGroup, smartGroupName)
+          ..changeProxyDebounce(targetGroup, smartGroupName);
+      }
+      ref.read(profilesProvider.notifier).setProfile(updated);
+    }
+
+    _ensureProxyStartedIfStopped();
+
+    if (!silentFeedback) {
+      final hitLeaf = (currentActiveId == updated.id && isAlreadyLiveActive)
+          ? resolveSmartActiveLeafName(
+              selectorGroupName: targetGroup,
+              allGroups: allGroups,
+              selectedMap: updated.selectedMap,
+            )
+          : null;
+      final nextFeedback = hitLeaf != null
+          ? appLocalizations.nodeOverviewSwitchedToSmartWithNode(
+              updated.label ?? updated.id,
+              hitLeaf,
+            )
+          : appLocalizations.nodeOverviewSwitchedToSmart(
+              updated.label ?? updated.id,
+            );
+      tracker.feedback = nextFeedback;
+      if (mounted) {
+        setState(() {
+          _feedback = nextFeedback;
+        });
+      }
+    }
+  }
+
+  void _activateManualSelection(Profile profile) {
+    if (ref.read(patchClashConfigProvider).mode == Mode.direct) {
+      ref
+          .read(patchClashConfigProvider.notifier)
+          .updateState((s) => s.copyWith(mode: Mode.rule));
+    }
+    final latest =
+        ref.read(profilesProvider).getProfile(profile.id) ?? profile;
+    final catalog = ref.read(profileCatalogProvider(latest.id)).valueOrNull ??
+        ref.read(cachedProfileCatalogsProvider)[latest.id];
+    final targetGroup = _resolvePrimaryTargetGroupForProfile(latest, catalog);
+
+    final tracker = ref.read(_overviewSwitchTrackerProvider);
+    final currentActiveId = ref.read(currentProfileIdProvider);
+    final verifiedRuntimeProfileId = globalState.lastRuntimeProfileId ??
+        ref.read(activeNodeCatalogProvider)?.profileId;
+    final allGroups = ref.read(groupsProvider);
+    final currentVersion = ref.read(versionProvider);
+    final attestation = _resolveSnapshotAttestation(
+      tracker,
+      allGroups,
+      currentVersion,
+    );
+    final isAlreadyLiveActive = currentActiveId == latest.id &&
+        (verifiedRuntimeProfileId == null ||
+            verifiedRuntimeProfileId == latest.id) &&
+        _isSnapshotLiveForProfile(
+          profileId: latest.id,
+          groups: allGroups,
+          attestation: attestation,
+        ) &&
+        tracker.pendingProfileId != latest.id;
+
+    if (isAlreadyLiveActive && allGroups.isNotEmpty) {
+      final groupNames = {for (final g in allGroups) g.name};
+      var chosenGroup = targetGroup;
+      var chosenLeaf = resolveSmartActiveLeafName(
+        selectorGroupName: targetGroup,
+        allGroups: allGroups,
+        selectedMap: latest.selectedMap,
+      );
+
+      if (chosenLeaf == null &&
+          resolveProfileSelectionMode(latest) == NodeSelectionMode.manual) {
+        final existing = latest.selectedMap[targetGroup];
+        final selectorObj = allGroups.getGroup(targetGroup);
+        if (existing != null &&
+            existing.isNotEmpty &&
+            !isManagedSmartGroupName(existing) &&
+            (selectorObj?.all.any((p) => p.name == existing) ?? false)) {
+          chosenLeaf = existing;
+        }
+      }
+
+      if (chosenLeaf == null) {
+        final visibleGroups = ref.read(currentGroupsStateProvider).value;
+        final orderedSelectors = <Group>[
+          if (allGroups.getGroup(targetGroup) case final Group primary
+              when primary.type == GroupType.Selector)
+            primary,
+          for (final g in visibleGroups)
+            if (g.type == GroupType.Selector && g.name != targetGroup) g,
+        ];
+        final health = ref.read(nodeHealthEntriesProvider(latest.id));
+        final runtimeNodes = _uniqueCatalogNodes(
+          ref.read(activeNodeCatalogProvider)?.profileId == latest.id
+              ? ref.read(activeNodeCatalogProvider)
+              : catalog,
+        );
+        for (final selector in orderedSelectors) {
+          final leaves =
+              selector.all.where((p) => _isLeaf(p, groupNames)).toList();
+          if (leaves.isEmpty) continue;
+          final nonInfo = leaves
+              .where((p) => !isInformationalProxyName(p.name))
+              .toList();
+          final pool = (nonInfo.isNotEmpty ? nonInfo : leaves)
+            ..sort((a, b) {
+              final nodeA = runtimeNodes[a.name];
+              final nodeB = runtimeNodes[b.name];
+              final delayA =
+                  nodeA != null ? _nodeHealth(nodeA, health)?.delayMs : null;
+              final delayB =
+                  nodeB != null ? _nodeHealth(nodeB, health)?.delayMs : null;
+              final byDelay = _compareDelay(delayA, delayB);
+              if (byDelay != 0) return byDelay;
+              return a.name.toLowerCase().compareTo(b.name.toLowerCase());
+            });
+          chosenGroup = selector.name;
+          chosenLeaf = pool.first.name;
+          break;
+        }
+      }
+
+      if (chosenLeaf != null) {
+        _useActiveNode(
+          latest,
+          chosenGroup,
+          chosenLeaf,
+          feedbackOverride: appLocalizations.nodeOverviewLockedManualNode(
+            latest.label ?? latest.id,
+            chosenLeaf,
+          ),
+        );
+        return;
+      }
+    }
+
+    if (catalog != null && catalog.nodes.isNotEmpty) {
+      final effectiveMode = ref.read(patchClashConfigProvider).mode;
+      final existingLeaf =
+          resolveProfileSelectionMode(latest) == NodeSelectionMode.manual
+              ? latest.selectedMap[targetGroup]
+              : null;
+      if (existingLeaf != null &&
+          existingLeaf.isNotEmpty &&
+          !isManagedSmartGroupName(existingLeaf)) {
+        final match = catalog.nodes
+            .where((n) => n.name == existingLeaf)
+            .firstOrNull;
+        if (match != null) {
+          final grp =
+              _targetGroupForCatalogNode(latest, match, effectiveMode) ??
+                  targetGroup;
+          _useCatalogNode(
+            latest,
+            match,
+            grp,
+            feedbackOverride: appLocalizations.nodeOverviewLockedManualNode(
+              latest.label ?? latest.id,
+              match.name,
+            ),
+          );
+          return;
+        }
+      }
+
+      final selectable = <(CatalogNode, String)>[];
+      for (final node in catalog.nodes) {
+        final grp = _targetGroupForCatalogNode(latest, node, effectiveMode);
+        if (grp != null) selectable.add((node, grp));
+      }
+      if (selectable.isNotEmpty) {
+        final nonInfo = selectable
+            .where((pair) => !isInformationalProxyName(pair.$1.name))
+            .toList();
+        final pool = nonInfo.isNotEmpty ? nonInfo : selectable;
+        final health = ref.read(nodeHealthEntriesProvider(latest.id));
+        final candidateNodes = [for (final pair in pool) pair.$1];
+        _sortNodes(candidateNodes, health, ProxiesSortType.delay);
+        final chosenNode = candidateNodes.first;
+        final chosenGrp =
+            pool.firstWhere((pair) => identical(pair.$1, chosenNode)).$2;
+        _useCatalogNode(
+          latest,
+          chosenNode,
+          chosenGrp,
+          feedbackOverride: appLocalizations.nodeOverviewLockedManualNode(
+            latest.label ?? latest.id,
+            chosenNode.name,
+          ),
+        );
+        return;
+      }
+    }
+
+    final updated = markProfileSelectionMode(latest, NodeSelectionMode.manual);
+    ref.read(profilesProvider.notifier).setProfile(updated);
+    if (ref.read(currentProfileIdProvider) != updated.id) {
+      ref.read(currentProfileIdProvider.notifier).value = updated.id;
+    }
+    _ensureProxyStartedIfStopped();
   }
 
   Future<void> _syncSubscription(Profile targetProfile) async {
@@ -1143,11 +1497,15 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
               .read(patchClashConfigProvider.notifier)
               .updateState((s) => s.copyWith(mode: Mode.rule));
         }
-        _useCatalogNode(latest, chosenNode, chosenGroup);
+        _activateSmartSelection(
+          latest,
+          targetGroupOverride: chosenGroup,
+          silentFeedback: true,
+        );
 
         final String postFeedback;
         if (chosenDelay != null && chosenDelay > 0) {
-          postFeedback = appLocalizations.nodeOverviewAutoConnectedBest(
+          postFeedback = appLocalizations.nodeOverviewAutoConnectedSmartBest(
             latest.label ?? latest.id,
             chosenNode.name,
             chosenDelay,
@@ -1178,13 +1536,10 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
       if (group.type != GroupType.Selector) continue;
       final leaves = group.all.where((p) => _isLeaf(p, groupNames)).toList();
       if (leaves.isEmpty) continue;
-      final realLeaves =
-          leaves.where((p) => !isInformationalProxyName(p.name)).toList();
-      final chosen = (realLeaves.isNotEmpty ? realLeaves : leaves).first;
-      _useActiveNode(latest, group.name, chosen.name);
+      _activateSmartSelection(latest, targetGroupOverride: group.name);
       return;
     }
-    _ensureProxyStartedIfStopped();
+    _activateSmartSelection(latest);
   }
 
   Future<void> _openUrlSubscriptionImport({
@@ -1218,7 +1573,10 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
         if (url == null || url.isEmpty || !globalState.isAppControllerReady) {
           return;
         }
-        final wasZeroProfiles = ref.read(profilesProvider).isEmpty;
+        final existingBeforeImport = {
+          for (final p in ref.read(profilesProvider)) p.id,
+        };
+        final wasZeroProfiles = existingBeforeImport.isEmpty;
         globalState.lastSubscriptionImportError = null;
         globalState.suppressNextSubscriptionImportErrorDialog = true;
         String? importError;
@@ -1234,6 +1592,18 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
           nextInitialUrl = url;
           nextInitialError = importError;
           continue;
+        }
+        if (mounted && !_disposed) {
+          final currentProfiles = ref.read(profilesProvider);
+          for (final added in currentProfiles) {
+            if (!existingBeforeImport.contains(added.id) &&
+                !added.providerHeaders.containsKey(smartSelectionModeMarker) &&
+                added.selectedMap.isEmpty) {
+              ref.read(profilesProvider.notifier).setProfile(
+                    markProfileSelectionMode(added, NodeSelectionMode.smart),
+                  );
+            }
+          }
         }
         if (wasZeroProfiles && mounted && !_disposed) {
           final imported = ref.read(profilesProvider).firstOrNull;
@@ -1619,6 +1989,15 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
               if (entry.selectGroup != null &&
                   (entry.delay == null || entry.delay! >= 0)) {
                 final targetGroup = entry.selectGroup!;
+                if (resolveProfileSelectionMode(profile) ==
+                        NodeSelectionMode.smart &&
+                    query.isEmpty &&
+                    activeCountry == null) {
+                  return () => _activateSmartSelection(
+                        profile,
+                        targetGroupOverride: targetGroup,
+                      );
+                }
                 final targetProxy = entry.proxy.name;
                 return () => _useActiveNode(profile, targetGroup, targetProxy);
               }
@@ -1672,6 +2051,15 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
             }
             final targetGroup = _targetGroupForCatalogNode(profile, node, mode);
             if (targetGroup != null) {
+              if (resolveProfileSelectionMode(profile) ==
+                      NodeSelectionMode.smart &&
+                  query.isEmpty &&
+                  activeCountry == null) {
+                return () => _activateSmartSelection(
+                      profile,
+                      targetGroupOverride: targetGroup,
+                    );
+              }
               return () => _useCatalogNode(profile, node, targetGroup);
             }
           }
@@ -1687,30 +2075,65 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
     final statusStartCancelable = ref.watch(statusStartCancelableProvider);
     final activeProfileObj =
         activeId == null ? null : profiles.getProfile(activeId);
+    final activeIsSmart = activeProfileObj != null &&
+        resolveProfileSelectionMode(activeProfileObj) == NodeSelectionMode.smart;
+    final targetModeProfile = selected != null
+        ? visible.firstOrNull
+        : (activeProfileObj ?? orderedProfiles.firstOrNull);
+    final currentSelectionMode = targetModeProfile == null
+        ? NodeSelectionMode.smart
+        : resolveProfileSelectionMode(targetModeProfile);
+    final canSwitchSelectionMode =
+        targetModeProfile != null && !targetModeProfile.isUpdating;
     String? activeNodeLabel;
     if (activeProfileObj != null) {
       final preferredGroup = activeProfileObj.currentGroupName;
-      if (currentGroups.isNotEmpty && isLiveActive(activeProfileObj)) {
-        Group? targetGroup;
-        if (preferredGroup != null) {
-          targetGroup = currentGroups
-              .where((g) => g.name == preferredGroup)
+      if (activeIsSmart) {
+        if (groups.isNotEmpty && isLiveActive(activeProfileObj)) {
+          Group? targetGroup;
+          if (preferredGroup != null) {
+            targetGroup = currentGroups
+                .where((g) => g.name == preferredGroup)
+                .firstOrNull;
+          }
+          targetGroup ??= currentGroups
+              .where((g) => g.type == GroupType.Selector)
               .firstOrNull;
+          activeNodeLabel = resolveSmartActiveLeafName(
+            selectorGroupName: targetGroup?.name ?? preferredGroup,
+            allGroups: groups,
+            selectedMap: activeProfileObj.selectedMap,
+          );
         }
-        targetGroup ??= currentGroups
-            .where((g) => g.type == GroupType.Selector)
-            .firstOrNull;
-        if (targetGroup != null) {
-          activeNodeLabel = (targetGroup.type == GroupType.Selector
-                  ? activeProfileObj.selectedMap[targetGroup.name]
-                  : null) ??
-              targetGroup.now ??
-              activeProfileObj.selectedMap[targetGroup.name];
+      } else {
+        if (currentGroups.isNotEmpty && isLiveActive(activeProfileObj)) {
+          Group? targetGroup;
+          if (preferredGroup != null) {
+            targetGroup = currentGroups
+                .where((g) => g.name == preferredGroup)
+                .firstOrNull;
+          }
+          targetGroup ??= currentGroups
+              .where((g) => g.type == GroupType.Selector)
+              .firstOrNull;
+          if (targetGroup != null) {
+            final candidate = (targetGroup.type == GroupType.Selector
+                    ? activeProfileObj.selectedMap[targetGroup.name]
+                    : null) ??
+                targetGroup.now ??
+                activeProfileObj.selectedMap[targetGroup.name];
+            if (!isManagedSmartGroupName(candidate)) {
+              activeNodeLabel = candidate;
+            }
+          }
+        }
+        final fallbackLabel = preferredGroup != null
+            ? activeProfileObj.selectedMap[preferredGroup]
+            : activeProfileObj.selectedMap.values.firstOrNull;
+        if (activeNodeLabel == null && !isManagedSmartGroupName(fallbackLabel)) {
+          activeNodeLabel = fallbackLabel;
         }
       }
-      activeNodeLabel ??= preferredGroup != null
-          ? activeProfileObj.selectedMap[preferredGroup]
-          : activeProfileObj.selectedMap.values.firstOrNull;
     }
     final visibleMatchingNodeCount =
         countryCounts.values.fold<int>(0, (sum, count) => sum + count);
@@ -1774,7 +2197,11 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
                         ? null
                         : () => _testAll(profiles),
                     icon: const Icon(Icons.bolt),
-                    label: Text(appLocalizations.nodeOverviewTestAll)),
+                    label: Text(
+                      appLocalizations.nodeOverviewTestAll,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    )),
                 for (final code in sortedCountries)
                   FilterChip(
                     key: ValueKey('overview-country-$code'),
@@ -1913,36 +2340,62 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
               const VerticalDivider(width: 16),
             ],
             Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  if (profiles.isNotEmpty)
-                    _OverviewConnectionStatusBar(
-                      key: const ValueKey('overview-connection-bar'),
-                      isRunning: isProxyRunning,
-                      pendingTarget: statusSwitchPending ??
-                          (_localProxyTogglePending ? !isProxyRunning : null),
-                      startCancelable: statusStartCancelable,
-                      activeProfileLabel:
-                          activeProfileObj?.label ?? activeProfileObj?.id,
-                      activeNodeName: activeNodeLabel,
-                      onToggle: globalState.isAppControllerReady
-                          ? () => unawaited(_toggleProxyMasterSwitch())
-                          : null,
-                    ),
-                  _OverviewQuickWorkflowBar(
+              child: LayoutBuilder(
+                builder: (context, paneConstraints) {
+                  final paneTextScale =
+                      MediaQuery.textScalerOf(context).scale(1.0);
+                  final scrollTopBars =
+                      paneTextScale > 1.3 || paneConstraints.maxHeight < 420;
+                  final connectionBar = profiles.isNotEmpty
+                      ? _OverviewConnectionStatusBar(
+                          key: const ValueKey('overview-connection-bar'),
+                          isRunning: isProxyRunning,
+                          pendingTarget: statusSwitchPending ??
+                              (_localProxyTogglePending
+                                  ? !isProxyRunning
+                                  : null),
+                          startCancelable: statusStartCancelable,
+                          isSmartMode: activeIsSmart,
+                          activeProfileLabel:
+                              activeProfileObj?.label ?? activeProfileObj?.id,
+                          activeNodeName: activeNodeLabel,
+                          onToggle: globalState.isAppControllerReady
+                              ? () => unawaited(_toggleProxyMasterSwitch())
+                              : null,
+                        )
+                      : null;
+                  final workflowBar = _OverviewQuickWorkflowBar(
                     key: const ValueKey('overview-workflow-bar'),
                     onAddSubscription: _importingSubscription
                         ? null
                         : () => unawaited(_openUrlSubscriptionImport()),
                     onTestCurrent: testCurrentAction,
                     onQuickUse: quickUseAction,
-                  ),
-                  Expanded(
-                    child: CustomScrollView(
-                      key: const ValueKey('overview-nodes'),
-                      slivers: [
-                        for (final profile in visible)
+                    selectionMode: currentSelectionMode,
+                    onSelectSmart: canSwitchSelectionMode
+                        ? () => _activateSmartSelection(targetModeProfile)
+                        : null,
+                    onSelectManual: canSwitchSelectionMode
+                        ? () => _activateManualSelection(targetModeProfile)
+                        : null,
+                  );
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      if (!scrollTopBars) ...[
+                        if (connectionBar != null) connectionBar,
+                        workflowBar,
+                      ],
+                      Expanded(
+                        child: CustomScrollView(
+                          key: const ValueKey('overview-nodes'),
+                          slivers: [
+                            if (scrollTopBars) ...[
+                              if (connectionBar != null)
+                                SliverToBoxAdapter(child: connectionBar),
+                              SliverToBoxAdapter(child: workflowBar),
+                            ],
+                            for (final profile in visible)
                           _ProfileNodesSliver(
                               key: ValueKey('overview-section-${profile.id}'),
                               profile: profile,
@@ -2023,6 +2476,8 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
                     ),
                   ),
                 ],
+              );
+                },
               ),
             ),
           ],
@@ -2038,6 +2493,7 @@ class _OverviewConnectionStatusBar extends StatelessWidget {
     required this.isRunning,
     required this.pendingTarget,
     required this.startCancelable,
+    this.isSmartMode = false,
     required this.activeProfileLabel,
     required this.activeNodeName,
     required this.onToggle,
@@ -2046,6 +2502,7 @@ class _OverviewConnectionStatusBar extends StatelessWidget {
   final bool isRunning;
   final bool? pendingTarget;
   final bool startCancelable;
+  final bool isSmartMode;
   final String? activeProfileLabel;
   final String? activeNodeName;
   final VoidCallback? onToggle;
@@ -2068,12 +2525,23 @@ class _OverviewConnectionStatusBar extends StatelessWidget {
       final hasNode = activeProfileLabel != null &&
           activeNodeName != null &&
           activeNodeName!.trim().isNotEmpty;
-      statusText = hasNode
-          ? appLocalizations.nodeOverviewProxyConnectedWithNode(
-              activeProfileLabel!,
-              activeNodeName!,
-            )
-          : appLocalizations.nodeOverviewProxyConnected;
+      if (isSmartMode && activeProfileLabel != null) {
+        statusText = hasNode
+            ? appLocalizations.nodeOverviewProxyConnectedSmartWithNode(
+                activeProfileLabel!,
+                activeNodeName!,
+              )
+            : appLocalizations.nodeOverviewProxyConnectedSmart(
+                activeProfileLabel!,
+              );
+      } else {
+        statusText = hasNode
+            ? appLocalizations.nodeOverviewProxyConnectedWithNode(
+                activeProfileLabel!,
+                activeNodeName!,
+              )
+            : appLocalizations.nodeOverviewProxyConnected;
+      }
     } else {
       statusText = appLocalizations.nodeOverviewProxyDisconnected;
     }
@@ -2091,6 +2559,56 @@ class _OverviewConnectionStatusBar extends StatelessWidget {
         ? appLocalizations.nodeOverviewTurnOffProxy
         : appLocalizations.nodeOverviewTurnOnProxy;
 
+    final toggleButton =
+        (isRunning || (pendingTarget == true && startCancelable))
+            ? OutlinedButton(
+                key: const ValueKey('overview-proxy-toggle'),
+                onPressed: canPress ? onToggle : null,
+                style: OutlinedButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                ),
+                child: Text(
+                  buttonLabel,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              )
+            : FilledButton(
+                key: const ValueKey('overview-proxy-toggle'),
+                onPressed: canPress ? onToggle : null,
+                style: FilledButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                ),
+                child: Text(
+                  buttonLabel,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              );
+
+    final leadingIcon = isBusy
+        ? SizedBox(
+            width: 16,
+            height: 16,
+            child: CircularProgressIndicator(
+              strokeWidth: 2,
+              color: effectiveConnected ? green : colors.primary,
+            ),
+          )
+        : Icon(
+            isRunning
+                ? Icons.shield_rounded
+                : Icons.power_settings_new_rounded,
+            size: 18,
+            color: isRunning ? green : colors.onSurfaceVariant,
+          );
+
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
       child: DecoratedBox(
@@ -2101,64 +2619,62 @@ class _OverviewConnectionStatusBar extends StatelessWidget {
         ),
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-          child: Row(
-            children: [
-              if (isBusy)
-                SizedBox(
-                  width: 16,
-                  height: 16,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2,
-                    color: effectiveConnected ? green : colors.primary,
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final textScale = MediaQuery.textScalerOf(context).scale(1.0);
+              if (constraints.maxWidth < 340 * textScale) {
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Row(
+                      children: [
+                        leadingIcon,
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            statusText,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: theme.textTheme.bodyMedium?.copyWith(
+                              fontWeight: isRunning
+                                  ? FontWeight.w600
+                                  : FontWeight.w500,
+                              color: colors.onSurface,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: toggleButton,
+                    ),
+                  ],
+                );
+              }
+              return Row(
+                children: [
+                  leadingIcon,
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      statusText,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        fontWeight:
+                            isRunning ? FontWeight.w600 : FontWeight.w500,
+                        color: colors.onSurface,
+                      ),
+                    ),
                   ),
-                )
-              else
-                Icon(
-                  isRunning
-                      ? Icons.shield_rounded
-                      : Icons.power_settings_new_rounded,
-                  size: 18,
-                  color: isRunning ? green : colors.onSurfaceVariant,
-                ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Text(
-                  statusText,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: theme.textTheme.bodyMedium?.copyWith(
-                    fontWeight:
-                        isRunning ? FontWeight.w600 : FontWeight.w500,
-                    color: colors.onSurface,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 10),
-              if (isRunning || (pendingTarget == true && startCancelable))
-                OutlinedButton(
-                  key: const ValueKey('overview-proxy-toggle'),
-                  onPressed: canPress ? onToggle : null,
-                  style: OutlinedButton.styleFrom(
-                    visualDensity: VisualDensity.compact,
-                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                  ),
-                  child: Text(buttonLabel),
-                )
-              else
-                FilledButton(
-                  key: const ValueKey('overview-proxy-toggle'),
-                  onPressed: canPress ? onToggle : null,
-                  style: FilledButton.styleFrom(
-                    visualDensity: VisualDensity.compact,
-                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                  ),
-                  child: Text(buttonLabel),
-                ),
-            ],
+                  const SizedBox(width: 10),
+                  Flexible(flex: 0, child: toggleButton),
+                ],
+              );
+            },
           ),
         ),
       ),
@@ -2284,17 +2800,89 @@ class _OverviewQuickWorkflowBar extends StatelessWidget {
     required this.onAddSubscription,
     required this.onTestCurrent,
     required this.onQuickUse,
+    this.selectionMode = NodeSelectionMode.smart,
+    this.onSelectSmart,
+    this.onSelectManual,
   });
 
   final VoidCallback? onAddSubscription;
   final VoidCallback? onTestCurrent;
   final VoidCallback? onQuickUse;
+  final NodeSelectionMode selectionMode;
+  final VoidCallback? onSelectSmart;
+  final VoidCallback? onSelectManual;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
     final isDark = theme.brightness == Brightness.dark;
+    final stepItems = <Widget>[
+      _WorkflowStepButton(
+        buttonKey: const ValueKey('overview-add-subscription'),
+        stepNumber: 1,
+        icon: Icons.add_link_rounded,
+        label: appLocalizations.nodeOverviewAddSubscription,
+        onPressed: onAddSubscription,
+      ),
+      Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _WorkflowStepArrow(
+            key: const ValueKey('overview-workflow-arrow-1'),
+            active: onTestCurrent != null,
+          ),
+          const SizedBox(width: 8),
+          Flexible(
+            child: _WorkflowStepButton(
+              buttonKey: const ValueKey('overview-test-current'),
+              stepNumber: 2,
+              icon: Icons.speed_rounded,
+              label: appLocalizations.nodeOverviewTestCurrent,
+              onPressed: onTestCurrent,
+            ),
+          ),
+        ],
+      ),
+      Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _WorkflowStepArrow(
+            key: const ValueKey('overview-workflow-arrow-2'),
+            active: onQuickUse != null,
+          ),
+          const SizedBox(width: 8),
+          Flexible(
+            child: _WorkflowStepButton(
+              buttonKey: const ValueKey('overview-quick-use'),
+              stepNumber: 3,
+              icon: Icons.play_arrow_rounded,
+              label: appLocalizations.nodeOverviewQuickUse,
+              onPressed: onQuickUse,
+              emphasized: true,
+            ),
+          ),
+        ],
+      ),
+    ];
+
+    final smartButton = _SelectionModeButton(
+      buttonKey: const ValueKey('overview-mode-smart'),
+      icon: Icons.auto_awesome_rounded,
+      title: appLocalizations.nodeOverviewSmartSelectTitle,
+      subtitle: appLocalizations.nodeOverviewSmartSelectSubtitle,
+      selected: selectionMode == NodeSelectionMode.smart,
+      onPressed: onSelectSmart,
+    );
+    final manualButton = _SelectionModeButton(
+      buttonKey: const ValueKey('overview-mode-manual'),
+      icon: Icons.push_pin_rounded,
+      title: appLocalizations.nodeOverviewManualSelectTitle,
+      subtitle: appLocalizations.nodeOverviewManualSelectSubtitle,
+      selected: selectionMode == NodeSelectionMode.manual,
+      onPressed: onSelectManual,
+    );
+
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
       child: DecoratedBox(
@@ -2311,60 +2899,148 @@ class _OverviewQuickWorkflowBar extends StatelessWidget {
         ),
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-          child: Wrap(
-            spacing: 8,
-            runSpacing: 6,
-            crossAxisAlignment: WrapCrossAlignment.center,
-            children: [
-              _WorkflowStepButton(
-                buttonKey: const ValueKey('overview-add-subscription'),
-                stepNumber: 1,
-                icon: Icons.add_link_rounded,
-                label: appLocalizations.nodeOverviewAddSubscription,
-                onPressed: onAddSubscription,
-              ),
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  _WorkflowStepArrow(
-                    key: const ValueKey('overview-workflow-arrow-1'),
-                    active: onTestCurrent != null,
-                  ),
-                  const SizedBox(width: 8),
-                  Flexible(
-                    child: _WorkflowStepButton(
-                      buttonKey: const ValueKey('overview-test-current'),
-                      stepNumber: 2,
-                      icon: Icons.speed_rounded,
-                      label: appLocalizations.nodeOverviewTestCurrent,
-                      onPressed: onTestCurrent,
-                    ),
-                  ),
-                ],
-              ),
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  _WorkflowStepArrow(
-                    key: const ValueKey('overview-workflow-arrow-2'),
-                    active: onQuickUse != null,
-                  ),
-                  const SizedBox(width: 8),
-                  Flexible(
-                    child: _WorkflowStepButton(
-                      buttonKey: const ValueKey('overview-quick-use'),
-                      stepNumber: 3,
-                      icon: Icons.play_arrow_rounded,
-                      label: appLocalizations.nodeOverviewQuickUse,
-                      onPressed: onQuickUse,
-                      emphasized: true,
-                    ),
-                  ),
-                ],
-              ),
-            ],
+          child: SizedBox(
+            width: double.infinity,
+            child: Wrap(
+              spacing: 10,
+              runSpacing: 6,
+              alignment: WrapAlignment.spaceBetween,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 6,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: stepItems,
+                ),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 6,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    smartButton,
+                    manualButton,
+                  ],
+                ),
+              ],
+            ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _SelectionModeButton extends StatelessWidget {
+  const _SelectionModeButton({
+    required this.buttonKey,
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.selected,
+    required this.onPressed,
+  });
+
+  final Key buttonKey;
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final bool selected;
+  final VoidCallback? onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
+    final enabled = onPressed != null;
+
+    final bgColor = !enabled
+        ? Colors.transparent
+        : selected
+            ? colors.primary.withValues(alpha: isDark ? 0.22 : 0.14)
+            : colors.surfaceContainerHighest.withValues(
+                alpha: isDark ? 0.34 : 0.48,
+              );
+    final borderColor = !enabled
+        ? colors.outlineVariant.withValues(alpha: 0.32)
+        : selected
+            ? colors.primary.withValues(alpha: isDark ? 0.72 : 0.58)
+            : colors.outlineVariant.withValues(alpha: isDark ? 0.55 : 0.68);
+    final fgColor = !enabled
+        ? colors.onSurface.withValues(alpha: 0.38)
+        : selected
+            ? colors.primary
+            : colors.onSurface;
+    final tagBg = !enabled
+        ? colors.onSurface.withValues(alpha: 0.06)
+        : selected
+            ? colors.primary.withValues(alpha: isDark ? 0.28 : 0.18)
+            : colors.onSurface.withValues(alpha: isDark ? 0.10 : 0.07);
+    final tagFg = !enabled
+        ? colors.onSurface.withValues(alpha: 0.38)
+        : selected
+            ? colors.primary
+            : colors.onSurfaceVariant;
+
+    return TextButton(
+      key: buttonKey,
+      onPressed: onPressed,
+      style: TextButton.styleFrom(
+        visualDensity: VisualDensity.compact,
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        minimumSize: Size.zero,
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+        backgroundColor: bgColor,
+        foregroundColor: fgColor,
+        side: BorderSide(
+          color: borderColor,
+          width: selected && enabled ? 1.2 : 1.0,
+        ),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(999),
+        ),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 14, color: fgColor),
+          const SizedBox(width: 4),
+          Flexible(
+            flex: 2,
+            child: Text(
+              title,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: theme.textTheme.labelMedium?.copyWith(
+                color: fgColor,
+                fontWeight:
+                    selected && enabled ? FontWeight.w700 : FontWeight.w500,
+              ),
+            ),
+          ),
+          const SizedBox(width: 4),
+          Flexible(
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+              decoration: BoxDecoration(
+                color: tagBg,
+                borderRadius: BorderRadius.circular(999),
+              ),
+              child: Text(
+                subtitle,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: theme.textTheme.labelSmall?.copyWith(
+                  fontSize: 10.5,
+                  height: 1.15,
+                  fontWeight: FontWeight.w600,
+                  color: tagFg,
+                ),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -5203,6 +5879,7 @@ void _sortNodes(List<CatalogNode> nodes, Map<String, NodeHealthRecord> health,
 
 bool _isLeaf(Proxy proxy, Set<String> groupNames) =>
     !groupNames.contains(proxy.name) &&
+    !isManagedSmartGroupName(proxy.name) &&
     !{'direct', 'reject', 'reject-drop', 'pass', 'dns', 'compatible'}
         .contains(proxy.type.toLowerCase());
 
@@ -5280,6 +5957,7 @@ Widget _buildUseButton(
   BuildContext context, {
   required Key buttonKey,
   required bool inUse,
+  bool smartInUse = false,
   required VoidCallback? onPressed,
 }) {
   final colorScheme = Theme.of(context).colorScheme;
@@ -5293,7 +5971,9 @@ Widget _buildUseButton(
       tapTargetSize: MaterialTapTargetSize.shrinkWrap,
       backgroundColor: inUse
           ? colorScheme.secondaryContainer
-          : colorScheme.surfaceContainerLow,
+          : smartInUse
+              ? colorScheme.primary.withValues(alpha: 0.16)
+              : colorScheme.surfaceContainerLow,
       foregroundColor: colorScheme.primary,
       disabledBackgroundColor: inUse ? colorScheme.secondaryContainer : null,
       disabledForegroundColor: inUse ? colorScheme.onSecondaryContainer : null,
@@ -5301,7 +5981,9 @@ Widget _buildUseButton(
     child: Text(
       inUse
           ? appLocalizations.nodeOverviewInUse
-          : appLocalizations.nodeOverviewUseNode,
+          : smartInUse
+              ? appLocalizations.nodeOverviewSmartInUse
+              : appLocalizations.nodeOverviewUseNode,
     ),
   );
 }
@@ -5410,11 +6092,16 @@ typedef _ActiveDisplay = ({
   bool independent,
   String? selectGroup,
   bool inUse,
+  bool smartInUse,
 });
 
 Map<String, _ActiveDisplay> _activeDisplays(
     WidgetRef ref, String profileId, ProfileCatalog? fileCatalog) {
   final runtime = ref.watch(activeNodeCatalogProvider);
+  final allGroups = ref.watch(groupsProvider);
+  final profileObj = ref.watch(
+    profilesProvider.select((list) => list.getProfile(profileId)),
+  );
   final runtimeNodes =
       _uniqueCatalogNodes(runtime?.profileId == profileId ? runtime : null);
   final fileNodes = _uniqueCatalogNodes(fileCatalog?.profileId == profileId &&
@@ -5483,6 +6170,20 @@ Map<String, _ActiveDisplay> _activeDisplays(
         final selectedProxyName = selectGroup == null
             ? null
             : ref.watch(getSelectedProxyNameProvider(selectGroup));
+        final isSmartGroupSelected = isManagedSmartGroupName(selectedProxyName) ||
+            (profileObj != null &&
+                selectGroup != null &&
+                resolveProfileSelectionMode(profileObj) ==
+                    NodeSelectionMode.smart &&
+                isManagedSmartGroupName(profileObj.selectedMap[selectGroup]));
+        final smartResolvedLeaf = (selectGroup != null && isSmartGroupSelected)
+            ? resolveSmartActiveLeafName(
+                selectorGroupName: selectGroup,
+                allGroups: allGroups,
+                selectedMap:
+                    profileObj?.selectedMap ?? const <String, String>{},
+              )
+            : null;
         return (
           proxy: entry.proxy,
           testUrl: entry.testUrl,
@@ -5492,7 +6193,11 @@ Map<String, _ActiveDisplay> _activeDisplays(
           fileSource: fileSource,
           independent: independent,
           selectGroup: selectGroup,
-          inUse: selectGroup != null && selectedProxyName == entry.proxy.name,
+          inUse: selectGroup != null &&
+              !isSmartGroupSelected &&
+              selectedProxyName == entry.proxy.name,
+          smartInUse:
+              smartResolvedLeaf != null && smartResolvedLeaf == entry.proxy.name,
         );
       }(),
   };
@@ -5596,6 +6301,7 @@ class _ActiveNodes extends ConsumerWidget {
                   useKey: ValueKey(
                       'overview-use-${profile.id}-${entry.proxy.name}'),
                   inUse: entry.inUse,
+                  smartInUse: entry.smartInUse,
                   onUse: entry.inUse ||
                           entry.selectGroup == null ||
                           profile.isUpdating
@@ -5622,6 +6328,7 @@ class _ActiveNodeRow extends StatelessWidget {
       required this.onTest,
       required this.useKey,
       required this.inUse,
+      this.smartInUse = false,
       required this.onUse,
       required this.now});
   final Proxy proxy;
@@ -5636,6 +6343,7 @@ class _ActiveNodeRow extends StatelessWidget {
   final VoidCallback? onTest;
   final Key useKey;
   final bool inUse;
+  final bool smartInUse;
   final VoidCallback? onUse;
   final DateTime now;
 
@@ -5690,6 +6398,7 @@ class _ActiveNodeRow extends StatelessWidget {
                     context,
                     buttonKey: useKey,
                     inUse: inUse,
+                    smartInUse: smartInUse,
                     onPressed: onUse,
                   ),
                 ],

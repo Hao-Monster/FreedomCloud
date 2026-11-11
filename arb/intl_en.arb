@@ -1408,5 +1408,73 @@
         "type": "String"
       }
     }
+  },
+  "nodeOverviewSmartSelectTitle": "Smart Select",
+  "nodeOverviewSmartSelectSubtitle": "Better experience",
+  "nodeOverviewManualSelectTitle": "Manual Select",
+  "nodeOverviewManualSelectSubtitle": "Fixed IP",
+  "nodeOverviewSmartInUse": "Smart active",
+  "nodeOverviewProxyConnectedSmartWithNode": "Proxy on · Smart: {profile} · {node}",
+  "@nodeOverviewProxyConnectedSmartWithNode": {
+    "placeholders": {
+      "profile": {
+        "type": "String"
+      },
+      "node": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewProxyConnectedSmart": "Proxy on · Smart: {profile} (auto-selecting)",
+  "@nodeOverviewProxyConnectedSmart": {
+    "placeholders": {
+      "profile": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewSwitchedToSmart": "Enabled Smart Select: {profile}",
+  "@nodeOverviewSwitchedToSmart": {
+    "placeholders": {
+      "profile": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewSwitchedToSmartWithNode": "Enabled Smart Select: {profile} (current: {node})",
+  "@nodeOverviewSwitchedToSmartWithNode": {
+    "placeholders": {
+      "profile": {
+        "type": "String"
+      },
+      "node": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewAutoConnectedSmartBest": "Smart Select active: {profile} (fastest: {node} · {delay} ms)",
+  "@nodeOverviewAutoConnectedSmartBest": {
+    "placeholders": {
+      "profile": {
+        "type": "String"
+      },
+      "node": {
+        "type": "String"
+      },
+      "delay": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewLockedManualNode": "Locked fixed node: {profile} · {node}",
+  "@nodeOverviewLockedManualNode": {
+    "placeholders": {
+      "profile": {
+        "type": "String"
+      },
+      "node": {
+        "type": "String"
+      }
+    }
   }
 }

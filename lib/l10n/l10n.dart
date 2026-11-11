@@ -8353,6 +8353,120 @@ class AppLocalizations {
       args: [node],
     );
   }
+
+  /// `Smart Select`
+  String get nodeOverviewSmartSelectTitle {
+    return Intl.message(
+      'Smart Select',
+      name: 'nodeOverviewSmartSelectTitle',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Better experience`
+  String get nodeOverviewSmartSelectSubtitle {
+    return Intl.message(
+      'Better experience',
+      name: 'nodeOverviewSmartSelectSubtitle',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Manual Select`
+  String get nodeOverviewManualSelectTitle {
+    return Intl.message(
+      'Manual Select',
+      name: 'nodeOverviewManualSelectTitle',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Fixed IP`
+  String get nodeOverviewManualSelectSubtitle {
+    return Intl.message(
+      'Fixed IP',
+      name: 'nodeOverviewManualSelectSubtitle',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Smart active`
+  String get nodeOverviewSmartInUse {
+    return Intl.message(
+      'Smart active',
+      name: 'nodeOverviewSmartInUse',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Proxy on · Smart: {profile} · {node}`
+  String nodeOverviewProxyConnectedSmartWithNode(String profile, String node) {
+    return Intl.message(
+      'Proxy on · Smart: $profile · $node',
+      name: 'nodeOverviewProxyConnectedSmartWithNode',
+      desc: '',
+      args: [profile, node],
+    );
+  }
+
+  /// `Proxy on · Smart: {profile} (auto-selecting)`
+  String nodeOverviewProxyConnectedSmart(String profile) {
+    return Intl.message(
+      'Proxy on · Smart: $profile (auto-selecting)',
+      name: 'nodeOverviewProxyConnectedSmart',
+      desc: '',
+      args: [profile],
+    );
+  }
+
+  /// `Enabled Smart Select: {profile}`
+  String nodeOverviewSwitchedToSmart(String profile) {
+    return Intl.message(
+      'Enabled Smart Select: $profile',
+      name: 'nodeOverviewSwitchedToSmart',
+      desc: '',
+      args: [profile],
+    );
+  }
+
+  /// `Enabled Smart Select: {profile} (current: {node})`
+  String nodeOverviewSwitchedToSmartWithNode(String profile, String node) {
+    return Intl.message(
+      'Enabled Smart Select: $profile (current: $node)',
+      name: 'nodeOverviewSwitchedToSmartWithNode',
+      desc: '',
+      args: [profile, node],
+    );
+  }
+
+  /// `Smart Select active: {profile} (fastest: {node} · {delay} ms)`
+  String nodeOverviewAutoConnectedSmartBest(
+    String profile,
+    String node,
+    int delay,
+  ) {
+    return Intl.message(
+      'Smart Select active: $profile (fastest: $node · $delay ms)',
+      name: 'nodeOverviewAutoConnectedSmartBest',
+      desc: '',
+      args: [profile, node, delay],
+    );
+  }
+
+  /// `Locked fixed node: {profile} · {node}`
+  String nodeOverviewLockedManualNode(String profile, String node) {
+    return Intl.message(
+      'Locked fixed node: $profile · $node',
+      name: 'nodeOverviewLockedManualNode',
+      desc: '',
+      args: [profile, node],
+    );
+  }
 }
 
 class AppLocalizationDelegate extends LocalizationsDelegate<AppLocalizations> {

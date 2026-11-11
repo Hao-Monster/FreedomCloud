@@ -27,6 +27,7 @@ import 'common/admin_authorization.dart';
 import 'common/delay_tests.dart';
 import 'common/node_health_recorder.dart';
 import 'common/node_health_store.dart';
+import 'common/smart_node_selection.dart';
 import 'common/tun_runtime.dart';
 import 'common/ui_activity.dart';
 import 'common/windows_tun_prepare.dart';
@@ -1384,12 +1385,17 @@ class AppController {
   }
 
   Future<void> addProfile(Profile profile) async {
-    _ref.read(profilesProvider.notifier).setProfile(profile);
+    final effectiveProfile =
+        !profile.providerHeaders.containsKey(smartSelectionModeMarker) &&
+                profile.selectedMap.isEmpty
+            ? markProfileSelectionMode(profile, NodeSelectionMode.smart)
+            : profile;
+    _ref.read(profilesProvider.notifier).setProfile(effectiveProfile);
     if (_ref.read(currentProfileIdProvider) != null) return;
     // Setting currentProfileId drives needSetupProvider → clash_manager →
     // handleChangeProfile() → applyProfile(), so an explicit apply here would
     // run setupConfig twice on the first add.
-    _ref.read(currentProfileIdProvider.notifier).value = profile.id;
+    _ref.read(currentProfileIdProvider.notifier).value = effectiveProfile.id;
   }
 
   Future<void> deleteProfile(String id) async {

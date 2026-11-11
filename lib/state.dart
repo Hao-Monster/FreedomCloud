@@ -23,6 +23,7 @@ import 'package:path/path.dart' as p;
 import 'package:url_launcher/url_launcher.dart';
 
 import 'common/common.dart';
+import 'common/smart_node_selection.dart';
 import 'common/ui_activity.dart';
 import 'controller.dart';
 import 'core_version.dart';
@@ -872,7 +873,10 @@ class GlobalState {
     );
     final params = SetupParams(
       config: clashConfig,
-      selectedMap: profile?.selectedMap ?? {},
+      selectedMap: buildEffectiveSelectedMapForProfile(
+        profile: profile,
+        patchedRawConfig: clashConfig,
+      ),
       testUrl: testUrl,
     );
     return params;
@@ -1479,6 +1483,11 @@ class GlobalState {
         return false;
       }
     }
+
+    injectManagedSmartProxyGroups(
+      rawConfig,
+      defaultTestUrl: config.appSetting.testUrl,
+    );
 
     final compiledRules = compileEffectiveRules(
       rawProfileRules: rawRules,

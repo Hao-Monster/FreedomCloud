@@ -7,6 +7,7 @@ import 'package:flclashx/common/delay_test_coordinator.dart';
 import 'package:flclashx/common/node_catalog_service.dart';
 import 'package:flclashx/common/node_catalog_tester.dart';
 import 'package:flclashx/common/node_health_store.dart';
+import 'package:flclashx/common/smart_node_selection.dart';
 import 'package:flclashx/common/tun_runtime.dart';
 import 'package:flclashx/common/windows_tun_startup.dart';
 import 'package:flclashx/controller.dart';
@@ -7992,23 +7993,26 @@ void main() {
       'https://sub.example.com/v1/sub?token=first123',
     );
 
-    // Second submit succeeds -> auto-runs testAll, skips 剩余流量 12ms dummy, selects 香港 01 (46ms), and starts proxy!
+    // Second submit succeeds -> auto-runs testAll, skips 剩余流量 12ms dummy, defaults to Smart mode, and starts proxy!
     await tester.tap(find.byKey(const ValueKey('url-dialog-confirm')));
     await tester.pumpAndSettle();
     expect(find.byType(URLFormDialog), findsNothing);
     expect(backend.all, hasLength(1));
     expect(container.read(currentProfileIdProvider), 'first-sub');
+    final activatedFirst =
+        container.read(profilesProvider).getProfile('first-sub')!;
+    expect(resolveProfileSelectionMode(activatedFirst), NodeSelectionMode.smart);
     expect(
-      container.read(profilesProvider).getProfile('first-sub')?.selectedMap,
-      {'Proxy': '香港 01'},
+      activatedFirst.selectedMap['Proxy'],
+      managedSmartGroupNameFor('Proxy'),
     );
     expect(controller.statusUpdates, contains(true));
     expect(
-      find.text('已自动连接最快节点：新手订阅 · 香港 01（46 ms）'),
+      find.text('已开启智能选择节点：新手订阅（当前最快：香港 01 · 46 ms）'),
       findsOneWidget,
     );
 
-    // Adding a 2nd subscription when profiles already exist only adds it without switching active profile or re-testing.
+    // Adding a 2nd subscription when profiles already exist marks it Smart without switching active profile or re-testing.
     await tester.tap(find.byKey(const ValueKey('overview-add-subscription')));
     await tester.pumpAndSettle();
     await tester.enterText(
@@ -8020,8 +8024,14 @@ void main() {
     expect(backend.all, hasLength(1));
     expect(container.read(currentProfileIdProvider), 'first-sub');
     expect(
-      container.read(profilesProvider).getProfile('first-sub')?.selectedMap,
-      {'Proxy': '香港 01'},
+      container.read(profilesProvider).getProfile('first-sub')?.selectedMap['Proxy'],
+      managedSmartGroupNameFor('Proxy'),
+    );
+    expect(
+      resolveProfileSelectionMode(
+        container.read(profilesProvider).getProfile('second-sub'),
+      ),
+      NodeSelectionMode.smart,
     );
     expect(tester.takeException(), isNull);
   });
@@ -8124,11 +8134,13 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('url-dialog-confirm')));
     await tester.pumpAndSettle();
 
-    // Even though ALL nodes failed (-1), skips 套餐到期 dummy ('套' U+5957 < '新' U+65B0),
-    // selects #1 sorted real node 新加坡备用 B, starts proxy, and warns about expiry!
+    // Even though ALL nodes failed (-1), activates Smart mode, starts proxy, and warns about expiry!
+    final deadActivated =
+        container.read(profilesProvider).getProfile('dead-sub')!;
+    expect(resolveProfileSelectionMode(deadActivated), NodeSelectionMode.smart);
     expect(
-      container.read(profilesProvider).getProfile('dead-sub')?.selectedMap,
-      {'Proxy': '新加坡备用 B'},
+      deadActivated.selectedMap['Proxy'],
+      managedSmartGroupNameFor('Proxy'),
     );
     expect(controller.statusUpdates, contains(true));
     expect(find.textContaining('但该订阅已过期'), findsOneWidget);
@@ -8393,10 +8405,13 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('url-dialog-confirm')));
     await tester.pumpAndSettle();
 
-    // Verify full end-to-end chain: fastest node selected + Windows TUN elevated & on + master proxy switch green!
+    // Verify full end-to-end chain: Smart mode enabled + Windows TUN elevated & on + master proxy switch green!
+    final winActivated =
+        container.read(profilesProvider).getProfile('win-first-sub')!;
+    expect(resolveProfileSelectionMode(winActivated), NodeSelectionMode.smart);
     expect(
-      container.read(profilesProvider).getProfile('win-first-sub')?.selectedMap,
-      {'Proxy': '香港 01'},
+      winActivated.selectedMap['Proxy'],
+      managedSmartGroupNameFor('Proxy'),
     );
     expect(
       effects.calls.sublist(2),
@@ -8413,7 +8428,327 @@ void main() {
     expect(runtime.observed, TunObservedState.on);
     expect(runtime.failure, isNull);
     expect(runtime.requestFailure, isNull);
-    expect(find.text('代理已开启 · 正在使用 新手订阅 · 香港 01'), findsOneWidget);
+    expect(find.textContaining('代理已开启 · 智能选择：新手订阅'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'smart vs manual mode buttons: render right of Quick Use, switch Smart <-> Manual (locking live hit node in-place), auto-switch to Manual on card Use, and honor mode on Quick Use',
+      (tester) async {
+    final controller = _ProxyController();
+    globalState.appController = controller;
+    final smartGroupName = managedSmartGroupNameFor('Proxy');
+
+    const profileA = Profile(
+      id: 'a',
+      label: 'admin',
+      url: 'https://sub.example.com/a',
+      autoUpdateDuration: defaultUpdateDuration,
+      currentGroupName: 'Proxy',
+      selectedMap: {'Proxy': '美国静态原生-Reality-Vision'},
+    );
+    globalState.config = globalState.config.copyWith(
+      currentProfileId: 'a',
+      profiles: const [profileA],
+    );
+    final runtimeGroups = [
+      Group(
+        name: 'Proxy',
+        type: GroupType.Selector,
+        hidden: false,
+        now: '美国静态原生-Reality-Vision',
+        all: [
+          const Proxy(name: '美国AGK-Reality-Vision', type: 'VLESS'),
+          const Proxy(name: '美国静态原生-Reality-Vision', type: 'VLESS'),
+          Proxy(name: smartGroupName, type: 'URLTest'),
+        ],
+      ),
+      Group(
+        name: smartGroupName,
+        type: GroupType.URLTest,
+        hidden: true,
+        now: '美国AGK-Reality-Vision',
+        all: const [
+          Proxy(name: '美国AGK-Reality-Vision', type: 'VLESS'),
+          Proxy(name: '美国静态原生-Reality-Vision', type: 'VLESS'),
+        ],
+      ),
+    ];
+    globalState.appState = globalState.appState.copyWith(groups: runtimeGroups);
+
+    final container = await mount(
+      tester,
+      width: 1280,
+      locale: const Locale('zh', 'CN'),
+      profiles: const [profileA],
+      catalogs: {
+        'a': ProfileCatalog(
+          profileId: 'a',
+          fingerprint: 'fa',
+          status: ProfileCatalogStatus.ready,
+          nodes: [
+            _node('us-agk', '美国AGK-Reality-Vision')
+                .copyWith(selectGroups: const ['Proxy']),
+            _node('us-static', '美国静态原生-Reality-Vision')
+                .copyWith(selectGroups: const ['Proxy']),
+          ],
+        ),
+      },
+    );
+    container.read(runTimeProvider.notifier).value = 1000;
+    await tester.pumpAndSettle();
+
+    final quickUseBtn = find.byKey(const ValueKey('overview-quick-use'));
+    final smartBtn = find.byKey(const ValueKey('overview-mode-smart'));
+    final manualBtn = find.byKey(const ValueKey('overview-mode-manual'));
+    expect(smartBtn, findsOneWidget);
+    expect(manualBtn, findsOneWidget);
+    expect(find.descendant(of: smartBtn, matching: find.text('智能选择节点')), findsOneWidget);
+    expect(find.descendant(of: smartBtn, matching: find.text('体验更好')), findsOneWidget);
+    expect(find.descendant(of: manualBtn, matching: find.text('手动选择节点')), findsOneWidget);
+    expect(find.descendant(of: manualBtn, matching: find.text('固定IP')), findsOneWidget);
+
+    // Placed to the right of `3 点击使用` on wide desktop layout!
+    expect(
+      tester.getTopLeft(smartBtn).dx,
+      greaterThan(tester.getTopRight(quickUseBtn).dx),
+    );
+    expect(
+      tester.getTopLeft(manualBtn).dx,
+      greaterThan(tester.getTopRight(smartBtn).dx),
+    );
+
+    // Legacy profileA starts in Manual mode with 美国静态原生-Reality-Vision inUse ('使用中').
+    expect(
+      resolveProfileSelectionMode(container.read(profilesProvider).getProfile('a')),
+      NodeSelectionMode.manual,
+    );
+    expect(find.text('代理已开启 · 正在使用 admin · 美国静态原生-Reality-Vision'), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('overview-use-a-美国静态原生-Reality-Vision')),
+        matching: find.text('使用中'),
+      ),
+      findsOneWidget,
+    );
+
+    // 1. Tap `智能选择节点（体验更好）` -> switches Proxy to smartGroupName via changeProxyDebounce (0 core restarts)!
+    await tester.tap(smartBtn);
+    await tester.pumpAndSettle();
+    expect(
+      resolveProfileSelectionMode(container.read(profilesProvider).getProfile('a')),
+      NodeSelectionMode.smart,
+    );
+    expect(
+      container.read(profilesProvider).getProfile('a')?.selectedMap['Proxy'],
+      smartGroupName,
+    );
+    expect(controller.changes.last, ('Proxy', smartGroupName));
+
+    // Simulate Mihomo updating Selector.now to smartGroupName while smartGroup.now == '美国AGK-Reality-Vision'.
+    final updatedSmartGroups = [
+      runtimeGroups[0].copyWith(now: smartGroupName),
+      runtimeGroups[1],
+    ];
+    globalState.appState = globalState.appState.copyWith(
+      groups: updatedSmartGroups,
+      version: 2,
+    );
+    container.read(groupsProvider.notifier).value = updatedSmartGroups;
+    container.read(versionProvider.notifier).value = 2;
+    await tester.pumpAndSettle();
+
+    // Top bar reflects Smart mode + live hit leaf, and hit leaf row shows clickable `智能使用中`!
+    expect(
+      find.text('代理已开启 · 智能选择：admin · 美国AGK-Reality-Vision'),
+      findsOneWidget,
+    );
+    final agkUseBtn =
+        find.byKey(const ValueKey('overview-use-a-美国AGK-Reality-Vision'));
+    expect(
+      find.descendant(of: agkUseBtn, matching: find.text('智能使用中')),
+      findsOneWidget,
+    );
+
+    // 2. Tap `手动选择节点（固定IP）` top button -> seamlessly locks the currently hit live leaf (`美国AGK-Reality-Vision`) in-place!
+    await tester.tap(manualBtn);
+    await tester.pumpAndSettle();
+    expect(
+      resolveProfileSelectionMode(container.read(profilesProvider).getProfile('a')),
+      NodeSelectionMode.manual,
+    );
+    expect(
+      container.read(profilesProvider).getProfile('a')?.selectedMap['Proxy'],
+      '美国AGK-Reality-Vision',
+    );
+    expect(controller.changes.last, ('Proxy', '美国AGK-Reality-Vision'));
+
+    // 3. Switch back to Smart mode, then tap `使用` on a specific node card (`美国静态原生-Reality-Vision`) -> auto-switches back to Manual Fixed IP!
+    await tester.tap(smartBtn);
+    await tester.pumpAndSettle();
+    expect(
+      resolveProfileSelectionMode(container.read(profilesProvider).getProfile('a')),
+      NodeSelectionMode.smart,
+    );
+    await tester.tap(
+      find.byKey(const ValueKey('overview-use-a-美国静态原生-Reality-Vision')),
+    );
+    await tester.pumpAndSettle();
+    expect(
+      resolveProfileSelectionMode(container.read(profilesProvider).getProfile('a')),
+      NodeSelectionMode.manual,
+    );
+    expect(
+      container.read(profilesProvider).getProfile('a')?.selectedMap['Proxy'],
+      '美国静态原生-Reality-Vision',
+    );
+
+    // 4. Stop proxy, switch to Smart mode (starts proxy), stop again, tap `3 点击使用` -> honors Smart mode without knocking back to Manual!
+    container.read(runTimeProvider.notifier).value = null;
+    await tester.pumpAndSettle();
+    await tester.tap(smartBtn);
+    await tester.pumpAndSettle();
+    controller.statusUpdates.clear();
+    await tester.tap(quickUseBtn);
+    await tester.pumpAndSettle();
+    expect(
+      resolveProfileSelectionMode(container.read(profilesProvider).getProfile('a')),
+      NodeSelectionMode.smart,
+    );
+    expect(controller.statusUpdates, [true]);
+
+    // 5. Tapping the `智能使用中` pill directly on the hit node row also locks it into Manual Fixed IP!
+    await tester.tap(agkUseBtn);
+    await tester.pumpAndSettle();
+    expect(
+      resolveProfileSelectionMode(container.read(profilesProvider).getProfile('a')),
+      NodeSelectionMode.manual,
+    );
+    expect(
+      container.read(profilesProvider).getProfile('a')?.selectedMap['Proxy'],
+      '美国AGK-Reality-Vision',
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'smart vs manual mode buttons render overflow-free across zh_CN/en/ja/ru at 320px & 1200px @ 2.0x text scale and support switching inactive selected profile',
+      (tester) async {
+    final controller = _ProxyController();
+    globalState.appController = controller;
+    const profileA = Profile(
+      id: 'a',
+      label: 'Primary',
+      url: 'https://sub.example.com/a',
+      autoUpdateDuration: defaultUpdateDuration,
+      currentGroupName: 'Proxy',
+      selectedMap: {'Proxy': 'HK 01'},
+    );
+    const profileB = Profile(
+      id: 'b',
+      label: 'Secondary',
+      url: 'https://sub.example.com/b',
+      autoUpdateDuration: defaultUpdateDuration,
+    );
+    globalState.config = globalState.config.copyWith(
+      currentProfileId: 'a',
+      profiles: const [profileA, profileB],
+    );
+    globalState.appState = globalState.appState.copyWith(
+      groups: const [
+        Group(
+          name: 'Proxy',
+          type: GroupType.Selector,
+          hidden: false,
+          now: 'HK 01',
+          all: [
+            Proxy(name: 'HK 01', type: 'VLESS'),
+          ],
+        ),
+      ],
+    );
+
+    final catalogs = {
+      'a': ProfileCatalog(
+        profileId: 'a',
+        fingerprint: 'fa',
+        status: ProfileCatalogStatus.ready,
+        nodes: [_node('hk-1', 'HK 01').copyWith(selectGroups: const ['Proxy'])],
+      ),
+      'b': ProfileCatalog(
+        profileId: 'b',
+        fingerprint: 'fb',
+        status: ProfileCatalogStatus.ready,
+        nodes: [
+          _node('sg-1', 'SG 01').copyWith(selectGroups: const ['Proxy']),
+          _node('info-1', '剩余流量：88 GB').copyWith(selectGroups: const ['Proxy']),
+        ],
+      ),
+    };
+
+    for (final (width, locale) in const [
+      (320.0, Locale('zh', 'CN')),
+      (380.0, Locale('ja')),
+      (380.0, Locale('en')),
+      (380.0, Locale('ru')),
+      (1200.0, Locale('zh', 'CN')),
+      (1200.0, Locale('en')),
+      (1200.0, Locale('ja')),
+      (1200.0, Locale('ru')),
+    ]) {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await mount(
+        tester,
+        width: width,
+        locale: locale,
+        profiles: const [profileA, profileB],
+        catalogs: catalogs,
+        child: MediaQuery(
+          data: MediaQueryData(
+            size: Size(width, 1000),
+            textScaler: const TextScaler.linear(2.0),
+          ),
+          child: const NodeOverviewView(),
+        ),
+      );
+      expect(find.byKey(const ValueKey('overview-mode-smart')), findsOneWidget);
+      expect(find.byKey(const ValueKey('overview-mode-manual')), findsOneWidget);
+      expect(tester.takeException(), isNull, reason: 'overflow at $width $locale');
+    }
+
+    // Mount at 1280px, select inactive profile B in sidebar, and switch it between Smart and Manual!
+    final container = await mount(
+      tester,
+      width: 1280,
+      locale: const Locale('zh', 'CN'),
+      profiles: const [profileA, profileB],
+      catalogs: catalogs,
+    );
+    await tester.tap(find.byKey(const ValueKey('overview-sidebar-card-b')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('overview-mode-smart')));
+    await tester.pumpAndSettle();
+    expect(container.read(currentProfileIdProvider), 'b');
+    expect(
+      resolveProfileSelectionMode(container.read(profilesProvider).getProfile('b')),
+      NodeSelectionMode.smart,
+    );
+    expect(
+      container.read(profilesProvider).getProfile('b')?.selectedMap['Proxy'],
+      managedSmartGroupNameFor('Proxy'),
+    );
+
+    await tester.tap(find.byKey(const ValueKey('overview-mode-manual')));
+    await tester.pumpAndSettle();
+    expect(
+      resolveProfileSelectionMode(container.read(profilesProvider).getProfile('b')),
+      NodeSelectionMode.manual,
+    );
+    // Skips informational '剩余流量：88 GB' and locks real node 'SG 01'!
+    expect(
+      container.read(profilesProvider).getProfile('b')?.selectedMap['Proxy'],
+      'SG 01',
+    );
     expect(tester.takeException(), isNull);
   });
 }

@@ -1213,5 +1213,73 @@
         "type": "String"
       }
     }
+  },
+  "nodeOverviewSmartSelectTitle": "スマート選択",
+  "nodeOverviewSmartSelectSubtitle": "より快適",
+  "nodeOverviewManualSelectTitle": "手動選択",
+  "nodeOverviewManualSelectSubtitle": "固定IP",
+  "nodeOverviewSmartInUse": "自動使用中",
+  "nodeOverviewProxyConnectedSmartWithNode": "プロキシ有効 · スマート：{profile} · {node}",
+  "@nodeOverviewProxyConnectedSmartWithNode": {
+    "placeholders": {
+      "profile": {
+        "type": "String"
+      },
+      "node": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewProxyConnectedSmart": "プロキシ有効 · スマート：{profile}（自動最適化中）",
+  "@nodeOverviewProxyConnectedSmart": {
+    "placeholders": {
+      "profile": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewSwitchedToSmart": "スマート選択を有効化：{profile}",
+  "@nodeOverviewSwitchedToSmart": {
+    "placeholders": {
+      "profile": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewSwitchedToSmartWithNode": "スマート選択を有効化：{profile}（現在：{node}）",
+  "@nodeOverviewSwitchedToSmartWithNode": {
+    "placeholders": {
+      "profile": {
+        "type": "String"
+      },
+      "node": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewAutoConnectedSmartBest": "スマート選択を開始：{profile}（最速：{node} · {delay} ms）",
+  "@nodeOverviewAutoConnectedSmartBest": {
+    "placeholders": {
+      "profile": {
+        "type": "String"
+      },
+      "node": {
+        "type": "String"
+      },
+      "delay": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewLockedManualNode": "固定ノードにロック：{profile} · {node}",
+  "@nodeOverviewLockedManualNode": {
+    "placeholders": {
+      "profile": {
+        "type": "String"
+      },
+      "node": {
+        "type": "String"
+      }
+    }
   }
 }
