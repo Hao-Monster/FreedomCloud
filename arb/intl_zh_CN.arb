@@ -570,7 +570,7 @@
   "purchaseHistoryPage": "页码",
   "purchaseHistoryTotal": "总计",
   "purchaseGetCard": "获取礼品卡",
-  "purchaseGetCardDescription": "可联系以下任一微信号购买礼品卡或获取帮助。",
+  "purchaseGetCardDescription": "可通过自助发卡商店、在线客服或备用微信购买礼品卡与获取协助。",
   "purchaseCardStore": "打开礼品卡商店",
   "purchaseOpenLinkFailed": "无法打开页面，请重试。",
   "purchaseRestoring": "正在恢复账户…",
@@ -590,7 +590,7 @@
   "purchaseCodeFormatError": "请输入由 8–32 位字母和数字组成的兑换码。",
   "purchaseChannelError": "礼品卡商店信息加载失败，仍可通过下方微信联系客服。",
   "purchaseAvailablePlans": "可购买套餐",
-  "purchasePlansDescription": "价格按网站标价显示；币种及购买请联系下方微信确认，获取礼品卡后在此兑换。",
+  "purchasePlansDescription": "价格按网站标价显示；点击「去购买」前往自助发卡商店购卡，复制兑换码后返回本页核销。",
   "purchasePlansLoading": "正在加载套餐…",
   "purchasePlansEmpty": "暂无可购买的套餐。",
   "purchasePlansError": "套餐加载失败，请重试。",
@@ -1446,5 +1446,8 @@
   "purchaseBackupContactsLabel": "备用人工协助（微信号）",
   "purchaseEmailExistsError": "该邮箱已注册，请直接切换到「登录账户」。",
   "purchaseRegistrationClosedError": "当前站点暂未开放新用户注册。",
-  "purchaseRegisterWebRequiredError": "当前站点启用了邮箱验证或人机校验，请点击下方「前往网页注册」完成注册。"
+  "purchaseRegisterWebRequiredError": "当前站点启用了邮箱验证或人机校验，请点击下方「前往网页注册」完成注册。",
+  "purchaseClipboardEmpty": "剪贴板中未检测到可用的兑换码",
+  "purchaseEmailDomainError": "当前站点暂不支持该邮箱域名，请更换常用邮箱或前往网页注册。",
+  "purchaseGmailAliasError": "当前站点不支持 Gmail 别名邮箱（含 + 号），请使用主邮箱地址。"
 }

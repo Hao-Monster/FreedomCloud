@@ -641,6 +641,7 @@ class PurchasePlanCatalog extends StatefulWidget {
     this.openLink,
     this.onBuyPlan,
     this.onAcquirePlan,
+    this.buyingPlanId,
     this.collapsibleDetails = false,
   });
 
@@ -651,6 +652,7 @@ class PurchasePlanCatalog extends StatefulWidget {
   final Future<void> Function(Uri)? openLink;
   final ValueChanged<XboardPlanOffer>? onBuyPlan;
   final ValueChanged<XboardPlanOffer>? onAcquirePlan;
+  final int? buyingPlanId;
   final bool collapsibleDetails;
 
   @override
@@ -866,6 +868,7 @@ class _PurchasePlanCatalogState extends State<PurchasePlanCatalog> {
                       openLink: widget.openLink,
                       onBuyPlan: widget.onBuyPlan,
                       onAcquirePlan: widget.onAcquirePlan,
+                      buying: widget.buyingPlanId == plan.id,
                       collapsibleDetails: widget.collapsibleDetails,
                       multiTierComparison: plans.length >= 2,
                     ),
@@ -905,6 +908,7 @@ class _PlanCard extends StatefulWidget {
     this.openLink,
     this.onBuyPlan,
     this.onAcquirePlan,
+    this.buying = false,
     this.collapsibleDetails = false,
     this.multiTierComparison = false,
   });
@@ -913,6 +917,7 @@ class _PlanCard extends StatefulWidget {
   final Future<void> Function(Uri)? openLink;
   final ValueChanged<XboardPlanOffer>? onBuyPlan;
   final ValueChanged<XboardPlanOffer>? onAcquirePlan;
+  final bool buying;
   final bool collapsibleDetails;
   final bool multiTierComparison;
 
@@ -956,13 +961,15 @@ class _PlanCardState extends State<_PlanCard> {
         plan.capacityRemaining! <= 20;
     final isFeatured = _isFeatured(isSoldOut);
 
+    final displayContent =
+        XboardPurchaseChannels.stripPlanPurchaseMetadata(plan.content);
     final markdownSummary = widget.collapsibleDetails
-        ? summarizePlanMarkdown(plan.content)
-        : (collapsible: false, preview: plan.content);
+        ? summarizePlanMarkdown(displayContent)
+        : (collapsible: false, preview: displayContent);
     final shouldCollapse = markdownSummary.collapsible;
     final previewMarkdown = shouldCollapse && !_detailsExpanded
         ? markdownSummary.preview
-        : plan.content;
+        : displayContent;
 
     return Container(
       decoration: BoxDecoration(
@@ -1207,7 +1214,7 @@ class _PlanCardState extends State<_PlanCard> {
                 ),
               ],
             ),
-            if (plan.content.trim().isNotEmpty) ...[
+            if (displayContent.trim().isNotEmpty) ...[
               const Padding(
                 padding: EdgeInsets.symmetric(vertical: 14),
                 child: Divider(height: 1),
@@ -1296,8 +1303,9 @@ class _PlanCardState extends State<_PlanCard> {
                           style: sideBySide
                               ? FilledButton.styleFrom(padding: compactPadding)
                               : null,
-                          onPressed:
-                              isSoldOut ? null : () => widget.onBuyPlan!(plan),
+                          onPressed: isSoldOut || widget.buying
+                              ? null
+                              : () => widget.onBuyPlan!(plan),
                           icon: Icon(
                             isSoldOut
                                 ? Icons.block_rounded

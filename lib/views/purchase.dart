@@ -64,11 +64,21 @@ class _PurchaseViewState extends ConsumerState<PurchaseView> {
         !_manager.unresolvedRedemption &&
         accountId != null &&
         _autoSyncedAccountId != accountId &&
+        !_manager.hasAttemptedInitialSyncFor(accountId) &&
         (_manager.subscription?.valid ?? false) &&
         globalState.isConfigInitialized &&
         ref.read(profilesProvider).isEmpty) {
       _autoSyncedAccountId = accountId;
-      unawaited(_manager.syncSubscription());
+      scheduleMicrotask(() {
+        if (mounted &&
+            _manager.loggedIn &&
+            _manager.account?.id == accountId &&
+            !_manager.busy &&
+            !_manager.syncing &&
+            !_manager.unresolvedRedemption) {
+          unawaited(_manager.syncSubscription());
+        }
+      });
     }
   }
 
@@ -80,6 +90,8 @@ class _PurchaseViewState extends ConsumerState<PurchaseView> {
         (defaultApi = DioXboardApi(
           shouldFallbackToDirect: () =>
               HttpOverrides.current is FlClashHttpOverrides &&
+              globalState.isAppStateInitialized &&
+              globalState.isConfigInitialized &&
               FlClashHttpOverrides.handleFindProxy(defaultApi.baseUri)
                   .startsWith('PROXY '),
         ));
@@ -178,8 +190,12 @@ class _PurchaseViewState extends ConsumerState<PurchaseView> {
       ref.watch(profilesProvider.select((profiles) => profiles.length));
       ref.watch(currentProfileIdProvider);
     }
+    final isActiveTab = globalState.homeScaffoldKey.currentContext == null ||
+        !globalState.isAppStateInitialized ||
+        ref.watch(currentPageLabelProvider) == PageLabel.purchase;
     return PurchaseCenter(
       manager: _manager,
+      isActiveTab: isActiveTab,
       openLink: (url) async {
         if (url.scheme != 'https' ||
             url.host.isEmpty ||

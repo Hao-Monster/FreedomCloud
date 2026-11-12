@@ -1114,16 +1114,28 @@ class MessageLookup extends MessageLookupByLibrary {
       "バックアップ窓口（WeChat）",
     ),
     "purchaseClearCode": MessageLookupByLibrary.simpleMessage("コードをクリア"),
+    "purchaseClipboardEmpty": MessageLookupByLibrary.simpleMessage(
+      "クリップボードに有効な引き換えコードが見つかりません。",
+    ),
     "purchaseContactDescription": MessageLookupByLibrary.simpleMessage(
       "オンライン決済は現在ご利用いただけません。購入または更新については、以下のいずれかのWeChatアカウントを追加してください。",
     ),
     "purchaseCopyInquiry": MessageLookupByLibrary.simpleMessage("問い合わせ文をコピー"),
+    "purchaseEmailDomainError": MessageLookupByLibrary.simpleMessage(
+      "このメールドメインは利用できません。別のメールアドレスをお試しください。",
+    ),
     "purchaseEmailExistsError": MessageLookupByLibrary.simpleMessage(
       "このメールアドレスは登録済みです。「ログイン」に切り替えてください。",
     ),
     "purchaseFilterAll": MessageLookupByLibrary.simpleMessage("すべて"),
     "purchaseFilterOnetime": MessageLookupByLibrary.simpleMessage("通信量パック"),
     "purchaseFilterPeriod": MessageLookupByLibrary.simpleMessage("定期プラン"),
+    "purchaseGetCardDescription": MessageLookupByLibrary.simpleMessage(
+      "セルフストア、オンラインサポート、または下記の WeChat からギフトカードの購入・相談ができます。",
+    ),
+    "purchaseGmailAliasError": MessageLookupByLibrary.simpleMessage(
+      "Gmail エイリアス（+ 付き）は利用できません。通常のアドレスをご使用ください。",
+    ),
     "purchaseHandoffDescription": MessageLookupByLibrary.simpleMessage(
       "購入後にコードをコピーしてこのウィンドウに戻ると、特典を自動確認します（確認なしでは消費されません）。",
     ),
@@ -1194,7 +1206,7 @@ class MessageLookup extends MessageLookupByLibrary {
     ),
     "purchasePlanUnlimited": MessageLookupByLibrary.simpleMessage("無制限"),
     "purchasePlansDescription": MessageLookupByLibrary.simpleMessage(
-      "価格はサイトの表示額です。通貨と購入については下記の WeChat で確認し、ギフトカードを取得してここで引き換えてください。",
+      "価格はサイトの表示額です。「購入する」からセルフストアでギフトカードを取得し、ここで引き換えてください。",
     ),
     "purchasePlansEmpty": MessageLookupByLibrary.simpleMessage(
       "現在購入可能なプランはありません。",

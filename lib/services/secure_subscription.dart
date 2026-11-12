@@ -3,16 +3,24 @@ import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
 import 'package:dio/io.dart';
+import 'package:flclashx/services/pre_request_transport.dart';
 
 /// Download a managed account subscription without inheriting the legacy
 /// client's permissive certificate callback or forwarding device IDs to a
-/// different redirect origin. Existing OS/proxy routing remains in effect.
+/// different redirect origin. Existing OS/proxy routing remains in effect,
+/// with optional pre-request DIRECT fallback when the local proxy tunnel fails.
 class SecureSubscriptionDownloader {
-  SecureSubscriptionDownloader({Dio? dio}) : _dio = dio ?? Dio() {
-    _dio.options.connectTimeout = const Duration(seconds: 15);
-    if (dio == null) {
+  SecureSubscriptionDownloader({
+    Dio? dio,
+    this.shouldFallbackToDirect,
+  })  : _dio = dio ?? Dio(),
+        _ownsTransport = dio == null {
+    _dio.options.connectTimeout = _ownsTransport && shouldFallbackToDirect != null
+        ? const Duration(seconds: 6)
+        : const Duration(seconds: 15);
+    if (_ownsTransport) {
       _dio.httpClientAdapter = IOHttpClientAdapter(createHttpClient: () {
-        final client = HttpClient()
+        final client = wrapPreRequestHttpClient(HttpClient())
           ..badCertificateCallback = (_, __, ___) => false;
         return client;
       });
@@ -20,6 +28,19 @@ class SecureSubscriptionDownloader {
   }
 
   final Dio _dio;
+  final bool _ownsTransport;
+  final bool Function(Uri url)? shouldFallbackToDirect;
+  Dio? _directDio;
+
+  Dio _ensureDirectDio() => _directDio ??= (Dio(
+        BaseOptions(
+          connectTimeout: const Duration(seconds: 15),
+        ),
+      )..httpClientAdapter = IOHttpClientAdapter(
+          createHttpClient: () => wrapPreRequestHttpClient(HttpClient())
+            ..findProxy = ((_) => 'DIRECT')
+            ..badCertificateCallback = ((_, __, ___) => false),
+        ));
 
   Future<Response<Uint8List>> download(
     Uri url,
@@ -28,23 +49,34 @@ class SecureSubscriptionDownloader {
     if (url.scheme != 'https' || url.host.isEmpty || url.userInfo.isNotEmpty) {
       throw const FormatException('Managed subscriptions require HTTPS');
     }
+    final options = Options(
+      headers: headers,
+      responseType: ResponseType.bytes,
+      followRedirects: false,
+      receiveTimeout: const Duration(seconds: 60),
+      sendTimeout: const Duration(seconds: 15),
+      validateStatus: (status) =>
+          status != null && status >= 200 && status < 400,
+    );
     var current = url;
     for (var redirects = 0; redirects <= 5; redirects++) {
-      final Response<Uint8List> response;
+      Response<Uint8List> response;
       try {
-        response = await _dio.getUri<Uint8List>(current,
-            options: Options(
-              headers: headers,
-              responseType: ResponseType.bytes,
-              followRedirects: false,
-              receiveTimeout: const Duration(seconds: 60),
-              sendTimeout: const Duration(seconds: 15),
-              validateStatus: (status) =>
-                  status != null && status >= 200 && status < 400,
-            ));
-      } on DioException {
-        // Background profile updates display thrown errors directly; never expose the secret URL.
-        throw const FormatException('Subscription download failed');
+        response = await _dio.getUri<Uint8List>(current, options: options);
+      } on DioException catch (error) {
+        if (_ownsTransport &&
+            isPreRequestDioFailure(error) &&
+            (shouldFallbackToDirect?.call(current) ?? false)) {
+          try {
+            response = await _ensureDirectDio()
+                .getUri<Uint8List>(current, options: options);
+          } on DioException {
+            throw const FormatException('Subscription download failed');
+          }
+        } else {
+          // Background profile updates display thrown errors directly; never expose the secret URL.
+          throw const FormatException('Subscription download failed');
+        }
       }
       final status = response.statusCode;
       if (status == 200) return response;

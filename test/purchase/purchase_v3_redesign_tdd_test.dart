@@ -422,7 +422,14 @@ void main() {
     await tester.ensureVisible(chatBtn);
     await tester.tap(chatBtn);
     await tester.pumpAndSettle();
-    expect(openedLinks, [Uri.parse('https://chat.example.test')]);
+    expect(
+      openedLinks,
+      [
+        Uri.parse(
+          'https://chat.example.test/widget?website_token=public-widget-token&locale=zh_CN',
+        ),
+      ],
+    );
     expect(find.text('微信号: ChasingDream_2021'), findsOneWidget);
     expect(find.text('微信号: dxm_qa'), findsOneWidget);
 

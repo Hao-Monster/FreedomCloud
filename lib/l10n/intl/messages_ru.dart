@@ -1426,11 +1426,17 @@ class MessageLookup extends MessageLookupByLibrary {
       "Резервная поддержка (WeChat)",
     ),
     "purchaseClearCode": MessageLookupByLibrary.simpleMessage("Очистить код"),
+    "purchaseClipboardEmpty": MessageLookupByLibrary.simpleMessage(
+      "В буфере обмена не найден код активации.",
+    ),
     "purchaseContactDescription": MessageLookupByLibrary.simpleMessage(
       "Онлайн-оплата пока недоступна. Добавьте любой из указанных аккаунтов WeChat для покупки или продления.",
     ),
     "purchaseCopyInquiry": MessageLookupByLibrary.simpleMessage(
       "Скопировать запрос",
+    ),
+    "purchaseEmailDomainError": MessageLookupByLibrary.simpleMessage(
+      "Этот почтовый домен не поддерживается. Используйте другой адрес электронной почты.",
     ),
     "purchaseEmailExistsError": MessageLookupByLibrary.simpleMessage(
       "Этот email уже зарегистрирован. Переключитесь на «Вход».",
@@ -1440,6 +1446,12 @@ class MessageLookup extends MessageLookupByLibrary {
       "Пакеты трафика",
     ),
     "purchaseFilterPeriod": MessageLookupByLibrary.simpleMessage("По периоду"),
+    "purchaseGetCardDescription": MessageLookupByLibrary.simpleMessage(
+      "Приобрести карту или получить помощь можно через магазин карт, онлайн-поддержку или контакты WeChat ниже.",
+    ),
+    "purchaseGmailAliasError": MessageLookupByLibrary.simpleMessage(
+      "Псевдонимы Gmail (со знаком «+») не поддерживаются. Используйте основной адрес.",
+    ),
     "purchaseHandoffDescription": MessageLookupByLibrary.simpleMessage(
       "Скопируйте код после покупки и вернитесь в окно — бонусы проверятся автоматически без списания.",
     ),
@@ -1534,7 +1546,7 @@ class MessageLookup extends MessageLookupByLibrary {
       "Без ограничений",
     ),
     "purchasePlansDescription": MessageLookupByLibrary.simpleMessage(
-      "Цены указаны как на сайте. Уточните валюту и купите подарочную карту через контакты WeChat ниже, затем активируйте её здесь.",
+      "Цены указаны как на сайте. Нажмите «Купить» для перехода в магазин кодов, затем активируйте полученный код здесь.",
     ),
     "purchasePlansEmpty": MessageLookupByLibrary.simpleMessage(
       "Сейчас нет доступных тарифов.",

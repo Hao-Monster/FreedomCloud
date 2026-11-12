@@ -1103,6 +1103,9 @@ class MessageLookup extends MessageLookupByLibrary {
     "purchaseCheck": MessageLookupByLibrary.simpleMessage("查询权益"),
     "purchaseChecking": MessageLookupByLibrary.simpleMessage("正在查询…"),
     "purchaseClearCode": MessageLookupByLibrary.simpleMessage("清空兑换码"),
+    "purchaseClipboardEmpty": MessageLookupByLibrary.simpleMessage(
+      "剪贴板中未检测到可用的兑换码",
+    ),
     "purchaseCode": MessageLookupByLibrary.simpleMessage("礼品卡兑换码"),
     "purchaseCodeFormatError": MessageLookupByLibrary.simpleMessage(
       "请输入由 8–32 位字母和数字组成的兑换码。",
@@ -1113,6 +1116,9 @@ class MessageLookup extends MessageLookupByLibrary {
     ),
     "purchaseCopyInquiry": MessageLookupByLibrary.simpleMessage("一键复制咨询口令"),
     "purchaseEmail": MessageLookupByLibrary.simpleMessage("邮箱地址"),
+    "purchaseEmailDomainError": MessageLookupByLibrary.simpleMessage(
+      "当前站点暂不支持该邮箱域名，请更换常用邮箱或前往网页注册。",
+    ),
     "purchaseEmailExistsError": MessageLookupByLibrary.simpleMessage(
       "该邮箱已注册，请直接切换到「登录账户」。",
     ),
@@ -1131,7 +1137,10 @@ class MessageLookup extends MessageLookupByLibrary {
     "purchaseGenericError": MessageLookupByLibrary.simpleMessage("请求失败，请重试。"),
     "purchaseGetCard": MessageLookupByLibrary.simpleMessage("获取礼品卡"),
     "purchaseGetCardDescription": MessageLookupByLibrary.simpleMessage(
-      "可联系以下任一微信号购买礼品卡或获取帮助。",
+      "可通过自助发卡商店、在线客服或备用微信购买礼品卡与获取协助。",
+    ),
+    "purchaseGmailAliasError": MessageLookupByLibrary.simpleMessage(
+      "当前站点不支持 Gmail 别名邮箱（含 + 号），请使用主邮箱地址。",
     ),
     "purchaseHandoffDescription": MessageLookupByLibrary.simpleMessage(
       "完成购卡并复制兑换码后，切回本窗口将自动识别并查验权益（不会自动核销）。",
@@ -1234,7 +1243,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "purchasePlanUnknown": MessageLookupByLibrary.simpleMessage("订阅套餐"),
     "purchasePlanUnlimited": MessageLookupByLibrary.simpleMessage("不限"),
     "purchasePlansDescription": MessageLookupByLibrary.simpleMessage(
-      "价格按网站标价显示；币种及购买请联系下方微信确认，获取礼品卡后在此兑换。",
+      "价格按网站标价显示；点击「去购买」前往自助发卡商店购卡，复制兑换码后返回本页核销。",
     ),
     "purchasePlansEmpty": MessageLookupByLibrary.simpleMessage("暂无可购买的套餐。"),
     "purchasePlansError": MessageLookupByLibrary.simpleMessage("套餐加载失败，请重试。"),

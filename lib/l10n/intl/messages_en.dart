@@ -1524,6 +1524,9 @@ class MessageLookup extends MessageLookupByLibrary {
     "purchaseCheck": MessageLookupByLibrary.simpleMessage("Preview benefits"),
     "purchaseChecking": MessageLookupByLibrary.simpleMessage("Checking…"),
     "purchaseClearCode": MessageLookupByLibrary.simpleMessage("Clear code"),
+    "purchaseClipboardEmpty": MessageLookupByLibrary.simpleMessage(
+      "No valid gift card code found in clipboard.",
+    ),
     "purchaseCode": MessageLookupByLibrary.simpleMessage("Gift card code"),
     "purchaseCodeFormatError": MessageLookupByLibrary.simpleMessage(
       "Enter an 8–32 character code using letters and numbers.",
@@ -1538,6 +1541,9 @@ class MessageLookup extends MessageLookupByLibrary {
       "Copy plan inquiry",
     ),
     "purchaseEmail": MessageLookupByLibrary.simpleMessage("Email address"),
+    "purchaseEmailDomainError": MessageLookupByLibrary.simpleMessage(
+      "This email domain is not allowed. Try another email address or register on the website.",
+    ),
     "purchaseEmailExistsError": MessageLookupByLibrary.simpleMessage(
       "This email is already registered. Switch to Sign in.",
     ),
@@ -1564,7 +1570,10 @@ class MessageLookup extends MessageLookupByLibrary {
     ),
     "purchaseGetCard": MessageLookupByLibrary.simpleMessage("Get a gift card"),
     "purchaseGetCardDescription": MessageLookupByLibrary.simpleMessage(
-      "Contact either WeChat account below to buy a gift card or get help.",
+      "Buy a gift card through the self-service store, live support, or backup WeChat contacts below.",
+    ),
+    "purchaseGmailAliasError": MessageLookupByLibrary.simpleMessage(
+      "Gmail alias addresses (with \'+\') are not allowed. Use your base Gmail address.",
     ),
     "purchaseHandoffDescription": MessageLookupByLibrary.simpleMessage(
       "Copy your code after purchase and return to this window to auto-preview benefits (never redeemed without confirmation).",
@@ -1715,7 +1724,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "purchasePlanUnknown": MessageLookupByLibrary.simpleMessage("Subscription"),
     "purchasePlanUnlimited": MessageLookupByLibrary.simpleMessage("Unlimited"),
     "purchasePlansDescription": MessageLookupByLibrary.simpleMessage(
-      "Prices are shown as listed on the website. Confirm the currency and buy a gift card through the WeChat contacts below, then redeem it here.",
+      "Prices are shown as listed on the website. Confirm the currency on the store page when buying a gift card, then return here to redeem.",
     ),
     "purchasePlansEmpty": MessageLookupByLibrary.simpleMessage(
       "No plans are currently available.",

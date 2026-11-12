@@ -268,36 +268,103 @@ class XboardPurchaseChannels {
       cardStore200gUrl != null ||
       cardStore500gUrl != null;
 
-  bool get hasChatwoot =>
-      chatwootBaseUrl != null &&
-      chatwootWebsiteToken != null &&
-      chatwootWebsiteToken!.trim().isNotEmpty;
+  bool get hasChatwoot => resolveChatwootWidgetUrl() != null;
 
-  static final RegExp _contentPurchaseLinkPattern = RegExp(
-    r'(?:购买链接|购卡链接|发卡链接|purchase\s*(?:url|link))\s*[:：]\s*(https://[^\s)<>\]"”]+)',
+  static final RegExp _chatwootTokenPattern =
+      RegExp(r'^[A-Za-z0-9_-]{1,128}$');
+
+  Uri? resolveChatwootWidgetUrl({String locale = 'zh_CN'}) {
+    final base = chatwootBaseUrl;
+    final token = chatwootWebsiteToken?.trim() ?? '';
+    if (base == null ||
+        base.scheme != 'https' ||
+        base.host.isEmpty ||
+        base.userInfo.isNotEmpty ||
+        base.hasQuery ||
+        base.hasFragment ||
+        (base.path.isNotEmpty && base.path != '/') ||
+        !_chatwootTokenPattern.hasMatch(token)) {
+      return null;
+    }
+    return base.replace(
+      path: '/widget',
+      queryParameters: <String, String>{
+        'website_token': token,
+        'locale': locale,
+      },
+    );
+  }
+
+  static final RegExp _metadataLinePattern = RegExp(
+    r'^(?:[•·\-*+]\s*)?\*{0,2}(?:购买链接|购卡链接|发卡链接|发卡网|card_store_url|purchase\s*(?:url|link))\*{0,2}\s*[:：]\s*(.+)$',
     caseSensitive: false,
   );
 
-  static Uri? extractPlanContentPurchaseUrl(String content) {
-    if (content.trim().isEmpty) return null;
-    final match = _contentPurchaseLinkPattern.firstMatch(content);
-    if (match == null) return null;
-    final parsed = Uri.tryParse(match.group(1)!.trim());
+  static final RegExp _markdownLinkUrlPattern = RegExp(
+    r'\[[^\]]*\]\(\s*(https://[^\s)]+)\s*\)',
+    caseSensitive: false,
+  );
+
+  static final RegExp _bareHttpsUrlPattern = RegExp(
+    r'https://[^\s<>\]"”]+',
+    caseSensitive: false,
+  );
+
+  static final RegExp _trailingUrlNoise = RegExp(
+    r'''[，。；！？、,.;!?'")\]>*`\s]+$''',
+  );
+
+  static Uri? _sanitizeHttpsPurchaseUri(String rawCandidate) {
+    final cleaned = rawCandidate.trim().replaceAll(_trailingUrlNoise, '');
+    if (cleaned.isEmpty) return null;
+    final parsed = Uri.tryParse(cleaned);
     if (parsed == null ||
         parsed.scheme != 'https' ||
         parsed.host.isEmpty ||
-        parsed.userInfo.isNotEmpty) {
+        parsed.userInfo.isNotEmpty ||
+        parsed.hasFragment) {
       return null;
     }
     return parsed;
   }
 
+  static Uri? extractPlanContentPurchaseUrl(String content) {
+    if (content.trim().isEmpty) return null;
+    for (final rawLine in content.split(RegExp(r'\r?\n'))) {
+      final lineMatch = _metadataLinePattern.firstMatch(rawLine.trim());
+      if (lineMatch == null) continue;
+      final rhs = lineMatch.group(1)!.trim();
+      final mdMatch = _markdownLinkUrlPattern.firstMatch(rhs);
+      if (mdMatch != null) {
+        final mdUri = _sanitizeHttpsPurchaseUri(mdMatch.group(1)!);
+        if (mdUri != null) return mdUri;
+      }
+      final bareMatch = _bareHttpsUrlPattern.firstMatch(rhs);
+      if (bareMatch != null) {
+        final bareUri = _sanitizeHttpsPurchaseUri(bareMatch.group(0)!);
+        if (bareUri != null) return bareUri;
+      }
+    }
+    return null;
+  }
+
+  static String stripPlanPurchaseMetadata(String content) {
+    if (content.trim().isEmpty) return content;
+    final kept = content
+        .split(RegExp(r'\r?\n'))
+        .where((line) => !_metadataLinePattern.hasMatch(line.trim()))
+        .toList();
+    return kept.join('\n').trim();
+  }
+
   static int? detectTierGiB(XboardPlanOffer plan) {
-    if (const {50, 100, 200, 500}.contains(plan.transferGiB)) {
-      return plan.transferGiB;
+    if (plan.transferGiB > 0) {
+      return const {50, 100, 200, 500}.contains(plan.transferGiB)
+          ? plan.transferGiB
+          : null;
     }
     final match = RegExp(
-      r'(?:^|[^0-9])(50|100|200|500)\s*(?:gib|gb|g)(?:$|[^a-z0-9])',
+      r'(?<![0-9.])(50|100|200|500)\s*(?:gib|gb|g)(?![a-z0-9])',
       caseSensitive: false,
     ).firstMatch(plan.name);
     if (match == null) return null;

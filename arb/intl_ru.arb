@@ -508,7 +508,7 @@
   "openPanel": "Открыть панель",
   "downloadingZashboard": "Качаю Zashboard…",
   "purchaseAvailablePlans": "Доступные тарифы",
-  "purchasePlansDescription": "Цены указаны как на сайте. Уточните валюту и купите подарочную карту через контакты WeChat ниже, затем активируйте её здесь.",
+  "purchasePlansDescription": "Цены указаны как на сайте. Нажмите «Купить» для перехода в магазин кодов, затем активируйте полученный код здесь.",
   "purchasePlansLoading": "Загрузка тарифов…",
   "purchasePlansEmpty": "Сейчас нет доступных тарифов.",
   "purchasePlansError": "Не удалось загрузить тарифы. Повторите попытку.",
@@ -1362,5 +1362,9 @@
   "purchaseBackupContactsLabel": "Резервная поддержка (WeChat)",
   "purchaseEmailExistsError": "Этот email уже зарегистрирован. Переключитесь на «Вход».",
   "purchaseRegistrationClosedError": "Регистрация новых аккаунтов временно закрыта.",
-  "purchaseRegisterWebRequiredError": "Требуется подтверждение почты или CAPTCHA. Нажмите «Создать аккаунт на сайте» ниже."
+  "purchaseRegisterWebRequiredError": "Требуется подтверждение почты или CAPTCHA. Нажмите «Создать аккаунт на сайте» ниже.",
+  "purchaseGetCardDescription": "Приобрести карту или получить помощь можно через магазин карт, онлайн-поддержку или контакты WeChat ниже.",
+  "purchaseClipboardEmpty": "В буфере обмена не найден код активации.",
+  "purchaseEmailDomainError": "Этот почтовый домен не поддерживается. Используйте другой адрес электронной почты.",
+  "purchaseGmailAliasError": "Псевдонимы Gmail (со знаком «+») не поддерживаются. Используйте основной адрес."
 }

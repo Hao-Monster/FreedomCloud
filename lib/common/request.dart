@@ -57,7 +57,13 @@ class Request {
   }
   late final Dio _dio;
   late final Dio _clashDio;
-  final _secureSubscription = SecureSubscriptionDownloader();
+  final _secureSubscription = SecureSubscriptionDownloader(
+    shouldFallbackToDirect: (uri) =>
+        HttpOverrides.current is FlClashHttpOverrides &&
+        globalState.isAppStateInitialized &&
+        globalState.isConfigInitialized &&
+        FlClashHttpOverrides.handleFindProxy(uri).startsWith('PROXY '),
+  );
   String? userAgent;
 
   Future<Response<Uint8List>> getFileResponseForUrl(

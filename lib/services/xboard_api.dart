@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:dio/dio.dart';
 import 'package:dio/io.dart';
 import 'package:flclashx/models/xboard.dart';
+import 'package:flclashx/services/pre_request_transport.dart';
 
 abstract class XboardApi {
   Uri get baseUri;
@@ -61,17 +62,26 @@ class DioXboardApi implements XboardApi, XboardExtendedApi {
           // certificate override for account credentials and gift codes.
           final client = HttpClient()
             ..badCertificateCallback = ((_, __, ___) => false);
-          return client;
+          return wrapPreRequestHttpClient(client);
         },
       );
     }
     _dio.interceptors.clear();
-    _dio.options = _buildBaseOptions(this.baseUri);
+    _dio.options = _buildBaseOptions(
+      this.baseUri,
+      connectTimeout: dio == null
+          ? const Duration(seconds: 6)
+          : const Duration(seconds: 15),
+    );
   }
 
-  static BaseOptions _buildBaseOptions(Uri origin) => BaseOptions(
+  static BaseOptions _buildBaseOptions(
+    Uri origin, {
+    Duration connectTimeout = const Duration(seconds: 15),
+  }) =>
+      BaseOptions(
         baseUrl: origin.origin,
-        connectTimeout: const Duration(seconds: 15),
+        connectTimeout: connectTimeout,
         sendTimeout: const Duration(seconds: 20),
         receiveTimeout: const Duration(seconds: 20),
         contentType: Headers.jsonContentType,
@@ -101,9 +111,11 @@ class DioXboardApi implements XboardApi, XboardExtendedApi {
     final direct = Dio(_buildBaseOptions(baseUri))
       ..interceptors.clear()
       ..httpClientAdapter = IOHttpClientAdapter(
-        createHttpClient: () => HttpClient()
-          ..findProxy = ((_) => 'DIRECT')
-          ..badCertificateCallback = ((_, __, ___) => false),
+        createHttpClient: () => wrapPreRequestHttpClient(
+          HttpClient()
+            ..findProxy = ((_) => 'DIRECT')
+            ..badCertificateCallback = ((_, __, ___) => false),
+        ),
       );
     _directDio = direct;
     return direct;
@@ -178,6 +190,7 @@ class DioXboardApi implements XboardApi, XboardExtendedApi {
         '/api/v1/passport/auth/register',
         method: 'POST',
         data: {'email': email.trim(), 'password': password},
+        nonIdempotentAfterSend: true,
         parse: (body) {
           final result = _data(body);
           final authorization = _string(result, 'auth_data');
@@ -339,8 +352,11 @@ class DioXboardApi implements XboardApi, XboardExtendedApi {
       );
 
   @override
-  Future<Uri?> getCardStore(String authorization) async =>
-      (await getUserPurchaseChannels(authorization)).cardStoreUrl;
+  Future<Uri?> getCardStore(String authorization) => _request(
+        '/api/v1/user/purchase-channels',
+        authorization: authorization,
+        parse: (body) => _optionalHttpsField(_data(body), 'card_store_url'),
+      );
 
   @override
   Future<void> logout(String authorization) => _request<void>(
@@ -361,19 +377,10 @@ class DioXboardApi implements XboardApi, XboardExtendedApi {
   bool _canFallbackToDirect(DioException error, {required bool mutation}) {
     if (mutation ||
         !_ownsTransport ||
-        error.response != null ||
         !(_shouldFallbackToDirect?.call() ?? false)) {
       return false;
     }
-    return switch (error.type) {
-      DioExceptionType.connectionError ||
-      DioExceptionType.connectionTimeout ||
-      DioExceptionType.sendTimeout =>
-        true,
-      DioExceptionType.unknown =>
-        error.error is SocketException || error.error is HttpException,
-      _ => false,
-    };
+    return isPreRequestDioFailure(error);
   }
 
   Future<Response<Object?>> _performRequest(
@@ -405,6 +412,7 @@ class DioXboardApi implements XboardApi, XboardExtendedApi {
     Map<String, Object?>? data,
     Map<String, Object?>? queryParameters,
     bool mutation = false,
+    bool nonIdempotentAfterSend = false,
     bool emptyResponse = false,
     required T Function(Object? body) parse,
   }) async {
@@ -416,6 +424,7 @@ class DioXboardApi implements XboardApi, XboardExtendedApi {
       );
     }
     int? status;
+    final uncertainAfterSend = mutation || nonIdempotentAfterSend;
     try {
       Response<Object?> response;
       try {
@@ -445,18 +454,22 @@ class DioXboardApi implements XboardApi, XboardExtendedApi {
           code: 'redirect_blocked',
           message: '购买服务返回了重定向，请联系管理员核对服务地址',
           statusCode: status,
-          isUncertain: mutation,
+          isUncertain: uncertainAfterSend,
         );
       }
       if (status < 200 || status >= 300) {
-        throw _serverError(response.data, status, mutation: mutation);
+        throw _serverError(
+          response.data,
+          status,
+          mutation: uncertainAfterSend,
+        );
       }
       if (emptyResponse) {
         if (status != 204) _invalid();
       } else {
         final root = _object(response.data);
         if (root['status'] == 'fail') {
-          throw _serverError(root, status, mutation: mutation);
+          throw _serverError(root, status, mutation: uncertainAfterSend);
         }
       }
       return parse(response.data);
@@ -465,22 +478,25 @@ class DioXboardApi implements XboardApi, XboardExtendedApi {
     } on FormatException {
       throw XboardException(
         code: 'invalid_response',
-        message: mutation ? '服务响应格式异常，兑换结果需要进一步确认' : '服务响应格式异常，请稍后重试',
+        message: uncertainAfterSend ? '服务响应格式异常，兑换结果需要进一步确认' : '服务响应格式异常，请稍后重试',
         statusCode: status,
-        isUncertain: mutation,
+        isUncertain: uncertainAfterSend,
       );
     } on DioException catch (error) {
       // Never expose DioException: it can include request headers and bodies.
-      final certificate = error.type == DioExceptionType.badCertificate;
+      final certificate = isCertificateDioFailure(error);
+      final uncertain = !certificate &&
+          (mutation ||
+              (nonIdempotentAfterSend && !isPreRequestDioFailure(error)));
       throw XboardException(
         code: certificate ? 'certificate_error' : 'connection_error',
         message: certificate
             ? '购买服务的安全证书无法验证'
-            : mutation
-                ? '连接中断，兑换结果需要进一步确认'
+            : uncertain
+                ? '连接中断，请确认操作是否已生效后再重试'
                 : '无法连接购买服务，请检查网络后重试',
         statusCode: error.response?.statusCode,
-        isUncertain: mutation && !certificate,
+        isUncertain: uncertain,
       );
     }
   }
@@ -748,6 +764,32 @@ XboardException _serverError(Object? body, int status,
       statusCode: status,
     );
   }
+  final data = body is Map<String, dynamic> ? body : null;
+  final errorObj = data?['error'] is Map<String, dynamic>
+      ? data!['error'] as Map<String, dynamic>
+      : null;
+  final backendCode = errorObj?['code'];
+  final fields = errorObj?['fields'] is Map<String, dynamic>
+      ? errorObj!['fields'] as Map<String, dynamic>
+      : null;
+  if (backendCode == 'invitation_code_required' ||
+      backendCode == 'invitation_code_invalid' ||
+      backendCode == 'invitation_unavailable' ||
+      backendCode == 'captcha_invalid' ||
+      backendCode == 'captcha_unavailable' ||
+      backendCode == 'captcha_required' ||
+      backendCode == 'captcha_failed' ||
+      backendCode == 'mail_unavailable' ||
+      backendCode == 'registration_email_invalid' ||
+      backendCode == 'registration_email_disabled' ||
+      (backendCode == 'validation_failed' &&
+          (fields?.containsKey('email_code') ?? false))) {
+    return XboardException(
+      code: 'register_web_required',
+      message: '',
+      statusCode: status,
+    );
+  }
   if (status >= 500 || status == 408) {
     return XboardException(
       code: 'server_error',
@@ -756,12 +798,6 @@ XboardException _serverError(Object? body, int status,
       isUncertain: mutation,
     );
   }
-  final data = body is Map<String, dynamic> ? body : null;
-  final errorObj =
-      data?['error'] is Map<String, dynamic> ? data!['error'] as Map<String, dynamic> : null;
-  final backendCode = errorObj?['code'];
-  final fields =
-      errorObj?['fields'] is Map<String, dynamic> ? errorObj!['fields'] as Map<String, dynamic> : null;
   if (backendCode == 'email_exists') {
     return XboardException(
       code: 'email_exists',
@@ -776,13 +812,16 @@ XboardException _serverError(Object? body, int status,
       statusCode: status,
     );
   }
-  if (backendCode == 'invitation_code_required' ||
-      backendCode == 'captcha_required' ||
-      backendCode == 'captcha_failed' ||
-      (backendCode == 'validation_failed' &&
-          (fields?.containsKey('email_code') ?? false))) {
+  if (backendCode == 'email_domain_not_allowed') {
     return XboardException(
-      code: 'register_web_required',
+      code: 'email_domain_not_allowed',
+      message: '',
+      statusCode: status,
+    );
+  }
+  if (backendCode == 'gmail_alias_not_allowed') {
+    return XboardException(
+      code: 'gmail_alias_not_allowed',
       message: '',
       statusCode: status,
     );
@@ -803,13 +842,33 @@ Uri? _optionalHttpsField(Map<String, Object?> data, String key) {
   return trimmed.isEmpty ? null : _httpsUrl(trimmed);
 }
 
+Uri? _safeOptionalChannelHttpsUrl(Map<String, Object?> data, String key) {
+  final raw = data[key];
+  if (raw == null) return null;
+  if (raw is! String) _invalid();
+  final trimmed = raw.trim();
+  if (trimmed.isEmpty) return null;
+  final parsed = Uri.tryParse(trimmed);
+  if (parsed == null ||
+      parsed.scheme != 'https' ||
+      parsed.host.isEmpty ||
+      parsed.userInfo.isNotEmpty ||
+      parsed.hasFragment) {
+    return null;
+  }
+  return parsed;
+}
+
 XboardPurchaseChannels _parsePurchaseChannels(Map<String, Object?> data) =>
     XboardPurchaseChannels(
-      cardStoreUrl: _optionalHttpsField(data, 'card_store_url'),
-      cardStore50gUrl: _optionalHttpsField(data, 'card_store_50g_url'),
-      cardStore100gUrl: _optionalHttpsField(data, 'card_store_100g_url'),
-      cardStore200gUrl: _optionalHttpsField(data, 'card_store_200g_url'),
-      cardStore500gUrl: _optionalHttpsField(data, 'card_store_500g_url'),
-      chatwootBaseUrl: _optionalHttpsField(data, 'chatwoot_base_url'),
+      cardStoreUrl: _safeOptionalChannelHttpsUrl(data, 'card_store_url'),
+      cardStore50gUrl: _safeOptionalChannelHttpsUrl(data, 'card_store_50g_url'),
+      cardStore100gUrl:
+          _safeOptionalChannelHttpsUrl(data, 'card_store_100g_url'),
+      cardStore200gUrl:
+          _safeOptionalChannelHttpsUrl(data, 'card_store_200g_url'),
+      cardStore500gUrl:
+          _safeOptionalChannelHttpsUrl(data, 'card_store_500g_url'),
+      chatwootBaseUrl: _safeOptionalChannelHttpsUrl(data, 'chatwoot_base_url'),
       chatwootWebsiteToken: _optionalString(data, 'chatwoot_website_token'),
     );

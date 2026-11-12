@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flclashx/models/xboard.dart';
 import 'package:flclashx/services/purchase_storage.dart';
 import 'package:flclashx/services/xboard_api.dart';
@@ -59,7 +61,9 @@ class PurchaseManager extends ChangeNotifier {
   bool _pendingStateReady = false;
   _GiftOperation? _giftOperation;
   _AuthOperation? _authOperation;
-  Future<XboardPurchaseChannels?>? _guestChannelsInFlight;
+  Future<XboardPurchaseChannels?>? _channelsInFlight;
+  int _sessionEpoch = 0;
+  int? _initialSyncAttemptedAccountId;
 
   bool get checkingCode => _giftOperation == _GiftOperation.check;
   bool get redeemingCode => _giftOperation == _GiftOperation.redeem;
@@ -74,6 +78,15 @@ class PurchaseManager extends ChangeNotifier {
       (preview?.canRedeem ?? false) &&
       _previewCode == code;
   bool get canSync => loggedIn && !busy && (subscription?.valid ?? false);
+
+  bool hasAttemptedInitialSyncFor(int accountId) =>
+      _initialSyncAttemptedAccountId == accountId;
+
+  void clearError() {
+    if (_disposed || error == null) return;
+    error = null;
+    _notify();
+  }
 
   Uri? resolvePlanStoreUrl(XboardPlanOffer plan) =>
       XboardPurchaseChannels.extractPlanContentPurchaseUrl(plan.content) ??
@@ -92,12 +105,15 @@ class PurchaseManager extends ChangeNotifier {
     _notify();
   }
 
-  Future<XboardPurchaseChannels?> ensurePurchaseChannels() {
-    if (_disposed || purchaseChannels != null) {
+  Future<XboardPurchaseChannels?> ensurePurchaseChannels({bool force = false}) {
+    if (_disposed) {
+      return Future<XboardPurchaseChannels?>.value(null);
+    }
+    if (!force && purchaseChannels != null) {
       return Future<XboardPurchaseChannels?>.value(purchaseChannels);
     }
-    final inFlight = _guestChannelsInFlight;
-    if (inFlight != null) return inFlight;
+    final inFlight = _channelsInFlight;
+    if (inFlight != null && !force) return inFlight;
     final extApi = switch (api) {
       final XboardExtendedApi value => value,
       _ => null,
@@ -105,27 +121,46 @@ class PurchaseManager extends ChangeNotifier {
     if (extApi == null) {
       return Future<XboardPurchaseChannels?>.value(null);
     }
-    final future = () async {
+    final epochAtStart = _sessionEpoch;
+    final authAtStart = _authorization;
+    final wasLoggedIn = loggedIn && authAtStart != null;
+    late final Future<XboardPurchaseChannels?> future;
+    future = () async {
       try {
-        final loaded = await extApi.getGuestPurchaseChannels();
-        if (!_disposed) {
+        final loaded = wasLoggedIn
+            ? await extApi.getUserPurchaseChannels(authAtStart)
+            : await extApi.getGuestPurchaseChannels();
+        if (!_disposed &&
+            _sessionEpoch == epochAtStart &&
+            loggedIn == wasLoggedIn) {
           purchaseChannels = loaded;
-          cardStoreUrl ??= loaded.cardStoreUrl;
+          if (wasLoggedIn) {
+            cardStoreUrl = loaded.cardStoreUrl;
+          } else {
+            cardStoreUrl ??= loaded.cardStoreUrl;
+          }
           channelError = null;
           _notify();
         }
         return loaded;
       } on Exception catch (cause) {
-        if (!_disposed) {
-          channelError = _failure(cause);
-          _notify();
+        if (!_disposed &&
+            _sessionEpoch == epochAtStart &&
+            loggedIn == wasLoggedIn) {
+          final failure = _failure(cause);
+          if (!failure.isUnauthorized) {
+            channelError = failure;
+            _notify();
+          }
         }
         return null;
       } finally {
-        _guestChannelsInFlight = null;
+        if (identical(_channelsInFlight, future)) {
+          _channelsInFlight = null;
+        }
       }
     }();
-    _guestChannelsInFlight = future;
+    _channelsInFlight = future;
     return future;
   }
 
@@ -162,18 +197,21 @@ class PurchaseManager extends ChangeNotifier {
     Future<void> Function() action, {
     _GiftOperation? giftOperation,
     _AuthOperation? authOperation,
+    bool clearError = true,
   }) async {
     if (_disposed || busy) return;
     busy = true;
     _giftOperation = giftOperation;
     _authOperation = authOperation;
-    error = null;
+    if (clearError) {
+      error = null;
+    }
     _notify();
     try {
       await action();
     } on Exception catch (cause) {
       final failure = _failure(cause);
-      if (failure.isUnauthorized) {
+      if (failure.isUnauthorized && loggedIn) {
         try {
           await storage.clearSession();
         } on Exception {
@@ -183,6 +221,7 @@ class PurchaseManager extends ChangeNotifier {
         final confirmedReceipt = receipt;
         _clearAccount();
         receipt = confirmedReceipt;
+        unawaited(ensurePurchaseChannels());
       }
       error ??= failure;
     } finally {
@@ -196,17 +235,35 @@ class PurchaseManager extends ChangeNotifier {
 
   Future<void> initialize() => _run(() async {
         final saved = await _storageReadSession();
-        if (saved == null) return;
-        final restored = await api.getAccount(saved.authorization);
-        if (restored.id != saved.accountId || restored.isDistributor) {
-          await storage.clearSession();
-          throw const XboardException(
-              code: 'purchase_account_unsupported', message: '');
+        if (saved == null) {
+          unawaited(ensurePurchaseChannels(force: channelError != null));
+          return;
         }
-        _authorization = saved.authorization;
-        account = restored;
-        await _restorePending();
-        await _refreshData();
+        try {
+          final restored = await api.getAccount(saved.authorization);
+          if (restored.id != saved.accountId || restored.isDistributor) {
+            await storage.clearSession();
+            throw const XboardException(
+                code: 'purchase_account_unsupported', message: '');
+          }
+          _sessionEpoch++;
+          _authorization = saved.authorization;
+          account = restored;
+          await _restorePending();
+          await _refreshData();
+        } on XboardException catch (cause) {
+          if (cause.isUnauthorized) {
+            try {
+              await storage.clearSession();
+            } on Exception {
+              throw const XboardException(
+                  code: 'secure_storage_failed', message: '');
+            }
+            _clearAccount();
+            unawaited(ensurePurchaseChannels());
+          }
+          rethrow;
+        }
       });
 
   Future<PurchaseSession?> _storageReadSession() async {
@@ -245,6 +302,8 @@ class PurchaseManager extends ChangeNotifier {
       } on Exception {
         throw const XboardException(code: 'secure_storage_failed', message: '');
       }
+      _sessionEpoch++;
+      _channelsInFlight = null;
       _authorization = authorization;
       account = authenticated;
     } on Exception {
@@ -261,7 +320,7 @@ class PurchaseManager extends ChangeNotifier {
     }
     await _refreshData();
     if (autoSyncSubscription && (subscription?.valid ?? false) && !_disposed) {
-      await _syncLatest();
+      await _syncLatest(reuseCurrentSubscription: true);
     }
     if (_pending == null &&
         !_disposed &&
@@ -324,6 +383,7 @@ class PurchaseManager extends ChangeNotifier {
               code: 'secure_storage_failed', message: '');
         }
         _clearAccount();
+        unawaited(ensurePurchaseChannels());
         if (authorization != null) {
           try {
             await api.logout(authorization);
@@ -337,6 +397,9 @@ class PurchaseManager extends ChangeNotifier {
       });
 
   void _clearAccount() {
+    _sessionEpoch++;
+    _channelsInFlight = null;
+    _initialSyncAttemptedAccountId = null;
     _authorization = null;
     account = null;
     subscription = null;
@@ -359,9 +422,12 @@ class PurchaseManager extends ChangeNotifier {
   static final RegExp _codeSeparators =
       RegExp(r'[\s\u00AD\u2010-\u2015\u2212-]+');
 
+  static String normalizeCodeInput(String value) =>
+      value.replaceAll(_codeSeparators, '').toUpperCase();
+
   void setCode(String value) {
     if (busy || unresolvedRedemption || _disposed) return;
-    final normalized = value.replaceAll(_codeSeparators, '').toUpperCase();
+    final normalized = normalizeCodeInput(value);
     if (normalized == code) return;
     code = normalized;
     preview = null;
@@ -602,17 +668,25 @@ class PurchaseManager extends ChangeNotifier {
     }
   }
 
-  Future<void> syncSubscription() => _run(() async {
-        if (loggedIn) await _syncLatest();
-      });
+  Future<void> syncSubscription() => _run(
+        () async {
+          if (loggedIn) await _syncLatest();
+        },
+        clearError: false,
+      );
 
-  Future<void> _syncLatest() async {
+  Future<void> _syncLatest({bool reuseCurrentSubscription = false}) async {
+    if (account != null) {
+      _initialSyncAttemptedAccountId = account!.id;
+    }
     syncError = null;
     subscriptionSynced = false;
     syncing = true;
     _notify();
     try {
-      subscription = await api.getSubscription(_authorization!);
+      if (!reuseCurrentSubscription || subscription == null) {
+        subscription = await api.getSubscription(_authorization!);
+      }
       if (subscription!.valid && !_disposed) {
         await _synchronize(account!, subscription!);
         subscriptionSynced = true;

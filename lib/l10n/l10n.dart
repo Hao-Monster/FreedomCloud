@@ -5074,10 +5074,10 @@ class AppLocalizations {
     );
   }
 
-  /// `Contact either WeChat account below to buy a gift card or get help.`
+  /// `Buy a gift card through the self-service store, live support, or backup WeChat contacts below.`
   String get purchaseGetCardDescription {
     return Intl.message(
-      'Contact either WeChat account below to buy a gift card or get help.',
+      'Buy a gift card through the self-service store, live support, or backup WeChat contacts below.',
       name: 'purchaseGetCardDescription',
       desc: '',
       args: [],
@@ -5269,10 +5269,10 @@ class AppLocalizations {
     );
   }
 
-  /// `Prices are shown as listed on the website. Confirm the currency and buy a gift card through the WeChat contacts below, then redeem it here.`
+  /// `Prices are shown as listed on the website. Confirm the currency on the store page when buying a gift card, then return here to redeem.`
   String get purchasePlansDescription {
     return Intl.message(
-      'Prices are shown as listed on the website. Confirm the currency and buy a gift card through the WeChat contacts below, then redeem it here.',
+      'Prices are shown as listed on the website. Confirm the currency on the store page when buying a gift card, then return here to redeem.',
       name: 'purchasePlansDescription',
       desc: '',
       args: [],
@@ -8693,6 +8693,36 @@ class AppLocalizations {
     return Intl.message(
       'Email verification or CAPTCHA is enabled. Use \'Create account on website\' below.',
       name: 'purchaseRegisterWebRequiredError',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `No valid gift card code found in clipboard.`
+  String get purchaseClipboardEmpty {
+    return Intl.message(
+      'No valid gift card code found in clipboard.',
+      name: 'purchaseClipboardEmpty',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `This email domain is not allowed. Try another email address or register on the website.`
+  String get purchaseEmailDomainError {
+    return Intl.message(
+      'This email domain is not allowed. Try another email address or register on the website.',
+      name: 'purchaseEmailDomainError',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Gmail alias addresses (with '+') are not allowed. Use your base Gmail address.`
+  String get purchaseGmailAliasError {
+    return Intl.message(
+      'Gmail alias addresses (with \'+\') are not allowed. Use your base Gmail address.',
+      name: 'purchaseGmailAliasError',
       desc: '',
       args: [],
     );

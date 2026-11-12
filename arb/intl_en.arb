@@ -620,7 +620,7 @@
   "purchaseHistoryPage": "Page",
   "purchaseHistoryTotal": "Total",
   "purchaseGetCard": "Get a gift card",
-  "purchaseGetCardDescription": "Contact either WeChat account below to buy a gift card or get help.",
+  "purchaseGetCardDescription": "Buy a gift card through the self-service store, live support, or backup WeChat contacts below.",
   "purchaseCardStore": "Open gift card store",
   "purchaseOpenLinkFailed": "Could not open the page. Please try again.",
   "purchaseRestoring": "Restoring account…",
@@ -640,7 +640,7 @@
   "purchaseCodeFormatError": "Enter an 8–32 character code using letters and numbers.",
   "purchaseChannelError": "Gift card store information could not be loaded. You can still contact support below.",
   "purchaseAvailablePlans": "Available plans",
-  "purchasePlansDescription": "Prices are shown as listed on the website. Confirm the currency and buy a gift card through the WeChat contacts below, then redeem it here.",
+  "purchasePlansDescription": "Prices are shown as listed on the website. Confirm the currency on the store page when buying a gift card, then return here to redeem.",
   "purchasePlansLoading": "Loading plans…",
   "purchasePlansEmpty": "No plans are currently available.",
   "purchasePlansError": "Plans could not be loaded. Please try again.",
@@ -1507,5 +1507,8 @@
   "purchaseBackupContactsLabel": "Backup support (WeChat)",
   "purchaseEmailExistsError": "This email is already registered. Switch to Sign in.",
   "purchaseRegistrationClosedError": "New account registration is currently closed.",
-  "purchaseRegisterWebRequiredError": "Email verification or CAPTCHA is enabled. Use 'Create account on website' below."
+  "purchaseRegisterWebRequiredError": "Email verification or CAPTCHA is enabled. Use 'Create account on website' below.",
+  "purchaseClipboardEmpty": "No valid gift card code found in clipboard.",
+  "purchaseEmailDomainError": "This email domain is not allowed. Try another email address or register on the website.",
+  "purchaseGmailAliasError": "Gmail alias addresses (with '+') are not allowed. Use your base Gmail address."
 }

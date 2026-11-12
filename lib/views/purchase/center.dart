@@ -11,7 +11,15 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 
-String? _extractStrictResumeCode(String raw) {
+final RegExp _standardUuidPattern = RegExp(
+  r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$',
+  caseSensitive: false,
+);
+
+String? _extractStrictResumeCode(
+  String raw, {
+  required bool allowUnlabeled,
+}) {
   if (raw.trim().isEmpty) return null;
   final sanitized = raw
       .replaceAll(RegExp(r'https?://[\x21-\x7E]+', caseSensitive: false), ' ')
@@ -30,21 +38,26 @@ String? _extractStrictResumeCode(String raw) {
     caseSensitive: false,
   ).firstMatch(sanitized);
   if (labeledMatch != null) {
-    final normalized = labeledMatch.group(1)!.replaceAll('-', '').toUpperCase();
+    final token = labeledMatch.group(1)!;
+    if (_standardUuidPattern.hasMatch(token)) return null;
+    final normalized = token.replaceAll('-', '').toUpperCase();
     if (RegExp(r'^[A-Z0-9]{8,32}$').hasMatch(normalized)) {
       return normalized;
     }
   }
 
+  if (!allowUnlabeled) return null;
+
   final trimmed = sanitized.trim();
+  if (_standardUuidPattern.hasMatch(trimmed)) return null;
   if (RegExp(r'^[A-Za-z0-9]{2,}(?:-[A-Za-z0-9]{2,})+$').hasMatch(trimmed)) {
     final normalized = trimmed.replaceAll('-', '').toUpperCase();
     if (RegExp(r'^[A-Z0-9]{8,32}$').hasMatch(normalized)) {
       return normalized;
     }
   }
-  if (RegExp(r'^(?=.*[A-Z])(?=.*\d)[A-Z0-9]{8,32}$').hasMatch(trimmed)) {
-    return trimmed;
+  if (RegExp(r'^(?=.*[A-Za-z])(?=.*\d)[A-Za-z0-9]{8,32}$').hasMatch(trimmed)) {
+    return trimmed.toUpperCase();
   }
   return null;
 }
@@ -133,11 +146,13 @@ class PurchaseCenter extends StatefulWidget {
     required this.manager,
     required this.openLink,
     required this.openProfiles,
+    this.isActiveTab = true,
   });
 
   final PurchaseManager manager;
   final Future<void> Function(Uri) openLink;
   final VoidCallback openProfiles;
+  final bool isActiveTab;
 
   @override
   State<PurchaseCenter> createState() => _PurchaseCenterState();
@@ -159,7 +174,11 @@ class _PurchaseCenterState extends State<PurchaseCenter>
   bool _historyExpanded = false;
   bool _updatingCodeFromInput = false;
   bool _checkingResumeClipboard = false;
+  bool _openingExternalLink = false;
+  int? _buyingPlanId;
   String? _lastAutoDetectedClipboard;
+  String? _lastHandledNormalizedCode;
+  String _lastNonEmptyManagerCode = '';
 
   PurchaseManager get manager => widget.manager;
   AppLocalizations get l => AppLocalizations.of(context);
@@ -193,28 +212,42 @@ class _PurchaseCenterState extends State<PurchaseCenter>
 
   Future<void> _checkClipboardOnResume() async {
     if (!mounted ||
+        !widget.isActiveTab ||
+        !TickerMode.valuesOf(context).enabled ||
         _checkingResumeClipboard ||
         manager.restoring ||
         manager.busy ||
         manager.syncing ||
         manager.unresolvedRedemption ||
-        manager.code.trim().isNotEmpty) {
+        manager.code.trim().isNotEmpty ||
+        (manager.receipt != null && _handoffPlan == null)) {
       return;
     }
     _checkingResumeClipboard = true;
     try {
       final clip = await Clipboard.getData('text/plain');
       final raw = clip?.text ?? '';
-      if (!mounted || raw.isEmpty || raw == _lastAutoDetectedClipboard) return;
+      if (!mounted ||
+          !widget.isActiveTab ||
+          !TickerMode.valuesOf(context).enabled ||
+          raw.isEmpty ||
+          raw == _lastAutoDetectedClipboard) {
+        return;
+      }
       if (manager.busy ||
           manager.syncing ||
           manager.unresolvedRedemption ||
-          manager.code.trim().isNotEmpty) {
+          manager.code.trim().isNotEmpty ||
+          (manager.receipt != null && _handoffPlan == null)) {
         return;
       }
-      final extracted = _extractStrictResumeCode(raw);
-      if (extracted == null) return;
+      final extracted = _extractStrictResumeCode(
+        raw,
+        allowUnlabeled: _handoffPlan != null,
+      );
+      if (extracted == null || extracted == _lastHandledNormalizedCode) return;
       _lastAutoDetectedClipboard = raw;
+      _lastHandledNormalizedCode = extracted;
       _code.value = TextEditingValue(
         text: extracted,
         selection: TextSelection.collapsed(offset: extracted.length),
@@ -246,15 +279,27 @@ class _PurchaseCenterState extends State<PurchaseCenter>
   }
 
   void _onManagerChanged({bool notifyState = true}) {
-    if (!_updatingCodeFromInput &&
-        _code.text != manager.code &&
-        (manager.code.isEmpty || !_code.value.isComposingRangeValid)) {
+    if (manager.code.isNotEmpty) {
+      _lastNonEmptyManagerCode = manager.code;
+    } else if (manager.receipt != null && _lastNonEmptyManagerCode.isNotEmpty) {
+      _lastHandledNormalizedCode = _lastNonEmptyManagerCode;
+    }
+    final normalizedControllerCode =
+        PurchaseManager.normalizeCodeInput(_code.text);
+    final shouldSyncController = manager.code.isEmpty
+        ? normalizedControllerCode.isNotEmpty
+        : (normalizedControllerCode != manager.code &&
+            !_code.value.isComposingRangeValid);
+    if (!_updatingCodeFromInput && shouldSyncController) {
       _code.value = TextEditingValue(
         text: manager.code,
         selection: TextSelection.collapsed(offset: manager.code.length),
       );
     }
     if (_wasLoggedIn != manager.loggedIn) {
+      if (manager.loggedIn) {
+        TextInput.finishAutofillContext();
+      }
       _password.clear();
       if (!manager.loggedIn) {
         _email.clear();
@@ -302,20 +347,36 @@ class _PurchaseCenterState extends State<PurchaseCenter>
   }
 
   Future<void> _handleBuyPlan(XboardPlanOffer plan) async {
-    var targetUrl = _resolvePlanStoreUrl(plan);
-    if (targetUrl == null && _isRealManager) {
-      await manager.ensurePurchaseChannels();
-      if (!mounted) return;
-      targetUrl = _resolvePlanStoreUrl(plan);
+    if (_buyingPlanId != null || _openingExternalLink) return;
+    if (mounted) {
+      setState(() => _buyingPlanId = plan.id);
+    } else {
+      _buyingPlanId = plan.id;
     }
-    if (targetUrl != null) {
-      if (_isRealManager) {
-        manager.markPlanHandoff(plan);
+    try {
+      var targetUrl = _resolvePlanStoreUrl(plan);
+      if (targetUrl == null && _isRealManager) {
+        await manager.ensurePurchaseChannels(
+          force: manager.channelError != null,
+        );
+        if (!mounted) return;
+        targetUrl = _resolvePlanStoreUrl(plan);
       }
-      await _open(targetUrl);
-      return;
+      if (targetUrl != null) {
+        if (_isRealManager) {
+          manager.markPlanHandoff(plan);
+        }
+        await _open(targetUrl);
+        return;
+      }
+      await _showAcquireSheet(plan);
+    } finally {
+      if (mounted) {
+        setState(() => _buyingPlanId = null);
+      } else {
+        _buyingPlanId = null;
+      }
     }
-    await _showAcquireSheet(plan);
   }
 
   Future<void> _pasteAndCheckHandoff() async {
@@ -345,6 +406,8 @@ class _PurchaseCenterState extends State<PurchaseCenter>
   }
 
   Future<void> _open(Uri uri) async {
+    if (_openingExternalLink) return;
+    _openingExternalLink = true;
     try {
       await widget.openLink(uri);
     } catch (_) {
@@ -352,6 +415,8 @@ class _PurchaseCenterState extends State<PurchaseCenter>
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(l.purchaseOpenLinkFailed)),
       );
+    } finally {
+      _openingExternalLink = false;
     }
   }
 
@@ -368,7 +433,14 @@ class _PurchaseCenterState extends State<PurchaseCenter>
     final raw = clip?.text ?? '';
     if (!mounted) return;
     final extracted = extractRedemptionCodeFromClipboard(raw);
-    if (extracted == null || extracted.isEmpty) return;
+    if (extracted == null || extracted.isEmpty) {
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(SnackBar(content: Text(l.purchaseClipboardEmpty)));
+      return;
+    }
+    _lastAutoDetectedClipboard = raw;
+    _lastHandledNormalizedCode = extracted;
     _code.value = TextEditingValue(
       text: extracted,
       selection: TextSelection.collapsed(offset: extracted.length),
@@ -387,6 +459,11 @@ class _PurchaseCenterState extends State<PurchaseCenter>
   }
 
   Future<void> _showAcquireSheet(XboardPlanOffer plan) async {
+    if (_isRealManager && _resolvePlanStoreUrl(plan) == null) {
+      unawaited(
+        manager.ensurePurchaseChannels(force: manager.channelError != null),
+      );
+    }
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
@@ -443,6 +520,7 @@ class _PurchaseCenterState extends State<PurchaseCenter>
                             openLink: _open,
                             onBuyPlan: _handleBuyPlan,
                             onAcquirePlan: _showAcquireSheet,
+                            buyingPlanId: _buyingPlanId,
                             collapsibleDetails: true,
                           ),
                         ),
@@ -456,7 +534,8 @@ class _PurchaseCenterState extends State<PurchaseCenter>
                             crossAxisAlignment: CrossAxisAlignment.stretch,
                             children: [
                               if (_handoffPlan != null &&
-                                  manager.receipt == null) ...[
+                                  manager.receipt == null &&
+                                  !manager.unresolvedRedemption) ...[
                                 _handoffBanner(_handoffPlan!),
                                 const SizedBox(height: 12),
                               ],
@@ -672,9 +751,10 @@ class _PurchaseCenterState extends State<PurchaseCenter>
               ),
               IconButton(
                 key: const Key('purchase-handoff-dismiss'),
+                tooltip: MaterialLocalizations.of(context).closeButtonTooltip,
                 visualDensity: VisualDensity.compact,
-                padding: EdgeInsets.zero,
-                constraints: const BoxConstraints.tightFor(width: 28, height: 28),
+                padding: const EdgeInsets.all(6),
+                constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
                 onPressed: _isRealManager ? manager.clearPlanHandoff : null,
                 icon: const Icon(Icons.close_rounded, size: 18),
               ),
@@ -692,7 +772,11 @@ class _PurchaseCenterState extends State<PurchaseCenter>
             alignment: Alignment.centerLeft,
             child: FilledButton.tonalIcon(
               key: const Key('purchase-handoff-paste'),
-              onPressed: manager.busy ? null : _pasteAndCheckHandoff,
+              onPressed: manager.busy ||
+                      manager.syncing ||
+                      manager.unresolvedRedemption
+                  ? null
+                  : _pasteAndCheckHandoff,
               icon: const Icon(Icons.content_paste_go_rounded, size: 18),
               label: Text(l.purchaseHandoffPasteAction),
             ),
@@ -740,8 +824,15 @@ class _PurchaseCenterState extends State<PurchaseCenter>
                         enabled: !manager.busy,
                         onTap: () {
                           if (!inRegisterMode) return;
+                          final savedEmail = _email.value;
+                          final savedPassword = _password.value;
                           setState(() => _isRegisterMode = false);
                           _loginForm.currentState?.reset();
+                          _email.value = savedEmail;
+                          _password.value = savedPassword;
+                          if (_isRealManager) {
+                            manager.clearError();
+                          }
                         },
                       );
                       final registerTab = _AuthModeTabButton(
@@ -752,8 +843,15 @@ class _PurchaseCenterState extends State<PurchaseCenter>
                         enabled: !manager.busy,
                         onTap: () {
                           if (inRegisterMode) return;
+                          final savedEmail = _email.value;
+                          final savedPassword = _password.value;
                           setState(() => _isRegisterMode = true);
                           _loginForm.currentState?.reset();
+                          _email.value = savedEmail;
+                          _password.value = savedPassword;
+                          if (_isRealManager) {
+                            manager.clearError();
+                          }
                         },
                       );
                       if (stackTabs) {
@@ -967,32 +1065,34 @@ class _PurchaseCenterState extends State<PurchaseCenter>
                       builder: (context, codeValue, _) {
                         final hasCodeText =
                             codeValue.text.isNotEmpty || manager.code.isNotEmpty;
-                        return ExcludeFocusTraversal(
-                          child: hasCodeText
-                              ? IconButton(
-                                  key: const Key('purchase-prelogin-code-clear'),
-                                  tooltip: l.purchaseClearCode,
-                                  onPressed: manager.busy
-                                      ? null
-                                      : () {
-                                          _code.clear();
-                                          manager.setCode('');
-                                        },
-                                  icon: const Icon(
-                                    Icons.close_rounded,
-                                    size: 18,
-                                  ),
-                                )
-                              : IconButton(
-                                  key: const Key('purchase-prelogin-code-paste'),
-                                  tooltip: l.paste,
-                                  onPressed: manager.busy ? null : _pasteCode,
-                                  icon: const Icon(
-                                    Icons.content_paste_rounded,
-                                    size: 18,
-                                  ),
+                        return hasCodeText
+                            ? IconButton(
+                                key: const Key('purchase-prelogin-code-clear'),
+                                tooltip: l.purchaseClearCode,
+                                onPressed: manager.busy
+                                    ? null
+                                    : () {
+                                        if (manager.code.isNotEmpty) {
+                                          _lastHandledNormalizedCode =
+                                              manager.code;
+                                        }
+                                        _code.clear();
+                                        manager.setCode('');
+                                      },
+                                icon: const Icon(
+                                  Icons.close_rounded,
+                                  size: 18,
                                 ),
-                        );
+                              )
+                            : IconButton(
+                                key: const Key('purchase-prelogin-code-paste'),
+                                tooltip: l.paste,
+                                onPressed: manager.busy ? null : _pasteCode,
+                                icon: const Icon(
+                                  Icons.content_paste_rounded,
+                                  size: 18,
+                                ),
+                              );
                       },
                     ),
                   ),
@@ -1211,6 +1311,9 @@ class _PurchaseCenterState extends State<PurchaseCenter>
                           onPressed: locked
                               ? null
                               : () {
+                                  if (manager.code.isNotEmpty) {
+                                    _lastHandledNormalizedCode = manager.code;
+                                  }
                                   _code.clear();
                                   manager.setCode('');
                                 },
@@ -1689,7 +1792,7 @@ class _PurchaseCenterState extends State<PurchaseCenter>
   Widget _supportSection() {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
-    final chatUrl = _purchaseChannels?.chatwootBaseUrl;
+    final chatUrl = _purchaseChannels?.resolveChatwootWidgetUrl();
     final hasSelfServiceRow = manager.cardStoreUrl != null || chatUrl != null;
 
     return _Section(
@@ -1704,7 +1807,7 @@ class _PurchaseCenterState extends State<PurchaseCenter>
               color: colors.onSurfaceVariant,
             ),
           ),
-          if (manager.channelError != null) ...[
+          if (manager.channelError != null && !hasSelfServiceRow) ...[
             const SizedBox(height: 12),
             _Notice(message: l.purchaseChannelError),
           ],
@@ -1822,6 +1925,8 @@ class _PurchaseCenterState extends State<PurchaseCenter>
         'gift_result_unconfirmed' => l.purchaseUnresolvedDescription,
         'subscription_sync_failed' => l.purchaseSyncError,
         'email_exists' => l.purchaseEmailExistsError,
+        'email_domain_not_allowed' => l.purchaseEmailDomainError,
+        'gmail_alias_not_allowed' => l.purchaseGmailAliasError,
         'registration_closed' => l.purchaseRegistrationClosedError,
         'register_web_required' => l.purchaseRegisterWebRequiredError,
         _ =>
@@ -2126,10 +2231,11 @@ class _AuthModeTabButton extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
-    return ExcludeFocusTraversal(
+    return MergeSemantics(
       child: Semantics(
         button: true,
         selected: selected,
+        inMutuallyExclusiveGroup: true,
         enabled: enabled,
         child: Material(
           color: selected ? colors.surface : Colors.transparent,

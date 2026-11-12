@@ -455,7 +455,7 @@
   "openPanel": "パネルを開く",
   "downloadingZashboard": "Zashboard をダウンロード中…",
   "purchaseAvailablePlans": "購入可能なプラン",
-  "purchasePlansDescription": "価格はサイトの表示額です。通貨と購入については下記の WeChat で確認し、ギフトカードを取得してここで引き換えてください。",
+  "purchasePlansDescription": "価格はサイトの表示額です。「購入する」からセルフストアでギフトカードを取得し、ここで引き換えてください。",
   "purchasePlansLoading": "プランを読み込み中…",
   "purchasePlansEmpty": "現在購入可能なプランはありません。",
   "purchasePlansError": "プランを読み込めませんでした。もう一度お試しください。",
@@ -1312,5 +1312,9 @@
   "purchaseBackupContactsLabel": "バックアップ窓口（WeChat）",
   "purchaseEmailExistsError": "このメールアドレスは登録済みです。「ログイン」に切り替えてください。",
   "purchaseRegistrationClosedError": "現在、新規登録は停止されています。",
-  "purchaseRegisterWebRequiredError": "メール認証またはCAPTCHAが有効です。下の「Webサイトでアカウント作成」をご利用ください。"
+  "purchaseRegisterWebRequiredError": "メール認証またはCAPTCHAが有効です。下の「Webサイトでアカウント作成」をご利用ください。",
+  "purchaseGetCardDescription": "セルフストア、オンラインサポート、または下記の WeChat からギフトカードの購入・相談ができます。",
+  "purchaseClipboardEmpty": "クリップボードに有効な引き換えコードが見つかりません。",
+  "purchaseEmailDomainError": "このメールドメインは利用できません。別のメールアドレスをお試しください。",
+  "purchaseGmailAliasError": "Gmail エイリアス（+ 付き）は利用できません。通常のアドレスをご使用ください。"
 }
