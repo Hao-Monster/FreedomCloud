@@ -8,6 +8,8 @@ typedef PurchaseSubscriptionSync = Future<void> Function(
 
 enum _GiftOperation { check, redeem }
 
+enum _AuthOperation { login, register }
+
 /// Keeps account authentication, card consumption, and local configuration
 /// updates separate. A failed download must never repeat a successful redemption.
 class PurchaseManager extends ChangeNotifier {
@@ -15,7 +17,14 @@ class PurchaseManager extends ChangeNotifier {
     required this.api,
     required this.storage,
     required PurchaseSubscriptionSync synchronize,
-  }) : _synchronize = synchronize;
+  }) : _synchronize = synchronize {
+    _realInstances[this] = true;
+  }
+
+  static final Expando<bool> _realInstances = Expando<bool>();
+
+  static bool isRealInstance(PurchaseManager instance) =>
+      _realInstances[instance] ?? false;
 
   final XboardApi api;
   final PurchaseStorage storage;
@@ -31,6 +40,8 @@ class PurchaseManager extends ChangeNotifier {
   GiftReceipt? receipt;
   GiftHistoryPage? history;
   Uri? cardStoreUrl;
+  XboardPurchaseChannels? purchaseChannels;
+  XboardPlanOffer? handoffPlan;
   XboardException? error;
   XboardException? historyError;
   XboardException? syncError;
@@ -47,9 +58,12 @@ class PurchaseManager extends ChangeNotifier {
   bool _disposed = false;
   bool _pendingStateReady = false;
   _GiftOperation? _giftOperation;
+  _AuthOperation? _authOperation;
+  Future<XboardPurchaseChannels?>? _guestChannelsInFlight;
 
   bool get checkingCode => _giftOperation == _GiftOperation.check;
   bool get redeemingCode => _giftOperation == _GiftOperation.redeem;
+  bool get registering => _authOperation == _AuthOperation.register;
   bool get loggedIn => account != null && _authorization != null;
   bool get unresolvedRedemption => _pending != null;
   bool get canRedeem =>
@@ -60,6 +74,60 @@ class PurchaseManager extends ChangeNotifier {
       (preview?.canRedeem ?? false) &&
       _previewCode == code;
   bool get canSync => loggedIn && !busy && (subscription?.valid ?? false);
+
+  Uri? resolvePlanStoreUrl(XboardPlanOffer plan) =>
+      XboardPurchaseChannels.extractPlanContentPurchaseUrl(plan.content) ??
+      purchaseChannels?.resolvePlanStoreUrl(plan) ??
+      cardStoreUrl;
+
+  void markPlanHandoff(XboardPlanOffer plan) {
+    if (_disposed) return;
+    handoffPlan = plan;
+    _notify();
+  }
+
+  void clearPlanHandoff() {
+    if (_disposed || handoffPlan == null) return;
+    handoffPlan = null;
+    _notify();
+  }
+
+  Future<XboardPurchaseChannels?> ensurePurchaseChannels() {
+    if (_disposed || purchaseChannels != null) {
+      return Future<XboardPurchaseChannels?>.value(purchaseChannels);
+    }
+    final inFlight = _guestChannelsInFlight;
+    if (inFlight != null) return inFlight;
+    final extApi = switch (api) {
+      final XboardExtendedApi value => value,
+      _ => null,
+    };
+    if (extApi == null) {
+      return Future<XboardPurchaseChannels?>.value(null);
+    }
+    final future = () async {
+      try {
+        final loaded = await extApi.getGuestPurchaseChannels();
+        if (!_disposed) {
+          purchaseChannels = loaded;
+          cardStoreUrl ??= loaded.cardStoreUrl;
+          channelError = null;
+          _notify();
+        }
+        return loaded;
+      } on Exception catch (cause) {
+        if (!_disposed) {
+          channelError = _failure(cause);
+          _notify();
+        }
+        return null;
+      } finally {
+        _guestChannelsInFlight = null;
+      }
+    }();
+    _guestChannelsInFlight = future;
+    return future;
+  }
 
   void _notify() {
     if (!_disposed) notifyListeners();
@@ -90,11 +158,15 @@ class PurchaseManager extends ChangeNotifier {
           ? cause
           : XboardException(code: fallback, message: '');
 
-  Future<void> _run(Future<void> Function() action,
-      {_GiftOperation? giftOperation}) async {
+  Future<void> _run(
+    Future<void> Function() action, {
+    _GiftOperation? giftOperation,
+    _AuthOperation? authOperation,
+  }) async {
     if (_disposed || busy) return;
     busy = true;
     _giftOperation = giftOperation;
+    _authOperation = authOperation;
     error = null;
     _notify();
     try {
@@ -116,6 +188,7 @@ class PurchaseManager extends ChangeNotifier {
     } finally {
       busy = false;
       _giftOperation = null;
+      _authOperation = null;
       restoring = false;
       _notify();
     }
@@ -155,36 +228,90 @@ class PurchaseManager extends ChangeNotifier {
     }
   }
 
-  Future<void> login(String email, String password) => _run(() async {
-        if (loggedIn) return;
-        receipt = null;
-        final authorization = await api.login(email.trim(), password);
-        try {
-          final authenticated = await api.getAccount(authorization);
-          if (authenticated.isDistributor) {
-            throw const XboardException(
-                code: 'purchase_account_unsupported', message: '');
+  Future<void> _authenticateWithAuthorization(
+    String authorization, {
+    required String prefilledCode,
+    required bool autoSyncSubscription,
+  }) async {
+    try {
+      final authenticated = await api.getAccount(authorization);
+      if (authenticated.isDistributor) {
+        throw const XboardException(
+            code: 'purchase_account_unsupported', message: '');
+      }
+      try {
+        await storage
+            .saveSession(PurchaseSession(authenticated.id, authorization));
+      } on Exception {
+        throw const XboardException(code: 'secure_storage_failed', message: '');
+      }
+      _authorization = authorization;
+      account = authenticated;
+    } on Exception {
+      // The token was issued but never admitted to the client session.
+      // Best-effort revocation does not mask the original failure.
+      try {
+        await api.logout(authorization);
+      } on Exception {/* Already unusable or offline. */}
+      rethrow;
+    }
+    await _restorePending();
+    if (_pending == null && prefilledCode.isNotEmpty) {
+      code = prefilledCode;
+    }
+    await _refreshData();
+    if (autoSyncSubscription && (subscription?.valid ?? false) && !_disposed) {
+      await _syncLatest();
+    }
+    if (_pending == null &&
+        !_disposed &&
+        RegExp(r'^[A-Z0-9]{8,32}$').hasMatch(code)) {
+      try {
+        final checked = await api.checkGift(_authorization!, code);
+        preview = checked;
+        _previewCode = code;
+      } on XboardException catch (cause) {
+        if (cause.isUnauthorized) rethrow;
+        error = cause;
+      }
+    }
+  }
+
+  Future<void> login(String email, String password) => _run(
+        () async {
+          if (loggedIn) return;
+          final prefilledCode = code;
+          receipt = null;
+          final authorization = await api.login(email.trim(), password);
+          await _authenticateWithAuthorization(
+            authorization,
+            prefilledCode: prefilledCode,
+            autoSyncSubscription: false,
+          );
+        },
+        authOperation: _AuthOperation.login,
+      );
+
+  Future<void> register(String email, String password) => _run(
+        () async {
+          if (loggedIn) return;
+          final apiInstance = api;
+          if (apiInstance is! XboardExtendedApi) {
+            throw const XboardException(code: 'purchase_failed', message: '');
           }
-          try {
-            await storage
-                .saveSession(PurchaseSession(authenticated.id, authorization));
-          } on Exception {
-            throw const XboardException(
-                code: 'secure_storage_failed', message: '');
-          }
-          _authorization = authorization;
-          account = authenticated;
-        } on Exception {
-          // The token was issued but never admitted to the client session.
-          // Best-effort revocation does not mask the original failure.
-          try {
-            await api.logout(authorization);
-          } on Exception {/* Already unusable or offline. */}
-          rethrow;
-        }
-        await _restorePending();
-        await _refreshData();
-      });
+          final extApi = apiInstance as XboardExtendedApi;
+          final prefilledCode = code;
+          receipt = null;
+          final authorization =
+              await extApi.register(email.trim(), password);
+          await _authenticateWithAuthorization(
+            authorization,
+            prefilledCode: prefilledCode,
+            autoSyncSubscription: true,
+          );
+        },
+        authOperation: _AuthOperation.register,
+      );
 
   Future<void> logout() => _run(() async {
         final authorization = _authorization;
@@ -217,6 +344,8 @@ class PurchaseManager extends ChangeNotifier {
     receipt = null;
     history = null;
     cardStoreUrl = null;
+    purchaseChannels = null;
+    handoffPlan = null;
     _pending = null;
     _pendingStateReady = false;
     code = '';
@@ -320,6 +449,7 @@ class PurchaseManager extends ChangeNotifier {
     receipt = result;
     preview = null;
     _previewCode = null;
+    handoffPlan = null;
     code = '';
     _notify();
     await _clearPending();
@@ -425,11 +555,21 @@ class PurchaseManager extends ChangeNotifier {
     final cardStoreFuture = () async {
       channelError = null;
       try {
-        cardStoreUrl = await api.getCardStore(authorization);
+        final apiInstance = api;
+        if (apiInstance is XboardExtendedApi) {
+          final extApi = apiInstance as XboardExtendedApi;
+          final channels =
+              await extApi.getUserPurchaseChannels(authorization);
+          purchaseChannels = channels;
+          cardStoreUrl = channels.cardStoreUrl;
+        } else {
+          cardStoreUrl = await api.getCardStore(authorization);
+        }
       } on XboardException catch (cause) {
         if (cause.isUnauthorized) {
           unauthorizedFailure ??= cause;
         } else {
+          purchaseChannels = null;
           cardStoreUrl = null;
           channelError = cause;
         }

@@ -159,20 +159,22 @@ class MessageLookup extends MessageLookupByLibrary {
 
   static String m65(label) => "${label} は 1024 から 49151 の間でなければなりません";
 
-  static String m66(plan, quota, price) =>
+  static String m66(plan) => "「${plan}」の購入ページを開きました";
+
+  static String m67(plan, quota, price) =>
       "こんにちは。【${plan} · ${quota} GiB（${price}）】の引き換えコードを購入したいです。";
 
-  static String m67(count) => "残り ${count} 枠";
+  static String m68(count) => "残り ${count} 枠";
 
-  static String m68(code) => "不明なルール（${code}）";
+  static String m69(code) => "不明なルール（${code}）";
 
-  static String m69(count) => "${count} 項目が選択されています";
+  static String m70(count) => "${count} 項目が選択されています";
 
-  static String m70(days) => "サブスクリプションは${days}日後に期限切れになります";
+  static String m71(days) => "サブスクリプションは${days}日後に期限切れになります";
 
-  static String m71(reason) => "TUN: ${reason}";
+  static String m72(reason) => "TUN: ${reason}";
 
-  static String m72(label) => "${label}はURLである必要があります";
+  static String m73(label) => "${label}はURLである必要があります";
 
   final messages = _notInlinedMessages(_notInlinedMessages);
   static Map<String, Function> _notInlinedMessages(_) => <String, Function>{
@@ -1103,17 +1105,40 @@ class MessageLookup extends MessageLookupByLibrary {
     "purchaseAcquireSheetSubtitle": MessageLookupByLibrary.simpleMessage(
       "下記のストアまたは WeChat サポートでコードを取得し、この画面で引き換えてください。アプリ内で注文は作成されません。",
     ),
+    "purchaseAuthTabLogin": MessageLookupByLibrary.simpleMessage("ログイン"),
+    "purchaseAuthTabRegister": MessageLookupByLibrary.simpleMessage(
+      "無料登録で2G受取",
+    ),
     "purchaseAvailablePlans": MessageLookupByLibrary.simpleMessage("購入可能なプラン"),
+    "purchaseBackupContactsLabel": MessageLookupByLibrary.simpleMessage(
+      "バックアップ窓口（WeChat）",
+    ),
     "purchaseClearCode": MessageLookupByLibrary.simpleMessage("コードをクリア"),
     "purchaseContactDescription": MessageLookupByLibrary.simpleMessage(
       "オンライン決済は現在ご利用いただけません。購入または更新については、以下のいずれかのWeChatアカウントを追加してください。",
     ),
     "purchaseCopyInquiry": MessageLookupByLibrary.simpleMessage("問い合わせ文をコピー"),
+    "purchaseEmailExistsError": MessageLookupByLibrary.simpleMessage(
+      "このメールアドレスは登録済みです。「ログイン」に切り替えてください。",
+    ),
     "purchaseFilterAll": MessageLookupByLibrary.simpleMessage("すべて"),
     "purchaseFilterOnetime": MessageLookupByLibrary.simpleMessage("通信量パック"),
     "purchaseFilterPeriod": MessageLookupByLibrary.simpleMessage("定期プラン"),
+    "purchaseHandoffDescription": MessageLookupByLibrary.simpleMessage(
+      "購入後にコードをコピーしてこのウィンドウに戻ると、特典を自動確認します（確認なしでは消費されません）。",
+    ),
+    "purchaseHandoffPasteAction": MessageLookupByLibrary.simpleMessage(
+      "貼り付けて確認",
+    ),
+    "purchaseHandoffTitle": m66,
+    "purchaseHeaderSyncedBadge": MessageLookupByLibrary.simpleMessage(
+      "高速ノード準備完了",
+    ),
+    "purchaseHeaderTrialBadge": MessageLookupByLibrary.simpleMessage(
+      "新規登録で 2 GiB 無料体験 · 無期限データパック",
+    ),
     "purchaseHidePassword": MessageLookupByLibrary.simpleMessage("パスワードを隠す"),
-    "purchaseInquiryTemplate": m66,
+    "purchaseInquiryTemplate": m67,
     "purchaseJumpToWorkbench": MessageLookupByLibrary.simpleMessage(
       "コードをお持ちの方はこちら",
     ),
@@ -1121,9 +1146,14 @@ class MessageLookup extends MessageLookupByLibrary {
       "アカウントにサインインしてコードを引き換えると、プランと高速ノードが自動的に同期されます。",
     ),
     "purchaseNewActivationBadge": MessageLookupByLibrary.simpleMessage("新規有効化"),
+    "purchaseOnlineSupport": MessageLookupByLibrary.simpleMessage("オンラインサポート"),
     "purchaseOpenNodesAction": MessageLookupByLibrary.simpleMessage(
       "プロファイルとノードを表示",
     ),
+    "purchasePasswordMinLength": MessageLookupByLibrary.simpleMessage(
+      "パスワードは8文字以上で入力してください。",
+    ),
+    "purchasePlanBuyNow": MessageLookupByLibrary.simpleMessage("購入する"),
     "purchasePlanCollapseDetails": MessageLookupByLibrary.simpleMessage(
       "詳細を折りたたむ",
     ),
@@ -1132,10 +1162,11 @@ class MessageLookup extends MessageLookupByLibrary {
     "purchasePlanExpandDetails": MessageLookupByLibrary.simpleMessage(
       "詳細をすべて表示",
     ),
+    "purchasePlanFeaturedBadge": MessageLookupByLibrary.simpleMessage("おすすめ"),
     "purchasePlanImageNotLoaded": MessageLookupByLibrary.simpleMessage(
       "外部画像は読み込まれていません",
     ),
-    "purchasePlanLowStock": m67,
+    "purchasePlanLowStock": m68,
     "purchasePlanNotProvided": MessageLookupByLibrary.simpleMessage("未提供"),
     "purchasePlanResetMonthStart": MessageLookupByLibrary.simpleMessage("毎月1日"),
     "purchasePlanResetMonthlyExpiry": MessageLookupByLibrary.simpleMessage(
@@ -1148,7 +1179,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "purchasePlanResetSystem": MessageLookupByLibrary.simpleMessage(
       "システム設定に従う",
     ),
-    "purchasePlanResetUnknown": m68,
+    "purchasePlanResetUnknown": m69,
     "purchasePlanResetYearStart": MessageLookupByLibrary.simpleMessage(
       "毎年1月1日",
     ),
@@ -1171,7 +1202,27 @@ class MessageLookup extends MessageLookupByLibrary {
     "purchasePlansError": MessageLookupByLibrary.simpleMessage(
       "プランを読み込めませんでした。もう一度お試しください。",
     ),
+    "purchasePlansErrorHint": MessageLookupByLibrary.simpleMessage(
+      "右側のログイン・無料登録・ギフトカード引換はそのまま利用できます。",
+    ),
     "purchasePlansLoading": MessageLookupByLibrary.simpleMessage("プランを読み込み中…"),
+    "purchasePlansRetry": MessageLookupByLibrary.simpleMessage("プランを再読み込み"),
+    "purchasePreloginCodeHint": MessageLookupByLibrary.simpleMessage(
+      "コードをお持ちですか？ここに入力するとログイン後に自動で確認します",
+    ),
+    "purchaseRegisterSubmit": MessageLookupByLibrary.simpleMessage(
+      "無料登録してノードを同期",
+    ),
+    "purchaseRegisterTrialBanner": MessageLookupByLibrary.simpleMessage(
+      "登録するとすぐに 2 GiB の無期限体験通信量が付与され、高速ノードが自動設定されます。",
+    ),
+    "purchaseRegisterWebRequiredError": MessageLookupByLibrary.simpleMessage(
+      "メール認証またはCAPTCHAが有効です。下の「Webサイトでアカウント作成」をご利用ください。",
+    ),
+    "purchaseRegistering": MessageLookupByLibrary.simpleMessage("登録して有効化中…"),
+    "purchaseRegistrationClosedError": MessageLookupByLibrary.simpleMessage(
+      "現在、新規登録は停止されています。",
+    ),
     "purchaseRenewalBadge": MessageLookupByLibrary.simpleMessage("更新"),
     "purchaseShowPassword": MessageLookupByLibrary.simpleMessage("パスワードを表示"),
     "purchaseStepBrowse": MessageLookupByLibrary.simpleMessage("① プラン確認・コード取得"),
@@ -1237,7 +1288,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "seconds": MessageLookupByLibrary.simpleMessage("秒"),
     "selectAll": MessageLookupByLibrary.simpleMessage("すべて選択"),
     "selected": MessageLookupByLibrary.simpleMessage("選択済み"),
-    "selectedCountTitle": m69,
+    "selectedCountTitle": m70,
     "settings": MessageLookupByLibrary.simpleMessage("設定"),
     "show": MessageLookupByLibrary.simpleMessage("表示"),
     "shrink": MessageLookupByLibrary.simpleMessage("縮小"),
@@ -1267,7 +1318,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "subscriptionExpired": MessageLookupByLibrary.simpleMessage(
       "サブスクリプションが期限切れになりました",
     ),
-    "subscriptionExpiresInDays": m70,
+    "subscriptionExpiresInDays": m71,
     "subscriptionExpiresSoon": MessageLookupByLibrary.simpleMessage(
       "サブスクリプションがまもなく期限切れ",
     ),
@@ -1356,7 +1407,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "tunErrorUnavailable": MessageLookupByLibrary.simpleMessage(
       "状態を確認できません。バックグラウンドのバージョンを確認してください",
     ),
-    "tunStatusFailure": m71,
+    "tunStatusFailure": m72,
     "tunStatusOff": MessageLookupByLibrary.simpleMessage("停止中"),
     "tunStatusOn": MessageLookupByLibrary.simpleMessage("起動済み"),
     "tunStatusStarting": MessageLookupByLibrary.simpleMessage("起動しています…"),
@@ -1379,7 +1430,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "upload": MessageLookupByLibrary.simpleMessage("アップロード"),
     "url": MessageLookupByLibrary.simpleMessage("URL"),
     "urlDesc": MessageLookupByLibrary.simpleMessage("URL経由でプロファイルを取得"),
-    "urlTip": m72,
+    "urlTip": m73,
     "useHosts": MessageLookupByLibrary.simpleMessage("ホストを使用"),
     "useSystemHosts": MessageLookupByLibrary.simpleMessage("システムホストを使用"),
     "value": MessageLookupByLibrary.simpleMessage("値"),

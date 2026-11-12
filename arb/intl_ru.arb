@@ -1334,5 +1334,33 @@
   },
   "expertMode": "Режим эксперта",
   "noviceMode": "Простой режим",
-  "goToPurchasePrompt": "Нет подписки? Купить или активировать код"
+  "goToPurchasePrompt": "Нет подписки? Купить или активировать код",
+  "purchasePlansRetry": "Перезагрузить тарифы",
+  "purchasePlansErrorHint": "Вход, бесплатная регистрация и активация кода справа остаются доступны.",
+  "purchasePlanFeaturedBadge": "Рекомендуем",
+  "purchasePlanBuyNow": "Купить",
+  "purchaseHeaderTrialBadge": "2 ГиБ бесплатно при регистрации · Бессрочный трафик",
+  "purchaseHeaderSyncedBadge": "Узлы синхронизированы",
+  "purchaseAuthTabLogin": "Вход",
+  "purchaseAuthTabRegister": "Регистрация +2G",
+  "purchaseRegisterTrialBanner": "Получите 2 ГиБ бессрочного пробного трафика сразу после регистрации с автоимпортом узлов.",
+  "purchaseRegisterSubmit": "Создать аккаунт и синхронизировать",
+  "purchaseRegistering": "Создание аккаунта…",
+  "purchasePasswordMinLength": "Пароль должен содержать минимум 8 символов.",
+  "purchasePreloginCodeHint": "Уже купили код? Вставьте его сюда для автопроверки после входа",
+  "purchaseHandoffTitle": "Открыт магазин для «{plan}»",
+  "@purchaseHandoffTitle": {
+    "placeholders": {
+      "plan": {
+        "type": "String"
+      }
+    }
+  },
+  "purchaseHandoffDescription": "Скопируйте код после покупки и вернитесь в окно — бонусы проверятся автоматически без списания.",
+  "purchaseHandoffPasteAction": "Вставить и проверить",
+  "purchaseOnlineSupport": "Онлайн-поддержка",
+  "purchaseBackupContactsLabel": "Резервная поддержка (WeChat)",
+  "purchaseEmailExistsError": "Этот email уже зарегистрирован. Переключитесь на «Вход».",
+  "purchaseRegistrationClosedError": "Регистрация новых аккаунтов временно закрыта.",
+  "purchaseRegisterWebRequiredError": "Требуется подтверждение почты или CAPTCHA. Нажмите «Создать аккаунт на сайте» ниже."
 }

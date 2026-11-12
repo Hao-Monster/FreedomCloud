@@ -164,20 +164,22 @@ class MessageLookup extends MessageLookupByLibrary {
 
   static String m65(label) => "${label} must be between 1024 and 49151";
 
-  static String m66(plan, quota, price) =>
+  static String m66(plan) => "Opened store for ${plan}";
+
+  static String m67(plan, quota, price) =>
       "Hello, I would like to get a redemption code for [${plan} · ${quota} GiB (${price})].";
 
-  static String m67(count) => "${count} left";
+  static String m68(count) => "${count} left";
 
-  static String m68(code) => "Unknown rule (${code})";
+  static String m69(code) => "Unknown rule (${code})";
 
-  static String m69(count) => "${count} items have been selected";
+  static String m70(count) => "${count} items have been selected";
 
-  static String m70(days) => "Your subscription expires in ${days} day(s)";
+  static String m71(days) => "Your subscription expires in ${days} day(s)";
 
-  static String m71(reason) => "TUN: ${reason}";
+  static String m72(reason) => "TUN: ${reason}";
 
-  static String m72(label) => "${label} must be a url";
+  static String m73(label) => "${label} must be a url";
 
   final messages = _notInlinedMessages(_notInlinedMessages);
   static Map<String, Function> _notInlinedMessages(_) => <String, Function>{
@@ -1490,8 +1492,15 @@ class MessageLookup extends MessageLookupByLibrary {
     "purchaseAcquireSheetSubtitle": MessageLookupByLibrary.simpleMessage(
       "Contact support or open the card store to get a code, then return here to redeem. No order is created in the app.",
     ),
+    "purchaseAuthTabLogin": MessageLookupByLibrary.simpleMessage("Sign in"),
+    "purchaseAuthTabRegister": MessageLookupByLibrary.simpleMessage(
+      "Free 2G sign-up",
+    ),
     "purchaseAvailablePlans": MessageLookupByLibrary.simpleMessage(
       "Available plans",
+    ),
+    "purchaseBackupContactsLabel": MessageLookupByLibrary.simpleMessage(
+      "Backup support (WeChat)",
     ),
     "purchaseBalance": MessageLookupByLibrary.simpleMessage("Account balance"),
     "purchaseBalanceOnlyHint": MessageLookupByLibrary.simpleMessage(
@@ -1529,6 +1538,9 @@ class MessageLookup extends MessageLookupByLibrary {
       "Copy plan inquiry",
     ),
     "purchaseEmail": MessageLookupByLibrary.simpleMessage("Email address"),
+    "purchaseEmailExistsError": MessageLookupByLibrary.simpleMessage(
+      "This email is already registered. Switch to Sign in.",
+    ),
     "purchaseEmailRequired": MessageLookupByLibrary.simpleMessage(
       "Enter a valid email address.",
     ),
@@ -1554,6 +1566,19 @@ class MessageLookup extends MessageLookupByLibrary {
     "purchaseGetCardDescription": MessageLookupByLibrary.simpleMessage(
       "Contact either WeChat account below to buy a gift card or get help.",
     ),
+    "purchaseHandoffDescription": MessageLookupByLibrary.simpleMessage(
+      "Copy your code after purchase and return to this window to auto-preview benefits (never redeemed without confirmation).",
+    ),
+    "purchaseHandoffPasteAction": MessageLookupByLibrary.simpleMessage(
+      "Paste & check",
+    ),
+    "purchaseHandoffTitle": m66,
+    "purchaseHeaderSyncedBadge": MessageLookupByLibrary.simpleMessage(
+      "High-speed nodes ready",
+    ),
+    "purchaseHeaderTrialBadge": MessageLookupByLibrary.simpleMessage(
+      "Free 2 GiB trial on sign-up · Lifetime traffic packs",
+    ),
     "purchaseHidePassword": MessageLookupByLibrary.simpleMessage(
       "Hide password",
     ),
@@ -1568,7 +1593,7 @@ class MessageLookup extends MessageLookupByLibrary {
       "Reload history",
     ),
     "purchaseHistoryTotal": MessageLookupByLibrary.simpleMessage("Total"),
-    "purchaseInquiryTemplate": m66,
+    "purchaseInquiryTemplate": m67,
     "purchaseJumpToWorkbench": MessageLookupByLibrary.simpleMessage(
       "Have a code? Redeem now",
     ),
@@ -1600,6 +1625,9 @@ class MessageLookup extends MessageLookupByLibrary {
     "purchaseNotEligible": MessageLookupByLibrary.simpleMessage(
       "This card cannot be redeemed by this account.",
     ),
+    "purchaseOnlineSupport": MessageLookupByLibrary.simpleMessage(
+      "Live support",
+    ),
     "purchaseOpenLinkFailed": MessageLookupByLibrary.simpleMessage(
       "Could not open the page. Please try again.",
     ),
@@ -1610,6 +1638,9 @@ class MessageLookup extends MessageLookupByLibrary {
       "Redemption order",
     ),
     "purchasePassword": MessageLookupByLibrary.simpleMessage("Password"),
+    "purchasePasswordMinLength": MessageLookupByLibrary.simpleMessage(
+      "Enter at least 8 characters.",
+    ),
     "purchasePasswordRequired": MessageLookupByLibrary.simpleMessage(
       "Enter your password.",
     ),
@@ -1632,6 +1663,7 @@ class MessageLookup extends MessageLookupByLibrary {
     ),
     "purchasePeriodYearly": MessageLookupByLibrary.simpleMessage("Yearly"),
     "purchasePlan": MessageLookupByLibrary.simpleMessage("Current plan"),
+    "purchasePlanBuyNow": MessageLookupByLibrary.simpleMessage("Buy card"),
     "purchasePlanCollapseDetails": MessageLookupByLibrary.simpleMessage(
       "Hide plan details",
     ),
@@ -1640,10 +1672,13 @@ class MessageLookup extends MessageLookupByLibrary {
     "purchasePlanExpandDetails": MessageLookupByLibrary.simpleMessage(
       "Show full plan details",
     ),
+    "purchasePlanFeaturedBadge": MessageLookupByLibrary.simpleMessage(
+      "Popular tier",
+    ),
     "purchasePlanImageNotLoaded": MessageLookupByLibrary.simpleMessage(
       "External image not loaded",
     ),
-    "purchasePlanLowStock": m67,
+    "purchasePlanLowStock": m68,
     "purchasePlanNotProvided": MessageLookupByLibrary.simpleMessage(
       "Not provided",
     ),
@@ -1662,7 +1697,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "purchasePlanResetSystem": MessageLookupByLibrary.simpleMessage(
       "Follows system settings",
     ),
-    "purchasePlanResetUnknown": m68,
+    "purchasePlanResetUnknown": m69,
     "purchasePlanResetYearStart": MessageLookupByLibrary.simpleMessage(
       "On January 1 each year",
     ),
@@ -1688,8 +1723,15 @@ class MessageLookup extends MessageLookupByLibrary {
     "purchasePlansError": MessageLookupByLibrary.simpleMessage(
       "Plans could not be loaded. Please try again.",
     ),
+    "purchasePlansErrorHint": MessageLookupByLibrary.simpleMessage(
+      "Account sign-in, free sign-up, and gift card redemption on the right remain available.",
+    ),
     "purchasePlansLoading": MessageLookupByLibrary.simpleMessage(
       "Loading plans…",
+    ),
+    "purchasePlansRetry": MessageLookupByLibrary.simpleMessage("Reload plans"),
+    "purchasePreloginCodeHint": MessageLookupByLibrary.simpleMessage(
+      "Already bought a code? Paste it here to auto-preview right after sign-in",
     ),
     "purchasePreview": MessageLookupByLibrary.simpleMessage(
       "Review before redeeming",
@@ -1715,6 +1757,21 @@ class MessageLookup extends MessageLookupByLibrary {
     "purchaseRefresh": MessageLookupByLibrary.simpleMessage("Refresh account"),
     "purchaseRegister": MessageLookupByLibrary.simpleMessage(
       "Create account on website",
+    ),
+    "purchaseRegisterSubmit": MessageLookupByLibrary.simpleMessage(
+      "Create account & sync nodes",
+    ),
+    "purchaseRegisterTrialBanner": MessageLookupByLibrary.simpleMessage(
+      "Get 2 GiB of lifetime trial traffic instantly, with automatic node import and Smart Connect.",
+    ),
+    "purchaseRegisterWebRequiredError": MessageLookupByLibrary.simpleMessage(
+      "Email verification or CAPTCHA is enabled. Use \'Create account on website\' below.",
+    ),
+    "purchaseRegistering": MessageLookupByLibrary.simpleMessage(
+      "Creating account…",
+    ),
+    "purchaseRegistrationClosedError": MessageLookupByLibrary.simpleMessage(
+      "New account registration is currently closed.",
     ),
     "purchaseRemaining": MessageLookupByLibrary.simpleMessage(
       "Remaining traffic",
@@ -1870,7 +1927,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "selectAll": MessageLookupByLibrary.simpleMessage("Select all"),
     "selectProfile": MessageLookupByLibrary.simpleMessage("Select Profile"),
     "selected": MessageLookupByLibrary.simpleMessage("Selected"),
-    "selectedCountTitle": m69,
+    "selectedCountTitle": m70,
     "sendToTv": MessageLookupByLibrary.simpleMessage("Send to TV"),
     "sendToTvTitle": MessageLookupByLibrary.simpleMessage("Send to TV"),
     "sentSuccessfullyMessage": MessageLookupByLibrary.simpleMessage(
@@ -1917,7 +1974,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "subscriptionExpired": MessageLookupByLibrary.simpleMessage(
       "Your subscription has expired",
     ),
-    "subscriptionExpiresInDays": m70,
+    "subscriptionExpiresInDays": m71,
     "subscriptionExpiresSoon": MessageLookupByLibrary.simpleMessage(
       "Subscription expires soon",
     ),
@@ -2022,7 +2079,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "tunErrorUnavailable": MessageLookupByLibrary.simpleMessage(
       "Cannot verify status; check the background version",
     ),
-    "tunStatusFailure": m71,
+    "tunStatusFailure": m72,
     "tunStatusOff": MessageLookupByLibrary.simpleMessage("Not running"),
     "tunStatusOn": MessageLookupByLibrary.simpleMessage("Running"),
     "tunStatusStarting": MessageLookupByLibrary.simpleMessage("Starting…"),
@@ -2053,7 +2110,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "urlDesc": MessageLookupByLibrary.simpleMessage(
       "Obtain profile through URL",
     ),
-    "urlTip": m72,
+    "urlTip": m73,
     "useHosts": MessageLookupByLibrary.simpleMessage("Use hosts"),
     "useSystemHosts": MessageLookupByLibrary.simpleMessage("Use system hosts"),
     "value": MessageLookupByLibrary.simpleMessage("Value"),

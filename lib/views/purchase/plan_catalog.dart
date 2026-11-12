@@ -639,6 +639,7 @@ class PurchasePlanCatalog extends StatefulWidget {
     required this.failed,
     required this.retry,
     this.openLink,
+    this.onBuyPlan,
     this.onAcquirePlan,
     this.collapsibleDetails = false,
   });
@@ -648,6 +649,7 @@ class PurchasePlanCatalog extends StatefulWidget {
   final bool failed;
   final VoidCallback retry;
   final Future<void> Function(Uri)? openLink;
+  final ValueChanged<XboardPlanOffer>? onBuyPlan;
   final ValueChanged<XboardPlanOffer>? onAcquirePlan;
   final bool collapsibleDetails;
 
@@ -802,15 +804,29 @@ class _PurchasePlanCatalogState extends State<PurchasePlanCatalog> {
                       color: colors.error,
                     ),
                     const SizedBox(width: 10),
-                    Expanded(child: Text(l.purchasePlansError)),
+                    Expanded(
+                      child: Text(
+                        l.purchasePlansError,
+                        style: theme.textTheme.titleSmall?.copyWith(
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
                   ],
                 ),
-                const SizedBox(height: 10),
-                TextButton.icon(
+                const SizedBox(height: 6),
+                Text(
+                  l.purchasePlansErrorHint,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: colors.onSurfaceVariant,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                FilledButton.tonalIcon(
                   key: const Key('purchase-plans-retry'),
                   onPressed: widget.retry,
-                  icon: const Icon(Icons.refresh_rounded),
-                  label: Text(l.purchaseRefresh),
+                  icon: const Icon(Icons.refresh_rounded, size: 18),
+                  label: Text(l.purchasePlansRetry),
                 ),
               ],
             ),
@@ -848,8 +864,10 @@ class _PurchasePlanCatalogState extends State<PurchasePlanCatalog> {
                       key: Key('purchase-plan-${plan.id}'),
                       plan: plan,
                       openLink: widget.openLink,
+                      onBuyPlan: widget.onBuyPlan,
                       onAcquirePlan: widget.onAcquirePlan,
                       collapsibleDetails: widget.collapsibleDetails,
+                      multiTierComparison: plans.length >= 2,
                     ),
                   ),
               ],
@@ -885,14 +903,18 @@ class _PlanCard extends StatefulWidget {
     super.key,
     required this.plan,
     this.openLink,
+    this.onBuyPlan,
     this.onAcquirePlan,
     this.collapsibleDetails = false,
+    this.multiTierComparison = false,
   });
 
   final XboardPlanOffer plan;
   final Future<void> Function(Uri)? openLink;
+  final ValueChanged<XboardPlanOffer>? onBuyPlan;
   final ValueChanged<XboardPlanOffer>? onAcquirePlan;
   final bool collapsibleDetails;
+  final bool multiTierComparison;
 
   @override
   State<_PlanCard> createState() => _PlanCardState();
@@ -902,6 +924,16 @@ class _PlanCardState extends State<_PlanCard> {
   bool _detailsExpanded = false;
 
   XboardPlanOffer get plan => widget.plan;
+
+  static final RegExp _featuredTagPattern = RegExp(
+    r'推荐|主力|热销|popular|featured|best',
+    caseSensitive: false,
+  );
+
+  bool _isFeatured(bool isSoldOut) =>
+      !isSoldOut &&
+      (plan.tags.any(_featuredTagPattern.hasMatch) ||
+          (widget.multiTierComparison && plan.transferGiB == 200));
 
   @override
   void didUpdateWidget(covariant _PlanCard oldWidget) {
@@ -922,6 +954,7 @@ class _PlanCardState extends State<_PlanCard> {
         plan.capacityRemaining != null &&
         plan.capacityRemaining! > 0 &&
         plan.capacityRemaining! <= 20;
+    final isFeatured = _isFeatured(isSoldOut);
 
     final markdownSummary = widget.collapsibleDetails
         ? summarizePlanMarkdown(plan.content)
@@ -933,12 +966,25 @@ class _PlanCardState extends State<_PlanCard> {
 
     return Container(
       decoration: BoxDecoration(
-        color: colors.surfaceContainerLow,
+        gradient: isFeatured
+            ? LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [
+                  colors.primaryContainer.withValues(alpha: 0.24),
+                  colors.surfaceContainerLow,
+                ],
+              )
+            : null,
+        color: isFeatured ? null : colors.surfaceContainerLow,
         borderRadius: BorderRadius.circular(18),
         border: Border.all(
           color: isSoldOut
               ? colors.outlineVariant.withValues(alpha: 0.55)
-              : colors.outlineVariant,
+              : isFeatured
+                  ? colors.primary.withValues(alpha: 0.62)
+                  : colors.outlineVariant,
+          width: isFeatured ? 1.4 : 1.0,
         ),
       ),
       child: Padding(
@@ -985,30 +1031,68 @@ class _PlanCardState extends State<_PlanCard> {
                     ),
                   ],
                 ),
-                if (isSoldOut || isLowStock)
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 3,
-                    ),
-                    decoration: BoxDecoration(
-                      color: isSoldOut
-                          ? colors.errorContainer
-                          : colors.tertiaryContainer,
-                      borderRadius: BorderRadius.circular(999),
-                    ),
-                    child: Text(
-                      isSoldOut
-                          ? l.purchasePlanSoldOut
-                          : l.purchasePlanLowStock(plan.capacityRemaining!),
-                      style: theme.textTheme.labelSmall?.copyWith(
-                        fontWeight: FontWeight.w600,
-                        color: isSoldOut
-                            ? colors.onErrorContainer
-                            : colors.onTertiaryContainer,
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 6,
+                  children: [
+                    if (isFeatured)
+                      Container(
+                        key: Key('purchase-plan-featured-${plan.id}'),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 9,
+                          vertical: 3,
+                        ),
+                        decoration: BoxDecoration(
+                          color: colors.primary,
+                          borderRadius: BorderRadius.circular(999),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              Icons.auto_awesome_rounded,
+                              size: 12,
+                              color: colors.onPrimary,
+                            ),
+                            const SizedBox(width: 4),
+                            Flexible(
+                              child: Text(
+                                l.purchasePlanFeaturedBadge,
+                                style: theme.textTheme.labelSmall?.copyWith(
+                                  fontWeight: FontWeight.w700,
+                                  color: colors.onPrimary,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
-                    ),
-                  ),
+                    if (isSoldOut || isLowStock)
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 3,
+                        ),
+                        decoration: BoxDecoration(
+                          color: isSoldOut
+                              ? colors.errorContainer
+                              : colors.tertiaryContainer,
+                          borderRadius: BorderRadius.circular(999),
+                        ),
+                        child: Text(
+                          isSoldOut
+                              ? l.purchasePlanSoldOut
+                              : l.purchasePlanLowStock(plan.capacityRemaining!),
+                          style: theme.textTheme.labelSmall?.copyWith(
+                            fontWeight: FontWeight.w600,
+                            color: isSoldOut
+                                ? colors.onErrorContainer
+                                : colors.onTertiaryContainer,
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
               ],
             ),
             if (plan.tags.any((tag) => tag.trim().isNotEmpty)) ...[
@@ -1193,16 +1277,72 @@ class _PlanCardState extends State<_PlanCard> {
                 openLink: widget.openLink,
               ),
             ],
-            if (widget.onAcquirePlan != null) ...[
+            if (widget.onBuyPlan != null || widget.onAcquirePlan != null) ...[
               const SizedBox(height: 16),
-              FilledButton.tonalIcon(
-                key: Key('purchase-plan-acquire-${plan.id}'),
-                onPressed: isSoldOut ? null : () => widget.onAcquirePlan!(plan),
-                icon: Icon(
-                  isSoldOut ? Icons.block_rounded : Icons.card_giftcard_rounded,
-                  size: 18,
-                ),
-                label: Text(l.purchaseAcquirePlanCode),
+              LayoutBuilder(
+                builder: (context, ctaConstraints) {
+                  final textScale = MediaQuery.textScalerOf(context).scale(1);
+                  final sideBySide = widget.onBuyPlan != null &&
+                      widget.onAcquirePlan != null &&
+                      ctaConstraints.maxWidth >= 340 * textScale;
+                  const compactPadding = EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 10,
+                  );
+                  final buyBtn = widget.onBuyPlan == null
+                      ? null
+                      : FilledButton.icon(
+                          key: Key('purchase-plan-buy-${plan.id}'),
+                          style: sideBySide
+                              ? FilledButton.styleFrom(padding: compactPadding)
+                              : null,
+                          onPressed:
+                              isSoldOut ? null : () => widget.onBuyPlan!(plan),
+                          icon: Icon(
+                            isSoldOut
+                                ? Icons.block_rounded
+                                : Icons.shopping_bag_outlined,
+                            size: 18,
+                          ),
+                          label: Text(l.purchasePlanBuyNow),
+                        );
+                  final acquireBtn = widget.onAcquirePlan == null
+                      ? null
+                      : FilledButton.tonalIcon(
+                          key: Key('purchase-plan-acquire-${plan.id}'),
+                          style: sideBySide
+                              ? FilledButton.styleFrom(padding: compactPadding)
+                              : null,
+                          onPressed: isSoldOut
+                              ? null
+                              : () => widget.onAcquirePlan!(plan),
+                          icon: Icon(
+                            isSoldOut
+                                ? Icons.block_rounded
+                                : Icons.card_giftcard_rounded,
+                            size: 18,
+                          ),
+                          label: Text(l.purchaseAcquirePlanCode),
+                        );
+                  if (sideBySide) {
+                    return Row(
+                      children: [
+                        Expanded(flex: 4, child: buyBtn!),
+                        const SizedBox(width: 8),
+                        Expanded(flex: 6, child: acquireBtn!),
+                      ],
+                    );
+                  }
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      if (buyBtn != null) buyBtn,
+                      if (buyBtn != null && acquireBtn != null)
+                        const SizedBox(height: 8),
+                      if (acquireBtn != null) acquireBtn,
+                    ],
+                  );
+                },
               ),
             ],
           ],

@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:flclashx/common/http.dart';
 import 'package:flclashx/common/preferences.dart';
 import 'package:flclashx/common/smart_node_selection.dart';
 import 'package:flclashx/enum/enum.dart';
@@ -73,7 +75,14 @@ class _PurchaseViewState extends ConsumerState<PurchaseView> {
   @override
   void initState() {
     super.initState();
-    final api = widget.apiOverride ?? DioXboardApi();
+    late final DioXboardApi defaultApi;
+    final api = widget.apiOverride ??
+        (defaultApi = DioXboardApi(
+          shouldFallbackToDirect: () =>
+              HttpOverrides.current is FlClashHttpOverrides &&
+              FlClashHttpOverrides.handleFindProxy(defaultApi.baseUri)
+                  .startsWith('PROXY '),
+        ));
     final storage = widget.storageOverride ?? SecurePurchaseStorage(api.baseUri);
     Uint8List? downloadedBytes;
     final synchronizer = PurchaseProfileSynchronizer(

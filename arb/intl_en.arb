@@ -1479,5 +1479,33 @@
   },
   "expertMode": "Expert Mode",
   "noviceMode": "Simple Mode",
-  "goToPurchasePrompt": "No subscription yet? Buy or Redeem"
+  "goToPurchasePrompt": "No subscription yet? Buy or Redeem",
+  "purchasePlansRetry": "Reload plans",
+  "purchasePlansErrorHint": "Account sign-in, free sign-up, and gift card redemption on the right remain available.",
+  "purchasePlanFeaturedBadge": "Popular tier",
+  "purchasePlanBuyNow": "Buy card",
+  "purchaseHeaderTrialBadge": "Free 2 GiB trial on sign-up · Lifetime traffic packs",
+  "purchaseHeaderSyncedBadge": "High-speed nodes ready",
+  "purchaseAuthTabLogin": "Sign in",
+  "purchaseAuthTabRegister": "Free 2G sign-up",
+  "purchaseRegisterTrialBanner": "Get 2 GiB of lifetime trial traffic instantly, with automatic node import and Smart Connect.",
+  "purchaseRegisterSubmit": "Create account & sync nodes",
+  "purchaseRegistering": "Creating account…",
+  "purchasePasswordMinLength": "Enter at least 8 characters.",
+  "purchasePreloginCodeHint": "Already bought a code? Paste it here to auto-preview right after sign-in",
+  "purchaseHandoffTitle": "Opened store for {plan}",
+  "@purchaseHandoffTitle": {
+    "placeholders": {
+      "plan": {
+        "type": "String"
+      }
+    }
+  },
+  "purchaseHandoffDescription": "Copy your code after purchase and return to this window to auto-preview benefits (never redeemed without confirmation).",
+  "purchaseHandoffPasteAction": "Paste & check",
+  "purchaseOnlineSupport": "Live support",
+  "purchaseBackupContactsLabel": "Backup support (WeChat)",
+  "purchaseEmailExistsError": "This email is already registered. Switch to Sign in.",
+  "purchaseRegistrationClosedError": "New account registration is currently closed.",
+  "purchaseRegisterWebRequiredError": "Email verification or CAPTCHA is enabled. Use 'Create account on website' below."
 }

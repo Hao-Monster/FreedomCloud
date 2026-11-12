@@ -8487,6 +8487,216 @@ class AppLocalizations {
       args: [],
     );
   }
+
+  /// `Reload plans`
+  String get purchasePlansRetry {
+    return Intl.message(
+      'Reload plans',
+      name: 'purchasePlansRetry',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Account sign-in, free sign-up, and gift card redemption on the right remain available.`
+  String get purchasePlansErrorHint {
+    return Intl.message(
+      'Account sign-in, free sign-up, and gift card redemption on the right remain available.',
+      name: 'purchasePlansErrorHint',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Popular tier`
+  String get purchasePlanFeaturedBadge {
+    return Intl.message(
+      'Popular tier',
+      name: 'purchasePlanFeaturedBadge',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Buy card`
+  String get purchasePlanBuyNow {
+    return Intl.message(
+      'Buy card',
+      name: 'purchasePlanBuyNow',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Free 2 GiB trial on sign-up · Lifetime traffic packs`
+  String get purchaseHeaderTrialBadge {
+    return Intl.message(
+      'Free 2 GiB trial on sign-up · Lifetime traffic packs',
+      name: 'purchaseHeaderTrialBadge',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `High-speed nodes ready`
+  String get purchaseHeaderSyncedBadge {
+    return Intl.message(
+      'High-speed nodes ready',
+      name: 'purchaseHeaderSyncedBadge',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Sign in`
+  String get purchaseAuthTabLogin {
+    return Intl.message(
+      'Sign in',
+      name: 'purchaseAuthTabLogin',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Free 2G sign-up`
+  String get purchaseAuthTabRegister {
+    return Intl.message(
+      'Free 2G sign-up',
+      name: 'purchaseAuthTabRegister',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Get 2 GiB of lifetime trial traffic instantly, with automatic node import and Smart Connect.`
+  String get purchaseRegisterTrialBanner {
+    return Intl.message(
+      'Get 2 GiB of lifetime trial traffic instantly, with automatic node import and Smart Connect.',
+      name: 'purchaseRegisterTrialBanner',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Create account & sync nodes`
+  String get purchaseRegisterSubmit {
+    return Intl.message(
+      'Create account & sync nodes',
+      name: 'purchaseRegisterSubmit',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Creating account…`
+  String get purchaseRegistering {
+    return Intl.message(
+      'Creating account…',
+      name: 'purchaseRegistering',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Enter at least 8 characters.`
+  String get purchasePasswordMinLength {
+    return Intl.message(
+      'Enter at least 8 characters.',
+      name: 'purchasePasswordMinLength',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Already bought a code? Paste it here to auto-preview right after sign-in`
+  String get purchasePreloginCodeHint {
+    return Intl.message(
+      'Already bought a code? Paste it here to auto-preview right after sign-in',
+      name: 'purchasePreloginCodeHint',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Opened store for {plan}`
+  String purchaseHandoffTitle(String plan) {
+    return Intl.message(
+      'Opened store for $plan',
+      name: 'purchaseHandoffTitle',
+      desc: '',
+      args: [plan],
+    );
+  }
+
+  /// `Copy your code after purchase and return to this window to auto-preview benefits (never redeemed without confirmation).`
+  String get purchaseHandoffDescription {
+    return Intl.message(
+      'Copy your code after purchase and return to this window to auto-preview benefits (never redeemed without confirmation).',
+      name: 'purchaseHandoffDescription',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Paste & check`
+  String get purchaseHandoffPasteAction {
+    return Intl.message(
+      'Paste & check',
+      name: 'purchaseHandoffPasteAction',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Live support`
+  String get purchaseOnlineSupport {
+    return Intl.message(
+      'Live support',
+      name: 'purchaseOnlineSupport',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Backup support (WeChat)`
+  String get purchaseBackupContactsLabel {
+    return Intl.message(
+      'Backup support (WeChat)',
+      name: 'purchaseBackupContactsLabel',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `This email is already registered. Switch to Sign in.`
+  String get purchaseEmailExistsError {
+    return Intl.message(
+      'This email is already registered. Switch to Sign in.',
+      name: 'purchaseEmailExistsError',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `New account registration is currently closed.`
+  String get purchaseRegistrationClosedError {
+    return Intl.message(
+      'New account registration is currently closed.',
+      name: 'purchaseRegistrationClosedError',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Email verification or CAPTCHA is enabled. Use 'Create account on website' below.`
+  String get purchaseRegisterWebRequiredError {
+    return Intl.message(
+      'Email verification or CAPTCHA is enabled. Use \'Create account on website\' below.',
+      name: 'purchaseRegisterWebRequiredError',
+      desc: '',
+      args: [],
+    );
+  }
 }
 
 class AppLocalizationDelegate extends LocalizationsDelegate<AppLocalizations> {

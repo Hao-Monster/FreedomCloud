@@ -164,20 +164,22 @@ class MessageLookup extends MessageLookupByLibrary {
 
   static String m65(label) => "${label} должен быть числом от 1024 до 49151";
 
-  static String m66(plan, quota, price) =>
+  static String m66(plan) => "Открыт магазин для «${plan}»";
+
+  static String m67(plan, quota, price) =>
       "Здравствуйте! Хочу приобрести код активации для тарифа «${plan} · ${quota} GiB (${price})».";
 
-  static String m67(count) => "Осталось: ${count}";
+  static String m68(count) => "Осталось: ${count}";
 
-  static String m68(code) => "Неизвестное правило (${code})";
+  static String m69(code) => "Неизвестное правило (${code})";
 
-  static String m69(count) => "Выбрано ${count} элементов";
+  static String m70(count) => "Выбрано ${count} элементов";
 
-  static String m70(days) => "Ваша подписка истекает через ${days} дн.";
+  static String m71(days) => "Ваша подписка истекает через ${days} дн.";
 
-  static String m71(reason) => "TUN: ${reason}";
+  static String m72(reason) => "TUN: ${reason}";
 
-  static String m72(label) => "${label} должен быть URL";
+  static String m73(label) => "${label} должен быть URL";
 
   final messages = _notInlinedMessages(_notInlinedMessages);
   static Map<String, Function> _notInlinedMessages(_) => <String, Function>{
@@ -1413,8 +1415,15 @@ class MessageLookup extends MessageLookupByLibrary {
     "purchaseAcquireSheetSubtitle": MessageLookupByLibrary.simpleMessage(
       "Получите код через магазин карт или WeChat ниже, затем активируйте его здесь. Заказ в приложении не создаётся.",
     ),
+    "purchaseAuthTabLogin": MessageLookupByLibrary.simpleMessage("Вход"),
+    "purchaseAuthTabRegister": MessageLookupByLibrary.simpleMessage(
+      "Регистрация +2G",
+    ),
     "purchaseAvailablePlans": MessageLookupByLibrary.simpleMessage(
       "Доступные тарифы",
+    ),
+    "purchaseBackupContactsLabel": MessageLookupByLibrary.simpleMessage(
+      "Резервная поддержка (WeChat)",
     ),
     "purchaseClearCode": MessageLookupByLibrary.simpleMessage("Очистить код"),
     "purchaseContactDescription": MessageLookupByLibrary.simpleMessage(
@@ -1423,15 +1432,31 @@ class MessageLookup extends MessageLookupByLibrary {
     "purchaseCopyInquiry": MessageLookupByLibrary.simpleMessage(
       "Скопировать запрос",
     ),
+    "purchaseEmailExistsError": MessageLookupByLibrary.simpleMessage(
+      "Этот email уже зарегистрирован. Переключитесь на «Вход».",
+    ),
     "purchaseFilterAll": MessageLookupByLibrary.simpleMessage("Все тарифы"),
     "purchaseFilterOnetime": MessageLookupByLibrary.simpleMessage(
       "Пакеты трафика",
     ),
     "purchaseFilterPeriod": MessageLookupByLibrary.simpleMessage("По периоду"),
+    "purchaseHandoffDescription": MessageLookupByLibrary.simpleMessage(
+      "Скопируйте код после покупки и вернитесь в окно — бонусы проверятся автоматически без списания.",
+    ),
+    "purchaseHandoffPasteAction": MessageLookupByLibrary.simpleMessage(
+      "Вставить и проверить",
+    ),
+    "purchaseHandoffTitle": m66,
+    "purchaseHeaderSyncedBadge": MessageLookupByLibrary.simpleMessage(
+      "Узлы синхронизированы",
+    ),
+    "purchaseHeaderTrialBadge": MessageLookupByLibrary.simpleMessage(
+      "2 ГиБ бесплатно при регистрации · Бессрочный трафик",
+    ),
     "purchaseHidePassword": MessageLookupByLibrary.simpleMessage(
       "Скрыть пароль",
     ),
-    "purchaseInquiryTemplate": m66,
+    "purchaseInquiryTemplate": m67,
     "purchaseJumpToWorkbench": MessageLookupByLibrary.simpleMessage(
       "Есть код? Перейти к активации",
     ),
@@ -1441,9 +1466,16 @@ class MessageLookup extends MessageLookupByLibrary {
     "purchaseNewActivationBadge": MessageLookupByLibrary.simpleMessage(
       "Новая активация",
     ),
+    "purchaseOnlineSupport": MessageLookupByLibrary.simpleMessage(
+      "Онлайн-поддержка",
+    ),
     "purchaseOpenNodesAction": MessageLookupByLibrary.simpleMessage(
       "Открыть профили и узлы",
     ),
+    "purchasePasswordMinLength": MessageLookupByLibrary.simpleMessage(
+      "Пароль должен содержать минимум 8 символов.",
+    ),
+    "purchasePlanBuyNow": MessageLookupByLibrary.simpleMessage("Купить"),
     "purchasePlanCollapseDetails": MessageLookupByLibrary.simpleMessage(
       "Свернуть описание",
     ),
@@ -1456,10 +1488,13 @@ class MessageLookup extends MessageLookupByLibrary {
     "purchasePlanExpandDetails": MessageLookupByLibrary.simpleMessage(
       "Показать полное описание",
     ),
+    "purchasePlanFeaturedBadge": MessageLookupByLibrary.simpleMessage(
+      "Рекомендуем",
+    ),
     "purchasePlanImageNotLoaded": MessageLookupByLibrary.simpleMessage(
       "Внешнее изображение не загружено",
     ),
-    "purchasePlanLowStock": m67,
+    "purchasePlanLowStock": m68,
     "purchasePlanNotProvided": MessageLookupByLibrary.simpleMessage(
       "Не указано",
     ),
@@ -1478,7 +1513,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "purchasePlanResetSystem": MessageLookupByLibrary.simpleMessage(
       "По настройкам системы",
     ),
-    "purchasePlanResetUnknown": m68,
+    "purchasePlanResetUnknown": m69,
     "purchasePlanResetYearStart": MessageLookupByLibrary.simpleMessage(
       "1 января каждого года",
     ),
@@ -1507,8 +1542,32 @@ class MessageLookup extends MessageLookupByLibrary {
     "purchasePlansError": MessageLookupByLibrary.simpleMessage(
       "Не удалось загрузить тарифы. Повторите попытку.",
     ),
+    "purchasePlansErrorHint": MessageLookupByLibrary.simpleMessage(
+      "Вход, бесплатная регистрация и активация кода справа остаются доступны.",
+    ),
     "purchasePlansLoading": MessageLookupByLibrary.simpleMessage(
       "Загрузка тарифов…",
+    ),
+    "purchasePlansRetry": MessageLookupByLibrary.simpleMessage(
+      "Перезагрузить тарифы",
+    ),
+    "purchasePreloginCodeHint": MessageLookupByLibrary.simpleMessage(
+      "Уже купили код? Вставьте его сюда для автопроверки после входа",
+    ),
+    "purchaseRegisterSubmit": MessageLookupByLibrary.simpleMessage(
+      "Создать аккаунт и синхронизировать",
+    ),
+    "purchaseRegisterTrialBanner": MessageLookupByLibrary.simpleMessage(
+      "Получите 2 ГиБ бессрочного пробного трафика сразу после регистрации с автоимпортом узлов.",
+    ),
+    "purchaseRegisterWebRequiredError": MessageLookupByLibrary.simpleMessage(
+      "Требуется подтверждение почты или CAPTCHA. Нажмите «Создать аккаунт на сайте» ниже.",
+    ),
+    "purchaseRegistering": MessageLookupByLibrary.simpleMessage(
+      "Создание аккаунта…",
+    ),
+    "purchaseRegistrationClosedError": MessageLookupByLibrary.simpleMessage(
+      "Регистрация новых аккаунтов временно закрыта.",
     ),
     "purchaseRenewalBadge": MessageLookupByLibrary.simpleMessage("Продление"),
     "purchaseShowPassword": MessageLookupByLibrary.simpleMessage(
@@ -1622,7 +1681,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "selectAll": MessageLookupByLibrary.simpleMessage("Выбрать все"),
     "selectProfile": MessageLookupByLibrary.simpleMessage("Выбрать профиль"),
     "selected": MessageLookupByLibrary.simpleMessage("Выбрано"),
-    "selectedCountTitle": m69,
+    "selectedCountTitle": m70,
     "sendToTv": MessageLookupByLibrary.simpleMessage("Отправить на ТВ"),
     "sendToTvTitle": MessageLookupByLibrary.simpleMessage("Отправить на ТВ"),
     "sentSuccessfullyMessage": MessageLookupByLibrary.simpleMessage(
@@ -1669,7 +1728,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "subscriptionExpired": MessageLookupByLibrary.simpleMessage(
       "Ваша подписка истекла",
     ),
-    "subscriptionExpiresInDays": m70,
+    "subscriptionExpiresInDays": m71,
     "subscriptionExpiresSoon": MessageLookupByLibrary.simpleMessage(
       "Подписка скоро истекает",
     ),
@@ -1780,7 +1839,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "tunErrorUnavailable": MessageLookupByLibrary.simpleMessage(
       "Не удалось проверить состояние; проверьте версию фонового процесса",
     ),
-    "tunStatusFailure": m71,
+    "tunStatusFailure": m72,
     "tunStatusOff": MessageLookupByLibrary.simpleMessage("Не запущен"),
     "tunStatusOn": MessageLookupByLibrary.simpleMessage("Запущен"),
     "tunStatusStarting": MessageLookupByLibrary.simpleMessage("Запуск…"),
@@ -1813,7 +1872,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "upload": MessageLookupByLibrary.simpleMessage("Отправка"),
     "url": MessageLookupByLibrary.simpleMessage("URL"),
     "urlDesc": MessageLookupByLibrary.simpleMessage("Загрузить профиль по URL"),
-    "urlTip": m72,
+    "urlTip": m73,
     "useHosts": MessageLookupByLibrary.simpleMessage("Использовать hosts"),
     "useSystemHosts": MessageLookupByLibrary.simpleMessage(
       "Использовать системные hosts",

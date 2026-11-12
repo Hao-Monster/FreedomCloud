@@ -1284,5 +1284,33 @@
   },
   "expertMode": "上級者モード",
   "noviceMode": "かんたんモード",
-  "goToPurchasePrompt": "サブスクリプションをお持ちでない方：購入・引換へ"
+  "goToPurchasePrompt": "サブスクリプションをお持ちでない方：購入・引換へ",
+  "purchasePlansRetry": "プランを再読み込み",
+  "purchasePlansErrorHint": "右側のログイン・無料登録・ギフトカード引換はそのまま利用できます。",
+  "purchasePlanFeaturedBadge": "おすすめ",
+  "purchasePlanBuyNow": "購入する",
+  "purchaseHeaderTrialBadge": "新規登録で 2 GiB 無料体験 · 無期限データパック",
+  "purchaseHeaderSyncedBadge": "高速ノード準備完了",
+  "purchaseAuthTabLogin": "ログイン",
+  "purchaseAuthTabRegister": "無料登録で2G受取",
+  "purchaseRegisterTrialBanner": "登録するとすぐに 2 GiB の無期限体験通信量が付与され、高速ノードが自動設定されます。",
+  "purchaseRegisterSubmit": "無料登録してノードを同期",
+  "purchaseRegistering": "登録して有効化中…",
+  "purchasePasswordMinLength": "パスワードは8文字以上で入力してください。",
+  "purchasePreloginCodeHint": "コードをお持ちですか？ここに入力するとログイン後に自動で確認します",
+  "purchaseHandoffTitle": "「{plan}」の購入ページを開きました",
+  "@purchaseHandoffTitle": {
+    "placeholders": {
+      "plan": {
+        "type": "String"
+      }
+    }
+  },
+  "purchaseHandoffDescription": "購入後にコードをコピーしてこのウィンドウに戻ると、特典を自動確認します（確認なしでは消費されません）。",
+  "purchaseHandoffPasteAction": "貼り付けて確認",
+  "purchaseOnlineSupport": "オンラインサポート",
+  "purchaseBackupContactsLabel": "バックアップ窓口（WeChat）",
+  "purchaseEmailExistsError": "このメールアドレスは登録済みです。「ログイン」に切り替えてください。",
+  "purchaseRegistrationClosedError": "現在、新規登録は停止されています。",
+  "purchaseRegisterWebRequiredError": "メール認証またはCAPTCHAが有効です。下の「Webサイトでアカウント作成」をご利用ください。"
 }

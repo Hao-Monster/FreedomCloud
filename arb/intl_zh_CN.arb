@@ -1418,5 +1418,33 @@
   },
   "expertMode": "大佬模式",
   "noviceMode": "小白模式",
-  "goToPurchasePrompt": "还没有订阅？去购买 / 兑换"
+  "goToPurchasePrompt": "还没有订阅？去购买 / 兑换",
+  "purchasePlansRetry": "重新加载套餐",
+  "purchasePlansErrorHint": "右侧账号登录、免费注册与礼品卡核销不受影响，可直接继续操作。",
+  "purchasePlanFeaturedBadge": "热销档位",
+  "purchasePlanBuyNow": "去购买",
+  "purchaseHeaderTrialBadge": "新客注册立享 2 GiB 体验 · 流量包永不过期",
+  "purchaseHeaderSyncedBadge": "高速节点已就绪",
+  "purchaseAuthTabLogin": "登录账户",
+  "purchaseAuthTabRegister": "免费注册领 2G",
+  "purchaseRegisterTrialBanner": "注册即赠 2 GiB 永久体验流量，自动导入高速节点并开启智能连接。",
+  "purchaseRegisterSubmit": "免费注册并同步节点",
+  "purchaseRegistering": "正在注册并开通…",
+  "purchasePasswordMinLength": "密码至少需要 8 位字符。",
+  "purchasePreloginCodeHint": "已买好卡密？可先粘贴于此，登录或注册后自动查验权益",
+  "purchaseHandoffTitle": "已打开「{plan}」购卡页",
+  "@purchaseHandoffTitle": {
+    "placeholders": {
+      "plan": {
+        "type": "String"
+      }
+    }
+  },
+  "purchaseHandoffDescription": "完成购卡并复制兑换码后，切回本窗口将自动识别并查验权益（不会自动核销）。",
+  "purchaseHandoffPasteAction": "粘贴并查询",
+  "purchaseOnlineSupport": "在线客服",
+  "purchaseBackupContactsLabel": "备用人工协助（微信号）",
+  "purchaseEmailExistsError": "该邮箱已注册，请直接切换到「登录账户」。",
+  "purchaseRegistrationClosedError": "当前站点暂未开放新用户注册。",
+  "purchaseRegisterWebRequiredError": "当前站点启用了邮箱验证或人机校验，请点击下方「前往网页注册」完成注册。"
 }

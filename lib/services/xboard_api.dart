@@ -18,6 +18,12 @@ abstract class XboardApi {
   void close();
 }
 
+abstract interface class XboardExtendedApi {
+  Future<XboardPurchaseChannels> getGuestPurchaseChannels();
+  Future<XboardPurchaseChannels> getUserPurchaseChannels(String authorization);
+  Future<String> register(String email, String password);
+}
+
 class XboardException implements Exception {
   const XboardException({
     required this.code,
@@ -39,9 +45,14 @@ class XboardException implements Exception {
 
 /// Owns a dedicated Dio instance, so application interceptors cannot log secrets
 /// or automatically repeat entitlement mutations.
-class DioXboardApi implements XboardApi {
-  DioXboardApi({Dio? dio, Uri? baseUri})
-      : baseUri = _validateOrigin(baseUri ?? Uri.parse(_configuredOrigin)),
+class DioXboardApi implements XboardApi, XboardExtendedApi {
+  DioXboardApi({
+    Dio? dio,
+    Uri? baseUri,
+    bool Function()? shouldFallbackToDirect,
+  })  : baseUri = _validateOrigin(baseUri ?? Uri.parse(_configuredOrigin)),
+        _ownsTransport = dio == null,
+        _shouldFallbackToDirect = shouldFallbackToDirect,
         _dio = dio ?? Dio() {
     if (dio == null) {
       _dio.httpClientAdapter = IOHttpClientAdapter(
@@ -55,20 +66,22 @@ class DioXboardApi implements XboardApi {
       );
     }
     _dio.interceptors.clear();
-    _dio.options = BaseOptions(
-      baseUrl: this.baseUri.origin,
-      connectTimeout: const Duration(seconds: 15),
-      sendTimeout: const Duration(seconds: 20),
-      receiveTimeout: const Duration(seconds: 20),
-      contentType: Headers.jsonContentType,
-      responseType: ResponseType.json,
-      followRedirects: false,
-      maxRedirects: 0,
-      validateStatus: (status) =>
-          status != null && status >= 200 && status < 600,
-      headers: {'Accept': Headers.jsonContentType},
-    );
+    _dio.options = _buildBaseOptions(this.baseUri);
   }
+
+  static BaseOptions _buildBaseOptions(Uri origin) => BaseOptions(
+        baseUrl: origin.origin,
+        connectTimeout: const Duration(seconds: 15),
+        sendTimeout: const Duration(seconds: 20),
+        receiveTimeout: const Duration(seconds: 20),
+        contentType: Headers.jsonContentType,
+        responseType: ResponseType.json,
+        followRedirects: false,
+        maxRedirects: 0,
+        validateStatus: (status) =>
+            status != null && status >= 200 && status < 600,
+        headers: {'Accept': Headers.jsonContentType},
+      );
 
   static const _configuredOrigin = String.fromEnvironment(
     'XBOARD_BASE_URL',
@@ -77,7 +90,24 @@ class DioXboardApi implements XboardApi {
 
   @override
   final Uri baseUri;
+  final bool _ownsTransport;
+  final bool Function()? _shouldFallbackToDirect;
   final Dio _dio;
+  Dio? _directDio;
+
+  Dio _ensureDirectDio() {
+    final existing = _directDio;
+    if (existing != null) return existing;
+    final direct = Dio(_buildBaseOptions(baseUri))
+      ..interceptors.clear()
+      ..httpClientAdapter = IOHttpClientAdapter(
+        createHttpClient: () => HttpClient()
+          ..findProxy = ((_) => 'DIRECT')
+          ..badCertificateCallback = ((_, __, ___) => false),
+      );
+    _directDio = direct;
+    return direct;
+  }
 
   @override
   Future<XboardPlanCatalog> getPlanCatalog() => _request(
@@ -137,6 +167,19 @@ class DioXboardApi implements XboardApi {
         parse: (body) {
           final result = _data(body);
           // The adjacent `token` property is a subscription token, not auth.
+          final authorization = _string(result, 'auth_data');
+          if (!_validAuthorization(authorization)) _invalid();
+          return authorization;
+        },
+      );
+
+  @override
+  Future<String> register(String email, String password) => _request(
+        '/api/v1/passport/auth/register',
+        method: 'POST',
+        data: {'email': email.trim(), 'password': password},
+        parse: (body) {
+          final result = _data(body);
           final authorization = _string(result, 'auth_data');
           if (!_validAuthorization(authorization)) _invalid();
           return authorization;
@@ -280,14 +323,24 @@ class DioXboardApi implements XboardApi {
   }
 
   @override
-  Future<Uri?> getCardStore(String authorization) => _request(
+  Future<XboardPurchaseChannels> getGuestPurchaseChannels() => _request(
+        '/api/v1/guest/comm/config',
+        parse: (body) => _parsePurchaseChannels(_data(body)),
+      );
+
+  @override
+  Future<XboardPurchaseChannels> getUserPurchaseChannels(
+    String authorization,
+  ) =>
+      _request(
         '/api/v1/user/purchase-channels',
         authorization: authorization,
-        parse: (body) {
-          final url = _string(_data(body), 'card_store_url', allowEmpty: true);
-          return url.isEmpty ? null : _httpsUrl(url);
-        },
+        parse: (body) => _parsePurchaseChannels(_data(body)),
       );
+
+  @override
+  Future<Uri?> getCardStore(String authorization) async =>
+      (await getUserPurchaseChannels(authorization)).cardStoreUrl;
 
   @override
   Future<void> logout(String authorization) => _request<void>(
@@ -300,7 +353,50 @@ class DioXboardApi implements XboardApi {
       );
 
   @override
-  void close() => _dio.close(force: true);
+  void close() {
+    _dio.close(force: true);
+    _directDio?.close(force: true);
+  }
+
+  bool _canFallbackToDirect(DioException error, {required bool mutation}) {
+    if (mutation ||
+        !_ownsTransport ||
+        error.response != null ||
+        !(_shouldFallbackToDirect?.call() ?? false)) {
+      return false;
+    }
+    return switch (error.type) {
+      DioExceptionType.connectionError ||
+      DioExceptionType.connectionTimeout ||
+      DioExceptionType.sendTimeout =>
+        true,
+      DioExceptionType.unknown =>
+        error.error is SocketException || error.error is HttpException,
+      _ => false,
+    };
+  }
+
+  Future<Response<Object?>> _performRequest(
+    Dio client,
+    String path, {
+    required String method,
+    String? authorization,
+    Map<String, Object?>? data,
+    Map<String, Object?>? queryParameters,
+  }) =>
+      client.request<Object?>(
+        path,
+        data: data,
+        queryParameters: queryParameters,
+        options: Options(
+          method: method,
+          followRedirects: false,
+          maxRedirects: 0,
+          headers: {
+            if (authorization != null) 'Authorization': authorization,
+          },
+        ),
+      );
 
   Future<T> _request<T>(
     String path, {
@@ -321,19 +417,27 @@ class DioXboardApi implements XboardApi {
     }
     int? status;
     try {
-      final response = await _dio.request<Object?>(
-        path,
-        data: data,
-        queryParameters: queryParameters,
-        options: Options(
+      Response<Object?> response;
+      try {
+        response = await _performRequest(
+          _dio,
+          path,
           method: method,
-          followRedirects: false,
-          maxRedirects: 0,
-          headers: {
-            if (authorization != null) 'Authorization': authorization,
-          },
-        ),
-      );
+          authorization: authorization,
+          data: data,
+          queryParameters: queryParameters,
+        );
+      } on DioException catch (error) {
+        if (!_canFallbackToDirect(error, mutation: mutation)) rethrow;
+        response = await _performRequest(
+          _ensureDirectDio(),
+          path,
+          method: method,
+          authorization: authorization,
+          data: data,
+          queryParameters: queryParameters,
+        );
+      }
       status = response.statusCode;
       if (status == null) _invalid();
       if (status >= 300 && status < 400) {
@@ -653,6 +757,36 @@ XboardException _serverError(Object? body, int status,
     );
   }
   final data = body is Map<String, dynamic> ? body : null;
+  final errorObj =
+      data?['error'] is Map<String, dynamic> ? data!['error'] as Map<String, dynamic> : null;
+  final backendCode = errorObj?['code'];
+  final fields =
+      errorObj?['fields'] is Map<String, dynamic> ? errorObj!['fields'] as Map<String, dynamic> : null;
+  if (backendCode == 'email_exists') {
+    return XboardException(
+      code: 'email_exists',
+      message: '',
+      statusCode: status,
+    );
+  }
+  if (backendCode == 'registration_closed') {
+    return XboardException(
+      code: 'registration_closed',
+      message: '',
+      statusCode: status,
+    );
+  }
+  if (backendCode == 'invitation_code_required' ||
+      backendCode == 'captcha_required' ||
+      backendCode == 'captcha_failed' ||
+      (backendCode == 'validation_failed' &&
+          (fields?.containsKey('email_code') ?? false))) {
+    return XboardException(
+      code: 'register_web_required',
+      message: '',
+      statusCode: status,
+    );
+  }
   final reason = _safeGiftReason(data?['message']);
   return XboardException(
     code: reason == null ? 'request_failed' : 'gift_card_rejected',
@@ -660,3 +794,22 @@ XboardException _serverError(Object? body, int status,
     statusCode: status,
   );
 }
+
+Uri? _optionalHttpsField(Map<String, Object?> data, String key) {
+  final raw = data[key];
+  if (raw == null) return null;
+  if (raw is! String) _invalid();
+  final trimmed = raw.trim();
+  return trimmed.isEmpty ? null : _httpsUrl(trimmed);
+}
+
+XboardPurchaseChannels _parsePurchaseChannels(Map<String, Object?> data) =>
+    XboardPurchaseChannels(
+      cardStoreUrl: _optionalHttpsField(data, 'card_store_url'),
+      cardStore50gUrl: _optionalHttpsField(data, 'card_store_50g_url'),
+      cardStore100gUrl: _optionalHttpsField(data, 'card_store_100g_url'),
+      cardStore200gUrl: _optionalHttpsField(data, 'card_store_200g_url'),
+      cardStore500gUrl: _optionalHttpsField(data, 'card_store_500g_url'),
+      chatwootBaseUrl: _optionalHttpsField(data, 'chatwoot_base_url'),
+      chatwootWebsiteToken: _optionalString(data, 'chatwoot_website_token'),
+    );

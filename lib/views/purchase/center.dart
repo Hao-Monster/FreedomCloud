@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flclashx/enum/enum.dart';
 import 'package:flclashx/l10n/l10n.dart';
 import 'package:flclashx/manager/purchase_manager.dart';
@@ -8,6 +10,44 @@ import 'package:flclashx/widgets/text.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
+
+String? _extractStrictResumeCode(String raw) {
+  if (raw.trim().isEmpty) return null;
+  final sanitized = raw
+      .replaceAll(RegExp(r'https?://[\x21-\x7E]+', caseSensitive: false), ' ')
+      .replaceAll(
+        RegExp(r'[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}'),
+        ' ',
+      )
+      .replaceAll(
+        RegExp(r'(?<!\d)\d{4}[-/.]\d{1,2}[-/.]\d{1,2}(?!\d)'),
+        ' ',
+      )
+      .replaceAll(RegExp(r'(?<!\d)\d{1,2}:\d{2}(?::\d{2})?(?!\d)'), ' ');
+
+  final labeledMatch = RegExp(
+    r'''(?:兑换码|卡密|礼品卡|激活码|(?<![A-Za-z0-9_])(?:voucher|gift\s*code|redeem\s*code|code))\s*[:：]\s*[`'"“”‘’【「『\[\(]*([A-Za-z0-9]+(?:-[A-Za-z0-9]+)*)''',
+    caseSensitive: false,
+  ).firstMatch(sanitized);
+  if (labeledMatch != null) {
+    final normalized = labeledMatch.group(1)!.replaceAll('-', '').toUpperCase();
+    if (RegExp(r'^[A-Z0-9]{8,32}$').hasMatch(normalized)) {
+      return normalized;
+    }
+  }
+
+  final trimmed = sanitized.trim();
+  if (RegExp(r'^[A-Za-z0-9]{2,}(?:-[A-Za-z0-9]{2,})+$').hasMatch(trimmed)) {
+    final normalized = trimmed.replaceAll('-', '').toUpperCase();
+    if (RegExp(r'^[A-Z0-9]{8,32}$').hasMatch(normalized)) {
+      return normalized;
+    }
+  }
+  if (RegExp(r'^(?=.*[A-Z])(?=.*\d)[A-Z0-9]{8,32}$').hasMatch(trimmed)) {
+    return trimmed;
+  }
+  return null;
+}
 
 String? extractRedemptionCodeFromClipboard(String raw) {
   if (raw.trim().isEmpty) return null;
@@ -103,7 +143,8 @@ class PurchaseCenter extends StatefulWidget {
   State<PurchaseCenter> createState() => _PurchaseCenterState();
 }
 
-class _PurchaseCenterState extends State<PurchaseCenter> {
+class _PurchaseCenterState extends State<PurchaseCenter>
+    with WidgetsBindingObserver {
   static const _wechatContacts = <String>['ChasingDream_2021', 'dxm_qa'];
 
   final _loginForm = GlobalKey<FormState>();
@@ -113,19 +154,80 @@ class _PurchaseCenterState extends State<PurchaseCenter> {
   final _password = TextEditingController();
   final _code = TextEditingController();
   bool _wasLoggedIn = false;
+  bool _isRegisterMode = false;
   bool _obscurePassword = true;
   bool _historyExpanded = false;
   bool _updatingCodeFromInput = false;
+  bool _checkingResumeClipboard = false;
+  String? _lastAutoDetectedClipboard;
 
   PurchaseManager get manager => widget.manager;
   AppLocalizations get l => AppLocalizations.of(context);
+  bool get _isRealManager => PurchaseManager.isRealInstance(manager);
+  XboardPurchaseChannels? get _purchaseChannels =>
+      _isRealManager ? manager.purchaseChannels : null;
+  XboardPlanOffer? get _handoffPlan =>
+      _isRealManager ? manager.handoffPlan : null;
+  bool get _registering => _isRealManager && manager.registering;
+
+  Uri? _resolvePlanStoreUrl(XboardPlanOffer plan) => _isRealManager
+      ? manager.resolvePlanStoreUrl(plan)
+      : (XboardPurchaseChannels.extractPlanContentPurchaseUrl(plan.content) ??
+          manager.cardStoreUrl);
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _wasLoggedIn = manager.loggedIn;
     _code.text = manager.code;
     manager.addListener(_onManagerChanged);
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      unawaited(_checkClipboardOnResume());
+    }
+  }
+
+  Future<void> _checkClipboardOnResume() async {
+    if (!mounted ||
+        _checkingResumeClipboard ||
+        manager.restoring ||
+        manager.busy ||
+        manager.syncing ||
+        manager.unresolvedRedemption ||
+        manager.code.trim().isNotEmpty) {
+      return;
+    }
+    _checkingResumeClipboard = true;
+    try {
+      final clip = await Clipboard.getData('text/plain');
+      final raw = clip?.text ?? '';
+      if (!mounted || raw.isEmpty || raw == _lastAutoDetectedClipboard) return;
+      if (manager.busy ||
+          manager.syncing ||
+          manager.unresolvedRedemption ||
+          manager.code.trim().isNotEmpty) {
+        return;
+      }
+      final extracted = _extractStrictResumeCode(raw);
+      if (extracted == null) return;
+      _lastAutoDetectedClipboard = raw;
+      _code.value = TextEditingValue(
+        text: extracted,
+        selection: TextSelection.collapsed(offset: extracted.length),
+      );
+      manager.setCode(extracted);
+      if (manager.loggedIn && !manager.busy) {
+        await manager.checkCode();
+      }
+    } catch (_) {
+      // Ignore clipboard platform errors silently on window focus.
+    } finally {
+      _checkingResumeClipboard = false;
+    }
   }
 
   @override
@@ -136,6 +238,7 @@ class _PurchaseCenterState extends State<PurchaseCenter> {
       manager.addListener(_onManagerChanged);
       _email.clear();
       _password.clear();
+      _isRegisterMode = false;
       _obscurePassword = true;
       _historyExpanded = false;
       _onManagerChanged(notifyState: false);
@@ -157,9 +260,11 @@ class _PurchaseCenterState extends State<PurchaseCenter> {
         _email.clear();
         _code.clear();
       }
-      final needsStateReset =
-          !_obscurePassword || (!manager.loggedIn && _historyExpanded);
+      final needsStateReset = !_obscurePassword ||
+          _isRegisterMode ||
+          (!manager.loggedIn && _historyExpanded);
       _obscurePassword = true;
+      _isRegisterMode = false;
       if (!manager.loggedIn) {
         _historyExpanded = false;
       }
@@ -172,6 +277,7 @@ class _PurchaseCenterState extends State<PurchaseCenter> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     manager.removeListener(_onManagerChanged);
     _email.dispose();
     _password.dispose();
@@ -183,6 +289,45 @@ class _PurchaseCenterState extends State<PurchaseCenter> {
     if (manager.busy || !(_loginForm.currentState?.validate() ?? false)) return;
     await manager.login(_email.text.trim(), _password.text);
     if (mounted && manager.loggedIn) _password.clear();
+  }
+
+  Future<void> _register() async {
+    if (!_isRealManager ||
+        manager.busy ||
+        !(_loginForm.currentState?.validate() ?? false)) {
+      return;
+    }
+    await manager.register(_email.text.trim(), _password.text);
+    if (mounted && manager.loggedIn) _password.clear();
+  }
+
+  Future<void> _handleBuyPlan(XboardPlanOffer plan) async {
+    var targetUrl = _resolvePlanStoreUrl(plan);
+    if (targetUrl == null && _isRealManager) {
+      await manager.ensurePurchaseChannels();
+      if (!mounted) return;
+      targetUrl = _resolvePlanStoreUrl(plan);
+    }
+    if (targetUrl != null) {
+      if (_isRealManager) {
+        manager.markPlanHandoff(plan);
+      }
+      await _open(targetUrl);
+      return;
+    }
+    await _showAcquireSheet(plan);
+  }
+
+  Future<void> _pasteAndCheckHandoff() async {
+    await _pasteCode();
+    if (!mounted) return;
+    if (manager.loggedIn &&
+        !manager.busy &&
+        !manager.syncing &&
+        !manager.unresolvedRedemption &&
+        manager.code.trim().isNotEmpty) {
+      await manager.checkCode();
+    }
   }
 
   Future<void> _logout() async {
@@ -296,6 +441,7 @@ class _PurchaseCenterState extends State<PurchaseCenter> {
                             failed: manager.plansError != null,
                             retry: manager.loadPlans,
                             openLink: _open,
+                            onBuyPlan: _handleBuyPlan,
                             onAcquirePlan: _showAcquireSheet,
                             collapsibleDetails: true,
                           ),
@@ -309,6 +455,11 @@ class _PurchaseCenterState extends State<PurchaseCenter> {
                             key: const Key('purchase-workbench'),
                             crossAxisAlignment: CrossAxisAlignment.stretch,
                             children: [
+                              if (_handoffPlan != null &&
+                                  manager.receipt == null) ...[
+                                _handoffBanner(_handoffPlan!),
+                                const SizedBox(height: 12),
+                              ],
                               if (!manager.loggedIn &&
                                   manager.receipt != null) ...[
                                 _receiptCard(
@@ -393,9 +544,16 @@ class _PurchaseCenterState extends State<PurchaseCenter> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
       decoration: BoxDecoration(
-        color: colors.surfaceContainerLow,
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            colors.primaryContainer.withValues(alpha: 0.22),
+            colors.surfaceContainerLow,
+          ],
+        ),
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: colors.outlineVariant),
+        border: Border.all(color: colors.primary.withValues(alpha: 0.28)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -407,15 +565,46 @@ class _PurchaseCenterState extends State<PurchaseCenter> {
             crossAxisAlignment: WrapCrossAlignment.center,
             children: [
               ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 720),
+                constraints: const BoxConstraints(maxWidth: 740),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      l.purchaseCenterTitle,
-                      style: theme.textTheme.headlineSmall?.copyWith(
-                        fontWeight: FontWeight.w700,
-                      ),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 6,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: [
+                        Text(
+                          l.purchaseCenterTitle,
+                          style: theme.textTheme.headlineSmall?.copyWith(
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 3,
+                          ),
+                          decoration: BoxDecoration(
+                            color: manager.subscriptionSynced
+                                ? colors.primary.withValues(alpha: 0.16)
+                                : colors.tertiaryContainer
+                                    .withValues(alpha: 0.72),
+                            borderRadius: BorderRadius.circular(999),
+                          ),
+                          child: Text(
+                            manager.subscriptionSynced
+                                ? l.purchaseHeaderSyncedBadge
+                                : l.purchaseHeaderTrialBadge,
+                            style: theme.textTheme.labelSmall?.copyWith(
+                              fontWeight: FontWeight.w600,
+                              color: manager.subscriptionSynced
+                                  ? colors.primary
+                                  : colors.onTertiaryContainer,
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                     const SizedBox(height: 4),
                     Text(
@@ -454,39 +643,168 @@ class _PurchaseCenterState extends State<PurchaseCenter> {
     );
   }
 
+  Widget _handoffBanner(XboardPlanOffer plan) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    return Container(
+      key: const Key('purchase-handoff-banner'),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: colors.primaryContainer.withValues(alpha: 0.38),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: colors.primary.withValues(alpha: 0.55)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(Icons.bolt_rounded, size: 20, color: colors.primary),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  l.purchaseHandoffTitle(plan.name),
+                  style: theme.textTheme.titleSmall?.copyWith(
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+              IconButton(
+                key: const Key('purchase-handoff-dismiss'),
+                visualDensity: VisualDensity.compact,
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints.tightFor(width: 28, height: 28),
+                onPressed: _isRealManager ? manager.clearPlanHandoff : null,
+                icon: const Icon(Icons.close_rounded, size: 18),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            l.purchaseHandoffDescription,
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: colors.onSurfaceVariant,
+            ),
+          ),
+          const SizedBox(height: 10),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: FilledButton.tonalIcon(
+              key: const Key('purchase-handoff-paste'),
+              onPressed: manager.busy ? null : _pasteAndCheckHandoff,
+              icon: const Icon(Icons.content_paste_go_rounded, size: 18),
+              label: Text(l.purchaseHandoffPasteAction),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _loginSection() {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
+    final registerSupported =
+        _isRealManager && manager.api is XboardExtendedApi;
+    final inRegisterMode = registerSupported && _isRegisterMode;
+
     return _Section(
-      icon: Icons.person_outline_rounded,
-      title: l.purchaseLoginTitle,
+      icon: inRegisterMode
+          ? Icons.person_add_alt_1_rounded
+          : Icons.person_outline_rounded,
+      title: inRegisterMode ? l.purchaseAuthTabRegister : l.purchaseLoginTitle,
       child: AutofillGroup(
         child: Form(
           key: _loginForm,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
+              if (registerSupported) ...[
+                Container(
+                  key: const Key('purchase-auth-mode-tabs'),
+                  padding: const EdgeInsets.all(4),
+                  decoration: BoxDecoration(
+                    color: colors.surfaceContainerHighest.withValues(alpha: 0.5),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: LayoutBuilder(
+                    builder: (context, tabConstraints) {
+                      final scale = MediaQuery.textScalerOf(context).scale(1);
+                      final stackTabs = tabConstraints.maxWidth < 240 * scale;
+                      final loginTab = _AuthModeTabButton(
+                        key: const Key('purchase-auth-tab-login'),
+                        label: l.purchaseAuthTabLogin,
+                        icon: Icons.login_rounded,
+                        selected: !inRegisterMode,
+                        enabled: !manager.busy,
+                        onTap: () {
+                          if (!inRegisterMode) return;
+                          setState(() => _isRegisterMode = false);
+                          _loginForm.currentState?.reset();
+                        },
+                      );
+                      final registerTab = _AuthModeTabButton(
+                        key: const Key('purchase-auth-tab-register'),
+                        label: l.purchaseAuthTabRegister,
+                        icon: Icons.card_giftcard_rounded,
+                        selected: inRegisterMode,
+                        enabled: !manager.busy,
+                        onTap: () {
+                          if (inRegisterMode) return;
+                          setState(() => _isRegisterMode = true);
+                          _loginForm.currentState?.reset();
+                        },
+                      );
+                      if (stackTabs) {
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            loginTab,
+                            const SizedBox(height: 4),
+                            registerTab,
+                          ],
+                        );
+                      }
+                      return Row(
+                        children: [
+                          Expanded(child: loginTab),
+                          const SizedBox(width: 4),
+                          Expanded(child: registerTab),
+                        ],
+                      );
+                    },
+                  ),
+                ),
+                const SizedBox(height: 12),
+              ],
               Container(
                 padding: const EdgeInsets.symmetric(
                   horizontal: 12,
                   vertical: 10,
                 ),
                 decoration: BoxDecoration(
-                  color: colors.primaryContainer.withValues(alpha: 0.35),
+                  color: inRegisterMode
+                      ? colors.tertiaryContainer.withValues(alpha: 0.45)
+                      : colors.primaryContainer.withValues(alpha: 0.35),
                   borderRadius: BorderRadius.circular(12),
                 ),
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Icon(
-                      Icons.verified_user_outlined,
+                      inRegisterMode
+                          ? Icons.rocket_launch_outlined
+                          : Icons.verified_user_outlined,
                       size: 18,
-                      color: colors.primary,
+                      color: inRegisterMode ? colors.tertiary : colors.primary,
                     ),
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
-                        l.purchaseLoginDescription,
+                        inRegisterMode
+                            ? l.purchaseRegisterTrialBanner
+                            : l.purchaseLoginDescription,
                         style: theme.textTheme.bodySmall?.copyWith(
                           color: colors.onSurface,
                         ),
@@ -495,7 +813,7 @@ class _PurchaseCenterState extends State<PurchaseCenter> {
                   ],
                 ),
               ),
-              const SizedBox(height: 16),
+              const SizedBox(height: 14),
               TextFormField(
                 key: const Key('purchase-email'),
                 controller: _email,
@@ -515,7 +833,7 @@ class _PurchaseCenterState extends State<PurchaseCenter> {
                     ? null
                     : l.purchaseEmailRequired,
               ),
-              const SizedBox(height: 14),
+              const SizedBox(height: 12),
               TextFormField(
                 key: const Key('purchase-password'),
                 controller: _password,
@@ -548,14 +866,26 @@ class _PurchaseCenterState extends State<PurchaseCenter> {
                 enableSuggestions: false,
                 autocorrect: false,
                 textInputAction: TextInputAction.done,
-                autofillHints: const [AutofillHints.password],
-                validator: (value) => value == null || value.isEmpty
-                    ? l.purchasePasswordRequired
-                    : null,
-                onFieldSubmitted: (_) async => _login(),
+                autofillHints: [
+                  if (inRegisterMode)
+                    AutofillHints.newPassword
+                  else
+                    AutofillHints.password,
+                ],
+                validator: (value) {
+                  if (value == null || value.isEmpty) {
+                    return l.purchasePasswordRequired;
+                  }
+                  if (inRegisterMode && value.length < 8) {
+                    return l.purchasePasswordMinLength;
+                  }
+                  return null;
+                },
+                onFieldSubmitted: (_) async =>
+                    inRegisterMode ? _register() : _login(),
               ),
               if (manager.error != null) ...[
-                const SizedBox(height: 14),
+                const SizedBox(height: 12),
                 _Notice(message: _errorMessage(manager.error!), error: true),
                 Align(
                   alignment: Alignment.centerLeft,
@@ -565,16 +895,28 @@ class _PurchaseCenterState extends State<PurchaseCenter> {
                   ),
                 ),
               ],
-              const SizedBox(height: 16),
-              FilledButton.icon(
-                key: const Key('purchase-login'),
-                onPressed: manager.busy ? null : _login,
-                icon: const Icon(Icons.login_rounded, size: 18),
-                label: Text(
-                  manager.busy ? l.purchaseLoggingIn : l.purchaseLogin,
+              const SizedBox(height: 14),
+              if (inRegisterMode)
+                FilledButton.icon(
+                  key: const Key('purchase-register-submit'),
+                  onPressed: manager.busy ? null : _register,
+                  icon: const Icon(Icons.rocket_launch_rounded, size: 18),
+                  label: Text(
+                    _registering || manager.busy
+                        ? l.purchaseRegistering
+                        : l.purchaseRegisterSubmit,
+                  ),
+                )
+              else
+                FilledButton.icon(
+                  key: const Key('purchase-login'),
+                  onPressed: manager.busy ? null : _login,
+                  icon: const Icon(Icons.login_rounded, size: 18),
+                  label: Text(
+                    manager.busy ? l.purchaseLoggingIn : l.purchaseLogin,
+                  ),
                 ),
-              ),
-              const SizedBox(height: 8),
+              const SizedBox(height: 6),
               Wrap(
                 spacing: 8,
                 runSpacing: 4,
@@ -593,6 +935,80 @@ class _PurchaseCenterState extends State<PurchaseCenter> {
                   ),
                 ],
               ),
+              if (_isRealManager) ...[
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 10),
+                  child: Divider(height: 1),
+                ),
+                Text(
+                  l.purchasePreloginCodeHint,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: colors.onSurfaceVariant,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                TextField(
+                  key: const Key('purchase-prelogin-code'),
+                  controller: _code,
+                  enabled: !manager.busy,
+                  inputFormatters: const [_UpperCaseCodeFormatter()],
+                  style: TextStyle(
+                    fontFamily: FontFamily.jetBrainsMono.value,
+                    fontFamilyFallback: _cjkMonoFallback(theme),
+                    letterSpacing: 1.05,
+                    fontWeight: FontWeight.w600,
+                  ),
+                  decoration: _inputDecoration(
+                    context,
+                    labelText: l.purchaseCode,
+                    prefixIcon: Icons.confirmation_number_outlined,
+                    suffixIcon: ValueListenableBuilder<TextEditingValue>(
+                      valueListenable: _code,
+                      builder: (context, codeValue, _) {
+                        final hasCodeText =
+                            codeValue.text.isNotEmpty || manager.code.isNotEmpty;
+                        return ExcludeFocusTraversal(
+                          child: hasCodeText
+                              ? IconButton(
+                                  key: const Key('purchase-prelogin-code-clear'),
+                                  tooltip: l.purchaseClearCode,
+                                  onPressed: manager.busy
+                                      ? null
+                                      : () {
+                                          _code.clear();
+                                          manager.setCode('');
+                                        },
+                                  icon: const Icon(
+                                    Icons.close_rounded,
+                                    size: 18,
+                                  ),
+                                )
+                              : IconButton(
+                                  key: const Key('purchase-prelogin-code-paste'),
+                                  tooltip: l.paste,
+                                  onPressed: manager.busy ? null : _pasteCode,
+                                  icon: const Icon(
+                                    Icons.content_paste_rounded,
+                                    size: 18,
+                                  ),
+                                ),
+                        );
+                      },
+                    ),
+                  ),
+                  textCapitalization: TextCapitalization.characters,
+                  autocorrect: false,
+                  enableSuggestions: false,
+                  onChanged: (value) {
+                    _updatingCodeFromInput = true;
+                    try {
+                      manager.setCode(value);
+                    } finally {
+                      _updatingCodeFromInput = false;
+                    }
+                  },
+                ),
+              ],
             ],
           ),
         ),
@@ -1273,6 +1689,9 @@ class _PurchaseCenterState extends State<PurchaseCenter> {
   Widget _supportSection() {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
+    final chatUrl = _purchaseChannels?.chatwootBaseUrl;
+    final hasSelfServiceRow = manager.cardStoreUrl != null || chatUrl != null;
+
     return _Section(
       icon: Icons.support_agent_rounded,
       title: l.purchaseGetCard,
@@ -1289,18 +1708,38 @@ class _PurchaseCenterState extends State<PurchaseCenter> {
             const SizedBox(height: 12),
             _Notice(message: l.purchaseChannelError),
           ],
-          if (manager.cardStoreUrl != null) ...[
+          if (hasSelfServiceRow) ...[
             const SizedBox(height: 12),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: OutlinedButton.icon(
-                onPressed: () => _open(manager.cardStoreUrl!),
-                icon: const Icon(Icons.open_in_new_rounded, size: 18),
-                label: Text(l.purchaseCardStore),
-              ),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                if (manager.cardStoreUrl != null)
+                  OutlinedButton.icon(
+                    key: const Key('purchase-support-store'),
+                    onPressed: () => _open(manager.cardStoreUrl!),
+                    icon: const Icon(Icons.open_in_new_rounded, size: 18),
+                    label: Text(l.purchaseCardStore),
+                  ),
+                if (chatUrl != null)
+                  FilledButton.tonalIcon(
+                    key: const Key('purchase-support-chat'),
+                    onPressed: () => _open(chatUrl),
+                    icon: const Icon(Icons.forum_outlined, size: 18),
+                    label: Text(l.purchaseOnlineSupport),
+                  ),
+              ],
             ),
           ],
           const SizedBox(height: 14),
+          Text(
+            l.purchaseBackupContactsLabel,
+            style: theme.textTheme.labelSmall?.copyWith(
+              color: colors.onSurfaceVariant,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 6),
           for (final account in _wechatContacts)
             Padding(
               padding: const EdgeInsets.symmetric(vertical: 4),
@@ -1382,6 +1821,9 @@ class _PurchaseCenterState extends State<PurchaseCenter> {
         'gift_code_format' => l.purchaseCodeFormatError,
         'gift_result_unconfirmed' => l.purchaseUnresolvedDescription,
         'subscription_sync_failed' => l.purchaseSyncError,
+        'email_exists' => l.purchaseEmailExistsError,
+        'registration_closed' => l.purchaseRegistrationClosedError,
+        'register_web_required' => l.purchaseRegisterWebRequiredError,
         _ =>
           error.message.trim().isEmpty ? l.purchaseGenericError : error.message,
       };
@@ -1496,6 +1938,11 @@ class _AcquirePlanSheetState extends State<_AcquirePlanSheet> {
             priceSummary,
           );
           final regionBadge = resolvePlanRegionBadge(plan.name);
+          final storeUrl = PurchaseManager.isRealInstance(widget.manager)
+              ? widget.manager.resolvePlanStoreUrl(plan)
+              : (XboardPurchaseChannels.extractPlanContentPurchaseUrl(
+                      plan.content) ??
+                  widget.manager.cardStoreUrl);
 
           return ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 560),
@@ -1559,8 +2006,7 @@ class _AcquirePlanSheetState extends State<_AcquirePlanSheet> {
                       color: colors.onSurfaceVariant,
                     ),
                   ),
-                  if (widget.manager.channelError != null &&
-                      widget.manager.cardStoreUrl == null)
+                  if (widget.manager.channelError != null && storeUrl == null)
                     Padding(
                       padding: const EdgeInsets.only(top: 12),
                       child: _Notice(message: l.purchaseChannelError),
@@ -1576,13 +2022,20 @@ class _AcquirePlanSheetState extends State<_AcquirePlanSheet> {
                       ),
                     ),
                   const SizedBox(height: 16),
-                  if (widget.manager.cardStoreUrl != null) ...[
+                  if (storeUrl != null) ...[
                     FilledButton.icon(
                       key: const Key('purchase-acquire-store'),
-                      onPressed: () => _open(
-                        widget.manager.cardStoreUrl!,
-                        l.purchaseOpenLinkFailed,
-                      ),
+                      onPressed: () {
+                        if (PurchaseManager.isRealInstance(widget.manager)) {
+                          widget.manager.markPlanHandoff(plan);
+                        }
+                        unawaited(
+                          _open(
+                            storeUrl,
+                            l.purchaseOpenLinkFailed,
+                          ),
+                        );
+                      },
                       icon: const Icon(Icons.storefront_rounded, size: 18),
                       label: Text(l.purchaseCardStore),
                     ),
@@ -1651,6 +2104,72 @@ class _AcquirePlanSheetState extends State<_AcquirePlanSheet> {
           );
         },
       );
+}
+
+class _AuthModeTabButton extends StatelessWidget {
+  const _AuthModeTabButton({
+    super.key,
+    required this.label,
+    required this.icon,
+    required this.selected,
+    required this.enabled,
+    required this.onTap,
+  });
+
+  final String label;
+  final IconData icon;
+  final bool selected;
+  final bool enabled;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    return ExcludeFocusTraversal(
+      child: Semantics(
+        button: true,
+        selected: selected,
+        enabled: enabled,
+        child: Material(
+          color: selected ? colors.surface : Colors.transparent,
+          borderRadius: BorderRadius.circular(9),
+          elevation: selected ? 1 : 0,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(9),
+            onTap: enabled ? onTap : null,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    icon,
+                    size: 16,
+                    color: selected ? colors.primary : colors.onSurfaceVariant,
+                  ),
+                  const SizedBox(width: 6),
+                  Flexible(
+                    child: Text(
+                      label,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.center,
+                      style: theme.textTheme.labelMedium?.copyWith(
+                        fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                        color: selected ? colors.onSurface : colors.onSurfaceVariant,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 class _StepChip extends StatelessWidget {

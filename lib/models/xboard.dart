@@ -241,3 +241,79 @@ class GiftHistoryPage {
   final int lastPage;
   final int total;
 }
+
+class XboardPurchaseChannels {
+  const XboardPurchaseChannels({
+    this.cardStoreUrl,
+    this.cardStore50gUrl,
+    this.cardStore100gUrl,
+    this.cardStore200gUrl,
+    this.cardStore500gUrl,
+    this.chatwootBaseUrl,
+    this.chatwootWebsiteToken,
+  });
+
+  final Uri? cardStoreUrl;
+  final Uri? cardStore50gUrl;
+  final Uri? cardStore100gUrl;
+  final Uri? cardStore200gUrl;
+  final Uri? cardStore500gUrl;
+  final Uri? chatwootBaseUrl;
+  final String? chatwootWebsiteToken;
+
+  bool get hasAnyStoreUrl =>
+      cardStoreUrl != null ||
+      cardStore50gUrl != null ||
+      cardStore100gUrl != null ||
+      cardStore200gUrl != null ||
+      cardStore500gUrl != null;
+
+  bool get hasChatwoot =>
+      chatwootBaseUrl != null &&
+      chatwootWebsiteToken != null &&
+      chatwootWebsiteToken!.trim().isNotEmpty;
+
+  static final RegExp _contentPurchaseLinkPattern = RegExp(
+    r'(?:购买链接|购卡链接|发卡链接|purchase\s*(?:url|link))\s*[:：]\s*(https://[^\s)<>\]"”]+)',
+    caseSensitive: false,
+  );
+
+  static Uri? extractPlanContentPurchaseUrl(String content) {
+    if (content.trim().isEmpty) return null;
+    final match = _contentPurchaseLinkPattern.firstMatch(content);
+    if (match == null) return null;
+    final parsed = Uri.tryParse(match.group(1)!.trim());
+    if (parsed == null ||
+        parsed.scheme != 'https' ||
+        parsed.host.isEmpty ||
+        parsed.userInfo.isNotEmpty) {
+      return null;
+    }
+    return parsed;
+  }
+
+  static int? detectTierGiB(XboardPlanOffer plan) {
+    if (const {50, 100, 200, 500}.contains(plan.transferGiB)) {
+      return plan.transferGiB;
+    }
+    final match = RegExp(
+      r'(?:^|[^0-9])(50|100|200|500)\s*(?:gib|gb|g)(?:$|[^a-z0-9])',
+      caseSensitive: false,
+    ).firstMatch(plan.name);
+    if (match == null) return null;
+    return int.tryParse(match.group(1)!);
+  }
+
+  Uri? resolvePlanStoreUrl(XboardPlanOffer plan) {
+    final contentUrl = extractPlanContentPurchaseUrl(plan.content);
+    if (contentUrl != null) return contentUrl;
+    final tierUrl = switch (detectTierGiB(plan)) {
+      50 => cardStore50gUrl,
+      100 => cardStore100gUrl,
+      200 => cardStore200gUrl,
+      500 => cardStore500gUrl,
+      _ => null,
+    };
+    return tierUrl ?? cardStoreUrl;
+  }
+}
