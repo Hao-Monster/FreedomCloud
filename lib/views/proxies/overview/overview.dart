@@ -1555,9 +1555,19 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
       var nextInitialError = initialErrorText;
       while (mounted && !_disposed) {
         final String? url;
+        var redirectedToPurchase = false;
         final dialog = URLFormDialog(
           initialUrl: nextInitialUrl,
           initialErrorText: nextInitialError,
+          onGoToPurchase: () {
+            redirectedToPurchase = true;
+            if (globalState.isAppControllerReady) {
+              globalState.appController.toPage(PageLabel.purchase);
+            } else if (mounted) {
+              ref.read(currentPageLabelProvider.notifier).value =
+                  PageLabel.purchase;
+            }
+          },
         );
         if (globalState.navigatorKey.currentState != null) {
           url = await globalState.showCommonDialog<String>(
@@ -1570,7 +1580,10 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
             builder: (_) => dialog,
           );
         }
-        if (url == null || url.isEmpty || !globalState.isAppControllerReady) {
+        if (redirectedToPurchase ||
+            url == null ||
+            url.isEmpty ||
+            !globalState.isAppControllerReady) {
           return;
         }
         final existingBeforeImport = {
@@ -2449,6 +2462,16 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
                                   ? null
                                   : () =>
                                       unawaited(_openUrlSubscriptionImport()),
+                              onGoToPurchase: () {
+                                if (globalState.isAppControllerReady) {
+                                  globalState.appController
+                                      .toPage(PageLabel.purchase);
+                                } else {
+                                  ref
+                                      .read(currentPageLabelProvider.notifier)
+                                      .value = PageLabel.purchase;
+                                }
+                              },
                             ),
                           ),
                         if (availableFilterHidAllNodes)
@@ -2686,9 +2709,11 @@ class _OverviewEmptyProfilesCard extends StatelessWidget {
   const _OverviewEmptyProfilesCard({
     super.key,
     required this.onAddSubscription,
+    this.onGoToPurchase,
   });
 
   final VoidCallback? onAddSubscription;
+  final VoidCallback? onGoToPurchase;
 
   @override
   Widget build(BuildContext context) {
@@ -2737,6 +2762,15 @@ class _OverviewEmptyProfilesCard extends StatelessWidget {
                 icon: const Icon(Icons.content_paste_go_rounded, size: 18),
                 label: Text(appLocalizations.nodeOverviewAddSubscription),
               ),
+              if (onGoToPurchase != null) ...[
+                const SizedBox(height: 8),
+                TextButton.icon(
+                  key: const ValueKey('overview-empty-go-purchase'),
+                  onPressed: onGoToPurchase,
+                  icon: const Icon(Icons.shopping_bag_outlined, size: 18),
+                  label: Text(appLocalizations.goToPurchasePrompt),
+                ),
+              ],
             ],
           ),
         ),

@@ -1281,5 +1281,8 @@
         "type": "String"
       }
     }
-  }
+  },
+  "expertMode": "上級者モード",
+  "noviceMode": "かんたんモード",
+  "goToPurchasePrompt": "サブスクリプションをお持ちでない方：購入・引換へ"
 }

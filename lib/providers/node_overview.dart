@@ -29,6 +29,7 @@ import 'package:path/path.dart' as p;
 import 'app.dart';
 import 'config.dart';
 import 'state.dart';
+export 'state.dart' show expertNavigationExpandedProvider;
 
 enum ProxiesScope { current, all }
 
@@ -38,6 +39,22 @@ final proxiesScopeProvider =
     StateProvider<ProxiesScope>((ref) => ProxiesScope.all);
 final coldStartZeroProfilePromptedProvider =
     StateProvider<bool>((ref) => false);
+
+void toggleExpertNavigationMode(WidgetRef ref) {
+  final nextExpanded = !ref.read(expertNavigationExpandedProvider);
+  ref.read(expertNavigationExpandedProvider.notifier).state = nextExpanded;
+  if (!nextExpanded) {
+    ref.read(proxiesScopeProvider.notifier).state = ProxiesScope.all;
+    final currentPage = ref.read(currentPageLabelProvider);
+    if (!noviceVisiblePageLabels.contains(currentPage)) {
+      if (globalState.isAppControllerReady) {
+        globalState.appController.toPage(PageLabel.proxies);
+      } else {
+        ref.read(currentPageLabelProvider.notifier).value = PageLabel.proxies;
+      }
+    }
+  }
+}
 final cachedProfileCatalogsProvider =
     StateProvider<Map<String, ProfileCatalog>>((ref) => const {});
 final nodeOverviewTestUrlProvider =

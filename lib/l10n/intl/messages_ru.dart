@@ -485,6 +485,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "exit": MessageLookupByLibrary.simpleMessage("Выход"),
     "expand": MessageLookupByLibrary.simpleMessage("Стандартный"),
     "expandAll": MessageLookupByLibrary.simpleMessage("Развернуть всё"),
+    "expertMode": MessageLookupByLibrary.simpleMessage("Режим эксперта"),
     "expirationTime": MessageLookupByLibrary.simpleMessage("Время истечения"),
     "expiresOn": MessageLookupByLibrary.simpleMessage("Истекает"),
     "exportFile": MessageLookupByLibrary.simpleMessage("Экспорт файла"),
@@ -557,6 +558,9 @@ class MessageLookup extends MessageLookupByLibrary {
     ),
     "go": MessageLookupByLibrary.simpleMessage("Перейти"),
     "goDownload": MessageLookupByLibrary.simpleMessage("Перейти к загрузке"),
+    "goToPurchasePrompt": MessageLookupByLibrary.simpleMessage(
+      "Нет подписки? Купить или активировать код",
+    ),
     "goToSelected": MessageLookupByLibrary.simpleMessage("К выбранному"),
     "gratitude": MessageLookupByLibrary.simpleMessage("Благодарность"),
     "hasCacheChange": MessageLookupByLibrary.simpleMessage(
@@ -1268,6 +1272,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "notSelectedTip": MessageLookupByLibrary.simpleMessage(
       "Текущая группа прокси недоступна для выбора",
     ),
+    "noviceMode": MessageLookupByLibrary.simpleMessage("Простой режим"),
     "nullProfileDesc": MessageLookupByLibrary.simpleMessage(
       "Профиль отсутствует. Пожалуйста, добавьте профиль",
     ),

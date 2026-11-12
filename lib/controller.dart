@@ -1398,6 +1398,33 @@ class AppController {
     _ref.read(currentProfileIdProvider.notifier).value = effectiveProfile.id;
   }
 
+  Future<void> activateImportedProfileForNovice(
+    Profile profile, {
+    bool isNewProfile = false,
+    bool switchToProxiesPage = false,
+  }) async {
+    final effectiveProfile =
+        !profile.providerHeaders.containsKey(smartSelectionModeMarker) &&
+                profile.selectedMap.isEmpty
+            ? markProfileSelectionMode(profile, NodeSelectionMode.smart)
+            : profile;
+    final hadNoActiveProfile = _ref.read(currentProfileIdProvider) == null;
+    if (isNewProfile || hadNoActiveProfile) {
+      await addProfile(effectiveProfile);
+    } else {
+      setProfileAndAutoApply(effectiveProfile);
+    }
+    if (switchToProxiesPage) {
+      _ref.read(proxiesScopeProvider.notifier).state = ProxiesScope.all;
+      toPage(PageLabel.proxies);
+    }
+    final isActive =
+        _ref.read(currentProfileIdProvider) == effectiveProfile.id;
+    if (isActive && !_ref.read(runTimeProvider.notifier).isStart) {
+      await updateStatus(true);
+    }
+  }
+
   Future<void> deleteProfile(String id) async {
     _autoUpdateBackoff.clear(id);
     _ref.read(profilesProvider.notifier).deleteProfileById(id);
@@ -3482,6 +3509,9 @@ class AppController {
   }
 
   void toPage(PageLabel pageLabel) {
+    if (!noviceVisiblePageLabels.contains(pageLabel)) {
+      _ref.read(expertNavigationExpandedProvider.notifier).state = true;
+    }
     _ref.read(currentPageLabelProvider.notifier).value = pageLabel;
   }
 
@@ -3512,7 +3542,7 @@ class AppController {
         if (res != true) {
           return;
         }
-        addProfileFormURL(url);
+        await _addProfileFormURL(url, activateAndStartProxy: true);
       },
     );
   }
@@ -3557,7 +3587,13 @@ class AppController {
     return;
   }
 
-  Future<void> addProfileFormURL(String url) async {
+  Future<void> addProfileFormURL(String url) =>
+      _addProfileFormURL(url, activateAndStartProxy: false);
+
+  Future<void> _addProfileFormURL(
+    String url, {
+    bool activateAndStartProxy = false,
+  }) async {
     globalState.lastSubscriptionImportError = null;
     if (globalState.navigatorKey.currentState?.canPop() ?? false) {
       globalState.navigatorKey.currentState?.popUntil((route) => route.isFirst);
@@ -3588,7 +3624,15 @@ class AppController {
           _showHwidNotSupportedNotice();
         }
 
-        await addProfile(profile);
+        if (activateAndStartProxy) {
+          await activateImportedProfileForNovice(
+            profile,
+            isNewProfile: true,
+            switchToProxiesPage: true,
+          );
+        } else {
+          await addProfile(profile);
+        }
       }
     } catch (err) {
       commonPrint.log('Add Profile Failed: $err');

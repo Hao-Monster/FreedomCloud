@@ -92,10 +92,13 @@ NavigationItemsState navigationsState(Ref ref) {
   );
 }
 
+final expertNavigationExpandedProvider = StateProvider<bool>((ref) => false);
+
 @riverpod
 NavigationItemsState currentNavigationsState(Ref ref) {
   final viewWidth = ref.watch(viewWidthProvider);
   final navigationItemsState = ref.watch(navigationsStateProvider);
+  final expertExpanded = ref.watch(expertNavigationExpandedProvider);
   final navigationItemMode = switch (viewWidth <= maxMobileWidth) {
     true => NavigationItemMode.mobile,
     false => NavigationItemMode.desktop,
@@ -103,7 +106,10 @@ NavigationItemsState currentNavigationsState(Ref ref) {
   return NavigationItemsState(
     value: navigationItemsState.value
         .where(
-          (element) => element.modes.contains(navigationItemMode),
+          (element) =>
+              element.modes.contains(navigationItemMode) &&
+              (expertExpanded ||
+                  noviceVisiblePageLabels.contains(element.label)),
         )
         .toList(),
   );

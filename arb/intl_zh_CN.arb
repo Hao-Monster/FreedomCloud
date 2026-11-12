@@ -1415,5 +1415,8 @@
         "type": "String"
       }
     }
-  }
+  },
+  "expertMode": "大佬模式",
+  "noviceMode": "小白模式",
+  "goToPurchasePrompt": "还没有订阅？去购买 / 兑换"
 }

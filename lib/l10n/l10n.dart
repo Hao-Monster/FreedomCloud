@@ -8467,6 +8467,26 @@ class AppLocalizations {
       args: [profile, node],
     );
   }
+
+  /// `Expert Mode`
+  String get expertMode {
+    return Intl.message('Expert Mode', name: 'expertMode', desc: '', args: []);
+  }
+
+  /// `Simple Mode`
+  String get noviceMode {
+    return Intl.message('Simple Mode', name: 'noviceMode', desc: '', args: []);
+  }
+
+  /// `No subscription yet? Buy or Redeem`
+  String get goToPurchasePrompt {
+    return Intl.message(
+      'No subscription yet? Buy or Redeem',
+      name: 'goToPurchasePrompt',
+      desc: '',
+      args: [],
+    );
+  }
 }
 
 class AppLocalizationDelegate extends LocalizationsDelegate<AppLocalizations> {

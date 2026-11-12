@@ -369,6 +369,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "existsTip": m6,
     "exit": MessageLookupByLibrary.simpleMessage("終了"),
     "expand": MessageLookupByLibrary.simpleMessage("標準"),
+    "expertMode": MessageLookupByLibrary.simpleMessage("上級者モード"),
     "expirationTime": MessageLookupByLibrary.simpleMessage("有効期限"),
     "expiresOn": MessageLookupByLibrary.simpleMessage("有効期限"),
     "exportFile": MessageLookupByLibrary.simpleMessage("ファイルをエクスポート"),
@@ -417,6 +418,9 @@ class MessageLookup extends MessageLookupByLibrary {
     ),
     "go": MessageLookupByLibrary.simpleMessage("移動"),
     "goDownload": MessageLookupByLibrary.simpleMessage("ダウンロードへ"),
+    "goToPurchasePrompt": MessageLookupByLibrary.simpleMessage(
+      "サブスクリプションをお持ちでない方：購入・引換へ",
+    ),
     "gratitude": MessageLookupByLibrary.simpleMessage("感謝"),
     "hasCacheChange": MessageLookupByLibrary.simpleMessage("変更をキャッシュしますか？"),
     "healthActionOpenDns": MessageLookupByLibrary.simpleMessage("DNS 設定"),
@@ -988,6 +992,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "notSelectedTip": MessageLookupByLibrary.simpleMessage(
       "現在のプロキシグループは選択できません",
     ),
+    "noviceMode": MessageLookupByLibrary.simpleMessage("かんたんモード"),
     "nullProfileDesc": MessageLookupByLibrary.simpleMessage(
       "プロファイルがありません。追加してください",
     ),

@@ -2,8 +2,10 @@ import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:flclashx/common/preferences.dart';
+import 'package:flclashx/enum/enum.dart';
 import 'package:flclashx/manager/purchase_manager.dart';
 import 'package:flclashx/models/profile.dart';
+import 'package:flclashx/providers/node_overview.dart';
 import 'package:flclashx/providers/providers.dart';
 import 'package:flclashx/services/purchase_profile_sync.dart';
 import 'package:flclashx/services/purchase_storage.dart';
@@ -58,9 +60,10 @@ class _PurchaseViewState extends ConsumerState<PurchaseView> {
             ref.read(profilesProvider).getProfile(profile.id) != beforeSave) {
           throw const FormatException('Profile changed during synchronization');
         }
-        // Save without auto-selecting a new profile or applying provider UI
-        // settings to a different active subscription.
-        globalState.appController.setProfileAndAutoApply(written);
+        await globalState.appController.activateImportedProfileForNovice(
+          written,
+          isNewProfile: beforeSave == null,
+        );
         final saved = await preferences.saveConfig(globalState.config);
         if (!saved) {
           throw const FormatException('Profile settings were not saved');
@@ -90,6 +93,9 @@ class _PurchaseViewState extends ConsumerState<PurchaseView> {
             throw const FormatException('Could not open the account website');
           }
         },
-        openProfiles: () => globalState.appController.toProfiles(),
+        openProfiles: () {
+          ref.read(proxiesScopeProvider.notifier).state = ProxiesScope.all;
+          globalState.appController.toPage(PageLabel.proxies);
+        },
       );
 }

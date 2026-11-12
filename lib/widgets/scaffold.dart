@@ -83,6 +83,9 @@ class CommonScaffoldState extends ConsumerState<CommonScaffold> {
 
   Widget? get _sideNavigationBar => widget.sideNavigationBar;
 
+  bool get hasNavigationBar =>
+      widget.sideNavigationBar != null || widget.bottomNavigationBar != null;
+
   set actions(List<Widget> actions) {
     _appBarState.value = _appBarState.value.copyWith(actions: actions);
   }

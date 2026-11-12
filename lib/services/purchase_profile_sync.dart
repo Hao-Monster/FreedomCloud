@@ -80,6 +80,8 @@ class PurchaseProfileSynchronizer {
     }
     // Only replace downloaded metadata; local choices may have changed while
     // the network request or secure storage write was pending.
+    final localSelectionMode =
+        (latest ?? existing)?.providerHeaders[smartSelectionModeMarker];
     final updated = (latest ?? fetched).copyWith(
       url: fetched.url,
       lastUpdateDate: fetched.lastUpdateDate,
@@ -91,6 +93,8 @@ class PurchaseProfileSynchronizer {
       isUpdating: false,
       providerHeaders: {
         ...fetched.providerHeaders,
+        if (localSelectionMode != null)
+          smartSelectionModeMarker: localSelectionMode,
         xboardAccountMarker: ownership,
         xboardTlsMarker: 'required'
       },

@@ -581,6 +581,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "exit": MessageLookupByLibrary.simpleMessage("Exit"),
     "expand": MessageLookupByLibrary.simpleMessage("Standard"),
     "expandAll": MessageLookupByLibrary.simpleMessage("Expand all"),
+    "expertMode": MessageLookupByLibrary.simpleMessage("Expert Mode"),
     "expirationTime": MessageLookupByLibrary.simpleMessage("Expiration time"),
     "expiresOn": MessageLookupByLibrary.simpleMessage("Expires on"),
     "exportFile": MessageLookupByLibrary.simpleMessage("Export file"),
@@ -645,6 +646,9 @@ class MessageLookup extends MessageLookupByLibrary {
     ),
     "go": MessageLookupByLibrary.simpleMessage("Go"),
     "goDownload": MessageLookupByLibrary.simpleMessage("Go to download"),
+    "goToPurchasePrompt": MessageLookupByLibrary.simpleMessage(
+      "No subscription yet? Buy or Redeem",
+    ),
     "goToSelected": MessageLookupByLibrary.simpleMessage("Go to selected"),
     "gratitude": MessageLookupByLibrary.simpleMessage("Gratitude"),
     "hasCacheChange": MessageLookupByLibrary.simpleMessage(
@@ -1348,6 +1352,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "notSelectedTip": MessageLookupByLibrary.simpleMessage(
       "The current proxy group cannot be selected.",
     ),
+    "noviceMode": MessageLookupByLibrary.simpleMessage("Simple Mode"),
     "nullProfileDesc": MessageLookupByLibrary.simpleMessage(
       "No profile, Please add a profile",
     ),

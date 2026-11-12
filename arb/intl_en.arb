@@ -1476,5 +1476,8 @@
         "type": "String"
       }
     }
-  }
+  },
+  "expertMode": "Expert Mode",
+  "noviceMode": "Simple Mode",
+  "goToPurchasePrompt": "No subscription yet? Buy or Redeem"
 }

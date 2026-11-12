@@ -33,11 +33,30 @@ class _ProxiesViewState extends ConsumerState<ProxiesView> with PageMixin {
     await delayTestGroups(groups);
   }
 
+  bool _showAdvancedProxiesActions(BuildContext context, WidgetRef ref) {
+    final expertExpanded = ref.watch(expertNavigationExpandedProvider);
+    if (expertExpanded) return true;
+    final scaffold = context.commonScaffoldState;
+    if (scaffold != null && !scaffold.hasNavigationBar) {
+      return true;
+    }
+    return false;
+  }
+
   @override
   List<Widget> get actions => [
-        const NodeOverviewScopeAction(),
         Consumer(
-          builder: (_, ref, child) {
+          builder: (ctx, ref, child) =>
+              _showAdvancedProxiesActions(ctx, ref)
+                  ? child!
+                  : const SizedBox.shrink(),
+          child: const NodeOverviewScopeAction(),
+        ),
+        Consumer(
+          builder: (ctx, ref, child) {
+            if (!_showAdvancedProxiesActions(ctx, ref)) {
+              return const SizedBox.shrink();
+            }
             final globalModeEnabled = ref.watch(globalModeEnabledProvider);
             if (!globalModeEnabled) return const SizedBox.shrink();
             return child!;
@@ -86,59 +105,65 @@ class _ProxiesViewState extends ConsumerState<ProxiesView> with PageMixin {
             },
           ),
         ],
-        CommonPopupBox(
-          targetBuilder: (open) => IconButton(
-              onPressed: () {
-                open(
-                  offset: const Offset(0, 20),
-                );
-              },
-              icon: const Icon(
-                Icons.more_vert,
-              ),
-            ),
-          popup: CommonPopupMenu(
-            items: [
-              PopupMenuItemData(
-                icon: Icons.tune,
-                label: appLocalizations.settings,
+        Consumer(
+          builder: (ctx, ref, child) =>
+              _showAdvancedProxiesActions(ctx, ref)
+                  ? child!
+                  : const SizedBox.shrink(),
+          child: CommonPopupBox(
+            targetBuilder: (open) => IconButton(
                 onPressed: () {
-                  showSheet(
-                    context: context,
-                    props: const SheetProps(
-                      isScrollControlled: true,
-                    ),
-                    builder: (_, type) => AdaptiveSheetScaffold(
-                        type: type,
-                        body: const ProxiesSetting(),
-                        title: appLocalizations.settings,
-                      ),
+                  open(
+                    offset: const Offset(0, 20),
                   );
                 },
+                icon: const Icon(
+                  Icons.more_vert,
+                ),
               ),
-              if (_hasProviders)
+            popup: CommonPopupMenu(
+              items: [
                 PopupMenuItemData(
-                  icon: Icons.poll_outlined,
-                  label: appLocalizations.providers,
+                  icon: Icons.tune,
+                  label: appLocalizations.settings,
                   onPressed: () {
-                    showExtend(
-                      context,
-                      builder: (_, type) => const ProvidersView(),
+                    showSheet(
+                      context: context,
+                      props: const SheetProps(
+                        isScrollControlled: true,
+                      ),
+                      builder: (_, type) => AdaptiveSheetScaffold(
+                          type: type,
+                          body: const ProxiesSetting(),
+                          title: appLocalizations.settings,
+                        ),
                     );
                   },
                 ),
-              if (!_isTab)
-                PopupMenuItemData(
-                  icon: Icons.style_outlined,
-                  label: appLocalizations.iconConfiguration,
-                  onPressed: () {
-                    showExtend(
-                      context,
-                      builder: (_, type) => const _IconConfigView(),
-                    );
-                  },
-                ),
-            ],
+                if (_hasProviders)
+                  PopupMenuItemData(
+                    icon: Icons.poll_outlined,
+                    label: appLocalizations.providers,
+                    onPressed: () {
+                      showExtend(
+                        context,
+                        builder: (_, type) => const ProvidersView(),
+                      );
+                    },
+                  ),
+                if (!_isTab)
+                  PopupMenuItemData(
+                    icon: Icons.style_outlined,
+                    label: appLocalizations.iconConfiguration,
+                    onPressed: () {
+                      showExtend(
+                        context,
+                        builder: (_, type) => const _IconConfigView(),
+                      );
+                    },
+                  ),
+              ],
+            ),
           ),
         )
       ];

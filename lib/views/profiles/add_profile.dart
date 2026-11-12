@@ -123,10 +123,12 @@ class URLFormDialog extends StatefulWidget {
     super.key,
     this.initialUrl,
     this.initialErrorText,
+    this.onGoToPurchase,
   });
 
   final String? initialUrl;
   final String? initialErrorText;
+  final VoidCallback? onGoToPurchase;
 
   @override
   State<URLFormDialog> createState() => _URLFormDialogState();
@@ -208,26 +210,44 @@ class _URLFormDialogState extends State<URLFormDialog> {
       ],
       child: Padding(
         padding: const EdgeInsets.only(top: 16.0),
-        child: TextField(
-          controller: urlController,
-          keyboardType: TextInputType.url,
-          autofocus: true,
-          minLines: 1,
-          maxLines: 5,
-          onChanged: (_) {
-            if (_errorText != null) {
-              setState(() {
-                _errorText = null;
-              });
-            }
-          },
-          onSubmitted: (_) => _handleSubmit(),
-          decoration: InputDecoration(
-            border: const OutlineInputBorder(),
-            labelText: appLocalizations.url,
-            errorText: _errorText,
-            errorMaxLines: 3,
-          ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            TextField(
+              controller: urlController,
+              keyboardType: TextInputType.url,
+              autofocus: true,
+              minLines: 1,
+              maxLines: 5,
+              onChanged: (_) {
+                if (_errorText != null) {
+                  setState(() {
+                    _errorText = null;
+                  });
+                }
+              },
+              onSubmitted: (_) => _handleSubmit(),
+              decoration: InputDecoration(
+                border: const OutlineInputBorder(),
+                labelText: appLocalizations.url,
+                errorText: _errorText,
+                errorMaxLines: 3,
+              ),
+            ),
+            if (widget.onGoToPurchase != null) ...[
+              const SizedBox(height: 8),
+              TextButton.icon(
+                key: const ValueKey('url-dialog-go-purchase'),
+                onPressed: () {
+                  Navigator.of(context).pop<String>(null);
+                  widget.onGoToPurchase?.call();
+                },
+                icon: const Icon(Icons.shopping_bag_outlined, size: 18),
+                label: Text(appLocalizations.goToPurchasePrompt),
+              ),
+            ],
+          ],
         ),
       ),
     );
