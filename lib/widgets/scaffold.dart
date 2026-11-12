@@ -140,10 +140,10 @@ class CommonScaffoldState extends ConsumerState<CommonScaffold> {
     return Theme(
       data: theme.copyWith(
         appBarTheme: theme.appBarTheme.copyWith(
-          backgroundColor: colorScheme.brightness == Brightness.dark
-              ? Colors.grey[900]
-              : Colors.white,
-          iconTheme: theme.primaryIconTheme.copyWith(color: Colors.grey),
+          backgroundColor: colorScheme.surfaceContainer,
+          iconTheme: (theme.appBarTheme.iconTheme ?? theme.iconTheme).copyWith(
+            color: colorScheme.onSurfaceVariant,
+          ),
           titleTextStyle: theme.textTheme.titleLarge,
           toolbarTextStyle: theme.textTheme.bodyMedium,
         ),
@@ -356,24 +356,25 @@ class CommonScaffoldState extends ConsumerState<CommonScaffold> {
   PreferredSizeWidget _buildAppBar() {
     final backgroundUrl = widget.disableBackground ? null : ref.watch(backgroundUrlProvider);
     final isTransparent = backgroundUrl != null;
-    
+    final theme = Theme.of(context);
+
     return PreferredSize(
       preferredSize: const Size.fromHeight(kToolbarHeight),
       child: Theme(
-        data: Theme.of(context).copyWith(
-          appBarTheme: AppBarTheme(
+        data: theme.copyWith(
+          appBarTheme: theme.appBarTheme.copyWith(
             systemOverlayStyle: SystemUiOverlayStyle(
               statusBarColor: Colors.transparent,
               statusBarIconBrightness:
-                  Theme.of(context).brightness == Brightness.dark
+                  theme.brightness == Brightness.dark
                       ? Brightness.light
                       : Brightness.dark,
               systemNavigationBarIconBrightness:
-                  Theme.of(context).brightness == Brightness.dark
+                  theme.brightness == Brightness.dark
                       ? Brightness.light
                       : Brightness.dark,
               systemNavigationBarColor: widget.bottomNavigationBar != null
-                  ? context.colorScheme.surfaceContainer
+                  ? context.colorScheme.surfaceDim
                   : context.colorScheme.surface,
               systemNavigationBarDividerColor: Colors.transparent,
             ),

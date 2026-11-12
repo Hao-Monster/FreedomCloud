@@ -1141,7 +1141,7 @@ class _EmptyHero extends ConsumerWidget {
         const _Logo(),
         const SizedBox(height: 16),
         Text(
-          appName,
+          appLocalizations.appBrandName,
           style: context.textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w700),
         ),
         const SizedBox(height: 24),

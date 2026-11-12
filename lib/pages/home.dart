@@ -42,8 +42,13 @@ class HomePage extends StatelessWidget {
                 : null;
             final sideNavigationBar =
                 viewMode != ViewMode.mobile ? navigationBar : null;
+            final showAppBarBrandTrigger =
+                viewMode == ViewMode.mobile || Platform.isMacOS;
             return CommonScaffold(
               key: globalState.homeScaffoldKey,
+              leading: showAppBarBrandTrigger
+                  ? const _CompactBrandTributeLeading()
+                  : null,
               title: Intl.message(
                 pageLabel.name,
               ),
@@ -192,32 +197,41 @@ class CommonNavigationBar extends ConsumerWidget {
       final toggleIcon = Icon(
         expertExpanded ? Icons.expand_less_rounded : Icons.expand_more_rounded,
       );
-      return NavigationBarTheme(
-        data: _NavigationBarDefaultsM3(context),
-        child: NavigationBar(
-          destinations: [
-            ...navigationItems.map(
-              (e) => NavigationDestination(
-                icon: e.icon,
-                label: Intl.message(e.label.name),
+      final colors = context.colorScheme;
+      return DecoratedBox(
+        position: DecorationPosition.foreground,
+        decoration: BoxDecoration(
+          border: Border(
+            top: BorderSide(color: freedomNetHairlineColor(colors)),
+          ),
+        ),
+        child: NavigationBarTheme(
+          data: _NavigationBarDefaultsM3(context),
+          child: NavigationBar(
+            destinations: [
+              ...navigationItems.map(
+                (e) => NavigationDestination(
+                  icon: e.icon,
+                  label: Intl.message(e.label.name),
+                ),
               ),
-            ),
-            NavigationDestination(
-              key: const ValueKey('navigation-expert-mode-toggle'),
-              icon: toggleIcon,
-              label: toggleLabel,
-            ),
-          ],
-          onDestinationSelected: (index) {
-            if (index == navigationItems.length) {
-              toggleExpertNavigationMode(ref);
-              return;
-            }
-            globalState.appController.toPage(navigationItems[index].label);
-          },
-          selectedIndex: navigationItems.isEmpty
-              ? 0
-              : currentIndex.clamp(0, navigationItems.length - 1),
+              NavigationDestination(
+                key: const ValueKey('navigation-expert-mode-toggle'),
+                icon: toggleIcon,
+                label: toggleLabel,
+              ),
+            ],
+            onDestinationSelected: (index) {
+              if (index == navigationItems.length) {
+                toggleExpertNavigationMode(ref);
+                return;
+              }
+              globalState.appController.toPage(navigationItems[index].label);
+            },
+            selectedIndex: navigationItems.isEmpty
+                ? 0
+                : currentIndex.clamp(0, navigationItems.length - 1),
+          ),
         ),
       );
     }
@@ -228,6 +242,8 @@ class CommonNavigationBar extends ConsumerWidget {
         .toLowerCase()
         .startsWith('zh');
     final hairline = freedomNetHairlineColor(colors);
+    final tributeSemanticsLabel =
+        '${appLocalizations.appBrandName} · ${appLocalizations.tributeDialogTitle}';
     return Material(
       color: colors.surfaceDim,
       // SafeArea: the app draws edge-to-edge, so on tablets/foldables (which
@@ -250,56 +266,67 @@ class CommonNavigationBar extends ConsumerWidget {
                 const SizedBox(height: 10),
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 6),
-                  child: Tooltip(
-                    excludeFromSemantics: true,
-                    message: appLocalizations.tributeDialogTitle,
-                    child: InkWell(
-                      key: const ValueKey('brand-tribute-trigger'),
-                      borderRadius: BorderRadius.circular(12),
-                      onTap: () => showFreedomNetTributeDialog(context),
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 6,
-                          vertical: 8,
-                        ),
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            const FreedomNetBrandMark(size: 36),
-                            const SizedBox(height: 6),
-                            ConstrainedBox(
-                              constraints: const BoxConstraints(maxWidth: 88),
-                              child: Text(
-                                appLocalizations.appBrandName,
-                                textAlign: TextAlign.center,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: context.textTheme.labelMedium?.copyWith(
-                                  color: colors.onSurface,
-                                  fontWeight: FontWeight.w700,
-                                  letterSpacing: 0.2,
-                                ),
-                              ),
-                            ),
-                            if (isZh) ...[
-                              const SizedBox(height: 1),
-                              ConstrainedBox(
-                                constraints: const BoxConstraints(maxWidth: 88),
-                                child: Text(
-                                  brandNameEn,
-                                  textAlign: TextAlign.center,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: context.textTheme.labelSmall?.copyWith(
-                                    fontSize: 9.5,
-                                    color: colors.onSurfaceVariant,
-                                    fontWeight: FontWeight.w600,
-                                    letterSpacing: 0.3,
+                  child: Semantics(
+                    key: const ValueKey('brand-tribute-trigger'),
+                    container: true,
+                    button: true,
+                    label: tributeSemanticsLabel,
+                    child: Tooltip(
+                      excludeFromSemantics: true,
+                      message: appLocalizations.tributeDialogTitle,
+                      child: InkWell(
+                        borderRadius: BorderRadius.circular(12),
+                        onTap: () => showFreedomNetTributeDialog(context),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 6,
+                            vertical: 8,
+                          ),
+                          child: ExcludeSemantics(
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const FreedomNetBrandMark(size: 36),
+                                const SizedBox(height: 6),
+                                ConstrainedBox(
+                                  constraints:
+                                      const BoxConstraints(maxWidth: 88),
+                                  child: Text(
+                                    appLocalizations.appBrandName,
+                                    textAlign: TextAlign.center,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: context.textTheme.labelMedium
+                                        ?.copyWith(
+                                      color: colors.onSurface,
+                                      fontWeight: FontWeight.w700,
+                                      letterSpacing: 0.2,
+                                    ),
                                   ),
                                 ),
-                              ),
-                            ],
-                          ],
+                                if (isZh) ...[
+                                  const SizedBox(height: 1),
+                                  ConstrainedBox(
+                                    constraints:
+                                        const BoxConstraints(maxWidth: 88),
+                                    child: Text(
+                                      brandNameEn,
+                                      textAlign: TextAlign.center,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: context.textTheme.labelSmall
+                                          ?.copyWith(
+                                        fontSize: 9.5,
+                                        color: colors.onSurfaceVariant,
+                                        fontWeight: FontWeight.w600,
+                                        letterSpacing: 0.3,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ],
+                            ),
+                          ),
                         ),
                       ),
                     ),
@@ -464,11 +491,43 @@ class _NavigationModeToggleButton extends StatelessWidget {
   }
 }
 
+class _CompactBrandTributeLeading extends StatelessWidget {
+  const _CompactBrandTributeLeading();
+
+  @override
+  Widget build(BuildContext context) {
+    final tributeSemanticsLabel =
+        '${appLocalizations.appBrandName} · ${appLocalizations.tributeDialogTitle}';
+    return Center(
+      child: Semantics(
+        key: const ValueKey('brand-tribute-trigger'),
+        container: true,
+        button: true,
+        label: tributeSemanticsLabel,
+        child: Tooltip(
+          excludeFromSemantics: true,
+          message: appLocalizations.tributeDialogTitle,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(10),
+            onTap: () => showFreedomNetTributeDialog(context),
+            child: const Padding(
+              padding: EdgeInsets.all(6),
+              child: ExcludeSemantics(
+                child: FreedomNetBrandMark(size: 28),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _NavigationBarDefaultsM3 extends NavigationBarThemeData {
   _NavigationBarDefaultsM3(this.context)
       : super(
-          height: 80.0,
-          elevation: 3.0,
+          height: 76.0,
+          elevation: 0.0,
           labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
         );
 
@@ -477,7 +536,7 @@ class _NavigationBarDefaultsM3 extends NavigationBarThemeData {
   late final TextTheme _textTheme = Theme.of(context).textTheme;
 
   @override
-  Color? get backgroundColor => _colors.surfaceContainer;
+  Color? get backgroundColor => _colors.surfaceDim;
 
   @override
   Color? get shadowColor => Colors.transparent;
@@ -493,15 +552,19 @@ class _NavigationBarDefaultsM3 extends NavigationBarThemeData {
                 color: states.contains(WidgetState.disabled)
                     ? _colors.onSurfaceVariant.opacity38
                     : states.contains(WidgetState.selected)
-                        ? _colors.onSecondaryContainer
+                        ? _colors.primary
                         : _colors.onSurfaceVariant,
               ));
 
   @override
-  Color? get indicatorColor => _colors.secondaryContainer;
+  Color? get indicatorColor => _colors.primary.withValues(
+        alpha: _colors.brightness == Brightness.dark ? 0.16 : 0.12,
+      );
 
   @override
-  ShapeBorder? get indicatorShape => const StadiumBorder();
+  ShapeBorder? get indicatorShape => RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+      );
 
   @override
   WidgetStateProperty<TextStyle?>? get labelTextStyle =>

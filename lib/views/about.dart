@@ -428,7 +428,7 @@ class Avatar extends StatelessWidget {
                 ? Text(
                     contributor.name[0].toUpperCase(),
                     style: TextStyle(
-                      color: Colors.white,
+                      color: Theme.of(context).colorScheme.onPrimaryContainer,
                       fontFamily: 'Unbounded',
                       fontSize: avatarFontSize,
                       fontWeight: FontWeight.bold,
@@ -451,11 +451,26 @@ class Avatar extends StatelessWidget {
     );
 
     if (contributor.clickable) {
-      return GestureDetector(
-        onTap: () {
-          unawaited(globalState.openUrl(contributor.link));
-        },
-        child: avatarWidget,
+      return Semantics(
+        container: true,
+        button: true,
+        link: true,
+        label: contributor.name,
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(12),
+            onTap: () {
+              unawaited(globalState.openUrl(contributor.link));
+            },
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+              child: ExcludeSemantics(
+                child: avatarWidget,
+              ),
+            ),
+          ),
+        ),
       );
     }
 

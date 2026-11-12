@@ -41,6 +41,7 @@ const defaultThemeProps = ThemeProps(
   primaryColor: defaultPrimaryColor,
   themeMode: ThemeMode.dark,
 );
+const int _legacyDefaultPrimaryColor = 0xFF03A9F4;
 
 const defaultConnectionTableColumns = [
   'status',
@@ -261,7 +262,8 @@ class ThemeProps with _$ThemeProps {
   const factory ThemeProps({
     int? primaryColor,
     @Default(defaultPrimaryColors) List<int> primaryColors,
-    @Default(ThemeMode.system) ThemeMode themeMode,
+    @Default(ThemeMode.dark) ThemeMode themeMode,
+    @Default(true) bool freedomNetThemeV1Migrated,
     @Default(DynamicSchemeVariant.content) DynamicSchemeVariant schemeVariant,
     @Default(false) bool pureBlack,
     @Default(TextScale()) TextScale textScale,
@@ -520,6 +522,43 @@ class Config with _$Config {
       final globalOverride = normalizedJson["globalOverrideData"];
       if (globalOverride != null && globalOverride is! Map) {
         normalizedJson.remove("globalOverrideData");
+      }
+    } catch (_) {}
+
+    try {
+      // One-shot migration: upgrade legacy uncustomized themeProps
+      // (0xFF03A9F4 + ThemeMode.system) to Flagship Obsidian Slate
+      // (defaultPrimaryColor + ThemeMode.dark) and inject defaultPrimaryColor
+      // into primaryColors while preserving explicit user customizations and
+      // any subsequent user choice after freedomNetThemeV1Migrated == true.
+      final rawThemeProps = normalizedJson["themeProps"];
+      if (rawThemeProps is Map) {
+        final nextThemeProps = Map<String, Object?>.from(rawThemeProps);
+        if (nextThemeProps["freedomNetThemeV1Migrated"] != true) {
+          final rawColor = nextThemeProps["primaryColor"];
+          final rawMode = nextThemeProps["themeMode"];
+          final isLegacyDefaultColor = rawColor == null ||
+              (rawColor is num &&
+                  rawColor.toInt() == _legacyDefaultPrimaryColor);
+          final isLegacyDefaultMode = rawMode == null || rawMode == "system";
+          if (isLegacyDefaultColor && isLegacyDefaultMode) {
+            nextThemeProps["primaryColor"] = defaultPrimaryColor;
+            nextThemeProps["themeMode"] = "dark";
+          }
+          final rawSwatches = nextThemeProps["primaryColors"];
+          if (rawSwatches is List) {
+            final nextSwatches = <int>[
+              for (final item in rawSwatches)
+                if (item is num) item.toInt(),
+            ];
+            if (!nextSwatches.contains(defaultPrimaryColor)) {
+              nextSwatches.insert(0, defaultPrimaryColor);
+            }
+            nextThemeProps["primaryColors"] = nextSwatches;
+          }
+          nextThemeProps["freedomNetThemeV1Migrated"] = true;
+        }
+        normalizedJson["themeProps"] = nextThemeProps;
       }
     } catch (_) {}
 

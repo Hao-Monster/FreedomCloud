@@ -41,6 +41,9 @@ class HeroNavBar extends ConsumerWidget {
           decoration: BoxDecoration(
             color: colorScheme.surfaceContainerHighest,
             borderRadius: BorderRadius.circular(29),
+            border: Border.all(
+              color: freedomNetHairlineColor(colorScheme),
+            ),
             boxShadow: [
               BoxShadow(
                 color: Colors.black.withValues(alpha: 0.10),

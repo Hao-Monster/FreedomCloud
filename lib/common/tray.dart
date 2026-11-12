@@ -15,7 +15,6 @@ import 'package:intl/intl.dart';
 import 'package:tray_manager/tray_manager.dart';
 
 import 'app_localizations.dart';
-import 'constant.dart';
 import 'statusbar.dart';
 import 'window.dart';
 
@@ -360,7 +359,7 @@ class Tray {
     }
     if (!Platform.isWindows) return;
     final nextToolTip =
-        '$appName · ↑ ${traffic.up.show}/s ↓ ${traffic.down.show}/s';
+        '${appLocalizations.appBrandName} · ↑ ${traffic.up.show}/s ↓ ${traffic.down.show}/s';
     if (_lastToolTip == nextToolTip) return;
     _lastToolTip = nextToolTip;
     await trayManager.setToolTip(nextToolTip);
