@@ -1,6 +1,27 @@
 # 开发、集成与预览台账
 
-更新日期：2026-11-12。当前阶段是快速开发、快速迭代和部分功能预览。本文记录来源与验收边界；每次继续开发仍需核实实际 Git/PR/CI 状态，不能把历史报告视为当前通过证明。
+更新日期：2026-11-13。当前阶段是快速开发、快速迭代和部分功能预览。本文记录来源与验收边界；每次继续开发仍需核实实际 Git/PR/CI 状态，不能把历史报告视为当前通过证明。
+
+## 「自由云 · FreedomNet」商业视觉系统、小白/大佬双态导航、购买中心 V3 与 WiFi 漫游恢复 Windows `amd64` 预览包交付（2026-11-13）
+
+- 构建来源与范围：基于本地 `development` 干净源码快照 `60890bddd9bf38733964b0085017612de555e306`（代码提交 `d05d9321960c66edf4d5de3cdd272db775e8ba43`，tree `c41aade20f58a4733b666d7d3219a11f6076b5b8`，涵盖 `a229588..60890bd` 全量增量：「自由云 · FreedomNet」方案 A 商业色彩体系 + `FlClashX` / `Gemini 4` 郑重致敬 + `CR-01`..`CR-06` 审查修复 `2c08c5e4..d05d9321`、购买与账户中心 V3 重构及审查修复 `01539220..93142ee6`、导航栏「小白模式 / 大佬模式」折叠双态切换与零操作闭环 `bda7233b..a1a75770`、Windows WiFi 切换断流无缝恢复 `fcf426c1..937ffcc8`、智能/手动选点与全配置概览 `a2295888..a29d4f45`），通过 `git archive` 干净快照全量重编四组件、仓库内原生插件与 Flutter AOT 产物。
+- 预览包交付产物与 SHA256：
+  - 免安装 ZIP 包：[`FreedomCloud-windows-amd64-freedomnet-ui-60890bddd9bf.zip`](file:///E:/CodeWorkstation/FlClashX/dist/FreedomCloud-windows-amd64-freedomnet-ui-60890bddd9bf.zip)（`167,921,314` 字节，SHA256 `81b5a09a29b187bd9543f6308910db24b21fff3186beee32208a2b01eb345640`，73 文件往返解压校验 `PASS`）；
+  - 校验文件：[`FreedomCloud-windows-amd64-freedomnet-ui-60890bddd9bf.zip.sha256`](file:///E:/CodeWorkstation/FlClashX/dist/FreedomCloud-windows-amd64-freedomnet-ui-60890bddd9bf.zip.sha256)；
+  - 解压即用目录：[`FreedomCloud-windows-amd64-freedomnet-ui-60890bddd9bf`](file:///E:/CodeWorkstation/FlClashX/dist/FreedomCloud-windows-amd64-freedomnet-ui-60890bddd9bf)（内含 [`BUILD-INFO.txt`](file:///E:/CodeWorkstation/FlClashX/dist/FreedomCloud-windows-amd64-freedomnet-ui-60890bddd9bf/BUILD-INFO.txt)、[`COMPONENTS.json`](file:///E:/CodeWorkstation/FlClashX/dist/FreedomCloud-windows-amd64-freedomnet-ui-60890bddd9bf/COMPONENTS.json)、[`CORE-PATCH.json`](file:///E:/CodeWorkstation/FlClashX/dist/FreedomCloud-windows-amd64-freedomnet-ui-60890bddd9bf/CORE-PATCH.json)、[`PREVIEW-README.txt`](file:///E:/CodeWorkstation/FlClashX/dist/FreedomCloud-windows-amd64-freedomnet-ui-60890bddd9bf/PREVIEW-README.txt)、[`SHA256SUMS.txt`](file:///E:/CodeWorkstation/FlClashX/dist/FreedomCloud-windows-amd64-freedomnet-ui-60890bddd9bf/SHA256SUMS.txt)）；
+  - 构建报告：[`freedomnet-ui-build-60890bddd9bf.json`](file:///E:/CodeWorkstation/FlClashX/dist/freedomnet-ui-build-60890bddd9bf.json)（源码归档 SHA256 `c29d149d29690b3e8d447a35346b12c8d37dfd32574dd9b27aef8e0ac160ed25`）。
+- 关键同源重编组件与绑定哈希：
+  - `FlClashCore.exe`（Mihomo `v1.19.32` + overlay 补丁清单 [`CORE-PATCH.json`](file:///E:/CodeWorkstation/FlClashX/dist/FreedomCloud-windows-amd64-freedomnet-ui-60890bddd9bf/CORE-PATCH.json) SHA256 `7ba929a8768784066853041b96747e5ac2ad7a5b01ba840ee7e5cbd353fcee9f`）：`72,534,528` 字节，SHA256 `cf2dbfa6f7df0e30769bd17e0bc629dada5c7b86cc1fab31b4243f88cb432796`（已同时编译绑定至 `FlClashHelperService.exe` 与 Flutter UI `CORE_SHA256`）；
+  - `FlClashAgent.exe`：`1,336,320` 字节，SHA256 `09095e547f1419ea9276d563e34a62e9586270e6adae5940bf57a65ffee56af4`；
+  - `FlClashHelperService.exe`：`1,261,056` 字节，SHA256 `79569894cf2be7f36e9843478e3893b121c7b5daa075eeecbd1157723a10cf4e`；
+  - `FlClashX.exe`（含更新后的 Win32 顶层窗口标题 `自由云 · FreedomNet` 二进制宽字符校验 `PASS`）：`134,144` 字节，SHA256 `28ac9685a3b5dbb8e479ce17b718aded538e97e94c2ac2053fc3ed9d5ffad268`；
+  - `data/app.so`（Flutter `3.47.4` / Dart `3.13.3` Release AOT）：`17,597,320` 字节，SHA256 `da446cae4d9c8cb929e43bbcdee254c8f376867ecac0e123179b23ff5e029d4b`；
+  - `tray_manager_plugin.dll`（`DestroyMenu` / `DestroyIcon` 导入表校验 `PASS`）：`111,616` 字节，SHA256 `bf6f8de728a2ec52113ebd13e44bcb3de7fd768372541f6623e47fe5a415dcb0`；
+  - `proxy_plugin.dll`：`114,176` 字节，SHA256 `d1303dcc85a33c3de01250d2e742b5779d2fe6c1171b4358abcd33cc10bf59c0`。
+- 验收与回退边界：
+  - 构建期 15 个阶段（`source-archive`、`backend-build`、`cmake-configure`、`flutter-assemble`、`windows-build`、`bundle-copy`、`tray-imports`、`package`、73 文件 ZIP 往返校验等）全部 **PASS**；
+  - 上一可用预览包 [`FreedomCloud-windows-amd64-runtime-fix-5764b81e3859.zip`](file:///E:/CodeWorkstation/FlClashX/dist/FreedomCloud-windows-amd64-runtime-fix-5764b81e3859.zip)（SHA256 `21d87ad24ae21032061e5d98b78dbbed45d8cdf2aff682e4f85fb63671071e0b`）及全部历史包完整保留未改动；
+  - 宿主机实机启动与网络/服务切换 **NOT RUN（遵守协作规则未在开发工作站自动拉起候选程序或触碰现役代理/TUN/后台服务，交由用户按 [`PREVIEW-README.txt`](file:///E:/CodeWorkstation/FlClashX/dist/FreedomCloud-windows-amd64-freedomnet-ui-60890bddd9bf/PREVIEW-README.txt) 步骤本地验收）**；远端推送 **NOT RUN** / PR 与合并 **NOT RUN** / 云端 CI **NOT RUN**。
 
 ## 「自由云 / FreedomNet」商业视觉系统与致敬声明 Code Review（`CR-01` ~ `CR-06`）TDD 修复落地（2026-11-12）
 
