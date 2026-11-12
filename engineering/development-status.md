@@ -1,6 +1,25 @@
 # 开发、集成与预览台账
 
-更新日期：2026-11-11。当前阶段是快速开发、快速迭代和部分功能预览。本文记录来源与验收边界；每次继续开发仍需核实实际 Git/PR/CI 状态，不能把历史报告视为当前通过证明。
+更新日期：2026-11-12。当前阶段是快速开发、快速迭代和部分功能预览。本文记录来源与验收边界；每次继续开发仍需核实实际 Git/PR/CI 状态，不能把历史报告视为当前通过证明。
+
+## 导航栏「小白模式 / 大佬模式」折叠双态切换与小白零操作购买/导入全链路闭环 TDD 落地（2026-11-12）
+
+- 原始来源与设计对齐：按用户需求及 4 项小白零门槛补充确认结论，以严格 TDD（前置有效 Red → 最小生产实现 Green → 全套回归）落入本地 `development`（代码提交 `bda7233`）：
+  1. **[导航栏顺序重排、默认折叠与双态同位切换按鈕]**：
+     - 在 [`lib/common/navigation.dart`](file:///E:/CodeWorkstation/FlClashX/lib/common/navigation.dart#L7-L68) 定义 [`noviceVisiblePageLabels`](file:///E:/CodeWorkstation/FlClashX/lib/common/navigation.dart#L7-L10)（`{PageLabel.proxies, PageLabel.purchase}`）并将 [`Navigation.getItems`](file:///E:/CodeWorkstation/FlClashX/lib/common/navigation.dart#L17-L98) 重排为：**第 1 位 `代理`**、**第 2 位 `购买`**、**第 3 位 `仪表盘`**，其后依次为 `配置 -> 连接 -> (资源) -> (日志) -> 设置`；
+     - 在 [`lib/providers/state.dart`](file:///E:/CodeWorkstation/FlClashX/lib/providers/state.dart#L18-L21) 新增非持久化会话状态 [`expertNavigationExpandedProvider`](file:///E:/CodeWorkstation/FlClashX/lib/providers/state.dart#L19-L20)（每次重启软件默认 `false` 折叠态），并在 [`currentNavigationsState`](file:///E:/CodeWorkstation/FlClashX/lib/providers/state.dart#L755-L779) 过滤折叠态下的进阶菜单；
+     - 在 [`lib/pages/home.dart`](file:///E:/CodeWorkstation/FlClashX/lib/pages/home.dart#L292-L426) 移除侧边栏底部原先无文字的汉堡图标按钮，固定开启导航文字标签（`NavigationRailLabelType.all`），并在 `NavigationRail.trailing` 挂载单一同位双态切换按钮 [`_NavigationModeToggleButton`](file:///E:/CodeWorkstation/FlClashX/lib/pages/home.dart#L365-L426)（`ValueKey('navigation-expert-mode-toggle')`）：折叠态展示展开箭头 `Icons.expand_more_rounded` + `大佬模式`，点击后展开全部菜单并原地切换为收起箭头 `Icons.expand_less_rounded` + `小白模式`；再次点击 [`toggleExpertNavigationMode`](file:///E:/CodeWorkstation/FlClashX/lib/providers/node_overview.dart#L53-L65) 收起进阶菜单、重置 `ProxiesScope.all`，且当用户原本停留在被折叠的进阶页（`仪表盘`/`配置`/`连接`/`日志`/`设置`）时自动切回 `代理` 页面（停留在 `代理` 或 `购买` 时保持原页）。
+  2. **[4 项小白零操作闭环增强]**：
+     - **购买/兑换自动激活并开启代理**：[`PurchaseProfileSynchronizer.synchronize`](file:///E:/CodeWorkstation/FlClashX/lib/services/purchase_profile_sync.dart#L34-L74) 同步保留本地 `smartSelectionModeMarker`；[`PurchaseView`](file:///E:/CodeWorkstation/FlClashX/lib/views/purchase.dart#L73-L108) 登录或兑换礼品卡同步订阅后调用 [`AppController.activateImportedProfileForNovice`](file:///E:/CodeWorkstation/FlClashX/lib/controller.dart#L1401-L1426) 自动标记 `NodeSelectionMode.smart`、选中当前配置并在未启动时自动开启代理总开关；同时将购买页 `查看节点`（`openProfiles`）直达 `PageLabel.proxies`（`ProxiesScope.all`）；
+     - **小白模式代理页顶栏降噪**：在 [`CommonScaffoldState`](file:///E:/CodeWorkstation/FlClashX/lib/widgets/scaffold.dart#L95-L96) 暴露 `hasNavigationBar`，[`ProxiesView`](file:///E:/CodeWorkstation/FlClashX/lib/views/proxies/proxies.dart#L130-L246) 在带导航栏的小白折叠态下隐藏右上角 `[当前配置 | 全部配置]`、`规则/全局` 模式切换及 `⋮` 高级设置菜单，仅保留搜索按钮，切入 `大佬模式` 后完整恢复；
+     - **0 配置弹窗与空态卡片直达「购买」**：在 [`URLFormDialog`](file:///E:/CodeWorkstation/FlClashX/lib/views/profiles/add_profile.dart#L140-L263)（`ValueKey('url-dialog-go-purchase')`）与 [`_OverviewEmptyProfilesCard`](file:///E:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart#L2763-L2848)（`ValueKey('overview-empty-go-purchase')`）新增 `还没有订阅？去购买 / 兑换` 快捷入口，一键关闭弹窗并切换至 `PageLabel.purchase`；
+     - **外部 URL Scheme 一键导入自动开启**：[`AppController.initLink`](file:///E:/CodeWorkstation/FlClashX/lib/controller.dart#L3522-L3548) 确认导入后通过 `_addProfileFormURL(url, activateAndStartProxy: true)` 自动以智能模式激活配置、切至 `代理 · 全部配置` 并自动开启代理；同步更新中/英/日/俄 4 语种 ARB 与 [`lib/l10n/`](file:///E:/CodeWorkstation/FlClashX/lib/l10n/l10n.dart)。
+- 验证记录（本机 `Flutter 3.47.4` / `Dart 3.13.3`）：
+  - 前置有效 Red：**PASS**（[`novice_expert_navigation_test.dart`](file:///E:/CodeWorkstation/FlClashX/test/views/novice_expert_navigation_test.dart) 在合入生产实现前确定性失败退出码 `1`）；
+  - 新增专项测试与关联回归（[`novice_expert_navigation_test.dart`](file:///E:/CodeWorkstation/FlClashX/test/views/novice_expert_navigation_test.dart) `4` 项 + [`purchase_interaction_test.dart`](file:///E:/CodeWorkstation/FlClashX/test/purchase/purchase_interaction_test.dart)、[`purchase_v2_ux_test.dart`](file:///E:/CodeWorkstation/FlClashX/test/purchase/purchase_v2_ux_test.dart)、[`purchase_profile_sync_test.dart`](file:///E:/CodeWorkstation/FlClashX/test/purchase/purchase_profile_sync_test.dart)、[`node_overview_render_test.dart`](file:///E:/CodeWorkstation/FlClashX/test/views/node_overview_render_test.dart)、[`node_overview_providers_test.dart`](file:///E:/CodeWorkstation/FlClashX/test/common/node_overview_providers_test.dart)、[`node_overview_integration_test.dart`](file:///E:/CodeWorkstation/FlClashX/test/common/node_overview_integration_test.dart) `58` 项 + [`node_overview_test.dart`](file:///E:/CodeWorkstation/FlClashX/test/views/node_overview_test.dart) `122` 项，合计 `184` 项全绿）：**PASS**；
+  - 静态分析（`dart analyze --fatal-warnings` 覆盖全部修改与新增文件，退出码 `0`，`0 error / 0 warning`）：**PASS**；
+  - 新预览包构建 **NOT RUN** / 真实 Windows 窗口交互验收 **NOT RUN（待用户授权或下一预览包验证）** / 远端推送 **NOT RUN** / PR 与合并 **NOT RUN** / 云端 CI **NOT RUN**。
+- 恢复位置与下一步：成果已保存在本地工作树 `E:\CodeWorkstation\FlClashX` 的 `development` 分支提交 `bda7233`（未推送至 `freedomcloud/development`）；本机运行态代理/TUN/服务零触碰，既有未提交文件与 `stash@{0}` 原样保留。下一步可按需打包 Windows 预览包进行真实交互验收，或按授权统一推送至 `freedomcloud/development`。
 
 ## Windows 中途切换 WiFi 修复（`fcf426c`）对抗性 Double-Check 审查与六重残余缺口 TDD 闭环（2026-11-11）
 
