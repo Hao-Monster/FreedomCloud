@@ -88,9 +88,11 @@ class _HomePageViewState extends ConsumerState<_HomePageView> {
 
   int get _pageIndex {
     final navigationItems = ref.read(currentNavigationsStateProvider).value;
-    return navigationItems.indexWhere(
-      (item) => item.label == globalState.appState.pageLabel,
+    final currentLabel = ref.read(currentPageLabelProvider);
+    final index = navigationItems.indexWhere(
+      (item) => item.label == currentLabel,
     );
+    return index < 0 ? 0 : index;
   }
 
   Future<void> _toPage(PageLabel pageLabel, [bool ignoreAnimateTo = false]) async {
@@ -104,13 +106,20 @@ class _HomePageViewState extends ConsumerState<_HomePageView> {
     }
     final isAnimateToPage = ref.read(appSettingProvider).isAnimateToPage;
     final isMobile = ref.read(isMobileViewProvider);
-    if (isAnimateToPage && isMobile && !ignoreAnimateTo) {
+    final currentPage =
+        _pageController.hasClients ? (_pageController.page?.round() ?? 0) : 0;
+    final canAnimate = isAnimateToPage &&
+        isMobile &&
+        !ignoreAnimateTo &&
+        currentPage >= 0 &&
+        currentPage < navigationItems.length;
+    if (canAnimate) {
       await _pageController.animateToPage(
         index,
         duration: kTabScrollDuration,
         curve: Curves.easeOut,
       );
-    } else {
+    } else if (_pageController.hasClients) {
       _pageController.jumpToPage(index);
     }
     if (!mounted) {
@@ -125,7 +134,7 @@ class _HomePageViewState extends ConsumerState<_HomePageView> {
   }
 
   void _updatePageController() {
-    final pageLabel = globalState.appState.pageLabel;
+    final pageLabel = ref.read(currentPageLabelProvider);
     _toPage(pageLabel, true);
   }
 
@@ -176,26 +185,42 @@ class CommonNavigationBar extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final expertExpanded = ref.watch(expertNavigationExpandedProvider);
     if (viewMode == ViewMode.mobile) {
+      final toggleLabel =
+          expertExpanded ? appLocalizations.noviceMode : appLocalizations.expertMode;
+      final toggleIcon = Icon(
+        expertExpanded ? Icons.expand_less_rounded : Icons.expand_more_rounded,
+      );
       return NavigationBarTheme(
         data: _NavigationBarDefaultsM3(context),
         child: NavigationBar(
-          destinations: navigationItems
-              .map(
-                (e) => NavigationDestination(
-                  icon: e.icon,
-                  label: Intl.message(e.label.name),
-                ),
-              )
-              .toList(),
+          destinations: [
+            ...navigationItems.map(
+              (e) => NavigationDestination(
+                icon: e.icon,
+                label: Intl.message(e.label.name),
+              ),
+            ),
+            NavigationDestination(
+              key: const ValueKey('navigation-expert-mode-toggle'),
+              icon: toggleIcon,
+              label: toggleLabel,
+            ),
+          ],
           onDestinationSelected: (index) {
+            if (index == navigationItems.length) {
+              toggleExpertNavigationMode(ref);
+              return;
+            }
             globalState.appController.toPage(navigationItems[index].label);
           },
-          selectedIndex: currentIndex,
+          selectedIndex: navigationItems.isEmpty
+              ? 0
+              : currentIndex.clamp(0, navigationItems.length - 1),
         ),
       );
     }
-    final expertExpanded = ref.watch(expertNavigationExpandedProvider);
     return Material(
       color: context.colorScheme.surfaceContainer,
       // SafeArea: the app draws edge-to-edge, so on tablets/foldables (which
@@ -244,49 +269,52 @@ class CommonNavigationBar extends ConsumerWidget {
             Expanded(
               child: ScrollConfiguration(
                 behavior: HiddenBarScrollBehavior(),
-                child: SingleChildScrollView(
-                  child: IntrinsicHeight(
-                    child: NavigationRail(
-                      backgroundColor: context.colorScheme.surfaceContainer,
-                      selectedIconTheme: IconThemeData(
-                        color: context.colorScheme.onSurfaceVariant,
-                      ),
-                      unselectedIconTheme: IconThemeData(
-                        color: context.colorScheme.onSurfaceVariant,
-                      ),
-                      selectedLabelTextStyle:
-                          context.textTheme.labelLarge!.copyWith(
-                        color: context.colorScheme.onSurface,
-                      ),
-                      unselectedLabelTextStyle:
-                          context.textTheme.labelLarge!.copyWith(
-                        color: context.colorScheme.onSurface,
-                      ),
-                      destinations: navigationItems
-                          .map(
-                            (e) => NavigationRailDestination(
-                              icon: e.icon,
-                              label: Text(
-                                Intl.message(e.label.name),
-                              ),
-                            ),
-                          )
-                          .toList(),
-                      onDestinationSelected: (index) {
-                        globalState.appController
-                            .toPage(navigationItems[index].label);
-                      },
-                      trailing: _NavigationModeToggleButton(
-                        key: const ValueKey('navigation-expert-mode-toggle'),
-                        expanded: expertExpanded,
-                        showLabel: true,
-                        onPressed: () => toggleExpertNavigationMode(ref),
-                      ),
-                      extended: false,
-                      selectedIndex: currentIndex,
-                      labelType: NavigationRailLabelType.all,
-                    ),
+                child: NavigationRail(
+                  scrollable: true,
+                  backgroundColor: context.colorScheme.surfaceContainer,
+                  selectedIconTheme: IconThemeData(
+                    color: context.colorScheme.onSurfaceVariant,
                   ),
+                  unselectedIconTheme: IconThemeData(
+                    color: context.colorScheme.onSurfaceVariant,
+                  ),
+                  selectedLabelTextStyle:
+                      context.textTheme.labelLarge!.copyWith(
+                    color: context.colorScheme.onSurface,
+                  ),
+                  unselectedLabelTextStyle:
+                      context.textTheme.labelLarge!.copyWith(
+                    color: context.colorScheme.onSurface,
+                  ),
+                  destinations: navigationItems
+                      .map(
+                        (e) => NavigationRailDestination(
+                          icon: e.icon,
+                          label: ConstrainedBox(
+                            constraints: const BoxConstraints(maxWidth: 88),
+                            child: Text(
+                              Intl.message(e.label.name),
+                              textAlign: TextAlign.center,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ),
+                      )
+                      .toList(),
+                  onDestinationSelected: (index) {
+                    globalState.appController
+                        .toPage(navigationItems[index].label);
+                  },
+                  trailing: _NavigationModeToggleButton(
+                    key: const ValueKey('navigation-expert-mode-toggle'),
+                    expanded: expertExpanded,
+                    showLabel: true,
+                    onPressed: () => toggleExpertNavigationMode(ref),
+                  ),
+                  extended: false,
+                  selectedIndex: currentIndex,
+                  labelType: NavigationRailLabelType.all,
                 ),
               ),
             ),
@@ -323,42 +351,56 @@ class _NavigationModeToggleButton extends StatelessWidget {
       color: colors.onSurfaceVariant,
     );
 
-    return Padding(
-      padding: const EdgeInsets.only(top: 6, bottom: 8),
-      child: Tooltip(
-        message: labelText,
-        child: InkWell(
-          borderRadius: BorderRadius.circular(16),
-          onTap: onPressed,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Container(
-                  width: 56,
-                  height: 32,
-                  decoration: BoxDecoration(
-                    color: colors.surfaceContainerHighest
-                        .withValues(alpha: expanded ? 0.55 : 0.35),
-                    borderRadius: BorderRadius.circular(16),
-                  ),
-                  alignment: Alignment.center,
-                  child: Icon(
-                    iconData,
-                    size: 24,
-                    color: colors.onSurfaceVariant,
-                  ),
+    return Semantics(
+      container: true,
+      button: true,
+      toggled: expanded,
+      label: labelText,
+      child: Padding(
+        padding: const EdgeInsets.only(top: 6, bottom: 8),
+        child: Tooltip(
+          excludeFromSemantics: true,
+          message: labelText,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(16),
+            onTap: onPressed,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
+              child: ExcludeSemantics(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      width: 56,
+                      height: 32,
+                      decoration: BoxDecoration(
+                        color: colors.surfaceContainerHighest
+                            .withValues(alpha: expanded ? 0.55 : 0.35),
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                      alignment: Alignment.center,
+                      child: Icon(
+                        iconData,
+                        size: 24,
+                        color: colors.onSurfaceVariant,
+                      ),
+                    ),
+                    if (showLabel) ...[
+                      const SizedBox(height: 4),
+                      ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 88),
+                        child: Text(
+                          labelText,
+                          style: textStyle,
+                          textAlign: TextAlign.center,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ],
                 ),
-                if (showLabel) ...[
-                  const SizedBox(height: 4),
-                  Text(
-                    labelText,
-                    style: textStyle,
-                    textAlign: TextAlign.center,
-                  ),
-                ],
-              ],
+              ),
             ),
           ),
         ),

@@ -1,4 +1,6 @@
 import 'package:flclashx/common/common.dart';
+import 'package:flclashx/common/delay_test_coordinator.dart';
+import 'package:flclashx/common/node_catalog_tester.dart';
 import 'package:flclashx/common/smart_node_selection.dart';
 import 'package:flclashx/common/theme.dart';
 import 'package:flclashx/controller.dart';
@@ -12,10 +14,13 @@ import 'package:flclashx/providers/node_overview.dart';
 import 'package:flclashx/providers/providers.dart';
 import 'package:flclashx/services/purchase_profile_sync.dart';
 import 'package:flclashx/services/purchase_storage.dart';
+import 'package:flclashx/services/xboard_api.dart';
 import 'package:flclashx/state.dart';
+import 'package:flclashx/views/dashboard/widgets/hero_nav_bar.dart';
 import 'package:flclashx/views/profiles/add_profile.dart';
 import 'package:flclashx/views/proxies/overview/overview.dart';
 import 'package:flclashx/views/proxies/proxies.dart';
+import 'package:flclashx/views/purchase.dart';
 import 'package:flclashx/widgets/widgets.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
@@ -23,12 +28,14 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 class _TestAppController extends Fake implements AppController {
-  _TestAppController(this.ref);
+  _TestAppController(this.ref, {this.onUpdateStatus});
 
   final WidgetRef ref;
+  final Future<void> Function(bool isStart)? onUpdateStatus;
   final List<PageLabel> navigatedPages = <PageLabel>[];
   final List<bool> updateStatusCalls = <bool>[];
   final List<Profile> addedProfiles = <Profile>[];
+  final List<String> eventLog = <String>[];
 
   @override
   void toPage(PageLabel pageLabel) {
@@ -41,7 +48,11 @@ class _TestAppController extends Fake implements AppController {
 
   @override
   Future<void> updateStatus(bool isStart) async {
+    eventLog.add('updateStatus:$isStart');
     updateStatusCalls.add(isStart);
+    if (onUpdateStatus != null) {
+      await onUpdateStatus!(isStart);
+    }
     globalState.startTime = isStart ? DateTime.now() : null;
     ref.read(runTimeProvider.notifier).value = isStart ? 1000 : null;
   }
@@ -66,11 +77,21 @@ class _TestAppController extends Fake implements AppController {
   }
 
   @override
-  Future<void> activateImportedProfileForNovice(
+  void updateCurrentSelectedMap(String groupName, String proxyName) {}
+
+  @override
+  void changeProxyDebounce(String groupName, String proxyName) {}
+
+  @override
+  void updateCurrentGroupName(String groupName) {}
+
+  @override
+  Future<Profile> registerImportedProfileForNovice(
     Profile profile, {
     bool isNewProfile = false,
     bool switchToProxiesPage = false,
   }) async {
+    final hadZeroProfiles = ref.read(profilesProvider).isEmpty;
     final effectiveProfile =
         !profile.providerHeaders.containsKey(smartSelectionModeMarker) &&
                 profile.selectedMap.isEmpty
@@ -82,20 +103,74 @@ class _TestAppController extends Fake implements AppController {
     } else {
       setProfileAndAutoApply(effectiveProfile);
     }
+    if (hadZeroProfiles) {
+      ref.read(pendingNoviceFirstProfileAutoTestProvider.notifier).state =
+          effectiveProfile.id;
+    }
     if (switchToProxiesPage) {
       ref.read(proxiesScopeProvider.notifier).state = ProxiesScope.all;
       toPage(PageLabel.proxies);
     }
-    final isActive =
-        ref.read(currentProfileIdProvider) == effectiveProfile.id;
-    if (isActive && !ref.read(runTimeProvider.notifier).isStart) {
-      await updateStatus(true);
+    return effectiveProfile;
+  }
+
+  @override
+  Future<void> tryStartProxyForActiveNoviceProfile(String profileId) async {
+    final isActive = ref.read(currentProfileIdProvider) == profileId;
+    if (!isActive || ref.read(runTimeProvider.notifier).isStart) {
+      return;
     }
+    try {
+      await updateStatus(true);
+    } catch (_) {}
+  }
+
+  @override
+  Future<void> activateImportedProfileForNovice(
+    Profile profile, {
+    bool isNewProfile = false,
+    bool switchToProxiesPage = false,
+  }) async {
+    final effectiveProfile = await registerImportedProfileForNovice(
+      profile,
+      isNewProfile: isNewProfile,
+      switchToProxiesPage: switchToProxiesPage,
+    );
+    await tryStartProxyForActiveNoviceProfile(effectiveProfile.id);
   }
 }
 
 class _MemPurchaseStorage implements PurchaseStorage {
+  PurchaseSession? session;
+  final Map<int, PendingGiftRedemption> pending = <int, PendingGiftRedemption>{};
   final Map<int, String> profileIds = <int, String>{};
+
+  @override
+  Future<PurchaseSession?> readSession() async => session;
+
+  @override
+  Future<void> saveSession(PurchaseSession value) async {
+    session = value;
+  }
+
+  @override
+  Future<void> clearSession() async {
+    session = null;
+  }
+
+  @override
+  Future<PendingGiftRedemption?> readPending(int accountId) async =>
+      pending[accountId];
+
+  @override
+  Future<void> savePending(int accountId, PendingGiftRedemption value) async {
+    pending[accountId] = value;
+  }
+
+  @override
+  Future<void> clearPending(int accountId) async {
+    pending.remove(accountId);
+  }
 
   @override
   Future<String?> readProfileId(int accountId) async => profileIds[accountId];
@@ -104,6 +179,82 @@ class _MemPurchaseStorage implements PurchaseStorage {
   Future<void> saveProfileId(int accountId, String profileId) async {
     profileIds[accountId] = profileId;
   }
+}
+
+class _FakeXboardApi implements XboardApi {
+  _FakeXboardApi({required this.subscription});
+
+  final XboardSubscription subscription;
+  int loginCalls = 0;
+
+  @override
+  Uri get baseUri => Uri.parse('https://panel.example.test');
+
+  @override
+  Future<XboardPlanCatalog> getPlanCatalog() async =>
+      const XboardPlanCatalog(plans: []);
+
+  @override
+  Future<String> login(String email, String password) async {
+    loginCalls++;
+    return 'Bearer token-42';
+  }
+
+  @override
+  Future<XboardAccount> getAccount(String authorization) async =>
+      const XboardAccount(id: 42, email: 'novice@example.test');
+
+  @override
+  Future<XboardSubscription> getSubscription(String authorization) async =>
+      subscription;
+
+  @override
+  Future<GiftHistoryPage> getGiftHistory(String authorization,
+          {int page = 1}) async =>
+      GiftHistoryPage(entries: const [], page: page, lastPage: 1, total: 0);
+
+  @override
+  Future<Uri?> getCardStore(String authorization) async => null;
+
+  @override
+  Future<GiftPreview> checkGift(String authorization, String code) =>
+      throw UnimplementedError();
+
+  @override
+  Future<GiftReceipt> redeemGift(String authorization, String code) =>
+      throw UnimplementedError();
+
+  @override
+  Future<void> logout(String authorization) async {}
+
+  @override
+  void close() {}
+}
+
+class _SpyCatalogTester extends ChangeNotifier implements NodeCatalogTester {
+  final List<List<Profile>> testedBatches = <List<Profile>>[];
+
+  @override
+  bool busy = false;
+  @override
+  int total = 0;
+  @override
+  int completed = 0;
+
+  @override
+  bool pending(String profileId, String identityKey) => false;
+
+  @override
+  Set<String> pendingIdentitySnapshot(String profileId) => const <String>{};
+
+  @override
+  Future<DelayBatchResult> testAll(List<Profile> profiles, String url) async {
+    testedBatches.add(List<Profile>.from(profiles));
+    return const DelayBatchResult(completed: 1, failed: 0);
+  }
+
+  @override
+  void disposeScope() {}
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
@@ -446,6 +597,7 @@ void main() {
           nodeOverviewEnabledProvider.overrideWithValue(true),
           activeNodeCatalogProvider.overrideWithValue(null),
           coldStartZeroProfilePromptedProvider.overrideWith((ref) => true),
+          nodeCatalogTesterProvider.overrideWith((ref) => _SpyCatalogTester()),
           profileCatalogProvider.overrideWith(
             (ref, id) async => ProfileCatalog(
               profileId: id,
@@ -547,5 +699,533 @@ void main() {
     );
     final resynced = container.read(profilesProvider).single;
     expect(resolveProfileSelectionMode(resynced), NodeSelectionMode.manual);
+  });
+
+  testWidgets(
+      'CR-01: ViewMode.mobile (narrow <= 600px) exposes 大佬模式 <-> 小白模式 toggle in both classic NavigationBar and HeroNavBar without dead-ending',
+      (tester) async {
+    tester.view.physicalSize = const Size(430, 860);
+    tester.view.devicePixelRatio = 1.0;
+    globalState.appState = globalState.appState.copyWith(
+      viewSize: const Size(430, 860),
+    );
+    addTearDown(() {
+      tester.view.resetPhysicalSize();
+      tester.view.resetDevicePixelRatio();
+    });
+
+    // 1. Classic mobile NavigationBar (CommonNavigationBar with ViewMode.mobile).
+    await tester.pumpWidget(
+      ProviderScope(
+        child: MaterialApp(
+          locale: const Locale('zh', 'CN'),
+          localizationsDelegates: const [
+            AppLocalizations.delegate,
+            GlobalMaterialLocalizations.delegate,
+            GlobalWidgetsLocalizations.delegate,
+            GlobalCupertinoLocalizations.delegate,
+          ],
+          supportedLocales: AppLocalizations.delegate.supportedLocales,
+          home: Consumer(
+            builder: (context, ref, _) {
+              globalState.measure = Measure.of(context, 1.0);
+              globalState.theme = CommonTheme.of(context, 1.0);
+              globalState.appController = _TestAppController(ref);
+              final navItems = ref.watch(currentNavigationsStateProvider).value;
+              final pageLabel = ref.watch(currentPageLabelProvider);
+              final idx = navItems.indexWhere((e) => e.label == pageLabel);
+              return Scaffold(
+                body: Center(child: Text('MobilePage:${pageLabel.name}')),
+                bottomNavigationBar: CommonNavigationBar(
+                  viewMode: ViewMode.mobile,
+                  navigationItems: navItems,
+                  currentIndex: idx < 0 ? 0 : idx,
+                ),
+              );
+            },
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final toggleFinder =
+        find.byKey(const ValueKey('navigation-expert-mode-toggle'));
+    expect(toggleFinder, findsOneWidget);
+    expect(find.text('大佬模式'), findsOneWidget);
+    expect(find.text('设置'), findsNothing);
+
+    await tester.tap(toggleFinder);
+    await tester.pumpAndSettle();
+    expect(find.text('小白模式'), findsOneWidget);
+    expect(find.text('仪表盘'), findsOneWidget);
+    expect(find.text('设置'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+
+    // Navigate to 设置 in mobile mode, then tap 小白模式 -> collapses and returns to 代理.
+    await tester.tap(find.text('设置'));
+    await tester.pumpAndSettle();
+    expect(find.text('MobilePage:tools'), findsOneWidget);
+
+    await tester.tap(toggleFinder);
+    await tester.pumpAndSettle();
+    expect(find.text('MobilePage:proxies'), findsOneWidget);
+    expect(find.text('大佬模式'), findsOneWidget);
+
+    // 2. HeroNavBar (newDashboard mobile bottom bar) also exposes the toggle.
+    await tester.pumpWidget(
+      ProviderScope(
+        child: MaterialApp(
+          locale: const Locale('zh', 'CN'),
+          localizationsDelegates: const [
+            AppLocalizations.delegate,
+            GlobalMaterialLocalizations.delegate,
+            GlobalWidgetsLocalizations.delegate,
+            GlobalCupertinoLocalizations.delegate,
+          ],
+          supportedLocales: AppLocalizations.delegate.supportedLocales,
+          home: Consumer(
+            builder: (context, ref, _) {
+              globalState.measure = Measure.of(context, 1.0);
+              globalState.theme = CommonTheme.of(context, 1.0);
+              globalState.appController = _TestAppController(ref);
+              final pageLabel = ref.watch(currentPageLabelProvider);
+              return Scaffold(
+                body: Center(child: Text('HeroPage:${pageLabel.name}')),
+                bottomNavigationBar: const HeroNavBar(),
+              );
+            },
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(toggleFinder, findsOneWidget);
+    await tester.tap(toggleFinder);
+    await tester.pumpAndSettle();
+    final heroContainer =
+        ProviderScope.containerOf(tester.element(find.byType(HeroNavBar)));
+    expect(heroContainer.read(expertNavigationExpandedProvider), isTrue);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'CR-02: collapsing 小白模式 switches currentPageLabelProvider to proxies BEFORE shrinking currentNavigationsState, and HomePage handles initially collapsed advanced pageLabel safely',
+      (tester) async {
+    tester.view.physicalSize = const Size(1280, 900);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(() {
+      tester.view.resetPhysicalSize();
+      tester.view.resetDevicePixelRatio();
+    });
+
+    // Start with appState.pageLabel = connections while expertNavigationExpanded is false:
+    // HomePage must NOT crash with PageController(initialPage: -1).
+    globalState.appState = globalState.appState.copyWith(
+      pageLabel: PageLabel.connections,
+    );
+
+    final emissions = <String>[];
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          nodeOverviewEnabledProvider.overrideWithValue(true),
+          activeNodeCatalogProvider.overrideWithValue(null),
+          coldStartZeroProfilePromptedProvider.overrideWith((ref) => true),
+          nodeCatalogTesterProvider.overrideWith((ref) => _SpyCatalogTester()),
+        ],
+        child: MaterialApp(
+          locale: const Locale('zh', 'CN'),
+          localizationsDelegates: const [
+            AppLocalizations.delegate,
+            GlobalMaterialLocalizations.delegate,
+            GlobalWidgetsLocalizations.delegate,
+            GlobalCupertinoLocalizations.delegate,
+          ],
+          supportedLocales: AppLocalizations.delegate.supportedLocales,
+          home: Consumer(
+            builder: (context, ref, _) {
+              globalState.measure = Measure.of(context, 1.0);
+              globalState.theme = CommonTheme.of(context, 1.0);
+              globalState.appController = _TestAppController(ref);
+              return const HomePage();
+            },
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+
+    final container =
+        ProviderScope.containerOf(tester.element(find.byType(HomePage)));
+    // Expand expert mode and navigate to connections (index 4).
+    await tester
+        .tap(find.byKey(const ValueKey('navigation-expert-mode-toggle')));
+    await tester.pumpAndSettle();
+    container.read(currentPageLabelProvider.notifier).value =
+        PageLabel.connections;
+    await tester.pumpAndSettle();
+
+    final subPage = container.listen<PageLabel>(
+      currentPageLabelProvider,
+      (prev, next) => emissions.add('page:${next.name}'),
+    );
+    final subNav = container.listen<NavigationItemsState>(
+      currentNavigationsStateProvider,
+      (prev, next) => emissions.add('navLen:${next.value.length}'),
+    );
+    addTearDown(() {
+      subPage.close();
+      subNav.close();
+    });
+
+    // Collapse back to 小白模式 while on tools.
+    await tester
+        .tap(find.byKey(const ValueKey('navigation-expert-mode-toggle')));
+    await tester.pumpAndSettle();
+
+    expect(
+      emissions,
+      equals(['page:proxies', 'navLen:2']),
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'CR-03: PurchaseView auto-syncs valid subscription on 0-profile login AND isolates proxy start errors from saveConfig & subscriptionSynced',
+      (tester) async {
+    tester.view.physicalSize = const Size(1280, 900);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(() {
+      tester.view.resetPhysicalSize();
+      tester.view.resetDevicePixelRatio();
+    });
+
+    globalState.config = globalState.config.copyWith(
+      profiles: const [],
+      currentProfileId: null,
+    );
+
+    final api = _FakeXboardApi(
+      subscription: XboardSubscription(
+        valid: true,
+        planId: 7,
+        planName: 'Pro Annual',
+        url: Uri.parse(
+            'https://panel.example.test/api/v1/client/subscribe?token=abc'),
+      ),
+    );
+    final storage = _MemPurchaseStorage();
+    final callOrder = <String>[];
+    late _TestAppController controller;
+
+    await tester.pumpWidget(
+      ProviderScope(
+        child: MaterialApp(
+          locale: const Locale('zh', 'CN'),
+          localizationsDelegates: const [
+            AppLocalizations.delegate,
+            GlobalMaterialLocalizations.delegate,
+            GlobalWidgetsLocalizations.delegate,
+            GlobalCupertinoLocalizations.delegate,
+          ],
+          supportedLocales: AppLocalizations.delegate.supportedLocales,
+          home: Consumer(
+            builder: (context, ref, _) {
+              globalState.measure = Measure.of(context, 1.0);
+              globalState.theme = CommonTheme.of(context, 1.0);
+              controller = _TestAppController(
+                ref,
+                onUpdateStatus: (isStart) async {
+                  callOrder.add('updateStatus:$isStart');
+                  throw StateError('Simulated UAC rejection');
+                },
+              );
+              globalState.appController = controller;
+              return Scaffold(
+                body: PurchaseView(
+                  apiOverride: api,
+                  storageOverride: storage,
+                  downloadOverride: (target) async => target.copyWith(
+                    lastUpdateDate: DateTime.utc(2026, 11, 12),
+                  ),
+                  saveConfigOverride: (config) async {
+                    callOrder.add('saveConfig:${config.profiles.length}');
+                    return true;
+                  },
+                ),
+              );
+            },
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // Enter credentials and log in on 0-profile install.
+    await tester.enterText(
+      find.byKey(const Key('purchase-email')),
+      'novice@example.test',
+    );
+    await tester.enterText(
+      find.byKey(const Key('purchase-password')),
+      'secret123',
+    );
+    await tester.tap(find.byKey(const Key('purchase-login')));
+    await tester.pumpAndSettle();
+
+    final container =
+        ProviderScope.containerOf(tester.element(find.byType(PurchaseView)));
+    // 1. 0-profile login automatically synced the valid subscription without manual click!
+    expect(container.read(profilesProvider), hasLength(1));
+    final synced = container.read(profilesProvider).single;
+    expect(resolveProfileSelectionMode(synced), NodeSelectionMode.smart);
+    expect(container.read(currentProfileIdProvider), synced.id);
+
+    // 2. saveConfig ran BEFORE updateStatus(true), and updateStatus throwing did NOT fail sync!
+    expect(callOrder, equals(['saveConfig:1', 'updateStatus:true']));
+    expect(find.textContaining('同步失败'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'CR-04 & CR-05: 小白模式 forces NodeOverviewView even if proxiesScopeProvider is current, and returning to 代理 after 0-profile PurchaseView sync auto-tests nodes',
+      (tester) async {
+    tester.view.physicalSize = const Size(1280, 900);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(() {
+      tester.view.resetPhysicalSize();
+      tester.view.resetDevicePixelRatio();
+    });
+
+    final spyTester = _SpyCatalogTester();
+    final api = _FakeXboardApi(
+      subscription: XboardSubscription(
+        valid: true,
+        planId: 9,
+        planName: 'Starter',
+        url: Uri.parse(
+            'https://panel.example.test/api/v1/client/subscribe?token=xyz'),
+      ),
+    );
+    final storage = _MemPurchaseStorage();
+
+    var showPurchase = true;
+    late StateSetter setHostState;
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          nodeOverviewEnabledProvider.overrideWithValue(true),
+          activeNodeCatalogProvider.overrideWithValue(null),
+          coldStartZeroProfilePromptedProvider.overrideWith((ref) => true),
+          nodeCatalogTesterProvider.overrideWith((ref) => spyTester),
+          profileCatalogProvider.overrideWith(
+            (ref, id) async => ProfileCatalog(
+              profileId: id,
+              fingerprint: 'fp',
+              status: ProfileCatalogStatus.ready,
+              nodes: [
+                CatalogNode(
+                  identityKey: '$id::hk1',
+                  endpointKey: 'ep-hk1',
+                  name: '香港 IPLC 01',
+                  type: 'vless',
+                  source: CatalogNodeSource.inline,
+                  selectGroups: const ['Proxy'],
+                ),
+              ],
+            ),
+          ),
+          nodeHealthEntriesProvider.overrideWith((ref, id) => const {}),
+        ],
+        child: MaterialApp(
+          locale: const Locale('zh', 'CN'),
+          localizationsDelegates: const [
+            AppLocalizations.delegate,
+            GlobalMaterialLocalizations.delegate,
+            GlobalWidgetsLocalizations.delegate,
+            GlobalCupertinoLocalizations.delegate,
+          ],
+          supportedLocales: AppLocalizations.delegate.supportedLocales,
+          home: StatefulBuilder(
+            builder: (context, setState) {
+              setHostState = setState;
+              return Consumer(
+                builder: (context, ref, _) {
+                  globalState.measure = Measure.of(context, 1.0);
+                  globalState.theme = CommonTheme.of(context, 1.0);
+                  globalState.appController = _TestAppController(ref);
+                  final navItems =
+                      ref.watch(currentNavigationsStateProvider).value;
+                  return CommonScaffold(
+                    title: showPurchase ? '购买' : '代理',
+                    sideNavigationBar: CommonNavigationBar(
+                      viewMode: ViewMode.desktop,
+                      navigationItems: navItems,
+                      currentIndex: showPurchase ? 1 : 0,
+                    ),
+                    body: Stack(
+                      children: [
+                        TickerMode(
+                          enabled: !showPurchase,
+                          child: const ProxiesView(),
+                        ),
+                        if (showPurchase)
+                          PurchaseView(
+                            apiOverride: api,
+                            storageOverride: storage,
+                            downloadOverride: (target) async => target.copyWith(
+                              lastUpdateDate: DateTime.utc(2026, 11, 12),
+                            ),
+                            saveConfigOverride: (_) async => true,
+                          ),
+                      ],
+                    ),
+                  );
+                },
+              );
+            },
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // Log in on PurchaseView while 0 profiles exist -> auto-syncs first profile while ProxiesView is inactive.
+    await tester.enterText(
+      find.byKey(const Key('purchase-email')),
+      'novice@example.test',
+    );
+    await tester.enterText(
+      find.byKey(const Key('purchase-password')),
+      'secret123',
+    );
+    await tester.tap(find.byKey(const Key('purchase-login')));
+    await tester.pumpAndSettle();
+
+    final container =
+        ProviderScope.containerOf(tester.element(find.byType(ProxiesView)));
+    expect(container.read(profilesProvider), hasLength(1));
+
+    // Force proxiesScopeProvider to current while still in 小白模式 (CR-04).
+    container.read(proxiesScopeProvider.notifier).state = ProxiesScope.current;
+
+    // Switch back to 代理 page -> CR-04 keeps NodeOverviewView visible AND CR-05 runs auto-test!
+    setHostState(() {
+      showPurchase = false;
+    });
+    await tester.pumpAndSettle();
+
+    expect(find.byType(NodeOverviewView), findsOneWidget);
+    expect(spyTester.testedBatches, isNotEmpty);
+  });
+
+  testWidgets(
+      'CR-06: _NavigationModeToggleButton exposes clean toggled button semantics without Tooltip duplicate readout and renders overflow-free at 2.0x across zh_CN/en/ja/ru',
+      (tester) async {
+    tester.view.physicalSize = const Size(1280, 900);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(() {
+      tester.view.resetPhysicalSize();
+      tester.view.resetDevicePixelRatio();
+    });
+
+    final semanticsHandle = tester.ensureSemantics();
+    try {
+      for (final locale in const [
+        Locale('zh', 'CN'),
+        Locale('en'),
+        Locale('ja'),
+        Locale('ru'),
+      ]) {
+        await AppLocalizations.load(locale);
+        await tester.pumpWidget(
+          ProviderScope(
+            key: ValueKey(locale.toLanguageTag()),
+            child: MediaQuery(
+              data: const MediaQueryData(
+                size: Size(1280, 900),
+                textScaler: TextScaler.linear(2.0),
+              ),
+              child: MaterialApp(
+                locale: locale,
+                localizationsDelegates: const [
+                  AppLocalizations.delegate,
+                  GlobalMaterialLocalizations.delegate,
+                  GlobalWidgetsLocalizations.delegate,
+                  GlobalCupertinoLocalizations.delegate,
+                ],
+                supportedLocales: AppLocalizations.delegate.supportedLocales,
+                builder: (context, child) => MediaQuery(
+                  data: MediaQuery.of(context).copyWith(
+                    textScaler: const TextScaler.linear(2.0),
+                  ),
+                  child: child!,
+                ),
+                home: Consumer(
+                  builder: (context, ref, _) {
+                    globalState.measure = Measure.of(context, 2.0);
+                    globalState.theme = CommonTheme.of(context, 2.0);
+                    globalState.appController = _TestAppController(ref);
+                    final navItems =
+                        ref.watch(currentNavigationsStateProvider).value;
+                    return Scaffold(
+                      body: Row(
+                        children: [
+                          CommonNavigationBar(
+                            viewMode: ViewMode.desktop,
+                            navigationItems: navItems,
+                            currentIndex: 0,
+                          ),
+                          const Expanded(child: SizedBox()),
+                        ],
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        expect(tester.takeException(), isNull);
+
+        final toggleFinder =
+            find.byKey(const ValueKey('navigation-expert-mode-toggle'));
+        expect(
+          tester.getSemantics(toggleFinder),
+          matchesSemantics(
+            isButton: true,
+            isFocusable: true,
+            hasToggledState: true,
+            isToggled: false,
+            hasTapAction: true,
+            hasFocusAction: true,
+            label: appLocalizations.expertMode,
+          ),
+        );
+
+        await tester.tap(toggleFinder);
+        await tester.pumpAndSettle();
+        expect(tester.takeException(), isNull);
+
+        expect(
+          tester.getSemantics(toggleFinder),
+          matchesSemantics(
+            isButton: true,
+            isFocusable: true,
+            hasToggledState: true,
+            isToggled: true,
+            hasTapAction: true,
+            hasFocusAction: true,
+            label: appLocalizations.noviceMode,
+          ),
+        );
+      }
+    } finally {
+      semanticsHandle.dispose();
+    }
   });
 }

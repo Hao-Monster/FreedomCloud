@@ -37,7 +37,10 @@ class NodeOverviewScopeView extends ConsumerWidget {
     final count = ref.watch(profilesProvider.select((value) => value.length));
     if (!enabled) return currentView;
     ref.watch(_overviewSwitchTrackerProvider);
-    if (count == 0) return const NodeOverviewView();
+    final expertExpanded = ref.watch(expertNavigationExpandedProvider);
+    final lockedToOverviewInNovice = !expertExpanded &&
+        (context.commonScaffoldState?.hasNavigationBar ?? false);
+    if (count == 0 || lockedToOverviewInNovice) return const NodeOverviewView();
     final scope = ref.watch(proxiesScopeProvider);
     return scope == ProxiesScope.all ? const NodeOverviewView() : currentView;
   }
@@ -580,6 +583,18 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
           },
           fireImmediately: true,
         ),
+      )
+      ..add(
+        ref.listenManual<String?>(
+          pendingNoviceFirstProfileAutoTestProvider,
+          (previous, next) {
+            if (next == null) return;
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              _consumePendingFirstProfileAutoTest();
+            });
+          },
+          fireImmediately: true,
+        ),
       );
     // Schedule background country indexing one frame after initial sliver
     // visibility settles so visible slivers attach their own catalog watches
@@ -594,6 +609,16 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
     _syncClockState();
   }
 
+  void _consumePendingFirstProfileAutoTest() {
+    if (!mounted || _disposed || !_tickerEnabled) return;
+    final pendingProfileId = ref.read(pendingNoviceFirstProfileAutoTestProvider);
+    if (pendingProfileId == null) return;
+    final imported = ref.read(profilesProvider).getProfile(pendingProfileId);
+    ref.read(pendingNoviceFirstProfileAutoTestProvider.notifier).state = null;
+    if (imported == null) return;
+    unawaited(_autoTestAndActivateFirstProfile(imported));
+  }
+
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
@@ -601,6 +626,11 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
     if (_tickerEnabled != enabled) {
       _tickerEnabled = enabled;
       _syncClockState(refreshOnResume: true);
+      if (enabled) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          _consumePendingFirstProfileAutoTest();
+        });
+      }
     }
   }
 

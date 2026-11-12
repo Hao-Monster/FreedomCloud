@@ -65,8 +65,8 @@ class _ProxiesViewState extends ConsumerState<ProxiesView> with PageMixin {
         ),
         const SearchOrderMarker(),
         Consumer(
-          builder: (_, ref, child) =>
-              _showAllProfiles(ref) ? const SizedBox.shrink() : child!,
+          builder: (ctx, ref, child) =>
+              _showAllProfiles(ctx, ref) ? const SizedBox.shrink() : child!,
           child: DelayTestAction(
             coordinator: delayTests,
             onStart: _pingAllGroups,
@@ -76,8 +76,8 @@ class _ProxiesViewState extends ConsumerState<ProxiesView> with PageMixin {
         ),
         if (!_isTab) ...[
           Consumer(
-            builder: (_, ref, __) {
-              if (_showAllProfiles(ref)) return const SizedBox.shrink();
+            builder: (ctx, ref, __) {
+              if (_showAllProfiles(ctx, ref)) return const SizedBox.shrink();
               final unfoldSet = ref.watch(unfoldSetProvider);
               final groupNames = ref.watch(
                 currentGroupsStateProvider.select(
@@ -239,8 +239,13 @@ class _ProxiesViewState extends ConsumerState<ProxiesView> with PageMixin {
   }
 }
 
-bool _showAllProfiles(WidgetRef ref) {
+bool _showAllProfiles(BuildContext context, WidgetRef ref) {
   if (!ref.watch(nodeOverviewEnabledProvider)) return false;
+  final expertExpanded = ref.watch(expertNavigationExpandedProvider);
+  if (!expertExpanded &&
+      (context.commonScaffoldState?.hasNavigationBar ?? false)) {
+    return true;
+  }
   final count = ref.watch(profilesProvider.select((profiles) => profiles.length));
   return count == 0 || ref.watch(proxiesScopeProvider) == ProxiesScope.all;
 }

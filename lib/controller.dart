@@ -1398,11 +1398,12 @@ class AppController {
     _ref.read(currentProfileIdProvider.notifier).value = effectiveProfile.id;
   }
 
-  Future<void> activateImportedProfileForNovice(
+  Future<Profile> registerImportedProfileForNovice(
     Profile profile, {
     bool isNewProfile = false,
     bool switchToProxiesPage = false,
   }) async {
+    final hadZeroProfiles = _ref.read(profilesProvider).isEmpty;
     final effectiveProfile =
         !profile.providerHeaders.containsKey(smartSelectionModeMarker) &&
                 profile.selectedMap.isEmpty
@@ -1414,15 +1415,40 @@ class AppController {
     } else {
       setProfileAndAutoApply(effectiveProfile);
     }
+    if (hadZeroProfiles) {
+      _ref.read(pendingNoviceFirstProfileAutoTestProvider.notifier).state =
+          effectiveProfile.id;
+    }
     if (switchToProxiesPage) {
       _ref.read(proxiesScopeProvider.notifier).state = ProxiesScope.all;
       toPage(PageLabel.proxies);
     }
-    final isActive =
-        _ref.read(currentProfileIdProvider) == effectiveProfile.id;
-    if (isActive && !_ref.read(runTimeProvider.notifier).isStart) {
-      await updateStatus(true);
+    return effectiveProfile;
+  }
+
+  Future<void> tryStartProxyForActiveNoviceProfile(String profileId) async {
+    final isActive = _ref.read(currentProfileIdProvider) == profileId;
+    if (!isActive || _ref.read(runTimeProvider.notifier).isStart) {
+      return;
     }
+    try {
+      await updateStatus(true);
+    } catch (err) {
+      commonPrint.log('Auto-start proxy after profile import failed: $err');
+    }
+  }
+
+  Future<void> activateImportedProfileForNovice(
+    Profile profile, {
+    bool isNewProfile = false,
+    bool switchToProxiesPage = false,
+  }) async {
+    final effectiveProfile = await registerImportedProfileForNovice(
+      profile,
+      isNewProfile: isNewProfile,
+      switchToProxiesPage: switchToProxiesPage,
+    );
+    await tryStartProxyForActiveNoviceProfile(effectiveProfile.id);
   }
 
   Future<void> deleteProfile(String id) async {

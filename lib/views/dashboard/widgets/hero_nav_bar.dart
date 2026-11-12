@@ -1,5 +1,6 @@
 import 'package:flclashx/common/common.dart';
 import 'package:flclashx/enum/enum.dart';
+import 'package:flclashx/providers/node_overview.dart';
 import 'package:flclashx/providers/providers.dart';
 import 'package:flclashx/state.dart';
 import 'package:flutter/material.dart';
@@ -17,12 +18,18 @@ class HeroNavBar extends ConsumerWidget {
     final isMobile = ref.watch(isMobileViewProvider);
     if (!isMobile) return const SizedBox.shrink();
     final items = ref.watch(currentNavigationsStateProvider).value;
-    if (items.length < 2) return const SizedBox.shrink();
+    if (items.isEmpty) return const SizedBox.shrink();
+    final expertExpanded = ref.watch(expertNavigationExpandedProvider);
     final current = ref.watch(currentPageLabelProvider);
     final colorScheme = context.colorScheme;
 
     final rawIndex = items.indexWhere((e) => e.label == current);
     final selectedIndex = rawIndex < 0 ? 0 : rawIndex;
+    final totalSegments = items.length + 1;
+    final toggleLabel =
+        expertExpanded ? appLocalizations.noviceMode : appLocalizations.expertMode;
+    final toggleIcon =
+        expertExpanded ? Icons.expand_less_rounded : Icons.expand_more_rounded;
 
     return SafeArea(
       top: false,
@@ -44,7 +51,7 @@ class HeroNavBar extends ConsumerWidget {
           ),
           child: LayoutBuilder(
             builder: (context, constraints) {
-              final segWidth = constraints.maxWidth / items.length;
+              final segWidth = constraints.maxWidth / totalSegments;
               return Stack(
                 children: [
                   // Sliding highlight pill behind the active segment.
@@ -91,6 +98,31 @@ class HeroNavBar extends ConsumerWidget {
                             ),
                           ),
                         ),
+                      Expanded(
+                        child: Semantics(
+                          container: true,
+                          button: true,
+                          toggled: expertExpanded,
+                          label: toggleLabel,
+                          excludeSemantics: true,
+                          child: GestureDetector(
+                            key: const ValueKey('navigation-expert-mode-toggle'),
+                            behavior: HitTestBehavior.opaque,
+                            onTap: () => toggleExpertNavigationMode(ref),
+                            child: Tooltip(
+                              excludeFromSemantics: true,
+                              message: toggleLabel,
+                              child: Center(
+                                child: Icon(
+                                  toggleIcon,
+                                  size: 26,
+                                  color: colorScheme.onSurfaceVariant,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
                     ],
                   ),
                 ],
