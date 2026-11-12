@@ -2,6 +2,34 @@
 
 更新日期：2026-11-12。当前阶段是快速开发、快速迭代和部分功能预览。本文记录来源与验收边界；每次继续开发仍需核实实际 Git/PR/CI 状态，不能把历史报告视为当前通过证明。
 
+## 购买与账户中心 V3 跨仓全链路 Code Review（`CR-01` ~ `CR-16`）TDD 修复落地（2026-11-12）
+
+- 审查来源与范围：针对 `FlClashX`（`01539220`）与 `Xboard-Go`（`87e670af`）跨端购买、注册、剪贴板接力与死代理恢复全链路执行技术负责人 + 高级开发工程师对抗性 Code Review，检出 `CR-01` ~ `CR-16` 共 16 项缺陷（含 2 项 `P0` 隐私/入口阻塞），按严格 TDD（前置有效 Red → 最小生产实现 Green → 全量回归）分别收口于 `FlClashX` 本地 `development` 代码提交 `93142ee6` 与 `Xboard-Go` 本地 `codex/ci-001-tiered-gates` 代码提交 `b897e27d`：
+  1. **[`CR-01` (`P0`) — 剪贴板隐私与后台页签越权拦截]**：
+     - 在 [`PurchaseView`](file:///E:/CodeWorkstation/FlClashX/lib/views/purchase.dart) 向 [`PurchaseCenter`](file:///E:/CodeWorkstation/FlClashX/lib/views/purchase/center.dart) 注入页签可见态守卫 `isPageActive`（同时检查 `TickerMode.of(context)`，阻断 `HomePage` `KeepScope` 后台驻留页签在 `AppLifecycleState.resumed` 静默读取剪贴板）；
+     - 在 [`PurchaseCenter._extractCodeFromClipboard`](file:///E:/CodeWorkstation/FlClashX/lib/views/purchase/center.dart) 拦截标准 `8-4-4-4-12` UUID，并增加 `autoResume` 模式（无显式 `兑换码/卡密/code` 前缀时，仅在存在 `handoffPlan` 购卡接力上下文且长度 `10..64` 非纯数字时自动查验，防止误上报 2FA 恢复码或 Token）。
+  2. **[`CR-02` (`P0`) — Chatwoot 访客 Widget URL 修复 + 游客购卡渠道即时拉取与 `_sessionEpoch` 世代隔离]**：
+     - 在 [`XboardPurchaseChannels.chatwootWidgetUrl`](file:///E:/CodeWorkstation/FlClashX/lib/models/xboard.dart) 构造 `/widget?website_token=<token>&locale=zh_CN`，替代原先跳往坐席后台 `/app/login` 的裸域名；
+     - 在 [`PurchaseManager`](file:///E:/CodeWorkstation/FlClashX/lib/manager/purchase_manager.dart) 为未登录进入购买页、`logout()`、未登录 `refresh()` 及 [`PurchaseCenter._showAcquireSheet`](file:///E:/CodeWorkstation/FlClashX/lib/views/purchase/center.dart) 自动拉取 `getGuestPurchaseChannels()`，并通过递增 `_sessionEpoch` 隔离慢速游客响应，杜绝覆盖刚登录拉取的鉴权渠道。
+  3. **[`CR-03` & `CR-04` (`P1`) — 死代理连接前置 `DIRECT` 回退闭环 + `register()` 发送后断流防重放]**：
+     - 新增 [`pre_request_transport.dart`](file:///E:/CodeWorkstation/FlClashX/lib/services/pre_request_transport.dart)（`createPreRequestTrackingHttpClient` + `PreRequestTransportException` 追踪 `openUrl` 连接建立阶段），在 [`DioXboardApi`](file:///E:/CodeWorkstation/FlClashX/lib/services/xboard_api.dart)、[`SecureSubscriptionDownloader`](file:///E:/CodeWorkstation/FlClashX/lib/services/secure_subscription.dart) 及 [`Request`](file:///E:/CodeWorkstation/FlClashX/lib/common/request.dart) 仅对尚未发出 HTTP 载荷的前置连接异常（含死代理 HTTP CONNECT 阶段的 `HandshakeException`/`TlsException`）回退 `DIRECT`，并将真实 TLS 证书校验失败精确映射为 `certificate_error`；
+     - `register()` 若在 HTTP 请求体发出后断流，不再重放注册请求，而是标记 `XboardException(..., isUncertain: true)`；同时在 [`PurchaseView._shouldFallbackDeadLocalProxy`](file:///E:/CodeWorkstation/FlClashX/lib/views/purchase.dart) 补齐 `globalState.isAppStateInitialized && globalState.isConfigInitialized` 防护。
+  4. **[`CR-05` ~ `CR-09` (`P1`/`P2`) — 认证状态机、0 配置自动同步去重、键盘焦点与剪贴板交互收口]**：
+     - `CR-05`：[`PurchaseManager._fail`](file:///E:/CodeWorkstation/FlClashX/lib/manager/purchase_manager.dart) 仅在 `loggedIn == true` 时对 `401` 执行 `_clearAccount()`，输错密码不再清空未登录预填卡密、`handoffPlan` 与购卡渠道；
+     - `CR-06`：[`PurchaseCenter._selectGuestAuthRegister`](file:///E:/CodeWorkstation/FlClashX/lib/views/purchase/center.dart) 切换 `登录账户 / 免费注册领 2G` 时保留已填邮箱与密码并调用 `manager.dismissError()` 清除旧报错；
+     - `CR-07`：[`PurchaseManager.syncSubscription`](file:///E:/CodeWorkstation/FlClashX/lib/manager/purchase_manager.dart) 支持 `clearError` 与 `reuseCurrentSubscription`，[`PurchaseView._onManagerChanged`](file:///E:/CodeWorkstation/FlClashX/lib/views/purchase.dart) 通过 `scheduleMicrotask` + `hasAttemptedInitialSyncFor` 避免覆盖预填卡密错误或对 `register()` 失败的同步二次重试；
+     - `CR-08` & `CR-09`：移除 [`_AuthModeTabButton`](file:///E:/CodeWorkstation/FlClashX/lib/views/purchase/center.dart) 与未登录卡密框后缀按钮的 `ExcludeFocusTraversal`，增加 `_buyingPlanId` / `_openingExternalLink` 防连点重入锁；记录手工粘贴/清空/已核销卡密指纹防止 Alt-Tab 切回对已用完卡密重复报红，空剪贴板粘贴弹出 `SnackBar` 提示，且 `unresolvedRedemption` 期间隐藏购卡横幅。
+  5. **[`CR-10`、`CR-11`、`CR-14` ~ `CR-16` (`P2`/`P3`) — 后端错误码映射、渠道容错、多语言对齐与跨仓链接优先级统一]**：
+     - [`DioXboardApi`](file:///E:/CodeWorkstation/FlClashX/lib/services/xboard_api.dart) 将 `captcha_invalid`、`captcha_unavailable` 归入 `register_web_required`，新增 `email_domain_not_allowed`、`gmail_alias_not_allowed` 本地化文案，并对单条脏次级渠道 URL 降级为 `null`；
+     - 统一 `FlClashX`（[`xboard.dart`](file:///E:/CodeWorkstation/FlClashX/lib/models/xboard.dart)、[`plan_catalog.dart`](file:///E:/CodeWorkstation/FlClashX/lib/views/purchase/plan_catalog.dart)）与 `Xboard-Go` Web（`cardStoreURL.ts`、`PublicStorefront.tsx`、`PlanCatalogPage.tsx`、`UserGiftCardPage.tsx`，涵盖 `CR-12`、`CR-13`、`CR-15`）的 `购买链接` Markdown 提取、说明区元数据剥离、`套餐显式链接 > 分档链接 > 全局发卡网` 优先级及带连字符卡密输入光标保留（`CR-16`）与密码自动填充收尾（`TextInput.finishAutofillContext`）。
+- 验证记录（本机 `Flutter 3.47.4` / `Dart 3.13.3`；`Xboard-Go` Web `pnpm` 门禁同步全绿）：
+  - 前置有效 Red：**PASS**（[`purchase_v3_code_review_tdd_test.dart`](file:///E:/CodeWorkstation/FlClashX/test/purchase/purchase_v3_code_review_tdd_test.dart) 与 `Xboard-Go` Web 新增单测在合入生产修复前均确定性失败退出码 `1`）；
+  - `FlClashX` 新增专项与购买/导航全量回归：**PASS**（[`purchase_v3_code_review_tdd_test.dart`](file:///E:/CodeWorkstation/FlClashX/test/purchase/purchase_v3_code_review_tdd_test.dart) `8/8` + [`purchase_v3_redesign_tdd_test.dart`](file:///E:/CodeWorkstation/FlClashX/test/purchase/purchase_v3_redesign_tdd_test.dart) `6/6` + [`test/purchase`](file:///E:/CodeWorkstation/FlClashX/test/purchase) 全目录既有套件 + [`novice_expert_navigation_test.dart`](file:///E:/CodeWorkstation/FlClashX/test/views/novice_expert_navigation_test.dart) `9/9`，合计 **`338/338` 项测试全绿**）；
+  - `FlClashX` 静态分析（`dart analyze --fatal-infos` 覆盖全部 10 个购买核心生产与测试文件 `0 issues`，`dart analyze --fatal-warnings lib/common/request.dart lib/l10n` 退出码 `0`）：**PASS**；
+  - `Xboard-Go` Web 全套门禁（`pnpm --dir web run typecheck`、`pnpm --dir web run lint`、`pnpm --dir web test` `73 files / 452 tests`、`pnpm --dir web run build` 首包预算 `111.18 KB`）：**PASS**；
+  - 新预览包构建 **NOT RUN** / 宿主机实机窗口运行验收 **NOT RUN（遵守协作规则未触碰宿主机现役代理/TUN/后台服务）** / 远端推送 **NOT RUN** / PR 与合并 **NOT RUN** / 云端 CI **NOT RUN**。
+- 恢复位置与下一步：`FlClashX` 成果保存在本地 `development` 分支提交 `93142ee6`（未推送至 `freedomcloud/development`），`Xboard-Go` 成果保存在本地 `codex/ci-001-tiered-gates` 分支提交 `b897e27d`（未推送至 `origin/codex/ci-001-tiered-gates`）；无关未跟踪与未暂存文件原样保留。下一步可按授权推送远端触发流水线或打包桌面预览包验收。
+
 ## 购买与账户中心 V3 产品重构（抗代理死锁直连兜底 + 分档发卡网一键直跳 + 客户端内 2G 体验极速注册 + 切回窗口剪贴板自动查验）TDD 落地（2026-11-12）
 
 - 原始来源与设计目标：基于用户桌面端截图诊断（`运行中` 空配置/失效节点代理接管触发 `套餐加载失败，请重试` 死循环、错误重试按钮文案错位为 `刷新账户`、未登录无应用内注册入口、购卡缺少与 Web 端对齐的 `50G/100G/200G/500G` 分档发卡网一键直跳与切回窗口接力），按严格 TDD（前置有效 Red → 最小生产实现 Green → 渲染核验与全量回归）收口于本地 `development` 代码提交 `01539220`：
