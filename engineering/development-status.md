@@ -2,6 +2,32 @@
 
 更新日期：2026-11-12。当前阶段是快速开发、快速迭代和部分功能预览。本文记录来源与验收边界；每次继续开发仍需核实实际 Git/PR/CI 状态，不能把历史报告视为当前通过证明。
 
+## 导航栏「小白 / 大佬模式」与零操作购买/导入链路 Code Review（`CR-01` ~ `CR-06`）TDD 修复落地（2026-11-12）
+
+- 审查来源与范围：针对 `bda7233` 全量变更执行技术负责人 + 高级开发工程师 Code Review，检出 `CR-01` ~ `CR-06` 共 6 项跨端布局、状态时序、故障隔离与无障碍缺陷，按严格 TDD（前置有效 Red → 最小生产实现 Green → 重构与全量回归）收口于本地 `development` 代码提交 `a1a75770`：
+  1. **[`CR-01` (`P1`) — `ViewMode.mobile`（窄窗 `<= 600px` / 移动端）补齐「大佬模式 / 小白模式」双态切换入口]**：
+     - 在 [`CommonNavigationBar`](file:///E:/CodeWorkstation/FlClashX/lib/pages/home.dart#L221-L263) 的 `NavigationBar` 分支与 [`HeroNavBar`](file:///E:/CodeWorkstation/FlClashX/lib/views/dashboard/widgets/hero_nav_bar.dart#L59-L115) 同步挂载双态切换项（统一 `ValueKey('navigation-expert-mode-toggle')`），拦截选择下标并转发 [`toggleExpertNavigationMode`](file:///E:/CodeWorkstation/FlClashX/lib/providers/node_overview.dart#L53-L66)，消除窄窗/移动端因 `currentNavigationsState` 折叠而无法进入设置/仪表盘的死胡同。
+  2. **[`CR-02` (`P1`) — 收起折叠态时序倒置修复与 `HomePage` `PageController` 越界防护]**：
+     - 调整 [`toggleExpertNavigationMode`](file:///E:/CodeWorkstation/FlClashX/lib/providers/node_overview.dart#L53-L66) 更新顺序：在被折叠进阶页切回小白模式时，**先**将 `currentPageLabelProvider` 切至 `PageLabel.proxies`（并重置 `ProxiesScope.all`），**再**将 `expertNavigationExpandedProvider` 置为 `false`，使监听者永不观测到不在可见导航列表中的悬空页签；
+     - 在 [`_HomePageViewState`](file:///E:/CodeWorkstation/FlClashX/lib/pages/home.dart#L29-L118) 改为读取 `ref.read(currentPageLabelProvider)` 计算初始页，将 `_pageIndex` 下界钳制为 `0`（防止 `PageController(initialPage: -1)` 断言异常），并为页面切换动画补充 `_pageController.hasClients` 与 `currentPage < navigationItems.length` 边界保护。
+  3. **[`CR-03` (`P1`) — `PurchaseView` 代理启动异常与配置落盘故障隔离 + 0 配置老用户登录自动同步]**：
+     - 将 [`AppController`](file:///E:/CodeWorkstation/FlClashX/lib/controller.dart#L1401-L1441) 的小白激活入口拆分为纯配置注册 [`registerImportedProfileForNovice`](file:///E:/CodeWorkstation/FlClashX/lib/controller.dart#L1401-L1424) 与带异常捕获隔离的 [`tryStartProxyForActiveNoviceProfile`](file:///E:/CodeWorkstation/FlClashX/lib/controller.dart#L1426-L1441)；
+     - 在 [`PurchaseView`](file:///E:/CodeWorkstation/FlClashX/lib/views/purchase.dart#L92-L152) 的 `save` 回调中**先执行 `saveConfig(globalState.config)` 持久化**，落盘成功后再调用 `tryStartProxyForActiveNoviceProfile`（UAC 取消或虚拟网卡拉起异常不再跳过配置持久化，亦不再令 [`PurchaseManager._syncLatest`](file:///E:/CodeWorkstation/FlClashX/lib/manager/purchase_manager.dart) 误报 `subscription_sync_failed`）；
+     - 在 [`_PurchaseViewState._onManagerChanged`](file:///E:/CodeWorkstation/FlClashX/lib/views/purchase.dart#L48-L71) 增加老账号 0 配置自动同步：检测到账号已登录、套餐有效（`subscription.valid`）且本地 `profilesProvider` 为空时，按 `accountId` 幂等自动触发一次 `_manager.syncSubscription()`；同时对未初始化 `GlobalState.config` 的公开套餐目录宿主场景补充 `globalState.isConfigInitialized` 守卫。
+  4. **[`CR-04` (`P2`) — 小白模式代理页锁定「全部配置」概览防困死]**：
+     - 在 [`NodeOverviewScopeView.build`](file:///E:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart#L35-L46) 与 [`_showAllProfiles`](file:///E:/CodeWorkstation/FlClashX/lib/views/proxies/proxies.dart#L242-L251) 中，当处于带导航栏的小白折叠态（`!expertExpanded && hasNavigationBar`）时强制展示 `NodeOverviewView`（`全部配置`），防止用户在顶栏范围切换器隐藏期间因历史 `ProxiesScope.current` 状态被困在单配置分组页。
+  5. **[`CR-05` (`P2`) — 跨页面首次导入（`PurchaseView` / 外部 `initLink`）返回「代理」页自动测速闭环]**：
+     - 在 [`lib/providers/node_overview.dart`](file:///E:/CodeWorkstation/FlClashX/lib/providers/node_overview.dart#L50-L51) 新增一次性挂起标记 [`pendingNoviceFirstProfileAutoTestProvider`](file:///E:/CodeWorkstation/FlClashX/lib/providers/node_overview.dart#L50-L51)，由 `0` 配置首次注册订阅时写入，并在 [`_NodeOverviewState._consumePendingFirstProfileAutoTest`](file:///E:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart#L1401-L1432)（同时覆盖实时通知与从 `购买` 页切回 `代理` 页 `TickerMode` 激活时的 `didChangeDependencies`）自动消费并触发首配延迟测试。
+  6. **[`CR-06` (`P3`) — 导航模式切换按钮无障碍语义去重与 `2.0x` 大字号防溢出]**：
+     - 重构 [`_NavigationModeToggleButton`](file:///E:/CodeWorkstation/FlClashX/lib/pages/home.dart#L354-L408) 为外层 `Semantics(container: true, button: true, toggled: expanded, label: labelText)` + `Tooltip(excludeFromSemantics: true)` + 内层视觉列 `ExcludeSemantics`，既消除屏幕阅读器三段重复播报，又完整保留 `InkWell` 的 `tap` / `focus` 语义动作；
+     - 为侧边栏标签增加 `ConstrainedBox(maxWidth: 88)` 与双行省略，并将 `CommonNavigationBar` 外层会因 `IntrinsicHeight` 预估单行高度导致 `2.0x` 字号底部溢出 `40px` 的手工滚动包装替换为原生 `NavigationRail(scrollable: true, ...)`。
+- 验证记录（本机 `Flutter 3.47.4` / `Dart 3.13.3`）：
+  - 前置有效 Red：**PASS**（[`novice_expert_navigation_test.dart`](file:///E:/CodeWorkstation/FlClashX/test/views/novice_expert_navigation_test.dart) 新增 `CR-01` ~ `CR-06` 共 5 组对抗测试在合入生产修复前确定性失败退出码 `1`，`+4 -5`）；
+  - 专项与关联全量回归：**PASS**（[`novice_expert_navigation_test.dart`](file:///E:/CodeWorkstation/FlClashX/test/views/novice_expert_navigation_test.dart) `9/9` + [`test/purchase`](file:///E:/CodeWorkstation/FlClashX/test/purchase) 全目录 `315/315` + [`node_overview_test.dart`](file:///E:/CodeWorkstation/FlClashX/test/views/node_overview_test.dart)、[`node_overview_render_test.dart`](file:///E:/CodeWorkstation/FlClashX/test/views/node_overview_render_test.dart)、[`node_overview_providers_test.dart`](file:///E:/CodeWorkstation/FlClashX/test/common/node_overview_providers_test.dart)、[`node_overview_integration_test.dart`](file:///E:/CodeWorkstation/FlClashX/test/common/node_overview_integration_test.dart) `138/138`，合计 **`462` 项测试全绿**，含中/英/日/俄 4 语种 `2.0x` 字体缩放防溢出与 `matchesSemantics` 无障碍校验）；
+  - 静态分析（`dart analyze --fatal-warnings` 覆盖全部 8 个改动文件，退出码 `0`，`0 error / 0 warning`，新增/修改代码 `0 info`）：**PASS**；
+  - 新预览包构建 **NOT RUN** / 真实 Windows 窗口交互验收 **NOT RUN（遵守协作规则未触碰宿主机现役代理/TUN/服务，待用户授权或打包预览验证）** / 远端推送 **NOT RUN** / PR 与合并 **NOT RUN** / 云端 CI **NOT RUN**。
+- 恢复位置与下一步：成果已保存在本地工作树 `E:\CodeWorkstation\FlClashX` 的 `development` 分支提交 `a1a75770`（未推送至 `freedomcloud/development`）；既有未提交文件与 `stash@{0}` 原样保留。下一步可按授权构建带 `BUILD-INFO` 的 Windows 预览包进行真机窗口验证，或统一推送至 `freedomcloud/development`。
+
 ## 导航栏「小白模式 / 大佬模式」折叠双态切换与小白零操作购买/导入全链路闭环 TDD 落地（2026-11-12）
 
 - 原始来源与设计对齐：按用户需求及 4 项小白零门槛补充确认结论，以严格 TDD（前置有效 Red → 最小生产实现 Green → 全套回归）落入本地 `development`（代码提交 `bda7233`）：
