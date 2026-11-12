@@ -2,6 +2,28 @@
 
 更新日期：2026-11-12。当前阶段是快速开发、快速迭代和部分功能预览。本文记录来源与验收边界；每次继续开发仍需核实实际 Git/PR/CI 状态，不能把历史报告视为当前通过证明。
 
+## 购买与账户中心 V3 产品重构（抗代理死锁直连兜底 + 分档发卡网一键直跳 + 客户端内 2G 体验极速注册 + 切回窗口剪贴板自动查验）TDD 落地（2026-11-12）
+
+- 原始来源与设计目标：基于用户桌面端截图诊断（`运行中` 空配置/失效节点代理接管触发 `套餐加载失败，请重试` 死循环、错误重试按钮文案错位为 `刷新账户`、未登录无应用内注册入口、购卡缺少与 Web 端对齐的 `50G/100G/200G/500G` 分档发卡网一键直跳与切回窗口接力），按严格 TDD（前置有效 Red → 最小生产实现 Green → 渲染核验与全量回归）收口于本地 `development` 代码提交 `01539220`：
+  1. **[抗本地死代理直连回退（消除「先有代理才能买套餐」死锁）]**：
+     - 在 [`DioXboardApi`](file:///E:/CodeWorkstation/FlClashX/lib/services/xboard_api.dart#L48-L115) 新增受控 `shouldFallbackToDirect` 回调与惰性直连客户端 `_directDio`（`findProxy = (_) => 'DIRECT'`、强制 `badCertificateCallback = false`、零重定向），并在 [`PurchaseView.initState`](file:///E:/CodeWorkstation/FlClashX/lib/views/purchase.dart#L75-L86) 仅当当前 Zone 为 [`FlClashHttpOverrides`](file:///E:/CodeWorkstation/FlClashX/lib/common/http.dart) 且主路由指向本地 `PROXY ` 端口时启用；
+     - 非幂等变更操作（`mutation: true`，如 `redeemGift`、`logout`）及 TLS 证书错误永不触发回退重试，既打破 0 节点/过期节点下的 `localhost:7890` 连接死锁，又完整保持严格代理/自定义 `HttpOverrides` 测试边界与礼品卡兑换幂等恢复契约。
+  2. **[与 Web 端 100% 对齐的分档发卡网直跳、购卡接力横幅与在线客服融合]**：
+     - 在 [`lib/models/xboard.dart`](file:///E:/CodeWorkstation/FlClashX/lib/models/xboard.dart) 新增 [`XboardPurchaseChannels`](file:///E:/CodeWorkstation/FlClashX/lib/models/xboard.dart)（解析 `card_store_url`、`card_store_50g_url`..`500g_url`、`chatwoot_base_url`、`chatwoot_website_token`，按套餐正文 `购买链接: https://...` -> 流量档位匹配 -> 全局发卡网三级优先级解析），并在 [`DioXboardApi`](file:///E:/CodeWorkstation/FlClashX/lib/services/xboard_api.dart) 实现无凭据公开通道 `getGuestPurchaseChannels()`（`/api/v1/guest/comm/config`）与鉴权通道 `getUserPurchaseChannels()`（`/api/v1/user/purchase-channels`）；
+     - 升级 [`PurchasePlanCatalog`](file:///E:/CodeWorkstation/FlClashX/lib/views/purchase/plan_catalog.dart)：修复目录加载失败按钮文案为准确的 `重新加载套餐`（附右侧登录/注册/核销不受影响提示），多档目录中突出高亮 `200G` 热销档位（`purchase-plan-featured-${plan.id}`），每张套餐卡提供一键直达对应档位发卡网的 `去购买` 主按钮（`purchase-plan-buy-${plan.id}`）与保留微信咨询短语复制的 `获取此套餐兑换码` 副按钮；点击 `去购买` 后在右侧工作台置顶展示 `已打开「…套餐」购卡页` 接力指引卡（`purchase-handoff-banner`）；
+     - 升级底部支持区为 `在线客服`（`purchase-support-chat`，接入后台配置的 Chatwoot）+ 完整保留两个备用微信号（`ChasingDream_2021`、`dxm_qa`）一键复制。
+  3. **[应用内「登录账户 / 免费注册领 2G」双标签切换与未登录卡密预填接力]**：
+     - 在 [`DioXboardApi.register`](file:///E:/CodeWorkstation/FlClashX/lib/services/xboard_api.dart) 对接 `POST /api/v1/passport/auth/register`（支持 `email_exists`、`registration_closed` 及需邮箱验证码/人机校验时提示引导 `register_web_required`）；
+     - 在 [`PurchaseManager.register`](file:///E:/CodeWorkstation/FlClashX/lib/manager/purchase_manager.dart) 与 [`PurchaseCenter`](file:///E:/CodeWorkstation/FlClashX/lib/views/purchase/center.dart) 未登录工作台新增 `[登录账户 | 免费注册领 2G]` 分段标签（`purchase-auth-tab-login` / `purchase-auth-tab-register`）及未登录卡密预填框（`purchase-prelogin-code`）：新客注册成功后自动保存会话、自动拉取并激活 `2 GiB` 永久体验订阅（联动智能选点与开启代理），同时若未登录时已预填兑换码，登录或注册完成后自动保留卡密并立即触发只读 `checkGift` 权益预览（绝不绕过用户二次确认自动核销）。
+  4. **[从浏览器购卡切回客户端（`AppLifecycleState.resumed`）智能剪贴板识别查验]**：
+     - 在 [`PurchaseCenter`](file:///E:/CodeWorkstation/FlClashX/lib/views/purchase/center.dart) 接入 `WidgetsBindingObserver`：当已登录用户从浏览器购卡复制卡密切回客户端且输入框为空时，复用智能提取器提取兑换码，对同一剪贴板内容去重填入 `purchase-code` 并自动执行一次非消耗型 `checkCode()` 权益预览，交由用户核对后点击 `确认兑换`。同步更新中/英/日/俄 4 语种 ARB 与 [`lib/l10n/`](file:///E:/CodeWorkstation/FlClashX/lib/l10n/l10n.dart)。
+- 验证记录（本机 `Flutter 3.47.4` / `Dart 3.13.3`）：
+  - 前置有效 Red：**PASS**（[`purchase_v3_redesign_tdd_test.dart`](file:///E:/CodeWorkstation/FlClashX/test/purchase/purchase_v3_redesign_tdd_test.dart) `T01`~`T05` 在合入生产实现前确定性失败退出码 `1`）；
+  - 新增专项与购买/导航全量回归：**PASS**（[`purchase_v3_redesign_tdd_test.dart`](file:///E:/CodeWorkstation/FlClashX/test/purchase/purchase_v3_redesign_tdd_test.dart) `6/6` + [`test/purchase`](file:///E:/CodeWorkstation/FlClashX/test/purchase) 全目录既有套件 + [`novice_expert_navigation_test.dart`](file:///E:/CodeWorkstation/FlClashX/test/views/novice_expert_navigation_test.dart) `9/9`，合计 **`330/330` 项测试全绿**，含 `1280×900` 桌面双栏首屏几何约束、中/英/日/俄 4 语种 `2.0x` 大字号 `320px` 窄窗双标签防溢出及真实中文字体合成截图 [`v3-guest-register-handoff.png`](file:///E:/CodeWorkstation/FlClashX/build/purchase-preview/v3-guest-register-handoff.png) / [`v3-catalog-error-recovery.png`](file:///E:/CodeWorkstation/FlClashX/build/purchase-preview/v3-catalog-error-recovery.png) 视觉核验）；
+  - 静态分析（`dart analyze --fatal-infos` 覆盖全部手写改动与测试文件 + `dart analyze --fatal-warnings lib/l10n`，退出码 `0`，`0 error / 0 warning / 0 info`）：**PASS**；
+  - 新预览包构建 **NOT RUN** / 宿主机实机窗口运行验收 **NOT RUN（遵守协作规则未触碰宿主机现役代理/TUN/后台服务）** / 远端推送 **NOT RUN** / PR 与合并 **NOT RUN** / 云端 CI **NOT RUN**。
+- 恢复位置与下一步：成果已保存在本地工作树 `E:\CodeWorkstation\FlClashX` 的 `development` 分支提交 `01539220`（未推送至 `freedomcloud/development`）；既有未提交文件与 `stash@{0}` 原样保留。下一步可按授权打包带 `BUILD-INFO` 的 Windows 预览包真机验证，或统一推送至 `freedomcloud/development`。
+
 ## 导航栏「小白 / 大佬模式」与零操作购买/导入链路 Code Review（`CR-01` ~ `CR-06`）TDD 修复落地（2026-11-12）
 
 - 审查来源与范围：针对 `bda7233` 全量变更执行技术负责人 + 高级开发工程师 Code Review，检出 `CR-01` ~ `CR-06` 共 6 项跨端布局、状态时序、故障隔离与无障碍缺陷，按严格 TDD（前置有效 Red → 最小生产实现 Green → 重构与全量回归）收口于本地 `development` 代码提交 `a1a75770`：
