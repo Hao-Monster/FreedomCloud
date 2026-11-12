@@ -234,7 +234,9 @@ class HeroConnect extends ConsumerWidget {
     final isReady = state.isInit;
     final profile = ref.watch(currentProfileProvider);
     final headers = profile?.providerHeaders ?? {};
-    final serviceName = _decodeBase64(headers['flclashx-servicename']) ?? appName;
+    final serviceName =
+        _decodeBase64(headers['flclashx-servicename']) ??
+            appLocalizations.appBrandName;
     final logoUrl = _decodeBase64(headers['flclashx-servicelogo']);
     final announce = _decodeAnnounce(headers['announce']);
     final sub = profile?.subscriptionInfo;
@@ -382,10 +384,7 @@ class _Logo extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     const size = 104.0;
-    final fallback = ClipRRect(
-      borderRadius: BorderRadius.circular(26),
-      child: Image.asset('assets/images/icon.png', width: size, height: size, fit: BoxFit.cover),
-    );
+    const Widget fallback = FreedomNetBrandMark(size: size);
     if (logoUrl == null || logoUrl!.isEmpty) return fallback;
     return ClipRRect(
       borderRadius: BorderRadius.circular(26),

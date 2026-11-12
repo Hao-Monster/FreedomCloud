@@ -1510,5 +1510,14 @@
   "purchaseRegisterWebRequiredError": "Email verification or CAPTCHA is enabled. Use 'Create account on website' below.",
   "purchaseClipboardEmpty": "No valid gift card code found in clipboard.",
   "purchaseEmailDomainError": "This email domain is not allowed. Try another email address or register on the website.",
-  "purchaseGmailAliasError": "Gmail alias addresses (with '+') are not allowed. Use your base Gmail address."
+  "purchaseGmailAliasError": "Gmail alias addresses (with '+') are not allowed. Use your base Gmail address.",
+  "appBrandName": "FreedomNet",
+  "appBrandTagline": "Next-Generation Intelligent Network Client",
+  "tributeDialogTitle": "Open-Source Tribute & Special Credits",
+  "tributeFlclashxBadge": "OPEN-SOURCE HERITAGE",
+  "tributeFlclashxTitle": "Built Upon Open-Source Project FlClashX",
+  "tributeFlclashxBody": "FreedomNet solemnly declares that this software is built upon the open-source project FlClashX (pluralplay/FlClashX), inheriting the FlClash and Mihomo (Clash.Meta) ecosystem. With our deepest respect and gratitude to the original authors and all upstream open-source contributors.",
+  "tributeGeminiBadge": "ENGINEERING & DESIGN SUPPORT",
+  "tributeGeminiTitle": "Special Thanks to Gemini 4",
+  "tributeGeminiBody": "Special thanks to Gemini 4 for supporting FreedomNet's architecture evolution, commercial UI/UX design, engineering refactoring, and automated verification."
 }

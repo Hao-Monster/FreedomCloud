@@ -112,8 +112,8 @@ class CommonCard extends StatelessWidget {
       return BorderSide.none;
     }
     final hoverColor = isSelected
-        ? colorScheme.primary.opacity80
-        : colorScheme.primary.opacity60;
+        ? colorScheme.primary.withValues(alpha: 0.72)
+        : colorScheme.primary.withValues(alpha: 0.42);
     if (states.contains(WidgetState.hovered) ||
         states.contains(WidgetState.focused) ||
         states.contains(WidgetState.pressed)) {
@@ -123,23 +123,28 @@ class CommonCard extends StatelessWidget {
     }
     return BorderSide(
       color: isSelected
-          ? colorScheme.primary
-          : colorScheme.surfaceContainerHighest,
+          ? colorScheme.primary.withValues(alpha: 0.58)
+          : freedomNetHairlineColor(colorScheme),
     );
   }
 
   Color? getBackgroundColor(BuildContext context, Set<WidgetState> states) {
     final colorScheme = context.colorScheme;
+    final isHovered = states.contains(WidgetState.hovered);
     if (type == CommonCardType.filled) {
       if (isSelected) {
-        return colorScheme.secondaryContainer.opacity80;
+        return colorScheme.secondaryContainer.withValues(alpha: 0.9);
       }
-      return colorScheme.surfaceContainer.withValues(alpha: 0.85);
+      return isHovered
+          ? colorScheme.surfaceContainerHigh
+          : colorScheme.surfaceContainer;
     }
     if (isSelected) {
-      return colorScheme.secondaryContainer.withValues(alpha: 0.85);
+      return colorScheme.secondaryContainer.withValues(alpha: 0.88);
     }
-    return colorScheme.surfaceContainerLow.withValues(alpha: 0.85);
+    return isHovered
+        ? colorScheme.surfaceContainerHigh
+        : colorScheme.surfaceContainer;
   }
 
   @override

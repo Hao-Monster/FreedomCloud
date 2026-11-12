@@ -221,12 +221,6 @@ class ApplicationState extends ConsumerState<Application> {
     },
   );
 
-  ColorScheme _getAppColorScheme({
-    required Brightness brightness,
-    int? primaryColor,
-  }) =>
-      ref.read(genColorSchemeProvider(brightness));
-
   @override
   void initState() {
     super.initState();
@@ -378,29 +372,21 @@ class ApplicationState extends ConsumerState<Application> {
                   return app;
                 },
                 scrollBehavior: BaseScrollBehavior(),
-                title: appName,
+                onGenerateTitle: (ctx) => AppLocalizations.of(ctx).appBrandName,
                 locale: utils.getLocaleForString(locale),
                 supportedLocales: AppLocalizations.delegate.supportedLocales,
                 themeMode: themeProps.themeMode,
-                theme: ThemeData(
-                  useMaterial3: true,
-                  pageTransitionsTheme: _pageTransitionsTheme,
-                  colorScheme: _getAppColorScheme(
-                    brightness: Brightness.light,
-                    primaryColor: themeProps.primaryColor,
+                theme: buildFreedomNetThemeData(
+                  colorScheme: ref.watch(
+                    genColorSchemeProvider(Brightness.light),
                   ),
-                  // Reduce animation duration for snappier feel
-                  visualDensity: VisualDensity.adaptivePlatformDensity,
-                ),
-                darkTheme: ThemeData(
-                  useMaterial3: true,
                   pageTransitionsTheme: _pageTransitionsTheme,
-                  colorScheme: _getAppColorScheme(
-                    brightness: Brightness.dark,
-                    primaryColor: themeProps.primaryColor,
-                  ).toPureBlack(themeProps.pureBlack),
-                  // Reduce animation duration for snappier feel
-                  visualDensity: VisualDensity.adaptivePlatformDensity,
+                ),
+                darkTheme: buildFreedomNetThemeData(
+                  colorScheme: ref
+                      .watch(genColorSchemeProvider(Brightness.dark))
+                      .toPureBlack(themeProps.pureBlack),
+                  pageTransitionsTheme: _pageTransitionsTheme,
                 ),
                 home: child,
               );

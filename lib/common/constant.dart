@@ -9,6 +9,8 @@ import 'package:flclashx/models/models.dart';
 import 'package:flutter/material.dart';
 
 const appName = "FlClashX";
+const brandNameZh = "自由云";
+const brandNameEn = "FreedomNet";
 const nodeOverviewEnabled =
     bool.fromEnvironment('FCX_NODE_OVERVIEW', defaultValue: true);
 const appHelperService = "FlClashHelperService";
@@ -84,7 +86,7 @@ const viewModeColumnsMap = {
 // const toolsStoreKey = PageStorageKey<String>('tools');
 // const profilesStoreKey = PageStorageKey<String>('profiles');
 
-const defaultPrimaryColor = 0xFF03A9F4;
+const defaultPrimaryColor = 0xFF0EA5E9;
 
 double getWidgetHeight(num lines) => max(lines * 84 + (lines - 1) * 16, 0).ap;
 
@@ -92,9 +94,11 @@ const maxLength = 150;
 
 
 const defaultPrimaryColors = [
-  0xFF795548,
   defaultPrimaryColor,
-  0xFFFFFF00,
+  0xFF03A9F4,
+  0xFF6366F1,
+  0xFF10B981,
+  0xFF795548,
   0XFFBBC9CC,
   0XFFABD397,
   0XFFD8C0C3,

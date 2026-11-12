@@ -8727,6 +8727,91 @@ class AppLocalizations {
       args: [],
     );
   }
+
+  /// `FreedomNet`
+  String get appBrandName {
+    return Intl.message('FreedomNet', name: 'appBrandName', desc: '', args: []);
+  }
+
+  /// `Next-Generation Intelligent Network Client`
+  String get appBrandTagline {
+    return Intl.message(
+      'Next-Generation Intelligent Network Client',
+      name: 'appBrandTagline',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Open-Source Tribute & Special Credits`
+  String get tributeDialogTitle {
+    return Intl.message(
+      'Open-Source Tribute & Special Credits',
+      name: 'tributeDialogTitle',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `OPEN-SOURCE HERITAGE`
+  String get tributeFlclashxBadge {
+    return Intl.message(
+      'OPEN-SOURCE HERITAGE',
+      name: 'tributeFlclashxBadge',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Built Upon Open-Source Project FlClashX`
+  String get tributeFlclashxTitle {
+    return Intl.message(
+      'Built Upon Open-Source Project FlClashX',
+      name: 'tributeFlclashxTitle',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `FreedomNet solemnly declares that this software is built upon the open-source project FlClashX (pluralplay/FlClashX), inheriting the FlClash and Mihomo (Clash.Meta) ecosystem. With our deepest respect and gratitude to the original authors and all upstream open-source contributors.`
+  String get tributeFlclashxBody {
+    return Intl.message(
+      'FreedomNet solemnly declares that this software is built upon the open-source project FlClashX (pluralplay/FlClashX), inheriting the FlClash and Mihomo (Clash.Meta) ecosystem. With our deepest respect and gratitude to the original authors and all upstream open-source contributors.',
+      name: 'tributeFlclashxBody',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `ENGINEERING & DESIGN SUPPORT`
+  String get tributeGeminiBadge {
+    return Intl.message(
+      'ENGINEERING & DESIGN SUPPORT',
+      name: 'tributeGeminiBadge',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Special Thanks to Gemini 4`
+  String get tributeGeminiTitle {
+    return Intl.message(
+      'Special Thanks to Gemini 4',
+      name: 'tributeGeminiTitle',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Special thanks to Gemini 4 for supporting FreedomNet's architecture evolution, commercial UI/UX design, engineering refactoring, and automated verification.`
+  String get tributeGeminiBody {
+    return Intl.message(
+      'Special thanks to Gemini 4 for supporting FreedomNet\'s architecture evolution, commercial UI/UX design, engineering refactoring, and automated verification.',
+      name: 'tributeGeminiBody',
+      desc: '',
+      args: [],
+    );
+  }
 }
 
 class AppLocalizationDelegate extends LocalizationsDelegate<AppLocalizations> {

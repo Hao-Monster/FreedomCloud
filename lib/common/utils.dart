@@ -13,9 +13,9 @@ import 'package:lpinyin/lpinyin.dart';
 class Utils {
   Color? getDelayColor(int? delay) {
     if (delay == null) return null;
-    if (delay < 0) return Colors.red;
-    if (delay < 600) return Colors.green;
-    return const Color(0xFFC57F0A);
+    if (delay < 0) return kLatencyErrorColor;
+    if (delay < 600) return kLatencyFastColor;
+    return kLatencyMediumColor;
   }
 
   /// Total-order delay comparator:

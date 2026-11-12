@@ -211,6 +211,8 @@ class MessageLookup extends MessageLookupByLibrary {
     "announcement": MessageLookupByLibrary.simpleMessage("公告"),
     "app": MessageLookupByLibrary.simpleMessage("应用"),
     "appAccessControl": MessageLookupByLibrary.simpleMessage("应用访问控制"),
+    "appBrandName": MessageLookupByLibrary.simpleMessage("自由云"),
+    "appBrandTagline": MessageLookupByLibrary.simpleMessage("旗舰级智能网络加速客户端"),
     "appDesc": MessageLookupByLibrary.simpleMessage("处理应用相关设置"),
     "application": MessageLookupByLibrary.simpleMessage("应用程序设置"),
     "applicationDesc": MessageLookupByLibrary.simpleMessage("标准应用程序设置"),
@@ -1447,6 +1449,25 @@ class MessageLookup extends MessageLookupByLibrary {
     "tproxyPort": MessageLookupByLibrary.simpleMessage("Tproxy端口"),
     "trafficUnlimited": MessageLookupByLibrary.simpleMessage("不限流量"),
     "trafficUsage": MessageLookupByLibrary.simpleMessage("流量统计"),
+    "tributeDialogTitle": MessageLookupByLibrary.simpleMessage("开源致敬与特别鸣谢"),
+    "tributeFlclashxBadge": MessageLookupByLibrary.simpleMessage(
+      "OPEN-SOURCE HERITAGE",
+    ),
+    "tributeFlclashxBody": MessageLookupByLibrary.simpleMessage(
+      "自由云（FreedomNet）郑重声明：本软件基于开源项目 FlClashX（pluralplay/FlClashX）构建，承袭 FlClash 与 Mihomo（Clash.Meta）内核生态。谨向 FlClashX 原作者及全体上游开源贡献者致以最崇高的敬意与诚挚感谢。",
+    ),
+    "tributeFlclashxTitle": MessageLookupByLibrary.simpleMessage(
+      "郑重声明：本项目基于开源项目 FlClashX 构建",
+    ),
+    "tributeGeminiBadge": MessageLookupByLibrary.simpleMessage(
+      "ENGINEERING & DESIGN SUPPORT",
+    ),
+    "tributeGeminiBody": MessageLookupByLibrary.simpleMessage(
+      "郑重感谢 Gemini 4 为自由云（FreedomNet）的系统架构演进、商业级交互设计、代码工程重构与全链路自动化验证提供的核心技术支持。",
+    ),
+    "tributeGeminiTitle": MessageLookupByLibrary.simpleMessage(
+      "特别鸣谢：Gemini 4 研发与设计支持",
+    ),
     "tun": MessageLookupByLibrary.simpleMessage("虚拟网卡"),
     "tunDesc": MessageLookupByLibrary.simpleMessage("仅在管理员模式生效"),
     "tunDisableAction": MessageLookupByLibrary.simpleMessage("请求关闭"),

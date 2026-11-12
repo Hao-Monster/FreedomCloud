@@ -2302,13 +2302,17 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
                   alignment: Alignment.centerLeft,
                   child: Text(feedback,
                       key: const ValueKey('overview-feedback')))),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-          child: Align(
-              alignment: Alignment.centerLeft,
-              child: Text(appLocalizations.nodeOverviewHistoryNotice,
-                  style: Theme.of(context).textTheme.bodySmall)),
-        ),
+        if (!_isNoviceAppShell(
+          context,
+          ref.watch(expertNavigationExpandedProvider),
+        ))
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+            child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text(appLocalizations.nodeOverviewHistoryNotice,
+                    style: Theme.of(context).textTheme.bodySmall)),
+          ),
         Expanded(
             child: Row(
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -2567,7 +2571,7 @@ class _OverviewConnectionStatusBar extends StatelessWidget {
     final isDark = theme.brightness == Brightness.dark;
     final isBusy = pendingTarget != null;
     final effectiveConnected = pendingTarget ?? isRunning;
-    final green = isDark ? const Color(0xFF4ADE80) : const Color(0xFF15803D);
+    final green = isDark ? kLatencyFastColor : const Color(0xFF059669);
 
     final String statusText;
     if (pendingTarget == true) {
@@ -2600,11 +2604,11 @@ class _OverviewConnectionStatusBar extends StatelessWidget {
     }
 
     final bgColor = effectiveConnected
-        ? green.withValues(alpha: isDark ? 0.14 : 0.09)
-        : colors.surfaceContainerLow.withValues(alpha: isDark ? 0.72 : 0.88);
+        ? green.withValues(alpha: isDark ? 0.12 : 0.08)
+        : colors.surfaceContainer;
     final borderColor = effectiveConnected
-        ? green.withValues(alpha: isDark ? 0.42 : 0.32)
-        : colors.outlineVariant.withValues(alpha: isDark ? 0.55 : 0.70);
+        ? green.withValues(alpha: isDark ? 0.34 : 0.26)
+        : freedomNetHairlineColor(colors);
 
     final canPress = onToggle != null &&
         (!isBusy || (pendingTarget == true && startCancelable));
@@ -2951,14 +2955,12 @@ class _OverviewQuickWorkflowBar extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
       child: DecoratedBox(
         decoration: BoxDecoration(
-          color: colors.surfaceContainerLow.withValues(
-            alpha: isDark ? 0.56 : 0.72,
+          color: colors.surfaceContainer.withValues(
+            alpha: isDark ? 0.88 : 0.96,
           ),
-          borderRadius: BorderRadius.circular(12),
+          borderRadius: BorderRadius.circular(14),
           border: Border.all(
-            color: colors.outlineVariant.withValues(
-              alpha: isDark ? 0.46 : 0.58,
-            ),
+            color: freedomNetHairlineColor(colors),
           ),
         ),
         child: Padding(
@@ -2977,14 +2979,23 @@ class _OverviewQuickWorkflowBar extends StatelessWidget {
                   crossAxisAlignment: WrapCrossAlignment.center,
                   children: stepItems,
                 ),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 6,
-                  crossAxisAlignment: WrapCrossAlignment.center,
-                  children: [
-                    smartButton,
-                    manualButton,
-                  ],
+                Container(
+                  key: const ValueKey('overview-mode-segmented-track'),
+                  padding: const EdgeInsets.all(3),
+                  decoration: BoxDecoration(
+                    color: colors.surfaceDim,
+                    borderRadius: BorderRadius.circular(11),
+                    border: Border.all(color: freedomNetHairlineColor(colors)),
+                  ),
+                  child: Wrap(
+                    spacing: 4,
+                    runSpacing: 4,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    children: [
+                      smartButton,
+                      manualButton,
+                    ],
+                  ),
                 ),
               ],
             ),
@@ -3022,25 +3033,21 @@ class _SelectionModeButton extends StatelessWidget {
     final bgColor = !enabled
         ? Colors.transparent
         : selected
-            ? colors.primary.withValues(alpha: isDark ? 0.22 : 0.14)
-            : colors.surfaceContainerHighest.withValues(
-                alpha: isDark ? 0.34 : 0.48,
-              );
-    final borderColor = !enabled
-        ? colors.outlineVariant.withValues(alpha: 0.32)
-        : selected
-            ? colors.primary.withValues(alpha: isDark ? 0.72 : 0.58)
-            : colors.outlineVariant.withValues(alpha: isDark ? 0.55 : 0.68);
+            ? colors.primary.withValues(alpha: isDark ? 0.18 : 0.12)
+            : Colors.transparent;
+    final borderColor = selected && enabled
+        ? colors.primary.withValues(alpha: isDark ? 0.42 : 0.30)
+        : Colors.transparent;
     final fgColor = !enabled
         ? colors.onSurface.withValues(alpha: 0.38)
         : selected
             ? colors.primary
-            : colors.onSurface;
+            : colors.onSurfaceVariant;
     final tagBg = !enabled
-        ? colors.onSurface.withValues(alpha: 0.06)
+        ? colors.onSurface.withValues(alpha: 0.05)
         : selected
-            ? colors.primary.withValues(alpha: isDark ? 0.28 : 0.18)
-            : colors.onSurface.withValues(alpha: isDark ? 0.10 : 0.07);
+            ? colors.primary.withValues(alpha: isDark ? 0.24 : 0.16)
+            : colors.onSurface.withValues(alpha: isDark ? 0.08 : 0.06);
     final tagFg = !enabled
         ? colors.onSurface.withValues(alpha: 0.38)
         : selected
@@ -3054,15 +3061,15 @@ class _SelectionModeButton extends StatelessWidget {
         visualDensity: VisualDensity.compact,
         tapTargetSize: MaterialTapTargetSize.shrinkWrap,
         minimumSize: Size.zero,
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
         backgroundColor: bgColor,
         foregroundColor: fgColor,
         side: BorderSide(
           color: borderColor,
-          width: selected && enabled ? 1.2 : 1.0,
+          width: 1.0,
         ),
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(999),
+          borderRadius: BorderRadius.circular(8),
         ),
       ),
       child: Row(
@@ -4256,17 +4263,17 @@ class _SidebarAllProfilesCard extends ConsumerWidget {
                       runSpacing: 3,
                       children: [
                         _DelayBandLegendItem(
-                          color: Colors.green,
+                          color: kLatencyFastColor,
                           label: appLocalizations
                               .nodeOverviewBandFast(summary.fastCount),
                         ),
                         _DelayBandLegendItem(
-                          color: const Color(0xFFC57F0A),
+                          color: kLatencyMediumColor,
                           label: appLocalizations
                               .nodeOverviewBandSlow(summary.slowCount),
                         ),
                         _DelayBandLegendItem(
-                          color: Colors.red,
+                          color: kLatencyErrorColor,
                           label: appLocalizations
                               .nodeOverviewBandFailed(summary.failedCount),
                         ),
@@ -4294,21 +4301,26 @@ class _SidebarAllProfilesCard extends ConsumerWidget {
                             if (summary.fastCount > 0)
                               Expanded(
                                 flex: summary.fastCount,
-                                child:
-                                    Container(height: 5, color: Colors.green),
+                                child: Container(
+                                  height: 5,
+                                  color: kLatencyFastColor,
+                                ),
                               ),
                             if (summary.slowCount > 0)
                               Expanded(
                                 flex: summary.slowCount,
                                 child: Container(
                                   height: 5,
-                                  color: const Color(0xFFC57F0A),
+                                  color: kLatencyMediumColor,
                                 ),
                               ),
                             if (summary.failedCount > 0)
                               Expanded(
                                 flex: summary.failedCount,
-                                child: Container(height: 5, color: Colors.red),
+                                child: Container(
+                                  height: 5,
+                                  color: kLatencyErrorColor,
+                                ),
                               ),
                             if (summary.untestedCount > 0)
                               Expanded(
@@ -5153,8 +5165,8 @@ class _ProfileSubscriptionSummary extends StatelessWidget {
         final barColor = usedRatio > 0.90
             ? colors.error
             : usedRatio > 0.70
-                ? Colors.orange
-                : Colors.green;
+                ? kLatencyMediumColor
+                : colors.primary;
 
         children.addAll([
           Row(
@@ -6377,7 +6389,40 @@ class _ActiveNodes extends ConsumerWidget {
   }
 }
 
-class _ActiveNodeRow extends StatelessWidget {
+bool _isNoviceAppShell(BuildContext context, bool expertExpanded) =>
+    !expertExpanded &&
+    (context.commonScaffoldState?.hasNavigationBar ?? false);
+
+Widget _buildLatencyStatusPill(
+  BuildContext context, {
+  required String label,
+  required Color? color,
+  required bool hasMeasurement,
+}) {
+  final text = Text(
+    label,
+    style: TextStyle(
+      color: color,
+      fontSize: 12,
+      fontWeight: hasMeasurement ? FontWeight.w600 : FontWeight.w500,
+      fontFeatures: const [FontFeature.tabularFigures()],
+    ),
+  );
+  if (!hasMeasurement || color == null) {
+    return text;
+  }
+  final isDark = Theme.of(context).brightness == Brightness.dark;
+  return Container(
+    padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+    decoration: BoxDecoration(
+      color: color.withValues(alpha: isDark ? 0.14 : 0.10),
+      borderRadius: BorderRadius.circular(6),
+    ),
+    child: text,
+  );
+}
+
+class _ActiveNodeRow extends ConsumerWidget {
   const _ActiveNodeRow(
       {super.key,
       required this.proxy,
@@ -6412,7 +6457,11 @@ class _ActiveNodeRow extends StatelessWidget {
   final DateTime now;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final inNoviceAppShell = _isNoviceAppShell(
+      context,
+      ref.watch(expertNavigationExpandedProvider),
+    );
     final color = utils.getDelayColor(delay);
     final providerSource = node == null ? null : _providerSourceLabel(node!);
     final source = node == null
@@ -6432,6 +6481,8 @@ class _ActiveNodeRow extends StatelessWidget {
       if (source != null) source,
       if (independent) appLocalizations.nodeOverviewIndependentTest,
     ].join(' · ');
+    final hasCountry = countryEmoji != null && countryName != null;
+    final showMetaRow = hasCountry || !inNoviceAppShell;
     return Card(
         child: Padding(
             padding: const EdgeInsets.all(12),
@@ -6445,13 +6496,16 @@ class _ActiveNodeRow extends StatelessWidget {
                         width: 14,
                         height: 14,
                         child: CircularProgressIndicator(strokeWidth: 2))
-                    : Text(
-                        delay == null
+                    : _buildLatencyStatusPill(
+                        context,
+                        label: delay == null
                             ? appLocalizations.nodeOverviewUntested
                             : delay! > 0
                                 ? '$delay ms'
                                 : appLocalizations.nodeOverviewTestFailed,
-                        style: TextStyle(color: color)),
+                        color: color,
+                        hasMeasurement: delay != null,
+                      ),
                 actions: [
                   _buildTestButton(
                     context,
@@ -6467,27 +6521,32 @@ class _ActiveNodeRow extends StatelessWidget {
                   ),
                 ],
               ),
-              const SizedBox(height: 4),
-              Row(
-                children: [
-                  if (countryEmoji != null && countryName != null) ...[
-                    _CountryBadge(emoji: countryEmoji!, name: countryName!),
-                    const SizedBox(width: 6),
+              if (showMetaRow) ...[
+                const SizedBox(height: 5),
+                Row(
+                  children: [
+                    if (hasCountry) ...[
+                      _CountryBadge(emoji: countryEmoji!, name: countryName!),
+                      if (!inNoviceAppShell) const SizedBox(width: 6),
+                    ],
+                    if (!inNoviceAppShell)
+                      Flexible(
+                        child: Text(
+                          description,
+                          style: Theme.of(context).textTheme.bodySmall,
+                        ),
+                      ),
                   ],
-                  Flexible(
-                    child: Text(
-                      description,
-                      style: Theme.of(context).textTheme.bodySmall,
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 4),
-              Text(
-                  history == null
-                      ? appLocalizations.nodeOverviewLive
-                      : _testedAt(history!, now),
-                  style: Theme.of(context).textTheme.bodySmall),
+                ),
+              ],
+              if (!inNoviceAppShell) ...[
+                const SizedBox(height: 4),
+                Text(
+                    history == null
+                        ? appLocalizations.nodeOverviewLive
+                        : _testedAt(history!, now),
+                    style: Theme.of(context).textTheme.bodySmall),
+              ],
             ])));
   }
 }
@@ -6565,7 +6624,7 @@ String _testedAt(NodeHealthRecord record, DateTime now) {
       : label;
 }
 
-class _InactiveNodeRow extends StatelessWidget {
+class _InactiveNodeRow extends ConsumerWidget {
   const _InactiveNodeRow(
       {super.key,
       required this.node,
@@ -6592,13 +6651,19 @@ class _InactiveNodeRow extends StatelessWidget {
   final VoidCallback? onUse;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final inNoviceAppShell = _isNoviceAppShell(
+      context,
+      ref.watch(expertNavigationExpandedProvider),
+    );
     final invalid = node.unsupported == CatalogUnsupportedReason.parseFailed;
     final record = invalid ? null : health;
     final stale = record?.isStale(now) ?? false;
     final color = stale
         ? Theme.of(context).colorScheme.onSurfaceVariant
         : utils.getDelayColor(record?.delayMs);
+    final hasCountry = countryEmoji != null && countryName != null;
+    final showMetaRow = hasCountry || !inNoviceAppShell;
     return Card(
         child: Padding(
             padding: const EdgeInsets.all(12),
@@ -6616,13 +6681,16 @@ class _InactiveNodeRow extends StatelessWidget {
                               width: 14,
                               height: 14,
                               child: CircularProgressIndicator(strokeWidth: 2))
-                          : Text(
-                              record == null
+                          : _buildLatencyStatusPill(
+                              context,
+                              label: record == null
                                   ? appLocalizations.nodeOverviewUntested
                                   : record.delayMs > 0
                                       ? '${record.delayMs} ms'
                                       : appLocalizations.nodeOverviewTestFailed,
-                              style: TextStyle(color: color)),
+                              color: color,
+                              hasMeasurement: record != null && !stale,
+                            ),
                   actions: [
                     if (node.unsupported == CatalogUnsupportedReason.none)
                       _buildTestButton(
@@ -6639,30 +6707,34 @@ class _InactiveNodeRow extends StatelessWidget {
                       ),
                   ],
                 ),
-                const SizedBox(height: 4),
-                Row(
-                  children: [
-                    if (countryEmoji != null && countryName != null) ...[
-                      _CountryBadge(emoji: countryEmoji!, name: countryName!),
-                      const SizedBox(width: 6),
+                if (showMetaRow) ...[
+                  const SizedBox(height: 5),
+                  Row(
+                    children: [
+                      if (hasCountry) ...[
+                        _CountryBadge(emoji: countryEmoji!, name: countryName!),
+                        if (!inNoviceAppShell) const SizedBox(width: 6),
+                      ],
+                      if (!inNoviceAppShell)
+                        Flexible(
+                          child: Text(
+                            [
+                              _catalogProtocolLabel(node),
+                              if (_providerSourceLabel(node) case final src?)
+                                src,
+                            ].join(' · '),
+                            style: Theme.of(context).textTheme.bodySmall,
+                          ),
+                        ),
                     ],
-                    Flexible(
-                      child: Text(
-                        [
-                          _catalogProtocolLabel(node),
-                          if (_providerSourceLabel(node) case final src?) src,
-                        ].join(' · '),
-                        style: Theme.of(context).textTheme.bodySmall,
-                      ),
-                    ),
-                  ],
-                ),
+                  ),
+                ],
                 if (node.unsupported != CatalogUnsupportedReason.none)
                   Padding(
                       padding: const EdgeInsets.only(top: 4),
                       child: Text(_unsupported(node.unsupported),
                           style: Theme.of(context).textTheme.bodySmall)),
-                if (record != null)
+                if (record != null && !inNoviceAppShell)
                   Padding(
                       padding: const EdgeInsets.only(top: 4),
                       child: Text(_testedAt(record, now),

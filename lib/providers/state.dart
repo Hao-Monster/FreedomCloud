@@ -743,20 +743,24 @@ ColorScheme genColorScheme(
     ),
   );
   if (color == null && (ignoreConfig == true || vm2.a == null)) {
-    return ColorScheme.fromSeed(
-      seedColor: globalState.corePalette
-              ?.toColorScheme(brightness: brightness)
-              .primary ??
-          globalState.accentColor,
+    final dynamicSeed = globalState.corePalette
+            ?.toColorScheme(brightness: brightness)
+            .primary ??
+        globalState.accentColor;
+    final base = ColorScheme.fromSeed(
+      seedColor: dynamicSeed,
       brightness: brightness,
       dynamicSchemeVariant: vm2.b,
     );
+    return calibrateFreedomNetColorScheme(base, seedColor: dynamicSeed);
   }
-  return ColorScheme.fromSeed(
-    seedColor: color ?? Color(vm2.a!),
+  final resolvedSeed = color ?? Color(vm2.a!);
+  final base = ColorScheme.fromSeed(
+    seedColor: resolvedSeed,
     brightness: brightness,
     dynamicSchemeVariant: vm2.b,
   );
+  return calibrateFreedomNetColorScheme(base, seedColor: resolvedSeed);
 }
 
 @riverpod

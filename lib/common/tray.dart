@@ -149,11 +149,12 @@ class Tray {
       );
       _lastIconPath = iconPath;
     }
-    if (!Platform.isLinux && (force || _lastToolTip == null)) {
+    final tooltip = appLocalizations.appBrandName;
+    if (!Platform.isLinux && (force || _lastToolTip != tooltip)) {
       await trayManager.setToolTip(
-        appName,
+        tooltip,
       );
-      _lastToolTip = appName;
+      _lastToolTip = tooltip;
     }
   }
 

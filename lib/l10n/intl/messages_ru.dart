@@ -240,6 +240,10 @@ class MessageLookup extends MessageLookupByLibrary {
     "appAccessControl": MessageLookupByLibrary.simpleMessage(
       "Контроль доступа приложений",
     ),
+    "appBrandName": MessageLookupByLibrary.simpleMessage("FreedomNet"),
+    "appBrandTagline": MessageLookupByLibrary.simpleMessage(
+      "Интеллектуальный сетевой клиент нового поколения",
+    ),
     "appDesc": MessageLookupByLibrary.simpleMessage(
       "Обработка настроек, связанных с приложением",
     ),
@@ -1816,6 +1820,27 @@ class MessageLookup extends MessageLookupByLibrary {
     ),
     "trafficUsage": MessageLookupByLibrary.simpleMessage(
       "Использование трафика",
+    ),
+    "tributeDialogTitle": MessageLookupByLibrary.simpleMessage(
+      "Дань уважения Open Source и благодарности",
+    ),
+    "tributeFlclashxBadge": MessageLookupByLibrary.simpleMessage(
+      "OPEN-SOURCE HERITAGE",
+    ),
+    "tributeFlclashxBody": MessageLookupByLibrary.simpleMessage(
+      "FreedomNet (自由云) официально заявляет, что данное приложение создано на базе открытого проекта FlClashX (pluralplay/FlClashX) и экосистемы FlClash / Mihomo (Clash.Meta). Выражаем глубочайшее уважение и искреннюю благодарность авторам и всем участникам открытого сообщества.",
+    ),
+    "tributeFlclashxTitle": MessageLookupByLibrary.simpleMessage(
+      "Создано на базе открытого проекта FlClashX",
+    ),
+    "tributeGeminiBadge": MessageLookupByLibrary.simpleMessage(
+      "ENGINEERING & DESIGN SUPPORT",
+    ),
+    "tributeGeminiBody": MessageLookupByLibrary.simpleMessage(
+      "Выражаем особую благодарность Gemini 4 за ключевую поддержку в архитектуре, коммерческом UI/UX-дизайне, инженерной разработке и автоматизированном тестировании FreedomNet.",
+    ),
+    "tributeGeminiTitle": MessageLookupByLibrary.simpleMessage(
+      "Особая благодарность Gemini 4",
     ),
     "tun": MessageLookupByLibrary.simpleMessage("TUN"),
     "tunDesc": MessageLookupByLibrary.simpleMessage(

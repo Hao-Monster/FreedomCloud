@@ -39,6 +39,7 @@ const defaultWindowProps = WindowProps();
 const defaultAccessControl = AccessControl();
 const defaultThemeProps = ThemeProps(
   primaryColor: defaultPrimaryColor,
+  themeMode: ThemeMode.dark,
 );
 
 const defaultConnectionTableColumns = [

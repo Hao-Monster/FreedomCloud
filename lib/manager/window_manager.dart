@@ -428,10 +428,10 @@ class _WindowHeaderState extends State<WindowHeader> with WindowListener {
       child: Container(
         height: kHeaderHeight,
         decoration: BoxDecoration(
-          color: colorScheme.surface,
+          color: colorScheme.surfaceDim,
           border: Border(
             bottom: BorderSide(
-              color: colorScheme.outlineVariant.withValues(alpha: 0.3),
+              color: freedomNetHairlineColor(colorScheme),
               width: 1,
             ),
           ),
@@ -469,7 +469,7 @@ class _WindowHeaderState extends State<WindowHeader> with WindowListener {
             ),
             // Content
             if (Platform.isMacOS)
-              const Center(child: Text(appName))
+              Center(child: Text(appLocalizations.appBrandName))
             else
               Row(
                 children: [
@@ -554,8 +554,8 @@ class _ConnectionStatusIndicator extends ConsumerWidget {
     final isStart = ref.watch(runTimeProvider.select((state) => state != null));
 
     final statusColor = isStart
-        ? const Color(0xFF4CAF50) // Green when connected
-        : colorScheme.onSurface.withValues(alpha: 0.3); // Gray when disconnected
+        ? kLatencyFastColor
+        : colorScheme.onSurface.withValues(alpha: 0.3);
 
     final statusText =
         isStart ? appLocalizations.running : appLocalizations.stopped;
@@ -599,21 +599,15 @@ class AppIcon extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Container(
         margin: const EdgeInsets.only(left: 8),
-        child: const Row(
+        child: Row(
           children: [
-            SizedBox(
-              width: 24,
-              height: 24,
-              child: CircleAvatar(
-                foregroundImage: AssetImage("assets/images/icon.png"),
-                backgroundColor: Colors.transparent,
-              ),
-            ),
-            SizedBox(
-              width: 8,
-            ),
+            const FreedomNetBrandMark(size: 24),
+            const SizedBox(width: 8),
             Text(
-              appName,
+              appLocalizations.appBrandName,
+              style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                    fontWeight: FontWeight.w700,
+                  ),
             ),
           ],
         ),

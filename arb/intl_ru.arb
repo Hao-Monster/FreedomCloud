@@ -1366,5 +1366,14 @@
   "purchaseGetCardDescription": "Приобрести карту или получить помощь можно через магазин карт, онлайн-поддержку или контакты WeChat ниже.",
   "purchaseClipboardEmpty": "В буфере обмена не найден код активации.",
   "purchaseEmailDomainError": "Этот почтовый домен не поддерживается. Используйте другой адрес электронной почты.",
-  "purchaseGmailAliasError": "Псевдонимы Gmail (со знаком «+») не поддерживаются. Используйте основной адрес."
+  "purchaseGmailAliasError": "Псевдонимы Gmail (со знаком «+») не поддерживаются. Используйте основной адрес.",
+  "appBrandName": "FreedomNet",
+  "appBrandTagline": "Интеллектуальный сетевой клиент нового поколения",
+  "tributeDialogTitle": "Дань уважения Open Source и благодарности",
+  "tributeFlclashxBadge": "OPEN-SOURCE HERITAGE",
+  "tributeFlclashxTitle": "Создано на базе открытого проекта FlClashX",
+  "tributeFlclashxBody": "FreedomNet (自由云) официально заявляет, что данное приложение создано на базе открытого проекта FlClashX (pluralplay/FlClashX) и экосистемы FlClash / Mihomo (Clash.Meta). Выражаем глубочайшее уважение и искреннюю благодарность авторам и всем участникам открытого сообщества.",
+  "tributeGeminiBadge": "ENGINEERING & DESIGN SUPPORT",
+  "tributeGeminiTitle": "Особая благодарность Gemini 4",
+  "tributeGeminiBody": "Выражаем особую благодарность Gemini 4 за ключевую поддержку в архитектуре, коммерческом UI/UX-дизайне, инженерной разработке и автоматизированном тестировании FreedomNet."
 }

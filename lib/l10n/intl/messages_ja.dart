@@ -216,6 +216,10 @@ class MessageLookup extends MessageLookupByLibrary {
     "announcement": MessageLookupByLibrary.simpleMessage("お知らせ"),
     "app": MessageLookupByLibrary.simpleMessage("アプリ"),
     "appAccessControl": MessageLookupByLibrary.simpleMessage("アプリアクセス制御"),
+    "appBrandName": MessageLookupByLibrary.simpleMessage("FreedomNet"),
+    "appBrandTagline": MessageLookupByLibrary.simpleMessage(
+      "次世代インテリジェントネットワーククライアント",
+    ),
     "appDesc": MessageLookupByLibrary.simpleMessage("アプリ関連設定の処理"),
     "application": MessageLookupByLibrary.simpleMessage("アプリケーション設定"),
     "applicationDesc": MessageLookupByLibrary.simpleMessage("標準アプリ設定"),
@@ -1389,6 +1393,27 @@ class MessageLookup extends MessageLookupByLibrary {
     "tproxyPort": MessageLookupByLibrary.simpleMessage("Tproxyポート"),
     "trafficUnlimited": MessageLookupByLibrary.simpleMessage("無制限トラフィック"),
     "trafficUsage": MessageLookupByLibrary.simpleMessage("トラフィック使用量"),
+    "tributeDialogTitle": MessageLookupByLibrary.simpleMessage(
+      "オープンソースへの敬意と謝辞",
+    ),
+    "tributeFlclashxBadge": MessageLookupByLibrary.simpleMessage(
+      "OPEN-SOURCE HERITAGE",
+    ),
+    "tributeFlclashxBody": MessageLookupByLibrary.simpleMessage(
+      "FreedomNet（自由云）は、オープンソースプロジェクト FlClashX（pluralplay/FlClashX）を基盤とし、FlClash および Mihomo（Clash.Meta）エコシステムを継承して構築されています。原作者およびすべての上流コントリビューターの皆様に深く敬意と感謝を表します。",
+    ),
+    "tributeFlclashxTitle": MessageLookupByLibrary.simpleMessage(
+      "オープンソースプロジェクト FlClashX を基盤として構築",
+    ),
+    "tributeGeminiBadge": MessageLookupByLibrary.simpleMessage(
+      "ENGINEERING & DESIGN SUPPORT",
+    ),
+    "tributeGeminiBody": MessageLookupByLibrary.simpleMessage(
+      "FreedomNet（自由云）のアーキテクチャ設計、UI/UXデザイン、エンジニアリング実装および自動検証を強力に支援した Gemini 4 に心より感謝いたします。",
+    ),
+    "tributeGeminiTitle": MessageLookupByLibrary.simpleMessage(
+      "特別謝辞：Gemini 4 開発・設計サポート",
+    ),
     "tun": MessageLookupByLibrary.simpleMessage("TUN"),
     "tunDesc": MessageLookupByLibrary.simpleMessage("管理者モードでのみ有効"),
     "tunDisableAction": MessageLookupByLibrary.simpleMessage("停止を要求"),

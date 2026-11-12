@@ -9,6 +9,7 @@ export 'context.dart';
 export 'converter.dart';
 export 'core_update.dart';
 export 'datetime.dart';
+export 'design_system.dart';
 export 'file_logger.dart';
 export 'fixed.dart';
 export 'function.dart';

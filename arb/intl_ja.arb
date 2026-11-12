@@ -1316,5 +1316,14 @@
   "purchaseGetCardDescription": "セルフストア、オンラインサポート、または下記の WeChat からギフトカードの購入・相談ができます。",
   "purchaseClipboardEmpty": "クリップボードに有効な引き換えコードが見つかりません。",
   "purchaseEmailDomainError": "このメールドメインは利用できません。別のメールアドレスをお試しください。",
-  "purchaseGmailAliasError": "Gmail エイリアス（+ 付き）は利用できません。通常のアドレスをご使用ください。"
+  "purchaseGmailAliasError": "Gmail エイリアス（+ 付き）は利用できません。通常のアドレスをご使用ください。",
+  "appBrandName": "FreedomNet",
+  "appBrandTagline": "次世代インテリジェントネットワーククライアント",
+  "tributeDialogTitle": "オープンソースへの敬意と謝辞",
+  "tributeFlclashxBadge": "OPEN-SOURCE HERITAGE",
+  "tributeFlclashxTitle": "オープンソースプロジェクト FlClashX を基盤として構築",
+  "tributeFlclashxBody": "FreedomNet（自由云）は、オープンソースプロジェクト FlClashX（pluralplay/FlClashX）を基盤とし、FlClash および Mihomo（Clash.Meta）エコシステムを継承して構築されています。原作者およびすべての上流コントリビューターの皆様に深く敬意と感謝を表します。",
+  "tributeGeminiBadge": "ENGINEERING & DESIGN SUPPORT",
+  "tributeGeminiTitle": "特別謝辞：Gemini 4 開発・設計サポート",
+  "tributeGeminiBody": "FreedomNet（自由云）のアーキテクチャ設計、UI/UXデザイン、エンジニアリング実装および自動検証を強力に支援した Gemini 4 に心より感謝いたします。"
 }

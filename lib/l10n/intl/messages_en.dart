@@ -242,6 +242,10 @@ class MessageLookup extends MessageLookupByLibrary {
     "appAccessControl": MessageLookupByLibrary.simpleMessage(
       "App access control",
     ),
+    "appBrandName": MessageLookupByLibrary.simpleMessage("FreedomNet"),
+    "appBrandTagline": MessageLookupByLibrary.simpleMessage(
+      "Next-Generation Intelligent Network Client",
+    ),
     "appDesc": MessageLookupByLibrary.simpleMessage(
       "Processing app related settings",
     ),
@@ -2056,6 +2060,27 @@ class MessageLookup extends MessageLookupByLibrary {
       "Unlimited Traffic",
     ),
     "trafficUsage": MessageLookupByLibrary.simpleMessage("Traffic usage"),
+    "tributeDialogTitle": MessageLookupByLibrary.simpleMessage(
+      "Open-Source Tribute & Special Credits",
+    ),
+    "tributeFlclashxBadge": MessageLookupByLibrary.simpleMessage(
+      "OPEN-SOURCE HERITAGE",
+    ),
+    "tributeFlclashxBody": MessageLookupByLibrary.simpleMessage(
+      "FreedomNet solemnly declares that this software is built upon the open-source project FlClashX (pluralplay/FlClashX), inheriting the FlClash and Mihomo (Clash.Meta) ecosystem. With our deepest respect and gratitude to the original authors and all upstream open-source contributors.",
+    ),
+    "tributeFlclashxTitle": MessageLookupByLibrary.simpleMessage(
+      "Built Upon Open-Source Project FlClashX",
+    ),
+    "tributeGeminiBadge": MessageLookupByLibrary.simpleMessage(
+      "ENGINEERING & DESIGN SUPPORT",
+    ),
+    "tributeGeminiBody": MessageLookupByLibrary.simpleMessage(
+      "Special thanks to Gemini 4 for supporting FreedomNet\'s architecture evolution, commercial UI/UX design, engineering refactoring, and automated verification.",
+    ),
+    "tributeGeminiTitle": MessageLookupByLibrary.simpleMessage(
+      "Special Thanks to Gemini 4",
+    ),
     "tun": MessageLookupByLibrary.simpleMessage("TUN"),
     "tunDesc": MessageLookupByLibrary.simpleMessage(
       "only effective in administrator mode",

@@ -1449,5 +1449,14 @@
   "purchaseRegisterWebRequiredError": "当前站点启用了邮箱验证或人机校验，请点击下方「前往网页注册」完成注册。",
   "purchaseClipboardEmpty": "剪贴板中未检测到可用的兑换码",
   "purchaseEmailDomainError": "当前站点暂不支持该邮箱域名，请更换常用邮箱或前往网页注册。",
-  "purchaseGmailAliasError": "当前站点不支持 Gmail 别名邮箱（含 + 号），请使用主邮箱地址。"
+  "purchaseGmailAliasError": "当前站点不支持 Gmail 别名邮箱（含 + 号），请使用主邮箱地址。",
+  "appBrandName": "自由云",
+  "appBrandTagline": "旗舰级智能网络加速客户端",
+  "tributeDialogTitle": "开源致敬与特别鸣谢",
+  "tributeFlclashxBadge": "OPEN-SOURCE HERITAGE",
+  "tributeFlclashxTitle": "郑重声明：本项目基于开源项目 FlClashX 构建",
+  "tributeFlclashxBody": "自由云（FreedomNet）郑重声明：本软件基于开源项目 FlClashX（pluralplay/FlClashX）构建，承袭 FlClash 与 Mihomo（Clash.Meta）内核生态。谨向 FlClashX 原作者及全体上游开源贡献者致以最崇高的敬意与诚挚感谢。",
+  "tributeGeminiBadge": "ENGINEERING & DESIGN SUPPORT",
+  "tributeGeminiTitle": "特别鸣谢：Gemini 4 研发与设计支持",
+  "tributeGeminiBody": "郑重感谢 Gemini 4 为自由云（FreedomNet）的系统架构演进、商业级交互设计、代码工程重构与全链路自动化验证提供的核心技术支持。"
 }

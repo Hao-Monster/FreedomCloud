@@ -221,107 +221,162 @@ class CommonNavigationBar extends ConsumerWidget {
         ),
       );
     }
+    final colors = context.colorScheme;
+    final isDark = colors.brightness == Brightness.dark;
+    final isZh = Localizations.localeOf(context)
+        .languageCode
+        .toLowerCase()
+        .startsWith('zh');
+    final hairline = freedomNetHairlineColor(colors);
     return Material(
-      color: context.colorScheme.surfaceContainer,
+      color: colors.surfaceDim,
       // SafeArea: the app draws edge-to-edge, so on tablets/foldables (which
       // also get the desktop-style side rail) the status bar overlapped the
       // logo. Shifts the whole logo+rail block below the system inset; no-op
       // on desktop OSes.
-      child: SafeArea(
-        bottom: false,
-        right: false,
-        child: Column(
-          children: [
-            // App logo at the top of sidebar
-            if (!Platform.isMacOS) ...[
-              const SizedBox(height: 12),
-              Container(
-                padding: const EdgeInsets.symmetric(vertical: 8),
-                child: Column(
-                  children: [
-                    const SizedBox(
-                      width: 36,
-                      height: 36,
-                      child: CircleAvatar(
-                        foregroundImage: AssetImage("assets/images/icon.png"),
-                        backgroundColor: Colors.transparent,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          border: Border(
+            right: BorderSide(color: hairline),
+          ),
+        ),
+        child: SafeArea(
+          bottom: false,
+          right: false,
+          child: Column(
+            children: [
+              // Brand emblem + one-tap open-source tribute trigger at top of rail
+              if (!Platform.isMacOS) ...[
+                const SizedBox(height: 10),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 6),
+                  child: Tooltip(
+                    excludeFromSemantics: true,
+                    message: appLocalizations.tributeDialogTitle,
+                    child: InkWell(
+                      key: const ValueKey('brand-tribute-trigger'),
+                      borderRadius: BorderRadius.circular(12),
+                      onTap: () => showFreedomNetTributeDialog(context),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 6,
+                          vertical: 8,
+                        ),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const FreedomNetBrandMark(size: 36),
+                            const SizedBox(height: 6),
+                            ConstrainedBox(
+                              constraints: const BoxConstraints(maxWidth: 88),
+                              child: Text(
+                                appLocalizations.appBrandName,
+                                textAlign: TextAlign.center,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: context.textTheme.labelMedium?.copyWith(
+                                  color: colors.onSurface,
+                                  fontWeight: FontWeight.w700,
+                                  letterSpacing: 0.2,
+                                ),
+                              ),
+                            ),
+                            if (isZh) ...[
+                              const SizedBox(height: 1),
+                              ConstrainedBox(
+                                constraints: const BoxConstraints(maxWidth: 88),
+                                child: Text(
+                                  brandNameEn,
+                                  textAlign: TextAlign.center,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: context.textTheme.labelSmall?.copyWith(
+                                    fontSize: 9.5,
+                                    color: colors.onSurfaceVariant,
+                                    fontWeight: FontWeight.w600,
+                                    letterSpacing: 0.3,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
                       ),
                     ),
-                    const SizedBox(height: 4),
-                    Text(
-                      appName,
-                      style: context.textTheme.labelSmall?.copyWith(
-                        color: context.colorScheme.onSurfaceVariant,
-                      ),
-                    ),
-                  ],
+                  ),
                 ),
-              ),
-              const SizedBox(height: 8),
-              Divider(
-                height: 1,
-                indent: 12,
-                endIndent: 12,
-                color:
-                    context.colorScheme.outlineVariant.withValues(alpha: 0.5),
-              ),
-            ],
-            Expanded(
-              child: ScrollConfiguration(
-                behavior: HiddenBarScrollBehavior(),
-                child: NavigationRail(
-                  scrollable: true,
-                  backgroundColor: context.colorScheme.surfaceContainer,
-                  selectedIconTheme: IconThemeData(
-                    color: context.colorScheme.onSurfaceVariant,
-                  ),
-                  unselectedIconTheme: IconThemeData(
-                    color: context.colorScheme.onSurfaceVariant,
-                  ),
-                  selectedLabelTextStyle:
-                      context.textTheme.labelLarge!.copyWith(
-                    color: context.colorScheme.onSurface,
-                  ),
-                  unselectedLabelTextStyle:
-                      context.textTheme.labelLarge!.copyWith(
-                    color: context.colorScheme.onSurface,
-                  ),
-                  destinations: navigationItems
-                      .map(
-                        (e) => NavigationRailDestination(
-                          icon: e.icon,
-                          label: ConstrainedBox(
-                            constraints: const BoxConstraints(maxWidth: 88),
-                            child: Text(
-                              Intl.message(e.label.name),
-                              textAlign: TextAlign.center,
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
+                const SizedBox(height: 6),
+                Divider(
+                  height: 1,
+                  indent: 14,
+                  endIndent: 14,
+                  color: hairline,
+                ),
+              ],
+              Expanded(
+                child: ScrollConfiguration(
+                  behavior: HiddenBarScrollBehavior(),
+                  child: NavigationRail(
+                    scrollable: true,
+                    backgroundColor: Colors.transparent,
+                    indicatorColor:
+                        colors.primary.withValues(alpha: isDark ? 0.16 : 0.12),
+                    indicatorShape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    selectedIconTheme: IconThemeData(
+                      color: colors.primary,
+                    ),
+                    unselectedIconTheme: IconThemeData(
+                      color: colors.onSurfaceVariant,
+                    ),
+                    selectedLabelTextStyle:
+                        context.textTheme.labelMedium!.copyWith(
+                      color: colors.onSurface,
+                      fontWeight: FontWeight.w700,
+                    ),
+                    unselectedLabelTextStyle:
+                        context.textTheme.labelMedium!.copyWith(
+                      color: colors.onSurfaceVariant,
+                      fontWeight: FontWeight.w500,
+                    ),
+                    destinations: navigationItems
+                        .map(
+                          (e) => NavigationRailDestination(
+                            icon: e.icon,
+                            label: ConstrainedBox(
+                              constraints: const BoxConstraints(maxWidth: 88),
+                              child: Text(
+                                Intl.message(e.label.name),
+                                textAlign: TextAlign.center,
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                              ),
                             ),
                           ),
-                        ),
-                      )
-                      .toList(),
-                  onDestinationSelected: (index) {
-                    globalState.appController
-                        .toPage(navigationItems[index].label);
-                  },
-                  trailing: _NavigationModeToggleButton(
-                    key: const ValueKey('navigation-expert-mode-toggle'),
-                    expanded: expertExpanded,
-                    showLabel: true,
-                    onPressed: () => toggleExpertNavigationMode(ref),
+                        )
+                        .toList(),
+                    onDestinationSelected: (index) {
+                      globalState.appController
+                          .toPage(navigationItems[index].label);
+                    },
+                    trailing: _NavigationModeToggleButton(
+                      key: const ValueKey('navigation-expert-mode-toggle'),
+                      expanded: expertExpanded,
+                      showLabel: true,
+                      onPressed: () => toggleExpertNavigationMode(ref),
+                    ),
+                    extended: false,
+                    selectedIndex: currentIndex,
+                    labelType: NavigationRailLabelType.all,
                   ),
-                  extended: false,
-                  selectedIndex: currentIndex,
-                  labelType: NavigationRailLabelType.all,
                 ),
               ),
-            ),
-            const SizedBox(
-              height: 12,
-            ),
-          ],
+              const SizedBox(
+                height: 12,
+              ),
+            ],
+          ),
         ),
       ),
     );
