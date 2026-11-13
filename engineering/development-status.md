@@ -2,6 +2,23 @@
 
 更新日期：2026-11-13。当前阶段是快速开发、快速迭代和部分功能预览。本文记录来源与验收边界；每次继续开发仍需核实实际 Git/PR/CI 状态，不能把历史报告视为当前通过证明。
 
+## 修复健康检查 `D3 当前节点出站` 与顶部裁决卡误报节点不可用 TDD 落地（`433f1b39`，2026-11-13）
+
+- 问题与实证根因：用户在代理正常连通且有实时上下行流量的场景下打开「健康检查」，顶部裁决卡与 `D3 当前节点出站` 却偶发报红（「本机网络正常，但当前节点无法连通外网」/「节点 … 无法连通探测地址 481 ms」），`D4 端到端实测` 因前置失败被跳过。根因三项叠加：
+  1. [`HealthRunner.runD3`](file:///e:/CodeWorkstation/FlClashX/lib/common/health/health_runner.dart#L1133-L1206) 仅对单一 URL（`gstatic/generate_204`）发起 1 次 `URLTest`（HTTP HEAD），遇远端/中间链路瞬态 TLS/Reality `TCP RST`（`testFailed`）或出口封锁单一探测域名时零重试即直接判失败；
+  2. Phase 3 无条件在 `d3.status.isFailure` 时硬跳过 `D4` 端到端实测，未让真实代理流量（`probeEndToEnd`）对 `D3` 单点 HEAD 测速假阴性进行交叉验证；
+  3. `runD3()` 内硬编码 `res.value <= 300` 才算通过，与全仓 `kLatencyFastMaxMs = 2000` 阈值不一致。
+- TDD 修复落地（本地 `development` 代码提交 `433f1b39`，`433f1b3931ee3906feaa5550d9bbe08ae6e4aa23`）：
+  1. **多轮重试与备用 `204` 探测地址 + `2000 ms` 阈值对齐（[`health_runner.dart`](file:///e:/CodeWorkstation/FlClashX/lib/common/health/health_runner.dart#L28-L32)、[`health_runner.dart`](file:///e:/CodeWorkstation/FlClashX/lib/common/health/health_runner.dart#L1133-L1228)）**：对瞬态快速失败（非 `'overloaded'` / `'notFound'` / `'deadlineExceeded'`）在预算时间窗内自动重试一次主地址，仍失败则回退至 `HealthRunner.outboundFallbackProbeUrls`（`https://cp.cloudflare.com/generate_204`），同步在每次尝试前校验 `HealthCancellationToken` 与注册 `cancelProxyDelay`；成功阈值统一对齐 `kLatencyFastMaxMs`（`<= 2000 ms` 为 `passed`，`> 2000 ms` 为 `outboundVerySlow` 告警）；
+  2. **放行 `D4` 与真实端到端代理交叉验证（[`health_runner.dart`](file:///e:/CodeWorkstation/FlClashX/lib/common/health/health_runner.dart#L1289-L1330)、[`health_runner.dart`](file:///e:/CodeWorkstation/FlClashX/lib/common/health/health_runner.dart#L1523-L1538)、[`health_verdict.dart`](file:///e:/CodeWorkstation/FlClashX/lib/common/health/health_verdict.dart#L90-L120)、[`health_verdict.dart`](file:///e:/CodeWorkstation/FlClashX/lib/common/health/health_verdict.dart#L191-L205)）**：仅当 `D1` 同步失败（本地断网）或 `D3` 属于确定性配置/策略故障（`outboundSelectedReject` / `outboundGroupMissing` / `outboundGroupLoop` / `outboundNotFound`）时才跳过 `D4`；当 `D4` 实测证明流量进入核心并经真实代理出站（`d4.status == passed && reasonCode == 'ok'` 或 `tunBypassedSystemProxyOk`，严防 `routedDirectByRule` / `trafficBypassedCore` 误救）时，将 `D3` 降级为告警 `outboundProbeFallbackOk` 并在 `computeHealthVerdict` 输出 `healthyWithWarnings`（保留节点名与出口国家），绝不误报 `outboundNodeFailed`；
+  3. **四语言详情文案与无延迟副标题兼容（[`health_check_view.dart`](file:///e:/CodeWorkstation/FlClashX/lib/views/tools/health_check_view.dart#L184-L188)、[`health_check_view.dart`](file:///e:/CodeWorkstation/FlClashX/lib/views/tools/health_check_view.dart#L598-L616) 及 [`intl_zh_CN.arb`](file:///e:/CodeWorkstation/FlClashX/arb/intl_zh_CN.arb#L1147-L1154) 等 4 个 `.arb` / `lib/l10n/`）**：新增 `healthDetailOutboundProbeFallbackOk` 文案，无 `outboundDelayMs` 时顶部裁决卡仍清晰展示节点名与出口国家。
+- 验证记录（本机 Flutter / Dart）：
+  - 前置有效 Red：**PASS**（先行在 [`health_diagnostics_v2_test.dart`](file:///e:/CodeWorkstation/FlClashX/test/common/health_diagnostics_v2_test.dart#L1677-L1914) 与 [`health_check_view_test.dart`](file:///e:/CodeWorkstation/FlClashX/test/views/health_check_view_test.dart#L1081-L1122) 写入 6 组单测 + 1 组 Widget 测试并同步校准既有 `e2e` 桩默认态，首轮运行精准失败于 `7` 项新增与目标断言）；
+  - Green 与全量健康检查回归：**PASS**（[`health_diagnostics_v2_test.dart`](file:///e:/CodeWorkstation/FlClashX/test/common/health_diagnostics_v2_test.dart) + [`health_remediation_9bugs_test.dart`](file:///e:/CodeWorkstation/FlClashX/test/common/health_remediation_9bugs_test.dart) + [`health_check_view_test.dart`](file:///e:/CodeWorkstation/FlClashX/test/views/health_check_view_test.dart) **`49/49` 全绿**）；
+  - 静态分析与补丁检查：**PASS**（`dart analyze lib/common/health lib/views/tools/health_check_view.dart lib/l10n test/common/health_diagnostics_v2_test.dart test/common/health_remediation_9bugs_test.dart test/views/health_check_view_test.dart` 输出 `No issues found!`，退出码 `0`；`git diff --cached --check` 零错误）；
+  - 预览包构建：**NOT RUN（严格遵照用户指令 `修复后暂不构建测试包`，`dist/` 未新建或覆盖产物）**；
+  - 宿主机实机运行 / 远端推送 / PR：**NOT RUN**。
+
 ## 全量最新功能 Windows `amd64` 预览包交付（`315ece4b2905`，2026-11-13）
 
 - 构建来源与完整包含范围：基于本地 `development` 干净 `git archive` 快照 `315ece4b2905472470fadccd1f4c411f68e2ad4b`（代码提交 `44015ed43e4c451039454e9eef5d492989acbee8`，tree `c28d8105951e8885f90484f87aaa76a54e6d0476`），由独立隔离工具集 [`fcx-freedomnet-tools-20261113-r3`](file:///E:/Temp/fcx-freedomnet-tools-20261113-r3/Build-PerfOverhaul.ps1) 完成 15 阶段全栈同源重编，完整涵盖 `196889071d39` 之后全部 5 轮最新开发及全部历史本地特性（`a229588..44015ed4`）：
