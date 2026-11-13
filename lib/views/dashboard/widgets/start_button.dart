@@ -139,8 +139,9 @@ class _StartButtonState extends ConsumerState<StartButton>
     }
     final providerPending = ref.watch(statusSwitchPendingProvider);
     final startCancelable = ref.watch(statusStartCancelableProvider);
-    final runTime = ref.watch(runTimeProvider);
-    final effectiveStart = runTime != null;
+    final effectiveStart = ref.watch(
+      runTimeProvider.select((value) => value != null),
+    );
     final pendingTarget = providerPending ?? (_localPending ? _localTargetStart : null);
     final isBusy = pendingTarget != null;
     final canTapPress = !isBusy || (pendingTarget && startCancelable);
@@ -152,6 +153,14 @@ class _StartButtonState extends ConsumerState<StartButton>
     final foregroundColor = showActivePalette
         ? Colors.white
         : colorScheme.onSecondaryContainer;
+
+    final semanticsLabel = isBusy
+        ? (pendingTarget
+            ? appLocalizations.tunStatusStarting
+            : appLocalizations.tunStatusStopping)
+        : (effectiveStart
+            ? appLocalizations.nodeOverviewTurnOffProxy
+            : appLocalizations.nodeOverviewTurnOnProxy);
 
     final Widget? statusLabelWidget;
     if (isBusy) {
@@ -165,15 +174,9 @@ class _StartButtonState extends ConsumerState<StartButton>
           color: foregroundColor,
         ),
       );
-    } else if (runTime != null) {
-      final text = utils.getTimeText(runTime);
-      statusLabelWidget = Text(
-        text,
-        key: const ValueKey('running_uptime'),
-        style: context.textTheme.titleMedium?.toSoftBold.copyWith(
-          color: Colors.white,
-          fontFeatures: const [FontFeature.tabularFigures()],
-        ),
+    } else if (effectiveStart) {
+      statusLabelWidget = const _StartButtonUptimeText(
+        key: ValueKey('running_uptime'),
       );
     } else {
       statusLabelWidget = null;
@@ -202,69 +205,94 @@ class _StartButtonState extends ConsumerState<StartButton>
                   ),
                   elevation: showActivePalette ? 4 : 0,
                 ),
-                child: Center(
-                  child: AnimatedSize(
-                    duration: const Duration(milliseconds: 240),
-                    curve: Curves.easeOutCubic,
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        if (isBusy)
-                          SizedBox(
-                            width: 22,
-                            height: 22,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2.4,
+                child: Semantics(
+                  label: semanticsLabel,
+                  excludeSemantics: true,
+                  child: Center(
+                    child: AnimatedSize(
+                      duration: const Duration(milliseconds: 240),
+                      curve: Curves.easeOutCubic,
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (isBusy)
+                            SizedBox(
+                              width: 22,
+                              height: 22,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2.4,
+                                color: foregroundColor,
+                              ),
+                            )
+                          else
+                            AnimatedIcon(
+                              icon: AnimatedIcons.play_pause,
+                              progress: _animation,
+                              size: 36,
                               color: foregroundColor,
                             ),
-                          )
-                        else
-                          AnimatedIcon(
-                            icon: AnimatedIcons.play_pause,
-                            progress: _animation,
-                            size: 36,
-                            color: foregroundColor,
-                          ),
-                        if (statusLabelWidget != null) ...[
-                          const SizedBox(width: 12),
-                          AnimatedSwitcher(
-                            duration: const Duration(milliseconds: 240),
-                            switchInCurve: Curves.easeOutCubic,
-                            switchOutCurve: Curves.easeInCubic,
-                            transitionBuilder: (childWidget, animation) {
-                              final offsetAnimation = Tween<Offset>(
-                                begin: const Offset(0, 0.3),
-                                end: Offset.zero,
-                              ).animate(CurvedAnimation(
-                                parent: animation,
-                                curve: Curves.easeOutCubic,
-                              ));
+                          if (statusLabelWidget != null) ...[
+                            const SizedBox(width: 12),
+                            AnimatedSwitcher(
+                              duration: const Duration(milliseconds: 240),
+                              switchInCurve: Curves.easeOutCubic,
+                              switchOutCurve: Curves.easeInCubic,
+                              transitionBuilder: (childWidget, animation) {
+                                final offsetAnimation = Tween<Offset>(
+                                  begin: const Offset(0, 0.3),
+                                  end: Offset.zero,
+                                ).animate(CurvedAnimation(
+                                  parent: animation,
+                                  curve: Curves.easeOutCubic,
+                                ));
 
-                              return SlideTransition(
-                                position: offsetAnimation,
-                                child: FadeTransition(
-                                  opacity: animation,
-                                  child: childWidget,
-                                ),
-                              );
-                            },
-                            layoutBuilder: (currentChild, previousChildren) =>
-                                Stack(
-                              alignment: Alignment.center,
-                              children: [
-                                ...previousChildren,
-                                if (currentChild != null) currentChild,
-                              ],
+                                return SlideTransition(
+                                  position: offsetAnimation,
+                                  child: FadeTransition(
+                                    opacity: animation,
+                                    child: childWidget,
+                                  ),
+                                );
+                              },
+                              layoutBuilder: (currentChild, previousChildren) =>
+                                  Stack(
+                                alignment: Alignment.center,
+                                children: [
+                                  ...previousChildren,
+                                  if (currentChild != null) currentChild,
+                                ],
+                              ),
+                              child: statusLabelWidget,
                             ),
-                            child: statusLabelWidget,
-                          ),
+                          ],
                         ],
-                      ],
+                      ),
                     ),
                   ),
                 ),
               ),
             ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _StartButtonUptimeText extends ConsumerWidget {
+  const _StartButtonUptimeText({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final runTime = ref.watch(runTimeProvider);
+    final text = utils.getTimeText(runTime);
+    return RepaintBoundary(
+      child: ExcludeSemantics(
+        child: Text(
+          text,
+          style: context.textTheme.titleMedium?.toSoftBold.copyWith(
+            color: Colors.white,
+            fontFeatures: const [FontFeature.tabularFigures()],
           ),
         ),
       ),

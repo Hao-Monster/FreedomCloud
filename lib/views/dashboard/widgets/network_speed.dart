@@ -118,101 +118,115 @@ class _NetworkSpeedState extends State<NetworkSpeed> {
     final headerColor = context.colorScheme.onSurfaceVariant;
     final speedTextColor = headerColor.opacity80;
 
-    return Consumer(
-      builder: (context, ref, _) {
-        final traffics = ref.watch(trafficsProvider).list;
-        final lastTraffic = _getLastTraffic(traffics);
-        final liveSpeedLabel = '${lastTraffic.up}↑   ${lastTraffic.down}↓';
-
-        final titleGroup = Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              Icons.speed_sharp,
-              size: 20,
-              color: headerColor,
-            ),
-            const SizedBox(width: 8),
-            Flexible(
-              child: TooltipText(
-                text: Text(
-                  appLocalizations.networkSpeed,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: context.textTheme.titleSmall?.copyWith(
-                    color: headerColor,
-                  ),
-                ),
+    final titleGroup = Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(
+          Icons.speed_sharp,
+          size: 20,
+          color: headerColor,
+        ),
+        const SizedBox(width: 8),
+        Flexible(
+          child: TooltipText(
+            text: Text(
+              appLocalizations.networkSpeed,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: context.textTheme.titleSmall?.copyWith(
+                color: headerColor,
               ),
             ),
-          ],
-        );
-
-        final speedText = Text(
-          liveSpeedLabel,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: context.textTheme.bodySmall?.copyWith(
-            color: speedTextColor,
-            fontFeatures: const [FontFeature.tabularFigures()],
           ),
-        );
+        ),
+      ],
+    );
 
-        final header = Padding(
-          padding: const EdgeInsets.fromLTRB(16, 14, 14, 0),
-          child: isStacked
-              ? Wrap(
-                  spacing: 8,
-                  runSpacing: 4,
-                  alignment: WrapAlignment.spaceBetween,
-                  crossAxisAlignment: WrapCrossAlignment.center,
-                  children: [
-                    titleGroup,
-                    speedText,
-                  ],
-                )
-              : Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Flexible(child: titleGroup),
-                    const SizedBox(width: 8),
-                    Flexible(
-                      child: FittedBox(
-                        fit: BoxFit.scaleDown,
-                        alignment: Alignment.centerRight,
-                        child: speedText,
-                      ),
-                    ),
-                  ],
-                ),
-        );
+    final speedReadout = RepaintBoundary(
+      child: ExcludeSemantics(
+        child: Consumer(
+          builder: (context, ref, _) {
+            final traffics = ref.watch(trafficsProvider).list;
+            final lastTraffic = _getLastTraffic(traffics);
+            final liveSpeedLabel = '${lastTraffic.up}↑   ${lastTraffic.down}↓';
+            final speedText = Text(
+              liveSpeedLabel,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: context.textTheme.bodySmall?.copyWith(
+                color: speedTextColor,
+                fontFeatures: const [FontFeature.tabularFigures()],
+              ),
+            );
+            if (isStacked) {
+              return speedText;
+            }
+            return FittedBox(
+              fit: BoxFit.scaleDown,
+              alignment: Alignment.centerRight,
+              child: speedText,
+            );
+          },
+        ),
+      ),
+    );
 
-        final chart = ClipRect(
-          child: Padding(
-            padding: EdgeInsets.only(top: isStacked ? 10 : 14),
-            child: LineChart(
-              gradient: true,
-              color: context.colorScheme.primary,
-              points: _getPoints(traffics),
+    final header = Padding(
+      padding: const EdgeInsets.fromLTRB(16, 14, 14, 0),
+      child: isStacked
+          ? Wrap(
+              spacing: 8,
+              runSpacing: 4,
+              alignment: WrapAlignment.spaceBetween,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                titleGroup,
+                speedReadout,
+              ],
+            )
+          : Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Flexible(child: titleGroup),
+                const SizedBox(width: 8),
+                Flexible(child: speedReadout),
+              ],
             ),
-          ),
-        );
+    );
 
-        return Column(
-          mainAxisSize: isStacked ? MainAxisSize.min : MainAxisSize.max,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            header,
-            if (isStacked)
-              SizedBox(
-                height: 92,
-                child: chart,
-              )
-            else
-              Expanded(child: chart),
-          ],
-        );
-      },
+    final chart = RepaintBoundary(
+      child: ExcludeSemantics(
+        child: Consumer(
+          builder: (context, ref, _) {
+            final traffics = ref.watch(trafficsProvider).list;
+            return ClipRect(
+              child: Padding(
+                padding: EdgeInsets.only(top: isStacked ? 10 : 14),
+                child: LineChart(
+                  gradient: true,
+                  color: context.colorScheme.primary,
+                  points: _getPoints(traffics),
+                ),
+              ),
+            );
+          },
+        ),
+      ),
+    );
+
+    return Column(
+      mainAxisSize: isStacked ? MainAxisSize.min : MainAxisSize.max,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        header,
+        if (isStacked)
+          SizedBox(
+            height: 92,
+            child: chart,
+          )
+        else
+          Expanded(child: chart),
+      ],
     );
   }
 

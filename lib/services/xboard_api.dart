@@ -104,8 +104,15 @@ class DioXboardApi implements XboardApi, XboardExtendedApi {
   final bool Function()? _shouldFallbackToDirect;
   final Dio _dio;
   Dio? _directDio;
+  bool _closed = false;
 
   Dio _ensureDirectDio() {
+    if (_closed) {
+      throw const XboardException(
+        code: 'connection_error',
+        message: '无法连接购买服务，请检查网络后重试',
+      );
+    }
     final existing = _directDio;
     if (existing != null) return existing;
     final direct = Dio(_buildBaseOptions(baseUri))
@@ -370,12 +377,16 @@ class DioXboardApi implements XboardApi, XboardExtendedApi {
 
   @override
   void close() {
+    _closed = true;
     _dio.close(force: true);
-    _directDio?.close(force: true);
+    final direct = _directDio;
+    _directDio = null;
+    direct?.close(force: true);
   }
 
   bool _canFallbackToDirect(DioException error, {required bool mutation}) {
-    if (mutation ||
+    if (_closed ||
+        mutation ||
         !_ownsTransport ||
         !(_shouldFallbackToDirect?.call() ?? false)) {
       return false;
@@ -421,6 +432,12 @@ class DioXboardApi implements XboardApi, XboardExtendedApi {
         code: 'invalid_authorization',
         message: '登录凭据无效，请重新登录',
         statusCode: 401,
+      );
+    }
+    if (_closed) {
+      throw const XboardException(
+        code: 'connection_error',
+        message: '无法连接购买服务，请检查网络后重试',
       );
     }
     int? status;

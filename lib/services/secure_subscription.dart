@@ -31,16 +31,30 @@ class SecureSubscriptionDownloader {
   final bool _ownsTransport;
   final bool Function(Uri url)? shouldFallbackToDirect;
   Dio? _directDio;
+  bool _closed = false;
 
-  Dio _ensureDirectDio() => _directDio ??= (Dio(
-        BaseOptions(
-          connectTimeout: const Duration(seconds: 15),
-        ),
-      )..httpClientAdapter = IOHttpClientAdapter(
-          createHttpClient: () => wrapPreRequestHttpClient(HttpClient())
-            ..findProxy = ((_) => 'DIRECT')
-            ..badCertificateCallback = ((_, __, ___) => false),
-        ));
+  void close() {
+    _closed = true;
+    _dio.close(force: true);
+    final direct = _directDio;
+    _directDio = null;
+    direct?.close(force: true);
+  }
+
+  Dio _ensureDirectDio() {
+    if (_closed) {
+      throw const FormatException('Subscription download failed');
+    }
+    return _directDio ??= (Dio(
+      BaseOptions(
+        connectTimeout: const Duration(seconds: 15),
+      ),
+    )..httpClientAdapter = IOHttpClientAdapter(
+        createHttpClient: () => wrapPreRequestHttpClient(HttpClient())
+          ..findProxy = ((_) => 'DIRECT')
+          ..badCertificateCallback = ((_, __, ___) => false),
+      ));
+  }
 
   Future<Response<Uint8List>> download(
     Uri url,
@@ -48,6 +62,9 @@ class SecureSubscriptionDownloader {
   ) async {
     if (url.scheme != 'https' || url.host.isEmpty || url.userInfo.isNotEmpty) {
       throw const FormatException('Managed subscriptions require HTTPS');
+    }
+    if (_closed) {
+      throw const FormatException('Subscription download failed');
     }
     final options = Options(
       headers: headers,
@@ -60,11 +77,15 @@ class SecureSubscriptionDownloader {
     );
     var current = url;
     for (var redirects = 0; redirects <= 5; redirects++) {
+      if (_closed) {
+        throw const FormatException('Subscription download failed');
+      }
       Response<Uint8List> response;
       try {
         response = await _dio.getUri<Uint8List>(current, options: options);
       } on DioException catch (error) {
-        if (_ownsTransport &&
+        if (!_closed &&
+            _ownsTransport &&
             isPreRequestDioFailure(error) &&
             (shouldFallbackToDirect?.call(current) ?? false)) {
           try {

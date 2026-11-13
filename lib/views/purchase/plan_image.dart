@@ -237,9 +237,15 @@ class _ImageLoad {
   void cancel() {
     if (_isCancelled) return;
     _cancelled.complete();
-    unawaited(_subscription?.cancel());
+    final subscription = _subscription;
+    _subscription = null;
+    if (subscription != null) {
+      unawaited(subscription.cancel());
+    }
     _request?.abort();
+    _request = null;
     _client?.close(force: true);
+    _client = null;
     if (!_workStarted) _slot?.release();
   }
 
@@ -274,6 +280,11 @@ class _ImageLoad {
   }
 
   Future<_LoadedImage> _download() async {
+    final encoded = await _fetchBytes();
+    return _decode(encoded);
+  }
+
+  Future<Uint8List> _fetchBytes() async {
     // HttpClient inherits the app's routing override. Do not inherit its
     // trust-all certificate callback or reuse any authenticated API client.
     final client = HttpClient()
@@ -282,58 +293,77 @@ class _ImageLoad {
       ..autoUncompress = false
       ..authenticate = null;
     _client = client;
-    final request = await _active(client.getUrl(uri).then((request) {
-      if (_isCancelled) request.abort();
-      _request = request;
-      return request;
-    }));
-    _checkActive();
-    request
-      ..followRedirects = false
-      ..maxRedirects = 0
-      ..cookies.clear();
-    [
-      HttpHeaders.authorizationHeader,
-      HttpHeaders.cookieHeader,
-      HttpHeaders.refererHeader,
-    ].forEach(request.headers.removeAll);
-    request.headers.set(HttpHeaders.acceptHeader, 'image/*');
-    request.headers.set(HttpHeaders.acceptEncodingHeader, 'identity');
-    final response = await _active(request.close());
-    _checkActive();
-    final mime = response.headers.contentType?.mimeType.toLowerCase();
-    final encoding = response.headers
-        .value(HttpHeaders.contentEncodingHeader)
-        ?.toLowerCase();
-    if (response.statusCode != HttpStatus.ok ||
-        response.contentLength > _maxBytes ||
-        (mime != null && !_rasterTypes.contains(mime)) ||
-        (encoding != null && encoding != 'identity')) {
-      throw const _ImageUnavailable();
-    }
+    var completed = false;
+    try {
+      final request = await _active(client.getUrl(uri).then((request) {
+        if (_isCancelled) request.abort();
+        _request = request;
+        return request;
+      }));
+      _checkActive();
+      request
+        ..followRedirects = false
+        ..maxRedirects = 0
+        ..cookies.clear();
+      [
+        HttpHeaders.authorizationHeader,
+        HttpHeaders.cookieHeader,
+        HttpHeaders.refererHeader,
+      ].forEach(request.headers.removeAll);
+      request.headers.set(HttpHeaders.acceptHeader, 'image/*');
+      request.headers.set(HttpHeaders.acceptEncodingHeader, 'identity');
+      final response = await _active(request.close());
+      _checkActive();
+      final mime = response.headers.contentType?.mimeType.toLowerCase();
+      final encoding = response.headers
+          .value(HttpHeaders.contentEncodingHeader)
+          ?.toLowerCase();
+      if (response.statusCode != HttpStatus.ok ||
+          response.contentLength > _maxBytes ||
+          (mime != null && !_rasterTypes.contains(mime)) ||
+          (encoding != null && encoding != 'identity')) {
+        throw const _ImageUnavailable();
+      }
 
-    final bytes = BytesBuilder(copy: false);
-    final downloaded = Completer<Uint8List>();
-    _subscription = response.listen(
-      (chunk) {
-        if (downloaded.isCompleted) return;
-        if (bytes.length + chunk.length > _maxBytes) {
-          downloaded.completeError(const _ImageUnavailable());
-          return;
-        }
-        bytes.add(chunk);
-      },
-      onError: (Object error) {
-        if (!downloaded.isCompleted) downloaded.completeError(error);
-      },
-      onDone: () {
-        if (!downloaded.isCompleted) downloaded.complete(bytes.takeBytes());
-      },
-      cancelOnError: true,
-    );
-    final encoded = await _active(downloaded.future);
-    _checkActive();
-    return _decode(encoded);
+      final bytes = BytesBuilder(copy: false);
+      final downloaded = Completer<Uint8List>();
+      _subscription = response.listen(
+        (chunk) {
+          if (downloaded.isCompleted) return;
+          if (bytes.length + chunk.length > _maxBytes) {
+            downloaded.completeError(const _ImageUnavailable());
+            return;
+          }
+          bytes.add(chunk);
+        },
+        onError: (Object error) {
+          if (!downloaded.isCompleted) downloaded.completeError(error);
+        },
+        onDone: () {
+          if (!downloaded.isCompleted) downloaded.complete(bytes.takeBytes());
+        },
+        cancelOnError: true,
+      );
+      final encoded = await _active(downloaded.future);
+      _checkActive();
+      completed = true;
+      return encoded;
+    } finally {
+      final subscription = _subscription;
+      _subscription = null;
+      if (subscription != null) {
+        unawaited(subscription.cancel());
+      }
+      final activeRequest = _request;
+      _request = null;
+      if (!completed) {
+        activeRequest?.abort();
+      }
+      if (identical(_client, client)) {
+        _client = null;
+      }
+      client.close(force: true);
+    }
   }
 
   Future<_LoadedImage> _decode(Uint8List encoded) async {

@@ -1041,10 +1041,9 @@ class _ConnectButton extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final colorScheme = context.colorScheme;
-    final runTime = ref.watch(runTimeProvider);
+    final isStart = ref.watch(runTimeProvider.select((value) => value != null));
     final pending = ref.watch(statusSwitchPendingProvider);
     final startCancelable = ref.watch(statusStartCancelableProvider);
-    final isStart = runTime != null;
     final isBusy = pending != null;
     final canTap = isReady && (!isBusy || (pending && startCancelable));
 
@@ -1061,6 +1060,14 @@ class _ConnectButton extends ConsumerWidget {
       fg = colorScheme.onPrimary;
     }
 
+    final semanticsLabel = isBusy
+        ? (pending
+            ? appLocalizations.tunStatusStarting
+            : appLocalizations.tunStatusStopping)
+        : (isStart
+            ? appLocalizations.nodeOverviewTurnOffProxy
+            : appLocalizations.nodeOverviewTurnOnProxy);
+
     return _FocusableTap(
       autofocus: true,
       borderRadius: 24,
@@ -1073,53 +1080,76 @@ class _ConnectButton extends ConsumerWidget {
               unawaited(globalState.appController.updateStatus(shouldStart));
             }
           : null,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 250),
-        width: double.infinity,
-        height: 54,
-        alignment: Alignment.center,
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(24),
-          color: bg,
-          border: isStart
-              ? Border.all(color: colorScheme.primary.withValues(alpha: 0.4))
-              : null,
+      child: Semantics(
+        button: true,
+        enabled: canTap,
+        label: semanticsLabel,
+        excludeSemantics: true,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 250),
+          width: double.infinity,
+          height: 54,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(24),
+            color: bg,
+            border: isStart
+                ? Border.all(color: colorScheme.primary.withValues(alpha: 0.4))
+                : null,
+          ),
+          child: isBusy
+              ? Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2.2,
+                        color: fg,
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Text(
+                      pending
+                          ? appLocalizations.tunStatusStarting
+                          : appLocalizations.tunStatusStopping,
+                      style: context.textTheme.titleSmall?.copyWith(
+                        color: fg,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                )
+              : isStart
+                  ? _ConnectUptimeText(color: fg)
+                  : Icon(Icons.play_arrow_rounded, size: 30, color: fg),
         ),
-        child: isBusy
-            ? Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  SizedBox(
-                    width: 18,
-                    height: 18,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2.2,
-                      color: fg,
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Text(
-                    pending
-                        ? appLocalizations.tunStatusStarting
-                        : appLocalizations.tunStatusStopping,
-                    style: context.textTheme.titleSmall?.copyWith(
-                      color: fg,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ],
-              )
-            : isStart
-                ? Text(
-                    utils.getTimeText(runTime),
-                    style: context.textTheme.titleSmall?.copyWith(
-                      color: fg,
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: 0.5,
-                      fontFamily: FontFamily.jetBrainsMono.value,
-                    ),
-                  )
-                : Icon(Icons.play_arrow_rounded, size: 30, color: fg),
+      ),
+    );
+  }
+}
+
+class _ConnectUptimeText extends ConsumerWidget {
+  const _ConnectUptimeText({required this.color});
+
+  final Color color;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final runTime = ref.watch(runTimeProvider);
+    return RepaintBoundary(
+      child: ExcludeSemantics(
+        child: Text(
+          utils.getTimeText(runTime),
+          style: context.textTheme.titleSmall?.copyWith(
+            color: color,
+            fontWeight: FontWeight.w700,
+            letterSpacing: 0.5,
+            fontFamily: FontFamily.jetBrainsMono.value,
+            fontFeatures: const [FontFeature.tabularFigures()],
+          ),
+        ),
       ),
     );
   }

@@ -66,6 +66,12 @@ class Request {
   );
   String? userAgent;
 
+  void close() {
+    _dio.close(force: true);
+    _clashDio.close(force: true);
+    _secureSubscription.close();
+  }
+
   Future<Response<Uint8List>> getFileResponseForUrl(
     String rawUrl, {
     Map<String, dynamic>? headers,

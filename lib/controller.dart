@@ -172,6 +172,7 @@ class AppController {
   final Map<String, int> _activeProfileUpdateTokens = {};
   final Map<String, ({int token, String url, Future<void> future})>
       _inFlightProfileUpdates = {};
+  final Set<String> _silentAutoUpdateIds = <String>{};
   final ProfileAutoUpdateBackoff _autoUpdateBackoff =
       ProfileAutoUpdateBackoff();
   NodeHealthStore? get catalogHealthStore =>
@@ -1641,6 +1642,7 @@ class AppController {
   }
 
   Future<void> updateProfile(Profile profile) async {
+    final silentRequested = _silentAutoUpdateIds.remove(profile.id);
     final current = _ref.read(profilesProvider).getProfile(profile.id);
     final starting = prepareStartingProfileUpdate(
       requested: profile,
@@ -1649,16 +1651,23 @@ class AppController {
     if (starting == null) {
       return;
     }
+    final silent = silentRequested &&
+        !profile.isUpdating &&
+        !(current?.isUpdating ?? false);
     final existingInFlight = _inFlightProfileUpdates[starting.id];
     if (existingInFlight != null && existingInFlight.url == starting.url) {
-      if (starting != current) {
+      if (!silent && starting != current) {
         _ref.read(profilesProvider.notifier).setProfile(starting);
       }
       return existingInFlight.future;
     }
     final token = ++_nextProfileUpdateToken;
     _activeProfileUpdateTokens[starting.id] = token;
-    final future = _runProfileUpdate(starting: starting, token: token);
+    final future = _runProfileUpdate(
+      starting: starting,
+      token: token,
+      silent: silent,
+    );
     _inFlightProfileUpdates[starting.id] = (
       token: token,
       url: starting.url,
@@ -1677,6 +1686,7 @@ class AppController {
   Future<void> _runProfileUpdate({
     required Profile starting,
     required int token,
+    bool silent = false,
   }) async {
     bool isCurrentRun() => _activeProfileUpdateTokens[starting.id] == token;
 
@@ -1699,7 +1709,9 @@ class AppController {
       }
     }
 
-    _ref.read(profilesProvider.notifier).setProfile(starting);
+    if (!silent) {
+      _ref.read(profilesProvider.notifier).setProfile(starting);
+    }
     try {
       final prefs = await SharedPreferences.getInstance();
       final shouldSend = prefs.getBool('sendDeviceHeaders') ?? true;
@@ -2660,6 +2672,7 @@ class AppController {
           !_autoUpdateBackoff.canAttempt(profile, now: referenceNow)) {
         continue;
       }
+      _silentAutoUpdateIds.add(id);
       try {
         await updateProfile(profile);
         final refreshedNow = now ?? DateTime.now();
@@ -2682,6 +2695,8 @@ class AppController {
         } else {
           commonPrint.log(e.toString());
         }
+      } finally {
+        _silentAutoUpdateIds.remove(id);
       }
     }
   }
