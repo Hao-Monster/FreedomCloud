@@ -87,6 +87,7 @@ class _TestHealthEnvironment implements HealthProbeEnvironment {
   int subscriptionExpireSec = 1796000000;
   EndToEndProbeObservation? e2e;
   Completer<DelayTestResult>? outboundGate;
+  Completer<EndToEndProbeObservation?>? e2eGate;
   int runCount = 0;
 
   @override
@@ -200,8 +201,12 @@ class _TestHealthEnvironment implements HealthProbeEnvironment {
   Future<EndToEndProbeObservation?> probeEndToEnd({
     required HealthCancellationToken cancelToken,
     required String? explicitProxyDirective,
-  }) async =>
-      e2e;
+  }) async {
+    if (e2eGate != null) {
+      return e2eGate!.future;
+    }
+    return e2e;
+  }
 }
 
 void _seedTestAppState({
@@ -1122,6 +1127,58 @@ void main() {
       scrollable: find.byType(Scrollable).first,
     );
     expect(find.textContaining('已验证经过代理'), findsOneWidget);
+  });
+
+  testWidgets(
+      'P2-#3: while D3 failed and D4 E2E is still in-flight, UI never flashes outbound failure or switch-node action before direct transition to warning',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(960, 900));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    final e2eGate = Completer<EndToEndProbeObservation?>();
+    final env = _TestHealthEnvironment(
+      outboundDelay: const DelayTestResult(-1, reason: 'testFailed'),
+    )..e2eGate = e2eGate;
+    _seedTestAppState();
+
+    await tester.pumpWidget(
+      _wrapWithApp(
+        env: env,
+        viewSize: const Size(460, 900),
+        child: const HealthCheckView(type: SheetType.page),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+
+    final outboundRow = find.byKey(const ValueKey('health-row-outboundConnectivity'));
+    await tester.scrollUntilVisible(
+      outboundRow,
+      120,
+      scrollable: find.byType(Scrollable).first,
+    );
+
+    expect(find.textContaining('无法连通探测地址'), findsNothing);
+    expect(
+      find.byKey(const ValueKey('health-row-action-outboundConnectivity')),
+      findsNothing,
+    );
+
+    e2eGate.complete(
+      const EndToEndProbeObservation(
+        exitCountryCode: 'SG',
+        observedInCore: true,
+        matchedLeafProxy: 'SG-01',
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('无法连通探测地址'), findsNothing);
+    expect(
+      find.byKey(const ValueKey('health-row-action-outboundConnectivity')),
+      findsNothing,
+    );
+    expect(find.textContaining('测速地址受限，但端到端实测已连通'), findsOneWidget);
   });
 }
 

@@ -30,8 +30,36 @@ class HealthRunner {
 
   static const List<String> outboundFallbackProbeUrls = [
     'https://cp.cloudflare.com/generate_204',
+    'http://www.gstatic.com/generate_204',
+    'https://www.google.com/generate_204',
     'http://cp.cloudflare.com/generate_204',
   ];
+
+  static String _selectOutboundFallbackUrl(String primaryUrl) {
+    final primaryHost = Uri.tryParse(primaryUrl)?.host.toLowerCase() ?? '';
+    final primaryIsCloudflare = primaryHost.contains('cloudflare');
+    final primaryIsGoogle =
+        primaryHost.contains('gstatic') || primaryHost.contains('google');
+    return outboundFallbackProbeUrls.firstWhere(
+      (candidate) {
+        if (candidate == primaryUrl) return false;
+        final candidateHost =
+            Uri.tryParse(candidate)?.host.toLowerCase() ?? '';
+        if (primaryIsCloudflare) {
+          return !candidateHost.contains('cloudflare');
+        }
+        if (primaryIsGoogle) {
+          return !candidateHost.contains('gstatic') &&
+              !candidateHost.contains('google');
+        }
+        return true;
+      },
+      orElse: () => outboundFallbackProbeUrls.firstWhere(
+        (u) => u != primaryUrl,
+        orElse: () => '',
+      ),
+    );
+  }
 
   static const List<String> systemDnsProbeHosts = [
     'connectivitycheck.platform.hicloud.com',
@@ -149,7 +177,8 @@ class HealthRunner {
     return cfg.allGroups.isNotEmpty ? cfg.allGroups.first : null;
   }
 
-  static ({String? leaf, String? failureReason}) _resolveSelectedLeaf(
+  static ({String? leaf, String? failureReason, Group? dynamicGroup})
+      _resolveSelectedLeaf(
     Group entryGroup,
     List<Group> allGroups,
     Map<String, String> selectedMap, {
@@ -157,32 +186,95 @@ class HealthRunner {
   }) {
     final visited = <String>{};
     var current = entryGroup;
+    Group? dynamicGroup;
     while (visited.add(current.name) && visited.length <= 32) {
+      if (const {
+        GroupType.URLTest,
+        GroupType.Fallback,
+        GroupType.LoadBalance,
+      }.contains(current.type)) {
+        dynamicGroup ??= current;
+      }
       final picked = (preferRuntimeNow && current.realNow.isNotEmpty)
           ? current.realNow
           : current.getCurrentSelectedName(selectedMap[current.name] ?? '');
       if (picked == current.name) {
-        return (leaf: null, failureReason: 'outboundGroupLoop');
+        return (
+          leaf: null,
+          failureReason: 'outboundGroupLoop',
+          dynamicGroup: dynamicGroup,
+        );
       }
       if (picked.isEmpty) {
         if (current.all.isEmpty) {
-          return (leaf: null, failureReason: 'outboundGroupMissing');
+          return (
+            leaf: null,
+            failureReason: 'outboundGroupMissing',
+            dynamicGroup: dynamicGroup,
+          );
         }
         // LoadBalance, Relay, and unprobed lazy URLTest/Fallback groups
         // legitimately report an empty `now` in Mihomo; return the group name
         // so D3 delay-tests the group itself through Core.
-        return (leaf: current.name, failureReason: null);
+        return (
+          leaf: current.name,
+          failureReason: null,
+          dynamicGroup: dynamicGroup,
+        );
       }
       if (picked == 'DIRECT' || picked == 'REJECT' || picked == 'REJECT-DROP') {
-        return (leaf: picked, failureReason: null);
+        return (
+          leaf: picked,
+          failureReason: null,
+          dynamicGroup: dynamicGroup,
+        );
       }
       final nextGroup = allGroups.getGroup(picked);
       if (nextGroup == null) {
-        return (leaf: picked, failureReason: null);
+        return (
+          leaf: picked,
+          failureReason: null,
+          dynamicGroup: dynamicGroup,
+        );
       }
       current = nextGroup;
     }
-    return (leaf: null, failureReason: 'outboundGroupLoop');
+    return (
+      leaf: null,
+      failureReason: 'outboundGroupLoop',
+      dynamicGroup: dynamicGroup,
+    );
+  }
+
+  static Set<String> _collectReachableProxyLeaves(
+    Group rootGroup,
+    List<Group> allGroups,
+  ) {
+    final leaves = <String>{};
+    final visitedGroups = <String>{};
+    void visit(Group group) {
+      if (!visitedGroups.add(group.name) || visitedGroups.length > 64) {
+        return;
+      }
+      for (final proxy in group.all) {
+        final name = proxy.name;
+        if (name.isEmpty ||
+            name == 'DIRECT' ||
+            name == 'REJECT' ||
+            name == 'REJECT-DROP') {
+          continue;
+        }
+        final nested = allGroups.getGroup(name);
+        if (nested != null) {
+          visit(nested);
+        } else {
+          leaves.add(name);
+        }
+      }
+    }
+
+    visit(rootGroup);
+    return leaves;
   }
 
   @visibleForTesting
@@ -1049,6 +1141,7 @@ class HealthRunner {
       }
 
       String? resolvedActiveLeaf;
+      Group? activeDynamicGroup;
       int? resolvedOutboundDelay;
 
       Future<HealthCheckResult> runD3() async {
@@ -1108,6 +1201,7 @@ class HealthRunner {
           );
         }
         resolvedActiveLeaf = leaf;
+        activeDynamicGroup = leafResult.dynamicGroup;
         if (leaf == 'REJECT' || leaf == 'REJECT-DROP') {
           return HealthCheckResult(
             id: HealthCheckId.outboundConnectivity,
@@ -1162,28 +1256,42 @@ class HealthRunner {
             r.reason != 'deadlineExceeded';
 
         try {
+          const totalBudgetMs = 6500;
+          const minRetryBudgetMs = 1200;
+          const maxRetryTimeoutMs = 3500;
           var res = await runOutboundAttempt(
             primaryUrl,
             'hc-outbound-$seq',
             const Duration(seconds: 5),
           );
-          if (shouldRetryFastFailure(res) && watch.elapsedMilliseconds < 4500) {
+          final remainingAfterPrimary =
+              totalBudgetMs - watch.elapsedMilliseconds;
+          if (shouldRetryFastFailure(res) &&
+              remainingAfterPrimary >= minRetryBudgetMs) {
+            final r1TimeoutMs = math.min(
+              maxRetryTimeoutMs,
+              remainingAfterPrimary,
+            );
             res = await runOutboundAttempt(
               primaryUrl,
               'hc-outbound-$seq-r1',
-              const Duration(seconds: 4),
+              Duration(milliseconds: r1TimeoutMs),
             );
           }
-          if (shouldRetryFastFailure(res) && watch.elapsedMilliseconds < 5500) {
-            final fallbackUrl = outboundFallbackProbeUrls.firstWhere(
-              (u) => u != primaryUrl,
-              orElse: () => '',
-            );
+          final remainingAfterRetry1 =
+              totalBudgetMs - watch.elapsedMilliseconds;
+          if (shouldRetryFastFailure(res) &&
+              remainingAfterRetry1 >= minRetryBudgetMs) {
+            final fallbackUrl = _selectOutboundFallbackUrl(primaryUrl);
             if (fallbackUrl.isNotEmpty) {
+              final r2TimeoutMs = math.min(
+                maxRetryTimeoutMs,
+                remainingAfterRetry1,
+              );
               res = await runOutboundAttempt(
                 fallbackUrl,
                 'hc-outbound-$seq-r2',
-                const Duration(seconds: 4),
+                Duration(milliseconds: r2TimeoutMs),
               );
             }
           }
@@ -1285,7 +1393,6 @@ class HealthRunner {
       final d3 = phase2Results[2];
       record(d1);
       record(d2);
-      record(d3);
 
       // Phase 3: End-to-End Verification (D4)
       const structuralD3Failures = {
@@ -1294,6 +1401,18 @@ class HealthRunner {
         'outboundGroupLoop',
         'outboundNotFound',
       };
+      final d4CanRunUnderGate = !c1.status.isFailure &&
+          !b1.status.isFailure &&
+          cfg.mode != Mode.direct &&
+          !c4.status.isFailure &&
+          (!d3.status.isFailure ||
+              (!d1.status.isFailure &&
+                  !structuralD3Failures.contains(d3.reasonCode)));
+      final d4WillRunLiveProbe = d4CanRunUnderGate &&
+          (tunCapturingTraffic || verifiedSysProxyDirective != null);
+      if (!d3.status.isFailure || !d4WillRunLiveProbe) {
+        record(d3);
+      }
       markRunning(const [HealthCheckId.endToEndConnectivity]);
       String? exitCountryCode;
       HealthCheckResult d4;
@@ -1521,19 +1640,34 @@ class HealthRunner {
           }
         }
       }
-      final e2eProvesProxyOutbound =
+      final d4Leaf = d4.nodeName;
+      final d4ProvesProxyStatus =
           (d4.status == HealthStatus.passed && d4.reasonCode == 'ok') ||
               (d4.status == HealthStatus.warning &&
                   d4.reasonCode == 'tunBypassedSystemProxyOk');
+      final d4MatchesExpectedOutbound = isVerifiedProxyOutboundLeaf(d4Leaf) &&
+          (d4Leaf == resolvedActiveLeaf ||
+              (activeDynamicGroup != null &&
+                  _collectReachableProxyLeaves(
+                    activeDynamicGroup!,
+                    cfg.allGroups,
+                  ).contains(d4Leaf)));
+      final e2eProvesProxyOutbound =
+          d4ProvesProxyStatus && d4MatchesExpectedOutbound;
       if (d3.status.isFailure && e2eProvesProxyOutbound) {
-        state[HealthCheckId.outboundConnectivity] = HealthCheckResult(
-          id: HealthCheckId.outboundConnectivity,
-          status: HealthStatus.warning,
-          elapsedMs: d3.elapsedMs,
-          reasonCode: 'outboundProbeFallbackOk',
-          nodeName: d3.nodeName ?? resolvedActiveLeaf,
-          localDetail: d3.localDetail,
+        resolvedActiveLeaf = d4Leaf;
+        record(
+          HealthCheckResult(
+            id: HealthCheckId.outboundConnectivity,
+            status: HealthStatus.warning,
+            elapsedMs: d3.elapsedMs,
+            reasonCode: 'outboundProbeFallbackOk',
+            nodeName: d4Leaf,
+            localDetail: d3.localDetail,
+          ),
         );
+      } else if (d3.status.isFailure && d4WillRunLiveProbe) {
+        record(d3);
       }
       record(d4);
 

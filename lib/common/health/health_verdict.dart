@@ -1,6 +1,15 @@
 import 'package:flclashx/common/health/health_models.dart';
 import 'package:flclashx/enum/enum.dart';
 
+/// Returns true only when [leaf] identifies a concrete proxy outbound rather than
+/// DIRECT, REJECT, or an unattributed/missing leaf.
+bool isVerifiedProxyOutboundLeaf(String? leaf) =>
+    leaf != null &&
+    leaf.isNotEmpty &&
+    leaf != 'DIRECT' &&
+    leaf != 'REJECT' &&
+    leaf != 'REJECT-DROP';
+
 HealthVerdict computeHealthVerdict(
   List<HealthCheckResult> checks, {
   Mode mode = Mode.rule,
@@ -84,13 +93,22 @@ HealthVerdict computeHealthVerdict(
 
   // Priority 6: Local physical network down (only when proxy outbound / E2E has
   // not already proven that physical uplink reaches remote servers).
-  final outboundStatus = get(HealthCheckId.outboundConnectivity)?.status;
+  final outboundResult = get(HealthCheckId.outboundConnectivity);
+  final outboundStatus = outboundResult?.status;
+  final outboundNode = activeNodeName ?? outboundResult?.nodeName;
   final e2eResult = get(HealthCheckId.endToEndConnectivity);
   final e2eStatus = e2eResult?.status;
-  final outboundProvenByE2e =
+  final e2eNode = e2eResult?.nodeName;
+  final e2eProvesProxyStatus =
       (e2eStatus == HealthStatus.passed && e2eResult?.reasonCode == 'ok') ||
           (e2eStatus == HealthStatus.warning &&
               e2eResult?.reasonCode == 'tunBypassedSystemProxyOk');
+  final e2eMatchesOutbound = outboundNode == null ||
+      outboundNode.isEmpty ||
+      e2eNode == outboundNode;
+  final outboundProvenByE2e = e2eProvesProxyStatus &&
+      isVerifiedProxyOutboundLeaf(e2eNode) &&
+      e2eMatchesOutbound;
   final uplinkProvenByProxy = outboundStatus == HealthStatus.passed ||
       outboundStatus == HealthStatus.warning ||
       e2eStatus == HealthStatus.passed ||

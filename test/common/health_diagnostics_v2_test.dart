@@ -84,8 +84,15 @@ class _FakeProbeEnvironment
 
   final List<String> cancelledRequestIds = [];
   final List<String> recordedOutboundTestUrls = [];
+  final List<Duration> recordedOutboundTimeouts = [];
   DelayTestResult Function(String proxyName, String testUrl, int callIndex)?
       onTestProxyDelay;
+  Future<DelayTestResult> Function(
+    String proxyName,
+    String testUrl,
+    int callIndex,
+    Duration timeout,
+  )? onTestProxyDelayWithTimeout;
   int _outboundDelayCallCount = 0;
   String? lastExplicitProxyDirective;
   final List<String?> explicitProxyDirectives = [];
@@ -191,6 +198,12 @@ class _FakeProbeEnvironment
   }) async {
     if (proxyName != 'DIRECT') {
       recordedOutboundTestUrls.add(testUrl);
+      recordedOutboundTimeouts.add(timeout);
+    }
+    if (onTestProxyDelayWithTimeout != null) {
+      final callIndex =
+          proxyName == 'DIRECT' ? 0 : _outboundDelayCallCount++;
+      return onTestProxyDelayWithTimeout!(proxyName, testUrl, callIndex, timeout);
     }
     if (onTestProxyDelay != null) {
       final callIndex =
@@ -1769,7 +1782,7 @@ void main() {
         e2eObservation: const EndToEndProbeObservation(
           exitCountryCode: 'US',
           observedInCore: true,
-          matchedLeafProxy: 'US-BWG-02',
+          matchedLeafProxy: 'HK-VIP-SecretNode-99',
         ),
       );
       final report = await HealthRunner(env).run();
@@ -1915,6 +1928,424 @@ void main() {
       expect(verdict.code, 'healthyWithWarnings');
       expect(verdict.severity, HealthVerdictSeverity.warning);
       expect(verdict.primaryAction, isNull);
+    });
+  });
+
+  group('CR-HC-R3: Outbound false-negative Code Review remediations', () {
+    HealthConfigSnapshot snapshotWithGroups({
+      required List<Group> groups,
+      required String currentGroupName,
+      required Map<String, String> selectedMap,
+      String testUrl = 'https://cp.cloudflare.com/generate_204',
+      bool tunDesiredEnabled = true,
+      bool realTunEnable = true,
+      bool systemProxyEnabled = false,
+    }) {
+      final profile = Profile(
+        id: 'prof-cr',
+        label: 'Test Profile',
+        url: 'https://sub.example.invalid/token',
+        currentGroupName: currentGroupName,
+        lastUpdateDate: DateTime.utc(2026, 11, 1, 9, 30, 0),
+        autoUpdateDuration: const Duration(hours: 24),
+        selectedMap: selectedMap,
+      );
+      return HealthConfigSnapshot(
+        currentProfileId: profile.id,
+        currentProfile: profile,
+        profileFileExists: true,
+        profileFileBytes: 4096,
+        mode: Mode.rule,
+        mixedPort: 7890,
+        testUrl: testUrl,
+        resolveGroupTestUrl: (url) =>
+            (url != null && url.isNotEmpty) ? url : testUrl,
+        systemProxyEnabled: systemProxyEnabled,
+        pacEnabled: false,
+        pacUrl: null,
+        tunDesiredEnabled: tunDesiredEnabled,
+        tunFailureCode: null,
+        realTunEnable: realTunEnable,
+        proxyStarted: true,
+        lastRuntimeProfileId: profile.id,
+        groupsSnapshotProfileId: profile.id,
+        allGroups: groups,
+        visibleGroups: groups,
+        selectedMap: profile.selectedMap,
+      );
+    }
+
+    test(
+        'P1-#1: DIRECT E2E observation under tunBypassedSystemProxyOk never rescues failed D3 outbound node',
+        () async {
+      final env = _FakeProbeEnvironment(
+        configSnapshot: snapshotWithGroups(
+          currentGroupName: 'Proxy',
+          selectedMap: const {'Proxy': 'HK-VIP-SecretNode-99'},
+          systemProxyEnabled: true,
+          groups: const [
+            Group(
+              type: GroupType.Selector,
+              name: 'Proxy',
+              now: 'HK-VIP-SecretNode-99',
+              all: [Proxy(name: 'HK-VIP-SecretNode-99', type: 'Trojan')],
+            ),
+          ],
+        ),
+        delayResults: const {
+          'DIRECT': DelayTestResult(55),
+          'Proxy': DelayTestResult(-1, reason: 'testFailed'),
+        },
+        e2eObservationByDirective: const {
+          'DIRECT': EndToEndProbeObservation(
+            exitCountryCode: 'CN',
+            observedInCore: false,
+          ),
+          'http://127.0.0.1:7890': EndToEndProbeObservation(
+            exitCountryCode: 'CN',
+            observedInCore: true,
+            matchedLeafProxy: 'DIRECT',
+          ),
+        },
+      )..windowsSystemProxy = const WindowsSystemProxySnapshot(
+          proxyEnabled: true,
+          proxyServer: '127.0.0.1:7890',
+          autoConfigUrl: null,
+        );
+
+      final report = await HealthRunner(env).run();
+      final d3 = report.checkById(HealthCheckId.outboundConnectivity)!;
+      final d4 = report.checkById(HealthCheckId.endToEndConnectivity)!;
+
+      expect(d4.status, HealthStatus.warning);
+      expect(d4.reasonCode, 'tunBypassedSystemProxyOk');
+      expect(d3.status, HealthStatus.failed);
+      expect(report.verdict.code, 'outboundNodeFailed');
+      expect(report.verdict.severity, HealthVerdictSeverity.failed);
+    });
+
+    test(
+        'P1-#1: unattributed loopback fallback (matchedLeafProxy == null) preserves null nodeName and never rescues failed D3',
+        () async {
+      final env = _FakeProbeEnvironment(
+        configSnapshot: snapshotWithGroups(
+          currentGroupName: 'Proxy',
+          selectedMap: const {'Proxy': 'HK-VIP-SecretNode-99'},
+          tunDesiredEnabled: false,
+          realTunEnable: false,
+          systemProxyEnabled: true,
+          groups: const [
+            Group(
+              type: GroupType.Selector,
+              name: 'Proxy',
+              now: 'HK-VIP-SecretNode-99',
+              all: [Proxy(name: 'HK-VIP-SecretNode-99', type: 'Trojan')],
+            ),
+          ],
+        ),
+        delayResults: const {
+          'DIRECT': DelayTestResult(45),
+          'Proxy': DelayTestResult(-1, reason: 'testFailed'),
+        },
+        e2eObservation: const EndToEndProbeObservation(
+          exitCountryCode: 'US',
+          observedInCore: false,
+          matchedLeafProxy: null,
+        ),
+      )
+        ..tunStatus = const TunStatus(
+          instanceId: 'core-1',
+          revision: 3,
+          state: 'off',
+          listenerActive: false,
+          interfaceState: 'absent',
+          privilege: 'user',
+          requestedEnabled: false,
+        )
+        ..windowsSystemProxy = const WindowsSystemProxySnapshot(
+          proxyEnabled: true,
+          proxyServer: '127.0.0.1:7890',
+          autoConfigUrl: null,
+        );
+
+      final report = await HealthRunner(env).run();
+      final d3 = report.checkById(HealthCheckId.outboundConnectivity)!;
+      final d4 = report.checkById(HealthCheckId.endToEndConnectivity)!;
+
+      expect(d4.status, HealthStatus.passed);
+      expect(d4.reasonCode, 'ok');
+      expect(d4.nodeName, isNull);
+      expect(d3.status, HealthStatus.failed);
+      expect(report.verdict.code, 'outboundNodeFailed');
+      expect(report.verdict.severity, HealthVerdictSeverity.failed);
+    });
+
+    test(
+        'P1-#2: pinned Selector group must NOT be rescued when a different split-group node served E2E',
+        () async {
+      final env = _FakeProbeEnvironment(
+        configSnapshot: snapshotWithGroups(
+          currentGroupName: 'Proxy',
+          selectedMap: const {'Proxy': 'HK-Pinned-01'},
+          groups: const [
+            Group(
+              type: GroupType.Selector,
+              name: 'Proxy',
+              now: 'HK-Pinned-01',
+              all: [
+                Proxy(name: 'HK-Pinned-01', type: 'Trojan'),
+                Proxy(name: 'SG-Alt-02', type: 'Trojan'),
+              ],
+            ),
+            Group(
+              type: GroupType.Selector,
+              name: 'Streaming',
+              now: 'US-Split-03',
+              all: [Proxy(name: 'US-Split-03', type: 'Trojan')],
+            ),
+          ],
+        ),
+        delayResults: const {
+          'DIRECT': DelayTestResult(48),
+          'Proxy': DelayTestResult(-1, reason: 'testFailed'),
+        },
+        e2eObservation: const EndToEndProbeObservation(
+          exitCountryCode: 'US',
+          observedInCore: true,
+          matchedLeafProxy: 'US-Split-03',
+        ),
+      );
+
+      final report = await HealthRunner(env).run();
+      final d3 = report.checkById(HealthCheckId.outboundConnectivity)!;
+
+      expect(d3.status, HealthStatus.failed);
+      expect(report.verdict.code, 'outboundNodeFailed');
+      expect(report.verdict.activeNodeName, 'HK-Pinned-01');
+    });
+
+    test(
+        'P1-#2: dynamic URLTest group failover E2E rescues failed D3 and updates attributed nodeName',
+        () async {
+      final env = _FakeProbeEnvironment(
+        configSnapshot: snapshotWithGroups(
+          currentGroupName: 'Proxy',
+          selectedMap: const {'Proxy': 'Auto'},
+          groups: const [
+            Group(
+              type: GroupType.Selector,
+              name: 'Proxy',
+              now: 'Auto',
+              all: [Proxy(name: 'Auto', type: 'URLTest')],
+            ),
+            Group(
+              type: GroupType.URLTest,
+              name: 'Auto',
+              now: 'HK-Down-01',
+              all: [
+                Proxy(name: 'HK-Down-01', type: 'Trojan'),
+                Proxy(name: 'SG-Failover-02', type: 'Trojan'),
+              ],
+            ),
+          ],
+        ),
+        delayResults: const {
+          'DIRECT': DelayTestResult(48),
+          'Proxy': DelayTestResult(-1, reason: 'testFailed'),
+        },
+        e2eObservation: const EndToEndProbeObservation(
+          exitCountryCode: 'SG',
+          observedInCore: true,
+          matchedLeafProxy: 'SG-Failover-02',
+        ),
+      );
+
+      final report = await HealthRunner(env).run();
+      final d3 = report.checkById(HealthCheckId.outboundConnectivity)!;
+
+      expect(d3.status, HealthStatus.warning);
+      expect(d3.reasonCode, 'outboundProbeFallbackOk');
+      expect(d3.nodeName, 'SG-Failover-02');
+      expect(report.verdict.code, 'healthyWithWarnings');
+      expect(report.verdict.activeNodeName, 'SG-Failover-02');
+      expect(report.verdict.exitCountryCode, 'SG');
+    });
+
+    test(
+        'P2-#3: onProgress never emits transient outboundConnectivity=failed while live D4 is still running',
+        () async {
+      final env = _FakeProbeEnvironment(
+        delayResults: const {
+          'DIRECT': DelayTestResult(50),
+          'Proxy': DelayTestResult(-1, reason: 'testFailed'),
+        },
+        e2eObservation: const EndToEndProbeObservation(
+          exitCountryCode: 'HK',
+          observedInCore: true,
+          matchedLeafProxy: 'HK-VIP-SecretNode-99',
+        ),
+      )..e2eCompleter = Completer<EndToEndProbeObservation?>();
+
+      final outboundStatusTimeline = <HealthStatus>[];
+      final runFuture = HealthRunner(env).run(
+        onProgress: (snapshot) {
+          final d3 = snapshot[HealthCheckId.outboundConnectivity];
+          if (d3 != null) {
+            outboundStatusTimeline.add(d3.status);
+          }
+        },
+      );
+
+      await Future<void>.delayed(const Duration(milliseconds: 30));
+      expect(
+        outboundStatusTimeline,
+        isNot(contains(HealthStatus.failed)),
+      );
+      expect(outboundStatusTimeline.last, HealthStatus.running);
+
+      env.e2eCompleter!.complete(
+        const EndToEndProbeObservation(
+          exitCountryCode: 'HK',
+          observedInCore: true,
+          matchedLeafProxy: 'HK-VIP-SecretNode-99',
+        ),
+      );
+
+      final report = await runFuture;
+      expect(
+        outboundStatusTimeline,
+        isNot(contains(HealthStatus.failed)),
+      );
+      expect(
+        report.checkById(HealthCheckId.outboundConnectivity)!.status,
+        HealthStatus.warning,
+      );
+    });
+
+    test(
+        'P2-#4: fallback probe prefers non-Cloudflare endpoint when primary testUrl is Cloudflare',
+        () async {
+      final env = _FakeProbeEnvironment(
+        configSnapshot: snapshotWithGroups(
+          currentGroupName: 'Proxy',
+          selectedMap: const {'Proxy': 'HK-VIP-SecretNode-99'},
+          testUrl: 'https://cp.cloudflare.com/generate_204',
+          groups: const [
+            Group(
+              type: GroupType.Selector,
+              name: 'Proxy',
+              now: 'HK-VIP-SecretNode-99',
+              all: [Proxy(name: 'HK-VIP-SecretNode-99', type: 'Trojan')],
+            ),
+          ],
+        ),
+        delayResults: const {
+          'DIRECT': DelayTestResult(40),
+        },
+        onTestProxyDelay: (proxyName, testUrl, callIndex) {
+          if (proxyName == 'DIRECT') return const DelayTestResult(40);
+          if (testUrl.contains('cloudflare.com')) {
+            return const DelayTestResult(-1, reason: 'testFailed');
+          }
+          return const DelayTestResult(165);
+        },
+      );
+
+      final report = await HealthRunner(env).run();
+      final d3 = report.checkById(HealthCheckId.outboundConnectivity)!;
+
+      expect(d3.status, HealthStatus.passed);
+      expect(d3.delayMs, 165);
+      expect(env.recordedOutboundTestUrls, hasLength(3));
+      expect(
+        Uri.parse(env.recordedOutboundTestUrls.last).host,
+        isNot('cp.cloudflare.com'),
+      );
+    });
+
+    test(
+        'P2-#4: D3 retry loop clamps timeouts and skips remaining retries within 6500ms budget',
+        () async {
+      final env = _FakeProbeEnvironment(
+        delayResults: const {'DIRECT': DelayTestResult(30)},
+        e2eObservation: const EndToEndProbeObservation(
+          exitCountryCode: 'HK',
+          observedInCore: true,
+          matchedLeafProxy: 'HK-VIP-SecretNode-99',
+        ),
+      )..onTestProxyDelayWithTimeout =
+          (proxyName, testUrl, callIndex, timeout) async {
+        if (proxyName == 'DIRECT') return const DelayTestResult(30);
+        if (callIndex == 0) {
+          await Future<void>.delayed(const Duration(milliseconds: 3000));
+          return const DelayTestResult(-1, reason: 'timeout');
+        }
+        await Future<void>.delayed(const Duration(milliseconds: 2600));
+        return const DelayTestResult(-1, reason: 'timeout');
+      };
+
+      final report = await HealthRunner(env).run();
+      final d3 = report.checkById(HealthCheckId.outboundConnectivity)!;
+
+      expect(d3.status, HealthStatus.warning);
+      // Primary + at most 1 retry because elapsed (~5600ms) leaves < 1200ms budget
+      expect(env.recordedOutboundTestUrls.length, lessThanOrEqualTo(2));
+      expect(env.recordedOutboundTimeouts.length, 2);
+      expect(
+        env.recordedOutboundTimeouts[1].inMilliseconds,
+        lessThanOrEqualTo(3500),
+      );
+    });
+
+    test(
+        'P1-#1 & P1-#2: computeHealthVerdict refuses E2E rescue when leaf is DIRECT, null, or mismatched',
+        () {
+      List<HealthCheckResult> checksForE2e({
+        required String reasonCode,
+        String? e2eNode,
+        HealthStatus e2eStatus = HealthStatus.passed,
+      }) =>
+          [
+            const HealthCheckResult(
+              id: HealthCheckId.directConnectivity,
+              status: HealthStatus.passed,
+              elapsedMs: 40,
+              reasonCode: 'ok',
+              delayMs: 40,
+            ),
+            const HealthCheckResult(
+              id: HealthCheckId.outboundConnectivity,
+              status: HealthStatus.failed,
+              elapsedMs: 480,
+              reasonCode: 'outboundFailed',
+              nodeName: 'Node-A',
+            ),
+            HealthCheckResult(
+              id: HealthCheckId.endToEndConnectivity,
+              status: e2eStatus,
+              elapsedMs: 300,
+              reasonCode: reasonCode,
+              nodeName: e2eNode,
+            ),
+          ];
+
+      for (final unverified in [
+        checksForE2e(
+          reasonCode: 'tunBypassedSystemProxyOk',
+          e2eNode: 'DIRECT',
+          e2eStatus: HealthStatus.warning,
+        ),
+        checksForE2e(reasonCode: 'ok', e2eNode: null),
+        checksForE2e(reasonCode: 'ok', e2eNode: 'Node-B'),
+      ]) {
+        final verdict = computeHealthVerdict(
+          unverified,
+          mode: Mode.rule,
+          activeNodeName: 'Node-A',
+        );
+        expect(verdict.code, 'outboundNodeFailed');
+        expect(verdict.severity, HealthVerdictSeverity.failed);
+      }
     });
   });
 }
