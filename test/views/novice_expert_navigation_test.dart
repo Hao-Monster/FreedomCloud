@@ -409,7 +409,12 @@ void main() {
     expect(toggleFinder, findsOneWidget);
     expect(find.text('大佬模式'), findsOneWidget);
     expect(find.text('小白模式'), findsNothing);
-    expect(find.byIcon(Icons.expand_more_rounded), findsOneWidget);
+    expect(find.byIcon(Icons.expand_more_rounded), findsNothing);
+    expect(find.byIcon(Icons.expand_less_rounded), findsNothing);
+    expect(
+      find.descendant(of: toggleFinder, matching: find.byType(Icon)),
+      findsNothing,
+    );
     final collapsedToggleTop = tester.getTopLeft(toggleFinder).dy;
     expect(
       collapsedToggleTop,
@@ -430,7 +435,12 @@ void main() {
     expect(find.text('设置'), findsOneWidget);
     expect(find.text('小白模式'), findsOneWidget);
     expect(find.text('大佬模式'), findsNothing);
-    expect(find.byIcon(Icons.expand_less_rounded), findsOneWidget);
+    expect(find.byIcon(Icons.expand_less_rounded), findsNothing);
+    expect(find.byIcon(Icons.expand_more_rounded), findsNothing);
+    expect(
+      find.descendant(of: toggleFinder, matching: find.byType(Icon)),
+      findsNothing,
+    );
 
     final expandedToggleTop = tester.getTopLeft(toggleFinder).dy;
     expect(expandedToggleTop, closeTo(collapsedToggleTop, 0.01));
@@ -1325,6 +1335,10 @@ void main() {
       expect(find.text('代理'), findsOneWidget);
       expect(find.text('购买'), findsOneWidget);
       expect(find.text('大佬模式'), findsOneWidget);
+      expect(
+        find.descendant(of: toggleFinder, matching: find.byType(Icon)),
+        findsNothing,
+      );
       expect(find.text('仪表盘'), findsNothing);
       expect(find.text('日志'), findsNothing);
       expect(find.text('设置'), findsNothing);
@@ -1343,6 +1357,10 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('小白模式'), findsOneWidget);
+      expect(
+        find.descendant(of: toggleFinder, matching: find.byType(Icon)),
+        findsNothing,
+      );
       expect(find.text('日志'), findsOneWidget);
       expect(tester.getTopLeft(toggleFinder).dy, closeTo(collapsedToggleTop, 0.01));
 

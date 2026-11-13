@@ -418,7 +418,6 @@ class CommonNavigationBar extends ConsumerWidget {
                               key: const ValueKey(
                                   'navigation-expert-mode-toggle'),
                               expanded: expertExpanded,
-                              showLabel: true,
                               onPressed: () => toggleExpertNavigationMode(ref),
                             ),
                             for (var i = 0; i < expandedItems.length; i++)
@@ -467,23 +466,25 @@ class _NavigationModeToggleButton extends StatelessWidget {
   const _NavigationModeToggleButton({
     super.key,
     required this.expanded,
-    required this.showLabel,
     required this.onPressed,
   });
 
   final bool expanded;
-  final bool showLabel;
   final VoidCallback onPressed;
 
   @override
   Widget build(BuildContext context) {
     final labelText =
         expanded ? appLocalizations.noviceMode : appLocalizations.expertMode;
-    final iconData =
-        expanded ? Icons.expand_less_rounded : Icons.expand_more_rounded;
     final colors = context.colorScheme;
-    final textStyle = context.textTheme.labelLarge?.copyWith(
+    final isDark = colors.brightness == Brightness.dark;
+    final hairline = freedomNetHairlineColor(colors);
+    final pillBg = colors.surfaceContainerHighest.withValues(
+      alpha: isDark ? (expanded ? 0.55 : 0.38) : (expanded ? 0.65 : 0.45),
+    );
+    final textStyle = context.textTheme.labelMedium?.copyWith(
       color: colors.onSurfaceVariant,
+      fontWeight: FontWeight.w600,
     );
 
     return Semantics(
@@ -492,48 +493,46 @@ class _NavigationModeToggleButton extends StatelessWidget {
       toggled: expanded,
       label: labelText,
       child: Padding(
-        padding: const EdgeInsets.only(top: 6, bottom: 8),
+        padding: const EdgeInsets.only(top: 4, bottom: 12, left: 4, right: 4),
         child: Tooltip(
           excludeFromSemantics: true,
           message: labelText,
-          child: InkWell(
-            borderRadius: BorderRadius.circular(16),
-            onTap: onPressed,
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
-              child: ExcludeSemantics(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Container(
-                      width: 56,
-                      height: 32,
-                      decoration: BoxDecoration(
-                        color: colors.surfaceContainerHighest
-                            .withValues(alpha: expanded ? 0.55 : 0.35),
-                        borderRadius: BorderRadius.circular(16),
-                      ),
-                      alignment: Alignment.center,
-                      child: Icon(
-                        iconData,
-                        size: 24,
-                        color: colors.onSurfaceVariant,
+          child: Material(
+            color: pillBg,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(10),
+              side: BorderSide(color: hairline),
+            ),
+            clipBehavior: Clip.antiAlias,
+            child: InkWell(
+              borderRadius: BorderRadius.circular(10),
+              splashColor: colors.primary.withValues(alpha: 0.12),
+              hoverColor: colors.primary.withValues(alpha: 0.06),
+              onTap: onPressed,
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(
+                  minWidth: 64,
+                  maxWidth: 88,
+                  minHeight: 30,
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 6,
+                  ),
+                  child: ExcludeSemantics(
+                    child: Center(
+                      widthFactor: 1.0,
+                      heightFactor: 1.0,
+                      child: Text(
+                        labelText,
+                        style: textStyle,
+                        textAlign: TextAlign.center,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
                       ),
                     ),
-                    if (showLabel) ...[
-                      const SizedBox(height: 4),
-                      ConstrainedBox(
-                        constraints: const BoxConstraints(maxWidth: 88),
-                        child: Text(
-                          labelText,
-                          style: textStyle,
-                          textAlign: TextAlign.center,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                    ],
-                  ],
+                  ),
                 ),
               ),
             ),
