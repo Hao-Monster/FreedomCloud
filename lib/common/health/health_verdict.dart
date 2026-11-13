@@ -87,6 +87,10 @@ HealthVerdict computeHealthVerdict(
   final outboundStatus = get(HealthCheckId.outboundConnectivity)?.status;
   final e2eResult = get(HealthCheckId.endToEndConnectivity);
   final e2eStatus = e2eResult?.status;
+  final outboundProvenByE2e =
+      (e2eStatus == HealthStatus.passed && e2eResult?.reasonCode == 'ok') ||
+          (e2eStatus == HealthStatus.warning &&
+              e2eResult?.reasonCode == 'tunBypassedSystemProxyOk');
   final uplinkProvenByProxy = outboundStatus == HealthStatus.passed ||
       outboundStatus == HealthStatus.warning ||
       e2eStatus == HealthStatus.passed ||
@@ -103,7 +107,7 @@ HealthVerdict computeHealthVerdict(
   }
 
   // Priority 7: Direct network OK/skipped, active outbound node failed
-  if (failed(HealthCheckId.outboundConnectivity)) {
+  if (failed(HealthCheckId.outboundConnectivity) && !outboundProvenByE2e) {
     final outbound = get(HealthCheckId.outboundConnectivity)!;
     return HealthVerdict(
       code: 'outboundNodeFailed',
@@ -183,6 +187,20 @@ HealthVerdict computeHealthVerdict(
         mode: mode,
       );
     }
+  }
+  if (failed(HealthCheckId.outboundConnectivity) && outboundProvenByE2e) {
+    return HealthVerdict(
+      code: 'healthyWithWarnings',
+      severity: HealthVerdictSeverity.warning,
+      primaryCheckId: HealthCheckId.outboundConnectivity,
+      primaryAction: null,
+      activeNodeName:
+          activeNodeName ?? get(HealthCheckId.outboundConnectivity)?.nodeName,
+      outboundDelayMs: outboundDelayMs,
+      directDelayMs: directDelayMs,
+      exitCountryCode: exitCountryCode,
+      mode: mode,
+    );
   }
   if (failed(HealthCheckId.directConnectivity) && uplinkProvenByProxy) {
     return HealthVerdict(

@@ -1145,6 +1145,14 @@
       }
     }
   },
+  "healthDetailOutboundProbeFallbackOk": "节点 {node} 测速地址受限，但端到端实测已连通",
+  "@healthDetailOutboundProbeFallbackOk": {
+    "placeholders": {
+      "node": {
+        "type": "String"
+      }
+    }
+  },
   "healthDetailE2eVerified": "已验证经过代理{exitPart}",
   "@healthDetailE2eVerified": {
     "placeholders": {

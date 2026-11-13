@@ -68,6 +68,11 @@ class _TestHealthEnvironment implements HealthProbeEnvironment {
     DateTime? initialClock,
     this.outboundDelay = const DelayTestResult(68),
     this.tunStatus,
+    this.e2e = const EndToEndProbeObservation(
+      exitCountryCode: 'SG',
+      observedInCore: true,
+      matchedLeafProxy: 'SG-01',
+    ),
   }) : clock = initialClock ?? DateTime(2026, 11, 1, 14, 5, 10);
 
   DateTime clock;
@@ -80,11 +85,7 @@ class _TestHealthEnvironment implements HealthProbeEnvironment {
   int mixedPort = 7890;
   WindowsSystemProxySnapshot? windowsProxy;
   int subscriptionExpireSec = 1796000000;
-  EndToEndProbeObservation? e2e = const EndToEndProbeObservation(
-    exitCountryCode: 'SG',
-    observedInCore: true,
-    matchedLeafProxy: 'SG-01',
-  );
+  EndToEndProbeObservation? e2e;
   Completer<DelayTestResult>? outboundGate;
   int runCount = 0;
 
@@ -382,7 +383,8 @@ void main() {
     final gate = Completer<DelayTestResult>();
     env
       ..clock = DateTime(2026, 11, 1, 14, 9, 45)
-      ..outboundGate = gate;
+      ..outboundGate = gate
+      ..e2e = null;
 
     await tester.tap(find.byKey(const ValueKey('health-recheck-button')));
     await tester.pump();
@@ -418,6 +420,7 @@ void main() {
 
     final env = _TestHealthEnvironment(
       outboundDelay: const DelayTestResult(-1, reason: 'error'),
+      e2e: null,
     );
     _seedTestAppState();
 
@@ -877,7 +880,8 @@ void main() {
     final run2Gate = Completer<DelayTestResult>();
     reopenEnv
       ..clock = DateTime(2026, 11, 1, 15, 5, 30)
-      ..outboundGate = run2Gate;
+      ..outboundGate = run2Gate
+      ..e2e = null;
 
     // Close Sheet #1 at t=0ms (starts 200ms reverse transition; Sheet #1 is NOT disposed yet!)
     await tester.tap(find.byType(CloseButton));
@@ -1076,6 +1080,48 @@ void main() {
 
     expect(find.text('连接正常'), findsOneWidget);
     expect(find.textContaining('11:30:05'), findsOneWidget);
+  });
+
+  testWidgets(
+      'when D3 URLTest fails but D4 E2E probe succeeds via proxy, UI shows warning instead of false outbound failure',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(960, 900));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    final env = _TestHealthEnvironment(
+      outboundDelay: const DelayTestResult(-1, reason: 'testFailed'),
+    );
+    _seedTestAppState();
+
+    await tester.pumpWidget(
+      _wrapWithApp(
+        env: env,
+        viewSize: const Size(460, 900),
+        child: const HealthCheckView(type: SheetType.page),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('本机网络正常，但当前节点无法连通外网'), findsNothing);
+    expect(find.text('连接可用，但存在需关注的告警项'), findsOneWidget);
+    expect(find.textContaining('SG-01'), findsWidgets);
+    expect(find.textContaining('SG'), findsWidgets);
+
+    final outboundRow = find.byKey(const ValueKey('health-row-outboundConnectivity'));
+    await tester.scrollUntilVisible(
+      outboundRow,
+      120,
+      scrollable: find.byType(Scrollable).first,
+    );
+    expect(find.textContaining('测速地址受限，但端到端实测已连通'), findsOneWidget);
+
+    final e2eRow = find.byKey(const ValueKey('health-row-endToEndConnectivity'));
+    await tester.scrollUntilVisible(
+      e2eRow,
+      120,
+      scrollable: find.byType(Scrollable).first,
+    );
+    expect(find.textContaining('已验证经过代理'), findsOneWidget);
   });
 }
 

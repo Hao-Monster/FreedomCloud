@@ -3,6 +3,8 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
 
+import 'package:flclashx/common/delay_test_coordinator.dart';
+import 'package:flclashx/common/design_system.dart';
 import 'package:flclashx/common/health/health_environment.dart';
 import 'package:flclashx/common/health/health_models.dart';
 import 'package:flclashx/common/health/health_verdict.dart';
@@ -24,6 +26,11 @@ class HealthRunner {
     'http://connectivitycheck.platform.hicloud.com/generate_204',
     'http://connect.rom.miui.com/generate_204',
     'http://www.msftconnecttest.com/connecttest.txt',
+  ];
+
+  static const List<String> outboundFallbackProbeUrls = [
+    'https://cp.cloudflare.com/generate_204',
+    'http://cp.cloudflare.com/generate_204',
   ];
 
   static const List<String> systemDnsProbeHosts = [
@@ -1124,26 +1131,67 @@ class HealthRunner {
           );
         }
 
-        final reqId = 'hc-outbound-$seq';
-        token.register(() => environment.cancelProxyDelay(reqId));
         final watch = Stopwatch()..start();
-        final url = cfg.resolveGroupTestUrl(group.testUrl);
-        try {
-          final res = await raceCancel(
+        final primaryUrl = cfg.resolveGroupTestUrl(group.testUrl);
+
+        Future<DelayTestResult> runOutboundAttempt(
+          String targetUrl,
+          String attemptReqId,
+          Duration attemptTimeout,
+        ) {
+          if (token.isCancelled) {
+            throw const _HealthCancelledException();
+          }
+          token.register(() => environment.cancelProxyDelay(attemptReqId));
+          return raceCancel(
             environment
                 .testProxyDelay(
                   proxyName: group.name,
-                  testUrl: url,
-                  requestId: reqId,
-                  timeout: const Duration(seconds: 5),
+                  testUrl: targetUrl,
+                  requestId: attemptReqId,
+                  timeout: attemptTimeout,
                 )
-                .timeout(const Duration(seconds: 6)),
+                .timeout(attemptTimeout + const Duration(seconds: 1)),
           );
+        }
+
+        bool shouldRetryFastFailure(DelayTestResult r) =>
+            r.value <= 0 &&
+            r.reason != 'overloaded' &&
+            r.reason != 'notFound' &&
+            r.reason != 'deadlineExceeded';
+
+        try {
+          var res = await runOutboundAttempt(
+            primaryUrl,
+            'hc-outbound-$seq',
+            const Duration(seconds: 5),
+          );
+          if (shouldRetryFastFailure(res) && watch.elapsedMilliseconds < 4500) {
+            res = await runOutboundAttempt(
+              primaryUrl,
+              'hc-outbound-$seq-r1',
+              const Duration(seconds: 4),
+            );
+          }
+          if (shouldRetryFastFailure(res) && watch.elapsedMilliseconds < 5500) {
+            final fallbackUrl = outboundFallbackProbeUrls.firstWhere(
+              (u) => u != primaryUrl,
+              orElse: () => '',
+            );
+            if (fallbackUrl.isNotEmpty) {
+              res = await runOutboundAttempt(
+                fallbackUrl,
+                'hc-outbound-$seq-r2',
+                const Duration(seconds: 4),
+              );
+            }
+          }
           final ms = watch.elapsedMilliseconds;
           if (res.value > 0) {
             resolvedOutboundDelay = res.value;
             final detail = '$leaf · ${res.value} ms';
-            if (res.value <= 300) {
+            if (res.value <= kLatencyFastMaxMs) {
               return HealthCheckResult(
                 id: HealthCheckId.outboundConnectivity,
                 status: HealthStatus.passed,
@@ -1158,8 +1206,7 @@ class HealthRunner {
               id: HealthCheckId.outboundConnectivity,
               status: HealthStatus.warning,
               elapsedMs: ms,
-              reasonCode:
-                  res.value <= 800 ? 'outboundSlow' : 'outboundVerySlow',
+              reasonCode: 'outboundVerySlow',
               nodeName: leaf,
               delayMs: res.value,
               localDetail: detail,
@@ -1241,6 +1288,12 @@ class HealthRunner {
       record(d3);
 
       // Phase 3: End-to-End Verification (D4)
+      const structuralD3Failures = {
+        'outboundSelectedReject',
+        'outboundGroupMissing',
+        'outboundGroupLoop',
+        'outboundNotFound',
+      };
       markRunning(const [HealthCheckId.endToEndConnectivity]);
       String? exitCountryCode;
       HealthCheckResult d4;
@@ -1272,7 +1325,9 @@ class HealthRunner {
           elapsedMs: 0,
           reasonCode: 'takeoverFailed',
         );
-      } else if (d3.status.isFailure) {
+      } else if (d3.status.isFailure &&
+          (d1.status.isFailure ||
+              structuralD3Failures.contains(d3.reasonCode))) {
         d4 = const HealthCheckResult(
           id: HealthCheckId.endToEndConnectivity,
           status: HealthStatus.skipped,
@@ -1465,6 +1520,20 @@ class HealthRunner {
             }
           }
         }
+      }
+      final e2eProvesProxyOutbound =
+          (d4.status == HealthStatus.passed && d4.reasonCode == 'ok') ||
+              (d4.status == HealthStatus.warning &&
+                  d4.reasonCode == 'tunBypassedSystemProxyOk');
+      if (d3.status.isFailure && e2eProvesProxyOutbound) {
+        state[HealthCheckId.outboundConnectivity] = HealthCheckResult(
+          id: HealthCheckId.outboundConnectivity,
+          status: HealthStatus.warning,
+          elapsedMs: d3.elapsedMs,
+          reasonCode: 'outboundProbeFallbackOk',
+          nodeName: d3.nodeName ?? resolvedActiveLeaf,
+          localDetail: d3.localDetail,
+        );
       }
       record(d4);
 

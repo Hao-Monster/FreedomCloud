@@ -1529,5 +1529,13 @@
   "brandPillarModesTitle": "Dual-Mode Cockpit · Zero Friction",
   "brandPillarModesBody": "Novice Mode keeps everyday connection effortless with seamless TUN & system proxy, while Expert Mode unlocks full routing, connection, and diagnostic control.",
   "brandPillarServiceTitle": "Transparent Quota · Instant Activation",
-  "brandPillarServiceBody": "Track data quota, remaining balance, and expiry at a glance, with instant gift-card verification, multi-profile sync, and dedicated support."
+  "brandPillarServiceBody": "Track data quota, remaining balance, and expiry at a glance, with instant gift-card verification, multi-profile sync, and dedicated support.",
+  "healthDetailOutboundProbeFallbackOk": "Node {node} failed delay probe, but live E2E traffic succeeded",
+  "@healthDetailOutboundProbeFallbackOk": {
+    "placeholders": {
+      "node": {
+        "type": "String"
+      }
+    }
+  }
 }

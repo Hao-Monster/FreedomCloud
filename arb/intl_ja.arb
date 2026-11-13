@@ -1335,5 +1335,13 @@
   "brandPillarModesTitle": "デュアルモード · 迷わず使える操作性",
   "brandPillarModesBody": "「初心者モード」でTUNとシステムプロキシをシームレスに自動連携。「エキスパートモード」ではルーティングや通信診断を自在に管理できます。",
   "brandPillarServiceTitle": "明確な利用状況 · スムーズな有効化",
-  "brandPillarServiceBody": "通信量・残量・有効期限をひと目で把握。ギフトカード確認・引き換え、複数プロファイル同期、サポート窓口を備えています。"
+  "brandPillarServiceBody": "通信量・残量・有効期限をひと目で把握。ギフトカード確認・引き換え、複数プロファイル同期、サポート窓口を備えています。",
+  "healthDetailOutboundProbeFallbackOk": "ノード {node} の遅延プローブは失敗しましたが、実通信は正常です",
+  "@healthDetailOutboundProbeFallbackOk": {
+    "placeholders": {
+      "node": {
+        "type": "String"
+      }
+    }
+  }
 }

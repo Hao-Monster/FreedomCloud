@@ -184,6 +184,8 @@ String healthCheckItemDetail(HealthCheckResult result, AppLocalizations l10n) {
         'outboundSlow' || 'outboundVerySlow' => result.delayMs != null
             ? '${l10n.healthDetailOutboundSlow(result.nodeName ?? '-')} (${result.delayMs} ms)'
             : l10n.healthDetailOutboundSlow(result.nodeName ?? '-'),
+        'outboundProbeFallbackOk' =>
+          l10n.healthDetailOutboundProbeFallbackOk(result.nodeName ?? '-'),
         'outboundSelectedDirect' => l10n.healthDetailOutboundDirectSelected,
         'outboundSelectedReject' => l10n.healthDetailOutboundRejectSelected,
         'coreDelayBusy' => l10n.healthDetailCoreDelayBusy,
@@ -606,6 +608,12 @@ class _VerdictBanner extends StatelessWidget {
           verdict.outboundDelayMs!,
           exitPart,
         );
+      } else if (verdict.activeNodeName != null) {
+        final cc = verdict.exitCountryCode;
+        final exitPart = (cc != null && cc.length == 2)
+            ? l10n.healthExitCountryPart('${_countryCodeToFlag(cc)} $cc')
+            : '';
+        subtitle = '${verdict.activeNodeName!}$exitPart';
       }
     }
 

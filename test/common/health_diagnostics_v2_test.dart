@@ -34,6 +34,7 @@ class _FakeProbeEnvironment
     ),
     this.e2eObservationByDirective,
     this.lastFailedProbeObservedInCore = false,
+    this.onTestProxyDelay,
   })  : _now = initialNow ?? DateTime.utc(2026, 11, 1, 10, 0, 0),
         _configSnapshot = configSnapshot ?? _defaultHealthySnapshot(),
         _delayResults = delayResults ??
@@ -82,6 +83,10 @@ class _FakeProbeEnvironment
   Completer<EndToEndProbeObservation?>? e2eCompleter;
 
   final List<String> cancelledRequestIds = [];
+  final List<String> recordedOutboundTestUrls = [];
+  DelayTestResult Function(String proxyName, String testUrl, int callIndex)?
+      onTestProxyDelay;
+  int _outboundDelayCallCount = 0;
   String? lastExplicitProxyDirective;
   final List<String?> explicitProxyDirectives = [];
   bool e2eCancelObserved = false;
@@ -184,6 +189,14 @@ class _FakeProbeEnvironment
     required String requestId,
     required Duration timeout,
   }) async {
+    if (proxyName != 'DIRECT') {
+      recordedOutboundTestUrls.add(testUrl);
+    }
+    if (onTestProxyDelay != null) {
+      final callIndex =
+          proxyName == 'DIRECT' ? 0 : _outboundDelayCallCount++;
+      return onTestProxyDelay!(proxyName, testUrl, callIndex);
+    }
     final customCompleter = delayCompleterByProxy?[proxyName];
     if (customCompleter != null) {
       return customCompleter.future;
@@ -533,7 +546,7 @@ void main() {
       expect(deadNodeReport.verdict.primaryAction, HealthAction.openProxies);
       expect(
         deadNodeReport.checkById(HealthCheckId.endToEndConnectivity)?.status,
-        HealthStatus.skipped,
+        HealthStatus.failed,
       );
     });
 
@@ -1665,6 +1678,243 @@ void main() {
       expect(credManual.localDetail, '127.0.0.1:10809');
       expect(credManual.localDetail, isNot(contains('secretUser')));
       expect(credManual.localDetail, isNot(contains('secretPass')));
+    });
+  });
+
+  group('Outbound false-negative resilience & E2E cross-validation', () {
+    test('transient testFailed on D3 recovers on immediate retry of primary URL',
+        () async {
+      final env = _FakeProbeEnvironment(
+        onTestProxyDelay: (proxyName, testUrl, callIndex) {
+          if (proxyName == 'DIRECT') return const DelayTestResult(52);
+          if (callIndex == 0) {
+            return const DelayTestResult(-1, reason: 'testFailed');
+          }
+          return const DelayTestResult(357);
+        },
+      );
+      final report = await HealthRunner(env).run();
+      final d3 = report.checkById(HealthCheckId.outboundConnectivity)!;
+      expect(d3.status, HealthStatus.passed);
+      expect(d3.reasonCode, 'ok');
+      expect(d3.delayMs, 357);
+      expect(report.verdict.code, 'healthy');
+      expect(env.recordedOutboundTestUrls, [
+        'https://www.gstatic.com/generate_204',
+        'https://www.gstatic.com/generate_204',
+      ]);
+    });
+
+    test('primary URL testFailed twice falls back to secondary 204 URL and passes',
+        () async {
+      final env = _FakeProbeEnvironment(
+        onTestProxyDelay: (proxyName, testUrl, callIndex) {
+          if (proxyName == 'DIRECT') return const DelayTestResult(48);
+          if (testUrl == 'https://cp.cloudflare.com/generate_204') {
+            return const DelayTestResult(412);
+          }
+          return const DelayTestResult(-1, reason: 'testFailed');
+        },
+      );
+      final report = await HealthRunner(env).run();
+      final d3 = report.checkById(HealthCheckId.outboundConnectivity)!;
+      expect(d3.status, HealthStatus.passed);
+      expect(d3.reasonCode, 'ok');
+      expect(d3.delayMs, 412);
+      expect(report.verdict.code, 'healthy');
+      expect(env.recordedOutboundTestUrls, [
+        'https://www.gstatic.com/generate_204',
+        'https://www.gstatic.com/generate_204',
+        'https://cp.cloudflare.com/generate_204',
+      ]);
+    });
+
+    test('D3 latency threshold aligns with kLatencyFastMaxMs (2000 ms)',
+        () async {
+      for (final ms in [357, 2000]) {
+        final fastEnv = _FakeProbeEnvironment(
+          delayResults: {
+            'DIRECT': const DelayTestResult(45),
+            'Proxy': DelayTestResult(ms),
+          },
+        );
+        final report = await HealthRunner(fastEnv).run();
+        final d3 = report.checkById(HealthCheckId.outboundConnectivity)!;
+        expect(d3.status, HealthStatus.passed);
+        expect(d3.reasonCode, 'ok');
+        expect(report.verdict.code, 'healthy');
+      }
+
+      final slowEnv = _FakeProbeEnvironment(
+        delayResults: const {
+          'DIRECT': DelayTestResult(45),
+          'Proxy': DelayTestResult(2001),
+        },
+      );
+      final slowReport = await HealthRunner(slowEnv).run();
+      final slowD3 = slowReport.checkById(HealthCheckId.outboundConnectivity)!;
+      expect(slowD3.status, HealthStatus.warning);
+      expect(slowD3.reasonCode, 'outboundVerySlow');
+      expect(slowReport.verdict.code, 'healthyWithWarnings');
+    });
+
+    test(
+        'when all D3 probes fail but D1 passes, D4 runs and real proxy E2E rescues verdict from outboundNodeFailed',
+        () async {
+      final env = _FakeProbeEnvironment(
+        delayResults: const {
+          'DIRECT': DelayTestResult(62),
+          'Proxy': DelayTestResult(-1, reason: 'testFailed'),
+        },
+        e2eObservation: const EndToEndProbeObservation(
+          exitCountryCode: 'US',
+          observedInCore: true,
+          matchedLeafProxy: 'US-BWG-02',
+        ),
+      );
+      final report = await HealthRunner(env).run();
+      final d3 = report.checkById(HealthCheckId.outboundConnectivity)!;
+      final d4 = report.checkById(HealthCheckId.endToEndConnectivity)!;
+      expect(d4.status, HealthStatus.passed);
+      expect(d4.reasonCode, 'ok');
+      expect(d3.status, HealthStatus.warning);
+      expect(d3.reasonCode, 'outboundProbeFallbackOk');
+      expect(report.verdict.code, 'healthyWithWarnings');
+      expect(report.verdict.code, isNot('outboundNodeFailed'));
+      expect(report.verdict.exitCountryCode, 'US');
+      expect(report.verdict.activeNodeName, 'HK-VIP-SecretNode-99');
+    });
+
+    test(
+        'guards against false rescue when D4 routes DIRECT by rule or bypasses Core',
+        () async {
+      final directRuleEnv = _FakeProbeEnvironment(
+        delayResults: const {
+          'DIRECT': DelayTestResult(60),
+          'Proxy': DelayTestResult(-1, reason: 'testFailed'),
+        },
+        e2eObservation: const EndToEndProbeObservation(
+          exitCountryCode: 'CN',
+          observedInCore: true,
+          matchedLeafProxy: 'DIRECT',
+        ),
+      );
+      final directRuleReport = await HealthRunner(directRuleEnv).run();
+      expect(
+        directRuleReport.checkById(HealthCheckId.outboundConnectivity)?.status,
+        HealthStatus.failed,
+      );
+      expect(directRuleReport.verdict.code, 'outboundNodeFailed');
+
+      final bypassedEnv = _FakeProbeEnvironment(
+        delayResults: const {
+          'DIRECT': DelayTestResult(60),
+          'Proxy': DelayTestResult(-1, reason: 'testFailed'),
+        },
+        e2eObservation: const EndToEndProbeObservation(
+          exitCountryCode: 'CN',
+          observedInCore: false,
+        ),
+      );
+      final bypassedReport = await HealthRunner(bypassedEnv).run();
+      expect(
+        bypassedReport.checkById(HealthCheckId.outboundConnectivity)?.status,
+        HealthStatus.failed,
+      );
+      expect(bypassedReport.verdict.code, 'outboundNodeFailed');
+    });
+
+    test(
+        'computeHealthVerdict returns healthyWithWarnings when raw D3 failed but D4 E2E ok',
+        () {
+      final checks = [
+        const HealthCheckResult(
+          id: HealthCheckId.profileSelected,
+          status: HealthStatus.passed,
+          elapsedMs: 1,
+          reasonCode: 'ok',
+        ),
+        const HealthCheckResult(
+          id: HealthCheckId.subscriptionHealth,
+          status: HealthStatus.passed,
+          elapsedMs: 1,
+          reasonCode: 'ok',
+        ),
+        const HealthCheckResult(
+          id: HealthCheckId.runtimeConfigLoaded,
+          status: HealthStatus.passed,
+          elapsedMs: 1,
+          reasonCode: 'ok',
+        ),
+        const HealthCheckResult(
+          id: HealthCheckId.coreResponsive,
+          status: HealthStatus.passed,
+          elapsedMs: 1,
+          reasonCode: 'ok',
+        ),
+        const HealthCheckResult(
+          id: HealthCheckId.proxyStarted,
+          status: HealthStatus.passed,
+          elapsedMs: 1,
+          reasonCode: 'ok',
+        ),
+        const HealthCheckResult(
+          id: HealthCheckId.tunTakeover,
+          status: HealthStatus.passed,
+          elapsedMs: 1,
+          reasonCode: 'tunReadyElevated',
+        ),
+        const HealthCheckResult(
+          id: HealthCheckId.systemProxyTakeover,
+          status: HealthStatus.skipped,
+          elapsedMs: 0,
+          reasonCode: 'systemProxyDisabledByPreference',
+        ),
+        const HealthCheckResult(
+          id: HealthCheckId.trafficTakeover,
+          status: HealthStatus.passed,
+          elapsedMs: 1,
+          reasonCode: 'takeoverTun',
+        ),
+        const HealthCheckResult(
+          id: HealthCheckId.directConnectivity,
+          status: HealthStatus.passed,
+          elapsedMs: 40,
+          reasonCode: 'ok',
+          delayMs: 40,
+        ),
+        const HealthCheckResult(
+          id: HealthCheckId.dnsResolution,
+          status: HealthStatus.passed,
+          elapsedMs: 5,
+          reasonCode: 'dnsFakeIpActive',
+        ),
+        const HealthCheckResult(
+          id: HealthCheckId.outboundConnectivity,
+          status: HealthStatus.failed,
+          elapsedMs: 481,
+          reasonCode: 'outboundFailed',
+          nodeName: 'Node-A',
+        ),
+        const HealthCheckResult(
+          id: HealthCheckId.endToEndConnectivity,
+          status: HealthStatus.passed,
+          elapsedMs: 320,
+          reasonCode: 'ok',
+          exitCountryCode: 'US',
+          nodeName: 'Node-A',
+        ),
+      ];
+      final verdict = computeHealthVerdict(
+        checks,
+        mode: Mode.rule,
+        activeNodeName: 'Node-A',
+        directDelayMs: 40,
+        exitCountryCode: 'US',
+      );
+      expect(verdict.code, 'healthyWithWarnings');
+      expect(verdict.severity, HealthVerdictSeverity.warning);
+      expect(verdict.primaryAction, isNull);
     });
   });
 }

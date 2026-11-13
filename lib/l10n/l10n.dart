@@ -8912,6 +8912,16 @@ class AppLocalizations {
       args: [],
     );
   }
+
+  /// `Node {node} failed delay probe, but live E2E traffic succeeded`
+  String healthDetailOutboundProbeFallbackOk(String node) {
+    return Intl.message(
+      'Node $node failed delay probe, but live E2E traffic succeeded',
+      name: 'healthDetailOutboundProbeFallbackOk',
+      desc: '',
+      args: [node],
+    );
+  }
 }
 
 class AppLocalizationDelegate extends LocalizationsDelegate<AppLocalizations> {
