@@ -2,6 +2,23 @@
 
 更新日期：2026-11-13。当前阶段是快速开发、快速迭代和部分功能预览。本文记录来源与验收边界；每次继续开发仍需核实实际 Git/PR/CI 状态，不能把历史报告视为当前通过证明。
 
+## 全量最新功能 Windows `amd64` 预览包交付（`315ece4b2905`，2026-11-13）
+
+- 构建来源与完整包含范围：基于本地 `development` 干净 `git archive` 快照 `315ece4b2905472470fadccd1f4c411f68e2ad4b`（代码提交 `44015ed43e4c451039454e9eef5d492989acbee8`，tree `c28d8105951e8885f90484f87aaa76a54e6d0476`），由独立隔离工具集 [`fcx-freedomnet-tools-20261113-r3`](file:///E:/Temp/fcx-freedomnet-tools-20261113-r3/Build-PerfOverhaul.ps1) 完成 15 阶段全栈同源重编，完整涵盖 `196889071d39` 之后全部 5 轮最新开发及全部历史本地特性（`a229588..44015ed4`）：
+  1. **方案 B · 机械光轨推杆代理开关（纯点击自动滑动）**（`44015ed4`）；
+  2. **`CF-优选直连` / `CF-优选域名` 及 CDN/Fake-IP 节点国家徽章识别（Go Core + Dart）**（`99410c85`）；
+  3. **桌面侧栏「小白模式 / 大佬模式」切换按钮去尖角图标精简**（`cbae3031`）；
+  4. **左上角品牌弹窗改为「自由云 · FreedomNet」品牌宣传并保留「设置 -> 关于」郑重声明与特别鸣谢**（`b4c2e07b`）；
+  5. **Windows Runner `uia_guard.cpp` 非读屏 `WM_GETOBJECT` 拦截 + 代理总览 `kValue` 进度语义隔离防 `(未响应)`/闪退**（`6a78972a`）；
+  6. **叠加既有完整特性**：门户绿底 `F` 全端品牌/任务栏/双态托盘图标（`19688907`）、`1~2000ms` 绿 / `>2000ms` 黄方案 B 永久保色延迟胶囊（`c77d301e`）、侧栏锚定展开（`3330ef37`）、泄露封堵与 UIA 降噪（`adef39f0`）、购买中心 V3 与 WiFi 漫游恢复（`a229588..d01ae1dc`）。
+- 预览包交付产物与校验（保留 `freedomnet-ui-196889071d39` 与 `freedomnet-ui-36d57861d3c6` 等历史可用包未覆盖）：
+  - 免安装 ZIP 包：[`FreedomCloud-windows-amd64-freedomnet-ui-315ece4b2905.zip`](file:///e:/CodeWorkstation/FlClashX/dist/FreedomCloud-windows-amd64-freedomnet-ui-315ece4b2905.zip)（`167,622,959` 字节，SHA256 `95d2b4fd9a11cc2065825a598df0a9b838f0e7b3695c1e1abbc8f47633982e5a`，73 文件往返解压校验 `PASS`）；
+  - 校验文件：[`FreedomCloud-windows-amd64-freedomnet-ui-315ece4b2905.zip.sha256`](file:///e:/CodeWorkstation/FlClashX/dist/FreedomCloud-windows-amd64-freedomnet-ui-315ece4b2905.zip.sha256)；
+  - 解压即用目录：[`FreedomCloud-windows-amd64-freedomnet-ui-315ece4b2905`](file:///e:/CodeWorkstation/FlClashX/dist/FreedomCloud-windows-amd64-freedomnet-ui-315ece4b2905)（含 [`BUILD-INFO.txt`](file:///e:/CodeWorkstation/FlClashX/dist/FreedomCloud-windows-amd64-freedomnet-ui-315ece4b2905/BUILD-INFO.txt)、[`COMPONENTS.json`](file:///e:/CodeWorkstation/FlClashX/dist/FreedomCloud-windows-amd64-freedomnet-ui-315ece4b2905/COMPONENTS.json)、[`CORE-PATCH.json`](file:///e:/CodeWorkstation/FlClashX/dist/FreedomCloud-windows-amd64-freedomnet-ui-315ece4b2905/CORE-PATCH.json)、[`PREVIEW-README.txt`](file:///e:/CodeWorkstation/FlClashX/dist/FreedomCloud-windows-amd64-freedomnet-ui-315ece4b2905/PREVIEW-README.txt)、[`SHA256SUMS.txt`](file:///e:/CodeWorkstation/FlClashX/dist/FreedomCloud-windows-amd64-freedomnet-ui-315ece4b2905/SHA256SUMS.txt)）；
+  - 构建报告：[`freedomnet-ui-build-315ece4b2905.json`](file:///e:/CodeWorkstation/FlClashX/dist/freedomnet-ui-build-315ece4b2905.json)（源码归档 SHA256 `e1846703b152056e914ca5199fba0f1c74bd5ff28c69f94ab350e1d46c6c26e7`，15 阶段与 `uia_guard.cpp.obj` / `tray_manager_plugin` / `proxy_plugin` 编译及 `tray-imports` 检查全绿）；
+  - 同源重编绑定哈希：`FlClashCore.exe`（`72,543,744` 字节）SHA256 `9f14f2de104f4a04ab38225a73fae3516d1df671ea50b72b2fed83b70616af5a`（与 `helperCompiledCoreSha256` 及 `CORE_SHA256` 严格一致）、`FlClashAgent.exe`（`1,336,320` 字节）SHA256 `23c8ca48190e95f12f6ee22ed24cb11653135c37f5c81c08be95eb61431056a5`、`FlClashHelperService.exe`（`1,262,080` 字节）SHA256 `493e6577f4d1875a39211664ca5aee5c164cb763b4b2b75ff28492f21487e9f0`、`FlClashX.exe`（`119,808` 字节）SHA256 `288ef261300494b2a9dbe0254cc354db35590608f24715e70d4da069d4a059cf`、`data/app.so`（`17,662,856` 字节）SHA256 `545c3bfe9ee06e5f3c3032f5e108020d81a2163c10606a5cb94aa92e4a1b5141`、`tray_manager_plugin.dll`（`111,616` 字节）SHA256 `6f8fbc540b6af0826205acf74fc5c2cdb119bcd65edd1a29e3d9438f08e6928f`、`proxy_plugin.dll`（`114,176` 字节）SHA256 `87d17fed821e488d1210c008c17c11d9ed3b0ab4958f3a029a966ccb1aab2fd5`。
+- 验收与运行边界：普通无签名免安装预览包（不含测试签名 Strict WFP 驱动/Broker）；宿主机实机运行 **NOT RUN（遵守协作规则未拉起候选程序或触碰现役代理/TUN/后台服务；因本版包含 Go Core 更新且 Core SHA256 已变化，用户在旧托盘右键完全“退出”并启动本包首次开启 TUN 时会按预期弹一次 UAC 对齐后台服务）**；远端推送 **NOT RUN** / PR 与合并 **NOT RUN** / 云端 CI **NOT RUN**。
+
 ## 代理总览页状态栏升级为「方案 B 机械光轨推杆开关（点击自动滑动）」（2026-11-13）
 
 - 需求与交互契约：保留并完整复用 [`NodeOverviewView`](file:///e:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart#L848-L873) 原有 `_toggleProxyMasterSwitch()`（含 `statusSwitchPendingProvider` / `statusStartCancelableProvider` / `_localProxyTogglePending` 及 `ValueKey('overview-proxy-toggle')`），将 [`_OverviewConnectionStatusBar`](file:///e:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart#L2566-L2764) 右侧普通按钮升级为方案 B「机械光轨推杆开关（Tactile Cyber-Switch Track）」。严格遵循用户指定的**纯点击触发（无手动拖拽手势）+ 自动左右滑动光轨动画**：单击开关或键盘 `Enter`/`Space` 激活后自动平滑滑动并点亮光轨开启代理，再次单击自动左滑复位关闭代理。
