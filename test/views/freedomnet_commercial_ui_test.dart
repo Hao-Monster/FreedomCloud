@@ -1,4 +1,7 @@
 import 'dart:async';
+import 'dart:io';
+import 'dart:typed_data';
+import 'dart:ui' as ui;
 
 import 'package:flclashx/clash/clash.dart';
 import 'package:flclashx/clash/interface.dart';
@@ -495,5 +498,176 @@ void main() {
     }
     tester.view.resetPhysicalSize();
     tester.view.resetDevicePixelRatio();
+  });
+
+  testWidgets(
+      'T6: Portal F brand mark (<span class="portal-brand-mark">F</span>) unifies FreedomNetBrandMark, taskbar app_icon.ico, and running/stopped tray icons',
+      (tester) async {
+    tester.view.physicalSize = const Size(1200, 820);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(
+      _buildTestApp(
+        locale: const Locale('zh', 'CN'),
+        home: _buildNavigationBarShell(),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final markFinder = find.byType(FreedomNetBrandMark);
+    expect(markFinder, findsOneWidget);
+
+    final container = tester.widget<Container>(
+      find
+          .descendant(
+            of: markFinder,
+            matching: find.byType(Container),
+          )
+          .first,
+    );
+    final box = container.decoration as BoxDecoration?;
+    expect(box, isNotNull);
+    expect(box!.color, equals(const Color(0xFF71D7A7)));
+    expect(box.gradient, isNull);
+    expect(box.borderRadius, equals(BorderRadius.circular(36 * (10.0 / 34.0))));
+
+    final customPaint = tester.widget<CustomPaint>(
+      find.descendant(
+        of: markFinder,
+        matching: find.byType(CustomPaint),
+      ),
+    );
+    expect(customPaint.painter, isNotNull);
+
+    final rgba = await tester.runAsync(() async {
+      final recorder = ui.PictureRecorder();
+      final canvas = Canvas(recorder);
+      customPaint.painter!.paint(canvas, const Size(68, 68));
+      final picture = recorder.endRecording();
+      final rendered = await picture.toImage(68, 68);
+      try {
+        final raw = await rendered.toByteData(format: ui.ImageByteFormat.rawRgba);
+        return raw?.buffer.asUint8List();
+      } finally {
+        rendered.dispose();
+        picture.dispose();
+      }
+    });
+    expect(rgba, isNotNull);
+    int idx(int x, int y) => (y * 68 + x) * 4;
+
+    // Pixel (29, 34) sits squarely on the bold dark-emerald F stem.
+    final stemOffset = idx(29, 34);
+    expect(rgba![stemOffset], equals(0x10));
+    expect(rgba[stemOffset + 1], equals(0x20));
+    expect(rgba[stemOffset + 2], equals(0x18));
+    expect(rgba[stemOffset + 3], equals(0xFF));
+
+    // Pixel (42, 44) in the bottom-right negative space must stay transparent.
+    final blankOffset = idx(42, 44);
+    expect(rgba[blankOffset + 3], equals(0));
+
+    // Tray routing contract.
+    expect(
+      utils.getTrayIconPath(
+        brightness: Brightness.dark,
+        isRunning: true,
+        isSystemDark: true,
+      ),
+      equals('assets/images/icon.ico'),
+    );
+    expect(
+      utils.getTrayIconPath(
+        brightness: Brightness.dark,
+        isRunning: false,
+        isSystemDark: true,
+      ),
+      equals('assets/images/icon_stop_white.ico'),
+    );
+    expect(
+      utils.getTrayIconPath(
+        brightness: Brightness.light,
+        isRunning: false,
+        isSystemDark: false,
+      ),
+      equals('assets/images/icon_stop_black.ico'),
+    );
+
+    Map<int, ({int offset, int size, int bpp})> parseIcoEntries(String path) {
+      final bytes = File(path).readAsBytesSync();
+      final data = ByteData.sublistView(bytes);
+      expect(data.getUint16(0, Endian.little), equals(0), reason: path);
+      expect(data.getUint16(2, Endian.little), equals(1), reason: path);
+      final count = data.getUint16(4, Endian.little);
+      final map = <int, ({int offset, int size, int bpp})>{};
+      for (var i = 0; i < count; i++) {
+        final base = 6 + i * 16;
+        final w = bytes[base] == 0 ? 256 : bytes[base];
+        final h = bytes[base + 1] == 0 ? 256 : bytes[base + 1];
+        expect(w, equals(h), reason: '$path frame $i should be square');
+        map[w] = (
+          offset: data.getUint32(base + 12, Endian.little),
+          size: data.getUint32(base + 8, Endian.little),
+          bpp: data.getUint16(base + 6, Endian.little),
+        );
+      }
+      return map;
+    }
+
+    Uint8List read32x32BgraPixels(String path) {
+      final bytes = File(path).readAsBytesSync();
+      final entries = parseIcoEntries(path);
+      expect(
+        entries.keys.toSet(),
+        containsAll(const [16, 20, 24, 28, 32, 40, 48, 64, 256]),
+        reason: '$path must contain full Windows DPI ladder + 256px frame',
+      );
+      final frame = entries[32]!;
+      expect(frame.bpp, equals(32));
+      // Skip 40-byte BITMAPINFOHEADER; XOR pixel rows are stored bottom-up.
+      final xorStart = frame.offset + 40;
+      return Uint8List.sublistView(bytes, xorStart, xorStart + 32 * 32 * 4);
+    }
+
+    (int r, int g, int b, int a) bgraPixel(Uint8List px, int x, int y) {
+      final dibRow = 31 - y;
+      final o = (dibRow * 32 + x) * 4;
+      return (px[o + 2], px[o + 1], px[o], px[o + 3]);
+    }
+
+    // Taskbar app_icon.ico and running tray icon.ico use filled #71D7A7 + #102018 F.
+    for (final filledPath in const [
+      'windows/runner/resources/app_icon.ico',
+      'assets/images/icon.ico',
+    ]) {
+      final px = read32x32BgraPixels(filledPath);
+      expect(bgraPixel(px, 0, 0).$4, equals(0), reason: '$filledPath corner');
+      final bg = bgraPixel(px, 7, 16);
+      expect(bg, equals((0x71, 0xD7, 0xA7, 0xFF)), reason: '$filledPath bg');
+      final hasDarkStem = [
+        for (var x = 10; x <= 15; x++) bgraPixel(px, x, 16),
+      ].any((p) => p.$4 > 200 && p.$1 < 0x30 && p.$2 < 0x40 && p.$3 < 0x30);
+      expect(hasDarkStem, isTrue, reason: '$filledPath dark F stem');
+    }
+
+    // Stopped tray icons use transparent interior + crisp monochrome rounded outline + F.
+    for (final stopSpec in const [
+      (path: 'assets/images/icon_stop_white.ico', isWhite: true),
+      (path: 'assets/images/icon_stop_black.ico', isWhite: false),
+    ]) {
+      final px = read32x32BgraPixels(stopSpec.path);
+      expect(bgraPixel(px, 7, 16).$4, equals(0),
+          reason: '${stopSpec.path} interior must stay transparent');
+      final hasOutline = [
+        for (var x = 1; x <= 4; x++) bgraPixel(px, x, 16),
+      ].any((p) => p.$4 > 200 && (stopSpec.isWhite ? p.$1 > 220 : p.$1 < 50));
+      expect(hasOutline, isTrue, reason: '${stopSpec.path} rounded outline');
+      final hasStem = [
+        for (var x = 10; x <= 15; x++) bgraPixel(px, x, 16),
+      ].any((p) => p.$4 > 200 && (stopSpec.isWhite ? p.$1 > 220 : p.$1 < 50));
+      expect(hasStem, isTrue, reason: '${stopSpec.path} monochrome F stem');
+    }
   });
 }

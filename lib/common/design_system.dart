@@ -22,6 +22,10 @@ const Color kLatencyMediumColor = Color(0xFFF59E0B);
 const Color kLatencyErrorColor = Color(0xFFEF4444);
 const int kLatencyFastMaxMs = 2000;
 
+const Color kPortalBrandMarkBg = Color(0xFF71D7A7);
+const Color kPortalBrandMarkFg = Color(0xFF102018);
+const double kPortalBrandMarkCornerRatio = 10.0 / 34.0;
+
 const List<String> kFreedomNetFontFallback = <String>[
   'Segoe UI Variable Text',
   'Segoe UI',
@@ -210,7 +214,7 @@ ThemeData buildFreedomNetThemeData({
   );
 }
 
-/// Bespoke geometric emblem for 自由云 / FreedomNet.
+/// Portal F brand emblem (`<span class="portal-brand-mark">F</span>`) for 自由云 / FreedomNet.
 class FreedomNetBrandMark extends StatelessWidget {
   const FreedomNetBrandMark({
     super.key,
@@ -221,34 +225,22 @@ class FreedomNetBrandMark extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final radius = size * 0.28;
+    final radius = size * kPortalBrandMarkCornerRatio;
     return Container(
       width: size,
       height: size,
       decoration: BoxDecoration(
+        color: kPortalBrandMarkBg,
         borderRadius: BorderRadius.circular(radius),
-        gradient: const LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [
-            Color(0xFF38BDF8),
-            Color(0xFF0284C7),
-            Color(0xFF1D4ED8),
-          ],
-        ),
-        border: Border.all(
-          color: Colors.white.withValues(alpha: 0.24),
-          width: 1,
-        ),
         boxShadow: [
           BoxShadow(
-            color: const Color(0xFF0EA5E9).withValues(alpha: 0.28),
-            blurRadius: size * 0.34,
-            offset: Offset(0, size * 0.1),
+            color: kPortalBrandMarkFg.withValues(alpha: 0.10),
+            blurRadius: size * 0.16,
+            offset: Offset(0, size * 0.05),
           ),
         ],
       ),
-      child: CustomPaint(
+      child: const CustomPaint(
         painter: _FreedomNetGlyphPainter(),
       ),
     );
@@ -256,50 +248,46 @@ class FreedomNetBrandMark extends StatelessWidget {
 }
 
 class _FreedomNetGlyphPainter extends CustomPainter {
+  const _FreedomNetGlyphPainter();
+
   @override
   void paint(Canvas canvas, Size size) {
     final w = size.width;
     final h = size.height;
+    final hF = h * 0.43;
+    final wF = hF * 0.58;
+    final stem = hF * 0.195;
+    final left = (w - wF) / 2.0 + w * 0.015;
+    final top = (h - hF) / 2.0;
+    final corner = Radius.circular(stem * 0.12);
 
-    final primaryStroke = Paint()
-      ..color = Colors.white
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = (w * 0.085).clamp(1.6, 4.2)
-      ..strokeCap = StrokeCap.round
-      ..strokeJoin = StrokeJoin.round;
+    final stemPath = Path()
+      ..addRRect(RRect.fromRectAndRadius(
+        Rect.fromLTWH(left, top, stem, hF),
+        corner,
+      ));
+    final topBarPath = Path()
+      ..addRRect(RRect.fromRectAndRadius(
+        Rect.fromLTWH(left, top, wF, stem),
+        corner,
+      ));
+    final midBarPath = Path()
+      ..addRRect(RRect.fromRectAndRadius(
+        Rect.fromLTWH(left, top + hF * 0.42, wF * 0.86, stem),
+        corner,
+      ));
 
-    final accentStroke = Paint()
-      ..color = Colors.white.withValues(alpha: 0.72)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = (w * 0.062).clamp(1.2, 3.0)
-      ..strokeCap = StrokeCap.round;
+    final fPath = Path.combine(
+      PathOperation.union,
+      Path.combine(PathOperation.union, stemPath, topBarPath),
+      midBarPath,
+    );
 
-    // Aerodynamic cloud-wing arc representing fast, borderless connectivity.
-    final cloudPath = Path()
-      ..moveTo(w * 0.24, h * 0.64)
-      ..lineTo(w * 0.68, h * 0.64)
-      ..arcToPoint(
-        Offset(w * 0.72, h * 0.42),
-        radius: Radius.circular(w * 0.14),
-        clockwise: false,
-      )
-      ..arcToPoint(
-        Offset(w * 0.44, h * 0.34),
-        radius: Radius.circular(w * 0.17),
-        clockwise: false,
-      )
-      ..arcToPoint(
-        Offset(w * 0.24, h * 0.64),
-        radius: Radius.circular(w * 0.16),
-        clockwise: false,
-      );
-    canvas.drawPath(cloudPath, primaryStroke);
-
-    // Upward velocity vector accent.
-    final streamPath = Path()
-      ..moveTo(w * 0.36, h * 0.52)
-      ..quadraticBezierTo(w * 0.50, h * 0.44, w * 0.64, h * 0.30);
-    canvas.drawPath(streamPath, accentStroke);
+    final paint = Paint()
+      ..color = kPortalBrandMarkFg
+      ..style = PaintingStyle.fill
+      ..isAntiAlias = true;
+    canvas.drawPath(fPath, paint);
   }
 
   @override
