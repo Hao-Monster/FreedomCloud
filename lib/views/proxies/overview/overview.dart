@@ -2623,10 +2623,13 @@ class _OverviewConnectionStatusBar extends StatelessWidget {
     }
 
     final bgColor = effectiveConnected
-        ? green.withValues(alpha: isDark ? 0.12 : 0.08)
-        : colors.surfaceContainer;
+        ? Color.alphaBlend(
+            green.withValues(alpha: isDark ? 0.14 : 0.09),
+            colors.surfaceContainerLow,
+          )
+        : (isDark ? colors.surfaceContainer : colors.surfaceContainerLowest);
     final borderColor = effectiveConnected
-        ? green.withValues(alpha: isDark ? 0.34 : 0.26)
+        ? green.withValues(alpha: isDark ? 0.42 : 0.34)
         : freedomNetHairlineColor(colors);
 
     final canPress = onToggle != null &&
@@ -2635,65 +2638,65 @@ class _OverviewConnectionStatusBar extends StatelessWidget {
         ? appLocalizations.nodeOverviewTurnOffProxy
         : appLocalizations.nodeOverviewTurnOnProxy;
 
-    final toggleButton =
-        (isRunning || (pendingTarget == true && startCancelable))
-            ? OutlinedButton(
-                key: const ValueKey('overview-proxy-toggle'),
-                onPressed: canPress ? onToggle : null,
-                style: OutlinedButton.styleFrom(
-                  visualDensity: VisualDensity.compact,
-                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                ),
-                child: Text(
-                  buttonLabel,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              )
-            : FilledButton(
-                key: const ValueKey('overview-proxy-toggle'),
-                onPressed: canPress ? onToggle : null,
-                style: FilledButton.styleFrom(
-                  visualDensity: VisualDensity.compact,
-                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                ),
-                child: Text(
-                  buttonLabel,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              );
+    final toggleButton = _OverviewTactileProxySwitch(
+      key: const ValueKey('overview-proxy-toggle'),
+      isRunning: isRunning,
+      pendingTarget: pendingTarget,
+      startCancelable: startCancelable,
+      canPress: canPress,
+      semanticsLabel: buttonLabel,
+      onToggle: onToggle,
+    );
 
-    final leadingIcon = isBusy
-        ? ExcludeSemantics(
-            child: SizedBox(
-              width: 16,
-              height: 16,
-              child: CircularProgressIndicator(
-                strokeWidth: 2,
-                color: effectiveConnected ? green : colors.primary,
-              ),
-            ),
-          )
-        : Icon(
-            isRunning
-                ? Icons.shield_rounded
-                : Icons.power_settings_new_rounded,
-            size: 18,
-            color: isRunning ? green : colors.onSurfaceVariant,
-          );
+    final leadingIcon = DecoratedBox(
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: effectiveConnected
+            ? green.withValues(alpha: isDark ? 0.20 : 0.14)
+            : colors.surfaceContainerHighest.withValues(alpha: isDark ? 0.65 : 0.85),
+      ),
+      child: SizedBox(
+        width: 28,
+        height: 28,
+        child: Center(
+          child: isBusy
+              ? ExcludeSemantics(
+                  child: SizedBox(
+                    width: 14,
+                    height: 14,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: effectiveConnected ? green : colors.primary,
+                    ),
+                  ),
+                )
+              : Icon(
+                  isRunning
+                      ? Icons.shield_rounded
+                      : Icons.power_settings_new_rounded,
+                  size: 16,
+                  color: isRunning ? green : colors.onSurfaceVariant,
+                ),
+        ),
+      ),
+    );
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
       child: DecoratedBox(
         decoration: BoxDecoration(
           color: bgColor,
-          borderRadius: BorderRadius.circular(12),
+          borderRadius: BorderRadius.circular(14),
           border: Border.all(color: borderColor),
+          boxShadow: [
+            BoxShadow(
+              color: effectiveConnected
+                  ? green.withValues(alpha: isDark ? 0.12 : 0.08)
+                  : Colors.black.withValues(alpha: isDark ? 0.18 : 0.04),
+              blurRadius: 12,
+              offset: const Offset(0, 3),
+            ),
+          ],
         ),
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
@@ -2758,6 +2761,614 @@ class _OverviewConnectionStatusBar extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Scheme B tactile cyber-switch track for the overview proxy master switch.
+///
+/// Triggered strictly by click/tap or keyboard activation (`Enter`/`Space`),
+/// automatically sliding the thumb horizontally across a laser-illuminated rail
+/// without requiring manual drag gestures.
+class _OverviewTactileProxySwitch extends StatefulWidget {
+  const _OverviewTactileProxySwitch({
+    super.key,
+    required this.isRunning,
+    required this.pendingTarget,
+    required this.startCancelable,
+    required this.canPress,
+    required this.semanticsLabel,
+    required this.onToggle,
+  });
+
+  final bool isRunning;
+  final bool? pendingTarget;
+  final bool startCancelable;
+  final bool canPress;
+  final String semanticsLabel;
+  final VoidCallback? onToggle;
+
+  @override
+  State<_OverviewTactileProxySwitch> createState() =>
+      _OverviewTactileProxySwitchState();
+}
+
+class _OverviewTactileProxySwitchState
+    extends State<_OverviewTactileProxySwitch> with TickerProviderStateMixin {
+  static const Duration _slideDuration = Duration(milliseconds: 360);
+  static const Duration _hoverDuration = Duration(milliseconds: 180);
+
+  late final AnimationController _slideController;
+  late final AnimationController _hoverController;
+  bool _hovered = false;
+  bool _pressed = false;
+  bool _focused = false;
+
+  bool get _effectiveConnected => widget.pendingTarget ?? widget.isRunning;
+
+  @override
+  void initState() {
+    super.initState();
+    _slideController = AnimationController(
+      vsync: this,
+      duration: _slideDuration,
+      value: _effectiveConnected ? 1.0 : 0.0,
+    );
+    _hoverController = AnimationController(
+      vsync: this,
+      duration: _hoverDuration,
+      value: 0.0,
+    );
+  }
+
+  @override
+  void didUpdateWidget(covariant _OverviewTactileProxySwitch oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final oldConnected = oldWidget.pendingTarget ?? oldWidget.isRunning;
+    final nextConnected = _effectiveConnected;
+    if (oldConnected != nextConnected) {
+      final target = nextConnected ? 1.0 : 0.0;
+      final reduceMotion = MediaQuery.maybeDisableAnimationsOf(context) ?? false;
+      if (reduceMotion) {
+        _slideController.value = target;
+      } else {
+        unawaited(
+          _slideController.animateTo(
+            target,
+            duration: _slideDuration,
+            curve: Curves.easeOutCubic,
+          ),
+        );
+      }
+    }
+    if (!widget.canPress && _pressed) {
+      _pressed = false;
+    }
+  }
+
+  @override
+  void dispose() {
+    _slideController.dispose();
+    _hoverController.dispose();
+    super.dispose();
+  }
+
+  void _setHovered(bool value) {
+    if (_hovered == value) return;
+    _hovered = value;
+    final target = value ? 1.0 : 0.0;
+    final reduceMotion = MediaQuery.maybeDisableAnimationsOf(context) ?? false;
+    if (reduceMotion) {
+      _hoverController.value = target;
+    } else {
+      unawaited(
+        _hoverController.animateTo(
+          target,
+          duration: _hoverDuration,
+          curve: Curves.easeOutCubic,
+        ),
+      );
+    }
+  }
+
+  void _setPressed(bool value) {
+    if (_pressed == value) return;
+    setState(() {
+      _pressed = value;
+    });
+  }
+
+  void _setFocused(bool value) {
+    if (_focused == value) return;
+    setState(() {
+      _focused = value;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
+    final textScale = MediaQuery.textScalerOf(context).scale(1.0);
+    final heightScale = textScale.clamp(1.0, 1.40);
+    final widthScale = textScale.clamp(1.0, 1.48);
+    final trackHeight = (40.0 * heightScale).roundToDouble();
+    final desiredWidth = (142.0 * widthScale).roundToDouble();
+    final isBusy = widget.pendingTarget != null;
+
+    return Semantics(
+      container: true,
+      button: true,
+      enabled: widget.canPress,
+      toggled: widget.isRunning,
+      label: widget.semanticsLabel,
+      child: FocusableActionDetector(
+        enabled: widget.canPress,
+        onShowFocusHighlight: _setFocused,
+        shortcuts: const <ShortcutActivator, Intent>{
+          SingleActivator(LogicalKeyboardKey.enter): ActivateIntent(),
+          SingleActivator(LogicalKeyboardKey.space): ActivateIntent(),
+        },
+        actions: {
+          ActivateIntent: CallbackAction<ActivateIntent>(
+            onInvoke: (_) {
+              if (widget.canPress) {
+                widget.onToggle?.call();
+              }
+              return null;
+            },
+          ),
+        },
+        child: MouseRegion(
+          cursor: widget.canPress
+              ? SystemMouseCursors.click
+              : SystemMouseCursors.basic,
+          onEnter: (_) => _setHovered(true),
+          onExit: (_) => _setHovered(false),
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: widget.canPress ? widget.onToggle : null,
+            onTapDown: widget.canPress ? (_) => _setPressed(true) : null,
+            onTapUp: widget.canPress ? (_) => _setPressed(false) : null,
+            onTapCancel: () => _setPressed(false),
+            child: ExcludeSemantics(
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  final trackWidth = constraints.maxWidth.isFinite
+                      ? math.min(constraints.maxWidth, desiredWidth)
+                      : desiredWidth;
+                  const inset = 4.0;
+                  final thumbSize = math.max(24.0, trackHeight - inset * 2);
+                  final travel =
+                      math.max(0.0, trackWidth - thumbSize - inset * 2);
+
+                  return SizedBox(
+                    width: trackWidth,
+                    height: trackHeight,
+                    child: AnimatedBuilder(
+                      animation: Listenable.merge([
+                        _slideController,
+                        _hoverController,
+                      ]),
+                      builder: (context, _) {
+                        final p = _slideController.value.clamp(0.0, 1.0);
+                        final hoverProgress =
+                            _hoverController.value.clamp(0.0, 1.0);
+                        final disconnectHover = (p *
+                                (widget.pendingTarget == false
+                                    ? 1.0
+                                    : hoverProgress))
+                            .clamp(0.0, 1.0);
+                        final slideEnergy = math.sin(p * math.pi);
+                        final thumbLeft = inset + travel * p;
+                        final showDisconnectText = disconnectHover >= 0.45 ||
+                            widget.pendingTarget == false;
+
+                        final offLabelColor = isDark
+                            ? const Color(0xFFCBD5E1)
+                            : const Color(0xFF334155);
+                        final onLabelColor = Color.lerp(
+                          const Color(0xFFECFDF5),
+                          const Color(0xFFFFE4E6),
+                          disconnectHover,
+                        )!;
+
+                        final knobTopColor = Color.lerp(
+                          Color.lerp(
+                            isDark ? const Color(0xFF3B4963) : Colors.white,
+                            const Color(0xFFA7F3D0),
+                            p,
+                          ),
+                          const Color(0xFFFCA5A5),
+                          disconnectHover,
+                        )!;
+                        final knobBottomColor = Color.lerp(
+                          Color.lerp(
+                            isDark
+                                ? const Color(0xFF1E293B)
+                                : const Color(0xFFE2E8F0),
+                            kPortalBrandMarkBg,
+                            p,
+                          ),
+                          const Color(0xFFEF4444),
+                          disconnectHover,
+                        )!;
+                        final knobBorderColor = Color.lerp(
+                          Color.lerp(
+                            isDark
+                                ? const Color(0xFF64748B)
+                                : const Color(0xFFCBD5E1),
+                            const Color(0xFFECFDF5),
+                            p,
+                          ),
+                          const Color(0xFFFEE2E2),
+                          disconnectHover,
+                        )!;
+                        final knobGlowColor = Color.lerp(
+                          Color.lerp(
+                            Colors.black.withValues(
+                              alpha: isDark ? 0.36 : 0.14,
+                            ),
+                            const Color(0xFF10B981).withValues(
+                              alpha: 0.48 + slideEnergy * 0.20,
+                            ),
+                            p,
+                          ),
+                          const Color(0xFFEF4444).withValues(alpha: 0.56),
+                          disconnectHover,
+                        )!;
+                        final iconColor = Color.lerp(
+                          Color.lerp(
+                            isDark
+                                ? const Color(0xFFE2E8F0)
+                                : const Color(0xFF1E293B),
+                            kPortalBrandMarkFg,
+                            p,
+                          ),
+                          Colors.white,
+                          disconnectHover,
+                        )!;
+
+                        return Stack(
+                          clipBehavior: Clip.none,
+                          children: [
+                            Positioned.fill(
+                              child: RepaintBoundary(
+                                child: CustomPaint(
+                                  key: const ValueKey(
+                                    'overview-proxy-toggle-rail',
+                                  ),
+                                  painter: _TactileCyberSwitchRailPainter(
+                                    progress: p,
+                                    hoverProgress: hoverProgress,
+                                    disconnectHover: disconnectHover,
+                                    slideEnergy: slideEnergy,
+                                    thumbCenterX: thumbLeft + thumbSize * 0.5,
+                                    thumbRadius: thumbSize * 0.5,
+                                    inset: inset,
+                                    isDark: isDark,
+                                    isFocused: _focused,
+                                    focusColor: colors.primary,
+                                  ),
+                                ),
+                              ),
+                            ),
+                            if (p < 0.55)
+                              Positioned(
+                                left: inset + thumbSize + 4,
+                                right: 8,
+                                top: 0,
+                                bottom: 0,
+                                child: Opacity(
+                                  opacity:
+                                      ((0.55 - p) / 0.55).clamp(0.0, 1.0),
+                                  child: Center(
+                                    child: FittedBox(
+                                      fit: BoxFit.scaleDown,
+                                      child: Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Text(
+                                            appLocalizations
+                                                .nodeOverviewTurnOnProxy,
+                                            maxLines: 1,
+                                            style: TextStyle(
+                                              fontSize: 12.5,
+                                              fontWeight: FontWeight.w600,
+                                              color: offLabelColor,
+                                              height: 1.1,
+                                            ),
+                                          ),
+                                          const SizedBox(width: 1),
+                                          Icon(
+                                            Icons.chevron_right_rounded,
+                                            size: 15,
+                                            color: offLabelColor.withValues(
+                                              alpha: 0.72,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            if (p >= 0.45)
+                              Positioned(
+                                left: 10,
+                                right: inset + thumbSize + 4,
+                                top: 0,
+                                bottom: 0,
+                                child: Opacity(
+                                  opacity:
+                                      ((p - 0.45) / 0.55).clamp(0.0, 1.0),
+                                  child: Center(
+                                    child: FittedBox(
+                                      fit: BoxFit.scaleDown,
+                                      child: Text(
+                                        showDisconnectText
+                                            ? appLocalizations
+                                                .nodeOverviewTurnOffProxy
+                                            : appLocalizations.running,
+                                        maxLines: 1,
+                                        style: TextStyle(
+                                          fontSize: 12.5,
+                                          fontWeight: FontWeight.w700,
+                                          letterSpacing: 0.2,
+                                          color: onLabelColor,
+                                          height: 1.1,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            Positioned(
+                              left: thumbLeft,
+                              top: inset,
+                              width: thumbSize,
+                              height: thumbSize,
+                              child: AnimatedScale(
+                                scale: (_pressed && widget.canPress) ? 0.93 : 1.0,
+                                duration: const Duration(milliseconds: 90),
+                                child: DecoratedBox(
+                                  key: const ValueKey(
+                                    'overview-proxy-toggle-thumb',
+                                  ),
+                                  decoration: BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    gradient: LinearGradient(
+                                      begin: Alignment.topLeft,
+                                      end: Alignment.bottomRight,
+                                      colors: [knobTopColor, knobBottomColor],
+                                    ),
+                                    border: Border.all(
+                                      color: knobBorderColor,
+                                      width: 1.4,
+                                    ),
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color: knobGlowColor,
+                                        blurRadius: 6 +
+                                            p * 6 +
+                                            slideEnergy * 4 +
+                                            disconnectHover * 3,
+                                        spreadRadius: disconnectHover * 0.8,
+                                        offset: Offset(0, p > 0.5 ? 1 : 2),
+                                      ),
+                                    ],
+                                  ),
+                                  child: Center(
+                                    child: isBusy
+                                        ? SizedBox(
+                                            width: thumbSize * 0.50,
+                                            height: thumbSize * 0.50,
+                                            child: CircularProgressIndicator(
+                                              strokeWidth: 2.0,
+                                              color: iconColor,
+                                            ),
+                                          )
+                                        : Icon(
+                                            Icons.power_settings_new_rounded,
+                                            size: (thumbSize * 0.54)
+                                                .clamp(15.0, 22.0),
+                                            color: iconColor,
+                                          ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
+                        );
+                      },
+                    ),
+                  );
+                },
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _TactileCyberSwitchRailPainter extends CustomPainter {
+  const _TactileCyberSwitchRailPainter({
+    required this.progress,
+    required this.hoverProgress,
+    required this.disconnectHover,
+    required this.slideEnergy,
+    required this.thumbCenterX,
+    required this.thumbRadius,
+    required this.inset,
+    required this.isDark,
+    required this.isFocused,
+    required this.focusColor,
+  });
+
+  final double progress;
+  final double hoverProgress;
+  final double disconnectHover;
+  final double slideEnergy;
+  final double thumbCenterX;
+  final double thumbRadius;
+  final double inset;
+  final bool isDark;
+  final bool isFocused;
+  final Color focusColor;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final rect = Offset.zero & size;
+    final radius = Radius.circular(size.height * 0.5);
+    final stadium = RRect.fromRectAndRadius(rect, radius);
+
+    // 1. Recessed metallic/slate stadium groove.
+    final baseColors = isDark
+        ? const [Color(0xFF0B111E), Color(0xFF162033)]
+        : const [Color(0xFFDCE4EE), Color(0xFFEDF2F7)];
+    final basePaint = Paint()
+      ..shader = LinearGradient(
+        begin: Alignment.topCenter,
+        end: Alignment.bottomCenter,
+        colors: baseColors,
+      ).createShader(rect);
+    canvas.drawRRect(stadium, basePaint);
+
+    // Subtle hover highlight when disconnected.
+    if (hoverProgress > 0.01 && disconnectHover < 0.5) {
+      final offHoverAlpha = hoverProgress * (1.0 - progress) * 0.14;
+      if (offHoverAlpha > 0.005) {
+        canvas.drawRRect(
+          stadium,
+          Paint()
+            ..color = const Color(0xFF10B981).withValues(alpha: offHoverAlpha),
+        );
+      }
+    }
+
+    canvas
+      ..save()
+      ..clipRRect(stadium);
+
+    // 2. Progressive cyber emerald rail fill + disconnect crimson hover blend.
+    if (progress > 0.005) {
+      final trailEndX = (thumbCenterX +
+              thumbRadius * 0.65 +
+              (size.width - (thumbCenterX + thumbRadius * 0.65)) * progress)
+          .clamp(0.0, size.width);
+      final fillRect = Rect.fromLTWH(0, 0, trailEndX, size.height);
+      final fillStart = Color.lerp(
+        const Color(0xFF064E3B),
+        const Color(0xFF7F1D1D),
+        disconnectHover * 0.65,
+      )!;
+      final fillMid = Color.lerp(
+        const Color(0xFF047857),
+        const Color(0xFF991B1B),
+        disconnectHover * 0.55,
+      )!;
+      final fillEnd = Color.lerp(
+        const Color(0xFF10B981),
+        const Color(0xFFDC2626),
+        disconnectHover * 0.65,
+      )!;
+      final fillPaint = Paint()
+        ..shader = LinearGradient(
+          begin: Alignment.centerLeft,
+          end: Alignment.centerRight,
+          colors: [fillStart, fillMid, fillEnd],
+        ).createShader(fillRect);
+      canvas.drawRect(fillRect, fillPaint);
+
+      // Subtle upper specular highlight inside active groove.
+      final sheenRect = Rect.fromLTWH(0, 0, trailEndX, size.height * 0.45);
+      canvas.drawRect(
+        sheenRect,
+        Paint()
+          ..shader = LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [
+              Colors.white.withValues(alpha: 0.16),
+              Colors.white.withValues(alpha: 0.0),
+            ],
+          ).createShader(sheenRect),
+      );
+    }
+
+    // 3. Transient laser light-beam trailing the sliding thumb (State 2).
+    if (slideEnergy > 0.01 && thumbCenterX > inset + thumbRadius * 0.5) {
+      final centerY = size.height * 0.5;
+      final beamStart = inset + thumbRadius * 0.35;
+      final beamEnd = thumbCenterX;
+      if (beamEnd > beamStart) {
+        final glowPaint = Paint()
+          ..strokeWidth = 6.0
+          ..strokeCap = StrokeCap.round
+          ..color = const Color(0xFF34D399)
+              .withValues(alpha: (slideEnergy * 0.65).clamp(0.0, 1.0))
+          ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 5);
+        canvas.drawLine(
+          Offset(beamStart, centerY),
+          Offset(beamEnd, centerY),
+          glowPaint,
+        );
+
+        final corePaint = Paint()
+          ..strokeWidth = 2.0
+          ..strokeCap = StrokeCap.round
+          ..color = const Color(0xFFA7F3D0)
+              .withValues(alpha: (slideEnergy * 0.92).clamp(0.0, 1.0));
+        canvas.drawLine(
+          Offset(beamStart, centerY),
+          Offset(beamEnd, centerY),
+          corePaint,
+        );
+      }
+    }
+
+    canvas.restore();
+
+    // 4. Outer stadium rim border + keyboard focus indicator.
+    final offRim = isDark ? const Color(0xFF28354B) : const Color(0xFFC5D0DF);
+    final onRim = Color.lerp(
+      const Color(0xFF34D399),
+      const Color(0xFFF87171),
+      disconnectHover,
+    )!;
+    final rimColor = Color.lerp(offRim, onRim, progress)!;
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(rect.deflate(0.6), radius),
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.2
+        ..color = rimColor,
+    );
+
+    if (isFocused) {
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(rect.inflate(1.5), radius),
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 2.0
+          ..color = focusColor.withValues(alpha: 0.78),
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _TactileCyberSwitchRailPainter oldDelegate) =>
+      oldDelegate.progress != progress ||
+      oldDelegate.hoverProgress != hoverProgress ||
+      oldDelegate.disconnectHover != disconnectHover ||
+      oldDelegate.slideEnergy != slideEnergy ||
+      oldDelegate.thumbCenterX != thumbCenterX ||
+      oldDelegate.thumbRadius != thumbRadius ||
+      oldDelegate.inset != inset ||
+      oldDelegate.isDark != isDark ||
+      oldDelegate.isFocused != isFocused ||
+      oldDelegate.focusColor != focusColor;
 }
 
 class _OverviewEmptyProfilesCard extends StatelessWidget {

@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:ui' show PointerDeviceKind;
 
 import 'package:flclashx/common/common.dart';
 import 'package:flclashx/common/delay_test_coordinator.dart';
@@ -68,6 +69,7 @@ class _ProxyController implements AppController {
   Future<void> Function(Profile profile)? onUpdateProfile;
   Future<void> Function(String url)? onAddProfileFormURL;
   Future<void> Function(String id)? onDeleteProfile;
+  Future<void> Function({required bool isStart})? onUpdateStatus;
 
   @override
   void updateCurrentSelectedMap(String groupName, String proxyName) =>
@@ -126,6 +128,9 @@ class _ProxyController implements AppController {
   @override
   Future<void> updateStatus(bool isStart) async {
     statusUpdates.add(isStart);
+    if (onUpdateStatus != null) {
+      await onUpdateStatus!(isStart: isStart);
+    }
   }
 
   @override
@@ -9038,6 +9043,191 @@ void main() {
       expectedHue: kLatencyMediumColor,
       expectStale: true,
     );
+  });
+
+  testWidgets(
+      'Scheme B tactile cyber proxy switch: single-click auto-slides thumb left<->right, rejects manual drag, shows hover disconnect warning, and scales cleanly',
+      (tester) async {
+    final controller = _ProxyController();
+    globalState.appController = controller;
+    const profileA = Profile(
+      id: 'a',
+      label: '主力订阅',
+      url: 'https://sub.example.com/a',
+      autoUpdateDuration: defaultUpdateDuration,
+      currentGroupName: 'Proxy',
+      selectedMap: {'Proxy': '香港 01'},
+    );
+    globalState.config = globalState.config.copyWith(
+      currentProfileId: 'a',
+      profiles: const [profileA],
+    );
+    globalState.appState = globalState.appState.copyWith(
+      groups: const [
+        Group(
+          name: 'Proxy',
+          type: GroupType.Selector,
+          hidden: false,
+          now: '香港 01',
+          all: [
+            Proxy(name: '香港 01', type: 'Shadowsocks'),
+          ],
+        ),
+      ],
+    );
+
+    final semanticsHandle = tester.ensureSemantics();
+    try {
+      final container = await mount(
+        tester,
+        width: 1200,
+        locale: const Locale('zh', 'CN'),
+        profiles: const [profileA],
+        catalogs: {
+          'a': ProfileCatalog(
+            profileId: 'a',
+            fingerprint: 'fa',
+            status: ProfileCatalogStatus.ready,
+            nodes: [
+              _node('hk-1', '香港 01').copyWith(selectGroups: const ['Proxy']),
+            ],
+          ),
+        },
+      );
+
+      final switchFinder = find.byKey(const ValueKey('overview-proxy-toggle'));
+      final railFinder =
+          find.byKey(const ValueKey('overview-proxy-toggle-rail'));
+      final thumbFinder =
+          find.byKey(const ValueKey('overview-proxy-toggle-thumb'));
+
+      // 1. Structure & OFF state assertions.
+      expect(switchFinder, findsOneWidget);
+      expect(railFinder, findsOneWidget);
+      expect(thumbFinder, findsOneWidget);
+      expect(find.text('开启代理'), findsOneWidget);
+
+      final switchRect = tester.getRect(switchFinder);
+      final thumbOffCenter = tester.getCenter(thumbFinder);
+      expect(thumbOffCenter.dx, lessThan(switchRect.center.dx));
+
+      expect(
+        tester.getSemantics(switchFinder),
+        matchesSemantics(
+          label: '开启代理',
+          isButton: true,
+          isFocusable: true,
+          hasToggledState: true,
+          isToggled: false,
+          hasEnabledState: true,
+          isEnabled: true,
+          hasTapAction: true,
+          hasFocusAction: true,
+        ),
+      );
+
+      // 2. Manual drag gesture MUST NOT trigger proxy toggle or move thumb.
+      await tester.drag(switchFinder, const Offset(90, 0));
+      await tester.pumpAndSettle();
+      expect(controller.statusUpdates, isEmpty);
+      expect(tester.getCenter(thumbFinder).dx, closeTo(thumbOffCenter.dx, 0.5));
+
+      // 3. Single click automatically slides thumb LEFT -> RIGHT to ON state.
+      controller.onUpdateStatus = ({required isStart}) async {
+        container.read(runTimeProvider.notifier).value = isStart ? 1000 : null;
+      };
+      await tester.tap(switchFinder);
+      expect(controller.statusUpdates, [true]);
+
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 160));
+      final thumbMidOnCenter = tester.getCenter(thumbFinder);
+      expect(thumbMidOnCenter.dx, greaterThan(thumbOffCenter.dx + 8));
+      expect(thumbMidOnCenter.dx, lessThan(switchRect.right - 28));
+
+      await tester.pumpAndSettle();
+      final thumbOnCenter = tester.getCenter(thumbFinder);
+      expect(thumbOnCenter.dx, greaterThan(switchRect.center.dx));
+      expect(find.text('运行中'), findsOneWidget);
+      expect(
+        tester.getSemantics(switchFinder),
+        matchesSemantics(
+          label: '关闭代理',
+          isButton: true,
+          isFocusable: true,
+          hasToggledState: true,
+          isToggled: true,
+          hasEnabledState: true,
+          isEnabled: true,
+          hasTapAction: true,
+          hasFocusAction: true,
+        ),
+      );
+
+      // 4. Hover while ON displays disconnect warning ('关闭代理') and clears on exit.
+      final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
+      await mouse.addPointer(location: Offset.zero);
+      addTearDown(mouse.removePointer);
+      await mouse.moveTo(tester.getCenter(switchFinder));
+      await tester.pumpAndSettle();
+      expect(find.text('关闭代理'), findsOneWidget);
+
+      await mouse.moveTo(const Offset(2, 2));
+      await tester.pumpAndSettle();
+      expect(find.text('运行中'), findsOneWidget);
+
+      // 5. Single click again automatically slides thumb RIGHT -> LEFT to OFF state.
+      await tester.tap(switchFinder);
+      expect(controller.statusUpdates, [true, false]);
+
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 160));
+      final thumbMidOffCenter = tester.getCenter(thumbFinder);
+      expect(thumbMidOffCenter.dx, lessThan(thumbOnCenter.dx - 8));
+      expect(thumbMidOffCenter.dx, greaterThan(thumbOffCenter.dx + 4));
+
+      await tester.pumpAndSettle();
+      expect(tester.getCenter(thumbFinder).dx, closeTo(thumbOffCenter.dx, 0.5));
+      expect(find.text('开启代理'), findsOneWidget);
+
+      // 6. Responsive 2.0x scaling across 320px/1200px and locales in ON state.
+      for (final (width, locale) in [
+        (320.0, const Locale('zh', 'CN')),
+        (320.0, const Locale('ru')),
+        (1200.0, const Locale('en')),
+        (1200.0, const Locale('ja')),
+      ]) {
+        await tester.pumpWidget(const SizedBox.shrink());
+        final scaledContainer = await mount(
+          tester,
+          width: width,
+          locale: locale,
+          profiles: const [profileA],
+          child: MediaQuery(
+            data: MediaQueryData(
+              size: Size(width, 1000),
+              textScaler: const TextScaler.linear(2.0),
+            ),
+            child: const NodeOverviewView(),
+          ),
+          catalogs: {
+            'a': ProfileCatalog(
+              profileId: 'a',
+              fingerprint: 'fa',
+              status: ProfileCatalogStatus.ready,
+              nodes: [
+                _node('hk-1', '香港 01').copyWith(selectGroups: const ['Proxy']),
+              ],
+            ),
+          },
+        );
+        scaledContainer.read(runTimeProvider.notifier).value = 1000;
+        await tester.pumpAndSettle();
+        expect(tester.takeException(), isNull);
+      }
+    } finally {
+      semanticsHandle.dispose();
+    }
   });
 }
 
