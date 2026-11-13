@@ -2,6 +2,21 @@
 
 更新日期：2026-11-13。当前阶段是快速开发、快速迭代和部分功能预览。本文记录来源与验收边界；每次继续开发仍需核实实际 Git/PR/CI 状态，不能把历史报告视为当前通过证明。
 
+## 健康检查 Code Review（`CR-HC-R3`）5 项问题 TDD 修复落地（`5f3307a9`，2026-11-13）
+
+- 来源与审计基线：围绕提交 [`433f1b39`](file:///e:/CodeWorkstation/FlClashX/lib/common/health/health_runner.dart) 的技术负责人级 Code Review 发现 5 项缺陷（2 项 P1、2 项 P2、1 项 P3），按严格 TDD 流程（先增补红灯测试并实测失败 -> 实现修复 -> 全量绿灯 + 静态分析）合入本地 `development`（代码提交 `5f3307a9`，`5f3307a9d5d320ba2b327e4da976c7477417de9a`）：
+  1. **P1-#1 · `DIRECT` / 回环未归因观测防误救（[`health_verdict.dart`](file:///e:/CodeWorkstation/FlClashX/lib/common/health/health_verdict.dart#L4-L120)、[`health_runner.dart`](file:///e:/CodeWorkstation/FlClashX/lib/common/health/health_runner.dart#L1571-L1605)）**：提取共享谓词 `isVerifiedProxyOutboundLeaf(leaf)`（排除 `null` / 空串 / `DIRECT` / `REJECT` / `REJECT-DROP`）；保留 `tunBypassedSystemProxyOk` 告警诊断本身，但在 `D3/D4` 互证与 `computeHealthVerdict` 中严禁将经 `tunBypassedSystemProxyOk` 走 `DIRECT` 或未归因回环（`matchedLeafProxy == null`）误当成可拯救 `D3` 的真实代理证据。
+  2. **P1-#2 · 节点归因与动态策略组故障转移（[`health_runner.dart`](file:///e:/CodeWorkstation/FlClashX/lib/common/health/health_runner.dart#L180-L280)、[`health_runner.dart`](file:///e:/CodeWorkstation/FlClashX/lib/common/health/health_runner.dart#L1571-L1605)）**：扩展 `_resolveSelectedLeaf` 返回首个动态策略组 `dynamicGroup`（`URLTest` / `Fallback` / `LoadBalance`）并新增 `_collectReachableProxyLeaves`；仅当 `D4` 实测出站叶子等于 `resolvedActiveLeaf` 或属于 `activeDynamicGroup` 可达代理叶子集合时才允许拯救 `D3`，且故障转移命中新节点时同步更新 `resolvedActiveLeaf` 与 `D3.nodeName`，防止分流规则其他组节点误救固定 `Selector`。
+  3. **P2-#3 · `D3` 失败延后上屏防瞬态红卡片闪烁（[`health_runner.dart`](file:///e:/CodeWorkstation/FlClashX/lib/common/health/health_runner.dart#L1319-L1350)）**：当 `D3` 失败且 `D4` 将执行实时探测（`d4WillRunLiveProbe`）时暂缓 `record(d3)`，保持 `D3` 处于 `running` 态直至 `D4` 结算；若被 `D4` 拯救直接原子切换为 `warning`（`outboundProbeFallbackOk`），否则再补发 `D3` 失败事件后发 `D4`，彻底消除 `节点 … 无法连通探测地址` 与 `[切换代理节点]` 瞬闪。
+  4. **P2-#4 · 跨厂商备用 204 地址与 `6500 ms` 预算硬封顶（[`health_runner.dart`](file:///e:/CodeWorkstation/FlClashX/lib/common/health/health_runner.dart#L31-L65)、[`health_runner.dart`](file:///e:/CodeWorkstation/FlClashX/lib/common/health/health_runner.dart#L1186-L1225)）**：新增 `_selectOutboundFallbackUrl`（Cloudflare 主测地址优先切至非 Cloudflare，Google 主测地址优先切至 Cloudflare）；重试前按 `totalBudgetMs = 6500` 计算剩余预算，不足 `minRetryBudgetMs = 1200` 直接终止后续重试，并将单次重试 `timeout` 封顶至 `min(3500, remaining)` ms。
+  5. **P3-#5 · 测试桩与默认节点对齐（[`health_diagnostics_v2_test.dart`](file:///e:/CodeWorkstation/FlClashX/test/common/health_diagnostics_v2_test.dart#L1928-L2350)、[`health_check_view_test.dart`](file:///e:/CodeWorkstation/FlClashX/test/views/health_check_view_test.dart#L1129-L1181)）**：修正原有测试默认 `matchedLeafProxy` 对齐 `'HK-VIP-SecretNode-99'`，并新增 8 项单测 + 1 项带异步 `e2eGate` 的 Widget 测试。
+- TDD 与验证记录（最后一次代码修改后实测）：
+  - 前置有效 Red：**PASS**（`health_diagnostics_v2_test.dart` 23 旧过 / 7 新增全红、`health_check_view_test.dart` `P2-#3` 新增 Widget 用例准确失败于未消隐的 `节点 SG-01 无法连通探测地址`）；
+  - Green 与全量健康检查回归：**PASS**（[`health_diagnostics_v2_test.dart`](file:///e:/CodeWorkstation/FlClashX/test/common/health_diagnostics_v2_test.dart) + [`health_remediation_9bugs_test.dart`](file:///e:/CodeWorkstation/FlClashX/test/common/health_remediation_9bugs_test.dart) + [`health_check_view_test.dart`](file:///e:/CodeWorkstation/FlClashX/test/views/health_check_view_test.dart) **`58/58` 全绿**）；
+  - 静态分析：**PASS**（`dart analyze lib/common/health lib/views/tools/health_check_view.dart test/common/health_diagnostics_v2_test.dart test/common/health_remediation_9bugs_test.dart test/views/health_check_view_test.dart` 输出 `No issues found!`，退出码 `0`）；
+  - 预览包构建：**NOT RUN（严格遵照用户指令 `修复之后先不构建测试包`）**；
+  - 宿主机实机运行 / 远端推送 / PR：**NOT RUN**。
+
 ## 代理总览页「方案 B · 常驻底部唯一悬浮开关舱」TDD 落地（`dea94298`，2026-11-13）
 
 - 需求与架构决策：遵照用户确认的「方案 B」落地代理总览页唯一总开关布局——将原顶部 [`_OverviewConnectionStatusBar`](file:///e:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart#L2614-L2758) 瘦身为只读单行连接状态条（移除顶部重复开关），并将唯一 [`_OverviewTactileProxySwitch`](file:///e:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart#L2839-L3261)（`ValueKey('overview-proxy-toggle')`）迁入右侧节点列表区底部居中的常驻悬浮胶囊 [`_OverviewFloatingProxyDock`](file:///e:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart#L2762-L2832)（`ValueKey('overview-floating-proxy-dock')`）。
