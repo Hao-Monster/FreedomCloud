@@ -351,7 +351,7 @@ void main() {
     });
 
     testWidgets(
-      'StartButton does not restart AnimatedSwitcher transition on 1s uptime ticks',
+      'StartButton tactile dock skips rebuilds and animations on 1s uptime ticks',
       (tester) async {
         final profile = Profile.normal().copyWith(id: 'p1');
         globalState.config = globalState.config.copyWith(
@@ -381,27 +381,40 @@ void main() {
           ),
         );
         await tester.pumpAndSettle();
-        expect(find.text('00:00:01'), findsOneWidget);
+        final dockFinder = find.byKey(
+          const ValueKey('dashboard-floating-proxy-dock'),
+        );
+        expect(dockFinder, findsOneWidget);
+        expect(find.text(appLocalizations.running), findsOneWidget);
+        final initialDock = tester.widget<FloatingProxyDock>(dockFinder);
 
         runTimeNotifier.updateMs(2000);
         await tester.pump();
-        expect(find.text('00:00:02'), findsOneWidget);
-
-        final switcherFades = tester
-            .widgetList<FadeTransition>(
-              find.descendant(
-                of: find.byType(AnimatedSwitcher),
-                matching: find.byType(FadeTransition),
-              ),
-            )
-            .toList();
         expect(
-          switcherFades,
-          hasLength(1),
+          identical(tester.widget<FloatingProxyDock>(dockFinder), initialDock),
+          isTrue,
           reason:
-              '1-second uptime text change must update child in-place without spawning outgoing AnimatedSwitcher transition',
+              'StartButton selects runTimeProvider != null so 1s uptime ticks must trigger zero StartButton rebuilds',
         );
-        expect(switcherFades.single.opacity.value, 1.0);
+
+        runTimeNotifier.updateMs(3000);
+        await tester.pump();
+        expect(
+          identical(tester.widget<FloatingProxyDock>(dockFinder), initialDock),
+          isTrue,
+        );
+        expect(find.text(appLocalizations.running), findsOneWidget);
+
+        runTimeNotifier.updateMs(null);
+        await tester.pumpAndSettle();
+        expect(
+          identical(tester.widget<FloatingProxyDock>(dockFinder), initialDock),
+          isFalse,
+        );
+        expect(
+          find.text(appLocalizations.nodeOverviewTurnOnProxy),
+          findsOneWidget,
+        );
       },
     );
 

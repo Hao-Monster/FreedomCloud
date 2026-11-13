@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math' as math;
+import 'dart:ui' show PointerDeviceKind;
 
 import 'package:flclashx/common/common.dart';
 import 'package:flclashx/common/theme.dart';
@@ -13,6 +15,8 @@ import 'package:flclashx/state.dart';
 import 'package:flclashx/views/dashboard/dashboard.dart';
 import 'package:flclashx/views/dashboard/widgets/metainfo_widget.dart';
 import 'package:flclashx/views/dashboard/widgets/network_speed.dart';
+import 'package:flclashx/views/dashboard/widgets/start_button.dart';
+import 'package:flclashx/widgets/card.dart';
 import 'package:flclashx/widgets/donut_chart.dart';
 import 'package:flclashx/widgets/line_chart.dart';
 import 'package:flclashx/widgets/scaffold.dart';
@@ -43,6 +47,8 @@ class _TestDashboardController implements AppController {
   Profile? lastUpdatedProfile;
   Completer<void>? pendingUpdate;
   Exception? updateError;
+  final List<bool> statusUpdates = [];
+  Future<void> Function({required bool isStart})? onUpdateStatus;
 
   @override
   Future<void> updateProfile(
@@ -88,7 +94,12 @@ class _TestDashboardController implements AppController {
   void changeMode(Mode mode) {}
 
   @override
-  Future<void> updateStatus(bool isStart) async {}
+  Future<void> updateStatus(bool isStart) async {
+    statusUpdates.add(isStart);
+    if (onUpdateStatus != null) {
+      await onUpdateStatus!(isStart: isStart);
+    }
+  }
 
   @override
   dynamic noSuchMethod(Invocation invocation) => null;
@@ -711,6 +722,238 @@ void main() {
         find.byKey(const ValueKey('metainfo-update-subscription-button')),
         findsNothing,
       );
+    },
+  );
+
+  testWidgets(
+    'Dashboard floating tactile proxy switch: replaces full-width green bar with bottom-center FloatingProxyDock matching Overview, auto-slides on click, rejects drag, clears bottom cards on scroll, and hides in edit/empty modes',
+    (tester) async {
+      await AppLocalizations.load(const Locale('zh', 'CN'));
+      const size = Size(480, 480);
+      final controller = _TestDashboardController();
+      globalState.appController = controller;
+
+      const adminProfile = Profile(
+        id: 'admin',
+        label: 'admin',
+        url: 'https://example.com/sub/admin',
+        autoUpdateDuration: Duration(hours: 24),
+        subscriptionInfo: SubscriptionInfo(
+          upload: 10485760,
+          download: 52428800,
+          total: 107374182400,
+          expire: 0,
+        ),
+      );
+      const dashboardAppSetting = defaultAppSettingProps;
+
+      _seedGlobalState(
+        viewSize: size,
+        appSetting: dashboardAppSetting,
+        profiles: const [adminProfile],
+        currentProfileId: 'admin',
+      );
+      globalState.appState = globalState.appState.copyWith(isInit: true);
+
+      final container = ProviderContainer();
+      addTearDown(container.dispose);
+      controller
+        ..container = container
+        ..onUpdateStatus = ({required isStart}) async {
+          container.read(runTimeProvider.notifier).value = isStart ? 1000 : null;
+        };
+
+      tester.view.physicalSize = size;
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      await tester.pumpWidget(
+        _buildTestHarness(
+          container: container,
+          viewSize: size,
+          child: const DashboardView(),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final dockFinder = find.byKey(
+        const ValueKey('dashboard-floating-proxy-dock'),
+      );
+      final switchFinder = find.byKey(
+        const ValueKey('dashboard-proxy-toggle'),
+      );
+      final railFinder = find.byKey(
+        const ValueKey('dashboard-proxy-toggle-rail'),
+      );
+      final thumbFinder = find.byKey(
+        const ValueKey('dashboard-proxy-toggle-thumb'),
+      );
+      final scrollFinder = find.byKey(const ValueKey('dashboard-scroll-view'));
+
+      expect(dockFinder, findsOneWidget);
+      expect(switchFinder, findsOneWidget);
+      expect(railFinder, findsOneWidget);
+      expect(thumbFinder, findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byType(StartButton),
+          matching: find.byType(FilledButton),
+        ),
+        findsNothing,
+      );
+
+      final initialDockRect = tester.getRect(dockFinder);
+      final scrollRect = tester.getRect(scrollFinder);
+      final switchRect = tester.getRect(switchFinder);
+      final thumbOffCenter = tester.getCenter(thumbFinder);
+      expect(initialDockRect.center.dx, closeTo(scrollRect.center.dx, 1.5));
+      final expectedBottomMargin = math.min(
+        16.0,
+        math.max(6.0, scrollRect.height * 0.03),
+      );
+      expect(
+        initialDockRect.bottom,
+        closeTo(scrollRect.bottom - expectedBottomMargin, 1.5),
+      );
+      expect(initialDockRect.width, lessThan(220));
+      expect(thumbOffCenter.dx, lessThan(switchRect.center.dx));
+      expect(find.text('开启代理'), findsOneWidget);
+
+      // Manual drag must not trigger toggle or displace the thumb.
+      await tester.drag(switchFinder, const Offset(90, 0));
+      await tester.pumpAndSettle();
+      expect(controller.statusUpdates, isEmpty);
+      expect(tester.getCenter(thumbFinder).dx, closeTo(thumbOffCenter.dx, 0.5));
+
+      // Single click auto-slides thumb to ON without rendering stopwatch.
+      await tester.tap(switchFinder);
+      await tester.pumpAndSettle();
+      expect(controller.statusUpdates, [true]);
+      expect(tester.getCenter(thumbFinder).dx, greaterThan(switchRect.center.dx));
+      expect(find.text('运行中'), findsOneWidget);
+      expect(find.text('00:00:01'), findsNothing);
+
+      // Mouse hover over active switch surfaces disconnect label and resets on exit.
+      final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
+      await mouse.addPointer(location: Offset.zero);
+      addTearDown(mouse.removePointer);
+      await mouse.moveTo(tester.getCenter(switchFinder));
+      await tester.pumpAndSettle();
+      expect(find.text('关闭代理'), findsOneWidget);
+      await mouse.moveTo(const Offset(2, 2));
+      await tester.pumpAndSettle();
+      expect(find.text('运行中'), findsOneWidget);
+
+      // Scrolling keeps dock anchored and leaves bottom-most card unobstructed at maxScrollExtent.
+      await tester.drag(scrollFinder, const Offset(0, -120));
+      await tester.pumpAndSettle();
+      expect(tester.getRect(dockFinder), initialDockRect);
+
+      final scrollable = tester.state<ScrollableState>(
+        find.descendant(
+          of: scrollFinder,
+          matching: find.byType(Scrollable),
+        ).first,
+      );
+      expect(scrollable.position.maxScrollExtent, greaterThan(0));
+      scrollable.position.jumpTo(scrollable.position.maxScrollExtent);
+      await tester.pumpAndSettle();
+      final lastGridCardFinder = find.byType(CommonCard).last;
+      expect(lastGridCardFinder, findsOneWidget);
+      expect(
+        tester.getRect(lastGridCardFinder).bottom,
+        lessThanOrEqualTo(initialDockRect.top),
+      );
+
+      // Edit mode hides the floating dock; saving restores it.
+      await tester.tap(find.byIcon(Icons.edit));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 250));
+      expect(dockFinder, findsNothing);
+      await tester.tap(find.byIcon(Icons.save));
+      await tester.pumpAndSettle();
+      expect(dockFinder, findsOneWidget);
+
+      // Empty profiles hides the floating dock.
+      await tester.pumpWidget(const SizedBox.shrink());
+      _seedGlobalState(
+        viewSize: size,
+        appSetting: dashboardAppSetting,
+        profiles: const <Profile>[],
+      );
+      globalState.appState = globalState.appState.copyWith(isInit: true);
+      final emptyContainer = ProviderContainer();
+      addTearDown(emptyContainer.dispose);
+      await tester.pumpWidget(
+        _buildTestHarness(
+          container: emptyContainer,
+          viewSize: size,
+          child: const DashboardView(),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(dockFinder, findsNothing);
+
+      // Responsive 320px @ 2.0x text scaling across locales and brightness stays within bounds.
+      for (final (locale, brightness) in [
+        (const Locale('ru'), Brightness.dark),
+        (const Locale('zh', 'CN'), Brightness.light),
+      ]) {
+        await AppLocalizations.load(locale);
+        await tester.pumpWidget(const SizedBox.shrink());
+        const narrowSize = Size(320, 720);
+        tester.view.physicalSize = narrowSize;
+        tester.view.devicePixelRatio = 1.0;
+        _seedGlobalState(
+          viewSize: narrowSize,
+          appSetting: dashboardAppSetting,
+          profiles: const [adminProfile],
+          currentProfileId: 'admin',
+        );
+        globalState.appState = globalState.appState.copyWith(isInit: true);
+        final scaledContainer = ProviderContainer();
+        addTearDown(scaledContainer.dispose);
+        await tester.pumpWidget(
+          UncontrolledProviderScope(
+            container: scaledContainer,
+            child: MaterialApp(
+              locale: locale,
+              localizationsDelegates: const [
+                AppLocalizations.delegate,
+                GlobalMaterialLocalizations.delegate,
+                GlobalWidgetsLocalizations.delegate,
+                GlobalCupertinoLocalizations.delegate,
+              ],
+              supportedLocales: AppLocalizations.delegate.supportedLocales,
+              theme: ThemeData(brightness: brightness, useMaterial3: true),
+              home: MediaQuery(
+                data: const MediaQueryData(
+                  size: narrowSize,
+                  textScaler: TextScaler.linear(2.0),
+                ),
+                child: Builder(
+                  builder: (context) {
+                    globalState.measure = Measure.of(context, 2.0);
+                    globalState.theme = CommonTheme.of(context, 2.0);
+                    return const CommonScaffold(
+                      title: 'Dashboard',
+                      body: DashboardView(),
+                    );
+                  },
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        expect(tester.takeException(), isNull);
+        expect(dockFinder, findsOneWidget);
+        final scaledDockRect = tester.getRect(dockFinder);
+        final scaledScrollRect = tester.getRect(scrollFinder);
+        expect(scaledDockRect.left, greaterThanOrEqualTo(scaledScrollRect.left));
+        expect(scaledDockRect.right, lessThanOrEqualTo(scaledScrollRect.right));
+      }
     },
   );
 }

@@ -251,22 +251,57 @@ class _DashboardViewState extends ConsumerState<DashboardView> with PageMixin {
       final newDashboard = ref.watch(newDashboardEnabledProvider);
 
       if (!newDashboard) {
+        final startButtonState = ref.watch(startButtonSelectorStateProvider);
+        final showFloatingStart =
+            startButtonState.isInit && startButtonState.hasProfile;
         return Expanded(
-          child: Column(
-            children: [
-              Expanded(
-                child: SingleChildScrollView(
-                  padding: const EdgeInsets.all(16).copyWith(bottom: 16),
-                  child: Grid(
-                    crossAxisCount: columns,
-                    crossAxisSpacing: spacing,
-                    mainAxisSpacing: spacing,
-                    children: children,
+          child: LayoutBuilder(
+            builder: (context, paneConstraints) {
+              final paneTextScale = MediaQuery.textScalerOf(context).scale(1.0);
+              final floatingBottomMargin = computeFloatingProxyDockBottomMargin(
+                paneConstraints.maxHeight,
+              );
+              final bottomScrollClearance = showFloatingStart
+                  ? computeFloatingProxyDockScrollClearance(
+                      textScale: paneTextScale,
+                      bottomMargin: floatingBottomMargin,
+                    )
+                  : 16.0;
+              return Stack(
+                fit: StackFit.expand,
+                children: [
+                  SingleChildScrollView(
+                    key: const ValueKey('dashboard-scroll-view'),
+                    padding: const EdgeInsets.all(16).copyWith(
+                      bottom: bottomScrollClearance,
+                    ),
+                    child: Grid(
+                      crossAxisCount: columns,
+                      crossAxisSpacing: spacing,
+                      mainAxisSpacing: spacing,
+                      children: children,
+                    ),
                   ),
-                ),
-              ),
-              const StartButton(),
-            ],
+                  if (showFloatingStart)
+                    Positioned(
+                      left: 16,
+                      right: 16,
+                      bottom: floatingBottomMargin,
+                      child: Align(
+                        alignment: Alignment.bottomCenter,
+                        widthFactor: 1.0,
+                        heightFactor: 1.0,
+                        child: ConstrainedBox(
+                          constraints: BoxConstraints(
+                            maxWidth: max(96.0, paneConstraints.maxWidth - 32),
+                          ),
+                          child: const StartButton(floating: true),
+                        ),
+                      ),
+                    ),
+                ],
+              );
+            },
           ),
         );
       }

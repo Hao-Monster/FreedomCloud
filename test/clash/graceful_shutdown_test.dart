@@ -537,7 +537,8 @@ void main() {
       expect(find.text(appLocalizations.tunStatusOn), findsNWidgets(2));
 
       // Tap StartButton -> MUST invoke updateStatus(false) immediately at 0ms (no 400ms debounce!).
-      await tester.tap(find.byType(FilledButton));
+      final toggleFinder = find.byKey(const ValueKey('dashboard-proxy-toggle'));
+      await tester.tap(toggleFinder);
       await tester.pump();
 
       expect(
@@ -550,7 +551,7 @@ void main() {
       expect(find.text(appLocalizations.tunStatusStopping), findsOneWidget);
 
       // Duplicate tap while stopping must be ignored.
-      await tester.tap(find.byType(FilledButton));
+      await tester.tap(toggleFinder);
       await tester.pump();
       expect(fakeController.updateStatusCalls, 1);
 
@@ -700,14 +701,15 @@ void main() {
       await tester.pump();
 
       // Tap 1: initiates Start -> pending == true ("正在开启...").
-      await tester.tap(find.byType(FilledButton));
+      final toggleFinder = find.byKey(const ValueKey('dashboard-proxy-toggle'));
+      await tester.tap(toggleFinder);
       await tester.pump();
       expect(container.read(statusSwitchPendingProvider), isTrue);
       expect(find.text(appLocalizations.tunStatusStarting), findsOneWidget);
 
       // Tap 2 at 120ms (<500ms accidental double-click window): MUST be ignored!
       await tester.pump(const Duration(milliseconds: 120));
-      await tester.tap(find.byType(FilledButton));
+      await tester.tap(toggleFinder);
       await tester.pump();
       expect(
         container.read(statusSwitchPendingProvider),
@@ -718,7 +720,7 @@ void main() {
 
       // Advance past 500ms (total 560ms >= 500ms): Tap 3 MUST cancel the hung Start!
       await tester.pump(const Duration(milliseconds: 440));
-      await tester.tap(find.byType(FilledButton));
+      await tester.tap(toggleFinder);
       await tester.pump();
       expect(
         container.read(statusSwitchPendingProvider),
@@ -903,14 +905,25 @@ void main() {
       );
       await tester.pump();
 
-      final button = tester.widget<FilledButton>(find.byType(FilledButton));
-      final bgColor = button.style?.backgroundColor?.resolve(const <WidgetState>{});
+      final surface = tester.widget<DecoratedBox>(
+        find.byKey(const ValueKey('dashboard-floating-proxy-dock-surface')),
+      );
+      final decoration = surface.decoration as BoxDecoration;
+      final expectedBgColor = Color.alphaBlend(
+        kLatencyFastColor.withValues(alpha: 0.14),
+        const Color(0xFF111826).withValues(alpha: 0.96),
+      );
       expect(
-        bgColor,
-        Colors.green.shade600.withValues(alpha: 0.9),
+        decoration.color,
+        expectedBgColor,
         reason:
             'StartButton must retain active green palette throughout "正在关闭..." without flashing grey mid-teardown',
       );
+      expect(
+        (decoration.border! as Border).top.color,
+        kLatencyFastColor.withValues(alpha: 0.48),
+      );
+      expect(find.text(appLocalizations.tunStatusStopping), findsOneWidget);
 
       await tester.pumpWidget(const SizedBox.shrink());
       await tester.pump(const Duration(milliseconds: 50));

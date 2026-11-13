@@ -906,8 +906,9 @@ void main() {
           await tester.pump();
           await tester.pump(const Duration(milliseconds: 300));
 
-          // Initial visual uptime 00:00:01 is rendered on both HeroConnect & StartButton.
-          expect(find.text('00:00:01'), findsNWidgets(2));
+          // Initial visual uptime 00:00:01 renders on HeroConnect; StartButton shows tactile Running state.
+          expect(find.text('00:00:01'), findsOneWidget);
+          expect(find.text(appLocalizations.running), findsOneWidget);
           expect(
             find.bySemanticsLabel(appLocalizations.nodeOverviewTurnOffProxy),
             findsWidgets,
@@ -933,7 +934,8 @@ void main() {
             }
 
             // Visual 1Hz telemetry MUST still update accurately!
-            expect(find.text('00:00:05'), findsNWidgets(2));
+            expect(find.text('00:00:05'), findsOneWidget);
+            expect(find.text(appLocalizations.running), findsOneWidget);
 
             // Semantics tree MUST emit ZERO mutations across steady-state 1Hz ticks,
             // eliminating the 1Hz UiaRaiseAutomationEvent / get_accValue storm!
