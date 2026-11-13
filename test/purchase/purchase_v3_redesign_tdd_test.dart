@@ -5,7 +5,11 @@ import 'dart:ui' as ui;
 
 import 'package:flclashx/l10n/l10n.dart';
 import 'package:flclashx/manager/purchase_manager.dart';
+import 'package:flclashx/manager/support_manager.dart';
+import 'package:flclashx/models/chatwoot.dart';
 import 'package:flclashx/models/xboard.dart';
+import 'package:flclashx/services/chatwoot_service.dart';
+import 'package:flclashx/services/chatwoot_storage.dart';
 import 'package:flclashx/services/purchase_storage.dart';
 import 'package:flclashx/services/xboard_api.dart';
 import 'package:flclashx/views/purchase/center.dart';
@@ -77,6 +81,7 @@ void main() {
   Future<void> pumpV3Center(
     WidgetTester tester,
     PurchaseManager manager, {
+    SupportManager? supportManager,
     Size size = const Size(1280, 900),
     Locale locale = const Locale('zh', 'CN'),
     Brightness brightness = Brightness.dark,
@@ -114,6 +119,7 @@ void main() {
         home: Scaffold(
           body: PurchaseCenter(
             manager: manager,
+            supportManager: supportManager,
             openLink: (uri) async => openedLinks?.add(uri),
             openProfiles: () {},
           ),
@@ -397,6 +403,16 @@ void main() {
     );
     addTearDown(manager.dispose);
 
+    final supportManager = SupportManager(
+      service: _V3FakeChatwootService(),
+      storage: _V3FakeChatwootStorage(),
+      realtimeConnector: (_, __) async => _V3FakeChatwootRealtime(),
+    )..configureChannel(
+        baseUrl: Uri.parse('https://chat.example.test'),
+        websiteToken: 'public-widget-token',
+      );
+    addTearDown(supportManager.dispose);
+
     await manager.initialize();
     await manager.loadPlans();
     await manager.ensurePurchaseChannels();
@@ -405,6 +421,7 @@ void main() {
     await pumpV3Center(
       tester,
       manager,
+      supportManager: supportManager,
       size: const Size(1280, 900),
       openedLinks: openedLinks,
     );
@@ -437,7 +454,9 @@ void main() {
     );
     await tester.tap(find.byKey(const Key('support-close')));
     await tester.pumpAndSettle();
+    await tester.runAsync(() => Future<void>.delayed(Duration.zero));
     expect(find.byKey(const Key('support-chat-sheet')), findsNothing);
+    expect(supportManager.hasActiveRealtimeResources, isFalse);
     expect(find.text('微信号: ChasingDream_2021'), findsOneWidget);
     expect(find.text('微信号: dxm_qa'), findsOneWidget);
 
@@ -451,6 +470,7 @@ void main() {
       await pumpV3Center(
         tester,
         manager,
+        supportManager: supportManager,
         size: const Size(320, 800),
         locale: locale,
         textScale: 2.0,
@@ -895,6 +915,147 @@ class _V3FakeApi implements XboardApi, XboardExtendedApi {
 
   @override
   Future<void> logout(String authorization) async {}
+
+  @override
+  void close() {}
+}
+
+class _V3FakeChatwootStorage implements ChatwootSessionStorage {
+  final Map<String, ChatwootSession> _store = {};
+
+  @override
+  Future<void> clearSession({
+    required Uri baseUrl,
+    required String websiteToken,
+    required String scopeKey,
+  }) async {
+    _store.remove('${baseUrl.origin}|$websiteToken|$scopeKey');
+  }
+
+  @override
+  Future<ChatwootSession?> readSession({
+    required Uri baseUrl,
+    required String websiteToken,
+    required String scopeKey,
+  }) async =>
+      _store['${baseUrl.origin}|$websiteToken|$scopeKey'];
+
+  @override
+  Future<void> saveSession({
+    required Uri baseUrl,
+    required String websiteToken,
+    required ChatwootSession session,
+  }) async {
+    _store['${baseUrl.origin}|$websiteToken|${session.scopeKey}'] = session;
+  }
+}
+
+class _V3FakeChatwootRealtime implements ChatwootRealtimeConnection {
+  final StreamController<ChatwootRealtimeEvent> _controller =
+      StreamController<ChatwootRealtimeEvent>.broadcast();
+  bool _closed = false;
+
+  @override
+  Stream<ChatwootRealtimeEvent> get events => _controller.stream;
+
+  @override
+  Future<void> get done => _controller.done;
+
+  @override
+  bool get isClosed => _closed;
+
+  @override
+  Future<void> sendPresence() async {}
+
+  @override
+  Future<void> close() async {
+    if (_closed) return;
+    _closed = true;
+    await _controller.close();
+  }
+}
+
+class _V3FakeChatwootService implements ChatwootService {
+  @override
+  Future<
+      ({
+        ChatwootChannelConfig config,
+        String authToken,
+        ChatwootContact contact,
+      })> initializeSession({
+    required Uri baseUrl,
+    required String websiteToken,
+    String? authToken,
+  }) async =>
+      (
+        config: ChatwootChannelConfig(
+          baseUrl: baseUrl,
+          websiteToken: websiteToken,
+          websiteName: 'FreedomNet 客服',
+          welcomeTitle: '欢迎光临',
+          welcomeTagline: '通常 5 分钟内回复',
+          replyTime: '通常几分钟内回复',
+          allowMessagesAfterResolved: false,
+        ),
+        authToken: authToken ?? 'cw-auth-1',
+        contact: const ChatwootContact(
+          id: 9001,
+          name: 'Visitor',
+          pubsubToken: 'pubsub-1',
+        ),
+      );
+
+  @override
+  Future<ChatwootContact?> updateContact({
+    required Uri baseUrl,
+    required String websiteToken,
+    required String authToken,
+    String? email,
+    String? name,
+    Map<String, Object?>? customAttributes,
+  }) async =>
+      null;
+
+  @override
+  Future<ChatwootConversation?> fetchConversation({
+    required Uri baseUrl,
+    required String websiteToken,
+    required String authToken,
+  }) async =>
+      const ChatwootConversation(id: 501, status: 'open');
+
+  @override
+  Future<List<ChatwootMessage>> fetchMessages({
+    required Uri baseUrl,
+    required String websiteToken,
+    required String authToken,
+    int? before,
+    int? after,
+  }) async =>
+      const <ChatwootMessage>[];
+
+  @override
+  Future<ChatwootMessage> sendMessage({
+    required Uri baseUrl,
+    required String websiteToken,
+    required String authToken,
+    required String content,
+    required String echoId,
+  }) async =>
+      ChatwootMessage(
+        id: 1,
+        echoId: echoId,
+        content: content,
+        type: ChatwootMessageType.visitor,
+        createdAt: DateTime.now().toUtc(),
+      );
+
+  @override
+  Future<void> updateLastSeen({
+    required Uri baseUrl,
+    required String websiteToken,
+    required String authToken,
+  }) async {}
 
   @override
   void close() {}
