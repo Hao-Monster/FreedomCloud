@@ -308,6 +308,36 @@ class MessageLookup extends MessageLookupByLibrary {
     "blacklistModeDesc": MessageLookupByLibrary.simpleMessage(
       "The selected apps connect directly; all others are routed through the VPN.",
     ),
+    "brandDialogSubtitle": MessageLookupByLibrary.simpleMessage(
+      "Brand Overview & Core Experience",
+    ),
+    "brandPillarModesBody": MessageLookupByLibrary.simpleMessage(
+      "Novice Mode keeps everyday connection effortless with seamless TUN & system proxy, while Expert Mode unlocks full routing, connection, and diagnostic control.",
+    ),
+    "brandPillarModesTitle": MessageLookupByLibrary.simpleMessage(
+      "Dual-Mode Cockpit · Zero Friction",
+    ),
+    "brandPillarServiceBody": MessageLookupByLibrary.simpleMessage(
+      "Track data quota, remaining balance, and expiry at a glance, with instant gift-card verification, multi-profile sync, and dedicated support.",
+    ),
+    "brandPillarServiceTitle": MessageLookupByLibrary.simpleMessage(
+      "Transparent Quota · Instant Activation",
+    ),
+    "brandPillarSmartBody": MessageLookupByLibrary.simpleMessage(
+      "Concurrent latency health checks with clear visual tiers, one-click fastest connect, region filters, and pinned node control.",
+    ),
+    "brandPillarSmartTitle": MessageLookupByLibrary.simpleMessage(
+      "Smart Routing · Millisecond Insight",
+    ),
+    "brandShowcaseBadge": MessageLookupByLibrary.simpleMessage(
+      "FREEDOMNET · FLAGSHIP CLIENT",
+    ),
+    "brandShowcaseHeroBody": MessageLookupByLibrary.simpleMessage(
+      "FreedomNet delivers a clean, reliable, low-latency global network acceleration experience—built for cross-border work, AI productivity, and high-definition streaming in one click.",
+    ),
+    "brandShowcaseHeroTitle": MessageLookupByLibrary.simpleMessage(
+      "Borderless Access, Effortless Speed",
+    ),
     "bypassDomain": MessageLookupByLibrary.simpleMessage("Bypass domain"),
     "bypassDomainDesc": MessageLookupByLibrary.simpleMessage(
       "Only takes effect when the system proxy is enabled",

@@ -243,7 +243,7 @@ class CommonNavigationBar extends ConsumerWidget {
         .startsWith('zh');
     final hairline = freedomNetHairlineColor(colors);
     final tributeSemanticsLabel =
-        '${appLocalizations.appBrandName} · ${appLocalizations.tributeDialogTitle}';
+        '${appLocalizations.appBrandName} · ${appLocalizations.brandDialogSubtitle}';
     return Material(
       color: colors.surfaceDim,
       // SafeArea: the app draws edge-to-edge, so on tablets/foldables (which
@@ -261,7 +261,7 @@ class CommonNavigationBar extends ConsumerWidget {
           right: false,
           child: Column(
             children: [
-              // Brand emblem + one-tap open-source tribute trigger at top of rail
+              // Brand emblem + one-tap brand showcase trigger at top of rail
               if (!Platform.isMacOS) ...[
                 const SizedBox(height: 10),
                 Padding(
@@ -273,7 +273,7 @@ class CommonNavigationBar extends ConsumerWidget {
                     label: tributeSemanticsLabel,
                     child: Tooltip(
                       excludeFromSemantics: true,
-                      message: appLocalizations.tributeDialogTitle,
+                      message: appLocalizations.brandDialogSubtitle,
                       child: InkWell(
                         borderRadius: BorderRadius.circular(12),
                         onTap: () => showFreedomNetTributeDialog(context),
@@ -649,7 +649,7 @@ class _CompactBrandTributeLeading extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final tributeSemanticsLabel =
-        '${appLocalizations.appBrandName} · ${appLocalizations.tributeDialogTitle}';
+        '${appLocalizations.appBrandName} · ${appLocalizations.brandDialogSubtitle}';
     return Center(
       child: Semantics(
         key: const ValueKey('brand-tribute-trigger'),
@@ -658,7 +658,7 @@ class _CompactBrandTributeLeading extends StatelessWidget {
         label: tributeSemanticsLabel,
         child: Tooltip(
           excludeFromSemantics: true,
-          message: appLocalizations.tributeDialogTitle,
+          message: appLocalizations.brandDialogSubtitle,
           child: InkWell(
             borderRadius: BorderRadius.circular(10),
             onTap: () => showFreedomNetTributeDialog(context),

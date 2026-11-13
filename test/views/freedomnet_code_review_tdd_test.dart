@@ -413,8 +413,15 @@ void main() {
       find.byKey(const ValueKey('freedomnet-tribute-dialog')),
       findsOneWidget,
     );
-    expect(find.textContaining('FlClashX'), findsWidgets);
-    expect(find.textContaining('Gemini 4'), findsWidgets);
+    expect(
+      find.byKey(const ValueKey('freedomnet-brand-showcase')),
+      findsOneWidget,
+    );
+    expect(find.text('连接无界 · 疾速随行'), findsOneWidget);
+    expect(find.textContaining('FlClashX'), findsNothing);
+    expect(find.textContaining('Gemini 4'), findsNothing);
+    expect(find.textContaining('郑重声明'), findsNothing);
+    expect(find.textContaining('特别鸣谢'), findsNothing);
 
     await tester.tap(
       find.byKey(const ValueKey('freedomnet-tribute-dialog-close')),
@@ -567,7 +574,7 @@ void main() {
           isFocusable: true,
           hasTapAction: true,
           hasFocusAction: true,
-          label: '自由云 · 开源致敬与特别鸣谢',
+          label: '自由云 · 品牌介绍与核心体验',
         ),
       );
 

@@ -310,6 +310,36 @@ class MessageLookup extends MessageLookupByLibrary {
     "blacklistModeDesc": MessageLookupByLibrary.simpleMessage(
       "Выбранные приложения идут напрямую; остальные — через VPN.",
     ),
+    "brandDialogSubtitle": MessageLookupByLibrary.simpleMessage(
+      "О бренде и ключевых возможностях",
+    ),
+    "brandPillarModesBody": MessageLookupByLibrary.simpleMessage(
+      "«Простой режим» обеспечивает мгновенный запуск TUN и системного прокси, а «Экспертный режим» открывает детальное управление маршрутами и диагностикой.",
+    ),
+    "brandPillarModesTitle": MessageLookupByLibrary.simpleMessage(
+      "Два режима · От простоты к контролю",
+    ),
+    "brandPillarServiceBody": MessageLookupByLibrary.simpleMessage(
+      "Наглядный учёт трафика и срока действия подписки, быстрая проверка и активация подарочных карт, синхронизация профилей и поддержка.",
+    ),
+    "brandPillarServiceTitle": MessageLookupByLibrary.simpleMessage(
+      "Прозрачный трафик · Мгновенная активация",
+    ),
+    "brandPillarSmartBody": MessageLookupByLibrary.simpleMessage(
+      "Параллельная проверка узлов, наглядная индикация задержки, подключение к самому быстрому узлу в один клик и фильтр по регионам.",
+    ),
+    "brandPillarSmartTitle": MessageLookupByLibrary.simpleMessage(
+      "Умный выбор · Точный контроль задержки",
+    ),
+    "brandShowcaseBadge": MessageLookupByLibrary.simpleMessage(
+      "FREEDOMNET · ФЛАГМАНСКИЙ КЛИЕНТ",
+    ),
+    "brandShowcaseHeroBody": MessageLookupByLibrary.simpleMessage(
+      "FreedomNet (自由云) обеспечивает стабильное и быстрое интеллектуальное ускорение сети для удалённой работы, ИИ-сервисов и потокового видео в один клик.",
+    ),
+    "brandShowcaseHeroTitle": MessageLookupByLibrary.simpleMessage(
+      "Связь без границ и мгновенный отклик",
+    ),
     "bypassDomain": MessageLookupByLibrary.simpleMessage("Обход домена"),
     "bypassDomainDesc": MessageLookupByLibrary.simpleMessage(
       "Действует только при включенном системном прокси",

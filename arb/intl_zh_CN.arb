@@ -1458,5 +1458,15 @@
   "tributeFlclashxBody": "自由云（FreedomNet）郑重声明：本软件基于开源项目 FlClashX（pluralplay/FlClashX）构建，承袭 FlClash 与 Mihomo（Clash.Meta）内核生态。谨向 FlClashX 原作者及全体上游开源贡献者致以最崇高的敬意与诚挚感谢。",
   "tributeGeminiBadge": "ENGINEERING & DESIGN SUPPORT",
   "tributeGeminiTitle": "特别鸣谢：Gemini 4 研发与设计支持",
-  "tributeGeminiBody": "郑重感谢 Gemini 4 为自由云（FreedomNet）的系统架构演进、商业级交互设计、代码工程重构与全链路自动化验证提供的核心技术支持。"
+  "tributeGeminiBody": "郑重感谢 Gemini 4 为自由云（FreedomNet）的系统架构演进、商业级交互设计、代码工程重构与全链路自动化验证提供的核心技术支持。",
+  "brandDialogSubtitle": "品牌介绍与核心体验",
+  "brandShowcaseBadge": "FREEDOMNET · 官方旗舰客户端",
+  "brandShowcaseHeroTitle": "连接无界 · 疾速随行",
+  "brandShowcaseHeroBody": "自由云（FreedomNet）专注打造纯粹、稳定、低延迟的全球智能网络加速体验。无论跨境办公、AI 生产力协作还是高清流媒体娱乐，一键即达理想连接。",
+  "brandPillarSmartTitle": "智能选点 · 毫秒级感知",
+  "brandPillarSmartBody": "并发健康测速与直观色阶呈现，支持一键连最快、地区筛选与固定节点自由切换。",
+  "brandPillarModesTitle": "双模驾驭 · 即开即连",
+  "brandPillarModesBody": "「小白模式」清爽直观、系统级 TUN 与代理无缝协同；展开「大佬模式」即可掌控分流、连接与诊断细节。",
+  "brandPillarServiceTitle": "透明权益 · 安心续享",
+  "brandPillarServiceBody": "订阅流量、剩余比例与到期状态清晰可查，支持礼品卡核验兑换、多配置同步与专属客服协助。"
 }

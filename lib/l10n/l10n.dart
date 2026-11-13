@@ -8812,6 +8812,106 @@ class AppLocalizations {
       args: [],
     );
   }
+
+  /// `Brand Overview & Core Experience`
+  String get brandDialogSubtitle {
+    return Intl.message(
+      'Brand Overview & Core Experience',
+      name: 'brandDialogSubtitle',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `FREEDOMNET · FLAGSHIP CLIENT`
+  String get brandShowcaseBadge {
+    return Intl.message(
+      'FREEDOMNET · FLAGSHIP CLIENT',
+      name: 'brandShowcaseBadge',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Borderless Access, Effortless Speed`
+  String get brandShowcaseHeroTitle {
+    return Intl.message(
+      'Borderless Access, Effortless Speed',
+      name: 'brandShowcaseHeroTitle',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `FreedomNet delivers a clean, reliable, low-latency global network acceleration experience—built for cross-border work, AI productivity, and high-definition streaming in one click.`
+  String get brandShowcaseHeroBody {
+    return Intl.message(
+      'FreedomNet delivers a clean, reliable, low-latency global network acceleration experience—built for cross-border work, AI productivity, and high-definition streaming in one click.',
+      name: 'brandShowcaseHeroBody',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Smart Routing · Millisecond Insight`
+  String get brandPillarSmartTitle {
+    return Intl.message(
+      'Smart Routing · Millisecond Insight',
+      name: 'brandPillarSmartTitle',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Concurrent latency health checks with clear visual tiers, one-click fastest connect, region filters, and pinned node control.`
+  String get brandPillarSmartBody {
+    return Intl.message(
+      'Concurrent latency health checks with clear visual tiers, one-click fastest connect, region filters, and pinned node control.',
+      name: 'brandPillarSmartBody',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Dual-Mode Cockpit · Zero Friction`
+  String get brandPillarModesTitle {
+    return Intl.message(
+      'Dual-Mode Cockpit · Zero Friction',
+      name: 'brandPillarModesTitle',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Novice Mode keeps everyday connection effortless with seamless TUN & system proxy, while Expert Mode unlocks full routing, connection, and diagnostic control.`
+  String get brandPillarModesBody {
+    return Intl.message(
+      'Novice Mode keeps everyday connection effortless with seamless TUN & system proxy, while Expert Mode unlocks full routing, connection, and diagnostic control.',
+      name: 'brandPillarModesBody',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Transparent Quota · Instant Activation`
+  String get brandPillarServiceTitle {
+    return Intl.message(
+      'Transparent Quota · Instant Activation',
+      name: 'brandPillarServiceTitle',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Track data quota, remaining balance, and expiry at a glance, with instant gift-card verification, multi-profile sync, and dedicated support.`
+  String get brandPillarServiceBody {
+    return Intl.message(
+      'Track data quota, remaining balance, and expiry at a glance, with instant gift-card verification, multi-profile sync, and dedicated support.',
+      name: 'brandPillarServiceBody',
+      desc: '',
+      args: [],
+    );
+  }
 }
 
 class AppLocalizationDelegate extends LocalizationsDelegate<AppLocalizations> {

@@ -275,7 +275,7 @@ void main() {
   });
 
   testWidgets(
-      'T3: Solemn Open-Source Tribute & Credits — AboutView monument and Novice Mode one-tap brand dialog honor FlClashX and Gemini 4',
+      'T3: Brand Showcase vs Solemn Credits — AboutView preserves FlClashX & Gemini 4 tributes while top-left brand dialog showcases FreedomNet brand only',
       (tester) async {
     tester.view.physicalSize = const Size(1200, 860);
     tester.view.devicePixelRatio = 1.0;
@@ -304,7 +304,15 @@ void main() {
       findsOneWidget,
     );
     expect(
+      find.textContaining('郑重声明', findRichText: true),
+      findsWidgets,
+    );
+    expect(
       find.textContaining('FlClashX', findRichText: true),
+      findsWidgets,
+    );
+    expect(
+      find.textContaining('特别鸣谢', findRichText: true),
       findsWidgets,
     );
     expect(
@@ -314,7 +322,7 @@ void main() {
     expect(find.text('pluralplay'), findsOneWidget);
     expect(find.text('kastov'), findsOneWidget);
 
-    // 2. In Novice Mode (设置 collapsed), tapping top-left brand emblem opens tribute dialog.
+    // 2. Tapping top-left brand emblem opens FreedomNet brand showcase dialog without open-source tributes.
     await tester.pumpWidget(
       _buildTestApp(
         locale: const Locale('zh', 'CN'),
@@ -334,17 +342,65 @@ void main() {
     expect(
       find.descendant(
         of: dialogFinder,
-        matching: find.textContaining('FlClashX', findRichText: true),
+        matching: find.byKey(const ValueKey('freedomnet-brand-showcase')),
       ),
-      findsWidgets,
+      findsOneWidget,
     );
     expect(
       find.descendant(
         of: dialogFinder,
-        matching: find.textContaining('Gemini 4', findRichText: true),
+        matching: find.text('品牌介绍与核心体验'),
       ),
-      findsWidgets,
+      findsOneWidget,
     );
+    expect(
+      find.descendant(
+        of: dialogFinder,
+        matching: find.text('连接无界 · 疾速随行'),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: dialogFinder,
+        matching: find.text('智能选点 · 毫秒级感知'),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: dialogFinder,
+        matching: find.text('双模驾驭 · 即开即连'),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: dialogFinder,
+        matching: find.text('透明权益 · 安心续享'),
+      ),
+      findsOneWidget,
+    );
+    for (final forbidden in const [
+      '开源致敬与特别鸣谢',
+      '郑重声明',
+      '特别鸣谢',
+      'OPEN-SOURCE HERITAGE',
+      'ENGINEERING & DESIGN SUPPORT',
+      'FlClashX',
+      'FlClash',
+      'Mihomo',
+      'Gemini 4',
+    ]) {
+      expect(
+        find.descendant(
+          of: dialogFinder,
+          matching: find.textContaining(forbidden, findRichText: true),
+        ),
+        findsNothing,
+        reason: 'Brand showcase dialog must not contain "$forbidden"',
+      );
+    }
 
     await tester.tap(
       find.byKey(const ValueKey('freedomnet-tribute-dialog-close')),
@@ -494,6 +550,28 @@ void main() {
           find.byKey(const ValueKey('about-brand-monument')),
           findsOneWidget,
         );
+        if (width == 360.0) {
+          unawaited(
+            showFreedomNetTributeDialog(
+              tester.element(find.byType(AboutView)),
+            ),
+          );
+          await tester.pumpAndSettle();
+          expect(
+            tester.takeException(),
+            isNull,
+            reason:
+                'Brand dialog overflow at width=$width locale=${locale.toLanguageTag()}',
+          );
+          expect(
+            find.byKey(const ValueKey('freedomnet-brand-showcase')),
+            findsOneWidget,
+          );
+          await tester.tap(
+            find.byKey(const ValueKey('freedomnet-tribute-dialog-close')),
+          );
+          await tester.pumpAndSettle();
+        }
       }
     }
     tester.view.resetPhysicalSize();

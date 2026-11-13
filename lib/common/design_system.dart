@@ -294,8 +294,8 @@ class _FreedomNetGlyphPainter extends CustomPainter {
   bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
 
-/// Solemn open-source heritage & engineering credit cards shared by AboutView
-/// and the one-tap Novice Mode brand tribute dialog.
+/// Solemn open-source heritage & engineering credit cards displayed in
+/// Settings -> About (`AboutView`).
 class FreedomNetTributeCards extends StatelessWidget {
   const FreedomNetTributeCards({
     super.key,
@@ -540,6 +540,236 @@ class _TributeRepoChip extends StatelessWidget {
   }
 }
 
+/// Commercial brand showcase content displayed inside the one-tap brand dialog
+/// opened from the top-left emblem.
+class FreedomNetBrandShowcase extends StatelessWidget {
+  const FreedomNetBrandShowcase({super.key});
+
+  String _safeClientVersion() {
+    try {
+      return globalState.packageInfo.version.trim();
+    } catch (_) {
+      return '';
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
+    final isDark = colors.brightness == Brightness.dark;
+    final hairline = freedomNetHairlineColor(colors);
+    final badgeFg = isDark ? kPortalBrandMarkBg : kPortalBrandMarkFg;
+    final serviceAccent =
+        isDark ? const Color(0xFFA5B4FC) : const Color(0xFF4F46E5);
+    final version = _safeClientVersion();
+
+    return Column(
+      key: const ValueKey('freedomnet-brand-showcase'),
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Container(
+          key: const ValueKey('freedomnet-brand-hero-card'),
+          padding: const EdgeInsets.all(18),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(14),
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [
+                kPortalBrandMarkBg.withValues(alpha: isDark ? 0.14 : 0.12),
+                colors.primary.withValues(alpha: isDark ? 0.08 : 0.05),
+                colors.surfaceContainer,
+              ],
+            ),
+            border: Border.all(
+              color: kPortalBrandMarkBg.withValues(alpha: isDark ? 0.34 : 0.45),
+            ),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Wrap(
+                spacing: 8,
+                runSpacing: 6,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: kPortalBrandMarkBg.withValues(
+                        alpha: isDark ? 0.18 : 0.22,
+                      ),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.verified_rounded,
+                          size: 13,
+                          color: badgeFg,
+                        ),
+                        const SizedBox(width: 5),
+                        Flexible(
+                          child: Text(
+                            appLocalizations.brandShowcaseBadge,
+                            style: textTheme.labelSmall?.copyWith(
+                              color: badgeFg,
+                              fontWeight: FontWeight.w700,
+                              letterSpacing: 0.5,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  if (version.isNotEmpty)
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 3,
+                      ),
+                      decoration: BoxDecoration(
+                        color: colors.surfaceContainerHigh,
+                        borderRadius: BorderRadius.circular(6),
+                        border: Border.all(color: hairline),
+                      ),
+                      child: Text(
+                        'v$version',
+                        style: textTheme.labelSmall?.copyWith(
+                          color: colors.onSurfaceVariant,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              Text(
+                appLocalizations.brandShowcaseHeroTitle,
+                style: textTheme.titleMedium?.copyWith(
+                  fontWeight: FontWeight.w800,
+                  color: colors.onSurface,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                appLocalizations.brandShowcaseHeroBody,
+                style: textTheme.bodyMedium?.copyWith(
+                  color: colors.onSurfaceVariant,
+                  height: 1.55,
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 12),
+        _BrandShowcasePillarTile(
+          tileKey: const ValueKey('freedomnet-brand-pillar-smart'),
+          icon: Icons.bolt_rounded,
+          accentColor: kLatencyFastColor,
+          title: appLocalizations.brandPillarSmartTitle,
+          body: appLocalizations.brandPillarSmartBody,
+        ),
+        const SizedBox(height: 10),
+        _BrandShowcasePillarTile(
+          tileKey: const ValueKey('freedomnet-brand-pillar-modes'),
+          icon: Icons.tune_rounded,
+          accentColor: colors.primary,
+          title: appLocalizations.brandPillarModesTitle,
+          body: appLocalizations.brandPillarModesBody,
+        ),
+        const SizedBox(height: 10),
+        _BrandShowcasePillarTile(
+          tileKey: const ValueKey('freedomnet-brand-pillar-service'),
+          icon: Icons.verified_user_rounded,
+          accentColor: serviceAccent,
+          title: appLocalizations.brandPillarServiceTitle,
+          body: appLocalizations.brandPillarServiceBody,
+        ),
+      ],
+    );
+  }
+}
+
+class _BrandShowcasePillarTile extends StatelessWidget {
+  const _BrandShowcasePillarTile({
+    required this.tileKey,
+    required this.icon,
+    required this.accentColor,
+    required this.title,
+    required this.body,
+  });
+
+  final Key tileKey;
+  final IconData icon;
+  final Color accentColor;
+  final String title;
+  final String body;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
+    final isDark = colors.brightness == Brightness.dark;
+    final hairline = freedomNetHairlineColor(colors);
+
+    return Container(
+      key: tileKey,
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(12),
+        color: colors.surfaceContainer,
+        border: Border.all(color: hairline),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 34,
+            height: 34,
+            decoration: BoxDecoration(
+              color: accentColor.withValues(alpha: isDark ? 0.16 : 0.12),
+              borderRadius: BorderRadius.circular(9),
+            ),
+            child: Icon(
+              icon,
+              size: 18,
+              color: accentColor,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: textTheme.titleSmall?.copyWith(
+                    fontWeight: FontWeight.w700,
+                    color: colors.onSurface,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  body,
+                  style: textTheme.bodySmall?.copyWith(
+                    color: colors.onSurfaceVariant,
+                    height: 1.45,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 Future<void> showFreedomNetTributeDialog(BuildContext context) {
   final isZh = Localizations.localeOf(context)
       .languageCode
@@ -588,7 +818,7 @@ Future<void> showFreedomNetTributeDialog(BuildContext context) {
                   ),
                   const SizedBox(height: 2),
                   Text(
-                    appLocalizations.tributeDialogTitle,
+                    appLocalizations.brandDialogSubtitle,
                     style: textTheme.bodySmall?.copyWith(
                       color: colors.onSurfaceVariant,
                     ),
@@ -601,7 +831,7 @@ Future<void> showFreedomNetTributeDialog(BuildContext context) {
         content: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 520),
           child: const SingleChildScrollView(
-            child: FreedomNetTributeCards(),
+            child: FreedomNetBrandShowcase(),
           ),
         ),
         actions: [

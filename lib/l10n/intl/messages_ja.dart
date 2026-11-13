@@ -257,6 +257,34 @@ class MessageLookup extends MessageLookupByLibrary {
     ),
     "bind": MessageLookupByLibrary.simpleMessage("バインド"),
     "blacklistMode": MessageLookupByLibrary.simpleMessage("ブラックリストモード"),
+    "brandDialogSubtitle": MessageLookupByLibrary.simpleMessage("ブランド紹介とコア体験"),
+    "brandPillarModesBody": MessageLookupByLibrary.simpleMessage(
+      "「初心者モード」でTUNとシステムプロキシをシームレスに自動連携。「エキスパートモード」ではルーティングや通信診断を自在に管理できます。",
+    ),
+    "brandPillarModesTitle": MessageLookupByLibrary.simpleMessage(
+      "デュアルモード · 迷わず使える操作性",
+    ),
+    "brandPillarServiceBody": MessageLookupByLibrary.simpleMessage(
+      "通信量・残量・有効期限をひと目で把握。ギフトカード確認・引き換え、複数プロファイル同期、サポート窓口を備えています。",
+    ),
+    "brandPillarServiceTitle": MessageLookupByLibrary.simpleMessage(
+      "明確な利用状況 · スムーズな有効化",
+    ),
+    "brandPillarSmartBody": MessageLookupByLibrary.simpleMessage(
+      "並列ヘルスチェックと直感的なステータス表示により、最速ワンクリック接続・地域フィルタ・固定ノード切替に対応します。",
+    ),
+    "brandPillarSmartTitle": MessageLookupByLibrary.simpleMessage(
+      "スマート選択 · ミリ秒単位の可視化",
+    ),
+    "brandShowcaseBadge": MessageLookupByLibrary.simpleMessage(
+      "FREEDOMNET · フラッグシップクライアント",
+    ),
+    "brandShowcaseHeroBody": MessageLookupByLibrary.simpleMessage(
+      "FreedomNet（自由云）は、シンプルで安定した低遅延のグローバルネットワーク加速体験を提供します。ビジネス、AI活用、高画質ストリーミングまでワンクリックで快適に接続できます。",
+    ),
+    "brandShowcaseHeroTitle": MessageLookupByLibrary.simpleMessage(
+      "境界を超え、快適なスピードを日常に",
+    ),
     "bypassDomain": MessageLookupByLibrary.simpleMessage("バイパスドメイン"),
     "bypassDomainDesc": MessageLookupByLibrary.simpleMessage("システムプロキシ有効時のみ適用"),
     "cacheCorrupt": MessageLookupByLibrary.simpleMessage(

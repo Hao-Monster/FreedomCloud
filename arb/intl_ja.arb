@@ -1325,5 +1325,15 @@
   "tributeFlclashxBody": "FreedomNet（自由云）は、オープンソースプロジェクト FlClashX（pluralplay/FlClashX）を基盤とし、FlClash および Mihomo（Clash.Meta）エコシステムを継承して構築されています。原作者およびすべての上流コントリビューターの皆様に深く敬意と感謝を表します。",
   "tributeGeminiBadge": "ENGINEERING & DESIGN SUPPORT",
   "tributeGeminiTitle": "特別謝辞：Gemini 4 開発・設計サポート",
-  "tributeGeminiBody": "FreedomNet（自由云）のアーキテクチャ設計、UI/UXデザイン、エンジニアリング実装および自動検証を強力に支援した Gemini 4 に心より感謝いたします。"
+  "tributeGeminiBody": "FreedomNet（自由云）のアーキテクチャ設計、UI/UXデザイン、エンジニアリング実装および自動検証を強力に支援した Gemini 4 に心より感謝いたします。",
+  "brandDialogSubtitle": "ブランド紹介とコア体験",
+  "brandShowcaseBadge": "FREEDOMNET · フラッグシップクライアント",
+  "brandShowcaseHeroTitle": "境界を超え、快適なスピードを日常に",
+  "brandShowcaseHeroBody": "FreedomNet（自由云）は、シンプルで安定した低遅延のグローバルネットワーク加速体験を提供します。ビジネス、AI活用、高画質ストリーミングまでワンクリックで快適に接続できます。",
+  "brandPillarSmartTitle": "スマート選択 · ミリ秒単位の可視化",
+  "brandPillarSmartBody": "並列ヘルスチェックと直感的なステータス表示により、最速ワンクリック接続・地域フィルタ・固定ノード切替に対応します。",
+  "brandPillarModesTitle": "デュアルモード · 迷わず使える操作性",
+  "brandPillarModesBody": "「初心者モード」でTUNとシステムプロキシをシームレスに自動連携。「エキスパートモード」ではルーティングや通信診断を自在に管理できます。",
+  "brandPillarServiceTitle": "明確な利用状況 · スムーズな有効化",
+  "brandPillarServiceBody": "通信量・残量・有効期限をひと目で把握。ギフトカード確認・引き換え、複数プロファイル同期、サポート窓口を備えています。"
 }

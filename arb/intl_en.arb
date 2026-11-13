@@ -1519,5 +1519,15 @@
   "tributeFlclashxBody": "FreedomNet solemnly declares that this software is built upon the open-source project FlClashX (pluralplay/FlClashX), inheriting the FlClash and Mihomo (Clash.Meta) ecosystem. With our deepest respect and gratitude to the original authors and all upstream open-source contributors.",
   "tributeGeminiBadge": "ENGINEERING & DESIGN SUPPORT",
   "tributeGeminiTitle": "Special Thanks to Gemini 4",
-  "tributeGeminiBody": "Special thanks to Gemini 4 for supporting FreedomNet's architecture evolution, commercial UI/UX design, engineering refactoring, and automated verification."
+  "tributeGeminiBody": "Special thanks to Gemini 4 for supporting FreedomNet's architecture evolution, commercial UI/UX design, engineering refactoring, and automated verification.",
+  "brandDialogSubtitle": "Brand Overview & Core Experience",
+  "brandShowcaseBadge": "FREEDOMNET · FLAGSHIP CLIENT",
+  "brandShowcaseHeroTitle": "Borderless Access, Effortless Speed",
+  "brandShowcaseHeroBody": "FreedomNet delivers a clean, reliable, low-latency global network acceleration experience—built for cross-border work, AI productivity, and high-definition streaming in one click.",
+  "brandPillarSmartTitle": "Smart Routing · Millisecond Insight",
+  "brandPillarSmartBody": "Concurrent latency health checks with clear visual tiers, one-click fastest connect, region filters, and pinned node control.",
+  "brandPillarModesTitle": "Dual-Mode Cockpit · Zero Friction",
+  "brandPillarModesBody": "Novice Mode keeps everyday connection effortless with seamless TUN & system proxy, while Expert Mode unlocks full routing, connection, and diagnostic control.",
+  "brandPillarServiceTitle": "Transparent Quota · Instant Activation",
+  "brandPillarServiceBody": "Track data quota, remaining balance, and expiry at a glance, with instant gift-card verification, multi-profile sync, and dedicated support."
 }

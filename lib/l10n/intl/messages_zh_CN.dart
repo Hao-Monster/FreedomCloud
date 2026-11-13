@@ -248,6 +248,34 @@ class MessageLookup extends MessageLookupByLibrary {
     ),
     "bind": MessageLookupByLibrary.simpleMessage("绑定"),
     "blacklistMode": MessageLookupByLibrary.simpleMessage("黑名单模式"),
+    "brandDialogSubtitle": MessageLookupByLibrary.simpleMessage("品牌介绍与核心体验"),
+    "brandPillarModesBody": MessageLookupByLibrary.simpleMessage(
+      "「小白模式」清爽直观、系统级 TUN 与代理无缝协同；展开「大佬模式」即可掌控分流、连接与诊断细节。",
+    ),
+    "brandPillarModesTitle": MessageLookupByLibrary.simpleMessage(
+      "双模驾驭 · 即开即连",
+    ),
+    "brandPillarServiceBody": MessageLookupByLibrary.simpleMessage(
+      "订阅流量、剩余比例与到期状态清晰可查，支持礼品卡核验兑换、多配置同步与专属客服协助。",
+    ),
+    "brandPillarServiceTitle": MessageLookupByLibrary.simpleMessage(
+      "透明权益 · 安心续享",
+    ),
+    "brandPillarSmartBody": MessageLookupByLibrary.simpleMessage(
+      "并发健康测速与直观色阶呈现，支持一键连最快、地区筛选与固定节点自由切换。",
+    ),
+    "brandPillarSmartTitle": MessageLookupByLibrary.simpleMessage(
+      "智能选点 · 毫秒级感知",
+    ),
+    "brandShowcaseBadge": MessageLookupByLibrary.simpleMessage(
+      "FREEDOMNET · 官方旗舰客户端",
+    ),
+    "brandShowcaseHeroBody": MessageLookupByLibrary.simpleMessage(
+      "自由云（FreedomNet）专注打造纯粹、稳定、低延迟的全球智能网络加速体验。无论跨境办公、AI 生产力协作还是高清流媒体娱乐，一键即达理想连接。",
+    ),
+    "brandShowcaseHeroTitle": MessageLookupByLibrary.simpleMessage(
+      "连接无界 · 疾速随行",
+    ),
     "bypassDomain": MessageLookupByLibrary.simpleMessage("排除域名"),
     "bypassDomainDesc": MessageLookupByLibrary.simpleMessage("仅在系统代理启用时生效"),
     "cacheCorrupt": MessageLookupByLibrary.simpleMessage("缓存已损坏，是否清空？"),
