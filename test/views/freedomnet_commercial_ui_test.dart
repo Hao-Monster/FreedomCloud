@@ -225,8 +225,13 @@ void main() {
     expect(light.surfaceContainer, equals(const Color(0xFFFFFFFF)));
     expect(light.primary, equals(const Color(0xFF0284C7)));
 
+    expect(utils.getDelayColor(null), isNull);
+    expect(utils.getDelayColor(0), isNull);
+    expect(utils.getDelayColor(1), equals(const Color(0xFF10B981)));
     expect(utils.getDelayColor(120), equals(const Color(0xFF10B981)));
-    expect(utils.getDelayColor(650), equals(const Color(0xFFF59E0B)));
+    expect(utils.getDelayColor(650), equals(const Color(0xFF10B981)));
+    expect(utils.getDelayColor(2000), equals(const Color(0xFF10B981)));
+    expect(utils.getDelayColor(2001), equals(const Color(0xFFF59E0B)));
     expect(utils.getDelayColor(-1), equals(const Color(0xFFEF4444)));
   });
 

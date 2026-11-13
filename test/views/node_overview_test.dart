@@ -1507,7 +1507,7 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('health band uses node color scale at the 600 ms boundary',
+  testWidgets('health band uses node color scale at the 2000 ms boundary',
       (tester) async {
     final now = DateTime.now();
     await mount(tester, width: 1200, catalogs: {
@@ -1523,11 +1523,13 @@ void main() {
           ]),
     }, health: {
       'a': {
-        for (final entry in {'fast': 599, 'slow': 600, 'failed': -1}.entries)
+        for (final entry in {'fast': 2000, 'slow': 2001, 'failed': -1}.entries)
           entry.key: NodeHealthRecord(
               delayMs: entry.value, testedAt: now, testUrlHash: 'fixture')
       },
     });
+    expect(utils.getDelayColor(2000), equals(const Color(0xFF10B981)));
+    expect(utils.getDelayColor(2001), equals(const Color(0xFFF59E0B)));
     final bands = tester
         .widgetList<Container>(find.descendant(
             of: find.byKey(const ValueKey('overview-select-a')),
@@ -1536,8 +1538,8 @@ void main() {
         .toList();
     expect(bands, hasLength(4));
     expect(bands.take(3).map((band) => band.color), [
-      utils.getDelayColor(599),
-      utils.getDelayColor(600),
+      utils.getDelayColor(2000),
+      utils.getDelayColor(2001),
       utils.getDelayColor(-1),
     ]);
     expect(find.text('2 available / 3 tested / 4 total'), findsOneWidget);
@@ -1583,7 +1585,7 @@ void main() {
       'b': {
         'b-node': NodeHealthRecord(
             delayMs: 456,
-            testedAt: now.subtract(const Duration(minutes: 11)),
+            testedAt: now.subtract(const Duration(hours: 1, minutes: 1)),
             testUrlHash: 'hash')
       },
     });
@@ -7509,7 +7511,7 @@ void main() {
         },
         'soon': {
           nSlow.identityKey: NodeHealthRecord(
-            delayMs: 760,
+            delayMs: 2400,
             testedAt: now,
             testUrlHash: 'h',
           ),
@@ -7599,7 +7601,7 @@ void main() {
     expect(bands, hasLength(4));
     expect(bands.take(3).map((b) => b.color), [
       utils.getDelayColor(80),
-      utils.getDelayColor(760),
+      utils.getDelayColor(2400),
       utils.getDelayColor(-1),
     ]);
 
@@ -8750,6 +8752,292 @@ void main() {
       'SG 01',
     );
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'Plan B persistent hue pills: 1-2000ms green, >2000ms yellow, -1 red, 1h fresh window, stale 3d keeps hue border without turning grey',
+      (tester) async {
+    final now = DateTime.now();
+    final freshAt = now.subtract(const Duration(minutes: 45));
+    final staleAt = now.subtract(const Duration(days: 3));
+    const profileA =
+        Profile(id: 'a', label: 'Alpha', autoUpdateDuration: Duration.zero);
+
+    final nFreshFast = _node('f-fast', 'Fresh 2000');
+    final nFreshSlow = _node('f-slow', 'Fresh 2001');
+    final nFreshFail = _node('f-fail', 'Fresh Fail');
+    final nStaleFast = _node('s-fast', 'Stale 232');
+    final nStaleSlow = _node('s-slow', 'Stale 2500');
+    final nStaleFail = _node('s-fail', 'Stale Fail');
+
+    await mount(
+      tester,
+      width: 1280,
+      locale: const Locale('zh', 'CN'),
+      profiles: const [profileA],
+      catalogs: {
+        'a': ProfileCatalog(
+          profileId: 'a',
+          fingerprint: 'f',
+          status: ProfileCatalogStatus.ready,
+          nodes: [
+            nFreshFast,
+            nFreshSlow,
+            nFreshFail,
+            nStaleFast,
+            nStaleSlow,
+            nStaleFail,
+          ],
+        ),
+      },
+      health: {
+        'a': {
+          nFreshFast.identityKey: NodeHealthRecord(
+            delayMs: 2000,
+            testedAt: freshAt,
+            testUrlHash: 'h',
+          ),
+          nFreshSlow.identityKey: NodeHealthRecord(
+            delayMs: 2001,
+            testedAt: freshAt,
+            testUrlHash: 'h',
+          ),
+          nFreshFail.identityKey: NodeHealthRecord(
+            delayMs: -1,
+            testedAt: freshAt,
+            testUrlHash: 'h',
+          ),
+          nStaleFast.identityKey: NodeHealthRecord(
+            delayMs: 232,
+            testedAt: staleAt,
+            testUrlHash: 'h',
+          ),
+          nStaleSlow.identityKey: NodeHealthRecord(
+            delayMs: 2500,
+            testedAt: staleAt,
+            testUrlHash: 'h',
+          ),
+          nStaleFail.identityKey: NodeHealthRecord(
+            delayMs: -1,
+            testedAt: staleAt,
+            testUrlHash: 'h',
+          ),
+        },
+      },
+    );
+
+    // Summary card uses 1~2000 ms for fast and >2000 ms for slow regardless of age.
+    final allCard = find.byKey(const ValueKey('overview-select-all'));
+    expect(
+      find.descendant(of: allCard, matching: find.text('流畅 2')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: allCard, matching: find.text('偏慢 2')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: allCard, matching: find.text('失败 2')),
+      findsOneWidget,
+    );
+
+    void expectPill({
+      required String nodeKey,
+      required String label,
+      required Color expectedHue,
+      required bool expectStale,
+    }) {
+      final row = find.byKey(ValueKey('overview-node-a-$nodeKey'));
+      expect(row, findsOneWidget);
+      final textFinder = find.descendant(of: row, matching: find.text(label));
+      expect(textFinder, findsOneWidget);
+      final textWidget = tester.widget<Text>(textFinder);
+      final textColor = textWidget.style?.color;
+      expect(textColor, isNotNull);
+
+      final ctx = tester.element(row);
+      final neutralGrey = Theme.of(ctx).colorScheme.onSurfaceVariant;
+      expect(textColor!.toARGB32(), isNot(equals(neutralGrey.toARGB32())));
+
+      // RGB components match the semantic hue permanently (never turns grey).
+      expect((textColor.r * 255).round(), (expectedHue.r * 255).round());
+      expect((textColor.g * 255).round(), (expectedHue.g * 255).round());
+      expect((textColor.b * 255).round(), (expectedHue.b * 255).round());
+
+      final pillFinder =
+          find.ancestor(of: textFinder, matching: find.byType(Container));
+      expect(pillFinder, findsWidgets);
+      final pillContainer = tester.widget<Container>(pillFinder.first);
+      final decoration = pillContainer.decoration;
+      expect(decoration, isA<BoxDecoration>());
+      final box = decoration! as BoxDecoration;
+      expect(box.borderRadius, BorderRadius.circular(6));
+
+      if (expectStale) {
+        expect(textColor.a, closeTo(0.80, 0.04));
+        expect(box.border, isNotNull);
+        final border = box.border! as Border;
+        expect((border.top.color.r * 255).round(),
+            (expectedHue.r * 255).round());
+        expect((border.top.color.g * 255).round(),
+            (expectedHue.g * 255).round());
+        expect((border.top.color.b * 255).round(),
+            (expectedHue.b * 255).round());
+      } else {
+        expect(textColor.a, closeTo(1.0, 0.01));
+        expect(box.border, isNull);
+      }
+    }
+
+    // 45m ago is within 1 hour -> fresh solid soft pill.
+    expectPill(
+      nodeKey: nFreshFast.identityKey,
+      label: '2000 ms',
+      expectedHue: kLatencyFastColor,
+      expectStale: false,
+    );
+    expectPill(
+      nodeKey: nFreshSlow.identityKey,
+      label: '2001 ms',
+      expectedHue: kLatencyMediumColor,
+      expectStale: false,
+    );
+    expectPill(
+      nodeKey: nFreshFail.identityKey,
+      label: '测试失败',
+      expectedHue: kLatencyErrorColor,
+      expectStale: false,
+    );
+
+    // 3d ago is stale (> 1h) -> Plan B soft hue + outlined pill, NOT grey!
+    expectPill(
+      nodeKey: nStaleFast.identityKey,
+      label: '232 ms',
+      expectedHue: kLatencyFastColor,
+      expectStale: true,
+    );
+    expectPill(
+      nodeKey: nStaleSlow.identityKey,
+      label: '2500 ms',
+      expectedHue: kLatencyMediumColor,
+      expectStale: true,
+    );
+    expectPill(
+      nodeKey: nStaleFail.identityKey,
+      label: '测试失败',
+      expectedHue: kLatencyErrorColor,
+      expectStale: true,
+    );
+  });
+
+  testWidgets(
+      'Plan B persistent hue pills apply consistently to active profile historical delays',
+      (tester) async {
+    final now = DateTime.now();
+    final freshAt = now.subtract(const Duration(minutes: 30));
+    final staleAt = now.subtract(const Duration(hours: 2));
+    const profileA =
+        Profile(id: 'a', label: 'ActiveAlpha', autoUpdateDuration: Duration.zero);
+
+    final catalogA = ProfileCatalog(
+      profileId: 'a',
+      fingerprint: 'act',
+      status: ProfileCatalogStatus.ready,
+      nodes: [
+        _node('n1', 'Active Fresh 1800'),
+        _node('n2', 'Active Stale 320'),
+        _node('n3', 'Active Stale 2300'),
+      ],
+    );
+
+    final container = await mount(
+      tester,
+      width: 1280,
+      locale: const Locale('zh', 'CN'),
+      profiles: const [profileA],
+      catalogs: {'a': catalogA},
+      activeCatalog: catalogA,
+      health: {
+        'a': {
+          'n1': NodeHealthRecord(
+            delayMs: 1800,
+            testedAt: freshAt,
+            testUrlHash: '',
+          ),
+          'n2': NodeHealthRecord(
+            delayMs: 320,
+            testedAt: staleAt,
+            testUrlHash: '',
+          ),
+          'n3': NodeHealthRecord(
+            delayMs: 2300,
+            testedAt: staleAt,
+            testUrlHash: '',
+          ),
+        },
+      },
+    );
+
+    globalState.lastRuntimeProfileId = 'a';
+    container.read(currentProfileIdProvider.notifier).value = 'a';
+    container.read(groupsProvider.notifier).value = const [
+      Group(
+        name: 'Proxy',
+        type: GroupType.Selector,
+        hidden: false,
+        now: 'Active Fresh 1800',
+        all: [
+          Proxy(name: 'Active Fresh 1800', type: 'Shadowsocks'),
+          Proxy(name: 'Active Stale 320', type: 'Shadowsocks'),
+          Proxy(name: 'Active Stale 2300', type: 'Shadowsocks'),
+        ],
+      ),
+    ];
+    container.read(versionProvider.notifier).value = 2;
+    await tester.pumpAndSettle();
+
+    void expectActivePill({
+      required String label,
+      required Color expectedHue,
+      required bool expectStale,
+    }) {
+      final textFinder = find.text(label);
+      expect(textFinder, findsOneWidget);
+      final textWidget = tester.widget<Text>(textFinder);
+      final textColor = textWidget.style?.color;
+      expect(textColor, isNotNull);
+      expect((textColor!.r * 255).round(), (expectedHue.r * 255).round());
+      expect((textColor.g * 255).round(), (expectedHue.g * 255).round());
+      expect((textColor.b * 255).round(), (expectedHue.b * 255).round());
+
+      final pillContainer = tester.widget<Container>(
+        find.ancestor(of: textFinder, matching: find.byType(Container)).first,
+      );
+      final box = pillContainer.decoration! as BoxDecoration;
+      if (expectStale) {
+        expect(textColor.a, closeTo(0.80, 0.04));
+        expect(box.border, isNotNull);
+      } else {
+        expect(textColor.a, closeTo(1.0, 0.01));
+        expect(box.border, isNull);
+      }
+    }
+
+    expectActivePill(
+      label: '1800 ms',
+      expectedHue: kLatencyFastColor,
+      expectStale: false,
+    );
+    expectActivePill(
+      label: '320 ms',
+      expectedHue: kLatencyFastColor,
+      expectStale: true,
+    );
+    expectActivePill(
+      label: '2300 ms',
+      expectedHue: kLatencyMediumColor,
+      expectStale: true,
+    );
   });
 }
 

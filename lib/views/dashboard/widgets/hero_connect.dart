@@ -1002,11 +1002,11 @@ class _SignalBars extends StatelessWidget {
       color = Colors.red.shade400;
     } else {
       color = utils.getDelayColor(delay) ?? Colors.green;
-      level = delay! < 150
+      level = delay! <= 250
           ? 4
-          : delay! < 300
+          : delay! <= 800
               ? 3
-              : delay! < 600
+              : delay! <= kLatencyFastMaxMs
                   ? 2
                   : 1;
     }

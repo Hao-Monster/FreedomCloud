@@ -8,6 +8,8 @@ import 'package:flclashx/models/node_catalog.dart';
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as path;
 
+const Duration kNodeHealthFreshDuration = Duration(hours: 1);
+
 class NodeHealthRecord {
   const NodeHealthRecord({
     required this.delayMs,
@@ -22,7 +24,7 @@ class NodeHealthRecord {
   final String? reason;
 
   bool isStale(DateTime now) =>
-      now.difference(testedAt) > const Duration(minutes: 10);
+      now.difference(testedAt) > kNodeHealthFreshDuration;
 
   Map<String, Object?> toJson() => {
         'd': delayMs,

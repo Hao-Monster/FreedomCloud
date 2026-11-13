@@ -20,6 +20,7 @@ const Color kFreedomNetLightPrimary = Color(0xFF0284C7);
 const Color kLatencyFastColor = Color(0xFF10B981);
 const Color kLatencyMediumColor = Color(0xFFF59E0B);
 const Color kLatencyErrorColor = Color(0xFFEF4444);
+const int kLatencyFastMaxMs = 2000;
 
 const List<String> kFreedomNetFontFallback = <String>[
   'Segoe UI Variable Text',

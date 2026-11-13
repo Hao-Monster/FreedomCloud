@@ -3977,7 +3977,7 @@ class _SidebarAllProfilesCard extends ConsumerWidget {
       if (delay > 0) {
         availableNodes++;
         positiveDelays.add(delay);
-        if (delay < 600) {
+        if (delay <= kLatencyFastMaxMs) {
           fastCount++;
         } else {
           slowCount++;
@@ -6441,11 +6441,18 @@ Widget _buildLatencyStatusPill(
   required String label,
   required Color? color,
   required bool hasMeasurement,
+  bool isStale = false,
 }) {
+  final isDark = Theme.of(context).brightness == Brightness.dark;
+  final effectiveTextColor = (!hasMeasurement || color == null)
+      ? color
+      : isStale
+          ? color.withValues(alpha: isDark ? 0.82 : 0.80)
+          : color;
   final text = Text(
     label,
     style: TextStyle(
-      color: color,
+      color: effectiveTextColor,
       fontSize: 12,
       fontWeight: hasMeasurement ? FontWeight.w600 : FontWeight.w500,
       fontFeatures: const [FontFeature.tabularFigures()],
@@ -6454,12 +6461,19 @@ Widget _buildLatencyStatusPill(
   if (!hasMeasurement || color == null) {
     return text;
   }
-  final isDark = Theme.of(context).brightness == Brightness.dark;
   return Container(
     padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
     decoration: BoxDecoration(
-      color: color.withValues(alpha: isDark ? 0.14 : 0.10),
+      color: color.withValues(
+        alpha: isStale ? (isDark ? 0.06 : 0.04) : (isDark ? 0.14 : 0.10),
+      ),
       borderRadius: BorderRadius.circular(6),
+      border: isStale
+          ? Border.all(
+              color: color.withValues(alpha: isDark ? 0.28 : 0.24),
+              width: 1,
+            )
+          : null,
     ),
     child: text,
   );
@@ -6506,6 +6520,11 @@ class _ActiveNodeRow extends ConsumerWidget {
       ref.watch(expertNavigationExpandedProvider),
     );
     final color = utils.getDelayColor(delay);
+    final stale = delay != null &&
+        delay != 0 &&
+        history != null &&
+        history!.delayMs == delay &&
+        history!.isStale(now);
     final providerSource = node == null ? null : _providerSourceLabel(node!);
     final source = node == null
         ? appLocalizations.nodeOverviewRuntimeSource
@@ -6548,6 +6567,7 @@ class _ActiveNodeRow extends ConsumerWidget {
                                 : appLocalizations.nodeOverviewTestFailed,
                         color: color,
                         hasMeasurement: delay != null,
+                        isStale: stale,
                       ),
                 actions: [
                   _buildTestButton(
@@ -6702,9 +6722,7 @@ class _InactiveNodeRow extends ConsumerWidget {
     final invalid = node.unsupported == CatalogUnsupportedReason.parseFailed;
     final record = invalid ? null : health;
     final stale = record?.isStale(now) ?? false;
-    final color = stale
-        ? Theme.of(context).colorScheme.onSurfaceVariant
-        : utils.getDelayColor(record?.delayMs);
+    final color = utils.getDelayColor(record?.delayMs);
     final hasCountry = countryEmoji != null && countryName != null;
     final showMetaRow = hasCountry || !inNoviceAppShell;
     return Card(
@@ -6732,7 +6750,8 @@ class _InactiveNodeRow extends ConsumerWidget {
                                       ? '${record.delayMs} ms'
                                       : appLocalizations.nodeOverviewTestFailed,
                               color: color,
-                              hasMeasurement: record != null && !stale,
+                              hasMeasurement: record != null,
+                              isStale: stale,
                             ),
                   actions: [
                     if (node.unsupported == CatalogUnsupportedReason.none)
@@ -6784,7 +6803,13 @@ class _InactiveNodeRow extends ConsumerWidget {
                           style: Theme.of(context)
                               .textTheme
                               .bodySmall
-                              ?.copyWith(color: color))),
+                              ?.copyWith(
+                                color: stale
+                                    ? Theme.of(context)
+                                        .colorScheme
+                                        .onSurfaceVariant
+                                    : color,
+                              ))),
               ],
             )));
   }

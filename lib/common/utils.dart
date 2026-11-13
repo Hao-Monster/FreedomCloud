@@ -12,9 +12,9 @@ import 'package:lpinyin/lpinyin.dart';
 
 class Utils {
   Color? getDelayColor(int? delay) {
-    if (delay == null) return null;
+    if (delay == null || delay == 0) return null;
     if (delay < 0) return kLatencyErrorColor;
-    if (delay < 600) return kLatencyFastColor;
+    if (delay <= kLatencyFastMaxMs) return kLatencyFastColor;
     return kLatencyMediumColor;
   }
 
