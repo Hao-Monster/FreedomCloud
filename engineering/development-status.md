@@ -2,6 +2,26 @@
 
 更新日期：2026-11-13。当前阶段是快速开发、快速迭代和部分功能预览。本文记录来源与验收边界；每次继续开发仍需核实实际 Git/PR/CI 状态，不能把历史报告视为当前通过证明。
 
+## 延迟三色阈值调整（`1~2000 ms` 绿 / `>2000 ms` 黄 / `-1` 红）与方案 B 永久保色分层胶囊 TDD 落地（2026-11-13）
+
+- 需求与根因：原延迟色阶将 `>= 600 ms` 即判为黄色，且节点测速记录超过 `10 分钟` 即在非活动节点行被整行刷为中性灰（`onSurfaceVariant`）并剥离背景胶囊，导致数天前的可用历史延迟与待测/灰字混淆。现按明确需求调整阈值并以方案 B 实现永久保色与新旧分层。
+- 实施落地：基于本地 `development@32fe0706` 按严格 TDD（前置有效 Red → 最小生产实现 Green → 跨模块回归与静态分析）收口于本地 `development` 代码提交 `c77d301e`（`c77d301efbc7257c61dfee35a812a54804f414e3`，tree `a6e514c25515809ad1de448b55550493bd6187b2`）：
+  1. **三色延迟分级与统计/信号格同步对齐**：
+     - [`design_system.dart`](file:///e:/CodeWorkstation/FlClashX/lib/common/design_system.dart#L20-L23) & [`utils.dart`](file:///e:/CodeWorkstation/FlClashX/lib/common/utils.dart#L14-L19)：定义 `kLatencyFastMaxMs = 2000` 并更新 `Utils.getDelayColor`——`null` / `0` 返回 `null`（未测/加载态），`< 0`（如 `-1`）返回红色 `kLatencyErrorColor`，`1 <= delay <= 2000` 返回绿色 `kLatencyFastColor`，`> 2000` 返回黄色 `kLatencyMediumColor`；
+     - [`overview.dart`](file:///e:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart#L3974-L3988)：同步更新左侧「全部配置」汇总卡片 `_AllProfilesOverviewCard._computeSummary` 中的 `fastCount` vs `slowCount` 统计为 `delay <= kLatencyFastMaxMs`，保证 `流畅 / 偏慢 / 失败` 计数与三色比例条 100% 一致；
+     - [`hero_connect.dart`](file:///e:/CodeWorkstation/FlClashX/lib/views/dashboard/widgets/hero_connect.dart#L1004-L1012)：将 `_SignalBars` 信号格分级平滑对齐至 `kLatencyFastMaxMs`（`<= 250 -> 4`, `<= 800 -> 3`, `<= 2000 -> 2`, `> 2000 -> 1`）。
+  2. **方案 B：1 小时新鲜期与永久保色分层胶囊（永不褪灰）**：
+     - [`node_health_store.dart`](file:///e:/CodeWorkstation/FlClashX/lib/common/node_health_store.dart#L11-L27)：定义 `kNodeHealthFreshDuration = Duration(hours: 1)`，将 `NodeHealthRecord.isStale` 阈值从 `10 分钟` 放宽至严格 `> 1 小时`；
+     - [`overview.dart`](file:///e:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart#L6439-L6805)：更新 `_buildLatencyStatusPill`、`_ActiveNodeRow` 与 `_InactiveNodeRow`：移除 `stale` 时刷为 `onSurfaceVariant` 灰字的分支，所有已测节点永久保留红/黄/绿色相；`<= 1 小时` 新鲜期内使用全饱和度文字 + 无边框实心柔光胶囊，`> 1 小时` 过时期使用柔和同色系文字（`alpha 0.80/0.82`）+ 极淡底色（`alpha 0.04/0.06`）+ `1px` 同色细描边胶囊；活动配置与非活动配置视觉分层一致，次要时间戳小字在过时后保留中性色以突出右侧主数值胶囊。
+  3. **TDD 边界与视觉分层验证**：
+     - 更新 [`node_health_store_test.dart`](file:///e:/CodeWorkstation/FlClashX/test/common/node_health_store_test.dart#L313-L327)、[`freedomnet_commercial_ui_test.dart`](file:///e:/CodeWorkstation/FlClashX/test/views/freedomnet_commercial_ui_test.dart#L228-L235) 与 [`node_overview_test.dart`](file:///e:/CodeWorkstation/FlClashX/test/views/node_overview_test.dart#L1510-L1607) 边界断言，并在 [`node_overview_test.dart`](file:///e:/CodeWorkstation/FlClashX/test/views/node_overview_test.dart#L8755-L9041) 新增 2 项专项 Widget 测试验证非活动/活动配置下 `1~2000 ms` 绿、`>2000 ms` 黄、`-1` 红、`45m` 新鲜实心与 `3d` / `2h` 过时描边永久保色行为。
+- 验证记录（本机 `Flutter 3.47.4` / `Dart 3.13.3`）：
+  - 前置有效 Red：**PASS**（[`node_health_store_test.dart`](file:///e:/CodeWorkstation/FlClashX/test/common/node_health_store_test.dart)、[`freedomnet_commercial_ui_test.dart`](file:///e:/CodeWorkstation/FlClashX/test/views/freedomnet_commercial_ui_test.dart) `T1` 与 [`node_overview_test.dart`](file:///e:/CodeWorkstation/FlClashX/test/views/node_overview_test.dart) 新增/边界用例在修改生产代码前均零编译错误并按预期断言失败）；
+  - Green 与跨模块全量回归：**PASS**（[`node_health_store_test.dart`](file:///e:/CodeWorkstation/FlClashX/test/common/node_health_store_test.dart) + [`freedomnet_commercial_ui_test.dart`](file:///e:/CodeWorkstation/FlClashX/test/views/freedomnet_commercial_ui_test.dart) + [`node_overview_test.dart`](file:///e:/CodeWorkstation/FlClashX/test/views/node_overview_test.dart) `172/172` 全绿；[`overview_coldstart_and_header_tdd_test.dart`](file:///e:/CodeWorkstation/FlClashX/test/views/overview_coldstart_and_header_tdd_test.dart) + [`novice_expert_navigation_test.dart`](file:///e:/CodeWorkstation/FlClashX/test/views/novice_expert_navigation_test.dart) + [`freedomnet_code_review_tdd_test.dart`](file:///e:/CodeWorkstation/FlClashX/test/views/freedomnet_code_review_tdd_test.dart) + [`dashboard_widgets_test.dart`](file:///e:/CodeWorkstation/FlClashX/test/views/dashboard_widgets_test.dart) + [`health_check_view_test.dart`](file:///e:/CodeWorkstation/FlClashX/test/views/health_check_view_test.dart) + [`node_overview_providers_test.dart`](file:///e:/CodeWorkstation/FlClashX/test/common/node_overview_providers_test.dart) `38/38` 全绿；合计 **`210/210` 全绿**）；
+  - 静态分析：**PASS**（`dart analyze --fatal-warnings` 对 8 个涉及文件返回退出码 `0`，`0 error / 0 warning / 0 新增 info`；`git diff --cached --check` 零空白错误）；
+  - 新预览包重编 **NOT RUN（既有预览包 `36d57861d3c6` 未包含本次 `c77d301e` 改动）** / 宿主机实机窗口运行 **NOT RUN（遵守协作规则未拉起候选程序或触碰现役代理/服务）** / 远端推送 **NOT RUN** / PR 与合并 **NOT RUN** / 云端 CI **NOT RUN**。
+- 恢复位置与下一步：代码已提交于本地工作树 `E:\CodeWorkstation\FlClashX` 的 `development` 分支提交 `c77d301e`（未推送至 `freedomcloud/development`）；既有无关未跟踪/未暂存文件（`test/views/dashboard_render_test.dart`、`coverage/`、`engineering/testing/*`）与 `stash@{0}` 原样保留。下一步可在用户确认后基于新 HEAD 重编 Windows 预览包上机验证或推送 `development`。
+
 ## 全量本地已开发功能 Windows `amd64` 预览包交付（`36d57861d3c6`，2026-11-13）
 
 - 构建来源与完整范围：基于本地 `development` 干净源码快照 `36d57861d3c6d90db6159eedec02ba5c8b2cfa96`（代码提交 `3330ef37945cb7674070ccd3579b234b1a2cf86c`，tree `e8edba636c4e9410fe86758f798da3be5b06a7c8`），通过 `git archive` 干净快照全栈重新编译四组件、仓库内原生插件与 Flutter Release AOT，完整包含 `a229588..36d5786` 全部本地已开发功能：
