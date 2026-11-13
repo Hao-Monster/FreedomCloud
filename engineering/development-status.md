@@ -1,6 +1,19 @@
 # 开发、集成与预览台账
 
-更新日期：2026-11-13。当前阶段是快速开发、快速迭代和部分功能预览。本文记录来源与验收边界；每次继续开发仍需核实实际 Git/PR/CI 状态，不能把历史报告视为当前通过证明。
+更新日期：2026-11-14。当前阶段是快速开发、快速迭代和部分功能预览。本文记录来源与验收边界；每次继续开发仍需核实实际 Git/PR/CI 状态，不能把历史报告视为当前通过证明。
+
+## 购买页套餐卡片极简网页版样式重构 TDD 落地（`481a9195`，2026-11-14）
+
+- 需求与视觉结构重构（对照网页端 Storefront 卡片）：将 [`plan_catalog.dart`](file:///e:/CodeWorkstation/FlClashX/lib/views/purchase/plan_catalog.dart) 中的 `_PlanCard` 由冗余信息堆砌重组为与网页端一致的四段式极简结构，覆盖深色与浅色双主题、窄屏与桌面双栏：
+  1. **顶部元信息行**：左侧仅保留单个主档位胶囊 `_TierCapsulePill`（如 `轻量入门`、`日常常备`、高亮 `主力推荐` + `Key('purchase-plan-featured-<id>')`、`超值囤货`，在存在具体档位标签时自动去重通用 `永久流量包` / `按量流量包`，且多周期未打标套餐不在顶部重复挂单一周期标签）；右侧渲染单位流量均价提示 `约 0.76 / G`（免费单次套餐显示翠绿 `免费体验`，有限名额显示 `已售罄` / `剩余 X 份`），不猜测接口未提供币种符号；
+  2. **居中内凹主视觉盒 + 标题去重**：当 `plan.name` 仅为 `<N>G 永久流量包` / `<N>G 按量流量包` 这类纯容量名称时隐藏重复标题；自定义名称（如 `ultra线路-美国`、`Travel plan`）与地区国旗 `Key('purchase-plan-flag-<id>')` 完整保留；内凹主盒左右展示加粗 `${plan.transferGiB}G` 与按整型分单位精确格式化的标价（如 `38.00`、`75.00`、`150.00`、`270.00`、`0.00`），多周期套餐完整展示各周期价格与流量重置价格；
+  3. **四项翠绿对勾核心权益与标准模板去重**：`_PlanSpecRow` 以翠绿圆形 `✓` 渲染关键规格（设备数量、使用时间、重置规则、正速率限制及全平台支持），通过 `isStandardBoilerplatePlanContent` 跳过网页端标准 `## 核心权益` 重复模板，同时保留运营商自定义 Markdown、GFM 表格、链接与渐进折叠开关 `Key('purchase-plan-details-toggle-<id>')`；
+  4. **底部全宽纵向双按钮 + 零 Intrinsics 等高双栏**：桌面双栏采用自定义无 intrinsics 测量组件 `_EqualHeightRow` + `_PlanCardLayout`（避免 `IntrinsicHeight` 与嵌套 `LayoutBuilder` 冲突，并保持无紧高重排边界以支持动态折叠展开），强制同行卡片等高、全宽纵向堆叠按钮（`去购买` `Key('purchase-plan-buy-<id>')` / `获取兑换码` `Key('purchase-plan-acquire-<id>')`）底部齐平；同步更新 `arb/intl_{zh_CN,en,ja,ru}.arb` 与生成 [`l10n.dart`](file:///e:/CodeWorkstation/FlClashX/lib/l10n/l10n.dart)。
+- TDD 与验证记录（最后一次代码改动后实测）：
+  - 前置有效 Red：**PASS**（[`plan_card_web_style_tdd_test.dart`](file:///e:/CodeWorkstation/FlClashX/test/purchase/plan_card_web_style_tdd_test.dart) 新增 `W01–W03` 在修改 `plan_catalog.dart` 前确定性 `0/3` 失败）；
+  - 全量购买域回归：**PASS**（`E:\flutter\bin\flutter.bat test test/purchase/` **`345/345` 全绿**，退出码 `0`）；
+  - 静态分析与补丁检查：**PASS**（`dart analyze --fatal-infos lib/views/purchase/plan_catalog.dart test/purchase/plan_card_web_style_tdd_test.dart test/purchase/plan_catalog_details_test.dart test/purchase/plan_catalog_widgets_test.dart test/purchase/plan_catalog_host_test.dart test/purchase/plan_catalog_render_test.dart` 输出 `No issues found!`；`dart analyze --fatal-warnings lib/views/purchase/ test/purchase/` 退出码 `0`；`git diff --check` 退出码 `0`）；
+  - 未执行项：**预览包构建 NOT RUN（本轮未请求重新打包）**；**宿主机实机进程运行 NOT RUN**；**远端推送 / PR / 合并 NOT RUN**；仓库原有未暂存 [`dashboard_render_test.dart`](file:///e:/CodeWorkstation/FlClashX/test/views/dashboard_render_test.dart) 及未跟踪目录保持原样未纳入本次提交。
 
 ## 仪表盘总开关统一样式（`FloatingProxyDock` / `TactileProxySwitch`）TDD 落地（`1e7827e6`，2026-11-13）
 
