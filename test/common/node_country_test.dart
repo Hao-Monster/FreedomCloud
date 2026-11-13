@@ -3,6 +3,8 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:dio/dio.dart';
+import 'package:flclashx/clash/core.dart';
+import 'package:flclashx/clash/interface.dart';
 import 'package:flclashx/common/constant.dart' show maxLength;
 import 'package:flclashx/common/fixed.dart';
 import 'package:flclashx/common/node_country.dart';
@@ -13,6 +15,7 @@ import 'package:flclashx/models/node_catalog.dart';
 import 'package:flclashx/providers/node_overview.dart';
 import 'package:flclashx/state.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -2026,4 +2029,228 @@ void main() {
       },
     );
   });
+
+  group('CF preferred IP & domain country resolution (Tier 2 + retry)', () {
+    test(
+        'defaultResolveServerCountry resolves CF direct IP, Fake-IP domain via Core, and OS DNS fallback while ignoring bogons',
+        () async {
+      final requested = <String>[];
+      final fakeHandler = _FakeCountryCodeHandler((input) async {
+        requested.add(input);
+        return switch (input) {
+          '104.18.25.100' => 'US',
+          'cf-prefer.freedomnet.net' => 'US',
+          '104.16.99.1' => 'DE',
+          _ => '',
+        };
+      });
+      final previousCore = ClashCore.existingCore;
+      ClashCore.instanceForTesting = ClashCore.forTesting(fakeHandler);
+      addTearDown(() => ClashCore.instanceForTesting = previousCore);
+
+      // 1. CF-优选直连 literal Anycast IP -> resolves US via Core
+      expect(
+        await defaultResolveServerCountry('104.18.25.100'),
+        'US',
+      );
+      expect(formatNodeCountryBadge('US', languageCode: 'zh'), '🇺🇸 美国');
+
+      // 2. CF-优选域名 under TUN Fake-IP (OS DNS returns 198.18.0.42) ->
+      // delegates hostname directly to Core non-FakeIP resolver and gets US.
+      expect(
+        await defaultResolveServerCountry(
+          'cf-prefer.freedomnet.net',
+          lookupHost: (_) async => [InternetAddress('198.18.0.42')],
+        ),
+        'US',
+      );
+
+      // 3. Domain when OS DNS throws SocketException -> still delegates to Core.
+      expect(
+        await defaultResolveServerCountry(
+          'cf-prefer.freedomnet.net',
+          lookupHost: (_) => Future<List<InternetAddress>>.error(
+            const SocketException('DNS hijacked or offline'),
+          ),
+        ),
+        'US',
+      );
+
+      // 4. Fallback when Core cannot resolve hostname ('') -> filters Fake-IP
+      // 198.18.0.42 from OS DNS, picks public 104.16.99.1 -> resolves DE.
+      expect(
+        await defaultResolveServerCountry(
+          'cf-fallback.freedomnet.net',
+          lookupHost: (_) async => [
+            InternetAddress('198.18.0.42'),
+            InternetAddress('104.16.99.1'),
+          ],
+        ),
+        'DE',
+      );
+
+      // 5. Literal non-public IPs and local/bogon hostnames never query Core.
+      final callsBeforeBogons = requested.length;
+      for (final bogon in const [
+        '192.168.1.1',
+        '198.18.0.42',
+        '127.0.0.1',
+        'localhost',
+        'node.local',
+        'test.invalid',
+      ]) {
+        expect(await defaultResolveServerCountry(bogon), isNull);
+      }
+      expect(requested.length, callsBeforeBogons);
+    });
+
+    test(
+        'NodeCountryResolver retries unresolved CF direct/domain nodes after Core attaches',
+        () async {
+      final previousCore = ClashCore.existingCore;
+      ClashCore.instanceForTesting = null;
+      addTearDown(() => ClashCore.instanceForTesting = previousCore);
+
+      final queried = <String>[];
+      final resolver = NodeCountryResolver(
+        resolveServerCountry: (server) async {
+          queried.add(server);
+          return defaultResolveServerCountry(
+            server,
+            lookupHost: (_) async => [InternetAddress('198.18.0.42')],
+          );
+        },
+      );
+      addTearDown(resolver.dispose);
+
+      var notifyCount = 0;
+      resolver
+        ..addListener(() => notifyCount++)
+        ..registerProxyMaps('admin', const [
+          {
+            'name': 'CF-优选直连15 · 高速AI解锁',
+            'type': 'vless',
+            'server': '104.18.25.100',
+            'port': 443,
+          },
+          {
+            'name': 'CF-优选域名1 · 高速AI解锁',
+            'type': 'vless',
+            'server': 'cf-prefer.freedomnet.net',
+            'port': 443,
+          },
+        ]);
+
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(
+        resolver.resolveCountryCode(
+          profileId: 'admin',
+          profileLabel: 'admin',
+          nodeName: 'CF-优选直连15 · 高速AI解锁',
+        ),
+        kUnknownCountryCode,
+      );
+      expect(
+        resolver.resolveCountryCode(
+          profileId: 'admin',
+          profileLabel: 'admin',
+          nodeName: 'CF-优选域名1 · 高速AI解锁',
+        ),
+        kUnknownCountryCode,
+      );
+
+      final fakeHandler = _FakeCountryCodeHandler(
+        (input) async => switch (input) {
+          '104.18.25.100' => 'US',
+          'cf-prefer.freedomnet.net' => 'NL',
+          _ => '',
+        },
+      );
+      ClashCore.instanceForTesting = ClashCore.forTesting(fakeHandler);
+      queried.clear();
+      final notifyBefore = notifyCount;
+
+      resolver.retryUnresolvedServers();
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      expect(
+        resolver.resolveCountryCode(
+          profileId: 'admin',
+          profileLabel: 'admin',
+          nodeName: 'CF-优选直连15 · 高速AI解锁',
+        ),
+        'US',
+      );
+      expect(
+        resolver.resolveCountryCode(
+          profileId: 'admin',
+          profileLabel: 'admin',
+          nodeName: 'CF-优选域名1 · 高速AI解锁',
+        ),
+        'NL',
+      );
+      expect(notifyCount, greaterThan(notifyBefore));
+
+      // Calling retryUnresolvedServers again does not re-query cached servers.
+      queried.clear();
+      resolver.retryUnresolvedServers();
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(queried, isEmpty);
+    });
+
+    test(
+        'nodeCountryResolverProvider triggers retryUnresolvedServers when coreCatalogEpochProvider increments',
+        () async {
+      final previousCore = ClashCore.existingCore;
+      ClashCore.instanceForTesting = null;
+      addTearDown(() => ClashCore.instanceForTesting = previousCore);
+
+      final container = ProviderContainer();
+      addTearDown(container.dispose);
+
+      final resolver = container.read(nodeCountryResolverProvider)
+        ..registerProxyMaps('admin', const [
+          {
+            'name': 'CF-优选直连20 · 高速AI解锁',
+            'type': 'vless',
+            'server': '172.67.10.20',
+            'port': 443,
+          },
+        ]);
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(
+        resolver.resolveCountryCode(
+          profileId: 'admin',
+          profileLabel: 'admin',
+          nodeName: 'CF-优选直连20 · 高速AI解锁',
+        ),
+        kUnknownCountryCode,
+      );
+
+      final fakeHandler = _FakeCountryCodeHandler(
+        (input) async => input == '172.67.10.20' ? 'US' : '',
+      );
+      ClashCore.instanceForTesting = ClashCore.forTesting(fakeHandler);
+      container.read(coreCatalogEpochProvider.notifier).state++;
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      expect(
+        resolver.resolveCountryCode(
+          profileId: 'admin',
+          profileLabel: 'admin',
+          nodeName: 'CF-优选直连20 · 高速AI解锁',
+        ),
+        'US',
+      );
+    });
+  });
+}
+
+class _FakeCountryCodeHandler extends Fake implements ClashHandlerInterface {
+  _FakeCountryCodeHandler(this._onGetCountryCode);
+
+  final FutureOr<String> Function(String ip) _onGetCountryCode;
+
+  @override
+  FutureOr<String> getCountryCode(String ip) => _onGetCountryCode(ip);
 }

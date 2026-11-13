@@ -4,7 +4,6 @@ import (
 	"context"
 	"core/state"
 	"encoding/json"
-	"net"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -21,7 +20,6 @@ import (
 	"github.com/metacubex/mihomo/adapter/provider"
 	"github.com/metacubex/mihomo/common/observable"
 	"github.com/metacubex/mihomo/common/utils"
-	"github.com/metacubex/mihomo/component/mmdb"
 	P "github.com/metacubex/mihomo/component/process"
 	"github.com/metacubex/mihomo/component/resolver"
 	"github.com/metacubex/mihomo/component/updater"
@@ -300,6 +298,7 @@ func handleShutdown() bool {
 	syncEffectiveFindProcessMode()
 	runtime.GC()
 	isInit.Store(false)
+	mmdbReady.Store(false)
 	requestsActive.Store(false)
 	isRunning = false
 	tunUp.Store(false)
@@ -1022,17 +1021,9 @@ func handleStopLog() {
 
 func handleGetCountryCode(ip string, fn func(value string)) {
 	go func() {
-		// Look up under mmdbMu.RLock, release, then call fn (a JNI upcall)
-		// outside the lock to avoid a re-entrant deadlock through the JVM callback
-		// and avoid contending with proxyStateMu during GeoIP refreshes.
-		mmdbMu.RLock()
-		codes := mmdb.IPInstance().LookupCode(net.ParseIP(ip))
-		mmdbMu.RUnlock()
-		if len(codes) == 0 {
-			fn("")
-			return
-		}
-		fn(codes[0])
+		// Look up outside locks and invoke fn (a JNI/IPC callback) after
+		// resolution finishes to avoid re-entrant deadlocks or contention.
+		fn(resolveCountryCode(ip))
 	}()
 }
 

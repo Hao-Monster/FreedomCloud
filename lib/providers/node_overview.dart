@@ -642,7 +642,12 @@ final ChangeNotifierProvider<NodeCountryResolver> nodeCountryResolverProvider =
       },
     )
     ..listen(
-        cachedProfileCatalogsProvider, (_, __) => syncCentralTarget(notify: true));
+        cachedProfileCatalogsProvider, (_, __) => syncCentralTarget(notify: true))
+    ..listen<int>(coreCatalogEpochProvider, (previous, next) {
+      if (previous != next) {
+        resolver.retryUnresolvedServers();
+      }
+    });
   if (globalState.isAppStateInitialized) {
     ref
       ..listen<bool>(
@@ -651,6 +656,9 @@ final ChangeNotifierProvider<NodeCountryResolver> nodeCountryResolverProvider =
           if (previous == isRunning) return;
           detectionState.notifyRoutingChanged();
           resolver.onProxyRunningChanged(isRunning: isRunning);
+          if (isRunning) {
+            resolver.retryUnresolvedServers();
+          }
           syncCentralTarget(notify: true);
         },
       )
