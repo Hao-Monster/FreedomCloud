@@ -341,62 +341,115 @@ class CommonNavigationBar extends ConsumerWidget {
                 ),
               ],
               Expanded(
-                child: ScrollConfiguration(
-                  behavior: HiddenBarScrollBehavior(),
-                  child: NavigationRail(
-                    scrollable: true,
-                    backgroundColor: Colors.transparent,
-                    indicatorColor:
-                        colors.primary.withValues(alpha: isDark ? 0.16 : 0.12),
-                    indicatorShape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    selectedIconTheme: IconThemeData(
-                      color: colors.primary,
-                    ),
-                    unselectedIconTheme: IconThemeData(
-                      color: colors.onSurfaceVariant,
-                    ),
-                    selectedLabelTextStyle:
+                child: Builder(
+                  builder: (context) {
+                    final purchaseIndex = navigationItems.indexWhere(
+                      (item) => item.label == PageLabel.purchase,
+                    );
+                    final primaryCount = purchaseIndex >= 0
+                        ? purchaseIndex + 1
+                        : navigationItems.length;
+                    final primaryItems =
+                        navigationItems.sublist(0, primaryCount);
+                    final expandedItems =
+                        navigationItems.sublist(primaryCount);
+                    final effectiveIndex = navigationItems.isEmpty
+                        ? -1
+                        : currentIndex.clamp(0, navigationItems.length - 1);
+                    final railSelectedIndex = (effectiveIndex >= 0 &&
+                            effectiveIndex < primaryItems.length)
+                        ? effectiveIndex
+                        : null;
+                    final indicatorColor =
+                        colors.primary.withValues(alpha: isDark ? 0.16 : 0.12);
+                    final selectedLabelTextStyle =
                         context.textTheme.labelMedium!.copyWith(
                       color: colors.onSurface,
                       fontWeight: FontWeight.w700,
-                    ),
-                    unselectedLabelTextStyle:
+                    );
+                    final unselectedLabelTextStyle =
                         context.textTheme.labelMedium!.copyWith(
                       color: colors.onSurfaceVariant,
                       fontWeight: FontWeight.w500,
-                    ),
-                    destinations: navigationItems
-                        .map(
-                          (e) => NavigationRailDestination(
-                            icon: e.icon,
-                            label: ConstrainedBox(
-                              constraints: const BoxConstraints(maxWidth: 88),
-                              child: Text(
-                                Intl.message(e.label.name),
-                                textAlign: TextAlign.center,
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
+                    );
+                    final localizations = MaterialLocalizations.of(context);
+                    return ScrollConfiguration(
+                      behavior: HiddenBarScrollBehavior(),
+                      child: NavigationRail(
+                        scrollable: true,
+                        backgroundColor: Colors.transparent,
+                        indicatorColor: indicatorColor,
+                        indicatorShape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        selectedIconTheme: IconThemeData(
+                          color: colors.primary,
+                        ),
+                        unselectedIconTheme: IconThemeData(
+                          color: colors.onSurfaceVariant,
+                        ),
+                        selectedLabelTextStyle: selectedLabelTextStyle,
+                        unselectedLabelTextStyle: unselectedLabelTextStyle,
+                        destinations: primaryItems
+                            .map(
+                              (e) => NavigationRailDestination(
+                                icon: e.icon,
+                                label: ConstrainedBox(
+                                  constraints:
+                                      const BoxConstraints(maxWidth: 88),
+                                  child: Text(
+                                    Intl.message(e.label.name),
+                                    textAlign: TextAlign.center,
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
                               ),
+                            )
+                            .toList(),
+                        onDestinationSelected: (index) {
+                          globalState.appController
+                              .toPage(primaryItems[index].label);
+                        },
+                        trailing: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            _NavigationModeToggleButton(
+                              key: const ValueKey(
+                                  'navigation-expert-mode-toggle'),
+                              expanded: expertExpanded,
+                              showLabel: true,
+                              onPressed: () => toggleExpertNavigationMode(ref),
                             ),
-                          ),
-                        )
-                        .toList(),
-                    onDestinationSelected: (index) {
-                      globalState.appController
-                          .toPage(navigationItems[index].label);
-                    },
-                    trailing: _NavigationModeToggleButton(
-                      key: const ValueKey('navigation-expert-mode-toggle'),
-                      expanded: expertExpanded,
-                      showLabel: true,
-                      onPressed: () => toggleExpertNavigationMode(ref),
-                    ),
-                    extended: false,
-                    selectedIndex: currentIndex,
-                    labelType: NavigationRailLabelType.all,
-                  ),
+                            for (var i = 0; i < expandedItems.length; i++)
+                              _ExpertNavigationRailItem(
+                                key: ValueKey(
+                                  'navigation-item-${expandedItems[i].label.name}',
+                                ),
+                                item: expandedItems[i],
+                                selected:
+                                    effectiveIndex == primaryItems.length + i,
+                                indicatorColor: indicatorColor,
+                                selectedIconColor: colors.primary,
+                                unselectedIconColor: colors.onSurfaceVariant,
+                                selectedLabelStyle: selectedLabelTextStyle,
+                                unselectedLabelStyle: unselectedLabelTextStyle,
+                                indexLabel: localizations.tabLabel(
+                                  tabIndex: primaryItems.length + i + 1,
+                                  tabCount: navigationItems.length,
+                                ),
+                                onTap: () => globalState.appController.toPage(
+                                  expandedItems[i].label,
+                                ),
+                              ),
+                          ],
+                        ),
+                        extended: false,
+                        selectedIndex: railSelectedIndex,
+                        labelType: NavigationRailLabelType.all,
+                      ),
+                    );
+                  },
                 ),
               ),
               const SizedBox(
@@ -485,6 +538,105 @@ class _NavigationModeToggleButton extends StatelessWidget {
               ),
             ),
           ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ExpertNavigationRailItem extends StatelessWidget {
+  const _ExpertNavigationRailItem({
+    super.key,
+    required this.item,
+    required this.selected,
+    required this.indicatorColor,
+    required this.selectedIconColor,
+    required this.unselectedIconColor,
+    required this.selectedLabelStyle,
+    required this.unselectedLabelStyle,
+    required this.indexLabel,
+    required this.onTap,
+  });
+
+  final NavigationItem item;
+  final bool selected;
+  final Color indicatorColor;
+  final Color selectedIconColor;
+  final Color unselectedIconColor;
+  final TextStyle selectedLabelStyle;
+  final TextStyle unselectedLabelStyle;
+  final String indexLabel;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = context.colorScheme;
+    return Semantics(
+      container: true,
+      selected: selected,
+      child: Padding(
+        padding: const EdgeInsets.only(bottom: 12),
+        child: Stack(
+          alignment: Alignment.center,
+          children: [
+            Material(
+              type: MaterialType.transparency,
+              child: InkWell(
+                borderRadius: BorderRadius.circular(12),
+                splashColor: colors.primary.withValues(alpha: 0.12),
+                hoverColor: colors.primary.withValues(alpha: 0.04),
+                onTap: onTap,
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(minWidth: 80),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        AnimatedContainer(
+                          duration: const Duration(milliseconds: 200),
+                          curve: Curves.easeOutCubic,
+                          width: 56,
+                          height: 32,
+                          decoration: BoxDecoration(
+                            color:
+                                selected ? indicatorColor : Colors.transparent,
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          alignment: Alignment.center,
+                          child: IconTheme(
+                            data: IconThemeData(
+                              size: 24,
+                              color: selected
+                                  ? selectedIconColor
+                                  : unselectedIconColor,
+                            ),
+                            child: item.icon,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        ConstrainedBox(
+                          constraints: const BoxConstraints(maxWidth: 88),
+                          child: DefaultTextStyle.merge(
+                            style: selected
+                                ? selectedLabelStyle
+                                : unselectedLabelStyle,
+                            child: Text(
+                              Intl.message(item.label.name),
+                              textAlign: TextAlign.center,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            Semantics(label: indexLabel),
+          ],
         ),
       ),
     );

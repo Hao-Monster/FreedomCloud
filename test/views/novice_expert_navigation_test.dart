@@ -410,14 +410,20 @@ void main() {
     expect(find.text('大佬模式'), findsOneWidget);
     expect(find.text('小白模式'), findsNothing);
     expect(find.byIcon(Icons.expand_more_rounded), findsOneWidget);
+    final collapsedToggleTop = tester.getTopLeft(toggleFinder).dy;
+    expect(
+      collapsedToggleTop,
+      greaterThan(tester.getBottomLeft(find.text('购买')).dy),
+    );
 
-    // 3. Click 大佬模式 -> expands all items (代理, 购买, 仪表盘, 配置, 连接, 设置) & changes button to 小白模式.
+    // 3. Click 大佬模式 -> toggle stays anchored below 购买 and expands advanced items underneath.
     await tester.tap(toggleFinder);
     await tester.pumpAndSettle();
 
+    expect(find.byType(NavigationRail), findsOneWidget);
     final railExpanded =
         tester.widget<NavigationRail>(find.byType(NavigationRail));
-    expect(railExpanded.destinations.length, 6);
+    expect(railExpanded.destinations.length, 2);
     expect(find.text('仪表盘'), findsOneWidget);
     expect(find.text('配置'), findsOneWidget);
     expect(find.text('连接'), findsOneWidget);
@@ -425,6 +431,29 @@ void main() {
     expect(find.text('小白模式'), findsOneWidget);
     expect(find.text('大佬模式'), findsNothing);
     expect(find.byIcon(Icons.expand_less_rounded), findsOneWidget);
+
+    final expandedToggleTop = tester.getTopLeft(toggleFinder).dy;
+    expect(expandedToggleTop, closeTo(collapsedToggleTop, 0.01));
+    expect(
+      expandedToggleTop,
+      greaterThan(tester.getBottomLeft(find.text('购买')).dy),
+    );
+    expect(
+      tester.getBottomLeft(toggleFinder).dy,
+      lessThanOrEqualTo(tester.getTopLeft(find.text('仪表盘')).dy),
+    );
+    expect(
+      tester.getTopLeft(find.text('仪表盘')).dy,
+      lessThan(tester.getTopLeft(find.text('配置')).dy),
+    );
+    expect(
+      tester.getTopLeft(find.text('配置')).dy,
+      lessThan(tester.getTopLeft(find.text('连接')).dy),
+    );
+    expect(
+      tester.getTopLeft(find.text('连接')).dy,
+      lessThan(tester.getTopLeft(find.text('设置')).dy),
+    );
 
     // 4. Navigate to 仪表盘 (3rd item) and set proxiesScope to current, then click 小白模式 ->
     // collapses rail AND automatically returns to 代理 (PageLabel.proxies) + ProxiesScope.all.
@@ -1224,6 +1253,165 @@ void main() {
           ),
         );
       }
+    } finally {
+      semanticsHandle.dispose();
+    }
+  });
+
+  testWidgets(
+      'Desktop side rail pins 大佬模式/小白模式 below 购买, expands advanced items including 日志 underneath, and maintains single active selection across primary and expanded items',
+      (tester) async {
+    tester.view.physicalSize = const Size(1280, 900);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(() {
+      tester.view.resetPhysicalSize();
+      tester.view.resetDevicePixelRatio();
+    });
+
+    final previousConfig = globalState.config;
+    addTearDown(() {
+      globalState.config = previousConfig;
+    });
+    globalState.config = previousConfig.copyWith(
+      appSetting: previousConfig.appSetting.copyWith(
+        openLogs: true,
+      ),
+    );
+
+    final semanticsHandle = tester.ensureSemantics();
+    try {
+      await AppLocalizations.load(const Locale('zh', 'CN'));
+      await tester.pumpWidget(
+        ProviderScope(
+          child: MaterialApp(
+            locale: const Locale('zh', 'CN'),
+            localizationsDelegates: const [
+              AppLocalizations.delegate,
+              GlobalMaterialLocalizations.delegate,
+              GlobalWidgetsLocalizations.delegate,
+              GlobalCupertinoLocalizations.delegate,
+            ],
+            supportedLocales: AppLocalizations.delegate.supportedLocales,
+            home: Consumer(
+              builder: (context, ref, _) {
+                globalState.measure = Measure.of(context, 1.0);
+                globalState.theme = CommonTheme.of(context, 1.0);
+                globalState.appController = _TestAppController(ref);
+                final navItems =
+                    ref.watch(currentNavigationsStateProvider).value;
+                final pageLabel = ref.watch(currentPageLabelProvider);
+                final idx = navItems.indexWhere((e) => e.label == pageLabel);
+                return Scaffold(
+                  body: Row(
+                    children: [
+                      CommonNavigationBar(
+                        viewMode: ViewMode.desktop,
+                        navigationItems: navItems,
+                        currentIndex: idx < 0 ? 0 : idx,
+                      ),
+                      Expanded(child: Text('Current: ${pageLabel.name}')),
+                    ],
+                  ),
+                );
+              },
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final toggleFinder =
+          find.byKey(const ValueKey('navigation-expert-mode-toggle'));
+      expect(find.text('代理'), findsOneWidget);
+      expect(find.text('购买'), findsOneWidget);
+      expect(find.text('大佬模式'), findsOneWidget);
+      expect(find.text('仪表盘'), findsNothing);
+      expect(find.text('日志'), findsNothing);
+      expect(find.text('设置'), findsNothing);
+
+      final collapsedToggleTop = tester.getTopLeft(toggleFinder).dy;
+      expect(
+        tester.getTopLeft(find.text('代理')).dy,
+        lessThan(tester.getTopLeft(find.text('购买')).dy),
+      );
+      expect(
+        tester.getTopLeft(find.text('购买')).dy,
+        lessThan(collapsedToggleTop),
+      );
+
+      await tester.tap(toggleFinder);
+      await tester.pumpAndSettle();
+
+      expect(find.text('小白模式'), findsOneWidget);
+      expect(find.text('日志'), findsOneWidget);
+      expect(tester.getTopLeft(toggleFinder).dy, closeTo(collapsedToggleTop, 0.01));
+
+      final orderedLabels = [
+        find.text('代理'),
+        find.text('购买'),
+        toggleFinder,
+        find.text('仪表盘'),
+        find.text('配置'),
+        find.text('连接'),
+        find.text('日志'),
+        find.text('设置'),
+      ];
+      for (var i = 0; i < orderedLabels.length - 1; i++) {
+        expect(
+          tester.getTopLeft(orderedLabels[i]).dy,
+          lessThan(tester.getTopLeft(orderedLabels[i + 1]).dy),
+        );
+      }
+
+      final container =
+          ProviderScope.containerOf(tester.element(find.byType(Scaffold)));
+
+      await tester.tap(find.text('连接'));
+      await tester.pumpAndSettle();
+
+      expect(container.read(currentPageLabelProvider), PageLabel.connections);
+      expect(
+        tester.widget<NavigationRail>(find.byType(NavigationRail)).selectedIndex,
+        isNull,
+      );
+      expect(
+        tester.getSemantics(
+          find.byKey(const ValueKey('navigation-item-connections')),
+        ),
+        isSemantics(hasSelectedState: true, isSelected: true),
+      );
+      expect(
+        tester.getSemantics(
+          find.byKey(const ValueKey('navigation-item-dashboard')),
+        ),
+        isSemantics(hasSelectedState: true, isSelected: false),
+      );
+
+      await tester.tap(find.text('购买'));
+      await tester.pumpAndSettle();
+
+      expect(container.read(currentPageLabelProvider), PageLabel.purchase);
+      expect(
+        tester.widget<NavigationRail>(find.byType(NavigationRail)).selectedIndex,
+        1,
+      );
+      expect(
+        tester.getSemantics(
+          find.byKey(const ValueKey('navigation-item-connections')),
+        ),
+        isSemantics(hasSelectedState: true, isSelected: false),
+      );
+
+      tester.view.physicalSize = const Size(1280, 440);
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+
+      await tester.ensureVisible(find.text('设置'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('设置'));
+      await tester.pumpAndSettle();
+      expect(container.read(currentPageLabelProvider), PageLabel.tools);
+      expect(tester.takeException(), isNull);
     } finally {
       semanticsHandle.dispose();
     }
