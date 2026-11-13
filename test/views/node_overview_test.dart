@@ -9229,6 +9229,211 @@ void main() {
       semanticsHandle.dispose();
     }
   });
+
+  testWidgets(
+      'Plan B persistent bottom floating proxy dock: removes top bar duplicate switch, anchors unique tactile switch at bottom-center of node pane, preserves side hit-testing and bottom scroll clearance',
+      (tester) async {
+    final controller = _ProxyController();
+    globalState.appController = controller;
+    final proxies = List.generate(
+      25,
+      (index) => Proxy(
+        name: '节点 ${(index + 1).toString().padLeft(2, '0')}',
+        type: 'Shadowsocks',
+      ),
+    );
+    const profileA = Profile(
+      id: 'a',
+      label: '主力订阅',
+      url: 'https://sub.example.com/a',
+      autoUpdateDuration: defaultUpdateDuration,
+      currentGroupName: 'Proxy',
+      selectedMap: {'Proxy': '节点 01'},
+    );
+    globalState.config = globalState.config.copyWith(
+      currentProfileId: 'a',
+      profiles: const [profileA],
+    );
+    globalState.appState = globalState.appState.copyWith(
+      groups: [
+        Group(
+          name: 'Proxy',
+          type: GroupType.Selector,
+          hidden: false,
+          now: '节点 01',
+          all: proxies,
+        ),
+      ],
+    );
+    final nodes = [
+      for (var i = 0; i < 25; i++)
+        _node(
+          'node-${i + 1}',
+          '节点 ${(i + 1).toString().padLeft(2, '0')}',
+        ).copyWith(selectGroups: const ['Proxy']),
+    ];
+
+    final container = await mount(
+      tester,
+      width: 1200,
+      locale: const Locale('zh', 'CN'),
+      profiles: const [profileA],
+      catalogs: {
+        'a': ProfileCatalog(
+          profileId: 'a',
+          fingerprint: 'fa',
+          status: ProfileCatalogStatus.ready,
+          nodes: nodes,
+        ),
+      },
+    );
+    controller.onUpdateStatus = ({required isStart}) async {
+      container.read(runTimeProvider.notifier).value = isStart ? 1000 : null;
+    };
+
+    final topBarFinder = find.byKey(const ValueKey('overview-connection-bar'));
+    final dockFinder =
+        find.byKey(const ValueKey('overview-floating-proxy-dock'));
+    final switchFinder = find.byKey(const ValueKey('overview-proxy-toggle'));
+    final nodesFinder = find.byKey(const ValueKey('overview-nodes'));
+
+    // 1. Single master switch resides exclusively inside bottom floating dock; top bar is status-only.
+    expect(topBarFinder, findsOneWidget);
+    expect(dockFinder, findsOneWidget);
+    expect(switchFinder, findsOneWidget);
+    expect(
+      find.descendant(of: topBarFinder, matching: switchFinder),
+      findsNothing,
+    );
+    expect(
+      find.descendant(of: dockFinder, matching: switchFinder),
+      findsOneWidget,
+    );
+
+    // 2. Floating dock is centered horizontally at bottom of right-hand node pane (excluding sidebar).
+    final initialDockRect = tester.getRect(dockFinder);
+    final nodesRect = tester.getRect(nodesFinder);
+    expect(initialDockRect.center.dx, closeTo(nodesRect.center.dx, 1.5));
+    expect(initialDockRect.bottom, closeTo(nodesRect.bottom - 16.0, 1.5));
+    expect(initialDockRect.top, greaterThan(nodesRect.center.dy));
+
+    // 3. Scrolling down keeps floating dock anchored at exact screen position and responsive to single click.
+    await tester.drag(nodesFinder, const Offset(0, -420));
+    await tester.pumpAndSettle();
+    expect(tester.getRect(dockFinder), initialDockRect);
+
+    await tester.tap(switchFinder);
+    await tester.pumpAndSettle();
+    expect(controller.statusUpdates, [true]);
+    expect(find.text('运行中'), findsOneWidget);
+    expect(find.text('代理已开启 · 正在使用 主力订阅 · 节点 01'), findsOneWidget);
+
+    // 4. Side hit-testing outside capsule passes cleanly to node rows/buttons; bezel absorbs stray taps.
+    final changesBeforeSideTap = controller.changes.length;
+    Finder? sideUseButtonFinder;
+    for (var i = 1; i <= 25; i++) {
+      final candidate = find.byKey(
+        ValueKey('overview-use-a-节点 ${i.toString().padLeft(2, '0')}'),
+      );
+      if (candidate.evaluate().isEmpty) continue;
+      final rect = tester.getRect(candidate);
+      if (rect.center.dy >= initialDockRect.top &&
+          rect.center.dy <= initialDockRect.bottom &&
+          rect.left >= initialDockRect.right) {
+        sideUseButtonFinder = candidate;
+        break;
+      }
+    }
+    sideUseButtonFinder ??= () {
+      for (var i = 1; i <= 25; i++) {
+        final candidate = find.byKey(
+          ValueKey('overview-use-a-节点 ${i.toString().padLeft(2, '0')}'),
+        );
+        if (candidate.evaluate().isEmpty) continue;
+        final rect = tester.getRect(candidate);
+        if (rect.left >= initialDockRect.right &&
+            rect.top >= nodesRect.top &&
+            rect.bottom <= nodesRect.bottom) {
+          return candidate;
+        }
+      }
+      return find.byKey(const ValueKey('overview-use-a-节点 08'));
+    }();
+    await tester.tap(sideUseButtonFinder);
+    await tester.pumpAndSettle();
+    expect(controller.changes.length, greaterThan(changesBeforeSideTap));
+
+    final changesBeforeBezelTap = controller.changes.length;
+    final updatesBeforeBezelTap = controller.statusUpdates.length;
+    await tester.tapAt(
+      Offset(initialDockRect.left + 2.0, initialDockRect.center.dy),
+    );
+    await tester.pumpAndSettle();
+    expect(controller.changes.length, changesBeforeBezelTap);
+    expect(controller.statusUpdates.length, updatesBeforeBezelTap);
+
+    // 5. Scrolling all the way to bottom leaves final node completely clear above the floating dock.
+    final scrollable = tester.state<ScrollableState>(
+      find.descendant(of: nodesFinder, matching: find.byType(Scrollable)).first,
+    );
+    scrollable.position.jumpTo(scrollable.position.maxScrollExtent);
+    await tester.pumpAndSettle();
+    final lastNodeTextFinder = find.text('节点 25');
+    expect(lastNodeTextFinder, findsOneWidget);
+    expect(
+      tester.getRect(lastNodeTextFinder).bottom,
+      lessThanOrEqualTo(initialDockRect.top),
+    );
+
+    // 6. Empty profiles list hides both connection bar and floating dock.
+    await tester.pumpWidget(const SizedBox.shrink());
+    await mount(
+      tester,
+      width: 1200,
+      locale: const Locale('zh', 'CN'),
+      profiles: const <Profile>[],
+    );
+    expect(dockFinder, findsNothing);
+    expect(switchFinder, findsNothing);
+
+    // 7. 2.0x text scaling across narrow/wide viewports, light/dark themes, and locales stays within bounds.
+    for (final (width, locale, brightness) in [
+      (320.0, const Locale('ru'), Brightness.dark),
+      (1200.0, const Locale('ja'), Brightness.light),
+    ]) {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await mount(
+        tester,
+        width: width,
+        locale: locale,
+        profiles: const [profileA],
+        child: Theme(
+          data: ThemeData(brightness: brightness, useMaterial3: true),
+          child: MediaQuery(
+            data: MediaQueryData(
+              size: Size(width, 1000),
+              textScaler: const TextScaler.linear(2.0),
+            ),
+            child: const NodeOverviewView(),
+          ),
+        ),
+        catalogs: {
+          'a': ProfileCatalog(
+            profileId: 'a',
+            fingerprint: 'fa',
+            status: ProfileCatalogStatus.ready,
+            nodes: [nodes.first],
+          ),
+        },
+      );
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      final scaledDockRect = tester.getRect(dockFinder);
+      final scaledNodesRect = tester.getRect(nodesFinder);
+      expect(scaledDockRect.left, greaterThanOrEqualTo(scaledNodesRect.left));
+      expect(scaledDockRect.right, lessThanOrEqualTo(scaledNodesRect.right));
+    }
+  });
 }
 
 class _OverviewWindowsTunEffects implements WindowsTunStartupEffects {

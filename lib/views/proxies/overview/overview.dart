@@ -2412,24 +2412,42 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
                       MediaQuery.textScalerOf(context).scale(1.0);
                   final scrollTopBars =
                       paneTextScale > 1.3 || paneConstraints.maxHeight < 420;
+                  final effectivePendingTarget = statusSwitchPending ??
+                      (_localProxyTogglePending ? !isProxyRunning : null);
+                  final toggleAction = globalState.isAppControllerReady
+                      ? () => unawaited(_toggleProxyMasterSwitch())
+                      : null;
                   final connectionBar = profiles.isNotEmpty
                       ? _OverviewConnectionStatusBar(
                           key: const ValueKey('overview-connection-bar'),
                           isRunning: isProxyRunning,
-                          pendingTarget: statusSwitchPending ??
-                              (_localProxyTogglePending
-                                  ? !isProxyRunning
-                                  : null),
-                          startCancelable: statusStartCancelable,
+                          pendingTarget: effectivePendingTarget,
                           isSmartMode: activeIsSmart,
                           activeProfileLabel:
                               activeProfileObj?.label ?? activeProfileObj?.id,
                           activeNodeName: activeNodeLabel,
-                          onToggle: globalState.isAppControllerReady
-                              ? () => unawaited(_toggleProxyMasterSwitch())
-                              : null,
                         )
                       : null;
+                  final floatingProxyDock = profiles.isNotEmpty
+                      ? _OverviewFloatingProxyDock(
+                          key: const ValueKey('overview-floating-proxy-dock'),
+                          isRunning: isProxyRunning,
+                          pendingTarget: effectivePendingTarget,
+                          startCancelable: statusStartCancelable,
+                          onToggle: toggleAction,
+                        )
+                      : null;
+                  final floatingBottomMargin = math.min(
+                    16.0,
+                    math.max(6.0, paneConstraints.maxHeight * 0.03),
+                  );
+                  final bottomScrollClearance = profiles.isNotEmpty
+                      ? (40.0 * paneTextScale.clamp(1.0, 1.40))
+                              .roundToDouble() +
+                          12.0 +
+                          floatingBottomMargin +
+                          24.0
+                      : 32.0;
                   final workflowBar = _OverviewQuickWorkflowBar(
                     key: const ValueKey('overview-workflow-bar'),
                     onAddSubscription: _importingSubscription
@@ -2453,106 +2471,142 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
                         workflowBar,
                       ],
                       Expanded(
-                        child: CustomScrollView(
-                          key: const ValueKey('overview-nodes'),
-                          slivers: [
-                            if (scrollTopBars) ...[
-                              if (connectionBar != null)
-                                SliverToBoxAdapter(child: connectionBar),
-                              SliverToBoxAdapter(child: workflowBar),
-                            ],
-                            for (final profile in visible)
-                          _ProfileNodesSliver(
-                              key: ValueKey('overview-section-${profile.id}'),
-                              profile: profile,
-                              active: profile.id == activeId,
-                              liveActive: isLiveActive(profile),
-                              showHeader: selected == null,
-                              showSubscriptionSummary:
-                                  !wide || selected != null,
-                              onSyncSubscription:
-                                  profile.type == ProfileType.url &&
-                                          (!wide || selected != null)
-                                      ? () =>
-                                          unawaited(_syncSubscription(profile))
-                                      : null,
-                              syncButtonKey: wide
-                                  ? ValueKey(
-                                      'overview-detail-sync-${profile.id}')
-                                  : ValueKey('overview-sync-${profile.id}'),
-                              showDeleteSubscription: _expired(profile, now) &&
-                                  (!wide || selected != null),
-                              deletingSubscription:
-                                  _deletingProfileIds.contains(profile.id),
-                              onDeleteSubscription: _expired(profile, now) &&
-                                      !profile.isUpdating &&
-                                      (!wide || selected != null)
-                                  ? () => unawaited(
-                                      _confirmAndDeleteProfile(profile))
-                                  : null,
-                              deleteButtonKey: wide
-                                  ? ValueKey(
-                                      'overview-detail-delete-${profile.id}')
-                                  : ValueKey('overview-delete-${profile.id}'),
-                              loadImmediately: selected != null ||
-                                  searching ||
-                                  activeCountry != null,
-                              availableOnly: _availableOnly,
-                              countryFilter: activeCountry,
-                              onVisibilityChanged: (isVisible) =>
-                                  _onProfileVisibilityChanged(
-                                      profile.id, isVisible),
-                              onTest: _testNode,
-                              onTestActive: _testActiveNode,
-                              onUseActive: _useActiveNode,
-                              onUseCatalog: _useCatalogNode,
-                              now: now),
-                        if (profiles.isEmpty)
-                          SliverToBoxAdapter(
-                            child: _OverviewEmptyProfilesCard(
-                              key: const ValueKey('overview-empty-profiles'),
-                              onAddSubscription: _importingSubscription
-                                  ? null
-                                  : () =>
-                                      unawaited(_openUrlSubscriptionImport()),
-                              onGoToPurchase: () {
-                                if (globalState.isAppControllerReady) {
-                                  globalState.appController
-                                      .toPage(PageLabel.purchase);
-                                } else {
-                                  ref
-                                      .read(currentPageLabelProvider.notifier)
-                                      .value = PageLabel.purchase;
-                                }
-                              },
+                        child: Stack(
+                          fit: StackFit.expand,
+                          children: [
+                            CustomScrollView(
+                              key: const ValueKey('overview-nodes'),
+                              slivers: [
+                                if (scrollTopBars) ...[
+                                  if (connectionBar != null)
+                                    SliverToBoxAdapter(child: connectionBar),
+                                  SliverToBoxAdapter(child: workflowBar),
+                                ],
+                                for (final profile in visible)
+                                  _ProfileNodesSliver(
+                                      key: ValueKey(
+                                          'overview-section-${profile.id}'),
+                                      profile: profile,
+                                      active: profile.id == activeId,
+                                      liveActive: isLiveActive(profile),
+                                      showHeader: selected == null,
+                                      showSubscriptionSummary:
+                                          !wide || selected != null,
+                                      onSyncSubscription:
+                                          profile.type == ProfileType.url &&
+                                                  (!wide || selected != null)
+                                              ? () => unawaited(
+                                                  _syncSubscription(profile))
+                                              : null,
+                                      syncButtonKey: wide
+                                          ? ValueKey(
+                                              'overview-detail-sync-${profile.id}')
+                                          : ValueKey(
+                                              'overview-sync-${profile.id}'),
+                                      showDeleteSubscription:
+                                          _expired(profile, now) &&
+                                              (!wide || selected != null),
+                                      deletingSubscription:
+                                          _deletingProfileIds.contains(
+                                              profile.id),
+                                      onDeleteSubscription: _expired(
+                                                  profile, now) &&
+                                              !profile.isUpdating &&
+                                              (!wide || selected != null)
+                                          ? () => unawaited(
+                                              _confirmAndDeleteProfile(profile))
+                                          : null,
+                                      deleteButtonKey: wide
+                                          ? ValueKey(
+                                              'overview-detail-delete-${profile.id}')
+                                          : ValueKey(
+                                              'overview-delete-${profile.id}'),
+                                      loadImmediately: selected != null ||
+                                          searching ||
+                                          activeCountry != null,
+                                      availableOnly: _availableOnly,
+                                      countryFilter: activeCountry,
+                                      onVisibilityChanged: (isVisible) =>
+                                          _onProfileVisibilityChanged(
+                                              profile.id, isVisible),
+                                      onTest: _testNode,
+                                      onTestActive: _testActiveNode,
+                                      onUseActive: _useActiveNode,
+                                      onUseCatalog: _useCatalogNode,
+                                      now: now),
+                                if (profiles.isEmpty)
+                                  SliverToBoxAdapter(
+                                    child: _OverviewEmptyProfilesCard(
+                                      key: const ValueKey(
+                                          'overview-empty-profiles'),
+                                      onAddSubscription: _importingSubscription
+                                          ? null
+                                          : () => unawaited(
+                                              _openUrlSubscriptionImport()),
+                                      onGoToPurchase: () {
+                                        if (globalState.isAppControllerReady) {
+                                          globalState.appController
+                                              .toPage(PageLabel.purchase);
+                                        } else {
+                                          ref
+                                              .read(currentPageLabelProvider
+                                                  .notifier)
+                                              .value = PageLabel.purchase;
+                                        }
+                                      },
+                                    ),
+                                  ),
+                                if (availableFilterHidAllNodes)
+                                  SliverToBoxAdapter(
+                                    child: _OverviewAvailableFilterEmptyBanner(
+                                      key: const ValueKey(
+                                          'overview-available-only-empty'),
+                                      onShowAllNodes: () => setState(
+                                          () => _availableOnly = false),
+                                    ),
+                                  ),
+                                if (selected == null &&
+                                    activeCountry != null &&
+                                    activeCountryMatchCount == 0 &&
+                                    !anyVisibleCatalogLoading)
+                                  SliverToBoxAdapter(
+                                    child: Padding(
+                                      padding: const EdgeInsets.symmetric(
+                                          horizontal: 24, vertical: 16),
+                                      child: Text(
+                                          appLocalizations.nodeOverviewNoNodes),
+                                    ),
+                                  ),
+                                SliverToBoxAdapter(
+                                  child: SizedBox(height: bottomScrollClearance),
+                                ),
+                              ],
                             ),
-                          ),
-                        if (availableFilterHidAllNodes)
-                          SliverToBoxAdapter(
-                            child: _OverviewAvailableFilterEmptyBanner(
-                              key: const ValueKey(
-                                  'overview-available-only-empty'),
-                              onShowAllNodes: () =>
-                                  setState(() => _availableOnly = false),
-                            ),
-                          ),
-                        if (selected == null &&
-                            activeCountry != null &&
-                            activeCountryMatchCount == 0 &&
-                            !anyVisibleCatalogLoading)
-                          SliverToBoxAdapter(
-                            child: Padding(
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 24, vertical: 16),
-                              child: Text(appLocalizations.nodeOverviewNoNodes),
-                            ),
-                          ),
-                        const SliverToBoxAdapter(child: SizedBox(height: 32)),
-                      ],
-                    ),
-                  ),
-                ],
-              );
+                            if (floatingProxyDock != null)
+                              Positioned(
+                                left: 16,
+                                right: 16,
+                                bottom: floatingBottomMargin,
+                                child: Align(
+                                  alignment: Alignment.bottomCenter,
+                                  widthFactor: 1.0,
+                                  heightFactor: 1.0,
+                                  child: ConstrainedBox(
+                                    constraints: BoxConstraints(
+                                      maxWidth: math.max(
+                                        96.0,
+                                        paneConstraints.maxWidth - 32,
+                                      ),
+                                    ),
+                                    child: floatingProxyDock,
+                                  ),
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  );
                 },
               ),
             ),
@@ -2568,20 +2622,16 @@ class _OverviewConnectionStatusBar extends StatelessWidget {
     super.key,
     required this.isRunning,
     required this.pendingTarget,
-    required this.startCancelable,
     this.isSmartMode = false,
     required this.activeProfileLabel,
     required this.activeNodeName,
-    required this.onToggle,
   });
 
   final bool isRunning;
   final bool? pendingTarget;
-  final bool startCancelable;
   final bool isSmartMode;
   final String? activeProfileLabel;
   final String? activeNodeName;
-  final VoidCallback? onToggle;
 
   @override
   Widget build(BuildContext context) {
@@ -2632,22 +2682,6 @@ class _OverviewConnectionStatusBar extends StatelessWidget {
         ? green.withValues(alpha: isDark ? 0.42 : 0.34)
         : freedomNetHairlineColor(colors);
 
-    final canPress = onToggle != null &&
-        (!isBusy || (pendingTarget == true && startCancelable));
-    final buttonLabel = (isRunning || (pendingTarget == true && startCancelable))
-        ? appLocalizations.nodeOverviewTurnOffProxy
-        : appLocalizations.nodeOverviewTurnOnProxy;
-
-    final toggleButton = _OverviewTactileProxySwitch(
-      key: const ValueKey('overview-proxy-toggle'),
-      isRunning: isRunning,
-      pendingTarget: pendingTarget,
-      startCancelable: startCancelable,
-      canPress: canPress,
-      semanticsLabel: buttonLabel,
-      onToggle: onToggle,
-    );
-
     final leadingIcon = DecoratedBox(
       decoration: BoxDecoration(
         shape: BoxShape.circle,
@@ -2656,8 +2690,8 @@ class _OverviewConnectionStatusBar extends StatelessWidget {
             : colors.surfaceContainerHighest.withValues(alpha: isDark ? 0.65 : 0.85),
       ),
       child: SizedBox(
-        width: 28,
-        height: 28,
+        width: 26,
+        height: 26,
         child: Center(
           child: isBusy
               ? ExcludeSemantics(
@@ -2674,7 +2708,7 @@ class _OverviewConnectionStatusBar extends StatelessWidget {
                   isRunning
                       ? Icons.shield_rounded
                       : Icons.power_settings_new_rounded,
-                  size: 16,
+                  size: 15,
                   color: isRunning ? green : colors.onSurfaceVariant,
                 ),
         ),
@@ -2699,63 +2733,109 @@ class _OverviewConnectionStatusBar extends StatelessWidget {
           ],
         ),
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              final textScale = MediaQuery.textScalerOf(context).scale(1.0);
-              if (constraints.maxWidth < 340 * textScale) {
-                return Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Row(
-                      children: [
-                        leadingIcon,
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: Text(
-                            statusText,
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                            style: theme.textTheme.bodyMedium?.copyWith(
-                              fontWeight: isRunning
-                                  ? FontWeight.w600
-                                  : FontWeight.w500,
-                              color: colors.onSurface,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 6),
-                    Align(
-                      alignment: Alignment.centerRight,
-                      child: toggleButton,
-                    ),
-                  ],
-                );
-              }
-              return Row(
-                children: [
-                  leadingIcon,
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Text(
-                      statusText,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: theme.textTheme.bodyMedium?.copyWith(
-                        fontWeight:
-                            isRunning ? FontWeight.w600 : FontWeight.w500,
-                        color: colors.onSurface,
-                      ),
-                    ),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+          child: Row(
+            children: [
+              leadingIcon,
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  statusText,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    fontWeight: isRunning ? FontWeight.w600 : FontWeight.w500,
+                    color: colors.onSurface,
                   ),
-                  const SizedBox(width: 10),
-                  Flexible(flex: 0, child: toggleButton),
-                ],
-              );
-            },
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Persistent floating stadium capsule housing the unique proxy master switch
+/// anchored at the bottom-center of the node pane.
+class _OverviewFloatingProxyDock extends StatelessWidget {
+  const _OverviewFloatingProxyDock({
+    super.key,
+    required this.isRunning,
+    required this.pendingTarget,
+    required this.startCancelable,
+    required this.onToggle,
+  });
+
+  final bool isRunning;
+  final bool? pendingTarget;
+  final bool startCancelable;
+  final VoidCallback? onToggle;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+    final isBusy = pendingTarget != null;
+    final effectiveConnected = pendingTarget ?? isRunning;
+    final green = isDark ? kLatencyFastColor : const Color(0xFF059669);
+    final canPress = onToggle != null &&
+        (!isBusy || (pendingTarget == true && startCancelable));
+    final buttonLabel = (isRunning || (pendingTarget == true && startCancelable))
+        ? appLocalizations.nodeOverviewTurnOffProxy
+        : appLocalizations.nodeOverviewTurnOnProxy;
+
+    final dockBgColor = effectiveConnected
+        ? Color.alphaBlend(
+            green.withValues(alpha: isDark ? 0.14 : 0.08),
+            (isDark ? const Color(0xFF111826) : Colors.white)
+                .withValues(alpha: isDark ? 0.96 : 0.97),
+          )
+        : (isDark
+            ? const Color(0xFF121927).withValues(alpha: 0.96)
+            : Colors.white.withValues(alpha: 0.97));
+    final dockBorderColor = effectiveConnected
+        ? green.withValues(alpha: isDark ? 0.48 : 0.38)
+        : (isDark
+            ? Colors.white.withValues(alpha: 0.12)
+            : const Color(0xFFCBD5E1).withValues(alpha: 0.95));
+
+    return RepaintBoundary(
+      child: Listener(
+        behavior: HitTestBehavior.opaque,
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: dockBgColor,
+            borderRadius: BorderRadius.circular(999),
+            border: Border.all(color: dockBorderColor, width: 1.2),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: isDark ? 0.46 : 0.12),
+                blurRadius: 20,
+                offset: const Offset(0, 8),
+              ),
+              BoxShadow(
+                color: effectiveConnected
+                    ? green.withValues(alpha: isDark ? 0.24 : 0.16)
+                    : Colors.black.withValues(alpha: isDark ? 0.22 : 0.05),
+                blurRadius: effectiveConnected ? 24 : 6,
+                spreadRadius: effectiveConnected ? 1 : 0,
+                offset: Offset(0, effectiveConnected ? 4 : 2),
+              ),
+            ],
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(6),
+            child: _OverviewTactileProxySwitch(
+              key: const ValueKey('overview-proxy-toggle'),
+              isRunning: isRunning,
+              pendingTarget: pendingTarget,
+              startCancelable: startCancelable,
+              canPress: canPress,
+              semanticsLabel: buttonLabel,
+              onToggle: onToggle,
+            ),
           ),
         ),
       ),
