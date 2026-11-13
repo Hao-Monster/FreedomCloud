@@ -2,6 +2,23 @@
 
 更新日期：2026-11-14。当前阶段是快速开发、快速迭代和部分功能预览。本文记录来源与验收边界；每次继续开发仍需核实实际 Git/PR/CI 状态，不能把历史报告视为当前通过证明。
 
+## 应用内原生注册/找回密码与 Chatwoot 在线客服交付核验（`4341f3b4`..`c9c30e43`，2026-11-14）
+
+- 范围与 `development` 提交链（HEAD `c9c30e43`）：
+  1. **`4341f3b4` · 纯 Flutter Chatwoot 引擎与 `SupportManager`**：新增 [`chatwoot.dart`](file:///e:/CodeWorkstation/FlClashX/lib/models/chatwoot.dart)、[`chatwoot_storage.dart`](file:///e:/CodeWorkstation/FlClashX/lib/services/chatwoot_storage.dart)、[`chatwoot_service.dart`](file:///e:/CodeWorkstation/FlClashX/lib/services/chatwoot_service.dart)、[`support_manager.dart`](file:///e:/CodeWorkstation/FlClashX/lib/manager/support_manager.dart) 与 [`chatwoot_engine_test.dart`](file:///e:/CodeWorkstation/FlClashX/test/support/chatwoot_engine_test.dart)，零新增依赖（零 `webview_windows`），以 `(origin|websiteToken|scopeKey)` SHA-256 隔离访客与多账号会话；
+  2. **`e66e014a` · Xboard-Go 原生认证/注册/找回密码契约与单飞缓存**：扩展 [`xboard.dart`](file:///e:/CodeWorkstation/FlClashX/lib/models/xboard.dart)、[`xboard_api.dart`](file:///e:/CodeWorkstation/FlClashX/lib/services/xboard_api.dart)、[`purchase_manager.dart`](file:///e:/CodeWorkstation/FlClashX/lib/manager/purchase_manager.dart) 与 [`native_passport_auth_test.dart`](file:///e:/CodeWorkstation/FlClashX/test/purchase/native_passport_auth_test.dart)，新增 `XboardGuestAuthConfig`、`XboardPassportApi` 及 `/api/v1/guest/comm/config` 单飞 + 30s TTL 缓存；
+  3. **`83adb5ab` · 原生认证 UI、`SupportChatSheet`、共享协调器与四语言国际化**：更新 [`center.dart`](file:///e:/CodeWorkstation/FlClashX/lib/views/purchase/center.dart)、[`purchase.dart`](file:///e:/CodeWorkstation/FlClashX/lib/views/purchase.dart)、[`support_chat_sheet.dart`](file:///e:/CodeWorkstation/FlClashX/lib/views/support/support_chat_sheet.dart)、[`purchase_support_provider.dart`](file:///e:/CodeWorkstation/FlClashX/lib/providers/purchase_support_provider.dart)、[`home.dart`](file:///e:/CodeWorkstation/FlClashX/lib/pages/home.dart)、`arb/intl_{zh_CN,en,ja,ru}.arb`、`lib/l10n/` 与 [`native_auth_and_support_ui_test.dart`](file:///e:/CodeWorkstation/FlClashX/test/support/native_auth_and_support_ui_test.dart)，落地全局导航栏在线客服入口、注册/找回密码原生表单（含 CAPTCHA 浏览器降级与双微信号保留）；
+  4. **`c9c30e43` · `T05` 假体 `SupportManager` 注入加固**：更新 [`purchase_v3_redesign_tdd_test.dart`](file:///e:/CodeWorkstation/FlClashX/test/purchase/purchase_v3_redesign_tdd_test.dart) 中 `T05`，注入受控假体 `SupportManager` 并校验关闭客服面板后 `hasActiveRealtimeResources == false`。
+- 实测验证记录（HEAD `c9c30e43`）：
+  - 依赖增量检查：**PASS**（`4341f3b4^..HEAD` 对 `pubspec.yaml` / `pubspec.lock` 零改动，全仓零 `webview_windows`）；
+  - 静态分析：**PASS**（`dart analyze` 目标 14 项路径返回 `No issues found!`，退出码 `0`；`dart analyze lib/pages/home.dart` 返回 0 errors、0 warnings、6 条既有 info，退出码 `0`）；
+  - 自动化测试回归：**PASS**（`flutter test --no-pub test/support/ test/purchase/ test/views/novice_expert_navigation_test.dart test/views/freedomnet_code_review_tdd_test.dart test/views/freedomnet_commercial_ui_test.dart` 共 **`390/390` 全绿**，0 失败，退出码 `0`）；
+  - 性能/安全/业务不变量抽检：**PASS**（`filter: null`、0 `BackdropFilter`、0 `.repeat(`、关闭释放 WebSocket 与计时器、`ValueListenableBuilder` 局部重建、严格 TLS、`badCertificateCallback => false`、无敏感日志、双微信号 + 复制与礼品卡/公开目录完整保留）。
+- 未执行项（`NOT RUN`）：
+  - **GitHub Actions CI**：**NOT RUN**；
+  - **真实桌面 `.exe` 构建与端到端联调（直连 `fast.hjy.ca` / 线上 Chatwoot）**：**NOT RUN**；
+  - **后端部署**：**NOT RUN**。
+
 ## 购买页套餐卡片极简网页版样式重构 TDD 落地（`481a9195`，2026-11-14）
 
 - 需求与视觉结构重构（对照网页端 Storefront 卡片）：将 [`plan_catalog.dart`](file:///e:/CodeWorkstation/FlClashX/lib/views/purchase/plan_catalog.dart) 中的 `_PlanCard` 由冗余信息堆砌重组为与网页端一致的四段式极简结构，覆盖深色与浅色双主题、窄屏与桌面双栏：
