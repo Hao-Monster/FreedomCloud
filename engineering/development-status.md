@@ -2,6 +2,22 @@
 
 更新日期：2026-11-13。当前阶段是快速开发、快速迭代和部分功能预览。本文记录来源与验收边界；每次继续开发仍需核实实际 Git/PR/CI 状态，不能把历史报告视为当前通过证明。
 
+## 代理总览页状态栏升级为「方案 B 机械光轨推杆开关（点击自动滑动）」（2026-11-13）
+
+- 需求与交互契约：保留并完整复用 [`NodeOverviewView`](file:///e:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart#L848-L873) 原有 `_toggleProxyMasterSwitch()`（含 `statusSwitchPendingProvider` / `statusStartCancelableProvider` / `_localProxyTogglePending` 及 `ValueKey('overview-proxy-toggle')`），将 [`_OverviewConnectionStatusBar`](file:///e:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart#L2566-L2764) 右侧普通按钮升级为方案 B「机械光轨推杆开关（Tactile Cyber-Switch Track）」。严格遵循用户指定的**纯点击触发（无手动拖拽手势）+ 自动左右滑动光轨动画**：单击开关或键盘 `Enter`/`Space` 激活后自动平滑滑动并点亮光轨开启代理，再次单击自动左滑复位关闭代理。
+- TDD 代码落地（本地 `development` 代码提交 `44015ed4`，`44015ed43e4c451039454e9eef5d492989acbee8`）：
+  1. **机械光轨开关组件与光轨绘制器（[`_OverviewTactileProxySwitch`](file:///e:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart#L2771-L3193)、[`_TactileCyberSwitchRailPainter`](file:///e:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart#L3195-L3372)）**：
+     - 仅绑定 `GestureDetector` 的 `onTap` / `onTapDown` / `onTapUp` / `onTapCancel` 与 `FocusableActionDetector`（`ActivateIntent`），不绑定任何 `onHorizontalDrag*` / `onPan*` 手势；
+     - 采用有限时长控制器（`_slideController` 360ms、`Curves.easeOutCubic` 双向对称缓动；`_hoverController` 180ms；无后台常驻 `repeat()` ticker），结合 `RepaintBoundary` + `CustomPaint` 呈现关态金属凹槽（`开启代理 >`）、滑行中瞬态激光流束（`slideEnergy = sin(p * pi)`）、运行态翡翠光轨与 `#71D7A7` 发光圆钮（`运行中`）以及已开启状态下鼠标悬停的珊瑚红断开警示态（`关闭代理`），过渡期圆钮内集成 `CircularProgressIndicator`；
+     - 顶层 `Semantics`（`button` / `toggled` / `enabled` / `label`）+ 内部 `ExcludeSemantics` 隔离装饰与进度子节点，避免 Windows UIA `kValue` 节点抖动。
+  2. **TDD 自动化测试（[`node_overview_test.dart`](file:///e:/CodeWorkstation/FlClashX/test/views/node_overview_test.dart#L9048-L9231)）**：扩展 `_ProxyController.onUpdateStatus` 并在 `node_overview_test.dart` 新增专测，验证关态左停靠与语义、拖拽手势不触发切换且不移动推杆、单击后 `160ms` 滑行中段位移（左->右及右->左）、运行态 `运行中` 与鼠标悬停 `关闭代理` 切换，以及 `320px` / `1200px` `@ 2.0x` 字体缩放（`zh_CN` / `ru` / `en` / `ja`）零溢出。
+- 验证记录：
+  - 前置有效 Red：**PASS**（首次运行 `flutter test test/views/node_overview_test.dart --plain-name "Scheme B tactile cyber proxy switch"` 按预期失败于 `Found 0 widgets with key [<'overview-proxy-toggle-rail'>]`）；
+  - Green 与全量回归：**PASS**（最后一次代码与测试微调后重跑 `flutter test test/views/node_overview_test.dart --plain-name "Scheme B tactile cyber proxy switch"` `+1: All tests passed!`，并完整运行 `flutter test test/views/node_overview_test.dart test/common/resource_leak_and_uia_stability_tdd_test.dart` **`132/132` 全绿**）；
+  - 静态分析与补丁检查：**PASS**（`dart analyze --fatal-infos test/views/node_overview_test.dart` 输出 `No issues found!`；`dart analyze --fatal-warnings lib/views/proxies/overview/overview.dart` 退出码 `0` 且无新增 info，仅余该文件原有 4 处无关 info；`git diff --cached --check` 零空白错误）；
+  - 预览包构建：**NOT RUN（按本轮纯代码开发范围未新建或修改 `dist/` 预览包）**；
+  - 宿主机实机目视 / 远端推送 / PR：**NOT RUN**。
+
 ## 修复 `CF-优选直连` / `CF-优选域名` 及 CDN / Fake-IP 域名节点不展示国家/地区徽章（2026-11-13）
 
 - 需求与根因：用户反馈代理节点列表（`NodeOverviewView`）中 `德国Frankfurt76`、`美国静态原生` 等节点可正常显示 `🇩🇪 德国` / `🇺🇸 美国`，但 `CF-优选直连*` 与 `CF-优选域名*`（`CF-优选直连15 · 高速AI解锁`、`CF-优选域名1 · 高速AI解锁` 等）均未展示国家徽章并落入 `🌐 其他`。经查：名称含地名的节点依靠第 3 层名称关键字命中，而不含地名的 CF 节点完全依赖第 2 层服务器 GeoIP 解析，且第 2 层存在三处叠加缺陷：
