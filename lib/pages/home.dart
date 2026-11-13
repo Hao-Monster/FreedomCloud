@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flclashx/common/common.dart';
@@ -5,8 +6,10 @@ import 'package:flclashx/enum/enum.dart';
 import 'package:flclashx/models/models.dart';
 import 'package:flclashx/providers/node_overview.dart';
 import 'package:flclashx/providers/providers.dart';
+import 'package:flclashx/providers/purchase_support_provider.dart';
 import 'package:flclashx/state.dart';
 import 'package:flclashx/views/dashboard/widgets/hero_nav_bar.dart';
+import 'package:flclashx/views/support/support_chat_sheet.dart';
 import 'package:flclashx/widgets/widgets.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -441,6 +444,28 @@ class CommonNavigationBar extends ConsumerWidget {
                                   expandedItems[i].label,
                                 ),
                               ),
+                            _NavigationSupportRailButton(
+                              key: const ValueKey('navigation-support-trigger'),
+                              iconColor: colors.onSurfaceVariant,
+                              labelStyle: unselectedLabelTextStyle,
+                              onTap: () {
+                                final coordinator = ref.read(
+                                  purchaseSupportCoordinatorProvider,
+                                );
+                                unawaited(coordinator.prepareSupport());
+                                final locale = Localizations.localeOf(context);
+                                unawaited(
+                                  openSupportChatSheet(
+                                    context,
+                                    supportManager: coordinator.supportManager,
+                                    openLink: openHttpsExternalLink,
+                                    externalWidgetUri: coordinator
+                                        .resolveExternalWidgetUri(locale),
+                                    onRetryChannel: coordinator.prepareSupport,
+                                  ),
+                                );
+                              },
+                            ),
                           ],
                         ),
                         extended: false,
@@ -636,6 +661,71 @@ class _ExpertNavigationRailItem extends StatelessWidget {
             ),
             Semantics(label: indexLabel),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+class _NavigationSupportRailButton extends StatelessWidget {
+  const _NavigationSupportRailButton({
+    super.key,
+    required this.iconColor,
+    required this.labelStyle,
+    required this.onTap,
+  });
+
+  final Color iconColor;
+  final TextStyle labelStyle;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = context.colorScheme;
+    final label = appLocalizations.purchaseOnlineSupport;
+    return Semantics(
+      container: true,
+      button: true,
+      label: label,
+      child: Padding(
+        padding: const EdgeInsets.only(top: 4, bottom: 8),
+        child: Material(
+          type: MaterialType.transparency,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(12),
+            splashColor: colors.primary.withValues(alpha: 0.12),
+            hoverColor: colors.primary.withValues(alpha: 0.04),
+            onTap: onTap,
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(minWidth: 80),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                child: ExcludeSemantics(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Icons.support_agent_rounded,
+                        size: 22,
+                        color: iconColor,
+                      ),
+                      const SizedBox(height: 4),
+                      ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 88),
+                        child: Text(
+                          label,
+                          style: labelStyle,
+                          textAlign: TextAlign.center,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
         ),
       ),
     );

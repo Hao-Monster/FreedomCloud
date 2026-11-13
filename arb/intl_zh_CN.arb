@@ -1514,5 +1514,77 @@
   "brandPillarModesTitle": "双模驾驭 · 即开即连",
   "brandPillarModesBody": "「小白模式」清爽直观、系统级 TUN 与代理无缝协同；展开「大佬模式」即可掌控分流、连接与诊断细节。",
   "brandPillarServiceTitle": "透明权益 · 安心续享",
-  "brandPillarServiceBody": "订阅流量、剩余比例与到期状态清晰可查，支持礼品卡核验兑换、多配置同步与专属客服协助。"
+  "brandPillarServiceBody": "订阅流量、剩余比例与到期状态清晰可查，支持礼品卡核验兑换、多配置同步与专属客服协助。",
+  "purchaseForgotPassword": "忘记密码？",
+  "purchaseResetPasswordTitle": "重置密码",
+  "purchaseResetPasswordDescription": "输入注册邮箱并获取 6 位验证码，即可设置新密码。",
+  "purchaseEmailCode": "邮箱验证码",
+  "purchaseEmailCodeRequired": "请输入 6 位数字验证码",
+  "purchaseSendCode": "获取验证码",
+  "purchaseSendingCode": "发送中...",
+  "purchaseSendCodeCooldown": "{seconds}s 后重发",
+  "@purchaseSendCodeCooldown": {
+    "placeholders": {
+      "seconds": {
+        "type": "int"
+      }
+    }
+  },
+  "purchaseCodeSentNotice": "验证码已发送，请查收邮箱（含垃圾箱）。",
+  "purchaseInviteCode": "邀请码",
+  "purchaseInviteCodeOptionalToggle": "填写邀请码（选填）",
+  "purchaseInviteCodeRequired": "请输入邀请码",
+  "purchaseNewPassword": "新密码",
+  "purchaseResetPasswordSubmit": "确认重置密码",
+  "purchaseResettingPassword": "重置中...",
+  "purchaseBackToLogin": "返回登录",
+  "purchaseResetPasswordSuccess": "密码已重置，请使用新密码登录。",
+  "purchaseCaptchaRequiredNotice": "当前站点启用了人机校验，请前往网页完成验证。",
+  "purchaseOpenWebAuth": "前往网页完成",
+  "purchaseTosAgreementPrefix": "注册即表示同意",
+  "purchaseTosLinkLabel": "《服务条款》",
+  "purchaseInviteCodeRequiredError": "当前站点需要填写有效邀请码才能注册。",
+  "purchaseInviteCodeInvalidError": "邀请码无效或已过期，请核对后重试。",
+  "purchaseInvitationUnavailableError": "邀请功能暂不可用，请稍后重试。",
+  "purchaseEmailCodeInvalidError": "邮箱验证码无效或已过期，请重新获取。",
+  "purchaseEmailCodeLockedError": "验证码尝试次数过多，请稍后重新获取。",
+  "purchaseEmailCooldownError": "验证码发送过于频繁，请稍后再试。",
+  "purchaseEmailRateLimitedError": "发送次数已达上限，请稍后再试。",
+  "purchaseEmailVerifyDisabledError": "当前站点已关闭邮箱验证码功能。",
+  "purchaseMailUnavailableError": "邮件服务暂不可用，请联系客服或稍后重试。",
+  "purchaseCooldownWithSecondsError": "操作过于频繁，请在 {seconds} 秒后重试。",
+  "@purchaseCooldownWithSecondsError": {
+    "placeholders": {
+      "seconds": {
+        "type": "int"
+      }
+    }
+  },
+  "supportSheetTitle": "在线客服",
+  "supportStatusConnected": "已连接",
+  "supportStatusConnecting": "连接中",
+  "supportStatusOffline": "离线",
+  "supportNewConversation": "开启新对话",
+  "supportOpenExternalFallback": "浏览器打开",
+  "supportRefreshTooltip": "刷新消息",
+  "supportWelcomeFallbackTitle": "欢迎咨询自由云客服",
+  "supportWelcomeFallbackSubtitle": "有任何订阅、节点或礼品卡问题，欢迎随时留言。",
+  "supportTypingIndicator": "{name} 正在输入...",
+  "@supportTypingIndicator": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "supportTypingAnonymous": "客服",
+  "supportMessageSending": "发送中",
+  "supportMessageFailed": "发送失败",
+  "supportRetryAction": "重试",
+  "supportComposerHint": "输入问题，按 Enter 发送...",
+  "supportSendTooltip": "发送",
+  "supportConversationLockedNotice": "当前会话已结束，您可以开启新对话继续咨询。",
+  "supportNotConfiguredNotice": "在线客服通道暂未配置，您可以使用下方备用微信联系人工客服。",
+  "supportBackupWechatToggle": "备用微信",
+  "purchaseAcquireOpenSupport": "联系在线客服"
 }

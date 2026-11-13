@@ -9022,6 +9022,511 @@ class AppLocalizations {
       args: [node],
     );
   }
+
+  /// `Forgot password?`
+  String get purchaseForgotPassword {
+    return Intl.message(
+      'Forgot password?',
+      name: 'purchaseForgotPassword',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Reset password`
+  String get purchaseResetPasswordTitle {
+    return Intl.message(
+      'Reset password',
+      name: 'purchaseResetPasswordTitle',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Enter your registered email and a 6-digit verification code to set a new password.`
+  String get purchaseResetPasswordDescription {
+    return Intl.message(
+      'Enter your registered email and a 6-digit verification code to set a new password.',
+      name: 'purchaseResetPasswordDescription',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Email verification code`
+  String get purchaseEmailCode {
+    return Intl.message(
+      'Email verification code',
+      name: 'purchaseEmailCode',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Enter the 6-digit verification code`
+  String get purchaseEmailCodeRequired {
+    return Intl.message(
+      'Enter the 6-digit verification code',
+      name: 'purchaseEmailCodeRequired',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Send code`
+  String get purchaseSendCode {
+    return Intl.message(
+      'Send code',
+      name: 'purchaseSendCode',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Sending...`
+  String get purchaseSendingCode {
+    return Intl.message(
+      'Sending...',
+      name: 'purchaseSendingCode',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Resend in {seconds}s`
+  String purchaseSendCodeCooldown(int seconds) {
+    return Intl.message(
+      'Resend in ${seconds}s',
+      name: 'purchaseSendCodeCooldown',
+      desc: '',
+      args: [seconds],
+    );
+  }
+
+  /// `Verification code sent. Check your inbox and spam folder.`
+  String get purchaseCodeSentNotice {
+    return Intl.message(
+      'Verification code sent. Check your inbox and spam folder.',
+      name: 'purchaseCodeSentNotice',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Invite code`
+  String get purchaseInviteCode {
+    return Intl.message(
+      'Invite code',
+      name: 'purchaseInviteCode',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Have an invite code? (Optional)`
+  String get purchaseInviteCodeOptionalToggle {
+    return Intl.message(
+      'Have an invite code? (Optional)',
+      name: 'purchaseInviteCodeOptionalToggle',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Enter your invite code`
+  String get purchaseInviteCodeRequired {
+    return Intl.message(
+      'Enter your invite code',
+      name: 'purchaseInviteCodeRequired',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `New password`
+  String get purchaseNewPassword {
+    return Intl.message(
+      'New password',
+      name: 'purchaseNewPassword',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Confirm password reset`
+  String get purchaseResetPasswordSubmit {
+    return Intl.message(
+      'Confirm password reset',
+      name: 'purchaseResetPasswordSubmit',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Resetting...`
+  String get purchaseResettingPassword {
+    return Intl.message(
+      'Resetting...',
+      name: 'purchaseResettingPassword',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Back to sign in`
+  String get purchaseBackToLogin {
+    return Intl.message(
+      'Back to sign in',
+      name: 'purchaseBackToLogin',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Password reset. Sign in with your new password.`
+  String get purchaseResetPasswordSuccess {
+    return Intl.message(
+      'Password reset. Sign in with your new password.',
+      name: 'purchaseResetPasswordSuccess',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `This site requires CAPTCHA verification. Continue on the website.`
+  String get purchaseCaptchaRequiredNotice {
+    return Intl.message(
+      'This site requires CAPTCHA verification. Continue on the website.',
+      name: 'purchaseCaptchaRequiredNotice',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Continue on website`
+  String get purchaseOpenWebAuth {
+    return Intl.message(
+      'Continue on website',
+      name: 'purchaseOpenWebAuth',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `By registering, you agree to the`
+  String get purchaseTosAgreementPrefix {
+    return Intl.message(
+      'By registering, you agree to the',
+      name: 'purchaseTosAgreementPrefix',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Terms of Service`
+  String get purchaseTosLinkLabel {
+    return Intl.message(
+      'Terms of Service',
+      name: 'purchaseTosLinkLabel',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `An invite code is required to register on this site.`
+  String get purchaseInviteCodeRequiredError {
+    return Intl.message(
+      'An invite code is required to register on this site.',
+      name: 'purchaseInviteCodeRequiredError',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Invalid or expired invite code.`
+  String get purchaseInviteCodeInvalidError {
+    return Intl.message(
+      'Invalid or expired invite code.',
+      name: 'purchaseInviteCodeInvalidError',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Invitations are currently unavailable.`
+  String get purchaseInvitationUnavailableError {
+    return Intl.message(
+      'Invitations are currently unavailable.',
+      name: 'purchaseInvitationUnavailableError',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Invalid or expired email verification code.`
+  String get purchaseEmailCodeInvalidError {
+    return Intl.message(
+      'Invalid or expired email verification code.',
+      name: 'purchaseEmailCodeInvalidError',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Too many verification attempts. Request a new code later.`
+  String get purchaseEmailCodeLockedError {
+    return Intl.message(
+      'Too many verification attempts. Request a new code later.',
+      name: 'purchaseEmailCodeLockedError',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Please wait before requesting another code.`
+  String get purchaseEmailCooldownError {
+    return Intl.message(
+      'Please wait before requesting another code.',
+      name: 'purchaseEmailCooldownError',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Too many verification emails requested. Try again later.`
+  String get purchaseEmailRateLimitedError {
+    return Intl.message(
+      'Too many verification emails requested. Try again later.',
+      name: 'purchaseEmailRateLimitedError',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Email verification is currently disabled.`
+  String get purchaseEmailVerifyDisabledError {
+    return Intl.message(
+      'Email verification is currently disabled.',
+      name: 'purchaseEmailVerifyDisabledError',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Email delivery is unavailable right now. Contact support or try again later.`
+  String get purchaseMailUnavailableError {
+    return Intl.message(
+      'Email delivery is unavailable right now. Contact support or try again later.',
+      name: 'purchaseMailUnavailableError',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Too many requests. Please try again in {seconds}s.`
+  String purchaseCooldownWithSecondsError(int seconds) {
+    return Intl.message(
+      'Too many requests. Please try again in ${seconds}s.',
+      name: 'purchaseCooldownWithSecondsError',
+      desc: '',
+      args: [seconds],
+    );
+  }
+
+  /// `Live Support`
+  String get supportSheetTitle {
+    return Intl.message(
+      'Live Support',
+      name: 'supportSheetTitle',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Connected`
+  String get supportStatusConnected {
+    return Intl.message(
+      'Connected',
+      name: 'supportStatusConnected',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Connecting`
+  String get supportStatusConnecting {
+    return Intl.message(
+      'Connecting',
+      name: 'supportStatusConnecting',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Offline`
+  String get supportStatusOffline {
+    return Intl.message(
+      'Offline',
+      name: 'supportStatusOffline',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `New conversation`
+  String get supportNewConversation {
+    return Intl.message(
+      'New conversation',
+      name: 'supportNewConversation',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Open in browser`
+  String get supportOpenExternalFallback {
+    return Intl.message(
+      'Open in browser',
+      name: 'supportOpenExternalFallback',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Refresh messages`
+  String get supportRefreshTooltip {
+    return Intl.message(
+      'Refresh messages',
+      name: 'supportRefreshTooltip',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Welcome to FreedomNet Support`
+  String get supportWelcomeFallbackTitle {
+    return Intl.message(
+      'Welcome to FreedomNet Support',
+      name: 'supportWelcomeFallbackTitle',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Ask us anything about plans, nodes, or gift card redemption.`
+  String get supportWelcomeFallbackSubtitle {
+    return Intl.message(
+      'Ask us anything about plans, nodes, or gift card redemption.',
+      name: 'supportWelcomeFallbackSubtitle',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `{name} is typing...`
+  String supportTypingIndicator(String name) {
+    return Intl.message(
+      '$name is typing...',
+      name: 'supportTypingIndicator',
+      desc: '',
+      args: [name],
+    );
+  }
+
+  /// `Agent`
+  String get supportTypingAnonymous {
+    return Intl.message(
+      'Agent',
+      name: 'supportTypingAnonymous',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Sending`
+  String get supportMessageSending {
+    return Intl.message(
+      'Sending',
+      name: 'supportMessageSending',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Failed`
+  String get supportMessageFailed {
+    return Intl.message(
+      'Failed',
+      name: 'supportMessageFailed',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Retry`
+  String get supportRetryAction {
+    return Intl.message(
+      'Retry',
+      name: 'supportRetryAction',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Type a message, press Enter to send...`
+  String get supportComposerHint {
+    return Intl.message(
+      'Type a message, press Enter to send...',
+      name: 'supportComposerHint',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Send`
+  String get supportSendTooltip {
+    return Intl.message('Send', name: 'supportSendTooltip', desc: '', args: []);
+  }
+
+  /// `This conversation is resolved. Start a new conversation to continue.`
+  String get supportConversationLockedNotice {
+    return Intl.message(
+      'This conversation is resolved. Start a new conversation to continue.',
+      name: 'supportConversationLockedNotice',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Live chat is not configured yet. Use the backup WeChat contacts below.`
+  String get supportNotConfiguredNotice {
+    return Intl.message(
+      'Live chat is not configured yet. Use the backup WeChat contacts below.',
+      name: 'supportNotConfiguredNotice',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Backup WeChat`
+  String get supportBackupWechatToggle {
+    return Intl.message(
+      'Backup WeChat',
+      name: 'supportBackupWechatToggle',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Chat with support`
+  String get purchaseAcquireOpenSupport {
+    return Intl.message(
+      'Chat with support',
+      name: 'purchaseAcquireOpenSupport',
+      desc: '',
+      args: [],
+    );
+  }
 }
 
 class AppLocalizationDelegate extends LocalizationsDelegate<AppLocalizations> {

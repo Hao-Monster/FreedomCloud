@@ -417,10 +417,15 @@ void main() {
     expect(plansRect.right, lessThanOrEqualTo(workbenchRect.left));
     expect(loginRect.bottom, lessThanOrEqualTo(900));
 
-    // Online Chatwoot button + both backup WeChat entries coexist cleanly.
+    // Online Chatwoot button opens native in-app SupportChatSheet + external fallback + both backup WeChat entries coexist cleanly.
     final chatBtn = find.byKey(const Key('purchase-support-chat'));
     await tester.ensureVisible(chatBtn);
     await tester.tap(chatBtn);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('support-chat-sheet')), findsOneWidget);
+    expect(openedLinks, isEmpty);
+
+    await tester.tap(find.byKey(const Key('support-open-external')));
     await tester.pumpAndSettle();
     expect(
       openedLinks,
@@ -430,6 +435,9 @@ void main() {
         ),
       ],
     );
+    await tester.tap(find.byKey(const Key('support-close')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('support-chat-sheet')), findsNothing);
     expect(find.text('微信号: ChasingDream_2021'), findsOneWidget);
     expect(find.text('微信号: dxm_qa'), findsOneWidget);
 

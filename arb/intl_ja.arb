@@ -1382,5 +1382,77 @@
         "type": "String"
       }
     }
-  }
+  },
+  "purchaseForgotPassword": "パスワードをお忘れですか？",
+  "purchaseResetPasswordTitle": "パスワードのリセット",
+  "purchaseResetPasswordDescription": "登録済みのメールアドレスと6桁の確認コードを入力して、新しいパスワードを設定してください。",
+  "purchaseEmailCode": "メール確認コード",
+  "purchaseEmailCodeRequired": "6桁の確認コードを入力してください",
+  "purchaseSendCode": "コードを送信",
+  "purchaseSendingCode": "送信中...",
+  "purchaseSendCodeCooldown": "{seconds}秒後に再送信",
+  "@purchaseSendCodeCooldown": {
+    "placeholders": {
+      "seconds": {
+        "type": "int"
+      }
+    }
+  },
+  "purchaseCodeSentNotice": "確認コードを送信しました。受信トレイ（迷惑メール含む）をご確認ください。",
+  "purchaseInviteCode": "招待コード",
+  "purchaseInviteCodeOptionalToggle": "招待コードを入力（任意）",
+  "purchaseInviteCodeRequired": "招待コードを入力してください",
+  "purchaseNewPassword": "新しいパスワード",
+  "purchaseResetPasswordSubmit": "パスワードをリセット",
+  "purchaseResettingPassword": "リセット中...",
+  "purchaseBackToLogin": "ログインに戻る",
+  "purchaseResetPasswordSuccess": "パスワードをリセットしました。新しいパスワードでログインしてください。",
+  "purchaseCaptchaRequiredNotice": "このサイトでは人間確認（CAPTCHA）が必要です。Webページで続行してください。",
+  "purchaseOpenWebAuth": "Webページで続行",
+  "purchaseTosAgreementPrefix": "登録することで次に同意したことになります：",
+  "purchaseTosLinkLabel": "利用規約",
+  "purchaseInviteCodeRequiredError": "このサイトへの登録には招待コードが必要です。",
+  "purchaseInviteCodeInvalidError": "招待コードが無効または期限切れです。",
+  "purchaseInvitationUnavailableError": "招待機能は現在利用できません。",
+  "purchaseEmailCodeInvalidError": "メール確認コードが無効または期限切れです。",
+  "purchaseEmailCodeLockedError": "確認コードの試行回数が上限に達しました。しばらくしてから再取得してください。",
+  "purchaseEmailCooldownError": "送信間隔が短すぎます。しばらくしてから再試行してください。",
+  "purchaseEmailRateLimitedError": "確認メールの送信上限に達しました。しばらくしてから再試行してください。",
+  "purchaseEmailVerifyDisabledError": "メール確認機能は現在無効です。",
+  "purchaseMailUnavailableError": "メール送信サービスが利用できません。サポートへ連絡するか後ほど再試行してください。",
+  "purchaseCooldownWithSecondsError": "リクエストが多すぎます。{seconds}秒後に再試行してください。",
+  "@purchaseCooldownWithSecondsError": {
+    "placeholders": {
+      "seconds": {
+        "type": "int"
+      }
+    }
+  },
+  "supportSheetTitle": "オンラインサポート",
+  "supportStatusConnected": "接続済み",
+  "supportStatusConnecting": "接続中",
+  "supportStatusOffline": "オフライン",
+  "supportNewConversation": "新しい会話を開始",
+  "supportOpenExternalFallback": "ブラウザで開く",
+  "supportRefreshTooltip": "メッセージを更新",
+  "supportWelcomeFallbackTitle": "FreedomNet サポートへようこそ",
+  "supportWelcomeFallbackSubtitle": "プラン、ノード、ギフトカードについてお気軽にご質問ください。",
+  "supportTypingIndicator": "{name} が入力中...",
+  "@supportTypingIndicator": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "supportTypingAnonymous": "スタッフ",
+  "supportMessageSending": "送信中",
+  "supportMessageFailed": "送信失敗",
+  "supportRetryAction": "再試行",
+  "supportComposerHint": "メッセージを入力（Enter で送信）...",
+  "supportSendTooltip": "送信",
+  "supportConversationLockedNotice": "この会話は解決済みです。続けるには新しい会話を開始してください。",
+  "supportNotConfiguredNotice": "オンラインチャットが未設定です。下の予備 WeChat からお問い合わせください。",
+  "supportBackupWechatToggle": "予備 WeChat",
+  "purchaseAcquireOpenSupport": "オンラインサポートに相談"
 }

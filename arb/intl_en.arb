@@ -1575,5 +1575,77 @@
         "type": "String"
       }
     }
-  }
+  },
+  "purchaseForgotPassword": "Forgot password?",
+  "purchaseResetPasswordTitle": "Reset password",
+  "purchaseResetPasswordDescription": "Enter your registered email and a 6-digit verification code to set a new password.",
+  "purchaseEmailCode": "Email verification code",
+  "purchaseEmailCodeRequired": "Enter the 6-digit verification code",
+  "purchaseSendCode": "Send code",
+  "purchaseSendingCode": "Sending...",
+  "purchaseSendCodeCooldown": "Resend in {seconds}s",
+  "@purchaseSendCodeCooldown": {
+    "placeholders": {
+      "seconds": {
+        "type": "int"
+      }
+    }
+  },
+  "purchaseCodeSentNotice": "Verification code sent. Check your inbox and spam folder.",
+  "purchaseInviteCode": "Invite code",
+  "purchaseInviteCodeOptionalToggle": "Have an invite code? (Optional)",
+  "purchaseInviteCodeRequired": "Enter your invite code",
+  "purchaseNewPassword": "New password",
+  "purchaseResetPasswordSubmit": "Confirm password reset",
+  "purchaseResettingPassword": "Resetting...",
+  "purchaseBackToLogin": "Back to sign in",
+  "purchaseResetPasswordSuccess": "Password reset. Sign in with your new password.",
+  "purchaseCaptchaRequiredNotice": "This site requires CAPTCHA verification. Continue on the website.",
+  "purchaseOpenWebAuth": "Continue on website",
+  "purchaseTosAgreementPrefix": "By registering, you agree to the",
+  "purchaseTosLinkLabel": "Terms of Service",
+  "purchaseInviteCodeRequiredError": "An invite code is required to register on this site.",
+  "purchaseInviteCodeInvalidError": "Invalid or expired invite code.",
+  "purchaseInvitationUnavailableError": "Invitations are currently unavailable.",
+  "purchaseEmailCodeInvalidError": "Invalid or expired email verification code.",
+  "purchaseEmailCodeLockedError": "Too many verification attempts. Request a new code later.",
+  "purchaseEmailCooldownError": "Please wait before requesting another code.",
+  "purchaseEmailRateLimitedError": "Too many verification emails requested. Try again later.",
+  "purchaseEmailVerifyDisabledError": "Email verification is currently disabled.",
+  "purchaseMailUnavailableError": "Email delivery is unavailable right now. Contact support or try again later.",
+  "purchaseCooldownWithSecondsError": "Too many requests. Please try again in {seconds}s.",
+  "@purchaseCooldownWithSecondsError": {
+    "placeholders": {
+      "seconds": {
+        "type": "int"
+      }
+    }
+  },
+  "supportSheetTitle": "Live Support",
+  "supportStatusConnected": "Connected",
+  "supportStatusConnecting": "Connecting",
+  "supportStatusOffline": "Offline",
+  "supportNewConversation": "New conversation",
+  "supportOpenExternalFallback": "Open in browser",
+  "supportRefreshTooltip": "Refresh messages",
+  "supportWelcomeFallbackTitle": "Welcome to FreedomNet Support",
+  "supportWelcomeFallbackSubtitle": "Ask us anything about plans, nodes, or gift card redemption.",
+  "supportTypingIndicator": "{name} is typing...",
+  "@supportTypingIndicator": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "supportTypingAnonymous": "Agent",
+  "supportMessageSending": "Sending",
+  "supportMessageFailed": "Failed",
+  "supportRetryAction": "Retry",
+  "supportComposerHint": "Type a message, press Enter to send...",
+  "supportSendTooltip": "Send",
+  "supportConversationLockedNotice": "This conversation is resolved. Start a new conversation to continue.",
+  "supportNotConfiguredNotice": "Live chat is not configured yet. Use the backup WeChat contacts below.",
+  "supportBackupWechatToggle": "Backup WeChat",
+  "purchaseAcquireOpenSupport": "Chat with support"
 }

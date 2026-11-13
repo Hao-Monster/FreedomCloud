@@ -1432,5 +1432,77 @@
         "type": "String"
       }
     }
-  }
+  },
+  "purchaseForgotPassword": "Забыли пароль?",
+  "purchaseResetPasswordTitle": "Сброс пароля",
+  "purchaseResetPasswordDescription": "Введите зарегистрированный email и 6-значный код подтверждения, чтобы задать новый пароль.",
+  "purchaseEmailCode": "Код подтверждения email",
+  "purchaseEmailCodeRequired": "Введите 6-значный код подтверждения",
+  "purchaseSendCode": "Отправить код",
+  "purchaseSendingCode": "Отправка...",
+  "purchaseSendCodeCooldown": "Повтор через {seconds}с",
+  "@purchaseSendCodeCooldown": {
+    "placeholders": {
+      "seconds": {
+        "type": "int"
+      }
+    }
+  },
+  "purchaseCodeSentNotice": "Код подтверждения отправлен. Проверьте почту и папку «Спам».",
+  "purchaseInviteCode": "Код приглашения",
+  "purchaseInviteCodeOptionalToggle": "Указать код приглашения (необязательно)",
+  "purchaseInviteCodeRequired": "Введите код приглашения",
+  "purchaseNewPassword": "Новый пароль",
+  "purchaseResetPasswordSubmit": "Подтвердить сброс пароля",
+  "purchaseResettingPassword": "Сброс...",
+  "purchaseBackToLogin": "Вернуться ко входу",
+  "purchaseResetPasswordSuccess": "Пароль сброшен. Войдите с новым паролем.",
+  "purchaseCaptchaRequiredNotice": "На сайте включена CAPTCHA. Продолжите на веб-странице.",
+  "purchaseOpenWebAuth": "Продолжить на сайте",
+  "purchaseTosAgreementPrefix": "Регистрируясь, вы принимаете",
+  "purchaseTosLinkLabel": "Условия использования",
+  "purchaseInviteCodeRequiredError": "Для регистрации требуется код приглашения.",
+  "purchaseInviteCodeInvalidError": "Недействительный или просроченный код приглашения.",
+  "purchaseInvitationUnavailableError": "Приглашения временно недоступны.",
+  "purchaseEmailCodeInvalidError": "Недействительный или просроченный код из письма.",
+  "purchaseEmailCodeLockedError": "Слишком много попыток ввода кода. Запросите новый позже.",
+  "purchaseEmailCooldownError": "Подождите перед повторной отправкой кода.",
+  "purchaseEmailRateLimitedError": "Превышен лимит запросов кода. Попробуйте позже.",
+  "purchaseEmailVerifyDisabledError": "Подтверждение по email отключено.",
+  "purchaseMailUnavailableError": "Сервис отправки писем недоступен. Свяжитесь с поддержкой или попробуйте позже.",
+  "purchaseCooldownWithSecondsError": "Слишком много запросов. Повторите через {seconds} с.",
+  "@purchaseCooldownWithSecondsError": {
+    "placeholders": {
+      "seconds": {
+        "type": "int"
+      }
+    }
+  },
+  "supportSheetTitle": "Онлайн-поддержка",
+  "supportStatusConnected": "Подключено",
+  "supportStatusConnecting": "Подключение",
+  "supportStatusOffline": "Офлайн",
+  "supportNewConversation": "Новый диалог",
+  "supportOpenExternalFallback": "Открыть в браузере",
+  "supportRefreshTooltip": "Обновить сообщения",
+  "supportWelcomeFallbackTitle": "Добро пожаловать в поддержку FreedomNet",
+  "supportWelcomeFallbackSubtitle": "Задайте любой вопрос о тарифах, узлах или подарочных картах.",
+  "supportTypingIndicator": "{name} печатает...",
+  "@supportTypingIndicator": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "supportTypingAnonymous": "Оператор",
+  "supportMessageSending": "Отправка",
+  "supportMessageFailed": "Ошибка",
+  "supportRetryAction": "Повторить",
+  "supportComposerHint": "Введите сообщение, Enter — отправить...",
+  "supportSendTooltip": "Отправить",
+  "supportConversationLockedNotice": "Этот диалог завершён. Начните новый диалог, чтобы продолжить.",
+  "supportNotConfiguredNotice": "Онлайн-чат пока не настроен. Используйте резервные контакты WeChat ниже.",
+  "supportBackupWechatToggle": "Резервный WeChat",
+  "purchaseAcquireOpenSupport": "Написать в поддержку"
 }

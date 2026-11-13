@@ -3,9 +3,12 @@ import 'dart:async';
 import 'package:flclashx/enum/enum.dart';
 import 'package:flclashx/l10n/l10n.dart';
 import 'package:flclashx/manager/purchase_manager.dart';
+import 'package:flclashx/manager/support_manager.dart';
 import 'package:flclashx/models/xboard.dart';
+import 'package:flclashx/providers/purchase_support_provider.dart';
 import 'package:flclashx/services/xboard_api.dart';
 import 'package:flclashx/views/purchase/plan_catalog.dart';
+import 'package:flclashx/views/support/support_chat_sheet.dart';
 import 'package:flclashx/widgets/text.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -146,12 +149,14 @@ class PurchaseCenter extends StatefulWidget {
     required this.manager,
     required this.openLink,
     required this.openProfiles,
+    this.supportManager,
     this.isActiveTab = true,
   });
 
   final PurchaseManager manager;
   final Future<void> Function(Uri) openLink;
   final VoidCallback openProfiles;
+  final SupportManager? supportManager;
   final bool isActiveTab;
 
   @override
@@ -161,15 +166,36 @@ class PurchaseCenter extends StatefulWidget {
 class _PurchaseCenterState extends State<PurchaseCenter>
     with WidgetsBindingObserver {
   static const _wechatContacts = <String>['ChasingDream_2021', 'dxm_qa'];
+  static const _preferredEmailDomains = <String>[
+    'gmail.com',
+    'qq.com',
+    '163.com',
+    'outlook.com',
+    'icloud.com',
+    'hotmail.com',
+    '126.com',
+    'foxmail.com',
+    'yahoo.com',
+  ];
 
   final _loginForm = GlobalKey<FormState>();
   final _catalogAnchor = GlobalKey();
   final _workbenchAnchor = GlobalKey();
   final _email = TextEditingController();
   final _password = TextEditingController();
+  final _emailCode = TextEditingController();
+  final _inviteCode = TextEditingController();
+  final _newPassword = TextEditingController();
   final _code = TextEditingController();
+  final ValueNotifier<int> _cooldownSeconds = ValueNotifier<int>(0);
+  Timer? _cooldownTimer;
+  SupportManagerHandle? _fallbackSupportHandle;
   bool _wasLoggedIn = false;
   bool _isRegisterMode = false;
+  bool _isForgotPasswordMode = false;
+  bool _showInviteField = false;
+  bool _codeSentNotice = false;
+  String? _localEmailError;
   bool _obscurePassword = true;
   bool _historyExpanded = false;
   bool _updatingCodeFromInput = false;
@@ -185,9 +211,18 @@ class _PurchaseCenterState extends State<PurchaseCenter>
   bool get _isRealManager => PurchaseManager.isRealInstance(manager);
   XboardPurchaseChannels? get _purchaseChannels =>
       _isRealManager ? manager.purchaseChannels : null;
+  XboardGuestAuthConfig get _guestAuthConfig =>
+      _isRealManager ? manager.guestAuthConfig : const XboardGuestAuthConfig();
   XboardPlanOffer? get _handoffPlan =>
       _isRealManager ? manager.handoffPlan : null;
   bool get _registering => _isRealManager && manager.registering;
+  bool get _resettingPassword => _isRealManager && manager.resettingPassword;
+  SupportManager get _effectiveSupportManager =>
+      widget.supportManager ??
+      (_fallbackSupportHandle ??= createSupportManagerHandle(
+        fallbackBaseUrl: () => manager.api.baseUri,
+      ))
+          .manager;
 
   Uri? _resolvePlanStoreUrl(XboardPlanOffer plan) => _isRealManager
       ? manager.resolvePlanStoreUrl(plan)
@@ -271,7 +306,16 @@ class _PurchaseCenterState extends State<PurchaseCenter>
       manager.addListener(_onManagerChanged);
       _email.clear();
       _password.clear();
+      _emailCode.clear();
+      _inviteCode.clear();
+      _newPassword.clear();
+      _cooldownTimer?.cancel();
+      _cooldownTimer = null;
+      _cooldownSeconds.value = 0;
       _isRegisterMode = false;
+      _isForgotPasswordMode = false;
+      _showInviteField = false;
+      _codeSentNotice = false;
       _obscurePassword = true;
       _historyExpanded = false;
       _onManagerChanged(notifyState: false);
@@ -301,15 +345,27 @@ class _PurchaseCenterState extends State<PurchaseCenter>
         TextInput.finishAutofillContext();
       }
       _password.clear();
+      _emailCode.clear();
+      _inviteCode.clear();
+      _newPassword.clear();
+      _cooldownTimer?.cancel();
+      _cooldownTimer = null;
+      _cooldownSeconds.value = 0;
       if (!manager.loggedIn) {
         _email.clear();
         _code.clear();
       }
       final needsStateReset = !_obscurePassword ||
           _isRegisterMode ||
+          _isForgotPasswordMode ||
+          _showInviteField ||
+          _codeSentNotice ||
           (!manager.loggedIn && _historyExpanded);
       _obscurePassword = true;
       _isRegisterMode = false;
+      _isForgotPasswordMode = false;
+      _showInviteField = false;
+      _codeSentNotice = false;
       if (!manager.loggedIn) {
         _historyExpanded = false;
       }
@@ -324,14 +380,97 @@ class _PurchaseCenterState extends State<PurchaseCenter>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     manager.removeListener(_onManagerChanged);
+    _cooldownTimer?.cancel();
+    _cooldownSeconds.dispose();
+    _fallbackSupportHandle?.dispose();
     _email.dispose();
     _password.dispose();
+    _emailCode.dispose();
+    _inviteCode.dispose();
+    _newPassword.dispose();
     _code.dispose();
     super.dispose();
   }
 
+  void _startCooldown([int seconds = 60]) {
+    _cooldownTimer?.cancel();
+    final initial = seconds > 0 ? seconds : 60;
+    _cooldownSeconds.value = initial;
+    _cooldownTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (!mounted) {
+        timer.cancel();
+        return;
+      }
+      final next = _cooldownSeconds.value - 1;
+      if (next <= 0) {
+        _cooldownSeconds.value = 0;
+        timer.cancel();
+        _cooldownTimer = null;
+      } else {
+        _cooldownSeconds.value = next;
+      }
+    });
+  }
+
+  String? _validateEmailInput(
+    String? value, {
+    required bool checkRegisterPolicy,
+  }) {
+    final trimmed = value?.trim() ?? '';
+    if (!RegExp(r'^[^\s@]+@[^\s@]+\.[^\s@]+$').hasMatch(trimmed)) {
+      return l.purchaseEmailRequired;
+    }
+    if (checkRegisterPolicy) {
+      if (_guestAuthConfig.hasGmailPlusAlias(trimmed)) {
+        return l.purchaseGmailAliasError;
+      }
+      if (!_guestAuthConfig.isEmailDomainAllowed(trimmed)) {
+        return l.purchaseEmailDomainError;
+      }
+    }
+    return null;
+  }
+
+  Future<void> _sendEmailVerificationCode({required bool forReset}) async {
+    if (!_isRealManager || manager.sendingEmailCode || manager.busy) return;
+    final emailError = _validateEmailInput(
+      _email.text,
+      checkRegisterPolicy: !forReset && manager.api is XboardPassportApi,
+    );
+    if (emailError != null) {
+      setState(() {
+        _codeSentNotice = false;
+        _localEmailError = emailError;
+      });
+      return;
+    }
+    final email = _email.text.trim();
+    if ((_codeSentNotice || _localEmailError != null) && mounted) {
+      setState(() {
+        _codeSentNotice = false;
+        _localEmailError = null;
+      });
+    }
+    final sent = forReset
+        ? await manager.sendPasswordResetCode(email)
+        : await manager.sendRegistrationEmailCode(email);
+    if (!mounted) return;
+    if (sent) {
+      setState(() {
+        _codeSentNotice = true;
+        _localEmailError = null;
+      });
+      _startCooldown(60);
+    } else if (manager.error?.retryAfterSeconds != null) {
+      _startCooldown(manager.error!.retryAfterSeconds!);
+    }
+  }
+
   Future<void> _login() async {
     if (manager.busy || !(_loginForm.currentState?.validate() ?? false)) return;
+    if (_isRealManager) {
+      manager.clearPasswordResetState();
+    }
     await manager.login(_email.text.trim(), _password.text);
     if (mounted && manager.loggedIn) _password.clear();
   }
@@ -342,8 +481,65 @@ class _PurchaseCenterState extends State<PurchaseCenter>
         !(_loginForm.currentState?.validate() ?? false)) {
       return;
     }
-    await manager.register(_email.text.trim(), _password.text);
-    if (mounted && manager.loggedIn) _password.clear();
+    if (manager.api is XboardPassportApi) {
+      final emailCode = _emailCode.text.trim();
+      final inviteCode = _inviteCode.text.trim();
+      await manager.registerWithDetails(
+        email: _email.text.trim(),
+        password: _password.text,
+        emailCode: emailCode.isEmpty ? null : emailCode,
+        inviteCode: inviteCode.isEmpty ? null : inviteCode,
+      );
+    } else {
+      await manager.register(_email.text.trim(), _password.text);
+    }
+    if (mounted && manager.loggedIn) {
+      _password.clear();
+      _emailCode.clear();
+      _inviteCode.clear();
+    }
+  }
+
+  Future<void> _submitResetPassword() async {
+    if (!_isRealManager ||
+        manager.busy ||
+        !(_loginForm.currentState?.validate() ?? false)) {
+      return;
+    }
+    final ok = await manager.resetPassword(
+      email: _email.text.trim(),
+      emailCode: _emailCode.text.trim(),
+      password: _newPassword.text,
+    );
+    if (!mounted) return;
+    if (ok && manager.passwordResetSucceeded) {
+      _emailCode.clear();
+      _newPassword.clear();
+      _password.clear();
+      setState(() {
+        _isForgotPasswordMode = false;
+        _isRegisterMode = false;
+        _codeSentNotice = false;
+      });
+    }
+  }
+
+  Future<void> _openSupport({String? initialDraft}) async {
+    final locale = Localizations.localeOf(context).toString();
+    final chatUrl = _purchaseChannels?.resolveChatwootWidgetUrl(locale: locale);
+    final support = _effectiveSupportManager;
+    syncSupportManagerWithPurchase(manager, support);
+    await openSupportChatSheet(
+      context,
+      supportManager: support,
+      openLink: _open,
+      externalWidgetUri: chatUrl,
+      initialDraft: initialDraft,
+      wechatContacts: _wechatContacts,
+      onRetryChannel: _isRealManager
+          ? () => manager.ensurePurchaseChannels(force: true)
+          : null,
+    );
   }
 
   Future<void> _handleBuyPlan(XboardPlanOffer plan) async {
@@ -464,6 +660,7 @@ class _PurchaseCenterState extends State<PurchaseCenter>
         manager.ensurePurchaseChannels(force: manager.channelError != null),
       );
     }
+    final hasChatwoot = _purchaseChannels?.hasChatwoot ?? false;
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
@@ -474,6 +671,12 @@ class _PurchaseCenterState extends State<PurchaseCenter>
         manager: manager,
         wechatContacts: _wechatContacts,
         openLink: widget.openLink,
+        onOpenSupport: hasChatwoot
+            ? (draft) {
+                Navigator.of(sheetContext).maybePop();
+                unawaited(_openSupport(initialDraft: draft));
+              }
+            : null,
       ),
     );
   }
@@ -695,12 +898,26 @@ class _PurchaseCenterState extends State<PurchaseCenter>
                   ],
                 ),
               ),
-              if (showQuickJump)
-                FilledButton.tonalIcon(
-                  key: const Key('purchase-jump-workbench'),
-                  onPressed: _jumpToWorkbench,
-                  icon: const Icon(Icons.bolt_rounded, size: 18),
-                  label: Text(l.purchaseJumpToWorkbench),
+              if (showQuickJump || (_purchaseChannels?.hasChatwoot ?? false))
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    if (_purchaseChannels?.hasChatwoot ?? false)
+                      FilledButton.tonalIcon(
+                        key: const Key('purchase-header-support'),
+                        onPressed: _openSupport,
+                        icon: const Icon(Icons.support_agent_rounded, size: 18),
+                        label: Text(l.purchaseOnlineSupport),
+                      ),
+                    if (showQuickJump)
+                      FilledButton.tonalIcon(
+                        key: const Key('purchase-jump-workbench'),
+                        onPressed: _jumpToWorkbench,
+                        icon: const Icon(Icons.bolt_rounded, size: 18),
+                        label: Text(l.purchaseJumpToWorkbench),
+                      ),
+                  ],
                 ),
             ],
           ),
@@ -786,25 +1003,175 @@ class _PurchaseCenterState extends State<PurchaseCenter>
     );
   }
 
+  List<String> _resolveWhitelistSuffixChips(XboardGuestAuthConfig config) {
+    if (config.emailWhitelistSuffix.isEmpty) return const [];
+    final normalized = <String>[];
+    for (final entry in config.emailWhitelistSuffix) {
+      var domain = entry.trim().toLowerCase();
+      while (domain.startsWith('@')) {
+        domain = domain.substring(1).trim();
+      }
+      if (domain.isNotEmpty && !normalized.contains(domain)) {
+        normalized.add(domain);
+      }
+    }
+    if (normalized.isEmpty) return const [];
+    final ordered = <String>[
+      for (final preferred in _preferredEmailDomains)
+        if (normalized.contains(preferred)) preferred,
+      for (final other in normalized)
+        if (!_preferredEmailDomains.contains(other)) other,
+    ];
+    return ordered.take(6).toList(growable: false);
+  }
+
+  void _applyEmailSuffix(String domain) {
+    final raw = _email.text.trim();
+    final atIndex = raw.indexOf('@');
+    final localPart = atIndex >= 0 ? raw.substring(0, atIndex) : raw;
+    final updated = '$localPart@$domain';
+    _email.value = TextEditingValue(
+      text: updated,
+      selection: TextSelection.collapsed(offset: updated.length),
+    );
+  }
+
+  void _switchAuthMode({
+    required bool registerMode,
+    required bool forgotMode,
+  }) {
+    final savedEmail = _email.value;
+    final savedPassword = _password.value;
+    setState(() {
+      _isRegisterMode = registerMode;
+      _isForgotPasswordMode = forgotMode;
+      _codeSentNotice = false;
+      _localEmailError = null;
+    });
+    _loginForm.currentState?.reset();
+    _email.value = savedEmail;
+    _password.value = savedPassword;
+    if (_isRealManager) {
+      manager
+        ..clearError()
+        ..clearPasswordResetState();
+    }
+  }
+
+  Widget _buildEmailCodeRow({
+    required Key fieldKey,
+    required Key buttonKey,
+    required bool forReset,
+  }) {
+    final field = TextFormField(
+      key: fieldKey,
+      controller: _emailCode,
+      enabled: !manager.busy,
+      decoration: _inputDecoration(
+        context,
+        labelText: l.purchaseEmailCode,
+        prefixIcon: Icons.mark_email_read_outlined,
+      ),
+      keyboardType: TextInputType.number,
+      inputFormatters: [
+        FilteringTextInputFormatter.digitsOnly,
+        LengthLimitingTextInputFormatter(6),
+      ],
+      textInputAction: TextInputAction.next,
+      validator: (value) =>
+          value != null && RegExp(r'^\d{6}$').hasMatch(value.trim())
+              ? null
+              : l.purchaseEmailCodeRequired,
+    );
+
+    final sendButton = ValueListenableBuilder<int>(
+      valueListenable: _cooldownSeconds,
+      builder: (context, seconds, _) {
+        final sending = _isRealManager && manager.sendingEmailCode;
+        final disabled = manager.busy || sending || seconds > 0;
+        final label = sending
+            ? l.purchaseSendingCode
+            : (seconds > 0
+                ? l.purchaseSendCodeCooldown(seconds)
+                : l.purchaseSendCode);
+        return FilledButton.tonal(
+          key: buttonKey,
+          onPressed: disabled
+              ? null
+              : () => _sendEmailVerificationCode(forReset: forReset),
+          child: Text(label),
+        );
+      },
+    );
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final scale = MediaQuery.textScalerOf(context).scale(1);
+        if (constraints.maxWidth < 260 * scale) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              field,
+              const SizedBox(height: 8),
+              sendButton,
+            ],
+          );
+        }
+        return Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(child: field),
+            const SizedBox(width: 8),
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: sendButton,
+            ),
+          ],
+        );
+      },
+    );
+  }
+
   Widget _loginSection() {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
     final registerSupported =
         _isRealManager && manager.api is XboardExtendedApi;
-    final inRegisterMode = registerSupported && _isRegisterMode;
+    final passportSupported =
+        _isRealManager && manager.api is XboardPassportApi;
+    final inForgotMode = passportSupported && _isForgotPasswordMode;
+    final inRegisterMode = registerSupported && !inForgotMode && _isRegisterMode;
+    final authConfig = _guestAuthConfig;
+    final needRegisterEmailCode = inRegisterMode &&
+        passportSupported &&
+        (authConfig.isEmailVerify || manager.emailVerifyRequiredByServer);
+    final needRegisterInviteCode = inRegisterMode &&
+        passportSupported &&
+        (authConfig.isInviteForce ||
+            manager.inviteCodeRequiredByServer ||
+            _showInviteField);
+    final suffixChips = inRegisterMode && passportSupported
+        ? _resolveWhitelistSuffixChips(authConfig)
+        : const <String>[];
+    final showCaptchaFallback = (inRegisterMode && authConfig.isCaptcha) ||
+        manager.error?.code == 'register_web_required';
 
     return _Section(
-      icon: inRegisterMode
-          ? Icons.person_add_alt_1_rounded
-          : Icons.person_outline_rounded,
-      title: inRegisterMode ? l.purchaseAuthTabRegister : l.purchaseLoginTitle,
+      icon: inForgotMode
+          ? Icons.lock_reset_rounded
+          : (inRegisterMode
+              ? Icons.person_add_alt_1_rounded
+              : Icons.person_outline_rounded),
+      title: inForgotMode
+          ? l.purchaseResetPasswordTitle
+          : (inRegisterMode ? l.purchaseAuthTabRegister : l.purchaseLoginTitle),
       child: AutofillGroup(
         child: Form(
           key: _loginForm,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              if (registerSupported) ...[
+              if (registerSupported && !inForgotMode) ...[
                 Container(
                   key: const Key('purchase-auth-mode-tabs'),
                   padding: const EdgeInsets.all(4),
@@ -824,15 +1191,10 @@ class _PurchaseCenterState extends State<PurchaseCenter>
                         enabled: !manager.busy,
                         onTap: () {
                           if (!inRegisterMode) return;
-                          final savedEmail = _email.value;
-                          final savedPassword = _password.value;
-                          setState(() => _isRegisterMode = false);
-                          _loginForm.currentState?.reset();
-                          _email.value = savedEmail;
-                          _password.value = savedPassword;
-                          if (_isRealManager) {
-                            manager.clearError();
-                          }
+                          _switchAuthMode(
+                            registerMode: false,
+                            forgotMode: false,
+                          );
                         },
                       );
                       final registerTab = _AuthModeTabButton(
@@ -843,15 +1205,10 @@ class _PurchaseCenterState extends State<PurchaseCenter>
                         enabled: !manager.busy,
                         onTap: () {
                           if (inRegisterMode) return;
-                          final savedEmail = _email.value;
-                          final savedPassword = _password.value;
-                          setState(() => _isRegisterMode = true);
-                          _loginForm.currentState?.reset();
-                          _email.value = savedEmail;
-                          _password.value = savedPassword;
-                          if (_isRealManager) {
-                            manager.clearError();
-                          }
+                          _switchAuthMode(
+                            registerMode: true,
+                            forgotMode: false,
+                          );
                         },
                       );
                       if (stackTabs) {
@@ -882,27 +1239,35 @@ class _PurchaseCenterState extends State<PurchaseCenter>
                   vertical: 10,
                 ),
                 decoration: BoxDecoration(
-                  color: inRegisterMode
-                      ? colors.tertiaryContainer.withValues(alpha: 0.45)
-                      : colors.primaryContainer.withValues(alpha: 0.35),
+                  color: inForgotMode
+                      ? colors.secondaryContainer.withValues(alpha: 0.45)
+                      : (inRegisterMode
+                          ? colors.tertiaryContainer.withValues(alpha: 0.45)
+                          : colors.primaryContainer.withValues(alpha: 0.35)),
                   borderRadius: BorderRadius.circular(12),
                 ),
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Icon(
-                      inRegisterMode
-                          ? Icons.rocket_launch_outlined
-                          : Icons.verified_user_outlined,
+                      inForgotMode
+                          ? Icons.mark_email_unread_outlined
+                          : (inRegisterMode
+                              ? Icons.rocket_launch_outlined
+                              : Icons.verified_user_outlined),
                       size: 18,
-                      color: inRegisterMode ? colors.tertiary : colors.primary,
+                      color: inForgotMode
+                          ? colors.secondary
+                          : (inRegisterMode ? colors.tertiary : colors.primary),
                     ),
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
-                        inRegisterMode
-                            ? l.purchaseRegisterTrialBanner
-                            : l.purchaseLoginDescription,
+                        inForgotMode
+                            ? l.purchaseResetPasswordDescription
+                            : (inRegisterMode
+                                ? l.purchaseRegisterTrialBanner
+                                : l.purchaseLoginDescription),
                         style: theme.textTheme.bodySmall?.copyWith(
                           color: colors.onSurface,
                         ),
@@ -925,63 +1290,251 @@ class _PurchaseCenterState extends State<PurchaseCenter>
                 textInputAction: TextInputAction.next,
                 autofillHints: const [AutofillHints.username],
                 autocorrect: false,
-                validator: (value) => value != null &&
-                        RegExp(r'^[^\s@]+@[^\s@]+\.[^\s@]+$')
-                            .hasMatch(value.trim())
-                    ? null
-                    : l.purchaseEmailRequired,
+                onChanged: (_) {
+                  if (_localEmailError != null) {
+                    setState(() => _localEmailError = null);
+                  }
+                },
+                validator: (value) => _validateEmailInput(
+                  value,
+                  checkRegisterPolicy: inRegisterMode && passportSupported,
+                ),
               ),
-              const SizedBox(height: 12),
-              TextFormField(
-                key: const Key('purchase-password'),
-                controller: _password,
-                enabled: !manager.busy,
-                decoration: _inputDecoration(
-                  context,
-                  labelText: l.purchasePassword,
-                  prefixIcon: Icons.lock_outline_rounded,
-                  suffixIcon: ExcludeFocusTraversal(
-                    child: IconButton(
-                      key: const Key('purchase-password-visibility'),
-                      tooltip: _obscurePassword
-                          ? l.purchaseShowPassword
-                          : l.purchaseHidePassword,
-                      onPressed: manager.busy
-                          ? null
-                          : () => setState(
-                                () => _obscurePassword = !_obscurePassword,
-                              ),
-                      icon: Icon(
-                        _obscurePassword
-                            ? Icons.visibility_outlined
-                            : Icons.visibility_off_outlined,
-                        size: 18,
+              if (suffixChips.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                Wrap(
+                  key: const Key('purchase-email-suffix-strip'),
+                  spacing: 6,
+                  runSpacing: 6,
+                  children: [
+                    for (final domain in suffixChips)
+                      ActionChip(
+                        visualDensity: VisualDensity.compact,
+                        label: Text('@$domain'),
+                        onPressed: manager.busy
+                            ? null
+                            : () => _applyEmailSuffix(domain),
+                      ),
+                  ],
+                ),
+              ],
+              if (needRegisterEmailCode) ...[
+                const SizedBox(height: 12),
+                _buildEmailCodeRow(
+                  fieldKey: const Key('purchase-register-email-code'),
+                  buttonKey: const Key('purchase-register-send-code'),
+                  forReset: false,
+                ),
+              ],
+              if (inForgotMode) ...[
+                const SizedBox(height: 12),
+                _buildEmailCodeRow(
+                  fieldKey: const Key('purchase-reset-email-code'),
+                  buttonKey: const Key('purchase-reset-send-code'),
+                  forReset: true,
+                ),
+                const SizedBox(height: 12),
+                TextFormField(
+                  key: const Key('purchase-reset-new-password'),
+                  controller: _newPassword,
+                  enabled: !manager.busy,
+                  decoration: _inputDecoration(
+                    context,
+                    labelText: l.purchaseNewPassword,
+                    prefixIcon: Icons.lock_reset_rounded,
+                    suffixIcon: ExcludeFocusTraversal(
+                      child: IconButton(
+                        key: const Key('purchase-password-visibility'),
+                        tooltip: _obscurePassword
+                            ? l.purchaseShowPassword
+                            : l.purchaseHidePassword,
+                        onPressed: manager.busy
+                            ? null
+                            : () => setState(
+                                  () => _obscurePassword = !_obscurePassword,
+                                ),
+                        icon: Icon(
+                          _obscurePassword
+                              ? Icons.visibility_outlined
+                              : Icons.visibility_off_outlined,
+                          size: 18,
+                        ),
                       ),
                     ),
                   ),
+                  obscureText: _obscurePassword,
+                  enableSuggestions: false,
+                  autocorrect: false,
+                  textInputAction: TextInputAction.done,
+                  autofillHints: const [AutofillHints.newPassword],
+                  validator: (value) {
+                    if (value == null || value.isEmpty) {
+                      return l.purchasePasswordRequired;
+                    }
+                    if (value.length < 8) {
+                      return l.purchasePasswordMinLength;
+                    }
+                    return null;
+                  },
+                  onFieldSubmitted: (_) async => _submitResetPassword(),
                 ),
-                obscureText: _obscurePassword,
-                enableSuggestions: false,
-                autocorrect: false,
-                textInputAction: TextInputAction.done,
-                autofillHints: [
-                  if (inRegisterMode)
-                    AutofillHints.newPassword
-                  else
-                    AutofillHints.password,
-                ],
-                validator: (value) {
-                  if (value == null || value.isEmpty) {
-                    return l.purchasePasswordRequired;
-                  }
-                  if (inRegisterMode && value.length < 8) {
-                    return l.purchasePasswordMinLength;
-                  }
-                  return null;
-                },
-                onFieldSubmitted: (_) async =>
-                    inRegisterMode ? _register() : _login(),
-              ),
+              ] else ...[
+                const SizedBox(height: 12),
+                TextFormField(
+                  key: const Key('purchase-password'),
+                  controller: _password,
+                  enabled: !manager.busy,
+                  decoration: _inputDecoration(
+                    context,
+                    labelText: l.purchasePassword,
+                    prefixIcon: Icons.lock_outline_rounded,
+                    suffixIcon: ExcludeFocusTraversal(
+                      child: IconButton(
+                        key: const Key('purchase-password-visibility'),
+                        tooltip: _obscurePassword
+                            ? l.purchaseShowPassword
+                            : l.purchaseHidePassword,
+                        onPressed: manager.busy
+                            ? null
+                            : () => setState(
+                                  () => _obscurePassword = !_obscurePassword,
+                                ),
+                        icon: Icon(
+                          _obscurePassword
+                              ? Icons.visibility_outlined
+                              : Icons.visibility_off_outlined,
+                          size: 18,
+                        ),
+                      ),
+                    ),
+                  ),
+                  obscureText: _obscurePassword,
+                  enableSuggestions: false,
+                  autocorrect: false,
+                  textInputAction: needRegisterInviteCode
+                      ? TextInputAction.next
+                      : TextInputAction.done,
+                  autofillHints: [
+                    if (inRegisterMode)
+                      AutofillHints.newPassword
+                    else
+                      AutofillHints.password,
+                  ],
+                  validator: (value) {
+                    if (value == null || value.isEmpty) {
+                      return l.purchasePasswordRequired;
+                    }
+                    if (inRegisterMode && value.length < 8) {
+                      return l.purchasePasswordMinLength;
+                    }
+                    return null;
+                  },
+                  onFieldSubmitted: (_) async =>
+                      inRegisterMode ? _register() : _login(),
+                ),
+              ],
+              if (needRegisterInviteCode) ...[
+                const SizedBox(height: 12),
+                TextFormField(
+                  key: const Key('purchase-register-invite-code'),
+                  controller: _inviteCode,
+                  enabled: !manager.busy,
+                  decoration: _inputDecoration(
+                    context,
+                    labelText: l.purchaseInviteCode,
+                    prefixIcon: Icons.confirmation_number_outlined,
+                  ),
+                  textInputAction: TextInputAction.done,
+                  autocorrect: false,
+                  validator: (value) {
+                    final requiredByPolicy = authConfig.isInviteForce ||
+                        manager.inviteCodeRequiredByServer;
+                    if (requiredByPolicy &&
+                        (value == null || value.trim().isEmpty)) {
+                      return l.purchaseInviteCodeRequired;
+                    }
+                    return null;
+                  },
+                  onFieldSubmitted: (_) async => _register(),
+                ),
+              ] else if (inRegisterMode && passportSupported) ...[
+                const SizedBox(height: 4),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: TextButton(
+                    key: const Key('purchase-invite-toggle'),
+                    onPressed: manager.busy
+                        ? null
+                        : () => setState(() => _showInviteField = true),
+                    child: Text(l.purchaseInviteCodeOptionalToggle),
+                  ),
+                ),
+              ],
+              if (inRegisterMode &&
+                  passportSupported &&
+                  authConfig.tosUrl != null) ...[
+                const SizedBox(height: 6),
+                Wrap(
+                  spacing: 4,
+                  runSpacing: 2,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    Text(
+                      l.purchaseTosAgreementPrefix,
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: colors.onSurfaceVariant,
+                      ),
+                    ),
+                    InkWell(
+                      key: const Key('purchase-register-tos-link'),
+                      onTap: () => _open(authConfig.tosUrl!),
+                      child: Text(
+                        l.purchaseTosLinkLabel,
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: colors.primary,
+                          fontWeight: FontWeight.w600,
+                          decoration: TextDecoration.underline,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+              if (_localEmailError != null) ...[
+                const SizedBox(height: 10),
+                _Notice(message: _localEmailError!, error: true),
+              ],
+              if (_codeSentNotice && manager.error == null) ...[
+                const SizedBox(height: 10),
+                _Notice(message: l.purchaseCodeSentNotice, success: true),
+              ],
+              if (!inForgotMode &&
+                  !inRegisterMode &&
+                  _isRealManager &&
+                  manager.passwordResetSucceeded &&
+                  manager.error == null) ...[
+                const SizedBox(height: 10),
+                KeyedSubtree(
+                  key: const Key('purchase-reset-success-notice'),
+                  child: _Notice(
+                    message: l.purchaseResetPasswordSuccess,
+                    success: true,
+                  ),
+                ),
+              ],
+              if (showCaptchaFallback) ...[
+                const SizedBox(height: 10),
+                _Notice(message: l.purchaseCaptchaRequiredNotice),
+                const SizedBox(height: 8),
+                OutlinedButton.icon(
+                  key: const Key('purchase-auth-web-fallback'),
+                  onPressed: () => _open(
+                    manager.api.baseUri.replace(fragment: '/register'),
+                  ),
+                  icon: const Icon(Icons.open_in_new_rounded, size: 18),
+                  label: Text(l.purchaseOpenWebAuth),
+                ),
+              ],
               if (manager.error != null) ...[
                 const SizedBox(height: 12),
                 _Notice(message: _errorMessage(manager.error!), error: true),
@@ -994,7 +1547,32 @@ class _PurchaseCenterState extends State<PurchaseCenter>
                 ),
               ],
               const SizedBox(height: 14),
-              if (inRegisterMode)
+              if (inForgotMode) ...[
+                FilledButton.icon(
+                  key: const Key('purchase-reset-submit'),
+                  onPressed: manager.busy ? null : _submitResetPassword,
+                  icon: const Icon(Icons.check_circle_outline_rounded, size: 18),
+                  label: Text(
+                    _resettingPassword || manager.busy
+                        ? l.purchaseResettingPassword
+                        : l.purchaseResetPasswordSubmit,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: TextButton(
+                    key: const Key('purchase-reset-back-to-login'),
+                    onPressed: manager.busy
+                        ? null
+                        : () => _switchAuthMode(
+                              registerMode: false,
+                              forgotMode: false,
+                            ),
+                    child: Text(l.purchaseBackToLogin),
+                  ),
+                ),
+              ] else if (inRegisterMode)
                 FilledButton.icon(
                   key: const Key('purchase-register-submit'),
                   onPressed: manager.busy ? null : _register,
@@ -1005,7 +1583,7 @@ class _PurchaseCenterState extends State<PurchaseCenter>
                         : l.purchaseRegisterSubmit,
                   ),
                 )
-              else
+              else ...[
                 FilledButton.icon(
                   key: const Key('purchase-login'),
                   onPressed: manager.busy ? null : _login,
@@ -1014,26 +1592,54 @@ class _PurchaseCenterState extends State<PurchaseCenter>
                     manager.busy ? l.purchaseLoggingIn : l.purchaseLogin,
                   ),
                 ),
-              const SizedBox(height: 6),
-              Wrap(
-                spacing: 8,
-                runSpacing: 4,
-                children: [
-                  TextButton(
-                    onPressed: () => _open(
-                      manager.api.baseUri.replace(fragment: '/register'),
+                const SizedBox(height: 4),
+                if (!registerSupported)
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 4,
+                    children: [
+                      TextButton(
+                        onPressed: () => _open(
+                          manager.api.baseUri.replace(fragment: '/register'),
+                        ),
+                        child: Text(l.purchaseRegister),
+                      ),
+                      TextButton(
+                        onPressed: () => _open(
+                          manager.api.baseUri
+                              .replace(fragment: '/forgetpassword'),
+                        ),
+                        child: Text(l.purchaseRecoverPassword),
+                      ),
+                    ],
+                  )
+                else if (passportSupported)
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: TextButton(
+                      key: const Key('purchase-auth-forgot-trigger'),
+                      onPressed: manager.busy
+                          ? null
+                          : () => _switchAuthMode(
+                                registerMode: false,
+                                forgotMode: true,
+                              ),
+                      child: Text(l.purchaseForgotPassword),
                     ),
-                    child: Text(l.purchaseRegister),
-                  ),
-                  TextButton(
-                    onPressed: () => _open(
-                      manager.api.baseUri.replace(fragment: '/forgetpassword'),
+                  )
+                else
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: TextButton(
+                      onPressed: () => _open(
+                        manager.api.baseUri
+                            .replace(fragment: '/forgetpassword'),
+                      ),
+                      child: Text(l.purchaseRecoverPassword),
                     ),
-                    child: Text(l.purchaseRecoverPassword),
                   ),
-                ],
-              ),
-              if (_isRealManager) ...[
+              ],
+              if (_isRealManager && !inForgotMode) ...[
                 const Padding(
                   padding: EdgeInsets.symmetric(vertical: 10),
                   child: Divider(height: 1),
@@ -1827,7 +2433,7 @@ class _PurchaseCenterState extends State<PurchaseCenter>
                 if (chatUrl != null)
                   FilledButton.tonalIcon(
                     key: const Key('purchase-support-chat'),
-                    onPressed: () => _open(chatUrl),
+                    onPressed: _openSupport,
                     icon: const Icon(Icons.forum_outlined, size: 18),
                     label: Text(l.purchaseOnlineSupport),
                   ),
@@ -1916,22 +2522,48 @@ class _PurchaseCenterState extends State<PurchaseCenter>
     return '${material.formatFullDate(local)} $time';
   }
 
-  String _errorMessage(XboardException error) => switch (error.code) {
-        'purchase_failed' => l.purchaseGenericError,
-        'secure_storage_failed' => l.purchaseStorageError,
-        'purchase_account_unsupported' => l.purchaseUnsupportedAccount,
-        'logout_remote_failed' => l.purchaseLogoutRemoteError,
-        'gift_code_format' => l.purchaseCodeFormatError,
-        'gift_result_unconfirmed' => l.purchaseUnresolvedDescription,
-        'subscription_sync_failed' => l.purchaseSyncError,
-        'email_exists' => l.purchaseEmailExistsError,
-        'email_domain_not_allowed' => l.purchaseEmailDomainError,
-        'gmail_alias_not_allowed' => l.purchaseGmailAliasError,
-        'registration_closed' => l.purchaseRegistrationClosedError,
-        'register_web_required' => l.purchaseRegisterWebRequiredError,
-        _ =>
-          error.message.trim().isEmpty ? l.purchaseGenericError : error.message,
-      };
+  String _errorMessage(XboardException error) {
+    final retryAfter = error.retryAfterSeconds;
+    return switch (error.code) {
+      'purchase_failed' => l.purchaseGenericError,
+      'secure_storage_failed' => l.purchaseStorageError,
+      'purchase_account_unsupported' => l.purchaseUnsupportedAccount,
+      'logout_remote_failed' => l.purchaseLogoutRemoteError,
+      'gift_code_format' => l.purchaseCodeFormatError,
+      'gift_result_unconfirmed' => l.purchaseUnresolvedDescription,
+      'subscription_sync_failed' => l.purchaseSyncError,
+      'email_exists' => l.purchaseEmailExistsError,
+      'email_domain_not_allowed' => l.purchaseEmailDomainError,
+      'gmail_alias_not_allowed' => l.purchaseGmailAliasError,
+      'registration_closed' => l.purchaseRegistrationClosedError,
+      'register_web_required' => l.purchaseRegisterWebRequiredError,
+      'invitation_code_required' => l.purchaseInviteCodeRequiredError,
+      'invitation_code_invalid' => l.purchaseInviteCodeInvalidError,
+      'invitation_unavailable' => l.purchaseInvitationUnavailableError,
+      'registration_email_invalid' ||
+      'password_reset_invalid' =>
+        l.purchaseEmailCodeInvalidError,
+      'registration_email_locked' ||
+      'password_reset_locked' =>
+        l.purchaseEmailCodeLockedError,
+      'registration_email_cooldown' ||
+      'password_reset_cooldown' ||
+      'passport_email_cooldown' =>
+        retryAfter != null
+            ? l.purchaseCooldownWithSecondsError(retryAfter)
+            : l.purchaseEmailCooldownError,
+      'registration_email_rate_limited' ||
+      'password_reset_rate_limited' ||
+      'passport_email_rate_limited' ||
+      'rate_limited' =>
+        retryAfter != null
+            ? l.purchaseCooldownWithSecondsError(retryAfter)
+            : l.purchaseEmailRateLimitedError,
+      'registration_email_disabled' => l.purchaseEmailVerifyDisabledError,
+      'mail_unavailable' => l.purchaseMailUnavailableError,
+      _ => error.message.trim().isEmpty ? l.purchaseGenericError : error.message,
+    };
+  }
 
   String _expiry(DateTime? value) =>
       value == null ? l.purchaseNoExpiry : _date(value);
@@ -1985,12 +2617,14 @@ class _AcquirePlanSheet extends StatefulWidget {
     required this.manager,
     required this.wechatContacts,
     required this.openLink,
+    this.onOpenSupport,
   });
 
   final XboardPlanOffer plan;
   final PurchaseManager manager;
   final List<String> wechatContacts;
   final Future<void> Function(Uri) openLink;
+  final void Function(String inquiryText)? onOpenSupport;
 
   @override
   State<_AcquirePlanSheet> createState() => _AcquirePlanSheetState();
@@ -2158,6 +2792,15 @@ class _AcquirePlanSheetState extends State<_AcquirePlanSheet> {
                     ),
                     label: Text(l.purchaseCopyInquiry),
                   ),
+                  if (widget.onOpenSupport != null) ...[
+                    const SizedBox(height: 10),
+                    FilledButton.tonalIcon(
+                      key: const Key('purchase-acquire-open-support'),
+                      onPressed: () => widget.onOpenSupport!(inquiryText),
+                      icon: const Icon(Icons.support_agent_rounded, size: 18),
+                      label: Text(l.purchaseAcquireOpenSupport),
+                    ),
+                  ],
                   const SizedBox(height: 16),
                   const Divider(height: 1),
                   const SizedBox(height: 12),

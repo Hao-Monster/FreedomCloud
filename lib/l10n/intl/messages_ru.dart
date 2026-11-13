@@ -167,30 +167,37 @@ class MessageLookup extends MessageLookupByLibrary {
 
   static String m66(label) => "${label} должен быть числом от 1024 до 49151";
 
-  static String m67(plan) => "Открыт магазин для «${plan}»";
+  static String m67(seconds) =>
+      "Слишком много запросов. Повторите через ${seconds} с.";
 
-  static String m68(plan, quota, price) =>
+  static String m68(plan) => "Открыт магазин для «${plan}»";
+
+  static String m69(plan, quota, price) =>
       "Здравствуйте! Хочу приобрести код активации для тарифа «${plan} · ${quota} GiB (${price})».";
 
-  static String m69(count) => "Осталось: ${count}";
+  static String m70(count) => "Осталось: ${count}";
 
-  static String m70(code) => "Неизвестное правило (${code})";
+  static String m71(code) => "Неизвестное правило (${code})";
 
-  static String m71(price) => "~${price} / ГБ";
+  static String m72(price) => "~${price} / ГБ";
 
-  static String m72(periods) => "Период оплаты: ${periods}";
+  static String m73(seconds) => "Повтор через ${seconds}с";
 
-  static String m73(count) => "Лимит устройств: ${count}";
+  static String m74(periods) => "Период оплаты: ${periods}";
 
-  static String m74(speed) => "Скорость: до ${speed} Мбит/с";
+  static String m75(count) => "Лимит устройств: ${count}";
 
-  static String m75(count) => "Выбрано ${count} элементов";
+  static String m76(speed) => "Скорость: до ${speed} Мбит/с";
 
-  static String m76(days) => "Ваша подписка истекает через ${days} дн.";
+  static String m77(count) => "Выбрано ${count} элементов";
 
-  static String m77(reason) => "TUN: ${reason}";
+  static String m78(days) => "Ваша подписка истекает через ${days} дн.";
 
-  static String m78(label) => "${label} должен быть URL";
+  static String m79(name) => "${name} печатает...";
+
+  static String m80(reason) => "TUN: ${reason}";
+
+  static String m81(label) => "${label} должен быть URL";
 
   final messages = _notInlinedMessages(_notInlinedMessages);
   static Map<String, Function> _notInlinedMessages(_) => <String, Function>{
@@ -1455,6 +1462,9 @@ class MessageLookup extends MessageLookupByLibrary {
     ),
     "proxyProviders": MessageLookupByLibrary.simpleMessage("Провайдеры прокси"),
     "purchase": MessageLookupByLibrary.simpleMessage("Покупка"),
+    "purchaseAcquireOpenSupport": MessageLookupByLibrary.simpleMessage(
+      "Написать в поддержку",
+    ),
     "purchaseAcquirePlanCode": MessageLookupByLibrary.simpleMessage(
       "Получить код",
     ),
@@ -1468,18 +1478,43 @@ class MessageLookup extends MessageLookupByLibrary {
     "purchaseAvailablePlans": MessageLookupByLibrary.simpleMessage(
       "Доступные тарифы",
     ),
+    "purchaseBackToLogin": MessageLookupByLibrary.simpleMessage(
+      "Вернуться ко входу",
+    ),
     "purchaseBackupContactsLabel": MessageLookupByLibrary.simpleMessage(
       "Резервная поддержка (WeChat)",
+    ),
+    "purchaseCaptchaRequiredNotice": MessageLookupByLibrary.simpleMessage(
+      "На сайте включена CAPTCHA. Продолжите на веб-странице.",
     ),
     "purchaseClearCode": MessageLookupByLibrary.simpleMessage("Очистить код"),
     "purchaseClipboardEmpty": MessageLookupByLibrary.simpleMessage(
       "В буфере обмена не найден код активации.",
     ),
+    "purchaseCodeSentNotice": MessageLookupByLibrary.simpleMessage(
+      "Код подтверждения отправлен. Проверьте почту и папку «Спам».",
+    ),
     "purchaseContactDescription": MessageLookupByLibrary.simpleMessage(
       "Онлайн-оплата пока недоступна. Добавьте любой из указанных аккаунтов WeChat для покупки или продления.",
     ),
+    "purchaseCooldownWithSecondsError": m67,
     "purchaseCopyInquiry": MessageLookupByLibrary.simpleMessage(
       "Скопировать запрос",
+    ),
+    "purchaseEmailCode": MessageLookupByLibrary.simpleMessage(
+      "Код подтверждения email",
+    ),
+    "purchaseEmailCodeInvalidError": MessageLookupByLibrary.simpleMessage(
+      "Недействительный или просроченный код из письма.",
+    ),
+    "purchaseEmailCodeLockedError": MessageLookupByLibrary.simpleMessage(
+      "Слишком много попыток ввода кода. Запросите новый позже.",
+    ),
+    "purchaseEmailCodeRequired": MessageLookupByLibrary.simpleMessage(
+      "Введите 6-значный код подтверждения",
+    ),
+    "purchaseEmailCooldownError": MessageLookupByLibrary.simpleMessage(
+      "Подождите перед повторной отправкой кода.",
     ),
     "purchaseEmailDomainError": MessageLookupByLibrary.simpleMessage(
       "Этот почтовый домен не поддерживается. Используйте другой адрес электронной почты.",
@@ -1487,11 +1522,20 @@ class MessageLookup extends MessageLookupByLibrary {
     "purchaseEmailExistsError": MessageLookupByLibrary.simpleMessage(
       "Этот email уже зарегистрирован. Переключитесь на «Вход».",
     ),
+    "purchaseEmailRateLimitedError": MessageLookupByLibrary.simpleMessage(
+      "Превышен лимит запросов кода. Попробуйте позже.",
+    ),
+    "purchaseEmailVerifyDisabledError": MessageLookupByLibrary.simpleMessage(
+      "Подтверждение по email отключено.",
+    ),
     "purchaseFilterAll": MessageLookupByLibrary.simpleMessage("Все тарифы"),
     "purchaseFilterOnetime": MessageLookupByLibrary.simpleMessage(
       "Пакеты трафика",
     ),
     "purchaseFilterPeriod": MessageLookupByLibrary.simpleMessage("По периоду"),
+    "purchaseForgotPassword": MessageLookupByLibrary.simpleMessage(
+      "Забыли пароль?",
+    ),
     "purchaseGetCardDescription": MessageLookupByLibrary.simpleMessage(
       "Приобрести карту или получить помощь можно через магазин карт, онлайн-поддержку или контакты WeChat ниже.",
     ),
@@ -1504,7 +1548,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "purchaseHandoffPasteAction": MessageLookupByLibrary.simpleMessage(
       "Вставить и проверить",
     ),
-    "purchaseHandoffTitle": m67,
+    "purchaseHandoffTitle": m68,
     "purchaseHeaderSyncedBadge": MessageLookupByLibrary.simpleMessage(
       "Узлы синхронизированы",
     ),
@@ -1514,21 +1558,46 @@ class MessageLookup extends MessageLookupByLibrary {
     "purchaseHidePassword": MessageLookupByLibrary.simpleMessage(
       "Скрыть пароль",
     ),
-    "purchaseInquiryTemplate": m68,
+    "purchaseInquiryTemplate": m69,
+    "purchaseInvitationUnavailableError": MessageLookupByLibrary.simpleMessage(
+      "Приглашения временно недоступны.",
+    ),
+    "purchaseInviteCode": MessageLookupByLibrary.simpleMessage(
+      "Код приглашения",
+    ),
+    "purchaseInviteCodeInvalidError": MessageLookupByLibrary.simpleMessage(
+      "Недействительный или просроченный код приглашения.",
+    ),
+    "purchaseInviteCodeOptionalToggle": MessageLookupByLibrary.simpleMessage(
+      "Указать код приглашения (необязательно)",
+    ),
+    "purchaseInviteCodeRequired": MessageLookupByLibrary.simpleMessage(
+      "Введите код приглашения",
+    ),
+    "purchaseInviteCodeRequiredError": MessageLookupByLibrary.simpleMessage(
+      "Для регистрации требуется код приглашения.",
+    ),
     "purchaseJumpToWorkbench": MessageLookupByLibrary.simpleMessage(
       "Есть код? Перейти к активации",
     ),
     "purchaseLoginDescription": MessageLookupByLibrary.simpleMessage(
       "Войдите в аккаунт для активации кода — тариф и узлы синхронизируются автоматически.",
     ),
+    "purchaseMailUnavailableError": MessageLookupByLibrary.simpleMessage(
+      "Сервис отправки писем недоступен. Свяжитесь с поддержкой или попробуйте позже.",
+    ),
     "purchaseNewActivationBadge": MessageLookupByLibrary.simpleMessage(
       "Новая активация",
     ),
+    "purchaseNewPassword": MessageLookupByLibrary.simpleMessage("Новый пароль"),
     "purchaseOnlineSupport": MessageLookupByLibrary.simpleMessage(
       "Онлайн-поддержка",
     ),
     "purchaseOpenNodesAction": MessageLookupByLibrary.simpleMessage(
       "Открыть профили и узлы",
+    ),
+    "purchaseOpenWebAuth": MessageLookupByLibrary.simpleMessage(
+      "Продолжить на сайте",
     ),
     "purchasePasswordMinLength": MessageLookupByLibrary.simpleMessage(
       "Пароль должен содержать минимум 8 символов.",
@@ -1554,7 +1623,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "purchasePlanImageNotLoaded": MessageLookupByLibrary.simpleMessage(
       "Внешнее изображение не загружено",
     ),
-    "purchasePlanLowStock": m69,
+    "purchasePlanLowStock": m70,
     "purchasePlanNotProvided": MessageLookupByLibrary.simpleMessage(
       "Не указано",
     ),
@@ -1573,7 +1642,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "purchasePlanResetSystem": MessageLookupByLibrary.simpleMessage(
       "По настройкам системы",
     ),
-    "purchasePlanResetUnknown": m70,
+    "purchasePlanResetUnknown": m71,
     "purchasePlanResetYearStart": MessageLookupByLibrary.simpleMessage(
       "1 января каждого года",
     ),
@@ -1590,7 +1659,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "purchasePlanTrafficReset": MessageLookupByLibrary.simpleMessage(
       "Сброс трафика",
     ),
-    "purchasePlanUnitPriceHint": m71,
+    "purchasePlanUnitPriceHint": m72,
     "purchasePlanUnlimited": MessageLookupByLibrary.simpleMessage(
       "Без ограничений",
     ),
@@ -1631,21 +1700,39 @@ class MessageLookup extends MessageLookupByLibrary {
       "Регистрация новых аккаунтов временно закрыта.",
     ),
     "purchaseRenewalBadge": MessageLookupByLibrary.simpleMessage("Продление"),
+    "purchaseResetPasswordDescription": MessageLookupByLibrary.simpleMessage(
+      "Введите зарегистрированный email и 6-значный код подтверждения, чтобы задать новый пароль.",
+    ),
+    "purchaseResetPasswordSubmit": MessageLookupByLibrary.simpleMessage(
+      "Подтвердить сброс пароля",
+    ),
+    "purchaseResetPasswordSuccess": MessageLookupByLibrary.simpleMessage(
+      "Пароль сброшен. Войдите с новым паролем.",
+    ),
+    "purchaseResetPasswordTitle": MessageLookupByLibrary.simpleMessage(
+      "Сброс пароля",
+    ),
+    "purchaseResettingPassword": MessageLookupByLibrary.simpleMessage(
+      "Сброс...",
+    ),
+    "purchaseSendCode": MessageLookupByLibrary.simpleMessage("Отправить код"),
+    "purchaseSendCodeCooldown": m73,
+    "purchaseSendingCode": MessageLookupByLibrary.simpleMessage("Отправка..."),
     "purchaseShowPassword": MessageLookupByLibrary.simpleMessage(
       "Показать пароль",
     ),
     "purchaseSpecAllDevicesSupported": MessageLookupByLibrary.simpleMessage(
       "Поддержка всех типов устройств",
     ),
-    "purchaseSpecBillingCycle": m72,
-    "purchaseSpecDevicesCount": m73,
+    "purchaseSpecBillingCycle": m74,
+    "purchaseSpecDevicesCount": m75,
     "purchaseSpecDevicesUnlimited": MessageLookupByLibrary.simpleMessage(
       "Устройства: без лимита",
     ),
     "purchaseSpecDurationUnlimited": MessageLookupByLibrary.simpleMessage(
       "Срок действия: бессрочно",
     ),
-    "purchaseSpecSpeedLimit": m74,
+    "purchaseSpecSpeedLimit": m76,
     "purchaseSpecTrafficUntilUsed": MessageLookupByLibrary.simpleMessage(
       "Трафик действует до исчерпания",
     ),
@@ -1660,6 +1747,12 @@ class MessageLookup extends MessageLookupByLibrary {
     ),
     "purchaseTitle": MessageLookupByLibrary.simpleMessage(
       "Покупка и продление",
+    ),
+    "purchaseTosAgreementPrefix": MessageLookupByLibrary.simpleMessage(
+      "Регистрируясь, вы принимаете",
+    ),
+    "purchaseTosLinkLabel": MessageLookupByLibrary.simpleMessage(
+      "Условия использования",
     ),
     "pureBlackMode": MessageLookupByLibrary.simpleMessage("Чисто черный режим"),
     "qrNotFound": MessageLookupByLibrary.simpleMessage("QR-код не найден"),
@@ -1757,7 +1850,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "selectAll": MessageLookupByLibrary.simpleMessage("Выбрать все"),
     "selectProfile": MessageLookupByLibrary.simpleMessage("Выбрать профиль"),
     "selected": MessageLookupByLibrary.simpleMessage("Выбрано"),
-    "selectedCountTitle": m75,
+    "selectedCountTitle": m77,
     "sendToTv": MessageLookupByLibrary.simpleMessage("Отправить на ТВ"),
     "sendToTvTitle": MessageLookupByLibrary.simpleMessage("Отправить на ТВ"),
     "sentSuccessfullyMessage": MessageLookupByLibrary.simpleMessage(
@@ -1804,7 +1897,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "subscriptionExpired": MessageLookupByLibrary.simpleMessage(
       "Ваша подписка истекла",
     ),
-    "subscriptionExpiresInDays": m76,
+    "subscriptionExpiresInDays": m78,
     "subscriptionExpiresSoon": MessageLookupByLibrary.simpleMessage(
       "Подписка скоро истекает",
     ),
@@ -1836,6 +1929,49 @@ class MessageLookup extends MessageLookupByLibrary {
     ),
     "successTitle": MessageLookupByLibrary.simpleMessage("Успешно"),
     "support": MessageLookupByLibrary.simpleMessage("Поддержка"),
+    "supportBackupWechatToggle": MessageLookupByLibrary.simpleMessage(
+      "Резервный WeChat",
+    ),
+    "supportComposerHint": MessageLookupByLibrary.simpleMessage(
+      "Введите сообщение, Enter — отправить...",
+    ),
+    "supportConversationLockedNotice": MessageLookupByLibrary.simpleMessage(
+      "Этот диалог завершён. Начните новый диалог, чтобы продолжить.",
+    ),
+    "supportMessageFailed": MessageLookupByLibrary.simpleMessage("Ошибка"),
+    "supportMessageSending": MessageLookupByLibrary.simpleMessage("Отправка"),
+    "supportNewConversation": MessageLookupByLibrary.simpleMessage(
+      "Новый диалог",
+    ),
+    "supportNotConfiguredNotice": MessageLookupByLibrary.simpleMessage(
+      "Онлайн-чат пока не настроен. Используйте резервные контакты WeChat ниже.",
+    ),
+    "supportOpenExternalFallback": MessageLookupByLibrary.simpleMessage(
+      "Открыть в браузере",
+    ),
+    "supportRefreshTooltip": MessageLookupByLibrary.simpleMessage(
+      "Обновить сообщения",
+    ),
+    "supportRetryAction": MessageLookupByLibrary.simpleMessage("Повторить"),
+    "supportSendTooltip": MessageLookupByLibrary.simpleMessage("Отправить"),
+    "supportSheetTitle": MessageLookupByLibrary.simpleMessage(
+      "Онлайн-поддержка",
+    ),
+    "supportStatusConnected": MessageLookupByLibrary.simpleMessage(
+      "Подключено",
+    ),
+    "supportStatusConnecting": MessageLookupByLibrary.simpleMessage(
+      "Подключение",
+    ),
+    "supportStatusOffline": MessageLookupByLibrary.simpleMessage("Офлайн"),
+    "supportTypingAnonymous": MessageLookupByLibrary.simpleMessage("Оператор"),
+    "supportTypingIndicator": m79,
+    "supportWelcomeFallbackSubtitle": MessageLookupByLibrary.simpleMessage(
+      "Задайте любой вопрос о тарифах, узлах или подарочных картах.",
+    ),
+    "supportWelcomeFallbackTitle": MessageLookupByLibrary.simpleMessage(
+      "Добро пожаловать в поддержку FreedomNet",
+    ),
     "sync": MessageLookupByLibrary.simpleMessage("Обновление"),
     "system": MessageLookupByLibrary.simpleMessage("Система"),
     "systemApp": MessageLookupByLibrary.simpleMessage("Системное приложение"),
@@ -1936,7 +2072,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "tunErrorUnavailable": MessageLookupByLibrary.simpleMessage(
       "Не удалось проверить состояние; проверьте версию фонового процесса",
     ),
-    "tunStatusFailure": m77,
+    "tunStatusFailure": m80,
     "tunStatusOff": MessageLookupByLibrary.simpleMessage("Не запущен"),
     "tunStatusOn": MessageLookupByLibrary.simpleMessage("Запущен"),
     "tunStatusStarting": MessageLookupByLibrary.simpleMessage("Запуск…"),
@@ -1969,7 +2105,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "upload": MessageLookupByLibrary.simpleMessage("Отправка"),
     "url": MessageLookupByLibrary.simpleMessage("URL"),
     "urlDesc": MessageLookupByLibrary.simpleMessage("Загрузить профиль по URL"),
-    "urlTip": m78,
+    "urlTip": m81,
     "useHosts": MessageLookupByLibrary.simpleMessage("Использовать hosts"),
     "useSystemHosts": MessageLookupByLibrary.simpleMessage(
       "Использовать системные hosts",
