@@ -76,7 +76,7 @@ void main() {
     expect(find.text('Monthly'), findsOneWidget);
     expect(find.text('Yearly'), findsOneWidget);
     expect(find.text('Traffic based'), findsOneWidget);
-    expect(find.text('Traffic quota: 150 GiB'), findsOneWidget);
+    expect(find.text('150G'), findsOneWidget);
     expect(find.text('Speed limit: 200 Mbps'), findsOneWidget);
     expect(find.text('Device limit: 3'), findsOneWidget);
     expect(find.byKey(const Key('purchase-login')), findsOneWidget);

@@ -170,13 +170,21 @@ class MessageLookup extends MessageLookupByLibrary {
 
   static String m70(code) => "不明なルール（${code}）";
 
-  static String m71(count) => "${count} 項目が選択されています";
+  static String m71(price) => "約 ${price} / G";
 
-  static String m72(days) => "サブスクリプションは${days}日後に期限切れになります";
+  static String m72(periods) => "課金周期：${periods}";
 
-  static String m73(reason) => "TUN: ${reason}";
+  static String m73(count) => "デバイス上限：${count} 台";
 
-  static String m74(label) => "${label}はURLである必要があります";
+  static String m74(speed) => "速度上限：${speed} Mbps";
+
+  static String m75(count) => "${count} 項目が選択されています";
+
+  static String m76(days) => "サブスクリプションは${days}日後に期限切れになります";
+
+  static String m77(reason) => "TUN: ${reason}";
+
+  static String m78(label) => "${label}はURLである必要があります";
 
   final messages = _notInlinedMessages(_notInlinedMessages);
   static Map<String, Function> _notInlinedMessages(_) => <String, Function>{
@@ -1210,6 +1218,8 @@ class MessageLookup extends MessageLookupByLibrary {
       "詳細をすべて表示",
     ),
     "purchasePlanFeaturedBadge": MessageLookupByLibrary.simpleMessage("おすすめ"),
+    "purchasePlanFreeBadge": MessageLookupByLibrary.simpleMessage("無料体験"),
+    "purchasePlanFreeHint": MessageLookupByLibrary.simpleMessage("無料"),
     "purchasePlanImageNotLoaded": MessageLookupByLibrary.simpleMessage(
       "外部画像は読み込まれていません",
     ),
@@ -1239,6 +1249,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "purchasePlanTrafficReset": MessageLookupByLibrary.simpleMessage(
       "通信量のリセット",
     ),
+    "purchasePlanUnitPriceHint": m71,
     "purchasePlanUnlimited": MessageLookupByLibrary.simpleMessage("無制限"),
     "purchasePlansDescription": MessageLookupByLibrary.simpleMessage(
       "価格はサイトの表示額です。「購入する」からセルフストアでギフトカードを取得し、ここで引き換えてください。",
@@ -1272,6 +1283,21 @@ class MessageLookup extends MessageLookupByLibrary {
     ),
     "purchaseRenewalBadge": MessageLookupByLibrary.simpleMessage("更新"),
     "purchaseShowPassword": MessageLookupByLibrary.simpleMessage("パスワードを表示"),
+    "purchaseSpecAllDevicesSupported": MessageLookupByLibrary.simpleMessage(
+      "すべての端末タイプに対応",
+    ),
+    "purchaseSpecBillingCycle": m72,
+    "purchaseSpecDevicesCount": m73,
+    "purchaseSpecDevicesUnlimited": MessageLookupByLibrary.simpleMessage(
+      "デバイス数：無制限",
+    ),
+    "purchaseSpecDurationUnlimited": MessageLookupByLibrary.simpleMessage(
+      "利用期間：無期限",
+    ),
+    "purchaseSpecSpeedLimit": m74,
+    "purchaseSpecTrafficUntilUsed": MessageLookupByLibrary.simpleMessage(
+      "通信量は使い切るまで有効",
+    ),
     "purchaseStepBrowse": MessageLookupByLibrary.simpleMessage("① プラン確認・コード取得"),
     "purchaseStepRedeem": MessageLookupByLibrary.simpleMessage("② サインインして確認"),
     "purchaseStepSync": MessageLookupByLibrary.simpleMessage("③ ノード自動同期"),
@@ -1335,7 +1361,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "seconds": MessageLookupByLibrary.simpleMessage("秒"),
     "selectAll": MessageLookupByLibrary.simpleMessage("すべて選択"),
     "selected": MessageLookupByLibrary.simpleMessage("選択済み"),
-    "selectedCountTitle": m71,
+    "selectedCountTitle": m75,
     "settings": MessageLookupByLibrary.simpleMessage("設定"),
     "show": MessageLookupByLibrary.simpleMessage("表示"),
     "shrink": MessageLookupByLibrary.simpleMessage("縮小"),
@@ -1365,7 +1391,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "subscriptionExpired": MessageLookupByLibrary.simpleMessage(
       "サブスクリプションが期限切れになりました",
     ),
-    "subscriptionExpiresInDays": m72,
+    "subscriptionExpiresInDays": m76,
     "subscriptionExpiresSoon": MessageLookupByLibrary.simpleMessage(
       "サブスクリプションがまもなく期限切れ",
     ),
@@ -1475,7 +1501,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "tunErrorUnavailable": MessageLookupByLibrary.simpleMessage(
       "状態を確認できません。バックグラウンドのバージョンを確認してください",
     ),
-    "tunStatusFailure": m73,
+    "tunStatusFailure": m77,
     "tunStatusOff": MessageLookupByLibrary.simpleMessage("停止中"),
     "tunStatusOn": MessageLookupByLibrary.simpleMessage("起動済み"),
     "tunStatusStarting": MessageLookupByLibrary.simpleMessage("起動しています…"),
@@ -1498,7 +1524,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "upload": MessageLookupByLibrary.simpleMessage("アップロード"),
     "url": MessageLookupByLibrary.simpleMessage("URL"),
     "urlDesc": MessageLookupByLibrary.simpleMessage("URL経由でプロファイルを取得"),
-    "urlTip": m74,
+    "urlTip": m78,
     "useHosts": MessageLookupByLibrary.simpleMessage("ホストを使用"),
     "useSystemHosts": MessageLookupByLibrary.simpleMessage("システムホストを使用"),
     "value": MessageLookupByLibrary.simpleMessage("値"),

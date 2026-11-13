@@ -6209,11 +6209,111 @@ class AppLocalizations {
     );
   }
 
-  /// `Get redemption code`
+  /// `Get code`
   String get purchaseAcquirePlanCode {
     return Intl.message(
-      'Get redemption code',
+      'Get code',
       name: 'purchaseAcquirePlanCode',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Free trial`
+  String get purchasePlanFreeBadge {
+    return Intl.message(
+      'Free trial',
+      name: 'purchasePlanFreeBadge',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Free`
+  String get purchasePlanFreeHint {
+    return Intl.message(
+      'Free',
+      name: 'purchasePlanFreeHint',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `~{price} / GB`
+  String purchasePlanUnitPriceHint(String price) {
+    return Intl.message(
+      '~$price / GB',
+      name: 'purchasePlanUnitPriceHint',
+      desc: '',
+      args: [price],
+    );
+  }
+
+  /// `Devices: Unlimited`
+  String get purchaseSpecDevicesUnlimited {
+    return Intl.message(
+      'Devices: Unlimited',
+      name: 'purchaseSpecDevicesUnlimited',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Device limit: {count}`
+  String purchaseSpecDevicesCount(int count) {
+    return Intl.message(
+      'Device limit: $count',
+      name: 'purchaseSpecDevicesCount',
+      desc: '',
+      args: [count],
+    );
+  }
+
+  /// `Validity: Never expires`
+  String get purchaseSpecDurationUnlimited {
+    return Intl.message(
+      'Validity: Never expires',
+      name: 'purchaseSpecDurationUnlimited',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Billing cycle: {periods}`
+  String purchaseSpecBillingCycle(String periods) {
+    return Intl.message(
+      'Billing cycle: $periods',
+      name: 'purchaseSpecBillingCycle',
+      desc: '',
+      args: [periods],
+    );
+  }
+
+  /// `Traffic valid until used up`
+  String get purchaseSpecTrafficUntilUsed {
+    return Intl.message(
+      'Traffic valid until used up',
+      name: 'purchaseSpecTrafficUntilUsed',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Speed limit: {speed} Mbps`
+  String purchaseSpecSpeedLimit(int speed) {
+    return Intl.message(
+      'Speed limit: $speed Mbps',
+      name: 'purchaseSpecSpeedLimit',
+      desc: '',
+      args: [speed],
+    );
+  }
+
+  /// `Supports all device types`
+  String get purchaseSpecAllDevicesSupported {
+    return Intl.message(
+      'Supports all device types',
+      name: 'purchaseSpecAllDevicesSupported',
       desc: '',
       args: [],
     );

@@ -176,13 +176,21 @@ class MessageLookup extends MessageLookupByLibrary {
 
   static String m70(code) => "Unknown rule (${code})";
 
-  static String m71(count) => "${count} items have been selected";
+  static String m71(price) => "~${price} / GB";
 
-  static String m72(days) => "Your subscription expires in ${days} day(s)";
+  static String m72(periods) => "Billing cycle: ${periods}";
 
-  static String m73(reason) => "TUN: ${reason}";
+  static String m73(count) => "Device limit: ${count}";
 
-  static String m74(label) => "${label} must be a url";
+  static String m74(speed) => "Speed limit: ${speed} Mbps";
+
+  static String m75(count) => "${count} items have been selected";
+
+  static String m76(days) => "Your subscription expires in ${days} day(s)";
+
+  static String m77(reason) => "TUN: ${reason}";
+
+  static String m78(label) => "${label} must be a url";
 
   final messages = _notInlinedMessages(_notInlinedMessages);
   static Map<String, Function> _notInlinedMessages(_) => <String, Function>{
@@ -1524,9 +1532,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "purchaseAccount": MessageLookupByLibrary.simpleMessage(
       "Account and subscription",
     ),
-    "purchaseAcquirePlanCode": MessageLookupByLibrary.simpleMessage(
-      "Get redemption code",
-    ),
+    "purchaseAcquirePlanCode": MessageLookupByLibrary.simpleMessage("Get code"),
     "purchaseAcquireSheetSubtitle": MessageLookupByLibrary.simpleMessage(
       "Contact support or open the card store to get a code, then return here to redeem. No order is created in the app.",
     ),
@@ -1722,6 +1728,8 @@ class MessageLookup extends MessageLookupByLibrary {
     "purchasePlanFeaturedBadge": MessageLookupByLibrary.simpleMessage(
       "Popular tier",
     ),
+    "purchasePlanFreeBadge": MessageLookupByLibrary.simpleMessage("Free trial"),
+    "purchasePlanFreeHint": MessageLookupByLibrary.simpleMessage("Free"),
     "purchasePlanImageNotLoaded": MessageLookupByLibrary.simpleMessage(
       "External image not loaded",
     ),
@@ -1759,6 +1767,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "purchasePlanTrafficReset": MessageLookupByLibrary.simpleMessage(
       "Traffic reset",
     ),
+    "purchasePlanUnitPriceHint": m71,
     "purchasePlanUnknown": MessageLookupByLibrary.simpleMessage("Subscription"),
     "purchasePlanUnlimited": MessageLookupByLibrary.simpleMessage("Unlimited"),
     "purchasePlansDescription": MessageLookupByLibrary.simpleMessage(
@@ -1832,6 +1841,21 @@ class MessageLookup extends MessageLookupByLibrary {
     ),
     "purchaseShowPassword": MessageLookupByLibrary.simpleMessage(
       "Show password",
+    ),
+    "purchaseSpecAllDevicesSupported": MessageLookupByLibrary.simpleMessage(
+      "Supports all device types",
+    ),
+    "purchaseSpecBillingCycle": m72,
+    "purchaseSpecDevicesCount": m73,
+    "purchaseSpecDevicesUnlimited": MessageLookupByLibrary.simpleMessage(
+      "Devices: Unlimited",
+    ),
+    "purchaseSpecDurationUnlimited": MessageLookupByLibrary.simpleMessage(
+      "Validity: Never expires",
+    ),
+    "purchaseSpecSpeedLimit": m74,
+    "purchaseSpecTrafficUntilUsed": MessageLookupByLibrary.simpleMessage(
+      "Traffic valid until used up",
     ),
     "purchaseStepBrowse": MessageLookupByLibrary.simpleMessage(
       "1. Choose plan or get code",
@@ -1974,7 +1998,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "selectAll": MessageLookupByLibrary.simpleMessage("Select all"),
     "selectProfile": MessageLookupByLibrary.simpleMessage("Select Profile"),
     "selected": MessageLookupByLibrary.simpleMessage("Selected"),
-    "selectedCountTitle": m71,
+    "selectedCountTitle": m75,
     "sendToTv": MessageLookupByLibrary.simpleMessage("Send to TV"),
     "sendToTvTitle": MessageLookupByLibrary.simpleMessage("Send to TV"),
     "sentSuccessfullyMessage": MessageLookupByLibrary.simpleMessage(
@@ -2021,7 +2045,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "subscriptionExpired": MessageLookupByLibrary.simpleMessage(
       "Your subscription has expired",
     ),
-    "subscriptionExpiresInDays": m72,
+    "subscriptionExpiresInDays": m76,
     "subscriptionExpiresSoon": MessageLookupByLibrary.simpleMessage(
       "Subscription expires soon",
     ),
@@ -2147,7 +2171,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "tunErrorUnavailable": MessageLookupByLibrary.simpleMessage(
       "Cannot verify status; check the background version",
     ),
-    "tunStatusFailure": m73,
+    "tunStatusFailure": m77,
     "tunStatusOff": MessageLookupByLibrary.simpleMessage("Not running"),
     "tunStatusOn": MessageLookupByLibrary.simpleMessage("Running"),
     "tunStatusStarting": MessageLookupByLibrary.simpleMessage("Starting…"),
@@ -2178,7 +2202,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "urlDesc": MessageLookupByLibrary.simpleMessage(
       "Obtain profile through URL",
     ),
-    "urlTip": m74,
+    "urlTip": m78,
     "useHosts": MessageLookupByLibrary.simpleMessage("Use hosts"),
     "useSystemHosts": MessageLookupByLibrary.simpleMessage("Use system hosts"),
     "value": MessageLookupByLibrary.simpleMessage("Value"),

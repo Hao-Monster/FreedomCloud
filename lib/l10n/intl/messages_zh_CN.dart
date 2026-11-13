@@ -169,13 +169,21 @@ class MessageLookup extends MessageLookupByLibrary {
 
   static String m70(code) => "未知规则（${code}）";
 
-  static String m71(count) => "已选择 ${count} 项";
+  static String m71(price) => "约 ${price} / G";
 
-  static String m72(days) => "您的订阅将在${days}天后到期";
+  static String m72(periods) => "计费周期：${periods}";
 
-  static String m73(reason) => "虚拟网卡：${reason}";
+  static String m73(count) => "设备数量：${count} 台";
 
-  static String m74(label) => "${label}必须为URL";
+  static String m74(speed) => "速率上限：${speed} Mbps";
+
+  static String m75(count) => "已选择 ${count} 项";
+
+  static String m76(days) => "您的订阅将在${days}天后到期";
+
+  static String m77(reason) => "虚拟网卡：${reason}";
+
+  static String m78(label) => "${label}必须为URL";
 
   final messages = _notInlinedMessages(_notInlinedMessages);
   static Map<String, Function> _notInlinedMessages(_) => <String, Function>{
@@ -1108,7 +1116,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "proxyProviders": MessageLookupByLibrary.simpleMessage("代理提供者"),
     "purchase": MessageLookupByLibrary.simpleMessage("购买"),
     "purchaseAccount": MessageLookupByLibrary.simpleMessage("账户与订阅"),
-    "purchaseAcquirePlanCode": MessageLookupByLibrary.simpleMessage("获取此套餐兑换码"),
+    "purchaseAcquirePlanCode": MessageLookupByLibrary.simpleMessage("获取兑换码"),
     "purchaseAcquireSheetSubtitle": MessageLookupByLibrary.simpleMessage(
       "通过下方自助商店或微信客服获取兑换码后，返回本页输入核销；客户端内不创建付款订单。",
     ),
@@ -1248,6 +1256,8 @@ class MessageLookup extends MessageLookupByLibrary {
       "展开完整套餐说明",
     ),
     "purchasePlanFeaturedBadge": MessageLookupByLibrary.simpleMessage("热销档位"),
+    "purchasePlanFreeBadge": MessageLookupByLibrary.simpleMessage("免费试用"),
+    "purchasePlanFreeHint": MessageLookupByLibrary.simpleMessage("免费体验"),
     "purchasePlanImageNotLoaded": MessageLookupByLibrary.simpleMessage(
       "未加载外部图片",
     ),
@@ -1273,6 +1283,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "purchasePlanSoldOut": MessageLookupByLibrary.simpleMessage("已售罄"),
     "purchasePlanSpeed": MessageLookupByLibrary.simpleMessage("速率上限"),
     "purchasePlanTrafficReset": MessageLookupByLibrary.simpleMessage("流量重置"),
+    "purchasePlanUnitPriceHint": m71,
     "purchasePlanUnknown": MessageLookupByLibrary.simpleMessage("订阅套餐"),
     "purchasePlanUnlimited": MessageLookupByLibrary.simpleMessage("不限"),
     "purchasePlansDescription": MessageLookupByLibrary.simpleMessage(
@@ -1317,6 +1328,21 @@ class MessageLookup extends MessageLookupByLibrary {
     "purchaseResetTraffic": MessageLookupByLibrary.simpleMessage("重置已用流量"),
     "purchaseRestoring": MessageLookupByLibrary.simpleMessage("正在恢复账户…"),
     "purchaseShowPassword": MessageLookupByLibrary.simpleMessage("显示密码"),
+    "purchaseSpecAllDevicesSupported": MessageLookupByLibrary.simpleMessage(
+      "支持所有类型设备",
+    ),
+    "purchaseSpecBillingCycle": m72,
+    "purchaseSpecDevicesCount": m73,
+    "purchaseSpecDevicesUnlimited": MessageLookupByLibrary.simpleMessage(
+      "设备数量：无限",
+    ),
+    "purchaseSpecDurationUnlimited": MessageLookupByLibrary.simpleMessage(
+      "使用时间：无限",
+    ),
+    "purchaseSpecSpeedLimit": m74,
+    "purchaseSpecTrafficUntilUsed": MessageLookupByLibrary.simpleMessage(
+      "流量用完为止",
+    ),
     "purchaseStepBrowse": MessageLookupByLibrary.simpleMessage("① 选套餐或获取兑换码"),
     "purchaseStepRedeem": MessageLookupByLibrary.simpleMessage("② 登录并核验兑换码"),
     "purchaseStepSync": MessageLookupByLibrary.simpleMessage("③ 自动同步节点"),
@@ -1399,7 +1425,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "seconds": MessageLookupByLibrary.simpleMessage("秒"),
     "selectAll": MessageLookupByLibrary.simpleMessage("全选"),
     "selected": MessageLookupByLibrary.simpleMessage("已选择"),
-    "selectedCountTitle": m71,
+    "selectedCountTitle": m75,
     "settings": MessageLookupByLibrary.simpleMessage("设置"),
     "show": MessageLookupByLibrary.simpleMessage("显示"),
     "shrink": MessageLookupByLibrary.simpleMessage("紧凑"),
@@ -1427,7 +1453,7 @@ class MessageLookup extends MessageLookupByLibrary {
     ),
     "subscriptionEternal": MessageLookupByLibrary.simpleMessage("长期有效"),
     "subscriptionExpired": MessageLookupByLibrary.simpleMessage("您的订阅已过期"),
-    "subscriptionExpiresInDays": m72,
+    "subscriptionExpiresInDays": m76,
     "subscriptionExpiresSoon": MessageLookupByLibrary.simpleMessage("订阅即将到期"),
     "subscriptionExpiresToday": MessageLookupByLibrary.simpleMessage(
       "您的订阅今天到期",
@@ -1523,7 +1549,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "tunErrorUnavailable": MessageLookupByLibrary.simpleMessage(
       "无法确认状态，请检查后台版本",
     ),
-    "tunStatusFailure": m73,
+    "tunStatusFailure": m77,
     "tunStatusOff": MessageLookupByLibrary.simpleMessage("未启动"),
     "tunStatusOn": MessageLookupByLibrary.simpleMessage("已启动"),
     "tunStatusStarting": MessageLookupByLibrary.simpleMessage("正在开启…"),
@@ -1544,7 +1570,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "upload": MessageLookupByLibrary.simpleMessage("上传"),
     "url": MessageLookupByLibrary.simpleMessage("URL"),
     "urlDesc": MessageLookupByLibrary.simpleMessage("通过URL获取配置文件"),
-    "urlTip": m74,
+    "urlTip": m78,
     "useHosts": MessageLookupByLibrary.simpleMessage("使用Hosts"),
     "useSystemHosts": MessageLookupByLibrary.simpleMessage("使用系统Hosts"),
     "value": MessageLookupByLibrary.simpleMessage("值"),

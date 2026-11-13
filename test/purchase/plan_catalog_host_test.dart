@@ -172,7 +172,7 @@ void main() {
         expect(client.requests.single.headers.values,
             isNot(contains(HttpHeaders.authorizationHeader)));
         expect(find.text('Host-only plan fixture'), findsOneWidget);
-        expect(find.text('Traffic quota: 200 GiB'), findsOneWidget);
+        expect(find.text('200G'), findsOneWidget);
         expect(find.text('150.00'), findsOneWidget);
         expect(find.text('Public catalog tag'), findsOneWidget);
         expect(

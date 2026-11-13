@@ -766,7 +766,45 @@
   "purchaseFilterAll": "全部套餐",
   "purchaseFilterPeriod": "周期订阅",
   "purchaseFilterOnetime": "按量流量包",
-  "purchaseAcquirePlanCode": "获取此套餐兑换码",
+  "purchaseAcquirePlanCode": "获取兑换码",
+  "purchasePlanFreeBadge": "免费试用",
+  "purchasePlanFreeHint": "免费体验",
+  "purchasePlanUnitPriceHint": "约 {price} / G",
+  "@purchasePlanUnitPriceHint": {
+    "placeholders": {
+      "price": {
+        "type": "String"
+      }
+    }
+  },
+  "purchaseSpecDevicesUnlimited": "设备数量：无限",
+  "purchaseSpecDevicesCount": "设备数量：{count} 台",
+  "@purchaseSpecDevicesCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "purchaseSpecDurationUnlimited": "使用时间：无限",
+  "purchaseSpecBillingCycle": "计费周期：{periods}",
+  "@purchaseSpecBillingCycle": {
+    "placeholders": {
+      "periods": {
+        "type": "String"
+      }
+    }
+  },
+  "purchaseSpecTrafficUntilUsed": "流量用完为止",
+  "purchaseSpecSpeedLimit": "速率上限：{speed} Mbps",
+  "@purchaseSpecSpeedLimit": {
+    "placeholders": {
+      "speed": {
+        "type": "int"
+      }
+    }
+  },
+  "purchaseSpecAllDevicesSupported": "支持所有类型设备",
   "purchasePlanSoldOut": "已售罄",
   "purchasePlanLowStock": "仅剩 {count} 席",
   "@purchasePlanLowStock": {

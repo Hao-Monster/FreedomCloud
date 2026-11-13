@@ -112,14 +112,9 @@ void main() {
   testWidgets('missing metadata stays unknown rather than unlimited',
       (tester) async {
     await _pump(tester, _catalog(_plan()));
-    for (final label in [
-      'Speed limit',
-      'Device limit',
-      'Traffic reset',
-      'Remaining sales slots',
-    ]) {
-      expect(find.text('$label: Not provided'), findsOneWidget);
-    }
+    expect(find.text('200G'), findsOneWidget);
+    expect(find.text('Validity: Never expires'), findsOneWidget);
+    expect(find.text('Traffic valid until used up'), findsOneWidget);
     expect(find.textContaining('Unlimited'), findsNothing);
     expect(find.text('Plan details'), findsNothing);
     expect(find.text('Traffic reset · listed price'), findsNothing);
@@ -136,19 +131,17 @@ void main() {
           hasReset: true,
           hasSlots: true,
         )));
-    expect(find.text('Speed limit: Unlimited'), findsOneWidget);
-    expect(find.text('Device limit: Unlimited'), findsOneWidget);
-    expect(find.text('Remaining sales slots: Unlimited'), findsOneWidget);
-    expect(find.text('Traffic reset: Follows system settings'), findsOneWidget);
+    expect(find.text('Devices: Unlimited'), findsOneWidget);
+    expect(
+        find.text('Traffic reset: Follows system settings'), findsOneWidget);
   });
 
   testWidgets('zero limits are unlimited but zero sales slots stay zero',
       (tester) async {
     await _pump(tester, _catalog(_plan(speed: 0, devices: 0, slots: 0)));
-    expect(find.text('Speed limit: Unlimited'), findsOneWidget);
-    expect(find.text('Device limit: Unlimited'), findsOneWidget);
-    expect(find.text('Remaining sales slots: 0'), findsOneWidget);
-    expect(find.textContaining('0 GiB'), findsOneWidget);
+    expect(find.text('Devices: Unlimited'), findsOneWidget);
+    expect(find.text('Sold out'), findsOneWidget);
+    expect(find.text('200G'), findsOneWidget);
   });
 
   testWidgets('positive limits and server tags are retained without new claims',
@@ -163,17 +156,18 @@ void main() {
         )));
     expect(find.text('Speed limit: 300 Mbps'), findsOneWidget);
     expect(find.text('Device limit: 5'), findsOneWidget);
-    expect(find.text('Remaining sales slots: 12'), findsOneWidget);
+    expect(find.text('12 left'), findsOneWidget);
     expect(find.text('多设备'), findsOneWidget);
     expect(find.text('<b>原始标签</b>'), findsOneWidget);
     expect(find.text('重复'), findsNWidgets(2));
+    expect(find.text('Popular tier'), findsNothing);
     expect(find.text('Recommended'), findsNothing);
   });
 
   for (final (code, label) in [
     (0, 'On the 1st of each month'),
     (1, 'Monthly on the expiry day'),
-    (2, 'Does not reset automatically'),
+    (2, 'Traffic valid until used up'),
     (3, 'On January 1 each year'),
     (4, 'Yearly on the expiry month and day'),
     (99, 'Unknown rule (99)'),
@@ -181,7 +175,8 @@ void main() {
   ]) {
     testWidgets('renders traffic reset code $code explicitly', (tester) async {
       await _pump(tester, _catalog(_plan(reset: code)));
-      expect(find.text('Traffic reset: $label'), findsOneWidget);
+      final expected = code == 2 ? label : 'Traffic reset: $label';
+      expect(find.text(expected), findsOneWidget);
     });
   }
 
@@ -642,14 +637,14 @@ void main() {
     (
       const Locale('en'),
       'Plan details',
-      'Traffic reset: Does not reset automatically'
+      'Traffic valid until used up'
     ),
-    (const Locale('zh', 'CN'), '套餐说明', '流量重置: 不自动重置'),
-    (const Locale('ja'), 'プランの詳細', '通信量のリセット: 自動リセットなし'),
+    (const Locale('zh', 'CN'), '套餐说明', '流量用完为止'),
+    (const Locale('ja'), 'プランの詳細', '通信量は使い切るまで有効'),
     (
       const Locale('ru'),
       'Описание тарифа',
-      'Сброс трафика: Без автоматического сброса'
+      'Трафик действует до исчерпания'
     ),
   ]) {
     for (final brightness in [Brightness.light, Brightness.dark]) {

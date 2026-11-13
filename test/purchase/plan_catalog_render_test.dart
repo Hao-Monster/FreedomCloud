@@ -169,7 +169,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(tester.takeException(), isNull, reason: name);
       expect(find.text('示例流量包'), findsOneWidget);
-      expect(find.text('流量重置: 不自动重置'), findsOneWidget);
+      expect(find.text('流量用完为止'), findsOneWidget);
       expect(find.text('套餐权益以实际配置为准', findRichText: true), findsOneWidget);
       final boundary = boundaryKey.currentContext!.findRenderObject()!
           as RenderRepaintBoundary;

@@ -475,6 +475,45 @@
   "purchasePlanResetPrice": "通信量リセットの表示価格",
   "purchasePlanDetails": "プランの詳細",
   "purchasePlanImageNotLoaded": "外部画像は読み込まれていません",
+  "purchaseAcquirePlanCode": "コードを取得",
+  "purchasePlanFreeBadge": "無料体験",
+  "purchasePlanFreeHint": "無料",
+  "purchasePlanUnitPriceHint": "約 {price} / G",
+  "@purchasePlanUnitPriceHint": {
+    "placeholders": {
+      "price": {
+        "type": "String"
+      }
+    }
+  },
+  "purchaseSpecDevicesUnlimited": "デバイス数：無制限",
+  "purchaseSpecDevicesCount": "デバイス上限：{count} 台",
+  "@purchaseSpecDevicesCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "purchaseSpecDurationUnlimited": "利用期間：無期限",
+  "purchaseSpecBillingCycle": "課金周期：{periods}",
+  "@purchaseSpecBillingCycle": {
+    "placeholders": {
+      "periods": {
+        "type": "String"
+      }
+    }
+  },
+  "purchaseSpecTrafficUntilUsed": "通信量は使い切るまで有効",
+  "purchaseSpecSpeedLimit": "速度上限：{speed} Mbps",
+  "@purchaseSpecSpeedLimit": {
+    "placeholders": {
+      "speed": {
+        "type": "int"
+      }
+    }
+  },
+  "purchaseSpecAllDevicesSupported": "すべての端末タイプに対応",
   "tunStatusUnknown": "状態不明",
   "tunStatusOff": "停止中",
   "tunStatusOn": "起動済み",

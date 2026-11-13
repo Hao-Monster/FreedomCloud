@@ -1339,6 +1339,45 @@
   "purchasePlansErrorHint": "Вход, бесплатная регистрация и активация кода справа остаются доступны.",
   "purchasePlanFeaturedBadge": "Рекомендуем",
   "purchasePlanBuyNow": "Купить",
+  "purchaseAcquirePlanCode": "Получить код",
+  "purchasePlanFreeBadge": "Пробный",
+  "purchasePlanFreeHint": "Бесплатно",
+  "purchasePlanUnitPriceHint": "~{price} / ГБ",
+  "@purchasePlanUnitPriceHint": {
+    "placeholders": {
+      "price": {
+        "type": "String"
+      }
+    }
+  },
+  "purchaseSpecDevicesUnlimited": "Устройства: без лимита",
+  "purchaseSpecDevicesCount": "Лимит устройств: {count}",
+  "@purchaseSpecDevicesCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "purchaseSpecDurationUnlimited": "Срок действия: бессрочно",
+  "purchaseSpecBillingCycle": "Период оплаты: {periods}",
+  "@purchaseSpecBillingCycle": {
+    "placeholders": {
+      "periods": {
+        "type": "String"
+      }
+    }
+  },
+  "purchaseSpecTrafficUntilUsed": "Трафик действует до исчерпания",
+  "purchaseSpecSpeedLimit": "Скорость: до {speed} Мбит/с",
+  "@purchaseSpecSpeedLimit": {
+    "placeholders": {
+      "speed": {
+        "type": "int"
+      }
+    }
+  },
+  "purchaseSpecAllDevicesSupported": "Поддержка всех типов устройств",
   "purchaseHeaderTrialBadge": "2 ГиБ бесплатно при регистрации · Бессрочный трафик",
   "purchaseHeaderSyncedBadge": "Узлы синхронизированы",
   "purchaseAuthTabLogin": "Вход",

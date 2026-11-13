@@ -830,7 +830,45 @@
   "purchaseFilterAll": "All plans",
   "purchaseFilterPeriod": "Recurring",
   "purchaseFilterOnetime": "Traffic pack",
-  "purchaseAcquirePlanCode": "Get redemption code",
+  "purchaseAcquirePlanCode": "Get code",
+  "purchasePlanFreeBadge": "Free trial",
+  "purchasePlanFreeHint": "Free",
+  "purchasePlanUnitPriceHint": "~{price} / GB",
+  "@purchasePlanUnitPriceHint": {
+    "placeholders": {
+      "price": {
+        "type": "String"
+      }
+    }
+  },
+  "purchaseSpecDevicesUnlimited": "Devices: Unlimited",
+  "purchaseSpecDevicesCount": "Device limit: {count}",
+  "@purchaseSpecDevicesCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "purchaseSpecDurationUnlimited": "Validity: Never expires",
+  "purchaseSpecBillingCycle": "Billing cycle: {periods}",
+  "@purchaseSpecBillingCycle": {
+    "placeholders": {
+      "periods": {
+        "type": "String"
+      }
+    }
+  },
+  "purchaseSpecTrafficUntilUsed": "Traffic valid until used up",
+  "purchaseSpecSpeedLimit": "Speed limit: {speed} Mbps",
+  "@purchaseSpecSpeedLimit": {
+    "placeholders": {
+      "speed": {
+        "type": "int"
+      }
+    }
+  },
+  "purchaseSpecAllDevicesSupported": "Supports all device types",
   "purchasePlanSoldOut": "Sold out",
   "purchasePlanLowStock": "{count} left",
   "@purchasePlanLowStock": {
