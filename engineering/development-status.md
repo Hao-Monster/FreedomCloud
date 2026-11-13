@@ -2,6 +2,27 @@
 
 更新日期：2026-11-13。当前阶段是快速开发、快速迭代和部分功能预览。本文记录来源与验收边界；每次继续开发仍需核实实际 Git/PR/CI 状态，不能把历史报告视为当前通过证明。
 
+## Windows UIA 非读屏探测拦截与代理总览 `kValue` 语义降噪防 `(未响应)` / 闪退 TDD 落地（2026-11-13）
+
+- 需求与根因：针对构建 `196889071d39` 实机出现的 14 秒 `自由云 · FreedomNet (未响应)` 后闪退（`FlClashX.exe.58432.dmp` / `FlClashX.exe(1).58432.dmp` 及同日 `15584.dmp`），经 `cdb.exe` 转储反汇编确证：非读屏宿主软件（Tobii Eye Tracking、百度输入法 `baiducnTSF.dll` / `UIPFullx64.dll`、Snipaste）向 Flutter 窗口发送 `WM_GETOBJECT`（`0x003D`）误激活 `flutter_windows.dll` 内 `AccessibilityBridgeWindows`；随后代理总览页滚动/批量测速更新带 `kValue`（`0x1B`）的进度条语义触发 `UIAutomationCore!UiaRaiseAutomationPropertyChangedEvent` -> `oleacc!PropMgrClient_LookupProp` -> `ui::AXPlatformNodeWin::GetPropertyValue` -> `ui::AXNodeData::GetStringAttribute` UAF 崩溃（`0xc0000005` -> `0xc000041d`），WER 两次挂起 UI 线程采集 dump 共 14s 导致 DWM 标记 `(未响应)`。
+- 双层 TDD 代码落地（本地 `development` 代码提交 `6a78972a`，`6a78972a2b86cd7c1ea6689b4938a41714b6cffd`）：
+  1. **第 1 层 — 原生 Windows Runner UIA 卫士（[`uia_guard.h`](file:///e:/CodeWorkstation/FlClashX/windows/runner/uia_guard.h)、[`uia_guard.cpp`](file:///e:/CodeWorkstation/FlClashX/windows/runner/uia_guard.cpp)、[`flutter_window.cpp`](file:///e:/CodeWorkstation/FlClashX/windows/runner/flutter_window.cpp)、[`windows/runner/CMakeLists.txt`](file:///e:/CodeWorkstation/FlClashX/windows/runner/CMakeLists.txt)）**：
+     - 零堆分配、无异常依赖（兼容 `_HAS_EXCEPTIONS=0` 与 `/W4 /WX`），使用 `comctl32!SetWindowSubclass` 保护主 `FlutterWindow`、`FLUTTERVIEW` 子窗口、`WM_PARENTNOTIFY(WM_CREATE)` 动态子窗口，并通过 `DesktopMultiWindowSetWindowCreatedCallback` 覆盖 `desktop_multi_window` 次级窗口；
+     - 默认通过 `SystemParametersInfoW(SPI_GETSCREENREADER)` 仅在真实读屏器开启时放行 `WM_GETOBJECT`，屏蔽非读屏后台工具误激活；支持 `FLCLASHX_UIA_MODE=allow|block|auto` 与 `FLCLASHX_FORCE_UIA=1|0` 覆盖；`WM_IME_*`、键鼠、焦点、DPI 等全部消息原样透传；`FlutterWindow::MessageHandler` 中先于 `HandleTopLevelWindowProc` 短路拦截。
+  2. **第 2 层 — 代理总览装饰性进度条 `kValue` 语义隔离（[`overview.dart`](file:///e:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart)、[`profile_selector.dart`](file:///e:/CodeWorkstation/FlClashX/lib/views/proxies/overview/profile_selector.dart)）**：
+     - 对批量测速顶部 `LinearProgressIndicator`、订阅卡片流量配额条 `LinearProgressIndicator`、加载态 `LinearProgressIndicator` 及内嵌测速/连接/更新态 `CircularProgressIndicator` 共 7 处纯装饰指示器外包 `ExcludeSemantics`，保留全部相邻业务可读文本语义与组件树结构。
+  3. **TDD 自动化测试（[`uia_guard_test.cpp`](file:///e:/CodeWorkstation/FlClashX/windows/runner/uia_guard_test.cpp)、[`resource_leak_and_uia_stability_tdd_test.dart`](file:///e:/CodeWorkstation/FlClashX/test/common/resource_leak_and_uia_stability_tdd_test.dart) `TDD-6` & `TDD-7`）**：
+     - C++ Win32 隐藏真实 `HWND` 套件覆盖 5 类用例（非读屏默认阻断 `WM_GETOBJECT`、读屏开启放行、`FLCLASHX_UIA_MODE`/`FLCLASHX_FORCE_UIA` 矩阵与 `WM_SETTINGCHANGE`、`WM_IME_*`/键鼠/DPI 零副作用透传、幂等安装+动态子窗口自动保护+`WM_NCDESTROY` 清理）；Dart 侧覆盖 `NodeOverviewView` 无 `kValue` 进度条语义泄露与 Runner 接线契约。
+- 验证记录：
+  - 前置有效 Red：**PASS**（C++ `cl.exe /W4 /WX /D_HAS_EXCEPTIONS=0` 编译桩运行 `flclashx_uia_guard_test.exe` 失败 `RED_EXIT=1`；Flutter `TDD-6` 实测捕获 `SemanticsNode(role: progressBar, value: "30")` 泄露与 `TDD-7` 接线断言失败 `+0 -2`）；
+  - C++ Win32 单元测试（Green）：**PASS**（`cl.exe` 与隔离 CMake `Ninja Multi-Config` Release 目标 `flclashx_uia_guard_test.exe` 均输出 `flclashx_uia_guard_test: PASS`，退出码 `0`）；
+  - 完整 `FlClashX` 原生编译与链接校验：**PASS**（隔离临时目录 `CMake + Ninja Multi-Config` `Debug` 目标 `--target FlClashX` `[61/61] Linking CXX executable runner\Debug\FlClashX.exe` 成功生成 `1,067,520` 字节，全插件 + `desktop_multi_window_plugin` + `uia_guard.cpp` + `comctl32.lib` 0 错误，验证后已清理临时构建目录，未覆盖 `dist/`）；
+  - Flutter TDD 与 UI/导航全量回归：**PASS**（[`resource_leak_and_uia_stability_tdd_test.dart`](file:///e:/CodeWorkstation/FlClashX/test/common/resource_leak_and_uia_stability_tdd_test.dart) `7/7 PASS`；[`node_overview_test.dart`](file:///e:/CodeWorkstation/FlClashX/test/views/node_overview_test.dart) + [`freedomnet_code_review_tdd_test.dart`](file:///e:/CodeWorkstation/FlClashX/test/views/freedomnet_code_review_tdd_test.dart) + [`freedomnet_commercial_ui_test.dart`](file:///e:/CodeWorkstation/FlClashX/test/views/freedomnet_commercial_ui_test.dart) + [`novice_expert_navigation_test.dart`](file:///e:/CodeWorkstation/FlClashX/test/views/novice_expert_navigation_test.dart) **`146/146` 全绿**）；
+  - 静态分析与补丁检查：**PASS**（`dart analyze --fatal-warnings lib/views/proxies/overview/overview.dart lib/views/proxies/overview/profile_selector.dart test/common/resource_leak_and_uia_stability_tdd_test.dart` 返回退出码 `0`，`0 error / 0 warning`；`git diff --cached --check` 零错误）；
+  - 新预览包构建：**NOT RUN（按用户指令 `暂不构建测试包`，`dist/` 与在跑宿主进程未触碰）**；
+  - 宿主机实机窗口运行：**NOT RUN（遵守协作规则未拉起或干扰现役 `FlClashX.exe` 与代理/TUN/服务）**；
+  - 远端推送 / PR / 合并 / 云端 CI：**NOT RUN**。
+
 ## 门户绿底 `F` 全局品牌图标统一 TDD 落地与最新 Windows `amd64` 预览包交付（`196889071d39`，2026-11-13）
 
 - 需求与范围：按用户提供的 Web 门户 `<span class="portal-brand-mark">F</span>`（`#71D7A7` 薄荷翠绿圆角方块底 + `#102018` 深墨绿几何粗体 `F`）统一替换应用内全局品牌标（含侧边栏顶部、窄窗顶栏、窗口左上角、空配置 `HeroConnect`、「关于」及致敬弹窗）、Windows 任务栏 / EXE 图标（`app_icon.ico`），以及系统托盘双态图标（运行中 `icon.ico` 为绿底黑字 `F`；停止/关闭代理后深/浅色系统分别显示 `icon_stop_white.ico` / `icon_stop_black.ico` 透明底同款圆角线框 `F`），并同步更新 macOS 与 Android 启动器图标资源。
