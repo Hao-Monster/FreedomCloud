@@ -266,7 +266,8 @@ extension ActionResultExt on ActionResult {
     if (code == ResultType.success) {
       return Result.success(data);
     } else {
-      return Result.error(data);
+      final message = data is String ? data : (data?.toString() ?? '');
+      return Result.error(message);
     }
   }
 }

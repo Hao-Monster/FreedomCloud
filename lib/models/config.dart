@@ -41,7 +41,6 @@ const defaultThemeProps = ThemeProps(
   primaryColor: defaultPrimaryColor,
   themeMode: ThemeMode.dark,
 );
-const int _legacyDefaultPrimaryColor = 0xFF03A9F4;
 
 const defaultConnectionTableColumns = [
   'status',
@@ -264,6 +263,7 @@ class ThemeProps with _$ThemeProps {
     @Default(defaultPrimaryColors) List<int> primaryColors,
     @Default(ThemeMode.dark) ThemeMode themeMode,
     @Default(true) bool freedomNetThemeV1Migrated,
+    @Default(true) bool freedomNetThemeV2Migrated,
     @Default(DynamicSchemeVariant.content) DynamicSchemeVariant schemeVariant,
     @Default(false) bool pureBlack,
     @Default(TextScale()) TextScale textScale,
@@ -526,37 +526,33 @@ class Config with _$Config {
     } catch (_) {}
 
     try {
-      // One-shot migration: upgrade legacy uncustomized themeProps
-      // (0xFF03A9F4 + ThemeMode.system) to Flagship Obsidian Slate
-      // (defaultPrimaryColor + ThemeMode.dark) and inject defaultPrimaryColor
-      // into primaryColors while preserving explicit user customizations and
-      // any subsequent user choice after freedomNetThemeV1Migrated == true.
+      // One-shot V2 migration: upgrade pre-V2 themeProps (including legacy
+      // custom swatches, pureBlack: true, or tonalSpot variants) once to
+      // Flagship Plan A Obsidian Slate + Electric Cyan while preserving any
+      // subsequent user customizations after freedomNetThemeV2Migrated == true.
       final rawThemeProps = normalizedJson["themeProps"];
       if (rawThemeProps is Map) {
         final nextThemeProps = Map<String, Object?>.from(rawThemeProps);
-        if (nextThemeProps["freedomNetThemeV1Migrated"] != true) {
-          final rawColor = nextThemeProps["primaryColor"];
-          final rawMode = nextThemeProps["themeMode"];
-          final isLegacyDefaultColor = rawColor == null ||
-              (rawColor is num &&
-                  rawColor.toInt() == _legacyDefaultPrimaryColor);
-          final isLegacyDefaultMode = rawMode == null || rawMode == "system";
-          if (isLegacyDefaultColor && isLegacyDefaultMode) {
-            nextThemeProps["primaryColor"] = defaultPrimaryColor;
-            nextThemeProps["themeMode"] = "dark";
-          }
+        if (nextThemeProps["freedomNetThemeV2Migrated"] != true) {
+          nextThemeProps["primaryColor"] = defaultPrimaryColor;
+          nextThemeProps["themeMode"] = "dark";
+          nextThemeProps["pureBlack"] = false;
+          nextThemeProps.remove("prueBlack");
+          nextThemeProps["schemeVariant"] = "content";
           final rawSwatches = nextThemeProps["primaryColors"];
-          if (rawSwatches is List) {
-            final nextSwatches = <int>[
+          final nextSwatches = <int>[
+            defaultPrimaryColor,
+            if (rawSwatches is List)
               for (final item in rawSwatches)
-                if (item is num) item.toInt(),
-            ];
-            if (!nextSwatches.contains(defaultPrimaryColor)) {
-              nextSwatches.insert(0, defaultPrimaryColor);
-            }
-            nextThemeProps["primaryColors"] = nextSwatches;
-          }
+                if (item is num && item.toInt() != defaultPrimaryColor)
+                  item.toInt()
+            else
+              for (final item in defaultPrimaryColors)
+                if (item != defaultPrimaryColor) item,
+          ];
+          nextThemeProps["primaryColors"] = nextSwatches;
           nextThemeProps["freedomNetThemeV1Migrated"] = true;
+          nextThemeProps["freedomNetThemeV2Migrated"] = true;
         }
         normalizedJson["themeProps"] = nextThemeProps;
       }

@@ -366,6 +366,8 @@ _$ThemePropsImpl _$$ThemePropsImplFromJson(Map<String, dynamic> json) =>
           ThemeMode.dark,
       freedomNetThemeV1Migrated:
           json['freedomNetThemeV1Migrated'] as bool? ?? true,
+      freedomNetThemeV2Migrated:
+          json['freedomNetThemeV2Migrated'] as bool? ?? true,
       schemeVariant: $enumDecodeNullable(
               _$DynamicSchemeVariantEnumMap, json['schemeVariant']) ??
           DynamicSchemeVariant.content,
@@ -381,6 +383,7 @@ Map<String, dynamic> _$$ThemePropsImplToJson(_$ThemePropsImpl instance) =>
       'primaryColors': instance.primaryColors,
       'themeMode': _$ThemeModeEnumMap[instance.themeMode]!,
       'freedomNetThemeV1Migrated': instance.freedomNetThemeV1Migrated,
+      'freedomNetThemeV2Migrated': instance.freedomNetThemeV2Migrated,
       'schemeVariant': _$DynamicSchemeVariantEnumMap[instance.schemeVariant]!,
       'pureBlack': instance.pureBlack,
       'textScale': instance.textScale,

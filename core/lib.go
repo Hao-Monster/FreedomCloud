@@ -32,6 +32,10 @@ func (result ActionResult) send() {
 		result.Code, result.Data = -1, "Core response encoding failed"
 		data, _ = result.Json()
 	}
+	if result.Response != nil {
+		result.Response(data)
+		return
+	}
 	invokeCallback(result.Callback, string(data))
 }
 

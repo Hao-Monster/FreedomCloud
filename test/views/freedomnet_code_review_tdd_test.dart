@@ -269,43 +269,60 @@ void main() {
     expect(migratedNullColor.themeProps.themeMode, equals(ThemeMode.dark));
     expect(migratedNullColor.themeProps.freedomNetThemeV1Migrated, isTrue);
 
-    // 2. Legacy upgrade config where user explicitly customized brown + light mode
+    // 2. Legacy upgrade config where user previously had green swatch + pureBlack + tonalSpot
+    // (even if freedomNetThemeV1Migrated was already true): V2 one-shot migration resets once
+    // to Flagship Plan A (Obsidian Slate + Electric Cyan + dark + pureBlack:false + content).
     final legacyCustomizedJson = <String, Object?>{
       'themeProps': <String, Object?>{
-        'primaryColor': 0xFF795548,
-        'primaryColors': <int>[0xFF795548, 0xFF03A9F4],
-        'themeMode': 'light',
+        'primaryColor': 0xFFC9E7CA,
+        'primaryColors': <int>[0xFFC9E7CA, 0xFF03A9F4],
+        'themeMode': 'dark',
+        'freedomNetThemeV1Migrated': true,
+        'schemeVariant': 'tonalSpot',
+        'pureBlack': true,
       },
     };
     final migratedCustom = Config.compatibleFromJson(
       legacyCustomizedJson,
       isDesktop: true,
     );
-    expect(migratedCustom.themeProps.primaryColor, equals(0xFF795548));
-    expect(migratedCustom.themeProps.themeMode, equals(ThemeMode.light));
+    expect(migratedCustom.themeProps.primaryColor, equals(defaultPrimaryColor));
+    expect(migratedCustom.themeProps.themeMode, equals(ThemeMode.dark));
+    expect(migratedCustom.themeProps.pureBlack, isFalse);
     expect(
-      migratedCustom.themeProps.primaryColors,
-      contains(defaultPrimaryColor),
+      migratedCustom.themeProps.schemeVariant,
+      equals(DynamicSchemeVariant.content),
     );
     expect(
-      migratedCustom.themeProps.toJson()['freedomNetThemeV1Migrated'],
+      migratedCustom.themeProps.primaryColors.first,
+      equals(defaultPrimaryColor),
+    );
+    expect(
+      migratedCustom.themeProps.toJson()['freedomNetThemeV2Migrated'],
       isTrue,
     );
 
-    // 3. Post-migration idempotency: if user later switches back to system + 0xFF03A9F4,
+    // 3. Post-V2 migration idempotency: if user later customizes light/system + pureBlack + color,
     // compatibleFromJson must NOT overwrite their choice again.
-    final userReverted = migratedDefault.copyWith(
-      themeProps: migratedDefault.themeProps.copyWith(
-        primaryColor: 0xFF03A9F4,
-        themeMode: ThemeMode.system,
+    final userReverted = migratedCustom.copyWith(
+      themeProps: migratedCustom.themeProps.copyWith(
+        primaryColor: 0xFF795548,
+        themeMode: ThemeMode.light,
+        pureBlack: true,
+        schemeVariant: DynamicSchemeVariant.tonalSpot,
       ),
     );
     final reloaded = Config.compatibleFromJson(
       jsonDecode(jsonEncode(userReverted)) as Map<String, Object?>,
       isDesktop: true,
     );
-    expect(reloaded.themeProps.primaryColor, equals(0xFF03A9F4));
-    expect(reloaded.themeProps.themeMode, equals(ThemeMode.system));
+    expect(reloaded.themeProps.primaryColor, equals(0xFF795548));
+    expect(reloaded.themeProps.themeMode, equals(ThemeMode.light));
+    expect(reloaded.themeProps.pureBlack, isTrue);
+    expect(
+      reloaded.themeProps.schemeVariant,
+      equals(DynamicSchemeVariant.tonalSpot),
+    );
   });
 
   testWidgets(

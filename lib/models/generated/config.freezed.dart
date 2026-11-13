@@ -2502,6 +2502,7 @@ mixin _$ThemeProps {
   List<int> get primaryColors => throw _privateConstructorUsedError;
   ThemeMode get themeMode => throw _privateConstructorUsedError;
   bool get freedomNetThemeV1Migrated => throw _privateConstructorUsedError;
+  bool get freedomNetThemeV2Migrated => throw _privateConstructorUsedError;
   DynamicSchemeVariant get schemeVariant => throw _privateConstructorUsedError;
   bool get pureBlack => throw _privateConstructorUsedError;
   TextScale get textScale => throw _privateConstructorUsedError;
@@ -2527,6 +2528,7 @@ abstract class $ThemePropsCopyWith<$Res> {
       List<int> primaryColors,
       ThemeMode themeMode,
       bool freedomNetThemeV1Migrated,
+      bool freedomNetThemeV2Migrated,
       DynamicSchemeVariant schemeVariant,
       bool pureBlack,
       TextScale textScale});
@@ -2553,6 +2555,7 @@ class _$ThemePropsCopyWithImpl<$Res, $Val extends ThemeProps>
     Object? primaryColors = null,
     Object? themeMode = null,
     Object? freedomNetThemeV1Migrated = null,
+    Object? freedomNetThemeV2Migrated = null,
     Object? schemeVariant = null,
     Object? pureBlack = null,
     Object? textScale = null,
@@ -2573,6 +2576,10 @@ class _$ThemePropsCopyWithImpl<$Res, $Val extends ThemeProps>
       freedomNetThemeV1Migrated: null == freedomNetThemeV1Migrated
           ? _value.freedomNetThemeV1Migrated
           : freedomNetThemeV1Migrated // ignore: cast_nullable_to_non_nullable
+              as bool,
+      freedomNetThemeV2Migrated: null == freedomNetThemeV2Migrated
+          ? _value.freedomNetThemeV2Migrated
+          : freedomNetThemeV2Migrated // ignore: cast_nullable_to_non_nullable
               as bool,
       schemeVariant: null == schemeVariant
           ? _value.schemeVariant
@@ -2613,6 +2620,7 @@ abstract class _$$ThemePropsImplCopyWith<$Res>
       List<int> primaryColors,
       ThemeMode themeMode,
       bool freedomNetThemeV1Migrated,
+      bool freedomNetThemeV2Migrated,
       DynamicSchemeVariant schemeVariant,
       bool pureBlack,
       TextScale textScale});
@@ -2638,6 +2646,7 @@ class __$$ThemePropsImplCopyWithImpl<$Res>
     Object? primaryColors = null,
     Object? themeMode = null,
     Object? freedomNetThemeV1Migrated = null,
+    Object? freedomNetThemeV2Migrated = null,
     Object? schemeVariant = null,
     Object? pureBlack = null,
     Object? textScale = null,
@@ -2658,6 +2667,10 @@ class __$$ThemePropsImplCopyWithImpl<$Res>
       freedomNetThemeV1Migrated: null == freedomNetThemeV1Migrated
           ? _value.freedomNetThemeV1Migrated
           : freedomNetThemeV1Migrated // ignore: cast_nullable_to_non_nullable
+              as bool,
+      freedomNetThemeV2Migrated: null == freedomNetThemeV2Migrated
+          ? _value.freedomNetThemeV2Migrated
+          : freedomNetThemeV2Migrated // ignore: cast_nullable_to_non_nullable
               as bool,
       schemeVariant: null == schemeVariant
           ? _value.schemeVariant
@@ -2683,6 +2696,7 @@ class _$ThemePropsImpl implements _ThemeProps {
       final List<int> primaryColors = defaultPrimaryColors,
       this.themeMode = ThemeMode.dark,
       this.freedomNetThemeV1Migrated = true,
+      this.freedomNetThemeV2Migrated = true,
       this.schemeVariant = DynamicSchemeVariant.content,
       this.pureBlack = false,
       this.textScale = const TextScale()})
@@ -2710,6 +2724,9 @@ class _$ThemePropsImpl implements _ThemeProps {
   final bool freedomNetThemeV1Migrated;
   @override
   @JsonKey()
+  final bool freedomNetThemeV2Migrated;
+  @override
+  @JsonKey()
   final DynamicSchemeVariant schemeVariant;
   @override
   @JsonKey()
@@ -2720,7 +2737,7 @@ class _$ThemePropsImpl implements _ThemeProps {
 
   @override
   String toString() {
-    return 'ThemeProps(primaryColor: $primaryColor, primaryColors: $primaryColors, themeMode: $themeMode, freedomNetThemeV1Migrated: $freedomNetThemeV1Migrated, schemeVariant: $schemeVariant, pureBlack: $pureBlack, textScale: $textScale)';
+    return 'ThemeProps(primaryColor: $primaryColor, primaryColors: $primaryColors, themeMode: $themeMode, freedomNetThemeV1Migrated: $freedomNetThemeV1Migrated, freedomNetThemeV2Migrated: $freedomNetThemeV2Migrated, schemeVariant: $schemeVariant, pureBlack: $pureBlack, textScale: $textScale)';
   }
 
   @override
@@ -2737,8 +2754,11 @@ class _$ThemePropsImpl implements _ThemeProps {
             (identical(other.freedomNetThemeV1Migrated,
                     freedomNetThemeV1Migrated) ||
                 other.freedomNetThemeV1Migrated == freedomNetThemeV1Migrated) &&
+            (identical(other.freedomNetThemeV2Migrated,
+                    freedomNetThemeV2Migrated) ||
+                other.freedomNetThemeV2Migrated == freedomNetThemeV2Migrated) &&
             (identical(other.schemeVariant, schemeVariant) ||
-                other.schemeVariant == schemeVariant) &&
+                 other.schemeVariant == schemeVariant) &&
             (identical(other.pureBlack, pureBlack) ||
                 other.pureBlack == pureBlack) &&
             (identical(other.textScale, textScale) ||
@@ -2753,6 +2773,7 @@ class _$ThemePropsImpl implements _ThemeProps {
       const DeepCollectionEquality().hash(_primaryColors),
       themeMode,
       freedomNetThemeV1Migrated,
+      freedomNetThemeV2Migrated,
       schemeVariant,
       pureBlack,
       textScale);
@@ -2779,6 +2800,7 @@ abstract class _ThemeProps implements ThemeProps {
       final List<int> primaryColors,
       final ThemeMode themeMode,
       final bool freedomNetThemeV1Migrated,
+      final bool freedomNetThemeV2Migrated,
       final DynamicSchemeVariant schemeVariant,
       final bool pureBlack,
       final TextScale textScale}) = _$ThemePropsImpl;
@@ -2794,6 +2816,8 @@ abstract class _ThemeProps implements ThemeProps {
   ThemeMode get themeMode;
   @override
   bool get freedomNetThemeV1Migrated;
+  @override
+  bool get freedomNetThemeV2Migrated;
   @override
   DynamicSchemeVariant get schemeVariant;
   @override

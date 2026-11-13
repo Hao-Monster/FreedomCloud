@@ -2266,6 +2266,16 @@ class NodeCatalogService {
       }
     } catch (error) {
       if (_isCurrent(profile.id, generation)) _cache.remove(profile.id);
+      if ((error is CatalogBuildException &&
+              error.reason == 'runtimeUnavailable') ||
+          (error is String && error.startsWith('not_ready:'))) {
+        onError?.call('runtimeUnavailable');
+        return ProfileCatalog(
+          profileId: profile.id,
+          fingerprint: '',
+          status: ProfileCatalogStatus.loading,
+        );
+      }
       return ProfileCatalog(
         profileId: profile.id,
         fingerprint: fingerprint,

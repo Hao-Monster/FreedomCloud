@@ -619,15 +619,22 @@ abstract class ClashHandlerInterface with ClashInterface {
       );
 
   @override
-  Future<Result> getConfig(String path) => invoke<Result>(
-        method: ActionMethod.getConfig,
-        data: path,
-        timeout: const Duration(minutes: 2),
-        // A timed-out/failed read used to default to Result.success({}), making
-        // the caller treat an empty config as a successful load. Yield an error
-        // Result so getConfig()'s error path fires instead.
-        defaultValue: Result.error('getConfig timed out'),
-      );
+  Future<Result> getConfig(String path) {
+    final preflightNotReady = tunTransportNotReadyReason;
+    if (preflightNotReady != null) {
+      return Future.value(Result.error('not_ready:$preflightNotReady'));
+    }
+    return invoke<Result>(
+      method: ActionMethod.getConfig,
+      data: path,
+      timeout: const Duration(minutes: 2),
+      // Disconnected/deferred cold-start/restarting IPC completes via
+      // callbackDefaultMap / failSend; distinguish transient Core unavailability
+      // (`not_ready:*`) from an actual 2-minute timeout.
+      defaultValue: Result.error('not_ready:ipc_disconnected'),
+      onTimeout: () => Result.error('getConfig timed out'),
+    );
+  }
 
   @override
   Future<String> setupConfig(SetupParams setupParams) => invoke<String>(

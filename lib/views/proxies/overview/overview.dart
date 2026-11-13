@@ -295,6 +295,7 @@ class _IndexScanEpochState {
   final int generation;
   final Set<String> indexingProfileIds = <String>{};
   final Set<String> failedProfileIds = <String>{};
+  final Set<String> deferredProfileIds = <String>{};
   final Set<ProviderSubscription<Object?>> subscriptions =
       <ProviderSubscription<Object?>>{};
   int activeWorkers = 0;
@@ -305,6 +306,7 @@ class _IndexScanEpochState {
     cancelled = true;
     indexingProfileIds.clear();
     failedProfileIds.clear();
+    deferredProfileIds.clear();
     activeWorkers = 0;
     dirty = false;
     for (final sub in subscriptions.toList()) {
@@ -436,7 +438,8 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
         continue;
       }
       if (epoch.indexingProfileIds.contains(profile.id) ||
-          epoch.failedProfileIds.contains(profile.id)) {
+          epoch.failedProfileIds.contains(profile.id) ||
+          epoch.deferredProfileIds.contains(profile.id)) {
         continue;
       }
       epoch.indexingProfileIds.add(profile.id);
@@ -484,9 +487,13 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
           profile.lastUpdateDate == snapshotAtStart.lastUpdateDate &&
           profile.isUpdating == snapshotAtStart.isUpdating;
       if (unchangedSinceStart && !profile.isUpdating) {
-        final currentScript = ref.read(scriptStateProvider).currentScript;
-        _recordIndexedCatalog(profile, currentScript, catalog);
-        epoch.dirty = true;
+        if (catalog.status == ProfileCatalogStatus.loading) {
+          epoch.deferredProfileIds.add(profile.id);
+        } else {
+          final currentScript = ref.read(scriptStateProvider).currentScript;
+          _recordIndexedCatalog(profile, currentScript, catalog);
+          epoch.dirty = true;
+        }
       }
     } catch (_) {
       if (!_disposed &&
@@ -566,12 +573,22 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
         }),
       )
       ..add(
+        ref.listenManual<int>(coreCatalogEpochProvider, (previous, next) {
+          _scanEpoch.deferredProfileIds.clear();
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted && !_disposed) _scheduleCountryIndexScan();
+          });
+        }),
+      )
+      ..add(
         ref.listenManual<bool>(
           initProvider,
           (previous, isInit) {
             if (!isInit) return;
+            _scanEpoch.deferredProfileIds.clear();
             WidgetsBinding.instance.addPostFrameCallback((_) {
               if (!mounted || _disposed) return;
+              _scheduleCountryIndexScan();
               if (ref.read(coldStartZeroProfilePromptedProvider)) return;
               ref.read(coldStartZeroProfilePromptedProvider.notifier).state =
                   true;
@@ -5683,6 +5700,8 @@ class _ProfileNodesSliverState extends ConsumerState<_ProfileNodesSliver> {
     final error = (loaded?.hasError ?? false) ||
         catalog?.status == ProfileCatalogStatus.fileMissing ||
         catalog?.status == ProfileCatalogStatus.parseFailed;
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
     final textScale = MediaQuery.textScalerOf(context).scale(1.0);
     final headerExtent =
         math.max(44.0, (28.0 + 16.0 * textScale).ceilToDouble());
@@ -5697,6 +5716,10 @@ class _ProfileNodesSliverState extends ConsumerState<_ProfileNodesSliver> {
               delegate: _PinnedProfileHeader(
                   profile: profile,
                   active: widget.active,
+                  surfaceColor: colors.surface,
+                  hairlineColor: freedomNetHairlineColor(colors),
+                  titleStyle: theme.textTheme.titleSmall,
+                  activeTextStyle: theme.textTheme.labelSmall,
                   extent: headerExtent)),
         if (metadata != null)
           SliverToBoxAdapter(
@@ -5835,10 +5858,18 @@ class _PinnedProfileHeader extends SliverPersistentHeaderDelegate {
   _PinnedProfileHeader({
     required this.profile,
     required this.active,
+    required this.surfaceColor,
+    required this.hairlineColor,
+    required this.titleStyle,
+    required this.activeTextStyle,
     this.extent = 44,
   });
   final Profile profile;
   final bool active;
+  final Color surfaceColor;
+  final Color hairlineColor;
+  final TextStyle? titleStyle;
+  final TextStyle? activeTextStyle;
   final double extent;
   @override
   double get minExtent => extent;
@@ -5848,36 +5879,48 @@ class _PinnedProfileHeader extends SliverPersistentHeaderDelegate {
   Widget build(
           BuildContext context, double shrinkOffset, bool overlapsContent) =>
       Material(
-          color: Theme.of(context).colorScheme.surface,
-          child: SizedBox.expand(
-              child: Padding(
-            key: ValueKey('overview-header-${profile.id}'),
-            padding: const EdgeInsets.symmetric(horizontal: 24),
-            child: Row(children: [
-              Expanded(
-                  child: Text(profile.label ?? profile.id,
+          animationDuration: Duration.zero,
+          color: surfaceColor,
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              border: Border(
+                bottom: BorderSide(color: hairlineColor),
+              ),
+            ),
+            child: SizedBox.expand(
+                child: Padding(
+              key: ValueKey('overview-header-${profile.id}'),
+              padding: const EdgeInsets.symmetric(horizontal: 24),
+              child: Row(children: [
+                Expanded(
+                    child: Text(profile.label ?? profile.id,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: titleStyle)),
+                if (active) ...[
+                  const SizedBox(width: 8),
+                  Flexible(
+                    flex: 0,
+                    child: Text(
+                      appLocalizations.nodeOverviewActive,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: Theme.of(context).textTheme.titleSmall)),
-              if (active) ...[
-                const SizedBox(width: 8),
-                Flexible(
-                  flex: 0,
-                  child: Text(
-                    appLocalizations.nodeOverviewActive,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context).textTheme.labelSmall,
+                      style: activeTextStyle,
+                    ),
                   ),
-                ),
-              ],
-            ]),
-          )));
+                ],
+              ]),
+            )),
+          ));
   @override
   bool shouldRebuild(covariant _PinnedProfileHeader oldDelegate) =>
       profile != oldDelegate.profile ||
       active != oldDelegate.active ||
-      extent != oldDelegate.extent;
+      extent != oldDelegate.extent ||
+      surfaceColor != oldDelegate.surfaceColor ||
+      hairlineColor != oldDelegate.hairlineColor ||
+      titleStyle != oldDelegate.titleStyle ||
+      activeTextStyle != oldDelegate.activeTextStyle;
 }
 
 /// A sliver's painted geometry is the viewport authority; mounted headers alone

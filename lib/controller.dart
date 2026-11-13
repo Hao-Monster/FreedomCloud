@@ -3215,6 +3215,7 @@ class AppController {
         globalState.getCoreState(),
       );
     }
+    _ref.read(coreCatalogEpochProvider.notifier).state++;
     await clashCore.setUiActive(uiActivity.value);
     // Re-assert the log subscription on every attach. startLog() lives inside
     // clashCore.init(), which is skipped above when the core is already
@@ -3386,6 +3387,7 @@ class AppController {
     await _handlePreference();
     await _handlerDisclaimer();
     _ref.read(initProvider.notifier).value = true;
+    _ref.read(coreCatalogEpochProvider.notifier).state++;
     // Defer background subscription and release checks briefly so the initial
     // dashboard exit-IP probe gets uncontested DNS and proxy bandwidth.
     Future.delayed(

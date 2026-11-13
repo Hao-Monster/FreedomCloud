@@ -795,14 +795,30 @@ final nodeHealthEntriesProvider = Provider.autoDispose
       .readProfile(profileId, testUrl: url);
 });
 
+/// Incremented whenever ClashCore finishes initialization / re-attach so any
+/// profile catalog read that previously hit `runtimeUnavailable` (cold-start
+/// preload, deferred Windows Agent UAC, or manual Core restart) re-evaluates.
+final coreCatalogEpochProvider = StateProvider<int>((ref) => 0);
+
 // Inject only the IO boundary in tests; provider invalidation stays real.
 final nodeCatalogServiceFactoryProvider =
     Provider<NodeCatalogService Function()>((ref) => () => NodeCatalogService(
-          readProfileConfig: (id) {
+          readProfileConfig: (id) async {
             if (ClashCore.existingInterface == null) {
               throw const CatalogBuildException('runtimeUnavailable');
             }
-            return globalState.getProfileConfig(id);
+            try {
+              return await globalState.getProfileConfig(id);
+            } catch (error) {
+              if (error is String && error.startsWith('not_ready:')) {
+                throw const CatalogBuildException('runtimeUnavailable');
+              }
+              if (error is CatalogCoreException &&
+                  error.reason == 'transportFailure') {
+                throw const CatalogBuildException('runtimeUnavailable');
+              }
+              rethrow;
+            }
           },
           evaluate: globalState.handleEvaluate,
           fileMetadata: (id) async {
@@ -958,11 +974,15 @@ final profileCatalogProvider = FutureProvider.autoDispose
         status: ProfileCatalogStatus.ready);
   }
   ref
+    ..watch(coreCatalogEpochProvider)
     ..watch(profilesProvider.select((profiles) {
       final profile = profiles.getProfile(profileId);
       return (profile?.url, profile?.lastUpdateDate, profile?.isUpdating);
     }))
     ..watch(scriptStateProvider.select((state) => state.currentScript));
+  if (globalState.isAppStateInitialized) {
+    ref.watch(initProvider);
+  }
   final profile = ref.read(profilesProvider).getProfile(profileId);
   if (profile == null) {
     return ProfileCatalog(
@@ -973,7 +993,7 @@ final profileCatalogProvider = FutureProvider.autoDispose
   var disposed = false;
   ref.onDispose(() => disposed = true);
   final result = await ref.watch(nodeCatalogServiceProvider).load(profile);
-  if (!disposed) {
+  if (!disposed && result.status != ProfileCatalogStatus.loading) {
     final cached =
         Map<String, ProfileCatalog>.of(ref.read(cachedProfileCatalogsProvider))
           ..remove(profileId)

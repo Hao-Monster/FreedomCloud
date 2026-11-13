@@ -151,7 +151,11 @@ func (result ActionResult) success(data interface{}) {
 
 func (result ActionResult) error(data interface{}) {
 	result.Code = -1
-	result.Data = data
+	if err, ok := data.(error); ok {
+		result.Data = err.Error()
+	} else {
+		result.Data = data
+	}
 	result.send()
 }
 
@@ -314,9 +318,13 @@ func handleAction(action *Action, result ActionResult) {
 			result.error("invalid data type")
 			return
 		}
+		if path != "fcx://runtime" && !isInit.Load() {
+			result.error("not_ready:core_uninitialized")
+			return
+		}
 		config, err := handleGetConfig(path)
 		if err != nil {
-			result.error(err)
+			result.error(err.Error())
 			return
 		}
 		result.success(config)
