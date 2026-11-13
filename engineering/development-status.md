@@ -2,6 +2,23 @@
 
 更新日期：2026-11-13。当前阶段是快速开发、快速迭代和部分功能预览。本文记录来源与验收边界；每次继续开发仍需核实实际 Git/PR/CI 状态，不能把历史报告视为当前通过证明。
 
+## 全量本地已开发功能 Windows `amd64` 预览包交付（`36d57861d3c6`，2026-11-13）
+
+- 构建来源与完整范围：基于本地 `development` 干净源码快照 `36d57861d3c6d90db6159eedec02ba5c8b2cfa96`（代码提交 `3330ef37945cb7674070ccd3579b234b1a2cf86c`，tree `e8edba636c4e9410fe86758f798da3be5b06a7c8`），通过 `git archive` 干净快照全栈重新编译四组件、仓库内原生插件与 Flutter Release AOT，完整包含 `a229588..36d5786` 全部本地已开发功能：
+  1. 侧边栏「大佬模式 / 小白模式」固定锚定于「购买」正下方原地展开与收起（`3330ef37`）；
+  2. 网络客户端关闭逃逸泄露封堵、后台静默订阅刷新降噪与 Windows UIA 1Hz 语义风暴防闪退（`adef39f0`）；
+  3. 冷启动防误报「配置解析失败」、浅色模式吸顶栏黑块残留修复与存量主题 V2 迁移（`d01ae1dc`）；
+  4. 「自由云 · FreedomNet」方案 A 商业视觉系统与 `FlClashX` / `Gemini 4` 郑重致敬（`2c08c5e4` + `d05d9321`）；
+  5. 购买与账户中心 V3 全链路闭环（`01539220` + `93142ee6`）；
+  6. Windows WiFi 切换漫游恢复、首次配置延后 TUN 补拉起与智能/手动选点全配置节点概览（`a2295888..937ffcc8`）。
+- 预览包交付产物与 SHA256（保留上一包 `freedomnet-ui-d01ae1dc5ec1` 与 `runtime-fix-5764b81e3859` 未覆盖）：
+  - 免安装 ZIP 包：[`FreedomCloud-windows-amd64-freedomnet-ui-36d57861d3c6.zip`](file:///e:/CodeWorkstation/FlClashX/dist/FreedomCloud-windows-amd64-freedomnet-ui-36d57861d3c6.zip)（`167,935,033` 字节，SHA256 `99651915cec129881e717380515d403a58d21237b712c0ef5d2bae40f6bb469f`，73 文件往返解压校验 `PASS`）；
+  - 校验文件：[`FreedomCloud-windows-amd64-freedomnet-ui-36d57861d3c6.zip.sha256`](file:///e:/CodeWorkstation/FlClashX/dist/FreedomCloud-windows-amd64-freedomnet-ui-36d57861d3c6.zip.sha256)；
+  - 解压即用目录：[`FreedomCloud-windows-amd64-freedomnet-ui-36d57861d3c6`](file:///e:/CodeWorkstation/FlClashX/dist/FreedomCloud-windows-amd64-freedomnet-ui-36d57861d3c6)（含 [`BUILD-INFO.txt`](file:///e:/CodeWorkstation/FlClashX/dist/FreedomCloud-windows-amd64-freedomnet-ui-36d57861d3c6/BUILD-INFO.txt)、[`COMPONENTS.json`](file:///e:/CodeWorkstation/FlClashX/dist/FreedomCloud-windows-amd64-freedomnet-ui-36d57861d3c6/COMPONENTS.json)、[`CORE-PATCH.json`](file:///e:/CodeWorkstation/FlClashX/dist/FreedomCloud-windows-amd64-freedomnet-ui-36d57861d3c6/CORE-PATCH.json)、[`PREVIEW-README.txt`](file:///e:/CodeWorkstation/FlClashX/dist/FreedomCloud-windows-amd64-freedomnet-ui-36d57861d3c6/PREVIEW-README.txt)、[`SHA256SUMS.txt`](file:///e:/CodeWorkstation/FlClashX/dist/FreedomCloud-windows-amd64-freedomnet-ui-36d57861d3c6/SHA256SUMS.txt)）；
+  - 构建报告：[`freedomnet-ui-build-36d57861d3c6.json`](file:///e:/CodeWorkstation/FlClashX/dist/freedomnet-ui-build-36d57861d3c6.json)（源码归档 SHA256 `d89412e5e5e71aeccd3ea489310fc9e78a7a63f26d680eac0382aefbe481d352`，15 阶段构建与往返校验全部 `PASS`）；
+  - 同源重编绑定哈希：`FlClashCore.exe` SHA256 `d8da01554378bf08502f27c0960cbff4f4744ecbf04b73886b29085241569c09`（`72,532,480` 字节，已绑定 Helper 与 UI `CORE_SHA256`）、`FlClashAgent.exe` SHA256 `b9f5d8c3b6416f98497df0074afbe434d7beeaf0448710857fd456368eae0188`、`FlClashHelperService.exe` SHA256 `6a8dc1b72f8ef7911af725ef9d9384931a2a15ed819df5ae4ad1b3f16089c552`、`FlClashX.exe` SHA256 `7599687161212302eb0821d9b59f2ee371c7d5a79d95bd4a1644e7d72576dfa0`、`data/app.so` SHA256 `d8c005403ac062e82d61075fe076ad20f83267730c4070877fdd42bae1c62eea`、`tray_manager_plugin.dll` SHA256 `7d6dbd196d971fed8351c369b3bc3a784c3a07c6bf82ba31e0dc2945e247db81`、`proxy_plugin.dll` SHA256 `ecc62dd412a87c306042eef43a0c8956d003bb19f7739729bb139fbeab20c576`。
+- 验证与交付边界：普通无签名预览包（不含测试签名 Strict WFP 驱动/Broker）；宿主机实机运行 **NOT RUN（遵守规则未拉起候选程序或触碰现役代理/TUN/后台服务，交由用户退出旧托盘后启动新包验收）**；远端推送 **NOT RUN** / PR 与合并 **NOT RUN** / 云端 CI **NOT RUN**。
+
 ## 桌面/平板侧栏「大佬模式 / 小白模式」固定锚定于「购买」正下方展开高级项 TDD 落地（2026-11-13）
 
 - 需求与根因：桌面/平板左侧导航栏（`CommonNavigationBar` 非 `ViewMode.mobile` 分支）原将 `_NavigationModeToggleButton`（`ValueKey('navigation-expert-mode-toggle')`）直接置于 `NavigationRail.trailing` 并把全部导航项放入 `destinations`，导致折叠态按钮紧邻 `购买` 下方，而点击切换为大佬模式后切换按钮被整体下推至最末尾（`设置` 之后，`dy=242.0` -> `dy=562.0`），原点击坐标不再停留于切换按钮。
