@@ -25,18 +25,37 @@ abstract interface class XboardExtendedApi {
   Future<String> register(String email, String password);
 }
 
+abstract interface class XboardPassportApi implements XboardExtendedApi {
+  Future<XboardGuestAuthConfig> getGuestAuthConfig();
+  Future<String> registerAccount({
+    required String email,
+    required String password,
+    String? emailCode,
+    String? inviteCode,
+  });
+  Future<void> sendRegistrationEmailCode(String email);
+  Future<void> sendPasswordResetEmailCode(String email);
+  Future<void> confirmPasswordReset({
+    required String email,
+    required String emailCode,
+    required String password,
+  });
+}
+
 class XboardException implements Exception {
   const XboardException({
     required this.code,
     required this.message,
     this.statusCode,
     this.isUncertain = false,
+    this.retryAfterSeconds,
   });
 
   final String code;
   final String message;
   final int? statusCode;
   final bool isUncertain;
+  final int? retryAfterSeconds;
 
   bool get isUnauthorized => statusCode == 401;
 
@@ -44,9 +63,21 @@ class XboardException implements Exception {
   String toString() => 'XboardException($code): $message';
 }
 
+class _GuestCommConfigBundle {
+  const _GuestCommConfigBundle({
+    required this.channels,
+    required this.authConfig,
+    required this.fetchedAt,
+  });
+
+  final XboardPurchaseChannels channels;
+  final XboardGuestAuthConfig authConfig;
+  final DateTime fetchedAt;
+}
+
 /// Owns a dedicated Dio instance, so application interceptors cannot log secrets
 /// or automatically repeat entitlement mutations.
-class DioXboardApi implements XboardApi, XboardExtendedApi {
+class DioXboardApi implements XboardApi, XboardPassportApi {
   DioXboardApi({
     Dio? dio,
     Uri? baseUri,
@@ -98,6 +129,8 @@ class DioXboardApi implements XboardApi, XboardExtendedApi {
     defaultValue: 'https://fast.hjy.ca:8443',
   );
 
+  static const Duration _guestConfigTtl = Duration(seconds: 30);
+
   @override
   final Uri baseUri;
   final bool _ownsTransport;
@@ -105,6 +138,8 @@ class DioXboardApi implements XboardApi, XboardExtendedApi {
   final Dio _dio;
   Dio? _directDio;
   bool _closed = false;
+  _GuestCommConfigBundle? _guestConfigCache;
+  Future<_GuestCommConfigBundle>? _guestConfigInFlight;
 
   Dio _ensureDirectDio() {
     if (_closed) {
@@ -193,18 +228,95 @@ class DioXboardApi implements XboardApi, XboardExtendedApi {
       );
 
   @override
-  Future<String> register(String email, String password) => _request(
-        '/api/v1/passport/auth/register',
-        method: 'POST',
-        data: {'email': email.trim(), 'password': password},
-        nonIdempotentAfterSend: true,
-        parse: (body) {
-          final result = _data(body);
-          final authorization = _string(result, 'auth_data');
-          if (!_validAuthorization(authorization)) _invalid();
-          return authorization;
+  Future<String> register(String email, String password) => registerAccount(
+        email: email,
+        password: password,
+      );
+
+  @override
+  Future<String> registerAccount({
+    required String email,
+    required String password,
+    String? emailCode,
+    String? inviteCode,
+  }) {
+    final trimmedEmailCode = emailCode?.trim();
+    final trimmedInviteCode = inviteCode?.trim();
+    return _request(
+      '/api/v1/passport/auth/register',
+      method: 'POST',
+      data: {
+        'email': email.trim(),
+        'password': password,
+        if (trimmedEmailCode != null && trimmedEmailCode.isNotEmpty)
+          'email_code': trimmedEmailCode,
+        if (trimmedInviteCode != null && trimmedInviteCode.isNotEmpty)
+          'invite_code': trimmedInviteCode,
+      },
+      nonIdempotentAfterSend: true,
+      parse: (body) {
+        final result = _data(body);
+        final raw = _string(result, 'auth_data');
+        final authorization = raw.startsWith('Bearer ') ? raw : 'Bearer $raw';
+        if (!_validAuthorization(authorization)) _invalid();
+        return authorization;
+      },
+    );
+  }
+
+  @override
+  Future<void> sendRegistrationEmailCode(String email) =>
+      _postWithLegacy404Fallback(
+        primaryPath: '/api/v1/auth/registration-email/request',
+        fallbackPath: '/api/v1/passport/comm/sendEmailVerify',
+        data: {'email': email.trim()},
+      );
+
+  @override
+  Future<void> sendPasswordResetEmailCode(String email) =>
+      _postWithLegacy404Fallback(
+        primaryPath: '/api/v1/auth/password-reset/request',
+        fallbackPath: '/api/v1/passport/comm/sendEmailVerify',
+        data: {'email': email.trim()},
+      );
+
+  @override
+  Future<void> confirmPasswordReset({
+    required String email,
+    required String emailCode,
+    required String password,
+  }) =>
+      _postWithLegacy404Fallback(
+        primaryPath: '/api/v1/auth/password-reset/confirm',
+        fallbackPath: '/api/v1/passport/auth/forget',
+        data: {
+          'email': email.trim(),
+          'email_code': emailCode.trim(),
+          'password': password,
         },
       );
+
+  Future<void> _postWithLegacy404Fallback({
+    required String primaryPath,
+    required String fallbackPath,
+    required Map<String, Object?> data,
+  }) async {
+    Future<void> send(String path) => _request<void>(
+          path,
+          method: 'POST',
+          data: data,
+          mutation: true,
+          allowEmpty204: true,
+          parse: _parseAcknowledgeResponse,
+        );
+
+    try {
+      await send(primaryPath);
+    } on XboardException catch (error) {
+      if (error.statusCode != 404) rethrow;
+      await send(fallbackPath);
+    }
+  }
 
   @override
   Future<XboardAccount> getAccount(String authorization) => _request(
@@ -342,11 +454,55 @@ class DioXboardApi implements XboardApi, XboardExtendedApi {
     );
   }
 
-  @override
-  Future<XboardPurchaseChannels> getGuestPurchaseChannels() => _request(
+  Future<_GuestCommConfigBundle> _loadGuestCommConfig() {
+    if (_closed) {
+      return _request<_GuestCommConfigBundle>(
         '/api/v1/guest/comm/config',
-        parse: (body) => _parsePurchaseChannels(_data(body)),
+        parse: (_) => _invalid(),
       );
+    }
+    final cached = _guestConfigCache;
+    if (cached != null) {
+      if (DateTime.now().difference(cached.fetchedAt) < _guestConfigTtl) {
+        return Future<_GuestCommConfigBundle>.value(cached);
+      }
+      _guestConfigCache = null;
+    }
+    final inFlight = _guestConfigInFlight;
+    if (inFlight != null) return inFlight;
+
+    late final Future<_GuestCommConfigBundle> future;
+    future = _request<_GuestCommConfigBundle>(
+      '/api/v1/guest/comm/config',
+      parse: (body) {
+        final data = _data(body);
+        return _GuestCommConfigBundle(
+          channels: _parsePurchaseChannels(data),
+          authConfig: _parseGuestAuthConfig(data),
+          fetchedAt: DateTime.now(),
+        );
+      },
+    ).then((bundle) {
+      if (!_closed) {
+        _guestConfigCache = bundle;
+      }
+      return bundle;
+    }).whenComplete(() {
+      if (identical(_guestConfigInFlight, future)) {
+        _guestConfigInFlight = null;
+      }
+    });
+    _guestConfigInFlight = future;
+    return future;
+  }
+
+  @override
+  Future<XboardPurchaseChannels> getGuestPurchaseChannels() async =>
+      (await _loadGuestCommConfig()).channels;
+
+  @override
+  Future<XboardGuestAuthConfig> getGuestAuthConfig() async =>
+      (await _loadGuestCommConfig()).authConfig;
 
   @override
   Future<XboardPurchaseChannels> getUserPurchaseChannels(
@@ -378,6 +534,8 @@ class DioXboardApi implements XboardApi, XboardExtendedApi {
   @override
   void close() {
     _closed = true;
+    _guestConfigCache = null;
+    _guestConfigInFlight = null;
     _dio.close(force: true);
     final direct = _directDio;
     _directDio = null;
@@ -425,6 +583,7 @@ class DioXboardApi implements XboardApi, XboardExtendedApi {
     bool mutation = false,
     bool nonIdempotentAfterSend = false,
     bool emptyResponse = false,
+    bool allowEmpty204 = false,
     required T Function(Object? body) parse,
   }) async {
     if (authorization != null && !_validAuthorization(authorization)) {
@@ -466,12 +625,14 @@ class DioXboardApi implements XboardApi, XboardExtendedApi {
       }
       status = response.statusCode;
       if (status == null) _invalid();
+      final retryAfter = _parseRetryAfterSeconds(response.headers);
       if (status >= 300 && status < 400) {
         throw XboardException(
           code: 'redirect_blocked',
           message: '购买服务返回了重定向，请联系管理员核对服务地址',
           statusCode: status,
           isUncertain: uncertainAfterSend,
+          retryAfterSeconds: retryAfter,
         );
       }
       if (status < 200 || status >= 300) {
@@ -479,14 +640,22 @@ class DioXboardApi implements XboardApi, XboardExtendedApi {
           response.data,
           status,
           mutation: uncertainAfterSend,
+          retryAfterSeconds: retryAfter,
         );
       }
       if (emptyResponse) {
         if (status != 204) _invalid();
+      } else if (allowEmpty204 && status == 204) {
+        return parse(null);
       } else {
         final root = _object(response.data);
         if (root['status'] == 'fail') {
-          throw _serverError(root, status, mutation: uncertainAfterSend);
+          throw _serverError(
+            root,
+            status,
+            mutation: uncertainAfterSend,
+            retryAfterSeconds: retryAfter,
+          );
         }
       }
       return parse(response.data);
@@ -514,6 +683,7 @@ class DioXboardApi implements XboardApi, XboardExtendedApi {
                 : '无法连接购买服务，请检查网络后重试',
         statusCode: error.response?.statusCode,
         isUncertain: uncertain,
+        retryAfterSeconds: _parseRetryAfterSeconds(error.response?.headers),
       );
     }
   }
@@ -758,13 +928,59 @@ const _giftReasons = {
 String? _safeGiftReason(Object? message) =>
     message is String && _giftReasons.contains(message) ? message : null;
 
-XboardException _serverError(Object? body, int status,
-    {required bool mutation}) {
+const _preservedAuthErrorCodes = {
+  'email_exists',
+  'email_domain_not_allowed',
+  'gmail_alias_not_allowed',
+  'registration_closed',
+  'invitation_code_required',
+  'invitation_code_invalid',
+  'invitation_unavailable',
+  'registration_email_invalid',
+  'registration_email_locked',
+  'registration_email_cooldown',
+  'registration_email_rate_limited',
+  'registration_email_disabled',
+  'password_reset_invalid',
+  'password_reset_locked',
+  'password_reset_cooldown',
+  'password_reset_rate_limited',
+  'passport_email_cooldown',
+  'passport_email_rate_limited',
+  'mail_unavailable',
+};
+
+int? _parseRetryAfterSeconds(Headers? headers) {
+  final raw = headers?.value('retry-after')?.trim();
+  if (raw == null || raw.isEmpty) return null;
+  final parsed = int.tryParse(raw);
+  if (parsed == null || parsed < 0) return null;
+  return parsed;
+}
+
+void _parseAcknowledgeResponse(Object? body) {
+  if (body == null) return;
+  final root = _object(body);
+  final status = root['status'];
+  if (status != null) {
+    if (status != 'success') _invalid();
+    return;
+  }
+  if (!root.containsKey('data')) _invalid();
+}
+
+XboardException _serverError(
+  Object? body,
+  int status, {
+  required bool mutation,
+  int? retryAfterSeconds,
+}) {
   if (status == 401) {
     return XboardException(
       code: 'unauthorized',
       message: '账号或密码错误，或登录已失效，请重新登录',
       statusCode: status,
+      retryAfterSeconds: retryAfterSeconds,
     );
   }
   if (status == 403) {
@@ -772,13 +988,7 @@ XboardException _serverError(Object? body, int status,
       code: 'forbidden',
       message: '当前账号没有使用此功能的权限',
       statusCode: status,
-    );
-  }
-  if (status == 429) {
-    return XboardException(
-      code: 'rate_limited',
-      message: '操作过于频繁，请稍后重试',
-      statusCode: status,
+      retryAfterSeconds: retryAfterSeconds,
     );
   }
   final data = body is Map<String, dynamic> ? body : null;
@@ -789,22 +999,40 @@ XboardException _serverError(Object? body, int status,
   final fields = errorObj?['fields'] is Map<String, dynamic>
       ? errorObj!['fields'] as Map<String, dynamic>
       : null;
-  if (backendCode == 'invitation_code_required' ||
-      backendCode == 'invitation_code_invalid' ||
-      backendCode == 'invitation_unavailable' ||
-      backendCode == 'captcha_invalid' ||
+  if (backendCode == 'captcha_invalid' ||
       backendCode == 'captcha_unavailable' ||
       backendCode == 'captcha_required' ||
-      backendCode == 'captcha_failed' ||
-      backendCode == 'mail_unavailable' ||
-      backendCode == 'registration_email_invalid' ||
-      backendCode == 'registration_email_disabled' ||
-      (backendCode == 'validation_failed' &&
-          (fields?.containsKey('email_code') ?? false))) {
+      backendCode == 'captcha_failed') {
     return XboardException(
       code: 'register_web_required',
       message: '',
       statusCode: status,
+      retryAfterSeconds: retryAfterSeconds,
+    );
+  }
+  if (backendCode == 'validation_failed' &&
+      (fields?.containsKey('email_code') ?? false)) {
+    return XboardException(
+      code: 'registration_email_invalid',
+      message: '',
+      statusCode: status,
+      retryAfterSeconds: retryAfterSeconds,
+    );
+  }
+  if (backendCode is String && _preservedAuthErrorCodes.contains(backendCode)) {
+    return XboardException(
+      code: backendCode,
+      message: '',
+      statusCode: status,
+      retryAfterSeconds: retryAfterSeconds,
+    );
+  }
+  if (status == 429) {
+    return XboardException(
+      code: 'rate_limited',
+      message: '操作过于频繁，请稍后重试',
+      statusCode: status,
+      retryAfterSeconds: retryAfterSeconds,
     );
   }
   if (status >= 500 || status == 408) {
@@ -813,34 +1041,7 @@ XboardException _serverError(Object? body, int status,
       message: mutation ? '服务暂时异常，兑换结果需要进一步确认' : '购买服务暂时不可用，请稍后重试',
       statusCode: status,
       isUncertain: mutation,
-    );
-  }
-  if (backendCode == 'email_exists') {
-    return XboardException(
-      code: 'email_exists',
-      message: '',
-      statusCode: status,
-    );
-  }
-  if (backendCode == 'registration_closed') {
-    return XboardException(
-      code: 'registration_closed',
-      message: '',
-      statusCode: status,
-    );
-  }
-  if (backendCode == 'email_domain_not_allowed') {
-    return XboardException(
-      code: 'email_domain_not_allowed',
-      message: '',
-      statusCode: status,
-    );
-  }
-  if (backendCode == 'gmail_alias_not_allowed') {
-    return XboardException(
-      code: 'gmail_alias_not_allowed',
-      message: '',
-      statusCode: status,
+      retryAfterSeconds: retryAfterSeconds,
     );
   }
   final reason = _safeGiftReason(data?['message']);
@@ -848,6 +1049,7 @@ XboardException _serverError(Object? body, int status,
     code: reason == null ? 'request_failed' : 'gift_card_rejected',
     message: reason ?? '请求未完成，请检查输入或稍后重试',
     statusCode: status,
+    retryAfterSeconds: retryAfterSeconds,
   );
 }
 
@@ -874,6 +1076,49 @@ Uri? _safeOptionalChannelHttpsUrl(Map<String, Object?> data, String key) {
     return null;
   }
   return parsed;
+}
+
+bool _optionalFlag(Map<String, Object?> data, String key) {
+  final raw = data[key];
+  if (raw == null) return false;
+  if (raw is bool) return raw;
+  if (raw is int && (raw == 0 || raw == 1)) return raw == 1;
+  _invalid();
+}
+
+List<String> _parseEmailWhitelist(Object? raw) {
+  if (raw is! List) return const [];
+  final result = <String>[];
+  for (final item in raw) {
+    if (item is! String) continue;
+    var domain = item.trim().toLowerCase();
+    while (domain.startsWith('@')) {
+      domain = domain.substring(1).trim();
+    }
+    if (domain.isNotEmpty) {
+      result.add(domain);
+    }
+  }
+  return List.unmodifiable(result);
+}
+
+XboardGuestAuthConfig _parseGuestAuthConfig(Map<String, Object?> data) {
+  final rawCaptchaType = data['captcha_type'];
+  final captchaType = rawCaptchaType is String && rawCaptchaType.trim().isNotEmpty
+      ? rawCaptchaType.trim()
+      : null;
+  final rawTos = data['tos_url'];
+  final tosUrl = rawTos is String
+      ? _safeOptionalChannelHttpsUrl(data, 'tos_url')
+      : null;
+  return XboardGuestAuthConfig(
+    isEmailVerify: _optionalFlag(data, 'is_email_verify'),
+    isInviteForce: _optionalFlag(data, 'is_invite_force'),
+    emailWhitelistSuffix: _parseEmailWhitelist(data['email_whitelist_suffix']),
+    isCaptcha: _optionalFlag(data, 'is_captcha'),
+    captchaType: captchaType,
+    tosUrl: tosUrl,
+  );
 }
 
 XboardPurchaseChannels _parsePurchaseChannels(Map<String, Object?> data) =>

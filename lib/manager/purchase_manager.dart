@@ -10,7 +10,7 @@ typedef PurchaseSubscriptionSync = Future<void> Function(
 
 enum _GiftOperation { check, redeem }
 
-enum _AuthOperation { login, register }
+enum _AuthOperation { login, register, resetPassword }
 
 /// Keeps account authentication, card consumption, and local configuration
 /// updates separate. A failed download must never repeat a successful redemption.
@@ -43,6 +43,7 @@ class PurchaseManager extends ChangeNotifier {
   GiftHistoryPage? history;
   Uri? cardStoreUrl;
   XboardPurchaseChannels? purchaseChannels;
+  XboardGuestAuthConfig guestAuthConfig = const XboardGuestAuthConfig();
   XboardPlanOffer? handoffPlan;
   XboardException? error;
   XboardException? historyError;
@@ -50,6 +51,10 @@ class PurchaseManager extends ChangeNotifier {
   XboardException? channelError;
   bool restoring = true;
   bool busy = false;
+  bool sendingEmailCode = false;
+  bool passwordResetSucceeded = false;
+  bool inviteCodeRequiredByServer = false;
+  bool emailVerifyRequiredByServer = false;
   bool syncing = false;
   bool subscriptionSynced = false;
   String code = '';
@@ -68,6 +73,7 @@ class PurchaseManager extends ChangeNotifier {
   bool get checkingCode => _giftOperation == _GiftOperation.check;
   bool get redeemingCode => _giftOperation == _GiftOperation.redeem;
   bool get registering => _authOperation == _AuthOperation.register;
+  bool get resettingPassword => _authOperation == _AuthOperation.resetPassword;
   bool get loggedIn => account != null && _authorization != null;
   bool get unresolvedRedemption => _pending != null;
   bool get canRedeem =>
@@ -85,6 +91,12 @@ class PurchaseManager extends ChangeNotifier {
   void clearError() {
     if (_disposed || error == null) return;
     error = null;
+    _notify();
+  }
+
+  void clearPasswordResetState() {
+    if (_disposed || !passwordResetSucceeded) return;
+    passwordResetSucceeded = false;
     _notify();
   }
 
@@ -127,13 +139,27 @@ class PurchaseManager extends ChangeNotifier {
     late final Future<XboardPurchaseChannels?> future;
     future = () async {
       try {
-        final loaded = wasLoggedIn
-            ? await extApi.getUserPurchaseChannels(authAtStart)
-            : await extApi.getGuestPurchaseChannels();
+        final XboardPurchaseChannels loaded;
+        XboardGuestAuthConfig? loadedAuthConfig;
+        if (wasLoggedIn) {
+          loaded = await extApi.getUserPurchaseChannels(authAtStart);
+        } else if (extApi is XboardPassportApi) {
+          final results = await Future.wait<Object>([
+            extApi.getGuestPurchaseChannels(),
+            extApi.getGuestAuthConfig(),
+          ]);
+          loaded = results[0] as XboardPurchaseChannels;
+          loadedAuthConfig = results[1] as XboardGuestAuthConfig;
+        } else {
+          loaded = await extApi.getGuestPurchaseChannels();
+        }
         if (!_disposed &&
             _sessionEpoch == epochAtStart &&
             loggedIn == wasLoggedIn) {
           purchaseChannels = loaded;
+          if (loadedAuthConfig != null) {
+            guestAuthConfig = loadedAuthConfig;
+          }
           if (wasLoggedIn) {
             cardStoreUrl = loaded.cardStoreUrl;
           } else {
@@ -306,6 +332,9 @@ class PurchaseManager extends ChangeNotifier {
       _channelsInFlight = null;
       _authorization = authorization;
       account = authenticated;
+      inviteCodeRequiredByServer = false;
+      emailVerifyRequiredByServer = false;
+      passwordResetSucceeded = false;
     } on Exception {
       // The token was issued but never admitted to the client session.
       // Best-effort revocation does not mask the original failure.
@@ -351,26 +380,132 @@ class PurchaseManager extends ChangeNotifier {
         authOperation: _AuthOperation.login,
       );
 
-  Future<void> register(String email, String password) => _run(
+  Future<void> register(String email, String password) =>
+      registerWithDetails(email: email, password: password);
+
+  Future<void> registerWithDetails({
+    required String email,
+    required String password,
+    String? emailCode,
+    String? inviteCode,
+  }) =>
+      _run(
         () async {
           if (loggedIn) return;
           final apiInstance = api;
           if (apiInstance is! XboardExtendedApi) {
             throw const XboardException(code: 'purchase_failed', message: '');
           }
-          final extApi = apiInstance as XboardExtendedApi;
           final prefilledCode = code;
           receipt = null;
-          final authorization =
-              await extApi.register(email.trim(), password);
-          await _authenticateWithAuthorization(
-            authorization,
-            prefilledCode: prefilledCode,
-            autoSyncSubscription: true,
-          );
+          try {
+            final String authorization;
+            if (apiInstance is XboardPassportApi) {
+              final passportApi = apiInstance as XboardPassportApi;
+              authorization = await passportApi.registerAccount(
+                email: email.trim(),
+                password: password,
+                emailCode: emailCode?.trim(),
+                inviteCode: inviteCode?.trim(),
+              );
+            } else {
+              authorization =
+                  await (apiInstance as XboardExtendedApi).register(
+                email.trim(),
+                password,
+              );
+            }
+            await _authenticateWithAuthorization(
+              authorization,
+              prefilledCode: prefilledCode,
+              autoSyncSubscription: true,
+            );
+          } on XboardException catch (cause) {
+            if (cause.code == 'invitation_code_required') {
+              inviteCodeRequiredByServer = true;
+            }
+            if (cause.code == 'registration_email_invalid' ||
+                cause.code.toLowerCase().contains('email_code') ||
+                cause.message.toLowerCase().contains('email_code')) {
+              emailVerifyRequiredByServer = true;
+            }
+            rethrow;
+          }
         },
         authOperation: _AuthOperation.register,
       );
+
+  Future<bool> sendRegistrationEmailCode(String email) => _sendEmailCode(
+        (passportApi) => passportApi.sendRegistrationEmailCode(email.trim()),
+      );
+
+  Future<bool> sendPasswordResetCode(String email) => _sendEmailCode(
+        (passportApi) => passportApi.sendPasswordResetEmailCode(email.trim()),
+      );
+
+  Future<bool> _sendEmailCode(
+    Future<void> Function(XboardPassportApi passportApi) send,
+  ) async {
+    if (_disposed || sendingEmailCode) return false;
+    final passportApi = switch (api) {
+      final XboardPassportApi value => value,
+      _ => null,
+    };
+    if (passportApi == null) {
+      error = const XboardException(code: 'purchase_failed', message: '');
+      passwordResetSucceeded = false;
+      _notify();
+      return false;
+    }
+    sendingEmailCode = true;
+    error = null;
+    passwordResetSucceeded = false;
+    _notify();
+    try {
+      await send(passportApi);
+      return !_disposed;
+    } on Exception catch (cause) {
+      if (!_disposed) {
+        error = _failure(cause);
+      }
+      return false;
+    } finally {
+      sendingEmailCode = false;
+      _notify();
+    }
+  }
+
+  Future<bool> resetPassword({
+    required String email,
+    required String emailCode,
+    required String password,
+  }) async {
+    if (_disposed || busy) return false;
+    var succeeded = false;
+    await _run(
+      () async {
+        final passportApi = switch (api) {
+          final XboardPassportApi value => value,
+          _ => null,
+        };
+        if (passportApi == null) {
+          throw const XboardException(code: 'purchase_failed', message: '');
+        }
+        passwordResetSucceeded = false;
+        await passportApi.confirmPasswordReset(
+          email: email.trim(),
+          emailCode: emailCode.trim(),
+          password: password,
+        );
+        if (!_disposed) {
+          passwordResetSucceeded = true;
+          succeeded = true;
+        }
+      },
+      authOperation: _AuthOperation.resetPassword,
+    );
+    return succeeded;
+  }
 
   Future<void> logout() => _run(() async {
         final authorization = _authorization;
@@ -408,6 +543,7 @@ class PurchaseManager extends ChangeNotifier {
     history = null;
     cardStoreUrl = null;
     purchaseChannels = null;
+    guestAuthConfig = const XboardGuestAuthConfig();
     handoffPlan = null;
     _pending = null;
     _pendingStateReady = false;
@@ -417,6 +553,9 @@ class PurchaseManager extends ChangeNotifier {
     syncError = null;
     channelError = null;
     subscriptionSynced = false;
+    passwordResetSucceeded = false;
+    inviteCodeRequiredByServer = false;
+    emailVerifyRequiredByServer = false;
   }
 
   static final RegExp _codeSeparators =

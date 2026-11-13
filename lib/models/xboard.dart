@@ -384,3 +384,57 @@ class XboardPurchaseChannels {
     return tierUrl ?? cardStoreUrl;
   }
 }
+
+class XboardGuestAuthConfig {
+  const XboardGuestAuthConfig({
+    this.isEmailVerify = false,
+    this.isInviteForce = false,
+    this.emailWhitelistSuffix = const [],
+    this.isCaptcha = false,
+    this.captchaType,
+    this.tosUrl,
+  });
+
+  final bool isEmailVerify;
+  final bool isInviteForce;
+  final List<String> emailWhitelistSuffix;
+  final bool isCaptcha;
+  final String? captchaType;
+  final Uri? tosUrl;
+
+  bool isEmailDomainAllowed(String email) {
+    if (emailWhitelistSuffix.isEmpty) return true;
+    final trimmed = email.trim();
+    final atIndex = trimmed.indexOf('@');
+    if (atIndex <= 0 ||
+        atIndex != trimmed.lastIndexOf('@') ||
+        atIndex == trimmed.length - 1) {
+      return false;
+    }
+    final domain = trimmed.substring(atIndex + 1).toLowerCase();
+    for (final entry in emailWhitelistSuffix) {
+      var normalized = entry.trim().toLowerCase();
+      while (normalized.startsWith('@')) {
+        normalized = normalized.substring(1).trim();
+      }
+      if (normalized.isNotEmpty && normalized == domain) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  bool hasGmailPlusAlias(String email) {
+    final trimmed = email.trim();
+    final atIndex = trimmed.indexOf('@');
+    if (atIndex <= 0 ||
+        atIndex != trimmed.lastIndexOf('@') ||
+        atIndex == trimmed.length - 1) {
+      return false;
+    }
+    final localPart = trimmed.substring(0, atIndex);
+    final domain = trimmed.substring(atIndex + 1).toLowerCase();
+    return (domain == 'gmail.com' || domain == 'googlemail.com') &&
+        localPart.contains('+');
+  }
+}
