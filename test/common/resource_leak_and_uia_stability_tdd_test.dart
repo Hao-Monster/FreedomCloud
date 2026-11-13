@@ -6,11 +6,14 @@ import 'dart:typed_data';
 import 'package:flclashx/clash/core.dart';
 import 'package:flclashx/clash/interface.dart';
 import 'package:flclashx/common/common.dart';
+import 'package:flclashx/common/node_catalog_tester.dart';
 import 'package:flclashx/common/theme.dart';
 import 'package:flclashx/controller.dart';
 import 'package:flclashx/enum/enum.dart';
 import 'package:flclashx/l10n/l10n.dart';
 import 'package:flclashx/models/models.dart';
+import 'package:flclashx/models/node_catalog.dart';
+import 'package:flclashx/providers/node_overview.dart';
 import 'package:flclashx/providers/providers.dart';
 import 'package:flclashx/services/secure_subscription.dart';
 import 'package:flclashx/services/xboard_api.dart';
@@ -18,8 +21,10 @@ import 'package:flclashx/state.dart';
 import 'package:flclashx/views/dashboard/widgets/hero_connect.dart';
 import 'package:flclashx/views/dashboard/widgets/network_speed.dart';
 import 'package:flclashx/views/dashboard/widgets/start_button.dart';
+import 'package:flclashx/views/proxies/overview/overview.dart';
 import 'package:flclashx/views/purchase/plan_image.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -313,6 +318,56 @@ class _StubCoreTransport extends ClashHandlerInterface {
 
   @override
   dynamic noSuchMethod(Invocation invocation) => null;
+}
+
+class _TddOverviewCatalogTester extends ChangeNotifier
+    implements NodeCatalogTester {
+  @override
+  bool busy = true;
+
+  @override
+  int total = 10;
+
+  @override
+  int completed = 3;
+
+  final Set<String> pendingKeys = {'node-pending'};
+
+  @override
+  Set<String> pendingIdentitySnapshot(String profileId) =>
+      profileId == 'sub-b' ? pendingKeys : const <String>{};
+
+  @override
+  bool pending(String profileId, String identityKey) =>
+      profileId == 'sub-b' && pendingKeys.contains(identityKey);
+
+  @override
+  void disposeScope() {}
+
+  @override
+  Future<void> cancel({String reason = 'cancelled'}) async {}
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+List<SemanticsNode> _collectSemanticsNodesWithValue(SemanticsNode? root) {
+  final matches = <SemanticsNode>[];
+  void visit(SemanticsNode node) {
+    final data = node.getSemanticsData();
+    if (data.value.trim().isNotEmpty) {
+      matches.add(node);
+    }
+    node.visitChildren((child) {
+      visit(child);
+      return true;
+    });
+  }
+
+  if (root != null) {
+    visit(root);
+  }
+  return matches;
 }
 
 void main() {
@@ -908,6 +963,183 @@ void main() {
         } finally {
           semanticsHandle.dispose();
         }
+      },
+    );
+
+    testWidgets(
+      'TDD-6: NodeOverviewView isolates decorative progress indicators from AXStringAttribute kValue semantics while preserving readable labels',
+      (tester) async {
+        tester.view.physicalSize = const Size(1280, 900);
+        tester.view.devicePixelRatio = 1.0;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
+
+        await AppLocalizations.load(const Locale('zh', 'CN'));
+
+        const activeProfile = Profile(
+          id: 'sub-a',
+          label: '主力订阅',
+          autoUpdateDuration: Duration.zero,
+          subscriptionInfo: SubscriptionInfo(
+            upload: 1024 * 1024 * 1024,
+            download: 2 * 1024 * 1024 * 1024,
+            total: 10 * 1024 * 1024 * 1024,
+          ),
+        );
+        const updatingProfile = Profile(
+          id: 'sub-b',
+          label: '备用订阅',
+          autoUpdateDuration: Duration.zero,
+          isUpdating: true,
+        );
+
+        globalState.config = Config(
+          themeProps: defaultThemeProps,
+          profiles: const [activeProfile, updatingProfile],
+          currentProfileId: activeProfile.id,
+        );
+        globalState.appState = AppState(
+          isInit: true,
+          viewSize: const Size(1280, 900),
+          requests: FixedList(4),
+          version: 0,
+          logs: FixedList(4),
+          traffics: FixedList(4),
+          totalTraffic: Traffic(),
+          groups: const [
+            Group(
+              name: 'PROXY',
+              type: GroupType.Selector,
+              now: 'HK-01',
+              all: [Proxy(name: 'HK-01', type: 'ss')],
+            ),
+          ],
+        );
+
+        final activeCatalog = ProfileCatalog(
+          profileId: activeProfile.id,
+          fingerprint: 'fp-a',
+          status: ProfileCatalogStatus.ready,
+          nodes: const [
+            CatalogNode(
+              identityKey: 'node-active',
+              endpointKey: 'ep-active',
+              name: 'HK-01',
+              type: 'ss',
+              source: CatalogNodeSource.inline,
+            ),
+          ],
+        );
+        final standbyCatalog = ProfileCatalog(
+          profileId: updatingProfile.id,
+          fingerprint: 'fp-b',
+          status: ProfileCatalogStatus.ready,
+          nodes: const [
+            CatalogNode(
+              identityKey: 'node-pending',
+              endpointKey: 'ep-pending',
+              name: 'JP-Pending',
+              type: 'ss',
+              source: CatalogNodeSource.inline,
+            ),
+          ],
+        );
+
+        final testerDouble = _TddOverviewCatalogTester();
+
+        final semanticsHandle = tester.ensureSemantics();
+        try {
+          await tester.pumpWidget(
+            ProviderScope(
+              overrides: [
+                nodeOverviewEnabledProvider.overrideWithValue(true),
+                proxiesScopeProvider.overrideWith((ref) => ProxiesScope.all),
+                nodeCatalogTesterProvider.overrideWith((ref) => testerDouble),
+                activeNodeCatalogProvider.overrideWithValue(activeCatalog),
+                cachedProfileCatalogsProvider.overrideWith(
+                  (ref) => {
+                    activeProfile.id: activeCatalog,
+                    updatingProfile.id: standbyCatalog,
+                  },
+                ),
+                profileCatalogProvider.overrideWith((ref, id) async {
+                  return id == activeProfile.id
+                      ? activeCatalog
+                      : standbyCatalog;
+                }),
+                nodeHealthEntriesProvider.overrideWith((ref, id) => const {}),
+              ],
+              child: MaterialApp(
+                locale: const Locale('zh', 'CN'),
+                localizationsDelegates: const [
+                  AppLocalizations.delegate,
+                  GlobalMaterialLocalizations.delegate,
+                  GlobalWidgetsLocalizations.delegate,
+                  GlobalCupertinoLocalizations.delegate,
+                ],
+                supportedLocales: AppLocalizations.delegate.supportedLocales,
+                home: Builder(
+                  builder: (context) {
+                    globalState.measure = Measure.of(context, 1.0);
+                    globalState.theme = CommonTheme.of(context, 1.0);
+                    return const Scaffold(body: NodeOverviewView());
+                  },
+                ),
+              ),
+            ),
+          );
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 50));
+
+          expect(find.byType(LinearProgressIndicator), findsAtLeastNWidgets(2));
+          expect(find.byType(CircularProgressIndicator), findsAtLeastNWidgets(1));
+          expect(find.text('70%'), findsWidgets);
+
+          final semanticsOwner =
+              tester.renderObject(find.byType(Scaffold)).owner!.semanticsOwner!;
+          final valueNodes = _collectSemanticsNodesWithValue(
+            semanticsOwner.rootSemanticsNode,
+          );
+          expect(
+            valueNodes,
+            isEmpty,
+            reason:
+                'Decorative progress indicators must not emit UIA AXStringAttribute kValue nodes that race AccessibilityBridgeWindows',
+          );
+        } finally {
+          semanticsHandle.dispose();
+        }
+      },
+    );
+
+    test(
+      'TDD-7: Windows runner wires UIA guard across CMakeLists, FlutterWindow lifecycle, and desktop_multi_window',
+      () {
+        final cmakeContent =
+            File('windows/runner/CMakeLists.txt').readAsStringSync();
+        expect(cmakeContent, contains('"uia_guard.cpp"'));
+        expect(cmakeContent, contains('"comctl32.lib"'));
+
+        final flutterWindowContent =
+            File('windows/runner/flutter_window.cpp').readAsStringSync();
+        expect(flutterWindowContent, contains('#include "uia_guard.h"'));
+        expect(
+          flutterWindowContent,
+          contains('DesktopMultiWindowSetWindowCreatedCallback'),
+        );
+        expect(
+          flutterWindowContent,
+          contains('InstallFlutterWindowTreeUiaGuard'),
+        );
+        expect(
+          flutterWindowContent,
+          contains('ShouldInterceptWindowMessageForUiaGuard'),
+        );
+        expect(
+          flutterWindowContent,
+          contains('UninstallFlutterWindowTreeUiaGuard'),
+        );
       },
     );
   });

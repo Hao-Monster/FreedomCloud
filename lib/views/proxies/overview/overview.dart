@@ -2306,10 +2306,12 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
                   (t) => (t.completed, t.total),
                 ),
               );
-              return LinearProgressIndicator(
-                  value: total == 0
-                      ? null
-                      : (completed / total).clamp(0.0, 1.0));
+              return ExcludeSemantics(
+                child: LinearProgressIndicator(
+                    value: total == 0
+                        ? null
+                        : (completed / total).clamp(0.0, 1.0)),
+              );
             },
           ),
         if (feedback != null)
@@ -2667,12 +2669,14 @@ class _OverviewConnectionStatusBar extends StatelessWidget {
               );
 
     final leadingIcon = isBusy
-        ? SizedBox(
-            width: 16,
-            height: 16,
-            child: CircularProgressIndicator(
-              strokeWidth: 2,
-              color: effectiveConnected ? green : colors.primary,
+        ? ExcludeSemantics(
+            child: SizedBox(
+              width: 16,
+              height: 16,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                color: effectiveConnected ? green : colors.primary,
+              ),
             ),
           )
         : Icon(
@@ -5224,13 +5228,15 @@ class _ProfileSubscriptionSummary extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 5),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(999),
-            child: LinearProgressIndicator(
-              value: usedRatio,
-              minHeight: 5,
-              backgroundColor: colors.surfaceContainerHighest,
-              valueColor: AlwaysStoppedAnimation<Color>(barColor),
+          ExcludeSemantics(
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(999),
+              child: LinearProgressIndicator(
+                value: usedRatio,
+                minHeight: 5,
+                backgroundColor: colors.surfaceContainerHighest,
+                valueColor: AlwaysStoppedAnimation<Color>(barColor),
+              ),
             ),
           ),
           const SizedBox(height: 4),
@@ -5754,7 +5760,7 @@ class _ProfileNodesSliverState extends ConsumerState<_ProfileNodesSliver> {
           const SliverToBoxAdapter(
               child: Padding(
                   padding: EdgeInsets.all(16),
-                  child: LinearProgressIndicator())),
+                  child: ExcludeSemantics(child: LinearProgressIndicator()))),
         if (metadata == null && _expired(profile, widget.now))
           _notice(appLocalizations.nodeOverviewExpired),
         if (profile.isUpdating ||
@@ -6554,10 +6560,12 @@ class _ActiveNodeRow extends ConsumerWidget {
                 context,
                 name: proxy.name,
                 status: delay == 0
-                    ? const SizedBox(
-                        width: 14,
-                        height: 14,
-                        child: CircularProgressIndicator(strokeWidth: 2))
+                    ? const ExcludeSemantics(
+                        child: SizedBox(
+                            width: 14,
+                            height: 14,
+                            child: CircularProgressIndicator(strokeWidth: 2)),
+                      )
                     : _buildLatencyStatusPill(
                         context,
                         label: delay == null
@@ -6738,10 +6746,13 @@ class _InactiveNodeRow extends ConsumerWidget {
                       ? Icon(Icons.help_outline,
                           color: Theme.of(context).colorScheme.onSurfaceVariant)
                       : pending
-                          ? const SizedBox(
-                              width: 14,
-                              height: 14,
-                              child: CircularProgressIndicator(strokeWidth: 2))
+                          ? const ExcludeSemantics(
+                              child: SizedBox(
+                                  width: 14,
+                                  height: 14,
+                                  child: CircularProgressIndicator(
+                                      strokeWidth: 2)),
+                            )
                           : _buildLatencyStatusPill(
                               context,
                               label: record == null

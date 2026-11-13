@@ -1162,12 +1162,14 @@ class _OverviewProfileOptionCard extends StatelessWidget {
               ),
               if (item.isUpdating) ...[
                 const SizedBox(width: 6),
-                SizedBox(
-                  width: 11,
-                  height: 11,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 1.6,
-                    valueColor: AlwaysStoppedAnimation<Color>(colors.primary),
+                ExcludeSemantics(
+                  child: SizedBox(
+                    width: 11,
+                    height: 11,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 1.6,
+                      valueColor: AlwaysStoppedAnimation<Color>(colors.primary),
+                    ),
                   ),
                 ),
               ],
