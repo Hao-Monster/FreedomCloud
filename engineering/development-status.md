@@ -2,6 +2,19 @@
 
 更新日期：2026-11-13。当前阶段是快速开发、快速迭代和部分功能预览。本文记录来源与验收边界；每次继续开发仍需核实实际 Git/PR/CI 状态，不能把历史报告视为当前通过证明。
 
+## 代理总览页「方案 B · 常驻底部唯一悬浮开关舱」TDD 落地（`dea94298`，2026-11-13）
+
+- 需求与架构决策：遵照用户确认的「方案 B」落地代理总览页唯一总开关布局——将原顶部 [`_OverviewConnectionStatusBar`](file:///e:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart#L2614-L2758) 瘦身为只读单行连接状态条（移除顶部重复开关），并将唯一 [`_OverviewTactileProxySwitch`](file:///e:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart#L2839-L3261)（`ValueKey('overview-proxy-toggle')`）迁入右侧节点列表区底部居中的常驻悬浮胶囊 [`_OverviewFloatingProxyDock`](file:///e:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart#L2762-L2832)（`ValueKey('overview-floating-proxy-dock')`）。
+- 交互、性能与命中契约（本地 `development` 代码提交 `dea94298`，`dea94298ab979740ca8a6a5dbd13731d699b4c8a`）：
+  1. **同屏唯一开关与状态条瘦身**：`profiles.isEmpty` 时两者均不渲染；有订阅时顶部状态条仅展示连接状态与当前活跃配置/节点，绝不并存两个主开关；
+  2. **悬浮锚定与防误触/侧边穿透**：`Stack` 包裹 `CustomScrollView` 并将悬浮舱以 `Align(alignment: Alignment.bottomCenter, widthFactor: 1.0, heightFactor: 1.0)` 锚定于右侧节点窗格底部中央（距底 `6~16px` 自适应），胶囊两侧空白与滚动手势直接穿透到底层节点列表；胶囊外圈 `6px` 边沿通过 `Listener(behavior: HitTestBehavior.opaque)` 吸收误点，防止误触被遮挡行；
+  3. **底部动态留白与滚动帧率**：不使用高开销 `BackdropFilter`，改用 `RepaintBoundary` + 高不透明度 `DecoratedBox` 与双层阴影；`CustomScrollView` 末尾注入动态高度占位（`(40.0 * textScale.clamp(1.0, 1.40)).roundToDouble() + 12.0 + floatingBottomMargin + 24.0`），确保滑至最底部时末行节点完全露出于悬浮舱上方。
+- TDD 与验证记录：
+  - 前置有效 Red：**PASS**（[`node_overview_test.dart`](file:///e:/CodeWorkstation/FlClashX/test/views/node_overview_test.dart#L9234-L9436) 新增 `Plan B persistent bottom floating proxy dock...` 用例在修改 `overview.dart` 前确定性失败于 `Found 0 widgets with key [<'overview-floating-proxy-dock'>]`）；
+  - Green 与全量回归：**PASS**（`node_overview_test.dart` + `overview_coldstart_and_header_tdd_test.dart` + `freedomnet_commercial_ui_test.dart` + `freedomnet_code_review_tdd_test.dart` + `novice_expert_navigation_test.dart` + `resource_leak_and_uia_stability_tdd_test.dart` **`158/158` 全绿**）；
+  - 静态分析与补丁检查：**PASS**（`dart analyze --fatal-infos test/views/node_overview_test.dart` 输出 `No issues found!`，`dart analyze --fatal-warnings lib/views/proxies/overview/overview.dart` 退出码 `0` 且新增零 info，`git diff --check` 零空白错误）；
+  - 未执行项：**预览包构建 NOT RUN（本轮未请求重新打包，`dist/` 未改动）**；**宿主机实机进程运行 NOT RUN**；**远端推送 / PR / 合并 NOT RUN**。
+
 ## 修复健康检查 `D3 当前节点出站` 与顶部裁决卡误报节点不可用 TDD 落地（`433f1b39`，2026-11-13）
 
 - 问题与实证根因：用户在代理正常连通且有实时上下行流量的场景下打开「健康检查」，顶部裁决卡与 `D3 当前节点出站` 却偶发报红（「本机网络正常，但当前节点无法连通外网」/「节点 … 无法连通探测地址 481 ms」），`D4 端到端实测` 因前置失败被跳过。根因三项叠加：
