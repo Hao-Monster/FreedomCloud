@@ -2,6 +2,19 @@
 
 更新日期：2026-11-13。当前阶段是快速开发、快速迭代和部分功能预览。本文记录来源与验收边界；每次继续开发仍需核实实际 Git/PR/CI 状态，不能把历史报告视为当前通过证明。
 
+## 移除桌面侧栏「小白模式 / 大佬模式」切换按钮上方尖角图标（2026-11-13）
+
+- 需求与范围：移除桌面/平板左侧导航栏中 [`_NavigationModeToggleButton`](file:///e:/CodeWorkstation/FlClashX/lib/pages/home.dart#L465-L535) 上方的展开/收起尖角图标（`Icons.expand_less_rounded` / `Icons.expand_more_rounded`）及 `56x32` 图标占位框，改为紧凑圆角文字胶囊按钮，保持固定锚定于「购买」正下方、无障碍语义（`button` / `toggled` / `label`）、悬浮提示与四语言 `2.0x` 缩放零溢出，不改动移动端底部栏。
+- TDD 代码落地（本地 `development` 代码提交 `cbae3031`，`cbae30313606613f3a8d947dfe94fdc5a0d24799`）：
+  1. **按钮重构（[`home.dart`](file:///e:/CodeWorkstation/FlClashX/lib/pages/home.dart#L417-L535)）**：移除 `_NavigationModeToggleButton` 内 `iconData`、`Icon(...)`、顶部 `56x32` 容器及多余 `showLabel` 参数，直接以 `Material` + `InkWell` + `RoundedRectangleBorder(10px)` + `freedomNetHairlineColor` 渲染 `小白模式` / `大佬模式` 居中胶囊按钮；
+  2. **TDD 测试更新（[`novice_expert_navigation_test.dart`](file:///e:/CodeWorkstation/FlClashX/test/views/novice_expert_navigation_test.dart#L410-L440)、[`novice_expert_navigation_test.dart`](file:///e:/CodeWorkstation/FlClashX/test/views/novice_expert_navigation_test.dart#L1337-L1364)）**：更新折叠与展开态断言，确保 `navigation-expert-mode-toggle` 下不存在任何 `Icon` / `expand_more_rounded` / `expand_less_rounded`。
+- 验证记录：
+  - 前置有效 Red：**PASS**（[`novice_expert_navigation_test.dart`](file:///e:/CodeWorkstation/FlClashX/test/views/novice_expert_navigation_test.dart) 修改后、修改 `home.dart` 前运行 `+8 -2` 按预期失败于 `IconData(U+0F720)`）；
+  - Green 与导航/UI 回归：**PASS**（[`novice_expert_navigation_test.dart`](file:///e:/CodeWorkstation/FlClashX/test/views/novice_expert_navigation_test.dart) + [`freedomnet_commercial_ui_test.dart`](file:///e:/CodeWorkstation/FlClashX/test/views/freedomnet_commercial_ui_test.dart) + [`freedomnet_code_review_tdd_test.dart`](file:///e:/CodeWorkstation/FlClashX/test/views/freedomnet_code_review_tdd_test.dart) **`22/22` 全绿**）；
+  - 静态分析与补丁检查：**PASS**（`dart analyze --fatal-warnings lib/pages/home.dart test/views/novice_expert_navigation_test.dart` 退出码 `0`，无错误无警告且改动行零新增 info；`git diff --cached --check` 零空白错误）；
+  - 预览包构建：**NOT RUN（按本轮纯代码开发范围未构建新包，`dist/` 未改动）**；
+  - 宿主机实机运行 / 远端推送 / PR：**NOT RUN**。
+
 ## 左上角品牌标识弹窗改为「自由云 · FreedomNet」品牌宣传并保留「设置 -> 关于」郑重声明与特别鸣谢（2026-11-13）
 
 - 需求与职责分离：将点击左上角品牌标识（`ValueKey('brand-tribute-trigger')`）弹出的对话框（`ValueKey('freedomnet-tribute-dialog')`）从原本展示开源声明/鸣谢改为宣传自有品牌「自由云 · FreedomNet」，移除弹窗内全部 `郑重声明`（`OPEN-SOURCE HERITAGE`、`FlClashX`、`FlClash`、`Mihomo`）、`特别鸣谢`（`ENGINEERING & DESIGN SUPPORT`、`Gemini 4`）及 `开源致敬与特别鸣谢` 副标题；同时在「设置 -> 关于」（[`about.dart`](file:///e:/CodeWorkstation/FlClashX/lib/views/about.dart#L376-L382)）完整保留 [`FreedomNetTributeCards`](file:///e:/CodeWorkstation/FlClashX/lib/common/design_system.dart#L299-L497) 及其 `郑重声明` 与 `特别鸣谢`。
