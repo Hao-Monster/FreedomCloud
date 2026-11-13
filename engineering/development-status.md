@@ -2,6 +2,23 @@
 
 更新日期：2026-11-13。当前阶段是快速开发、快速迭代和部分功能预览。本文记录来源与验收边界；每次继续开发仍需核实实际 Git/PR/CI 状态，不能把历史报告视为当前通过证明。
 
+## 桌面/平板侧栏「大佬模式 / 小白模式」固定锚定于「购买」正下方展开高级项 TDD 落地（2026-11-13）
+
+- 需求与根因：桌面/平板左侧导航栏（`CommonNavigationBar` 非 `ViewMode.mobile` 分支）原将 `_NavigationModeToggleButton`（`ValueKey('navigation-expert-mode-toggle')`）直接置于 `NavigationRail.trailing` 并把全部导航项放入 `destinations`，导致折叠态按钮紧邻 `购买` 下方，而点击切换为大佬模式后切换按钮被整体下推至最末尾（`设置` 之后，`dy=242.0` -> `dy=562.0`），原点击坐标不再停留于切换按钮。
+- 实施落地：基于本地 `development@7c3b14ab` 按严格 TDD（前置有效 Red → 最小生产实现 Green → 跨模块回归与静态分析）收口于本地 `development` 代码提交 `3330ef37`（`3330ef37945cb7674070ccd3579b234b1a2cf86c`，tree `52204a4b9393d200f0f9370cbd76ef29a5be8049`）：
+  1. **单 `NavigationRail` 锚点切分与原地展开（[`home.dart`](file:///E:/CodeWorkstation/FlClashX/lib/pages/home.dart#L343-L644)）**：
+     - 以 `PageLabel.purchase` 为锚点将 `navigationItems` 切分为常驻主轨项 `primaryItems`（`[代理, 购买]`）与展开项 `expandedItems`（`[仪表盘, 配置, 连接, (日志), 设置]`），仅保留唯一 `NavigationRail(scrollable: true)` 实例（兼容全仓单 `NavigationRail` 约束及键盘 `Tab` 焦点遍历）；
+     - 将 `_NavigationModeToggleButton` 置于 `NavigationRail.trailing` 内的 `Column` 首项，确保折叠态与展开态纵向坐标原地锚定于 `购买` 正下方不发生下移，并在其下方依次渲染 `_ExpertNavigationRailItem`；
+     - 通过 `railSelectedIndex`（仅当激活页位于 `primaryItems` 时高亮主轨，位于高级项时传 `null`）配合 `_ExpertNavigationRailItem` 的 Material 3 规格（`56x32` 圆角 `12` 主色胶囊指示器、`Semantics(container: true, selected: selected)` 与 `tabLabel`），保证同一时刻仅有一个选中项且在 `440px` 窄高窗口下可正常滚动无溢出；移动端底部栏（`ViewMode.mobile`）保持现有分段布局不变。
+  2. **TDD 几何定位与单选状态验证（[`novice_expert_navigation_test.dart`](file:///E:/CodeWorkstation/FlClashX/test/views/novice_expert_navigation_test.dart#L407-L448)、[`novice_expert_navigation_test.dart`](file:///E:/CodeWorkstation/FlClashX/test/views/novice_expert_navigation_test.dart#L1261-L1418)）**：
+     - 升级并新增桌面侧栏顺序与坐标断言，验证折叠态 `代理 -> 购买 -> 大佬模式` 与展开态 `代理 -> 购买 -> 小白模式 -> 仪表盘 -> 配置 -> 连接 -> (日志) -> 设置` 严格纵向序，展开前后切换按钮 `top` 保持一致（`closeTo(..., 0.01)`）、`selectedIndex` 与 `isSemantics` 单选互斥及 `1280x440` 滚动点击零异常。
+- 验证记录（本机 `Flutter 3.47.4` / `Dart 3.13.3`）：
+  - 前置有效 Red：**PASS**（[`novice_expert_navigation_test.dart`](file:///E:/CodeWorkstation/FlClashX/test/views/novice_expert_navigation_test.dart) 精确复现旧实现展开后 `toggle` 由 `dy=242.0` 下推至 `562.0` 与 `destinations.length == 6` 的失败断言）；
+  - Green 与跨模块回归：**PASS**（[`novice_expert_navigation_test.dart`](file:///E:/CodeWorkstation/FlClashX/test/views/novice_expert_navigation_test.dart) `10/10` + [`freedomnet_commercial_ui_test.dart`](file:///E:/CodeWorkstation/FlClashX/test/views/freedomnet_commercial_ui_test.dart) + [`freedomnet_code_review_tdd_test.dart`](file:///E:/CodeWorkstation/FlClashX/test/views/freedomnet_code_review_tdd_test.dart) + [`purchase_interaction_test.dart`](file:///E:/CodeWorkstation/FlClashX/test/purchase/purchase_interaction_test.dart) + [`overview_coldstart_and_header_tdd_test.dart`](file:///E:/CodeWorkstation/FlClashX/test/views/overview_coldstart_and_header_tdd_test.dart) + [`resource_leak_and_uia_stability_tdd_test.dart`](file:///E:/CodeWorkstation/FlClashX/test/common/resource_leak_and_uia_stability_tdd_test.dart) 合计 **`44/44` 全绿**）；
+  - 静态分析：**PASS**（`dart analyze --fatal-warnings` 对 [`home.dart`](file:///E:/CodeWorkstation/FlClashX/lib/pages/home.dart) 与 [`novice_expert_navigation_test.dart`](file:///E:/CodeWorkstation/FlClashX/test/views/novice_expert_navigation_test.dart) 返回退出码 `0`，`0 error / 0 warning / 0 新增 info`；`git diff --cached --check` 零空白错误）；
+  - 新预览包重编 **NOT RUN（既有预览包未覆盖）** / 宿主机实机窗口运行 **NOT RUN（遵守协作规则未拉起候选程序或触碰现役代理/服务）** / 远端推送 **NOT RUN** / PR 与合并 **NOT RUN** / 云端 CI **NOT RUN**。
+- 恢复位置与下一步：代码已提交于本地工作树 `E:\CodeWorkstation\FlClashX` 的 `development` 分支提交 `3330ef37`（未推送至 `freedomcloud/development`）；既有无关未跟踪/未暂存文件及 `stash@{0}` 原样保留。下一步可在用户确认后基于新 HEAD 重编预览包验证实机交互或按授权推送 `development`。
+
 ## 网络客户端关闭逃逸泄露、后台静默订阅刷新降噪与 Windows UIA 1Hz 语义风暴 TDD 修复落地（2026-11-13）
 
 - 问题来源与根因定位：针对 `60890bddd9bf` 运行版闪退转储 `FlClashX.exe.15584.dmp`（`flutter_windows.dll` 在响应外部 `Tobii.EyeTracking.Portal.WPF.exe` / `baiducnTSF.dll` UIAutomation 查询 `ui::AXPlatformNodeWin::get_accValue` -> `ui::AXNodeData::GetStringAttribute` `+0x8fe43a` 时的语义节点 UAF `0xc0000005` -> `0xc000041d`）及全仓资源泄露专项审查，基于本地 `development@e16d8928` 按严格 TDD（前置有效 Red → 最小生产实现 Green → 跨模块全量回归验证）收口于本地 `development` 代码提交 `adef39f0`（`adef39f02e3bbf07c37debcc5826f95189102c31`，tree `07e0424034e34513f6b21709204cc64a3949deed`）：
