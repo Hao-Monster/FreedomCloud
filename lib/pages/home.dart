@@ -17,6 +17,21 @@ import 'package:intl/intl.dart';
 
 typedef OnSelected = void Function(int index);
 
+void _openGlobalSupport(BuildContext context, WidgetRef ref) {
+  final coordinator = ref.read(purchaseSupportCoordinatorProvider);
+  unawaited(coordinator.prepareSupport());
+  final locale = Localizations.localeOf(context);
+  unawaited(
+    openSupportChatSheet(
+      context,
+      supportManager: coordinator.supportManager,
+      openLink: openHttpsExternalLink,
+      externalWidgetUri: coordinator.resolveExternalWidgetUri(locale),
+      onRetryChannel: () => coordinator.prepareSupport(force: true),
+    ),
+  );
+}
+
 class HomePage extends StatelessWidget {
   const HomePage({super.key});
 
@@ -56,6 +71,16 @@ class HomePage extends StatelessWidget {
                 pageLabel.name,
               ),
               sideNavigationBar: sideNavigationBar,
+              persistentActions: viewMode == ViewMode.mobile
+                  ? [
+                      IconButton(
+                        key: const ValueKey('navigation-support-trigger-mobile'),
+                        tooltip: appLocalizations.supportSheetTitle,
+                        onPressed: () => _openGlobalSupport(context, ref),
+                        icon: const Icon(Icons.support_agent_outlined),
+                      ),
+                    ]
+                  : null,
               body: child!,
               bottomNavigationBar: bottomNavigationBar,
             );
@@ -84,7 +109,7 @@ class _HomePageViewState extends ConsumerState<_HomePageView> {
     );
     ref.listenManual(currentPageLabelProvider, (prev, next) {
       if (prev != next) {
-        _toPage(next);
+        unawaited(_toPage(next));
       }
     });
     ref.listenManual(currentNavigationsStateProvider, (prev, next) {
@@ -143,7 +168,7 @@ class _HomePageViewState extends ConsumerState<_HomePageView> {
 
   void _updatePageController() {
     final pageLabel = ref.read(currentPageLabelProvider);
-    _toPage(pageLabel, true);
+    unawaited(_toPage(pageLabel, true));
   }
 
   @override
@@ -180,16 +205,16 @@ class _HomePageViewState extends ConsumerState<_HomePageView> {
 }
 
 class CommonNavigationBar extends ConsumerWidget {
-  final ViewMode viewMode;
-  final List<NavigationItem> navigationItems;
-  final int currentIndex;
-
   const CommonNavigationBar({
     super.key,
     required this.viewMode,
     required this.navigationItems,
     required this.currentIndex,
   });
+
+  final ViewMode viewMode;
+  final List<NavigationItem> navigationItems;
+  final int currentIndex;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -448,23 +473,7 @@ class CommonNavigationBar extends ConsumerWidget {
                               key: const ValueKey('navigation-support-trigger'),
                               iconColor: colors.onSurfaceVariant,
                               labelStyle: unselectedLabelTextStyle,
-                              onTap: () {
-                                final coordinator = ref.read(
-                                  purchaseSupportCoordinatorProvider,
-                                );
-                                unawaited(coordinator.prepareSupport());
-                                final locale = Localizations.localeOf(context);
-                                unawaited(
-                                  openSupportChatSheet(
-                                    context,
-                                    supportManager: coordinator.supportManager,
-                                    openLink: openHttpsExternalLink,
-                                    externalWidgetUri: coordinator
-                                        .resolveExternalWidgetUri(locale),
-                                    onRetryChannel: coordinator.prepareSupport,
-                                  ),
-                                );
-                              },
+                              onTap: () => _openGlobalSupport(context, ref),
                             ),
                           ],
                         ),
@@ -820,9 +829,9 @@ class _NavigationBarDefaultsM3 extends NavigationBarThemeData {
 }
 
 class HomeBackScope extends StatelessWidget {
-  final Widget child;
-
   const HomeBackScope({super.key, required this.child});
+
+  final Widget child;
 
   @override
   Widget build(BuildContext context) {

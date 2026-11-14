@@ -163,6 +163,33 @@ class PurchaseCenter extends StatefulWidget {
   State<PurchaseCenter> createState() => _PurchaseCenterState();
 }
 
+@immutable
+class _CatalogSnapshot {
+  const _CatalogSnapshot({
+    required this.catalog,
+    required this.loading,
+    required this.failed,
+    required this.buyingPlanId,
+  });
+
+  final XboardPlanCatalog? catalog;
+  final bool loading;
+  final bool failed;
+  final int? buyingPlanId;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is _CatalogSnapshot &&
+          (identical(other.catalog, catalog) || other.catalog == catalog) &&
+          other.loading == loading &&
+          other.failed == failed &&
+          other.buyingPlanId == buyingPlanId;
+
+  @override
+  int get hashCode => Object.hash(catalog, loading, failed, buyingPlanId);
+}
+
 class _PurchaseCenterState extends State<PurchaseCenter>
     with WidgetsBindingObserver {
   static const _wechatContacts = <String>['ChasingDream_2021', 'dxm_qa'];
@@ -187,9 +214,13 @@ class _PurchaseCenterState extends State<PurchaseCenter>
   final _inviteCode = TextEditingController();
   final _newPassword = TextEditingController();
   final _code = TextEditingController();
-  final ValueNotifier<int> _cooldownSeconds = ValueNotifier<int>(0);
-  Timer? _cooldownTimer;
+  final ValueNotifier<int> _regCooldownSeconds = ValueNotifier<int>(0);
+  final ValueNotifier<int> _resetCooldownSeconds = ValueNotifier<int>(0);
+  Timer? _regCooldownTimer;
+  Timer? _resetCooldownTimer;
   SupportManagerHandle? _fallbackSupportHandle;
+  late final ValueNotifier<_CatalogSnapshot> _catalogState;
+  late Widget _catalogPane;
   bool _wasLoggedIn = false;
   bool _isRegisterMode = false;
   bool _isForgotPasswordMode = false;
@@ -229,12 +260,48 @@ class _PurchaseCenterState extends State<PurchaseCenter>
       : (XboardPurchaseChannels.extractPlanContentPurchaseUrl(plan.content) ??
           manager.cardStoreUrl);
 
+  _CatalogSnapshot _currentCatalogSnapshot() => _CatalogSnapshot(
+        catalog: manager.planCatalog,
+        loading: manager.plansLoading,
+        failed: manager.plansError != null,
+        buyingPlanId: _buyingPlanId,
+      );
+
+  void _syncCatalogState() {
+    final next = _currentCatalogSnapshot();
+    if (_catalogState.value != next) {
+      _catalogState.value = next;
+    }
+  }
+
+  Widget _buildCatalogPane() => FocusTraversalGroup(
+        child: KeyedSubtree(
+          key: _catalogAnchor,
+          child: ValueListenableBuilder<_CatalogSnapshot>(
+            valueListenable: _catalogState,
+            builder: (context, snapshot, _) => PurchasePlanCatalog(
+              catalog: snapshot.catalog,
+              loading: snapshot.loading,
+              failed: snapshot.failed,
+              retry: manager.loadPlans,
+              openLink: _open,
+              onBuyPlan: _handleBuyPlan,
+              onAcquirePlan: _showAcquireSheet,
+              buyingPlanId: snapshot.buyingPlanId,
+              collapsibleDetails: true,
+            ),
+          ),
+        ),
+      );
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _wasLoggedIn = manager.loggedIn;
     _code.text = manager.code;
+    _catalogState = ValueNotifier<_CatalogSnapshot>(_currentCatalogSnapshot());
+    _catalogPane = _buildCatalogPane();
     manager.addListener(_onManagerChanged);
   }
 
@@ -298,9 +365,23 @@ class _PurchaseCenterState extends State<PurchaseCenter>
     }
   }
 
+  void _cancelCooldowns() {
+    _regCooldownTimer?.cancel();
+    _regCooldownTimer = null;
+    _regCooldownSeconds.value = 0;
+    _resetCooldownTimer?.cancel();
+    _resetCooldownTimer = null;
+    _resetCooldownSeconds.value = 0;
+  }
+
   @override
   void didUpdateWidget(covariant PurchaseCenter oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.supportManager != widget.supportManager &&
+        widget.supportManager != null) {
+      _fallbackSupportHandle?.dispose();
+      _fallbackSupportHandle = null;
+    }
     if (oldWidget.manager != manager) {
       oldWidget.manager.removeListener(_onManagerChanged);
       manager.addListener(_onManagerChanged);
@@ -309,20 +390,22 @@ class _PurchaseCenterState extends State<PurchaseCenter>
       _emailCode.clear();
       _inviteCode.clear();
       _newPassword.clear();
-      _cooldownTimer?.cancel();
-      _cooldownTimer = null;
-      _cooldownSeconds.value = 0;
+      _cancelCooldowns();
       _isRegisterMode = false;
       _isForgotPasswordMode = false;
       _showInviteField = false;
       _codeSentNotice = false;
       _obscurePassword = true;
       _historyExpanded = false;
+      _catalogPane = _buildCatalogPane();
       _onManagerChanged(notifyState: false);
+    } else if (oldWidget.openLink != widget.openLink) {
+      _catalogPane = _buildCatalogPane();
     }
   }
 
   void _onManagerChanged({bool notifyState = true}) {
+    _syncCatalogState();
     if (manager.code.isNotEmpty) {
       _lastNonEmptyManagerCode = manager.code;
     } else if (manager.receipt != null && _lastNonEmptyManagerCode.isNotEmpty) {
@@ -348,9 +431,7 @@ class _PurchaseCenterState extends State<PurchaseCenter>
       _emailCode.clear();
       _inviteCode.clear();
       _newPassword.clear();
-      _cooldownTimer?.cancel();
-      _cooldownTimer = null;
-      _cooldownSeconds.value = 0;
+      _cancelCooldowns();
       if (!manager.loggedIn) {
         _email.clear();
         _code.clear();
@@ -380,8 +461,11 @@ class _PurchaseCenterState extends State<PurchaseCenter>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     manager.removeListener(_onManagerChanged);
-    _cooldownTimer?.cancel();
-    _cooldownSeconds.dispose();
+    _regCooldownTimer?.cancel();
+    _resetCooldownTimer?.cancel();
+    _regCooldownSeconds.dispose();
+    _resetCooldownSeconds.dispose();
+    _catalogState.dispose();
     _fallbackSupportHandle?.dispose();
     _email.dispose();
     _password.dispose();
@@ -392,24 +476,38 @@ class _PurchaseCenterState extends State<PurchaseCenter>
     super.dispose();
   }
 
-  void _startCooldown([int seconds = 60]) {
-    _cooldownTimer?.cancel();
+  void _startCooldownFor({required bool forReset, int seconds = 60}) {
+    final notifier = forReset ? _resetCooldownSeconds : _regCooldownSeconds;
+    if (forReset) {
+      _resetCooldownTimer?.cancel();
+    } else {
+      _regCooldownTimer?.cancel();
+    }
     final initial = seconds > 0 ? seconds : 60;
-    _cooldownSeconds.value = initial;
-    _cooldownTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+    notifier.value = initial;
+    final timer = Timer.periodic(const Duration(seconds: 1), (timer) {
       if (!mounted) {
         timer.cancel();
         return;
       }
-      final next = _cooldownSeconds.value - 1;
+      final next = notifier.value - 1;
       if (next <= 0) {
-        _cooldownSeconds.value = 0;
+        notifier.value = 0;
         timer.cancel();
-        _cooldownTimer = null;
+        if (forReset) {
+          _resetCooldownTimer = null;
+        } else {
+          _regCooldownTimer = null;
+        }
       } else {
-        _cooldownSeconds.value = next;
+        notifier.value = next;
       }
     });
+    if (forReset) {
+      _resetCooldownTimer = timer;
+    } else {
+      _regCooldownTimer = timer;
+    }
   }
 
   String? _validateEmailInput(
@@ -421,7 +519,7 @@ class _PurchaseCenterState extends State<PurchaseCenter>
       return l.purchaseEmailRequired;
     }
     if (checkRegisterPolicy) {
-      if (_guestAuthConfig.hasGmailPlusAlias(trimmed)) {
+      if (_guestAuthConfig.isRestrictedGmailAlias(trimmed)) {
         return l.purchaseGmailAliasError;
       }
       if (!_guestAuthConfig.isEmailDomainAllowed(trimmed)) {
@@ -433,6 +531,7 @@ class _PurchaseCenterState extends State<PurchaseCenter>
 
   Future<void> _sendEmailVerificationCode({required bool forReset}) async {
     if (!_isRealManager || manager.sendingEmailCode || manager.busy) return;
+    if (!forReset && _guestAuthConfig.isRegistrationStopped) return;
     final emailError = _validateEmailInput(
       _email.text,
       checkRegisterPolicy: !forReset && manager.api is XboardPassportApi,
@@ -460,9 +559,12 @@ class _PurchaseCenterState extends State<PurchaseCenter>
         _codeSentNotice = true;
         _localEmailError = null;
       });
-      _startCooldown(60);
+      _startCooldownFor(forReset: forReset, seconds: 60);
     } else if (manager.error?.retryAfterSeconds != null) {
-      _startCooldown(manager.error!.retryAfterSeconds!);
+      _startCooldownFor(
+        forReset: forReset,
+        seconds: manager.error!.retryAfterSeconds!,
+      );
     }
   }
 
@@ -478,6 +580,7 @@ class _PurchaseCenterState extends State<PurchaseCenter>
   Future<void> _register() async {
     if (!_isRealManager ||
         manager.busy ||
+        _guestAuthConfig.isRegistrationStopped ||
         !(_loginForm.currentState?.validate() ?? false)) {
       return;
     }
@@ -493,10 +596,18 @@ class _PurchaseCenterState extends State<PurchaseCenter>
     } else {
       await manager.register(_email.text.trim(), _password.text);
     }
-    if (mounted && manager.loggedIn) {
+    if (!mounted) return;
+    if (manager.loggedIn) {
       _password.clear();
       _emailCode.clear();
       _inviteCode.clear();
+    } else if (manager.error?.code == 'registration_created_login_required') {
+      setState(() {
+        _isRegisterMode = false;
+        _isForgotPasswordMode = false;
+        _codeSentNotice = false;
+        _localEmailError = null;
+      });
     }
   }
 
@@ -544,11 +655,8 @@ class _PurchaseCenterState extends State<PurchaseCenter>
 
   Future<void> _handleBuyPlan(XboardPlanOffer plan) async {
     if (_buyingPlanId != null || _openingExternalLink) return;
-    if (mounted) {
-      setState(() => _buyingPlanId = plan.id);
-    } else {
-      _buyingPlanId = plan.id;
-    }
+    _buyingPlanId = plan.id;
+    _syncCatalogState();
     try {
       var targetUrl = _resolvePlanStoreUrl(plan);
       if (targetUrl == null && _isRealManager) {
@@ -567,10 +675,9 @@ class _PurchaseCenterState extends State<PurchaseCenter>
       }
       await _showAcquireSheet(plan);
     } finally {
+      _buyingPlanId = null;
       if (mounted) {
-        setState(() => _buyingPlanId = null);
-      } else {
-        _buyingPlanId = null;
+        _syncCatalogState();
       }
     }
   }
@@ -682,143 +789,125 @@ class _PurchaseCenterState extends State<PurchaseCenter>
   }
 
   @override
-  Widget build(BuildContext context) => ListenableBuilder(
-        listenable: manager,
-        builder: (context, _) {
-          final viewportWidth = MediaQuery.sizeOf(context).width;
-          final horizontalPadding = viewportWidth < 420 ? 14.0 : 20.0;
-          return FocusTraversalGroup(
-            // Keep the form's reading order separate from the desktop side rail.
-            child: Align(
-              alignment: Alignment.topCenter,
-              child: SingleChildScrollView(
-                key: const Key('purchase-scroll'),
-                padding: EdgeInsets.fromLTRB(
-                  horizontalPadding,
-                  20,
-                  horizontalPadding,
-                  40,
-                ),
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 1240),
-                  child: LayoutBuilder(
-                    builder: (context, constraints) {
-                      final textScale =
-                          MediaQuery.textScalerOf(context).scale(1);
-                      final isDualColumn =
-                          constraints.maxWidth >= 860 * textScale;
-                      final workbenchWidth =
-                          (constraints.maxWidth * 0.37).clamp(356.0, 420.0);
-                      final columnGap =
-                          constraints.maxWidth >= 1080 ? 24.0 : 20.0;
+  Widget build(BuildContext context) {
+    final viewportWidth = MediaQuery.sizeOf(context).width;
+    final horizontalPadding = viewportWidth < 420 ? 14.0 : 20.0;
+    return FocusTraversalGroup(
+      // Keep the form's reading order separate from the desktop side rail.
+      child: Align(
+        alignment: Alignment.topCenter,
+        child: SingleChildScrollView(
+          key: const Key('purchase-scroll'),
+          padding: EdgeInsets.fromLTRB(
+            horizontalPadding,
+            20,
+            horizontalPadding,
+            40,
+          ),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 1240),
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final textScale = MediaQuery.textScalerOf(context).scale(1);
+                final isDualColumn = constraints.maxWidth >= 860 * textScale;
+                final workbenchWidth =
+                    (constraints.maxWidth * 0.37).clamp(356.0, 420.0);
+                final columnGap = constraints.maxWidth >= 1080 ? 24.0 : 20.0;
 
-                      final catalogPane = FocusTraversalGroup(
-                        child: KeyedSubtree(
-                          key: _catalogAnchor,
-                          child: PurchasePlanCatalog(
-                            catalog: manager.planCatalog,
-                            loading: manager.plansLoading,
-                            failed: manager.plansError != null,
-                            retry: manager.loadPlans,
-                            openLink: _open,
-                            onBuyPlan: _handleBuyPlan,
-                            onAcquirePlan: _showAcquireSheet,
-                            buyingPlanId: _buyingPlanId,
-                            collapsibleDetails: true,
-                          ),
-                        ),
-                      );
-
-                      final workbenchPane = FocusTraversalGroup(
-                        child: KeyedSubtree(
-                          key: _workbenchAnchor,
-                          child: Column(
-                            key: const Key('purchase-workbench'),
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            children: [
-                              if (_handoffPlan != null &&
-                                  manager.receipt == null &&
-                                  !manager.unresolvedRedemption) ...[
-                                _handoffBanner(_handoffPlan!),
-                                const SizedBox(height: 12),
-                              ],
-                              if (!manager.loggedIn &&
-                                  manager.receipt != null) ...[
-                                _receiptCard(
-                                  manager.receipt!,
-                                  showOpenProfiles: false,
-                                ),
-                                const SizedBox(height: 12),
-                              ],
-                              if (manager.restoring)
-                                _Section(
-                                  icon: Icons.hourglass_top_rounded,
-                                  title: l.purchaseRestoring,
-                                  child: ClipRRect(
-                                    borderRadius: BorderRadius.circular(999),
-                                    child: const LinearProgressIndicator(
-                                      minHeight: 6,
-                                    ),
-                                  ),
-                                )
-                              else if (!manager.loggedIn)
-                                _loginSection()
-                              else ...[
-                                _accountSection(),
-                                const SizedBox(height: 16),
-                                if (manager.error != null) ...[
-                                  _Notice(
-                                    message: _errorMessage(manager.error!),
-                                    error: true,
-                                  ),
-                                  const SizedBox(height: 12),
-                                ],
-                                _redemptionSection(),
-                                const SizedBox(height: 16),
-                                _historySection(),
-                              ],
-                              const SizedBox(height: 16),
-                              _supportSection(),
-                            ],
-                          ),
-                        ),
-                      );
-
-                      return Column(
+                final workbenchPane = FocusTraversalGroup(
+                  child: KeyedSubtree(
+                    key: _workbenchAnchor,
+                    child: ListenableBuilder(
+                      listenable: manager,
+                      builder: (context, _) => Column(
+                        key: const Key('purchase-workbench'),
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
-                          _headerBanner(
-                            context,
-                            showQuickJump: !isDualColumn,
-                          ),
-                          const SizedBox(height: 20),
-                          if (isDualColumn)
-                            Row(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Expanded(child: catalogPane),
-                                SizedBox(width: columnGap),
-                                SizedBox(
-                                  width: workbenchWidth,
-                                  child: workbenchPane,
-                                ),
-                              ],
-                            )
-                          else ...[
-                            catalogPane,
-                            const SizedBox(height: 20),
-                            workbenchPane,
+                          if (_handoffPlan != null &&
+                              manager.receipt == null &&
+                              !manager.unresolvedRedemption) ...[
+                            _handoffBanner(_handoffPlan!),
+                            const SizedBox(height: 12),
                           ],
+                          if (!manager.loggedIn && manager.receipt != null) ...[
+                            _receiptCard(
+                              manager.receipt!,
+                              showOpenProfiles: false,
+                            ),
+                            const SizedBox(height: 12),
+                          ],
+                          if (manager.restoring)
+                            _Section(
+                              icon: Icons.hourglass_top_rounded,
+                              title: l.purchaseRestoring,
+                              child: ClipRRect(
+                                borderRadius: BorderRadius.circular(999),
+                                child: const LinearProgressIndicator(
+                                  minHeight: 6,
+                                ),
+                              ),
+                            )
+                          else if (!manager.loggedIn)
+                            _loginSection()
+                          else ...[
+                            _accountSection(),
+                            const SizedBox(height: 16),
+                            if (manager.error != null) ...[
+                              _Notice(
+                                message: _errorMessage(manager.error!),
+                                error: true,
+                              ),
+                              const SizedBox(height: 12),
+                            ],
+                            _redemptionSection(),
+                            const SizedBox(height: 16),
+                            _historySection(),
+                          ],
+                          const SizedBox(height: 16),
+                          _supportSection(),
                         ],
-                      );
-                    },
+                      ),
+                    ),
                   ),
-                ),
-              ),
+                );
+
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    ListenableBuilder(
+                      listenable: manager,
+                      builder: (context, _) => _headerBanner(
+                        context,
+                        showQuickJump: !isDualColumn,
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+                    if (isDualColumn)
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Expanded(child: _catalogPane),
+                          SizedBox(width: columnGap),
+                          SizedBox(
+                            width: workbenchWidth,
+                            child: workbenchPane,
+                          ),
+                        ],
+                      )
+                    else ...[
+                      _catalogPane,
+                      const SizedBox(height: 20),
+                      workbenchPane,
+                    ],
+                  ],
+                );
+              },
             ),
-          );
-        },
-      );
+          ),
+        ),
+      ),
+    );
+  }
 
   Widget _headerBanner(BuildContext context, {required bool showQuickJump}) {
     final theme = Theme.of(context);
@@ -1085,10 +1174,13 @@ class _PurchaseCenterState extends State<PurchaseCenter>
     );
 
     final sendButton = ValueListenableBuilder<int>(
-      valueListenable: _cooldownSeconds,
+      valueListenable: forReset ? _resetCooldownSeconds : _regCooldownSeconds,
       builder: (context, seconds, _) {
         final sending = _isRealManager && manager.sendingEmailCode;
-        final disabled = manager.busy || sending || seconds > 0;
+        final registerBlocked =
+            !forReset && _guestAuthConfig.isRegistrationStopped;
+        final disabled =
+            manager.busy || sending || seconds > 0 || registerBlocked;
         final label = sending
             ? l.purchaseSendingCode
             : (seconds > 0
@@ -1155,6 +1247,8 @@ class _PurchaseCenterState extends State<PurchaseCenter>
         : const <String>[];
     final showCaptchaFallback = (inRegisterMode && authConfig.isCaptcha) ||
         manager.error?.code == 'register_web_required';
+    final registrationStopped =
+        inRegisterMode && authConfig.isRegistrationStopped;
 
     return _Section(
       icon: inForgotMode
@@ -1522,6 +1616,10 @@ class _PurchaseCenterState extends State<PurchaseCenter>
                   ),
                 ),
               ],
+              if (registrationStopped) ...[
+                const SizedBox(height: 10),
+                _Notice(message: l.purchaseRegistrationClosedError, error: true),
+              ],
               if (showCaptchaFallback) ...[
                 const SizedBox(height: 10),
                 _Notice(message: l.purchaseCaptchaRequiredNotice),
@@ -1575,7 +1673,8 @@ class _PurchaseCenterState extends State<PurchaseCenter>
               ] else if (inRegisterMode)
                 FilledButton.icon(
                   key: const Key('purchase-register-submit'),
-                  onPressed: manager.busy ? null : _register,
+                  onPressed:
+                      manager.busy || registrationStopped ? null : _register,
                   icon: const Icon(Icons.rocket_launch_rounded, size: 18),
                   label: Text(
                     _registering || manager.busy
@@ -2398,7 +2497,9 @@ class _PurchaseCenterState extends State<PurchaseCenter>
   Widget _supportSection() {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
-    final chatUrl = _purchaseChannels?.resolveChatwootWidgetUrl();
+    final chatUrl = _purchaseChannels?.resolveChatwootWidgetUrl(
+      locale: Localizations.localeOf(context).toString(),
+    );
     final hasSelfServiceRow = manager.cardStoreUrl != null || chatUrl != null;
 
     return _Section(
@@ -2555,6 +2656,11 @@ class _PurchaseCenterState extends State<PurchaseCenter>
       'registration_email_rate_limited' ||
       'password_reset_rate_limited' ||
       'passport_email_rate_limited' ||
+      'registration_rate_limited' ||
+      'registration_busy' ||
+      'registration_ip_limited' ||
+      'password_reset_busy' ||
+      'login_rate_limited' ||
       'rate_limited' =>
         retryAfter != null
             ? l.purchaseCooldownWithSecondsError(retryAfter)

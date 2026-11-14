@@ -3,9 +3,38 @@ import 'dart:async';
 import 'package:flclashx/l10n/l10n.dart';
 import 'package:flclashx/manager/support_manager.dart';
 import 'package:flclashx/models/chatwoot.dart';
+import 'package:flclashx/models/xboard.dart';
 import 'package:flclashx/widgets/side_sheet.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+
+final Expando<bool> _activeSupportSheets = Expando<bool>('activeSupportSheet');
+
+Uri? _resolveEffectiveExternalUri(
+  ChatwootChannelConfig? config, {
+  required String locale,
+  Uri? fallback,
+}) {
+  if (config == null) return fallback;
+  final base = config.baseUrl;
+  final direct = XboardPurchaseChannels(
+    chatwootBaseUrl: base,
+    chatwootWebsiteToken: config.websiteToken,
+  ).resolveChatwootWidgetUrl(locale: locale);
+  if (direct != null) return direct;
+  final rootResolved = XboardPurchaseChannels(
+    chatwootBaseUrl: base.replace(path: '/'),
+    chatwootWebsiteToken: config.websiteToken,
+  ).resolveChatwootWidgetUrl(locale: locale);
+  if (rootResolved == null) return fallback;
+  var normalizedPath = base.path;
+  while (normalizedPath.endsWith('/')) {
+    normalizedPath = normalizedPath.substring(0, normalizedPath.length - 1);
+  }
+  final widgetPath = normalizedPath.isEmpty ? '/widget' : '$normalizedPath/widget';
+  return rootResolved.replace(path: widgetPath);
+}
 
 /// Opens the native in-app customer support chat sheet.
 ///
@@ -20,6 +49,9 @@ Future<void> openSupportChatSheet(
   List<String> wechatContacts = const ['ChasingDream_2021', 'dxm_qa'],
   Future<void> Function()? onRetryChannel,
 }) async {
+  if (_activeSupportSheets[supportManager] ?? false) return;
+  _activeSupportSheets[supportManager] = true;
+  int? sheetPanelToken;
   final width = MediaQuery.sizeOf(context).width;
   final surfaceColor = Theme.of(context).colorScheme.surface;
   try {
@@ -38,6 +70,7 @@ Future<void> openSupportChatSheet(
           initialDraft: initialDraft,
           wechatContacts: wechatContacts,
           onRetryChannel: onRetryChannel,
+          onPanelTokenAcquired: (token) => sheetPanelToken = token,
         ),
       );
     } else {
@@ -55,12 +88,16 @@ Future<void> openSupportChatSheet(
             initialDraft: initialDraft,
             wechatContacts: wechatContacts,
             onRetryChannel: onRetryChannel,
+            onPanelTokenAcquired: (token) => sheetPanelToken = token,
           ),
         ),
       );
     }
   } finally {
-    await supportManager.closePanel();
+    _activeSupportSheets[supportManager] = null;
+    if (sheetPanelToken != null) {
+      await supportManager.closePanel(panelToken: sheetPanelToken);
+    }
   }
 }
 
@@ -74,6 +111,7 @@ class SupportChatSheet extends StatefulWidget {
     this.initialDraft,
     this.wechatContacts = const ['ChasingDream_2021', 'dxm_qa'],
     this.onRetryChannel,
+    this.onPanelTokenAcquired,
   });
 
   final SupportManager supportManager;
@@ -82,31 +120,147 @@ class SupportChatSheet extends StatefulWidget {
   final String? initialDraft;
   final List<String> wechatContacts;
   final Future<void> Function()? onRetryChannel;
+  final ValueChanged<int>? onPanelTokenAcquired;
 
   @override
   State<SupportChatSheet> createState() => _SupportChatSheetState();
 }
 
+@immutable
+class _MessageBodySnapshot {
+  const _MessageBodySnapshot({
+    required this.messages,
+    required this.config,
+    required this.hasMoreHistory,
+    required this.isLoadingOlder,
+  });
+
+  factory _MessageBodySnapshot.fromManager(SupportManager manager) =>
+      _MessageBodySnapshot(
+        messages: List<ChatwootMessage>.unmodifiable(manager.messages),
+        config: manager.channelConfig,
+        hasMoreHistory: manager.hasMoreHistory,
+        isLoadingOlder: manager.isLoadingOlder,
+      );
+
+  final List<ChatwootMessage> messages;
+  final ChatwootChannelConfig? config;
+  final bool hasMoreHistory;
+  final bool isLoadingOlder;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is _MessageBodySnapshot &&
+          other.config == config &&
+          other.hasMoreHistory == hasMoreHistory &&
+          other.isLoadingOlder == isLoadingOlder &&
+          listEquals(other.messages, messages);
+
+  @override
+  int get hashCode => Object.hash(
+        config,
+        hasMoreHistory,
+        isLoadingOlder,
+        Object.hashAll(messages),
+      );
+}
+
 class _SupportChatSheetState extends State<SupportChatSheet> {
   late final TextEditingController _composer;
   final ScrollController _scrollController = ScrollController();
-  bool _showBackupWechat = false;
-  bool _retryingChannel = false;
+  final ValueNotifier<bool> _showBackupWechat = ValueNotifier<bool>(false);
+  final ValueNotifier<bool> _retryingChannel = ValueNotifier<bool>(false);
+  late final ValueNotifier<_MessageBodySnapshot> _bodyState;
+  late int _panelToken;
+  bool _isNearBottom = true;
 
   @override
   void initState() {
     super.initState();
-    unawaited(widget.supportManager.openPanel(initialDraft: widget.initialDraft));
-    final pendingDraft = widget.supportManager.takePendingDraft();
-    _composer = TextEditingController(text: pendingDraft ?? '');
+    _panelToken = widget.supportManager.acquirePanelToken();
+    widget.onPanelTokenAcquired?.call(_panelToken);
+    final queuedDraft = widget.supportManager.takePendingDraft();
+    final initialText = (widget.initialDraft?.trim().isNotEmpty ?? false)
+        ? widget.initialDraft!
+        : (queuedDraft ?? '');
+    _composer = TextEditingController(text: initialText);
+    _bodyState = ValueNotifier<_MessageBodySnapshot>(
+      _MessageBodySnapshot.fromManager(widget.supportManager),
+    );
+    _scrollController.addListener(_onScroll);
+    widget.supportManager.addListener(_onSupportManagerChanged);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      unawaited(widget.supportManager.openPanel(panelToken: _panelToken));
+    });
+  }
+
+  @override
+  void didUpdateWidget(covariant SupportChatSheet oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.supportManager != widget.supportManager) {
+      final oldToken = _panelToken;
+      oldWidget.supportManager.removeListener(_onSupportManagerChanged);
+      unawaited(oldWidget.supportManager.closePanel(panelToken: oldToken));
+      _panelToken = widget.supportManager.acquirePanelToken();
+      widget.onPanelTokenAcquired?.call(_panelToken);
+      widget.supportManager.addListener(_onSupportManagerChanged);
+      _bodyState.value = _MessageBodySnapshot.fromManager(widget.supportManager);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        unawaited(widget.supportManager.openPanel(panelToken: _panelToken));
+      });
+    }
   }
 
   @override
   void dispose() {
+    widget.supportManager.removeListener(_onSupportManagerChanged);
+    _showBackupWechat.dispose();
+    _retryingChannel.dispose();
+    _bodyState.dispose();
     _composer.dispose();
-    _scrollController.dispose();
-    unawaited(widget.supportManager.closePanel());
+    _scrollController
+      ..removeListener(_onScroll)
+      ..dispose();
+    unawaited(widget.supportManager.closePanel(panelToken: _panelToken));
     super.dispose();
+  }
+
+  void _onScroll() {
+    if (!_scrollController.hasClients) return;
+    final pos = _scrollController.position;
+    _isNearBottom = pos.pixels <= 48.0;
+    if (pos.maxScrollExtent > 0 &&
+        pos.extentAfter <= 120.0 &&
+        widget.supportManager.hasMoreHistory &&
+        !widget.supportManager.isLoadingOlder) {
+      unawaited(widget.supportManager.loadOlderMessages());
+    }
+  }
+
+  void _onSupportManagerChanged() {
+    final prev = _bodyState.value;
+    final next = _MessageBodySnapshot.fromManager(widget.supportManager);
+    if (prev != next) {
+      final prevLastKey =
+          prev.messages.isEmpty ? null : prev.messages.last.stableKey;
+      final nextLastKey =
+          next.messages.isEmpty ? null : next.messages.last.stableKey;
+      final appendedNewBottomMessage = nextLastKey != null &&
+          nextLastKey != prevLastKey &&
+          next.messages.length >= prev.messages.length;
+      _bodyState.value = next;
+      if (appendedNewBottomMessage && _isNearBottom) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted && _scrollController.hasClients) {
+            _scrollController.jumpTo(0);
+            _isNearBottom = true;
+          }
+        });
+      }
+    }
   }
 
   Future<void> _sendCurrentDraft() async {
@@ -116,37 +270,37 @@ class _SupportChatSheetState extends State<SupportChatSheet> {
     if (text.trim().isEmpty) return;
     _composer.clear();
     await manager.sendMessage(text);
-    if (_scrollController.hasClients) {
+    if (mounted && _scrollController.hasClients) {
       _scrollController.jumpTo(0);
+      _isNearBottom = true;
     }
   }
 
   Future<void> _handleRefreshOrRetry() async {
     final manager = widget.supportManager;
     if (!manager.isConfigured && widget.onRetryChannel != null) {
-      if (_retryingChannel) return;
-      setState(() => _retryingChannel = true);
+      if (_retryingChannel.value) return;
+      _retryingChannel.value = true;
       try {
         await widget.onRetryChannel!.call();
         if (mounted && manager.isConfigured) {
-          await manager.openPanel();
+          await manager.openPanel(panelToken: _panelToken);
         }
       } finally {
         if (mounted) {
-          setState(() => _retryingChannel = false);
+          _retryingChannel.value = false;
         }
       }
       return;
     }
     if (manager.error != null && manager.contact == null) {
-      await manager.openPanel();
+      await manager.openPanel(panelToken: _panelToken);
       return;
     }
     await manager.refreshMessages();
   }
 
-  Future<void> _openExternalFallback() async {
-    final uri = widget.externalWidgetUri;
+  Future<void> _openExternalFallback(Uri? uri) async {
     if (uri == null || widget.openLink == null) return;
     try {
       await widget.openLink!.call(uri);
@@ -173,7 +327,15 @@ class _SupportChatSheetState extends State<SupportChatSheet> {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
     final l = AppLocalizations.of(context);
+    final localeTag = Localizations.localeOf(context).toString();
     final viewInsets = MediaQuery.viewInsetsOf(context);
+    final headerListenable =
+        Listenable.merge([widget.supportManager, _retryingChannel]);
+    final footerListenable = Listenable.merge([
+      widget.supportManager,
+      _retryingChannel,
+      _showBackupWechat,
+    ]);
 
     return Material(
       key: const Key('support-chat-sheet'),
@@ -184,53 +346,71 @@ class _SupportChatSheetState extends State<SupportChatSheet> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Expanded(
-              child: ListenableBuilder(
-                listenable: widget.supportManager,
-                builder: (context, _) {
-                  final manager = widget.supportManager;
-                  final config = manager.channelConfig;
-                  final showWechatPanel = _showBackupWechat ||
-                      manager.error != null ||
-                      !manager.isConfigured;
-
-                  return Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      _SupportHeader(
-                        title: (config?.websiteName?.trim().isNotEmpty ?? false)
-                            ? config!.websiteName!.trim()
-                            : l.supportSheetTitle,
-                        replyTime: config?.replyTime,
-                        isConfigured: manager.isConfigured,
-                        isRealtimeConnected: manager.isRealtimeConnected,
-                        isConnecting:
-                            manager.isConnecting || manager.isLoading,
-                        showNewConversation: manager.isConversationLocked ||
-                            manager.isConversationResolved,
-                        externalWidgetUri: widget.externalWidgetUri,
-                        onRefresh: _retryingChannel
-                            ? null
-                            : _handleRefreshOrRetry,
-                        onNewConversation: manager.isConfigured
-                            ? manager.startNewConversation
-                            : null,
-                        onOpenExternal: widget.externalWidgetUri != null &&
-                                widget.openLink != null
-                            ? _openExternalFallback
-                            : null,
-                        onClose: () => Navigator.of(context).maybePop(),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  ListenableBuilder(
+                    listenable: headerListenable,
+                    builder: (context, _) {
+                      final manager = widget.supportManager;
+                      final config = manager.channelConfig;
+                      final effectiveExternalUri = _resolveEffectiveExternalUri(
+                        config,
+                        locale: localeTag,
+                        fallback: widget.externalWidgetUri,
+                      );
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          _SupportHeader(
+                            title: (config?.websiteName?.trim().isNotEmpty ??
+                                    false)
+                                ? config!.websiteName!.trim()
+                                : l.supportSheetTitle,
+                            replyTime: config?.replyTime,
+                            isConfigured: manager.isConfigured,
+                            isRealtimeConnected: manager.isRealtimeConnected,
+                            isConnecting:
+                                manager.isConnecting || manager.isLoading,
+                            showNewConversation: manager.isConversationLocked ||
+                                manager.isConversationResolved,
+                            externalWidgetUri: effectiveExternalUri,
+                            onRefresh: _retryingChannel.value
+                                ? null
+                                : _handleRefreshOrRetry,
+                            onNewConversation: manager.isConfigured
+                                ? manager.startNewConversation
+                                : null,
+                            onOpenExternal: effectiveExternalUri != null &&
+                                    widget.openLink != null
+                                ? () =>
+                                    _openExternalFallback(effectiveExternalUri)
+                                : null,
+                            onClose: () => Navigator.of(context).maybePop(),
+                          ),
+                          if (manager.isLoading || _retryingChannel.value)
+                            const LinearProgressIndicator(minHeight: 2)
+                          else
+                            Divider(height: 1, color: colors.outlineVariant),
+                        ],
+                      );
+                    },
+                  ),
+                  Expanded(
+                    child: ValueListenableBuilder<_MessageBodySnapshot>(
+                      valueListenable: _bodyState,
+                      builder: (context, snapshot, _) => _SupportMessageBody(
+                        manager: widget.supportManager,
+                        snapshot: snapshot,
+                        scrollController: _scrollController,
                       ),
-                      if (manager.isLoading || _retryingChannel)
-                        const LinearProgressIndicator(minHeight: 2)
-                      else
-                        Divider(height: 1, color: colors.outlineVariant),
-                      Expanded(
-                        child: _SupportMessageBody(
-                          manager: manager,
-                          scrollController: _scrollController,
-                        ),
-                      ),
-                      AnimatedSize(
+                    ),
+                  ),
+                  ListenableBuilder(
+                    listenable: widget.supportManager,
+                    builder: (context, _) {
+                      final manager = widget.supportManager;
+                      return AnimatedSize(
                         duration: const Duration(milliseconds: 180),
                         curve: Curves.easeOut,
                         child: manager.isAgentTyping
@@ -256,47 +436,62 @@ class _SupportChatSheetState extends State<SupportChatSheet> {
                                 ),
                               )
                             : const SizedBox.shrink(),
-                      ),
-                      if (!manager.isConfigured)
-                        _SupportNoticeBanner(
-                          key: const Key('support-not-configured-banner'),
-                          message: l.supportNotConfiguredNotice,
-                          actionLabel: l.supportRetryAction,
-                          onAction: _retryingChannel
-                              ? null
-                              : _handleRefreshOrRetry,
-                        )
-                      else if (manager.error != null)
-                        _SupportNoticeBanner(
-                          key: const Key('support-error-banner'),
-                          message: _supportErrorText(l, manager.error!),
-                          isError: true,
-                          actionLabel: l.supportRetryAction,
-                          onAction: _handleRefreshOrRetry,
-                        ),
-                      if (manager.isConversationLocked)
-                        _SupportNoticeBanner(
-                          key: const Key('support-locked-banner'),
-                          message: l.supportConversationLockedNotice,
-                          actionLabel: l.supportNewConversation,
-                          actionKey: const Key('support-locked-new-conversation'),
-                          onAction: manager.startNewConversation,
-                        ),
-                      if (showWechatPanel && widget.wechatContacts.isNotEmpty)
-                        _BackupWechatStrip(
-                          contacts: widget.wechatContacts,
-                          onCopy: _copyWechat,
-                        ),
-                      _SupportFooterControls(
-                        showBackupWechat: _showBackupWechat,
-                        hasWechatContacts: widget.wechatContacts.isNotEmpty,
-                        onToggleBackupWechat: () => setState(
-                          () => _showBackupWechat = !_showBackupWechat,
-                        ),
-                      ),
-                    ],
-                  );
-                },
+                      );
+                    },
+                  ),
+                  ListenableBuilder(
+                    listenable: footerListenable,
+                    builder: (context, _) {
+                      final manager = widget.supportManager;
+                      final showWechatPanel = _showBackupWechat.value ||
+                          manager.error != null ||
+                          !manager.isConfigured;
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          if (!manager.isConfigured)
+                            _SupportNoticeBanner(
+                              key: const Key('support-not-configured-banner'),
+                              message: l.supportNotConfiguredNotice,
+                              actionLabel: l.supportRetryAction,
+                              onAction: _retryingChannel.value
+                                  ? null
+                                  : _handleRefreshOrRetry,
+                            )
+                          else if (manager.error != null)
+                            _SupportNoticeBanner(
+                              key: const Key('support-error-banner'),
+                              message: _supportErrorText(l, manager.error!),
+                              isError: true,
+                              actionLabel: l.supportRetryAction,
+                              onAction: _handleRefreshOrRetry,
+                            ),
+                          if (manager.isConversationLocked)
+                            _SupportNoticeBanner(
+                              key: const Key('support-locked-banner'),
+                              message: l.supportConversationLockedNotice,
+                              actionLabel: l.supportNewConversation,
+                              actionKey:
+                                  const Key('support-locked-new-conversation'),
+                              onAction: manager.startNewConversation,
+                            ),
+                          if (showWechatPanel &&
+                              widget.wechatContacts.isNotEmpty)
+                            _BackupWechatStrip(
+                              contacts: widget.wechatContacts,
+                              onCopy: _copyWechat,
+                            ),
+                          _SupportFooterControls(
+                            showBackupWechat: _showBackupWechat.value,
+                            hasWechatContacts: widget.wechatContacts.isNotEmpty,
+                            onToggleBackupWechat: () => _showBackupWechat.value =
+                                !_showBackupWechat.value,
+                          ),
+                        ],
+                      );
+                    },
+                  ),
+                ],
               ),
             ),
             Divider(height: 1, color: colors.outlineVariant),
@@ -467,16 +662,19 @@ class _SupportHeader extends StatelessWidget {
 class _SupportMessageBody extends StatelessWidget {
   const _SupportMessageBody({
     required this.manager,
+    required this.snapshot,
     required this.scrollController,
   });
 
   final SupportManager manager;
+  final _MessageBodySnapshot snapshot;
   final ScrollController scrollController;
 
   @override
   Widget build(BuildContext context) {
-    final messages = manager.messages;
-    final config = manager.channelConfig;
+    final l = AppLocalizations.of(context);
+    final messages = snapshot.messages;
+    final config = snapshot.config;
     final hasWelcome =
         (config?.welcomeTitle?.trim().isNotEmpty ?? false) ||
             (config?.welcomeTagline?.trim().isNotEmpty ?? false) ||
@@ -489,17 +687,41 @@ class _SupportMessageBody extends StatelessWidget {
       );
     }
 
-    final itemCount = messages.length + (hasWelcome ? 1 : 0);
+    final showOlderHeader =
+        snapshot.hasMoreHistory || snapshot.isLoadingOlder;
+    final welcomeCount = hasWelcome ? 1 : 0;
+    final olderCount = showOlderHeader ? 1 : 0;
+    final itemCount = messages.length + welcomeCount + olderCount;
     return RepaintBoundary(
       child: ListView.builder(
         key: const Key('support-message-list'),
         controller: scrollController,
         reverse: true,
-        addAutomaticKeepAlives: false,
+        addAutomaticKeepAlives: true,
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
         itemCount: itemCount,
         itemBuilder: (context, index) {
-          if (hasWelcome && index == itemCount - 1) {
+          if (showOlderHeader && index == itemCount - 1) {
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 10),
+              child: Center(
+                child: snapshot.isLoadingOlder
+                    ? const SizedBox(
+                        key: Key('support-loading-older'),
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : IconButton(
+                        key: const Key('support-load-older'),
+                        tooltip: l.supportRefreshTooltip,
+                        onPressed: manager.loadOlderMessages,
+                        icon: const Icon(Icons.expand_less_rounded, size: 20),
+                      ),
+              ),
+            );
+          }
+          if (hasWelcome && index == messages.length) {
             return Padding(
               padding: const EdgeInsets.only(bottom: 12),
               child: _WelcomeBanner(config: config),
@@ -922,8 +1144,10 @@ class _SupportComposerBar extends StatelessWidget {
         children: [
           Expanded(
             child: Focus(
+              canRequestFocus: false,
+              skipTraversal: true,
               onKeyEvent: (_, event) {
-                if (event is KeyDownEvent &&
+                if ((event is KeyDownEvent || event is KeyRepeatEvent) &&
                     (event.logicalKey == LogicalKeyboardKey.enter ||
                         event.logicalKey == LogicalKeyboardKey.numpadEnter)) {
                   final keys = HardwareKeyboard.instance.logicalKeysPressed;
@@ -936,11 +1160,13 @@ class _SupportComposerBar extends StatelessWidget {
                           keys.contains(LogicalKeyboardKey.altRight) ||
                           keys.contains(LogicalKeyboardKey.metaLeft) ||
                           keys.contains(LogicalKeyboardKey.metaRight);
-                  final composing = composer.value.composing;
+                  final value = composer.value;
                   final isComposing =
-                      composing.isValid && !composing.isCollapsed;
+                      value.isComposingRangeValid && !value.composing.isCollapsed;
                   if (!isShift && !isModifier && !isComposing) {
-                    onSend();
+                    if (event is KeyDownEvent) {
+                      onSend();
+                    }
                     return KeyEventResult.handled;
                   }
                 }

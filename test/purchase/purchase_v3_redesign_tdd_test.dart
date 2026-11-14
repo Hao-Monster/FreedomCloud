@@ -3,20 +3,32 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:ui' as ui;
 
+import 'package:flclashx/common/common.dart';
+import 'package:flclashx/common/theme.dart';
+import 'package:flclashx/enum/enum.dart';
 import 'package:flclashx/l10n/l10n.dart';
 import 'package:flclashx/manager/purchase_manager.dart';
 import 'package:flclashx/manager/support_manager.dart';
 import 'package:flclashx/models/chatwoot.dart';
+import 'package:flclashx/models/models.dart';
 import 'package:flclashx/models/xboard.dart';
+import 'package:flclashx/providers/providers.dart';
+import 'package:flclashx/providers/purchase_support_provider.dart';
 import 'package:flclashx/services/chatwoot_service.dart';
 import 'package:flclashx/services/chatwoot_storage.dart';
 import 'package:flclashx/services/purchase_storage.dart';
 import 'package:flclashx/services/xboard_api.dart';
+import 'package:flclashx/state.dart';
+import 'package:flclashx/views/purchase.dart';
 import 'package:flclashx/views/purchase/center.dart';
+import 'package:flclashx/views/purchase/plan_catalog.dart';
+import 'package:flclashx/views/purchase/plan_content.dart';
+import 'package:flclashx/views/support/support_chat_sheet.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 const _trialAccount = XboardAccount(id: 108, email: 'newbie@example.test');
@@ -609,6 +621,268 @@ void main() {
       }
     });
   });
+
+  testWidgets(
+      'T07 (P1-8 & P2-11 & P1-9): PurchaseCenter preserves injected configured SupportManager when channels null, cleanly updates supportManager on didUpdateWidget, and passes locale + preserves subpath in Chatwoot external widget URI',
+      (tester) async {
+    final storage = _V3FakeStorage()
+      ..session = PurchaseSession(_trialAccount.id, 'Bearer valid_token');
+    final api = _V3MarkdownAndFailChannelsApi();
+    final manager = PurchaseManager(
+      api: api,
+      storage: storage,
+      synchronize: (_, __) async {},
+    );
+    addTearDown(manager.dispose);
+    await manager.initialize();
+    await manager.loadPlans();
+
+    final supportA = SupportManager(
+      service: _V3FakeChatwootService(),
+      storage: _V3FakeChatwootStorage(),
+      realtimeConnector: (_, __) async => _V3FakeChatwootRealtime(),
+    )..configureChannel(
+        baseUrl: Uri.parse('https://chat.example.test/support'),
+        websiteToken: 'token-a',
+      );
+    addTearDown(supportA.dispose);
+
+    final supportB = SupportManager(
+      service: _V3FakeChatwootService(),
+      storage: _V3FakeChatwootStorage(),
+      realtimeConnector: (_, __) async => _V3FakeChatwootRealtime(),
+    )..configureChannel(
+        baseUrl: Uri.parse('https://chat.example.test/helpdesk'),
+        websiteToken: 'token-b',
+      );
+    addTearDown(supportB.dispose);
+
+    final openedLinks = <Uri>[];
+    await AppLocalizations.load(const Locale('ja'));
+    addTearDown(() => AppLocalizations.load(const Locale('zh', 'CN')));
+
+    Widget buildHost(SupportManager? currentSupport) => MaterialApp(
+          locale: const Locale('ja'),
+          localizationsDelegates: const [
+            AppLocalizations.delegate,
+            GlobalMaterialLocalizations.delegate,
+            GlobalWidgetsLocalizations.delegate,
+            GlobalCupertinoLocalizations.delegate,
+          ],
+          supportedLocales: AppLocalizations.delegate.supportedLocales,
+          home: Scaffold(
+            body: PurchaseCenter(
+              manager: manager,
+              supportManager: currentSupport,
+              openLink: (uri) async => openedLinks.add(uri),
+              openProfiles: () {},
+            ),
+          ),
+        );
+
+    // Pump with null first (creates fallback handle), then swap to injected supportA, then supportB.
+    await tester.pumpWidget(buildHost(null));
+    await tester.pumpAndSettle();
+
+    await tester.pumpWidget(buildHost(supportA));
+    await tester.pumpAndSettle();
+    // P1-8: purchaseChannels is null, so injected supportA MUST stay configured!
+    expect(supportA.isConfigured, isTrue);
+    expect(supportA.channelConfig?.websiteToken, 'token-a');
+
+    await tester.pumpWidget(buildHost(supportB));
+    await tester.pumpAndSettle();
+    expect(supportB.isConfigured, isTrue);
+    expect(supportB.channelConfig?.websiteToken, 'token-b');
+
+    // Open SupportChatSheet directly with supportB (subpath /helpdesk + locale ja).
+    await tester.pumpWidget(
+      MaterialApp(
+        locale: const Locale('ja'),
+        localizationsDelegates: const [
+          AppLocalizations.delegate,
+          GlobalMaterialLocalizations.delegate,
+          GlobalWidgetsLocalizations.delegate,
+          GlobalCupertinoLocalizations.delegate,
+        ],
+        supportedLocales: AppLocalizations.delegate.supportedLocales,
+        home: Scaffold(
+          body: SupportChatSheet(
+            supportManager: supportB,
+            openLink: (uri) async => openedLinks.add(uri),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final extBtn = find.byKey(const Key('support-open-external'));
+    expect(extBtn, findsOneWidget);
+    await tester.tap(extBtn);
+    await tester.pumpAndSettle();
+    expect(openedLinks, hasLength(1));
+    expect(openedLinks.single.path, '/helpdesk/widget');
+    expect(openedLinks.single.queryParameters['website_token'], 'token-b');
+    expect(openedLinks.single.queryParameters['locale'], 'ja');
+  });
+
+  testWidgets(
+      'T08 (P2-9 & P3-6): PurchaseView tab switches isolate non-purchase rebuilds, and PurchaseCenter inputs/errors do not rebuild PurchasePlanCatalog or PurchasePlanContent',
+      (tester) async {
+    tester.view.physicalSize = const Size(1280, 900);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    globalState.config = const Config(themeProps: defaultThemeProps);
+    globalState.appState = AppState(
+      viewSize: const Size(1280, 900),
+      pageLabel: PageLabel.proxies,
+      version: 1,
+      requests: FixedList(maxLength),
+      logs: FixedList(maxLength),
+      traffics: FixedList(30),
+      totalTraffic: Traffic(),
+      isInit: true,
+    );
+
+    final storage = _V3FakeStorage()
+      ..session = PurchaseSession(_trialAccount.id, 'Bearer valid_token');
+    final api = _V3MarkdownAndFailChannelsApi()..returnValidChannels = true;
+    final manager = PurchaseManager(
+      api: api,
+      storage: storage,
+      synchronize: (_, __) async {},
+    );
+    addTearDown(manager.dispose);
+    await manager.initialize();
+    await manager.loadPlans();
+    await manager.ensurePurchaseChannels();
+
+    // 1. PurchaseView rebuild isolation across non-purchase tab transitions.
+    final viewSupport = SupportManager(
+      service: _V3FakeChatwootService(),
+      storage: _V3FakeChatwootStorage(),
+      realtimeConnector: (_, __) async => _V3FakeChatwootRealtime(),
+    );
+    final container = ProviderContainer(
+      overrides: [
+        purchaseSupportCoordinatorProvider.overrideWith((ref) {
+          final coordinator = PurchaseSupportCoordinator.test(
+            ref,
+            api: api,
+            storage: storage,
+            supportManager: viewSupport,
+          );
+          ref.onDispose(coordinator.dispose);
+          return coordinator;
+        }),
+      ],
+    );
+    addTearDown(container.dispose);
+
+    await AppLocalizations.load(const Locale('zh', 'CN'));
+    await tester.pumpWidget(
+      UncontrolledProviderScope(
+        container: container,
+        child: MaterialApp(
+          locale: const Locale('zh', 'CN'),
+          localizationsDelegates: const [
+            AppLocalizations.delegate,
+            GlobalMaterialLocalizations.delegate,
+            GlobalWidgetsLocalizations.delegate,
+            GlobalCupertinoLocalizations.delegate,
+          ],
+          supportedLocales: AppLocalizations.delegate.supportedLocales,
+          home: Consumer(
+            builder: (context, ref, _) {
+              globalState.measure = Measure.of(context, 1.0);
+              globalState.theme = CommonTheme.of(context, 1.0);
+              return const Scaffold(body: PurchaseView());
+            },
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final centerBeforeSwitch =
+        tester.widget<PurchaseCenter>(find.byType(PurchaseCenter));
+    container.read(currentPageLabelProvider.notifier).value = PageLabel.dashboard;
+    await tester.pump();
+    container.read(currentPageLabelProvider.notifier).value = PageLabel.tools;
+    await tester.pump();
+    final centerAfterSwitch =
+        tester.widget<PurchaseCenter>(find.byType(PurchaseCenter));
+    expect(identical(centerBeforeSwitch, centerAfterSwitch), isTrue);
+
+    // 2. PurchaseCenter typing in gift code / auth error must NOT rebuild PurchasePlanCatalog or PurchasePlanContent.
+    await tester.pumpWidget(
+      MaterialApp(
+        locale: const Locale('zh', 'CN'),
+        localizationsDelegates: const [
+          AppLocalizations.delegate,
+          GlobalMaterialLocalizations.delegate,
+          GlobalWidgetsLocalizations.delegate,
+          GlobalCupertinoLocalizations.delegate,
+        ],
+        supportedLocales: AppLocalizations.delegate.supportedLocales,
+        home: Scaffold(
+          body: PurchaseCenter(
+            manager: manager,
+            openLink: (_) async {},
+            openProfiles: () {},
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final catalogBefore =
+        tester.widget<PurchasePlanCatalog>(find.byType(PurchasePlanCatalog));
+    final planContentBefore =
+        tester.widget<PurchasePlanContent>(find.byType(PurchasePlanContent).first);
+
+    await tester.enterText(find.byKey(const Key('purchase-code')), 'VIP2026CODE88');
+    await tester.pump();
+    final catalogAfterCode =
+        tester.widget<PurchasePlanCatalog>(find.byType(PurchasePlanCatalog));
+    final planContentAfterCode =
+        tester.widget<PurchasePlanContent>(find.byType(PurchasePlanContent).first);
+
+    expect(identical(catalogBefore, catalogAfterCode), isTrue);
+    expect(identical(planContentBefore, planContentAfterCode), isTrue);
+  });
+}
+
+class _V3MarkdownAndFailChannelsApi extends _V3FakeApi {
+  bool returnValidChannels = false;
+
+  @override
+  Future<XboardPlanCatalog> getPlanCatalog() async => const XboardPlanCatalog(
+        plans: [
+          XboardPlanOffer(
+            id: 201,
+            name: '200G 永久流量包',
+            transferGiB: 200,
+            prices: [XboardPlanPrice(period: 'onetime', amount: 15000)],
+            content: '1. 第一步说明\n2. 第二步说明\n- 不限速节点',
+          ),
+        ],
+      );
+
+  @override
+  Future<XboardPurchaseChannels> getGuestPurchaseChannels() async {
+    if (!returnValidChannels) {
+      throw const XboardException(code: 'connection_error', message: '');
+    }
+    return super.getGuestPurchaseChannels();
+  }
+
+  @override
+  Future<XboardPurchaseChannels> getUserPurchaseChannels(
+    String authorization,
+  ) =>
+      getGuestPurchaseChannels();
 }
 
 class _DummyCert implements X509Certificate {

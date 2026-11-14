@@ -45,13 +45,24 @@ void syncSupportManagerWithPurchase(
   PurchaseManager purchaseManager,
   SupportManager supportManager,
 ) {
-  final channels = PurchaseManager.isRealInstance(purchaseManager)
-      ? purchaseManager.purchaseChannels
-      : null;
-  supportManager.configureChannel(
-    baseUrl: channels?.chatwootBaseUrl,
-    websiteToken: channels?.chatwootWebsiteToken,
-  );
+  if (!PurchaseManager.isRealInstance(purchaseManager)) {
+    return;
+  }
+  final channels = purchaseManager.purchaseChannels;
+  if (channels != null) {
+    if (channels.chatwootBaseUrl != null &&
+        channels.chatwootWebsiteToken != null) {
+      supportManager.configureChannel(
+        baseUrl: channels.chatwootBaseUrl,
+        websiteToken: channels.chatwootWebsiteToken,
+      );
+    } else {
+      supportManager.configureChannel(
+        baseUrl: null,
+        websiteToken: null,
+      );
+    }
+  }
   final account = purchaseManager.account;
   supportManager.bindAccount(
     accountId: account?.id,
@@ -272,24 +283,28 @@ class PurchaseSupportCoordinator {
 
   bool _disposed = false;
   bool _initialized = false;
+  Future<void>? _initFuture;
   int? _autoSyncedAccountId;
 
   /// Runs one-time initialization and catalog loading on first access.
   void ensureInitialized() {
     if (_disposed || _initialized) return;
     _initialized = true;
-    unawaited(purchaseManager.initialize());
+    _initFuture = purchaseManager.initialize();
+    unawaited(_initFuture);
     unawaited(purchaseManager.loadPlans());
   }
 
   /// Ensures Chatwoot channel metadata is fetched and synced before opening
   /// support from a global navigation entry.
-  Future<void> prepareSupport() async {
+  Future<void> prepareSupport({bool force = false}) async {
     if (_disposed) return;
     ensureInitialized();
-    if (!supportManager.isConfigured) {
+    await (_initFuture ?? Future<void>.value());
+    if (_disposed) return;
+    if (force || !supportManager.isConfigured) {
       await purchaseManager.ensurePurchaseChannels(
-        force: purchaseManager.channelError != null,
+        force: force || purchaseManager.channelError != null,
       );
       if (_disposed) return;
       syncSupportManagerWithPurchase(purchaseManager, supportManager);

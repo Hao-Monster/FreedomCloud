@@ -12,6 +12,51 @@ class PurchasePlanContent extends StatelessWidget {
   final String data;
   final Future<void> Function(Uri)? openLink;
 
+  static const int _maxCacheEntries = 64;
+  static final Map<String, int> _maxListIndexCache = <String, int>{};
+  static final Map<
+          (int, TextStyle?, TextScaler, TextDirection), double>
+      _baseIndentCache = <(int, TextStyle?, TextScaler, TextDirection), double>{};
+
+  static void _putBounded<K, V>(Map<K, V> cache, K key, V value) {
+    if (cache.length >= _maxCacheEntries) {
+      cache.remove(cache.keys.first);
+    }
+    cache[key] = value;
+  }
+
+  static int _maxOrderedListIndex(String markdown) {
+    final cached = _maxListIndexCache.remove(markdown);
+    if (cached != null) {
+      _maxListIndexCache[markdown] = cached;
+      return cached;
+    }
+    // Inspect only block structure: code, HTML and ordinary text are not lists.
+    // Inline parsing is unnecessary here and is done once by MarkdownBody.
+    final nodes = md.BlockParser(
+      markdown.split('\n').map(md.Line.new).toList(),
+      md.Document(extensionSet: md.ExtensionSet.gitHubFlavored),
+    ).parseLines();
+    var largestIndex = 1;
+    void visit(md.Node node) {
+      if (node is! md.Element) return;
+      if (node.tag == 'ol') {
+        final start = int.tryParse(node.attributes['start'] ?? '') ?? 1;
+        final count = node.children
+                ?.whereType<md.Element>()
+                .where((child) => child.tag == 'li')
+                .length ??
+            0;
+        largestIndex = math.max(largestIndex, start + count - 1);
+      }
+      node.children?.forEach(visit);
+    }
+
+    nodes.forEach(visit);
+    _putBounded(_maxListIndexCache, markdown, largestIndex);
+    return largestIndex;
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -63,39 +108,26 @@ class PurchasePlanContent extends StatelessWidget {
 
   double _listIndent(BuildContext context, ThemeData theme, double width) {
     final scaler = MediaQuery.textScalerOf(context);
-    // Inspect only block structure: code, HTML and ordinary text are not lists.
-    // Inline parsing is unnecessary here and is done once by MarkdownBody.
-    final nodes = md.BlockParser(
-      data.split('\n').map(md.Line.new).toList(),
-      md.Document(extensionSet: md.ExtensionSet.gitHubFlavored),
-    ).parseLines();
-    var largestIndex = 1;
-    void visit(md.Node node) {
-      if (node is! md.Element) return;
-      if (node.tag == 'ol') {
-        final start = int.tryParse(node.attributes['start'] ?? '') ?? 1;
-        final count = node.children
-                ?.whereType<md.Element>()
-                .where((child) => child.tag == 'li')
-                .length ??
-            0;
-        largestIndex = math.max(largestIndex, start + count - 1);
-      }
-      node.children?.forEach(visit);
+    final direction = Directionality.of(context);
+    final bodyStyle = theme.textTheme.bodyMedium;
+    final largestIndex = _maxOrderedListIndex(data);
+    final metricKey = (largestIndex, bodyStyle, scaler, direction);
+    var indent = _baseIndentCache.remove(metricKey);
+    if (indent != null) {
+      _baseIndentCache[metricKey] = indent;
+    } else {
+      // Include automatic numbering; source may use "1." on every list item.
+      // Measure the actual font instead of assuming a number and dot fit at 2x.
+      final painter = TextPainter(
+        text: TextSpan(text: '$largestIndex.', style: bodyStyle),
+        textDirection: direction,
+        textScaler: scaler,
+        maxLines: 1,
+      )..layout();
+      indent = math.max(22 * scaler.scale(1), painter.width + scaler.scale(6));
+      painter.dispose();
+      _putBounded(_baseIndentCache, metricKey, indent);
     }
-
-    nodes.forEach(visit);
-    // Include automatic numbering; source may use "1." on every list item.
-    // Measure the actual font instead of assuming a number and dot fit at 2x.
-    final painter = TextPainter(
-      text: TextSpan(text: '$largestIndex.', style: theme.textTheme.bodyMedium),
-      textDirection: Directionality.of(context),
-      textScaler: scaler,
-      maxLines: 1,
-    )..layout();
-    final indent =
-        math.max(22 * scaler.scale(1), painter.width + scaler.scale(6));
-    painter.dispose();
     // Very large start numbers must not consume a narrow card's whole width.
     // The marker scales down, while the actual list content keeps its text size.
     return math.min(indent, width / 3);

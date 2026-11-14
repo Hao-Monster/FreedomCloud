@@ -25,6 +25,7 @@ class CommonScaffold extends ConsumerStatefulWidget {
     this.leading,
     this.title,
     this.actions,
+    this.persistentActions,
     this.automaticallyImplyLeading = true,
     this.centerTitle,
     this.appBarEditState,
@@ -61,6 +62,7 @@ class CommonScaffold extends ConsumerStatefulWidget {
   final String? title;
   final Widget? leading;
   final List<Widget>? actions;
+  final List<Widget>? persistentActions;
   final bool automaticallyImplyLeading;
   final bool? centerTitle;
   final AppBarEditState? appBarEditState;
@@ -309,9 +311,14 @@ class CommonScaffoldState extends ConsumerState<CommonScaffold> {
       icon: const Icon(Icons.search),
     );
 
+    final persistent = !_isEdit
+        ? (widget.persistentActions ?? const <Widget>[])
+        : const <Widget>[];
+
     if (!hasSearch) {
       return genActions([
         ...actions,
+        ...persistent,
       ]);
     }
 
@@ -323,12 +330,14 @@ class CommonScaffoldState extends ConsumerState<CommonScaffold> {
       return genActions([
         ...actions,
         searchButton,
+        ...persistent,
       ]);
     }
 
     return genActions([
       searchButton,
       ...actions,
+      ...persistent,
     ]);
   
   }
