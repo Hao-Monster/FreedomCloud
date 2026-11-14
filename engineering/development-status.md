@@ -2,6 +2,19 @@
 
 更新日期：2026-11-14。当前阶段是快速开发、快速迭代和部分功能预览。本文记录来源与验收边界；每次继续开发仍需核实实际 Git/PR/CI 状态，不能把历史报告视为当前通过证明。
 
+## 默认测速链接切换为 `https://www.google.com/generate_204` TDD 落地（`0f182041`，2026-11-14）
+
+- 需求与全链路覆盖：将软件默认延迟测试地址从 `https://www.gstatic.com/generate_204` 统一切换为 `https://www.google.com/generate_204`，覆盖新装默认配置、存量配置一次性自动迁移、智能选路兜底、健康检查 D2 DNS 兜底与 Go Core 默认值：
+  1. **Dart 默认常量与模块兜底**：更新 [`constant.dart`](file:///e:/CodeWorkstation/FlClashX/lib/common/constant.dart#L56) `defaultTestUrl = "https://www.google.com/generate_204"`、[`smart_node_selection.dart`](file:///e:/CodeWorkstation/FlClashX/lib/common/smart_node_selection.dart#L63-L70) 空测速地址兜底（复用 `app_constant.defaultTestUrl`）与 [`health_runner.dart`](file:///e:/CodeWorkstation/FlClashX/lib/common/health/health_runner.dart#L1063-L1070) D2 TUN DNS IP 兜底域名为 `'www.google.com'`；
+  2. **存量 `config.json` 一次性无感迁移**：在 [`config.dart`](file:///e:/CodeWorkstation/FlClashX/lib/models/config.dart#L40-L550) `AppSettingProps` 新增 `@Default(true) bool defaultTestUrlGoogleMigrated`（同步更新 [`config.g.dart`](file:///e:/CodeWorkstation/FlClashX/lib/models/generated/config.g.dart) 与 [`config.freezed.dart`](file:///e:/CodeWorkstation/FlClashX/lib/models/generated/config.freezed.dart)），并在 `Config.compatibleFromJson` 对未迁移配置将旧默认 `https://www.gstatic.com/generate_204` / 空白 / 非字符串 `testUrl` 一次性升级为 `defaultTestUrl`，同时保留自定义 URL 及迁移后的任何手动修改；
+  3. **Go Core 默认值统一**：在 [`common.go`](file:///e:/CodeWorkstation/FlClashX/core/common.go#L52-L512) 提取 `defaultCoreTestURL = "https://www.google.com/generate_204"` 并用于 `currentTestURL` 与 `defaultSetupParams().TestURL`，同步更新 [`delay_tasks.go`](file:///e:/CodeWorkstation/FlClashX/core/delay_tasks.go#L126-L130) 空 `test-url` 回退值。
+- TDD 与验证记录（最后一次代码改动后实测）：
+  - 前置有效 Red：**PASS**（[`default_test_url_migration_tdd_test.dart`](file:///e:/CodeWorkstation/FlClashX/test/common/default_test_url_migration_tdd_test.dart) `U01–U04` `0/4` 与 [`delay_tasks_test.go`](file:///e:/CodeWorkstation/FlClashX/core/delay_tasks_test.go) `TestDefaultTestURLUsesGoogleGenerate204` 均确定性失败于 `gstatic` vs `google`）；
+  - Flutter 回归验证：**PASS**（[`default_test_url_migration_tdd_test.dart`](file:///e:/CodeWorkstation/FlClashX/test/common/default_test_url_migration_tdd_test.dart) + [`smart_node_selection_test.dart`](file:///e:/CodeWorkstation/FlClashX/test/common/smart_node_selection_test.dart) 等 15 个 common/views/perf 测试文件 **`142/142` 全绿**，[`node_overview_test.dart`](file:///e:/CodeWorkstation/FlClashX/test/views/node_overview_test.dart) **`126/126` 全绿**，总计 `268/268`，退出码 `0`）；
+  - Go Core Overlay 验证：**PASS**（`go run ./tools/mihomo-overlay`、`go test -tags=with_gvisor ./...` 及非缓存 `-count=1 ./...` + `-run "^TestFCXURLTest" github.com/metacubex/mihomo/adapter` 全绿，退出码 `0`）；
+  - 静态分析与补丁检查：**PASS**（`dart analyze --fatal-infos` 目标文件输出 `No issues found!`，`dart analyze --fatal-warnings lib/models/config.dart lib/common/health/health_runner.dart` 与 `git diff --check` 退出码 `0`）；
+  - 未执行项（`NOT RUN`）：**Windows 预览包构建 NOT RUN（注意后续打 Windows 预览包须按 `AGENTS.md` 同步重编 Core + Helper）**；**宿主机实机运行 / `core` race（`CGO_ENABLED`） / 远端推送 / PR / 合并 NOT RUN**；工作区原有 [`dashboard_render_test.dart`](file:///e:/CodeWorkstation/FlClashX/test/views/dashboard_render_test.dart) 及未跟踪目录保留未动。
+
 ## 应用内原生注册/找回密码与 Chatwoot 在线客服交付核验（`4341f3b4`..`c9c30e43`，2026-11-14）
 
 - 范围与 `development` 提交链（HEAD `c9c30e43`）：
