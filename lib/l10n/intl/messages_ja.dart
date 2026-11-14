@@ -858,6 +858,9 @@ class MessageLookup extends MessageLookupByLibrary {
     "nodeOverviewDeviceLimitReached": MessageLookupByLibrary.simpleMessage(
       "端末数の上限に達しました",
     ),
+    "nodeOverviewEmptyStepsHint": MessageLookupByLibrary.simpleMessage(
+      "① サブスク追加  ·  ② 自動速度測定  ·  ③ 最速接続",
+    ),
     "nodeOverviewEmptySubtitle": MessageLookupByLibrary.simpleMessage(
       "サブスクリプションURLを貼り付けて確定すると、自動で速度測定し最速ノードに接続します",
     ),
@@ -901,6 +904,9 @@ class MessageLookup extends MessageLookupByLibrary {
     "nodeOverviewLockedManualNode": m47,
     "nodeOverviewManageProfiles": MessageLookupByLibrary.simpleMessage(
       "設定管理 / サブスクリプション更新",
+    ),
+    "nodeOverviewManualSelectCompact": MessageLookupByLibrary.simpleMessage(
+      "固定IP",
     ),
     "nodeOverviewManualSelectSubtitle": MessageLookupByLibrary.simpleMessage(
       "固定IP",
@@ -985,6 +991,9 @@ class MessageLookup extends MessageLookupByLibrary {
       "すべてのノードを表示",
     ),
     "nodeOverviewSmartInUse": MessageLookupByLibrary.simpleMessage("自動使用中"),
+    "nodeOverviewSmartSelectCompact": MessageLookupByLibrary.simpleMessage(
+      "スマート",
+    ),
     "nodeOverviewSmartSelectSubtitle": MessageLookupByLibrary.simpleMessage(
       "より快適",
     ),

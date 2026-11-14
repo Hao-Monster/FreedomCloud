@@ -1300,6 +1300,7 @@
   "nodeOverviewTurnOffProxy": "停止",
   "nodeOverviewEmptyTitle": "サブスクリプションがまだありません",
   "nodeOverviewEmptySubtitle": "サブスクリプションURLを貼り付けて確定すると、自動で速度測定し最速ノードに接続します",
+  "nodeOverviewEmptyStepsHint": "① サブスク追加  ·  ② 自動速度測定  ·  ③ 最速接続",
   "nodeOverviewAvailableFilterEmpty": "現在利用可能な測定済みノードがありません（未測定またはタイムアウト）",
   "nodeOverviewShowAllNodes": "すべてのノードを表示",
   "nodeOverviewAutoConnectedBest": "最速ノードに自動接続しました：{profile} · {node}（{delay} ms）",
@@ -1342,8 +1343,10 @@
   },
   "nodeOverviewSmartSelectTitle": "スマート選択",
   "nodeOverviewSmartSelectSubtitle": "より快適",
+  "nodeOverviewSmartSelectCompact": "スマート",
   "nodeOverviewManualSelectTitle": "手動選択",
   "nodeOverviewManualSelectSubtitle": "固定IP",
+  "nodeOverviewManualSelectCompact": "固定IP",
   "nodeOverviewSmartInUse": "自動使用中",
   "nodeOverviewProxyConnectedSmartWithNode": "プロキシ有効 · スマート：{profile} · {node}",
   "@nodeOverviewProxyConnectedSmartWithNode": {

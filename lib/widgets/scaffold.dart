@@ -10,6 +10,7 @@ import 'package:flclashx/widgets/search_order_marker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:intl/intl.dart';
 
 import 'chip.dart';
 
@@ -74,14 +75,22 @@ class CommonScaffold extends ConsumerStatefulWidget {
 }
 
 class CommonScaffoldState extends ConsumerState<CommonScaffold> {
+  static const double minInlineTitleAccessoryWidth = 1040.0;
+  static const double maxInlineTitleAccessoryTextScale = 1.20;
+
   late final ValueNotifier<AppBarState> _appBarState;
+  late final Listenable _headerSlotListenable;
   final ValueNotifier<Widget?> _floatingActionButton = ValueNotifier(null);
+  final ValueNotifier<Widget?> _titleAccessory = ValueNotifier(null);
   final ValueNotifier<List<String>> _keywordsNotifier = ValueNotifier([]);
   final ValueNotifier<bool> _loading = ValueNotifier(false);
 
   final _textController = TextEditingController();
 
   Function(List<String>)? _onKeywordsUpdate;
+  Locale? _lastLocale;
+  String? _lastIntlLocale;
+  bool _hasRecordedLocale = false;
 
   Widget? get _sideNavigationBar => widget.sideNavigationBar;
 
@@ -108,6 +117,7 @@ class CommonScaffoldState extends ConsumerState<CommonScaffold> {
         editState: widget.appBarEditState,
       ),
     );
+    _headerSlotListenable = Listenable.merge([_appBarState, _titleAccessory]);
   }
 
   void updateSearchState(
@@ -134,6 +144,40 @@ class CommonScaffoldState extends ConsumerState<CommonScaffold> {
     if (_floatingActionButton.value != floatingActionButton) {
       _floatingActionButton.value = floatingActionButton;
     }
+  }
+
+  Listenable get headerSlotListenable => _headerSlotListenable;
+
+  Widget? get titleAccessory => _titleAccessory.value;
+
+  set titleAccessory(Widget? widget) {
+    if (_titleAccessory.value != widget) {
+      _titleAccessory.value = widget;
+    }
+  }
+
+  bool get isInlineTitleAccessoryActive =>
+      isInlineTitleAccessoryActiveFor(context);
+
+  /// Returns whether the inline AppBar title accessory is active for [callerContext].
+  ///
+  /// Registering [MediaQuery.maybeOf] on [callerContext] keeps AppBar and body
+  /// listeners synchronized in the same frame across dynamic `textScale` and
+  /// window width transitions.
+  bool isInlineTitleAccessoryActiveFor(BuildContext callerContext) {
+    if (!mounted ||
+        !callerContext.mounted ||
+        _isSearch ||
+        _isEdit ||
+        _titleAccessory.value == null) {
+      return false;
+    }
+    final media = MediaQuery.maybeOf(callerContext);
+    if (media == null) {
+      return false;
+    }
+    return media.size.width >= minInlineTitleAccessoryWidth &&
+        media.textScaler.scale(1.0) <= maxInlineTitleAccessoryTextScale;
   }
 
   Widget _buildSearchingAppBarTheme(Widget child) {
@@ -213,17 +257,40 @@ class CommonScaffoldState extends ConsumerState<CommonScaffold> {
     _appBarState.dispose();
     _textController.dispose();
     _floatingActionButton.dispose();
+    _titleAccessory.dispose();
     _keywordsNotifier.dispose();
     _loading.dispose();
     super.dispose();
   }
 
+  void _syncLocaleTracking() {
+    _lastLocale = Localizations.maybeLocaleOf(context);
+    _lastIntlLocale = Intl.getCurrentLocale();
+    _hasRecordedLocale = true;
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _syncLocaleTracking();
+  }
+
   @override
   void didUpdateWidget(CommonScaffold oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.title != widget.title) {
+    final currentLocale = Localizations.maybeLocaleOf(context);
+    final currentIntlLocale = Intl.getCurrentLocale();
+    final localeChanged = _hasRecordedLocale &&
+        (currentLocale != _lastLocale ||
+            currentIntlLocale != _lastIntlLocale);
+    _lastLocale = currentLocale;
+    _lastIntlLocale = currentIntlLocale;
+    _hasRecordedLocale = true;
+
+    if (oldWidget.title != widget.title && !localeChanged) {
       _appBarState.value = const AppBarState();
       _floatingActionButton.value = null;
+      _titleAccessory.value = null;
       _textController.text = "";
       _keywordsNotifier.value = [];
       _onKeywordsUpdate = null;
@@ -264,27 +331,52 @@ class CommonScaffoldState extends ConsumerState<CommonScaffold> {
         : widget.leading;
   }
 
-  Widget _buildTitle(AppBarSearchState? startState) => _isSearch
-        ? TextField(
-            autofocus: true,
-            controller: _textController,
-            style: context.textTheme.titleLarge,
-            onChanged: (value) {
-              if (startState != null) {
-                startState.onSearch(value);
-              }
-            },
-            decoration: InputDecoration(
-              hintText: appLocalizations.search,
+  Widget _buildTitle(
+    AppBarSearchState? startState,
+    BuildContext accessoryContext,
+  ) {
+    if (_isSearch) {
+      return TextField(
+        autofocus: true,
+        controller: _textController,
+        style: context.textTheme.titleLarge,
+        onChanged: (value) {
+          if (startState != null) {
+            startState.onSearch(value);
+          }
+        },
+        decoration: InputDecoration(
+          hintText: appLocalizations.search,
+        ),
+      );
+    }
+    if (_isEdit) {
+      return Text(
+        appLocalizations.selectedCountTitle(
+          "${_appBarState.value.editState?.editCount ?? 0}",
+        ),
+      );
+    }
+    if (isInlineTitleAccessoryActiveFor(accessoryContext)) {
+      return Row(
+        children: [
+          Flexible(
+            flex: 0,
+            child: Text(
+              widget.title!,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
             ),
-          )
-        : Text(
-            !_isEdit
-                ? widget.title!
-                : appLocalizations.selectedCountTitle(
-                    "${_appBarState.value.editState?.editCount ?? 0}",
-                  ),
-          );
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: _titleAccessory.value!,
+          ),
+        ],
+      );
+    }
+    return Text(widget.title!);
+  }
 
   List<Widget> _buildActions(
     AppBarSearchState? searchState,
@@ -393,17 +485,22 @@ class CommonScaffoldState extends ConsumerState<CommonScaffold> {
           alignment: Alignment.bottomCenter,
           children: [
             widget.appBar ??
-                ValueListenableBuilder<AppBarState>(
-                  valueListenable: _appBarState,
-                  builder: (_, state, __) => _buildAppBarWrap(
+                ListenableBuilder(
+                  listenable: headerSlotListenable,
+                  builder: (slotContext, _) {
+                    final state = _appBarState.value;
+                    final inlineActive =
+                        isInlineTitleAccessoryActiveFor(slotContext);
+                    return _buildAppBarWrap(
                       AppBar(
                         backgroundColor: isTransparent ? Colors.transparent : null,
                         elevation: isTransparent ? 0 : null,
-                        centerTitle: widget.centerTitle ?? false,
+                        centerTitle:
+                            inlineActive ? false : (widget.centerTitle ?? false),
                         automaticallyImplyLeading:
                             widget.automaticallyImplyLeading,
                         leading: _buildLeading(),
-                        title: _buildTitle(state.searchState),
+                        title: _buildTitle(state.searchState, slotContext),
                         actions: _buildActions(
                           state.searchState,
                           state.actions.isNotEmpty
@@ -411,7 +508,8 @@ class CommonScaffoldState extends ConsumerState<CommonScaffold> {
                               : widget.actions ?? [],
                         ),
                       ),
-                    ),
+                    );
+                  },
                 ),
             ValueListenableBuilder(
               valueListenable: _loading,

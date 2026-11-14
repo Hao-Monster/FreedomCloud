@@ -1407,6 +1407,7 @@
   "nodeOverviewTurnOffProxy": "Turn off",
   "nodeOverviewEmptyTitle": "No subscription profile yet",
   "nodeOverviewEmptySubtitle": "Paste your subscription link and confirm to auto-test and connect to the fastest node",
+  "nodeOverviewEmptyStepsHint": "① Add subscription  ·  ② Auto speedtest  ·  ③ Connect fastest",
   "nodeOverviewAvailableFilterEmpty": "No tested available nodes right now (untested or all timed out)",
   "nodeOverviewShowAllNodes": "Show all nodes",
   "nodeOverviewAutoConnectedBest": "Auto-connected to fastest node: {profile} · {node} ({delay} ms)",
@@ -1449,8 +1450,10 @@
   },
   "nodeOverviewSmartSelectTitle": "Smart Select",
   "nodeOverviewSmartSelectSubtitle": "Better experience",
+  "nodeOverviewSmartSelectCompact": "Smart",
   "nodeOverviewManualSelectTitle": "Manual Select",
   "nodeOverviewManualSelectSubtitle": "Fixed IP",
+  "nodeOverviewManualSelectCompact": "Fixed IP",
   "nodeOverviewSmartInUse": "Smart active",
   "nodeOverviewProxyConnectedSmartWithNode": "Proxy on · Smart: {profile} · {node}",
   "@nodeOverviewProxyConnectedSmartWithNode": {

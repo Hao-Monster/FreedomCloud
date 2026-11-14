@@ -1118,6 +1118,9 @@ class MessageLookup extends MessageLookupByLibrary {
     "nodeOverviewDeviceLimitReached": MessageLookupByLibrary.simpleMessage(
       "Достигнут лимит устройств",
     ),
+    "nodeOverviewEmptyStepsHint": MessageLookupByLibrary.simpleMessage(
+      "① Подписка  ·  ② Тест задержки  ·  ③ Быстрейший",
+    ),
     "nodeOverviewEmptySubtitle": MessageLookupByLibrary.simpleMessage(
       "Вставьте ссылку подписки — приложение автоматически проверит задержку и подключит лучший узел",
     ),
@@ -1167,6 +1170,9 @@ class MessageLookup extends MessageLookupByLibrary {
     "nodeOverviewLockedManualNode": m47,
     "nodeOverviewManageProfiles": MessageLookupByLibrary.simpleMessage(
       "Управление профилями / обновление подписки",
+    ),
+    "nodeOverviewManualSelectCompact": MessageLookupByLibrary.simpleMessage(
+      "Фикс. IP",
     ),
     "nodeOverviewManualSelectSubtitle": MessageLookupByLibrary.simpleMessage(
       "Фикс. IP",
@@ -1255,6 +1261,9 @@ class MessageLookup extends MessageLookupByLibrary {
       "Показать все узлы",
     ),
     "nodeOverviewSmartInUse": MessageLookupByLibrary.simpleMessage("Авто"),
+    "nodeOverviewSmartSelectCompact": MessageLookupByLibrary.simpleMessage(
+      "Умный",
+    ),
     "nodeOverviewSmartSelectSubtitle": MessageLookupByLibrary.simpleMessage(
       "Лучший опыт",
     ),

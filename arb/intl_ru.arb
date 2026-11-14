@@ -1311,6 +1311,7 @@
   "nodeOverviewTurnOffProxy": "Выключить",
   "nodeOverviewEmptyTitle": "Нет добавленных подписок",
   "nodeOverviewEmptySubtitle": "Вставьте ссылку подписки — приложение автоматически проверит задержку и подключит лучший узел",
+  "nodeOverviewEmptyStepsHint": "① Подписка  ·  ② Тест задержки  ·  ③ Быстрейший",
   "nodeOverviewAvailableFilterEmpty": "Сейчас нет проверенных доступных узлов (не проверены или недоступны)",
   "nodeOverviewShowAllNodes": "Показать все узлы",
   "nodeOverviewAutoConnectedBest": "Автоподключение к лучшему узлу: {profile} · {node} ({delay} мс)",
@@ -1353,8 +1354,10 @@
   },
   "nodeOverviewSmartSelectTitle": "Умный выбор",
   "nodeOverviewSmartSelectSubtitle": "Лучший опыт",
+  "nodeOverviewSmartSelectCompact": "Умный",
   "nodeOverviewManualSelectTitle": "Ручной выбор",
   "nodeOverviewManualSelectSubtitle": "Фикс. IP",
+  "nodeOverviewManualSelectCompact": "Фикс. IP",
   "nodeOverviewSmartInUse": "Авто",
   "nodeOverviewProxyConnectedSmartWithNode": "Прокси вкл · Умный: {profile} · {node}",
   "@nodeOverviewProxyConnectedSmartWithNode": {

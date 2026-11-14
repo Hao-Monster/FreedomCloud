@@ -19,17 +19,185 @@ import 'package:flclashx/views/profiles/add_profile.dart';
 import 'package:flclashx/widgets/widgets.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart' hide TextDirection;
 
 part 'profile_selector.dart';
 
+/// Shared state/action bridge between ProxiesView's AppBar accessory slot
+/// and the active NodeOverviewView instance.
+class NodeOverviewCommandController extends ChangeNotifier {
+  String? selectedProfile;
+  String? selectedCountry;
+  bool _availableOnly = false;
+  bool get availableOnly => _availableOnly;
+  bool _importingSubscription = false;
+  bool get importingSubscription => _importingSubscription;
+  bool _localProxyTogglePending = false;
+  bool get localProxyTogglePending => _localProxyTogglePending;
+  final Set<String> visibleProfileIds = <String>{};
+  final Map<String, _IndexedProfileCountrySummary> _indexedProfiles =
+      <String, _IndexedProfileCountrySummary>{};
+  List<String> stableProfileOrderIds = const <String>[];
+  final Set<String> updatingOrderFreezeIds = <String>{};
+  Widget? inlineAccessoryWidget;
+
+  Object? _owner;
+  VoidCallback? _onOpenAddSubscription;
+  void Function(Profile profile, {String? targetGroupOverride})?
+      _onActivateSmartSelection;
+  void Function(Profile profile)? _onActivateManualSelection;
+  void Function(Profile profile, String groupName, String proxyName)?
+      _onUseActiveNode;
+  void Function(Profile profile, CatalogNode node, String groupName)?
+      _onUseCatalogNode;
+
+  bool _disposed = false;
+  bool get isDisposed => _disposed;
+
+  void notifySafely() {
+    if (_disposed) return;
+    final phase = SchedulerBinding.instance.schedulerPhase;
+    if (phase == SchedulerPhase.idle ||
+        phase == SchedulerPhase.postFrameCallbacks) {
+      notifyListeners();
+    } else {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!_disposed) notifyListeners();
+      });
+    }
+  }
+
+  void bindView({
+    required Object owner,
+    required VoidCallback onOpenAddSubscription,
+    required void Function(Profile profile, {String? targetGroupOverride})
+        onActivateSmartSelection,
+    required void Function(Profile profile) onActivateManualSelection,
+    required void Function(Profile profile, String groupName, String proxyName)
+        onUseActiveNode,
+    required void Function(Profile profile, CatalogNode node, String groupName)
+        onUseCatalogNode,
+    String? selectedProfile,
+    String? selectedCountry,
+    bool availableOnly = false,
+    bool importingSubscription = false,
+    bool localProxyTogglePending = false,
+  }) {
+    _owner = owner;
+    _onOpenAddSubscription = onOpenAddSubscription;
+    _onActivateSmartSelection = onActivateSmartSelection;
+    _onActivateManualSelection = onActivateManualSelection;
+    _onUseActiveNode = onUseActiveNode;
+    _onUseCatalogNode = onUseCatalogNode;
+    this.selectedProfile = selectedProfile;
+    this.selectedCountry = selectedCountry;
+    _availableOnly = availableOnly;
+    _importingSubscription = importingSubscription;
+    _localProxyTogglePending = localProxyTogglePending;
+    notifySafely();
+  }
+
+  void unbindView(Object owner) {
+    if (!identical(_owner, owner)) return;
+    _owner = null;
+    _onOpenAddSubscription = null;
+    _onActivateSmartSelection = null;
+    _onActivateManualSelection = null;
+    _onUseActiveNode = null;
+    _onUseCatalogNode = null;
+    visibleProfileIds.clear();
+    _indexedProfiles.clear();
+    stableProfileOrderIds = const <String>[];
+    updatingOrderFreezeIds.clear();
+    selectedProfile = null;
+    selectedCountry = null;
+    _availableOnly = false;
+    _importingSubscription = false;
+    _localProxyTogglePending = false;
+  }
+
+  void openAddSubscription() => _onOpenAddSubscription?.call();
+
+  void activateSmartSelection(
+    Profile profile, {
+    String? targetGroupOverride,
+  }) =>
+      _onActivateSmartSelection?.call(
+        profile,
+        targetGroupOverride: targetGroupOverride,
+      );
+
+  void activateManualSelection(Profile profile) =>
+      _onActivateManualSelection?.call(profile);
+
+  void useActiveNode(Profile profile, String groupName, String proxyName) =>
+      _onUseActiveNode?.call(profile, groupName, proxyName);
+
+  void useCatalogNode(Profile profile, CatalogNode node, String groupName) =>
+      _onUseCatalogNode?.call(profile, node, groupName);
+
+  set importingSubscription(bool value) {
+    if (_importingSubscription == value) return;
+    _importingSubscription = value;
+    notifySafely();
+  }
+
+  set localProxyTogglePending(bool value) {
+    if (_localProxyTogglePending == value) return;
+    _localProxyTogglePending = value;
+    notifySafely();
+  }
+
+  void setSelectedProfile(String? value) {
+    if (selectedProfile == value) return;
+    selectedProfile = value;
+    notifySafely();
+  }
+
+  void setSelectedCountry(String? value) {
+    if (selectedCountry == value) return;
+    selectedCountry = value;
+    notifySafely();
+  }
+
+  set availableOnly(bool value) {
+    if (_availableOnly == value) return;
+    _availableOnly = value;
+    notifySafely();
+  }
+
+  void recordVisibleProfile(String profileId) {
+    if (visibleProfileIds.add(profileId)) {
+      notifySafely();
+    }
+  }
+
+  @override
+  void dispose() {
+    _disposed = true;
+    _owner = null;
+    _onOpenAddSubscription = null;
+    _onActivateSmartSelection = null;
+    _onActivateManualSelection = null;
+    _onUseActiveNode = null;
+    _onUseCatalogNode = null;
+    super.dispose();
+  }
+}
+
 /// Selects only the page body; the scope control belongs to the existing app bar.
 class NodeOverviewScopeView extends ConsumerWidget {
-  const NodeOverviewScopeView({super.key, required this.currentView});
+  const NodeOverviewScopeView({
+    super.key,
+    required this.currentView,
+    this.commandController,
+  });
 
   final Widget currentView;
+  final NodeOverviewCommandController? commandController;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -40,9 +208,13 @@ class NodeOverviewScopeView extends ConsumerWidget {
     final expertExpanded = ref.watch(expertNavigationExpandedProvider);
     final lockedToOverviewInNovice = !expertExpanded &&
         (context.commonScaffoldState?.hasNavigationBar ?? false);
-    if (count == 0 || lockedToOverviewInNovice) return const NodeOverviewView();
+    if (count == 0 || lockedToOverviewInNovice) {
+      return NodeOverviewView(commandController: commandController);
+    }
     final scope = ref.watch(proxiesScopeProvider);
-    return scope == ProxiesScope.all ? const NodeOverviewView() : currentView;
+    return scope == ProxiesScope.all
+        ? NodeOverviewView(commandController: commandController)
+        : currentView;
   }
 }
 
@@ -51,6 +223,7 @@ class NodeOverviewScopeAction extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    Localizations.maybeLocaleOf(context);
     final enabled = ref.watch(nodeOverviewEnabledProvider);
     final count = ref.watch(profilesProvider.select((value) => value.length));
     if (!enabled || count == 0) return const SizedBox.shrink();
@@ -61,7 +234,16 @@ class NodeOverviewScopeAction extends ConsumerWidget {
     };
     void select(ProxiesScope value) =>
         ref.read(proxiesScopeProvider.notifier).state = value;
-    if (ref.watch(viewWidthProvider) <= maxLaptopWidth) {
+    final viewWidth = ref.watch(viewWidthProvider);
+    final mediaWidth = MediaQuery.maybeSizeOf(context)?.width;
+    final effectiveWidth = (mediaWidth != null && mediaWidth > 0)
+        ? math.min(viewWidth, mediaWidth)
+        : viewWidth;
+    // Keep narrow desktop (<1200px) in compact menu mode so the Plan A inline
+    // command bar keeps comfortable width across all locales and text scales
+    // without morphing when toggling between all and current profile scopes.
+    final useCompactScopeMenu = effectiveWidth < 1200;
+    if (useCompactScopeMenu) {
       return PopupMenuButton<ProxiesScope>(
         key: const ValueKey('overview-scope-menu'),
         tooltip: labels[scope],
@@ -82,7 +264,13 @@ class NodeOverviewScopeAction extends ConsumerWidget {
       child: SegmentedButton<ProxiesScope>(
         key: const ValueKey('overview-scope-segments'),
         showSelectedIcon: false,
-        style: const ButtonStyle(visualDensity: VisualDensity.compact),
+        style: const ButtonStyle(
+          visualDensity: VisualDensity.compact,
+          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          padding: WidgetStatePropertyAll(
+            EdgeInsets.symmetric(horizontal: 10),
+          ),
+        ),
         segments: [
           for (final value in ProxiesScope.values)
             ButtonSegment(value: value, label: Text(labels[value]!))
@@ -222,10 +410,1696 @@ final _overviewExplicitLiveResultsProvider = NotifierProvider.autoDispose<
 );
 
 class NodeOverviewView extends ConsumerStatefulWidget {
-  const NodeOverviewView({super.key});
+  const NodeOverviewView({
+    super.key,
+    this.commandController,
+  });
+
+  final NodeOverviewCommandController? commandController;
 
   @override
   ConsumerState<NodeOverviewView> createState() => _NodeOverviewViewState();
+}
+
+({bool verified, String? profileId}) _resolveSnapshotAttestation(
+  _OverviewSwitchTracker tracker,
+  List<Group> groups,
+  int version,
+) {
+  if (tracker.matchesAttested(groups, version)) {
+    return (verified: true, profileId: tracker.attestedProfileId);
+  }
+  if (globalState.matchesGroupsSnapshot(groups, version)) {
+    return (
+      verified: true,
+      profileId: globalState.groupsSnapshotProfileId,
+    );
+  }
+  return (verified: false, profileId: null);
+}
+
+bool _isSnapshotLiveForProfile({
+  required String profileId,
+  required List<Group> groups,
+  required ({bool verified, String? profileId}) attestation,
+}) {
+  if (groups.isEmpty) return true;
+  if (!attestation.verified) return false;
+  if (attestation.profileId != null) {
+    return attestation.profileId == profileId;
+  }
+  return globalState.lastRuntimeProfileId == null;
+}
+
+class _OverviewComputedSnapshot {
+  const _OverviewComputedSnapshot({
+    required this.profiles,
+    required this.testerBusy,
+    required this.tester,
+    required this.activeId,
+    required this.tracker,
+    required this.liveActiveProfileIds,
+    required this.isMobile,
+    required this.sort,
+    required this.selected,
+    required this.cachedCatalogs,
+    required this.currentScript,
+    required this.query,
+    required this.searching,
+    required this.locale,
+    required this.countryCounts,
+    required this.availableCounts,
+    required this.activeDisplayCounts,
+    required this.healthByProfile,
+    required this.loadErrorIds,
+    required this.resolvedCatalogs,
+    required this.anyVisibleCatalogLoading,
+    required this.orderedProfiles,
+    required this.visible,
+    required this.activeCountry,
+    required this.sortedCountries,
+    required this.activeCountryMatchCount,
+    required this.targetTestProfile,
+    required this.canTestCurrent,
+    required this.quickUseAction,
+    required this.isProxyRunning,
+    required this.effectivePendingTarget,
+    required this.statusStartCancelable,
+    required this.activeProfileObj,
+    required this.activeIsSmart,
+    required this.targetModeProfile,
+    required this.currentSelectionMode,
+    required this.canSwitchSelectionMode,
+    required this.activeNodeLabel,
+    required this.availableFilterHidAllNodes,
+  });
+
+  final List<Profile> profiles;
+  final bool testerBusy;
+  final NodeCatalogTester tester;
+  final String? activeId;
+  final _OverviewSwitchTracker tracker;
+  final Set<String> liveActiveProfileIds;
+  final bool isMobile;
+  final ProxiesSortType sort;
+  final String? selected;
+  final Map<String, ProfileCatalog> cachedCatalogs;
+  final Script? currentScript;
+  final String query;
+  final bool searching;
+  final Locale locale;
+  final Map<String, int> countryCounts;
+  final Map<String, int> availableCounts;
+  final Map<String, int> activeDisplayCounts;
+  final Map<String, Map<String, NodeHealthRecord>> healthByProfile;
+  final Set<String> loadErrorIds;
+  final Map<String, ProfileCatalog?> resolvedCatalogs;
+  final bool anyVisibleCatalogLoading;
+  final List<Profile> orderedProfiles;
+  final List<Profile> visible;
+  final String? activeCountry;
+  final List<String> sortedCountries;
+  final int activeCountryMatchCount;
+  final Profile? targetTestProfile;
+  final bool canTestCurrent;
+  final VoidCallback? quickUseAction;
+  final bool isProxyRunning;
+  final bool? effectivePendingTarget;
+  final bool statusStartCancelable;
+  final Profile? activeProfileObj;
+  final bool activeIsSmart;
+  final Profile? targetModeProfile;
+  final NodeSelectionMode currentSelectionMode;
+  final bool canSwitchSelectionMode;
+  final String? activeNodeLabel;
+  final bool availableFilterHidAllNodes;
+}
+
+_OverviewComputedSnapshot _computeOverviewSnapshot({
+  required WidgetRef ref,
+  required Locale locale,
+  required String? rawSelectedProfile,
+  required String? rawSelectedCountry,
+  required bool availableOnly,
+  required bool localProxyTogglePending,
+  required Set<String> visibleProfileIds,
+  required Map<String, _IndexedProfileCountrySummary> indexedProfiles,
+  required List<String> stableProfileOrderIds,
+  required Set<String> updatingOrderFreezeIds,
+  required bool mutateCaches,
+  void Function(List<String> nextOrder)? onUpdateStableOrder,
+  required void Function(Profile profile, {String? targetGroupOverride})
+      onActivateSmartSelection,
+  required void Function(Profile profile) onActivateManualSelection,
+  required void Function(Profile profile, String groupName, String proxyName)
+      onUseActiveNode,
+  required void Function(Profile profile, CatalogNode node, String groupName)
+      onUseCatalogNode,
+}) {
+  final profiles = ref.watch(profilesProvider);
+  final testerBusy =
+      ref.watch(nodeCatalogTesterProvider.select((t) => t.busy));
+  final tester = ref.read(nodeCatalogTesterProvider);
+  final activeId = ref.watch(currentProfileIdProvider);
+  final groups = ref.watch(groupsProvider);
+  final version = ref.watch(versionProvider);
+  final tracker = ref.watch(_overviewSwitchTrackerProvider);
+  final verifiedRuntimeProfileId = globalState.lastRuntimeProfileId ??
+      ref.watch(activeNodeCatalogProvider)?.profileId;
+  final attestation = _resolveSnapshotAttestation(tracker, groups, version);
+  final runtimeMatchesPending = tracker.pendingProfileId != null &&
+      verifiedRuntimeProfileId == tracker.pendingProfileId &&
+      attestation.verified &&
+      attestation.profileId == tracker.pendingProfileId;
+  if (tracker.pendingProfileId != null) {
+    if (activeId != tracker.pendingProfileId) {
+      tracker
+        ..pendingProfileId = null
+        ..pendingProfileLabel = null
+        ..pendingNodeName = null
+        ..pendingGroups = null
+        ..pendingVersion = null;
+    } else if (runtimeMatchesPending &&
+        (!globalState.isSameGroupsList(groups, tracker.pendingGroups) ||
+            version != tracker.pendingVersion)) {
+      if (tracker.pendingProfileLabel != null &&
+          tracker.pendingNodeName != null) {
+        tracker.feedback ??= appLocalizations.nodeOverviewSwitchedToNode(
+            tracker.pendingProfileLabel!, tracker.pendingNodeName!);
+      }
+      tracker
+        ..pendingProfileId = null
+        ..pendingProfileLabel = null
+        ..pendingNodeName = null
+        ..pendingGroups = null
+        ..pendingVersion = null;
+    } else if (!runtimeMatchesPending) {
+      tracker
+        ..pendingGroups = groups
+        ..pendingVersion = version;
+    }
+  } else if (activeId != null &&
+      ((verifiedRuntimeProfileId != null &&
+              verifiedRuntimeProfileId != activeId) ||
+          !_isSnapshotLiveForProfile(
+            profileId: activeId,
+            groups: groups,
+            attestation: attestation,
+          ))) {
+    tracker
+      ..pendingProfileId = activeId
+      ..pendingGroups = groups
+      ..pendingVersion = version;
+  }
+
+  bool isLiveActive(Profile profile) =>
+      profile.id == activeId &&
+      (verifiedRuntimeProfileId == null ||
+          verifiedRuntimeProfileId == profile.id) &&
+      _isSnapshotLiveForProfile(
+        profileId: profile.id,
+        groups: groups,
+        attestation: attestation,
+      ) &&
+      tracker.pendingProfileId != profile.id;
+
+  final isMobile = ref.watch(isMobileViewProvider);
+  final sort = ref.watch(proxiesStyleSettingProvider.select((s) => s.sortType));
+  final selected = profiles.any((p) => p.id == rawSelectedProfile)
+      ? rawSelectedProfile
+      : null;
+  final countryResolver = ref.watch(nodeCountryResolverProvider);
+  final cachedCatalogs = ref.watch(cachedProfileCatalogsProvider);
+  final currentScript =
+      ref.watch(scriptStateProvider.select((state) => state.currentScript));
+  final query = ref.watch(proxiesQueryProvider).trim().toLowerCase();
+  final searching = query.isNotEmpty;
+  final mode =
+      ref.watch(patchClashConfigProvider.select((state) => state.mode));
+  final currentGroups = ref.watch(currentGroupsStateProvider).value;
+  final scopeCountries = <String>{};
+  final countryCounts = <String, int>{};
+  final availableCounts = <String, int>{};
+  final activeDisplayCounts = <String, int>{};
+  final healthByProfile = <String, Map<String, NodeHealthRecord>>{};
+  final loadErrorIds = <String>{};
+  final originalIndexes = <String, int>{};
+  final resolvedCatalogs = <String, ProfileCatalog?>{};
+  final liveActiveProfileIds = <String>{};
+  var anyVisibleCatalogLoading = false;
+
+  for (var i = 0; i < profiles.length; i++) {
+    final profile = profiles[i];
+    originalIndexes[profile.id] = i;
+    final liveActive = isLiveActive(profile);
+    if (liveActive) {
+      liveActiveProfileIds.add(profile.id);
+    }
+    final inSelectedScope = selected == null || selected == profile.id;
+    final shouldWatchCatalog = selected == profile.id ||
+        visibleProfileIds.contains(profile.id) ||
+        (inSelectedScope && (searching || rawSelectedCountry != null));
+    final loaded = shouldWatchCatalog
+        ? ref.watch(profileCatalogProvider(profile.id))
+        : null;
+    if (loaded?.hasError ?? false) {
+      loadErrorIds.add(profile.id);
+    }
+    final catalog = loaded?.valueOrNull ?? cachedCatalogs[profile.id];
+    resolvedCatalogs[profile.id] = catalog;
+    if (mutateCaches) {
+      final catalogReloadingAfterSync =
+          ((loaded?.isLoading ?? false) && catalog == null) ||
+              catalog?.status == ProfileCatalogStatus.loading ||
+              catalog?.status == ProfileCatalogStatus.updating;
+      if (profile.isUpdating) {
+        updatingOrderFreezeIds.add(profile.id);
+      } else if (!catalogReloadingAfterSync) {
+        updatingOrderFreezeIds.remove(profile.id);
+      }
+      if (catalog != null && catalog.status != ProfileCatalogStatus.loading) {
+        indexedProfiles[profile.id] = _IndexedProfileCountrySummary(
+          url: profile.url,
+          lastUpdateDate: profile.lastUpdateDate,
+          isUpdating: profile.isUpdating,
+          scriptId: currentScript?.id,
+          scriptContent: currentScript?.content,
+          status: catalog.status,
+          errorSummary: catalog.errorSummary,
+          hasUnresolvedProviders:
+              catalog.providerNodeCounts.values.any((count) => count < 0),
+          nodes: catalog.nodes.map(_IndexedNodeSummary.fromNode).toList(),
+        );
+      }
+    }
+    final indexedSummary = indexedProfiles[profile.id];
+    final validIndexed = indexedSummary != null &&
+            indexedSummary.matchesProfile(profile, currentScript)
+        ? indexedSummary
+        : null;
+    if (inSelectedScope) {
+      final pendingIndex = !liveActive &&
+          catalog == null &&
+          validIndexed == null &&
+          !profile.isUpdating;
+      if (((loaded?.isLoading ?? false) && catalog == null) ||
+          (mutateCaches && pendingIndex) ||
+          profile.isUpdating ||
+          catalog?.status == ProfileCatalogStatus.loading ||
+          catalog?.status == ProfileCatalogStatus.updating) {
+        anyVisibleCatalogLoading = true;
+      }
+    }
+    final profileMatches =
+        (profile.label ?? profile.id).toLowerCase().contains(query);
+    final health = ref.watch(nodeHealthEntriesProvider(profile.id));
+    healthByProfile[profile.id] = health;
+    if (liveActive) {
+      final displays = _activeDisplays(
+          ref, profile.id, profile.isUpdating ? null : catalog);
+      activeDisplayCounts[profile.id] = displays.length;
+      if (displays.isNotEmpty || profile.isUpdating) {
+        availableCounts[profile.id] =
+            displays.values.where((entry) => (entry.delay ?? -1) > 0).length;
+      } else {
+        availableCounts[profile.id] = _resolveStaticPickerStats(
+          loadedHasError: loaded?.hasError ?? false,
+          catalog: catalog,
+          validIndexed: validIndexed,
+          health: health,
+        ).availableCount;
+      }
+      if (inSelectedScope) {
+        final effectiveQuery = profileMatches ? '' : query;
+        for (final entry in displays.values) {
+          final code = countryResolver.resolveCountryCode(
+            profileId: profile.id,
+            profileLabel: profile.label,
+            nodeName: entry.proxy.name,
+            endpointKey: entry.node?.endpointKey,
+            isLiveActive: true,
+            inUse: entry.inUse,
+          );
+          scopeCountries.add(code);
+          final matches = _activeEntryMatchesQuery(entry, effectiveQuery);
+          if (!matches || (availableOnly && (entry.delay ?? -1) <= 0)) {
+            continue;
+          }
+          countryCounts.update(code, (count) => count + 1, ifAbsent: () => 1);
+        }
+      }
+    } else {
+      if (catalog != null) {
+        final unusableCatalog =
+            catalog.status == ProfileCatalogStatus.loading ||
+                catalog.status == ProfileCatalogStatus.fileMissing ||
+                catalog.status == ProfileCatalogStatus.parseFailed;
+        availableCounts[profile.id] = unusableCatalog
+            ? 0
+            : catalog.nodes
+                .where((node) => (_nodeHealth(node, health)?.delayMs ?? -1) > 0)
+                .length;
+        if (inSelectedScope) {
+          for (final node in catalog.nodes) {
+            final code = countryResolver.resolveCountryCode(
+              profileId: profile.id,
+              profileLabel: profile.label,
+              nodeName: node.name,
+              endpointKey: node.endpointKey,
+            );
+            scopeCountries.add(code);
+            if (!(profileMatches || _matches(node, query)) ||
+                (availableOnly &&
+                    (_nodeHealth(node, health)?.delayMs ?? -1) <= 0)) {
+              continue;
+            }
+            countryCounts.update(code, (count) => count + 1, ifAbsent: () => 1);
+          }
+        }
+      } else if (validIndexed != null) {
+        final unusableIndexed =
+            validIndexed.status == ProfileCatalogStatus.loading ||
+                validIndexed.status == ProfileCatalogStatus.fileMissing ||
+                validIndexed.status == ProfileCatalogStatus.parseFailed;
+        availableCounts[profile.id] = unusableIndexed
+            ? 0
+            : validIndexed.nodes
+                .where((node) =>
+                    !node.parseFailed &&
+                    (health[node.identityKey]?.delayMs ?? -1) > 0)
+                .length;
+        if (inSelectedScope) {
+          for (final node in validIndexed.nodes) {
+            final code = countryResolver.resolveCountryCode(
+              profileId: profile.id,
+              profileLabel: profile.label,
+              nodeName: node.name,
+              endpointKey: node.endpointKey,
+            );
+            scopeCountries.add(code);
+            final matchesQuery = profileMatches ||
+                '${node.name}\n${node.type}\n${node.protocolSummary ?? ''}\n${node.providerName ?? ''}'
+                    .toLowerCase()
+                    .contains(query);
+            final delayMs =
+                node.parseFailed ? null : health[node.identityKey]?.delayMs;
+            if (!matchesQuery || (availableOnly && (delayMs ?? -1) <= 0)) {
+              continue;
+            }
+            countryCounts.update(code, (count) => count + 1, ifAbsent: () => 1);
+          }
+        }
+      } else {
+        availableCounts[profile.id] = 0;
+      }
+    }
+  }
+  if (mutateCaches) {
+    updatingOrderFreezeIds.retainAll(originalIndexes.keys);
+  }
+  final List<Profile> orderedProfiles;
+  if (stableProfileOrderIds.isNotEmpty &&
+      (testerBusy || updatingOrderFreezeIds.isNotEmpty)) {
+    final byId = <String, Profile>{
+      for (final profile in profiles) profile.id: profile,
+    };
+    orderedProfiles = <Profile>[
+      for (final id in stableProfileOrderIds)
+        if (byId.remove(id) case final Profile existing) existing,
+      ...byId.values,
+    ];
+  } else {
+    orderedProfiles = profiles.toList()
+      ..sort((a, b) {
+        final byAvailable = (availableCounts[b.id] ?? 0)
+            .compareTo(availableCounts[a.id] ?? 0);
+        if (byAvailable != 0) return byAvailable;
+        return (originalIndexes[a.id] ?? 0)
+            .compareTo(originalIndexes[b.id] ?? 0);
+      });
+    if (mutateCaches) {
+      onUpdateStableOrder?.call(<String>[
+        for (final profile in orderedProfiles) profile.id,
+      ]);
+    }
+  }
+  final visible = selected == null
+      ? orderedProfiles
+      : orderedProfiles.where((p) => p.id == selected).toList();
+  final activeCountry = rawSelectedCountry != null &&
+          (scopeCountries.contains(rawSelectedCountry) ||
+              anyVisibleCatalogLoading)
+      ? rawSelectedCountry
+      : null;
+  if (activeCountry != null && !countryCounts.containsKey(activeCountry)) {
+    countryCounts[activeCountry] = 0;
+  }
+  final showCountryChips =
+      countryCounts.keys.any((code) => code != kUnknownCountryCode) ||
+          activeCountry != null;
+  final sortedCountries = showCountryChips
+      ? sortCountryCodes(countryCounts.keys, countryCounts)
+      : const <String>[];
+  final activeCountryMatchCount =
+      activeCountry == null ? 0 : (countryCounts[activeCountry] ?? 0);
+  final targetTestProfile = selected != null
+      ? visible.firstOrNull
+      : (activeId == null ? null : profiles.getProfile(activeId));
+  final canTestCurrent = !testerBusy &&
+      !(targetTestProfile?.isUpdating ?? false) &&
+      !(selected != null && targetTestProfile == null) &&
+      !(selected == null && (activeId == null || currentGroups.isEmpty));
+
+  VoidCallback? resolveQuickUseAction() {
+    for (final profile in visible) {
+      if (profile.isUpdating) {
+        return null;
+      }
+      final profileMatches =
+          (profile.label ?? profile.id).toLowerCase().contains(query);
+      final catalog = resolvedCatalogs[profile.id];
+      if (liveActiveProfileIds.contains(profile.id)) {
+        final effectiveQuery = profileMatches ? '' : query;
+        final rows = _activeDisplays(
+          ref,
+          profile.id,
+          profile.isUpdating ? null : catalog,
+        ).values.where((entry) {
+          final matches = _activeEntryMatchesQuery(entry, effectiveQuery);
+          if (!matches || (availableOnly && (entry.delay ?? -1) <= 0)) {
+            return false;
+          }
+          if (activeCountry != null) {
+            final code = countryResolver.resolveCountryCode(
+              profileId: profile.id,
+              profileLabel: profile.label,
+              nodeName: entry.proxy.name,
+              endpointKey: entry.node?.endpointKey,
+              isLiveActive: true,
+              inUse: entry.inUse,
+            );
+            if (code != activeCountry) return false;
+          }
+          return true;
+        }).toList();
+        if (rows.isEmpty) {
+          continue;
+        }
+        if (sort != ProxiesSortType.none) {
+          rows.sort((a, b) {
+            if (sort == ProxiesSortType.delay) {
+              final result = _compareDelay(a.delay, b.delay);
+              if (result != 0) return result;
+            }
+            return a.proxy.name
+                .toLowerCase()
+                .compareTo(b.proxy.name.toLowerCase());
+          });
+        }
+        for (final allowInformational in const [false, true]) {
+          for (final entry in rows) {
+            if (!allowInformational &&
+                isInformationalProxyName(entry.proxy.name)) {
+              continue;
+            }
+            if (entry.selectGroup != null &&
+                (entry.delay == null || entry.delay! >= 0)) {
+              final targetGroup = entry.selectGroup!;
+              if (resolveProfileSelectionMode(profile) ==
+                      NodeSelectionMode.smart &&
+                  query.isEmpty &&
+                  activeCountry == null) {
+                return () => onActivateSmartSelection(
+                      profile,
+                      targetGroupOverride: targetGroup,
+                    );
+              }
+              final targetProxy = entry.proxy.name;
+              return () => onUseActiveNode(profile, targetGroup, targetProxy);
+            }
+          }
+        }
+        return null;
+      }
+      if (catalog == null ||
+          catalog.status == ProfileCatalogStatus.loading ||
+          catalog.status == ProfileCatalogStatus.updating) {
+        return null;
+      }
+      if (catalog.status != ProfileCatalogStatus.ready) {
+        if (availableOnly || activeCountry != null || query.isNotEmpty) {
+          continue;
+        }
+        return null;
+      }
+      final health =
+          healthByProfile[profile.id] ?? const <String, NodeHealthRecord>{};
+      final nodes = catalog.nodes.where((node) {
+        final matches = profileMatches || _matches(node, query);
+        if (!matches ||
+            (availableOnly && (_nodeHealth(node, health)?.delayMs ?? -1) <= 0)) {
+          return false;
+        }
+        if (activeCountry != null) {
+          final code = countryResolver.resolveCountryCode(
+            profileId: profile.id,
+            profileLabel: profile.label,
+            nodeName: node.name,
+            endpointKey: node.endpointKey,
+          );
+          if (code != activeCountry) return false;
+        }
+        return true;
+      }).toList();
+      if (nodes.isEmpty) {
+        continue;
+      }
+      _sortNodes(nodes, health, sort);
+      for (final allowInformational in const [false, true]) {
+        for (final node in nodes) {
+          if (!allowInformational && isInformationalProxyName(node.name)) {
+            continue;
+          }
+          final delayMs = _nodeHealth(node, health)?.delayMs;
+          if (delayMs != null && delayMs < 0) {
+            continue;
+          }
+          final targetGroup = _targetGroupForCatalogNode(profile, node, mode);
+          if (targetGroup != null) {
+            if (resolveProfileSelectionMode(profile) ==
+                    NodeSelectionMode.smart &&
+                query.isEmpty &&
+                activeCountry == null) {
+              return () => onActivateSmartSelection(
+                    profile,
+                    targetGroupOverride: targetGroup,
+                  );
+            }
+            return () => onUseCatalogNode(profile, node, targetGroup);
+          }
+        }
+      }
+      return null;
+    }
+    return null;
+  }
+
+  final quickUseAction = resolveQuickUseAction();
+  final isProxyRunning = ref.watch(runTimeProvider.select((s) => s != null));
+  final statusSwitchPending = ref.watch(statusSwitchPendingProvider);
+  final statusStartCancelable = ref.watch(statusStartCancelableProvider);
+  final effectivePendingTarget =
+      statusSwitchPending ?? (localProxyTogglePending ? !isProxyRunning : null);
+  final activeProfileObj =
+      activeId == null ? null : profiles.getProfile(activeId);
+  final activeIsSmart = activeProfileObj != null &&
+      resolveProfileSelectionMode(activeProfileObj) == NodeSelectionMode.smart;
+  final targetModeProfile = selected != null
+      ? visible.firstOrNull
+      : (activeProfileObj ?? orderedProfiles.firstOrNull);
+  final currentSelectionMode = targetModeProfile == null
+      ? NodeSelectionMode.smart
+      : resolveProfileSelectionMode(targetModeProfile);
+  final canSwitchSelectionMode =
+      targetModeProfile != null && !targetModeProfile.isUpdating;
+  String? activeNodeLabel;
+  if (activeProfileObj != null) {
+    final preferredGroup = activeProfileObj.currentGroupName;
+    if (activeIsSmart) {
+      if (groups.isNotEmpty && liveActiveProfileIds.contains(activeProfileObj.id)) {
+        Group? targetGroup;
+        if (preferredGroup != null) {
+          targetGroup = currentGroups
+              .where((g) => g.name == preferredGroup)
+              .firstOrNull;
+        }
+        targetGroup ??= currentGroups
+            .where((g) => g.type == GroupType.Selector)
+            .firstOrNull;
+        activeNodeLabel = resolveSmartActiveLeafName(
+          selectorGroupName: targetGroup?.name ?? preferredGroup,
+          allGroups: groups,
+          selectedMap: activeProfileObj.selectedMap,
+        );
+      }
+    } else {
+      if (currentGroups.isNotEmpty &&
+          liveActiveProfileIds.contains(activeProfileObj.id)) {
+        Group? targetGroup;
+        if (preferredGroup != null) {
+          targetGroup = currentGroups
+              .where((g) => g.name == preferredGroup)
+              .firstOrNull;
+        }
+        targetGroup ??= currentGroups
+            .where((g) => g.type == GroupType.Selector)
+            .firstOrNull;
+        if (targetGroup != null) {
+          final candidate = (targetGroup.type == GroupType.Selector
+                  ? activeProfileObj.selectedMap[targetGroup.name]
+                  : null) ??
+              targetGroup.now ??
+              activeProfileObj.selectedMap[targetGroup.name];
+          if (!isManagedSmartGroupName(candidate)) {
+            activeNodeLabel = candidate;
+          }
+        }
+      }
+      final fallbackLabel = preferredGroup != null
+          ? activeProfileObj.selectedMap[preferredGroup]
+          : activeProfileObj.selectedMap.values.firstOrNull;
+      if (activeNodeLabel == null && !isManagedSmartGroupName(fallbackLabel)) {
+        activeNodeLabel = fallbackLabel;
+      }
+    }
+  }
+  final visibleMatchingNodeCount =
+      countryCounts.values.fold<int>(0, (sum, count) => sum + count);
+  final availableFilterHidAllNodes = profiles.isNotEmpty &&
+      availableOnly &&
+      !searching &&
+      activeCountry == null &&
+      scopeCountries.isNotEmpty &&
+      visibleMatchingNodeCount == 0 &&
+      !anyVisibleCatalogLoading;
+
+  return _OverviewComputedSnapshot(
+    profiles: profiles,
+    testerBusy: testerBusy,
+    tester: tester,
+    activeId: activeId,
+    tracker: tracker,
+    liveActiveProfileIds: liveActiveProfileIds,
+    isMobile: isMobile,
+    sort: sort,
+    selected: selected,
+    cachedCatalogs: cachedCatalogs,
+    currentScript: currentScript,
+    query: query,
+    searching: searching,
+    locale: locale,
+    countryCounts: countryCounts,
+    availableCounts: availableCounts,
+    activeDisplayCounts: activeDisplayCounts,
+    healthByProfile: healthByProfile,
+    loadErrorIds: loadErrorIds,
+    resolvedCatalogs: resolvedCatalogs,
+    anyVisibleCatalogLoading: anyVisibleCatalogLoading,
+    orderedProfiles: orderedProfiles,
+    visible: visible,
+    activeCountry: activeCountry,
+    sortedCountries: sortedCountries,
+    activeCountryMatchCount: activeCountryMatchCount,
+    targetTestProfile: targetTestProfile,
+    canTestCurrent: canTestCurrent,
+    quickUseAction: quickUseAction,
+    isProxyRunning: isProxyRunning,
+    effectivePendingTarget: effectivePendingTarget,
+    statusStartCancelable: statusStartCancelable,
+    activeProfileObj: activeProfileObj,
+    activeIsSmart: activeIsSmart,
+    targetModeProfile: targetModeProfile,
+    currentSelectionMode: currentSelectionMode,
+    canSwitchSelectionMode: canSwitchSelectionMode,
+    activeNodeLabel: activeNodeLabel,
+    availableFilterHidAllNodes: availableFilterHidAllNodes,
+  );
+}
+
+/// Inline AppBar command accessory rendered when [CommonScaffoldState.isInlineTitleAccessoryActive] is true.
+class NodeOverviewAppBarCommandBar extends ConsumerStatefulWidget {
+  const NodeOverviewAppBarCommandBar({
+    super.key,
+    required this.controller,
+  });
+
+  final NodeOverviewCommandController controller;
+
+  @override
+  ConsumerState<NodeOverviewAppBarCommandBar> createState() =>
+      _NodeOverviewAppBarCommandBarState();
+}
+
+class _NodeOverviewAppBarCommandBarState
+    extends ConsumerState<NodeOverviewAppBarCommandBar> {
+  @override
+  void initState() {
+    super.initState();
+    widget.controller.addListener(_onControllerChanged);
+  }
+
+  @override
+  void didUpdateWidget(covariant NodeOverviewAppBarCommandBar oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.controller != widget.controller) {
+      if (!oldWidget.controller.isDisposed) {
+        oldWidget.controller.removeListener(_onControllerChanged);
+      }
+      if (!widget.controller.isDisposed) {
+        widget.controller.addListener(_onControllerChanged);
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    if (!widget.controller.isDisposed) {
+      widget.controller.removeListener(_onControllerChanged);
+    }
+    super.dispose();
+  }
+
+  void _onControllerChanged() {
+    if (mounted) {
+      setState(() {});
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final controller = widget.controller;
+    if (controller.isDisposed) {
+      return const SizedBox.shrink();
+    }
+    final snapshot = _computeOverviewSnapshot(
+      ref: ref,
+      locale: Localizations.localeOf(context),
+      rawSelectedProfile: controller.selectedProfile,
+      rawSelectedCountry: controller.selectedCountry,
+      availableOnly: controller.availableOnly,
+      localProxyTogglePending: controller.localProxyTogglePending,
+      visibleProfileIds: controller.visibleProfileIds,
+      indexedProfiles: controller._indexedProfiles,
+      stableProfileOrderIds: controller.stableProfileOrderIds,
+      updatingOrderFreezeIds: controller.updatingOrderFreezeIds,
+      mutateCaches: false,
+      onActivateSmartSelection: controller.activateSmartSelection,
+      onActivateManualSelection: controller.activateManualSelection,
+      onUseActiveNode: controller.useActiveNode,
+      onUseCatalogNode: controller.useCatalogNode,
+    );
+    return OverviewTopCommandBar(
+      key: const ValueKey('overview-top-command-bar'),
+      inline: true,
+      hasProfiles: snapshot.profiles.isNotEmpty,
+      isRunning: snapshot.isProxyRunning,
+      pendingTarget: snapshot.effectivePendingTarget,
+      isSmartMode: snapshot.activeIsSmart,
+      activeProfileLabel:
+          snapshot.activeProfileObj?.label ?? snapshot.activeProfileObj?.id,
+      activeNodeName: snapshot.activeNodeLabel,
+      selectionMode: snapshot.currentSelectionMode,
+      onAddSubscription: controller.importingSubscription
+          ? null
+          : controller.openAddSubscription,
+      onQuickUse: snapshot.quickUseAction,
+      onSelectSmart: snapshot.canSwitchSelectionMode
+          ? () => controller.activateSmartSelection(snapshot.targetModeProfile!)
+          : null,
+      onSelectManual: snapshot.canSwitchSelectionMode
+          ? () => controller.activateManualSelection(snapshot.targetModeProfile!)
+          : null,
+    );
+  }
+}
+
+String _formatOverviewConnectionStatusText({
+  required bool isRunning,
+  required bool? pendingTarget,
+  required bool isSmartMode,
+  required String? activeProfileLabel,
+  required String? activeNodeName,
+}) {
+  if (pendingTarget != null) {
+    return pendingTarget
+        ? appLocalizations.nodeOverviewProxyStarting
+        : appLocalizations.nodeOverviewProxyStopping;
+  }
+  if (isRunning) {
+    final hasNode = activeProfileLabel != null &&
+        activeNodeName != null &&
+        activeNodeName.trim().isNotEmpty;
+    if (isSmartMode && activeProfileLabel != null) {
+      return hasNode
+          ? appLocalizations.nodeOverviewProxyConnectedSmartWithNode(
+              activeProfileLabel,
+              activeNodeName,
+            )
+          : appLocalizations.nodeOverviewProxyConnectedSmart(
+              activeProfileLabel,
+            );
+    }
+    return hasNode
+        ? appLocalizations.nodeOverviewProxyConnectedWithNode(
+            activeProfileLabel,
+            activeNodeName,
+          )
+        : appLocalizations.nodeOverviewProxyConnected;
+  }
+  return appLocalizations.nodeOverviewProxyDisconnected;
+}
+
+ButtonStyle _overviewTopActionButtonStyle(
+  BuildContext context, {
+  required bool emphasized,
+  required bool inline,
+}) {
+  final theme = Theme.of(context);
+  final colors = theme.colorScheme;
+  final isDark = theme.brightness == Brightness.dark;
+  return ButtonStyle(
+    visualDensity: VisualDensity.compact,
+    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+    minimumSize: WidgetStatePropertyAll(Size(0, inline ? 32 : 30)),
+    padding: const WidgetStatePropertyAll(
+      EdgeInsets.symmetric(
+        horizontal: 10,
+        vertical: 4,
+      ),
+    ),
+    textStyle: WidgetStatePropertyAll(
+      theme.textTheme.labelMedium?.copyWith(
+        fontWeight: emphasized ? FontWeight.w600 : FontWeight.w500,
+        letterSpacing: 0.1,
+      ),
+    ),
+    backgroundColor: WidgetStateProperty.resolveWith((states) {
+      if (states.contains(WidgetState.disabled)) {
+        return colors.surfaceContainerHigh.withValues(
+          alpha: isDark ? 0.24 : 0.38,
+        );
+      }
+      final hovered = states.contains(WidgetState.hovered);
+      if (emphasized) {
+        return colors.primary.withValues(
+          alpha: hovered ? (isDark ? 0.24 : 0.17) : (isDark ? 0.16 : 0.11),
+        );
+      }
+      return hovered
+          ? colors.surfaceContainerHighest.withValues(
+              alpha: isDark ? 0.78 : 0.94,
+            )
+          : colors.surfaceContainerHigh.withValues(
+              alpha: isDark ? 0.52 : 0.78,
+            );
+    }),
+    foregroundColor: WidgetStateProperty.resolveWith((states) {
+      if (states.contains(WidgetState.disabled)) {
+        return colors.onSurface.withValues(alpha: 0.38);
+      }
+      return emphasized
+          ? colors.primary
+          : colors.onSurface.withValues(alpha: 0.92);
+    }),
+    overlayColor: WidgetStatePropertyAll(
+      colors.primary.withValues(alpha: 0.08),
+    ),
+    shape: WidgetStateProperty.resolveWith((states) {
+      final disabled = states.contains(WidgetState.disabled);
+      final hovered = states.contains(WidgetState.hovered);
+      final focused = states.contains(WidgetState.focused);
+      final Color borderColor;
+      if (disabled) {
+        borderColor = colors.outlineVariant.withValues(alpha: 0.32);
+      } else if (focused) {
+        borderColor = colors.primary.withValues(alpha: 0.72);
+      } else if (emphasized) {
+        borderColor = colors.primary.withValues(alpha: hovered ? 0.68 : 0.48);
+      } else if (hovered) {
+        borderColor = colors.outline.withValues(alpha: 0.58);
+      } else {
+        borderColor = colors.outlineVariant.withValues(alpha: 0.62);
+      }
+      return RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(10),
+        side: BorderSide(color: borderColor),
+      );
+    }),
+  );
+}
+
+class _OverviewCommandSegmentedButton extends StatelessWidget {
+  const _OverviewCommandSegmentedButton({
+    required this.buttonKey,
+    required this.icon,
+    required this.label,
+    required this.tooltip,
+    required this.selected,
+    required this.inline,
+    this.allowEllipsis = true,
+    required this.onPressed,
+  });
+
+  final Key buttonKey;
+  final IconData icon;
+  final String label;
+  final String tooltip;
+  final bool selected;
+  final bool inline;
+  final bool allowEllipsis;
+  final VoidCallback? onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
+    final enabled = onPressed != null;
+    final bgColor = !enabled
+        ? Colors.transparent
+        : selected
+            ? colors.primary.withValues(alpha: isDark ? 0.18 : 0.12)
+            : Colors.transparent;
+    final borderColor = selected && enabled
+        ? colors.primary.withValues(alpha: isDark ? 0.42 : 0.30)
+        : Colors.transparent;
+    final fgColor = !enabled
+        ? colors.onSurface.withValues(alpha: 0.38)
+        : selected
+            ? colors.primary
+            : colors.onSurfaceVariant;
+    final textWidget = Text(
+      label,
+      maxLines: 1,
+      softWrap: allowEllipsis,
+      overflow: allowEllipsis ? TextOverflow.ellipsis : TextOverflow.clip,
+      style: theme.textTheme.labelMedium?.copyWith(
+        color: fgColor,
+        fontWeight: selected && enabled ? FontWeight.w700 : FontWeight.w500,
+      ),
+    );
+
+    return Tooltip(
+      message: tooltip,
+      child: TextButton(
+        key: buttonKey,
+        onPressed: onPressed,
+        style: TextButton.styleFrom(
+          visualDensity: VisualDensity.compact,
+          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          minimumSize: const Size(0, 28),
+          padding: EdgeInsets.symmetric(
+            horizontal: 8,
+            vertical: inline ? 4 : 3,
+          ),
+          backgroundColor: bgColor,
+          foregroundColor: fgColor,
+          side: BorderSide(color: borderColor, width: 1.0),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(8),
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 14, color: fgColor),
+            const SizedBox(width: 4),
+            if (allowEllipsis) Flexible(child: textWidget) else textWidget,
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Top command bar uniting subscription import, live connection status capsule,
+/// smart/fixed selection mode switch, and one-click fastest connect.
+class OverviewTopCommandBar extends StatelessWidget {
+  const OverviewTopCommandBar({
+    super.key,
+    required this.inline,
+    required this.hasProfiles,
+    required this.isRunning,
+    required this.pendingTarget,
+    required this.isSmartMode,
+    required this.activeProfileLabel,
+    required this.activeNodeName,
+    required this.selectionMode,
+    required this.onAddSubscription,
+    required this.onQuickUse,
+    this.onSelectSmart,
+    this.onSelectManual,
+  });
+
+  final bool inline;
+  final bool hasProfiles;
+  final bool isRunning;
+  final bool? pendingTarget;
+  final bool isSmartMode;
+  final String? activeProfileLabel;
+  final String? activeNodeName;
+  final NodeSelectionMode selectionMode;
+  final VoidCallback? onAddSubscription;
+  final VoidCallback? onQuickUse;
+  final VoidCallback? onSelectSmart;
+  final VoidCallback? onSelectManual;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
+
+    Widget buildActionButton({
+      required Key buttonKey,
+      required IconData icon,
+      required String label,
+      required bool emphasized,
+      required VoidCallback? onPressed,
+      required bool allowEllipsis,
+    }) {
+      final textWidget = Text(
+        label,
+        maxLines: 1,
+        softWrap: allowEllipsis,
+        overflow: allowEllipsis ? TextOverflow.ellipsis : TextOverflow.clip,
+      );
+      return TextButton(
+        key: buttonKey,
+        onPressed: onPressed,
+        style: _overviewTopActionButtonStyle(
+          context,
+          emphasized: emphasized,
+          inline: inline,
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 16),
+            const SizedBox(width: 6),
+            if (allowEllipsis) Flexible(child: textWidget) else textWidget,
+          ],
+        ),
+      );
+    }
+
+    final textScale = MediaQuery.textScalerOf(context).scale(1.0);
+    Widget? buildConnectionBar({required bool singleRow}) {
+      if (!hasProfiles) return null;
+      final statusText = _formatOverviewConnectionStatusText(
+        isRunning: isRunning,
+        pendingTarget: pendingTarget,
+        isSmartMode: isSmartMode,
+        activeProfileLabel: activeProfileLabel,
+        activeNodeName: activeNodeName,
+      );
+      final isBusy = pendingTarget != null;
+      final effectiveConnected = pendingTarget ?? isRunning;
+      final green = isDark ? kLatencyFastColor : const Color(0xFF059669);
+      final bgColor = effectiveConnected
+          ? Color.alphaBlend(
+              green.withValues(alpha: isDark ? 0.14 : 0.09),
+              colors.surfaceContainerLow,
+            )
+          : (isDark ? colors.surfaceContainer : colors.surfaceContainerLowest);
+      final borderColor = effectiveConnected
+          ? green.withValues(alpha: isDark ? 0.42 : 0.34)
+          : freedomNetHairlineColor(colors);
+      final leadingIcon = DecoratedBox(
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: effectiveConnected
+              ? green.withValues(alpha: isDark ? 0.20 : 0.14)
+              : colors.surfaceContainerHighest.withValues(
+                  alpha: isDark ? 0.65 : 0.85,
+                ),
+        ),
+        child: SizedBox(
+          width: inline ? 20 : 22,
+          height: inline ? 20 : 22,
+          child: Center(
+            child: isBusy
+                ? ExcludeSemantics(
+                    child: SizedBox(
+                      width: 12,
+                      height: 12,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 1.8,
+                        color: effectiveConnected ? green : colors.primary,
+                      ),
+                    ),
+                  )
+                : Icon(
+                    isRunning
+                        ? Icons.shield_rounded
+                        : Icons.power_settings_new_rounded,
+                    size: 13,
+                    color: isRunning ? green : colors.onSurfaceVariant,
+                  ),
+          ),
+        ),
+      );
+      return DecoratedBox(
+        key: const ValueKey('overview-connection-bar'),
+        decoration: BoxDecoration(
+          color: bgColor,
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(color: borderColor),
+        ),
+        child: Tooltip(
+          message: statusText,
+          child: Padding(
+            padding: EdgeInsets.symmetric(
+              horizontal: inline ? 8 : 10,
+              vertical: 4,
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                leadingIcon,
+                SizedBox(width: inline ? 5 : 7),
+                Flexible(
+                  child: Text(
+                    statusText,
+                    maxLines: singleRow ? 1 : 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      fontWeight: isRunning ? FontWeight.w600 : FontWeight.w500,
+                      color: colors.onSurface,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
+    Widget buildModeSegmentedTrack({
+      required bool singleRow,
+      required bool allowEllipsis,
+    }) {
+      final smartButton = _OverviewCommandSegmentedButton(
+        buttonKey: const ValueKey('overview-mode-smart'),
+        icon: Icons.auto_awesome_rounded,
+        label: appLocalizations.nodeOverviewSmartSelectCompact,
+        tooltip:
+            '${appLocalizations.nodeOverviewSmartSelectTitle} · ${appLocalizations.nodeOverviewSmartSelectSubtitle}',
+        selected: selectionMode == NodeSelectionMode.smart,
+        inline: inline,
+        allowEllipsis: allowEllipsis,
+        onPressed: onSelectSmart,
+      );
+      final manualButton = _OverviewCommandSegmentedButton(
+        buttonKey: const ValueKey('overview-mode-manual'),
+        icon: Icons.push_pin_rounded,
+        label: appLocalizations.nodeOverviewManualSelectCompact,
+        tooltip:
+            '${appLocalizations.nodeOverviewManualSelectTitle} · ${appLocalizations.nodeOverviewManualSelectSubtitle}',
+        selected: selectionMode == NodeSelectionMode.manual,
+        inline: inline,
+        allowEllipsis: allowEllipsis,
+        onPressed: onSelectManual,
+      );
+      return Container(
+        key: const ValueKey('overview-mode-segmented-track'),
+        padding: const EdgeInsets.all(2),
+        decoration: BoxDecoration(
+          color: colors.surfaceDim,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: freedomNetHairlineColor(colors)),
+        ),
+        child: singleRow
+            ? Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  smartButton,
+                  const SizedBox(width: 2),
+                  manualButton,
+                ],
+              )
+            : Wrap(
+                spacing: 4,
+                runSpacing: 4,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  smartButton,
+                  manualButton,
+                ],
+              ),
+      );
+    }
+
+    Widget buildSingleRowBar() {
+      final addButton = buildActionButton(
+        buttonKey: const ValueKey('overview-add-subscription'),
+        icon: Icons.add_link_rounded,
+        label: appLocalizations.nodeOverviewAddSubscription,
+        emphasized: false,
+        onPressed: onAddSubscription,
+        allowEllipsis: false,
+      );
+      final connectionBar = buildConnectionBar(singleRow: true);
+      final modeTrack = buildModeSegmentedTrack(
+        singleRow: true,
+        allowEllipsis: false,
+      );
+      final quickButton = buildActionButton(
+        buttonKey: const ValueKey('overview-quick-use'),
+        icon: Icons.bolt_rounded,
+        label: appLocalizations.nodeOverviewQuickUse,
+        emphasized: true,
+        onPressed: onQuickUse,
+        allowEllipsis: false,
+      );
+      return _InlineCommandBarRow(
+        hasConnectionBar: connectionBar != null,
+        textDirection: Directionality.of(context),
+        children: [
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            alignment: AlignmentDirectional.centerStart,
+            child: addButton,
+          ),
+          if (connectionBar != null) connectionBar,
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            alignment: Alignment.center,
+            child: modeTrack,
+          ),
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            alignment: AlignmentDirectional.centerEnd,
+            child: quickButton,
+          ),
+        ],
+      );
+    }
+
+    if (inline) {
+      return buildSingleRowBar();
+    }
+
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: colors.surfaceContainer.withValues(
+          alpha: isDark ? 0.88 : 0.96,
+        ),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: freedomNetHairlineColor(colors)),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final useSingleRow =
+                constraints.maxWidth >= 840 && textScale <= 1.20;
+            if (useSingleRow) {
+              return buildSingleRowBar();
+            }
+            final addButton = buildActionButton(
+              buttonKey: const ValueKey('overview-add-subscription'),
+              icon: Icons.add_link_rounded,
+              label: appLocalizations.nodeOverviewAddSubscription,
+              emphasized: false,
+              onPressed: onAddSubscription,
+              allowEllipsis: true,
+            );
+            final connectionBar = buildConnectionBar(singleRow: false);
+            final modeTrack = buildModeSegmentedTrack(
+              singleRow: false,
+              allowEllipsis: true,
+            );
+            final quickButton = buildActionButton(
+              buttonKey: const ValueKey('overview-quick-use'),
+              icon: Icons.bolt_rounded,
+              label: appLocalizations.nodeOverviewQuickUse,
+              emphasized: true,
+              onPressed: onQuickUse,
+              allowEllipsis: true,
+            );
+            return SizedBox(
+              width: double.infinity,
+              child: Wrap(
+                spacing: 8,
+                runSpacing: 6,
+                alignment: WrapAlignment.spaceBetween,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 6,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    children: [
+                      addButton,
+                      if (connectionBar != null) connectionBar,
+                    ],
+                  ),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 6,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    children: [
+                      modeTrack,
+                      quickButton,
+                    ],
+                  ),
+                ],
+              ),
+            );
+          },
+        ),
+      ),
+    );
+  }
+}
+
+class _InlineCommandBarRow extends MultiChildRenderObjectWidget {
+  const _InlineCommandBarRow({
+    required this.hasConnectionBar,
+    required this.textDirection,
+    required super.children,
+  });
+
+  final bool hasConnectionBar;
+  final TextDirection textDirection;
+
+  @override
+  _RenderInlineCommandBarRow createRenderObject(BuildContext context) =>
+      _RenderInlineCommandBarRow(
+        hasConnectionBar: hasConnectionBar,
+        textDirection: textDirection,
+      );
+
+  @override
+  void updateRenderObject(
+    BuildContext context,
+    _RenderInlineCommandBarRow renderObject,
+  ) {
+    renderObject
+      ..hasConnectionBar = hasConnectionBar
+      ..textDirection = textDirection;
+  }
+}
+
+class _InlineCommandBarParentData extends ContainerBoxParentData<RenderBox> {}
+
+/// Single-row command layout that guarantees non-zero readable width for the
+/// status capsule while scaling action buttons proportionally when tight.
+class _RenderInlineCommandBarRow extends RenderBox
+    with
+        ContainerRenderObjectMixin<RenderBox, _InlineCommandBarParentData>,
+        RenderBoxContainerDefaultsMixin<RenderBox,
+            _InlineCommandBarParentData> {
+  _RenderInlineCommandBarRow({
+    required bool hasConnectionBar,
+    required TextDirection textDirection,
+  })  : _hasConnectionBar = hasConnectionBar,
+        _textDirection = textDirection;
+
+  bool _hasConnectionBar;
+  set hasConnectionBar(bool value) {
+    if (_hasConnectionBar == value) return;
+    _hasConnectionBar = value;
+    markNeedsLayout();
+  }
+
+  TextDirection _textDirection;
+  set textDirection(TextDirection value) {
+    if (_textDirection == value) return;
+    _textDirection = value;
+    markNeedsLayout();
+  }
+
+  @override
+  void setupParentData(RenderBox child) {
+    if (child.parentData is! _InlineCommandBarParentData) {
+      child.parentData = _InlineCommandBarParentData();
+    }
+  }
+
+  double _gapForWidth(double maxWidth) =>
+      maxWidth.isFinite && maxWidth < 460 ? 4.0 : 8.0;
+
+  ({
+    RenderBox add,
+    RenderBox? conn,
+    RenderBox mode,
+    RenderBox quick,
+  }) _orderedChildren() {
+    final add = firstChild!;
+    final second = childAfter(add)!;
+    if (_hasConnectionBar) {
+      final mode = childAfter(second)!;
+      final quick = childAfter(mode)!;
+      return (add: add, conn: second, mode: mode, quick: quick);
+    }
+    final quick = childAfter(second)!;
+    return (add: add, conn: null, mode: second, quick: quick);
+  }
+
+  @override
+  double computeMinIntrinsicWidth(double height) {
+    var total = 0.0;
+    var count = 0;
+    var child = firstChild;
+    while (child != null) {
+      total += child.getMinIntrinsicWidth(height);
+      count++;
+      child = childAfter(child);
+    }
+    if (count > 1) {
+      total += 4.0 * (count - 1);
+    }
+    return total;
+  }
+
+  @override
+  double computeMaxIntrinsicWidth(double height) {
+    var total = 0.0;
+    var count = 0;
+    var child = firstChild;
+    while (child != null) {
+      total += child.getMaxIntrinsicWidth(height);
+      count++;
+      child = childAfter(child);
+    }
+    if (count > 1) {
+      total += 8.0 * (count - 1);
+    }
+    return total;
+  }
+
+  @override
+  double computeMinIntrinsicHeight(double width) {
+    var maxH = 0.0;
+    var child = firstChild;
+    while (child != null) {
+      maxH = math.max(maxH, child.getMinIntrinsicHeight(width));
+      child = childAfter(child);
+    }
+    return maxH;
+  }
+
+  @override
+  double computeMaxIntrinsicHeight(double width) {
+    var maxH = 0.0;
+    var child = firstChild;
+    while (child != null) {
+      maxH = math.max(maxH, child.getMaxIntrinsicHeight(width));
+      child = childAfter(child);
+    }
+    return maxH;
+  }
+
+  @override
+  Size computeDryLayout(BoxConstraints constraints) {
+    if (firstChild == null) {
+      return constraints.smallest;
+    }
+    final slots = _orderedChildren();
+    final maxHeight = constraints.maxHeight;
+    final buttonDryConstraints = BoxConstraints(maxHeight: maxHeight);
+    final addDry = slots.add.getDryLayout(buttonDryConstraints);
+    final modeDry = slots.mode.getDryLayout(buttonDryConstraints);
+    final quickDry = slots.quick.getDryLayout(buttonDryConstraints);
+
+    if (!constraints.hasBoundedWidth) {
+      const gap = 8.0;
+      var totalW = addDry.width + modeDry.width + quickDry.width;
+      var maxH = math.max(
+        addDry.height,
+        math.max(modeDry.height, quickDry.height),
+      );
+      if (slots.conn != null) {
+        final connDry = slots.conn!.getDryLayout(buttonDryConstraints);
+        totalW += connDry.width + gap * 3;
+        maxH = math.max(maxH, connDry.height);
+      } else {
+        totalW += gap * 2;
+      }
+      return constraints.constrain(Size(totalW, maxH));
+    }
+
+    final maxWidth = constraints.maxWidth;
+    final gap = _gapForWidth(maxWidth);
+    final totalGaps = gap * (slots.conn != null ? 3 : 2);
+    final avail = math.max(0.0, maxWidth - totalGaps);
+    final buttonsNatural = addDry.width + modeDry.width + quickDry.width;
+    final lower = slots.conn == null ? 0.0 : math.min(92.0, avail * 0.30);
+    final upper = slots.conn == null
+        ? 0.0
+        : math.max(lower, math.min(148.0, avail * 0.42));
+    final minConnWidth = slots.conn == null || avail <= 0
+        ? 0.0
+        : (maxWidth * 0.26).clamp(lower, upper);
+    final buttonsBudget = math.max(0.0, avail - minConnWidth);
+    final scale = (buttonsNatural > 0 && buttonsNatural > buttonsBudget)
+        ? (buttonsBudget / buttonsNatural)
+        : 1.0;
+
+    var maxH = math.max(
+      addDry.height * scale,
+      math.max(modeDry.height * scale, quickDry.height * scale),
+    );
+    if (slots.conn != null) {
+      final usedButtons = buttonsNatural * scale;
+      final connDry = slots.conn!.getDryLayout(
+        BoxConstraints(
+          maxWidth: math.max(0.0, avail - usedButtons),
+          maxHeight: maxHeight,
+        ),
+      );
+      maxH = math.max(maxH, connDry.height);
+    }
+    return Size(
+      constraints.constrainWidth(maxWidth),
+      constraints.constrainHeight(maxH),
+    );
+  }
+
+  @override
+  void performLayout() {
+    if (firstChild == null) {
+      size = constraints.smallest;
+      return;
+    }
+    final slots = _orderedChildren();
+    final maxHeight = constraints.maxHeight;
+    final dryConstraints = BoxConstraints(maxHeight: maxHeight);
+
+    if (!constraints.hasBoundedWidth) {
+      const gap = 8.0;
+      slots.add.layout(dryConstraints, parentUsesSize: true);
+      slots.conn?.layout(dryConstraints, parentUsesSize: true);
+      slots.mode.layout(dryConstraints, parentUsesSize: true);
+      slots.quick.layout(dryConstraints, parentUsesSize: true);
+
+      var totalW =
+          slots.add.size.width + slots.mode.size.width + slots.quick.size.width;
+      var rowH = math.max(
+        slots.add.size.height,
+        math.max(slots.mode.size.height, slots.quick.size.height),
+      );
+      if (slots.conn != null) {
+        totalW += slots.conn!.size.width + gap * 3;
+        rowH = math.max(rowH, slots.conn!.size.height);
+      } else {
+        totalW += gap * 2;
+      }
+      final finalSize = constraints.constrain(Size(totalW, rowH));
+      size = finalSize;
+
+      final ordered = <RenderBox>[
+        slots.add,
+        if (slots.conn != null) slots.conn!,
+        slots.mode,
+        slots.quick,
+      ];
+      var x = 0.0;
+      for (final child in ordered) {
+        final pd = child.parentData! as _InlineCommandBarParentData;
+        final dx = _textDirection == TextDirection.rtl
+            ? finalSize.width - x - child.size.width
+            : x;
+        final dy = (finalSize.height - child.size.height) / 2;
+        pd.offset = Offset(dx, dy);
+        x += child.size.width + gap;
+      }
+      return;
+    }
+
+    final maxWidth = constraints.maxWidth;
+    final gap = _gapForWidth(maxWidth);
+    final totalGaps = gap * (slots.conn != null ? 3 : 2);
+    final avail = math.max(0.0, maxWidth - totalGaps);
+
+    final addDry = slots.add.getDryLayout(dryConstraints);
+    final modeDry = slots.mode.getDryLayout(dryConstraints);
+    final quickDry = slots.quick.getDryLayout(dryConstraints);
+    final buttonsNatural = addDry.width + modeDry.width + quickDry.width;
+
+    final lower = slots.conn == null ? 0.0 : math.min(92.0, avail * 0.30);
+    final upper = slots.conn == null
+        ? 0.0
+        : math.max(lower, math.min(148.0, avail * 0.42));
+    final minConnWidth = slots.conn == null || avail <= 0
+        ? 0.0
+        : (maxWidth * 0.26).clamp(lower, upper);
+    final buttonsBudget = math.max(0.0, avail - minConnWidth);
+    final scale = (buttonsNatural > 0 && buttonsNatural > buttonsBudget)
+        ? (buttonsBudget / buttonsNatural)
+        : 1.0;
+
+    slots.add.layout(
+      BoxConstraints(maxWidth: addDry.width * scale, maxHeight: maxHeight),
+      parentUsesSize: true,
+    );
+    slots.mode.layout(
+      BoxConstraints(maxWidth: modeDry.width * scale, maxHeight: maxHeight),
+      parentUsesSize: true,
+    );
+    slots.quick.layout(
+      BoxConstraints(maxWidth: quickDry.width * scale, maxHeight: maxHeight),
+      parentUsesSize: true,
+    );
+
+    final usedButtons =
+        slots.add.size.width + slots.mode.size.width + slots.quick.size.width;
+    var rowH = math.max(
+      slots.add.size.height,
+      math.max(slots.mode.size.height, slots.quick.size.height),
+    );
+    if (slots.conn != null) {
+      final connMaxWidth = math.max(0.0, avail - usedButtons);
+      slots.conn!.layout(
+        BoxConstraints(maxWidth: connMaxWidth, maxHeight: maxHeight),
+        parentUsesSize: true,
+      );
+      rowH = math.max(rowH, slots.conn!.size.height);
+    }
+
+    final finalW = constraints.constrainWidth(maxWidth);
+    final finalH = constraints.constrainHeight(rowH);
+    size = Size(finalW, finalH);
+
+    void place(RenderBox child, double logicalStart) {
+      final pd = child.parentData! as _InlineCommandBarParentData;
+      final dx = _textDirection == TextDirection.rtl
+          ? finalW - logicalStart - child.size.width
+          : logicalStart;
+      final dy = (finalH - child.size.height) / 2;
+      pd.offset = Offset(dx, dy);
+    }
+
+    place(slots.add, 0.0);
+    if (slots.conn != null) {
+      place(slots.conn!, slots.add.size.width + gap);
+    }
+    final quickStart = math.max(0.0, finalW - slots.quick.size.width);
+    final modeStart = math.max(0.0, quickStart - gap - slots.mode.size.width);
+    place(slots.mode, modeStart);
+    place(slots.quick, quickStart);
+  }
+
+  @override
+  void paint(PaintingContext context, Offset offset) =>
+      defaultPaint(context, offset);
+
+  @override
+  bool hitTestChildren(BoxHitTestResult result, {required Offset position}) =>
+      defaultHitTestChildren(result, position: position);
 }
 
 class _IndexedNodeSummary {
@@ -322,13 +2196,13 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
   String? _selectedProfile;
   String? _selectedCountry;
   bool _availableOnly = false;
-  final Set<String> _visibleProfileIds = <String>{};
-  final Map<String, _IndexedProfileCountrySummary> _indexedProfiles =
+  final Set<String> _localVisibleProfileIds = <String>{};
+  final Map<String, _IndexedProfileCountrySummary> _localIndexedProfiles =
       <String, _IndexedProfileCountrySummary>{};
   final List<ProviderSubscription<Object?>> _lifecycleSubscriptions =
       <ProviderSubscription<Object?>>[];
-  List<String> _stableProfileOrderIds = const <String>[];
-  final Set<String> _updatingOrderFreezeIds = <String>{};
+  List<String> _localStableProfileOrderIds = const <String>[];
+  final Set<String> _localUpdatingOrderFreezeIds = <String>{};
   final Set<String> _syncingProfileIds = <String>{};
   final Set<String> _deletingProfileIds = <String>{};
   bool _syncingAll = false;
@@ -343,40 +2217,50 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
   late final NodeCatalogTester _tester;
   String? _feedback;
 
+  Set<String> get _visibleProfileIds =>
+      widget.commandController?.visibleProfileIds ?? _localVisibleProfileIds;
+
+  Map<String, _IndexedProfileCountrySummary> get _indexedProfiles =>
+      widget.commandController?._indexedProfiles ?? _localIndexedProfiles;
+
+  List<String> get _stableProfileOrderIds =>
+      widget.commandController?.stableProfileOrderIds ??
+      _localStableProfileOrderIds;
+
+  set _stableProfileOrderIds(List<String> value) {
+    final controller = widget.commandController;
+    if (controller != null) {
+      controller.stableProfileOrderIds = value;
+    } else {
+      _localStableProfileOrderIds = value;
+    }
+  }
+
+  Set<String> get _updatingOrderFreezeIds =>
+      widget.commandController?.updatingOrderFreezeIds ??
+      _localUpdatingOrderFreezeIds;
+
+  void _bindCommandController(NodeOverviewCommandController? controller) {
+    controller?.bindView(
+      owner: this,
+      onOpenAddSubscription: () => unawaited(_openUrlSubscriptionImport()),
+      onActivateSmartSelection: _activateSmartSelection,
+      onActivateManualSelection: _activateManualSelection,
+      onUseActiveNode: _useActiveNode,
+      onUseCatalogNode: _useCatalogNode,
+      selectedProfile: _selectedProfile,
+      selectedCountry: _selectedCountry,
+      availableOnly: _availableOnly,
+      importingSubscription: _importingSubscription,
+      localProxyTogglePending: _localProxyTogglePending,
+    );
+  }
+
   void _onProfileVisibilityChanged(String profileId, bool visible) {
     if (visible && _visibleProfileIds.add(profileId) && mounted) {
       setState(() {});
+      widget.commandController?.notifySafely();
     }
-  }
-
-  ({bool verified, String? profileId}) _resolveSnapshotAttestation(
-    _OverviewSwitchTracker tracker,
-    List<Group> groups,
-    int version,
-  ) {
-    if (tracker.matchesAttested(groups, version)) {
-      return (verified: true, profileId: tracker.attestedProfileId);
-    }
-    if (globalState.matchesGroupsSnapshot(groups, version)) {
-      return (
-        verified: true,
-        profileId: globalState.groupsSnapshotProfileId,
-      );
-    }
-    return (verified: false, profileId: null);
-  }
-
-  bool _isSnapshotLiveForProfile({
-    required String profileId,
-    required List<Group> groups,
-    required ({bool verified, String? profileId}) attestation,
-  }) {
-    if (groups.isEmpty) return true;
-    if (!attestation.verified) return false;
-    if (attestation.profileId != null) {
-      return attestation.profileId == profileId;
-    }
-    return globalState.lastRuntimeProfileId == null;
   }
 
   void _recordIndexedCatalog(
@@ -454,6 +2338,7 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
         identical(epoch, _scanEpoch)) {
       epoch.dirty = false;
       setState(() {});
+      widget.commandController?.notifySafely();
     }
   }
 
@@ -545,6 +2430,7 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
     super.initState();
     _tester = ref.read(nodeCatalogTesterProvider);
     _feedback = ref.read(_overviewSwitchTrackerProvider).feedback;
+    _bindCommandController(widget.commandController);
     _lifecycleSubscriptions
       ..add(
         ref.listenManual<List<Profile>>(profilesProvider, (previous, next) {
@@ -679,8 +2565,18 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
   }
 
   @override
+  void didUpdateWidget(covariant NodeOverviewView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.commandController != widget.commandController) {
+      oldWidget.commandController?.unbindView(this);
+      _bindCommandController(widget.commandController);
+    }
+  }
+
+  @override
   void dispose() {
     _disposed = true;
+    widget.commandController?.unbindView(this);
     uiActivity.removeListener(_handleClockActivityChange);
     _scanEpoch.cancel();
     for (final sub in _lifecycleSubscriptions) {
@@ -859,6 +2755,7 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
     setState(() {
       _localProxyTogglePending = true;
     });
+    widget.commandController?.localProxyTogglePending = true;
     try {
       await globalState.appController.updateStatus(!isStart);
     } finally {
@@ -869,6 +2766,7 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
       } else {
         _localProxyTogglePending = false;
       }
+      widget.commandController?.localProxyTogglePending = false;
     }
   }
 
@@ -1473,6 +3371,7 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
             _selectedProfile = null;
           }
         });
+        widget.commandController?.setSelectedProfile(_selectedProfile);
       }
     } finally {
       _deletingProfileIds.remove(targetProfile.id);
@@ -1597,6 +3496,7 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
     setState(() {
       _importingSubscription = true;
     });
+    widget.commandController?.importingSubscription = true;
     try {
       var nextInitialUrl = initialUrl;
       var nextInitialError = initialErrorText;
@@ -1681,289 +3581,71 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
       } else {
         _importingSubscription = false;
       }
+      widget.commandController?.importingSubscription = false;
     }
+  }
+
+  bool _isInlineHeaderMounted(
+    CommonScaffoldState? scaffoldState,
+    BuildContext callerContext,
+  ) {
+    final controller = widget.commandController;
+    final inlineAccessory = controller?.inlineAccessoryWidget;
+    return controller != null &&
+        inlineAccessory != null &&
+        scaffoldState != null &&
+        _tickerEnabled &&
+        scaffoldState.isInlineTitleAccessoryActiveFor(callerContext) &&
+        identical(scaffoldState.titleAccessory, inlineAccessory);
   }
 
   @override
   Widget build(BuildContext context) {
-    final profiles = ref.watch(profilesProvider);
-    final testerBusy =
-        ref.watch(nodeCatalogTesterProvider.select((t) => t.busy));
-    final tester = ref.read(nodeCatalogTesterProvider);
-    final activeId = ref.watch(currentProfileIdProvider);
-    final groups = ref.watch(groupsProvider);
-    final version = ref.watch(versionProvider);
-    final tracker = ref.watch(_overviewSwitchTrackerProvider);
-    final verifiedRuntimeProfileId = globalState.lastRuntimeProfileId ??
-        ref.watch(activeNodeCatalogProvider)?.profileId;
-    final attestation = _resolveSnapshotAttestation(tracker, groups, version);
-    final runtimeMatchesPending = tracker.pendingProfileId != null &&
-        verifiedRuntimeProfileId == tracker.pendingProfileId &&
-        attestation.verified &&
-        attestation.profileId == tracker.pendingProfileId;
-    if (tracker.pendingProfileId != null) {
-      if (activeId != tracker.pendingProfileId) {
-        tracker
-          ..pendingProfileId = null
-          ..pendingProfileLabel = null
-          ..pendingNodeName = null
-          ..pendingGroups = null
-          ..pendingVersion = null;
-      } else if (runtimeMatchesPending &&
-          (!globalState.isSameGroupsList(groups, tracker.pendingGroups) ||
-              version != tracker.pendingVersion)) {
-        if (tracker.pendingProfileLabel != null &&
-            tracker.pendingNodeName != null) {
-          tracker.feedback ??= appLocalizations.nodeOverviewSwitchedToNode(
-              tracker.pendingProfileLabel!, tracker.pendingNodeName!);
-          _feedback = tracker.feedback;
-        }
-        tracker
-          ..pendingProfileId = null
-          ..pendingProfileLabel = null
-          ..pendingNodeName = null
-          ..pendingGroups = null
-          ..pendingVersion = null;
-      } else if (!runtimeMatchesPending) {
-        tracker
-          ..pendingGroups = groups
-          ..pendingVersion = version;
-      }
-    } else if (activeId != null &&
-        ((verifiedRuntimeProfileId != null &&
-                verifiedRuntimeProfileId != activeId) ||
-            !_isSnapshotLiveForProfile(
-              profileId: activeId,
-              groups: groups,
-              attestation: attestation,
-            ))) {
-      tracker
-        ..pendingProfileId = activeId
-        ..pendingGroups = groups
-        ..pendingVersion = version;
-    }
+    final snapshot = _computeOverviewSnapshot(
+      ref: ref,
+      locale: Localizations.localeOf(context),
+      rawSelectedProfile: _selectedProfile,
+      rawSelectedCountry: _selectedCountry,
+      availableOnly: _availableOnly,
+      localProxyTogglePending: _localProxyTogglePending,
+      visibleProfileIds: _visibleProfileIds,
+      indexedProfiles: _indexedProfiles,
+      stableProfileOrderIds: _stableProfileOrderIds,
+      updatingOrderFreezeIds: _updatingOrderFreezeIds,
+      mutateCaches: true,
+      onUpdateStableOrder: (nextOrder) => _stableProfileOrderIds = nextOrder,
+      onActivateSmartSelection: _activateSmartSelection,
+      onActivateManualSelection: _activateManualSelection,
+      onUseActiveNode: _useActiveNode,
+      onUseCatalogNode: _useCatalogNode,
+    );
+    final profiles = snapshot.profiles;
+    final testerBusy = snapshot.testerBusy;
+    final tester = snapshot.tester;
+    final activeId = snapshot.activeId;
+    final tracker = snapshot.tracker;
     bool isLiveActive(Profile profile) =>
-        profile.id == activeId &&
-        (verifiedRuntimeProfileId == null ||
-            verifiedRuntimeProfileId == profile.id) &&
-        _isSnapshotLiveForProfile(
-          profileId: profile.id,
-          groups: groups,
-          attestation: attestation,
-        ) &&
-        tracker.pendingProfileId != profile.id;
-    final feedback = _feedback ?? tracker.feedback;
-    final isMobile = ref.watch(isMobileViewProvider);
-    final sort =
-        ref.watch(proxiesStyleSettingProvider.select((s) => s.sortType));
-    final selected =
-        profiles.any((p) => p.id == _selectedProfile) ? _selectedProfile : null;
-    final countryResolver = ref.watch(nodeCountryResolverProvider);
-    final cachedCatalogs = ref.watch(cachedProfileCatalogsProvider);
-    final currentScript =
-        ref.watch(scriptStateProvider.select((state) => state.currentScript));
-    final query = ref.watch(proxiesQueryProvider).trim().toLowerCase();
-    final searching = query.isNotEmpty;
-    final locale = Localizations.localeOf(context);
-    final mode =
-        ref.watch(patchClashConfigProvider.select((state) => state.mode));
-    final currentGroups = ref.watch(currentGroupsStateProvider).value;
-    final scopeCountries = <String>{};
-    final countryCounts = <String, int>{};
-    final availableCounts = <String, int>{};
-    final activeDisplayCounts = <String, int>{};
-    final healthByProfile = <String, Map<String, NodeHealthRecord>>{};
-    final loadErrorIds = <String>{};
-    final originalIndexes = <String, int>{};
-    final resolvedCatalogs = <String, ProfileCatalog?>{};
-    var anyVisibleCatalogLoading = false;
-    for (var i = 0; i < profiles.length; i++) {
-      final profile = profiles[i];
-      originalIndexes[profile.id] = i;
-      final liveActive = isLiveActive(profile);
-      final inSelectedScope = selected == null || selected == profile.id;
-      final shouldWatchCatalog = selected == profile.id ||
-          _visibleProfileIds.contains(profile.id) ||
-          (inSelectedScope && (searching || _selectedCountry != null));
-      final loaded = shouldWatchCatalog
-          ? ref.watch(profileCatalogProvider(profile.id))
-          : null;
-      if (loaded?.hasError ?? false) {
-        loadErrorIds.add(profile.id);
-      }
-      final catalog = loaded?.valueOrNull ?? cachedCatalogs[profile.id];
-      resolvedCatalogs[profile.id] = catalog;
-      final catalogReloadingAfterSync =
-          ((loaded?.isLoading ?? false) && catalog == null) ||
-              catalog?.status == ProfileCatalogStatus.loading ||
-              catalog?.status == ProfileCatalogStatus.updating;
-      if (profile.isUpdating) {
-        _updatingOrderFreezeIds.add(profile.id);
-      } else if (!catalogReloadingAfterSync) {
-        _updatingOrderFreezeIds.remove(profile.id);
-      }
-      if (catalog != null && catalog.status != ProfileCatalogStatus.loading) {
-        _recordIndexedCatalog(profile, currentScript, catalog);
-      }
-      final indexedSummary = _indexedProfiles[profile.id];
-      final validIndexed = indexedSummary != null &&
-              indexedSummary.matchesProfile(profile, currentScript)
-          ? indexedSummary
-          : null;
-      if (inSelectedScope) {
-        final pendingIndex = !liveActive &&
-            catalog == null &&
-            validIndexed == null &&
-            !profile.isUpdating &&
-            _scanEpoch.indexingProfileIds.contains(profile.id);
-        if (((loaded?.isLoading ?? false) && catalog == null) ||
-            pendingIndex ||
-            profile.isUpdating ||
-            catalog?.status == ProfileCatalogStatus.loading ||
-            catalog?.status == ProfileCatalogStatus.updating) {
-          anyVisibleCatalogLoading = true;
-        }
-      }
-      final profileMatches =
-          (profile.label ?? profile.id).toLowerCase().contains(query);
-      final health = ref.watch(nodeHealthEntriesProvider(profile.id));
-      healthByProfile[profile.id] = health;
-      if (liveActive) {
-        final displays = _activeDisplays(
-            ref, profile.id, profile.isUpdating ? null : catalog);
-        activeDisplayCounts[profile.id] = displays.length;
-        if (displays.isNotEmpty || profile.isUpdating) {
-          availableCounts[profile.id] =
-              displays.values.where((entry) => (entry.delay ?? -1) > 0).length;
-        } else {
-          availableCounts[profile.id] = _resolveStaticPickerStats(
-            loadedHasError: loaded?.hasError ?? false,
-            catalog: catalog,
-            validIndexed: validIndexed,
-            health: health,
-          ).availableCount;
-        }
-        if (inSelectedScope) {
-          final effectiveQuery = profileMatches ? '' : query;
-          for (final entry in displays.values) {
-            final code = countryResolver.resolveCountryCode(
-              profileId: profile.id,
-              profileLabel: profile.label,
-              nodeName: entry.proxy.name,
-              endpointKey: entry.node?.endpointKey,
-              isLiveActive: true,
-              inUse: entry.inUse,
-            );
-            scopeCountries.add(code);
-            final matches = _activeEntryMatchesQuery(entry, effectiveQuery);
-            if (!matches || (_availableOnly && (entry.delay ?? -1) <= 0)) {
-              continue;
-            }
-            countryCounts.update(code, (count) => count + 1, ifAbsent: () => 1);
-          }
-        }
-      } else {
-        if (catalog != null) {
-          final unusableCatalog =
-              catalog.status == ProfileCatalogStatus.loading ||
-                  catalog.status == ProfileCatalogStatus.fileMissing ||
-                  catalog.status == ProfileCatalogStatus.parseFailed;
-          availableCounts[profile.id] = unusableCatalog
-              ? 0
-              : catalog.nodes
-                  .where(
-                      (node) => (_nodeHealth(node, health)?.delayMs ?? -1) > 0)
-                  .length;
-          if (inSelectedScope) {
-            for (final node in catalog.nodes) {
-              final code = countryResolver.resolveCountryCode(
-                profileId: profile.id,
-                profileLabel: profile.label,
-                nodeName: node.name,
-                endpointKey: node.endpointKey,
-              );
-              scopeCountries.add(code);
-              if (!(profileMatches || _matches(node, query)) ||
-                  (_availableOnly &&
-                      (_nodeHealth(node, health)?.delayMs ?? -1) <= 0)) {
-                continue;
-              }
-              countryCounts.update(
-                  code, (count) => count + 1, ifAbsent: () => 1);
-            }
-          }
-        } else if (validIndexed != null) {
-          final unusableIndexed =
-              validIndexed.status == ProfileCatalogStatus.loading ||
-                  validIndexed.status == ProfileCatalogStatus.fileMissing ||
-                  validIndexed.status == ProfileCatalogStatus.parseFailed;
-          availableCounts[profile.id] = unusableIndexed
-              ? 0
-              : validIndexed.nodes
-                  .where((node) =>
-                      !node.parseFailed &&
-                      (health[node.identityKey]?.delayMs ?? -1) > 0)
-                  .length;
-          if (inSelectedScope) {
-            for (final node in validIndexed.nodes) {
-              final code = countryResolver.resolveCountryCode(
-                profileId: profile.id,
-                profileLabel: profile.label,
-                nodeName: node.name,
-                endpointKey: node.endpointKey,
-              );
-              scopeCountries.add(code);
-              final matchesQuery = profileMatches ||
-                  '${node.name}\n${node.type}\n${node.protocolSummary ?? ''}\n${node.providerName ?? ''}'
-                      .toLowerCase()
-                      .contains(query);
-              final delayMs =
-                  node.parseFailed ? null : health[node.identityKey]?.delayMs;
-              if (!matchesQuery || (_availableOnly && (delayMs ?? -1) <= 0)) {
-                continue;
-              }
-              countryCounts.update(
-                  code, (count) => count + 1, ifAbsent: () => 1);
-            }
-          }
-        } else {
-          availableCounts[profile.id] = 0;
-        }
-      }
+        snapshot.liveActiveProfileIds.contains(profile.id);
+    if (tracker.feedback != null && _feedback != tracker.feedback) {
+      _feedback = tracker.feedback;
     }
-    _updatingOrderFreezeIds.retainAll(originalIndexes.keys);
-    final List<Profile> orderedProfiles;
-    if (_stableProfileOrderIds.isNotEmpty &&
-        (testerBusy || _updatingOrderFreezeIds.isNotEmpty)) {
-      final byId = <String, Profile>{
-        for (final profile in profiles) profile.id: profile,
-      };
-      orderedProfiles = <Profile>[
-        for (final id in _stableProfileOrderIds)
-          if (byId.remove(id) case final Profile existing) existing,
-        ...byId.values,
-      ];
-    } else {
-      orderedProfiles = profiles.toList()
-        ..sort((a, b) {
-          final byAvailable = (availableCounts[b.id] ?? 0)
-              .compareTo(availableCounts[a.id] ?? 0);
-          if (byAvailable != 0) return byAvailable;
-          return (originalIndexes[a.id] ?? 0)
-              .compareTo(originalIndexes[b.id] ?? 0);
-        });
-      _stableProfileOrderIds = <String>[
-        for (final profile in orderedProfiles) profile.id,
-      ];
-    }
-    final visible = selected == null
-        ? orderedProfiles
-        : orderedProfiles.where((p) => p.id == selected).toList();
-    final activeCountry = _selectedCountry != null &&
-            (scopeCountries.contains(_selectedCountry) ||
-                anyVisibleCatalogLoading)
-        ? _selectedCountry
-        : null;
+    final feedback = tracker.feedback ?? _feedback;
+    final isMobile = snapshot.isMobile;
+    final sort = snapshot.sort;
+    final selected = snapshot.selected;
+    final currentScript = snapshot.currentScript;
+    final searching = snapshot.searching;
+    final locale = snapshot.locale;
+    final countryCounts = snapshot.countryCounts;
+    final availableCounts = snapshot.availableCounts;
+    final activeDisplayCounts = snapshot.activeDisplayCounts;
+    final healthByProfile = snapshot.healthByProfile;
+    final loadErrorIds = snapshot.loadErrorIds;
+    final resolvedCatalogs = snapshot.resolvedCatalogs;
+    final anyVisibleCatalogLoading = snapshot.anyVisibleCatalogLoading;
+    final orderedProfiles = snapshot.orderedProfiles;
+    final visible = snapshot.visible;
+    final activeCountry = snapshot.activeCountry;
     if (_selectedCountry != null &&
         activeCountry == null &&
         !anyVisibleCatalogLoading) {
@@ -1971,245 +3653,78 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted && _selectedCountry == staleCountry) {
           setState(() => _selectedCountry = null);
+          widget.commandController?.setSelectedCountry(null);
         }
       });
     }
-    if (activeCountry != null && !countryCounts.containsKey(activeCountry)) {
-      countryCounts[activeCountry] = 0;
-    }
-    final showCountryChips =
-        countryCounts.keys.any((code) => code != kUnknownCountryCode) ||
-            activeCountry != null;
-    final sortedCountries = showCountryChips
-        ? sortCountryCodes(countryCounts.keys, countryCounts)
-        : const <String>[];
-    final activeCountryMatchCount =
-        activeCountry == null ? 0 : (countryCounts[activeCountry] ?? 0);
-    final targetTestProfile = selected != null
-        ? visible.firstOrNull
-        : (activeId == null ? null : profiles.getProfile(activeId));
-    final testCurrentAction = testerBusy ||
-            (targetTestProfile?.isUpdating ?? false) ||
-            (selected != null && targetTestProfile == null) ||
-            (selected == null && (activeId == null || currentGroups.isEmpty))
-        ? null
-        : () => _testCurrent(selected == null ? null : targetTestProfile);
-    VoidCallback? resolveQuickUseAction() {
-      for (final profile in visible) {
-        if (profile.isUpdating) {
-          return null;
-        }
-        final profileMatches =
-            (profile.label ?? profile.id).toLowerCase().contains(query);
-        final catalog = resolvedCatalogs[profile.id];
-        if (isLiveActive(profile)) {
-          final effectiveQuery = profileMatches ? '' : query;
-          final rows = _activeDisplays(
-            ref,
-            profile.id,
-            profile.isUpdating ? null : catalog,
-          ).values.where((entry) {
-            final matches = _activeEntryMatchesQuery(entry, effectiveQuery);
-            if (!matches || (_availableOnly && (entry.delay ?? -1) <= 0)) {
-              return false;
-            }
-            if (activeCountry != null) {
-              final code = countryResolver.resolveCountryCode(
-                profileId: profile.id,
-                profileLabel: profile.label,
-                nodeName: entry.proxy.name,
-                endpointKey: entry.node?.endpointKey,
-                isLiveActive: true,
-                inUse: entry.inUse,
-              );
-              if (code != activeCountry) return false;
-            }
-            return true;
-          }).toList();
-          if (rows.isEmpty) {
-            continue;
-          }
-          if (sort != ProxiesSortType.none) {
-            rows.sort((a, b) {
-              if (sort == ProxiesSortType.delay) {
-                final result = _compareDelay(a.delay, b.delay);
-                if (result != 0) return result;
-              }
-              return a.proxy.name
-                  .toLowerCase()
-                  .compareTo(b.proxy.name.toLowerCase());
-            });
-          }
-          for (final allowInformational in const [false, true]) {
-            for (final entry in rows) {
-              if (!allowInformational &&
-                  isInformationalProxyName(entry.proxy.name)) {
-                continue;
-              }
-              if (entry.selectGroup != null &&
-                  (entry.delay == null || entry.delay! >= 0)) {
-                final targetGroup = entry.selectGroup!;
-                if (resolveProfileSelectionMode(profile) ==
-                        NodeSelectionMode.smart &&
-                    query.isEmpty &&
-                    activeCountry == null) {
-                  return () => _activateSmartSelection(
-                        profile,
-                        targetGroupOverride: targetGroup,
-                      );
-                }
-                final targetProxy = entry.proxy.name;
-                return () => _useActiveNode(profile, targetGroup, targetProxy);
-              }
-            }
-          }
-          return null;
-        }
-        if (catalog == null ||
-            catalog.status == ProfileCatalogStatus.loading ||
-            catalog.status == ProfileCatalogStatus.updating) {
-          return null;
-        }
-        if (catalog.status != ProfileCatalogStatus.ready) {
-          if (_availableOnly || activeCountry != null || query.isNotEmpty) {
-            continue;
-          }
-          return null;
-        }
-        final health =
-            healthByProfile[profile.id] ?? const <String, NodeHealthRecord>{};
-        final nodes = catalog.nodes.where((node) {
-          final matches = profileMatches || _matches(node, query);
-          if (!matches ||
-              (_availableOnly &&
-                  (_nodeHealth(node, health)?.delayMs ?? -1) <= 0)) {
-            return false;
-          }
-          if (activeCountry != null) {
-            final code = countryResolver.resolveCountryCode(
-              profileId: profile.id,
-              profileLabel: profile.label,
-              nodeName: node.name,
-              endpointKey: node.endpointKey,
-            );
-            if (code != activeCountry) return false;
-          }
-          return true;
-        }).toList();
-        if (nodes.isEmpty) {
-          continue;
-        }
-        _sortNodes(nodes, health, sort);
-        for (final allowInformational in const [false, true]) {
-          for (final node in nodes) {
-            if (!allowInformational && isInformationalProxyName(node.name)) {
-              continue;
-            }
-            final delayMs = _nodeHealth(node, health)?.delayMs;
-            if (delayMs != null && delayMs < 0) {
-              continue;
-            }
-            final targetGroup = _targetGroupForCatalogNode(profile, node, mode);
-            if (targetGroup != null) {
-              if (resolveProfileSelectionMode(profile) ==
-                      NodeSelectionMode.smart &&
-                  query.isEmpty &&
-                  activeCountry == null) {
-                return () => _activateSmartSelection(
-                      profile,
-                      targetGroupOverride: targetGroup,
-                    );
-              }
-              return () => _useCatalogNode(profile, node, targetGroup);
-            }
-          }
-        }
-        return null;
-      }
-      return null;
-    }
-
-    final quickUseAction = resolveQuickUseAction();
-    final isProxyRunning = ref.watch(runTimeProvider.select((s) => s != null));
-    final statusSwitchPending = ref.watch(statusSwitchPendingProvider);
-    final statusStartCancelable = ref.watch(statusStartCancelableProvider);
-    final activeProfileObj =
-        activeId == null ? null : profiles.getProfile(activeId);
-    final activeIsSmart = activeProfileObj != null &&
-        resolveProfileSelectionMode(activeProfileObj) == NodeSelectionMode.smart;
-    final targetModeProfile = selected != null
-        ? visible.firstOrNull
-        : (activeProfileObj ?? orderedProfiles.firstOrNull);
-    final currentSelectionMode = targetModeProfile == null
-        ? NodeSelectionMode.smart
-        : resolveProfileSelectionMode(targetModeProfile);
-    final canSwitchSelectionMode =
-        targetModeProfile != null && !targetModeProfile.isUpdating;
-    String? activeNodeLabel;
-    if (activeProfileObj != null) {
-      final preferredGroup = activeProfileObj.currentGroupName;
-      if (activeIsSmart) {
-        if (groups.isNotEmpty && isLiveActive(activeProfileObj)) {
-          Group? targetGroup;
-          if (preferredGroup != null) {
-            targetGroup = currentGroups
-                .where((g) => g.name == preferredGroup)
-                .firstOrNull;
-          }
-          targetGroup ??= currentGroups
-              .where((g) => g.type == GroupType.Selector)
-              .firstOrNull;
-          activeNodeLabel = resolveSmartActiveLeafName(
-            selectorGroupName: targetGroup?.name ?? preferredGroup,
-            allGroups: groups,
-            selectedMap: activeProfileObj.selectedMap,
-          );
-        }
-      } else {
-        if (currentGroups.isNotEmpty && isLiveActive(activeProfileObj)) {
-          Group? targetGroup;
-          if (preferredGroup != null) {
-            targetGroup = currentGroups
-                .where((g) => g.name == preferredGroup)
-                .firstOrNull;
-          }
-          targetGroup ??= currentGroups
-              .where((g) => g.type == GroupType.Selector)
-              .firstOrNull;
-          if (targetGroup != null) {
-            final candidate = (targetGroup.type == GroupType.Selector
-                    ? activeProfileObj.selectedMap[targetGroup.name]
-                    : null) ??
-                targetGroup.now ??
-                activeProfileObj.selectedMap[targetGroup.name];
-            if (!isManagedSmartGroupName(candidate)) {
-              activeNodeLabel = candidate;
-            }
-          }
-        }
-        final fallbackLabel = preferredGroup != null
-            ? activeProfileObj.selectedMap[preferredGroup]
-            : activeProfileObj.selectedMap.values.firstOrNull;
-        if (activeNodeLabel == null && !isManagedSmartGroupName(fallbackLabel)) {
-          activeNodeLabel = fallbackLabel;
-        }
-      }
-    }
-    final visibleMatchingNodeCount =
-        countryCounts.values.fold<int>(0, (sum, count) => sum + count);
-    final availableFilterHidAllNodes = profiles.isNotEmpty &&
-        _availableOnly &&
-        !searching &&
-        activeCountry == null &&
-        scopeCountries.isNotEmpty &&
-        visibleMatchingNodeCount == 0 &&
-        !anyVisibleCatalogLoading;
+    final sortedCountries = snapshot.sortedCountries;
+    final activeCountryMatchCount = snapshot.activeCountryMatchCount;
+    final testCurrentAction = snapshot.canTestCurrent
+        ? () => _testCurrent(selected == null ? null : snapshot.targetTestProfile)
+        : null;
+    final quickUseAction = snapshot.quickUseAction;
+    final isProxyRunning = snapshot.isProxyRunning;
+    final effectivePendingTarget = snapshot.effectivePendingTarget;
+    final statusStartCancelable = snapshot.statusStartCancelable;
+    final activeProfileObj = snapshot.activeProfileObj;
+    final activeIsSmart = snapshot.activeIsSmart;
+    final targetModeProfile = snapshot.targetModeProfile;
+    final currentSelectionMode = snapshot.currentSelectionMode;
+    final canSwitchSelectionMode = snapshot.canSwitchSelectionMode;
+    final activeNodeLabel = snapshot.activeNodeLabel;
+    final availableFilterHidAllNodes = snapshot.availableFilterHidAllNodes;
     final now = DateTime.now();
+    final scaffoldState = context.commonScaffoldState;
+    final slotListenable = scaffoldState?.headerSlotListenable;
+
+    Widget buildFallbackTopCommandBar() => Padding(
+          padding: const EdgeInsets.fromLTRB(16, 4, 16, 2),
+          child: OverviewTopCommandBar(
+            key: const ValueKey('overview-top-command-bar'),
+            inline: false,
+            hasProfiles: profiles.isNotEmpty,
+            isRunning: isProxyRunning,
+            pendingTarget: effectivePendingTarget,
+            isSmartMode: activeIsSmart,
+            activeProfileLabel:
+                activeProfileObj?.label ?? activeProfileObj?.id,
+            activeNodeName: activeNodeLabel,
+            selectionMode: currentSelectionMode,
+            onAddSubscription: _importingSubscription
+                ? null
+                : () => unawaited(_openUrlSubscriptionImport()),
+            onQuickUse: quickUseAction,
+            onSelectSmart: canSwitchSelectionMode
+                ? () => _activateSmartSelection(targetModeProfile!)
+                : null,
+            onSelectManual: canSwitchSelectionMode
+                ? () => _activateManualSelection(targetModeProfile!)
+                : null,
+          ),
+        );
+
     return LayoutBuilder(builder: (context, constraints) {
       final wide = !isMobile && constraints.maxWidth > maxLaptopWidth;
       return Column(children: [
+        if (slotListenable != null)
+          ListenableBuilder(
+            listenable: slotListenable,
+            builder: (slotContext, _) {
+              // Ensure MediaQuery dependency is registered regardless of branch short-circuiting.
+              MediaQuery.maybeOf(slotContext);
+              if (_isInlineHeaderMounted(
+                slotContext.commonScaffoldState,
+                slotContext,
+              )) {
+                return const SizedBox(height: 4);
+              }
+              return buildFallbackTopCommandBar();
+            },
+          )
+        else
+          buildFallbackTopCommandBar(),
         Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          padding: const EdgeInsets.fromLTRB(16, 2, 16, 6),
           child: Align(
             alignment: Alignment.centerLeft,
             child: Wrap(
@@ -2235,13 +3750,18 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
                       loadErrorIds: loadErrorIds,
                       now: now,
                     ),
-                    onChanged: (value) =>
-                        setState(() => _selectedProfile = value),
+                    onChanged: (value) {
+                      setState(() => _selectedProfile = value);
+                      widget.commandController?.setSelectedProfile(value);
+                    },
                   ),
                 _OverviewAvailableFilterButton(
                   key: const ValueKey('overview-available-only'),
                   selected: _availableOnly,
-                  onChanged: (value) => setState(() => _availableOnly = value),
+                  onChanged: (value) {
+                    setState(() => _availableOnly = value);
+                    widget.commandController?.availableOnly = value;
+                  },
                 ),
                 _OverviewSortSelector(
                   value: sort,
@@ -2251,17 +3771,52 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
                         .updateState((state) => state.copyWith(sortType: value));
                   },
                 ),
-                TextButton.icon(
-                    key: const ValueKey('overview-test-all'),
-                    onPressed: testerBusy || profiles.isEmpty
-                        ? null
-                        : () => _testAll(profiles),
-                    icon: const Icon(Icons.bolt),
-                    label: Text(
-                      appLocalizations.nodeOverviewTestAll,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    )),
+                TextButton(
+                  key: const ValueKey('overview-test-current'),
+                  onPressed: testCurrentAction,
+                  style: TextButton.styleFrom(
+                    visualDensity: VisualDensity.compact,
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.speed_rounded, size: 17),
+                      const SizedBox(width: 6),
+                      Flexible(
+                        child: Text(
+                          appLocalizations.nodeOverviewTestCurrent,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                TextButton(
+                  key: const ValueKey('overview-test-all'),
+                  onPressed: testerBusy || profiles.isEmpty
+                      ? null
+                      : () => _testAll(profiles),
+                  style: TextButton.styleFrom(
+                    visualDensity: VisualDensity.compact,
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.bolt, size: 17),
+                      const SizedBox(width: 6),
+                      Flexible(
+                        child: Text(
+                          appLocalizations.nodeOverviewTestAll,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
                 for (final code in sortedCountries)
                   FilterChip(
                     key: ValueKey('overview-country-$code'),
@@ -2271,9 +3826,11 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
                           '${nodeCountryName(code, locale: locale)} (${countryCounts[code] ?? 0})',
                     ),
                     selected: activeCountry == code,
-                    onSelected: (value) => setState(() {
-                      _selectedCountry = value ? code : null;
-                    }),
+                    onSelected: (value) {
+                      final nextCountry = value ? code : null;
+                      setState(() => _selectedCountry = nextCountry);
+                      widget.commandController?.setSelectedCountry(nextCountry);
+                    },
                   ),
                 if (testerBusy) ...[
                   Consumer(
@@ -2288,12 +3845,45 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
                       );
                     },
                   ),
-                  TextButton.icon(
-                      key: const ValueKey('overview-cancel'),
-                      onPressed: () => unawaited(tester.cancel()),
-                      icon: const Icon(Icons.close),
-                      label: Text(appLocalizations.cancel)),
+                  TextButton(
+                    key: const ValueKey('overview-cancel'),
+                    onPressed: () => unawaited(tester.cancel()),
+                    style: TextButton.styleFrom(
+                      visualDensity: VisualDensity.compact,
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(Icons.close, size: 17),
+                        const SizedBox(width: 6),
+                        Flexible(
+                          child: Text(
+                            appLocalizations.cancel,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
                 ],
+                if (!_isNoviceAppShell(
+                  context,
+                  ref.watch(expertNavigationExpandedProvider),
+                ))
+                  Tooltip(
+                    key: const ValueKey('overview-history-notice-tooltip'),
+                    message: appLocalizations.nodeOverviewHistoryNotice,
+                    child: Padding(
+                      padding: const EdgeInsets.all(4),
+                      child: Icon(
+                        Icons.info_outline_rounded,
+                        size: 16,
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ),
               ],
             ),
           ),
@@ -2316,21 +3906,48 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
           ),
         if (feedback != null)
           Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-              child: Align(
-                  alignment: Alignment.centerLeft,
-                  child: Text(feedback,
-                      key: const ValueKey('overview-feedback')))),
-        if (!_isNoviceAppShell(
-          context,
-          ref.watch(expertNavigationExpandedProvider),
-        ))
-          Padding(
             padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-            child: Align(
-                alignment: Alignment.centerLeft,
-                child: Text(appLocalizations.nodeOverviewHistoryNotice,
-                    style: Theme.of(context).textTheme.bodySmall)),
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.surfaceContainerLow,
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(
+                  color: freedomNetHairlineColor(
+                    Theme.of(context).colorScheme,
+                  ),
+                ),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(12, 4, 4, 4),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        feedback,
+                        key: const ValueKey('overview-feedback'),
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    IconButton(
+                      key: const ValueKey('overview-feedback-dismiss'),
+                      onPressed: () {
+                        ref.read(_overviewSwitchTrackerProvider).feedback =
+                            null;
+                        setState(() => _feedback = null);
+                      },
+                      icon: const Icon(Icons.close_rounded, size: 16),
+                      tooltip: appLocalizations.cancel,
+                      style: IconButton.styleFrom(
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        padding: const EdgeInsets.all(4),
+                        minimumSize: const Size(28, 28),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
           ),
         Expanded(
             child: Row(
@@ -2374,8 +3991,10 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
                           onSyncAll: urlProfiles.isNotEmpty
                               ? () => unawaited(_syncAllSubscriptions())
                               : null,
-                          onSelect: () =>
-                              setState(() => _selectedProfile = null),
+                          onSelect: () {
+                            setState(() => _selectedProfile = null);
+                            widget.commandController?.setSelectedProfile(null);
+                          },
                         );
                       }
                       final profile = orderedProfiles[index - 1];
@@ -2399,8 +4018,11 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
                               : null,
                           onVisible: () =>
                               _onProfileVisibilityChanged(profile.id, true),
-                          onSelect: () =>
-                              setState(() => _selectedProfile = profile.id));
+                          onSelect: () {
+                            setState(() => _selectedProfile = profile.id);
+                            widget.commandController
+                                ?.setSelectedProfile(profile.id);
+                          });
                     },
                   )),
               const VerticalDivider(width: 16),
@@ -2410,23 +4032,9 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
                 builder: (context, paneConstraints) {
                   final paneTextScale =
                       MediaQuery.textScalerOf(context).scale(1.0);
-                  final scrollTopBars =
-                      paneTextScale > 1.3 || paneConstraints.maxHeight < 420;
-                  final effectivePendingTarget = statusSwitchPending ??
-                      (_localProxyTogglePending ? !isProxyRunning : null);
+                  final effectivePendingTarget = snapshot.effectivePendingTarget;
                   final toggleAction = globalState.isAppControllerReady
                       ? () => unawaited(_toggleProxyMasterSwitch())
-                      : null;
-                  final connectionBar = profiles.isNotEmpty
-                      ? _OverviewConnectionStatusBar(
-                          key: const ValueKey('overview-connection-bar'),
-                          isRunning: isProxyRunning,
-                          pendingTarget: effectivePendingTarget,
-                          isSmartMode: activeIsSmart,
-                          activeProfileLabel:
-                              activeProfileObj?.label ?? activeProfileObj?.id,
-                          activeNodeName: activeNodeLabel,
-                        )
                       : null;
                   final floatingProxyDock = profiles.isNotEmpty
                       ? FloatingProxyDock(
@@ -2447,163 +4055,129 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
                           bottomMargin: floatingBottomMargin,
                         )
                       : 32.0;
-                  final workflowBar = _OverviewQuickWorkflowBar(
-                    key: const ValueKey('overview-workflow-bar'),
-                    onAddSubscription: _importingSubscription
-                        ? null
-                        : () => unawaited(_openUrlSubscriptionImport()),
-                    onTestCurrent: testCurrentAction,
-                    onQuickUse: quickUseAction,
-                    selectionMode: currentSelectionMode,
-                    onSelectSmart: canSwitchSelectionMode
-                        ? () => _activateSmartSelection(targetModeProfile)
-                        : null,
-                    onSelectManual: canSwitchSelectionMode
-                        ? () => _activateManualSelection(targetModeProfile)
-                        : null,
-                  );
-                  return Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                  return Stack(
+                    fit: StackFit.expand,
                     children: [
-                      if (!scrollTopBars) ...[
-                        if (connectionBar != null) connectionBar,
-                        workflowBar,
-                      ],
-                      Expanded(
-                        child: Stack(
-                          fit: StackFit.expand,
-                          children: [
-                            CustomScrollView(
-                              key: const ValueKey('overview-nodes'),
-                              slivers: [
-                                if (scrollTopBars) ...[
-                                  if (connectionBar != null)
-                                    SliverToBoxAdapter(child: connectionBar),
-                                  SliverToBoxAdapter(child: workflowBar),
-                                ],
-                                for (final profile in visible)
-                                  _ProfileNodesSliver(
-                                      key: ValueKey(
-                                          'overview-section-${profile.id}'),
-                                      profile: profile,
-                                      active: profile.id == activeId,
-                                      liveActive: isLiveActive(profile),
-                                      showHeader: selected == null,
-                                      showSubscriptionSummary:
-                                          !wide || selected != null,
-                                      onSyncSubscription:
-                                          profile.type == ProfileType.url &&
-                                                  (!wide || selected != null)
-                                              ? () => unawaited(
-                                                  _syncSubscription(profile))
-                                              : null,
-                                      syncButtonKey: wide
-                                          ? ValueKey(
-                                              'overview-detail-sync-${profile.id}')
-                                          : ValueKey(
-                                              'overview-sync-${profile.id}'),
-                                      showDeleteSubscription:
-                                          _expired(profile, now) &&
-                                              (!wide || selected != null),
-                                      deletingSubscription:
-                                          _deletingProfileIds.contains(
-                                              profile.id),
-                                      onDeleteSubscription: _expired(
-                                                  profile, now) &&
-                                              !profile.isUpdating &&
-                                              (!wide || selected != null)
-                                          ? () => unawaited(
-                                              _confirmAndDeleteProfile(profile))
-                                          : null,
-                                      deleteButtonKey: wide
-                                          ? ValueKey(
-                                              'overview-detail-delete-${profile.id}')
-                                          : ValueKey(
-                                              'overview-delete-${profile.id}'),
-                                      loadImmediately: selected != null ||
-                                          searching ||
-                                          activeCountry != null,
-                                      availableOnly: _availableOnly,
-                                      countryFilter: activeCountry,
-                                      onVisibilityChanged: (isVisible) =>
-                                          _onProfileVisibilityChanged(
-                                              profile.id, isVisible),
-                                      onTest: _testNode,
-                                      onTestActive: _testActiveNode,
-                                      onUseActive: _useActiveNode,
-                                      onUseCatalog: _useCatalogNode,
-                                      now: now),
-                                if (profiles.isEmpty)
-                                  SliverToBoxAdapter(
-                                    child: _OverviewEmptyProfilesCard(
-                                      key: const ValueKey(
-                                          'overview-empty-profiles'),
-                                      onAddSubscription: _importingSubscription
-                                          ? null
-                                          : () => unawaited(
-                                              _openUrlSubscriptionImport()),
-                                      onGoToPurchase: () {
-                                        if (globalState.isAppControllerReady) {
-                                          globalState.appController
-                                              .toPage(PageLabel.purchase);
-                                        } else {
-                                          ref
-                                              .read(currentPageLabelProvider
-                                                  .notifier)
-                                              .value = PageLabel.purchase;
-                                        }
-                                      },
-                                    ),
-                                  ),
-                                if (availableFilterHidAllNodes)
-                                  SliverToBoxAdapter(
-                                    child: _OverviewAvailableFilterEmptyBanner(
-                                      key: const ValueKey(
-                                          'overview-available-only-empty'),
-                                      onShowAllNodes: () => setState(
-                                          () => _availableOnly = false),
-                                    ),
-                                  ),
-                                if (selected == null &&
-                                    activeCountry != null &&
-                                    activeCountryMatchCount == 0 &&
-                                    !anyVisibleCatalogLoading)
-                                  SliverToBoxAdapter(
-                                    child: Padding(
-                                      padding: const EdgeInsets.symmetric(
-                                          horizontal: 24, vertical: 16),
-                                      child: Text(
-                                          appLocalizations.nodeOverviewNoNodes),
-                                    ),
-                                  ),
-                                SliverToBoxAdapter(
-                                  child: SizedBox(height: bottomScrollClearance),
-                                ),
-                              ],
+                      CustomScrollView(
+                        key: const ValueKey('overview-nodes'),
+                        slivers: [
+                          for (final profile in visible)
+                            _ProfileNodesSliver(
+                                key: ValueKey('overview-section-${profile.id}'),
+                                profile: profile,
+                                active: profile.id == activeId,
+                                liveActive: isLiveActive(profile),
+                                showHeader: selected == null,
+                                showSubscriptionSummary:
+                                    !wide || selected != null,
+                                onSyncSubscription:
+                                    profile.type == ProfileType.url &&
+                                            (!wide || selected != null)
+                                        ? () => unawaited(
+                                            _syncSubscription(profile))
+                                        : null,
+                                syncButtonKey: wide
+                                    ? ValueKey(
+                                        'overview-detail-sync-${profile.id}')
+                                    : ValueKey('overview-sync-${profile.id}'),
+                                showDeleteSubscription: _expired(profile, now) &&
+                                    (!wide || selected != null),
+                                deletingSubscription:
+                                    _deletingProfileIds.contains(profile.id),
+                                onDeleteSubscription: _expired(profile, now) &&
+                                        !profile.isUpdating &&
+                                        (!wide || selected != null)
+                                    ? () => unawaited(
+                                        _confirmAndDeleteProfile(profile))
+                                    : null,
+                                deleteButtonKey: wide
+                                    ? ValueKey(
+                                        'overview-detail-delete-${profile.id}')
+                                    : ValueKey('overview-delete-${profile.id}'),
+                                loadImmediately: selected != null ||
+                                    searching ||
+                                    activeCountry != null,
+                                availableOnly: _availableOnly,
+                                countryFilter: activeCountry,
+                                onVisibilityChanged: (isVisible) =>
+                                    _onProfileVisibilityChanged(
+                                        profile.id, isVisible),
+                                onTest: _testNode,
+                                onTestActive: _testActiveNode,
+                                onUseActive: _useActiveNode,
+                                onUseCatalog: _useCatalogNode,
+                                now: now),
+                          if (profiles.isEmpty)
+                            SliverToBoxAdapter(
+                              child: _OverviewEmptyProfilesCard(
+                                key: const ValueKey('overview-empty-profiles'),
+                                onAddSubscription: _importingSubscription
+                                    ? null
+                                    : () => unawaited(
+                                        _openUrlSubscriptionImport()),
+                                onGoToPurchase: () {
+                                  if (globalState.isAppControllerReady) {
+                                    globalState.appController
+                                        .toPage(PageLabel.purchase);
+                                  } else {
+                                    ref
+                                        .read(currentPageLabelProvider.notifier)
+                                        .value = PageLabel.purchase;
+                                  }
+                                },
+                              ),
                             ),
-                            if (floatingProxyDock != null)
-                              Positioned(
-                                left: 16,
-                                right: 16,
-                                bottom: floatingBottomMargin,
-                                child: Align(
-                                  alignment: Alignment.bottomCenter,
-                                  widthFactor: 1.0,
-                                  heightFactor: 1.0,
-                                  child: ConstrainedBox(
-                                    constraints: BoxConstraints(
-                                      maxWidth: math.max(
-                                        96.0,
-                                        paneConstraints.maxWidth - 32,
-                                      ),
-                                    ),
-                                    child: floatingProxyDock,
-                                  ),
+                          if (availableFilterHidAllNodes)
+                            SliverToBoxAdapter(
+                              child: _OverviewAvailableFilterEmptyBanner(
+                                key: const ValueKey(
+                                    'overview-available-only-empty'),
+                                onShowAllNodes: () {
+                                  setState(() => _availableOnly = false);
+                                  final controller = widget.commandController;
+                                  if (controller != null) {
+                                    controller.availableOnly = false;
+                                  }
+                                },
+                              ),
+                            ),
+                          if (selected == null &&
+                              activeCountry != null &&
+                              activeCountryMatchCount == 0 &&
+                              !anyVisibleCatalogLoading)
+                            SliverToBoxAdapter(
+                              child: Padding(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 24, vertical: 16),
+                                child:
+                                    Text(appLocalizations.nodeOverviewNoNodes),
+                              ),
+                            ),
+                          SliverToBoxAdapter(
+                            child: SizedBox(height: bottomScrollClearance),
+                          ),
+                        ],
+                      ),
+                      if (floatingProxyDock != null)
+                        Positioned(
+                          left: 16,
+                          right: 16,
+                          bottom: floatingBottomMargin,
+                          child: Align(
+                            alignment: Alignment.bottomCenter,
+                            widthFactor: 1.0,
+                            heightFactor: 1.0,
+                            child: ConstrainedBox(
+                              constraints: BoxConstraints(
+                                maxWidth: math.max(
+                                  96.0,
+                                  paneConstraints.maxWidth - 32,
                                 ),
                               ),
-                          ],
+                              child: floatingProxyDock,
+                            ),
+                          ),
                         ),
-                      ),
                     ],
                   );
                 },
@@ -2613,146 +4187,6 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
         )),
       ]);
     });
-  }
-}
-
-class _OverviewConnectionStatusBar extends StatelessWidget {
-  const _OverviewConnectionStatusBar({
-    super.key,
-    required this.isRunning,
-    required this.pendingTarget,
-    this.isSmartMode = false,
-    required this.activeProfileLabel,
-    required this.activeNodeName,
-  });
-
-  final bool isRunning;
-  final bool? pendingTarget;
-  final bool isSmartMode;
-  final String? activeProfileLabel;
-  final String? activeNodeName;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final colors = theme.colorScheme;
-    final isDark = theme.brightness == Brightness.dark;
-    final isBusy = pendingTarget != null;
-    final effectiveConnected = pendingTarget ?? isRunning;
-    final green = isDark ? kLatencyFastColor : const Color(0xFF059669);
-
-    final String statusText;
-    if (pendingTarget == true) {
-      statusText = appLocalizations.nodeOverviewProxyStarting;
-    } else if (pendingTarget == false) {
-      statusText = appLocalizations.nodeOverviewProxyStopping;
-    } else if (isRunning) {
-      final hasNode = activeProfileLabel != null &&
-          activeNodeName != null &&
-          activeNodeName!.trim().isNotEmpty;
-      if (isSmartMode && activeProfileLabel != null) {
-        statusText = hasNode
-            ? appLocalizations.nodeOverviewProxyConnectedSmartWithNode(
-                activeProfileLabel!,
-                activeNodeName!,
-              )
-            : appLocalizations.nodeOverviewProxyConnectedSmart(
-                activeProfileLabel!,
-              );
-      } else {
-        statusText = hasNode
-            ? appLocalizations.nodeOverviewProxyConnectedWithNode(
-                activeProfileLabel!,
-                activeNodeName!,
-              )
-            : appLocalizations.nodeOverviewProxyConnected;
-      }
-    } else {
-      statusText = appLocalizations.nodeOverviewProxyDisconnected;
-    }
-
-    final bgColor = effectiveConnected
-        ? Color.alphaBlend(
-            green.withValues(alpha: isDark ? 0.14 : 0.09),
-            colors.surfaceContainerLow,
-          )
-        : (isDark ? colors.surfaceContainer : colors.surfaceContainerLowest);
-    final borderColor = effectiveConnected
-        ? green.withValues(alpha: isDark ? 0.42 : 0.34)
-        : freedomNetHairlineColor(colors);
-
-    final leadingIcon = DecoratedBox(
-      decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        color: effectiveConnected
-            ? green.withValues(alpha: isDark ? 0.20 : 0.14)
-            : colors.surfaceContainerHighest.withValues(alpha: isDark ? 0.65 : 0.85),
-      ),
-      child: SizedBox(
-        width: 26,
-        height: 26,
-        child: Center(
-          child: isBusy
-              ? ExcludeSemantics(
-                  child: SizedBox(
-                    width: 14,
-                    height: 14,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      color: effectiveConnected ? green : colors.primary,
-                    ),
-                  ),
-                )
-              : Icon(
-                  isRunning
-                      ? Icons.shield_rounded
-                      : Icons.power_settings_new_rounded,
-                  size: 15,
-                  color: isRunning ? green : colors.onSurfaceVariant,
-                ),
-        ),
-      ),
-    );
-
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          color: bgColor,
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: borderColor),
-          boxShadow: [
-            BoxShadow(
-              color: effectiveConnected
-                  ? green.withValues(alpha: isDark ? 0.12 : 0.08)
-                  : Colors.black.withValues(alpha: isDark ? 0.18 : 0.04),
-              blurRadius: 12,
-              offset: const Offset(0, 3),
-            ),
-          ],
-        ),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
-          child: Row(
-            children: [
-              leadingIcon,
-              const SizedBox(width: 10),
-              Expanded(
-                child: Text(
-                  statusText,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: theme.textTheme.bodyMedium?.copyWith(
-                    fontWeight: isRunning ? FontWeight.w600 : FontWeight.w500,
-                    color: colors.onSurface,
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
   }
 }
 
@@ -2806,20 +4240,61 @@ class _OverviewEmptyProfilesCard extends StatelessWidget {
                   color: colors.onSurfaceVariant,
                 ),
               ),
-              const SizedBox(height: 20),
-              FilledButton.icon(
+              const SizedBox(height: 14),
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                decoration: BoxDecoration(
+                  color: colors.surfaceContainerHighest.withValues(alpha: 0.45),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Text(
+                  appLocalizations.nodeOverviewEmptyStepsHint,
+                  textAlign: TextAlign.center,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: colors.onSurfaceVariant,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 18),
+              FilledButton(
                 key: const ValueKey('overview-empty-add-subscription'),
                 onPressed: onAddSubscription,
-                icon: const Icon(Icons.content_paste_go_rounded, size: 18),
-                label: Text(appLocalizations.nodeOverviewAddSubscription),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.content_paste_go_rounded, size: 18),
+                    const SizedBox(width: 8),
+                    Flexible(
+                      child: Text(
+                        appLocalizations.nodeOverviewAddSubscription,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
+                ),
               ),
               if (onGoToPurchase != null) ...[
                 const SizedBox(height: 8),
-                TextButton.icon(
+                TextButton(
                   key: const ValueKey('overview-empty-go-purchase'),
                   onPressed: onGoToPurchase,
-                  icon: const Icon(Icons.shopping_bag_outlined, size: 18),
-                  label: Text(appLocalizations.goToPurchasePrompt),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.shopping_bag_outlined, size: 18),
+                      const SizedBox(width: 8),
+                      Flexible(
+                        child: Text(
+                          appLocalizations.goToPurchasePrompt,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ],
             ],
@@ -2877,536 +4352,6 @@ class _OverviewAvailableFilterEmptyBanner extends StatelessWidget {
       ),
     );
   }
-}
-
-class _OverviewQuickWorkflowBar extends StatelessWidget {
-  const _OverviewQuickWorkflowBar({
-    super.key,
-    required this.onAddSubscription,
-    required this.onTestCurrent,
-    required this.onQuickUse,
-    this.selectionMode = NodeSelectionMode.smart,
-    this.onSelectSmart,
-    this.onSelectManual,
-  });
-
-  final VoidCallback? onAddSubscription;
-  final VoidCallback? onTestCurrent;
-  final VoidCallback? onQuickUse;
-  final NodeSelectionMode selectionMode;
-  final VoidCallback? onSelectSmart;
-  final VoidCallback? onSelectManual;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final colors = theme.colorScheme;
-    final isDark = theme.brightness == Brightness.dark;
-    final stepItems = <Widget>[
-      _WorkflowStepButton(
-        buttonKey: const ValueKey('overview-add-subscription'),
-        stepNumber: 1,
-        icon: Icons.add_link_rounded,
-        label: appLocalizations.nodeOverviewAddSubscription,
-        onPressed: onAddSubscription,
-      ),
-      Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          _WorkflowStepArrow(
-            key: const ValueKey('overview-workflow-arrow-1'),
-            active: onTestCurrent != null,
-          ),
-          const SizedBox(width: 8),
-          Flexible(
-            child: _WorkflowStepButton(
-              buttonKey: const ValueKey('overview-test-current'),
-              stepNumber: 2,
-              icon: Icons.speed_rounded,
-              label: appLocalizations.nodeOverviewTestCurrent,
-              onPressed: onTestCurrent,
-            ),
-          ),
-        ],
-      ),
-      Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          _WorkflowStepArrow(
-            key: const ValueKey('overview-workflow-arrow-2'),
-            active: onQuickUse != null,
-          ),
-          const SizedBox(width: 8),
-          Flexible(
-            child: _WorkflowStepButton(
-              buttonKey: const ValueKey('overview-quick-use'),
-              stepNumber: 3,
-              icon: Icons.play_arrow_rounded,
-              label: appLocalizations.nodeOverviewQuickUse,
-              onPressed: onQuickUse,
-              emphasized: true,
-            ),
-          ),
-        ],
-      ),
-    ];
-
-    final smartButton = _SelectionModeButton(
-      buttonKey: const ValueKey('overview-mode-smart'),
-      icon: Icons.auto_awesome_rounded,
-      title: appLocalizations.nodeOverviewSmartSelectTitle,
-      subtitle: appLocalizations.nodeOverviewSmartSelectSubtitle,
-      selected: selectionMode == NodeSelectionMode.smart,
-      onPressed: onSelectSmart,
-    );
-    final manualButton = _SelectionModeButton(
-      buttonKey: const ValueKey('overview-mode-manual'),
-      icon: Icons.push_pin_rounded,
-      title: appLocalizations.nodeOverviewManualSelectTitle,
-      subtitle: appLocalizations.nodeOverviewManualSelectSubtitle,
-      selected: selectionMode == NodeSelectionMode.manual,
-      onPressed: onSelectManual,
-    );
-
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          color: colors.surfaceContainer.withValues(
-            alpha: isDark ? 0.88 : 0.96,
-          ),
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(
-            color: freedomNetHairlineColor(colors),
-          ),
-        ),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-          child: SizedBox(
-            width: double.infinity,
-            child: Wrap(
-              spacing: 10,
-              runSpacing: 6,
-              alignment: WrapAlignment.spaceBetween,
-              crossAxisAlignment: WrapCrossAlignment.center,
-              children: [
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 6,
-                  crossAxisAlignment: WrapCrossAlignment.center,
-                  children: stepItems,
-                ),
-                Container(
-                  key: const ValueKey('overview-mode-segmented-track'),
-                  padding: const EdgeInsets.all(3),
-                  decoration: BoxDecoration(
-                    color: colors.surfaceDim,
-                    borderRadius: BorderRadius.circular(11),
-                    border: Border.all(color: freedomNetHairlineColor(colors)),
-                  ),
-                  child: Wrap(
-                    spacing: 4,
-                    runSpacing: 4,
-                    crossAxisAlignment: WrapCrossAlignment.center,
-                    children: [
-                      smartButton,
-                      manualButton,
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _SelectionModeButton extends StatelessWidget {
-  const _SelectionModeButton({
-    required this.buttonKey,
-    required this.icon,
-    required this.title,
-    required this.subtitle,
-    required this.selected,
-    required this.onPressed,
-  });
-
-  final Key buttonKey;
-  final IconData icon;
-  final String title;
-  final String subtitle;
-  final bool selected;
-  final VoidCallback? onPressed;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final colors = theme.colorScheme;
-    final isDark = theme.brightness == Brightness.dark;
-    final enabled = onPressed != null;
-
-    final bgColor = !enabled
-        ? Colors.transparent
-        : selected
-            ? colors.primary.withValues(alpha: isDark ? 0.18 : 0.12)
-            : Colors.transparent;
-    final borderColor = selected && enabled
-        ? colors.primary.withValues(alpha: isDark ? 0.42 : 0.30)
-        : Colors.transparent;
-    final fgColor = !enabled
-        ? colors.onSurface.withValues(alpha: 0.38)
-        : selected
-            ? colors.primary
-            : colors.onSurfaceVariant;
-    final tagBg = !enabled
-        ? colors.onSurface.withValues(alpha: 0.05)
-        : selected
-            ? colors.primary.withValues(alpha: isDark ? 0.24 : 0.16)
-            : colors.onSurface.withValues(alpha: isDark ? 0.08 : 0.06);
-    final tagFg = !enabled
-        ? colors.onSurface.withValues(alpha: 0.38)
-        : selected
-            ? colors.primary
-            : colors.onSurfaceVariant;
-
-    return TextButton(
-      key: buttonKey,
-      onPressed: onPressed,
-      style: TextButton.styleFrom(
-        visualDensity: VisualDensity.compact,
-        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-        minimumSize: Size.zero,
-        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
-        backgroundColor: bgColor,
-        foregroundColor: fgColor,
-        side: BorderSide(
-          color: borderColor,
-          width: 1.0,
-        ),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(8),
-        ),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 14, color: fgColor),
-          const SizedBox(width: 4),
-          Flexible(
-            flex: 2,
-            child: Text(
-              title,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: theme.textTheme.labelMedium?.copyWith(
-                color: fgColor,
-                fontWeight:
-                    selected && enabled ? FontWeight.w700 : FontWeight.w500,
-              ),
-            ),
-          ),
-          const SizedBox(width: 4),
-          Flexible(
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
-              decoration: BoxDecoration(
-                color: tagBg,
-                borderRadius: BorderRadius.circular(999),
-              ),
-              child: Text(
-                subtitle,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: theme.textTheme.labelSmall?.copyWith(
-                  fontSize: 10.5,
-                  height: 1.15,
-                  fontWeight: FontWeight.w600,
-                  color: tagFg,
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _WorkflowStepButton extends StatelessWidget {
-  const _WorkflowStepButton({
-    required this.buttonKey,
-    required this.stepNumber,
-    required this.icon,
-    required this.label,
-    required this.onPressed,
-    this.emphasized = false,
-  });
-
-  final Key buttonKey;
-  final int stepNumber;
-  final IconData icon;
-  final String label;
-  final VoidCallback? onPressed;
-  final bool emphasized;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final colors = theme.colorScheme;
-    final isDark = theme.brightness == Brightness.dark;
-    final enabled = onPressed != null;
-
-    final badgeBg = !enabled
-        ? colors.onSurface.withValues(alpha: 0.08)
-        : emphasized
-            ? colors.primary.withValues(alpha: isDark ? 0.28 : 0.20)
-            : colors.primary.withValues(alpha: isDark ? 0.16 : 0.11);
-    final badgeFg = !enabled
-        ? colors.onSurface.withValues(alpha: 0.38)
-        : colors.primary;
-
-    return TextButton(
-      key: buttonKey,
-      onPressed: onPressed,
-      style: ButtonStyle(
-        visualDensity: VisualDensity.compact,
-        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-        minimumSize: const WidgetStatePropertyAll(Size(0, 34)),
-        padding: const WidgetStatePropertyAll(
-          EdgeInsets.symmetric(horizontal: 11, vertical: 6),
-        ),
-        backgroundColor: WidgetStateProperty.resolveWith((states) {
-          if (states.contains(WidgetState.disabled)) {
-            return colors.surfaceContainerHigh.withValues(
-              alpha: isDark ? 0.24 : 0.38,
-            );
-          }
-          final hovered = states.contains(WidgetState.hovered);
-          if (emphasized) {
-            return colors.primary.withValues(
-              alpha: hovered ? (isDark ? 0.24 : 0.17) : (isDark ? 0.16 : 0.11),
-            );
-          }
-          return hovered
-              ? colors.surfaceContainerHighest.withValues(
-                  alpha: isDark ? 0.78 : 0.94,
-                )
-              : colors.surfaceContainerHigh.withValues(
-                  alpha: isDark ? 0.52 : 0.78,
-                );
-        }),
-        foregroundColor: WidgetStateProperty.resolveWith((states) {
-          if (states.contains(WidgetState.disabled)) {
-            return colors.onSurface.withValues(alpha: 0.38);
-          }
-          return emphasized
-              ? colors.primary
-              : colors.onSurface.withValues(alpha: 0.92);
-        }),
-        overlayColor: WidgetStatePropertyAll(
-          colors.primary.withValues(alpha: 0.08),
-        ),
-        shape: WidgetStateProperty.resolveWith((states) {
-          final disabled = states.contains(WidgetState.disabled);
-          final hovered = states.contains(WidgetState.hovered);
-          final focused = states.contains(WidgetState.focused);
-          final Color borderColor;
-          if (disabled) {
-            borderColor = colors.outlineVariant.withValues(alpha: 0.32);
-          } else if (focused) {
-            borderColor = colors.primary.withValues(alpha: 0.72);
-          } else if (emphasized) {
-            borderColor =
-                colors.primary.withValues(alpha: hovered ? 0.68 : 0.48);
-          } else if (hovered) {
-            borderColor = colors.outline.withValues(alpha: 0.58);
-          } else {
-            borderColor = colors.outlineVariant.withValues(alpha: 0.62);
-          }
-          return RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(10),
-            side: BorderSide(color: borderColor),
-          );
-        }),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            width: 18,
-            height: 18,
-            alignment: Alignment.center,
-            decoration: BoxDecoration(
-              color: badgeBg,
-              shape: BoxShape.circle,
-            ),
-            child: Text(
-              '$stepNumber',
-              style: TextStyle(
-                fontSize: 11,
-                height: 1.0,
-                fontWeight: FontWeight.w700,
-                color: badgeFg,
-              ),
-            ),
-          ),
-          const SizedBox(width: 6),
-          Icon(
-            icon,
-            size: 15,
-            color: !enabled
-                ? colors.onSurface.withValues(alpha: 0.38)
-                : emphasized
-                    ? colors.primary
-                    : colors.onSurfaceVariant,
-          ),
-          const SizedBox(width: 5),
-          Flexible(
-            child: Text(
-              label,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontSize: 13,
-                height: 1.2,
-                fontWeight: emphasized ? FontWeight.w600 : FontWeight.w500,
-                letterSpacing: 0.1,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _WorkflowStepArrow extends StatelessWidget {
-  const _WorkflowStepArrow({
-    super.key,
-    required this.active,
-  });
-
-  final bool active;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final colors = theme.colorScheme;
-    final isRtl = Directionality.of(context) == TextDirection.rtl;
-    return ExcludeSemantics(
-      child: SizedBox(
-        width: 34,
-        height: 18,
-        child: CustomPaint(
-          painter: _WorkflowArrowPainter(
-            color: active ? colors.primary : colors.outline,
-            active: active,
-            isDark: theme.brightness == Brightness.dark,
-            isRtl: isRtl,
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _WorkflowArrowPainter extends CustomPainter {
-  const _WorkflowArrowPainter({
-    required this.color,
-    required this.active,
-    required this.isDark,
-    required this.isRtl,
-  });
-
-  final Color color;
-  final bool active;
-  final bool isDark;
-  final bool isRtl;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    if (isRtl) {
-      canvas
-        ..save()
-        ..translate(size.width, 0)
-        ..scale(-1, 1);
-    }
-
-    final cy = size.height / 2;
-    const startX = 3.5;
-    final tipX = size.width - 3.5;
-    final shaftEndX = tipX - 1.2;
-
-    // 1. Subtle origin dot.
-    final dotPaint = Paint()
-      ..style = PaintingStyle.fill
-      ..color = color.withValues(alpha: active ? 0.46 : 0.24);
-    canvas.drawCircle(Offset(startX, cy), 2.0, dotPaint);
-
-    // 2. Gradient shaft fading into crisp arrowhead.
-    final shaftRect = Rect.fromLTRB(startX, cy - 2, tipX, cy + 2);
-    final shaftPaint = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.65
-      ..strokeCap = StrokeCap.round
-      ..shader = LinearGradient(
-        colors: [
-          color.withValues(alpha: active ? 0.20 : 0.10),
-          color.withValues(alpha: active ? 0.88 : 0.40),
-        ],
-      ).createShader(shaftRect);
-    canvas.drawLine(Offset(startX + 2.5, cy), Offset(shaftEndX, cy), shaftPaint);
-
-    // 3. Soft trailing motion chevron.
-    final trailX = tipX - 6.8;
-    final trailPath = Path()
-      ..moveTo(trailX - 3.6, cy - 3.4)
-      ..lineTo(trailX, cy)
-      ..lineTo(trailX - 3.6, cy + 3.4);
-    final trailPaint = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.4
-      ..strokeCap = StrokeCap.round
-      ..strokeJoin = StrokeJoin.round
-      ..color = color.withValues(alpha: active ? 0.38 : 0.18);
-    canvas.drawPath(trailPath, trailPaint);
-
-    // 4. Primary crisp arrowhead (+ subtle glow in dark mode when active).
-    final headPath = Path()
-      ..moveTo(tipX - 4.8, cy - 4.4)
-      ..lineTo(tipX, cy)
-      ..lineTo(tipX - 4.8, cy + 4.4);
-    if (active && isDark) {
-      final glowPaint = Paint()
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 3.2
-        ..strokeCap = StrokeCap.round
-        ..strokeJoin = StrokeJoin.round
-        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 2.2)
-        ..color = color.withValues(alpha: 0.26);
-      canvas.drawPath(headPath, glowPaint);
-    }
-    final headPaint = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.85
-      ..strokeCap = StrokeCap.round
-      ..strokeJoin = StrokeJoin.round
-      ..color = color.withValues(alpha: active ? 0.94 : 0.44);
-    canvas.drawPath(headPath, headPaint);
-
-    if (isRtl) {
-      canvas.restore();
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant _WorkflowArrowPainter oldDelegate) =>
-      color != oldDelegate.color ||
-      active != oldDelegate.active ||
-      isDark != oldDelegate.isDark ||
-      isRtl != oldDelegate.isRtl;
 }
 
 class _OverviewAvailableFilterButton extends StatefulWidget {
@@ -6118,14 +7063,16 @@ Widget _buildNodeHeaderLayout(
     LayoutBuilder(
       builder: (context, constraints) {
         final textScale = MediaQuery.textScalerOf(context).scale(1.0);
+        final minSingleRowWidth =
+            (actions.length <= 1 ? 520.0 : 680.0) * textScale;
         final singleRow =
-            actions.isEmpty || constraints.maxWidth >= 460 * textScale;
+            actions.isEmpty || constraints.maxWidth >= minSingleRowWidth;
         if (singleRow) {
           return Row(
             children: [
               Expanded(child: Text(name)),
               const SizedBox(width: 8),
-              status,
+              if (actions.isEmpty) Flexible(child: status) else status,
               for (final action in actions) ...[
                 const SizedBox(width: 8),
                 action,
@@ -6590,18 +7537,17 @@ class _ActiveNodeRow extends ConsumerWidget {
               ),
               if (showMetaRow) ...[
                 const SizedBox(height: 5),
-                Row(
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 4,
+                  crossAxisAlignment: WrapCrossAlignment.center,
                   children: [
-                    if (hasCountry) ...[
+                    if (hasCountry)
                       _CountryBadge(emoji: countryEmoji!, name: countryName!),
-                      if (!inNoviceAppShell) const SizedBox(width: 6),
-                    ],
                     if (!inNoviceAppShell)
-                      Flexible(
-                        child: Text(
-                          description,
-                          style: Theme.of(context).textTheme.bodySmall,
-                        ),
+                      Text(
+                        description,
+                        style: Theme.of(context).textTheme.bodySmall,
                       ),
                   ],
                 ),
@@ -6623,11 +7569,15 @@ class _CountryLabelText extends StatelessWidget {
     required this.emoji,
     required this.text,
     this.style,
+    this.maxLines,
+    this.overflow,
   });
 
   final String emoji;
   final String text;
   final TextStyle? style;
+  final int? maxLines;
+  final TextOverflow? overflow;
 
   @override
   Widget build(BuildContext context) => Text.rich(
@@ -6641,6 +7591,8 @@ class _CountryLabelText extends StatelessWidget {
             TextSpan(text: ' $text'),
           ],
         ),
+        maxLines: maxLines,
+        overflow: overflow,
       );
 }
 
@@ -6665,6 +7617,8 @@ class _CountryBadge extends StatelessWidget {
       child: _CountryLabelText(
         emoji: emoji,
         text: name,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
         style: Theme.of(context).textTheme.labelSmall?.copyWith(
               color: colorScheme.onSurfaceVariant,
             ),
@@ -6778,22 +7732,20 @@ class _InactiveNodeRow extends ConsumerWidget {
                 ),
                 if (showMetaRow) ...[
                   const SizedBox(height: 5),
-                  Row(
+                  Wrap(
+                    spacing: 6,
+                    runSpacing: 4,
+                    crossAxisAlignment: WrapCrossAlignment.center,
                     children: [
-                      if (hasCountry) ...[
+                      if (hasCountry)
                         _CountryBadge(emoji: countryEmoji!, name: countryName!),
-                        if (!inNoviceAppShell) const SizedBox(width: 6),
-                      ],
                       if (!inNoviceAppShell)
-                        Flexible(
-                          child: Text(
-                            [
-                              _catalogProtocolLabel(node),
-                              if (_providerSourceLabel(node) case final src?)
-                                src,
-                            ].join(' · '),
-                            style: Theme.of(context).textTheme.bodySmall,
-                          ),
+                        Text(
+                          [
+                            _catalogProtocolLabel(node),
+                            if (_providerSourceLabel(node) case final src?) src,
+                          ].join(' · '),
+                          style: Theme.of(context).textTheme.bodySmall,
                         ),
                     ],
                   ),

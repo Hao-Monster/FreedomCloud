@@ -572,7 +572,13 @@ void main() {
     expect(
         find.text(
             'Delay results are kept until the next completed test. Test times appear below each node.'),
-        findsOneWidget);
+        findsNothing);
+    final historyTooltipFinder =
+        find.byKey(const ValueKey('overview-history-notice-tooltip'));
+    expect(historyTooltipFinder, findsOneWidget);
+    expect(
+        tester.widget<Tooltip>(historyTooltipFinder).message,
+        'Delay results are kept until the next completed test. Test times appear below each node.');
     expect(find.text('Available only'), findsOneWidget);
     expect(find.text('Test current profile'), findsOneWidget);
     expect(tester.takeException(), isNull);
@@ -5547,45 +5553,54 @@ void main() {
       catalogs: flatCatalogs(),
     );
 
-    final workflowBar = find.byKey(const ValueKey('overview-workflow-bar'));
+    final commandBar = find.byKey(const ValueKey('overview-top-command-bar'));
     final addBtn = find.byKey(const ValueKey('overview-add-subscription'));
-    final arrow1 = find.byKey(const ValueKey('overview-workflow-arrow-1'));
+    final connectionBar = find.byKey(const ValueKey('overview-connection-bar'));
+    final modeTrack =
+        find.byKey(const ValueKey('overview-mode-segmented-track'));
     final testBtn = find.byKey(const ValueKey('overview-test-current'));
-    final arrow2 = find.byKey(const ValueKey('overview-workflow-arrow-2'));
     final useBtn = find.byKey(const ValueKey('overview-quick-use'));
-    expect(workflowBar, findsOneWidget);
+    expect(find.byKey(const ValueKey('overview-workflow-bar')), findsNothing);
+    expect(
+        find.byKey(const ValueKey('overview-workflow-arrow-1')), findsNothing);
+    expect(
+        find.byKey(const ValueKey('overview-workflow-arrow-2')), findsNothing);
+    expect(commandBar, findsOneWidget);
     expect(addBtn, findsOneWidget);
-    expect(arrow1, findsOneWidget);
+    expect(connectionBar, findsOneWidget);
+    expect(modeTrack, findsOneWidget);
     expect(testBtn, findsOneWidget);
-    expect(arrow2, findsOneWidget);
     expect(useBtn, findsOneWidget);
 
     expect(find.text('添加订阅'), findsOneWidget);
     expect(find.text('测试当前配置'), findsOneWidget);
     expect(find.text('一键连最快'), findsOneWidget);
 
-    // Moved out of top filter row into right-hand pane above node list.
+    // Command bar sits above the layer-2 filter/test row; overview-test-current sits in layer-2 above aligned panes.
     final sortRect =
         tester.getRect(find.byKey(const ValueKey('overview-sort-button')));
     final sidebarRect =
         tester.getRect(find.byKey(const ValueKey('overview-sidebar')));
+    final nodesRect =
+        tester.getRect(find.byKey(const ValueKey('overview-nodes')));
     final headerRect =
         tester.getRect(find.byKey(const ValueKey('overview-header-a')));
+    final commandBarRect = tester.getRect(commandBar);
     final addRect = tester.getRect(addBtn);
-    final arrow1Rect = tester.getRect(arrow1);
+    final connRect = tester.getRect(connectionBar);
+    final trackRect = tester.getRect(modeTrack);
     final testRect = tester.getRect(testBtn);
-    final arrow2Rect = tester.getRect(arrow2);
     final useRect = tester.getRect(useBtn);
 
-    expect(testRect.top, greaterThan(sortRect.bottom));
-    expect(addRect.left, greaterThan(sidebarRect.right));
-    expect(addRect.bottom, lessThanOrEqualTo(headerRect.top));
-    expect(addRect.right, lessThanOrEqualTo(arrow1Rect.left));
-    expect(arrow1Rect.right, lessThanOrEqualTo(testRect.left));
-    expect(testRect.right, lessThanOrEqualTo(arrow2Rect.left));
-    expect(arrow2Rect.right, lessThanOrEqualTo(useRect.left));
-    expect(addRect.center.dy, closeTo(testRect.center.dy, 1.0));
-    expect(testRect.center.dy, closeTo(useRect.center.dy, 1.0));
+    expect(commandBarRect.bottom, lessThanOrEqualTo(sortRect.top));
+    expect(testRect.top, greaterThanOrEqualTo(commandBarRect.bottom));
+    expect(testRect.center.dy, closeTo(sortRect.center.dy, 2.0));
+    expect(testRect.bottom, lessThanOrEqualTo(headerRect.top));
+    expect(nodesRect.top, closeTo(sidebarRect.top, 2.0));
+    expect(addRect.right, lessThanOrEqualTo(connRect.left));
+    expect(connRect.right, lessThanOrEqualTo(trackRect.left));
+    expect(trackRect.right, lessThanOrEqualTo(useRect.left));
+    expect(addRect.center.dy, closeTo(useRect.center.dy, 2.0));
 
     // Step 2 preserves TextButton contract and triggers current profile test.
     expect(tester.widget<TextButton>(testBtn).onPressed, isNotNull);
@@ -6268,7 +6283,7 @@ void main() {
       findsOneWidget,
     );
 
-    // 4. Narrow 380px wrapped workflow bar keeps each arrow on the exact same row as its destination step.
+    // 4. Narrow 380px wrapped command bar sits above layer-2 filter/test bar without legacy step arrows.
     await tester.pumpWidget(const SizedBox.shrink());
     await mount(
       tester,
@@ -6277,20 +6292,23 @@ void main() {
       profiles: profiles,
       catalogs: flatCatalogs(),
     );
-    final arrow1CenterY = tester
-        .getCenter(find.byKey(const ValueKey('overview-workflow-arrow-1')))
-        .dy;
-    final testCenterY = tester
-        .getCenter(find.byKey(const ValueKey('overview-test-current')))
-        .dy;
-    final arrow2CenterY = tester
-        .getCenter(find.byKey(const ValueKey('overview-workflow-arrow-2')))
-        .dy;
-    final useCenterY = tester
-        .getCenter(find.byKey(const ValueKey('overview-quick-use')))
-        .dy;
-    expect(arrow1CenterY, closeTo(testCenterY, 1.5));
-    expect(arrow2CenterY, closeTo(useCenterY, 1.5));
+    expect(find.byKey(const ValueKey('overview-workflow-bar')), findsNothing);
+    expect(
+        find.byKey(const ValueKey('overview-workflow-arrow-1')), findsNothing);
+    expect(
+        find.byKey(const ValueKey('overview-workflow-arrow-2')), findsNothing);
+    final narrowCommandBar =
+        find.byKey(const ValueKey('overview-top-command-bar'));
+    final narrowTestCurrent =
+        find.byKey(const ValueKey('overview-test-current'));
+    final narrowQuickUse = find.byKey(const ValueKey('overview-quick-use'));
+    expect(narrowCommandBar, findsOneWidget);
+    expect(narrowTestCurrent, findsOneWidget);
+    expect(narrowQuickUse, findsOneWidget);
+    expect(
+      tester.getRect(narrowCommandBar).bottom,
+      lessThanOrEqualTo(tester.getRect(narrowTestCurrent).top),
+    );
     expect(tester.takeException(), isNull);
   });
 
@@ -8508,21 +8526,38 @@ void main() {
     final quickUseBtn = find.byKey(const ValueKey('overview-quick-use'));
     final smartBtn = find.byKey(const ValueKey('overview-mode-smart'));
     final manualBtn = find.byKey(const ValueKey('overview-mode-manual'));
+    final connectionBar = find.byKey(const ValueKey('overview-connection-bar'));
     expect(smartBtn, findsOneWidget);
     expect(manualBtn, findsOneWidget);
-    expect(find.descendant(of: smartBtn, matching: find.text('智能选择节点')), findsOneWidget);
-    expect(find.descendant(of: smartBtn, matching: find.text('体验更好')), findsOneWidget);
-    expect(find.descendant(of: manualBtn, matching: find.text('手动选择节点')), findsOneWidget);
-    expect(find.descendant(of: manualBtn, matching: find.text('固定IP')), findsOneWidget);
+    expect(
+      find.descendant(of: smartBtn, matching: find.text('智能选路')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: manualBtn, matching: find.text('固定IP')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: smartBtn, matching: find.text('智能选择节点')),
+      findsNothing,
+    );
+    expect(
+      find.descendant(of: manualBtn, matching: find.text('手动选择节点')),
+      findsNothing,
+    );
 
-    // Placed to the right of `3 点击使用` on wide desktop layout!
+    // Placed inside top command bar: connection bar -> [智能选路 | 固定IP] -> 一键连最快!
     expect(
       tester.getTopLeft(smartBtn).dx,
-      greaterThan(tester.getTopRight(quickUseBtn).dx),
+      greaterThan(tester.getTopRight(connectionBar).dx),
     );
     expect(
       tester.getTopLeft(manualBtn).dx,
       greaterThan(tester.getTopRight(smartBtn).dx),
+    );
+    expect(
+      tester.getTopLeft(quickUseBtn).dx,
+      greaterThan(tester.getTopRight(manualBtn).dx),
     );
 
     // Legacy profileA starts in Manual mode with 美国静态原生-Reality-Vision inUse ('使用中').

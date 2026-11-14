@@ -869,6 +869,9 @@ class MessageLookup extends MessageLookupByLibrary {
     "nodeOverviewDeviceLimitReached": MessageLookupByLibrary.simpleMessage(
       "已达设备数量上限",
     ),
+    "nodeOverviewEmptyStepsHint": MessageLookupByLibrary.simpleMessage(
+      "① 添加订阅  ·  ② 自动测速  ·  ③ 一键连最快",
+    ),
     "nodeOverviewEmptySubtitle": MessageLookupByLibrary.simpleMessage(
       "粘贴订阅链接并点击确定，软件将自动测速并连接最快节点",
     ),
@@ -906,6 +909,9 @@ class MessageLookup extends MessageLookupByLibrary {
     "nodeOverviewLockedManualNode": m47,
     "nodeOverviewManageProfiles": MessageLookupByLibrary.simpleMessage(
       "管理配置 / 更新订阅",
+    ),
+    "nodeOverviewManualSelectCompact": MessageLookupByLibrary.simpleMessage(
+      "固定IP",
     ),
     "nodeOverviewManualSelectSubtitle": MessageLookupByLibrary.simpleMessage(
       "固定IP",
@@ -982,6 +988,9 @@ class MessageLookup extends MessageLookupByLibrary {
     ),
     "nodeOverviewShowAllNodes": MessageLookupByLibrary.simpleMessage("显示全部节点"),
     "nodeOverviewSmartInUse": MessageLookupByLibrary.simpleMessage("智能使用中"),
+    "nodeOverviewSmartSelectCompact": MessageLookupByLibrary.simpleMessage(
+      "智能选路",
+    ),
     "nodeOverviewSmartSelectSubtitle": MessageLookupByLibrary.simpleMessage(
       "体验更好",
     ),

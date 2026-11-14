@@ -9,7 +9,9 @@ import 'package:flclashx/views/proxies/overview/overview.dart';
 import 'package:flclashx/views/proxies/providers.dart';
 import 'package:flclashx/widgets/widgets.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:intl/intl.dart';
 
 import 'common.dart';
 import 'delay_test_action.dart';
@@ -26,6 +28,19 @@ class ProxiesView extends ConsumerStatefulWidget {
 class _ProxiesViewState extends ConsumerState<ProxiesView> with PageMixin {
   bool _hasProviders = false;
   bool _isTab = false;
+  final NodeOverviewCommandController _overviewCommandController =
+      NodeOverviewCommandController();
+  late final Widget _overviewInlineAccessory = NodeOverviewAppBarCommandBar(
+    controller: _overviewCommandController,
+  );
+  CommonScaffoldState? _attachedScaffold;
+  bool _titleSyncScheduled = false;
+  bool _pendingSyncActions = false;
+  bool? _lastTickerEnabled;
+  Locale? _lastLocale;
+  String? _lastIntlLocale;
+  bool _hasRecordedLocale = false;
+  bool? _lastHasNavigationBar;
 
   Future<void> _pingAllGroups() async {
     // Resolve every group's members and URL inside one shared bounded batch.
@@ -33,8 +48,8 @@ class _ProxiesViewState extends ConsumerState<ProxiesView> with PageMixin {
     await delayTestGroups(groups);
   }
 
-  bool _showAdvancedProxiesActions(BuildContext context, WidgetRef ref) {
-    final expertExpanded = ref.watch(expertNavigationExpandedProvider);
+  bool _isAdvancedActionsVisible() {
+    final expertExpanded = ref.read(expertNavigationExpandedProvider);
     if (expertExpanded) return true;
     final scaffold = context.commonScaffoldState;
     if (scaffold != null && !scaffold.hasNavigationBar) {
@@ -43,41 +58,32 @@ class _ProxiesViewState extends ConsumerState<ProxiesView> with PageMixin {
     return false;
   }
 
+  bool _isScopeActionVisible() {
+    if (!_isAdvancedActionsVisible()) return false;
+    final enabled = ref.read(nodeOverviewEnabledProvider);
+    final count = ref.read(profilesProvider.select((value) => value.length));
+    return enabled && count > 0;
+  }
+
   @override
-  List<Widget> get actions => [
-        Consumer(
-          builder: (ctx, ref, child) =>
-              _showAdvancedProxiesActions(ctx, ref)
-                  ? child!
-                  : const SizedBox.shrink(),
-          child: const NodeOverviewScopeAction(),
+  List<Widget> get actions {
+    final advancedVisible = _isAdvancedActionsVisible();
+    final showOverview = _readShowAllProfiles(context, ref);
+    return [
+      if (_isScopeActionVisible()) const NodeOverviewScopeAction(),
+      if (advancedVisible && ref.read(globalModeEnabledProvider))
+        const _ModeSelectorAction(),
+      const SearchOrderMarker(),
+      if (!showOverview) ...[
+        DelayTestAction(
+          coordinator: delayTests,
+          onStart: _pingAllGroups,
+          startLabel: appLocalizations.testAllDelay,
+          cancelLabel: appLocalizations.cancel,
         ),
-        Consumer(
-          builder: (ctx, ref, child) {
-            if (!_showAdvancedProxiesActions(ctx, ref)) {
-              return const SizedBox.shrink();
-            }
-            final globalModeEnabled = ref.watch(globalModeEnabledProvider);
-            if (!globalModeEnabled) return const SizedBox.shrink();
-            return child!;
-          },
-          child: const _ModeSelectorAction(),
-        ),
-        const SearchOrderMarker(),
-        Consumer(
-          builder: (ctx, ref, child) =>
-              _showAllProfiles(ctx, ref) ? const SizedBox.shrink() : child!,
-          child: DelayTestAction(
-            coordinator: delayTests,
-            onStart: _pingAllGroups,
-            startLabel: appLocalizations.testAllDelay,
-            cancelLabel: appLocalizations.cancel,
-          ),
-        ),
-        if (!_isTab) ...[
+        if (!_isTab)
           Consumer(
             builder: (ctx, ref, __) {
-              if (_showAllProfiles(ctx, ref)) return const SizedBox.shrink();
               final unfoldSet = ref.watch(unfoldSetProvider);
               final groupNames = ref.watch(
                 currentGroupsStateProvider.select(
@@ -104,69 +110,65 @@ class _ProxiesViewState extends ConsumerState<ProxiesView> with PageMixin {
               );
             },
           ),
-        ],
-        Consumer(
-          builder: (ctx, ref, child) =>
-              _showAdvancedProxiesActions(ctx, ref)
-                  ? child!
-                  : const SizedBox.shrink(),
-          child: CommonPopupBox(
-            targetBuilder: (open) => IconButton(
+      ],
+      if (advancedVisible)
+        CommonPopupBox(
+          targetBuilder: (open) => IconButton(
+            onPressed: () {
+              open(
+                offset: const Offset(0, 20),
+              );
+            },
+            icon: const Icon(
+              Icons.more_vert,
+            ),
+          ),
+          popup: CommonPopupMenu(
+            items: [
+              PopupMenuItemData(
+                icon: Icons.tune,
+                label: appLocalizations.settings,
                 onPressed: () {
-                  open(
-                    offset: const Offset(0, 20),
+                  showSheet(
+                    context: context,
+                    props: const SheetProps(
+                      isScrollControlled: true,
+                    ),
+                    builder: (_, type) => AdaptiveSheetScaffold(
+                      type: type,
+                      body: const ProxiesSetting(),
+                      title: appLocalizations.settings,
+                    ),
                   );
                 },
-                icon: const Icon(
-                  Icons.more_vert,
-                ),
               ),
-            popup: CommonPopupMenu(
-              items: [
+              if (_hasProviders)
                 PopupMenuItemData(
-                  icon: Icons.tune,
-                  label: appLocalizations.settings,
+                  icon: Icons.poll_outlined,
+                  label: appLocalizations.providers,
                   onPressed: () {
-                    showSheet(
-                      context: context,
-                      props: const SheetProps(
-                        isScrollControlled: true,
-                      ),
-                      builder: (_, type) => AdaptiveSheetScaffold(
-                          type: type,
-                          body: const ProxiesSetting(),
-                          title: appLocalizations.settings,
-                        ),
+                    showExtend(
+                      context,
+                      builder: (_, type) => const ProvidersView(),
                     );
                   },
                 ),
-                if (_hasProviders)
-                  PopupMenuItemData(
-                    icon: Icons.poll_outlined,
-                    label: appLocalizations.providers,
-                    onPressed: () {
-                      showExtend(
-                        context,
-                        builder: (_, type) => const ProvidersView(),
-                      );
-                    },
-                  ),
-                if (!_isTab)
-                  PopupMenuItemData(
-                    icon: Icons.style_outlined,
-                    label: appLocalizations.iconConfiguration,
-                    onPressed: () {
-                      showExtend(
-                        context,
-                        builder: (_, type) => const _IconConfigView(),
-                      );
-                    },
-                  ),
-              ],
-            ),
+              if (!_isTab)
+                PopupMenuItemData(
+                  icon: Icons.style_outlined,
+                  label: appLocalizations.iconConfiguration,
+                  onPressed: () {
+                    showExtend(
+                      context,
+                      builder: (_, type) => const _IconConfigView(),
+                    );
+                  },
+                ),
+            ],
           ),
-        )
-      ];
+        ),
+    ];
+  }
 
   @override
   Null Function(String value) get onSearch => (value) {
@@ -175,16 +177,108 @@ class _ProxiesViewState extends ConsumerState<ProxiesView> with PageMixin {
 
   @override
   void dispose() {
+    final attached = _attachedScaffold;
+    final accessory = _overviewInlineAccessory;
+    _overviewCommandController.dispose();
     super.dispose();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) {
-        ref.read(proxiesQueryProvider.notifier).value = "";
+      if (attached != null &&
+          attached.mounted &&
+          identical(attached.titleAccessory, accessory)) {
+        attached.titleAccessory = null;
       }
     });
   }
 
+  void _scheduleTitleAccessorySync({bool syncActions = false}) {
+    _pendingSyncActions = _pendingSyncActions || syncActions;
+    if (_titleSyncScheduled || !mounted) return;
+    _titleSyncScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _titleSyncScheduled = false;
+      _syncTitleAccessory();
+    });
+  }
+
+  void _syncTitleAccessoryNowOrScheduled({bool syncActions = false}) {
+    if (!mounted) return;
+    final phase = SchedulerBinding.instance.schedulerPhase;
+    if (phase == SchedulerPhase.idle ||
+        phase == SchedulerPhase.postFrameCallbacks) {
+      _syncTitleAccessory(syncActions: syncActions);
+    } else {
+      _scheduleTitleAccessorySync(syncActions: syncActions);
+    }
+  }
+
+  void _syncTitleAccessory({
+    CommonScaffoldState? scaffoldOverride,
+    bool syncActions = false,
+  }) {
+    final shouldSyncActions = syncActions || _pendingSyncActions;
+    _pendingSyncActions = false;
+    if (!mounted) return;
+    final scaffold = scaffoldOverride ?? context.commonScaffoldState;
+    if (scaffold == null || !scaffold.mounted) return;
+    _attachedScaffold = scaffold;
+    final isProxiesPage =
+        ref.read(proxiesActionsStateProvider).pageLabel == PageLabel.proxies;
+    final tickerEnabled = TickerMode.valuesOf(context).enabled;
+    final overviewActive = _readShowAllProfiles(context, ref);
+    final shouldAttach = isProxiesPage && tickerEnabled && overviewActive;
+    if (isProxiesPage && tickerEnabled && shouldSyncActions) {
+      scaffold
+        ..actions = actions
+        ..floatingActionButton = floatingActionButton
+        ..onKeywordsUpdate = onKeywordsUpdate;
+    }
+    if (shouldAttach) {
+      if (!identical(scaffold.titleAccessory, _overviewInlineAccessory)) {
+        scaffold.titleAccessory = _overviewInlineAccessory;
+      }
+    } else if (identical(scaffold.titleAccessory, _overviewInlineAccessory)) {
+      scaffold.titleAccessory = null;
+    }
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final tickerEnabled = TickerMode.valuesOf(context).enabled;
+    final scaffold = context.commonScaffoldState;
+    if (scaffold != null) {
+      _attachedScaffold = scaffold;
+    }
+    final currentLocale = Localizations.maybeLocaleOf(context);
+    final currentIntlLocale = Intl.getCurrentLocale();
+    final localeChanged = _hasRecordedLocale &&
+        (currentLocale != _lastLocale ||
+            currentIntlLocale != _lastIntlLocale);
+    _lastLocale = currentLocale;
+    _lastIntlLocale = currentIntlLocale;
+    _hasRecordedLocale = true;
+
+    final isProxiesPage =
+        ref.read(proxiesActionsStateProvider).pageLabel == PageLabel.proxies;
+    if (localeChanged && isProxiesPage && tickerEnabled) {
+      // Rebuild cached action tooltips/menus in the new locale while preserving search state.
+      _scheduleTitleAccessorySync(syncActions: true);
+    }
+    if (_lastTickerEnabled != tickerEnabled) {
+      _lastTickerEnabled = tickerEnabled;
+      _scheduleTitleAccessorySync(syncActions: tickerEnabled);
+    } else if (tickerEnabled &&
+        isProxiesPage &&
+        _readShowAllProfiles(context, ref) &&
+        scaffold != null &&
+        scaffold.titleAccessory == null) {
+      _scheduleTitleAccessorySync();
+    }
+  }
+
   @override
   void initState() {
+    _overviewCommandController.inlineAccessoryWidget = _overviewInlineAccessory;
     ref.listenManual(
       proxiesActionsStateProvider,
       fireImmediately: true,
@@ -195,9 +289,14 @@ class _ProxiesViewState extends ConsumerState<ProxiesView> with PageMixin {
         if (next.pageLabel == PageLabel.proxies) {
           _hasProviders = next.hasProviders;
           _isTab = next.type == ProxiesType.tab;
-          initPageState();
+          if (prev?.pageLabel != PageLabel.proxies) {
+            initPageState();
+          } else {
+            _scheduleTitleAccessorySync(syncActions: true);
+          }
           return;
         } else {
+          _syncTitleAccessoryNowOrScheduled();
           WidgetsBinding.instance.addPostFrameCallback((_) {
             if (mounted) {
               ref.read(proxiesQueryProvider.notifier).value = "";
@@ -206,12 +305,33 @@ class _ProxiesViewState extends ConsumerState<ProxiesView> with PageMixin {
         }
       },
     );
+    ref.listenManual<bool>(
+      nodeOverviewEnabledProvider,
+      (_, __) => _syncTitleAccessoryNowOrScheduled(syncActions: true),
+    );
+    ref.listenManual<ProxiesScope>(
+      proxiesScopeProvider,
+      (_, __) => _syncTitleAccessoryNowOrScheduled(syncActions: true),
+    );
+    ref.listenManual<bool>(
+      expertNavigationExpandedProvider,
+      (_, __) => _syncTitleAccessoryNowOrScheduled(syncActions: true),
+    );
+    ref.listenManual<bool>(
+      globalModeEnabledProvider,
+      (_, __) => _syncTitleAccessoryNowOrScheduled(syncActions: true),
+    );
+    ref.listenManual<bool>(
+      profilesProvider.select((profiles) => profiles.isEmpty),
+      (_, __) => _syncTitleAccessoryNowOrScheduled(syncActions: true),
+    );
     super.initState();
   }
 
   @override
   void initPageState() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
       final commonScaffoldState = context.commonScaffoldState;
       commonScaffoldState?.actions = actions;
       commonScaffoldState?.floatingActionButton = floatingActionButton;
@@ -221,33 +341,61 @@ class _ProxiesViewState extends ConsumerState<ProxiesView> with PageMixin {
           onSearch: onSearch,
         ),
       );
+      _syncTitleAccessory(scaffoldOverride: commonScaffoldState);
     });
   }
 
   @override
   Widget build(BuildContext context) {
+    final scaffold = context.commonScaffoldState;
+    if (scaffold != null) {
+      _attachedScaffold = scaffold;
+      final hasNavBar = scaffold.hasNavigationBar;
+      final isProxiesPage =
+          ref.read(proxiesActionsStateProvider).pageLabel == PageLabel.proxies;
+      final tickerEnabled = TickerMode.valuesOf(context).enabled;
+      final overviewActive = _readShowAllProfiles(context, ref);
+      if (_lastHasNavigationBar != hasNavBar) {
+        final changed = _lastHasNavigationBar != null;
+        _lastHasNavigationBar = hasNavBar;
+        if (changed && isProxiesPage && tickerEnabled) {
+          _scheduleTitleAccessorySync(syncActions: true);
+        }
+      }
+      if (isProxiesPage &&
+          tickerEnabled &&
+          overviewActive &&
+          scaffold.titleAccessory == null) {
+        _scheduleTitleAccessorySync();
+      } else if ((!isProxiesPage || !tickerEnabled || !overviewActive) &&
+          identical(scaffold.titleAccessory, _overviewInlineAccessory)) {
+        _scheduleTitleAccessorySync();
+      }
+    }
     final proxiesType = ref.watch(
       proxiesStyleSettingProvider.select(
         (state) => state.type,
       ),
     );
     return NodeOverviewScopeView(
-        currentView: switch (proxiesType) {
-      ProxiesType.tab => const ProxiesTabView(),
-      ProxiesType.list => const ProxiesListView(),
-    });
+      commandController: _overviewCommandController,
+      currentView: switch (proxiesType) {
+        ProxiesType.tab => const ProxiesTabView(),
+        ProxiesType.list => const ProxiesListView(),
+      },
+    );
   }
 }
 
-bool _showAllProfiles(BuildContext context, WidgetRef ref) {
-  if (!ref.watch(nodeOverviewEnabledProvider)) return false;
-  final expertExpanded = ref.watch(expertNavigationExpandedProvider);
+bool _readShowAllProfiles(BuildContext context, WidgetRef ref) {
+  if (!ref.read(nodeOverviewEnabledProvider)) return false;
+  final expertExpanded = ref.read(expertNavigationExpandedProvider);
   if (!expertExpanded &&
       (context.commonScaffoldState?.hasNavigationBar ?? false)) {
     return true;
   }
-  final count = ref.watch(profilesProvider.select((profiles) => profiles.length));
-  return count == 0 || ref.watch(proxiesScopeProvider) == ProxiesScope.all;
+  final count = ref.read(profilesProvider).length;
+  return count == 0 || ref.read(proxiesScopeProvider) == ProxiesScope.all;
 }
 
 class _ModeSelectorAction extends ConsumerWidget {
@@ -267,6 +415,7 @@ class _ModeSelectorAction extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    Localizations.maybeLocaleOf(context);
     final mode = ref.watch(
       patchClashConfigProvider.select((state) => state.mode),
     );

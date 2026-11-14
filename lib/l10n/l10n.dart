@@ -8394,6 +8394,16 @@ class AppLocalizations {
     );
   }
 
+  /// `① Add subscription  ·  ② Auto speedtest  ·  ③ Connect fastest`
+  String get nodeOverviewEmptyStepsHint {
+    return Intl.message(
+      '① Add subscription  ·  ② Auto speedtest  ·  ③ Connect fastest',
+      name: 'nodeOverviewEmptyStepsHint',
+      desc: '',
+      args: [],
+    );
+  }
+
   /// `No tested available nodes right now (untested or all timed out)`
   String get nodeOverviewAvailableFilterEmpty {
     return Intl.message(
@@ -8474,6 +8484,16 @@ class AppLocalizations {
     );
   }
 
+  /// `Smart`
+  String get nodeOverviewSmartSelectCompact {
+    return Intl.message(
+      'Smart',
+      name: 'nodeOverviewSmartSelectCompact',
+      desc: '',
+      args: [],
+    );
+  }
+
   /// `Manual Select`
   String get nodeOverviewManualSelectTitle {
     return Intl.message(
@@ -8489,6 +8509,16 @@ class AppLocalizations {
     return Intl.message(
       'Fixed IP',
       name: 'nodeOverviewManualSelectSubtitle',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Fixed IP`
+  String get nodeOverviewManualSelectCompact {
+    return Intl.message(
+      'Fixed IP',
+      name: 'nodeOverviewManualSelectCompact',
       desc: '',
       args: [],
     );

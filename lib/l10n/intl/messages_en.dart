@@ -1198,6 +1198,9 @@ class MessageLookup extends MessageLookupByLibrary {
     "nodeOverviewDeviceLimitReached": MessageLookupByLibrary.simpleMessage(
       "Device limit reached",
     ),
+    "nodeOverviewEmptyStepsHint": MessageLookupByLibrary.simpleMessage(
+      "① Add subscription  ·  ② Auto speedtest  ·  ③ Connect fastest",
+    ),
     "nodeOverviewEmptySubtitle": MessageLookupByLibrary.simpleMessage(
       "Paste your subscription link and confirm to auto-test and connect to the fastest node",
     ),
@@ -1243,6 +1246,9 @@ class MessageLookup extends MessageLookupByLibrary {
     "nodeOverviewLockedManualNode": m47,
     "nodeOverviewManageProfiles": MessageLookupByLibrary.simpleMessage(
       "Manage profiles / update subscription",
+    ),
+    "nodeOverviewManualSelectCompact": MessageLookupByLibrary.simpleMessage(
+      "Fixed IP",
     ),
     "nodeOverviewManualSelectSubtitle": MessageLookupByLibrary.simpleMessage(
       "Fixed IP",
@@ -1336,6 +1342,9 @@ class MessageLookup extends MessageLookupByLibrary {
     ),
     "nodeOverviewSmartInUse": MessageLookupByLibrary.simpleMessage(
       "Smart active",
+    ),
+    "nodeOverviewSmartSelectCompact": MessageLookupByLibrary.simpleMessage(
+      "Smart",
     ),
     "nodeOverviewSmartSelectSubtitle": MessageLookupByLibrary.simpleMessage(
       "Better experience",

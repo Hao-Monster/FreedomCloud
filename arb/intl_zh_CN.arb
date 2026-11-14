@@ -1354,6 +1354,7 @@
   "nodeOverviewTurnOffProxy": "关闭代理",
   "nodeOverviewEmptyTitle": "还没有添加订阅配置",
   "nodeOverviewEmptySubtitle": "粘贴订阅链接并点击确定，软件将自动测速并连接最快节点",
+  "nodeOverviewEmptyStepsHint": "① 添加订阅  ·  ② 自动测速  ·  ③ 一键连最快",
   "nodeOverviewAvailableFilterEmpty": "当前没有测速可用的节点（可能尚未测速或节点全部超时）",
   "nodeOverviewShowAllNodes": "显示全部节点",
   "nodeOverviewAutoConnectedBest": "已自动连接最快节点：{profile} · {node}（{delay} ms）",
@@ -1396,8 +1397,10 @@
   },
   "nodeOverviewSmartSelectTitle": "智能选择节点",
   "nodeOverviewSmartSelectSubtitle": "体验更好",
+  "nodeOverviewSmartSelectCompact": "智能选路",
   "nodeOverviewManualSelectTitle": "手动选择节点",
   "nodeOverviewManualSelectSubtitle": "固定IP",
+  "nodeOverviewManualSelectCompact": "固定IP",
   "nodeOverviewSmartInUse": "智能使用中",
   "nodeOverviewProxyConnectedSmartWithNode": "代理已开启 · 智能选择：{profile} · {node}",
   "@nodeOverviewProxyConnectedSmartWithNode": {

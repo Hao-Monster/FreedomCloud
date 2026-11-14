@@ -500,8 +500,12 @@ void main() {
       find.text(appLocalizations.nodeOverviewHistoryNotice),
       findsNothing,
     );
+    expect(
+      find.byKey(const ValueKey('overview-history-notice-tooltip')),
+      findsNothing,
+    );
 
-    // Switch to 大佬模式 -> geeky protocol telemetry & history notice immediately appear.
+    // Switch to 大佬模式 -> geeky protocol telemetry & history notice tooltip appear without taking a full row.
     await tester.tap(
       find.byKey(const ValueKey('navigation-expert-mode-toggle')),
     );
@@ -513,8 +517,29 @@ void main() {
     );
     expect(
       find.text(appLocalizations.nodeOverviewHistoryNotice),
-      findsOneWidget,
+      findsNothing,
     );
+    final historyNoticeTooltip =
+        find.byKey(const ValueKey('overview-history-notice-tooltip'));
+    expect(historyNoticeTooltip, findsOneWidget);
+    final tooltipPredicate = find.byWidgetPredicate(
+      (widget) =>
+          widget is Tooltip &&
+          widget.message == appLocalizations.nodeOverviewHistoryNotice,
+    );
+    final hasMatchingTooltip = (tester.widget<Widget>(historyNoticeTooltip)
+                is Tooltip &&
+            tester.widget<Tooltip>(historyNoticeTooltip).message ==
+                appLocalizations.nodeOverviewHistoryNotice) ||
+        find
+            .descendant(of: historyNoticeTooltip, matching: tooltipPredicate)
+            .evaluate()
+            .isNotEmpty ||
+        find
+            .ancestor(of: historyNoticeTooltip, matching: tooltipPredicate)
+            .evaluate()
+            .isNotEmpty;
+    expect(hasMatchingTooltip, isTrue);
   });
 
   testWidgets(
