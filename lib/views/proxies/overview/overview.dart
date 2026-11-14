@@ -4036,12 +4036,33 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
                   final toggleAction = globalState.isAppControllerReady
                       ? () => unawaited(_toggleProxyMasterSwitch())
                       : null;
+                  String? activeFallbackCountryCode;
+                  final activeLabel = snapshot.activeNodeLabel;
+                  final activeProfileObj = snapshot.activeProfileObj;
+                  if (activeLabel != null && activeLabel.isNotEmpty) {
+                    final resolved = ref
+                        .read(nodeCountryResolverProvider)
+                        .resolveCountryCode(
+                          profileId: activeProfileObj?.id ?? '',
+                          profileLabel: activeProfileObj?.label,
+                          nodeName: activeLabel,
+                          isLiveActive: activeProfileObj != null &&
+                              snapshot.liveActiveProfileIds
+                                  .contains(activeProfileObj.id),
+                          inUse: true,
+                        );
+                    activeFallbackCountryCode =
+                        resolved != kUnknownCountryCode
+                            ? resolved
+                            : inferCountryCodeFromText(activeLabel);
+                  }
                   final floatingProxyDock = profiles.isNotEmpty
                       ? FloatingProxyDock(
                           key: const ValueKey('overview-floating-proxy-dock'),
                           isRunning: isProxyRunning,
                           pendingTarget: effectivePendingTarget,
                           startCancelable: statusStartCancelable,
+                          fallbackCountryCode: activeFallbackCountryCode,
                           onToggle: toggleAction,
                         )
                       : null;
@@ -4053,6 +4074,8 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
                       ? computeFloatingProxyDockScrollClearance(
                           textScale: paneTextScale,
                           bottomMargin: floatingBottomMargin,
+                          viewportWidth: paneConstraints.maxWidth,
+                          viewportHeight: paneConstraints.maxHeight,
                         )
                       : 32.0;
                   return Stack(

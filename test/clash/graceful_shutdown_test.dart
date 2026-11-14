@@ -14,6 +14,7 @@ import 'package:flclashx/providers/providers.dart';
 import 'package:flclashx/state.dart';
 import 'package:flclashx/views/dashboard/widgets/quick_options.dart';
 import 'package:flclashx/views/dashboard/widgets/start_button.dart';
+import 'package:flclashx/widgets/earth_proxy_switch.dart';
 import 'package:flclashx/widgets/tun_status.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
@@ -905,23 +906,14 @@ void main() {
       );
       await tester.pump();
 
-      final surface = tester.widget<DecoratedBox>(
-        find.byKey(const ValueKey('dashboard-floating-proxy-dock-surface')),
-      );
-      final decoration = surface.decoration as BoxDecoration;
-      final expectedBgColor = Color.alphaBlend(
-        kLatencyFastColor.withValues(alpha: 0.14),
-        const Color(0xFF111826).withValues(alpha: 0.96),
-      );
+      final earthElement = tester.element(find.byType(EarthProxySwitch));
+      final earthSnapshot = EarthProxySwitch.debugSnapshotOf(earthElement);
+      expect(earthSnapshot, isNotNull);
       expect(
-        decoration.color,
-        expectedBgColor,
+        earthSnapshot!.visualActive,
+        isTrue,
         reason:
-            'StartButton must retain active green palette throughout "正在关闭..." without flashing grey mid-teardown',
-      );
-      expect(
-        (decoration.border! as Border).top.color,
-        kLatencyFastColor.withValues(alpha: 0.48),
+            'StartButton must retain active Earth visuals throughout "正在关闭..." without flashing grey mid-teardown',
       );
       expect(find.text(appLocalizations.tunStatusStopping), findsOneWidget);
 

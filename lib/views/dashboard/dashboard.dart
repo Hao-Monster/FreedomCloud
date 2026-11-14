@@ -265,6 +265,8 @@ class _DashboardViewState extends ConsumerState<DashboardView> with PageMixin {
                   ? computeFloatingProxyDockScrollClearance(
                       textScale: paneTextScale,
                       bottomMargin: floatingBottomMargin,
+                      viewportWidth: paneConstraints.maxWidth,
+                      viewportHeight: paneConstraints.maxHeight,
                     )
                   : 16.0;
               return Stack(

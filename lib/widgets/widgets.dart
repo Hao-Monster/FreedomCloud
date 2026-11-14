@@ -8,6 +8,7 @@ export 'container.dart';
 export 'dialog.dart';
 export 'disabled_mask.dart';
 export 'donut_chart.dart';
+export 'earth_proxy_switch.dart';
 export 'effect.dart';
 export 'fade_box.dart';
 export 'flag.dart';

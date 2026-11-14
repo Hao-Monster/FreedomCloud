@@ -18,6 +18,7 @@ import 'package:flclashx/views/dashboard/widgets/network_speed.dart';
 import 'package:flclashx/views/dashboard/widgets/start_button.dart';
 import 'package:flclashx/widgets/card.dart';
 import 'package:flclashx/widgets/donut_chart.dart';
+import 'package:flclashx/widgets/earth_proxy_switch.dart';
 import 'package:flclashx/widgets/line_chart.dart';
 import 'package:flclashx/widgets/scaffold.dart';
 import 'package:flclashx/widgets/super_grid.dart';
@@ -783,18 +784,12 @@ void main() {
       final switchFinder = find.byKey(
         const ValueKey('dashboard-proxy-toggle'),
       );
-      final railFinder = find.byKey(
-        const ValueKey('dashboard-proxy-toggle-rail'),
-      );
-      final thumbFinder = find.byKey(
-        const ValueKey('dashboard-proxy-toggle-thumb'),
-      );
+      final earthFinder = find.byType(EarthProxySwitch);
       final scrollFinder = find.byKey(const ValueKey('dashboard-scroll-view'));
 
       expect(dockFinder, findsOneWidget);
       expect(switchFinder, findsOneWidget);
-      expect(railFinder, findsOneWidget);
-      expect(thumbFinder, findsOneWidget);
+      expect(earthFinder, findsOneWidget);
       expect(
         find.descendant(
           of: find.byType(StartButton),
@@ -805,8 +800,6 @@ void main() {
 
       final initialDockRect = tester.getRect(dockFinder);
       final scrollRect = tester.getRect(scrollFinder);
-      final switchRect = tester.getRect(switchFinder);
-      final thumbOffCenter = tester.getCenter(thumbFinder);
       expect(initialDockRect.center.dx, closeTo(scrollRect.center.dx, 1.5));
       final expectedBottomMargin = math.min(
         16.0,
@@ -817,33 +810,47 @@ void main() {
         closeTo(scrollRect.bottom - expectedBottomMargin, 1.5),
       );
       expect(initialDockRect.width, lessThan(220));
-      expect(thumbOffCenter.dx, lessThan(switchRect.center.dx));
-      expect(find.text('开启代理'), findsOneWidget);
+      expect(find.text('开启代理'), findsNothing);
 
-      // Manual drag must not trigger toggle or displace the thumb.
+      // Manual 3D drag rotates the globe without triggering toggle.
+      final yawBeforeDrag =
+          EarthProxySwitch.debugSnapshotOf(tester.element(earthFinder))!.yaw;
       await tester.drag(switchFinder, const Offset(90, 0));
       await tester.pumpAndSettle();
       expect(controller.statusUpdates, isEmpty);
-      expect(tester.getCenter(thumbFinder).dx, closeTo(thumbOffCenter.dx, 0.5));
+      expect(
+        (EarthProxySwitch.debugSnapshotOf(tester.element(earthFinder))!.yaw -
+                yawBeforeDrag)
+            .abs(),
+        greaterThan(0.1),
+      );
 
-      // Single click auto-slides thumb to ON without rendering stopwatch.
+      // Single click turns Earth ON immediately without rendering stopwatch or pill text.
       await tester.tap(switchFinder);
       await tester.pumpAndSettle();
       expect(controller.statusUpdates, [true]);
-      expect(tester.getCenter(thumbFinder).dx, greaterThan(switchRect.center.dx));
-      expect(find.text('运行中'), findsOneWidget);
+      expect(tester.widget<EarthProxySwitch>(earthFinder).isRunning, isTrue);
+      expect(
+        EarthProxySwitch.debugSnapshotOf(tester.element(earthFinder))!.activeMix,
+        closeTo(1.0, 0.01),
+      );
+      expect(find.text('运行中'), findsNothing);
       expect(find.text('00:00:01'), findsNothing);
 
-      // Mouse hover over active switch surfaces disconnect label and resets on exit.
+      // Mouse hover over active Earth does not render capsule captions or trigger extra toggle.
       final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
       await mouse.addPointer(location: Offset.zero);
       addTearDown(mouse.removePointer);
       await mouse.moveTo(tester.getCenter(switchFinder));
       await tester.pumpAndSettle();
-      expect(find.text('关闭代理'), findsOneWidget);
+      expect(find.text('关闭代理'), findsNothing);
+      expect(find.text('运行中'), findsNothing);
+      expect(controller.statusUpdates, [true]);
       await mouse.moveTo(const Offset(2, 2));
       await tester.pumpAndSettle();
-      expect(find.text('运行中'), findsOneWidget);
+      expect(find.text('关闭代理'), findsNothing);
+      expect(find.text('运行中'), findsNothing);
+      expect(controller.statusUpdates, [true]);
 
       // Scrolling keeps dock anchored and leaves bottom-most card unobstructed at maxScrollExtent.
       await tester.drag(scrollFinder, const Offset(0, -120));

@@ -385,7 +385,10 @@ void main() {
           const ValueKey('dashboard-floating-proxy-dock'),
         );
         expect(dockFinder, findsOneWidget);
-        expect(find.text(appLocalizations.running), findsOneWidget);
+        expect(
+          tester.widget<EarthProxySwitch>(find.byType(EarthProxySwitch)).isRunning,
+          isTrue,
+        );
         final initialDock = tester.widget<FloatingProxyDock>(dockFinder);
 
         runTimeNotifier.updateMs(2000);
@@ -403,7 +406,10 @@ void main() {
           identical(tester.widget<FloatingProxyDock>(dockFinder), initialDock),
           isTrue,
         );
-        expect(find.text(appLocalizations.running), findsOneWidget);
+        expect(
+          tester.widget<EarthProxySwitch>(find.byType(EarthProxySwitch)).isRunning,
+          isTrue,
+        );
 
         runTimeNotifier.updateMs(null);
         await tester.pumpAndSettle();
@@ -412,8 +418,8 @@ void main() {
           isFalse,
         );
         expect(
-          find.text(appLocalizations.nodeOverviewTurnOnProxy),
-          findsOneWidget,
+          tester.widget<EarthProxySwitch>(find.byType(EarthProxySwitch)).isRunning,
+          isFalse,
         );
       },
     );

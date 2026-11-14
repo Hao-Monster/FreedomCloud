@@ -24,6 +24,7 @@ import 'package:flclashx/views/proxies/card.dart';
 import 'package:flclashx/views/proxies/list.dart';
 import 'package:flclashx/views/proxies/overview/overview.dart';
 import 'package:flclashx/views/proxies/proxies.dart';
+import 'package:flclashx/widgets/earth_proxy_switch.dart';
 import 'package:flclashx/widgets/scaffold.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
@@ -8246,10 +8247,14 @@ void main() {
       },
     );
 
-    // Disconnected state shows 代理未开启 + 开启代理 button.
+    // Disconnected state shows 代理未开启 + circular Earth proxy toggle button.
     expect(find.byKey(const ValueKey('overview-connection-bar')), findsOneWidget);
     expect(find.textContaining('代理未开启'), findsOneWidget);
-    expect(find.text('开启代理'), findsOneWidget);
+    expect(find.byKey(const ValueKey('overview-proxy-toggle')), findsOneWidget);
+    expect(
+      tester.widget<EarthProxySwitch>(find.byType(EarthProxySwitch)).isRunning,
+      isFalse,
+    );
 
     // Tapping an active node's 使用 while proxy is off automatically starts proxy!
     await tester.tap(find.byKey(const ValueKey('overview-use-a-新加坡 01')));
@@ -9131,20 +9136,16 @@ void main() {
       );
 
       final switchFinder = find.byKey(const ValueKey('overview-proxy-toggle'));
-      final railFinder =
-          find.byKey(const ValueKey('overview-proxy-toggle-rail'));
-      final thumbFinder =
-          find.byKey(const ValueKey('overview-proxy-toggle-thumb'));
+      final earthFinder = find.byType(EarthProxySwitch);
 
       // 1. Structure & OFF state assertions.
       expect(switchFinder, findsOneWidget);
-      expect(railFinder, findsOneWidget);
-      expect(thumbFinder, findsOneWidget);
-      expect(find.text('开启代理'), findsOneWidget);
-
-      final switchRect = tester.getRect(switchFinder);
-      final thumbOffCenter = tester.getCenter(thumbFinder);
-      expect(thumbOffCenter.dx, lessThan(switchRect.center.dx));
+      expect(earthFinder, findsOneWidget);
+      expect(find.text('开启代理'), findsNothing);
+      expect(
+        EarthProxySwitch.debugSnapshotOf(tester.element(earthFinder))!.activeMix,
+        0.0,
+      );
 
       expect(
         tester.getSemantics(switchFinder),
@@ -9161,13 +9162,20 @@ void main() {
         ),
       );
 
-      // 2. Manual drag gesture MUST NOT trigger proxy toggle or move thumb.
+      // 2. Manual drag gesture rotates 3D Earth and MUST NOT trigger proxy toggle.
+      final yawBeforeDrag =
+          EarthProxySwitch.debugSnapshotOf(tester.element(earthFinder))!.yaw;
       await tester.drag(switchFinder, const Offset(90, 0));
       await tester.pumpAndSettle();
       expect(controller.statusUpdates, isEmpty);
-      expect(tester.getCenter(thumbFinder).dx, closeTo(thumbOffCenter.dx, 0.5));
+      expect(
+        (EarthProxySwitch.debugSnapshotOf(tester.element(earthFinder))!.yaw -
+                yawBeforeDrag)
+            .abs(),
+        greaterThan(0.1),
+      );
 
-      // 3. Single click automatically slides thumb LEFT -> RIGHT to ON state.
+      // 3. Single click transitions Earth smoothly to ON state.
       controller.onUpdateStatus = ({required isStart}) async {
         container.read(runTimeProvider.notifier).value = isStart ? 1000 : null;
       };
@@ -9176,14 +9184,18 @@ void main() {
 
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 160));
-      final thumbMidOnCenter = tester.getCenter(thumbFinder);
-      expect(thumbMidOnCenter.dx, greaterThan(thumbOffCenter.dx + 8));
-      expect(thumbMidOnCenter.dx, lessThan(switchRect.right - 28));
+      final midOnMix =
+          EarthProxySwitch.debugSnapshotOf(tester.element(earthFinder))!
+              .activeMix;
+      expect(midOnMix, greaterThan(0.05));
+      expect(midOnMix, lessThan(0.99));
 
       await tester.pumpAndSettle();
-      final thumbOnCenter = tester.getCenter(thumbFinder);
-      expect(thumbOnCenter.dx, greaterThan(switchRect.center.dx));
-      expect(find.text('运行中'), findsOneWidget);
+      expect(
+        EarthProxySwitch.debugSnapshotOf(tester.element(earthFinder))!.activeMix,
+        closeTo(1.0, 0.01),
+      );
+      expect(find.text('运行中'), findsNothing);
       expect(
         tester.getSemantics(switchFinder),
         matchesSemantics(
@@ -9199,31 +9211,40 @@ void main() {
         ),
       );
 
-      // 4. Hover while ON displays disconnect warning ('关闭代理') and clears on exit.
+      // 4. Hover while ON does not render pill captions or trigger extra toggle.
       final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
       await mouse.addPointer(location: Offset.zero);
       addTearDown(mouse.removePointer);
       await mouse.moveTo(tester.getCenter(switchFinder));
       await tester.pumpAndSettle();
-      expect(find.text('关闭代理'), findsOneWidget);
+      expect(find.text('关闭代理'), findsNothing);
+      expect(find.text('运行中'), findsNothing);
+      expect(controller.statusUpdates, [true]);
 
       await mouse.moveTo(const Offset(2, 2));
       await tester.pumpAndSettle();
-      expect(find.text('运行中'), findsOneWidget);
+      expect(find.text('关闭代理'), findsNothing);
+      expect(find.text('运行中'), findsNothing);
+      expect(controller.statusUpdates, [true]);
 
-      // 5. Single click again automatically slides thumb RIGHT -> LEFT to OFF state.
+      // 5. Single click again transitions Earth smoothly back to OFF state.
       await tester.tap(switchFinder);
       expect(controller.statusUpdates, [true, false]);
 
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 160));
-      final thumbMidOffCenter = tester.getCenter(thumbFinder);
-      expect(thumbMidOffCenter.dx, lessThan(thumbOnCenter.dx - 8));
-      expect(thumbMidOffCenter.dx, greaterThan(thumbOffCenter.dx + 4));
+      final midOffMix =
+          EarthProxySwitch.debugSnapshotOf(tester.element(earthFinder))!
+              .activeMix;
+      expect(midOffMix, lessThan(0.95));
+      expect(midOffMix, greaterThan(0.01));
 
       await tester.pumpAndSettle();
-      expect(tester.getCenter(thumbFinder).dx, closeTo(thumbOffCenter.dx, 0.5));
-      expect(find.text('开启代理'), findsOneWidget);
+      expect(
+        EarthProxySwitch.debugSnapshotOf(tester.element(earthFinder))!.activeMix,
+        closeTo(0.0, 0.01),
+      );
+      expect(find.text('开启代理'), findsNothing);
 
       // 6. Responsive 2.0x scaling across 320px/1200px and locales in ON state.
       for (final (width, locale) in [
@@ -9360,7 +9381,10 @@ void main() {
     await tester.tap(switchFinder);
     await tester.pumpAndSettle();
     expect(controller.statusUpdates, [true]);
-    expect(find.text('运行中'), findsOneWidget);
+    expect(
+      tester.widget<EarthProxySwitch>(find.byType(EarthProxySwitch)).isRunning,
+      isTrue,
+    );
     expect(find.text('代理已开启 · 正在使用 主力订阅 · 节点 01'), findsOneWidget);
 
     // 4. Side hit-testing outside capsule passes cleanly to node rows/buttons; bezel absorbs stray taps.
