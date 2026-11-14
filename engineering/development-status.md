@@ -2,6 +2,24 @@
 
 更新日期：2026-11-14。当前阶段是快速开发、快速迭代和部分功能预览。本文记录来源与验收边界；每次继续开发仍需核实实际 Git/PR/CI 状态，不能把历史报告视为当前通过证明。
 
+## 纯圆裸地球 3D 代理总开关实现与 TDD 验收（`6fb6c45e`，2026-11-14）
+
+- 来源基线与本地提交：基于本地 `development` 基线 [`0fcf01ed`](file:///e:/CodeWorkstation/FlClashX/engineering/development-status.md) 完成 3D 纯圆裸地球代理总开关开发与联调重构，代码提交 [`6fb6c45e`](file:///e:/CodeWorkstation/FlClashX/lib/widgets/earth_proxy_switch.dart)（`6fb6c45eda9d2fdf56794605e1a22bc9c890831d`），严格纳入 10 个任务文件（[`earth_proxy_switch.dart`](file:///e:/CodeWorkstation/FlClashX/lib/widgets/earth_proxy_switch.dart)、[`tactile_proxy_switch.dart`](file:///e:/CodeWorkstation/FlClashX/lib/widgets/tactile_proxy_switch.dart)、[`widgets.dart`](file:///e:/CodeWorkstation/FlClashX/lib/widgets/widgets.dart)、[`overview.dart`](file:///e:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart)、[`dashboard.dart`](file:///e:/CodeWorkstation/FlClashX/lib/views/dashboard/dashboard.dart)、[`earth_proxy_switch_tdd_test.dart`](file:///e:/CodeWorkstation/FlClashX/test/widgets/earth_proxy_switch_tdd_test.dart)、[`batch4_ui_virtualization_and_providers_test.dart`](file:///e:/CodeWorkstation/FlClashX/test/perf/batch4_ui_virtualization_and_providers_test.dart)、[`graceful_shutdown_test.dart`](file:///e:/CodeWorkstation/FlClashX/test/clash/graceful_shutdown_test.dart)、[`dashboard_widgets_test.dart`](file:///e:/CodeWorkstation/FlClashX/test/views/dashboard_widgets_test.dart)、[`node_overview_test.dart`](file:///e:/CodeWorkstation/FlClashX/test/views/node_overview_test.dart)）；工作区既有未提交/未跟踪文件（[`dashboard_render_test.dart`](file:///e:/CodeWorkstation/FlClashX/test/views/dashboard_render_test.dart)、`coverage/`、`engineering/testing/`）原样保留未纳入。
+- 核心实现与性能架构：
+  1. **裸地球总开关 [`earth_proxy_switch.dart`](file:///e:/CodeWorkstation/FlClashX/lib/widgets/earth_proxy_switch.dart)**：零新增第三方依赖；采用平滑大气辉光与自适应大直径（`computeFloatingEarthDiameter` 钳位 `112.0`–`152.0`），移除胶囊外壳、黑圈与静态文字标签，仅 `pendingTarget != null` 时叠加紧凑启停状态徽章（保留 `tunStatusStarting`/`tunStatusStopping` 优雅关停与键盘焦点框兼容）。
+  2. **跨国航线与 3D 交互**：固定中国大陆起点（`kEarthOriginCountryCode = 'CN'`）连线至动态检测出口 IP 国家或活跃节点兜底国家（`kEarthCountryCentroids` 多国经纬度质心），`'XYZ'` 欧拉角居中构图，开启时持续流转 5 颗网络数据粒子与落地波纹；支持 `< 5px` 零延迟点击切换、`>= 5px` 3D 鼠标/触控拖拽转球（开机静置 `> 1.8s` 自动回正）、`_CircularEarthHitBox` 外角命中透传底层列表与外缘羽化区防误触吸纳。
+  3. **性能门禁**：共享离屏单次同步光栅贴图缓存 + `ui.Vertices.raw` 顶点绘制；关闭静置、`TickerMode` 关闭或应用隐藏/后台状态自动停表 `0 fps`；运行稳态采用 `_steadyFrameStepSec = 0.0315`（`~30 fps`）节流；`FLUTTER_TEST` 下有限动画收敛不卡 `pumpAndSettle`。
+  4. **共享 Dock 与视图集成（[`tactile_proxy_switch.dart`](file:///e:/CodeWorkstation/FlClashX/lib/widgets/tactile_proxy_switch.dart)、[`overview.dart`](file:///e:/CodeWorkstation/FlClashX/lib/views/proxies/overview/overview.dart)、[`dashboard.dart`](file:///e:/CodeWorkstation/FlClashX/lib/views/dashboard/dashboard.dart)）**：代理总览页与经典仪表盘 [`start_button.dart`](file:///e:/CodeWorkstation/FlClashX/lib/views/dashboard/widgets/start_button.dart) 统一渲染裸地球总开关，`computeFloatingProxyDockScrollClearance` 按视口宽/高计算滚动留白，且保持 1 秒 `runTimeProvider` 计时跳动不触发 `FloatingProxyDock` 重建。
+- 本地验证实测记录（最终代码定稿后实测；本机工具链 `Flutter 3.47.4 / Dart 3.13.3`，与 CI `.github/workflows/quality-gate.yaml` 声明的 `FLUTTER_VERSION: "3.41.7"` 存在版本差异）：
+  - **静态分析（`E:\flutter\bin\dart.bat analyze --fatal-warnings` 覆盖 11 个改动及相关文件）**：**PASS**（退出码 `0`，`0 errors / 0 warnings`，15 条 `info`）；
+  - **目标 Flutter TDD 与回归测试（`E:\flutter\bin\flutter.bat test --no-pub -r expanded` 覆盖上述 5 个测试文件及 [`proxy_plan_a_command_header_tdd_test.dart`](file:///e:/CodeWorkstation/FlClashX/test/views/proxy_plan_a_command_header_tdd_test.dart) 共 6 文件）**：**PASS**（`+170: All tests passed!`，`0 failed, 0 skipped`，退出码 `0`）；
+  - **补丁格式检查（`git diff --cached --check`）**：**PASS**（退出码 `0`）。
+- 尚未运行与交付边界（NOT RUN）：
+  - **Windows 预览包构建 / 安装包打包**：**NOT RUN**（本轮仅完成开发实现、提交与回归验证）；
+  - **宿主机实机 `FlClashX.exe` 真实渲染与代理/TUN 运行**：**NOT RUN**（遵守协作规则未在开发工作站拉起候选程序或触碰现役代理/TUN）；
+  - **Go Core / Windows Agent & Helper 测试与 `.github/workflows/quality-gate.yaml` 全仓库检查**：**NOT RUN**；
+  - **远端 `freedomcloud` 推送 / PR / 合并**：**NOT RUN**。
+
 ## 代理页方案 A 顶栏指挥舱 Windows `amd64` 预览包交付（`0df4230e3f7e`，2026-11-14）
 
 - 构建来源与完整包含范围：基于本地 `development` 提交 `0df4230e3f7e235be0d0283f90125718753478ab` 的干净 `git archive` 快照（代码提交 `c5c853722294a99e00ee637a205c2f076c9eefdc`，tree `cfceef248baa1054de9c1f3669c42a704f5bcde0`，工作区原有未提交单测文件 [`dashboard_render_test.dart`](file:///e:/CodeWorkstation/FlClashX/test/views/dashboard_render_test.dart) 与未跟踪目录 `coverage/`、`engineering/testing/` 已按规则隔离并保留未动，生产代码零未提交差异），由独立工具集 [`Build-PerfOverhaul.ps1`](file:///E:/Temp/fcx-freedomnet-tools-20261114-r2/Build-PerfOverhaul.ps1)（工作根目录 `E:\Temp\fcx-freedomnet-ui-r7`）完成 15 阶段全栈同源重编，完整纳入 `a461647ce223..c5c85372` 代理页「方案 A · 顶栏一体化指挥舱」重构及全部既定开发成果：
