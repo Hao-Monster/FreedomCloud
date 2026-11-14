@@ -138,12 +138,13 @@ class _PurchaseViewState extends ConsumerState<PurchaseView> {
       ref.watch(profilesProvider.select((profiles) => profiles.length));
       ref.watch(currentProfileIdProvider);
     }
-    final isPurchaseTab = ref.watch(
-      currentPageLabelProvider.select((label) => label == PageLabel.purchase),
-    );
-    final isActiveTab = globalState.homeScaffoldKey.currentContext == null ||
-        !globalState.isAppStateInitialized ||
-        isPurchaseTab;
+    final isActiveTab = !globalState.isAppStateInitialized ||
+        globalState.homeScaffoldKey.currentContext == null ||
+        ref.watch(
+          currentPageLabelProvider.select(
+            (label) => label == PageLabel.purchase,
+          ),
+        );
     return PurchaseCenter(
       manager: _manager,
       supportManager: _supportManager,
