@@ -353,7 +353,7 @@ class MessageLookup extends MessageLookupByLibrary {
       "FREEDOMNET · ФЛАГМАНСКИЙ КЛИЕНТ",
     ),
     "brandShowcaseHeroBody": MessageLookupByLibrary.simpleMessage(
-      "FreedomNet (自由云) обеспечивает стабильное и быстрое интеллектуальное ускорение сети для удалённой работы, ИИ-сервисов и потокового видео в один клик.",
+      "FreedomNet обеспечивает стабильное и быстрое интеллектуальное ускорение сети для удалённой работы, ИИ-сервисов и потокового видео в один клик.",
     ),
     "brandShowcaseHeroTitle": MessageLookupByLibrary.simpleMessage(
       "Связь без границ и мгновенный отклик",
@@ -1462,6 +1462,9 @@ class MessageLookup extends MessageLookupByLibrary {
     ),
     "proxyProviders": MessageLookupByLibrary.simpleMessage("Провайдеры прокси"),
     "purchase": MessageLookupByLibrary.simpleMessage("Покупка"),
+    "purchaseAccount": MessageLookupByLibrary.simpleMessage(
+      "Аккаунт и подписка",
+    ),
     "purchaseAcquireOpenSupport": MessageLookupByLibrary.simpleMessage(
       "Написать в поддержку",
     ),
@@ -1484,15 +1487,45 @@ class MessageLookup extends MessageLookupByLibrary {
     "purchaseBackupContactsLabel": MessageLookupByLibrary.simpleMessage(
       "Резервная поддержка (WeChat)",
     ),
+    "purchaseBalance": MessageLookupByLibrary.simpleMessage("Баланс аккаунта"),
+    "purchaseBalanceOnlyHint": MessageLookupByLibrary.simpleMessage(
+      "Пополнение баланса не активирует подписку автоматически.",
+    ),
+    "purchaseBenefitsAfter": MessageLookupByLibrary.simpleMessage(
+      "Бонусы отобразятся после активации.",
+    ),
     "purchaseCaptchaRequiredNotice": MessageLookupByLibrary.simpleMessage(
       "На сайте включена CAPTCHA. Продолжите на веб-странице.",
     ),
+    "purchaseCardStore": MessageLookupByLibrary.simpleMessage(
+      "Открыть магазин карт",
+    ),
+    "purchaseCenterDescription": MessageLookupByLibrary.simpleMessage(
+      "Активируйте карту для подключения или продления тарифа, затем синхронизируйте подписку.",
+    ),
+    "purchaseCenterTitle": MessageLookupByLibrary.simpleMessage(
+      "Активация подарочных карт",
+    ),
+    "purchaseChannelError": MessageLookupByLibrary.simpleMessage(
+      "Не удалось загрузить данные магазина карт. Вы по-прежнему можете обратиться в поддержку ниже.",
+    ),
+    "purchaseCheck": MessageLookupByLibrary.simpleMessage("Проверить карту"),
+    "purchaseChecking": MessageLookupByLibrary.simpleMessage("Проверка…"),
     "purchaseClearCode": MessageLookupByLibrary.simpleMessage("Очистить код"),
     "purchaseClipboardEmpty": MessageLookupByLibrary.simpleMessage(
       "В буфере обмена не найден код активации.",
     ),
+    "purchaseCode": MessageLookupByLibrary.simpleMessage(
+      "Код подарочной карты",
+    ),
+    "purchaseCodeFormatError": MessageLookupByLibrary.simpleMessage(
+      "Введите код из 8–32 латинских букв и цифр.",
+    ),
     "purchaseCodeSentNotice": MessageLookupByLibrary.simpleMessage(
       "Код подтверждения отправлен. Проверьте почту и папку «Спам».",
+    ),
+    "purchaseConfirmRedeem": MessageLookupByLibrary.simpleMessage(
+      "Подтвердить активацию",
     ),
     "purchaseContactDescription": MessageLookupByLibrary.simpleMessage(
       "Онлайн-оплата пока недоступна. Добавьте любой из указанных аккаунтов WeChat для покупки или продления.",
@@ -1501,6 +1534,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "purchaseCopyInquiry": MessageLookupByLibrary.simpleMessage(
       "Скопировать запрос",
     ),
+    "purchaseEmail": MessageLookupByLibrary.simpleMessage("Электронная почта"),
     "purchaseEmailCode": MessageLookupByLibrary.simpleMessage(
       "Код подтверждения email",
     ),
@@ -1525,8 +1559,21 @@ class MessageLookup extends MessageLookupByLibrary {
     "purchaseEmailRateLimitedError": MessageLookupByLibrary.simpleMessage(
       "Превышен лимит запросов кода. Попробуйте позже.",
     ),
+    "purchaseEmailRequired": MessageLookupByLibrary.simpleMessage(
+      "Введите корректный адрес электронной почты.",
+    ),
     "purchaseEmailVerifyDisabledError": MessageLookupByLibrary.simpleMessage(
       "Подтверждение по email отключено.",
+    ),
+    "purchaseExpires": MessageLookupByLibrary.simpleMessage("Истекает"),
+    "purchaseExpiryChange": MessageLookupByLibrary.simpleMessage(
+      "Срок действия: до → после",
+    ),
+    "purchaseExtraDays": MessageLookupByLibrary.simpleMessage(
+      "Продление срока (дн.)",
+    ),
+    "purchaseExtraDevices": MessageLookupByLibrary.simpleMessage(
+      "Доп. устройства",
     ),
     "purchaseFilterAll": MessageLookupByLibrary.simpleMessage("Все тарифы"),
     "purchaseFilterOnetime": MessageLookupByLibrary.simpleMessage(
@@ -1535,6 +1582,12 @@ class MessageLookup extends MessageLookupByLibrary {
     "purchaseFilterPeriod": MessageLookupByLibrary.simpleMessage("По периоду"),
     "purchaseForgotPassword": MessageLookupByLibrary.simpleMessage(
       "Забыли пароль?",
+    ),
+    "purchaseGenericError": MessageLookupByLibrary.simpleMessage(
+      "Ошибка запроса. Повторите попытку.",
+    ),
+    "purchaseGetCard": MessageLookupByLibrary.simpleMessage(
+      "Получить подарочную карту",
     ),
     "purchaseGetCardDescription": MessageLookupByLibrary.simpleMessage(
       "Приобрести карту или получить помощь можно через магазин карт, онлайн-поддержку или контакты WeChat ниже.",
@@ -1558,6 +1611,17 @@ class MessageLookup extends MessageLookupByLibrary {
     "purchaseHidePassword": MessageLookupByLibrary.simpleMessage(
       "Скрыть пароль",
     ),
+    "purchaseHistory": MessageLookupByLibrary.simpleMessage(
+      "История активаций",
+    ),
+    "purchaseHistoryEmpty": MessageLookupByLibrary.simpleMessage(
+      "Активаций пока нет.",
+    ),
+    "purchaseHistoryPage": MessageLookupByLibrary.simpleMessage("Стр."),
+    "purchaseHistoryRetry": MessageLookupByLibrary.simpleMessage(
+      "Обновить историю",
+    ),
+    "purchaseHistoryTotal": MessageLookupByLibrary.simpleMessage("Всего"),
     "purchaseInquiryTemplate": m69,
     "purchaseInvitationUnavailableError": MessageLookupByLibrary.simpleMessage(
       "Приглашения временно недоступны.",
@@ -1580,18 +1644,49 @@ class MessageLookup extends MessageLookupByLibrary {
     "purchaseJumpToWorkbench": MessageLookupByLibrary.simpleMessage(
       "Есть код? Перейти к активации",
     ),
+    "purchaseLoggingIn": MessageLookupByLibrary.simpleMessage(
+      "Выполняется вход…",
+    ),
+    "purchaseLogin": MessageLookupByLibrary.simpleMessage("Войти"),
     "purchaseLoginDescription": MessageLookupByLibrary.simpleMessage(
       "Войдите в аккаунт для активации кода — тариф и узлы синхронизируются автоматически.",
     ),
+    "purchaseLoginTitle": MessageLookupByLibrary.simpleMessage(
+      "Войдите для активации",
+    ),
+    "purchaseLogout": MessageLookupByLibrary.simpleMessage("Выйти"),
+    "purchaseLogoutRemoteError": MessageLookupByLibrary.simpleMessage(
+      "Выход выполнен на этом устройстве, но подтвердить его на сервере не удалось.",
+    ),
     "purchaseMailUnavailableError": MessageLookupByLibrary.simpleMessage(
       "Сервис отправки писем недоступен. Свяжитесь с поддержкой или попробуйте позже.",
+    ),
+    "purchaseMysteryPreview": MessageLookupByLibrary.simpleMessage(
+      "Это карта-сюрприз. Содержимое откроется после активации.",
     ),
     "purchaseNewActivationBadge": MessageLookupByLibrary.simpleMessage(
       "Новая активация",
     ),
     "purchaseNewPassword": MessageLookupByLibrary.simpleMessage("Новый пароль"),
+    "purchaseNextPage": MessageLookupByLibrary.simpleMessage("Следующая"),
+    "purchaseNoBenefits": MessageLookupByLibrary.simpleMessage(
+      "Дополнительных бонусов нет.",
+    ),
+    "purchaseNoExpiry": MessageLookupByLibrary.simpleMessage("Бессрочно"),
+    "purchaseNoPlan": MessageLookupByLibrary.simpleMessage(
+      "Нет активного тарифа",
+    ),
+    "purchaseNoPreviousExpiry": MessageLookupByLibrary.simpleMessage(
+      "Не задано",
+    ),
+    "purchaseNotEligible": MessageLookupByLibrary.simpleMessage(
+      "Эту карту нельзя активировать для данного аккаунта.",
+    ),
     "purchaseOnlineSupport": MessageLookupByLibrary.simpleMessage(
       "Онлайн-поддержка",
+    ),
+    "purchaseOpenLinkFailed": MessageLookupByLibrary.simpleMessage(
+      "Не удалось открыть страницу. Попробуйте ещё раз.",
     ),
     "purchaseOpenNodesAction": MessageLookupByLibrary.simpleMessage(
       "Открыть профили и узлы",
@@ -1599,9 +1694,25 @@ class MessageLookup extends MessageLookupByLibrary {
     "purchaseOpenWebAuth": MessageLookupByLibrary.simpleMessage(
       "Продолжить на сайте",
     ),
+    "purchaseOrderNumber": MessageLookupByLibrary.simpleMessage(
+      "Номер активации",
+    ),
+    "purchasePassword": MessageLookupByLibrary.simpleMessage("Пароль"),
     "purchasePasswordMinLength": MessageLookupByLibrary.simpleMessage(
       "Пароль должен содержать минимум 8 символов.",
     ),
+    "purchasePasswordRequired": MessageLookupByLibrary.simpleMessage(
+      "Введите пароль.",
+    ),
+    "purchasePeriod": MessageLookupByLibrary.simpleMessage("Период оплаты"),
+    "purchasePeriodHalfYearly": MessageLookupByLibrary.simpleMessage("Полгода"),
+    "purchasePeriodMonthly": MessageLookupByLibrary.simpleMessage("Месяц"),
+    "purchasePeriodOnetime": MessageLookupByLibrary.simpleMessage("По трафику"),
+    "purchasePeriodQuarterly": MessageLookupByLibrary.simpleMessage("Квартал"),
+    "purchasePeriodThreeYearly": MessageLookupByLibrary.simpleMessage("3 года"),
+    "purchasePeriodTwoYearly": MessageLookupByLibrary.simpleMessage("2 года"),
+    "purchasePeriodYearly": MessageLookupByLibrary.simpleMessage("Год"),
+    "purchasePlan": MessageLookupByLibrary.simpleMessage("Текущий тариф"),
     "purchasePlanBuyNow": MessageLookupByLibrary.simpleMessage("Купить"),
     "purchasePlanCollapseDetails": MessageLookupByLibrary.simpleMessage(
       "Свернуть описание",
@@ -1660,6 +1771,7 @@ class MessageLookup extends MessageLookupByLibrary {
       "Сброс трафика",
     ),
     "purchasePlanUnitPriceHint": m72,
+    "purchasePlanUnknown": MessageLookupByLibrary.simpleMessage("Подписка"),
     "purchasePlanUnlimited": MessageLookupByLibrary.simpleMessage(
       "Без ограничений",
     ),
@@ -1684,6 +1796,33 @@ class MessageLookup extends MessageLookupByLibrary {
     "purchasePreloginCodeHint": MessageLookupByLibrary.simpleMessage(
       "Уже купили код? Вставьте его сюда для автопроверки после входа",
     ),
+    "purchasePreview": MessageLookupByLibrary.simpleMessage(
+      "Проверьте перед активацией",
+    ),
+    "purchasePreviousPage": MessageLookupByLibrary.simpleMessage("Предыдущая"),
+    "purchaseProfiles": MessageLookupByLibrary.simpleMessage(
+      "Управление профилями",
+    ),
+    "purchaseQuotaChange": MessageLookupByLibrary.simpleMessage(
+      "Общий трафик: до → после",
+    ),
+    "purchaseRecoverPassword": MessageLookupByLibrary.simpleMessage(
+      "Восстановить пароль на сайте",
+    ),
+    "purchaseRecoverResult": MessageLookupByLibrary.simpleMessage(
+      "Проверить результат",
+    ),
+    "purchaseRedeemFor": MessageLookupByLibrary.simpleMessage(
+      "Аккаунт для активации",
+    ),
+    "purchaseRedeemTitle": MessageLookupByLibrary.simpleMessage(
+      "Активация подарочной карты",
+    ),
+    "purchaseRedeeming": MessageLookupByLibrary.simpleMessage("Активация…"),
+    "purchaseRefresh": MessageLookupByLibrary.simpleMessage("Обновить аккаунт"),
+    "purchaseRegister": MessageLookupByLibrary.simpleMessage(
+      "Создать аккаунт на сайте",
+    ),
     "purchaseRegisterSubmit": MessageLookupByLibrary.simpleMessage(
       "Создать аккаунт и синхронизировать",
     ),
@@ -1699,6 +1838,9 @@ class MessageLookup extends MessageLookupByLibrary {
     "purchaseRegistrationClosedError": MessageLookupByLibrary.simpleMessage(
       "Регистрация новых аккаунтов временно закрыта.",
     ),
+    "purchaseRemaining": MessageLookupByLibrary.simpleMessage(
+      "Остаток трафика",
+    ),
     "purchaseRenewalBadge": MessageLookupByLibrary.simpleMessage("Продление"),
     "purchaseResetPasswordDescription": MessageLookupByLibrary.simpleMessage(
       "Введите зарегистрированный email и 6-значный код подтверждения, чтобы задать новый пароль.",
@@ -1712,8 +1854,14 @@ class MessageLookup extends MessageLookupByLibrary {
     "purchaseResetPasswordTitle": MessageLookupByLibrary.simpleMessage(
       "Сброс пароля",
     ),
+    "purchaseResetTraffic": MessageLookupByLibrary.simpleMessage(
+      "Сбросить использованный трафик",
+    ),
     "purchaseResettingPassword": MessageLookupByLibrary.simpleMessage(
       "Сброс...",
+    ),
+    "purchaseRestoring": MessageLookupByLibrary.simpleMessage(
+      "Восстановление аккаунта…",
     ),
     "purchaseSendCode": MessageLookupByLibrary.simpleMessage("Отправить код"),
     "purchaseSendCodeCooldown": m73,
@@ -1745,6 +1893,30 @@ class MessageLookup extends MessageLookupByLibrary {
     "purchaseStepSync": MessageLookupByLibrary.simpleMessage(
       "③ Автосинхронизация узлов",
     ),
+    "purchaseStorageError": MessageLookupByLibrary.simpleMessage(
+      "Защищённое хранилище учётных данных недоступно. Проверьте настройки системы и повторите.",
+    ),
+    "purchaseSuccess": MessageLookupByLibrary.simpleMessage(
+      "Подарочная карта активирована",
+    ),
+    "purchaseSuccessDescription": MessageLookupByLibrary.simpleMessage(
+      "Бонусы начислены на аккаунт. Статус синхронизации подписки подтверждается отдельно.",
+    ),
+    "purchaseSync": MessageLookupByLibrary.simpleMessage(
+      "Синхронизировать подписку",
+    ),
+    "purchaseSyncError": MessageLookupByLibrary.simpleMessage(
+      "Не удалось синхронизировать подписку. Вы можете повторить попытку ниже.",
+    ),
+    "purchaseSyncFailed": MessageLookupByLibrary.simpleMessage(
+      "Карта активирована, но не удалось синхронизировать подписку. Повторите синхронизацию ниже.",
+    ),
+    "purchaseSyncSucceeded": MessageLookupByLibrary.simpleMessage(
+      "Подписка успешно синхронизирована.",
+    ),
+    "purchaseSyncing": MessageLookupByLibrary.simpleMessage(
+      "Синхронизация подписки…",
+    ),
     "purchaseTitle": MessageLookupByLibrary.simpleMessage(
       "Покупка и продление",
     ),
@@ -1753,6 +1925,23 @@ class MessageLookup extends MessageLookupByLibrary {
     ),
     "purchaseTosLinkLabel": MessageLookupByLibrary.simpleMessage(
       "Условия использования",
+    ),
+    "purchaseTraffic": MessageLookupByLibrary.simpleMessage("Лимит трафика"),
+    "purchaseUnresolved": MessageLookupByLibrary.simpleMessage(
+      "Требуется проверка результата",
+    ),
+    "purchaseUnresolvedDescription": MessageLookupByLibrary.simpleMessage(
+      "Запрос был прерван. Проверьте результат перед активацией другой карты.",
+    ),
+    "purchaseUnsupportedAccount": MessageLookupByLibrary.simpleMessage(
+      "Для активации подарочной карты используйте обычный пользовательский аккаунт.",
+    ),
+    "purchaseUsed": MessageLookupByLibrary.simpleMessage("Использовано"),
+    "purchaseUsedPreserved": MessageLookupByLibrary.simpleMessage(
+      "Использованный трафик сохраняется",
+    ),
+    "purchaseValidityDays": MessageLookupByLibrary.simpleMessage(
+      "Срок действия (дн.)",
     ),
     "pureBlackMode": MessageLookupByLibrary.simpleMessage("Чисто черный режим"),
     "qrNotFound": MessageLookupByLibrary.simpleMessage("QR-код не найден"),
@@ -2024,7 +2213,7 @@ class MessageLookup extends MessageLookupByLibrary {
       "OPEN-SOURCE HERITAGE",
     ),
     "tributeFlclashxBody": MessageLookupByLibrary.simpleMessage(
-      "FreedomNet (自由云) официально заявляет, что данное приложение создано на базе открытого проекта FlClashX (pluralplay/FlClashX) и экосистемы FlClash / Mihomo (Clash.Meta). Выражаем глубочайшее уважение и искреннюю благодарность авторам и всем участникам открытого сообщества.",
+      "FreedomNet официально заявляет, что данное приложение создано на базе открытого проекта FlClashX (pluralplay/FlClashX) и экосистемы FlClash / Mihomo (Clash.Meta). Выражаем глубочайшее уважение и искреннюю благодарность авторам и всем участникам открытого сообщества.",
     ),
     "tributeFlclashxTitle": MessageLookupByLibrary.simpleMessage(
       "Создано на базе открытого проекта FlClashX",
