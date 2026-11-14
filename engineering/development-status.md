@@ -2,6 +2,26 @@
 
 更新日期：2026-11-14。当前阶段是快速开发、快速迭代和部分功能预览。本文记录来源与验收边界；每次继续开发仍需核实实际 Git/PR/CI 状态，不能把历史报告视为当前通过证明。
 
+## 全量增量功能 Windows `amd64` 预览包交付（`a461647ce223`，2026-11-14）
+
+- 构建来源与完整包含范围：基于本地 `development` 提交 `a461647ce223a8a1c052e091d9a11fef12a1b36e` 的干净 `git archive` 快照（代码提交 `df591f4b95976acaacaeb4b47d138925b747483d`，tree `5da41dd2eece8adb8cde56909093547dcd7d789b`，工作区原有未提交单测文件末尾空行 [`dashboard_render_test.dart`](file:///e:/CodeWorkstation/FlClashX/test/views/dashboard_render_test.dart) 已按规则隔离并保留未动，生产代码零未提交差异），由独立工具集 [`Build-PerfOverhaul.ps1`](file:///E:/Temp/fcx-freedomnet-tools-20261114-r1/Build-PerfOverhaul.ps1)（工作根目录 `E:\Temp\fcx-freedomnet-ui-r6`）完成 15 阶段全栈同源重编，在上一可用包 `315ece4b2905` 基础上完整纳入后续 24 个本地提交（`315ece4b..a461647c`）与全部历史基线特性：
+  1. **健康检查 `D3` 出站探测加固与 `CR-HC-R3` 深度修复**（`433f1b39`、`5f3307a9`）；
+  2. **代理总览与经典仪表盘统一底部常驻悬浮推杆开关（`FloatingProxyDock` / `TactileProxySwitch`）**（`dea94298`、`1e7827e6`）；
+  3. **购买页套餐卡片极简网页版 Storefront 四段式重构**（`481a9195`）；
+  4. **默认测速地址切换为 `https://www.google.com/generate_204`（含 Go Core 与存量 `config.json` 一次性迁移）**（`0f182041`）；
+  5. **应用内原生注册/登录/邮箱验证/找回密码与纯 Flutter Chatwoot 在线客服及全部 39 项 CR TDD 修复**（`4341f3b4`..`df591f4b`）；
+  6. **既有基线特性完整保留**（`a229588..44015ed4`：CF 节点国家徽章、侧栏切换去尖角、自由云品牌弹窗、`uia_guard.cpp`、门户绿底 `F` 全端图标、2000ms 绿永久保色延迟、购买 V3 与 WiFi 漫游恢复）。
+- 预览包交付产物与校验（完整保留 `315ece4b2905` 与 `196889071d39` 等历史可用包未覆盖）：
+  - 免安装 ZIP 包：[`FreedomCloud-windows-amd64-freedomnet-ui-a461647ce223.zip`](file:///e:/CodeWorkstation/FlClashX/dist/FreedomCloud-windows-amd64-freedomnet-ui-a461647ce223.zip)（`168,033,904` 字节，SHA256 `e9cae1ecb912f82e531742537238aaa2148a36600a589f6e472e85843ea1ad92`，73 文件往返解压校验 `PASS`）；
+  - 校验文件：[`FreedomCloud-windows-amd64-freedomnet-ui-a461647ce223.zip.sha256`](file:///e:/CodeWorkstation/FlClashX/dist/FreedomCloud-windows-amd64-freedomnet-ui-a461647ce223.zip.sha256)；
+  - 解压即用目录：[`FreedomCloud-windows-amd64-freedomnet-ui-a461647ce223`](file:///e:/CodeWorkstation/FlClashX/dist/FreedomCloud-windows-amd64-freedomnet-ui-a461647ce223)（含 [`BUILD-INFO.txt`](file:///e:/CodeWorkstation/FlClashX/dist/FreedomCloud-windows-amd64-freedomnet-ui-a461647ce223/BUILD-INFO.txt)、[`COMPONENTS.json`](file:///e:/CodeWorkstation/FlClashX/dist/FreedomCloud-windows-amd64-freedomnet-ui-a461647ce223/COMPONENTS.json)、[`CORE-PATCH.json`](file:///e:/CodeWorkstation/FlClashX/dist/FreedomCloud-windows-amd64-freedomnet-ui-a461647ce223/CORE-PATCH.json)、[`PREVIEW-README.txt`](file:///e:/CodeWorkstation/FlClashX/dist/FreedomCloud-windows-amd64-freedomnet-ui-a461647ce223/PREVIEW-README.txt)、[`SHA256SUMS.txt`](file:///e:/CodeWorkstation/FlClashX/dist/FreedomCloud-windows-amd64-freedomnet-ui-a461647ce223/SHA256SUMS.txt)）；
+  - 构建报告：[`freedomnet-ui-build-a461647ce223.json`](file:///e:/CodeWorkstation/FlClashX/dist/freedomnet-ui-build-a461647ce223.json)（源码归档 SHA256 `32ea47f5fc4dab553d9a9440a57dc2631b88e50a28564557937c3720426991d3`，15 阶段与 `uia_guard.cpp.obj` / `tray_manager_plugin` / `proxy_plugin` 编译及 `tray-imports` 检查全绿）；
+  - 同源重编绑定哈希：`FlClashCore.exe`（`72,543,744` 字节）SHA256 `71860f475cd1d6515833846034fecfae35e762240c50915a0a3d1ab673b16326`（与 `helperCompiledCoreSha256` 及 `CORE_SHA256` 严格一致）、`FlClashAgent.exe`（`1,336,320` 字节）SHA256 `18fb586ffba6bbb3831a8f9c0d6362e6456a250605c02cc96724e04b11cb71c6`、`FlClashHelperService.exe`（`1,261,056` 字节）SHA256 `91fe1578a873569b5a6ca6b7f703adf19a28e50333b031af884c33a85ca68f1e`、`FlClashX.exe`（`119,808` 字节）SHA256 `174ffc5a93e34d114f2216da161125869b096cc28a22e7d4cbf4c9826f6a2a5b`、`data/app.so`（`18,072,456` 字节）SHA256 `9848e08458298fb5d0001671c0b01c8226d6b0b2a95b0a9e8096a8108960247c`、`tray_manager_plugin.dll`（`111,616` 字节）SHA256 `1899e29fca278c14a20089f7a4c9f40a08dd0aa1abb6b1ed4e7122a1b48d12ed`、`proxy_plugin.dll`（`114,176` 字节）SHA256 `04a836ea65ecf072f2971a5ea3ae1166437bcf30b75c1b616851e2e052a40c95`、`window_ext_plugin.dll`（`95,232` 字节）SHA256 `0b4a962ae440041747093b8e88f5bedab2113482b3df861b75bd9f388cd9dc39`。
+- 验收与运行边界：
+  - **本地同源全栈构建与 ZIP 往返校验 / 元数据敏感信息扫描**：**PASS**；
+  - **宿主机实机运行 / 真实网络与在线后端联调（直连 `fast.hjy.ca` / Chatwoot）**：**NOT RUN（遵守协作规则未在开发工作站拉起候选程序或触碰现役代理/TUN/后台服务；因本版包含 Go Core 更新且 Core SHA256 已变化，用户在旧客户端托盘右键完全“退出”并首次启动本包开启 TUN 时会按预期请求一次 UAC 对齐后台服务）**；
+  - **远端推送 / PR / 合并 / 云端 GitHub Actions CI**：**NOT RUN**。
+
 ## 原生注册/找回密码与 Chatwoot 客服 Code Review（39 项）TDD 修复验收（`cae99981`..`df591f4b`，2026-11-14）
 
 - 范围与 `development` 修复提交链（HEAD `df591f4b`，覆盖 `#30` 审计确认的全部 **39 项** Code Review 缺陷：`1 P0`、`13 P1`、`16 P2`、`9 P3`）：
