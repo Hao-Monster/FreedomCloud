@@ -9,9 +9,12 @@ import 'package:flclashx/widgets/tactile_proxy_switch.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
   setUp(() async {
+    SharedPreferences.setMockInitialValues({});
+    EarthDockPositionStore.instance.resetForTest();
     await AppLocalizations.load(const Locale('zh', 'CN'));
     globalState.appState = AppState(
       viewSize: const Size(1200, 800),
@@ -30,6 +33,7 @@ void main() {
   });
 
   tearDown(() {
+    EarthDockPositionStore.instance.resetForTest();
     detectionState.state.value = const NetworkDetectionState(
       isLoading: false,
       isTesting: false,
@@ -238,64 +242,232 @@ void main() {
   );
 
   testWidgets(
-    '3D mouse drag rotates Earth without toggling proxy, auto-recovers after 1.8s when ON, and supports keyboard activation',
+    'Connected Earth self-rotates continuously while OFF settles to 0fps and startup pending frames without spinning',
     (tester) async {
-      var toggleCount = 0;
-
+      // 1. Disconnected (OFF): stationary yaw and 0fps.
       await tester.pumpWidget(
         wrapDock(
           child: EarthProxySwitch(
-            key: const ValueKey('earth-drag'),
+            key: const ValueKey('earth-spin-off'),
+            isRunning: false,
+            pendingTarget: null,
+            startCancelable: false,
+            canPress: true,
+            semanticsLabel: '开启代理',
+            continuousAnimationInTests: true,
+            onToggle: () {},
+          ),
+        ),
+      );
+      await tester.pump();
+      final offFinder = find.byKey(const ValueKey('earth-spin-off'));
+      final offYaw0 =
+          EarthProxySwitch.debugSnapshotOf(tester.element(offFinder))!.yaw;
+      for (var i = 0; i < 20; i++) {
+        await tester.pump(const Duration(milliseconds: 50));
+      }
+      final offSnap1 =
+          EarthProxySwitch.debugSnapshotOf(tester.element(offFinder))!;
+      expect(offSnap1.isTickerActive, isFalse);
+      expect(offSnap1.yaw, closeTo(offYaw0, 1e-6));
+
+      // 2. Startup pending (isRunning: false, pendingTarget: true): illuminates and frames without continuous spin.
+      await tester.pumpWidget(
+        wrapDock(
+          child: EarthProxySwitch(
+            key: const ValueKey('earth-spin-pending'),
+            isRunning: false,
+            pendingTarget: true,
+            startCancelable: false,
+            canPress: false,
+            semanticsLabel: '正在启动...',
+            continuousAnimationInTests: true,
+            onToggle: () {},
+          ),
+        ),
+      );
+      await tester.pump();
+      for (var i = 0; i < 30; i++) {
+        await tester.pump(const Duration(milliseconds: 32));
+      }
+      final pendingFinder = find.byKey(const ValueKey('earth-spin-pending'));
+      final pendingYaw1 =
+          EarthProxySwitch.debugSnapshotOf(tester.element(pendingFinder))!.yaw;
+      for (var i = 0; i < 30; i++) {
+        await tester.pump(const Duration(milliseconds: 32));
+      }
+      final pendingYaw2 =
+          EarthProxySwitch.debugSnapshotOf(tester.element(pendingFinder))!.yaw;
+      final pendingDrift = math.atan2(
+        math.sin(pendingYaw2 - pendingYaw1),
+        math.cos(pendingYaw2 - pendingYaw1),
+      );
+      expect(
+        pendingDrift.abs(),
+        lessThan(0.12),
+        reason: 'Connecting globe should frame the route rather than continuously spinning before connection succeeds',
+      );
+
+      // 3. Connected (isRunning: true): continuously self-rotates West-to-East across consecutive seconds.
+      await tester.pumpWidget(
+        wrapDock(
+          child: EarthProxySwitch(
+            key: const ValueKey('earth-spin-on'),
             isRunning: true,
             pendingTarget: null,
             startCancelable: false,
             canPress: true,
             semanticsLabel: '关闭代理',
-            onToggle: () => toggleCount++,
+            continuousAnimationInTests: true,
+            onToggle: () {},
+          ),
+        ),
+      );
+      await tester.pump();
+      final onFinder = find.byKey(const ValueKey('earth-spin-on'));
+      final yaw0 =
+          EarthProxySwitch.debugSnapshotOf(tester.element(onFinder))!.yaw;
+      for (var i = 0; i < 32; i++) {
+        await tester.pump(const Duration(milliseconds: 32));
+      }
+      final yaw1 =
+          EarthProxySwitch.debugSnapshotOf(tester.element(onFinder))!.yaw;
+      for (var i = 0; i < 32; i++) {
+        await tester.pump(const Duration(milliseconds: 32));
+      }
+      final yaw2 =
+          EarthProxySwitch.debugSnapshotOf(tester.element(onFinder))!.yaw;
+
+      final delta1 = math.atan2(math.sin(yaw1 - yaw0), math.cos(yaw1 - yaw0));
+      final delta2 = math.atan2(math.sin(yaw2 - yaw1), math.cos(yaw2 - yaw1));
+      expect(delta1, greaterThan(0.30));
+      expect(delta2, greaterThan(0.30));
+
+      // Keyboard focus + Space still toggles connected globe.
+      var keyboardToggled = 0;
+      await tester.pumpWidget(
+        wrapDock(
+          child: EarthProxySwitch(
+            key: const ValueKey('earth-spin-kbd'),
+            isRunning: true,
+            pendingTarget: null,
+            startCancelable: false,
+            canPress: true,
+            semanticsLabel: '关闭代理',
+            onToggle: () => keyboardToggled++,
           ),
         ),
       );
       await tester.pumpAndSettle();
-
-      final earthFinder = find.byKey(const ValueKey('earth-drag'));
-      final initialSnap =
-          EarthProxySwitch.debugSnapshotOf(tester.element(earthFinder))!;
-      expect(toggleCount, 0);
-
-      await tester.drag(earthFinder, const Offset(80, -24));
-      await tester.pump();
-
-      final draggedSnap =
-          EarthProxySwitch.debugSnapshotOf(tester.element(earthFinder))!;
-      expect(
-        toggleCount,
-        0,
-        reason: 'Dragging the 3D globe must never toggle proxy state',
-      );
-      expect(
-        (draggedSnap.yaw - initialSnap.yaw).abs(),
-        greaterThan(0.25),
-      );
-
-      // Hold gently, then glide back once 1.8s post-drag cooldown elapses.
-      await tester.pump(const Duration(milliseconds: 500));
-      await tester.pump(const Duration(milliseconds: 1600));
-      await tester.pumpAndSettle();
-
-      final recoveredSnap =
-          EarthProxySwitch.debugSnapshotOf(tester.element(earthFinder))!;
-      final yawDiff = math.atan2(
-        math.sin(recoveredSnap.yaw - initialSnap.yaw),
-        math.cos(recoveredSnap.yaw - initialSnap.yaw),
-      );
-      expect(yawDiff.abs(), lessThan(0.12));
-
-      // Keyboard focus + Space triggers onToggle without requiring pointer click.
       await tester.sendKeyEvent(LogicalKeyboardKey.tab);
       await tester.pump();
       await tester.sendKeyEvent(LogicalKeyboardKey.space);
       await tester.pump();
+      expect(keyboardToggled, 1);
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+    },
+  );
+
+  testWidgets(
+    'FloatingProxyDockOverlay keeps undragged Earth bottom-centered across window resizes, supports free position dragging with clamping, and persists position across cold relaunch',
+    (tester) async {
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      var toggleCount = 0;
+
+      Widget buildHost({required double width, required double height}) {
+        tester.view.physicalSize = Size(width, height);
+        return MaterialApp(
+          home: MediaQuery(
+            data: MediaQueryData(size: Size(width, height)),
+            child: Scaffold(
+              body: SizedBox(
+                width: width,
+                height: height,
+                child: FloatingProxyDockOverlay(
+                  key: const ValueKey('test-overlay'),
+                  viewportWidth: width,
+                  viewportHeight: height,
+                  dock: FloatingProxyDock(
+                    key: const ValueKey('overlay-dock'),
+                    switchKey: const ValueKey('overlay-earth-toggle'),
+                    isRunning: true,
+                    pendingTarget: null,
+                    startCancelable: false,
+                    onToggle: () => toggleCount++,
+                  ),
+                  child: const SizedBox.expand(),
+                ),
+              ),
+            ),
+          ),
+        );
+      }
+
+      // 1. Undragged dock stays horizontally centered at bottom across narrow/wide resizes.
+      for (final (width, height) in const [
+        (1200.0, 800.0),
+        (960.0, 800.0),
+        (640.0, 800.0),
+        (360.0, 720.0),
+        (1440.0, 900.0),
+      ]) {
+        await tester.pumpWidget(buildHost(width: width, height: height));
+        await tester.pumpAndSettle();
+
+        final dockRect =
+            tester.getRect(find.byKey(const ValueKey('overlay-dock')));
+        expect(dockRect.center.dx, closeTo(width * 0.5, 0.5));
+        expect(
+          dockRect.bottom,
+          closeTo(height - computeFloatingProxyDockBottomMargin(height), 0.5),
+        );
+      }
+
+      // 2. Dragging >= 5px moves Earth freely on screen without triggering onToggle.
+      await tester.pumpWidget(buildHost(width: 1200.0, height: 800.0));
+      await tester.pumpAndSettle();
+      final dockFinder = find.byKey(const ValueKey('overlay-dock'));
+      final toggleFinder = find.byKey(const ValueKey('overlay-earth-toggle'));
+      final beforeDragRect = tester.getRect(dockFinder);
+
+      await tester.drag(toggleFinder, const Offset(-260, -320));
+      await tester.pumpAndSettle();
+      expect(
+        toggleCount,
+        0,
+        reason: 'Dragging the Earth position must never trigger onToggle',
+      );
+      final draggedRect = tester.getRect(dockFinder);
+      expect(draggedRect.left, closeTo(beforeDragRect.left - 260, 1.5));
+      expect(draggedRect.top, closeTo(beforeDragRect.top - 320, 1.5));
+
+      // 3. Single click (< 5px) at the new dragged location still triggers onToggle immediately.
+      await tester.tap(toggleFinder);
+      await tester.pump();
       expect(toggleCount, 1);
+
+      // 4. Cold relaunch simulation: wipe in-memory store, reload from SharedPreferences, and verify frame-1 restoration.
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+      EarthDockPositionStore.instance.resetForTest();
+      await EarthDockPositionStore.instance.ensureLoaded();
+
+      await tester.pumpWidget(buildHost(width: 1200.0, height: 800.0));
+      await tester.pump();
+      final restoredRect = tester.getRect(dockFinder);
+      expect(restoredRect.left, closeTo(draggedRect.left, 0.5));
+      expect(restoredRect.top, closeTo(draggedRect.top, 0.5));
+
+      // 5. Extreme drag clamps cleanly inside viewport edgeMargin.
+      await tester.drag(toggleFinder, const Offset(-5000, -5000));
+      await tester.pumpAndSettle();
+      final clampedTopLeftRect = tester.getRect(dockFinder);
+      expect(clampedTopLeftRect.left, closeTo(8.0, 0.5));
+      expect(clampedTopLeftRect.top, closeTo(8.0, 0.5));
 
       await tester.pumpWidget(const SizedBox.shrink());
       await tester.pump();

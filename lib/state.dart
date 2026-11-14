@@ -15,6 +15,7 @@ import 'package:flclashx/l10n/l10n.dart';
 import 'package:flclashx/plugins/service.dart';
 import 'package:flclashx/widgets/dialog.dart';
 import 'package:flclashx/widgets/scaffold.dart';
+import 'package:flclashx/widgets/tactile_proxy_switch.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_js/flutter_js.dart';
 import 'package:material_color_utilities/palettes/core_palette.dart';
@@ -561,6 +562,7 @@ class GlobalState {
               ? desktopDefaultClashConfig()
               : defaultClashConfig,
         );
+    await EarthDockPositionStore.instance.ensureLoaded();
     await migrateOldData(config);
     await AppLocalizations.load(
       utils.getLocaleForString(config.appSetting.locale) ??

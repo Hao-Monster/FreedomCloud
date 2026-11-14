@@ -3676,6 +3676,33 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
     final now = DateTime.now();
     final scaffoldState = context.commonScaffoldState;
     final slotListenable = scaffoldState?.headerSlotListenable;
+    final toggleAction = globalState.isAppControllerReady
+        ? () => unawaited(_toggleProxyMasterSwitch())
+        : null;
+    String? activeFallbackCountryCode;
+    if (activeNodeLabel != null && activeNodeLabel.isNotEmpty) {
+      final resolved = ref.read(nodeCountryResolverProvider).resolveCountryCode(
+            profileId: activeProfileObj?.id ?? '',
+            profileLabel: activeProfileObj?.label,
+            nodeName: activeNodeLabel,
+            isLiveActive: activeProfileObj != null &&
+                snapshot.liveActiveProfileIds.contains(activeProfileObj.id),
+            inUse: true,
+          );
+      activeFallbackCountryCode = resolved != kUnknownCountryCode
+          ? resolved
+          : inferCountryCodeFromText(activeNodeLabel);
+    }
+    final floatingProxyDock = profiles.isNotEmpty
+        ? FloatingProxyDock(
+            key: const ValueKey('overview-floating-proxy-dock'),
+            isRunning: isProxyRunning,
+            pendingTarget: effectivePendingTarget,
+            startCancelable: statusStartCancelable,
+            fallbackCountryCode: activeFallbackCountryCode,
+            onToggle: toggleAction,
+          )
+        : null;
 
     Widget buildFallbackTopCommandBar() => Padding(
           padding: const EdgeInsets.fromLTRB(16, 4, 16, 2),
@@ -3705,7 +3732,11 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
 
     return LayoutBuilder(builder: (context, constraints) {
       final wide = !isMobile && constraints.maxWidth > maxLaptopWidth;
-      return Column(children: [
+      return FloatingProxyDockOverlay(
+        viewportWidth: constraints.maxWidth,
+        viewportHeight: constraints.maxHeight,
+        dock: floatingProxyDock,
+        child: Column(children: [
         if (slotListenable != null)
           ListenableBuilder(
             listenable: slotListenable,
@@ -4032,175 +4063,112 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
                 builder: (context, paneConstraints) {
                   final paneTextScale =
                       MediaQuery.textScalerOf(context).scale(1.0);
-                  final effectivePendingTarget = snapshot.effectivePendingTarget;
-                  final toggleAction = globalState.isAppControllerReady
-                      ? () => unawaited(_toggleProxyMasterSwitch())
-                      : null;
-                  String? activeFallbackCountryCode;
-                  final activeLabel = snapshot.activeNodeLabel;
-                  final activeProfileObj = snapshot.activeProfileObj;
-                  if (activeLabel != null && activeLabel.isNotEmpty) {
-                    final resolved = ref
-                        .read(nodeCountryResolverProvider)
-                        .resolveCountryCode(
-                          profileId: activeProfileObj?.id ?? '',
-                          profileLabel: activeProfileObj?.label,
-                          nodeName: activeLabel,
-                          isLiveActive: activeProfileObj != null &&
-                              snapshot.liveActiveProfileIds
-                                  .contains(activeProfileObj.id),
-                          inUse: true,
-                        );
-                    activeFallbackCountryCode =
-                        resolved != kUnknownCountryCode
-                            ? resolved
-                            : inferCountryCodeFromText(activeLabel);
-                  }
-                  final floatingProxyDock = profiles.isNotEmpty
-                      ? FloatingProxyDock(
-                          key: const ValueKey('overview-floating-proxy-dock'),
-                          isRunning: isProxyRunning,
-                          pendingTarget: effectivePendingTarget,
-                          startCancelable: statusStartCancelable,
-                          fallbackCountryCode: activeFallbackCountryCode,
-                          onToggle: toggleAction,
-                        )
-                      : null;
                   final floatingBottomMargin =
                       computeFloatingProxyDockBottomMargin(
-                    paneConstraints.maxHeight,
+                    constraints.maxHeight,
                   );
                   final bottomScrollClearance = profiles.isNotEmpty
                       ? computeFloatingProxyDockScrollClearance(
                           textScale: paneTextScale,
                           bottomMargin: floatingBottomMargin,
-                          viewportWidth: paneConstraints.maxWidth,
-                          viewportHeight: paneConstraints.maxHeight,
+                          viewportWidth: constraints.maxWidth,
+                          viewportHeight: constraints.maxHeight,
                         )
                       : 32.0;
-                  return Stack(
-                    fit: StackFit.expand,
-                    children: [
-                      CustomScrollView(
-                        key: const ValueKey('overview-nodes'),
-                        slivers: [
-                          for (final profile in visible)
-                            _ProfileNodesSliver(
-                                key: ValueKey('overview-section-${profile.id}'),
-                                profile: profile,
-                                active: profile.id == activeId,
-                                liveActive: isLiveActive(profile),
-                                showHeader: selected == null,
-                                showSubscriptionSummary:
-                                    !wide || selected != null,
-                                onSyncSubscription:
-                                    profile.type == ProfileType.url &&
-                                            (!wide || selected != null)
-                                        ? () => unawaited(
-                                            _syncSubscription(profile))
-                                        : null,
-                                syncButtonKey: wide
-                                    ? ValueKey(
-                                        'overview-detail-sync-${profile.id}')
-                                    : ValueKey('overview-sync-${profile.id}'),
-                                showDeleteSubscription: _expired(profile, now) &&
-                                    (!wide || selected != null),
-                                deletingSubscription:
-                                    _deletingProfileIds.contains(profile.id),
-                                onDeleteSubscription: _expired(profile, now) &&
-                                        !profile.isUpdating &&
+                  return CustomScrollView(
+                    key: const ValueKey('overview-nodes'),
+                    slivers: [
+                      for (final profile in visible)
+                        _ProfileNodesSliver(
+                            key: ValueKey('overview-section-${profile.id}'),
+                            profile: profile,
+                            active: profile.id == activeId,
+                            liveActive: isLiveActive(profile),
+                            showHeader: selected == null,
+                            showSubscriptionSummary: !wide || selected != null,
+                            onSyncSubscription:
+                                profile.type == ProfileType.url &&
                                         (!wide || selected != null)
-                                    ? () => unawaited(
-                                        _confirmAndDeleteProfile(profile))
+                                    ? () =>
+                                        unawaited(_syncSubscription(profile))
                                     : null,
-                                deleteButtonKey: wide
-                                    ? ValueKey(
-                                        'overview-detail-delete-${profile.id}')
-                                    : ValueKey('overview-delete-${profile.id}'),
-                                loadImmediately: selected != null ||
-                                    searching ||
-                                    activeCountry != null,
-                                availableOnly: _availableOnly,
-                                countryFilter: activeCountry,
-                                onVisibilityChanged: (isVisible) =>
-                                    _onProfileVisibilityChanged(
-                                        profile.id, isVisible),
-                                onTest: _testNode,
-                                onTestActive: _testActiveNode,
-                                onUseActive: _useActiveNode,
-                                onUseCatalog: _useCatalogNode,
-                                now: now),
-                          if (profiles.isEmpty)
-                            SliverToBoxAdapter(
-                              child: _OverviewEmptyProfilesCard(
-                                key: const ValueKey('overview-empty-profiles'),
-                                onAddSubscription: _importingSubscription
-                                    ? null
-                                    : () => unawaited(
-                                        _openUrlSubscriptionImport()),
-                                onGoToPurchase: () {
-                                  if (globalState.isAppControllerReady) {
-                                    globalState.appController
-                                        .toPage(PageLabel.purchase);
-                                  } else {
-                                    ref
-                                        .read(currentPageLabelProvider.notifier)
-                                        .value = PageLabel.purchase;
-                                  }
-                                },
-                              ),
-                            ),
-                          if (availableFilterHidAllNodes)
-                            SliverToBoxAdapter(
-                              child: _OverviewAvailableFilterEmptyBanner(
-                                key: const ValueKey(
-                                    'overview-available-only-empty'),
-                                onShowAllNodes: () {
-                                  setState(() => _availableOnly = false);
-                                  final controller = widget.commandController;
-                                  if (controller != null) {
-                                    controller.availableOnly = false;
-                                  }
-                                },
-                              ),
-                            ),
-                          if (selected == null &&
-                              activeCountry != null &&
-                              activeCountryMatchCount == 0 &&
-                              !anyVisibleCatalogLoading)
-                            SliverToBoxAdapter(
-                              child: Padding(
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 24, vertical: 16),
-                                child:
-                                    Text(appLocalizations.nodeOverviewNoNodes),
-                              ),
-                            ),
-                          SliverToBoxAdapter(
-                            child: SizedBox(height: bottomScrollClearance),
-                          ),
-                        ],
-                      ),
-                      if (floatingProxyDock != null)
-                        Positioned(
-                          left: 16,
-                          right: 16,
-                          bottom: floatingBottomMargin,
-                          child: Align(
-                            alignment: Alignment.bottomCenter,
-                            widthFactor: 1.0,
-                            heightFactor: 1.0,
-                            child: ConstrainedBox(
-                              constraints: BoxConstraints(
-                                maxWidth: math.max(
-                                  96.0,
-                                  paneConstraints.maxWidth - 32,
-                                ),
-                              ),
-                              child: floatingProxyDock,
-                            ),
+                            syncButtonKey: wide
+                                ? ValueKey('overview-detail-sync-${profile.id}')
+                                : ValueKey('overview-sync-${profile.id}'),
+                            showDeleteSubscription: _expired(profile, now) &&
+                                (!wide || selected != null),
+                            deletingSubscription:
+                                _deletingProfileIds.contains(profile.id),
+                            onDeleteSubscription: _expired(profile, now) &&
+                                    !profile.isUpdating &&
+                                    (!wide || selected != null)
+                                ? () => unawaited(
+                                    _confirmAndDeleteProfile(profile))
+                                : null,
+                            deleteButtonKey: wide
+                                ? ValueKey(
+                                    'overview-detail-delete-${profile.id}')
+                                : ValueKey('overview-delete-${profile.id}'),
+                            loadImmediately: selected != null ||
+                                searching ||
+                                activeCountry != null,
+                            availableOnly: _availableOnly,
+                            countryFilter: activeCountry,
+                            onVisibilityChanged: (isVisible) =>
+                                _onProfileVisibilityChanged(
+                                    profile.id, isVisible),
+                            onTest: _testNode,
+                            onTestActive: _testActiveNode,
+                            onUseActive: _useActiveNode,
+                            onUseCatalog: _useCatalogNode,
+                            now: now),
+                      if (profiles.isEmpty)
+                        SliverToBoxAdapter(
+                          child: _OverviewEmptyProfilesCard(
+                            key: const ValueKey('overview-empty-profiles'),
+                            onAddSubscription: _importingSubscription
+                                ? null
+                                : () => unawaited(_openUrlSubscriptionImport()),
+                            onGoToPurchase: () {
+                              if (globalState.isAppControllerReady) {
+                                globalState.appController
+                                    .toPage(PageLabel.purchase);
+                              } else {
+                                ref
+                                    .read(currentPageLabelProvider.notifier)
+                                    .value = PageLabel.purchase;
+                              }
+                            },
                           ),
                         ),
+                      if (availableFilterHidAllNodes)
+                        SliverToBoxAdapter(
+                          child: _OverviewAvailableFilterEmptyBanner(
+                            key: const ValueKey(
+                                'overview-available-only-empty'),
+                            onShowAllNodes: () {
+                              setState(() => _availableOnly = false);
+                              final controller = widget.commandController;
+                              if (controller != null) {
+                                controller.availableOnly = false;
+                              }
+                            },
+                          ),
+                        ),
+                      if (selected == null &&
+                          activeCountry != null &&
+                          activeCountryMatchCount == 0 &&
+                          !anyVisibleCatalogLoading)
+                        SliverToBoxAdapter(
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 24, vertical: 16),
+                            child: Text(appLocalizations.nodeOverviewNoNodes),
+                          ),
+                        ),
+                      SliverToBoxAdapter(
+                        child: SizedBox(height: bottomScrollClearance),
+                      ),
                     ],
                   );
                 },
@@ -4208,7 +4176,8 @@ class _NodeOverviewViewState extends ConsumerState<NodeOverviewView> {
             ),
           ],
         )),
-      ]);
+      ]),
+    );
     });
   }
 }

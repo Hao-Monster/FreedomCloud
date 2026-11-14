@@ -791,6 +791,30 @@ class _RenderCircularEarthHitBox extends RenderProxyBox {
   }
 }
 
+/// Inherited drag-target bridge used by `FloatingProxyDockOverlay` so
+/// dragging [EarthProxySwitch] moves the entire floating dock across its host
+/// viewport without rebuilding the switch subtree.
+class FloatingProxyDockDragScope extends InheritedWidget {
+  const FloatingProxyDockDragScope({
+    super.key,
+    required this.onDragStart,
+    required this.onDragUpdate,
+    required this.onDragEnd,
+    required super.child,
+  });
+
+  final VoidCallback onDragStart;
+  final ValueChanged<Offset> onDragUpdate;
+  final VoidCallback onDragEnd;
+
+  static FloatingProxyDockDragScope? maybeOf(BuildContext context) =>
+      context.getInheritedWidgetOfExactType<FloatingProxyDockDragScope>();
+
+  @override
+  bool updateShouldNotify(covariant FloatingProxyDockDragScope oldWidget) =>
+      false;
+}
+
 /// Interactive 3D naked Earth proxy master switch (`CN -> ExitCountry`).
 class EarthProxySwitch extends StatefulWidget {
   const EarthProxySwitch({
@@ -807,6 +831,9 @@ class EarthProxySwitch extends StatefulWidget {
     this.railKey,
     this.thumbKey,
     this.continuousAnimationInTests = false,
+    this.onPositionDragStart,
+    this.onPositionDragUpdate,
+    this.onPositionDragEnd,
   });
 
   final bool isRunning;
@@ -821,6 +848,9 @@ class EarthProxySwitch extends StatefulWidget {
   final Key? railKey;
   final Key? thumbKey;
   final bool continuousAnimationInTests;
+  final VoidCallback? onPositionDragStart;
+  final ValueChanged<Offset>? onPositionDragUpdate;
+  final VoidCallback? onPositionDragEnd;
 
   @visibleForTesting
   static int get debugSharedTextureRasterizeCount =>
@@ -844,8 +874,12 @@ class _EarthProxySwitchState extends State<EarthProxySwitch>
   static const double _dragThresholdPx = 5.0;
   static const double _interactiveCoreRatio = 0.84;
   static const double _steadyFrameStepSec = 0.0315; // ~30fps steady throttling
+  static const double _selfRotationRadPerSec = 0.42; // West-to-East spin when ON
   static final bool _runningInFlutterTest =
       Platform.environment.containsKey('FLUTTER_TEST');
+
+  static double _normalizeAngle(double angle) =>
+      math.atan2(math.sin(angle), math.cos(angle));
 
   late final _EarthSharedGpuAssets _gpuAssets;
   late final _EarthRenderScratch _scratch;
@@ -865,10 +899,8 @@ class _EarthProxySwitchState extends State<EarthProxySwitch>
   double _targetRipple = 0.0;
   double _yaw = 0.0;
   double _pitch = 0.18;
-  double _userRotVelocity = 0.0;
-  double _lastDragTime = -10.0;
   double _elapsed = 0.0;
-  bool _hasPendingRecenter = false;
+  bool _reframeToRoutePending = false;
   final List<double> _packetPhases = List<double>.generate(
     _packetCount,
     (i) => i / _packetCount,
@@ -884,8 +916,8 @@ class _EarthProxySwitchState extends State<EarthProxySwitch>
 
   // Pointer & focus state
   int? _activePointerId;
-  Offset _pointerDownLocal = Offset.zero;
-  Offset _pointerLastLocal = Offset.zero;
+  Offset _pointerDownGlobal = Offset.zero;
+  Offset _pointerLastGlobal = Offset.zero;
   bool _pointerDragging = false;
   bool _pointerStartedInCore = false;
   bool _isFocused = false;
@@ -893,28 +925,33 @@ class _EarthProxySwitchState extends State<EarthProxySwitch>
 
   bool get _visualActive => widget.isRunning || widget.pendingTarget != null;
 
+  bool get _allowContinuousAnimation =>
+      !_runningInFlutterTest || widget.continuousAnimationInTests;
+
+  bool get _shouldSelfRotate =>
+      widget.isRunning &&
+      widget.pendingTarget != false &&
+      _allowContinuousAnimation &&
+      !_reduceMotion;
+
   bool get _hasFiniteTransitionPending {
     if (_reduceMotion) return false;
     if ((_activeMix - _targetMix).abs() > 0.004) return true;
     if ((1.0 - _scaleSpring).abs() > 0.002 || _scaleVel.abs() > 0.008) {
       return true;
     }
-    if (_pointerDragging || _userRotVelocity.abs() > 0.0004) return true;
     if (_targetMix > 0.5) {
       if (_sweepProgress < 0.996 || _lineReveal < 0.996) return true;
-      if (_hasPendingRecenter) return true;
-      final allowSway =
-          !_runningInFlutterTest || widget.continuousAnimationInTests;
-      final desiredYaw = _arcSpec.baseYaw +
-          (allowSway ? math.sin(_elapsed * 0.55) * 0.09 : 0.0);
       final desiredPitch = _arcSpec.basePitch +
-          (allowSway ? math.cos(_elapsed * 0.42) * 0.03 : 0.0);
-      final dy = math.atan2(
-        math.sin(desiredYaw - _yaw),
-        math.cos(desiredYaw - _yaw),
-      );
-      final settleEps = allowSway ? 0.02 : 0.006;
-      if (dy.abs() > settleEps || (desiredPitch - _pitch).abs() > settleEps) {
+          (_allowContinuousAnimation ? math.cos(_elapsed * 0.42) * 0.03 : 0.0);
+      final pitchEps = _allowContinuousAnimation ? 0.02 : 0.006;
+      if ((desiredPitch - _pitch).abs() > pitchEps) {
+        return true;
+      }
+      if (_shouldSelfRotate) {
+        return _reframeToRoutePending;
+      }
+      if (_normalizeAngle(_arcSpec.baseYaw - _yaw).abs() > 0.006) {
         return true;
       }
     } else {
@@ -929,8 +966,7 @@ class _EarthProxySwitchState extends State<EarthProxySwitch>
       return false;
     }
     if (_hasFiniteTransitionPending) return true;
-    if (_targetMix > 0.5 &&
-        (!_runningInFlutterTest || widget.continuousAnimationInTests)) {
+    if (_targetMix > 0.5 && _allowContinuousAnimation) {
       return true;
     }
     return false;
@@ -1006,12 +1042,21 @@ class _EarthProxySwitchState extends State<EarthProxySwitch>
         if (isActive) {
           _sweepProgress = 0.0;
           _lineReveal = 0.0;
-          _hasPendingRecenter = false;
+          _reframeToRoutePending = true;
+        } else {
+          _reframeToRoutePending = false;
         }
+      }
+    } else if (oldWidget.isRunning != widget.isRunning && widget.isRunning) {
+      if (!_reduceMotion &&
+          _normalizeAngle(_arcSpec.baseYaw - _yaw).abs() > 0.04) {
+        _reframeToRoutePending = true;
       }
     }
     if (oldWidget.fallbackCountryCode != widget.fallbackCountryCode ||
         oldWidget.continuousAnimationInTests != widget.continuousAnimationInTests ||
+        oldWidget.isRunning != widget.isRunning ||
+        oldWidget.pendingTarget != widget.pendingTarget ||
         wasActive != isActive) {
       _refreshResolvedTargetCountry();
     }
@@ -1121,10 +1166,11 @@ class _EarthProxySwitchState extends State<EarthProxySwitch>
     if (nextCode == _resolvedTargetCode) return;
     _resolvedTargetCode = nextCode;
     _arcSpec = _EarthArcSpec.build(targetCode: nextCode);
-    _hasPendingRecenter = false;
+    _reframeToRoutePending = false;
     if (_reduceMotion) {
       _snapToTargetImmediately();
     } else if (_visualActive) {
+      _reframeToRoutePending = true;
       _lineReveal = 0.0;
       _scaleSpring = 0.96;
       _scaleVel = 1.4;
@@ -1142,8 +1188,7 @@ class _EarthProxySwitchState extends State<EarthProxySwitch>
     _lineReveal = _targetMix > 0.5 ? 1.0 : 0.0;
     _scaleSpring = 1.0;
     _scaleVel = 0.0;
-    _userRotVelocity = 0.0;
-    _hasPendingRecenter = false;
+    _reframeToRoutePending = false;
     _yaw = _arcSpec.baseYaw;
     _pitch = _arcSpec.basePitch;
     _frameNotifier.value++;
@@ -1214,42 +1259,30 @@ class _EarthProxySwitchState extends State<EarthProxySwitch>
       _scaleVel = 0.0;
     }
 
-    if (!_pointerDragging) {
-      if (_targetMix > 0.5) {
-        final holdElapsed = _elapsed - _lastDragTime;
-        if (!_hasPendingRecenter || holdElapsed > 1.8) {
-          final allowSway =
-              !_runningInFlutterTest || widget.continuousAnimationInTests;
-          final swayYaw = allowSway ? math.sin(_elapsed * 0.55) * 0.09 : 0.0;
-          final swayPitch = allowSway ? math.cos(_elapsed * 0.42) * 0.03 : 0.0;
-          final desiredYaw = _arcSpec.baseYaw + swayYaw;
-          final desiredPitch = _arcSpec.basePitch + swayPitch;
-          final dy = math.atan2(
-            math.sin(desiredYaw - _yaw),
-            math.cos(desiredYaw - _yaw),
-          );
-          final dp = desiredPitch - _pitch;
-          final damp = math.min(1.0, dt * 5.6);
-          _yaw += dy * damp;
-          _pitch += dp * damp;
-          _userRotVelocity = 0.0;
-          if (_hasPendingRecenter && dy.abs() <= 0.006 && dp.abs() <= 0.006) {
-            _yaw = desiredYaw;
-            _pitch = desiredPitch;
-            _hasPendingRecenter = false;
+    if (_targetMix > 0.5) {
+      final desiredPitch = _arcSpec.basePitch +
+          (_allowContinuousAnimation ? math.cos(_elapsed * 0.42) * 0.03 : 0.0);
+      final pitchDamp = math.min(1.0, dt * 5.6);
+      _pitch += (desiredPitch - _pitch) * pitchDamp;
+
+      if (_shouldSelfRotate) {
+        if (_reframeToRoutePending) {
+          final dy = _normalizeAngle(_arcSpec.baseYaw - _yaw);
+          if (dy.abs() <= 0.04) {
+            _reframeToRoutePending = false;
+            _yaw = _normalizeAngle(_yaw + _selfRotationRadPerSec * dt);
+          } else {
+            _yaw = _normalizeAngle(_yaw + dy * math.min(1.0, dt * 5.6));
           }
         } else {
-          _yaw += _userRotVelocity;
-          _userRotVelocity *= math.exp(-5.0 * dt);
-          if (_userRotVelocity.abs() <= 0.0002) {
-            _userRotVelocity = 0.0;
-          }
+          _yaw = _normalizeAngle(_yaw + _selfRotationRadPerSec * dt);
         }
       } else {
-        _yaw += _userRotVelocity;
-        _userRotVelocity *= math.exp(-5.0 * dt);
-        if (_userRotVelocity.abs() <= 0.0002) {
-          _userRotVelocity = 0.0;
+        final dy = _normalizeAngle(_arcSpec.baseYaw - _yaw);
+        if (dy.abs() <= 0.006) {
+          _yaw = _arcSpec.baseYaw;
+        } else {
+          _yaw = _normalizeAngle(_yaw + dy * math.min(1.0, dt * 5.6));
         }
       }
     }
@@ -1278,11 +1311,26 @@ class _EarthProxySwitchState extends State<EarthProxySwitch>
     }
   }
 
+  void _emitDragStart() {
+    widget.onPositionDragStart?.call();
+    FloatingProxyDockDragScope.maybeOf(context)?.onDragStart();
+  }
+
+  void _emitDragUpdate(Offset delta) {
+    widget.onPositionDragUpdate?.call(delta);
+    FloatingProxyDockDragScope.maybeOf(context)?.onDragUpdate(delta);
+  }
+
+  void _emitDragEnd() {
+    widget.onPositionDragEnd?.call();
+    FloatingProxyDockDragScope.maybeOf(context)?.onDragEnd();
+  }
+
   void _handlePointerDown(PointerDownEvent event) {
     if (_activePointerId != null) return;
     _activePointerId = event.pointer;
-    _pointerDownLocal = event.localPosition;
-    _pointerLastLocal = event.localPosition;
+    _pointerDownGlobal = event.position;
+    _pointerLastGlobal = event.position;
     _pointerDragging = false;
 
     final half = widget.diameter * 0.5;
@@ -1294,22 +1342,22 @@ class _EarthProxySwitchState extends State<EarthProxySwitch>
 
   void _handlePointerMove(PointerMoveEvent event) {
     if (event.pointer != _activePointerId) return;
-    final totalDelta = event.localPosition - _pointerDownLocal;
+    final totalDelta = event.position - _pointerDownGlobal;
     if (!_pointerDragging && totalDelta.distance >= _dragThresholdPx) {
       _pointerDragging = true;
-      _hasPendingRecenter = true;
-      _userRotVelocity = 0.0;
       setState(() {});
+      _emitDragStart();
+      _emitDragUpdate(totalDelta);
+      _pointerLastGlobal = event.position;
+      return;
     }
     if (_pointerDragging) {
-      final step = event.localPosition - _pointerLastLocal;
-      _yaw += step.dx * 0.0085;
-      _pitch = (_pitch + step.dy * 0.006).clamp(-0.65, 0.75);
-      _userRotVelocity = step.dx * 0.003;
-      _lastDragTime = _elapsed;
-      _frameNotifier.value++;
+      final step = event.position - _pointerLastGlobal;
+      if (step != Offset.zero) {
+        _emitDragUpdate(step);
+      }
+      _pointerLastGlobal = event.position;
     }
-    _pointerLastLocal = event.localPosition;
   }
 
   void _handlePointerUp(PointerUpEvent event) {
@@ -1320,10 +1368,8 @@ class _EarthProxySwitchState extends State<EarthProxySwitch>
     _pointerStartedInCore = false;
     if (wasDragging) {
       _pointerDragging = false;
-      _lastDragTime = _elapsed;
-      _hasPendingRecenter = true;
       setState(() {});
-      _syncTickerState();
+      _emitDragEnd();
       return;
     }
     if (inCore && widget.canPress) {
@@ -1338,10 +1384,8 @@ class _EarthProxySwitchState extends State<EarthProxySwitch>
     _pointerDragging = false;
     _pointerStartedInCore = false;
     if (wasDragging) {
-      _lastDragTime = _elapsed;
-      _hasPendingRecenter = true;
       setState(() {});
-      _syncTickerState();
+      _emitDragEnd();
     }
   }
 
@@ -1372,7 +1416,7 @@ class _EarthProxySwitchState extends State<EarthProxySwitch>
 
     final cursor = _pointerDragging
         ? SystemMouseCursors.grabbing
-        : (widget.canPress ? SystemMouseCursors.grab : SystemMouseCursors.basic);
+        : (widget.canPress ? SystemMouseCursors.click : SystemMouseCursors.grab);
 
     final Widget content = Stack(
       clipBehavior: Clip.none,

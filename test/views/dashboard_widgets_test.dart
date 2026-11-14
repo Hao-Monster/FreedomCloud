@@ -18,15 +18,16 @@ import 'package:flclashx/views/dashboard/widgets/network_speed.dart';
 import 'package:flclashx/views/dashboard/widgets/start_button.dart';
 import 'package:flclashx/widgets/card.dart';
 import 'package:flclashx/widgets/donut_chart.dart';
-import 'package:flclashx/widgets/earth_proxy_switch.dart';
 import 'package:flclashx/widgets/line_chart.dart';
 import 'package:flclashx/widgets/scaffold.dart';
 import 'package:flclashx/widgets/super_grid.dart';
+import 'package:flclashx/widgets/tactile_proxy_switch.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class _TestPaths extends PathProviderPlatform {
   _TestPaths(this.root);
@@ -190,6 +191,15 @@ void main() {
   setUpAll(() async {
     tempDir = await Directory.systemTemp.createTemp('flclashx_dashboard_test_');
     PathProviderPlatform.instance = _TestPaths(tempDir.path);
+  });
+
+  setUp(() {
+    SharedPreferences.setMockInitialValues({});
+    EarthDockPositionStore.instance.resetForTest();
+  });
+
+  tearDown(() {
+    EarthDockPositionStore.instance.resetForTest();
   });
 
   tearDownAll(() async {
@@ -812,18 +822,13 @@ void main() {
       expect(initialDockRect.width, lessThan(220));
       expect(find.text('开启代理'), findsNothing);
 
-      // Manual 3D drag rotates the globe without triggering toggle.
-      final yawBeforeDrag =
-          EarthProxySwitch.debugSnapshotOf(tester.element(earthFinder))!.yaw;
-      await tester.drag(switchFinder, const Offset(90, 0));
+      // Manual drag moves dock screen position freely without triggering toggle.
+      await tester.drag(switchFinder, const Offset(90, -120));
       await tester.pumpAndSettle();
       expect(controller.statusUpdates, isEmpty);
-      expect(
-        (EarthProxySwitch.debugSnapshotOf(tester.element(earthFinder))!.yaw -
-                yawBeforeDrag)
-            .abs(),
-        greaterThan(0.1),
-      );
+      final draggedDockRect = tester.getRect(dockFinder);
+      expect(draggedDockRect.left, closeTo(initialDockRect.left + 90, 1.5));
+      expect(draggedDockRect.top, closeTo(initialDockRect.top - 120, 1.5));
 
       // Single click turns Earth ON immediately without rendering stopwatch or pill text.
       await tester.tap(switchFinder);
@@ -852,8 +857,12 @@ void main() {
       expect(find.text('运行中'), findsNothing);
       expect(controller.statusUpdates, [true]);
 
-      // Scrolling keeps dock anchored and leaves bottom-most card unobstructed at maxScrollExtent.
+      // Scrolling keeps dock anchored at its dragged position and clears bottom-most card when reset to default bottom-center.
       await tester.drag(scrollFinder, const Offset(0, -120));
+      await tester.pumpAndSettle();
+      expect(tester.getRect(dockFinder), draggedDockRect);
+
+      EarthDockPositionStore.instance.resetForTest();
       await tester.pumpAndSettle();
       expect(tester.getRect(dockFinder), initialDockRect);
 

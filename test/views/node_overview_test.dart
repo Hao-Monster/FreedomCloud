@@ -24,8 +24,8 @@ import 'package:flclashx/views/proxies/card.dart';
 import 'package:flclashx/views/proxies/list.dart';
 import 'package:flclashx/views/proxies/overview/overview.dart';
 import 'package:flclashx/views/proxies/proxies.dart';
-import 'package:flclashx/widgets/earth_proxy_switch.dart';
 import 'package:flclashx/widgets/scaffold.dart';
+import 'package:flclashx/widgets/tactile_proxy_switch.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart';
@@ -33,6 +33,7 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class _TestPaths extends PathProviderPlatform {
   _TestPaths(this.root);
@@ -243,6 +244,9 @@ class _CatalogTester extends ChangeNotifier implements NodeCatalogTester {
 
 void main() {
   setUp(() async {
+    SharedPreferences.setMockInitialValues({});
+    EarthDockPositionStore.instance.resetForTest();
+    addTearDown(EarthDockPositionStore.instance.resetForTest);
     await AppLocalizations.load(const Locale('en'));
     globalState.config =
         const Config(themeProps: defaultThemeProps, profiles: [_a, _b]);
@@ -9162,17 +9166,21 @@ void main() {
         ),
       );
 
-      // 2. Manual drag gesture rotates 3D Earth and MUST NOT trigger proxy toggle.
-      final yawBeforeDrag =
-          EarthProxySwitch.debugSnapshotOf(tester.element(earthFinder))!.yaw;
-      await tester.drag(switchFinder, const Offset(90, 0));
+      // 2. Manual drag gesture moves floating dock freely (including across wide sidebar)
+      //    without triggering proxy toggle.
+      final dockFinder =
+          find.byKey(const ValueKey('overview-floating-proxy-dock'));
+      final initialDockRect = tester.getRect(dockFinder);
+      await tester.drag(switchFinder, const Offset(-460, -110));
       await tester.pumpAndSettle();
       expect(controller.statusUpdates, isEmpty);
+      final draggedDockRect = tester.getRect(dockFinder);
+      expect(draggedDockRect.left, closeTo(initialDockRect.left - 460, 1.5));
+      expect(draggedDockRect.top, closeTo(initialDockRect.top - 110, 1.5));
       expect(
-        (EarthProxySwitch.debugSnapshotOf(tester.element(earthFinder))!.yaw -
-                yawBeforeDrag)
-            .abs(),
-        greaterThan(0.1),
+        draggedDockRect.left,
+        lessThan(296.0),
+        reason: 'Floating Earth dock must drag freely across the left sidebar area in wide mode',
       );
 
       // 3. Single click transitions Earth smoothly to ON state.
@@ -9366,12 +9374,36 @@ void main() {
       findsOneWidget,
     );
 
-    // 2. Floating dock is centered horizontally at bottom of right-hand node pane (excluding sidebar).
+    // 2. Undragged floating dock stays horizontally centered at bottom across full host viewport
+    //    and remains centered as window narrows/widens across the wide sidebar breakpoint.
+    final overviewFinder = find.byType(NodeOverviewView);
+    final initialOverviewRect = tester.getRect(overviewFinder);
     final initialDockRect = tester.getRect(dockFinder);
     final nodesRect = tester.getRect(nodesFinder);
-    expect(initialDockRect.center.dx, closeTo(nodesRect.center.dx, 1.5));
-    expect(initialDockRect.bottom, closeTo(nodesRect.bottom - 16.0, 1.5));
+    expect(
+      initialDockRect.center.dx,
+      closeTo(initialOverviewRect.center.dx, 1.5),
+    );
+    expect(
+      initialDockRect.bottom,
+      closeTo(initialOverviewRect.bottom - 16.0, 1.5),
+    );
     expect(initialDockRect.top, greaterThan(nodesRect.center.dy));
+
+    for (final width in const [720.0, 420.0, 1440.0, 1200.0]) {
+      tester.view.physicalSize = Size(width, 1000);
+      await tester.pumpAndSettle();
+      final resizedOverviewRect = tester.getRect(overviewFinder);
+      final resizedDockRect = tester.getRect(dockFinder);
+      expect(
+        resizedDockRect.center.dx,
+        closeTo(resizedOverviewRect.center.dx, 1.5),
+      );
+      expect(
+        resizedDockRect.bottom,
+        closeTo(resizedOverviewRect.bottom - 16.0, 1.5),
+      );
+    }
 
     // 3. Scrolling down keeps floating dock anchored at exact screen position and responsive to single click.
     await tester.drag(nodesFinder, const Offset(0, -420));
