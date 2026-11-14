@@ -415,13 +415,20 @@ void main() {
       find.descendant(of: toggleFinder, matching: find.byType(Icon)),
       findsNothing,
     );
+    final supportFinder =
+        find.byKey(const ValueKey('navigation-support-trigger'));
+    expect(supportFinder, findsOneWidget);
+    expect(
+      tester.getTopLeft(supportFinder).dy,
+      greaterThan(tester.getBottomLeft(find.text('购买')).dy),
+    );
     final collapsedToggleTop = tester.getTopLeft(toggleFinder).dy;
     expect(
       collapsedToggleTop,
-      greaterThan(tester.getBottomLeft(find.text('购买')).dy),
+      greaterThan(tester.getBottomLeft(supportFinder).dy),
     );
 
-    // 3. Click 大佬模式 -> toggle stays anchored below 购买 and expands advanced items underneath.
+    // 3. Click 大佬模式 -> toggle stays pinned at bottom-left, 在线客服 stays below 购买, and advanced items expand underneath 在线客服.
     await tester.tap(toggleFinder);
     await tester.pumpAndSettle();
 
@@ -445,12 +452,16 @@ void main() {
     final expandedToggleTop = tester.getTopLeft(toggleFinder).dy;
     expect(expandedToggleTop, closeTo(collapsedToggleTop, 0.01));
     expect(
-      expandedToggleTop,
+      tester.getTopLeft(supportFinder).dy,
       greaterThan(tester.getBottomLeft(find.text('购买')).dy),
     );
     expect(
-      tester.getBottomLeft(toggleFinder).dy,
+      tester.getBottomLeft(supportFinder).dy,
       lessThanOrEqualTo(tester.getTopLeft(find.text('仪表盘')).dy),
+    );
+    expect(
+      expandedToggleTop,
+      greaterThan(tester.getBottomLeft(find.text('设置')).dy),
     );
     expect(
       tester.getTopLeft(find.text('仪表盘')).dy,
@@ -1269,7 +1280,7 @@ void main() {
   });
 
   testWidgets(
-      'Desktop side rail pins 大佬模式/小白模式 below 购买, expands advanced items including 日志 underneath, and maintains single active selection across primary and expanded items',
+      'Desktop side rail places 在线客服 below 购买, expands advanced items including 日志 underneath, pins 大佬模式/小白模式 to bottom-left, and maintains single active selection across primary and expanded items',
       (tester) async {
     tester.view.physicalSize = const Size(1280, 900);
     tester.view.devicePixelRatio = 1.0;
@@ -1367,12 +1378,13 @@ void main() {
       final orderedLabels = [
         find.text('代理'),
         find.text('购买'),
-        toggleFinder,
+        find.byKey(const ValueKey('navigation-support-trigger')),
         find.text('仪表盘'),
         find.text('配置'),
         find.text('连接'),
         find.text('日志'),
         find.text('设置'),
+        toggleFinder,
       ];
       for (var i = 0; i < orderedLabels.length - 1; i++) {
         expect(
