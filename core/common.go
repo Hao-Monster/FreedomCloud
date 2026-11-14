@@ -51,7 +51,7 @@ var (
 	skipListenerTunRecreate     = false
 	currentRawListeners         []map[string]any
 	currentListenersClosed      = false
-	currentTestURL              = "https://www.gstatic.com/generate_204"
+	currentTestURL              = defaultCoreTestURL
 	minHealthCheckInterval      = 5 * time.Second
 	emitLoadedProviderMessage   = func(name string) {
 		sendMessage(Message{
@@ -499,10 +499,12 @@ func defaultCoreRawConfig() *config.RawConfig {
 	return defaults
 }
 
+const defaultCoreTestURL = "https://www.google.com/generate_204"
+
 func defaultSetupParams() *SetupParams {
 	return &SetupParams{
 		Config:      defaultCoreRawConfig(),
-		TestURL:     "https://www.gstatic.com/generate_204",
+		TestURL:     defaultCoreTestURL,
 		SelectedMap: map[string]string{},
 	}
 }

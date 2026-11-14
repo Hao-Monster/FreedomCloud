@@ -1,3 +1,4 @@
+import 'package:flclashx/common/constant.dart' as app_constant;
 import 'package:flclashx/models/models.dart';
 import 'package:flclashx/providers/node_overview.dart'
     show isInformationalProxyName;
@@ -65,7 +66,7 @@ void injectManagedSmartProxyGroups(
 }) {
   final effectiveDefaultUrl = defaultTestUrl.trim().isNotEmpty
       ? defaultTestUrl.trim()
-      : 'https://www.gstatic.com/generate_204';
+      : app_constant.defaultTestUrl;
 
   final rawProxies = rawConfig['proxies'];
   final inlineLeafNames = <String>[];

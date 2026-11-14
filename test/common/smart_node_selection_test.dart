@@ -5,7 +5,7 @@ import 'package:flclashx/models/models.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  const defaultUrl = 'https://www.gstatic.com/generate_204';
+  const defaultUrl = 'https://www.google.com/generate_204';
 
   group('injectManagedSmartProxyGroups', () {
     test(

@@ -250,3 +250,29 @@ func TestLookupDelayProxyFindsBuiltinDirectAfterApplyConfig(t *testing.T) {
 		t.Fatalf("expected DIRECT proxy type %v, got %v", constant.Direct, direct.Type())
 	}
 }
+
+func TestDefaultTestURLUsesGoogleGenerate204(t *testing.T) {
+	const want = "https://www.google.com/generate_204"
+	if defaults := defaultSetupParams(); defaults.TestURL != want {
+		t.Fatalf("defaultSetupParams().TestURL = %q, want %q", defaults.TestURL, want)
+	}
+	if currentTestURL != want {
+		t.Fatalf("currentTestURL = %q, want %q", currentTestURL, want)
+	}
+	done := make(chan string, 1)
+	handleAsyncTestDelay(`{"proxy-name":"__missing__","timeout":100}`, func(value string) {
+		done <- value
+	})
+	select {
+	case value := <-done:
+		var result Delay
+		if err := json.Unmarshal([]byte(value), &result); err != nil {
+			t.Fatalf("unmarshal delay result: %v", err)
+		}
+		if result.Url != want {
+			t.Fatalf("default Delay.Url = %q, want %q", result.Url, want)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for default test url delay response")
+	}
+}

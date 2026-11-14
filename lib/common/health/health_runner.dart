@@ -1064,7 +1064,7 @@ class HealthRunner {
           final parsedHost = Uri.tryParse(cfg.testUrl)?.host.trim() ?? '';
           final primary = (parsedHost.isEmpty ||
                   InternetAddress.tryParse(parsedHost) != null)
-              ? 'www.gstatic.com'
+              ? 'www.google.com'
               : parsedHost;
           candidateHosts = <String>[primary];
         } else {

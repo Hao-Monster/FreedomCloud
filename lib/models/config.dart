@@ -41,6 +41,7 @@ const defaultThemeProps = ThemeProps(
   primaryColor: defaultPrimaryColor,
   themeMode: ThemeMode.dark,
 );
+const String _legacyDefaultTestUrl = "https://www.gstatic.com/generate_204";
 
 const defaultConnectionTableColumns = [
   'status',
@@ -115,6 +116,7 @@ class AppSettingProps with _$AppSettingProps {
     @Default(true) bool dashboardDefaultV2Migrated,
     @Default(true) bool tunDesktopStackGvisorRestored,
     @Default(true) bool dnsRespectRulesDefaultMigrated,
+    @Default(true) bool defaultTestUrlGoogleMigrated,
     @Default(false) bool onlyStatisticsProxy,
     @Default(false) bool autoLaunch,
     @Default(false) bool silentLaunch,
@@ -515,6 +517,34 @@ class Config with _$Config {
             "dnsRespectRulesDefaultMigrated": true,
           };
         }
+      }
+    } catch (_) {}
+
+    try {
+      // One-shot migration: upgrade legacy uncustomized default testUrl
+      // (https://www.gstatic.com/generate_204 or blank/corrupt) once to
+      // defaultTestUrl (https://www.google.com/generate_204) while preserving
+      // custom user URLs and any manual edits after defaultTestUrlGoogleMigrated.
+      final rawAppSetting = normalizedJson["appSetting"];
+      final alreadyMigratedTestUrl = rawAppSetting is Map &&
+          rawAppSetting["defaultTestUrlGoogleMigrated"] == true;
+      if (!alreadyMigratedTestUrl) {
+        final nextAppSetting = rawAppSetting is Map
+            ? Map<String, Object?>.from(rawAppSetting)
+            : <String, Object?>{};
+        final rawTestUrl = nextAppSetting["testUrl"];
+        if (rawTestUrl == null) {
+          nextAppSetting["testUrl"] = defaultTestUrl;
+        } else if (rawTestUrl is String) {
+          final trimmed = rawTestUrl.trim();
+          if (trimmed.isEmpty || trimmed == _legacyDefaultTestUrl) {
+            nextAppSetting["testUrl"] = defaultTestUrl;
+          }
+        } else {
+          nextAppSetting["testUrl"] = defaultTestUrl;
+        }
+        nextAppSetting["defaultTestUrlGoogleMigrated"] = true;
+        normalizedJson["appSetting"] = nextAppSetting;
       }
     } catch (_) {}
 

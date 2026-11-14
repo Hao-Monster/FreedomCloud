@@ -125,7 +125,7 @@ func runDelayTask(params TestDelayParams, lookup func(context.Context) (constant
 	respond := func() { data, _ := json.Marshal(result); fn(string(data)) }
 	result.Name, result.Url = params.ProxyName, params.TestUrl
 	if result.Url == "" {
-		result.Url = "https://www.gstatic.com/generate_204"
+		result.Url = defaultCoreTestURL
 	}
 	if params.Timeout <= 0 {
 		params.Timeout = 1

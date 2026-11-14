@@ -19,6 +19,8 @@ _$AppSettingPropsImpl _$$AppSettingPropsImplFromJson(
           json['tunDesktopStackGvisorRestored'] as bool? ?? true,
       dnsRespectRulesDefaultMigrated:
           json['dnsRespectRulesDefaultMigrated'] as bool? ?? true,
+      defaultTestUrlGoogleMigrated:
+          json['defaultTestUrlGoogleMigrated'] as bool? ?? true,
       onlyStatisticsProxy: json['onlyStatisticsProxy'] as bool? ?? false,
       autoLaunch: json['autoLaunch'] as bool? ?? false,
       silentLaunch: json['silentLaunch'] as bool? ?? false,
@@ -85,6 +87,7 @@ Map<String, dynamic> _$$AppSettingPropsImplToJson(
       'dashboardDefaultV2Migrated': instance.dashboardDefaultV2Migrated,
       'tunDesktopStackGvisorRestored': instance.tunDesktopStackGvisorRestored,
       'dnsRespectRulesDefaultMigrated': instance.dnsRespectRulesDefaultMigrated,
+      'defaultTestUrlGoogleMigrated': instance.defaultTestUrlGoogleMigrated,
       'onlyStatisticsProxy': instance.onlyStatisticsProxy,
       'autoLaunch': instance.autoLaunch,
       'silentLaunch': instance.silentLaunch,
