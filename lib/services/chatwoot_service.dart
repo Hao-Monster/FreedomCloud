@@ -12,9 +12,11 @@ export 'package:flclashx/models/chatwoot.dart'
     show
         ChatwootContactMergedEvent,
         ChatwootConversationStatusChangedEvent,
+        ChatwootDisconnectedEvent,
         ChatwootMessageCreatedEvent,
         ChatwootMessageUpdatedEvent,
         ChatwootRealtimeEvent,
+        ChatwootSubscriptionConfirmedEvent,
         ChatwootSubscriptionRejectedEvent,
         ChatwootTypingEvent;
 
@@ -166,8 +168,12 @@ class DioChatwootService implements ChatwootService {
     return direct;
   }
 
-  bool _canFallbackToDirect(DioException error) {
-    if (_closed ||
+  bool _canFallbackToDirect(
+    DioException error, {
+    bool nonIdempotent = false,
+  }) {
+    if (nonIdempotent ||
+        _closed ||
         (!_ownsTransport && _directDio == null) ||
         !(_shouldFallbackToDirect?.call() ?? false)) {
       return false;
@@ -233,6 +239,7 @@ class DioChatwootService implements ChatwootService {
     Map<String, String>? query,
     bool allowNotFound = false,
     bool resolvedLockOnForbidden = false,
+    bool nonIdempotent = false,
     required T Function(int status, Object? body) parse,
   }) async {
     if (_closed) {
@@ -269,7 +276,7 @@ class DioChatwootService implements ChatwootService {
           data: data,
         );
       } on DioException catch (error) {
-        if (!_canFallbackToDirect(error)) rethrow;
+        if (!_canFallbackToDirect(error, nonIdempotent: nonIdempotent)) rethrow;
         response = await _performRequest(
           _ensureDirectDio(),
           uri,
@@ -290,8 +297,15 @@ class DioChatwootService implements ChatwootService {
           statusCode: status,
         );
       }
-      if (allowNotFound && status == 404) {
-        return parse(status, response.data);
+      if (status == 404) {
+        if (allowNotFound) {
+          return parse(status, _tryDecodeBodyIfJsonString(response.data));
+        }
+        throw const ChatwootException(
+          code: 'not_found',
+          message: '客服会话或联系人不存在，正在重新建立连接',
+          statusCode: 404,
+        );
       }
       if (status == 401) {
         throw const ChatwootException(
@@ -302,7 +316,7 @@ class DioChatwootService implements ChatwootService {
         );
       }
       if (status == 403) {
-        final decodedBody = _decodeBodyIfJsonString(response.data);
+        final decodedBody = _tryDecodeBodyIfJsonString(response.data);
         final isResolved = resolvedLockOnForbidden ||
             _looksLikeResolvedError(decodedBody);
         throw ChatwootException(
@@ -390,7 +404,8 @@ class DioChatwootService implements ChatwootService {
                 _optionalString(channelRaw, 'out_of_office_message'),
           );
 
-          final resolvedAuthToken = _optionalString(root, 'auth_token') ??
+          final resolvedAuthToken = _optionalString(channelRaw, 'auth_token') ??
+              _optionalString(root, 'auth_token') ??
               (authToken != null && authToken.trim().isNotEmpty
                   ? authToken.trim()
                   : null);
@@ -466,9 +481,8 @@ class DioChatwootService implements ChatwootService {
         websiteToken: websiteToken,
         authToken: authToken,
         requireAuthToken: true,
-        allowNotFound: true,
         parse: (status, body) {
-          if (status == 404 || body == null) return null;
+          if (body == null) return null;
           final root = _asNullableObject(body);
           if (root == null || root.isEmpty) return null;
           final payload = _asNullableObject(root['payload']) ?? root;
@@ -513,8 +527,8 @@ class DioChatwootService implements ChatwootService {
           final messages = <ChatwootMessage>[];
           for (final item in rawList) {
             final map = _asObject(item);
-            final parsed = _parseMessage(map);
-            if (!parsed.isPrivate) {
+            final parsed = _tryParseMessage(map);
+            if (parsed != null && !parsed.isPrivate) {
               messages.add(parsed);
             }
           }
@@ -538,6 +552,7 @@ class DioChatwootService implements ChatwootService {
         authToken: authToken,
         requireAuthToken: true,
         resolvedLockOnForbidden: true,
+        nonIdempotent: true,
         data: {
           'message': {
             'content': content,
@@ -591,8 +606,11 @@ class ActionCableChatwootRealtime implements ChatwootRealtimeConnection {
   ActionCableChatwootRealtime._(
     this._socket,
     this._pubsubToken,
-    this._ownedClients,
-  ) {
+    this._ownedClients, {
+    Duration pingTimeout = const Duration(seconds: 20),
+    Duration closeTimeout = const Duration(seconds: 2),
+  })  : _pingTimeout = pingTimeout,
+        _closeTimeout = closeTimeout {
     _identifier = jsonEncode({
       'channel': 'RoomChannel',
       'pubsub_token': _pubsubToken,
@@ -603,18 +621,23 @@ class ActionCableChatwootRealtime implements ChatwootRealtimeConnection {
       onDone: _handleDisconnect,
       cancelOnError: true,
     );
+    _resetPingWatchdog();
   }
 
   final WebSocket _socket;
   final String _pubsubToken;
   final List<HttpClient> _ownedClients;
+  final Duration _pingTimeout;
+  final Duration _closeTimeout;
   late final String _identifier;
   late final StreamSubscription<dynamic> _subscription;
   final StreamController<ChatwootRealtimeEvent> _controller =
       StreamController<ChatwootRealtimeEvent>.broadcast();
   final Completer<void> _doneCompleter = Completer<void>();
 
+  Timer? _pingWatchdogTimer;
   bool _closed = false;
+  bool _disconnecting = false;
   bool _subscribeSent = false;
 
   /// Connects to `wss://<baseUrl.host>(:<port>)/cable` with strict TLS and
@@ -624,6 +647,9 @@ class ActionCableChatwootRealtime implements ChatwootRealtimeConnection {
     required String pubsubToken,
     bool Function()? shouldFallbackToDirect,
     Duration connectTimeout = const Duration(seconds: 8),
+    Duration pingTimeout = const Duration(seconds: 20),
+    Future<void>? cancelSignal,
+    @visibleForTesting Duration closeTimeout = const Duration(seconds: 2),
     @visibleForTesting
     Future<WebSocket> Function(String url, HttpClient client)?
         webSocketConnector,
@@ -649,6 +675,105 @@ class ActionCableChatwootRealtime implements ChatwootRealtimeConnection {
         (String url, HttpClient client) =>
             WebSocket.connect(url, customClient: client);
 
+    Future<void> closeOrphanSocket(WebSocket socket) async {
+      try {
+        await socket.close().timeout(closeTimeout);
+      } on Object {
+        // Best-effort close for late-arriving socket after timeout/cancellation.
+      }
+    }
+
+    var cancelled = false;
+    HttpClient? activeClient;
+
+    void triggerCancel() {
+      cancelled = true;
+      activeClient?.close(force: true);
+    }
+
+    Future<WebSocket> attemptConnect(HttpClient client) async {
+      if (cancelled) {
+        client.close(force: true);
+        throw const ChatwootException(
+          code: 'realtime_cancelled',
+          message: '客服实时连接已取消',
+        );
+      }
+      activeClient = client;
+      var timedOut = false;
+      final rawFuture = connectFn(wsUri.toString(), client);
+      unawaited(
+        rawFuture.then(
+          (socket) {
+            if (timedOut || cancelled) {
+              unawaited(closeOrphanSocket(socket));
+            }
+          },
+          onError: (Object _) {},
+        ),
+      );
+
+      final guarded = rawFuture.timeout(
+        connectTimeout,
+        onTimeout: () {
+          timedOut = true;
+          client.close(force: true);
+          throw TimeoutException(
+            'ActionCable connect timed out',
+            connectTimeout,
+          );
+        },
+      );
+
+      if (cancelSignal == null) {
+        final socket = await guarded;
+        if (cancelled) {
+          unawaited(closeOrphanSocket(socket));
+          client.close(force: true);
+          throw const ChatwootException(
+            code: 'realtime_cancelled',
+            message: '客服实时连接已取消',
+          );
+        }
+        return socket;
+      }
+
+      final race = Completer<WebSocket>();
+      unawaited(
+        guarded.then(
+          (socket) {
+            if (cancelled || timedOut || race.isCompleted) {
+              unawaited(closeOrphanSocket(socket));
+              return;
+            }
+            race.complete(socket);
+          },
+          onError: (Object error, StackTrace stackTrace) {
+            if (!race.isCompleted) {
+              race.completeError(error, stackTrace);
+            }
+          },
+        ),
+      );
+      unawaited(
+        cancelSignal.then(
+          (_) {
+            triggerCancel();
+            if (!race.isCompleted) {
+              race.completeError(
+                const ChatwootException(
+                  code: 'realtime_cancelled',
+                  message: '客服实时连接已取消',
+                ),
+              );
+            }
+          },
+          onError: (Object _) {},
+        ),
+      );
+      return race.future;
+    }
+
     final primaryClient = HttpClient()
       ..connectionTimeout = connectTimeout
       ..badCertificateCallback = ((_, __, ___) => false);
@@ -656,15 +781,26 @@ class ActionCableChatwootRealtime implements ChatwootRealtimeConnection {
     try {
       // Closed by ActionCableChatwootRealtime.close().
       // ignore: close_sinks
-      final socket = await connectFn(wsUri.toString(), primaryClient);
+      final socket = await attemptConnect(primaryClient);
+      activeClient = null;
       return ActionCableChatwootRealtime._(
         socket,
         trimmedPubsub,
         [primaryClient],
+        pingTimeout: pingTimeout,
+        closeTimeout: closeTimeout,
       );
     } on Object catch (error) {
+      activeClient = null;
       primaryClient.close(force: true);
-      if (_isCertificateFailure(error)) {
+      if (cancelled ||
+          (error is ChatwootException && error.code == 'realtime_cancelled')) {
+        throw const ChatwootException(
+          code: 'realtime_cancelled',
+          message: '客服实时连接已取消',
+        );
+      }
+      if (isCertificateTransportError(error)) {
         throw const ChatwootException(
           code: 'certificate_error',
           message: '客服实时连接证书验证失败',
@@ -684,15 +820,27 @@ class ActionCableChatwootRealtime implements ChatwootRealtimeConnection {
       try {
         // Closed by ActionCableChatwootRealtime.close().
         // ignore: close_sinks
-        final socket = await connectFn(wsUri.toString(), directClient);
+        final socket = await attemptConnect(directClient);
+        activeClient = null;
         return ActionCableChatwootRealtime._(
           socket,
           trimmedPubsub,
           [directClient],
+          pingTimeout: pingTimeout,
+          closeTimeout: closeTimeout,
         );
       } on Object catch (directError) {
+        activeClient = null;
         directClient.close(force: true);
-        if (_isCertificateFailure(directError)) {
+        if (cancelled ||
+            (directError is ChatwootException &&
+                directError.code == 'realtime_cancelled')) {
+          throw const ChatwootException(
+            code: 'realtime_cancelled',
+            message: '客服实时连接已取消',
+          );
+        }
+        if (isCertificateTransportError(directError)) {
           throw const ChatwootException(
             code: 'certificate_error',
             message: '客服实时连接证书验证失败',
@@ -714,6 +862,17 @@ class ActionCableChatwootRealtime implements ChatwootRealtimeConnection {
 
   @override
   bool get isClosed => _closed;
+
+  void _resetPingWatchdog() {
+    _pingWatchdogTimer?.cancel();
+    if (_closed || _disconnecting || _pingTimeout <= Duration.zero) {
+      return;
+    }
+    _pingWatchdogTimer = Timer(_pingTimeout, () {
+      if (_closed || _disconnecting) return;
+      _emitDisconnectedAndClose(reconnect: true, reason: 'ping_timeout');
+    });
+  }
 
   void _sendSubscribe() {
     if (_closed || _subscribeSent) return;
@@ -743,106 +902,156 @@ class ActionCableChatwootRealtime implements ChatwootRealtimeConnection {
   }
 
   void _handleFrame(dynamic raw) {
-    if (_closed || raw is! String) return;
-    final Object? decoded;
+    if (_closed || _disconnecting || raw is! String) return;
+    _resetPingWatchdog();
     try {
-      decoded = jsonDecode(raw);
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) return;
+      final frame = decoded.cast<String, Object?>();
+      final type = frame['type'];
+      if (type is String) {
+        switch (type) {
+          case 'welcome':
+            _sendSubscribe();
+            return;
+          case 'ping':
+            return;
+          case 'confirm_subscription':
+            if (!_controller.isClosed) {
+              _controller.add(const ChatwootSubscriptionConfirmedEvent());
+            }
+            return;
+          case 'reject_subscription':
+            if (!_controller.isClosed) {
+              _controller.add(const ChatwootSubscriptionRejectedEvent());
+            }
+            return;
+          case 'disconnect':
+            final reconnectRaw = frame['reconnect'];
+            final reconnect = reconnectRaw is bool ? reconnectRaw : true;
+            final reasonRaw = frame['reason'];
+            final reason = reasonRaw is String && reasonRaw.trim().isNotEmpty
+                ? reasonRaw.trim()
+                : null;
+            _emitDisconnectedAndClose(reconnect: reconnect, reason: reason);
+            return;
+        }
+      }
+
+      final payload = _asNullableObject(frame['message']);
+      if (payload == null) return;
+      final eventName = _optionalString(payload, 'event');
+      final data =
+          _asNullableObject(payload['data']) ?? const <String, Object?>{};
+      final conversationId = _extractConversationId(data);
+      switch (eventName) {
+        case 'message.created':
+          final msg = _tryParseMessage(data);
+          if (msg != null && !msg.isPrivate && !_controller.isClosed) {
+            _controller.add(
+              ChatwootMessageCreatedEvent(
+                msg,
+                conversationId: conversationId,
+              ),
+            );
+          }
+        case 'message.updated':
+          final msg = _tryParseMessage(data);
+          if (msg != null && !msg.isPrivate && !_controller.isClosed) {
+            _controller.add(
+              ChatwootMessageUpdatedEvent(
+                msg,
+                conversationId: conversationId,
+              ),
+            );
+          }
+        case 'conversation.typing_on':
+          if (data['is_private'] == true || data['private'] == true) {
+            return;
+          }
+          if (!_controller.isClosed) {
+            _controller.add(
+              ChatwootTypingEvent(
+                isTyping: true,
+                senderName: _extractActorName(data),
+                conversationId: conversationId,
+              ),
+            );
+          }
+        case 'conversation.typing_off':
+          if (data['is_private'] == true || data['private'] == true) {
+            return;
+          }
+          if (!_controller.isClosed) {
+            _controller.add(
+              ChatwootTypingEvent(
+                isTyping: false,
+                senderName: _extractActorName(data),
+                conversationId: conversationId,
+              ),
+            );
+          }
+        case 'conversation.status_changed':
+          final status = _parseConversationStatus(data['status']);
+          if (status != null && !_controller.isClosed) {
+            final convId = _optionalInt(data, 'id') ?? conversationId;
+            _controller.add(
+              ChatwootConversationStatusChangedEvent(
+                conversationId: convId,
+                status: status,
+              ),
+            );
+          }
+        case 'contact.merged':
+          if (!_controller.isClosed) {
+            _controller.add(
+              ChatwootContactMergedEvent(
+                contactId: _optionalInt(data, 'id') ??
+                    _optionalInt(data, 'contact_id'),
+                pubsubToken: _optionalString(data, 'pubsub_token'),
+              ),
+            );
+          }
+      }
     } on FormatException {
       return;
     }
-    if (decoded is! Map) return;
-    final frame = decoded.cast<String, Object?>();
-    final type = frame['type'];
-    if (type is String) {
-      switch (type) {
-        case 'welcome':
-          _sendSubscribe();
-          return;
-        case 'ping':
-        case 'confirm_subscription':
-          return;
-        case 'reject_subscription':
-          if (!_controller.isClosed) {
-            _controller.add(const ChatwootSubscriptionRejectedEvent());
-          }
-          return;
-      }
-    }
+  }
 
-    final payload = _asNullableObject(frame['message']);
-    if (payload == null) return;
-    final eventName = _optionalString(payload, 'event');
-    final data = _asNullableObject(payload['data']) ?? const <String, Object?>{};
-    switch (eventName) {
-      case 'message.created':
-        final msg = _tryParseMessage(data);
-        if (msg != null && !msg.isPrivate && !_controller.isClosed) {
-          _controller.add(ChatwootMessageCreatedEvent(msg));
-        }
-      case 'message.updated':
-        final msg = _tryParseMessage(data);
-        if (msg != null && !msg.isPrivate && !_controller.isClosed) {
-          _controller.add(ChatwootMessageUpdatedEvent(msg));
-        }
-      case 'conversation.typing_on':
-        if (!_controller.isClosed) {
-          _controller.add(
-            ChatwootTypingEvent(
-              isTyping: true,
-              senderName: _extractActorName(data),
-            ),
-          );
-        }
-      case 'conversation.typing_off':
-        if (!_controller.isClosed) {
-          _controller.add(
-            ChatwootTypingEvent(
-              isTyping: false,
-              senderName: _extractActorName(data),
-            ),
-          );
-        }
-      case 'conversation.status_changed':
-        final status = _parseConversationStatus(data['status']);
-        if (status != null && !_controller.isClosed) {
-          final convId = _optionalInt(data, 'id') ??
-              _optionalInt(data, 'conversation_id');
-          _controller.add(
-            ChatwootConversationStatusChangedEvent(
-              conversationId: convId,
-              status: status,
-            ),
-          );
-        }
-      case 'contact.merged':
-        if (!_controller.isClosed) {
-          _controller.add(
-            ChatwootContactMergedEvent(
-              contactId: _optionalInt(data, 'id') ??
-                  _optionalInt(data, 'contact_id'),
-              pubsubToken: _optionalString(data, 'pubsub_token'),
-            ),
-          );
-        }
+  void _emitDisconnectedAndClose({
+    required bool reconnect,
+    String? reason,
+  }) {
+    if (_closed || _disconnecting) return;
+    _disconnecting = true;
+    _pingWatchdogTimer?.cancel();
+    if (!_controller.isClosed) {
+      _controller.add(
+        ChatwootDisconnectedEvent(reconnect: reconnect, reason: reason),
+      );
     }
+    unawaited(close());
   }
 
   void _handleDisconnect() {
-    if (!_doneCompleter.isCompleted) {
-      _doneCompleter.complete();
-    }
-    unawaited(close());
+    _emitDisconnectedAndClose(reconnect: true);
   }
 
   @override
   Future<void> close() async {
     if (_closed) return;
     _closed = true;
-    await _subscription.cancel();
+    _pingWatchdogTimer?.cancel();
+    _pingWatchdogTimer = null;
     try {
-      await _socket.close();
+      await _subscription.cancel();
     } on Object {
-      // Ignore socket close failures during teardown.
+      // Ignore stream subscription cancel errors during teardown.
+    }
+    try {
+      await _socket.close().timeout(_closeTimeout);
+    } on Object {
+      // Ignore socket close failures or timeouts during teardown.
     }
     for (final client in _ownedClients) {
       client.close(force: true);
@@ -856,18 +1065,19 @@ class ActionCableChatwootRealtime implements ChatwootRealtimeConnection {
   }
 }
 
-bool _isCertificateFailure(Object error) {
-  if (error is CertificateException) return true;
-  if (error is HandshakeException) {
-    final text =
-        '${error.message} ${error.osError?.message ?? ''}'.toLowerCase();
-    return text.contains('certificate') ||
-        text.contains('cert_') ||
-        text.contains('unable to get local issuer') ||
-        text.contains('self signed') ||
-        text.contains('hostname mismatch');
+int? _extractConversationId(Map<String, Object?> data) {
+  final direct = _optionalInt(data, 'conversation_id');
+  if (direct != null) return direct;
+  final conversation = _asNullableObject(data['conversation']);
+  return conversation == null ? null : _optionalInt(conversation, 'id');
+}
+
+Object? _tryDecodeBodyIfJsonString(Object? body) {
+  try {
+    return _decodeBodyIfJsonString(body);
+  } on FormatException {
+    return null;
   }
-  return false;
 }
 
 Object? _decodeBodyIfJsonString(Object? body) {

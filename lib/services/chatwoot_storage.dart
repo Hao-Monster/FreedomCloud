@@ -120,21 +120,42 @@ class SecureChatwootSessionStorage implements ChatwootSessionStorage {
 
   final FlutterSecureStorage _storage;
 
-  /// Computes the isolated storage key for an origin, website token, and scope.
+  /// Computes the isolated storage key for a normalized base URL, website
+  /// token, and scope.
   @visibleForTesting
   static String storageKeyFor({
     required Uri baseUrl,
     required String websiteToken,
     required String scopeKey,
   }) {
-    final normalizedOrigin = validateChatwootBaseUrl(baseUrl).origin;
+    final normalizedBaseUrl = validateChatwootBaseUrl(baseUrl).toString();
     final trimmedToken = websiteToken.trim();
     final trimmedScope = scopeKey.trim();
     if (trimmedToken.isEmpty || trimmedScope.isEmpty) {
       throw ArgumentError('websiteToken and scopeKey must not be empty');
     }
     final digest = sha256
-        .convert(utf8.encode('$normalizedOrigin|$trimmedToken|$trimmedScope'))
+        .convert(
+          utf8.encode(
+            jsonEncode([normalizedBaseUrl, trimmedToken, trimmedScope]),
+          ),
+        )
+        .toString();
+    return 'chatwoot_session_v2_$digest';
+  }
+
+  static String? _legacyStorageKeyFor({
+    required Uri baseUrl,
+    required String websiteToken,
+    required String scopeKey,
+  }) {
+    final valid = validateChatwootBaseUrl(baseUrl);
+    if (valid.toString() != valid.origin) return null;
+    final trimmedToken = websiteToken.trim();
+    final trimmedScope = scopeKey.trim();
+    if (trimmedToken.isEmpty || trimmedScope.isEmpty) return null;
+    final digest = sha256
+        .convert(utf8.encode('${valid.origin}|$trimmedToken|$trimmedScope'))
         .toString();
     return 'chatwoot_session_v1_$digest';
   }
@@ -150,7 +171,17 @@ class SecureChatwootSessionStorage implements ChatwootSessionStorage {
       websiteToken: websiteToken,
       scopeKey: scopeKey,
     );
-    final raw = await _storage.read(key: key);
+    var raw = await _storage.read(key: key);
+    if (raw == null || raw.isEmpty) {
+      final legacyKey = _legacyStorageKeyFor(
+        baseUrl: baseUrl,
+        websiteToken: websiteToken,
+        scopeKey: scopeKey,
+      );
+      if (legacyKey != null) {
+        raw = await _storage.read(key: legacyKey);
+      }
+    }
     if (raw == null || raw.isEmpty) return null;
     try {
       final decoded = jsonDecode(raw);
@@ -203,6 +234,14 @@ class SecureChatwootSessionStorage implements ChatwootSessionStorage {
     await _storage.delete(key: key);
     if (await _storage.read(key: key) != null) {
       throw const FormatException('Secure storage did not remove Chatwoot session');
+    }
+    final legacyKey = _legacyStorageKeyFor(
+      baseUrl: baseUrl,
+      websiteToken: websiteToken,
+      scopeKey: scopeKey,
+    );
+    if (legacyKey != null) {
+      await _storage.delete(key: legacyKey);
     }
   }
 }

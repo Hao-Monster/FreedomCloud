@@ -390,25 +390,29 @@ sealed class ChatwootRealtimeEvent {
 }
 
 final class ChatwootMessageCreatedEvent extends ChatwootRealtimeEvent {
-  const ChatwootMessageCreatedEvent(this.message);
+  const ChatwootMessageCreatedEvent(this.message, {this.conversationId});
 
   final ChatwootMessage message;
+  final int? conversationId;
 }
 
 final class ChatwootMessageUpdatedEvent extends ChatwootRealtimeEvent {
-  const ChatwootMessageUpdatedEvent(this.message);
+  const ChatwootMessageUpdatedEvent(this.message, {this.conversationId});
 
   final ChatwootMessage message;
+  final int? conversationId;
 }
 
 final class ChatwootTypingEvent extends ChatwootRealtimeEvent {
   const ChatwootTypingEvent({
     required this.isTyping,
     this.senderName,
+    this.conversationId,
   });
 
   final bool isTyping;
   final String? senderName;
+  final int? conversationId;
 }
 
 final class ChatwootConversationStatusChangedEvent extends ChatwootRealtimeEvent {
@@ -431,6 +435,20 @@ final class ChatwootContactMergedEvent extends ChatwootRealtimeEvent {
   final String? pubsubToken;
 }
 
+final class ChatwootSubscriptionConfirmedEvent extends ChatwootRealtimeEvent {
+  const ChatwootSubscriptionConfirmedEvent();
+}
+
 final class ChatwootSubscriptionRejectedEvent extends ChatwootRealtimeEvent {
   const ChatwootSubscriptionRejectedEvent();
+}
+
+final class ChatwootDisconnectedEvent extends ChatwootRealtimeEvent {
+  const ChatwootDisconnectedEvent({
+    this.reconnect = true,
+    this.reason,
+  });
+
+  final bool reconnect;
+  final String? reason;
 }

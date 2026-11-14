@@ -25,20 +25,25 @@ bool isPreRequestDioFailure(DioException error) {
   return error.error is PreRequestTransportException;
 }
 
-bool isCertificateDioFailure(DioException error) {
-  if (error.type == DioExceptionType.badCertificate) return true;
-  final cause = unwrapPreRequestTransportError(error.error);
+bool isCertificateTransportError(Object? error) {
+  final cause = unwrapPreRequestTransportError(error);
   if (cause is CertificateException) return true;
-  if (cause is HandshakeException) {
+  if (cause is TlsException) {
     final text =
         '${cause.message} ${cause.osError?.message ?? ''}'.toLowerCase();
     return text.contains('certificate') ||
         text.contains('cert_') ||
         text.contains('unable to get local issuer') ||
         text.contains('self signed') ||
-        text.contains('hostname mismatch');
+        text.contains('hostname mismatch') ||
+        text.contains('unknown ca');
   }
   return false;
+}
+
+bool isCertificateDioFailure(DioException error) {
+  if (error.type == DioExceptionType.badCertificate) return true;
+  return isCertificateTransportError(error.error);
 }
 
 HttpClient wrapPreRequestHttpClient(HttpClient inner) =>
