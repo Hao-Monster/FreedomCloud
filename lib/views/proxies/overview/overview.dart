@@ -6655,7 +6655,13 @@ class _ProfileNodesSliverState extends ConsumerState<_ProfileNodesSliver> {
               delegate: _PinnedProfileHeader(
                   profile: profile,
                   active: widget.active,
-                  surfaceColor: colors.surface,
+                  surfaceColor: DayNightSkyScope.isActiveOf(context)
+                      ? colors.surface.withValues(
+                          alpha: theme.brightness == Brightness.dark
+                              ? 0.64
+                              : 0.72,
+                        )
+                      : colors.surface,
                   hairlineColor: freedomNetHairlineColor(colors),
                   titleStyle: theme.textTheme.titleSmall,
                   activeTextStyle: theme.textTheme.labelSmall,

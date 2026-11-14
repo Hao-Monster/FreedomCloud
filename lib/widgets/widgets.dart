@@ -5,6 +5,7 @@ export 'card.dart';
 export 'chip.dart';
 export 'color_scheme_box.dart';
 export 'container.dart';
+export 'day_night_sky_background.dart';
 export 'dialog.dart';
 export 'disabled_mask.dart';
 export 'donut_chart.dart';

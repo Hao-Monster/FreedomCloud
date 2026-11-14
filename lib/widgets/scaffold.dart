@@ -4,6 +4,7 @@ import 'package:flclashx/enum/enum.dart';
 import 'package:flclashx/models/models.dart';
 import 'package:flclashx/providers/providers.dart';
 import 'package:flclashx/state.dart';
+import 'package:flclashx/widgets/day_night_sky_background.dart';
 import 'package:flclashx/widgets/fade_box.dart';
 import 'package:flclashx/widgets/pop_scope.dart';
 import 'package:flclashx/widgets/search_order_marker.dart';
@@ -91,6 +92,18 @@ class CommonScaffoldState extends ConsumerState<CommonScaffold> {
   Locale? _lastLocale;
   String? _lastIntlLocale;
   bool _hasRecordedLocale = false;
+  bool _skyDaySurface = false;
+  bool _hasSyncedSkySurface = false;
+
+  void _handleSkyDaySurfaceChanged(bool isDaySurface) {
+    if (!mounted) return;
+    _hasSyncedSkySurface = true;
+    if (_skyDaySurface != isDaySurface) {
+      setState(() {
+        _skyDaySurface = isDaySurface;
+      });
+    }
+  }
 
   Widget? get _sideNavigationBar => widget.sideNavigationBar;
 
@@ -180,8 +193,11 @@ class CommonScaffoldState extends ConsumerState<CommonScaffold> {
         media.textScaler.scale(1.0) <= maxInlineTitleAccessoryTextScale;
   }
 
-  Widget _buildSearchingAppBarTheme(Widget child) {
-    final theme = Theme.of(context);
+  Widget _buildSearchingAppBarTheme(
+    BuildContext themeContext,
+    Widget child,
+  ) {
+    final theme = Theme.of(themeContext);
     final colorScheme = theme.colorScheme;
     return Theme(
       data: theme.copyWith(
@@ -339,7 +355,7 @@ class CommonScaffoldState extends ConsumerState<CommonScaffold> {
       return TextField(
         autofocus: true,
         controller: _textController,
-        style: context.textTheme.titleLarge,
+        style: Theme.of(accessoryContext).textTheme.titleLarge,
         onChanged: (value) {
           if (startState != null) {
             startState.onSearch(value);
@@ -434,8 +450,9 @@ class CommonScaffoldState extends ConsumerState<CommonScaffold> {
   
   }
 
-  Widget _buildAppBarWrap(Widget child) {
-    final appBar = _isSearch ? _buildSearchingAppBarTheme(child) : child;
+  Widget _buildAppBarWrap(BuildContext themeContext, Widget child) {
+    final appBar =
+        _isSearch ? _buildSearchingAppBarTheme(themeContext, child) : child;
     if (_isEdit || _isSearch) {
       return SystemBackBlock(
         child: CommonPopScope(
@@ -454,10 +471,12 @@ class CommonScaffoldState extends ConsumerState<CommonScaffold> {
     return appBar;
   }
 
-  PreferredSizeWidget _buildAppBar() {
-    final backgroundUrl = widget.disableBackground ? null : ref.watch(backgroundUrlProvider);
-    final isTransparent = backgroundUrl != null;
-    final theme = Theme.of(context);
+  PreferredSizeWidget _buildAppBar(
+    BuildContext themeContext, {
+    required bool isTransparent,
+  }) {
+    final theme = Theme.of(themeContext);
+    final colorScheme = theme.colorScheme;
 
     return PreferredSize(
       preferredSize: const Size.fromHeight(kToolbarHeight),
@@ -475,8 +494,8 @@ class CommonScaffoldState extends ConsumerState<CommonScaffold> {
                       ? Brightness.light
                       : Brightness.dark,
               systemNavigationBarColor: widget.bottomNavigationBar != null
-                  ? context.colorScheme.surfaceDim
-                  : context.colorScheme.surface,
+                  ? colorScheme.surfaceDim
+                  : colorScheme.surface,
               systemNavigationBarDividerColor: Colors.transparent,
             ),
           ),
@@ -491,10 +510,14 @@ class CommonScaffoldState extends ConsumerState<CommonScaffold> {
                     final state = _appBarState.value;
                     final inlineActive =
                         isInlineTitleAccessoryActiveFor(slotContext);
+                    final effectiveTransparent =
+                        isTransparent && !_isSearch && !_isEdit;
                     return _buildAppBarWrap(
+                      slotContext,
                       AppBar(
-                        backgroundColor: isTransparent ? Colors.transparent : null,
-                        elevation: isTransparent ? 0 : null,
+                        backgroundColor:
+                            effectiveTransparent ? Colors.transparent : null,
+                        elevation: effectiveTransparent ? 0 : null,
                         centerTitle:
                             inlineActive ? false : (widget.centerTitle ?? false),
                         automaticallyImplyLeading:
@@ -571,11 +594,116 @@ class CommonScaffoldState extends ConsumerState<CommonScaffold> {
     );
   }
 
+  ThemeData _resolveSkyScaffoldTheme(
+    BuildContext context, {
+    required bool isDaySurface,
+  }) {
+    final ambient = Theme.of(context);
+    final targetBrightness = isDaySurface ? Brightness.light : Brightness.dark;
+    final ThemeData baseTheme;
+    if (ambient.brightness == targetBrightness) {
+      baseTheme = ambient;
+    } else {
+      final colorScheme = ref.watch(genColorSchemeProvider(targetBrightness));
+      final built = buildFreedomNetThemeData(
+        colorScheme: colorScheme,
+        pageTransitionsTheme: ambient.pageTransitionsTheme,
+      );
+      final ambientFont = ambient.textTheme.bodyMedium?.fontFamily;
+      final builtFont = built.textTheme.bodyMedium?.fontFamily;
+      if (ambientFont != null && ambientFont != builtFont) {
+        baseTheme = built.copyWith(
+          textTheme: built.textTheme.apply(fontFamily: ambientFont),
+          appBarTheme: built.appBarTheme.copyWith(
+            titleTextStyle: built.appBarTheme.titleTextStyle?.copyWith(
+              fontFamily: ambientFont,
+            ),
+          ),
+        );
+      } else {
+        baseTheme = built;
+      }
+    }
+
+    final scheme = baseTheme.colorScheme;
+    final hairline = freedomNetHairlineColor(scheme);
+    final cardAlpha = isDaySurface ? 0.66 : 0.62;
+    final chipAlpha = isDaySurface ? 0.72 : 0.68;
+    final translucentCard = scheme.surfaceContainer.withValues(alpha: cardAlpha);
+    final translucentChip =
+        scheme.surfaceContainerHigh.withValues(alpha: chipAlpha);
+
+    return baseTheme.copyWith(
+      scaffoldBackgroundColor: Colors.transparent,
+      cardColor: translucentCard,
+      cardTheme: baseTheme.cardTheme.copyWith(
+        elevation: 0,
+        color: translucentCard,
+        surfaceTintColor: Colors.transparent,
+        shape: baseTheme.cardTheme.shape ??
+            RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(14),
+              side: BorderSide(color: hairline),
+            ),
+      ),
+      chipTheme: baseTheme.chipTheme.copyWith(
+        backgroundColor: translucentChip,
+      ),
+    );
+  }
+
+  Widget _buildScaffoldShell(
+    BuildContext themeContext, {
+    required Widget body,
+    required bool isTransparent,
+  }) =>
+      Scaffold(
+        appBar: _buildAppBar(themeContext, isTransparent: isTransparent),
+        body: body,
+        resizeToAvoidBottomInset: true,
+        backgroundColor: isTransparent
+            ? (widget.backgroundColor ?? Colors.transparent)
+            : widget.backgroundColor,
+        floatingActionButton: widget.floatingActionButton ??
+            ValueListenableBuilder<Widget?>(
+              valueListenable: _floatingActionButton,
+              builder: (_, value, __) => IntrinsicWidth(
+                child: IntrinsicHeight(
+                  child: FadeScaleBox(
+                    child: value ?? const SizedBox.shrink(),
+                  ),
+                ),
+              ),
+            ),
+        bottomNavigationBar: widget.bottomNavigationBar,
+      );
+
   @override
   Widget build(BuildContext context) {
-    assert(widget.appBar != null || widget.title != null);
-    final backgroundUrl = widget.disableBackground ? null : ref.watch(backgroundUrlProvider);
-    
+    assert(
+      widget.appBar != null || widget.title != null,
+      'CommonScaffold requires either appBar or title',
+    );
+    final backgroundUrl =
+        widget.disableBackground ? null : ref.watch(backgroundUrlProvider);
+    final hasCustomBackground =
+        backgroundUrl != null && backgroundUrl.isNotEmpty;
+    final useSkyBackground = !widget.disableBackground && !hasCustomBackground;
+    final isRunning = useSkyBackground
+        ? ref.watch(runTimeProvider.select((state) => state != null))
+        : false;
+    final pendingTarget =
+        useSkyBackground ? ref.watch(statusSwitchPendingProvider) : null;
+    final targetPhase = resolveDayNightSkyPhase(
+      isRunning: isRunning,
+      pendingTarget: pendingTarget,
+    );
+    final reduceMotion = MediaQuery.maybeDisableAnimationsOf(context) ?? false;
+    if (useSkyBackground && (!_hasSyncedSkySurface || reduceMotion)) {
+      _skyDaySurface = targetPhase == DayNightSkyPhase.day;
+      _hasSyncedSkySurface = true;
+    }
+
     final body = SafeArea(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -589,7 +717,7 @@ class CommonScaffoldState extends ConsumerState<CommonScaffold> {
                 }
               });
               if (keywords.isEmpty) {
-                return const SizedBox();
+                return const SizedBox.shrink();
               }
               return Padding(
                 padding: const EdgeInsets.symmetric(
@@ -619,41 +747,57 @@ class CommonScaffoldState extends ConsumerState<CommonScaffold> {
         ],
       ),
     );
-    
-    final scaffold = Scaffold(
-      appBar: _buildAppBar(),
-      body: body,
-      resizeToAvoidBottomInset: true,
-      backgroundColor: backgroundUrl != null ? Colors.transparent : widget.backgroundColor,
-      floatingActionButton: widget.floatingActionButton ??
-          ValueListenableBuilder<Widget?>(
-            valueListenable: _floatingActionButton,
-            builder: (_, value, __) => IntrinsicWidth(
-                child: IntrinsicHeight(
-                  child: FadeScaleBox(
-                    child: value ?? const SizedBox(),
+
+    final Widget scaffoldWithBackground;
+    if (hasCustomBackground) {
+      scaffoldWithBackground = Stack(
+        children: [
+          _buildBackground(backgroundUrl),
+          _buildOverlay(
+            context,
+            widget.disableBackground
+                ? null
+                : ref.watch(backgroundOpacityProvider),
+          ),
+          _buildScaffoldShell(context, body: body, isTransparent: true),
+        ],
+      );
+    } else if (useSkyBackground) {
+      final skyTheme = _resolveSkyScaffoldTheme(
+        context,
+        isDaySurface: _skyDaySurface,
+      );
+      scaffoldWithBackground = Theme(
+        data: skyTheme,
+        child: DayNightSkyScope(
+          isActive: true,
+          isDaySurface: _skyDaySurface,
+          child: Builder(
+            builder: (skyContext) => Stack(
+              children: [
+                Positioned.fill(
+                  child: DayNightSkyBackground(
+                    onDaySurfaceChanged: _handleSkyDaySurfaceChanged,
                   ),
                 ),
-              ),
+                _buildScaffoldShell(
+                  skyContext,
+                  body: body,
+                  isTransparent: true,
+                ),
+              ],
+            ),
           ),
-      bottomNavigationBar: widget.bottomNavigationBar,
-    );
-    
-    final scaffoldWithBackground = backgroundUrl != null
-        ? Stack(
-            children: [
-              _buildBackground(backgroundUrl),
-              _buildOverlay(
-                context,
-                widget.disableBackground
-                    ? null
-                    : ref.watch(backgroundOpacityProvider),
-              ),
-              scaffold,
-            ],
-          )
-        : scaffold;
-    
+        ),
+      );
+    } else {
+      scaffoldWithBackground = _buildScaffoldShell(
+        context,
+        body: body,
+        isTransparent: false,
+      );
+    }
+
     return _sideNavigationBar != null
         ? Row(
             mainAxisSize: MainAxisSize.min,

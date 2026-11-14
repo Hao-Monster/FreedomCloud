@@ -10,6 +10,7 @@ import 'package:flclashx/manager/manager.dart';
 import 'package:flclashx/plugins/app.dart';
 import 'package:flclashx/providers/providers.dart';
 import 'package:flclashx/state.dart';
+import 'package:flclashx/widgets/day_night_sky_background.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_displaymode/flutter_displaymode.dart';
@@ -338,6 +339,14 @@ class ApplicationState extends ConsumerState<Application> {
               final locale =
                   ref.watch(appSettingProvider.select((state) => state.locale));
               final themeProps = ref.watch(themeSettingProvider);
+              final isRunning = ref.watch(
+                runTimeProvider.select((state) => state != null),
+              );
+              final pendingTarget = ref.watch(statusSwitchPendingProvider);
+              final effectiveThemeMode = resolveDayNightThemeMode(
+                isRunning: isRunning,
+                pendingTarget: pendingTarget,
+              );
               return MaterialApp(
                 debugShowCheckedModeBanner: false,
                 navigatorKey: globalState.navigatorKey,
@@ -375,7 +384,7 @@ class ApplicationState extends ConsumerState<Application> {
                 onGenerateTitle: (ctx) => AppLocalizations.of(ctx).appBrandName,
                 locale: utils.getLocaleForString(locale),
                 supportedLocales: AppLocalizations.delegate.supportedLocales,
-                themeMode: themeProps.themeMode,
+                themeMode: effectiveThemeMode,
                 theme: buildFreedomNetThemeData(
                   colorScheme: ref.watch(
                     genColorSchemeProvider(Brightness.light),

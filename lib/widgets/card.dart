@@ -1,5 +1,6 @@
 import 'package:flclashx/common/common.dart';
 import 'package:flclashx/enum/enum.dart';
+import 'package:flclashx/widgets/day_night_sky_background.dart';
 import 'package:flclashx/widgets/fade_box.dart';
 import 'package:flutter/material.dart';
 
@@ -128,27 +129,45 @@ class CommonCard extends StatelessWidget {
     );
   }
 
-  Color? getBackgroundColor(BuildContext context, Set<WidgetState> states) {
+  Color? getBackgroundColor(
+    BuildContext context,
+    Set<WidgetState> states, {
+    bool skyActive = false,
+    bool skyDaySurface = false,
+  }) {
     final colorScheme = context.colorScheme;
     final isHovered = states.contains(WidgetState.hovered);
+    final alpha = skyActive
+        ? (isHovered
+            ? (skyDaySurface ? 0.78 : 0.74)
+            : (skyDaySurface ? 0.68 : 0.64))
+        : 1.0;
     if (type == CommonCardType.filled) {
       if (isSelected) {
-        return colorScheme.secondaryContainer.withValues(alpha: 0.9);
+        return colorScheme.secondaryContainer.withValues(
+          alpha: skyActive ? 0.82 : 0.9,
+        );
       }
-      return isHovered
+      final base = isHovered
           ? colorScheme.surfaceContainerHigh
           : colorScheme.surfaceContainer;
+      return skyActive ? base.withValues(alpha: alpha) : base;
     }
     if (isSelected) {
-      return colorScheme.secondaryContainer.withValues(alpha: 0.88);
+      return colorScheme.secondaryContainer.withValues(
+        alpha: skyActive ? 0.80 : 0.88,
+      );
     }
-    return isHovered
+    final base = isHovered
         ? colorScheme.surfaceContainerHigh
         : colorScheme.surfaceContainer;
+    return skyActive ? base.withValues(alpha: alpha) : base;
   }
 
   @override
   Widget build(BuildContext context) {
+    final skyActive = DayNightSkyScope.isActiveOf(context);
+    final skyDaySurface = DayNightSkyScope.isDaySurfaceOf(context);
     var childWidget = child;
 
     if (info != null) {
@@ -195,7 +214,12 @@ class CommonCard extends StatelessWidget {
         iconColor: WidgetStatePropertyAll(context.colorScheme.primary),
         iconSize: WidgetStateProperty.all(20),
         backgroundColor: WidgetStateProperty.resolveWith(
-          (states) => getBackgroundColor(context, states),
+          (states) => getBackgroundColor(
+            context,
+            states,
+            skyActive: skyActive,
+            skyDaySurface: skyDaySurface,
+          ),
         ),
         side: WidgetStateProperty.resolveWith(
           (states) => getBorderSide(context, states),
