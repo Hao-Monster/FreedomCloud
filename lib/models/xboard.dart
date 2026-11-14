@@ -389,30 +389,46 @@ class XboardGuestAuthConfig {
   const XboardGuestAuthConfig({
     this.isEmailVerify = false,
     this.isInviteForce = false,
-    this.emailWhitelistSuffix = const [],
+    List<String> emailWhitelistSuffix = const [],
     this.isCaptcha = false,
     this.captchaType,
     this.tosUrl,
-  });
+    this.isRegistrationStopped = false,
+    this.isGmailAliasRestricted,
+  }) : _emailWhitelistSuffix = emailWhitelistSuffix;
 
   final bool isEmailVerify;
   final bool isInviteForce;
-  final List<String> emailWhitelistSuffix;
+  final List<String> _emailWhitelistSuffix;
   final bool isCaptcha;
   final String? captchaType;
   final Uri? tosUrl;
+  final bool isRegistrationStopped;
+  final bool? isGmailAliasRestricted;
 
-  bool isEmailDomainAllowed(String email) {
-    if (emailWhitelistSuffix.isEmpty) return true;
+  List<String> get emailWhitelistSuffix =>
+      List<String>.unmodifiable(_emailWhitelistSuffix);
+
+  static (String localPart, String domain)? _splitEmail(String email) {
     final trimmed = email.trim();
     final atIndex = trimmed.indexOf('@');
     if (atIndex <= 0 ||
         atIndex != trimmed.lastIndexOf('@') ||
         atIndex == trimmed.length - 1) {
-      return false;
+      return null;
     }
-    final domain = trimmed.substring(atIndex + 1).toLowerCase();
-    for (final entry in emailWhitelistSuffix) {
+    return (
+      trimmed.substring(0, atIndex),
+      trimmed.substring(atIndex + 1).toLowerCase(),
+    );
+  }
+
+  bool isEmailDomainAllowed(String email) {
+    if (_emailWhitelistSuffix.isEmpty) return true;
+    final parts = _splitEmail(email);
+    if (parts == null) return false;
+    final (_, domain) = parts;
+    for (final entry in _emailWhitelistSuffix) {
       var normalized = entry.trim().toLowerCase();
       while (normalized.startsWith('@')) {
         normalized = normalized.substring(1).trim();
@@ -425,16 +441,20 @@ class XboardGuestAuthConfig {
   }
 
   bool hasGmailPlusAlias(String email) {
-    final trimmed = email.trim();
-    final atIndex = trimmed.indexOf('@');
-    if (atIndex <= 0 ||
-        atIndex != trimmed.lastIndexOf('@') ||
-        atIndex == trimmed.length - 1) {
-      return false;
-    }
-    final localPart = trimmed.substring(0, atIndex);
-    final domain = trimmed.substring(atIndex + 1).toLowerCase();
+    final parts = _splitEmail(email);
+    if (parts == null) return false;
+    final (localPart, domain) = parts;
     return (domain == 'gmail.com' || domain == 'googlemail.com') &&
         localPart.contains('+');
+  }
+
+  bool isRestrictedGmailAlias(String email) {
+    if (isGmailAliasRestricted == false) return false;
+    final parts = _splitEmail(email);
+    if (parts == null) return false;
+    final (localPart, domain) = parts;
+    if (domain != 'gmail.com' && domain != 'googlemail.com') return false;
+    if (localPart.contains('+')) return true;
+    return (isGmailAliasRestricted ?? false) && localPart.contains('.');
   }
 }

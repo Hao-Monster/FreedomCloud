@@ -68,7 +68,9 @@ class PurchaseManager extends ChangeNotifier {
   _AuthOperation? _authOperation;
   Future<XboardPurchaseChannels?>? _channelsInFlight;
   int _sessionEpoch = 0;
+  int _authActionGeneration = 0;
   int? _initialSyncAttemptedAccountId;
+  bool _pendingInitialAutoSync = false;
 
   bool get checkingCode => _giftOperation == _GiftOperation.check;
   bool get redeemingCode => _giftOperation == _GiftOperation.redeem;
@@ -136,6 +138,11 @@ class PurchaseManager extends ChangeNotifier {
     final epochAtStart = _sessionEpoch;
     final authAtStart = _authorization;
     final wasLoggedIn = loggedIn && authAtStart != null;
+    if (force) {
+      if (extApi case final XboardRefreshableGuestConfigApi refreshable) {
+        refreshable.invalidateGuestConfigCache();
+      }
+    }
     late final Future<XboardPurchaseChannels?> future;
     future = () async {
       try {
@@ -154,23 +161,29 @@ class PurchaseManager extends ChangeNotifier {
           loaded = await extApi.getGuestPurchaseChannels();
         }
         if (!_disposed &&
+            identical(_channelsInFlight, future) &&
             _sessionEpoch == epochAtStart &&
             loggedIn == wasLoggedIn) {
           purchaseChannels = loaded;
           if (loadedAuthConfig != null) {
             guestAuthConfig = loadedAuthConfig;
+            if (force) {
+              if (!loadedAuthConfig.isInviteForce) {
+                inviteCodeRequiredByServer = false;
+              }
+              if (!loadedAuthConfig.isEmailVerify) {
+                emailVerifyRequiredByServer = false;
+              }
+            }
           }
-          if (wasLoggedIn) {
-            cardStoreUrl = loaded.cardStoreUrl;
-          } else {
-            cardStoreUrl ??= loaded.cardStoreUrl;
-          }
+          cardStoreUrl = loaded.cardStoreUrl;
           channelError = null;
           _notify();
         }
         return loaded;
       } on Exception catch (cause) {
         if (!_disposed &&
+            identical(_channelsInFlight, future) &&
             _sessionEpoch == epochAtStart &&
             loggedIn == wasLoggedIn) {
           final failure = _failure(cause);
@@ -227,6 +240,7 @@ class PurchaseManager extends ChangeNotifier {
   }) async {
     if (_disposed || busy) return;
     busy = true;
+    _authActionGeneration++;
     _giftOperation = giftOperation;
     _authOperation = authOperation;
     if (clearError) {
@@ -260,15 +274,29 @@ class PurchaseManager extends ChangeNotifier {
   }
 
   Future<void> initialize() => _run(() async {
-        final saved = await _storageReadSession();
+        final PurchaseSession? saved;
+        try {
+          saved = await _storageReadSession();
+        } on Exception {
+          if (!loggedIn) {
+            unawaited(ensurePurchaseChannels(force: channelError != null));
+          }
+          rethrow;
+        }
         if (saved == null) {
           unawaited(ensurePurchaseChannels(force: channelError != null));
           return;
         }
         try {
           final restored = await api.getAccount(saved.authorization);
+          if (_disposed) return;
           if (restored.id != saved.accountId || restored.isDistributor) {
-            await storage.clearSession();
+            try {
+              await storage.clearSession();
+            } on Exception {
+              throw const XboardException(
+                  code: 'secure_storage_failed', message: '');
+            }
             throw const XboardException(
                 code: 'purchase_account_unsupported', message: '');
           }
@@ -277,16 +305,20 @@ class PurchaseManager extends ChangeNotifier {
           account = restored;
           await _restorePending();
           await _refreshData();
-        } on XboardException catch (cause) {
-          if (cause.isUnauthorized) {
+        } on Exception catch (cause) {
+          if (cause is XboardException && cause.isUnauthorized) {
             try {
               await storage.clearSession();
             } on Exception {
+              _clearAccount();
+              unawaited(ensurePurchaseChannels(force: channelError != null));
               throw const XboardException(
                   code: 'secure_storage_failed', message: '');
             }
             _clearAccount();
-            unawaited(ensurePurchaseChannels());
+          }
+          if (!loggedIn) {
+            unawaited(ensurePurchaseChannels(force: channelError != null));
           }
           rethrow;
         }
@@ -315,9 +347,11 @@ class PurchaseManager extends ChangeNotifier {
     String authorization, {
     required String prefilledCode,
     required bool autoSyncSubscription,
+    bool fromRegistration = false,
   }) async {
     try {
       final authenticated = await api.getAccount(authorization);
+      if (_disposed) return;
       if (authenticated.isDistributor) {
         throw const XboardException(
             code: 'purchase_account_unsupported', message: '');
@@ -328,6 +362,7 @@ class PurchaseManager extends ChangeNotifier {
       } on Exception {
         throw const XboardException(code: 'secure_storage_failed', message: '');
       }
+      if (_disposed) return;
       _sessionEpoch++;
       _channelsInFlight = null;
       _authorization = authorization;
@@ -335,21 +370,35 @@ class PurchaseManager extends ChangeNotifier {
       inviteCodeRequiredByServer = false;
       emailVerifyRequiredByServer = false;
       passwordResetSucceeded = false;
-    } on Exception {
+    } on Exception catch (cause) {
       // The token was issued but never admitted to the client session.
       // Best-effort revocation does not mask the original failure.
       try {
         await api.logout(authorization);
       } on Exception {/* Already unusable or offline. */}
+      if (fromRegistration &&
+          !(cause is XboardException &&
+              cause.code == 'purchase_account_unsupported')) {
+        throw const XboardException(
+          code: 'registration_created_login_required',
+          message: '账号已创建成功，请直接登录以同步权益',
+        );
+      }
       rethrow;
     }
     await _restorePending();
     if (_pending == null && prefilledCode.isNotEmpty) {
       code = prefilledCode;
     }
+    if (autoSyncSubscription) {
+      _pendingInitialAutoSync = true;
+    }
     await _refreshData();
-    if (autoSyncSubscription && (subscription?.valid ?? false) && !_disposed) {
-      await _syncLatest(reuseCurrentSubscription: true);
+    if (autoSyncSubscription && !_disposed) {
+      _pendingInitialAutoSync = false;
+      if (subscription?.valid ?? false) {
+        await _syncLatest(reuseCurrentSubscription: true);
+      }
     }
     if (_pending == null &&
         !_disposed &&
@@ -371,6 +420,7 @@ class PurchaseManager extends ChangeNotifier {
           final prefilledCode = code;
           receipt = null;
           final authorization = await api.login(email.trim(), password);
+          if (_disposed) return;
           await _authenticateWithAuthorization(
             authorization,
             prefilledCode: prefilledCode,
@@ -415,13 +465,17 @@ class PurchaseManager extends ChangeNotifier {
                 password,
               );
             }
+            if (_disposed) return;
             await _authenticateWithAuthorization(
               authorization,
               prefilledCode: prefilledCode,
               autoSyncSubscription: true,
+              fromRegistration: true,
             );
           } on XboardException catch (cause) {
-            if (cause.code == 'invitation_code_required') {
+            if (cause.code == 'invitation_code_required' ||
+                cause.code.toLowerCase().contains('invite_code') ||
+                cause.message.toLowerCase().contains('invite_code')) {
               inviteCodeRequiredByServer = true;
             }
             if (cause.code == 'registration_email_invalid' ||
@@ -446,7 +500,7 @@ class PurchaseManager extends ChangeNotifier {
   Future<bool> _sendEmailCode(
     Future<void> Function(XboardPassportApi passportApi) send,
   ) async {
-    if (_disposed || sendingEmailCode) return false;
+    if (_disposed || busy || sendingEmailCode) return false;
     final passportApi = switch (api) {
       final XboardPassportApi value => value,
       _ => null,
@@ -457,15 +511,24 @@ class PurchaseManager extends ChangeNotifier {
       _notify();
       return false;
     }
+    final epochAtStart = _sessionEpoch;
+    final loggedInAtStart = loggedIn;
+    final authGenAtStart = _authActionGeneration;
     sendingEmailCode = true;
     error = null;
     passwordResetSucceeded = false;
     _notify();
     try {
       await send(passportApi);
-      return !_disposed;
+      return !_disposed &&
+          _sessionEpoch == epochAtStart &&
+          loggedIn == loggedInAtStart &&
+          _authActionGeneration == authGenAtStart;
     } on Exception catch (cause) {
-      if (!_disposed) {
+      if (!_disposed &&
+          _sessionEpoch == epochAtStart &&
+          loggedIn == loggedInAtStart &&
+          _authActionGeneration == authGenAtStart) {
         error = _failure(cause);
       }
       return false;
@@ -481,6 +544,15 @@ class PurchaseManager extends ChangeNotifier {
     required String password,
   }) async {
     if (_disposed || busy) return false;
+    if (loggedIn) {
+      error = const XboardException(
+        code: 'reset_password_requires_logout',
+        message: '请先退出当前账号后再重置密码',
+      );
+      passwordResetSucceeded = false;
+      _notify();
+      return false;
+    }
     var succeeded = false;
     await _run(
       () async {
@@ -535,6 +607,7 @@ class PurchaseManager extends ChangeNotifier {
     _sessionEpoch++;
     _channelsInFlight = null;
     _initialSyncAttemptedAccountId = null;
+    _pendingInitialAutoSync = false;
     _authorization = null;
     account = null;
     subscription = null;
@@ -710,16 +783,26 @@ class PurchaseManager extends ChangeNotifier {
             const XboardException(code: 'gift_result_unconfirmed', message: '');
       });
 
+  Future<void> _refreshAndFlushInitialAutoSync() async {
+    await _refreshData();
+    if (_pendingInitialAutoSync && !_disposed) {
+      _pendingInitialAutoSync = false;
+      if (subscription?.valid ?? false) {
+        await _syncLatest(reuseCurrentSubscription: true);
+      }
+    }
+  }
+
   Future<void> refresh() {
     if (!loggedIn) return initialize();
     if (!_pendingStateReady) {
       return _run(() async {
         await _restorePending();
-        await _refreshData();
+        await _refreshAndFlushInitialAutoSync();
       });
     }
     if (unresolvedRedemption) return recoverRedemption();
-    return _run(_refreshData);
+    return _run(_refreshAndFlushInitialAutoSync);
   }
 
   Future<void> _refreshData() async {
@@ -774,12 +857,10 @@ class PurchaseManager extends ChangeNotifier {
         if (cause.isUnauthorized) {
           unauthorizedFailure ??= cause;
         } else {
-          purchaseChannels = null;
-          cardStoreUrl = null;
           channelError = cause;
         }
-      } on Exception catch (cause) {
-        otherFailure ??= cause;
+      } catch (cause) {
+        channelError = _failure(cause);
       }
     }();
 
@@ -815,6 +896,7 @@ class PurchaseManager extends ChangeNotifier {
       );
 
   Future<void> _syncLatest({bool reuseCurrentSubscription = false}) async {
+    _pendingInitialAutoSync = false;
     if (account != null) {
       _initialSyncAttemptedAccountId = account!.id;
     }

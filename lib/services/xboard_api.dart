@@ -25,6 +25,10 @@ abstract interface class XboardExtendedApi {
   Future<String> register(String email, String password);
 }
 
+abstract interface class XboardRefreshableGuestConfigApi {
+  void invalidateGuestConfigCache();
+}
+
 abstract interface class XboardPassportApi implements XboardExtendedApi {
   Future<XboardGuestAuthConfig> getGuestAuthConfig();
   Future<String> registerAccount({
@@ -67,17 +71,207 @@ class _GuestCommConfigBundle {
   const _GuestCommConfigBundle({
     required this.channels,
     required this.authConfig,
-    required this.fetchedAt,
+    required this.fetchedElapsed,
   });
 
   final XboardPurchaseChannels channels;
   final XboardGuestAuthConfig authConfig;
-  final DateTime fetchedAt;
+  final Duration fetchedElapsed;
+}
+
+class _PreRequestSocketException implements SocketException {
+  const _PreRequestSocketException(this.cause);
+
+  final SocketException cause;
+
+  @override
+  String get message => cause.message;
+
+  @override
+  OSError? get osError => cause.osError;
+
+  @override
+  InternetAddress? get address => cause.address;
+
+  @override
+  int? get port => cause.port;
+
+  @override
+  String toString() => cause.toString();
+}
+
+class _OpenUrlSocketTaggingHttpClient implements HttpClient {
+  _OpenUrlSocketTaggingHttpClient(this._inner);
+
+  final HttpClient _inner;
+
+  @override
+  bool get autoUncompress => _inner.autoUncompress;
+
+  @override
+  set autoUncompress(bool value) => _inner.autoUncompress = value;
+
+  @override
+  Duration? get connectionTimeout => _inner.connectionTimeout;
+
+  @override
+  set connectionTimeout(Duration? value) => _inner.connectionTimeout = value;
+
+  @override
+  Duration get idleTimeout => _inner.idleTimeout;
+
+  @override
+  set idleTimeout(Duration value) => _inner.idleTimeout = value;
+
+  @override
+  int? get maxConnectionsPerHost => _inner.maxConnectionsPerHost;
+
+  @override
+  set maxConnectionsPerHost(int? value) => _inner.maxConnectionsPerHost = value;
+
+  @override
+  String? get userAgent => _inner.userAgent;
+
+  @override
+  set userAgent(String? value) => _inner.userAgent = value;
+
+  @override
+  void addCredentials(
+    Uri url,
+    String realm,
+    HttpClientCredentials credentials,
+  ) =>
+      _inner.addCredentials(url, realm, credentials);
+
+  @override
+  void addProxyCredentials(
+    String host,
+    int port,
+    String realm,
+    HttpClientCredentials credentials,
+  ) =>
+      _inner.addProxyCredentials(host, port, realm, credentials);
+
+  @override
+  set authenticate(
+    Future<bool> Function(Uri url, String scheme, String? realm)? f,
+  ) =>
+      _inner.authenticate = f;
+
+  @override
+  set authenticateProxy(
+    Future<bool> Function(String host, int port, String scheme, String? realm)?
+        f,
+  ) =>
+      _inner.authenticateProxy = f;
+
+  @override
+  set badCertificateCallback(
+    bool Function(X509Certificate cert, String host, int port)? callback,
+  ) =>
+      _inner.badCertificateCallback = callback;
+
+  @override
+  set connectionFactory(
+    Future<ConnectionTask<Socket>> Function(
+      Uri url,
+      String? proxyHost,
+      int? proxyPort,
+    )? f,
+  ) =>
+      _inner.connectionFactory = f;
+
+  @override
+  set findProxy(String Function(Uri url)? f) => _inner.findProxy = f;
+
+  @override
+  set keyLog(void Function(String line)? callback) => _inner.keyLog = callback;
+
+  Future<HttpClientRequest> _tagSocketFailure(
+    Future<HttpClientRequest> Function() op,
+  ) async {
+    try {
+      return await op();
+    } on SocketException catch (error, stackTrace) {
+      Error.throwWithStackTrace(
+        _PreRequestSocketException(error),
+        stackTrace,
+      );
+    }
+  }
+
+  @override
+  Future<HttpClientRequest> open(
+    String method,
+    String host,
+    int port,
+    String path,
+  ) =>
+      _tagSocketFailure(() => _inner.open(method, host, port, path));
+
+  @override
+  Future<HttpClientRequest> openUrl(String method, Uri url) =>
+      _tagSocketFailure(() => _inner.openUrl(method, url));
+
+  @override
+  Future<HttpClientRequest> get(String host, int port, String path) =>
+      _tagSocketFailure(() => _inner.get(host, port, path));
+
+  @override
+  Future<HttpClientRequest> getUrl(Uri url) =>
+      _tagSocketFailure(() => _inner.getUrl(url));
+
+  @override
+  Future<HttpClientRequest> post(String host, int port, String path) =>
+      _tagSocketFailure(() => _inner.post(host, port, path));
+
+  @override
+  Future<HttpClientRequest> postUrl(Uri url) =>
+      _tagSocketFailure(() => _inner.postUrl(url));
+
+  @override
+  Future<HttpClientRequest> put(String host, int port, String path) =>
+      _tagSocketFailure(() => _inner.put(host, port, path));
+
+  @override
+  Future<HttpClientRequest> putUrl(Uri url) =>
+      _tagSocketFailure(() => _inner.putUrl(url));
+
+  @override
+  Future<HttpClientRequest> delete(String host, int port, String path) =>
+      _tagSocketFailure(() => _inner.delete(host, port, path));
+
+  @override
+  Future<HttpClientRequest> deleteUrl(Uri url) =>
+      _tagSocketFailure(() => _inner.deleteUrl(url));
+
+  @override
+  Future<HttpClientRequest> patch(String host, int port, String path) =>
+      _tagSocketFailure(() => _inner.patch(host, port, path));
+
+  @override
+  Future<HttpClientRequest> patchUrl(Uri url) =>
+      _tagSocketFailure(() => _inner.patchUrl(url));
+
+  @override
+  Future<HttpClientRequest> head(String host, int port, String path) =>
+      _tagSocketFailure(() => _inner.head(host, port, path));
+
+  @override
+  Future<HttpClientRequest> headUrl(Uri url) =>
+      _tagSocketFailure(() => _inner.headUrl(url));
+
+  @override
+  void close({bool force = false}) => _inner.close(force: force);
 }
 
 /// Owns a dedicated Dio instance, so application interceptors cannot log secrets
 /// or automatically repeat entitlement mutations.
-class DioXboardApi implements XboardApi, XboardPassportApi {
+class DioXboardApi
+    implements
+        XboardApi,
+        XboardPassportApi,
+        XboardRefreshableGuestConfigApi {
   DioXboardApi({
     Dio? dio,
     Uri? baseUri,
@@ -88,13 +282,7 @@ class DioXboardApi implements XboardApi, XboardPassportApi {
         _dio = dio ?? Dio() {
     if (dio == null) {
       _dio.httpClientAdapter = IOHttpClientAdapter(
-        createHttpClient: () {
-          // Keep the application's proxy routing, but never its permissive
-          // certificate override for account credentials and gift codes.
-          final client = HttpClient()
-            ..badCertificateCallback = ((_, __, ___) => false);
-          return wrapPreRequestHttpClient(client);
-        },
+        createHttpClient: _createStrictHttpClient,
       );
     }
     _dio.interceptors.clear();
@@ -130,6 +318,9 @@ class DioXboardApi implements XboardApi, XboardPassportApi {
   );
 
   static const Duration _guestConfigTtl = Duration(seconds: 30);
+  static const String _authUncertainMessage =
+      '请求状态未确认，请检查邮箱或尝试登录，切勿盲目重复提交';
+  static const String _giftUncertainMessage = '服务暂时异常，兑换结果需要进一步确认';
 
   @override
   final Uri baseUri;
@@ -138,8 +329,23 @@ class DioXboardApi implements XboardApi, XboardPassportApi {
   final Dio _dio;
   Dio? _directDio;
   bool _closed = false;
+  final Stopwatch _guestConfigClock = Stopwatch()..start();
   _GuestCommConfigBundle? _guestConfigCache;
   Future<_GuestCommConfigBundle>? _guestConfigInFlight;
+  int _guestConfigGeneration = 0;
+
+  static HttpClient _createStrictHttpClient({bool forceDirect = false}) {
+    // Keep proxy routing unless forcing direct fallback, but never adopt the
+    // application's permissive certificate override for credentials/gifts.
+    final client = HttpClient()
+      ..badCertificateCallback = ((_, __, ___) => false);
+    if (forceDirect) {
+      client.findProxy = (_) => 'DIRECT';
+    }
+    return wrapPreRequestHttpClient(
+      _OpenUrlSocketTaggingHttpClient(client),
+    );
+  }
 
   Dio _ensureDirectDio() {
     if (_closed) {
@@ -153,11 +359,7 @@ class DioXboardApi implements XboardApi, XboardPassportApi {
     final direct = Dio(_buildBaseOptions(baseUri))
       ..interceptors.clear()
       ..httpClientAdapter = IOHttpClientAdapter(
-        createHttpClient: () => wrapPreRequestHttpClient(
-          HttpClient()
-            ..findProxy = ((_) => 'DIRECT')
-            ..badCertificateCallback = ((_, __, ___) => false),
-        ),
+        createHttpClient: () => _createStrictHttpClient(forceDirect: true),
       );
     _directDio = direct;
     return direct;
@@ -218,8 +420,24 @@ class DioXboardApi implements XboardApi, XboardPassportApi {
         '/api/v1/passport/auth/login',
         method: 'POST',
         data: {'email': email.trim(), 'password': password},
-        parse: (body) {
+        nonIdempotentAfterSend: true,
+        uncertainMessage: _authUncertainMessage,
+        parseWithStatus: (status, body) {
+          if (status == 202) {
+            throw const XboardException(
+              code: 'purchase_account_unsupported',
+              message: '该账号已开启管理员二次验证，请在网页端登录',
+              statusCode: 202,
+            );
+          }
           final result = _data(body);
+          if (result['mfa_required'] == true) {
+            throw XboardException(
+              code: 'purchase_account_unsupported',
+              message: '该账号已开启管理员二次验证，请在网页端登录',
+              statusCode: status,
+            );
+          }
           // The adjacent `token` property is a subscription token, not auth.
           final authorization = _string(result, 'auth_data');
           if (!_validAuthorization(authorization)) _invalid();
@@ -254,6 +472,7 @@ class DioXboardApi implements XboardApi, XboardPassportApi {
           'invite_code': trimmedInviteCode,
       },
       nonIdempotentAfterSend: true,
+      uncertainMessage: _authUncertainMessage,
       parse: (body) {
         final result = _data(body);
         final raw = _string(result, 'auth_data');
@@ -307,6 +526,7 @@ class DioXboardApi implements XboardApi, XboardPassportApi {
           data: data,
           mutation: true,
           allowEmpty204: true,
+          uncertainMessage: _authUncertainMessage,
           parse: _parseAcknowledgeResponse,
         );
 
@@ -403,6 +623,7 @@ class DioXboardApi implements XboardApi, XboardPassportApi {
         authorization: authorization,
         data: {'code': code.trim()},
         mutation: true,
+        uncertainMessage: _giftUncertainMessage,
         parse: (body) {
           final result = _data(body);
           final usage =
@@ -454,23 +675,38 @@ class DioXboardApi implements XboardApi, XboardPassportApi {
     );
   }
 
-  Future<_GuestCommConfigBundle> _loadGuestCommConfig() {
+  @override
+  void invalidateGuestConfigCache() {
+    _guestConfigGeneration++;
+    _guestConfigCache = null;
+    _guestConfigInFlight = null;
+  }
+
+  Future<_GuestCommConfigBundle> _loadGuestCommConfig({
+    bool forceRefresh = false,
+  }) {
     if (_closed) {
       return _request<_GuestCommConfigBundle>(
         '/api/v1/guest/comm/config',
         parse: (_) => _invalid(),
       );
     }
-    final cached = _guestConfigCache;
-    if (cached != null) {
-      if (DateTime.now().difference(cached.fetchedAt) < _guestConfigTtl) {
-        return Future<_GuestCommConfigBundle>.value(cached);
+    if (forceRefresh) {
+      invalidateGuestConfigCache();
+    } else {
+      final cached = _guestConfigCache;
+      if (cached != null) {
+        if (_guestConfigClock.elapsed - cached.fetchedElapsed <
+            _guestConfigTtl) {
+          return Future<_GuestCommConfigBundle>.value(cached);
+        }
+        _guestConfigCache = null;
       }
-      _guestConfigCache = null;
+      final inFlight = _guestConfigInFlight;
+      if (inFlight != null) return inFlight;
     }
-    final inFlight = _guestConfigInFlight;
-    if (inFlight != null) return inFlight;
 
+    final generation = _guestConfigGeneration;
     late final Future<_GuestCommConfigBundle> future;
     future = _request<_GuestCommConfigBundle>(
       '/api/v1/guest/comm/config',
@@ -479,11 +715,11 @@ class DioXboardApi implements XboardApi, XboardPassportApi {
         return _GuestCommConfigBundle(
           channels: _parsePurchaseChannels(data),
           authConfig: _parseGuestAuthConfig(data),
-          fetchedAt: DateTime.now(),
+          fetchedElapsed: _guestConfigClock.elapsed,
         );
       },
     ).then((bundle) {
-      if (!_closed) {
+      if (!_closed && _guestConfigGeneration == generation) {
         _guestConfigCache = bundle;
       }
       return bundle;
@@ -497,12 +733,16 @@ class DioXboardApi implements XboardApi, XboardPassportApi {
   }
 
   @override
-  Future<XboardPurchaseChannels> getGuestPurchaseChannels() async =>
-      (await _loadGuestCommConfig()).channels;
+  Future<XboardPurchaseChannels> getGuestPurchaseChannels({
+    bool forceRefresh = false,
+  }) async =>
+      (await _loadGuestCommConfig(forceRefresh: forceRefresh)).channels;
 
   @override
-  Future<XboardGuestAuthConfig> getGuestAuthConfig() async =>
-      (await _loadGuestCommConfig()).authConfig;
+  Future<XboardGuestAuthConfig> getGuestAuthConfig({
+    bool forceRefresh = false,
+  }) async =>
+      (await _loadGuestCommConfig(forceRefresh: forceRefresh)).authConfig;
 
   @override
   Future<XboardPurchaseChannels> getUserPurchaseChannels(
@@ -528,26 +768,56 @@ class DioXboardApi implements XboardApi, XboardPassportApi {
         authorization: authorization,
         mutation: true,
         emptyResponse: true,
+        uncertainMessage: '退出状态未确认，请刷新后重试',
         parse: (_) {},
       );
 
   @override
   void close() {
     _closed = true;
-    _guestConfigCache = null;
-    _guestConfigInFlight = null;
+    invalidateGuestConfigCache();
     _dio.close(force: true);
     final direct = _directDio;
     _directDio = null;
     direct?.close(force: true);
   }
 
-  bool _canFallbackToDirect(DioException error, {required bool mutation}) {
+  bool _isCertificateFailure(DioException error) {
+    if (isCertificateDioFailure(error)) return true;
+    final cause = unwrapPreRequestTransportError(error.error);
+    if (cause is TlsException) {
+      final text =
+          '${cause.message} ${cause.osError?.message ?? ''}'.toLowerCase();
+      return text.contains('certificate') ||
+          text.contains('cert_') ||
+          text.contains('unable to get local issuer') ||
+          text.contains('self signed') ||
+          text.contains('hostname mismatch') ||
+          text.contains('unknown ca');
+    }
+    return false;
+  }
+
+  bool _isNonIdempotentPreRequestError(DioException error) =>
+      error.response == null &&
+      (error.error is PreRequestTransportException ||
+          error.error is _PreRequestSocketException ||
+          error.type == DioExceptionType.connectionTimeout);
+
+  bool _canFallbackToDirect(
+    DioException error, {
+    required bool mutation,
+    bool nonIdempotentAfterSend = false,
+  }) {
     if (_closed ||
         mutation ||
         !_ownsTransport ||
         !(_shouldFallbackToDirect?.call() ?? false)) {
       return false;
+    }
+    if (_isCertificateFailure(error)) return false;
+    if (nonIdempotentAfterSend) {
+      return _isNonIdempotentPreRequestError(error);
     }
     return isPreRequestDioFailure(error);
   }
@@ -584,8 +854,14 @@ class DioXboardApi implements XboardApi, XboardPassportApi {
     bool nonIdempotentAfterSend = false,
     bool emptyResponse = false,
     bool allowEmpty204 = false,
-    required T Function(Object? body) parse,
+    String? uncertainMessage,
+    T Function(Object? body)? parse,
+    T Function(int status, Object? body)? parseWithStatus,
   }) async {
+    assert(
+      parse != null || parseWithStatus != null,
+      'Either parse or parseWithStatus must be provided.',
+    );
     if (authorization != null && !_validAuthorization(authorization)) {
       throw const XboardException(
         code: 'invalid_authorization',
@@ -613,7 +889,13 @@ class DioXboardApi implements XboardApi, XboardPassportApi {
           queryParameters: queryParameters,
         );
       } on DioException catch (error) {
-        if (!_canFallbackToDirect(error, mutation: mutation)) rethrow;
+        if (!_canFallbackToDirect(
+          error,
+          mutation: mutation,
+          nonIdempotentAfterSend: nonIdempotentAfterSend,
+        )) {
+          rethrow;
+        }
         response = await _performRequest(
           _ensureDirectDio(),
           path,
@@ -641,12 +923,15 @@ class DioXboardApi implements XboardApi, XboardPassportApi {
           status,
           mutation: uncertainAfterSend,
           retryAfterSeconds: retryAfter,
+          uncertainMessage: uncertainMessage,
         );
       }
       if (emptyResponse) {
         if (status != 204) _invalid();
       } else if (allowEmpty204 && status == 204) {
-        return parse(null);
+        return parseWithStatus != null
+            ? parseWithStatus(status, null)
+            : parse!(null);
       } else {
         final root = _object(response.data);
         if (root['status'] == 'fail') {
@@ -655,31 +940,38 @@ class DioXboardApi implements XboardApi, XboardPassportApi {
             status,
             mutation: uncertainAfterSend,
             retryAfterSeconds: retryAfter,
+            uncertainMessage: uncertainMessage,
           );
         }
       }
-      return parse(response.data);
+      return parseWithStatus != null
+          ? parseWithStatus(status, response.data)
+          : parse!(response.data);
     } on XboardException {
       rethrow;
     } on FormatException {
       throw XboardException(
         code: 'invalid_response',
-        message: uncertainAfterSend ? '服务响应格式异常，兑换结果需要进一步确认' : '服务响应格式异常，请稍后重试',
+        message: uncertainAfterSend
+            ? (uncertainMessage ?? '服务响应格式异常，请确认操作是否已生效后再重试')
+            : '服务响应格式异常，请稍后重试',
         statusCode: status,
         isUncertain: uncertainAfterSend,
       );
     } on DioException catch (error) {
       // Never expose DioException: it can include request headers and bodies.
-      final certificate = isCertificateDioFailure(error);
-      final uncertain = !certificate &&
-          (mutation ||
-              (nonIdempotentAfterSend && !isPreRequestDioFailure(error)));
+      final certificate = _isCertificateFailure(error);
+      final preRequest = nonIdempotentAfterSend
+          ? _isNonIdempotentPreRequestError(error)
+          : isPreRequestDioFailure(error);
+      final uncertain =
+          !certificate && (mutation || (nonIdempotentAfterSend && !preRequest));
       throw XboardException(
         code: certificate ? 'certificate_error' : 'connection_error',
         message: certificate
             ? '购买服务的安全证书无法验证'
             : uncertain
-                ? '连接中断，请确认操作是否已生效后再重试'
+                ? (uncertainMessage ?? '连接中断，请确认操作是否已生效后再重试')
                 : '无法连接购买服务，请检查网络后重试',
         statusCode: error.response?.statusCode,
         isUncertain: uncertain,
@@ -941,21 +1233,47 @@ const _preservedAuthErrorCodes = {
   'registration_email_cooldown',
   'registration_email_rate_limited',
   'registration_email_disabled',
+  'registration_rate_limited',
+  'registration_busy',
+  'registration_ip_limited',
   'password_reset_invalid',
   'password_reset_locked',
   'password_reset_cooldown',
   'password_reset_rate_limited',
+  'password_reset_busy',
   'passport_email_cooldown',
   'passport_email_rate_limited',
+  'login_rate_limited',
   'mail_unavailable',
+  'invalid_origin',
+};
+
+const _preservedAuthErrorMessages = {
+  'registration_rate_limited': '注册请求过于频繁，请稍后重试',
+  'registration_busy': '注册服务繁忙，请稍后重试',
+  'registration_ip_limited': '当前网络注册过于频繁，请稍后重试',
+  'password_reset_busy': '重置服务繁忙，请稍后重试',
+  'login_rate_limited': '登录尝试过多，请稍后重试',
+  'invalid_origin': '请求来源不受信任，请核对服务地址',
 };
 
 int? _parseRetryAfterSeconds(Headers? headers) {
   final raw = headers?.value('retry-after')?.trim();
   if (raw == null || raw.isEmpty) return null;
   final parsed = int.tryParse(raw);
-  if (parsed == null || parsed < 0) return null;
-  return parsed;
+  if (parsed != null) {
+    if (parsed <= 0) return null;
+    return parsed > 86400 ? 86400 : parsed;
+  }
+  try {
+    final target = HttpDate.parse(raw).toUtc();
+    final diff = target.difference(DateTime.now().toUtc());
+    if (diff <= Duration.zero) return null;
+    final seconds = (diff.inMilliseconds + 999) ~/ 1000;
+    return seconds > 86400 ? 86400 : seconds;
+  } on Exception {
+    return null;
+  }
 }
 
 void _parseAcknowledgeResponse(Object? body) {
@@ -969,11 +1287,121 @@ void _parseAcknowledgeResponse(Object? body) {
   if (!root.containsKey('data')) _invalid();
 }
 
+XboardException? _validationError({
+  required int status,
+  required Object? backendCode,
+  required Map<Object?, Object?>? fields,
+  required Map<Object?, Object?>? legacyErrors,
+  int? retryAfterSeconds,
+}) {
+  if (status != 422 && backendCode != 'validation_failed') return null;
+
+  String? fieldText(String key) {
+    final raw = fields?[key] ?? legacyErrors?[key];
+    if (raw is String) {
+      final trimmed = raw.trim();
+      return trimmed.isEmpty ? null : trimmed;
+    }
+    if (raw is List) {
+      for (final item in raw) {
+        if (item is String && item.trim().isNotEmpty) {
+          return item.trim();
+        }
+      }
+    }
+    return null;
+  }
+
+  final hasEmail = (fields?.containsKey('email') ?? false) ||
+      (legacyErrors?.containsKey('email') ?? false);
+  final hasPassword = (fields?.containsKey('password') ?? false) ||
+      (legacyErrors?.containsKey('password') ?? false) ||
+      (fields?.containsKey('password_confirmation') ?? false) ||
+      (legacyErrors?.containsKey('password_confirmation') ?? false);
+  final hasEmailCode = (fields?.containsKey('email_code') ?? false) ||
+      (legacyErrors?.containsKey('email_code') ?? false);
+  final hasInviteCode = (fields?.containsKey('invite_code') ?? false) ||
+      (legacyErrors?.containsKey('invite_code') ?? false);
+
+  if (hasEmailCode && !hasEmail && !hasPassword && !hasInviteCode) {
+    return XboardException(
+      code: 'registration_email_invalid',
+      message: '邮箱验证码有误，请重新核对',
+      statusCode: status,
+      retryAfterSeconds: retryAfterSeconds,
+    );
+  }
+  final inviteText = (fieldText('invite_code') ?? '').toLowerCase();
+  if (hasInviteCode && !hasEmail && !hasPassword && !hasEmailCode) {
+    final isInvalid = inviteText.contains('invalid') ||
+        inviteText.contains('无效') ||
+        inviteText.contains('不存在');
+    return XboardException(
+      code: isInvalid ? 'invitation_code_invalid' : 'invitation_code_required',
+      message: isInvalid ? '邀请码无效，请检查后重试' : '必须使用邀请码才可以注册',
+      statusCode: status,
+      retryAfterSeconds: retryAfterSeconds,
+    );
+  }
+
+  final emailText = (fieldText('email') ?? '').toLowerCase();
+  final passwordText =
+      (fieldText('password') ?? fieldText('password_confirmation') ?? '')
+          .toLowerCase();
+  final messages = <String>[];
+  if (hasEmail) {
+    if (emailText.contains('taken') ||
+        emailText.contains('exists') ||
+        emailText.contains('存在') ||
+        emailText.contains('已注册')) {
+      messages.add('该邮箱已注册');
+    } else if (emailText.contains('whitelist') ||
+        emailText.contains('domain') ||
+        emailText.contains('白名单') ||
+        emailText.contains('后缀')) {
+      messages.add('当前邮箱域名不在允许范围内');
+    } else if (emailText.contains('gmail') ||
+        emailText.contains('alias') ||
+        emailText.contains('别名')) {
+      messages.add('不支持 Gmail 别名邮箱');
+    } else {
+      messages.add('邮箱格式无效，请检查后重试');
+    }
+  }
+  if (hasPassword) {
+    if (passwordText.contains('1024') ||
+        passwordText.contains('byte') ||
+        passwordText.contains('字节')) {
+      messages.add('密码不得超过 1024 个字节');
+    } else if (passwordText.contains('confirm') ||
+        passwordText.contains('match') ||
+        passwordText.contains('一致')) {
+      messages.add('两次输入的密码不一致');
+    } else {
+      messages.add('密码至少需要 8 个字符，请检查后重试');
+    }
+  }
+  if (hasEmailCode) {
+    messages.add('邮箱验证码有误');
+  }
+  if (hasInviteCode) {
+    messages.add('需要填写有效的邀请码');
+  }
+
+  return XboardException(
+    code: 'validation_failed',
+    message: messages.isEmpty ? '输入信息格式有误，请检查后重试' : messages.join('；'),
+    statusCode: status,
+    retryAfterSeconds: retryAfterSeconds,
+  );
+}
+
 XboardException _serverError(
   Object? body,
   int status, {
   required bool mutation,
   int? retryAfterSeconds,
+  String? uncertainMessage,
 }) {
   if (status == 401) {
     return XboardException(
@@ -983,22 +1411,16 @@ XboardException _serverError(
       retryAfterSeconds: retryAfterSeconds,
     );
   }
-  if (status == 403) {
-    return XboardException(
-      code: 'forbidden',
-      message: '当前账号没有使用此功能的权限',
-      statusCode: status,
-      retryAfterSeconds: retryAfterSeconds,
-    );
-  }
-  final data = body is Map<String, dynamic> ? body : null;
-  final errorObj = data?['error'] is Map<String, dynamic>
-      ? data!['error'] as Map<String, dynamic>
-      : null;
+  final data = body is Map ? body.cast<Object?, Object?>() : null;
+  final rawError = data?['error'];
+  final errorObj = rawError is Map ? rawError.cast<Object?, Object?>() : null;
   final backendCode = errorObj?['code'];
-  final fields = errorObj?['fields'] is Map<String, dynamic>
-      ? errorObj!['fields'] as Map<String, dynamic>
-      : null;
+  final rawFields = errorObj?['fields'];
+  final fields = rawFields is Map ? rawFields.cast<Object?, Object?>() : null;
+  final rawLegacyErrors = data?['errors'];
+  final legacyErrors =
+      rawLegacyErrors is Map ? rawLegacyErrors.cast<Object?, Object?>() : null;
+
   if (backendCode == 'captcha_invalid' ||
       backendCode == 'captcha_unavailable' ||
       backendCode == 'captcha_required' ||
@@ -1010,23 +1432,41 @@ XboardException _serverError(
       retryAfterSeconds: retryAfterSeconds,
     );
   }
-  if (backendCode == 'validation_failed' &&
-      (fields?.containsKey('email_code') ?? false)) {
-    return XboardException(
-      code: 'registration_email_invalid',
-      message: '',
-      statusCode: status,
-      retryAfterSeconds: retryAfterSeconds,
-    );
-  }
   if (backendCode is String && _preservedAuthErrorCodes.contains(backendCode)) {
     return XboardException(
       code: backendCode,
-      message: '',
+      message: _preservedAuthErrorMessages[backendCode] ?? '',
       statusCode: status,
       retryAfterSeconds: retryAfterSeconds,
     );
   }
+  if (status == 403) {
+    if (backendCode is String &&
+        RegExp(r'^[a-z0-9_]{1,64}$').hasMatch(backendCode) &&
+        backendCode != 'forbidden') {
+      return XboardException(
+        code: backendCode,
+        message: _preservedAuthErrorMessages[backendCode] ??
+            '请求被拒绝，请检查服务地址或账号权限',
+        statusCode: status,
+        retryAfterSeconds: retryAfterSeconds,
+      );
+    }
+    return XboardException(
+      code: 'forbidden',
+      message: '当前账号没有使用此功能的权限',
+      statusCode: status,
+      retryAfterSeconds: retryAfterSeconds,
+    );
+  }
+  final validation = _validationError(
+    status: status,
+    backendCode: backendCode,
+    fields: fields,
+    legacyErrors: legacyErrors,
+    retryAfterSeconds: retryAfterSeconds,
+  );
+  if (validation != null) return validation;
   if (status == 429) {
     return XboardException(
       code: 'rate_limited',
@@ -1038,7 +1478,9 @@ XboardException _serverError(
   if (status >= 500 || status == 408) {
     return XboardException(
       code: 'server_error',
-      message: mutation ? '服务暂时异常，兑换结果需要进一步确认' : '购买服务暂时不可用，请稍后重试',
+      message: mutation
+          ? (uncertainMessage ?? '服务暂时异常，请确认操作是否已生效后再重试')
+          : '购买服务暂时不可用，请稍后重试',
       statusCode: status,
       isUncertain: mutation,
       retryAfterSeconds: retryAfterSeconds,
@@ -1063,8 +1505,7 @@ Uri? _optionalHttpsField(Map<String, Object?> data, String key) {
 
 Uri? _safeOptionalChannelHttpsUrl(Map<String, Object?> data, String key) {
   final raw = data[key];
-  if (raw == null) return null;
-  if (raw is! String) _invalid();
+  if (raw is! String) return null;
   final trimmed = raw.trim();
   if (trimmed.isEmpty) return null;
   final parsed = Uri.tryParse(trimmed);
@@ -1078,9 +1519,24 @@ Uri? _safeOptionalChannelHttpsUrl(Map<String, Object?> data, String key) {
   return parsed;
 }
 
+String? _optionalTrimmedString(Map<String, Object?> data, String key) {
+  final raw = data[key];
+  if (raw is! String) return null;
+  final trimmed = raw.trim();
+  return trimmed.isEmpty ? null : trimmed;
+}
+
 bool _optionalFlag(Map<String, Object?> data, String key) {
   final raw = data[key];
   if (raw == null) return false;
+  if (raw is bool) return raw;
+  if (raw is int && (raw == 0 || raw == 1)) return raw == 1;
+  _invalid();
+}
+
+bool? _optionalNullableFlag(Map<String, Object?> data, String key) {
+  final raw = data[key];
+  if (raw == null) return null;
   if (raw is bool) return raw;
   if (raw is int && (raw == 0 || raw == 1)) return raw == 1;
   _invalid();
@@ -1102,24 +1558,19 @@ List<String> _parseEmailWhitelist(Object? raw) {
   return List.unmodifiable(result);
 }
 
-XboardGuestAuthConfig _parseGuestAuthConfig(Map<String, Object?> data) {
-  final rawCaptchaType = data['captcha_type'];
-  final captchaType = rawCaptchaType is String && rawCaptchaType.trim().isNotEmpty
-      ? rawCaptchaType.trim()
-      : null;
-  final rawTos = data['tos_url'];
-  final tosUrl = rawTos is String
-      ? _safeOptionalChannelHttpsUrl(data, 'tos_url')
-      : null;
-  return XboardGuestAuthConfig(
-    isEmailVerify: _optionalFlag(data, 'is_email_verify'),
-    isInviteForce: _optionalFlag(data, 'is_invite_force'),
-    emailWhitelistSuffix: _parseEmailWhitelist(data['email_whitelist_suffix']),
-    isCaptcha: _optionalFlag(data, 'is_captcha'),
-    captchaType: captchaType,
-    tosUrl: tosUrl,
-  );
-}
+XboardGuestAuthConfig _parseGuestAuthConfig(Map<String, Object?> data) =>
+    XboardGuestAuthConfig(
+      isEmailVerify: _optionalFlag(data, 'is_email_verify'),
+      isInviteForce: _optionalFlag(data, 'is_invite_force'),
+      emailWhitelistSuffix:
+          _parseEmailWhitelist(data['email_whitelist_suffix']),
+      isCaptcha: _optionalFlag(data, 'is_captcha'),
+      captchaType: _optionalTrimmedString(data, 'captcha_type'),
+      tosUrl: _safeOptionalChannelHttpsUrl(data, 'tos_url'),
+      isRegistrationStopped: _optionalFlag(data, 'stop_register'),
+      isGmailAliasRestricted:
+          _optionalNullableFlag(data, 'email_gmail_limit_enable'),
+    );
 
 XboardPurchaseChannels _parsePurchaseChannels(Map<String, Object?> data) =>
     XboardPurchaseChannels(
@@ -1132,5 +1583,6 @@ XboardPurchaseChannels _parsePurchaseChannels(Map<String, Object?> data) =>
       cardStore500gUrl:
           _safeOptionalChannelHttpsUrl(data, 'card_store_500g_url'),
       chatwootBaseUrl: _safeOptionalChannelHttpsUrl(data, 'chatwoot_base_url'),
-      chatwootWebsiteToken: _optionalString(data, 'chatwoot_website_token'),
+      chatwootWebsiteToken:
+          _optionalTrimmedString(data, 'chatwoot_website_token'),
     );
