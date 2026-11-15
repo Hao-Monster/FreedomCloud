@@ -2531,6 +2531,10 @@ mixin _$ThemeProps {
   DynamicSchemeVariant get schemeVariant => throw _privateConstructorUsedError;
   bool get pureBlack => throw _privateConstructorUsedError;
   TextScale get textScale => throw _privateConstructorUsedError;
+  DayNightSkyMode get skyMode => throw _privateConstructorUsedError;
+  DayNightGlassPreset get glassPreset => throw _privateConstructorUsedError;
+  bool get skyAmbientAnimation => throw _privateConstructorUsedError;
+  bool get ignoreCustomBackground => throw _privateConstructorUsedError;
 
   /// Serializes this ThemeProps to a JSON map.
   Map<String, dynamic> toJson() => throw _privateConstructorUsedError;
@@ -2556,7 +2560,11 @@ abstract class $ThemePropsCopyWith<$Res> {
       bool freedomNetThemeV2Migrated,
       DynamicSchemeVariant schemeVariant,
       bool pureBlack,
-      TextScale textScale});
+      TextScale textScale,
+      DayNightSkyMode skyMode,
+      DayNightGlassPreset glassPreset,
+      bool skyAmbientAnimation,
+      bool ignoreCustomBackground});
 
   $TextScaleCopyWith<$Res> get textScale;
 }
@@ -2584,6 +2592,10 @@ class _$ThemePropsCopyWithImpl<$Res, $Val extends ThemeProps>
     Object? schemeVariant = null,
     Object? pureBlack = null,
     Object? textScale = null,
+    Object? skyMode = null,
+    Object? glassPreset = null,
+    Object? skyAmbientAnimation = null,
+    Object? ignoreCustomBackground = null,
   }) {
     return _then(_value.copyWith(
       primaryColor: freezed == primaryColor
@@ -2618,6 +2630,22 @@ class _$ThemePropsCopyWithImpl<$Res, $Val extends ThemeProps>
           ? _value.textScale
           : textScale // ignore: cast_nullable_to_non_nullable
               as TextScale,
+      skyMode: null == skyMode
+          ? _value.skyMode
+          : skyMode // ignore: cast_nullable_to_non_nullable
+              as DayNightSkyMode,
+      glassPreset: null == glassPreset
+          ? _value.glassPreset
+          : glassPreset // ignore: cast_nullable_to_non_nullable
+              as DayNightGlassPreset,
+      skyAmbientAnimation: null == skyAmbientAnimation
+          ? _value.skyAmbientAnimation
+          : skyAmbientAnimation // ignore: cast_nullable_to_non_nullable
+              as bool,
+      ignoreCustomBackground: null == ignoreCustomBackground
+          ? _value.ignoreCustomBackground
+          : ignoreCustomBackground // ignore: cast_nullable_to_non_nullable
+              as bool,
     ) as $Val);
   }
 
@@ -2648,7 +2676,11 @@ abstract class _$$ThemePropsImplCopyWith<$Res>
       bool freedomNetThemeV2Migrated,
       DynamicSchemeVariant schemeVariant,
       bool pureBlack,
-      TextScale textScale});
+      TextScale textScale,
+      DayNightSkyMode skyMode,
+      DayNightGlassPreset glassPreset,
+      bool skyAmbientAnimation,
+      bool ignoreCustomBackground});
 
   @override
   $TextScaleCopyWith<$Res> get textScale;
@@ -2675,6 +2707,10 @@ class __$$ThemePropsImplCopyWithImpl<$Res>
     Object? schemeVariant = null,
     Object? pureBlack = null,
     Object? textScale = null,
+    Object? skyMode = null,
+    Object? glassPreset = null,
+    Object? skyAmbientAnimation = null,
+    Object? ignoreCustomBackground = null,
   }) {
     return _then(_$ThemePropsImpl(
       primaryColor: freezed == primaryColor
@@ -2709,6 +2745,22 @@ class __$$ThemePropsImplCopyWithImpl<$Res>
           ? _value.textScale
           : textScale // ignore: cast_nullable_to_non_nullable
               as TextScale,
+      skyMode: null == skyMode
+          ? _value.skyMode
+          : skyMode // ignore: cast_nullable_to_non_nullable
+              as DayNightSkyMode,
+      glassPreset: null == glassPreset
+          ? _value.glassPreset
+          : glassPreset // ignore: cast_nullable_to_non_nullable
+              as DayNightGlassPreset,
+      skyAmbientAnimation: null == skyAmbientAnimation
+          ? _value.skyAmbientAnimation
+          : skyAmbientAnimation // ignore: cast_nullable_to_non_nullable
+              as bool,
+      ignoreCustomBackground: null == ignoreCustomBackground
+          ? _value.ignoreCustomBackground
+          : ignoreCustomBackground // ignore: cast_nullable_to_non_nullable
+              as bool,
     ));
   }
 }
@@ -2724,7 +2776,11 @@ class _$ThemePropsImpl implements _ThemeProps {
       this.freedomNetThemeV2Migrated = true,
       this.schemeVariant = DynamicSchemeVariant.content,
       this.pureBlack = false,
-      this.textScale = const TextScale()})
+      this.textScale = const TextScale(),
+      this.skyMode = DayNightSkyMode.followConnection,
+      this.glassPreset = DayNightGlassPreset.balanced,
+      this.skyAmbientAnimation = true,
+      this.ignoreCustomBackground = false})
       : _primaryColors = primaryColors;
 
   factory _$ThemePropsImpl.fromJson(Map<String, dynamic> json) =>
@@ -2759,10 +2815,22 @@ class _$ThemePropsImpl implements _ThemeProps {
   @override
   @JsonKey()
   final TextScale textScale;
+  @override
+  @JsonKey()
+  final DayNightSkyMode skyMode;
+  @override
+  @JsonKey()
+  final DayNightGlassPreset glassPreset;
+  @override
+  @JsonKey()
+  final bool skyAmbientAnimation;
+  @override
+  @JsonKey()
+  final bool ignoreCustomBackground;
 
   @override
   String toString() {
-    return 'ThemeProps(primaryColor: $primaryColor, primaryColors: $primaryColors, themeMode: $themeMode, freedomNetThemeV1Migrated: $freedomNetThemeV1Migrated, freedomNetThemeV2Migrated: $freedomNetThemeV2Migrated, schemeVariant: $schemeVariant, pureBlack: $pureBlack, textScale: $textScale)';
+    return 'ThemeProps(primaryColor: $primaryColor, primaryColors: $primaryColors, themeMode: $themeMode, freedomNetThemeV1Migrated: $freedomNetThemeV1Migrated, freedomNetThemeV2Migrated: $freedomNetThemeV2Migrated, schemeVariant: $schemeVariant, pureBlack: $pureBlack, textScale: $textScale, skyMode: $skyMode, glassPreset: $glassPreset, skyAmbientAnimation: $skyAmbientAnimation, ignoreCustomBackground: $ignoreCustomBackground)';
   }
 
   @override
@@ -2783,11 +2851,18 @@ class _$ThemePropsImpl implements _ThemeProps {
                     freedomNetThemeV2Migrated) ||
                 other.freedomNetThemeV2Migrated == freedomNetThemeV2Migrated) &&
             (identical(other.schemeVariant, schemeVariant) ||
-                 other.schemeVariant == schemeVariant) &&
+                other.schemeVariant == schemeVariant) &&
             (identical(other.pureBlack, pureBlack) ||
                 other.pureBlack == pureBlack) &&
             (identical(other.textScale, textScale) ||
-                other.textScale == textScale));
+                other.textScale == textScale) &&
+            (identical(other.skyMode, skyMode) || other.skyMode == skyMode) &&
+            (identical(other.glassPreset, glassPreset) ||
+                other.glassPreset == glassPreset) &&
+            (identical(other.skyAmbientAnimation, skyAmbientAnimation) ||
+                other.skyAmbientAnimation == skyAmbientAnimation) &&
+            (identical(other.ignoreCustomBackground, ignoreCustomBackground) ||
+                other.ignoreCustomBackground == ignoreCustomBackground));
   }
 
   @JsonKey(includeFromJson: false, includeToJson: false)
@@ -2801,7 +2876,11 @@ class _$ThemePropsImpl implements _ThemeProps {
       freedomNetThemeV2Migrated,
       schemeVariant,
       pureBlack,
-      textScale);
+      textScale,
+      skyMode,
+      glassPreset,
+      skyAmbientAnimation,
+      ignoreCustomBackground);
 
   /// Create a copy of ThemeProps
   /// with the given fields replaced by the non-null parameter values.
@@ -2828,7 +2907,11 @@ abstract class _ThemeProps implements ThemeProps {
       final bool freedomNetThemeV2Migrated,
       final DynamicSchemeVariant schemeVariant,
       final bool pureBlack,
-      final TextScale textScale}) = _$ThemePropsImpl;
+      final TextScale textScale,
+      final DayNightSkyMode skyMode,
+      final DayNightGlassPreset glassPreset,
+      final bool skyAmbientAnimation,
+      final bool ignoreCustomBackground}) = _$ThemePropsImpl;
 
   factory _ThemeProps.fromJson(Map<String, dynamic> json) =
       _$ThemePropsImpl.fromJson;
@@ -2849,6 +2932,14 @@ abstract class _ThemeProps implements ThemeProps {
   bool get pureBlack;
   @override
   TextScale get textScale;
+  @override
+  DayNightSkyMode get skyMode;
+  @override
+  DayNightGlassPreset get glassPreset;
+  @override
+  bool get skyAmbientAnimation;
+  @override
+  bool get ignoreCustomBackground;
 
   /// Create a copy of ThemeProps
   /// with the given fields replaced by the non-null parameter values.

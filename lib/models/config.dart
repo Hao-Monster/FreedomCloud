@@ -269,6 +269,10 @@ class ThemeProps with _$ThemeProps {
     @Default(DynamicSchemeVariant.content) DynamicSchemeVariant schemeVariant,
     @Default(false) bool pureBlack,
     @Default(TextScale()) TextScale textScale,
+    @Default(DayNightSkyMode.followConnection) DayNightSkyMode skyMode,
+    @Default(DayNightGlassPreset.balanced) DayNightGlassPreset glassPreset,
+    @Default(true) bool skyAmbientAnimation,
+    @Default(false) bool ignoreCustomBackground,
   }) = _ThemeProps;
 
   factory ThemeProps.fromJson(Map<String, Object?> json) =>

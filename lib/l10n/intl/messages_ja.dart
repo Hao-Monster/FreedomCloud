@@ -301,6 +301,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "brandShowcaseHeroTitle": MessageLookupByLibrary.simpleMessage(
       "境界を超え、快適なスピードを日常に",
     ),
+    "buyExtraTraffic": MessageLookupByLibrary.simpleMessage("データ容量を追加"),
     "bypassDomain": MessageLookupByLibrary.simpleMessage("バイパスドメイン"),
     "bypassDomainDesc": MessageLookupByLibrary.simpleMessage("システムプロキシ有効時のみ適用"),
     "cacheCorrupt": MessageLookupByLibrary.simpleMessage(
@@ -811,6 +812,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "networkDetection": MessageLookupByLibrary.simpleMessage("あなたのIPアドレス"),
     "networkSpeed": MessageLookupByLibrary.simpleMessage("ネットワーク速度"),
     "neutralScheme": MessageLookupByLibrary.simpleMessage("ニュートラル"),
+    "newDashboard": MessageLookupByLibrary.simpleMessage("シンプルモード"),
     "noData": MessageLookupByLibrary.simpleMessage("データなし"),
     "noHotKey": MessageLookupByLibrary.simpleMessage("ホットキーなし"),
     "noIcon": MessageLookupByLibrary.simpleMessage("なし"),
@@ -1552,6 +1554,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "remove": MessageLookupByLibrary.simpleMessage("削除"),
     "rename": MessageLookupByLibrary.simpleMessage("リネーム"),
     "renew": MessageLookupByLibrary.simpleMessage("更新"),
+    "renewSubscription": MessageLookupByLibrary.simpleMessage("プランを更新"),
     "requests": MessageLookupByLibrary.simpleMessage("リクエスト"),
     "requestsDesc": MessageLookupByLibrary.simpleMessage("最近のリクエスト記録を表示"),
     "reset": MessageLookupByLibrary.simpleMessage("リセット"),
@@ -1691,9 +1694,61 @@ class MessageLookup extends MessageLookupByLibrary {
     "textScale": MessageLookupByLibrary.simpleMessage("テキストスケーリング"),
     "thanks": MessageLookupByLibrary.simpleMessage("貢献に感謝"),
     "theme": MessageLookupByLibrary.simpleMessage("テーマ"),
+    "themeAtmosphereSection": MessageLookupByLibrary.simpleMessage(
+      "質感とアニメーション",
+    ),
     "themeColor": MessageLookupByLibrary.simpleMessage("テーマカラー"),
-    "themeDesc": MessageLookupByLibrary.simpleMessage("ダークモードの設定、色の調整"),
+    "themeCustomBgNotice": MessageLookupByLibrary.simpleMessage(
+      "サブスクリプション壁紙が設定されています",
+    ),
+    "themeDesc": MessageLookupByLibrary.simpleMessage(
+      "昼夜スカイ連動・ガラス透過度・アクセントカラー",
+    ),
+    "themeGlassPresetAiry": MessageLookupByLibrary.simpleMessage("クリア"),
+    "themeGlassPresetBalanced": MessageLookupByLibrary.simpleMessage("標準"),
+    "themeGlassPresetLabel": MessageLookupByLibrary.simpleMessage("カードのガラス透過度"),
+    "themeGlassPresetSolid": MessageLookupByLibrary.simpleMessage("しっかり"),
+    "themeIgnoreCustomBgLabel": MessageLookupByLibrary.simpleMessage(
+      "昼夜スカイ背景を優先",
+    ),
     "themeMode": MessageLookupByLibrary.simpleMessage("テーマモード"),
+    "themeSkyAmbientAnimation": MessageLookupByLibrary.simpleMessage(
+      "流れる雲と星のきらめき",
+    ),
+    "themeSkyAmbientAnimationDesc": MessageLookupByLibrary.simpleMessage(
+      "通常時は静止して省電力化（接続時の朝夕アニメーションは維持）",
+    ),
+    "themeSkyConsoleSection": MessageLookupByLibrary.simpleMessage("昼夜スカイ連動"),
+    "themeSkyModeDay": MessageLookupByLibrary.simpleMessage("常時サニーデイ"),
+    "themeSkyModeDayDesc": MessageLookupByLibrary.simpleMessage(
+      "未接続でも明るい青空を維持",
+    ),
+    "themeSkyModeFollow": MessageLookupByLibrary.simpleMessage("接続に連動"),
+    "themeSkyModeFollowDesc": MessageLookupByLibrary.simpleMessage(
+      "接続時は晴天、切断時は星空を表示",
+    ),
+    "themeSkyModeNight": MessageLookupByLibrary.simpleMessage("常時スターリーナイト"),
+    "themeSkyModeNightDesc": MessageLookupByLibrary.simpleMessage(
+      "接続中も目に優しい夜空を維持",
+    ),
+    "themeSkyStatusConnecting": MessageLookupByLibrary.simpleMessage(
+      "夜明け前 · 接続中",
+    ),
+    "themeSkyStatusDayConnected": MessageLookupByLibrary.simpleMessage(
+      "晴天 · 接続済み",
+    ),
+    "themeSkyStatusLockedDay": MessageLookupByLibrary.simpleMessage(
+      "常時晴天 · 固定中",
+    ),
+    "themeSkyStatusLockedNight": MessageLookupByLibrary.simpleMessage(
+      "常時夜空 · 固定中",
+    ),
+    "themeSkyStatusNightDisconnected": MessageLookupByLibrary.simpleMessage(
+      "星空 · 未接続",
+    ),
+    "themeTextScaleDefaultDesc": MessageLookupByLibrary.simpleMessage(
+      "システム標準 (100%)",
+    ),
     "threeColumns": MessageLookupByLibrary.simpleMessage("3列"),
     "tight": MessageLookupByLibrary.simpleMessage("密"),
     "time": MessageLookupByLibrary.simpleMessage("時間"),

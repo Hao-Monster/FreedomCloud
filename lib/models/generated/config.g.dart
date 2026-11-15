@@ -378,6 +378,13 @@ _$ThemePropsImpl _$$ThemePropsImplFromJson(Map<String, dynamic> json) =>
       textScale: json['textScale'] == null
           ? const TextScale()
           : TextScale.fromJson(json['textScale'] as Map<String, dynamic>),
+      skyMode: $enumDecodeNullable(_$DayNightSkyModeEnumMap, json['skyMode']) ??
+          DayNightSkyMode.followConnection,
+      glassPreset: $enumDecodeNullable(
+              _$DayNightGlassPresetEnumMap, json['glassPreset']) ??
+          DayNightGlassPreset.balanced,
+      skyAmbientAnimation: json['skyAmbientAnimation'] as bool? ?? true,
+      ignoreCustomBackground: json['ignoreCustomBackground'] as bool? ?? false,
     );
 
 Map<String, dynamic> _$$ThemePropsImplToJson(_$ThemePropsImpl instance) =>
@@ -390,7 +397,23 @@ Map<String, dynamic> _$$ThemePropsImplToJson(_$ThemePropsImpl instance) =>
       'schemeVariant': _$DynamicSchemeVariantEnumMap[instance.schemeVariant]!,
       'pureBlack': instance.pureBlack,
       'textScale': instance.textScale,
+      'skyMode': _$DayNightSkyModeEnumMap[instance.skyMode]!,
+      'glassPreset': _$DayNightGlassPresetEnumMap[instance.glassPreset]!,
+      'skyAmbientAnimation': instance.skyAmbientAnimation,
+      'ignoreCustomBackground': instance.ignoreCustomBackground,
     };
+
+const _$DayNightSkyModeEnumMap = {
+  DayNightSkyMode.followConnection: 'followConnection',
+  DayNightSkyMode.alwaysNight: 'alwaysNight',
+  DayNightSkyMode.alwaysDay: 'alwaysDay',
+};
+
+const _$DayNightGlassPresetEnumMap = {
+  DayNightGlassPreset.airy: 'airy',
+  DayNightGlassPreset.balanced: 'balanced',
+  DayNightGlassPreset.solid: 'solid',
+};
 
 const _$ThemeModeEnumMap = {
   ThemeMode.system: 'system',

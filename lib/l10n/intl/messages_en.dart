@@ -356,6 +356,9 @@ class MessageLookup extends MessageLookupByLibrary {
     "brandShowcaseHeroTitle": MessageLookupByLibrary.simpleMessage(
       "Borderless Access, Effortless Speed",
     ),
+    "buyExtraTraffic": MessageLookupByLibrary.simpleMessage(
+      "Buy extra traffic",
+    ),
     "bypassDomain": MessageLookupByLibrary.simpleMessage("Bypass domain"),
     "bypassDomainDesc": MessageLookupByLibrary.simpleMessage(
       "Only takes effect when the system proxy is enabled",
@@ -1144,7 +1147,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "networkDetection": MessageLookupByLibrary.simpleMessage("Your IP Address"),
     "networkSpeed": MessageLookupByLibrary.simpleMessage("Network speed"),
     "neutralScheme": MessageLookupByLibrary.simpleMessage("Neutral"),
-    "newDashboard": MessageLookupByLibrary.simpleMessage("New look"),
+    "newDashboard": MessageLookupByLibrary.simpleMessage("Concise mode"),
     "noData": MessageLookupByLibrary.simpleMessage("No data"),
     "noHotKey": MessageLookupByLibrary.simpleMessage("No HotKey"),
     "noIcon": MessageLookupByLibrary.simpleMessage("None"),
@@ -2049,6 +2052,9 @@ class MessageLookup extends MessageLookupByLibrary {
     "remove": MessageLookupByLibrary.simpleMessage("Remove"),
     "rename": MessageLookupByLibrary.simpleMessage("Rename"),
     "renew": MessageLookupByLibrary.simpleMessage("Renew"),
+    "renewSubscription": MessageLookupByLibrary.simpleMessage(
+      "Renew subscription",
+    ),
     "requests": MessageLookupByLibrary.simpleMessage("Requests"),
     "requestsDesc": MessageLookupByLibrary.simpleMessage(
       "View recently request records",
@@ -2236,11 +2242,71 @@ class MessageLookup extends MessageLookupByLibrary {
     "textScale": MessageLookupByLibrary.simpleMessage("Text Scaling"),
     "thanks": MessageLookupByLibrary.simpleMessage("Thanks for contribution"),
     "theme": MessageLookupByLibrary.simpleMessage("Theme"),
+    "themeAtmosphereSection": MessageLookupByLibrary.simpleMessage(
+      "Atmosphere & Motion",
+    ),
     "themeColor": MessageLookupByLibrary.simpleMessage("Theme color"),
+    "themeCustomBgNotice": MessageLookupByLibrary.simpleMessage(
+      "Subscription custom wallpaper detected",
+    ),
     "themeDesc": MessageLookupByLibrary.simpleMessage(
-      "Set dark mode,adjust the color",
+      "Day/Night sky sync, glass translucency & accent color",
+    ),
+    "themeGlassPresetAiry": MessageLookupByLibrary.simpleMessage("Airy"),
+    "themeGlassPresetBalanced": MessageLookupByLibrary.simpleMessage(
+      "Balanced",
+    ),
+    "themeGlassPresetLabel": MessageLookupByLibrary.simpleMessage(
+      "Card glass translucency",
+    ),
+    "themeGlassPresetSolid": MessageLookupByLibrary.simpleMessage("Solid"),
+    "themeIgnoreCustomBgLabel": MessageLookupByLibrary.simpleMessage(
+      "Prefer Day/Night sky background",
     ),
     "themeMode": MessageLookupByLibrary.simpleMessage("Theme mode"),
+    "themeSkyAmbientAnimation": MessageLookupByLibrary.simpleMessage(
+      "Drifting clouds & starlight",
+    ),
+    "themeSkyAmbientAnimationDesc": MessageLookupByLibrary.simpleMessage(
+      "Pauses steady drift to save power while keeping sunrise/sunset transitions",
+    ),
+    "themeSkyConsoleSection": MessageLookupByLibrary.simpleMessage(
+      "Day & Night Sky Sync",
+    ),
+    "themeSkyModeDay": MessageLookupByLibrary.simpleMessage("Always Sunny Day"),
+    "themeSkyModeDayDesc": MessageLookupByLibrary.simpleMessage(
+      "Keep the bright sunny sky even when disconnected",
+    ),
+    "themeSkyModeFollow": MessageLookupByLibrary.simpleMessage(
+      "Follow connection",
+    ),
+    "themeSkyModeFollowDesc": MessageLookupByLibrary.simpleMessage(
+      "Sunny sky when connected, starry night when off",
+    ),
+    "themeSkyModeNight": MessageLookupByLibrary.simpleMessage(
+      "Always Starry Night",
+    ),
+    "themeSkyModeNightDesc": MessageLookupByLibrary.simpleMessage(
+      "Keep the dark starry sky even while connected",
+    ),
+    "themeSkyStatusConnecting": MessageLookupByLibrary.simpleMessage(
+      "Pre-dawn · Connecting",
+    ),
+    "themeSkyStatusDayConnected": MessageLookupByLibrary.simpleMessage(
+      "Sunny Day · Connected",
+    ),
+    "themeSkyStatusLockedDay": MessageLookupByLibrary.simpleMessage(
+      "Sunny Day · Locked",
+    ),
+    "themeSkyStatusLockedNight": MessageLookupByLibrary.simpleMessage(
+      "Starry Night · Locked",
+    ),
+    "themeSkyStatusNightDisconnected": MessageLookupByLibrary.simpleMessage(
+      "Starry Night · Disconnected",
+    ),
+    "themeTextScaleDefaultDesc": MessageLookupByLibrary.simpleMessage(
+      "Follow system default (100%)",
+    ),
     "threeColumns": MessageLookupByLibrary.simpleMessage("Three columns"),
     "tight": MessageLookupByLibrary.simpleMessage("Tight"),
     "time": MessageLookupByLibrary.simpleMessage("Time"),

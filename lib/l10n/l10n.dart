@@ -504,10 +504,10 @@ class AppLocalizations {
     return Intl.message('Theme', name: 'theme', desc: '', args: []);
   }
 
-  /// `Set dark mode,adjust the color`
+  /// `Day/Night sky sync, glass translucency & accent color`
   String get themeDesc {
     return Intl.message(
-      'Set dark mode,adjust the color',
+      'Day/Night sky sync, glass translucency & accent color',
       name: 'themeDesc',
       desc: '',
       args: [],
@@ -4109,9 +4109,14 @@ class AppLocalizations {
     return Intl.message('Expires on', name: 'expiresOn', desc: '', args: []);
   }
 
-  /// `New look`
+  /// `Concise mode`
   String get newDashboard {
-    return Intl.message('New look', name: 'newDashboard', desc: '', args: []);
+    return Intl.message(
+      'Concise mode',
+      name: 'newDashboard',
+      desc: '',
+      args: [],
+    );
   }
 
   /// `until`
@@ -9553,6 +9558,246 @@ class AppLocalizations {
     return Intl.message(
       'Chat with support',
       name: 'purchaseAcquireOpenSupport',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Renew subscription`
+  String get renewSubscription {
+    return Intl.message(
+      'Renew subscription',
+      name: 'renewSubscription',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Buy extra traffic`
+  String get buyExtraTraffic {
+    return Intl.message(
+      'Buy extra traffic',
+      name: 'buyExtraTraffic',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Day & Night Sky Sync`
+  String get themeSkyConsoleSection {
+    return Intl.message(
+      'Day & Night Sky Sync',
+      name: 'themeSkyConsoleSection',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Follow connection`
+  String get themeSkyModeFollow {
+    return Intl.message(
+      'Follow connection',
+      name: 'themeSkyModeFollow',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Sunny sky when connected, starry night when off`
+  String get themeSkyModeFollowDesc {
+    return Intl.message(
+      'Sunny sky when connected, starry night when off',
+      name: 'themeSkyModeFollowDesc',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Always Starry Night`
+  String get themeSkyModeNight {
+    return Intl.message(
+      'Always Starry Night',
+      name: 'themeSkyModeNight',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Keep the dark starry sky even while connected`
+  String get themeSkyModeNightDesc {
+    return Intl.message(
+      'Keep the dark starry sky even while connected',
+      name: 'themeSkyModeNightDesc',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Always Sunny Day`
+  String get themeSkyModeDay {
+    return Intl.message(
+      'Always Sunny Day',
+      name: 'themeSkyModeDay',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Keep the bright sunny sky even when disconnected`
+  String get themeSkyModeDayDesc {
+    return Intl.message(
+      'Keep the bright sunny sky even when disconnected',
+      name: 'themeSkyModeDayDesc',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Sunny Day · Connected`
+  String get themeSkyStatusDayConnected {
+    return Intl.message(
+      'Sunny Day · Connected',
+      name: 'themeSkyStatusDayConnected',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Pre-dawn · Connecting`
+  String get themeSkyStatusConnecting {
+    return Intl.message(
+      'Pre-dawn · Connecting',
+      name: 'themeSkyStatusConnecting',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Starry Night · Disconnected`
+  String get themeSkyStatusNightDisconnected {
+    return Intl.message(
+      'Starry Night · Disconnected',
+      name: 'themeSkyStatusNightDisconnected',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Starry Night · Locked`
+  String get themeSkyStatusLockedNight {
+    return Intl.message(
+      'Starry Night · Locked',
+      name: 'themeSkyStatusLockedNight',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Sunny Day · Locked`
+  String get themeSkyStatusLockedDay {
+    return Intl.message(
+      'Sunny Day · Locked',
+      name: 'themeSkyStatusLockedDay',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Subscription custom wallpaper detected`
+  String get themeCustomBgNotice {
+    return Intl.message(
+      'Subscription custom wallpaper detected',
+      name: 'themeCustomBgNotice',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Prefer Day/Night sky background`
+  String get themeIgnoreCustomBgLabel {
+    return Intl.message(
+      'Prefer Day/Night sky background',
+      name: 'themeIgnoreCustomBgLabel',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Atmosphere & Motion`
+  String get themeAtmosphereSection {
+    return Intl.message(
+      'Atmosphere & Motion',
+      name: 'themeAtmosphereSection',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Card glass translucency`
+  String get themeGlassPresetLabel {
+    return Intl.message(
+      'Card glass translucency',
+      name: 'themeGlassPresetLabel',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Airy`
+  String get themeGlassPresetAiry {
+    return Intl.message(
+      'Airy',
+      name: 'themeGlassPresetAiry',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Balanced`
+  String get themeGlassPresetBalanced {
+    return Intl.message(
+      'Balanced',
+      name: 'themeGlassPresetBalanced',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Solid`
+  String get themeGlassPresetSolid {
+    return Intl.message(
+      'Solid',
+      name: 'themeGlassPresetSolid',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Drifting clouds & starlight`
+  String get themeSkyAmbientAnimation {
+    return Intl.message(
+      'Drifting clouds & starlight',
+      name: 'themeSkyAmbientAnimation',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Pauses steady drift to save power while keeping sunrise/sunset transitions`
+  String get themeSkyAmbientAnimationDesc {
+    return Intl.message(
+      'Pauses steady drift to save power while keeping sunrise/sunset transitions',
+      name: 'themeSkyAmbientAnimationDesc',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Follow system default (100%)`
+  String get themeTextScaleDefaultDesc {
+    return Intl.message(
+      'Follow system default (100%)',
+      name: 'themeTextScaleDefaultDesc',
       desc: '',
       args: [],
     );

@@ -535,13 +535,13 @@ class _BuyButtons extends StatelessWidget {
   Widget build(BuildContext context) {
     final plan = _HeroBuyButton(
       icon: Icons.autorenew_rounded,
-      label: 'Продлить подписку',
+      label: appLocalizations.renewSubscription,
       filled: true,
       onTap: () => globalState.openUrl(buyPlanUrl!),
     );
     final traffic = _HeroBuyButton(
       icon: Icons.add_rounded,
-      label: 'Докупить трафик',
+      label: appLocalizations.buyExtraTraffic,
       filled: false,
       onTap: () => globalState.openUrl(buyTrafficUrl!),
     );

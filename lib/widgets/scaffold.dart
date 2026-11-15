@@ -597,6 +597,7 @@ class CommonScaffoldState extends ConsumerState<CommonScaffold> {
   ThemeData _resolveSkyScaffoldTheme(
     BuildContext context, {
     required bool isDaySurface,
+    required DayNightGlassPreset glassPreset,
   }) {
     final ambient = Theme.of(context);
     final targetBrightness = isDaySurface ? Brightness.light : Brightness.dark;
@@ -627,11 +628,14 @@ class CommonScaffoldState extends ConsumerState<CommonScaffold> {
 
     final scheme = baseTheme.colorScheme;
     final hairline = freedomNetHairlineColor(scheme);
-    final cardAlpha = isDaySurface ? 0.66 : 0.62;
-    final chipAlpha = isDaySurface ? 0.72 : 0.68;
-    final translucentCard = scheme.surfaceContainer.withValues(alpha: cardAlpha);
+    final glass = resolveDayNightGlassAlphas(
+      preset: glassPreset,
+      isDaySurface: isDaySurface,
+    );
+    final translucentCard =
+        scheme.surfaceContainer.withValues(alpha: glass.scaffoldCard);
     final translucentChip =
-        scheme.surfaceContainerHigh.withValues(alpha: chipAlpha);
+        scheme.surfaceContainerHigh.withValues(alpha: glass.scaffoldChip);
 
     return baseTheme.copyWith(
       scaffoldBackgroundColor: Colors.transparent,
@@ -688,7 +692,14 @@ class CommonScaffoldState extends ConsumerState<CommonScaffold> {
         widget.disableBackground ? null : ref.watch(backgroundUrlProvider);
     final hasCustomBackground =
         backgroundUrl != null && backgroundUrl.isNotEmpty;
-    final useSkyBackground = !widget.disableBackground && !hasCustomBackground;
+    final (skyMode, glassPreset, ignoreCustomBackground) = ref.watch(
+      themeSettingProvider.select(
+        (state) =>
+            (state.skyMode, state.glassPreset, state.ignoreCustomBackground),
+      ),
+    );
+    final useCustomBackground = hasCustomBackground && !ignoreCustomBackground;
+    final useSkyBackground = !widget.disableBackground && !useCustomBackground;
     final isRunning = useSkyBackground
         ? ref.watch(runTimeProvider.select((state) => state != null))
         : false;
@@ -697,6 +708,7 @@ class CommonScaffoldState extends ConsumerState<CommonScaffold> {
     final targetPhase = resolveDayNightSkyPhase(
       isRunning: isRunning,
       pendingTarget: pendingTarget,
+      mode: skyMode,
     );
     final reduceMotion = MediaQuery.maybeDisableAnimationsOf(context) ?? false;
     if (!useSkyBackground) {
@@ -752,7 +764,7 @@ class CommonScaffoldState extends ConsumerState<CommonScaffold> {
 
     ThemeData? skyTheme;
     final Widget scaffoldWithBackground;
-    if (hasCustomBackground) {
+    if (useCustomBackground) {
       scaffoldWithBackground = Stack(
         children: [
           _buildBackground(backgroundUrl),
@@ -769,6 +781,7 @@ class CommonScaffoldState extends ConsumerState<CommonScaffold> {
       skyTheme = _resolveSkyScaffoldTheme(
         context,
         isDaySurface: _skyDaySurface,
+        glassPreset: glassPreset,
       );
       scaffoldWithBackground = Builder(
         builder: (skyContext) => Stack(
@@ -813,6 +826,7 @@ class CommonScaffoldState extends ConsumerState<CommonScaffold> {
         child: DayNightSkyScope(
           isActive: true,
           isDaySurface: _skyDaySurface,
+          glassPreset: glassPreset,
           child: layout,
         ),
       );

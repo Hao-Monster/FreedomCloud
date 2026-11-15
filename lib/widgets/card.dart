@@ -134,13 +134,16 @@ class CommonCard extends StatelessWidget {
     Set<WidgetState> states, {
     bool skyActive = false,
     bool skyDaySurface = false,
+    DayNightGlassPreset glassPreset = DayNightGlassPreset.balanced,
   }) {
     final colorScheme = context.colorScheme;
     final isHovered = states.contains(WidgetState.hovered);
+    final glass = resolveDayNightGlassAlphas(
+      preset: glassPreset,
+      isDaySurface: skyDaySurface,
+    );
     final alpha = skyActive
-        ? (isHovered
-            ? (skyDaySurface ? 0.78 : 0.74)
-            : (skyDaySurface ? 0.68 : 0.64))
+        ? (isHovered ? glass.cardHover : glass.cardResting)
         : 1.0;
     if (type == CommonCardType.filled) {
       if (isSelected) {
@@ -168,6 +171,7 @@ class CommonCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final skyActive = DayNightSkyScope.isActiveOf(context);
     final skyDaySurface = DayNightSkyScope.isDaySurfaceOf(context);
+    final glassPreset = DayNightSkyScope.glassPresetOf(context);
     var childWidget = child;
 
     if (info != null) {
@@ -219,6 +223,7 @@ class CommonCard extends StatelessWidget {
             states,
             skyActive: skyActive,
             skyDaySurface: skyDaySurface,
+            glassPreset: glassPreset,
           ),
         ),
         side: WidgetStateProperty.resolveWith(

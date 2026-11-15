@@ -583,3 +583,15 @@ enum ImportOption {
   file,
   url,
 }
+
+enum DayNightSkyMode {
+  followConnection,
+  alwaysNight,
+  alwaysDay,
+}
+
+enum DayNightGlassPreset {
+  airy,
+  balanced,
+  solid,
+}

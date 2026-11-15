@@ -342,15 +342,18 @@ class ApplicationState extends ConsumerState<Application> {
               final backgroundUrl = ref.watch(backgroundUrlProvider);
               final hasCustomBackground =
                   backgroundUrl != null && backgroundUrl.isNotEmpty;
+              final useCustomBackground =
+                  hasCustomBackground && !themeProps.ignoreCustomBackground;
               final isRunning = ref.watch(
                 runTimeProvider.select((state) => state != null),
               );
               final pendingTarget = ref.watch(statusSwitchPendingProvider);
-              final effectiveThemeMode = hasCustomBackground
+              final effectiveThemeMode = useCustomBackground
                   ? themeProps.themeMode
                   : resolveDayNightThemeMode(
                       isRunning: isRunning,
                       pendingTarget: pendingTarget,
+                      mode: themeProps.skyMode,
                     );
               return MaterialApp(
                 debugShowCheckedModeBanner: false,
@@ -399,7 +402,7 @@ class ApplicationState extends ConsumerState<Application> {
                 darkTheme: buildFreedomNetThemeData(
                   colorScheme: ref
                       .watch(genColorSchemeProvider(Brightness.dark))
-                      .toPureBlack(themeProps.pureBlack),
+                      .toPureBlack(useCustomBackground && themeProps.pureBlack),
                   pageTransitionsTheme: _pageTransitionsTheme,
                 ),
                 home: child,

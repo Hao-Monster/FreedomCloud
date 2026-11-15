@@ -6657,9 +6657,11 @@ class _ProfileNodesSliverState extends ConsumerState<_ProfileNodesSliver> {
                   active: widget.active,
                   surfaceColor: DayNightSkyScope.isActiveOf(context)
                       ? colors.surface.withValues(
-                          alpha: theme.brightness == Brightness.dark
-                              ? 0.64
-                              : 0.72,
+                          alpha: resolveDayNightGlassAlphas(
+                            preset: DayNightSkyScope.glassPresetOf(context),
+                            isDaySurface:
+                                DayNightSkyScope.isDaySurfaceOf(context),
+                          ).stickyHeader,
                         )
                       : colors.surface,
                   hairlineColor: freedomNetHairlineColor(colors),

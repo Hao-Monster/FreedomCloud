@@ -358,6 +358,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "brandShowcaseHeroTitle": MessageLookupByLibrary.simpleMessage(
       "Связь без границ и мгновенный отклик",
     ),
+    "buyExtraTraffic": MessageLookupByLibrary.simpleMessage("Докупить трафик"),
     "bypassDomain": MessageLookupByLibrary.simpleMessage("Обход домена"),
     "bypassDomainDesc": MessageLookupByLibrary.simpleMessage(
       "Действует только при включенном системном прокси",
@@ -1062,7 +1063,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "networkDetection": MessageLookupByLibrary.simpleMessage("Ваш IP-адрес"),
     "networkSpeed": MessageLookupByLibrary.simpleMessage("Скорость сети"),
     "neutralScheme": MessageLookupByLibrary.simpleMessage("Нейтральные"),
-    "newDashboard": MessageLookupByLibrary.simpleMessage("Новый вид"),
+    "newDashboard": MessageLookupByLibrary.simpleMessage("Краткий режим"),
     "noData": MessageLookupByLibrary.simpleMessage("Нет данных"),
     "noHotKey": MessageLookupByLibrary.simpleMessage("Нет горячей клавиши"),
     "noIcon": MessageLookupByLibrary.simpleMessage("Нет иконки"),
@@ -1997,6 +1998,9 @@ class MessageLookup extends MessageLookupByLibrary {
     "remove": MessageLookupByLibrary.simpleMessage("Удалить"),
     "rename": MessageLookupByLibrary.simpleMessage("Переименовать"),
     "renew": MessageLookupByLibrary.simpleMessage("Продлить"),
+    "renewSubscription": MessageLookupByLibrary.simpleMessage(
+      "Продлить подписку",
+    ),
     "requests": MessageLookupByLibrary.simpleMessage("Запросы"),
     "requestsDesc": MessageLookupByLibrary.simpleMessage(
       "Просмотр последних записей запросов",
@@ -2192,11 +2196,71 @@ class MessageLookup extends MessageLookupByLibrary {
     "textScale": MessageLookupByLibrary.simpleMessage("Масштабирование текста"),
     "thanks": MessageLookupByLibrary.simpleMessage("Спасибо за вклад"),
     "theme": MessageLookupByLibrary.simpleMessage("Тема"),
+    "themeAtmosphereSection": MessageLookupByLibrary.simpleMessage(
+      "Текстура и анимация",
+    ),
     "themeColor": MessageLookupByLibrary.simpleMessage("Цвет темы"),
+    "themeCustomBgNotice": MessageLookupByLibrary.simpleMessage(
+      "Обнаружены обои подписки",
+    ),
     "themeDesc": MessageLookupByLibrary.simpleMessage(
-      "Установить темный режим, настроить цвет",
+      "Синхронизация неба дня и ночи, прозрачность стекла и цвет",
+    ),
+    "themeGlassPresetAiry": MessageLookupByLibrary.simpleMessage("Лёгкая"),
+    "themeGlassPresetBalanced": MessageLookupByLibrary.simpleMessage("Баланс"),
+    "themeGlassPresetLabel": MessageLookupByLibrary.simpleMessage(
+      "Прозрачность карточек",
+    ),
+    "themeGlassPresetSolid": MessageLookupByLibrary.simpleMessage("Плотная"),
+    "themeIgnoreCustomBgLabel": MessageLookupByLibrary.simpleMessage(
+      "Предпочитать фон неба",
     ),
     "themeMode": MessageLookupByLibrary.simpleMessage("Режим темы"),
+    "themeSkyAmbientAnimation": MessageLookupByLibrary.simpleMessage(
+      "Движение облаков и звёзд",
+    ),
+    "themeSkyAmbientAnimationDesc": MessageLookupByLibrary.simpleMessage(
+      "Останавливает фоновое движение для экономии энергии, сохраняя рассвет и закат",
+    ),
+    "themeSkyConsoleSection": MessageLookupByLibrary.simpleMessage(
+      "Синхронизация неба",
+    ),
+    "themeSkyModeDay": MessageLookupByLibrary.simpleMessage(
+      "Всегда ясный день",
+    ),
+    "themeSkyModeDayDesc": MessageLookupByLibrary.simpleMessage(
+      "Сохранять светлое ясное небо даже без подключения",
+    ),
+    "themeSkyModeFollow": MessageLookupByLibrary.simpleMessage(
+      "По подключению",
+    ),
+    "themeSkyModeFollowDesc": MessageLookupByLibrary.simpleMessage(
+      "Ясный день при подключении, звёздная ночь без связи",
+    ),
+    "themeSkyModeNight": MessageLookupByLibrary.simpleMessage(
+      "Всегда звёздная ночь",
+    ),
+    "themeSkyModeNightDesc": MessageLookupByLibrary.simpleMessage(
+      "Сохранять тёмное звёздное небо даже при подключении",
+    ),
+    "themeSkyStatusConnecting": MessageLookupByLibrary.simpleMessage(
+      "Рассвет · Подключение",
+    ),
+    "themeSkyStatusDayConnected": MessageLookupByLibrary.simpleMessage(
+      "Ясный день · Подключено",
+    ),
+    "themeSkyStatusLockedDay": MessageLookupByLibrary.simpleMessage(
+      "Ясный день · Закреплено",
+    ),
+    "themeSkyStatusLockedNight": MessageLookupByLibrary.simpleMessage(
+      "Звёздная ночь · Закреплено",
+    ),
+    "themeSkyStatusNightDisconnected": MessageLookupByLibrary.simpleMessage(
+      "Звёздная ночь · Отключено",
+    ),
+    "themeTextScaleDefaultDesc": MessageLookupByLibrary.simpleMessage(
+      "По умолчанию системы (100%)",
+    ),
     "threeColumns": MessageLookupByLibrary.simpleMessage("Три столбца"),
     "tight": MessageLookupByLibrary.simpleMessage("Плотный"),
     "time": MessageLookupByLibrary.simpleMessage("Время"),

@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'dart:ui' as ui;
 
 import 'package:flclashx/common/ui_activity.dart';
+import 'package:flclashx/enum/enum.dart';
 import 'package:flclashx/providers/providers.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
@@ -28,23 +29,105 @@ const double kDayNightConnectingProgress = 0.16;
 /// nocturnal dark glass to sunlit porcelain glass.
 const double kDayNightSurfaceThreshold = 0.52;
 
-/// Resolves the canonical [DayNightSkyPhase] from proxy runtime & pending state.
+/// Calibrated translucent card/chip surface alphas for a given
+/// [DayNightGlassPreset] and sky contrast polarity.
+@immutable
+class DayNightGlassAlphas {
+  const DayNightGlassAlphas({
+    required this.scaffoldCard,
+    required this.scaffoldChip,
+    required this.cardResting,
+    required this.cardHover,
+    required this.stickyHeader,
+  });
+
+  final double scaffoldCard;
+  final double scaffoldChip;
+  final double cardResting;
+  final double cardHover;
+  final double stickyHeader;
+}
+
+/// Resolves foreground glass opacities tuned separately for azure day sky and
+/// deep cosmic night sky.
+DayNightGlassAlphas resolveDayNightGlassAlphas({
+  required DayNightGlassPreset preset,
+  required bool isDaySurface,
+}) =>
+    switch (preset) {
+      DayNightGlassPreset.airy => isDaySurface
+          ? const DayNightGlassAlphas(
+              scaffoldCard: 0.48,
+              scaffoldChip: 0.56,
+              cardResting: 0.50,
+              cardHover: 0.62,
+              stickyHeader: 0.56,
+            )
+          : const DayNightGlassAlphas(
+              scaffoldCard: 0.44,
+              scaffoldChip: 0.52,
+              cardResting: 0.46,
+              cardHover: 0.58,
+              stickyHeader: 0.48,
+            ),
+      DayNightGlassPreset.balanced => isDaySurface
+          ? const DayNightGlassAlphas(
+              scaffoldCard: 0.66,
+              scaffoldChip: 0.72,
+              cardResting: 0.68,
+              cardHover: 0.78,
+              stickyHeader: 0.72,
+            )
+          : const DayNightGlassAlphas(
+              scaffoldCard: 0.62,
+              scaffoldChip: 0.68,
+              cardResting: 0.64,
+              cardHover: 0.74,
+              stickyHeader: 0.64,
+            ),
+      DayNightGlassPreset.solid => isDaySurface
+          ? const DayNightGlassAlphas(
+              scaffoldCard: 0.86,
+              scaffoldChip: 0.90,
+              cardResting: 0.88,
+              cardHover: 0.93,
+              stickyHeader: 0.90,
+            )
+          : const DayNightGlassAlphas(
+              scaffoldCard: 0.84,
+              scaffoldChip: 0.88,
+              cardResting: 0.86,
+              cardHover: 0.91,
+              stickyHeader: 0.86,
+            ),
+    };
+
+/// Resolves the canonical [DayNightSkyPhase] from user sky mode, proxy runtime,
+/// and pending state.
 ///
-/// Daytime is entered **only** when [isRunning] is `true` and [pendingTarget]
-/// is `null`. Turning the switch OFF (`pendingTarget == false`) immediately
-/// targets [DayNightSkyPhase.night]; turning it ON (`pendingTarget == true`)
-/// holds at [DayNightSkyPhase.connecting] until bring-up succeeds or rolls back.
+/// Under [DayNightSkyMode.followConnection], daytime is entered **only** when
+/// [isRunning] is `true` and [pendingTarget] is `null`. [DayNightSkyMode.alwaysNight]
+/// and [DayNightSkyMode.alwaysDay] lock the sky to starry night or sunny day
+/// regardless of connection status.
 DayNightSkyPhase resolveDayNightSkyPhase({
   required bool isRunning,
   required bool? pendingTarget,
+  DayNightSkyMode mode = DayNightSkyMode.followConnection,
 }) {
-  if (pendingTarget == false) {
-    return DayNightSkyPhase.night;
+  switch (mode) {
+    case DayNightSkyMode.alwaysNight:
+      return DayNightSkyPhase.night;
+    case DayNightSkyMode.alwaysDay:
+      return DayNightSkyPhase.day;
+    case DayNightSkyMode.followConnection:
+      if (pendingTarget == false) {
+        return DayNightSkyPhase.night;
+      }
+      if (pendingTarget ?? false) {
+        return DayNightSkyPhase.connecting;
+      }
+      return isRunning ? DayNightSkyPhase.day : DayNightSkyPhase.night;
   }
-  if (pendingTarget ?? false) {
-    return DayNightSkyPhase.connecting;
-  }
-  return isRunning ? DayNightSkyPhase.day : DayNightSkyPhase.night;
 }
 
 /// Maps [phase] to its normalized sky progress scalar in `[0.0, 1.0]`.
@@ -58,27 +141,32 @@ double resolveDayNightTargetProgress(DayNightSkyPhase phase) => switch (phase) {
 ThemeMode resolveDayNightThemeMode({
   required bool isRunning,
   required bool? pendingTarget,
+  DayNightSkyMode mode = DayNightSkyMode.followConnection,
 }) =>
     resolveDayNightSkyPhase(
               isRunning: isRunning,
               pendingTarget: pendingTarget,
+              mode: mode,
             ) ==
             DayNightSkyPhase.day
         ? ThemeMode.light
         : ThemeMode.dark;
 
 /// Inherited scope advertising whether an ancestor `CommonScaffold` is actively
-/// rendering [DayNightSkyBackground] behind its content.
+/// rendering [DayNightSkyBackground] behind its content, together with the
+/// surface polarity and active glass translucency preset.
 class DayNightSkyScope extends InheritedWidget {
   const DayNightSkyScope({
     super.key,
     required this.isActive,
     required this.isDaySurface,
+    this.glassPreset = DayNightGlassPreset.balanced,
     required super.child,
   });
 
   final bool isActive;
   final bool isDaySurface;
+  final DayNightGlassPreset glassPreset;
 
   static bool isActiveOf(BuildContext context) =>
       context
@@ -92,9 +180,17 @@ class DayNightSkyScope extends InheritedWidget {
           ?.isDaySurface ??
       false;
 
+  static DayNightGlassPreset glassPresetOf(BuildContext context) =>
+      context
+          .dependOnInheritedWidgetOfExactType<DayNightSkyScope>()
+          ?.glassPreset ??
+      DayNightGlassPreset.balanced;
+
   @override
   bool updateShouldNotify(DayNightSkyScope oldWidget) =>
-      isActive != oldWidget.isActive || isDaySurface != oldWidget.isDaySurface;
+      isActive != oldWidget.isActive ||
+      isDaySurface != oldWidget.isDaySurface ||
+      glassPreset != oldWidget.glassPreset;
 }
 
 /// Immutable diagnostic snapshot exposed for deterministic widget testing.
@@ -117,17 +213,21 @@ class DayNightSkyDebugSnapshot {
 
 /// Full-bleed atmospheric sky canvas transitioning seamlessly between
 /// Deep Cosmic Starry Night (disconnected), Pre-Dawn Horizon Glimmer
-/// (connecting), and Crisp Clear Bright Sunny Day (connected).
+/// (connecting), and Crisp Clear Bright Sunny Day (connected), with user
+/// override modes and steady ambient drift control.
 class DayNightSkyBackground extends StatelessWidget {
   const DayNightSkyBackground({
     super.key,
     this.phase,
     this.onDaySurfaceChanged,
     this.continuousAnimationInTests = false,
+    this.ambientAnimation,
+    this.includeInDebugSnapshot = true,
   });
 
-  /// Optional explicit phase override (primarily for isolated visual tests).
-  /// When `null`, watches `runTimeProvider` and `statusSwitchPendingProvider`.
+  /// Optional explicit phase override (primarily for isolated visual tests
+  /// and Theme Console mini preview banners). When `null`, watches
+  /// `runTimeProvider`, `statusSwitchPendingProvider`, and `themeSettingProvider`.
   final DayNightSkyPhase? phase;
 
   /// Notifies an enclosing `CommonScaffold` when the sky crosses
@@ -137,6 +237,14 @@ class DayNightSkyBackground extends StatelessWidget {
 
   /// Keeps ambient cloud drift / star twinkle running under `FLUTTER_TEST`.
   final bool continuousAnimationInTests;
+
+  /// Explicit ambient motion override. When `null` and [phase] is `null`,
+  /// reads `themeSettingProvider.skyAmbientAnimation`.
+  final bool? ambientAnimation;
+
+  /// Whether this canvas registers in [debugSnapshotOf]. Miniature previews
+  /// pass `false` so they never shadow the primary window sky snapshot.
+  final bool includeInDebugSnapshot;
 
   @visibleForTesting
   static DayNightSkyDebugSnapshot? debugSnapshotOf([Object? _]) =>
@@ -150,6 +258,8 @@ class DayNightSkyBackground extends StatelessWidget {
         phase: explicitPhase,
         onDaySurfaceChanged: onDaySurfaceChanged,
         continuousAnimationInTests: continuousAnimationInTests,
+        ambientAnimation: ambientAnimation ?? true,
+        includeInDebugSnapshot: includeInDebugSnapshot,
       );
     }
     return Consumer(
@@ -157,13 +267,21 @@ class DayNightSkyBackground extends StatelessWidget {
         final isRunning =
             ref.watch(runTimeProvider.select((state) => state != null));
         final pendingTarget = ref.watch(statusSwitchPendingProvider);
+        final (skyMode, configuredAmbient) = ref.watch(
+          themeSettingProvider.select(
+            (state) => (state.skyMode, state.skyAmbientAnimation),
+          ),
+        );
         return _DayNightSkyCanvas(
           phase: resolveDayNightSkyPhase(
             isRunning: isRunning,
             pendingTarget: pendingTarget,
+            mode: skyMode,
           ),
           onDaySurfaceChanged: onDaySurfaceChanged,
           continuousAnimationInTests: continuousAnimationInTests,
+          ambientAnimation: ambientAnimation ?? configuredAmbient,
+          includeInDebugSnapshot: includeInDebugSnapshot,
         );
       },
     );
@@ -175,11 +293,15 @@ class _DayNightSkyCanvas extends StatefulWidget {
     required this.phase,
     this.onDaySurfaceChanged,
     this.continuousAnimationInTests = false,
+    this.ambientAnimation = true,
+    this.includeInDebugSnapshot = true,
   });
 
   final DayNightSkyPhase phase;
   final ValueChanged<bool>? onDaySurfaceChanged;
   final bool continuousAnimationInTests;
+  final bool ambientAnimation;
+  final bool includeInDebugSnapshot;
 
   @override
   State<_DayNightSkyCanvas> createState() => _DayNightSkyCanvasState();
@@ -217,7 +339,8 @@ class _DayNightSkyCanvasState extends State<_DayNightSkyCanvas>
   bool _lastReportedDaySurface = false;
 
   bool get _allowAmbientLoop =>
-      !_runningInFlutterTest || widget.continuousAnimationInTests;
+      widget.ambientAnimation &&
+      (!_runningInFlutterTest || widget.continuousAnimationInTests);
 
   bool get _canAnimateVisibly =>
       !_reduceMotion &&
@@ -247,7 +370,9 @@ class _DayNightSkyCanvasState extends State<_DayNightSkyCanvas>
   @override
   void initState() {
     super.initState();
-    _mountedStates.add(this);
+    if (widget.includeInDebugSnapshot) {
+      _mountedStates.add(this);
+    }
     WidgetsBinding.instance.addObserver(this);
     uiActivity.addListener(_handleUiActivityChanged);
     _uiActive = uiActivity.value;
@@ -287,10 +412,20 @@ class _DayNightSkyCanvasState extends State<_DayNightSkyCanvas>
   @override
   void didUpdateWidget(covariant _DayNightSkyCanvas oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (widget.includeInDebugSnapshot != oldWidget.includeInDebugSnapshot) {
+      if (widget.includeInDebugSnapshot) {
+        if (!_mountedStates.contains(this)) {
+          _mountedStates.add(this);
+        }
+      } else {
+        _mountedStates.remove(this);
+      }
+    }
     if (widget.phase != oldWidget.phase) {
       _applyTargetPhase(widget.phase);
     } else if (oldWidget.continuousAnimationInTests !=
-        widget.continuousAnimationInTests) {
+            widget.continuousAnimationInTests ||
+        oldWidget.ambientAnimation != widget.ambientAnimation) {
       _syncTickerState();
     }
   }
