@@ -339,14 +339,19 @@ class ApplicationState extends ConsumerState<Application> {
               final locale =
                   ref.watch(appSettingProvider.select((state) => state.locale));
               final themeProps = ref.watch(themeSettingProvider);
+              final backgroundUrl = ref.watch(backgroundUrlProvider);
+              final hasCustomBackground =
+                  backgroundUrl != null && backgroundUrl.isNotEmpty;
               final isRunning = ref.watch(
                 runTimeProvider.select((state) => state != null),
               );
               final pendingTarget = ref.watch(statusSwitchPendingProvider);
-              final effectiveThemeMode = resolveDayNightThemeMode(
-                isRunning: isRunning,
-                pendingTarget: pendingTarget,
-              );
+              final effectiveThemeMode = hasCustomBackground
+                  ? themeProps.themeMode
+                  : resolveDayNightThemeMode(
+                      isRunning: isRunning,
+                      pendingTarget: pendingTarget,
+                    );
               return MaterialApp(
                 debugShowCheckedModeBanner: false,
                 navigatorKey: globalState.navigatorKey,

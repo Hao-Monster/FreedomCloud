@@ -2,6 +2,7 @@ import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:flclashx/common/common.dart';
+import 'package:flclashx/common/ui_activity.dart';
 import 'package:flclashx/l10n/l10n.dart';
 import 'package:flclashx/models/models.dart';
 import 'package:flclashx/providers/providers.dart';
@@ -20,48 +21,86 @@ class _TestRunTime extends RunTime {
   int? build() => globalState.appState.runTime;
 }
 
+final _testCustomBackgroundUrlProvider = StateProvider<String?>((ref) => null);
+
 Widget _buildSkyScaffoldHost({
   required ProviderContainer container,
   required Widget body,
+  Widget? sideNavigationBar,
   bool disableBackground = false,
   bool disableAnimations = false,
   bool tickerEnabled = true,
   Brightness ambientBrightness = Brightness.dark,
+  bool syncAppThemeMode = false,
 }) {
-  final scheme = calibrateFreedomNetColorScheme(
+  final darkScheme = calibrateFreedomNetColorScheme(
     ColorScheme.fromSeed(
       seedColor: const Color(defaultPrimaryColor),
-      brightness: ambientBrightness,
+      brightness: Brightness.dark,
     ),
     seedColor: const Color(defaultPrimaryColor),
   );
+  final lightScheme = calibrateFreedomNetColorScheme(
+    ColorScheme.fromSeed(
+      seedColor: const Color(defaultPrimaryColor),
+      brightness: Brightness.light,
+    ),
+    seedColor: const Color(defaultPrimaryColor),
+  );
+  final fallbackScheme =
+      ambientBrightness == Brightness.dark ? darkScheme : lightScheme;
   return UncontrolledProviderScope(
     container: container,
-    child: MaterialApp(
-      debugShowCheckedModeBanner: false,
-      locale: const Locale('zh', 'CN'),
-      localizationsDelegates: const [
-        AppLocalizations.delegate,
-        GlobalMaterialLocalizations.delegate,
-        GlobalWidgetsLocalizations.delegate,
-        GlobalCupertinoLocalizations.delegate,
-      ],
-      supportedLocales: AppLocalizations.delegate.supportedLocales,
-      theme: buildFreedomNetThemeData(colorScheme: scheme),
-      builder: (context, child) => MediaQuery(
-        data: MediaQuery.of(context).copyWith(
-          disableAnimations: disableAnimations,
-        ),
-        child: TickerMode(
-          enabled: tickerEnabled,
-          child: child!,
-        ),
-      ),
-      home: CommonScaffold(
-        title: '代理',
-        disableBackground: disableBackground,
-        body: body,
-      ),
+    child: Consumer(
+      builder: (_, ref, __) {
+        final ThemeMode resolvedMode;
+        if (syncAppThemeMode) {
+          final backgroundUrl = ref.watch(backgroundUrlProvider);
+          final hasCustom = backgroundUrl != null && backgroundUrl.isNotEmpty;
+          final isRunning =
+              ref.watch(runTimeProvider.select((state) => state != null));
+          final pendingTarget = ref.watch(statusSwitchPendingProvider);
+          resolvedMode = hasCustom
+              ? ThemeMode.dark
+              : resolveDayNightThemeMode(
+                  isRunning: isRunning,
+                  pendingTarget: pendingTarget,
+                );
+        } else {
+          resolvedMode = ThemeMode.light;
+        }
+        return MaterialApp(
+          debugShowCheckedModeBanner: false,
+          locale: const Locale('zh', 'CN'),
+          localizationsDelegates: const [
+            AppLocalizations.delegate,
+            GlobalMaterialLocalizations.delegate,
+            GlobalWidgetsLocalizations.delegate,
+            GlobalCupertinoLocalizations.delegate,
+          ],
+          supportedLocales: AppLocalizations.delegate.supportedLocales,
+          themeMode: resolvedMode,
+          theme: buildFreedomNetThemeData(
+            colorScheme: syncAppThemeMode ? lightScheme : fallbackScheme,
+          ),
+          darkTheme: buildFreedomNetThemeData(colorScheme: darkScheme),
+          builder: (context, child) => MediaQuery(
+            data: MediaQuery.of(context).copyWith(
+              disableAnimations: disableAnimations,
+            ),
+            child: TickerMode(
+              enabled: tickerEnabled,
+              child: child!,
+            ),
+          ),
+          home: CommonScaffold(
+            title: '代理',
+            disableBackground: disableBackground,
+            sideNavigationBar: sideNavigationBar,
+            body: body,
+          ),
+        );
+      },
     ),
   );
 }
@@ -534,6 +573,237 @@ void main() {
       expect(connectedSnap.phase, equals(DayNightSkyPhase.day));
       expect(connectedSnap.dayProgress, closeTo(1.0, 0.02));
       expect(find.byType(EarthProxySwitch), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'DNS-07: Desktop sideNavigationBar and main body stay brightness-synchronized across the 0.52 sky surface threshold',
+    (tester) async {
+      final previousConfig = globalState.config;
+      final previousAppState = globalState.appState;
+      addTearDown(() {
+        globalState.config = previousConfig;
+        globalState.appState = previousAppState;
+      });
+      globalState.config = const Config(themeProps: defaultThemeProps);
+
+      final container = ProviderContainer(
+        overrides: [
+          runTimeProvider.overrideWith(_TestRunTime.new),
+        ],
+      );
+      addTearDown(container.dispose);
+
+      BuildContext? railCtx;
+      BuildContext? bodyCtx;
+      await tester.pumpWidget(
+        _buildSkyScaffoldHost(
+          container: container,
+          syncAppThemeMode: true,
+          sideNavigationBar: SizedBox(
+            width: 104,
+            child: Builder(
+              builder: (ctx) {
+                railCtx = ctx;
+                return const SizedBox.expand();
+              },
+            ),
+          ),
+          body: Builder(
+            builder: (ctx) {
+              bodyCtx = ctx;
+              return const SizedBox.expand();
+            },
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(Theme.of(railCtx!).brightness, equals(Brightness.dark));
+      expect(Theme.of(bodyCtx!).brightness, equals(Brightness.dark));
+      expect(DayNightSkyScope.isDaySurfaceOf(railCtx!), isFalse);
+
+      // MaterialApp switches ThemeMode.light immediately when connected, while
+      // sky progresses gradually; rail and body must both wait until dayProgress >= 0.52.
+      container.read(runTimeProvider.notifier).value = 1200;
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      final midSnap = DayNightSkyBackground.debugSnapshotOf(tester)!;
+      expect(midSnap.dayProgress, lessThan(kDayNightSurfaceThreshold));
+      expect(Theme.of(railCtx!).brightness, equals(Brightness.dark));
+      expect(Theme.of(bodyCtx!).brightness, equals(Brightness.dark));
+      expect(DayNightSkyScope.isDaySurfaceOf(railCtx!), isFalse);
+
+      await tester.pumpAndSettle();
+      final endSnap = DayNightSkyBackground.debugSnapshotOf(tester)!;
+      expect(endSnap.dayProgress, equals(1.0));
+      expect(Theme.of(railCtx!).brightness, equals(Brightness.light));
+      expect(Theme.of(bodyCtx!).brightness, equals(Brightness.light));
+      expect(DayNightSkyScope.isDaySurfaceOf(railCtx!), isTrue);
+    },
+  );
+
+  testWidgets(
+    'DNS-08: Minimized uiActivity and TickerMode(false) routes snap sky phase cleanly without replaying stale transitions',
+    (tester) async {
+      final previousConfig = globalState.config;
+      final previousAppState = globalState.appState;
+      addTearDown(() {
+        uiActivity
+          ..setVisible(true)
+          ..setMinimized(false)
+          ..setLifecycle(AppLifecycleState.resumed);
+        globalState.config = previousConfig;
+        globalState.appState = previousAppState;
+      });
+      globalState.config = const Config(themeProps: defaultThemeProps);
+
+      final container = ProviderContainer(
+        overrides: [
+          runTimeProvider.overrideWith(_TestRunTime.new),
+        ],
+      );
+      addTearDown(container.dispose);
+
+      // Part A: uiActivity minimized (tray) -> phase change completes immediately
+      BuildContext? bodyCtx;
+      await tester.pumpWidget(
+        _buildSkyScaffoldHost(
+          container: container,
+          body: Builder(
+            builder: (ctx) {
+              bodyCtx = ctx;
+              return const SizedBox.expand();
+            },
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(DayNightSkyBackground.debugSnapshotOf(tester)!.dayProgress, 0.0);
+
+      uiActivity.setMinimized(true);
+      await tester.pump();
+      expect(uiActivity.value, isFalse);
+
+      container.read(runTimeProvider.notifier).value = 900;
+      await tester.pump();
+      await tester.pump();
+
+      final snappedHidden = DayNightSkyBackground.debugSnapshotOf(tester)!;
+      expect(snappedHidden.phase, equals(DayNightSkyPhase.day));
+      expect(snappedHidden.dayProgress, equals(1.0));
+      expect(snappedHidden.isDaySurface, isTrue);
+      expect(Theme.of(bodyCtx!).brightness, equals(Brightness.light));
+
+      // Restoring visibility must remain at 1.0 (zero stale night->day replay).
+      uiActivity.setMinimized(false);
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(
+        DayNightSkyBackground.debugSnapshotOf(tester)!.dayProgress,
+        equals(1.0),
+      );
+
+      // Part B: Route pushed over CommonScaffold mid-transition (TickerMode false)
+      final tickerNotifier = ValueNotifier<bool>(true);
+      addTearDown(tickerNotifier.dispose);
+      container.read(runTimeProvider.notifier).value = null;
+      await tester.pumpWidget(
+        ValueListenableBuilder<bool>(
+          valueListenable: tickerNotifier,
+          builder: (_, enabled, __) => _buildSkyScaffoldHost(
+            container: container,
+            tickerEnabled: enabled,
+            body: Builder(
+              builder: (ctx) {
+                bodyCtx = ctx;
+                return const SizedBox.expand();
+              },
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(DayNightSkyBackground.debugSnapshotOf(tester)!.dayProgress, 0.0);
+
+      container.read(runTimeProvider.notifier).value = 1500;
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 80));
+      expect(
+        DayNightSkyBackground.debugSnapshotOf(tester)!.dayProgress,
+        lessThan(kDayNightSurfaceThreshold),
+      );
+
+      tickerNotifier.value = false;
+      await tester.pump();
+      await tester.pump();
+
+      final coveredSnap = DayNightSkyBackground.debugSnapshotOf(tester)!;
+      expect(coveredSnap.dayProgress, equals(1.0));
+      expect(coveredSnap.isDaySurface, isTrue);
+      expect(coveredSnap.isTickerActive, isFalse);
+      expect(Theme.of(bodyCtx!).brightness, equals(Brightness.light));
+    },
+  );
+
+  testWidgets(
+    'DNS-09: Toggling back from custom background / disabled background resyncs DayNightSkyScope cleanly',
+    (tester) async {
+      final previousConfig = globalState.config;
+      final previousAppState = globalState.appState;
+      addTearDown(() {
+        globalState.config = previousConfig;
+        globalState.appState = previousAppState;
+      });
+      globalState.config = const Config(themeProps: defaultThemeProps);
+
+      final container = ProviderContainer(
+        overrides: [
+          runTimeProvider.overrideWith(_TestRunTime.new),
+          backgroundUrlProvider.overrideWith(
+            (ref) => ref.watch(_testCustomBackgroundUrlProvider),
+          ),
+        ],
+      );
+      addTearDown(container.dispose);
+
+      BuildContext? bodyCtx;
+      await tester.pumpWidget(
+        _buildSkyScaffoldHost(
+          container: container,
+          syncAppThemeMode: true,
+          body: Builder(
+            builder: (ctx) {
+              bodyCtx = ctx;
+              return const Card(
+                child: Text('背景切换测试卡片'),
+              );
+            },
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(DayNightSkyScope.isActiveOf(bodyCtx!), isTrue);
+      expect(DayNightSkyScope.isDaySurfaceOf(bodyCtx!), isFalse);
+      expect(Theme.of(bodyCtx!).brightness, equals(Brightness.dark));
+
+      // Enable custom background while disconnected
+      container.read(_testCustomBackgroundUrlProvider.notifier).state =
+          'https://127.0.0.1:1/custom-bg.png';
+      await tester.pump();
+      expect(DayNightSkyScope.isActiveOf(bodyCtx!), isFalse);
+
+      // Connect while custom background is active
+      container.read(runTimeProvider.notifier).value = 1800;
+      await tester.pump();
+      expect(Theme.of(bodyCtx!).brightness, equals(Brightness.dark));
+
+      // Clear custom background -> default sky returns and resyncs immediately to Day
+      container.read(_testCustomBackgroundUrlProvider.notifier).state = null;
+      await tester.pump();
+      expect(DayNightSkyScope.isActiveOf(bodyCtx!), isTrue);
+      expect(DayNightSkyScope.isDaySurfaceOf(bodyCtx!), isTrue);
+      expect(Theme.of(bodyCtx!).brightness, equals(Brightness.light));
     },
   );
 }

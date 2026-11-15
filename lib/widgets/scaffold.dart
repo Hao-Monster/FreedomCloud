@@ -699,7 +699,9 @@ class CommonScaffoldState extends ConsumerState<CommonScaffold> {
       pendingTarget: pendingTarget,
     );
     final reduceMotion = MediaQuery.maybeDisableAnimationsOf(context) ?? false;
-    if (useSkyBackground && (!_hasSyncedSkySurface || reduceMotion)) {
+    if (!useSkyBackground) {
+      _hasSyncedSkySurface = false;
+    } else if (!_hasSyncedSkySurface || reduceMotion) {
       _skyDaySurface = targetPhase == DayNightSkyPhase.day;
       _hasSyncedSkySurface = true;
     }
@@ -748,6 +750,7 @@ class CommonScaffoldState extends ConsumerState<CommonScaffold> {
       ),
     );
 
+    ThemeData? skyTheme;
     final Widget scaffoldWithBackground;
     if (hasCustomBackground) {
       scaffoldWithBackground = Stack(
@@ -763,31 +766,24 @@ class CommonScaffoldState extends ConsumerState<CommonScaffold> {
         ],
       );
     } else if (useSkyBackground) {
-      final skyTheme = _resolveSkyScaffoldTheme(
+      skyTheme = _resolveSkyScaffoldTheme(
         context,
         isDaySurface: _skyDaySurface,
       );
-      scaffoldWithBackground = Theme(
-        data: skyTheme,
-        child: DayNightSkyScope(
-          isActive: true,
-          isDaySurface: _skyDaySurface,
-          child: Builder(
-            builder: (skyContext) => Stack(
-              children: [
-                Positioned.fill(
-                  child: DayNightSkyBackground(
-                    onDaySurfaceChanged: _handleSkyDaySurfaceChanged,
-                  ),
-                ),
-                _buildScaffoldShell(
-                  skyContext,
-                  body: body,
-                  isTransparent: true,
-                ),
-              ],
+      scaffoldWithBackground = Builder(
+        builder: (skyContext) => Stack(
+          children: [
+            Positioned.fill(
+              child: DayNightSkyBackground(
+                onDaySurfaceChanged: _handleSkyDaySurfaceChanged,
+              ),
             ),
-          ),
+            _buildScaffoldShell(
+              skyContext,
+              body: body,
+              isTransparent: true,
+            ),
+          ],
         ),
       );
     } else {
@@ -798,7 +794,7 @@ class CommonScaffoldState extends ConsumerState<CommonScaffold> {
       );
     }
 
-    return _sideNavigationBar != null
+    final layout = _sideNavigationBar != null
         ? Row(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -810,6 +806,18 @@ class CommonScaffoldState extends ConsumerState<CommonScaffold> {
             ],
           )
         : scaffoldWithBackground;
+
+    if (skyTheme != null) {
+      return Theme(
+        data: skyTheme,
+        child: DayNightSkyScope(
+          isActive: true,
+          isDaySurface: _skyDaySurface,
+          child: layout,
+        ),
+      );
+    }
+    return layout;
   }
 }
 

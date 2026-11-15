@@ -219,15 +219,17 @@ class _DayNightSkyCanvasState extends State<_DayNightSkyCanvas>
   bool get _allowAmbientLoop =>
       !_runningInFlutterTest || widget.continuousAnimationInTests;
 
+  bool get _canAnimateVisibly =>
+      !_reduceMotion &&
+      _tickerModeEnabled &&
+      !_appHiddenOrPaused &&
+      _uiActive;
+
   bool get _hasPendingTransition =>
       !_reduceMotion && (_dayProgress - _targetProgress).abs() > _convergenceEps;
 
   bool get _shouldTickerRun {
-    if (!mounted) return false;
-    if (!_tickerModeEnabled ||
-        _reduceMotion ||
-        _appHiddenOrPaused ||
-        !_uiActive) {
+    if (!mounted || !_canAnimateVisibly) {
       return false;
     }
     if (_hasPendingTransition) return true;
@@ -271,8 +273,11 @@ class _DayNightSkyCanvasState extends State<_DayNightSkyCanvas>
         nextReduceMotion != _reduceMotion;
     _tickerModeEnabled = nextTickerEnabled;
     _reduceMotion = nextReduceMotion;
-    if (_reduceMotion && (_dayProgress - _targetProgress).abs() > 0.0) {
-      _snapToTargetImmediately(notifySurface: false);
+    if (!_canAnimateVisibly && (_dayProgress - _targetProgress).abs() > 0.0) {
+      _snapToTargetImmediately(
+        notifySurface: true,
+        deferCallback: true,
+      );
     }
     if (changed || !_ticker.isActive) {
       _syncTickerState();
@@ -301,7 +306,11 @@ class _DayNightSkyCanvasState extends State<_DayNightSkyCanvas>
     };
     if (hidden != _appHiddenOrPaused) {
       _appHiddenOrPaused = hidden;
-      _syncTickerState();
+      if (hidden && (_dayProgress - _targetProgress).abs() > _convergenceEps) {
+        _snapToTargetImmediately(notifySurface: true);
+      } else {
+        _syncTickerState();
+      }
     }
   }
 
@@ -309,7 +318,11 @@ class _DayNightSkyCanvasState extends State<_DayNightSkyCanvas>
     final active = uiActivity.value;
     if (active != _uiActive) {
       _uiActive = active;
-      _syncTickerState();
+      if (!active && (_dayProgress - _targetProgress).abs() > _convergenceEps) {
+        _snapToTargetImmediately(notifySurface: true);
+      } else {
+        _syncTickerState();
+      }
     }
   }
 
@@ -320,22 +333,34 @@ class _DayNightSkyCanvasState extends State<_DayNightSkyCanvas>
     }
     _phase = nextPhase;
     _targetProgress = nextTarget;
-    if (_reduceMotion) {
-      _snapToTargetImmediately(notifySurface: true);
+    if (!_canAnimateVisibly) {
+      _snapToTargetImmediately(
+        notifySurface: true,
+        deferCallback: true,
+      );
     } else {
       _repaintTick.value++;
       _syncTickerState();
     }
   }
 
-  void _snapToTargetImmediately({required bool notifySurface}) {
+  void _snapToTargetImmediately({
+    required bool notifySurface,
+    bool deferCallback = false,
+  }) {
     _dayProgress = _targetProgress;
     _repaintTick.value++;
-    _maybeNotifyDaySurface(allowSchedule: notifySurface);
+    _maybeNotifyDaySurface(
+      allowSchedule: notifySurface,
+      deferCallback: deferCallback,
+    );
     _syncTickerState();
   }
 
-  void _maybeNotifyDaySurface({required bool allowSchedule}) {
+  void _maybeNotifyDaySurface({
+    required bool allowSchedule,
+    bool deferCallback = false,
+  }) {
     final nextDaySurface = _dayProgress >= kDayNightSurfaceThreshold;
     if (nextDaySurface == _lastReportedDaySurface) {
       return;
@@ -346,7 +371,7 @@ class _DayNightSkyCanvasState extends State<_DayNightSkyCanvas>
       return;
     }
     final schedulerPhase = SchedulerBinding.instance.schedulerPhase;
-    if (schedulerPhase == SchedulerPhase.persistentCallbacks) {
+    if (deferCallback || schedulerPhase == SchedulerPhase.persistentCallbacks) {
       SchedulerBinding.instance.addPostFrameCallback((_) {
         if (mounted) {
           widget.onDaySurfaceChanged?.call(_lastReportedDaySurface);
