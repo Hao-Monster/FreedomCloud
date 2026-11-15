@@ -2196,6 +2196,9 @@ class MessageLookup extends MessageLookupByLibrary {
     "textScale": MessageLookupByLibrary.simpleMessage("Масштабирование текста"),
     "thanks": MessageLookupByLibrary.simpleMessage("Спасибо за вклад"),
     "theme": MessageLookupByLibrary.simpleMessage("Тема"),
+    "themeAtmosphereCustomBgHint": MessageLookupByLibrary.simpleMessage(
+      "Активны обои подписки. Включите «Предпочитать фон неба» выше для настройки стекла и анимации.",
+    ),
     "themeAtmosphereSection": MessageLookupByLibrary.simpleMessage(
       "Текстура и анимация",
     ),
@@ -2245,6 +2248,9 @@ class MessageLookup extends MessageLookupByLibrary {
     ),
     "themeSkyStatusConnecting": MessageLookupByLibrary.simpleMessage(
       "Рассвет · Подключение",
+    ),
+    "themeSkyStatusCustomBgActive": MessageLookupByLibrary.simpleMessage(
+      "Обои подписки активны · Синхронизация темы",
     ),
     "themeSkyStatusDayConnected": MessageLookupByLibrary.simpleMessage(
       "Ясный день · Подключено",
@@ -2344,6 +2350,53 @@ class MessageLookup extends MessageLookupByLibrary {
     ),
     "tunStatusWaiting": MessageLookupByLibrary.simpleMessage(
       "Включить при запуске прокси",
+    ),
+    "tvSyncApplying": MessageLookupByLibrary.simpleMessage(
+      "Получаю профиль с телефона…",
+    ),
+    "tvSyncCouldNotGetIp": MessageLookupByLibrary.simpleMessage(
+      "Не удалось получить IP-адрес",
+    ),
+    "tvSyncFailed": MessageLookupByLibrary.simpleMessage(
+      "Не удалось добавить профиль",
+    ),
+    "tvSyncScanQrHint": MessageLookupByLibrary.simpleMessage(
+      "Отсканируйте код камерой телефона",
+    ),
+    "tvSyncSuccess": MessageLookupByLibrary.simpleMessage("Профиль добавлен"),
+    "tvSyncWebApplying": MessageLookupByLibrary.simpleMessage(
+      "Телевизор добавляет профиль…",
+    ),
+    "tvSyncWebConnectionLost": MessageLookupByLibrary.simpleMessage(
+      "Связь с телевизором потеряна",
+    ),
+    "tvSyncWebEmptyUrl": MessageLookupByLibrary.simpleMessage(
+      "Вставьте ссылку подписки",
+    ),
+    "tvSyncWebErrorPrefix": MessageLookupByLibrary.simpleMessage("❌ Ошибка: "),
+    "tvSyncWebHeading": MessageLookupByLibrary.simpleMessage(
+      "Подписка на телевизор",
+    ),
+    "tvSyncWebPageTitle": MessageLookupByLibrary.simpleMessage(
+      "FreedomNet — подписка на ТВ",
+    ),
+    "tvSyncWebPaste": MessageLookupByLibrary.simpleMessage("Вставить"),
+    "tvSyncWebReceived": MessageLookupByLibrary.simpleMessage(
+      "Телевизор получил ссылку…",
+    ),
+    "tvSyncWebRejected": MessageLookupByLibrary.simpleMessage(
+      "Телевизор отклонил ссылку",
+    ),
+    "tvSyncWebSend": MessageLookupByLibrary.simpleMessage("Отправить"),
+    "tvSyncWebSending": MessageLookupByLibrary.simpleMessage("Отправляю…"),
+    "tvSyncWebSubtitle": MessageLookupByLibrary.simpleMessage(
+      "Вставьте ссылку на подписку и нажмите «Отправить» — она появится на телевизоре автоматически.",
+    ),
+    "tvSyncWebSuccess": MessageLookupByLibrary.simpleMessage(
+      "✅ Готово! Профиль добавлен на телевизор",
+    ),
+    "tvSyncWebUnreachable": MessageLookupByLibrary.simpleMessage(
+      "Не удалось связаться с телевизором",
     ),
     "twoColumns": MessageLookupByLibrary.simpleMessage("Два столбца"),
     "unableToUpdateCurrentProfileDesc": MessageLookupByLibrary.simpleMessage(

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:ui' as ui;
@@ -14,6 +15,7 @@ import 'package:flclashx/state.dart';
 import 'package:flclashx/views/dashboard/dashboard.dart';
 import 'package:flclashx/views/dashboard/widgets/hero_connect.dart';
 import 'package:flclashx/views/dashboard/widgets/start_button.dart';
+import 'package:flclashx/views/profiles/receive_profile_dialog.dart';
 import 'package:flclashx/views/theme.dart';
 import 'package:flclashx/widgets/widgets.dart';
 import 'package:flutter/material.dart';
@@ -21,6 +23,7 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
+import 'package:qr_flutter/qr_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class _TestPaths extends PathProviderPlatform {
@@ -46,6 +49,17 @@ class _TestAppController implements AppController {
   @override
   dynamic noSuchMethod(Invocation invocation) => null;
 }
+
+class _AddSyncTestController extends _TestAppController {
+  String? syncedUrl;
+
+  @override
+  Future<void> addProfileFromUrlForSync(String url) async {
+    syncedUrl = url;
+  }
+}
+
+class _DirectHttpOverrides extends HttpOverrides {}
 
 void _resetGlobalTestState({
   ThemeProps themeProps = defaultThemeProps,
@@ -79,6 +93,7 @@ Widget _buildLocalizedApp({
   required ProviderContainer container,
   required Widget home,
   bool disableAnimations = false,
+  bool attachGlobalNavigatorKey = false,
   Size viewSize = const Size(960, 800),
 }) {
   final darkScheme = calibrateFreedomNetColorScheme(
@@ -101,22 +116,17 @@ Widget _buildLocalizedApp({
     child: Consumer(
       builder: (_, ref, __) {
         final themeProps = ref.watch(themeSettingProvider);
-        final backgroundUrl = ref.watch(backgroundUrlProvider);
-        final hasCustomBackground =
-            backgroundUrl != null && backgroundUrl.isNotEmpty;
-        final useCustomBackground =
-            hasCustomBackground && !themeProps.ignoreCustomBackground;
         final isRunning =
             ref.watch(runTimeProvider.select((state) => state != null));
         final pendingTarget = ref.watch(statusSwitchPendingProvider);
-        final effectiveMode = useCustomBackground
-            ? themeProps.themeMode
-            : resolveDayNightThemeMode(
-                isRunning: isRunning,
-                pendingTarget: pendingTarget,
-                mode: themeProps.skyMode,
-              );
+        final effectiveMode = resolveDayNightThemeMode(
+          isRunning: isRunning,
+          pendingTarget: pendingTarget,
+          mode: themeProps.skyMode,
+        );
         return MaterialApp(
+          navigatorKey:
+              attachGlobalNavigatorKey ? globalState.navigatorKey : null,
           debugShowCheckedModeBanner: false,
           locale: const Locale('zh', 'CN'),
           localizationsDelegates: const [
@@ -864,6 +874,403 @@ void main() {
       expect(find.text('Продлить подписку'), findsNothing);
       expect(find.text('Докупить трафик'), findsNothing);
       expect(tester.takeException(), isNull);
+    });
+  });
+
+  group('CR-THM: Code review remediations (P2-1..P2-3 & P3-1)', () {
+    testWidgets(
+        'CR-THM-01 (P2-1): ConciseDashboardModeButton exposes semantic tap action and toggles via semantics',
+        (tester) async {
+      final semanticsHandle = tester.ensureSemantics();
+      try {
+        await tester.binding.setSurfaceSize(const Size(1040, 820));
+        addTearDown(() => tester.binding.setSurfaceSize(null));
+
+        final profile = Profile(
+          id: 'p_sem',
+          label: 'Test',
+          url: 'https://example.com/sub',
+          autoUpdateDuration: const Duration(days: 1),
+          lastUpdateDate: DateTime(2026, 11, 1),
+        );
+        _resetGlobalTestState(
+          profiles: [profile],
+          currentProfileId: 'p_sem',
+          appSetting: const AppSettingProps(newDashboard: false),
+          pageLabel: PageLabel.dashboard,
+        );
+
+        final container = ProviderContainer(
+          overrides: [
+            runTimeProvider.overrideWith(_TestRunTime.new),
+            tunRuntimeProvider.overrideWith((_) => TunRuntimeController()),
+          ],
+        );
+        addTearDown(container.dispose);
+
+        await tester.pumpWidget(
+          _buildLocalizedApp(
+            container: container,
+            viewSize: const Size(1040, 820),
+            home: const CommonScaffold(
+              title: '仪表盘',
+              body: DashboardView(),
+            ),
+          ),
+        );
+        await tester.pump();
+        await tester.pumpAndSettle();
+
+        final toggleFinder =
+            find.byKey(const ValueKey('dashboard-concise-mode-toggle'));
+        expect(toggleFinder, findsOneWidget);
+
+        final initialNode = tester.getSemantics(toggleFinder);
+        expect(
+          initialNode.getSemanticsData().hasAction(ui.SemanticsAction.tap),
+          isTrue,
+        );
+        expect(
+          initialNode.flagsCollection.isToggled,
+          equals(ui.Tristate.isFalse),
+        );
+
+        initialNode.owner!.performAction(
+          initialNode.id,
+          ui.SemanticsAction.tap,
+        );
+        await tester.pumpAndSettle();
+
+        expect(container.read(appSettingProvider).newDashboard, isTrue);
+        expect(
+          tester.getSemantics(toggleFinder).flagsCollection.isToggled,
+          equals(ui.Tristate.isTrue),
+        );
+        expect(find.byType(HeroConnect), findsOneWidget);
+      } finally {
+        semanticsHandle.dispose();
+      }
+    });
+
+    testWidgets(
+        'CR-THM-02 (P2-2): custom wallpaper follows skyMode brightness cleanly and disables sky glass/ambient controls until overridden',
+        (tester) async {
+      await tester.binding.setSurfaceSize(const Size(400, 900));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+
+      _resetGlobalTestState(
+        runTime: null,
+        themeProps: defaultThemeProps.copyWith(
+          themeMode: ThemeMode.light,
+          skyMode: DayNightSkyMode.followConnection,
+          ignoreCustomBackground: false,
+        ),
+      );
+      final container = ProviderContainer(
+        overrides: [
+          runTimeProvider.overrideWith(_TestRunTime.new),
+          backgroundUrlProvider
+              .overrideWith((_) => 'https://example.com/custom-wall.jpg'),
+        ],
+      );
+      addTearDown(container.dispose);
+
+      await tester.pumpWidget(
+        _buildLocalizedApp(
+          container: container,
+          viewSize: const Size(400, 900),
+          home: const CommonScaffold(
+            title: '主题',
+            disableBackground: true,
+            body: ThemeView(),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // Legacy themeMode=light must NOT freeze brightness under skyMode=followConnection
+      final themeViewCtx = tester.element(find.byType(ThemeView));
+      expect(Theme.of(themeViewCtx).brightness, equals(Brightness.dark));
+      expect(find.text('订阅壁纸生效中 · 同步界面明暗'), findsOneWidget);
+
+      final hintFinder =
+          find.byKey(const ValueKey('theme-atmosphere-custom-bg-hint'));
+      expect(hintFinder, findsOneWidget);
+
+      // While custom wallpaper is active, skyMode still drives MaterialApp brightness
+      await tester.tap(find.byKey(const ValueKey('theme-sky-mode-alwaysDay')));
+      await tester.pumpAndSettle();
+      expect(
+        Theme.of(tester.element(find.byType(ThemeView))).brightness,
+        equals(Brightness.light),
+      );
+
+      // Atmosphere preset taps are ignored while custom wallpaper covers sky canvas
+      final airyFinder = find.byKey(const ValueKey('theme-glass-preset-airy'));
+      await tester.ensureVisible(airyFinder);
+      await tester.pumpAndSettle();
+      await tester.tap(airyFinder, warnIfMissed: false);
+      await tester.pumpAndSettle();
+      expect(
+        container.read(themeSettingProvider).glassPreset,
+        equals(DayNightGlassPreset.balanced),
+      );
+
+      // Enable override -> custom bg hint disappears and glass preset becomes interactive
+      final overrideSwitch =
+          find.byKey(const ValueKey('theme-ignore-custom-bg-switch'));
+      await tester.ensureVisible(overrideSwitch);
+      await tester.pumpAndSettle();
+      await tester.tap(overrideSwitch);
+      await tester.pumpAndSettle();
+
+      expect(container.read(themeSettingProvider).ignoreCustomBackground, isTrue);
+      expect(hintFinder, findsNothing);
+      expect(find.text('常驻晴空 · 已锁定晴朗天象'), findsOneWidget);
+
+      await tester.ensureVisible(airyFinder);
+      await tester.pumpAndSettle();
+      await tester.tap(airyFinder);
+      await tester.pumpAndSettle();
+      expect(
+        container.read(themeSettingProvider).glassPreset,
+        equals(DayNightGlassPreset.airy),
+      );
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets(
+        'CR-THM-03 (P2-3): ReceiveProfileDialog and embedded portal HTML localize cleanly and lib/ has zero hardcoded Cyrillic literals',
+        (tester) async {
+      final syncController = _AddSyncTestController();
+      globalState.appController = syncController;
+
+      final zh = await AppLocalizations.load(const Locale('zh', 'CN'));
+      final zhHtml =
+          ReceiveProfileDialog.buildReceiveProfilePortalHtml(zh, htmlLang: 'zh-CN');
+      expect(zhHtml, contains('导入订阅配置'));
+      expect(zhHtml, contains('粘贴'));
+      expect(zhHtml, contains('发送'));
+      expect(RegExp(r'[\u0400-\u04FF]').hasMatch(zhHtml), isFalse);
+
+      // Verify no hardcoded Cyrillic UI strings remain anywhere under lib/
+      final cyrillicRe = RegExp(r'[\u0400-\u04FF]');
+      for (final entity in Directory('lib').listSync(recursive: true)) {
+        if (entity is! File || !entity.path.endsWith('.dart')) continue;
+        final normalized = entity.path.replaceAll(r'\', '/');
+        if (normalized.endsWith('/messages_ru.dart')) continue;
+        final nonCommentLines = entity
+            .readAsLinesSync()
+            .where((line) => !line.trimLeft().startsWith('//'));
+        for (final line in nonCommentLines) {
+          expect(
+            cyrillicRe.hasMatch(line),
+            isFalse,
+            reason: 'Unexpected Cyrillic literal in $normalized: $line',
+          );
+        }
+      }
+
+      final container = ProviderContainer();
+      addTearDown(container.dispose);
+
+      Uri? listeningUri;
+      await tester.pumpWidget(
+        _buildLocalizedApp(
+          container: container,
+          home: Builder(
+            builder: (ctx) => Scaffold(
+              body: Center(
+                child: ElevatedButton(
+                  onPressed: () {
+                    unawaited(
+                      showDialog<void>(
+                        context: ctx,
+                        builder: (_) => ReceiveProfileDialog(
+                          resolveWifiIp: () async => '127.0.0.1',
+                          syncPort: 0,
+                          onServerReady: (uri) => listeningUri = uri,
+                        ),
+                      ),
+                    );
+                  },
+                  child: const Text('open-sync'),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('open-sync'));
+      await tester.pump();
+
+      for (var i = 0; i < 200 && listeningUri == null; i++) {
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 15)),
+        );
+        await tester.pump();
+      }
+      await tester.pumpAndSettle();
+
+      expect(listeningUri, isNotNull);
+      expect(find.text('请使用手机相机扫描二维码'), findsOneWidget);
+      expect(find.byType(QrImageView), findsOneWidget);
+      final baseUri = listeningUri!;
+      expect(baseUri.host, equals('127.0.0.1'));
+      expect(baseUri.port, greaterThan(0));
+
+      Future<T> pumpRealIo<T>(Future<T> Function() action) async {
+        T? result;
+        Object? caughtError;
+        StackTrace? caughtStack;
+        var done = false;
+        Zone.root.run(() {
+          unawaited(
+            HttpOverrides.runWithHttpOverrides(action, _DirectHttpOverrides())
+                .then(
+              (value) {
+                result = value;
+                done = true;
+              },
+              onError: (Object error, StackTrace stack) {
+                caughtError = error;
+                caughtStack = stack;
+                done = true;
+              },
+            ),
+          );
+        });
+        for (var i = 0; i < 300 && !done; i++) {
+          await tester.runAsync(
+            () => Future<void>.delayed(const Duration(milliseconds: 15)),
+          );
+          await tester.pump();
+        }
+        if (!done) {
+          throw TimeoutException(
+            'Loopback HTTP I/O did not finish within 4.5s',
+          );
+        }
+        if (caughtError != null) {
+          Error.throwWithStackTrace(caughtError!, caughtStack!);
+        }
+        return result as T;
+      }
+
+      final ioResult = await pumpRealIo(() async {
+        final client = HttpClient();
+        try {
+          final getReq = await client.getUrl(baseUri);
+          final getResp = await getReq.close();
+          final htmlBody = await utf8.decodeStream(getResp);
+
+          final postReq = await client.postUrl(baseUri.resolve('/add-profile'));
+          postReq.headers.contentType = ContentType.json;
+          postReq.write(jsonEncode({'url': 'https://example.com/sub.yaml'}));
+          final postResp = await postReq.close();
+          await utf8.decodeStream(postResp);
+          return (
+            getStatusCode: getResp.statusCode,
+            htmlBody: htmlBody,
+            postStatusCode: postResp.statusCode,
+          );
+        } finally {
+          client.close(force: true);
+        }
+      });
+
+      expect(ioResult.getStatusCode, equals(HttpStatus.ok));
+      expect(ioResult.htmlBody, contains('导入订阅配置'));
+      expect(cyrillicRe.hasMatch(ioResult.htmlBody), isFalse);
+      expect(ioResult.postStatusCode, equals(HttpStatus.ok));
+
+      await tester.pump();
+      expect(syncController.syncedUrl, equals('https://example.com/sub.yaml'));
+      expect(find.text('配置添加成功'), findsOneWidget);
+
+      // Flush the 1600ms auto-close timer cleanly and confirm dialog closes
+      await tester.pump(const Duration(milliseconds: 1700));
+      await tester.pumpAndSettle();
+      expect(find.byType(ReceiveProfileDialog), findsNothing);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets(
+        'CR-THM-04 (P3-1): sky/glass controls expose selected semantics and accent reset restores defaultThemeProps.schemeVariant',
+        (tester) async {
+      final semanticsHandle = tester.ensureSemantics();
+      try {
+        await tester.binding.setSurfaceSize(const Size(400, 920));
+        addTearDown(() => tester.binding.setSurfaceSize(null));
+
+        final container = ProviderContainer(
+          overrides: [
+            runTimeProvider.overrideWith(_TestRunTime.new),
+          ],
+        );
+        addTearDown(container.dispose);
+
+        await tester.pumpWidget(
+          _buildLocalizedApp(
+            container: container,
+            attachGlobalNavigatorKey: true,
+            viewSize: const Size(400, 920),
+            home: const CommonScaffold(
+              title: '主题',
+              disableBackground: true,
+              body: ThemeView(),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        final followNode = tester.getSemantics(
+          find.byKey(const ValueKey('theme-sky-mode-followConnection')),
+        );
+        final nightNode = tester.getSemantics(
+          find.byKey(const ValueKey('theme-sky-mode-alwaysNight')),
+        );
+        final balancedGlassNode = tester.getSemantics(
+          find.byKey(const ValueKey('theme-glass-preset-balanced')),
+        );
+        expect(followNode.flagsCollection.isSelected, equals(ui.Tristate.isTrue));
+        expect(
+          followNode.getSemanticsData().hasAction(ui.SemanticsAction.tap),
+          isTrue,
+        );
+        expect(nightNode.flagsCollection.isSelected, equals(ui.Tristate.isFalse));
+        expect(
+          balancedGlassNode.flagsCollection.isSelected,
+          equals(ui.Tristate.isTrue),
+        );
+
+        final resetFinder =
+            find.byKey(const ValueKey('theme-accent-reset-button'));
+        expect(resetFinder, findsNothing);
+
+        // Changing only schemeVariant should reveal the reset button
+        container.read(themeSettingProvider.notifier).updateState(
+              (s) => s.copyWith(schemeVariant: DynamicSchemeVariant.tonalSpot),
+            );
+        await tester.pumpAndSettle();
+        await tester.ensureVisible(resetFinder);
+        await tester.pumpAndSettle();
+        expect(resetFinder, findsOneWidget);
+
+        await tester.tap(resetFinder);
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('确定'));
+        await tester.pumpAndSettle();
+
+        expect(
+          container.read(themeSettingProvider).schemeVariant,
+          equals(defaultThemeProps.schemeVariant),
+        );
+        expect(resetFinder, findsNothing);
+        expect(tester.takeException(), isNull);
+      } finally {
+        semanticsHandle.dispose();
+      }
     });
   });
 }

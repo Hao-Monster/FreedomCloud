@@ -9802,6 +9802,206 @@ class AppLocalizations {
       args: [],
     );
   }
+
+  /// `Custom wallpaper active · Syncing UI brightness`
+  String get themeSkyStatusCustomBgActive {
+    return Intl.message(
+      'Custom wallpaper active · Syncing UI brightness',
+      name: 'themeSkyStatusCustomBgActive',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Custom wallpaper is active. Enable "Prefer Day/Night sky background" above to tune sky glass and motion.`
+  String get themeAtmosphereCustomBgHint {
+    return Intl.message(
+      'Custom wallpaper is active. Enable "Prefer Day/Night sky background" above to tune sky glass and motion.',
+      name: 'themeAtmosphereCustomBgHint',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Could not obtain LAN IP address`
+  String get tvSyncCouldNotGetIp {
+    return Intl.message(
+      'Could not obtain LAN IP address',
+      name: 'tvSyncCouldNotGetIp',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Receiving profile from phone…`
+  String get tvSyncApplying {
+    return Intl.message(
+      'Receiving profile from phone…',
+      name: 'tvSyncApplying',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Profile added`
+  String get tvSyncSuccess {
+    return Intl.message(
+      'Profile added',
+      name: 'tvSyncSuccess',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Failed to add profile`
+  String get tvSyncFailed {
+    return Intl.message(
+      'Failed to add profile',
+      name: 'tvSyncFailed',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Scan the QR code with your phone camera`
+  String get tvSyncScanQrHint {
+    return Intl.message(
+      'Scan the QR code with your phone camera',
+      name: 'tvSyncScanQrHint',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `FreedomNet — Import Subscription`
+  String get tvSyncWebPageTitle {
+    return Intl.message(
+      'FreedomNet — Import Subscription',
+      name: 'tvSyncWebPageTitle',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Import Subscription`
+  String get tvSyncWebHeading {
+    return Intl.message(
+      'Import Subscription',
+      name: 'tvSyncWebHeading',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Paste your subscription link and tap "Send" — it will sync to this device automatically.`
+  String get tvSyncWebSubtitle {
+    return Intl.message(
+      'Paste your subscription link and tap "Send" — it will sync to this device automatically.',
+      name: 'tvSyncWebSubtitle',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Paste`
+  String get tvSyncWebPaste {
+    return Intl.message('Paste', name: 'tvSyncWebPaste', desc: '', args: []);
+  }
+
+  /// `Send`
+  String get tvSyncWebSend {
+    return Intl.message('Send', name: 'tvSyncWebSend', desc: '', args: []);
+  }
+
+  /// `Please paste a subscription URL`
+  String get tvSyncWebEmptyUrl {
+    return Intl.message(
+      'Please paste a subscription URL',
+      name: 'tvSyncWebEmptyUrl',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Sending…`
+  String get tvSyncWebSending {
+    return Intl.message(
+      'Sending…',
+      name: 'tvSyncWebSending',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `The device rejected the subscription URL`
+  String get tvSyncWebRejected {
+    return Intl.message(
+      'The device rejected the subscription URL',
+      name: 'tvSyncWebRejected',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Could not reach the receiving device`
+  String get tvSyncWebUnreachable {
+    return Intl.message(
+      'Could not reach the receiving device',
+      name: 'tvSyncWebUnreachable',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Importing subscription on device…`
+  String get tvSyncWebApplying {
+    return Intl.message(
+      'Importing subscription on device…',
+      name: 'tvSyncWebApplying',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `✅ Done! Subscription added to device`
+  String get tvSyncWebSuccess {
+    return Intl.message(
+      '✅ Done! Subscription added to device',
+      name: 'tvSyncWebSuccess',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `❌ Error: `
+  String get tvSyncWebErrorPrefix {
+    return Intl.message(
+      '❌ Error: ',
+      name: 'tvSyncWebErrorPrefix',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Link received by device…`
+  String get tvSyncWebReceived {
+    return Intl.message(
+      'Link received by device…',
+      name: 'tvSyncWebReceived',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Connection to device lost`
+  String get tvSyncWebConnectionLost {
+    return Intl.message(
+      'Connection to device lost',
+      name: 'tvSyncWebConnectionLost',
+      desc: '',
+      args: [],
+    );
+  }
 }
 
 class AppLocalizationDelegate extends LocalizationsDelegate<AppLocalizations> {

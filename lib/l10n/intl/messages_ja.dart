@@ -1694,6 +1694,9 @@ class MessageLookup extends MessageLookupByLibrary {
     "textScale": MessageLookupByLibrary.simpleMessage("テキストスケーリング"),
     "thanks": MessageLookupByLibrary.simpleMessage("貢献に感謝"),
     "theme": MessageLookupByLibrary.simpleMessage("テーマ"),
+    "themeAtmosphereCustomBgHint": MessageLookupByLibrary.simpleMessage(
+      "カスタム壁紙を表示中です。上の「昼夜スカイ背景を優先」をオンにすると透過度とアニメーションを調整できます。",
+    ),
     "themeAtmosphereSection": MessageLookupByLibrary.simpleMessage(
       "質感とアニメーション",
     ),
@@ -1733,6 +1736,9 @@ class MessageLookup extends MessageLookupByLibrary {
     ),
     "themeSkyStatusConnecting": MessageLookupByLibrary.simpleMessage(
       "夜明け前 · 接続中",
+    ),
+    "themeSkyStatusCustomBgActive": MessageLookupByLibrary.simpleMessage(
+      "カスタム壁紙有効 · UI明暗を連動",
     ),
     "themeSkyStatusDayConnected": MessageLookupByLibrary.simpleMessage(
       "晴天 · 接続済み",
@@ -1820,6 +1826,47 @@ class MessageLookup extends MessageLookupByLibrary {
     "tunStatusStopping": MessageLookupByLibrary.simpleMessage("停止しています…"),
     "tunStatusUnknown": MessageLookupByLibrary.simpleMessage("状態不明"),
     "tunStatusWaiting": MessageLookupByLibrary.simpleMessage("プロキシの起動時に有効化"),
+    "tvSyncApplying": MessageLookupByLibrary.simpleMessage(
+      "スマートフォンからプロファイルを受信中…",
+    ),
+    "tvSyncCouldNotGetIp": MessageLookupByLibrary.simpleMessage(
+      "LAN IP アドレスを取得できませんでした",
+    ),
+    "tvSyncFailed": MessageLookupByLibrary.simpleMessage("プロファイルの追加に失敗しました"),
+    "tvSyncScanQrHint": MessageLookupByLibrary.simpleMessage(
+      "スマートフォンのカメラで QR コードを読み取ってください",
+    ),
+    "tvSyncSuccess": MessageLookupByLibrary.simpleMessage("プロファイルを追加しました"),
+    "tvSyncWebApplying": MessageLookupByLibrary.simpleMessage(
+      "端末でサブスクリプションを取込中…",
+    ),
+    "tvSyncWebConnectionLost": MessageLookupByLibrary.simpleMessage(
+      "端末との接続が切断されました",
+    ),
+    "tvSyncWebEmptyUrl": MessageLookupByLibrary.simpleMessage(
+      "サブスクリプション URL を入力してください",
+    ),
+    "tvSyncWebErrorPrefix": MessageLookupByLibrary.simpleMessage("❌ エラー: "),
+    "tvSyncWebHeading": MessageLookupByLibrary.simpleMessage("サブスクリプションを取込"),
+    "tvSyncWebPageTitle": MessageLookupByLibrary.simpleMessage(
+      "FreedomNet — サブスクリプション取込",
+    ),
+    "tvSyncWebPaste": MessageLookupByLibrary.simpleMessage("貼り付け"),
+    "tvSyncWebReceived": MessageLookupByLibrary.simpleMessage("端末がリンクを受信しました…"),
+    "tvSyncWebRejected": MessageLookupByLibrary.simpleMessage(
+      "端末が URL を拒否しました",
+    ),
+    "tvSyncWebSend": MessageLookupByLibrary.simpleMessage("送信"),
+    "tvSyncWebSending": MessageLookupByLibrary.simpleMessage("送信中…"),
+    "tvSyncWebSubtitle": MessageLookupByLibrary.simpleMessage(
+      "サブスクリプション URL を貼り付けて「送信」をタップすると、この端末に自動同期されます。",
+    ),
+    "tvSyncWebSuccess": MessageLookupByLibrary.simpleMessage(
+      "✅ 完了！サブスクリプションを追加しました",
+    ),
+    "tvSyncWebUnreachable": MessageLookupByLibrary.simpleMessage(
+      "受信側の端末に接続できません",
+    ),
     "twoColumns": MessageLookupByLibrary.simpleMessage("2列"),
     "unableToUpdateCurrentProfileDesc": MessageLookupByLibrary.simpleMessage(
       "現在のプロファイルを更新できません",

@@ -435,6 +435,13 @@ class ConciseDashboardModeButton extends ConsumerWidget {
     // for the AppBar title + action buttons (e.g. 320px width at 2.0x scale).
     final compactMode = (media.size.width / safeScale) < 250;
 
+    void handleToggle() {
+      onWillToggle?.call();
+      ref.read(appSettingProvider.notifier).updateState(
+            (state) => state.copyWith(newDashboard: !isConcise),
+          );
+    }
+
     return MediaQuery(
       data: media.copyWith(textScaler: TextScaler.linear(clampedScale)),
       child: Semantics(
@@ -443,16 +450,12 @@ class ConciseDashboardModeButton extends ConsumerWidget {
         toggled: isConcise,
         label: label,
         excludeSemantics: true,
+        onTap: handleToggle,
         child: ConciseDashboardModePill(
           isHighlighted: isConcise,
           label: label,
           showLabel: !compactMode,
-          onTap: () {
-            onWillToggle?.call();
-            ref.read(appSettingProvider.notifier).updateState(
-                  (state) => state.copyWith(newDashboard: !isConcise),
-                );
-          },
+          onTap: handleToggle,
         ),
       ),
     );

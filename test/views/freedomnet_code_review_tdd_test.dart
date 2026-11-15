@@ -20,6 +20,7 @@ import 'package:flclashx/state.dart';
 import 'package:flclashx/views/about.dart';
 import 'package:flclashx/views/dashboard/widgets/hero_connect.dart';
 import 'package:flclashx/views/dashboard/widgets/hero_nav_bar.dart';
+import 'package:flclashx/views/profiles/receive_profile_dialog.dart';
 import 'package:flclashx/widgets/widgets.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -375,7 +376,20 @@ void main() {
       receiveDialogDart,
       isNot(contains('<title>FlClashX')),
     );
-    expect(receiveDialogDart, contains('<title>FreedomNet'));
+    final enL10n = await AppLocalizations.load(const Locale('en'));
+    final enPortalHtml = ReceiveProfileDialog.buildReceiveProfilePortalHtml(
+      enL10n,
+      htmlLang: 'en',
+    );
+    expect(enPortalHtml, contains('<title>FreedomNet'));
+    expect(enPortalHtml, isNot(contains('FlClashX')));
+
+    final zhL10n = await AppLocalizations.load(const Locale('zh', 'CN'));
+    final zhPortalHtml = ReceiveProfileDialog.buildReceiveProfilePortalHtml(
+      zhL10n,
+    );
+    expect(zhPortalHtml, contains('<title>自由云'));
+    expect(zhPortalHtml, isNot(contains('FlClashX')));
 
     final winMainCpp = File('windows/runner/main.cpp').readAsStringSync();
     expect(winMainCpp, isNot(contains('window.Create(L"FlClashX"')));

@@ -2242,6 +2242,9 @@ class MessageLookup extends MessageLookupByLibrary {
     "textScale": MessageLookupByLibrary.simpleMessage("Text Scaling"),
     "thanks": MessageLookupByLibrary.simpleMessage("Thanks for contribution"),
     "theme": MessageLookupByLibrary.simpleMessage("Theme"),
+    "themeAtmosphereCustomBgHint": MessageLookupByLibrary.simpleMessage(
+      "Custom wallpaper is active. Enable \"Prefer Day/Night sky background\" above to tune sky glass and motion.",
+    ),
     "themeAtmosphereSection": MessageLookupByLibrary.simpleMessage(
       "Atmosphere & Motion",
     ),
@@ -2291,6 +2294,9 @@ class MessageLookup extends MessageLookupByLibrary {
     ),
     "themeSkyStatusConnecting": MessageLookupByLibrary.simpleMessage(
       "Pre-dawn · Connecting",
+    ),
+    "themeSkyStatusCustomBgActive": MessageLookupByLibrary.simpleMessage(
+      "Custom wallpaper active · Syncing UI brightness",
     ),
     "themeSkyStatusDayConnected": MessageLookupByLibrary.simpleMessage(
       "Sunny Day · Connected",
@@ -2384,6 +2390,53 @@ class MessageLookup extends MessageLookupByLibrary {
     "tunStatusUnknown": MessageLookupByLibrary.simpleMessage("Status unknown"),
     "tunStatusWaiting": MessageLookupByLibrary.simpleMessage(
       "Enable when proxy starts",
+    ),
+    "tvSyncApplying": MessageLookupByLibrary.simpleMessage(
+      "Receiving profile from phone…",
+    ),
+    "tvSyncCouldNotGetIp": MessageLookupByLibrary.simpleMessage(
+      "Could not obtain LAN IP address",
+    ),
+    "tvSyncFailed": MessageLookupByLibrary.simpleMessage(
+      "Failed to add profile",
+    ),
+    "tvSyncScanQrHint": MessageLookupByLibrary.simpleMessage(
+      "Scan the QR code with your phone camera",
+    ),
+    "tvSyncSuccess": MessageLookupByLibrary.simpleMessage("Profile added"),
+    "tvSyncWebApplying": MessageLookupByLibrary.simpleMessage(
+      "Importing subscription on device…",
+    ),
+    "tvSyncWebConnectionLost": MessageLookupByLibrary.simpleMessage(
+      "Connection to device lost",
+    ),
+    "tvSyncWebEmptyUrl": MessageLookupByLibrary.simpleMessage(
+      "Please paste a subscription URL",
+    ),
+    "tvSyncWebErrorPrefix": MessageLookupByLibrary.simpleMessage("❌ Error: "),
+    "tvSyncWebHeading": MessageLookupByLibrary.simpleMessage(
+      "Import Subscription",
+    ),
+    "tvSyncWebPageTitle": MessageLookupByLibrary.simpleMessage(
+      "FreedomNet — Import Subscription",
+    ),
+    "tvSyncWebPaste": MessageLookupByLibrary.simpleMessage("Paste"),
+    "tvSyncWebReceived": MessageLookupByLibrary.simpleMessage(
+      "Link received by device…",
+    ),
+    "tvSyncWebRejected": MessageLookupByLibrary.simpleMessage(
+      "The device rejected the subscription URL",
+    ),
+    "tvSyncWebSend": MessageLookupByLibrary.simpleMessage("Send"),
+    "tvSyncWebSending": MessageLookupByLibrary.simpleMessage("Sending…"),
+    "tvSyncWebSubtitle": MessageLookupByLibrary.simpleMessage(
+      "Paste your subscription link and tap \"Send\" — it will sync to this device automatically.",
+    ),
+    "tvSyncWebSuccess": MessageLookupByLibrary.simpleMessage(
+      "✅ Done! Subscription added to device",
+    ),
+    "tvSyncWebUnreachable": MessageLookupByLibrary.simpleMessage(
+      "Could not reach the receiving device",
     ),
     "twoColumns": MessageLookupByLibrary.simpleMessage("Two columns"),
     "unableToUpdateCurrentProfileDesc": MessageLookupByLibrary.simpleMessage(

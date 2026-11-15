@@ -5,7 +5,7 @@ import 'dart:ui' as ui;
 
 import 'package:flclashx/common/common.dart';
 import 'package:flclashx/enum/enum.dart';
-import 'package:flclashx/models/selector.dart';
+import 'package:flclashx/models/models.dart';
 import 'package:flclashx/providers/providers.dart';
 import 'package:flclashx/state.dart';
 import 'package:flclashx/widgets/widgets.dart';
@@ -107,13 +107,16 @@ class _DayNightSkyConsoleCard extends ConsumerWidget {
     final backgroundUrl = ref.watch(backgroundUrlProvider);
     final hasCustomBackground =
         backgroundUrl != null && backgroundUrl.isNotEmpty;
+    final useCustomBackground = hasCustomBackground && !ignoreCustomBackground;
 
     final previewPhase = resolveDayNightSkyPhase(
       isRunning: isRunning,
       pendingTarget: pendingTarget,
       mode: skyMode,
     );
-    final statusText = _statusLabel(skyMode, previewPhase);
+    final statusText = useCustomBackground
+        ? appLocalizations.themeSkyStatusCustomBgActive
+        : _statusLabel(skyMode, previewPhase);
     final dotColor = _statusDotColor(previewPhase);
     final colorScheme = context.colorScheme;
     final hairline = freedomNetHairlineColor(colorScheme);
@@ -340,41 +343,49 @@ class _SkyModeOptionCard extends StatelessWidget {
     final fg =
         selected ? colorScheme.onPrimaryContainer : colorScheme.onSurfaceVariant;
 
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(12),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 10),
-          decoration: BoxDecoration(
-            color: bg,
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(
-              color: borderColor,
-              width: selected ? 1.4 : 1.0,
+    return Semantics(
+      container: true,
+      button: true,
+      selected: selected,
+      label: label,
+      excludeSemantics: true,
+      onTap: onTap,
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(12),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 10),
+            decoration: BoxDecoration(
+              color: bg,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color: borderColor,
+                width: selected ? 1.4 : 1.0,
+              ),
             ),
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(
-                icon,
-                size: 18,
-                color: selected ? colorScheme.primary : fg,
-              ),
-              const SizedBox(height: 5),
-              Text(
-                label,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                textAlign: TextAlign.center,
-                style: context.textTheme.labelMedium?.copyWith(
-                  color: fg,
-                  fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  icon,
+                  size: 18,
+                  color: selected ? colorScheme.primary : fg,
                 ),
-              ),
-            ],
+                const SizedBox(height: 5),
+                Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.center,
+                  style: context.textTheme.labelMedium?.copyWith(
+                    color: fg,
+                    fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -387,11 +398,19 @@ class _SkyAtmosphereCard extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final (glassPreset, skyAmbientAnimation) = ref.watch(
+    final (glassPreset, skyAmbientAnimation, ignoreCustomBackground) = ref.watch(
       themeSettingProvider.select(
-        (state) => (state.glassPreset, state.skyAmbientAnimation),
+        (state) => (
+          state.glassPreset,
+          state.skyAmbientAnimation,
+          state.ignoreCustomBackground,
+        ),
       ),
     );
+    final backgroundUrl = ref.watch(backgroundUrlProvider);
+    final useCustomBackground = backgroundUrl != null &&
+        backgroundUrl.isNotEmpty &&
+        !ignoreCustomBackground;
     final colorScheme = context.colorScheme;
     final hairline = freedomNetHairlineColor(colorScheme);
 
@@ -427,110 +446,183 @@ class _SkyAtmosphereCard extends ConsumerWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Text(
-              appLocalizations.themeGlassPresetLabel,
-              style: context.textTheme.titleSmall?.copyWith(
-                color: colorScheme.onSurfaceVariant,
-              ),
-            ),
-            const SizedBox(height: 10),
-            Container(
-              padding: const EdgeInsets.all(4),
-              decoration: BoxDecoration(
-                color: colorScheme.surfaceContainerHigh.withValues(alpha: 0.56),
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: hairline),
-              ),
-              child: Row(
-                spacing: 4,
-                children: [
-                  for (final item in presets)
-                    Expanded(
-                      child: Material(
-                        color: Colors.transparent,
-                        child: InkWell(
-                          key: item.key,
-                          borderRadius: BorderRadius.circular(9),
-                          onTap: () {
-                            ref
-                                .read(themeSettingProvider.notifier)
-                                .updateState(
-                                  (state) => state.copyWith(
-                                    glassPreset: item.preset,
-                                  ),
-                                );
-                          },
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(vertical: 8),
-                            alignment: Alignment.center,
-                            decoration: BoxDecoration(
-                              color: glassPreset == item.preset
-                                  ? colorScheme.primaryContainer
-                                  : Colors.transparent,
-                              borderRadius: BorderRadius.circular(9),
-                            ),
-                            child: Text(
-                              item.label,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: context.textTheme.labelMedium?.copyWith(
-                                color: glassPreset == item.preset
-                                    ? colorScheme.onPrimaryContainer
-                                    : colorScheme.onSurfaceVariant,
-                                fontWeight: glassPreset == item.preset
-                                    ? FontWeight.w700
-                                    : FontWeight.w500,
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 14),
-            Row(
-              children: [
-                Icon(
-                  Icons.air_rounded,
-                  size: 20,
-                  color: colorScheme.onSurfaceVariant,
+            if (useCustomBackground) ...[
+              Container(
+                key: const ValueKey('theme-atmosphere-custom-bg-hint'),
+                margin: const EdgeInsets.only(bottom: 10),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                decoration: BoxDecoration(
+                  color: colorScheme.surfaceContainerHigh.withValues(alpha: 0.56),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: hairline),
                 ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        appLocalizations.themeSkyAmbientAnimation,
-                        style: context.textTheme.titleSmall?.copyWith(
-                          color: colorScheme.onSurfaceVariant,
-                        ),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        appLocalizations.themeSkyAmbientAnimationDesc,
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.info_outline_rounded,
+                      size: 16,
+                      color: colorScheme.onSurfaceVariant,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        appLocalizations.themeAtmosphereCustomBgHint,
                         style: context.textTheme.bodySmall?.copyWith(
                           color: colorScheme.onSurfaceVariant,
                         ),
                       ),
-                    ],
-                  ),
+                    ),
+                  ],
                 ),
-                const SizedBox(width: 12),
-                Switch(
-                  key: const ValueKey('theme-sky-ambient-animation-switch'),
-                  value: skyAmbientAnimation,
-                  onChanged: (value) {
-                    ref.read(themeSettingProvider.notifier).updateState(
-                          (state) => state.copyWith(
-                            skyAmbientAnimation: value,
+              ),
+            ],
+            IgnorePointer(
+              ignoring: useCustomBackground,
+              child: AnimatedOpacity(
+                duration: const Duration(milliseconds: 180),
+                opacity: useCustomBackground ? 0.45 : 1.0,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Text(
+                      appLocalizations.themeGlassPresetLabel,
+                      style: context.textTheme.titleSmall?.copyWith(
+                        color: colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    Container(
+                      padding: const EdgeInsets.all(4),
+                      decoration: BoxDecoration(
+                        color: colorScheme.surfaceContainerHigh
+                            .withValues(alpha: 0.56),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: hairline),
+                      ),
+                      child: Row(
+                        spacing: 4,
+                        children: [
+                          for (final item in presets)
+                            Expanded(
+                              child: Semantics(
+                                key: item.key,
+                                container: true,
+                                button: true,
+                                selected: glassPreset == item.preset,
+                                enabled: !useCustomBackground,
+                                label: item.label,
+                                excludeSemantics: true,
+                                onTap: useCustomBackground
+                                    ? null
+                                    : () {
+                                        ref
+                                            .read(themeSettingProvider.notifier)
+                                            .updateState(
+                                              (state) => state.copyWith(
+                                                glassPreset: item.preset,
+                                              ),
+                                            );
+                                      },
+                                child: Material(
+                                  color: Colors.transparent,
+                                  child: InkWell(
+                                    borderRadius: BorderRadius.circular(9),
+                                    onTap: useCustomBackground
+                                        ? null
+                                        : () {
+                                            ref
+                                                .read(themeSettingProvider
+                                                    .notifier)
+                                                .updateState(
+                                                  (state) => state.copyWith(
+                                                    glassPreset: item.preset,
+                                                  ),
+                                                );
+                                          },
+                                    child: Container(
+                                      padding: const EdgeInsets.symmetric(
+                                          vertical: 8),
+                                      alignment: Alignment.center,
+                                      decoration: BoxDecoration(
+                                        color: glassPreset == item.preset
+                                            ? colorScheme.primaryContainer
+                                            : Colors.transparent,
+                                        borderRadius: BorderRadius.circular(9),
+                                      ),
+                                      child: Text(
+                                        item.label,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: context.textTheme.labelMedium
+                                            ?.copyWith(
+                                          color: glassPreset == item.preset
+                                              ? colorScheme.onPrimaryContainer
+                                              : colorScheme.onSurfaceVariant,
+                                          fontWeight: glassPreset == item.preset
+                                              ? FontWeight.w700
+                                              : FontWeight.w500,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                    Row(
+                      children: [
+                        Icon(
+                          Icons.air_rounded,
+                          size: 20,
+                          color: colorScheme.onSurfaceVariant,
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                appLocalizations.themeSkyAmbientAnimation,
+                                style: context.textTheme.titleSmall?.copyWith(
+                                  color: colorScheme.onSurfaceVariant,
+                                ),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                appLocalizations.themeSkyAmbientAnimationDesc,
+                                style: context.textTheme.bodySmall?.copyWith(
+                                  color: colorScheme.onSurfaceVariant,
+                                ),
+                              ),
+                            ],
                           ),
-                        );
-                  },
+                        ),
+                        const SizedBox(width: 12),
+                        Switch(
+                          key: const ValueKey(
+                              'theme-sky-ambient-animation-switch'),
+                          value: skyAmbientAnimation,
+                          onChanged: useCustomBackground
+                              ? null
+                              : (value) {
+                                  ref
+                                      .read(themeSettingProvider.notifier)
+                                      .updateState(
+                                        (state) => state.copyWith(
+                                          skyAmbientAnimation: value,
+                                        ),
+                                      );
+                                },
+                        ),
+                      ],
+                    ),
+                  ],
                 ),
-              ],
+              ),
             ),
           ],
         ),
@@ -564,7 +656,7 @@ class _PrimaryColorItemState extends ConsumerState<_PrimaryColorItem> {
           (state) => state.copyWith(
             primaryColors: defaultPrimaryColors,
             primaryColor: defaultPrimaryColor,
-            schemeVariant: DynamicSchemeVariant.tonalSpot,
+            schemeVariant: defaultThemeProps.schemeVariant,
           ),
         );
   }
@@ -666,6 +758,7 @@ class _PrimaryColorItemState extends ConsumerState<_PrimaryColorItem> {
           b: state.primaryColors,
           c: state.schemeVariant,
           d: state.primaryColor == defaultPrimaryColor &&
+              state.schemeVariant == defaultThemeProps.schemeVariant &&
               intListEquality.equals(state.primaryColors, defaultPrimaryColors),
         ),
       ),
@@ -727,6 +820,8 @@ class _PrimaryColorItemState extends ConsumerState<_PrimaryColorItem> {
               ),
             if (_removablePrimaryColor == null && !isEquals)
               IconButton.filledTonal(
+                key: const ValueKey('theme-accent-reset-button'),
+                tooltip: appLocalizations.reset,
                 iconSize: 20,
                 padding: const EdgeInsets.all(4),
                 visualDensity: VisualDensity.compact,
@@ -935,6 +1030,12 @@ class _PaletteDialog extends StatefulWidget {
 
 class _PaletteDialogState extends State<_PaletteDialog> {
   final _controller = ValueNotifier<ui.Color>(Colors.transparent);
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) => CommonDialog(

@@ -1662,6 +1662,9 @@ class MessageLookup extends MessageLookupByLibrary {
     "textScale": MessageLookupByLibrary.simpleMessage("文本缩放"),
     "thanks": MessageLookupByLibrary.simpleMessage("感谢贡献"),
     "theme": MessageLookupByLibrary.simpleMessage("主题"),
+    "themeAtmosphereCustomBgHint": MessageLookupByLibrary.simpleMessage(
+      "当前正在使用订阅自定义壁纸，开启上方「优先使用昼夜天象背景」后可调节毛玻璃与流云动效",
+    ),
     "themeAtmosphereSection": MessageLookupByLibrary.simpleMessage("天空质感与动效"),
     "themeColor": MessageLookupByLibrary.simpleMessage("主题色彩"),
     "themeCustomBgNotice": MessageLookupByLibrary.simpleMessage("当前订阅附带自定义壁纸"),
@@ -1693,6 +1696,9 @@ class MessageLookup extends MessageLookupByLibrary {
     ),
     "themeSkyStatusConnecting": MessageLookupByLibrary.simpleMessage(
       "晨曦微光 · 正在连接",
+    ),
+    "themeSkyStatusCustomBgActive": MessageLookupByLibrary.simpleMessage(
+      "订阅壁纸生效中 · 同步界面明暗",
     ),
     "themeSkyStatusDayConnected": MessageLookupByLibrary.simpleMessage(
       "晴朗白天 · 代理已连接",
@@ -1771,6 +1777,31 @@ class MessageLookup extends MessageLookupByLibrary {
     "tunStatusStopping": MessageLookupByLibrary.simpleMessage("正在关闭…"),
     "tunStatusUnknown": MessageLookupByLibrary.simpleMessage("状态未知"),
     "tunStatusWaiting": MessageLookupByLibrary.simpleMessage("代理启动后启用"),
+    "tvSyncApplying": MessageLookupByLibrary.simpleMessage("正在接收手机发来的配置…"),
+    "tvSyncCouldNotGetIp": MessageLookupByLibrary.simpleMessage(
+      "无法获取局域网 IP 地址",
+    ),
+    "tvSyncFailed": MessageLookupByLibrary.simpleMessage("添加配置失败"),
+    "tvSyncScanQrHint": MessageLookupByLibrary.simpleMessage("请使用手机相机扫描二维码"),
+    "tvSyncSuccess": MessageLookupByLibrary.simpleMessage("配置添加成功"),
+    "tvSyncWebApplying": MessageLookupByLibrary.simpleMessage("设备正在导入订阅配置…"),
+    "tvSyncWebConnectionLost": MessageLookupByLibrary.simpleMessage(
+      "与接收端设备的连接已断开",
+    ),
+    "tvSyncWebEmptyUrl": MessageLookupByLibrary.simpleMessage("请先粘贴订阅链接"),
+    "tvSyncWebErrorPrefix": MessageLookupByLibrary.simpleMessage("❌ 导入失败："),
+    "tvSyncWebHeading": MessageLookupByLibrary.simpleMessage("导入订阅配置"),
+    "tvSyncWebPageTitle": MessageLookupByLibrary.simpleMessage("自由云 — 扫码导入订阅"),
+    "tvSyncWebPaste": MessageLookupByLibrary.simpleMessage("粘贴"),
+    "tvSyncWebReceived": MessageLookupByLibrary.simpleMessage("设备已收到链接，正在处理…"),
+    "tvSyncWebRejected": MessageLookupByLibrary.simpleMessage("设备拒绝了该订阅链接"),
+    "tvSyncWebSend": MessageLookupByLibrary.simpleMessage("发送"),
+    "tvSyncWebSending": MessageLookupByLibrary.simpleMessage("正在发送…"),
+    "tvSyncWebSubtitle": MessageLookupByLibrary.simpleMessage(
+      "粘贴订阅链接并点击「发送」，配置将自动同步到当前设备。",
+    ),
+    "tvSyncWebSuccess": MessageLookupByLibrary.simpleMessage("✅ 导入完成！订阅已添加到设备"),
+    "tvSyncWebUnreachable": MessageLookupByLibrary.simpleMessage("无法连接到接收端设备"),
     "twoColumns": MessageLookupByLibrary.simpleMessage("两列"),
     "unableToUpdateCurrentProfileDesc": MessageLookupByLibrary.simpleMessage(
       "无法更新当前配置文件",

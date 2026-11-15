@@ -348,13 +348,11 @@ class ApplicationState extends ConsumerState<Application> {
                 runTimeProvider.select((state) => state != null),
               );
               final pendingTarget = ref.watch(statusSwitchPendingProvider);
-              final effectiveThemeMode = useCustomBackground
-                  ? themeProps.themeMode
-                  : resolveDayNightThemeMode(
-                      isRunning: isRunning,
-                      pendingTarget: pendingTarget,
-                      mode: themeProps.skyMode,
-                    );
+              final effectiveThemeMode = resolveDayNightThemeMode(
+                isRunning: isRunning,
+                pendingTarget: pendingTarget,
+                mode: themeProps.skyMode,
+              );
               return MaterialApp(
                 debugShowCheckedModeBanner: false,
                 navigatorKey: globalState.navigatorKey,
