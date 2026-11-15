@@ -2186,3 +2186,12 @@ Windows 普通免安装包已从上述 `863298c7` 干净源码完成重编，交
 - 先冻结C1-C8矩阵；4条富文本缺陷和2条图片资源缺陷均有真实Red→Green。最终目标58 PASS、全Flutter **591 PASS/0 FAIL/0 SKIP**（97.33秒），定向analyze无问题，Windows目标debug UI资源编译exit0；本次diff行290/293、分支104/111。四种真实组件截图已查看，仍是合成内容而非当前客户端实机。
 - 源码、测试与本节随本次development本地提交保存；详细命令、覆盖率、边界和审查在`engineering/testing/plan-card-rich-content-2026-10-11.md`。未推送、未PR/合并、未打新可执行包、未部署，旧CI不冒充本提交结果。
 - NOT RUN：完整客户端/真实图片/TLS设备与兑换、原生解码中故障注入、Core/Agent/Helper和各平台实机。没有启动候选应用、改代理/TUN或消费卡码；如需让运行中的客户端包含新展示，应另从精确提交构建预览并遵守启动环境授权。
+
+## 昼夜天象主题控制台、简洁模式切换与大陆汉化增量（2026-11-15）
+
+- 分支与提交：`development` 本地提交 `0db4890d`（`0db4890d43b6e20ec0dc7b57f22761c7184be7d8`，按约定保留本地未推送、未建 PR）。既有工作区残留（`test/views/dashboard_render_test.dart`、`coverage/`、`engineering/previews/`、`engineering/testing/`、`stash@{0}`）均保持原样，未纳入提交。
+- 昼夜天象主题控制台（`lib/views/theme.dart`、`lib/enum/enum.dart`、`lib/models/config.dart`、`lib/application.dart`、`lib/widgets/day_night_sky_background.dart`、`lib/widgets/scaffold.dart`、`lib/widgets/card.dart`、`lib/views/proxies/overview/overview.dart`）：移除旧“主题模式（自动/浅色/深色）”、“纯黑模式”及主题页内 New look 开关；改为 84px 实时天象预览卡与状态胶囊、3 种天象联动模式（`DayNightSkyMode`：`followConnection` 随连接切换 / `alwaysNight` 常驻星夜 / `alwaysDay` 常驻晴空）、订阅自定义壁纸覆写开关（`ignoreCustomBackground`）、3 档毛玻璃通透度预设（`DayNightGlassPreset`：`airy` / `balanced` / `solid` 驱动 `CommonScaffold` / `CommonCard` / 吸顶栏 alpha）、常驻天象微动效开关（`skyAmbientAnimation`：关闭后先平滑完成过渡再降至 0 fps 停表）、紧凑点缀色块与可折叠文本缩放；`ThemeProps` 兼容旧 JSON 反序列化，且未改动任何现有代理总开关 UI（`EarthProxySwitch` / `TactileProxySwitch` / `FloatingProxyDock` / `StartButton`）。
+- 仪表盘“简洁模式”胶囊与大陆汉化（`lib/views/dashboard/dashboard.dart`、`lib/views/dashboard/widgets/hero_connect.dart`、`arb/intl_*.arb`、`lib/l10n/*`）：在 `DashboardView` 顶部 AppBar `actions` 增加 `ConciseDashboardModeButton` / `ConciseDashboardModePill`（`简洁模式`），以高亮状态切换 `HeroConnect` 与经典网格、编辑模式自动隐藏，并在超窄高缩放（如 `320px @ 2.0x`）下自动折叠文字以防 AppBar 溢出；补全 `zh_CN` 缺失翻译并替换 `HeroConnect` 硬编码俄语购买/续费文案为 `appLocalizations`。
+- 验证结果：
+  - PASS：最终编辑后执行 `flutter test --no-pub test/views/day_night_theme_console_and_concise_dashboard_tdd_test.dart test/widgets/day_night_sky_background_tdd_test.dart test/views/dashboard_widgets_test.dart test/views/health_check_view_test.dart test/views/novice_expert_navigation_test.dart test/views/freedomnet_code_review_tdd_test.dart test/support/native_auth_and_support_ui_test.dart` 共 **62/62 PASS**（0 FAIL / 0 SKIP，含新增 TDD `THM-01`..`THM-05`）；目标 11 个修改/新增 Dart 文件执行 `dart analyze --fatal-warnings` 退出码 0（0 error、0 warning，28 条既有 `info`）。
+  - NOT RUN：Windows 实机 `FlClashX.exe` 启动与真实窗口渲染、全仓其余测试与 Go Core 测试、`.zip` 预览包构建及远端推送/CI。
