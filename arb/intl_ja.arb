@@ -534,7 +534,7 @@
   "purchaseUnsupportedAccount": "ギフトカードの引き換えには一般ユーザーアカウントをご利用ください。",
   "purchaseLogoutRemoteError": "この端末からログアウトしました。サーバー側のログアウト確認はできませんでした。",
   "purchaseCodeFormatError": "8〜32文字の半角英数字でコードを入力してください。",
-  "purchaseChannelError": "ギフトカードストアの情報を読み込めませんでした。下記のサポート窓口よりお問い合わせいただけます。",
+  "purchaseChannelError": "ギフトカードストアの情報を読み込めませんでした。下のオンラインサポートからお問い合わせいただけます。",
   "purchaseAvailablePlans": "購入可能なプラン",
   "purchasePlansDescription": "価格はサイトの表示額です。「購入する」からセルフストアでギフトカードを取得し、ここで引き換えてください。",
   "purchasePlansLoading": "プランを読み込み中…",
@@ -1442,7 +1442,7 @@
   "purchaseEmailExistsError": "このメールアドレスは登録済みです。「ログイン」に切り替えてください。",
   "purchaseRegistrationClosedError": "現在、新規登録は停止されています。",
   "purchaseRegisterWebRequiredError": "メール認証またはCAPTCHAが有効です。下の「Webサイトでアカウント作成」をご利用ください。",
-  "purchaseGetCardDescription": "セルフストア、オンラインサポート、または下記の WeChat からギフトカードの購入・相談ができます。",
+  "purchaseGetCardDescription": "セルフサービスストアまたは24時間オンラインサポートからギフトカードの購入・ご相談が可能です。",
   "purchaseClipboardEmpty": "クリップボードに有効な引き換えコードが見つかりません。",
   "purchaseEmailDomainError": "このメールドメインは利用できません。別のメールアドレスをお試しください。",
   "purchaseGmailAliasError": "Gmail エイリアス（+ 付き）は利用できません。通常のアドレスをご使用ください。",
@@ -1590,5 +1590,10 @@
   "tvSyncWebSuccess": "✅ 完了！サブスクリプションを追加しました",
   "tvSyncWebErrorPrefix": "❌ エラー: ",
   "tvSyncWebReceived": "端末がリンクを受信しました…",
-  "tvSyncWebConnectionLost": "端末との接続が切断されました"
+  "tvSyncWebConnectionLost": "端末との接続が切断されました",
+  "purchaseSafetyTitle": "公式安全購入保証 · 24時間365日有人サポート",
+  "purchaseSafetyBody": "通信のプライバシーと安全のため、ご購入は直接サポートまでご連絡ください。",
+  "purchaseSafetyTagOfficial": "公式直営",
+  "purchaseSafetyTagFunds": "決済安全保護",
+  "purchaseSafetyTag24h": "24時間迅速対応"
 }

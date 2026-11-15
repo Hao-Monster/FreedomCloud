@@ -1193,7 +1193,7 @@ class MessageLookup extends MessageLookupByLibrary {
     ),
     "purchaseCenterTitle": MessageLookupByLibrary.simpleMessage("礼品卡兑换"),
     "purchaseChannelError": MessageLookupByLibrary.simpleMessage(
-      "礼品卡商店信息加载失败，仍可通过下方微信联系客服。",
+      "礼品卡商店信息加载失败，仍可通过下方在线客服获取协助。",
     ),
     "purchaseCheck": MessageLookupByLibrary.simpleMessage("查询权益"),
     "purchaseChecking": MessageLookupByLibrary.simpleMessage("正在查询…"),
@@ -1256,7 +1256,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "purchaseGenericError": MessageLookupByLibrary.simpleMessage("请求失败，请重试。"),
     "purchaseGetCard": MessageLookupByLibrary.simpleMessage("获取礼品卡"),
     "purchaseGetCardDescription": MessageLookupByLibrary.simpleMessage(
-      "可通过自助发卡商店、在线客服或备用微信购买礼品卡与获取协助。",
+      "可通过自助发卡商店或在线人工客服购买礼品卡与获取协助。",
     ),
     "purchaseGmailAliasError": MessageLookupByLibrary.simpleMessage(
       "当前站点不支持 Gmail 别名邮箱（含 + 号），请使用主邮箱地址。",
@@ -1437,6 +1437,15 @@ class MessageLookup extends MessageLookupByLibrary {
     "purchaseResetTraffic": MessageLookupByLibrary.simpleMessage("重置已用流量"),
     "purchaseResettingPassword": MessageLookupByLibrary.simpleMessage("重置中..."),
     "purchaseRestoring": MessageLookupByLibrary.simpleMessage("正在恢复账户…"),
+    "purchaseSafetyBody": MessageLookupByLibrary.simpleMessage(
+      "为了你的网络隐私与安全，购买请直接联系客服即可",
+    ),
+    "purchaseSafetyTag24h": MessageLookupByLibrary.simpleMessage("全天候秒级响应"),
+    "purchaseSafetyTagFunds": MessageLookupByLibrary.simpleMessage("资金安全护航"),
+    "purchaseSafetyTagOfficial": MessageLookupByLibrary.simpleMessage("官方直营防伪"),
+    "purchaseSafetyTitle": MessageLookupByLibrary.simpleMessage(
+      "官方安全购卡保障 · 7×24 小时人工在线",
+    ),
     "purchaseSendCode": MessageLookupByLibrary.simpleMessage("获取验证码"),
     "purchaseSendCodeCooldown": m73,
     "purchaseSendingCode": MessageLookupByLibrary.simpleMessage("发送中..."),

@@ -1194,7 +1194,7 @@ class MessageLookup extends MessageLookupByLibrary {
     ),
     "purchaseCenterTitle": MessageLookupByLibrary.simpleMessage("ギフトカード引き換え"),
     "purchaseChannelError": MessageLookupByLibrary.simpleMessage(
-      "ギフトカードストアの情報を読み込めませんでした。下記のサポート窓口よりお問い合わせいただけます。",
+      "ギフトカードストアの情報を読み込めませんでした。下のオンラインサポートからお問い合わせいただけます。",
     ),
     "purchaseCheck": MessageLookupByLibrary.simpleMessage("特典を確認"),
     "purchaseChecking": MessageLookupByLibrary.simpleMessage("確認中…"),
@@ -1261,7 +1261,7 @@ class MessageLookup extends MessageLookupByLibrary {
     ),
     "purchaseGetCard": MessageLookupByLibrary.simpleMessage("ギフトカードを入手"),
     "purchaseGetCardDescription": MessageLookupByLibrary.simpleMessage(
-      "セルフストア、オンラインサポート、または下記の WeChat からギフトカードの購入・相談ができます。",
+      "セルフサービスストアまたは24時間オンラインサポートからギフトカードの購入・ご相談が可能です。",
     ),
     "purchaseGmailAliasError": MessageLookupByLibrary.simpleMessage(
       "Gmail エイリアス（+ 付き）は利用できません。通常のアドレスをご使用ください。",
@@ -1468,6 +1468,15 @@ class MessageLookup extends MessageLookupByLibrary {
       "リセット中...",
     ),
     "purchaseRestoring": MessageLookupByLibrary.simpleMessage("アカウントを復元中…"),
+    "purchaseSafetyBody": MessageLookupByLibrary.simpleMessage(
+      "通信のプライバシーと安全のため、ご購入は直接サポートまでご連絡ください。",
+    ),
+    "purchaseSafetyTag24h": MessageLookupByLibrary.simpleMessage("24時間迅速対応"),
+    "purchaseSafetyTagFunds": MessageLookupByLibrary.simpleMessage("決済安全保護"),
+    "purchaseSafetyTagOfficial": MessageLookupByLibrary.simpleMessage("公式直営"),
+    "purchaseSafetyTitle": MessageLookupByLibrary.simpleMessage(
+      "公式安全購入保証 · 24時間365日有人サポート",
+    ),
     "purchaseSendCode": MessageLookupByLibrary.simpleMessage("コードを送信"),
     "purchaseSendCodeCooldown": m73,
     "purchaseSendingCode": MessageLookupByLibrary.simpleMessage("送信中..."),

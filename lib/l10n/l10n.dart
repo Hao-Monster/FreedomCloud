@@ -5079,10 +5079,10 @@ class AppLocalizations {
     );
   }
 
-  /// `Buy a gift card through the self-service store, live support, or backup WeChat contacts below.`
+  /// `Buy a gift card or get assistance through the self-service store or 24/7 live support.`
   String get purchaseGetCardDescription {
     return Intl.message(
-      'Buy a gift card through the self-service store, live support, or backup WeChat contacts below.',
+      'Buy a gift card or get assistance through the self-service store or 24/7 live support.',
       name: 'purchaseGetCardDescription',
       desc: '',
       args: [],
@@ -5254,10 +5254,10 @@ class AppLocalizations {
     );
   }
 
-  /// `Gift card store information could not be loaded. You can still contact support below.`
+  /// `Gift card store information could not be loaded. You can still contact live support below.`
   String get purchaseChannelError {
     return Intl.message(
-      'Gift card store information could not be loaded. You can still contact support below.',
+      'Gift card store information could not be loaded. You can still contact live support below.',
       name: 'purchaseChannelError',
       desc: '',
       args: [],
@@ -9998,6 +9998,56 @@ class AppLocalizations {
     return Intl.message(
       'Connection to device lost',
       name: 'tvSyncWebConnectionLost',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Official Secure Purchase · 24/7 Live Support`
+  String get purchaseSafetyTitle {
+    return Intl.message(
+      'Official Secure Purchase · 24/7 Live Support',
+      name: 'purchaseSafetyTitle',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `For your network privacy and security, please contact live support directly to purchase.`
+  String get purchaseSafetyBody {
+    return Intl.message(
+      'For your network privacy and security, please contact live support directly to purchase.',
+      name: 'purchaseSafetyBody',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Official Direct`
+  String get purchaseSafetyTagOfficial {
+    return Intl.message(
+      'Official Direct',
+      name: 'purchaseSafetyTagOfficial',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Payment Safety`
+  String get purchaseSafetyTagFunds {
+    return Intl.message(
+      'Payment Safety',
+      name: 'purchaseSafetyTagFunds',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `24/7 Fast Reply`
+  String get purchaseSafetyTag24h {
+    return Intl.message(
+      '24/7 Fast Reply',
+      name: 'purchaseSafetyTag24h',
       desc: '',
       args: [],
     );

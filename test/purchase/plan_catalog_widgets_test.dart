@@ -4,7 +4,6 @@ import 'package:flclashx/models/xboard.dart';
 import 'package:flclashx/services/xboard_api.dart';
 import 'package:flclashx/views/purchase/center.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -66,7 +65,8 @@ void main() {
     await tester.pump();
   }
 
-  testWidgets('guests see offers and prices before login with WeChat preserved',
+  testWidgets(
+      'guests see offers and prices before login with safety support card preserved',
       (tester) async {
     await showCenter(tester, _Manager());
     expect(find.text('Travel plan'), findsOneWidget);
@@ -80,9 +80,10 @@ void main() {
     expect(find.text('Speed limit: 200 Mbps'), findsOneWidget);
     expect(find.text('Device limit: 3'), findsOneWidget);
     expect(find.byKey(const Key('purchase-login')), findsOneWidget);
-    expect(find.text('WeChat ID: ChasingDream_2021'), findsOneWidget);
-    expect(find.text('WeChat ID: dxm_qa'), findsOneWidget);
-    expect(find.text('Copy'), findsNWidgets(2));
+    expect(find.byKey(const Key('purchase-safety-support-card')),
+        findsOneWidget);
+    expect(find.textContaining('ChasingDream_2021'), findsNothing);
+    expect(find.textContaining('dxm_qa'), findsNothing);
     expect(find.text('Open gift card store'), findsOneWidget);
     expect(
         tester.getTopLeft(find.text('Travel plan')).dy,
@@ -101,8 +102,9 @@ void main() {
     expect(find.byKey(const Key('purchase-sync')), findsOneWidget);
     expect(find.byKey(const Key('purchase-logout')), findsOneWidget);
     expect(find.text('Redemption history'), findsOneWidget);
-    expect(find.text('WeChat ID: ChasingDream_2021'), findsOneWidget);
-    expect(find.text('WeChat ID: dxm_qa'), findsOneWidget);
+    expect(find.byKey(const Key('purchase-safety-support-card')),
+        findsOneWidget);
+    expect(find.textContaining('ChasingDream_2021'), findsNothing);
   });
 
   for (final failsToOpen in [false, true]) {
@@ -132,7 +134,8 @@ void main() {
       expect(find.text('Could not open the page. Please try again.'),
           failsToOpen ? findsOneWidget : findsNothing);
       expect(find.textContaining('Private launcher failure'), findsNothing);
-      expect(find.text('WeChat ID: dxm_qa'), findsOneWidget);
+      expect(find.byKey(const Key('purchase-safety-support-card')),
+          findsOneWidget);
       expect(find.byKey(const Key('purchase-login')), findsOneWidget);
       expect(tester.takeException(), isNull);
     });
@@ -146,7 +149,8 @@ void main() {
     await showCenter(tester, manager);
     expect(find.byKey(const Key('purchase-plans-loading')), findsOneWidget);
     expect(find.byKey(const Key('purchase-login')), findsOneWidget);
-    expect(find.text('WeChat ID: dxm_qa'), findsOneWidget);
+    expect(find.byKey(const Key('purchase-safety-support-card')),
+        findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
@@ -163,7 +167,8 @@ void main() {
     expect(find.text('Plans could not be loaded. Please try again.'),
         findsOneWidget);
     expect(find.byKey(const Key('purchase-login')), findsOneWidget);
-    expect(find.text('WeChat ID: dxm_qa'), findsOneWidget);
+    expect(find.byKey(const Key('purchase-safety-support-card')),
+        findsOneWidget);
     await tester.tap(find.byKey(const Key('purchase-plans-retry')));
     await tester.pump();
     expect(manager.planLoads, 1);
@@ -177,7 +182,8 @@ void main() {
     await showCenter(tester, manager);
     expect(find.text('No plans are currently available.'), findsOneWidget);
     expect(find.byKey(const Key('purchase-login')), findsOneWidget);
-    expect(find.text('WeChat ID: ChasingDream_2021'), findsOneWidget);
+    expect(find.byKey(const Key('purchase-safety-support-card')),
+        findsOneWidget);
   });
 
   testWidgets('wide layout places two offers side by side', (tester) async {
@@ -188,28 +194,19 @@ void main() {
     expect(first.right, lessThan(second.left));
   });
 
-  testWidgets('both existing WeChat copy actions work with offers visible',
+  testWidgets('safety support trust card opens live support sheet with offers visible',
       (tester) async {
-    final copied = <String>[];
-    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-        .setMockMethodCallHandler(SystemChannels.platform, (call) async {
-      if (call.method == 'Clipboard.setData') {
-        copied.add((call.arguments as Map)['text'] as String);
-      }
-      return null;
-    });
-    addTearDown(() => TestDefaultBinaryMessengerBinding
-        .instance.defaultBinaryMessenger
-        .setMockMethodCallHandler(SystemChannels.platform, null));
     await showCenter(tester, _Manager());
-    final copyButtons = find.widgetWithText(TextButton, 'Copy');
-    for (var index = 0; index < 2; index++) {
-      await tester.ensureVisible(copyButtons.at(index));
-      await tester.pumpAndSettle();
-      await tester.tap(copyButtons.at(index));
-      await tester.pumpAndSettle();
-    }
-    expect(copied, ['ChasingDream_2021', 'dxm_qa']);
+    final safetyCard = find.byKey(const Key('purchase-safety-support-card'));
+    await tester.ensureVisible(safetyCard);
+    await tester.pumpAndSettle();
+    await tester.tap(safetyCard);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('support-chat-sheet')), findsOneWidget);
+    expect(find.byKey(const Key('support-backup-wechat-toggle')), findsNothing);
+    await tester.tap(find.byKey(const Key('support-close')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('support-chat-sheet')), findsNothing);
     expect(find.text('Travel plan'), findsOneWidget);
   });
 
@@ -236,7 +233,8 @@ void main() {
     expect(first.bottom, lessThan(second.top));
     await tester.ensureVisible(find.byKey(const Key('purchase-login')));
     await tester.pumpAndSettle();
-    await tester.ensureVisible(find.text('WeChat ID: dxm_qa'));
+    await tester
+        .ensureVisible(find.byKey(const Key('purchase-safety-support-card')));
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
   });

@@ -185,7 +185,8 @@ void main() {
       }
       for (final phase in ['', '-support']) {
         if (phase.isNotEmpty) {
-          await tester.ensureVisible(find.text('微信号: dxm_qa'));
+          await tester.ensureVisible(
+              find.byKey(const Key('purchase-safety-support-card')));
           await tester.pumpAndSettle();
           expect(tester.takeException(), isNull, reason: '$name$phase');
         }

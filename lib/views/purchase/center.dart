@@ -9,7 +9,6 @@ import 'package:flclashx/providers/purchase_support_provider.dart';
 import 'package:flclashx/services/xboard_api.dart';
 import 'package:flclashx/views/purchase/plan_catalog.dart';
 import 'package:flclashx/views/support/support_chat_sheet.dart';
-import 'package:flclashx/widgets/text.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
@@ -192,7 +191,6 @@ class _CatalogSnapshot {
 
 class _PurchaseCenterState extends State<PurchaseCenter>
     with WidgetsBindingObserver {
-  static const _wechatContacts = <String>['ChasingDream_2021', 'dxm_qa'];
   static const _preferredEmailDomains = <String>[
     'gmail.com',
     'qq.com',
@@ -286,7 +284,7 @@ class _PurchaseCenterState extends State<PurchaseCenter>
               retry: manager.loadPlans,
               openLink: _open,
               onBuyPlan: _handleBuyPlan,
-              onAcquirePlan: _showAcquireSheet,
+              onAcquirePlan: _handleAcquirePlan,
               buyingPlanId: snapshot.buyingPlanId,
               collapsibleDetails: true,
             ),
@@ -406,6 +404,9 @@ class _PurchaseCenterState extends State<PurchaseCenter>
 
   void _onManagerChanged({bool notifyState = true}) {
     _syncCatalogState();
+    if (widget.supportManager != null || _fallbackSupportHandle != null) {
+      syncSupportManagerWithPurchase(manager, _effectiveSupportManager);
+    }
     if (manager.code.isNotEmpty) {
       _lastNonEmptyManagerCode = manager.code;
     } else if (manager.receipt != null && _lastNonEmptyManagerCode.isNotEmpty) {
@@ -635,7 +636,10 @@ class _PurchaseCenterState extends State<PurchaseCenter>
     }
   }
 
-  Future<void> _openSupport({String? initialDraft}) async {
+  Future<void> _openSupport({
+    String? initialDraft,
+    String? autoSendMessage,
+  }) async {
     final locale = Localizations.localeOf(context).toString();
     final chatUrl = _purchaseChannels?.resolveChatwootWidgetUrl(locale: locale);
     final support = _effectiveSupportManager;
@@ -646,12 +650,25 @@ class _PurchaseCenterState extends State<PurchaseCenter>
       openLink: _open,
       externalWidgetUri: chatUrl,
       initialDraft: initialDraft,
-      wechatContacts: _wechatContacts,
+      autoSendMessage: autoSendMessage,
+      wechatContacts: const [],
       onRetryChannel: _isRealManager
-          ? () => manager.ensurePurchaseChannels(force: true)
+          ? () async {
+              await manager.ensurePurchaseChannels(
+                force: manager.purchaseChannels != null ||
+                    manager.channelError != null,
+              );
+              if (mounted) {
+                syncSupportManagerWithPurchase(manager, support);
+              }
+            }
           : null,
     );
   }
+
+  Future<void> _handleAcquirePlan(XboardPlanOffer plan) => _openSupport(
+        autoSendMessage: _buildPlanInquiryMessage(l, plan),
+      );
 
   Future<void> _handleBuyPlan(XboardPlanOffer plan) async {
     if (_buyingPlanId != null || _openingExternalLink) return;
@@ -673,12 +690,14 @@ class _PurchaseCenterState extends State<PurchaseCenter>
         await _open(targetUrl);
         return;
       }
-      await _showAcquireSheet(plan);
     } finally {
       _buyingPlanId = null;
       if (mounted) {
         _syncCatalogState();
       }
+    }
+    if (mounted) {
+      await _openSupport(autoSendMessage: _buildPlanInquiryMessage(l, plan));
     }
   }
 
@@ -723,14 +742,6 @@ class _PurchaseCenterState extends State<PurchaseCenter>
     }
   }
 
-  Future<void> _copyText(String value) async {
-    await Clipboard.setData(ClipboardData(text: value));
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(l.copySuccess)),
-    );
-  }
-
   Future<void> _pasteCode() async {
     final clip = await Clipboard.getData('text/plain');
     final raw = clip?.text ?? '';
@@ -758,33 +769,6 @@ class _PurchaseCenterState extends State<PurchaseCenter>
       targetContext,
       duration: const Duration(milliseconds: 220),
       curve: Curves.easeOutCubic,
-    );
-  }
-
-  Future<void> _showAcquireSheet(XboardPlanOffer plan) async {
-    if (_isRealManager && _resolvePlanStoreUrl(plan) == null) {
-      unawaited(
-        manager.ensurePurchaseChannels(force: manager.channelError != null),
-      );
-    }
-    final hasChatwoot = _purchaseChannels?.hasChatwoot ?? false;
-    await showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      useSafeArea: true,
-      showDragHandle: true,
-      builder: (sheetContext) => _AcquirePlanSheet(
-        plan: plan,
-        manager: manager,
-        wechatContacts: _wechatContacts,
-        openLink: widget.openLink,
-        onOpenSupport: hasChatwoot
-            ? (draft) {
-                Navigator.of(sheetContext).maybePop();
-                unawaited(_openSupport(initialDraft: draft));
-              }
-            : null,
-      ),
     );
   }
 
@@ -2542,48 +2526,10 @@ class _PurchaseCenterState extends State<PurchaseCenter>
             ),
           ],
           const SizedBox(height: 14),
-          Text(
-            l.purchaseBackupContactsLabel,
-            style: theme.textTheme.labelSmall?.copyWith(
-              color: colors.onSurfaceVariant,
-              fontWeight: FontWeight.w600,
-            ),
+          _SafetySupportTrustCard(
+            key: const Key('purchase-safety-support-card'),
+            onTap: _openSupport,
           ),
-          const SizedBox(height: 6),
-          for (final account in _wechatContacts)
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 4),
-              child: Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 8,
-                ),
-                decoration: BoxDecoration(
-                  color: colors.surfaceContainerHighest.withValues(alpha: 0.45),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Wrap(
-                  spacing: 12,
-                  runSpacing: 6,
-                  alignment: WrapAlignment.spaceBetween,
-                  crossAxisAlignment: WrapCrossAlignment.center,
-                  children: [
-                    SelectableText(
-                      '${l.wechatId}: $account',
-                      style: theme.textTheme.bodyMedium?.copyWith(
-                        fontFamily: FontFamily.jetBrainsMono.value,
-                        fontFamilyFallback: _cjkMonoFallback(theme),
-                      ),
-                    ),
-                    TextButton.icon(
-                      onPressed: () => _copyText(account),
-                      icon: const Icon(Icons.copy_rounded, size: 18),
-                      label: Text(l.copy),
-                    ),
-                  ],
-                ),
-              ),
-            ),
         ],
       ),
     );
@@ -2717,247 +2663,177 @@ String _formatPeriodLabel(AppLocalizations l, String period) =>
       _ => period,
     };
 
-class _AcquirePlanSheet extends StatefulWidget {
-  const _AcquirePlanSheet({
-    required this.plan,
-    required this.manager,
-    required this.wechatContacts,
-    required this.openLink,
-    this.onOpenSupport,
-  });
-
-  final XboardPlanOffer plan;
-  final PurchaseManager manager;
-  final List<String> wechatContacts;
-  final Future<void> Function(Uri) openLink;
-  final void Function(String inquiryText)? onOpenSupport;
-
-  @override
-  State<_AcquirePlanSheet> createState() => _AcquirePlanSheetState();
+String _buildPlanInquiryMessage(AppLocalizations l, XboardPlanOffer plan) {
+  final priceSummary = plan.prices
+      .map(
+        (price) =>
+            '${_formatPeriodLabel(l, price.period)} ${_formatMinorAmount(price.amount)}',
+      )
+      .join(' / ');
+  return l.purchaseInquiryTemplate(
+    plan.name,
+    plan.transferGiB,
+    priceSummary,
+  );
 }
 
-class _AcquirePlanSheetState extends State<_AcquirePlanSheet> {
-  String? _copiedKey;
-  String? _feedbackMessage;
-  bool _feedbackError = false;
+class _SafetySupportTrustCard extends StatelessWidget {
+  const _SafetySupportTrustCard({
+    super.key,
+    required this.onTap,
+  });
 
-  Future<void> _copy(String key, String value, String successMessage) async {
-    await Clipboard.setData(ClipboardData(text: value));
-    if (!mounted) return;
-    setState(() {
-      _copiedKey = key;
-      _feedbackMessage = successMessage;
-      _feedbackError = false;
-    });
-  }
-
-  Future<void> _open(Uri uri, String errorMessage) async {
-    try {
-      await widget.openLink(uri);
-    } catch (_) {
-      if (!mounted) return;
-      setState(() {
-        _feedbackMessage = errorMessage;
-        _feedbackError = true;
-      });
-    }
-  }
+  final VoidCallback onTap;
 
   @override
-  Widget build(BuildContext context) => ListenableBuilder(
-        listenable: widget.manager,
-        builder: (context, _) {
-          final l = AppLocalizations.of(context);
-          final theme = Theme.of(context);
-          final colors = theme.colorScheme;
-          final plan = widget.plan;
-          final priceSummary = plan.prices
-              .map(
-                (price) =>
-                    '${_formatPeriodLabel(l, price.period)} ${_formatMinorAmount(price.amount)}',
-              )
-              .join(' / ');
-          final inquiryText = l.purchaseInquiryTemplate(
-            plan.name,
-            plan.transferGiB,
-            priceSummary,
-          );
-          final regionBadge = resolvePlanRegionBadge(plan.name);
-          final storeUrl = PurchaseManager.isRealInstance(widget.manager)
-              ? widget.manager.resolvePlanStoreUrl(plan)
-              : (XboardPurchaseChannels.extractPlanContentPurchaseUrl(
-                      plan.content) ??
-                  widget.manager.cardStoreUrl);
+  Widget build(BuildContext context) {
+    final l = AppLocalizations.of(context);
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
 
-          return ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 560),
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.fromLTRB(24, 4, 24, 28),
-              child: Column(
-                key: const Key('purchase-acquire-sheet'),
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Row(
-                    children: [
-                      if (regionBadge != null) ...[
-                        EmojiText(
-                          regionBadge,
-                          style: const TextStyle(fontSize: 20),
-                        ),
-                        const SizedBox(width: 8),
-                      ],
-                      Expanded(
-                        child: Text(
-                          plan.name,
-                          style: theme.textTheme.titleLarge?.copyWith(
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                      ),
-                      IconButton(
-                        key: const Key('purchase-acquire-close'),
-                        tooltip: MaterialLocalizations.of(context)
-                            .closeButtonTooltip,
-                        onPressed: () => Navigator.of(context).maybePop(),
-                        icon: const Icon(Icons.close_rounded, size: 20),
-                      ),
-                    ],
+    return Semantics(
+      container: true,
+      button: true,
+      label: '${l.purchaseSafetyTitle}. ${l.purchaseSafetyBody}',
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(14),
+          onTap: onTap,
+          child: Ink(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(14),
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [
+                  colors.primaryContainer.withValues(alpha: isDark ? 0.24 : 0.42),
+                  colors.surfaceContainerHighest.withValues(
+                    alpha: isDark ? 0.40 : 0.56,
                   ),
-                  const SizedBox(height: 8),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 10,
-                    ),
-                    decoration: BoxDecoration(
-                      color: colors.primaryContainer.withValues(alpha: 0.45),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Text(
-                      '${plan.transferGiB} GiB · $priceSummary',
-                      style: theme.textTheme.bodyMedium?.copyWith(
-                        fontFamily: FontFamily.jetBrainsMono.value,
-                        fontFamilyFallback: _cjkMonoFallback(theme),
-                        fontWeight: FontWeight.w600,
-                        color: colors.onPrimaryContainer,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  Text(
-                    l.purchaseAcquireSheetSubtitle,
-                    style: theme.textTheme.bodyMedium?.copyWith(
-                      color: colors.onSurfaceVariant,
-                    ),
-                  ),
-                  if (widget.manager.channelError != null && storeUrl == null)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 12),
-                      child: _Notice(message: l.purchaseChannelError),
-                    ),
-                  if (_feedbackMessage != null)
-                    Padding(
-                      key: const Key('purchase-acquire-feedback'),
-                      padding: const EdgeInsets.only(top: 12),
-                      child: _Notice(
-                        message: _feedbackMessage!,
-                        error: _feedbackError,
-                        success: !_feedbackError,
-                      ),
-                    ),
-                  const SizedBox(height: 16),
-                  if (storeUrl != null) ...[
-                    FilledButton.icon(
-                      key: const Key('purchase-acquire-store'),
-                      onPressed: () {
-                        if (PurchaseManager.isRealInstance(widget.manager)) {
-                          widget.manager.markPlanHandoff(plan);
-                        }
-                        unawaited(
-                          _open(
-                            storeUrl,
-                            l.purchaseOpenLinkFailed,
-                          ),
-                        );
-                      },
-                      icon: const Icon(Icons.storefront_rounded, size: 18),
-                      label: Text(l.purchaseCardStore),
-                    ),
-                    const SizedBox(height: 10),
-                  ],
-                  FilledButton.tonalIcon(
-                    key: const Key('purchase-acquire-copy-inquiry'),
-                    onPressed: () =>
-                        _copy('inquiry', inquiryText, l.copySuccess),
-                    icon: Icon(
-                      _copiedKey == 'inquiry'
-                          ? Icons.check_rounded
-                          : Icons.chat_bubble_outline_rounded,
-                      size: 18,
-                    ),
-                    label: Text(l.purchaseCopyInquiry),
-                  ),
-                  if (widget.onOpenSupport != null) ...[
-                    const SizedBox(height: 10),
-                    FilledButton.tonalIcon(
-                      key: const Key('purchase-acquire-open-support'),
-                      onPressed: () => widget.onOpenSupport!(inquiryText),
-                      icon: const Icon(Icons.support_agent_rounded, size: 18),
-                      label: Text(l.purchaseAcquireOpenSupport),
-                    ),
-                  ],
-                  const SizedBox(height: 16),
-                  const Divider(height: 1),
-                  const SizedBox(height: 12),
-                  for (final account in widget.wechatContacts)
-                    Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 4),
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 8,
-                        ),
-                        decoration: BoxDecoration(
-                          color: colors.surfaceContainerHighest
-                              .withValues(alpha: 0.45),
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                        child: Wrap(
-                          spacing: 12,
-                          runSpacing: 6,
-                          alignment: WrapAlignment.spaceBetween,
-                          crossAxisAlignment: WrapCrossAlignment.center,
-                          children: [
-                            SelectableText(
-                              '${l.wechatId}: $account',
-                              style: theme.textTheme.bodyMedium?.copyWith(
-                                fontFamily: FontFamily.jetBrainsMono.value,
-                                fontFamilyFallback: _cjkMonoFallback(theme),
-                              ),
-                            ),
-                            OutlinedButton.icon(
-                              key: Key('purchase-acquire-wechat-$account'),
-                              onPressed: () => _copy(
-                                  'wechat:$account', account, l.copySuccess),
-                              icon: Icon(
-                                _copiedKey == 'wechat:$account'
-                                    ? Icons.check_rounded
-                                    : Icons.copy_rounded,
-                                size: 16,
-                              ),
-                              label: Text(l.copy),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
                 ],
               ),
+              border: Border.all(
+                color: colors.primary.withValues(alpha: isDark ? 0.34 : 0.22),
+              ),
             ),
-          );
-        },
-      );
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(6),
+                      decoration: BoxDecoration(
+                        color: colors.primary.withValues(
+                          alpha: isDark ? 0.22 : 0.12,
+                        ),
+                        borderRadius: BorderRadius.circular(9),
+                      ),
+                      child: Icon(
+                        Icons.verified_user_rounded,
+                        size: 18,
+                        color: colors.primary,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        l.purchaseSafetyTitle,
+                        style: theme.textTheme.titleSmall?.copyWith(
+                          fontWeight: FontWeight.w700,
+                          color: colors.onSurface,
+                        ),
+                      ),
+                    ),
+                    Icon(
+                      Icons.chevron_right_rounded,
+                      size: 20,
+                      color: colors.primary,
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  l.purchaseSafetyBody,
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    color: colors.onSurfaceVariant,
+                    height: 1.42,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 6,
+                  children: [
+                    _SafetyTrustPill(
+                      icon: Icons.gpp_good_outlined,
+                      label: l.purchaseSafetyTagOfficial,
+                    ),
+                    _SafetyTrustPill(
+                      icon: Icons.lock_outline_rounded,
+                      label: l.purchaseSafetyTagFunds,
+                    ),
+                    _SafetyTrustPill(
+                      icon: Icons.bolt_rounded,
+                      label: l.purchaseSafetyTag24h,
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _SafetyTrustPill extends StatelessWidget {
+  const _SafetyTrustPill({
+    required this.icon,
+    required this.label,
+  });
+
+  final IconData icon;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: colors.surface.withValues(alpha: isDark ? 0.55 : 0.80),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(
+          color: colors.outlineVariant.withValues(alpha: 0.45),
+        ),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 13, color: colors.primary),
+          const SizedBox(width: 4),
+          Flexible(
+            child: Text(
+              label,
+              style: theme.textTheme.labelSmall?.copyWith(
+                color: colors.onSurface,
+                fontWeight: FontWeight.w600,
+              ),
+              softWrap: true,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 class _AuthModeTabButton extends StatelessWidget {

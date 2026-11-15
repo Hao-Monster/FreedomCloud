@@ -1591,7 +1591,7 @@ class MessageLookup extends MessageLookupByLibrary {
       "Gift card redemption",
     ),
     "purchaseChannelError": MessageLookupByLibrary.simpleMessage(
-      "Gift card store information could not be loaded. You can still contact support below.",
+      "Gift card store information could not be loaded. You can still contact live support below.",
     ),
     "purchaseCheck": MessageLookupByLibrary.simpleMessage("Preview benefits"),
     "purchaseChecking": MessageLookupByLibrary.simpleMessage("Checking…"),
@@ -1670,7 +1670,7 @@ class MessageLookup extends MessageLookupByLibrary {
     ),
     "purchaseGetCard": MessageLookupByLibrary.simpleMessage("Get a gift card"),
     "purchaseGetCardDescription": MessageLookupByLibrary.simpleMessage(
-      "Buy a gift card through the self-service store, live support, or backup WeChat contacts below.",
+      "Buy a gift card or get assistance through the self-service store or 24/7 live support.",
     ),
     "purchaseGmailAliasError": MessageLookupByLibrary.simpleMessage(
       "Gmail alias addresses (with \'+\') are not allowed. Use your base Gmail address.",
@@ -1932,6 +1932,21 @@ class MessageLookup extends MessageLookupByLibrary {
     ),
     "purchaseRestoring": MessageLookupByLibrary.simpleMessage(
       "Restoring account…",
+    ),
+    "purchaseSafetyBody": MessageLookupByLibrary.simpleMessage(
+      "For your network privacy and security, please contact live support directly to purchase.",
+    ),
+    "purchaseSafetyTag24h": MessageLookupByLibrary.simpleMessage(
+      "24/7 Fast Reply",
+    ),
+    "purchaseSafetyTagFunds": MessageLookupByLibrary.simpleMessage(
+      "Payment Safety",
+    ),
+    "purchaseSafetyTagOfficial": MessageLookupByLibrary.simpleMessage(
+      "Official Direct",
+    ),
+    "purchaseSafetyTitle": MessageLookupByLibrary.simpleMessage(
+      "Official Secure Purchase · 24/7 Live Support",
     ),
     "purchaseSendCode": MessageLookupByLibrary.simpleMessage("Send code"),
     "purchaseSendCodeCooldown": m73,

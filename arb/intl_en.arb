@@ -620,7 +620,7 @@
   "purchaseHistoryPage": "Page",
   "purchaseHistoryTotal": "Total",
   "purchaseGetCard": "Get a gift card",
-  "purchaseGetCardDescription": "Buy a gift card through the self-service store, live support, or backup WeChat contacts below.",
+  "purchaseGetCardDescription": "Buy a gift card or get assistance through the self-service store or 24/7 live support.",
   "purchaseCardStore": "Open gift card store",
   "purchaseOpenLinkFailed": "Could not open the page. Please try again.",
   "purchaseRestoring": "Restoring account…",
@@ -638,7 +638,7 @@
   "purchaseUnsupportedAccount": "Use a regular user account to redeem gift cards.",
   "purchaseLogoutRemoteError": "Signed out on this device. Server sign-out could not be confirmed.",
   "purchaseCodeFormatError": "Enter an 8–32 character code using letters and numbers.",
-  "purchaseChannelError": "Gift card store information could not be loaded. You can still contact support below.",
+  "purchaseChannelError": "Gift card store information could not be loaded. You can still contact live support below.",
   "purchaseAvailablePlans": "Available plans",
   "purchasePlansDescription": "Prices are shown as listed on the website. Confirm the currency on the store page when buying a gift card, then return here to redeem.",
   "purchasePlansLoading": "Loading plans…",
@@ -1695,5 +1695,10 @@
   "tvSyncWebSuccess": "✅ Done! Subscription added to device",
   "tvSyncWebErrorPrefix": "❌ Error: ",
   "tvSyncWebReceived": "Link received by device…",
-  "tvSyncWebConnectionLost": "Connection to device lost"
+  "tvSyncWebConnectionLost": "Connection to device lost",
+  "purchaseSafetyTitle": "Official Secure Purchase · 24/7 Live Support",
+  "purchaseSafetyBody": "For your network privacy and security, please contact live support directly to purchase.",
+  "purchaseSafetyTagOfficial": "Official Direct",
+  "purchaseSafetyTagFunds": "Payment Safety",
+  "purchaseSafetyTag24h": "24/7 Fast Reply"
 }

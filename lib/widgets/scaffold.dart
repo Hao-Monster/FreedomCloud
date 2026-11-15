@@ -692,12 +692,22 @@ class CommonScaffoldState extends ConsumerState<CommonScaffold> {
         widget.disableBackground ? null : ref.watch(backgroundUrlProvider);
     final hasCustomBackground =
         backgroundUrl != null && backgroundUrl.isNotEmpty;
-    final (skyMode, glassPreset, ignoreCustomBackground) = ref.watch(
-      themeSettingProvider.select(
-        (state) =>
-            (state.skyMode, state.glassPreset, state.ignoreCustomBackground),
-      ),
-    );
+    final (skyMode, glassPreset, ignoreCustomBackground) =
+        widget.disableBackground
+            ? (
+                DayNightSkyMode.followConnection,
+                DayNightGlassPreset.balanced,
+                false,
+              )
+            : ref.watch(
+                themeSettingProvider.select(
+                  (state) => (
+                    state.skyMode,
+                    state.glassPreset,
+                    state.ignoreCustomBackground,
+                  ),
+                ),
+              );
     final useCustomBackground = hasCustomBackground && !ignoreCustomBackground;
     final useSkyBackground = !widget.disableBackground && !useCustomBackground;
     final isRunning = useSkyBackground

@@ -469,8 +469,9 @@ void main() {
     await tester.runAsync(() => Future<void>.delayed(Duration.zero));
     expect(find.byKey(const Key('support-chat-sheet')), findsNothing);
     expect(supportManager.hasActiveRealtimeResources, isFalse);
-    expect(find.text('微信号: ChasingDream_2021'), findsOneWidget);
-    expect(find.text('微信号: dxm_qa'), findsOneWidget);
+    expect(find.byKey(const Key('purchase-safety-support-card')), findsOneWidget);
+    expect(find.textContaining('ChasingDream_2021'), findsNothing);
+    expect(find.textContaining('dxm_qa'), findsNothing);
 
     // 4-locale 2.0x textScale stress check on narrow 320x800 in both Login & Register tabs.
     for (final locale in const [

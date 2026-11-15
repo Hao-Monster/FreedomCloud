@@ -1517,7 +1517,7 @@ class MessageLookup extends MessageLookupByLibrary {
       "Активация подарочных карт",
     ),
     "purchaseChannelError": MessageLookupByLibrary.simpleMessage(
-      "Не удалось загрузить данные магазина карт. Вы по-прежнему можете обратиться в поддержку ниже.",
+      "Не удалось загрузить данные магазина карт. Вы по-прежнему можете обратиться в онлайн-поддержку ниже.",
     ),
     "purchaseCheck": MessageLookupByLibrary.simpleMessage("Проверить карту"),
     "purchaseChecking": MessageLookupByLibrary.simpleMessage("Проверка…"),
@@ -1600,7 +1600,7 @@ class MessageLookup extends MessageLookupByLibrary {
       "Получить подарочную карту",
     ),
     "purchaseGetCardDescription": MessageLookupByLibrary.simpleMessage(
-      "Приобрести карту или получить помощь можно через магазин карт, онлайн-поддержку или контакты WeChat ниже.",
+      "Приобрести подарочную карту или получить помощь можно через магазин самообслуживания или онлайн-поддержку.",
     ),
     "purchaseGmailAliasError": MessageLookupByLibrary.simpleMessage(
       "Псевдонимы Gmail (со знаком «+») не поддерживаются. Используйте основной адрес.",
@@ -1872,6 +1872,19 @@ class MessageLookup extends MessageLookupByLibrary {
     ),
     "purchaseRestoring": MessageLookupByLibrary.simpleMessage(
       "Восстановление аккаунта…",
+    ),
+    "purchaseSafetyBody": MessageLookupByLibrary.simpleMessage(
+      "Для вашей сетевой конфиденциальности и безопасности свяжитесь напрямую с поддержкой для покупки.",
+    ),
+    "purchaseSafetyTag24h": MessageLookupByLibrary.simpleMessage("Ответ 24/7"),
+    "purchaseSafetyTagFunds": MessageLookupByLibrary.simpleMessage(
+      "Защита средств",
+    ),
+    "purchaseSafetyTagOfficial": MessageLookupByLibrary.simpleMessage(
+      "Официальный канал",
+    ),
+    "purchaseSafetyTitle": MessageLookupByLibrary.simpleMessage(
+      "Официальная защита покупки · Поддержка 24/7",
     ),
     "purchaseSendCode": MessageLookupByLibrary.simpleMessage("Отправить код"),
     "purchaseSendCodeCooldown": m73,

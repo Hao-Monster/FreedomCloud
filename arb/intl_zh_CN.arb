@@ -570,7 +570,7 @@
   "purchaseHistoryPage": "页码",
   "purchaseHistoryTotal": "总计",
   "purchaseGetCard": "获取礼品卡",
-  "purchaseGetCardDescription": "可通过自助发卡商店、在线客服或备用微信购买礼品卡与获取协助。",
+  "purchaseGetCardDescription": "可通过自助发卡商店或在线人工客服购买礼品卡与获取协助。",
   "purchaseCardStore": "打开礼品卡商店",
   "purchaseOpenLinkFailed": "无法打开页面，请重试。",
   "purchaseRestoring": "正在恢复账户…",
@@ -588,7 +588,7 @@
   "purchaseUnsupportedAccount": "请使用普通用户账户兑换礼品卡。",
   "purchaseLogoutRemoteError": "已在此设备退出登录，但尚未确认服务器端注销结果。",
   "purchaseCodeFormatError": "请输入由 8–32 位字母和数字组成的兑换码。",
-  "purchaseChannelError": "礼品卡商店信息加载失败，仍可通过下方微信联系客服。",
+  "purchaseChannelError": "礼品卡商店信息加载失败，仍可通过下方在线客服获取协助。",
   "purchaseAvailablePlans": "可购买套餐",
   "purchasePlansDescription": "价格按网站标价显示；点击「去购买」前往自助发卡商店购卡，复制兑换码后返回本页核销。",
   "purchasePlansLoading": "正在加载套餐…",
@@ -1682,5 +1682,10 @@
   "tvSyncWebSuccess": "✅ 导入完成！订阅已添加到设备",
   "tvSyncWebErrorPrefix": "❌ 导入失败：",
   "tvSyncWebReceived": "设备已收到链接，正在处理…",
-  "tvSyncWebConnectionLost": "与接收端设备的连接已断开"
+  "tvSyncWebConnectionLost": "与接收端设备的连接已断开",
+  "purchaseSafetyTitle": "官方安全购卡保障 · 7×24 小时人工在线",
+  "purchaseSafetyBody": "为了你的网络隐私与安全，购买请直接联系客服即可",
+  "purchaseSafetyTagOfficial": "官方直营防伪",
+  "purchaseSafetyTagFunds": "资金安全护航",
+  "purchaseSafetyTag24h": "全天候秒级响应"
 }

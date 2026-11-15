@@ -30,6 +30,7 @@ class SupportManager extends ChangeNotifier {
     Duration typingExpiry = const Duration(seconds: 6),
     Duration lastSeenDebounce = const Duration(milliseconds: 500),
     String Function()? echoIdGenerator,
+    DateTime Function()? clock,
   })  : _service = service ?? DioChatwootService(),
         _ownsService = service == null,
         _storage = storage ?? SecureChatwootSessionStorage(),
@@ -45,7 +46,8 @@ class SupportManager extends ChangeNotifier {
                     ))),
         _typingExpiry = typingExpiry,
         _lastSeenDebounce = lastSeenDebounce,
-        _echoIdGenerator = echoIdGenerator;
+        _echoIdGenerator = echoIdGenerator,
+        _clock = clock ?? DateTime.now;
 
   static const List<int> _reconnectBackoffSeconds = [1, 2, 4, 8, 15];
   static const int _maxConsecutiveSubscriptionRejections = 6;
@@ -60,6 +62,7 @@ class SupportManager extends ChangeNotifier {
   final Duration _typingExpiry;
   final Duration _lastSeenDebounce;
   final String Function()? _echoIdGenerator;
+  final DateTime Function() _clock;
 
   ChatwootChannelConfig? _channelConfig;
   String _scopeKey = 'guest';
@@ -87,6 +90,8 @@ class SupportManager extends ChangeNotifier {
   bool _needsContactSync = false;
   String? _contactSyncedScopeKey;
   String? _pendingDraft;
+  String? _lastAutoSentContent;
+  DateTime? _lastAutoSentAt;
 
   int _epoch = 0;
   int _panelTokenCounter = 0;
@@ -117,6 +122,7 @@ class SupportManager extends ChangeNotifier {
 
   ChatwootChannelConfig? get channelConfig => _channelConfig;
   bool get isConfigured => _channelConfig != null;
+  bool get hasSession => _session != null;
   String get scopeKey => _scopeKey;
   String? get boundEmail => _boundEmail;
   bool get isPanelOpen => _isPanelOpen;
@@ -350,7 +356,7 @@ class SupportManager extends ChangeNotifier {
       echoId: echoId,
       content: text,
       type: ChatwootMessageType.visitor,
-      createdAt: DateTime.now().toUtc(),
+      createdAt: _clock().toUtc(),
       deliveryState: ChatwootDeliveryState.sending,
     );
     _error = null;
@@ -364,6 +370,59 @@ class SupportManager extends ChangeNotifier {
       content: text,
       startEpoch: startEpoch,
     );
+  }
+
+  /// Returns whether auto-sending [text] should be suppressed because the
+  /// most recent visitor message in the conversation already matches within
+  /// [window] and did not fail.
+  bool shouldSuppressDuplicateAutoSend(
+    String text, {
+    Duration window = const Duration(seconds: 60),
+  }) {
+    final trimmed = text.trim();
+    if (trimmed.isEmpty) return false;
+    ChatwootMessage? latestVisitor;
+    for (var i = _messages.length - 1; i >= 0; i--) {
+      if (_messages[i].type == ChatwootMessageType.visitor) {
+        latestVisitor = _messages[i];
+        break;
+      }
+    }
+    if (latestVisitor == null ||
+        latestVisitor.deliveryState == ChatwootDeliveryState.failed ||
+        latestVisitor.content.trim() != trimmed) {
+      return false;
+    }
+    final now = _clock();
+    if (_lastAutoSentContent == trimmed &&
+        _lastAutoSentAt != null &&
+        now.difference(_lastAutoSentAt!).abs() < window) {
+      return true;
+    }
+    return now.toUtc().difference(latestVisitor.createdAt.toUtc()).abs() <
+        window;
+  }
+
+  /// Sends an inquiry automatically when entering from a purchase plan action,
+  /// returning `false` when the channel is unavailable/locked so callers can
+  /// keep [text] in the composer draft instead.
+  Future<bool> sendAutoInquiry(
+    String text, {
+    Duration dedupeWindow = const Duration(seconds: 60),
+  }) async {
+    if (_disposed) return false;
+    final trimmed = text.trim();
+    if (trimmed.isEmpty) return false;
+    if (!isConfigured || _session == null || isConversationLocked) {
+      return false;
+    }
+    if (shouldSuppressDuplicateAutoSend(trimmed, window: dedupeWindow)) {
+      return true;
+    }
+    _lastAutoSentContent = trimmed;
+    _lastAutoSentAt = _clock();
+    await sendMessage(text);
+    return true;
   }
 
   /// Retries a previously failed outgoing message identified by [echoId].
@@ -1442,6 +1501,8 @@ class SupportManager extends ChangeNotifier {
     _needsContactSync = false;
     _contactSyncedScopeKey = null;
     _pendingDraft = null;
+    _lastAutoSentContent = null;
+    _lastAutoSentAt = null;
     _reconnectAttempt = 0;
     _subscriptionRejectionCount = 0;
     _rejectionRecoveryAttempted = false;

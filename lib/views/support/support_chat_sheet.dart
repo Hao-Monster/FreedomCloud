@@ -46,6 +46,7 @@ Future<void> openSupportChatSheet(
   Future<void> Function(Uri)? openLink,
   Uri? externalWidgetUri,
   String? initialDraft,
+  String? autoSendMessage,
   List<String> wechatContacts = const ['ChasingDream_2021', 'dxm_qa'],
   Future<void> Function()? onRetryChannel,
 }) async {
@@ -68,6 +69,7 @@ Future<void> openSupportChatSheet(
           openLink: openLink,
           externalWidgetUri: externalWidgetUri,
           initialDraft: initialDraft,
+          autoSendMessage: autoSendMessage,
           wechatContacts: wechatContacts,
           onRetryChannel: onRetryChannel,
           onPanelTokenAcquired: (token) => sheetPanelToken = token,
@@ -86,6 +88,7 @@ Future<void> openSupportChatSheet(
             openLink: openLink,
             externalWidgetUri: externalWidgetUri,
             initialDraft: initialDraft,
+            autoSendMessage: autoSendMessage,
             wechatContacts: wechatContacts,
             onRetryChannel: onRetryChannel,
             onPanelTokenAcquired: (token) => sheetPanelToken = token,
@@ -109,6 +112,7 @@ class SupportChatSheet extends StatefulWidget {
     this.openLink,
     this.externalWidgetUri,
     this.initialDraft,
+    this.autoSendMessage,
     this.wechatContacts = const ['ChasingDream_2021', 'dxm_qa'],
     this.onRetryChannel,
     this.onPanelTokenAcquired,
@@ -118,6 +122,7 @@ class SupportChatSheet extends StatefulWidget {
   final Future<void> Function(Uri)? openLink;
   final Uri? externalWidgetUri;
   final String? initialDraft;
+  final String? autoSendMessage;
   final List<String> wechatContacts;
   final Future<void> Function()? onRetryChannel;
   final ValueChanged<int>? onPanelTokenAcquired;
@@ -192,8 +197,47 @@ class _SupportChatSheetState extends State<SupportChatSheet> {
     widget.supportManager.addListener(_onSupportManagerChanged);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      unawaited(widget.supportManager.openPanel(panelToken: _panelToken));
+      unawaited(_openAndMaybeAutoSend(_panelToken, widget.autoSendMessage));
     });
+  }
+
+  Future<void> _openAndMaybeAutoSend(int token, String? autoSendText) async {
+    final manager = widget.supportManager;
+    final hasAutoSend = autoSendText != null && autoSendText.trim().isNotEmpty;
+    if (hasAutoSend && !manager.isConfigured && widget.onRetryChannel != null) {
+      if (!_retryingChannel.value) {
+        _retryingChannel.value = true;
+        try {
+          await widget.onRetryChannel!.call();
+        } catch (_) {
+          // Handled via composer fallback below if channel remains unavailable.
+        } finally {
+          if (mounted) {
+            _retryingChannel.value = false;
+          }
+        }
+      }
+      if (!mounted || token != _panelToken) return;
+    }
+
+    await manager.openPanel(panelToken: token);
+    if (!mounted || token != _panelToken) return;
+
+    if (hasAutoSend) {
+      final handled = await manager.sendAutoInquiry(autoSendText);
+      if (!mounted || token != _panelToken) return;
+      if (!handled) {
+        if (_composer.text.trim().isEmpty) {
+          _composer.value = TextEditingValue(
+            text: autoSendText,
+            selection: TextSelection.collapsed(offset: autoSendText.length),
+          );
+        }
+      } else if (_scrollController.hasClients) {
+        _scrollController.jumpTo(0);
+        _isNearBottom = true;
+      }
+    }
   }
 
   @override

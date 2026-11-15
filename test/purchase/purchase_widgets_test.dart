@@ -269,7 +269,8 @@ void main() {
     await tester.ensureVisible(find.byKey(const Key('purchase-history-next')));
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
-    await tester.ensureVisible(find.text('WeChat ID: dxm_qa'));
+    await tester
+        .ensureVisible(find.byKey(const Key('purchase-safety-support-card')));
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
   });

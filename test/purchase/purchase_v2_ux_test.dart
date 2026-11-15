@@ -223,17 +223,12 @@ void main() {
   });
 
   testWidgets(
-      'R02/R04: contextual plan CTA opens acquisition sheet, copies inquiry phrase without creating orders, and code preview still follows redeemed code',
+      'R02/R04: contextual plan CTAs open store or support with inquiry without creating orders, and code preview still follows redeemed code',
       (tester) async {
-    final copied = <String>[];
     var clipboardText = '您的卡密： synth-8888-code ';
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(SystemChannels.platform, (call) async {
-      if (call.method == 'Clipboard.setData') {
-        final value = (call.arguments as Map)['text'] as String;
-        copied.add(value);
-        clipboardText = value;
-      } else if (call.method == 'Clipboard.getData') {
+      if (call.method == 'Clipboard.getData') {
         return <String, dynamic>{'text': clipboardText};
       }
       return null;
@@ -275,29 +270,35 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('purchase-plan-1')), findsOneWidget);
 
-    // Open contextual acquisition sheet for Plan 1 (Plan A).
-    await tester.tap(find.byKey(const Key('purchase-plan-acquire-1')));
+    // Buy CTA for Plan 1 launches configured external store URL.
+    await tester.ensureVisible(find.byKey(const Key('purchase-plan-buy-1')));
     await tester.pumpAndSettle();
-    expect(find.byKey(const Key('purchase-acquire-sheet')), findsOneWidget);
-    expect(manager.checked, 0);
-    expect(manager.redeemed, 0);
-
-    // Copy contextual inquiry text and open card store from sheet.
-    await tester.tap(find.byKey(const Key('purchase-acquire-copy-inquiry')));
-    await tester.pumpAndSettle();
-    expect(copied.single, contains('ultra线路-美国'));
-    expect(copied.single, contains('200 GiB'));
-    expect(copied.single, contains('150.00'));
-
-    await tester.tap(find.byKey(const Key('purchase-acquire-store')));
+    await tester.tap(find.byKey(const Key('purchase-plan-buy-1')));
     await tester.pumpAndSettle();
     expect(openedLinks, [Uri.parse('https://shop.example.test/cards')]);
 
-    // Dismiss sheet, then paste messy code for Plan B and verify preview shows Plan B without rebinding.
-    clipboardText = '您的兑换码： planb-2026-vip ';
-    await tester.tapAt(const Offset(10, 10));
+    // Get Code CTA directly opens SupportChatSheet with inquiry text without creating orders.
+    await tester.ensureVisible(find.byKey(const Key('purchase-plan-acquire-1')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('purchase-plan-acquire-1')));
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('purchase-acquire-sheet')), findsNothing);
+    expect(find.byKey(const Key('support-chat-sheet')), findsOneWidget);
+    expect(manager.checked, 0);
+    expect(manager.redeemed, 0);
+
+    final composer = tester.widget<TextField>(
+      find.byKey(const Key('support-composer')),
+    );
+    expect(composer.controller?.text, contains('ultra线路-美国'));
+    expect(composer.controller?.text, contains('200 GiB'));
+    expect(composer.controller?.text, contains('150.00'));
+
+    // Close sheet, then paste messy code for Plan B and verify preview shows Plan B without rebinding.
+    clipboardText = '您的兑换码： planb-2026-vip ';
+    await tester.tap(find.byKey(const Key('support-close')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('support-chat-sheet')), findsNothing);
 
     await tester.tap(find.byKey(const Key('purchase-code-paste')));
     await tester.pumpAndSettle();
@@ -558,58 +559,47 @@ void main() {
   });
 
   testWidgets(
-      'CR-03: acquisition sheet shows Copy label on WeChat buttons, gives modal-visible feedback, and reacts to cardStoreUrl updates',
+      'CR-03: Get Code opens SupportChatSheet directly without WeChat controls, prefills inquiry offline, and Buy CTA reacts to cardStoreUrl updates',
       (tester) async {
-    final copied = <String>[];
-    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-        .setMockMethodCallHandler(SystemChannels.platform, (call) async {
-      if (call.method == 'Clipboard.setData') {
-        copied.add((call.arguments as Map)['text'] as String);
-      }
-      return null;
-    });
-    addTearDown(() => TestDefaultBinaryMessengerBinding
-        .instance.defaultBinaryMessenger
-        .setMockMethodCallHandler(SystemChannels.platform, null));
-
+    final openedLinks = <Uri>[];
     final manager = _UxManager()
       ..cardStoreUrl = null
       ..planCatalog = const XboardPlanCatalog(plans: [_usFlagshipPlan]);
-    await pumpCenter(tester, manager, size: const Size(1280, 900));
+    await pumpCenter(
+      tester,
+      manager,
+      size: const Size(1280, 900),
+      openedLinks: openedLinks,
+    );
+
+    expect(find.textContaining('ChasingDream_2021'), findsNothing);
+    expect(find.textContaining('dxm_qa'), findsNothing);
+    expect(find.byKey(const Key('purchase-safety-support-card')),
+        findsOneWidget);
 
     await tester.tap(find.byKey(const Key('purchase-plan-acquire-1')));
     await tester.pumpAndSettle();
 
-    final sheet = find.byKey(const Key('purchase-acquire-sheet'));
-    expect(sheet, findsOneWidget);
-    expect(find.byKey(const Key('purchase-acquire-store')), findsNothing);
-
-    final wechatCopyBtn =
-        find.byKey(const Key('purchase-acquire-wechat-ChasingDream_2021'));
-    expect(
-      find.descendant(of: wechatCopyBtn, matching: find.text('复制')),
-      findsOneWidget,
+    expect(find.byKey(const Key('purchase-acquire-sheet')), findsNothing);
+    expect(find.byKey(const Key('support-chat-sheet')), findsOneWidget);
+    expect(find.byKey(const Key('support-backup-wechat-toggle')), findsNothing);
+    final composer = tester.widget<TextField>(
+      find.byKey(const Key('support-composer')),
     );
-    expect(
-      find.descendant(of: wechatCopyBtn, matching: find.text('微信号')),
-      findsNothing,
-    );
+    expect(composer.controller?.text, contains('ultra线路-美国'));
 
-    await tester.tap(wechatCopyBtn);
+    await tester.tap(find.byKey(const Key('support-close')));
     await tester.pumpAndSettle();
-    expect(copied, ['ChasingDream_2021']);
-    expect(
-      find.byKey(const Key('purchase-acquire-feedback')),
-      findsOneWidget,
-    );
-    expect(find.byType(SnackBar), findsNothing);
+    expect(find.byKey(const Key('support-chat-sheet')), findsNothing);
 
-    // Live update to cardStoreUrl while modal sheet is open updates sheet immediately.
+    // Live update to cardStoreUrl routes Buy CTA to external browser URL immediately.
     manager
       ..cardStoreUrl = Uri.parse('https://shop.example.test/live-cards')
       ..notify();
     await tester.pumpAndSettle();
-    expect(find.byKey(const Key('purchase-acquire-store')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('purchase-plan-buy-1')));
+    await tester.pumpAndSettle();
+    expect(openedLinks, [Uri.parse('https://shop.example.test/live-cards')]);
   });
 
   testWidgets(
@@ -1048,26 +1038,28 @@ void main() {
     expect(find.byKey(const Key('purchase-plan-2')), findsNothing);
     expect(find.text('最终开通套餐以兑换码预览为准', findRichText: true), findsOneWidget);
 
-    // Open acquire sheet and verify channelError degradation notice + explicit close button.
+    // Verify channelError degradation notice in support section, and direct support modal open/close.
+    await tester
+        .ensureVisible(find.byKey(const Key('purchase-safety-support-card')));
+    await tester.pumpAndSettle();
+    expect(
+      find.text('礼品卡商店信息加载失败，仍可通过下方在线客服获取协助。'),
+      findsOneWidget,
+    );
+
     await tester
         .ensureVisible(find.byKey(const Key('purchase-plan-acquire-1')));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('purchase-plan-acquire-1')));
     await tester.pumpAndSettle();
-    expect(find.byKey(const Key('purchase-acquire-sheet')), findsOneWidget);
-    expect(
-      find.descendant(
-        of: find.byKey(const Key('purchase-acquire-sheet')),
-        matching: find.text('礼品卡商店信息加载失败，仍可通过下方微信联系客服。'),
-      ),
-      findsOneWidget,
-    );
+    expect(find.byKey(const Key('purchase-acquire-sheet')), findsNothing);
+    expect(find.byKey(const Key('support-chat-sheet')), findsOneWidget);
 
-    final closeBtn = find.byKey(const Key('purchase-acquire-close'));
+    final closeBtn = find.byKey(const Key('support-close'));
     expect(closeBtn, findsOneWidget);
     await tester.tap(closeBtn);
     await tester.pumpAndSettle();
-    expect(find.byKey(const Key('purchase-acquire-sheet')), findsNothing);
+    expect(find.byKey(const Key('support-chat-sheet')), findsNothing);
   });
 }
 

@@ -182,8 +182,10 @@ void main() {
         expect(find.byKey(const Key('purchase-email')), findsOneWidget);
         expect(find.byKey(const Key('purchase-password')), findsOneWidget);
         expect(find.byKey(const Key('purchase-login')), findsOneWidget);
-        expect(find.text('WeChat ID: ChasingDream_2021'), findsOneWidget);
-        expect(find.text('WeChat ID: dxm_qa'), findsOneWidget);
+        expect(find.byKey(const Key('purchase-safety-support-card')),
+            findsOneWidget);
+        expect(find.textContaining('ChasingDream_2021'), findsNothing);
+        expect(find.textContaining('dxm_qa'), findsNothing);
         if (corruptStoredSession) {
           expect(
               find.text(

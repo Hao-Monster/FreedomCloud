@@ -296,27 +296,36 @@ class XboardPurchaseChannels {
   }
 
   static final RegExp _metadataLinePattern = RegExp(
-    r'^(?:[•·\-*+]\s*)?\*{0,2}(?:购买链接|购卡链接|发卡链接|发卡网|card_store_url|purchase\s*(?:url|link))\*{0,2}\s*[:：]\s*(.+)$',
+    r'^(?:(?:[•·]|-(?!-)|\+(?!\+))\s*|\*(?!\*)\s+)?(?:\*{1,2}|_{1,2})?(?:购买链接|购卡链接|发卡链接|发卡网|card_store_url|purchase\s*(?:url|link))(?:\*{1,2}|_{1,2})?\s*[:：](?:\*{1,2}|_{1,2})?\s*(.*)$',
     caseSensitive: false,
   );
 
   static final RegExp _markdownLinkUrlPattern = RegExp(
-    r'\[[^\]]*\]\(\s*(https://[^\s)]+)\s*\)',
+    r'''\[[^\]]*\]\(\s*<?([^>\s)]+)>?(?:\s+["'][^"']*["'])?\s*\)''',
     caseSensitive: false,
   );
 
+  static final RegExp _angleLinkUrlPattern = RegExp(
+    r'^<\s*([^>\s]+)\s*>',
+  );
+
+  static final RegExp _leadingUrlQuotes = RegExp(r'''^[`'"“”‘’]+''');
+
   static final RegExp _bareHttpsUrlPattern = RegExp(
-    r'https://[^\s<>\]"”]+',
+    r'https://[^\s<>\]"”’）]+',
     caseSensitive: false,
   );
 
   static final RegExp _trailingUrlNoise = RegExp(
-    r'''[，。；！？、,.;!?'")\]>*`\s]+$''',
+    r'''[，。；！？、,.;!?'")\]>*`”’）\s]+$''',
   );
 
   static Uri? _sanitizeHttpsPurchaseUri(String rawCandidate) {
-    final cleaned = rawCandidate.trim().replaceAll(_trailingUrlNoise, '');
-    if (cleaned.isEmpty) return null;
+    final cleaned = rawCandidate
+        .trim()
+        .replaceFirst(_leadingUrlQuotes, '')
+        .replaceAll(_trailingUrlNoise, '');
+    if (cleaned.isEmpty || cleaned.contains('#')) return null;
     final parsed = Uri.tryParse(cleaned);
     if (parsed == null ||
         parsed.scheme != 'https' ||
@@ -334,11 +343,21 @@ class XboardPurchaseChannels {
       final lineMatch = _metadataLinePattern.firstMatch(rawLine.trim());
       if (lineMatch == null) continue;
       final rhs = lineMatch.group(1)!.trim();
+      if (rhs.isEmpty) continue;
       final mdMatch = _markdownLinkUrlPattern.firstMatch(rhs);
       if (mdMatch != null) {
         final mdUri = _sanitizeHttpsPurchaseUri(mdMatch.group(1)!);
         if (mdUri != null) return mdUri;
       }
+      final angleMatch = _angleLinkUrlPattern.firstMatch(rhs);
+      if (angleMatch != null) {
+        final angleUri = _sanitizeHttpsPurchaseUri(angleMatch.group(1)!);
+        if (angleUri != null) return angleUri;
+      }
+      final firstToken =
+          rhs.replaceFirst(_leadingUrlQuotes, '').split(RegExp(r'\s+')).first;
+      final firstUri = _sanitizeHttpsPurchaseUri(firstToken);
+      if (firstUri != null) return firstUri;
       final bareMatch = _bareHttpsUrlPattern.firstMatch(rhs);
       if (bareMatch != null) {
         final bareUri = _sanitizeHttpsPurchaseUri(bareMatch.group(0)!);
