@@ -18,11 +18,16 @@ import (
 type gracefulStopTestTracker struct {
 	statistic.Tracker
 	id     string
+	info   *statistic.TrackerInfo
 	closed atomic.Bool
 }
 
 func (t *gracefulStopTestTracker) ID() string {
 	return t.id
+}
+
+func (t *gracefulStopTestTracker) Info() *statistic.TrackerInfo {
+	return t.info
 }
 
 func (t *gracefulStopTestTracker) Close() error {

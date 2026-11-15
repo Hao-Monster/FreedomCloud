@@ -435,6 +435,8 @@ func updateListeners() {
 		recreateRuntimeTun(general.Tun, tunnel.Tunnel)
 		if general.Tun.Enable {
 			seedNetworkRecoveryBaseline()
+		} else {
+			cancelPendingNetworkRecoveryHealthChecks()
 		}
 	}
 }
@@ -463,6 +465,7 @@ func stopListeners() {
 	resolver.ResetConnection()
 	listener.Cleanup()
 	closeConnectionsWithReason("listener:stop")
+	cancelPendingNetworkRecoveryHealthChecks()
 	resolver.StoreFakePoolState()
 }
 

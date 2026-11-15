@@ -149,6 +149,17 @@ abstract interface class CoreFailedProbeTelemetry {
   bool get lastFailedProbeObservedInCore;
 }
 
+/// Optional capability allowing `HealthRunner` to pass an adaptive timeout
+/// budget to end-to-end exit-IP probes without altering the legacy signature.
+abstract interface class AdaptiveEndToEndProbeEnvironment {
+  Future<EndToEndProbeObservation?> probeEndToEndWithBudget({
+    required HealthCancellationToken cancelToken,
+    required String? explicitProxyDirective,
+    required Duration connectTimeout,
+    required Duration attemptTimeout,
+  });
+}
+
 bool isVerifiedLoopbackProxyDirective(String? directive) {
   if (directive == null) return false;
   final trimmed = directive.trim();
@@ -203,7 +214,10 @@ bool isVerifiedLoopbackProxyDirective(String? directive) {
 }
 
 class DefaultHealthProbeEnvironment
-    implements HealthProbeEnvironment, CoreFailedProbeTelemetry {
+    implements
+        HealthProbeEnvironment,
+        CoreFailedProbeTelemetry,
+        AdaptiveEndToEndProbeEnvironment {
   DefaultHealthProbeEnvironment(this._ref, {Request? probeRequest})
       : _probeRequest = probeRequest;
   final Ref _ref;
@@ -452,10 +466,42 @@ class DefaultHealthProbeEnvironment
   Future<List<InternetAddress>> lookupHost(String host) =>
       InternetAddress.lookup(host);
 
+  static const Duration _defaultEndToEndConnectTimeout =
+      Duration(milliseconds: 2800);
+  static const Duration _defaultEndToEndAttemptTimeout =
+      Duration(milliseconds: 3200);
+
   @override
   Future<EndToEndProbeObservation?> probeEndToEnd({
     required HealthCancellationToken cancelToken,
     required String? explicitProxyDirective,
+  }) =>
+      _probeEndToEndInternal(
+        cancelToken: cancelToken,
+        explicitProxyDirective: explicitProxyDirective,
+        connectTimeout: _defaultEndToEndConnectTimeout,
+        attemptTimeout: _defaultEndToEndAttemptTimeout,
+      );
+
+  @override
+  Future<EndToEndProbeObservation?> probeEndToEndWithBudget({
+    required HealthCancellationToken cancelToken,
+    required String? explicitProxyDirective,
+    required Duration connectTimeout,
+    required Duration attemptTimeout,
+  }) =>
+      _probeEndToEndInternal(
+        cancelToken: cancelToken,
+        explicitProxyDirective: explicitProxyDirective,
+        connectTimeout: connectTimeout,
+        attemptTimeout: attemptTimeout,
+      );
+
+  Future<EndToEndProbeObservation?> _probeEndToEndInternal({
+    required HealthCancellationToken cancelToken,
+    required String? explicitProxyDirective,
+    required Duration connectTimeout,
+    required Duration attemptTimeout,
   }) async {
     final dioCancel = CancelToken();
     cancelToken.register(() {
@@ -509,8 +555,8 @@ class DefaultHealthProbeEnvironment
       final res = await activeRequest.checkIpWithHost(
         cancelToken: dioCancel,
         keepAliveHold: const Duration(milliseconds: 1800),
-        connectTimeout: const Duration(milliseconds: 2800),
-        attemptTimeout: const Duration(milliseconds: 3200),
+        connectTimeout: connectTimeout,
+        attemptTimeout: attemptTimeout,
         forceHoldSocket: true,
         proxyResolver: explicitProxyDirective != null
             ? (_) => explicitProxyDirective

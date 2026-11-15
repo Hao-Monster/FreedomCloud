@@ -141,15 +141,36 @@ HealthVerdict computeHealthVerdict(
   final e2e = get(HealthCheckId.endToEndConnectivity);
   if (e2e != null) {
     if (e2e.status.isFailure) {
-      return HealthVerdict(
-        code: 'endToEndFailed',
-        severity: HealthVerdictSeverity.failed,
-        primaryCheckId: HealthCheckId.endToEndConnectivity,
-        primaryAction: e2e.action ?? HealthAction.openProxies,
-        activeNodeName: activeNodeName,
-        outboundDelayMs: outboundDelayMs,
-        mode: mode,
-      );
+      final outboundProvenByProbe = outboundResult != null &&
+          (outboundResult.status == HealthStatus.passed ||
+              outboundResult.status == HealthStatus.warning) &&
+          outboundResult.reasonCode != 'outboundSelectedDirect' &&
+          outboundResult.reasonCode != 'outboundSelectedReject' &&
+          outboundResult.reasonCode != 'coreDelayBusy';
+      if (e2e.reasonCode != 'e2eRejectedByRule' && outboundProvenByProbe) {
+        if (!failed(HealthCheckId.dnsResolution)) {
+          return HealthVerdict(
+            code: 'healthyWithWarnings',
+            severity: HealthVerdictSeverity.warning,
+            primaryCheckId: HealthCheckId.endToEndConnectivity,
+            primaryAction: e2e.action ?? HealthAction.openProxies,
+            activeNodeName: activeNodeName,
+            outboundDelayMs: outboundDelayMs,
+            directDelayMs: directDelayMs,
+            mode: mode,
+          );
+        }
+      } else {
+        return HealthVerdict(
+          code: 'endToEndFailed',
+          severity: HealthVerdictSeverity.failed,
+          primaryCheckId: HealthCheckId.endToEndConnectivity,
+          primaryAction: e2e.action ?? HealthAction.openProxies,
+          activeNodeName: activeNodeName,
+          outboundDelayMs: outboundDelayMs,
+          mode: mode,
+        );
+      }
     }
     if (e2e.status == HealthStatus.warning &&
         e2e.reasonCode == 'tunBypassedSystemProxyOk') {

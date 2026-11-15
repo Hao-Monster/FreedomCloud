@@ -321,7 +321,7 @@ class Request {
           options: Options(
             responseType: ResponseType.json,
             followRedirects: false,
-            receiveTimeout: const Duration(seconds: 3),
+            receiveTimeout: attemptTimeout ?? const Duration(seconds: 3),
           ),
         );
         // A peer can trickle headers or body bytes without hitting an idle

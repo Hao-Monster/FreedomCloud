@@ -198,11 +198,12 @@ func fcxLogSingTunStage(stage string, startedAt time.Time, err error) {
 }
 
 type FCXDefaultInterfaceEvent struct {
-	Name      string
-	Index     int
-	Addresses []netip.Prefix
-	Lost      bool
-	Flags     int
+	Name       string
+	Index      int
+	Addresses  []netip.Prefix
+	Lost       bool
+	Flags      int
+	ObservedAt time.Time
 }
 
 var fcxDefaultInterfaceObserver atomic.Pointer[func(FCXDefaultInterfaceEvent)]
@@ -215,12 +216,16 @@ func SetFCXDefaultInterfaceObserver(fn func(FCXDefaultInterfaceEvent)) {
 	fcxDefaultInterfaceObserver.Store(&fn)
 }
 
-func fcxNotifyDefaultInterfaceChanged(defaultInterface *control.Interface, flags int) {
+func fcxNotifyDefaultInterfaceChanged(defaultInterface *control.Interface, flags int) bool {
+	observedAt := time.Now()
 	observer := fcxDefaultInterfaceObserver.Load()
 	if observer == nil || *observer == nil {
-		return
+		return false
 	}
-	event := FCXDefaultInterfaceEvent{Flags: flags}
+	event := FCXDefaultInterfaceEvent{
+		Flags:      flags,
+		ObservedAt: observedAt,
+	}
 	if defaultInterface == nil {
 		event.Lost = true
 	} else {
@@ -231,4 +236,5 @@ func fcxNotifyDefaultInterfaceChanged(defaultInterface *control.Interface, flags
 		}
 	}
 	(*observer)(event)
+	return true
 }

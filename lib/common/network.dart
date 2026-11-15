@@ -1,16 +1,36 @@
 import 'dart:io';
 
-bool _isTunnelInterfaceName(String name) {
+const List<String> _virtualOrTunnelInterfaceKeywords = [
+  'flclash',
+  'mihomo',
+  'wintun',
+  'clash',
+  'vethernet',
+  'wsl',
+  'hyper-v',
+  'vmware',
+  'vmnet',
+  'vboxnet',
+  'virtualbox',
+  'tailscale',
+  'zerotier',
+  'wireguard',
+  'tap-windows',
+  'loopback',
+  'docker',
+  'podman',
+];
+
+bool isVirtualOrTunnelInterfaceName(String name) {
   final normalized = name.trim().toLowerCase();
   if (normalized.isEmpty) {
     return false;
   }
-  return normalized.contains('flclash') ||
-      normalized.contains('mihomo') ||
-      normalized.contains('wintun') ||
-      normalized.contains('clash') ||
-      normalized.startsWith('utun') ||
-      RegExp(r'^tun\d*$').hasMatch(normalized);
+  if (normalized.startsWith('utun') ||
+      RegExp(r'^tun\d*$').hasMatch(normalized)) {
+    return true;
+  }
+  return _virtualOrTunnelInterfaceKeywords.any(normalized.contains);
 }
 
 bool _isWifiInterfaceName(String name) {
@@ -97,7 +117,7 @@ String selectPreferredPhysicalLocalIp(
 ) {
   final candidates = <({String name, List<InternetAddress> usable})>[];
   for (final iface in interfaces) {
-    if (_isTunnelInterfaceName(iface.name)) {
+    if (isVirtualOrTunnelInterfaceName(iface.name)) {
       continue;
     }
     final usable = iface.addresses.where(_isUsablePhysicalAddress).toList();

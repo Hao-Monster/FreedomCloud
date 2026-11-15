@@ -35,10 +35,13 @@ class NetworkChangeCoordinator {
     required this.resetConnections,
     required this.closeConnections,
     this.onLocalIpChanged,
+    this.onRecovered,
     this.probeDelays = const [
       Duration(milliseconds: 250),
-      Duration(milliseconds: 1200),
-      Duration(milliseconds: 2800),
+      Duration(milliseconds: 1000),
+      Duration(milliseconds: 2500),
+      Duration(milliseconds: 4500),
+      Duration(milliseconds: 7000),
     ],
   });
 
@@ -47,6 +50,7 @@ class NetworkChangeCoordinator {
   final VoidCallback resetConnections;
   final VoidCallback closeConnections;
   final ValueChanged<String?>? onLocalIpChanged;
+  final FutureOr<void> Function()? onRecovered;
   final List<Duration> probeDelays;
 
   bool _disposed = false;
@@ -84,10 +88,10 @@ class NetworkChangeCoordinator {
       return;
     }
     final ip = (rawIp ?? '').trim();
-    _lastTransports = transports;
+    _lastTransports = ip.isEmpty ? const <ConnectivityResult>{} : transports;
     _lastLocalIp = ip;
     _hasSnapshot = true;
-    _wasOffline = false;
+    _wasOffline = ip.isEmpty;
     if (ip.isNotEmpty) {
       onLocalIpChanged?.call(rawIp);
     }
@@ -143,6 +147,18 @@ class NetworkChangeCoordinator {
       return;
     }
 
+    await _probeUntilRecovered(
+      epoch: epoch,
+      transports: transports,
+      delays: delays,
+    );
+  }
+
+  Future<void> _probeUntilRecovered({
+    required int epoch,
+    required Set<ConnectivityResult> transports,
+    required List<Duration> delays,
+  }) async {
     for (var i = 0; i < delays.length; i++) {
       final delay = delays[i];
       if (delay > Duration.zero) {
@@ -160,37 +176,48 @@ class NetworkChangeCoordinator {
       final isLastProbe = i == delays.length - 1;
 
       if (!_hasSnapshot) {
-        _lastTransports = transports;
-        if (ip.isNotEmpty || isLastProbe) {
+        if (ip.isNotEmpty) {
+          _lastTransports = transports;
           _lastLocalIp = ip;
           _hasSnapshot = true;
           _wasOffline = false;
           break;
         }
-        continue;
-      }
-
-      final transportChanged = !setEquals(_lastTransports, transports);
-      final ipChanged = ip.isNotEmpty && ip != _lastLocalIp;
-      final shouldReset = _wasOffline || transportChanged || ipChanged;
-
-      if (shouldReset) {
-        if (ip.isNotEmpty || isLastProbe) {
-          resetConnections();
-          _wasOffline = false;
-          _lastTransports = transports;
-          if (ip.isNotEmpty) {
-            _lastLocalIp = ip;
-          }
-          break;
+        if (isLastProbe) {
+          _lastTransports = const <ConnectivityResult>{};
+          _lastLocalIp = '';
+          _hasSnapshot = true;
+          _wasOffline = true;
         }
         continue;
       }
 
-      if (ip.isNotEmpty) {
-        _lastTransports = transports;
-        break;
+      if (ip.isEmpty) {
+        _wasOffline = true;
+        if (isLastProbe) {
+          _lastTransports = const <ConnectivityResult>{};
+        }
+        continue;
       }
+
+      final transportChanged = !setEquals(_lastTransports, transports);
+      final ipChanged = ip != _lastLocalIp;
+      final shouldReset = _wasOffline || transportChanged || ipChanged;
+
+      _wasOffline = false;
+      _lastTransports = transports;
+      _lastLocalIp = ip;
+
+      if (shouldReset) {
+        resetConnections();
+        if (_disposed || epoch != _epoch) {
+          return;
+        }
+        try {
+          await onRecovered?.call();
+        } catch (_) {}
+      }
+      break;
     }
   }
 
@@ -250,6 +277,16 @@ class ApplicationState extends ConsumerState<Application> {
         if (mounted) {
           ref.read(localIpProvider.notifier).value = ip;
         }
+      },
+      onRecovered: () {
+        if (!mounted ||
+            !globalState.isAppStateInitialized ||
+            !globalState.isConfigInitialized) {
+          return;
+        }
+        detectionState
+          ..notifyRoutingChanged()
+          ..startCheck();
       },
     );
     WidgetsBinding.instance.addPostFrameCallback((timeStamp) async {

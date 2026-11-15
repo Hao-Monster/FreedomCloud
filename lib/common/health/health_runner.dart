@@ -19,6 +19,23 @@ class _HealthCancelledException implements Exception {
   const _HealthCancelledException();
 }
 
+({Duration connectTimeout, Duration attemptTimeout, Duration overallTimeout})
+    computeEndToEndProbeBudget({HealthCheckResult? outboundResult}) {
+  final observedOutboundMs = math.max(
+    outboundResult?.elapsedMs ?? 0,
+    outboundResult?.delayMs ?? 0,
+  );
+  final connectTimeoutMs =
+      math.max(4500, observedOutboundMs + 1500).clamp(4500, 7500);
+  final attemptTimeoutMs = (connectTimeoutMs + 1200).clamp(5700, 8700);
+  final overallTimeout = Duration(milliseconds: attemptTimeoutMs * 2 + 2000);
+  return (
+    connectTimeout: Duration(milliseconds: connectTimeoutMs),
+    attemptTimeout: Duration(milliseconds: attemptTimeoutMs),
+    overallTimeout: overallTimeout,
+  );
+}
+
 class HealthRunner {
   HealthRunner(this.environment);
 
@@ -1551,26 +1568,45 @@ class HealthRunner {
             );
           }
         } else {
+          final e2eBudget = computeEndToEndProbeBudget(outboundResult: d3);
+
+          Future<
+              ({
+                EndToEndProbeObservation? observation,
+                String? failureReason,
+              })> probeEndToEndOnce(String directive) async {
+            try {
+              final probeFuture = switch (environment) {
+                final AdaptiveEndToEndProbeEnvironment adaptiveEnv =>
+                  adaptiveEnv.probeEndToEndWithBudget(
+                    cancelToken: token,
+                    explicitProxyDirective: directive,
+                    connectTimeout: e2eBudget.connectTimeout,
+                    attemptTimeout: e2eBudget.attemptTimeout,
+                  ),
+                _ => environment.probeEndToEnd(
+                    cancelToken: token,
+                    explicitProxyDirective: directive,
+                  ),
+              };
+              final observation = await raceCancel(
+                probeFuture.timeout(e2eBudget.overallTimeout),
+              );
+              return (observation: observation, failureReason: null);
+            } on _HealthCancelledException {
+              rethrow;
+            } on TimeoutException {
+              return (observation: null, failureReason: 'e2eTimeout');
+            } catch (_) {
+              return (observation: null, failureReason: 'e2eAllSourcesFailed');
+            }
+          }
+
           final primaryDirective = tunActive ? 'DIRECT' : systemProxyDirective!;
           final primaryWatch = Stopwatch()..start();
-          EndToEndProbeObservation? primaryObservation;
-          String? primaryFailureReason;
-          try {
-            primaryObservation = await raceCancel(
-              environment
-                  .probeEndToEnd(
-                    cancelToken: token,
-                    explicitProxyDirective: primaryDirective,
-                  )
-                  .timeout(const Duration(seconds: 10)),
-            );
-          } on _HealthCancelledException {
-            rethrow;
-          } on TimeoutException {
-            primaryFailureReason = 'e2eTimeout';
-          } catch (_) {
-            primaryFailureReason = 'e2eAllSourcesFailed';
-          }
+          final primaryAttempt = await probeEndToEndOnce(primaryDirective);
+          final primaryObservation = primaryAttempt.observation;
+          final primaryFailureReason = primaryAttempt.failureReason;
           final primaryMs = primaryWatch.elapsedMilliseconds;
           final failedAttemptCapturedByCore = switch (environment) {
             CoreFailedProbeTelemetry(:final lastFailedProbeObservedInCore) =>
@@ -1598,24 +1634,10 @@ class HealthRunner {
                   );
           } else {
             final fallbackWatch = Stopwatch()..start();
-            EndToEndProbeObservation? fallbackObservation;
-            String? fallbackFailureReason;
-            try {
-              fallbackObservation = await raceCancel(
-                environment
-                    .probeEndToEnd(
-                      cancelToken: token,
-                      explicitProxyDirective: systemProxyDirective,
-                    )
-                    .timeout(const Duration(seconds: 10)),
-              );
-            } on _HealthCancelledException {
-              rethrow;
-            } on TimeoutException {
-              fallbackFailureReason = 'e2eTimeout';
-            } catch (_) {
-              fallbackFailureReason = 'e2eAllSourcesFailed';
-            }
+            final fallbackAttempt =
+                await probeEndToEndOnce(systemProxyDirective);
+            final fallbackObservation = fallbackAttempt.observation;
+            final fallbackFailureReason = fallbackAttempt.failureReason;
             final fallbackMs = fallbackWatch.elapsedMilliseconds;
             if (fallbackObservation != null) {
               d4 = classifyObservation(

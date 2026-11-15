@@ -929,18 +929,31 @@ func closeConnections() {
 }
 
 func closeConnectionsWithReason(reason string) int {
+	return closeConnectionsBefore(time.Time{}, true, reason)
+}
+
+func closeConnectionsBefore(cutoff time.Time, resetPools bool, reason string) int {
 	var toClose []statistic.Tracker
+	preserved := 0
 	statistic.DefaultManager.Range(func(c statistic.Tracker) bool {
+		if !cutoff.IsZero() {
+			if info := c.Info(); info != nil && !info.Start.IsZero() && info.Start.After(cutoff) {
+				preserved++
+				return true
+			}
+		}
 		toClose = append(toClose, c)
 		return true
 	})
 	for _, c := range toClose {
 		_ = c.Close()
 	}
-	resetOutboundAdapterPools()
+	if resetPools {
+		resetOutboundAdapterPools()
+	}
 	closed := len(toClose)
-	if closed > 0 || strings.Contains(reason, "ipc") {
-		log.Infoln("[Connections] closed=%d reason=%s", closed, reason)
+	if closed > 0 || preserved > 0 || strings.Contains(reason, "ipc") {
+		log.Infoln("[Connections] closed=%d preserved=%d reason=%s", closed, preserved, reason)
 	}
 	return closed
 }

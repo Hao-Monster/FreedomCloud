@@ -122,6 +122,7 @@ func handleStopTun() {
 		stopRequestForwarder()
 	}
 	runLock.Unlock()
+	cancelPendingNetworkRecoveryHealthChecks()
 }
 
 func handleStartTun(fd int, callback unsafe.Pointer) bool {

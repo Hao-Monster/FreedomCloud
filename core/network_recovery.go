@@ -26,12 +26,14 @@ var (
 	networkRecoveryMu           sync.Mutex
 	lastTunRecoveredNetworkKey  string
 	lastTunDefaultInterfaceID   string
+	lastTunBaselineSeeded       bool
+	lastRecoveryFromTun         bool
 	lastTunRecoveredAt          time.Time
 	networkHealthCheckTimer     *time.Timer
 	networkHealthCheckWG        sync.WaitGroup
 	networkHealthCheckEpoch     uint64
 	networkHealthCheckDebounce  = 250 * time.Millisecond
-	tunRecoveryDedupGraceWindow = 15 * time.Second
+	tunRecoveryDedupGraceWindow = 30 * time.Second
 )
 
 func stopNetworkHealthCheckTimerLocked() {
@@ -141,12 +143,34 @@ func seedNetworkRecoveryBaseline() {
 	networkRecoveryMu.Lock()
 	if !isEstablishedNetworkRecoveryKey(lastTunRecoveredNetworkKey) {
 		lastTunRecoveredNetworkKey = key
+		lastTunDefaultInterfaceID = ""
+		lastTunBaselineSeeded = true
+		lastRecoveryFromTun = true
 		lastTunRecoveredAt = time.Now()
 	}
 	networkRecoveryMu.Unlock()
 }
 
 var fcxBenchmarkTunPrefix = netip.MustParsePrefix("198.18.0.0/15")
+
+var virtualOrTunKeywords = []string{
+	"wintun",
+	"flclash",
+	"vethernet",
+	"wsl",
+	"hyper-v",
+	"vmware",
+	"vmnet",
+	"vboxnet",
+	"virtualbox",
+	"tailscale",
+	"zerotier",
+	"wireguard",
+	"tap-windows",
+	"loopback",
+	"docker",
+	"podman",
+}
 
 func isTunLikeInterface(item *iface.Interface, configuredTunDevice string) bool {
 	if item == nil {
@@ -159,8 +183,13 @@ func isTunLikeInterface(item *iface.Interface, configuredTunDevice string) bool 
 		return true
 	}
 	lower := strings.ToLower(item.Name)
-	if strings.Contains(lower, "wintun") || strings.Contains(lower, "flclash") || strings.HasPrefix(lower, "utun") {
+	if strings.HasPrefix(lower, "utun") {
 		return true
+	}
+	for _, kw := range virtualOrTunKeywords {
+		if strings.Contains(lower, kw) {
+			return true
+		}
 	}
 	for _, prefix := range item.Addresses {
 		addr := prefix.Addr().Unmap()
@@ -169,6 +198,140 @@ func isTunLikeInterface(item *iface.Interface, configuredTunDevice string) bool 
 		}
 	}
 	return false
+}
+
+func defaultInterfaceHasUsablePrefix(event sing_tun.FCXDefaultInterfaceEvent) bool {
+	if len(formatRoutingIdentityPrefixes(event.Addresses)) > 0 {
+		return true
+	}
+	if event.Name == "" && event.Index <= 0 {
+		return false
+	}
+	ifaces, err := iface.Interfaces()
+	if err != nil || len(ifaces) == 0 {
+		return false
+	}
+	tunDevice := listener.GetTunLifecycleStatus().Device
+	for _, item := range ifaces {
+		if item == nil || item.Flags&net.FlagUp == 0 || isTunLikeInterface(item, tunDevice) {
+			continue
+		}
+		matches := false
+		if event.Name != "" {
+			matches = strings.EqualFold(item.Name, event.Name)
+		} else {
+			matches = item.Index == event.Index
+		}
+		if matches && len(formatRoutingIdentityPrefixes(item.Addresses)) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func parseNetworkRecoveryKey(key string) (map[string]map[string]struct{}, bool) {
+	if !isEstablishedNetworkRecoveryKey(key) {
+		return nil, false
+	}
+	entries := strings.Split(key, ";")
+	result := make(map[string]map[string]struct{}, len(entries))
+	for _, entry := range entries {
+		idx := strings.Index(entry, "=[")
+		if idx <= 0 || !strings.HasSuffix(entry, "]") {
+			return nil, false
+		}
+		ifName := entry[:idx]
+		addrsRaw := entry[idx+2 : len(entry)-1]
+		if addrsRaw == "" {
+			return nil, false
+		}
+		prefixSet := result[ifName]
+		if prefixSet == nil {
+			prefixSet = make(map[string]struct{})
+			result[ifName] = prefixSet
+		}
+		for _, p := range strings.Split(addrsRaw, ",") {
+			if p == "" {
+				return nil, false
+			}
+			prefixSet[p] = struct{}{}
+		}
+	}
+	return result, len(result) > 0
+}
+
+// isPurelyAdditiveInterfaceUpdate reports whether switching from prevKey to newKey
+// on the same default interface preserves all previously established prefixes across
+// all physical NICs while adding only prefixes from previously absent address families
+// on defaultIfName (such as IPv6 RA arriving shortly after DHCPv4).
+func isPurelyAdditiveInterfaceUpdate(prevKey, newKey, defaultIfName string) bool {
+	if defaultIfName == "" || prevKey == newKey {
+		return false
+	}
+	prevMap, okPrev := parseNetworkRecoveryKey(prevKey)
+	newMap, okNew := parseNetworkRecoveryKey(newKey)
+	if !okPrev || !okNew {
+		return false
+	}
+
+	for ifName, prevAddrs := range prevMap {
+		if ifName == defaultIfName {
+			continue
+		}
+		newAddrs := newMap[ifName]
+		if len(newAddrs) == 0 {
+			return false
+		}
+		for p := range prevAddrs {
+			if _, ok := newAddrs[p]; !ok {
+				return false
+			}
+		}
+	}
+
+	prevDefault := prevMap[defaultIfName]
+	newDefault := newMap[defaultIfName]
+	if len(prevDefault) == 0 || len(newDefault) == 0 {
+		return false
+	}
+
+	var prevHasV4, prevHasV6 bool
+	for p := range prevDefault {
+		if _, ok := newDefault[p]; !ok {
+			return false
+		}
+		parsed, err := netip.ParsePrefix(p)
+		if err != nil {
+			return false
+		}
+		addr := parsed.Addr().Unmap()
+		if addr.Is4() {
+			prevHasV4 = true
+		} else if addr.Is6() {
+			prevHasV6 = true
+		}
+	}
+
+	for p := range newDefault {
+		if _, existed := prevDefault[p]; existed {
+			continue
+		}
+		parsed, err := netip.ParsePrefix(p)
+		if err != nil {
+			return false
+		}
+		addr := parsed.Addr().Unmap()
+		if addr.Is4() && prevHasV4 {
+			return false
+		}
+		if addr.Is6() && prevHasV6 {
+			return false
+		}
+		if !addr.Is4() && !addr.Is6() {
+			return false
+		}
+	}
+	return true
 }
 
 func computeActivePhysicalInterfacesKey() string {
@@ -207,13 +370,20 @@ func buildSingleInterfaceKey(name string, prefixes []netip.Prefix) string {
 }
 
 func onTunDefaultInterfaceChanged(event sing_tun.FCXDefaultInterfaceEvent) {
+	observedAt := event.ObservedAt
+	if observedAt.IsZero() {
+		observedAt = time.Now()
+	}
+
 	if event.Lost {
 		resetNetworkCachesAndResolvers()
-		closeConnectionsWithReason("network:lost")
+		closeConnectionsBefore(observedAt, true, "network:lost")
 		networkRecoveryMu.Lock()
 		lastTunRecoveredNetworkKey = "lost"
 		lastTunDefaultInterfaceID = ""
-		lastTunRecoveredAt = time.Now()
+		lastTunBaselineSeeded = false
+		lastRecoveryFromTun = false
+		lastTunRecoveredAt = time.Time{}
 		networkHealthCheckEpoch++
 		stopNetworkHealthCheckTimerLocked()
 		networkRecoveryMu.Unlock()
@@ -223,14 +393,15 @@ func onTunDefaultInterfaceChanged(event sing_tun.FCXDefaultInterfaceEvent) {
 
 	iface.FlushCache()
 	key := computeActivePhysicalInterfacesKey()
-	usableEventAddrs := formatRoutingIdentityPrefixes(event.Addresses)
 	defaultID := formatDefaultInterfaceID(event.Name, event.Index)
 
-	if key == "" && len(usableEventAddrs) == 0 {
+	if !defaultInterfaceHasUsablePrefix(event) {
 		networkRecoveryMu.Lock()
 		prevKey := lastTunRecoveredNetworkKey
 		lastTunRecoveredNetworkKey = "tentative:" + event.Name
 		lastTunDefaultInterfaceID = defaultID
+		lastTunBaselineSeeded = false
+		lastRecoveryFromTun = false
 		lastTunRecoveredAt = time.Time{}
 		networkHealthCheckEpoch++
 		stopNetworkHealthCheckTimerLocked()
@@ -238,7 +409,7 @@ func onTunDefaultInterfaceChanged(event sing_tun.FCXDefaultInterfaceEvent) {
 
 		if !strings.HasPrefix(prevKey, "tentative:") {
 			resetNetworkCachesAndResolvers()
-			closeConnectionsWithReason("network:tentative:" + event.Name)
+			closeConnectionsBefore(observedAt, true, "network:tentative:"+event.Name)
 			resetURLTestGroupCaches()
 		}
 		log.Infoln("[Network] default interface %s acquiring usable address (DAD/DHCP in progress); deferred health checks", event.Name)
@@ -252,10 +423,11 @@ func onTunDefaultInterfaceChanged(event sing_tun.FCXDefaultInterfaceEvent) {
 	networkRecoveryMu.Lock()
 	prevKey := lastTunRecoveredNetworkKey
 	prevDefaultID := lastTunDefaultInterfaceID
+	prevSeeded := lastTunBaselineSeeded
 	samePhysicalKey := isEstablishedNetworkRecoveryKey(prevKey) && key == prevKey
-	sameDefaultIf := prevDefaultID == "" || defaultID == "" || defaultID == prevDefaultID
+	sameDefaultIf := (defaultID != "" && prevDefaultID == defaultID) || (prevDefaultID == "" && prevSeeded)
 	if samePhysicalKey && sameDefaultIf {
-		lastTunRecoveredAt = now
+		lastTunBaselineSeeded = false
 		if prevDefaultID == "" && defaultID != "" {
 			lastTunDefaultInterfaceID = defaultID
 		}
@@ -263,43 +435,62 @@ func onTunDefaultInterfaceChanged(event sing_tun.FCXDefaultInterfaceEvent) {
 		log.Debugln("[Network] default interface %s unchanged (%s); preserved active connections", event.Name, key)
 		return
 	}
+	if prevDefaultID != "" && defaultID == prevDefaultID && isPurelyAdditiveInterfaceUpdate(prevKey, key, event.Name) {
+		lastTunRecoveredNetworkKey = key
+		lastTunBaselineSeeded = false
+		networkRecoveryMu.Unlock()
+		log.Debugln("[Network] default interface %s additive update (%s); preserved active connections and DNS pools", event.Name, key)
+		return
+	}
 	lastTunRecoveredNetworkKey = key
 	lastTunDefaultInterfaceID = defaultID
+	lastTunBaselineSeeded = false
+	lastRecoveryFromTun = true
 	lastTunRecoveredAt = now
 	networkRecoveryMu.Unlock()
 
 	resetNetworkCachesAndResolvers()
-	closeConnectionsWithReason("network:changed:" + event.Name)
+	closeConnectionsBefore(observedAt, true, "network:changed:"+event.Name)
 	resetURLTestGroupCaches()
 	scheduleNetworkRecoveryHealthChecks()
 	log.Infoln("[Network] default interface switched to %s; reset DNS, closed stale connections, scheduled health checks", event.Name)
 }
 
 func recoverFromIPCNetworkReset() {
-	resetNetworkCachesAndResolvers()
+	ipcStartedAt := time.Now()
+	iface.FlushCache()
 
 	key := computeActivePhysicalInterfacesKey()
-	now := time.Now()
 	networkRecoveryMu.Lock()
 	alreadyRecoveredByTun := key != "" &&
+		lastRecoveryFromTun &&
 		isEstablishedNetworkRecoveryKey(lastTunRecoveredNetworkKey) &&
 		key == lastTunRecoveredNetworkKey &&
-		now.Sub(lastTunRecoveredAt) < tunRecoveryDedupGraceWindow
-	if !alreadyRecoveredByTun && key != "" {
+		!lastTunRecoveredAt.IsZero() &&
+		ipcStartedAt.Sub(lastTunRecoveredAt) < tunRecoveryDedupGraceWindow
+	if alreadyRecoveredByTun {
+		networkRecoveryMu.Unlock()
+		log.Debugln("[Network] resetConnections deduplicated within %v after TUN recovery (%s)", tunRecoveryDedupGraceWindow, key)
+		return
+	}
+	if key != "" {
 		if lastTunRecoveredNetworkKey != key {
 			lastTunDefaultInterfaceID = ""
 		}
 		lastTunRecoveredNetworkKey = key
-		lastTunRecoveredAt = now
+	} else {
+		lastTunDefaultInterfaceID = ""
 	}
+	lastTunBaselineSeeded = false
+	lastRecoveryFromTun = false
+	lastTunRecoveredAt = time.Time{}
 	networkRecoveryMu.Unlock()
 
-	if !alreadyRecoveredByTun {
-		closeConnectionsWithReason("ipc:resetConnections")
-	}
+	resetNetworkCachesAndResolvers()
+	closeConnectionsBefore(ipcStartedAt, true, "ipc:resetConnections")
 	resetURLTestGroupCaches()
 	scheduleNetworkRecoveryHealthChecks()
-	log.Infoln("[Network] resetConnections completed (closedConnections=%v)", !alreadyRecoveredByTun)
+	log.Infoln("[Network] resetConnections completed (closedConnections=true)")
 }
 
 func cancelPendingNetworkRecoveryHealthChecks() {
@@ -308,6 +499,8 @@ func cancelPendingNetworkRecoveryHealthChecks() {
 	stopNetworkHealthCheckTimerLocked()
 	lastTunRecoveredNetworkKey = ""
 	lastTunDefaultInterfaceID = ""
+	lastTunBaselineSeeded = false
+	lastRecoveryFromTun = false
 	lastTunRecoveredAt = time.Time{}
 	networkRecoveryMu.Unlock()
 }

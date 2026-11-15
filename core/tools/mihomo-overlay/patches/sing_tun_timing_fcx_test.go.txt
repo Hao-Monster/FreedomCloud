@@ -16,6 +16,7 @@ import (
 
 	"github.com/metacubex/mihomo/log"
 	tun "github.com/metacubex/sing-tun"
+	"github.com/metacubex/sing/common/control"
 )
 
 func TestFCXTimingPersistsAtWarningLogLevel(t *testing.T) {
@@ -321,3 +322,41 @@ func TestFCXTunNewKeepsUpstreamRetryForOtherSlowFailures(t *testing.T) {
 		t.Fatal("nil error must stay untyped")
 	}
 }
+
+func TestFCXNotifyDefaultInterfaceChangedCapturesObservedAtAndReturnsBool(t *testing.T) {
+	SetFCXDefaultInterfaceObserver(nil)
+	defer SetFCXDefaultInterfaceObserver(nil)
+
+	ifaceArg := &control.Interface{
+		Index: 30,
+		Name:  "WLAN",
+		Addresses: []netip.Prefix{
+			netip.MustParsePrefix("192.168.1.50/24"),
+		},
+	}
+	if handled := fcxNotifyDefaultInterfaceChanged(ifaceArg, 1); handled {
+		t.Fatal("expected false when no observer is registered")
+	}
+
+	var captured FCXDefaultInterfaceEvent
+	before := time.Now()
+	SetFCXDefaultInterfaceObserver(func(ev FCXDefaultInterfaceEvent) {
+		time.Sleep(15 * time.Millisecond)
+		captured = ev
+	})
+	handled := fcxNotifyDefaultInterfaceChanged(ifaceArg, 2)
+	after := time.Now()
+	if !handled {
+		t.Fatal("expected true when observer is registered")
+	}
+	if captured.ObservedAt.IsZero() {
+		t.Fatal("expected non-zero ObservedAt captured on notification entry")
+	}
+	if captured.ObservedAt.Before(before) || captured.ObservedAt.After(after) {
+		t.Fatalf("ObservedAt=%v out of bounds [%v, %v]", captured.ObservedAt, before, after)
+	}
+	if captured.Name != "WLAN" || captured.Index != 30 || len(captured.Addresses) != 1 {
+		t.Fatalf("unexpected event payload: %+v", captured)
+	}
+}
+

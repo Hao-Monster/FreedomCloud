@@ -33,6 +33,7 @@ const configsSHA256 = "d11710296ea68a8d12f7593ec50cec9fef830272b3a54f64f707ec869
 const controllerSHA256 = "01724bd82002cf80b85448ef664ca53a7cb82f529ccf2b7f4a6383282768d256"
 const adapterSHA256 = "0a0524f342ff1672fdb94ad675d176d069b1f6e16ddfe462ece2f55b9e10212c"
 const urlTestGroupSHA256 = "6d58af720ff6bcb368b2d43253a784865fd040d6871598cd2cc7eb8237083565"
+const groupBaseSHA256 = "4f073f75e1deaff8468458adecaaf674e720200f5c056967e5ee7f9dee25fc38"
 const dnsDoHSHA256 = "1ba0170bed4aabf6b295471f9fddb03da20122d339526a97170dff537fbde57b"
 const dnsResolverSHA256 = "400765c7dde15950c324ab8fce1a7dc1d7730b3c7f3bff6a85fd64e4238e2b48"
 const dnsPolicySHA256 = "a46f9e8cb408b0ea1863fc5bf926e7ce461afb3b6a842394421b5c9951b10116"
@@ -367,14 +368,15 @@ func patchSingTunServer(source []byte) ([]byte, error) {
 			return
 		}
 		defaultInterfaceMonitor.RegisterCallback(func(defaultInterface *control.Interface, event int) {
-			if defaultInterface != nil {
-				log.Warnln("[TUN] default interface changed by monitor, => %s", defaultInterface.Name)
-			} else {
-				log.Errorln("[TUN] default interface lost by monitor")
+			if !fcxNotifyDefaultInterfaceChanged(defaultInterface, event) {
+				if defaultInterface != nil {
+					log.Warnln("[TUN] default interface changed by monitor, => %s", defaultInterface.Name)
+				} else {
+					log.Errorln("[TUN] default interface lost by monitor")
+				}
+				iface.FlushCache()
+				resolver.ResetConnection() // reset resolver's connection after default interface changed
 			}
-			iface.FlushCache()
-			resolver.ResetConnection() // reset resolver's connection after default interface changed
-			fcxNotifyDefaultInterfaceChanged(defaultInterface, event)
 		})
 		fcxLogSingTunStage("sing_tun.monitors", monitorsStartedAt, nil)`
 
@@ -1171,6 +1173,102 @@ func (u *URLTest) ResetFastCacheFCX() {
 		return nil, fmt.Errorf("upstream outboundgroup/urltest.go ForceSet changed")
 	}
 	patched = strings.Replace(patched, forceSetAnchor, forceSetReplacement, 1)
+	return format.Source([]byte(patched))
+}
+
+func patchOutboundGroupBase(source []byte) ([]byte, error) {
+	source = bytes.ReplaceAll(source, []byte("\r\n"), []byte("\n"))
+	fset := token.NewFileSet()
+	if _, err := parser.ParseFile(fset, "groupbase.go", source, 0); err != nil {
+		return nil, err
+	}
+	patched := string(source)
+
+	const dialFailedBlockAnchor = `		gb.failedTestMux.Lock()
+		defer gb.failedTestMux.Unlock()
+
+		gb.failedTimes++
+		if gb.failedTimes == 1 {
+			log.Debugln("ProxyGroup: %s first failed", gb.Name())
+			gb.failedTime = time.Now()
+		} else {
+			if time.Since(gb.failedTime) > time.Duration(gb.testTimeout)*time.Millisecond {
+				gb.failedTimes = 0
+				return
+			}
+
+			log.Debugln("ProxyGroup: %s failed count: %d", gb.Name(), gb.failedTimes)
+			if gb.failedTimes >= gb.maxFailedTimes {
+				log.Warnln("because %s failed multiple times, activate health check", gb.Name())
+				fn()
+			}
+		}`
+	const dialFailedBlockReplacement = `		shouldTrigger := func() bool {
+			gb.failedTestMux.Lock()
+			defer gb.failedTestMux.Unlock()
+
+			gb.failedTimes++
+			if gb.failedTimes == 1 {
+				log.Debugln("ProxyGroup: %s first failed", gb.Name())
+				gb.failedTime = time.Now()
+				return false
+			}
+
+			failedWindow := 3 * time.Duration(gb.testTimeout) * time.Millisecond
+			if failedWindow < 30*time.Second {
+				failedWindow = 30 * time.Second
+			}
+			if time.Since(gb.failedTime) > failedWindow {
+				gb.failedTimes = 1
+				gb.failedTime = time.Now()
+				return false
+			}
+
+			log.Debugln("ProxyGroup: %s failed count: %d", gb.Name(), gb.failedTimes)
+			if gb.failedTimes >= gb.maxFailedTimes {
+				log.Warnln("because %s failed multiple times, activate health check", gb.Name())
+				return true
+			}
+			return false
+		}()
+		if shouldTrigger {
+			fn()
+		}`
+	if strings.Count(patched, dialFailedBlockAnchor) != 1 {
+		return nil, fmt.Errorf("upstream outboundgroup/groupbase.go onDialFailed block changed")
+	}
+	patched = strings.Replace(patched, dialFailedBlockAnchor, dialFailedBlockReplacement, 1)
+
+	const healthCheckResetAnchor = `	wg.Wait()
+	gb.failedTesting.Store(false)
+	gb.failedTimes = 0`
+	const healthCheckResetReplacement = `	wg.Wait()
+	gb.failedTesting.Store(false)
+	gb.failedTestMux.Lock()
+	gb.failedTimes = 0
+	gb.failedTestMux.Unlock()`
+	if strings.Count(patched, healthCheckResetAnchor) != 1 {
+		return nil, fmt.Errorf("upstream outboundgroup/groupbase.go healthCheck reset changed")
+	}
+	patched = strings.Replace(patched, healthCheckResetAnchor, healthCheckResetReplacement, 1)
+
+	const dialSuccessAnchor = `func (gb *GroupBase) onDialSuccess() {
+	if !gb.failedTesting.Load() {
+		gb.failedTimes = 0
+	}
+}`
+	const dialSuccessReplacement = `func (gb *GroupBase) onDialSuccess() {
+	if !gb.failedTesting.Load() {
+		gb.failedTestMux.Lock()
+		gb.failedTimes = 0
+		gb.failedTestMux.Unlock()
+	}
+}`
+	if strings.Count(patched, dialSuccessAnchor) != 1 {
+		return nil, fmt.Errorf("upstream outboundgroup/groupbase.go onDialSuccess changed")
+	}
+	patched = strings.Replace(patched, dialSuccessAnchor, dialSuccessReplacement, 1)
+
 	return format.Source([]byte(patched))
 }
 
@@ -2059,6 +2157,14 @@ func convertsV2RayFCX(buf []byte, diagnostics bool) ([]map[string]any, error) {`
 	if err != nil {
 		return err
 	}
+	groupBaseSource, err := checkedSource(filepath.Join(module.Dir, "adapter", "outboundgroup", "groupbase.go"), groupBaseSHA256)
+	if err != nil {
+		return err
+	}
+	patchedGroupBase, err := patchOutboundGroupBase(groupBaseSource)
+	if err != nil {
+		return err
+	}
 	singTunMonitorWindowsSource, err := checkedSource(filepath.Join(singTunModule.Dir, "monitor_windows.go"), singTunMonitorWindowsSHA256)
 	if err != nil {
 		return err
@@ -2159,6 +2265,9 @@ func convertsV2RayFCX(buf []byte, diagnostics bool) ([]map[string]any, error) {`
 		return err
 	}
 	if err := write(filepath.Join(sourceDirectory, "adapter", "outboundgroup", "urltest.go"), "outboundgroup_urltest.go", patchedURLTestGroup); err != nil {
+		return err
+	}
+	if err := write(filepath.Join(sourceDirectory, "adapter", "outboundgroup", "groupbase.go"), "outboundgroup_groupbase.go", patchedGroupBase); err != nil {
 		return err
 	}
 	if err := write(filepath.Join(sourceDirectory, "common", "convert", "converter.go"), "catalog_converter.go", converterSource); err != nil {
@@ -2281,6 +2390,17 @@ func convertsV2RayFCX(buf []byte, diagnostics bool) ([]map[string]any, error) {`
 		if err := write(filepath.Join(sourceDirectory, "adapter", name), name, contents); err != nil {
 			return err
 		}
+	}
+	groupBaseTest, err := patchFiles.ReadFile("patches/outboundgroup_groupbase_fcx_test.go.txt")
+	if err != nil {
+		return err
+	}
+	groupBaseTest, err = format.Source(groupBaseTest)
+	if err != nil {
+		return err
+	}
+	if err := write(filepath.Join(sourceDirectory, "adapter", "outboundgroup", "groupbase_fcx_test.go"), "outboundgroup_groupbase_fcx_test.go", groupBaseTest); err != nil {
+		return err
 	}
 	for _, name := range []string{"controller_fcx.go", "controller_fcx_test.go"} {
 		contents, err := patchFiles.ReadFile("patches/" + name + ".txt")
@@ -2543,6 +2663,7 @@ func convertsV2RayFCX(buf []byte, diagnostics bool) ([]map[string]any, error) {`
 			"rules/provider/provider.go":                ruleProviderSHA256,
 			"adapter/provider/provider.go":              proxyProviderSHA256,
 			"adapter/outboundgroup/urltest.go":          urlTestGroupSHA256,
+			"adapter/outboundgroup/groupbase.go":        groupBaseSHA256,
 			"config/config.go":                          configSHA256,
 			"hub/route/configs.go":                      configsSHA256,
 			"hub/route/server.go":                       controllerSHA256,

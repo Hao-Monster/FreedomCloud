@@ -1179,3 +1179,128 @@ func (u *URLTest) ForceSet(name string) {
 		t.Fatal("changed urltest.go shape accepted")
 	}
 }
+
+func TestSingTunServerPatchDelegatesDNSToHandledObserver(t *testing.T) {
+	patchedBytes, err := patchSingTunServer([]byte(minimalSingTunServer))
+	if err != nil {
+		t.Fatal(err)
+	}
+	patched := string(patchedBytes)
+	if !strings.Contains(patched, "if !fcxNotifyDefaultInterfaceChanged(defaultInterface, event)") {
+		t.Fatalf("expected RegisterCallback closure to guard fallback DNS/iface reset behind !fcxNotifyDefaultInterfaceChanged(...), got:\n%s", patched)
+	}
+	notifyIdx := strings.Index(patched, "fcxNotifyDefaultInterfaceChanged(defaultInterface, event)")
+	resolverIdx := strings.Index(patched, "resolver.ResetConnection()")
+	if notifyIdx < 0 || resolverIdx < notifyIdx {
+		t.Fatalf("expected resolver.ResetConnection() to sit inside !fcxNotifyDefaultInterfaceChanged fallback branch after notify call (notifyIdx=%d resolverIdx=%d)", notifyIdx, resolverIdx)
+	}
+}
+
+func TestOutboundGroupBasePatchIsDeterministicAndRejectsChangedShape(t *testing.T) {
+	const minimalGroupBase = `package outboundgroup
+
+import (
+	"sync"
+	"sync/atomic"
+	"time"
+)
+
+type GroupBase struct {
+	failedTestMux  sync.Mutex
+	failedTimes    int
+	failedTime     time.Time
+	failedTesting  atomic.Bool
+	testTimeout    int
+	maxFailedTimes int
+	providers      []interface{ HealthCheck() }
+}
+
+func (gb *GroupBase) Name() string { return "g" }
+
+func (gb *GroupBase) onDialFailed(fn func()) {
+	go func() {
+		gb.failedTestMux.Lock()
+		defer gb.failedTestMux.Unlock()
+
+		gb.failedTimes++
+		if gb.failedTimes == 1 {
+			log.Debugln("ProxyGroup: %s first failed", gb.Name())
+			gb.failedTime = time.Now()
+		} else {
+			if time.Since(gb.failedTime) > time.Duration(gb.testTimeout)*time.Millisecond {
+				gb.failedTimes = 0
+				return
+			}
+
+			log.Debugln("ProxyGroup: %s failed count: %d", gb.Name(), gb.failedTimes)
+			if gb.failedTimes >= gb.maxFailedTimes {
+				log.Warnln("because %s failed multiple times, activate health check", gb.Name())
+				fn()
+			}
+		}
+	}()
+}
+
+func (gb *GroupBase) healthCheck() {
+	if gb.failedTesting.Load() {
+		return
+	}
+	gb.failedTesting.Store(true)
+	wg := sync.WaitGroup{}
+	for _, proxyProvider := range gb.providers {
+		wg.Add(1)
+		proxyProvider := proxyProvider
+		go func() {
+			defer wg.Done()
+			proxyProvider.HealthCheck()
+		}()
+	}
+	wg.Wait()
+	gb.failedTesting.Store(false)
+	gb.failedTimes = 0
+}
+
+func (gb *GroupBase) onDialSuccess() {
+	if !gb.failedTesting.Load() {
+		gb.failedTimes = 0
+	}
+}
+`
+	first, err := patchOutboundGroupBase([]byte(minimalGroupBase))
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := patchOutboundGroupBase([]byte(minimalGroupBase))
+	if err != nil || !bytes.Equal(first, second) {
+		t.Fatalf("groupbase.go patch is nondeterministic: %v", err)
+	}
+	patched := string(first)
+	for _, want := range []string{
+		"30 * time.Second",
+		"gb.failedTimes = 1",
+		"gb.failedTime = time.Now()",
+		"gb.failedTestMux.Lock()",
+		"shouldTrigger := func() bool",
+	} {
+		if !strings.Contains(patched, want) {
+			t.Fatalf("patched groupbase.go missing %q:\n%s", want, patched)
+		}
+	}
+	shouldTriggerIdx := strings.Index(patched, "shouldTrigger := func() bool")
+	invokeIdx := strings.Index(patched, "if shouldTrigger {\n\t\t\tfn()\n\t\t}")
+	if shouldTriggerIdx < 0 || invokeIdx <= shouldTriggerIdx {
+		t.Fatalf("expected fn() invocation after releasing failedTestMux in onDialFailed:\n%s", patched)
+	}
+	for name, tampered := range map[string]string{
+		"missing timeout check": strings.Replace(minimalGroupBase, "time.Duration(gb.testTimeout)*time.Millisecond", "time.Second", 1),
+		"missing healthCheck":   strings.Replace(minimalGroupBase, "wg.Wait()", "wg.Done()", 1),
+		"missing onDialSuccess": strings.Replace(minimalGroupBase, "func (gb *GroupBase) onDialSuccess()", "func (gb *GroupBase) otherSuccess()", 1),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := patchOutboundGroupBase([]byte(tampered)); err == nil {
+				t.Fatal("changed upstream groupbase.go shape accepted")
+			}
+		})
+	}
+}
+
