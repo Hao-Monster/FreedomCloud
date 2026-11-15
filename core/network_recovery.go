@@ -1,8 +1,10 @@
 package main
 
 import (
+	"fmt"
 	"net"
 	"net/netip"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -23,6 +25,7 @@ import (
 var (
 	networkRecoveryMu           sync.Mutex
 	lastTunRecoveredNetworkKey  string
+	lastTunDefaultInterfaceID   string
 	lastTunRecoveredAt          time.Time
 	networkHealthCheckTimer     *time.Timer
 	networkHealthCheckWG        sync.WaitGroup
@@ -87,17 +90,60 @@ func resetURLTestGroupCaches() {
 	proxyStateMu.RUnlock()
 }
 
-func formatUsablePrefixes(prefixes []netip.Prefix) []string {
+// formatRoutingIdentityPrefixes normalizes usable IP prefixes so IPv4 host
+// changes remain distinct while RFC 4941/8981 IPv6 SLAAC temporary addresses
+// collapse onto their /64 network prefix.
+func formatRoutingIdentityPrefixes(prefixes []netip.Prefix) []string {
 	var out []string
 	for _, p := range prefixes {
-		addr := p.Addr().Unmap()
+		if !p.IsValid() {
+			continue
+		}
+		rawAddr := p.Addr()
+		bits := p.Bits()
+		if rawAddr.Is4In6() && bits >= 96 {
+			bits -= 96
+		}
+		addr := rawAddr.Unmap()
 		if !addr.IsValid() || addr.IsLoopback() || addr.IsLinkLocalUnicast() || addr.IsUnspecified() {
 			continue
 		}
-		out = append(out, netip.PrefixFrom(addr, p.Bits()).String())
+		if addr.Is4() {
+			out = append(out, netip.PrefixFrom(addr, bits).String())
+			continue
+		}
+		if bits > 64 {
+			bits = 64
+		}
+		out = append(out, netip.PrefixFrom(addr, bits).Masked().String())
 	}
 	sort.Strings(out)
-	return out
+	return slices.Compact(out)
+}
+
+func formatDefaultInterfaceID(name string, index int) string {
+	if name == "" {
+		return ""
+	}
+	return fmt.Sprintf("%s#%d", name, index)
+}
+
+func isEstablishedNetworkRecoveryKey(k string) bool {
+	return k != "" && k != "lost" && !strings.HasPrefix(k, "tentative:")
+}
+
+func seedNetworkRecoveryBaseline() {
+	iface.FlushCache()
+	key := computeActivePhysicalInterfacesKey()
+	if key == "" {
+		return
+	}
+	networkRecoveryMu.Lock()
+	if !isEstablishedNetworkRecoveryKey(lastTunRecoveredNetworkKey) {
+		lastTunRecoveredNetworkKey = key
+		lastTunRecoveredAt = time.Now()
+	}
+	networkRecoveryMu.Unlock()
 }
 
 var fcxBenchmarkTunPrefix = netip.MustParsePrefix("198.18.0.0/15")
@@ -139,7 +185,7 @@ func computeActivePhysicalInterfacesKey() string {
 		if isTunLikeInterface(item, tunDevice) {
 			continue
 		}
-		addrs := formatUsablePrefixes(item.Addresses)
+		addrs := formatRoutingIdentityPrefixes(item.Addresses)
 		if len(addrs) == 0 {
 			continue
 		}
@@ -153,7 +199,7 @@ func buildSingleInterfaceKey(name string, prefixes []netip.Prefix) string {
 	if name == "" {
 		return ""
 	}
-	addrs := formatUsablePrefixes(prefixes)
+	addrs := formatRoutingIdentityPrefixes(prefixes)
 	if len(addrs) == 0 {
 		return name
 	}
@@ -161,12 +207,12 @@ func buildSingleInterfaceKey(name string, prefixes []netip.Prefix) string {
 }
 
 func onTunDefaultInterfaceChanged(event sing_tun.FCXDefaultInterfaceEvent) {
-	resetNetworkCachesAndResolvers()
-	closeConnections()
-
 	if event.Lost {
+		resetNetworkCachesAndResolvers()
+		closeConnectionsWithReason("network:lost")
 		networkRecoveryMu.Lock()
 		lastTunRecoveredNetworkKey = "lost"
+		lastTunDefaultInterfaceID = ""
 		lastTunRecoveredAt = time.Now()
 		networkHealthCheckEpoch++
 		stopNetworkHealthCheckTimerLocked()
@@ -175,27 +221,55 @@ func onTunDefaultInterfaceChanged(event sing_tun.FCXDefaultInterfaceEvent) {
 		return
 	}
 
+	iface.FlushCache()
 	key := computeActivePhysicalInterfacesKey()
-	usableEventAddrs := formatUsablePrefixes(event.Addresses)
+	usableEventAddrs := formatRoutingIdentityPrefixes(event.Addresses)
+	defaultID := formatDefaultInterfaceID(event.Name, event.Index)
+
 	if key == "" && len(usableEventAddrs) == 0 {
 		networkRecoveryMu.Lock()
-		lastTunRecoveredNetworkKey = ""
+		prevKey := lastTunRecoveredNetworkKey
+		lastTunRecoveredNetworkKey = "tentative:" + event.Name
+		lastTunDefaultInterfaceID = defaultID
 		lastTunRecoveredAt = time.Time{}
 		networkHealthCheckEpoch++
 		stopNetworkHealthCheckTimerLocked()
 		networkRecoveryMu.Unlock()
-		resetURLTestGroupCaches()
-		log.Infoln("[Network] default interface %s acquiring usable address (DAD/DHCP in progress); closed stale connections and deferred health checks", event.Name)
+
+		if !strings.HasPrefix(prevKey, "tentative:") {
+			resetNetworkCachesAndResolvers()
+			closeConnectionsWithReason("network:tentative:" + event.Name)
+			resetURLTestGroupCaches()
+		}
+		log.Infoln("[Network] default interface %s acquiring usable address (DAD/DHCP in progress); deferred health checks", event.Name)
 		return
 	}
 	if key == "" {
 		key = buildSingleInterfaceKey(event.Name, event.Addresses)
 	}
+
+	now := time.Now()
 	networkRecoveryMu.Lock()
+	prevKey := lastTunRecoveredNetworkKey
+	prevDefaultID := lastTunDefaultInterfaceID
+	samePhysicalKey := isEstablishedNetworkRecoveryKey(prevKey) && key == prevKey
+	sameDefaultIf := prevDefaultID == "" || defaultID == "" || defaultID == prevDefaultID
+	if samePhysicalKey && sameDefaultIf {
+		lastTunRecoveredAt = now
+		if prevDefaultID == "" && defaultID != "" {
+			lastTunDefaultInterfaceID = defaultID
+		}
+		networkRecoveryMu.Unlock()
+		log.Debugln("[Network] default interface %s unchanged (%s); preserved active connections", event.Name, key)
+		return
+	}
 	lastTunRecoveredNetworkKey = key
-	lastTunRecoveredAt = time.Now()
+	lastTunDefaultInterfaceID = defaultID
+	lastTunRecoveredAt = now
 	networkRecoveryMu.Unlock()
 
+	resetNetworkCachesAndResolvers()
+	closeConnectionsWithReason("network:changed:" + event.Name)
 	resetURLTestGroupCaches()
 	scheduleNetworkRecoveryHealthChecks()
 	log.Infoln("[Network] default interface switched to %s; reset DNS, closed stale connections, scheduled health checks", event.Name)
@@ -208,18 +282,20 @@ func recoverFromIPCNetworkReset() {
 	now := time.Now()
 	networkRecoveryMu.Lock()
 	alreadyRecoveredByTun := key != "" &&
-		lastTunRecoveredNetworkKey != "" &&
-		lastTunRecoveredNetworkKey != "lost" &&
+		isEstablishedNetworkRecoveryKey(lastTunRecoveredNetworkKey) &&
 		key == lastTunRecoveredNetworkKey &&
 		now.Sub(lastTunRecoveredAt) < tunRecoveryDedupGraceWindow
 	if !alreadyRecoveredByTun && key != "" {
+		if lastTunRecoveredNetworkKey != key {
+			lastTunDefaultInterfaceID = ""
+		}
 		lastTunRecoveredNetworkKey = key
 		lastTunRecoveredAt = now
 	}
 	networkRecoveryMu.Unlock()
 
 	if !alreadyRecoveredByTun {
-		closeConnections()
+		closeConnectionsWithReason("ipc:resetConnections")
 	}
 	resetURLTestGroupCaches()
 	scheduleNetworkRecoveryHealthChecks()
@@ -231,6 +307,7 @@ func cancelPendingNetworkRecoveryHealthChecks() {
 	networkHealthCheckEpoch++
 	stopNetworkHealthCheckTimerLocked()
 	lastTunRecoveredNetworkKey = ""
+	lastTunDefaultInterfaceID = ""
 	lastTunRecoveredAt = time.Time{}
 	networkRecoveryMu.Unlock()
 }

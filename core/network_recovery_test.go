@@ -476,3 +476,367 @@ func TestCloseConnectionsResetsPooledSingMuxCarrierSessions(t *testing.T) {
 		t.Fatalf("expected fresh carrier socket #2 on new network after reset, got %d", carrier.dials.Load())
 	}
 }
+
+func TestTunDefaultInterfaceSLAACTemporaryIPv6RotationDoesNotDropConnections(t *testing.T) {
+	isolateHealthCheckForwarder(t)
+	prevDebounce := networkHealthCheckDebounce
+	networkHealthCheckDebounce = 25 * time.Millisecond
+	t.Cleanup(func() {
+		networkHealthCheckDebounce = prevDebounce
+		cancelPendingNetworkRecoveryHealthChecks()
+		networkHealthCheckWG.Wait()
+	})
+
+	cancelPendingNetworkRecoveryHealthChecks()
+
+	initialIfaces := []*iface.Interface{
+		{
+			Index: 30,
+			MTU:   1500,
+			Name:  "WLAN",
+			Flags: net.FlagUp | net.FlagBroadcast,
+			Addresses: []netip.Prefix{
+				netip.MustParsePrefix("172.23.104.177/24"),
+				netip.MustParsePrefix("2001:db8:1:2::10/64"),
+				netip.MustParsePrefix("2001:db8:1:2:1111:2222:3333:4444/128"),
+				netip.MustParsePrefix("fe80::abcd/64"),
+			},
+		},
+	}
+	restoreIface := iface.FCXOverrideInterfacesForTest(initialIfaces)
+	defer restoreIface()
+
+	prevDefaultResolver := resolver.DefaultResolver
+	prevSystemResolver := resolver.SystemResolver
+	fakeDefaultRes := &networkRecoveryFakeResolver{}
+	fakeSystemRes := &networkRecoveryFakeResolver{}
+	resolver.DefaultResolver = fakeDefaultRes
+	resolver.SystemResolver = fakeSystemRes
+	t.Cleanup(func() {
+		resolver.DefaultResolver = prevDefaultResolver
+		resolver.SystemResolver = prevSystemResolver
+	})
+
+	carrier := &fakeCarrierAdapter{
+		Base: outbound.NewBase(outbound.BaseOption{
+			Name: "slaac-carrier-node",
+			Type: C.Trojan,
+		}),
+	}
+	smuxAdapter, err := outbound.NewSingMux(outbound.SingMuxOption{
+		Enabled:  true,
+		Protocol: "smux",
+	}, carrier)
+	if err != nil {
+		t.Fatalf("NewSingMux failed: %v", err)
+	}
+	muxProxy := adapter.NewProxy(smuxAdapter)
+	t.Cleanup(func() { _ = muxProxy.Close() })
+
+	proxyStateMu.Lock()
+	prevProxies := tunnel.Proxies()
+	prevProviders := tunnel.Providers()
+	fakeProv := &networkRecoveryFakeProvider{name: "slaac-provider"}
+	tunnel.UpdateProxies(map[string]C.Proxy{
+		"slaac-carrier-node": muxProxy,
+	}, map[string]cp.ProxyProvider{
+		fakeProv.name: fakeProv,
+	})
+	proxyStateMu.Unlock()
+	t.Cleanup(func() {
+		cancelPendingNetworkRecoveryHealthChecks()
+		networkHealthCheckWG.Wait()
+		proxyStateMu.Lock()
+		tunnel.UpdateProxies(prevProxies, prevProviders)
+		proxyStateMu.Unlock()
+	})
+
+	runLock.Lock()
+	prevRunning := isRunning
+	prevConfig := currentConfig
+	isRunning = true
+	currentConfig = &config.Config{}
+	runLock.Unlock()
+	t.Cleanup(func() {
+		runLock.Lock()
+		isRunning = prevRunning
+		currentConfig = prevConfig
+		runLock.Unlock()
+	})
+
+	// Establish initial network and open a pooled SingMux carrier + active Agent SSE stream.
+	onTunDefaultInterfaceChanged(sing_tun.FCXDefaultInterfaceEvent{
+		Name:  "WLAN",
+		Index: 30,
+		Addresses: []netip.Prefix{
+			netip.MustParsePrefix("172.23.104.177/24"),
+			netip.MustParsePrefix("2001:db8:1:2::10/64"),
+			netip.MustParsePrefix("2001:db8:1:2:1111:2222:3333:4444/128"),
+			netip.MustParsePrefix("fe80::abcd/64"),
+		},
+	})
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) && fakeProv.healthCheckCount.Load() == 0 {
+		time.Sleep(15 * time.Millisecond)
+	}
+	if fakeProv.healthCheckCount.Load() != 1 {
+		t.Fatalf("expected 1 initial HealthCheck, got %d", fakeProv.healthCheckCount.Load())
+	}
+
+	stream, err := muxProxy.DialContext(context.Background(), &C.Metadata{Host: "example.com", DstPort: 443})
+	if err != nil {
+		t.Fatalf("SingMux DialContext failed: %v", err)
+	}
+	_ = stream.Close()
+
+	agentTracker := &gracefulStopTestTracker{id: "agent-sse-stream-1"}
+	statistic.DefaultManager.Join(agentTracker)
+	t.Cleanup(func() { statistic.DefaultManager.Leave(agentTracker) })
+
+	fakeDefaultRes.resetCount.Store(0)
+	fakeDefaultRes.clearCount.Store(0)
+	fakeSystemRes.resetCount.Store(0)
+	fakeSystemRes.clearCount.Store(0)
+	fakeProv.healthCheckCount.Store(0)
+
+	// 1) RFC 4941/8981 SLAAC temporary IPv6 address addition in same /64.
+	restoreAdded := iface.FCXOverrideInterfacesForTest([]*iface.Interface{
+		{
+			Index: 30,
+			MTU:   1500,
+			Name:  "WLAN",
+			Flags: net.FlagUp | net.FlagBroadcast,
+			Addresses: []netip.Prefix{
+				netip.MustParsePrefix("172.23.104.177/24"),
+				netip.MustParsePrefix("2001:db8:1:2::10/64"),
+				netip.MustParsePrefix("2001:db8:1:2:1111:2222:3333:4444/128"),
+				netip.MustParsePrefix("2001:db8:1:2:aaaa:bbbb:cccc:dddd/128"),
+				netip.MustParsePrefix("fe80::abcd/64"),
+			},
+		},
+	})
+	defer restoreAdded()
+
+	onTunDefaultInterfaceChanged(sing_tun.FCXDefaultInterfaceEvent{
+		Name:  "WLAN",
+		Index: 30,
+		Addresses: []netip.Prefix{
+			netip.MustParsePrefix("172.23.104.177/24"),
+			netip.MustParsePrefix("2001:db8:1:2::10/64"),
+			netip.MustParsePrefix("2001:db8:1:2:1111:2222:3333:4444/128"),
+			netip.MustParsePrefix("2001:db8:1:2:aaaa:bbbb:cccc:dddd/128"),
+			netip.MustParsePrefix("fe80::abcd/64"),
+		},
+	})
+
+	// 2) Old SLAAC temporary IPv6 address deprecated/removed, leaving only new temporary /128.
+	restoreRotated := iface.FCXOverrideInterfacesForTest([]*iface.Interface{
+		{
+			Index: 30,
+			MTU:   1500,
+			Name:  "WLAN",
+			Flags: net.FlagUp | net.FlagBroadcast,
+			Addresses: []netip.Prefix{
+				netip.MustParsePrefix("172.23.104.177/24"),
+				netip.MustParsePrefix("2001:db8:1:2::10/64"),
+				netip.MustParsePrefix("2001:db8:1:2:aaaa:bbbb:cccc:dddd/128"),
+				netip.MustParsePrefix("fe80::abcd/64"),
+			},
+		},
+	})
+	defer restoreRotated()
+
+	onTunDefaultInterfaceChanged(sing_tun.FCXDefaultInterfaceEvent{
+		Name:  "WLAN",
+		Index: 30,
+		Addresses: []netip.Prefix{
+			netip.MustParsePrefix("172.23.104.177/24"),
+			netip.MustParsePrefix("2001:db8:1:2::10/64"),
+			netip.MustParsePrefix("2001:db8:1:2:aaaa:bbbb:cccc:dddd/128"),
+			netip.MustParsePrefix("fe80::abcd/64"),
+		},
+	})
+
+	// 3) Duplicate NCSI Event 4004 notification with identical addresses.
+	onTunDefaultInterfaceChanged(sing_tun.FCXDefaultInterfaceEvent{
+		Name:  "WLAN",
+		Index: 30,
+		Addresses: []netip.Prefix{
+			netip.MustParsePrefix("172.23.104.177/24"),
+			netip.MustParsePrefix("2001:db8:1:2::10/64"),
+			netip.MustParsePrefix("2001:db8:1:2:aaaa:bbbb:cccc:dddd/128"),
+			netip.MustParsePrefix("fe80::abcd/64"),
+		},
+	})
+
+	time.Sleep(80 * time.Millisecond)
+
+	if agentTracker.closed.Load() {
+		t.Fatal("expected SLAAC temporary IPv6 rotation and NCSI repeat events NOT to drop active Agent connection")
+	}
+	if fakeDefaultRes.clearCount.Load() != 0 || fakeDefaultRes.resetCount.Load() != 0 {
+		t.Fatalf("expected 0 DefaultResolver resets/clears on SLAAC rotation, got reset=%d clear=%d",
+			fakeDefaultRes.resetCount.Load(), fakeDefaultRes.clearCount.Load())
+	}
+	if fakeSystemRes.clearCount.Load() != 0 || fakeSystemRes.resetCount.Load() != 0 {
+		t.Fatalf("expected 0 SystemResolver resets/clears on SLAAC rotation, got reset=%d clear=%d",
+			fakeSystemRes.resetCount.Load(), fakeSystemRes.clearCount.Load())
+	}
+	if carrier.closed.Load() != 0 {
+		t.Fatalf("expected SingMux carrier pool NOT to close on SLAAC rotation, got closed=%d", carrier.closed.Load())
+	}
+	if fakeProv.healthCheckCount.Load() != 0 {
+		t.Fatalf("expected 0 provider HealthCheck storms on SLAAC rotation, got %d", fakeProv.healthCheckCount.Load())
+	}
+}
+
+func TestTunDefaultInterfaceRepeatedTentativeClosesOnlyFirstTransition(t *testing.T) {
+	isolateHealthCheckForwarder(t)
+	prevDebounce := networkHealthCheckDebounce
+	networkHealthCheckDebounce = 25 * time.Millisecond
+	t.Cleanup(func() {
+		networkHealthCheckDebounce = prevDebounce
+		cancelPendingNetworkRecoveryHealthChecks()
+		networkHealthCheckWG.Wait()
+	})
+	cancelPendingNetworkRecoveryHealthChecks()
+
+	restoreInit := iface.FCXOverrideInterfacesForTest([]*iface.Interface{
+		{
+			Index: 30,
+			MTU:   1500,
+			Name:  "WLAN",
+			Flags: net.FlagUp | net.FlagBroadcast,
+			Addresses: []netip.Prefix{
+				netip.MustParsePrefix("192.168.1.50/24"),
+			},
+		},
+	})
+	defer restoreInit()
+
+	prevResolver := resolver.DefaultResolver
+	fakeRes := &networkRecoveryFakeResolver{}
+	resolver.DefaultResolver = fakeRes
+	t.Cleanup(func() { resolver.DefaultResolver = prevResolver })
+
+	proxyStateMu.Lock()
+	prevProviders := tunnel.Providers()
+	fakeProv := &networkRecoveryFakeProvider{name: "tentative-repeat-provider"}
+	tunnel.UpdateProxies(tunnel.Proxies(), map[string]cp.ProxyProvider{
+		fakeProv.name: fakeProv,
+	})
+	proxyStateMu.Unlock()
+	t.Cleanup(func() {
+		cancelPendingNetworkRecoveryHealthChecks()
+		networkHealthCheckWG.Wait()
+		proxyStateMu.Lock()
+		tunnel.UpdateProxies(tunnel.Proxies(), prevProviders)
+		proxyStateMu.Unlock()
+	})
+
+	runLock.Lock()
+	prevRunning := isRunning
+	prevConfig := currentConfig
+	isRunning = true
+	currentConfig = &config.Config{}
+	runLock.Unlock()
+	t.Cleanup(func() {
+		runLock.Lock()
+		isRunning = prevRunning
+		currentConfig = prevConfig
+		runLock.Unlock()
+	})
+
+	onTunDefaultInterfaceChanged(sing_tun.FCXDefaultInterfaceEvent{
+		Name:      "WLAN",
+		Index:     30,
+		Addresses: []netip.Prefix{netip.MustParsePrefix("192.168.1.50/24")},
+	})
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) && fakeProv.healthCheckCount.Load() == 0 {
+		time.Sleep(15 * time.Millisecond)
+	}
+	fakeProv.healthCheckCount.Store(0)
+
+	// Transition to Tentative (link-local only).
+	restoreTentative := iface.FCXOverrideInterfacesForTest([]*iface.Interface{
+		{
+			Index: 30,
+			MTU:   1500,
+			Name:  "WLAN",
+			Flags: net.FlagUp | net.FlagBroadcast,
+			Addresses: []netip.Prefix{
+				netip.MustParsePrefix("fe80::abcd/64"),
+			},
+		},
+	})
+	defer restoreTentative()
+
+	firstStale := &gracefulStopTestTracker{id: "tentative-first-stale"}
+	statistic.DefaultManager.Join(firstStale)
+	t.Cleanup(func() { statistic.DefaultManager.Leave(firstStale) })
+
+	onTunDefaultInterfaceChanged(sing_tun.FCXDefaultInterfaceEvent{
+		Name:      "WLAN",
+		Index:     30,
+		Addresses: []netip.Prefix{netip.MustParsePrefix("fe80::abcd/64")},
+	})
+	if !firstStale.closed.Load() {
+		t.Fatal("expected first Tentative transition to close stale connections")
+	}
+
+	fakeRes.resetCount.Store(0)
+	fakeRes.clearCount.Store(0)
+
+	secondTracker := &gracefulStopTestTracker{id: "tentative-repeat-conn"}
+	statistic.DefaultManager.Join(secondTracker)
+	t.Cleanup(func() { statistic.DefaultManager.Leave(secondTracker) })
+
+	// Repeated Tentative event while still acquiring address must NOT re-close or clear DNS.
+	onTunDefaultInterfaceChanged(sing_tun.FCXDefaultInterfaceEvent{
+		Name:      "WLAN",
+		Index:     30,
+		Addresses: []netip.Prefix{netip.MustParsePrefix("fe80::1234/64")},
+	})
+	if secondTracker.closed.Load() {
+		t.Fatal("expected repeated Tentative event NOT to close connections again")
+	}
+	if fakeRes.clearCount.Load() != 0 || fakeRes.resetCount.Load() != 0 {
+		t.Fatalf("expected repeated Tentative event NOT to clear/reset DNS, got reset=%d clear=%d",
+			fakeRes.resetCount.Load(), fakeRes.clearCount.Load())
+	}
+
+	// Preferred IPv4 arrives -> must recover, close tentative connections, and run HealthCheck once.
+	restorePreferred := iface.FCXOverrideInterfacesForTest([]*iface.Interface{
+		{
+			Index: 30,
+			MTU:   1500,
+			Name:  "WLAN",
+			Flags: net.FlagUp | net.FlagBroadcast,
+			Addresses: []netip.Prefix{
+				netip.MustParsePrefix("192.168.1.88/24"),
+				netip.MustParsePrefix("fe80::1234/64"),
+			},
+		},
+	})
+	defer restorePreferred()
+
+	onTunDefaultInterfaceChanged(sing_tun.FCXDefaultInterfaceEvent{
+		Name:  "WLAN",
+		Index: 30,
+		Addresses: []netip.Prefix{
+			netip.MustParsePrefix("192.168.1.88/24"),
+			netip.MustParsePrefix("fe80::1234/64"),
+		},
+	})
+	if !secondTracker.closed.Load() {
+		t.Fatal("expected arrival of preferred IPv4 after Tentative to close pre-preferred connections")
+	}
+	deadline = time.Now().Add(time.Second)
+	for time.Now().Before(deadline) && fakeProv.healthCheckCount.Load() == 0 {
+		time.Sleep(15 * time.Millisecond)
+	}
+	if fakeProv.healthCheckCount.Load() != 1 {
+		t.Fatalf("expected 1 HealthCheck after recovering from Tentative, got %d", fakeProv.healthCheckCount.Load())
+	}
+}

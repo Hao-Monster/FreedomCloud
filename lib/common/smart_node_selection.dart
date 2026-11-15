@@ -13,7 +13,86 @@ enum NodeSelectionMode {
 /// Display-friendly prefix for synthesized hidden `url-test` groups.
 const String kManagedSmartGroupPrefix = '智能选择节点 · 自动优选';
 const int kManagedSmartTestIntervalSec = 180;
-const int kManagedSmartToleranceMs = 80;
+const int kManagedSmartToleranceMs = 150;
+const int kManagedSmartMaxFailedTimes = 2;
+const int kManagedSmartTestTimeoutMs = 5000;
+
+const String _trafficBadgePrefixPattern =
+    r'(?:(?:📊|📈|📉|🔋|💾|剩余流量|可用流量|已用流量|流量剩余|剩余|可用|流量|余量|remaining(?:\s+traffic)?|left)\s*[:：=]?\s*)*';
+const String _trafficBadgeUnitPattern =
+    r'(?:KiB|MiB|GiB|TiB|PiB|KB|MB|GB|TB|PB|B)';
+const String _trafficBadgeAmountPattern =
+    '$_trafficBadgePrefixPattern'
+    r'\d+(?:\.\d+)?(?:\s*'
+    '$_trafficBadgeUnitPattern'
+    r'?\s*/\s*'
+    '$_trafficBadgePrefixPattern'
+    r'\d+(?:\.\d+)?)?\s*'
+    '$_trafficBadgeUnitPattern';
+const List<(String, String)> _trafficBadgeBracketPairs = <(String, String)>[
+  (r'\(', r'\)'),
+  (r'\[', r'\]'),
+  ('（', '）'),
+  ('【', '】'),
+];
+
+final RegExp _dynamicTrafficBadgeSuffixPattern = RegExp(
+  '(?:'
+  r'(?:\s*[|｜/、]\s*|\s+[-–—:：·]\s*)'
+  '$_trafficBadgeAmountPattern'
+  '|'
+  r'(?:\s*[|｜/、]\s*|\s+[-–—:：·]\s*|\s*)'
+  '(?:${_trafficBadgeBracketPairs.map((pair) => '${pair.$1}\\s*$_trafficBadgeAmountPattern\\s*${pair.$2}').join('|')})'
+  r')\s*$',
+  caseSensitive: false,
+);
+
+/// Strips a trailing dynamic remaining-traffic badge (containing a numeric value
+/// and byte unit) from [name], returning the trimmed stem when stripped or
+/// `null` when no traffic badge matched or the resulting stem would be empty.
+String? stripDynamicTrafficBadge(String name) {
+  if (name.isEmpty) return null;
+  final match = _dynamicTrafficBadgeSuffixPattern.firstMatch(name);
+  if (match == null) return null;
+  final stem = name.substring(0, match.start).trim();
+  if (stem.isEmpty) return null;
+  return stem;
+}
+
+/// Aligns a persisted [selected] proxy name against updated [candidates] when
+/// subscription traffic badges change while preserving exact hits and failing
+/// closed on missing or ambiguous candidates.
+String reconcileDynamicTrafficNodeName(
+  String selected,
+  Iterable<String> candidates,
+) {
+  if (selected.isEmpty) return selected;
+  final candidateList = candidates is List<String>
+      ? candidates
+      : candidates.toList(growable: false);
+  if (candidateList.isEmpty || candidateList.contains(selected)) {
+    return selected;
+  }
+
+  final selectedStripped = stripDynamicTrafficBadge(selected);
+  final selectedStem = selectedStripped ?? selected.trim();
+  if (selectedStem.isEmpty) return selected;
+
+  final matches = <String>{};
+  for (final candidate in candidateList) {
+    if (candidate.isEmpty) continue;
+    final candidateStripped = stripDynamicTrafficBadge(candidate);
+    if (selectedStripped != null) {
+      final candidateStem = candidateStripped ?? candidate.trim();
+      if (candidateStem == selectedStem) {
+        matches.add(candidate);
+      }
+    } else if (candidateStripped != null && candidateStripped == selectedStem) {
+      matches.add(candidate);
+    }
+  }
+  return matches.length == 1 ? matches.first : selected;
+}
 
 const String kInformationalProxyExcludeRegex =
     r'(剩余流量|可用流量|已用流量|总流量|流量剩余|流量已用|流量重置|距离下次重置|下次重置|重置剩余'
@@ -251,6 +330,8 @@ void injectManagedSmartProxyGroups(
       'url': groupUrl,
       'interval': kManagedSmartTestIntervalSec,
       'tolerance': kManagedSmartToleranceMs,
+      'timeout': kManagedSmartTestTimeoutMs,
+      'max-failed-times': kManagedSmartMaxFailedTimes,
       'lazy': false,
       if (finalLeaves.isNotEmpty) 'proxies': finalLeaves,
       if (candidateProviders.isNotEmpty) 'use': candidateProviders,
@@ -286,6 +367,8 @@ void injectManagedSmartProxyGroups(
       'url': effectiveDefaultUrl,
       'interval': kManagedSmartTestIntervalSec,
       'tolerance': kManagedSmartToleranceMs,
+      'timeout': kManagedSmartTestTimeoutMs,
+      'max-failed-times': kManagedSmartMaxFailedTimes,
       'lazy': false,
       if (finalGlobalLeaves.isNotEmpty) 'proxies': finalGlobalLeaves,
       if (providerNames.isNotEmpty) 'use': providerNames,
@@ -328,28 +411,52 @@ NodeSelectionMode resolveProfileSelectionMode(Profile? profile) {
   return NodeSelectionMode.manual;
 }
 
+Map<String, String> _reconcileEffectiveSelectedMap({
+  required Map<String, String> effective,
+  required Map<String, List<String>> inlineProxiesByGroup,
+  required Map<String, bool> hasProvidersByGroup,
+}) {
+  if (effective.isEmpty || inlineProxiesByGroup.isEmpty) {
+    return effective;
+  }
+  for (final groupName in effective.keys.toList(growable: false)) {
+    final selected = effective[groupName];
+    if (selected == null ||
+        selected.isEmpty ||
+        isManagedSmartGroupName(selected)) {
+      continue;
+    }
+    final inlineProxies = inlineProxiesByGroup[groupName];
+    if (inlineProxies == null || inlineProxies.isEmpty) {
+      continue;
+    }
+    final reconciled = reconcileDynamicTrafficNodeName(
+      selected,
+      inlineProxies,
+    );
+    if (reconciled != selected) {
+      effective[groupName] = reconciled;
+      continue;
+    }
+    if (hasProvidersByGroup[groupName] ?? false) {
+      // Inline candidates did not match; preserve original selection so Go Core
+      // can reconcile against expanded provider proxies at runtime.
+      continue;
+    }
+  }
+  return effective;
+}
+
 Map<String, String> buildEffectiveSelectedMapForProfile({
   required Profile? profile,
   required Map<String, dynamic> patchedRawConfig,
 }) {
   if (profile == null) return const <String, String>{};
-  final mode = resolveProfileSelectionMode(profile);
-  if (mode == NodeSelectionMode.manual) {
-    final explicitManual = profile.providerHeaders[smartSelectionModeMarker]
-            ?.trim()
-            .toLowerCase() ==
-        'manual';
-    if (!explicitManual) {
-      return Map<String, String>.from(profile.selectedMap);
-    }
-    return <String, String>{
-      for (final entry in profile.selectedMap.entries)
-        if (!isManagedSmartGroupName(entry.value)) entry.key: entry.value,
-    };
-  }
 
   final availableGroupNames = <String>{};
   final selectableRuleGroups = <String>[];
+  final inlineProxiesByGroup = <String, List<String>>{};
+  final hasProvidersByGroup = <String, bool>{};
   final rawGroups = patchedRawConfig['proxy-groups'];
   if (rawGroups is List) {
     for (final item in rawGroups) {
@@ -357,6 +464,16 @@ Map<String, String> buildEffectiveSelectedMapForProfile({
       final name = item['name'];
       if (name is! String || name.isEmpty) continue;
       availableGroupNames.add(name);
+      final rawProxies = item['proxies'];
+      inlineProxiesByGroup[name] = rawProxies is List
+          ? rawProxies.whereType<String>().toList(growable: false)
+          : const <String>[];
+      final rawUse = item['use'];
+      final hasUse = rawUse is List &&
+          rawUse.whereType<String>().any((entry) => entry.trim().isNotEmpty);
+      hasProvidersByGroup[name] = hasUse ||
+          item['include-all'] == true ||
+          item['include-all-providers'] == true;
       if (item['type'] == 'select' &&
           item['hidden'] != true &&
           name != 'GLOBAL' &&
@@ -364,6 +481,25 @@ Map<String, String> buildEffectiveSelectedMapForProfile({
         selectableRuleGroups.add(name);
       }
     }
+  }
+
+  final mode = resolveProfileSelectionMode(profile);
+  if (mode == NodeSelectionMode.manual) {
+    final explicitManual = profile.providerHeaders[smartSelectionModeMarker]
+            ?.trim()
+            .toLowerCase() ==
+        'manual';
+    final effective = !explicitManual
+        ? Map<String, String>.from(profile.selectedMap)
+        : <String, String>{
+            for (final entry in profile.selectedMap.entries)
+              if (!isManagedSmartGroupName(entry.value)) entry.key: entry.value,
+          };
+    return _reconcileEffectiveSelectedMap(
+      effective: effective,
+      inlineProxiesByGroup: inlineProxiesByGroup,
+      hasProvidersByGroup: hasProvidersByGroup,
+    );
   }
 
   final effective = Map<String, String>.from(profile.selectedMap);
@@ -390,7 +526,11 @@ Map<String, String> buildEffectiveSelectedMapForProfile({
   if (availableGroupNames.contains(globalSmartName)) {
     effective['GLOBAL'] = globalSmartName;
   }
-  return effective;
+  return _reconcileEffectiveSelectedMap(
+    effective: effective,
+    inlineProxiesByGroup: inlineProxiesByGroup,
+    hasProvidersByGroup: hasProvidersByGroup,
+  );
 }
 
 Profile markProfileSelectionMode(

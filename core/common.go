@@ -8,7 +8,9 @@ import (
 	"io"
 	"os"
 	"runtime"
+	"regexp"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -431,6 +433,9 @@ func updateListeners() {
 	// Desktop builds may include the `cmfa` tag, so gate TUN only on Android.
 	if runtime.GOOS != "android" && !skipListenerTunRecreate {
 		recreateRuntimeTun(general.Tun, tunnel.Tunnel)
+		if general.Tun.Enable {
+			seedNetworkRecoveryBaseline()
+		}
 	}
 }
 
@@ -454,11 +459,101 @@ func stopListeners() {
 	listener.ReCreateTuic(LC.TuicServer{}, tunnel.Tunnel)
 	// Drain tracked TCP/UDP connections and upstream DNS pools BEFORE closing
 	// Wintun/gVisor so active packet pumps release cleanly without closeFailed.
-	closeConnections()
+	closeConnectionsWithReason("listener:stop")
 	resolver.ResetConnection()
 	listener.Cleanup()
-	closeConnections()
+	closeConnectionsWithReason("listener:stop")
 	resolver.StoreFakePoolState()
+}
+
+var (
+	dynamicTrafficPrefixPattern    = `(?:(?:📊|📈|📉|🔋|💾|剩余流量|可用流量|已用流量|流量剩余|剩余|可用|流量|余量|remaining(?:\s+traffic)?|left)\s*[:：=]?\s*)*`
+	dynamicTrafficUnitPattern      = `(?:KiB|MiB|GiB|TiB|PiB|KB|MB|GB|TB|PB|B)`
+	dynamicTrafficAmountPattern    = dynamicTrafficPrefixPattern + `\d+(?:\.\d+)?(?:\s*` + dynamicTrafficUnitPattern + `?\s*/\s*` + dynamicTrafficPrefixPattern + `\d+(?:\.\d+)?)?\s*` + dynamicTrafficUnitPattern
+	dynamicTrafficDelimiterPattern = `(?:\s*[|｜/、]\s*|\s+[-–—:：·]\s*)`
+	dynamicTrafficDelimiterRE      = regexp.MustCompile(`(?i)^(.*?)` + dynamicTrafficDelimiterPattern + dynamicTrafficAmountPattern + `\s*$`)
+	dynamicTrafficBracketRE        = regexp.MustCompile(`(?i)^(.*?)(?:\s*[|｜/、]\s*|\s+[-–—:：·]\s*|\s*)([(\[（【])\s*` + dynamicTrafficAmountPattern + `\s*([)\]）】])\s*$`)
+)
+
+func stripDynamicTrafficBadge(name string) (string, bool) {
+	if name == "" {
+		return name, false
+	}
+	if matches := dynamicTrafficBracketRE.FindStringSubmatch(name); len(matches) == 4 {
+		switch matches[2] + matches[3] {
+		case "()", "[]", "（）", "【】":
+			if stem := strings.TrimSpace(matches[1]); stem != "" {
+				return stem, true
+			}
+		}
+	}
+	if matches := dynamicTrafficDelimiterRE.FindStringSubmatch(name); len(matches) == 2 {
+		if stem := strings.TrimSpace(matches[1]); stem != "" {
+			return stem, true
+		}
+	}
+	return name, false
+}
+
+func resolveUpdatedProxySelection(selected string, candidates []string) string {
+	if selected == "" || len(candidates) == 0 {
+		return selected
+	}
+	if slices.Contains(candidates, selected) {
+		return selected
+	}
+	selectedStem, selectedStripped := stripDynamicTrafficBadge(selected)
+	if !selectedStripped {
+		selectedStem = strings.TrimSpace(selected)
+	}
+	if selectedStem == "" {
+		return selected
+	}
+
+	matchedCandidate := ""
+	for _, candidate := range candidates {
+		if candidate == "" {
+			continue
+		}
+		candidateStem, candidateStripped := stripDynamicTrafficBadge(candidate)
+		if !selectedStripped && !candidateStripped {
+			continue
+		}
+		if !candidateStripped {
+			candidateStem = strings.TrimSpace(candidate)
+		}
+		if candidateStem != selectedStem {
+			continue
+		}
+		if matchedCandidate == "" {
+			matchedCandidate = candidate
+			continue
+		}
+		if candidate != matchedCandidate {
+			return selected
+		}
+	}
+	if matchedCandidate != "" {
+		return matchedCandidate
+	}
+	return selected
+}
+
+func selectGroupCandidateNames(adapter constant.ProxyAdapter) []string {
+	if group, ok := adapter.(interface{ All() []string }); ok {
+		return group.All()
+	}
+	if group, ok := adapter.(interface{ Proxies() []constant.Proxy }); ok {
+		proxies := group.Proxies()
+		names := make([]string, 0, len(proxies))
+		for _, item := range proxies {
+			if item != nil {
+				names = append(names, item.Name())
+			}
+		}
+		return names
+	}
+	return nil
 }
 
 func patchSelectGroupOnProxies(proxies map[string]constant.Proxy, mapping map[string]string) {
@@ -481,6 +576,9 @@ func patchSelectGroupOnProxies(proxies map[string]constant.Proxy, mapping map[st
 			continue
 		}
 
+		if candidates := selectGroupCandidateNames(outbound.ProxyAdapter); len(candidates) > 0 {
+			selected = resolveUpdatedProxySelection(selected, candidates)
+		}
 		selector.ForceSet(selected)
 	}
 }

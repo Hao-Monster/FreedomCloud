@@ -10,6 +10,7 @@ import (
 	"runtime/debug"
 	"sort"
 	"strconv"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -723,6 +724,116 @@ func handleGetProxies() interface{} {
 	return proxiesWithDescriptions()
 }
 
+func resolveLeafProxyName(name string, proxies map[string]constant.Proxy) string {
+	if name == "" || len(proxies) == 0 {
+		return name
+	}
+	type nowProvider interface {
+		Now() string
+	}
+	curr := name
+	visited := make(map[string]struct{}, 4)
+	for step := 0; step < 16; step++ {
+		if _, seen := visited[curr]; seen {
+			return curr
+		}
+		visited[curr] = struct{}{}
+		proxy, ok := proxies[curr]
+		if !ok || proxy == nil {
+			return curr
+		}
+		var next string
+		if np, ok := proxy.(nowProvider); ok {
+			next = np.Now()
+		} else if ap := proxy.Adapter(); ap != nil {
+			if np, ok := ap.(nowProvider); ok {
+				next = np.Now()
+			}
+		}
+		if next == "" || next == curr {
+			return curr
+		}
+		curr = next
+	}
+	return curr
+}
+
+func applySelectorChange(proxies map[string]constant.Proxy, groupName, proxyName string) (prevLeaf, nextLeaf, errMsg string) {
+	group, ok := proxies[groupName]
+	if !ok {
+		return "", "", "Not found group"
+	}
+	adapterProxy, ok := group.(*adapter.Proxy)
+	if !ok {
+		return "", "", "Group is not a proxy adapter"
+	}
+	selector, ok := adapterProxy.ProxyAdapter.(outboundgroup.SelectAble)
+	if !ok {
+		return "", "", "Group is not selectable"
+	}
+
+	prevLeaf = resolveLeafProxyName(groupName, proxies)
+	var err error
+	if proxyName == "" {
+		selector.ForceSet(proxyName)
+	} else {
+		err = selector.Set(proxyName)
+	}
+	if err != nil {
+		return "", "", err.Error()
+	}
+	nextLeaf = resolveLeafProxyName(groupName, proxies)
+	return prevLeaf, nextLeaf, ""
+}
+
+func closeConnectionsForProxySwitch(manager *statistic.Manager, groupName, targetName, prevLeaf, nextLeaf string) {
+	if manager == nil {
+		return
+	}
+	if prevLeaf != "" && prevLeaf == nextLeaf {
+		log.Debugln("[ProxySwitch] group=%s target=%s leaf=%s unchanged; preserved active connections", groupName, targetName, nextLeaf)
+		return
+	}
+
+	var toClose []statistic.Tracker
+	manager.Range(func(c statistic.Tracker) bool {
+		chains := c.Chains()
+		if len(chains) == 0 {
+			if info := c.Info(); info != nil {
+				chains = info.Chain
+			}
+		}
+		if len(chains) == 0 || !slices.Contains(chains, groupName) {
+			return true
+		}
+		if nextLeaf != "" && chains[0] == nextLeaf {
+			return true
+		}
+		toClose = append(toClose, c)
+		return true
+	})
+	for _, c := range toClose {
+		_ = c.Close()
+	}
+	log.Infoln("[ProxySwitch] group=%s target=%s leaf=%s->%s closed=%d", groupName, targetName, prevLeaf, nextLeaf, len(toClose))
+}
+
+func changeSelectorProxy(proxies map[string]constant.Proxy, manager *statistic.Manager, params ChangeProxyParams) string {
+	if params.GroupName == nil || params.ProxyName == nil {
+		return "missing group-name or proxy-name"
+	}
+	groupName := *params.GroupName
+	proxyName := *params.ProxyName
+	prevLeaf, nextLeaf, errMsg := applySelectorChange(proxies, groupName, proxyName)
+	if errMsg != "" {
+		return errMsg
+	}
+	if params.CloseConnections != nil && *params.CloseConnections {
+		closeConnectionsForProxySwitch(manager, groupName, proxyName, prevLeaf, nextLeaf)
+	}
+	return ""
+}
+
 func handleChangeProxy(data string, fn func(string string)) {
 	go func() {
 		var params = &ChangeProxyParams{}
@@ -735,41 +846,22 @@ func handleChangeProxy(data string, fn func(string string)) {
 			fn("missing group-name or proxy-name")
 			return
 		}
-		groupName := *params.GroupName
-		proxyName := *params.ProxyName
 
-		// Hold proxyStateMu.RLock only across the proxy lookup + selector mutation,
-		// so proxy queries/switches do not stall behind a multi-second listener/Wintun
-		// bring-up on runLock, while remaining race-free against ApplyConfig/Shutdown.
+		// Hold proxyStateMu.RLock only across the proxy lookup + selector mutation
+		// and leaf resolution, so proxy queries/switches do not stall behind a
+		// multi-second listener/Wintun bring-up on runLock while remaining race-free
+		// against ApplyConfig/Shutdown, then release before evicting connections.
 		proxyStateMu.RLock()
 		proxies := proxiesWithProviders()
-		group, ok := proxies[groupName]
-		if !ok {
-			proxyStateMu.RUnlock()
-			fn("Not found group")
-			return
-		}
-		adapterProxy, ok := group.(*adapter.Proxy)
-		if !ok {
-			proxyStateMu.RUnlock()
-			fn("Group is not a proxy adapter")
-			return
-		}
-		selector, ok := adapterProxy.ProxyAdapter.(outboundgroup.SelectAble)
-		if !ok {
-			proxyStateMu.RUnlock()
-			fn("Group is not selectable")
-			return
-		}
-		if proxyName == "" {
-			selector.ForceSet(proxyName)
-		} else {
-			err = selector.Set(proxyName)
-		}
+		prevLeaf, nextLeaf, errMsg := applySelectorChange(proxies, *params.GroupName, *params.ProxyName)
 		proxyStateMu.RUnlock()
-		if err != nil {
-			fn(err.Error())
+		if errMsg != "" {
+			fn(errMsg)
 			return
+		}
+
+		if params.CloseConnections != nil && *params.CloseConnections {
+			closeConnectionsForProxySwitch(statistic.DefaultManager, *params.GroupName, *params.ProxyName, prevLeaf, nextLeaf)
 		}
 
 		fn("")
@@ -828,16 +920,29 @@ func handleGetConnections() string {
 }
 
 func handleCloseConnections() bool {
-	closeConnections()
+	closeConnectionsWithReason("ipc:closeConnections")
 	return true
 }
 
 func closeConnections() {
+	closeConnectionsWithReason("unspecified")
+}
+
+func closeConnectionsWithReason(reason string) int {
+	var toClose []statistic.Tracker
 	statistic.DefaultManager.Range(func(c statistic.Tracker) bool {
-		_ = c.Close()
+		toClose = append(toClose, c)
 		return true
 	})
+	for _, c := range toClose {
+		_ = c.Close()
+	}
 	resetOutboundAdapterPools()
+	closed := len(toClose)
+	if closed > 0 || strings.Contains(reason, "ipc") {
+		log.Infoln("[Connections] closed=%d reason=%s", closed, reason)
+	}
+	return closed
 }
 
 func handleResetConnections() bool {

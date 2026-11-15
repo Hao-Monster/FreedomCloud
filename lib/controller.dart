@@ -98,6 +98,23 @@ bool shouldSkipUnchangedSilentSetup({
   return true;
 }
 
+/// Dispatches a proxy selection switch with the caller's surgical
+/// [closeConnections] intent so the Core can evict only displaced circuits
+/// instead of closing unrelated long-lived connections globally.
+Future<String> performSurgicalChangeProxy({
+  required ClashCore core,
+  required String groupName,
+  required String proxyName,
+  required bool closeConnections,
+}) =>
+    core.changeProxy(
+      ChangeProxyParams(
+        groupName: groupName,
+        proxyName: proxyName,
+        closeConnections: closeConnections,
+      ),
+    );
+
 @visibleForTesting
 class AppShutdownEffects {
   const AppShutdownEffects({
@@ -2811,15 +2828,12 @@ class AppController {
     required String proxyName,
   }) async {
     detectionState.notifyRoutingChanged();
-    await clashCore.changeProxy(
-      ChangeProxyParams(
-        groupName: groupName,
-        proxyName: proxyName,
-      ),
+    await performSurgicalChangeProxy(
+      core: clashCore,
+      groupName: groupName,
+      proxyName: proxyName,
+      closeConnections: _ref.read(appSettingProvider).closeConnections,
     );
-    if (_ref.read(appSettingProvider).closeConnections) {
-      clashCore.closeConnections();
-    }
     addCheckIpNumDebounce();
     // Android: re-persist cold-start params so a later headless restart (tile/
     // Always-on/sticky) brings the tunnel up with the NEWLY selected node, not

@@ -115,6 +115,7 @@ class ChangeProxyParams with _$ChangeProxyParams {
   const factory ChangeProxyParams({
     @JsonKey(name: "group-name") required String groupName,
     @JsonKey(name: "proxy-name") required String proxyName,
+    @JsonKey(name: "close-connections") @Default(false) bool closeConnections,
   }) = _ChangeProxyParams;
 
   factory ChangeProxyParams.fromJson(Map<String, Object?> json) =>

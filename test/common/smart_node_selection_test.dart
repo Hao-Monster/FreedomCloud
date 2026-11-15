@@ -108,11 +108,16 @@ void main() {
       // Synthesized hidden url-test group contains ONLY real non-informational leaves!
       final smartSelectGroup =
           groups.singleWhere((g) => g['name'] == smartSelectorName);
+      expect(kManagedSmartToleranceMs, 150);
+      expect(kManagedSmartMaxFailedTimes, 2);
+      expect(kManagedSmartTestTimeoutMs, 5000);
       expect(smartSelectGroup['type'], 'url-test');
       expect(smartSelectGroup['hidden'], isTrue);
       expect(smartSelectGroup['url'], defaultUrl);
       expect(smartSelectGroup['interval'], kManagedSmartTestIntervalSec);
-      expect(smartSelectGroup['tolerance'], kManagedSmartToleranceMs);
+      expect(smartSelectGroup['tolerance'], 150);
+      expect(smartSelectGroup['timeout'], 5000);
+      expect(smartSelectGroup['max-failed-times'], 2);
       expect(smartSelectGroup['lazy'], isFalse);
       expect(smartSelectGroup['proxies'], ['香港 01', '美国 01']);
 
@@ -121,6 +126,9 @@ void main() {
           groups.singleWhere((g) => g['name'] == smartGlobalName);
       expect(smartGlobalGroup['type'], 'url-test');
       expect(smartGlobalGroup['hidden'], isTrue);
+      expect(smartGlobalGroup['tolerance'], 150);
+      expect(smartGlobalGroup['timeout'], 5000);
+      expect(smartGlobalGroup['max-failed-times'], 2);
       expect(smartGlobalGroup['proxies'], ['香港 01', '美国 01']);
 
       // Runtime catalog identity & selectGroups projection remain 100% identical!
@@ -403,6 +411,112 @@ void main() {
         ),
         '美国AGK-Reality-Vision',
       );
+    });
+  });
+
+  group('dynamic traffic badge alignment', () {
+    test('reconcileDynamicTrafficNodeName handles exact, updated badge, added/removed badge, and ambiguity',
+        () {
+      expect(
+        reconcileDynamicTrafficNodeName(
+          '443-新加坡01|📊227.33GB',
+          const ['443-新加坡01|📊227.33GB', '443-新加坡01|📊180.00GB'],
+        ),
+        '443-新加坡01|📊227.33GB',
+      );
+      expect(
+        reconcileDynamicTrafficNodeName(
+          '443-新加坡01|📊227.33GB',
+          const ['443-新加坡01|📊180.00GB', '香港 01'],
+        ),
+        '443-新加坡01|📊180.00GB',
+      );
+      expect(
+        reconcileDynamicTrafficNodeName(
+          '香港01',
+          const ['香港01 | 剩余 128.4 GB', '美国01 (流量 50MB)'],
+        ),
+        '香港01 | 剩余 128.4 GB',
+      );
+      expect(
+        reconcileDynamicTrafficNodeName(
+          '日本01 [99.5GiB]',
+          const ['日本01', '新加坡01'],
+        ),
+        '日本01',
+      );
+      expect(
+        reconcileDynamicTrafficNodeName(
+          '香港01 | 剩余 128.4 GB',
+          const ['香港01 | 剩余 90.0 GB', '香港01 [90.0GiB]'],
+        ),
+        '香港01 | 剩余 128.4 GB',
+      );
+      expect(
+        reconcileDynamicTrafficNodeName(
+          '香港 01',
+          const ['香港 02'],
+        ),
+        '香港 01',
+      );
+      expect(
+        reconcileDynamicTrafficNodeName(
+          '香港01 1x',
+          const ['香港01 2x'],
+        ),
+        '香港01 1x',
+      );
+      expect(
+        reconcileDynamicTrafficNodeName('香港01 | 10GB', const []),
+        '香港01 | 10GB',
+      );
+    });
+
+    test('buildEffectiveSelectedMapForProfile reconciles inline traffic updates and preserves provider misses',
+        () {
+      final patchedConfig = <String, dynamic>{
+        'proxy-providers': {
+          'airport': {'type': 'http', 'url': 'https://sub.example.com/p'},
+        },
+        'proxy-groups': [
+          {
+            'name': 'Proxy',
+            'type': 'select',
+            'proxies': ['香港01 | 剩余 90.2 GB', '日本01 [50GiB]'],
+          },
+          {
+            'name': 'ProviderOnly',
+            'type': 'select',
+            'include-all-providers': true,
+            'proxies': ['DIRECT'],
+          },
+          {
+            'name': 'IncludeAllGroup',
+            'type': 'select',
+            'include-all': true,
+            'proxies': ['DIRECT'],
+          },
+        ],
+      };
+
+      const profile = Profile(
+        id: 'p-traffic',
+        label: 'Traffic Profile',
+        autoUpdateDuration: Duration.zero,
+        selectedMap: {
+          'Proxy': '香港01 | 剩余 128.4 GB',
+          'ProviderOnly': '新加坡01|📊200GB',
+          'IncludeAllGroup': '美国01 (流量 50MB)',
+        },
+      );
+
+      final effective = buildEffectiveSelectedMapForProfile(
+        profile: profile,
+        patchedRawConfig: patchedConfig,
+      );
+      expect(effective['Proxy'], '香港01 | 剩余 90.2 GB');
+      expect(effective['ProviderOnly'], '新加坡01|📊200GB');
+      expect(effective['IncludeAllGroup'], '美国01 (流量 50MB)');
     });
   });
 }

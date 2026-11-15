@@ -1513,6 +1513,8 @@ mixin _$ChangeProxyParams {
   String get groupName => throw _privateConstructorUsedError;
   @JsonKey(name: "proxy-name")
   String get proxyName => throw _privateConstructorUsedError;
+  @JsonKey(name: "close-connections")
+  bool get closeConnections => throw _privateConstructorUsedError;
 
   /// Serializes this ChangeProxyParams to a JSON map.
   Map<String, dynamic> toJson() => throw _privateConstructorUsedError;
@@ -1532,7 +1534,8 @@ abstract class $ChangeProxyParamsCopyWith<$Res> {
   @useResult
   $Res call(
       {@JsonKey(name: "group-name") String groupName,
-      @JsonKey(name: "proxy-name") String proxyName});
+      @JsonKey(name: "proxy-name") String proxyName,
+      @JsonKey(name: "close-connections") bool closeConnections});
 }
 
 /// @nodoc
@@ -1552,6 +1555,7 @@ class _$ChangeProxyParamsCopyWithImpl<$Res, $Val extends ChangeProxyParams>
   $Res call({
     Object? groupName = null,
     Object? proxyName = null,
+    Object? closeConnections = null,
   }) {
     return _then(_value.copyWith(
       groupName: null == groupName
@@ -1562,6 +1566,10 @@ class _$ChangeProxyParamsCopyWithImpl<$Res, $Val extends ChangeProxyParams>
           ? _value.proxyName
           : proxyName // ignore: cast_nullable_to_non_nullable
               as String,
+      closeConnections: null == closeConnections
+          ? _value.closeConnections
+          : closeConnections // ignore: cast_nullable_to_non_nullable
+              as bool,
     ) as $Val);
   }
 }
@@ -1576,7 +1584,8 @@ abstract class _$$ChangeProxyParamsImplCopyWith<$Res>
   @useResult
   $Res call(
       {@JsonKey(name: "group-name") String groupName,
-      @JsonKey(name: "proxy-name") String proxyName});
+      @JsonKey(name: "proxy-name") String proxyName,
+      @JsonKey(name: "close-connections") bool closeConnections});
 }
 
 /// @nodoc
@@ -1594,6 +1603,7 @@ class __$$ChangeProxyParamsImplCopyWithImpl<$Res>
   $Res call({
     Object? groupName = null,
     Object? proxyName = null,
+    Object? closeConnections = null,
   }) {
     return _then(_$ChangeProxyParamsImpl(
       groupName: null == groupName
@@ -1604,6 +1614,10 @@ class __$$ChangeProxyParamsImplCopyWithImpl<$Res>
           ? _value.proxyName
           : proxyName // ignore: cast_nullable_to_non_nullable
               as String,
+      closeConnections: null == closeConnections
+          ? _value.closeConnections
+          : closeConnections // ignore: cast_nullable_to_non_nullable
+              as bool,
     ));
   }
 }
@@ -1613,7 +1627,8 @@ class __$$ChangeProxyParamsImplCopyWithImpl<$Res>
 class _$ChangeProxyParamsImpl implements _ChangeProxyParams {
   const _$ChangeProxyParamsImpl(
       {@JsonKey(name: "group-name") required this.groupName,
-      @JsonKey(name: "proxy-name") required this.proxyName});
+      @JsonKey(name: "proxy-name") required this.proxyName,
+      @JsonKey(name: "close-connections") this.closeConnections = false});
 
   factory _$ChangeProxyParamsImpl.fromJson(Map<String, dynamic> json) =>
       _$$ChangeProxyParamsImplFromJson(json);
@@ -1624,10 +1639,13 @@ class _$ChangeProxyParamsImpl implements _ChangeProxyParams {
   @override
   @JsonKey(name: "proxy-name")
   final String proxyName;
+  @override
+  @JsonKey(name: "close-connections")
+  final bool closeConnections;
 
   @override
   String toString() {
-    return 'ChangeProxyParams(groupName: $groupName, proxyName: $proxyName)';
+    return 'ChangeProxyParams(groupName: $groupName, proxyName: $proxyName, closeConnections: $closeConnections)';
   }
 
   @override
@@ -1638,12 +1656,15 @@ class _$ChangeProxyParamsImpl implements _ChangeProxyParams {
             (identical(other.groupName, groupName) ||
                 other.groupName == groupName) &&
             (identical(other.proxyName, proxyName) ||
-                other.proxyName == proxyName));
+                other.proxyName == proxyName) &&
+            (identical(other.closeConnections, closeConnections) ||
+                other.closeConnections == closeConnections));
   }
 
   @JsonKey(includeFromJson: false, includeToJson: false)
   @override
-  int get hashCode => Object.hash(runtimeType, groupName, proxyName);
+  int get hashCode =>
+      Object.hash(runtimeType, groupName, proxyName, closeConnections);
 
   /// Create a copy of ChangeProxyParams
   /// with the given fields replaced by the non-null parameter values.
@@ -1665,7 +1686,8 @@ class _$ChangeProxyParamsImpl implements _ChangeProxyParams {
 abstract class _ChangeProxyParams implements ChangeProxyParams {
   const factory _ChangeProxyParams(
           {@JsonKey(name: "group-name") required final String groupName,
-          @JsonKey(name: "proxy-name") required final String proxyName}) =
+          @JsonKey(name: "proxy-name") required final String proxyName,
+          @JsonKey(name: "close-connections") final bool closeConnections}) =
       _$ChangeProxyParamsImpl;
 
   factory _ChangeProxyParams.fromJson(Map<String, dynamic> json) =
@@ -1677,6 +1699,9 @@ abstract class _ChangeProxyParams implements ChangeProxyParams {
   @override
   @JsonKey(name: "proxy-name")
   String get proxyName;
+  @override
+  @JsonKey(name: "close-connections")
+  bool get closeConnections;
 
   /// Create a copy of ChangeProxyParams
   /// with the given fields replaced by the non-null parameter values.
