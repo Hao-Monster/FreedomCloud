@@ -34,7 +34,7 @@ function Artifact([string]$file,[string]$exe,[string]$version,[uri]$url) {
 }
 $manifest = Artifact $Installer $ApplicationExecutable $Version $PackageUrl
 $manifest.installerProtocol='fcx-update-v1'
-$manifest.schema=1; $manifest.target=$Target; $manifest.format='inno-exe'; $manifest.entry='FlClashX.exe'
+$manifest.schema=1; $manifest.target=$Target; $manifest.format='inno-exe'; $manifest.entry='FreedomNet.exe'
 $manifest.expiresUtc=[DateTime]::UtcNow.AddDays($ValidDays).ToString('o')
 $manifest.rollback=Artifact $RollbackInstaller $RollbackApplicationExecutable $RollbackVersion $RollbackUrl
 $content = New-Object Security.Cryptography.Pkcs.ContentInfo(,[Text.Encoding]::UTF8.GetBytes(($manifest | ConvertTo-Json -Depth 8 -Compress)))

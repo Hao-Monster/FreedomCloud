@@ -7,6 +7,7 @@ import 'dart:typed_data';
 import 'package:dio/dio.dart';
 import 'package:dio/io.dart';
 import 'package:flclashx/common/common.dart';
+import 'package:flclashx/common/signed_update.dart';
 import 'package:flclashx/common/tun_runtime.dart';
 import 'package:flclashx/common/windows_helper_compatibility.dart';
 import 'package:flclashx/models/models.dart';
@@ -143,20 +144,22 @@ class Request {
   }
 
   Future<Map<String, dynamic>?> checkForUpdate() async {
-    final response = await _dio.get(
-      "https://api.github.com/repos/$repository/releases/latest",
-      options: Options(
-        responseType: ResponseType.json,
-      ),
-    );
-    if (response.statusCode != 200) return null;
-    final data = response.data as Map<String, dynamic>;
-    final remoteVersion = data['tag_name'];
-    final version = globalState.packageInfo.version;
-    final hasUpdate =
-        utils.compareVersions(remoteVersion.replaceAll('v', ''), version) > 0;
-    if (!hasUpdate) return null;
-    return data;
+    try {
+      final updater = SignedUpdate();
+      if (updater.unavailable != null) return null;
+      final currentVersion = globalState.isPackageInfoInitialized
+          ? globalState.packageInfo.version
+          : '0.0.0';
+      final result = await updater.checkAvailableUpdate(currentVersion);
+      if (result == null) return null;
+      return <String, dynamic>{
+        'tag_name': 'v${result.version.replaceFirst(RegExp(r'^v'), '')}',
+        'body': result.releaseNotes,
+        if (result.publishedAt != null) 'published_at': result.publishedAt,
+      };
+    } catch (_) {
+      return null;
+    }
   }
 
   // Prefer the IPv4 endpoint. Contact the HTTPS fallback only if it fails.

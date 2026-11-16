@@ -1166,17 +1166,123 @@ func (d *dhcpClient) ResetConnection() {
 	}
 
 	const minimalURLTest = `package outboundgroup
+
+import "context"
+
+func (u *URLTest) DialContext(ctx context.Context, metadata *C.Metadata) (c C.Conn, err error) {
+	proxy := u.fast(true)
+	c, err = proxy.DialContext(ctx, metadata)
+	if err == nil {
+		c.AppendToChains(u)
+	} else {
+		u.onDialFailed(proxy.Type(), err, u.healthCheck)
+	}
+
+	if N.NeedHandshake(c) {
+		c = callback.NewFirstWriteCallBackConn(c, func(err error) {
+			if err == nil {
+				u.onDialSuccess()
+			} else {
+				u.onDialFailed(proxy.Type(), err, u.healthCheck)
+			}
+		})
+	}
+
+	return c, err
+}
+
+func (u *URLTest) ListenPacketContext(ctx context.Context, metadata *C.Metadata) (C.PacketConn, error) {
+	proxy := u.fast(true)
+	pc, err := proxy.ListenPacketContext(ctx, metadata)
+	if err == nil {
+		pc.AppendToChains(u)
+	} else {
+		u.onDialFailed(proxy.Type(), err, u.healthCheck)
+	}
+
+	return pc, err
+}
+
+func (u *URLTest) fast(touch bool) C.Proxy {
+	elm, _, shared := u.fastSingle.Do(func() (C.Proxy, error) {
+		proxies := u.GetProxies(touch)
+		if u.selected != "" {
+			for _, proxy := range proxies {
+				if !proxy.AliveForTestUrl(u.testUrl) {
+					continue
+				}
+				if proxy.Name() == u.selected {
+					u.fastNode = proxy
+					return proxy, nil
+				}
+			}
+		}
+
+		fast := proxies[0]
+		minDelay := fast.LastDelayForTestUrl(u.testUrl)
+		fastNotExist := true
+
+		for _, proxy := range proxies[1:] {
+			if u.fastNode != nil && proxy.Name() == u.fastNode.Name() {
+				fastNotExist = false
+			}
+
+			if !proxy.AliveForTestUrl(u.testUrl) {
+				continue
+			}
+
+			delay := proxy.LastDelayForTestUrl(u.testUrl)
+			if delay < minDelay {
+				fast = proxy
+				minDelay = delay
+			}
+
+		}
+		// tolerance
+		if u.fastNode == nil || fastNotExist || !u.fastNode.AliveForTestUrl(u.testUrl) || u.fastNode.LastDelayForTestUrl(u.testUrl) > fast.LastDelayForTestUrl(u.testUrl)+u.tolerance {
+			u.fastNode = fast
+		}
+		return u.fastNode, nil
+	})
+	_ = shared
+	return elm
+}
+
 func (u *URLTest) ForceSet(name string) {
 	u.selected = name
 	u.fastSingle.Reset()
 }
 `
 	firstURLTest, err := patchURLTestGroup([]byte(minimalURLTest))
-	if err != nil || !bytes.Contains(firstURLTest, []byte("ResetFastCacheFCX")) {
+	if err != nil {
 		t.Fatalf("urltest.go patch failed: %v", err)
 	}
-	if _, err := patchURLTestGroup([]byte("package outboundgroup\n")); err == nil {
-		t.Fatal("changed urltest.go shape accepted")
+	secondURLTest, err := patchURLTestGroup([]byte(strings.ReplaceAll(minimalURLTest, "\n", "\r\n")))
+	if err != nil || !bytes.Equal(firstURLTest, secondURLTest) {
+		t.Fatalf("urltest.go patch nondeterministic: %v", err)
+	}
+	for _, want := range []string{
+		"RecordDialErrorFCX",
+		"WrapStableConnFCX",
+		"EffectiveDelayFCX",
+		"ResetFastCacheFCX",
+	} {
+		if !bytes.Contains(firstURLTest, []byte(want)) {
+			t.Fatalf("urltest.go missing %q:\n%s", want, firstURLTest)
+		}
+	}
+	for name, tampered := range map[string]string{
+		"empty":                "package outboundgroup\n",
+		"missing DialContext":  strings.Replace(minimalURLTest, "N.NeedHandshake(c)", "false", 1),
+		"missing ListenPacket": strings.Replace(minimalURLTest, "proxy.ListenPacketContext", "proxy.DialPacket", 1),
+		"missing fast":         strings.Replace(minimalURLTest, "minDelay := fast.LastDelayForTestUrl(u.testUrl)", "minDelay := uint16(0)", 1),
+		"missing ForceSet":     strings.Replace(minimalURLTest, "func (u *URLTest) ForceSet(name string)", "func (u *URLTest) Other(name string)", 1),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := patchURLTestGroup([]byte(tampered)); err == nil {
+				t.Fatalf("changed urltest.go shape (%s) accepted", name)
+			}
+		})
 	}
 }
 
@@ -1276,6 +1382,8 @@ func (gb *GroupBase) onDialSuccess() {
 	}
 	patched := string(first)
 	for _, want := range []string{
+		"fcxStability",
+		"fcxStabilityTracker",
 		"30 * time.Second",
 		"gb.failedTimes = 1",
 		"gb.failedTime = time.Now()",

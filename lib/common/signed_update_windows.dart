@@ -208,6 +208,64 @@ try {
     InstallerPointer @{directory=$directory;role='rollback'} | Out-Null
     exit 0
   }
+  if ($job.action -eq 'stageEd25519Installer') {
+    Preflight
+    if ($job.targetSha256 -notmatch '^[a-fA-F0-9]{64}$' -or $job.targetSize -le 0 -or $job.targetSize -gt 2147483648) { throw 'Invalid Ed25519 target metadata' }
+    NoLinks $job.archive
+    if ((Get-Item -LiteralPath $job.archive).Length -ne $job.targetSize -or (Hash $job.archive) -ine $job.targetSha256) { throw 'Installer integrity mismatch' }
+    if ($job.pin -match '^[a-fA-F0-9]{64}$') {
+      $signature = Get-AuthenticodeSignature -LiteralPath $job.archive
+      if ($signature.Status -ne 'Valid') { throw 'Installer Authenticode signature is not trusted' }
+      $sha = [Security.Cryptography.SHA256]::Create()
+      try { $pin = [BitConverter]::ToString($sha.ComputeHash($signature.SignerCertificate.RawData)).Replace('-','') } finally { $sha.Dispose() }
+      if ($pin -cne $job.pin) { throw 'Installer publisher differs from the compiled release identity' }
+    }
+    $cache = Join-Path $root 'ed25519-installers'
+    [IO.Directory]::CreateDirectory($cache) | Out-Null
+    NoLinks $cache
+    $directory = Join-Path $cache $job.targetSha256.ToLowerInvariant()
+    if (!(Test-Path -LiteralPath $directory)) {
+      $stage = Join-Path $cache ('.staging-' + [guid]::NewGuid().ToString('N'))
+      [IO.Directory]::CreateDirectory($stage) | Out-Null
+      Copy-Item -LiteralPath $job.archive -Destination (Join-Path $stage 'setup.exe')
+      if ((Hash (Join-Path $stage 'setup.exe')) -ine $job.targetSha256) { throw 'Staged installer hash mismatch' }
+      [IO.Directory]::Move($stage, $directory)
+    }
+    exit 0
+  }
+  if ($job.action -eq 'applyEd25519Installer') {
+    Preflight
+    if ($job.targetSha256 -notmatch '^[a-fA-F0-9]{64}$') { throw 'Invalid Ed25519 target hash' }
+    $lock = [IO.File]::Open((Join-Path $root 'transaction.lock'),'OpenOrCreate','ReadWrite','None')
+    try {
+      $setupPath = Join-Path (Join-Path (Join-Path $root 'ed25519-installers') $job.targetSha256.ToLowerInvariant()) 'setup.exe'
+      NoLinks $setupPath
+      if ((Get-Item -LiteralPath $setupPath).Length -ne $job.targetSize -or (Hash $setupPath) -ine $job.targetSha256) { throw 'Staged installer integrity mismatch' }
+      if ($job.pin -match '^[a-fA-F0-9]{64}$') {
+        $signature = Get-AuthenticodeSignature -LiteralPath $setupPath
+        if ($signature.Status -ne 'Valid') { throw 'Installer Authenticode signature is not trusted' }
+        $sha = [Security.Cryptography.SHA256]::Create()
+        try { $pin = [BitConverter]::ToString($sha.ComputeHash($signature.SignerCertificate.RawData)).Replace('-','') } finally { $sha.Dispose() }
+        if ($pin -cne $job.pin) { throw 'Installer publisher differs from the compiled release identity' }
+      }
+      $installDirectory = [IO.Path]::GetDirectoryName($job.currentExe)
+      NoLinks $installDirectory
+      $parent = Get-Process -Id $job.parentPid -ErrorAction SilentlyContinue
+      if ($parent -and !$parent.WaitForExit(60000)) { throw 'Application did not stop; installer not launched' }
+      AtomicJson (Join-Path $root 'last-result.json') @{state='installing';time=[DateTime]::UtcNow.ToString('o');mode='ed25519'}
+      $hold = [IO.File]::Open($setupPath,'Open','Read','Read')
+      try {
+        if ((Hash $setupPath) -ine $job.targetSha256) { throw 'Staged installer changed before launch' }
+        $arguments = '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP- /NOCLOSEAPPLICATIONS /NORESTARTAPPLICATIONS /FCXUPDATE /DIR="' + $installDirectory + '"'
+        $process = Start-Process -FilePath $setupPath -ArgumentList $arguments -Verb RunAs -WindowStyle Hidden -PassThru
+        $process.WaitForExit()
+        if ($process.ExitCode -ne 0) { throw ('Inno installer failed with exit code ' + $process.ExitCode) }
+      } finally { $hold.Dispose() }
+      Start-Process -FilePath $job.currentExe -WorkingDirectory $installDirectory | Out-Null
+      AtomicJson (Join-Path $root 'last-result.json') @{state='installer-completed-awaiting-user-acceptance';time=[DateTime]::UtcNow.ToString('o');mode='ed25519'}
+    } finally { $lock.Dispose() }
+    exit 0
+  }
   if ($job.action -in @('applyInstaller','rollbackInstaller')) { RunInstallerUpdate; exit 0 }
   if ($job.action -eq 'stage') {
     PortablePreflight

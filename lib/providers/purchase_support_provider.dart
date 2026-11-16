@@ -208,13 +208,13 @@ class PurchaseSupportCoordinator {
     late final DioXboardApi defaultApi;
     defaultApi = DioXboardApi(
       shouldFallbackToDirect: () =>
-          shouldFallbackToDirectForUri(defaultApi.baseUri),
+          shouldFallbackToDirectForUri(defaultApi.activeOrigin),
     );
     _init(
       api: defaultApi,
       storage: SecurePurchaseStorage(defaultApi.baseUri),
       supportHandle: createSupportManagerHandle(
-        fallbackBaseUrl: () => defaultApi.baseUri,
+        fallbackBaseUrl: () => defaultApi.activeOrigin,
       ),
     );
   }

@@ -75,31 +75,33 @@ impl ReplayJournal {
         }
     }
 
-    pub fn commit_response(&mut self, line: &str) {
+    pub fn commit_response(&mut self, line: &str) -> Option<String> {
         if self.pending.is_empty() {
-            return;
+            return None;
         }
         let Ok(probe) = serde_json::from_str::<ResponseIdProbe<'_>>(line) else {
-            return;
+            return None;
         };
         let Some(id) = probe.id.as_deref() else {
-            return;
+            return None;
         };
         let Some(staged) = self.pending.remove(id) else {
-            return;
+            return None;
         };
         if let Some(position) = self.pending_order.iter().position(|item| item == id) {
             self.pending_order.remove(position);
         }
         let Ok(value) = serde_json::from_str::<Value>(line) else {
-            return;
+            return None;
         };
         let Ok(action) = serde_json::from_str::<Value>(&staged) else {
-            return;
+            return None;
         };
         if mutation_was_accepted(&action, &value) {
             self.record(&staged);
+            return Some(staged);
         }
+        None
     }
 
     pub fn discard_pending(&mut self) {

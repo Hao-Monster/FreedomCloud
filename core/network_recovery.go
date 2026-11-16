@@ -92,6 +92,20 @@ func resetURLTestGroupCaches() {
 	proxyStateMu.RUnlock()
 }
 
+func resetURLTestStabilityPenalties() {
+	proxyStateMu.RLock()
+	for _, proxy := range tunnel.Proxies() {
+		adapterProxy, ok := proxy.(*adapter.Proxy)
+		if !ok || adapterProxy == nil {
+			continue
+		}
+		if group, ok := adapterProxy.ProxyAdapter.(interface{ ResetStabilityPenaltiesFCX() }); ok {
+			group.ResetStabilityPenaltiesFCX()
+		}
+	}
+	proxyStateMu.RUnlock()
+}
+
 // formatRoutingIdentityPrefixes normalizes usable IP prefixes so IPv4 host
 // changes remain distinct while RFC 4941/8981 IPv6 SLAAC temporary addresses
 // collapse onto their /64 network prefix.
@@ -379,6 +393,7 @@ func onTunDefaultInterfaceChanged(event sing_tun.FCXDefaultInterfaceEvent) {
 	if event.Lost {
 		resetNetworkCachesAndResolvers()
 		closeConnectionsBefore(observedAt, true, "network:lost")
+		resetURLTestStabilityPenalties()
 		networkRecoveryMu.Lock()
 		lastTunRecoveredNetworkKey = "lost"
 		lastTunDefaultInterfaceID = ""
@@ -453,6 +468,7 @@ func onTunDefaultInterfaceChanged(event sing_tun.FCXDefaultInterfaceEvent) {
 	resetNetworkCachesAndResolvers()
 	closeConnectionsBefore(observedAt, true, "network:changed:"+event.Name)
 	resetURLTestGroupCaches()
+	resetURLTestStabilityPenalties()
 	scheduleNetworkRecoveryHealthChecks()
 	log.Infoln("[Network] default interface switched to %s; reset DNS, closed stale connections, scheduled health checks", event.Name)
 }
@@ -490,6 +506,7 @@ func recoverFromIPCNetworkReset() {
 	resetNetworkCachesAndResolvers()
 	closeConnectionsBefore(ipcStartedAt, true, "ipc:resetConnections")
 	resetURLTestGroupCaches()
+	resetURLTestStabilityPenalties()
 	scheduleNetworkRecoveryHealthChecks()
 	log.Infoln("[Network] resetConnections completed (closedConnections=true)")
 }

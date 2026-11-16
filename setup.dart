@@ -170,27 +170,55 @@ class Build {
 
   /// Public update trust configuration is baked into the client, never read
   /// from an untrusted release feed or a downloaded settings file.
-  static List<String> get signedUpdateDefines {
-    final feed = Platform.environment['FCX_RELEASE_MANIFEST_URL']?.trim() ?? '';
-    final pin = Platform.environment['FCX_RELEASE_CERT_SHA256']?.trim() ?? '';
-    final team = Platform.environment['FCX_MACOS_TEAM_ID']?.trim() ?? '';
-    if (feed.isEmpty && pin.isEmpty && team.isEmpty) return const [];
-    final uri = Uri.tryParse(feed);
-    if (uri == null || uri.scheme != 'https' || uri.host.isEmpty ||
-        uri.userInfo.isNotEmpty || !RegExp(r'^[a-fA-F0-9]{64}$').hasMatch(pin)) {
-      throw StateError('Signed updates require an HTTPS FCX_RELEASE_MANIFEST_URL '
-          'and a 64-digit FCX_RELEASE_CERT_SHA256');
+  static List<String> buildSignedUpdateDefines({
+    String? manifestUrl,
+    String? certSha256,
+    String? macosTeamId,
+    String? ed25519PublicKey,
+    bool? isMacOS,
+  }) {
+    final feed = (manifestUrl ?? '').trim();
+    final pin = (certSha256 ?? '').trim();
+    final team = (macosTeamId ?? '').trim();
+    final ed25519Pub = (ed25519PublicKey ?? '').trim();
+    if (feed.isEmpty && pin.isEmpty && team.isEmpty && ed25519Pub.isEmpty) {
+      return const [];
     }
-    if ((Platform.isMacOS || team.isNotEmpty) &&
+    if (feed.isNotEmpty) {
+      final uri = Uri.tryParse(feed);
+      if (uri == null ||
+          uri.scheme != 'https' ||
+          uri.host.isEmpty ||
+          uri.userInfo.isNotEmpty) {
+        throw StateError(
+            'FCX_RELEASE_MANIFEST_URL must be an HTTPS URL when set');
+      }
+    }
+    if (pin.isNotEmpty && !RegExp(r'^[a-fA-F0-9]{64}$').hasMatch(pin)) {
+      throw StateError(
+          'FCX_RELEASE_CERT_SHA256 must be a 64-digit SHA-256 hex string');
+    }
+    if (((isMacOS ?? Platform.isMacOS) || team.isNotEmpty) &&
         !RegExp(r'^[A-Z0-9]{10}$').hasMatch(team)) {
       throw StateError('macOS signed updates require FCX_MACOS_TEAM_ID');
     }
     return [
-      '--dart-define=FCX_RELEASE_MANIFEST_URL=$feed',
-      '--dart-define=FCX_RELEASE_CERT_SHA256=${pin.toUpperCase()}',
+      if (feed.isNotEmpty) '--dart-define=FCX_RELEASE_MANIFEST_URL=$feed',
+      if (pin.isNotEmpty)
+        '--dart-define=FCX_RELEASE_CERT_SHA256=${pin.toUpperCase()}',
       if (team.isNotEmpty) '--dart-define=FCX_MACOS_TEAM_ID=$team',
+      if (ed25519Pub.isNotEmpty)
+        '--dart-define=FCX_RELEASE_ED25519_PUBLIC_KEY=$ed25519Pub',
     ];
   }
+
+  static List<String> get signedUpdateDefines => buildSignedUpdateDefines(
+        manifestUrl: Platform.environment['FCX_RELEASE_MANIFEST_URL'],
+        certSha256: Platform.environment['FCX_RELEASE_CERT_SHA256'],
+        macosTeamId: Platform.environment['FCX_MACOS_TEAM_ID'],
+        ed25519PublicKey: Platform.environment['FCX_RELEASE_ED25519_PUBLIC_KEY'],
+        isMacOS: Platform.isMacOS,
+      );
 
   // Full release version for the User-Agent, taken from the CI tag
   // (GITHUB_REF_NAME, e.g. "v0.4.1-pre.18"), baked in via --dart-define=APP_VERSION.
@@ -947,6 +975,125 @@ class Build {
 
   static String? _generatedStrictManifest;
 
+  static const String defaultCodesignTimestampUrl =
+      'http://timestamp.digicert.com';
+
+  static String? resolveWindowsSigntool({
+    String? explicitPath,
+    String? programFilesX86,
+  }) {
+    final override = (explicitPath ??
+            Platform.environment['WINDOWS_SIGNTOOL'] ??
+            Platform.environment['FLCLASH_SIGNTOOL'] ??
+            '')
+        .trim();
+    if (override.isNotEmpty) {
+      return File(override).existsSync() ? override : null;
+    }
+    final pf86 = programFilesX86 ??
+        Platform.environment['ProgramFiles(x86)'] ??
+        r'C:\Program Files (x86)';
+    final kitsRoot = Directory(join(pf86, 'Windows Kits', '10', 'bin'));
+    if (!kitsRoot.existsSync()) return null;
+    final candidates = <String>[];
+    for (final entity in kitsRoot.listSync(followLinks: false)) {
+      if (entity is! Directory) continue;
+      for (final archDir in const ['x64', 'arm64']) {
+        final tool = join(entity.path, archDir, 'signtool.exe');
+        if (File(tool).existsSync()) {
+          candidates.add(tool);
+        }
+      }
+    }
+    if (candidates.isEmpty) return null;
+    candidates.sort((a, b) => b.compareTo(a));
+    return candidates.first;
+  }
+
+  static Future<bool> signOptionalWindowsAuthenticode(
+    String targetPath, {
+    String? pfxBase64,
+    String? password,
+    String? timestampUrl,
+    String? signtoolPath,
+    Future<void> Function(List<String> command)? runner,
+  }) async {
+    final rawB64 =
+        (pfxBase64 ?? Platform.environment['WINDOWS_CODESIGN_PFX_B64'] ?? '')
+            .trim();
+    if (rawB64.isEmpty) {
+      print(
+          'ℹ️  WINDOWS_CODESIGN_PFX_B64 not set; skipping Authenticode signing for ${basename(targetPath)}');
+      return false;
+    }
+    final targetFile = File(targetPath);
+    if (!targetFile.existsSync()) {
+      throw StateError(
+          'Authenticode signing target does not exist: $targetPath');
+    }
+    final resolvedPassword =
+        password ?? Platform.environment['WINDOWS_CODESIGN_PASSWORD'] ?? '';
+    final rawTs = (timestampUrl ??
+            Platform.environment['WINDOWS_CODESIGN_TIMESTAMP_URL'] ??
+            defaultCodesignTimestampUrl)
+        .trim();
+    final tsUri =
+        Uri.tryParse(rawTs.isEmpty ? defaultCodesignTimestampUrl : rawTs);
+    if (tsUri == null ||
+        (tsUri.scheme != 'https' && tsUri.scheme != 'http') ||
+        tsUri.host.isEmpty ||
+        tsUri.userInfo.isNotEmpty) {
+      throw StateError('Invalid WINDOWS_CODESIGN_TIMESTAMP_URL');
+    }
+    final tool = signtoolPath ?? resolveWindowsSigntool();
+    if (tool == null || tool.isEmpty) {
+      throw StateError(
+          'signtool.exe not found for optional Windows Authenticode signing');
+    }
+    final pfxBytes = base64Decode(rawB64.replaceAll(RegExp(r'\s+'), ''));
+    if (pfxBytes.isEmpty) {
+      throw StateError('WINDOWS_CODESIGN_PFX_B64 decoded to empty bytes');
+    }
+    final tempDir = await Directory.systemTemp.createTemp('fn-codesign-');
+    try {
+      final pfxFile = File(join(tempDir.path, 'codesign.pfx'));
+      await pfxFile.writeAsBytes(pfxBytes, flush: true);
+      final signArgs = <String>[
+        tool,
+        'sign',
+        '/fd',
+        'SHA256',
+        '/f',
+        pfxFile.path,
+        if (resolvedPassword.isNotEmpty) ...['/p', resolvedPassword],
+        '/tr',
+        tsUri.toString(),
+        '/td',
+        'SHA256',
+        targetFile.absolute.path,
+      ];
+      if (runner != null) {
+        await runner(signArgs);
+        await runner([tool, 'verify', '/pa', targetFile.absolute.path]);
+      } else {
+        await exec(signArgs, name: 'authenticode sign', runInShell: false);
+        await exec(
+          [tool, 'verify', '/pa', targetFile.absolute.path],
+          name: 'authenticode verify',
+          runInShell: false,
+        );
+      }
+      print('✅ Authenticode signed: ${basename(targetPath)}');
+      return true;
+    } finally {
+      try {
+        if (tempDir.existsSync()) {
+          await tempDir.delete(recursive: true);
+        }
+      } catch (_) {}
+    }
+  }
+
   static Future<void> signWindowsBinary(String path) async {
     final thumbprint = Platform.environment['FLCLASH_SIGNING_THUMBPRINT']?.trim();
     final signTool = Platform.environment['FLCLASH_SIGNTOOL']?.trim();
@@ -1378,6 +1525,10 @@ class BuildCommand extends Command {
     final winAppName = Build.appNameFor(Target.windows);
     if (Build.strictPackageEnabled) {
       await Build.signWindowsBinary(join(buildDir, '$winAppName.exe'));
+    } else {
+      await Build.signOptionalWindowsAuthenticode(
+        join(buildDir, '$winAppName.exe'),
+      );
     }
     Build.bundleWindowsMsvcRuntime(buildDir, winArch);
     if (Build.strictPackageEnabled) {
@@ -1457,6 +1608,7 @@ class BuildCommand extends Command {
         if (!File(setupPath).existsSync()) {
           throw "Inno Setup completed without creating $setupPath";
         }
+        await Build.signOptionalWindowsAuthenticode(setupPath);
         await Build.writeArtifactChecksum(setupPath);
         print("✅ EXE installer created");
       } else {

@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:crypto/crypto.dart';
+import 'package:flclashx/services/xboard_bootstrap.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 class PurchaseSession {
@@ -41,10 +42,11 @@ abstract class PurchaseStorage {
 
 class SecurePurchaseStorage implements PurchaseStorage {
   SecurePurchaseStorage(Uri origin, {FlutterSecureStorage? storage})
-      : _prefix =
-            'freedomnet.xboard.${sha256.convert(utf8.encode(origin.origin))}',
+      : _canonicalOrigin = canonicalizeTenantOrigin(origin).origin,
+        _prefix =
+            'freedomnet.xboard.${sha256.convert(utf8.encode(canonicalizeTenantOrigin(origin).origin))}',
         _legacyPrefix =
-            'flclashx.xboard.${sha256.convert(utf8.encode(origin.origin))}',
+            'flclashx.xboard.${sha256.convert(utf8.encode(canonicalizeTenantOrigin(origin).origin))}',
         _storage = storage ??
             const FlutterSecureStorage(
               // This app does not share credentials with other macOS apps.
@@ -53,8 +55,11 @@ class SecurePurchaseStorage implements PurchaseStorage {
             );
 
   final FlutterSecureStorage _storage;
+  final String _canonicalOrigin;
   final String _prefix;
   final String _legacyPrefix;
+
+  String get canonicalOrigin => _canonicalOrigin;
 
   Future<String?> _readWithLegacyFallback(String suffix) async {
     final primary = await _storage.read(key: '$_prefix.$suffix');

@@ -6,6 +6,7 @@ import 'package:dio/dio.dart';
 import 'package:dio/io.dart';
 import 'package:flclashx/models/chatwoot.dart';
 import 'package:flclashx/services/pre_request_transport.dart';
+import 'package:flclashx/services/xboard_bootstrap.dart';
 import 'package:flutter/foundation.dart';
 
 export 'package:flclashx/models/chatwoot.dart'
@@ -88,9 +89,11 @@ class DioChatwootService implements ChatwootService {
   DioChatwootService({
     Dio? dio,
     bool Function()? shouldFallbackToDirect,
+    TransportMirrorPool? mirrorPool,
     @visibleForTesting Dio? directDio,
   })  : _ownsTransport = dio == null,
         _shouldFallbackToDirect = shouldFallbackToDirect,
+        _mirrorPool = mirrorPool ?? TransportMirrorPool.shared,
         _dio = dio ?? Dio(),
         _directDio = directDio {
     if (_ownsTransport) {
@@ -134,6 +137,7 @@ class DioChatwootService implements ChatwootService {
   final Dio _dio;
   final bool _ownsTransport;
   final bool Function()? _shouldFallbackToDirect;
+  final TransportMirrorPool _mirrorPool;
   Dio? _directDio;
   bool _closed = false;
 
@@ -264,26 +268,72 @@ class DioChatwootService implements ChatwootService {
       extraQuery: query,
     );
 
+    final useTenantMirrors =
+        _ownsTransport && _mirrorPool.isKnownTenantOrigin(uri);
+    final candidateUris = !useTenantMirrors
+        ? <Uri>[uri]
+        : nonIdempotent
+            ? <Uri>[
+                _mirrorPool.rewriteToOrigin(
+                  uri,
+                  _mirrorPool.selectOriginForMutation(),
+                ),
+              ]
+            : <Uri>[
+                uri,
+                for (final origin in _mirrorPool.orderedOrigins())
+                  if (origin.origin != uri.origin)
+                    _mirrorPool.rewriteToOrigin(uri, origin),
+              ];
+
     int? status;
     try {
-      Response<Object?> response;
-      try {
-        response = await _performRequest(
-          _dio,
-          uri,
-          method: method,
-          authToken: authToken,
-          data: data,
-        );
-      } on DioException catch (error) {
-        if (!_canFallbackToDirect(error, nonIdempotent: nonIdempotent)) rethrow;
-        response = await _performRequest(
-          _ensureDirectDio(),
-          uri,
-          method: method,
-          authToken: authToken,
-          data: data,
-        );
+      late Response<Object?> response;
+      for (var i = 0; i < candidateUris.length; i++) {
+        if (_closed) {
+          throw const ChatwootException(
+            code: 'connection_error',
+            message: '无法连接在线客服，请检查网络后重试',
+          );
+        }
+        final attemptUri = candidateUris[i];
+        try {
+          try {
+            response = await _performRequest(
+              _dio,
+              attemptUri,
+              method: method,
+              authToken: authToken,
+              data: data,
+            );
+          } on DioException catch (error) {
+            if (!_canFallbackToDirect(error, nonIdempotent: nonIdempotent)) {
+              rethrow;
+            }
+            response = await _performRequest(
+              _ensureDirectDio(),
+              attemptUri,
+              method: method,
+              authToken: authToken,
+              data: data,
+            );
+          }
+          if (useTenantMirrors && (response.statusCode ?? 500) < 500) {
+            _mirrorPool.markSuccess(Uri.parse(attemptUri.origin));
+          }
+          break;
+        } on DioException catch (error) {
+          final canFailover = useTenantMirrors &&
+              !nonIdempotent &&
+              !_closed &&
+              !isCertificateDioFailure(error) &&
+              isPreRequestDioFailure(error) &&
+              i + 1 < candidateUris.length;
+          if (!canFailover) {
+            rethrow;
+          }
+          _mirrorPool.markFailure(Uri.parse(attemptUri.origin));
+        }
       }
 
       status = response.statusCode;

@@ -19,3 +19,4 @@ pub mod strict_retry;
 
 #[cfg(windows)]
 pub mod strict_store;
+pub mod win_system_proxy;

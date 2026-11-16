@@ -3,12 +3,14 @@ import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flclashx/common/common.dart';
+import 'package:flclashx/common/health/ai_agent_diagnostics.dart';
 import 'package:flclashx/common/health/health_export.dart';
 import 'package:flclashx/common/health/health_models.dart';
 import 'package:flclashx/common/health/health_runner.dart';
 import 'package:flclashx/enum/enum.dart';
 import 'package:flclashx/l10n/l10n.dart';
 import 'package:flclashx/manager/proxy_manager.dart';
+import 'package:flclashx/providers/providers.dart';
 import 'package:flclashx/state.dart';
 import 'package:flclashx/views/config/dns.dart';
 import 'package:flclashx/views/config/network.dart';
@@ -100,7 +102,7 @@ String healthCheckItemDetail(HealthCheckResult result, AppLocalizations l10n) {
         'subscriptionExpiringSoon' =>
           l10n.healthDetailSubExpiringSoon(result.daysRemaining ?? 0),
         'subscriptionTrafficLow' =>
-          l10n.healthDetailSubTrafficLow(result.quotaUsedPercent ?? 90),
+          l10n.healthDetailSubTrafficLow(result.quotaUsedPercent ?? 85),
         'subscriptionDeviceLimit' => l10n.healthDetailSubDeviceLimit,
         _ => _formatHealthySubscription(result, l10n),
       },
@@ -259,6 +261,8 @@ class _HealthCheckViewState extends ConsumerState<HealthCheckView> {
   Object? _viewLease;
   Animation<double>? _routeAnimation;
   bool _actionInFlight = false;
+  bool _aiProbing = false;
+  List<AiEndpointProbeResult>? _aiResults;
 
   @override
   void initState() {
@@ -269,8 +273,72 @@ class _HealthCheckViewState extends ConsumerState<HealthCheckView> {
       Future.microtask(() {
         if (mounted && _viewLease != null) {
           unawaited(_controller.startOrAttach());
+          if (ref.read(aiAutoProbeOnOpenProvider)) {
+            unawaited(_runAiProbes());
+          }
         }
       }),
+    );
+  }
+
+  Future<({int mixedPort, bool proxyStarted, bool tunActive, bool allowLan})>
+      _resolveRuntimeDiagnosticsContext() async {
+    final patchClash = ref.read(patchClashConfigProvider);
+    var mixedPort = patchClash.mixedPort;
+    var proxyStarted = ref.read(runTimeProvider) != null;
+    var tunActive = Platform.isWindows
+        ? ref.read(tunRuntimeProvider).isEnabled
+        : patchClash.tun.enable;
+    try {
+      final snap = await _controller.runner.environment
+          .readConfigSnapshot()
+          .timeout(const Duration(seconds: 2));
+      if (snap.mixedPort > 0) mixedPort = snap.mixedPort;
+      proxyStarted = snap.proxyStarted;
+      tunActive = snap.realTunEnable || snap.tunDesiredEnabled;
+    } catch (_) {
+      // Fallback to Riverpod snapshot when environment read fails.
+    }
+    return (
+      mixedPort: mixedPort,
+      proxyStarted: proxyStarted,
+      tunActive: tunActive,
+      allowLan: patchClash.allowLan,
+    );
+  }
+
+  Future<void> _runAiProbes() async {
+    if (_aiProbing) return;
+    setState(() => _aiProbing = true);
+    try {
+      final ctx = await _resolveRuntimeDiagnosticsContext();
+      final results = await ref.read(aiEndpointRunnerProvider).probeAll(
+            proxyStarted: ctx.proxyStarted,
+            tunActive: ctx.tunActive,
+            mixedPort: ctx.mixedPort,
+          );
+      if (mounted) {
+        setState(() => _aiResults = results);
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _aiProbing = false);
+      }
+    }
+  }
+
+  Future<void> _openCliProxyDiagnosticsDialog(BuildContext context) async {
+    final ctx = await _resolveRuntimeDiagnosticsContext();
+    final report = await ref.read(cliProxyDiagnosticsRunnerProvider).diagnose(
+          mixedPort: ctx.mixedPort,
+          proxyStarted: ctx.proxyStarted,
+          tunEnabled: ctx.tunActive,
+          allowLan: ctx.allowLan,
+        );
+    if (!context.mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (_) => _CliProxyDiagnosticsDialog(report: report),
     );
   }
 
@@ -479,6 +547,14 @@ class _HealthCheckViewState extends ConsumerState<HealthCheckView> {
                   ),
                   const SizedBox(height: 12),
                 ],
+                _AgentUxDiagnosticsSection(
+                  probing: _aiProbing,
+                  results: _aiResults,
+                  onRunAiProbes: () => unawaited(_runAiProbes()),
+                  onOpenCliProxyDialog: () =>
+                      unawaited(_openCliProxyDiagnosticsDialog(context)),
+                ),
+                const SizedBox(height: 12),
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 4),
                   child: Text(
@@ -1130,6 +1206,388 @@ class _BottomActionBar extends StatelessWidget {
           );
         },
       ),
+    );
+  }
+}
+
+class _AgentUxDiagnosticsSection extends StatelessWidget {
+  const _AgentUxDiagnosticsSection({
+    required this.probing,
+    required this.results,
+    required this.onRunAiProbes,
+    required this.onOpenCliProxyDialog,
+  });
+
+  final bool probing;
+  final List<AiEndpointProbeResult>? results;
+  final VoidCallback onRunAiProbes;
+  final VoidCallback onOpenCliProxyDialog;
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = context.colorScheme;
+    final brightness = Theme.of(context).brightness;
+    final entries = results;
+
+    return Column(
+      key: const ValueKey('health-agent-ux-card'),
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(left: 4, bottom: 6),
+          child: Text(
+            'AI Agent 与终端代理诊断',
+            style: context.textTheme.labelLarge?.copyWith(
+              color: cs.primary,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ),
+        Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: cs.surfaceContainerLow,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(
+              color: cs.outlineVariant.withValues(alpha: 0.45),
+            ),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              for (var i = 0; i < AiEndpointSpec.defaults.length; i++) ...[
+                _AiEndpointRow(
+                  spec: AiEndpointSpec.defaults[i],
+                  result: entries?.cast<AiEndpointProbeResult?>().firstWhere(
+                        (e) => e?.id == AiEndpointSpec.defaults[i].id,
+                        orElse: () => null,
+                      ),
+                  probing: probing,
+                  brightness: brightness,
+                ),
+                if (i < AiEndpointSpec.defaults.length - 1)
+                  Divider(
+                    height: 12,
+                    color: cs.outlineVariant.withValues(alpha: 0.35),
+                  ),
+              ],
+              const SizedBox(height: 10),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  OutlinedButton.icon(
+                    key: const ValueKey('health-ai-probe-button'),
+                    style: OutlinedButton.styleFrom(
+                      visualDensity: VisualDensity.compact,
+                    ),
+                    onPressed: probing ? null : onRunAiProbes,
+                    icon: probing
+                        ? SizedBox(
+                            width: 14,
+                            height: 14,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: cs.primary,
+                            ),
+                          )
+                        : const Icon(Icons.auto_awesome_outlined, size: 16),
+                    label: Text(probing ? '正在探测 AI 端点…' : '探测 AI 端点'),
+                  ),
+                  FilledButton.tonalIcon(
+                    key: const ValueKey('health-open-cli-proxy-dialog'),
+                    style: FilledButton.styleFrom(
+                      visualDensity: VisualDensity.compact,
+                    ),
+                    onPressed: onOpenCliProxyDialog,
+                    icon: const Icon(Icons.terminal_rounded, size: 16),
+                    label: const Text('CLI / Git / WSL2 代理诊断'),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _AiEndpointRow extends StatelessWidget {
+  const _AiEndpointRow({
+    required this.spec,
+    required this.result,
+    required this.probing,
+    required this.brightness,
+  });
+
+  final AiEndpointSpec spec;
+  final AiEndpointProbeResult? result;
+  final bool probing;
+  final Brightness brightness;
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = context.colorScheme;
+    final effectiveStatus = probing
+        ? AiEndpointStatus.running
+        : (result?.status ?? AiEndpointStatus.idle);
+
+    final (String badgeText, Color fg, Color bg) = switch (effectiveStatus) {
+      AiEndpointStatus.idle => (
+          '待探测',
+          cs.onSurfaceVariant,
+          cs.surfaceContainerHighest,
+        ),
+      AiEndpointStatus.running => (
+          '探测中',
+          cs.onPrimaryContainer,
+          cs.primaryContainer.withValues(alpha: 0.55),
+        ),
+      AiEndpointStatus.reachable => (
+          result?.httpStatus != null
+              ? '可达 (${result!.httpStatus})'
+              : '可达',
+          _healthyForeground(brightness),
+          Colors.green.withValues(alpha: brightness == Brightness.dark ? 0.18 : 0.14),
+        ),
+      AiEndpointStatus.regionBlocked => (
+          result?.httpStatus != null
+              ? 'IP 地区受限 (${result!.httpStatus})'
+              : 'IP 地区受限',
+          _warningForeground(brightness),
+          Colors.amber.withValues(alpha: brightness == Brightness.dark ? 0.18 : 0.16),
+        ),
+      AiEndpointStatus.tlsOrTimeoutError => (
+          'TLS / 超时失败',
+          cs.onErrorContainer,
+          cs.errorContainer.withValues(alpha: 0.7),
+        ),
+      AiEndpointStatus.skipped => (
+          '代理未启动',
+          cs.onSurfaceVariant,
+          cs.surfaceContainerHighest,
+        ),
+    };
+
+    return Row(
+      key: ValueKey('health-ai-row-${spec.id.name}'),
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                spec.displayName,
+                style: context.textTheme.bodyMedium?.copyWith(
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              Text(
+                spec.host,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: context.textTheme.labelSmall?.copyWith(
+                  color: cs.onSurfaceVariant,
+                  fontFamily: FontFamily.jetBrainsMono.value,
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(width: 8),
+        Flexible(
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+            decoration: BoxDecoration(
+              color: bg,
+              borderRadius: BorderRadius.circular(999),
+            ),
+            child: Text(
+              badgeText,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: context.textTheme.labelSmall?.copyWith(
+                color: fg,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _CliProxyDiagnosticsDialog extends StatelessWidget {
+  const _CliProxyDiagnosticsDialog({required this.report});
+
+  final CliProxyDiagnosticReport report;
+
+  Future<void> _copy(BuildContext context, String text, String label) async {
+    await Clipboard.setData(ClipboardData(text: text));
+    if (!context.mounted) return;
+    ScaffoldMessenger.maybeOf(context)
+      ?..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text('已复制 $label 配置命令')));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = context.colorScheme;
+    final brightness = Theme.of(context).brightness;
+    return AlertDialog(
+      key: const ValueKey('cli-proxy-diagnostics-dialog'),
+      title: const Text('CLI / Git / WSL2 代理环境诊断'),
+      content: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 520, maxHeight: 460),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                '当前本地混合端口: ${report.effectivePort} (${report.proxyStarted ? '代理已启动' : '代理未启动'} · ${report.tunEnabled ? 'TUN 开启' : 'TUN 未开启'})',
+                style: context.textTheme.bodySmall?.copyWith(
+                  color: cs.onSurfaceVariant,
+                ),
+              ),
+              const SizedBox(height: 10),
+              for (final item in report.items) ...[
+                Container(
+                  key: ValueKey('cli-proxy-item-${item.id}'),
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: cs.surfaceContainerLow,
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(
+                      color: cs.outlineVariant.withValues(alpha: 0.45),
+                    ),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Icon(
+                            switch (item.severity) {
+                              CliProxyCheckSeverity.ok =>
+                                Icons.check_circle_outline_rounded,
+                              CliProxyCheckSeverity.warning =>
+                                Icons.warning_amber_rounded,
+                              CliProxyCheckSeverity.info =>
+                                Icons.info_outline_rounded,
+                            },
+                            size: 16,
+                            color: switch (item.severity) {
+                              CliProxyCheckSeverity.ok =>
+                                _healthyForeground(brightness),
+                              CliProxyCheckSeverity.warning =>
+                                _warningForeground(brightness),
+                              CliProxyCheckSeverity.info => cs.primary,
+                            },
+                          ),
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: Text(
+                              item.title,
+                              style: context.textTheme.labelMedium?.copyWith(
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        item.summary,
+                        style: context.textTheme.bodySmall,
+                      ),
+                      if (item.observedValue != null &&
+                          item.observedValue!.isNotEmpty) ...[
+                        const SizedBox(height: 4),
+                        SelectableText(
+                          item.observedValue!,
+                          style: context.textTheme.labelSmall?.copyWith(
+                            color: cs.onSurfaceVariant,
+                            fontFamily: FontFamily.jetBrainsMono.value,
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 8),
+              ],
+              const SizedBox(height: 4),
+              Text(
+                '一键复制代理配置命令',
+                style: context.textTheme.labelLarge?.copyWith(
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  OutlinedButton.icon(
+                    key: const ValueKey('cli-proxy-copy-powershell'),
+                    onPressed: () => unawaited(
+                      _copy(context, report.powershellSnippet, 'PowerShell'),
+                    ),
+                    icon: const Icon(Icons.copy_rounded, size: 15),
+                    label: const Text('复制 PowerShell'),
+                  ),
+                  OutlinedButton.icon(
+                    key: const ValueKey('cli-proxy-copy-bash'),
+                    onPressed: () => unawaited(
+                      _copy(
+                        context,
+                        report.wslGatewayIp != null
+                            ? report.wslSnippet
+                            : report.bashSnippet,
+                        report.wslGatewayIp != null
+                            ? 'Bash / WSL2'
+                            : 'Bash / Zsh',
+                      ),
+                    ),
+                    icon: const Icon(Icons.copy_rounded, size: 15),
+                    label: Text(
+                      report.wslGatewayIp != null
+                          ? '复制 Bash / WSL2'
+                          : '复制 Bash / Zsh',
+                    ),
+                  ),
+                  OutlinedButton.icon(
+                    key: const ValueKey('cli-proxy-copy-git'),
+                    onPressed: () => unawaited(
+                      _copy(context, report.gitSnippet, 'Git 全局代理'),
+                    ),
+                    icon: const Icon(Icons.copy_rounded, size: 15),
+                    label: const Text('复制 Git 代理'),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: Text(MaterialLocalizations.of(context).closeButtonLabel),
+        ),
+        FilledButton.icon(
+          key: const ValueKey('cli-proxy-copy-all'),
+          onPressed: () => unawaited(
+            _copy(context, report.combinedCopyText, '全部 CLI / Git / WSL2'),
+          ),
+          icon: const Icon(Icons.copy_all_rounded, size: 16),
+          label: const Text('一键复制全部'),
+        ),
+      ],
     );
   }
 }

@@ -4,6 +4,7 @@ import 'package:dio/dio.dart';
 import 'package:dio/io.dart';
 import 'package:flclashx/models/xboard.dart';
 import 'package:flclashx/services/pre_request_transport.dart';
+import 'package:flclashx/services/xboard_bootstrap.dart';
 
 abstract class XboardApi {
   Uri get baseUri;
@@ -276,10 +277,26 @@ class DioXboardApi
     Dio? dio,
     Uri? baseUri,
     bool Function()? shouldFallbackToDirect,
+    TransportMirrorPool? mirrorPool,
   })  : baseUri = _validateOrigin(baseUri ?? Uri.parse(_configuredOrigin)),
         _ownsTransport = dio == null,
         _shouldFallbackToDirect = shouldFallbackToDirect,
-        _dio = dio ?? Dio() {
+        _dio = dio ?? Dio(),
+        _mirrorPool = mirrorPool ??
+            ((dio == null &&
+                    (baseUri == null ||
+                        (_configuredOrigin == fnCanonicalTenantOrigin &&
+                            fnBootstrapSeedOrigins.contains(
+                              _validateOrigin(baseUri).origin,
+                            ))))
+                ? TransportMirrorPool.defaultTenant()
+                : TransportMirrorPool(
+                    seedOrigins: [
+                      _validateOrigin(baseUri ?? Uri.parse(_configuredOrigin)),
+                    ],
+                    canonicalOrigin:
+                        _validateOrigin(baseUri ?? Uri.parse(_configuredOrigin)),
+                  )) {
     if (dio == null) {
       _dio.httpClientAdapter = IOHttpClientAdapter(
         createHttpClient: _createStrictHttpClient,
@@ -293,6 +310,21 @@ class DioXboardApi
           : const Duration(seconds: 15),
     );
   }
+
+  /// Active healthy mirror origin currently selected for FreedomNet API traffic.
+  Uri get activeOrigin => _mirrorPool.selectOriginForMutation(capability: 'api');
+
+  TransportMirrorPool get mirrorPool => _mirrorPool;
+
+  /// Fetches and Ed25519-verifies `/api/v1/client/bootstrap` (`fn-2026-v1`),
+  /// updating candidate origins only if signature, `tenant_id`, and expiry pass.
+  Future<VerifiedBootstrapConfig?> refreshBootstrap({
+    String path = '/api/v1/client/bootstrap',
+  }) =>
+      _request<VerifiedBootstrapConfig?>(
+        path,
+        parse: (body) => _mirrorPool.applyBootstrapResponse(body),
+      );
 
   static BaseOptions _buildBaseOptions(
     Uri origin, {
@@ -327,6 +359,7 @@ class DioXboardApi
   final bool _ownsTransport;
   final bool Function()? _shouldFallbackToDirect;
   final Dio _dio;
+  final TransportMirrorPool _mirrorPool;
   Dio? _directDio;
   bool _closed = false;
   final Stopwatch _guestConfigClock = Stopwatch()..start();
@@ -824,6 +857,7 @@ class DioXboardApi
 
   Future<Response<Object?>> _performRequest(
     Dio client,
+    Uri origin,
     String path, {
     required String method,
     String? authorization,
@@ -831,7 +865,9 @@ class DioXboardApi
     Map<String, Object?>? queryParameters,
   }) =>
       client.request<Object?>(
-        path,
+        origin.origin == client.options.baseUrl
+            ? path
+            : origin.resolve(path).toString(),
         data: data,
         queryParameters: queryParameters,
         options: Options(
@@ -843,6 +879,46 @@ class DioXboardApi
           },
         ),
       );
+
+  Future<Response<Object?>> _executeSingleOriginWithDirectFallback(
+    Uri origin,
+    String path, {
+    required String method,
+    String? authorization,
+    Map<String, Object?>? data,
+    Map<String, Object?>? queryParameters,
+    required bool mutation,
+    required bool nonIdempotentAfterSend,
+  }) async {
+    try {
+      return await _performRequest(
+        _dio,
+        origin,
+        path,
+        method: method,
+        authorization: authorization,
+        data: data,
+        queryParameters: queryParameters,
+      );
+    } on DioException catch (error) {
+      if (!_canFallbackToDirect(
+        error,
+        mutation: mutation,
+        nonIdempotentAfterSend: nonIdempotentAfterSend,
+      )) {
+        rethrow;
+      }
+      return _performRequest(
+        _ensureDirectDio(),
+        origin,
+        path,
+        method: method,
+        authorization: authorization,
+        data: data,
+        queryParameters: queryParameters,
+      );
+    }
+  }
 
   Future<T> _request<T>(
     String path, {
@@ -877,33 +953,47 @@ class DioXboardApi
     }
     int? status;
     final uncertainAfterSend = mutation || nonIdempotentAfterSend;
+    // Lock non-idempotent operations (`login`, `register`, `redeem`, `logout`,
+    // verification codes) to one healthy origin; never blind-replay across mirrors.
+    final targets = uncertainAfterSend
+        ? <Uri>[_mirrorPool.selectOriginForMutation(capability: 'api')]
+        : _mirrorPool.orderedOrigins(capability: 'api');
     try {
-      Response<Object?> response;
-      try {
-        response = await _performRequest(
-          _dio,
-          path,
-          method: method,
-          authorization: authorization,
-          data: data,
-          queryParameters: queryParameters,
-        );
-      } on DioException catch (error) {
-        if (!_canFallbackToDirect(
-          error,
-          mutation: mutation,
-          nonIdempotentAfterSend: nonIdempotentAfterSend,
-        )) {
-          rethrow;
+      late Response<Object?> response;
+      for (var i = 0; i < targets.length; i++) {
+        if (_closed) {
+          throw const XboardException(
+            code: 'connection_error',
+            message: '无法连接购买服务，请检查网络后重试',
+          );
         }
-        response = await _performRequest(
-          _ensureDirectDio(),
-          path,
-          method: method,
-          authorization: authorization,
-          data: data,
-          queryParameters: queryParameters,
-        );
+        final targetOrigin = targets[i];
+        try {
+          response = await _executeSingleOriginWithDirectFallback(
+            targetOrigin,
+            path,
+            method: method,
+            authorization: authorization,
+            data: data,
+            queryParameters: queryParameters,
+            mutation: mutation,
+            nonIdempotentAfterSend: nonIdempotentAfterSend,
+          );
+          if ((response.statusCode ?? 500) < 500) {
+            _mirrorPool.markSuccess(targetOrigin);
+          }
+          break;
+        } on DioException catch (error) {
+          final canFailoverMirror = !uncertainAfterSend &&
+              !_closed &&
+              !_isCertificateFailure(error) &&
+              isPreRequestDioFailure(error) &&
+              i + 1 < targets.length;
+          if (!canFailoverMirror) {
+            rethrow;
+          }
+          _mirrorPool.markFailure(targetOrigin);
+        }
       }
       status = response.statusCode;
       if (status == null) _invalid();

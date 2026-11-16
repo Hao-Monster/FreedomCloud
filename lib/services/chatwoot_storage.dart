@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:crypto/crypto.dart';
 import 'package:flclashx/models/chatwoot.dart';
+import 'package:flclashx/services/xboard_bootstrap.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
@@ -120,15 +121,25 @@ class SecureChatwootSessionStorage implements ChatwootSessionStorage {
 
   final FlutterSecureStorage _storage;
 
+  static Uri _canonicalStorageBaseUrl(Uri baseUrl) {
+    final valid = validateChatwootBaseUrl(baseUrl);
+    final canonical = canonicalizeTenantOrigin(Uri.parse(valid.origin));
+    if (canonical.origin == valid.origin) return valid;
+    return canonical.replace(
+      path: valid.path.isEmpty || valid.path == '/' ? null : valid.path,
+    );
+  }
+
   /// Computes the isolated storage key for a normalized base URL, website
-  /// token, and scope.
+  /// token, and scope. Tenant bootstrap origins collapse onto the Canonical
+  /// Tenant Namespace so saved sessions survive mirror rotation.
   @visibleForTesting
   static String storageKeyFor({
     required Uri baseUrl,
     required String websiteToken,
     required String scopeKey,
   }) {
-    final normalizedBaseUrl = validateChatwootBaseUrl(baseUrl).toString();
+    final normalizedBaseUrl = _canonicalStorageBaseUrl(baseUrl).toString();
     final trimmedToken = websiteToken.trim();
     final trimmedScope = scopeKey.trim();
     if (trimmedToken.isEmpty || trimmedScope.isEmpty) {
@@ -149,7 +160,7 @@ class SecureChatwootSessionStorage implements ChatwootSessionStorage {
     required String websiteToken,
     required String scopeKey,
   }) {
-    final valid = validateChatwootBaseUrl(baseUrl);
+    final valid = _canonicalStorageBaseUrl(baseUrl);
     if (valid.toString() != valid.origin) return null;
     final trimmedToken = websiteToken.trim();
     final trimmedScope = scopeKey.trim();

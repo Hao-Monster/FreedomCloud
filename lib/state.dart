@@ -32,6 +32,85 @@ import 'models/models.dart';
 
 typedef UpdateTasks = List<FutureOr Function()>;
 
+String _preferMirrorGeoXUrl(Object? configured, String mirrorFallback) {
+  if (configured is! String) return mirrorFallback;
+  final trimmed = configured.trim();
+  if (trimmed.isEmpty) return mirrorFallback;
+  if (trimmed.startsWith('https://github.com/MetaCubeX/meta-rules-dat/')) {
+    return mirrorFallback;
+  }
+  return trimmed;
+}
+
+/// Safely merges subscription DNS configuration with local defaults. When
+/// `overrideDns` is false and the subscription enables DNS, subscription keys
+/// (`nameserver`, `fallback`, `nameserver-policy`, etc.) stay intact while
+/// missing `default-nameserver`, `proxy-server-nameserver`, and essential
+/// `fake-ip-filter` entries are backfilled for Mainland China resilience.
+Map<String, dynamic> mergeAndBackfillDnsConfig({
+  required Map<String, dynamic> subscriptionDns,
+  required Map<String, dynamic> fallbackDnsJson,
+  required bool overrideDns,
+}) {
+  final isEnableDns = subscriptionDns['enable'] == true;
+  final Map<String, dynamic> result;
+  if (overrideDns || !isEnableDns) {
+    result = Map<String, dynamic>.from(fallbackDnsJson);
+    if (!isEnableDns && result['nameserver'] is List) {
+      final ns = List<String>.from(
+        (result['nameserver'] as List).map((e) => e.toString()),
+      );
+      if (!ns.contains('system://')) {
+        ns.add('system://');
+      }
+      result['nameserver'] = ns;
+    }
+  } else {
+    result = Map<String, dynamic>.from(subscriptionDns);
+  }
+
+  bool isMissingOrEmptyList(Object? value) =>
+      value == null ||
+      (value is Iterable &&
+          value.every((e) => e.toString().trim().isEmpty));
+
+  List<String> resolveNonEmptyList(Object? candidate, List<String> defaults) {
+    if (candidate is Iterable) {
+      final items = candidate
+          .map((e) => e.toString().trim())
+          .where((e) => e.isNotEmpty)
+          .toList();
+      if (items.isNotEmpty) return items;
+    }
+    return List<String>.from(defaults);
+  }
+
+  if (isMissingOrEmptyList(result['default-nameserver'])) {
+    result['default-nameserver'] = resolveNonEmptyList(
+      fallbackDnsJson['default-nameserver'],
+      defaultDns.defaultNameserver,
+    );
+  }
+  if ((result['respect-rules'] == true || (!overrideDns && isEnableDns)) &&
+      isMissingOrEmptyList(result['proxy-server-nameserver'])) {
+    result['proxy-server-nameserver'] = resolveNonEmptyList(
+      fallbackDnsJson['proxy-server-nameserver'],
+      defaultDns.proxyServerNameserver,
+    );
+  }
+  final enhancedMode = result['enhanced-mode']?.toString().trim().toLowerCase();
+  if (enhancedMode == 'fake-ip' ||
+      enhancedMode == 'fakeip' ||
+      result['fake-ip-filter'] != null ||
+      (!overrideDns && isEnableDns && enhancedMode == null)) {
+    final existing = result['fake-ip-filter'] is Iterable
+        ? result['fake-ip-filter'] as Iterable
+        : const <Object?>[];
+    result['fake-ip-filter'] = mergeEssentialFakeIpFilter(existing);
+  }
+  return result;
+}
+
 final RegExp _yamlTopLevelLogLevelLine = RegExp(
   r'''^(?:"log-level"|'log-level'|log-level)\s*:\s*([^\s#]+)?''',
 );
@@ -448,6 +527,8 @@ class GlobalState {
   // builds, where [_uaVersion] falls back to the pubspec version + a `-pre` mark.
   String appVersionTag = "";
   late PackageInfo packageInfo;
+  bool _packageInfoInitialized = false;
+  bool get isPackageInfoInitialized => _packageInfoInitialized;
   Function? updateCurrentDelayDebounce;
   late Measure measure;
   late CommonTheme theme;
@@ -555,6 +636,7 @@ class GlobalState {
 
   Future<void> init() async {
     packageInfo = await PackageInfo.fromPlatform();
+    _packageInfoInitialized = true;
     config = await preferences.getConfig() ??
         Config(
           themeProps: defaultThemeProps,
@@ -982,6 +1064,7 @@ class GlobalState {
             'dns-hijack': params.tun.dnsHijack,
             'auto-route': params.tun.autoRoute,
             'route-address': params.tun.routeAddress,
+            'route-exclude-address': params.tun.routeExcludeAddress,
           },
       };
       _lastRuntimeConfigDigest = null;
@@ -1153,6 +1236,7 @@ class GlobalState {
     required Profile? profile,
     Map<String, dynamic>? preloadedRawConfig,
     bool? preloadedHasExplicitLogLevel,
+    Ipv6ReachabilityGuard? ipv6ReachabilityGuard,
   }) async {
     if (profile == null) {
       return {};
@@ -1273,6 +1357,15 @@ class GlobalState {
         rawConfig["mixed-port"] = realPatchConfig.mixedPort;
       }
     }
+    if (!config.appSetting.overrideNetworkSettings &&
+        rawConfig["ipv6"] == true) {
+      final ipv6Reachable =
+          await (ipv6ReachabilityGuard ?? Ipv6ReachabilityGuard.shared)
+              .isGlobalIpv6Reachable();
+      if (!ipv6Reachable) {
+        rawConfig["ipv6"] = false;
+      }
+    }
     // Process-centric connection cards need metadata for every desktop
     // connection. This narrow UI requirement overrides a profile-level
     // `strict`/`off`; all other network settings still follow the provider.
@@ -1320,6 +1413,7 @@ class GlobalState {
     }
     
     tunConfig["route-address"] = realPatchConfig.tun.routeAddress;
+    tunConfig["route-exclude-address"] = realPatchConfig.tun.routeExcludeAddress;
     tunConfig["auto-route"] = realPatchConfig.tun.autoRoute;
     final currentMtu = (tunConfig["mtu"] as num?)?.toInt();
     if (currentMtu == null || currentMtu <= 0) {
@@ -1377,19 +1471,35 @@ class GlobalState {
     final mergedGeoXUrl = <String, dynamic>{};
     final patchGeoX = realPatchConfig.geoXUrl.toJson();
     final profileGeoX = rawConfig["geox-url"];
-    
-    mergedGeoXUrl['geoip'] = patchGeoX['geoip'];
-    mergedGeoXUrl['mmdb'] = patchGeoX['mmdb'];
-    mergedGeoXUrl['asn'] = patchGeoX['asn'];
-    mergedGeoXUrl['geosite'] = patchGeoX['geosite'];
-    
+
+    mergedGeoXUrl['geoip'] =
+        _preferMirrorGeoXUrl(patchGeoX['geoip'], defaultGeoXUrl.geoip);
+    mergedGeoXUrl['mmdb'] =
+        _preferMirrorGeoXUrl(patchGeoX['mmdb'], defaultGeoXUrl.mmdb);
+    mergedGeoXUrl['asn'] =
+        _preferMirrorGeoXUrl(patchGeoX['asn'], defaultGeoXUrl.asn);
+    mergedGeoXUrl['geosite'] =
+        _preferMirrorGeoXUrl(patchGeoX['geosite'], defaultGeoXUrl.geosite);
+
     if (profileGeoX != null && profileGeoX is Map) {
-      if (profileGeoX['geoip'] != null) mergedGeoXUrl['geoip'] = profileGeoX['geoip'];
-      if (profileGeoX['mmdb'] != null) mergedGeoXUrl['mmdb'] = profileGeoX['mmdb'];
-      if (profileGeoX['asn'] != null) mergedGeoXUrl['asn'] = profileGeoX['asn'];
-      if (profileGeoX['geosite'] != null) mergedGeoXUrl['geosite'] = profileGeoX['geosite'];
+      if (profileGeoX['geoip'] != null) {
+        mergedGeoXUrl['geoip'] =
+            _preferMirrorGeoXUrl(profileGeoX['geoip'], defaultGeoXUrl.geoip);
+      }
+      if (profileGeoX['mmdb'] != null) {
+        mergedGeoXUrl['mmdb'] =
+            _preferMirrorGeoXUrl(profileGeoX['mmdb'], defaultGeoXUrl.mmdb);
+      }
+      if (profileGeoX['asn'] != null) {
+        mergedGeoXUrl['asn'] =
+            _preferMirrorGeoXUrl(profileGeoX['asn'], defaultGeoXUrl.asn);
+      }
+      if (profileGeoX['geosite'] != null) {
+        mergedGeoXUrl['geosite'] = _preferMirrorGeoXUrl(
+            profileGeoX['geosite'], defaultGeoXUrl.geosite);
+      }
     }
-    
+
     rawConfig["geox-url"] = mergedGeoXUrl;
     rawConfig["global-ua"] = realPatchConfig.globalUa;
     if (rawConfig["hosts"] == null) {
@@ -1401,25 +1511,29 @@ class GlobalState {
     if (rawConfig["dns"] == null) {
       rawConfig["dns"] = {};
     }
-    final isEnableDns = rawConfig["dns"]["enable"] == true;
+    final rawSubDns = rawConfig["dns"] is Map
+        ? Map<String, dynamic>.from(rawConfig["dns"] as Map)
+        : <String, dynamic>{};
+    final isEnableDns = rawSubDns["enable"] == true;
     final overrideDns = globalState.config.overrideDns;
+    final mergedDns = mergeAndBackfillDnsConfig(
+      subscriptionDns: rawSubDns,
+      fallbackDnsJson: realPatchConfig.dns.toJson(),
+      overrideDns: overrideDns,
+    );
     if (overrideDns || !isEnableDns) {
-      final dns = switch (!isEnableDns) {
-        true => realPatchConfig.dns.copyWith(
-            nameserver: [...realPatchConfig.dns.nameserver, "system://"]),
-        false => realPatchConfig.dns,
-      };
-      rawConfig["dns"] = dns.toJson();
-      if (dns.respectRules && dns.proxyServerNameserver.isEmpty) {
-        rawConfig["dns"]["proxy-server-nameserver"] =
-            List<String>.from(defaultDns.proxyServerNameserver);
-      }
-      rawConfig["dns"]["nameserver-policy"] = {};
-      for (final entry in dns.nameserverPolicy.entries) {
-        rawConfig["dns"]["nameserver-policy"][entry.key] =
+      mergedDns["nameserver-policy"] = <String, dynamic>{};
+      for (final entry in realPatchConfig.dns.nameserverPolicy.entries) {
+        (mergedDns["nameserver-policy"] as Map<String, dynamic>)[entry.key] =
             entry.value.splitByMultipleSeparators;
       }
     }
+    if (rawConfig["ipv6"] == false &&
+        !config.appSetting.overrideNetworkSettings &&
+        mergedDns["ipv6"] == true) {
+      mergedDns["ipv6"] = false;
+    }
+    rawConfig["dns"] = mergedDns;
     final enhancedMode =
         (rawConfig["dns"] is Map ? rawConfig["dns"]["enhanced-mode"] : null)
             ?.toString()

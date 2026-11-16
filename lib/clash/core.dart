@@ -82,10 +82,30 @@ class ClashCore {
 
   static Future<void> initGeo() async {
     final homePath = await appPath.homeDirPath;
+    await ensureGeoFilesInitialized(homePath: homePath);
+  }
+
+  /// Ensures all bundled GeoIP/GeoSite/ASN/MMDB databases exist and are
+  /// non-empty in [homePath], repairing missing or 0-byte files from bundled
+  /// assets without terminating the process on I/O errors.
+  @visibleForTesting
+  static Future<void> ensureGeoFilesInitialized({
+    required String homePath,
+    Future<Uint8List> Function(String assetPath)? loadAssetBytes,
+  }) async {
+    final loader = loadAssetBytes ??
+        (String assetPath) async {
+          final data = await rootBundle.load(assetPath);
+          return data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes);
+        };
     final homeDir = Directory(homePath);
-    final isExists = await homeDir.exists();
-    if (!isExists) {
-      await homeDir.create(recursive: true);
+    if (!await homeDir.exists()) {
+      try {
+        await homeDir.create(recursive: true);
+      } catch (e) {
+        commonPrint.log('initGeo failed to create directory $homePath: $e');
+        return;
+      }
     }
     const geoFileNameList = [
       mmdbFileName,
@@ -93,25 +113,27 @@ class ClashCore {
       geoSiteFileName,
       asnFileName,
     ];
-    try {
-      for (final geoFileName in geoFileNameList) {
-        final geoFile = File(
-          join(homePath, geoFileName),
-        );
+    for (final geoFileName in geoFileNameList) {
+      try {
+        final geoFile = File(join(homePath, geoFileName));
         final isExists = await geoFile.exists();
-        if (isExists) {
+        if (isExists && await geoFile.length() > 0) {
           continue;
         }
-        final data = await rootBundle.load('assets/data/$geoFileName');
-        final List<int> bytes = data.buffer.asUint8List();
+        final bytes = await loader('assets/data/$geoFileName');
+        if (bytes.isEmpty) {
+          commonPrint.log('initGeo asset assets/data/$geoFileName was empty');
+          continue;
+        }
         await geoFile.writeAsBytes(bytes, flush: true);
+      } catch (e) {
+        commonPrint.log('initGeo failed for $geoFileName: $e');
       }
-    } catch (e) {
-      exit(0);
     }
   }
 
   Future<bool> init() async {
+    Ipv6ReachabilityGuard.shared.invalidate();
     await initGeo();
     if (globalState.config.appSetting.openLogs) {
       clashCore.startLog();

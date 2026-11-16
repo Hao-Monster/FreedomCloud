@@ -296,6 +296,38 @@ String rewriteRuleTargetForProfile(
   return trimmed;
 }
 
+/// Domestic messaging and game anti-cheat drivers that must bypass TUN/Proxy
+/// directly on desktop platforms unless explicitly overridden by user/profile
+/// `PROCESS-NAME` rules.
+const List<String> desktopDirectBypassProcessNames = <String>[
+  'SGuard64.exe',
+  'SGuardSvc64.exe',
+  'vgc.exe',
+  'EasyAntiCheat.exe',
+  'EasyAntiCheat_EOS.exe',
+  'BEService.exe',
+  'WeChat.exe',
+  'Weixin.exe',
+  'WXWork.exe',
+  'DingTalk.exe',
+  'Feishu.exe',
+];
+
+final List<String> desktopDirectBypassRules = List<String>.unmodifiable([
+  for (final proc in desktopDirectBypassProcessNames) 'PROCESS-NAME,$proc,DIRECT',
+]);
+
+Set<String> _explicitProcessNameTargets(Iterable<String> rules) {
+  final targets = <String>{};
+  for (final raw in rules) {
+    final parts = raw.split(',');
+    if (parts.length >= 2 && parts[0].trim().toUpperCase() == 'PROCESS-NAME') {
+      targets.add(parts[1].trim().toLowerCase());
+    }
+  }
+  return targets;
+}
+
 /// Synthesizes the complete 5-layer routing rule list for Mihomo Core.
 CompiledRuleResult compileEffectiveRules({
   required Iterable<Object?> rawProfileRules,
@@ -388,9 +420,23 @@ CompiledRuleResult compileEffectiveRules({
           ),
   ];
 
+  final explicitProcessNames = <String>{
+    ..._explicitProcessNameTargets(profileAddedRules),
+    ..._explicitProcessNameTargets(globalAddedRules),
+  };
+  final desktopBypassRules = <String>[
+    if (isDesktop && !scriptActive)
+      for (var i = 0; i < desktopDirectBypassProcessNames.length; i++)
+        if (!explicitProcessNames.contains(
+          desktopDirectBypassProcessNames[i].toLowerCase(),
+        ))
+          desktopDirectBypassRules[i],
+  ];
+
   final mergedRules = <String>[
     ...profileAddedRules,
     ...globalAddedRules,
+    ...desktopBypassRules,
     ...baseRules,
   ];
 

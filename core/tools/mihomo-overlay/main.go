@@ -1157,12 +1157,183 @@ func patchURLTestGroup(source []byte) ([]byte, error) {
 		return nil, err
 	}
 	patched := string(source)
+
+	const dialAnchor = `func (u *URLTest) DialContext(ctx context.Context, metadata *C.Metadata) (c C.Conn, err error) {
+	proxy := u.fast(true)
+	c, err = proxy.DialContext(ctx, metadata)
+	if err == nil {
+		c.AppendToChains(u)
+	} else {
+		u.onDialFailed(proxy.Type(), err, u.healthCheck)
+	}
+
+	if N.NeedHandshake(c) {
+		c = callback.NewFirstWriteCallBackConn(c, func(err error) {
+			if err == nil {
+				u.onDialSuccess()
+			} else {
+				u.onDialFailed(proxy.Type(), err, u.healthCheck)
+			}
+		})
+	}
+
+	return c, err
+}`
+	const dialReplacement = `func (u *URLTest) DialContext(ctx context.Context, metadata *C.Metadata) (c C.Conn, err error) {
+	proxy := u.fast(true)
+	c, err = proxy.DialContext(ctx, metadata)
+	if err == nil {
+		c.AppendToChains(u)
+	} else {
+		u.RecordDialErrorFCX(proxy.Name(), err, ctx, u.ResetFastCacheFCX)
+		u.onDialFailed(proxy.Type(), err, u.healthCheck)
+	}
+
+	if N.NeedHandshake(c) {
+		c = callback.NewFirstWriteCallBackConn(c, func(err error) {
+			if err == nil {
+				u.onDialSuccess()
+			} else {
+				u.onDialFailed(proxy.Type(), err, u.healthCheck)
+			}
+		})
+	}
+	if err == nil && c != nil {
+		c = u.WrapStableConnFCX(proxy.Name(), c, u.ResetFastCacheFCX)
+	}
+
+	return c, err
+}`
+	if strings.Count(patched, dialAnchor) != 1 {
+		return nil, fmt.Errorf("upstream outboundgroup/urltest.go DialContext changed")
+	}
+	patched = strings.Replace(patched, dialAnchor, dialReplacement, 1)
+
+	const listenPacketAnchor = `func (u *URLTest) ListenPacketContext(ctx context.Context, metadata *C.Metadata) (C.PacketConn, error) {
+	proxy := u.fast(true)
+	pc, err := proxy.ListenPacketContext(ctx, metadata)
+	if err == nil {
+		pc.AppendToChains(u)
+	} else {
+		u.onDialFailed(proxy.Type(), err, u.healthCheck)
+	}
+
+	return pc, err
+}`
+	const listenPacketReplacement = `func (u *URLTest) ListenPacketContext(ctx context.Context, metadata *C.Metadata) (C.PacketConn, error) {
+	proxy := u.fast(true)
+	pc, err := proxy.ListenPacketContext(ctx, metadata)
+	if err == nil {
+		pc.AppendToChains(u)
+	} else {
+		u.RecordDialErrorFCX(proxy.Name(), err, ctx, u.ResetFastCacheFCX)
+		u.onDialFailed(proxy.Type(), err, u.healthCheck)
+	}
+
+	return pc, err
+}`
+	if strings.Count(patched, listenPacketAnchor) != 1 {
+		return nil, fmt.Errorf("upstream outboundgroup/urltest.go ListenPacketContext changed")
+	}
+	patched = strings.Replace(patched, listenPacketAnchor, listenPacketReplacement, 1)
+
+	const fastAnchor = `	elm, _, shared := u.fastSingle.Do(func() (C.Proxy, error) {
+		proxies := u.GetProxies(touch)
+		if u.selected != "" {
+			for _, proxy := range proxies {
+				if !proxy.AliveForTestUrl(u.testUrl) {
+					continue
+				}
+				if proxy.Name() == u.selected {
+					u.fastNode = proxy
+					return proxy, nil
+				}
+			}
+		}
+
+		fast := proxies[0]
+		minDelay := fast.LastDelayForTestUrl(u.testUrl)
+		fastNotExist := true
+
+		for _, proxy := range proxies[1:] {
+			if u.fastNode != nil && proxy.Name() == u.fastNode.Name() {
+				fastNotExist = false
+			}
+
+			if !proxy.AliveForTestUrl(u.testUrl) {
+				continue
+			}
+
+			delay := proxy.LastDelayForTestUrl(u.testUrl)
+			if delay < minDelay {
+				fast = proxy
+				minDelay = delay
+			}
+
+		}
+		// tolerance
+		if u.fastNode == nil || fastNotExist || !u.fastNode.AliveForTestUrl(u.testUrl) || u.fastNode.LastDelayForTestUrl(u.testUrl) > fast.LastDelayForTestUrl(u.testUrl)+u.tolerance {
+			u.fastNode = fast
+		}
+		return u.fastNode, nil
+	})`
+	const fastReplacement = `	elm, _, shared := u.fastSingle.Do(func() (C.Proxy, error) {
+		u.LockFastMuFCX()
+		defer u.UnlockFastMuFCX()
+		proxies := u.GetProxies(touch)
+		if u.selected != "" {
+			for _, proxy := range proxies {
+				if !proxy.AliveForTestUrl(u.testUrl) {
+					continue
+				}
+				if proxy.Name() == u.selected {
+					u.fastNode = proxy
+					return proxy, nil
+				}
+			}
+		}
+
+		fast := proxies[0]
+		fastAlive := fast.AliveForTestUrl(u.testUrl)
+		minDelay := uint32(u.EffectiveDelayFCX(fast.Name(), fast.LastDelayForTestUrl(u.testUrl)))
+		fastNotExist := u.fastNode == nil || fast.Name() != u.fastNode.Name()
+
+		for _, proxy := range proxies[1:] {
+			if u.fastNode != nil && proxy.Name() == u.fastNode.Name() {
+				fastNotExist = false
+			}
+
+			if !proxy.AliveForTestUrl(u.testUrl) {
+				continue
+			}
+
+			delay := uint32(u.EffectiveDelayFCX(proxy.Name(), proxy.LastDelayForTestUrl(u.testUrl)))
+			if !fastAlive || delay < minDelay {
+				fast = proxy
+				fastAlive = true
+				minDelay = delay
+			}
+
+		}
+		// tolerance
+		if u.fastNode == nil || fastNotExist || !u.fastNode.AliveForTestUrl(u.testUrl) || uint32(u.EffectiveDelayFCX(u.fastNode.Name(), u.fastNode.LastDelayForTestUrl(u.testUrl))) > uint32(u.EffectiveDelayFCX(fast.Name(), fast.LastDelayForTestUrl(u.testUrl)))+uint32(u.tolerance) {
+			u.fastNode = fast
+		}
+		return u.fastNode, nil
+	})`
+	if strings.Count(patched, fastAnchor) != 1 {
+		return nil, fmt.Errorf("upstream outboundgroup/urltest.go fast changed")
+	}
+	patched = strings.Replace(patched, fastAnchor, fastReplacement, 1)
+
 	const forceSetAnchor = `func (u *URLTest) ForceSet(name string) {
 	u.selected = name
 	u.fastSingle.Reset()
 }`
 	const forceSetReplacement = `func (u *URLTest) ForceSet(name string) {
+	u.LockFastMuFCX()
 	u.selected = name
+	u.UnlockFastMuFCX()
 	u.fastSingle.Reset()
 }
 
@@ -1179,10 +1350,45 @@ func (u *URLTest) ResetFastCacheFCX() {
 func patchOutboundGroupBase(source []byte) ([]byte, error) {
 	source = bytes.ReplaceAll(source, []byte("\r\n"), []byte("\n"))
 	fset := token.NewFileSet()
-	if _, err := parser.ParseFile(fset, "groupbase.go", source, 0); err != nil {
+	file, err := parser.ParseFile(fset, "groupbase.go", source, 0)
+	if err != nil {
 		return nil, err
 	}
 	patched := string(source)
+
+	var structCloseOffset int
+	structs := 0
+	for _, declaration := range file.Decls {
+		generic, ok := declaration.(*ast.GenDecl)
+		if !ok || generic.Tok != token.TYPE {
+			continue
+		}
+		for _, spec := range generic.Specs {
+			typeSpec, ok := spec.(*ast.TypeSpec)
+			if !ok || typeSpec.Name.Name != "GroupBase" {
+				continue
+			}
+			structType, ok := typeSpec.Type.(*ast.StructType)
+			if !ok || structType.Fields == nil || !structType.Fields.Closing.IsValid() {
+				return nil, fmt.Errorf("upstream outboundgroup/groupbase.go GroupBase struct changed")
+			}
+			for _, field := range structType.Fields.List {
+				for _, fieldName := range field.Names {
+					if fieldName.Name == "fcxStability" {
+						return nil, fmt.Errorf("upstream outboundgroup/groupbase.go GroupBase already has fcxStability")
+					}
+				}
+			}
+			structs++
+			structCloseOffset = fset.Position(structType.Fields.Closing).Offset
+		}
+	}
+	if structs != 1 {
+		return nil, fmt.Errorf("upstream outboundgroup/groupbase.go GroupBase struct changed")
+	}
+
+	var changes []replacement
+	changes = append(changes, replacement{structCloseOffset, structCloseOffset, "\n\tfcxStability fcxStabilityTracker\n"})
 
 	const dialFailedBlockAnchor = `		gb.failedTestMux.Lock()
 		defer gb.failedTestMux.Unlock()
@@ -1234,10 +1440,11 @@ func patchOutboundGroupBase(source []byte) ([]byte, error) {
 		if shouldTrigger {
 			fn()
 		}`
-	if strings.Count(patched, dialFailedBlockAnchor) != 1 {
+	dialFailedIdx := strings.Index(patched, dialFailedBlockAnchor)
+	if dialFailedIdx < 0 || strings.Count(patched, dialFailedBlockAnchor) != 1 {
 		return nil, fmt.Errorf("upstream outboundgroup/groupbase.go onDialFailed block changed")
 	}
-	patched = strings.Replace(patched, dialFailedBlockAnchor, dialFailedBlockReplacement, 1)
+	changes = append(changes, replacement{dialFailedIdx, dialFailedIdx + len(dialFailedBlockAnchor), dialFailedBlockReplacement})
 
 	const healthCheckResetAnchor = `	wg.Wait()
 	gb.failedTesting.Store(false)
@@ -1247,10 +1454,11 @@ func patchOutboundGroupBase(source []byte) ([]byte, error) {
 	gb.failedTestMux.Lock()
 	gb.failedTimes = 0
 	gb.failedTestMux.Unlock()`
-	if strings.Count(patched, healthCheckResetAnchor) != 1 {
+	healthCheckIdx := strings.Index(patched, healthCheckResetAnchor)
+	if healthCheckIdx < 0 || strings.Count(patched, healthCheckResetAnchor) != 1 {
 		return nil, fmt.Errorf("upstream outboundgroup/groupbase.go healthCheck reset changed")
 	}
-	patched = strings.Replace(patched, healthCheckResetAnchor, healthCheckResetReplacement, 1)
+	changes = append(changes, replacement{healthCheckIdx, healthCheckIdx + len(healthCheckResetAnchor), healthCheckResetReplacement})
 
 	const dialSuccessAnchor = `func (gb *GroupBase) onDialSuccess() {
 	if !gb.failedTesting.Load() {
@@ -1264,10 +1472,16 @@ func patchOutboundGroupBase(source []byte) ([]byte, error) {
 		gb.failedTestMux.Unlock()
 	}
 }`
-	if strings.Count(patched, dialSuccessAnchor) != 1 {
+	dialSuccessIdx := strings.Index(patched, dialSuccessAnchor)
+	if dialSuccessIdx < 0 || strings.Count(patched, dialSuccessAnchor) != 1 {
 		return nil, fmt.Errorf("upstream outboundgroup/groupbase.go onDialSuccess changed")
 	}
-	patched = strings.Replace(patched, dialSuccessAnchor, dialSuccessReplacement, 1)
+	changes = append(changes, replacement{dialSuccessIdx, dialSuccessIdx + len(dialSuccessAnchor), dialSuccessReplacement})
+
+	sort.Slice(changes, func(i, j int) bool { return changes[i].start > changes[j].start })
+	for _, change := range changes {
+		patched = patched[:change.start] + change.text + patched[change.end:]
+	}
 
 	return format.Source([]byte(patched))
 }
@@ -2401,6 +2615,24 @@ func convertsV2RayFCX(buf []byte, diagnostics bool) ([]map[string]any, error) {`
 	}
 	if err := write(filepath.Join(sourceDirectory, "adapter", "outboundgroup", "groupbase_fcx_test.go"), "outboundgroup_groupbase_fcx_test.go", groupBaseTest); err != nil {
 		return err
+	}
+	for _, spec := range []struct {
+		patchFile string
+		destFile  string
+	}{
+		{"patches/outboundgroup_stability_fcx.go.txt", "stability_fcx.go"},
+	} {
+		contents, err := patchFiles.ReadFile(spec.patchFile)
+		if err != nil {
+			return err
+		}
+		contents, err = format.Source(contents)
+		if err != nil {
+			return err
+		}
+		if err := write(filepath.Join(sourceDirectory, "adapter", "outboundgroup", spec.destFile), spec.destFile, contents); err != nil {
+			return err
+		}
 	}
 	for _, name := range []string{"controller_fcx.go", "controller_fcx_test.go"} {
 		contents, err := patchFiles.ReadFile("patches/" + name + ".txt")

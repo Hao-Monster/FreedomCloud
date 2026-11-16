@@ -160,6 +160,7 @@ struct Shared {
     helper_port: Option<u16>,
     helper_token: Option<String>,
     home_dir: PathBuf,
+    system_proxy: Arc<crate::win_system_proxy::SystemProxyManager>,
     strict_blocks: Mutex<HashSet<String>>,
     #[cfg(windows)]
     strict_runtime: Mutex<Option<Arc<StrictRuntime>>>,
@@ -231,10 +232,18 @@ async fn apply_supervisor_end(
         SessionEnd::Command(SupervisorCommand::Stop(reply)) => {
             *should_start = false;
             set_status(shared, CoreStatus::Stopped).await;
+            let _ = shared
+                .system_proxy
+                .cleanup_if_owned_async("supervisor_stop", shared.logger.clone())
+                .await;
             let _ = reply.send(true);
         }
         SessionEnd::Command(SupervisorCommand::Shutdown(reply)) => {
             set_status(shared, CoreStatus::Stopped).await;
+            let _ = shared
+                .system_proxy
+                .cleanup_if_owned_async("supervisor_shutdown", shared.logger.clone())
+                .await;
             let _ = reply.send(true);
             // The UI handler signals shutdown after the command result is
             // written to the socket. Fall back to a bounded forced shutdown
@@ -247,6 +256,10 @@ async fn apply_supervisor_end(
             return true;
         }
         SessionEnd::Shutdown => {
+            let _ = shared
+                .system_proxy
+                .cleanup_if_owned_async("session_shutdown", shared.logger.clone())
+                .await;
             signal_shutdown(shared);
             return true;
         }
@@ -1092,6 +1105,14 @@ pub async fn run(config: AgentConfig) -> Result<()> {
     let shared_helper_port = config.use_helper.then_some(config.helper_port);
     let shared_helper_token = helper_token.clone();
     let shared_home_dir = config.home.clone();
+    let system_proxy = Arc::new(crate::win_system_proxy::SystemProxyManager::platform_default(
+        shared_home_dir.clone(),
+    ));
+    let _ = system_proxy.cleanup_orphan_on_startup(false, &logger);
+    let _proxy_cleanup_guard = crate::win_system_proxy::AgentProxyCleanupGuard::new(
+        system_proxy.clone(),
+        logger.clone(),
+    );
     let (supervisor_tx, supervisor_rx) = mpsc::channel(16);
     #[cfg(windows)]
     let (strict_store, stored_intent) = match crate::strict_store::StrictIntentStore::open(&shared_home_dir) {
@@ -1143,6 +1164,7 @@ pub async fn run(config: AgentConfig) -> Result<()> {
         helper_port: shared_helper_port,
         helper_token: shared_helper_token,
         home_dir: shared_home_dir,
+        system_proxy,
         strict_blocks: Mutex::new(HashSet::new()),
         #[cfg(windows)]
         strict_runtime: Mutex::new(None),
@@ -1775,7 +1797,11 @@ async fn supervise_core(
                             if handle_strict_core_line(&shared, &line).await {
                                 continue;
                             }
-                            shared.journal.lock().await.commit_response(&line);
+                            if let Some(accepted) =
+                                shared.journal.lock().await.commit_response(&line)
+                            {
+                                shared.system_proxy.record_core_action(&accepted);
+                            }
                             #[cfg(target_os = "macos")]
                             {
                                 let response: Value = serde_json::from_str(&line)?;
@@ -2434,6 +2460,12 @@ async fn set_status(shared: &Arc<Shared>, status: CoreStatus) {
     if status == CoreStatus::Ready {
         shared.strict_wakeup.notify_waiters();
     }
+    if status == CoreStatus::Failed {
+        let _ = shared
+            .system_proxy
+            .cleanup_if_owned_async("core_failed", shared.logger.clone())
+            .await;
+    }
     // `null` means no explicit listener decision has been observed yet, so a
     // first UI launch may still apply its auto-run preference. `false` is
     // reserved for an explicit stopListener action and must survive reattach.
@@ -2596,6 +2628,10 @@ mod tests {
             helper_port: None,
             helper_token: None,
             home_dir: PathBuf::new(),
+            system_proxy: Arc::new(crate::win_system_proxy::SystemProxyManager::new(
+                Arc::new(crate::win_system_proxy::NoopSystemProxyBackend),
+                PathBuf::new(),
+            )),
             strict_blocks: Mutex::new(HashSet::new()),
             #[cfg(windows)]
             strict_runtime: Mutex::new(None),
@@ -3530,5 +3566,279 @@ mod tests {
             "time=\"2026-11-10T18:37:18.138704900+08:00\" level=debug msg=\"XTLS Vision read padding\"\n",
             true,
         ));
+    }
+
+    struct RuntimeMockProxyBackend {
+        snapshot: std::sync::Mutex<crate::win_system_proxy::InternetSettingsSnapshot>,
+        disable_calls: std::sync::atomic::AtomicUsize,
+        probe_real_loopback: bool,
+    }
+
+    impl RuntimeMockProxyBackend {
+        fn new(
+            proxy_enable: u32,
+            proxy_server: Option<&str>,
+            auto_config_url: Option<&str>,
+            probe_real_loopback: bool,
+        ) -> Self {
+            Self {
+                snapshot: std::sync::Mutex::new(
+                    crate::win_system_proxy::InternetSettingsSnapshot {
+                        proxy_enable,
+                        proxy_server: proxy_server.map(str::to_owned),
+                        auto_config_url: auto_config_url.map(str::to_owned),
+                    },
+                ),
+                disable_calls: std::sync::atomic::AtomicUsize::new(0),
+                probe_real_loopback,
+            }
+        }
+
+        fn calls(&self) -> usize {
+            self.disable_calls.load(Ordering::Acquire)
+        }
+
+        fn set_enabled(&self, proxy_enable: u32, proxy_server: Option<&str>, pac: Option<&str>) {
+            let mut snapshot = self.snapshot.lock().unwrap();
+            snapshot.proxy_enable = proxy_enable;
+            snapshot.proxy_server = proxy_server.map(str::to_owned);
+            snapshot.auto_config_url = pac.map(str::to_owned);
+        }
+    }
+
+    impl crate::win_system_proxy::SystemProxyBackend for RuntimeMockProxyBackend {
+        fn read_internet_settings(
+            &self,
+        ) -> Result<crate::win_system_proxy::InternetSettingsSnapshot> {
+            Ok(self.snapshot.lock().unwrap().clone())
+        }
+
+        fn disable_system_proxy(&self) -> Result<()> {
+            self.disable_calls.fetch_add(1, Ordering::AcqRel);
+            self.snapshot.lock().unwrap().proxy_enable = 0;
+            Ok(())
+        }
+
+        fn is_loopback_port_listening(&self, port: u16) -> bool {
+            if self.probe_real_loopback {
+                crate::win_system_proxy::probe_loopback_tcp(port)
+            } else {
+                false
+            }
+        }
+    }
+
+    fn session_fixture_with_proxy(
+        backend: Arc<dyn crate::win_system_proxy::SystemProxyBackend>,
+        home_dir: PathBuf,
+    ) -> Arc<Shared> {
+        let (supervisor, _) = mpsc::channel(1);
+        Arc::new(Shared {
+            ui: Mutex::new(None),
+            strict_mutations: Arc::new(Semaphore::new(1)),
+            core: Mutex::new(None),
+            journal: Mutex::new(ReplayJournal::default()),
+            #[cfg(target_os = "macos")]
+            mac_strict_replay: Mutex::new(crate::mac_strict_replay::MacStrictReplay::default()),
+            #[cfg(target_os = "macos")]
+            mac_strict_account: "test-only-no-keychain-access".to_owned(),
+            logger: AgentLogger::new(&std::env::temp_dir().join("flclash-agent-session-tests")),
+            status: RwLock::new(CoreStatus::Ready),
+            strict_policy: RwLock::new(StrictPolicyStatus::disabled()),
+            generation: AtomicU64::new(7),
+            next_session: AtomicU64::new(1),
+            shutting_down: AtomicBool::new(false),
+            shutdown: Notify::new(),
+            supervisor,
+            privileged_backend: false,
+            agent_instance_id: random_token(),
+            agent_executable: PathBuf::from("test-agent"),
+            core_executable: PathBuf::from("test-core"),
+            core_pid: Mutex::new(None),
+            helper_session: Mutex::new(HelperSession::default()),
+            helper_port: None,
+            helper_token: None,
+            home_dir: home_dir.clone(),
+            system_proxy: Arc::new(crate::win_system_proxy::SystemProxyManager::new(
+                backend, home_dir,
+            )),
+            strict_blocks: Mutex::new(HashSet::new()),
+            #[cfg(windows)]
+            strict_runtime: Mutex::new(None),
+            #[cfg(windows)]
+            strict_wakeup: Notify::new(),
+            #[cfg(windows)]
+            strict_store: Mutex::new(None),
+        })
+    }
+
+    #[tokio::test]
+    async fn core_failed_clears_owned_proxy_while_leaving_pac_and_external_proxies_alone() {
+        let backend = Arc::new(RuntimeMockProxyBackend::new(
+            1,
+            Some("127.0.0.1:7890"),
+            None,
+            false,
+        ));
+        let shared = session_fixture_with_proxy(backend.clone(), PathBuf::new());
+        {
+            let mut journal = shared.journal.lock().await;
+            journal.stage(
+                r#"{"id":"cfg-1","method":"setupConfig","data":{"config":{"mixed-port":7890}}}"#,
+            );
+            let accepted = journal
+                .commit_response(r#"{"id":"cfg-1","method":"setupConfig","code":0,"data":""}"#)
+                .expect("accepted setupConfig response should commit");
+            shared.system_proxy.record_core_action(&accepted);
+        }
+
+        set_status(&shared, CoreStatus::Failed).await;
+        assert_eq!(backend.calls(), 1);
+        assert_eq!(backend.snapshot.lock().unwrap().proxy_enable, 0);
+
+        backend.set_enabled(
+            1,
+            Some("127.0.0.1:7890"),
+            Some("https://corp.example/proxy.pac"),
+        );
+        set_status(&shared, CoreStatus::Failed).await;
+        assert_eq!(backend.calls(), 1);
+        assert_eq!(backend.snapshot.lock().unwrap().proxy_enable, 1);
+
+        backend.set_enabled(1, Some("10.0.0.2:8080"), None);
+        set_status(&shared, CoreStatus::Failed).await;
+        assert_eq!(backend.calls(), 1);
+        assert_eq!(backend.snapshot.lock().unwrap().proxy_enable, 1);
+    }
+
+    #[tokio::test]
+    async fn supervisor_stop_and_shutdown_clear_proxy_while_restart_and_ui_disconnect_preserve_it() {
+        let backend = Arc::new(RuntimeMockProxyBackend::new(
+            1,
+            Some("127.0.0.1:7890"),
+            None,
+            false,
+        ));
+        let shared = session_fixture_with_proxy(backend.clone(), PathBuf::new());
+        shared.system_proxy.record_managed_port(7890);
+
+        let (mut ui_reader, ui_task) = attach_ui(shared.clone()).await;
+        ui_reader.get_mut().shutdown().await.unwrap();
+        assert!(timeout(Duration::from_secs(3), ui_task).await.unwrap().unwrap().is_ok());
+        assert_eq!(
+            backend.calls(),
+            0,
+            "UI IPC disconnect must preserve system proxy while Agent keeps Core running"
+        );
+        assert_eq!(backend.snapshot.lock().unwrap().proxy_enable, 1);
+
+        let config = AgentConfig {
+            home: PathBuf::new(),
+            core: PathBuf::from("not-launched"),
+            service_core: None,
+            helper_port: 0,
+            use_helper: false,
+        };
+        let mut child = None;
+        let mut should_start = true;
+        let (restart_tx, restart_rx) = oneshot::channel();
+        assert!(!apply_supervisor_end(
+            SessionEnd::Command(SupervisorCommand::Restart(restart_tx)),
+            &mut should_start,
+            &shared,
+            &config,
+            None,
+            &mut child,
+        )
+        .await);
+        assert!(restart_rx.await.unwrap());
+        assert_eq!(backend.calls(), 0);
+        assert_eq!(backend.snapshot.lock().unwrap().proxy_enable, 1);
+
+        let (stop_tx, stop_rx) = oneshot::channel();
+        assert!(!apply_supervisor_end(
+            SessionEnd::Command(SupervisorCommand::Stop(stop_tx)),
+            &mut should_start,
+            &shared,
+            &config,
+            None,
+            &mut child,
+        )
+        .await);
+        assert!(stop_rx.await.unwrap());
+        assert_eq!(backend.calls(), 1);
+        assert_eq!(backend.snapshot.lock().unwrap().proxy_enable, 0);
+
+        backend.set_enabled(1, Some("http=127.0.0.1:7890;https=127.0.0.1:7890"), None);
+        let (shutdown_tx, shutdown_rx) = oneshot::channel();
+        assert!(apply_supervisor_end(
+            SessionEnd::Command(SupervisorCommand::Shutdown(shutdown_tx)),
+            &mut should_start,
+            &shared,
+            &config,
+            None,
+            &mut child,
+        )
+        .await);
+        assert!(shutdown_rx.await.unwrap());
+        assert_eq!(backend.calls(), 2);
+        assert_eq!(backend.snapshot.lock().unwrap().proxy_enable, 0);
+
+        backend.set_enabled(1, Some("localhost:7890"), None);
+        assert!(apply_supervisor_end(
+            SessionEnd::Shutdown,
+            &mut should_start,
+            &shared,
+            &config,
+            None,
+            &mut child,
+        )
+        .await);
+        assert_eq!(backend.calls(), 3);
+        assert_eq!(backend.snapshot.lock().unwrap().proxy_enable, 0);
+    }
+
+    #[tokio::test]
+    async fn startup_orphan_cleanup_preserves_live_listener_and_clears_dead_port() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let live_port = listener.local_addr().unwrap().port();
+        let live_addr = format!("127.0.0.1:{live_port}");
+        let temp_home = std::env::temp_dir().join(format!(
+            "flclash-agent-orphan-runtime-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&temp_home);
+        std::fs::create_dir_all(&temp_home).unwrap();
+        let logger = AgentLogger::new(&temp_home);
+
+        let backend = Arc::new(RuntimeMockProxyBackend::new(
+            1,
+            Some(&live_addr),
+            None,
+            true,
+        ));
+        let manager = crate::win_system_proxy::SystemProxyManager::new(
+            backend.clone(),
+            temp_home.clone(),
+        );
+        manager.record_managed_port(live_port);
+
+        let reloaded = crate::win_system_proxy::SystemProxyManager::new(
+            backend.clone(),
+            temp_home.clone(),
+        );
+        assert_eq!(
+            reloaded.cleanup_orphan_on_startup(false, &logger),
+            crate::win_system_proxy::CleanupOutcome::Skipped("port_still_listening")
+        );
+        assert_eq!(backend.calls(), 0);
+
+        drop(listener);
+        assert_eq!(
+            reloaded.cleanup_orphan_on_startup(false, &logger),
+            crate::win_system_proxy::CleanupOutcome::Cleared { port: live_port }
+        );
+        assert_eq!(backend.calls(), 1);
+        let _ = std::fs::remove_dir_all(&temp_home);
     }
 }

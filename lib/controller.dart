@@ -7,6 +7,7 @@ import 'package:archive/archive.dart';
 import 'package:flclashx/clash/clash.dart';
 import 'package:flclashx/clash/windows_agent_launch.dart';
 import 'package:flclashx/common/archive.dart';
+import 'package:flclashx/common/signed_update.dart';
 import 'package:flclashx/services/subscription_notification_service.dart';
 import 'package:flclashx/enum/enum.dart';
 import 'package:flclashx/plugins/app.dart';
@@ -14,13 +15,13 @@ import 'package:flclashx/plugins/service.dart';
 import 'package:flclashx/providers/providers.dart';
 import 'package:flclashx/state.dart';
 import 'package:flclashx/widgets/dialog.dart';
+import 'package:flclashx/widgets/signed_update_dialog.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:path/path.dart' hide windows;
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 import 'common/common.dart';
 import 'common/admin_authorization.dart';
@@ -3163,51 +3164,96 @@ class AppController {
     }
   }
 
-  Future<void> autoCheckUpdate() async {
+  String _resolveCurrentAppVersion() {
+    if (globalState.isPackageInfoInitialized) {
+      final v = globalState.packageInfo.version.trim();
+      if (v.isNotEmpty) return v;
+    }
+    try {
+      final v = globalState.packageInfo.version.trim();
+      if (v.isNotEmpty) return v;
+    } catch (_) {
+      // Uninitialized late PackageInfo in isolated tests.
+    }
+    return '0.0.0';
+  }
+
+  Future<void> autoCheckUpdate() => autoCheckUpdateWith();
+
+  @visibleForTesting
+  Future<void> autoCheckUpdateWith({
+    SignedUpdate? signedUpdater,
+  }) async {
     if (!_ref.read(appSettingProvider).autoCheckUpdate) return;
-    final res = await request.checkForUpdate();
-    checkUpdateResultHandle(data: res);
+    final updater = signedUpdater ?? SignedUpdate();
+    if (updater.unavailable != null) return;
+    try {
+      final res =
+          await updater.checkAvailableUpdate(_resolveCurrentAppVersion());
+      await checkUpdateResultHandle(
+        signedResult: res,
+        signedUpdater: updater,
+      );
+    } catch (e) {
+      commonPrint.log('autoCheckUpdate failed: $e');
+    }
   }
 
   Future<void> checkUpdateResultHandle({
+    SignedUpdateCheckResult? signedResult,
+    SignedUpdate? signedUpdater,
     Map<String, dynamic>? data,
     bool handleError = false,
   }) async {
     if (globalState.isPre) {
       return;
     }
-    if (data != null) {
-      final tagName = data['tag_name'];
-      final body = data['body'];
-      final submits = utils.parseReleaseBody(body);
+    final resolved = signedResult ??
+        (data == null
+            ? null
+            : SignedUpdateCheckResult(
+                version: data['tag_name']?.toString() ?? '',
+                releaseNotes: data['body']?.toString() ?? '',
+              ));
+    if (resolved != null && resolved.version.trim().isNotEmpty) {
+      final notes = utils.parseReleaseBody(resolved.releaseNotes);
       final textTheme = context.textTheme;
       final res = await globalState.showMessage(
         title: appLocalizations.discoverNewVersion,
         message: TextSpan(
-          text: "$tagName \n",
+          text: '${resolved.version} \n',
           style: textTheme.headlineSmall,
           children: [
             TextSpan(
-              text: "\n",
+              text: '\n',
               style: textTheme.bodyMedium,
             ),
-            for (final submit in submits)
+            for (final line in notes)
               TextSpan(
-                text: "- $submit \n",
+                text: '- $line \n',
                 style: textTheme.bodyMedium,
               ),
           ],
         ),
-        confirmText: appLocalizations.goDownload,
+        confirmText: '立即更新',
       );
       if (res != true) {
         return;
       }
-      unawaited(launchUrl(
-        Uri.parse("https://github.com/$repository/releases/latest"),
-      ));
+      final dialogContext = globalState.navigatorKey.currentContext;
+      if (dialogContext == null || !dialogContext.mounted) {
+        return;
+      }
+      await showDialog<void>(
+        context: dialogContext,
+        barrierDismissible: false,
+        builder: (_) => SignedUpdateDialog(
+          updater: signedUpdater,
+          initialUpdate: resolved,
+        ),
+      );
     } else if (handleError) {
-      globalState.showMessage(
+      await globalState.showMessage(
         title: appLocalizations.checkUpdate,
         message: TextSpan(
           text: appLocalizations.checkUpdateError,

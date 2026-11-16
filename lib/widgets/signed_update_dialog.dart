@@ -3,18 +3,27 @@ import 'package:flclashx/state.dart';
 import 'package:flutter/material.dart';
 
 class SignedUpdateDialog extends StatefulWidget {
-  const SignedUpdateDialog({super.key});
+  const SignedUpdateDialog({
+    super.key,
+    this.updater,
+    this.initialUpdate,
+  });
+
+  final SignedUpdate? updater;
+  final SignedUpdateCheckResult? initialUpdate;
+
   @override
   State<SignedUpdateDialog> createState() => _SignedUpdateDialogState();
 }
 
 class _SignedUpdateDialogState extends State<SignedUpdateDialog> {
-  final _updater = SignedUpdate();
+  late final SignedUpdate _updater = widget.updater ?? SignedUpdate();
   bool _busy = false;
   bool _ready = false;
   bool _rollback = false;
   double? _progress;
-  String _status = '下载签名完整应用并预先准备回滚。更新会关闭代理和应用；完整安装器请求 Windows 提权，便携版保留并排版本，macOS 按需授权安装已验证网络核心。';
+  String _status =
+      '下载通过 Ed25519 签名清单与完整 SHA-256 校验的应用包并预先准备回滚。更新会关闭代理和应用；Windows 完整安装器支持 Authenticode 签名及提权安装，便携版保留并排版本，macOS 按需授权安装已验证网络核心。';
 
   @override
   void initState() {
@@ -22,6 +31,10 @@ class _SignedUpdateDialogState extends State<SignedUpdateDialog> {
     if (_updater.unavailable != null) {
       _status = _updater.unavailable!;
     } else {
+      if (widget.initialUpdate != null) {
+        _status =
+            '发现已验证新版本 ${widget.initialUpdate!.version}，点击下方按钮即可通过 Ed25519 与 SHA-256 双重校验下载并准备更新。';
+      }
       _loadStatus();
     }
   }
@@ -76,16 +89,24 @@ class _SignedUpdateDialogState extends State<SignedUpdateDialog> {
     canPop: !_busy,
     child: AlertDialog(
       title: const Text('签名完整应用更新'),
-      content: SizedBox(width: 480, child: Column(
+      content: SizedBox(width: 480, child: SingleChildScrollView(child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(_status),
+          if (widget.initialUpdate != null &&
+              widget.initialUpdate!.releaseNotes.trim().isNotEmpty) ...[
+            const SizedBox(height: 12),
+            Text(
+              widget.initialUpdate!.releaseNotes.trim(),
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+          ],
           const SizedBox(height: 16),
-          const Text('保留订阅、设置和用户数据。失败时恢复先前便携版本或重新安装已验证旧安装包；恢复失败会明确记录。macOS/Linux 更新需要 Python 3.9+ 与支持 CMS 的 OpenSSL；macOS 还须有效 Developer ID 签名及公证。'),
+          const Text('保留订阅、设置和用户数据。更新清单由内置 Ed25519 公钥与可选 Authenticode / CMS 证书校验，安装包通过完整 SHA-256 校验；失败时自动恢复先前便携版本或重新安装已验证旧安装包。'),
           if (_busy) ...[const SizedBox(height: 16), LinearProgressIndicator(value: _progress)],
         ],
-      )),
+      ))),
       actions: [
         TextButton(onPressed: _busy ? null : () => Navigator.of(context).pop(), child: const Text('关闭')),
         if (_rollback) TextButton(onPressed: _busy ? null : () => _apply(true), child: const Text('回滚上一个版本')),

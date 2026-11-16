@@ -4196,6 +4196,9 @@ class _OverviewEmptyProfilesCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
+    final isZh = Localizations.localeOf(context).languageCode == 'zh';
+    final loginLabel = isZh ? '登录 / 开通自由云账号' : 'Sign in / Activate FreedomNet';
+    final importLabel = isZh ? '手动导入订阅链接' : 'Import Subscription Link';
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 24, 16, 16),
       child: DecoratedBox(
@@ -4212,7 +4215,7 @@ class _OverviewEmptyProfilesCard extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             children: [
               Icon(
-                Icons.add_link_rounded,
+                Icons.login_rounded,
                 size: 40,
                 color: colors.primary,
               ),
@@ -4250,27 +4253,8 @@ class _OverviewEmptyProfilesCard extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 18),
-              FilledButton(
-                key: const ValueKey('overview-empty-add-subscription'),
-                onPressed: onAddSubscription,
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Icon(Icons.content_paste_go_rounded, size: 18),
-                    const SizedBox(width: 8),
-                    Flexible(
-                      child: Text(
-                        appLocalizations.nodeOverviewAddSubscription,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
               if (onGoToPurchase != null) ...[
-                const SizedBox(height: 8),
-                TextButton(
+                FilledButton(
                   key: const ValueKey('overview-empty-go-purchase'),
                   onPressed: onGoToPurchase,
                   child: Row(
@@ -4280,7 +4264,7 @@ class _OverviewEmptyProfilesCard extends StatelessWidget {
                       const SizedBox(width: 8),
                       Flexible(
                         child: Text(
-                          appLocalizations.goToPurchasePrompt,
+                          loginLabel,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                         ),
@@ -4288,7 +4272,26 @@ class _OverviewEmptyProfilesCard extends StatelessWidget {
                     ],
                   ),
                 ),
+                const SizedBox(height: 10),
               ],
+              OutlinedButton(
+                key: const ValueKey('overview-empty-add-subscription'),
+                onPressed: onAddSubscription,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.content_paste_go_rounded, size: 18),
+                    const SizedBox(width: 8),
+                    Flexible(
+                      child: Text(
+                        importLabel,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             ],
           ),
         ),

@@ -519,7 +519,7 @@ class HealthRunner {
                 quotaUsedPercent: usedPct,
                 action: HealthAction.openPurchase,
               );
-            } else if (hasQuota && ratio >= 0.90) {
+            } else if (hasQuota && ratio >= 0.85) {
               a2 = HealthCheckResult(
                 id: HealthCheckId.subscriptionHealth,
                 status: HealthStatus.warning,

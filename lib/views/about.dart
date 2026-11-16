@@ -65,146 +65,92 @@ class AboutView extends StatelessWidget {
           color: freedomNetHairlineColor(colors),
         ),
       ),
-      child: _EasterEggDetector(
-        onEasterEgg: () {
-          unawaited(
-            showDialog<void>(
-              context: context,
-              barrierDismissible: false,
-              builder: (dialogContext) => AlertDialog(
-                title: const Text(
-                  'REMNAFAMILY ONE LOVE',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    fontFamily: 'Unbounded',
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                content: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Text(
-                      '❤️',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(fontSize: 48),
-                    ),
-                    const SizedBox(height: 16),
-                    InkWell(
-                      onTap: () {
-                        unawaited(globalState.openUrl('https://docs.rw'));
-                      },
-                      child: const Text(
-                        'TRY REMNAWAVE',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          color: Colors.blue,
-                          fontFamily: 'Unbounded',
-                          fontSize: 14,
-                          fontWeight: FontWeight.bold,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Wrap(
+            spacing: 16,
+            runSpacing: 12,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              const FreedomNetBrandMark(size: 58),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Wrap(
+                    spacing: 10,
+                    runSpacing: 4,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    children: [
+                      Text(
+                        brandNameZh,
+                        style: textTheme.headlineSmall?.copyWith(
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: -0.3,
                         ),
                       ),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 9,
+                          vertical: 3,
+                        ),
+                        decoration: BoxDecoration(
+                          color: colors.primary
+                              .withValues(alpha: isDark ? 0.16 : 0.10),
+                          borderRadius: BorderRadius.circular(999),
+                        ),
+                        child: Text(
+                          brandNameEn,
+                          style: textTheme.labelMedium?.copyWith(
+                            color: colors.primary,
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: 0.4,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    appLocalizations.appBrandTagline,
+                    style: textTheme.bodyMedium?.copyWith(
+                      color: colors.onSurfaceVariant,
                     ),
-                  ],
-                ),
-                actionsAlignment: MainAxisAlignment.center,
-                actions: [
-                  TextButton(
-                    onPressed: () => Navigator.of(dialogContext).pop(),
-                    child: const Text('OK'),
+                  ),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 6,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 3,
+                        ),
+                        decoration: BoxDecoration(
+                          color: colors.surfaceContainerHigh,
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: Text(
+                          'v${globalState.packageInfo.version}',
+                          style: textTheme.labelMedium?.copyWith(
+                            fontFeatures: const [
+                              FontFeature.tabularFigures(),
+                            ],
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                      const _CoreVersionWidget(),
+                    ],
                   ),
                 ],
               ),
-            ),
-          );
-        },
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Wrap(
-              spacing: 16,
-              runSpacing: 12,
-              crossAxisAlignment: WrapCrossAlignment.center,
-              children: [
-                const FreedomNetBrandMark(size: 58),
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Wrap(
-                      spacing: 10,
-                      runSpacing: 4,
-                      crossAxisAlignment: WrapCrossAlignment.center,
-                      children: [
-                        Text(
-                          brandNameZh,
-                          style: textTheme.headlineSmall?.copyWith(
-                            fontWeight: FontWeight.w800,
-                            letterSpacing: -0.3,
-                          ),
-                        ),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 9,
-                            vertical: 3,
-                          ),
-                          decoration: BoxDecoration(
-                            color: colors.primary
-                                .withValues(alpha: isDark ? 0.16 : 0.10),
-                            borderRadius: BorderRadius.circular(999),
-                          ),
-                          child: Text(
-                            brandNameEn,
-                            style: textTheme.labelMedium?.copyWith(
-                              color: colors.primary,
-                              fontWeight: FontWeight.w700,
-                              letterSpacing: 0.4,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      appLocalizations.appBrandTagline,
-                      style: textTheme.bodyMedium?.copyWith(
-                        color: colors.onSurfaceVariant,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 6,
-                      crossAxisAlignment: WrapCrossAlignment.center,
-                      children: [
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 8,
-                            vertical: 3,
-                          ),
-                          decoration: BoxDecoration(
-                            color: colors.surfaceContainerHigh,
-                            borderRadius: BorderRadius.circular(6),
-                          ),
-                          child: Text(
-                            'v${globalState.packageInfo.version}',
-                            style: textTheme.labelMedium?.copyWith(
-                              fontFeatures: const [
-                                FontFeature.tabularFigures(),
-                              ],
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ),
-                        const _CoreVersionWidget(),
-                      ],
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ],
-        ),
+            ],
+          ),
+        ],
       ),
     );
   }
@@ -564,51 +510,5 @@ class _CoreVersionWidget extends StatelessWidget {
             ),
           );
         },
-      );
-}
-
-class _EasterEggDetector extends StatefulWidget {
-  const _EasterEggDetector({
-    required this.child,
-    required this.onEasterEgg,
-  });
-  final Widget child;
-  final VoidCallback onEasterEgg;
-
-  @override
-  State<_EasterEggDetector> createState() => _EasterEggDetectorState();
-}
-
-class _EasterEggDetectorState extends State<_EasterEggDetector> {
-  int _counter = 0;
-  Timer? _timer;
-
-  void _handleTap() {
-    _counter++;
-    if (_counter >= 10) {
-      widget.onEasterEgg();
-      _resetCounter();
-    } else {
-      _timer?.cancel();
-      _timer = Timer(const Duration(seconds: 1), _resetCounter);
-    }
-  }
-
-  void _resetCounter() {
-    _counter = 0;
-    _timer?.cancel();
-    _timer = null;
-  }
-
-  @override
-  void dispose() {
-    _timer?.cancel();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) => GestureDetector(
-        onTap: _handleTap,
-        child: widget.child,
       );
 }

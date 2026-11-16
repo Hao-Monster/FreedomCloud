@@ -169,6 +169,13 @@ jobs:
           echo "C:\Program Files (x86)\Inno Setup 6" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
       - name: Setup
+        env:
+          WINDOWS_CODESIGN_PFX_B64: ${{ secrets.WINDOWS_CODESIGN_PFX_B64 }}
+          WINDOWS_CODESIGN_PASSWORD: ${{ secrets.WINDOWS_CODESIGN_PASSWORD }}
+          WINDOWS_CODESIGN_TIMESTAMP_URL: ${{ secrets.WINDOWS_CODESIGN_TIMESTAMP_URL }}
+          FCX_RELEASE_MANIFEST_URL: ${{ secrets.FCX_RELEASE_MANIFEST_URL }}
+          FCX_RELEASE_CERT_SHA256: ${{ secrets.FCX_RELEASE_CERT_SHA256 }}
+          FCX_MACOS_TEAM_ID: ${{ secrets.FCX_MACOS_TEAM_ID }}
         run: dart setup.dart ${{ matrix.platform }} ${{ matrix.arch && format('--arch {0}', matrix.arch) }} ${{ env.IS_STABLE == 'true' && '--env stable' || '' }}
 
       - name: Upload
@@ -358,6 +365,33 @@ jobs:
           else
             sed "s|VERSION|$version|g" ./.github/pre_release_template.md >> release.md
           fi
+
+      - name: Setup Go for manifest signing
+        uses: actions/setup-go@v6
+        with:
+          go-version: "1.26.0"
+          cache: false
+
+      - name: Generate signed release manifest (latest.json)
+        env:
+          FCX_RELEASE_ED25519_PRIVATE_KEY: ${{ secrets.FCX_RELEASE_ED25519_PRIVATE_KEY }}
+          FCX_RELEASE_DOWNLOAD_BASE_URL: ${{ secrets.FCX_RELEASE_DOWNLOAD_BASE_URL }}
+        run: |
+          if [ -z "$FCX_RELEASE_ED25519_PRIVATE_KEY" ]; then
+            echo "FCX_RELEASE_ED25519_PRIVATE_KEY not configured; skipping latest.json signing"
+            exit 0
+          fi
+          version=$(echo "${{ github.ref_name }}" | sed 's/^v//')
+          channel=$([ "${{ env.IS_STABLE }}" == "true" ] && echo "stable" || echo "beta")
+          base_url="${FCX_RELEASE_DOWNLOAD_BASE_URL:-https://api.westernmoviefans.com/api/v1/client/releases/files/${version}}"
+          go run ./tool/sign_release_manifest.go \
+            --version "$version" \
+            --channel "$channel" \
+            --dist ./dist \
+            --base-url "$base_url" \
+            --notes-file ./release.md \
+            --out ./dist/latest.json
+          go run ./tool/sign_release_manifest.go --verify --in ./dist/latest.json
 
       - name: Generate sha256
         run: |

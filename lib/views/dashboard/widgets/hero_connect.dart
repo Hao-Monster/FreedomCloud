@@ -245,8 +245,8 @@ class HeroConnect extends ConsumerWidget {
 
     // Buy/renew links carried by the profile. The buttons (under the traffic
     // card) only appear when the matching condition is met:
-    //   buyplan    -> less than 3 days left (expired included), time-limited plans
-    //   buytraffic -> less than 10% of the limit remaining, capped plans
+    //   buyplan    -> <= 3 days left (expired included), time-limited plans
+    //   buytraffic -> < 15% of the limit remaining, capped plans
     final buyPlanUrl = headers['flclashx-buyplan'];
     final buyTrafficUrl = headers['flclashx-buytraffic'];
     var showBuyPlan = false;
@@ -254,12 +254,12 @@ class HeroConnect extends ConsumerWidget {
     if (sub != null) {
       if (buyPlanUrl != null && buyPlanUrl.isNotEmpty && sub.expire > 0) {
         showBuyPlan = DateTime.fromMillisecondsSinceEpoch(sub.expire * 1000)
-                .difference(DateTime.now()) <
+                .difference(DateTime.now()) <=
             const Duration(days: 3);
       }
       if (buyTrafficUrl != null && buyTrafficUrl.isNotEmpty && sub.total > 0) {
         final used = sub.upload + sub.download;
-        showBuyTraffic = (sub.total - used) < sub.total * 0.1;
+        showBuyTraffic = (sub.total - used) < sub.total * 0.15;
       }
     }
     final showBuy = showBuyPlan || showBuyTraffic;
@@ -416,22 +416,53 @@ class _TrafficCard extends StatelessWidget {
     final total = sub.total;
     final unlimited = total <= 0;
     final progress = total > 0 ? (used / total).clamp(0.0, 1.0) : 0.0;
-    final barColor = progress > 0.9
+    final barColor = progress >= 0.85
         ? Colors.red.shade400
         : progress > 0.7
             ? Colors.orange.shade400
             : colorScheme.primary;
 
+    final now = DateTime.now();
     int? daysLeft;
+    DateTime? expireDate;
     if (sub.expire > 0) {
-      daysLeft = DateTime.fromMillisecondsSinceEpoch(sub.expire * 1000)
-          .difference(DateTime.now())
-          .inDays;
+      expireDate = DateTime.fromMillisecondsSinceEpoch(sub.expire * 1000);
+      daysLeft = expireDate.difference(now).inDays;
       if (daysLeft < 0) daysLeft = 0;
     }
 
-    final daysUrgent = daysLeft != null && daysLeft <= 3;
+    final isExpired = expireDate != null && expireDate.isBefore(now);
+    final isExpiringSoon = !isExpired &&
+        expireDate != null &&
+        expireDate.difference(now) <= const Duration(days: 3);
+    final daysUrgent = isExpired || isExpiringSoon;
     final daysColor = daysUrgent ? Colors.red.shade400 : colorScheme.primary;
+
+    final remainingBytes = total > 0 ? (total - used).clamp(0, total) : 0;
+    final isTrafficExhausted = !unlimited && used >= total;
+    final isTrafficLow = !unlimited && !isTrafficExhausted && progress >= 0.85;
+    final remainingPct = !unlimited && total > 0
+        ? ((remainingBytes / total) * 100).round().clamp(0, 100)
+        : null;
+
+    final cueParts = <String>[];
+    if (isExpired) {
+      cueParts.add(appLocalizations.subscriptionExpired);
+    } else if (isExpiringSoon) {
+      cueParts.add(
+        daysLeft == 0
+            ? appLocalizations.subscriptionExpiresToday
+            : '将在 $daysLeft 天内到期',
+      );
+    }
+    if (isTrafficExhausted) {
+      cueParts.add('套餐流量已耗尽');
+    } else if (isTrafficLow) {
+      cueParts.add('剩余流量不足 15%（剩余 $remainingPct%）');
+    }
+    final showAlertCue = cueParts.isNotEmpty;
+    final alertColor =
+        (isExpired || isTrafficExhausted) ? colorScheme.error : Colors.orange.shade400;
 
     return Container(
       width: double.infinity,
@@ -503,6 +534,50 @@ class _TrafficCard extends StatelessWidget {
                         ),
                       ),
                     ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+          if (showAlertCue) ...[
+            const SizedBox(height: 10),
+            Container(
+              key: const ValueKey('hero-subscription-alert-cue'),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: alertColor.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: alertColor.withValues(alpha: 0.35)),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.warning_amber_rounded, size: 16, color: alertColor),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      cueParts.join(' · '),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: context.textTheme.labelMedium?.copyWith(
+                        color: alertColor,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  TextButton(
+                    key: const ValueKey('hero-subscription-alert-renew'),
+                    style: TextButton.styleFrom(
+                      visualDensity: VisualDensity.compact,
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
+                    ),
+                    onPressed: () =>
+                        globalState.appController.toPage(PageLabel.purchase),
+                    child: Text(appLocalizations.renew),
                   ),
                 ],
               ),
