@@ -162,6 +162,71 @@ void main() {
         expect(strictRendered, contains('FreedomNetAgent.exe'));
       },
     );
+
+    test(
+      'Inno Setup installer displays Terms of Service popup with exact wording, Accept/Decline buttons, and unconditional continuation',
+      () {
+        final template =
+            File('windows/packaging/exe/inno_setup.iss').readAsStringSync();
+        final rendered = setup.Build.renderWindowsInnoSetupScript(
+          template: template,
+          version: '0.4.2',
+          archName: 'amd64',
+          buildDir: r'E:\build\windows\x64\runner\Release',
+          setupIconFile: r'E:\repo\windows\runner\resources\app_icon.ico',
+          chineseIslPath:
+              r'E:\repo\windows\packaging\exe\ChineseSimplified.isl',
+          strict: false,
+        );
+
+        expect(
+          rendered,
+          contains('chineseSimplified.TermsDialogInstruction=服务条款'),
+        );
+        expect(
+          rendered,
+          contains('english.TermsDialogInstruction=Terms of Service'),
+        );
+        expect(
+          rendered,
+          contains(
+            'chineseSimplified.TermsDialogBody=本软件只供人们用于Ai和用于学习,用于跨境电商和游戏加速,禁止用于传播违法资料禁止用于发表违法言论,请务必遵守国家法律,一旦发现有违法行为本软件有权利结束服务',
+          ),
+        );
+        expect(rendered, contains('english.TermsDialogBody='));
+        expect(
+          rendered,
+          contains('chineseSimplified.TermsAcceptButton=接受'),
+        );
+        expect(rendered, contains('english.TermsAcceptButton=Accept'));
+        expect(
+          rendered,
+          contains('chineseSimplified.TermsDeclineButton=不接受'),
+        );
+        expect(rendered, contains('english.TermsDeclineButton=Decline'));
+
+        final fmtIdx = rendered.indexOf('function FormatSetupText(');
+        final tosIdx = rendered.indexOf('procedure ShowTermsOfServiceDialog;');
+        final initIdx = rendered.indexOf('function InitializeSetup(): Boolean;');
+        final initWizIdx = rendered.indexOf('procedure InitializeWizard();');
+        expect(fmtIdx, greaterThan(0));
+        expect(tosIdx, greaterThan(fmtIdx));
+        expect(initIdx, greaterThan(tosIdx));
+        expect(initWizIdx, greaterThan(initIdx));
+
+        final tosAndInitBlock = rendered.substring(tosIdx, initWizIdx);
+        expect(tosAndInitBlock, contains('SuppressibleTaskDialogMsgBox('));
+        expect(tosAndInitBlock, contains('MB_YESNO'));
+        expect(
+          tosAndInitBlock,
+          contains('if (not WizardSilent) and (not IsManagedUpdate()) then'),
+        );
+        expect(tosAndInitBlock, contains('ShowTermsOfServiceDialog'));
+        expect(tosAndInitBlock, contains('Result := True;'));
+        expect(tosAndInitBlock, isNot(contains('Result := False')));
+        expect(tosAndInitBlock, isNot(contains('Abort')));
+      },
+    );
   });
 
   group('Windows runtime coexistence & non-Windows preservation', () {

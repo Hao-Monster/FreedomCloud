@@ -42,6 +42,14 @@ chineseSimplified.MemoFreshInstallHeader=全新安装
 english.MemoFreshInstallHeader=Fresh Installation
 chineseSimplified.ConfirmDeleteUserData=是否同时删除用户配置与本地数据？
 english.ConfirmDeleteUserData=Do you also want to remove user configuration and local application data?
+chineseSimplified.TermsDialogInstruction=服务条款
+english.TermsDialogInstruction=Terms of Service
+chineseSimplified.TermsDialogBody=本软件只供人们用于Ai和用于学习,用于跨境电商和游戏加速,禁止用于传播违法资料禁止用于发表违法言论,请务必遵守国家法律,一旦发现有违法行为本软件有权利结束服务
+english.TermsDialogBody=This software is strictly for AI, learning, cross-border e-commerce, and game acceleration. Distributing illegal materials or publishing unlawful statements is prohibited. Please comply with national laws; this software reserves the right to terminate service if any illegal activity is discovered.
+chineseSimplified.TermsAcceptButton=接受
+english.TermsAcceptButton=Accept
+chineseSimplified.TermsDeclineButton=不接受
+english.TermsDeclineButton=Decline
 
 [Code]
 const
@@ -233,10 +241,43 @@ begin
     end;
 end;
 
+function FormatSetupText(const Msg: String): String;
+begin
+  Result := Msg;
+  StringChange(Result, '%n', #13#10);
+end;
+
+procedure ShowTermsOfServiceDialog;
+var
+  ButtonLabels: TArrayOfString;
+  Choice: Integer;
+begin
+  ButtonLabels := [
+    CustomMessage('TermsAcceptButton'),
+    CustomMessage('TermsDeclineButton')
+  ];
+  Choice := SuppressibleTaskDialogMsgBox(
+    FormatSetupText(CustomMessage('TermsDialogInstruction')),
+    FormatSetupText(CustomMessage('TermsDialogBody')),
+    mbInformation,
+    MB_YESNO,
+    ButtonLabels,
+    0,
+    IDYES
+  );
+  if Choice = IDYES then
+    Log('Terms of service dialog completed: accepted.')
+  else
+    Log('Terms of service dialog completed: declined (continuing installation).');
+end;
+
 function InitializeSetup(): Boolean;
 var
   ResultCode: Integer;
 begin
+  if (not WizardSilent) and (not IsManagedUpdate()) then
+    ShowTermsOfServiceDialog;
+
   // Check if app is already installed
   IsUpgrade := IsAppInstalled();
   if IsUpgrade then
@@ -253,12 +294,6 @@ begin
   if not IsManagedUpdate() then KillProcesses;
   
   Result := True;
-end;
-
-function FormatSetupText(const Msg: String): String;
-begin
-  Result := Msg;
-  StringChange(Result, '%n', #13#10);
 end;
 
 procedure InitializeWizard();
