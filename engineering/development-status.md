@@ -2,6 +2,22 @@
 
 更新日期：2026-11-16。当前阶段是快速开发、快速迭代和部分功能预览。本文记录来源与验收边界；每次继续开发仍需核实实际 Git/PR/CI 状态，不能把历史报告视为当前通过证明。
 
+## Windows 安装器服务条款非阻塞弹窗（[`320301420b11`](file:///e:/CodeWorkstation/FlClashX/windows/packaging/exe/inno_setup.iss)，2026-11-16）
+
+- 来源基线与本地代码提交：
+  - 基于本地 `development` 基线 [`6856a8e746b2`](file:///e:/CodeWorkstation/FlClashX/engineering/development-status.md)（对应前一代码提交 [`acf30df2ef1d`](file:///e:/CodeWorkstation/FlClashX/setup.dart)）完成 TDD 开发与验证，本地代码提交 [`320301420b11`](file:///e:/CodeWorkstation/FlClashX/windows/packaging/exe/inno_setup.iss)（`320301420b116e121ad9e53c62498259ca657876`，tree `c38d597ecc0c75df037e28859327bd6a3b779154`）。
+  - 严格纳入 2 个任务文件：[`inno_setup.iss`](file:///e:/CodeWorkstation/FlClashX/windows/packaging/exe/inno_setup.iss) 与 [`windows_freedomnet_rebrand_tdd_test.dart`](file:///e:/CodeWorkstation/FlClashX/test/common/windows_freedomnet_rebrand_tdd_test.dart)；工作区既有未提交测试草稿 [`dashboard_render_test.dart`](file:///e:/CodeWorkstation/FlClashX/test/views/dashboard_render_test.dart)（SHA256 `3C54F67C5951399F4DB3E80F87E1EA41203B582E5A7639AA296165AB4242EE1F`）原样保留未改动。
+- 实现细节（[`inno_setup.iss`](file:///e:/CodeWorkstation/FlClashX/windows/packaging/exe/inno_setup.iss)）：
+  1. 在 `[CustomMessages]` 新增简体中文与英文服务条款文案，简中原文严格为 `本软件只供人们用于Ai和用于学习,用于跨境电商和游戏加速,禁止用于传播违法资料禁止用于发表违法言论,请务必遵守国家法律,一旦发现有违法行为本软件有权利结束服务`，按钮文案对应 `接受` / `不接受`（`Accept` / `Decline`）。
+  2. 将 `FormatSetupText` 前置并新增 `ShowTermsOfServiceDialog`，通过 `SuppressibleTaskDialogMsgBox(..., mbInformation, MB_YESNO, ButtonLabels, 0, IDYES)` 展示两个按钮；在 `InitializeSetup()` 最开头以 `if (not WizardSilent) and (not IsManagedUpdate()) then` 调用（避免阻断 `/SILENT`、`/VERYSILENT` 与带 `/FCXUPDATE` 的签章自动更新）。
+  3. **非阻塞继续安装**：点击`接受`、`不接受`或关闭对话框均仅写入安装日志并继续执行服务停止、进程清理与安装流程，`InitializeSetup()` 始终返回 `Result := True`，不会触发 `Abort` 或中止安装。
+- 验证结果（PASS / NOT RUN）：
+  - TDD 前置 Red 验证（[`windows_freedomnet_rebrand_tdd_test.dart`](file:///e:/CodeWorkstation/FlClashX/test/common/windows_freedomnet_rebrand_tdd_test.dart) 修改 `inno_setup.iss` 前）：**PASS**（预期失败于缺失 `TermsDialogInstruction` 等键值）；
+  - Flutter 回归验证（`E:\flutter\bin\flutter.bat test --no-pub test/common/windows_freedomnet_rebrand_tdd_test.dart test/setup_test.dart`）：**PASS**（`+11: All tests passed!`，`0 failed, 0 skipped`）；
+  - 静态分析（`E:\flutter\bin\dart.bat analyze --fatal-warnings test/common/windows_freedomnet_rebrand_tdd_test.dart test/setup_test.dart`）：**PASS**（exit `0`，`0 errors / 0 warnings`；注：未改动的 `setup.dart` 含 4 条既有历史 warning）；
+  - `git diff --cached --check`：**PASS**（exit `0`）；
+  - **NOT RUN**：本机未安装 `ISCC.exe`，`.exe` 安装包实际编译与 Windows VM 弹窗交互点击“接受 / 不接受”后安装完成真机验收 **NOT RUN**；GitHub Actions CI 与远端 `git push` **NOT RUN**。
+
 ## Windows 安装包双语重塑、`FreedomNet` 品牌统一与同机共存隔离（[`acf30df2ef1d`](file:///e:/CodeWorkstation/FlClashX/windows/packaging/exe/inno_setup.iss)，2026-11-16）
 
 - 来源基线与本地代码提交：
