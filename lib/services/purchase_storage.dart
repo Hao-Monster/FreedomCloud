@@ -42,6 +42,8 @@ abstract class PurchaseStorage {
 class SecurePurchaseStorage implements PurchaseStorage {
   SecurePurchaseStorage(Uri origin, {FlutterSecureStorage? storage})
       : _prefix =
+            'freedomnet.xboard.${sha256.convert(utf8.encode(origin.origin))}',
+        _legacyPrefix =
             'flclashx.xboard.${sha256.convert(utf8.encode(origin.origin))}',
         _storage = storage ??
             const FlutterSecureStorage(
@@ -52,6 +54,13 @@ class SecurePurchaseStorage implements PurchaseStorage {
 
   final FlutterSecureStorage _storage;
   final String _prefix;
+  final String _legacyPrefix;
+
+  Future<String?> _readWithLegacyFallback(String suffix) async {
+    final primary = await _storage.read(key: '$_prefix.$suffix');
+    if (primary != null) return primary;
+    return _storage.read(key: '$_legacyPrefix.$suffix');
+  }
 
   Future<void> _write(String suffix, String value) async {
     final key = '$_prefix.$suffix';
@@ -67,11 +76,16 @@ class SecurePurchaseStorage implements PurchaseStorage {
     if (await _storage.read(key: key) != null) {
       throw const FormatException('Secure storage did not remove the value');
     }
+    final legacyKey = '$_legacyPrefix.$suffix';
+    await _storage.delete(key: legacyKey);
+    if (await _storage.read(key: legacyKey) != null) {
+      throw const FormatException('Secure storage did not remove the value');
+    }
   }
 
   @override
   Future<PurchaseSession?> readSession() async {
-    final value = await _storage.read(key: '$_prefix.session');
+    final value = await _readWithLegacyFallback('session');
     if (value == null) return null;
     final data = jsonDecode(value);
     if (data is! Map<String, dynamic> ||
@@ -100,7 +114,7 @@ class SecurePurchaseStorage implements PurchaseStorage {
 
   @override
   Future<PendingGiftRedemption?> readPending(int accountId) async {
-    final value = await _storage.read(key: '$_prefix.pending.$accountId');
+    final value = await _readWithLegacyFallback('pending.$accountId');
     if (value == null) return null;
     final data = jsonDecode(value);
     if (data is! Map<String, dynamic> ||
@@ -144,7 +158,7 @@ class SecurePurchaseStorage implements PurchaseStorage {
 
   @override
   Future<String?> readProfileId(int accountId) =>
-      _storage.read(key: '$_prefix.profile.$accountId');
+      _readWithLegacyFallback('profile.$accountId');
 
   @override
   Future<void> saveProfileId(int accountId, String profileId) =>

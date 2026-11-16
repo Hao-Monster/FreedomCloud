@@ -155,6 +155,7 @@ var fcxBenchmarkTunPrefix = netip.MustParsePrefix("198.18.0.0/15")
 
 var virtualOrTunKeywords = []string{
 	"wintun",
+	"freedomnet",
 	"flclash",
 	"vethernet",
 	"wsl",

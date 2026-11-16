@@ -1,6 +1,7 @@
 import 'dart:io';
 
 const List<String> _virtualOrTunnelInterfaceKeywords = [
+  'freedomnet',
   'flclash',
   'mihomo',
   'wintun',

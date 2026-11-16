@@ -178,6 +178,8 @@ func TestSurgicalVirtualInterfacesIgnoredAndDefaultNicTentative(t *testing.T) {
 	_, _, fakeProv := setupSurgicalRecoveryEnv(t, "surgical-1c-provider")
 
 	virtualNames := []string{
+		"FreedomNet",
+		"FreedomNet Tunnel",
 		"vEthernet (WSL)",
 		"WSL",
 		"Hyper-V Virtual Ethernet Adapter",
@@ -203,6 +205,9 @@ func TestSurgicalVirtualInterfacesIgnoredAndDefaultNicTentative(t *testing.T) {
 		}
 		if !isTunLikeInterface(item, "FlClashX") {
 			t.Fatalf("expected virtual/VPN/container interface %q to be filtered by isTunLikeInterface", name)
+		}
+		if (name == "FreedomNet" || name == "FreedomNet Tunnel") && !isTunLikeInterface(item, "") {
+			t.Fatalf("expected FreedomNet interface %q to be filtered even without configuredTunDevice", name)
 		}
 	}
 

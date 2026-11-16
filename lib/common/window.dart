@@ -38,9 +38,7 @@ class Window {
       exit(0);
     }
     if (Platform.isWindows) {
-      protocol.register("clashx");
-      protocol.register("flclash");
-      protocol.register("flclashx");
+      protocol.register("freedomnet");
     }
 
     // On macOS, the app runs in status bar with popover - no window manager needed

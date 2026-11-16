@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:crypto/crypto.dart';
+import 'package:flclashx/common/constant.dart';
 import 'package:flclashx/models/profile.dart';
 import 'package:flclashx/models/xboard.dart';
 import 'package:flclashx/services/purchase_storage.dart';
@@ -54,7 +55,7 @@ class PurchaseProfileSynchronizer {
             (profile.providerHeaders[xboardAccountMarker] == null ||
                 profile.providerHeaders[xboardAccountMarker] == ownership));
     final base = existing ??
-        Profile.normal(label: 'FreedomCloud · ${account.email}')
+        Profile.normal(label: '$brandDisplayName · ${account.email}')
             .copyWith(id: 'xboard-$ownership');
     final target = base.copyWith(
       url: subscription.url.toString(),

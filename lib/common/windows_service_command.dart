@@ -4,7 +4,7 @@ import 'dart:typed_data';
 
 import 'package:flclashx/enum/enum.dart';
 
-const windowsHelperServiceName = 'FlClashHelperService';
+const windowsHelperServiceName = 'FreedomNetHelperService';
 
 /// Win32 Advapi32 routine that recovers a legacy self-locked service whose SDDL
 /// stripped `DC`, `SD`, `WD`, and `WO` from `Administrators`/`SY` (making
@@ -116,7 +116,7 @@ const _msvcRuntimeFiles = [
   'vcruntime140_threads.dll',
 ];
 
-const windowsHelperDefaultLogDirectory = r'%ProgramData%\FlClashX\logs';
+const windowsHelperDefaultLogDirectory = r'%ProgramData%\FreedomNet\logs';
 
 /// Builds the elevated service repair command from values that cannot escape
 /// cmd.exe quoting. The service is configured in place when it already exists;

@@ -140,8 +140,8 @@ try {
     New-Item -ItemType Directory -Path $staging | Out-Null
     Copy-Item -LiteralPath $driver -Destination (Join-Path $staging 'FlClashStrictCallout.sys')
     Copy-Item -LiteralPath $broker -Destination (Join-Path $staging 'FlClashStrictBroker.exe')
-    Copy-Item -LiteralPath $agent -Destination (Join-Path $staging 'FlClashAgent.exe')
-    Copy-Item -LiteralPath $core -Destination (Join-Path $staging 'FlClashCore.exe')
+    Copy-Item -LiteralPath $agent -Destination (Join-Path $staging 'FreedomNetAgent.exe')
+    Copy-Item -LiteralPath $core -Destination (Join-Path $staging 'FreedomNetCore.exe')
     Copy-Item -LiteralPath $manifestFile -Destination (Join-Path $staging 'strict-package-manifest.json')
     foreach ($support in @(
         'Invoke-M3VmPreflight.ps1'
@@ -155,8 +155,8 @@ try {
 
     $stagedDriver = Get-SignedIdentity (Join-Path $staging 'FlClashStrictCallout.sys') 'staged driver'
     $stagedBroker = Get-SignedIdentity (Join-Path $staging 'FlClashStrictBroker.exe') 'staged Broker'
-    $stagedAgent = Get-SignedIdentity (Join-Path $staging 'FlClashAgent.exe') 'staged Agent'
-    $stagedCore = Get-SignedIdentity (Join-Path $staging 'FlClashCore.exe') 'staged Core'
+    $stagedAgent = Get-SignedIdentity (Join-Path $staging 'FreedomNetAgent.exe') 'staged Agent'
+    $stagedCore = Get-SignedIdentity (Join-Path $staging 'FreedomNetCore.exe') 'staged Core'
     Assert-EqualHex $stagedDriver.FileSha256 $driverIdentity.FileSha256 'staged driver digest'
     Assert-EqualHex $stagedBroker.FileSha256 $brokerIdentity.FileSha256 'staged Broker digest'
     Assert-EqualHex $stagedAgent.FileSha256 $agentIdentity.FileSha256 'staged Agent digest'
@@ -164,7 +164,7 @@ try {
     Assert-EqualHex (Get-FileHash -LiteralPath (Join-Path $staging 'strict-package-manifest.json') -Algorithm SHA256).Hash (Get-FileHash -LiteralPath $manifestFile -Algorithm SHA256).Hash 'staged manifest digest'
 
     $buildInfo = @(
-        'FlClashX M3 signed Windows VM qualification bundle'
+        'FreedomNet M3 signed Windows VM qualification bundle'
         "Source commit: $($SourceCommit.ToLowerInvariant())"
         "Package version: $($manifest.packageVersion)"
         "Driver build ID: $($manifest.driverBuildId.ToLowerInvariant())"

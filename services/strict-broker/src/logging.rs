@@ -11,7 +11,7 @@ const MAX_LINE_CHARS: usize = 16 * 1024;
 const MAX_FILE_BYTES: u64 = 8 * 1024 * 1024;
 const MAX_ROTATED_FILES: usize = 3;
 const LOG_BUFFER_BYTES: usize = 32 * 1024;
-const LOG_DIRECTORY: &str = "FlClashX.StrictBroker";
+const LOG_DIRECTORY: &str = "FreedomNet.StrictBroker";
 const LOG_FILE_NAME: &str = "FlClashStrictBroker.log";
 
 #[derive(Clone)]

@@ -438,12 +438,14 @@ void main() {
           }
         });
         final endpointPath = p.join(tempDir.path, 'agent.json');
-        final bundledAgent = p.join(tempDir.path, 'FlClashAgent.exe');
-        final bundledCore = p.join(tempDir.path, 'FlClashCore.exe');
-        final bundledHelper = p.join(tempDir.path, 'FlClashHelperService.exe');
+        final bundledAgent = p.join(tempDir.path, 'FreedomNetAgent.exe');
+        final bundledCore = p.join(tempDir.path, 'FreedomNetCore.exe');
+        final bundledHelper =
+            p.join(tempDir.path, 'FreedomNetHelperService.exe');
         final serviceDir = p.join(tempDir.path, 'service');
-        final serviceHelper = p.join(serviceDir, 'FlClashHelperService.exe');
-        final serviceCore = p.join(serviceDir, 'FlClashCore.exe');
+        final serviceHelper =
+            p.join(serviceDir, 'FreedomNetHelperService.exe');
+        final serviceCore = p.join(serviceDir, 'FreedomNetCore.exe');
         await Directory(serviceDir).create(recursive: true);
         for (final file in [
           bundledAgent,

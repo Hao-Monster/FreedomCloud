@@ -424,7 +424,7 @@ class ApplicationState extends ConsumerState<Application> {
                   return app;
                 },
                 scrollBehavior: BaseScrollBehavior(),
-                onGenerateTitle: (ctx) => AppLocalizations.of(ctx).appBrandName,
+                onGenerateTitle: (_) => brandDisplayName,
                 locale: utils.getLocaleForString(locale),
                 supportedLocales: AppLocalizations.delegate.supportedLocales,
                 themeMode: effectiveThemeMode,

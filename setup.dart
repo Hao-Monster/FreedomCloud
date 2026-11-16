@@ -135,6 +135,27 @@ class Build {
 
   static String get coreName => "FlClashCore";
 
+  static String appNameFor(Target target) =>
+      target == Target.windows ? "FreedomNet" : "FlClashX";
+
+  static String coreNameFor(Target target) =>
+      target == Target.windows ? "FreedomNetCore" : "FlClashCore";
+
+  static String agentNameFor(Target target) =>
+      target == Target.windows ? "FreedomNetAgent" : "FlClashAgent";
+
+  static String helperNameFor(Target target) => target == Target.windows
+      ? "FreedomNetHelperService"
+      : "FlClashHelperService";
+
+  static String get windowsDisplayName => "自由云 · FreedomNet";
+
+  static String get windowsPublisherName => "FreedomNet";
+
+  static String get windowsPublisherUrl => "https://fast.hjy.ca:8443/";
+
+  static String get windowsAppId => "8F4E9C2A-6D1B-4A73-9E52-3C8B1D7F4A90";
+
   static String get libName => "libclash";
 
   static String get outDir => join(current, libName);
@@ -489,7 +510,7 @@ class Build {
       }
     }
     if (!compilerRecorded) lines.add("MSVC compiler: unavailable");
-    final project = File(join(dirname(buildDir), "${appName}.vcxproj"));
+    final project = File(join(dirname(buildDir), "${appNameFor(Target.windows)}.vcxproj"));
     final sdk = project.existsSync()
         ? RegExp(r'<WindowsTargetPlatformVersion>([^<]+)</WindowsTargetPlatformVersion>')
             .firstMatch(await project.readAsString())?.group(1)
@@ -767,7 +788,7 @@ class Build {
 
       final fileName = isLib
           ? "$libName${item.target.dynamicLibExtensionName}"
-          : "$coreName${item.target.executableExtensionName}";
+          : "${coreNameFor(item.target)}${item.target.executableExtensionName}";
       final realOutPath = join(outFilePath, fileName);
       corePaths.add(realOutPath);
 
@@ -881,7 +902,7 @@ class Build {
     final targetPath = join(
       outDir,
       target.name,
-      "FlClashHelperService${target.executableExtensionName}",
+      "${helperNameFor(target)}${target.executableExtensionName}",
     );
     await File(outPath).copy(targetPath);
   }
@@ -907,7 +928,7 @@ class Build {
     final targetPath = join(
       outDir,
       target.name,
-      "FlClashAgent${target.executableExtensionName}",
+      "${agentNameFor(target)}${target.executableExtensionName}",
     );
     await File(sourcePath).copy(targetPath);
   }
@@ -1022,6 +1043,114 @@ class Build {
     for (final entry in files.entries) {
       await File(entry.key).copy(join(buildDir, entry.value));
     }
+  }
+
+  static String renderWindowsInnoSetupScript({
+    required String template,
+    required String version,
+    required String archName,
+    required String buildDir,
+    required String setupIconFile,
+    required String chineseIslPath,
+    required bool strict,
+  }) {
+    final winAppName = appNameFor(Target.windows);
+    final winAgentName = "${agentNameFor(Target.windows)}.exe";
+    final rendered = template
+        .replaceAll("AppId={{APP_ID}}", "AppId={{$windowsAppId}")
+        .replaceAll("{{APP_ID}}", windowsAppId)
+        .replaceAll("{{APP_VERSION}}", version)
+        .replaceAll("{{DISPLAY_NAME}}", windowsDisplayName)
+        .replaceAll("{{PUBLISHER_NAME}}", windowsPublisherName)
+        .replaceAll("{{PUBLISHER_URL}}", windowsPublisherUrl)
+        .replaceAll("{{INSTALL_DIR_NAME}}", "{autopf}\\$winAppName")
+        .replaceAll(
+            "{{OUTPUT_BASE_FILENAME}}", "$winAppName-windows-$archName-setup")
+        .replaceAll("{{SETUP_ICON_FILE}}", setupIconFile)
+        .replaceAll("{{PRIVILEGES_REQUIRED}}", "admin")
+        .replaceAll("{{ARCH}}", archName == "amd64" ? "x64compatible" : "arm64")
+        .replaceAll("{{SOURCE_DIR}}", buildDir)
+        .replaceAll(
+          "{{STRICT_UPGRADE_STOP}}",
+          strict
+              ? '''  StopStrictService('FlClashStrictBroker');
+  StopStrictService('FlClashStrictCallout');'''
+              : "",
+        )
+        .replaceAll("{{EXECUTABLE_NAME}}", "$winAppName.exe")
+        .replaceAll(
+          "{{STRICT_PACKAGE_FILES}}",
+          strict
+              ? '''Source: "{{SOURCE_DIR}}\\FlClashStrictCallout.sys"; DestDir: "{commonpf}\\FreedomNet Service"; Flags: ignoreversion
+Source: "{{SOURCE_DIR}}\\FlClashStrictBroker.exe"; DestDir: "{commonpf}\\FreedomNet Service"; Flags: ignoreversion
+Source: "{{SOURCE_DIR}}\\strict-package-manifest.json"; DestDir: "{commonpf}\\FreedomNet Service"; Flags: ignoreversion
+Source: "{{SOURCE_DIR}}\\$winAgentName"; DestDir: "{commonpf}\\FreedomNet Service"; Flags: ignoreversion'''
+              : "",
+        )
+        .replaceAll(
+          "{{STRICT_SERVICE_BLOCK}}",
+          strict
+              ? '''    SecureStrictRecoveryDirectory;
+    StrictSc('query "FlClashStrictCallout"', ResultCode);
+    if ResultCode = 1060 then
+      StrictSc('create "FlClashStrictCallout" type= kernel start= demand binPath= "' + ExpandConstant('{commonpf}\\FreedomNet Service\\FlClashStrictCallout.sys') + '"', ResultCode)
+    else if ResultCode = 0 then
+      StrictSc('config "FlClashStrictCallout" type= kernel start= demand binPath= "' + ExpandConstant('{commonpf}\\FreedomNet Service\\FlClashStrictCallout.sys') + '"', ResultCode);
+    if ResultCode = 0 then
+      StrictSc('start "FlClashStrictCallout"', ResultCode);
+    if (ResultCode <> 0) and (ResultCode <> 1056) then
+      RaiseException('Strict driver registration or startup failed. Existing protection is retained.');
+    StrictBrokerExe := ExpandConstant('{commonpf}\\FreedomNet Service\\FlClashStrictBroker.exe');
+    StrictSc('query "FlClashStrictBroker"', ResultCode);
+    if ResultCode = 0 then
+      StrictSc('config "FlClashStrictBroker" binPath= "\"' + StrictBrokerExe + '\"" obj= LocalSystem type= own start= auto', ResultCode);
+    if ResultCode = 1060 then
+      StrictSc('create "FlClashStrictBroker" binPath= "\"' + StrictBrokerExe + '\"" obj= LocalSystem type= own start= auto', ResultCode);
+    if ResultCode = 0 then
+      StrictSc('config "FlClashStrictBroker" binPath= "\"' + StrictBrokerExe + '\"" obj= LocalSystem type= own start= auto', ResultCode);
+    if ResultCode = 0 then
+      StrictSc('failure "FlClashStrictBroker" reset= 86400 actions= restart/60000/restart/120000/""', ResultCode);
+    if ResultCode = 0 then
+      StrictSc('failureflag "FlClashStrictBroker" 1', ResultCode);
+    if ResultCode = 0 then
+      StrictSc('start "FlClashStrictBroker"', ResultCode);
+    if ResultCode <> 0 then
+    begin
+      MsgBox('Strict Broker service registration or startup failed. Installation cannot continue.', mbError, MB_OK);
+      Abort;
+    end;'''
+              : "",
+        )
+        .replaceAll(
+          "{{STRICT_UNINSTALL_BLOCK}}",
+          strict
+              ? '''      StopStrictService('FlClashStrictBroker');
+      StopStrictService('FlClashStrictCallout');
+      StrictSc('delete "FlClashStrictBroker"', ResultCode);
+      if (ResultCode <> 0) and (ResultCode <> 1060) then
+        RaiseException('Cannot remove Strict Broker service.');
+      StrictSc('delete "FlClashStrictCallout"', ResultCode);
+      if (ResultCode <> 0) and (ResultCode <> 1060) then
+        RaiseException('Cannot remove Strict driver service.');'''
+              : "",
+        )
+        .replaceAll("{{SOURCE_DIR}}", buildDir);
+
+    final langLines = <String>[
+      'Name: "chineseSimplified"; MessagesFile: "$chineseIslPath"',
+      'Name: "english"; MessagesFile: "compiler:Default.isl"',
+    ];
+    var processed = rendered.replaceAll(
+      RegExp(r'\{% for locale in LOCALES %\}.*?\{% endfor %\}', dotAll: true),
+      langLines.join('\n'),
+    );
+    processed = processed.replaceAllMapped(
+      RegExp(
+          r"\{%\s*if\s+PRIVILEGES_REQUIRED\s*==\s*'admin'\s*%\}(.*?)\{%\s*endif\s*%\}",
+          dotAll: true),
+      (m) => m.group(1)!,
+    );
+    return processed;
   }
 
   static List<String> getExecutable(String command) => command.split(" ");
@@ -1246,8 +1375,9 @@ class BuildCommand extends Command {
     final winArch = arch == Arch.arm64 ? "arm64" : "x64";
     final buildDir =
         join(current, "build", "windows", winArch, "runner", "Release");
+    final winAppName = Build.appNameFor(Target.windows);
     if (Build.strictPackageEnabled) {
-      await Build.signWindowsBinary(join(buildDir, '${Build.appName}.exe'));
+      await Build.signWindowsBinary(join(buildDir, '$winAppName.exe'));
     }
     Build.bundleWindowsMsvcRuntime(buildDir, winArch);
     if (Build.strictPackageEnabled) {
@@ -1283,7 +1413,7 @@ class BuildCommand extends Command {
     if (!distDir.existsSync()) distDir.createSync(recursive: true);
 
     final archName = arch.name;
-    final zipName = "${Build.appName}-windows-$archName.zip";
+    final zipName = "$winAppName-windows-$archName.zip";
     final zipPath = join(Build.distPath, zipName);
     await Build.createDeterministicZip(
       sourceDirectory: buildDir,
@@ -1297,116 +1427,23 @@ class BuildCommand extends Command {
     final issTemplate =
         File(join(current, "windows", "packaging", "exe", "inno_setup.iss"));
     if (issTemplate.existsSync()) {
-      final issContent = issTemplate
-          .readAsStringSync()
-          .replaceAll("{{APP_ID}}", "728B3532-C74B-4870-9068-BE70FE12A3E6")
-          .replaceAll("{{APP_VERSION}}", version)
-          .replaceAll("{{DISPLAY_NAME}}", Build.appName)
-          .replaceAll("{{PUBLISHER_NAME}}", "pluralplay")
-          .replaceAll(
-              "{{PUBLISHER_URL}}", "https://github.com/pluralplay/FlClashX")
-          .replaceAll("{{INSTALL_DIR_NAME}}", "{autopf}\\${Build.appName}")
-          .replaceAll("{{OUTPUT_BASE_FILENAME}}",
-              "${Build.appName}-windows-$archName-setup")
-          .replaceAll("{{SETUP_ICON_FILE}}",
-              join(current, "windows", "runner", "resources", "app_icon.ico"))
-          .replaceAll("{{PRIVILEGES_REQUIRED}}", "admin")
-          .replaceAll(
-              "{{ARCH}}", archName == "amd64" ? "x64compatible" : "arm64")
-          .replaceAll("{{SOURCE_DIR}}", buildDir)
-          .replaceAll(
-            "{{STRICT_UPGRADE_STOP}}",
-            Build.strictPackageEnabled
-                ? '''  StopStrictService('FlClashStrictBroker');
-  StopStrictService('FlClashStrictCallout');'''
-                : "",
-          )
-          .replaceAll("{{EXECUTABLE_NAME}}", "${Build.appName}.exe")
-          .replaceAll(
-            "{{STRICT_PACKAGE_FILES}}",
-            Build.strictPackageEnabled
-                ? '''Source: "{{SOURCE_DIR}}\\FlClashStrictCallout.sys"; DestDir: "{commonpf}\\FlClashX Service"; Flags: ignoreversion\nSource: "{{SOURCE_DIR}}\\FlClashStrictBroker.exe"; DestDir: "{commonpf}\\FlClashX Service"; Flags: ignoreversion\nSource: "{{SOURCE_DIR}}\\strict-package-manifest.json"; DestDir: "{commonpf}\\FlClashX Service"; Flags: ignoreversion\nSource: "{{SOURCE_DIR}}\\FlClashAgent.exe"; DestDir: "{commonpf}\\FlClashX Service"; Flags: ignoreversion'''
-                : "",
-          )
-          .replaceAll(
-            "{{STRICT_SERVICE_BLOCK}}",
-            Build.strictPackageEnabled
-                ? '''    SecureStrictRecoveryDirectory;
-    StrictSc('query "FlClashStrictCallout"', ResultCode);
-    if ResultCode = 1060 then
-      StrictSc('create "FlClashStrictCallout" type= kernel start= demand binPath= "' + ExpandConstant('{commonpf}\\FlClashX Service\\FlClashStrictCallout.sys') + '"', ResultCode)
-    else if ResultCode = 0 then
-      StrictSc('config "FlClashStrictCallout" type= kernel start= demand binPath= "' + ExpandConstant('{commonpf}\\FlClashX Service\\FlClashStrictCallout.sys') + '"', ResultCode);
-    if ResultCode = 0 then
-      StrictSc('start "FlClashStrictCallout"', ResultCode);
-    if (ResultCode <> 0) and (ResultCode <> 1056) then
-      RaiseException('Strict driver registration or startup failed. Existing protection is retained.');
-    StrictBrokerExe := ExpandConstant('{commonpf}\\FlClashX Service\\FlClashStrictBroker.exe');
-    StrictSc('query "FlClashStrictBroker"', ResultCode);
-    if ResultCode = 0 then
-      StrictSc('config "FlClashStrictBroker" binPath= "\\"' + StrictBrokerExe + '\\"" obj= LocalSystem type= own start= auto', ResultCode);
-    if ResultCode = 1060 then
-      StrictSc('create "FlClashStrictBroker" binPath= "\\"' + StrictBrokerExe + '\\"" obj= LocalSystem type= own start= auto', ResultCode);
-    if ResultCode = 0 then
-      StrictSc('config "FlClashStrictBroker" binPath= "\\"' + StrictBrokerExe + '\\"" obj= LocalSystem type= own start= auto', ResultCode);
-    if ResultCode = 0 then
-      StrictSc('failure "FlClashStrictBroker" reset= 86400 actions= restart/60000/restart/120000/""', ResultCode);
-    if ResultCode = 0 then
-      StrictSc('failureflag "FlClashStrictBroker" 1', ResultCode);
-    if ResultCode = 0 then
-      StrictSc('start "FlClashStrictBroker"', ResultCode);
-    if ResultCode <> 0 then
-    begin
-      MsgBox('Strict Broker service registration or startup failed. Installation cannot continue.', mbError, MB_OK);
-      Abort;
-    end;'''
-                : "",
-          )
-          .replaceAll(
-            "{{STRICT_UNINSTALL_BLOCK}}",
-            Build.strictPackageEnabled
-                ? '''      StopStrictService('FlClashStrictBroker');
-      StopStrictService('FlClashStrictCallout');
-      StrictSc('delete "FlClashStrictBroker"', ResultCode);
-      if (ResultCode <> 0) and (ResultCode <> 1060) then
-        RaiseException('Cannot remove Strict Broker service.');
-      StrictSc('delete "FlClashStrictCallout"', ResultCode);
-      if (ResultCode <> 0) and (ResultCode <> 1060) then
-        RaiseException('Cannot remove Strict driver service.');'''
-                : "",
-          )
-          // The strict file block is injected after the normal source-dir
-          // substitution, so expand its intentionally repeated placeholder.
-          .replaceAll("{{SOURCE_DIR}}", buildDir);
-
-      var processed = issContent;
-      final locales = [
-        {"lang": "ru"},
-        {"lang": "en"},
-      ];
-      final langLines = <String>[];
-      for (final locale in locales) {
-        final lang = locale["lang"]!;
-        if (lang == "en")
-          langLines
-              .add('Name: "english"; MessagesFile: "compiler:Default.isl"');
-        if (lang == "ru")
-          langLines.add(
-              'Name: "russian"; MessagesFile: "compiler:Languages\\Russian.isl"');
-      }
-      processed = processed.replaceAll(
-        RegExp(r'\{% for locale in LOCALES %\}.*?\{% endfor %\}', dotAll: true),
-        langLines.join('\n'),
-      );
-      processed = processed.replaceAllMapped(
-        RegExp(
-            r"\{%\s*if\s+PRIVILEGES_REQUIRED\s*==\s*'admin'\s*%\}(.*?)\{%\s*endif\s*%\}",
-            dotAll: true),
-        (m) => m.group(1)!,
+      final processed = Build.renderWindowsInnoSetupScript(
+        template: issTemplate.readAsStringSync(),
+        version: version,
+        archName: archName,
+        buildDir: buildDir,
+        setupIconFile:
+            join(current, "windows", "runner", "resources", "app_icon.ico"),
+        chineseIslPath:
+            join(current, "windows", "packaging", "exe", "ChineseSimplified.isl"),
+        strict: Build.strictPackageEnabled,
       );
 
       final issOut = File(join(Build.distPath, "setup.iss"));
-      issOut.writeAsStringSync(processed);
+      issOut.writeAsBytesSync(
+        [0xEF, 0xBB, 0xBF, ...utf8.encode(processed)],
+        flush: true,
+      );
       final innoCompiler = Platform.environment["INNO_ISCC"] ??
           r"C:\Program Files (x86)\Inno Setup 6\ISCC.exe";
       if (File(innoCompiler).existsSync()) {
@@ -1415,8 +1452,8 @@ class BuildCommand extends Command {
           [innoCompiler, issOut.path],
           runInShell: false,
         );
-        final setupPath = join(Build.distPath,
-            "${Build.appName}-windows-$archName-setup.exe");
+        final setupPath =
+            join(Build.distPath, "$winAppName-windows-$archName-setup.exe");
         if (!File(setupPath).existsSync()) {
           throw "Inno Setup completed without creating $setupPath";
         }
@@ -1440,7 +1477,7 @@ class BuildCommand extends Command {
           Directory(msixDir).listSync().where((f) => f.path.endsWith(".msix"));
       if (msixFiles.isNotEmpty) {
         final msixOutPath =
-            join(Build.distPath, "${Build.appName}-windows-${arch.name}.msix");
+            join(Build.distPath, "$winAppName-windows-${arch.name}.msix");
         Build.copyFile(msixFiles.first.path, msixOutPath);
         print("✅ MSIX created: $msixOutPath");
       }
@@ -1834,9 +1871,11 @@ class BuildCommand extends Command {
         await Build.buildAgent(target, arch: arch);
         await Build.buildHelper(target, token, arch: arch);
         if (Build.strictPackageEnabled) {
-          final agentPath = join(Build.outDir, target.name, 'FlClashAgent.exe');
+          final agentPath = join(
+              Build.outDir, target.name, '${Build.agentNameFor(target)}.exe');
           await Build.signWindowsBinary(agentPath);
-          await Build.signWindowsBinary(join(Build.outDir, target.name, 'FlClashHelperService.exe'));
+          await Build.signWindowsBinary(join(
+              Build.outDir, target.name, '${Build.helperNameFor(target)}.exe'));
           await Build.prepareStrictManifest(corePaths.first, agentPath);
         }
         final strictBrokerPath = Build.strictPackageEnabled

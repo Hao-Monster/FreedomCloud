@@ -15,6 +15,7 @@ import 'package:intl/intl.dart';
 import 'package:tray_manager/tray_manager.dart';
 
 import 'app_localizations.dart';
+import 'constant.dart';
 import 'statusbar.dart';
 import 'window.dart';
 
@@ -148,8 +149,12 @@ class Tray {
       );
       _lastIconPath = iconPath;
     }
-    final tooltip = appLocalizations.appBrandName;
-    if (!Platform.isLinux && (force || _lastToolTip != tooltip)) {
+    const tooltip = brandDisplayName;
+    final shouldResetToolTip = force ||
+        _lastToolTip == null ||
+        !_lastToolTip!.startsWith(tooltip) ||
+        (!isRunning && _lastToolTip != tooltip);
+    if (!Platform.isLinux && shouldResetToolTip) {
       await trayManager.setToolTip(
         tooltip,
       );
@@ -359,7 +364,7 @@ class Tray {
     }
     if (!Platform.isWindows) return;
     final nextToolTip =
-        '${appLocalizations.appBrandName} · ↑ ${traffic.up.show}/s ↓ ${traffic.down.show}/s';
+        '$brandDisplayName · ↑ ${traffic.up.show}/s ↓ ${traffic.down.show}/s';
     if (_lastToolTip == nextToolTip) return;
     _lastToolTip = nextToolTip;
     await trayManager.setToolTip(nextToolTip);

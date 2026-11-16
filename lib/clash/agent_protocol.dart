@@ -1,9 +1,10 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 
 const agentProtocolVersion = 1;
-const agentEndpointFileName = 'flclashx-agent-v1.json';
+String get agentEndpointFileName => Platform.isWindows ? 'freedomnet-agent-v1.json' : 'flclashx-agent-v1.json';
 
 enum AgentCommand {
   restartCore,

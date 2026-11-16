@@ -11,8 +11,8 @@ void main() {
   late String service;
   setUp(() async {
     root = await Directory.systemTemp.createTemp('strict-launch-');
-    agent = p.join(root.path, 'FlClashAgent.exe');
-    core = p.join(root.path, 'FlClashCore.exe');
+    agent = p.join(root.path, 'FreedomNetAgent.exe');
+    core = p.join(root.path, 'FreedomNetCore.exe');
     await File(agent).writeAsString('agent');
     await File(core).writeAsString('core');
     service = p.join(root.path, 'protected');
@@ -27,8 +27,8 @@ void main() {
   Future<void> install() async {
     await File(p.join(service, 'FlClashStrictBroker.exe'))
         .writeAsString('broker');
-    await File(agent).copy(p.join(service, 'FlClashAgent.exe'));
-    await File(core).copy(p.join(service, 'FlClashCore.exe'));
+    await File(agent).copy(p.join(service, 'FreedomNetAgent.exe'));
+    await File(core).copy(p.join(service, 'FreedomNetCore.exe'));
   }
 
   test('ordinary portable launch uses bundled components', () async {
@@ -37,11 +37,11 @@ void main() {
   test('strict installation launches both protected components', () async {
     await install();
     expect(await resolve(), (
-      agent: p.join(service, 'FlClashAgent.exe'),
-      core: p.join(service, 'FlClashCore.exe'),
+      agent: p.join(service, 'FreedomNetAgent.exe'),
+      core: p.join(service, 'FreedomNetCore.exe'),
     ));
   });
-  for (final name in ['FlClashAgent.exe', 'FlClashCore.exe']) {
+  for (final name in ['FreedomNetAgent.exe', 'FreedomNetCore.exe']) {
     test('rejects mismatched $name without portable fallback', () async {
       await install();
       await File(p.join(service, name)).writeAsString('other build');
@@ -83,12 +83,12 @@ void main() {
       await install();
       expect(await launch(), isTrue);
       expect(starts, hasLength(1));
-      expect(starts.single.$1, p.join(service, 'FlClashAgent.exe'));
-      expect(starts.single.$2, ['--core', p.join(service, 'FlClashCore.exe')]);
+      expect(starts.single.$1, p.join(service, 'FreedomNetAgent.exe'));
+      expect(starts.single.$2, ['--core', p.join(service, 'FreedomNetCore.exe')]);
       expect(errors, isEmpty);
     });
 
-    for (final name in ['FlClashAgent.exe', 'FlClashCore.exe']) {
+    for (final name in ['FreedomNetAgent.exe', 'FreedomNetCore.exe']) {
       test(
         'mismatched $name reports failure on every retry without launch',
         () async {

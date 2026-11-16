@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{anyhow, bail, Context, Result};
 
 const CORE_FILE_NAME: &str = if cfg!(windows) {
-    "FlClashCore.exe"
+    "FreedomNetCore.exe"
 } else {
     "FlClashCore"
 };
@@ -30,7 +30,7 @@ impl AgentConfig {
         let mut home = None;
         let mut core = None;
         let mut service_core = None;
-        let mut helper_port = 47_890;
+        let mut helper_port = 47_895;
         let mut use_helper = false;
         let mut args = args.into_iter();
 
@@ -165,7 +165,7 @@ mod tests {
         let install = TempDir::new();
         let outside = TempDir::new();
         let agent = install.0.join(if cfg!(windows) {
-            "FlClashAgent.exe"
+            "FreedomNetAgent.exe"
         } else {
             "FlClashAgent"
         });

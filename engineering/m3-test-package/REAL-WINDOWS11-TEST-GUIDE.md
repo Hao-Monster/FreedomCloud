@@ -13,8 +13,8 @@
 
    - `FlClashStrictCallout.sys`
    - `FlClashStrictBroker.exe`
-   - `FlClashAgent.exe`
-   - `FlClashCore.exe`
+   - `FreedomNetAgent.exe`
+   - `FreedomNetCore.exe`
    - `strict-package-manifest.json`
    - `SHA256SUMS.txt`
 
@@ -64,7 +64,7 @@ pwsh -NoProfile -File '.\Invoke-M3VmPreflight.ps1' `
 才允许显示 `armed`。
 
 1. **初始状态**：不选择严格应用，确认普通 Mihomo 域名/IP 规则可用；记录
-   `FlClashX`、`FlClashAgent`、`FlClashCore`、`FlClashStrictBroker` 和服务
+   `FreedomNet`、`FreedomNetAgent`、`FreedomNetCore`、`FlClashStrictBroker` 和服务
    状态。
 2. **应用身份**：选择 Edge 和一个 Electron 应用，检查显示名称、图标、规范化
    路径及其实际联网的 helper/renderer 子进程。路径或签名身份不匹配时必须拒绝，
@@ -107,16 +107,16 @@ working set/private bytes、句柄、线程和驱动 nonpaged-pool。至少持�
 
 | 类别 | 默认位置 |
 |---|---|
-| Flutter/UI | `%APPDATA%\com.follow\clashx\logs` |
-| UI 备用目录 | `%LOCALAPPDATA%\FlClashX\logs` |
-| Agent/应用公共日志 | `%ProgramData%\FlClashX\logs` |
-| Strict Broker | `%ProgramData%\FlClashX.StrictBroker\logs` |
-| Helper 服务 | `%ProgramFiles%\FlClashX Service\logs` |
+| Flutter/UI | `%APPDATA%\FreedomNet\FreedomNet\logs` |
+| UI 备用目录 | `%LOCALAPPDATA%\FreedomNet\logs` |
+| Agent/应用公共日志 | `%ProgramData%\FreedomNet\logs` |
+| Strict Broker | `%ProgramData%\FreedomNet.StrictBroker\logs` |
+| Helper 服务 | `%ProgramFiles%\FreedomNet Service\logs` |
 | SCM 事件 | Windows Event Viewer → Windows Logs → System → Service Control Manager |
 | 驱动内核诊断 | DebugView/ETW capture；驱动不会自行写普通文本文件 |
 
-允许收集的日志名包括 `FlClashX_YYYY-MM-DD*.log`、
-`connections_diagnostic*.log`、`FlClashAgent*.log`、`FlClashHelperService*.log`
+允许收集的日志名包括 `FreedomNet_YYYY-MM-DD*.log`、
+`connections_diagnostic*.log`、`FreedomNetAgent*.log`、`FreedomNetHelperService*.log`
 和 `FlClashStrictBroker*.log`。不要提交配置 YAML、订阅地址、token、认证头、
 完整主机/IP 历史、用户名、进程命令行或数据包内容。
 
@@ -143,8 +143,8 @@ powershell.exe -NoLogo -NoProfile -NonInteractive `
 手工服务/进程信息可用：
 
 ```powershell
-Get-Service FlClashStrictCallout,FlClashStrictBroker,FlClashHelperService -ErrorAction SilentlyContinue
-Get-Process FlClashX,FlClashAgent,FlClashCore,FlClashStrictBroker,FlClashHelperService -ErrorAction SilentlyContinue |
+Get-Service FlClashStrictCallout,FlClashStrictBroker,FreedomNetHelperService -ErrorAction SilentlyContinue
+Get-Process FreedomNet,FreedomNetAgent,FreedomNetCore,FlClashStrictBroker,FreedomNetHelperService -ErrorAction SilentlyContinue |
   Select-Object Name,Id,WorkingSet64,PrivateMemorySize64,HandleCount,Threads
 Get-WinEvent -FilterHashtable @{LogName='System'; ProviderName='Service Control Manager'; StartTime=(Get-Date).AddHours(-2)} |
   Select-Object TimeCreated,Id,LevelDisplayName,Message

@@ -209,8 +209,12 @@ void main() {
     expect(await storage.readSession(), isNull);
     expect((await storage.readPending(1))!.previousUsageIds, [2, 5]);
     expect(await storage.readProfileId(1), 'profile-one');
-    expect(backend.deletions, hasLength(1));
-    expect(backend.deletions.single, endsWith('.session'));
+    expect(backend.deletions, hasLength(2));
+    expect(backend.deletions, everyElement(endsWith('.session')));
+    expect(
+      backend.deletions.map((key) => key.split('.').first).toSet(),
+      equals({'freedomnet', 'flclashx'}),
+    );
 
     await storage
         .saveSession(const PurchaseSession(2, 'Bearer second-fixture'));
@@ -230,7 +234,7 @@ void main() {
       expect(
         key,
         matches(RegExp(
-            r'^flclashx\.xboard\.[a-f0-9]{64}\.(session|pending\.1|profile\.1)$')),
+            r'^freedomnet\.xboard\.[a-f0-9]{64}\.(session|pending\.1|profile\.1)$')),
       );
       expect(key, isNot(contains(_giftCode)));
       expect(key, isNot(contains(_authorization)));

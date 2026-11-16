@@ -23,14 +23,17 @@ void main() {
     addTearDown(logger.dispose);
     logger.log('new bounded data');
     await _waitUntil(() async {
-      final current = File('${directory.path}/FlClashX_2026-10-09.log');
+      final current = File('${directory.path}/FreedomNet_2026-10-09.log');
       return await current.exists() &&
           (await current.readAsString()).contains('new bounded data');
     });
     await logger.dispose();
     final files = await directory
         .list()
-        .where((entry) => entry is File && entry.path.contains('FlClashX_'))
+        .where((entry) =>
+            entry is File &&
+            (entry.path.contains('FreedomNet_') ||
+                entry.path.contains('FlClashX_')))
         .cast<File>()
         .toList();
     final lengths = await Future.wait(files.map((file) => file.length()));
@@ -113,7 +116,7 @@ void main() {
     }
     final own = await directory
         .list()
-        .where((entry) => entry is File && entry.path.contains('FlClashX_'))
+        .where((entry) => entry is File && entry.path.contains('FreedomNet_'))
         .toList();
     expect(own.length, lessThanOrEqualTo(3));
     expect(await foreign.readAsString(), 'keep diagnostics');
@@ -129,8 +132,8 @@ void main() {
     final logger =
         FileLogger.forTesting(() async => directory.path, now: () => now);
     addTearDown(logger.dispose);
-    final dayOne = File('${directory.path}/FlClashX_2026-10-09.log');
-    final dayTwo = File('${directory.path}/FlClashX_2026-10-10.log');
+    final dayOne = File('${directory.path}/FreedomNet_2026-10-09.log');
+    final dayTwo = File('${directory.path}/FreedomNet_2026-10-10.log');
     logger.log('before midnight');
     await _waitUntil(() async =>
         await dayOne.exists() &&

@@ -64,8 +64,8 @@ Future<AgentLaunchPaths> windowsAgentLaunchPaths({
   if (!File(p.join(serviceDirectory, 'FlClashStrictBroker.exe')).existsSync()) {
     return (agent: bundledAgent, core: bundledCore);
   }
-  final agent = p.join(serviceDirectory, 'FlClashAgent.exe');
-  final core = p.join(serviceDirectory, 'FlClashCore.exe');
+  final agent = p.join(serviceDirectory, 'FreedomNetAgent.exe');
+  final core = p.join(serviceDirectory, 'FreedomNetCore.exe');
   for (final pair in [(bundledAgent, agent), (bundledCore, core)]) {
     final digests = await Future.wait([
       fileSha256(pair.$1),

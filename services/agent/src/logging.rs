@@ -22,7 +22,12 @@ pub struct AgentLogger {
 
 impl AgentLogger {
     pub fn new(home: &Path) -> Arc<Self> {
-        let path = home.join("logs").join("FlClashAgent.log");
+        let log_file_name = if cfg!(windows) {
+            "FreedomNetAgent.log"
+        } else {
+            "FlClashAgent.log"
+        };
+        let path = home.join("logs").join(log_file_name);
         let (sender, receiver) = mpsc::sync_channel(CHANNEL_CAPACITY);
         let dropped = Arc::new(AtomicU64::new(0));
         let writer_dropped = Arc::clone(&dropped);
@@ -55,28 +60,33 @@ impl AgentLogger {
 /// the same per-user application data root without spawning a background
 /// writer that could be terminated before it flushes.
 pub fn log_bootstrap_failure(message: impl AsRef<str>) {
+    let bootstrap_file_name = if cfg!(windows) {
+        "FreedomNetAgent.bootstrap.log"
+    } else {
+        "FlClashAgent.bootstrap.log"
+    };
     let path = std::env::var_os("APPDATA")
         .map(PathBuf::from)
         .map(|root| {
-            root.join("com.follow")
-                .join("clashx")
+            root.join("FreedomNet")
+                .join("FreedomNet")
                 .join("logs")
-                .join("FlClashAgent.bootstrap.log")
+                .join(bootstrap_file_name)
         })
         .or_else(|| {
             std::env::var_os("LOCALAPPDATA")
                 .map(PathBuf::from)
                 .map(|root| {
-                    root.join("FlClashX")
+                    root.join("FreedomNet")
                         .join("logs")
-                        .join("FlClashAgent.bootstrap.log")
+                        .join(bootstrap_file_name)
                 })
         })
         .or_else(|| {
             std::env::current_exe()
                 .ok()
                 .and_then(|path| path.parent().map(Path::to_path_buf))
-                .map(|root| root.join("logs").join("FlClashAgent.bootstrap.log"))
+                .map(|root| root.join("logs").join(bootstrap_file_name))
         });
     let Some(path) = path else {
         return;

@@ -172,7 +172,7 @@ Future<void> _handleStart() async {
 }
 
 String _buildNotificationTitle(Profile? profile) {
-  if (profile == null) return appLocalizations.appBrandName;
+  if (profile == null) return brandDisplayName;
   final profileName = profile.label ?? profile.id;
 
   String serviceName = '';

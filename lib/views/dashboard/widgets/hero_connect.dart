@@ -235,8 +235,7 @@ class HeroConnect extends ConsumerWidget {
     final profile = ref.watch(currentProfileProvider);
     final headers = profile?.providerHeaders ?? {};
     final serviceName =
-        _decodeBase64(headers['flclashx-servicename']) ??
-            appLocalizations.appBrandName;
+        _decodeBase64(headers['flclashx-servicename']) ?? brandDisplayName;
     final logoUrl = _decodeBase64(headers['flclashx-servicelogo']);
     final announce = _decodeAnnounce(headers['announce']);
     final sub = profile?.subscriptionInfo;
@@ -1171,7 +1170,7 @@ class _EmptyHero extends ConsumerWidget {
         const _Logo(),
         const SizedBox(height: 16),
         Text(
-          appLocalizations.appBrandName,
+          brandDisplayName,
           style: context.textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w700),
         ),
         const SizedBox(height: 24),

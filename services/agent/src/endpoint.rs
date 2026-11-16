@@ -10,9 +10,21 @@ use serde::{Deserialize, Serialize};
 
 use crate::protocol::PROTOCOL_VERSION;
 
-pub const ENDPOINT_FILE_NAME: &str = "flclashx-agent-v1.json";
-const LOCK_FILE_NAME: &str = "flclashx-agent-v1.lock";
-pub const HELPER_TOKEN_FILE_NAME: &str = "flclashx-helper-v1.token";
+pub const ENDPOINT_FILE_NAME: &str = if cfg!(windows) {
+    "freedomnet-agent-v1.json"
+} else {
+    "flclashx-agent-v1.json"
+};
+const LOCK_FILE_NAME: &str = if cfg!(windows) {
+    "freedomnet-agent-v1.lock"
+} else {
+    "flclashx-agent-v1.lock"
+};
+pub const HELPER_TOKEN_FILE_NAME: &str = if cfg!(windows) {
+    "freedomnet-helper-v1.token"
+} else {
+    "flclashx-helper-v1.token"
+};
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub struct EndpointDocument {

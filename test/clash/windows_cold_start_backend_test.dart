@@ -362,12 +362,12 @@ void main() {
 
     setUp(() async {
       tempDir = await Directory.systemTemp.createTemp('win-cold-start-');
-      bundledAgent = p.join(tempDir.path, 'FlClashAgent.exe');
-      bundledCore = p.join(tempDir.path, 'FlClashCore.exe');
-      bundledHelper = p.join(tempDir.path, 'FlClashHelperService.exe');
+      bundledAgent = p.join(tempDir.path, 'FreedomNetAgent.exe');
+      bundledCore = p.join(tempDir.path, 'FreedomNetCore.exe');
+      bundledHelper = p.join(tempDir.path, 'FreedomNetHelperService.exe');
       serviceDir = p.join(tempDir.path, 'service');
-      serviceHelper = p.join(serviceDir, 'FlClashHelperService.exe');
-      serviceCore = p.join(serviceDir, 'FlClashCore.exe');
+      serviceHelper = p.join(serviceDir, 'FreedomNetHelperService.exe');
+      serviceCore = p.join(serviceDir, 'FreedomNetCore.exe');
       endpointPath = p.join(tempDir.path, agentEndpointFileName);
 
       await Directory(serviceDir).create(recursive: true);

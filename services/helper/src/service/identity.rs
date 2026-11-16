@@ -69,7 +69,7 @@ mod tests {
     #[test]
     fn request_requires_the_authentication_fields() {
         let parsed = serde_json::from_str::<InspectStrictIdentityParams>(
-            r#"{"path":"C:\\Apps\\edge.exe","home_dir":"C:\\Users\\test\\AppData\\Roaming\\com.follow\\clashx","helper_token":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}"#,
+            r#"{"path":"C:\\Apps\\edge.exe","home_dir":"C:\\Users\\test\\AppData\\Roaming\\FreedomNet\\FreedomNet","helper_token":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}"#,
         )
         .expect("valid inspect request");
         assert_eq!(parsed.path, r#"C:\Apps\edge.exe"#);

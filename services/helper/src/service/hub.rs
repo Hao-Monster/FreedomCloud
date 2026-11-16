@@ -12,11 +12,15 @@ use warp::{Filter, Reply};
 
 use super::logging::ServiceLogger;
 
-const LISTEN_PORT: u16 = 47890;
+const LISTEN_PORT: u16 = 47895;
 const MAX_REQUEST_BYTES: u64 = 16 * 1024;
-const HELPER_TOKEN_FILE_NAME: &str = "flclashx-helper-v1.token";
+const HELPER_TOKEN_FILE_NAME: &str = if cfg!(windows) {
+    "freedomnet-helper-v1.token"
+} else {
+    "flclashx-helper-v1.token"
+};
 const CORE_FILE_NAME: &str = if cfg!(windows) {
-    "FlClashCore.exe"
+    "FreedomNetCore.exe"
 } else {
     "FlClashCore"
 };
@@ -158,7 +162,7 @@ pub(crate) fn validate_home_directory(value: Option<String>) -> Result<PathBuf, 
     // path_provider on Windows resolves application support to this fixed
     // suffix. Requiring it prevents an unauthenticated local caller from using
     // the SYSTEM core as a write primitive against arbitrary directories.
-    let suffix = ["appdata", "roaming", "com.follow", "clashx"];
+    let suffix = ["appdata", "roaming", "freedomnet", "freedomnet"];
     let components = canonical
         .components()
         .map(|component| component.as_os_str().to_string_lossy().to_lowercase())
@@ -418,7 +422,7 @@ where
     {
         logger.record_core_output_failure();
         logger.log(format!("Core {channel} reader could not start: {error}"));
-        eprintln!("FlClashHelperService: Core {channel} reader could not start: {error}");
+        eprintln!("FreedomNetHelperService: Core {channel} reader could not start: {error}");
     }
 }
 
@@ -994,7 +998,7 @@ mod tests {
     async fn owned_http_routes_reject_lost_session_and_invalid_start_without_spawning() {
         let routes = control_routes(ServiceLogger::discard_for_test());
         let root = TempDir::new();
-        let app_home = root.path().join("AppData/Roaming/com.follow/clashx");
+        let app_home = root.path().join("AppData/Roaming/FreedomNet/FreedomNet");
         fs::create_dir_all(&app_home).unwrap();
         let token = "a".repeat(64);
         fs::write(app_home.join(HELPER_TOKEN_FILE_NAME), &token).unwrap();
@@ -1126,7 +1130,7 @@ mod tests {
         let log_path = root.path().join("helper.log");
         let logger = ServiceLogger::new_at_path(log_path.clone());
         let routes = control_routes(logger.clone());
-        let app_home = root.path().join("AppData/Roaming/com.follow/clashx");
+        let app_home = root.path().join("AppData/Roaming/FreedomNet/FreedomNet");
         fs::create_dir_all(&app_home).unwrap();
         let token = "a".repeat(64);
         fs::write(app_home.join(HELPER_TOKEN_FILE_NAME), &token).unwrap();
@@ -1165,13 +1169,21 @@ mod tests {
             .path()
             .join("AppData")
             .join("Roaming")
+            .join("FreedomNet")
+            .join("FreedomNet");
+        let legacy_home = root
+            .path()
+            .join("AppData")
+            .join("Roaming")
             .join("com.follow")
             .join("clashx");
         let arbitrary = root.path().join("arbitrary");
         fs::create_dir_all(&app_home).expect("create application home");
+        fs::create_dir_all(&legacy_home).expect("create legacy application home");
         fs::create_dir_all(&arbitrary).expect("create arbitrary directory");
 
         assert!(validate_home_directory(Some(app_home.to_string_lossy().into())).is_ok());
+        assert!(validate_home_directory(Some(legacy_home.to_string_lossy().into())).is_err());
         assert!(validate_home_directory(Some(arbitrary.to_string_lossy().into())).is_err());
         assert!(validate_home_directory(None).is_err());
     }
@@ -1183,8 +1195,8 @@ mod tests {
             .path()
             .join("AppData")
             .join("Roaming")
-            .join("com.follow")
-            .join("clashx");
+            .join("FreedomNet")
+            .join("FreedomNet");
         fs::create_dir_all(&app_home).expect("create application home");
         let token = "a".repeat(64);
         fs::write(app_home.join(HELPER_TOKEN_FILE_NAME), &token).expect("write token");

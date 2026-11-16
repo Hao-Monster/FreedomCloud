@@ -6,12 +6,12 @@ import 'package:flclashx/enum/enum.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  const helperPath = r'C:\Program Files\FlClashX\FlClashHelperService.exe';
-  const corePath = r'C:\Program Files\FlClashX\FlClashCore.exe';
-  const serviceDirectory = r'C:\Program Files\FlClashX Service';
+  const helperPath = r'C:\Program Files\FreedomNet\FreedomNetHelperService.exe';
+  const corePath = r'C:\Program Files\FreedomNet\FreedomNetCore.exe';
+  const serviceDirectory = r'C:\Program Files\FreedomNet Service';
   const serviceHelperPath =
-      r'C:\Program Files\FlClashX Service\FlClashHelperService.exe';
-  const serviceCorePath = r'C:\Program Files\FlClashX Service\FlClashCore.exe';
+      r'C:\Program Files\FreedomNet Service\FreedomNetHelperService.exe';
+  const serviceCorePath = r'C:\Program Files\FreedomNet Service\FreedomNetCore.exe';
 
   test('new helper installation creates and starts the service', () {
     final command = buildWindowsHelperRepairCommand(
@@ -23,21 +23,21 @@ void main() {
       serviceCorePath: serviceCorePath,
     );
 
-    expect(command, contains('sc create FlClashHelperService'));
+    expect(command, contains('sc create FreedomNetHelperService'));
     expect(command, contains('(set "fcx_p=$serviceHelperPath")'));
     expect(command, contains(r'binPath= "\"!fcx_p!\""'));
     expect(command, isNot(contains('sc delete')));
     expect(command, contains('copy /b /y "$helperPath" "$serviceHelperPath"'));
     expect(command, contains('copy /b /y "$corePath" "$serviceCorePath"'));
     expect(command,
-        contains('copy /b /y "C:\\Program Files\\FlClashX\\msvcp140.dll"'));
+        contains('copy /b /y "C:\\Program Files\\FreedomNet\\msvcp140.dll"'));
     expect(command,
-        contains('copy /b /y "C:\\Program Files\\FlClashX\\vcruntime140.dll"'));
+        contains('copy /b /y "C:\\Program Files\\FreedomNet\\vcruntime140.dll"'));
     expect(
-        command, contains(r'%ProgramData%\FlClashX\logs\helper-install.log'));
-    expect(command, contains('sc sdset FlClashHelperService'));
+        command, contains(r'%ProgramData%\FreedomNet\logs\helper-install.log'));
+    expect(command, contains('sc sdset FreedomNetHelperService'));
     expect(command, contains('(A;;CCLCSWRPWPLOCRRC;;;IU)'));
-    expect(command, contains('sc queryex FlClashHelperService'));
+    expect(command, contains('sc queryex FreedomNetHelperService'));
     expect(command, isNot(contains('allowed_core.sha256')));
     expect(
         command.indexOf('copy /b /y'), lessThan(command.indexOf('sc create')));
@@ -55,7 +55,7 @@ void main() {
       serviceCorePath: serviceCorePath,
     );
 
-    expect(command, contains('sc config FlClashHelperService'));
+    expect(command, contains('sc config FreedomNetHelperService'));
     expect(command, contains('(set "fcx_p=$serviceHelperPath")'));
     expect(command, contains(r'binPath= "\"!fcx_p!\""'));
     // Legacy locked SDDL strips SD (DELETE) from BA/SY, so `sc delete` fails
@@ -68,7 +68,7 @@ void main() {
     // Must stay safely under cmd.exe's 8191-character command-line ceiling.
     expect(command.length, lessThan(7500));
     // net stop waits for STOPPED so the running helper binary can be replaced.
-    expect(command, contains('net stop FlClashHelperService'));
+    expect(command, contains('net stop FreedomNetHelperService'));
     expect(
         command.indexOf('net stop'), lessThan(command.indexOf('copy /b /y')));
     expect(
@@ -147,17 +147,17 @@ void main() {
       final source = Directory('${root.path}\\source')..createSync();
       final service = Directory('${root.path}\\service')..createSync();
       final logs = Directory('${root.path}\\logs')..createSync();
-      File('${source.path}\\FlClashHelperService.exe').writeAsStringSync('new');
-      File('${source.path}\\FlClashCore.exe').writeAsStringSync('core');
-      File('${service.path}\\FlClashHelperService.exe').writeAsStringSync('old');
+      File('${source.path}\\FreedomNetHelperService.exe').writeAsStringSync('new');
+      File('${source.path}\\FreedomNetCore.exe').writeAsStringSync('core');
+      File('${service.path}\\FreedomNetHelperService.exe').writeAsStringSync('old');
 
       final command = buildWindowsHelperRepairCommand(
         serviceExists: true,
-        helperPath: '${source.path}\\FlClashHelperService.exe',
-        corePath: '${source.path}\\FlClashCore.exe',
+        helperPath: '${source.path}\\FreedomNetHelperService.exe',
+        corePath: '${source.path}\\FreedomNetCore.exe',
         serviceDirectory: service.path,
-        serviceHelperPath: '${service.path}\\FlClashHelperService.exe',
-        serviceCorePath: '${service.path}\\FlClashCore.exe',
+        serviceHelperPath: '${service.path}\\FreedomNetHelperService.exe',
+        serviceCorePath: '${service.path}\\FreedomNetCore.exe',
         // Never touch a real service from a unit test.
         serviceName: 'FlClashRepairTestNoSuchService',
         logDirectory: logs.path,
@@ -185,11 +185,11 @@ void main() {
 
       expect(result.stderr.toString().trim(), isEmpty);
       expect(
-        File('${service.path}\\FlClashHelperService.exe').readAsStringSync(),
+        File('${service.path}\\FreedomNetHelperService.exe').readAsStringSync(),
         'new',
       );
       expect(
-        File('${service.path}\\FlClashCore.exe').readAsStringSync(),
+        File('${service.path}\\FreedomNetCore.exe').readAsStringSync(),
         'core',
       );
       final log = File('${logs.path}\\helper-install.log').readAsStringSync();
@@ -212,8 +212,8 @@ void main() {
       final scTrace = File('${root.path}\\sc-calls.txt');
       final psTrace = File('${root.path}\\ps-calls.txt');
 
-      File('${source.path}\\FlClashHelperService.exe').writeAsStringSync('new');
-      File('${source.path}\\FlClashCore.exe').writeAsStringSync('core');
+      File('${source.path}\\FreedomNetHelperService.exe').writeAsStringSync('new');
+      File('${source.path}\\FreedomNetCore.exe').writeAsStringSync('core');
       File('${bin.path}\\net.cmd').writeAsStringSync('@exit /b 0\r\n');
       File('${bin.path}\\powershell.cmd').writeAsStringSync(
         '@echo svc=%FCX_SVC%>>"${psTrace.path}"\r\n'
@@ -235,16 +235,16 @@ void main() {
       );
 
       final serviceX86 =
-          Directory('${root.path}\\Program Files (x86)\\FlClashX Service')
+          Directory('${root.path}\\Program Files (x86)\\FreedomNet Service')
             ..createSync(recursive: true);
-      final expectedServiceHelper = '${serviceX86.path}\\FlClashHelperService.exe';
+      final expectedServiceHelper = '${serviceX86.path}\\FreedomNetHelperService.exe';
       final command = buildWindowsHelperRepairCommand(
         serviceExists: true,
-        helperPath: '${source.path}\\FlClashHelperService.exe',
-        corePath: '${source.path}\\FlClashCore.exe',
+        helperPath: '${source.path}\\FreedomNetHelperService.exe',
+        corePath: '${source.path}\\FreedomNetCore.exe',
         serviceDirectory: serviceX86.path,
         serviceHelperPath: expectedServiceHelper,
-        serviceCorePath: '${serviceX86.path}\\FlClashCore.exe',
+        serviceCorePath: '${serviceX86.path}\\FreedomNetCore.exe',
         serviceName: 'FlClashRepairMockService',
         logDirectory: logs.path,
       );
@@ -396,9 +396,9 @@ void main() {
 
   test('service configuration must reference the current helper binary', () {
     const current =
-        r'BINARY_PATH_NAME   : "C:\Program Files\FlClashX Service\FlClashHelperService.exe"';
+        r'BINARY_PATH_NAME   : "C:\Program Files\FreedomNet Service\FreedomNetHelperService.exe"';
     const moved =
-        r'BINARY_PATH_NAME   : "D:\Old FlClashX\FlClashHelperService.exe"';
+        r'BINARY_PATH_NAME   : "D:\Old FreedomNet\FreedomNetHelperService.exe"';
 
     expect(
       windowsServiceConfigReferencesHelper(current, serviceHelperPath),
@@ -410,7 +410,7 @@ void main() {
     );
     expect(
       windowsServiceConfigReferencesHelper(
-        r'BINARY_PATH_NAME   : C:\Program Files\FlClashX Service\FlClashHelperService.exe',
+        r'BINARY_PATH_NAME   : C:\Program Files\FreedomNet Service\FreedomNetHelperService.exe',
         serviceHelperPath,
       ),
       isFalse,
@@ -418,36 +418,36 @@ void main() {
     );
     expect(
       windowsServiceConfigReferencesHelper(
-        r'BINARY_PATH_NAME   : "C:\Program Files\FlClashX Service\FlClashHelperService.exe.bak"',
+        r'BINARY_PATH_NAME   : "C:\Program Files\FreedomNet Service\FreedomNetHelperService.exe.bak"',
         serviceHelperPath,
       ),
       isFalse,
     );
     expect(
       windowsServiceConfigReferencesHelper(
-        r'BINARY_PATH_NAME   : "D:\Wrapper\svc.exe" "C:\Program Files\FlClashX Service\FlClashHelperService.exe"',
+        r'BINARY_PATH_NAME   : "D:\Wrapper\svc.exe" "C:\Program Files\FreedomNet Service\FreedomNetHelperService.exe"',
         serviceHelperPath,
       ),
       isFalse,
     );
     expect(
       windowsServiceConfigReferencesHelper(
-        r'BINARY_PATH_NAME   : "C:\Program Files\FlClashX Service\FlClashHelperService.exe" --unexpected',
+        r'BINARY_PATH_NAME   : "C:\Program Files\FreedomNet Service\FreedomNetHelperService.exe" --unexpected',
         serviceHelperPath,
       ),
       isFalse,
     );
     expect(
       windowsServiceConfigReferencesHelper(
-        r'二进制路径名称        : "\\?\c:/program files/flclashx service/flclashhelperservice.exe"',
+        r'二进制路径名称        : "\\?\c:/program files/freedomnet service/freedomnethelperservice.exe"',
         serviceHelperPath,
       ),
       isTrue,
     );
     expect(
       windowsServiceBinaryPathMatchesHelper(
-        r'C:\FlClashX\FlClashHelperService.exe',
-        r'C:\FlClashX\FlClashHelperService.exe',
+        r'C:\FreedomNet\FreedomNetHelperService.exe',
+        r'C:\FreedomNet\FreedomNetHelperService.exe',
       ),
       isTrue,
     );

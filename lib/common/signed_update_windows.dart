@@ -26,7 +26,7 @@ function Manifest([string]$file) {
   if ($pin -cne $job.pin) { throw 'Release signer does not match compiled publisher identity' }
   $cms.CheckSignature($true)
   $m = [Text.Encoding]::UTF8.GetString($cms.ContentInfo.Content) | ConvertFrom-Json
-  if ($m.schema -ne 1 -or $m.format -notin @('portable-zip','inno-exe') -or $m.entry -cne 'FlClashX.exe') { throw 'Unsupported release manifest' }
+  if ($m.schema -ne 1 -or $m.format -notin @('portable-zip','inno-exe') -or $m.entry -cne 'FreedomNet.exe') { throw 'Unsupported release manifest' }
   if ($m.sha256 -notmatch '^[a-fA-F0-9]{64}$') { throw 'Invalid package identity' }
   return $m
 }
@@ -50,7 +50,7 @@ function Preflight {
 }
 function PortablePreflight {
   Preflight
-  foreach ($name in @('FlClashHelperService','FlClashStrictBroker','FlClashStrictCallout')) {
+  foreach ($name in @('FreedomNetHelperService','FlClashStrictBroker','FlClashStrictCallout')) {
     if (Get-Service -Name $name -ErrorAction SilentlyContinue) { throw 'Installed privileged services detected. Use a signed complete installer; portable update cannot replace the service trust chain.' }
   }
 }
@@ -85,7 +85,7 @@ function VerifyPointer($pointer) {
     NoLinks $path
     if ((Hash $path) -ine $record.sha256) { throw 'Previous installation changed; automatic rollback refused' }
   }
-  return Join-Path $pointer.directory 'FlClashX.exe'
+  return Join-Path $pointer.directory 'FreedomNet.exe'
 }
 function VerifyInstaller([string]$path, $record) {
   NoLinks $path
@@ -221,7 +221,7 @@ try {
       $expected[$name] = $record; $total += $record.size
       if ($total -gt 8589934592) { throw 'Expanded package exceeds limit' }
     }
-    foreach ($required in @('FlClashX.exe','FlClashCore.exe','FlClashAgent.exe','FlClashHelperService.exe')) {
+    foreach ($required in @('FreedomNet.exe','FreedomNetCore.exe','FreedomNetAgent.exe','FreedomNetHelperService.exe')) {
       if (!$expected.ContainsKey($required)) { throw 'Not a complete application package' }
     }
     $versions = Join-Path $root 'versions'
@@ -310,7 +310,7 @@ try {
     Copy-Item -LiteralPath $PSCommandPath -Destination (Join-Path $root 'launch.ps1') -Force
     AtomicJson (Join-Path $root 'launch.json') @{action='launch';root=$root;pin=$job.pin}
     $shell = New-Object -ComObject WScript.Shell
-    $shortcut = $shell.CreateShortcut((Join-Path ([Environment]::GetFolderPath('Desktop')) 'FreedomCloud Updated.lnk'))
+    $shortcut = $shell.CreateShortcut((Join-Path ([Environment]::GetFolderPath('Desktop')) 'FreedomNet Updated.lnk'))
     $shortcut.TargetPath = (Join-Path $PSHOME 'powershell.exe')
     $shortcut.Arguments = '-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "' + (Join-Path $root 'launch.ps1') + '" "' + (Join-Path $root 'launch.json') + '"'
     $shortcut.WorkingDirectory = $root

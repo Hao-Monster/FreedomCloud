@@ -19,10 +19,29 @@ ArchitecturesAllowed={{ARCH}}
 ArchitecturesInstallIn64BitMode={{ARCH}}
 UninstallDisplayIcon={uninstallexe}
 ChangesAssociations=yes
+ShowLanguageDialog=yes
 ; Update mode settings
 UsePreviousAppDir=yes
 UsePreviousGroup=yes
 UsePreviousTasks=yes
+
+[CustomMessages]
+chineseSimplified.UpgradeWindowCaption={{DISPLAY_NAME}} - 更新
+english.UpgradeWindowCaption={{DISPLAY_NAME}} - Update
+chineseSimplified.UpgradeWelcomeWithPrev=检测到已安装版本 %1。%n%n安装程序将更新至版本 {{APP_VERSION}}。%n%n点击“下一步”继续更新，或点击“取消”退出。
+english.UpgradeWelcomeWithPrev=Detected installed version %1.%n%nSetup will update to version {{APP_VERSION}}.%n%nClick "Next" to continue updating, or "Cancel" to exit.
+chineseSimplified.UpgradeWelcomeNoPrev=检测到已安装本程序。%n%n安装程序将更新至版本 {{APP_VERSION}}。%n%n点击“下一步”继续更新，或点击“取消”退出。
+english.UpgradeWelcomeNoPrev=An existing installation was detected.%n%nSetup will update to version {{APP_VERSION}}.%n%nClick "Next" to continue updating, or "Cancel" to exit.
+chineseSimplified.MemoUpgradeHeader=更新安装
+english.MemoUpgradeHeader=Update Installation
+chineseSimplified.MemoCurrentVersion=当前版本：%1
+english.MemoCurrentVersion=Current version: %1
+chineseSimplified.MemoNewVersion=目标版本：{{APP_VERSION}}
+english.MemoNewVersion=Target version: {{APP_VERSION}}
+chineseSimplified.MemoFreshInstallHeader=全新安装
+english.MemoFreshInstallHeader=Fresh Installation
+chineseSimplified.ConfirmDeleteUserData=是否同时删除用户配置与本地数据？
+english.ConfirmDeleteUserData=Do you also want to remove user configuration and local application data?
 
 [Code]
 const
@@ -62,7 +81,7 @@ var
   Descriptor: LongWord;
   Handle: THandle;
 begin
-  Path := ExpandConstant('{commonappdata}\FlClashX.StrictBroker');
+  Path := ExpandConstant('{commonappdata}\FreedomNet.StrictBroker');
   if not ForceDirectories(Path) then
     RaiseException('Cannot create Strict Broker recovery directory.');
   if (StrictFileAttributes(Path) and $400) <> 0 then
@@ -152,7 +171,7 @@ var
   i: Integer;
   ResultCode: Integer;
 begin
-  Processes := ['FlClashX.exe', 'FlClashAgent.exe', 'FlClashCore.exe', 'FlClashHelperService.exe', 'FlClashStrictBroker.exe'];
+  Processes := ['FreedomNet.exe', 'FreedomNetAgent.exe', 'FreedomNetCore.exe', 'FreedomNetHelperService.exe'];
 
   // First try graceful shutdown
   for i := 0 to GetArrayLength(Processes)-1 do
@@ -177,7 +196,7 @@ function IsAppInstalled(): Boolean;
 var
   UninstallKey: String;
 begin
-  UninstallKey := 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{{APP_ID}}_is1';
+  UninstallKey := 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{{{APP_ID}}}_is1';
   Result := RegKeyExists(HKEY_LOCAL_MACHINE, UninstallKey) or 
             RegKeyExists(HKEY_CURRENT_USER, UninstallKey);
 end;
@@ -193,7 +212,7 @@ var
   Version: String;
 begin
   Result := '';
-  UninstallKey := 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{{APP_ID}}_is1';
+  UninstallKey := 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{{{APP_ID}}}_is1';
   
   if RegQueryStringValue(HKEY_LOCAL_MACHINE, UninstallKey, 'DisplayVersion', Version) then
     Result := Version
@@ -224,7 +243,7 @@ begin
     PreviousVersion := GetInstalledVersion();
   
   // Stop service if running
-  Exec('sc.exe', 'stop "FlClashHelperService"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Exec('sc.exe', 'stop "FreedomNetHelperService"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
 {{STRICT_UPGRADE_STOP}}
   Sleep(1000);
   
@@ -236,21 +255,23 @@ begin
   Result := True;
 end;
 
+function FormatSetupText(const Msg: String): String;
+begin
+  Result := Msg;
+  StringChange(Result, '%n', #13#10);
+end;
+
 procedure InitializeWizard();
 begin
   if IsUpgrade then
   begin
-    WizardForm.Caption := '{{DISPLAY_NAME}} - Обновление';
+    WizardForm.Caption := CustomMessage('UpgradeWindowCaption');
     if PreviousVersion <> '' then
-      WizardForm.WelcomeLabel2.Caption := 
-        'Обнаружена установленная версия ' + PreviousVersion + '.' + #13#10 + #13#10 +
-        'Программа установит версию {{APP_VERSION}}.' + #13#10 + #13#10 +
-        'Нажмите «Далее», чтобы продолжить обновление, или «Отмена», чтобы выйти.'
+      WizardForm.WelcomeLabel2.Caption :=
+        FmtMessage(FormatSetupText(CustomMessage('UpgradeWelcomeWithPrev')), [PreviousVersion])
     else
-      WizardForm.WelcomeLabel2.Caption := 
-        'Обнаружена установленная версия программы.' + #13#10 + #13#10 +
-        'Программа установит версию {{APP_VERSION}}.' + #13#10 + #13#10 +
-        'Нажмите «Далее», чтобы продолжить обновление, или «Отмена», чтобы выйти.';
+      WizardForm.WelcomeLabel2.Caption :=
+        FormatSetupText(CustomMessage('UpgradeWelcomeNoPrev'));
   end;
 end;
 
@@ -259,13 +280,13 @@ function UpdateReadyMemo(Space, NewLine, MemoUserInfoInfo, MemoDirInfo, MemoType
 begin
   if IsUpgrade then
   begin
-    Result := 'Обновление' + NewLine;
+    Result := CustomMessage('MemoUpgradeHeader') + NewLine;
     if PreviousVersion <> '' then
-      Result := Result + 'Текущая версия: ' + PreviousVersion + NewLine;
-    Result := Result + 'Новая версия: {{APP_VERSION}}' + NewLine + NewLine;
+      Result := Result + FmtMessage(CustomMessage('MemoCurrentVersion'), [PreviousVersion]) + NewLine;
+    Result := Result + CustomMessage('MemoNewVersion') + NewLine + NewLine;
   end
   else
-    Result := 'Новая установка' + NewLine + NewLine;
+    Result := CustomMessage('MemoFreshInstallHeader') + NewLine + NewLine;
     
   if MemoDirInfo <> '' then
     Result := Result + MemoDirInfo + NewLine + NewLine;
@@ -292,17 +313,17 @@ begin
     // The service and the SYSTEM-launched core live in a dedicated protected
     // Program Files directory. Never point SCM at a portable/user-writable
     // application directory.
-    ServiceExe := ExpandConstant('{commonpf}\FlClashX Service\FlClashHelperService.exe');
-    Exec('sc.exe', 'config "FlClashHelperService" binPath= "' + ServiceExe + '" start= auto',
+    ServiceExe := ExpandConstant('{commonpf}\FreedomNet Service\FreedomNetHelperService.exe');
+    Exec('sc.exe', 'config "FreedomNetHelperService" binPath= "\"' + ServiceExe + '\"" start= auto',
       '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
     if ResultCode <> 0 then
-      Exec('sc.exe', 'create "FlClashHelperService" binPath= "' + ServiceExe + '" start= auto',
+      Exec('sc.exe', 'create "FreedomNetHelperService" binPath= "\"' + ServiceExe + '\"" start= auto',
         '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
     if ResultCode = 0 then
-      Exec('sc.exe', 'sdset "FlClashHelperService" "D:(A;;CCLCSWRPWPDTLOCRRC;;;SY)(A;;CCLCSWRPWPDTLOCRRC;;;BA)(A;;CCLCSWRPWPLOCRRC;;;IU)(A;;CCLCSWLOCRRC;;;SU)"',
+      Exec('sc.exe', 'sdset "FreedomNetHelperService" "D:(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;SY)(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;BA)(A;;CCLCSWRPWPLOCRRC;;;IU)(A;;CCLCSWLOCRRC;;;SU)"',
         '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
     if ResultCode = 0 then
-      Exec('sc.exe', 'start "FlClashHelperService"', '', SW_HIDE, ewNoWait, ResultCode);
+      Exec('sc.exe', 'start "FreedomNetHelperService"', '', SW_HIDE, ewNoWait, ResultCode);
 {{STRICT_SERVICE_BLOCK}}
   end;
 end;
@@ -315,26 +336,26 @@ begin
     usUninstall:
     begin
       // Stop service first
-      Exec('sc.exe', 'stop "FlClashHelperService"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+      Exec('sc.exe', 'stop "FreedomNetHelperService"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
       Sleep(1000);
       
       // Kill all processes
       KillProcesses;
       
       // Delete service
-      Exec('sc.exe', 'delete "FlClashHelperService"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+      Exec('sc.exe', 'delete "FreedomNetHelperService"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
 {{STRICT_UNINSTALL_BLOCK}}
       Sleep(500);
-      DelTree(ExpandConstant('{commonpf}\FlClashX Service'), True, True, True);
+      DelTree(ExpandConstant('{commonpf}\FreedomNet Service'), True, True, True);
     end;
     
     usPostUninstall:
     begin
-      if DirExists(ExpandConstant('{userappdata}\com.follow\clashx')) then
+      if DirExists(ExpandConstant('{userappdata}\FreedomNet\FreedomNet')) then
       begin
-        if MsgBox('Удалить пользовательские данные программы?', mbConfirmation, MB_YESNO) = IDYES then
+        if MsgBox(CustomMessage('ConfirmDeleteUserData'), mbConfirmation, MB_YESNO) = IDYES then
         begin
-          DelTree(ExpandConstant('{userappdata}\com.follow\clashx'), True, True, True);
+          DelTree(ExpandConstant('{userappdata}\FreedomNet\FreedomNet'), True, True, True);
         end;
       end;
     end;
@@ -375,17 +396,17 @@ Name: "chineseSimplified"; MessagesFile: {% if locale.file %}{{ locale.file }}{%
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: checkedonce; Check: not IsUpgradeInstallation
 [Files]
 Source: "{{SOURCE_DIR}}\\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
-Source: "{{SOURCE_DIR}}\\FlClashHelperService.exe"; DestDir: "{commonpf}\FlClashX Service"; Flags: ignoreversion
-Source: "{{SOURCE_DIR}}\\FlClashCore.exe"; DestDir: "{commonpf}\FlClashX Service"; Flags: ignoreversion
-Source: "{{SOURCE_DIR}}\\concrt140.dll"; DestDir: "{commonpf}\FlClashX Service"; Flags: ignoreversion
-Source: "{{SOURCE_DIR}}\\msvcp140.dll"; DestDir: "{commonpf}\FlClashX Service"; Flags: ignoreversion
-Source: "{{SOURCE_DIR}}\\msvcp140_1.dll"; DestDir: "{commonpf}\FlClashX Service"; Flags: ignoreversion
-Source: "{{SOURCE_DIR}}\\msvcp140_2.dll"; DestDir: "{commonpf}\FlClashX Service"; Flags: ignoreversion
-Source: "{{SOURCE_DIR}}\\msvcp140_atomic_wait.dll"; DestDir: "{commonpf}\FlClashX Service"; Flags: ignoreversion
-Source: "{{SOURCE_DIR}}\\msvcp140_codecvt_ids.dll"; DestDir: "{commonpf}\FlClashX Service"; Flags: ignoreversion
-Source: "{{SOURCE_DIR}}\\vcruntime140.dll"; DestDir: "{commonpf}\FlClashX Service"; Flags: ignoreversion
-Source: "{{SOURCE_DIR}}\\vcruntime140_1.dll"; DestDir: "{commonpf}\FlClashX Service"; Flags: ignoreversion
-Source: "{{SOURCE_DIR}}\\vcruntime140_threads.dll"; DestDir: "{commonpf}\FlClashX Service"; Flags: ignoreversion
+Source: "{{SOURCE_DIR}}\\FreedomNetHelperService.exe"; DestDir: "{commonpf}\FreedomNet Service"; Flags: ignoreversion
+Source: "{{SOURCE_DIR}}\\FreedomNetCore.exe"; DestDir: "{commonpf}\FreedomNet Service"; Flags: ignoreversion
+Source: "{{SOURCE_DIR}}\\concrt140.dll"; DestDir: "{commonpf}\FreedomNet Service"; Flags: ignoreversion
+Source: "{{SOURCE_DIR}}\\msvcp140.dll"; DestDir: "{commonpf}\FreedomNet Service"; Flags: ignoreversion
+Source: "{{SOURCE_DIR}}\\msvcp140_1.dll"; DestDir: "{commonpf}\FreedomNet Service"; Flags: ignoreversion
+Source: "{{SOURCE_DIR}}\\msvcp140_2.dll"; DestDir: "{commonpf}\FreedomNet Service"; Flags: ignoreversion
+Source: "{{SOURCE_DIR}}\\msvcp140_atomic_wait.dll"; DestDir: "{commonpf}\FreedomNet Service"; Flags: ignoreversion
+Source: "{{SOURCE_DIR}}\\msvcp140_codecvt_ids.dll"; DestDir: "{commonpf}\FreedomNet Service"; Flags: ignoreversion
+Source: "{{SOURCE_DIR}}\\vcruntime140.dll"; DestDir: "{commonpf}\FreedomNet Service"; Flags: ignoreversion
+Source: "{{SOURCE_DIR}}\\vcruntime140_1.dll"; DestDir: "{commonpf}\FreedomNet Service"; Flags: ignoreversion
+Source: "{{SOURCE_DIR}}\\vcruntime140_threads.dll"; DestDir: "{commonpf}\FreedomNet Service"; Flags: ignoreversion
 {{STRICT_PACKAGE_FILES}}
 ; NOTE: Don't use "Flags: ignoreversion" on any shared system files
 

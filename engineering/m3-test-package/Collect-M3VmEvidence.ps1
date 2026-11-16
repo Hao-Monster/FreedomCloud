@@ -50,7 +50,7 @@ function Copy-ApplicationLogs {
     if (-not (Test-Path -LiteralPath $destination)) {
         New-Item -ItemType Directory -Path $destination | Out-Null
     }
-    $allowed = '^(FlClashX_\d{4}-\d{2}-\d{2}(?:_\d+)?|connections_diagnostic|FlClashAgent(?:\.bootstrap)?|FlClashHelperService|FlClashStrictBroker)\.log(?:\.\d+)?$'
+    $allowed = '^((?:FreedomNet|FlClashX)_\d{4}-\d{2}-\d{2}(?:_\d+)?|connections_diagnostic|(?:FreedomNetAgent|FlClashAgent)(?:\.bootstrap)?|(?:FreedomNetHelperService|FlClashHelperService)|FlClashStrictBroker)\.log(?:\.\d+)?$'
     $copied = New-Object Collections.Generic.List[object]
     foreach ($file in Get-ChildItem -LiteralPath $SourceRoot -File -ErrorAction SilentlyContinue) {
         if ($file.Name -notmatch $allowed) {
@@ -72,11 +72,11 @@ if (-not (Test-Path -LiteralPath $logRoot)) {
     New-Item -ItemType Directory -Path $logRoot | Out-Null
 }
 $logInventory = New-Object Collections.Generic.List[object]
-$appDataRoot = if ($env:APPDATA) { Join-Path $env:APPDATA 'com.follow\clashx\logs' } else { $null }
-$localAppDataRoot = if ($env:LOCALAPPDATA) { Join-Path $env:LOCALAPPDATA 'FlClashX\logs' } else { $null }
-$programDataRoot = if ($env:ProgramData) { Join-Path $env:ProgramData 'FlClashX\logs' } else { $null }
-$strictBrokerLogRoot = if ($env:ProgramData) { Join-Path $env:ProgramData 'FlClashX.StrictBroker\logs' } else { $null }
-$serviceLogRoot = if ($env:ProgramFiles) { Join-Path $env:ProgramFiles 'FlClashX Service\logs' } else { $null }
+$appDataRoot = if ($env:APPDATA) { Join-Path $env:APPDATA 'FreedomNet\FreedomNet\logs' } else { $null }
+$localAppDataRoot = if ($env:LOCALAPPDATA) { Join-Path $env:LOCALAPPDATA 'FreedomNet\logs' } else { $null }
+$programDataRoot = if ($env:ProgramData) { Join-Path $env:ProgramData 'FreedomNet\logs' } else { $null }
+$strictBrokerLogRoot = if ($env:ProgramData) { Join-Path $env:ProgramData 'FreedomNet.StrictBroker\logs' } else { $null }
+$serviceLogRoot = if ($env:ProgramFiles) { Join-Path $env:ProgramFiles 'FreedomNet Service\logs' } else { $null }
 foreach ($source in @(
         @{ root = $appDataRoot; label = 'appdata' },
         @{ root = $localAppDataRoot; label = 'localappdata' },
@@ -97,14 +97,14 @@ $logInventory | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $o
 # crash/upgrade/uninstall recovery can still be correlated safely.
 $strictState = New-Object Text.StringBuilder
 [void]$strictState.AppendLine("capturedUtc=$([DateTime]::UtcNow.ToString('o'))")
-foreach ($serviceName in @('FlClashHelperService', 'FlClashStrictCallout', 'FlClashStrictBroker')) {
+foreach ($serviceName in @('FreedomNetHelperService', 'FlClashStrictCallout', 'FlClashStrictBroker')) {
     [void]$strictState.AppendLine("service=$serviceName")
     [void]$strictState.AppendLine((& sc.exe query $serviceName 2>&1 | Out-String).Trim())
     [void]$strictState.AppendLine((& sc.exe qc $serviceName 2>&1 | Out-String).Trim())
 }
 foreach ($marker in @(
-        @{ path = if ($env:ProgramData) { Join-Path $env:ProgramData 'FlClashX\strict-recovery.json' } else { $null }; label = 'helper' },
-        @{ path = if ($env:ProgramData) { Join-Path $env:ProgramData 'FlClashX.StrictBroker\strict-recovery-v1.json' } else { $null }; label = 'broker' }
+        @{ path = if ($env:ProgramData) { Join-Path $env:ProgramData 'FreedomNet\strict-recovery.json' } else { $null }; label = 'helper' },
+        @{ path = if ($env:ProgramData) { Join-Path $env:ProgramData 'FreedomNet.StrictBroker\strict-recovery-v1.json' } else { $null }; label = 'broker' }
     )) {
     if ($null -ne $marker.path -and (Test-Path -LiteralPath $marker.path -PathType Leaf)) {
         $markerHash = (Get-FileHash -LiteralPath $marker.path -Algorithm SHA256).Hash
@@ -124,7 +124,7 @@ foreach ($marker in @(
 $utf8 = New-Object Text.UTF8Encoding($false)
 [IO.File]::WriteAllText((Join-Path $output 'strict-state.txt'), $strictState.ToString(), $utf8)
 
-$processNames = @('FlClashX', 'FlClashAgent', 'FlClashCore', 'FlClashStrictBroker', 'FlClashHelperService')
+$processNames = @('FreedomNet', 'FreedomNetAgent', 'FreedomNetCore', 'FlClashStrictBroker', 'FreedomNetHelperService')
 $sampleLimit = [Math]::Ceiling(($DurationMinutes * 60) / $SampleIntervalSeconds) + 1
 $samples = New-Object Collections.Generic.List[object]
 for ($sample = 0; $sample -lt $sampleLimit; ++$sample) {
@@ -147,7 +147,7 @@ for ($sample = 0; $sample -lt $sampleLimit; ++$sample) {
 }
 $samples | Export-Csv -LiteralPath (Join-Path $output 'process-samples.csv') -NoTypeInformation -Encoding UTF8
 
-$services = foreach ($name in @('FlClashStrictCallout', 'FlClashStrictBroker', 'FlClashHelperService')) {
+$services = foreach ($name in @('FlClashStrictCallout', 'FlClashStrictBroker', 'FreedomNetHelperService')) {
     $service = Get-CimInstance -ClassName Win32_Service -Filter "Name='$name'" -ErrorAction SilentlyContinue
     if ($null -ne $service) {
         [pscustomobject]@{

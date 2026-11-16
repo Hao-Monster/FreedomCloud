@@ -58,9 +58,12 @@ impl StrictAppTarget {
             .unwrap_or_default();
         if matches!(
             filename.to_ascii_lowercase().as_str(),
-            "flclashcore.exe" | "flclashhelperservice.exe"
+            "freedomnetcore.exe"
+                | "freedomnethelperservice.exe"
+                | "flclashcore.exe"
+                | "flclashhelperservice.exe"
         ) {
-            return Err("FlClashX service binaries cannot be strict targets".to_owned());
+            return Err("FreedomNet service binaries cannot be strict targets".to_owned());
         }
         Ok(Self { executable })
     }
@@ -127,7 +130,7 @@ mod platform {
         let root = std::env::var_os("ProgramData")
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from(r"C:\ProgramData"));
-        root.join("FlClashX").join(RECOVERY_MARKER_FILE_NAME)
+        root.join("FreedomNet").join(RECOVERY_MARKER_FILE_NAME)
     }
 
     fn load_recovery_marker() -> Result<RecoveryMarker, String> {
@@ -672,7 +675,7 @@ mod tests {
             .as_nanos();
         let directory = std::env::temp_dir().join(format!("flclashx-wfp-core-{nonce}"));
         fs::create_dir_all(&directory).expect("create service fixture directory");
-        let path = directory.join("FlClashCore.exe");
+        let path = directory.join("FreedomNetCore.exe");
         fs::write(&path, b"test").expect("write service fixture");
         assert!(StrictAppTarget::new(path.clone()).is_err());
         let _ = fs::remove_dir_all(directory);

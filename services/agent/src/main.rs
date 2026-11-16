@@ -8,7 +8,14 @@ async fn main() {
     };
     if let Err(error) = result {
         logging::log_bootstrap_failure(format!("{error:#}"));
-        eprintln!("FlClashAgent: {error:#}");
+        eprintln!(
+            "{}: {error:#}",
+            if cfg!(windows) {
+                "FreedomNetAgent"
+            } else {
+                "FlClashAgent"
+            }
+        );
         std::process::exit(2);
     }
 }

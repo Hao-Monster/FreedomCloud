@@ -770,12 +770,7 @@ class _BrandShowcasePillarTile extends StatelessWidget {
   }
 }
 
-Future<void> showFreedomNetTributeDialog(BuildContext context) {
-  final isZh = Localizations.localeOf(context)
-      .languageCode
-      .toLowerCase()
-      .startsWith('zh');
-  return showDialog<void>(
+Future<void> showFreedomNetTributeDialog(BuildContext context) => showDialog<void>(
     context: context,
     builder: (dialogContext) {
       final colors = Theme.of(dialogContext).colorScheme;
@@ -800,20 +795,19 @@ Future<void> showFreedomNetTributeDialog(BuildContext context) {
                     crossAxisAlignment: WrapCrossAlignment.center,
                     children: [
                       Text(
-                        appLocalizations.appBrandName,
+                        brandNameZh,
                         style: textTheme.titleLarge?.copyWith(
                           fontWeight: FontWeight.w800,
                         ),
                       ),
-                      if (isZh)
-                        Text(
-                          brandNameEn,
-                          style: textTheme.labelMedium?.copyWith(
-                            color: colors.primary,
-                            fontWeight: FontWeight.w700,
-                            letterSpacing: 0.4,
-                          ),
+                      Text(
+                        brandNameEn,
+                        style: textTheme.labelMedium?.copyWith(
+                          color: colors.primary,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 0.4,
                         ),
+                      ),
                     ],
                   ),
                   const SizedBox(height: 2),
@@ -844,4 +838,3 @@ Future<void> showFreedomNetTributeDialog(BuildContext context) {
       );
     },
   );
-}

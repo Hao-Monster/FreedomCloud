@@ -34,9 +34,9 @@ use crate::{
 const BROKER_SERVICE_NAME: &str = "FlClashStrictBroker";
 const BROKER_FILE_NAME: &str = "FlClashStrictBroker.exe";
 const DRIVER_FILE_NAME: &str = "FlClashStrictCallout.sys";
-const AGENT_FILE_NAME: &str = "FlClashAgent.exe";
-const CORE_FILE_NAME: &str = "FlClashCore.exe";
-const RECOVERY_DIRECTORY_NAME: &str = "FlClashX.StrictBroker";
+const AGENT_FILE_NAME: &str = "FreedomNetAgent.exe";
+const CORE_FILE_NAME: &str = "FreedomNetCore.exe";
+const RECOVERY_DIRECTORY_NAME: &str = "FreedomNet.StrictBroker";
 const MAX_TRUSTED_PATH_UNITS: usize = 1024;
 const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0400;
 const SESSION_WORKERS: usize = 4;
@@ -1073,25 +1073,25 @@ mod tests {
     #[test]
     fn fixed_package_layout_never_accepts_runtime_selected_component_paths() {
         let paths = WindowsStrictBrokerPaths::from_trusted_roots(
-            r"C:\Program Files\FlClashX\FlClashStrictBroker.exe",
+            r"C:\Program Files\FreedomNet Service\FlClashStrictBroker.exe",
             r"C:\ProgramData",
         )
         .unwrap();
         assert_eq!(
             paths.driver(),
-            Path::new(r"C:\Program Files\FlClashX\FlClashStrictCallout.sys")
+            Path::new(r"C:\Program Files\FreedomNet Service\FlClashStrictCallout.sys")
         );
         assert_eq!(
             paths.agent(),
-            Path::new(r"C:\Program Files\FlClashX\FlClashAgent.exe")
+            Path::new(r"C:\Program Files\FreedomNet Service\FreedomNetAgent.exe")
         );
         assert_eq!(
             paths.core(),
-            Path::new(r"C:\Program Files\FlClashX\FlClashCore.exe")
+            Path::new(r"C:\Program Files\FreedomNet Service\FreedomNetCore.exe")
         );
         assert_eq!(
             paths.recovery(),
-            Path::new(r"C:\ProgramData\FlClashX.StrictBroker")
+            Path::new(r"C:\ProgramData\FreedomNet.StrictBroker")
         );
         assert!(WindowsStrictBrokerPaths::from_trusted_roots(
             r"C:\Temp\renamed.exe",
@@ -1099,7 +1099,7 @@ mod tests {
         )
         .is_err());
         assert!(WindowsStrictBrokerPaths::from_trusted_roots(
-            r"C:\Program Files\FlClashX\FlClashStrictBroker.exe",
+            r"C:\Program Files\FreedomNet Service\FlClashStrictBroker.exe",
             r"C:\ProgramData\..\Temp"
         )
         .is_err());

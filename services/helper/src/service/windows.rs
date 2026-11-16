@@ -17,7 +17,7 @@ use windows_service::{
     service_dispatcher, Result,
 };
 
-const SERVICE_NAME: &str = "FlClashHelperService";
+const SERVICE_NAME: &str = "FreedomNetHelperService";
 
 const SERVICE_TYPE: ServiceType = ServiceType::OWN_PROCESS;
 
@@ -32,7 +32,7 @@ pub fn start_service() -> Result<()> {
             let logger = ServiceLogger::new_default();
             logger.log(format!("service dispatcher failed: {error}"));
             if let Err(flush_error) = logger.flush(Duration::from_millis(500)) {
-                eprintln!("FlClashHelperService: dispatcher diagnostics incomplete: {flush_error}");
+                eprintln!("FreedomNetHelperService: dispatcher diagnostics incomplete: {flush_error}");
             }
             Err(error)
         }
@@ -58,7 +58,7 @@ pub fn service_main(_arguments: Vec<OsString>) {
         }
     }
     if let Err(error) = logger.flush(Duration::from_millis(500)) {
-        eprintln!("FlClashHelperService: final diagnostics incomplete: {error}");
+        eprintln!("FreedomNetHelperService: final diagnostics incomplete: {error}");
     }
 }
 
@@ -188,11 +188,11 @@ async fn finish_confirmed_stop<R>(
     let logs_failed = match result {
         Ok(Ok(())) => false,
         Ok(Err(error)) => {
-            eprintln!("FlClashHelperService: {error}");
+            eprintln!("FreedomNetHelperService: {error}");
             true
         }
         Err(error) => {
-            eprintln!("FlClashHelperService: log finish worker failed: {error}");
+            eprintln!("FreedomNetHelperService: log finish worker failed: {error}");
             true
         }
     };

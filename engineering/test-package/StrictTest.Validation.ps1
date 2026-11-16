@@ -1,4 +1,4 @@
-#requires -Version 7.2
+﻿#requires -Version 7.2
 # Read-only validation shared by the installer and its isolated fixture tests.
 Set-StrictMode -Version Latest
 
@@ -132,7 +132,7 @@ function Read-StrictTestPackage {
         throw 'Package directory must be an absolute local path.'
     }
     Assert-StrictTestNoReparse $PackageDirectory
-    $files = @('FlClashStrictCallout.sys','FlClashStrictBroker.exe','FlClashAgent.exe','FlClashCore.exe')
+    $files = @('FlClashStrictCallout.sys','FlClashStrictBroker.exe','FreedomNetAgent.exe','FreedomNetCore.exe')
     $sourceHashes = @{}
     foreach ($name in ($files + @('strict-package-manifest.json'))) {
         $path = Join-Path $PackageDirectory $name
@@ -163,8 +163,8 @@ function Read-StrictTestPackage {
     $manifest = Read-StrictTestManifest $manifestBytes
     foreach ($entry in @(
         @('FlClashStrictCallout.sys','driverFileSha256','driverPublisherCertificateSha256'),
-        @('FlClashAgent.exe','agentFileSha256','agentPublisherCertificateSha256'),
-        @('FlClashCore.exe','coreFileSha256','corePublisherCertificateSha256')
+        @('FreedomNetAgent.exe','agentFileSha256','agentPublisherCertificateSha256'),
+        @('FreedomNetCore.exe','coreFileSha256','corePublisherCertificateSha256')
     )) {
         $expectedFileHash = $manifest.($entry[1])
         $expectedPublisherHash = $manifest.($entry[2])

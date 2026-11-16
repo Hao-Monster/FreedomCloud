@@ -469,7 +469,7 @@ class _WindowHeaderState extends State<WindowHeader> with WindowListener {
             ),
             // Content
             if (Platform.isMacOS)
-              Center(child: Text(appLocalizations.appBrandName))
+              const Center(child: Text(brandDisplayName))
             else
               Row(
                 children: [
@@ -603,11 +603,9 @@ class AppIcon extends StatelessWidget {
           children: [
             const FreedomNetBrandMark(size: 24),
             const SizedBox(width: 8),
-            Text(
-              appLocalizations.appBrandName,
-              style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                    fontWeight: FontWeight.w700,
-                  ),
+            const Text(
+              brandDisplayName,
+              style: TextStyle(fontWeight: FontWeight.w700),
             ),
           ],
         ),

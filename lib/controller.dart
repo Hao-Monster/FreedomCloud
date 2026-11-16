@@ -3121,6 +3121,7 @@ class AppController {
         final filesToDelete = [
           'cache.db',
           'libCachedImageData.json',
+          'FreedomNet.lock',
           'FlClashX.lock',
         ];
 

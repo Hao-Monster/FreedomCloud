@@ -116,9 +116,9 @@ class FileLogger {
 
   String _getLogFileName(String date, {int index = 0}) {
     if (index == 0) {
-      return 'FlClashX_$date.log';
+      return 'FreedomNet_$date.log';
     }
-    return 'FlClashX_${date}_$index.log';
+    return 'FreedomNet_${date}_$index.log';
   }
 
   Future<void> _rotateLogs(
@@ -129,7 +129,8 @@ class FileLogger {
   }) async {
     final logsDir = await _getLogsDir();
     final dir = Directory(logsDir);
-    final ownedName = RegExp(r'^FlClashX_\d{4}-\d{2}-\d{2}(?:_\d+)?\.log$');
+    final ownedName =
+        RegExp(r'^(?:FreedomNet|FlClashX)_\d{4}-\d{2}-\d{2}(?:_\d+)?\.log$');
 
     // Get all log files
     final files = await dir

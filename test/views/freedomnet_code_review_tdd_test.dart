@@ -344,7 +344,7 @@ void main() {
     if (Platform.isWindows) {
       expect(calls, hasLength(1));
       final toolTip = (calls.single.arguments as Map)['toolTip'] as String;
-      expect(toolTip, startsWith('${appLocalizations.appBrandName} · '));
+      expect(toolTip, startsWith('$brandDisplayName · '));
       expect(toolTip, isNot(contains('FlClashX')));
     }
 
@@ -357,7 +357,7 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(find.byType(FreedomNetBrandMark), findsOneWidget);
-    expect(find.text('自由云'), findsOneWidget);
+    expect(find.text(brandDisplayName), findsOneWidget);
     expect(find.text('FlClashX'), findsNothing);
 
     // 3. VPN notification fallback & static HTML/C++ brand titles
@@ -588,7 +588,7 @@ void main() {
           isFocusable: true,
           hasTapAction: true,
           hasFocusAction: true,
-          label: '自由云 · 品牌介绍与核心体验',
+          label: '$brandDisplayName · 品牌介绍与核心体验',
         ),
       );
 

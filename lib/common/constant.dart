@@ -8,18 +8,20 @@ import 'package:flclashx/enum/enum.dart';
 import 'package:flclashx/models/models.dart';
 import 'package:flutter/material.dart';
 
-const appName = "FlClashX";
+const appName = "FreedomNet";
 const brandNameZh = "自由云";
 const brandNameEn = "FreedomNet";
+const brandDisplayName = "$brandNameZh · $brandNameEn";
+const officialWebsiteUrl = "https://fast.hjy.ca:8443/";
 const nodeOverviewEnabled =
     bool.fromEnvironment('FCX_NODE_OVERVIEW', defaultValue: true);
-const appHelperService = "FlClashHelperService";
+const appHelperService = "FreedomNetHelperService";
 const coreName = "clashx.meta";
 const browserUa =
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 const packageName = "com.follow.clashx";
 final unixSocketPath = "/tmp/FlClashXSocket_${pid}_${Random.secure().nextInt(1 << 30)}.sock";
-const helperPort = 47890;
+const helperPort = 47895;
 const maxTextScale = 1.4;
 const minTextScale = 0.8;
 final baseInfoEdgeInsets = EdgeInsets.symmetric(

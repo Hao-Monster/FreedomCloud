@@ -1,7 +1,7 @@
 # Windows 11 VM acceptance checklist
 
-Test artifact: `FlClashX-windows-amd64.zip` (unsigned portable local acceptance
-build). If a matching `FlClashX-windows-amd64-setup.exe` is present, verify its
+Test artifact: `FreedomNet-windows-amd64.zip` (unsigned portable local acceptance
+build). If a matching `FreedomNet-windows-amd64-setup.exe` is present, verify its
 adjacent `.sha256` file before using it. Do not use either artifact as a
 production release.
 
@@ -13,22 +13,22 @@ installation and do not copy subscription/profile files into the return bundle.
 1. Verify the ZIP SHA-256 against the adjacent `.sha256` file, extract it in the
    clean Windows 11 VM, and verify extracted files against `SHA256SUMS.txt`.
    If testing an installer, verify its own adjacent `.sha256` file first.
-2. Start FlClashX normally. Do not run the UI as Administrator. Approve the
+2. Start FreedomNet normally. Do not run the UI as Administrator. Approve the
    one-time Helper registration only when the virtual network card requires it;
    capture the exact UAC command if a prompt appears.
-3. Exit and start FlClashX twice. A healthy existing service must not be deleted,
+3. Exit and start FreedomNet twice. A healthy existing service must not be deleted,
    recreated or produce another repair UAC prompt.
-4. Run `sc qc FlClashHelperService` and confirm `BINARY_PATH_NAME` is
-   `C:\Program Files\FlClashX Service\FlClashHelperService.exe`.
-5. With the UI open, record PID and memory for `FlClashX.exe`,
-   `FlClashAgent.exe`, `FlClashCore.exe` and `FlClashHelperService.exe`.
+4. Run `sc qc FreedomNetHelperService` and confirm `BINARY_PATH_NAME` is
+   `"C:\Program Files\FreedomNet Service\FreedomNetHelperService.exe"`.
+5. With the UI open, record PID and memory for `FreedomNet.exe`,
+   `FreedomNetAgent.exe`, `FreedomNetCore.exe` and `FreedomNetHelperService.exe`.
 
 ## B. Agent lifecycle (R-120 through R-124)
 
 6. Enable the existing virtual network card and establish continuous traffic in
-   the VM. Close only the UI window. Confirm `FlClashX.exe` exits while Agent and
+   the VM. Close only the UI window. Confirm `FreedomNet.exe` exits while Agent and
    Core remain, traffic continues, and no hidden Flutter process remains.
-7. Reopen FlClashX. Confirm it attaches without a new Agent PID, active traffic
+7. Reopen FreedomNet. Confirm it attaches without a new Agent PID, active traffic
    remains usable, the profile/listener is not visibly restarted and no UAC
    prompt occurs.
 8. Use UI restart. Confirm UI PID changes but Agent PID remains and continuous
@@ -69,7 +69,7 @@ installation and do not copy subscription/profile files into the return bundle.
     path, host, IP, subscription URL, secret or authorization header.
 18. Run the same installer over the installed build. Confirm upgrade can stop
     Agent/Core cleanly and restart without duplicate Agent/Helper processes.
-19. Uninstall. Confirm FlClashX, Agent and Core are gone, service cleanup is
+19. Uninstall. Confirm FreedomNet, Agent and Core are gone, service cleanup is
     correct, no system proxy/DNS/TUN state is left active and ordinary networking
     still works.
 20. If any lifecycle/network step fails, collect screenshots, Task Manager

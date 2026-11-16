@@ -46,10 +46,6 @@ class AboutView extends StatelessWidget {
     final colors = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
     final isDark = colors.brightness == Brightness.dark;
-    final isZh = Localizations.localeOf(context)
-        .languageCode
-        .toLowerCase()
-        .startsWith('zh');
 
     return Container(
       key: const ValueKey('about-brand-monument'),
@@ -141,32 +137,31 @@ class AboutView extends StatelessWidget {
                       crossAxisAlignment: WrapCrossAlignment.center,
                       children: [
                         Text(
-                          appLocalizations.appBrandName,
+                          brandNameZh,
                           style: textTheme.headlineSmall?.copyWith(
                             fontWeight: FontWeight.w800,
                             letterSpacing: -0.3,
                           ),
                         ),
-                        if (isZh)
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 9,
-                              vertical: 3,
-                            ),
-                            decoration: BoxDecoration(
-                              color: colors.primary
-                                  .withValues(alpha: isDark ? 0.16 : 0.10),
-                              borderRadius: BorderRadius.circular(999),
-                            ),
-                            child: Text(
-                              brandNameEn,
-                              style: textTheme.labelMedium?.copyWith(
-                                color: colors.primary,
-                                fontWeight: FontWeight.w700,
-                                letterSpacing: 0.4,
-                              ),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 9,
+                            vertical: 3,
+                          ),
+                          decoration: BoxDecoration(
+                            color: colors.primary
+                                .withValues(alpha: isDark ? 0.16 : 0.10),
+                            borderRadius: BorderRadius.circular(999),
+                          ),
+                          child: Text(
+                            brandNameEn,
+                            style: textTheme.labelMedium?.copyWith(
+                              color: colors.primary,
+                              fontWeight: FontWeight.w700,
+                              letterSpacing: 0.4,
                             ),
                           ),
+                        ),
                       ],
                     ),
                     const SizedBox(height: 4),
@@ -299,16 +294,16 @@ class AboutView extends StatelessWidget {
           ),
           // Standalone core updates stay hidden until R-206 provides signature
           // verification and rollback for privileged desktop cores.
-          ListItem(
-            title: Text('${appLocalizations.project} (FlClashX)'),
-            onTap: () {
-              unawaited(
-                globalState.openUrl(
-                  "https://github.com/$repository",
-                ),
-              );
-            },
-            trailing: const Icon(Icons.insert_link),
+          KeyedSubtree(
+            key: const ValueKey('about-official-website'),
+            child: ListItem(
+              title: const Text(brandDisplayName),
+              subtitle: const Text(officialWebsiteUrl),
+              onTap: () {
+                unawaited(globalState.openUrl(officialWebsiteUrl));
+              },
+              trailing: const Icon(Icons.language_rounded),
+            ),
           ),
           ListItem(
             title: Text(appLocalizations.originalRepository),

@@ -246,9 +246,9 @@ void main() {
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
 
-    // Low-level system/Wintun/log contracts MUST remain intact.
-    expect(appName, equals('FlClashX'));
-    expect(const Tun().device, equals('FlClashX'));
+    // Windows/FreedomNet coexistence isolation contracts.
+    expect(appName, equals('FreedomNet'));
+    expect(const Tun().device, equals('FreedomNet'));
 
     await tester.pumpWidget(
       _buildTestApp(

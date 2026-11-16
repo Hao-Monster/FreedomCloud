@@ -1,5 +1,7 @@
 // ignore_for_file: invalid_annotation_target
 
+import 'dart:io';
+
 import 'package:flclashx/common/common.dart';
 import 'package:flclashx/enum/enum.dart';
 import 'package:freezed_annotation/freezed_annotation.dart';
@@ -204,16 +206,30 @@ class Tun with _$Tun {
 }
 
 extension TunExt on Tun {
+  String get effectiveDevice {
+    final trimmed = device.trim();
+    if (trimmed.isEmpty) return appName;
+    final lower = trimmed.toLowerCase();
+    if (lower == 'flclashx' || lower == 'flclash') {
+      return appName;
+    }
+    return device;
+  }
+
   Tun getRealTun(RouteMode routeMode) {
     final mRouteAddress = routeMode == RouteMode.bypassPrivate
         ? defaultBypassPrivateRouteAddress
         : routeAddress;
+    final resolvedDevice =
+        Platform.isWindows ? effectiveDevice : (device.trim().isEmpty ? appName : device);
     return switch (system.isDesktop) {
       true => copyWith(
+          device: resolvedDevice,
           autoRoute: true,
           routeAddress: [],
         ),
       false => copyWith(
+          device: resolvedDevice,
           autoRoute: mRouteAddress.isEmpty ? true : false,
           routeAddress: mRouteAddress,
         ),

@@ -13,8 +13,8 @@ const CHANNEL_CAPACITY: usize = 256;
 const MAX_LINE_CHARS: usize = 16 * 1024;
 const MAX_FILE_BYTES: u64 = 8 * 1024 * 1024;
 const MAX_ROTATED_FILES: usize = 3;
-const LOG_DIRECTORY: &str = "FlClashX";
-const LOG_FILE_NAME: &str = "FlClashHelperService.log";
+const LOG_DIRECTORY: &str = "FreedomNet";
+const LOG_FILE_NAME: &str = "FreedomNetHelperService.log";
 
 #[derive(Clone)]
 pub struct ServiceLogger {
@@ -126,7 +126,7 @@ impl ServiceLogger {
             .spawn(move || run_writer(path, receiver, max_file_bytes))
             .is_ok();
         if !spawned {
-            eprintln!("FlClashHelperService: unable to start persistent log writer");
+            eprintln!("FreedomNetHelperService: unable to start persistent log writer");
         }
         Arc::new(Self::from_sender(sender))
     }

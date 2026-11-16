@@ -27,15 +27,15 @@ foreach ($name in @('FlClashStrictCallout','FlClashStrictBroker')) {
     & "$env:SystemRoot/System32/sc.exe" query $name *> $null
     $serviceQueryExitCodes[$name] = $LASTEXITCODE
 }
-$destination = Join-Path $env:ProgramFiles 'FlClashX Service'
-$recovery = Join-Path $env:ProgramData 'FlClashX.StrictBroker'
+$destination = Join-Path $env:ProgramFiles 'FreedomNet Service'
+$recovery = Join-Path $env:ProgramData 'FreedomNet.StrictBroker'
 $thumbprint = 'F48C72AD4E3D344DCCDC56107DE546CD957FC47D'
 $plan = Get-StrictTestInstallationPlan -HostFacts $hostFacts -ConfirmTestMachine:$ConfirmTestMachine `
     -AllowPhysicalTestHost:$AllowPhysicalTestHost -BootQueryExitCode $bootExitCode -BootConfiguration ($boot -join "`n") `
     -ServiceQueryExitCodes $serviceQueryExitCodes -PackageDirectory $PSScriptRoot `
     -Destination $destination -Recovery $recovery -Thumbprint $thumbprint
 $sourceHashes = $plan.SourceHashes
-$files = @('FlClashStrictCallout.sys','FlClashStrictBroker.exe','FlClashAgent.exe','FlClashCore.exe')
+$files = @('FlClashStrictCallout.sys','FlClashStrictBroker.exe','FreedomNetAgent.exe','FreedomNetCore.exe')
 function Invoke-ServiceCommand([string[]]$Arguments) {
     & "$env:SystemRoot/System32/sc.exe" @Arguments
     if ($LASTEXITCODE -ne 0) { throw "Service command failed ($LASTEXITCODE): $($Arguments[0]). Stop and inspect service state; restore the test-host snapshot after evidence collection." }

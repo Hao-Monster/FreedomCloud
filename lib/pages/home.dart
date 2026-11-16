@@ -305,10 +305,6 @@ class CommonNavigationBar extends ConsumerWidget {
     final colors = context.colorScheme;
     final isDark = colors.brightness == Brightness.dark;
     final isPureBlack = isDark && colors.surface == Colors.black;
-    final isZh = Localizations.localeOf(context)
-        .languageCode
-        .toLowerCase()
-        .startsWith('zh');
     final panelGradientColors = isDark
         ? (isPureBlack
             ? const [
@@ -338,7 +334,7 @@ class CommonNavigationBar extends ConsumerWidget {
       ],
     );
     final tributeSemanticsLabel =
-        '${appLocalizations.appBrandName} · ${appLocalizations.brandDialogSubtitle}';
+        '$brandDisplayName · ${appLocalizations.brandDialogSubtitle}';
     return Material(
       type: MaterialType.transparency,
       // SafeArea: the app draws edge-to-edge, so on tablets/foldables (which
@@ -398,7 +394,7 @@ class CommonNavigationBar extends ConsumerWidget {
                                   constraints:
                                       const BoxConstraints(maxWidth: 88),
                                   child: Text(
-                                    appLocalizations.appBrandName,
+                                    brandNameZh,
                                     textAlign: TextAlign.center,
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis,
@@ -412,28 +408,26 @@ class CommonNavigationBar extends ConsumerWidget {
                                     ),
                                   ),
                                 ),
-                                if (isZh) ...[
-                                  const SizedBox(height: 1),
-                                  ConstrainedBox(
-                                    constraints:
-                                        const BoxConstraints(maxWidth: 88),
-                                    child: Text(
-                                      brandNameEn,
-                                      textAlign: TextAlign.center,
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: context.textTheme.labelSmall
-                                          ?.copyWith(
-                                        fontSize: 9.5,
-                                        color: isDark
-                                            ? const Color(0xFF94A3B8)
-                                            : const Color(0xFF475569),
-                                        fontWeight: FontWeight.w600,
-                                        letterSpacing: 0.3,
-                                      ),
+                                const SizedBox(height: 1),
+                                ConstrainedBox(
+                                  constraints:
+                                      const BoxConstraints(maxWidth: 88),
+                                  child: Text(
+                                    brandNameEn,
+                                    textAlign: TextAlign.center,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style:
+                                        context.textTheme.labelSmall?.copyWith(
+                                      fontSize: 9.5,
+                                      color: isDark
+                                          ? const Color(0xFF94A3B8)
+                                          : const Color(0xFF475569),
+                                      fontWeight: FontWeight.w600,
+                                      letterSpacing: 0.3,
                                     ),
                                   ),
-                                ],
+                                ),
                               ],
                             ),
                           ),
@@ -1004,7 +998,7 @@ class _CompactBrandTributeLeading extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final tributeSemanticsLabel =
-        '${appLocalizations.appBrandName} · ${appLocalizations.brandDialogSubtitle}';
+        '$brandDisplayName · ${appLocalizations.brandDialogSubtitle}';
     return Center(
       child: Semantics(
         key: const ValueKey('brand-tribute-trigger'),
