@@ -29,6 +29,24 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 class _RealHttpOverrides extends HttpOverrides {}
 
+class _MethodChannelProxyForwarder extends ProxyPlatform {
+  static const _channel = MethodChannel('proxy');
+
+  @override
+  Future<bool?> startPac(String url) =>
+      _channel.invokeMethod<bool>('StartPac', {'url': url});
+
+  @override
+  Future<bool?> startProxy(int port, List<String> bypassDomain) =>
+      _channel.invokeMethod<bool>('StartProxy', {
+        'port': port,
+        'bypassDomain': bypassDomain,
+      });
+
+  @override
+  Future<bool?> stopProxy() => _channel.invokeMethod<bool>('StopProxy');
+}
+
 class _TestPaths extends PathProviderPlatform {
   _TestPaths(this.root);
   final String root;
@@ -531,6 +549,10 @@ void main() {
       expect(report.verdict.primaryAction, HealthAction.reapplySystemProxy);
 
       // Verify SystemProxyCoordinator.forceReapply bypasses _lastApplied cache
+      final originalPlatform = ProxyPlatform.instance;
+      ProxyPlatform.instance = _MethodChannelProxyForwarder();
+      addTearDown(() => ProxyPlatform.instance = originalPlatform);
+
       final startProxyCalls = <int>[];
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
           .setMockMethodCallHandler(const MethodChannel('proxy'), (call) async {
@@ -827,7 +849,13 @@ void main() {
 
         // Primary source trickles header lines every 800ms so idle/receiveTimeout never triggers
         trickleServer.listen((socket) {
-          socket.add(utf8.encode('HTTP/1.1 200 OK\r\n'));
+          unawaited(socket.done.catchError((_) {}));
+          socket.listen((_) {}, onError: (_) {}, cancelOnError: true);
+          try {
+            socket.add(utf8.encode('HTTP/1.1 200 OK\r\n'));
+          } catch (_) {
+            return;
+          }
           trickleTimers.add(
             Timer.periodic(const Duration(milliseconds: 800), (timer) {
               try {
@@ -841,6 +869,7 @@ void main() {
 
         int? observedClientPort;
         fastServer.listen((socket) {
+          unawaited(socket.done.catchError((_) {}));
           observedClientPort = socket.remotePort;
           socket.listen((chunk) {
             if (utf8.decode(chunk, allowMalformed: true).contains('\r\n\r\n')) {

@@ -124,6 +124,12 @@ void main() {
           reason:
               'Unchanged icon during background updateTray() on Windows must skip setContextMenu, skip duplicate setIcon, and not clobber traffic tooltip',
         );
+      } else {
+        expect(
+          calls.where((c) => c.method == 'setContextMenu'),
+          hasLength(1),
+        );
+        calls.clear();
       }
 
       // Right-click on-demand tray.update(trayState: ...) builds and pushes fresh menu.

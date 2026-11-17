@@ -535,7 +535,10 @@ void main() {
       );
       await tester.pump();
 
-      expect(find.text(appLocalizations.tunStatusOn), findsNWidgets(2));
+      expect(
+        find.text(appLocalizations.tunStatusOn),
+        findsNWidgets(Platform.isWindows ? 2 : 1),
+      );
 
       // Tap StartButton -> MUST invoke updateStatus(false) immediately at 0ms (no 400ms debounce!).
       final toggleFinder = find.byKey(const ValueKey('dashboard-proxy-toggle'));
@@ -572,17 +575,25 @@ void main() {
       pendingToggle.complete();
       await tester.pumpAndSettle();
 
-      // Both TUNButton and SystemProxyButton must show "等待代理启动" and unchecked Switches!
+      // On Windows both TUNButton and SystemProxyButton show "等待代理启动" and unchecked Switches;
+      // on non-Windows platforms TUNButton renders generic "Options" + patchClashConfig.tun.enable.
       expect(
         find.text(appLocalizations.tunStatusWaiting),
-        findsNWidgets(2),
+        findsNWidgets(Platform.isWindows ? 2 : 1),
         reason:
-            'Both TUNButton and SystemProxyButton must reactively show "等待代理启动" when proxy stops',
+            'SystemProxyButton (and TUNButton on Windows) must reactively show "等待代理启动" when proxy stops',
       );
       final switches = tester.widgetList<Switch>(find.byType(Switch)).toList();
-      expect(switches.every((s) => !s.value), isTrue,
-          reason:
-              'Neither TUN switch nor SystemProxy switch may remain checked while proxy is stopped');
+      expect(switches, hasLength(2));
+      if (Platform.isWindows) {
+        expect(switches.every((s) => !s.value), isTrue,
+            reason:
+                'Neither TUN switch nor SystemProxy switch may remain checked while proxy is stopped');
+      } else {
+        expect(switches[1].value, isFalse,
+            reason:
+                'SystemProxy switch must not remain checked while proxy is stopped');
+      }
     },
   );
 

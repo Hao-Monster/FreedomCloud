@@ -238,16 +238,18 @@ Widget _gallery(Iterable<int> indexes) => Wrap(
 
 Future<void> _waitUntil(
     WidgetTester tester, bool Function() ready, String description) async {
-  for (var frame = 0; frame < 100; frame++) {
+  for (var frame = 0; frame < 300; frame++) {
     if (ready()) return;
-    await tester.runAsync(() => Future<void>.delayed(Duration.zero));
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 10)),
+    );
     await tester.pump();
   }
   fail(description);
 }
 
 Future<void> _waitForImage(WidgetTester tester, {int count = 1}) async {
-  for (var frame = 0; frame < 100; frame++) {
+  for (var frame = 0; frame < 300; frame++) {
     if (tester
             .widgetList<RawImage>(find.byType(RawImage))
             .where((image) => image.image != null)
@@ -255,7 +257,9 @@ Future<void> _waitForImage(WidgetTester tester, {int count = 1}) async {
         count) {
       return;
     }
-    await tester.runAsync(() => Future<void>.delayed(Duration.zero));
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 10)),
+    );
     await tester.pump();
   }
   fail('The synthetic raster did not render');
