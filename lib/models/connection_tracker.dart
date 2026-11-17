@@ -151,16 +151,21 @@ const _electronChildNames = <String>{
   'chrome_crashpad_handler',
 };
 
+final _multiSlashRegex = RegExp(r'/+');
+final _trailingSlashRegex = RegExp(r'/$');
+final _windowsDrivePrefixRegex = RegExp(r'^[a-zA-Z]:/');
+
 String _normalizeProcessPath(String value) {
   final trimmed = value.trim();
+  if (trimmed.isEmpty) return '';
   final normalized = trimmed
       .replaceAll('\\', '/')
-      .replaceAll(RegExp(r'/+'), '/')
-      .replaceFirst(RegExp(r'/$'), '');
+      .replaceAll(_multiSlashRegex, '/')
+      .replaceFirst(_trailingSlashRegex, '');
   // Windows process paths are case-insensitive. Keep Unix paths case-sensitive
   // so two distinct applications such as /opt/Foo and /opt/foo do not merge.
   final isWindows =
-      RegExp(r'^[a-zA-Z]:/').hasMatch(normalized) || trimmed.contains('\\');
+      _windowsDrivePrefixRegex.hasMatch(normalized) || trimmed.contains('\\');
   return isWindows ? normalized.toLowerCase() : normalized;
 }
 

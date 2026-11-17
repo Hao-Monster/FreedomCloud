@@ -2,11 +2,11 @@ import 'dart:async';
 import 'dart:collection';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flclashx/common/log_redaction.dart';
 import 'package:flclashx/common/path.dart';
 import 'package:flutter/widgets.dart';
-import 'package:intl/intl.dart';
 import 'package:path/path.dart';
 
 class FileLogger {
@@ -98,13 +98,27 @@ class FileLogger {
     return logsDir;
   }
 
-  String _getTodayDate() => DateFormat('yyyy-MM-dd').format(_now());
+  static String _twoDigits(int n) => n >= 10 ? '$n' : '0$n';
+
+  static String _threeDigits(int n) {
+    if (n >= 100) return '$n';
+    if (n >= 10) return '0$n';
+    return '00$n';
+  }
+
+  static String _formatDate(DateTime dt) =>
+      '${dt.year.toString().padLeft(4, '0')}-${_twoDigits(dt.month)}-${_twoDigits(dt.day)}';
+
+  static String _formatTimestamp(DateTime dt) =>
+      '${_formatDate(dt)} ${_twoDigits(dt.hour)}:${_twoDigits(dt.minute)}:${_twoDigits(dt.second)}.${_threeDigits(dt.millisecond)}';
+
+  String _getTodayDate() => _formatDate(_now());
 
   String _getLogFileName(String date, {int index = 0}) {
     if (index == 0) {
-      return 'FlClashX_$date.log';
+      return 'FreedomNet_$date.log';
     }
-    return 'FlClashX_${date}_$index.log';
+    return 'FreedomNet_${date}_$index.log';
   }
 
   Future<void> _rotateLogs(
@@ -115,7 +129,8 @@ class FileLogger {
   }) async {
     final logsDir = await _getLogsDir();
     final dir = Directory(logsDir);
-    final ownedName = RegExp(r'^FlClashX_\d{4}-\d{2}-\d{2}(?:_\d+)?\.log$');
+    final ownedName =
+        RegExp(r'^(?:FreedomNet|FlClashX)_\d{4}-\d{2}-\d{2}(?:_\d+)?\.log$');
 
     // Get all log files
     final files = await dir
@@ -214,7 +229,7 @@ class FileLogger {
   }
 
   Future<void> _writeLine(String message) async {
-    final timestamp = DateFormat('yyyy-MM-dd HH:mm:ss.SSS').format(_now());
+    final timestamp = _formatTimestamp(_now());
     final bytes = utf8.encode('[$timestamp] $message\n');
     await _ensureSink(bytes.length);
     _currentSink!.add(bytes);
@@ -260,17 +275,48 @@ class FileLogger {
       }
 
       while (_writeQueue.isNotEmpty) {
-        final message = _writeQueue.removeFirst();
+        final firstMessage = _writeQueue.removeFirst();
+        final timestamp = _formatTimestamp(_now());
+        final firstBytes = utf8.encode('[$timestamp] $firstMessage\n');
         try {
-          await _writeLine(message);
+          await _ensureSink(firstBytes.length);
         } catch (_) {
           if (_writeQueue.length < maxPendingMessages) {
-            _writeQueue.addFirst(message);
+            _writeQueue.addFirst(firstMessage);
           } else {
             _droppedMessages++;
           }
           rethrow;
         }
+
+        if (_writeQueue.isEmpty ||
+            _currentBytes + firstBytes.length >= _fileSizeLimit) {
+          _currentSink!.add(firstBytes);
+          _currentBytes += firstBytes.length;
+          continue;
+        }
+
+        final batch = BytesBuilder(copy: false)..add(firstBytes);
+        var batchBytes = firstBytes.length;
+        final batchDate = _currentDate;
+        while (_writeQueue.isNotEmpty) {
+          final now = _now();
+          if (_formatDate(now) != batchDate) {
+            break;
+          }
+          final nextMessage = _writeQueue.first;
+          final nextLineBytes =
+              utf8.encode('[${_formatTimestamp(now)}] $nextMessage\n');
+          if (_currentBytes + batchBytes + nextLineBytes.length >
+              _fileSizeLimit) {
+            break;
+          }
+          _writeQueue.removeFirst();
+          batch.add(nextLineBytes);
+          batchBytes += nextLineBytes.length;
+        }
+        _currentSink!.add(batch.takeBytes());
+        _currentBytes += batchBytes;
       }
 
       await _currentSink?.flush();

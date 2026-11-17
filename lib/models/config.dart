@@ -33,12 +33,15 @@ const defaultBypassDomain = [
 const defaultAppSettingProps = AppSettingProps();
 const defaultVpnProps = VpnProps();
 const defaultNetworkProps = NetworkProps();
+const defaultGlobalOverrideData = OverrideData(enable: true);
 const defaultProxiesStyle = ProxiesStyle();
 const defaultWindowProps = WindowProps();
 const defaultAccessControl = AccessControl();
 const defaultThemeProps = ThemeProps(
   primaryColor: defaultPrimaryColor,
+  themeMode: ThemeMode.dark,
 );
+const String _legacyDefaultTestUrl = "https://www.gstatic.com/generate_204";
 
 const defaultConnectionTableColumns = [
   'status',
@@ -56,19 +59,48 @@ const defaultConnectionTableColumns = [
 ];
 
 const List<DashboardWidget> defaultDashboardWidgets = [
-  DashboardWidget.announce,
   DashboardWidget.metainfo,
+  DashboardWidget.networkSpeed,
   DashboardWidget.outboundModeV2,
 ];
+
+List<DashboardWidget> normalizeDashboardWidgets(
+  Iterable<DashboardWidget> items, {
+  bool dropRedundantAnnounce = false,
+}) {
+  final hasMetainfo = items.contains(DashboardWidget.metainfo);
+  final normalized = <DashboardWidget>[];
+  for (final raw in items) {
+    if (dropRedundantAnnounce &&
+        hasMetainfo &&
+        raw == DashboardWidget.announce) {
+      continue;
+    }
+    final resolved = raw == DashboardWidget.trafficUsage
+        ? DashboardWidget.networkSpeed
+        : raw;
+    if (!normalized.contains(resolved)) {
+      normalized.add(resolved);
+    }
+  }
+  return normalized;
+}
 
 List<DashboardWidget> dashboardWidgetsSafeFormJson(
   List<dynamic>? dashboardWidgets,
 ) {
+  if (dashboardWidgets == null) {
+    return defaultDashboardWidgets;
+  }
   try {
-    return dashboardWidgets
-            ?.map((e) => $enumDecode(_$DashboardWidgetEnumMap, e))
-            .toList() ??
-        defaultDashboardWidgets;
+    final decoded = <DashboardWidget>[];
+    for (final item in dashboardWidgets) {
+      final parsed = $enumDecodeNullable(_$DashboardWidgetEnumMap, item);
+      if (parsed != null) {
+        decoded.add(parsed);
+      }
+    }
+    return normalizeDashboardWidgets(decoded);
   } catch (_) {
     return defaultDashboardWidgets;
   }
@@ -81,6 +113,10 @@ class AppSettingProps with _$AppSettingProps {
     @Default(defaultDashboardWidgets)
     @JsonKey(fromJson: dashboardWidgetsSafeFormJson)
     List<DashboardWidget> dashboardWidgets,
+    @Default(true) bool dashboardDefaultV2Migrated,
+    @Default(true) bool tunDesktopStackGvisorRestored,
+    @Default(true) bool dnsRespectRulesDefaultMigrated,
+    @Default(true) bool defaultTestUrlGoogleMigrated,
     @Default(false) bool onlyStatisticsProxy,
     @Default(false) bool autoLaunch,
     @Default(false) bool silentLaunch,
@@ -183,6 +219,9 @@ class NetworkProps with _$NetworkProps {
     @Default(false) bool systemProxy,
     @Default(defaultBypassDomain) List<String> bypassDomain,
     @Default(RouteMode.config) RouteMode routeMode,
+    @JsonKey(unknownEnumValue: LocalSplitMode.auto)
+    @Default(LocalSplitMode.auto)
+    LocalSplitMode localSplitMode,
     @Default(true) bool autoSetSystemDns,
   }) = _NetworkProps;
 
@@ -224,10 +263,16 @@ class ThemeProps with _$ThemeProps {
   const factory ThemeProps({
     int? primaryColor,
     @Default(defaultPrimaryColors) List<int> primaryColors,
-    @Default(ThemeMode.system) ThemeMode themeMode,
+    @Default(ThemeMode.dark) ThemeMode themeMode,
+    @Default(true) bool freedomNetThemeV1Migrated,
+    @Default(true) bool freedomNetThemeV2Migrated,
     @Default(DynamicSchemeVariant.content) DynamicSchemeVariant schemeVariant,
     @Default(false) bool pureBlack,
     @Default(TextScale()) TextScale textScale,
+    @Default(DayNightSkyMode.followConnection) DayNightSkyMode skyMode,
+    @Default(DayNightGlassPreset.balanced) DayNightGlassPreset glassPreset,
+    @Default(true) bool skyAmbientAnimation,
+    @Default(false) bool ignoreCustomBackground,
   }) = _ThemeProps;
 
   factory ThemeProps.fromJson(Map<String, Object?> json) =>
@@ -292,11 +337,16 @@ class Config with _$Config {
     @Default(defaultWindowProps) WindowProps windowProps,
     @Default(defaultClashConfig) ClashConfig patchClashConfig,
     @Default(ScriptProps()) ScriptProps scriptProps,
+    @Default(defaultGlobalOverrideData) OverrideData globalOverrideData,
   }) = _Config;
 
   factory Config.fromJson(Map<String, Object?> json) => _$ConfigFromJson(json);
 
-  factory Config.compatibleFromJson(Map<String, Object?> json) {
+  factory Config.compatibleFromJson(
+    Map<String, Object?> json, {
+    bool? isDesktop,
+  }) {
+    final effectiveIsDesktop = isDesktop ?? system.isDesktop;
     final normalizedJson = Map<String, Object?>.from(json);
     try {
       final accessControlMap = normalizedJson["accessControl"];
@@ -342,6 +392,45 @@ class Config with _$Config {
     } catch (_) {}
 
     try {
+      // Migration: promote unified networkSpeed + trafficUsage card once for
+      // legacy unmigrated configs, deduplicating legacy trafficUsage/announce
+      // while preserving any subsequent user hide preference.
+      final appSetting = normalizedJson["appSetting"];
+      if (appSetting is Map) {
+        final nextAppSetting = Map<String, Object?>.from(appSetting);
+        if (nextAppSetting["dashboardDefaultV2Migrated"] != true) {
+          final rawWidgets = nextAppSetting["dashboardWidgets"];
+          if (rawWidgets is List) {
+            final stringWidgets = <String>[];
+            final hasMetainfo = rawWidgets.any((e) => e == "metainfo");
+            for (final item in rawWidgets) {
+              if (item is! String) continue;
+              if (hasMetainfo && item == "announce") continue;
+              final mapped =
+                  item == "trafficUsage" ? "networkSpeed" : item;
+              if (!stringWidgets.contains(mapped)) {
+                stringWidgets.add(mapped);
+              }
+            }
+            if (!stringWidgets.contains("networkSpeed")) {
+              final metainfoIdx = stringWidgets.indexOf("metainfo");
+              if (metainfoIdx >= 0) {
+                stringWidgets.insert(metainfoIdx + 1, "networkSpeed");
+              } else {
+                stringWidgets.insert(0, "networkSpeed");
+              }
+            }
+            nextAppSetting["dashboardWidgets"] = stringWidgets;
+          }
+          nextAppSetting["dashboardDefaultV2Migrated"] = true;
+        }
+        normalizedJson["appSetting"] = nextAppSetting;
+      } else if (appSetting != null) {
+        normalizedJson.remove("appSetting");
+      }
+    } catch (_) {}
+
+    try {
       // Migration: strip removed fields from profiles
       final profiles = normalizedJson["profiles"];
       if (profiles is List) {
@@ -352,6 +441,154 @@ class Config with _$Config {
             else
               p,
         ];
+      }
+    } catch (_) {}
+
+    try {
+      // One-shot desktop recovery migration: both f329535-migrated configs and
+      // legacy desktop installs created when `const Tun()` defaulted to `mixed`
+      // are upgraded once to `gvisor` while preserving explicit `system`/`mips`
+      // and any manual `mixed` choice saved after `tunDesktopStackGvisorRestored`.
+      if (effectiveIsDesktop) {
+        final rawAppSetting = normalizedJson["appSetting"];
+        final alreadyRestored = rawAppSetting is Map &&
+            rawAppSetting["tunDesktopStackGvisorRestored"] == true;
+        if (!alreadyRestored) {
+          final rawPatchClash = normalizedJson["patchClashConfig"];
+          if (rawPatchClash is Map) {
+            final rawTun = rawPatchClash["tun"];
+            if (rawTun is Map) {
+              final rawStack = rawTun["stack"];
+              if (rawStack == null || rawStack == "mixed") {
+                final nextTun = Map<String, Object?>.from(rawTun);
+                nextTun["stack"] = "gvisor";
+                final nextPatchClash = Map<String, Object?>.from(rawPatchClash);
+                nextPatchClash["tun"] = nextTun;
+                normalizedJson["patchClashConfig"] = nextPatchClash;
+              }
+            } else if (rawTun == null) {
+              final nextPatchClash = Map<String, Object?>.from(rawPatchClash);
+              nextPatchClash["tun"] = <String, Object?>{"stack": "gvisor"};
+              normalizedJson["patchClashConfig"] = nextPatchClash;
+            }
+          } else if (rawPatchClash == null) {
+            normalizedJson["patchClashConfig"] = <String, Object?>{
+              "tun": <String, Object?>{"stack": "gvisor"},
+            };
+          }
+          if (rawAppSetting is Map) {
+            final nextAppSetting = Map<String, Object?>.from(rawAppSetting);
+            nextAppSetting.remove("tunDesktopStackMixedMigrated");
+            nextAppSetting["tunDesktopStackGvisorRestored"] = true;
+            normalizedJson["appSetting"] = nextAppSetting;
+          } else if (rawAppSetting == null) {
+            normalizedJson["appSetting"] = <String, Object?>{
+              "tunDesktopStackGvisorRestored": true,
+            };
+          }
+        }
+      }
+    } catch (_) {}
+
+    try {
+      final rawAppSetting = normalizedJson["appSetting"];
+      final alreadyMigratedDns = rawAppSetting is Map &&
+          rawAppSetting["dnsRespectRulesDefaultMigrated"] == true;
+      if (!alreadyMigratedDns) {
+        final rawPatchClash = normalizedJson["patchClashConfig"];
+        if (rawPatchClash is Map) {
+          final rawDns = rawPatchClash["dns"];
+          if (rawDns is Map) {
+            final parsedDns = Dns.safeDnsFromJson(
+              Map<String, Object?>.from(rawDns),
+            );
+            if (parsedDns == const Dns(respectRules: false)) {
+              final nextDns = Map<String, Object?>.from(rawDns);
+              nextDns["respect-rules"] = true;
+              final nextPatchClash = Map<String, Object?>.from(rawPatchClash);
+              nextPatchClash["dns"] = nextDns;
+              normalizedJson["patchClashConfig"] = nextPatchClash;
+            }
+          }
+        }
+        final latestAppSetting = normalizedJson["appSetting"];
+        if (latestAppSetting is Map) {
+          final nextAppSetting = Map<String, Object?>.from(latestAppSetting);
+          nextAppSetting["dnsRespectRulesDefaultMigrated"] = true;
+          normalizedJson["appSetting"] = nextAppSetting;
+        } else if (latestAppSetting == null) {
+          normalizedJson["appSetting"] = <String, Object?>{
+            "dnsRespectRulesDefaultMigrated": true,
+          };
+        }
+      }
+    } catch (_) {}
+
+    try {
+      // One-shot migration: upgrade legacy uncustomized default testUrl
+      // (https://www.gstatic.com/generate_204 or blank/corrupt) once to
+      // defaultTestUrl (https://www.google.com/generate_204) while preserving
+      // custom user URLs and any manual edits after defaultTestUrlGoogleMigrated.
+      final rawAppSetting = normalizedJson["appSetting"];
+      final alreadyMigratedTestUrl = rawAppSetting is Map &&
+          rawAppSetting["defaultTestUrlGoogleMigrated"] == true;
+      if (!alreadyMigratedTestUrl) {
+        final nextAppSetting = rawAppSetting is Map
+            ? Map<String, Object?>.from(rawAppSetting)
+            : <String, Object?>{};
+        final rawTestUrl = nextAppSetting["testUrl"];
+        if (rawTestUrl == null) {
+          nextAppSetting["testUrl"] = defaultTestUrl;
+        } else if (rawTestUrl is String) {
+          final trimmed = rawTestUrl.trim();
+          if (trimmed.isEmpty || trimmed == _legacyDefaultTestUrl) {
+            nextAppSetting["testUrl"] = defaultTestUrl;
+          }
+        } else {
+          nextAppSetting["testUrl"] = defaultTestUrl;
+        }
+        nextAppSetting["defaultTestUrlGoogleMigrated"] = true;
+        normalizedJson["appSetting"] = nextAppSetting;
+      }
+    } catch (_) {}
+
+    try {
+      final globalOverride = normalizedJson["globalOverrideData"];
+      if (globalOverride != null && globalOverride is! Map) {
+        normalizedJson.remove("globalOverrideData");
+      }
+    } catch (_) {}
+
+    try {
+      // One-shot V2 migration: upgrade pre-V2 themeProps (including legacy
+      // custom swatches, pureBlack: true, or tonalSpot variants) once to
+      // Flagship Plan A Obsidian Slate + Electric Cyan while preserving any
+      // subsequent user customizations after freedomNetThemeV2Migrated == true.
+      final rawThemeProps = normalizedJson["themeProps"];
+      if (rawThemeProps is Map) {
+        final nextThemeProps = Map<String, Object?>.from(rawThemeProps);
+        if (nextThemeProps["freedomNetThemeV2Migrated"] != true) {
+          nextThemeProps["primaryColor"] = defaultPrimaryColor;
+          nextThemeProps["themeMode"] = "dark";
+          nextThemeProps["pureBlack"] = false;
+          nextThemeProps.remove("prueBlack");
+          nextThemeProps["schemeVariant"] = "content";
+          final rawSwatches = nextThemeProps["primaryColors"];
+          final nextSwatches = <int>[
+            defaultPrimaryColor,
+            if (rawSwatches is List)
+              for (final item in rawSwatches)
+                if (item is num && item.toInt() != defaultPrimaryColor)
+                  item.toInt()
+            else
+              for (final item in defaultPrimaryColors)
+                if (item != defaultPrimaryColor) item,
+          ];
+          nextThemeProps["primaryColors"] = nextSwatches;
+          nextThemeProps["freedomNetThemeV1Migrated"] = true;
+          nextThemeProps["freedomNetThemeV2Migrated"] = true;
+        }
+        normalizedJson["themeProps"] = nextThemeProps;
       }
     } catch (_) {}
 

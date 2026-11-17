@@ -1,9 +1,31 @@
 import 'dart:io';
 
-import 'package:crypto/crypto.dart';
+import 'package:flclashx/common/file_digest.dart';
+import 'package:flclashx/common/tun_runtime.dart';
 import 'package:path/path.dart' as p;
 
 typedef AgentLaunchPaths = ({String agent, String core});
+
+enum WindowsAgentColdStartAction {
+  launchWithHelper,
+  launchLocal,
+  deferForTunAuthorization,
+}
+
+bool resolveWindowsTunDesiredForLaunch({
+  required TunRuntimeController runtime,
+  required bool isConfigInitialized,
+  required bool Function() readPersistedTunEnabled,
+}) {
+  final hasRuntimeIntent = runtime.status != null || runtime.intentRevision > 0;
+  if (hasRuntimeIntent) {
+    return runtime.desiredEnabled;
+  }
+  if (!isConfigInitialized) {
+    return false;
+  }
+  return readPersistedTunEnabled();
+}
 
 /// Resolving protected files is part of launching, so failures follow the same
 /// retry/reporting path as Process.start, including background reconnection.
@@ -42,12 +64,14 @@ Future<AgentLaunchPaths> windowsAgentLaunchPaths({
   if (!File(p.join(serviceDirectory, 'FlClashStrictBroker.exe')).existsSync()) {
     return (agent: bundledAgent, core: bundledCore);
   }
-  final agent = p.join(serviceDirectory, 'FlClashAgent.exe');
-  final core = p.join(serviceDirectory, 'FlClashCore.exe');
+  final agent = p.join(serviceDirectory, 'FreedomNetAgent.exe');
+  final core = p.join(serviceDirectory, 'FreedomNetCore.exe');
   for (final pair in [(bundledAgent, agent), (bundledCore, core)]) {
-    final bundled = await sha256.bind(File(pair.$1).openRead()).first;
-    final installed = await sha256.bind(File(pair.$2).openRead()).first;
-    if (bundled != installed) {
+    final digests = await Future.wait([
+      fileSha256(pair.$1),
+      fileSha256(pair.$2),
+    ]);
+    if (digests[0] != digests[1]) {
       throw StateError(
         'Strict component does not match this portable package: '
         '${pair.$2}. Update the protected installation before launching.',
@@ -55,4 +79,83 @@ Future<AgentLaunchPaths> windowsAgentLaunchPaths({
     }
   }
   return (agent: agent, core: core);
+}
+
+Future<bool> windowsInstalledHelperFilesMatch({
+  required String bundledHelper,
+  required String bundledCore,
+  required String installedHelper,
+  required String installedCore,
+}) async {
+  try {
+    if (!File(installedHelper).existsSync() ||
+        !File(installedCore).existsSync()) {
+      return false;
+    }
+    final (helperExpected, helperActual, coreExpected, coreActual) = await (
+      fileSha256(bundledHelper),
+      fileSha256(installedHelper),
+      fileSha256(bundledCore),
+      fileSha256(installedCore),
+    ).wait;
+    return helperExpected == helperActual && coreExpected == coreActual;
+  } catch (_) {
+    return false;
+  }
+}
+
+Future<bool> shouldLaunchWindowsAgentWithHelper({
+  required bool tunDesired,
+  required Future<bool> Function() isHelperRunning,
+  required Future<bool> Function() installedFilesMatch,
+  required Future<bool> Function() tryStartExistingHelper,
+}) async {
+  if (await isHelperRunning()) return true;
+  if (!tunDesired) return false;
+  if (!await installedFilesMatch()) return false;
+  return tryStartExistingHelper();
+}
+
+Future<WindowsAgentColdStartAction> planWindowsAgentColdStart({
+  required bool tunDesired,
+  required bool allowDeferForTunAuthorization,
+  required Future<bool> Function() isHelperRunning,
+  required Future<bool> Function() installedFilesMatch,
+  required Future<bool> Function() tryStartExistingHelper,
+}) async {
+  final useHelper = await shouldLaunchWindowsAgentWithHelper(
+    tunDesired: tunDesired,
+    isHelperRunning: isHelperRunning,
+    installedFilesMatch: installedFilesMatch,
+    tryStartExistingHelper: tryStartExistingHelper,
+  );
+  if (useHelper) {
+    return WindowsAgentColdStartAction.launchWithHelper;
+  }
+  if (tunDesired && allowDeferForTunAuthorization) {
+    return WindowsAgentColdStartAction.deferForTunAuthorization;
+  }
+  return WindowsAgentColdStartAction.launchLocal;
+}
+
+/// Materializes the unprivileged local Agent when a Windows cold-start TUN
+/// launch exits without starting the elevated Helper Agent (e.g. fresh install
+/// with zero profiles `profileRequired`, or UAC cancellation
+/// `permissionDenied`). This restores Core availability for `validateConfig`
+/// and `catalogPrepare` without prompting for UAC or altering `tunRuntime`
+/// failure / preference state.
+Future<void> reconcileDeferredWindowsAgentAfterStartup({
+  required bool pendingProxyStop,
+  required bool Function() hasDeferredAgentLaunch,
+  required Future<void> Function() initializeDeferredAgent,
+  required void Function(String message) log,
+}) async {
+  if (pendingProxyStop || !hasDeferredAgentLaunch()) {
+    return;
+  }
+  try {
+    await initializeDeferredAgent();
+  } catch (error) {
+    log('startup: deferred local Agent fallback failed: $error');
+  }
 }

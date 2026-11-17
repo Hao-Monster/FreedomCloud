@@ -79,6 +79,9 @@ Future<T> retry<T>({
     if (!retryIf(res) || attempts >= maxAttempts - 1) {
       return res;
     }
+    if (delay > Duration.zero) {
+      await Future.delayed(delay);
+    }
     attempts++;
   }
   throw "unknown error";

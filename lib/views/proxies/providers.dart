@@ -24,14 +24,14 @@ class _ProvidersViewState extends ConsumerState<ProvidersView> {
   Future<String?> _refreshProvider(ExternalProvider provider) async {
     final notifier = ref.read(providersProvider.notifier);
     notifier.setProvider(provider.copyWith(isUpdating: true));
-    String? message;
     try {
-      message = await clashCore.updateExternalProvider(
+      final message = await clashCore.updateExternalProvider(
         providerName: provider.name,
       );
       if (message.isNotEmpty) {
         return "${provider.name}: $message \n";
       }
+      return null;
     } catch (error) {
       return "${provider.name}: $error \n";
     } finally {
@@ -42,7 +42,6 @@ class _ProvidersViewState extends ConsumerState<ProvidersView> {
         notifier.setProvider(provider.copyWith(isUpdating: false));
       }
     }
-    return message?.isNotEmpty == true ? "${provider.name}: $message \n" : null;
   }
 
   Future<void> _updateProviders() async {

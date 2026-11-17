@@ -1,7 +1,11 @@
 #include "../proxy_settings.h"
 
+#include <atomic>
+#include <chrono>
 #include <iostream>
+#include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -13,9 +17,10 @@ struct FakeApi {
   inline static std::vector<DWORD> calls;
   inline static std::wstring bypass;
   inline static std::vector<DWORD> flags;
+  inline static std::vector<bool> cleared_autoconfig;
   static void Reset() {
     enumerations = fail_enumeration = fail_option = ras_count = 0;
-    calls.clear(); bypass.clear(); flags.clear();
+    calls.clear(); bypass.clear(); flags.clear(); cleared_autoconfig.clear();
   }
   static DWORD Enumerate(RASENTRYNAMEW* entries, DWORD* bytes, DWORD* count) {
     ++enumerations;
@@ -35,7 +40,19 @@ struct FakeApi {
     if (option == INTERNET_OPTION_PER_CONNECTION_OPTION) {
       const auto* list = static_cast<INTERNET_PER_CONN_OPTION_LISTW*>(data);
       flags.push_back(list->pOptions[0].Value.dwValue);
-      if (list->dwOptionCount == 3) bypass = list->pOptions[2].Value.pszValue;
+      bool saw_empty_pac = false;
+      for (DWORD i = 0; i < list->dwOptionCount; ++i) {
+        if (list->pOptions[i].dwOption == INTERNET_PER_CONN_PROXY_BYPASS &&
+            list->pOptions[i].Value.pszValue != nullptr) {
+          bypass = list->pOptions[i].Value.pszValue;
+        }
+        if (list->pOptions[i].dwOption == INTERNET_PER_CONN_AUTOCONFIG_URL &&
+            (list->pOptions[i].Value.pszValue == nullptr ||
+             list->pOptions[i].Value.pszValue[0] == L'\0')) {
+          saw_empty_pac = true;
+        }
+      }
+      cleared_autoconfig.push_back(saw_empty_pac);
     }
     return static_cast<int>(calls.size()) != fail_option;
   }
@@ -57,12 +74,14 @@ int main() {
   CHECK(FakeApi::bypass == L"example.com;xn--fsqu00a.xn--0zwm56d;\u4F8B\u5B50.\u6D4B\u8BD5;*.\u4F8B\u5B50;<local>");
   CHECK(FakeApi::calls.size() == 3);
   CHECK(FakeApi::flags[0] == (PROXY_TYPE_DIRECT | PROXY_TYPE_PROXY));
+  CHECK(FakeApi::cleared_autoconfig.size() == 1 && FakeApi::cleared_autoconfig[0]);
 
   FakeApi::Reset();
   FakeApi::ras_count = 3;
   CHECK(proxy::ApplySystemProxy<FakeApi>(false, 0, {}).ok());
   CHECK(FakeApi::enumerations == 2 && FakeApi::calls.size() == 6);
   for (const auto flag : FakeApi::flags) CHECK(flag == PROXY_TYPE_DIRECT);
+  for (const bool cleared : FakeApi::cleared_autoconfig) CHECK(cleared);
 
   for (int fail = 1; fail <= 2; ++fail) {
     for (int repeat = 0; repeat < 1000; ++repeat) {
@@ -94,7 +113,136 @@ int main() {
   FakeApi::Reset();
   CHECK(!proxy::ApplySystemProxy<FakeApi>(true, 0, {}).ok());
   CHECK(FakeApi::calls.empty());
+
+  // Verify SerialTaskRunner executes move-only work off the caller thread in
+  // strict FIFO order and drains all queued tasks before Shutdown() returns.
+  {
+    const auto caller_thread = std::this_thread::get_id();
+    std::mutex log_mutex;
+    std::vector<int> order;
+    std::atomic<bool> ran_off_caller{true};
+    {
+      proxy::SerialTaskRunner runner;
+      for (int i = 0; i < 16; ++i) {
+        auto payload = std::make_unique<int>(i);
+        runner.Post([&, item = std::move(payload)]() {
+          if (std::this_thread::get_id() == caller_thread) {
+            ran_off_caller.store(false);
+          }
+          if (*item == 0) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(15));
+          }
+          std::lock_guard<std::mutex> guard(log_mutex);
+          order.push_back(*item);
+        });
+      }
+      runner.Shutdown();
+    }
+    CHECK(ran_off_caller.load());
+    CHECK(order.size() == 16);
+    for (int i = 0; i < 16; ++i) {
+      CHECK(order[static_cast<size_t>(i)] == i);
+    }
+  }
+
+  // [CR-PERF-02] Verify Shutdown() on a Win32 UI thread that owns an HWND does
+  // not self-deadlock when the background worker broadcasts WM_SETTINGCHANGE via
+  // synchronous SendMessageTimeoutW back to that HWND.
+  {
+    HWND hwnd = CreateWindowExW(
+        0, L"STATIC", L"fcx-proxy-shutdown-test", 0, 0, 0, 0, 0,
+        nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+    CHECK(hwnd != nullptr);
+
+    HANDLE worker_entered = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    CHECK(worker_entered != nullptr);
+
+    std::atomic<BOOL> send_succeeded{FALSE};
+    std::atomic<DWORD> send_error{ERROR_SUCCESS};
+    const auto start_tick = std::chrono::steady_clock::now();
+    {
+      proxy::SerialTaskRunner runner;
+      runner.Post([&]() {
+        SetEvent(worker_entered);
+        // Give the UI thread a brief moment to enter runner.Shutdown() so the
+        // SendMessageTimeoutW lands while Shutdown() is waiting on the worker.
+        std::this_thread::sleep_for(std::chrono::milliseconds(25));
+        DWORD_PTR msg_result = 0;
+        const LRESULT ok = SendMessageTimeoutW(
+            hwnd, WM_SETTINGCHANGE, 0,
+            reinterpret_cast<LPARAM>(L"InternetSettings"),
+            SMTO_NORMAL, 700, &msg_result);
+        send_succeeded.store(ok != 0 ? TRUE : FALSE);
+        if (ok == 0) {
+          send_error.store(GetLastError());
+        }
+      });
+      CHECK(WaitForSingleObject(worker_entered, 2000) == WAIT_OBJECT_0);
+      runner.Shutdown();
+    }
+    const auto elapsed_ms =
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - start_tick)
+            .count();
+
+    CloseHandle(worker_entered);
+    DestroyWindow(hwnd);
+
+    CHECK(send_succeeded.load() == TRUE);
+    CHECK(send_error.load() == ERROR_SUCCESS);
+    CHECK(elapsed_ms < 400);
+  }
+
+  // Verify CoalescingStateRunner collapses rapid superseded updates while an
+  // active apply is running, applying only [initial, latest] and completing all
+  // caller callbacks.
+  {
+    HANDLE first_started = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    HANDLE release_first = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    CHECK(first_started != nullptr && release_first != nullptr);
+
+    std::mutex applied_mu;
+    std::vector<int> applied_states;
+    std::atomic<int> completed_callbacks{0};
+    std::atomic<int> last_callback_outcome{0};
+
+    {
+      proxy::CoalescingStateRunner<int, int> coalescer([&](const int& state) {
+        {
+          std::lock_guard<std::mutex> lock(applied_mu);
+          applied_states.push_back(state);
+        }
+        if (state == 1) {
+          SetEvent(first_started);
+          WaitForSingleObject(release_first, 2000);
+        }
+        return state * 10;
+      });
+
+      coalescer.Submit(1, [&](const int&) { ++completed_callbacks; });
+      CHECK(WaitForSingleObject(first_started, 2000) == WAIT_OBJECT_0);
+
+      for (int s = 2; s <= 9; ++s) {
+        coalescer.Submit(s, [&](const int& out) {
+          last_callback_outcome.store(out);
+          ++completed_callbacks;
+        });
+      }
+      SetEvent(release_first);
+      coalescer.Shutdown();
+    }
+
+    CloseHandle(first_started);
+    CloseHandle(release_first);
+
+    CHECK(applied_states.size() == 2);
+    CHECK(applied_states[0] == 1 && applied_states[1] == 9);
+    CHECK(completed_callbacks.load() == 9);
+    CHECK(last_callback_outcome.load() == 90);
+  }
+
   std::cout << "PASS: Unicode/ASCII/Punycode, start/stop, 2000 RAS failure cycles, "
-               "8 write/notify failures, invalid UTF-8/NUL/port; OS settings unchanged\n";
+               "8 write/notify failures, invalid UTF-8/NUL/port, SerialTaskRunner FIFO; "
+               "OS settings unchanged\n";
   return 0;
 }

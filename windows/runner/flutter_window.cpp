@@ -1,8 +1,32 @@
 #include "flutter_window.h"
 
+#include <desktop_multi_window/desktop_multi_window_plugin.h>
+
 #include <optional>
 
 #include "flutter/generated_plugin_registrant.h"
+#include "uia_guard.h"
+
+namespace {
+
+void OnSecondaryFlutterWindowCreated(void* raw_controller) noexcept {
+  if (raw_controller == nullptr) {
+    return;
+  }
+  auto* controller = static_cast<flutter::FlutterViewController*>(raw_controller);
+  flutter::FlutterView* view = controller->view();
+  if (view == nullptr) {
+    return;
+  }
+  HWND view_hwnd = view->GetNativeWindow();
+  flclashx::uia_guard::InstallFlutterWindowTreeUiaGuard(view_hwnd);
+  HWND root_hwnd = ::GetAncestor(view_hwnd, GA_ROOT);
+  if (root_hwnd != nullptr && root_hwnd != view_hwnd) {
+    flclashx::uia_guard::InstallFlutterWindowTreeUiaGuard(root_hwnd);
+  }
+}
+
+}  // namespace
 
 FlutterWindow::FlutterWindow(const flutter::DartProject& project)
     : project_(project) {}
@@ -25,7 +49,12 @@ bool FlutterWindow::OnCreate() {
     return false;
   }
   RegisterPlugins(flutter_controller_->engine());
-  SetChildContent(flutter_controller_->view()->GetNativeWindow());
+  DesktopMultiWindowSetWindowCreatedCallback(&OnSecondaryFlutterWindowCreated);
+
+  HWND view_hwnd = flutter_controller_->view()->GetNativeWindow();
+  SetChildContent(view_hwnd);
+  flclashx::uia_guard::InstallFlutterWindowTreeUiaGuard(GetHandle());
+  flclashx::uia_guard::InstallFlutterWindowTreeUiaGuard(view_hwnd);
 
   flutter_controller_->engine()->SetNextFrameCallback([&]() {
 
@@ -40,6 +69,8 @@ bool FlutterWindow::OnCreate() {
 }
 
 void FlutterWindow::OnDestroy() {
+  flclashx::uia_guard::UninstallFlutterWindowTreeUiaGuard(GetHandle());
+
   if (flutter_controller_) {
     flutter_controller_ = nullptr;
   }
@@ -51,6 +82,14 @@ LRESULT
 FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
                               WPARAM const wparam,
                               LPARAM const lparam) noexcept {
+  if (flclashx::uia_guard::ShouldInterceptWindowMessageForUiaGuard(
+          message, wparam, lparam)) {
+    if (message == WM_GETOBJECT) {
+      return ::DefWindowProcW(hwnd, message, wparam, lparam);
+    }
+    return 0;
+  }
+
   // Give Flutter, including plugins, an opportunity to handle window messages.
   if (flutter_controller_) {
     std::optional<LRESULT> result =

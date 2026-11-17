@@ -16,6 +16,7 @@ class ConnectionTable extends StatefulWidget {
     required this.onClose,
     this.sort,
     this.sortDirection,
+    this.itemsPreSorted = false,
   });
 
   final List<TrackedConnection> items;
@@ -30,6 +31,9 @@ class ConnectionTable extends StatefulWidget {
   /// external settings change) must not silently fall back to time sorting.
   final ConnectionSort? sort;
   final ConnectionSortDirection? sortDirection;
+  /// True when [items] has already been sorted according to [sort] and
+  /// [sortDirection] by the parent view.
+  final bool itemsPreSorted;
 
   @override
   State<ConnectionTable> createState() => _ConnectionTableState();
@@ -75,9 +79,19 @@ class _ConnectionTableState extends State<ConnectionTable> {
   double _width(String column) =>
       _widths[column] ?? _defaultColumnWidth(column);
 
+  ConnectionSortDirection get _resolvedParentDirection =>
+      widget.sortDirection ??
+      (widget.sort == ConnectionSort.process
+          ? ConnectionSortDirection.ascending
+          : ConnectionSortDirection.descending);
+
   @override
   Widget build(BuildContext context) {
-    final sorted = _sortItems(widget.items, _sortColumn, _direction);
+    final sorted = widget.itemsPreSorted &&
+            _sortColumn == _columnForSort(widget.sort) &&
+            _direction == _resolvedParentDirection
+        ? widget.items
+        : _sortItems(widget.items, _sortColumn, _direction);
     final width = widget.columns.fold<double>(
           0,
           (total, column) => total + _width(column),
@@ -318,20 +332,38 @@ List<TrackedConnection> _sortItems(
   String column,
   ConnectionSortDirection direction,
 ) {
-  final result = List<TrackedConnection>.of(source)
-    ..sort((left, right) {
-      final leftValue = _sortableValue(left, column);
-      final rightValue = _sortableValue(right, column);
-      final comparison = leftValue is num && rightValue is num
-          ? leftValue.compareTo(rightValue)
-          : leftValue.toString().toLowerCase().compareTo(
-                rightValue.toString().toLowerCase(),
-              );
+  if (source.length <= 1) return source;
+  const numericColumns = {
+    'time',
+    'upload',
+    'download',
+    'uploadSpeed',
+    'downloadSpeed',
+    'uid',
+    'status',
+  };
+  if (numericColumns.contains(column)) {
+    final keyed = <({TrackedConnection item, num key})>[
+      for (final item in source)
+        (item: item, key: _sortableValue(item, column) as num),
+    ]..sort((left, right) {
+        final comparison = left.key.compareTo(right.key);
+        return direction == ConnectionSortDirection.ascending
+            ? comparison
+            : -comparison;
+      });
+    return <TrackedConnection>[for (final entry in keyed) entry.item];
+  }
+  final keyed = <({TrackedConnection item, String key})>[
+    for (final item in source)
+      (item: item, key: _columnValue(item, column).toLowerCase()),
+  ]..sort((left, right) {
+      final comparison = left.key.compareTo(right.key);
       return direction == ConnectionSortDirection.ascending
           ? comparison
           : -comparison;
     });
-  return result;
+  return <TrackedConnection>[for (final entry in keyed) entry.item];
 }
 
 Object _sortableValue(TrackedConnection item, String column) =>

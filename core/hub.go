@@ -4,13 +4,13 @@ import (
 	"context"
 	"core/state"
 	"encoding/json"
-	"net"
 	"os"
 	"path/filepath"
 	"runtime"
 	"runtime/debug"
 	"sort"
 	"strconv"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -21,7 +21,7 @@ import (
 	"github.com/metacubex/mihomo/adapter/provider"
 	"github.com/metacubex/mihomo/common/observable"
 	"github.com/metacubex/mihomo/common/utils"
-	"github.com/metacubex/mihomo/component/mmdb"
+	P "github.com/metacubex/mihomo/component/process"
 	"github.com/metacubex/mihomo/component/resolver"
 	"github.com/metacubex/mihomo/component/updater"
 	"github.com/metacubex/mihomo/config"
@@ -47,7 +47,9 @@ var (
 	requestStopCh         chan struct{}
 	requestChMu           sync.Mutex
 	requestMu             sync.Mutex
-	requestSeen           = map[string]bool{}
+	requestEpoch          uint64
+	requestSeen           = map[string]uint64{}
+	requestsActive        atomic.Bool
 	// uiActive reflects whether the Flutter UI is in the foreground. When false
 	// (app backgrounded) the request forwarder is paused and the health-check
 	// forwarder slows to backgroundHealthCheckInterval, so the core stops pinging
@@ -89,17 +91,26 @@ type healthCheckSignature struct {
 }
 
 const (
-	runtimeGCPercent       = 100
-	runtimeMemoryLimitByte = 96 * 1024 * 1024
+	runtimeGCPercent              = 100
+	androidRuntimeMemoryLimitByte = 96 * 1024 * 1024
+	desktopRuntimeMemoryLimitByte = 512 * 1024 * 1024
 )
+
+func runtimeMemoryLimitForGOOS(goos string) int64 {
+	if goos == "android" {
+		return androidRuntimeMemoryLimitByte
+	}
+	return desktopRuntimeMemoryLimitByte
+}
 
 func configureRuntimeMemory() {
 	// GOGC=off retained every allocation until the soft limit, so the core sat
 	// close to its cap even while idle. Go's default proportional collector is a
-	// better throughput/RSS balance; the soft limit remains a last-resort bound
-	// for GEOIP/GEOSITE-heavy profiles.
+	// better throughput/RSS balance; Android keeps a 96 MiB bound against OEM
+	// background killers, whereas desktop uses 512 MiB so GeoSite/GeoIP + Wintun
+	// (~100-140 MiB steady RSS) never triggers continuous soft-limit GC thrashing.
 	debug.SetGCPercent(runtimeGCPercent)
-	debug.SetMemoryLimit(runtimeMemoryLimitByte)
+	debug.SetMemoryLimit(runtimeMemoryLimitForGOOS(runtime.GOOS))
 }
 
 func handleInitClash(paramsString string) bool {
@@ -128,6 +139,8 @@ func handleInitClash(paramsString string) bool {
 	// backgrounds. A headless cold-start has no UI but keeping the foreground
 	// cadence here preserves the previous behaviour (no regression).
 	uiActive.Store(true)
+	requestsActive.Store(false)
+	syncEffectiveFindProcessMode()
 	// Screen assumed on until the SuspendModule pushes the real state.
 	screenActive.Store(true)
 	isInit.Store(true)
@@ -223,6 +236,7 @@ func handleStartListener() bool {
 			runLock.Unlock()
 			return
 		}
+		runInitialProviderHealthChecks()
 		startHealthCheckForwarder()
 		runLock.Unlock()
 		// The request forwarder only feeds the connections UI; skip it while the
@@ -239,9 +253,12 @@ func handleStopListener() bool {
 	runLock.Lock()
 	defer runLock.Unlock()
 	isRunning = false
+	cancelPendingNetworkRecoveryHealthChecks()
 	cancelAllDelayTasks("cancelled")
-	// Keep health-check forwarder running so proxy pings stay fresh in the UI
-	// while the VPN is off. It is torn down only on full shutdown.
+	// Stop both background forwarders while proxy listeners are stopped so the
+	// Core does not wake providers to dial remote URLTests behind a stopped UI;
+	// handleStartListener restarts them when the user starts the proxy again.
+	stopHealthCheckForwarder()
 	stopRequestForwarder()
 	stopListeners()
 	return true
@@ -264,6 +281,7 @@ func handleShutdown() bool {
 	clearCatalogsForShutdown(true)
 	runLock.Lock()
 	defer runLock.Unlock()
+	cancelPendingNetworkRecoveryHealthChecks()
 	cancelAllDelayTasks("sessionClosed")
 	stopHealthCheckForwarder()
 	stopRequestForwarder()
@@ -272,12 +290,22 @@ func handleShutdown() bool {
 	// and guarded by its own logMu (never takes runLock), so calling it here is safe.
 	handleStopLog()
 	stopListeners()
+	proxyStateMu.Lock()
 	executor.Shutdown()
+	proxyStateMu.Unlock()
+	setProxyDescriptions(map[string]string{})
+	configuredFindProcessMode.Store(int32(P.FindProcessStrict))
+	externalControllerListening.Store(false)
+	syncEffectiveFindProcessMode()
 	runtime.GC()
 	isInit.Store(false)
+	mmdbReady.Store(false)
+	requestsActive.Store(false)
 	isRunning = false
 	tunUp.Store(false)
 	currentConfig = nil
+	currentRawListeners = nil
+	currentListenersClosed = false
 	return true
 }
 
@@ -382,6 +410,10 @@ func forwardHealthCheckDelays() {
 }
 
 func forwardHealthCheckDelaysForRun(stopCh <-chan struct{}) {
+	forwardHealthCheckDelaysWithTouch(stopCh, true)
+}
+
+func forwardHealthCheckDelaysWithTouch(stopCh <-chan struct{}, shouldTouch bool) {
 	// Foreground flushes and timer ticks must not overtake one another: an old
 	// provider snapshot must never prune a newer one. Lock order is sweep -> run
 	// -> state; reset/start/stop take state but never sweep. No run/state lock is
@@ -403,7 +435,9 @@ func forwardHealthCheckDelaysForRun(stopCh <-chan struct{}) {
 	}
 	generation := healthCheckGeneration
 	healthCheckMu.Unlock()
-	touchProviders()
+	if shouldTouch {
+		touchProviders()
+	}
 	proxies := proxiesWithProviders()
 	runLock.Unlock()
 
@@ -510,11 +544,13 @@ func handleSetUiActive(active bool) {
 	// startRequestForwarder/stopRequestForwarder are both no-ops when already in the
 	// target state, so re-running on a redundant call is cheap.
 	wasActive := uiActive.Swap(active)
+	syncEffectiveFindProcessMode()
 	if active {
 		runLock.Lock()
 		running := isRunning
 		runLock.Unlock()
-		if running || tunUp.Load() {
+		activeTunnel := running || tunUp.Load()
+		if activeTunnel {
 			startRequestForwarder()
 		}
 		// Clear the health-check de-dup before flushing. While the tunnel ran headless
@@ -524,7 +560,7 @@ func handleSetUiActive(active bool) {
 		// NOTHING to the just-attached UI (the "no pings after a tile start" bug). Reset
 		// so the current delay histories re-emit on foreground.
 		resetHealthCheckForwarderState()
-		go forwardHealthCheckDelays()
+		go forwardHealthCheckDelaysWithTouch(nil, activeTunnel)
 	} else {
 		if wasActive {
 			cancelAllDelayTasks("uiInactive")
@@ -548,10 +584,11 @@ func handleSetScreenActive(active bool) {
 		return
 	}
 	runLock.Lock()
+	running := isRunning
 	hasConfig := currentConfig != nil
 	minInterval := minHealthCheckInterval
 	runLock.Unlock()
-	if !hasConfig {
+	if !hasConfig || (!running && !tunUp.Load()) {
 		return
 	}
 	if time.Since(time.Unix(0, lastProviderTouchNs.Load())) < minInterval {
@@ -561,6 +598,18 @@ func handleSetScreenActive(active bool) {
 	touchProvidersSafely()
 	for _, p := range tunnel.Providers() {
 		go p.HealthCheck()
+	}
+}
+
+func handleSetRequestsActive(active bool) {
+	requestsActive.Store(active)
+	if active {
+		if uiActive.Load() {
+			startRequestForwarder()
+			go forwardNewRequests()
+		}
+	} else {
+		stopRequestForwarder()
 	}
 }
 
@@ -578,8 +627,8 @@ func startRequestForwarder() {
 	defer runLock.Unlock()
 	// isRunning covers an app-driven start (startListener); tunUp covers a headless
 	// tile/boot start (Core.startTun without startListener). Either means the tunnel is
-	// up and the connections it carries should feed the Journal.
-	if !isRunning && !tunUp.Load() {
+	// up and the connections it carries should feed the Journal once RequestLogView is open.
+	if (!isRunning && !tunUp.Load()) || !uiActive.Load() || !requestsActive.Load() {
 		return
 	}
 	requestChMu.Lock()
@@ -588,15 +637,13 @@ func startRequestForwarder() {
 		return
 	}
 	requestMu.Lock()
-	requestSeen = map[string]bool{}
+	requestEpoch = 0
+	requestSeen = map[string]uint64{}
 	requestMu.Unlock()
 	requestStopCh = make(chan struct{})
 	stopCh := requestStopCh
 	requestChMu.Unlock()
 	go func(stopCh chan struct{}) {
-		// 4s (was 2s): this only feeds the Requests live-log; halving the poll rate
-		// halves the foreground O(connections) scan + IPC churn that runs even when
-		// that page isn't open, with no user-visible loss on a log view.
 		ticker := time.NewTicker(4 * time.Second)
 		defer ticker.Stop()
 		for {
@@ -619,29 +666,34 @@ func stopRequestForwarder() {
 	close(requestStopCh)
 	requestStopCh = nil
 	requestMu.Lock()
-	requestSeen = map[string]bool{}
+	requestEpoch = 0
+	requestSeen = map[string]uint64{}
 	requestMu.Unlock()
 }
 
 func forwardNewRequests() {
+	if !requestsActive.Load() || !uiActive.Load() {
+		return
+	}
 	requestMu.Lock()
 	defer requestMu.Unlock()
-	alive := make(map[string]bool, len(requestSeen))
+	requestEpoch++
+	epoch := requestEpoch
 	statistic.DefaultManager.Range(func(c statistic.Tracker) bool {
 		id := c.ID()
-		alive[id] = true
-		if requestSeen[id] {
+		_, seen := requestSeen[id]
+		requestSeen[id] = epoch
+		if seen {
 			return true
 		}
-		requestSeen[id] = true
 		sendMessage(Message{
 			Type: RequestMessage,
 			Data: c.Info(),
 		})
 		return true
 	})
-	for id := range requestSeen {
-		if !alive[id] {
+	for id, seenEpoch := range requestSeen {
+		if seenEpoch != epoch {
 			delete(requestSeen, id)
 		}
 	}
@@ -667,9 +719,119 @@ func handleValidateConfig(bytes []byte) string {
 }
 
 func handleGetProxies() interface{} {
-	runLock.Lock()
-	defer runLock.Unlock()
+	proxyStateMu.RLock()
+	defer proxyStateMu.RUnlock()
 	return proxiesWithDescriptions()
+}
+
+func resolveLeafProxyName(name string, proxies map[string]constant.Proxy) string {
+	if name == "" || len(proxies) == 0 {
+		return name
+	}
+	type nowProvider interface {
+		Now() string
+	}
+	curr := name
+	visited := make(map[string]struct{}, 4)
+	for step := 0; step < 16; step++ {
+		if _, seen := visited[curr]; seen {
+			return curr
+		}
+		visited[curr] = struct{}{}
+		proxy, ok := proxies[curr]
+		if !ok || proxy == nil {
+			return curr
+		}
+		var next string
+		if np, ok := proxy.(nowProvider); ok {
+			next = np.Now()
+		} else if ap := proxy.Adapter(); ap != nil {
+			if np, ok := ap.(nowProvider); ok {
+				next = np.Now()
+			}
+		}
+		if next == "" || next == curr {
+			return curr
+		}
+		curr = next
+	}
+	return curr
+}
+
+func applySelectorChange(proxies map[string]constant.Proxy, groupName, proxyName string) (prevLeaf, nextLeaf, errMsg string) {
+	group, ok := proxies[groupName]
+	if !ok {
+		return "", "", "Not found group"
+	}
+	adapterProxy, ok := group.(*adapter.Proxy)
+	if !ok {
+		return "", "", "Group is not a proxy adapter"
+	}
+	selector, ok := adapterProxy.ProxyAdapter.(outboundgroup.SelectAble)
+	if !ok {
+		return "", "", "Group is not selectable"
+	}
+
+	prevLeaf = resolveLeafProxyName(groupName, proxies)
+	var err error
+	if proxyName == "" {
+		selector.ForceSet(proxyName)
+	} else {
+		err = selector.Set(proxyName)
+	}
+	if err != nil {
+		return "", "", err.Error()
+	}
+	nextLeaf = resolveLeafProxyName(groupName, proxies)
+	return prevLeaf, nextLeaf, ""
+}
+
+func closeConnectionsForProxySwitch(manager *statistic.Manager, groupName, targetName, prevLeaf, nextLeaf string) {
+	if manager == nil {
+		return
+	}
+	if prevLeaf != "" && prevLeaf == nextLeaf {
+		log.Debugln("[ProxySwitch] group=%s target=%s leaf=%s unchanged; preserved active connections", groupName, targetName, nextLeaf)
+		return
+	}
+
+	var toClose []statistic.Tracker
+	manager.Range(func(c statistic.Tracker) bool {
+		chains := c.Chains()
+		if len(chains) == 0 {
+			if info := c.Info(); info != nil {
+				chains = info.Chain
+			}
+		}
+		if len(chains) == 0 || !slices.Contains(chains, groupName) {
+			return true
+		}
+		if nextLeaf != "" && chains[0] == nextLeaf {
+			return true
+		}
+		toClose = append(toClose, c)
+		return true
+	})
+	for _, c := range toClose {
+		_ = c.Close()
+	}
+	log.Infoln("[ProxySwitch] group=%s target=%s leaf=%s->%s closed=%d", groupName, targetName, prevLeaf, nextLeaf, len(toClose))
+}
+
+func changeSelectorProxy(proxies map[string]constant.Proxy, manager *statistic.Manager, params ChangeProxyParams) string {
+	if params.GroupName == nil || params.ProxyName == nil {
+		return "missing group-name or proxy-name"
+	}
+	groupName := *params.GroupName
+	proxyName := *params.ProxyName
+	prevLeaf, nextLeaf, errMsg := applySelectorChange(proxies, groupName, proxyName)
+	if errMsg != "" {
+		return errMsg
+	}
+	if params.CloseConnections != nil && *params.CloseConnections {
+		closeConnectionsForProxySwitch(manager, groupName, proxyName, prevLeaf, nextLeaf)
+	}
+	return ""
 }
 
 func handleChangeProxy(data string, fn func(string string)) {
@@ -684,56 +846,40 @@ func handleChangeProxy(data string, fn func(string string)) {
 			fn("missing group-name or proxy-name")
 			return
 		}
-		groupName := *params.GroupName
-		proxyName := *params.ProxyName
 
-		// Hold runLock only across the proxy lookup + selector mutation, then
-		// release it BEFORE invoking fn (a JNI upcall): calling into the JVM while
-		// holding runLock risks a re-entrant deadlock. Acquire and release on this
-		// same goroutine — the old code locked on the caller and unlocked here, a
-		// cross-goroutine handoff.
-		runLock.Lock()
+		// Hold proxyStateMu.RLock only across the proxy lookup + selector mutation
+		// and leaf resolution, so proxy queries/switches do not stall behind a
+		// multi-second listener/Wintun bring-up on runLock while remaining race-free
+		// against ApplyConfig/Shutdown, then release before evicting connections.
+		proxyStateMu.RLock()
 		proxies := proxiesWithProviders()
-		group, ok := proxies[groupName]
-		if !ok {
-			runLock.Unlock()
-			fn("Not found group")
+		prevLeaf, nextLeaf, errMsg := applySelectorChange(proxies, *params.GroupName, *params.ProxyName)
+		proxyStateMu.RUnlock()
+		if errMsg != "" {
+			fn(errMsg)
 			return
 		}
-		adapterProxy, ok := group.(*adapter.Proxy)
-		if !ok {
-			runLock.Unlock()
-			fn("Group is not a proxy adapter")
-			return
-		}
-		selector, ok := adapterProxy.ProxyAdapter.(outboundgroup.SelectAble)
-		if !ok {
-			runLock.Unlock()
-			fn("Group is not selectable")
-			return
-		}
-		if proxyName == "" {
-			selector.ForceSet(proxyName)
-		} else {
-			err = selector.Set(proxyName)
-		}
-		runLock.Unlock()
-		if err != nil {
-			fn(err.Error())
-			return
+
+		if params.CloseConnections != nil && *params.CloseConnections {
+			closeConnectionsForProxySwitch(statistic.DefaultManager, *params.GroupName, *params.ProxyName, prevLeaf, nextLeaf)
 		}
 
 		fn("")
 	}()
 }
 
-func handleGetTraffic() string {
+type trafficSnapshot struct {
+	Up   int64 `json:"up"`
+	Down int64 `json:"down"`
+}
+
+func handleGetTrafficPayload() trafficSnapshot {
 	up, down := statistic.DefaultManager.Now()
-	traffic := map[string]int64{
-		"up":   up,
-		"down": down,
-	}
-	data, err := json.Marshal(traffic)
+	return trafficSnapshot{Up: up, Down: down}
+}
+
+func handleGetTraffic() string {
+	data, err := json.Marshal(handleGetTrafficPayload())
 	if err != nil {
 		log.Errorln("Error: %v", err)
 		return ""
@@ -741,13 +887,13 @@ func handleGetTraffic() string {
 	return string(data)
 }
 
-func handleGetTotalTraffic() string {
+func handleGetTotalTrafficPayload() trafficSnapshot {
 	up, down := statistic.DefaultManager.Total()
-	traffic := map[string]int64{
-		"up":   up,
-		"down": down,
-	}
-	data, err := json.Marshal(traffic)
+	return trafficSnapshot{Up: up, Down: down}
+}
+
+func handleGetTotalTraffic() string {
+	data, err := json.Marshal(handleGetTotalTrafficPayload())
 	if err != nil {
 		log.Errorln("Error: %v", err)
 		return ""
@@ -759,42 +905,65 @@ func handleResetTraffic() {
 	statistic.DefaultManager.ResetStatistic()
 }
 
-func handleGetConnections() string {
-	runLock.Lock()
-	defer runLock.Unlock()
+func handleGetConnectionsRaw() json.RawMessage {
 	snapshot := statistic.DefaultManager.Snapshot()
 	data, err := json.Marshal(snapshot)
 	if err != nil {
 		log.Errorln("Error: %v", err)
-		return ""
+		return json.RawMessage(`{"downloadTotal":0,"uploadTotal":0,"connections":[],"memory":0}`)
 	}
-	return string(data)
+	return json.RawMessage(data)
+}
+
+func handleGetConnections() string {
+	return string(handleGetConnectionsRaw())
 }
 
 func handleCloseConnections() bool {
-	runLock.Lock()
-	defer runLock.Unlock()
-	closeConnections()
+	closeConnectionsWithReason("ipc:closeConnections")
 	return true
 }
 
 func closeConnections() {
+	closeConnectionsWithReason("unspecified")
+}
+
+func closeConnectionsWithReason(reason string) int {
+	return closeConnectionsBefore(time.Time{}, true, reason)
+}
+
+func closeConnectionsBefore(cutoff time.Time, resetPools bool, reason string) int {
+	var toClose []statistic.Tracker
+	preserved := 0
 	statistic.DefaultManager.Range(func(c statistic.Tracker) bool {
-		_ = c.Close()
+		if !cutoff.IsZero() {
+			if info := c.Info(); info != nil && !info.Start.IsZero() && info.Start.After(cutoff) {
+				preserved++
+				return true
+			}
+		}
+		toClose = append(toClose, c)
 		return true
 	})
+	for _, c := range toClose {
+		_ = c.Close()
+	}
+	if resetPools {
+		resetOutboundAdapterPools()
+	}
+	closed := len(toClose)
+	if closed > 0 || preserved > 0 || strings.Contains(reason, "ipc") {
+		log.Infoln("[Connections] closed=%d preserved=%d reason=%s", closed, preserved, reason)
+	}
+	return closed
 }
 
 func handleResetConnections() bool {
-	runLock.Lock()
-	defer runLock.Unlock()
-	resolver.ResetConnection()
+	recoverFromIPCNetworkReset()
 	return true
 }
 
 func handleCloseConnection(connectionId string) bool {
-	runLock.Lock()
-	defer runLock.Unlock()
 	c := statistic.DefaultManager.Get(connectionId)
 	if c == nil {
 		return false
@@ -803,11 +972,11 @@ func handleCloseConnection(connectionId string) bool {
 	return true
 }
 
-func handleGetExternalProviders() string {
+func handleGetExternalProvidersPayload() []ExternalProvider {
 	runLock.Lock()
 	defer runLock.Unlock()
 	externalProviders = getExternalProvidersRaw()
-	eps := make([]ExternalProvider, 0)
+	eps := make([]ExternalProvider, 0, len(externalProviders))
 	for _, p := range externalProviders {
 		externalProvider, err := toExternalProvider(p)
 		if err != nil {
@@ -816,22 +985,43 @@ func handleGetExternalProviders() string {
 		eps = append(eps, *externalProvider)
 	}
 	sort.Sort(ExternalProviders(eps))
-	data, err := json.Marshal(eps)
+	return eps
+}
+
+func handleGetExternalProviders() string {
+	data, err := json.Marshal(handleGetExternalProvidersPayload())
 	if err != nil {
 		return ""
 	}
 	return string(data)
 }
 
-func handleGetExternalProvider(externalProviderName string) string {
+func lookupExternalProviderLocked(name string) (cp.Provider, bool) {
+	ep, exist := externalProviders[name]
+	if !exist {
+		externalProviders = getExternalProvidersRaw()
+		ep, exist = externalProviders[name]
+	}
+	return ep, exist
+}
+
+func handleGetExternalProviderPayload(externalProviderName string) *ExternalProvider {
 	runLock.Lock()
 	defer runLock.Unlock()
-	externalProvider, exist := externalProviders[externalProviderName]
+	externalProvider, exist := lookupExternalProviderLocked(externalProviderName)
 	if !exist {
-		return ""
+		return nil
 	}
 	e, err := toExternalProvider(externalProvider)
 	if err != nil {
+		return nil
+	}
+	return e
+}
+
+func handleGetExternalProvider(externalProviderName string) string {
+	e := handleGetExternalProviderPayload(externalProviderName)
+	if e == nil {
 		return ""
 	}
 	data, err := json.Marshal(e)
@@ -846,7 +1036,9 @@ func handleUpdateGeoData(geoType string, geoName string, fn func(value string)) 
 		var err error
 		switch geoType {
 		case "MMDB":
+			mmdbMu.Lock()
 			err = updater.UpdateMMDB()
+			mmdbMu.Unlock()
 		case "ASN":
 			err = updater.UpdateASN()
 		case "GeoIp":
@@ -865,7 +1057,7 @@ func handleUpdateGeoData(geoType string, geoName string, fn func(value string)) 
 func handleUpdateExternalProvider(providerName string, fn func(value string)) {
 	go func() {
 		runLock.Lock()
-		externalProvider, exist := externalProviders[providerName]
+		externalProvider, exist := lookupExternalProviderLocked(providerName)
 		runLock.Unlock()
 		if !exist {
 			fn("external provider is not exist")
@@ -886,7 +1078,7 @@ func handleSideLoadExternalProvider(providerName string, data []byte, fn func(va
 		// the fn (JNI) callback — mirrors handleUpdateExternalProvider and keeps the
 		// upcall off the lock. (externalProviders is only mutated under runLock.)
 		runLock.Lock()
-		externalProvider, exist := externalProviders[providerName]
+		externalProvider, exist := lookupExternalProviderLocked(providerName)
 		runLock.Unlock()
 		if !exist {
 			fn("external provider is not exist")
@@ -947,16 +1139,9 @@ func handleStopLog() {
 
 func handleGetCountryCode(ip string, fn func(value string)) {
 	go func() {
-		// Look up under runLock, release, then call fn (a JNI upcall) outside the
-		// lock to avoid a re-entrant deadlock through the JVM callback.
-		runLock.Lock()
-		codes := mmdb.IPInstance().LookupCode(net.ParseIP(ip))
-		runLock.Unlock()
-		if len(codes) == 0 {
-			fn("")
-			return
-		}
-		fn(codes[0])
+		// Look up outside locks and invoke fn (a JNI/IPC callback) after
+		// resolution finishes to avoid re-entrant deadlocks or contention.
+		fn(resolveCountryCode(ip))
 	}()
 }
 
@@ -974,14 +1159,74 @@ func handleSetState(params string) {
 	}
 }
 
+func canonicalizePathForContainment(target string) (string, bool) {
+	if target == "" || strings.ContainsRune(target, 0) {
+		return "", false
+	}
+	abs, err := filepath.Abs(target)
+	if err != nil {
+		return "", false
+	}
+	abs = filepath.Clean(abs)
+	var missing []string
+	curr := abs
+	for {
+		if _, lstatErr := os.Lstat(curr); lstatErr == nil {
+			resolved, evalErr := filepath.EvalSymlinks(curr)
+			if evalErr != nil {
+				return "", false
+			}
+			for i := len(missing) - 1; i >= 0; i-- {
+				resolved = filepath.Join(resolved, missing[i])
+			}
+			return normalizeComparablePath(resolved), true
+		} else if !os.IsNotExist(lstatErr) {
+			return "", false
+		}
+		parent := filepath.Dir(curr)
+		if parent == curr {
+			return "", false
+		}
+		missing = append(missing, filepath.Base(curr))
+		curr = parent
+	}
+}
+
+// resolveSafeConfigPath enforces canonical containment under constant.Path.HomeDir()
+// regardless of build tags such as `cmfa` where constant.Path.IsSafePath returns true.
+func resolveSafeConfigPath(path string) (string, bool) {
+	if path == "" || strings.ContainsRune(path, 0) {
+		return "", false
+	}
+	home := strings.TrimSpace(constant.Path.HomeDir())
+	if home == "" {
+		return "", false
+	}
+	canonHome, ok := canonicalizePathForContainment(home)
+	if !ok {
+		return "", false
+	}
+	resolved := constant.Path.Resolve(path)
+	canonTarget, ok := canonicalizePathForContainment(resolved)
+	if !ok {
+		return "", false
+	}
+	rel, err := filepath.Rel(canonHome, canonTarget)
+	if err != nil || rel == "." || !filepath.IsLocal(rel) {
+		return "", false
+	}
+	return canonTarget, true
+}
+
 func handleGetConfig(path string) (*config.RawConfig, error) {
 	if path == "fcx://runtime" {
 		return runtimeConfigSnapshot()
 	}
-	if !constant.Path.IsSafePath(path) {
+	safePath, ok := resolveSafeConfigPath(path)
+	if !constant.Path.IsSafePath(path) || !ok {
 		return nil, constant.Path.ErrNotSafePath(path)
 	}
-	bytes, err := readFile(path)
+	bytes, err := readFile(safePath)
 	if err != nil {
 		return nil, err
 	}
@@ -997,7 +1242,16 @@ func handleHealthCheck(groupName string, fn func(value string)) {
 	testUrl := currentTestURL
 	runLock.Unlock()
 	go func() {
-		proxies := tunnel.Proxies()
+		proxyStateMu.RLock()
+		rawProxies := tunnel.Proxies()
+		proxies := make(map[string]constant.Proxy, len(rawProxies))
+		for name, proxy := range rawProxies {
+			if groupName != "" && name != groupName {
+				continue
+			}
+			proxies[name] = proxy
+		}
+		proxyStateMu.RUnlock()
 		expectedStatus, _ := utils.NewUnsignedRanges[uint16]("")
 		defaultUrl := testUrl
 
@@ -1063,7 +1317,9 @@ func handleHealthProbe(fn func(value string)) {
 		return
 	}
 	go func() {
+		proxyStateMu.RLock()
 		active := tunnel.Proxies()["GLOBAL"]
+		proxyStateMu.RUnlock()
 		if active == nil {
 			fn("")
 			return

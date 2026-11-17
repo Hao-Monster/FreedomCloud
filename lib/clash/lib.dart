@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:isolate';
 
 import 'package:flclashx/common/common.dart';
 import 'package:flclashx/models/models.dart';
@@ -22,7 +23,8 @@ class ClashLib extends ClashHandlerInterface with AndroidClashInterface {
     unawaited(_init());
   }
 
-  final MethodChannel _channel = const MethodChannel('com.follow.clashx/service');
+  final MethodChannel _channel =
+      const MethodChannel('com.follow.clashx/service');
   Completer<bool> _initCompleter = Completer<bool>();
   // Guards against launching a second concurrent native `init` while a prior
   // _init() is still awaiting (its completer not yet settled).
@@ -35,7 +37,8 @@ class ClashLib extends ClashHandlerInterface with AndroidClashInterface {
   Future<void> _init() async {
     _initInFlight = true;
     try {
-      await _channel.invokeMethod<String>('init')
+      await _channel
+          .invokeMethod<String>('init')
           .timeout(const Duration(seconds: 15));
       _crashCount = 0;
       if (!_initCompleter.isCompleted) _initCompleter.complete(true);
@@ -87,6 +90,7 @@ class ClashLib extends ClashHandlerInterface with AndroidClashInterface {
         final raw = call.arguments as String?;
         if (raw == null || raw.isEmpty) return null;
         try {
+          if (tryHandleRawActionResultLine(raw)) return null;
           handleResult(ActionResult.fromJson(json.decode(raw)));
         } catch (e) {
           commonPrint.log('event parse err: $e raw=$raw');
@@ -164,6 +168,7 @@ class ClashLib extends ClashHandlerInterface with AndroidClashInterface {
         return;
       }
       try {
+        if (tryHandleRawActionResultLine(res)) return;
         handleResult(ActionResult.fromJson(json.decode(res)));
       } catch (e) {
         commonPrint.log('invokeAction parse err: $e');
@@ -176,6 +181,16 @@ class ClashLib extends ClashHandlerInterface with AndroidClashInterface {
   }
 
   void _failPendingCompleter(String message, String reason) {
+    final fastId = extractActionIdFast(message);
+    if (fastId != null) {
+      final completer = callbackCompleterMap.remove(fastId);
+      final def = callbackDefaultMap.remove(fastId);
+      if (completer != null && !completer.isCompleted) {
+        commonPrint.log('_failPendingCompleter: id=$fastId reason=$reason');
+        completer.complete(def);
+      }
+      return;
+    }
     try {
       final decoded = json.decode(message);
       if (decoded is Map<String, dynamic>) {
@@ -184,7 +199,8 @@ class ClashLib extends ClashHandlerInterface with AndroidClashInterface {
         if (id != null) {
           final completer = callbackCompleterMap.remove(id);
           if (completer != null && !completer.isCompleted) {
-            commonPrint.log('_failPendingCompleter: method=$method reason=$reason');
+            commonPrint
+                .log('_failPendingCompleter: method=$method reason=$reason');
             // Complete with the typed default (not null) so a Completer<bool/String/Map>
             // resolves immediately instead of throwing TypeError and hanging to timeout.
             completer.complete(callbackDefaultMap.remove(id));
@@ -334,10 +350,12 @@ class ClashLib extends ClashHandlerInterface with AndroidClashInterface {
   }) async {
     try {
       await _channel
-          .invokeMethod('updateNotificationParams', json.encode({
-            'title': title,
-            'stopText': server,
-          }))
+          .invokeMethod(
+              'updateNotificationParams',
+              json.encode({
+                'title': title,
+                'stopText': server,
+              }))
           .timeout(const Duration(seconds: 10));
     } catch (e) {
       commonPrint.log('updateNotificationParams error: $e');
@@ -351,6 +369,7 @@ class ClashLib extends ClashHandlerInterface with AndroidClashInterface {
       await _channel
           .invokeMethod('setCrashlytics', enable)
           .timeout(const Duration(seconds: 10));
+      return;
     } catch (e) {
       commonPrint.log('setCrashlytics error: $e');
     }
@@ -364,10 +383,11 @@ class ClashLib extends ClashHandlerInterface with AndroidClashInterface {
     required CoreState state,
   }) async {
     try {
+      final encodedParams = await Isolate.run(() => json.encode(setupParams));
       await _channel
           .invokeMethod('saveParams', <String, String>{
             'init': json.encode(initParams),
-            'params': json.encode(setupParams),
+            'params': encodedParams,
             'state': json.encode(state),
           })
           .timeout(const Duration(seconds: 15));

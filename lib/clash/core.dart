@@ -12,8 +12,8 @@ import 'package:flclashx/common/tun_runtime.dart';
 import 'package:flclashx/enum/enum.dart';
 import 'package:flclashx/models/models.dart';
 import 'package:flclashx/state.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:path/path.dart';
 
 class ClashCore {
@@ -31,9 +31,17 @@ class ClashCore {
   }
   @visibleForTesting
   ClashCore.forTesting(this.clashInterface);
+  @visibleForTesting
+  static set instanceForTesting(ClashCore? instance) {
+    _instance = instance;
+  }
+
+  static ClashCore? get existingCore => _instance;
   static ClashCore? _instance;
+
   /// Passive readers must not construct the service as a side effect.
-  static ClashHandlerInterface? get existingInterface => _instance?.clashInterface;
+  static ClashHandlerInterface? get existingInterface =>
+      _instance?.clashInterface;
   late ClashHandlerInterface clashInterface;
   final _connectionSnapshotDecoder = ConnectionSnapshotDecoder();
   int _connectionSnapshotRequestCount = 0;
@@ -42,15 +50,62 @@ class ClashCore {
   String? _lastConnectionSnapshotErrorType;
   bool? _wantedUiActive;
   Future<bool>? _uiActivityUpdate;
+  bool? _wantedRequestsActive;
+  bool? _lastAppliedRequestsActive;
+  Future<bool>? _requestsActivityUpdate;
+  final Set<String> _requestsConsumers = <String>{};
+  Future<bool>? _preloadFuture;
 
-  Future<bool> preload() => clashInterface.preload();
+  Future<bool> preload() => _preloadFuture ??= _preloadImpl().catchError((Object e) {
+        _preloadFuture = null;
+        throw e;
+      });
+
+  Future<bool> _preloadImpl() async {
+    final watch = Stopwatch()..start();
+    try {
+      final ready = await clashInterface.preload();
+      logStartupTiming(
+        'preload',
+        watch,
+        outcome: ready ? 'ready' : 'unavailable',
+      );
+      if (!ready) {
+        _preloadFuture = null;
+      }
+      return ready;
+    } catch (_) {
+      logStartupTiming('preload', watch, outcome: 'error');
+      rethrow;
+    }
+  }
 
   static Future<void> initGeo() async {
     final homePath = await appPath.homeDirPath;
+    await ensureGeoFilesInitialized(homePath: homePath);
+  }
+
+  /// Ensures all bundled GeoIP/GeoSite/ASN/MMDB databases exist and are
+  /// non-empty in [homePath], repairing missing or 0-byte files from bundled
+  /// assets without terminating the process on I/O errors.
+  @visibleForTesting
+  static Future<void> ensureGeoFilesInitialized({
+    required String homePath,
+    Future<Uint8List> Function(String assetPath)? loadAssetBytes,
+  }) async {
+    final loader = loadAssetBytes ??
+        (String assetPath) async {
+          final data = await rootBundle.load(assetPath);
+          return data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes);
+        };
     final homeDir = Directory(homePath);
-    final isExists = await homeDir.exists();
-    if (!isExists) {
-      await homeDir.create(recursive: true);
+    if (!await homeDir.exists()) {
+      try {
+        await homeDir.create(recursive: true);
+      } catch (e) {
+        commonPrint.log('initGeo failed to create directory $homePath: $e');
+        return;
+      }
     }
     const geoFileNameList = [
       mmdbFileName,
@@ -58,25 +113,27 @@ class ClashCore {
       geoSiteFileName,
       asnFileName,
     ];
-    try {
-      for (final geoFileName in geoFileNameList) {
-        final geoFile = File(
-          join(homePath, geoFileName),
-        );
+    for (final geoFileName in geoFileNameList) {
+      try {
+        final geoFile = File(join(homePath, geoFileName));
         final isExists = await geoFile.exists();
-        if (isExists) {
+        if (isExists && await geoFile.length() > 0) {
           continue;
         }
-        final data = await rootBundle.load('assets/data/$geoFileName');
-        final List<int> bytes = data.buffer.asUint8List();
+        final bytes = await loader('assets/data/$geoFileName');
+        if (bytes.isEmpty) {
+          commonPrint.log('initGeo asset assets/data/$geoFileName was empty');
+          continue;
+        }
         await geoFile.writeAsBytes(bytes, flush: true);
+      } catch (e) {
+        commonPrint.log('initGeo failed for $geoFileName: $e');
       }
-    } catch (e) {
-      exit(0);
     }
   }
 
   Future<bool> init() async {
+    Ipv6ReachabilityGuard.shared.invalidate();
     await initGeo();
     if (globalState.config.appSetting.openLogs) {
       clashCore.startLog();
@@ -84,12 +141,17 @@ class ClashCore {
       clashCore.stopLog();
     }
     final homeDirPath = await appPath.homeDirPath;
-    return clashInterface.init(
+    final initialized = await clashInterface.init(
       InitParams(
         homeDir: homeDirPath,
         version: globalState.appState.version,
       ),
     );
+    if (initialized && _requestsConsumers.isNotEmpty) {
+      _lastAppliedRequestsActive = null;
+      unawaited(setRequestsActive(true));
+    }
+    return initialized;
   }
 
   Future<bool> setState(CoreState state) => clashInterface.setState(state);
@@ -111,7 +173,51 @@ class ClashCore {
     return applied;
   }
 
+  Future<bool> acquireRequestsConsumer(String consumerKey) {
+    final wasActive = _requestsConsumers.isNotEmpty;
+    _requestsConsumers.add(consumerKey);
+    if (wasActive && _lastAppliedRequestsActive == true) {
+      return Future.value(true);
+    }
+    return setRequestsActive(true);
+  }
+
+  Future<bool> releaseRequestsConsumer(String consumerKey) {
+    if (!_requestsConsumers.remove(consumerKey)) {
+      return Future.value(true);
+    }
+    if (_requestsConsumers.isNotEmpty) {
+      return Future.value(true);
+    }
+    if (_lastAppliedRequestsActive == false) {
+      return Future.value(true);
+    }
+    return setRequestsActive(false);
+  }
+
+  Future<bool> setRequestsActive(bool active) {
+    _wantedRequestsActive = active;
+    return _requestsActivityUpdate ??=
+        _drainRequestsActivity().whenComplete(() {
+      _requestsActivityUpdate = null;
+    });
+  }
+
+  Future<bool> _drainRequestsActivity() async {
+    var applied = true;
+    while (_wantedRequestsActive != null) {
+      final active = _wantedRequestsActive!;
+      _wantedRequestsActive = null;
+      applied = await clashInterface.setRequestsActive(active);
+      if (applied) {
+        _lastAppliedRequestsActive = active;
+      }
+    }
+    return applied;
+  }
+
   Future<void> shutdown() async {
+    _lastAppliedRequestsActive = null;
     globalState.clearRuntimeSetup();
     await cancelDelayTests(reason: 'sessionClosed');
     await clashInterface.shutdown();
@@ -122,22 +228,44 @@ class ClashCore {
   FutureOr<String> validateConfig(String data) =>
       clashInterface.validateConfig(data);
 
-  Future<String> updateConfig(UpdateParams updateParams, {
-    String? controllerAddress, bool? controllerEnabled,
+  Future<String> updateConfig(
+    UpdateParams updateParams, {
+    String? controllerAddress,
+    bool? controllerEnabled,
   }) async {
-    final result = await clashInterface.updateConfig(updateParams,
-      controllerAddress: controllerAddress, controllerEnabled: controllerEnabled);
-    if (result.isEmpty) await cancelDelayTests(reason: 'configChanged');
-    return result;
-  }
-
-  Future<String> setupConfig(SetupParams setupParams, {required String? profileId}) async {
-    final result = await clashInterface.setupConfig(setupParams);
+    final result = await clashInterface.updateConfig(
+      updateParams,
+      controllerAddress: controllerAddress,
+      controllerEnabled: controllerEnabled,
+    );
     if (result.isEmpty) {
-      globalState.commitRuntimeSetup(setupParams, profileId);
+      globalState.commitRuntimeUpdate(updateParams);
       await cancelDelayTests(reason: 'configChanged');
     }
     return result;
+  }
+
+  Future<String> setupConfig(
+    SetupParams setupParams, {
+    required String? profileId,
+  }) async {
+    final watch = Stopwatch()..start();
+    try {
+      final result = await clashInterface.setupConfig(setupParams);
+      if (result.isEmpty) {
+        globalState.commitRuntimeSetup(setupParams, profileId);
+        await cancelDelayTests(reason: 'configChanged');
+      }
+      logStartupTiming(
+        'setupConfig',
+        watch,
+        outcome: result.isEmpty ? 'ok' : 'rejected',
+      );
+      return result;
+    } catch (_) {
+      logStartupTiming('setupConfig', watch, outcome: 'error');
+      rethrow;
+    }
   }
 
   Future<TunStatus> getTunStatus() => clashInterface.getTunStatus();
@@ -145,20 +273,24 @@ class ClashCore {
   Future<List<Group>> getProxiesGroups() async {
     final proxies = await clashInterface.getProxies();
     if (proxies.isEmpty) return [];
-    bool isGroup(dynamic name) =>
-        GroupTypeExtension.valueList.contains((proxies[name] ?? {})['type']);
+    final groupTypeSet = GroupTypeExtension.valueList.toSet();
+    bool isGroup(dynamic name) {
+      final entry = proxies[name];
+      return entry is Map && groupTypeSet.contains(entry['type']);
+    }
+
     // Groups reachable through GLOBAL.all, keeping GLOBAL's own ordering.
+    final globalEntry = proxies[UsedProxy.GLOBAL.name];
+    final rawGlobalAll = globalEntry is Map ? globalEntry['all'] : null;
     final fromGlobal =
-        (((proxies[UsedProxy.GLOBAL.name] ?? {})["all"] ?? []) as List)
-            .where(isGroup)
-            .toList();
-    final groupNames = [UsedProxy.GLOBAL.name, ...fromGlobal];
+        rawGlobalAll is List ? rawGlobalAll.where(isGroup).toList() : const [];
+    final groupNames = <dynamic>[UsedProxy.GLOBAL.name, ...fromGlobal];
     // Only when GLOBAL opts in via `flclashx-override`: a curated GLOBAL lists
     // just a subset, so the service groups used by rules (YouTube, Telegram, …)
     // wouldn't otherwise surface. Enumerate them from the full proxy map so
     // every defined group is available (the hidden flag still controls display).
     if (globalState.globalOverrideEnabled.value) {
-      final seen = {UsedProxy.GLOBAL.name, ...fromGlobal};
+      final seen = <dynamic>{UsedProxy.GLOBAL.name, ...fromGlobal};
       // proxies.keys arrive alphabetically (Go's json.Marshal sorts map keys),
       // so enumerate in profile-declaration order first, then append any leftover
       // groups not named in proxy-groups (still alphabetical, but a rare tail).
@@ -172,27 +304,70 @@ class ClashCore {
         proxies.keys.where((name) => !seen.contains(name) && isGroup(name)),
       );
     }
-    final groupsRaw = groupNames.map((groupName) {
-      final group = Map<String, dynamic>.from(proxies[groupName] as Map);
-      group["all"] = ((group["all"] ?? []) as List)
-          .map(
-            (name) => proxies[name] != null
-                ? Map<String, dynamic>.from(proxies[name] as Map)
-                : null,
-          )
-          .where((proxy) => proxy != null)
-          .toList();
-      return group;
-    }).toList();
-    return groupsRaw
-        .map(
-          (e) => Group.fromJson(Map<String, dynamic>.from(e)),
-        )
-        .toList();
+
+    // Deserialize each unique proxy once and share immutable Proxy instances
+    // across all referencing groups instead of G * N Map.from + Proxy.fromJson.
+    final proxyCache = <String, Proxy>{};
+    Proxy? resolveProxy(Object? rawName) {
+      if (rawName is! String) return null;
+      final cached = proxyCache[rawName];
+      if (cached != null) return cached;
+      final entry = proxies[rawName];
+      if (entry is! Map) return null;
+      final type = entry['type'] as String?;
+      if (type == null) return null;
+      final built = Proxy(
+        name: entry['name'] as String? ?? rawName,
+        type: type,
+        now: entry['now'] as String?,
+        serverDescription: entry['serverDescription'] as String?,
+      );
+      proxyCache[rawName] = built;
+      return built;
+    }
+
+    final groups = <Group>[];
+    for (final rawGroupName in groupNames) {
+      final groupName = rawGroupName?.toString();
+      if (groupName == null) continue;
+      final rawGroup = proxies[rawGroupName];
+      if (rawGroup is! Map) continue;
+      final groupType = GroupTypeExtension.getGroupType(
+        rawGroup['type'] as String? ?? '',
+      );
+      if (groupType == null) continue;
+      final rawAll = rawGroup['all'];
+      final members = <Proxy>[];
+      if (rawAll is List) {
+        for (final memberName in rawAll) {
+          final member = resolveProxy(memberName);
+          if (member != null) {
+            members.add(member);
+          }
+        }
+      }
+      groups.add(
+        Group(
+          type: groupType,
+          all: members,
+          now: rawGroup['now'] as String?,
+          hidden: rawGroup['hidden'] as bool?,
+          testUrl: rawGroup['testUrl'] as String?,
+          icon: rawGroup['icon'] as String? ?? '',
+          name: rawGroup['name'] as String? ?? groupName,
+        ),
+      );
+    }
+    return groups;
   }
 
-  FutureOr<String> changeProxy(ChangeProxyParams changeProxyParams) async =>
-      await clashInterface.changeProxy(changeProxyParams);
+  Future<String> changeProxy(ChangeProxyParams changeProxyParams) async {
+    final result = await clashInterface.changeProxy(changeProxyParams);
+    if (result.isEmpty) {
+      globalState.commitRuntimeChangeProxy(changeProxyParams);
+    }
+    return result;
+  }
 
   Future<ConnectionSnapshot> getConnectionsSnapshot() async {
     final requestNumber = ++_connectionSnapshotRequestCount;
@@ -316,13 +491,22 @@ class ClashCore {
   }
 
   Future<ExternalProvider?> getExternalProvider(
-      String externalProviderName) async {
-    final externalProvidersRawString =
+    String externalProviderName,
+  ) async {
+    final raw =
         await clashInterface.getExternalProvider(externalProviderName);
-    if (externalProvidersRawString.isEmpty) {
-      return null;
+    if (raw == null) return null;
+    if (raw is Map) {
+      if (raw.isEmpty) return null;
+      return ExternalProvider.fromJson(Map<String, dynamic>.from(raw));
     }
-    return ExternalProvider.fromJson(json.decode(externalProvidersRawString));
+    if (raw is String) {
+      if (raw.isEmpty) return null;
+      final decoded = json.decode(raw);
+      if (decoded is! Map || decoded.isEmpty) return null;
+      return ExternalProvider.fromJson(Map<String, dynamic>.from(decoded));
+    }
+    return null;
   }
 
   Future<String> updateGeoData(UpdateGeoDataParams params) =>
@@ -333,14 +517,34 @@ class ClashCore {
     required String data,
   }) =>
       clashInterface.sideLoadExternalProvider(
-          providerName: providerName, data: data);
+        providerName: providerName,
+        data: data,
+      );
 
   Future<String> updateExternalProvider({
     required String providerName,
   }) async =>
       clashInterface.updateExternalProvider(providerName);
 
-  Future<bool> startListener() => clashInterface.startListener();
+  Future<bool> startListener() async {
+    final watch = Stopwatch()..start();
+    try {
+      final started = await clashInterface.startListener();
+      logStartupTiming(
+        'startListener',
+        watch,
+        outcome: startListenerTimingOutcome(
+          started: started,
+          elapsed: watch.elapsed,
+          timeout: startListenerRpcTimeoutFor(isWindows: Platform.isWindows),
+        ),
+      );
+      return started;
+    } catch (_) {
+      logStartupTiming('startListener', watch, outcome: 'error');
+      rethrow;
+    }
+  }
 
   Future<void> stopListener() async {
     await cancelDelayTests(reason: 'sessionClosed');
@@ -355,32 +559,56 @@ class ClashCore {
     return Delay.fromJson(json.decode(data));
   }
 
-  Future<DelayTestResult> getDelayResult(String url, String proxyName, {
-    required String requestId, required Duration timeout,
+  Future<DelayTestResult> getDelayResult(
+    String url,
+    String proxyName, {
+    required String requestId,
+    required Duration timeout,
   }) async {
-    final data = await clashInterface.asyncTestDelay(url, proxyName,
-      requestId: requestId, timeout: timeout);
+    final data = await clashInterface.asyncTestDelay(
+      url,
+      proxyName,
+      requestId: requestId,
+      timeout: timeout,
+    );
     final decoded = json.decode(data) as Map<String, dynamic>;
-    return DelayTestResult((decoded['value'] as num?)?.toInt() ?? -1,
-      reason: decoded['reason'] as String?);
+    return DelayTestResult(
+      (decoded['value'] as num?)?.toInt() ?? -1,
+      reason: decoded['reason'] as String?,
+    );
   }
 
   Future<void> cancelDelayTest(String requestId) async {
     await clashInterface.cancelTestDelay(requestId);
   }
 
-  Future<String> catalogPrepare(String catalogId,
-      List<Map<String, dynamic>> proxies, List<Map<String, dynamic>> providers) =>
+  Future<String> catalogPrepare(
+    String catalogId,
+    List<Map<String, dynamic>> proxies,
+    List<Map<String, dynamic>> providers,
+  ) =>
       clashInterface.catalogPrepare(catalogId, proxies, providers);
 
-  Future<String> catalogParseProvider(String contentBase64,
-      Map<String, dynamic> definition) =>
+  Future<String> catalogParseProvider(
+    String contentBase64,
+    Map<String, dynamic> definition,
+  ) =>
       clashInterface.catalogParseProvider(contentBase64, definition);
 
-  Future<DelayTestResult> catalogTestDelay(String catalogId, int index, String url,
-      {required String requestId, Duration timeout = const Duration(seconds: 5)}) =>
-      clashInterface.catalogTestDelay(catalogId, index, url,
-          requestId: requestId, timeout: timeout);
+  Future<DelayTestResult> catalogTestDelay(
+    String catalogId,
+    int index,
+    String url, {
+    required String requestId,
+    Duration timeout = const Duration(seconds: 5),
+  }) =>
+      clashInterface.catalogTestDelay(
+        catalogId,
+        index,
+        url,
+        requestId: requestId,
+        timeout: timeout,
+      );
 
   Future<bool> catalogRelease(String catalogId) =>
       clashInterface.catalogRelease(catalogId);
@@ -395,13 +623,22 @@ class ClashCore {
     }
   }
 
-  Future<Traffic> getTraffic() async {
-    final trafficString = await clashInterface.getTraffic();
-    if (trafficString.isEmpty) {
-      return Traffic();
+  Traffic _parseTrafficPayload(Object? raw) {
+    if (raw is Map) {
+      if (raw.isEmpty) return Traffic();
+      return Traffic.fromMap(Map<String, dynamic>.from(raw));
     }
-    return Traffic.fromMap(json.decode(trafficString));
+    if (raw is String && raw.isNotEmpty) {
+      final decoded = json.decode(raw);
+      if (decoded is Map) {
+        return Traffic.fromMap(Map<String, dynamic>.from(decoded));
+      }
+    }
+    return Traffic();
   }
+
+  Future<Traffic> getTraffic() async =>
+      _parseTrafficPayload(await clashInterface.getTraffic());
 
   Future<IpInfo?> getCountryCode(String ip) async {
     final countryCode = await clashInterface.getCountryCode(ip);
@@ -414,13 +651,8 @@ class ClashCore {
     );
   }
 
-  Future<Traffic> getTotalTraffic() async {
-    final totalTrafficString = await clashInterface.getTotalTraffic();
-    if (totalTrafficString.isEmpty) {
-      return Traffic();
-    }
-    return Traffic.fromMap(json.decode(totalTrafficString));
-  }
+  Future<Traffic> getTotalTraffic() async =>
+      _parseTrafficPayload(await clashInterface.getTotalTraffic());
 
   Future<int> getMemory() async {
     final value = await clashInterface.getMemory();
@@ -455,6 +687,7 @@ class ClashCore {
   }
 
   Future<void> destroy() async {
+    _preloadFuture = null;
     _connectionSnapshotDecoder.dispose();
     await clashInterface.destroy();
   }

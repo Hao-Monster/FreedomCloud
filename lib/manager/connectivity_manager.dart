@@ -12,9 +12,11 @@ class ConnectivityManager extends ConsumerStatefulWidget {
   const ConnectivityManager({
     super.key,
     this.onConnectivityChanged,
+    this.onInitialConnectivity,
     required this.child,
   });
   final Function(List<ConnectivityResult> results)? onConnectivityChanged;
+  final Function(List<ConnectivityResult> results)? onInitialConnectivity;
   final Widget child;
 
   @override
@@ -65,13 +67,18 @@ class _ConnectivityManagerState extends ConsumerState<ConnectivityManager> {
       if (next.hasValue) _scheduleAutomation();
     }, fireImmediately: true);
     final revision = _networkRevision;
-    Connectivity().checkConnectivity().then((results) {
-      if (!mounted || revision != _networkRevision) return;
-      _latest = List.of(results);
-      _scheduleAutomation();
-    }).catchError((Object _) {
-      if (mounted) globalState.showNotifier('无法读取网络环境，自动切换等待下一次网络变化');
-    });
+    unawaited(
+      Connectivity().checkConnectivity().then((results) {
+        if (!mounted || revision != _networkRevision) return;
+        _latest = List.of(results);
+        widget.onInitialConnectivity?.call(results);
+        _scheduleAutomation();
+      }).catchError((Object _) {
+        if (mounted) {
+          globalState.showNotifier('无法读取网络环境，自动切换等待下一次网络变化');
+        }
+      }),
+    );
   }
 
   @override

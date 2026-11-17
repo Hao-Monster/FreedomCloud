@@ -98,6 +98,8 @@ class DelayTestCoordinator extends ChangeNotifier {
   int get completed => _batch?.completed ?? _lastCompleted;
   List<DelayTestTarget> get activeTargets =>
       List.unmodifiable(_batch?.active.values ?? const <DelayTestTarget>[]);
+  Iterable<DelayTestTarget> get activeTargetsView =>
+      _batch?.active.values ?? const <DelayTestTarget>[];
 
   Future<DelayBatchResult> run(Iterable<DelayTestTarget> targets,
       {Duration? batchTimeout}) async {

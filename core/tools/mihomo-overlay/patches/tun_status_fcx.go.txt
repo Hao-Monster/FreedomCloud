@@ -2,11 +2,9 @@ package listener
 
 import (
 	"errors"
-	"net"
 	"os"
-	"runtime"
-	"strings"
 	"sync/atomic"
+	"time"
 
 	C "github.com/metacubex/mihomo/constant"
 	LC "github.com/metacubex/mihomo/listener/config"
@@ -20,6 +18,7 @@ import (
 // "unavailable" instead of the real "starting" transition.
 type TunLifecycleStatus struct {
 	Revision uint64
+ TunAttempt uint64
 	RequestedEnabled bool
 	State string
 	ListenerActive bool
@@ -36,15 +35,52 @@ type fcxTunListener interface {
 
 var fcxTunStatus = TunLifecycleStatus{State: "off"}
 var fcxTunStatusSnapshot atomic.Pointer[TunLifecycleStatus]
+
+func fcxStartupTimingStart() time.Time { return time.Now() }
+func fcxBeforeTunLock() uint64 {
+ id := sing_tun.FCXReserveTunAttempt()
+ sing_tun.FCXStartAttemptStage("ReCreateTun", id)
+ sing_tun.FCXStartAttemptStage("tun.lock_wait", id)
+ return id
+}
+func fcxAfterTunLock(id uint64, started time.Time) {
+ wait := time.Since(started)
+ sing_tun.FCXActivateTunAttempt(id)
+ sing_tun.FCXEmitStartupTiming("tun.lock_wait", wait, "ok", "", nil)
+}
+func fcxEndTunAttempt() { sing_tun.FCXEndTunAttempt() }
+
+func fcxLogTunTiming(stage string, startedAt time.Time, outcome string, state string, errorCode string, err error) {
+	extra := ""
+	if state != "" {
+		extra += " state=" + state
+	}
+	if errorCode != "" {
+		extra += " errorCode=" + errorCode
+	}
+	sing_tun.FCXEmitStartupTiming(stage, time.Since(startedAt), outcome, extra, err)
+}
+
 // A failed Close may leave OS resources behind. Only a new Core can discard
 // this uncertainty; repeated Cleanup must not turn the failure into success.
 var fcxTunCloseError error
 var fcxCreateTun = func(config LC.Tun, target C.Tunnel) (fcxTunListener, error) {
-	return sing_tun.New(config, target)
+	startedAt := fcxStartupTimingStart()
+	sing_tun.FCXStartTunTiming("sing_tun.New")
+	created, err := sing_tun.New(config, target)
+	outcome := "ok"
+	errorCode := ""
+	if err != nil {
+		outcome = "error"
+		errorCode = fcxTunErrorCode(err)
+	}
+	fcxLogTunTiming("sing_tun.New", startedAt, outcome, "", errorCode, err)
+	return created, err
 }
 
 func fcxTunErrorCode(err error) string {
 	if errors.Is(err, os.ErrPermission) { return "permissionDenied" }
+	if sing_tun.FCXIsAdapterCreateFailure(err) { return "adapterCreateFailed" }
 	return "startFailed"
 }
 
@@ -53,13 +89,7 @@ func fcxTunErrorCode(err error) string {
 // must then rebuild instead of only calling OnReload. Enumeration failure is
 // not evidence of loss, so it keeps the existing listener.
 var fcxTunInterfaceUsable = func(device string) bool {
-	if runtime.GOOS != "windows" || device == "" { return true }
-	interfaces, err := net.Interfaces()
-	if err != nil { return true }
-	for _, adapter := range interfaces {
-		if strings.EqualFold(adapter.Name, device) { return adapter.Flags&net.FlagUp != 0 }
-	}
-	return false
+	return fcxPlatformTunInterfaceUsable(device)
 }
 
 // Caller owns tunMux. Publishes an immutable copy for lock-free readers.

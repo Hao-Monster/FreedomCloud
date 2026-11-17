@@ -161,6 +161,7 @@ _$ChangeProxyParamsImpl _$$ChangeProxyParamsImplFromJson(
     _$ChangeProxyParamsImpl(
       groupName: json['group-name'] as String,
       proxyName: json['proxy-name'] as String,
+      closeConnections: json['close-connections'] as bool? ?? false,
     );
 
 Map<String, dynamic> _$$ChangeProxyParamsImplToJson(
@@ -168,6 +169,7 @@ Map<String, dynamic> _$$ChangeProxyParamsImplToJson(
     <String, dynamic>{
       'group-name': instance.groupName,
       'proxy-name': instance.proxyName,
+      'close-connections': instance.closeConnections,
     };
 
 _$UpdateGeoDataParamsImpl _$$UpdateGeoDataParamsImplFromJson(
@@ -343,6 +345,7 @@ const _$ActionMethodEnumMap = {
   ActionMethod.getCoreVersion: 'getCoreVersion',
   ActionMethod.healthCheck: 'healthCheck',
   ActionMethod.setUiActive: 'setUiActive',
+  ActionMethod.setRequestsActive: 'setRequestsActive',
   ActionMethod.setState: 'setState',
   ActionMethod.startTun: 'startTun',
   ActionMethod.stopTun: 'stopTun',

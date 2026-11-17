@@ -121,7 +121,7 @@ pub fn authenticate(_line: &str, _expected_token: &str) -> bool {
 }
 
 pub fn parse_control(_line: &str) -> Option<ControlRequest> {
-    if _line.len() > MAX_MESSAGE_LINE_BYTES {
+    if _line.len() > MAX_MESSAGE_LINE_BYTES || !_line.contains("\"_agent\"") {
         return None;
     }
     #[derive(Deserialize)]

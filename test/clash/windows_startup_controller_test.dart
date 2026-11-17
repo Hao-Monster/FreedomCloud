@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:flclashx/common/common.dart';
 import 'package:flclashx/common/tun_runtime.dart';
 import 'package:flclashx/common/windows_tun_startup.dart';
 import 'package:flclashx/controller.dart';
@@ -247,6 +248,7 @@ void main() {
             'listener',
             'reflect'
           ]));
+      expect(effects.calls.where((call) => call == 'match'), hasLength(1));
       expect(effects.running, isTrue);
       expect(runtime.observed, TunObservedState.on);
       expect(globalState.config.patchClashConfig.tun.enable, isTrue);
@@ -384,7 +386,7 @@ void main() {
     final controller = await controllerFixture(tester, effects, runtime);
     await controller.initializeRuntime();
     expect(runtime.failure, 'profileRequired');
-    expect(effects.calls, ['observe', 'match', 'profile']);
+    expect(effects.calls, ['observe', 'profile']);
     expect(effects.backgroundConfigurations, 0);
   });
 
@@ -437,6 +439,7 @@ void main() {
     final runtime = TunRuntimeController();
     final controller = await controllerFixture(tester, effects, runtime);
     await controller.setTunEnabled(true);
+    expect(effects.calls.where((call) => call == 'match'), hasLength(1));
     expect(effects.calls, contains('incremental'));
     expect(effects.calls, isNot(contains('configure')));
     expect(effects.calls, isNot(contains('listener')));
@@ -1015,5 +1018,170 @@ void main() {
     expect(runtime.observed, TunObservedState.off);
     expect(runtime.failure, isNull);
     expect(runtime.requestFailure, isNull);
+  });
+
+  testWidgets(
+      'fresh install deferred profileRequired TUN bring-up runs automatically on first profile + updateStatus(true)',
+      (tester) async {
+    globalState.appState = AppState(
+      viewSize: const Size(450, 900),
+      version: 1,
+      requests: FixedList(1),
+      logs: FixedList(1),
+      traffics: FixedList(1),
+      totalTraffic: Traffic(),
+    );
+    final effects = StartupEffects()..profile = false;
+    final runtime = TunRuntimeController();
+    final controller = await controllerFixture(tester, effects, runtime);
+
+    // 1. Cold start with 0 profiles latches profileRequired without prompting UAC.
+    await controller.initializeRuntime();
+    expect(runtime.failure, 'profileRequired');
+    expect(runtime.requestFailure, 'profileRequired');
+    expect(effects.calls, ['observe', 'profile']);
+    expect(effects.running, isFalse);
+    expect(effects.enabled, isFalse);
+
+    // 2. User imports first subscription and triggers proxy start (updateStatus(true)).
+    effects.profile = true;
+    await controller.updateStatus(true);
+    await tester.pump(const Duration(milliseconds: 250));
+
+    expect(
+      effects.calls.sublist(2),
+      containsAllInOrder([
+        'profile',
+        'authorize',
+        'backend',
+        'initialize',
+        'configure',
+        'listener',
+        'reflect',
+      ]),
+    );
+    expect(effects.running, isTrue);
+    expect(effects.enabled, isTrue);
+    expect(runtime.observed, TunObservedState.on);
+    expect(runtime.isEnabled, isTrue);
+    expect(runtime.failure, isNull);
+    expect(runtime.requestFailure, isNull);
+    expect(globalState.config.patchClashConfig.tun.enable, isTrue);
+  });
+
+  testWidgets(
+      'UAC cancellation during deferred profileRequired bring-up preserves preference and never re-prompts on subsequent updateStatus(true)',
+      (tester) async {
+    globalState.appState = AppState(
+      viewSize: const Size(450, 900),
+      version: 1,
+      requests: FixedList(1),
+      logs: FixedList(1),
+      traffics: FixedList(1),
+      totalTraffic: Traffic(),
+    );
+    final effects = StartupEffects()
+      ..profile = false
+      ..authorized = false;
+    final runtime = TunRuntimeController();
+    final controller = await controllerFixture(tester, effects, runtime);
+
+    await controller.initializeRuntime();
+    expect(runtime.requestFailure, 'profileRequired');
+
+    // First profile imported -> updateStatus(true) prompts UAC once; user cancels.
+    effects.profile = true;
+    await controller.updateStatus(true);
+    await tester.pump(const Duration(milliseconds: 250));
+    expect(effects.calls.where((c) => c == 'authorize').length, 1);
+    expect(runtime.failure, 'permissionDenied');
+    expect(runtime.requestFailure, 'permissionDenied');
+    expect(effects.running, isFalse);
+    expect(effects.enabled, isFalse);
+    expect(globalState.config.patchClashConfig.tun.enable, isTrue);
+
+    // Subsequent proxy start / node switch does NOT re-prompt UAC; starts proxy without TUN.
+    await controller.updateStatus(true);
+    await tester.pump(const Duration(milliseconds: 250));
+    expect(effects.calls.where((c) => c == 'authorize').length, 1);
+    expect(effects.running, isTrue);
+    expect(effects.enabled, isFalse);
+
+    // Explicit TUN switch retry succeeds when user grants UAC.
+    effects.authorized = true;
+    await tester.pump();
+    await tester.tap(find.byType(Switch));
+    await tester.pumpAndSettle();
+    expect(effects.calls.where((c) => c == 'authorize').length, 2);
+    expect(runtime.observed, TunObservedState.on);
+    expect(runtime.failure, isNull);
+  });
+
+  testWidgets(
+      'manual TUN off after profileRequired cold start is respected when first profile starts proxy',
+      (tester) async {
+    globalState.appState = AppState(
+      viewSize: const Size(450, 900),
+      version: 1,
+      requests: FixedList(1),
+      logs: FixedList(1),
+      traffics: FixedList(1),
+      totalTraffic: Traffic(),
+    );
+    final effects = StartupEffects()..profile = false;
+    final runtime = TunRuntimeController();
+    final controller = await controllerFixture(tester, effects, runtime);
+
+    await controller.initializeRuntime();
+    expect(runtime.requestFailure, 'profileRequired');
+
+    await controller.setTunEnabled(false);
+    expect(globalState.config.patchClashConfig.tun.enable, isFalse);
+
+    effects.profile = true;
+    await controller.updateStatus(true);
+    await tester.pump(const Duration(milliseconds: 250));
+
+    expect(effects.calls, isNot(contains('authorize')));
+    expect(effects.running, isTrue);
+    expect(effects.enabled, isFalse);
+    expect(globalState.config.patchClashConfig.tun.enable, isFalse);
+  });
+
+  testWidgets(
+      'updateStatus(false) during deferred profileRequired UAC prompt revokes bring-up before backend and listener',
+      (tester) async {
+    globalState.appState = AppState(
+      viewSize: const Size(450, 900),
+      version: 1,
+      requests: FixedList(1),
+      logs: FixedList(1),
+      traffics: FixedList(1),
+      totalTraffic: Traffic(),
+    );
+    final effects = StartupEffects()
+      ..profile = false
+      ..pauseAt = 'authorize';
+    final runtime = TunRuntimeController();
+    final controller = await controllerFixture(tester, effects, runtime);
+
+    await controller.initializeRuntime();
+    expect(runtime.requestFailure, 'profileRequired');
+
+    effects.profile = true;
+    final startOp = controller.updateStatus(true);
+    await effects.entered.future;
+    final stopOp = controller.updateStatus(false);
+    effects.release.complete();
+    await Future.wait([startOp, stopOp]);
+    await tester.pump(const Duration(milliseconds: 250));
+
+    expect(effects.calls, contains('stop-proxy'));
+    expect(effects.calls, isNot(contains('backend')));
+    expect(effects.calls, isNot(contains('listener')));
+    expect(effects.calls, isNot(contains('reflect')));
+    expect(effects.running, isFalse);
+    expect(runtime.observed, TunObservedState.off);
+    expect(runtime.desiredEnabled, isTrue);
   });
 }

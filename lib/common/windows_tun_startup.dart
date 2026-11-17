@@ -1,7 +1,10 @@
+import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 
+import 'startup_timing.dart';
 import 'tun_runtime.dart';
 import 'windows_tun_prepare.dart';
 
@@ -74,7 +77,11 @@ Future<void> startWindowsTunOnLaunch({
       final initial = await observe();
       if (!current()) return;
       final initialEpoch = runtime.observationEpoch;
-      final matching = await effects.componentsMatch();
+      // Starting from off already verifies the binaries during backend
+      // preparation. Read them here only for the read-only adoption path.
+      final canAdopt = initial?.observed == TunObservedState.on &&
+          effects.proxyRunning &&
+          await effects.componentsMatch();
       if (!current()) return;
       if (initialEpoch != runtime.observationEpoch ||
           (initial != null &&
@@ -82,9 +89,7 @@ Future<void> startWindowsTunOnLaunch({
                   runtime.status?.revision != initial.revision))) {
         throw const TunFailure('statusUnavailable');
       }
-      if (matching &&
-          initial?.observed == TunObservedState.on &&
-          effects.proxyRunning) {
+      if (canAdopt && effects.proxyRunning) {
         await reflectObserved(initial!);
         return;
       }
@@ -134,17 +139,38 @@ Future<void> startWindowsTunOnLaunch({
       // Adapter creation and interface publication are asynchronous at the OS
       // level. Retry only unavailable/transitional reads within a short bound;
       // a definite off/failed observation still fails immediately.
+      final settleWatch = Stopwatch()..start();
       TunStatus? observed;
-      for (var attempt = 0;; attempt++) {
-        observed = await observe();
-        if (!current()) return;
-        if (observed != null &&
-            observed.observed != TunObservedState.unknown) {
-          break;
+      var attempts = 0;
+      try {
+        for (var attempt = 0;; attempt++) {
+          attempts = attempt + 1;
+          observed = await observe();
+          if (!current()) return;
+          if (observed != null &&
+              observed.observed != TunObservedState.unknown) {
+            break;
+          }
+          if (attempt + 1 >= settleAttempts) break;
+          if (settleDelay > Duration.zero) {
+            final step = switch (attempt) {
+              0 => const Duration(milliseconds: 150),
+              1 => const Duration(milliseconds: 250),
+              _ => settleDelay,
+            };
+            await Future.delayed(step < settleDelay ? step : settleDelay);
+          }
+          if (!current()) return;
         }
-        if (attempt + 1 >= settleAttempts) break;
-        if (settleDelay > Duration.zero) await Future.delayed(settleDelay);
-        if (!current()) return;
+      } finally {
+        logStartupTiming(
+          'settle',
+          settleWatch,
+          outcome: observed?.observed.name ?? 'unavailable',
+          attempt: attempts,
+          corePid: observed?.corePid,
+          tunAttempt: observed?.tunAttempt,
+        );
       }
       if (observed == null) throw const TunFailure('statusUnavailable');
       if (observed.observed != TunObservedState.on) {
@@ -153,13 +179,69 @@ Future<void> startWindowsTunOnLaunch({
       await reflectObserved(observed);
     }, writeIntent: writeIntent);
 
+/// Marks the Windows runtime connected immediately once TUN has settled, while
+/// hydrating proxy groups and external providers concurrently in the background
+/// so slow provider/group IPC cannot hold the TUN operation queue busy.
+Future<void> reflectWindowsTunRunning({
+  required bool Function() isCurrent,
+  required Future<void> Function() syncUiActive,
+  required void Function() syncLogStream,
+  required void Function() initForegroundCache,
+  required Future<void> Function() showConnectedIcon,
+  required void Function() markRunningNow,
+  required Future<void> Function() updateGroups,
+  required Future<void> Function() updateProviders,
+}) async {
+  final watch = Stopwatch()..start();
+  if (!isCurrent()) {
+    logStartupTiming('reflectRunning', watch, outcome: 'cancelled');
+    return;
+  }
+  await syncUiActive();
+  if (!isCurrent()) {
+    logStartupTiming('reflectRunning', watch, outcome: 'cancelled');
+    return;
+  }
+  syncLogStream();
+  initForegroundCache();
+  await showConnectedIcon();
+  if (!isCurrent()) {
+    logStartupTiming('reflectRunning', watch, outcome: 'cancelled');
+    return;
+  }
+  markRunningNow();
+  logStartupTiming('reflectRunning', watch, outcome: 'ok');
+
+  unawaited(() async {
+    final hydrateWatch = Stopwatch()..start();
+    try {
+      await (updateGroups(), updateProviders()).wait;
+      logStartupTiming(
+        'hydrateProjections',
+        hydrateWatch,
+        outcome: isCurrent() ? 'ok' : 'superseded',
+      );
+    } catch (error) {
+      logStartupTiming(
+        'hydrateProjections',
+        hydrateWatch,
+        outcome: 'error',
+        detail: error.runtimeType.toString().replaceAll(RegExp(r'\s+'), ''),
+      );
+    }
+  }());
+}
+
 /// Validate only what can be checked locally before prompting for privileges.
 /// YAML semantics and script output still require Core configuration acceptance.
 Future<bool> isReadableWindowsStartupProfile(String? path) async {
   if (path == null) return false;
   try {
-    final content = await File(path).readAsString();
-    return content.trim().isNotEmpty;
+    await for (final chunk in File(path).openRead().transform(utf8.decoder)) {
+      if (chunk.trim().isNotEmpty) return true;
+    }
+    return false;
+
   } on FileSystemException {
     return false;
   } on FormatException {

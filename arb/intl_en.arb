@@ -58,7 +58,7 @@
   "ru": "Russian",
   "zh_CN": "Simplified Chinese",
   "theme": "Theme",
-  "themeDesc": "Set dark mode,adjust the color",
+  "themeDesc": "Day/Night sky sync, glass translucency & accent color",
   "override": "Override",
   "overrideDesc": "Override Proxy related config",
   "allowLan": "AllowLan",
@@ -128,7 +128,7 @@
   "auto": "Auto",
   "light": "Light",
   "dark": "Dark",
-  "importFromURL": "Import from URL",
+  "importFromURL": "Paste subscription link and tap Confirm",
   "submit": "Submit",
   "doYouWantToPass": "Adding profile from",
   "create": "Create",
@@ -516,7 +516,7 @@
   "trafficUnlimited": "Unlimited Traffic",
   "subscriptionEternal": "Lifetime Subscription",
   "expiresOn": "Expires on",
-  "newDashboard": "New look",
+  "newDashboard": "Concise mode",
   "untilDate": "until",
   "remaining": "Remaining",
   "remainingSingular": "Remaining",
@@ -620,7 +620,7 @@
   "purchaseHistoryPage": "Page",
   "purchaseHistoryTotal": "Total",
   "purchaseGetCard": "Get a gift card",
-  "purchaseGetCardDescription": "Contact either WeChat account below to buy a gift card or get help.",
+  "purchaseGetCardDescription": "Buy a gift card or get assistance through the self-service store or 24/7 live support.",
   "purchaseCardStore": "Open gift card store",
   "purchaseOpenLinkFailed": "Could not open the page. Please try again.",
   "purchaseRestoring": "Restoring account…",
@@ -638,9 +638,9 @@
   "purchaseUnsupportedAccount": "Use a regular user account to redeem gift cards.",
   "purchaseLogoutRemoteError": "Signed out on this device. Server sign-out could not be confirmed.",
   "purchaseCodeFormatError": "Enter an 8–32 character code using letters and numbers.",
-  "purchaseChannelError": "Gift card store information could not be loaded. You can still contact support below.",
+  "purchaseChannelError": "Gift card store information could not be loaded. You can still contact live support below.",
   "purchaseAvailablePlans": "Available plans",
-  "purchasePlansDescription": "Prices are shown as listed on the website. Confirm the currency and buy a gift card through the WeChat contacts below, then redeem it here.",
+  "purchasePlansDescription": "Prices are shown as listed on the website. Confirm the currency on the store page when buying a gift card, then return here to redeem.",
   "purchasePlansLoading": "Loading plans…",
   "purchasePlansEmpty": "No plans are currently available.",
   "purchasePlansError": "Plans could not be loaded. Please try again.",
@@ -656,7 +656,13 @@
   "purchasePlanResetYearStart": "On January 1 each year",
   "purchasePlanResetYearlyExpiry": "Yearly on the expiry month and day",
   "purchasePlanResetUnknown": "Unknown rule ({code})",
-  "@purchasePlanResetUnknown": {"placeholders": {"code": {"type": "int"}}},
+  "@purchasePlanResetUnknown": {
+    "placeholders": {
+      "code": {
+        "type": "int"
+      }
+    }
+  },
   "purchasePlanSalesCapacity": "Remaining sales slots",
   "purchasePlanResetPrice": "Traffic reset · listed price",
   "purchasePlanDetails": "Plan details",
@@ -684,6 +690,7 @@
   },
   "tunErrorLegacyAgent": "Exit the old background app, then reopen this version",
   "tunErrorProfileRequired": "Select a readable, non-empty profile before connecting",
+  "tunErrorAdapterCreate": "Windows could not add the virtual adapter; try again later",
   "nodeOverviewCurrentProfile": "Current profile",
   "nodeOverviewAllProfiles": "All profiles",
   "nodeOverviewActive": "Active",
@@ -752,7 +759,11 @@
   "nodeOverviewIndependentTest": "Independent delay test",
   "nodeOverviewFileSource": "Profile file · {provider}",
   "@nodeOverviewFileSource": {
-    "placeholders": { "provider": { "type": "String" } }
+    "placeholders": {
+      "provider": {
+        "type": "String"
+      }
+    }
   },
   "nodeOverviewTestCurrent": "Test current profile",
   "nodeOverviewTestAll": "Test all node delays",
@@ -819,7 +830,45 @@
   "purchaseFilterAll": "All plans",
   "purchaseFilterPeriod": "Recurring",
   "purchaseFilterOnetime": "Traffic pack",
-  "purchaseAcquirePlanCode": "Get redemption code",
+  "purchaseAcquirePlanCode": "Get code",
+  "purchasePlanFreeBadge": "Free trial",
+  "purchasePlanFreeHint": "Free",
+  "purchasePlanUnitPriceHint": "~{price} / GB",
+  "@purchasePlanUnitPriceHint": {
+    "placeholders": {
+      "price": {
+        "type": "String"
+      }
+    }
+  },
+  "purchaseSpecDevicesUnlimited": "Devices: Unlimited",
+  "purchaseSpecDevicesCount": "Device limit: {count}",
+  "@purchaseSpecDevicesCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "purchaseSpecDurationUnlimited": "Validity: Never expires",
+  "purchaseSpecBillingCycle": "Billing cycle: {periods}",
+  "@purchaseSpecBillingCycle": {
+    "placeholders": {
+      "periods": {
+        "type": "String"
+      }
+    }
+  },
+  "purchaseSpecTrafficUntilUsed": "Traffic valid until used up",
+  "purchaseSpecSpeedLimit": "Speed limit: {speed} Mbps",
+  "@purchaseSpecSpeedLimit": {
+    "placeholders": {
+      "speed": {
+        "type": "int"
+      }
+    }
+  },
+  "purchaseSpecAllDevicesSupported": "Supports all device types",
   "purchasePlanSoldOut": "Sold out",
   "purchasePlanLowStock": "{count} left",
   "@purchasePlanLowStock": {
@@ -957,7 +1006,7 @@
   "nodeOverviewUpdateSubscription": "Update",
   "nodeOverviewUpdatingShort": "Updating",
   "nodeOverviewAddSubscription": "Add subscription",
-  "nodeOverviewQuickUse": "Quick use",
+  "nodeOverviewQuickUse": "Connect fastest",
   "nodeOverviewSelectProfileTitle": "Switch profile",
   "nodeOverviewProfileCountBadge": "{count} profiles",
   "@nodeOverviewProfileCountBadge": {
@@ -986,5 +1035,670 @@
         "type": "String"
       }
     }
-  }
+  },
+  "dashboardClickUpdateSubscription": "Click to update subscription",
+  "dashboardAnnouncementBadge": "Notice",
+  "dashboardNotSyncedYet": "Synced: Not yet",
+  "dashboardCurrentNodeLabel": "Current node: {node}",
+  "@dashboardCurrentNodeLabel": {
+    "placeholders": {
+      "node": {
+        "type": "String"
+      }
+    }
+  },
+  "dashboardTotalNodesCount": "{count} nodes",
+  "@dashboardTotalNodesCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "dashboardRuleOverrideCount": "Overrides {count}",
+  "@dashboardRuleOverrideCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "dashboardHwidNotSupported": "HWID binding is not enabled on this server",
+  "dashboardContactSupport": "Support",
+  "healthCheckTitle": "Health Check",
+  "healthCheckSubtitle": "Inspect profile, core, traffic capture, and live connectivity",
+  "healthCheckDiagnoseAction": "Diagnose",
+  "healthCheckRecheck": "Re-check",
+  "healthCheckCancel": "Cancel",
+  "healthCheckChecking": "Checking…",
+  "healthCheckCopySummary": "Copy Summary",
+  "healthCheckCopied": "Diagnostic summary copied",
+  "healthCheckExport": "Export Report",
+  "healthCheckExportDialogTitle": "Export Redacted Health Report",
+  "healthCheckExportSuccess": "Diagnostic report exported",
+  "healthCheckExportFailed": "Failed to export report",
+  "healthCheckPrivacyNote": "Exports contain only status codes and timings — never node names, IPs, URLs, or logs.",
+  "healthCheckLastChecked": "Last checked {time} · {elapsed}",
+  "@healthCheckLastChecked": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      },
+      "elapsed": {
+        "type": "String"
+      }
+    }
+  },
+  "healthLayerConfig": "Profile & Subscription",
+  "healthLayerCore": "Proxy Core",
+  "healthLayerTakeover": "Traffic Capture",
+  "healthLayerNetwork": "Network Path",
+  "healthItemProfileSelected": "Active Profile",
+  "healthItemSubscription": "Subscription Status",
+  "healthItemRuntimeConfig": "Runtime Config",
+  "healthItemCoreResponsive": "Core Responsiveness",
+  "healthItemProxyStarted": "Proxy State",
+  "healthItemTunTakeover": "TUN Virtual Adapter",
+  "healthItemSystemProxy": "System Proxy",
+  "healthItemTrafficTakeover": "Capture Summary",
+  "healthItemDirect": "Local Direct Uplink",
+  "healthItemDns": "DNS Resolution",
+  "healthItemOutbound": "Active Outbound Node",
+  "healthItemEndToEnd": "End-to-End Verification",
+  "healthStatusRunning": "Checking",
+  "healthStatusPassed": "Passed",
+  "healthStatusWarning": "Warning",
+  "healthStatusFailed": "Failed",
+  "healthStatusTimeout": "Timeout",
+  "healthStatusSkipped": "Skipped",
+  "healthVerdictCheckingTitle": "Checking connection layers…",
+  "healthVerdictHealthyTitle": "Connection Healthy",
+  "healthVerdictHealthySubtitle": "Node {node} · {delay} ms{exitPart}",
+  "@healthVerdictHealthySubtitle": {
+    "placeholders": {
+      "node": {
+        "type": "String"
+      },
+      "delay": {
+        "type": "int"
+      },
+      "exitPart": {
+        "type": "String"
+      }
+    }
+  },
+  "healthVerdictHealthyDirectSubtitle": "Direct mode · Uplink {delay} ms",
+  "@healthVerdictHealthyDirectSubtitle": {
+    "placeholders": {
+      "delay": {
+        "type": "int"
+      }
+    }
+  },
+  "healthVerdictCoreUnresponsive": "Proxy core is unresponsive",
+  "healthVerdictProfileMissing": "No valid profile selected or file is missing",
+  "healthVerdictSubscriptionExpired": "Subscription has expired",
+  "healthVerdictSubscriptionExhausted": "Subscription traffic is exhausted",
+  "healthVerdictProxyNotStarted": "Proxy is stopped; traffic goes direct",
+  "healthVerdictTakeoverFailed": "Traffic capture inactive; check TUN or system proxy",
+  "healthVerdictLocalNetworkDown": "Local network is unreachable (unrelated to proxy node)",
+  "healthVerdictOutboundFailed": "Local network is OK, but active proxy node failed",
+  "healthVerdictTrafficBypassed": "Probe reached internet without traversing proxy core",
+  "healthVerdictTunBypassedTitle": "TUN capture failed; only System Proxy is working",
+  "healthVerdictEndToEndFailed": "End-to-end exit check failed; try switching nodes",
+  "healthVerdictDnsFailed": "DNS resolution failed or returned sinkhole address",
+  "healthVerdictWarningsTitle": "Connected with warnings",
+  "healthActionOpenProfiles": "Open Profiles",
+  "healthActionOpenPurchase": "Renew / Redeem",
+  "healthActionOpenProxies": "Switch Node",
+  "healthActionOpenTun": "TUN Settings",
+  "healthActionOpenNetwork": "Network Settings",
+  "healthActionOpenDns": "DNS Settings",
+  "healthActionStartProxy": "Start Proxy",
+  "healthActionRestartCore": "Restart Core",
+  "healthDetailNoProfile": "No profile selected",
+  "healthDetailProfileFileMissing": "Profile YAML file is missing or empty",
+  "healthDetailLocalProfile": "Local file profile",
+  "healthDetailSubNeverSynced": "Not synced yet; update subscription first",
+  "healthDetailSubNoMeta": "No quota metadata from server",
+  "healthDetailSubHealthyEternal": "Lifetime · Unlimited",
+  "healthDetailSubHealthy": "Subscription active",
+  "healthDetailSubExpiringSoon": "{days}d remaining",
+  "@healthDetailSubExpiringSoon": {
+    "placeholders": {
+      "days": {
+        "type": "int"
+      }
+    }
+  },
+  "healthDetailSubTrafficLow": "{percent}% quota used",
+  "@healthDetailSubTrafficLow": {
+    "placeholders": {
+      "percent": {
+        "type": "int"
+      }
+    }
+  },
+  "healthDetailSubDeviceLimit": "Device limit reached",
+  "healthDetailSubExpired": "Subscription expired",
+  "healthDetailSubExhausted": "Traffic quota exhausted",
+  "healthDetailRuntimeSynced": "Loaded ({count} groups)",
+  "@healthDetailRuntimeSynced": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "healthDetailRuntimeMismatch": "Current profile not yet applied to Core",
+  "healthDetailCoreHealthy": "IPC OK · {mb} MB",
+  "@healthDetailCoreHealthy": {
+    "placeholders": {
+      "mb": {
+        "type": "String"
+      }
+    }
+  },
+  "healthDetailCoreSlow": "Core IPC response is slow (> 500 ms)",
+  "healthDetailCoreFailed": "Core control interface failed or timed out",
+  "healthDetailProxyRunning": "Running",
+  "healthDetailProxyStopped": "Stopped",
+  "healthDetailSkipPrerequisite": "Skipped due to earlier check",
+  "healthDetailSkipProxyStopped": "Skipped while proxy is stopped",
+  "healthDetailTunReadyElevated": "Active · Elevated",
+  "healthDetailTunReady": "Virtual adapter active",
+  "healthDetailTunDisabled": "Disabled in settings",
+  "healthDetailSysProxyDisabled": "Disabled in settings",
+  "healthDetailSysProxyUnsupported": "Not applicable on this platform",
+  "healthDetailSysProxyHijacked": "System proxy disabled or overwritten externally",
+  "healthDetailSysProxyUnexpectedPac": "Residual PAC URL detected in system settings",
+  "healthDetailTakeoverBoth": "TUN + System Proxy active",
+  "healthDetailTakeoverTun": "Captured via TUN adapter",
+  "healthDetailTakeoverSysProxy": "Captured via System Proxy",
+  "healthDetailTakeoverPartial": "Only one enabled capture mode is active",
+  "healthDetailTakeoverNone": "Neither TUN nor System Proxy is active",
+  "healthDetailDirectOk": "Direct uplink reachable",
+  "healthDetailDirectSlow": "Direct uplink latency is high",
+  "healthDetailDirectFailed": "Direct uplink failed; check Wi-Fi, router, or firewall",
+  "healthDetailCoreDelayBusy": "Delay test slots busy; retry shortly",
+  "healthDetailDnsOk": "Resolved",
+  "healthDetailDnsFakeIp": "Core DNS (fake-ip)",
+  "healthDetailDnsPoisoned": "DNS returned loopback/sinkhole IP",
+  "healthDetailDnsFailed": "DNS lookup failed or timed out",
+  "healthDetailDirectMode": "Direct mode is selected",
+  "healthDetailOutboundDirectSelected": "Selected target is DIRECT",
+  "healthDetailOutboundRejectSelected": "Selected target is REJECT",
+  "healthDetailOutboundSlow": "Node {node} latency is elevated",
+  "@healthDetailOutboundSlow": {
+    "placeholders": {
+      "node": {
+        "type": "String"
+      }
+    }
+  },
+  "healthDetailOutboundFailed": "Node {node} failed connectivity check",
+  "@healthDetailOutboundFailed": {
+    "placeholders": {
+      "node": {
+        "type": "String"
+      }
+    }
+  },
+  "healthDetailE2eVerified": "Verified through proxy{exitPart}",
+  "@healthDetailE2eVerified": {
+    "placeholders": {
+      "exitPart": {
+        "type": "String"
+      }
+    }
+  },
+  "healthDetailE2eDirectRule": "Entered Core (matched DIRECT rule)",
+  "healthDetailE2eBypassed": "Reached internet, but connection bypassed Core",
+  "healthDetailE2eFailed": "All end-to-end exit probes failed",
+  "healthExitCountryPart": " · Exit {flag}",
+  "@healthExitCountryPart": {
+    "placeholders": {
+      "flag": {
+        "type": "String"
+      }
+    }
+  },
+  "healthVerdictCancelledTitle": "Health check cancelled",
+  "healthDetailCancelled": "Cancelled",
+  "globalOverride": "Global Rule Override",
+  "globalOverrideDesc": "Persists across all profiles without re-editing on switch or update",
+  "enableGlobalOverride": "Enable Global Override",
+  "defaultProxyAutoTarget": "Default Proxy (Auto-adapt)",
+  "localSplitMode": "Domestic & LAN Local Split",
+  "localSplitModeDesc": "Automatically bypass domestic & LAN traffic when subscription lacks routing rules",
+  "localSplitMode_auto": "Smart Bare-Profile Detection (Auto)",
+  "localSplitMode_always": "Always Add Domestic Direct",
+  "localSplitMode_off": "Off",
+  "overrideAutoSavedHint": "Rule changes auto-save and hot-reload immediately",
+  "healthActionReapplySystemProxy": "Restore System Proxy",
+  "healthDetailSysProxyReadFailed": "Could not read system proxy settings",
+  "healthDetailSysProxyInvalidPort": "Local mixed-port is disabled (0)",
+  "healthDetailSysProxyNotApplied": "System proxy has not been applied to OS yet",
+  "healthDetailSysProxyDisabledExternally": "System proxy switch is turned off in OS",
+  "healthDetailDnsStaleFakeIp": "Stale Fake-IP cache detected while TUN is inactive",
+  "healthDetailTunBypassedSystemProxyOk": "TUN path failed; verified via System Proxy",
+  "nodeOverviewUpdateAllSubscriptions": "Update all",
+  "nodeOverviewAllProfilesCount": "{count} profiles",
+  "@nodeOverviewAllProfilesCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewExpiredCountBadge": "{count} expired",
+  "@nodeOverviewExpiredCountBadge": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewExpiringSoonCountBadge": "{count} expiring soon",
+  "@nodeOverviewExpiringSoonCountBadge": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewCurrentActiveProfile": "Active: {name}",
+  "@nodeOverviewCurrentActiveProfile": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewNoActiveProfile": "Active: None",
+  "nodeOverviewAllHealthCounts": "Nodes: {available} available / {tested} tested / {total} total",
+  "@nodeOverviewAllHealthCounts": {
+    "placeholders": {
+      "available": {
+        "type": "int"
+      },
+      "tested": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewGlobalMedian": "Global median: {median}",
+  "@nodeOverviewGlobalMedian": {
+    "placeholders": {
+      "median": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewGlobalMedianAndBest": "Median: {median} · Best: {best}",
+  "@nodeOverviewGlobalMedianAndBest": {
+    "placeholders": {
+      "median": {
+        "type": "String"
+      },
+      "best": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewBandFast": "Fast {count}",
+  "@nodeOverviewBandFast": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewBandSlow": "Slow {count}",
+  "@nodeOverviewBandSlow": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewBandFailed": "Failed {count}",
+  "@nodeOverviewBandFailed": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewBandUntested": "Untested {count}",
+  "@nodeOverviewBandUntested": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "subscriptionUrlEmptyError": "Please paste a subscription link first",
+  "subscriptionUrlInvalidError": "No valid http(s):// subscription link found",
+  "subscriptionClipboardEmptyError": "Clipboard is empty. Copy a subscription link first",
+  "subscriptionImportTimeoutError": "Timed out fetching subscription. Check your network and retry",
+  "subscriptionImportAuthOrNotFoundError": "Subscription link is invalid or expired. Verify the URL or contact support",
+  "subscriptionImportInvalidConfigError": "This URL did not return a valid subscription config (it may be a webpage)",
+  "subscriptionImportGenericError": "Failed to import subscription. Check the link and try again",
+  "nodeOverviewProxyConnectedWithNode": "Proxy on · Using {profile} · {node}",
+  "@nodeOverviewProxyConnectedWithNode": {
+    "placeholders": {
+      "profile": {
+        "type": "String"
+      },
+      "node": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewProxyConnected": "Proxy on · Traffic connected",
+  "nodeOverviewProxyDisconnected": "Proxy off · Tap Turn on or Use on any node to connect",
+  "nodeOverviewProxyStarting": "Starting proxy…",
+  "nodeOverviewProxyStopping": "Stopping proxy…",
+  "nodeOverviewTurnOnProxy": "Turn on",
+  "nodeOverviewTurnOffProxy": "Turn off",
+  "nodeOverviewEmptyTitle": "No subscription profile yet",
+  "nodeOverviewEmptySubtitle": "Paste your subscription link and confirm to auto-test and connect to the fastest node",
+  "nodeOverviewEmptyStepsHint": "① Add subscription  ·  ② Auto speedtest  ·  ③ Connect fastest",
+  "nodeOverviewAvailableFilterEmpty": "No tested available nodes right now (untested or all timed out)",
+  "nodeOverviewShowAllNodes": "Show all nodes",
+  "nodeOverviewAutoConnectedBest": "Auto-connected to fastest node: {profile} · {node} ({delay} ms)",
+  "@nodeOverviewAutoConnectedBest": {
+    "placeholders": {
+      "profile": {
+        "type": "String"
+      },
+      "node": {
+        "type": "String"
+      },
+      "delay": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewAutoSelectedExpiredWarning": "Selected {node}, but this subscription has expired. Renew or replace it",
+  "@nodeOverviewAutoSelectedExpiredWarning": {
+    "placeholders": {
+      "node": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewAutoSelectedTrafficExhaustedWarning": "Selected {node}, but subscription traffic is exhausted. Renew or replace it",
+  "@nodeOverviewAutoSelectedTrafficExhaustedWarning": {
+    "placeholders": {
+      "node": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewAutoSelectedAllFailedWarning": "Auto-selected {node} (all nodes failed latency check; update subscription or try another node if offline)",
+  "@nodeOverviewAutoSelectedAllFailedWarning": {
+    "placeholders": {
+      "node": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewSmartSelectTitle": "Smart Select",
+  "nodeOverviewSmartSelectSubtitle": "Better experience",
+  "nodeOverviewSmartSelectCompact": "Smart",
+  "nodeOverviewManualSelectTitle": "Manual Select",
+  "nodeOverviewManualSelectSubtitle": "Fixed IP",
+  "nodeOverviewManualSelectCompact": "Fixed IP",
+  "nodeOverviewSmartInUse": "Smart active",
+  "nodeOverviewProxyConnectedSmartWithNode": "Proxy on · Smart: {profile} · {node}",
+  "@nodeOverviewProxyConnectedSmartWithNode": {
+    "placeholders": {
+      "profile": {
+        "type": "String"
+      },
+      "node": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewProxyConnectedSmart": "Proxy on · Smart: {profile} (auto-selecting)",
+  "@nodeOverviewProxyConnectedSmart": {
+    "placeholders": {
+      "profile": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewSwitchedToSmart": "Enabled Smart Select: {profile}",
+  "@nodeOverviewSwitchedToSmart": {
+    "placeholders": {
+      "profile": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewSwitchedToSmartWithNode": "Enabled Smart Select: {profile} (current: {node})",
+  "@nodeOverviewSwitchedToSmartWithNode": {
+    "placeholders": {
+      "profile": {
+        "type": "String"
+      },
+      "node": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewAutoConnectedSmartBest": "Smart Select active: {profile} (fastest: {node} · {delay} ms)",
+  "@nodeOverviewAutoConnectedSmartBest": {
+    "placeholders": {
+      "profile": {
+        "type": "String"
+      },
+      "node": {
+        "type": "String"
+      },
+      "delay": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewLockedManualNode": "Locked fixed node: {profile} · {node}",
+  "@nodeOverviewLockedManualNode": {
+    "placeholders": {
+      "profile": {
+        "type": "String"
+      },
+      "node": {
+        "type": "String"
+      }
+    }
+  },
+  "expertMode": "Expert Mode",
+  "noviceMode": "Simple Mode",
+  "goToPurchasePrompt": "No subscription yet? Buy or Redeem",
+  "purchasePlansRetry": "Reload plans",
+  "purchasePlansErrorHint": "Account sign-in, free sign-up, and gift card redemption on the right remain available.",
+  "purchasePlanFeaturedBadge": "Popular tier",
+  "purchasePlanBuyNow": "Buy card",
+  "purchaseHeaderTrialBadge": "Free 2 GiB trial on sign-up · Lifetime traffic packs",
+  "purchaseHeaderSyncedBadge": "High-speed nodes ready",
+  "purchaseAuthTabLogin": "Sign in",
+  "purchaseAuthTabRegister": "Free 2G sign-up",
+  "purchaseRegisterTrialBanner": "Get 2 GiB of lifetime trial traffic instantly, with automatic node import and Smart Connect.",
+  "purchaseRegisterSubmit": "Create account & sync nodes",
+  "purchaseRegistering": "Creating account…",
+  "purchasePasswordMinLength": "Enter at least 8 characters.",
+  "purchasePreloginCodeHint": "Already bought a code? Paste it here to auto-preview right after sign-in",
+  "purchaseHandoffTitle": "Opened store for {plan}",
+  "@purchaseHandoffTitle": {
+    "placeholders": {
+      "plan": {
+        "type": "String"
+      }
+    }
+  },
+  "purchaseHandoffDescription": "Copy your code after purchase and return to this window to auto-preview benefits (never redeemed without confirmation).",
+  "purchaseHandoffPasteAction": "Paste & check",
+  "purchaseOnlineSupport": "Live support",
+  "purchaseBackupContactsLabel": "Backup support (WeChat)",
+  "purchaseEmailExistsError": "This email is already registered. Switch to Sign in.",
+  "purchaseRegistrationClosedError": "New account registration is currently closed.",
+  "purchaseRegisterWebRequiredError": "Email verification or CAPTCHA is enabled. Use 'Create account on website' below.",
+  "purchaseClipboardEmpty": "No valid gift card code found in clipboard.",
+  "purchaseEmailDomainError": "This email domain is not allowed. Try another email address or register on the website.",
+  "purchaseGmailAliasError": "Gmail alias addresses (with '+') are not allowed. Use your base Gmail address.",
+  "appBrandName": "FreedomNet",
+  "appBrandTagline": "Next-Generation Intelligent Network Client",
+  "tributeDialogTitle": "Open-Source Tribute & Special Credits",
+  "tributeFlclashxBadge": "OPEN-SOURCE HERITAGE",
+  "tributeFlclashxTitle": "Built Upon Open-Source Project FlClashX",
+  "tributeFlclashxBody": "FreedomNet solemnly declares that this software is built upon the open-source project FlClashX (pluralplay/FlClashX), inheriting the FlClash and Mihomo (Clash.Meta) ecosystem. With our deepest respect and gratitude to the original authors and all upstream open-source contributors.",
+  "tributeGeminiBadge": "ENGINEERING & DESIGN SUPPORT",
+  "tributeGeminiTitle": "Special Thanks to Gemini 4",
+  "tributeGeminiBody": "Special thanks to Gemini 4 for supporting FreedomNet's architecture evolution, commercial UI/UX design, engineering refactoring, and automated verification.",
+  "brandDialogSubtitle": "Brand Overview & Core Experience",
+  "brandShowcaseBadge": "FREEDOMNET · FLAGSHIP CLIENT",
+  "brandShowcaseHeroTitle": "Borderless Access, Effortless Speed",
+  "brandShowcaseHeroBody": "FreedomNet delivers a clean, reliable, low-latency global network acceleration experience—built for cross-border work, AI productivity, and high-definition streaming in one click.",
+  "brandPillarSmartTitle": "Smart Routing · Millisecond Insight",
+  "brandPillarSmartBody": "Concurrent latency health checks with clear visual tiers, one-click fastest connect, region filters, and pinned node control.",
+  "brandPillarModesTitle": "Dual-Mode Cockpit · Zero Friction",
+  "brandPillarModesBody": "Novice Mode keeps everyday connection effortless with seamless TUN & system proxy, while Expert Mode unlocks full routing, connection, and diagnostic control.",
+  "brandPillarServiceTitle": "Transparent Quota · Instant Activation",
+  "brandPillarServiceBody": "Track data quota, remaining balance, and expiry at a glance, with instant gift-card verification, multi-profile sync, and dedicated support.",
+  "healthDetailOutboundProbeFallbackOk": "Node {node} failed delay probe, but live E2E traffic succeeded",
+  "@healthDetailOutboundProbeFallbackOk": {
+    "placeholders": {
+      "node": {
+        "type": "String"
+      }
+    }
+  },
+  "purchaseForgotPassword": "Forgot password?",
+  "purchaseResetPasswordTitle": "Reset password",
+  "purchaseResetPasswordDescription": "Enter your registered email and a 6-digit verification code to set a new password.",
+  "purchaseEmailCode": "Email verification code",
+  "purchaseEmailCodeRequired": "Enter the 6-digit verification code",
+  "purchaseSendCode": "Send code",
+  "purchaseSendingCode": "Sending...",
+  "purchaseSendCodeCooldown": "Resend in {seconds}s",
+  "@purchaseSendCodeCooldown": {
+    "placeholders": {
+      "seconds": {
+        "type": "int"
+      }
+    }
+  },
+  "purchaseCodeSentNotice": "Verification code sent. Check your inbox and spam folder.",
+  "purchaseInviteCode": "Invite code",
+  "purchaseInviteCodeOptionalToggle": "Have an invite code? (Optional)",
+  "purchaseInviteCodeRequired": "Enter your invite code",
+  "purchaseNewPassword": "New password",
+  "purchaseResetPasswordSubmit": "Confirm password reset",
+  "purchaseResettingPassword": "Resetting...",
+  "purchaseBackToLogin": "Back to sign in",
+  "purchaseResetPasswordSuccess": "Password reset. Sign in with your new password.",
+  "purchaseCaptchaRequiredNotice": "This site requires CAPTCHA verification. Continue on the website.",
+  "purchaseOpenWebAuth": "Continue on website",
+  "purchaseTosAgreementPrefix": "By registering, you agree to the",
+  "purchaseTosLinkLabel": "Terms of Service",
+  "purchaseInviteCodeRequiredError": "An invite code is required to register on this site.",
+  "purchaseInviteCodeInvalidError": "Invalid or expired invite code.",
+  "purchaseInvitationUnavailableError": "Invitations are currently unavailable.",
+  "purchaseEmailCodeInvalidError": "Invalid or expired email verification code.",
+  "purchaseEmailCodeLockedError": "Too many verification attempts. Request a new code later.",
+  "purchaseEmailCooldownError": "Please wait before requesting another code.",
+  "purchaseEmailRateLimitedError": "Too many verification emails requested. Try again later.",
+  "purchaseEmailVerifyDisabledError": "Email verification is currently disabled.",
+  "purchaseMailUnavailableError": "Email delivery is unavailable right now. Contact support or try again later.",
+  "purchaseCooldownWithSecondsError": "Too many requests. Please try again in {seconds}s.",
+  "@purchaseCooldownWithSecondsError": {
+    "placeholders": {
+      "seconds": {
+        "type": "int"
+      }
+    }
+  },
+  "supportSheetTitle": "Live Support",
+  "supportStatusConnected": "Connected",
+  "supportStatusConnecting": "Connecting",
+  "supportStatusOffline": "Offline",
+  "supportNewConversation": "New conversation",
+  "supportOpenExternalFallback": "Open in browser",
+  "supportRefreshTooltip": "Refresh messages",
+  "supportWelcomeFallbackTitle": "Welcome to FreedomNet Support",
+  "supportWelcomeFallbackSubtitle": "Ask us anything about plans, nodes, or gift card redemption.",
+  "supportTypingIndicator": "{name} is typing...",
+  "@supportTypingIndicator": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "supportTypingAnonymous": "Agent",
+  "supportMessageSending": "Sending",
+  "supportMessageFailed": "Failed",
+  "supportRetryAction": "Retry",
+  "supportComposerHint": "Type a message, press Enter to send...",
+  "supportSendTooltip": "Send",
+  "supportConversationLockedNotice": "This conversation is resolved. Start a new conversation to continue.",
+  "supportNotConfiguredNotice": "Live chat is not configured yet. Use the backup WeChat contacts below.",
+  "supportBackupWechatToggle": "Backup WeChat",
+  "purchaseAcquireOpenSupport": "Chat with support",
+  "renewSubscription": "Renew subscription",
+  "buyExtraTraffic": "Buy extra traffic",
+  "themeSkyConsoleSection": "Day & Night Sky Sync",
+  "themeSkyModeFollow": "Follow connection",
+  "themeSkyModeFollowDesc": "Sunny sky when connected, starry night when off",
+  "themeSkyModeNight": "Always Starry Night",
+  "themeSkyModeNightDesc": "Keep the dark starry sky even while connected",
+  "themeSkyModeDay": "Always Sunny Day",
+  "themeSkyModeDayDesc": "Keep the bright sunny sky even when disconnected",
+  "themeSkyStatusDayConnected": "Sunny Day · Connected",
+  "themeSkyStatusConnecting": "Pre-dawn · Connecting",
+  "themeSkyStatusNightDisconnected": "Starry Night · Disconnected",
+  "themeSkyStatusLockedNight": "Starry Night · Locked",
+  "themeSkyStatusLockedDay": "Sunny Day · Locked",
+  "themeCustomBgNotice": "Subscription custom wallpaper detected",
+  "themeIgnoreCustomBgLabel": "Prefer Day/Night sky background",
+  "themeAtmosphereSection": "Atmosphere & Motion",
+  "themeGlassPresetLabel": "Card glass translucency",
+  "themeGlassPresetAiry": "Airy",
+  "themeGlassPresetBalanced": "Balanced",
+  "themeGlassPresetSolid": "Solid",
+  "themeSkyAmbientAnimation": "Drifting clouds & starlight",
+  "themeSkyAmbientAnimationDesc": "Pauses steady drift to save power while keeping sunrise/sunset transitions",
+  "themeTextScaleDefaultDesc": "Follow system default (100%)",
+  "themeSkyStatusCustomBgActive": "Custom wallpaper active · Syncing UI brightness",
+  "themeAtmosphereCustomBgHint": "Custom wallpaper is active. Enable \"Prefer Day/Night sky background\" above to tune sky glass and motion.",
+  "tvSyncCouldNotGetIp": "Could not obtain LAN IP address",
+  "tvSyncApplying": "Receiving profile from phone…",
+  "tvSyncSuccess": "Profile added",
+  "tvSyncFailed": "Failed to add profile",
+  "tvSyncScanQrHint": "Scan the QR code with your phone camera",
+  "tvSyncWebPageTitle": "FreedomNet — Import Subscription",
+  "tvSyncWebHeading": "Import Subscription",
+  "tvSyncWebSubtitle": "Paste your subscription link and tap \"Send\" — it will sync to this device automatically.",
+  "tvSyncWebPaste": "Paste",
+  "tvSyncWebSend": "Send",
+  "tvSyncWebEmptyUrl": "Please paste a subscription URL",
+  "tvSyncWebSending": "Sending…",
+  "tvSyncWebRejected": "The device rejected the subscription URL",
+  "tvSyncWebUnreachable": "Could not reach the receiving device",
+  "tvSyncWebApplying": "Importing subscription on device…",
+  "tvSyncWebSuccess": "✅ Done! Subscription added to device",
+  "tvSyncWebErrorPrefix": "❌ Error: ",
+  "tvSyncWebReceived": "Link received by device…",
+  "tvSyncWebConnectionLost": "Connection to device lost",
+  "purchaseSafetyTitle": "Official Secure Purchase · 24/7 Live Support",
+  "purchaseSafetyBody": "For your network privacy and security, please contact live support directly to purchase.",
+  "purchaseSafetyTagOfficial": "Official Direct",
+  "purchaseSafetyTagFunds": "Payment Safety",
+  "purchaseSafetyTag24h": "24/7 Fast Reply"
 }

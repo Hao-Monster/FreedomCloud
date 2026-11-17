@@ -108,7 +108,9 @@ func handleAsyncTestDelayOwned(paramsString string, owner *catalogOwner, fn func
 		if runLock.LockContext(ctx) != nil {
 			return nil, "deadlineExceeded", nil
 		}
+		proxyStateMu.RLock()
 		proxy := lookupDelayProxy(params.ProxyName)
+		proxyStateMu.RUnlock()
 		runLock.Unlock()
 		if proxy == nil {
 			return nil, "notFound", nil
@@ -123,7 +125,7 @@ func runDelayTask(params TestDelayParams, lookup func(context.Context) (constant
 	respond := func() { data, _ := json.Marshal(result); fn(string(data)) }
 	result.Name, result.Url = params.ProxyName, params.TestUrl
 	if result.Url == "" {
-		result.Url = "https://www.gstatic.com/generate_204"
+		result.Url = defaultCoreTestURL
 	}
 	if params.Timeout <= 0 {
 		params.Timeout = 1

@@ -42,6 +42,7 @@ class NodeCatalogTester extends ChangeNotifier {
   ({String profileId, Future<ProfileCatalog> future})? _preparation;
   final _catalogs = <String, String>{};
   final _profileIds = <String>{};
+  final _pendingSnapshots = <String, Set<String>>{};
   bool _testingAll = false;
   String? _testingProfile;
   CatalogTestPlan? _activePlan;
@@ -61,13 +62,46 @@ class NodeCatalogTester extends ChangeNotifier {
                   : 0)
           : coordinator.completed;
 
-  bool pending(String profileId, String identityKey) =>
-      coordinator.activeTargets.any((target) =>
-          target.scope != null &&
-          _catalogs[target.scope] == profileId &&
-          target.name == identityKey);
+  Set<String> pendingIdentitySnapshot(String profileId) =>
+      _pendingSnapshots[profileId] ?? const <String>{};
+
+  bool pending(String profileId, String identityKey) {
+    final cached = _pendingSnapshots[profileId];
+    if (cached != null) {
+      return cached.contains(identityKey);
+    }
+    return coordinator.activeTargetsView.any((target) =>
+        target.scope != null &&
+        _catalogs[target.scope] == profileId &&
+        target.name == identityKey);
+  }
+
+  void _syncPendingSnapshots() {
+    if (_catalogs.isEmpty) {
+      if (_pendingSnapshots.isNotEmpty) {
+        _pendingSnapshots.clear();
+      }
+      return;
+    }
+    final grouped = <String, Set<String>>{};
+    for (final target in coordinator.activeTargetsView) {
+      final scope = target.scope;
+      if (scope == null) continue;
+      final profileId = _catalogs[scope];
+      if (profileId == null) continue;
+      (grouped[profileId] ??= <String>{}).add(target.name);
+    }
+    _pendingSnapshots.removeWhere((key, _) => !grouped.containsKey(key));
+    for (final entry in grouped.entries) {
+      final previous = _pendingSnapshots[entry.key];
+      if (previous == null || !setEquals(previous, entry.value)) {
+        _pendingSnapshots[entry.key] = Set<String>.unmodifiable(entry.value);
+      }
+    }
+  }
 
   void _progress() {
+    _syncPendingSnapshots();
     if (!_disposed) notifyListeners();
   }
 
@@ -479,6 +513,7 @@ class NodeCatalogTester extends ChangeNotifier {
       unawaited(service.releasePrepared(id));
     }
     _catalogs.clear();
+    _pendingSnapshots.clear();
   }
 
   void _cancelPreparation() {

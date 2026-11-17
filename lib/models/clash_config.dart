@@ -1,5 +1,7 @@
 // ignore_for_file: invalid_annotation_target
 
+import 'dart:io';
+
 import 'package:flclashx/common/common.dart';
 import 'package:flclashx/enum/enum.dart';
 import 'package:freezed_annotation/freezed_annotation.dart';
@@ -12,11 +14,27 @@ typedef HostsMap = Map<String, String>;
 const defaultClashConfig = ClashConfig();
 
 const defaultTun = Tun();
+
+ClashConfig desktopDefaultClashConfig() => defaultClashConfig.copyWith(
+      tun: defaultTun.copyWith(stack: TunStack.gvisor),
+    );
+
 const defaultDns = Dns();
 const defaultGeoXUrl = GeoXUrl();
 
 const defaultMixedPort = 7890;
-const defaultKeepAliveInterval = 30;
+const defaultKeepAliveInterval = 15;
+
+const List<String> defaultTunRouteExcludeAddress = <String>[
+  "10.0.0.0/8",
+  "100.64.0.0/10",
+  "127.0.0.0/8",
+  "169.254.0.0/16",
+  "172.16.0.0/12",
+  "192.168.0.0/16",
+  "fc00::/7",
+  "fe80::/10",
+];
 
 const defaultBypassPrivateRouteAddress = [
   "1.0.0.0/8",
@@ -182,6 +200,9 @@ class Tun with _$Tun {
     @Default(TunStack.mixed) TunStack stack,
     @JsonKey(name: "dns-hijack") @Default(["any:53"]) List<String> dnsHijack,
     @JsonKey(name: "route-address") @Default([]) List<String> routeAddress,
+    @JsonKey(name: "route-exclude-address")
+    @Default(defaultTunRouteExcludeAddress)
+    List<String> routeExcludeAddress,
   }) = _Tun;
 
   factory Tun.fromJson(Map<String, Object?> json) => _$TunFromJson(json);
@@ -199,18 +220,37 @@ class Tun with _$Tun {
 }
 
 extension TunExt on Tun {
+  String get effectiveDevice {
+    final trimmed = device.trim();
+    if (trimmed.isEmpty) return appName;
+    final lower = trimmed.toLowerCase();
+    if (lower == 'flclashx' || lower == 'flclash') {
+      return appName;
+    }
+    return device;
+  }
+
   Tun getRealTun(RouteMode routeMode) {
     final mRouteAddress = routeMode == RouteMode.bypassPrivate
         ? defaultBypassPrivateRouteAddress
         : routeAddress;
+    final resolvedDevice =
+        Platform.isWindows ? effectiveDevice : (device.trim().isEmpty ? appName : device);
+    final effectiveExcludeAddress = routeExcludeAddress.isEmpty
+        ? defaultTunRouteExcludeAddress
+        : routeExcludeAddress;
     return switch (system.isDesktop) {
       true => copyWith(
+          device: resolvedDevice,
           autoRoute: true,
           routeAddress: [],
+          routeExcludeAddress: effectiveExcludeAddress,
         ),
       false => copyWith(
+          device: resolvedDevice,
           autoRoute: mRouteAddress.isEmpty ? true : false,
           routeAddress: mRouteAddress,
+          routeExcludeAddress: effectiveExcludeAddress,
         ),
     };
   }
@@ -243,9 +283,9 @@ class Dns with _$Dns {
     @Default(false) @JsonKey(name: "prefer-h3") bool preferH3,
     @Default(true) @JsonKey(name: "use-hosts") bool useHosts,
     @Default(true) @JsonKey(name: "use-system-hosts") bool useSystemHosts,
-    @Default(false) @JsonKey(name: "respect-rules") bool respectRules,
+    @Default(true) @JsonKey(name: "respect-rules") bool respectRules,
     @Default(true) bool ipv6,
-    @Default(["223.5.5.5"])
+    @Default(["223.5.5.5", "119.29.29.29"])
     @JsonKey(name: "default-nameserver")
     List<String> defaultNameserver,
     @Default(DnsMode.fakeIp)
@@ -279,6 +319,7 @@ class Dns with _$Dns {
     List<String> fallback,
     @Default([
       "https://doh.pub/dns-query",
+      "https://dns.alidns.com/dns-query",
     ])
     @JsonKey(name: "proxy-server-nameserver")
     List<String> proxyServerNameserver,
@@ -302,19 +343,19 @@ class Dns with _$Dns {
 class GeoXUrl with _$GeoXUrl {
   const factory GeoXUrl({
     @Default(
-      "https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/geoip.metadb",
+      "https://api.westernmoviefans.com/api/v1/client/geox/geoip.metadb",
     )
     String mmdb,
     @Default(
-      "https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/GeoLite2-ASN.mmdb",
+      "https://api.westernmoviefans.com/api/v1/client/geox/ASN.mmdb",
     )
     String asn,
     @Default(
-      "https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/geoip.dat",
+      "https://api.westernmoviefans.com/api/v1/client/geox/GeoIP.dat",
     )
     String geoip,
     @Default(
-      "https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/geosite.dat",
+      "https://api.westernmoviefans.com/api/v1/client/geox/GeoSite.dat",
     )
     String geosite,
   }) = _GeoXUrl;

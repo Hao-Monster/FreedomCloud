@@ -923,43 +923,77 @@ bool isPublicRoutableIp(InternetAddress address) {
   return false;
 }
 
-Future<String?> defaultResolveServerCountry(String rawServer) async {
+bool _isBogonOrLocalHostname(String host) =>
+    host.isEmpty ||
+    host == 'localhost' ||
+    host.endsWith('.invalid') ||
+    host.endsWith('.example') ||
+    host.endsWith('.local') ||
+    host.endsWith('.lan') ||
+    host.endsWith('.test');
+
+Future<String?> defaultResolveServerCountry(
+  String rawServer, {
+  Future<List<InternetAddress>> Function(String host)? lookupHost,
+}) async {
   final server = _normalizeServerHost(rawServer);
-  if (server.isEmpty ||
-      server == 'localhost' ||
-      server.endsWith('.invalid') ||
-      server.endsWith('.example') ||
-      server.endsWith('.local') ||
-      server.endsWith('.lan') ||
-      server.endsWith('.test')) {
+  if (_isBogonOrLocalHostname(server)) {
     return null;
   }
-  if (ClashCore.existingInterface == null) return null;
-  String? ip;
+  final interface = ClashCore.existingInterface;
+  if (interface == null) return null;
+
   final parsedIp = InternetAddress.tryParse(server);
   if (parsedIp != null) {
     if (!isPublicRoutableIp(parsedIp)) return null;
-    ip = parsedIp.address;
-  } else {
     try {
-      final addresses = await InternetAddress.lookup(server)
-          .timeout(const Duration(seconds: 2));
-      final routable = addresses.where(isPublicRoutableIp).toList();
-      final preferred = routable
-              .where((a) => a.type == InternetAddressType.IPv4)
-              .firstOrNull ??
-          routable.firstOrNull;
-      ip = preferred?.address;
+      final rawCode = await Future<String>.sync(
+        () => interface.getCountryCode(parsedIp.address),
+      ).timeout(const Duration(milliseconds: 1500));
+      return normalizeIsoCountryCode(rawCode);
     } catch (_) {
       return null;
     }
   }
-  if (ip == null || ip.isEmpty) return null;
+
+  final trimmedHost =
+      server.endsWith('.') ? server.substring(0, server.length - 1) : server;
+  if (_isBogonOrLocalHostname(trimmedHost) || !trimmedHost.contains('.')) {
+    return null;
+  }
+
+  // Step A: delegate domain lookup to Core first so Mihomo resolves via its
+  // ProxyServerHostResolver/DefaultResolver without getting hijacked by TUN Fake-IP.
   try {
-    final info = await clashCore
-        .getCountryCode(ip)
-        .timeout(const Duration(milliseconds: 1500));
-    return normalizeIsoCountryCode(info?.countryCode);
+    final rawCode = await Future<String>.sync(
+      () => interface.getCountryCode(trimmedHost),
+    ).timeout(const Duration(milliseconds: 2500));
+    final normalized = normalizeIsoCountryCode(rawCode);
+    if (normalized != null) {
+      return normalized;
+    }
+  } catch (_) {
+    // Fall back to OS DNS resolution below when Core returns empty or errors.
+  }
+
+  // Step B: OS DNS fallback (discarding Fake-IP 198.18.0.0/15 & non-public IPs).
+  try {
+    final resolveHost = lookupHost ?? InternetAddress.lookup;
+    final addresses =
+        await resolveHost(trimmedHost).timeout(const Duration(seconds: 2));
+    final routable = addresses.where(isPublicRoutableIp).toList();
+    final preferred = routable
+            .where((a) => a.type == InternetAddressType.IPv4)
+            .firstOrNull ??
+        routable.firstOrNull;
+    final resolvedIp = preferred?.address;
+    if (resolvedIp == null || resolvedIp.isEmpty) {
+      return null;
+    }
+    final rawCode = await Future<String>.sync(
+      () => interface.getCountryCode(resolvedIp),
+    ).timeout(const Duration(milliseconds: 1500));
+    return normalizeIsoCountryCode(rawCode);
   } catch (_) {
     return null;
   }
@@ -1094,6 +1128,7 @@ class NodeCountryResolver extends ChangeNotifier {
     this.resolveConnectionTarget,
     this.evaluateConnectionEvidence,
     this.maxConcurrency = 4,
+    this.maxCachedEndpoints = 4096,
     DateTime Function()? clock,
   })  : _resolveServerCountry =
             resolveServerCountry ?? defaultResolveServerCountry,
@@ -1121,6 +1156,7 @@ class NodeCountryResolver extends ChangeNotifier {
   final ConnectionOutboundTarget? Function()? resolveConnectionTarget;
   final ConnectionEvidenceEvaluation Function()? evaluateConnectionEvidence;
   final int maxConcurrency;
+  final int maxCachedEndpoints;
   final DateTime Function() _clock;
 
   final Map<String, String> _endpointServers = <String, String>{};
@@ -1132,6 +1168,24 @@ class NodeCountryResolver extends ChangeNotifier {
   final Queue<String> _lookupQueue = Queue<String>();
   int _activeLookups = 0;
   bool _disposed = false;
+
+  @visibleForTesting
+  int get cachedEndpointCount => _endpointServers.length;
+
+  @visibleForTesting
+  int get cachedServerCountryCount => _serverCountryCache.length;
+
+  void _putBounded<K, V>(Map<K, V> map, K key, V value) {
+    if (maxCachedEndpoints <= 0) return;
+    if (map.containsKey(key)) {
+      map.remove(key);
+    } else {
+      while (map.length >= maxCachedEndpoints) {
+        map.remove(map.keys.first);
+      }
+    }
+    map[key] = value;
+  }
 
   final Map<String, ExitCalibrationEntry> _exitCountryByNodeKey =
       <String, ExitCalibrationEntry>{};
@@ -1702,8 +1756,8 @@ class NodeCountryResolver extends ChangeNotifier {
       final previousEndpointKey = _nameEndpointKeys[nodeKey];
       final previousFingerprint = _nameConfigFingerprints[nodeKey];
       final configFingerprint = _computeProxyConfigFingerprint(item);
-      _nameServers[nodeKey] = normalizedServer;
-      _nameConfigFingerprints[nodeKey] = configFingerprint;
+      _putBounded(_nameServers, nodeKey, normalizedServer);
+      _putBounded(_nameConfigFingerprints, nodeKey, configFingerprint);
       String? endpointKey;
       if (port != null && port >= 1 && port <= 65535) {
         final endpoint = '$type|${server.toLowerCase()}|$port';
@@ -1711,8 +1765,8 @@ class NodeCountryResolver extends ChangeNotifier {
             .convert(utf8.encode('v1|$endpoint'))
             .toString()
             .substring(0, 32);
-        _endpointServers[endpointKey] = normalizedServer;
-        _nameEndpointKeys[nodeKey] = endpointKey;
+        _putBounded(_endpointServers, endpointKey, normalizedServer);
+        _putBounded(_nameEndpointKeys, nodeKey, endpointKey);
       } else {
         _nameEndpointKeys.remove(nodeKey);
       }
@@ -1764,6 +1818,31 @@ class NodeCountryResolver extends ChangeNotifier {
     _pumpLookups();
   }
 
+  /// Re-queues registered proxy servers that have not yet resolved to an ISO
+  /// country code (e.g. cold-start evaluations before Core attach or transient
+  /// DNS unavailability while proxy/core was starting).
+  void retryUnresolvedServers() {
+    if (_disposed) return;
+    final candidates = <String>{
+      ..._nameServers.values,
+      ..._endpointServers.values,
+    };
+    var queuedAny = false;
+    for (final server in candidates) {
+      if (server.isEmpty ||
+          _serverCountryCache.containsKey(server) ||
+          _pendingServers.contains(server)) {
+        continue;
+      }
+      _pendingServers.add(server);
+      _lookupQueue.add(server);
+      queuedAny = true;
+    }
+    if (queuedAny) {
+      _pumpLookups();
+    }
+  }
+
   void _pumpLookups() {
     while (!_disposed &&
         _activeLookups < maxConcurrency &&
@@ -1780,7 +1859,7 @@ class NodeCountryResolver extends ChangeNotifier {
       if (_disposed) return;
       if (code != null) {
         final changed = _serverCountryCache[server] != code;
-        _serverCountryCache[server] = code;
+        _putBounded(_serverCountryCache, server, code);
         if (changed) {
           _notify();
         }

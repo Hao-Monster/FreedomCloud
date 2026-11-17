@@ -1,0 +1,383 @@
+package outboundgroup
+
+import (
+	"context"
+	"errors"
+	"io"
+	"math"
+	"net"
+	"os"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"syscall"
+	"time"
+
+	"github.com/metacubex/mihomo/common/buf"
+	N "github.com/metacubex/mihomo/common/net"
+	C "github.com/metacubex/mihomo/constant"
+)
+
+const (
+	fcxStabilityHalfLife       = 180 * time.Second
+	fcxStabilityDelayPerUnit   = 250.0
+	fcxStabilityMaxScore       = 24.0
+	fcxStabilityPruneThreshold = 0.01
+	fcxPenaltyWeightDial       = 1.0
+	fcxPenaltyWeightMidStream  = 1.0
+	fcxMaxEntries              = 512
+
+	fcxErrPhaseDial uint8 = iota
+	fcxErrPhaseRead
+	fcxErrPhaseWrite
+)
+
+type fcxStabilityEntry struct {
+	score       float64
+	lastUpdated time.Time
+}
+
+type fcxStabilityTracker struct {
+	mu      sync.Mutex
+	fastMu  sync.Mutex
+	entries map[string]*fcxStabilityEntry
+}
+
+func (gb *GroupBase) LockFastMuFCX() {
+	gb.fcxStability.fastMu.Lock()
+}
+
+func (gb *GroupBase) UnlockFastMuFCX() {
+	gb.fcxStability.fastMu.Unlock()
+}
+
+func (e *fcxStabilityEntry) decayedAt(now time.Time) float64 {
+	if e == nil || e.score <= 0 {
+		return 0
+	}
+	elapsed := now.Sub(e.lastUpdated)
+	if elapsed <= 0 {
+		return e.score
+	}
+	decayed := e.score * math.Exp2(-elapsed.Seconds()/fcxStabilityHalfLife.Seconds())
+	if decayed < fcxStabilityPruneThreshold {
+		return 0
+	}
+	return decayed
+}
+
+func (t *fcxStabilityTracker) recordPenaltyAt(proxyName string, weight float64, now time.Time) {
+	if proxyName == "" || weight <= 0 {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.entries == nil {
+		t.entries = make(map[string]*fcxStabilityEntry)
+	}
+	if len(t.entries) >= fcxMaxEntries {
+		t.pruneExpiredLocked(now)
+		if len(t.entries) >= fcxMaxEntries {
+			// Evict the lowest-score entry to keep cardinality bounded.
+			var minKey string
+			var minScore = math.MaxFloat64
+			for name, item := range t.entries {
+				s := item.decayedAt(now)
+				if s < minScore {
+					minScore = s
+					minKey = name
+				}
+			}
+			if minKey != "" {
+				delete(t.entries, minKey)
+			}
+		}
+	}
+	entry := t.entries[proxyName]
+	if entry == nil {
+		entry = &fcxStabilityEntry{}
+		t.entries[proxyName] = entry
+	}
+	score := entry.decayedAt(now) + weight
+	if score > fcxStabilityMaxScore {
+		score = fcxStabilityMaxScore
+	}
+	entry.score = score
+	entry.lastUpdated = now
+}
+
+func (t *fcxStabilityTracker) pruneExpiredLocked(now time.Time) {
+	for name, entry := range t.entries {
+		if entry.decayedAt(now) == 0 {
+			delete(t.entries, name)
+		}
+	}
+}
+
+func (t *fcxStabilityTracker) scoreAt(proxyName string, now time.Time) float64 {
+	if proxyName == "" {
+		return 0
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.entries == nil {
+		return 0
+	}
+	entry := t.entries[proxyName]
+	if entry == nil {
+		return 0
+	}
+	decayed := entry.decayedAt(now)
+	if decayed == 0 {
+		delete(t.entries, proxyName)
+		return 0
+	}
+	return decayed
+}
+
+func (t *fcxStabilityTracker) reset() {
+	t.mu.Lock()
+	t.entries = nil
+	t.mu.Unlock()
+}
+
+func (gb *GroupBase) RecordDialErrorFCX(proxyName string, err error, dialCtx context.Context, onPenalty func()) bool {
+	if err == nil || proxyName == "" {
+		return false
+	}
+	if dialCtx != nil && errors.Is(dialCtx.Err(), context.Canceled) {
+		return false
+	}
+	if !isFCXStabilityError(err, fcxErrPhaseDial, 0, 0) {
+		return false
+	}
+	gb.fcxStability.recordPenaltyAt(proxyName, fcxPenaltyWeightDial, time.Now())
+	if onPenalty != nil {
+		onPenalty()
+	}
+	return true
+}
+
+func (gb *GroupBase) RecordReadErrorFCX(proxyName string, err error, bytesRead, bytesWritten uint64, onPenalty func()) bool {
+	if err == nil || proxyName == "" {
+		return false
+	}
+	if !isFCXStabilityError(err, fcxErrPhaseRead, bytesRead, bytesWritten) {
+		return false
+	}
+	gb.fcxStability.recordPenaltyAt(proxyName, fcxPenaltyWeightMidStream, time.Now())
+	if onPenalty != nil {
+		onPenalty()
+	}
+	return true
+}
+
+func (gb *GroupBase) RecordWriteErrorFCX(proxyName string, err error, onPenalty func()) bool {
+	if err == nil || proxyName == "" {
+		return false
+	}
+	if !isFCXStabilityError(err, fcxErrPhaseWrite, 0, 0) {
+		return false
+	}
+	gb.fcxStability.recordPenaltyAt(proxyName, fcxPenaltyWeightMidStream, time.Now())
+	if onPenalty != nil {
+		onPenalty()
+	}
+	return true
+}
+
+func (gb *GroupBase) StabilityPenaltyScoreFCX(proxyName string) float64 {
+	return gb.StabilityPenaltyScoreAtFCX(proxyName, time.Now())
+}
+
+func (gb *GroupBase) StabilityPenaltyScoreAtFCX(proxyName string, now time.Time) float64 {
+	return gb.fcxStability.scoreAt(proxyName, now)
+}
+
+func (gb *GroupBase) EffectiveDelayFCX(proxyName string, baseDelay uint16) uint16 {
+	return gb.EffectiveDelayAtFCX(proxyName, baseDelay, time.Now())
+}
+
+func (gb *GroupBase) EffectiveDelayAtFCX(proxyName string, baseDelay uint16, now time.Time) uint16 {
+	if baseDelay == math.MaxUint16 {
+		return math.MaxUint16
+	}
+	score := gb.StabilityPenaltyScoreAtFCX(proxyName, now)
+	if score <= 0 {
+		return baseDelay
+	}
+	added := math.Round(score * fcxStabilityDelayPerUnit)
+	if added <= 0 {
+		return baseDelay
+	}
+	combined := uint32(baseDelay) + uint32(added)
+	if combined >= math.MaxUint16 {
+		return math.MaxUint16 - 1
+	}
+	return uint16(combined)
+}
+
+func (gb *GroupBase) ResetStabilityPenaltiesFCX() {
+	gb.fcxStability.reset()
+}
+
+func (gb *GroupBase) WrapStableConnFCX(proxyName string, conn C.Conn, onPenalty func()) C.Conn {
+	if conn == nil || proxyName == "" {
+		return conn
+	}
+	return &fcxStabilityConn{
+		Conn:      conn,
+		tracker:   &gb.fcxStability,
+		proxyName: proxyName,
+		onPenalty: onPenalty,
+	}
+}
+
+func isFCXStabilityError(err error, phase uint8, bytesRead, bytesWritten uint64) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, net.ErrClosed) {
+		return false
+	}
+	if errors.Is(err, io.ErrUnexpectedEOF) {
+		return true
+	}
+	if errors.Is(err, io.EOF) {
+		switch phase {
+		case fcxErrPhaseDial, fcxErrPhaseWrite:
+			return true
+		case fcxErrPhaseRead:
+			return bytesRead == 0 && bytesWritten > 0
+		default:
+			return false
+		}
+	}
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, os.ErrDeadlineExceeded) {
+		return true
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return true
+	}
+	if errors.Is(err, syscall.ECONNRESET) ||
+		errors.Is(err, syscall.EPIPE) ||
+		errors.Is(err, syscall.ECONNABORTED) ||
+		errors.Is(err, syscall.ETIMEDOUT) ||
+		errors.Is(err, syscall.ECONNREFUSED) ||
+		errors.Is(err, syscall.ENETRESET) ||
+		errors.Is(err, syscall.EHOSTUNREACH) ||
+		errors.Is(err, syscall.ENETUNREACH) {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	if strings.Contains(msg, "use of closed") {
+		return false
+	}
+	for _, needle := range []string{
+		"connection reset",
+		"broken pipe",
+		"unexpected eof",
+		"stream error:",
+		"i/o timeout",
+		"connection aborted",
+		"wsarecv",
+		"wsasend",
+		"forcefully closed",
+	} {
+		if strings.Contains(msg, needle) {
+			return true
+		}
+	}
+	return false
+}
+
+type fcxStabilityConn struct {
+	C.Conn
+	tracker      *fcxStabilityTracker
+	proxyName    string
+	onPenalty    func()
+	bytesRead    atomic.Uint64
+	bytesWritten atomic.Uint64
+	localClosed  atomic.Bool
+	penalized    atomic.Bool
+}
+
+func (c *fcxStabilityConn) Read(b []byte) (int, error) {
+	n, err := c.Conn.Read(b)
+	if n > 0 {
+		c.bytesRead.Add(uint64(n))
+	}
+	c.handleErr(fcxErrPhaseRead, err)
+	return n, err
+}
+
+func (c *fcxStabilityConn) ReadBuffer(buffer *buf.Buffer) error {
+	before := buffer.Len()
+	err := c.Conn.ReadBuffer(buffer)
+	if delta := buffer.Len() - before; delta > 0 {
+		c.bytesRead.Add(uint64(delta))
+	}
+	c.handleErr(fcxErrPhaseRead, err)
+	return err
+}
+
+func (c *fcxStabilityConn) Write(b []byte) (int, error) {
+	n, err := c.Conn.Write(b)
+	if n > 0 {
+		c.bytesWritten.Add(uint64(n))
+	}
+	c.handleErr(fcxErrPhaseWrite, err)
+	return n, err
+}
+
+func (c *fcxStabilityConn) WriteBuffer(buffer *buf.Buffer) error {
+	before := buffer.Len()
+	err := c.Conn.WriteBuffer(buffer)
+	if err == nil && before > 0 {
+		c.bytesWritten.Add(uint64(before))
+	} else if err != nil && before > buffer.Len() {
+		c.bytesWritten.Add(uint64(before - buffer.Len()))
+	}
+	c.handleErr(fcxErrPhaseWrite, err)
+	return err
+}
+
+func (c *fcxStabilityConn) Close() error {
+	c.localClosed.Store(true)
+	return c.Conn.Close()
+}
+
+func (c *fcxStabilityConn) ReaderReplaceable() bool {
+	return false
+}
+
+func (c *fcxStabilityConn) WriterReplaceable() bool {
+	return false
+}
+
+func (c *fcxStabilityConn) Upstream() any {
+	return c.Conn
+}
+
+func (c *fcxStabilityConn) handleErr(phase uint8, err error) {
+	if err == nil || c.localClosed.Load() {
+		return
+	}
+	bytesRead := c.bytesRead.Load()
+	bytesWritten := c.bytesWritten.Load()
+	if !isFCXStabilityError(err, phase, bytesRead, bytesWritten) {
+		return
+	}
+	if !c.penalized.CompareAndSwap(false, true) {
+		return
+	}
+	if c.tracker != nil && c.proxyName != "" {
+		c.tracker.recordPenaltyAt(c.proxyName, fcxPenaltyWeightMidStream, time.Now())
+	}
+	if c.onPenalty != nil {
+		c.onPenalty()
+	}
+}
+
+var _ N.ExtendedConn = (*fcxStabilityConn)(nil)

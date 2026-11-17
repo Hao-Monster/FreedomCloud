@@ -1,0 +1,24 @@
+package provider
+
+import "sync/atomic"
+
+type fcxAtomicRuleStrategy struct {
+	ptr atomic.Pointer[ruleStrategy]
+}
+
+func (s *fcxAtomicRuleStrategy) load() ruleStrategy {
+	box := s.ptr.Load()
+	if box == nil {
+		return nil
+	}
+	return *box
+}
+
+func (s *fcxAtomicRuleStrategy) store(next ruleStrategy) {
+	if next == nil {
+		s.ptr.Store(nil)
+		return
+	}
+	box := next
+	s.ptr.Store(&box)
+}

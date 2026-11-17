@@ -1,95 +1,165 @@
 import 'dart:async';
-import 'dart:typed_data';
 
-import 'package:flclashx/common/preferences.dart';
+import 'package:flclashx/enum/enum.dart';
 import 'package:flclashx/manager/purchase_manager.dart';
-import 'package:flclashx/models/profile.dart';
+import 'package:flclashx/manager/support_manager.dart';
+import 'package:flclashx/models/models.dart';
+import 'package:flclashx/providers/node_overview.dart';
 import 'package:flclashx/providers/providers.dart';
-import 'package:flclashx/services/purchase_profile_sync.dart';
+import 'package:flclashx/providers/purchase_support_provider.dart';
 import 'package:flclashx/services/purchase_storage.dart';
 import 'package:flclashx/services/xboard_api.dart';
+import 'package:flclashx/services/xboard_bootstrap.dart';
 import 'package:flclashx/state.dart';
 import 'package:flclashx/views/purchase/center.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 class PurchaseView extends ConsumerStatefulWidget {
-  const PurchaseView({super.key});
+  const PurchaseView({
+    super.key,
+    @visibleForTesting this.apiOverride,
+    @visibleForTesting this.storageOverride,
+    @visibleForTesting this.downloadOverride,
+    @visibleForTesting this.saveConfigOverride,
+  });
+
+  @visibleForTesting
+  final XboardApi? apiOverride;
+  @visibleForTesting
+  final PurchaseStorage? storageOverride;
+  @visibleForTesting
+  final Future<Profile> Function(Profile)? downloadOverride;
+  @visibleForTesting
+  final Future<bool> Function(Config config)? saveConfigOverride;
 
   @override
   ConsumerState<PurchaseView> createState() => _PurchaseViewState();
 }
 
 class _PurchaseViewState extends ConsumerState<PurchaseView> {
+  PurchaseManager? _ownedManager;
+  SupportManagerHandle? _ownedSupportHandle;
   late final PurchaseManager _manager;
+  late final SupportManager _supportManager;
+  int? _autoSyncedAccountId;
+
+  bool get _hasTestOverrides =>
+      widget.apiOverride != null ||
+      widget.storageOverride != null ||
+      widget.downloadOverride != null ||
+      widget.saveConfigOverride != null;
+
+  void _onOwnedManagerChanged() {
+    if (!mounted) return;
+    syncSupportManagerWithPurchase(_manager, _supportManager);
+    if (!_manager.loggedIn) {
+      _autoSyncedAccountId = null;
+      return;
+    }
+    final accountId = _manager.account?.id;
+    if (!_manager.busy &&
+        !_manager.syncing &&
+        !_manager.unresolvedRedemption &&
+        accountId != null &&
+        _autoSyncedAccountId != accountId &&
+        !_manager.hasAttemptedInitialSyncFor(accountId) &&
+        (_manager.subscription?.valid ?? false) &&
+        globalState.isConfigInitialized &&
+        ref.read(profilesProvider).isEmpty) {
+      _autoSyncedAccountId = accountId;
+      scheduleMicrotask(() {
+        if (mounted &&
+            _manager.loggedIn &&
+            _manager.account?.id == accountId &&
+            !_manager.busy &&
+            !_manager.syncing &&
+            !_manager.unresolvedRedemption) {
+          unawaited(_manager.syncSubscription());
+        }
+      });
+    }
+  }
 
   @override
   void initState() {
     super.initState();
-    final api = DioXboardApi();
-    final storage = SecurePurchaseStorage(api.baseUri);
-    Uint8List? downloadedBytes;
-    final synchronizer = PurchaseProfileSynchronizer(
+    if (!_hasTestOverrides) {
+      final coordinator = ref.read(purchaseSupportCoordinatorProvider)
+        ..ensureInitialized();
+      _manager = coordinator.purchaseManager;
+      _supportManager = coordinator.supportManager;
+      return;
+    }
+
+    late final DioXboardApi defaultApi;
+    final api = widget.apiOverride ??
+        (defaultApi = DioXboardApi(
+          mirrorPool: TransportMirrorPool.shared,
+          shouldFallbackToDirect: () =>
+              shouldFallbackToDirectForUri(defaultApi.baseUri),
+        ));
+    final storage = widget.storageOverride ?? SecurePurchaseStorage(api.baseUri);
+    final synchronizer = createAppPurchaseSynchronizer(
+      read: ref.read,
       origin: api.baseUri,
       storage: storage,
-      readProfiles: () => ref.read(profilesProvider),
-      download: (profile) async {
-        final settings = await SharedPreferences.getInstance();
-        downloadedBytes = null;
-        final fetched = await profile.fetch(
-            shouldSendHeaders: settings.getBool('sendDeviceHeaders') ?? true);
-        downloadedBytes = fetched.bytes;
-        return fetched.profile;
-      },
-      save: (profile) async {
-        if (!mounted) throw const FormatException('Purchase view is closed');
-        final beforeSave = ref.read(profilesProvider).getProfile(profile.id);
-        final bytes = downloadedBytes;
-        if (bytes == null) throw const FormatException('No downloaded profile');
-        final written = await profile.saveFile(bytes,
-            canSave: () =>
-                mounted &&
-                ref.read(profilesProvider).getProfile(profile.id) ==
-                    beforeSave);
-        downloadedBytes = null;
-        if (!mounted ||
-            ref.read(profilesProvider).getProfile(profile.id) != beforeSave) {
-          throw const FormatException('Profile changed during synchronization');
-        }
-        // Save without auto-selecting a new profile or applying provider UI
-        // settings to a different active subscription.
-        globalState.appController.setProfileAndAutoApply(written);
-        final saved = await preferences.saveConfig(globalState.config);
-        if (!saved) {
-          throw const FormatException('Profile settings were not saved');
-        }
-      },
+      isActive: () => mounted,
+      downloadOverride: widget.downloadOverride,
+      saveConfigOverride: widget.saveConfigOverride,
     );
-    _manager = PurchaseManager(
-        api: api, storage: storage, synchronize: synchronizer.synchronize);
+    _ownedSupportHandle = createSupportManagerHandle(
+      fallbackBaseUrl: () => api.baseUri,
+    );
+    _supportManager = _ownedSupportHandle!.manager;
+    _ownedManager = PurchaseManager(
+      api: api,
+      storage: storage,
+      synchronize: synchronizer.synchronize,
+    )..addListener(_onOwnedManagerChanged);
+    _manager = _ownedManager!;
+    syncSupportManagerWithPurchase(_manager, _supportManager);
     unawaited(_manager.initialize());
     unawaited(_manager.loadPlans());
   }
 
   @override
   void dispose() {
-    _manager.dispose();
+    if (_ownedManager != null) {
+      _ownedManager!
+        ..removeListener(_onOwnedManagerChanged)
+        ..dispose();
+      _ownedSupportHandle?.dispose();
+    }
     super.dispose();
   }
 
   @override
-  Widget build(BuildContext context) => PurchaseCenter(
-        manager: _manager,
-        openLink: (url) async {
-          if (url.scheme != 'https' ||
-              url.host.isEmpty ||
-              url.userInfo.isNotEmpty ||
-              !await launchUrl(url, mode: LaunchMode.externalApplication)) {
-            throw const FormatException('Could not open the account website');
-          }
-        },
-        openProfiles: () => globalState.appController.toProfiles(),
-      );
+  Widget build(BuildContext context) {
+    if (globalState.isConfigInitialized) {
+      ref.watch(profilesProvider.select((profiles) => profiles.length));
+      ref.watch(currentProfileIdProvider);
+    }
+    final isActiveTab = !globalState.isAppStateInitialized ||
+        globalState.homeScaffoldKey.currentContext == null ||
+        ref.watch(
+          currentPageLabelProvider.select(
+            (label) => label == PageLabel.purchase,
+          ),
+        );
+    return PurchaseCenter(
+      manager: _manager,
+      supportManager: _supportManager,
+      isActiveTab: isActiveTab,
+      openLink: openHttpsExternalLink,
+      openProfiles: () {
+        ref.read(proxiesScopeProvider.notifier).state = ProxiesScope.all;
+        if (globalState.isAppControllerReady) {
+          globalState.appController.toPage(PageLabel.proxies);
+        } else {
+          ref.read(currentPageLabelProvider.notifier).value = PageLabel.proxies;
+        }
+      },
+    );
+  }
 }

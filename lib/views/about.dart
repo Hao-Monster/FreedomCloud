@@ -1,9 +1,9 @@
 import 'dart:async';
-import 'package:flclashx/widgets/signed_update_dialog.dart';
 
 import 'package:flclashx/clash/core.dart';
 import 'package:flclashx/common/common.dart';
 import 'package:flclashx/state.dart';
+import 'package:flclashx/widgets/signed_update_dialog.dart';
 import 'package:flclashx/widgets/widgets.dart';
 import 'package:flutter/material.dart';
 
@@ -39,6 +39,119 @@ class AboutView extends StatelessWidget {
       context: context,
       barrierDismissible: false,
       builder: (_) => const SignedUpdateDialog(),
+    );
+  }
+
+  Widget _buildBrandMonument(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
+    final isDark = colors.brightness == Brightness.dark;
+
+    return Container(
+      key: const ValueKey('about-brand-monument'),
+      margin: const EdgeInsets.symmetric(horizontal: 16),
+      padding: const EdgeInsets.all(22),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(18),
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            colors.primary.withValues(alpha: isDark ? 0.14 : 0.08),
+            colors.surfaceContainer,
+          ],
+        ),
+        border: Border.all(
+          color: freedomNetHairlineColor(colors),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Wrap(
+            spacing: 16,
+            runSpacing: 12,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              const FreedomNetBrandMark(size: 58),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Wrap(
+                    spacing: 10,
+                    runSpacing: 4,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    children: [
+                      Text(
+                        brandNameZh,
+                        style: textTheme.headlineSmall?.copyWith(
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: -0.3,
+                        ),
+                      ),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 9,
+                          vertical: 3,
+                        ),
+                        decoration: BoxDecoration(
+                          color: colors.primary
+                              .withValues(alpha: isDark ? 0.16 : 0.10),
+                          borderRadius: BorderRadius.circular(999),
+                        ),
+                        child: Text(
+                          brandNameEn,
+                          style: textTheme.labelMedium?.copyWith(
+                            color: colors.primary,
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: 0.4,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    appLocalizations.appBrandTagline,
+                    style: textTheme.bodyMedium?.copyWith(
+                      color: colors.onSurfaceVariant,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 6,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 3,
+                        ),
+                        decoration: BoxDecoration(
+                          color: colors.surfaceContainerHigh,
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: Text(
+                          'v${globalState.packageInfo.version}',
+                          style: textTheme.labelMedium?.copyWith(
+                            fontFeatures: const [
+                              FontFeature.tabularFigures(),
+                            ],
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                      const _CoreVersionWidget(),
+                    ],
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ],
+      ),
     );
   }
 
@@ -96,12 +209,13 @@ class AboutView extends StatelessWidget {
       title: appLocalizations.gratitude,
       items: [
         ListItem(
-          title: Row(
-            mainAxisAlignment: MainAxisAlignment.start,
+          title: Wrap(
+            spacing: 16,
+            runSpacing: 12,
             children: [
               for (final person in gratitude)
                 SizedBox(
-                  width: 70,
+                  width: 76,
                   child: ThanksAvatar(
                     person: person,
                   ),
@@ -120,26 +234,30 @@ class AboutView extends StatelessWidget {
           ListItem(
             title: Text(appLocalizations.checkUpdate),
             onTap: () {
-              _checkUpdate(context);
+              unawaited(_checkUpdate(context));
             },
             trailing: const Icon(Icons.update),
           ),
           // Standalone core updates stay hidden until R-206 provides signature
           // verification and rollback for privileged desktop cores.
-          ListItem(
-            title: Text(appLocalizations.project),
-            onTap: () {
-              globalState.openUrl(
-                "https://github.com/$repository",
-              );
-            },
-            trailing: const Icon(Icons.insert_link),
+          KeyedSubtree(
+            key: const ValueKey('about-official-website'),
+            child: ListItem(
+              title: const Text(brandDisplayName),
+              subtitle: const Text(officialWebsiteUrl),
+              onTap: () {
+                unawaited(globalState.openUrl(officialWebsiteUrl));
+              },
+              trailing: const Icon(Icons.language_rounded),
+            ),
           ),
           ListItem(
             title: Text(appLocalizations.originalRepository),
             onTap: () {
-              globalState.openUrl(
-                "https://github.com/chen08209/FlClash",
+              unawaited(
+                globalState.openUrl(
+                  "https://github.com/chen08209/FlClash",
+                ),
               );
             },
             trailing: const Icon(Icons.insert_link),
@@ -147,8 +265,10 @@ class AboutView extends StatelessWidget {
           ListItem(
             title: Text(appLocalizations.core),
             onTap: () {
-              globalState.openUrl(
-                "https://github.com/MetaCubeX/mihomo",
+              unawaited(
+                globalState.openUrl(
+                  "https://github.com/MetaCubeX/mihomo",
+                ),
               );
             },
             trailing: const Icon(Icons.insert_link),
@@ -192,104 +312,16 @@ class AboutView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final items = [
-      ListTile(
-        title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            _EasterEggDetector(
-              child: Wrap(
-                spacing: 16,
-                crossAxisAlignment: WrapCrossAlignment.center,
-                children: [
-                  Padding(
-                    padding: const EdgeInsets.all(12),
-                    child: Image.asset(
-                      'assets/images/icon.png',
-                      width: 64,
-                      height: 64,
-                    ),
-                  ),
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        appName,
-                        style: Theme.of(context).textTheme.headlineSmall,
-                      ),
-                      Text(
-                        globalState.packageInfo.version,
-                        style: Theme.of(context).textTheme.labelLarge,
-                      ),
-                      const SizedBox(height: 4),
-                      const _CoreVersionWidget(),
-                    ],
-                  )
-                ],
-              ),
-              onEasterEgg: () {
-                showDialog(
-                  context: context,
-                  barrierDismissible: false,
-                  builder: (dialogContext) => AlertDialog(
-                    title: const Text(
-                      'REMNAFAMILY ONE LOVE',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        fontFamily: 'Unbounded',
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    content: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const Text(
-                          '❤️',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(fontSize: 48),
-                        ),
-                        const SizedBox(height: 16),
-                        InkWell(
-                          onTap: () {
-                            globalState.openUrl('https://docs.rw');
-                          },
-                          child: const Text(
-                            'TRY REMNAWAVE',
-                            textAlign: TextAlign.center,
-                            style: TextStyle(
-                              color: Colors.blue,
-                              fontFamily: 'Unbounded',
-                              fontSize: 14,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                    actionsAlignment: MainAxisAlignment.center,
-                    actions: [
-                      TextButton(
-                        onPressed: () => Navigator.of(dialogContext).pop(),
-                        child: const Text('OK'),
-                      ),
-                    ],
-                  ),
-                );
-              },
-            ),
-            const SizedBox(
-              height: 24,
-            ),
-            Text(
-              appLocalizations.desc,
-              style: Theme.of(context).textTheme.bodySmall,
-            ),
-          ],
+      _buildBrandMonument(context),
+      const SizedBox(height: 14),
+      const Padding(
+        padding: EdgeInsets.symmetric(horizontal: 16),
+        child: FreedomNetTributeCards(
+          flclashxCardKey: ValueKey('about-tribute-flclashx'),
+          geminiCardKey: ValueKey('about-tribute-gemini4'),
         ),
       ),
-      const SizedBox(
-        height: 12,
-      ),
+      const SizedBox(height: 16),
       ..._buildContributorsSection(),
       ..._buildThanksForContributionSection(context),
       ..._buildGratitudeSection(context),
@@ -337,7 +369,7 @@ class Avatar extends StatelessWidget {
                 ? Text(
                     contributor.name[0].toUpperCase(),
                     style: TextStyle(
-                      color: Colors.white,
+                      color: Theme.of(context).colorScheme.onPrimaryContainer,
                       fontFamily: 'Unbounded',
                       fontSize: avatarFontSize,
                       fontWeight: FontWeight.bold,
@@ -360,11 +392,26 @@ class Avatar extends StatelessWidget {
     );
 
     if (contributor.clickable) {
-      return GestureDetector(
-        onTap: () {
-          globalState.openUrl(contributor.link);
-        },
-        child: avatarWidget,
+      return Semantics(
+        container: true,
+        button: true,
+        link: true,
+        label: contributor.name,
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(12),
+            onTap: () {
+              unawaited(globalState.openUrl(contributor.link));
+            },
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+              child: ExcludeSemantics(
+                child: avatarWidget,
+              ),
+            ),
+          ),
+        ),
       );
     }
 
@@ -435,10 +482,11 @@ class _CoreVersionWidget extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => FutureBuilder<String>(
-        // Prefer the running instance — after a standalone core update it is
-        // the only truthful source; the build-time constant covers a stopped
-        // core.
-        future: clashCore.getCoreVersion(),
+        // Passive read: only query an already-instantiated core so opening
+        // AboutView while stopped never constructs clashService as a side effect.
+        future: ClashCore.existingCore != null
+            ? clashCore.getCoreVersion()
+            : Future<String>.value(''),
         builder: (context, snapshot) {
           final live = snapshot.data;
           final coreVersion =
@@ -446,58 +494,21 @@ class _CoreVersionWidget extends StatelessWidget {
           if (coreVersion == null || coreVersion.isEmpty) {
             return const SizedBox.shrink();
           }
-          return Text(
-            'Core: $coreVersion',
-            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: Theme.of(context).colorScheme.onSurfaceVariant,
-                ),
+          final colors = Theme.of(context).colorScheme;
+          return Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+            decoration: BoxDecoration(
+              color: colors.surfaceContainerHigh,
+              borderRadius: BorderRadius.circular(6),
+            ),
+            child: Text(
+              'Core: $coreVersion',
+              style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                    color: colors.onSurfaceVariant,
+                    fontFeatures: const [FontFeature.tabularFigures()],
+                  ),
+            ),
           );
         },
-      );
-}
-
-class _EasterEggDetector extends StatefulWidget {
-  const _EasterEggDetector({
-    required this.child,
-    required this.onEasterEgg,
-  });
-  final Widget child;
-  final VoidCallback onEasterEgg;
-
-  @override
-  State<_EasterEggDetector> createState() => _EasterEggDetectorState();
-}
-
-class _EasterEggDetectorState extends State<_EasterEggDetector> {
-  int _counter = 0;
-  Timer? _timer;
-
-  void _handleTap() {
-    _counter++;
-    if (_counter >= 10) {
-      widget.onEasterEgg();
-      _resetCounter();
-    } else {
-      _timer?.cancel();
-      _timer = Timer(const Duration(seconds: 1), _resetCounter);
-    }
-  }
-
-  void _resetCounter() {
-    _counter = 0;
-    _timer?.cancel();
-    _timer = null;
-  }
-
-  @override
-  void dispose() {
-    _timer?.cancel();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) => GestureDetector(
-        onTap: _handleTap,
-        child: widget.child,
       );
 }

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -8,6 +9,7 @@ import 'package:flclashx/models/models.dart';
 import 'package:flclashx/providers/providers.dart';
 import 'package:flclashx/state.dart';
 import 'package:flclashx/views/profiles/add_profile.dart';
+import 'package:flclashx/views/tools/health_check_view.dart';
 import 'package:flclashx/widgets/widgets.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -232,7 +234,8 @@ class HeroConnect extends ConsumerWidget {
     final isReady = state.isInit;
     final profile = ref.watch(currentProfileProvider);
     final headers = profile?.providerHeaders ?? {};
-    final serviceName = _decodeBase64(headers['flclashx-servicename']) ?? appName;
+    final serviceName =
+        _decodeBase64(headers['flclashx-servicename']) ?? brandDisplayName;
     final logoUrl = _decodeBase64(headers['flclashx-servicelogo']);
     final announce = _decodeAnnounce(headers['announce']);
     final sub = profile?.subscriptionInfo;
@@ -242,8 +245,8 @@ class HeroConnect extends ConsumerWidget {
 
     // Buy/renew links carried by the profile. The buttons (under the traffic
     // card) only appear when the matching condition is met:
-    //   buyplan    -> less than 3 days left (expired included), time-limited plans
-    //   buytraffic -> less than 10% of the limit remaining, capped plans
+    //   buyplan    -> <= 3 days left (expired included), time-limited plans
+    //   buytraffic -> < 15% of the limit remaining, capped plans
     final buyPlanUrl = headers['flclashx-buyplan'];
     final buyTrafficUrl = headers['flclashx-buytraffic'];
     var showBuyPlan = false;
@@ -251,12 +254,12 @@ class HeroConnect extends ConsumerWidget {
     if (sub != null) {
       if (buyPlanUrl != null && buyPlanUrl.isNotEmpty && sub.expire > 0) {
         showBuyPlan = DateTime.fromMillisecondsSinceEpoch(sub.expire * 1000)
-                .difference(DateTime.now()) <
+                .difference(DateTime.now()) <=
             const Duration(days: 3);
       }
       if (buyTrafficUrl != null && buyTrafficUrl.isNotEmpty && sub.total > 0) {
         final used = sub.upload + sub.download;
-        showBuyTraffic = (sub.total - used) < sub.total * 0.1;
+        showBuyTraffic = (sub.total - used) < sub.total * 0.15;
       }
     }
     final showBuy = showBuyPlan || showBuyTraffic;
@@ -380,10 +383,7 @@ class _Logo extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     const size = 104.0;
-    final fallback = ClipRRect(
-      borderRadius: BorderRadius.circular(26),
-      child: Image.asset('assets/images/icon.png', width: size, height: size, fit: BoxFit.cover),
-    );
+    const Widget fallback = FreedomNetBrandMark(size: size);
     if (logoUrl == null || logoUrl!.isEmpty) return fallback;
     return ClipRRect(
       borderRadius: BorderRadius.circular(26),
@@ -416,22 +416,53 @@ class _TrafficCard extends StatelessWidget {
     final total = sub.total;
     final unlimited = total <= 0;
     final progress = total > 0 ? (used / total).clamp(0.0, 1.0) : 0.0;
-    final barColor = progress > 0.9
+    final barColor = progress >= 0.85
         ? Colors.red.shade400
         : progress > 0.7
             ? Colors.orange.shade400
             : colorScheme.primary;
 
+    final now = DateTime.now();
     int? daysLeft;
+    DateTime? expireDate;
     if (sub.expire > 0) {
-      daysLeft = DateTime.fromMillisecondsSinceEpoch(sub.expire * 1000)
-          .difference(DateTime.now())
-          .inDays;
+      expireDate = DateTime.fromMillisecondsSinceEpoch(sub.expire * 1000);
+      daysLeft = expireDate.difference(now).inDays;
       if (daysLeft < 0) daysLeft = 0;
     }
 
-    final daysUrgent = daysLeft != null && daysLeft <= 3;
+    final isExpired = expireDate != null && expireDate.isBefore(now);
+    final isExpiringSoon = !isExpired &&
+        expireDate != null &&
+        expireDate.difference(now) <= const Duration(days: 3);
+    final daysUrgent = isExpired || isExpiringSoon;
     final daysColor = daysUrgent ? Colors.red.shade400 : colorScheme.primary;
+
+    final remainingBytes = total > 0 ? (total - used).clamp(0, total) : 0;
+    final isTrafficExhausted = !unlimited && used >= total;
+    final isTrafficLow = !unlimited && !isTrafficExhausted && progress >= 0.85;
+    final remainingPct = !unlimited && total > 0
+        ? ((remainingBytes / total) * 100).round().clamp(0, 100)
+        : null;
+
+    final cueParts = <String>[];
+    if (isExpired) {
+      cueParts.add(appLocalizations.subscriptionExpired);
+    } else if (isExpiringSoon) {
+      cueParts.add(
+        daysLeft == 0
+            ? appLocalizations.subscriptionExpiresToday
+            : '将在 $daysLeft 天内到期',
+      );
+    }
+    if (isTrafficExhausted) {
+      cueParts.add('套餐流量已耗尽');
+    } else if (isTrafficLow) {
+      cueParts.add('剩余流量不足 15%（剩余 $remainingPct%）');
+    }
+    final showAlertCue = cueParts.isNotEmpty;
+    final alertColor =
+        (isExpired || isTrafficExhausted) ? colorScheme.error : Colors.orange.shade400;
 
     return Container(
       width: double.infinity,
@@ -508,6 +539,50 @@ class _TrafficCard extends StatelessWidget {
               ),
             ),
           ],
+          if (showAlertCue) ...[
+            const SizedBox(height: 10),
+            Container(
+              key: const ValueKey('hero-subscription-alert-cue'),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: alertColor.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: alertColor.withValues(alpha: 0.35)),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.warning_amber_rounded, size: 16, color: alertColor),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      cueParts.join(' · '),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: context.textTheme.labelMedium?.copyWith(
+                        color: alertColor,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  TextButton(
+                    key: const ValueKey('hero-subscription-alert-renew'),
+                    style: TextButton.styleFrom(
+                      visualDensity: VisualDensity.compact,
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
+                    ),
+                    onPressed: () =>
+                        globalState.appController.toPage(PageLabel.purchase),
+                    child: Text(appLocalizations.renew),
+                  ),
+                ],
+              ),
+            ),
+          ],
         ],
       ),
     );
@@ -534,13 +609,13 @@ class _BuyButtons extends StatelessWidget {
   Widget build(BuildContext context) {
     final plan = _HeroBuyButton(
       icon: Icons.autorenew_rounded,
-      label: 'Продлить подписку',
+      label: appLocalizations.renewSubscription,
       filled: true,
       onTap: () => globalState.openUrl(buyPlanUrl!),
     );
     final traffic = _HeroBuyButton(
       icon: Icons.add_rounded,
-      label: 'Докупить трафик',
+      label: appLocalizations.buyExtraTraffic,
       filled: false,
       onTap: () => globalState.openUrl(buyTrafficUrl!),
     );
@@ -729,14 +804,67 @@ class _ServerPanel extends ConsumerWidget {
                             ],
                           )
                         else
-                          Text(
-                            '—',
-                            style: context.textTheme.bodySmall?.copyWith(
-                              color: colorScheme.onSurfaceVariant,
-                              fontFamily: FontFamily.jetBrainsMono.value,
-                            ),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
+                          Row(
+                            children: [
+                              Text(
+                                '—',
+                                style: context.textTheme.bodySmall?.copyWith(
+                                  color: colorScheme.onSurfaceVariant,
+                                  fontFamily: FontFamily.jetBrainsMono.value,
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              const SizedBox(width: 8),
+                              Flexible(
+                                child: Semantics(
+                                  button: true,
+                                  label: appLocalizations
+                                      .healthCheckDiagnoseAction,
+                                  child: InkWell(
+                                    key: const ValueKey('hero-diagnose-button'),
+                                    borderRadius: BorderRadius.circular(6),
+                                    onTap: () => openHealthCheck(context),
+                                    child: ConstrainedBox(
+                                      constraints: const BoxConstraints(
+                                        minHeight: 28,
+                                      ),
+                                      child: Padding(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 6,
+                                          vertical: 4,
+                                        ),
+                                        child: Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            Icon(
+                                              Icons.monitor_heart_outlined,
+                                              size: 13,
+                                              color: colorScheme.primary,
+                                            ),
+                                            const SizedBox(width: 3),
+                                            Flexible(
+                                              child: Text(
+                                                appLocalizations
+                                                    .healthCheckDiagnoseAction,
+                                                maxLines: 1,
+                                                overflow: TextOverflow.ellipsis,
+                                                style: context
+                                                    .textTheme.labelSmall
+                                                    ?.copyWith(
+                                                  color: colorScheme.primary,
+                                                  fontWeight: FontWeight.w600,
+                                                ),
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
                           ),
                       ],
                     ],
@@ -948,11 +1076,11 @@ class _SignalBars extends StatelessWidget {
       color = Colors.red.shade400;
     } else {
       color = utils.getDelayColor(delay) ?? Colors.green;
-      level = delay! < 150
+      level = delay! <= 250
           ? 4
-          : delay! < 300
+          : delay! <= 800
               ? 3
-              : delay! < 600
+              : delay! <= kLatencyFastMaxMs
                   ? 2
                   : 1;
     }
@@ -987,8 +1115,11 @@ class _ConnectButton extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final colorScheme = context.colorScheme;
-    final runTime = ref.watch(runTimeProvider);
-    final isStart = runTime != null;
+    final isStart = ref.watch(runTimeProvider.select((value) => value != null));
+    final pending = ref.watch(statusSwitchPendingProvider);
+    final startCancelable = ref.watch(statusStartCancelableProvider);
+    final isBusy = pending != null;
+    final canTap = isReady && (!isBusy || (pending && startCancelable));
 
     final Color bg;
     final Color fg;
@@ -1003,41 +1134,96 @@ class _ConnectButton extends ConsumerWidget {
       fg = colorScheme.onPrimary;
     }
 
+    final semanticsLabel = isBusy
+        ? (pending
+            ? appLocalizations.tunStatusStarting
+            : appLocalizations.tunStatusStopping)
+        : (isStart
+            ? appLocalizations.nodeOverviewTurnOffProxy
+            : appLocalizations.nodeOverviewTurnOnProxy);
+
     return _FocusableTap(
       autofocus: true,
       borderRadius: 24,
-      onTap: isReady
+      onTap: canTap
           ? () {
               if (Platform.isAndroid) {
-                HapticFeedback.mediumImpact();
+                unawaited(HapticFeedback.mediumImpact());
               }
-              globalState.appController.updateStatus(!isStart);
+              final shouldStart = isBusy ? false : !isStart;
+              unawaited(globalState.appController.updateStatus(shouldStart));
             }
           : null,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 250),
-        width: double.infinity,
-        height: 54,
-        alignment: Alignment.center,
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(24),
-          color: bg,
-          border: isStart
-              ? Border.all(color: colorScheme.primary.withValues(alpha: 0.4))
-              : null,
+      child: Semantics(
+        button: true,
+        enabled: canTap,
+        label: semanticsLabel,
+        excludeSemantics: true,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 250),
+          width: double.infinity,
+          height: 54,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(24),
+            color: bg,
+            border: isStart
+                ? Border.all(color: colorScheme.primary.withValues(alpha: 0.4))
+                : null,
+          ),
+          child: isBusy
+              ? Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2.2,
+                        color: fg,
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Text(
+                      pending
+                          ? appLocalizations.tunStatusStarting
+                          : appLocalizations.tunStatusStopping,
+                      style: context.textTheme.titleSmall?.copyWith(
+                        color: fg,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                )
+              : isStart
+                  ? _ConnectUptimeText(color: fg)
+                  : Icon(Icons.play_arrow_rounded, size: 30, color: fg),
         ),
-        // Running: uptime only. Stopped: just a Play glyph (no "Start" label).
-        child: isStart
-            ? Text(
-                utils.getTimeText(runTime),
-                style: context.textTheme.titleSmall?.copyWith(
-                  color: fg,
-                  fontWeight: FontWeight.w700,
-                  letterSpacing: 0.5,
-                  fontFamily: FontFamily.jetBrainsMono.value,
-                ),
-              )
-            : Icon(Icons.play_arrow_rounded, size: 30, color: fg),
+      ),
+    );
+  }
+}
+
+class _ConnectUptimeText extends ConsumerWidget {
+  const _ConnectUptimeText({required this.color});
+
+  final Color color;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final runTime = ref.watch(runTimeProvider);
+    return RepaintBoundary(
+      child: ExcludeSemantics(
+        child: Text(
+          utils.getTimeText(runTime),
+          style: context.textTheme.titleSmall?.copyWith(
+            color: color,
+            fontWeight: FontWeight.w700,
+            letterSpacing: 0.5,
+            fontFamily: FontFamily.jetBrainsMono.value,
+            fontFeatures: const [FontFeature.tabularFigures()],
+          ),
+        ),
       ),
     );
   }
@@ -1059,7 +1245,7 @@ class _EmptyHero extends ConsumerWidget {
         const _Logo(),
         const SizedBox(height: 16),
         Text(
-          appName,
+          brandDisplayName,
           style: context.textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w700),
         ),
         const SizedBox(height: 24),

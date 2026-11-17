@@ -1,7 +1,7 @@
 use std::fs::{self, File, OpenOptions};
-use std::io::Write;
+use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::{self, SyncSender, TrySendError};
+use std::sync::mpsc::{self, SyncSender, TryRecvError, TrySendError};
 use std::sync::Arc;
 use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -10,7 +10,8 @@ const CHANNEL_CAPACITY: usize = 256;
 const MAX_LINE_CHARS: usize = 16 * 1024;
 const MAX_FILE_BYTES: u64 = 8 * 1024 * 1024;
 const MAX_ROTATED_FILES: usize = 3;
-const LOG_DIRECTORY: &str = "FlClashX.StrictBroker";
+const LOG_BUFFER_BYTES: usize = 32 * 1024;
+const LOG_DIRECTORY: &str = "FreedomNet.StrictBroker";
 const LOG_FILE_NAME: &str = "FlClashStrictBroker.log";
 
 #[derive(Clone)]
@@ -64,37 +65,62 @@ fn sanitize(message: &str) -> String {
     output
 }
 
+struct BufferedLogFile {
+    writer: BufWriter<File>,
+    written_bytes: u64,
+}
+
 fn run_writer(path: PathBuf, receiver: mpsc::Receiver<String>) {
     if let Some(parent) = path.parent() {
         let _ = fs::create_dir_all(parent);
     }
     let mut file = open_file(&path);
-    while let Ok(message) = receiver.recv() {
-        let line = format!("[unix_ms={}] {message}\n", unix_millis());
-        let should_rotate = file
-            .as_ref()
-            .and_then(|current| current.metadata().ok())
-            .is_none_or(|metadata| {
-                metadata.len().saturating_add(line.len() as u64) > MAX_FILE_BYTES
-            });
-        if should_rotate {
-            let _ = file.take();
-            rotate(&path);
-            file = open_file(&path);
+    while let Ok(first_message) = receiver.recv() {
+        write_log_line(&path, &mut file, &first_message);
+        loop {
+            match receiver.try_recv() {
+                Ok(next_message) => write_log_line(&path, &mut file, &next_message),
+                Err(TryRecvError::Empty | TryRecvError::Disconnected) => break,
+            }
         }
-        let Some(current) = file.as_mut() else {
-            continue;
-        };
-        if current.write_all(line.as_bytes()).is_ok() {
-            let _ = current.flush();
-        } else {
-            file = open_file(&path);
+        if let Some(current) = file.as_mut() {
+            if current.writer.flush().is_err() {
+                file = open_file(&path);
+            }
         }
     }
 }
 
-fn open_file(path: &Path) -> Option<File> {
-    OpenOptions::new().create(true).append(true).open(path).ok()
+fn write_log_line(path: &Path, file: &mut Option<BufferedLogFile>, message: &str) {
+    let line = format!("[unix_ms={}] {message}\n", unix_millis());
+    let line_bytes = line.len() as u64;
+    let should_rotate = file
+        .as_ref()
+        .is_none_or(|current| current.written_bytes.saturating_add(line_bytes) > MAX_FILE_BYTES);
+    if should_rotate {
+        if let Some(mut previous) = file.take() {
+            let _ = previous.writer.flush();
+        }
+        rotate(path);
+        *file = open_file(path);
+    }
+    let Some(current) = file.as_mut() else {
+        return;
+    };
+    if current.writer.write_all(line.as_bytes()).is_ok() {
+        current.written_bytes = current.written_bytes.saturating_add(line_bytes);
+    } else {
+        *file = open_file(path);
+    }
+}
+
+fn open_file(path: &Path) -> Option<BufferedLogFile> {
+    let file = OpenOptions::new().create(true).append(true).open(path).ok()?;
+    let written_bytes = file.metadata().map(|metadata| metadata.len()).unwrap_or(0);
+    Some(BufferedLogFile {
+        writer: BufWriter::with_capacity(LOG_BUFFER_BYTES, file),
+        written_bytes,
+    })
 }
 
 fn rotate(path: &Path) {

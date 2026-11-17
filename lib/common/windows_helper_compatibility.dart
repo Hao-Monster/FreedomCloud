@@ -1,6 +1,4 @@
-import 'dart:io';
-
-import 'package:crypto/crypto.dart';
+import 'package:flclashx/common/file_digest.dart';
 
 /// A compatibility preflight, not an authentication or signature assertion.
 /// The Helper's existing authenticated start/stop endpoints remain authoritative.
@@ -20,10 +18,10 @@ Future<bool> windowsHelperIsCompatible({
         capabilities['stopAcknowledgesExit'] != true ||
         capabilities['ownedStop'] != true ||
         capabilities['allowedCoreSha256'] != expectedCore) return false;
-    final actualCore = await sha256.bind(File(installedCore).openRead()).first;
-    if (actualCore.toString() != expectedCore) return false;
-    final bundled = await sha256.bind(File(bundledHelper).openRead()).first;
-    final installed = await sha256.bind(File(installedHelper).openRead()).first;
+    final actualCore = await fileSha256(installedCore);
+    if (actualCore != expectedCore) return false;
+    final (bundled, installed) =
+        await (fileSha256(bundledHelper), fileSha256(installedHelper)).wait;
     return bundled == installed;
   } catch (_) {
     return false;

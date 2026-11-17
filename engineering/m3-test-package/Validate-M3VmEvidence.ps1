@@ -36,7 +36,7 @@ $preflight = Get-Content -LiteralPath $preflightPath -Raw | ConvertFrom-Json
 if ($preflight.schema -ne 1 -or $preflight.elevated -ne $true -or $preflight.virtualMachine -ne $true) {
     throw 'preflight is not an elevated isolated VM report'
 }
-foreach ($name in @('FlClashStrictCallout.sys', 'FlClashStrictBroker.exe', 'FlClashAgent.exe', 'FlClashCore.exe')) {
+foreach ($name in @('FlClashStrictCallout.sys', 'FlClashStrictBroker.exe', 'FreedomNetAgent.exe', 'FreedomNetCore.exe')) {
     if ($preflight.signatures.$name -ne 'Valid') { throw "preflight signature is not valid: $name" }
     if ($preflight.hashes.$name -notmatch '^[0-9A-Fa-f]{64}$') { throw "preflight hash is missing: $name" }
 }

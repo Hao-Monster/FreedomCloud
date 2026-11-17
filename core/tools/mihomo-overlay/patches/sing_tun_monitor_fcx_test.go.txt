@@ -1,0 +1,106 @@
+//go:build linux || windows || darwin
+
+package sing_tun
+
+import (
+	"net"
+	"net/netip"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	tun "github.com/metacubex/sing-tun"
+	"github.com/metacubex/sing/common/control"
+	"github.com/metacubex/sing/common/logger"
+	"github.com/metacubex/sing/common/x/list"
+)
+
+type fcxFakeNetworkUpdateMonitor struct {
+	access    sync.Mutex
+	callbacks list.List[tun.NetworkUpdateCallback]
+}
+
+func (m *fcxFakeNetworkUpdateMonitor) Start() error { return nil }
+func (m *fcxFakeNetworkUpdateMonitor) Close() error { return nil }
+
+func (m *fcxFakeNetworkUpdateMonitor) RegisterCallback(callback tun.NetworkUpdateCallback) *list.Element[tun.NetworkUpdateCallback] {
+	m.access.Lock()
+	defer m.access.Unlock()
+	return m.callbacks.PushBack(callback)
+}
+
+func (m *fcxFakeNetworkUpdateMonitor) UnregisterCallback(element *list.Element[tun.NetworkUpdateCallback]) {
+	m.access.Lock()
+	defer m.access.Unlock()
+	m.callbacks.Remove(element)
+}
+
+func (m *fcxFakeNetworkUpdateMonitor) emit() {
+	m.access.Lock()
+	callbacks := m.callbacks.Array()
+	m.access.Unlock()
+	for _, cb := range callbacks {
+		cb()
+	}
+}
+
+type fcxCountingInterfaceFinder struct {
+	updates atomic.Int32
+}
+
+func (f *fcxCountingInterfaceFinder) Update() error {
+	f.updates.Add(1)
+	return nil
+}
+
+func (f *fcxCountingInterfaceFinder) Interfaces() []control.Interface {
+	return nil
+}
+
+func (f *fcxCountingInterfaceFinder) ByName(name string) (*control.Interface, error) {
+	return nil, net.ErrClosed
+}
+
+func (f *fcxCountingInterfaceFinder) ByIndex(index int) (*control.Interface, error) {
+	return &control.Interface{
+		Index:     index,
+		Name:      "WLAN",
+		Addresses: []netip.Prefix{netip.MustParsePrefix("172.23.104.177/24")},
+	}, nil
+}
+
+func (f *fcxCountingInterfaceFinder) ByAddr(addr netip.Addr) (*control.Interface, error) {
+	return nil, net.ErrClosed
+}
+
+func TestFCXDefaultInterfaceMonitorBoundedDebounceUnderEventStorm(t *testing.T) {
+	netMon := &fcxFakeNetworkUpdateMonitor{}
+	finder := &fcxCountingInterfaceFinder{}
+	mon, err := tun.NewDefaultInterfaceMonitor(netMon, logger.NOP(), tun.DefaultInterfaceMonitorOptions{
+		InterfaceFinder: finder,
+	})
+	if err != nil {
+		t.Fatalf("NewDefaultInterfaceMonitor failed: %v", err)
+	}
+	if err := mon.Start(); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer mon.Close()
+
+	baseline := finder.updates.Load()
+	if baseline != 1 {
+		t.Fatalf("expected 1 synchronous Update during Start(), got %d", baseline)
+	}
+
+	deadline := time.Now().Add(1600 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		netMon.emit()
+		time.Sleep(150 * time.Millisecond)
+	}
+
+	duringStorm := finder.updates.Load() - baseline
+	if duringStorm < 1 {
+		t.Fatalf("expected bounded debounce to run Update() at least once during 1.6s continuous event storm, got %d updates", duringStorm)
+	}
+}

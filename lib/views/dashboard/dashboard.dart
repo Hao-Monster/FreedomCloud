@@ -8,6 +8,7 @@ import 'package:flclashx/widgets/widgets.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'package:flclashx/views/tools/health_check_view.dart';
 import 'widgets/hero_connect.dart';
 import 'widgets/start_button.dart';
 
@@ -41,6 +42,7 @@ class _DashboardViewState extends ConsumerState<DashboardView> with PageMixin {
   @override
   void dispose() {
     _isEditNotifier.dispose();
+    _addedWidgetsNotifier.dispose();
     super.dispose();
   }
 
@@ -54,6 +56,24 @@ class _DashboardViewState extends ConsumerState<DashboardView> with PageMixin {
 
   @override
   List<Widget> get actions => [
+        _buildIsEdit((isEdit) => isEdit
+            ? const SizedBox.shrink()
+            : ConciseDashboardModeButton(
+                key: const ValueKey('dashboard-concise-mode-toggle'),
+                onWillToggle: () {
+                  if (_isEditNotifier.value) {
+                    _isEditNotifier.value = false;
+                  }
+                },
+              )),
+        _buildIsEdit((isEdit) => isEdit
+            ? const SizedBox.shrink()
+            : IconButton(
+                key: const ValueKey('dashboard-health-check-action'),
+                tooltip: appLocalizations.healthCheckTitle,
+                icon: const Icon(Icons.monitor_heart_outlined),
+                onPressed: () => openHealthCheck(context),
+              )),
         _buildIsEdit((isEdit) => isEdit
               ? ValueListenableBuilder(
                   valueListenable: _addedWidgetsNotifier,
@@ -142,6 +162,7 @@ class _DashboardViewState extends ConsumerState<DashboardView> with PageMixin {
     DashboardWidget item, {
     required bool globalModeEnabled,
     required bool hasAnnounceData,
+    required bool hasMetainfoWidget,
     required bool hasServiceInfoData,
     required bool hasServerInfoData,
   }) {
@@ -156,7 +177,8 @@ class _DashboardViewState extends ConsumerState<DashboardView> with PageMixin {
       }
     }
     
-    if (item == DashboardWidget.announce && !hasAnnounceData) {
+    if (item == DashboardWidget.announce &&
+        (!hasAnnounceData || hasMetainfoWidget)) {
       return false;
     }
     if (item == DashboardWidget.serviceInfo && !hasServiceInfoData) {
@@ -179,10 +201,14 @@ class _DashboardViewState extends ConsumerState<DashboardView> with PageMixin {
     final columns = max(4 * ((dashboardState.viewWidth / 320).ceil()), 8);
     final spacing = 16.ap;
 
+    final hasMetainfoWidget = dashboardState.dashboardWidgets.contains(
+      DashboardWidget.metainfo,
+    );
     bool isAllowed(DashboardWidget item) => _isAllowedWidget(
       item,
       globalModeEnabled: globalModeEnabled,
       hasAnnounceData: hasAnnounce,
+      hasMetainfoWidget: hasMetainfoWidget,
       hasServiceInfoData: hasServiceInfo,
       hasServerInfoData: hasServerInfo,
     );
@@ -235,12 +261,33 @@ class _DashboardViewState extends ConsumerState<DashboardView> with PageMixin {
       final newDashboard = ref.watch(newDashboardEnabledProvider);
 
       if (!newDashboard) {
+        final startButtonState = ref.watch(startButtonSelectorStateProvider);
+        final showFloatingStart =
+            startButtonState.isInit && startButtonState.hasProfile;
         return Expanded(
-          child: Column(
-            children: [
-              Expanded(
+          child: LayoutBuilder(
+            builder: (context, paneConstraints) {
+              final paneTextScale = MediaQuery.textScalerOf(context).scale(1.0);
+              final floatingBottomMargin = computeFloatingProxyDockBottomMargin(
+                paneConstraints.maxHeight,
+              );
+              final bottomScrollClearance = showFloatingStart
+                  ? computeFloatingProxyDockScrollClearance(
+                      textScale: paneTextScale,
+                      bottomMargin: floatingBottomMargin,
+                      viewportWidth: paneConstraints.maxWidth,
+                      viewportHeight: paneConstraints.maxHeight,
+                    )
+                  : 16.0;
+              return FloatingProxyDockOverlay(
+                viewportWidth: paneConstraints.maxWidth,
+                viewportHeight: paneConstraints.maxHeight,
+                dock: showFloatingStart ? const StartButton(floating: true) : null,
                 child: SingleChildScrollView(
-                  padding: const EdgeInsets.all(16).copyWith(bottom: 16),
+                  key: const ValueKey('dashboard-scroll-view'),
+                  padding: const EdgeInsets.all(16).copyWith(
+                    bottom: bottomScrollClearance,
+                  ),
                   child: Grid(
                     crossAxisCount: columns,
                     crossAxisSpacing: spacing,
@@ -248,9 +295,8 @@ class _DashboardViewState extends ConsumerState<DashboardView> with PageMixin {
                     children: children,
                   ),
                 ),
-              ),
-              const StartButton(),
-            ],
+              );
+            },
           ),
         );
       }
@@ -364,4 +410,150 @@ class _AddedContainerState extends State<_AddedContainer> {
         )
       ],
     );
+}
+
+
+/// Top AppBar capsule button allowing direct 1-click switching between the
+/// classic customizable widget dashboard and the concise hero dashboard.
+class ConciseDashboardModeButton extends ConsumerWidget {
+  const ConciseDashboardModeButton({
+    super.key,
+    this.onWillToggle,
+  });
+
+  final VoidCallback? onWillToggle;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final isConcise = ref.watch(newDashboardEnabledProvider);
+    final label = appLocalizations.newDashboard;
+    final media = MediaQuery.of(context);
+    final rawScale = media.textScaler.scale(14) / 14;
+    final safeScale = rawScale > 0 ? rawScale : 1.0;
+    final clampedScale = safeScale.clamp(0.85, 1.35);
+    // Collapse the text label only when effective horizontal room is too tight
+    // for the AppBar title + action buttons (e.g. 320px width at 2.0x scale).
+    final compactMode = (media.size.width / safeScale) < 250;
+
+    void handleToggle() {
+      onWillToggle?.call();
+      ref.read(appSettingProvider.notifier).updateState(
+            (state) => state.copyWith(newDashboard: !isConcise),
+          );
+    }
+
+    return MediaQuery(
+      data: media.copyWith(textScaler: TextScaler.linear(clampedScale)),
+      child: Semantics(
+        container: true,
+        button: true,
+        toggled: isConcise,
+        label: label,
+        excludeSemantics: true,
+        onTap: handleToggle,
+        child: ConciseDashboardModePill(
+          isHighlighted: isConcise,
+          label: label,
+          showLabel: !compactMode,
+          onTap: handleToggle,
+        ),
+      ),
+    );
+  }
+}
+
+/// Visual pill surface for [ConciseDashboardModeButton] with distinct highlighted
+/// active appearance vs muted inactive appearance.
+class ConciseDashboardModePill extends StatelessWidget {
+  const ConciseDashboardModePill({
+    super.key,
+    required this.isHighlighted,
+    required this.label,
+    required this.onTap,
+    this.showLabel = true,
+  });
+
+  final bool isHighlighted;
+  final String label;
+  final VoidCallback onTap;
+  final bool showLabel;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = context.colorScheme;
+    final hairline = freedomNetHairlineColor(colorScheme);
+    final backgroundColor = isHighlighted
+        ? colorScheme.primary
+        : colorScheme.surfaceContainerHigh.withValues(alpha: 0.72);
+    final foregroundColor =
+        isHighlighted ? colorScheme.onPrimary : colorScheme.onSurfaceVariant;
+    final borderColor = isHighlighted ? colorScheme.primary : hairline;
+
+    return Tooltip(
+      message: label,
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(20),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 180),
+            constraints: BoxConstraints(
+              minHeight: 32,
+              minWidth: showLabel ? 0 : 34,
+            ),
+            padding: EdgeInsets.symmetric(
+              horizontal: showLabel ? 10 : 8,
+              vertical: 6,
+            ),
+            decoration: BoxDecoration(
+              color: backgroundColor,
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(
+                color: borderColor,
+                width: isHighlighted ? 1.2 : 1.0,
+              ),
+              boxShadow: isHighlighted
+                  ? [
+                      BoxShadow(
+                        color: colorScheme.primary.withValues(alpha: 0.28),
+                        blurRadius: 8,
+                        offset: const Offset(0, 2),
+                      ),
+                    ]
+                  : null,
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  isHighlighted
+                      ? Icons.auto_awesome_rounded
+                      : Icons.dashboard_customize_outlined,
+                  size: 15,
+                  color: foregroundColor,
+                ),
+                if (showLabel) ...[
+                  const SizedBox(width: 5),
+                  ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 120),
+                    child: Text(
+                      label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: context.textTheme.labelMedium?.copyWith(
+                        color: foregroundColor,
+                        fontWeight:
+                            isHighlighted ? FontWeight.w700 : FontWeight.w500,
+                      ),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 }

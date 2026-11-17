@@ -37,7 +37,7 @@
   "ru": "ロシア語",
   "zh_CN": "簡体字中国語",
   "theme": "テーマ",
-  "themeDesc": "ダークモードの設定、色の調整",
+  "themeDesc": "昼夜スカイ連動・ガラス透過度・アクセントカラー",
   "override": "上書き",
   "overrideDesc": "プロキシ関連設定を上書き",
   "allowLan": "LANを許可",
@@ -102,7 +102,8 @@
   "auto": "自動",
   "light": "ライト",
   "dark": "ダーク",
-  "importFromURL": "URLからインポート",
+  "importFromURL": "サブスクリプションURLを貼り付けて確定してください",
+  "pasteFromClipboard": "貼り付け",
   "submit": "送信",
   "doYouWantToPass": "プロファイルを追加中",
   "create": "作成",
@@ -453,8 +454,89 @@
   "zashboardInAppDesc": "外部ブラウザに切り替えず、内蔵ブラウザでパネルを表示します",
   "openPanel": "パネルを開く",
   "downloadingZashboard": "Zashboard をダウンロード中…",
+  "purchaseCenterTitle": "ギフトカード引き換え",
+  "purchaseCenterDescription": "ギフトカードを引き換えてサービスを有効化・更新し、サブスクリプションを同期します。",
+  "purchaseAccount": "アカウントとサブスクリプション",
+  "purchaseLoginTitle": "ログインして引き換え",
+  "purchaseEmail": "メールアドレス",
+  "purchasePassword": "パスワード",
+  "purchaseLogin": "ログイン",
+  "purchaseLoggingIn": "ログイン中…",
+  "purchaseEmailRequired": "有効なメールアドレスを入力してください。",
+  "purchasePasswordRequired": "パスワードを入力してください。",
+  "purchaseRegister": "Webサイトでアカウント作成",
+  "purchaseRecoverPassword": "Webサイトでパスワードを再設定",
+  "purchaseLogout": "ログアウト",
+  "purchaseRefresh": "アカウントを更新",
+  "purchasePlan": "現在のプラン",
+  "purchaseNoPlan": "有効なプランがありません",
+  "purchasePlanUnknown": "サブスクリプション",
+  "purchaseRemaining": "残り通信量",
+  "purchaseUsed": "使用済み通信量",
+  "purchaseExpires": "有効期限",
+  "purchaseNoExpiry": "無期限",
+  "purchaseSync": "サブスクリプションを同期",
+  "purchaseSyncing": "サブスクリプションを同期中…",
+  "purchaseProfiles": "プロファイル管理",
+  "purchaseRedeemTitle": "ギフトカードを引き換え",
+  "purchaseCode": "ギフトカードコード",
+  "purchaseCheck": "特典を確認",
+  "purchaseChecking": "確認中…",
+  "purchasePreview": "引き換え内容の確認",
+  "purchaseRedeemFor": "対象アカウント",
+  "purchaseConfirmRedeem": "引き換えを確定",
+  "purchaseRedeeming": "引き換え中…",
+  "purchaseNotEligible": "このアカウントではこのギフトカードを引き換えできません。",
+  "purchaseMysteryPreview": "ミステリーカードです。実際の内容は引き換え完了後に表示されます。",
+  "purchaseBalance": "アカウント残高",
+  "purchaseBalanceOnlyHint": "残高へのチャージのみではプランは有効化されません。",
+  "purchaseTraffic": "通信量上限",
+  "purchaseValidityDays": "有効期間（日）",
+  "purchaseExtraDays": "延長期間（日）",
+  "purchaseExtraDevices": "追加デバイス数",
+  "purchaseResetTraffic": "使用済み通信量をリセット",
+  "purchaseBenefitsAfter": "実際の特典は引き換え後に表示されます。",
+  "purchaseNoBenefits": "追加特典はありません。",
+  "purchaseQuotaChange": "合計通信量：引き換え前 → 引き換え後",
+  "purchaseExpiryChange": "有効期限：引き換え前 → 引き換え後",
+  "purchaseUsedPreserved": "使用済み通信量は保持されます",
+  "purchaseNoPreviousExpiry": "未設定",
+  "purchaseSuccess": "ギフトカードを引き換えました",
+  "purchaseSuccessDescription": "アカウントに特典が反映されました。サブスクリプションの同期状態は別途ご確認ください。",
+  "purchaseOrderNumber": "引き換え注文番号",
+  "purchaseSyncFailed": "引き換えは完了しましたが、サブスクリプションの同期に失敗しました。下のボタンから同期を再試行してください。",
+  "purchaseSyncError": "サブスクリプションの同期に失敗しました。下のボタンから再試行できます。",
+  "purchaseUnresolved": "引き換え結果の確認が必要です",
+  "purchaseUnresolvedDescription": "通信が中断され、引き換え結果を確認できません。別のカードを引き換える前に結果を確認してください。",
+  "purchaseRecoverResult": "引き換え結果を確認",
+  "purchaseHistory": "引き換え履歴",
+  "purchaseHistoryEmpty": "引き換え履歴はまだありません。",
+  "purchaseHistoryRetry": "履歴を再読み込み",
+  "purchasePreviousPage": "前のページ",
+  "purchaseNextPage": "次のページ",
+  "purchaseHistoryPage": "ページ",
+  "purchaseHistoryTotal": "合計",
+  "purchaseGetCard": "ギフトカードを入手",
+  "purchaseCardStore": "ギフトカードストアを開く",
+  "purchaseOpenLinkFailed": "ページを開けませんでした。もう一度お試しください。",
+  "purchaseRestoring": "アカウントを復元中…",
+  "purchasePeriod": "契約期間",
+  "purchasePeriodMonthly": "月額",
+  "purchasePeriodQuarterly": "3ヶ月",
+  "purchasePeriodHalfYearly": "半年",
+  "purchasePeriodYearly": "年額",
+  "purchasePeriodTwoYearly": "2年",
+  "purchasePeriodThreeYearly": "3年",
+  "purchasePeriodOnetime": "通信量制",
+  "purchaseSyncSucceeded": "サブスクリプションの同期が完了しました。",
+  "purchaseGenericError": "リクエストに失敗しました。もう一度お試しください。",
+  "purchaseStorageError": "システムの安全な認証情報ストレージにアクセスできません。確認のうえ再試行してください。",
+  "purchaseUnsupportedAccount": "ギフトカードの引き換えには一般ユーザーアカウントをご利用ください。",
+  "purchaseLogoutRemoteError": "この端末からログアウトしました。サーバー側のログアウト確認はできませんでした。",
+  "purchaseCodeFormatError": "8〜32文字の半角英数字でコードを入力してください。",
+  "purchaseChannelError": "ギフトカードストアの情報を読み込めませんでした。下のオンラインサポートからお問い合わせいただけます。",
   "purchaseAvailablePlans": "購入可能なプラン",
-  "purchasePlansDescription": "価格はサイトの表示額です。通貨と購入については下記の WeChat で確認し、ギフトカードを取得してここで引き換えてください。",
+  "purchasePlansDescription": "価格はサイトの表示額です。「購入する」からセルフストアでギフトカードを取得し、ここで引き換えてください。",
   "purchasePlansLoading": "プランを読み込み中…",
   "purchasePlansEmpty": "現在購入可能なプランはありません。",
   "purchasePlansError": "プランを読み込めませんでした。もう一度お試しください。",
@@ -470,10 +552,55 @@
   "purchasePlanResetYearStart": "毎年1月1日",
   "purchasePlanResetYearlyExpiry": "毎年の有効期限月日",
   "purchasePlanResetUnknown": "不明なルール（{code}）",
+  "@purchasePlanResetUnknown": {
+    "placeholders": {
+      "code": {
+        "type": "int"
+      }
+    }
+  },
   "purchasePlanSalesCapacity": "残りの販売枠",
   "purchasePlanResetPrice": "通信量リセットの表示価格",
   "purchasePlanDetails": "プランの詳細",
   "purchasePlanImageNotLoaded": "外部画像は読み込まれていません",
+  "purchasePlanFreeBadge": "無料体験",
+  "purchasePlanFreeHint": "無料",
+  "purchasePlanUnitPriceHint": "約 {price} / G",
+  "@purchasePlanUnitPriceHint": {
+    "placeholders": {
+      "price": {
+        "type": "String"
+      }
+    }
+  },
+  "purchaseSpecDevicesUnlimited": "デバイス数：無制限",
+  "purchaseSpecDevicesCount": "デバイス上限：{count} 台",
+  "@purchaseSpecDevicesCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "purchaseSpecDurationUnlimited": "利用期間：無期限",
+  "purchaseSpecBillingCycle": "課金周期：{periods}",
+  "@purchaseSpecBillingCycle": {
+    "placeholders": {
+      "periods": {
+        "type": "String"
+      }
+    }
+  },
+  "purchaseSpecTrafficUntilUsed": "通信量は使い切るまで有効",
+  "purchaseSpecSpeedLimit": "速度上限：{speed} Mbps",
+  "@purchaseSpecSpeedLimit": {
+    "placeholders": {
+      "speed": {
+        "type": "int"
+      }
+    }
+  },
+  "purchaseSpecAllDevicesSupported": "すべての端末タイプに対応",
   "tunStatusUnknown": "状態不明",
   "tunStatusOff": "停止中",
   "tunStatusOn": "起動済み",
@@ -490,6 +617,7 @@
   "tunDisableAction": "停止を要求",
   "tunErrorLegacyAgent": "古いバックグラウンドアプリを終了してから、このバージョンを開き直してください",
   "tunErrorProfileRequired": "接続する前に、読み取り可能な空でない設定を選択してください",
+  "tunErrorAdapterCreate": "Windows が仮想アダプターを追加できませんでした。しばらくしてから再試行してください",
   "nodeOverviewCurrentProfile": "現在の設定",
   "nodeOverviewAllProfiles": "すべての設定",
   "nodeOverviewActive": "使用中",
@@ -558,7 +686,11 @@
   "nodeOverviewIndependentTest": "独立した遅延テスト",
   "nodeOverviewFileSource": "設定ファイル · {provider}",
   "@nodeOverviewFileSource": {
-    "placeholders": { "provider": { "type": "String" } }
+    "placeholders": {
+      "provider": {
+        "type": "String"
+      }
+    }
   },
   "nodeOverviewTestCurrent": "現在のプロファイルをテスト",
   "nodeOverviewTestAll": "全ノードの遅延を測定",
@@ -764,7 +896,7 @@
   "nodeOverviewUpdateSubscription": "購読を更新",
   "nodeOverviewUpdatingShort": "更新中",
   "nodeOverviewAddSubscription": "購読を追加",
-  "nodeOverviewQuickUse": "すぐ使う",
+  "nodeOverviewQuickUse": "最速に接続",
   "nodeOverviewSelectProfileTitle": "プロファイル切替",
   "nodeOverviewProfileCountBadge": "全 {count} 件",
   "@nodeOverviewProfileCountBadge": {
@@ -793,5 +925,675 @@
         "type": "String"
       }
     }
-  }
+  },
+  "trafficUnlimited": "無制限トラフィック",
+  "subscriptionEternal": "無期限",
+  "expiresOn": "有効期限",
+  "dashboardClickUpdateSubscription": "クリックして購読を更新",
+  "dashboardAnnouncementBadge": "お知らせ",
+  "dashboardNotSyncedYet": "同期時刻：未同期",
+  "dashboardCurrentNodeLabel": "現在のノード：{node}",
+  "@dashboardCurrentNodeLabel": {
+    "placeholders": {
+      "node": {
+        "type": "String"
+      }
+    }
+  },
+  "dashboardTotalNodesCount": "計 {count} ノード",
+  "@dashboardTotalNodesCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "dashboardRuleOverrideCount": "ルール上書き {count}",
+  "@dashboardRuleOverrideCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "dashboardHwidNotSupported": "このサーバーは HWID バインドに対応していません",
+  "dashboardContactSupport": "サポート",
+  "healthCheckTitle": "ヘルスチェック",
+  "healthCheckSubtitle": "プロファイル・コア・トラフィック制御・通信経路を診断",
+  "healthCheckDiagnoseAction": "診断",
+  "healthCheckRecheck": "再チェック",
+  "healthCheckCancel": "キャンセル",
+  "healthCheckChecking": "チェック中…",
+  "healthCheckCopySummary": "要約をコピー",
+  "healthCheckCopied": "診断の要約をコピーしました",
+  "healthCheckExport": "レポート出力",
+  "healthCheckExportDialogTitle": "匿名化診断レポートを出力",
+  "healthCheckExportSuccess": "診断レポートを出力しました",
+  "healthCheckExportFailed": "レポートの出力に失敗しました",
+  "healthCheckPrivacyNote": "出力には状態コードと所要時間のみ含まれ、ノード名・IP・URL・ログは含まれません。",
+  "healthCheckLastChecked": "前回 {time} · {elapsed}",
+  "@healthCheckLastChecked": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      },
+      "elapsed": {
+        "type": "String"
+      }
+    }
+  },
+  "healthLayerConfig": "プロファイルと購読",
+  "healthLayerCore": "プロキシコア",
+  "healthLayerTakeover": "トラフィック制御",
+  "healthLayerNetwork": "ネットワーク経路",
+  "healthItemProfileSelected": "現在のプロファイル",
+  "healthItemSubscription": "サブスクリプション状態",
+  "healthItemRuntimeConfig": "実行時設定の適用",
+  "healthItemCoreResponsive": "Core 応答",
+  "healthItemProxyStarted": "プロキシ稼働状態",
+  "healthItemTunTakeover": "TUN 仮想アダプタ",
+  "healthItemSystemProxy": "システムプロキシ",
+  "healthItemTrafficTakeover": "制御まとめ",
+  "healthItemDirect": "ローカル直接通信",
+  "healthItemDns": "DNS 名前解決",
+  "healthItemOutbound": "現在の出力ノード",
+  "healthItemEndToEnd": "エンドツーエンド検証",
+  "healthStatusRunning": "確認中",
+  "healthStatusPassed": "正常",
+  "healthStatusWarning": "警告",
+  "healthStatusFailed": "失敗",
+  "healthStatusTimeout": "タイムアウト",
+  "healthStatusSkipped": "スキップ",
+  "healthVerdictCheckingTitle": "通信経路を順番に診断しています…",
+  "healthVerdictHealthyTitle": "接続は正常です",
+  "healthVerdictHealthySubtitle": "ノード {node} · {delay} ms{exitPart}",
+  "@healthVerdictHealthySubtitle": {
+    "placeholders": {
+      "node": {
+        "type": "String"
+      },
+      "delay": {
+        "type": "int"
+      },
+      "exitPart": {
+        "type": "String"
+      }
+    }
+  },
+  "healthVerdictHealthyDirectSubtitle": "ダイレクトモード · {delay} ms",
+  "@healthVerdictHealthyDirectSubtitle": {
+    "placeholders": {
+      "delay": {
+        "type": "int"
+      }
+    }
+  },
+  "healthVerdictCoreUnresponsive": "プロキシコアが応答していません",
+  "healthVerdictProfileMissing": "有効なプロファイルが未選択かファイルがありません",
+  "healthVerdictSubscriptionExpired": "サブスクリプションの有効期限切れです",
+  "healthVerdictSubscriptionExhausted": "通信量の上限に達しています",
+  "healthVerdictProxyNotStarted": "プロキシ停止中のため直接通信しています",
+  "healthVerdictTakeoverFailed": "トラフィック未制御：TUN またはシステムプロキシを確認してください",
+  "healthVerdictLocalNetworkDown": "端末のネットワークが利用できません（ノードの問題ではありません）",
+  "healthVerdictOutboundFailed": "端末の通信は正常ですが、現在のノードに接続できません",
+  "healthVerdictTrafficBypassed": "外部通信は可能ですがプロキシコアを経由していません",
+  "healthVerdictTunBypassedTitle": "TUN 仮想アダプタが通信を捕捉できず、システムプロキシのみ稼働中",
+  "healthVerdictEndToEndFailed": "エンドツーエンド検証に失敗しました",
+  "healthVerdictDnsFailed": "DNS 名前解決に失敗したか不正な応答を検出しました",
+  "healthVerdictWarningsTitle": "利用可能ですが確認が必要な項目があります",
+  "healthActionOpenProfiles": "プロファイルへ",
+  "healthActionOpenPurchase": "更新・引き換え",
+  "healthActionOpenProxies": "ノード切替",
+  "healthActionOpenTun": "TUN 設定",
+  "healthActionOpenNetwork": "ネットワーク設定",
+  "healthActionOpenDns": "DNS 設定",
+  "healthActionStartProxy": "プロキシ開始",
+  "healthActionRestartCore": "コア再起動",
+  "healthDetailNoProfile": "プロファイル未選択",
+  "healthDetailProfileFileMissing": "設定ファイルが見つからないか空です",
+  "healthDetailLocalProfile": "ローカル設定ファイル",
+  "healthDetailSubNeverSynced": "未同期です。購読を更新してください",
+  "healthDetailSubNoMeta": "期限・容量情報なし",
+  "healthDetailSubHealthyEternal": "無期限 · 無制限",
+  "healthDetailSubHealthy": "有効",
+  "healthDetailSubExpiringSoon": "残り {days} 日",
+  "@healthDetailSubExpiringSoon": {
+    "placeholders": {
+      "days": {
+        "type": "int"
+      }
+    }
+  },
+  "healthDetailSubTrafficLow": "通信量 {percent}% 使用済み",
+  "@healthDetailSubTrafficLow": {
+    "placeholders": {
+      "percent": {
+        "type": "int"
+      }
+    }
+  },
+  "healthDetailSubDeviceLimit": "端末数上限に達しています",
+  "healthDetailSubExpired": "有効期限切れ",
+  "healthDetailSubExhausted": "容量超過",
+  "healthDetailRuntimeSynced": "適用済み（{count} グループ）",
+  "@healthDetailRuntimeSynced": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "healthDetailRuntimeMismatch": "現在の設定がコアに未適用です",
+  "healthDetailCoreHealthy": "IPC 正常 · {mb} MB",
+  "@healthDetailCoreHealthy": {
+    "placeholders": {
+      "mb": {
+        "type": "String"
+      }
+    }
+  },
+  "healthDetailCoreSlow": "コア応答が遅延しています（> 500 ms）",
+  "healthDetailCoreFailed": "コア制御インターフェースのエラーまたはタイムアウト",
+  "healthDetailProxyRunning": "稼働中",
+  "healthDetailProxyStopped": "停止中",
+  "healthDetailSkipPrerequisite": "前提項目の未通過によりスキップ",
+  "healthDetailSkipProxyStopped": "プロキシ停止中のためスキップ",
+  "healthDetailTunReadyElevated": "稼働中 · 管理者権限",
+  "healthDetailTunReady": "仮想アダプタ稼働中",
+  "healthDetailTunDisabled": "設定でオフ",
+  "healthDetailSysProxyDisabled": "設定でオフ",
+  "healthDetailSysProxyUnsupported": "この環境では対象外",
+  "healthDetailSysProxyHijacked": "システムプロキシが外部で変更または無効化されています",
+  "healthDetailSysProxyUnexpectedPac": "残存する PAC URL を検出しました",
+  "healthDetailTakeoverBoth": "TUN + システムプロキシ稼働中",
+  "healthDetailTakeoverTun": "TUN 仮想アダプタで制御中",
+  "healthDetailTakeoverSysProxy": "システムプロキシで制御中",
+  "healthDetailTakeoverPartial": "有効な制御方式の一部が異常です",
+  "healthDetailTakeoverNone": "TUN もシステムプロキシも有効ではありません",
+  "healthDetailDirectOk": "直接通信可能",
+  "healthDetailDirectSlow": "直接通信の遅延が高めです",
+  "healthDetailDirectFailed": "直接通信に失敗しました。回線やルーターを確認してください",
+  "healthDetailCoreDelayBusy": "一括テスト実行中のため混雑しています",
+  "healthDetailDnsOk": "名前解決正常",
+  "healthDetailDnsFakeIp": "Core DNS (fake-ip)",
+  "healthDetailDnsPoisoned": "DNS が無効なアドレスを返しました",
+  "healthDetailDnsFailed": "DNS 解決失敗またはタイムアウト",
+  "healthDetailDirectMode": "ダイレクトモード選択中",
+  "healthDetailOutboundDirectSelected": "グループで DIRECT が選択されています",
+  "healthDetailOutboundRejectSelected": "グループで REJECT が選択されています",
+  "healthDetailOutboundSlow": "ノード {node} の遅延が高めです",
+  "@healthDetailOutboundSlow": {
+    "placeholders": {
+      "node": {
+        "type": "String"
+      }
+    }
+  },
+  "healthDetailOutboundFailed": "ノード {node} で通信テストに失敗しました",
+  "@healthDetailOutboundFailed": {
+    "placeholders": {
+      "node": {
+        "type": "String"
+      }
+    }
+  },
+  "healthDetailE2eVerified": "プロキシ経由を確認{exitPart}",
+  "@healthDetailE2eVerified": {
+    "placeholders": {
+      "exitPart": {
+        "type": "String"
+      }
+    }
+  },
+  "healthDetailE2eDirectRule": "コア到達済み（DIRECT ルール一致）",
+  "healthDetailE2eBypassed": "外部到達しましたがコアを経由していません",
+  "healthDetailE2eFailed": "エンドツーエンド検証がすべて失敗しました",
+  "healthExitCountryPart": " · 出口 {flag}",
+  "@healthExitCountryPart": {
+    "placeholders": {
+      "flag": {
+        "type": "String"
+      }
+    }
+  },
+  "healthVerdictCancelledTitle": "ヘルスチェックはキャンセルされました",
+  "healthDetailCancelled": "キャンセル済み",
+  "globalOverride": "グローバルルール上書き",
+  "globalOverrideDesc": "すべてのプロファイルで共通して適用されます",
+  "enableGlobalOverride": "グローバル上書きを有効化",
+  "defaultProxyAutoTarget": "デフォルトプロキシ (自動適応)",
+  "localSplitMode": "国内・LAN スマート振り分け",
+  "localSplitModeDesc": "購読に分流ルールがない場合、国内・LAN 直接接続を自動補完します",
+  "localSplitMode_auto": "裸設定を自動判定 (自動)",
+  "localSplitMode_always": "常に国内直接接続を追加",
+  "localSplitMode_off": "オフ",
+  "overrideAutoSavedHint": "変更は自動保存され即座に反映されます",
+  "healthActionReapplySystemProxy": "システムプロキシを復元",
+  "healthDetailSysProxyReadFailed": "システムプロキシ設定を読み取れません",
+  "healthDetailSysProxyInvalidPort": "混合ポートが無効です (mixed-port = 0)",
+  "healthDetailSysProxyNotApplied": "システムプロキシがまだ適用されていません",
+  "healthDetailSysProxyDisabledExternally": "OSのシステムプロキシがオフになっています",
+  "healthDetailDnsStaleFakeIp": "TUN無効時に残留Fake-IPキャッシュを検出しました",
+  "healthDetailTunBypassedSystemProxyOk": "TUN 経路が失敗し、システムプロキシ経由で確認済み",
+  "nodeOverviewUpdateAllSubscriptions": "すべて更新",
+  "nodeOverviewAllProfilesCount": "計 {count} 件の設定",
+  "@nodeOverviewAllProfilesCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewExpiredCountBadge": "{count} 件期限切れ",
+  "@nodeOverviewExpiredCountBadge": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewExpiringSoonCountBadge": "{count} 件期限間近",
+  "@nodeOverviewExpiringSoonCountBadge": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewCurrentActiveProfile": "使用中：{name}",
+  "@nodeOverviewCurrentActiveProfile": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewNoActiveProfile": "使用中：未選択",
+  "nodeOverviewAllHealthCounts": "ノード：利用可能 {available} / 測定済 {tested} / 計 {total}",
+  "@nodeOverviewAllHealthCounts": {
+    "placeholders": {
+      "available": {
+        "type": "int"
+      },
+      "tested": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewGlobalMedian": "全体中央値：{median}",
+  "@nodeOverviewGlobalMedian": {
+    "placeholders": {
+      "median": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewGlobalMedianAndBest": "中央値：{median} · 最速 {best}",
+  "@nodeOverviewGlobalMedianAndBest": {
+    "placeholders": {
+      "median": {
+        "type": "String"
+      },
+      "best": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewBandFast": "快適 {count}",
+  "@nodeOverviewBandFast": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewBandSlow": "やや遅 {count}",
+  "@nodeOverviewBandSlow": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewBandFailed": "不可 {count}",
+  "@nodeOverviewBandFailed": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewBandUntested": "未測定 {count}",
+  "@nodeOverviewBandUntested": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "subscriptionUrlEmptyError": "先にサブスクリプションURLを貼り付けてください",
+  "subscriptionUrlInvalidError": "有効な http(s):// サブスクリプションURLが見つかりません",
+  "subscriptionClipboardEmptyError": "クリップボードが空です。先にURLをコピーしてください",
+  "subscriptionImportTimeoutError": "サブスクリプションの取得がタイムアウトしました。通信環境を確認してください",
+  "subscriptionImportAuthOrNotFoundError": "サブスクリプションURLが無効または期限切れです",
+  "subscriptionImportInvalidConfigError": "有効なサブスクリプション設定ではありません（WebページのURLの可能性があります）",
+  "subscriptionImportGenericError": "サブスクリプションのインポートに失敗しました。URLを確認してください",
+  "nodeOverviewProxyConnectedWithNode": "プロキシ有効 · {profile} · {node}",
+  "@nodeOverviewProxyConnectedWithNode": {
+    "placeholders": {
+      "profile": {
+        "type": "String"
+      },
+      "node": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewProxyConnected": "プロキシ有効 · 接続済み",
+  "nodeOverviewProxyDisconnected": "プロキシ無効 · 有効化またはノードの「使用」を押して接続",
+  "nodeOverviewProxyStarting": "プロキシを起動中…",
+  "nodeOverviewProxyStopping": "プロキシを停止中…",
+  "nodeOverviewTurnOnProxy": "有効化",
+  "nodeOverviewTurnOffProxy": "停止",
+  "nodeOverviewEmptyTitle": "サブスクリプションがまだありません",
+  "nodeOverviewEmptySubtitle": "サブスクリプションURLを貼り付けて確定すると、自動で速度測定し最速ノードに接続します",
+  "nodeOverviewEmptyStepsHint": "① サブスク追加  ·  ② 自動速度測定  ·  ③ 最速接続",
+  "nodeOverviewAvailableFilterEmpty": "現在利用可能な測定済みノードがありません（未測定またはタイムアウト）",
+  "nodeOverviewShowAllNodes": "すべてのノードを表示",
+  "nodeOverviewAutoConnectedBest": "最速ノードに自動接続しました：{profile} · {node}（{delay} ms）",
+  "@nodeOverviewAutoConnectedBest": {
+    "placeholders": {
+      "profile": {
+        "type": "String"
+      },
+      "node": {
+        "type": "String"
+      },
+      "delay": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewAutoSelectedExpiredWarning": "ノード {node} を選択しましたが、このサブスクリプションは期限切れです",
+  "@nodeOverviewAutoSelectedExpiredWarning": {
+    "placeholders": {
+      "node": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewAutoSelectedTrafficExhaustedWarning": "ノード {node} を選択しましたが、通信量が上限に達しています",
+  "@nodeOverviewAutoSelectedTrafficExhaustedWarning": {
+    "placeholders": {
+      "node": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewAutoSelectedAllFailedWarning": "ノード {node} を自動選択しました（全ノード応答なし。通信できない場合は更新または別ノードをお試しください）",
+  "@nodeOverviewAutoSelectedAllFailedWarning": {
+    "placeholders": {
+      "node": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewSmartSelectTitle": "スマート選択",
+  "nodeOverviewSmartSelectSubtitle": "より快適",
+  "nodeOverviewSmartSelectCompact": "スマート",
+  "nodeOverviewManualSelectTitle": "手動選択",
+  "nodeOverviewManualSelectSubtitle": "固定IP",
+  "nodeOverviewManualSelectCompact": "固定IP",
+  "nodeOverviewSmartInUse": "自動使用中",
+  "nodeOverviewProxyConnectedSmartWithNode": "プロキシ有効 · スマート：{profile} · {node}",
+  "@nodeOverviewProxyConnectedSmartWithNode": {
+    "placeholders": {
+      "profile": {
+        "type": "String"
+      },
+      "node": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewProxyConnectedSmart": "プロキシ有効 · スマート：{profile}（自動最適化中）",
+  "@nodeOverviewProxyConnectedSmart": {
+    "placeholders": {
+      "profile": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewSwitchedToSmart": "スマート選択を有効化：{profile}",
+  "@nodeOverviewSwitchedToSmart": {
+    "placeholders": {
+      "profile": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewSwitchedToSmartWithNode": "スマート選択を有効化：{profile}（現在：{node}）",
+  "@nodeOverviewSwitchedToSmartWithNode": {
+    "placeholders": {
+      "profile": {
+        "type": "String"
+      },
+      "node": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewAutoConnectedSmartBest": "スマート選択を開始：{profile}（最速：{node} · {delay} ms）",
+  "@nodeOverviewAutoConnectedSmartBest": {
+    "placeholders": {
+      "profile": {
+        "type": "String"
+      },
+      "node": {
+        "type": "String"
+      },
+      "delay": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewLockedManualNode": "固定ノードにロック：{profile} · {node}",
+  "@nodeOverviewLockedManualNode": {
+    "placeholders": {
+      "profile": {
+        "type": "String"
+      },
+      "node": {
+        "type": "String"
+      }
+    }
+  },
+  "expertMode": "上級者モード",
+  "noviceMode": "かんたんモード",
+  "goToPurchasePrompt": "サブスクリプションをお持ちでない方：購入・引換へ",
+  "purchasePlansRetry": "プランを再読み込み",
+  "purchasePlansErrorHint": "右側のログイン・無料登録・ギフトカード引換はそのまま利用できます。",
+  "purchasePlanFeaturedBadge": "おすすめ",
+  "purchasePlanBuyNow": "購入する",
+  "purchaseHeaderTrialBadge": "新規登録で 2 GiB 無料体験 · 無期限データパック",
+  "purchaseHeaderSyncedBadge": "高速ノード準備完了",
+  "purchaseAuthTabLogin": "ログイン",
+  "purchaseAuthTabRegister": "無料登録で2G受取",
+  "purchaseRegisterTrialBanner": "登録するとすぐに 2 GiB の無期限体験通信量が付与され、高速ノードが自動設定されます。",
+  "purchaseRegisterSubmit": "無料登録してノードを同期",
+  "purchaseRegistering": "登録して有効化中…",
+  "purchasePasswordMinLength": "パスワードは8文字以上で入力してください。",
+  "purchasePreloginCodeHint": "コードをお持ちですか？ここに入力するとログイン後に自動で確認します",
+  "purchaseHandoffTitle": "「{plan}」の購入ページを開きました",
+  "@purchaseHandoffTitle": {
+    "placeholders": {
+      "plan": {
+        "type": "String"
+      }
+    }
+  },
+  "purchaseHandoffDescription": "購入後にコードをコピーしてこのウィンドウに戻ると、特典を自動確認します（確認なしでは消費されません）。",
+  "purchaseHandoffPasteAction": "貼り付けて確認",
+  "purchaseOnlineSupport": "オンラインサポート",
+  "purchaseBackupContactsLabel": "バックアップ窓口（WeChat）",
+  "purchaseEmailExistsError": "このメールアドレスは登録済みです。「ログイン」に切り替えてください。",
+  "purchaseRegistrationClosedError": "現在、新規登録は停止されています。",
+  "purchaseRegisterWebRequiredError": "メール認証またはCAPTCHAが有効です。下の「Webサイトでアカウント作成」をご利用ください。",
+  "purchaseGetCardDescription": "セルフサービスストアまたは24時間オンラインサポートからギフトカードの購入・ご相談が可能です。",
+  "purchaseClipboardEmpty": "クリップボードに有効な引き換えコードが見つかりません。",
+  "purchaseEmailDomainError": "このメールドメインは利用できません。別のメールアドレスをお試しください。",
+  "purchaseGmailAliasError": "Gmail エイリアス（+ 付き）は利用できません。通常のアドレスをご使用ください。",
+  "appBrandName": "FreedomNet",
+  "appBrandTagline": "次世代インテリジェントネットワーククライアント",
+  "tributeDialogTitle": "オープンソースへの敬意と謝辞",
+  "tributeFlclashxBadge": "OPEN-SOURCE HERITAGE",
+  "tributeFlclashxTitle": "オープンソースプロジェクト FlClashX を基盤として構築",
+  "tributeFlclashxBody": "FreedomNet は、オープンソースプロジェクト FlClashX（pluralplay/FlClashX）を基盤とし、FlClash および Mihomo（Clash.Meta）エコシステムを継承して構築されています。原作者およびすべての上流コントリビューターの皆様に深く敬意と感謝を表します。",
+  "tributeGeminiBadge": "ENGINEERING & DESIGN SUPPORT",
+  "tributeGeminiTitle": "特別謝辞：Gemini 4 開発・設計サポート",
+  "tributeGeminiBody": "FreedomNet のアーキテクチャ設計、UI/UXデザイン、エンジニアリング実装および自動検証を強力に支援した Gemini 4 に心より感謝いたします。",
+  "brandDialogSubtitle": "ブランド紹介とコア体験",
+  "brandShowcaseBadge": "FREEDOMNET · フラッグシップクライアント",
+  "brandShowcaseHeroTitle": "境界を超え、快適なスピードを日常に",
+  "brandShowcaseHeroBody": "FreedomNet は、シンプルで安定した低遅延のグローバルネットワーク加速体験を提供します。ビジネス、AI活用、高画質ストリーミングまでワンクリックで快適に接続できます。",
+  "brandPillarSmartTitle": "スマート選択 · ミリ秒単位の可視化",
+  "brandPillarSmartBody": "並列ヘルスチェックと直感的なステータス表示により、最速ワンクリック接続・地域フィルタ・固定ノード切替に対応します。",
+  "brandPillarModesTitle": "デュアルモード · 迷わず使える操作性",
+  "brandPillarModesBody": "「初心者モード」でTUNとシステムプロキシをシームレスに自動連携。「エキスパートモード」ではルーティングや通信診断を自在に管理できます。",
+  "brandPillarServiceTitle": "明確な利用状況 · スムーズな有効化",
+  "brandPillarServiceBody": "通信量・残量・有効期限をひと目で把握。ギフトカード確認・引き換え、複数プロファイル同期、サポート窓口を備えています。",
+  "healthDetailOutboundProbeFallbackOk": "ノード {node} の遅延プローブは失敗しましたが、実通信は正常です",
+  "@healthDetailOutboundProbeFallbackOk": {
+    "placeholders": {
+      "node": {
+        "type": "String"
+      }
+    }
+  },
+  "purchaseForgotPassword": "パスワードをお忘れですか？",
+  "purchaseResetPasswordTitle": "パスワードのリセット",
+  "purchaseResetPasswordDescription": "登録済みのメールアドレスと6桁の確認コードを入力して、新しいパスワードを設定してください。",
+  "purchaseEmailCode": "メール確認コード",
+  "purchaseEmailCodeRequired": "6桁の確認コードを入力してください",
+  "purchaseSendCode": "コードを送信",
+  "purchaseSendingCode": "送信中...",
+  "purchaseSendCodeCooldown": "{seconds}秒後に再送信",
+  "@purchaseSendCodeCooldown": {
+    "placeholders": {
+      "seconds": {
+        "type": "int"
+      }
+    }
+  },
+  "purchaseCodeSentNotice": "確認コードを送信しました。受信トレイ（迷惑メール含む）をご確認ください。",
+  "purchaseInviteCode": "招待コード",
+  "purchaseInviteCodeOptionalToggle": "招待コードを入力（任意）",
+  "purchaseInviteCodeRequired": "招待コードを入力してください",
+  "purchaseNewPassword": "新しいパスワード",
+  "purchaseResetPasswordSubmit": "パスワードをリセット",
+  "purchaseResettingPassword": "リセット中...",
+  "purchaseBackToLogin": "ログインに戻る",
+  "purchaseResetPasswordSuccess": "パスワードをリセットしました。新しいパスワードでログインしてください。",
+  "purchaseCaptchaRequiredNotice": "このサイトでは人間確認（CAPTCHA）が必要です。Webページで続行してください。",
+  "purchaseOpenWebAuth": "Webページで続行",
+  "purchaseTosAgreementPrefix": "登録することで次に同意したことになります：",
+  "purchaseTosLinkLabel": "利用規約",
+  "purchaseInviteCodeRequiredError": "このサイトへの登録には招待コードが必要です。",
+  "purchaseInviteCodeInvalidError": "招待コードが無効または期限切れです。",
+  "purchaseInvitationUnavailableError": "招待機能は現在利用できません。",
+  "purchaseEmailCodeInvalidError": "メール確認コードが無効または期限切れです。",
+  "purchaseEmailCodeLockedError": "確認コードの試行回数が上限に達しました。しばらくしてから再取得してください。",
+  "purchaseEmailCooldownError": "送信間隔が短すぎます。しばらくしてから再試行してください。",
+  "purchaseEmailRateLimitedError": "確認メールの送信上限に達しました。しばらくしてから再試行してください。",
+  "purchaseEmailVerifyDisabledError": "メール確認機能は現在無効です。",
+  "purchaseMailUnavailableError": "メール送信サービスが利用できません。サポートへ連絡するか後ほど再試行してください。",
+  "purchaseCooldownWithSecondsError": "リクエストが多すぎます。{seconds}秒後に再試行してください。",
+  "@purchaseCooldownWithSecondsError": {
+    "placeholders": {
+      "seconds": {
+        "type": "int"
+      }
+    }
+  },
+  "supportSheetTitle": "オンラインサポート",
+  "supportStatusConnected": "接続済み",
+  "supportStatusConnecting": "接続中",
+  "supportStatusOffline": "オフライン",
+  "supportNewConversation": "新しい会話を開始",
+  "supportOpenExternalFallback": "ブラウザで開く",
+  "supportRefreshTooltip": "メッセージを更新",
+  "supportWelcomeFallbackTitle": "FreedomNet サポートへようこそ",
+  "supportWelcomeFallbackSubtitle": "プラン、ノード、ギフトカードについてお気軽にご質問ください。",
+  "supportTypingIndicator": "{name} が入力中...",
+  "@supportTypingIndicator": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "supportTypingAnonymous": "スタッフ",
+  "supportMessageSending": "送信中",
+  "supportMessageFailed": "送信失敗",
+  "supportRetryAction": "再試行",
+  "supportComposerHint": "メッセージを入力（Enter で送信）...",
+  "supportSendTooltip": "送信",
+  "supportConversationLockedNotice": "この会話は解決済みです。続けるには新しい会話を開始してください。",
+  "supportNotConfiguredNotice": "オンラインチャットが未設定です。下の予備 WeChat からお問い合わせください。",
+  "supportBackupWechatToggle": "予備 WeChat",
+  "purchaseAcquireOpenSupport": "オンラインサポートに相談",
+  "newDashboard": "シンプルモード",
+  "renewSubscription": "プランを更新",
+  "buyExtraTraffic": "データ容量を追加",
+  "themeSkyConsoleSection": "昼夜スカイ連動",
+  "themeSkyModeFollow": "接続に連動",
+  "themeSkyModeFollowDesc": "接続時は晴天、切断時は星空を表示",
+  "themeSkyModeNight": "常時スターリーナイト",
+  "themeSkyModeNightDesc": "接続中も目に優しい夜空を維持",
+  "themeSkyModeDay": "常時サニーデイ",
+  "themeSkyModeDayDesc": "未接続でも明るい青空を維持",
+  "themeSkyStatusDayConnected": "晴天 · 接続済み",
+  "themeSkyStatusConnecting": "夜明け前 · 接続中",
+  "themeSkyStatusNightDisconnected": "星空 · 未接続",
+  "themeSkyStatusLockedNight": "常時夜空 · 固定中",
+  "themeSkyStatusLockedDay": "常時晴天 · 固定中",
+  "themeCustomBgNotice": "サブスクリプション壁紙が設定されています",
+  "themeIgnoreCustomBgLabel": "昼夜スカイ背景を優先",
+  "themeAtmosphereSection": "質感とアニメーション",
+  "themeGlassPresetLabel": "カードのガラス透過度",
+  "themeGlassPresetAiry": "クリア",
+  "themeGlassPresetBalanced": "標準",
+  "themeGlassPresetSolid": "しっかり",
+  "themeSkyAmbientAnimation": "流れる雲と星のきらめき",
+  "themeSkyAmbientAnimationDesc": "通常時は静止して省電力化（接続時の朝夕アニメーションは維持）",
+  "themeTextScaleDefaultDesc": "システム標準 (100%)",
+  "themeSkyStatusCustomBgActive": "カスタム壁紙有効 · UI明暗を連動",
+  "themeAtmosphereCustomBgHint": "カスタム壁紙を表示中です。上の「昼夜スカイ背景を優先」をオンにすると透過度とアニメーションを調整できます。",
+  "tvSyncCouldNotGetIp": "LAN IP アドレスを取得できませんでした",
+  "tvSyncApplying": "スマートフォンからプロファイルを受信中…",
+  "tvSyncSuccess": "プロファイルを追加しました",
+  "tvSyncFailed": "プロファイルの追加に失敗しました",
+  "tvSyncScanQrHint": "スマートフォンのカメラで QR コードを読み取ってください",
+  "tvSyncWebPageTitle": "FreedomNet — サブスクリプション取込",
+  "tvSyncWebHeading": "サブスクリプションを取込",
+  "tvSyncWebSubtitle": "サブスクリプション URL を貼り付けて「送信」をタップすると、この端末に自動同期されます。",
+  "tvSyncWebPaste": "貼り付け",
+  "tvSyncWebSend": "送信",
+  "tvSyncWebEmptyUrl": "サブスクリプション URL を入力してください",
+  "tvSyncWebSending": "送信中…",
+  "tvSyncWebRejected": "端末が URL を拒否しました",
+  "tvSyncWebUnreachable": "受信側の端末に接続できません",
+  "tvSyncWebApplying": "端末でサブスクリプションを取込中…",
+  "tvSyncWebSuccess": "✅ 完了！サブスクリプションを追加しました",
+  "tvSyncWebErrorPrefix": "❌ エラー: ",
+  "tvSyncWebReceived": "端末がリンクを受信しました…",
+  "tvSyncWebConnectionLost": "端末との接続が切断されました",
+  "purchaseSafetyTitle": "公式安全購入保証 · 24時間365日有人サポート",
+  "purchaseSafetyBody": "通信のプライバシーと安全のため、ご購入は直接サポートまでご連絡ください。",
+  "purchaseSafetyTagOfficial": "公式直営",
+  "purchaseSafetyTagFunds": "決済安全保護",
+  "purchaseSafetyTag24h": "24時間迅速対応"
 }

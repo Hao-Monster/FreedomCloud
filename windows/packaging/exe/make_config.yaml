@@ -1,13 +1,14 @@
 script_template: inno_setup.iss
-app_id: 728B3532-C74B-4870-9068-BE70FE12A3E6
-app_name: FlClashX
-publisher: pluralplay
-publisher_url: https://github.com/pluralplay/FlClashX
-display_name: FlClashX
-executable_name: FlClashX.exe
-output_base_file_name: FlClashX.exe
+app_id: 8F4E9C2A-6D1B-4A73-9E52-3C8B1D7F4A90
+app_name: FreedomNet
+publisher: FreedomNet
+publisher_url: https://fast.hjy.ca:8443/
+display_name: 自由云 · FreedomNet
+executable_name: FreedomNet.exe
+output_base_file_name: FreedomNet-windows-setup
 setup_icon_file: ..\windows\runner\resources\app_icon.ico
 locales:
-  - lang: ru
+  - lang: zh
+    file: ChineseSimplified.isl
   - lang: en
 privileges_required: admin

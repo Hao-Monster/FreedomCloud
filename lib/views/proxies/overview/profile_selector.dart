@@ -944,16 +944,20 @@ class _OverviewAllProfilesOptionCard extends StatelessWidget {
                     label: summaryText,
                     foreground: highlightGreen
                         ? (isDark
-                            ? const Color(0xFF4ADE80)
-                            : const Color(0xFF15803D))
+                            ? kLatencyFastColor
+                            : const Color(0xFF059669))
                         : colors.onSurfaceVariant,
                     background: highlightGreen
-                        ? Colors.green.withValues(alpha: isDark ? 0.15 : 0.10)
+                        ? kLatencyFastColor.withValues(
+                            alpha: isDark ? 0.15 : 0.10,
+                          )
                         : colors.surfaceContainerHighest.withValues(
                             alpha: isDark ? 0.58 : 0.75,
                           ),
                     border: highlightGreen
-                        ? Colors.green.withValues(alpha: isDark ? 0.34 : 0.28)
+                        ? kLatencyFastColor.withValues(
+                            alpha: isDark ? 0.34 : 0.28,
+                          )
                         : colors.outlineVariant.withValues(alpha: 0.48),
                     maxWidth: math.max(120.0, maxContentWidth - 48.0),
                   ),
@@ -1053,15 +1057,15 @@ class _OverviewProfileOptionCard extends StatelessWidget {
             : Icons.radio_button_unchecked_rounded,
         label: availabilitySemantic,
         foreground: hasAvailable
-            ? (isDark ? const Color(0xFF4ADE80) : const Color(0xFF15803D))
+            ? (isDark ? kLatencyFastColor : const Color(0xFF059669))
             : colors.onSurfaceVariant,
         background: hasAvailable
-            ? Colors.green.withValues(alpha: isDark ? 0.15 : 0.10)
+            ? kLatencyFastColor.withValues(alpha: isDark ? 0.15 : 0.10)
             : colors.surfaceContainerHighest.withValues(
                 alpha: isDark ? 0.58 : 0.75,
               ),
         border: hasAvailable
-            ? Colors.green.withValues(alpha: isDark ? 0.34 : 0.28)
+            ? kLatencyFastColor.withValues(alpha: isDark ? 0.34 : 0.28)
             : colors.outlineVariant.withValues(alpha: 0.48),
         maxWidth: maxPillWidth,
       );
@@ -1158,12 +1162,14 @@ class _OverviewProfileOptionCard extends StatelessWidget {
               ),
               if (item.isUpdating) ...[
                 const SizedBox(width: 6),
-                SizedBox(
-                  width: 11,
-                  height: 11,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 1.6,
-                    valueColor: AlwaysStoppedAnimation<Color>(colors.primary),
+                ExcludeSemantics(
+                  child: SizedBox(
+                    width: 11,
+                    height: 11,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 1.6,
+                      valueColor: AlwaysStoppedAnimation<Color>(colors.primary),
+                    ),
                   ),
                 ),
               ],

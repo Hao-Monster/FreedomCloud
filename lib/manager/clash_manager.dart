@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flclashx/clash/clash.dart';
 import 'package:flclashx/common/common.dart';
 import 'package:flclashx/common/tun_runtime.dart';
@@ -13,6 +15,55 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'clash_config_update_listener.dart';
 import 'connection_manager.dart';
 
+@visibleForTesting
+Future<void> dispatchLoadedProviderEvent({
+  required String providerName,
+  required bool Function() isCurrent,
+  required Future<ExternalProvider?> Function(String name) getExternalProvider,
+  required bool Function(String name) hasExistingProvider,
+  required void Function(ExternalProvider provider) setProvider,
+  required Future<void> Function() updateProviders,
+  required void Function() updateGroupsDebounce,
+}) async {
+  try {
+    if (providerName == 'all') {
+      if (!isCurrent()) return;
+      await updateProviders();
+      if (!isCurrent()) return;
+      updateGroupsDebounce();
+      return;
+    }
+    final provider = await getExternalProvider(providerName);
+    if (!isCurrent()) return;
+    if (provider != null) {
+      if (hasExistingProvider(provider.name)) {
+        setProvider(provider);
+      } else {
+        await updateProviders();
+        if (!isCurrent()) return;
+      }
+      updateGroupsDebounce();
+    }
+  } catch (e) {
+    commonPrint.log('onLoaded($providerName) skipped transient error: $e');
+  }
+}
+
+/// When desktop Agent/Helper owns the Core process, Core stdout is already
+/// persisted in the native service log. Persist only warning/error/app lines on
+/// the UI side to eliminate duplicate disk amplification while keeping all logs
+/// in memory for [LogsView].
+@visibleForTesting
+bool shouldPersistCoreLogOnUiSide(
+  LogLevel level, {
+  required bool usesAgent,
+}) {
+  if (!usesAgent) return true;
+  return level == LogLevel.warning ||
+      level == LogLevel.error ||
+      level == LogLevel.app;
+}
+
 class ClashManager extends ConsumerStatefulWidget {
   const ClashManager({
     super.key,
@@ -26,12 +77,58 @@ class ClashManager extends ConsumerStatefulWidget {
 
 class _ClashContainerState extends ConsumerState<ClashManager>
     with AppMessageListener {
+  static const int _telemetryBatchFlushLimit = 128;
+  static const Duration _telemetryBatchWindow = Duration(milliseconds: 64);
+  final List<Log> _pendingLogs = [];
+  final List<Connection> _pendingRequests = [];
+  final List<Delay> _pendingDelays = [];
+  Timer? _telemetryFlushTimer;
+
+  void _scheduleTelemetryFlush() {
+    _telemetryFlushTimer ??=
+        Timer(_telemetryBatchWindow, _flushPendingTelemetry);
+  }
+
+  void _flushPendingTelemetry() {
+    _telemetryFlushTimer?.cancel();
+    _telemetryFlushTimer = null;
+    if (!mounted) {
+      _pendingLogs.clear();
+      _pendingRequests.clear();
+      _pendingDelays.clear();
+      return;
+    }
+    if (_pendingLogs.isNotEmpty) {
+      final batch = List<Log>.of(_pendingLogs, growable: false);
+      _pendingLogs.clear();
+      ref.read(logsProvider.notifier).addLogs(batch);
+    }
+    if (_pendingRequests.isNotEmpty) {
+      final batch = List<Connection>.of(_pendingRequests, growable: false);
+      _pendingRequests.clear();
+      ref.read(requestsProvider.notifier).addRequests(batch);
+    }
+    if (_pendingDelays.isNotEmpty) {
+      final batch = List<Delay>.of(_pendingDelays, growable: false);
+      _pendingDelays.clear();
+      ref.read(delayDataSourceProvider.notifier).setDelays(batch);
+      debouncer.call(
+        FunctionTag.updateDelay,
+        () async {
+          globalState.appController.updateGroupsDebounce();
+        },
+        duration: const Duration(milliseconds: 5000),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) => ClashConfigUpdateListener(
-    runtime: tunRuntime,
-    onConfigChanged: () => globalState.appController.updateClashConfigDebounce(),
-    child: widget.child,
-  );
+        runtime: tunRuntime,
+        onConfigChanged: () =>
+            globalState.appController.updateClashConfigDebounce(),
+        child: widget.child,
+      );
 
   @override
   void initState() {
@@ -46,6 +143,12 @@ class _ClashContainerState extends ConsumerState<ClashManager>
     ref.listenManual(needSetupProvider, (prev, next) {
       if (prev != next) {
         globalState.appController.handleChangeProfile();
+      }
+    });
+    ref.listenManual(routingRuleSetupProvider, (prev, next) {
+      if (prev != null && prev != next && prev.a == next.a) {
+        globalState.appController.setupClashConfigDebounce();
+        globalState.appController.savePreferencesDebounce();
       }
     });
     ref.listenManual(coreStateProvider, (prev, next) async {
@@ -98,6 +201,11 @@ class _ClashContainerState extends ConsumerState<ClashManager>
 
   @override
   Future<void> dispose() async {
+    _telemetryFlushTimer?.cancel();
+    _telemetryFlushTimer = null;
+    _pendingLogs.clear();
+    _pendingRequests.clear();
+    _pendingDelays.clear();
     connectionDiagnostics.log(
       '[ConnectionsDiag] clashManager.dispose '
       'managerRunning=${connectionManager.running}',
@@ -109,23 +217,30 @@ class _ClashContainerState extends ConsumerState<ClashManager>
   @override
   Future<void> onDelay(Delay delay) async {
     super.onDelay(delay);
-    final appController = globalState.appController;
-    appController.setDelay(delay);
-    debouncer.call(
-      FunctionTag.updateDelay,
-      () async {
-        appController.updateGroupsDebounce();
-      },
-      duration: const Duration(milliseconds: 5000),
-    );
+    _pendingDelays.add(delay);
+    if (_pendingDelays.length >= _telemetryBatchFlushLimit) {
+      _flushPendingTelemetry();
+    } else {
+      _scheduleTelemetryFlush();
+    }
   }
 
   @override
   void onLog(Log log) {
-    ref.read(logsProvider.notifier).addLog(log);
+    _pendingLogs.add(log);
+    if (_pendingLogs.length >= _telemetryBatchFlushLimit) {
+      _flushPendingTelemetry();
+    } else {
+      _scheduleTelemetryFlush();
+    }
 
     // Write core logs to file
-    fileLogger.log("[${log.logLevel.name.toUpperCase()}] ${log.payload}");
+    if (shouldPersistCoreLogOnUiSide(
+      log.logLevel,
+      usesAgent: clashService?.usesAgent == true,
+    )) {
+      fileLogger.log("[${log.logLevel.name.toUpperCase()}] ${log.payload}");
+    }
 
     if (log.logLevel == LogLevel.error) {
       globalState.showNotifier(log.payload);
@@ -134,8 +249,13 @@ class _ClashContainerState extends ConsumerState<ClashManager>
   }
 
   @override
-  void onRequest(Connection connection) async {
-    ref.read(requestsProvider.notifier).addRequest(connection);
+  void onRequest(Connection connection) {
+    _pendingRequests.add(connection);
+    if (_pendingRequests.length >= _telemetryBatchFlushLimit) {
+      _flushPendingTelemetry();
+    } else {
+      _scheduleTelemetryFlush();
+    }
     super.onRequest(connection);
   }
 
@@ -143,16 +263,20 @@ class _ClashContainerState extends ConsumerState<ClashManager>
   Future<void> onLoaded(String providerName) async {
     final configEpoch = globalState.runtimeConfigEpoch;
     final profileId = ref.read(currentProfileIdProvider);
-    final provider = await clashCore.getExternalProvider(
-      providerName,
+    await dispatchLoadedProviderEvent(
+      providerName: providerName,
+      isCurrent: () =>
+          mounted &&
+          configEpoch == globalState.runtimeConfigEpoch &&
+          profileId == ref.read(currentProfileIdProvider),
+      getExternalProvider: clashCore.getExternalProvider,
+      hasExistingProvider: (name) =>
+          ref.read(providersProvider).any((item) => item.name == name),
+      setProvider: ref.read(providersProvider.notifier).setProvider,
+      updateProviders: globalState.appController.updateProviders,
+      updateGroupsDebounce: globalState.appController.updateGroupsDebounce,
     );
-    if (!mounted ||
-        configEpoch != globalState.runtimeConfigEpoch ||
-        profileId != ref.read(currentProfileIdProvider)) {
-      return;
-    }
-    ref.read(providersProvider.notifier).setProvider(provider);
-    globalState.appController.updateGroupsDebounce();
+    if (!mounted) return;
     super.onLoaded(providerName);
   }
 }

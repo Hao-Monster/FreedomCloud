@@ -1,5 +1,6 @@
 import 'package:flclashx/common/common.dart';
 import 'package:flclashx/enum/enum.dart';
+import 'package:flclashx/widgets/day_night_sky_background.dart';
 import 'package:flclashx/widgets/fade_box.dart';
 import 'package:flutter/material.dart';
 
@@ -112,8 +113,8 @@ class CommonCard extends StatelessWidget {
       return BorderSide.none;
     }
     final hoverColor = isSelected
-        ? colorScheme.primary.opacity80
-        : colorScheme.primary.opacity60;
+        ? colorScheme.primary.withValues(alpha: 0.72)
+        : colorScheme.primary.withValues(alpha: 0.42);
     if (states.contains(WidgetState.hovered) ||
         states.contains(WidgetState.focused) ||
         states.contains(WidgetState.pressed)) {
@@ -123,27 +124,54 @@ class CommonCard extends StatelessWidget {
     }
     return BorderSide(
       color: isSelected
-          ? colorScheme.primary
-          : colorScheme.surfaceContainerHighest,
+          ? colorScheme.primary.withValues(alpha: 0.58)
+          : freedomNetHairlineColor(colorScheme),
     );
   }
 
-  Color? getBackgroundColor(BuildContext context, Set<WidgetState> states) {
+  Color? getBackgroundColor(
+    BuildContext context,
+    Set<WidgetState> states, {
+    bool skyActive = false,
+    bool skyDaySurface = false,
+    DayNightGlassPreset glassPreset = DayNightGlassPreset.balanced,
+  }) {
     final colorScheme = context.colorScheme;
+    final isHovered = states.contains(WidgetState.hovered);
+    final glass = resolveDayNightGlassAlphas(
+      preset: glassPreset,
+      isDaySurface: skyDaySurface,
+    );
+    final alpha = skyActive
+        ? (isHovered ? glass.cardHover : glass.cardResting)
+        : 1.0;
     if (type == CommonCardType.filled) {
       if (isSelected) {
-        return colorScheme.secondaryContainer.opacity80;
+        return colorScheme.secondaryContainer.withValues(
+          alpha: skyActive ? 0.82 : 0.9,
+        );
       }
-      return colorScheme.surfaceContainer.withValues(alpha: 0.85);
+      final base = isHovered
+          ? colorScheme.surfaceContainerHigh
+          : colorScheme.surfaceContainer;
+      return skyActive ? base.withValues(alpha: alpha) : base;
     }
     if (isSelected) {
-      return colorScheme.secondaryContainer.withValues(alpha: 0.85);
+      return colorScheme.secondaryContainer.withValues(
+        alpha: skyActive ? 0.80 : 0.88,
+      );
     }
-    return colorScheme.surfaceContainerLow.withValues(alpha: 0.85);
+    final base = isHovered
+        ? colorScheme.surfaceContainerHigh
+        : colorScheme.surfaceContainer;
+    return skyActive ? base.withValues(alpha: alpha) : base;
   }
 
   @override
   Widget build(BuildContext context) {
+    final skyActive = DayNightSkyScope.isActiveOf(context);
+    final skyDaySurface = DayNightSkyScope.isDaySurfaceOf(context);
+    final glassPreset = DayNightSkyScope.glassPresetOf(context);
     var childWidget = child;
 
     if (info != null) {
@@ -190,7 +218,13 @@ class CommonCard extends StatelessWidget {
         iconColor: WidgetStatePropertyAll(context.colorScheme.primary),
         iconSize: WidgetStateProperty.all(20),
         backgroundColor: WidgetStateProperty.resolveWith(
-          (states) => getBackgroundColor(context, states),
+          (states) => getBackgroundColor(
+            context,
+            states,
+            skyActive: skyActive,
+            skyDaySurface: skyDaySurface,
+            glassPreset: glassPreset,
+          ),
         ),
         side: WidgetStateProperty.resolveWith(
           (states) => getBorderSide(context, states),

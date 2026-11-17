@@ -58,7 +58,7 @@
   "ru": "Русский",
   "zh_CN": "Упрощенный китайский",
   "theme": "Тема",
-  "themeDesc": "Установить темный режим, настроить цвет",
+  "themeDesc": "Синхронизация неба дня и ночи, прозрачность стекла и цвет",
   "override": "Переопределение",
   "overrideDesc": "Переопределение конфигурации прокси",
   "allowLan": "Разрешить LAN",
@@ -128,7 +128,7 @@
   "auto": "Авто",
   "light": "Светлый",
   "dark": "Темный",
-  "importFromURL": "Импорт из URL",
+  "importFromURL": "Вставьте ссылку подписки и нажмите ОК",
   "submit": "Отправить",
   "doYouWantToPass": "Добавляем профиль по адресу",
   "create": "Создать",
@@ -467,7 +467,7 @@
   "trafficUnlimited": "Безлимитный трафик",
   "subscriptionEternal": "Бессрочная подписка",
   "expiresOn": "Истекает",
-  "newDashboard": "Новый вид",
+  "newDashboard": "Краткий режим",
   "untilDate": "до",
   "remaining": "Осталось",
   "remainingSingular": "Остался",
@@ -507,8 +507,89 @@
   "zashboardInAppDesc": "Показывать панель во встроенном браузере, не переключаясь на внешний",
   "openPanel": "Открыть панель",
   "downloadingZashboard": "Качаю Zashboard…",
+  "purchaseCenterTitle": "Активация подарочных карт",
+  "purchaseCenterDescription": "Активируйте карту для подключения или продления тарифа, затем синхронизируйте подписку.",
+  "purchaseAccount": "Аккаунт и подписка",
+  "purchaseLoginTitle": "Войдите для активации",
+  "purchaseEmail": "Электронная почта",
+  "purchasePassword": "Пароль",
+  "purchaseLogin": "Войти",
+  "purchaseLoggingIn": "Выполняется вход…",
+  "purchaseEmailRequired": "Введите корректный адрес электронной почты.",
+  "purchasePasswordRequired": "Введите пароль.",
+  "purchaseRegister": "Создать аккаунт на сайте",
+  "purchaseRecoverPassword": "Восстановить пароль на сайте",
+  "purchaseLogout": "Выйти",
+  "purchaseRefresh": "Обновить аккаунт",
+  "purchasePlan": "Текущий тариф",
+  "purchaseNoPlan": "Нет активного тарифа",
+  "purchasePlanUnknown": "Подписка",
+  "purchaseRemaining": "Остаток трафика",
+  "purchaseUsed": "Использовано",
+  "purchaseExpires": "Истекает",
+  "purchaseNoExpiry": "Бессрочно",
+  "purchaseSync": "Синхронизировать подписку",
+  "purchaseSyncing": "Синхронизация подписки…",
+  "purchaseProfiles": "Управление профилями",
+  "purchaseRedeemTitle": "Активация подарочной карты",
+  "purchaseCode": "Код подарочной карты",
+  "purchaseCheck": "Проверить карту",
+  "purchaseChecking": "Проверка…",
+  "purchasePreview": "Проверьте перед активацией",
+  "purchaseRedeemFor": "Аккаунт для активации",
+  "purchaseConfirmRedeem": "Подтвердить активацию",
+  "purchaseRedeeming": "Активация…",
+  "purchaseNotEligible": "Эту карту нельзя активировать для данного аккаунта.",
+  "purchaseMysteryPreview": "Это карта-сюрприз. Содержимое откроется после активации.",
+  "purchaseBalance": "Баланс аккаунта",
+  "purchaseBalanceOnlyHint": "Пополнение баланса не активирует подписку автоматически.",
+  "purchaseTraffic": "Лимит трафика",
+  "purchaseValidityDays": "Срок действия (дн.)",
+  "purchaseExtraDays": "Продление срока (дн.)",
+  "purchaseExtraDevices": "Доп. устройства",
+  "purchaseResetTraffic": "Сбросить использованный трафик",
+  "purchaseBenefitsAfter": "Бонусы отобразятся после активации.",
+  "purchaseNoBenefits": "Дополнительных бонусов нет.",
+  "purchaseQuotaChange": "Общий трафик: до → после",
+  "purchaseExpiryChange": "Срок действия: до → после",
+  "purchaseUsedPreserved": "Использованный трафик сохраняется",
+  "purchaseNoPreviousExpiry": "Не задано",
+  "purchaseSuccess": "Подарочная карта активирована",
+  "purchaseSuccessDescription": "Бонусы начислены на аккаунт. Статус синхронизации подписки подтверждается отдельно.",
+  "purchaseOrderNumber": "Номер активации",
+  "purchaseSyncFailed": "Карта активирована, но не удалось синхронизировать подписку. Повторите синхронизацию ниже.",
+  "purchaseSyncError": "Не удалось синхронизировать подписку. Вы можете повторить попытку ниже.",
+  "purchaseUnresolved": "Требуется проверка результата",
+  "purchaseUnresolvedDescription": "Запрос был прерван. Проверьте результат перед активацией другой карты.",
+  "purchaseRecoverResult": "Проверить результат",
+  "purchaseHistory": "История активаций",
+  "purchaseHistoryEmpty": "Активаций пока нет.",
+  "purchaseHistoryRetry": "Обновить историю",
+  "purchasePreviousPage": "Предыдущая",
+  "purchaseNextPage": "Следующая",
+  "purchaseHistoryPage": "Стр.",
+  "purchaseHistoryTotal": "Всего",
+  "purchaseGetCard": "Получить подарочную карту",
+  "purchaseCardStore": "Открыть магазин карт",
+  "purchaseOpenLinkFailed": "Не удалось открыть страницу. Попробуйте ещё раз.",
+  "purchaseRestoring": "Восстановление аккаунта…",
+  "purchasePeriod": "Период оплаты",
+  "purchasePeriodMonthly": "Месяц",
+  "purchasePeriodQuarterly": "Квартал",
+  "purchasePeriodHalfYearly": "Полгода",
+  "purchasePeriodYearly": "Год",
+  "purchasePeriodTwoYearly": "2 года",
+  "purchasePeriodThreeYearly": "3 года",
+  "purchasePeriodOnetime": "По трафику",
+  "purchaseSyncSucceeded": "Подписка успешно синхронизирована.",
+  "purchaseGenericError": "Ошибка запроса. Повторите попытку.",
+  "purchaseStorageError": "Защищённое хранилище учётных данных недоступно. Проверьте настройки системы и повторите.",
+  "purchaseUnsupportedAccount": "Для активации подарочной карты используйте обычный пользовательский аккаунт.",
+  "purchaseLogoutRemoteError": "Выход выполнен на этом устройстве, но подтвердить его на сервере не удалось.",
+  "purchaseCodeFormatError": "Введите код из 8–32 латинских букв и цифр.",
+  "purchaseChannelError": "Не удалось загрузить данные магазина карт. Вы по-прежнему можете обратиться в онлайн-поддержку ниже.",
   "purchaseAvailablePlans": "Доступные тарифы",
-  "purchasePlansDescription": "Цены указаны как на сайте. Уточните валюту и купите подарочную карту через контакты WeChat ниже, затем активируйте её здесь.",
+  "purchasePlansDescription": "Цены указаны как на сайте. Нажмите «Купить» для перехода в магазин кодов, затем активируйте полученный код здесь.",
   "purchasePlansLoading": "Загрузка тарифов…",
   "purchasePlansEmpty": "Сейчас нет доступных тарифов.",
   "purchasePlansError": "Не удалось загрузить тарифы. Повторите попытку.",
@@ -524,6 +605,13 @@
   "purchasePlanResetYearStart": "1 января каждого года",
   "purchasePlanResetYearlyExpiry": "Ежегодно в дату окончания срока",
   "purchasePlanResetUnknown": "Неизвестное правило ({code})",
+  "@purchasePlanResetUnknown": {
+    "placeholders": {
+      "code": {
+        "type": "int"
+      }
+    }
+  },
   "purchasePlanSalesCapacity": "Оставшиеся места для продажи",
   "purchasePlanResetPrice": "Сброс трафика · указанная цена",
   "purchasePlanDetails": "Описание тарифа",
@@ -544,6 +632,7 @@
   "tunDisableAction": "Запросить остановку",
   "tunErrorLegacyAgent": "Завершите старое фоновое приложение и снова откройте эту версию",
   "tunErrorProfileRequired": "Перед подключением выберите читаемый непустой профиль",
+  "tunErrorAdapterCreate": "Windows не смогла добавить виртуальный адаптер; повторите попытку позже",
   "nodeOverviewCurrentProfile": "Текущий профиль",
   "nodeOverviewAllProfiles": "Все профили",
   "nodeOverviewActive": "Активный",
@@ -612,7 +701,11 @@
   "nodeOverviewIndependentTest": "Независимая проверка задержки",
   "nodeOverviewFileSource": "Файл профиля · {provider}",
   "@nodeOverviewFileSource": {
-    "placeholders": { "provider": { "type": "String" } }
+    "placeholders": {
+      "provider": {
+        "type": "String"
+      }
+    }
   },
   "nodeOverviewTestCurrent": "Проверить текущий профиль",
   "nodeOverviewTestAll": "Проверить задержку всех узлов",
@@ -680,7 +773,6 @@
   "purchaseFilterAll": "Все тарифы",
   "purchaseFilterPeriod": "По периоду",
   "purchaseFilterOnetime": "Пакеты трафика",
-  "purchaseAcquirePlanCode": "Получить код тарифа",
   "purchasePlanSoldOut": "Распродано",
   "purchasePlanLowStock": "Осталось: {count}",
   "@purchasePlanLowStock": {
@@ -818,7 +910,7 @@
   "nodeOverviewUpdateSubscription": "Обновить",
   "nodeOverviewUpdatingShort": "Обновление",
   "nodeOverviewAddSubscription": "Добавить подписку",
-  "nodeOverviewQuickUse": "Использовать",
+  "nodeOverviewQuickUse": "Быстрейший",
   "nodeOverviewSelectProfileTitle": "Выбор профиля",
   "nodeOverviewProfileCountBadge": "Профилей: {count}",
   "@nodeOverviewProfileCountBadge": {
@@ -847,5 +939,710 @@
         "type": "String"
       }
     }
-  }
+  },
+  "dashboardClickUpdateSubscription": "Нажмите для обновления",
+  "dashboardAnnouncementBadge": "Объявление",
+  "dashboardNotSyncedYet": "Синхронизация: нет",
+  "dashboardCurrentNodeLabel": "Узел: {node}",
+  "@dashboardCurrentNodeLabel": {
+    "placeholders": {
+      "node": {
+        "type": "String"
+      }
+    }
+  },
+  "dashboardTotalNodesCount": "Узлов: {count}",
+  "@dashboardTotalNodesCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "dashboardRuleOverrideCount": "Правил: {count}",
+  "@dashboardRuleOverrideCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "dashboardHwidNotSupported": "Привязка HWID не поддерживается сервером",
+  "dashboardContactSupport": "Поддержка",
+  "healthCheckTitle": "Проверка сети",
+  "healthCheckSubtitle": "Диагностика профиля, ядра, перехвата трафика и связи",
+  "healthCheckDiagnoseAction": "Диагностика",
+  "healthCheckRecheck": "Проверить",
+  "healthCheckCancel": "Отмена",
+  "healthCheckChecking": "Проверка…",
+  "healthCheckCopySummary": "Копировать",
+  "healthCheckCopied": "Сводка скопирована в буфер обмена",
+  "healthCheckExport": "Экспорт отчёта",
+  "healthCheckExportDialogTitle": "Экспорт обезличенного отчёта",
+  "healthCheckExportSuccess": "Отчёт экспортирован",
+  "healthCheckExportFailed": "Ошибка экспорта отчёта",
+  "healthCheckPrivacyNote": "Отчёт содержит только коды статусов и время — без имён узлов, IP, ссылок и логов.",
+  "healthCheckLastChecked": "Проверка {time} · {elapsed}",
+  "@healthCheckLastChecked": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      },
+      "elapsed": {
+        "type": "String"
+      }
+    }
+  },
+  "healthLayerConfig": "Профиль и подписка",
+  "healthLayerCore": "Ядро прокси",
+  "healthLayerTakeover": "Перехват трафика",
+  "healthLayerNetwork": "Сетевой маршрут",
+  "healthItemProfileSelected": "Текущий профиль",
+  "healthItemSubscription": "Статус подписки",
+  "healthItemRuntimeConfig": "Применение конфига",
+  "healthItemCoreResponsive": "Отклик ядра",
+  "healthItemProxyStarted": "Состояние прокси",
+  "healthItemTunTakeover": "Адаптер TUN",
+  "healthItemSystemProxy": "Системный прокси",
+  "healthItemTrafficTakeover": "Итог перехвата",
+  "healthItemDirect": "Прямой доступ",
+  "healthItemDns": "DNS-разрешение",
+  "healthItemOutbound": "Узел выхода",
+  "healthItemEndToEnd": "Сквозная проверка",
+  "healthStatusRunning": "Проверка",
+  "healthStatusPassed": "Норма",
+  "healthStatusWarning": "Внимание",
+  "healthStatusFailed": "Ошибка",
+  "healthStatusTimeout": "Тайм-аут",
+  "healthStatusSkipped": "Пропуск",
+  "healthVerdictCheckingTitle": "Пошаговая проверка соединения…",
+  "healthVerdictHealthyTitle": "Соединение в норме",
+  "healthVerdictHealthySubtitle": "Узел {node} · {delay} мс{exitPart}",
+  "@healthVerdictHealthySubtitle": {
+    "placeholders": {
+      "node": {
+        "type": "String"
+      },
+      "delay": {
+        "type": "int"
+      },
+      "exitPart": {
+        "type": "String"
+      }
+    }
+  },
+  "healthVerdictHealthyDirectSubtitle": "Прямой режим · {delay} мс",
+  "@healthVerdictHealthyDirectSubtitle": {
+    "placeholders": {
+      "delay": {
+        "type": "int"
+      }
+    }
+  },
+  "healthVerdictCoreUnresponsive": "Ядро прокси не отвечает",
+  "healthVerdictProfileMissing": "Профиль не выбран или файл отсутствует",
+  "healthVerdictSubscriptionExpired": "Срок действия подписки истёк",
+  "healthVerdictSubscriptionExhausted": "Трафик подписки исчерпан",
+  "healthVerdictProxyNotStarted": "Прокси остановлен, трафик идёт напрямую",
+  "healthVerdictTakeoverFailed": "Трафик не перехватывается: проверьте TUN или прокси",
+  "healthVerdictLocalNetworkDown": "Локальная сеть недоступна (не связано с узлом)",
+  "healthVerdictOutboundFailed": "Локальная сеть работает, но узел недоступен",
+  "healthVerdictTrafficBypassed": "Сеть доступна, но трафик обошёл ядро прокси",
+  "healthVerdictTunBypassedTitle": "TUN не перехватывает трафик; работает только системный прокси",
+  "healthVerdictEndToEndFailed": "Сквозная проверка не удалась, смените узел",
+  "healthVerdictDnsFailed": "Ошибка разрешения DNS или подмена адреса",
+  "healthVerdictWarningsTitle": "Соединение работает, но есть предупреждения",
+  "healthActionOpenProfiles": "К профилям",
+  "healthActionOpenPurchase": "Продлить",
+  "healthActionOpenProxies": "Сменить узел",
+  "healthActionOpenTun": "Настройки TUN",
+  "healthActionOpenNetwork": "Настройки сети",
+  "healthActionOpenDns": "Настройки DNS",
+  "healthActionStartProxy": "Запустить",
+  "healthActionRestartCore": "Перезапуск ядра",
+  "healthDetailNoProfile": "Профиль не выбран",
+  "healthDetailProfileFileMissing": "Файл профиля отсутствует или пуст",
+  "healthDetailLocalProfile": "Локальный профиль",
+  "healthDetailSubNeverSynced": "Ещё не синхронизирован, обновите подписку",
+  "healthDetailSubNoMeta": "Сервер не передал данные о лимитах",
+  "healthDetailSubHealthyEternal": "Бессрочно · Безлимит",
+  "healthDetailSubHealthy": "Подписка активна",
+  "healthDetailSubExpiringSoon": "Осталось {days} дн.",
+  "@healthDetailSubExpiringSoon": {
+    "placeholders": {
+      "days": {
+        "type": "int"
+      }
+    }
+  },
+  "healthDetailSubTrafficLow": "Использовано {percent}% трафика",
+  "@healthDetailSubTrafficLow": {
+    "placeholders": {
+      "percent": {
+        "type": "int"
+      }
+    }
+  },
+  "healthDetailSubDeviceLimit": "Достигнут лимит устройств",
+  "healthDetailSubExpired": "Подписка истекла",
+  "healthDetailSubExhausted": "Трафик исчерпан",
+  "healthDetailRuntimeSynced": "Загружено (групп: {count})",
+  "@healthDetailRuntimeSynced": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "healthDetailRuntimeMismatch": "Профиль ещё не применён к ядру",
+  "healthDetailCoreHealthy": "IPC ОК · {mb} МБ",
+  "@healthDetailCoreHealthy": {
+    "placeholders": {
+      "mb": {
+        "type": "String"
+      }
+    }
+  },
+  "healthDetailCoreSlow": "Медленный отклик ядра (> 500 мс)",
+  "healthDetailCoreFailed": "Сбой или тайм-аут интерфейса ядра",
+  "healthDetailProxyRunning": "Запущен",
+  "healthDetailProxyStopped": "Остановлен",
+  "healthDetailSkipPrerequisite": "Пропущено из-за предыдущей ошибки",
+  "healthDetailSkipProxyStopped": "Пропущено: прокси остановлен",
+  "healthDetailTunReadyElevated": "Активен · Права админа",
+  "healthDetailTunReady": "Виртуальный адаптер активен",
+  "healthDetailTunDisabled": "Выключен в настройках",
+  "healthDetailSysProxyDisabled": "Выключен в настройках",
+  "healthDetailSysProxyUnsupported": "Неприменимо на этой платформе",
+  "healthDetailSysProxyHijacked": "Системный прокси изменён извне",
+  "healthDetailSysProxyUnexpectedPac": "Обнаружен сторонний PAC-адрес",
+  "healthDetailTakeoverBoth": "Активны TUN и системный прокси",
+  "healthDetailTakeoverTun": "Перехват через адаптер TUN",
+  "healthDetailTakeoverSysProxy": "Перехват через системный прокси",
+  "healthDetailTakeoverPartial": "Активен только один из включённых режимов",
+  "healthDetailTakeoverNone": "Ни TUN, ни системный прокси не активны",
+  "healthDetailDirectOk": "Прямой доступ работает",
+  "healthDetailDirectSlow": "Высокая задержка прямого канала",
+  "healthDetailDirectFailed": "Сбой прямого доступа: проверьте сеть или роутер",
+  "healthDetailCoreDelayBusy": "Очередь замера занята, повторите позже",
+  "healthDetailDnsOk": "Разрешено успешно",
+  "healthDetailDnsFakeIp": "Core DNS (fake-ip)",
+  "healthDetailDnsPoisoned": "DNS вернул некорректный адрес-заглушку",
+  "healthDetailDnsFailed": "Ошибка или тайм-аут DNS",
+  "healthDetailDirectMode": "Выбран прямой режим (Direct)",
+  "healthDetailOutboundDirectSelected": "В группе выбран DIRECT вместо узла",
+  "healthDetailOutboundRejectSelected": "В группе выбран REJECT (блокировка)",
+  "healthDetailOutboundSlow": "Повышенная задержка узла {node}",
+  "@healthDetailOutboundSlow": {
+    "placeholders": {
+      "node": {
+        "type": "String"
+      }
+    }
+  },
+  "healthDetailOutboundFailed": "Узел {node} не прошёл проверку связи",
+  "@healthDetailOutboundFailed": {
+    "placeholders": {
+      "node": {
+        "type": "String"
+      }
+    }
+  },
+  "healthDetailE2eVerified": "Через прокси подтверждено{exitPart}",
+  "@healthDetailE2eVerified": {
+    "placeholders": {
+      "exitPart": {
+        "type": "String"
+      }
+    }
+  },
+  "healthDetailE2eDirectRule": "Вошёл в ядро (правило DIRECT)",
+  "healthDetailE2eBypassed": "Доступ есть, но соединение обошло ядро",
+  "healthDetailE2eFailed": "Сквозные запросы завершились ошибкой",
+  "healthExitCountryPart": " · Выход {flag}",
+  "@healthExitCountryPart": {
+    "placeholders": {
+      "flag": {
+        "type": "String"
+      }
+    }
+  },
+  "healthVerdictCancelledTitle": "Проверка остановлена",
+  "healthDetailCancelled": "Отменено",
+  "globalOverride": "Глобальные правила",
+  "globalOverrideDesc": "Действует для всех профилей без повторной настройки",
+  "enableGlobalOverride": "Включить глобальные правила",
+  "defaultProxyAutoTarget": "Прокси по умолчанию (авто)",
+  "localSplitMode": "Локальное разделение трафика",
+  "localSplitModeDesc": "Автоматически направлять локальный трафик напрямую для голых подписок",
+  "localSplitMode_auto": "Автоопределение (Авто)",
+  "localSplitMode_always": "Всегда добавлять прямой маршрут",
+  "localSplitMode_off": "Выкл",
+  "overrideAutoSavedHint": "Изменения сохраняются и применяются автоматически",
+  "healthActionReapplySystemProxy": "Восстановить прокси",
+  "healthDetailSysProxyReadFailed": "Не удалось прочитать настройки прокси",
+  "healthDetailSysProxyInvalidPort": "Локальный mixed-port отключён (0)",
+  "healthDetailSysProxyNotApplied": "Системный прокси ещё не применён",
+  "healthDetailSysProxyDisabledExternally": "Системный прокси выключен в ОС",
+  "healthDetailDnsStaleFakeIp": "Обнаружен устаревший кэш Fake-IP при выключенном TUN",
+  "healthDetailTunBypassedSystemProxyOk": "Маршрут TUN не работает; проверено через системный прокси",
+  "nodeOverviewUpdateAllSubscriptions": "Обновить все",
+  "nodeOverviewAllProfilesCount": "Профилей: {count}",
+  "@nodeOverviewAllProfilesCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewExpiredCountBadge": "Истекло: {count}",
+  "@nodeOverviewExpiredCountBadge": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewExpiringSoonCountBadge": "Скоро истечёт: {count}",
+  "@nodeOverviewExpiringSoonCountBadge": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewCurrentActiveProfile": "Активный: {name}",
+  "@nodeOverviewCurrentActiveProfile": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewNoActiveProfile": "Активный: нет",
+  "nodeOverviewAllHealthCounts": "Узлы: дост. {available} / пров. {tested} / всего {total}",
+  "@nodeOverviewAllHealthCounts": {
+    "placeholders": {
+      "available": {
+        "type": "int"
+      },
+      "tested": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewGlobalMedian": "Медиана: {median}",
+  "@nodeOverviewGlobalMedian": {
+    "placeholders": {
+      "median": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewGlobalMedianAndBest": "Медиана: {median} · Лучший: {best}",
+  "@nodeOverviewGlobalMedianAndBest": {
+    "placeholders": {
+      "median": {
+        "type": "String"
+      },
+      "best": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewBandFast": "Быстр. {count}",
+  "@nodeOverviewBandFast": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewBandSlow": "Медл. {count}",
+  "@nodeOverviewBandSlow": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewBandFailed": "Ошибка {count}",
+  "@nodeOverviewBandFailed": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewBandUntested": "Не пров. {count}",
+  "@nodeOverviewBandUntested": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "subscriptionUrlEmptyError": "Сначала вставьте ссылку подписки",
+  "subscriptionUrlInvalidError": "Не найдена корректная http(s):// ссылка подписки",
+  "subscriptionClipboardEmptyError": "Буфер обмена пуст. Сначала скопируйте ссылку",
+  "subscriptionImportTimeoutError": "Превышено время ожидания загрузки подписки. Проверьте сеть",
+  "subscriptionImportAuthOrNotFoundError": "Ссылка подписки недействительна или устарела",
+  "subscriptionImportInvalidConfigError": "Ссылка не содержит корректной конфигурации подписки",
+  "subscriptionImportGenericError": "Не удалось импортировать подписку. Проверьте ссылку",
+  "nodeOverviewProxyConnectedWithNode": "Прокси включён · {profile} · {node}",
+  "@nodeOverviewProxyConnectedWithNode": {
+    "placeholders": {
+      "profile": {
+        "type": "String"
+      },
+      "node": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewProxyConnected": "Прокси включён · Подключено",
+  "nodeOverviewProxyDisconnected": "Прокси выключен · Нажмите Включить или Использовать у узла",
+  "nodeOverviewProxyStarting": "Запуск прокси…",
+  "nodeOverviewProxyStopping": "Остановка прокси…",
+  "nodeOverviewTurnOnProxy": "Включить",
+  "nodeOverviewTurnOffProxy": "Выключить",
+  "nodeOverviewEmptyTitle": "Нет добавленных подписок",
+  "nodeOverviewEmptySubtitle": "Вставьте ссылку подписки — приложение автоматически проверит задержку и подключит лучший узел",
+  "nodeOverviewEmptyStepsHint": "① Подписка  ·  ② Тест задержки  ·  ③ Быстрейший",
+  "nodeOverviewAvailableFilterEmpty": "Сейчас нет проверенных доступных узлов (не проверены или недоступны)",
+  "nodeOverviewShowAllNodes": "Показать все узлы",
+  "nodeOverviewAutoConnectedBest": "Автоподключение к лучшему узлу: {profile} · {node} ({delay} мс)",
+  "@nodeOverviewAutoConnectedBest": {
+    "placeholders": {
+      "profile": {
+        "type": "String"
+      },
+      "node": {
+        "type": "String"
+      },
+      "delay": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewAutoSelectedExpiredWarning": "Выбран узел {node}, но срок подписки истёк. Продлите или замените подписку",
+  "@nodeOverviewAutoSelectedExpiredWarning": {
+    "placeholders": {
+      "node": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewAutoSelectedTrafficExhaustedWarning": "Выбран узел {node}, но трафик подписки исчерпан",
+  "@nodeOverviewAutoSelectedTrafficExhaustedWarning": {
+    "placeholders": {
+      "node": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewAutoSelectedAllFailedWarning": "Выбран узел {node} (все узлы не прошли проверку задержки; обновите подписку или смените узел)",
+  "@nodeOverviewAutoSelectedAllFailedWarning": {
+    "placeholders": {
+      "node": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewSmartSelectTitle": "Умный выбор",
+  "nodeOverviewSmartSelectSubtitle": "Лучший опыт",
+  "nodeOverviewSmartSelectCompact": "Умный",
+  "nodeOverviewManualSelectTitle": "Ручной выбор",
+  "nodeOverviewManualSelectSubtitle": "Фикс. IP",
+  "nodeOverviewManualSelectCompact": "Фикс. IP",
+  "nodeOverviewSmartInUse": "Авто",
+  "nodeOverviewProxyConnectedSmartWithNode": "Прокси вкл · Умный: {profile} · {node}",
+  "@nodeOverviewProxyConnectedSmartWithNode": {
+    "placeholders": {
+      "profile": {
+        "type": "String"
+      },
+      "node": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewProxyConnectedSmart": "Прокси вкл · Умный: {profile} (автоподбор)",
+  "@nodeOverviewProxyConnectedSmart": {
+    "placeholders": {
+      "profile": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewSwitchedToSmart": "Включён умный выбор: {profile}",
+  "@nodeOverviewSwitchedToSmart": {
+    "placeholders": {
+      "profile": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewSwitchedToSmartWithNode": "Включён умный выбор: {profile} ({node})",
+  "@nodeOverviewSwitchedToSmartWithNode": {
+    "placeholders": {
+      "profile": {
+        "type": "String"
+      },
+      "node": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewAutoConnectedSmartBest": "Умный выбор включён: {profile} (лучший: {node} · {delay} мс)",
+  "@nodeOverviewAutoConnectedSmartBest": {
+    "placeholders": {
+      "profile": {
+        "type": "String"
+      },
+      "node": {
+        "type": "String"
+      },
+      "delay": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewLockedManualNode": "Закреплён фиксированный узел: {profile} · {node}",
+  "@nodeOverviewLockedManualNode": {
+    "placeholders": {
+      "profile": {
+        "type": "String"
+      },
+      "node": {
+        "type": "String"
+      }
+    }
+  },
+  "expertMode": "Режим эксперта",
+  "noviceMode": "Простой режим",
+  "goToPurchasePrompt": "Нет подписки? Купить или активировать код",
+  "purchasePlansRetry": "Перезагрузить тарифы",
+  "purchasePlansErrorHint": "Вход, бесплатная регистрация и активация кода справа остаются доступны.",
+  "purchasePlanFeaturedBadge": "Рекомендуем",
+  "purchasePlanBuyNow": "Купить",
+  "purchaseAcquirePlanCode": "Получить код",
+  "purchasePlanFreeBadge": "Пробный",
+  "purchasePlanFreeHint": "Бесплатно",
+  "purchasePlanUnitPriceHint": "~{price} / ГБ",
+  "@purchasePlanUnitPriceHint": {
+    "placeholders": {
+      "price": {
+        "type": "String"
+      }
+    }
+  },
+  "purchaseSpecDevicesUnlimited": "Устройства: без лимита",
+  "purchaseSpecDevicesCount": "Лимит устройств: {count}",
+  "@purchaseSpecDevicesCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "purchaseSpecDurationUnlimited": "Срок действия: бессрочно",
+  "purchaseSpecBillingCycle": "Период оплаты: {periods}",
+  "@purchaseSpecBillingCycle": {
+    "placeholders": {
+      "periods": {
+        "type": "String"
+      }
+    }
+  },
+  "purchaseSpecTrafficUntilUsed": "Трафик действует до исчерпания",
+  "purchaseSpecSpeedLimit": "Скорость: до {speed} Мбит/с",
+  "@purchaseSpecSpeedLimit": {
+    "placeholders": {
+      "speed": {
+        "type": "int"
+      }
+    }
+  },
+  "purchaseSpecAllDevicesSupported": "Поддержка всех типов устройств",
+  "purchaseHeaderTrialBadge": "2 ГиБ бесплатно при регистрации · Бессрочный трафик",
+  "purchaseHeaderSyncedBadge": "Узлы синхронизированы",
+  "purchaseAuthTabLogin": "Вход",
+  "purchaseAuthTabRegister": "Регистрация +2G",
+  "purchaseRegisterTrialBanner": "Получите 2 ГиБ бессрочного пробного трафика сразу после регистрации с автоимпортом узлов.",
+  "purchaseRegisterSubmit": "Создать аккаунт и синхронизировать",
+  "purchaseRegistering": "Создание аккаунта…",
+  "purchasePasswordMinLength": "Пароль должен содержать минимум 8 символов.",
+  "purchasePreloginCodeHint": "Уже купили код? Вставьте его сюда для автопроверки после входа",
+  "purchaseHandoffTitle": "Открыт магазин для «{plan}»",
+  "@purchaseHandoffTitle": {
+    "placeholders": {
+      "plan": {
+        "type": "String"
+      }
+    }
+  },
+  "purchaseHandoffDescription": "Скопируйте код после покупки и вернитесь в окно — бонусы проверятся автоматически без списания.",
+  "purchaseHandoffPasteAction": "Вставить и проверить",
+  "purchaseOnlineSupport": "Онлайн-поддержка",
+  "purchaseBackupContactsLabel": "Резервная поддержка (WeChat)",
+  "purchaseEmailExistsError": "Этот email уже зарегистрирован. Переключитесь на «Вход».",
+  "purchaseRegistrationClosedError": "Регистрация новых аккаунтов временно закрыта.",
+  "purchaseRegisterWebRequiredError": "Требуется подтверждение почты или CAPTCHA. Нажмите «Создать аккаунт на сайте» ниже.",
+  "purchaseGetCardDescription": "Приобрести подарочную карту или получить помощь можно через магазин самообслуживания или онлайн-поддержку.",
+  "purchaseClipboardEmpty": "В буфере обмена не найден код активации.",
+  "purchaseEmailDomainError": "Этот почтовый домен не поддерживается. Используйте другой адрес электронной почты.",
+  "purchaseGmailAliasError": "Псевдонимы Gmail (со знаком «+») не поддерживаются. Используйте основной адрес.",
+  "appBrandName": "FreedomNet",
+  "appBrandTagline": "Интеллектуальный сетевой клиент нового поколения",
+  "tributeDialogTitle": "Дань уважения Open Source и благодарности",
+  "tributeFlclashxBadge": "OPEN-SOURCE HERITAGE",
+  "tributeFlclashxTitle": "Создано на базе открытого проекта FlClashX",
+  "tributeFlclashxBody": "FreedomNet официально заявляет, что данное приложение создано на базе открытого проекта FlClashX (pluralplay/FlClashX) и экосистемы FlClash / Mihomo (Clash.Meta). Выражаем глубочайшее уважение и искреннюю благодарность авторам и всем участникам открытого сообщества.",
+  "tributeGeminiBadge": "ENGINEERING & DESIGN SUPPORT",
+  "tributeGeminiTitle": "Особая благодарность Gemini 4",
+  "tributeGeminiBody": "Выражаем особую благодарность Gemini 4 за ключевую поддержку в архитектуре, коммерческом UI/UX-дизайне, инженерной разработке и автоматизированном тестировании FreedomNet.",
+  "brandDialogSubtitle": "О бренде и ключевых возможностях",
+  "brandShowcaseBadge": "FREEDOMNET · ФЛАГМАНСКИЙ КЛИЕНТ",
+  "brandShowcaseHeroTitle": "Связь без границ и мгновенный отклик",
+  "brandShowcaseHeroBody": "FreedomNet обеспечивает стабильное и быстрое интеллектуальное ускорение сети для удалённой работы, ИИ-сервисов и потокового видео в один клик.",
+  "brandPillarSmartTitle": "Умный выбор · Точный контроль задержки",
+  "brandPillarSmartBody": "Параллельная проверка узлов, наглядная индикация задержки, подключение к самому быстрому узлу в один клик и фильтр по регионам.",
+  "brandPillarModesTitle": "Два режима · От простоты к контролю",
+  "brandPillarModesBody": "«Простой режим» обеспечивает мгновенный запуск TUN и системного прокси, а «Экспертный режим» открывает детальное управление маршрутами и диагностикой.",
+  "brandPillarServiceTitle": "Прозрачный трафик · Мгновенная активация",
+  "brandPillarServiceBody": "Наглядный учёт трафика и срока действия подписки, быстрая проверка и активация подарочных карт, синхронизация профилей и поддержка.",
+  "healthDetailOutboundProbeFallbackOk": "Проба задержки узла {node} не прошла, но реальный трафик работает",
+  "@healthDetailOutboundProbeFallbackOk": {
+    "placeholders": {
+      "node": {
+        "type": "String"
+      }
+    }
+  },
+  "purchaseForgotPassword": "Забыли пароль?",
+  "purchaseResetPasswordTitle": "Сброс пароля",
+  "purchaseResetPasswordDescription": "Введите зарегистрированный email и 6-значный код подтверждения, чтобы задать новый пароль.",
+  "purchaseEmailCode": "Код подтверждения email",
+  "purchaseEmailCodeRequired": "Введите 6-значный код подтверждения",
+  "purchaseSendCode": "Отправить код",
+  "purchaseSendingCode": "Отправка...",
+  "purchaseSendCodeCooldown": "Повтор через {seconds}с",
+  "@purchaseSendCodeCooldown": {
+    "placeholders": {
+      "seconds": {
+        "type": "int"
+      }
+    }
+  },
+  "purchaseCodeSentNotice": "Код подтверждения отправлен. Проверьте почту и папку «Спам».",
+  "purchaseInviteCode": "Код приглашения",
+  "purchaseInviteCodeOptionalToggle": "Указать код приглашения (необязательно)",
+  "purchaseInviteCodeRequired": "Введите код приглашения",
+  "purchaseNewPassword": "Новый пароль",
+  "purchaseResetPasswordSubmit": "Подтвердить сброс пароля",
+  "purchaseResettingPassword": "Сброс...",
+  "purchaseBackToLogin": "Вернуться ко входу",
+  "purchaseResetPasswordSuccess": "Пароль сброшен. Войдите с новым паролем.",
+  "purchaseCaptchaRequiredNotice": "На сайте включена CAPTCHA. Продолжите на веб-странице.",
+  "purchaseOpenWebAuth": "Продолжить на сайте",
+  "purchaseTosAgreementPrefix": "Регистрируясь, вы принимаете",
+  "purchaseTosLinkLabel": "Условия использования",
+  "purchaseInviteCodeRequiredError": "Для регистрации требуется код приглашения.",
+  "purchaseInviteCodeInvalidError": "Недействительный или просроченный код приглашения.",
+  "purchaseInvitationUnavailableError": "Приглашения временно недоступны.",
+  "purchaseEmailCodeInvalidError": "Недействительный или просроченный код из письма.",
+  "purchaseEmailCodeLockedError": "Слишком много попыток ввода кода. Запросите новый позже.",
+  "purchaseEmailCooldownError": "Подождите перед повторной отправкой кода.",
+  "purchaseEmailRateLimitedError": "Превышен лимит запросов кода. Попробуйте позже.",
+  "purchaseEmailVerifyDisabledError": "Подтверждение по email отключено.",
+  "purchaseMailUnavailableError": "Сервис отправки писем недоступен. Свяжитесь с поддержкой или попробуйте позже.",
+  "purchaseCooldownWithSecondsError": "Слишком много запросов. Повторите через {seconds} с.",
+  "@purchaseCooldownWithSecondsError": {
+    "placeholders": {
+      "seconds": {
+        "type": "int"
+      }
+    }
+  },
+  "supportSheetTitle": "Онлайн-поддержка",
+  "supportStatusConnected": "Подключено",
+  "supportStatusConnecting": "Подключение",
+  "supportStatusOffline": "Офлайн",
+  "supportNewConversation": "Новый диалог",
+  "supportOpenExternalFallback": "Открыть в браузере",
+  "supportRefreshTooltip": "Обновить сообщения",
+  "supportWelcomeFallbackTitle": "Добро пожаловать в поддержку FreedomNet",
+  "supportWelcomeFallbackSubtitle": "Задайте любой вопрос о тарифах, узлах или подарочных картах.",
+  "supportTypingIndicator": "{name} печатает...",
+  "@supportTypingIndicator": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "supportTypingAnonymous": "Оператор",
+  "supportMessageSending": "Отправка",
+  "supportMessageFailed": "Ошибка",
+  "supportRetryAction": "Повторить",
+  "supportComposerHint": "Введите сообщение, Enter — отправить...",
+  "supportSendTooltip": "Отправить",
+  "supportConversationLockedNotice": "Этот диалог завершён. Начните новый диалог, чтобы продолжить.",
+  "supportNotConfiguredNotice": "Онлайн-чат пока не настроен. Используйте резервные контакты WeChat ниже.",
+  "supportBackupWechatToggle": "Резервный WeChat",
+  "purchaseAcquireOpenSupport": "Написать в поддержку",
+  "renewSubscription": "Продлить подписку",
+  "buyExtraTraffic": "Докупить трафик",
+  "themeSkyConsoleSection": "Синхронизация неба",
+  "themeSkyModeFollow": "По подключению",
+  "themeSkyModeFollowDesc": "Ясный день при подключении, звёздная ночь без связи",
+  "themeSkyModeNight": "Всегда звёздная ночь",
+  "themeSkyModeNightDesc": "Сохранять тёмное звёздное небо даже при подключении",
+  "themeSkyModeDay": "Всегда ясный день",
+  "themeSkyModeDayDesc": "Сохранять светлое ясное небо даже без подключения",
+  "themeSkyStatusDayConnected": "Ясный день · Подключено",
+  "themeSkyStatusConnecting": "Рассвет · Подключение",
+  "themeSkyStatusNightDisconnected": "Звёздная ночь · Отключено",
+  "themeSkyStatusLockedNight": "Звёздная ночь · Закреплено",
+  "themeSkyStatusLockedDay": "Ясный день · Закреплено",
+  "themeCustomBgNotice": "Обнаружены обои подписки",
+  "themeIgnoreCustomBgLabel": "Предпочитать фон неба",
+  "themeAtmosphereSection": "Текстура и анимация",
+  "themeGlassPresetLabel": "Прозрачность карточек",
+  "themeGlassPresetAiry": "Лёгкая",
+  "themeGlassPresetBalanced": "Баланс",
+  "themeGlassPresetSolid": "Плотная",
+  "themeSkyAmbientAnimation": "Движение облаков и звёзд",
+  "themeSkyAmbientAnimationDesc": "Останавливает фоновое движение для экономии энергии, сохраняя рассвет и закат",
+  "themeTextScaleDefaultDesc": "По умолчанию системы (100%)",
+  "themeSkyStatusCustomBgActive": "Обои подписки активны · Синхронизация темы",
+  "themeAtmosphereCustomBgHint": "Активны обои подписки. Включите «Предпочитать фон неба» выше для настройки стекла и анимации.",
+  "tvSyncCouldNotGetIp": "Не удалось получить IP-адрес",
+  "tvSyncApplying": "Получаю профиль с телефона…",
+  "tvSyncSuccess": "Профиль добавлен",
+  "tvSyncFailed": "Не удалось добавить профиль",
+  "tvSyncScanQrHint": "Отсканируйте код камерой телефона",
+  "tvSyncWebPageTitle": "FreedomNet — подписка на ТВ",
+  "tvSyncWebHeading": "Подписка на телевизор",
+  "tvSyncWebSubtitle": "Вставьте ссылку на подписку и нажмите «Отправить» — она появится на телевизоре автоматически.",
+  "tvSyncWebPaste": "Вставить",
+  "tvSyncWebSend": "Отправить",
+  "tvSyncWebEmptyUrl": "Вставьте ссылку подписки",
+  "tvSyncWebSending": "Отправляю…",
+  "tvSyncWebRejected": "Телевизор отклонил ссылку",
+  "tvSyncWebUnreachable": "Не удалось связаться с телевизором",
+  "tvSyncWebApplying": "Телевизор добавляет профиль…",
+  "tvSyncWebSuccess": "✅ Готово! Профиль добавлен на телевизор",
+  "tvSyncWebErrorPrefix": "❌ Ошибка: ",
+  "tvSyncWebReceived": "Телевизор получил ссылку…",
+  "tvSyncWebConnectionLost": "Связь с телевизором потеряна",
+  "purchaseSafetyTitle": "Официальная защита покупки · Поддержка 24/7",
+  "purchaseSafetyBody": "Для вашей сетевой конфиденциальности и безопасности свяжитесь напрямую с поддержкой для покупки.",
+  "purchaseSafetyTagOfficial": "Официальный канал",
+  "purchaseSafetyTagFunds": "Защита средств",
+  "purchaseSafetyTag24h": "Ответ 24/7"
 }

@@ -2159,5 +2159,25 @@ final profileOverrideStateProvider = AutoDisposeNotifierProvider<
 );
 
 typedef _$ProfileOverrideState = AutoDisposeNotifier<ProfileOverrideStateModel>;
+String _$routingRuleSetupHash() => r'b7f82d9c03e14a6f7203bc45d6e7f80912345678';
+
+/// See also [routingRuleSetup].
+@ProviderFor(routingRuleSetup)
+final routingRuleSetupProvider = AutoDisposeProvider<
+    VM5<String?, OverrideData, OverrideData?, RouteMode,
+        LocalSplitMode>>.internal(
+  routingRuleSetup,
+  name: r'routingRuleSetupProvider',
+  debugGetCreateSourceHash: const bool.fromEnvironment('dart.vm.product')
+      ? null
+      : _$routingRuleSetupHash,
+  dependencies: null,
+  allTransitiveDependencies: null,
+);
+
+@Deprecated('Will be removed in 3.0. Use Ref instead')
+// ignore: unused_element
+typedef RoutingRuleSetupRef = AutoDisposeProviderRef<
+    VM5<String?, OverrideData, OverrideData?, RouteMode, LocalSplitMode>>;
 // ignore_for_file: type=lint
 // ignore_for_file: subtype_of_sealed_class, invalid_use_of_internal_member, invalid_use_of_visible_for_testing_member, deprecated_member_use_from_same_package

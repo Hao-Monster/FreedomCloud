@@ -51,7 +51,7 @@ if ($Mode -eq 'NativeCompile') {
         Tee-Object -FilePath $logPath -Append
     exit $compileExitCode
 }
-& $compiler /nologo /std:c++17 /EHsc /W4 /WX /D_HAS_EXCEPTIONS=0 "/Fo$object" "/Fe$executable" $source wininet.lib rasapi32.lib 2>&1 |
+& $compiler /nologo /std:c++17 /EHsc /W4 /WX /D_HAS_EXCEPTIONS=0 "/Fo$object" "/Fe$executable" $source wininet.lib rasapi32.lib user32.lib 2>&1 |
     Tee-Object -FilePath $logPath
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 & $executable 2>&1 | Tee-Object -FilePath $logPath -Append

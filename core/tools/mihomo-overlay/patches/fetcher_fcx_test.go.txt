@@ -1,0 +1,237 @@
+package resource
+
+import (
+	"context"
+	"errors"
+	"os"
+	"path/filepath"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/metacubex/mihomo/common/utils"
+	P "github.com/metacubex/mihomo/constant/provider"
+)
+
+type fakeRemoteVehicle struct {
+	path   string
+	typ    P.VehicleType
+	readFn func(ctx context.Context, oldHash utils.HashType) ([]byte, utils.HashType, error)
+}
+
+func (v *fakeRemoteVehicle) Read(ctx context.Context, oldHash utils.HashType) ([]byte, utils.HashType, error) {
+	return v.readFn(ctx, oldHash)
+}
+
+func (v *fakeRemoteVehicle) Write(buf []byte) error {
+	return os.WriteFile(v.path, buf, 0o644)
+}
+
+func (v *fakeRemoteVehicle) Path() string {
+	return v.path
+}
+
+func (v *fakeRemoteVehicle) Url() string {
+	return "https://provider.example/test.yaml"
+}
+
+func (v *fakeRemoteVehicle) Type() P.VehicleType {
+	return v.typ
+}
+
+func (v *fakeRemoteVehicle) Proxy() string {
+	return ""
+}
+
+func TestFCXFetcherInitialRemoteDoesNotBlockAndNotifiesUpdate(t *testing.T) {
+	cachePath := filepath.Join(t.TempDir(), "remote.yaml")
+	release := make(chan struct{})
+	defer func() {
+		select {
+		case <-release:
+		default:
+			close(release)
+		}
+	}()
+
+	var notified []string
+	var mu sync.Mutex
+	SetFCXProviderUpdatedCallback(func(name string) {
+		mu.Lock()
+		notified = append(notified, name)
+		mu.Unlock()
+	})
+	t.Cleanup(func() { SetFCXProviderUpdatedCallback(nil) })
+
+	vehicle := &fakeRemoteVehicle{
+		path: cachePath,
+		typ:  P.HTTP,
+		readFn: func(ctx context.Context, _ utils.HashType) ([]byte, utils.HashType, error) {
+			select {
+			case <-release:
+				payload := []byte("alpha")
+				return payload, utils.MakeHash(payload), nil
+			case <-ctx.Done():
+				return nil, utils.HashType{}, ctx.Err()
+			}
+		},
+	}
+
+	updatedCh := make(chan string, 1)
+	fetcher := NewFetcher[string](
+		"remote-alpha",
+		time.Hour,
+		vehicle,
+		nil,
+		func(b []byte) (string, error) { return string(b), nil },
+		func(v string) { updatedCh <- v },
+	)
+	t.Cleanup(func() { _ = fetcher.Close() })
+
+	start := time.Now()
+	initialVal, err := fetcher.Initial()
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatalf("Initial() returned error: %v", err)
+	}
+	if initialVal != "" {
+		t.Fatalf("expected empty initial value before remote release, got %q", initialVal)
+	}
+	if elapsed > 100*time.Millisecond {
+		t.Fatalf("Initial() blocked for %s", elapsed)
+	}
+
+	close(release)
+
+	select {
+	case got := <-updatedCh:
+		if got != "alpha" {
+			t.Fatalf("unexpected updated payload: %q", got)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("background initial pull did not complete after release")
+	}
+
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		mu.Lock()
+		count := len(notified)
+		mu.Unlock()
+		if count > 0 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(notified) != 1 || notified[0] != "remote-alpha" {
+		t.Fatalf("expected single callback for remote-alpha, got %v", notified)
+	}
+	if fetcher.UpdatedAt().IsZero() {
+		t.Fatal("expected non-zero UpdatedAt after background pull")
+	}
+}
+
+func TestFCXFetcherInitialRemoteIntervalZeroRetriesTransientFailure(t *testing.T) {
+	restoreDelays := SetFCXInitialRetryDelaysForTest([]time.Duration{25 * time.Millisecond, 25 * time.Millisecond})
+	defer restoreDelays()
+
+	cachePath := filepath.Join(t.TempDir(), "retry.yaml")
+	var attempts atomic.Int32
+	vehicle := &fakeRemoteVehicle{
+		path: cachePath,
+		typ:  P.HTTP,
+		readFn: func(_ context.Context, _ utils.HashType) ([]byte, utils.HashType, error) {
+			if attempts.Add(1) == 1 {
+				return nil, utils.HashType{}, errors.New("bootstrap network not ready")
+			}
+			payload := []byte("recovered")
+			return payload, utils.MakeHash(payload), nil
+		},
+	}
+
+	updatedCh := make(chan string, 1)
+	fetcher := NewFetcher[string](
+		"retry-zero-interval",
+		0,
+		vehicle,
+		nil,
+		func(b []byte) (string, error) { return string(b), nil },
+		func(v string) { updatedCh <- v },
+	)
+	t.Cleanup(func() { _ = fetcher.Close() })
+
+	if _, err := fetcher.Initial(); err != nil {
+		t.Fatalf("Initial() failed: %v", err)
+	}
+
+	select {
+	case got := <-updatedCh:
+		if got != "recovered" {
+			t.Fatalf("unexpected payload %q", got)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatalf("interval=0 provider did not recover after transient error (attempts=%d)", attempts.Load())
+	}
+}
+
+func TestFCXFetcherFileVehicleMissingRemainsSynchronousError(t *testing.T) {
+	missingPath := filepath.Join(t.TempDir(), "missing.yaml")
+	vehicle := NewFileVehicle(missingPath)
+	fetcher := NewFetcher[string](
+		"local-missing",
+		0,
+		vehicle,
+		nil,
+		func(b []byte) (string, error) { return string(b), nil },
+		nil,
+	)
+	t.Cleanup(func() { _ = fetcher.Close() })
+
+	if _, err := fetcher.Initial(); err == nil {
+		t.Fatal("expected missing local P.File vehicle to fail synchronously in Initial()")
+	}
+}
+
+func TestFCXFetcherConcurrentAccessIsRaceFree(t *testing.T) {
+	cachePath := filepath.Join(t.TempDir(), "concurrent.yaml")
+	var seq atomic.Int64
+	vehicle := &fakeRemoteVehicle{
+		path: cachePath,
+		typ:  P.HTTP,
+		readFn: func(_ context.Context, _ utils.HashType) ([]byte, utils.HashType, error) {
+			n := seq.Add(1)
+			payload := []byte{byte(n), byte(n >> 8)}
+			return payload, utils.MakeHash(payload), nil
+		},
+	}
+	fetcher := NewFetcher[int](
+		"concurrent",
+		0,
+		vehicle,
+		nil,
+		func(b []byte) (int, error) { return len(b), nil },
+		func(int) {},
+	)
+	t.Cleanup(func() { _ = fetcher.Close() })
+
+	var wg sync.WaitGroup
+	for i := 0; i < 4; i++ {
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 25; j++ {
+				_, _, _ = fetcher.Update()
+			}
+		}()
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 25; j++ {
+				_ = fetcher.UpdatedAt()
+			}
+		}()
+	}
+	wg.Wait()
+}

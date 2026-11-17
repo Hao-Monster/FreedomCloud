@@ -1,4 +1,4 @@
-# FlClashX M3 Windows 11 VM qualification checklist
+# FreedomNet M3 Windows 11 VM qualification checklist
 
 This checklist applies only to a Microsoft-signed M3 qualification bundle. Do
 not enable test signing or load the strict driver on a development workstation.

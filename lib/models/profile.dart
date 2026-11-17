@@ -19,6 +19,7 @@ typedef SelectedMap = Map<String, String>;
 // Local-only metadata; unlike provider headers this must survive every refresh.
 const xboardTlsMarker = 'local-xboard-tls';
 const xboardAccountMarker = 'local-xboard-account';
+const smartSelectionModeMarker = 'local-selection-mode';
 
 @freezed
 class SubscriptionInfo with _$SubscriptionInfo {
@@ -137,6 +138,98 @@ extension ProfilesExt on List<Profile> {
   }
 }
 
+bool isProfileAutoUpdateDue(Profile profile, {DateTime? now}) {
+  if (!profile.autoUpdate ||
+      profile.isUpdating ||
+      profile.type == ProfileType.file) {
+    return false;
+  }
+  final lastUpdate = profile.lastUpdateDate;
+  if (lastUpdate == null) {
+    return true;
+  }
+  final referenceNow = now ?? DateTime.now();
+  return !lastUpdate.add(profile.autoUpdateDuration).isAfter(referenceNow);
+}
+
+/// In-memory exponential backoff for failed background `autoUpdateProfiles`
+/// runs. Keyed to `(id, url, lastUpdateDate)` so any URL edit, manual refresh,
+/// or account subscription sync automatically invalidates prior failure state,
+/// without ever fabricating `Profile.lastUpdateDate`.
+class ProfileAutoUpdateBackoff {
+  static const List<Duration> schedule = <Duration>[
+    Duration(minutes: 40),
+    Duration(hours: 2),
+    Duration(hours: 6),
+    Duration(hours: 12),
+  ];
+
+  final Map<
+      String,
+      ({
+        String url,
+        DateTime? lastUpdateDate,
+        int failures,
+        DateTime retryAfter,
+      })> _entries = <
+      String,
+      ({
+        String url,
+        DateTime? lastUpdateDate,
+        int failures,
+        DateTime retryAfter,
+      })>{};
+
+  bool _matchesSnapshot(
+    ({
+      String url,
+      DateTime? lastUpdateDate,
+      int failures,
+      DateTime retryAfter,
+    }) entry,
+    Profile profile,
+  ) =>
+      entry.url == profile.url &&
+      entry.lastUpdateDate == profile.lastUpdateDate;
+
+  bool canAttempt(Profile profile, {DateTime? now}) {
+    final entry = _entries[profile.id];
+    if (entry == null) {
+      return true;
+    }
+    if (!_matchesSnapshot(entry, profile)) {
+      _entries.remove(profile.id);
+      return true;
+    }
+    final referenceNow = now ?? DateTime.now();
+    return !referenceNow.isBefore(entry.retryAfter);
+  }
+
+  Duration recordFailure(Profile profile, {DateTime? now}) {
+    final referenceNow = now ?? DateTime.now();
+    final existing = _entries[profile.id];
+    final previousFailures =
+        existing != null && _matchesSnapshot(existing, profile)
+            ? existing.failures
+            : 0;
+    final failures = previousFailures + 1;
+    final index =
+        failures - 1 < schedule.length ? failures - 1 : schedule.length - 1;
+    final delay = schedule[index];
+    _entries[profile.id] = (
+      url: profile.url,
+      lastUpdateDate: profile.lastUpdateDate,
+      failures: failures,
+      retryAfter: referenceNow.add(delay),
+    );
+    return delay;
+  }
+
+  void clear(String profileId) {
+    _entries.remove(profileId);
+  }
+}
+
 extension ProfileExtension on Profile {
   ProfileType get type =>
       url.isEmpty == true ? ProfileType.file : ProfileType.url;
@@ -214,6 +307,10 @@ extension ProfileExtension on Profile {
     }
     final owner = this.providerHeaders[xboardAccountMarker];
     if (owner != null) providerHeaders[xboardAccountMarker] = owner;
+    final selectionMode = this.providerHeaders[smartSelectionModeMarker];
+    if (selectionMode != null) {
+      providerHeaders[smartSelectionModeMarker] = selectionMode;
+    }
     
     final headersToCollect = [
       'announce',

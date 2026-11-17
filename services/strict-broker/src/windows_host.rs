@@ -1,10 +1,12 @@
+use std::collections::VecDeque;
 use std::ffi::c_void;
 use std::fs;
 use std::os::windows::fs::MetadataExt;
 use std::path::{Component, Path, PathBuf};
 use std::ptr::null_mut;
-use std::sync::mpsc::{self, Receiver, RecvTimeoutError, SyncSender, TryRecvError, TrySendError};
-use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::mpsc::{self, SyncSender, TrySendError};
+use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
@@ -32,9 +34,9 @@ use crate::{
 const BROKER_SERVICE_NAME: &str = "FlClashStrictBroker";
 const BROKER_FILE_NAME: &str = "FlClashStrictBroker.exe";
 const DRIVER_FILE_NAME: &str = "FlClashStrictCallout.sys";
-const AGENT_FILE_NAME: &str = "FlClashAgent.exe";
-const CORE_FILE_NAME: &str = "FlClashCore.exe";
-const RECOVERY_DIRECTORY_NAME: &str = "FlClashX.StrictBroker";
+const AGENT_FILE_NAME: &str = "FreedomNetAgent.exe";
+const CORE_FILE_NAME: &str = "FreedomNetCore.exe";
+const RECOVERY_DIRECTORY_NAME: &str = "FreedomNet.StrictBroker";
 const MAX_TRUSTED_PATH_UNITS: usize = 1024;
 const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0400;
 const SESSION_WORKERS: usize = 4;
@@ -62,10 +64,169 @@ enum EngineControl {
     Shutdown(SyncSender<Result<()>>),
 }
 
+struct EngineInboxState {
+    dispatch: VecDeque<EngineDispatch>,
+    dispatch_capacity: usize,
+    dispatch_closed: bool,
+    control: VecDeque<EngineControl>,
+    control_capacity: usize,
+    control_closed: bool,
+}
+
+struct EngineInboxShared {
+    state: Mutex<EngineInboxState>,
+    wakeup: Condvar,
+    dispatch_senders: AtomicUsize,
+    control_senders: AtomicUsize,
+    receiver_alive: std::sync::atomic::AtomicBool,
+}
+
+struct EngineDispatchSender {
+    shared: Arc<EngineInboxShared>,
+}
+
+impl Clone for EngineDispatchSender {
+    fn clone(&self) -> Self {
+        self.shared.dispatch_senders.fetch_add(1, Ordering::Relaxed);
+        Self {
+            shared: self.shared.clone(),
+        }
+    }
+}
+
+impl Drop for EngineDispatchSender {
+    fn drop(&mut self) {
+        if self.shared.dispatch_senders.fetch_sub(1, Ordering::AcqRel) == 1 {
+            if let Ok(mut state) = self.shared.state.lock() {
+                state.dispatch_closed = true;
+                self.shared.wakeup.notify_one();
+            }
+        }
+    }
+}
+
+impl EngineDispatchSender {
+    fn try_send(&self, item: EngineDispatch) -> std::result::Result<(), TrySendError<EngineDispatch>> {
+        if !self.shared.receiver_alive.load(Ordering::Acquire) {
+            return Err(TrySendError::Disconnected(item));
+        }
+        let mut state = self
+            .shared
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if !self.shared.receiver_alive.load(Ordering::Acquire) {
+            return Err(TrySendError::Disconnected(item));
+        }
+        if state.dispatch.len() >= state.dispatch_capacity {
+            return Err(TrySendError::Full(item));
+        }
+        state.dispatch.push_back(item);
+        drop(state);
+        self.shared.wakeup.notify_one();
+        Ok(())
+    }
+
+    #[cfg(test)]
+    fn send(&self, item: EngineDispatch) -> std::result::Result<(), &'static str> {
+        self.try_send(item).map_err(|_| "dispatch queue closed or full")
+    }
+}
+
+struct EngineControlSender {
+    shared: Arc<EngineInboxShared>,
+}
+
+impl Clone for EngineControlSender {
+    fn clone(&self) -> Self {
+        self.shared.control_senders.fetch_add(1, Ordering::Relaxed);
+        Self {
+            shared: self.shared.clone(),
+        }
+    }
+}
+
+impl Drop for EngineControlSender {
+    fn drop(&mut self) {
+        if self.shared.control_senders.fetch_sub(1, Ordering::AcqRel) == 1 {
+            if let Ok(mut state) = self.shared.state.lock() {
+                state.control_closed = true;
+                self.shared.wakeup.notify_one();
+            }
+        }
+    }
+}
+
+impl EngineControlSender {
+    fn try_send(&self, item: EngineControl) -> std::result::Result<(), TrySendError<EngineControl>> {
+        if !self.shared.receiver_alive.load(Ordering::Acquire) {
+            return Err(TrySendError::Disconnected(item));
+        }
+        let mut state = self
+            .shared
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if !self.shared.receiver_alive.load(Ordering::Acquire) {
+            return Err(TrySendError::Disconnected(item));
+        }
+        if state.control.len() >= state.control_capacity {
+            return Err(TrySendError::Full(item));
+        }
+        state.control.push_back(item);
+        drop(state);
+        self.shared.wakeup.notify_one();
+        Ok(())
+    }
+
+    #[cfg(test)]
+    fn send(&self, item: EngineControl) -> std::result::Result<(), &'static str> {
+        self.try_send(item).map_err(|_| "control queue closed or full")
+    }
+}
+
+struct EngineInboxReceiver {
+    shared: Arc<EngineInboxShared>,
+}
+
+impl Drop for EngineInboxReceiver {
+    fn drop(&mut self) {
+        self.shared.receiver_alive.store(false, Ordering::Release);
+    }
+}
+
+fn engine_actor_channels(
+    dispatch_capacity: usize,
+) -> (EngineDispatchSender, EngineControlSender, EngineInboxReceiver) {
+    let shared = Arc::new(EngineInboxShared {
+        state: Mutex::new(EngineInboxState {
+            dispatch: VecDeque::with_capacity(dispatch_capacity),
+            dispatch_capacity,
+            dispatch_closed: false,
+            control: VecDeque::with_capacity(1),
+            control_capacity: 1,
+            control_closed: false,
+        }),
+        wakeup: Condvar::new(),
+        dispatch_senders: AtomicUsize::new(1),
+        control_senders: AtomicUsize::new(1),
+        receiver_alive: std::sync::atomic::AtomicBool::new(true),
+    });
+    (
+        EngineDispatchSender {
+            shared: shared.clone(),
+        },
+        EngineControlSender {
+            shared: shared.clone(),
+        },
+        EngineInboxReceiver { shared },
+    )
+}
+
 #[derive(Clone)]
 struct EngineActorClient {
-    dispatch: SyncSender<EngineDispatch>,
-    control: SyncSender<EngineControl>,
+    dispatch: EngineDispatchSender,
+    control: EngineControlSender,
     logger: Arc<StrictBrokerLogger>,
 }
 
@@ -78,6 +239,9 @@ trait EngineRuntime {
     fn dispatch(&mut self, request: AuthorizedBrokerRequest) -> BrokerResponse;
     fn verify_health(&mut self) -> Result<()>;
     fn force_fail_closed(&mut self) -> Result<()>;
+    fn has_active_health_supervision(&self) -> bool {
+        true
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -381,6 +545,10 @@ impl EngineRuntime for ProductionDispatcher {
         self.health_probe_mut().verify_active()
     }
 
+    fn has_active_health_supervision(&self) -> bool {
+        self.health_probe().is_active()
+    }
+
     fn force_fail_closed(&mut self) -> Result<()> {
         let prepare = self.health_probe_mut().prepare_deactivation();
         let revoke = self
@@ -431,8 +599,7 @@ impl EngineActor {
         package: StrictPackageManifest,
         logger: Arc<StrictBrokerLogger>,
     ) -> Result<Self> {
-        let (dispatch_tx, dispatch_rx) = mpsc::sync_channel(ENGINE_QUEUE_CAPACITY);
-        let (control_tx, control_rx) = mpsc::sync_channel(1);
+        let (dispatch_tx, control_tx, inbox) = engine_actor_channels(ENGINE_QUEUE_CAPACITY);
         let (ready_tx, ready_rx) = mpsc::sync_channel(1);
         let worker_logger = logger.clone();
         let worker = thread::Builder::new()
@@ -454,7 +621,7 @@ impl EngineActor {
                         .force_fail_closed()
                         .context("startup listener left before strict engine became ready");
                 }
-                let result = run_engine_actor(&mut dispatcher, dispatch_rx, control_rx);
+                let result = run_engine_actor(&mut dispatcher, inbox);
                 if let Err(error) = &result {
                     worker_logger.log(format!("strict engine actor failed: {error:#}"));
                 }
@@ -578,14 +745,21 @@ impl EngineActorClient {
     }
 }
 
+enum NextEngineStep {
+    Control(EngineControl),
+    ControlDisconnected,
+    Dispatch(EngineDispatch),
+    DispatchDisconnected,
+    PollHealth,
+}
+
 fn run_engine_actor<R: EngineRuntime>(
     dispatcher: &mut R,
-    dispatch: Receiver<EngineDispatch>,
-    control: Receiver<EngineControl>,
+    inbox: EngineInboxReceiver,
 ) -> Result<()> {
     let mut health_supervision_suspended = false;
     loop {
-        if !health_supervision_suspended {
+        if dispatcher.has_active_health_supervision() && !health_supervision_suspended {
             let health = dispatcher.verify_health();
             if let Err(health) = health {
                 let cleanup = dispatcher.force_fail_closed();
@@ -599,17 +773,63 @@ fn run_engine_actor<R: EngineRuntime>(
                 // disable and a fresh authenticated commit, but do not spin on a
                 // failed runtime. A fresh authenticated commit attempt is the only
                 // operation that can resume supervision.
-                reject_queued_dispatches_after_health_failure(&dispatch);
+                reject_queued_dispatches_after_health_failure(&inbox);
                 health_supervision_suspended = true;
                 continue;
             }
         }
-        match control.try_recv() {
-            Ok(EngineControl::ForceFailClosed(response)) => {
-                send_result(response, dispatcher.force_fail_closed());
-                continue;
+
+        let active_poll =
+            dispatcher.has_active_health_supervision() && !health_supervision_suspended;
+        let next_step = {
+            let mut state = inbox
+                .shared
+                .state
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            loop {
+                if let Some(control) = state.control.pop_front() {
+                    break NextEngineStep::Control(control);
+                }
+                if state.control_closed {
+                    break NextEngineStep::ControlDisconnected;
+                }
+                if let Some(command) = state.dispatch.pop_front() {
+                    break NextEngineStep::Dispatch(command);
+                }
+                if state.dispatch_closed {
+                    break NextEngineStep::DispatchDisconnected;
+                }
+                if active_poll {
+                    let (next_state, wait_result) = inbox
+                        .shared
+                        .wakeup
+                        .wait_timeout(state, ENGINE_POLL_INTERVAL)
+                        .unwrap_or_else(|poisoned| poisoned.into_inner());
+                    state = next_state;
+                    if wait_result.timed_out()
+                        && state.control.is_empty()
+                        && !state.control_closed
+                        && state.dispatch.is_empty()
+                        && !state.dispatch_closed
+                    {
+                        break NextEngineStep::PollHealth;
+                    }
+                } else {
+                    state = inbox
+                        .shared
+                        .wakeup
+                        .wait(state)
+                        .unwrap_or_else(|poisoned| poisoned.into_inner());
+                }
             }
-            Ok(EngineControl::Shutdown(response)) => {
+        };
+
+        match next_step {
+            NextEngineStep::Control(EngineControl::ForceFailClosed(response)) => {
+                send_result(response, dispatcher.force_fail_closed());
+            }
+            NextEngineStep::Control(EngineControl::Shutdown(response)) => {
                 let result = dispatcher.force_fail_closed();
                 let returned = result
                     .as_ref()
@@ -618,16 +838,12 @@ fn run_engine_actor<R: EngineRuntime>(
                 let _ = response.send(returned);
                 return result;
             }
-            Err(TryRecvError::Disconnected) => {
+            NextEngineStep::ControlDisconnected => {
                 return dispatcher
                     .force_fail_closed()
                     .context("strict engine control channel disconnected");
             }
-            Err(TryRecvError::Empty) => {}
-        }
-
-        match dispatch.recv_timeout(ENGINE_POLL_INTERVAL) {
-            Ok(command) => {
+            NextEngineStep::Dispatch(command) => {
                 let may_resume_supervision = matches!(
                     &command.request.request().command,
                     BrokerCommand::CommitPolicy { .. }
@@ -638,23 +854,34 @@ fn run_engine_actor<R: EngineRuntime>(
                 }
                 let _ = command.response.send(response);
             }
-            Err(RecvTimeoutError::Timeout) => {}
-            Err(RecvTimeoutError::Disconnected) => {
+            NextEngineStep::DispatchDisconnected => {
                 return dispatcher
                     .force_fail_closed()
                     .context("strict engine dispatch channel disconnected");
             }
+            NextEngineStep::PollHealth => {}
         }
     }
 }
 
-fn reject_queued_dispatches_after_health_failure(dispatch: &Receiver<EngineDispatch>) {
+fn reject_queued_dispatches_after_health_failure(inbox: &EngineInboxReceiver) {
     // At most one pre-failure item can exist per bounded queue slot. Do not let
     // concurrent clients turn recovery cleanup into an unbounded drain loop.
-    for _ in 0..ENGINE_QUEUE_CAPACITY {
-        let Ok(command) = dispatch.try_recv() else {
-            break;
-        };
+    let mut drained = Vec::new();
+    {
+        let mut state = inbox
+            .shared
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        for _ in 0..ENGINE_QUEUE_CAPACITY {
+            let Some(command) = state.dispatch.pop_front() else {
+                break;
+            };
+            drained.push(command);
+        }
+    }
+    for command in drained {
         let request_id = command.request.request().request_id.clone();
         let response = BrokerResponse::error(&request_id, BrokerErrorCode::BackendUnavailable)
             .expect("an authenticated request ID always produces a bounded error response");
@@ -748,6 +975,8 @@ impl Drop for CoTaskMemPath {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::mpsc::{Receiver, RecvTimeoutError};
+
     use flclash_strict_contract::{
         BrokerCommand, BrokerRequest, BrokerResponseBody, StrictProxyIngressSet,
         STRICT_PROTOCOL_VERSION,
@@ -844,25 +1073,25 @@ mod tests {
     #[test]
     fn fixed_package_layout_never_accepts_runtime_selected_component_paths() {
         let paths = WindowsStrictBrokerPaths::from_trusted_roots(
-            r"C:\Program Files\FlClashX\FlClashStrictBroker.exe",
+            r"C:\Program Files\FreedomNet Service\FlClashStrictBroker.exe",
             r"C:\ProgramData",
         )
         .unwrap();
         assert_eq!(
             paths.driver(),
-            Path::new(r"C:\Program Files\FlClashX\FlClashStrictCallout.sys")
+            Path::new(r"C:\Program Files\FreedomNet Service\FlClashStrictCallout.sys")
         );
         assert_eq!(
             paths.agent(),
-            Path::new(r"C:\Program Files\FlClashX\FlClashAgent.exe")
+            Path::new(r"C:\Program Files\FreedomNet Service\FreedomNetAgent.exe")
         );
         assert_eq!(
             paths.core(),
-            Path::new(r"C:\Program Files\FlClashX\FlClashCore.exe")
+            Path::new(r"C:\Program Files\FreedomNet Service\FreedomNetCore.exe")
         );
         assert_eq!(
             paths.recovery(),
-            Path::new(r"C:\ProgramData\FlClashX.StrictBroker")
+            Path::new(r"C:\ProgramData\FreedomNet.StrictBroker")
         );
         assert!(WindowsStrictBrokerPaths::from_trusted_roots(
             r"C:\Temp\renamed.exe",
@@ -870,7 +1099,7 @@ mod tests {
         )
         .is_err());
         assert!(WindowsStrictBrokerPaths::from_trusted_roots(
-            r"C:\Program Files\FlClashX\FlClashStrictBroker.exe",
+            r"C:\Program Files\FreedomNet Service\FlClashStrictBroker.exe",
             r"C:\ProgramData\..\Temp"
         )
         .is_err());
@@ -895,8 +1124,7 @@ mod tests {
 
     #[test]
     fn engine_control_preempts_queued_data_work_after_the_current_transaction() {
-        let (dispatch_tx, dispatch_rx) = mpsc::sync_channel(ENGINE_QUEUE_CAPACITY);
-        let (control_tx, control_rx) = mpsc::sync_channel(1);
+        let (dispatch_tx, control_tx, inbox) = engine_actor_channels(ENGINE_QUEUE_CAPACITY);
         let (event_tx, event_rx) = mpsc::sync_channel(8);
         let (gate_tx, gate_rx) = mpsc::sync_channel(1);
         let worker = thread::spawn(move || {
@@ -905,7 +1133,7 @@ mod tests {
                 first_dispatch_gate: gate_rx,
                 dispatches: 0,
             };
-            run_engine_actor(&mut runtime, dispatch_rx, control_rx)
+            run_engine_actor(&mut runtime, inbox)
         });
 
         let (first_tx, first_rx) = mpsc::sync_channel(1);
@@ -944,8 +1172,7 @@ mod tests {
 
     #[test]
     fn engine_health_failure_forces_blocking_and_keeps_actor_recoverable() {
-        let (dispatch_tx, dispatch_rx) = mpsc::sync_channel(1);
-        let (control_tx, control_rx) = mpsc::sync_channel(1);
+        let (dispatch_tx, control_tx, inbox) = engine_actor_channels(1);
         let (event_tx, event_rx) = mpsc::sync_channel(4);
         let (stale_response_tx, stale_response_rx) = mpsc::sync_channel(1);
         dispatch_tx
@@ -966,7 +1193,7 @@ mod tests {
                 events: event_tx,
                 fail_cleanup: false,
             };
-            run_engine_actor(&mut runtime, dispatch_rx, control_rx)
+            run_engine_actor(&mut runtime, inbox)
         });
 
         assert_eq!(event_rx.recv().unwrap(), "health-failed");
@@ -1033,15 +1260,14 @@ mod tests {
 
     #[test]
     fn engine_health_failure_exits_when_fail_closed_cleanup_is_unproven() {
-        let (_dispatch_tx, dispatch_rx) = mpsc::sync_channel(1);
-        let (_control_tx, control_rx) = mpsc::sync_channel(1);
+        let (_dispatch_tx, _control_tx, inbox) = engine_actor_channels(1);
         let (event_tx, event_rx) = mpsc::sync_channel(2);
         let mut runtime = FailingHealthRuntime {
             events: event_tx,
             fail_cleanup: true,
         };
 
-        let error = run_engine_actor(&mut runtime, dispatch_rx, control_rx)
+        let error = run_engine_actor(&mut runtime, inbox)
             .unwrap_err()
             .to_string();
 
@@ -1051,5 +1277,60 @@ mod tests {
         assert!(error.contains("injected cleanup failure"));
         assert_eq!(event_rx.recv().unwrap(), "health-failed");
         assert_eq!(event_rx.recv().unwrap(), "force-fail-closed");
+    }
+
+    #[test]
+    fn idle_engine_actor_does_not_poll_health_every_25ms_when_forwarding_is_inactive() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        struct IdleCountingRuntime {
+            health_checks: Arc<AtomicUsize>,
+        }
+
+        impl EngineRuntime for IdleCountingRuntime {
+            fn dispatch(&mut self, request: AuthorizedBrokerRequest) -> BrokerResponse {
+                BrokerResponse::error(
+                    request.request().request_id.clone(),
+                    BrokerErrorCode::BackendUnavailable,
+                )
+                .unwrap()
+            }
+
+            fn verify_health(&mut self) -> Result<()> {
+                self.health_checks.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            }
+
+            fn force_fail_closed(&mut self) -> Result<()> {
+                Ok(())
+            }
+
+            fn has_active_health_supervision(&self) -> bool {
+                false
+            }
+        }
+
+        let (_dispatch_tx, control_tx, inbox) = engine_actor_channels(1);
+        let health_checks = Arc::new(AtomicUsize::new(0));
+        let worker_checks = health_checks.clone();
+        let worker = thread::spawn(move || {
+            let mut runtime = IdleCountingRuntime {
+                health_checks: worker_checks,
+            };
+            run_engine_actor(&mut runtime, inbox)
+        });
+
+        thread::sleep(Duration::from_millis(120));
+        let observed = health_checks.load(Ordering::SeqCst);
+        let (shutdown_tx, shutdown_rx) = mpsc::sync_channel(1);
+        control_tx
+            .send(EngineControl::Shutdown(shutdown_tx))
+            .unwrap();
+        shutdown_rx.recv().unwrap().unwrap();
+        worker.join().unwrap().unwrap();
+        assert_eq!(
+            observed, 0,
+            "idle engine actor woke and polled verify_health {observed} times in 120ms"
+        );
     }
 }

@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:crypto/crypto.dart';
 import 'package:flclashx/services/purchase_storage.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -210,13 +211,126 @@ void main() {
     expect((await storage.readPending(1))!.previousUsageIds, [2, 5]);
     expect(await storage.readProfileId(1), 'profile-one');
     expect(backend.deletions, hasLength(1));
+    expect(backend.deletions.single, startsWith('freedomnet.xboard.'));
     expect(backend.deletions.single, endsWith('.session'));
+    expect(
+      backend.deletions.where((key) => key.startsWith('flclashx.')),
+      isEmpty,
+    );
+    expect(backend.values.keys.where((key) => key.endsWith('.legacy_cleared')),
+        isEmpty);
 
     await storage
         .saveSession(const PurchaseSession(2, 'Bearer second-fixture'));
     expect((await storage.readSession())!.accountId, 2);
     expect(await storage.readPending(2), isNull);
     expect((await storage.readPending(1))!.code, _giftCode);
+  });
+
+  test(
+      'coexistence logout with both FreedomNet and FlClashX sessions preserves FlClashX credentials intact',
+      () async {
+    final digest =
+        sha256.convert(utf8.encode(storage.canonicalOrigin)).toString();
+    final legacyKey = 'flclashx.xboard.$digest.session';
+    final legacyPayload = jsonEncode({
+      'account_id': 10,
+      'authorization': 'Bearer flclashx-coexisting-session',
+    });
+    backend.values[legacyKey] = legacyPayload;
+
+    await storage.saveSession(const PurchaseSession(1, _authorization));
+    expect((await storage.readSession())!.accountId, 1);
+
+    await storage.clearSession();
+
+    expect(await storage.readSession(), isNull);
+    expect(backend.values[legacyKey], legacyPayload);
+    expect(
+      backend.deletions.where((key) => key.startsWith('flclashx.')),
+      isEmpty,
+    );
+    expect(
+      backend.writes.where((key) => key.startsWith('flclashx.')),
+      isEmpty,
+    );
+  });
+
+  test(
+      'legacy-only fallback session clears without zombie re-login or FlClashX deletion and subsequent saveSession restores login',
+      () async {
+    final digest =
+        sha256.convert(utf8.encode(storage.canonicalOrigin)).toString();
+    final legacyKey = 'flclashx.xboard.$digest.session';
+    final tombstoneKey = 'freedomnet.xboard.$digest.session.legacy_cleared';
+    final legacyPayload = jsonEncode({
+      'account_id': 11,
+      'authorization': 'Bearer flclashx-legacy-only',
+    });
+    backend.values[legacyKey] = legacyPayload;
+
+    final fallbackSession = await storage.readSession();
+    expect(fallbackSession, isNotNull);
+    expect(fallbackSession!.accountId, 11);
+    expect(fallbackSession.authorization, 'Bearer flclashx-legacy-only');
+
+    await storage.clearSession();
+
+    expect(await storage.readSession(), isNull);
+    expect(backend.values[legacyKey], legacyPayload);
+    expect(backend.values[tombstoneKey], '1');
+    expect(
+      backend.deletions.where((key) => key.startsWith('flclashx.')),
+      isEmpty,
+    );
+    expect(
+      backend.writes.where((key) => key.startsWith('flclashx.')),
+      isEmpty,
+    );
+
+    await storage.saveSession(
+      const PurchaseSession(22, 'Bearer freedomnet-restored-login'),
+    );
+    final restoredSession = await storage.readSession();
+    expect(restoredSession, isNotNull);
+    expect(restoredSession!.accountId, 22);
+    expect(restoredSession.authorization, 'Bearer freedomnet-restored-login');
+    expect(backend.values.containsKey(tombstoneKey), isFalse);
+    expect(backend.values[legacyKey], legacyPayload);
+
+    await storage.clearSession();
+    expect(await storage.readSession(), isNull);
+    expect(backend.values[legacyKey], legacyPayload);
+
+    // If the external FlClashX key is later absent, clearing in FreedomNet
+    // removes the stale tombstone so clean stores retain zero extra keys.
+    backend.values.remove(legacyKey);
+    await storage.clearSession();
+    expect(backend.values, isEmpty);
+  });
+
+  test(
+      'legacy-only pending redemption clears via FreedomNet tombstone without touching FlClashX pending key',
+      () async {
+    final digest =
+        sha256.convert(utf8.encode(storage.canonicalOrigin)).toString();
+    final legacyPendingKey = 'flclashx.xboard.$digest.pending.1';
+    final legacyPendingPayload = jsonEncode(_pendingJson());
+    backend.values[legacyPendingKey] = legacyPendingPayload;
+
+    expect((await storage.readPending(1))!.code, _giftCode);
+
+    await storage.clearPending(1);
+    expect(await storage.readPending(1), isNull);
+    expect(backend.values[legacyPendingKey], legacyPendingPayload);
+    expect(
+      backend.deletions.where((key) => key.startsWith('flclashx.')),
+      isEmpty,
+    );
+
+    await storage.savePending(1, _pending);
+    expect((await storage.readPending(1))!.codeId, 43);
+    expect(backend.values[legacyPendingKey], legacyPendingPayload);
   });
 
   test('complete gift codes exist only in the secure pending value, never keys',
@@ -230,7 +344,7 @@ void main() {
       expect(
         key,
         matches(RegExp(
-            r'^flclashx\.xboard\.[a-f0-9]{64}\.(session|pending\.1|profile\.1)$')),
+            r'^freedomnet\.xboard\.[a-f0-9]{64}\.(session|pending\.1|profile\.1)$')),
       );
       expect(key, isNot(contains(_giftCode)));
       expect(key, isNot(contains(_authorization)));

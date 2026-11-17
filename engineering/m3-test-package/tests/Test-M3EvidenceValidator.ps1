@@ -33,14 +33,14 @@ try {
         signatures = @{
             'FlClashStrictCallout.sys' = 'Valid'
             'FlClashStrictBroker.exe' = 'Valid'
-            'FlClashAgent.exe' = 'Valid'
-            'FlClashCore.exe' = 'Valid'
+            'FreedomNetAgent.exe' = 'Valid'
+            'FreedomNetCore.exe' = 'Valid'
         }
         hashes = @{
             'FlClashStrictCallout.sys' = ('a' * 64)
             'FlClashStrictBroker.exe' = ('b' * 64)
-            'FlClashAgent.exe' = ('c' * 64)
-            'FlClashCore.exe' = ('d' * 64)
+            'FreedomNetAgent.exe' = ('c' * 64)
+            'FreedomNetCore.exe' = ('d' * 64)
         }
     }
     $preflightPath = Join-Path $temp 'M3-PREFLIGHT.json'

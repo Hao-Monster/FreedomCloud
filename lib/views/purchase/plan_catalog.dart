@@ -1,5 +1,6 @@
 import 'dart:math' as math;
 
+import 'package:flclashx/common/design_system.dart';
 import 'package:flclashx/common/node_country.dart';
 import 'package:flclashx/enum/enum.dart';
 import 'package:flclashx/l10n/l10n.dart';
@@ -7,6 +8,7 @@ import 'package:flclashx/models/xboard.dart';
 import 'package:flclashx/views/purchase/plan_content.dart';
 import 'package:flclashx/widgets/text.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 
 final RegExp _planFlagEmojiPattern = RegExp(
   r'[\u{1F1E6}-\u{1F1FF}]{2}',
@@ -629,6 +631,57 @@ class _LinesSegment extends _MdSegment {
   }
 }
 
+final RegExp _boilerplateHeadingPattern = RegExp(
+  r'^(?:核心权益|套餐权益|套餐说明|套餐特点)$',
+);
+final List<RegExp> _boilerplateSpecPatterns = <RegExp>[
+  RegExp(r'^设备(?:数量|上限)\s*[:：]\s*(?:无限|不限)$'),
+  RegExp(r'^使用(?:时间|期限|时长)\s*[:：]\s*(?:无限|不限|长期有效|永久有效)$'),
+  RegExp(r'^流量用完为止(?:[，,。.\s]*永不过期)?$'),
+  RegExp(r'^支持所有类型设备(?:\s*[（(][^）)]*[）)])?$'),
+];
+
+/// Returns `true` when [markdown] is empty or contains only the standard
+/// storefront 4-item bullet boilerplate already surfaced concisely on the card.
+bool isStandardBoilerplatePlanContent(String markdown) {
+  final trimmed = markdown.trim();
+  if (trimmed.isEmpty) return true;
+  if (trimmed.contains('](') ||
+      trimmed.contains('|') ||
+      trimmed.contains('```') ||
+      trimmed.contains('~~~') ||
+      trimmed.contains('<')) {
+    return false;
+  }
+  final lines = trimmed
+      .replaceAll('\r\n', '\n')
+      .replaceAll('\r', '\n')
+      .split('\n')
+      .map((line) => line.trim())
+      .where((line) => line.isNotEmpty);
+  var hasLine = false;
+  for (var line in lines) {
+    hasLine = true;
+    line = line.replaceFirst(RegExp(r'^#{1,6}\s+'), '');
+    line = line.replaceFirst(RegExp(r'^(?:[-*+•]|\d+[.)])\s+'), '');
+    line = line.trim();
+    if (_boilerplateHeadingPattern.hasMatch(line)) continue;
+    if (_boilerplateSpecPatterns.any((pattern) => pattern.hasMatch(line))) {
+      continue;
+    }
+    return false;
+  }
+  return hasLine;
+}
+
+bool _isGenericQuotaPlanName(String name, int transferGiB) {
+  if (transferGiB <= 0 || resolvePlanRegionBadge(name) != null) return false;
+  return RegExp(
+    '^$transferGiB\\s*(?:G|GB|GiB)\\s*(?:永久流量包|按量流量包|流量包|套餐)?\$',
+    caseSensitive: false,
+  ).hasMatch(name.trim());
+}
+
 enum _PlanCategoryFilter { all, period, onetime }
 
 class PurchasePlanCatalog extends StatefulWidget {
@@ -639,7 +692,9 @@ class PurchasePlanCatalog extends StatefulWidget {
     required this.failed,
     required this.retry,
     this.openLink,
+    this.onBuyPlan,
     this.onAcquirePlan,
+    this.buyingPlanId,
     this.collapsibleDetails = false,
   });
 
@@ -648,7 +703,9 @@ class PurchasePlanCatalog extends StatefulWidget {
   final bool failed;
   final VoidCallback retry;
   final Future<void> Function(Uri)? openLink;
+  final ValueChanged<XboardPlanOffer>? onBuyPlan;
   final ValueChanged<XboardPlanOffer>? onAcquirePlan;
+  final int? buyingPlanId;
   final bool collapsibleDetails;
 
   @override
@@ -802,15 +859,29 @@ class _PurchasePlanCatalogState extends State<PurchasePlanCatalog> {
                       color: colors.error,
                     ),
                     const SizedBox(width: 10),
-                    Expanded(child: Text(l.purchasePlansError)),
+                    Expanded(
+                      child: Text(
+                        l.purchasePlansError,
+                        style: theme.textTheme.titleSmall?.copyWith(
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
                   ],
                 ),
-                const SizedBox(height: 10),
-                TextButton.icon(
+                const SizedBox(height: 6),
+                Text(
+                  l.purchasePlansErrorHint,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: colors.onSurfaceVariant,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                FilledButton.tonalIcon(
                   key: const Key('purchase-plans-retry'),
                   onPressed: widget.retry,
-                  icon: const Icon(Icons.refresh_rounded),
-                  label: Text(l.purchaseRefresh),
+                  icon: const Icon(Icons.refresh_rounded, size: 18),
+                  label: Text(l.purchasePlansRetry),
                 ),
               ],
             ),
@@ -834,25 +905,50 @@ class _PurchasePlanCatalogState extends State<PurchasePlanCatalog> {
             final textScale = MediaQuery.textScalerOf(context).scale(1);
             final twoColumns = filteredPlans.length > 1 &&
                 constraints.maxWidth >= 540 * textScale;
-            final width = twoColumns
-                ? (constraints.maxWidth - 16) / 2
+            final colWidth = twoColumns
+                ? math.max(0.0, (constraints.maxWidth - 16) / 2)
                 : constraints.maxWidth;
-            return Wrap(
-              spacing: 16,
-              runSpacing: 16,
-              children: [
-                for (final plan in filteredPlans)
-                  SizedBox(
-                    width: width,
-                    child: _PlanCard(
-                      key: Key('purchase-plan-${plan.id}'),
-                      plan: plan,
-                      openLink: widget.openLink,
-                      onAcquirePlan: widget.onAcquirePlan,
-                      collapsibleDetails: widget.collapsibleDetails,
-                    ),
-                  ),
-              ],
+            Widget buildCard(XboardPlanOffer plan) => _PlanCard(
+                  key: Key('purchase-plan-${plan.id}'),
+                  plan: plan,
+                  openLink: widget.openLink,
+                  onBuyPlan: widget.onBuyPlan,
+                  onAcquirePlan: widget.onAcquirePlan,
+                  buying: widget.buyingPlanId == plan.id,
+                  collapsibleDetails: widget.collapsibleDetails,
+                  multiTierComparison: plans.length >= 2,
+                  cardWidth: colWidth,
+                );
+
+            if (!twoColumns) {
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  for (var i = 0; i < filteredPlans.length; i++) ...[
+                    if (i > 0) const SizedBox(height: 16),
+                    buildCard(filteredPlans[i]),
+                  ],
+                ],
+              );
+            }
+
+            final rows = <Widget>[];
+            for (var i = 0; i < filteredPlans.length; i += 2) {
+              if (i > 0) rows.add(const SizedBox(height: 16));
+              rows.add(
+                _EqualHeightRow(
+                  gap: 16,
+                  children: [
+                    buildCard(filteredPlans[i]),
+                    if (i + 1 < filteredPlans.length)
+                      buildCard(filteredPlans[i + 1]),
+                  ],
+                ),
+              );
+            }
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: rows,
             );
           }),
       ],
@@ -885,14 +981,22 @@ class _PlanCard extends StatefulWidget {
     super.key,
     required this.plan,
     this.openLink,
+    this.onBuyPlan,
     this.onAcquirePlan,
+    this.buying = false,
     this.collapsibleDetails = false,
+    this.multiTierComparison = false,
+    this.cardWidth,
   });
 
   final XboardPlanOffer plan;
   final Future<void> Function(Uri)? openLink;
+  final ValueChanged<XboardPlanOffer>? onBuyPlan;
   final ValueChanged<XboardPlanOffer>? onAcquirePlan;
+  final bool buying;
   final bool collapsibleDetails;
+  final bool multiTierComparison;
+  final double? cardWidth;
 
   @override
   State<_PlanCard> createState() => _PlanCardState();
@@ -903,6 +1007,19 @@ class _PlanCardState extends State<_PlanCard> {
 
   XboardPlanOffer get plan => widget.plan;
 
+  static final RegExp _featuredTagPattern = RegExp(
+    r'推荐|主力|热销|popular|featured|best',
+    caseSensitive: false,
+  );
+  static final RegExp _genericPackTagPattern = RegExp(
+    r'^(?:永久|按量)?流量包$',
+  );
+
+  bool _isFeatured(bool isSoldOut) =>
+      !isSoldOut &&
+      (plan.tags.any(_featuredTagPattern.hasMatch) ||
+          (widget.multiTierComparison && plan.transferGiB == 200));
+
   @override
   void didUpdateWidget(covariant _PlanCard oldWidget) {
     super.didUpdateWidget(oldWidget);
@@ -911,304 +1028,515 @@ class _PlanCardState extends State<_PlanCard> {
     }
   }
 
+  List<String> _visibleTags() {
+    final nonEmpty = [
+      for (final tag in plan.tags)
+        if (tag.trim().isNotEmpty) tag.trim(),
+    ];
+    if (nonEmpty.length <= 1) return nonEmpty;
+    final hasSpecific =
+        nonEmpty.any((tag) => !_genericPackTagPattern.hasMatch(tag));
+    if (!hasSpecific) return nonEmpty;
+    return [
+      for (final tag in nonEmpty)
+        if (!_genericPackTagPattern.hasMatch(tag)) tag,
+    ];
+  }
+
   @override
   Widget build(BuildContext context) {
     final l = AppLocalizations.of(context);
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
     final regionBadge = resolvePlanRegionBadge(plan.name);
     final isSoldOut = plan.hasCapacityRemaining && plan.capacityRemaining == 0;
     final isLowStock = plan.hasCapacityRemaining &&
         plan.capacityRemaining != null &&
         plan.capacityRemaining! > 0 &&
         plan.capacityRemaining! <= 20;
+    final isFeatured = _isFeatured(isSoldOut);
+    final isPureOnetime =
+        plan.prices.isNotEmpty && plan.prices.every((p) => p.period == 'onetime');
+    final isSinglePrice = plan.prices.length == 1;
+    final primaryPrice = plan.prices.isNotEmpty ? plan.prices.first : null;
+    final isFree =
+        isSinglePrice && primaryPrice != null && primaryPrice.amount == 0;
+    final visibleTags = _visibleTags();
+    final hideRedundantTitle = _isGenericQuotaPlanName(plan.name, plan.transferGiB);
 
-    final markdownSummary = widget.collapsibleDetails
-        ? summarizePlanMarkdown(plan.content)
-        : (collapsible: false, preview: plan.content);
+    final displayContent =
+        XboardPurchaseChannels.stripPlanPurchaseMetadata(plan.content);
+    final showCustomMarkdown = displayContent.trim().isNotEmpty &&
+        !isStandardBoilerplatePlanContent(displayContent);
+    final markdownSummary = showCustomMarkdown && widget.collapsibleDetails
+        ? summarizePlanMarkdown(displayContent)
+        : (collapsible: false, preview: displayContent);
     final shouldCollapse = markdownSummary.collapsible;
     final previewMarkdown = shouldCollapse && !_detailsExpanded
         ? markdownSummary.preview
-        : plan.content;
+        : displayContent;
 
-    return Container(
-      decoration: BoxDecoration(
-        color: colors.surfaceContainerLow,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(
-          color: isSoldOut
-              ? colors.outlineVariant.withValues(alpha: 0.55)
-              : colors.outlineVariant,
+    final cardRadius = BorderRadius.circular(16);
+    final borderColor = isSoldOut
+        ? colors.outlineVariant.withValues(alpha: 0.55)
+        : isFree
+            ? kLatencyFastColor.withValues(alpha: isDark ? 0.58 : 0.48)
+            : isFeatured
+                ? colors.primary.withValues(alpha: isDark ? 0.65 : 0.58)
+                : freedomNetHairlineColor(colors);
+    final cardBg = isFeatured
+        ? Color.alphaBlend(
+            colors.primary.withValues(alpha: isDark ? 0.08 : 0.045),
+            colors.surfaceContainerLow,
+          )
+        : isFree
+            ? Color.alphaBlend(
+                kLatencyFastColor.withValues(alpha: isDark ? 0.07 : 0.04),
+                colors.surfaceContainerLow,
+              )
+            : colors.surfaceContainerLow;
+    final recessedBg =
+        isDark ? kFreedomNetDarkRecessed : kFreedomNetLightRecessed;
+
+    final Widget? topRightHint = isSoldOut || isLowStock
+        ? Container(
+            padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
+            decoration: BoxDecoration(
+              color: isSoldOut
+                  ? colors.errorContainer
+                  : colors.tertiaryContainer,
+              borderRadius: BorderRadius.circular(999),
+            ),
+            child: Text(
+              isSoldOut
+                  ? l.purchasePlanSoldOut
+                  : l.purchasePlanLowStock(plan.capacityRemaining!),
+              style: theme.textTheme.labelSmall?.copyWith(
+                fontWeight: FontWeight.w600,
+                color: isSoldOut
+                    ? colors.onErrorContainer
+                    : colors.onTertiaryContainer,
+              ),
+            ),
+          )
+        : isFree
+            ? Text(
+                l.purchasePlanFreeHint,
+                style: theme.textTheme.labelMedium?.copyWith(
+                  color: kLatencyFastColor,
+                  fontWeight: FontWeight.w600,
+                ),
+              )
+            : (isPureOnetime &&
+                    isSinglePrice &&
+                    plan.transferGiB > 0 &&
+                    primaryPrice != null &&
+                    primaryPrice.amount > 0)
+                ? Text(
+                    l.purchasePlanUnitPriceHint(
+                      _perGiBAmount(primaryPrice.amount, plan.transferGiB),
+                    ),
+                    style: theme.textTheme.labelMedium?.copyWith(
+                      fontFamily: FontFamily.jetBrainsMono.value,
+                      fontFamilyFallback: _cjkMonoFallback(theme),
+                      color: colors.onSurfaceVariant,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  )
+                : null;
+
+    final leftBadges = <Widget>[];
+    if (visibleTags.isNotEmpty) {
+      for (var idx = 0; idx < visibleTags.length; idx++) {
+        final tag = visibleTags[idx];
+        final isFeaturedPill =
+            isFeatured && (idx == 0 || _featuredTagPattern.hasMatch(tag));
+        leftBadges.add(
+          _TierCapsulePill(
+            key: isFeaturedPill && idx == 0
+                ? Key('purchase-plan-featured-${plan.id}')
+                : null,
+            label: tag,
+            highlighted: isFeaturedPill,
+            freeStyle: isFree && !isFeaturedPill,
+          ),
+        );
+      }
+    } else if (isFeatured) {
+      leftBadges.add(
+        _TierCapsulePill(
+          key: Key('purchase-plan-featured-${plan.id}'),
+          label: l.purchasePlanFeaturedBadge,
+          highlighted: true,
+          freeStyle: false,
         ),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(18),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Wrap(
-              spacing: 8,
-              runSpacing: 6,
-              alignment: WrapAlignment.spaceBetween,
-              crossAxisAlignment: WrapCrossAlignment.center,
-              children: [
-                Row(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    if (regionBadge != null) ...[
-                      Container(
-                        key: Key('purchase-plan-flag-${plan.id}'),
+      );
+    } else if (isSinglePrice && primaryPrice != null) {
+      leftBadges.add(
+        _TierCapsulePill(
+          label: _period(l, primaryPrice.period),
+          highlighted: false,
+          freeStyle: isFree,
+        ),
+      );
+    }
+
+    final specs = _buildSpecs(l, isPureOnetime: isPureOnetime);
+    final hasHeaderRow = leftBadges.isNotEmpty || topRightHint != null;
+
+    final topContent = Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (hasHeaderRow)
+          Wrap(
+            spacing: 8,
+            runSpacing: 6,
+            alignment: WrapAlignment.spaceBetween,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              if (leftBadges.isNotEmpty)
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 6,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: leftBadges,
+                ),
+              if (topRightHint != null) topRightHint,
+            ],
+          ),
+        if (!hideRedundantTitle || regionBadge != null) ...[
+          if (hasHeaderRow) const SizedBox(height: 10),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (regionBadge != null) ...[
+                Container(
+                  key: Key('purchase-plan-flag-${plan.id}'),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 7,
+                    vertical: 3,
+                  ),
+                  decoration: BoxDecoration(
+                    color: colors.secondaryContainer.withValues(alpha: 0.65),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: EmojiText(
+                    regionBadge,
+                    style: const TextStyle(fontSize: 14, height: 1.1),
+                  ),
+                ),
+                const SizedBox(width: 8),
+              ],
+              Expanded(
+                child: Text(
+                  plan.name,
+                  style: theme.textTheme.titleSmall?.copyWith(
+                    fontWeight: FontWeight.w700,
+                    color: colors.onSurface,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+        if (hasHeaderRow || !hideRedundantTitle || regionBadge != null)
+          const SizedBox(height: 12),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          decoration: BoxDecoration(
+            color: recessedBg,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: freedomNetHairlineColor(colors)),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              if (isSinglePrice && primaryPrice != null)
+                _buildHeroSinglePriceRow(
+                  context,
+                  theme,
+                  colors,
+                  primaryPrice,
+                  isFree: isFree,
+                )
+              else ...[
+                Text(
+                  plan.transferGiB > 0
+                      ? '${plan.transferGiB}G'
+                      : '${plan.transferGiB} GiB',
+                  style: theme.textTheme.headlineSmall?.copyWith(
+                    fontFamily: FontFamily.jetBrainsMono.value,
+                    fontFamilyFallback: _cjkMonoFallback(theme),
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: -0.4,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                for (var index = 0; index < plan.prices.length; index++) ...[
+                  if (index > 0) const SizedBox(height: 6),
+                  _priceTile(
+                    theme,
+                    _period(l, plan.prices[index].period),
+                    plan.prices[index].amount,
+                    highlighted: index == 0,
+                  ),
+                ],
+              ],
+              if (plan.resetTrafficPrice != null) ...[
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 8),
+                  child: Divider(height: 1),
+                ),
+                _priceTile(
+                  theme,
+                  l.purchasePlanResetPrice,
+                  plan.resetTrafficPrice!,
+                  highlighted: false,
+                ),
+              ],
+            ],
+          ),
+        ),
+        if (specs.isNotEmpty) ...[
+          const SizedBox(height: 12),
+          for (var i = 0; i < specs.length; i++) ...[
+            if (i > 0) const SizedBox(height: 8),
+            _PlanSpecRow(text: specs[i]),
+          ],
+        ],
+        if (showCustomMarkdown) ...[
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 12),
+            child: Divider(height: 1),
+          ),
+          Wrap(
+            spacing: 8,
+            runSpacing: 6,
+            alignment: WrapAlignment.spaceBetween,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              Text(
+                l.purchasePlanDetails,
+                style: theme.textTheme.titleSmall?.copyWith(
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              if (shouldCollapse)
+                MergeSemantics(
+                  key: Key('purchase-plan-details-toggle-${plan.id}'),
+                  child: Semantics(
+                    button: true,
+                    expanded: _detailsExpanded,
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(8),
+                      onTap: () => setState(
+                        () => _detailsExpanded = !_detailsExpanded,
+                      ),
+                      child: Padding(
                         padding: const EdgeInsets.symmetric(
-                          horizontal: 8,
+                          horizontal: 6,
                           vertical: 4,
                         ),
-                        decoration: BoxDecoration(
-                          color:
-                              colors.secondaryContainer.withValues(alpha: 0.65),
-                          borderRadius: BorderRadius.circular(8),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Flexible(
+                              child: Text(
+                                _detailsExpanded
+                                    ? l.purchasePlanCollapseDetails
+                                    : l.purchasePlanExpandDetails,
+                                style: theme.textTheme.labelMedium?.copyWith(
+                                  color: colors.primary,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 2),
+                            Icon(
+                              _detailsExpanded
+                                  ? Icons.expand_less_rounded
+                                  : Icons.expand_more_rounded,
+                              size: 18,
+                              color: colors.primary,
+                            ),
+                          ],
                         ),
-                        child: EmojiText(
-                          regionBadge,
-                          style: const TextStyle(fontSize: 15, height: 1.1),
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                    ],
-                    Flexible(
-                      child: Text(
-                        plan.name,
-                        style: theme.textTheme.titleMedium?.copyWith(
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                if (isSoldOut || isLowStock)
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 3,
-                    ),
-                    decoration: BoxDecoration(
-                      color: isSoldOut
-                          ? colors.errorContainer
-                          : colors.tertiaryContainer,
-                      borderRadius: BorderRadius.circular(999),
-                    ),
-                    child: Text(
-                      isSoldOut
-                          ? l.purchasePlanSoldOut
-                          : l.purchasePlanLowStock(plan.capacityRemaining!),
-                      style: theme.textTheme.labelSmall?.copyWith(
-                        fontWeight: FontWeight.w600,
-                        color: isSoldOut
-                            ? colors.onErrorContainer
-                            : colors.onTertiaryContainer,
                       ),
                     ),
                   ),
-              ],
-            ),
-            if (plan.tags.any((tag) => tag.trim().isNotEmpty)) ...[
-              const SizedBox(height: 10),
-              Wrap(
-                spacing: 6,
-                runSpacing: 6,
-                children: [
-                  for (final tag in plan.tags)
-                    if (tag.trim().isNotEmpty)
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 10,
-                          vertical: 4,
-                        ),
-                        decoration: BoxDecoration(
-                          color: colors.primaryContainer.withValues(alpha: 0.6),
-                          borderRadius: BorderRadius.circular(999),
-                        ),
-                        child: Text(
-                          tag,
-                          style: theme.textTheme.labelMedium?.copyWith(
-                            color: colors.onPrimaryContainer,
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                      ),
-                ],
-              ),
-            ],
-            const SizedBox(height: 14),
-            Container(
-              padding: const EdgeInsets.all(14),
-              decoration: BoxDecoration(
-                color: colors.surfaceContainerHighest.withValues(alpha: 0.45),
-                borderRadius: BorderRadius.circular(14),
-                border: Border.all(
-                  color: colors.outlineVariant.withValues(alpha: 0.6),
                 ),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Row(
-                    children: [
-                      Icon(
-                        Icons.data_usage_rounded,
-                        size: 18,
-                        color: colors.primary,
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          '${l.purchaseTraffic}: ${plan.transferGiB} GiB',
-                          style: theme.textTheme.titleSmall?.copyWith(
-                            fontFamily: FontFamily.jetBrainsMono.value,
-                            fontFamilyFallback: _cjkMonoFallback(theme),
+            ],
+          ),
+          const SizedBox(height: 8),
+          PurchasePlanContent(
+            data: previewMarkdown,
+            openLink: widget.openLink,
+          ),
+        ],
+      ],
+    );
+
+    final Widget? bottomActions =
+        (widget.onBuyPlan != null || widget.onAcquirePlan != null)
+            ? Padding(
+                padding: const EdgeInsets.only(top: 16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    if (widget.onBuyPlan != null)
+                      FilledButton(
+                        key: Key('purchase-plan-buy-${plan.id}'),
+                        style: FilledButton.styleFrom(
+                          minimumSize: const Size.fromHeight(40),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          textStyle: theme.textTheme.labelLarge?.copyWith(
                             fontWeight: FontWeight.w700,
                           ),
                         ),
+                        onPressed: isSoldOut || widget.buying
+                            ? null
+                            : () => widget.onBuyPlan!(plan),
+                        child: Text(l.purchasePlanBuyNow),
                       ),
-                    ],
-                  ),
-                  const SizedBox(height: 10),
-                  for (var index = 0; index < plan.prices.length; index++) ...[
-                    if (index > 0) const SizedBox(height: 6),
-                    _priceTile(
-                      theme,
-                      _period(l, plan.prices[index].period),
-                      plan.prices[index].amount,
-                      highlighted: index == 0,
-                    ),
-                  ],
-                  if (plan.resetTrafficPrice != null) ...[
-                    const Padding(
-                      padding: EdgeInsets.symmetric(vertical: 8),
-                      child: Divider(height: 1),
-                    ),
-                    _priceTile(
-                      theme,
-                      l.purchasePlanResetPrice,
-                      plan.resetTrafficPrice!,
-                      highlighted: false,
-                    ),
-                  ],
-                ],
-              ),
-            ),
-            const SizedBox(height: 12),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                _SpecPill(
-                  icon: Icons.speed_rounded,
-                  text: '${l.purchasePlanSpeed}: '
-                      '${_limit(l, plan.hasSpeedLimit, plan.speedLimit, unit: ' Mbps')}',
-                ),
-                _SpecPill(
-                  icon: Icons.devices_rounded,
-                  text: '${l.purchasePlanDevices}: '
-                      '${_limit(l, plan.hasDeviceLimit, plan.deviceLimit)}',
-                ),
-                _SpecPill(
-                  icon: Icons.autorenew_rounded,
-                  text: '${l.purchasePlanTrafficReset}: ${_reset(l)}',
-                ),
-                _SpecPill(
-                  icon: Icons.confirmation_number_outlined,
-                  text: '${l.purchasePlanSalesCapacity}: '
-                      '${!plan.hasCapacityRemaining ? l.purchasePlanNotProvided : plan.capacityRemaining?.toString() ?? l.purchasePlanUnlimited}',
-                ),
-              ],
-            ),
-            if (plan.content.trim().isNotEmpty) ...[
-              const Padding(
-                padding: EdgeInsets.symmetric(vertical: 14),
-                child: Divider(height: 1),
-              ),
-              Wrap(
-                spacing: 8,
-                runSpacing: 6,
-                alignment: WrapAlignment.spaceBetween,
-                crossAxisAlignment: WrapCrossAlignment.center,
-                children: [
-                  Text(
-                    l.purchasePlanDetails,
-                    style: theme.textTheme.titleSmall?.copyWith(
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                  if (shouldCollapse)
-                    MergeSemantics(
-                      key: Key('purchase-plan-details-toggle-${plan.id}'),
-                      child: Semantics(
-                        button: true,
-                        expanded: _detailsExpanded,
-                        child: InkWell(
-                          borderRadius: BorderRadius.circular(8),
-                          onTap: () => setState(
-                            () => _detailsExpanded = !_detailsExpanded,
+                    if (widget.onBuyPlan != null &&
+                        widget.onAcquirePlan != null)
+                      const SizedBox(height: 8),
+                    if (widget.onAcquirePlan != null)
+                      OutlinedButton(
+                        key: Key('purchase-plan-acquire-${plan.id}'),
+                        style: OutlinedButton.styleFrom(
+                          minimumSize: const Size.fromHeight(40),
+                          backgroundColor: colors.surfaceContainerHighest
+                              .withValues(alpha: isDark ? 0.35 : 0.45),
+                          foregroundColor: colors.onSurface,
+                          side: BorderSide(color: colors.outlineVariant),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10),
                           ),
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 6,
-                              vertical: 4,
-                            ),
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Flexible(
-                                  child: Text(
-                                    _detailsExpanded
-                                        ? l.purchasePlanCollapseDetails
-                                        : l.purchasePlanExpandDetails,
-                                    style:
-                                        theme.textTheme.labelMedium?.copyWith(
-                                      color: colors.primary,
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                                  ),
-                                ),
-                                const SizedBox(width: 2),
-                                Icon(
-                                  _detailsExpanded
-                                      ? Icons.expand_less_rounded
-                                      : Icons.expand_more_rounded,
-                                  size: 18,
-                                  color: colors.primary,
-                                ),
-                              ],
-                            ),
+                          textStyle: theme.textTheme.labelLarge?.copyWith(
+                            fontWeight: FontWeight.w600,
                           ),
                         ),
+                        onPressed: isSoldOut
+                            ? null
+                            : () => widget.onAcquirePlan!(plan),
+                        child: Text(l.purchaseAcquirePlanCode),
                       ),
-                    ),
-                ],
-              ),
-              const SizedBox(height: 10),
-              PurchasePlanContent(
-                data: previewMarkdown,
-                openLink: widget.openLink,
-              ),
-            ],
-            if (widget.onAcquirePlan != null) ...[
-              const SizedBox(height: 16),
-              FilledButton.tonalIcon(
-                key: Key('purchase-plan-acquire-${plan.id}'),
-                onPressed: isSoldOut ? null : () => widget.onAcquirePlan!(plan),
-                icon: Icon(
-                  isSoldOut ? Icons.block_rounded : Icons.card_giftcard_rounded,
-                  size: 18,
+                  ],
                 ),
-                label: Text(l.purchaseAcquirePlanCode),
-              ),
+              )
+            : null;
+
+    return Semantics(
+      container: true,
+      label: hideRedundantTitle ? plan.name : null,
+      child: Container(
+        decoration: BoxDecoration(
+          color: cardBg,
+          borderRadius: cardRadius,
+          border: Border.all(
+            color: borderColor,
+            width: isFeatured ? 1.4 : 1.0,
+          ),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: _PlanCardLayout(
+            children: [
+              topContent,
+              if (bottomActions != null) bottomActions,
             ],
-          ],
+          ),
         ),
       ),
     );
+  }
+
+  Widget _buildHeroSinglePriceRow(
+    BuildContext context,
+    ThemeData theme,
+    ColorScheme colors,
+    XboardPlanPrice price, {
+    required bool isFree,
+  }) {
+    final priceText = _amount(price.amount);
+    final quotaWidget = Text(
+      '${plan.transferGiB}G',
+      style: theme.textTheme.headlineSmall?.copyWith(
+        fontFamily: FontFamily.jetBrainsMono.value,
+        fontFamilyFallback: _cjkMonoFallback(theme),
+        fontWeight: FontWeight.w800,
+        letterSpacing: -0.5,
+      ),
+    );
+    final priceWidget = Text(
+      priceText,
+      textAlign: TextAlign.end,
+      style: theme.textTheme.titleLarge?.copyWith(
+        fontFamily: FontFamily.jetBrainsMono.value,
+        fontFamilyFallback: _cjkMonoFallback(theme),
+        fontWeight: FontWeight.w800,
+        color: isFree ? kLatencyFastColor : colors.primary,
+      ),
+    );
+    final scale = MediaQuery.textScalerOf(context).scale(1);
+    final estHeroInnerWidth = (widget.cardWidth ?? 360) - 64;
+    final stacked = estHeroInnerWidth < 190 * scale || priceText.length > 10;
+    if (stacked) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          quotaWidget,
+          const SizedBox(height: 4),
+          priceWidget,
+        ],
+      );
+    }
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      crossAxisAlignment: CrossAxisAlignment.baseline,
+      textBaseline: TextBaseline.alphabetic,
+      children: [
+        Flexible(child: quotaWidget),
+        const SizedBox(width: 8),
+        Flexible(child: priceWidget),
+      ],
+    );
+  }
+
+  List<String> _buildSpecs(
+    AppLocalizations l, {
+    required bool isPureOnetime,
+  }) {
+    final specs = <String>[];
+    if (plan.hasDeviceLimit) {
+      final count = plan.deviceLimit ?? 0;
+      specs.add(
+        count == 0
+            ? l.purchaseSpecDevicesUnlimited
+            : l.purchaseSpecDevicesCount(count),
+      );
+    }
+    if (isPureOnetime) {
+      specs.add(l.purchaseSpecDurationUnlimited);
+    } else if (plan.prices.isNotEmpty) {
+      final periods = plan.prices.map((p) => _period(l, p.period)).join(' / ');
+      specs.add(l.purchaseSpecBillingCycle(periods));
+    }
+    if (isPureOnetime &&
+        (!plan.hasResetTrafficMethod || plan.resetTrafficMethod == 2)) {
+      specs.add(l.purchaseSpecTrafficUntilUsed);
+    } else if (plan.hasResetTrafficMethod) {
+      specs.add('${l.purchasePlanTrafficReset}: ${_reset(l)}');
+    }
+    if (plan.hasSpeedLimit && (plan.speedLimit ?? 0) > 0) {
+      specs.add(l.purchaseSpecSpeedLimit(plan.speedLimit!));
+    }
+    specs.add(l.purchaseSpecAllDevicesSupported);
+    return specs;
   }
 
   List<String> _cjkMonoFallback(ThemeData theme) => <String>[
@@ -1264,16 +1592,6 @@ class _PlanCardState extends State<_PlanCard> {
     );
   }
 
-  String _limit(
-    AppLocalizations l,
-    bool provided,
-    int? value, {
-    String unit = '',
-  }) {
-    if (!provided) return l.purchasePlanNotProvided;
-    return (value ?? 0) == 0 ? l.purchasePlanUnlimited : '$value$unit';
-  }
-
   String _reset(AppLocalizations l) {
     if (!plan.hasResetTrafficMethod) return l.purchasePlanNotProvided;
     return switch (plan.resetTrafficMethod) {
@@ -1288,8 +1606,20 @@ class _PlanCardState extends State<_PlanCard> {
   }
 
   // Keep minor units as integers; converting through double can round prices.
-  String _amount(int amount) =>
-      '${amount ~/ 100}.${(amount % 100).toString().padLeft(2, '0')}';
+  String _amount(int amount) => _formatMinorUnits(BigInt.from(amount));
+
+  String _formatMinorUnits(BigInt minorUnits) {
+    final whole = minorUnits ~/ BigInt.from(100);
+    final cents = (minorUnits % BigInt.from(100)).toString().padLeft(2, '0');
+    return '$whole.$cents';
+  }
+
+  String _perGiBAmount(int amountMinorUnits, int transferGiB) {
+    final roundedMinor =
+        (BigInt.from(amountMinorUnits) * BigInt.two + BigInt.from(transferGiB)) ~/
+            BigInt.from(transferGiB * 2);
+    return _formatMinorUnits(roundedMinor);
+  }
 
   String _period(AppLocalizations l, String period) => switch (period) {
         'monthly' => l.purchasePeriodMonthly,
@@ -1303,37 +1633,271 @@ class _PlanCardState extends State<_PlanCard> {
       };
 }
 
-class _SpecPill extends StatelessWidget {
-  const _SpecPill({required this.icon, required this.text});
+class _TierCapsulePill extends StatelessWidget {
+  const _TierCapsulePill({
+    super.key,
+    required this.label,
+    required this.highlighted,
+    required this.freeStyle,
+  });
 
-  final IconData icon;
+  final String label;
+  final bool highlighted;
+  final bool freeStyle;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final bgColor = highlighted
+        ? colors.primary
+        : freeStyle
+            ? kLatencyFastColor.withValues(alpha: 0.14)
+            : colors.surfaceContainerHighest.withValues(alpha: 0.55);
+    final borderColor = highlighted
+        ? colors.primary
+        : freeStyle
+            ? kLatencyFastColor.withValues(alpha: 0.42)
+            : colors.outlineVariant.withValues(alpha: 0.75);
+    final fgColor = highlighted
+        ? colors.onPrimary
+        : freeStyle
+            ? kLatencyFastColor
+            : colors.onSurface;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+      decoration: BoxDecoration(
+        color: bgColor,
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: borderColor),
+      ),
+      child: Text(
+        label,
+        style: theme.textTheme.labelSmall?.copyWith(
+          color: fgColor,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+    );
+  }
+}
+
+class _PlanSpecRow extends StatelessWidget {
+  const _PlanSpecRow({required this.text});
+
   final String text;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-      decoration: BoxDecoration(
-        color: colors.surfaceContainerHighest.withValues(alpha: 0.45),
-        borderRadius: BorderRadius.circular(10),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 15, color: colors.onSurfaceVariant),
-          const SizedBox(width: 6),
-          Flexible(
-            child: Text(
-              text,
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: colors.onSurface,
-              ),
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          width: 18,
+          height: 18,
+          margin: const EdgeInsets.only(top: 1),
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: kLatencyFastColor.withValues(alpha: 0.14),
+            border: Border.all(
+              color: kLatencyFastColor.withValues(alpha: 0.4),
             ),
           ),
-        ],
-      ),
+          alignment: Alignment.center,
+          child: const Icon(
+            Icons.check_rounded,
+            size: 12,
+            color: kLatencyFastColor,
+          ),
+        ),
+        const SizedBox(width: 9),
+        Expanded(
+          child: Text(
+            text,
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: colors.onSurfaceVariant,
+              height: 1.35,
+            ),
+          ),
+        ),
+      ],
     );
   }
+}
+
+class _PlanSlotParentData extends ContainerBoxParentData<RenderBox> {}
+
+/// Single-pass-safe two-slot vertical card layout that keeps top content
+/// height-unbounded so stretched equal-height rows do not re-trigger inner
+/// [LayoutBuilder]s or query intrinsics.
+class _PlanCardLayout extends MultiChildRenderObjectWidget {
+  const _PlanCardLayout({required super.children});
+
+  @override
+  RenderObject createRenderObject(BuildContext context) =>
+      _RenderPlanCardLayout();
+}
+
+class _RenderPlanCardLayout extends RenderBox
+    with
+        ContainerRenderObjectMixin<RenderBox, _PlanSlotParentData>,
+        RenderBoxContainerDefaultsMixin<RenderBox, _PlanSlotParentData> {
+  @override
+  void setupParentData(RenderObject child) {
+    if (child.parentData is! _PlanSlotParentData) {
+      child.parentData = _PlanSlotParentData();
+    }
+  }
+
+  @override
+  void performLayout() {
+    final top = firstChild;
+    if (top == null) {
+      size = constraints.smallest;
+      return;
+    }
+    final maxWidth = constraints.maxWidth;
+    final childConstraints = BoxConstraints(
+      minWidth: maxWidth,
+      maxWidth: maxWidth,
+    );
+    top.layout(childConstraints, parentUsesSize: true);
+    final topData = (top.parentData! as _PlanSlotParentData)..offset = Offset.zero;
+
+    final bottom = topData.nextSibling;
+    double bottomHeight = 0;
+    if (bottom != null) {
+      bottom.layout(childConstraints, parentUsesSize: true);
+      bottomHeight = bottom.size.height;
+    }
+
+    final naturalHeight = top.size.height + bottomHeight;
+    final targetHeight = math.max(naturalHeight, constraints.minHeight);
+    final resolvedHeight = constraints.hasBoundedHeight
+        ? targetHeight.clamp(constraints.minHeight, constraints.maxHeight)
+        : targetHeight;
+
+    if (bottom != null) {
+      (bottom.parentData! as _PlanSlotParentData).offset = Offset(
+        0,
+        math.max(top.size.height, resolvedHeight - bottomHeight),
+      );
+    }
+    size = Size(maxWidth, resolvedHeight);
+  }
+
+  @override
+  double? computeDistanceToActualBaseline(TextBaseline baseline) =>
+      defaultComputeDistanceToFirstActualBaseline(baseline);
+
+  @override
+  void paint(PaintingContext context, Offset offset) {
+    defaultPaint(context, offset);
+  }
+
+  @override
+  bool hitTestChildren(BoxHitTestResult result, {required Offset position}) =>
+      defaultHitTestChildren(result, position: position);
+}
+
+/// Side-by-side two-column plan row that equalizes card heights without
+/// calling [RenderBox.getMaxIntrinsicHeight], avoiding conflicts with nested
+/// [LayoutBuilder] widgets such as [EmojiText] and [PurchasePlanContent].
+class _EqualHeightRow extends MultiChildRenderObjectWidget {
+  const _EqualHeightRow({
+    required this.gap,
+    required super.children,
+  });
+
+  final double gap;
+
+  @override
+  RenderObject createRenderObject(BuildContext context) =>
+      _RenderEqualHeightRow(gap: gap);
+
+  @override
+  void updateRenderObject(
+    BuildContext context,
+    covariant _RenderEqualHeightRow renderObject,
+  ) {
+    renderObject.gap = gap;
+  }
+}
+
+class _RenderEqualHeightRow extends RenderBox
+    with
+        ContainerRenderObjectMixin<RenderBox, _PlanSlotParentData>,
+        RenderBoxContainerDefaultsMixin<RenderBox, _PlanSlotParentData> {
+  _RenderEqualHeightRow({required double gap}) : _gap = gap;
+
+  double _gap;
+  double get gap => _gap;
+  set gap(double value) {
+    if (_gap == value) return;
+    _gap = value;
+    markNeedsLayout();
+  }
+
+  @override
+  void setupParentData(RenderObject child) {
+    if (child.parentData is! _PlanSlotParentData) {
+      child.parentData = _PlanSlotParentData();
+    }
+  }
+
+  @override
+  void performLayout() {
+    final left = firstChild;
+    if (left == null) {
+      size = constraints.smallest;
+      return;
+    }
+    final colWidth = math.max(0.0, (constraints.maxWidth - _gap) / 2);
+    final looseCol = BoxConstraints(minWidth: colWidth, maxWidth: colWidth);
+    left.layout(looseCol, parentUsesSize: true);
+    final leftData = (left.parentData! as _PlanSlotParentData)
+      ..offset = Offset.zero;
+
+    final right = leftData.nextSibling;
+    if (right == null) {
+      size = constraints.constrain(Size(constraints.maxWidth, left.size.height));
+      return;
+    }
+
+    right.layout(looseCol, parentUsesSize: true);
+    final rowHeight = math.max(left.size.height, right.size.height);
+    // Keep maxHeight unbounded so stretched cards do not create tight
+    // relayout boundaries that would swallow dynamic detail toggles.
+    final stretchedCol = BoxConstraints(
+      minWidth: colWidth,
+      maxWidth: colWidth,
+      minHeight: rowHeight,
+    );
+    if (left.size.height < rowHeight) {
+      left.layout(stretchedCol, parentUsesSize: true);
+    }
+    if (right.size.height < rowHeight) {
+      right.layout(stretchedCol, parentUsesSize: true);
+    }
+    (right.parentData! as _PlanSlotParentData).offset =
+        Offset(colWidth + _gap, 0);
+
+    final finalHeight = math.max(left.size.height, right.size.height);
+    size = constraints.constrain(Size(constraints.maxWidth, finalHeight));
+  }
+
+  @override
+  double? computeDistanceToActualBaseline(TextBaseline baseline) =>
+      defaultComputeDistanceToFirstActualBaseline(baseline);
+
+  @override
+  void paint(PaintingContext context, Offset offset) {
+    defaultPaint(context, offset);
+  }
+
+  @override
+  bool hitTestChildren(BoxHitTestResult result, {required Offset position}) =>
+      defaultHitTestChildren(result, position: position);
 }

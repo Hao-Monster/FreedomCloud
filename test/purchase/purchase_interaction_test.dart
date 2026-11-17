@@ -78,8 +78,8 @@ void main() {
       var reachedRail = false;
       for (var i = 0; i < 18 && !(reachedSupport && reachedRail); i++) {
         await _tab(tester);
-        reachedSupport |=
-            _hasFocus(tester, find.widgetWithText(TextButton, 'Copy').first);
+        reachedSupport |= _hasFocus(
+            tester, find.byKey(const Key('purchase-safety-support-card')));
         reachedRail |= _hasFocus(tester, find.byType(NavigationRail));
       }
       expect(reachedSupport, isTrue);

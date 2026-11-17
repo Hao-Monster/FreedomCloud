@@ -42,7 +42,7 @@ function Copy-ApplicationLogs {
     if (-not (Test-Path -LiteralPath $destination)) {
         New-Item -ItemType Directory -Path $destination | Out-Null
     }
-    $allowed = '^(FlClashX_\d{4}-\d{2}-\d{2}(?:_\d+)?|connections_diagnostic|FlClashAgent(?:\.bootstrap)?|FlClashHelperService|helper-install|FlClashStrictBroker)\.log(?:\.\d+)?$'
+    $allowed = '^((?:FreedomNet|FlClashX)_\d{4}-\d{2}-\d{2}(?:_\d+)?|connections_diagnostic|(?:FreedomNetAgent|FlClashAgent)(?:\.bootstrap)?|(?:FreedomNetHelperService|FlClashHelperService)|helper-install|FlClashStrictBroker)\.log(?:\.\d+)?$'
     $copied = New-Object Collections.Generic.List[object]
     foreach ($file in Get-ChildItem -LiteralPath $SourceRoot -File -ErrorAction SilentlyContinue) {
         if ($file.Name -notmatch $allowed) {
@@ -64,11 +64,16 @@ New-Item -ItemType Directory -Path $logRoot -Force | Out-Null
 $utf8 = New-Object Text.UTF8Encoding($false)
 $inventory = New-Object Collections.Generic.List[object]
 $sources = @(
-    @{ root = if ($env:APPDATA) { Join-Path $env:APPDATA 'com.follow\clashx\logs' } else { $null }; label = 'appdata' },
-    @{ root = if ($env:LOCALAPPDATA) { Join-Path $env:LOCALAPPDATA 'FlClashX\logs' } else { $null }; label = 'localappdata' },
-    @{ root = if ($env:ProgramData) { Join-Path $env:ProgramData 'FlClashX\logs' } else { $null }; label = 'programdata' },
-    @{ root = if ($env:ProgramData) { Join-Path $env:ProgramData 'FlClashX.StrictBroker\logs' } else { $null }; label = 'strict-broker' },
-    @{ root = if ($env:ProgramFiles) { Join-Path $env:ProgramFiles 'FlClashX Service\logs' } else { $null }; label = 'helper-service' }
+    @{ root = if ($env:APPDATA) { Join-Path $env:APPDATA 'FreedomNet\FreedomNet\logs' } else { $null }; label = 'appdata' },
+    @{ root = if ($env:APPDATA) { Join-Path $env:APPDATA 'com.follow\clashx\logs' } else { $null }; label = 'appdata-legacy' },
+    @{ root = if ($env:LOCALAPPDATA) { Join-Path $env:LOCALAPPDATA 'FreedomNet\logs' } else { $null }; label = 'localappdata' },
+    @{ root = if ($env:LOCALAPPDATA) { Join-Path $env:LOCALAPPDATA 'FlClashX\logs' } else { $null }; label = 'localappdata-legacy' },
+    @{ root = if ($env:ProgramData) { Join-Path $env:ProgramData 'FreedomNet\logs' } else { $null }; label = 'programdata' },
+    @{ root = if ($env:ProgramData) { Join-Path $env:ProgramData 'FlClashX\logs' } else { $null }; label = 'programdata-legacy' },
+    @{ root = if ($env:ProgramData) { Join-Path $env:ProgramData 'FreedomNet.StrictBroker\logs' } else { $null }; label = 'strict-broker' },
+    @{ root = if ($env:ProgramData) { Join-Path $env:ProgramData 'FlClashX.StrictBroker\logs' } else { $null }; label = 'strict-broker-legacy' },
+    @{ root = if ($env:ProgramFiles) { Join-Path $env:ProgramFiles 'FreedomNet Service\logs' } else { $null }; label = 'helper-service' },
+    @{ root = if ($env:ProgramFiles) { Join-Path $env:ProgramFiles 'FlClashX Service\logs' } else { $null }; label = 'helper-service-legacy' }
 )
 foreach ($source in $sources) {
     if ($null -ne $source.root) {
@@ -83,14 +88,14 @@ foreach ($source in $sources) {
 # enough to correlate recovery behavior while keeping evidence shareable.
 $strictState = New-Object Text.StringBuilder
 [void]$strictState.AppendLine("captured_at=$([DateTime]::UtcNow.ToString('o'))")
-foreach ($serviceName in @('FlClashHelperService', 'FlClashXStrictCapture')) {
+foreach ($serviceName in @('FreedomNetHelperService', 'FlClashStrictBroker', 'FlClashStrictCallout')) {
     [void]$strictState.AppendLine("service=$serviceName")
     $query = (& sc.exe query $serviceName 2>&1 | Out-String).Trim()
     [void]$strictState.AppendLine($query)
     $config = (& sc.exe qc $serviceName 2>&1 | Out-String).Trim()
     [void]$strictState.AppendLine($config)
 }
-$marker = if ($env:ProgramData) { Join-Path $env:ProgramData 'FlClashX\strict-recovery.json' } else { $null }
+$marker = if ($env:ProgramData) { Join-Path $env:ProgramData 'FreedomNet\strict-recovery.json' } else { $null }
 if ($null -ne $marker -and (Test-Path -LiteralPath $marker -PathType Leaf)) {
     $markerHash = (Get-FileHash -LiteralPath $marker -Algorithm SHA256).Hash
     try {

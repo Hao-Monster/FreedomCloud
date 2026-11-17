@@ -4,12 +4,14 @@ import 'package:flclashx/enum/enum.dart';
 import 'package:flclashx/models/models.dart';
 import 'package:flclashx/providers/providers.dart';
 import 'package:flclashx/state.dart';
+import 'package:flclashx/widgets/day_night_sky_background.dart';
 import 'package:flclashx/widgets/fade_box.dart';
 import 'package:flclashx/widgets/pop_scope.dart';
 import 'package:flclashx/widgets/search_order_marker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:intl/intl.dart';
 
 import 'chip.dart';
 
@@ -25,6 +27,7 @@ class CommonScaffold extends ConsumerStatefulWidget {
     this.leading,
     this.title,
     this.actions,
+    this.persistentActions,
     this.automaticallyImplyLeading = true,
     this.centerTitle,
     this.appBarEditState,
@@ -61,6 +64,7 @@ class CommonScaffold extends ConsumerStatefulWidget {
   final String? title;
   final Widget? leading;
   final List<Widget>? actions;
+  final List<Widget>? persistentActions;
   final bool automaticallyImplyLeading;
   final bool? centerTitle;
   final AppBarEditState? appBarEditState;
@@ -72,16 +76,39 @@ class CommonScaffold extends ConsumerStatefulWidget {
 }
 
 class CommonScaffoldState extends ConsumerState<CommonScaffold> {
+  static const double minInlineTitleAccessoryWidth = 1040.0;
+  static const double maxInlineTitleAccessoryTextScale = 1.20;
+
   late final ValueNotifier<AppBarState> _appBarState;
+  late final Listenable _headerSlotListenable;
   final ValueNotifier<Widget?> _floatingActionButton = ValueNotifier(null);
+  final ValueNotifier<Widget?> _titleAccessory = ValueNotifier(null);
   final ValueNotifier<List<String>> _keywordsNotifier = ValueNotifier([]);
   final ValueNotifier<bool> _loading = ValueNotifier(false);
 
   final _textController = TextEditingController();
 
   Function(List<String>)? _onKeywordsUpdate;
+  Locale? _lastLocale;
+  String? _lastIntlLocale;
+  bool _hasRecordedLocale = false;
+  bool _skyDaySurface = false;
+  bool _hasSyncedSkySurface = false;
+
+  void _handleSkyDaySurfaceChanged(bool isDaySurface) {
+    if (!mounted) return;
+    _hasSyncedSkySurface = true;
+    if (_skyDaySurface != isDaySurface) {
+      setState(() {
+        _skyDaySurface = isDaySurface;
+      });
+    }
+  }
 
   Widget? get _sideNavigationBar => widget.sideNavigationBar;
+
+  bool get hasNavigationBar =>
+      widget.sideNavigationBar != null || widget.bottomNavigationBar != null;
 
   set actions(List<Widget> actions) {
     _appBarState.value = _appBarState.value.copyWith(actions: actions);
@@ -103,6 +130,7 @@ class CommonScaffoldState extends ConsumerState<CommonScaffold> {
         editState: widget.appBarEditState,
       ),
     );
+    _headerSlotListenable = Listenable.merge([_appBarState, _titleAccessory]);
   }
 
   void updateSearchState(
@@ -131,16 +159,53 @@ class CommonScaffoldState extends ConsumerState<CommonScaffold> {
     }
   }
 
-  Widget _buildSearchingAppBarTheme(Widget child) {
-    final theme = Theme.of(context);
+  Listenable get headerSlotListenable => _headerSlotListenable;
+
+  Widget? get titleAccessory => _titleAccessory.value;
+
+  set titleAccessory(Widget? widget) {
+    if (_titleAccessory.value != widget) {
+      _titleAccessory.value = widget;
+    }
+  }
+
+  bool get isInlineTitleAccessoryActive =>
+      isInlineTitleAccessoryActiveFor(context);
+
+  /// Returns whether the inline AppBar title accessory is active for [callerContext].
+  ///
+  /// Registering [MediaQuery.maybeOf] on [callerContext] keeps AppBar and body
+  /// listeners synchronized in the same frame across dynamic `textScale` and
+  /// window width transitions.
+  bool isInlineTitleAccessoryActiveFor(BuildContext callerContext) {
+    if (!mounted ||
+        !callerContext.mounted ||
+        _isSearch ||
+        _isEdit ||
+        _titleAccessory.value == null) {
+      return false;
+    }
+    final media = MediaQuery.maybeOf(callerContext);
+    if (media == null) {
+      return false;
+    }
+    return media.size.width >= minInlineTitleAccessoryWidth &&
+        media.textScaler.scale(1.0) <= maxInlineTitleAccessoryTextScale;
+  }
+
+  Widget _buildSearchingAppBarTheme(
+    BuildContext themeContext,
+    Widget child,
+  ) {
+    final theme = Theme.of(themeContext);
     final colorScheme = theme.colorScheme;
     return Theme(
       data: theme.copyWith(
         appBarTheme: theme.appBarTheme.copyWith(
-          backgroundColor: colorScheme.brightness == Brightness.dark
-              ? Colors.grey[900]
-              : Colors.white,
-          iconTheme: theme.primaryIconTheme.copyWith(color: Colors.grey),
+          backgroundColor: colorScheme.surfaceContainer,
+          iconTheme: (theme.appBarTheme.iconTheme ?? theme.iconTheme).copyWith(
+            color: colorScheme.onSurfaceVariant,
+          ),
           titleTextStyle: theme.textTheme.titleLarge,
           toolbarTextStyle: theme.textTheme.bodyMedium,
         ),
@@ -208,17 +273,40 @@ class CommonScaffoldState extends ConsumerState<CommonScaffold> {
     _appBarState.dispose();
     _textController.dispose();
     _floatingActionButton.dispose();
+    _titleAccessory.dispose();
     _keywordsNotifier.dispose();
     _loading.dispose();
     super.dispose();
   }
 
+  void _syncLocaleTracking() {
+    _lastLocale = Localizations.maybeLocaleOf(context);
+    _lastIntlLocale = Intl.getCurrentLocale();
+    _hasRecordedLocale = true;
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _syncLocaleTracking();
+  }
+
   @override
   void didUpdateWidget(CommonScaffold oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.title != widget.title) {
+    final currentLocale = Localizations.maybeLocaleOf(context);
+    final currentIntlLocale = Intl.getCurrentLocale();
+    final localeChanged = _hasRecordedLocale &&
+        (currentLocale != _lastLocale ||
+            currentIntlLocale != _lastIntlLocale);
+    _lastLocale = currentLocale;
+    _lastIntlLocale = currentIntlLocale;
+    _hasRecordedLocale = true;
+
+    if (oldWidget.title != widget.title && !localeChanged) {
       _appBarState.value = const AppBarState();
       _floatingActionButton.value = null;
+      _titleAccessory.value = null;
       _textController.text = "";
       _keywordsNotifier.value = [];
       _onKeywordsUpdate = null;
@@ -259,27 +347,52 @@ class CommonScaffoldState extends ConsumerState<CommonScaffold> {
         : widget.leading;
   }
 
-  Widget _buildTitle(AppBarSearchState? startState) => _isSearch
-        ? TextField(
-            autofocus: true,
-            controller: _textController,
-            style: context.textTheme.titleLarge,
-            onChanged: (value) {
-              if (startState != null) {
-                startState.onSearch(value);
-              }
-            },
-            decoration: InputDecoration(
-              hintText: appLocalizations.search,
+  Widget _buildTitle(
+    AppBarSearchState? startState,
+    BuildContext accessoryContext,
+  ) {
+    if (_isSearch) {
+      return TextField(
+        autofocus: true,
+        controller: _textController,
+        style: Theme.of(accessoryContext).textTheme.titleLarge,
+        onChanged: (value) {
+          if (startState != null) {
+            startState.onSearch(value);
+          }
+        },
+        decoration: InputDecoration(
+          hintText: appLocalizations.search,
+        ),
+      );
+    }
+    if (_isEdit) {
+      return Text(
+        appLocalizations.selectedCountTitle(
+          "${_appBarState.value.editState?.editCount ?? 0}",
+        ),
+      );
+    }
+    if (isInlineTitleAccessoryActiveFor(accessoryContext)) {
+      return Row(
+        children: [
+          Flexible(
+            flex: 0,
+            child: Text(
+              widget.title!,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
             ),
-          )
-        : Text(
-            !_isEdit
-                ? widget.title!
-                : appLocalizations.selectedCountTitle(
-                    "${_appBarState.value.editState?.editCount ?? 0}",
-                  ),
-          );
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: _titleAccessory.value!,
+          ),
+        ],
+      );
+    }
+    return Text(widget.title!);
+  }
 
   List<Widget> _buildActions(
     AppBarSearchState? searchState,
@@ -306,9 +419,14 @@ class CommonScaffoldState extends ConsumerState<CommonScaffold> {
       icon: const Icon(Icons.search),
     );
 
+    final persistent = !_isEdit
+        ? (widget.persistentActions ?? const <Widget>[])
+        : const <Widget>[];
+
     if (!hasSearch) {
       return genActions([
         ...actions,
+        ...persistent,
       ]);
     }
 
@@ -320,18 +438,21 @@ class CommonScaffoldState extends ConsumerState<CommonScaffold> {
       return genActions([
         ...actions,
         searchButton,
+        ...persistent,
       ]);
     }
 
     return genActions([
       searchButton,
       ...actions,
+      ...persistent,
     ]);
   
   }
 
-  Widget _buildAppBarWrap(Widget child) {
-    final appBar = _isSearch ? _buildSearchingAppBarTheme(child) : child;
+  Widget _buildAppBarWrap(BuildContext themeContext, Widget child) {
+    final appBar =
+        _isSearch ? _buildSearchingAppBarTheme(themeContext, child) : child;
     if (_isEdit || _isSearch) {
       return SystemBackBlock(
         child: CommonPopScope(
@@ -350,28 +471,31 @@ class CommonScaffoldState extends ConsumerState<CommonScaffold> {
     return appBar;
   }
 
-  PreferredSizeWidget _buildAppBar() {
-    final backgroundUrl = widget.disableBackground ? null : ref.watch(backgroundUrlProvider);
-    final isTransparent = backgroundUrl != null;
-    
+  PreferredSizeWidget _buildAppBar(
+    BuildContext themeContext, {
+    required bool isTransparent,
+  }) {
+    final theme = Theme.of(themeContext);
+    final colorScheme = theme.colorScheme;
+
     return PreferredSize(
       preferredSize: const Size.fromHeight(kToolbarHeight),
       child: Theme(
-        data: Theme.of(context).copyWith(
-          appBarTheme: AppBarTheme(
+        data: theme.copyWith(
+          appBarTheme: theme.appBarTheme.copyWith(
             systemOverlayStyle: SystemUiOverlayStyle(
               statusBarColor: Colors.transparent,
               statusBarIconBrightness:
-                  Theme.of(context).brightness == Brightness.dark
+                  theme.brightness == Brightness.dark
                       ? Brightness.light
                       : Brightness.dark,
               systemNavigationBarIconBrightness:
-                  Theme.of(context).brightness == Brightness.dark
+                  theme.brightness == Brightness.dark
                       ? Brightness.light
                       : Brightness.dark,
               systemNavigationBarColor: widget.bottomNavigationBar != null
-                  ? context.colorScheme.surfaceContainer
-                  : context.colorScheme.surface,
+                  ? colorScheme.surfaceDim
+                  : colorScheme.surface,
               systemNavigationBarDividerColor: Colors.transparent,
             ),
           ),
@@ -380,17 +504,26 @@ class CommonScaffoldState extends ConsumerState<CommonScaffold> {
           alignment: Alignment.bottomCenter,
           children: [
             widget.appBar ??
-                ValueListenableBuilder<AppBarState>(
-                  valueListenable: _appBarState,
-                  builder: (_, state, __) => _buildAppBarWrap(
+                ListenableBuilder(
+                  listenable: headerSlotListenable,
+                  builder: (slotContext, _) {
+                    final state = _appBarState.value;
+                    final inlineActive =
+                        isInlineTitleAccessoryActiveFor(slotContext);
+                    final effectiveTransparent =
+                        isTransparent && !_isSearch && !_isEdit;
+                    return _buildAppBarWrap(
+                      slotContext,
                       AppBar(
-                        backgroundColor: isTransparent ? Colors.transparent : null,
-                        elevation: isTransparent ? 0 : null,
-                        centerTitle: widget.centerTitle ?? false,
+                        backgroundColor:
+                            effectiveTransparent ? Colors.transparent : null,
+                        elevation: effectiveTransparent ? 0 : null,
+                        centerTitle:
+                            inlineActive ? false : (widget.centerTitle ?? false),
                         automaticallyImplyLeading:
                             widget.automaticallyImplyLeading,
                         leading: _buildLeading(),
-                        title: _buildTitle(state.searchState),
+                        title: _buildTitle(state.searchState, slotContext),
                         actions: _buildActions(
                           state.searchState,
                           state.actions.isNotEmpty
@@ -398,7 +531,8 @@ class CommonScaffoldState extends ConsumerState<CommonScaffold> {
                               : widget.actions ?? [],
                         ),
                       ),
-                    ),
+                    );
+                  },
                 ),
             ValueListenableBuilder(
               valueListenable: _loading,
@@ -460,11 +594,140 @@ class CommonScaffoldState extends ConsumerState<CommonScaffold> {
     );
   }
 
+  ThemeData _resolveSkyScaffoldTheme(
+    BuildContext context, {
+    required bool isDaySurface,
+    required DayNightGlassPreset glassPreset,
+  }) {
+    final ambient = Theme.of(context);
+    final targetBrightness = isDaySurface ? Brightness.light : Brightness.dark;
+    final ThemeData baseTheme;
+    if (ambient.brightness == targetBrightness) {
+      baseTheme = ambient;
+    } else {
+      final colorScheme = ref.watch(genColorSchemeProvider(targetBrightness));
+      final built = buildFreedomNetThemeData(
+        colorScheme: colorScheme,
+        pageTransitionsTheme: ambient.pageTransitionsTheme,
+      );
+      final ambientFont = ambient.textTheme.bodyMedium?.fontFamily;
+      final builtFont = built.textTheme.bodyMedium?.fontFamily;
+      if (ambientFont != null && ambientFont != builtFont) {
+        baseTheme = built.copyWith(
+          textTheme: built.textTheme.apply(fontFamily: ambientFont),
+          appBarTheme: built.appBarTheme.copyWith(
+            titleTextStyle: built.appBarTheme.titleTextStyle?.copyWith(
+              fontFamily: ambientFont,
+            ),
+          ),
+        );
+      } else {
+        baseTheme = built;
+      }
+    }
+
+    final scheme = baseTheme.colorScheme;
+    final hairline = freedomNetHairlineColor(scheme);
+    final glass = resolveDayNightGlassAlphas(
+      preset: glassPreset,
+      isDaySurface: isDaySurface,
+    );
+    final translucentCard =
+        scheme.surfaceContainer.withValues(alpha: glass.scaffoldCard);
+    final translucentChip =
+        scheme.surfaceContainerHigh.withValues(alpha: glass.scaffoldChip);
+
+    return baseTheme.copyWith(
+      scaffoldBackgroundColor: Colors.transparent,
+      cardColor: translucentCard,
+      cardTheme: baseTheme.cardTheme.copyWith(
+        elevation: 0,
+        color: translucentCard,
+        surfaceTintColor: Colors.transparent,
+        shape: baseTheme.cardTheme.shape ??
+            RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(14),
+              side: BorderSide(color: hairline),
+            ),
+      ),
+      chipTheme: baseTheme.chipTheme.copyWith(
+        backgroundColor: translucentChip,
+      ),
+    );
+  }
+
+  Widget _buildScaffoldShell(
+    BuildContext themeContext, {
+    required Widget body,
+    required bool isTransparent,
+  }) =>
+      Scaffold(
+        appBar: _buildAppBar(themeContext, isTransparent: isTransparent),
+        body: body,
+        resizeToAvoidBottomInset: true,
+        backgroundColor: isTransparent
+            ? (widget.backgroundColor ?? Colors.transparent)
+            : widget.backgroundColor,
+        floatingActionButton: widget.floatingActionButton ??
+            ValueListenableBuilder<Widget?>(
+              valueListenable: _floatingActionButton,
+              builder: (_, value, __) => IntrinsicWidth(
+                child: IntrinsicHeight(
+                  child: FadeScaleBox(
+                    child: value ?? const SizedBox.shrink(),
+                  ),
+                ),
+              ),
+            ),
+        bottomNavigationBar: widget.bottomNavigationBar,
+      );
+
   @override
   Widget build(BuildContext context) {
-    assert(widget.appBar != null || widget.title != null);
-    final backgroundUrl = widget.disableBackground ? null : ref.watch(backgroundUrlProvider);
-    
+    assert(
+      widget.appBar != null || widget.title != null,
+      'CommonScaffold requires either appBar or title',
+    );
+    final backgroundUrl =
+        widget.disableBackground ? null : ref.watch(backgroundUrlProvider);
+    final hasCustomBackground =
+        backgroundUrl != null && backgroundUrl.isNotEmpty;
+    final (skyMode, glassPreset, ignoreCustomBackground) =
+        widget.disableBackground
+            ? (
+                DayNightSkyMode.followConnection,
+                DayNightGlassPreset.balanced,
+                false,
+              )
+            : ref.watch(
+                themeSettingProvider.select(
+                  (state) => (
+                    state.skyMode,
+                    state.glassPreset,
+                    state.ignoreCustomBackground,
+                  ),
+                ),
+              );
+    final useCustomBackground = hasCustomBackground && !ignoreCustomBackground;
+    final useSkyBackground = !widget.disableBackground && !useCustomBackground;
+    final isRunning = useSkyBackground
+        ? ref.watch(runTimeProvider.select((state) => state != null))
+        : false;
+    final pendingTarget =
+        useSkyBackground ? ref.watch(statusSwitchPendingProvider) : null;
+    final targetPhase = resolveDayNightSkyPhase(
+      isRunning: isRunning,
+      pendingTarget: pendingTarget,
+      mode: skyMode,
+    );
+    final reduceMotion = MediaQuery.maybeDisableAnimationsOf(context) ?? false;
+    if (!useSkyBackground) {
+      _hasSyncedSkySurface = false;
+    } else if (!_hasSyncedSkySurface || reduceMotion) {
+      _skyDaySurface = targetPhase == DayNightSkyPhase.day;
+      _hasSyncedSkySurface = true;
+    }
+
     final body = SafeArea(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -478,7 +741,7 @@ class CommonScaffoldState extends ConsumerState<CommonScaffold> {
                 }
               });
               if (keywords.isEmpty) {
-                return const SizedBox();
+                return const SizedBox.shrink();
               }
               return Padding(
                 padding: const EdgeInsets.symmetric(
@@ -508,42 +771,53 @@ class CommonScaffoldState extends ConsumerState<CommonScaffold> {
         ],
       ),
     );
-    
-    final scaffold = Scaffold(
-      appBar: _buildAppBar(),
-      body: body,
-      resizeToAvoidBottomInset: true,
-      backgroundColor: backgroundUrl != null ? Colors.transparent : widget.backgroundColor,
-      floatingActionButton: widget.floatingActionButton ??
-          ValueListenableBuilder<Widget?>(
-            valueListenable: _floatingActionButton,
-            builder: (_, value, __) => IntrinsicWidth(
-                child: IntrinsicHeight(
-                  child: FadeScaleBox(
-                    child: value ?? const SizedBox(),
-                  ),
-                ),
-              ),
+
+    ThemeData? skyTheme;
+    final Widget scaffoldWithBackground;
+    if (useCustomBackground) {
+      scaffoldWithBackground = Stack(
+        children: [
+          _buildBackground(backgroundUrl),
+          _buildOverlay(
+            context,
+            widget.disableBackground
+                ? null
+                : ref.watch(backgroundOpacityProvider),
           ),
-      bottomNavigationBar: widget.bottomNavigationBar,
-    );
-    
-    final scaffoldWithBackground = backgroundUrl != null
-        ? Stack(
-            children: [
-              _buildBackground(backgroundUrl),
-              _buildOverlay(
-                context,
-                widget.disableBackground
-                    ? null
-                    : ref.watch(backgroundOpacityProvider),
+          _buildScaffoldShell(context, body: body, isTransparent: true),
+        ],
+      );
+    } else if (useSkyBackground) {
+      skyTheme = _resolveSkyScaffoldTheme(
+        context,
+        isDaySurface: _skyDaySurface,
+        glassPreset: glassPreset,
+      );
+      scaffoldWithBackground = Builder(
+        builder: (skyContext) => Stack(
+          children: [
+            Positioned.fill(
+              child: DayNightSkyBackground(
+                onDaySurfaceChanged: _handleSkyDaySurfaceChanged,
               ),
-              scaffold,
-            ],
-          )
-        : scaffold;
-    
-    return _sideNavigationBar != null
+            ),
+            _buildScaffoldShell(
+              skyContext,
+              body: body,
+              isTransparent: true,
+            ),
+          ],
+        ),
+      );
+    } else {
+      scaffoldWithBackground = _buildScaffoldShell(
+        context,
+        body: body,
+        isTransparent: false,
+      );
+    }
+
+    final layout = _sideNavigationBar != null
         ? Row(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -555,6 +829,19 @@ class CommonScaffoldState extends ConsumerState<CommonScaffold> {
             ],
           )
         : scaffoldWithBackground;
+
+    if (skyTheme != null) {
+      return Theme(
+        data: skyTheme,
+        child: DayNightSkyScope(
+          isActive: true,
+          isDaySurface: _skyDaySurface,
+          glassPreset: glassPreset,
+          child: layout,
+        ),
+      );
+    }
+    return layout;
   }
 }
 

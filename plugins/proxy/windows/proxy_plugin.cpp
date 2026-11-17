@@ -12,7 +12,6 @@
 #pragma comment(lib, "wininet")
 #pragma comment(lib, "Rasapi32")
 
-// For getPlatformVersion; remove unless needed for your plugin implementation.
 #include <VersionHelpers.h>
 
 #include <flutter/method_channel.h>
@@ -21,18 +20,23 @@
 
 #include <memory>
 #include <sstream>
+#include <utility>
 
 #include "proxy_settings.h"
 
 namespace proxy
 {
 
+  bool IsValidPacUrl(const std::string& address) {
+    return address.size() <= 2048 &&
+           (address.rfind("https://", 0) == 0 || address.rfind("http://", 0) == 0) &&
+           address.find_first_of("\r\n\t ") == std::string::npos &&
+           address.find('\0') == std::string::npos;
+  }
+
   // Use the OS PAC engine. Never evaluate user-provided JavaScript in the UI.
   bool SetPac(const std::string& address) {
-    if (address.size() > 2048 ||
-        (address.rfind("https://", 0) != 0 && address.rfind("http://", 0) != 0) ||
-        address.find_first_of("\r\n\t ") != std::string::npos ||
-        address.find('\0') != std::string::npos) return false;
+    if (!IsValidPacUrl(address)) return false;
     std::wstring wide;
     if (!Utf8ToWide(address, &wide)) return false;
     INTERNET_PER_CONN_OPTIONW options[2]{};
@@ -71,9 +75,52 @@ namespace proxy
     registrar->AddPlugin(std::move(plugin));
   }
 
-  ProxyPlugin::ProxyPlugin() {}
+  namespace {
+  ProxyApplyOutcome ApplyDesiredProxyState(const DesiredProxyState& desired) {
+    ProxyApplyOutcome outcome;
+    outcome.mode = desired.mode;
+    switch (desired.mode) {
+      case DesiredProxyMode::kPac:
+        outcome.pac_ok = SetPac(desired.pac_url);
+        break;
+      case DesiredProxyMode::kStop:
+        outcome.proxy_result = ApplySystemProxy(false, 0, {});
+        break;
+      case DesiredProxyMode::kSystemProxy:
+        outcome.proxy_result =
+            ApplySystemProxy(true, desired.port, desired.bypass);
+        break;
+    }
+    return outcome;
+  }
 
-  ProxyPlugin::~ProxyPlugin() {}
+  void CompleteMethodResult(
+      const std::shared_ptr<flutter::MethodResult<flutter::EncodableValue>>& result,
+      const ProxyApplyOutcome& outcome) {
+    if (!result) return;
+    if (outcome.mode == DesiredProxyMode::kPac) {
+      if (!outcome.pac_ok) {
+        result->Error("pac_failed", "Windows could not apply PAC settings");
+        return;
+      }
+      result->Success(flutter::EncodableValue(true));
+      return;
+    }
+    if (!outcome.proxy_result.ok()) {
+      result->Error(
+          "proxy_failed", outcome.proxy_result.stage,
+          flutter::EncodableValue(static_cast<int64_t>(outcome.proxy_result.error)));
+      return;
+    }
+    result->Success(flutter::EncodableValue(true));
+  }
+  }  // namespace
+
+  ProxyPlugin::ProxyPlugin() : state_runner_(ApplyDesiredProxyState) {}
+
+  ProxyPlugin::~ProxyPlugin() {
+    state_runner_.Shutdown();
+  }
 
   void ProxyPlugin::HandleMethodCall(
       const flutter::MethodCall<flutter::EncodableValue> &method_call,
@@ -87,18 +134,26 @@ namespace proxy
       if (entry == args->end()) { result->Error("invalid_arguments", "PAC URL required"); return; }
       const auto* url = std::get_if<std::string>(&entry->second);
       if (!url) { result->Error("invalid_arguments", "PAC URL must be a string"); return; }
-      if (!SetPac(*url)) { result->Error("pac_failed", "Windows could not apply PAC settings"); return; }
-      result->Success(true);
+      DesiredProxyState desired;
+      desired.mode = DesiredProxyMode::kPac;
+      desired.pac_url = *url;
+      std::shared_ptr<flutter::MethodResult<flutter::EncodableValue>> shared_result(
+          std::move(result));
+      state_runner_.Submit(std::move(desired),
+                           [shared_result](const ProxyApplyOutcome& outcome) {
+                             CompleteMethodResult(shared_result, outcome);
+                           });
     }
     else if (method_call.method_name().compare("StopProxy") == 0)
     {
-      const auto applied = ApplySystemProxy(false, 0, {});
-      if (!applied.ok()) {
-        result->Error("proxy_failed", applied.stage,
-            flutter::EncodableValue(static_cast<int64_t>(applied.error)));
-        return;
-      }
-      result->Success(true);
+      DesiredProxyState desired;
+      desired.mode = DesiredProxyMode::kStop;
+      std::shared_ptr<flutter::MethodResult<flutter::EncodableValue>> shared_result(
+          std::move(result));
+      state_runner_.Submit(std::move(desired),
+                           [shared_result](const ProxyApplyOutcome& outcome) {
+                             CompleteMethodResult(shared_result, outcome);
+                           });
     }
     else if (method_call.method_name().compare("StartProxy") == 0)
     {
@@ -119,13 +174,16 @@ namespace proxy
         if (!text) { result->Error("invalid_arguments", "Bypass entries must be strings"); return; }
         bypass.push_back(*text);
       }
-      const auto applied = ApplySystemProxy(true, *port, bypass);
-      if (!applied.ok()) {
-        result->Error("proxy_failed", applied.stage,
-            flutter::EncodableValue(static_cast<int64_t>(applied.error)));
-        return;
-      }
-      result->Success(true);
+      DesiredProxyState desired;
+      desired.mode = DesiredProxyMode::kSystemProxy;
+      desired.port = *port;
+      desired.bypass = std::move(bypass);
+      std::shared_ptr<flutter::MethodResult<flutter::EncodableValue>> shared_result(
+          std::move(result));
+      state_runner_.Submit(std::move(desired),
+                           [shared_result](const ProxyApplyOutcome& outcome) {
+                             CompleteMethodResult(shared_result, outcome);
+                           });
     }
     else
     {

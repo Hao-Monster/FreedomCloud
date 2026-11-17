@@ -10,6 +10,8 @@ import 'package:flclashx/manager/manager.dart';
 import 'package:flclashx/plugins/app.dart';
 import 'package:flclashx/providers/providers.dart';
 import 'package:flclashx/state.dart';
+import 'package:flclashx/widgets/day_night_sky_background.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_displaymode/flutter_displaymode.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
@@ -17,6 +19,213 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'controller.dart';
 import 'pages/pages.dart';
+
+// Windows reports internet-connected adapter types. Adapter notifications can
+// omit the TUN even while existing Core connections are still healthy.
+bool shouldCloseConnectionsOnNetworkChange(
+  List<ConnectivityResult> results, {
+  required bool isWindows,
+}) =>
+    !isWindows && !results.contains(ConnectivityResult.vpn);
+
+class NetworkChangeCoordinator {
+  NetworkChangeCoordinator({
+    required this.isWindows,
+    required this.readLocalIp,
+    required this.resetConnections,
+    required this.closeConnections,
+    this.onLocalIpChanged,
+    this.onRecovered,
+    this.probeDelays = const [
+      Duration(milliseconds: 250),
+      Duration(milliseconds: 1000),
+      Duration(milliseconds: 2500),
+      Duration(milliseconds: 4500),
+      Duration(milliseconds: 7000),
+    ],
+  });
+
+  final bool isWindows;
+  final Future<String?> Function() readLocalIp;
+  final VoidCallback resetConnections;
+  final VoidCallback closeConnections;
+  final ValueChanged<String?>? onLocalIpChanged;
+  final FutureOr<void> Function()? onRecovered;
+  final List<Duration> probeDelays;
+
+  bool _disposed = false;
+  int _epoch = 0;
+  bool _hasSnapshot = false;
+  bool _wasOffline = false;
+  Set<ConnectivityResult> _lastTransports = const <ConnectivityResult>{};
+  String _lastLocalIp = '';
+
+  Set<ConnectivityResult> _extractPhysicalTransports(
+    List<ConnectivityResult> results,
+  ) =>
+      results
+          .where(
+            (result) =>
+                result != ConnectivityResult.vpn &&
+                result != ConnectivityResult.none,
+          )
+          .toSet();
+
+  Future<void> seedInitialBaseline(List<ConnectivityResult> results) async {
+    if (_disposed || !isWindows || _hasSnapshot || _epoch != 0) {
+      return;
+    }
+    final seedEpoch = _epoch;
+    final transports = _extractPhysicalTransports(results);
+    if (transports.isEmpty) {
+      _hasSnapshot = true;
+      _wasOffline = true;
+      _lastTransports = const <ConnectivityResult>{};
+      return;
+    }
+    final rawIp = await readLocalIp();
+    if (_disposed || _hasSnapshot || _epoch != seedEpoch) {
+      return;
+    }
+    final ip = (rawIp ?? '').trim();
+    _lastTransports = ip.isEmpty ? const <ConnectivityResult>{} : transports;
+    _lastLocalIp = ip;
+    _hasSnapshot = true;
+    _wasOffline = ip.isEmpty;
+    if (ip.isNotEmpty) {
+      onLocalIpChanged?.call(rawIp);
+    }
+  }
+
+  Future<void> handleConnectivityChanged(
+    List<ConnectivityResult> results,
+  ) async {
+    if (_disposed) {
+      return;
+    }
+    final epoch = ++_epoch;
+    final delays = probeDelays.isEmpty ? const [Duration.zero] : probeDelays;
+
+    if (!isWindows) {
+      if (shouldCloseConnectionsOnNetworkChange(results, isWindows: false)) {
+        resetConnections();
+        closeConnections();
+      }
+      final delay = delays.first;
+      if (delay > Duration.zero) {
+        await Future<void>.delayed(delay);
+      }
+      if (_disposed || epoch != _epoch) {
+        return;
+      }
+      final ip = await readLocalIp();
+      if (_disposed || epoch != _epoch) {
+        return;
+      }
+      onLocalIpChanged?.call(ip);
+      return;
+    }
+
+    final transports = _extractPhysicalTransports(results);
+
+    if (transports.isEmpty) {
+      _hasSnapshot = true;
+      _wasOffline = true;
+      _lastTransports = const <ConnectivityResult>{};
+      final delay = delays.first;
+      if (delay > Duration.zero) {
+        await Future<void>.delayed(delay);
+      }
+      if (_disposed || epoch != _epoch) {
+        return;
+      }
+      final ip = await readLocalIp();
+      if (_disposed || epoch != _epoch) {
+        return;
+      }
+      onLocalIpChanged?.call(ip);
+      return;
+    }
+
+    await _probeUntilRecovered(
+      epoch: epoch,
+      transports: transports,
+      delays: delays,
+    );
+  }
+
+  Future<void> _probeUntilRecovered({
+    required int epoch,
+    required Set<ConnectivityResult> transports,
+    required List<Duration> delays,
+  }) async {
+    for (var i = 0; i < delays.length; i++) {
+      final delay = delays[i];
+      if (delay > Duration.zero) {
+        await Future<void>.delayed(delay);
+      }
+      if (_disposed || epoch != _epoch) {
+        return;
+      }
+      final rawIp = await readLocalIp();
+      if (_disposed || epoch != _epoch) {
+        return;
+      }
+      onLocalIpChanged?.call(rawIp);
+      final ip = (rawIp ?? '').trim();
+      final isLastProbe = i == delays.length - 1;
+
+      if (!_hasSnapshot) {
+        if (ip.isNotEmpty) {
+          _lastTransports = transports;
+          _lastLocalIp = ip;
+          _hasSnapshot = true;
+          _wasOffline = false;
+          break;
+        }
+        if (isLastProbe) {
+          _lastTransports = const <ConnectivityResult>{};
+          _lastLocalIp = '';
+          _hasSnapshot = true;
+          _wasOffline = true;
+        }
+        continue;
+      }
+
+      if (ip.isEmpty) {
+        _wasOffline = true;
+        if (isLastProbe) {
+          _lastTransports = const <ConnectivityResult>{};
+        }
+        continue;
+      }
+
+      final transportChanged = !setEquals(_lastTransports, transports);
+      final ipChanged = ip != _lastLocalIp;
+      final shouldReset = _wasOffline || transportChanged || ipChanged;
+
+      _wasOffline = false;
+      _lastTransports = transports;
+      _lastLocalIp = ip;
+
+      if (shouldReset) {
+        resetConnections();
+        if (_disposed || epoch != _epoch) {
+          return;
+        }
+        try {
+          await onRecovered?.call();
+        } catch (_) {}
+      }
+      break;
+    }
+  }
+
+  void dispose() {
+    _disposed = true;
+    _epoch++;
+  }
+}
 
 class Application extends ConsumerStatefulWidget {
   const Application({
@@ -29,6 +238,7 @@ class Application extends ConsumerStatefulWidget {
 
 class ApplicationState extends ConsumerState<Application> {
   Timer? _autoUpdateProfilesTaskTimer;
+  late final NetworkChangeCoordinator _networkChangeCoordinator;
 
   final _pageTransitionsTheme = const PageTransitionsTheme(
     builders: <TargetPlatform, PageTransitionsBuilder>{
@@ -38,12 +248,6 @@ class ApplicationState extends ConsumerState<Application> {
       TargetPlatform.macOS: CommonPageTransitionsBuilder(),
     },
   );
-
-  ColorScheme _getAppColorScheme({
-    required Brightness brightness,
-    int? primaryColor,
-  }) =>
-      ref.read(genColorSchemeProvider(brightness));
 
   @override
   void initState() {
@@ -64,10 +268,32 @@ class ApplicationState extends ConsumerState<Application> {
     globalState.startGroupsUpdateTask();
     _autoUpdateProfilesTask();
     globalState.appController = AppController(context, ref);
+    _networkChangeCoordinator = NetworkChangeCoordinator(
+      isWindows: Platform.isWindows,
+      readLocalIp: utils.getLocalIpAddress,
+      resetConnections: clashCore.resetConnections,
+      closeConnections: clashCore.closeConnections,
+      onLocalIpChanged: (ip) {
+        if (mounted) {
+          ref.read(localIpProvider.notifier).value = ip;
+        }
+      },
+      onRecovered: () {
+        if (!mounted ||
+            !globalState.isAppStateInitialized ||
+            !globalState.isConfigInitialized) {
+          return;
+        }
+        detectionState
+          ..notifyRoutingChanged()
+          ..startCheck();
+      },
+    );
     WidgetsBinding.instance.addPostFrameCallback((timeStamp) async {
+      logStartupFirstFrameOnce();
       final currentContext = globalState.navigatorKey.currentContext;
       if (currentContext != null) {
-        globalState.appController = AppController(currentContext, ref);
+        globalState.appController.updateContext(currentContext);
       }
       await globalState.appController.init();
       globalState.appController.initLink();
@@ -107,11 +333,17 @@ class ApplicationState extends ConsumerState<Application> {
   Widget _buildState(Widget child) => AppStateManager(
         child: ClashManager(
           child: ConnectivityManager(
-            onConnectivityChanged: (results) async {
-              if (!results.contains(ConnectivityResult.vpn)) {
-                clashCore.closeConnections();
-              }
-              globalState.appController.updateLocalIp();
+            onInitialConnectivity: (results) {
+              unawaited(
+                _networkChangeCoordinator.seedInitialBaseline(results),
+              );
+            },
+            onConnectivityChanged: (results) {
+              detectionState.notifyRoutingChanged();
+              ref.read(localIpProvider.notifier).value = null;
+              unawaited(
+                _networkChangeCoordinator.handleConnectivityChanged(results),
+              );
               globalState.appController.addCheckIpNumDebounce();
             },
             child: child,
@@ -144,6 +376,20 @@ class ApplicationState extends ConsumerState<Application> {
               final locale =
                   ref.watch(appSettingProvider.select((state) => state.locale));
               final themeProps = ref.watch(themeSettingProvider);
+              final backgroundUrl = ref.watch(backgroundUrlProvider);
+              final hasCustomBackground =
+                  backgroundUrl != null && backgroundUrl.isNotEmpty;
+              final useCustomBackground =
+                  hasCustomBackground && !themeProps.ignoreCustomBackground;
+              final isRunning = ref.watch(
+                runTimeProvider.select((state) => state != null),
+              );
+              final pendingTarget = ref.watch(statusSwitchPendingProvider);
+              final effectiveThemeMode = resolveDayNightThemeMode(
+                isRunning: isRunning,
+                pendingTarget: pendingTarget,
+                mode: themeProps.skyMode,
+              );
               return MaterialApp(
                 debugShowCheckedModeBanner: false,
                 navigatorKey: globalState.navigatorKey,
@@ -178,29 +424,21 @@ class ApplicationState extends ConsumerState<Application> {
                   return app;
                 },
                 scrollBehavior: BaseScrollBehavior(),
-                title: appName,
+                onGenerateTitle: (_) => brandDisplayName,
                 locale: utils.getLocaleForString(locale),
                 supportedLocales: AppLocalizations.delegate.supportedLocales,
-                themeMode: themeProps.themeMode,
-                theme: ThemeData(
-                  useMaterial3: true,
-                  pageTransitionsTheme: _pageTransitionsTheme,
-                  colorScheme: _getAppColorScheme(
-                    brightness: Brightness.light,
-                    primaryColor: themeProps.primaryColor,
+                themeMode: effectiveThemeMode,
+                theme: buildFreedomNetThemeData(
+                  colorScheme: ref.watch(
+                    genColorSchemeProvider(Brightness.light),
                   ),
-                  // Reduce animation duration for snappier feel
-                  visualDensity: VisualDensity.adaptivePlatformDensity,
-                ),
-                darkTheme: ThemeData(
-                  useMaterial3: true,
                   pageTransitionsTheme: _pageTransitionsTheme,
-                  colorScheme: _getAppColorScheme(
-                    brightness: Brightness.dark,
-                    primaryColor: themeProps.primaryColor,
-                  ).toPureBlack(themeProps.pureBlack),
-                  // Reduce animation duration for snappier feel
-                  visualDensity: VisualDensity.adaptivePlatformDensity,
+                ),
+                darkTheme: buildFreedomNetThemeData(
+                  colorScheme: ref
+                      .watch(genColorSchemeProvider(Brightness.dark))
+                      .toPureBlack(useCustomBackground && themeProps.pureBlack),
+                  pageTransitionsTheme: _pageTransitionsTheme,
                 ),
                 home: child,
               );
@@ -212,6 +450,7 @@ class ApplicationState extends ConsumerState<Application> {
 
   @override
   void dispose() {
+    _networkChangeCoordinator.dispose();
     linkManager.destroy();
     globalState.stopGroupsUpdateTask();
     _autoUpdateProfilesTaskTimer?.cancel();

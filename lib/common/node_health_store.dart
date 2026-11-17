@@ -8,6 +8,8 @@ import 'package:flclashx/models/node_catalog.dart';
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as path;
 
+const Duration kNodeHealthFreshDuration = Duration(hours: 1);
+
 class NodeHealthRecord {
   const NodeHealthRecord({
     required this.delayMs,
@@ -22,7 +24,7 @@ class NodeHealthRecord {
   final String? reason;
 
   bool isStale(DateTime now) =>
-      now.difference(testedAt) > const Duration(minutes: 10);
+      now.difference(testedAt) > kNodeHealthFreshDuration;
 
   Map<String, Object?> toJson() => {
         'd': delayMs,
@@ -77,8 +79,11 @@ class NodeHealthStore extends ChangeNotifier {
   final Duration? retention;
   final void Function(String code)? onError;
   final _entries = <String, Map<String, NodeHealthRecord>>{};
+  final _profileRevisions = <String, int>{};
   final _catalogBindings = <String, _CatalogHealthBinding>{};
   final _catalogWrites = <Future<void>>{};
+  static final _urlHashCache = <String, String>{};
+  static const _maxUrlHashCacheEntries = 64;
   static final _identityPattern = RegExp(r'^[a-f0-9]{32}$');
   static final _urlHashPattern = RegExp(r'^[a-f0-9]{16}$');
   static const _schemaVersion = 2;
@@ -114,8 +119,25 @@ class NodeHealthStore extends ChangeNotifier {
   int get _entryCount =>
       _entries.values.fold(0, (count, records) => count + records.length);
 
-  static String hashTestUrl(String url) =>
-      sha256.convert(utf8.encode(url)).toString().substring(0, 16);
+  int profileRevision(String profileId) => _profileRevisions[profileId] ?? 0;
+
+  void _bumpProfileRevision(String profileId) {
+    _profileRevisions[profileId] = (_profileRevisions[profileId] ?? 0) + 1;
+  }
+
+  static String hashTestUrl(String url) {
+    final cached = _urlHashCache.remove(url);
+    if (cached != null) {
+      _urlHashCache[url] = cached;
+      return cached;
+    }
+    final computed = sha256.convert(utf8.encode(url)).toString().substring(0, 16);
+    if (_urlHashCache.length >= _maxUrlHashCacheEntries) {
+      _urlHashCache.remove(_urlHashCache.keys.first);
+    }
+    _urlHashCache[url] = computed;
+    return computed;
+  }
 
   Future<void> load() => _loading ??= _load();
 
@@ -297,6 +319,7 @@ class NodeHealthStore extends ChangeNotifier {
       testUrlHash: urlHash,
       reason: delayMs < 0 ? reason : null,
     );
+    _bumpProfileRevision(profileId);
     _trim();
     _changed();
   }
@@ -312,6 +335,7 @@ class NodeHealthStore extends ChangeNotifier {
     if (!_loaded) await load();
     _ensureActive();
     if (_entries.remove(profileId) != null) {
+      _bumpProfileRevision(profileId);
       if (!_capacityReadOnly && _lastErrorCode == 'capacityExceeded') {
         _lastErrorCode = null;
       }
@@ -361,6 +385,9 @@ class NodeHealthStore extends ChangeNotifier {
       _trim();
       if (_entries.isNotEmpty && !_disposed) notifyListeners();
     } on FormatException {
+      for (final profileId in _entries.keys) {
+        _bumpProfileRevision(profileId);
+      }
       _entries.clear();
       _capacityReadOnly = false;
       await _quarantine();
@@ -427,7 +454,11 @@ class NodeHealthStore extends ChangeNotifier {
           reason: delay < 0 ? reason : null,
         );
       }
-      if (records.isNotEmpty) _entries[profile.key as String] = records;
+      if (records.isNotEmpty) {
+        final profileId = profile.key as String;
+        _entries[profileId] = records;
+        _bumpProfileRevision(profileId);
+      }
     }
     if (_capacityReadOnly) _report('capacityExceeded');
     return needsRewrite;
@@ -437,11 +468,22 @@ class NodeHealthStore extends ChangeNotifier {
     final retention = this.retention;
     if (retention != null) {
       final cutoff = _now().subtract(retention);
-      for (final records in _entries.values) {
-        records.removeWhere((_, record) => record.testedAt.isBefore(cutoff));
+      for (final entry in _entries.entries) {
+        final before = entry.value.length;
+        entry.value.removeWhere((_, record) => record.testedAt.isBefore(cutoff));
+        if (entry.value.length != before) {
+          _bumpProfileRevision(entry.key);
+        }
       }
     }
-    _entries.removeWhere((_, entries) => entries.isEmpty);
+    final emptyKeys = <String>[
+      for (final entry in _entries.entries)
+        if (entry.value.isEmpty) entry.key,
+    ];
+    for (final key in emptyKeys) {
+      _entries.remove(key);
+      _bumpProfileRevision(key);
+    }
   }
 
   void _changed() {

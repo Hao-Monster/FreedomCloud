@@ -1,0 +1,21 @@
+package xhttp
+
+import "errors"
+
+func (c *Client) ResetConnectionsFCX() error {
+	if c == nil {
+		return nil
+	}
+	var errs []error
+	if c.uploadManager != nil {
+		if err := c.uploadManager.Close(); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	if c.downloadManager != nil {
+		if err := c.downloadManager.Close(); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}

@@ -1,0 +1,240 @@
+package sing_tun
+
+import (
+	"errors"
+	"fmt"
+	"io"
+	"net/netip"
+	"os"
+	"runtime"
+	"sync/atomic"
+	"syscall"
+	"time"
+
+	tun "github.com/metacubex/sing-tun"
+	"github.com/metacubex/sing/common/control"
+)
+
+var fcxSingTunTimingHook func(stage string, elapsed time.Duration, outcome string)
+
+// At most one writer and a fixed amount of queued data per Core process.
+// A stalled sink must never stall a caller holding tunMux.
+const fcxTimingQueueSize = 256
+const fcxMaxTimingLineBytes = 8 * 1024
+
+type fcxTimingOutput struct {
+	lines   chan string
+	dropped atomic.Uint64
+}
+
+var fcxOutput = fcxTimingOutput{lines: make(chan string, fcxTimingQueueSize)}
+
+func (s *fcxTimingOutput) enqueue(line string) {
+	if len(line) <= fcxMaxTimingLineBytes {
+		select {
+		case s.lines <- line:
+			return
+		default:
+		}
+	}
+	s.dropped.Add(1)
+}
+
+func (s *fcxTimingOutput) drain(w io.Writer) {
+	var writeFailures uint64
+	for line := range s.lines {
+		dropped := s.dropped.Swap(0)
+		formatted := line
+		if dropped > 0 {
+			formatted += fmt.Sprintf(" droppedTimingLines=%d", dropped)
+		}
+		if writeFailures > 0 {
+			formatted += fmt.Sprintf(" priorWriteFailures=%d", writeFailures)
+		}
+		if _, err := fmt.Fprintln(w, formatted); err != nil {
+			if dropped > 0 {
+				s.dropped.Add(dropped)
+			}
+			writeFailures++
+			continue
+		}
+		writeFailures = 0
+	}
+}
+
+var fcxStartupTimingLineHook atomic.Pointer[func(string)]
+
+func init() {
+	go func() {
+		w, err := fcxTimingSink()
+		if err == nil {
+			fcxOutput.drain(w)
+		}
+	}()
+
+	tun.FCXDeviceTimingHook = fcxLogSingTunStage
+	tun.FCXDeviceTimingStartHook = func(stage string) { FCXStartAttemptStage(stage, tun.FCXTunAttempt()) }
+}
+
+func FCXStartAttemptStage(stage string, id uint64) {
+	line := fmt.Sprintf("[startup-timing] schema=2 event=stage_start correlationId=%s pid=%d seq=%d stage=%s tunAttempt=%d", tun.FCXStartupCorrelationID(), os.Getpid(), tun.FCXNextDeviceStageSequence(), stage, id)
+	fcxWriteTimingLine(line)
+}
+
+func FCXStartTunTiming(stage string) {
+	if hook := tun.FCXDeviceTimingStartHook; hook != nil {
+		hook(stage)
+	}
+}
+func FCXReserveTunAttempt() uint64    { return tun.FCXReserveTunAttempt() }
+func FCXActivateTunAttempt(id uint64) { tun.FCXActivateTunAttempt(id) }
+func FCXEndTunAttempt()               { tun.FCXEndTunAttempt() }
+
+func FCXWrapAdapterCreateError(err error) error { return tun.FCXWrapAdapterCreateError(err) }
+func FCXIsAdapterCreateFailure(err error) bool  { return tun.FCXIsAdapterCreateFailure(err) }
+func FCXIsRefusedAdapterCreate(err error) bool  { return tun.FCXIsRefusedAdapterCreate(err) }
+
+const fcxTunNewMaxRetry = 3
+
+// fcxTunNewWithRetry keeps upstream's Windows tun.New retry policy (fast
+// failures return at once; slow failures are retried up to three times) except
+// for a Wintun adapter Windows refused with Win32 2. That failure already
+// includes Wintun's own device-arrival wait, and repeating it immediately only
+// kept ReCreateTun holding tunMux and the Core runLock for ~47s. Other slow
+// adapter errors (e.g. arrival timeouts) keep the upstream retries.
+func fcxTunNewWithRetry(open func() (tun.Tun, error), now func() time.Time, warn func(err error, attempt, maxRetry int), refused func(err error)) (tunIf tun.Tun, err error) {
+	for i := 0; i < fcxTunNewMaxRetry; i++ {
+		timeBegin := now()
+		tunIf, err = open()
+		if err == nil {
+			return
+		}
+		if now().Sub(timeBegin) < 1*time.Second { // retrying for "Cannot create a file when that file already exists."
+			return
+		}
+		if tun.FCXIsRefusedAdapterCreate(err) {
+			if refused != nil {
+				refused(err)
+			}
+			return
+		}
+		if warn != nil {
+			warn(err, i+1, fcxTunNewMaxRetry)
+		}
+	}
+	return
+}
+
+// SetFCXStartupTimingLineHookForTest installs an optional observer receiving
+// formatted schema=2 startup-timing lines for unit verification.
+func SetFCXStartupTimingLineHookForTest(hook func(string)) func() {
+	prev := fcxStartupTimingLineHook.Load()
+	if hook == nil {
+		fcxStartupTimingLineHook.Store(nil)
+	} else {
+		fn := hook
+		fcxStartupTimingLineHook.Store(&fn)
+	}
+	return func() {
+		fcxStartupTimingLineHook.Store(prev)
+	}
+}
+
+func fcxSingTunTimingStart() time.Time {
+	return time.Now()
+}
+
+func FCXFormatStageErrorFields(err error) string {
+	if err == nil {
+		return ""
+	}
+	fields := fmt.Sprintf(" errorType=%T error=%q", err, err.Error())
+	var errno syscall.Errno
+	if errors.As(err, &errno) {
+		if runtime.GOOS == "windows" {
+			fields += fmt.Sprintf(" win32Error=%d", uint32(errno))
+		} else {
+			fields += fmt.Sprintf(" osErrno=%d", uint32(errno))
+		}
+	}
+	return fields
+}
+
+// FCXEmitStartupTiming emits a unified schema=2 stage_end record sharing a
+// single process-wide monotonic sequence counter across sing-tun and listener.
+func FCXEmitStartupTiming(stage string, elapsed time.Duration, outcome string, extraFields string, err error) {
+	line := fmt.Sprintf(
+		"[startup-timing] schema=2 event=stage_end correlationId=%s pid=%d seq=%d stage=%s elapsedMs=%d outcome=%s%s%s tunAttempt=%d",
+		tun.FCXStartupCorrelationID(),
+		os.Getpid(),
+		tun.FCXNextDeviceStageSequence(),
+		stage,
+		elapsed.Milliseconds(),
+		outcome,
+		extraFields,
+		FCXFormatStageErrorFields(err),
+		tun.FCXTunAttempt(),
+	)
+	fcxWriteTimingLine(line)
+}
+
+func fcxWriteTimingLine(line string) {
+	if hook := fcxStartupTimingLineHook.Load(); hook != nil && *hook != nil {
+		(*hook)(line)
+	}
+	fcxOutput.enqueue(line)
+}
+
+func fcxLogSingTunStage(stage string, startedAt time.Time, err error) {
+	outcome := "ok"
+	if err != nil {
+		outcome = "error"
+	}
+	elapsed := time.Since(startedAt)
+	if hook := fcxSingTunTimingHook; hook != nil {
+		hook(stage, elapsed, outcome)
+	}
+	FCXEmitStartupTiming(stage, elapsed, outcome, "", err)
+}
+
+type FCXDefaultInterfaceEvent struct {
+	Name       string
+	Index      int
+	Addresses  []netip.Prefix
+	Lost       bool
+	Flags      int
+	ObservedAt time.Time
+}
+
+var fcxDefaultInterfaceObserver atomic.Pointer[func(FCXDefaultInterfaceEvent)]
+
+func SetFCXDefaultInterfaceObserver(fn func(FCXDefaultInterfaceEvent)) {
+	if fn == nil {
+		fcxDefaultInterfaceObserver.Store(nil)
+		return
+	}
+	fcxDefaultInterfaceObserver.Store(&fn)
+}
+
+func fcxNotifyDefaultInterfaceChanged(defaultInterface *control.Interface, flags int) bool {
+	observedAt := time.Now()
+	observer := fcxDefaultInterfaceObserver.Load()
+	if observer == nil || *observer == nil {
+		return false
+	}
+	event := FCXDefaultInterfaceEvent{
+		Flags:      flags,
+		ObservedAt: observedAt,
+	}
+	if defaultInterface == nil {
+		event.Lost = true
+	} else {
+		event.Name = defaultInterface.Name
+		event.Index = defaultInterface.Index
+		if len(defaultInterface.Addresses) > 0 {
+			event.Addresses = append([]netip.Prefix(nil), defaultInterface.Addresses...)
+		}
+	}
+	(*observer)(event)
+	return true
+}

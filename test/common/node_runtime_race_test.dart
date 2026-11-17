@@ -19,7 +19,10 @@ class _Controller extends AppController {
   int applies = 0;
 
   @override
-  Future<void> applyProfile({bool silence = false}) async {
+  Future<void> applyProfile({
+    bool silence = false,
+    bool skipIfUnchanged = false,
+  }) async {
     applies++;
   }
 }

@@ -57,13 +57,16 @@ def manifest(path):
     return m
 
 def mac_verify(directory,m):
-    bundle=directory if directory.suffix=='.app' else directory/'FlClashX.app'
+    if directory.suffix=='.app': bundle=directory
+    elif (directory/'FreedomNet.app').exists(): bundle=directory/'FreedomNet.app'
+    else: bundle=directory/'FlClashX.app'
     team=job.get('macTeam','')
     if not re.fullmatch(r'[A-Z0-9]{10}',team): raise RuntimeError('FCX_MACOS_TEAM_ID is required')
-    requirement='anchor apple generic and certificate leaf[subject.OU] = "'+team+'" and identifier "com.follow.clash"'
+    requirement='anchor apple generic and certificate leaf[subject.OU] = "'+team+'" and (identifier "com.follow.clashx" or identifier "com.follow.clash")'
     run(['/usr/bin/codesign','--verify','--deep','--strict','-R',requirement,str(bundle)])
     run(['/usr/sbin/spctl','--assess','--type','execute','--verbose=2',str(bundle)])
-    core=bundle/'Contents/MacOS/FlClashCore'
+    core=bundle/'Contents/MacOS/FreedomNetCore'
+    if not core.exists(): core=bundle/'Contents/MacOS/FlClashCore'
     run(['/usr/bin/codesign','--verify','--strict','-R','anchor apple generic and certificate leaf[subject.OU] = "'+team+'"',str(core)])
 
 def inventory(directory):
@@ -111,8 +114,9 @@ def pointer(value):
 def preflight():
     no_links(root)
     if sys.version_info<(3,9): raise RuntimeError('Python 3.9 or newer is required for safe updater filesystem handling')
-    run(['openssl','cms','-help'])
-    if sys.platform=='darwin' and not re.fullmatch(r'[A-Z0-9]{10}',job.get('macTeam','')): raise RuntimeError('FCX_MACOS_TEAM_ID must be compiled into the client')
+    if job.get('mode','cms')!='ed25519':
+        run(['openssl','cms','-help'])
+        if sys.platform=='darwin' and not re.fullmatch(r'[A-Z0-9]{10}',job.get('macTeam','')): raise RuntimeError('FCX_MACOS_TEAM_ID must be compiled into the client')
 
 def stage():
     preflight(); m=manifest(P(job['manifest']))
@@ -129,8 +133,9 @@ def stage():
         total+=record['size']
         if total>8589934592: raise RuntimeError('Expanded archive too large')
         records[name.casefold()]=record
-    required=['FlClashX.app/Contents/MacOS/FlClashX','FlClashX.app/Contents/MacOS/FlClashCore'] if sys.platform=='darwin' else ['FlClashX','FlClashCore','FlClashAgent']
-    if any(name.casefold() not in records for name in required) or m['entry']!=required[0]: raise RuntimeError('Incomplete application distribution')
+    required_sets=[['FreedomNet.app/Contents/MacOS/FreedomNet','FreedomNet.app/Contents/MacOS/FreedomNetCore'],['FlClashX.app/Contents/MacOS/FlClashX','FlClashX.app/Contents/MacOS/FlClashCore']] if sys.platform=='darwin' else [['FreedomNet','FreedomNetCore','FreedomNetAgent'],['FlClashX','FlClashCore','FlClashAgent']]
+    matched=next((req for req in required_sets if all(name.casefold() in records for name in req) and m['entry']==req[0]),None)
+    if matched is None: raise RuntimeError('Incomplete application distribution')
     versions=root/'versions'; versions.mkdir(exist_ok=True); no_links(versions)
     destination=versions/m['sha256'].lower()
     if destination.exists(): verify_release(destination); return
@@ -202,23 +207,69 @@ def apply():
         shutil.copyfile(__file__,root/'launch.py')
         atomic(root/'launch.json',{'action':'launch','root':str(root),'pin':job['pin'],'macTeam':job.get('macTeam','')})
         if sys.platform=='darwin':
-            launcher=root/'FreedomCloud Updated.command'
+            launcher=root/'FreedomNet Updated.command'
             import shlex
             launcher.write_text('#!/bin/sh\nexec '+shlex.quote(sys.executable)+' '+shlex.quote(str(root/'launch.py'))+' '+shlex.quote(str(root/'launch.json'))+'\n')
             launcher.chmod(0o755)
         else:
             desktop=P.home()/'.local/share/applications'; desktop.mkdir(parents=True,exist_ok=True)
             def quote(value): return chr(34)+str(value).replace(chr(92),chr(92)*2).replace(chr(34),chr(92)+chr(34)).replace(chr(96),chr(92)+chr(96)).replace(chr(36),chr(92)+chr(36)).replace(chr(37),chr(37)*2)+chr(34)
-            (desktop/'freedomcloud-updated.desktop').write_text('[Desktop Entry]\nType=Application\nName=FreedomCloud Updated\nExec='+quote(sys.executable)+' '+quote(root/'launch.py')+' '+quote(root/'launch.json')+'\nTerminal=false\n')
+            (desktop/'freedomnet-updated.desktop').write_text('[Desktop Entry]\nType=Application\nName=FreedomNet Updated\nExec='+quote(sys.executable)+' '+quote(root/'launch.py')+' '+quote(root/'launch.json')+'\nTerminal=false\n')
         atomic(root/'last-result.json',{'state':'launched-awaiting-user-acceptance'})
+
+def stage_ed25519():
+    preflight()
+    target_hash=job.get('targetSha256','').lower()
+    target_size=int(job.get('targetSize',0))
+    if not re.fullmatch(r'[0-9a-f]{64}',target_hash) or target_size<=0: raise RuntimeError('Invalid Ed25519 target metadata')
+    arc=P(job['archive'])
+    no_links(arc)
+    if arc.stat().st_size!=target_size or digest(arc)!=target_hash: raise RuntimeError('Archive integrity mismatch')
+    versions=root/'ed25519-versions'; versions.mkdir(parents=True,exist_ok=True); no_links(versions)
+    destination=versions/target_hash
+    if destination.exists(): return
+    working=versions/('.staging-'+target_hash[:12]); working.mkdir(parents=True,exist_ok=True)
+    with zipfile.ZipFile(arc) as zf:
+        for info in zf.infolist():
+            if info.is_dir(): continue
+            rel=relative(info.filename)
+            if ((info.external_attr>>16)&0o170000)==0o120000: raise RuntimeError('Symlinks unsupported in Ed25519 zip staging')
+            out=working/rel; out.parent.mkdir(parents=True,exist_ok=True)
+            with zf.open(info) as src, open(out,'wb') as dst: shutil.copyfileobj(src,dst)
+            mode=(info.external_attr>>16)&0o777
+            if mode: os.chmod(out,mode)
+    os.rename(working,destination)
+
+def apply_ed25519():
+    preflight()
+    target_hash=job.get('targetSha256','').lower()
+    entry_rel=relative(job.get('targetEntry','FreedomNet'))
+    if not re.fullmatch(r'[0-9a-f]{64}',target_hash): raise RuntimeError('Invalid Ed25519 target hash')
+    destination=root/'ed25519-versions'/target_hash
+    no_links(destination)
+    candidate=destination/entry_rel
+    if not candidate.exists(): raise RuntimeError('Missing entry executable in staged Ed25519 update')
+    deadline=time.monotonic()+60
+    while True:
+        try: os.kill(job['parentPid'],0)
+        except ProcessLookupError: break
+        if time.monotonic()>deadline: raise RuntimeError('Application did not exit; update not applied')
+        time.sleep(.2)
+    child=start(candidate)
+    try: child.wait(timeout=8)
+    except subprocess.TimeoutExpired: pass
+    else: raise RuntimeError('Updated app exited during startup')
+    atomic(root/'last-result.json',{'state':'launched-awaiting-user-acceptance','mode':'ed25519'})
 
 try:
     action=job['action']
     if action=='preflight': preflight()
     elif action=='manifest': print(json.dumps(manifest(P(job['manifest']))))
     elif action=='stage': stage()
+    elif action=='stageEd25519': stage_ed25519()
     elif action=='checkRollback': pointer(json.loads((root/'previous.json').read_text()))
     elif action in ('apply','rollback','launch'): apply()
+    elif action=='applyEd25519': apply_ed25519()
     else: raise RuntimeError('Unknown updater action')
 except Exception as error:
     atomic(root/'last-result.json',{'state':'failed','reason':str(error)})

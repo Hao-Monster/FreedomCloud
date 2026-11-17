@@ -13,6 +13,14 @@ _$AppSettingPropsImpl _$$AppSettingPropsImplFromJson(
       dashboardWidgets: json['dashboardWidgets'] == null
           ? defaultDashboardWidgets
           : dashboardWidgetsSafeFormJson(json['dashboardWidgets'] as List?),
+      dashboardDefaultV2Migrated:
+          json['dashboardDefaultV2Migrated'] as bool? ?? true,
+      tunDesktopStackGvisorRestored:
+          json['tunDesktopStackGvisorRestored'] as bool? ?? true,
+      dnsRespectRulesDefaultMigrated:
+          json['dnsRespectRulesDefaultMigrated'] as bool? ?? true,
+      defaultTestUrlGoogleMigrated:
+          json['defaultTestUrlGoogleMigrated'] as bool? ?? true,
       onlyStatisticsProxy: json['onlyStatisticsProxy'] as bool? ?? false,
       autoLaunch: json['autoLaunch'] as bool? ?? false,
       silentLaunch: json['silentLaunch'] as bool? ?? false,
@@ -76,6 +84,10 @@ Map<String, dynamic> _$$AppSettingPropsImplToJson(
       'dashboardWidgets': instance.dashboardWidgets
           .map((e) => _$DashboardWidgetEnumMap[e]!)
           .toList(),
+      'dashboardDefaultV2Migrated': instance.dashboardDefaultV2Migrated,
+      'tunDesktopStackGvisorRestored': instance.tunDesktopStackGvisorRestored,
+      'dnsRespectRulesDefaultMigrated': instance.dnsRespectRulesDefaultMigrated,
+      'defaultTestUrlGoogleMigrated': instance.defaultTestUrlGoogleMigrated,
       'onlyStatisticsProxy': instance.onlyStatisticsProxy,
       'autoLaunch': instance.autoLaunch,
       'silentLaunch': instance.silentLaunch,
@@ -244,6 +256,10 @@ _$NetworkPropsImpl _$$NetworkPropsImplFromJson(Map<String, dynamic> json) =>
           defaultBypassDomain,
       routeMode: $enumDecodeNullable(_$RouteModeEnumMap, json['routeMode']) ??
           RouteMode.config,
+      localSplitMode: $enumDecodeNullable(
+              _$LocalSplitModeEnumMap, json['localSplitMode'],
+              unknownValue: LocalSplitMode.auto) ??
+          LocalSplitMode.auto,
       autoSetSystemDns: json['autoSetSystemDns'] as bool? ?? true,
     );
 
@@ -251,13 +267,20 @@ Map<String, dynamic> _$$NetworkPropsImplToJson(_$NetworkPropsImpl instance) =>
     <String, dynamic>{
       'systemProxy': instance.systemProxy,
       'bypassDomain': instance.bypassDomain,
-      'routeMode': _$RouteModeEnumMap[instance.routeMode]!,
+            'routeMode': _$RouteModeEnumMap[instance.routeMode]!,
+      'localSplitMode': _$LocalSplitModeEnumMap[instance.localSplitMode]!,
       'autoSetSystemDns': instance.autoSetSystemDns,
     };
 
 const _$RouteModeEnumMap = {
   RouteMode.bypassPrivate: 'bypassPrivate',
   RouteMode.config: 'config',
+};
+
+const _$LocalSplitModeEnumMap = {
+  LocalSplitMode.auto: 'auto',
+  LocalSplitMode.always: 'always',
+  LocalSplitMode.off: 'off',
 };
 
 _$ProxiesStyleImpl _$$ProxiesStyleImplFromJson(Map<String, dynamic> json) =>
@@ -343,7 +366,11 @@ _$ThemePropsImpl _$$ThemePropsImplFromJson(Map<String, dynamic> json) =>
               .toList() ??
           defaultPrimaryColors,
       themeMode: $enumDecodeNullable(_$ThemeModeEnumMap, json['themeMode']) ??
-          ThemeMode.system,
+          ThemeMode.dark,
+      freedomNetThemeV1Migrated:
+          json['freedomNetThemeV1Migrated'] as bool? ?? true,
+      freedomNetThemeV2Migrated:
+          json['freedomNetThemeV2Migrated'] as bool? ?? true,
       schemeVariant: $enumDecodeNullable(
               _$DynamicSchemeVariantEnumMap, json['schemeVariant']) ??
           DynamicSchemeVariant.content,
@@ -351,6 +378,13 @@ _$ThemePropsImpl _$$ThemePropsImplFromJson(Map<String, dynamic> json) =>
       textScale: json['textScale'] == null
           ? const TextScale()
           : TextScale.fromJson(json['textScale'] as Map<String, dynamic>),
+      skyMode: $enumDecodeNullable(_$DayNightSkyModeEnumMap, json['skyMode']) ??
+          DayNightSkyMode.followConnection,
+      glassPreset: $enumDecodeNullable(
+              _$DayNightGlassPresetEnumMap, json['glassPreset']) ??
+          DayNightGlassPreset.balanced,
+      skyAmbientAnimation: json['skyAmbientAnimation'] as bool? ?? true,
+      ignoreCustomBackground: json['ignoreCustomBackground'] as bool? ?? false,
     );
 
 Map<String, dynamic> _$$ThemePropsImplToJson(_$ThemePropsImpl instance) =>
@@ -358,10 +392,28 @@ Map<String, dynamic> _$$ThemePropsImplToJson(_$ThemePropsImpl instance) =>
       'primaryColor': instance.primaryColor,
       'primaryColors': instance.primaryColors,
       'themeMode': _$ThemeModeEnumMap[instance.themeMode]!,
+      'freedomNetThemeV1Migrated': instance.freedomNetThemeV1Migrated,
+      'freedomNetThemeV2Migrated': instance.freedomNetThemeV2Migrated,
       'schemeVariant': _$DynamicSchemeVariantEnumMap[instance.schemeVariant]!,
       'pureBlack': instance.pureBlack,
       'textScale': instance.textScale,
+      'skyMode': _$DayNightSkyModeEnumMap[instance.skyMode]!,
+      'glassPreset': _$DayNightGlassPresetEnumMap[instance.glassPreset]!,
+      'skyAmbientAnimation': instance.skyAmbientAnimation,
+      'ignoreCustomBackground': instance.ignoreCustomBackground,
     };
+
+const _$DayNightSkyModeEnumMap = {
+  DayNightSkyMode.followConnection: 'followConnection',
+  DayNightSkyMode.alwaysNight: 'alwaysNight',
+  DayNightSkyMode.alwaysDay: 'alwaysDay',
+};
+
+const _$DayNightGlassPresetEnumMap = {
+  DayNightGlassPreset.airy: 'airy',
+  DayNightGlassPreset.balanced: 'balanced',
+  DayNightGlassPreset.solid: 'solid',
+};
 
 const _$ThemeModeEnumMap = {
   ThemeMode.system: 'system',
@@ -437,6 +489,10 @@ _$ConfigImpl _$$ConfigImplFromJson(Map<String, dynamic> json) => _$ConfigImpl(
       scriptProps: json['scriptProps'] == null
           ? const ScriptProps()
           : ScriptProps.fromJson(json['scriptProps'] as Map<String, dynamic>),
+      globalOverrideData: json['globalOverrideData'] == null
+          ? defaultGlobalOverrideData
+          : OverrideData.fromJson(
+              json['globalOverrideData'] as Map<String, dynamic>),
     );
 
 Map<String, dynamic> _$$ConfigImplToJson(_$ConfigImpl instance) =>
@@ -453,5 +509,6 @@ Map<String, dynamic> _$$ConfigImplToJson(_$ConfigImpl instance) =>
       'proxiesStyle': instance.proxiesStyle,
       'windowProps': instance.windowProps,
       'patchClashConfig': instance.patchClashConfig,
-      'scriptProps': instance.scriptProps,
+            'scriptProps': instance.scriptProps,
+      'globalOverrideData': instance.globalOverrideData,
     };

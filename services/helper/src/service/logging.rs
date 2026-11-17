@@ -1,8 +1,8 @@
 use std::fs::{self, File, OpenOptions};
-use std::io::{self, Write};
+use std::io::{self, BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::mpsc::{self, RecvTimeoutError, SyncSender, TrySendError};
+use std::sync::mpsc::{self, RecvTimeoutError, SyncSender, TryRecvError, TrySendError};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 #[cfg(any(test, all(feature = "windows-service", target_os = "windows")))]
@@ -13,8 +13,8 @@ const CHANNEL_CAPACITY: usize = 256;
 const MAX_LINE_CHARS: usize = 16 * 1024;
 const MAX_FILE_BYTES: u64 = 8 * 1024 * 1024;
 const MAX_ROTATED_FILES: usize = 3;
-const LOG_DIRECTORY: &str = "FlClashX";
-const LOG_FILE_NAME: &str = "FlClashHelperService.log";
+const LOG_DIRECTORY: &str = "FreedomNet";
+const LOG_FILE_NAME: &str = "FreedomNetHelperService.log";
 
 #[derive(Clone)]
 pub struct ServiceLogger {
@@ -126,7 +126,7 @@ impl ServiceLogger {
             .spawn(move || run_writer(path, receiver, max_file_bytes))
             .is_ok();
         if !spawned {
-            eprintln!("FlClashHelperService: unable to start persistent log writer");
+            eprintln!("FreedomNetHelperService: unable to start persistent log writer");
         }
         Arc::new(Self::from_sender(sender))
     }
@@ -256,59 +256,119 @@ fn run_writer(path: PathBuf, receiver: mpsc::Receiver<LogMessage>, max_file_byte
     write_messages(path, receiver, max_file_bytes, file);
 }
 
+struct BufferedLogFile {
+    writer: BufWriter<File>,
+    written_bytes: u64,
+}
+
+impl BufferedLogFile {
+    fn from_file(file: File) -> io::Result<Self> {
+        let written_bytes = file.metadata()?.len();
+        Ok(Self {
+            writer: BufWriter::with_capacity(32 * 1024, file),
+            written_bytes,
+        })
+    }
+}
+
 fn write_messages(
     path: PathBuf,
     receiver: mpsc::Receiver<LogMessage>,
     max_file_bytes: u64,
-    mut file: Option<File>,
+    file: Option<File>,
 ) {
     // A later successful reopen cannot restore a line already lost to I/O.
     // Retain only the first error, keeping diagnostics and memory bounded.
     let mut first_output_error: Option<String> = None;
-    while let Ok(message) = receiver.recv() {
-        let message = match message {
-            LogMessage::Line(line) => line,
-            LogMessage::Flush(done) => {
-                let result = file
-                    .as_mut()
-                    .ok_or_else(|| io::Error::other("log file is unavailable"))
-                    .and_then(Write::flush);
-                if let Err(error) = result {
-                    first_output_error.get_or_insert_with(|| error.to_string());
-                }
-                let result = first_output_error
-                    .as_ref()
-                    .map_or(Ok(()), |error| Err(LogFlushError::Output(error.clone())));
-                let _ = done.send(result);
-                continue;
+    let mut current_file: Option<BufferedLogFile> = match file {
+        Some(opened) => match BufferedLogFile::from_file(opened) {
+            Ok(buffered) => Some(buffered),
+            Err(error) => {
+                first_output_error.get_or_insert_with(|| error.to_string());
+                None
             }
-        };
-        let line = format!("[unix_ms={}] {message}\n", unix_millis());
-        if let Err(error) = write_line(&path, &mut file, line.as_bytes(), max_file_bytes) {
-            first_output_error.get_or_insert_with(|| error.to_string());
-            file = None;
+        },
+        None => None,
+    };
+
+    while let Ok(first_message) = receiver.recv() {
+        let mut pending = Some(first_message);
+        let mut wrote_in_batch = false;
+        while let Some(message) = pending.take() {
+            match message {
+                LogMessage::Line(text) => {
+                    let line = format!("[unix_ms={}] {text}\n", unix_millis());
+                    if let Err(error) =
+                        write_line(&path, &mut current_file, line.as_bytes(), max_file_bytes)
+                    {
+                        first_output_error.get_or_insert_with(|| error.to_string());
+                        current_file = None;
+                        wrote_in_batch = false;
+                    } else {
+                        wrote_in_batch = true;
+                    }
+                }
+                LogMessage::Flush(done) => {
+                    let result = current_file
+                        .as_mut()
+                        .ok_or_else(|| io::Error::other("log file is unavailable"))
+                        .and_then(|buffered| buffered.writer.flush());
+                    if let Err(error) = result {
+                        first_output_error.get_or_insert_with(|| error.to_string());
+                        current_file = None;
+                    }
+                    wrote_in_batch = false;
+                    let reply = first_output_error
+                        .as_ref()
+                        .map_or(Ok(()), |error| Err(LogFlushError::Output(error.clone())));
+                    let _ = done.send(reply);
+                }
+            }
+            match receiver.try_recv() {
+                Ok(next) => pending = Some(next),
+                Err(TryRecvError::Empty | TryRecvError::Disconnected) => break,
+            }
         }
+        if wrote_in_batch {
+            if let Some(buffered) = current_file.as_mut() {
+                if let Err(error) = buffered.writer.flush() {
+                    first_output_error.get_or_insert_with(|| error.to_string());
+                    current_file = None;
+                }
+            }
+        }
+    }
+    if let Some(mut buffered) = current_file {
+        let _ = buffered.writer.flush();
     }
 }
 
 fn write_line(
     path: &Path,
-    file: &mut Option<File>,
+    file: &mut Option<BufferedLogFile>,
     line: &[u8],
     max_file_bytes: u64,
 ) -> io::Result<()> {
     if file.is_none() {
-        *file = Some(open_file(path)?);
+        *file = Some(BufferedLogFile::from_file(open_file(path)?)?);
     }
-    let length = file.as_ref().expect("file opened above").metadata()?.len();
-    if length.saturating_add(line.len() as u64) > max_file_bytes {
-        *file = None;
+    let needs_rotate = file
+        .as_ref()
+        .expect("file opened above")
+        .written_bytes
+        .saturating_add(line.len() as u64)
+        > max_file_bytes;
+    if needs_rotate {
+        if let Some(mut existing) = file.take() {
+            existing.writer.flush()?;
+        }
         rotate(path)?;
-        *file = Some(open_file(path)?);
+        *file = Some(BufferedLogFile::from_file(open_file(path)?)?);
     }
     let current = file.as_mut().expect("file opened above");
-    current.write_all(line)?;
-    current.flush()
+    current.writer.write_all(line)?;
+    current.written_bytes = current.written_bytes.saturating_add(line.len() as u64);
+    Ok(())
 }
 
 fn open_file(path: &Path) -> io::Result<File> {

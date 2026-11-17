@@ -27,7 +27,7 @@ class CommonPrint {
   };
 
   void log(String? text) {
-    final payload = '[FlClashX] ${redactSensitiveLogData(text)}';
+    final payload = '[FreedomNet] ${redactSensitiveLogData(text)}';
     debugPrint(payload);
 
     fileLogger.log(payload);

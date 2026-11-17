@@ -1,16 +1,28 @@
 import 'dart:ui';
+
 import 'package:flclashx/common/color.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
+@immutable
 class Point {
-
   const Point(this.x, this.y);
   final double x;
   final double y;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is Point &&
+          runtimeType == other.runtimeType &&
+          x == other.x &&
+          y == other.y;
+
+  @override
+  int get hashCode => Object.hash(x, y);
 }
 
 class LineChart extends StatefulWidget {
-
   const LineChart({
     super.key,
     this.gradient = false,
@@ -47,7 +59,10 @@ class _LineChartState extends State<LineChart>
   @override
   void didUpdateWidget(LineChart oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (widget.points != points) {
+    if (oldWidget.duration != widget.duration) {
+      _controller.duration = widget.duration;
+    }
+    if (!listEquals(widget.points, points)) {
       prevPoints = points;
       points = widget.points;
       _controller.forward(from: 0);
@@ -61,26 +76,29 @@ class _LineChartState extends State<LineChart>
   }
 
   @override
-  Widget build(BuildContext context) => LayoutBuilder(builder: (_, container) => AnimatedBuilder(
-        animation: _controller.view,
-        builder: (_, __) => CustomPaint(
-            painter: LineChartPainter(
-              prevPoints: prevPoints,
-              points: points,
-              progress: _controller.value,
-              gradient: widget.gradient,
-              color: widget.color,
-            ),
-            child: SizedBox(
-              height: container.maxHeight,
-              width: container.maxWidth,
+  Widget build(BuildContext context) => LayoutBuilder(
+        builder: (_, container) => RepaintBoundary(
+          child: AnimatedBuilder(
+            animation: _controller.view,
+            builder: (_, __) => CustomPaint(
+              painter: LineChartPainter(
+                prevPoints: prevPoints,
+                points: points,
+                progress: _controller.value,
+                gradient: widget.gradient,
+                color: widget.color,
+              ),
+              child: SizedBox(
+                height: container.maxHeight,
+                width: container.maxWidth,
+              ),
             ),
           ),
-      ));
+        ),
+      );
 }
 
 class LineChartPainter extends CustomPainter {
-
   LineChartPainter({
     required this.prevPoints,
     required this.points,
@@ -95,7 +113,7 @@ class LineChartPainter extends CustomPainter {
   final bool gradient;
 
   List<Point> getRenderPoints(List<Point> points) {
-    if (points.isEmpty) return [];
+    if (points.isEmpty) return const [];
     var maxX = points[0].x;
     var minX = points[0].x;
     var maxY = points[0].y;
@@ -136,6 +154,7 @@ class LineChartPainter extends CustomPainter {
   }
 
   Path getPath(List<Point> points, Size size) {
+    if (points.isEmpty) return Path();
     final path = Path()
       ..moveTo(points[0].x * size.width, (1 - points[0].y) * size.height);
 
@@ -160,27 +179,22 @@ class LineChartPainter extends CustomPainter {
   Path getAnimatedPath(Size size) {
     final interpolatedPoints =
         getInterpolatePoints(prevPoints, points, progress);
-    final path = getPath(interpolatedPoints, size);
-
-    final metric = path.computeMetrics().first;
-    final length = metric.length;
-    return metric.extractPath(
-      0,
-      length,
-    );
+    if (interpolatedPoints.isEmpty) return Path();
+    return getPath(interpolatedPoints, size);
   }
 
   @override
   void paint(Canvas canvas, Size size) {
+    if (points.isEmpty && prevPoints.isEmpty) return;
     const strokeWidth = 2.0;
     final chartSize = Size(size.width, size.height * 0.7);
     final path = getAnimatedPath(chartSize);
 
     if (gradient) {
-      final fillPath = Path.from(path);
-      fillPath.lineTo(size.width, size.height + strokeWidth * 2);
-      fillPath.lineTo(0, size.height + strokeWidth * 2);
-      fillPath.close();
+      final fillPath = Path.from(path)
+        ..lineTo(size.width, size.height + strokeWidth * 2)
+        ..lineTo(0, size.height + strokeWidth * 2)
+        ..close();
 
       final gradient = LinearGradient(
         begin: Alignment.topCenter,
@@ -196,24 +210,27 @@ class LineChartPainter extends CustomPainter {
       );
 
       canvas.drawPath(
-          fillPath,
-          Paint()
-            ..shader = shader
-            ..style = PaintingStyle.fill);
+        fillPath,
+        Paint()
+          ..shader = shader
+          ..style = PaintingStyle.fill,
+      );
     }
 
     canvas.drawPath(
-        path,
-        Paint()
-          ..color = color
-          ..strokeWidth = strokeWidth
-          ..style = PaintingStyle.stroke);
+      path,
+      Paint()
+        ..color = color
+        ..strokeWidth = strokeWidth
+        ..style = PaintingStyle.stroke,
+    );
   }
 
   @override
-  bool shouldRepaint(covariant LineChartPainter oldDelegate) => oldDelegate.progress != progress ||
-        oldDelegate.prevPoints != prevPoints ||
-        oldDelegate.points != points ||
-        oldDelegate.color != color ||
-        oldDelegate.gradient != gradient;
+  bool shouldRepaint(covariant LineChartPainter oldDelegate) =>
+      oldDelegate.progress != progress ||
+      oldDelegate.color != color ||
+      oldDelegate.gradient != gradient ||
+      !listEquals(oldDelegate.prevPoints, prevPoints) ||
+      !listEquals(oldDelegate.points, points);
 }

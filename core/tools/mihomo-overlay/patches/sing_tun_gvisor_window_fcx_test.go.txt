@@ -1,0 +1,39 @@
+//go:build with_gvisor
+
+package sing_tun
+
+import (
+	"testing"
+
+	"github.com/metacubex/gvisor/pkg/tcpip"
+	"github.com/metacubex/gvisor/pkg/tcpip/link/channel"
+	"github.com/metacubex/gvisor/pkg/tcpip/transport/tcp"
+	"github.com/metacubex/sing-tun"
+)
+
+func TestFCXGVisorStackUsesExpandedTCPWindowBounds(t *testing.T) {
+	ep := channel.New(16, 1500, "")
+	defer ep.Close()
+
+	ipStack, err := tun.NewGVisorStack(ep)
+	if err != nil {
+		t.Fatalf("NewGVisorStack failed: %v", err)
+	}
+	defer ipStack.Close()
+
+	var rcv tcpip.TCPReceiveBufferSizeRangeOption
+	if tcpErr := ipStack.TransportProtocolOption(tcp.ProtocolNumber, &rcv); tcpErr != nil {
+		t.Fatalf("read TCPReceiveBufferSizeRangeOption: %v", tcpErr)
+	}
+	if rcv.Min != 4*1024 || rcv.Default != 256*1024 || rcv.Max != 4*1024*1024 {
+		t.Fatalf("unexpected TCP receive window range: %+v", rcv)
+	}
+
+	var snd tcpip.TCPSendBufferSizeRangeOption
+	if tcpErr := ipStack.TransportProtocolOption(tcp.ProtocolNumber, &snd); tcpErr != nil {
+		t.Fatalf("read TCPSendBufferSizeRangeOption: %v", tcpErr)
+	}
+	if snd.Min != 4*1024 || snd.Default != 256*1024 || snd.Max != 4*1024*1024 {
+		t.Fatalf("unexpected TCP send window range: %+v", snd)
+	}
+}

@@ -24,6 +24,10 @@ mixin _$AppSettingProps {
   @JsonKey(fromJson: dashboardWidgetsSafeFormJson)
   List<DashboardWidget> get dashboardWidgets =>
       throw _privateConstructorUsedError;
+  bool get dashboardDefaultV2Migrated => throw _privateConstructorUsedError;
+  bool get tunDesktopStackGvisorRestored => throw _privateConstructorUsedError;
+  bool get dnsRespectRulesDefaultMigrated => throw _privateConstructorUsedError;
+  bool get defaultTestUrlGoogleMigrated => throw _privateConstructorUsedError;
   bool get onlyStatisticsProxy => throw _privateConstructorUsedError;
   bool get autoLaunch => throw _privateConstructorUsedError;
   bool get silentLaunch => throw _privateConstructorUsedError;
@@ -82,6 +86,10 @@ abstract class $AppSettingPropsCopyWith<$Res> {
       {String? locale,
       @JsonKey(fromJson: dashboardWidgetsSafeFormJson)
       List<DashboardWidget> dashboardWidgets,
+      bool dashboardDefaultV2Migrated,
+      bool tunDesktopStackGvisorRestored,
+      bool dnsRespectRulesDefaultMigrated,
+      bool defaultTestUrlGoogleMigrated,
       bool onlyStatisticsProxy,
       bool autoLaunch,
       bool silentLaunch,
@@ -134,6 +142,10 @@ class _$AppSettingPropsCopyWithImpl<$Res, $Val extends AppSettingProps>
   $Res call({
     Object? locale = freezed,
     Object? dashboardWidgets = null,
+    Object? dashboardDefaultV2Migrated = null,
+    Object? tunDesktopStackGvisorRestored = null,
+    Object? dnsRespectRulesDefaultMigrated = null,
+    Object? defaultTestUrlGoogleMigrated = null,
     Object? onlyStatisticsProxy = null,
     Object? autoLaunch = null,
     Object? silentLaunch = null,
@@ -173,6 +185,22 @@ class _$AppSettingPropsCopyWithImpl<$Res, $Val extends AppSettingProps>
           ? _value.dashboardWidgets
           : dashboardWidgets // ignore: cast_nullable_to_non_nullable
               as List<DashboardWidget>,
+      dashboardDefaultV2Migrated: null == dashboardDefaultV2Migrated
+          ? _value.dashboardDefaultV2Migrated
+          : dashboardDefaultV2Migrated // ignore: cast_nullable_to_non_nullable
+              as bool,
+      tunDesktopStackGvisorRestored: null == tunDesktopStackGvisorRestored
+          ? _value.tunDesktopStackGvisorRestored
+          : tunDesktopStackGvisorRestored // ignore: cast_nullable_to_non_nullable
+              as bool,
+      dnsRespectRulesDefaultMigrated: null == dnsRespectRulesDefaultMigrated
+          ? _value.dnsRespectRulesDefaultMigrated
+          : dnsRespectRulesDefaultMigrated // ignore: cast_nullable_to_non_nullable
+              as bool,
+      defaultTestUrlGoogleMigrated: null == defaultTestUrlGoogleMigrated
+          ? _value.defaultTestUrlGoogleMigrated
+          : defaultTestUrlGoogleMigrated // ignore: cast_nullable_to_non_nullable
+              as bool,
       onlyStatisticsProxy: null == onlyStatisticsProxy
           ? _value.onlyStatisticsProxy
           : onlyStatisticsProxy // ignore: cast_nullable_to_non_nullable
@@ -305,6 +333,10 @@ abstract class _$$AppSettingPropsImplCopyWith<$Res>
       {String? locale,
       @JsonKey(fromJson: dashboardWidgetsSafeFormJson)
       List<DashboardWidget> dashboardWidgets,
+      bool dashboardDefaultV2Migrated,
+      bool tunDesktopStackGvisorRestored,
+      bool dnsRespectRulesDefaultMigrated,
+      bool defaultTestUrlGoogleMigrated,
       bool onlyStatisticsProxy,
       bool autoLaunch,
       bool silentLaunch,
@@ -355,6 +387,10 @@ class __$$AppSettingPropsImplCopyWithImpl<$Res>
   $Res call({
     Object? locale = freezed,
     Object? dashboardWidgets = null,
+    Object? dashboardDefaultV2Migrated = null,
+    Object? tunDesktopStackGvisorRestored = null,
+    Object? dnsRespectRulesDefaultMigrated = null,
+    Object? defaultTestUrlGoogleMigrated = null,
     Object? onlyStatisticsProxy = null,
     Object? autoLaunch = null,
     Object? silentLaunch = null,
@@ -394,6 +430,22 @@ class __$$AppSettingPropsImplCopyWithImpl<$Res>
           ? _value._dashboardWidgets
           : dashboardWidgets // ignore: cast_nullable_to_non_nullable
               as List<DashboardWidget>,
+      dashboardDefaultV2Migrated: null == dashboardDefaultV2Migrated
+          ? _value.dashboardDefaultV2Migrated
+          : dashboardDefaultV2Migrated // ignore: cast_nullable_to_non_nullable
+              as bool,
+      tunDesktopStackGvisorRestored: null == tunDesktopStackGvisorRestored
+          ? _value.tunDesktopStackGvisorRestored
+          : tunDesktopStackGvisorRestored // ignore: cast_nullable_to_non_nullable
+              as bool,
+      dnsRespectRulesDefaultMigrated: null == dnsRespectRulesDefaultMigrated
+          ? _value.dnsRespectRulesDefaultMigrated
+          : dnsRespectRulesDefaultMigrated // ignore: cast_nullable_to_non_nullable
+              as bool,
+      defaultTestUrlGoogleMigrated: null == defaultTestUrlGoogleMigrated
+          ? _value.defaultTestUrlGoogleMigrated
+          : defaultTestUrlGoogleMigrated // ignore: cast_nullable_to_non_nullable
+              as bool,
       onlyStatisticsProxy: null == onlyStatisticsProxy
           ? _value.onlyStatisticsProxy
           : onlyStatisticsProxy // ignore: cast_nullable_to_non_nullable
@@ -521,6 +573,10 @@ class _$AppSettingPropsImpl implements _AppSettingProps {
       {this.locale,
       @JsonKey(fromJson: dashboardWidgetsSafeFormJson)
       final List<DashboardWidget> dashboardWidgets = defaultDashboardWidgets,
+      this.dashboardDefaultV2Migrated = true,
+      this.tunDesktopStackGvisorRestored = true,
+      this.dnsRespectRulesDefaultMigrated = true,
+      this.defaultTestUrlGoogleMigrated = true,
       this.onlyStatisticsProxy = false,
       this.autoLaunch = false,
       this.silentLaunch = false,
@@ -573,6 +629,18 @@ class _$AppSettingPropsImpl implements _AppSettingProps {
     return EqualUnmodifiableListView(_dashboardWidgets);
   }
 
+  @override
+  @JsonKey()
+  final bool dashboardDefaultV2Migrated;
+  @override
+  @JsonKey()
+  final bool tunDesktopStackGvisorRestored;
+  @override
+  @JsonKey()
+  final bool dnsRespectRulesDefaultMigrated;
+  @override
+  @JsonKey()
+  final bool defaultTestUrlGoogleMigrated;
   @override
   @JsonKey()
   final bool onlyStatisticsProxy;
@@ -676,7 +744,7 @@ class _$AppSettingPropsImpl implements _AppSettingProps {
 
   @override
   String toString() {
-    return 'AppSettingProps(locale: $locale, dashboardWidgets: $dashboardWidgets, onlyStatisticsProxy: $onlyStatisticsProxy, autoLaunch: $autoLaunch, silentLaunch: $silentLaunch, autoRun: $autoRun, openLogs: $openLogs, closeConnections: $closeConnections, testUrl: $testUrl, isAnimateToPage: $isAnimateToPage, autoCheckUpdate: $autoCheckUpdate, showLabel: $showLabel, disclaimerAccepted: $disclaimerAccepted, minimizeOnExit: $minimizeOnExit, hidden: $hidden, developerMode: $developerMode, crashlytics: $crashlytics, zashboardInApp: $zashboardInApp, overrideProviderSettings: $overrideProviderSettings, overrideNetworkSettings: $overrideNetworkSettings, recoveryStrategy: $recoveryStrategy, connectionListMode: $connectionListMode, connectionViewMode: $connectionViewMode, connectionSort: $connectionSort, connectionSortDirection: $connectionSortDirection, connectionShowIcon: $connectionShowIcon, connectionUseApplicationName: $connectionUseApplicationName, connectionRefreshInterval: $connectionRefreshInterval, connectionTableColumns: $connectionTableColumns, connectionTableColumnWidths: $connectionTableColumnWidths, newDashboard: $newDashboard)';
+    return 'AppSettingProps(locale: $locale, dashboardWidgets: $dashboardWidgets, dashboardDefaultV2Migrated: $dashboardDefaultV2Migrated, tunDesktopStackGvisorRestored: $tunDesktopStackGvisorRestored, dnsRespectRulesDefaultMigrated: $dnsRespectRulesDefaultMigrated, defaultTestUrlGoogleMigrated: $defaultTestUrlGoogleMigrated, onlyStatisticsProxy: $onlyStatisticsProxy, autoLaunch: $autoLaunch, silentLaunch: $silentLaunch, autoRun: $autoRun, openLogs: $openLogs, closeConnections: $closeConnections, testUrl: $testUrl, isAnimateToPage: $isAnimateToPage, autoCheckUpdate: $autoCheckUpdate, showLabel: $showLabel, disclaimerAccepted: $disclaimerAccepted, minimizeOnExit: $minimizeOnExit, hidden: $hidden, developerMode: $developerMode, crashlytics: $crashlytics, zashboardInApp: $zashboardInApp, overrideProviderSettings: $overrideProviderSettings, overrideNetworkSettings: $overrideNetworkSettings, recoveryStrategy: $recoveryStrategy, connectionListMode: $connectionListMode, connectionViewMode: $connectionViewMode, connectionSort: $connectionSort, connectionSortDirection: $connectionSortDirection, connectionShowIcon: $connectionShowIcon, connectionUseApplicationName: $connectionUseApplicationName, connectionRefreshInterval: $connectionRefreshInterval, connectionTableColumns: $connectionTableColumns, connectionTableColumnWidths: $connectionTableColumnWidths, newDashboard: $newDashboard)';
   }
 
   @override
@@ -687,6 +755,22 @@ class _$AppSettingPropsImpl implements _AppSettingProps {
             (identical(other.locale, locale) || other.locale == locale) &&
             const DeepCollectionEquality()
                 .equals(other._dashboardWidgets, _dashboardWidgets) &&
+            (identical(other.dashboardDefaultV2Migrated,
+                    dashboardDefaultV2Migrated) ||
+                other.dashboardDefaultV2Migrated ==
+                    dashboardDefaultV2Migrated) &&
+            (identical(other.tunDesktopStackGvisorRestored,
+                    tunDesktopStackGvisorRestored) ||
+                other.tunDesktopStackGvisorRestored ==
+                    tunDesktopStackGvisorRestored) &&
+            (identical(other.dnsRespectRulesDefaultMigrated,
+                    dnsRespectRulesDefaultMigrated) ||
+                other.dnsRespectRulesDefaultMigrated ==
+                    dnsRespectRulesDefaultMigrated) &&
+            (identical(other.defaultTestUrlGoogleMigrated,
+                    defaultTestUrlGoogleMigrated) ||
+                other.defaultTestUrlGoogleMigrated ==
+                    defaultTestUrlGoogleMigrated) &&
             (identical(other.onlyStatisticsProxy, onlyStatisticsProxy) ||
                 other.onlyStatisticsProxy == onlyStatisticsProxy) &&
             (identical(other.autoLaunch, autoLaunch) ||
@@ -753,6 +837,10 @@ class _$AppSettingPropsImpl implements _AppSettingProps {
         runtimeType,
         locale,
         const DeepCollectionEquality().hash(_dashboardWidgets),
+        dashboardDefaultV2Migrated,
+        tunDesktopStackGvisorRestored,
+        dnsRespectRulesDefaultMigrated,
+        defaultTestUrlGoogleMigrated,
         onlyStatisticsProxy,
         autoLaunch,
         silentLaunch,
@@ -806,6 +894,10 @@ abstract class _AppSettingProps implements AppSettingProps {
       {final String? locale,
       @JsonKey(fromJson: dashboardWidgetsSafeFormJson)
       final List<DashboardWidget> dashboardWidgets,
+      final bool dashboardDefaultV2Migrated,
+      final bool tunDesktopStackGvisorRestored,
+      final bool dnsRespectRulesDefaultMigrated,
+      final bool defaultTestUrlGoogleMigrated,
       final bool onlyStatisticsProxy,
       final bool autoLaunch,
       final bool silentLaunch,
@@ -848,6 +940,14 @@ abstract class _AppSettingProps implements AppSettingProps {
   @override
   @JsonKey(fromJson: dashboardWidgetsSafeFormJson)
   List<DashboardWidget> get dashboardWidgets;
+  @override
+  bool get dashboardDefaultV2Migrated;
+  @override
+  bool get tunDesktopStackGvisorRestored;
+  @override
+  bool get dnsRespectRulesDefaultMigrated;
+  @override
+  bool get defaultTestUrlGoogleMigrated;
   @override
   bool get onlyStatisticsProxy;
   @override
@@ -1694,6 +1794,8 @@ mixin _$NetworkProps {
   bool get systemProxy => throw _privateConstructorUsedError;
   List<String> get bypassDomain => throw _privateConstructorUsedError;
   RouteMode get routeMode => throw _privateConstructorUsedError;
+  @JsonKey(unknownEnumValue: LocalSplitMode.auto)
+  LocalSplitMode get localSplitMode => throw _privateConstructorUsedError;
   bool get autoSetSystemDns => throw _privateConstructorUsedError;
 
   /// Serializes this NetworkProps to a JSON map.
@@ -1716,6 +1818,8 @@ abstract class $NetworkPropsCopyWith<$Res> {
       {bool systemProxy,
       List<String> bypassDomain,
       RouteMode routeMode,
+      @JsonKey(unknownEnumValue: LocalSplitMode.auto)
+      LocalSplitMode localSplitMode,
       bool autoSetSystemDns});
 }
 
@@ -1737,6 +1841,7 @@ class _$NetworkPropsCopyWithImpl<$Res, $Val extends NetworkProps>
     Object? systemProxy = null,
     Object? bypassDomain = null,
     Object? routeMode = null,
+    Object? localSplitMode = null,
     Object? autoSetSystemDns = null,
   }) {
     return _then(_value.copyWith(
@@ -1752,6 +1857,10 @@ class _$NetworkPropsCopyWithImpl<$Res, $Val extends NetworkProps>
           ? _value.routeMode
           : routeMode // ignore: cast_nullable_to_non_nullable
               as RouteMode,
+      localSplitMode: null == localSplitMode
+          ? _value.localSplitMode
+          : localSplitMode // ignore: cast_nullable_to_non_nullable
+              as LocalSplitMode,
       autoSetSystemDns: null == autoSetSystemDns
           ? _value.autoSetSystemDns
           : autoSetSystemDns // ignore: cast_nullable_to_non_nullable
@@ -1772,6 +1881,8 @@ abstract class _$$NetworkPropsImplCopyWith<$Res>
       {bool systemProxy,
       List<String> bypassDomain,
       RouteMode routeMode,
+      @JsonKey(unknownEnumValue: LocalSplitMode.auto)
+      LocalSplitMode localSplitMode,
       bool autoSetSystemDns});
 }
 
@@ -1791,6 +1902,7 @@ class __$$NetworkPropsImplCopyWithImpl<$Res>
     Object? systemProxy = null,
     Object? bypassDomain = null,
     Object? routeMode = null,
+    Object? localSplitMode = null,
     Object? autoSetSystemDns = null,
   }) {
     return _then(_$NetworkPropsImpl(
@@ -1806,6 +1918,10 @@ class __$$NetworkPropsImplCopyWithImpl<$Res>
           ? _value.routeMode
           : routeMode // ignore: cast_nullable_to_non_nullable
               as RouteMode,
+      localSplitMode: null == localSplitMode
+          ? _value.localSplitMode
+          : localSplitMode // ignore: cast_nullable_to_non_nullable
+              as LocalSplitMode,
       autoSetSystemDns: null == autoSetSystemDns
           ? _value.autoSetSystemDns
           : autoSetSystemDns // ignore: cast_nullable_to_non_nullable
@@ -1821,6 +1937,8 @@ class _$NetworkPropsImpl implements _NetworkProps {
       {this.systemProxy = false,
       final List<String> bypassDomain = defaultBypassDomain,
       this.routeMode = RouteMode.config,
+      @JsonKey(unknownEnumValue: LocalSplitMode.auto)
+      this.localSplitMode = LocalSplitMode.auto,
       this.autoSetSystemDns = true})
       : _bypassDomain = bypassDomain;
 
@@ -1843,12 +1961,15 @@ class _$NetworkPropsImpl implements _NetworkProps {
   @JsonKey()
   final RouteMode routeMode;
   @override
+  @JsonKey(unknownEnumValue: LocalSplitMode.auto)
+  final LocalSplitMode localSplitMode;
+  @override
   @JsonKey()
   final bool autoSetSystemDns;
 
   @override
   String toString() {
-    return 'NetworkProps(systemProxy: $systemProxy, bypassDomain: $bypassDomain, routeMode: $routeMode, autoSetSystemDns: $autoSetSystemDns)';
+    return 'NetworkProps(systemProxy: $systemProxy, bypassDomain: $bypassDomain, routeMode: $routeMode, localSplitMode: $localSplitMode, autoSetSystemDns: $autoSetSystemDns)';
   }
 
   @override
@@ -1862,6 +1983,8 @@ class _$NetworkPropsImpl implements _NetworkProps {
                 .equals(other._bypassDomain, _bypassDomain) &&
             (identical(other.routeMode, routeMode) ||
                 other.routeMode == routeMode) &&
+            (identical(other.localSplitMode, localSplitMode) ||
+                other.localSplitMode == localSplitMode) &&
             (identical(other.autoSetSystemDns, autoSetSystemDns) ||
                 other.autoSetSystemDns == autoSetSystemDns));
   }
@@ -1873,6 +1996,7 @@ class _$NetworkPropsImpl implements _NetworkProps {
       systemProxy,
       const DeepCollectionEquality().hash(_bypassDomain),
       routeMode,
+      localSplitMode,
       autoSetSystemDns);
 
   /// Create a copy of NetworkProps
@@ -1896,6 +2020,8 @@ abstract class _NetworkProps implements NetworkProps {
       {final bool systemProxy,
       final List<String> bypassDomain,
       final RouteMode routeMode,
+      @JsonKey(unknownEnumValue: LocalSplitMode.auto)
+      final LocalSplitMode localSplitMode,
       final bool autoSetSystemDns}) = _$NetworkPropsImpl;
 
   factory _NetworkProps.fromJson(Map<String, dynamic> json) =
@@ -1907,6 +2033,9 @@ abstract class _NetworkProps implements NetworkProps {
   List<String> get bypassDomain;
   @override
   RouteMode get routeMode;
+  @override
+  @JsonKey(unknownEnumValue: LocalSplitMode.auto)
+  LocalSplitMode get localSplitMode;
   @override
   bool get autoSetSystemDns;
 
@@ -2397,9 +2526,15 @@ mixin _$ThemeProps {
   int? get primaryColor => throw _privateConstructorUsedError;
   List<int> get primaryColors => throw _privateConstructorUsedError;
   ThemeMode get themeMode => throw _privateConstructorUsedError;
+  bool get freedomNetThemeV1Migrated => throw _privateConstructorUsedError;
+  bool get freedomNetThemeV2Migrated => throw _privateConstructorUsedError;
   DynamicSchemeVariant get schemeVariant => throw _privateConstructorUsedError;
   bool get pureBlack => throw _privateConstructorUsedError;
   TextScale get textScale => throw _privateConstructorUsedError;
+  DayNightSkyMode get skyMode => throw _privateConstructorUsedError;
+  DayNightGlassPreset get glassPreset => throw _privateConstructorUsedError;
+  bool get skyAmbientAnimation => throw _privateConstructorUsedError;
+  bool get ignoreCustomBackground => throw _privateConstructorUsedError;
 
   /// Serializes this ThemeProps to a JSON map.
   Map<String, dynamic> toJson() => throw _privateConstructorUsedError;
@@ -2421,9 +2556,15 @@ abstract class $ThemePropsCopyWith<$Res> {
       {int? primaryColor,
       List<int> primaryColors,
       ThemeMode themeMode,
+      bool freedomNetThemeV1Migrated,
+      bool freedomNetThemeV2Migrated,
       DynamicSchemeVariant schemeVariant,
       bool pureBlack,
-      TextScale textScale});
+      TextScale textScale,
+      DayNightSkyMode skyMode,
+      DayNightGlassPreset glassPreset,
+      bool skyAmbientAnimation,
+      bool ignoreCustomBackground});
 
   $TextScaleCopyWith<$Res> get textScale;
 }
@@ -2446,9 +2587,15 @@ class _$ThemePropsCopyWithImpl<$Res, $Val extends ThemeProps>
     Object? primaryColor = freezed,
     Object? primaryColors = null,
     Object? themeMode = null,
+    Object? freedomNetThemeV1Migrated = null,
+    Object? freedomNetThemeV2Migrated = null,
     Object? schemeVariant = null,
     Object? pureBlack = null,
     Object? textScale = null,
+    Object? skyMode = null,
+    Object? glassPreset = null,
+    Object? skyAmbientAnimation = null,
+    Object? ignoreCustomBackground = null,
   }) {
     return _then(_value.copyWith(
       primaryColor: freezed == primaryColor
@@ -2463,6 +2610,14 @@ class _$ThemePropsCopyWithImpl<$Res, $Val extends ThemeProps>
           ? _value.themeMode
           : themeMode // ignore: cast_nullable_to_non_nullable
               as ThemeMode,
+      freedomNetThemeV1Migrated: null == freedomNetThemeV1Migrated
+          ? _value.freedomNetThemeV1Migrated
+          : freedomNetThemeV1Migrated // ignore: cast_nullable_to_non_nullable
+              as bool,
+      freedomNetThemeV2Migrated: null == freedomNetThemeV2Migrated
+          ? _value.freedomNetThemeV2Migrated
+          : freedomNetThemeV2Migrated // ignore: cast_nullable_to_non_nullable
+              as bool,
       schemeVariant: null == schemeVariant
           ? _value.schemeVariant
           : schemeVariant // ignore: cast_nullable_to_non_nullable
@@ -2475,6 +2630,22 @@ class _$ThemePropsCopyWithImpl<$Res, $Val extends ThemeProps>
           ? _value.textScale
           : textScale // ignore: cast_nullable_to_non_nullable
               as TextScale,
+      skyMode: null == skyMode
+          ? _value.skyMode
+          : skyMode // ignore: cast_nullable_to_non_nullable
+              as DayNightSkyMode,
+      glassPreset: null == glassPreset
+          ? _value.glassPreset
+          : glassPreset // ignore: cast_nullable_to_non_nullable
+              as DayNightGlassPreset,
+      skyAmbientAnimation: null == skyAmbientAnimation
+          ? _value.skyAmbientAnimation
+          : skyAmbientAnimation // ignore: cast_nullable_to_non_nullable
+              as bool,
+      ignoreCustomBackground: null == ignoreCustomBackground
+          ? _value.ignoreCustomBackground
+          : ignoreCustomBackground // ignore: cast_nullable_to_non_nullable
+              as bool,
     ) as $Val);
   }
 
@@ -2501,9 +2672,15 @@ abstract class _$$ThemePropsImplCopyWith<$Res>
       {int? primaryColor,
       List<int> primaryColors,
       ThemeMode themeMode,
+      bool freedomNetThemeV1Migrated,
+      bool freedomNetThemeV2Migrated,
       DynamicSchemeVariant schemeVariant,
       bool pureBlack,
-      TextScale textScale});
+      TextScale textScale,
+      DayNightSkyMode skyMode,
+      DayNightGlassPreset glassPreset,
+      bool skyAmbientAnimation,
+      bool ignoreCustomBackground});
 
   @override
   $TextScaleCopyWith<$Res> get textScale;
@@ -2525,9 +2702,15 @@ class __$$ThemePropsImplCopyWithImpl<$Res>
     Object? primaryColor = freezed,
     Object? primaryColors = null,
     Object? themeMode = null,
+    Object? freedomNetThemeV1Migrated = null,
+    Object? freedomNetThemeV2Migrated = null,
     Object? schemeVariant = null,
     Object? pureBlack = null,
     Object? textScale = null,
+    Object? skyMode = null,
+    Object? glassPreset = null,
+    Object? skyAmbientAnimation = null,
+    Object? ignoreCustomBackground = null,
   }) {
     return _then(_$ThemePropsImpl(
       primaryColor: freezed == primaryColor
@@ -2542,6 +2725,14 @@ class __$$ThemePropsImplCopyWithImpl<$Res>
           ? _value.themeMode
           : themeMode // ignore: cast_nullable_to_non_nullable
               as ThemeMode,
+      freedomNetThemeV1Migrated: null == freedomNetThemeV1Migrated
+          ? _value.freedomNetThemeV1Migrated
+          : freedomNetThemeV1Migrated // ignore: cast_nullable_to_non_nullable
+              as bool,
+      freedomNetThemeV2Migrated: null == freedomNetThemeV2Migrated
+          ? _value.freedomNetThemeV2Migrated
+          : freedomNetThemeV2Migrated // ignore: cast_nullable_to_non_nullable
+              as bool,
       schemeVariant: null == schemeVariant
           ? _value.schemeVariant
           : schemeVariant // ignore: cast_nullable_to_non_nullable
@@ -2554,6 +2745,22 @@ class __$$ThemePropsImplCopyWithImpl<$Res>
           ? _value.textScale
           : textScale // ignore: cast_nullable_to_non_nullable
               as TextScale,
+      skyMode: null == skyMode
+          ? _value.skyMode
+          : skyMode // ignore: cast_nullable_to_non_nullable
+              as DayNightSkyMode,
+      glassPreset: null == glassPreset
+          ? _value.glassPreset
+          : glassPreset // ignore: cast_nullable_to_non_nullable
+              as DayNightGlassPreset,
+      skyAmbientAnimation: null == skyAmbientAnimation
+          ? _value.skyAmbientAnimation
+          : skyAmbientAnimation // ignore: cast_nullable_to_non_nullable
+              as bool,
+      ignoreCustomBackground: null == ignoreCustomBackground
+          ? _value.ignoreCustomBackground
+          : ignoreCustomBackground // ignore: cast_nullable_to_non_nullable
+              as bool,
     ));
   }
 }
@@ -2564,10 +2771,16 @@ class _$ThemePropsImpl implements _ThemeProps {
   const _$ThemePropsImpl(
       {this.primaryColor,
       final List<int> primaryColors = defaultPrimaryColors,
-      this.themeMode = ThemeMode.system,
+      this.themeMode = ThemeMode.dark,
+      this.freedomNetThemeV1Migrated = true,
+      this.freedomNetThemeV2Migrated = true,
       this.schemeVariant = DynamicSchemeVariant.content,
       this.pureBlack = false,
-      this.textScale = const TextScale()})
+      this.textScale = const TextScale(),
+      this.skyMode = DayNightSkyMode.followConnection,
+      this.glassPreset = DayNightGlassPreset.balanced,
+      this.skyAmbientAnimation = true,
+      this.ignoreCustomBackground = false})
       : _primaryColors = primaryColors;
 
   factory _$ThemePropsImpl.fromJson(Map<String, dynamic> json) =>
@@ -2589,6 +2802,12 @@ class _$ThemePropsImpl implements _ThemeProps {
   final ThemeMode themeMode;
   @override
   @JsonKey()
+  final bool freedomNetThemeV1Migrated;
+  @override
+  @JsonKey()
+  final bool freedomNetThemeV2Migrated;
+  @override
+  @JsonKey()
   final DynamicSchemeVariant schemeVariant;
   @override
   @JsonKey()
@@ -2596,10 +2815,22 @@ class _$ThemePropsImpl implements _ThemeProps {
   @override
   @JsonKey()
   final TextScale textScale;
+  @override
+  @JsonKey()
+  final DayNightSkyMode skyMode;
+  @override
+  @JsonKey()
+  final DayNightGlassPreset glassPreset;
+  @override
+  @JsonKey()
+  final bool skyAmbientAnimation;
+  @override
+  @JsonKey()
+  final bool ignoreCustomBackground;
 
   @override
   String toString() {
-    return 'ThemeProps(primaryColor: $primaryColor, primaryColors: $primaryColors, themeMode: $themeMode, schemeVariant: $schemeVariant, pureBlack: $pureBlack, textScale: $textScale)';
+    return 'ThemeProps(primaryColor: $primaryColor, primaryColors: $primaryColors, themeMode: $themeMode, freedomNetThemeV1Migrated: $freedomNetThemeV1Migrated, freedomNetThemeV2Migrated: $freedomNetThemeV2Migrated, schemeVariant: $schemeVariant, pureBlack: $pureBlack, textScale: $textScale, skyMode: $skyMode, glassPreset: $glassPreset, skyAmbientAnimation: $skyAmbientAnimation, ignoreCustomBackground: $ignoreCustomBackground)';
   }
 
   @override
@@ -2613,12 +2844,25 @@ class _$ThemePropsImpl implements _ThemeProps {
                 .equals(other._primaryColors, _primaryColors) &&
             (identical(other.themeMode, themeMode) ||
                 other.themeMode == themeMode) &&
+            (identical(other.freedomNetThemeV1Migrated,
+                    freedomNetThemeV1Migrated) ||
+                other.freedomNetThemeV1Migrated == freedomNetThemeV1Migrated) &&
+            (identical(other.freedomNetThemeV2Migrated,
+                    freedomNetThemeV2Migrated) ||
+                other.freedomNetThemeV2Migrated == freedomNetThemeV2Migrated) &&
             (identical(other.schemeVariant, schemeVariant) ||
                 other.schemeVariant == schemeVariant) &&
             (identical(other.pureBlack, pureBlack) ||
                 other.pureBlack == pureBlack) &&
             (identical(other.textScale, textScale) ||
-                other.textScale == textScale));
+                other.textScale == textScale) &&
+            (identical(other.skyMode, skyMode) || other.skyMode == skyMode) &&
+            (identical(other.glassPreset, glassPreset) ||
+                other.glassPreset == glassPreset) &&
+            (identical(other.skyAmbientAnimation, skyAmbientAnimation) ||
+                other.skyAmbientAnimation == skyAmbientAnimation) &&
+            (identical(other.ignoreCustomBackground, ignoreCustomBackground) ||
+                other.ignoreCustomBackground == ignoreCustomBackground));
   }
 
   @JsonKey(includeFromJson: false, includeToJson: false)
@@ -2628,9 +2872,15 @@ class _$ThemePropsImpl implements _ThemeProps {
       primaryColor,
       const DeepCollectionEquality().hash(_primaryColors),
       themeMode,
+      freedomNetThemeV1Migrated,
+      freedomNetThemeV2Migrated,
       schemeVariant,
       pureBlack,
-      textScale);
+      textScale,
+      skyMode,
+      glassPreset,
+      skyAmbientAnimation,
+      ignoreCustomBackground);
 
   /// Create a copy of ThemeProps
   /// with the given fields replaced by the non-null parameter values.
@@ -2653,9 +2903,15 @@ abstract class _ThemeProps implements ThemeProps {
       {final int? primaryColor,
       final List<int> primaryColors,
       final ThemeMode themeMode,
+      final bool freedomNetThemeV1Migrated,
+      final bool freedomNetThemeV2Migrated,
       final DynamicSchemeVariant schemeVariant,
       final bool pureBlack,
-      final TextScale textScale}) = _$ThemePropsImpl;
+      final TextScale textScale,
+      final DayNightSkyMode skyMode,
+      final DayNightGlassPreset glassPreset,
+      final bool skyAmbientAnimation,
+      final bool ignoreCustomBackground}) = _$ThemePropsImpl;
 
   factory _ThemeProps.fromJson(Map<String, dynamic> json) =
       _$ThemePropsImpl.fromJson;
@@ -2667,11 +2923,23 @@ abstract class _ThemeProps implements ThemeProps {
   @override
   ThemeMode get themeMode;
   @override
+  bool get freedomNetThemeV1Migrated;
+  @override
+  bool get freedomNetThemeV2Migrated;
+  @override
   DynamicSchemeVariant get schemeVariant;
   @override
   bool get pureBlack;
   @override
   TextScale get textScale;
+  @override
+  DayNightSkyMode get skyMode;
+  @override
+  DayNightGlassPreset get glassPreset;
+  @override
+  bool get skyAmbientAnimation;
+  @override
+  bool get ignoreCustomBackground;
 
   /// Create a copy of ThemeProps
   /// with the given fields replaced by the non-null parameter values.
@@ -2879,6 +3147,7 @@ mixin _$Config {
   WindowProps get windowProps => throw _privateConstructorUsedError;
   ClashConfig get patchClashConfig => throw _privateConstructorUsedError;
   ScriptProps get scriptProps => throw _privateConstructorUsedError;
+  OverrideData get globalOverrideData => throw _privateConstructorUsedError;
 
   /// Serializes this Config to a JSON map.
   Map<String, dynamic> toJson() => throw _privateConstructorUsedError;
@@ -2908,7 +3177,8 @@ abstract class $ConfigCopyWith<$Res> {
       ProxiesStyle proxiesStyle,
       WindowProps windowProps,
       ClashConfig patchClashConfig,
-      ScriptProps scriptProps});
+      ScriptProps scriptProps,
+      OverrideData globalOverrideData});
 
   $AppSettingPropsCopyWith<$Res> get appSetting;
   $DAVCopyWith<$Res>? get dav;
@@ -2919,6 +3189,7 @@ abstract class $ConfigCopyWith<$Res> {
   $WindowPropsCopyWith<$Res> get windowProps;
   $ClashConfigCopyWith<$Res> get patchClashConfig;
   $ScriptPropsCopyWith<$Res> get scriptProps;
+  $OverrideDataCopyWith<$Res> get globalOverrideData;
 }
 
 /// @nodoc
@@ -2949,6 +3220,7 @@ class _$ConfigCopyWithImpl<$Res, $Val extends Config>
     Object? windowProps = null,
     Object? patchClashConfig = null,
     Object? scriptProps = null,
+    Object? globalOverrideData = null,
   }) {
     return _then(_value.copyWith(
       appSetting: null == appSetting
@@ -3003,6 +3275,10 @@ class _$ConfigCopyWithImpl<$Res, $Val extends Config>
           ? _value.scriptProps
           : scriptProps // ignore: cast_nullable_to_non_nullable
               as ScriptProps,
+      globalOverrideData: null == globalOverrideData
+          ? _value.globalOverrideData
+          : globalOverrideData // ignore: cast_nullable_to_non_nullable
+              as OverrideData,
     ) as $Val);
   }
 
@@ -3099,6 +3375,16 @@ class _$ConfigCopyWithImpl<$Res, $Val extends Config>
       return _then(_value.copyWith(scriptProps: value) as $Val);
     });
   }
+
+  /// Create a copy of Config
+  /// with the given fields replaced by the non-null parameter values.
+  @override
+  @pragma('vm:prefer-inline')
+  $OverrideDataCopyWith<$Res> get globalOverrideData {
+    return $OverrideDataCopyWith<$Res>(_value.globalOverrideData, (value) {
+      return _then(_value.copyWith(globalOverrideData: value) as $Val);
+    });
+  }
 }
 
 /// @nodoc
@@ -3122,7 +3408,8 @@ abstract class _$$ConfigImplCopyWith<$Res> implements $ConfigCopyWith<$Res> {
       ProxiesStyle proxiesStyle,
       WindowProps windowProps,
       ClashConfig patchClashConfig,
-      ScriptProps scriptProps});
+      ScriptProps scriptProps,
+      OverrideData globalOverrideData});
 
   @override
   $AppSettingPropsCopyWith<$Res> get appSetting;
@@ -3142,6 +3429,8 @@ abstract class _$$ConfigImplCopyWith<$Res> implements $ConfigCopyWith<$Res> {
   $ClashConfigCopyWith<$Res> get patchClashConfig;
   @override
   $ScriptPropsCopyWith<$Res> get scriptProps;
+  @override
+  $OverrideDataCopyWith<$Res> get globalOverrideData;
 }
 
 /// @nodoc
@@ -3170,6 +3459,7 @@ class __$$ConfigImplCopyWithImpl<$Res>
     Object? windowProps = null,
     Object? patchClashConfig = null,
     Object? scriptProps = null,
+    Object? globalOverrideData = null,
   }) {
     return _then(_$ConfigImpl(
       appSetting: null == appSetting
@@ -3224,6 +3514,10 @@ class __$$ConfigImplCopyWithImpl<$Res>
           ? _value.scriptProps
           : scriptProps // ignore: cast_nullable_to_non_nullable
               as ScriptProps,
+      globalOverrideData: null == globalOverrideData
+          ? _value.globalOverrideData
+          : globalOverrideData // ignore: cast_nullable_to_non_nullable
+              as OverrideData,
     ));
   }
 }
@@ -3245,7 +3539,8 @@ class _$ConfigImpl implements _Config {
       this.proxiesStyle = defaultProxiesStyle,
       this.windowProps = defaultWindowProps,
       this.patchClashConfig = defaultClashConfig,
-      this.scriptProps = const ScriptProps()})
+      this.scriptProps = const ScriptProps(),
+      this.globalOverrideData = defaultGlobalOverrideData})
       : _profiles = profiles,
         _hotKeyActions = hotKeyActions;
 
@@ -3301,10 +3596,13 @@ class _$ConfigImpl implements _Config {
   @override
   @JsonKey()
   final ScriptProps scriptProps;
+  @override
+  @JsonKey()
+  final OverrideData globalOverrideData;
 
   @override
   String toString() {
-    return 'Config(appSetting: $appSetting, profiles: $profiles, hotKeyActions: $hotKeyActions, currentProfileId: $currentProfileId, overrideDns: $overrideDns, dav: $dav, networkProps: $networkProps, vpnProps: $vpnProps, themeProps: $themeProps, proxiesStyle: $proxiesStyle, windowProps: $windowProps, patchClashConfig: $patchClashConfig, scriptProps: $scriptProps)';
+    return 'Config(appSetting: $appSetting, profiles: $profiles, hotKeyActions: $hotKeyActions, currentProfileId: $currentProfileId, overrideDns: $overrideDns, dav: $dav, networkProps: $networkProps, vpnProps: $vpnProps, themeProps: $themeProps, proxiesStyle: $proxiesStyle, windowProps: $windowProps, patchClashConfig: $patchClashConfig, scriptProps: $scriptProps, globalOverrideData: $globalOverrideData)';
   }
 
   @override
@@ -3335,7 +3633,9 @@ class _$ConfigImpl implements _Config {
             (identical(other.patchClashConfig, patchClashConfig) ||
                 other.patchClashConfig == patchClashConfig) &&
             (identical(other.scriptProps, scriptProps) ||
-                other.scriptProps == scriptProps));
+                other.scriptProps == scriptProps) &&
+            (identical(other.globalOverrideData, globalOverrideData) ||
+                other.globalOverrideData == globalOverrideData));
   }
 
   @JsonKey(includeFromJson: false, includeToJson: false)
@@ -3354,7 +3654,8 @@ class _$ConfigImpl implements _Config {
       proxiesStyle,
       windowProps,
       patchClashConfig,
-      scriptProps);
+      scriptProps,
+      globalOverrideData);
 
   /// Create a copy of Config
   /// with the given fields replaced by the non-null parameter values.
@@ -3388,7 +3689,8 @@ abstract class _Config implements Config {
       final ProxiesStyle proxiesStyle,
       final WindowProps windowProps,
       final ClashConfig patchClashConfig,
-      final ScriptProps scriptProps}) = _$ConfigImpl;
+      final ScriptProps scriptProps,
+      final OverrideData globalOverrideData}) = _$ConfigImpl;
 
   factory _Config.fromJson(Map<String, dynamic> json) = _$ConfigImpl.fromJson;
 
@@ -3420,6 +3722,8 @@ abstract class _Config implements Config {
   ClashConfig get patchClashConfig;
   @override
   ScriptProps get scriptProps;
+  @override
+  OverrideData get globalOverrideData;
 
   /// Create a copy of Config
   /// with the given fields replaced by the non-null parameter values.

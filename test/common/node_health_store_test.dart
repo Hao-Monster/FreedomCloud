@@ -310,16 +310,19 @@ void main() {
     store.dispose();
   });
 
-  test('staleness starts strictly after ten minutes', () {
+  test('staleness starts strictly after one hour', () {
     final health = NodeHealthRecord(
       delayMs: 1,
       testedAt: now,
       testUrlHash: NodeHealthStore.hashTestUrl(url),
     );
     expect(health.isStale(now.add(const Duration(minutes: 10))), isFalse);
+    expect(health.isStale(now.add(const Duration(minutes: 59))), isFalse);
+    expect(health.isStale(now.add(const Duration(hours: 1))), isFalse);
     expect(
-        health.isStale(now.add(const Duration(minutes: 10, milliseconds: 1))),
+        health.isStale(now.add(const Duration(hours: 1, milliseconds: 1))),
         isTrue);
+    expect(health.isStale(now.add(const Duration(days: 3))), isTrue);
   });
 
   test('explicit retention drops old records without changing the default',

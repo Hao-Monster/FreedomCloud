@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"runtime"
 	"unsafe"
@@ -12,6 +13,119 @@ type Action struct {
 	Id     string      `json:"id"`
 	Method Method      `json:"method"`
 	Data   interface{} `json:"data"`
+}
+
+func (a *Action) UnmarshalJSON(raw []byte) error {
+	var wire struct {
+		Id     string          `json:"id"`
+		Method Method          `json:"method"`
+		Data   json.RawMessage `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &wire); err != nil {
+		return err
+	}
+	a.Id = wire.Id
+	a.Method = wire.Method
+	if len(wire.Data) > 0 {
+		a.Data = wire.Data
+	} else {
+		a.Data = nil
+	}
+	return nil
+}
+
+func actionDataJSONBytes(raw interface{}) ([]byte, bool) {
+	switch v := raw.(type) {
+	case json.RawMessage:
+		trimmed := bytes.TrimSpace(v)
+		if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+			return nil, false
+		}
+		if trimmed[0] == '"' {
+			var s string
+			if err := json.Unmarshal(trimmed, &s); err != nil {
+				return nil, false
+			}
+			return []byte(s), true
+		}
+		if trimmed[0] == '{' || trimmed[0] == '[' {
+			return trimmed, true
+		}
+		return nil, false
+	case string:
+		return []byte(v), true
+	case []byte:
+		return v, true
+	default:
+		if raw == nil {
+			return nil, false
+		}
+		encoded, err := json.Marshal(raw)
+		if err != nil {
+			return nil, false
+		}
+		return encoded, true
+	}
+}
+
+func actionDataJSONOrString(raw interface{}) (string, bool) {
+	switch v := raw.(type) {
+	case string:
+		return v, true
+	case json.RawMessage:
+		trimmed := bytes.TrimSpace(v)
+		if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+			return "", false
+		}
+		if trimmed[0] == '"' {
+			var s string
+			if err := json.Unmarshal(trimmed, &s); err != nil {
+				return "", false
+			}
+			return s, true
+		}
+		if trimmed[0] == '{' || trimmed[0] == '[' {
+			return string(trimmed), true
+		}
+		return "", false
+	default:
+		return "", false
+	}
+}
+
+func actionDataStrictString(raw interface{}) (string, bool) {
+	switch v := raw.(type) {
+	case string:
+		return v, true
+	case json.RawMessage:
+		trimmed := bytes.TrimSpace(v)
+		if len(trimmed) == 0 || trimmed[0] != '"' {
+			return "", false
+		}
+		var s string
+		if err := json.Unmarshal(trimmed, &s); err != nil {
+			return "", false
+		}
+		return s, true
+	default:
+		return "", false
+	}
+}
+
+func actionDataBool(raw interface{}) (bool, bool) {
+	switch v := raw.(type) {
+	case bool:
+		return v, true
+	case json.RawMessage:
+		trimmed := bytes.TrimSpace(v)
+		var b bool
+		if err := json.Unmarshal(trimmed, &b); err != nil {
+			return false, false
+		}
+		return b, true
+	default:
+		return false, false
+	}
 }
 
 type ActionResult struct {
@@ -37,14 +151,18 @@ func (result ActionResult) success(data interface{}) {
 
 func (result ActionResult) error(data interface{}) {
 	result.Code = -1
-	result.Data = data
+	if err, ok := data.(error); ok {
+		result.Data = err.Error()
+	} else {
+		result.Data = data
+	}
 	result.send()
 }
 
 func handleAction(action *Action, result ActionResult) {
 	switch action.Method {
 	case catalogParseProviderMethod:
-		data, ok := action.Data.(string)
+		data, ok := actionDataJSONOrString(action.Data)
 		if !ok {
 			result.error("invalidParameters")
 			return
@@ -57,7 +175,7 @@ func handleAction(action *Action, result ActionResult) {
 		}
 		return
 	case catalogPrepareMethod, catalogTestDelayMethod, catalogReleaseMethod:
-		data, ok := action.Data.(string)
+		data, ok := actionDataJSONOrString(action.Data)
 		if !ok {
 			result.error("invalidParameters")
 			return
@@ -72,7 +190,7 @@ func handleAction(action *Action, result ActionResult) {
 		}
 		return
 	case initClashMethod:
-		paramsString, ok := action.Data.(string)
+		paramsString, ok := actionDataJSONOrString(action.Data)
 		if !ok {
 			result.error("invalid data type")
 			return
@@ -90,21 +208,19 @@ func handleAction(action *Action, result ActionResult) {
 		result.success(handleShutdown())
 		return
 	case validateConfigMethod:
-		s, ok := action.Data.(string)
+		s, ok := actionDataStrictString(action.Data)
 		if !ok {
 			result.error("invalid data type")
 			return
 		}
-		data := []byte(s)
-		result.success(handleValidateConfig(data))
+		result.success(handleValidateConfig([]byte(s)))
 		return
 	case updateConfigMethod:
-		s, ok := action.Data.(string)
+		data, ok := actionDataJSONBytes(action.Data)
 		if !ok {
 			result.error("invalid data type")
 			return
 		}
-		data := []byte(s)
 		updateError := handleUpdateConfig(data)
 		if runtime.GOOS == "darwin" && updateError != "" {
 			result.error(updateError)
@@ -113,7 +229,7 @@ func handleAction(action *Action, result ActionResult) {
 		result.success(updateError)
 		return
 	case configureStrictIngressMethod:
-		s, ok := action.Data.(string)
+		s, ok := actionDataJSONOrString(action.Data)
 		if !ok {
 			result.error("invalid data type")
 			return
@@ -126,7 +242,7 @@ func handleAction(action *Action, result ActionResult) {
 		result.success(data)
 		return
 	case Method("restoreStrictIngressIntent"):
-		s, ok := action.Data.(string)
+		s, ok := actionDataJSONOrString(action.Data)
 		if !ok || handleRestoreMacStrictIngressIntent(s) != nil {
 			result.error("strict ingress intent recovery rejected")
 			return
@@ -134,12 +250,11 @@ func handleAction(action *Action, result ActionResult) {
 		result.success(true)
 		return
 	case setupConfigMethod:
-		s, ok := action.Data.(string)
+		data, ok := actionDataJSONBytes(action.Data)
 		if !ok {
 			result.error("invalid data type")
 			return
 		}
-		data := []byte(s)
 		setupError := handleSetupConfig(data)
 		if runtime.GOOS == "darwin" && setupError != "" {
 			result.error(setupError)
@@ -151,7 +266,7 @@ func handleAction(action *Action, result ActionResult) {
 		result.success(handleGetProxies())
 		return
 	case changeProxyMethod:
-		data, ok := action.Data.(string)
+		data, ok := actionDataJSONOrString(action.Data)
 		if !ok {
 			result.error("invalid data type")
 			return
@@ -161,17 +276,17 @@ func handleAction(action *Action, result ActionResult) {
 		})
 		return
 	case getTrafficMethod:
-		result.success(handleGetTraffic())
+		result.success(handleGetTrafficPayload())
 		return
 	case getTotalTrafficMethod:
-		result.success(handleGetTotalTraffic())
+		result.success(handleGetTotalTrafficPayload())
 		return
 	case resetTrafficMethod:
 		handleResetTraffic()
 		result.success(true)
 		return
 	case asyncTestDelayMethod:
-		data, ok := action.Data.(string)
+		data, ok := actionDataJSONOrString(action.Data)
 		if !ok {
 			result.error("invalid data type")
 			return
@@ -181,7 +296,7 @@ func handleAction(action *Action, result ActionResult) {
 		})
 		return
 	case cancelTestDelayMethod:
-		id, ok := action.Data.(string)
+		id, ok := actionDataStrictString(action.Data)
 		if !ok || id == "" {
 			result.error("invalid request id")
 			return
@@ -189,7 +304,7 @@ func handleAction(action *Action, result ActionResult) {
 		result.success(cancelDelayTaskOwned(result.owner, id, "cancelled"))
 		return
 	case getConnectionsMethod:
-		result.success(handleGetConnections())
+		result.success(handleGetConnectionsRaw())
 		return
 	case closeConnectionsMethod:
 		result.success(handleCloseConnections())
@@ -198,14 +313,18 @@ func handleAction(action *Action, result ActionResult) {
 		result.success(handleResetConnections())
 		return
 	case getConfigMethod:
-		path, ok := action.Data.(string)
+		path, ok := actionDataStrictString(action.Data)
 		if !ok {
 			result.error("invalid data type")
 			return
 		}
+		if path != "fcx://runtime" && !isInit.Load() {
+			result.error("not_ready:core_uninitialized")
+			return
+		}
 		config, err := handleGetConfig(path)
 		if err != nil {
-			result.error(err)
+			result.error(err.Error())
 			return
 		}
 		result.success(config)
@@ -217,7 +336,7 @@ func handleAction(action *Action, result ActionResult) {
 		result.success(constant.Version)
 		return
 	case closeConnectionMethod:
-		id, ok := action.Data.(string)
+		id, ok := actionDataStrictString(action.Data)
 		if !ok {
 			result.error("invalid data type")
 			return
@@ -225,18 +344,18 @@ func handleAction(action *Action, result ActionResult) {
 		result.success(handleCloseConnection(id))
 		return
 	case getExternalProvidersMethod:
-		result.success(handleGetExternalProviders())
+		result.success(handleGetExternalProvidersPayload())
 		return
 	case getExternalProviderMethod:
-		externalProviderName, ok := action.Data.(string)
+		externalProviderName, ok := actionDataStrictString(action.Data)
 		if !ok {
 			result.error("invalid data type")
 			return
 		}
-		result.success(handleGetExternalProvider(externalProviderName))
+		result.success(handleGetExternalProviderPayload(externalProviderName))
 		return
 	case updateGeoDataMethod:
-		paramsString, ok := action.Data.(string)
+		paramsString, ok := actionDataJSONOrString(action.Data)
 		if !ok {
 			result.error("invalid data type")
 			return
@@ -254,7 +373,7 @@ func handleAction(action *Action, result ActionResult) {
 		})
 		return
 	case updateExternalProviderMethod:
-		providerName, ok := action.Data.(string)
+		providerName, ok := actionDataStrictString(action.Data)
 		if !ok {
 			result.error("invalid data type")
 			return
@@ -264,7 +383,7 @@ func handleAction(action *Action, result ActionResult) {
 		})
 		return
 	case sideLoadExternalProviderMethod:
-		paramsString, ok := action.Data.(string)
+		paramsString, ok := actionDataJSONOrString(action.Data)
 		if !ok {
 			result.error("invalid data type")
 			return
@@ -296,7 +415,7 @@ func handleAction(action *Action, result ActionResult) {
 		result.success(handleStopListener())
 		return
 	case getCountryCodeMethod:
-		ip, ok := action.Data.(string)
+		ip, ok := actionDataStrictString(action.Data)
 		if !ok {
 			result.error("invalid data type")
 			return
@@ -311,7 +430,7 @@ func handleAction(action *Action, result ActionResult) {
 		})
 		return
 	case setStateMethod:
-		data, ok := action.Data.(string)
+		data, ok := actionDataJSONOrString(action.Data)
 		if !ok {
 			result.error("invalid data type")
 			return
@@ -320,7 +439,7 @@ func handleAction(action *Action, result ActionResult) {
 		result.success(true)
 		return
 	case healthCheckMethod:
-		groupName, _ := action.Data.(string)
+		groupName, _ := actionDataStrictString(action.Data)
 		handleHealthCheck(groupName, func(value string) {
 			result.success(value)
 		})
@@ -331,13 +450,18 @@ func handleAction(action *Action, result ActionResult) {
 		})
 		return
 	case setUiActiveMethod:
-		active, _ := action.Data.(bool)
+		active, _ := actionDataBool(action.Data)
 		handleSetUiActive(active)
 		result.success(true)
 		return
 	case setScreenActiveMethod:
-		active, _ := action.Data.(bool)
+		active, _ := actionDataBool(action.Data)
 		handleSetScreenActive(active)
+		result.success(true)
+		return
+	case setRequestsActiveMethod:
+		active, _ := actionDataBool(action.Data)
+		handleSetRequestsActive(active)
 		result.success(true)
 		return
 	case crashMethod:

@@ -765,3 +765,159 @@ func TestFCXDoHLogRedactsPathAndQuery(t *testing.T) {
 		t.Fatalf("redaction dropped diagnostics: %q", got)
 	}
 }
+
+type fcxTestDomainMatcher struct {
+	target string
+}
+
+func (m fcxTestDomainMatcher) MatchDomain(domain string) bool {
+	return domain == m.target
+}
+
+func TestFCXDoHResolverResetConnectionResetsPolicyAndHealth(t *testing.T) {
+	rs := NewResolver(Config{
+		Main: []NameServer{
+			{Net: "https", Addr: "https://main.doh.invalid/dns-query"},
+		},
+		Policy: []Policy{
+			{
+				Domain: "+.qq.com",
+				NameServers: []NameServer{
+					{Net: "https", Addr: "https://trie-policy.doh.invalid/dns-query"},
+				},
+			},
+			{
+				Matcher: fcxTestDomainMatcher{target: "matched.cn.invalid"},
+				NameServers: []NameServer{
+					{Net: "https", Addr: "https://matcher-policy.doh.invalid/dns-query"},
+				},
+			},
+		},
+	})
+
+	extractDoH := func(clients []dnsClient) *dnsOverHTTPS {
+		t.Helper()
+		if len(clients) != 1 {
+			t.Fatalf("expected 1 policy dnsClient, got %d", len(clients))
+		}
+		c := clients[0]
+		for {
+			u, ok := c.(interface{ Unwrap() dnsClient })
+			if !ok {
+				break
+			}
+			c = u.Unwrap()
+		}
+		doh, ok := c.(*dnsOverHTTPS)
+		if !ok {
+			t.Fatalf("expected *dnsOverHTTPS, got %T", c)
+		}
+		return doh
+	}
+
+	var trieDoH, matcherDoH *dnsOverHTTPS
+	for _, p := range rs.Resolver.policy {
+		if matched := p.Match("yybadaccessuse.3g.qq.com"); len(matched) > 0 {
+			trieDoH = extractDoH(matched)
+		}
+		if matched := p.Match("matched.cn.invalid"); len(matched) > 0 {
+			matcherDoH = extractDoH(matched)
+		}
+	}
+	if trieDoH == nil || matcherDoH == nil {
+		t.Fatalf("expected both trie and matcher policies to match: trie=%v matcher=%v", trieDoH != nil, matcherDoH != nil)
+	}
+
+	trieTr := &fcxDoHTransport{roundTrip: fcxDoHAnswer}
+	trieClient := &http.Client{Transport: trieTr}
+	trieDoH.client = trieClient
+	trieDoH.fcxHealth.adopt(trieClient)
+
+	matcherTr := &fcxDoHTransport{roundTrip: fcxDoHAnswer}
+	matcherClient := &http.Client{Transport: matcherTr}
+	matcherDoH.client = matcherClient
+	matcherDoH.fcxHealth.adopt(matcherClient)
+
+	rs.ResetConnection()
+
+	if trieDoH.client != nil || trieTr.closed.Load() != 1 || trieDoH.fcxHealth.client.Load() != nil {
+		t.Fatalf("trie nameserver-policy DoH was not fully reset: client=%v closes=%d health=%v",
+			trieDoH.client, trieTr.closed.Load(), trieDoH.fcxHealth.client.Load())
+	}
+	if matcherDoH.client != nil || matcherTr.closed.Load() != 1 || matcherDoH.fcxHealth.client.Load() != nil {
+		t.Fatalf("matcher nameserver-policy DoH was not fully reset: client=%v closes=%d health=%v",
+			matcherDoH.client, matcherTr.closed.Load(), matcherDoH.fcxHealth.client.Load())
+	}
+}
+
+type fcxResetCountingDNSClient struct {
+	addr   string
+	resets atomic.Int32
+}
+
+func (c *fcxResetCountingDNSClient) ExchangeContext(ctx context.Context, m *D.Msg) (*D.Msg, error) {
+	return nil, errors.New("unused")
+}
+
+func (c *fcxResetCountingDNSClient) Address() string { return c.addr }
+
+func (c *fcxResetCountingDNSClient) ResetConnection() {
+	c.resets.Add(1)
+}
+
+func TestFCXDoHSystemDHCPAndDefaultResolverResetInvalidatesCaches(t *testing.T) {
+	// 1. systemClient.ResetConnection() must invalidate 5-minute SystemDnsFlushTime window and reset inner clients.
+	sysInner := &fcxResetCountingDNSClient{addr: "172.20.10.1:53"}
+	defInner := &fcxResetCountingDNSClient{addr: "114.114.114.114:53"}
+	sc := newSystemClient()
+	sc.lastFlush = time.Now()
+	sc.dnsClients["172.20.10.1"] = &systemDnsClient{disableTimes: 0, dnsClient: sysInner}
+	sc.defaultNS = []dnsClient{defInner}
+
+	sc.ResetConnection()
+
+	sc.mu.Lock()
+	flushedZero := sc.lastFlush.IsZero()
+	sc.mu.Unlock()
+	if !flushedZero {
+		t.Fatal("expected systemClient.ResetConnection() to zero lastFlush so new WiFi DNS is read immediately instead of waiting 5 minutes")
+	}
+	if sysInner.resets.Load() != 1 || defInner.resets.Load() != 1 {
+		t.Fatalf("expected systemClient.ResetConnection() to reset cached & defaultNS clients, got sys=%d def=%d",
+			sysInner.resets.Load(), defInner.resets.Load())
+	}
+
+	// 2. dhcpClient.ResetConnection() must invalidate 20s/1h TTLs under lock and reset inner clients.
+	dhcpInner := &fcxResetCountingDNSClient{addr: "172.20.10.1:53"}
+	dc := newDHCPClient("WLAN")
+	dc.ifaceInvalidate = time.Now().Add(IfaceTTL)
+	dc.dnsInvalidate = time.Now().Add(DHCPTTL)
+	dc.clients = []dnsClient{dhcpInner}
+
+	dc.ResetConnection()
+
+	dc.lock.Lock()
+	dhcpZero := dc.ifaceInvalidate.IsZero() && dc.dnsInvalidate.IsZero()
+	dc.lock.Unlock()
+	if !dhcpZero {
+		t.Fatal("expected dhcpClient.ResetConnection() to zero ifaceInvalidate and dnsInvalidate")
+	}
+	if dhcpInner.resets.Load() != 1 {
+		t.Fatalf("expected dhcpClient.ResetConnection() to reset inner client, got %d", dhcpInner.resets.Load())
+	}
+
+	// 3. Resolver.ClearCache() must also clear defaultResolver's bootstrap DNS cache.
+	rs := NewResolver(Config{
+		Default: []NameServer{{Net: "udp", Addr: "223.5.5.5:53"}},
+		Main:    []NameServer{{Net: "https", Addr: "https://dns.alidns.com/dns-query"}},
+	})
+	if rs.Resolver.defaultResolver == nil || rs.Resolver.defaultResolver.cache == nil {
+		t.Fatal("expected defaultResolver cache to exist")
+	}
+	cachedMsg := new(D.Msg)
+	rs.Resolver.defaultResolver.cache.SetWithExpire("dns.alidns.com.", cachedMsg, time.Now().Add(time.Minute))
+	rs.ClearCache()
+	if _, _, hit := rs.Resolver.defaultResolver.cache.GetWithExpire("dns.alidns.com."); hit {
+		t.Fatal("expected Resolver.ClearCache() to clear defaultResolver bootstrap cache")
+	}
+}

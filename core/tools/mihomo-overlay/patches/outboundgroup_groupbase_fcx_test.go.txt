@@ -1,0 +1,201 @@
+package outboundgroup
+
+import (
+	"errors"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	C "github.com/metacubex/mihomo/constant"
+	P "github.com/metacubex/mihomo/constant/provider"
+)
+
+type fcxRaceMockProvider struct {
+	P.ProxyProvider
+	healthChecks atomic.Int32
+}
+
+func (p *fcxRaceMockProvider) Name() string        { return "fcx-mock-provider" }
+func (p *fcxRaceMockProvider) HealthCheck()        { p.healthChecks.Add(1) }
+func (p *fcxRaceMockProvider) Version() uint32     { return 1 }
+func (p *fcxRaceMockProvider) Proxies() []C.Proxy  { return nil }
+func (p *fcxRaceMockProvider) Touch()              {}
+func (p *fcxRaceMockProvider) Close() error        { return nil }
+func (p *fcxRaceMockProvider) SubscriptionInfo() any { return nil }
+
+func waitGroupBaseSettled(t *testing.T, fn func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if fn() {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("timed out waiting for async GroupBase.onDialFailed state transition")
+}
+
+func TestGroupBaseDialFailedRetainsSlowDialFailuresInside30sWindowAndResetsTo1OnExpiry(t *testing.T) {
+	// Case 1: testTimeout = 5000ms (< 30s floor). A failure arriving 6s after the first failure
+	// (when the previous dial timed out after >5s) must STILL count toward maxFailedTimes, not wipe to 0.
+	gb := NewGroupBase(GroupBaseOption{
+		Name:           "surgical-group-5s",
+		Type:           C.URLTest,
+		TestTimeout:    5000,
+		MaxFailedTimes: 3,
+	})
+
+	var triggered atomic.Int32
+	dialErr := errors.New("dial tcp 1.2.3.4:443: i/o timeout")
+
+	gb.onDialFailed(C.Shadowsocks, dialErr, func() { triggered.Add(1) })
+	waitGroupBaseSettled(t, func() bool {
+		gb.failedTestMux.Lock()
+		defer gb.failedTestMux.Unlock()
+		return gb.failedTimes == 1
+	})
+
+	// Simulate 6s elapsed (>5s testTimeout, <30s minimum retention window).
+	gb.failedTestMux.Lock()
+	gb.failedTime = time.Now().Add(-6 * time.Second)
+	gb.failedTestMux.Unlock()
+
+	gb.onDialFailed(C.Shadowsocks, dialErr, func() { triggered.Add(1) })
+	waitGroupBaseSettled(t, func() bool {
+		gb.failedTestMux.Lock()
+		defer gb.failedTestMux.Unlock()
+		return gb.failedTimes == 2
+	})
+	if triggered.Load() != 0 {
+		t.Fatalf("expected 0 health check triggers at failedTimes=2, got %d", triggered.Load())
+	}
+
+	gb.onDialFailed(C.Shadowsocks, dialErr, func() { triggered.Add(1) })
+	waitGroupBaseSettled(t, func() bool {
+		return triggered.Load() == 1
+	})
+
+	// Case 2: Window truly expired (>30s since failedTime). Must reset to failedTimes = 1
+	// (counting THIS failure, NOT dropping it to 0) and refresh failedTime.
+	gb.failedTestMux.Lock()
+	gb.failedTime = time.Now().Add(-35 * time.Second)
+	beforeExpiryCheck := time.Now()
+	gb.failedTestMux.Unlock()
+	triggered.Store(0)
+
+	gb.onDialFailed(C.Shadowsocks, dialErr, func() { triggered.Add(1) })
+	waitGroupBaseSettled(t, func() bool {
+		gb.failedTestMux.Lock()
+		defer gb.failedTestMux.Unlock()
+		return gb.failedTimes == 1 && !gb.failedTime.Before(beforeExpiryCheck)
+	})
+	if triggered.Load() != 0 {
+		t.Fatalf("expired reset must start fresh at failedTimes=1 without firing immediately, got %d", triggered.Load())
+	}
+
+	// Case 3: testTimeout = 15000ms -> effective window = 3 * 15s = 45s (> 30s).
+	// A failure at 35s elapsed must still accumulate rather than expire.
+	gbLong := NewGroupBase(GroupBaseOption{
+		Name:           "surgical-group-45s",
+		Type:           C.URLTest,
+		TestTimeout:    15000,
+		MaxFailedTimes: 2,
+	})
+	var triggeredLong atomic.Int32
+	gbLong.onDialFailed(C.Shadowsocks, dialErr, func() { triggeredLong.Add(1) })
+	waitGroupBaseSettled(t, func() bool {
+		gbLong.failedTestMux.Lock()
+		defer gbLong.failedTestMux.Unlock()
+		return gbLong.failedTimes == 1
+	})
+
+	gbLong.failedTestMux.Lock()
+	gbLong.failedTime = time.Now().Add(-35 * time.Second)
+	gbLong.failedTestMux.Unlock()
+
+	gbLong.onDialFailed(C.Shadowsocks, dialErr, func() { triggeredLong.Add(1) })
+	waitGroupBaseSettled(t, func() bool {
+		return triggeredLong.Load() == 1
+	})
+}
+
+func TestGroupBaseHealthCheckAndDialSuccessConcurrentRace(t *testing.T) {
+	prov := &fcxRaceMockProvider{}
+	gb := NewGroupBase(GroupBaseOption{
+		Name:           "surgical-group-race",
+		Type:           C.URLTest,
+		TestTimeout:    5000,
+		MaxFailedTimes: 3,
+		Providers:      []P.ProxyProvider{prov},
+	})
+
+	dialErr := errors.New("dial tcp 1.2.3.4:443: i/o timeout")
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 50; j++ {
+				gb.onDialFailed(C.Shadowsocks, dialErr, func() {})
+				gb.onDialSuccess()
+				gb.healthCheck()
+			}
+		}()
+	}
+	wg.Wait()
+	// Drain any pending async goroutines launched by onDialFailed.
+	time.Sleep(50 * time.Millisecond)
+	gb.onDialSuccess()
+	gb.failedTestMux.Lock()
+	got := gb.failedTimes
+	gb.failedTestMux.Unlock()
+	if got < 0 {
+		t.Fatalf("unexpected negative failedTimes %d", got)
+	}
+}
+
+func TestGroupBaseOnDialFailedInvokesRealHealthCheckWithoutDeadlock(t *testing.T) {
+	prov := &fcxRaceMockProvider{}
+	gb := NewGroupBase(GroupBaseOption{
+		Name:           "surgical-group-real-healthcheck",
+		Type:           C.URLTest,
+		TestTimeout:    5000,
+		MaxFailedTimes: 2,
+		Providers:      []P.ProxyProvider{prov},
+	})
+
+	dialErr := errors.New("dial tcp 1.2.3.4:443: i/o timeout")
+	gb.onDialFailed(C.Shadowsocks, dialErr, gb.healthCheck)
+	waitGroupBaseSettled(t, func() bool {
+		gb.failedTestMux.Lock()
+		defer gb.failedTestMux.Unlock()
+		return gb.failedTimes == 1
+	})
+
+	// Second failure reaches maxFailedTimes and invokes gb.healthCheck directly.
+	// Before the fix, onDialFailed held failedTestMux across fn() while healthCheck()
+	// acquired failedTestMux at the end, causing a permanent self-deadlock.
+	gb.onDialFailed(C.Shadowsocks, dialErr, gb.healthCheck)
+	waitGroupBaseSettled(t, func() bool {
+		gb.failedTestMux.Lock()
+		defer gb.failedTestMux.Unlock()
+		return prov.healthChecks.Load() >= 1 && gb.failedTimes == 0 && !gb.failedTesting.Load()
+	})
+
+	// Subsequent onDialSuccess and another full failure cycle must still complete without deadlock.
+	gb.onDialSuccess()
+	gb.onDialFailed(C.Shadowsocks, dialErr, gb.healthCheck)
+	waitGroupBaseSettled(t, func() bool {
+		gb.failedTestMux.Lock()
+		defer gb.failedTestMux.Unlock()
+		return gb.failedTimes == 1
+	})
+	gb.onDialFailed(C.Shadowsocks, dialErr, gb.healthCheck)
+	waitGroupBaseSettled(t, func() bool {
+		gb.failedTestMux.Lock()
+		defer gb.failedTestMux.Unlock()
+		return prov.healthChecks.Load() >= 2 && gb.failedTimes == 0 && !gb.failedTesting.Load()
+	})
+}
+

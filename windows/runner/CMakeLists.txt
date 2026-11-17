@@ -11,6 +11,7 @@ project(runner LANGUAGES CXX)
 add_executable(${BINARY_NAME} WIN32
   "flutter_window.cpp"
   "main.cpp"
+  "uia_guard.cpp"
   "utils.cpp"
   "win32_window.cpp"
   "${FLUTTER_MANAGED_DIR}/generated_plugin_registrant.cc"
@@ -34,8 +35,17 @@ target_compile_definitions(${BINARY_NAME} PRIVATE "NOMINMAX")
 # Add dependency libraries and include directories. Add any application-specific
 # dependencies here.
 target_link_libraries(${BINARY_NAME} PRIVATE flutter flutter_wrapper_app)
-target_link_libraries(${BINARY_NAME} PRIVATE "dwmapi.lib")
+target_link_libraries(${BINARY_NAME} PRIVATE "dwmapi.lib" "comctl32.lib")
 target_include_directories(${BINARY_NAME} PRIVATE "${CMAKE_SOURCE_DIR}")
+
+# Standalone Win32 C++ unit test executable for UIA guard verification (not installed).
+add_executable(flclashx_uia_guard_test EXCLUDE_FROM_ALL
+  "uia_guard_test.cpp"
+  "uia_guard.cpp"
+)
+apply_standard_settings(flclashx_uia_guard_test)
+target_compile_definitions(flclashx_uia_guard_test PRIVATE "NOMINMAX")
+target_link_libraries(flclashx_uia_guard_test PRIVATE "comctl32.lib" "user32.lib")
 
 # Run the Flutter tool portions of the build. This must not be removed.
 add_dependencies(${BINARY_NAME} flutter_assemble)

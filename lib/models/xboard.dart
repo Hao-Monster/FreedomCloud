@@ -241,3 +241,239 @@ class GiftHistoryPage {
   final int lastPage;
   final int total;
 }
+
+class XboardPurchaseChannels {
+  const XboardPurchaseChannels({
+    this.cardStoreUrl,
+    this.cardStore50gUrl,
+    this.cardStore100gUrl,
+    this.cardStore200gUrl,
+    this.cardStore500gUrl,
+    this.chatwootBaseUrl,
+    this.chatwootWebsiteToken,
+  });
+
+  final Uri? cardStoreUrl;
+  final Uri? cardStore50gUrl;
+  final Uri? cardStore100gUrl;
+  final Uri? cardStore200gUrl;
+  final Uri? cardStore500gUrl;
+  final Uri? chatwootBaseUrl;
+  final String? chatwootWebsiteToken;
+
+  bool get hasAnyStoreUrl =>
+      cardStoreUrl != null ||
+      cardStore50gUrl != null ||
+      cardStore100gUrl != null ||
+      cardStore200gUrl != null ||
+      cardStore500gUrl != null;
+
+  bool get hasChatwoot => resolveChatwootWidgetUrl() != null;
+
+  static final RegExp _chatwootTokenPattern =
+      RegExp(r'^[A-Za-z0-9_-]{1,128}$');
+
+  Uri? resolveChatwootWidgetUrl({String locale = 'zh_CN'}) {
+    final base = chatwootBaseUrl;
+    final token = chatwootWebsiteToken?.trim() ?? '';
+    if (base == null ||
+        base.scheme != 'https' ||
+        base.host.isEmpty ||
+        base.userInfo.isNotEmpty ||
+        base.hasQuery ||
+        base.hasFragment ||
+        (base.path.isNotEmpty && base.path != '/') ||
+        !_chatwootTokenPattern.hasMatch(token)) {
+      return null;
+    }
+    return base.replace(
+      path: '/widget',
+      queryParameters: <String, String>{
+        'website_token': token,
+        'locale': locale,
+      },
+    );
+  }
+
+  static final RegExp _metadataLinePattern = RegExp(
+    r'^(?:(?:[•·]|-(?!-)|\+(?!\+))\s*|\*(?!\*)\s+)?(?:\*{1,2}|_{1,2})?(?:购买链接|购卡链接|发卡链接|发卡网|card_store_url|purchase\s*(?:url|link))(?:\*{1,2}|_{1,2})?\s*[:：](?:\*{1,2}|_{1,2})?\s*(.*)$',
+    caseSensitive: false,
+  );
+
+  static final RegExp _markdownLinkUrlPattern = RegExp(
+    r'''\[[^\]]*\]\(\s*<?([^>\s)]+)>?(?:\s+["'][^"']*["'])?\s*\)''',
+    caseSensitive: false,
+  );
+
+  static final RegExp _angleLinkUrlPattern = RegExp(
+    r'^<\s*([^>\s]+)\s*>',
+  );
+
+  static final RegExp _leadingUrlQuotes = RegExp(r'''^[`'"“”‘’]+''');
+
+  static final RegExp _bareHttpsUrlPattern = RegExp(
+    r'https://[^\s<>\]"”’）]+',
+    caseSensitive: false,
+  );
+
+  static final RegExp _trailingUrlNoise = RegExp(
+    r'''[，。；！？、,.;!?'")\]>*`”’）\s]+$''',
+  );
+
+  static Uri? _sanitizeHttpsPurchaseUri(String rawCandidate) {
+    final cleaned = rawCandidate
+        .trim()
+        .replaceFirst(_leadingUrlQuotes, '')
+        .replaceAll(_trailingUrlNoise, '');
+    if (cleaned.isEmpty || cleaned.contains('#')) return null;
+    final parsed = Uri.tryParse(cleaned);
+    if (parsed == null ||
+        parsed.scheme != 'https' ||
+        parsed.host.isEmpty ||
+        parsed.userInfo.isNotEmpty ||
+        parsed.hasFragment) {
+      return null;
+    }
+    return parsed;
+  }
+
+  static Uri? extractPlanContentPurchaseUrl(String content) {
+    if (content.trim().isEmpty) return null;
+    for (final rawLine in content.split(RegExp(r'\r?\n'))) {
+      final lineMatch = _metadataLinePattern.firstMatch(rawLine.trim());
+      if (lineMatch == null) continue;
+      final rhs = lineMatch.group(1)!.trim();
+      if (rhs.isEmpty) continue;
+      final mdMatch = _markdownLinkUrlPattern.firstMatch(rhs);
+      if (mdMatch != null) {
+        final mdUri = _sanitizeHttpsPurchaseUri(mdMatch.group(1)!);
+        if (mdUri != null) return mdUri;
+      }
+      final angleMatch = _angleLinkUrlPattern.firstMatch(rhs);
+      if (angleMatch != null) {
+        final angleUri = _sanitizeHttpsPurchaseUri(angleMatch.group(1)!);
+        if (angleUri != null) return angleUri;
+      }
+      final firstToken =
+          rhs.replaceFirst(_leadingUrlQuotes, '').split(RegExp(r'\s+')).first;
+      final firstUri = _sanitizeHttpsPurchaseUri(firstToken);
+      if (firstUri != null) return firstUri;
+      final bareMatch = _bareHttpsUrlPattern.firstMatch(rhs);
+      if (bareMatch != null) {
+        final bareUri = _sanitizeHttpsPurchaseUri(bareMatch.group(0)!);
+        if (bareUri != null) return bareUri;
+      }
+    }
+    return null;
+  }
+
+  static String stripPlanPurchaseMetadata(String content) {
+    if (content.trim().isEmpty) return content;
+    final kept = content
+        .split(RegExp(r'\r?\n'))
+        .where((line) => !_metadataLinePattern.hasMatch(line.trim()))
+        .toList();
+    return kept.join('\n').trim();
+  }
+
+  static int? detectTierGiB(XboardPlanOffer plan) {
+    if (plan.transferGiB > 0) {
+      return const {50, 100, 200, 500}.contains(plan.transferGiB)
+          ? plan.transferGiB
+          : null;
+    }
+    final match = RegExp(
+      r'(?<![0-9.])(50|100|200|500)\s*(?:gib|gb|g)(?![a-z0-9])',
+      caseSensitive: false,
+    ).firstMatch(plan.name);
+    if (match == null) return null;
+    return int.tryParse(match.group(1)!);
+  }
+
+  Uri? resolvePlanStoreUrl(XboardPlanOffer plan) {
+    final contentUrl = extractPlanContentPurchaseUrl(plan.content);
+    if (contentUrl != null) return contentUrl;
+    final tierUrl = switch (detectTierGiB(plan)) {
+      50 => cardStore50gUrl,
+      100 => cardStore100gUrl,
+      200 => cardStore200gUrl,
+      500 => cardStore500gUrl,
+      _ => null,
+    };
+    return tierUrl ?? cardStoreUrl;
+  }
+}
+
+class XboardGuestAuthConfig {
+  const XboardGuestAuthConfig({
+    this.isEmailVerify = false,
+    this.isInviteForce = false,
+    List<String> emailWhitelistSuffix = const [],
+    this.isCaptcha = false,
+    this.captchaType,
+    this.tosUrl,
+    this.isRegistrationStopped = false,
+    this.isGmailAliasRestricted,
+  }) : _emailWhitelistSuffix = emailWhitelistSuffix;
+
+  final bool isEmailVerify;
+  final bool isInviteForce;
+  final List<String> _emailWhitelistSuffix;
+  final bool isCaptcha;
+  final String? captchaType;
+  final Uri? tosUrl;
+  final bool isRegistrationStopped;
+  final bool? isGmailAliasRestricted;
+
+  List<String> get emailWhitelistSuffix =>
+      List<String>.unmodifiable(_emailWhitelistSuffix);
+
+  static (String localPart, String domain)? _splitEmail(String email) {
+    final trimmed = email.trim();
+    final atIndex = trimmed.indexOf('@');
+    if (atIndex <= 0 ||
+        atIndex != trimmed.lastIndexOf('@') ||
+        atIndex == trimmed.length - 1) {
+      return null;
+    }
+    return (
+      trimmed.substring(0, atIndex),
+      trimmed.substring(atIndex + 1).toLowerCase(),
+    );
+  }
+
+  bool isEmailDomainAllowed(String email) {
+    if (_emailWhitelistSuffix.isEmpty) return true;
+    final parts = _splitEmail(email);
+    if (parts == null) return false;
+    final (_, domain) = parts;
+    for (final entry in _emailWhitelistSuffix) {
+      var normalized = entry.trim().toLowerCase();
+      while (normalized.startsWith('@')) {
+        normalized = normalized.substring(1).trim();
+      }
+      if (normalized.isNotEmpty && normalized == domain) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  bool hasGmailPlusAlias(String email) {
+    final parts = _splitEmail(email);
+    if (parts == null) return false;
+    final (localPart, domain) = parts;
+    return (domain == 'gmail.com' || domain == 'googlemail.com') &&
+        localPart.contains('+');
+  }
+
+  bool isRestrictedGmailAlias(String email) {
+    if (isGmailAliasRestricted == false) return false;
+    final parts = _splitEmail(email);
+    if (parts == null) return false;
+    final (localPart, domain) = parts;
+    if (domain != 'gmail.com' && domain != 'googlemail.com') return false;
+    if (localPart.contains('+')) return true;
+    return (isGmailAliasRestricted ?? false) && localPart.contains('.');
+  }
+}

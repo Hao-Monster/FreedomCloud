@@ -1,12 +1,16 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:ui' show PointerDeviceKind;
 
 import 'package:flclashx/common/common.dart';
 import 'package:flclashx/common/delay_test_coordinator.dart';
 import 'package:flclashx/common/node_catalog_service.dart';
 import 'package:flclashx/common/node_catalog_tester.dart';
 import 'package:flclashx/common/node_health_store.dart';
+import 'package:flclashx/common/smart_node_selection.dart';
+import 'package:flclashx/common/tun_runtime.dart';
+import 'package:flclashx/common/windows_tun_startup.dart';
 import 'package:flclashx/controller.dart';
 import 'package:flclashx/enum/enum.dart';
 import 'package:flclashx/l10n/l10n.dart';
@@ -21,6 +25,7 @@ import 'package:flclashx/views/proxies/list.dart';
 import 'package:flclashx/views/proxies/overview/overview.dart';
 import 'package:flclashx/views/proxies/proxies.dart';
 import 'package:flclashx/widgets/scaffold.dart';
+import 'package:flclashx/widgets/tactile_proxy_switch.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart';
@@ -28,6 +33,7 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class _TestPaths extends PathProviderPlatform {
   _TestPaths(this.root);
@@ -59,9 +65,13 @@ class _ProxyController implements AppController {
   final applyDebounces = <bool>[];
   final updatedProfiles = <Profile>[];
   final addedUrls = <String>[];
+  final deletedProfileIds = <String>[];
+  final statusUpdates = <bool>[];
   void Function(Profile profile)? onSetProfile;
   Future<void> Function(Profile profile)? onUpdateProfile;
   Future<void> Function(String url)? onAddProfileFormURL;
+  Future<void> Function(String id)? onDeleteProfile;
+  Future<void> Function({required bool isStart})? onUpdateStatus;
 
   @override
   void updateCurrentSelectedMap(String groupName, String proxyName) =>
@@ -72,7 +82,10 @@ class _ProxyController implements AppController {
       changes.add((groupName, proxyName));
 
   @override
-  void applyProfileDebounce({bool silence = false}) =>
+  void applyProfileDebounce({
+    bool silence = false,
+    bool skipIfUnchanged = false,
+  }) =>
       applyDebounces.add(silence);
 
   @override
@@ -105,6 +118,24 @@ class _ProxyController implements AppController {
   }
 
   @override
+  Future<void> deleteProfile(String id) async {
+    final handler = onDeleteProfile;
+    if (handler == null) {
+      throw StateError('Unexpected controller effect: deleteProfile');
+    }
+    deletedProfileIds.add(id);
+    await handler(id);
+  }
+
+  @override
+  Future<void> updateStatus(bool isStart) async {
+    statusUpdates.add(isStart);
+    if (onUpdateStatus != null) {
+      await onUpdateStatus!(isStart: isStart);
+    }
+  }
+
+  @override
   List<Proxy> getSortProxies(List<Proxy> proxies, [String? url]) => proxies;
 
   @override
@@ -118,10 +149,13 @@ class _CatalogTester extends ChangeNotifier implements NodeCatalogTester {
   final current = <List<DelayTestTarget>>[];
   final all = <List<Profile>>[];
   final pendingKeys = <(String, String)>{};
+  final _snapshotCache = <String, Set<String>>{};
   String? reason;
   DelayBatchResult? allResult;
   Future<DelayBatchResult> Function(List<DelayTestTarget> targets)?
       onTestCurrent;
+  Future<DelayBatchResult> Function(List<Profile> profiles, String url)?
+      onTestAll;
   int cancellations = 0;
   int scopeDisposals = 0;
   @override
@@ -130,6 +164,21 @@ class _CatalogTester extends ChangeNotifier implements NodeCatalogTester {
   int total = 0;
   @override
   int completed = 0;
+  @override
+  Set<String> pendingIdentitySnapshot(String profileId) {
+    final currentForProfile = {
+      for (final (p, key) in pendingKeys)
+        if (p == profileId) key,
+    };
+    final cached = _snapshotCache[profileId];
+    if (cached != null && stringSetEquality.equals(cached, currentForProfile)) {
+      return cached;
+    }
+    final frozen = Set<String>.unmodifiable(currentForProfile);
+    _snapshotCache[profileId] = frozen;
+    return frozen;
+  }
+
   @override
   bool pending(String profileId, String identityKey) =>
       pendingKeys.contains((profileId, identityKey));
@@ -155,6 +204,9 @@ class _CatalogTester extends ChangeNotifier implements NodeCatalogTester {
   Future<DelayBatchResult> testAll(List<Profile> profiles, String url) async {
     all.add(profiles);
     urls.add(url);
+    if (onTestAll != null) {
+      return onTestAll!(profiles, url);
+    }
     return allResult ??
         DelayBatchResult(completed: 0, failed: 0, reason: reason);
   }
@@ -192,11 +244,16 @@ class _CatalogTester extends ChangeNotifier implements NodeCatalogTester {
 
 void main() {
   setUp(() async {
+    SharedPreferences.setMockInitialValues({});
+    EarthDockPositionStore.instance.resetForTest();
+    addTearDown(EarthDockPositionStore.instance.resetForTest);
     await AppLocalizations.load(const Locale('en'));
     globalState.config =
         const Config(themeProps: defaultThemeProps, profiles: [_a, _b]);
     globalState.lastRuntimeConfig = null;
     globalState.lastRuntimeProfileId = null;
+    globalState.lastSubscriptionImportError = null;
+    globalState.suppressNextSubscriptionImportErrorDialog = false;
     globalState.appState = AppState(
       viewSize: const Size(400, 900),
       version: 1,
@@ -301,7 +358,14 @@ void main() {
       await tester
           .tap(find.widgetWithText(CheckedPopupMenuItem<ProxiesScope>, label));
     } else {
-      await tester.tap(find.text(label));
+      final segments = find.byKey(const ValueKey('overview-scope-segments'));
+      if (segments.evaluate().isNotEmpty) {
+        await tester.tap(
+          find.descendant(of: segments, matching: find.text(label)),
+        );
+      } else {
+        await tester.tap(find.text(label));
+      }
     }
     await tester.pumpAndSettle();
   }
@@ -513,7 +577,13 @@ void main() {
     expect(
         find.text(
             'Delay results are kept until the next completed test. Test times appear below each node.'),
-        findsOneWidget);
+        findsNothing);
+    final historyTooltipFinder =
+        find.byKey(const ValueKey('overview-history-notice-tooltip'));
+    expect(historyTooltipFinder, findsOneWidget);
+    expect(
+        tester.widget<Tooltip>(historyTooltipFinder).message,
+        'Delay results are kept until the next completed test. Test times appear below each node.');
     expect(find.text('Available only'), findsOneWidget);
     expect(find.text('Test current profile'), findsOneWidget);
     expect(tester.takeException(), isNull);
@@ -1294,7 +1364,7 @@ void main() {
           of: find.byType(AppBar),
           matching: width > 840
               ? find.text('Current profile')
-              : find.byTooltip('Current profile'));
+              : find.byTooltip('All profiles'));
       expect(inBar, findsOneWidget);
       expect(tester.takeException(), isNull);
     });
@@ -1331,6 +1401,8 @@ void main() {
     globalState.config = globalState.config.copyWith(currentProfileId: 'a');
     globalState.lastRuntimeConfig = null;
     globalState.lastRuntimeProfileId = null;
+    globalState.lastSubscriptionImportError = null;
+    globalState.suppressNextSubscriptionImportErrorDialog = false;
     globalState.appState = globalState.appState.copyWith(groups: const [
       Group(
           name: 'Live',
@@ -1349,13 +1421,35 @@ void main() {
     expect(find.textContaining('Inline'), findsNothing);
   });
 
-  testWidgets('scope is hidden for one profile and when disabled',
+  testWidgets(
+      'scope shows overview for 0 and 1 profile, hides toolbar when 0, and falls back when disabled',
       (tester) async {
     const scope =
         NodeOverviewScopeView(currentView: Text('Existing proxy view'));
-    await mount(tester, child: scope, profiles: [_a], scopeToolbar: true);
-    expect(find.text('All profiles'), findsNothing);
-    expect(find.text('Existing proxy view'), findsOneWidget);
+    await mount(
+      tester,
+      width: 1200,
+      child: scope,
+      profiles: const [],
+      scopeToolbar: true,
+    );
+    expect(find.byKey(const ValueKey('overview-empty-profiles')), findsOneWidget);
+    expect(find.byKey(const ValueKey('overview-scope-segments')), findsNothing);
+    expect(find.text('Existing proxy view'), findsNothing);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await mount(
+      tester,
+      width: 1200,
+      child: scope,
+      profiles: [_a],
+      scopeToolbar: true,
+    );
+    expect(find.byKey(const ValueKey('overview-scope-segments')), findsOneWidget);
+    expect(find.text('Alpha profile'), findsWidgets);
+    expect(find.text('Existing proxy view'), findsNothing);
+
+    await tester.pumpWidget(const SizedBox.shrink());
     await mount(tester, child: scope, enabled: false, scopeToolbar: true);
     expect(find.text('All profiles'), findsNothing);
     expect(find.text('Existing proxy view'), findsOneWidget);
@@ -1429,7 +1523,7 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('health band uses node color scale at the 600 ms boundary',
+  testWidgets('health band uses node color scale at the 2000 ms boundary',
       (tester) async {
     final now = DateTime.now();
     await mount(tester, width: 1200, catalogs: {
@@ -1445,11 +1539,13 @@ void main() {
           ]),
     }, health: {
       'a': {
-        for (final entry in {'fast': 599, 'slow': 600, 'failed': -1}.entries)
+        for (final entry in {'fast': 2000, 'slow': 2001, 'failed': -1}.entries)
           entry.key: NodeHealthRecord(
               delayMs: entry.value, testedAt: now, testUrlHash: 'fixture')
       },
     });
+    expect(utils.getDelayColor(2000), equals(const Color(0xFF10B981)));
+    expect(utils.getDelayColor(2001), equals(const Color(0xFFF59E0B)));
     final bands = tester
         .widgetList<Container>(find.descendant(
             of: find.byKey(const ValueKey('overview-select-a')),
@@ -1458,15 +1554,15 @@ void main() {
         .toList();
     expect(bands, hasLength(4));
     expect(bands.take(3).map((band) => band.color), [
-      utils.getDelayColor(599),
-      utils.getDelayColor(600),
+      utils.getDelayColor(2000),
+      utils.getDelayColor(2001),
       utils.getDelayColor(-1),
     ]);
     expect(find.text('2 available / 3 tested / 4 total'), findsOneWidget);
   });
 
   testWidgets(
-      'defaults to existing view; opening overview loads visible profiles',
+      'defaults to All profiles overview; switching to Current profile shows existing view',
       (tester) async {
     final loaded = <String>[];
     final container = await mount(tester,
@@ -1474,12 +1570,11 @@ void main() {
             currentView: Text('Existing proxy view')),
         scopeToolbar: true,
         onLoad: loaded.add);
-    expect(find.text('Existing proxy view'), findsOneWidget);
-    await selectScope(tester, 'All profiles');
     expect(find.text('Alpha profile'), findsOneWidget);
-    expect(loaded, containsAll(['a', 'b']));
-    expect(container.read(currentProfileIdProvider), isNull);
     expect(loaded, ['a', 'b']);
+    expect(container.read(currentProfileIdProvider), isNull);
+    await selectScope(tester, 'Current profile');
+    expect(find.text('Existing proxy view'), findsOneWidget);
     expect(container.read(currentProfileIdProvider), isNull);
   });
 
@@ -1506,7 +1601,7 @@ void main() {
       'b': {
         'b-node': NodeHealthRecord(
             delayMs: 456,
-            testedAt: now.subtract(const Duration(minutes: 11)),
+            testedAt: now.subtract(const Duration(hours: 1, minutes: 1)),
             testUrlHash: 'hash')
       },
     });
@@ -1709,11 +1804,9 @@ void main() {
           _a.copyWith(unfoldSet: {'Select'}),
           _b
         ]);
-    expect(find.byType(NodeOverviewView), findsNothing);
-    await selectScope(tester, 'All profiles');
+    expect(find.byType(NodeOverviewView), findsOneWidget);
     expect(container.read(currentProfileIdProvider), 'a');
     expect(container.read(currentGroupsStateProvider).value, isNotEmpty);
-    expect(find.byType(NodeOverviewView), findsOneWidget);
     await tester.tap(find.text('Selectable leaf', findRichText: true));
     await tester.pump();
     expect(controller.changes, isEmpty);
@@ -1724,6 +1817,8 @@ void main() {
     await tester.pump();
     expect(controller.changes, [('Select', 'Selectable leaf')]);
     expect(controller.selections, [('Select', 'Selectable leaf')]);
+    await selectScope(tester, 'All profiles');
+    expect(find.byType(NodeOverviewView), findsOneWidget);
     expect(container.read(currentProfileIdProvider), 'a');
     expect(tester.takeException(), isNull);
   });
@@ -2675,6 +2770,8 @@ void main() {
         ),
       },
     );
+    container.read(proxiesScopeProvider.notifier).state = ProxiesScope.current;
+    await tester.pumpAndSettle();
     expect(find.byType(ProxiesListView), findsOneWidget);
     expect(find.byType(NodeOverviewView), findsNothing);
 
@@ -5461,45 +5558,54 @@ void main() {
       catalogs: flatCatalogs(),
     );
 
-    final workflowBar = find.byKey(const ValueKey('overview-workflow-bar'));
+    final commandBar = find.byKey(const ValueKey('overview-top-command-bar'));
     final addBtn = find.byKey(const ValueKey('overview-add-subscription'));
-    final arrow1 = find.byKey(const ValueKey('overview-workflow-arrow-1'));
+    final connectionBar = find.byKey(const ValueKey('overview-connection-bar'));
+    final modeTrack =
+        find.byKey(const ValueKey('overview-mode-segmented-track'));
     final testBtn = find.byKey(const ValueKey('overview-test-current'));
-    final arrow2 = find.byKey(const ValueKey('overview-workflow-arrow-2'));
     final useBtn = find.byKey(const ValueKey('overview-quick-use'));
-    expect(workflowBar, findsOneWidget);
+    expect(find.byKey(const ValueKey('overview-workflow-bar')), findsNothing);
+    expect(
+        find.byKey(const ValueKey('overview-workflow-arrow-1')), findsNothing);
+    expect(
+        find.byKey(const ValueKey('overview-workflow-arrow-2')), findsNothing);
+    expect(commandBar, findsOneWidget);
     expect(addBtn, findsOneWidget);
-    expect(arrow1, findsOneWidget);
+    expect(connectionBar, findsOneWidget);
+    expect(modeTrack, findsOneWidget);
     expect(testBtn, findsOneWidget);
-    expect(arrow2, findsOneWidget);
     expect(useBtn, findsOneWidget);
 
     expect(find.text('添加订阅'), findsOneWidget);
     expect(find.text('测试当前配置'), findsOneWidget);
-    expect(find.text('点击使用'), findsOneWidget);
+    expect(find.text('一键连最快'), findsOneWidget);
 
-    // Moved out of top filter row into right-hand pane above node list.
+    // Command bar sits above the layer-2 filter/test row; overview-test-current sits in layer-2 above aligned panes.
     final sortRect =
         tester.getRect(find.byKey(const ValueKey('overview-sort-button')));
     final sidebarRect =
         tester.getRect(find.byKey(const ValueKey('overview-sidebar')));
+    final nodesRect =
+        tester.getRect(find.byKey(const ValueKey('overview-nodes')));
     final headerRect =
         tester.getRect(find.byKey(const ValueKey('overview-header-a')));
+    final commandBarRect = tester.getRect(commandBar);
     final addRect = tester.getRect(addBtn);
-    final arrow1Rect = tester.getRect(arrow1);
+    final connRect = tester.getRect(connectionBar);
+    final trackRect = tester.getRect(modeTrack);
     final testRect = tester.getRect(testBtn);
-    final arrow2Rect = tester.getRect(arrow2);
     final useRect = tester.getRect(useBtn);
 
-    expect(testRect.top, greaterThan(sortRect.bottom));
-    expect(addRect.left, greaterThan(sidebarRect.right));
-    expect(addRect.bottom, lessThanOrEqualTo(headerRect.top));
-    expect(addRect.right, lessThanOrEqualTo(arrow1Rect.left));
-    expect(arrow1Rect.right, lessThanOrEqualTo(testRect.left));
-    expect(testRect.right, lessThanOrEqualTo(arrow2Rect.left));
-    expect(arrow2Rect.right, lessThanOrEqualTo(useRect.left));
-    expect(addRect.center.dy, closeTo(testRect.center.dy, 1.0));
-    expect(testRect.center.dy, closeTo(useRect.center.dy, 1.0));
+    expect(commandBarRect.bottom, lessThanOrEqualTo(sortRect.top));
+    expect(testRect.top, greaterThanOrEqualTo(commandBarRect.bottom));
+    expect(testRect.center.dy, closeTo(sortRect.center.dy, 2.0));
+    expect(testRect.bottom, lessThanOrEqualTo(headerRect.top));
+    expect(nodesRect.top, closeTo(sidebarRect.top, 2.0));
+    expect(addRect.right, lessThanOrEqualTo(connRect.left));
+    expect(connRect.right, lessThanOrEqualTo(trackRect.left));
+    expect(trackRect.right, lessThanOrEqualTo(useRect.left));
+    expect(addRect.center.dy, closeTo(useRect.center.dy, 2.0));
 
     // Step 2 preserves TextButton contract and triggers current profile test.
     expect(tester.widget<TextButton>(testBtn).onPressed, isNotNull);
@@ -5510,14 +5616,15 @@ void main() {
     // Step 1 opens URLFormDialog directly and forwards trimmed URL to addProfileFormURL.
     await tester.tap(addBtn);
     await tester.pumpAndSettle();
-    expect(find.text('从URL导入'), findsOneWidget);
+    expect(find.text('粘贴订阅链接，点击确定即可'), findsOneWidget);
+    expect(find.text('粘贴'), findsOneWidget);
     await tester.enterText(
       find.byType(TextField),
       '  https://sub.example.com/api/v1/client/subscribe?token=demo  ',
     );
-    await tester.tap(find.text('提交'));
+    await tester.tap(find.text('确定'));
     await tester.pumpAndSettle();
-    expect(find.text('从URL导入'), findsNothing);
+    expect(find.text('粘贴订阅链接，点击确定即可'), findsNothing);
     expect(
       controller.addedUrls,
       ['https://sub.example.com/api/v1/client/subscribe?token=demo'],
@@ -6081,7 +6188,7 @@ void main() {
       find.byType(TextField),
       'https://sub.example.com/import',
     );
-    await tester.tap(find.text('提交'));
+    await tester.tap(find.text('确定'));
     await tester.pump();
 
     // While import is still running in background, button stays disabled against re-entry.
@@ -6181,7 +6288,7 @@ void main() {
       findsOneWidget,
     );
 
-    // 4. Narrow 380px wrapped workflow bar keeps each arrow on the exact same row as its destination step.
+    // 4. Narrow 380px wrapped command bar sits above layer-2 filter/test bar without legacy step arrows.
     await tester.pumpWidget(const SizedBox.shrink());
     await mount(
       tester,
@@ -6190,20 +6297,23 @@ void main() {
       profiles: profiles,
       catalogs: flatCatalogs(),
     );
-    final arrow1CenterY = tester
-        .getCenter(find.byKey(const ValueKey('overview-workflow-arrow-1')))
-        .dy;
-    final testCenterY = tester
-        .getCenter(find.byKey(const ValueKey('overview-test-current')))
-        .dy;
-    final arrow2CenterY = tester
-        .getCenter(find.byKey(const ValueKey('overview-workflow-arrow-2')))
-        .dy;
-    final useCenterY = tester
-        .getCenter(find.byKey(const ValueKey('overview-quick-use')))
-        .dy;
-    expect(arrow1CenterY, closeTo(testCenterY, 1.5));
-    expect(arrow2CenterY, closeTo(useCenterY, 1.5));
+    expect(find.byKey(const ValueKey('overview-workflow-bar')), findsNothing);
+    expect(
+        find.byKey(const ValueKey('overview-workflow-arrow-1')), findsNothing);
+    expect(
+        find.byKey(const ValueKey('overview-workflow-arrow-2')), findsNothing);
+    final narrowCommandBar =
+        find.byKey(const ValueKey('overview-top-command-bar'));
+    final narrowTestCurrent =
+        find.byKey(const ValueKey('overview-test-current'));
+    final narrowQuickUse = find.byKey(const ValueKey('overview-quick-use'));
+    expect(narrowCommandBar, findsOneWidget);
+    expect(narrowTestCurrent, findsOneWidget);
+    expect(narrowQuickUse, findsOneWidget);
+    expect(
+      tester.getRect(narrowCommandBar).bottom,
+      lessThanOrEqualTo(tester.getRect(narrowTestCurrent).top),
+    );
     expect(tester.takeException(), isNull);
   });
 
@@ -7132,4 +7242,2417 @@ void main() {
     expect(find.text('Beta node'), findsNothing);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets(
+      'expired subscription delete button: appears only on expired profiles in inline callout, isolates card selection, confirms via dialog, and handles wide detail / narrow / 2.0x text scale',
+      (tester) async {
+    final now = DateTime.now();
+    final futureExpireSec =
+        now.add(const Duration(days: 20)).millisecondsSinceEpoch ~/ 1000;
+    final pastExpireSec =
+        now.subtract(const Duration(days: 5)).millisecondsSinceEpoch ~/ 1000;
+
+    final validProfile = Profile(
+      id: 'valid-sub',
+      label: 'Valid Sub',
+      url: 'https://sub.example.invalid/valid',
+      autoUpdateDuration: const Duration(hours: 12),
+      subscriptionInfo: SubscriptionInfo(
+        total: 100 * 1024 * 1024,
+        download: 20 * 1024 * 1024,
+        expire: futureExpireSec,
+      ),
+    );
+    const perpetualProfile = Profile(
+      id: 'perpetual-sub',
+      label: 'Perpetual Sub',
+      url: 'https://sub.example.invalid/perpetual',
+      autoUpdateDuration: Duration(hours: 6),
+      subscriptionInfo: SubscriptionInfo(
+        total: 0,
+        download: 1024,
+        expire: 0,
+      ),
+    );
+    final expiredProfile = Profile(
+      id: 'expired-sub',
+      label: '测试-261026-GHDXXK',
+      url: 'https://sub.example.invalid/expired',
+      autoUpdateDuration: const Duration(hours: 24),
+      subscriptionInfo: SubscriptionInfo(
+        total: 500 * 1024 * 1024,
+        download: 500 * 1024 * 1024,
+        expire: pastExpireSec,
+      ),
+    );
+
+    final controller = _ProxyController();
+    globalState.appController = controller;
+    late ProviderContainer container;
+    controller.onDeleteProfile = (id) async {
+      container.read(profilesProvider.notifier).deleteProfileById(id);
+    };
+
+    container = await mount(
+      tester,
+      width: 1200,
+      attachNavigatorKey: true,
+      locale: const Locale('zh', 'CN'),
+      profiles: [validProfile, perpetualProfile, expiredProfile],
+      catalogs: {
+        'valid-sub': ProfileCatalog(
+          profileId: 'valid-sub',
+          fingerprint: 'v',
+          status: ProfileCatalogStatus.ready,
+          nodes: [_node('v-1', 'Valid Node')],
+        ),
+        'perpetual-sub': ProfileCatalog(
+          profileId: 'perpetual-sub',
+          fingerprint: 'p',
+          status: ProfileCatalogStatus.ready,
+          nodes: [_node('p-1', 'Perpetual Node')],
+        ),
+        'expired-sub': ProfileCatalog(
+          profileId: 'expired-sub',
+          fingerprint: 'e',
+          status: ProfileCatalogStatus.ready,
+          nodes: [_node('e-1', 'Expired Node')],
+        ),
+      },
+    );
+
+    // Non-expired and perpetual cards must NOT show delete button.
+    expect(find.byKey(const ValueKey('overview-delete-valid-sub')), findsNothing);
+    expect(
+      find.byKey(const ValueKey('overview-delete-perpetual-sub')),
+      findsNothing,
+    );
+
+    // Scroll sidebar if needed to bring expired card into view.
+    await tester.ensureVisible(
+      find.byKey(const ValueKey('overview-sidebar-card-expired-sub')),
+    );
+    await tester.pumpAndSettle();
+
+    final expiredCard =
+        find.byKey(const ValueKey('overview-sidebar-card-expired-sub'));
+    final deleteBtn = find.byKey(const ValueKey('overview-delete-expired-sub'));
+    final syncBtn = find.byKey(const ValueKey('overview-sync-expired-sub'));
+
+    // Both top-right sync button AND inline expired delete button coexist cleanly.
+    expect(syncBtn, findsOneWidget);
+    expect(deleteBtn, findsOneWidget);
+    expect(
+      find.descendant(of: deleteBtn, matching: find.text('删除')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: expiredCard, matching: find.text('订阅已过期')),
+      findsOneWidget,
+    );
+
+    // Tapping delete opens confirmation dialog WITHOUT switching sidebar selection away from All profiles.
+    await tester.tap(deleteBtn);
+    await tester.pumpAndSettle();
+    expect(find.text('取消'), findsOneWidget);
+    expect(find.text('确定'), findsOneWidget);
+
+    // Cancel keeps the profile intact.
+    await tester.tap(find.text('取消'));
+    await tester.pumpAndSettle();
+    expect(controller.deletedProfileIds, isEmpty);
+    expect(find.byKey(const ValueKey('overview-header-valid-sub')), findsOneWidget);
+
+    // Selecting the expired card in wide mode renders detail delete button without duplicate key collision.
+    await tester.tap(find.byKey(const ValueKey('overview-select-expired-sub')));
+    await tester.pumpAndSettle();
+    expect(deleteBtn, findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('overview-detail-delete-expired-sub')),
+      findsOneWidget,
+    );
+    expect(tester.takeException(), isNull);
+
+    // Confirm deletion from detail delete button removes the profile and returns selection to All profiles.
+    await tester.tap(
+      find.byKey(const ValueKey('overview-detail-delete-expired-sub')),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('确定'));
+    await tester.pumpAndSettle();
+
+    expect(controller.deletedProfileIds, ['expired-sub']);
+    expect(
+      find.byKey(const ValueKey('overview-sidebar-card-expired-sub')),
+      findsNothing,
+    );
+    expect(find.text('Valid Node'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+
+    // Verify narrow mode & 2.0x text scaling without overflow.
+    await mount(
+      tester,
+      width: 390,
+      attachNavigatorKey: true,
+      locale: const Locale('zh', 'CN'),
+      profiles: [validProfile, expiredProfile],
+      child: const MediaQuery(
+        data: MediaQueryData(
+          size: Size(390, 1000),
+          textScaler: TextScaler.linear(2.0),
+        ),
+        child: NodeOverviewView(),
+      ),
+      catalogs: {
+        'valid-sub': ProfileCatalog(
+          profileId: 'valid-sub',
+          fingerprint: 'v',
+          status: ProfileCatalogStatus.ready,
+          nodes: [_node('v-1', 'Valid Node')],
+        ),
+        'expired-sub': ProfileCatalog(
+          profileId: 'expired-sub',
+          fingerprint: 'e',
+          status: ProfileCatalogStatus.ready,
+          nodes: [_node('e-1', 'Expired Node')],
+        ),
+      },
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'all profiles overview card: renders top-right batch update button, profile count & expiry warning pills, active profile, 4-color node breakdown & proportional health bar',
+      (tester) async {
+    final now = DateTime.now();
+    final soonExpireSec =
+        now.add(const Duration(days: 3)).millisecondsSinceEpoch ~/ 1000;
+    final pastExpireSec =
+        now.subtract(const Duration(days: 2)).millisecondsSinceEpoch ~/ 1000;
+
+    const adminProfile = Profile(
+      id: 'admin',
+      label: 'admin',
+      url: 'https://sub.example.invalid/admin',
+      autoUpdateDuration: Duration(hours: 1),
+      subscriptionInfo: SubscriptionInfo(
+        total: 0,
+        download: 1024 * 1024,
+        expire: 0,
+      ),
+    );
+    final soonProfile = Profile(
+      id: 'soon',
+      label: 'Soon Sub',
+      url: 'https://sub.example.invalid/soon',
+      autoUpdateDuration: const Duration(hours: 12),
+      subscriptionInfo: SubscriptionInfo(
+        total: 100 * 1024 * 1024,
+        download: 10 * 1024 * 1024,
+        expire: soonExpireSec,
+      ),
+    );
+    final expiredProfile = Profile(
+      id: 'exp',
+      label: 'Expired Sub',
+      url: 'https://sub.example.invalid/exp',
+      autoUpdateDuration: const Duration(hours: 24),
+      subscriptionInfo: SubscriptionInfo(
+        total: 100 * 1024 * 1024,
+        download: 100 * 1024 * 1024,
+        expire: pastExpireSec,
+      ),
+    );
+    const localProfile = Profile(
+      id: 'local',
+      label: 'Local Only',
+      url: '',
+      autoUpdateDuration: Duration.zero,
+    );
+
+    final controller = _ProxyController();
+    globalState.appController = controller;
+    globalState.config = globalState.config.copyWith(currentProfileId: 'admin');
+    late ProviderContainer container;
+    final syncAllCompleter = Completer<void>();
+
+    controller
+      ..onSetProfile = (updated) {
+        container.read(profilesProvider.notifier).setProfile(updated);
+      }
+      ..onUpdateProfile = (profile) async {
+        await syncAllCompleter.future;
+        container.read(profilesProvider.notifier).setProfile(
+              profile.copyWith(isUpdating: false),
+            );
+      };
+
+    final nFast1 = _node('a-1', 'Fast 1');
+    final nFast2 = _node('a-2', 'Fast 2');
+    final nSlow = _node('s-1', 'Slow 1');
+    final nFail = _node('e-1', 'Fail 1');
+    final nUntested = _node('l-1', 'Untested 1');
+
+    container = await mount(
+      tester,
+      width: 1200,
+      locale: const Locale('zh', 'CN'),
+      profiles: [adminProfile, soonProfile, expiredProfile, localProfile],
+      catalogs: {
+        'admin': ProfileCatalog(
+          profileId: 'admin',
+          fingerprint: 'a',
+          status: ProfileCatalogStatus.ready,
+          nodes: [nFast1, nFast2],
+        ),
+        'soon': ProfileCatalog(
+          profileId: 'soon',
+          fingerprint: 's',
+          status: ProfileCatalogStatus.ready,
+          nodes: [nSlow],
+        ),
+        'exp': ProfileCatalog(
+          profileId: 'exp',
+          fingerprint: 'e',
+          status: ProfileCatalogStatus.ready,
+          nodes: [nFail],
+        ),
+        'local': ProfileCatalog(
+          profileId: 'local',
+          fingerprint: 'l',
+          status: ProfileCatalogStatus.ready,
+          nodes: [nUntested],
+        ),
+      },
+      health: {
+        'admin': {
+          nFast1.identityKey: NodeHealthRecord(
+            delayMs: 80,
+            testedAt: now,
+            testUrlHash: 'h',
+          ),
+          nFast2.identityKey: NodeHealthRecord(
+            delayMs: 220,
+            testedAt: now,
+            testUrlHash: 'h',
+          ),
+        },
+        'soon': {
+          nSlow.identityKey: NodeHealthRecord(
+            delayMs: 2400,
+            testedAt: now,
+            testUrlHash: 'h',
+          ),
+        },
+        'exp': {
+          nFail.identityKey: NodeHealthRecord(
+            delayMs: -1,
+            testedAt: now,
+            testUrlHash: 'h',
+          ),
+        },
+      },
+    );
+
+    final allCard = find.byKey(const ValueKey('overview-select-all'));
+    final syncAllBtn = find.byKey(const ValueKey('overview-sync-all'));
+
+    expect(allCard, findsOneWidget);
+    expect(syncAllBtn, findsOneWidget);
+    expect(
+      find.descendant(of: syncAllBtn, matching: find.text('全部更新')),
+      findsOneWidget,
+    );
+
+    // Top-right placement of "全部更新" button inside "全部配置" card.
+    final allCardRect = tester.getRect(allCard);
+    final syncAllRect = tester.getRect(syncAllBtn);
+    expect(syncAllRect.center.dx, greaterThan(allCardRect.center.dx));
+    expect(syncAllRect.top - allCardRect.top, lessThan(40));
+
+    // Upper section: profile count, expiry warnings, and active profile.
+    expect(
+      find.descendant(of: allCard, matching: find.text('共 4 个配置')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: allCard, matching: find.text('1 个已过期')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: allCard, matching: find.text('1 个即将到期')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: allCard, matching: find.text('当前活动：admin')),
+      findsOneWidget,
+    );
+
+    // Lower section: global node counts (3 available / 4 tested / 5 total), median + best, 4-color legend & 4-band bar.
+    expect(
+      find.descendant(
+        of: allCard,
+        matching: find.text('节点：可用 3 / 已测 4 / 共 5'),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: allCard,
+        matching: find.text('中位延迟：220 ms · 最快 80 ms'),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: allCard, matching: find.text('流畅 2')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: allCard, matching: find.text('偏慢 1')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: allCard, matching: find.text('失败 1')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: allCard, matching: find.text('未测 1')),
+      findsOneWidget,
+    );
+
+    final bands = tester
+        .widgetList<Container>(
+          find.descendant(of: allCard, matching: find.byType(Container)),
+        )
+        .where((c) => c.constraints?.maxHeight == 5)
+        .toList();
+    expect(bands, hasLength(4));
+    expect(bands.take(3).map((b) => b.color), [
+      utils.getDelayColor(80),
+      utils.getDelayColor(2400),
+      utils.getDelayColor(-1),
+    ]);
+
+    // Tapping "全部更新" triggers updateProfile on all 3 URL subscriptions (skipping local file).
+    await tester.tap(syncAllBtn);
+    await tester.pump();
+    expect(
+      controller.updatedProfiles.map((p) => p.id).toSet(),
+      {'admin', 'soon', 'exp'},
+    );
+    expect(
+      find.descendant(of: syncAllBtn, matching: find.text('更新中')),
+      findsOneWidget,
+    );
+
+    syncAllCompleter.complete();
+    await tester.pumpAndSettle();
+    expect(
+      find.descendant(of: syncAllBtn, matching: find.text('全部更新')),
+      findsOneWidget,
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'all profiles & expired delete edge cases: deduplicates semantics, disables delete while syncing, rolls back partial batch failure without aborting peers, hides sync-all for local-only, and scales to 2.0x across locales',
+      (tester) async {
+    final semanticsHandle = tester.ensureSemantics();
+    try {
+      final pastExpireSec =
+          DateTime.now().subtract(const Duration(days: 3)).millisecondsSinceEpoch ~/
+              1000;
+      const healthyUrl = Profile(
+        id: 'ok-url',
+        label: 'Healthy URL',
+        url: 'https://sub.example.invalid/ok',
+        autoUpdateDuration: Duration(hours: 6),
+      );
+      final expiredUrl = Profile(
+        id: 'exp-url',
+        label: 'Expired URL',
+        url: 'https://sub.example.invalid/exp',
+        autoUpdateDuration: const Duration(hours: 12),
+        subscriptionInfo: SubscriptionInfo(
+          total: 1024 * 1024,
+          download: 1024 * 1024,
+          expire: pastExpireSec,
+        ),
+      );
+
+      final controller = _ProxyController();
+      globalState.appController = controller;
+      late ProviderContainer container;
+      final syncGate = Completer<void>();
+
+      controller
+        ..onSetProfile = (updated) {
+          container.read(profilesProvider.notifier).setProfile(updated);
+        }
+        ..onUpdateProfile = (profile) async {
+          await syncGate.future;
+          if (profile.id == 'exp-url') {
+            throw Exception('expired upstream 403');
+          }
+          container.read(profilesProvider.notifier).setProfile(
+                profile.copyWith(isUpdating: false),
+              );
+        }
+        ..onDeleteProfile = (id) async {
+          container.read(profilesProvider.notifier).deleteProfileById(id);
+        };
+
+      container = await mount(
+        tester,
+        width: 1200,
+        attachNavigatorKey: true,
+        locale: const Locale('zh', 'CN'),
+        profiles: [healthyUrl, expiredUrl],
+        catalogs: {
+          'ok-url': ProfileCatalog(
+            profileId: 'ok-url',
+            fingerprint: 'o',
+            status: ProfileCatalogStatus.ready,
+            nodes: [_node('o-1', 'Node OK')],
+          ),
+          'exp-url': ProfileCatalog(
+            profileId: 'exp-url',
+            fingerprint: 'e',
+            status: ProfileCatalogStatus.ready,
+            nodes: [_node('e-1', 'Node Exp')],
+          ),
+        },
+      );
+
+      final syncAllBtn = find.byKey(const ValueKey('overview-sync-all'));
+      final deleteExpBtn = find.byKey(const ValueKey('overview-delete-exp-url'));
+
+      expect(tester.getSemantics(syncAllBtn).label, '全部更新');
+      expect(
+        tester
+            .getSemantics(syncAllBtn)
+            .getSemanticsData()
+            .hasAction(SemanticsAction.tap),
+        isTrue,
+      );
+      expect(tester.getSemantics(deleteExpBtn).label, '删除');
+      expect(
+        tester
+            .getSemantics(deleteExpBtn)
+            .getSemanticsData()
+            .hasAction(SemanticsAction.tap),
+        isTrue,
+      );
+
+      // Start batch sync: delete button on expired card remains visible in disabled state without opening dialog or selecting card.
+      await tester.tap(syncAllBtn);
+      await tester.pump();
+      expect(deleteExpBtn, findsOneWidget);
+      expect(
+        tester
+            .getSemantics(deleteExpBtn)
+            .getSemanticsData()
+            .hasAction(SemanticsAction.tap),
+        isFalse,
+      );
+      await tester.tap(deleteExpBtn);
+      await tester.pump();
+      expect(find.text('取消'), findsNothing);
+      expect(find.byKey(const ValueKey('overview-header-ok-url')), findsOneWidget);
+
+      // Finish batch sync with partial error: healthy profile succeeds, failed profile rolls back cleanly, single error modal surfaces.
+      syncGate.complete();
+      await tester.pumpAndSettle();
+      expect(find.textContaining('expired upstream 403'), findsOneWidget);
+      expect(container.read(profilesProvider).getProfile('ok-url')!.isUpdating, isFalse);
+      expect(container.read(profilesProvider).getProfile('exp-url')!.isUpdating, isFalse);
+      await tester.tapAt(const Offset(10, 10));
+      await tester.pumpAndSettle();
+
+      // Local-only profiles hide "全部更新" cleanly.
+      await tester.pumpWidget(const SizedBox.shrink());
+      await mount(
+        tester,
+        width: 1200,
+        locale: const Locale('zh', 'CN'),
+        profiles: const [_a, _b],
+        catalogs: flatCatalogs(),
+      );
+      expect(find.byKey(const ValueKey('overview-sync-all')), findsNothing);
+      expect(find.byKey(const ValueKey('overview-select-all')), findsOneWidget);
+
+      // Verify 2.0x text scaling on wide sidebar across all 4 supported locales without overflow.
+      for (final locale in const [
+        Locale('zh', 'CN'),
+        Locale('en'),
+        Locale('ja'),
+        Locale('ru'),
+      ]) {
+        await tester.pumpWidget(const SizedBox.shrink());
+        await mount(
+          tester,
+          width: 1200,
+          locale: locale,
+          profiles: [healthyUrl, expiredUrl],
+          child: const MediaQuery(
+            data: MediaQueryData(
+              size: Size(1200, 1000),
+              textScaler: TextScaler.linear(2.0),
+            ),
+            child: NodeOverviewView(),
+          ),
+          catalogs: {
+            'ok-url': ProfileCatalog(
+              profileId: 'ok-url',
+              fingerprint: 'o',
+              status: ProfileCatalogStatus.ready,
+              nodes: [_node('o-1', 'Node OK')],
+            ),
+            'exp-url': ProfileCatalog(
+              profileId: 'exp-url',
+              fingerprint: 'e',
+              status: ProfileCatalogStatus.ready,
+              nodes: [_node('e-1', 'Node Exp')],
+            ),
+          },
+        );
+        expect(tester.takeException(), isNull);
+      }
+    } finally {
+      semanticsHandle.dispose();
+    }
+  });
+
+  testWidgets(
+      'onboarding defaults & helpers: AppState opens on proxies, Navigation keeps proxies permanently visible, URL extractor strips chat noise, and informational nodes are filtered cleanly',
+      (tester) async {
+    await AppLocalizations.load(const Locale('zh', 'CN'));
+    addTearDown(() => AppLocalizations.load(const Locale('en')));
+
+    expect(globalState.appState.pageLabel, PageLabel.proxies);
+
+    final emptyNav = navigation.getItems(hasProxies: false);
+    final proxiesItem =
+        emptyNav.firstWhere((item) => item.label == PageLabel.proxies);
+    expect(
+      proxiesItem.modes,
+      containsAll([NavigationItemMode.mobile, NavigationItemMode.desktop]),
+    );
+
+    final scopeCheck = ProviderContainer();
+    addTearDown(scopeCheck.dispose);
+    expect(scopeCheck.read(proxiesScopeProvider), ProxiesScope.all);
+
+    expect(
+      extractSubscriptionUrl(
+        '您的专属订阅链接：https://sub.example.com/api/v1/client/subscribe?token=abc&flag=clash，请勿泄露！',
+      ),
+      'https://sub.example.com/api/v1/client/subscribe?token=abc&flag=clash',
+    );
+    expect(extractSubscriptionUrl('   '), isNull);
+    expect(extractSubscriptionUrl('只有中文没有链接'), isNull);
+
+    expect(isInformationalProxyName('剩余流量：499.97 GB'), isTrue);
+    expect(isInformationalProxyName('套餐到期：2026-12-31'), isTrue);
+    expect(isInformationalProxyName('官网：https://example.com'), isTrue);
+    expect(isInformationalProxyName('公告：节点维护通知'), isTrue);
+    expect(isInformationalProxyName('DIRECT'), isTrue);
+    expect(isInformationalProxyName('香港 IPLC 大流量 01'), isFalse);
+    expect(isInformationalProxyName('美国无限流量专线'), isFalse);
+    expect(isInformationalProxyName('日本 BGP 01'), isFalse);
+
+    expect(
+      formatSubscriptionImportError(const SocketException('Failed host lookup')),
+      contains('网络'),
+    );
+    expect(
+      formatSubscriptionImportError(Exception('Status 404 Not Found')),
+      contains('无效'),
+    );
+    expect(
+      formatSubscriptionImportError(const FormatException('<!DOCTYPE html>')),
+      contains('不是有效的订阅配置'),
+    );
+  });
+
+  testWidgets(
+      'zero-profile cold start onboarding: auto-opens URL dialog, validates empty/clipboard, recovers from import failure, and auto-tests + selects lowest-delay real node + starts proxy on 1st import only',
+      (tester) async {
+    const mockClipboardText =
+        '客服发您的订阅地址：https://sub.example.com/v1/sub?token=first123，点击复制即可。';
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(SystemChannels.platform, (call) async {
+      if (call.method == 'Clipboard.getData') {
+        return <String, dynamic>{'text': mockClipboardText};
+      }
+      return null;
+    });
+    addTearDown(() {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(SystemChannels.platform, null);
+    });
+
+    final now = DateTime(2026, 11, 11, 19, 0);
+    final liveHealth = <String, Map<String, NodeHealthRecord>>{};
+    final liveCatalogs = <String, ProfileCatalog>{};
+    late ProviderContainer container;
+    var failFirstImport = true;
+
+    const firstProfile = Profile(
+      id: 'first-sub',
+      label: '新手订阅',
+      url: 'https://sub.example.com/v1/sub?token=first123',
+      autoUpdateDuration: defaultUpdateDuration,
+    );
+    const secondProfile = Profile(
+      id: 'second-sub',
+      label: '备用订阅',
+      url: 'https://sub.example.com/v1/sub?token=second456',
+      autoUpdateDuration: defaultUpdateDuration,
+    );
+
+    final backend = _CatalogTester()
+      ..onTestAll = (testedProfiles, url) async {
+        expect(testedProfiles.map((p) => p.id), ['first-sub']);
+        liveHealth['first-sub'] = {
+          // Fake billing notice node has artificially tiny 12ms latency — must STILL be skipped!
+          'notice-1': NodeHealthRecord(
+            delayMs: 12,
+            testedAt: now,
+            testUrlHash: 'h',
+          ),
+          'jp-slow': NodeHealthRecord(
+            delayMs: 185,
+            testedAt: now,
+            testUrlHash: 'h',
+          ),
+          'hk-fast': NodeHealthRecord(
+            delayMs: 46,
+            testedAt: now,
+            testUrlHash: 'h',
+          ),
+        };
+        container.invalidate(nodeHealthEntriesProvider('first-sub'));
+        return const DelayBatchResult(completed: 3, failed: 0);
+      };
+
+    final controller = _ProxyController()
+      ..onAddProfileFormURL = (url) async {
+        if (failFirstImport) {
+          failFirstImport = false;
+          globalState.lastSubscriptionImportError =
+              '该链接不是有效的订阅配置（可能误粘了网页地址），请复制正确的订阅链接';
+          return;
+        }
+        if (url.contains('first123')) {
+          liveCatalogs['first-sub'] = ProfileCatalog(
+            profileId: 'first-sub',
+            fingerprint: 'f1',
+            status: ProfileCatalogStatus.ready,
+            nodes: [
+              _node('notice-1', '剩余流量：100 GB')
+                  .copyWith(selectGroups: const ['Proxy']),
+              _node('jp-slow', '日本 01')
+                  .copyWith(selectGroups: const ['Proxy']),
+              _node('hk-fast', '香港 01')
+                  .copyWith(selectGroups: const ['Proxy']),
+            ],
+          );
+          container.read(profilesProvider.notifier).setProfile(firstProfile);
+          container.read(currentProfileIdProvider.notifier).value =
+              firstProfile.id;
+        } else {
+          liveCatalogs['second-sub'] = ProfileCatalog(
+            profileId: 'second-sub',
+            fingerprint: 'f2',
+            status: ProfileCatalogStatus.ready,
+            nodes: [
+              _node('us-1', '美国 01').copyWith(selectGroups: const ['Proxy']),
+            ],
+          );
+          container.read(profilesProvider.notifier).setProfile(secondProfile);
+        }
+      };
+    globalState.appController = controller;
+
+    container = await mount(
+      tester,
+      width: 1200,
+      locale: const Locale('zh', 'CN'),
+      attachNavigatorKey: true,
+      profiles: const [],
+      catalogs: liveCatalogs,
+      health: liveHealth,
+      catalogTester: backend,
+    );
+
+    // Before initProvider completes (e.g. while disclaimer is pending), dialog has not popped yet.
+    expect(find.byType(URLFormDialog), findsNothing);
+    expect(find.byKey(const ValueKey('overview-empty-profiles')), findsOneWidget);
+
+    // Simulate cold-start init completion -> URLFormDialog pops automatically!
+    container.read(initProvider.notifier).value = true;
+    await tester.pumpAndSettle();
+    expect(find.byType(URLFormDialog), findsOneWidget);
+    expect(find.text('粘贴订阅链接，点击确定即可'), findsOneWidget);
+    expect(find.text('粘贴'), findsOneWidget);
+    expect(find.text('确定'), findsOneWidget);
+
+    // Clicking 确定 with empty input stays in dialog and shows inline validation error.
+    await tester.tap(find.byKey(const ValueKey('url-dialog-confirm')));
+    await tester.pumpAndSettle();
+    expect(find.byType(URLFormDialog), findsOneWidget);
+    expect(find.text('请先粘贴订阅链接'), findsOneWidget);
+
+    // Clicking 粘贴 extracts clean URL from noisy customer-service message.
+    await tester.tap(find.byKey(const ValueKey('url-dialog-paste')));
+    await tester.pumpAndSettle();
+    expect(find.text('请先粘贴订阅链接'), findsNothing);
+    expect(
+      tester.widget<TextField>(find.byType(TextField)).controller?.text,
+      'https://sub.example.com/v1/sub?token=first123',
+    );
+
+    // First submit fails -> dialog re-opens preserving the URL and showing friendly error!
+    await tester.tap(find.byKey(const ValueKey('url-dialog-confirm')));
+    await tester.pumpAndSettle();
+    expect(find.byType(URLFormDialog), findsOneWidget);
+    expect(find.textContaining('不是有效的订阅配置'), findsOneWidget);
+    expect(
+      tester.widget<TextField>(find.byType(TextField)).controller?.text,
+      'https://sub.example.com/v1/sub?token=first123',
+    );
+
+    // Second submit succeeds -> auto-runs testAll, skips 剩余流量 12ms dummy, defaults to Smart mode, and starts proxy!
+    await tester.tap(find.byKey(const ValueKey('url-dialog-confirm')));
+    await tester.pumpAndSettle();
+    expect(find.byType(URLFormDialog), findsNothing);
+    expect(backend.all, hasLength(1));
+    expect(container.read(currentProfileIdProvider), 'first-sub');
+    final activatedFirst =
+        container.read(profilesProvider).getProfile('first-sub')!;
+    expect(resolveProfileSelectionMode(activatedFirst), NodeSelectionMode.smart);
+    expect(
+      activatedFirst.selectedMap['Proxy'],
+      managedSmartGroupNameFor('Proxy'),
+    );
+    expect(controller.statusUpdates, contains(true));
+    expect(
+      find.text('已开启智能选择节点：新手订阅（当前最快：香港 01 · 46 ms）'),
+      findsOneWidget,
+    );
+
+    // Adding a 2nd subscription when profiles already exist marks it Smart without switching active profile or re-testing.
+    await tester.tap(find.byKey(const ValueKey('overview-add-subscription')));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byType(TextField),
+      'https://sub.example.com/v1/sub?token=second456',
+    );
+    await tester.tap(find.byKey(const ValueKey('url-dialog-confirm')));
+    await tester.pumpAndSettle();
+    expect(backend.all, hasLength(1));
+    expect(container.read(currentProfileIdProvider), 'first-sub');
+    expect(
+      container.read(profilesProvider).getProfile('first-sub')?.selectedMap['Proxy'],
+      managedSmartGroupNameFor('Proxy'),
+    );
+    expect(
+      resolveProfileSelectionMode(
+        container.read(profilesProvider).getProfile('second-sub'),
+      ),
+      NodeSelectionMode.smart,
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'zero-profile fallback & mid-session delete: selects 1st real node even when all tests fail ("即使可能不可用"), surfaces expiry reason, and deleting last profile stays on empty card without re-popping dialog',
+      (tester) async {
+    final now = DateTime(2026, 11, 11, 19, 0);
+    final expiredSec =
+        now.subtract(const Duration(days: 5)).millisecondsSinceEpoch ~/ 1000;
+    final liveHealth = <String, Map<String, NodeHealthRecord>>{};
+    final liveCatalogs = <String, ProfileCatalog>{};
+    late ProviderContainer container;
+
+    final expiredSub = Profile(
+      id: 'dead-sub',
+      label: '过期订阅',
+      url: 'https://sub.example.com/dead',
+      autoUpdateDuration: defaultUpdateDuration,
+      subscriptionInfo: SubscriptionInfo(
+        total: 100 * 1024 * 1024 * 1024,
+        upload: 0,
+        download: 10 * 1024 * 1024 * 1024,
+        expire: expiredSec,
+      ),
+    );
+
+    final backend = _CatalogTester()
+      ..onTestAll = (testedProfiles, url) async {
+        liveHealth['dead-sub'] = {
+          'exp-tip': NodeHealthRecord(
+            delayMs: -1,
+            testedAt: now,
+            testUrlHash: 'h',
+          ),
+          'dead-1': NodeHealthRecord(
+            delayMs: -1,
+            testedAt: now,
+            testUrlHash: 'h',
+          ),
+          'dead-2': NodeHealthRecord(
+            delayMs: -1,
+            testedAt: now,
+            testUrlHash: 'h',
+          ),
+        };
+        container.invalidate(nodeHealthEntriesProvider('dead-sub'));
+        return const DelayBatchResult(completed: 3, failed: 3);
+      };
+
+    final controller = _ProxyController()
+      ..onAddProfileFormURL = (url) async {
+        liveCatalogs['dead-sub'] = ProfileCatalog(
+          profileId: 'dead-sub',
+          fingerprint: 'fd',
+          status: ProfileCatalogStatus.ready,
+          nodes: [
+            _node('exp-tip', '套餐到期：2026-11-06')
+                .copyWith(selectGroups: const ['Proxy']),
+            _node('dead-1', '香港备用 A')
+                .copyWith(selectGroups: const ['Proxy']),
+            _node('dead-2', '新加坡备用 B')
+                .copyWith(selectGroups: const ['Proxy']),
+          ],
+        );
+        container.read(profilesProvider.notifier).setProfile(expiredSub);
+        container.read(currentProfileIdProvider.notifier).value = expiredSub.id;
+      }
+      ..onDeleteProfile = (id) async {
+        container.read(profilesProvider.notifier).deleteProfileById(id);
+        container.read(currentProfileIdProvider.notifier).value = null;
+      };
+    globalState.appController = controller;
+    globalState.appState = globalState.appState.copyWith(isInit: true);
+
+    container = await mount(
+      tester,
+      width: 1200,
+      locale: const Locale('zh', 'CN'),
+      attachNavigatorKey: true,
+      profiles: const [],
+      catalogs: liveCatalogs,
+      health: liveHealth,
+      catalogTester: backend,
+    );
+
+    // Auto-popped on mount since isInit == true and profiles is empty; user dismisses it first.
+    expect(find.byType(URLFormDialog), findsOneWidget);
+    await tester.tapAt(const Offset(10, 10));
+    await tester.pumpAndSettle();
+    expect(find.byType(URLFormDialog), findsNothing);
+    expect(find.byKey(const ValueKey('overview-empty-profiles')), findsOneWidget);
+
+    // User clicks empty-state CTA button and imports the expired/all-failed subscription.
+    await tester.tap(
+      find.byKey(const ValueKey('overview-empty-add-subscription')),
+    );
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), 'https://sub.example.com/dead');
+    await tester.tap(find.byKey(const ValueKey('url-dialog-confirm')));
+    await tester.pumpAndSettle();
+
+    // Even though ALL nodes failed (-1), activates Smart mode, starts proxy, and warns about expiry!
+    final deadActivated =
+        container.read(profilesProvider).getProfile('dead-sub')!;
+    expect(resolveProfileSelectionMode(deadActivated), NodeSelectionMode.smart);
+    expect(
+      deadActivated.selectedMap['Proxy'],
+      managedSmartGroupNameFor('Proxy'),
+    );
+    expect(controller.statusUpdates, contains(true));
+    expect(find.textContaining('但该订阅已过期'), findsOneWidget);
+
+    // Delete the expired profile mid-session -> returns to empty card WITHOUT forcibly re-opening URLFormDialog!
+    await tester.tap(
+      find.byKey(const ValueKey('overview-delete-dead-sub')),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('确定'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('overview-empty-profiles')), findsOneWidget);
+    expect(find.byType(URLFormDialog), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'connection status bar, auto-start on Use, and available-only empty recovery render cleanly across 320px/1200px @ 2.0x text scale',
+      (tester) async {
+    final controller = _ProxyController();
+    globalState.appController = controller;
+    const profileA = Profile(
+      id: 'a',
+      label: '主力订阅',
+      url: 'https://sub.example.com/a',
+      autoUpdateDuration: defaultUpdateDuration,
+      currentGroupName: 'Proxy',
+      selectedMap: {'Proxy': '香港 01'},
+    );
+    const profileB = Profile(
+      id: 'b',
+      label: '备用订阅',
+      url: 'https://sub.example.com/b',
+      autoUpdateDuration: defaultUpdateDuration,
+    );
+    globalState.config = globalState.config.copyWith(
+      currentProfileId: 'a',
+      profiles: const [profileA, profileB],
+    );
+    globalState.appState = globalState.appState.copyWith(
+      groups: const [
+        Group(
+          name: 'Proxy',
+          type: GroupType.Selector,
+          hidden: false,
+          now: '香港 01',
+          all: [
+            Proxy(name: '香港 01', type: 'Shadowsocks'),
+            Proxy(name: '新加坡 01', type: 'Shadowsocks'),
+          ],
+        ),
+      ],
+    );
+
+    final container = await mount(
+      tester,
+      width: 1200,
+      locale: const Locale('zh', 'CN'),
+      profiles: const [profileA, profileB],
+      catalogs: {
+        'a': ProfileCatalog(
+          profileId: 'a',
+          fingerprint: 'fa',
+          status: ProfileCatalogStatus.ready,
+          nodes: [
+            _node('hk-1', '香港 01').copyWith(selectGroups: const ['Proxy']),
+            _node('sg-1', '新加坡 01').copyWith(selectGroups: const ['Proxy']),
+          ],
+        ),
+        'b': ProfileCatalog(
+          profileId: 'b',
+          fingerprint: 'fb',
+          status: ProfileCatalogStatus.ready,
+          nodes: [
+            _node('us-1', '美国 01').copyWith(selectGroups: const ['Proxy']),
+          ],
+        ),
+      },
+    );
+
+    // Disconnected state shows 代理未开启 + circular Earth proxy toggle button.
+    expect(find.byKey(const ValueKey('overview-connection-bar')), findsOneWidget);
+    expect(find.textContaining('代理未开启'), findsOneWidget);
+    expect(find.byKey(const ValueKey('overview-proxy-toggle')), findsOneWidget);
+    expect(
+      tester.widget<EarthProxySwitch>(find.byType(EarthProxySwitch)).isRunning,
+      isFalse,
+    );
+
+    // Tapping an active node's 使用 while proxy is off automatically starts proxy!
+    await tester.tap(find.byKey(const ValueKey('overview-use-a-新加坡 01')));
+    await tester.pumpAndSettle();
+    expect(controller.statusUpdates, [true]);
+
+    // Tapping an inactive catalog node's 使用 while proxy is still off ALSO starts proxy & switches profile!
+    await tester.tap(find.byKey(const ValueKey('overview-use-b-us-1')));
+    await tester.pumpAndSettle();
+    expect(controller.statusUpdates, [true, true]);
+    expect(container.read(currentProfileIdProvider), 'b');
+
+    // Simulate runtime running -> bar turns green showing active profile & node + 关闭代理 button!
+    container.read(runTimeProvider.notifier).value = 1000;
+    await tester.pumpAndSettle();
+    expect(find.text('代理已开启 · 正在使用 备用订阅 · 美国 01'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('overview-proxy-toggle')));
+    await tester.pumpAndSettle();
+    expect(controller.statusUpdates, [true, true, false]);
+
+    // Turning on 仅显示可用 when all nodes are untested surfaces one-click 显示全部节点 recovery!
+    await tester.tap(find.byKey(const ValueKey('overview-available-only')));
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey('overview-available-only-empty')),
+      findsOneWidget,
+    );
+    await tester.tap(
+      find.byKey(const ValueKey('overview-reset-available-filter')),
+    );
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey('overview-available-only-empty')),
+      findsNothing,
+    );
+    expect(find.text('美国 01'), findsWidgets);
+
+    // Verify 2.0x text scaling at 320px and 1200px across locales (both empty & populated states).
+    for (final (width, locale, profs) in [
+      (320.0, const Locale('zh', 'CN'), const <Profile>[]),
+      (320.0, const Locale('zh', 'CN'), const <Profile>[profileA, profileB]),
+      (1200.0, const Locale('ru'), const <Profile>[profileA, profileB]),
+      (1200.0, const Locale('ja'), const <Profile>[profileA, profileB]),
+    ]) {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await mount(
+        tester,
+        width: width,
+        locale: locale,
+        profiles: profs,
+        child: MediaQuery(
+          data: MediaQueryData(
+            size: Size(width, 1000),
+            textScaler: const TextScaler.linear(2.0),
+          ),
+          child: const NodeOverviewView(),
+        ),
+        catalogs: {
+          'a': ProfileCatalog(
+            profileId: 'a',
+            fingerprint: 'fa',
+            status: ProfileCatalogStatus.ready,
+            nodes: [
+              _node('hk-1', '香港 01').copyWith(selectGroups: const ['Proxy']),
+            ],
+          ),
+          'b': ProfileCatalog(
+            profileId: 'b',
+            fingerprint: 'fb',
+            status: ProfileCatalogStatus.ready,
+            nodes: [
+              _node('us-1', '美国 01').copyWith(selectGroups: const ['Proxy']),
+            ],
+          ),
+        },
+      );
+      expect(tester.takeException(), isNull);
+    }
+  });
+
+  testWidgets(
+      'Windows fresh install (0 profiles): pasting first subscription auto-tests, selects fastest node, AND completes deferred TUN + proxy master switch bring-up',
+      (tester) async {
+    final now = DateTime(2026, 11, 11, 20, 0);
+    final liveHealth = <String, Map<String, NodeHealthRecord>>{};
+    final liveCatalogs = <String, ProfileCatalog>{};
+    late ProviderContainer container;
+    _WindowsOnboardingController? winController;
+
+    const firstSub = Profile(
+      id: 'win-first-sub',
+      label: '新手订阅',
+      url: 'https://sub.example.com/v1/win-fresh',
+      autoUpdateDuration: defaultUpdateDuration,
+    );
+
+    final effects = _OverviewWindowsTunEffects(
+      onReflectRunning: () {
+        globalState.startTime = DateTime.now();
+        container.read(runTimeProvider.notifier).value = 0;
+      },
+    )..profile = false;
+    final runtime = TunRuntimeController();
+
+    final backend = _CatalogTester()
+      ..onTestAll = (testedProfiles, url) async {
+        liveHealth['win-first-sub'] = {
+          'hk-fast': NodeHealthRecord(
+            delayMs: 46,
+            testedAt: now,
+            testUrlHash: 'h',
+          ),
+        };
+        container.invalidate(nodeHealthEntriesProvider('win-first-sub'));
+        return const DelayBatchResult(completed: 1, failed: 0);
+      };
+
+    globalState.config = const Config(
+      themeProps: defaultThemeProps,
+      profiles: [],
+      patchClashConfig: ClashConfig(tun: Tun(enable: true)),
+    );
+    globalState.appState = globalState.appState.copyWith(isInit: true);
+    addTearDown(() {
+      globalState.startTime = null;
+    });
+
+    container = await mount(
+      tester,
+      width: 1200,
+      locale: const Locale('zh', 'CN'),
+      attachNavigatorKey: true,
+      profiles: const [],
+      catalogs: liveCatalogs,
+      health: liveHealth,
+      catalogTester: backend,
+      child: Consumer(
+        builder: (context, ref, _) {
+          winController ??= _WindowsOnboardingController(
+            context,
+            ref,
+            windowsStartupEffects: effects,
+            tunRuntimeController: runtime,
+            onAddUrl: (url) async {
+              effects.profile = true;
+              liveCatalogs['win-first-sub'] = ProfileCatalog(
+                profileId: 'win-first-sub',
+                fingerprint: 'f-win',
+                status: ProfileCatalogStatus.ready,
+                nodes: [
+                  _node('hk-fast', '香港 01')
+                      .copyWith(selectGroups: const ['Proxy']),
+                ],
+              );
+              container.read(profilesProvider.notifier).setProfile(firstSub);
+              container.read(currentProfileIdProvider.notifier).value =
+                  firstSub.id;
+            },
+          );
+          globalState.appController = winController!;
+          return const NodeOverviewView();
+        },
+      ),
+    );
+
+    // Simulate cold-start Windows runtime initialization on 0 profiles -> latches profileRequired.
+    await winController!.initializeRuntime();
+    expect(runtime.failure, 'profileRequired');
+    expect(runtime.requestFailure, 'profileRequired');
+    expect(effects.calls, ['observe', 'profile']);
+
+    // Cold-start dialog popped automatically; paste subscription URL and click 确定!
+    expect(find.byType(URLFormDialog), findsOneWidget);
+    await tester.enterText(
+      find.byType(TextField),
+      'https://sub.example.com/v1/win-fresh',
+    );
+    await tester.tap(find.byKey(const ValueKey('url-dialog-confirm')));
+    await tester.pumpAndSettle();
+
+    // Verify full end-to-end chain: Smart mode enabled + Windows TUN elevated & on + master proxy switch green!
+    final winActivated =
+        container.read(profilesProvider).getProfile('win-first-sub')!;
+    expect(resolveProfileSelectionMode(winActivated), NodeSelectionMode.smart);
+    expect(
+      winActivated.selectedMap['Proxy'],
+      managedSmartGroupNameFor('Proxy'),
+    );
+    expect(
+      effects.calls.sublist(2),
+      containsAllInOrder([
+        'profile',
+        'authorize',
+        'backend',
+        'initialize',
+        'configure',
+        'listener',
+        'reflect',
+      ]),
+    );
+    expect(runtime.observed, TunObservedState.on);
+    expect(runtime.failure, isNull);
+    expect(runtime.requestFailure, isNull);
+    expect(find.textContaining('代理已开启 · 智能选择：新手订阅'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'smart vs manual mode buttons: render right of Quick Use, switch Smart <-> Manual (locking live hit node in-place), auto-switch to Manual on card Use, and honor mode on Quick Use',
+      (tester) async {
+    final controller = _ProxyController();
+    globalState.appController = controller;
+    final smartGroupName = managedSmartGroupNameFor('Proxy');
+
+    const profileA = Profile(
+      id: 'a',
+      label: 'admin',
+      url: 'https://sub.example.com/a',
+      autoUpdateDuration: defaultUpdateDuration,
+      currentGroupName: 'Proxy',
+      selectedMap: {'Proxy': '美国静态原生-Reality-Vision'},
+    );
+    globalState.config = globalState.config.copyWith(
+      currentProfileId: 'a',
+      profiles: const [profileA],
+    );
+    final runtimeGroups = [
+      Group(
+        name: 'Proxy',
+        type: GroupType.Selector,
+        hidden: false,
+        now: '美国静态原生-Reality-Vision',
+        all: [
+          const Proxy(name: '美国AGK-Reality-Vision', type: 'VLESS'),
+          const Proxy(name: '美国静态原生-Reality-Vision', type: 'VLESS'),
+          Proxy(name: smartGroupName, type: 'URLTest'),
+        ],
+      ),
+      Group(
+        name: smartGroupName,
+        type: GroupType.URLTest,
+        hidden: true,
+        now: '美国AGK-Reality-Vision',
+        all: const [
+          Proxy(name: '美国AGK-Reality-Vision', type: 'VLESS'),
+          Proxy(name: '美国静态原生-Reality-Vision', type: 'VLESS'),
+        ],
+      ),
+    ];
+    globalState.appState = globalState.appState.copyWith(groups: runtimeGroups);
+
+    final container = await mount(
+      tester,
+      width: 1280,
+      locale: const Locale('zh', 'CN'),
+      profiles: const [profileA],
+      catalogs: {
+        'a': ProfileCatalog(
+          profileId: 'a',
+          fingerprint: 'fa',
+          status: ProfileCatalogStatus.ready,
+          nodes: [
+            _node('us-agk', '美国AGK-Reality-Vision')
+                .copyWith(selectGroups: const ['Proxy']),
+            _node('us-static', '美国静态原生-Reality-Vision')
+                .copyWith(selectGroups: const ['Proxy']),
+          ],
+        ),
+      },
+    );
+    container.read(runTimeProvider.notifier).value = 1000;
+    await tester.pumpAndSettle();
+
+    final quickUseBtn = find.byKey(const ValueKey('overview-quick-use'));
+    final smartBtn = find.byKey(const ValueKey('overview-mode-smart'));
+    final manualBtn = find.byKey(const ValueKey('overview-mode-manual'));
+    final connectionBar = find.byKey(const ValueKey('overview-connection-bar'));
+    expect(smartBtn, findsOneWidget);
+    expect(manualBtn, findsOneWidget);
+    expect(
+      find.descendant(of: smartBtn, matching: find.text('智能选路')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: manualBtn, matching: find.text('固定IP')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: smartBtn, matching: find.text('智能选择节点')),
+      findsNothing,
+    );
+    expect(
+      find.descendant(of: manualBtn, matching: find.text('手动选择节点')),
+      findsNothing,
+    );
+
+    // Placed inside top command bar: connection bar -> [智能选路 | 固定IP] -> 一键连最快!
+    expect(
+      tester.getTopLeft(smartBtn).dx,
+      greaterThan(tester.getTopRight(connectionBar).dx),
+    );
+    expect(
+      tester.getTopLeft(manualBtn).dx,
+      greaterThan(tester.getTopRight(smartBtn).dx),
+    );
+    expect(
+      tester.getTopLeft(quickUseBtn).dx,
+      greaterThan(tester.getTopRight(manualBtn).dx),
+    );
+
+    // Legacy profileA starts in Manual mode with 美国静态原生-Reality-Vision inUse ('使用中').
+    expect(
+      resolveProfileSelectionMode(container.read(profilesProvider).getProfile('a')),
+      NodeSelectionMode.manual,
+    );
+    expect(find.text('代理已开启 · 正在使用 admin · 美国静态原生-Reality-Vision'), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('overview-use-a-美国静态原生-Reality-Vision')),
+        matching: find.text('使用中'),
+      ),
+      findsOneWidget,
+    );
+
+    // 1. Tap `智能选择节点（体验更好）` -> switches Proxy to smartGroupName via changeProxyDebounce (0 core restarts)!
+    await tester.tap(smartBtn);
+    await tester.pumpAndSettle();
+    expect(
+      resolveProfileSelectionMode(container.read(profilesProvider).getProfile('a')),
+      NodeSelectionMode.smart,
+    );
+    expect(
+      container.read(profilesProvider).getProfile('a')?.selectedMap['Proxy'],
+      smartGroupName,
+    );
+    expect(controller.changes.last, ('Proxy', smartGroupName));
+
+    // Simulate Mihomo updating Selector.now to smartGroupName while smartGroup.now == '美国AGK-Reality-Vision'.
+    final updatedSmartGroups = [
+      runtimeGroups[0].copyWith(now: smartGroupName),
+      runtimeGroups[1],
+    ];
+    globalState.appState = globalState.appState.copyWith(
+      groups: updatedSmartGroups,
+      version: 2,
+    );
+    container.read(groupsProvider.notifier).value = updatedSmartGroups;
+    container.read(versionProvider.notifier).value = 2;
+    await tester.pumpAndSettle();
+
+    // Top bar reflects Smart mode + live hit leaf, and hit leaf row shows clickable `智能使用中`!
+    expect(
+      find.text('代理已开启 · 智能选择：admin · 美国AGK-Reality-Vision'),
+      findsOneWidget,
+    );
+    final agkUseBtn =
+        find.byKey(const ValueKey('overview-use-a-美国AGK-Reality-Vision'));
+    expect(
+      find.descendant(of: agkUseBtn, matching: find.text('智能使用中')),
+      findsOneWidget,
+    );
+
+    // 2. Tap `手动选择节点（固定IP）` top button -> seamlessly locks the currently hit live leaf (`美国AGK-Reality-Vision`) in-place!
+    await tester.tap(manualBtn);
+    await tester.pumpAndSettle();
+    expect(
+      resolveProfileSelectionMode(container.read(profilesProvider).getProfile('a')),
+      NodeSelectionMode.manual,
+    );
+    expect(
+      container.read(profilesProvider).getProfile('a')?.selectedMap['Proxy'],
+      '美国AGK-Reality-Vision',
+    );
+    expect(controller.changes.last, ('Proxy', '美国AGK-Reality-Vision'));
+
+    // 3. Switch back to Smart mode, then tap `使用` on a specific node card (`美国静态原生-Reality-Vision`) -> auto-switches back to Manual Fixed IP!
+    await tester.tap(smartBtn);
+    await tester.pumpAndSettle();
+    expect(
+      resolveProfileSelectionMode(container.read(profilesProvider).getProfile('a')),
+      NodeSelectionMode.smart,
+    );
+    await tester.tap(
+      find.byKey(const ValueKey('overview-use-a-美国静态原生-Reality-Vision')),
+    );
+    await tester.pumpAndSettle();
+    expect(
+      resolveProfileSelectionMode(container.read(profilesProvider).getProfile('a')),
+      NodeSelectionMode.manual,
+    );
+    expect(
+      container.read(profilesProvider).getProfile('a')?.selectedMap['Proxy'],
+      '美国静态原生-Reality-Vision',
+    );
+
+    // 4. Stop proxy, switch to Smart mode (starts proxy), stop again, tap `3 点击使用` -> honors Smart mode without knocking back to Manual!
+    container.read(runTimeProvider.notifier).value = null;
+    await tester.pumpAndSettle();
+    await tester.tap(smartBtn);
+    await tester.pumpAndSettle();
+    controller.statusUpdates.clear();
+    await tester.tap(quickUseBtn);
+    await tester.pumpAndSettle();
+    expect(
+      resolveProfileSelectionMode(container.read(profilesProvider).getProfile('a')),
+      NodeSelectionMode.smart,
+    );
+    expect(controller.statusUpdates, [true]);
+
+    // 5. Tapping the `智能使用中` pill directly on the hit node row also locks it into Manual Fixed IP!
+    await tester.tap(agkUseBtn);
+    await tester.pumpAndSettle();
+    expect(
+      resolveProfileSelectionMode(container.read(profilesProvider).getProfile('a')),
+      NodeSelectionMode.manual,
+    );
+    expect(
+      container.read(profilesProvider).getProfile('a')?.selectedMap['Proxy'],
+      '美国AGK-Reality-Vision',
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'smart vs manual mode buttons render overflow-free across zh_CN/en/ja/ru at 320px & 1200px @ 2.0x text scale and support switching inactive selected profile',
+      (tester) async {
+    final controller = _ProxyController();
+    globalState.appController = controller;
+    const profileA = Profile(
+      id: 'a',
+      label: 'Primary',
+      url: 'https://sub.example.com/a',
+      autoUpdateDuration: defaultUpdateDuration,
+      currentGroupName: 'Proxy',
+      selectedMap: {'Proxy': 'HK 01'},
+    );
+    const profileB = Profile(
+      id: 'b',
+      label: 'Secondary',
+      url: 'https://sub.example.com/b',
+      autoUpdateDuration: defaultUpdateDuration,
+    );
+    globalState.config = globalState.config.copyWith(
+      currentProfileId: 'a',
+      profiles: const [profileA, profileB],
+    );
+    globalState.appState = globalState.appState.copyWith(
+      groups: const [
+        Group(
+          name: 'Proxy',
+          type: GroupType.Selector,
+          hidden: false,
+          now: 'HK 01',
+          all: [
+            Proxy(name: 'HK 01', type: 'VLESS'),
+          ],
+        ),
+      ],
+    );
+
+    final catalogs = {
+      'a': ProfileCatalog(
+        profileId: 'a',
+        fingerprint: 'fa',
+        status: ProfileCatalogStatus.ready,
+        nodes: [_node('hk-1', 'HK 01').copyWith(selectGroups: const ['Proxy'])],
+      ),
+      'b': ProfileCatalog(
+        profileId: 'b',
+        fingerprint: 'fb',
+        status: ProfileCatalogStatus.ready,
+        nodes: [
+          _node('sg-1', 'SG 01').copyWith(selectGroups: const ['Proxy']),
+          _node('info-1', '剩余流量：88 GB').copyWith(selectGroups: const ['Proxy']),
+        ],
+      ),
+    };
+
+    for (final (width, locale) in const [
+      (320.0, Locale('zh', 'CN')),
+      (380.0, Locale('ja')),
+      (380.0, Locale('en')),
+      (380.0, Locale('ru')),
+      (1200.0, Locale('zh', 'CN')),
+      (1200.0, Locale('en')),
+      (1200.0, Locale('ja')),
+      (1200.0, Locale('ru')),
+    ]) {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await mount(
+        tester,
+        width: width,
+        locale: locale,
+        profiles: const [profileA, profileB],
+        catalogs: catalogs,
+        child: MediaQuery(
+          data: MediaQueryData(
+            size: Size(width, 1000),
+            textScaler: const TextScaler.linear(2.0),
+          ),
+          child: const NodeOverviewView(),
+        ),
+      );
+      expect(find.byKey(const ValueKey('overview-mode-smart')), findsOneWidget);
+      expect(find.byKey(const ValueKey('overview-mode-manual')), findsOneWidget);
+      expect(tester.takeException(), isNull, reason: 'overflow at $width $locale');
+    }
+
+    // Mount at 1280px, select inactive profile B in sidebar, and switch it between Smart and Manual!
+    final container = await mount(
+      tester,
+      width: 1280,
+      locale: const Locale('zh', 'CN'),
+      profiles: const [profileA, profileB],
+      catalogs: catalogs,
+    );
+    await tester.tap(find.byKey(const ValueKey('overview-sidebar-card-b')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('overview-mode-smart')));
+    await tester.pumpAndSettle();
+    expect(container.read(currentProfileIdProvider), 'b');
+    expect(
+      resolveProfileSelectionMode(container.read(profilesProvider).getProfile('b')),
+      NodeSelectionMode.smart,
+    );
+    expect(
+      container.read(profilesProvider).getProfile('b')?.selectedMap['Proxy'],
+      managedSmartGroupNameFor('Proxy'),
+    );
+
+    await tester.tap(find.byKey(const ValueKey('overview-mode-manual')));
+    await tester.pumpAndSettle();
+    expect(
+      resolveProfileSelectionMode(container.read(profilesProvider).getProfile('b')),
+      NodeSelectionMode.manual,
+    );
+    // Skips informational '剩余流量：88 GB' and locks real node 'SG 01'!
+    expect(
+      container.read(profilesProvider).getProfile('b')?.selectedMap['Proxy'],
+      'SG 01',
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'Plan B persistent hue pills: 1-2000ms green, >2000ms yellow, -1 red, 1h fresh window, stale 3d keeps hue border without turning grey',
+      (tester) async {
+    final now = DateTime.now();
+    final freshAt = now.subtract(const Duration(minutes: 45));
+    final staleAt = now.subtract(const Duration(days: 3));
+    const profileA =
+        Profile(id: 'a', label: 'Alpha', autoUpdateDuration: Duration.zero);
+
+    final nFreshFast = _node('f-fast', 'Fresh 2000');
+    final nFreshSlow = _node('f-slow', 'Fresh 2001');
+    final nFreshFail = _node('f-fail', 'Fresh Fail');
+    final nStaleFast = _node('s-fast', 'Stale 232');
+    final nStaleSlow = _node('s-slow', 'Stale 2500');
+    final nStaleFail = _node('s-fail', 'Stale Fail');
+
+    await mount(
+      tester,
+      width: 1280,
+      locale: const Locale('zh', 'CN'),
+      profiles: const [profileA],
+      catalogs: {
+        'a': ProfileCatalog(
+          profileId: 'a',
+          fingerprint: 'f',
+          status: ProfileCatalogStatus.ready,
+          nodes: [
+            nFreshFast,
+            nFreshSlow,
+            nFreshFail,
+            nStaleFast,
+            nStaleSlow,
+            nStaleFail,
+          ],
+        ),
+      },
+      health: {
+        'a': {
+          nFreshFast.identityKey: NodeHealthRecord(
+            delayMs: 2000,
+            testedAt: freshAt,
+            testUrlHash: 'h',
+          ),
+          nFreshSlow.identityKey: NodeHealthRecord(
+            delayMs: 2001,
+            testedAt: freshAt,
+            testUrlHash: 'h',
+          ),
+          nFreshFail.identityKey: NodeHealthRecord(
+            delayMs: -1,
+            testedAt: freshAt,
+            testUrlHash: 'h',
+          ),
+          nStaleFast.identityKey: NodeHealthRecord(
+            delayMs: 232,
+            testedAt: staleAt,
+            testUrlHash: 'h',
+          ),
+          nStaleSlow.identityKey: NodeHealthRecord(
+            delayMs: 2500,
+            testedAt: staleAt,
+            testUrlHash: 'h',
+          ),
+          nStaleFail.identityKey: NodeHealthRecord(
+            delayMs: -1,
+            testedAt: staleAt,
+            testUrlHash: 'h',
+          ),
+        },
+      },
+    );
+
+    // Summary card uses 1~2000 ms for fast and >2000 ms for slow regardless of age.
+    final allCard = find.byKey(const ValueKey('overview-select-all'));
+    expect(
+      find.descendant(of: allCard, matching: find.text('流畅 2')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: allCard, matching: find.text('偏慢 2')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: allCard, matching: find.text('失败 2')),
+      findsOneWidget,
+    );
+
+    void expectPill({
+      required String nodeKey,
+      required String label,
+      required Color expectedHue,
+      required bool expectStale,
+    }) {
+      final row = find.byKey(ValueKey('overview-node-a-$nodeKey'));
+      expect(row, findsOneWidget);
+      final textFinder = find.descendant(of: row, matching: find.text(label));
+      expect(textFinder, findsOneWidget);
+      final textWidget = tester.widget<Text>(textFinder);
+      final textColor = textWidget.style?.color;
+      expect(textColor, isNotNull);
+
+      final ctx = tester.element(row);
+      final neutralGrey = Theme.of(ctx).colorScheme.onSurfaceVariant;
+      expect(textColor!.toARGB32(), isNot(equals(neutralGrey.toARGB32())));
+
+      // RGB components match the semantic hue permanently (never turns grey).
+      expect((textColor.r * 255).round(), (expectedHue.r * 255).round());
+      expect((textColor.g * 255).round(), (expectedHue.g * 255).round());
+      expect((textColor.b * 255).round(), (expectedHue.b * 255).round());
+
+      final pillFinder =
+          find.ancestor(of: textFinder, matching: find.byType(Container));
+      expect(pillFinder, findsWidgets);
+      final pillContainer = tester.widget<Container>(pillFinder.first);
+      final decoration = pillContainer.decoration;
+      expect(decoration, isA<BoxDecoration>());
+      final box = decoration! as BoxDecoration;
+      expect(box.borderRadius, BorderRadius.circular(6));
+
+      if (expectStale) {
+        expect(textColor.a, closeTo(0.80, 0.04));
+        expect(box.border, isNotNull);
+        final border = box.border! as Border;
+        expect((border.top.color.r * 255).round(),
+            (expectedHue.r * 255).round());
+        expect((border.top.color.g * 255).round(),
+            (expectedHue.g * 255).round());
+        expect((border.top.color.b * 255).round(),
+            (expectedHue.b * 255).round());
+      } else {
+        expect(textColor.a, closeTo(1.0, 0.01));
+        expect(box.border, isNull);
+      }
+    }
+
+    // 45m ago is within 1 hour -> fresh solid soft pill.
+    expectPill(
+      nodeKey: nFreshFast.identityKey,
+      label: '2000 ms',
+      expectedHue: kLatencyFastColor,
+      expectStale: false,
+    );
+    expectPill(
+      nodeKey: nFreshSlow.identityKey,
+      label: '2001 ms',
+      expectedHue: kLatencyMediumColor,
+      expectStale: false,
+    );
+    expectPill(
+      nodeKey: nFreshFail.identityKey,
+      label: '测试失败',
+      expectedHue: kLatencyErrorColor,
+      expectStale: false,
+    );
+
+    // 3d ago is stale (> 1h) -> Plan B soft hue + outlined pill, NOT grey!
+    expectPill(
+      nodeKey: nStaleFast.identityKey,
+      label: '232 ms',
+      expectedHue: kLatencyFastColor,
+      expectStale: true,
+    );
+    expectPill(
+      nodeKey: nStaleSlow.identityKey,
+      label: '2500 ms',
+      expectedHue: kLatencyMediumColor,
+      expectStale: true,
+    );
+    expectPill(
+      nodeKey: nStaleFail.identityKey,
+      label: '测试失败',
+      expectedHue: kLatencyErrorColor,
+      expectStale: true,
+    );
+  });
+
+  testWidgets(
+      'Plan B persistent hue pills apply consistently to active profile historical delays',
+      (tester) async {
+    final now = DateTime.now();
+    final freshAt = now.subtract(const Duration(minutes: 30));
+    final staleAt = now.subtract(const Duration(hours: 2));
+    const profileA =
+        Profile(id: 'a', label: 'ActiveAlpha', autoUpdateDuration: Duration.zero);
+
+    final catalogA = ProfileCatalog(
+      profileId: 'a',
+      fingerprint: 'act',
+      status: ProfileCatalogStatus.ready,
+      nodes: [
+        _node('n1', 'Active Fresh 1800'),
+        _node('n2', 'Active Stale 320'),
+        _node('n3', 'Active Stale 2300'),
+      ],
+    );
+
+    final container = await mount(
+      tester,
+      width: 1280,
+      locale: const Locale('zh', 'CN'),
+      profiles: const [profileA],
+      catalogs: {'a': catalogA},
+      activeCatalog: catalogA,
+      health: {
+        'a': {
+          'n1': NodeHealthRecord(
+            delayMs: 1800,
+            testedAt: freshAt,
+            testUrlHash: '',
+          ),
+          'n2': NodeHealthRecord(
+            delayMs: 320,
+            testedAt: staleAt,
+            testUrlHash: '',
+          ),
+          'n3': NodeHealthRecord(
+            delayMs: 2300,
+            testedAt: staleAt,
+            testUrlHash: '',
+          ),
+        },
+      },
+    );
+
+    globalState.lastRuntimeProfileId = 'a';
+    container.read(currentProfileIdProvider.notifier).value = 'a';
+    container.read(groupsProvider.notifier).value = const [
+      Group(
+        name: 'Proxy',
+        type: GroupType.Selector,
+        hidden: false,
+        now: 'Active Fresh 1800',
+        all: [
+          Proxy(name: 'Active Fresh 1800', type: 'Shadowsocks'),
+          Proxy(name: 'Active Stale 320', type: 'Shadowsocks'),
+          Proxy(name: 'Active Stale 2300', type: 'Shadowsocks'),
+        ],
+      ),
+    ];
+    container.read(versionProvider.notifier).value = 2;
+    await tester.pumpAndSettle();
+
+    void expectActivePill({
+      required String label,
+      required Color expectedHue,
+      required bool expectStale,
+    }) {
+      final textFinder = find.text(label);
+      expect(textFinder, findsOneWidget);
+      final textWidget = tester.widget<Text>(textFinder);
+      final textColor = textWidget.style?.color;
+      expect(textColor, isNotNull);
+      expect((textColor!.r * 255).round(), (expectedHue.r * 255).round());
+      expect((textColor.g * 255).round(), (expectedHue.g * 255).round());
+      expect((textColor.b * 255).round(), (expectedHue.b * 255).round());
+
+      final pillContainer = tester.widget<Container>(
+        find.ancestor(of: textFinder, matching: find.byType(Container)).first,
+      );
+      final box = pillContainer.decoration! as BoxDecoration;
+      if (expectStale) {
+        expect(textColor.a, closeTo(0.80, 0.04));
+        expect(box.border, isNotNull);
+      } else {
+        expect(textColor.a, closeTo(1.0, 0.01));
+        expect(box.border, isNull);
+      }
+    }
+
+    expectActivePill(
+      label: '1800 ms',
+      expectedHue: kLatencyFastColor,
+      expectStale: false,
+    );
+    expectActivePill(
+      label: '320 ms',
+      expectedHue: kLatencyFastColor,
+      expectStale: true,
+    );
+    expectActivePill(
+      label: '2300 ms',
+      expectedHue: kLatencyMediumColor,
+      expectStale: true,
+    );
+  });
+
+  testWidgets(
+      'Scheme B tactile cyber proxy switch: single-click auto-slides thumb left<->right, rejects manual drag, shows hover disconnect warning, and scales cleanly',
+      (tester) async {
+    final controller = _ProxyController();
+    globalState.appController = controller;
+    const profileA = Profile(
+      id: 'a',
+      label: '主力订阅',
+      url: 'https://sub.example.com/a',
+      autoUpdateDuration: defaultUpdateDuration,
+      currentGroupName: 'Proxy',
+      selectedMap: {'Proxy': '香港 01'},
+    );
+    globalState.config = globalState.config.copyWith(
+      currentProfileId: 'a',
+      profiles: const [profileA],
+    );
+    globalState.appState = globalState.appState.copyWith(
+      groups: const [
+        Group(
+          name: 'Proxy',
+          type: GroupType.Selector,
+          hidden: false,
+          now: '香港 01',
+          all: [
+            Proxy(name: '香港 01', type: 'Shadowsocks'),
+          ],
+        ),
+      ],
+    );
+
+    final semanticsHandle = tester.ensureSemantics();
+    try {
+      final container = await mount(
+        tester,
+        width: 1200,
+        locale: const Locale('zh', 'CN'),
+        profiles: const [profileA],
+        catalogs: {
+          'a': ProfileCatalog(
+            profileId: 'a',
+            fingerprint: 'fa',
+            status: ProfileCatalogStatus.ready,
+            nodes: [
+              _node('hk-1', '香港 01').copyWith(selectGroups: const ['Proxy']),
+            ],
+          ),
+        },
+      );
+
+      final switchFinder = find.byKey(const ValueKey('overview-proxy-toggle'));
+      final earthFinder = find.byType(EarthProxySwitch);
+
+      // 1. Structure & OFF state assertions.
+      expect(switchFinder, findsOneWidget);
+      expect(earthFinder, findsOneWidget);
+      expect(find.text('开启代理'), findsNothing);
+      expect(
+        EarthProxySwitch.debugSnapshotOf(tester.element(earthFinder))!.activeMix,
+        0.0,
+      );
+
+      expect(
+        tester.getSemantics(switchFinder),
+        matchesSemantics(
+          label: '开启代理',
+          isButton: true,
+          isFocusable: true,
+          hasToggledState: true,
+          isToggled: false,
+          hasEnabledState: true,
+          isEnabled: true,
+          hasTapAction: true,
+          hasFocusAction: true,
+        ),
+      );
+
+      // 2. Manual drag gesture moves floating dock freely (including across wide sidebar)
+      //    without triggering proxy toggle.
+      final dockFinder =
+          find.byKey(const ValueKey('overview-floating-proxy-dock'));
+      final initialDockRect = tester.getRect(dockFinder);
+      await tester.drag(switchFinder, const Offset(-460, -110));
+      await tester.pumpAndSettle();
+      expect(controller.statusUpdates, isEmpty);
+      final draggedDockRect = tester.getRect(dockFinder);
+      expect(draggedDockRect.left, closeTo(initialDockRect.left - 460, 1.5));
+      expect(draggedDockRect.top, closeTo(initialDockRect.top - 110, 1.5));
+      expect(
+        draggedDockRect.left,
+        lessThan(296.0),
+        reason: 'Floating Earth dock must drag freely across the left sidebar area in wide mode',
+      );
+
+      // 3. Single click transitions Earth smoothly to ON state.
+      controller.onUpdateStatus = ({required isStart}) async {
+        container.read(runTimeProvider.notifier).value = isStart ? 1000 : null;
+      };
+      await tester.tap(switchFinder);
+      expect(controller.statusUpdates, [true]);
+
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 160));
+      final midOnMix =
+          EarthProxySwitch.debugSnapshotOf(tester.element(earthFinder))!
+              .activeMix;
+      expect(midOnMix, greaterThan(0.05));
+      expect(midOnMix, lessThan(0.99));
+
+      await tester.pumpAndSettle();
+      expect(
+        EarthProxySwitch.debugSnapshotOf(tester.element(earthFinder))!.activeMix,
+        closeTo(1.0, 0.01),
+      );
+      expect(find.text('运行中'), findsNothing);
+      expect(
+        tester.getSemantics(switchFinder),
+        matchesSemantics(
+          label: '关闭代理',
+          isButton: true,
+          isFocusable: true,
+          hasToggledState: true,
+          isToggled: true,
+          hasEnabledState: true,
+          isEnabled: true,
+          hasTapAction: true,
+          hasFocusAction: true,
+        ),
+      );
+
+      // 4. Hover while ON does not render pill captions or trigger extra toggle.
+      final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
+      await mouse.addPointer(location: Offset.zero);
+      addTearDown(mouse.removePointer);
+      await mouse.moveTo(tester.getCenter(switchFinder));
+      await tester.pumpAndSettle();
+      expect(find.text('关闭代理'), findsNothing);
+      expect(find.text('运行中'), findsNothing);
+      expect(controller.statusUpdates, [true]);
+
+      await mouse.moveTo(const Offset(2, 2));
+      await tester.pumpAndSettle();
+      expect(find.text('关闭代理'), findsNothing);
+      expect(find.text('运行中'), findsNothing);
+      expect(controller.statusUpdates, [true]);
+
+      // 5. Single click again transitions Earth smoothly back to OFF state.
+      await tester.tap(switchFinder);
+      expect(controller.statusUpdates, [true, false]);
+
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 160));
+      final midOffMix =
+          EarthProxySwitch.debugSnapshotOf(tester.element(earthFinder))!
+              .activeMix;
+      expect(midOffMix, lessThan(0.95));
+      expect(midOffMix, greaterThan(0.01));
+
+      await tester.pumpAndSettle();
+      expect(
+        EarthProxySwitch.debugSnapshotOf(tester.element(earthFinder))!.activeMix,
+        closeTo(0.0, 0.01),
+      );
+      expect(find.text('开启代理'), findsNothing);
+
+      // 6. Responsive 2.0x scaling across 320px/1200px and locales in ON state.
+      for (final (width, locale) in [
+        (320.0, const Locale('zh', 'CN')),
+        (320.0, const Locale('ru')),
+        (1200.0, const Locale('en')),
+        (1200.0, const Locale('ja')),
+      ]) {
+        await tester.pumpWidget(const SizedBox.shrink());
+        final scaledContainer = await mount(
+          tester,
+          width: width,
+          locale: locale,
+          profiles: const [profileA],
+          child: MediaQuery(
+            data: MediaQueryData(
+              size: Size(width, 1000),
+              textScaler: const TextScaler.linear(2.0),
+            ),
+            child: const NodeOverviewView(),
+          ),
+          catalogs: {
+            'a': ProfileCatalog(
+              profileId: 'a',
+              fingerprint: 'fa',
+              status: ProfileCatalogStatus.ready,
+              nodes: [
+                _node('hk-1', '香港 01').copyWith(selectGroups: const ['Proxy']),
+              ],
+            ),
+          },
+        );
+        scaledContainer.read(runTimeProvider.notifier).value = 1000;
+        await tester.pumpAndSettle();
+        expect(tester.takeException(), isNull);
+      }
+    } finally {
+      semanticsHandle.dispose();
+    }
+  });
+
+  testWidgets(
+      'Plan B persistent bottom floating proxy dock: removes top bar duplicate switch, anchors unique tactile switch at bottom-center of node pane, preserves side hit-testing and bottom scroll clearance',
+      (tester) async {
+    final controller = _ProxyController();
+    globalState.appController = controller;
+    final proxies = List.generate(
+      25,
+      (index) => Proxy(
+        name: '节点 ${(index + 1).toString().padLeft(2, '0')}',
+        type: 'Shadowsocks',
+      ),
+    );
+    const profileA = Profile(
+      id: 'a',
+      label: '主力订阅',
+      url: 'https://sub.example.com/a',
+      autoUpdateDuration: defaultUpdateDuration,
+      currentGroupName: 'Proxy',
+      selectedMap: {'Proxy': '节点 01'},
+    );
+    globalState.config = globalState.config.copyWith(
+      currentProfileId: 'a',
+      profiles: const [profileA],
+    );
+    globalState.appState = globalState.appState.copyWith(
+      groups: [
+        Group(
+          name: 'Proxy',
+          type: GroupType.Selector,
+          hidden: false,
+          now: '节点 01',
+          all: proxies,
+        ),
+      ],
+    );
+    final nodes = [
+      for (var i = 0; i < 25; i++)
+        _node(
+          'node-${i + 1}',
+          '节点 ${(i + 1).toString().padLeft(2, '0')}',
+        ).copyWith(selectGroups: const ['Proxy']),
+    ];
+
+    final container = await mount(
+      tester,
+      width: 1200,
+      locale: const Locale('zh', 'CN'),
+      profiles: const [profileA],
+      catalogs: {
+        'a': ProfileCatalog(
+          profileId: 'a',
+          fingerprint: 'fa',
+          status: ProfileCatalogStatus.ready,
+          nodes: nodes,
+        ),
+      },
+    );
+    controller.onUpdateStatus = ({required isStart}) async {
+      container.read(runTimeProvider.notifier).value = isStart ? 1000 : null;
+    };
+
+    final topBarFinder = find.byKey(const ValueKey('overview-connection-bar'));
+    final dockFinder =
+        find.byKey(const ValueKey('overview-floating-proxy-dock'));
+    final switchFinder = find.byKey(const ValueKey('overview-proxy-toggle'));
+    final nodesFinder = find.byKey(const ValueKey('overview-nodes'));
+
+    // 1. Single master switch resides exclusively inside bottom floating dock; top bar is status-only.
+    expect(topBarFinder, findsOneWidget);
+    expect(dockFinder, findsOneWidget);
+    expect(switchFinder, findsOneWidget);
+    expect(
+      find.descendant(of: topBarFinder, matching: switchFinder),
+      findsNothing,
+    );
+    expect(
+      find.descendant(of: dockFinder, matching: switchFinder),
+      findsOneWidget,
+    );
+
+    // 2. Undragged floating dock stays horizontally centered at bottom across full host viewport
+    //    and remains centered as window narrows/widens across the wide sidebar breakpoint.
+    final overviewFinder = find.byType(NodeOverviewView);
+    final initialOverviewRect = tester.getRect(overviewFinder);
+    final initialDockRect = tester.getRect(dockFinder);
+    final nodesRect = tester.getRect(nodesFinder);
+    expect(
+      initialDockRect.center.dx,
+      closeTo(initialOverviewRect.center.dx, 1.5),
+    );
+    expect(
+      initialDockRect.bottom,
+      closeTo(initialOverviewRect.bottom - 16.0, 1.5),
+    );
+    expect(initialDockRect.top, greaterThan(nodesRect.center.dy));
+
+    for (final width in const [720.0, 420.0, 1440.0, 1200.0]) {
+      tester.view.physicalSize = Size(width, 1000);
+      await tester.pumpAndSettle();
+      final resizedOverviewRect = tester.getRect(overviewFinder);
+      final resizedDockRect = tester.getRect(dockFinder);
+      expect(
+        resizedDockRect.center.dx,
+        closeTo(resizedOverviewRect.center.dx, 1.5),
+      );
+      expect(
+        resizedDockRect.bottom,
+        closeTo(resizedOverviewRect.bottom - 16.0, 1.5),
+      );
+    }
+
+    // 3. Scrolling down keeps floating dock anchored at exact screen position and responsive to single click.
+    await tester.drag(nodesFinder, const Offset(0, -420));
+    await tester.pumpAndSettle();
+    expect(tester.getRect(dockFinder), initialDockRect);
+
+    await tester.tap(switchFinder);
+    await tester.pumpAndSettle();
+    expect(controller.statusUpdates, [true]);
+    expect(
+      tester.widget<EarthProxySwitch>(find.byType(EarthProxySwitch)).isRunning,
+      isTrue,
+    );
+    expect(find.text('代理已开启 · 正在使用 主力订阅 · 节点 01'), findsOneWidget);
+
+    // 4. Side hit-testing outside capsule passes cleanly to node rows/buttons; bezel absorbs stray taps.
+    final changesBeforeSideTap = controller.changes.length;
+    Finder? sideUseButtonFinder;
+    for (var i = 1; i <= 25; i++) {
+      final candidate = find.byKey(
+        ValueKey('overview-use-a-节点 ${i.toString().padLeft(2, '0')}'),
+      );
+      if (candidate.evaluate().isEmpty) continue;
+      final rect = tester.getRect(candidate);
+      if (rect.center.dy >= initialDockRect.top &&
+          rect.center.dy <= initialDockRect.bottom &&
+          rect.left >= initialDockRect.right) {
+        sideUseButtonFinder = candidate;
+        break;
+      }
+    }
+    sideUseButtonFinder ??= () {
+      for (var i = 1; i <= 25; i++) {
+        final candidate = find.byKey(
+          ValueKey('overview-use-a-节点 ${i.toString().padLeft(2, '0')}'),
+        );
+        if (candidate.evaluate().isEmpty) continue;
+        final rect = tester.getRect(candidate);
+        if (rect.left >= initialDockRect.right &&
+            rect.top >= nodesRect.top &&
+            rect.bottom <= nodesRect.bottom) {
+          return candidate;
+        }
+      }
+      return find.byKey(const ValueKey('overview-use-a-节点 08'));
+    }();
+    await tester.tap(sideUseButtonFinder);
+    await tester.pumpAndSettle();
+    expect(controller.changes.length, greaterThan(changesBeforeSideTap));
+
+    final changesBeforeBezelTap = controller.changes.length;
+    final updatesBeforeBezelTap = controller.statusUpdates.length;
+    await tester.tapAt(
+      Offset(initialDockRect.left + 2.0, initialDockRect.center.dy),
+    );
+    await tester.pumpAndSettle();
+    expect(controller.changes.length, changesBeforeBezelTap);
+    expect(controller.statusUpdates.length, updatesBeforeBezelTap);
+
+    // 5. Scrolling all the way to bottom leaves final node completely clear above the floating dock.
+    final scrollable = tester.state<ScrollableState>(
+      find.descendant(of: nodesFinder, matching: find.byType(Scrollable)).first,
+    );
+    scrollable.position.jumpTo(scrollable.position.maxScrollExtent);
+    await tester.pumpAndSettle();
+    final lastNodeTextFinder = find.text('节点 25');
+    expect(lastNodeTextFinder, findsOneWidget);
+    expect(
+      tester.getRect(lastNodeTextFinder).bottom,
+      lessThanOrEqualTo(initialDockRect.top),
+    );
+
+    // 6. Empty profiles list hides both connection bar and floating dock.
+    await tester.pumpWidget(const SizedBox.shrink());
+    await mount(
+      tester,
+      width: 1200,
+      locale: const Locale('zh', 'CN'),
+      profiles: const <Profile>[],
+    );
+    expect(dockFinder, findsNothing);
+    expect(switchFinder, findsNothing);
+
+    // 7. 2.0x text scaling across narrow/wide viewports, light/dark themes, and locales stays within bounds.
+    for (final (width, locale, brightness) in [
+      (320.0, const Locale('ru'), Brightness.dark),
+      (1200.0, const Locale('ja'), Brightness.light),
+    ]) {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await mount(
+        tester,
+        width: width,
+        locale: locale,
+        profiles: const [profileA],
+        child: Theme(
+          data: ThemeData(brightness: brightness, useMaterial3: true),
+          child: MediaQuery(
+            data: MediaQueryData(
+              size: Size(width, 1000),
+              textScaler: const TextScaler.linear(2.0),
+            ),
+            child: const NodeOverviewView(),
+          ),
+        ),
+        catalogs: {
+          'a': ProfileCatalog(
+            profileId: 'a',
+            fingerprint: 'fa',
+            status: ProfileCatalogStatus.ready,
+            nodes: [nodes.first],
+          ),
+        },
+      );
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      final scaledDockRect = tester.getRect(dockFinder);
+      final scaledNodesRect = tester.getRect(nodesFinder);
+      expect(scaledDockRect.left, greaterThanOrEqualTo(scaledNodesRect.left));
+      expect(scaledDockRect.right, lessThanOrEqualTo(scaledNodesRect.right));
+    }
+  });
+}
+
+class _OverviewWindowsTunEffects implements WindowsTunStartupEffects {
+  _OverviewWindowsTunEffects({this.onReflectRunning});
+
+  final VoidCallback? onReflectRunning;
+  final calls = <String>[];
+  bool running = false;
+  bool enabled = false;
+  bool elevated = false;
+  bool profile = false;
+
+  @override
+  bool get proxyRunning => running;
+
+  @override
+  Future<bool> hasProfile() async {
+    calls.add('profile');
+    return profile;
+  }
+
+  @override
+  Future<TunStatus?> observe() async {
+    calls.add('observe');
+    return TunStatus(
+      instanceId: 'win-core',
+      revision: calls.length,
+      state: enabled ? 'on' : 'off',
+      listenerActive: enabled,
+      interfaceState: enabled ? 'up' : 'missing',
+      privilege: elevated ? 'elevated' : 'unprivileged',
+      requestedEnabled: enabled,
+    );
+  }
+
+  @override
+  Future<bool> componentsMatch() async {
+    calls.add('match');
+    return true;
+  }
+
+  @override
+  bool canMigrate() => true;
+
+  @override
+  Future<bool> authorize() async {
+    calls.add('authorize');
+    return true;
+  }
+
+  @override
+  Future<bool> ensureBackend(bool Function() isCurrent) async {
+    calls.add('backend');
+    elevated = true;
+    return true;
+  }
+
+  @override
+  Future<void> initialize(bool Function() isCurrent) async {
+    calls.add('initialize');
+  }
+
+  @override
+  Future<void> applyConfiguration({
+    required bool full,
+    required bool Function() isCurrent,
+  }) async {
+    calls.add(full ? 'configure' : 'incremental');
+  }
+
+  @override
+  Future<bool> startListener() async {
+    calls.add('listener');
+    running = true;
+    enabled = true;
+    return true;
+  }
+
+  @override
+  Future<void> stopProxy() async {
+    calls.add('stop-proxy');
+    running = false;
+    enabled = false;
+  }
+
+  @override
+  Future<void> reflectRunning(bool Function() isCurrent) async {
+    if (isCurrent()) {
+      calls.add('reflect');
+      onReflectRunning?.call();
+    }
+  }
+
+  @override
+  Future<void> startProxyWithoutTun() async {
+    calls.add('proxy-only');
+    running = true;
+  }
+
+  @override
+  Future<void> restartCore() async {
+    calls.add('restart-core');
+  }
+
+  @override
+  void log(String message) {}
+}
+
+class _WindowsOnboardingController extends AppController {
+  _WindowsOnboardingController(
+    super.context,
+    super.ref, {
+    required super.windowsStartupEffects,
+    required super.tunRuntimeController,
+    required this.onAddUrl,
+  }) : super(tunSettleDelay: Duration.zero);
+
+  final Future<void> Function(String url) onAddUrl;
+
+  @override
+  Future<void> addProfileFormURL(String url) => onAddUrl(url);
+
+  @override
+  void applyProfileDebounce({
+    bool silence = false,
+    bool skipIfUnchanged = false,
+  }) {}
+
+  @override
+  void changeProxyDebounce(String groupName, String proxyName) {}
 }

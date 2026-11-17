@@ -1,15 +1,20 @@
 package listener
 
 import (
+ "context"
+ "os/exec"
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	C "github.com/metacubex/mihomo/constant"
 	LC "github.com/metacubex/mihomo/listener/config"
+	"github.com/metacubex/mihomo/listener/sing_tun"
 )
 
 type fcxFakeTun struct { config LC.Tun; closeError error }
@@ -187,5 +192,175 @@ func TestFCXTunStatusNotReadyDuringSlowClose(t *testing.T) {
 				t.Fatalf("terminal state not published after close: %+v", stopped)
 			}
 		})
+	}
+}
+
+func TestFCXTunStartupTimingSharesMonotonicSeqAndRecordsAccurateErrors(t *testing.T) {
+	fcxTestReset(t)
+	t.Setenv("FCX_STARTUP_ID", "corr-listener-seq-01")
+	var lines []string
+	var starts []string
+	restore := sing_tun.SetFCXStartupTimingLineHookForTest(func(line string) {
+		if strings.Contains(line, "stage=tun.lock_wait") { return }
+  if strings.Contains(line, "event=stage_start") { starts = append(starts, line) } else { lines = append(lines, line) }
+	})
+	defer restore()
+
+	fcxCreateTun = func(config LC.Tun, _ C.Tunnel) (fcxTunListener, error) {
+		sing_tun.FCXEmitStartupTiming("sing_tun.device", 5*time.Millisecond, "ok", "", nil)
+		return &fcxFakeTun{config: config}, nil
+	}
+	ReCreateTun(LC.Tun{Enable: true, Device: "fcx-test"}, nil)
+
+	fcxCreateTun = func(LC.Tun, C.Tunnel) (fcxTunListener, error) {
+		err := fmt.Errorf("adapter open failed: %w", os.ErrPermission)
+		fcxLogTunTiming("sing_tun.New", fcxStartupTimingStart(), "error", "", fcxTunErrorCode(err), err)
+		return nil, err
+	}
+	ReCreateTun(LC.Tun{Enable: true, Device: "fcx-test-fail"}, nil)
+	if len(starts) != 2 || !strings.Contains(starts[0], "stage=ReCreateTun tunAttempt=") || !strings.Contains(starts[1], "stage=ReCreateTun tunAttempt=") || starts[0] == starts[1] {
+		t.Fatalf("expected distinct ReCreateTun starts: %v", starts)
+	}
+
+	if len(lines) != 4 {
+		t.Fatalf("expected 4 timing lines across success and failure runs, got %d: %v", len(lines), lines)
+	}
+	prevSeq := uint64(0)
+	for idx, line := range lines {
+		if !strings.Contains(line, "schema=2 event=stage_end correlationId=corr-listener-seq-01 ") {
+			t.Fatalf("line %d missing schema=2 correlationId header: %s", idx, line)
+		}
+		seqPos := strings.Index(line, " seq=")
+		if seqPos < 0 {
+			t.Fatalf("line %d missing seq: %s", idx, line)
+		}
+		seqRest := line[seqPos+len(" seq="):]
+		seqToken := strings.SplitN(seqRest, " ", 2)[0]
+		seqVal, err := strconv.ParseUint(seqToken, 10, 64)
+		if err != nil || seqVal <= prevSeq {
+			t.Fatalf("non-monotonic seq across sing_tun and listener at line %d (prev=%d got=%q): %s", idx, prevSeq, seqToken, line)
+		}
+		prevSeq = seqVal
+	}
+	if strings.Contains(lines[1], "errorCode=") || strings.Contains(lines[1], "error=") {
+		t.Fatalf("successful ReCreateTun emitted empty error fields: %s", lines[1])
+	}
+	if !strings.Contains(lines[2], "stage=sing_tun.New") ||
+		!strings.Contains(lines[2], "outcome=error errorCode=permissionDenied") ||
+		!strings.Contains(lines[2], "adapter open failed") {
+		t.Fatalf("sing_tun.New failure line lost errorCode/error details: %s", lines[2])
+	}
+	if !strings.Contains(lines[3], "stage=ReCreateTun") ||
+		!strings.Contains(lines[3], "outcome=error state=failed errorCode=permissionDenied") ||
+		!strings.Contains(lines[3], "adapter open failed") {
+		t.Fatalf("ReCreateTun failure line lost terminal state/error details: %s", lines[3])
+	}
+}
+
+
+func TestFCXQueuedRecreateIsVisibleBeforeLockAcquisition(t *testing.T) {
+ fcxTestReset(t)
+ waiting := make(chan string, 1)
+ ended := make(chan string, 1)
+ restore := sing_tun.SetFCXStartupTimingLineHookForTest(func(line string) {
+  if !strings.Contains(line, "stage=tun.lock_wait ") { return }
+  if strings.Contains(line, "event=stage_start ") { waiting <- line } else { ended <- line }
+ })
+ defer restore()
+ done := make(chan struct{})
+ tunMux.Lock()
+ go func() { ReCreateTun(LC.Tun{}, nil); close(done) }()
+ var start string
+ select {
+ case start = <-waiting:
+ case <-time.After(2*time.Second): tunMux.Unlock(); <-done; t.Fatal("no event while waiting for tunMux")
+ }
+ tunMux.Unlock()
+ <-done
+ end := <-ended
+ _, startID, ok := strings.Cut(start, " tunAttempt=")
+ _, endID, _ := strings.Cut(end, " tunAttempt=")
+ if !ok || startID == "0" || startID != endID { t.Fatalf("mismatched lock events: %s / %s", start, end) }
+}
+
+func TestFCXTunLifecycleReturnsWithStalledLogPipes(t *testing.T) {
+	if mode := os.Getenv("FCX_TEST_TIMING_STALL"); mode != "" {
+		fcxTestReset(t) // In-memory listener; no real adapter or traffic.
+		for i := 0; i < 8192; i++ {
+			enable := mode == "toggle" && i%2 == 0
+			ReCreateTun(LC.Tun{Enable: enable, Device: "fcx-test"}, nil)
+			status := GetTunLifecycleStatus()
+			if status.ListenerActive != enable || status.ErrorCode != "" {
+				os.Exit(2)
+			}
+		}
+		os.Exit(0)
+	}
+	for _, mode := range []string{"off", "toggle"} {
+		t.Run(mode, func(t *testing.T) {
+			r, w, err := os.Pipe()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer r.Close()
+			defer w.Close()
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancel()
+			cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestFCXTunLifecycleReturnsWithStalledLogPipes$")
+			cmd.Env = append(os.Environ(), "FCX_TEST_TIMING_STALL="+mode)
+			cmd.Stderr = w // Deliberately never drained.
+			if mode == "off" {
+				cmd.Stdout = w // Also catches the former synchronous stdout path.
+			}
+			if err := cmd.Run(); err != nil {
+				t.Fatalf("TUN lifecycle stalled or failed: %v (deadline: %v)", err, ctx.Err())
+			}
+		})
+	}
+}
+
+func TestFCXIdenticalReloadPreservesActiveTunAttempt(t *testing.T) {
+	fcxTestReset(t)
+	cfg := LC.Tun{Enable: true, Device: "fcx-reload-test"}
+	ReCreateTun(cfg, nil)
+	createdStatus := GetTunLifecycleStatus()
+	if createdStatus.State != "on" || createdStatus.TunAttempt == 0 {
+		t.Fatalf("expected active TUN attempt after initial create, got %+v", createdStatus)
+	}
+	initialAttempt := createdStatus.TunAttempt
+
+	// Identical reload hits OnReload() without recreating sing_tun; the status
+	// snapshot must continue referencing the attempt that created the live adapter.
+	ReCreateTun(cfg, nil)
+	reloadedStatus := GetTunLifecycleStatus()
+	if reloadedStatus.State != "on" || reloadedStatus.TunAttempt != initialAttempt {
+		t.Fatalf("expected identical OnReload to preserve TunAttempt=%d, got %+v", initialAttempt, reloadedStatus)
+	}
+
+	// An actual disable transition advances TunAttempt to the new operation.
+	ReCreateTun(LC.Tun{Enable: false, Device: "fcx-reload-test"}, nil)
+	disabledStatus := GetTunLifecycleStatus()
+	if disabledStatus.State != "off" || disabledStatus.TunAttempt <= initialAttempt {
+		t.Fatalf("expected disable to advance TunAttempt past %d, got %+v", initialAttempt, disabledStatus)
+	}
+}
+
+func TestFCXTunAdapterCreateFailureHasDedicatedErrorCode(t *testing.T) {
+	fcxTestReset(t)
+	fcxCreateTun = func(LC.Tun, C.Tunnel) (fcxTunListener, error) {
+		return nil, fmt.Errorf("configure tun interface: %w", sing_tun.FCXWrapAdapterCreateError(errors.New("The system cannot find the file specified.")))
+	}
+	ReCreateTun(LC.Tun{Enable: true, Device: "fcx-test"}, nil)
+	status := GetTunLifecycleStatus()
+	if status.State != "failed" || status.ListenerActive || status.ErrorCode != "adapterCreateFailed" {
+		t.Fatalf("Wintun adapter creation failure was not reported distinctly: %+v", status)
+	}
+
+	fcxCreateTun = func(LC.Tun, C.Tunnel) (fcxTunListener, error) {
+		return nil, errors.New("configure tun interface: set ipv4 address: denied")
+	}
+	ReCreateTun(LC.Tun{Enable: true, Device: "fcx-test-other"}, nil)
+	if status := GetTunLifecycleStatus(); status.ErrorCode != "startFailed" {
+		t.Fatalf("non-adapter failures must keep startFailed: %+v", status)
 	}
 }

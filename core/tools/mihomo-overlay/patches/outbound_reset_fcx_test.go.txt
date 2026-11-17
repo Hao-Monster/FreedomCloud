@@ -1,0 +1,275 @@
+package outbound
+
+import (
+	"context"
+	"errors"
+	"io"
+	"net"
+	"sync/atomic"
+	"testing"
+
+	C "github.com/metacubex/mihomo/constant"
+	"github.com/metacubex/mihomo/transport/anytls"
+	"github.com/metacubex/mihomo/transport/anytls/padding"
+	"github.com/metacubex/mihomo/transport/anytls/session"
+	"github.com/metacubex/mihomo/transport/gun"
+	"github.com/metacubex/mihomo/transport/shadowquic"
+	"github.com/metacubex/mihomo/transport/snell"
+	"github.com/metacubex/mihomo/transport/tuic"
+	"github.com/metacubex/mihomo/transport/xhttp"
+
+	"github.com/metacubex/http"
+	"github.com/metacubex/quic-go"
+	sqquic "github.com/metacubex/jls-quic-go"
+	M "github.com/metacubex/sing/common/metadata"
+	N "github.com/metacubex/sing/common/network"
+)
+
+type fcxClosableRoundTripper struct {
+	closed atomic.Int32
+}
+
+func (rt *fcxClosableRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	return nil, errors.New("synthetic roundtrip")
+}
+
+func (rt *fcxClosableRoundTripper) CloseIdleConnections() {
+	rt.closed.Add(1)
+}
+
+type fcxPipeSingDialer struct {
+	dials  atomic.Int32
+	closed atomic.Int32
+}
+
+type fcxCountingConn struct {
+	net.Conn
+	onClose func()
+	closed  atomic.Bool
+}
+
+func (c *fcxCountingConn) Close() error {
+	if c.closed.CompareAndSwap(false, true) && c.onClose != nil {
+		c.onClose()
+	}
+	return c.Conn.Close()
+}
+
+func (d *fcxPipeSingDialer) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
+	d.dials.Add(1)
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	c1, c2 := net.Pipe()
+	go func() {
+		_, _ = io.Copy(io.Discard, c2)
+	}()
+	return &fcxCountingConn{
+		Conn: c1,
+		onClose: func() {
+			d.closed.Add(1)
+			_ = c2.Close()
+		},
+	}, nil
+}
+
+func (d *fcxPipeSingDialer) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
+	return nil, errors.New("unused")
+}
+
+var _ N.Dialer = (*fcxPipeSingDialer)(nil)
+
+func TestFCXOutboundResetEvictsPooledSessionsNonDestructively(t *testing.T) {
+	// 1. Vless xhttp ReuseManager + gun client: ResetAdapterConnectionsFCX must close pooled
+	// transports WITHOUT cancelling xhttpClient's lifetime context, so subsequent dials create fresh transports.
+	var madeTransports atomic.Int32
+	var lastRT *fcxClosableRoundTripper
+	xhttpCfg := &xhttp.Config{
+		Mode:        "stream-one",
+		Host:        "example.com",
+		Path:        "/",
+		ReuseConfig: &xhttp.ReuseConfig{},
+	}
+	xc, err := xhttp.NewClient(xhttpCfg, func() http.RoundTripper {
+		madeTransports.Add(1)
+		rt := &fcxClosableRoundTripper{}
+		lastRT = rt
+		return rt
+	}, nil, false)
+	if err != nil {
+		t.Fatalf("xhttp.NewClient failed: %v", err)
+	}
+	t.Cleanup(func() { _ = xc.Close() })
+
+	// Acquire a reusable transport entry on old WiFi, then release stream usage so it stays pooled.
+	ctxCanceled, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, _ = xc.Dial(ctxCanceled)
+	if madeTransports.Load() != 1 || lastRT == nil {
+		t.Fatalf("expected 1 pooled xhttp transport before reset, got %d", madeTransports.Load())
+	}
+	firstRT := lastRT
+
+	var gunMade atomic.Int32
+	gc := gun.NewClient(func() *gun.Transport {
+		gunMade.Add(1)
+		return &gun.Transport{}
+	}, 1, 0, 0)
+
+	vlessAdapter := &Vless{
+		Base:        NewBase(BaseOption{Name: "vless-xhttp", Type: C.Vless}),
+		xhttpClient: xc,
+		gunClient:   gc,
+	}
+	ResetAdapterConnectionsFCX(vlessAdapter)
+
+	if firstRT.closed.Load() < 1 {
+		t.Fatalf("expected pooled xhttp transport CloseIdleConnections() on network reset, got %d", firstRT.closed.Load())
+	}
+	// Dial again with canceled ctx: if xhttpClient remained non-destructively alive, ReuseManager calls maker() a 2nd time!
+	_, _ = xc.Dial(ctxCanceled)
+	if madeTransports.Load() != 2 {
+		t.Fatalf("expected xhttpClient to remain reusable and allocate fresh transport #2 after reset, got %d", madeTransports.Load())
+	}
+
+	// 2. Tuic PoolClient: ResetAdapterConnectionsFCX must evict pooled QUIC clients while keeping PoolClient dialable.
+	var tuicDials atomic.Int32
+	tuicPool := tuic.NewPoolClientV5(&tuic.ClientOptionV5{MaxOpenStreams: 10}, func(ctx context.Context) (*quic.Conn, error) {
+		tuicDials.Add(1)
+		return nil, errors.New("synthetic quic dial")
+	})
+	_, _ = tuicPool.DialContext(context.Background(), &C.Metadata{Host: "example.com", DstPort: 443})
+	if tuicDials.Load() != 1 {
+		t.Fatalf("expected 1 tuic dial, got %d", tuicDials.Load())
+	}
+	tuicAdapter := &Tuic{
+		Base:   NewBase(BaseOption{Name: "tuic-node", Type: C.Tuic}),
+		client: tuicPool,
+	}
+	ResetAdapterConnectionsFCX(tuicAdapter)
+	_, _ = tuicPool.DialContext(context.Background(), &C.Metadata{Host: "example.com", DstPort: 443})
+	if tuicDials.Load() != 2 {
+		t.Fatalf("expected Tuic PoolClient to remain alive after reset, got %d dials", tuicDials.Load())
+	}
+
+	// 3. Snell connection pool: ResetAdapterConnectionsFCX must evict idle TCP connections in pool.
+	var snellEvicted atomic.Int32
+	snellPool := snell.NewPool(func(ctx context.Context) (*snell.Snell, error) {
+		c1, c2 := net.Pipe()
+		_ = c2.Close()
+		conn := &fcxCountingConn{
+			Conn:    c1,
+			onClose: func() { snellEvicted.Add(1) },
+		}
+		return snell.StreamConn(conn, []byte("test-psk-123456"), snell.Version3), nil
+	})
+	pooledConn, err := snellPool.GetContext(context.Background())
+	if err != nil {
+		t.Fatalf("snellPool.GetContext: %v", err)
+	}
+	pc := pooledConn.(*snell.PoolConn)
+	snellPool.Put(pc.Snell) // HalfClose writes zero chunk; if pipe closed, let's also test direct pool reset.
+	// Also test pool.ResetConnectionsFCX directly via Snell adapter when an item is sitting in pool.
+	c1, c2 := net.Pipe()
+	go func() {
+		buf := make([]byte, 64)
+		for {
+			if _, rerr := c2.Read(buf); rerr != nil {
+				return
+			}
+		}
+	}()
+	t.Cleanup(func() { _ = c2.Close() })
+	snellPool2 := snell.NewPool(func(ctx context.Context) (*snell.Snell, error) {
+		conn := &fcxCountingConn{
+			Conn:    c1,
+			onClose: func() { snellEvicted.Add(1) },
+		}
+		return snell.StreamConn(conn, []byte("test-psk-123456"), snell.Version3), nil
+	})
+	got2, err := snellPool2.GetContext(context.Background())
+	if err != nil {
+		t.Fatalf("snellPool2.GetContext: %v", err)
+	}
+	snellPool2.Put(got2.(*snell.PoolConn).Snell)
+	evictedBefore := snellEvicted.Load()
+	ResetAdapterConnectionsFCX(&Snell{
+		Base: NewBase(BaseOption{Name: "snell-node", Type: C.Snell}),
+		pool: snellPool2,
+	})
+	if snellEvicted.Load() <= evictedBefore {
+		t.Fatalf("expected Snell idle pool entry to be closed on network reset (before=%d after=%d)", evictedBefore, snellEvicted.Load())
+	}
+
+	// 4. ShadowQuic + SingMux recursion: ResetAdapterConnectionsFCX must not mark ShadowQuic permanently closed.
+	var sqDials atomic.Int32
+	sqClient := shadowquic.NewClient(&shadowquic.ClientOption{
+		Dial: func(ctx context.Context) (*sqquic.Conn, error) {
+			sqDials.Add(1)
+			return nil, errors.New("synthetic shadowquic dial")
+		},
+	})
+	sqAdapter := &ShadowQuic{
+		Base:   NewBase(BaseOption{Name: "sq-node", Type: C.ShadowQuic}),
+		client: sqClient,
+	}
+	smuxWrapped, err := NewSingMux(SingMuxOption{Enabled: true, Protocol: "smux"}, sqAdapter)
+	if err != nil {
+		t.Fatalf("NewSingMux failed: %v", err)
+	}
+	ResetAdapterConnectionsFCX(smuxWrapped)
+	_, err = sqAdapter.DialContext(context.Background(), &C.Metadata{Host: "example.com", DstPort: 443})
+	if errors.Is(err, net.ErrClosed) || sqDials.Load() != 1 {
+		t.Fatalf("ShadowQuic was permanently closed by reset instead of staying dialable: err=%v dials=%d", err, sqDials.Load())
+	}
+
+	// 5. AnyTLS: ResetAdapterConnectionsFCX must evict pooled sessions AND not cancel sessionClient's die context (io.ErrClosedPipe).
+	var padPtr atomic.Pointer[padding.PaddingFactory]
+	padding.UpdatePaddingScheme(padding.DefaultPaddingScheme, &padPtr)
+	var sessionConnClosed atomic.Int32
+	sessClient := session.NewClient(context.Background(), func(ctx context.Context) (net.Conn, error) {
+		c1, c2 := net.Pipe()
+		go func() {
+			_, _ = io.Copy(io.Discard, c2)
+		}()
+		return &fcxCountingConn{
+			Conn: c1,
+			onClose: func() {
+				sessionConnClosed.Add(1)
+				_ = c2.Close()
+			},
+		}, nil
+	}, &padPtr, "", 0, 0, 0, false)
+	t.Cleanup(func() { _ = sessClient.Close() })
+	atlsStream, err := sessClient.CreateStream(context.Background())
+	if err != nil {
+		t.Fatalf("anytls session.CreateStream failed: %v", err)
+	}
+	_ = atlsStream.Close()
+	if sessionConnClosed.Load() != 0 {
+		t.Fatalf("expected idle AnyTLS session to stay pooled before reset, got closed=%d", sessionConnClosed.Load())
+	}
+	sessClient.ResetConnectionsFCX()
+	if sessionConnClosed.Load() != 1 {
+		t.Fatalf("expected AnyTLS ResetConnectionsFCX to close pooled session socket, got closed=%d", sessionConnClosed.Load())
+	}
+
+	pipeDialer := &fcxPipeSingDialer{}
+	atlsClient := anytls.NewClient(context.Background(), anytls.ClientConfig{
+		Password: "pw",
+		Server:   M.ParseSocksaddrHostPort("127.0.0.1", 443),
+		Dialer:   pipeDialer,
+	})
+	t.Cleanup(func() { _ = atlsClient.Close() })
+	atlsAdapter := &AnyTLS{
+		Base:   NewBase(BaseOption{Name: "anytls-node", Type: C.AnyTLS}),
+		client: atlsClient,
+	}
+	ResetAdapterConnectionsFCX(atlsAdapter)
+	ctxShort, cancelShort := context.WithCancel(context.Background())
+	cancelShort()
+	_, err = atlsAdapter.DialContext(ctxShort, &C.Metadata{Host: "example.com", DstPort: 443})
+	if errors.Is(err, io.ErrClosedPipe) || pipeDialer.dials.Load() != 1 {
+		t.Fatalf("AnyTLS session client was permanently killed instead of non-destructively reset: err=%v dials=%d", err, pipeDialer.dials.Load())
+	}
+}

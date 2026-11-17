@@ -5,48 +5,162 @@ import 'dart:isolate';
 
 import 'package:archive/archive.dart';
 import 'package:flclashx/clash/clash.dart';
+import 'package:flclashx/clash/windows_agent_launch.dart';
 import 'package:flclashx/common/archive.dart';
+import 'package:flclashx/common/signed_update.dart';
 import 'package:flclashx/services/subscription_notification_service.dart';
 import 'package:flclashx/enum/enum.dart';
 import 'package:flclashx/plugins/app.dart';
+import 'package:flclashx/plugins/service.dart';
 import 'package:flclashx/providers/providers.dart';
 import 'package:flclashx/state.dart';
 import 'package:flclashx/widgets/dialog.dart';
+import 'package:flclashx/widgets/signed_update_dialog.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:path/path.dart' hide windows;
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 import 'common/common.dart';
 import 'common/admin_authorization.dart';
 import 'common/delay_tests.dart';
 import 'common/node_health_recorder.dart';
 import 'common/node_health_store.dart';
+import 'common/smart_node_selection.dart';
 import 'common/tun_runtime.dart';
 import 'common/ui_activity.dart';
 import 'common/windows_tun_prepare.dart';
 import 'common/windows_tun_startup.dart';
+import 'manager/proxy_manager.dart';
 import 'models/models.dart';
 import 'plugins/vpn.dart';
 import 'providers/node_overview.dart';
 import 'views/profiles/override_profile.dart';
 
+@visibleForTesting
+Future<void> deleteProfileFilesInIsolate(
+  String profilePath,
+  String providersDirPath,
+) =>
+    Isolate.run(() async {
+      Future<void> removePath(String targetPath) async {
+        final entityType =
+            await FileSystemEntity.type(targetPath, followLinks: false);
+        switch (entityType) {
+          case FileSystemEntityType.notFound:
+            return;
+          case FileSystemEntityType.directory:
+            await Directory(targetPath).delete(recursive: true);
+            return;
+          default:
+            await File(targetPath).delete(recursive: true);
+            return;
+        }
+      }
+
+      await Future.wait([
+        removePath(profilePath),
+        removePath(providersDirPath),
+      ]);
+    });
+
+@visibleForTesting
+bool shouldSkipUnchangedSilentSetup({
+  required bool skipIfUnchanged,
+  required bool isAndroid,
+  required bool isWindows,
+  required bool explicitTunOperation,
+  required bool needsWindowsCoreRestore,
+  required bool hasAppliedWindowsProfile,
+  required String? lastAppliedWindowsProfileId,
+  required String? applyingProfileId,
+  required bool hasActiveTunRepair,
+  required bool hasTunRequestFailure,
+  required bool isCoreInit,
+  required bool matchesCommittedSetup,
+}) {
+  if (!skipIfUnchanged ||
+      isAndroid ||
+      explicitTunOperation ||
+      !isCoreInit ||
+      !matchesCommittedSetup) {
+    return false;
+  }
+  if (isWindows &&
+      (needsWindowsCoreRestore ||
+          !hasAppliedWindowsProfile ||
+          lastAppliedWindowsProfileId != applyingProfileId ||
+          hasActiveTunRepair ||
+          hasTunRequestFailure)) {
+    return false;
+  }
+  return true;
+}
+
+/// Dispatches a proxy selection switch with the caller's surgical
+/// [closeConnections] intent so the Core can evict only displaced circuits
+/// instead of closing unrelated long-lived connections globally.
+Future<String> performSurgicalChangeProxy({
+  required ClashCore core,
+  required String groupName,
+  required String proxyName,
+  required bool closeConnections,
+}) =>
+    core.changeProxy(
+      ChangeProxyParams(
+        groupName: groupName,
+        proxyName: proxyName,
+        closeConnections: closeConnections,
+      ),
+    );
+
+@visibleForTesting
+class AppShutdownEffects {
+  const AppShutdownEffects({
+    required this.usesAgent,
+    required this.agentCoreReady,
+    required this.stopListener,
+    required this.stopVpn,
+    required this.shutdownCore,
+    required this.destroyService,
+    required this.detachService,
+    this.exitApp,
+    this.clearLocalState,
+  });
+
+  final bool Function() usesAgent;
+  final bool Function() agentCoreReady;
+  final Future<void> Function() stopListener;
+  final Future<void> Function() stopVpn;
+  final Future<void> Function() shutdownCore;
+  final Future<void> Function() destroyService;
+  final Future<void> Function() detachService;
+  final Future<void> Function()? exitApp;
+  final Future<void> Function()? clearLocalState;
+}
+
 class AppController {
-  AppController(this.context, WidgetRef ref, {
+  AppController(BuildContext context, WidgetRef ref, {
     WindowsTunStartupEffects? windowsStartupEffects,
+    AppShutdownEffects? shutdownEffects,
     TunRuntimeController? tunRuntimeController,
     Future<DateTime?> Function()? nativeRunTimeProbe,
+    Future<void> Function()? flushSystemDnsCache,
     Duration tunSettleDelay = const Duration(milliseconds: 500),
-  }) : _ref = ref,
+  }) : _context = context,
+       _ref = ref,
        _windowsStartupEffects = windowsStartupEffects,
+       _shutdownEffects = shutdownEffects,
        _nativeRunTimeProbe = nativeRunTimeProbe,
+       _flushSystemDnsCacheOverride = flushSystemDnsCache,
        _tunSettleDelay = tunSettleDelay,
        _tunRuntime = tunRuntimeController ?? tunRuntime;
   final WindowsTunStartupEffects? _windowsStartupEffects;
+  final AppShutdownEffects? _shutdownEffects;
   final Future<DateTime?> Function()? _nativeRunTimeProbe;
+  final Future<void> Function()? _flushSystemDnsCacheOverride;
   final Duration _tunSettleDelay;
   final TunRuntimeController _tunRuntime;
   Future<void>? _runtimeInitialization;
@@ -61,16 +175,24 @@ class AppController {
   bool _windowsCoreRestoreNeedsListener = false;
   String? _lastAppliedWindowsProfileId;
   UpdateParams? _syncingProfileUpdateParams;
+  ({String? profileId, SetupParams params})? _lastComputedSetupParams;
   static const _maxTunRepairAttempts = 2;
   final Map<String, int> _tunRepairAttempts = {};
   int? lastProfileModified;
-  final BuildContext context;
+  BuildContext _context;
+  BuildContext get context => _context;
+  void updateContext(BuildContext value) {
+    _context = value;
+  }
   final WidgetRef _ref;
   final _nodeHealthWrites = <Future<void>>{};
   int _nextProfileUpdateToken = 0;
   final Map<String, int> _activeProfileUpdateTokens = {};
   final Map<String, ({int token, String url, Future<void> future})>
       _inFlightProfileUpdates = {};
+  final Set<String> _silentAutoUpdateIds = <String>{};
+  final ProfileAutoUpdateBackoff _autoUpdateBackoff =
+      ProfileAutoUpdateBackoff();
   NodeHealthStore? get catalogHealthStore =>
       _ref.read(nodeOverviewEnabledProvider)
           ? _ref.read(nodeHealthRecorderProvider).store
@@ -81,6 +203,7 @@ class AppController {
   final AdminAuthorizationGate _adminAuthorization =
       AdminAuthorizationGate();
   Timer? _tunObservationTimer;
+  bool _tunObservationActive = false;
   late final TunStatusObserver _tunObserver = TunStatusObserver(
     runtime: _tunRuntime,
     read: () => clashCore.getTunStatus(),
@@ -97,17 +220,109 @@ class AppController {
     );
   }
 
+  Future<void> _flushSystemDnsCache() async {
+    final override = _flushSystemDnsCacheOverride;
+    if (override != null) {
+      await override();
+      return;
+    }
+    if (Platform.isWindows && _windowsStartupEffects == null) {
+      windows?.tryFlushDnsResolverCache();
+    }
+  }
+
+  Timer? _startCancelableTimer;
+
+  void _setStatusSwitchPending(bool? pending, {int? epoch}) {
+    _startCancelableTimer?.cancel();
+    _startCancelableTimer = null;
+    if (!context.mounted) return;
+    try {
+      _ref.read(statusStartCancelableProvider.notifier).state = false;
+      _ref.read(statusSwitchPendingProvider.notifier).state = pending;
+    } catch (_) {
+      return;
+    }
+    if (pending == true && epoch != null) {
+      _startCancelableTimer = Timer(const Duration(milliseconds: 500), () {
+        _startCancelableTimer = null;
+        if (!context.mounted || epoch != _statusEpoch) return;
+        try {
+          if (_ref.read(statusSwitchPendingProvider) == true) {
+            _ref.read(statusStartCancelableProvider.notifier).state = true;
+          }
+        } catch (_) {}
+      });
+    }
+  }
+
+  bool get _isWindowsProxyRunningForTunPoll =>
+      !_pendingWindowsProxyStop &&
+      (globalState.isStart || _startupEffects().proxyRunning);
+
+  Duration? _nextTunObservationSchedule() => nextTunObservationSchedule(
+        runtime: _tunRuntime,
+        uiActive: uiActivity.value,
+        repairActive: _activeTunRepair != null,
+        proxyRunning: _isWindowsProxyRunningForTunPoll,
+        sessionSuppressed: _adminAuthorization.isFailureLatched,
+      );
+
+  void _onTunPollWakeup() {
+    if (!Platform.isWindows || !_tunObservationActive) return;
+    if (_tunObservationTimer == null && _nextTunObservationSchedule() != null) {
+      _scheduleNextTunObservation();
+      unawaited(refreshWindowsTunStatus());
+    }
+  }
+
+  void _scheduleNextTunObservation() {
+    _tunObservationTimer?.cancel();
+    _tunObservationTimer = null;
+    if (!Platform.isWindows || !_tunObservationActive) return;
+    final delay = _nextTunObservationSchedule();
+    if (delay == null) return;
+    _tunObservationTimer = Timer(delay, () async {
+      _tunObservationTimer = null;
+      if (!Platform.isWindows || !_tunObservationActive) return;
+      try {
+        await refreshWindowsTunStatus();
+      } finally {
+        if (_tunObservationActive) {
+          _scheduleNextTunObservation();
+        }
+      }
+    });
+  }
+
+  void _stopTunObservation() {
+    if (_tunObservationActive) {
+      uiActivity.removeListener(_onTunPollWakeup);
+      _tunRuntime.removeListener(_onTunPollWakeup);
+    }
+    _tunObservationActive = false;
+    _tunObservationTimer?.cancel();
+    _tunObservationTimer = null;
+    _startCancelableTimer?.cancel();
+    _startCancelableTimer = null;
+  }
+
   void startTunObservation() {
-    if (!Platform.isWindows || _tunObservationTimer != null) return;
+    if (!Platform.isWindows || _tunObservationActive) return;
+    _tunObservationActive = true;
+    uiActivity.addListener(_onTunPollWakeup);
+    _tunRuntime.addListener(_onTunPollWakeup);
     _tunRuntime.desiredEnabled = _ref.read(patchClashConfigProvider).tun.enable;
     clashService?.onTunTransportChanged = () {
-      _tunRuntime.invalidate('statusUnavailable');
+      if (clashService?.hasIntentionalOrInitialNotReady == true) {
+        _tunRuntime.markNotReady();
+      } else {
+        _tunRuntime.invalidate('statusUnavailable');
+      }
       _ref.invalidate(nodeRuntimeReadProvider);
       unawaited(updateTray());
     };
-    _tunObservationTimer = Timer.periodic(const Duration(seconds: 3), (_) {
-      unawaited(refreshWindowsTunStatus());
-    });
+    _scheduleNextTunObservation();
     unawaited(refreshWindowsTunStatus());
   }
 
@@ -136,17 +351,11 @@ class AppController {
   }
 
   bool _isRepairableTunFailure(
-      TunStatus status, WindowsTunStartupEffects effects) {
-    if (status.privilege != 'elevated') return false;
-    if (status.listenerActive) {
-      return status.errorCode == 'interfaceMissing' ||
-          status.errorCode == 'interfaceDown';
-    }
-    if (!effects.proxyRunning && !globalState.isStart) return false;
-    if (status.state != 'failed') return false;
-    return (status.requestedEnabled && status.errorCode == 'startFailed') ||
-        status.errorCode == 'closeFailed';
-  }
+          TunStatus status, WindowsTunStartupEffects effects) =>
+      isRepairableWindowsTunFailure(
+        status,
+        proxyRunning: effects.proxyRunning || globalState.isStart,
+      );
 
   bool _canRepairVanishedAdapter(TunStatus status) {
     if (status.observed == TunObservedState.on) return false;
@@ -507,10 +716,38 @@ class AppController {
     }
   }
 
+  Future<void> _ensureDeferredWindowsAgentInitialized({
+    bool Function()? isCurrent,
+  }) async {
+    bool current() => isCurrent == null || isCurrent();
+    if (!current()) return;
+    final service = clashService;
+    if (service == null || !service.hasDeferredAgentLaunch) return;
+    final ready = await service.materializeDeferredAgent();
+    if (!ready) throw const TunFailure('componentsMismatch');
+    if (!await clashCore.isInit) {
+      final accepted = await clashCore.init();
+      if (!accepted) throw const TunFailure('configurationFailed');
+    }
+    final stateAccepted = await clashCore.setState(globalState.getCoreState());
+    if (!stateAccepted) throw const TunFailure('configurationFailed');
+    await clashCore.setUiActive(uiActivity.value);
+    if (_ref.read(appSettingProvider).openLogs) {
+      clashCore.startLog();
+    } else {
+      clashCore.stopLog();
+    }
+  }
+
   Future<void> _applyWindowsConfig(Future<String> Function(bool enable) apply,
       {bool Function()? isCurrent, bool explicitTunOperation = false}) async {
     _applyingWindowsConfigDepth++;
     try {
+      if (_windowsStartupEffects == null &&
+          clashService?.hasDeferredAgentLaunch == true) {
+        await _ensureDeferredWindowsAgentInitialized(isCurrent: isCurrent);
+        if (isCurrent != null && !isCurrent()) return;
+      }
       await applyWindowsTunConfiguration(
         componentsMatch: () async =>
             await clashService?.windowsComponentsMatch() ?? false,
@@ -604,11 +841,7 @@ class AppController {
         } else {
           clashCore.stopLog();
         }
-        await updateGroups();
-        if (!current()) return;
-        await updateProviders();
-        if (!current()) return;
-        initForegroundCache();
+        _hydrateRuntimeProjectionsInBackground();
       }
     } else {
       _needsWindowsCoreRestore = false;
@@ -628,7 +861,14 @@ class AppController {
     _adminAuthorization.clearFailure();
     _tunRepairAttempts.clear();
     if (enabled) {
-      await _startWindowsTun();
+      try {
+        await _startWindowsTun();
+      } finally {
+        detectionState.notifyRoutingChanged();
+        if (globalState.isAppStateInitialized && context.mounted) {
+          _ref.read(checkIpNumProvider.notifier).add();
+        }
+      }
       if (_windowsStartupEffects == null) await updateTray();
       return;
     }
@@ -667,11 +907,19 @@ class AppController {
       if (status.observed != TunObservedState.off) {
         throw const TunFailure('closeFailed');
       }
+      await _flushSystemDnsCache();
     }, writeIntent: (value) {
       _ref.read(patchClashConfigProvider.notifier).updateState(
         (state) => state.copyWith.tun(enable: value));
     });
-    await operation;
+    try {
+      await operation;
+    } finally {
+      detectionState.notifyRoutingChanged();
+      if (globalState.isAppStateInitialized && context.mounted) {
+        _ref.read(checkIpNumProvider.notifier).add();
+      }
+    }
     if (_windowsStartupEffects == null) await updateTray();
   }
 
@@ -699,15 +947,23 @@ class AppController {
   void addCheckIpNumDebounce() {
     debouncer.call(FunctionTag.addCheckIpNum, () {
       _ref.read(checkIpNumProvider.notifier).add();
-    });
+    }, duration: const Duration(milliseconds: 180));
   }
 
   void applyProfileDebounce({
     bool silence = false,
+    bool skipIfUnchanged = false,
   }) {
-    debouncer.call(FunctionTag.applyProfile, (silence) {
-      applyProfile(silence: silence);
-    }, args: [silence]);
+    debouncer.call(
+      FunctionTag.applyProfile,
+      (bool silence, bool skipIfUnchanged) {
+        applyProfile(
+          silence: silence,
+          skipIfUnchanged: skipIfUnchanged,
+        );
+      },
+      args: [silence, skipIfUnchanged],
+    );
   }
 
   void savePreferencesDebounce() {
@@ -815,15 +1071,30 @@ class AppController {
   // would clobber the optimistic startTime, tearing down a live tunnel's UI.
   bool _statusOpInFlight = false;
 
+  bool _shouldStartDeferredWindowsTunOnProxyStart() =>
+      (Platform.isWindows || _windowsStartupEffects != null) &&
+      !_pendingWindowsProxyStop &&
+      !_tunRuntime.closing &&
+      !_tunRuntime.busy &&
+      !_tunRuntime.isEnabled &&
+      _ref.read(patchClashConfigProvider).tun.enable &&
+      _tunRuntime.requestFailure == 'profileRequired' &&
+      !_adminAuthorization.isFailureLatched;
+
   Future<void> updateStatus(bool isStart) {
     final windowsTun = Platform.isWindows || _windowsStartupEffects != null;
+    int? stopIntent;
+    final initialTunMayHaveCachedFakeIp = windowsTun &&
+        (_tunRuntime.observed != TunObservedState.off ||
+            _tunRuntime.desiredEnabled);
     if (windowsTun) {
       _pendingWindowsProxyStop = !isStart;
       if (!isStart) {
-        _tunRuntime.cancelPendingIntent();
+        stopIntent = _tunRuntime.beginProxyStop();
       }
     }
     final epoch = ++_statusEpoch;
+    _setStatusSwitchPending(isStart, epoch: epoch);
     final op = _statusOp.then((_) async {
       try {
         // Superseded by a newer toggle (rapid double-tap, start-then-stop): make
@@ -832,30 +1103,136 @@ class AppController {
         _statusOpInFlight = true;
         try {
           if (windowsTun) {
+            var promoteDeferredTun = false;
             await _tunRuntime.serialize(() async {
               if (epoch != _statusEpoch) return;
+              if (isStart && _shouldStartDeferredWindowsTunOnProxyStart()) {
+                promoteDeferredTun = true;
+                return;
+              }
+              final shouldFlushFakeIpDns = initialTunMayHaveCachedFakeIp ||
+                  _tunRuntime.observed != TunObservedState.off ||
+                  _tunRuntime.desiredEnabled;
               _tunRuntime.invalidate();
-              if (isStart) _applyingWindowsConfigDepth++;
+              _applyingWindowsConfigDepth++;
+              var depthReleased = false;
+              var observedAfterStop = false;
               try {
                 if (!isStart) {
-                  await _startupEffects().stopProxy();
+                  final releaseDisarm =
+                      await systemProxyCoordinator.acquireStopDisarm();
+                  try {
+                    final effects = _startupEffects();
+                    await effects.stopProxy();
+                    var status = await refreshWindowsTunStatus(fresh: true);
+                    observedAfterStop = true;
+                    if (epoch == _statusEpoch &&
+                        status?.errorCode == 'closeFailed') {
+                      effects.log(
+                        'TUN reported closeFailed on stop; restarting Core via Helper to reclaim adapter handle',
+                      );
+                      var coreReclaimed = false;
+                      try {
+                        await effects.restartCore();
+                        if (epoch == _statusEpoch) {
+                          await effects.initialize(
+                            () => epoch == _statusEpoch,
+                          );
+                          coreReclaimed = true;
+                        }
+                      } catch (error) {
+                        effects.log('TUN stop Core reclaim failed: $error');
+                      }
+                      if (coreReclaimed &&
+                          epoch == _statusEpoch &&
+                          _windowsStartupEffects == null) {
+                        try {
+                          await _restoreStoppedProjectionAfterCoreReclaim(
+                            () => epoch == _statusEpoch,
+                          );
+                        } catch (error) {
+                          effects.log(
+                            'TUN stop post-reclaim projection sync failed: $error',
+                          );
+                        }
+                      }
+                      status = await refreshWindowsTunStatus(fresh: true);
+                      if (epoch == _statusEpoch &&
+                          (status?.errorCode == 'closeFailed' ||
+                              status?.observed == TunObservedState.on)) {
+                        _tunRuntime.fail(status?.errorCode ?? 'closeFailed');
+                      }
+                    }
+                    if (shouldFlushFakeIpDns) {
+                      await _flushSystemDnsCache();
+                    }
+                  } finally {
+                    releaseDisarm();
+                  }
+                } else if (_windowsStartupEffects != null) {
+                  await _startupEffects().startProxyWithoutTun();
                 } else {
                   await _updateStatus(true);
                 }
               } finally {
-                if (isStart) _applyingWindowsConfigDepth--;
-                await refreshWindowsTunStatus(fresh: true);
+                if (!depthReleased) {
+                  depthReleased = true;
+                  _applyingWindowsConfigDepth--;
+                }
+                if (!observedAfterStop) {
+                  await refreshWindowsTunStatus(fresh: true);
+                }
               }
             });
+            if (promoteDeferredTun &&
+                epoch == _statusEpoch &&
+                !_pendingWindowsProxyStop) {
+              try {
+                await _startWindowsTun();
+              } finally {
+                detectionState.notifyRoutingChanged();
+                _onTunPollWakeup();
+                if (globalState.isAppStateInitialized && context.mounted) {
+                  _ref.read(checkIpNumProvider.notifier).add();
+                }
+                if (_windowsStartupEffects == null) {
+                  await reconcileDeferredWindowsAgentAfterStartup(
+                    pendingProxyStop: _pendingWindowsProxyStop,
+                    hasDeferredAgentLaunch: () =>
+                        clashService?.hasDeferredAgentLaunch ?? false,
+                    initializeDeferredAgent:
+                        _ensureDeferredWindowsAgentInitialized,
+                    log: _startupEffects().log,
+                  );
+                  await updateTray();
+                }
+              }
+            }
           } else {
-            await _updateStatus(isStart);
+            if (!isStart) {
+              final releaseDisarm =
+                  await systemProxyCoordinator.acquireStopDisarm();
+              try {
+                await _updateStatus(false);
+              } finally {
+                releaseDisarm();
+              }
+            } else {
+              await _updateStatus(true);
+            }
           }
         } finally {
           _statusOpInFlight = false;
         }
       } finally {
-        if (windowsTun && !isStart && epoch == _statusEpoch) {
-          _pendingWindowsProxyStop = false;
+        if (stopIntent != null) {
+          _tunRuntime.endProxyStop(stopIntent);
+        }
+        if (epoch == _statusEpoch) {
+          if (windowsTun && !isStart) {
+            _pendingWindowsProxyStop = false;
+          }
+          _setStatusSwitchPending(null);
         }
       }
     });
@@ -865,10 +1242,43 @@ class AppController {
     return op;
   }
 
-  Future<void> _updateStatus(bool isStart) async {
-    await StatusBarManager.updateIcon(isConnected: isStart);
+  Future<void> _restoreStoppedProjectionAfterCoreReclaim(
+    bool Function() isCurrent,
+  ) async {
+    if (!isCurrent()) return;
+    await clashCore.setUiActive(uiActivity.value);
+    if (!isCurrent()) return;
+    if (_ref.read(appSettingProvider).openLogs) {
+      clashCore.startLog();
+    } else {
+      clashCore.stopLog();
+    }
+    if (!isCurrent()) return;
+    if (clashService?.usesAgent != true &&
+        _ref.read(currentProfileProvider) != null) {
+      await _setupClashConfigImpl(isCurrent: isCurrent);
+      if (!isCurrent()) return;
+      _hasAppliedWindowsProfile = true;
+      _lastAppliedWindowsProfileId = _ref.read(currentProfileIdProvider);
+      _needsWindowsCoreRestore = false;
+      _windowsCoreRestoreNeedsListener = false;
+    } else if (clashService?.usesAgent == true &&
+        _ref.read(currentProfileProvider) != null) {
+      _hasAppliedWindowsProfile = true;
+      _lastAppliedWindowsProfileId = _ref.read(currentProfileIdProvider);
+      _needsWindowsCoreRestore = false;
+      _windowsCoreRestoreNeedsListener = false;
+    }
+    await updateGroups();
+    if (!isCurrent()) return;
+    await updateProviders();
+    if (!isCurrent()) return;
+    initForegroundCache();
+  }
 
+  Future<void> _updateStatus(bool isStart) async {
     if (isStart) {
+      await StatusBarManager.updateIcon(isConnected: true);
       if (Platform.isWindows && clashService?.usesAgent == true &&
           clashService?.agentCoreReady != true) {
         await clashService!.recoverCoreForUser();
@@ -908,6 +1318,7 @@ class AppController {
       _needsWindowsCoreRestore = false;
       _windowsCoreRestoreNeedsListener = false;
       startRunTimeTimer();
+      _onTunPollWakeup();
       // Android: the long-lived mihomo executor (DNS resolver, fake-ip pool,
       // providers) survives a plain stop→start — only setupConfig/ApplyConfig
       // rebuilds it. After a long session that state degrades, so a toggle
@@ -936,18 +1347,25 @@ class AppController {
       }
       applyProfileDebounce();
     } else {
-      detectionState.notifyRoutingChanged();
-      stopRunTimeTimer();
-      await globalState.handleStop();
-      _windowsCoreRestoreNeedsListener = false;
-      if (_hasAppliedWindowsProfile) {
-        _needsWindowsCoreRestore = false;
+      final releaseDisarm =
+          await systemProxyCoordinator.acquireStopDisarm();
+      try {
+        detectionState.notifyRoutingChanged();
+        stopRunTimeTimer();
+        await globalState.handleStop();
+        await StatusBarManager.updateIcon(isConnected: false);
+        _windowsCoreRestoreNeedsListener = false;
+        if (_hasAppliedWindowsProfile) {
+          _needsWindowsCoreRestore = false;
+        }
+        clashCore.resetTraffic();
+        _ref.read(trafficsProvider.notifier).clear();
+        _ref.read(totalTrafficProvider.notifier).value = Traffic();
+        _ref.read(runTimeProvider.notifier).value = null;
+        addCheckIpNumDebounce();
+      } finally {
+        releaseDisarm();
       }
-      clashCore.resetTraffic();
-      _ref.read(trafficsProvider.notifier).clear();
-      _ref.read(totalTrafficProvider.notifier).value = Traffic();
-      _ref.read(runTimeProvider.notifier).value = null;
-      addCheckIpNumDebounce();
     }
   }
 
@@ -986,15 +1404,74 @@ class AppController {
   }
 
   Future<void> addProfile(Profile profile) async {
-    _ref.read(profilesProvider.notifier).setProfile(profile);
+    final effectiveProfile =
+        !profile.providerHeaders.containsKey(smartSelectionModeMarker) &&
+                profile.selectedMap.isEmpty
+            ? markProfileSelectionMode(profile, NodeSelectionMode.smart)
+            : profile;
+    _ref.read(profilesProvider.notifier).setProfile(effectiveProfile);
     if (_ref.read(currentProfileIdProvider) != null) return;
     // Setting currentProfileId drives needSetupProvider → clash_manager →
     // handleChangeProfile() → applyProfile(), so an explicit apply here would
     // run setupConfig twice on the first add.
-    _ref.read(currentProfileIdProvider.notifier).value = profile.id;
+    _ref.read(currentProfileIdProvider.notifier).value = effectiveProfile.id;
+  }
+
+  Future<Profile> registerImportedProfileForNovice(
+    Profile profile, {
+    bool isNewProfile = false,
+    bool switchToProxiesPage = false,
+  }) async {
+    final hadZeroProfiles = _ref.read(profilesProvider).isEmpty;
+    final effectiveProfile =
+        !profile.providerHeaders.containsKey(smartSelectionModeMarker) &&
+                profile.selectedMap.isEmpty
+            ? markProfileSelectionMode(profile, NodeSelectionMode.smart)
+            : profile;
+    final hadNoActiveProfile = _ref.read(currentProfileIdProvider) == null;
+    if (isNewProfile || hadNoActiveProfile) {
+      await addProfile(effectiveProfile);
+    } else {
+      setProfileAndAutoApply(effectiveProfile);
+    }
+    if (hadZeroProfiles) {
+      _ref.read(pendingNoviceFirstProfileAutoTestProvider.notifier).state =
+          effectiveProfile.id;
+    }
+    if (switchToProxiesPage) {
+      _ref.read(proxiesScopeProvider.notifier).state = ProxiesScope.all;
+      toPage(PageLabel.proxies);
+    }
+    return effectiveProfile;
+  }
+
+  Future<void> tryStartProxyForActiveNoviceProfile(String profileId) async {
+    final isActive = _ref.read(currentProfileIdProvider) == profileId;
+    if (!isActive || _ref.read(runTimeProvider.notifier).isStart) {
+      return;
+    }
+    try {
+      await updateStatus(true);
+    } catch (err) {
+      commonPrint.log('Auto-start proxy after profile import failed: $err');
+    }
+  }
+
+  Future<void> activateImportedProfileForNovice(
+    Profile profile, {
+    bool isNewProfile = false,
+    bool switchToProxiesPage = false,
+  }) async {
+    final effectiveProfile = await registerImportedProfileForNovice(
+      profile,
+      isNewProfile: isNewProfile,
+      switchToProxiesPage: switchToProxiesPage,
+    );
+    await tryStartProxyForActiveNoviceProfile(effectiveProfile.id);
   }
 
   Future<void> deleteProfile(String id) async {
+    _autoUpdateBackoff.clear(id);
     _ref.read(profilesProvider.notifier).deleteProfileById(id);
     clearEffect(id);
     if (globalState.config.currentProfileId == id) {
@@ -1012,13 +1489,17 @@ class AppController {
 
   Future<void> updateProviders() async {
     final configEpoch = globalState.runtimeConfigEpoch;
-    final profileId = _ref.read(currentProfileIdProvider);
-    final providers = await clashCore.getExternalProviders();
-    if (configEpoch != globalState.runtimeConfigEpoch ||
-        profileId != _ref.read(currentProfileIdProvider)) {
-      return;
+    try {
+      final profileId = _ref.read(currentProfileIdProvider);
+      final providers = await clashCore.getExternalProviders();
+      if (configEpoch != globalState.runtimeConfigEpoch ||
+          profileId != _ref.read(currentProfileIdProvider)) {
+        return;
+      }
+      _ref.read(providersProvider.notifier).value = providers;
+    } catch (e) {
+      commonPrint.log("updateProviders error: $e, keeping old providers");
     }
-    _ref.read(providersProvider.notifier).value = providers;
   }
 
   Future<void> updateLocalIp() async {
@@ -1179,6 +1660,7 @@ class AppController {
   }
 
   Future<void> updateProfile(Profile profile) async {
+    final silentRequested = _silentAutoUpdateIds.remove(profile.id);
     final current = _ref.read(profilesProvider).getProfile(profile.id);
     final starting = prepareStartingProfileUpdate(
       requested: profile,
@@ -1187,16 +1669,23 @@ class AppController {
     if (starting == null) {
       return;
     }
+    final silent = silentRequested &&
+        !profile.isUpdating &&
+        !(current?.isUpdating ?? false);
     final existingInFlight = _inFlightProfileUpdates[starting.id];
     if (existingInFlight != null && existingInFlight.url == starting.url) {
-      if (starting != current) {
+      if (!silent && starting != current) {
         _ref.read(profilesProvider.notifier).setProfile(starting);
       }
       return existingInFlight.future;
     }
     final token = ++_nextProfileUpdateToken;
     _activeProfileUpdateTokens[starting.id] = token;
-    final future = _runProfileUpdate(starting: starting, token: token);
+    final future = _runProfileUpdate(
+      starting: starting,
+      token: token,
+      silent: silent,
+    );
     _inFlightProfileUpdates[starting.id] = (
       token: token,
       url: starting.url,
@@ -1215,6 +1704,7 @@ class AppController {
   Future<void> _runProfileUpdate({
     required Profile starting,
     required int token,
+    bool silent = false,
   }) async {
     bool isCurrentRun() => _activeProfileUpdateTokens[starting.id] == token;
 
@@ -1237,7 +1727,9 @@ class AppController {
       }
     }
 
-    _ref.read(profilesProvider.notifier).setProfile(starting);
+    if (!silent) {
+      _ref.read(profilesProvider.notifier).setProfile(starting);
+    }
     try {
       final prefs = await SharedPreferences.getInstance();
       final shouldSend = prefs.getBool('sendDeviceHeaders') ?? true;
@@ -1288,10 +1780,11 @@ class AppController {
         _showHwidNotSupportedNotice();
       }
 
+      _autoUpdateBackoff.clear(starting.id);
       _ref.read(profilesProvider.notifier).setProfile(mergedProfile);
 
       if (starting.id == _ref.read(currentProfileIdProvider)) {
-        applyProfileDebounce(silence: true);
+        applyProfileDebounce(silence: true, skipIfUnchanged: true);
       }
 
       // Check subscription expiration and show notification if needed
@@ -1681,14 +2174,26 @@ class AppController {
 
   Future<void> setupClashConfig() async {
     final commonScaffoldState = globalState.homeScaffoldKey.currentState;
-    if (commonScaffoldState?.mounted != true) return;
-    await commonScaffoldState?.loadingRun(() async {
+    if (commonScaffoldState?.mounted == true) {
+      await commonScaffoldState!.loadingRun(() async {
+        await _setupClashConfig();
+      });
+    } else {
+      if (!_runtimeInitialized && !_ref.read(initProvider)) {
+        return;
+      }
       await _setupClashConfig();
-    });
+    }
+    detectionState.notifyRoutingChanged();
+    addCheckIpNumDebounce();
+    unawaited(_persistColdStartParams());
   }
 
-  Future<void> _setupClashConfig() async {
+  Future<bool> _setupClashConfig({
+    bool skipIfUnchanged = false,
+  }) async {
     if (Platform.isWindows) {
+      var skippedUnchanged = false;
       TunStatus? preApplyRepairStatus;
       var repairFailedOrCancelled = false;
       for (var pass = 0; pass < 3; pass++) {
@@ -1721,7 +2226,9 @@ class AppController {
           }
           try {
             try {
-              await _setupClashConfigImpl();
+              skippedUnchanged = await _setupClashConfigImpl(
+                skipIfUnchanged: skipIfUnchanged && pass == 0,
+              );
             } finally {
               if (_needsWindowsCoreRestore &&
                   !_pendingWindowsProxyStop &&
@@ -1785,17 +2292,19 @@ class AppController {
         }
         if (!needsFollowUpApply) break;
       }
-      return;
+      return skippedUnchanged;
     }
-    return _setupClashConfigImpl();
+    return _setupClashConfigImpl(skipIfUnchanged: skipIfUnchanged);
   }
 
-  Future<void> _setupClashConfigImpl({
+  Future<bool> _setupClashConfigImpl({
     bool Function()? isCurrent,
     bool syncProviderSettings = true,
+    bool skipIfUnchanged = false,
   }) async {
     final isWindows = Platform.isWindows;
     var configApplied = false;
+    var skippedUnchangedSetup = false;
     if (isWindows) _applyingWindowsConfigDepth++;
     try {
       for (var profileAttempt = 0; profileAttempt < 4; profileAttempt++) {
@@ -1805,26 +2314,52 @@ class AppController {
         bool configurationIsCurrent() =>
             intentIsCurrent() &&
             _ref.read(currentProfileProvider)?.id == applyingProfileId;
-        if (!intentIsCurrent()) return;
+        if (!intentIsCurrent()) return false;
         await applyingProfile?.checkAndUpdate();
-        if (!intentIsCurrent()) return;
+        if (!intentIsCurrent()) return false;
         if (!configurationIsCurrent()) {
           if (isCurrent != null) continue;
-          return;
+          return false;
         }
         var patchConfig = _ref.read(patchClashConfigProvider);
+
+        // Load and evaluate the profile YAML/QuickJS once per attempt so
+        // provider network-setting sync and patchRawConfig share a single pass.
+        ({Map<String, dynamic> rawConfig, bool hasExplicitLogLevel})? loadedProfile;
+        var preloadedConsumed = false;
+        if (applyingProfile != null) {
+          try {
+            loadedProfile =
+                await globalState.loadEvaluatedProfileConfig(applyingProfile);
+          } catch (e) {
+            commonPrint.log('Error loading profile config ($applyingProfileId): $e');
+          }
+          if (!intentIsCurrent()) return false;
+          if (!configurationIsCurrent()) {
+            if (isCurrent != null) continue;
+            return false;
+          }
+        }
 
         // Sync network settings from provider config if not overriding
         final appSetting = _ref.read(appSettingProvider);
         ClashConfig? syncedConfig;
         if (syncProviderSettings && !appSetting.overrideNetworkSettings) {
-          syncedConfig =
-              await globalState.syncNetworkSettingsFromProvider(patchConfig,
-                  profile: applyingProfile);
-          if (!intentIsCurrent()) return;
-          if (!configurationIsCurrent()) {
-            if (isCurrent != null) continue;
-            return;
+          if (loadedProfile != null) {
+            syncedConfig = globalState.extractSyncedNetworkSettings(
+              patchConfig,
+              loadedProfile.rawConfig,
+            );
+          } else {
+            syncedConfig = await globalState.syncNetworkSettingsFromProvider(
+              patchConfig,
+              profile: applyingProfile,
+            );
+            if (!intentIsCurrent()) return false;
+            if (!configurationIsCurrent()) {
+              if (isCurrent != null) continue;
+              return false;
+            }
           }
         }
 
@@ -1885,10 +2420,10 @@ class AppController {
 
         try {
           final applyingModified = await applyingProfile?.profileLastModified;
-          if (!intentIsCurrent()) return;
+          if (!intentIsCurrent()) return false;
           if (!configurationIsCurrent()) {
             if (isCurrent != null) continue;
-            return;
+            return false;
           }
 
           if (isWindows) {
@@ -1898,9 +2433,18 @@ class AppController {
               (enabled) async {
                 applyEntered = true;
                 final currentPatchConfig = _ref.read(patchClashConfigProvider);
+                final usePreloaded = !preloadedConsumed && loadedProfile != null;
+                preloadedConsumed = true;
                 final params = await globalState.getSetupParams(
                   pathConfig: currentPatchConfig.copyWith.tun(enable: enabled),
                   profile: applyingProfile,
+                  preloadedRawConfig: usePreloaded ? loadedProfile.rawConfig : null,
+                  preloadedHasExplicitLogLevel:
+                      usePreloaded ? loadedProfile.hasExplicitLogLevel : null,
+                );
+                _lastComputedSetupParams = (
+                  profileId: applyingProfileId,
+                  params: params,
                 );
                 if (!configurationIsCurrent()) return '';
                 if (isCurrent != null && params.config.isEmpty) {
@@ -1908,6 +2452,36 @@ class AppController {
                 }
                 if (_ref.read(patchClashConfigProvider) == currentPatchConfig) {
                   debouncer.cancel(FunctionTag.updateClashConfig);
+                  if (_ref.read(currentProfileIdProvider) ==
+                      applyingProfileId) {
+                    debouncer.cancel(FunctionTag.applyProfile);
+                  }
+                }
+                final coreInitialized = await clashCore.isInit == true;
+                if (!configurationIsCurrent()) return '';
+                if (shouldSkipUnchangedSilentSetup(
+                  skipIfUnchanged: skipIfUnchanged,
+                  isAndroid: false,
+                  isWindows: true,
+                  explicitTunOperation: isCurrent != null,
+                  needsWindowsCoreRestore: _needsWindowsCoreRestore,
+                  hasAppliedWindowsProfile: _hasAppliedWindowsProfile,
+                  lastAppliedWindowsProfileId: _lastAppliedWindowsProfileId,
+                  applyingProfileId: applyingProfileId,
+                  hasActiveTunRepair: _activeTunRepair != null,
+                  hasTunRequestFailure: _tunRuntime.requestFailure != null,
+                  isCoreInit: coreInitialized,
+                  matchesCommittedSetup: globalState.matchesCommittedRuntimeSetup(
+                    params,
+                    profileId: applyingProfileId,
+                  ),
+                )) {
+                  setupExecuted = true;
+                  skippedUnchangedSetup = true;
+                  commonPrint.log(
+                    '[config] skipped idempotent setupConfig for unchanged profile=$applyingProfileId',
+                  );
+                  return '';
                 }
                 setupExecuted = true;
                 final message = await clashCore.setupConfig(
@@ -1927,29 +2501,65 @@ class AppController {
             );
             if (!setupExecuted) {
               if (isCurrent != null && intentIsCurrent()) continue;
-              return;
+              return false;
             }
             configApplied = true;
           } else {
             final res = await _requestAdmin(patchConfig.tun.enable);
-            if (res.isError || !configurationIsCurrent()) return;
+            if (res.isError || !configurationIsCurrent()) return false;
             final currentPatchConfig = _ref.read(patchClashConfigProvider);
             final realTunEnable = _ref.read(realTunEnableProvider);
             final realPatchConfig =
                 currentPatchConfig.copyWith.tun(enable: realTunEnable);
+            final usePreloaded = !preloadedConsumed && loadedProfile != null;
+            preloadedConsumed = true;
             final params = await globalState.getSetupParams(
-                pathConfig: realPatchConfig, profile: applyingProfile);
-            if (!configurationIsCurrent()) return;
+              pathConfig: realPatchConfig,
+              profile: applyingProfile,
+              preloadedRawConfig: usePreloaded ? loadedProfile.rawConfig : null,
+              preloadedHasExplicitLogLevel:
+                  usePreloaded ? loadedProfile.hasExplicitLogLevel : null,
+            );
+            _lastComputedSetupParams = (
+              profileId: applyingProfileId,
+              params: params,
+            );
+            if (!configurationIsCurrent()) return false;
             if (_ref.read(patchClashConfigProvider) == currentPatchConfig) {
               debouncer.cancel(FunctionTag.updateClashConfig);
             }
-            final message = await clashCore.setupConfig(params,
-                profileId: applyingProfileId);
-            if (message.isNotEmpty) {
-              // Don't advance lastProfileModified on a failed/timed-out setup: doing so
-              // would make the next start's recovery re-apply think the profile is
-              // already applied and skip it, leaving a degraded executor in place.
-              throw message;
+            final coreInitialized = await clashCore.isInit == true;
+            if (!configurationIsCurrent()) return false;
+            if (shouldSkipUnchangedSilentSetup(
+              skipIfUnchanged: skipIfUnchanged,
+              isAndroid: Platform.isAndroid,
+              isWindows: false,
+              explicitTunOperation: isCurrent != null,
+              needsWindowsCoreRestore: false,
+              hasAppliedWindowsProfile: true,
+              lastAppliedWindowsProfileId: applyingProfileId,
+              applyingProfileId: applyingProfileId,
+              hasActiveTunRepair: false,
+              hasTunRequestFailure: false,
+              isCoreInit: coreInitialized,
+              matchesCommittedSetup: globalState.matchesCommittedRuntimeSetup(
+                params,
+                profileId: applyingProfileId,
+              ),
+            )) {
+              skippedUnchangedSetup = true;
+              commonPrint.log(
+                '[config] skipped idempotent setupConfig for unchanged profile=$applyingProfileId',
+              );
+            } else {
+              final message = await clashCore.setupConfig(params,
+                  profileId: applyingProfileId);
+              if (message.isNotEmpty) {
+                // Don't advance lastProfileModified on a failed/timed-out setup: doing so
+                // would make the next start's recovery re-apply think the profile is
+                // already applied and skip it, leaving a degraded executor in place.
+                throw message;
+              }
             }
           }
           if (configurationIsCurrent()) lastProfileModified = applyingModified;
@@ -1972,27 +2582,49 @@ class AppController {
     if (isWindows && configApplied) {
       _handlePostConfigTunStatus(_tunRuntime.status);
     }
+    return skippedUnchangedSetup;
   }
 
-  Future _applyProfile({bool silence = false}) async {
+  Future<bool> _applyProfile({
+    bool silence = false,
+    bool skipIfUnchanged = false,
+  }) async {
     clashCore.requestGc();
+    var skippedSetup = false;
     if (silence) {
       // Silent/headless/early-start recovery: bypass the PUBLIC setupClashConfig()
       // scaffold gate + loadingRun (which no-ops when the home scaffold isn't
       // mounted — exactly when recovery is needed — and shows a loading overlay
       // when it is) by re-applying through the private path directly.
-      await _setupClashConfig();
+      skippedSetup = await _setupClashConfig(
+        skipIfUnchanged: skipIfUnchanged,
+      );
     } else {
       await setupClashConfig();
     }
-    await updateGroups();
-    await updateProviders();
-    initForegroundCache();
+    _hydrateRuntimeProjectionsInBackground();
+    return skippedSetup;
   }
 
-  Future applyProfile({bool silence = false}) async {
+  void _hydrateRuntimeProjectionsInBackground() {
+    initForegroundCache();
+    unawaited(
+      (updateGroups(), updateProviders())
+          .wait
+          .catchError((Object _) => (null, null)),
+    );
+  }
+
+  Future applyProfile({
+    bool silence = false,
+    bool skipIfUnchanged = false,
+  }) async {
+    var skippedSetup = false;
     if (silence) {
-      await _applyProfile(silence: true);
+      skippedSetup = await _applyProfile(
+        silence: true,
+        skipIfUnchanged: skipIfUnchanged,
+      );
     } else {
       final commonScaffoldState = globalState.homeScaffoldKey.currentState;
       if (commonScaffoldState?.mounted != true) return;
@@ -2000,10 +2632,14 @@ class AppController {
         await _applyProfile();
       });
     }
-    addCheckIpNumDebounce();
-    // Re-persist cold-start params so tile/widget/Always-on headless restarts reflect
-    // the currently active profile, not a stale one from app init.
-    unawaited(_persistColdStartParams());
+    if (!skippedSetup) {
+      addCheckIpNumDebounce();
+    }
+    // setupClashConfig() (invoked when silence == false) already persists
+    // cold-start params; only silent re-applies need an explicit persist here.
+    if (silence) {
+      unawaited(_persistColdStartParams());
+    }
   }
 
   void handleChangeProfile() {
@@ -2037,92 +2673,56 @@ class AppController {
     _ref.read(appBrightnessProvider.notifier).value = brightness;
   }
 
-  Future<void> autoUpdateProfiles() async {
-    final profileIds = [
-      for (final profile in _ref.read(profilesProvider)) profile.id,
+  Future<void> autoUpdateProfiles({DateTime? now}) async {
+    final profiles = _ref.read(profilesProvider);
+    final currentId = _ref.read(currentProfileIdProvider);
+    final orderedIds = <String>[
+      if (currentId != null && profiles.any((profile) => profile.id == currentId))
+        currentId,
+      for (final profile in profiles)
+        if (profile.id != currentId) profile.id,
     ];
-    for (final id in profileIds) {
+    for (final id in orderedIds) {
+      final referenceNow = now ?? DateTime.now();
       final profile = _ref.read(profilesProvider).getProfile(id);
       if (profile == null ||
-          !profile.autoUpdate ||
-          profile.isUpdating ||
-          profile.type == ProfileType.file) {
+          !isProfileAutoUpdateDue(profile, now: referenceNow) ||
+          !_autoUpdateBackoff.canAttempt(profile, now: referenceNow)) {
         continue;
       }
-      final isNotNeedUpdate = profile.lastUpdateDate
-          ?.add(
-            profile.autoUpdateDuration,
-          )
-          .isBeforeNow;
-      if (isNotNeedUpdate == false) {
-        continue;
-      }
+      _silentAutoUpdateIds.add(id);
       try {
         await updateProfile(profile);
+        final refreshedNow = now ?? DateTime.now();
+        final refreshed = _ref.read(profilesProvider).getProfile(id);
+        if (refreshed != null &&
+            !isProfileAutoUpdateDue(refreshed, now: refreshedNow)) {
+          _autoUpdateBackoff.clear(id);
+        }
       } catch (e) {
-        commonPrint.log(e.toString());
+        final failedNow = now ?? DateTime.now();
+        final latest = _ref.read(profilesProvider).getProfile(id);
+        if (latest != null && latest.url == profile.url) {
+          final delay = _autoUpdateBackoff.recordFailure(
+            latest,
+            now: failedNow,
+          );
+          commonPrint.log(
+            'autoUpdateProfiles failed for $id (backoff ${delay.inMinutes}m): $e',
+          );
+        } else {
+          commonPrint.log(e.toString());
+        }
+      } finally {
+        _silentAutoUpdateIds.remove(id);
       }
     }
   }
 
-  /// Updates subscription info for the current profile on app startup.
-  /// This ensures the subscription info is always up-to-date when the app launches.
-  Future<void> _updateCurrentProfileSubscription() async {
-    try {
-      final currentProfileId = _ref.read(currentProfileIdProvider);
-      commonPrint.log(
-          "_updateCurrentProfileSubscription: currentProfileId = $currentProfileId");
-      if (currentProfileId == null) {
-        commonPrint.log(
-            "_updateCurrentProfileSubscription: No current profile selected, skipping");
-        return;
-      }
-
-      final profiles = _ref.read(profilesProvider);
-      commonPrint.log(
-          "_updateCurrentProfileSubscription: profiles count = ${profiles.length}");
-
-      final currentProfile =
-          profiles.where((p) => p.id == currentProfileId).firstOrNull;
-      if (currentProfile == null) {
-        commonPrint.log(
-            "_updateCurrentProfileSubscription: Profile not found in list, skipping");
-        return;
-      }
-
-      if (currentProfile.type == ProfileType.file) {
-        commonPrint.log(
-            "_updateCurrentProfileSubscription: Profile is file type, skipping");
-        return;
-      }
-
-      commonPrint.log(
-          "Updating subscription info for current profile '${currentProfile.label}' on startup...");
-      if (currentProfile.autoUpdate) {
-        // autoUpdateProfiles() (fired immediately on startup) already refreshes
-        // any auto-update profile whose update window has elapsed (or that never
-        // updated). Skip those here so we don't fetch+apply the same current
-        // profile a second time 1s later; only handle the not-yet-due case it
-        // leaves untouched.
-        final isDue = currentProfile.lastUpdateDate
-                ?.add(currentProfile.autoUpdateDuration)
-                .isBeforeNow ??
-            true;
-        if (isDue) {
-          commonPrint.log(
-              "_updateCurrentProfileSubscription: already covered by autoUpdateProfiles, skipping");
-          return;
-        }
-        await updateProfile(currentProfile);
-        commonPrint.log("Subscription info updated successfully");
-      } else {
-        commonPrint.log(
-            "Auto-update disabled for current profile, skipping startup update");
-      }
-    } catch (e, stackTrace) {
-      commonPrint.log("Failed to update subscription info on startup: $e");
-      commonPrint.log("Stack trace: $stackTrace");
-    }
+  @visibleForTesting
+  Future<void> runDeferredStartupChecks() async {
+    await autoUpdateProfiles();
+    await autoCheckUpdate();
   }
 
   /// When the profile declares an explicit GLOBAL proxy-group, restrict the
@@ -2160,8 +2760,8 @@ class AppController {
 
   Future<void> updateGroups() async {
     final configEpoch = globalState.runtimeConfigEpoch;
-    final profileId = _ref.read(currentProfileIdProvider);
     try {
+      final profileId = _ref.read(currentProfileIdProvider);
       final newGroups = await retry(
         task: () async => clashCore.getProxiesGroups(),
         retryIf: (res) =>
@@ -2202,8 +2802,11 @@ class AppController {
   }
 
   Future<void> savePreferences() async {
-    commonPrint.log("save preferences");
-    await preferences.saveConfig(globalState.config);
+    final config = globalState.config;
+    if (preferences.hasUnsavedConfig(config)) {
+      commonPrint.log("save preferences");
+      await preferences.saveConfig(config);
+    }
     await flushNodeHealth();
   }
 
@@ -2226,15 +2829,12 @@ class AppController {
     required String proxyName,
   }) async {
     detectionState.notifyRoutingChanged();
-    await clashCore.changeProxy(
-      ChangeProxyParams(
-        groupName: groupName,
-        proxyName: proxyName,
-      ),
+    await performSurgicalChangeProxy(
+      core: clashCore,
+      groupName: groupName,
+      proxyName: proxyName,
+      closeConnections: _ref.read(appSettingProvider).closeConnections,
     );
-    if (_ref.read(appSettingProvider).closeConnections) {
-      clashCore.closeConnections();
-    }
     addCheckIpNumDebounce();
     // Android: re-persist cold-start params so a later headless restart (tile/
     // Always-on/sticky) brings the tunnel up with the NEWLY selected node, not
@@ -2296,15 +2896,69 @@ class AppController {
 
   Future<void> _quiesceWindows(Future<void> Function() action) async {
     if (!Platform.isWindows) { await action(); return; }
-    _tunObservationTimer?.cancel();
+    _stopTunObservation();
     ++_statusEpoch;
     await _tunRuntime.quiesce(action);
+  }
+
+  Future<void Function({bool reconcile})> _gracefulStopBeforeShutdown({
+    Duration listenerTimeout = const Duration(seconds: 3),
+  }) async {
+    final shutdown = _shutdownEffects;
+    stopRunTimeTimer();
+    globalState.startTime = null;
+    globalState.stopUpdateTasks();
+
+    void Function({bool reconcile}) releaseDisarm = ({bool reconcile = true}) {};
+    try {
+      if (systemProxyCoordinator.isAttached) {
+        releaseDisarm = await systemProxyCoordinator.acquireStopDisarm();
+      } else {
+        await proxy?.stopProxy();
+      }
+    } catch (_) {}
+
+    try {
+      _ref.read(runTimeProvider.notifier).value = null;
+    } catch (_) {}
+
+    final usesAgent = shutdown != null
+        ? shutdown.usesAgent()
+        : (clashService?.usesAgent == true);
+    final coreReady = shutdown != null
+        ? shutdown.agentCoreReady()
+        : (clashService?.agentCoreReady == true);
+    if (!usesAgent || coreReady) {
+      try {
+        final stopOp = shutdown != null
+            ? shutdown.stopListener()
+            : clashCore.stopListener();
+        await stopOp.timeout(listenerTimeout);
+      } catch (_) {}
+    }
+
+    try {
+      if (shutdown != null) {
+        await shutdown.stopVpn();
+      } else {
+        await service?.stopVpn();
+      }
+    } catch (_) {}
+
+    try {
+      await _flushSystemDnsCache();
+    } catch (_) {}
+
+    return releaseDisarm;
   }
 
   Future<void> handleExit() => _quiesceWindows(_handleExit);
 
   Future<void> _handleExit() async {
-    _tunObservationTimer?.cancel();
+    _stopTunObservation();
+    stopRunTimeTimer();
+    final shutdown = _shutdownEffects;
+    void Function({bool reconcile}) releaseDisarm = ({bool reconcile = true}) {};
     // Bound the cleanup instead of pre-arming a 300ms hard-exit timer. On macOS the
     // DNS/proxy teardown is several slow networksetup/route subprocesses that easily
     // overrun 300ms, so the old timer fired mid-cleanup and exit(0) skipped the DNS
@@ -2312,28 +2966,34 @@ class AppController {
     // proxy, and orphaning the root core. Mirror handleRestart: run cleanup under a
     // generous deadline, each step isolated, then always exit.
     try {
-      await Future.any([
-        Future(() async {
-          try {
-            await savePreferences();
-          } catch (_) {}
-          try {
-            await system.setMacOSDns(true);
-          } catch (_) {}
-          try {
-            await proxy?.stopProxy();
-          } catch (_) {}
-          try {
+      await (() async {
+        try {
+          await savePreferences().timeout(const Duration(seconds: 2));
+        } catch (_) {}
+        try {
+          await system.setMacOSDns(true).timeout(const Duration(seconds: 2));
+        } catch (_) {}
+        releaseDisarm = await _gracefulStopBeforeShutdown(
+          listenerTimeout: const Duration(seconds: 3),
+        );
+        try {
+          if (shutdown != null) {
+            await shutdown.shutdownCore();
+          } else {
             await clashCore.shutdown();
-          } catch (_) {}
-          try {
+          }
+        } catch (_) {}
+        try {
+          if (shutdown != null) {
+            await shutdown.destroyService();
+          } else {
             await clashService?.destroy();
-          } catch (_) {}
-        }),
-        Future.delayed(const Duration(seconds: 8)),
-      ]);
+          }
+        } catch (_) {}
+      })().timeout(const Duration(seconds: 8), onTimeout: () {});
     } finally {
-      system.exit();
+      releaseDisarm(reconcile: false);
+      await (shutdown?.exitApp?.call() ?? system.exit());
     }
   }
 
@@ -2342,31 +3002,50 @@ class AppController {
   Future<void> _handleRestart() async {
     await cancelDelayTests(reason: 'sessionClosed');
     commonPrint.log("Starting application restart...");
+    final shutdown = _shutdownEffects;
+    final usesAgent = shutdown != null
+        ? shutdown.usesAgent()
+        : (clashService?.usesAgent == true);
 
-    if (clashService?.usesAgent == true) {
+    if (usesAgent) {
       // A UI restart is an Agent detach/reattach, not a proxy restart. This is
       // the same path used by reopening after Close UI and does not interrupt
       // existing connections.
       try {
         await savePreferences();
-        await clashService?.detach();
+        if (shutdown != null) {
+          await shutdown.detachService();
+        } else {
+          await clashService?.detach();
+        }
       } catch (_) {}
     } else {
       // Compatibility path for source/debug bundles without FlClashAgent.
-      await Future.any([
-        Future(() async {
+      void Function({bool reconcile}) releaseDisarm =
+          ({bool reconcile = true}) {};
+      try {
+        await (() async {
+          releaseDisarm = await _gracefulStopBeforeShutdown(
+            listenerTimeout: const Duration(seconds: 2),
+          );
           try {
-            await proxy?.stopProxy();
+            if (shutdown != null) {
+              await shutdown.shutdownCore();
+            } else {
+              await clashCore.shutdown();
+            }
           } catch (_) {}
           try {
-            await clashCore.shutdown();
+            if (shutdown != null) {
+              await shutdown.destroyService();
+            } else {
+              await clashService?.destroy();
+            }
           } catch (_) {}
-          try {
-            await clashService?.destroy();
-          } catch (_) {}
-        }),
-        Future.delayed(const Duration(seconds: 3)),
-      ]);
+        })().timeout(const Duration(seconds: 4), onTimeout: () {});
+      } finally {
+        releaseDisarm(reconcile: false);
+      }
     }
 
     if (Platform.isLinux || Platform.isMacOS || Platform.isWindows) {
@@ -2384,24 +3063,34 @@ class AppController {
         commonPrint.log("Failed to start new process: $e");
         // The Windows UI has already detached and revoked pending operations.
         // End this instance; reusing it would silently ignore future requests.
-        if (Platform.isWindows) system.exit();
+        if (Platform.isWindows) {
+          await (shutdown?.exitApp?.call() ?? system.exit());
+        }
         return;
       }
     }
 
-    system.exit();
+    await (shutdown?.exitApp?.call() ?? system.exit());
   }
 
   Future<void> handleClear() => _quiesceWindows(_handleClear);
 
   Future<void> _handleClear() async {
+    final shutdown = _shutdownEffects;
+    void Function({bool reconcile}) releaseDisarm = ({bool reconcile = true}) {};
     try {
-      // Stop proxy/VPN first
-      await globalState.handleStop();
+      // Disarm system proxy, stop listeners/VPN, and flush Fake-IP DNS first
+      releaseDisarm = await _gracefulStopBeforeShutdown(
+        listenerTimeout: const Duration(seconds: 3),
+      );
       commonPrint.log("stopped proxy/VPN");
 
       // Stop core
-      await clashCore.shutdown();
+      if (shutdown != null) {
+        await shutdown.shutdownCore();
+      } else {
+        await clashCore.shutdown();
+      }
       commonPrint.log("shutdown core");
 
       // Wait a bit for all file handles to close
@@ -2411,36 +3100,41 @@ class AppController {
       await preferences.clearPreferences();
       commonPrint.log("cleared preferences");
 
-      // Get paths
-      final homePath = await appPath.homeDirPath;
-      final profilesPath = await appPath.profilesPath;
+      if (shutdown?.clearLocalState != null) {
+        await shutdown!.clearLocalState!();
+      } else {
+        // Get paths
+        final homePath = await appPath.homeDirPath;
+        final profilesPath = await appPath.profilesPath;
 
-      // Delete profiles directory
-      final profilesDir = Directory(profilesPath);
-      if (await profilesDir.exists()) {
-        try {
-          await profilesDir.delete(recursive: true);
-          commonPrint.log("deleted profiles directory");
-        } catch (e) {
-          commonPrint.log("failed to delete profiles directory: $e");
-        }
-      }
-
-      // Delete cache and temporary files
-      final filesToDelete = [
-        'cache.db',
-        'libCachedImageData.json',
-        'FlClashX.lock',
-      ];
-
-      for (final fileName in filesToDelete) {
-        final file = File(join(homePath, fileName));
-        if (await file.exists()) {
+        // Delete profiles directory
+        final profilesDir = Directory(profilesPath);
+        if (await profilesDir.exists()) {
           try {
-            await file.delete();
-            commonPrint.log("deleted $fileName");
+            await profilesDir.delete(recursive: true);
+            commonPrint.log("deleted profiles directory");
           } catch (e) {
-            commonPrint.log("failed to delete $fileName: $e");
+            commonPrint.log("failed to delete profiles directory: $e");
+          }
+        }
+
+        // Delete cache and temporary files
+        final filesToDelete = [
+          'cache.db',
+          'libCachedImageData.json',
+          'FreedomNet.lock',
+          'FlClashX.lock',
+        ];
+
+        for (final fileName in filesToDelete) {
+          final file = File(join(homePath, fileName));
+          if (await file.exists()) {
+            try {
+              await file.delete();
+              commonPrint.log("deleted $fileName");
+            } catch (e) {
+              commonPrint.log("failed to delete $fileName: $e");
+            }
           }
         }
       }
@@ -2452,61 +3146,114 @@ class AppController {
 
       commonPrint.log("handleClear completed");
 
-      // Close file logger to release file handles (MUST be last step)
-      await fileLogger.dispose();
-      if (Platform.isWindows) system.exit();
+      if (shutdown?.clearLocalState == null) {
+        // Close file logger to release file handles (MUST be last step)
+        await fileLogger.dispose();
+      }
+      if (Platform.isWindows) {
+        await (shutdown?.exitApp?.call() ?? system.exit());
+      }
     } catch (e) {
       commonPrint.log("handleClear error: $e");
-      await fileLogger.dispose();
+      if (shutdown?.clearLocalState == null) {
+        await fileLogger.dispose();
+      }
       rethrow;
+    } finally {
+      releaseDisarm(reconcile: false);
     }
   }
 
-  Future<void> autoCheckUpdate() async {
+  String _resolveCurrentAppVersion() {
+    if (globalState.isPackageInfoInitialized) {
+      final v = globalState.packageInfo.version.trim();
+      if (v.isNotEmpty) return v;
+    }
+    try {
+      final v = globalState.packageInfo.version.trim();
+      if (v.isNotEmpty) return v;
+    } catch (_) {
+      // Uninitialized late PackageInfo in isolated tests.
+    }
+    return '0.0.0';
+  }
+
+  Future<void> autoCheckUpdate() => autoCheckUpdateWith();
+
+  @visibleForTesting
+  Future<void> autoCheckUpdateWith({
+    SignedUpdate? signedUpdater,
+  }) async {
     if (!_ref.read(appSettingProvider).autoCheckUpdate) return;
-    final res = await request.checkForUpdate();
-    checkUpdateResultHandle(data: res);
+    final updater = signedUpdater ?? SignedUpdate();
+    if (updater.unavailable != null) return;
+    try {
+      final res =
+          await updater.checkAvailableUpdate(_resolveCurrentAppVersion());
+      await checkUpdateResultHandle(
+        signedResult: res,
+        signedUpdater: updater,
+      );
+    } catch (e) {
+      commonPrint.log('autoCheckUpdate failed: $e');
+    }
   }
 
   Future<void> checkUpdateResultHandle({
+    SignedUpdateCheckResult? signedResult,
+    SignedUpdate? signedUpdater,
     Map<String, dynamic>? data,
     bool handleError = false,
   }) async {
     if (globalState.isPre) {
       return;
     }
-    if (data != null) {
-      final tagName = data['tag_name'];
-      final body = data['body'];
-      final submits = utils.parseReleaseBody(body);
+    final resolved = signedResult ??
+        (data == null
+            ? null
+            : SignedUpdateCheckResult(
+                version: data['tag_name']?.toString() ?? '',
+                releaseNotes: data['body']?.toString() ?? '',
+              ));
+    if (resolved != null && resolved.version.trim().isNotEmpty) {
+      final notes = utils.parseReleaseBody(resolved.releaseNotes);
       final textTheme = context.textTheme;
       final res = await globalState.showMessage(
         title: appLocalizations.discoverNewVersion,
         message: TextSpan(
-          text: "$tagName \n",
+          text: '${resolved.version} \n',
           style: textTheme.headlineSmall,
           children: [
             TextSpan(
-              text: "\n",
+              text: '\n',
               style: textTheme.bodyMedium,
             ),
-            for (final submit in submits)
+            for (final line in notes)
               TextSpan(
-                text: "- $submit \n",
+                text: '- $line \n',
                 style: textTheme.bodyMedium,
               ),
           ],
         ),
-        confirmText: appLocalizations.goDownload,
+        confirmText: '立即更新',
       );
       if (res != true) {
         return;
       }
-      unawaited(launchUrl(
-        Uri.parse("https://github.com/$repository/releases/latest"),
-      ));
+      final dialogContext = globalState.navigatorKey.currentContext;
+      if (dialogContext == null || !dialogContext.mounted) {
+        return;
+      }
+      await showDialog<void>(
+        context: dialogContext,
+        barrierDismissible: false,
+        builder: (_) => SignedUpdateDialog(
+          updater: signedUpdater,
+          initialUpdate: resolved,
+        ),
+      );
     } else if (handleError) {
-      globalState.showMessage(
+      await globalState.showMessage(
         title: appLocalizations.checkUpdate,
         message: TextSpan(
           text: appLocalizations.checkUpdateError,
@@ -2544,6 +3291,7 @@ class AppController {
         globalState.getCoreState(),
       );
     }
+    _ref.read(coreCatalogEpochProvider.notifier).state++;
     await clashCore.setUiActive(uiActivity.value);
     // Re-assert the log subscription on every attach. startLog() lives inside
     // clashCore.init(), which is skipped above when the core is already
@@ -2561,16 +3309,12 @@ class AppController {
       // setupConfig here rebuilds listeners/providers and can interrupt live
       // flows, defeating R-121. Refresh only the UI projections; configuration
       // remains owned by the Agent/Core journal until the user changes it.
-      await updateGroups();
-      await updateProviders();
-      initForegroundCache();
+      _hydrateRuntimeProjectionsInBackground();
     } else if (Platform.isWindows && ownsWindowsConfig) {
       // Restart already owns the Windows configuration queue. Re-entering
       // applyProfile would wait on ourselves and deadlock recovery.
       await _setupClashConfigImpl();
-      await updateGroups();
-      await updateProviders();
-      initForegroundCache();
+      _hydrateRuntimeProjectionsInBackground();
     } else {
       await applyProfile();
     }
@@ -2579,13 +3323,32 @@ class AppController {
   Future<void> _persistColdStartParams() async {
     if (clashLib == null) return;
     try {
-      final clashConfig = globalState.config.patchClashConfig.copyWith.tun(
-        enable: false,
-      );
-      final setupParams = await globalState.getSetupParams(
-        pathConfig: clashConfig,
-        profile: globalState.config.currentProfile,
-      );
+      final currentProfile = globalState.config.currentProfile;
+      final cached = _lastComputedSetupParams;
+      final SetupParams setupParams;
+      if (cached != null && cached.profileId == currentProfile?.id) {
+        final rawTun = cached.params.config['tun'];
+        final tunMap = rawTun is Map
+            ? <String, dynamic>{
+                ...Map<String, dynamic>.from(rawTun),
+                'enable': false,
+              }
+            : <String, dynamic>{'enable': false};
+        setupParams = cached.params.copyWith(
+          config: <String, dynamic>{
+            ...cached.params.config,
+            'tun': tunMap,
+          },
+        );
+      } else {
+        final clashConfig = globalState.config.patchClashConfig.copyWith.tun(
+          enable: false,
+        );
+        setupParams = await globalState.getSetupParams(
+          pathConfig: clashConfig,
+          profile: currentProfile,
+        );
+      }
       unawaited(clashLib?.saveParamsForColdStart(
         initParams: InitParams(
           homeDir: await appPath.homeDirPath,
@@ -2620,7 +3383,18 @@ class AppController {
         effects.log('startup: saved TUN preference is off; starting proxy without TUN');
         try {
           await effects.startProxyWithoutTun();
+          logStartupTunnelReadyOnce(
+            mode: 'proxy_only',
+            outcome: (globalState.isStart || effects.proxyRunning)
+                ? 'ready'
+                : 'idle',
+          );
         } catch (e) {
+          logStartupTunnelReadyOnce(
+            mode: 'proxy_only',
+            outcome: 'error',
+            detail: 'reason=${e.runtimeType}',
+          );
           effects.log('startup: proxy start failed: $e');
         }
         return;
@@ -2628,8 +3402,24 @@ class AppController {
       effects.log('startup: saved TUN preference is on; starting proxy and TUN');
       await _startWindowsTun();
       final failure = _tunRuntime.failure;
+      logStartupTunnelReadyOnce(
+        mode: 'tun',
+        outcome: failure == null ? _tunRuntime.observed.name : 'degraded',
+        corePid: _tunRuntime.status?.corePid,
+        tunAttempt: _tunRuntime.status?.tunAttempt,
+        detail: failure != null ? 'failure=$failure' : null,
+      );
       effects.log('startup: TUN observed=${_tunRuntime.observed.name}'
           '${failure == null ? '' : ', failure=$failure (TUN not enabled; retry from the TUN switch)'}');
+      if (_windowsStartupEffects == null) {
+        await reconcileDeferredWindowsAgentAfterStartup(
+          pendingProxyStop: _pendingWindowsProxyStop,
+          hasDeferredAgentLaunch: () =>
+              clashService?.hasDeferredAgentLaunch == true,
+          initializeDeferredAgent: _ensureDeferredWindowsAgentInitialized,
+          log: effects.log,
+        );
+      }
       return;
     }
     try {
@@ -2638,17 +3428,17 @@ class AppController {
       commonPrint.log('initCore failed (will retry on profile change): $e');
     }
     await _initStatus();
+    logStartupTunnelReadyOnce(
+      mode: Platform.operatingSystem,
+      outcome: globalState.isStart ? 'ready' : 'idle',
+    );
   }
 
   Future<void> init() async {
-    startTunObservation();
     FlutterError.onError = (details) {
       commonPrint.log(details.stack.toString());
     };
     updateTray(true);
-    // Desktop only (clashService is null on Android): on an unexpected core-process
-    // death, respawn it AND re-init/re-apply (and re-start the tunnel if it was up).
-    clashService?.onCoreCrash = (_) => restartCore();
     // Show (or hide) the window before runtime startup. On Windows startup may
     // wait for a UAC reply or a backend handover; the native window is created
     // hidden, so awaiting first left the user with no app window meanwhile.
@@ -2659,18 +3449,27 @@ class AppController {
         window?.hide();
       }
     }
+    if (_windowsStartupEffects == null) {
+      await clashCore.preload();
+    }
+    // Desktop only (clashService is null on Android): on an unexpected core-process
+    // death, respawn it AND re-init/re-apply (and re-start the tunnel if it was up).
+    clashService?.onCoreCrash = (_) => restartCore();
+    startTunObservation();
     await initializeRuntime();
     autoLaunch?.updateStatus(
       _ref.read(appSettingProvider).autoLaunch,
     );
-    // Delay subscription update to ensure network is ready after app initialization
-    Future.delayed(
-        const Duration(seconds: 1), _updateCurrentProfileSubscription);
-    autoUpdateProfiles();
-    autoCheckUpdate();
     await _handlePreference();
     await _handlerDisclaimer();
     _ref.read(initProvider.notifier).value = true;
+    _ref.read(coreCatalogEpochProvider.notifier).state++;
+    // Defer background subscription and release checks briefly so the initial
+    // dashboard exit-IP probe gets uncontested DNS and proxy bandwidth.
+    Future.delayed(
+      const Duration(seconds: 4),
+      runDeferredStartupChecks,
+    );
   }
 
   Future<void> _initStatus() async {
@@ -2814,6 +3613,9 @@ class AppController {
   }
 
   void toPage(PageLabel pageLabel) {
+    if (!noviceVisiblePageLabels.contains(pageLabel)) {
+      _ref.read(expertNavigationExpandedProvider.notifier).state = true;
+    }
     _ref.read(currentPageLabelProvider.notifier).value = pageLabel;
   }
 
@@ -2844,7 +3646,7 @@ class AppController {
         if (res != true) {
           return;
         }
-        addProfileFormURL(url);
+        await _addProfileFormURL(url, activateAndStartProxy: true);
       },
     );
   }
@@ -2889,7 +3691,14 @@ class AppController {
     return;
   }
 
-  Future<void> addProfileFormURL(String url) async {
+  Future<void> addProfileFormURL(String url) =>
+      _addProfileFormURL(url, activateAndStartProxy: false);
+
+  Future<void> _addProfileFormURL(
+    String url, {
+    bool activateAndStartProxy = false,
+  }) async {
+    globalState.lastSubscriptionImportError = null;
     if (globalState.navigatorKey.currentState?.canPop() ?? false) {
       globalState.navigatorKey.currentState?.popUntil((route) => route.isFirst);
     }
@@ -2919,12 +3728,25 @@ class AppController {
           _showHwidNotSupportedNotice();
         }
 
-        await addProfile(profile);
+        if (activateAndStartProxy) {
+          await activateImportedProfileForNovice(
+            profile,
+            isNewProfile: true,
+            switchToProxiesPage: true,
+          );
+        } else {
+          await addProfile(profile);
+        }
       }
     } catch (err) {
       commonPrint.log('Add Profile Failed: $err');
-      unawaited(
-          globalState.showMessage(message: TextSpan(text: err.toString())));
+      final friendlyMessage = formatSubscriptionImportError(err);
+      globalState.lastSubscriptionImportError = friendlyMessage;
+      if (!globalState.suppressNextSubscriptionImportErrorDialog) {
+        unawaited(
+          globalState.showMessage(message: TextSpan(text: friendlyMessage)),
+        );
+      }
     }
   }
 
@@ -2959,7 +3781,7 @@ class AppController {
     }
     if (!context.mounted) return;
     globalState.navigatorKey.currentState?.popUntil((route) => route.isFirst);
-    toPage(PageLabel.dashboard);
+    toPage(PageLabel.proxies);
     final commonScaffoldState = globalState.homeScaffoldKey.currentState;
     if (commonScaffoldState?.mounted != true) return;
     final profile = await commonScaffoldState?.loadingRun<Profile?>(
@@ -3036,18 +3858,11 @@ class AppController {
     }
     final profilePath = await appPath.getProfilePath(profileId);
     final providersDirPath = await appPath.getProvidersDirPath(profileId);
-    return Isolate.run(() async {
-      final profileFile = File(profilePath);
-      final isExists = await profileFile.exists();
-      if (isExists) {
-        unawaited(profileFile.delete(recursive: true));
-      }
-      final providersFileDir = File(providersDirPath);
-      final providersFileIsExists = await providersFileDir.exists();
-      if (providersFileIsExists) {
-        unawaited(providersFileDir.delete(recursive: true));
-      }
-    });
+    if (_lastComputedSetupParams?.profileId == profileId) {
+      _lastComputedSetupParams = null;
+    }
+    await deleteProfileFilesInIsolate(profilePath, providersDirPath);
+    return null;
   }
 
   void updateTun() {
@@ -3336,6 +4151,7 @@ class AppController {
     await tray.update(
       trayState: _ref.read(trayStateProvider),
       focus: focus,
+      includeMenu: focus || !Platform.isWindows,
     );
   }
 
@@ -3416,6 +4232,8 @@ class AppController {
       _ref.read(proxiesStyleSettingProvider.notifier).value =
           config.proxiesStyle;
       _ref.read(overrideDnsProvider.notifier).value = config.overrideDns;
+      _ref.read(globalOverrideProvider.notifier).value =
+          config.globalOverrideData;
       _ref.read(networkSettingProvider.notifier).value = config.networkProps;
       _ref.read(hotKeyActionsProvider.notifier).value = config.hotKeyActions;
       _ref.read(scriptStateProvider.notifier).value = config.scriptProps;
@@ -3447,27 +4265,55 @@ class _ControllerWindowsTunStartupEffects implements WindowsTunStartupEffects {
   @override
   Future<TunStatus?> observe() => controller.refreshWindowsTunStatus(fresh: true);
   @override
-  Future<bool> componentsMatch() async => await clashService?.windowsComponentsMatch() ?? false;
+  Future<bool> componentsMatch() async =>
+      await clashService?.windowsComponentsMatch() ?? false;
   @override
   bool canMigrate() => clashService?.windowsAgentSupportsMigration ?? false;
   @override
-  Future<bool> authorize() async => await controller._adminAuthorization.request(system.authorizeCore) != AuthorizeCode.error;
+  Future<bool> authorize() async {
+    final watch = Stopwatch()..start();
+    try {
+      final code =
+          await controller._adminAuthorization.request(system.authorizeCore);
+      final authorized = code != AuthorizeCode.error;
+      logStartupTiming(
+        'authorize',
+        watch,
+        outcome: authorized ? code.name : 'error',
+      );
+      return authorized;
+    } catch (_) {
+      logStartupTiming('authorize', watch, outcome: 'error');
+      rethrow;
+    }
+  }
   @override
   Future<bool> ensureBackend(bool Function() isCurrent) async {
+    final watch = Stopwatch()..start();
     final wasRunning = globalState.isStart || proxyRunning;
-    final replaced =
-        await clashService?.ensureWindowsTunBackend(isCurrent: isCurrent) ??
-            false;
-    if (replaced) {
-      controller._tunRuntime.clearCoreRuntimeFailure();
-      globalState.clearRuntimeSetup();
-      controller._hasAppliedWindowsProfile = false;
-      controller._needsWindowsCoreRestore = true;
-      controller._windowsCoreRestoreNeedsListener =
-          controller._windowsCoreRestoreNeedsListener || wasRunning;
-      controller._ref.invalidate(nodeRuntimeReadProvider);
+    try {
+      final replaced =
+          await clashService?.ensureWindowsTunBackend(isCurrent: isCurrent) ??
+              false;
+      if (replaced) {
+        controller._tunRuntime.clearCoreRuntimeFailure();
+        globalState.clearRuntimeSetup();
+        controller._hasAppliedWindowsProfile = false;
+        controller._needsWindowsCoreRestore = true;
+        controller._windowsCoreRestoreNeedsListener =
+            controller._windowsCoreRestoreNeedsListener || wasRunning;
+        controller._ref.invalidate(nodeRuntimeReadProvider);
+      }
+      logStartupTiming(
+        'ensureBackend',
+        watch,
+        outcome: replaced ? 'replaced' : 'reused',
+      );
+      return replaced;
+    } catch (_) {
+      logStartupTiming('ensureBackend', watch, outcome: 'error');
+      rethrow;
     }
-    return replaced;
   }
   @override
   Future<void> initialize(bool Function() isCurrent) async {
@@ -3553,27 +4399,27 @@ class _ControllerWindowsTunStartupEffects implements WindowsTunStartupEffects {
   @override
   void log(String message) => commonPrint.log(message);
   @override
-  Future<void> reflectRunning(bool Function() isCurrent) async {
-    if (!isCurrent()) return;
-    await clashCore.setUiActive(uiActivity.value);
-    if (!isCurrent()) return;
-    if (controller._ref.read(appSettingProvider).openLogs) {
-      clashCore.startLog();
-    } else {
-      clashCore.stopLog();
-    }
-    if (!isCurrent()) return;
-    await controller.updateGroups();
-    if (!isCurrent()) return;
-    await controller.updateProviders();
-    if (!isCurrent()) return;
-    controller.initForegroundCache();
-    await StatusBarManager.updateIcon(isConnected: true);
-    if (!isCurrent()) return;
-    globalState.startTime ??= DateTime.now();
-    unawaited(globalState.startUpdateTasks([controller.updateTraffic]));
-    controller.startRunTimeTimer();
-  }
+  Future<void> reflectRunning(bool Function() isCurrent) =>
+      reflectWindowsTunRunning(
+        isCurrent: isCurrent,
+        syncUiActive: () => clashCore.setUiActive(uiActivity.value),
+        syncLogStream: () {
+          if (controller._ref.read(appSettingProvider).openLogs) {
+            clashCore.startLog();
+          } else {
+            clashCore.stopLog();
+          }
+        },
+        initForegroundCache: controller.initForegroundCache,
+        showConnectedIcon: () => StatusBarManager.updateIcon(isConnected: true),
+        markRunningNow: () {
+          globalState.startTime ??= DateTime.now();
+          unawaited(globalState.startUpdateTasks([controller.updateTraffic]));
+          controller.startRunTimeTimer();
+        },
+        updateGroups: controller.updateGroups,
+        updateProviders: controller.updateProviders,
+      );
 }
 
 class _TrackedWindowsTunStartupEffects implements WindowsTunStartupEffects {

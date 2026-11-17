@@ -1301,6 +1301,8 @@ mixin _$Tun {
   List<String> get dnsHijack => throw _privateConstructorUsedError;
   @JsonKey(name: "route-address")
   List<String> get routeAddress => throw _privateConstructorUsedError;
+  @JsonKey(name: "route-exclude-address")
+  List<String> get routeExcludeAddress => throw _privateConstructorUsedError;
 
   /// Serializes this Tun to a JSON map.
   Map<String, dynamic> toJson() => throw _privateConstructorUsedError;
@@ -1322,7 +1324,9 @@ abstract class $TunCopyWith<$Res> {
       @JsonKey(name: "auto-route") bool autoRoute,
       TunStack stack,
       @JsonKey(name: "dns-hijack") List<String> dnsHijack,
-      @JsonKey(name: "route-address") List<String> routeAddress});
+      @JsonKey(name: "route-address") List<String> routeAddress,
+      @JsonKey(name: "route-exclude-address")
+      List<String> routeExcludeAddress});
 }
 
 /// @nodoc
@@ -1345,6 +1349,7 @@ class _$TunCopyWithImpl<$Res, $Val extends Tun> implements $TunCopyWith<$Res> {
     Object? stack = null,
     Object? dnsHijack = null,
     Object? routeAddress = null,
+    Object? routeExcludeAddress = null,
   }) {
     return _then(_value.copyWith(
       enable: null == enable
@@ -1371,6 +1376,10 @@ class _$TunCopyWithImpl<$Res, $Val extends Tun> implements $TunCopyWith<$Res> {
           ? _value.routeAddress
           : routeAddress // ignore: cast_nullable_to_non_nullable
               as List<String>,
+      routeExcludeAddress: null == routeExcludeAddress
+          ? _value.routeExcludeAddress
+          : routeExcludeAddress // ignore: cast_nullable_to_non_nullable
+              as List<String>,
     ) as $Val);
   }
 }
@@ -1387,7 +1396,9 @@ abstract class _$$TunImplCopyWith<$Res> implements $TunCopyWith<$Res> {
       @JsonKey(name: "auto-route") bool autoRoute,
       TunStack stack,
       @JsonKey(name: "dns-hijack") List<String> dnsHijack,
-      @JsonKey(name: "route-address") List<String> routeAddress});
+      @JsonKey(name: "route-address") List<String> routeAddress,
+      @JsonKey(name: "route-exclude-address")
+      List<String> routeExcludeAddress});
 }
 
 /// @nodoc
@@ -1407,6 +1418,7 @@ class __$$TunImplCopyWithImpl<$Res> extends _$TunCopyWithImpl<$Res, _$TunImpl>
     Object? stack = null,
     Object? dnsHijack = null,
     Object? routeAddress = null,
+    Object? routeExcludeAddress = null,
   }) {
     return _then(_$TunImpl(
       enable: null == enable
@@ -1433,6 +1445,10 @@ class __$$TunImplCopyWithImpl<$Res> extends _$TunCopyWithImpl<$Res, _$TunImpl>
           ? _value._routeAddress
           : routeAddress // ignore: cast_nullable_to_non_nullable
               as List<String>,
+      routeExcludeAddress: null == routeExcludeAddress
+          ? _value._routeExcludeAddress
+          : routeExcludeAddress // ignore: cast_nullable_to_non_nullable
+              as List<String>,
     ));
   }
 }
@@ -1448,9 +1464,12 @@ class _$TunImpl implements _Tun {
       @JsonKey(name: "dns-hijack")
       final List<String> dnsHijack = const ["any:53"],
       @JsonKey(name: "route-address")
-      final List<String> routeAddress = const []})
+      final List<String> routeAddress = const [],
+      @JsonKey(name: "route-exclude-address")
+      final List<String> routeExcludeAddress = defaultTunRouteExcludeAddress})
       : _dnsHijack = dnsHijack,
-        _routeAddress = routeAddress;
+        _routeAddress = routeAddress,
+        _routeExcludeAddress = routeExcludeAddress;
 
   factory _$TunImpl.fromJson(Map<String, dynamic> json) =>
       _$$TunImplFromJson(json);
@@ -1485,9 +1504,19 @@ class _$TunImpl implements _Tun {
     return EqualUnmodifiableListView(_routeAddress);
   }
 
+  final List<String> _routeExcludeAddress;
+  @override
+  @JsonKey(name: "route-exclude-address")
+  List<String> get routeExcludeAddress {
+    if (_routeExcludeAddress is EqualUnmodifiableListView)
+      return _routeExcludeAddress;
+    // ignore: implicit_dynamic_type
+    return EqualUnmodifiableListView(_routeExcludeAddress);
+  }
+
   @override
   String toString() {
-    return 'Tun(enable: $enable, device: $device, autoRoute: $autoRoute, stack: $stack, dnsHijack: $dnsHijack, routeAddress: $routeAddress)';
+    return 'Tun(enable: $enable, device: $device, autoRoute: $autoRoute, stack: $stack, dnsHijack: $dnsHijack, routeAddress: $routeAddress, routeExcludeAddress: $routeExcludeAddress)';
   }
 
   @override
@@ -1503,7 +1532,9 @@ class _$TunImpl implements _Tun {
             const DeepCollectionEquality()
                 .equals(other._dnsHijack, _dnsHijack) &&
             const DeepCollectionEquality()
-                .equals(other._routeAddress, _routeAddress));
+                .equals(other._routeAddress, _routeAddress) &&
+            const DeepCollectionEquality()
+                .equals(other._routeExcludeAddress, _routeExcludeAddress));
   }
 
   @JsonKey(includeFromJson: false, includeToJson: false)
@@ -1515,7 +1546,8 @@ class _$TunImpl implements _Tun {
       autoRoute,
       stack,
       const DeepCollectionEquality().hash(_dnsHijack),
-      const DeepCollectionEquality().hash(_routeAddress));
+      const DeepCollectionEquality().hash(_routeAddress),
+      const DeepCollectionEquality().hash(_routeExcludeAddress));
 
   /// Create a copy of Tun
   /// with the given fields replaced by the non-null parameter values.
@@ -1535,13 +1567,14 @@ class _$TunImpl implements _Tun {
 
 abstract class _Tun implements Tun {
   const factory _Tun(
-          {final bool enable,
-          final String device,
-          @JsonKey(name: "auto-route") final bool autoRoute,
-          final TunStack stack,
-          @JsonKey(name: "dns-hijack") final List<String> dnsHijack,
-          @JsonKey(name: "route-address") final List<String> routeAddress}) =
-      _$TunImpl;
+      {final bool enable,
+      final String device,
+      @JsonKey(name: "auto-route") final bool autoRoute,
+      final TunStack stack,
+      @JsonKey(name: "dns-hijack") final List<String> dnsHijack,
+      @JsonKey(name: "route-address") final List<String> routeAddress,
+      @JsonKey(name: "route-exclude-address")
+      final List<String> routeExcludeAddress}) = _$TunImpl;
 
   factory _Tun.fromJson(Map<String, dynamic> json) = _$TunImpl.fromJson;
 
@@ -1560,6 +1593,9 @@ abstract class _Tun implements Tun {
   @override
   @JsonKey(name: "route-address")
   List<String> get routeAddress;
+  @override
+  @JsonKey(name: "route-exclude-address")
+  List<String> get routeExcludeAddress;
 
   /// Create a copy of Tun
   /// with the given fields replaced by the non-null parameter values.
@@ -2157,10 +2193,10 @@ class _$DnsImpl implements _Dns {
       @JsonKey(name: "prefer-h3") this.preferH3 = false,
       @JsonKey(name: "use-hosts") this.useHosts = true,
       @JsonKey(name: "use-system-hosts") this.useSystemHosts = true,
-      @JsonKey(name: "respect-rules") this.respectRules = false,
+      @JsonKey(name: "respect-rules") this.respectRules = true,
       this.ipv6 = true,
       @JsonKey(name: "default-nameserver")
-      final List<String> defaultNameserver = const ["223.5.5.5"],
+      final List<String> defaultNameserver = const ["223.5.5.5", "119.29.29.29"],
       @JsonKey(name: "enhanced-mode") this.enhancedMode = DnsMode.fakeIp,
       @JsonKey(name: "fake-ip-range") this.fakeIpRange = "198.18.0.1/16",
       @JsonKey(name: "fake-ip-filter") final List<String> fakeIpFilter = const [
@@ -2180,7 +2216,8 @@ class _$DnsImpl implements _Dns {
       final List<String> fallback = const ["tls://8.8.4.4", "tls://1.1.1.1"],
       @JsonKey(name: "proxy-server-nameserver")
       final List<String> proxyServerNameserver = const [
-        "https://doh.pub/dns-query"
+        "https://doh.pub/dns-query",
+        "https://dns.alidns.com/dns-query"
       ],
       @JsonKey(name: "fallback-filter")
       this.fallbackFilter = const FallbackFilter()})
@@ -2557,13 +2594,13 @@ class __$$GeoXUrlImplCopyWithImpl<$Res>
 class _$GeoXUrlImpl implements _GeoXUrl {
   const _$GeoXUrlImpl(
       {this.mmdb =
-          "https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/geoip.metadb",
+          "https://api.westernmoviefans.com/api/v1/client/geox/geoip.metadb",
       this.asn =
-          "https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/GeoLite2-ASN.mmdb",
+          "https://api.westernmoviefans.com/api/v1/client/geox/ASN.mmdb",
       this.geoip =
-          "https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/geoip.dat",
+          "https://api.westernmoviefans.com/api/v1/client/geox/GeoIP.dat",
       this.geosite =
-          "https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/geosite.dat"});
+          "https://api.westernmoviefans.com/api/v1/client/geox/GeoSite.dat"});
 
   factory _$GeoXUrlImpl.fromJson(Map<String, dynamic> json) =>
       _$$GeoXUrlImplFromJson(json);

@@ -1,0 +1,134 @@
+package tun
+
+import (
+	"errors"
+	"fmt"
+	"net/netip"
+	"os"
+	"strings"
+	"sync/atomic"
+	"syscall"
+	"time"
+)
+
+// FCXAdapterCreateError marks a failure to create (or fall back to opening)
+// the Wintun adapter itself, before any interface configuration ran. Windows
+// reports a refused device (e.g. CM_PROB_FAILED_ADD) only after Wintun's own
+// device-arrival wait, so callers must not treat it as a retryable timeout.
+// The message and wrapped Win32 error are preserved unchanged.
+type FCXAdapterCreateError struct{ Err error }
+
+func (e *FCXAdapterCreateError) Error() string { return e.Err.Error() }
+func (e *FCXAdapterCreateError) Unwrap() error { return e.Err }
+
+func FCXWrapAdapterCreateError(err error) error {
+	if err == nil {
+		return nil
+	}
+	return &FCXAdapterCreateError{Err: err}
+}
+
+func FCXIsAdapterCreateFailure(err error) bool {
+	var target *FCXAdapterCreateError
+	return errors.As(err, &target)
+}
+
+// fcxErrorFileNotFound is the Win32 code Wintun returns when Windows refuses
+// the device node (e.g. NTSTATUS 0xC00002F0 with CM_PROB_FAILED_ADD). Field
+// evidence (19/19 immediate retries failed; recovery took minutes) only
+// covers this code, so only it is treated as not worth an immediate retry.
+const fcxErrorFileNotFound = syscall.Errno(2)
+
+func FCXIsRefusedAdapterCreate(err error) bool {
+	if !FCXIsAdapterCreateFailure(err) {
+		return false
+	}
+	var errno syscall.Errno
+	return errors.As(err, &errno) && errno == fcxErrorFileNotFound
+}
+
+// FCXDeviceTimingHook receives sub-stage durations from Windows NativeTun setup
+// without requiring upstream callers to thread a custom logger through Options.
+var FCXDeviceTimingHook func(stage string, startedAt time.Time, err error)
+var FCXDeviceTimingStartHook func(stage string)
+var fcxDeviceStageSequence atomic.Uint64
+var fcxTunAttemptSequence atomic.Uint64
+var fcxActiveTunAttempt atomic.Uint64
+
+// ReCreateTun holds its lifecycle mutex while this context is active.
+func FCXReserveTunAttempt() uint64 { return fcxTunAttemptSequence.Add(1) }
+func FCXActivateTunAttempt(id uint64) { fcxActiveTunAttempt.Store(id) }
+func FCXEndTunAttempt() { fcxActiveTunAttempt.Store(0) }
+func FCXTunAttempt() uint64 { return fcxActiveTunAttempt.Load() }
+
+func fcxDeviceTimingStart() time.Time {
+	return time.Now()
+}
+
+func fcxDeviceTimingStartFor(stage string) time.Time {
+	if hook := FCXDeviceTimingStartHook; hook != nil { hook(stage) }
+	return time.Now()
+}
+
+func fcxLogDeviceStage(stage string, startedAt time.Time, err error) {
+	if hook := FCXDeviceTimingHook; hook != nil {
+		hook(stage, startedAt, err)
+	}
+}
+
+func FCXNextDeviceStageSequence() uint64 {
+	return fcxDeviceStageSequence.Add(1)
+}
+
+// FCXSanitizeCorrelationID bounds an external correlation identifier so raw
+// environment variables can never inject spaces, quotes, or control characters
+// into structured startup-timing log lines.
+func FCXSanitizeCorrelationID(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return "unknown"
+	}
+	if len(trimmed) > 64 {
+		return "invalid"
+	}
+	for i := 0; i < len(trimmed); i++ {
+		ch := trimmed[i]
+		isHexOrAlphaNum := (ch >= '0' && ch <= '9') ||
+			(ch >= 'a' && ch <= 'z') ||
+			(ch >= 'A' && ch <= 'Z') ||
+			ch == '-' || ch == '_'
+		if !isHexOrAlphaNum {
+			return "invalid"
+		}
+	}
+	return trimmed
+}
+
+func FCXStartupCorrelationID() string {
+	return FCXSanitizeCorrelationID(os.Getenv("FCX_STARTUP_ID"))
+}
+
+// FCXAddAutoRoutes adds each prefix route without letting a succeeding tail
+// route overwrite an earlier failure, while tolerating benign duplicate-route
+// errors reported by isBenignError.
+func FCXAddAutoRoutes(
+	routeRanges []netip.Prefix,
+	gateway4 netip.Addr,
+	gateway6 netip.Addr,
+	addRoute func(netip.Prefix, netip.Addr, uint32) error,
+	isBenignError func(error) bool,
+) error {
+	for _, routeRange := range routeRanges {
+		gateway := gateway6
+		if routeRange.Addr().Is4() {
+			gateway = gateway4
+		}
+		if err := addRoute(routeRange, gateway, 0); err != nil {
+			if isBenignError != nil && isBenignError(err) {
+				continue
+			}
+			return fmt.Errorf("add route %s: %w", routeRange.String(), err)
+		}
+	}
+	return nil
+}

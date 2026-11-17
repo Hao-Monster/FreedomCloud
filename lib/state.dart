@@ -1,9 +1,11 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:ffi' show Pointer;
-import 'dart:io' show Platform;
+import 'dart:io' show File, HttpOverrides, Platform;
+import 'dart:typed_data' show BytesBuilder;
 
 import 'package:animations/animations.dart';
+import 'package:crypto/crypto.dart';
 import 'package:dio/dio.dart';
 import 'package:dynamic_color/dynamic_color.dart';
 import 'package:flclashx/clash/clash.dart';
@@ -11,8 +13,11 @@ import 'package:flclashx/common/theme.dart';
 import 'package:flclashx/enum/enum.dart';
 import 'package:flclashx/l10n/l10n.dart';
 import 'package:flclashx/plugins/service.dart';
+import 'package:flclashx/services/xboard_api.dart';
+import 'package:flclashx/services/xboard_bootstrap.dart';
 import 'package:flclashx/widgets/dialog.dart';
 import 'package:flclashx/widgets/scaffold.dart';
+import 'package:flclashx/widgets/tactile_proxy_switch.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_js/flutter_js.dart';
 import 'package:material_color_utilities/palettes/core_palette.dart';
@@ -21,11 +26,388 @@ import 'package:path/path.dart' as p;
 import 'package:url_launcher/url_launcher.dart';
 
 import 'common/common.dart';
+import 'common/smart_node_selection.dart';
+import 'common/ui_activity.dart';
 import 'controller.dart';
 import 'core_version.dart';
 import 'models/models.dart';
 
 typedef UpdateTasks = List<FutureOr Function()>;
+
+String _preferMirrorGeoXUrl(Object? configured, String mirrorFallback) {
+  if (configured is! String) return mirrorFallback;
+  final trimmed = configured.trim();
+  if (trimmed.isEmpty) return mirrorFallback;
+  if (trimmed.startsWith('https://github.com/MetaCubeX/meta-rules-dat/')) {
+    return mirrorFallback;
+  }
+  return trimmed;
+}
+
+/// Safely merges subscription DNS configuration with local defaults. When
+/// `overrideDns` is false and the subscription enables DNS, subscription keys
+/// (`nameserver`, `fallback`, `nameserver-policy`, etc.) stay intact while
+/// missing `default-nameserver`, `proxy-server-nameserver`, and essential
+/// `fake-ip-filter` entries are backfilled for Mainland China resilience.
+Map<String, dynamic> mergeAndBackfillDnsConfig({
+  required Map<String, dynamic> subscriptionDns,
+  required Map<String, dynamic> fallbackDnsJson,
+  required bool overrideDns,
+}) {
+  final isEnableDns = subscriptionDns['enable'] == true;
+  final Map<String, dynamic> result;
+  if (overrideDns || !isEnableDns) {
+    result = Map<String, dynamic>.from(fallbackDnsJson);
+    if (!isEnableDns && result['nameserver'] is List) {
+      final ns = List<String>.from(
+        (result['nameserver'] as List).map((e) => e.toString()),
+      );
+      if (!ns.contains('system://')) {
+        ns.add('system://');
+      }
+      result['nameserver'] = ns;
+    }
+  } else {
+    result = Map<String, dynamic>.from(subscriptionDns);
+  }
+
+  bool isMissingOrEmptyList(Object? value) =>
+      value == null ||
+      (value is Iterable &&
+          value.every((e) => e.toString().trim().isEmpty));
+
+  List<String> resolveNonEmptyList(Object? candidate, List<String> defaults) {
+    if (candidate is Iterable) {
+      final items = candidate
+          .map((e) => e.toString().trim())
+          .where((e) => e.isNotEmpty)
+          .toList();
+      if (items.isNotEmpty) return items;
+    }
+    return List<String>.from(defaults);
+  }
+
+  if (isMissingOrEmptyList(result['default-nameserver'])) {
+    result['default-nameserver'] = resolveNonEmptyList(
+      fallbackDnsJson['default-nameserver'],
+      defaultDns.defaultNameserver,
+    );
+  }
+  if ((result['respect-rules'] == true || (!overrideDns && isEnableDns)) &&
+      isMissingOrEmptyList(result['proxy-server-nameserver'])) {
+    result['proxy-server-nameserver'] = resolveNonEmptyList(
+      fallbackDnsJson['proxy-server-nameserver'],
+      defaultDns.proxyServerNameserver,
+    );
+  }
+  final enhancedMode = result['enhanced-mode']?.toString().trim().toLowerCase();
+  if (enhancedMode == 'fake-ip' ||
+      enhancedMode == 'fakeip' ||
+      result['fake-ip-filter'] != null ||
+      (!overrideDns && isEnableDns && enhancedMode == null)) {
+    final existing = result['fake-ip-filter'] is Iterable
+        ? result['fake-ip-filter'] as Iterable
+        : const <Object?>[];
+    result['fake-ip-filter'] = mergeEssentialFakeIpFilter(existing);
+  }
+  return result;
+}
+
+final RegExp _yamlTopLevelLogLevelLine = RegExp(
+  r'''^(?:"log-level"|'log-level'|log-level)\s*:\s*([^\s#]+)?''',
+);
+
+bool _hasTopLevelJsonLogLevel(String text) {
+  final len = text.length;
+  var depth = 0;
+  var i = 0;
+  while (i < len) {
+    final c = text.codeUnitAt(i);
+    if (c == 0x22 /* " */) {
+      final start = i + 1;
+      i++;
+      var hasEscape = false;
+      while (i < len) {
+        final sc = text.codeUnitAt(i);
+        if (sc == 0x5C /* \ */) {
+          hasEscape = true;
+          i += 2;
+          continue;
+        }
+        if (sc == 0x22 /* " */) {
+          break;
+        }
+        i++;
+      }
+      if (i >= len) return false;
+      final end = i;
+      i++; // closing quote
+      if (depth == 1) {
+        var j = i;
+        while (j < len && text.codeUnitAt(j) <= 0x20) {
+          j++;
+        }
+        if (j < len && text.codeUnitAt(j) == 0x3A /* : */) {
+          final rawKey = text.substring(start, end);
+          final key = hasEscape ? (jsonDecode('"$rawKey"') as String) : rawKey;
+          if (key == 'log-level') {
+            var v = j + 1;
+            while (v < len && text.codeUnitAt(v) <= 0x20) {
+              v++;
+            }
+            if (v + 4 <= len && text.startsWith('null', v)) {
+              final next = v + 4;
+              if (next == len ||
+                  text.codeUnitAt(next) <= 0x20 ||
+                  text.codeUnitAt(next) == 0x2C /* , */ ||
+                  text.codeUnitAt(next) == 0x7D /* } */) {
+                i = next;
+                continue;
+              }
+            }
+            return true;
+          }
+        }
+      }
+      continue;
+    }
+    if (c == 0x7B /* { */ || c == 0x5B /* [ */) {
+      depth++;
+    } else if (c == 0x7D /* } */ || c == 0x5D /* ] */) {
+      depth--;
+    }
+    i++;
+  }
+  return false;
+}
+
+@visibleForTesting
+bool hasExplicitTopLevelLogLevel(String rawText) {
+  final stripped = rawText.startsWith('\uFEFF') ? rawText.substring(1) : rawText;
+  final trimmed = stripped.trimLeft();
+  if (trimmed.startsWith('{')) {
+    return _hasTopLevelJsonLogLevel(trimmed);
+  }
+  for (final line in const LineSplitter().convert(stripped)) {
+    final match = _yamlTopLevelLogLevelLine.firstMatch(line);
+    if (match != null) {
+      final rawVal = match.group(1)?.trim().toLowerCase();
+      if (rawVal != null &&
+          rawVal.isNotEmpty &&
+          rawVal != 'null' &&
+          rawVal != '~') {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+@visibleForTesting
+Future<bool?> probeProfileFileHasExplicitTopLevelLogLevel(String path) async {
+  try {
+    final file = File(path);
+    if (!await file.exists()) {
+      return null;
+    }
+    var checkedFirstNonEmpty = false;
+    var isFirstLine = true;
+    await for (var line in file
+        .openRead()
+        .transform(utf8.decoder)
+        .transform(const LineSplitter())) {
+      if (isFirstLine) {
+        isFirstLine = false;
+        if (line.startsWith('\uFEFF')) {
+          line = line.substring(1);
+        }
+      }
+      if (!checkedFirstNonEmpty) {
+        final trimmed = line.trimLeft();
+        if (trimmed.isNotEmpty && !trimmed.startsWith('#')) {
+          checkedFirstNonEmpty = true;
+          if (trimmed.startsWith('{')) {
+            final fullText = await file.readAsString();
+            return hasExplicitTopLevelLogLevel(fullText);
+          }
+        }
+      }
+      final match = _yamlTopLevelLogLevelLine.firstMatch(line);
+      if (match != null) {
+        final rawVal = match.group(1)?.trim().toLowerCase();
+        if (rawVal != null &&
+            rawVal.isNotEmpty &&
+            rawVal != 'null' &&
+            rawVal != '~') {
+          return true;
+        }
+      }
+    }
+    return false;
+  } catch (_) {
+    return null;
+  }
+}
+
+/// Resolves the effective Mihomo `log-level`:
+/// - When [isOverride] is true, [userLogLevel] wins unconditionally.
+/// - When the profile did not explicitly declare top-level `log-level` (so
+///   Mihomo's `DefaultRawConfig` filled `"info"`), [userLogLevel] wins.
+/// - When the profile explicitly sets `debug` or `info` while [isOverride] is
+///   off, clamp to `warning` unless the user also configured [userLogLevel] to
+///   a verbose level (`debug` / `info`).
+@visibleForTesting
+String resolveEffectiveLogLevel({
+  required bool isOverride,
+  required bool hasExplicitProfileLogLevel,
+  required String? profileLogLevel,
+  required LogLevel userLogLevel,
+}) {
+  if (isOverride || !hasExplicitProfileLogLevel || profileLogLevel == null) {
+    return userLogLevel.name;
+  }
+  final normalized = profileLogLevel.trim().toLowerCase();
+  if (normalized.isEmpty) {
+    return userLogLevel.name;
+  }
+  LogLevel? parsed;
+  for (final candidate in LogLevel.values) {
+    if (candidate.name == normalized) {
+      parsed = candidate;
+      break;
+    }
+  }
+  if (parsed == null) {
+    return normalized;
+  }
+  if (parsed.index < LogLevel.warning.index) {
+    return userLogLevel.index < LogLevel.warning.index
+        ? (userLogLevel.index > parsed.index ? userLogLevel.name : parsed.name)
+        : LogLevel.warning.name;
+  }
+  return parsed.name;
+}
+
+class _SingleDigestSink implements Sink<Digest> {
+  Digest? value;
+
+  @override
+  void add(Digest data) {
+    value = data;
+  }
+
+  @override
+  void close() {}
+}
+
+class _CanonicalHashWriter {
+  _CanonicalHashWriter(this._byteSink);
+
+  static const int _flushThreshold = 8192;
+  final ByteConversionSink _byteSink;
+  final BytesBuilder _buffer = BytesBuilder(copy: false);
+
+  void _maybeFlush() {
+    if (_buffer.length >= _flushThreshold) {
+      _byteSink.add(_buffer.takeBytes());
+    }
+  }
+
+  void writeAscii(String ascii) {
+    _buffer.add(ascii.codeUnits);
+    _maybeFlush();
+  }
+
+  void writeUtf8String(String s) {
+    final encoded = utf8.encode(s);
+    _buffer
+      ..add('S:${encoded.length}:'.codeUnits)
+      ..add(encoded)
+      ..addByte(0x3B /* ; */);
+    _maybeFlush();
+  }
+
+  void writeValue(Object? value) {
+    if (value == null) {
+      writeAscii('N;');
+      return;
+    }
+    if (value is bool) {
+      writeAscii(value ? 'T;' : 'F;');
+      return;
+    }
+    if (value is int) {
+      writeAscii('I:$value;');
+      return;
+    }
+    if (value is double) {
+      final normalized = value == 0.0 ? 0.0 : value;
+      writeAscii('D:$normalized;');
+      return;
+    }
+    if (value is String) {
+      writeUtf8String(value);
+      return;
+    }
+    if (value is Map) {
+      writeAscii('M:{');
+      if (value.isNotEmpty) {
+        final entries = value.entries
+            .map((e) => (key: e.key.toString(), value: e.value))
+            .toList(growable: false)
+          ..sort((a, b) => a.key.compareTo(b.key));
+        for (final entry in entries) {
+          writeUtf8String(entry.key);
+          writeAscii(':');
+          writeValue(entry.value);
+          writeAscii(',');
+        }
+      }
+      writeAscii('};');
+      return;
+    }
+    if (value is Iterable) {
+      writeAscii('L:[');
+      for (final element in value) {
+        writeValue(element);
+        writeAscii(',');
+      }
+      writeAscii('];');
+      return;
+    }
+    writeUtf8String(value.toString());
+  }
+
+  void finish() {
+    if (_buffer.isNotEmpty) {
+      _byteSink.add(_buffer.takeBytes());
+    }
+    _byteSink.close();
+  }
+}
+
+/// Computes a deterministic SHA-256 hex digest over nested JSON-like values
+/// (`Map`, `Iterable`, primitives) independent of map key insertion order and
+/// without allocating a multi-megabyte intermediate JSON string.
+@visibleForTesting
+String computeCanonicalConfigDigest(Object? value) {
+  final sink = _SingleDigestSink();
+  _CanonicalHashWriter(sha256.startChunkedConversion(sink))
+    ..writeValue(value)
+    ..finish();
+  return sink.value!.toString();
+}
+
+bool _shallowStringMapEquals(Map<String, String> a, Map<String, String> b) {
+  if (identical(a, b)) return true;
+  if (a.length != b.length) return false;
+  for (final entry in a.entries) {
+    if (b[entry.key] != entry.value || !b.containsKey(entry.key)) {
+      return false;
+    }
+  }
+  return true;
+}
 
 class GlobalState {
 
@@ -42,7 +424,20 @@ class GlobalState {
   Map<CacheTag, FixedMap<String, double>> cacheHeightMap = {};
   Timer? timer;
   Timer? groupsUpdateTimer;
-  late Config config;
+  Config? _config;
+  bool get isConfigInitialized => _config != null;
+  Config get config {
+    final value = _config;
+    if (value == null) {
+      throw StateError('GlobalState.config accessed before initialization');
+    }
+    return value;
+  }
+
+  set config(Config value) {
+    _config = value;
+  }
+  CompiledRuleResult? lastCompiledRuleResult;
   late AppState _appState;
   bool _appStateInitialized = false;
   List<Group>? _groupsSnapshot;
@@ -134,6 +529,8 @@ class GlobalState {
   // builds, where [_uaVersion] falls back to the pubspec version + a `-pre` mark.
   String appVersionTag = "";
   late PackageInfo packageInfo;
+  bool _packageInfoInitialized = false;
+  bool get isPackageInfoInitialized => _packageInfoInitialized;
   Function? updateCurrentDelayDebounce;
   late Measure measure;
   late CommonTheme theme;
@@ -142,8 +539,17 @@ class GlobalState {
   DateTime? startTime;
   UpdateTasks tasks = [];
   Map<String, dynamic>? lastRuntimeConfig;
+  String? _lastRuntimeConfigDigest;
   String? lastRuntimeProfileId;
-  int runtimeConfigEpoch = 0;
+  String? lastSubscriptionImportError;
+  bool suppressNextSubscriptionImportErrorDialog = false;
+  Map<String, String>? lastRuntimeSelectedMap;
+  String? lastRuntimeTestUrl;
+  final ValueNotifier<int> runtimeConfigEpochNotifier = ValueNotifier<int>(0);
+  int get runtimeConfigEpoch => runtimeConfigEpochNotifier.value;
+  set runtimeConfigEpoch(int value) {
+    runtimeConfigEpochNotifier.value = value;
+  }
   // Effective external-controller endpoint after merging subscription value
   // over UI defaults. Empty string means disabled. Subscription value wins if
   // present, otherwise falls back to the UI toggle default.
@@ -160,7 +566,7 @@ class GlobalState {
   final effectiveTcpConcurrent = ValueNotifier<bool>(false);
   final effectiveUnifiedDelay = ValueNotifier<bool>(false);
   final effectiveLogLevel = ValueNotifier<String>("info");
-  final effectiveKeepAliveInterval = ValueNotifier<int>(30);
+  final effectiveKeepAliveInterval = ValueNotifier<int>(defaultKeepAliveInterval);
   // Custom per-group descriptions parsed from the profile YAML
   // (proxy-groups[*].description). Shown as the subtitle of a nested group
   // card instead of its type (Fallback/URLTest/Selector).
@@ -220,6 +626,46 @@ class GlobalState {
     );
     await _initDynamicColor();
     await init();
+    unawaited(refreshBootstrapInBackground());
+  }
+
+  Future<VerifiedBootstrapConfig?>? _bootstrapRefreshInFlight;
+
+  /// Non-blocking startup bootstrap refresh with a bounded timeout and silent
+  /// fallback to embedded Stage-1 origins when offline or unverified.
+  Future<VerifiedBootstrapConfig?> refreshBootstrapInBackground({
+    @visibleForTesting DioXboardApi Function()? apiFactory,
+    Duration timeout = const Duration(seconds: 5),
+  }) {
+    final existing = _bootstrapRefreshInFlight;
+    if (existing != null) {
+      return existing;
+    }
+    final api = (apiFactory ??
+        () => DioXboardApi(
+              mirrorPool: TransportMirrorPool.shared,
+              shouldFallbackToDirect: () =>
+                  HttpOverrides.current is FlClashHttpOverrides &&
+                  isAppStateInitialized &&
+                  isConfigInitialized &&
+                  FlClashHttpOverrides.handleFindProxy(
+                    TransportMirrorPool.shared.selectOriginForMutation(
+                      capability: 'api',
+                    ),
+                  ).startsWith('PROXY '),
+            ))();
+    final future = () async {
+      try {
+        return await api.refreshBootstrap().timeout(timeout);
+      } catch (_) {
+        return null;
+      } finally {
+        api.close();
+        _bootstrapRefreshInFlight = null;
+      }
+    }();
+    _bootstrapRefreshInFlight = future;
+    return future;
   }
 
   Future<void> _initDynamicColor() async {
@@ -232,11 +678,16 @@ class GlobalState {
 
   Future<void> init() async {
     packageInfo = await PackageInfo.fromPlatform();
+    _packageInfoInitialized = true;
     config = await preferences.getConfig() ??
-        const Config(
+        Config(
           themeProps: defaultThemeProps,
+          patchClashConfig: system.isDesktop
+              ? desktopDefaultClashConfig()
+              : defaultClashConfig,
         );
-    await globalState.migrateOldData(config);
+    await EarthDockPositionStore.instance.ensureLoaded();
+    await migrateOldData(config);
     await AppLocalizations.load(
       utils.getLocaleForString(config.appSetting.locale) ??
           WidgetsBinding.instance.platformDispatcher.locale,
@@ -261,6 +712,9 @@ class GlobalState {
     if (tasks != null) {
       this.tasks = tasks;
     }
+    if (!Platform.isMacOS && !uiActivity.value) {
+      return Future.value();
+    }
     _tasksRunning = true;
     final inFlight = _tasksCycle;
     if (inFlight != null) return inFlight;
@@ -270,6 +724,10 @@ class GlobalState {
     _tasksCycle = cycle.whenComplete(() {
       _tasksCycle = null;
       if (!_tasksRunning) return;
+      if (!Platform.isMacOS && !uiActivity.value) {
+        _tasksRunning = false;
+        return;
+      }
       if (epoch != _tasksEpoch) {
         unawaited(startUpdateTasks());
         return;
@@ -277,6 +735,10 @@ class GlobalState {
       timer = Timer(const Duration(seconds: 3), () {
         if (!_tasksRunning || epoch != _tasksEpoch) return;
         timer = null;
+        if (!Platform.isMacOS && !uiActivity.value) {
+          _tasksRunning = false;
+          return;
+        }
         unawaited(startUpdateTasks());
       });
     });
@@ -308,9 +770,29 @@ class GlobalState {
 
   // Desktop tray menus consume group selection/latency while the main window
   // is hidden. Android explicitly pauses this loop with its UI.
+  Duration? _groupsUpdateInterval;
+
+  void rebalanceGroupsUpdateTask() {
+    if (groupsUpdateTimer != null && groupsUpdateTimer!.isActive) {
+      startGroupsUpdateTask();
+    }
+  }
   void startGroupsUpdateTask() {
-    if (groupsUpdateTimer != null && groupsUpdateTimer!.isActive) return;
-    groupsUpdateTimer = Timer(const Duration(seconds: 60), () {
+    final targetInterval = uiActivity.value
+        ? const Duration(seconds: 60)
+        : const Duration(seconds: 180);
+    if (groupsUpdateTimer != null && groupsUpdateTimer!.isActive) {
+      if (_groupsUpdateInterval == targetInterval) return;
+      groupsUpdateTimer!.cancel();
+      groupsUpdateTimer = null;
+    }
+    _groupsUpdateInterval = targetInterval;
+    final interval = uiActivity.value
+        ? const Duration(seconds: 60)
+        : const Duration(seconds: 180);
+    groupsUpdateTimer = Timer(interval, () {
+      groupsUpdateTimer = null;
+      _groupsUpdateInterval = null;
       if (isAppControllerReady) appController.updateGroupsDebounce();
       startGroupsUpdateTask();
     });
@@ -318,6 +800,7 @@ class GlobalState {
 
   void stopGroupsUpdateTask() {
     groupsUpdateTimer?.cancel();
+    _groupsUpdateInterval = null;
     groupsUpdateTimer = null;
   }
 
@@ -480,11 +963,14 @@ class GlobalState {
   Future<void> migrateOldData(Config config) async {
     final clashConfig = await preferences.getClashConfig();
     if (clashConfig != null) {
-      config = config.copyWith(
+      final migratedConfig = config.copyWith(
         patchClashConfig: clashConfig,
       );
-      preferences.clearClashConfig();
-      preferences.saveConfig(config);
+      this.config = migratedConfig;
+      final saved = await preferences.saveConfig(migratedConfig);
+      if (saved) {
+        await preferences.clearClashConfig();
+      }
     }
   }
 
@@ -501,15 +987,22 @@ class GlobalState {
   Future<SetupParams> getSetupParams({
     required ClashConfig pathConfig,
     required Profile? profile,
+    Map<String, dynamic>? preloadedRawConfig,
+    bool? preloadedHasExplicitLogLevel,
   }) async {
     final testUrl = config.appSetting.testUrl;
     final clashConfig = await patchRawConfig(
       patchConfig: pathConfig,
       profile: profile,
+      preloadedRawConfig: preloadedRawConfig,
+      preloadedHasExplicitLogLevel: preloadedHasExplicitLogLevel,
     );
     final params = SetupParams(
       config: clashConfig,
-      selectedMap: profile?.selectedMap ?? {},
+      selectedMap: buildEffectiveSelectedMapForProfile(
+        profile: profile,
+        patchedRawConfig: clashConfig,
+      ),
       testUrl: testUrl,
     );
     return params;
@@ -528,7 +1021,10 @@ class GlobalState {
   void clearRuntimeSetup() {
     runtimeConfigEpoch++;
     lastRuntimeConfig = null;
+    _lastRuntimeConfigDigest = null;
     lastRuntimeProfileId = null;
+    lastRuntimeSelectedMap = null;
+    lastRuntimeTestUrl = null;
     _groupsSnapshotProfileId = null;
   }
 
@@ -536,15 +1032,88 @@ class GlobalState {
     runtimeConfigEpoch++;
     final rawConfig = params.config;
     lastRuntimeConfig = rawConfig;
+    _lastRuntimeConfigDigest = null;
     lastRuntimeProfileId = profileId;
+    lastRuntimeSelectedMap = Map<String, String>.from(params.selectedMap);
+    lastRuntimeTestUrl = params.testUrl;
     effectiveExternalController.value = (rawConfig['external-controller'] as String?) ?? '';
     effectiveSecret.value = (rawConfig['secret'] as String?) ?? '';
     effectiveExternalUi.value = (rawConfig['external-ui'] as String?) ?? '';
     effectiveTcpConcurrent.value = rawConfig['tcp-concurrent'] as bool? ?? false;
     effectiveUnifiedDelay.value = rawConfig['unified-delay'] as bool? ?? false;
     effectiveLogLevel.value = rawConfig['log-level'] as String? ?? 'info';
-    effectiveKeepAliveInterval.value = (rawConfig['keep-alive-interval'] as num?)?.toInt() ?? 30;
+    final committedKeepAlive =
+        (rawConfig['keep-alive-interval'] as num?)?.toInt();
+    effectiveKeepAliveInterval.value =
+        (committedKeepAlive != null && committedKeepAlive > 0)
+            ? committedKeepAlive
+            : defaultKeepAliveInterval;
     _commitGroupMetadata(rawConfig);
+  }
+
+  void commitRuntimeChangeProxy(ChangeProxyParams params) {
+    final currentSelected = lastRuntimeSelectedMap;
+    if (currentSelected == null) return;
+    lastRuntimeSelectedMap = <String, String>{
+      ...currentSelected,
+      params.groupName: params.proxyName,
+    };
+  }
+
+  bool matchesCommittedRuntimeSetup(
+    SetupParams candidate, {
+    required String? profileId,
+  }) {
+    if (profileId == null ||
+        lastRuntimeProfileId != profileId ||
+        lastRuntimeConfig == null ||
+        lastRuntimeSelectedMap == null ||
+        lastRuntimeTestUrl != candidate.testUrl) {
+      return false;
+    }
+    if (!_shallowStringMapEquals(
+      lastRuntimeSelectedMap!,
+      candidate.selectedMap,
+    )) {
+      return false;
+    }
+    if (identical(lastRuntimeConfig, candidate.config)) {
+      return true;
+    }
+    final committedDigest =
+        _lastRuntimeConfigDigest ??= computeCanonicalConfigDigest(lastRuntimeConfig);
+    return committedDigest == computeCanonicalConfigDigest(candidate.config);
+  }
+
+  void commitRuntimeUpdate(UpdateParams params) {
+    final runtimeConfig = lastRuntimeConfig;
+    if (runtimeConfig != null) {
+      lastRuntimeConfig = <String, dynamic>{
+        ...runtimeConfig,
+        'mixed-port': params.mixedPort,
+        'mode': params.mode.name,
+        'allow-lan': params.allowLan,
+        'ipv6': params.ipv6,
+        'log-level': params.logLevel.name,
+        'tcp-concurrent': params.tcpConcurrent,
+        'unified-delay': params.unifiedDelay,
+        if (runtimeConfig['tun'] is Map)
+          'tun': <String, dynamic>{
+            ...Map<String, dynamic>.from(runtimeConfig['tun'] as Map),
+            'enable': params.tun.enable,
+            'device': params.tun.device,
+            'stack': params.tun.stack.name,
+            'dns-hijack': params.tun.dnsHijack,
+            'auto-route': params.tun.autoRoute,
+            'route-address': params.tun.routeAddress,
+            'route-exclude-address': params.tun.routeExcludeAddress,
+          },
+      };
+      _lastRuntimeConfigDigest = null;
+    }
+    effectiveTcpConcurrent.value = params.tcpConcurrent;
+    effectiveUnifiedDelay.value = params.unifiedDelay;
+    effectiveLogLevel.value = params.logLevel.name;
   }
 
   void _commitGroupMetadata(Map<String, dynamic> rawConfig) {
@@ -580,6 +1149,108 @@ class GlobalState {
     globalOverrideEnabled.value = globalOverride;
   }
 
+  static bool _isUnconfiguredDefaultRawTun(Object? rawTun) {
+    if (rawTun is! Map) return true;
+    if (rawTun['enable'] == true) return false;
+    final device = rawTun['device']?.toString().trim() ?? '';
+    final stack = rawTun['stack']?.toString().trim().toLowerCase();
+    return device.isEmpty && (stack == null || stack == 'mips');
+  }
+
+  static bool _isUnconfiguredDefaultRawSniffer(Object? rawSniffer) {
+    if (rawSniffer == null) return true;
+    if (rawSniffer is! Map) return true;
+    if (rawSniffer['enable'] == true) return false;
+    final sniff = rawSniffer['sniff'];
+    if (sniff is Map && sniff.isNotEmpty) return false;
+    for (final listKey in const [
+      'sniffing',
+      'force-domain',
+      'skip-src-address',
+      'skip-dst-address',
+      'skip-domain',
+      'port-whitelist',
+    ]) {
+      final value = rawSniffer[listKey];
+      if (value is Iterable && value.isNotEmpty) return false;
+    }
+    return true;
+  }
+
+  ClashConfig extractSyncedNetworkSettings(
+    ClashConfig patchConfig,
+    Map<String, dynamic> rawConfig,
+  ) {
+    final providerIpv6 = rawConfig['ipv6'] as bool? ?? patchConfig.ipv6;
+    final providerAllowLan =
+        rawConfig['allow-lan'] as bool? ?? patchConfig.allowLan;
+    final providerMixedPort =
+        rawConfig['mixed-port'] as int? ?? patchConfig.mixedPort;
+    final providerFindProcessModeStr = rawConfig['find-process-mode'] as String?;
+    final providerFindProcessMode = providerFindProcessModeStr != null
+        ? FindProcessMode.values.firstWhere(
+            (e) =>
+                e.name.toLowerCase() ==
+                providerFindProcessModeStr.toLowerCase(),
+            orElse: () => patchConfig.findProcessMode,
+          )
+        : patchConfig.findProcessMode;
+
+    final rawTun = rawConfig['tun'];
+    final providerTunStackStr = !_isUnconfiguredDefaultRawTun(rawTun)
+        ? (rawTun as Map)['stack']?.toString().trim()
+        : null;
+    final providerTunStack = providerTunStackStr != null
+        ? TunStack.values.firstWhere(
+            (e) => e.name.toLowerCase() == providerTunStackStr.toLowerCase(),
+            orElse: () => patchConfig.tun.stack,
+          )
+        : patchConfig.tun.stack;
+
+    return patchConfig
+        .copyWith(
+          ipv6: providerIpv6,
+          allowLan: providerAllowLan,
+          mixedPort: providerMixedPort,
+          findProcessMode: providerFindProcessMode,
+        )
+        .copyWith
+        .tun(stack: providerTunStack);
+  }
+
+  Future<({Map<String, dynamic> rawConfig, bool hasExplicitLogLevel})>
+      loadEvaluatedProfileConfig(Profile profile) async {
+    final profileId = profile.id;
+    String? profilePath;
+    try {
+      profilePath = await appPath.getProfilePath(profileId);
+    } catch (_) {
+      profilePath = null;
+    }
+    final (fileExplicit, configMap) = await (
+      profilePath != null
+          ? probeProfileFileHasExplicitTopLevelLogLevel(profilePath)
+          : Future<bool?>.value(null),
+      getProfileConfig(profileId),
+    ).wait;
+    final preEvalLogLevel = configMap['log-level'];
+    final rawConfig = await handleEvaluate(configMap);
+    final postEvalLogLevel = rawConfig['log-level'];
+    final scriptChangedLogLevel =
+        postEvalLogLevel != null && postEvalLogLevel != preEvalLogLevel;
+    final bool hasExplicitLogLevel;
+    if (scriptChangedLogLevel) {
+      hasExplicitLogLevel = true;
+    } else if (fileExplicit != null) {
+      hasExplicitLogLevel = fileExplicit;
+    } else {
+      hasExplicitLogLevel = postEvalLogLevel is String &&
+          postEvalLogLevel.isNotEmpty &&
+          postEvalLogLevel.toLowerCase() != 'info';
+    }
+    return (rawConfig: rawConfig, hasExplicitLogLevel: hasExplicitLogLevel);
+  }
+
   Future<ClashConfig> syncNetworkSettingsFromProvider(ClashConfig patchConfig, {
     required Profile? profile,
   }) async {
@@ -595,32 +1266,7 @@ class GlobalState {
       final profileId = profile.id;
       final configMap = await getProfileConfig(profileId);
       final rawConfig = await handleEvaluate(configMap);
-
-      final providerIpv6 = rawConfig['ipv6'] as bool? ?? patchConfig.ipv6;
-      final providerAllowLan = rawConfig['allow-lan'] as bool? ?? patchConfig.allowLan;
-      final providerMixedPort = rawConfig['mixed-port'] as int? ?? patchConfig.mixedPort;
-      final providerFindProcessModeStr = rawConfig['find-process-mode'] as String?;
-      final providerFindProcessMode = providerFindProcessModeStr != null 
-          ? FindProcessMode.values.firstWhere(
-              (e) => e.name.toLowerCase() == providerFindProcessModeStr.toLowerCase(),
-              orElse: () => patchConfig.findProcessMode,
-            )
-          : patchConfig.findProcessMode;
-      
-      final providerTunStackStr = rawConfig['tun']?['stack'] as String?;
-      final providerTunStack = providerTunStackStr != null
-          ? TunStack.values.firstWhere(
-              (e) => e.name.toLowerCase() == providerTunStackStr.toLowerCase(),
-              orElse: () => patchConfig.tun.stack,
-            )
-          : patchConfig.tun.stack;
-
-      return patchConfig.copyWith(
-        ipv6: providerIpv6,
-        allowLan: providerAllowLan,
-        mixedPort: providerMixedPort,
-        findProcessMode: providerFindProcessMode,
-      ).copyWith.tun(stack: providerTunStack);
+      return extractSyncedNetworkSettings(patchConfig, rawConfig);
     } catch (e) {
       commonPrint.log("Error syncing network settings from provider: $e");
       return patchConfig;
@@ -630,13 +1276,26 @@ class GlobalState {
   Future<Map<String, dynamic>> patchRawConfig({
     required ClashConfig patchConfig,
     required Profile? profile,
+    Map<String, dynamic>? preloadedRawConfig,
+    bool? preloadedHasExplicitLogLevel,
+    Ipv6ReachabilityGuard? ipv6ReachabilityGuard,
   }) async {
     if (profile == null) {
       return {};
     }
-    final profileId = profile.id;
-    final configMap = await getProfileConfig(profileId);
-    final rawConfig = await handleEvaluate(configMap);
+    final Map<String, dynamic> rawConfig;
+    final bool hasExplicitLogLevel;
+    if (preloadedRawConfig != null) {
+      rawConfig = preloadedRawConfig;
+      hasExplicitLogLevel = preloadedHasExplicitLogLevel ??
+          (rawConfig['log-level'] is String &&
+              (rawConfig['log-level'] as String).isNotEmpty &&
+              (rawConfig['log-level'] as String).toLowerCase() != 'info');
+    } else {
+      final loaded = await loadEvaluatedProfileConfig(profile);
+      rawConfig = loaded.rawConfig;
+      hasExplicitLogLevel = loaded.hasExplicitLogLevel;
+    }
     migrateDeprecatedGlobalClientFingerprint(rawConfig);
     
     final realPatchConfig = patchConfig.copyWith(
@@ -679,7 +1338,14 @@ class GlobalState {
     final profileTcpConcurrent = rawConfig["tcp-concurrent"] as bool?;
     final profileUnifiedDelay = rawConfig["unified-delay"] as bool?;
     final profileLogLevel = rawConfig["log-level"] as String?;
-    final profileKeepAlive = (rawConfig["keep-alive-interval"] as num?)?.toInt();
+    final rawKeepAlive = (rawConfig["keep-alive-interval"] as num?)?.toInt();
+    final profileKeepAlive =
+        (rawKeepAlive != null && rawKeepAlive > 0) ? rawKeepAlive : null;
+    final rawKeepAliveIdle = (rawConfig["keep-alive-idle"] as num?)?.toInt();
+    final profileKeepAliveIdle =
+        (rawKeepAliveIdle != null && rawKeepAliveIdle > 0)
+            ? rawKeepAliveIdle
+            : null;
     final isOverride = config.appSetting.overrideNetworkSettings;
     final effTcpConcurrent = isOverride
         ? realPatchConfig.tcpConcurrent
@@ -687,9 +1353,12 @@ class GlobalState {
     final effUnifiedDelay = isOverride
         ? realPatchConfig.unifiedDelay
         : (profileUnifiedDelay ?? realPatchConfig.unifiedDelay);
-    final effLogLevel = isOverride
-        ? realPatchConfig.logLevel.name
-        : (profileLogLevel ?? realPatchConfig.logLevel.name);
+    final effLogLevel = resolveEffectiveLogLevel(
+      isOverride: isOverride,
+      hasExplicitProfileLogLevel: hasExplicitLogLevel,
+      profileLogLevel: profileLogLevel,
+      userLogLevel: realPatchConfig.logLevel,
+    );
     final effKeepAlive = isOverride
         ? realPatchConfig.keepAliveInterval
         : (profileKeepAlive ?? realPatchConfig.keepAliveInterval);
@@ -697,6 +1366,9 @@ class GlobalState {
     rawConfig["unified-delay"] = effUnifiedDelay;
     rawConfig["log-level"] = effLogLevel;
     rawConfig["keep-alive-interval"] = effKeepAlive;
+    rawConfig["keep-alive-idle"] = isOverride
+        ? realPatchConfig.keepAliveInterval
+        : (profileKeepAliveIdle ?? effKeepAlive);
     rawConfig["port"] = 0;
     rawConfig["socks-port"] = 0;
     rawConfig["port"] = realPatchConfig.port;
@@ -727,6 +1399,15 @@ class GlobalState {
         rawConfig["mixed-port"] = realPatchConfig.mixedPort;
       }
     }
+    if (!config.appSetting.overrideNetworkSettings &&
+        rawConfig["ipv6"] == true) {
+      final ipv6Reachable =
+          await (ipv6ReachabilityGuard ?? Ipv6ReachabilityGuard.shared)
+              .isGlobalIpv6Reachable();
+      if (!ipv6Reachable) {
+        rawConfig["ipv6"] = false;
+      }
+    }
     // Process-centric connection cards need metadata for every desktop
     // connection. This narrow UI requirement overrides a profile-level
     // `strict`/`off`; all other network settings still follow the provider.
@@ -750,27 +1431,36 @@ class GlobalState {
       }
     }
     
-    if (rawConfig["tun"] == null) {
-      rawConfig["tun"] = {};
-    }
-    rawConfig["tun"]["enable"] = Platform.isAndroid ? true : realPatchConfig.tun.enable;
-    rawConfig["tun"]["device"] = realPatchConfig.tun.device;
-    rawConfig["tun"]["dns-hijack"] = realPatchConfig.tun.dnsHijack;
+    final rawTun = rawConfig["tun"];
+    final hasExplicitProviderTun = !_isUnconfiguredDefaultRawTun(rawTun);
+    final tunConfig = rawTun is Map
+        ? Map<String, dynamic>.from(rawTun)
+        : <String, dynamic>{};
+    rawConfig["tun"] = tunConfig;
+    tunConfig["enable"] =
+        Platform.isAndroid ? true : realPatchConfig.tun.enable;
+    tunConfig["device"] = realPatchConfig.tun.device;
+    tunConfig["dns-hijack"] = realPatchConfig.tun.dnsHijack;
     
     // Set TUN stack
     if (config.appSetting.overrideNetworkSettings) {
       // User wants to override - use value from UI (always write)
-      rawConfig["tun"]["stack"] = realPatchConfig.tun.stack.name;
+      tunConfig["stack"] = realPatchConfig.tun.stack.name;
     } else {
-      // Use provider value - only set if not already in rawConfig, use patchConfig value (which is synced from provider)
-      final currentStack = rawConfig["tun"]["stack"];
-      if (currentStack == null) {
-        rawConfig["tun"]["stack"] = realPatchConfig.tun.stack.name;
+      // Use provider value - only set if not already in rawConfig, use patchConfig value (which are synced from provider)
+      final currentStack = tunConfig["stack"];
+      if (!hasExplicitProviderTun || currentStack == null) {
+        tunConfig["stack"] = realPatchConfig.tun.stack.name;
       }
     }
     
-    rawConfig["tun"]["route-address"] = realPatchConfig.tun.routeAddress;
-    rawConfig["tun"]["auto-route"] = realPatchConfig.tun.autoRoute;
+    tunConfig["route-address"] = realPatchConfig.tun.routeAddress;
+    tunConfig["route-exclude-address"] = realPatchConfig.tun.routeExcludeAddress;
+    tunConfig["auto-route"] = realPatchConfig.tun.autoRoute;
+    final currentMtu = (tunConfig["mtu"] as num?)?.toInt();
+    if (currentMtu == null || currentMtu <= 0) {
+      tunConfig["mtu"] = 1500;
+    }
     rawConfig["geodata-loader"] = realPatchConfig.geodataLoader.name;
     if (rawConfig["sniffer"]?["sniff"] != null) {
       for (final value in (rawConfig["sniffer"]?["sniff"] as Map).values) {
@@ -818,23 +1508,40 @@ class GlobalState {
     }
 
     rawConfig["profile"]["store-selected"] = false;
+    rawConfig["profile"]["store-fake-ip"] = true;
     
     final mergedGeoXUrl = <String, dynamic>{};
     final patchGeoX = realPatchConfig.geoXUrl.toJson();
     final profileGeoX = rawConfig["geox-url"];
-    
-    mergedGeoXUrl['geoip'] = patchGeoX['geoip'];
-    mergedGeoXUrl['mmdb'] = patchGeoX['mmdb'];
-    mergedGeoXUrl['asn'] = patchGeoX['asn'];
-    mergedGeoXUrl['geosite'] = patchGeoX['geosite'];
-    
+
+    mergedGeoXUrl['geoip'] =
+        _preferMirrorGeoXUrl(patchGeoX['geoip'], defaultGeoXUrl.geoip);
+    mergedGeoXUrl['mmdb'] =
+        _preferMirrorGeoXUrl(patchGeoX['mmdb'], defaultGeoXUrl.mmdb);
+    mergedGeoXUrl['asn'] =
+        _preferMirrorGeoXUrl(patchGeoX['asn'], defaultGeoXUrl.asn);
+    mergedGeoXUrl['geosite'] =
+        _preferMirrorGeoXUrl(patchGeoX['geosite'], defaultGeoXUrl.geosite);
+
     if (profileGeoX != null && profileGeoX is Map) {
-      if (profileGeoX['geoip'] != null) mergedGeoXUrl['geoip'] = profileGeoX['geoip'];
-      if (profileGeoX['mmdb'] != null) mergedGeoXUrl['mmdb'] = profileGeoX['mmdb'];
-      if (profileGeoX['asn'] != null) mergedGeoXUrl['asn'] = profileGeoX['asn'];
-      if (profileGeoX['geosite'] != null) mergedGeoXUrl['geosite'] = profileGeoX['geosite'];
+      if (profileGeoX['geoip'] != null) {
+        mergedGeoXUrl['geoip'] =
+            _preferMirrorGeoXUrl(profileGeoX['geoip'], defaultGeoXUrl.geoip);
+      }
+      if (profileGeoX['mmdb'] != null) {
+        mergedGeoXUrl['mmdb'] =
+            _preferMirrorGeoXUrl(profileGeoX['mmdb'], defaultGeoXUrl.mmdb);
+      }
+      if (profileGeoX['asn'] != null) {
+        mergedGeoXUrl['asn'] =
+            _preferMirrorGeoXUrl(profileGeoX['asn'], defaultGeoXUrl.asn);
+      }
+      if (profileGeoX['geosite'] != null) {
+        mergedGeoXUrl['geosite'] = _preferMirrorGeoXUrl(
+            profileGeoX['geosite'], defaultGeoXUrl.geosite);
+      }
     }
-    
+
     rawConfig["geox-url"] = mergedGeoXUrl;
     rawConfig["global-ua"] = realPatchConfig.globalUa;
     if (rawConfig["hosts"] == null) {
@@ -846,35 +1553,75 @@ class GlobalState {
     if (rawConfig["dns"] == null) {
       rawConfig["dns"] = {};
     }
-    final isEnableDns = rawConfig["dns"]["enable"] == true;
+    final rawSubDns = rawConfig["dns"] is Map
+        ? Map<String, dynamic>.from(rawConfig["dns"] as Map)
+        : <String, dynamic>{};
+    final isEnableDns = rawSubDns["enable"] == true;
     final overrideDns = globalState.config.overrideDns;
+    final mergedDns = mergeAndBackfillDnsConfig(
+      subscriptionDns: rawSubDns,
+      fallbackDnsJson: realPatchConfig.dns.toJson(),
+      overrideDns: overrideDns,
+    );
     if (overrideDns || !isEnableDns) {
-      final dns = switch (!isEnableDns) {
-        true => realPatchConfig.dns.copyWith(
-            nameserver: [...realPatchConfig.dns.nameserver, "system://"]),
-        false => realPatchConfig.dns,
-      };
-      rawConfig["dns"] = dns.toJson();
-      rawConfig["dns"]["nameserver-policy"] = {};
-      for (final entry in dns.nameserverPolicy.entries) {
-        rawConfig["dns"]["nameserver-policy"][entry.key] =
+      mergedDns["nameserver-policy"] = <String, dynamic>{};
+      for (final entry in realPatchConfig.dns.nameserverPolicy.entries) {
+        (mergedDns["nameserver-policy"] as Map<String, dynamic>)[entry.key] =
             entry.value.splitByMultipleSeparators;
       }
     }
-    var rules = [];
-    if (rawConfig["rules"] != null) {
-      rules = rawConfig["rules"];
+    if (rawConfig["ipv6"] == false &&
+        !config.appSetting.overrideNetworkSettings &&
+        mergedDns["ipv6"] == true) {
+      mergedDns["ipv6"] = false;
     }
-    rawConfig.remove("rules");
-
-    final overrideData = profile.overrideData;
-    if (overrideData.enable && config.scriptProps.currentScript == null) {
-      if (overrideData.rule.type == OverrideRuleType.override) {
-        rules = overrideData.runningRule;
-      } else {
-        rules = [...overrideData.runningRule, ...rules];
+    rawConfig["dns"] = mergedDns;
+    final enhancedMode =
+        (rawConfig["dns"] is Map ? rawConfig["dns"]["enhanced-mode"] : null)
+            ?.toString()
+            .trim()
+            .toLowerCase();
+    if (rawConfig["dns"] is Map &&
+        (enhancedMode == 'fake-ip' || enhancedMode == 'fakeip')) {
+      rawConfig["dns"]["fake-ip-filter"] = mergeEssentialFakeIpFilter(
+        (rawConfig["dns"]["fake-ip-filter"] as Iterable?) ?? const [],
+      );
+      if (_isUnconfiguredDefaultRawSniffer(rawConfig["sniffer"])) {
+        rawConfig["sniffer"] = <String, dynamic>{
+          'enable': true,
+          'force-dns-mapping': false,
+          'parse-pure-ip': true,
+          'override-destination': true,
+          'skip-dst-address': <String>[
+            '127.0.0.0/8',
+            '10.0.0.0/8',
+            '100.64.0.0/10',
+            '169.254.0.0/16',
+            '172.16.0.0/12',
+            '192.168.0.0/16',
+            'fc00::/7',
+            'fe80::/10',
+          ],
+          'sniff': <String, dynamic>{
+            'HTTP': <String, dynamic>{
+              'ports': <String>['80', '8080-8880'],
+              'override-destination': true,
+            },
+            'TLS': <String, dynamic>{
+              'ports': <String>['443', '8443'],
+              'override-destination': true,
+            },
+            'QUIC': <String, dynamic>{
+              'ports': <String>['443', '8443'],
+              'override-destination': true,
+            },
+          },
+        };
       }
     }
+    final rawRules = (rawConfig["rules"] as Iterable?) ?? const [];
+    rawConfig.remove("rules");
+
     await perAppPolicyStore.ensureLoaded();
     var unavailablePerAppTargets = 0;
     // PROCESS-PATH rules are meaningful only when the core resolves process
@@ -885,16 +1632,41 @@ class GlobalState {
         perAppPoliciesRequireProcessLookup(perAppPolicyStore.entries)) {
       rawConfig["find-process-mode"] = FindProcessMode.always.name;
     }
-    rawConfig["rule"] = mergePerAppPolicyRules(
-      perAppPolicyStore.entries,
-      rules.cast<Object?>(),
-      availableTargetGroups: {
-        GroupName.GLOBAL.name,
-        ...((rawConfig['proxy-groups'] as List?) ?? const [])
-          .whereType<Map>().map((group) => group['name']).whereType<String>(),
-      },
-      onUnavailableTarget: (_) => unavailablePerAppTargets++,
+    final homeDirPath = await appPath.homeDirPath;
+    Future<bool> hasNonEmptyDataFile(String fileName) async {
+      try {
+        final file = File(p.join(homeDirPath, fileName));
+        return await file.exists() && await file.length() > 0;
+      } catch (_) {
+        return false;
+      }
+    }
+
+    injectManagedSmartProxyGroups(
+      rawConfig,
+      defaultTestUrl: config.appSetting.testUrl,
     );
+
+    final compiledRules = compileEffectiveRules(
+      rawProfileRules: rawRules,
+      ruleProviders: rawConfig["rule-providers"] is Map
+          ? rawConfig["rule-providers"] as Map<Object?, Object?>
+          : null,
+      proxyGroups: (rawConfig["proxy-groups"] as Iterable?) ?? const [],
+      proxies: (rawConfig["proxies"] as Iterable?) ?? const [],
+      perAppPolicies: perAppPolicyStore.entries,
+      globalOverrideData: config.globalOverrideData,
+      profileOverrideData: profile.overrideData,
+      scriptActive: config.scriptProps.currentScript != null,
+      localSplitMode: config.networkProps.localSplitMode,
+      routeMode: config.networkProps.routeMode,
+      isDesktop: system.isDesktop,
+      hasGeoSite: await hasNonEmptyDataFile(geoSiteFileName),
+      hasGeoIp: await hasNonEmptyDataFile(mmdbFileName),
+      onUnavailablePerAppTarget: (_) => unavailablePerAppTargets++,
+    );
+    lastCompiledRuleResult = compiledRules;
+    rawConfig["rule"] = compiledRules.rules;
     if (unavailablePerAppTargets > 0) {
       connectionDiagnostics.log(
         '[ConnectionsDiag] perApp.compile status=blocked '
@@ -954,11 +1726,21 @@ class DetectionState {
     return _instance!;
   }
 
-  DetectionState._internal();
+  DetectionState._internal()
+      : _request = request,
+        _warmupRetryDelay = const Duration(milliseconds: 1500);
+  @visibleForTesting
+  DetectionState.forTesting(
+    this._request, {
+    Duration warmupRetryDelay = Duration.zero,
+  }) : _warmupRetryDelay = warmupRetryDelay;
+  final Request _request;
+  final Duration _warmupRetryDelay;
   static DetectionState? _instance;
-  bool? _preIsStart;
-  Timer? _setTimeoutTimer;
-  CancelToken? cancelToken;
+  (int, bool, Mode)? _activeRoute;
+  (int, bool, Mode)? _warmupRetriedRoute;
+  Timer? _warmupRetryTimer;
+  CancelToken? _cancelToken;
   DateTime? _lastManualCheck;
   int _routingEpoch = 0;
   int _requestGeneration = 0;
@@ -1004,7 +1786,13 @@ class DetectionState {
   /// Advances the central proxy/profile/mode routing epoch so any in-flight
   /// exit-IP check started under a previous route cannot calibrate the new node.
   void notifyRoutingChanged() {
+    final hadWarmupPending = _warmupRetryTimer != null;
+    _warmupRetryTimer?.cancel();
+    _warmupRetryTimer = null;
     _routingEpoch++;
+    if (hadWarmupPending && _activeRoute == null && state.value.isTesting) {
+      state.value = state.value.copyWith(isTesting: false);
+    }
   }
 
   final state = ValueNotifier<NetworkDetectionState>(
@@ -1016,16 +1804,12 @@ class DetectionState {
   );
 
   void startCheck() {
-    debouncer.call(
-      FunctionTag.checkIp,
-      _checkIp,
-      duration: const Duration(
-        milliseconds: 1200,
-      ),
-    );
+    unawaited(_checkIp());
   }
 
   bool forceCheck() {
+    // The readiness listener will submit the first check as initialization ends.
+    if (!globalState.appState.isInit) return true;
     if (_lastManualCheck != null) {
       final timeSinceLastCheck = DateTime.now().difference(_lastManualCheck!);
       if (timeSinceLastCheck.inSeconds < 15) {
@@ -1033,15 +1817,13 @@ class DetectionState {
       }
     }
     _lastManualCheck = DateTime.now();
-    _checkIp();
+    debouncer.cancel(FunctionTag.addCheckIpNum);
+    startCheck();
     return true;
   }
 
-  /// Drop any stale exit-IP immediately (e.g. the instant the tunnel starts) so the
-  /// UI shows the "determining" state right away instead of flashing the previous IP
-  /// during the ~1.2s debounce before the next [_checkIp] runs.
+  /// Clear the previous route's exit IP while its new listener starts.
   void markChecking() {
-    _clearSetTimeoutTimer();
     state.value = state.value.copyWith(
       isLoading: true,
       isTesting: false,
@@ -1051,92 +1833,91 @@ class DetectionState {
 
   Future<void> _checkIp() async {
     final appState = globalState.appState;
-    final isInit = appState.isInit;
-    if (!isInit) return;
+    if (!appState.isInit) return;
     final isStart = appState.runTime != null;
-    if (_preIsStart == false &&
-        _preIsStart == isStart &&
-        state.value.ipInfo != null) {
-      return;
-    }
-    final justStarted = _preIsStart == false && isStart;
-    _clearSetTimeoutTimer();
-    state.value = state.value.copyWith(
-      isLoading: true,
-      ipInfo: null,
-    );
-    _preIsStart = isStart;
-    if (cancelToken != null) {
-      cancelToken!.cancel();
-      cancelToken = null;
-    }
-    if (justStarted) {
-      await Future.delayed(const Duration(milliseconds: 2000));
-    }
-    cancelToken = CancelToken();
-    final requestGen = ++_requestGeneration;
     final startRoutingEpoch = _routingEpoch;
-    final wasStartAtBegin = isStart;
     final modeAtBegin = globalState.config.patchClashConfig.mode;
+    final route = (startRoutingEpoch, isStart, modeAtBegin);
+    if (_activeRoute == route) return;
+    _activeRoute = route;
+    final requestGen = ++_requestGeneration;
+    _warmupRetryTimer?.cancel();
+    _warmupRetryTimer = null;
+    _cancelToken?.cancel();
+    final token = _cancelToken = CancelToken();
     final checkStartedAt = DateTime.now();
     state.value = state.value.copyWith(
+      isLoading: true,
       isTesting: true,
+      ipInfo: null,
     );
-    final res = await request.checkIpWithHost(cancelToken: cancelToken);
-    if (requestGen != _requestGeneration) {
-      return;
+    final probeConsumerKey =
+        isStart && modeAtBegin != Mode.direct ? 'ip_probe_$requestGen' : null;
+    final activeCore =
+        probeConsumerKey == null ? null : ClashCore.existingCore;
+    if (activeCore != null && probeConsumerKey != null) {
+      await activeCore.acquireRequestsConsumer(probeConsumerKey);
     }
-    if (res.isError) {
-      state.value = state.value.copyWith(
-        isLoading: true,
-        ipInfo: null,
+    late final Result<IpCheckProbeResult?> res;
+    try {
+      res = await _request.checkIpWithHost(
+        cancelToken: token,
+        attemptTimeout: const Duration(seconds: 3),
       );
+    } finally {
+      if (activeCore != null && probeConsumerKey != null) {
+        scheduleMicrotask(() {
+          unawaited(activeCore.releaseRequestsConsumer(probeConsumerKey));
+        });
+      }
+    }
+    if (requestGen != _requestGeneration) return;
+    _activeRoute = null;
+    final currentRoute = (
+      _routingEpoch,
+      globalState.appState.runTime != null,
+      globalState.config.patchClashConfig.mode,
+    );
+    if (route != currentRoute) {
+      // The route changed before its debounced notification was delivered.
+      // Discard the old IP; the next request must use the current route.
+      startCheck();
       return;
     }
     final ipInfo = res.data?.ipInfo;
-    final checkCompletedAt = DateTime.now();
-    final isStartAtEnd =
-        globalState.isAppStateInitialized && globalState.appState.runTime != null;
-    final modeAtEnd = globalState.config.patchClashConfig.mode;
-    state.value = state.value.copyWith(
-      isTesting: false,
-    );
     if (ipInfo != null) {
-      final sameRoute = startRoutingEpoch == _routingEpoch;
-      final proxyEligible = sameRoute &&
-          wasStartAtBegin &&
-          isStartAtEnd &&
+      final proxyEligible = isStart &&
           modeAtBegin != Mode.direct &&
-          modeAtEnd != Mode.direct &&
           (res.data?.routedViaClash ?? false);
       _lastCompletedIpInfo = ipInfo;
       _lastCompletedGeneration = requestGen;
-      _lastCompletedRoutingEpoch = sameRoute ? startRoutingEpoch : null;
+      _lastCompletedRoutingEpoch = startRoutingEpoch;
       _lastMatchedHost = res.data?.host;
       _lastProbeSourcePorts = res.data?.sourcePorts;
       _lastCheckStartedAt = checkStartedAt;
-      _lastCheckCompletedAt = checkCompletedAt;
+      _lastCheckCompletedAt = DateTime.now();
       _lastCheckProxyEligible = proxyEligible;
-      state.value = state.value.copyWith(
-        isLoading: false,
-        ipInfo: ipInfo,
-      );
+    } else if (_warmupRetryDelay > Duration.zero &&
+        isStart &&
+        !res.isError &&
+        _warmupRetriedRoute != route) {
+      // Right after Wintun/listener bring-up, Windows NDIS routing or upstream
+      // DNS can fail the initial probe once before stabilizing. Schedule a
+      // single bounded warm-up retry so the dashboard self-heals.
+      _warmupRetriedRoute = route;
+      _warmupRetryTimer = Timer(_warmupRetryDelay, () {
+        _warmupRetryTimer = null;
+        if (requestGen == _requestGeneration) {
+          startCheck();
+        }
+      });
       return;
     }
-    _clearSetTimeoutTimer();
-    _setTimeoutTimer = Timer(const Duration(milliseconds: 300), () {
-      state.value = state.value.copyWith(
-        isLoading: false,
-        ipInfo: null,
-      );
-    });
-  }
-
-  void _clearSetTimeoutTimer() {
-    if (_setTimeoutTimer != null) {
-      _setTimeoutTimer?.cancel();
-      _setTimeoutTimer = null;
-    }
+    state.value = state.value.copyWith(
+      isLoading: false,
+      isTesting: false,
+      ipInfo: ipInfo,
+    );
   }
 }
 

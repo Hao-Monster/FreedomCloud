@@ -1,4 +1,8 @@
+import 'dart:async';
+
+import 'package:flclashx/clash/core.dart';
 import 'package:flclashx/common/common.dart';
+import 'package:flclashx/common/ui_activity.dart';
 import 'package:flclashx/models/models.dart';
 import 'package:flclashx/providers/providers.dart';
 import 'package:flclashx/widgets/widgets.dart';
@@ -15,11 +19,48 @@ class RequestLogView extends ConsumerStatefulWidget {
 }
 
 class _RequestLogViewState extends ConsumerState<RequestLogView> {
+  static const _consumerKey = 'requests_view';
   final _queryController = TextEditingController();
   String _query = '';
+  bool _tickerEnabled = true;
+  bool _subscribed = false;
+
+  void _syncRequestsSubscription() {
+    final shouldSubscribe = mounted && _tickerEnabled && uiActivity.value;
+    if (shouldSubscribe == _subscribed) return;
+    _subscribed = shouldSubscribe;
+    final core = ClashCore.existingCore;
+    if (core == null) return;
+    if (shouldSubscribe) {
+      unawaited(core.acquireRequestsConsumer(_consumerKey));
+    } else {
+      unawaited(core.releaseRequestsConsumer(_consumerKey));
+    }
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    uiActivity.addListener(_syncRequestsSubscription);
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _tickerEnabled = TickerMode.valuesOf(context).enabled;
+    _syncRequestsSubscription();
+  }
 
   @override
   void dispose() {
+    uiActivity.removeListener(_syncRequestsSubscription);
+    if (_subscribed) {
+      _subscribed = false;
+      final core = ClashCore.existingCore;
+      if (core != null) {
+        unawaited(core.releaseRequestsConsumer(_consumerKey));
+      }
+    }
     _queryController.dispose();
     super.dispose();
   }

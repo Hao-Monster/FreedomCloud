@@ -22,7 +22,10 @@ class _Controller extends AppController {
   _Controller(super.context, super.ref);
   int applies = 0;
   @override
-  Future<void> applyProfile({bool silence = false}) async {
+  Future<void> applyProfile({
+    bool silence = false,
+    bool skipIfUnchanged = false,
+  }) async {
     applies++;
   }
 }

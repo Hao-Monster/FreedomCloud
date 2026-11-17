@@ -17,19 +17,21 @@ class LogsView extends ConsumerStatefulWidget {
 
 class _LogsViewState extends ConsumerState<LogsView> with PageMixin {
   final _logsStateNotifier = ValueNotifier<LogsState>(
-    const LogsState(loading: true),
+    const LogsState(loading: false),
   );
   late ScrollController _scrollController;
 
   double _currentMaxWidth = 0;
-  final _tag = CacheTag.rules;
-  bool _isLoad = false;
+  static const _tag = CacheTag.logs;
+  bool _isCurrentPage = false;
+  bool _dirtyWhileHidden = false;
 
   List<Log> _logs = [];
 
   @override
   void initState() {
     super.initState();
+    globalState.cacheHeightMap[_tag] ??= FixedMap(maxLength);
     final position = globalState.cacheScrollPosition[_tag] ?? -1;
     _scrollController = ScrollController(
       initialScrollOffset: position > 0 ? position : double.maxFinite,
@@ -37,6 +39,7 @@ class _LogsViewState extends ConsumerState<LogsView> with PageMixin {
     _logs = globalState.appState.logs.list;
     _logsStateNotifier.value = _logsStateNotifier.value.copyWith(
       logs: _logs,
+      loading: false,
     );
     ref.listenManual(
       isCurrentPageProvider(
@@ -45,8 +48,13 @@ class _LogsViewState extends ConsumerState<LogsView> with PageMixin {
             pageLabel == PageLabel.tools && viewMode == ViewMode.mobile,
       ),
       (prev, next) {
+        _isCurrentPage = next;
         if (prev != next && next == true) {
           initPageState();
+          if (_dirtyWhileHidden) {
+            _dirtyWhileHidden = false;
+            updateLogsThrottler();
+          }
         }
       },
       fireImmediately: true,
@@ -54,12 +62,14 @@ class _LogsViewState extends ConsumerState<LogsView> with PageMixin {
     ref.listenManual(
       logsProvider.select((state) => state.list),
       (prev, next) {
-        if (prev != next) {
-          final isEquality = logListEquality.equals(prev, next);
-          if (!isEquality) {
-            _logs = next;
-            updateLogsThrottler();
-          }
+        if (identical(prev, next)) return;
+        _logs = next;
+        if (!_isCurrentPage) {
+          _dirtyWhileHidden = true;
+          return;
+        }
+        if (!logListEquality.equals(prev, next)) {
+          updateLogsThrottler();
         }
       },
     );
@@ -126,6 +136,7 @@ class _LogsViewState extends ConsumerState<LogsView> with PageMixin {
 
   void updateLogsThrottler() {
     throttler.call(FunctionTag.logs, () {
+      if (!mounted || !_isCurrentPage) return;
       final isEquality = logListEquality.equals(
         _logs,
         _logsStateNotifier.value.logs,
@@ -143,67 +154,19 @@ class _LogsViewState extends ConsumerState<LogsView> with PageMixin {
     }, duration: commonDuration);
   }
 
-  void _preLoad() {
-    if (_isLoad == true) {
-      return;
-    }
-    _isLoad = true;
-    WidgetsBinding.instance.addPostFrameCallback((_) async {
-      if (!mounted) {
-        return;
-      }
-      final isMobileView = ref.read(isMobileViewProvider);
-      if (isMobileView) {
-        await Future.delayed(const Duration(milliseconds: 300));
-      }
-      final parts = _logs.batch(10);
-      globalState.cacheHeightMap[_tag] ??= FixedMap(
-        _logs.length,
-      );
-      for (var i = 0; i < parts.length; i++) {
-        final part = parts[i];
-        await Future(
-          () {
-            for (final log in part) {
-              globalState.cacheHeightMap[_tag]?.updateCacheValue(
-                log.payload,
-                () => _getItemHeight(log),
-              );
-            }
-          },
-        );
-      }
-      _logsStateNotifier.value = _logsStateNotifier.value.copyWith(
-        loading: false,
-      );
-    });
-  }
-
   @override
   Widget build(BuildContext context) => LayoutBuilder(
         builder: (_, constraints) {
-          _currentMaxWidth = constraints.maxWidth - 40;
+          final nextWidth = constraints.maxWidth - 40;
+          if (_currentMaxWidth != nextWidth) {
+            _currentMaxWidth = nextWidth;
+            globalState.cacheHeightMap[_tag]?.clear();
+          }
           return ValueListenableBuilder<LogsState>(
             valueListenable: _logsStateNotifier,
             builder: (_, state, __) {
-              _preLoad();
               final logs = state.list;
-              final items = logs
-                  .map<Widget>(
-                    (log) => LogItem(
-                      key: Key(log.dateTime),
-                      log: log,
-                      onClick: (value) {
-                        context.commonScaffoldState?.addKeyword(value);
-                      },
-                    ),
-                  )
-                  .separated(
-                    const Divider(
-                      height: 0,
-                    ),
-                  )
-                  .toList();
+              final itemCount = logs.isEmpty ? 0 : logs.length * 2 - 1;
               final content = logs.isEmpty
                   ? NullStatus(
                       label: appLocalizations.nullTip(
@@ -221,22 +184,35 @@ class _LogsViewState extends ConsumerState<LogsView> with PageMixin {
                           child: CacheItemExtentListView(
                             tag: _tag,
                             reverse: true,
-                            shrinkWrap: true,
+                            shrinkWrap: false,
                             physics: const NextClampingScrollPhysics(),
                             controller: _scrollController,
-                            itemBuilder: (_, index) => items[index],
+                            itemBuilder: (_, index) {
+                              if (index.isOdd) {
+                                return const Divider(height: 0);
+                              }
+                              final log = logs[index ~/ 2];
+                              return LogItem(
+                                key: ValueKey('${log.dateTime}#${index ~/ 2}'),
+                                log: log,
+                                onClick: (value) {
+                                  context.commonScaffoldState?.addKeyword(value);
+                                },
+                              );
+                            },
                             itemExtentBuilder: (index) {
                               if (index.isOdd) {
                                 return 0;
                               }
                               return _getItemHeight(logs[index ~/ 2]);
                             },
-                            itemCount: items.length,
+                            itemCount: itemCount,
                             keyBuilder: (index) {
                               if (index.isOdd) {
-                                return "divider";
+                                return 'divider#${index ~/ 2}';
                               }
-                              return logs[index ~/ 2].payload;
+                              final log = logs[index ~/ 2];
+                              return '${log.dateTime}#${index ~/ 2}#${log.payload.hashCode}';
                             },
                           ),
                         ),

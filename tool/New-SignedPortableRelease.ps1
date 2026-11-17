@@ -28,10 +28,10 @@ foreach ($file in $files) {
   if ($relative -ieq 'release.p7m') { throw 'Remove old release envelope before publishing' }
   $inventory += @{path=$relative;size=$file.Length;sha256=(Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()}
 }
-foreach ($required in @('FlClashX.exe','FlClashCore.exe','FlClashAgent.exe','FlClashHelperService.exe')) {
+foreach ($required in @('FreedomNet.exe','FreedomNetCore.exe','FreedomNetAgent.exe','FreedomNetHelperService.exe')) {
   if ($required -notin $inventory.path) { throw 'The input must be the complete portable bundle' }
 }
-$signature = Get-AuthenticodeSignature -LiteralPath (Join-Path $bundle 'FlClashX.exe')
+$signature = Get-AuthenticodeSignature -LiteralPath (Join-Path $bundle 'FreedomNet.exe')
 if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Thumbprint -ne $certificate.Thumbprint) { throw 'Sign the complete application entrypoint with this certificate before creating the immutable release inventory' }
 $stream = [IO.File]::Open($archivePath,'CreateNew','ReadWrite','None')
 $zip = New-Object IO.Compression.ZipArchive($stream, [IO.Compression.ZipArchiveMode]::Create, $false)
@@ -41,7 +41,7 @@ try {
     [IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zip, $file.FullName, $relative, [IO.Compression.CompressionLevel]::Optimal) | Out-Null
   }
 } finally { $zip.Dispose(); $stream.Dispose() }
-$manifest = @{schema=1;version=$Version;target=$Target;format='portable-zip';entry='FlClashX.exe';url=$PackageUrl.AbsoluteUri;
+$manifest = @{schema=1;version=$Version;target=$Target;format='portable-zip';entry='FreedomNet.exe';url=$PackageUrl.AbsoluteUri;
   expiresUtc=[DateTime]::UtcNow.AddDays($ValidDays).ToString('o');size=(Get-Item -LiteralPath $archivePath).Length;
   sha256=(Get-FileHash -LiteralPath $archivePath -Algorithm SHA256).Hash.ToLowerInvariant();files=$inventory}
 $content = New-Object Security.Cryptography.Pkcs.ContentInfo(,[Text.Encoding]::UTF8.GetBytes(($manifest | ConvertTo-Json -Depth 8 -Compress)))

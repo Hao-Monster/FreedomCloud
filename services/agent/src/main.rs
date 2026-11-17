@@ -1,6 +1,6 @@
 use flclash_agent::{config::AgentConfig, logging, runtime};
 
-#[tokio::main(flavor = "multi_thread", worker_threads = 2)]
+#[tokio::main(flavor = "current_thread")]
 async fn main() {
     let result = match AgentConfig::parse() {
         Ok(config) => runtime::run(config).await,
@@ -8,7 +8,14 @@ async fn main() {
     };
     if let Err(error) = result {
         logging::log_bootstrap_failure(format!("{error:#}"));
-        eprintln!("FlClashAgent: {error:#}");
+        eprintln!(
+            "{}: {error:#}",
+            if cfg!(windows) {
+                "FreedomNetAgent"
+            } else {
+                "FlClashAgent"
+            }
+        );
         std::process::exit(2);
     }
 }

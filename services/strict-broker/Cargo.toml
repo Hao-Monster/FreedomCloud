@@ -52,4 +52,4 @@ windows-sys = { version = "0.61", features = [
 panic = "abort"
 codegen-units = 1
 lto = true
-opt-level = "s"
+opt-level = 2

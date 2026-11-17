@@ -390,6 +390,7 @@ class _WindowsProcessIcon extends StatefulWidget {
 class _WindowsProcessIconState extends State<_WindowsProcessIcon> {
   ProcessIconLease<ImageProvider>? _lease;
   WindowsProcessIconLoader? _capacitySource;
+  WindowsProcessIconLoader? _retainedLoader;
   ImageProvider? _image;
   String? _key;
   bool _pageActive = true;
@@ -426,7 +427,16 @@ class _WindowsProcessIconState extends State<_WindowsProcessIcon> {
     _syncRequest();
   }
 
+  void _syncSessionRetention() {
+    final desired = _active ? widget.loader : null;
+    if (identical(_retainedLoader, desired)) return;
+    _retainedLoader?.releaseActiveConsumer();
+    _retainedLoader = desired;
+    _retainedLoader?.retainActiveConsumer();
+  }
+
   void _syncRequest() {
+    _syncSessionRetention();
     final key = normalizeWindowsIconPath(widget.path);
     if (key != _key) {
       _cancelRequest();
@@ -476,6 +486,8 @@ class _WindowsProcessIconState extends State<_WindowsProcessIcon> {
   void dispose() {
     widget.windowActivity.removeListener(_syncRequest);
     _cancelRequest();
+    _retainedLoader?.releaseActiveConsumer();
+    _retainedLoader = null;
     super.dispose();
   }
 

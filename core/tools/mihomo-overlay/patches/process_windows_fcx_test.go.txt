@@ -1,0 +1,44 @@
+//go:build windows
+
+package process
+
+import (
+	"os"
+	"strings"
+	"testing"
+	"time"
+)
+
+func TestFCXWindowsProcessPathCacheValidatesCreationTimeAndResolvesSelf(t *testing.T) {
+	once.Do(func() {
+		if err := initWin32API(); err != nil {
+			t.Fatalf("initWin32API failed: %v", err)
+		}
+	})
+
+	selfPID := uint32(os.Getpid())
+	firstPath, err := getExecPathFromPID(selfPID)
+	if err != nil || firstPath == "" {
+		t.Fatalf("getExecPathFromPID(self) failed: path=%q err=%v", firstPath, err)
+	}
+	secondPath, err := getExecPathFromPID(selfPID)
+	if err != nil || secondPath != firstPath {
+		t.Fatalf("cached getExecPathFromPID(self) mismatch: first=%q second=%q err=%v", firstPath, secondPath, err)
+	}
+	if !strings.HasSuffix(strings.ToLower(firstPath), ".exe") {
+		t.Fatalf("expected .exe path for current process, got %q", firstPath)
+	}
+
+	// Verify PID reuse protection: different creationTime must miss cache.
+	nowNs := time.Now().UnixNano()
+	fcxStoreCachedExecPath(999991, 1001, `C:\Old\App.exe`, nowNs)
+	if got, ok := fcxLookupCachedExecPath(999991, 1001, nowNs); !ok || got != `C:\Old\App.exe` {
+		t.Fatalf("expected cache hit for matching creationTime, got (%q, %v)", got, ok)
+	}
+	if _, ok := fcxLookupCachedExecPath(999991, 2002, nowNs); ok {
+		t.Fatal("cache erroneously hit when creationTime changed (PID reuse hazard)")
+	}
+	if _, ok := fcxLookupCachedExecPath(999991, 1001, nowNs+int64(fcxProcCacheTTL)+1); ok {
+		t.Fatal("cache erroneously hit after TTL expiry")
+	}
+}

@@ -7,6 +7,7 @@ import 'dart:typed_data';
 import 'package:dio/dio.dart';
 import 'package:dio/io.dart';
 import 'package:flclashx/common/common.dart';
+import 'package:flclashx/common/signed_update.dart';
 import 'package:flclashx/common/tun_runtime.dart';
 import 'package:flclashx/common/windows_helper_compatibility.dart';
 import 'package:flclashx/models/models.dart';
@@ -57,8 +58,20 @@ class Request {
   }
   late final Dio _dio;
   late final Dio _clashDio;
-  final _secureSubscription = SecureSubscriptionDownloader();
+  final _secureSubscription = SecureSubscriptionDownloader(
+    shouldFallbackToDirect: (uri) =>
+        HttpOverrides.current is FlClashHttpOverrides &&
+        globalState.isAppStateInitialized &&
+        globalState.isConfigInitialized &&
+        FlClashHttpOverrides.handleFindProxy(uri).startsWith('PROXY '),
+  );
   String? userAgent;
+
+  void close() {
+    _dio.close(force: true);
+    _clashDio.close(force: true);
+    _secureSubscription.close();
+  }
 
   Future<Response<Uint8List>> getFileResponseForUrl(
     String rawUrl, {
@@ -131,32 +144,28 @@ class Request {
   }
 
   Future<Map<String, dynamic>?> checkForUpdate() async {
-    final response = await _dio.get(
-      "https://api.github.com/repos/$repository/releases/latest",
-      options: Options(
-        responseType: ResponseType.json,
-      ),
-    );
-    if (response.statusCode != 200) return null;
-    final data = response.data as Map<String, dynamic>;
-    final remoteVersion = data['tag_name'];
-    final version = globalState.packageInfo.version;
-    final hasUpdate =
-        utils.compareVersions(remoteVersion.replaceAll('v', ''), version) > 0;
-    if (!hasUpdate) return null;
-    return data;
+    try {
+      final updater = SignedUpdate();
+      if (updater.unavailable != null) return null;
+      final currentVersion = globalState.isPackageInfoInitialized
+          ? globalState.packageInfo.version
+          : '0.0.0';
+      final result = await updater.checkAvailableUpdate(currentVersion);
+      if (result == null) return null;
+      return <String, dynamic>{
+        'tag_name': 'v${result.version.replaceFirst(RegExp(r'^v'), '')}',
+        'body': result.releaseNotes,
+        if (result.publishedAt != null) 'published_at': result.publishedAt,
+      };
+    } catch (_) {
+      return null;
+    }
   }
 
-  // Tried in order, first success wins. All return a dead-simple JSON with an
-  // IPv4 exit IP + country code:
-  //   ip.sb     — `api-ipv4` host is A-only, so the exit is forced over IPv4
-  //   ip-api.com — IPv4-only on the free tier
-  //   ipinfo.io — plain {ip, country}, used as a last-resort fallback
+  // Prefer the IPv4 endpoint. Contact the HTTPS fallback only if it fails.
   static final Map<String, IpInfo Function(Map<String, dynamic>)>
       _defaultIpInfoSources = {
     "https://api-ipv4.ip.sb/geoip": IpInfo.fromIpSbJson,
-    "http://ip-api.com/json/?fields=status,countryCode,query":
-        IpInfo.fromIpApiComJson,
     "https://ipinfo.io/json": IpInfo.fromIpInfoIoJson,
   };
   final Map<String, IpInfo Function(Map<String, dynamic>)> _ipInfoSources;
@@ -178,6 +187,54 @@ class Request {
     CancelToken? cancelToken,
     Duration keepAliveHold = const Duration(milliseconds: 4500),
     Duration connectTimeout = const Duration(seconds: 5),
+    Duration? attemptTimeout,
+    String Function(Uri uri)? proxyResolver,
+    bool forceHoldSocket = false,
+    void Function(Set<String> activePorts)? onSocketConnected,
+  }) async {
+    final primaryResult = await _checkIpWithHostSinglePass(
+      cancelToken: cancelToken,
+      keepAliveHold: keepAliveHold,
+      connectTimeout: connectTimeout,
+      attemptTimeout: attemptTimeout,
+      proxyResolver: proxyResolver,
+      forceHoldSocket: forceHoldSocket,
+      onSocketConnected: onSocketConnected,
+    );
+    if (proxyResolver != null ||
+        primaryResult.isError ||
+        primaryResult.data != null ||
+        (cancelToken?.isCancelled ?? false)) {
+      return primaryResult;
+    }
+    final canFallbackViaWindowsMixedPort = _ipInfoSources.keys.any((rawUrl) {
+      final parsed = Uri.tryParse(rawUrl);
+      return parsed != null &&
+          FlClashHttpOverrides.windowsTunLoopbackFallbackProxy(parsed) != null;
+    });
+    if (!canFallbackViaWindowsMixedPort) {
+      return primaryResult;
+    }
+    return _checkIpWithHostSinglePass(
+      cancelToken: cancelToken,
+      keepAliveHold: keepAliveHold,
+      connectTimeout: connectTimeout,
+      attemptTimeout: attemptTimeout,
+      proxyResolver: (uri) =>
+          FlClashHttpOverrides.windowsTunLoopbackFallbackProxy(uri) ?? 'DIRECT',
+      forceHoldSocket: forceHoldSocket,
+      onSocketConnected: onSocketConnected,
+    );
+  }
+
+  Future<Result<IpCheckProbeResult?>> _checkIpWithHostSinglePass({
+    CancelToken? cancelToken,
+    Duration keepAliveHold = const Duration(milliseconds: 4500),
+    Duration connectTimeout = const Duration(seconds: 5),
+    Duration? attemptTimeout,
+    String Function(Uri uri)? proxyResolver,
+    bool forceHoldSocket = false,
+    void Function(Set<String> activePorts)? onSocketConnected,
   }) async {
     for (final source in _ipInfoSources.entries) {
       if (cancelToken?.isCancelled ?? false) {
@@ -204,16 +261,38 @@ class Request {
       )..httpClientAdapter = IOHttpClientAdapter(
         createHttpClient: () {
           final client = HttpClient()
+            ..badCertificateCallback = null
             ..connectionTimeout = connectTimeout
             ..idleTimeout = keepAliveHold > Duration.zero
                 ? keepAliveHold
                 : const Duration(seconds: 1);
           client.findProxy = (uri) {
+            if (proxyResolver != null) {
+              if (globalState.isAppStateInitialized) {
+                try {
+                  client.userAgent = globalState.ua;
+                } catch (_) {}
+              }
+              final customDirective = proxyResolver(uri);
+              final isStart = globalState.isAppStateInitialized &&
+                  globalState.appState.runTime != null;
+              final tunHandlesTraffic = isStart &&
+                  (Platform.isAndroid ||
+                      (Platform.isWindows
+                          ? tunRuntime.isEnabled
+                          : globalState.appState.realTunEnable));
+              attemptRoutedViaClash = forceHoldSocket ||
+                  customDirective.startsWith('PROXY ') ||
+                  tunHandlesTraffic;
+              return customDirective;
+            }
             if (!globalState.isAppStateInitialized) {
-              attemptRoutedViaClash = false;
+              attemptRoutedViaClash = forceHoldSocket;
               return 'DIRECT';
             }
-            client.userAgent = globalState.ua;
+            try {
+              client.userAgent = globalState.ua;
+            } catch (_) {}
             final directive = FlClashHttpOverrides.handleFindProxy(uri);
             final isStart = globalState.appState.runTime != null;
             final tunHandlesTraffic = isStart &&
@@ -221,8 +300,9 @@ class Request {
                     (Platform.isWindows
                         ? tunRuntime.isEnabled
                         : globalState.appState.realTunEnable));
-            attemptRoutedViaClash =
-                directive.startsWith('PROXY ') || tunHandlesTraffic;
+            attemptRoutedViaClash = forceHoldSocket ||
+                directive.startsWith('PROXY ') ||
+                tunHandlesTraffic;
             return directive;
           };
           client.connectionFactory = (uri, proxyHost, proxyPort) =>
@@ -232,24 +312,32 @@ class Request {
                 proxyPort: proxyPort,
                 attemptPorts: attemptPorts,
                 clientAbortCallbacks: clientAbortCallbacks,
+                onSocketConnected: onSocketConnected,
               );
           return client;
         },
       );
       try {
-        final res = await attemptDio.get<Map<String, dynamic>>(
+        final response = attemptDio.get<Map<String, dynamic>>(
           source.key,
           cancelToken: cancelToken,
           options: Options(
             responseType: ResponseType.json,
-            receiveTimeout: const Duration(seconds: 3),
+            followRedirects: false,
+            receiveTimeout: attemptTimeout ?? const Duration(seconds: 3),
           ),
         );
+        // A peer can trickle headers or body bytes without hitting an idle
+        // timeout. The finally block aborts its sockets before the next source.
+        final res = await (attemptTimeout == null
+            ? response
+            : response.timeout(attemptTimeout));
         if (res.statusCode == HttpStatus.ok && res.data != null) {
           final ipInfo = source.value(res.data!);
           final host = Uri.tryParse(source.key)?.host.toLowerCase() ?? '';
           holdForTelemetry =
-              attemptRoutedViaClash && keepAliveHold > Duration.zero;
+              (forceHoldSocket || proxyResolver != null || attemptRoutedViaClash) &&
+              keepAliveHold > Duration.zero;
           if (holdForTelemetry) {
             final holdTimer = Timer(keepAliveHold, () {
               abortAllAttemptSockets();
@@ -296,6 +384,7 @@ class Request {
     required int? proxyPort,
     required Set<String> attemptPorts,
     required List<void Function()> clientAbortCallbacks,
+    void Function(Set<String> activePorts)? onSocketConnected,
   }) {
     final isProxied = proxyHost != null && proxyPort != null;
     final isHttps = uri.isScheme('https');
@@ -336,8 +425,16 @@ class Request {
         throw const SocketException('Probe connection cancelled');
       }
       attemptPorts.add(outboundSocket.port.toString());
+      void emitActiveSocketPorts() {
+        if (onSocketConnected == null || aborted) return;
+        try {
+          onSocketConnected(Set<String>.unmodifiable(attemptPorts));
+        } catch (_) {}
+      }
 
-      if (!isHttps) {
+      emitActiveSocketPorts();
+
+      if (!isHttps && onSocketConnected == null) {
         return outboundSocket;
       }
 
@@ -349,13 +446,19 @@ class Request {
       // the peer stalls during TLS negotiation. Bridging TLS over a one-shot
       // loopback pair keeps `outboundSocket` directly destroyable on timeout or
       // cancellation while preserving full system CA and hostname/SAN validation.
+      // When `onSocketConnected` is supplied, plain HTTP also bridges so we can
+      // sample active ports once the upstream tunnel delivers its first payload
+      // bytes (after Mihomo's listener/sniffer has registered the connection).
       final localClient = await _bridgeSocketForTls(
         outboundSocket: outboundSocket,
         abortCallbacks: connectionAbortCallbacks,
         isAborted: () => aborted,
+        onInboundPayloadChunk:
+            (!isHttps || isProxied) ? emitActiveSocketPorts : null,
+        waitForConnectTunnelEnd: isHttps && isProxied,
       );
 
-      if (isProxied) {
+      if (!isHttps || isProxied) {
         return localClient;
       }
 
@@ -371,6 +474,7 @@ class Request {
           outboundSocket.destroy();
           throw const SocketException('Probe connection cancelled');
         }
+        emitActiveSocketPorts();
         return tlsSocket;
       } catch (_) {
         abortConnection();
@@ -387,6 +491,8 @@ class Request {
     required Socket outboundSocket,
     required List<void Function()> abortCallbacks,
     required bool Function() isAborted,
+    void Function()? onInboundPayloadChunk,
+    bool waitForConnectTunnelEnd = false,
   }) async {
     final bridgeServer = await ServerSocket.bind(
       InternetAddress.loopbackIPv4,
@@ -445,8 +551,39 @@ class Request {
       throw const SocketException('Probe connection cancelled');
     }
 
+    var notifiedInboundPayload = false;
+    var connectHeaderMatched = 0;
+    const connectHeaderEnd = <int>[0x0D, 0x0A, 0x0D, 0x0A];
+
+    void maybeNotifyInboundPayload(List<int> data) {
+      if (notifiedInboundPayload ||
+          onInboundPayloadChunk == null ||
+          data.isEmpty) {
+        return;
+      }
+      if (!waitForConnectTunnelEnd) {
+        notifiedInboundPayload = true;
+        onInboundPayloadChunk();
+        return;
+      }
+      for (var i = 0; i < data.length; i++) {
+        if (connectHeaderMatched == 4) {
+          notifiedInboundPayload = true;
+          onInboundPayloadChunk();
+          return;
+        }
+        final b = data[i];
+        if (b == connectHeaderEnd[connectHeaderMatched]) {
+          connectHeaderMatched++;
+        } else {
+          connectHeaderMatched = b == connectHeaderEnd[0] ? 1 : 0;
+        }
+      }
+    }
+
     outboundSocket.listen(
       (data) {
+        maybeNotifyInboundPayload(data);
         try {
           bridgePeer.add(data);
         } catch (_) {

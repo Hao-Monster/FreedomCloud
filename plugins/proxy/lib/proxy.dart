@@ -2,6 +2,7 @@ import 'dart:io';
 
 import "package:path/path.dart";
 
+import 'proxy_method_channel.dart';
 import 'proxy_platform_interface.dart';
 
 enum ProxyTypes { http, https, socks }
@@ -17,7 +18,9 @@ class Proxy extends ProxyPlatform {
         address.contains(RegExp(r'[\x00-\x20]'))) {
       throw ArgumentError('Invalid PAC URL');
     }
-    if (Platform.isWindows) return ProxyPlatform.instance.startPac(address);
+    if (Platform.isWindows || ProxyPlatform.instance is! MethodChannelProxy) {
+      return ProxyPlatform.instance.startPac(address);
+    }
     if (Platform.isMacOS) {
       final devices = await _getNetworkDeviceListWithMacos();
       if (devices.isEmpty) return false;
@@ -60,6 +63,9 @@ class Proxy extends ProxyPlatform {
     int port, [
     List<String> bypassDomain = const [],
   ]) async {
+    if (ProxyPlatform.instance is! MethodChannelProxy) {
+      return ProxyPlatform.instance.startProxy(port, bypassDomain);
+    }
     return switch (Platform.operatingSystem) {
       "macos" => await _startProxyWithMacos(port, bypassDomain),
       "linux" => await _startProxyWithLinux(port, bypassDomain),
@@ -70,6 +76,9 @@ class Proxy extends ProxyPlatform {
 
   @override
   Future<bool?> stopProxy() async {
+    if (ProxyPlatform.instance is! MethodChannelProxy) {
+      return ProxyPlatform.instance.stopProxy();
+    }
     return switch (Platform.operatingSystem) {
       "macos" => await _stopProxyWithMacos(),
       "linux" => await _stopProxyWithLinux(),

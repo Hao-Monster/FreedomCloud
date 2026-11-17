@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flclashx/common/common.dart';
@@ -78,10 +79,38 @@ Future<void> openZashboard(BuildContext context, {required bool inApp}) async {
     if (context.mounted) {
       globalState.showNotifier(appLocalizations.downloadingZashboard);
     }
-    final ok = await ensureZashboardUi();
-    if (!ok) {
+    final installResult = await ensureZashboardUiWithResult();
+    if (!installResult.ok) {
       if (manageController) {
         await globalState.appController.setExternalControllerEnabled(false);
+      }
+      if (context.mounted) {
+        final fallbackUrl = buildZashboardUrl(preferPublicFallback: true);
+        final messenger = ScaffoldMessenger.maybeOf(context);
+        messenger?.hideCurrentSnackBar();
+        messenger?.showSnackBar(
+          SnackBar(
+            duration: const Duration(seconds: 6),
+            content: Text(
+              installResult.messageZh.isNotEmpty
+                  ? installResult.messageZh
+                  : zashboardChinaFallbackMessage,
+            ),
+            action: fallbackUrl == null
+                ? null
+                : SnackBarAction(
+                    label: '打开在线版',
+                    onPressed: () {
+                      unawaited(
+                        launchUrl(
+                          Uri.parse(fallbackUrl),
+                          mode: LaunchMode.externalApplication,
+                        ),
+                      );
+                    },
+                  ),
+          ),
+        );
       }
       return;
     }

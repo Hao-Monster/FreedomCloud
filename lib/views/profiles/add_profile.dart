@@ -96,15 +96,54 @@ class AddProfileView extends StatelessWidget {
     );
 }
 
+final RegExp _embeddedHttpUrlRegex = RegExp(
+  r'''https?://[^\s"'<>`\u3000-\u303F\uFF00-\uFFEF\u4E00-\u9FFF]+''',
+  caseSensitive: false,
+);
+final RegExp _trailingUrlPunctuationRegex = RegExp(r'[.,;!?，。；！？)）】\]}]+$');
+
+/// Extracts a clean `http://` or `https://` subscription URL from raw input or
+/// copied chat messages. Returns `null` if no valid HTTP(S) URL is present.
+String? extractSubscriptionUrl(String raw) {
+  final trimmed = raw.trim();
+  if (trimmed.isEmpty) return null;
+  final match = _embeddedHttpUrlRegex.firstMatch(trimmed);
+  if (match == null) return null;
+  final candidate =
+      match.group(0)!.replaceFirst(_trailingUrlPunctuationRegex, '').trim();
+  final uri = Uri.tryParse(candidate);
+  if (uri == null || !uri.hasScheme || uri.host.isEmpty) {
+    return null;
+  }
+  return candidate;
+}
+
 class URLFormDialog extends StatefulWidget {
-  const URLFormDialog({super.key});
+  const URLFormDialog({
+    super.key,
+    this.initialUrl,
+    this.initialErrorText,
+    this.onGoToPurchase,
+  });
+
+  final String? initialUrl;
+  final String? initialErrorText;
+  final VoidCallback? onGoToPurchase;
 
   @override
   State<URLFormDialog> createState() => _URLFormDialogState();
 }
 
 class _URLFormDialogState extends State<URLFormDialog> {
-  final urlController = TextEditingController();
+  late final TextEditingController urlController;
+  String? _errorText;
+
+  @override
+  void initState() {
+    super.initState();
+    urlController = TextEditingController(text: widget.initialUrl ?? '');
+    _errorText = widget.initialErrorText;
+  }
 
   @override
   void dispose() {
@@ -113,17 +152,44 @@ class _URLFormDialogState extends State<URLFormDialog> {
   }
 
   void _handleSubmit() {
-    final url = urlController.text.trim();
-    if (url.isNotEmpty) {
-      Navigator.of(context).pop<String>(url);
+    final raw = urlController.text;
+    if (raw.trim().isEmpty) {
+      setState(() {
+        _errorText = appLocalizations.subscriptionUrlEmptyError;
+      });
+      return;
     }
+    final extracted = extractSubscriptionUrl(raw);
+    if (extracted == null) {
+      setState(() {
+        _errorText = appLocalizations.subscriptionUrlInvalidError;
+      });
+      return;
+    }
+    Navigator.of(context).pop<String>(extracted);
   }
 
   Future<void> _handlePaste() async {
     final clipboardData = await Clipboard.getData(Clipboard.kTextPlain);
-    if (clipboardData?.text != null) {
-      urlController.text = clipboardData!.text!;
+    if (!mounted) return;
+    final rawText = clipboardData?.text;
+    if (rawText == null || rawText.trim().isEmpty) {
+      setState(() {
+        _errorText = appLocalizations.subscriptionClipboardEmptyError;
+      });
+      return;
     }
+    final extracted = extractSubscriptionUrl(rawText);
+    final nextText = extracted ?? rawText.trim();
+    urlController.value = TextEditingValue(
+      text: nextText,
+      selection: TextSelection.collapsed(offset: nextText.length),
+    );
+    setState(() {
+      _errorText = extracted == null
+          ? appLocalizations.subscriptionUrlInvalidError
+          : null;
+    });
   }
 
   @override
@@ -131,28 +197,57 @@ class _URLFormDialogState extends State<URLFormDialog> {
       title: appLocalizations.importFromURL,
       actions: [
         TextButton(
+          key: const ValueKey('url-dialog-paste'),
           onPressed: _handlePaste,
           child: Text(appLocalizations.pasteFromClipboard),
         ),
         const SizedBox(width: 8),
         FilledButton(
+          key: const ValueKey('url-dialog-confirm'),
           onPressed: _handleSubmit,
-          child: Text(appLocalizations.submit),
+          child: Text(appLocalizations.confirm),
         ),
       ],
       child: Padding(
         padding: const EdgeInsets.only(top: 16.0),
-        child: TextField(
-          controller: urlController,
-          keyboardType: TextInputType.url,
-          autofocus: true,
-          minLines: 1,
-          maxLines: 5,
-          onSubmitted: (_) => _handleSubmit(),
-          decoration: InputDecoration(
-            border: const OutlineInputBorder(),
-            labelText: appLocalizations.url,
-          ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            TextField(
+              controller: urlController,
+              keyboardType: TextInputType.url,
+              autofocus: true,
+              minLines: 1,
+              maxLines: 5,
+              onChanged: (_) {
+                if (_errorText != null) {
+                  setState(() {
+                    _errorText = null;
+                  });
+                }
+              },
+              onSubmitted: (_) => _handleSubmit(),
+              decoration: InputDecoration(
+                border: const OutlineInputBorder(),
+                labelText: appLocalizations.url,
+                errorText: _errorText,
+                errorMaxLines: 3,
+              ),
+            ),
+            if (widget.onGoToPurchase != null) ...[
+              const SizedBox(height: 8),
+              TextButton.icon(
+                key: const ValueKey('url-dialog-go-purchase'),
+                onPressed: () {
+                  Navigator.of(context).pop<String>(null);
+                  widget.onGoToPurchase?.call();
+                },
+                icon: const Icon(Icons.shopping_bag_outlined, size: 18),
+                label: Text(appLocalizations.goToPurchasePrompt),
+              ),
+            ],
+          ],
         ),
       ),
     );

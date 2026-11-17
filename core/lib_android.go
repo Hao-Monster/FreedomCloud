@@ -12,7 +12,6 @@ import (
 	"errors"
 	"github.com/metacubex/mihomo/component/dialer"
 	"github.com/metacubex/mihomo/component/process"
-	"github.com/metacubex/mihomo/component/resolver"
 	"github.com/metacubex/mihomo/constant"
 	"github.com/metacubex/mihomo/dns"
 	"github.com/metacubex/mihomo/listener/sing_tun"
@@ -110,12 +109,20 @@ var (
 
 func handleStopTun() {
 	tunLock.Lock()
-	defer tunLock.Unlock()
 	runTime = nil
 	tunUp.Store(false)
 	if tunHandler != nil {
 		tunHandler.close()
 	}
+	tunLock.Unlock()
+
+	runLock.Lock()
+	if !isRunning && !tunUp.Load() {
+		stopHealthCheckForwarder()
+		stopRequestForwarder()
+	}
+	runLock.Unlock()
+	cancelPendingNetworkRecoveryHealthChecks()
 }
 
 func handleStartTun(fd int, callback unsafe.Pointer) bool {
@@ -137,58 +144,70 @@ func handleStartTun(fd int, callback unsafe.Pointer) bool {
 	}
 	tunCfg := currentConfig.General.Tun
 	runLock.Unlock()
-	tunLock.Lock()
-	defer tunLock.Unlock()
-	now := time.Now()
-	runTime = &now
-	if fd != 0 {
-		tunHandler = &TunHandler{
-			callback: callback,
-			limit:    semaphore.NewWeighted(4),
-		}
-		tunHandler.ctx, tunHandler.cancel = context.WithCancel(context.Background())
-		tunHandler.resource = newRetiredResource(func() {
-			if callback != nil {
-				releaseObject(callback)
+	started := func() bool {
+		tunLock.Lock()
+		defer tunLock.Unlock()
+		now := time.Now()
+		runTime = &now
+		if fd != 0 {
+			tunHandler = &TunHandler{
+				callback: callback,
+				limit:    semaphore.NewWeighted(4),
 			}
-		})
-		initTunHook()
-		tunListener, err := t.Start(fd, tunCfg)
-		if err != nil {
-			log.Errorln("handleStartTun: t.Start failed: %v", err)
-			// fd ownership: the Kotlin caller no longer closes the fd on a false
-			// return (it sets fdHandedToCore=true before Core.startTun). Once startTun
-			// is entered the fd belongs to sing-tun, which closes it exactly once via
-			// Listener.Close on a post-wrap failure (NewStack/tunStack.Start). Do NOT
-			// add an unconditional syscall.Close(fd) here — that would double-close a
-			// number sing-tun may have already closed/reused. (A rare pre-wrap sing-tun
-			// failure would leak this one fd; accepted over a double-close.)
-			if tunHandler != nil {
-				tunHandler.close()
-				tunHandler = nil
+			tunHandler.ctx, tunHandler.cancel = context.WithCancel(context.Background())
+			tunHandler.resource = newRetiredResource(func() {
+				if callback != nil {
+					releaseObject(callback)
+				}
+			})
+			initTunHook()
+			tunListener, err := t.Start(fd, tunCfg)
+			if err != nil {
+				log.Errorln("handleStartTun: t.Start failed: %v", err)
+				// fd ownership: the Kotlin caller no longer closes the fd on a false
+				// return (it sets fdHandedToCore=true before Core.startTun). Once startTun
+				// is entered the fd belongs to sing-tun, which closes it exactly once via
+				// Listener.Close on a post-wrap failure (NewStack/tunStack.Start). Do NOT
+				// add an unconditional syscall.Close(fd) here — that would double-close a
+				// number sing-tun may have already closed/reused. (A rare pre-wrap sing-tun
+				// failure would leak this one fd; accepted over a double-close.)
+				if tunHandler != nil {
+					tunHandler.close()
+					tunHandler = nil
+				}
+				runTime = nil
+				return false
 			}
-			runTime = nil
-			return false
-		}
-		if tunListener != nil {
-			log.Infoln("TUN address: %v", tunListener.Address())
-			tunHandler.listener = tunListener
-			tunHandler.ready.Store(true)
-		} else {
-			if tunHandler != nil {
-				tunHandler.close()
-				tunHandler = nil
+			if tunListener != nil {
+				log.Infoln("TUN address: %v", tunListener.Address())
+				tunHandler.listener = tunListener
+				tunHandler.ready.Store(true)
+			} else {
+				if tunHandler != nil {
+					tunHandler.close()
+					tunHandler = nil
+				}
+				runTime = nil
+				return false
 			}
-			runTime = nil
-			return false
+		} else if callback != nil {
+			releaseObject(callback)
 		}
-	} else if callback != nil {
-		releaseObject(callback)
+		// The TUN is up. A headless tile/boot start reaches here without ever calling
+		// startListener (so isRunning stays false); tunUp lets the connections "Journal"
+		// forwarder run for this tunnel once the UI is foregrounded (see hub.go).
+		tunUp.Store(true)
+		return true
+	}()
+	if !started {
+		return false
 	}
-	// The TUN is up. A headless tile/boot start reaches here without ever calling
-	// startListener (so isRunning stays false); tunUp lets the connections "Journal"
-	// forwarder run for this tunnel once the UI is foregrounded (see hub.go).
-	tunUp.Store(true)
+	runLock.Lock()
+	if !isRunning && tunUp.Load() && currentConfig != nil {
+		runInitialProviderHealthChecks()
+		startHealthCheckForwarder()
+	}
+	runLock.Unlock()
 	return true
 }
 
@@ -292,7 +311,7 @@ func nextHandle(action *Action, result ActionResult) bool {
 		result.success(handleGetAndroidVpnOptions())
 		return true
 	case updateDnsMethod:
-		data, ok := action.Data.(string)
+		data, ok := actionDataJSONOrString(action.Data)
 		if !ok {
 			result.error("invalid data type")
 			return true
@@ -368,10 +387,6 @@ func updateDns(s *C.char) {
 //export resetConnections
 func resetConnections() {
 	go func() {
-		runLock.Lock()
-		defer runLock.Unlock()
-		resolver.ResetConnection()
-		closeConnections()
-		log.Infoln("[Network] connections reset after network change")
+		handleResetConnections()
 	}()
 }

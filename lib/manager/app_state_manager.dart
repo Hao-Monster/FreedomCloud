@@ -44,11 +44,24 @@ class _AppStateManagerState extends ConsumerState<AppStateManager>
     if (!globalState.isAppControllerReady) return;
     if (active) {
       render?.resume();
-      if (globalState.isStart) globalState.appController.startRunTimeTimer();
+      if (globalState.isStart) {
+        if (!Platform.isMacOS) {
+          unawaited(globalState.startUpdateTasks());
+        }
+        globalState.appController.startRunTimeTimer();
+      }
+      if (Platform.isWindows) {
+        unawaited(globalState.appController.refreshWindowsTunStatus());
+      }
+      globalState.rebalanceGroupsUpdateTask();
       globalState.appController.updateGroupsDebounce();
     } else {
       unawaited(cancelDelayTests(reason: 'uiInactive'));
       render?.pause();
+      if (!Platform.isMacOS) {
+        globalState.stopUpdateTasks();
+      }
+      globalState.rebalanceGroupsUpdateTask();
       globalState.appController.stopRunTimeTimer();
     }
   }
@@ -174,7 +187,13 @@ class _AppStateManagerState extends ConsumerState<AppStateManager>
     uiActivity.setLifecycle(state);
     if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.inactive) {
-      globalState.appController.savePreferences();
+      if (Platform.isAndroid ||
+          Platform.isIOS ||
+          state == AppLifecycleState.paused) {
+        unawaited(globalState.appController.savePreferences());
+      } else if (preferences.hasUnsavedConfig(globalState.config)) {
+        globalState.appController.savePreferencesDebounce();
+      }
       if (Platform.isAndroid) {
         globalState.stopUpdateTasks();
         globalState.appController.stopRunTimeTimer();

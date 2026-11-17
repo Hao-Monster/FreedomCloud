@@ -5,7 +5,28 @@ import 'package:flclashx/common/ui_activity.dart';
 import 'package:flclashx/state.dart';
 import 'package:flutter/material.dart';
 import 'package:screen_retriever/screen_retriever.dart';
+import 'package:tray_manager/tray_manager.dart';
 import 'package:window_manager/window_manager.dart';
+
+@visibleForTesting
+Future<void> prepareWindowTermination({
+  Future<void> Function()? destroyTray,
+  Future<void> Function()? disposeLogger,
+}) async {
+  try {
+    final destroy = destroyTray ??
+        () async {
+          if (Platform.isWindows || Platform.isLinux) {
+            await trayManager.destroy();
+          }
+        };
+    await destroy().timeout(const Duration(milliseconds: 500));
+  } catch (_) {}
+  try {
+    await (disposeLogger ?? fileLogger.dispose)()
+        .timeout(const Duration(milliseconds: 500));
+  } catch (_) {}
+}
 
 class Window {
   final ValueNotifier<bool> visible = ValueNotifier(true);
@@ -17,9 +38,7 @@ class Window {
       exit(0);
     }
     if (Platform.isWindows) {
-      protocol.register("clashx");
-      protocol.register("flclash");
-      protocol.register("flclashx");
+      protocol.register("freedomnet");
     }
 
     // On macOS, the app runs in status bar with popover - no window manager needed
@@ -92,6 +111,7 @@ class Window {
   }
 
   Future<void> close() async {
+    await prepareWindowTermination();
     exit(0);
   }
 

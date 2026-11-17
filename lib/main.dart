@@ -20,6 +20,7 @@ import 'models/models.dart';
 import 'pages/editor_window.dart';
 
 Future<void> main(List<String> args) async {
+  markStartupLaunchEntry();
   WidgetsFlutterBinding.ensureInitialized();
   fileLogger.flushPendingLogs();
   FlutterError.onError = (details) {
@@ -48,10 +49,22 @@ Future<void> main(List<String> args) async {
   if (Platform.isWindows || Platform.isLinux) {
     DartPluginRegistrant.ensureInitialized();
   }
+  if (system.isDesktop) {
+    final acquire = await singleInstanceLock.acquire();
+    if (!acquire) {
+      exit(0);
+    }
+  }
 
   final version = await system.version;
-  await clashCore.preload();
-  await globalState.initApp(version);
+  await bootstrapCoreAndState(
+    isAndroid: Platform.isAndroid,
+    // Keep closure so lazy top-level `clashCore`/`clashService` is not evaluated
+    // before `initApp` initializes `globalState.config`.
+    // ignore: unnecessary_lambdas
+    preloadCore: () => clashCore.preload(),
+    initApp: () => globalState.initApp(version),
+  );
   await android?.init();
   await window?.init(version);
 
@@ -68,6 +81,21 @@ Future<void> main(List<String> args) async {
   runApp(const ProviderScope(
     child: Application(),
   ));
+}
+
+@visibleForTesting
+Future<void> bootstrapCoreAndState({
+  required bool isAndroid,
+  required Future<bool> Function() preloadCore,
+  required Future<void> Function() initApp,
+}) async {
+  if (isAndroid) {
+    await preloadCore();
+    await initApp();
+    return;
+  }
+  await initApp();
+  unawaited(preloadCore().catchError((_) => false));
 }
 
 /// Handles start/stop/mode intents coming from the quick-settings tile or the
@@ -144,7 +172,7 @@ Future<void> _handleStart() async {
 }
 
 String _buildNotificationTitle(Profile? profile) {
-  if (profile == null) return 'FlClashX';
+  if (profile == null) return brandDisplayName;
   final profileName = profile.label ?? profile.id;
 
   String serviceName = '';

@@ -3,6 +3,11 @@ import 'package:flclashx/models/models.dart';
 import 'package:flclashx/views/views.dart';
 import 'package:flutter/material.dart';
 
+const Set<PageLabel> noviceVisiblePageLabels = <PageLabel>{
+  PageLabel.proxies,
+  PageLabel.purchase,
+};
+
 class Navigation {
 
   factory Navigation() {
@@ -18,24 +23,32 @@ class Navigation {
     bool hasProxies = false,
   }) => [
       const NavigationItem(
+        icon: Icon(Icons.travel_explore_rounded),
+        label: PageLabel.proxies,
+        view: ProxiesView(
+          key: GlobalObjectKey(
+            PageLabel.proxies,
+          ),
+        ),
+        modes: [NavigationItemMode.mobile, NavigationItemMode.desktop],
+      ),
+      const NavigationItem(
+        icon: Icon(Icons.shopping_bag_rounded),
+        label: PageLabel.purchase,
+        view: PurchaseView(
+          key: GlobalObjectKey(
+            PageLabel.purchase,
+          ),
+        ),
+        modes: [NavigationItemMode.desktop, NavigationItemMode.mobile],
+      ),
+      const NavigationItem(
         keep: false,
         icon: Icon(Icons.home_rounded),
         label: PageLabel.dashboard,
         view: DashboardView(
           key: GlobalObjectKey(PageLabel.dashboard),
         ),
-      ),
-      NavigationItem(
-        icon: const Icon(Icons.travel_explore_rounded),
-        label: PageLabel.proxies,
-        view: const ProxiesView(
-          key: GlobalObjectKey(
-            PageLabel.proxies,
-          ),
-        ),
-        modes: hasProxies
-            ? [NavigationItemMode.mobile, NavigationItemMode.desktop]
-            : [],
       ),
       const NavigationItem(
         icon: Icon(Icons.account_circle_rounded),
@@ -87,16 +100,6 @@ class Navigation {
         view: ToolsView(
           key: GlobalObjectKey(
             PageLabel.tools,
-          ),
-        ),
-        modes: [NavigationItemMode.desktop, NavigationItemMode.mobile],
-      ),
-      const NavigationItem(
-        icon: Icon(Icons.shopping_bag_rounded),
-        label: PageLabel.purchase,
-        view: PurchaseView(
-          key: GlobalObjectKey(
-            PageLabel.purchase,
           ),
         ),
         modes: [NavigationItemMode.desktop, NavigationItemMode.mobile],

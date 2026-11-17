@@ -4,14 +4,58 @@ import 'dart:io';
 import 'dart:math';
 import 'package:crypto/crypto.dart' as crypto;
 
-import 'package:flclashx/clash/agent_protocol.dart';
 import 'package:flclashx/clash/agent_lifecycle.dart';
+import 'package:flclashx/clash/agent_protocol.dart';
 import 'package:flclashx/clash/interface.dart';
 import 'package:flclashx/clash/windows_agent_launch.dart';
 import 'package:flclashx/common/common.dart';
+import 'package:flclashx/common/file_digest.dart';
 import 'package:flclashx/common/tun_runtime.dart';
+import 'package:flclashx/models/common.dart';
 import 'package:flclashx/models/core.dart';
 import 'package:flclashx/state.dart';
+import 'package:flutter/foundation.dart' show visibleForTesting;
+
+void _writeSocketLine(Socket socket, String line) {
+  socket.add(utf8.encode('$line\n'));
+}
+
+void _enableTcpNoDelayBestEffort(Socket socket) {
+  try {
+    socket.setOption(SocketOption.tcpNoDelay, true);
+  } catch (_) {
+    // Unix domain sockets do not support TCP_NODELAY; ignore safely.
+  }
+}
+
+/// Keep a split timing record together without buffering unlimited stderr
+/// when a directly launched Core prints a long message without a newline.
+@visibleForTesting
+Stream<String> coreStderrLines(Stream<List<int>> bytes) async* {
+  const limit = FileLogger.maxMessageLength;
+  final pending = StringBuffer();
+  await for (final chunk in bytes.transform(const Utf8Decoder(allowMalformed: true))) {
+    var start = 0;
+    while (start < chunk.length) {
+      final newline = chunk.indexOf('\n', start);
+      final end = newline < 0 ? chunk.length : newline;
+      while (start < end) {
+        final next = min(end, start + limit - pending.length);
+        pending.write(chunk.substring(start, next));
+        start = next;
+        if (pending.length == limit) {
+          yield pending.toString();
+          pending.clear();
+        }
+      }
+      if (newline < 0) break;
+      if (pending.isNotEmpty) yield pending.toString().replaceFirst(RegExp(r'\r$'), '');
+      pending.clear();
+      start = newline + 1;
+    }
+  }
+  if (pending.isNotEmpty) yield pending.toString();
+}
 
 class ClashService extends ClashHandlerInterface {
   factory ClashService() {
@@ -19,10 +63,111 @@ class ClashService extends ClashHandlerInterface {
     return _instance!;
   }
 
-  ClashService._internal() {
+  ClashService._internal()
+      : _isWindowsPlatform = Platform.isWindows,
+        _agentBinaryExists =
+            (() async => File(appPath.agentPath).existsSync()),
+        _applyPendingCoreUpdate = coreUpdater.applyPending,
+        _resolveEndpointPath = (() => appPath.agentEndpointPath),
+        _resolveHomeDirPath = (() => appPath.homeDirPath),
+        _resolveBundledAgentPath = (() => appPath.agentPath),
+        _resolveBundledCorePath = (() => appPath.corePath),
+        _resolveBundledHelperPath = (() => appPath.helperPath),
+        _resolveServiceDirectory = (() => appPath.windowsServiceDirectory),
+        _resolveServiceHelperPath = (() => appPath.windowsServiceHelperPath),
+        _resolveServiceCorePath = (() => appPath.windowsServiceCorePath),
+        _checkIsAdmin = system.checkIsAdmin,
+        _tryStartExistingHelper =
+            (() async => (await windows?.tryStartExistingService()) ?? false),
+        _pingHelper = request.pingHelper,
+        _readTunDesired = (() => resolveWindowsTunDesiredForLaunch(
+              runtime: tunRuntime,
+              isConfigInitialized: globalState.isConfigInitialized,
+              readPersistedTunEnabled: () =>
+                  globalState.config.patchClashConfig.tun.enable,
+            )),
+        _endpointPollInterval = const Duration(milliseconds: 100),
+        _startAgentProcess = null {
     unawaited(_initialize());
   }
+
+  @visibleForTesting
+  ClashService.forTesting({
+    bool? isWindowsPlatform,
+    Future<bool> Function()? agentBinaryExists,
+    Future<void> Function()? applyPendingCoreUpdate,
+    Future<String> Function()? resolveEndpointPath,
+    Future<String> Function()? resolveHomeDirPath,
+    String Function()? resolveBundledAgentPath,
+    String Function()? resolveBundledCorePath,
+    String Function()? resolveBundledHelperPath,
+    String Function()? resolveServiceDirectory,
+    String Function()? resolveServiceHelperPath,
+    String Function()? resolveServiceCorePath,
+    Future<bool> Function()? checkIsAdmin,
+    Future<bool> Function()? tryStartExistingHelper,
+    Future<bool> Function()? pingHelper,
+    bool Function()? readTunDesired,
+    Duration endpointPollInterval = const Duration(milliseconds: 100),
+    Future<void> Function(String agent, List<String> arguments)?
+        startAgentProcess,
+  })  : _isWindowsPlatform = isWindowsPlatform ?? Platform.isWindows,
+        _agentBinaryExists = agentBinaryExists ??
+            (() async => File(appPath.agentPath).existsSync()),
+        _applyPendingCoreUpdate =
+            applyPendingCoreUpdate ?? coreUpdater.applyPending,
+        _resolveEndpointPath =
+            resolveEndpointPath ?? (() => appPath.agentEndpointPath),
+        _resolveHomeDirPath =
+            resolveHomeDirPath ?? (() => appPath.homeDirPath),
+        _resolveBundledAgentPath =
+            resolveBundledAgentPath ?? (() => appPath.agentPath),
+        _resolveBundledCorePath =
+            resolveBundledCorePath ?? (() => appPath.corePath),
+        _resolveBundledHelperPath =
+            resolveBundledHelperPath ?? (() => appPath.helperPath),
+        _resolveServiceDirectory =
+            resolveServiceDirectory ?? (() => appPath.windowsServiceDirectory),
+        _resolveServiceHelperPath = resolveServiceHelperPath ??
+            (() => appPath.windowsServiceHelperPath),
+        _resolveServiceCorePath =
+            resolveServiceCorePath ?? (() => appPath.windowsServiceCorePath),
+        _checkIsAdmin = checkIsAdmin ?? system.checkIsAdmin,
+        _tryStartExistingHelper = tryStartExistingHelper ??
+            (() async => (await windows?.tryStartExistingService()) ?? false),
+        _pingHelper = pingHelper ?? request.pingHelper,
+        _readTunDesired = readTunDesired ??
+            (() => resolveWindowsTunDesiredForLaunch(
+                  runtime: tunRuntime,
+                  isConfigInitialized: globalState.isConfigInitialized,
+                  readPersistedTunEnabled: () =>
+                      globalState.config.patchClashConfig.tun.enable,
+                )),
+        _endpointPollInterval = endpointPollInterval,
+        _startAgentProcess = startAgentProcess {
+    unawaited(_initialize());
+  }
+
   static ClashService? _instance;
+
+  final bool _isWindowsPlatform;
+  final Future<bool> Function() _agentBinaryExists;
+  final Future<void> Function() _applyPendingCoreUpdate;
+  final Future<String> Function() _resolveEndpointPath;
+  final Future<String> Function() _resolveHomeDirPath;
+  final String Function() _resolveBundledAgentPath;
+  final String Function() _resolveBundledCorePath;
+  final String Function() _resolveBundledHelperPath;
+  final String Function() _resolveServiceDirectory;
+  final String Function() _resolveServiceHelperPath;
+  final String Function() _resolveServiceCorePath;
+  final Future<bool> Function() _checkIsAdmin;
+  final Future<bool> Function() _tryStartExistingHelper;
+  final Future<bool> Function() _pingHelper;
+  final bool Function() _readTunDesired;
+  final Duration _endpointPollInterval;
+  final Future<void> Function(String agent, List<String> arguments)?
+      _startAgentProcess;
 
   Completer<ServerSocket> serverCompleter = Completer();
 
@@ -49,23 +194,36 @@ class ClashService extends ClashHandlerInterface {
     if (frame is! Map || key == null || frame['protocol'] != 1) return false;
     final nonce = frame['nonce'];
     final proof = frame['proof'];
-    if (nonce is! String || proof is! String ||
+    if (nonce is! String ||
+        proof is! String ||
         !RegExp(r'^[0-9a-f]{64}$').hasMatch(nonce) ||
         !RegExp(r'^[0-9a-f]{64}$').hasMatch(proof)) return false;
     final mac = crypto.Hmac(crypto.sha256, key);
-    final expected = mac.convert(utf8.encode('FCX-MAC-CORE/1/core/$nonce')).toString();
+    final expected =
+        mac.convert(utf8.encode('FCX-MAC-CORE/1/core/$nonce')).toString();
     var difference = 0;
     for (var i = 0; i < expected.length; i++) {
       difference |= expected.codeUnitAt(i) ^ proof.codeUnitAt(i);
     }
     if (difference != 0) return false;
-    socket.writeln(jsonEncode({'_macCore': {'protocol': 1, 'nonce': nonce,
-      'proof': mac.convert(utf8.encode('FCX-MAC-CORE/1/host/$nonce')).toString()}}));
+    _writeSocketLine(
+      socket,
+      jsonEncode({
+        '_macCore': {
+          'protocol': 1,
+          'nonce': nonce,
+          'proof':
+              mac.convert(utf8.encode('FCX-MAC-CORE/1/host/$nonce')).toString()
+        }
+      }),
+    );
     return true;
   }
 
   bool _detaching = false;
   bool _agentRecovering = false;
+  bool _agentLaunchDeferred = false;
+  bool _loggedDeferredTunNotReady = false;
   int? _agentPid;
   AgentCoreState _agentCoreState = AgentCoreState.starting;
   bool? _agentProxyRunning;
@@ -75,6 +233,19 @@ class ClashService extends ClashHandlerInterface {
   int _connectionEpoch = 0;
   Completer<void> _agentDisconnected = Completer<void>();
   void Function()? onTunTransportChanged;
+
+  void _resetCoreReadyCompleter() {
+    if (_coreReadyCompleter.isCompleted) {
+      _coreReadyCompleter = Completer<void>();
+    }
+  }
+
+  void _releaseCoreReadyWaitersForDeferOrTeardown() {
+    if (!_coreReadyCompleter.isCompleted) {
+      _coreReadyCompleter.complete();
+    }
+    _coreReadyCompleter = Completer<void>();
+  }
 
   bool isStarting = false;
 
@@ -103,12 +274,54 @@ class ClashService extends ClashHandlerInterface {
 
   bool get usesAgent => _agentMode;
   bool get agentCoreReady => _agentCoreState == AgentCoreState.ready;
+  bool get hasDeferredAgentLaunch =>
+      _agentMode &&
+      _agentLaunchDeferred &&
+      _agentPid == null &&
+      _agentIdentity == null;
+
+  /// True when the transport transition is an expected startup, deferral,
+  /// migration, or teardown state rather than an unexpected live Core loss.
+  bool get hasIntentionalOrInitialNotReady =>
+      _detaching ||
+      _stopping ||
+      !_preloadCompleter.isCompleted ||
+      hasDeferredAgentLaunch ||
+      (_agentMode &&
+          !_agentRecovering &&
+          _agentCoreState == AgentCoreState.starting);
+
+  @override
+  String? get tunTransportNotReadyReason {
+    if (_detaching) return 'ipc_detaching';
+    if (_stopping) {
+      return _agentMode ? 'backend_migrating' : 'backend_stopping';
+    }
+    if (!_preloadCompleter.isCompleted) return 'preload_initializing';
+    if (_agentMode) {
+      if (hasDeferredAgentLaunch) return 'deferred_cold_start';
+      if (_agentRecovering) return 'agent_recovering';
+      if (!socketCompleter.isCompleted) return 'ipc_disconnected';
+      if (_agentCoreState == AgentCoreState.starting ||
+          !_coreReadyCompleter.isCompleted) {
+        return 'core_starting';
+      }
+      if (_agentCoreState == AgentCoreState.stopped) return 'core_stopped';
+      if (_agentCoreState != AgentCoreState.ready) return 'core_unavailable';
+      return null;
+    }
+    if (_recovering) return 'core_recovering';
+    if (isStarting) return 'core_starting';
+    if (!socketCompleter.isCompleted) return 'ipc_disconnected';
+    return null;
+  }
   bool get windowsAgentSupportsMigration =>
-      _agentIdentity?.agentInstanceId != null &&
-      RegExp(r'^[0-9a-f]{64}$').hasMatch(_agentIdentity!.agentInstanceId!) &&
-      _agentIdentity?.agentPid == _agentPid &&
-      _agentIdentity?.agentExecutable != null &&
-      _agentIdentity?.coreExecutable != null;
+      hasDeferredAgentLaunch ||
+      (_agentIdentity?.agentInstanceId != null &&
+          RegExp(r'^[0-9a-f]{64}$').hasMatch(_agentIdentity!.agentInstanceId!) &&
+          _agentIdentity?.agentPid == _agentPid &&
+          _agentIdentity?.agentExecutable != null &&
+          _agentIdentity?.coreExecutable != null);
   final _agentConnections = AgentConnectionCoordinator();
 
   bool? get agentProxyRunning => _agentProxyRunning;
@@ -165,10 +378,12 @@ class ClashService extends ClashHandlerInterface {
 
   Future<void> _initialize() async {
     try {
-      _agentMode = await File(appPath.agentPath).exists();
+      _agentMode = await _agentBinaryExists();
       if (_agentMode) {
-        await coreUpdater.applyPending();
-        final connected = await _connectOrLaunchAgent();
+        await _applyPendingCoreUpdate();
+        final connected = await _connectOrLaunchAgent(
+          allowDeferForTunAuthorization: true,
+        );
         if (!_preloadCompleter.isCompleted) {
           _preloadCompleter.complete(connected);
         }
@@ -198,69 +413,141 @@ class ClashService extends ClashHandlerInterface {
     }
   }
 
-  Future<bool> _connectOrLaunchAgent({bool recovery = false}) =>
+  Future<bool> _connectOrLaunchAgent({
+    bool recovery = false,
+    bool allowDeferForTunAuthorization = false,
+  }) =>
       _agentConnections.connect(() async {
         if (recovery && (_stopping || _detaching)) return false;
-        return _connectOrLaunchAgentImpl();
+        return _connectOrLaunchAgentImpl(
+          allowDeferForTunAuthorization:
+              allowDeferForTunAuthorization && !recovery,
+        );
       }, recovery: recovery);
 
-  Future<bool> _connectOrLaunchAgentImpl() async {
+  Future<bool> _connectOrLaunchAgentImpl({
+    bool allowDeferForTunAuthorization = false,
+  }) async {
     if (await _tryConnectAgent()) {
-      if (!Platform.isWindows) return _ensureAgentCoreReady();
+      _agentLaunchDeferred = false;
+      if (!_isWindowsPlatform) return _ensureAgentCoreReady();
       await _observeAgentCoreReady();
       return true;
     }
 
+    var useHelper = false;
+    if (_isWindowsPlatform) {
+      final tunDesired = _readTunDesired();
+      final action = await planWindowsAgentColdStart(
+        tunDesired: tunDesired,
+        allowDeferForTunAuthorization: allowDeferForTunAuthorization,
+        isHelperRunning: _checkIsAdmin,
+        installedFilesMatch: () => windowsInstalledHelperFilesMatch(
+          bundledHelper: _resolveBundledHelperPath(),
+          bundledCore: _resolveBundledCorePath(),
+          installedHelper: _resolveServiceHelperPath(),
+          installedCore: _resolveServiceCorePath(),
+        ),
+        tryStartExistingHelper: _tryStartExistingHelper,
+      );
+      if (action == WindowsAgentColdStartAction.deferForTunAuthorization) {
+        _agentLaunchDeferred = true;
+        _agentCoreState = AgentCoreState.stopped;
+        _agentUsingHelper = false;
+        _agentProxyRunning = null;
+        setStartupTimingCorrelationId(null);
+        _releaseCoreReadyWaitersForDeferOrTeardown();
+        _flushPendingCompleters();
+        commonPrint.log(
+          'FlClashAgent cold-start launch deferred until TUN authorization',
+        );
+        onTunTransportChanged?.call();
+        return true;
+      }
+      useHelper = action == WindowsAgentColdStartAction.launchWithHelper;
+    }
+
     final launched = await tryStartAgentProcess(
-      resolvePaths: () async => Platform.isWindows
+      resolvePaths: () async => _isWindowsPlatform
           ? windowsAgentLaunchPaths(
-              bundledAgent: appPath.agentPath,
-              bundledCore: appPath.corePath,
-              serviceDirectory: appPath.windowsServiceDirectory,
+              bundledAgent: _resolveBundledAgentPath(),
+              bundledCore: _resolveBundledCorePath(),
+              serviceDirectory: _resolveServiceDirectory(),
             )
-          : (agent: appPath.agentPath, core: appPath.corePath),
+          : (
+              agent: _resolveBundledAgentPath(),
+              core: _resolveBundledCorePath(),
+            ),
       buildArguments: (corePath) async {
         final arguments = <String>[
           '--home',
-          await appPath.homeDirPath,
+          await _resolveHomeDirPath(),
           '--core',
           corePath,
         ];
-        if (Platform.isWindows && await system.checkIsAdmin()) {
+        if (_isWindowsPlatform && useHelper) {
           arguments.addAll([
             '--service-core',
-            appPath.windowsServiceCorePath,
+            _resolveServiceCorePath(),
             '--use-helper',
           ]);
         }
         return arguments;
       },
-      onError: (error) => commonPrint.log('unable to launch FlClashAgent: $error'),
+      onError: (error) =>
+          commonPrint.log('unable to launch FlClashAgent: $error'),
+      startProcess: _startAgentProcess,
     );
     if (!launched) return false;
 
     for (var attempt = 0; attempt < 80; attempt++) {
-      await Future.delayed(const Duration(milliseconds: 100));
+      await Future.delayed(_endpointPollInterval);
       if (await _tryConnectAgent()) {
-        return Platform.isWindows ? _observeAgentCoreReady() : _ensureAgentCoreReady();
+        _agentLaunchDeferred = false;
+        return _isWindowsPlatform
+            ? _observeAgentCoreReady()
+            : _ensureAgentCoreReady();
       }
     }
     commonPrint.log('FlClashAgent did not publish a usable endpoint');
     return false;
   }
 
-  Future<bool> _tryConnectAgent() async {
+  Future<void> _abortConnectAttempt(Socket? socket) async {
+    ++_connectionEpoch;
+    await _socketSubscription?.cancel();
+    _socketSubscription = null;
     try {
-      final endpointFile = File(await appPath.agentEndpointPath);
+      socket?.destroy();
+    } catch (_) {}
+    socketCompleter = Completer<Socket>();
+    _agentPid = null;
+    _agentIdentity = null;
+    _agentGeneration = null;
+    _agentProxyRunning = null;
+    if (!hasDeferredAgentLaunch) {
+      _agentCoreState = AgentCoreState.stopped;
+    }
+    setStartupTimingCorrelationId(null);
+    _releaseCoreReadyWaitersForDeferOrTeardown();
+    _flushPendingCompleters();
+    onTunTransportChanged?.call();
+  }
+
+  Future<bool> _tryConnectAgent() async {
+    Socket? socket;
+    try {
+      final endpointFile = File(await _resolveEndpointPath());
       if (!await endpointFile.exists()) return false;
       final endpoint = AgentEndpoint.fromJson(
         json.decode(await endpointFile.readAsString()) as Map<String, dynamic>,
       );
-      final socket = await Socket.connect(
+      socket = await Socket.connect(
         InternetAddress.loopbackIPv4,
         endpoint.port,
         timeout: const Duration(milliseconds: 750),
       );
+      _enableTcpNoDelayBestEffort(socket);
       await _socketSubscription?.cancel();
       _socketSubscription = null;
       if (socketCompleter.isCompleted) {
@@ -274,6 +561,7 @@ class ClashService extends ClashHandlerInterface {
       _agentDisconnected = disconnected;
       _agentIdentity = null;
       _agentGeneration = null;
+      setStartupTimingCorrelationId(null);
       onTunTransportChanged?.call();
       _agentAttachedCompleter = Completer<void>();
       _socketSubscription = socket
@@ -281,40 +569,52 @@ class ClashService extends ClashHandlerInterface {
           .transform(utf8.decoder)
           .transform(const LineSplitter())
           .listen(
-            (line) { if (connectionEpoch == _connectionEpoch) _handleAgentLine(line); },
+            (line) {
+              if (connectionEpoch == _connectionEpoch) _handleAgentLine(line);
+            },
             onError: (Object error) {
               if (!disconnected.isCompleted) disconnected.complete();
-              if (connectionEpoch == _connectionEpoch) _onAgentLost('socket error: $error');
+              if (connectionEpoch == _connectionEpoch) {
+                _onAgentLost('socket error: $error');
+              }
             },
             onDone: () {
               if (!disconnected.isCompleted) disconnected.complete();
-              if (connectionEpoch == _connectionEpoch) _onAgentLost('socket closed');
+              if (connectionEpoch == _connectionEpoch) {
+                _onAgentLost('socket closed');
+              }
             },
             cancelOnError: true,
           );
-      socket.writeln(json.encode({
-        'token': endpoint.token,
-        'protocol': agentProtocolVersion,
-      }));
+      _writeSocketLine(
+        socket,
+        json.encode({
+          'token': endpoint.token,
+          'protocol': agentProtocolVersion,
+        }),
+      );
       await _agentAttachedCompleter.future.timeout(
         const Duration(seconds: 2),
       );
       if (endpoint.instanceId != null &&
           (_agentIdentity?.agentInstanceId != endpoint.instanceId ||
-           _agentIdentity?.agentPid != endpoint.pid)) {
-        await _socketSubscription?.cancel();
-        socket.destroy();
+              _agentIdentity?.agentPid != endpoint.pid)) {
+        await _abortConnectAttempt(socket);
         return false;
       }
       _agentPid = endpoint.pid;
       return true;
     } catch (_) {
+      if (socket != null) {
+        await _abortConnectAttempt(socket);
+      }
       return false;
     }
   }
 
   void _handleAgentLine(String line) {
     try {
+      if (tryHandleRawActionResultLine(line)) return;
       final value = json.decode(line.trim());
       if (value is! Map<String, dynamic>) return;
       final event = AgentEvent.tryParse(value);
@@ -336,7 +636,7 @@ class ClashService extends ClashHandlerInterface {
     final identity = _agentIdentity;
     if (identity?.agentInstanceId != null &&
         (event.agentInstanceId != identity!.agentInstanceId ||
-         event.generation < (_agentGeneration ?? 0))) {
+            event.generation < (_agentGeneration ?? 0))) {
       return;
     }
     if (_agentGeneration != event.generation ||
@@ -349,6 +649,7 @@ class ClashService extends ClashHandlerInterface {
         _agentCoreState == AgentCoreState.ready;
     _agentGeneration = event.generation;
     _agentIdentity = event;
+    setStartupTimingCorrelationId(event.agentInstanceId);
     _agentCoreState = event.coreState;
     _agentProxyRunning = _mergeProxyRunning(event, sameReadyCore);
     _publishStrictPolicyStatus(
@@ -366,8 +667,11 @@ class ClashService extends ClashHandlerInterface {
       if (!_coreReadyCompleter.isCompleted) {
         _coreReadyCompleter.complete();
       }
-    } else if (_coreReadyCompleter.isCompleted) {
-      _coreReadyCompleter = Completer<void>();
+    } else if (event.coreState == AgentCoreState.failed ||
+        event.coreState == AgentCoreState.stopped) {
+      _releaseCoreReadyWaitersForDeferOrTeardown();
+    } else {
+      _resetCoreReadyCompleter();
     }
     if (event.type == AgentEventType.commandResult && event.id != null) {
       final completer = _agentCommandCompleters.remove(event.id);
@@ -409,14 +713,52 @@ class ClashService extends ClashHandlerInterface {
   Future<bool> _observeAgentCoreReady({bool explicitRecovery = false}) =>
       reconcileAgentCore(
         state: () => _agentCoreState,
-        waitReady: () => _coreReadyCompleter.future.timeout(const Duration(seconds: 20)),
+        waitReady: () =>
+            _coreReadyCompleter.future.timeout(const Duration(seconds: 20)),
         restart: () => _agentCommand(AgentCommand.restartCore),
         explicitRecovery: explicitRecovery,
       );
 
+  Future<bool> materializeDeferredAgent() async {
+    if (!hasDeferredAgentLaunch) return agentCoreReady;
+    return _agentConnections.connect(() async {
+      if (!hasDeferredAgentLaunch) {
+        return _observeAgentCoreReady(explicitRecovery: true);
+      }
+      return _materializeDeferredAgentLocked();
+    });
+  }
+
+  Future<bool> _materializeDeferredAgentLocked() async {
+    _agentLaunchDeferred = false;
+    _agentCoreState = AgentCoreState.starting;
+    _resetCoreReadyCompleter();
+    onTunTransportChanged?.call();
+    final connected = await _connectOrLaunchAgentImpl(
+      allowDeferForTunAuthorization: false,
+    );
+    if (!connected && _agentPid == null && _agentIdentity == null) {
+      _agentLaunchDeferred = true;
+      _agentCoreState = AgentCoreState.stopped;
+      _releaseCoreReadyWaitersForDeferOrTeardown();
+      _flushPendingCompleters();
+      onTunTransportChanged?.call();
+    }
+    return connected;
+  }
+
   Future<void> recoverCoreForUser() async {
-    final ready = await _agentConnections.connect(
-      () => _observeAgentCoreReady(explicitRecovery: true));
+    final ready = await _agentConnections.connect(() async {
+      if (hasDeferredAgentLaunch) {
+        return _materializeDeferredAgentLocked();
+      }
+      if (!socketCompleter.isCompleted) {
+        return _connectOrLaunchAgentImpl(
+          allowDeferForTunAuthorization: false,
+        );
+      }
+      return _observeAgentCoreReady(explicitRecovery: true);
+    });
     if (!ready) throw const TunFailure('startFailed');
   }
 
@@ -425,12 +767,17 @@ class ClashService extends ClashHandlerInterface {
     String? path,
     Map<String, dynamic>? policy,
   }) async {
+    if (_agentMode &&
+        (hasDeferredAgentLaunch || !socketCompleter.isCompleted)) {
+      return false;
+    }
     final id = 'agent-${command.name}-${utils.id}';
     final completer = Completer<bool>();
     _agentCommandCompleters[id] = completer;
     try {
       final socket = await socketCompleter.future;
-      socket.writeln(
+      _writeSocketLine(
+        socket,
         encodeAgentCommand(
           id: id,
           command: command,
@@ -480,24 +827,29 @@ class ClashService extends ClashHandlerInterface {
   Future<bool> migrateStrictIdentity(
     String previousPath,
     StrictIdentityResolution replacement,
-  ) => _agentCommand(
-    AgentCommand.migrateStrictPolicy,
-    path: previousPath,
-    policy: {
-      'revision': DateTime.now().microsecondsSinceEpoch,
-      'replacement': {
-        'identityId': replacement.identityId,
-        'canonicalPath': replacement.canonicalPath,
-        'wfpAppIdSha256': replacement.wfpAppIdSha256,
-        'publisherCertificateSha256': replacement.publisherCertificateSha256,
-        'verifiedChildren': replacement.verifiedChildren.map((child) => {
-          'canonicalPath': child.canonicalPath,
-          'wfpAppIdSha256': child.wfpAppIdSha256,
-          'publisherCertificateSha256': child.publisherCertificateSha256,
-        }).toList(growable: false),
-      },
-    },
-  );
+  ) =>
+      _agentCommand(
+        AgentCommand.migrateStrictPolicy,
+        path: previousPath,
+        policy: {
+          'revision': DateTime.now().microsecondsSinceEpoch,
+          'replacement': {
+            'identityId': replacement.identityId,
+            'canonicalPath': replacement.canonicalPath,
+            'wfpAppIdSha256': replacement.wfpAppIdSha256,
+            'publisherCertificateSha256':
+                replacement.publisherCertificateSha256,
+            'verifiedChildren': replacement.verifiedChildren
+                .map((child) => {
+                      'canonicalPath': child.canonicalPath,
+                      'wfpAppIdSha256': child.wfpAppIdSha256,
+                      'publisherCertificateSha256':
+                          child.publisherCertificateSha256,
+                    })
+                .toList(growable: false),
+          },
+        },
+      );
 
   /// Disables strict capture and revokes Core ingress before filter cleanup.
   Future<bool> clearStrictPolicy() =>
@@ -509,12 +861,17 @@ class ClashService extends ClashHandlerInterface {
   Future<StrictIdentityResolution?> inspectStrictIdentity(
     String executablePath,
   ) async {
+    if (_agentMode &&
+        (hasDeferredAgentLaunch || !socketCompleter.isCompleted)) {
+      return null;
+    }
     final id = 'agent-${AgentCommand.inspectStrictIdentity.name}-${utils.id}';
     final completer = Completer<StrictIdentityResolution?>();
     _strictIdentityCompleters[id] = completer;
     try {
       final socket = await socketCompleter.future;
-      socket.writeln(
+      _writeSocketLine(
+        socket,
         encodeAgentCommand(
           id: id,
           command: AgentCommand.inspectStrictIdentity,
@@ -532,6 +889,15 @@ class ClashService extends ClashHandlerInterface {
   void _onAgentLost(String reason) {
     ++_connectionEpoch;
     _agentProxyRunning = null;
+    if (!hasDeferredAgentLaunch) {
+      _agentCoreState = AgentCoreState.stopped;
+    }
+    if (socketCompleter.isCompleted) {
+      socketCompleter = Completer<Socket>();
+    }
+    setStartupTimingCorrelationId(null);
+    _releaseCoreReadyWaitersForDeferOrTeardown();
+    _flushPendingCompleters();
     onTunTransportChanged?.call();
     // Socket loss invalidates any previously armed claim.  Keep the status
     // fail-closed while the bounded reconnect loop runs; never leave an armed
@@ -548,7 +914,6 @@ class ClashService extends ClashHandlerInterface {
     _agentRecovering = true;
     final previousAgentPid = _agentPid;
     final recoveryEpoch = _agentConnections.epoch;
-    _flushPendingCompleters();
     unawaited(() async {
       commonPrint.log('FlClashAgent connection lost ($reason), reconnecting');
       try {
@@ -556,9 +921,13 @@ class ClashService extends ClashHandlerInterface {
           await Future.delayed(
             Duration(milliseconds: 250 * (1 << attempt).clamp(1, 16)),
           );
-          if (_stopping || _detaching || recoveryEpoch != _agentConnections.epoch) return;
+          if (_stopping ||
+              _detaching ||
+              recoveryEpoch != _agentConnections.epoch) return;
           if (await _connectOrLaunchAgent(recovery: true)) {
-            if (_stopping || _detaching || recoveryEpoch != _agentConnections.epoch) return;
+            if (_stopping ||
+                _detaching ||
+                recoveryEpoch != _agentConnections.epoch) return;
             // A transport interruption to the same Agent requires no Core
             // restart: Agent still owns and has replayed its state. A new PID
             // means the Agent journal was lost, so rebuild Core from Flutter's
@@ -596,6 +965,7 @@ class ClashService extends ClashHandlerInterface {
       );
       serverCompleter.complete(server);
       await for (final socket in server) {
+        _enableTcpNoDelayBestEffort(socket);
         await _destroySocket();
         _macCoreVerified = false;
         if (!Platform.isMacOS) socketCompleter.complete(socket);
@@ -612,15 +982,20 @@ class ClashService extends ClashHandlerInterface {
           (data) {
             try {
               if (Platform.isMacOS && !_macCoreVerified) {
-                if (data.length > 4096 || !_acceptMacCoreHandshake(
-                    Map<String, dynamic>.from(jsonDecode(data) as Map), socket)) {
+                if (data.length > 4096 ||
+                    !_acceptMacCoreHandshake(
+                        Map<String, dynamic>.from(jsonDecode(data) as Map),
+                        socket)) {
                   socket.destroy();
                   return;
                 }
                 _macCoreVerified = true;
-                if (!socketCompleter.isCompleted) socketCompleter.complete(socket);
+                if (!socketCompleter.isCompleted) {
+                  socketCompleter.complete(socket);
+                }
                 return;
               }
+              if (tryHandleRawActionResultLine(data)) return;
               handleResult(ActionResult.fromJson(json.decode(data.trim())));
             } catch (e) {
               commonPrint.log('socket parse error: $e');
@@ -661,11 +1036,16 @@ class ClashService extends ClashHandlerInterface {
         // recovery must not replace a privileged Core with a local Core just
         // because a transient Helper health check failed.
         final restarted = await _agentConnections.connect(() async {
+          if (hasDeferredAgentLaunch) {
+            return _materializeDeferredAgentLocked();
+          }
           if (!await _agentCommand(AgentCommand.restartCore)) return false;
           await _coreReadyCompleter.future.timeout(const Duration(seconds: 20));
           return _agentCoreState == AgentCoreState.ready;
         });
-        if (!restarted && Platform.isWindows) throw const TunFailure('startFailed');
+        if (!restarted && _isWindowsPlatform) {
+          throw const TunFailure('startFailed');
+        }
         return;
       }
       if (process != null) {
@@ -704,7 +1084,9 @@ class ClashService extends ClashHandlerInterface {
       if (Platform.isMacOS) {
         final random = Random.secure();
         _macCoreKey = List.generate(32, (_) => random.nextInt(256));
-        macToken = _macCoreKey!.map((byte) => byte.toRadixString(16).padLeft(2, '0')).join();
+        macToken = _macCoreKey!
+            .map((byte) => byte.toRadixString(16).padLeft(2, '0'))
+            .join();
       }
       final started = await Process.start(
         appPath.corePath,
@@ -726,12 +1108,13 @@ class ClashService extends ClashHandlerInterface {
           .transform(utf8.decoder)
           .transform(const LineSplitter())
           .listen((line) {
-            fileLogger.log('[FlClashCore stdout] $line');
-          });
-      _stderrSubscription = started.stderr.listen((e) {
-        final error = utf8.decode(e);
-        if (error.isNotEmpty) {
-          commonPrint.log(error);
+        fileLogger.log('[FlClashCore stdout] $line');
+      });
+      _stderrSubscription = coreStderrLines(started.stderr).listen((line) {
+        if (line.startsWith('[startup-timing]')) {
+          fileLogger.log('[FlClashCore stderr] $line');
+        } else if (line.isNotEmpty) {
+          commonPrint.log(line);
         }
       });
       _watchProcess(started);
@@ -741,30 +1124,54 @@ class ClashService extends ClashHandlerInterface {
   }
 
   Future<bool> windowsComponentsMatch() async {
-    if (!Platform.isWindows) return true;
+    final watch = Stopwatch()..start();
+    void report(bool matching, {String? outcome}) {
+      logStartupTiming(
+        'componentsMatch',
+        watch,
+        outcome: outcome ?? (matching ? 'match' : 'mismatch'),
+      );
+    }
+
+    if (!_isWindowsPlatform) {
+      report(true);
+      return true;
+    }
     final identity = _agentIdentity;
     final connectionEpoch = _connectionEpoch;
     final generation = _agentGeneration;
-    if (!_agentMode || identity == null || identity.agentPid != _agentPid ||
+    if (!_agentMode ||
+        identity == null ||
+        identity.agentPid != _agentPid ||
         identity.agentInstanceId == null ||
         !RegExp(r'^[0-9a-f]{64}$').hasMatch(identity.agentInstanceId!) ||
-        identity.agentExecutable == null || identity.coreExecutable == null) {
+        identity.agentExecutable == null ||
+        identity.coreExecutable == null) {
+      report(false);
       return false;
     }
     try {
       for (final pair in [
-        (appPath.agentPath, identity.agentExecutable!),
-        (appPath.corePath, identity.coreExecutable!),
+        (_resolveBundledAgentPath(), identity.agentExecutable!),
+        (_resolveBundledCorePath(), identity.coreExecutable!),
       ]) {
-        final bundled = await crypto.sha256.bind(File(pair.$1).openRead()).first;
-        final running = await crypto.sha256.bind(File(pair.$2).openRead()).first;
-        if (bundled != running) return false;
+        if (!await binaryFilesMatch(pair.$1, pair.$2)) {
+          report(false);
+          return false;
+        }
       }
-      final helperMatches = identity.backendSource != 'helper' || await request.pingHelper();
-      return helperMatches && connectionEpoch == _connectionEpoch &&
-        generation == _agentGeneration &&
-        identity.agentInstanceId == _agentIdentity?.agentInstanceId;
-    } catch (_) { return false; }
+      final helperMatches =
+          identity.backendSource != 'helper' || await _pingHelper();
+      final matching = helperMatches &&
+          connectionEpoch == _connectionEpoch &&
+          generation == _agentGeneration &&
+          identity.agentInstanceId == _agentIdentity?.agentInstanceId;
+      report(matching);
+      return matching;
+    } catch (_) {
+      report(false, outcome: 'error');
+      return false;
+    }
   }
 
   /// Called only after an explicit user request prepared a matching Helper.
@@ -772,27 +1179,40 @@ class ClashService extends ClashHandlerInterface {
   Future<bool> ensureWindowsTunBackend({bool Function()? isCurrent}) async {
     bool current() => isCurrent?.call() ?? true;
     if (!current()) return false;
-    if (!Platform.isWindows || !_agentMode) {
+    if (!_isWindowsPlatform || !_agentMode) {
       throw const TunFailure('componentsMismatch');
     }
     if (_agentUsingHelper && await windowsComponentsMatch()) {
       if (!current()) return false;
       try {
         if ((await getTunStatus()).privilege == 'elevated') return false;
-      } on TunFailure { /* Reconcile a claimed Helper with the actual Core. */ }
+      } on TunFailure {
+        /* Reconcile a claimed Helper with the actual Core. */
+      } on TunNotReadyException {
+        /* Reconcile an unready Core with the expected elevated Helper. */
+      }
     }
-    if (!await system.checkIsAdmin()) throw const TunFailure('permissionDenied');
+    if (!await _checkIsAdmin()) {
+      throw const TunFailure('permissionDenied');
+    }
     if (!current()) return false;
     // Old Agents acknowledged shutdown before confirming Core exit. Never
     // use that acknowledgement to replace a potentially still-live Core.
     if (!windowsAgentSupportsMigration) throw const TunFailure('legacyAgent');
-    if (!await request.pingHelper()) throw const TunFailure('componentsMismatch');
+    if (!await _pingHelper()) {
+      throw const TunFailure('componentsMismatch');
+    }
     if (!current()) return false;
     // Verify the replacement can be selected before stopping a usable backend.
     try {
-      await windowsAgentLaunchPaths(bundledAgent: appPath.agentPath,
-        bundledCore: appPath.corePath, serviceDirectory: appPath.windowsServiceDirectory);
-    } catch (_) { throw const TunFailure('componentsMismatch'); }
+      await windowsAgentLaunchPaths(
+        bundledAgent: _resolveBundledAgentPath(),
+        bundledCore: _resolveBundledCorePath(),
+        serviceDirectory: _resolveServiceDirectory(),
+      );
+    } catch (_) {
+      throw const TunFailure('componentsMismatch');
+    }
     if (!current()) return false;
     _stopping = true;
     try {
@@ -800,14 +1220,41 @@ class ClashService extends ClashHandlerInterface {
         if (!current()) return false;
         return _replaceWindowsTunBackend(isCurrent: current);
       });
-    } finally { _stopping = false; }
+    } finally {
+      _stopping = false;
+    }
   }
 
-  Future<bool> _replaceWindowsTunBackend({required bool Function() isCurrent}) async {
-    if (!windowsAgentSupportsMigration || !await request.pingHelper()) {
+  Future<bool> _replaceWindowsTunBackend({
+    required bool Function() isCurrent,
+  }) async {
+    if (!windowsAgentSupportsMigration || !await _pingHelper()) {
       throw const TunFailure('componentsMismatch');
     }
     if (!isCurrent()) return false;
+    if (hasDeferredAgentLaunch) {
+      _agentLaunchDeferred = false;
+      _agentCoreState = AgentCoreState.starting;
+      _resetCoreReadyCompleter();
+      onTunTransportChanged?.call();
+      final connected = await _connectOrLaunchAgentImpl(
+        allowDeferForTunAuthorization: false,
+      );
+      if (!connected ||
+          _agentPid == null ||
+          !_agentUsingHelper ||
+          !await windowsComponentsMatch()) {
+        if (_agentPid == null && _agentIdentity == null) {
+          _agentLaunchDeferred = true;
+          _agentCoreState = AgentCoreState.stopped;
+          _releaseCoreReadyWaitersForDeferOrTeardown();
+          _flushPendingCompleters();
+          onTunTransportChanged?.call();
+        }
+        throw const TunFailure('componentsMismatch');
+      }
+      return true;
+    }
     final previousPid = _agentPid;
     final previousInstance = _agentIdentity?.agentInstanceId;
     final disconnected = _agentDisconnected.future;
@@ -821,20 +1268,32 @@ class ClashService extends ClashHandlerInterface {
       final deadline = DateTime.now().add(const Duration(seconds: 10));
       var endpointReleased = false;
       while (DateTime.now().isBefore(deadline)) {
-        final file = File(await appPath.agentEndpointPath);
-        if (!await file.exists()) { endpointReleased = true; break; }
+        final file = File(await _resolveEndpointPath());
+        if (!await file.exists()) {
+          endpointReleased = true;
+          break;
+        }
         try {
-          final endpoint = AgentEndpoint.fromJson(jsonDecode(await file.readAsString()));
-          if (endpoint.pid != previousPid) { endpointReleased = true; break; }
-        } catch (_) { /* A partial endpoint is not proof of ownership release. */ }
+          final endpoint =
+              AgentEndpoint.fromJson(jsonDecode(await file.readAsString()));
+          if (endpoint.pid != previousPid) {
+            endpointReleased = true;
+            break;
+          }
+        } catch (_) {
+          /* A partial endpoint is not proof of ownership release. */
+        }
         await Future<void>.delayed(const Duration(milliseconds: 100));
       }
       if (!endpointReleased) throw const TunFailure('backendStopFailed');
       await _detachAgentSocket();
-      _coreReadyCompleter = Completer<void>();
-      if (!await _connectOrLaunchAgentImpl() || _agentPid == previousPid ||
-          (previousInstance != null && _agentIdentity?.agentInstanceId == previousInstance) ||
-          !_agentUsingHelper || !await windowsComponentsMatch()) {
+      _resetCoreReadyCompleter();
+      if (!await _connectOrLaunchAgentImpl() ||
+          _agentPid == previousPid ||
+          (previousInstance != null &&
+              _agentIdentity?.agentInstanceId == previousInstance) ||
+          !_agentUsingHelper ||
+          !await windowsComponentsMatch()) {
         throw const TunFailure('componentsMismatch');
       }
       return true;
@@ -851,6 +1310,11 @@ class ClashService extends ClashHandlerInterface {
       _stopping = true;
       try {
         return await _agentConnections.replace(() async {
+          if (hasDeferredAgentLaunch || !socketCompleter.isCompleted) {
+            _agentLaunchDeferred = false;
+            await _detachAgentSocket();
+            return true;
+          }
           final result = await _agentCommand(AgentCommand.shutdownAgent);
           await _detachAgentSocket();
           return result;
@@ -875,13 +1339,62 @@ class ClashService extends ClashHandlerInterface {
   }
 
   @override
+  Future<TunStatus> getTunStatus() async {
+    if (hasDeferredAgentLaunch) {
+      if (!_loggedDeferredTunNotReady || tunRuntime.busy) {
+        _loggedDeferredTunNotReady = true;
+        final watch = Stopwatch()..start();
+        logStartupTiming(
+          'getTunStatus',
+          watch,
+          outcome: 'not_ready',
+          detail: 'reason=deferred_cold_start',
+        );
+      }
+      return const TunStatus(
+        instanceId: 'deferred-cold-start',
+        revision: 0,
+        state: 'off',
+        listenerActive: false,
+        interfaceState: 'notApplicable',
+        privilege: 'unprivileged',
+        requestedEnabled: false,
+      );
+    }
+    _loggedDeferredTunNotReady = false;
+    return super.getTunStatus();
+  }
+
+  @override
   Future<void> sendMessage(String message) async {
+    if (hasDeferredAgentLaunch) {
+      _failPendingCompleter(message, 'Agent launch deferred');
+      return;
+    }
+    if (_stopping || _detaching) {
+      _failPendingCompleter(
+        message,
+        _detaching ? 'Agent socket detaching' : 'Backend stopping',
+      );
+      return;
+    }
     try {
       if (_agentMode) {
         await _coreReadyCompleter.future.timeout(const Duration(seconds: 20));
+        if (hasDeferredAgentLaunch) {
+          _failPendingCompleter(message, 'Agent launch deferred');
+          return;
+        }
+        if (_stopping ||
+            _detaching ||
+            !socketCompleter.isCompleted ||
+            !agentCoreReady) {
+          _failPendingCompleter(message, 'Agent socket unavailable');
+          return;
+        }
       }
       final socket = await socketCompleter.future;
-      socket.writeln(message);
+      _writeSocketLine(socket, message);
     } catch (e) {
       // Writing to a dead socket used to throw into an unawaited future and
       // strand this call until its 30s safeFuture timeout. Fail it fast with the
@@ -951,6 +1464,11 @@ class ClashService extends ClashHandlerInterface {
   }
 
   void _failPendingCompleter(String message, String reason) {
+    final fastId = extractActionIdFast(message);
+    if (fastId != null) {
+      _completePendingWithDefault(fastId, reason);
+      return;
+    }
     try {
       final decoded = json.decode(message);
       if (decoded is Map<String, dynamic>) {
@@ -966,7 +1484,13 @@ class ClashService extends ClashHandlerInterface {
 
   void _completePendingWithDefault(String id, String reason) {
     final completer = callbackCompleterMap.remove(id);
-    final def = callbackDefaultMap.remove(id);
+    var def = callbackDefaultMap.remove(id);
+    if (def is Result &&
+        def.isError &&
+        def.message.startsWith('not_ready:') &&
+        reason == 'Agent Core unavailable') {
+      def = Result.error('not_ready:core_unavailable');
+    }
     if (completer != null && !completer.isCompleted) {
       commonPrint.log('_completePendingWithDefault: reason=$reason');
       completer.complete(def);
@@ -994,6 +1518,10 @@ class ClashService extends ClashHandlerInterface {
   }
 
   void _flushPendingCompleters() {
+    for (final completer in _agentCommandCompleters.values) {
+      if (!completer.isCompleted) completer.complete(false);
+    }
+    _agentCommandCompleters.clear();
     for (final completer in _strictIdentityCompleters.values) {
       if (!completer.isCompleted) completer.complete(null);
     }
@@ -1018,7 +1546,14 @@ class ClashService extends ClashHandlerInterface {
     _stopping = true;
     try {
       if (_agentMode) {
-        return await _agentConnections.replace(() => _agentCommand(AgentCommand.stopCore));
+        return await _agentConnections.replace(() async {
+          if (hasDeferredAgentLaunch || !socketCompleter.isCompleted) {
+            _agentLaunchDeferred = false;
+            await _detachAgentSocket();
+            return true;
+          }
+          return _agentCommand(AgentCommand.stopCore);
+        });
       }
       if (Platform.isWindows) {
         await request.stopCoreByHelper();
@@ -1043,7 +1578,10 @@ class ClashService extends ClashHandlerInterface {
   /// alive so TUN/system-proxy operation survives a closed desktop window.
   Future<bool> detach() async {
     _detaching = true;
-    return _agentConnections.replace(_detachAgentSocket);
+    return _agentConnections.replace(() async {
+      _agentLaunchDeferred = false;
+      return _detachAgentSocket();
+    });
   }
 
   Future<bool> _detachAgentSocket() async {
@@ -1061,9 +1599,13 @@ class ClashService extends ClashHandlerInterface {
         } catch (_) {}
       }
       socketCompleter = Completer<Socket>();
+      setStartupTimingCorrelationId(null);
+      _releaseCoreReadyWaitersForDeferOrTeardown();
       _flushPendingCompleters();
       return true;
-    } finally { onTunTransportChanged?.call(); }
+    } finally {
+      onTunTransportChanged?.call();
+    }
   }
 }
 

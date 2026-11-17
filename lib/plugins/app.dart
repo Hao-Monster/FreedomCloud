@@ -4,13 +4,13 @@ import 'dart:io';
 import 'dart:isolate';
 
 import 'package:flclashx/common/app_localizations.dart';
+import 'package:flclashx/common/bounded_cache.dart';
 import 'package:flclashx/models/models.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 
 class App {
-
   factory App() {
     _instance ??= App._internal();
     return _instance!;
@@ -39,7 +39,8 @@ class App {
   late MethodChannel methodChannel;
   Function()? onExit;
 
-  Future<bool?> moveTaskToBack() async => methodChannel.invokeMethod<bool>("moveTaskToBack");
+  Future<bool?> moveTaskToBack() async =>
+      methodChannel.invokeMethod<bool>("moveTaskToBack");
 
   Future<List<Package>> getPackages() async {
     final packagesString =
@@ -61,47 +62,56 @@ class App {
     });
   }
 
-  Future<bool> openFile(String path) async => await methodChannel.invokeMethod<bool>("openFile", {
-          "path": path,
-        }) ??
-        false;
+  Future<bool> openFile(String path) async =>
+      await methodChannel.invokeMethod<bool>("openFile", {
+        "path": path,
+      }) ??
+      false;
 
-  final _iconCache = <String, ImageProvider?>{};
+  static const int _maxCachedPackageIcons = 256;
+  final BoundedCache<String, ImageProvider?> _iconCache =
+      BoundedCache<String, ImageProvider?>(maxEntries: _maxCachedPackageIcons);
   final _iconFutures = <String, Future<ImageProvider?>>{};
 
   Future<ImageProvider?> getPackageIcon(String packageName) {
     if (_iconCache.containsKey(packageName)) {
-      return Future.value(_iconCache[packageName]);
+      return Future.value(_iconCache.putIfAbsent(packageName, () => null));
     }
     return _iconFutures[packageName] ??= _fetchIcon(packageName);
   }
 
   Future<ImageProvider?> _fetchIcon(String packageName) async {
-    final base64 = await methodChannel.invokeMethod<String>("getPackageIcon", {
-      "packageName": packageName,
-    });
-    final icon = base64 != null ? MemoryImage(base64Decode(base64)) : null;
-    _iconCache[packageName] = icon;
-    _iconFutures.remove(packageName);
-    return icon;
+    try {
+      final base64 =
+          await methodChannel.invokeMethod<String>("getPackageIcon", {
+        "packageName": packageName,
+      });
+      final icon = base64 != null ? MemoryImage(base64Decode(base64)) : null;
+      _iconCache.putIfAbsent(packageName, () => icon);
+      return icon;
+    } finally {
+      _iconFutures.remove(packageName);
+    }
   }
 
-  Future<bool?> tip(String? message) async => methodChannel.invokeMethod<bool>("tip", {
-      "message": "$message",
-    });
+  Future<bool?> tip(String? message) async =>
+      methodChannel.invokeMethod<bool>("tip", {
+        "message": "$message",
+      });
 
   Future<bool?> initShortcuts() async => methodChannel.invokeMethod<bool>(
-      "initShortcuts",
-      <String, String>{
-        "toggle": appLocalizations.toggle,
-        "start": appLocalizations.start,
-        "stop": appLocalizations.stop,
-      },
-    );
+        "initShortcuts",
+        <String, String>{
+          "toggle": appLocalizations.toggle,
+          "start": appLocalizations.start,
+          "stop": appLocalizations.stop,
+        },
+      );
 
-  Future<bool?> updateExcludeFromRecents(bool value) async => methodChannel.invokeMethod<bool>("updateExcludeFromRecents", {
-      "value": value,
-    });
+  Future<bool?> updateExcludeFromRecents(bool value) async =>
+      methodChannel.invokeMethod<bool>("updateExcludeFromRecents", {
+        "value": value,
+      });
 
   /// Whether the app is exempt from battery optimization (the key OEM survival
   /// lever). Returns true on pre-M / non-Android.

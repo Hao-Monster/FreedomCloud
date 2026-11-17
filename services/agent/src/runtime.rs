@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::process::Stdio;
@@ -6,8 +7,13 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{anyhow, bail, Context, Result};
+use serde::de::IgnoredAny;
+use serde::Deserialize;
 use serde_json::{json, Value};
-use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader};
+use tokio::io::{
+    AsyncBufRead, AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader,
+    BufWriter,
+};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::process::{Child, Command};
 use tokio::sync::{mpsc, oneshot, Mutex, Notify, OwnedSemaphorePermit, RwLock, Semaphore};
@@ -154,9 +160,12 @@ struct Shared {
     helper_port: Option<u16>,
     helper_token: Option<String>,
     home_dir: PathBuf,
+    system_proxy: Arc<crate::win_system_proxy::SystemProxyManager>,
     strict_blocks: Mutex<HashSet<String>>,
     #[cfg(windows)]
     strict_runtime: Mutex<Option<Arc<StrictRuntime>>>,
+    #[cfg(windows)]
+    strict_wakeup: Notify,
     #[cfg(windows)]
     strict_store: Mutex<Option<crate::strict_store::StrictIntentStore>>,
 }
@@ -223,10 +232,18 @@ async fn apply_supervisor_end(
         SessionEnd::Command(SupervisorCommand::Stop(reply)) => {
             *should_start = false;
             set_status(shared, CoreStatus::Stopped).await;
+            let _ = shared
+                .system_proxy
+                .cleanup_if_owned_async("supervisor_stop", shared.logger.clone())
+                .await;
             let _ = reply.send(true);
         }
         SessionEnd::Command(SupervisorCommand::Shutdown(reply)) => {
             set_status(shared, CoreStatus::Stopped).await;
+            let _ = shared
+                .system_proxy
+                .cleanup_if_owned_async("supervisor_shutdown", shared.logger.clone())
+                .await;
             let _ = reply.send(true);
             // The UI handler signals shutdown after the command result is
             // written to the socket. Fall back to a bounded forced shutdown
@@ -239,6 +256,10 @@ async fn apply_supervisor_end(
             return true;
         }
         SessionEnd::Shutdown => {
+            let _ = shared
+                .system_proxy
+                .cleanup_if_owned_async("session_shutdown", shared.logger.clone())
+                .await;
             signal_shutdown(shared);
             return true;
         }
@@ -250,6 +271,8 @@ async fn apply_supervisor_end(
 fn signal_shutdown(shared: &Shared) {
     shared.shutting_down.store(true, Ordering::Release);
     shared.shutdown.notify_waiters();
+    #[cfg(windows)]
+    shared.strict_wakeup.notify_waiters();
 }
 
 async fn set_strict_policy(
@@ -262,6 +285,8 @@ async fn set_strict_policy(
     status.state = state;
     status.failure_reason = failure_reason;
     drop(status);
+    #[cfg(windows)]
+    shared.strict_wakeup.notify_waiters();
     publish_strict_status(shared).await;
 }
 
@@ -587,6 +612,7 @@ async fn apply_strict_policy(shared: &Arc<Shared>, raw: Option<Value>) -> bool {
         }
         *current = Some(runtime.clone());
     }
+    shared.strict_wakeup.notify_waiters();
     set_strict_policy(shared, crate::protocol::StrictPolicyState::Preparing, None).await;
     drive_strict_action(shared, runtime, action).await
 }
@@ -608,6 +634,7 @@ async fn restore_strict_intent(shared: &Arc<Shared>, intent: crate::strict_store
     let action = runtime.orchestrator.lock().await.restore_disable(intent.policy);
     if let Ok(action) = action {
         *shared.strict_runtime.lock().await = Some(runtime.clone());
+        shared.strict_wakeup.notify_waiters();
         let _ = drive_strict_action(shared, runtime, action).await;
     } else {
         shared.logger.log("persisted strict disable intent could not be restored");
@@ -907,13 +934,37 @@ fn strict_target_key(path: &str) -> String {
 #[cfg(windows)]
 async fn supervise_strict_recovery(shared: Arc<Shared>) {
     let mut last_health_check = Instant::now();
-    let mut timer = tokio::time::interval(Duration::from_secs(1));
-    timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     loop {
-        timer.tick().await;
-        if shared.shutting_down.load(Ordering::Acquire) { break; }
-        if *shared.status.read().await != CoreStatus::Ready { continue; }
-        let Some(runtime) = shared.strict_runtime.lock().await.clone() else { continue; };
+        if shared.shutting_down.load(Ordering::Acquire) {
+            break;
+        }
+        let wakeup = shared.strict_wakeup.notified();
+        tokio::pin!(wakeup);
+        wakeup.as_mut().enable();
+        if shared.shutting_down.load(Ordering::Acquire) {
+            break;
+        }
+        if shared.strict_runtime.lock().await.is_none() {
+            wakeup.await;
+            continue;
+        }
+        if *shared.status.read().await != CoreStatus::Ready {
+            let _ = timeout(Duration::from_secs(1), wakeup).await;
+            continue;
+        }
+        tokio::select! {
+            _ = tokio::time::sleep(Duration::from_secs(1)) => {}
+            _ = &mut wakeup => {}
+        }
+        if shared.shutting_down.load(Ordering::Acquire) {
+            break;
+        }
+        if *shared.status.read().await != CoreStatus::Ready {
+            continue;
+        }
+        let Some(runtime) = shared.strict_runtime.lock().await.clone() else {
+            continue;
+        };
         let mut orchestrator = runtime.orchestrator.lock().await;
         let status = orchestrator.status();
         if status.state == StrictState::Armed && last_health_check.elapsed() >= Duration::from_secs(5) {
@@ -988,8 +1039,8 @@ async fn retry_or_command(
 pub async fn run(config: AgentConfig) -> Result<()> {
     let logger = AgentLogger::new(&config.home);
     logger.log(format!(
-        "agent starting use_helper={} helper_port={}",
-        config.use_helper, config.helper_port
+        "agent starting agent_pid={} use_helper={} helper_port={}",
+        std::process::id(), config.use_helper, config.helper_port
     ));
     let ui_listener = match TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
         .await
@@ -1029,6 +1080,7 @@ pub async fn run(config: AgentConfig) -> Result<()> {
     let agent_instance_id = endpoint
         .agent_instance_id
         .context("Agent instance ID is unavailable")?;
+    logger.log(format!("agent correlation_id={agent_instance_id}"));
     let agent_executable = std::env::current_exe().context("Agent executable is unavailable")?;
     let core_executable = if config.use_helper {
         config
@@ -1053,6 +1105,14 @@ pub async fn run(config: AgentConfig) -> Result<()> {
     let shared_helper_port = config.use_helper.then_some(config.helper_port);
     let shared_helper_token = helper_token.clone();
     let shared_home_dir = config.home.clone();
+    let system_proxy = Arc::new(crate::win_system_proxy::SystemProxyManager::platform_default(
+        shared_home_dir.clone(),
+    ));
+    let _ = system_proxy.cleanup_orphan_on_startup(false, &logger);
+    let _proxy_cleanup_guard = crate::win_system_proxy::AgentProxyCleanupGuard::new(
+        system_proxy.clone(),
+        logger.clone(),
+    );
     let (supervisor_tx, supervisor_rx) = mpsc::channel(16);
     #[cfg(windows)]
     let (strict_store, stored_intent) = match crate::strict_store::StrictIntentStore::open(&shared_home_dir) {
@@ -1104,9 +1164,12 @@ pub async fn run(config: AgentConfig) -> Result<()> {
         helper_port: shared_helper_port,
         helper_token: shared_helper_token,
         home_dir: shared_home_dir,
+        system_proxy,
         strict_blocks: Mutex::new(HashSet::new()),
         #[cfg(windows)]
         strict_runtime: Mutex::new(None),
+        #[cfg(windows)]
+        strict_wakeup: Notify::new(),
         #[cfg(windows)]
         strict_store: Mutex::new(strict_store),
     });
@@ -1207,6 +1270,7 @@ async fn handle_ui_admitted(
     shared: Arc<Shared>,
     auth_permit: Option<OwnedSemaphorePermit>,
 ) -> Result<()> {
+    let _ = stream.set_nodelay(true);
     let mut reader = BufReader::new(stream);
     let auth = timeout(UI_AUTH_TIMEOUT, read_bounded_line(&mut reader, MAX_AUTH_LINE_BYTES))
         .await.context("UI authentication timed out")??
@@ -1237,7 +1301,7 @@ async fn handle_ui_admitted(
     }
 
     let session_result: Result<()> = {
-      let writer = write_ui_output(write_half, output_rx, IPC_WRITE_TIMEOUT);
+      let writer = write_ui_output(BufWriter::new(write_half), output_rx, IPC_WRITE_TIMEOUT);
       let handler = async {
         output_tx.send(UiOutput::new(ready_envelope(&shared).await)).await?;
         send_ui_activity(&shared, true).await;
@@ -1366,17 +1430,26 @@ async fn handle_ui_admitted(
                 continue;
             }
 
-            let action = serde_json::from_str::<Value>(line).context("invalid Core action JSON")?;
-            if action.get("id").and_then(Value::as_str).is_none()
-                || action.get("method").and_then(Value::as_str).is_none()
-                || action.get("data").is_none()
-            {
-                bail!("invalid Core action envelope");
+            #[derive(Deserialize)]
+            struct CoreActionEnvelope<'a> {
+                #[serde(borrow)]
+                id: Cow<'a, str>,
+                #[serde(borrow)]
+                #[allow(dead_code)]
+                method: Cow<'a, str>,
+                #[allow(dead_code)]
+                data: IgnoredAny,
             }
+            let envelope = serde_json::from_str::<CoreActionEnvelope<'_>>(line)
+                .context("invalid Core action envelope")?;
             let core = shared.core.lock().await.clone();
             if let Some(core) = core {
                 #[cfg(target_os = "macos")]
-                shared.mac_strict_replay.lock().await.stage(&action)?;
+                {
+                    let action =
+                        serde_json::from_str::<Value>(line).context("invalid Core action JSON")?;
+                    shared.mac_strict_replay.lock().await.stage(&action)?;
+                }
                 shared.journal.lock().await.stage(line);
                 if !matches!(timeout(IPC_ENQUEUE_TIMEOUT, core.send(line.to_owned())).await, Ok(Ok(()))) {
                     #[cfg(target_os = "macos")]
@@ -1390,7 +1463,7 @@ async fn handle_ui_admitted(
                         "type": "coreUnavailable",
                         "protocol": PROTOCOL_VERSION,
                         "generation": shared.generation.load(Ordering::Acquire),
-                        "id": action["id"],
+                        "id": envelope.id.as_ref(),
                         "coreState": shared.status.read().await.as_str(),
                     }
                 });
@@ -1690,7 +1763,9 @@ async fn supervise_core(
             continue;
         }
 
-        let (read_half, mut write_half) = stream.into_split();
+        let buffered = stream.buffer().to_vec();
+        let (read_half, write_half) = stream.into_inner().into_split();
+        let mut write_half = BufWriter::new(write_half);
         let (core_tx, mut core_rx) = mpsc::channel::<String>(CHANNEL_CAPACITY);
         *shared.core.lock().await = Some(core_tx);
         shared.generation.fetch_add(1, Ordering::AcqRel);
@@ -1701,12 +1776,13 @@ async fn supervise_core(
             while let Some(line) = core_rx.recv().await {
                 timeout(IPC_WRITE_TIMEOUT, async {
                     write_half.write_all(line.as_bytes()).await?;
-                    write_half.write_all(b"\n").await
+                    write_half.write_all(b"\n").await?;
+                    write_half.flush().await
                 }).await.context("Core output timed out")??;
             }
             Result::<()>::Ok(())
         });
-        let mut reader = BufReader::new(read_half);
+        let mut reader = BufReader::new(std::io::Cursor::new(buffered).chain(read_half));
         let session_end = loop {
             tokio::select! {
                 result = &mut writer => {
@@ -1721,7 +1797,11 @@ async fn supervise_core(
                             if handle_strict_core_line(&shared, &line).await {
                                 continue;
                             }
-                            shared.journal.lock().await.commit_response(&line);
+                            if let Some(accepted) =
+                                shared.journal.lock().await.commit_response(&line)
+                            {
+                                shared.system_proxy.record_core_action(&accepted);
+                            }
                             #[cfg(target_os = "macos")]
                             {
                                 let response: Value = serde_json::from_str(&line)?;
@@ -1883,17 +1963,21 @@ async fn fail_closed_strict_core_loss(shared: &Arc<Shared>) {
 
 #[cfg(windows)]
 async fn handle_strict_core_line(shared: &Arc<Shared>, line: &str) -> bool {
-    let Ok(value) = serde_json::from_str::<Value>(line) else {
-        return false;
-    };
-    let Some(id) = value.get("id").and_then(Value::as_str) else {
-        return false;
-    };
     let Some(runtime) = shared.strict_runtime.lock().await.clone() else {
         return false;
     };
-    let pending = runtime.pending_core_id.lock().await.clone();
-    if pending.as_deref() != Some(id) {
+    let Some(expected_id) = runtime.pending_core_id.lock().await.clone() else {
+        return false;
+    };
+    #[derive(Deserialize)]
+    struct CoreIdProbe<'a> {
+        #[serde(borrow, default)]
+        id: Option<Cow<'a, str>>,
+    }
+    let Ok(probe) = serde_json::from_str::<CoreIdProbe<'_>>(line) else {
+        return false;
+    };
+    if probe.id.as_deref() != Some(expected_id.as_str()) {
         return false;
     }
     *runtime.pending_core_id.lock().await = None;
@@ -1954,6 +2038,7 @@ async fn start_backend(
         let owner = format!("{}-{}", shared.agent_instance_id, session.attempt);
         // Persist before the request: a timeout is not proof that spawn failed.
         session.owner = Some(owner.clone());
+        logger.log(format!("event=core_start.request correlationId={} port={core_port}", shared.agent_instance_id));
         let response = helper_request_json(
             config.helper_port,
             "/start",
@@ -1964,6 +2049,7 @@ async fn start_backend(
                 "auth_token": token,
                 "helper_token": helper_token,
                 "ownerInstanceId": owner,
+                "correlationId": shared.agent_instance_id,
             }),
         )
         .await?;
@@ -1990,6 +2076,7 @@ async fn start_backend(
         .arg(core_port.to_string())
         .arg(launch_credential)
         .env("SAFE_PATHS", &config.home)
+        .env("FCX_STARTUP_ID", &shared.agent_instance_id)
         .stdin(if cfg!(target_os = "macos") {
             Stdio::piped()
         } else {
@@ -2079,6 +2166,24 @@ async fn stop_backend(
     Ok(())
 }
 
+fn should_persist_core_output_line(channel: &str, line: &str) -> bool {
+    let allow_stdout_debug =
+        std::env::var("FCX_CORE_STDOUT_DEBUG").ok().as_deref() == Some("1");
+    should_persist_core_output_line_with_debug_flag(channel, line, allow_stdout_debug)
+}
+
+fn should_persist_core_output_line_with_debug_flag(
+    channel: &str,
+    line: &str,
+    allow_stdout_debug: bool,
+) -> bool {
+    if channel != "stdout" || allow_stdout_debug {
+        return true;
+    }
+    let trimmed = line.trim_start();
+    !(trimmed.starts_with("time=\"") && trimmed.contains("\" level=debug "))
+}
+
 fn spawn_core_output_logger<R>(stream: R, logger: Arc<AgentLogger>, channel: &'static str)
 where
     R: AsyncRead + Unpin + Send + 'static,
@@ -2088,7 +2193,11 @@ where
         loop {
             match read_core_output_line(&mut reader).await {
                 Ok(None) => break,
-                Ok(Some(line)) => logger.log(format!("Core {channel}: {}", line.trim_end())),
+                Ok(Some(line)) => {
+                    if should_persist_core_output_line(channel, &line) {
+                        logger.log(format!("Core {channel}: {}", line.trim_end()));
+                    }
+                }
                 Err(error) => {
                     logger.log(format!("Core {channel} read error: {error}"));
                     break;
@@ -2132,6 +2241,7 @@ async fn helper_request_raw(port: u16, path: &str, body: Option<Value>) -> Resul
     )
     .await
     .context("Helper connection timed out")??;
+    let _ = stream.set_nodelay(true);
     let request = format!(
         "{method} {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
         body.len()
@@ -2163,7 +2273,7 @@ async fn helper_request_raw(port: u16, path: &str, body: Option<Value>) -> Resul
     Ok(body.to_owned())
 }
 
-async fn accept_core(listener: &TcpListener, expected_token: &str) -> Result<TcpStream> {
+async fn accept_core(listener: &TcpListener, expected_token: &str) -> Result<BufReader<TcpStream>> {
     let deadline = Instant::now() + CORE_CONNECT_TIMEOUT;
     loop {
         let remaining = deadline.saturating_duration_since(Instant::now());
@@ -2176,6 +2286,7 @@ async fn accept_core(listener: &TcpListener, expected_token: &str) -> Result<Tcp
         if !address.ip().is_loopback() {
             continue;
         }
+        let _ = stream.set_nodelay(true);
         let mut reader = BufReader::new(stream);
         let Some(line) = timeout(remaining, read_bounded_line(&mut reader, MAX_AUTH_LINE_BYTES))
             .await.context("Core authentication timed out")?? else {
@@ -2189,7 +2300,7 @@ async fn accept_core(listener: &TcpListener, expected_token: &str) -> Result<Tcp
             };
             timeout(remaining, reader.get_mut().write_all(reply.as_bytes()))
                 .await.context("macOS Core authentication reply timed out")??;
-            return Ok(reader.into_inner());
+            return Ok(reader);
         }
         #[cfg(not(target_os = "macos"))]
         let valid = serde_json::from_str::<Value>(line.trim_end())
@@ -2204,7 +2315,7 @@ async fn accept_core(listener: &TcpListener, expected_token: &str) -> Result<Tcp
             .is_some_and(|token| crate::protocol::constant_time_eq(&token, expected_token));
         #[cfg(not(target_os = "macos"))]
         if valid {
-            return Ok(reader.into_inner());
+            return Ok(reader);
         }
     }
 }
@@ -2239,7 +2350,7 @@ fn mac_core_handshake_reply(line: &str, token: &str) -> Result<String> {
     Ok(format!("{}\n", json!({"_macCore": {"protocol": 1, "nonce": nonce, "proof": proof}})))
 }
 
-async fn replay_journal(stream: &mut TcpStream, shared: &Arc<Shared>) -> Result<()> {
+async fn replay_journal(reader: &mut BufReader<TcpStream>, shared: &Arc<Shared>) -> Result<()> {
     let lines = shared.journal.lock().await.replay_lines();
     for line in lines {
         let action = serde_json::from_str::<Value>(&line)?;
@@ -2247,11 +2358,13 @@ async fn replay_journal(stream: &mut TcpStream, shared: &Arc<Shared>) -> Result<
             .as_str()
             .context("replay action has no id")?
             .to_owned();
-        stream.write_all(line.as_bytes()).await?;
-        stream.write_all(b"\n").await?;
+        let mut framed = Vec::with_capacity(line.len() + 1);
+        framed.extend_from_slice(line.as_bytes());
+        framed.push(b'\n');
+        reader.get_mut().write_all(&framed).await?;
         timeout(CORE_REPLAY_TIMEOUT, async {
             loop {
-                let response = read_line_bytewise(stream, MAX_MESSAGE_LINE_BYTES)
+                let response = read_bounded_line(reader, MAX_MESSAGE_LINE_BYTES)
                     .await?
                     .context("Core disconnected during replay")?;
                 let value = serde_json::from_str::<Value>(response.trim_end())?;
@@ -2275,11 +2388,13 @@ async fn replay_journal(stream: &mut TcpStream, shared: &Arc<Shared>) -> Result<
     };
     #[cfg(target_os = "macos")]
     if let Some(line) = strict_replay {
-        stream.write_all(line.as_bytes()).await?;
-        stream.write_all(b"\n").await?;
+        let mut framed = Vec::with_capacity(line.len() + 1);
+        framed.extend_from_slice(line.as_bytes());
+        framed.push(b'\n');
+        reader.get_mut().write_all(&framed).await?;
         let response = timeout(CORE_REPLAY_TIMEOUT, async {
             loop {
-                let line = read_line_bytewise(stream, MAX_MESSAGE_LINE_BYTES).await?
+                let line = read_bounded_line(reader, MAX_MESSAGE_LINE_BYTES).await?
                     .context("Core disconnected during strict ingress recovery")?;
                 let value: Value = serde_json::from_str(&line)?;
                 if value.get("id").and_then(Value::as_str) == Some(if strict_stopped { "_agent-macos-strict-intent" } else { "_agent-macos-strict-replay" }) {
@@ -2296,28 +2411,6 @@ async fn replay_journal(stream: &mut TcpStream, shared: &Arc<Shared>) -> Result<
         }
     }
     Ok(())
-}
-
-async fn read_line_bytewise(stream: &mut TcpStream, max: usize) -> Result<Option<String>> {
-    let mut bytes = Vec::new();
-    let mut byte = [0_u8; 1];
-    loop {
-        let count = stream.read(&mut byte).await?;
-        if count == 0 {
-            return if bytes.is_empty() {
-                Ok(None)
-            } else {
-                bail!("truncated IPC line")
-            };
-        }
-        bytes.push(byte[0]);
-        if bytes.len() > max {
-            bail!("IPC line exceeded {max} bytes");
-        }
-        if byte[0] == b'\n' {
-            return Ok(Some(String::from_utf8(bytes)?));
-        }
-    }
 }
 
 async fn read_bounded_line<R>(reader: &mut R, max: usize) -> Result<Option<String>>
@@ -2363,6 +2456,16 @@ async fn send_ui_activity(shared: &Arc<Shared>, active: bool) {
 
 async fn set_status(shared: &Arc<Shared>, status: CoreStatus) {
     *shared.status.write().await = status;
+    #[cfg(windows)]
+    if status == CoreStatus::Ready {
+        shared.strict_wakeup.notify_waiters();
+    }
+    if status == CoreStatus::Failed {
+        let _ = shared
+            .system_proxy
+            .cleanup_if_owned_async("core_failed", shared.logger.clone())
+            .await;
+    }
     // `null` means no explicit listener decision has been observed yet, so a
     // first UI launch may still apply its auto-run preference. `false` is
     // reserved for an explicit stopListener action and must survive reattach.
@@ -2476,10 +2579,17 @@ async fn forward_to_ui(shared: &Arc<Shared>, line: String) {
 }
 
 fn is_unsolicited_message(line: &str) -> bool {
-    serde_json::from_str::<Value>(line)
+    if !line.contains("\"message\"") {
+        return false;
+    }
+    #[derive(Deserialize)]
+    struct MethodProbe<'a> {
+        #[serde(borrow, default)]
+        method: Option<Cow<'a, str>>,
+    }
+    serde_json::from_str::<MethodProbe<'_>>(line)
         .ok()
-        .and_then(|value| value.get("method")?.as_str().map(str::to_owned))
-        .is_some_and(|method| method == "message")
+        .is_some_and(|probe| probe.method.as_deref() == Some("message"))
 }
 
 fn crash_delay(attempt: u32) -> Duration {
@@ -2518,9 +2628,15 @@ mod tests {
             helper_port: None,
             helper_token: None,
             home_dir: PathBuf::new(),
+            system_proxy: Arc::new(crate::win_system_proxy::SystemProxyManager::new(
+                Arc::new(crate::win_system_proxy::NoopSystemProxyBackend),
+                PathBuf::new(),
+            )),
             strict_blocks: Mutex::new(HashSet::new()),
             #[cfg(windows)]
             strict_runtime: Mutex::new(None),
+            #[cfg(windows)]
+            strict_wakeup: Notify::new(),
             #[cfg(windows)]
             strict_store: Mutex::new(None),
         })
@@ -2985,9 +3101,11 @@ mod tests {
                 .await
                 .record(&json!({"id":"accepted","method":method,"data":"{}"}).to_string());
             let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-            let mut client = TcpStream::connect(listener.local_addr().unwrap())
-                .await
-                .unwrap();
+            let mut client = BufReader::new(
+                TcpStream::connect(listener.local_addr().unwrap())
+                    .await
+                    .unwrap(),
+            );
             let (server, _) = listener.accept().await.unwrap();
             let core = tokio::spawn(async move {
                 let mut reader = BufReader::new(server);
@@ -3400,5 +3518,327 @@ mod tests {
         assert!(!complete_strict_mutation(&shared, async { false }).await);
         assert!(complete_strict_mutation(&shared, async { true }).await);
         assert_eq!(shared.strict_mutations.available_permits(), 1);
+    }
+
+    #[tokio::test]
+    async fn accept_core_preserves_pipelined_frames_sent_with_handshake() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let token = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        let core_client = tokio::spawn(async move {
+            let mut conn = TcpStream::connect(addr).await.unwrap();
+            let payload = format!(
+                "{{\"_agentCore\":{{\"token\":\"{token}\"}}}}\n{{\"id\":\"pipe-1\",\"method\":\"message\",\"code\":0,\"data\":{{\"type\":\"Log\"}}}}\n"
+            );
+            conn.write_all(payload.as_bytes()).await.unwrap();
+            conn
+        });
+
+        let mut reader = accept_core(&listener, token).await.unwrap();
+        let _peer = core_client.await.unwrap();
+        let pipelined = timeout(
+            Duration::from_millis(150),
+            read_bounded_line(&mut reader, MAX_MESSAGE_LINE_BYTES),
+        )
+        .await
+        .expect("pipelined frame after Core handshake was lost")
+        .unwrap()
+        .unwrap();
+        assert!(pipelined.contains("\"pipe-1\""));
+    }
+
+    #[test]
+    fn core_stdout_logger_suppresses_logrus_debug_lines_while_keeping_info_and_stderr() {
+        assert!(!should_persist_core_output_line(
+            "stdout",
+            "time=\"2026-11-10T18:37:18.138704900+08:00\" level=debug msg=\"XTLS Vision read padding\"\n"
+        ));
+        assert!(should_persist_core_output_line(
+            "stdout",
+            "time=\"2026-11-10T18:37:18.482077300+08:00\" level=info msg=\"Load MMDB file\"\n"
+        ));
+        assert!(should_persist_core_output_line(
+            "stderr",
+            "time=\"2026-11-10T18:37:18.138704900+08:00\" level=debug msg=\"stderr diagnostic\"\n"
+        ));
+        assert!(should_persist_core_output_line_with_debug_flag(
+            "stdout",
+            "time=\"2026-11-10T18:37:18.138704900+08:00\" level=debug msg=\"XTLS Vision read padding\"\n",
+            true,
+        ));
+    }
+
+    struct RuntimeMockProxyBackend {
+        snapshot: std::sync::Mutex<crate::win_system_proxy::InternetSettingsSnapshot>,
+        disable_calls: std::sync::atomic::AtomicUsize,
+        probe_real_loopback: bool,
+    }
+
+    impl RuntimeMockProxyBackend {
+        fn new(
+            proxy_enable: u32,
+            proxy_server: Option<&str>,
+            auto_config_url: Option<&str>,
+            probe_real_loopback: bool,
+        ) -> Self {
+            Self {
+                snapshot: std::sync::Mutex::new(
+                    crate::win_system_proxy::InternetSettingsSnapshot {
+                        proxy_enable,
+                        proxy_server: proxy_server.map(str::to_owned),
+                        auto_config_url: auto_config_url.map(str::to_owned),
+                    },
+                ),
+                disable_calls: std::sync::atomic::AtomicUsize::new(0),
+                probe_real_loopback,
+            }
+        }
+
+        fn calls(&self) -> usize {
+            self.disable_calls.load(Ordering::Acquire)
+        }
+
+        fn set_enabled(&self, proxy_enable: u32, proxy_server: Option<&str>, pac: Option<&str>) {
+            let mut snapshot = self.snapshot.lock().unwrap();
+            snapshot.proxy_enable = proxy_enable;
+            snapshot.proxy_server = proxy_server.map(str::to_owned);
+            snapshot.auto_config_url = pac.map(str::to_owned);
+        }
+    }
+
+    impl crate::win_system_proxy::SystemProxyBackend for RuntimeMockProxyBackend {
+        fn read_internet_settings(
+            &self,
+        ) -> Result<crate::win_system_proxy::InternetSettingsSnapshot> {
+            Ok(self.snapshot.lock().unwrap().clone())
+        }
+
+        fn disable_system_proxy(&self) -> Result<()> {
+            self.disable_calls.fetch_add(1, Ordering::AcqRel);
+            self.snapshot.lock().unwrap().proxy_enable = 0;
+            Ok(())
+        }
+
+        fn is_loopback_port_listening(&self, port: u16) -> bool {
+            if self.probe_real_loopback {
+                crate::win_system_proxy::probe_loopback_tcp(port)
+            } else {
+                false
+            }
+        }
+    }
+
+    fn session_fixture_with_proxy(
+        backend: Arc<dyn crate::win_system_proxy::SystemProxyBackend>,
+        home_dir: PathBuf,
+    ) -> Arc<Shared> {
+        let (supervisor, _) = mpsc::channel(1);
+        Arc::new(Shared {
+            ui: Mutex::new(None),
+            strict_mutations: Arc::new(Semaphore::new(1)),
+            core: Mutex::new(None),
+            journal: Mutex::new(ReplayJournal::default()),
+            #[cfg(target_os = "macos")]
+            mac_strict_replay: Mutex::new(crate::mac_strict_replay::MacStrictReplay::default()),
+            #[cfg(target_os = "macos")]
+            mac_strict_account: "test-only-no-keychain-access".to_owned(),
+            logger: AgentLogger::new(&std::env::temp_dir().join("flclash-agent-session-tests")),
+            status: RwLock::new(CoreStatus::Ready),
+            strict_policy: RwLock::new(StrictPolicyStatus::disabled()),
+            generation: AtomicU64::new(7),
+            next_session: AtomicU64::new(1),
+            shutting_down: AtomicBool::new(false),
+            shutdown: Notify::new(),
+            supervisor,
+            privileged_backend: false,
+            agent_instance_id: random_token(),
+            agent_executable: PathBuf::from("test-agent"),
+            core_executable: PathBuf::from("test-core"),
+            core_pid: Mutex::new(None),
+            helper_session: Mutex::new(HelperSession::default()),
+            helper_port: None,
+            helper_token: None,
+            home_dir: home_dir.clone(),
+            system_proxy: Arc::new(crate::win_system_proxy::SystemProxyManager::new(
+                backend, home_dir,
+            )),
+            strict_blocks: Mutex::new(HashSet::new()),
+            #[cfg(windows)]
+            strict_runtime: Mutex::new(None),
+            #[cfg(windows)]
+            strict_wakeup: Notify::new(),
+            #[cfg(windows)]
+            strict_store: Mutex::new(None),
+        })
+    }
+
+    #[tokio::test]
+    async fn core_failed_clears_owned_proxy_while_leaving_pac_and_external_proxies_alone() {
+        let backend = Arc::new(RuntimeMockProxyBackend::new(
+            1,
+            Some("127.0.0.1:7890"),
+            None,
+            false,
+        ));
+        let shared = session_fixture_with_proxy(backend.clone(), PathBuf::new());
+        {
+            let mut journal = shared.journal.lock().await;
+            journal.stage(
+                r#"{"id":"cfg-1","method":"setupConfig","data":{"config":{"mixed-port":7890}}}"#,
+            );
+            let accepted = journal
+                .commit_response(r#"{"id":"cfg-1","method":"setupConfig","code":0,"data":""}"#)
+                .expect("accepted setupConfig response should commit");
+            shared.system_proxy.record_core_action(&accepted);
+        }
+
+        set_status(&shared, CoreStatus::Failed).await;
+        assert_eq!(backend.calls(), 1);
+        assert_eq!(backend.snapshot.lock().unwrap().proxy_enable, 0);
+
+        backend.set_enabled(
+            1,
+            Some("127.0.0.1:7890"),
+            Some("https://corp.example/proxy.pac"),
+        );
+        set_status(&shared, CoreStatus::Failed).await;
+        assert_eq!(backend.calls(), 1);
+        assert_eq!(backend.snapshot.lock().unwrap().proxy_enable, 1);
+
+        backend.set_enabled(1, Some("10.0.0.2:8080"), None);
+        set_status(&shared, CoreStatus::Failed).await;
+        assert_eq!(backend.calls(), 1);
+        assert_eq!(backend.snapshot.lock().unwrap().proxy_enable, 1);
+    }
+
+    #[tokio::test]
+    async fn supervisor_stop_and_shutdown_clear_proxy_while_restart_and_ui_disconnect_preserve_it() {
+        let backend = Arc::new(RuntimeMockProxyBackend::new(
+            1,
+            Some("127.0.0.1:7890"),
+            None,
+            false,
+        ));
+        let shared = session_fixture_with_proxy(backend.clone(), PathBuf::new());
+        shared.system_proxy.record_managed_port(7890);
+
+        let (mut ui_reader, ui_task) = attach_ui(shared.clone()).await;
+        ui_reader.get_mut().shutdown().await.unwrap();
+        assert!(timeout(Duration::from_secs(3), ui_task).await.unwrap().unwrap().is_ok());
+        assert_eq!(
+            backend.calls(),
+            0,
+            "UI IPC disconnect must preserve system proxy while Agent keeps Core running"
+        );
+        assert_eq!(backend.snapshot.lock().unwrap().proxy_enable, 1);
+
+        let config = AgentConfig {
+            home: PathBuf::new(),
+            core: PathBuf::from("not-launched"),
+            service_core: None,
+            helper_port: 0,
+            use_helper: false,
+        };
+        let mut child = None;
+        let mut should_start = true;
+        let (restart_tx, restart_rx) = oneshot::channel();
+        assert!(!apply_supervisor_end(
+            SessionEnd::Command(SupervisorCommand::Restart(restart_tx)),
+            &mut should_start,
+            &shared,
+            &config,
+            None,
+            &mut child,
+        )
+        .await);
+        assert!(restart_rx.await.unwrap());
+        assert_eq!(backend.calls(), 0);
+        assert_eq!(backend.snapshot.lock().unwrap().proxy_enable, 1);
+
+        let (stop_tx, stop_rx) = oneshot::channel();
+        assert!(!apply_supervisor_end(
+            SessionEnd::Command(SupervisorCommand::Stop(stop_tx)),
+            &mut should_start,
+            &shared,
+            &config,
+            None,
+            &mut child,
+        )
+        .await);
+        assert!(stop_rx.await.unwrap());
+        assert_eq!(backend.calls(), 1);
+        assert_eq!(backend.snapshot.lock().unwrap().proxy_enable, 0);
+
+        backend.set_enabled(1, Some("http=127.0.0.1:7890;https=127.0.0.1:7890"), None);
+        let (shutdown_tx, shutdown_rx) = oneshot::channel();
+        assert!(apply_supervisor_end(
+            SessionEnd::Command(SupervisorCommand::Shutdown(shutdown_tx)),
+            &mut should_start,
+            &shared,
+            &config,
+            None,
+            &mut child,
+        )
+        .await);
+        assert!(shutdown_rx.await.unwrap());
+        assert_eq!(backend.calls(), 2);
+        assert_eq!(backend.snapshot.lock().unwrap().proxy_enable, 0);
+
+        backend.set_enabled(1, Some("localhost:7890"), None);
+        assert!(apply_supervisor_end(
+            SessionEnd::Shutdown,
+            &mut should_start,
+            &shared,
+            &config,
+            None,
+            &mut child,
+        )
+        .await);
+        assert_eq!(backend.calls(), 3);
+        assert_eq!(backend.snapshot.lock().unwrap().proxy_enable, 0);
+    }
+
+    #[tokio::test]
+    async fn startup_orphan_cleanup_preserves_live_listener_and_clears_dead_port() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let live_port = listener.local_addr().unwrap().port();
+        let live_addr = format!("127.0.0.1:{live_port}");
+        let temp_home = std::env::temp_dir().join(format!(
+            "flclash-agent-orphan-runtime-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&temp_home);
+        std::fs::create_dir_all(&temp_home).unwrap();
+        let logger = AgentLogger::new(&temp_home);
+
+        let backend = Arc::new(RuntimeMockProxyBackend::new(
+            1,
+            Some(&live_addr),
+            None,
+            true,
+        ));
+        let manager = crate::win_system_proxy::SystemProxyManager::new(
+            backend.clone(),
+            temp_home.clone(),
+        );
+        manager.record_managed_port(live_port);
+
+        let reloaded = crate::win_system_proxy::SystemProxyManager::new(
+            backend.clone(),
+            temp_home.clone(),
+        );
+        assert_eq!(
+            reloaded.cleanup_orphan_on_startup(false, &logger),
+            crate::win_system_proxy::CleanupOutcome::Skipped("port_still_listening")
+        );
+        assert_eq!(backend.calls(), 0);
+
+        drop(listener);
+        assert_eq!(
+            reloaded.cleanup_orphan_on_startup(false, &logger),
+            crate::win_system_proxy::CleanupOutcome::Cleared { port: live_port }
+        );
+        assert_eq!(backend.calls(), 1);
+        let _ = std::fs::remove_dir_all(&temp_home);
     }
 }

@@ -115,6 +115,7 @@ class ChangeProxyParams with _$ChangeProxyParams {
   const factory ChangeProxyParams({
     @JsonKey(name: "group-name") required String groupName,
     @JsonKey(name: "proxy-name") required String proxyName,
+    @JsonKey(name: "close-connections") @Default(false) bool closeConnections,
   }) = _ChangeProxyParams;
 
   factory ChangeProxyParams.fromJson(Map<String, Object?> json) =>
@@ -266,7 +267,8 @@ extension ActionResultExt on ActionResult {
     if (code == ResultType.success) {
       return Result.success(data);
     } else {
-      return Result.error(data);
+      final message = data is String ? data : (data?.toString() ?? '');
+      return Result.error(message);
     }
   }
 }

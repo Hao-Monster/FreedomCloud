@@ -103,8 +103,8 @@ if (-not $isVm -and -not $AllowPhysicalTestHost) {
 $expectedFiles = @(
     'FlClashStrictCallout.sys',
     'FlClashStrictBroker.exe',
-    'FlClashAgent.exe',
-    'FlClashCore.exe',
+    'FreedomNetAgent.exe',
+    'FreedomNetCore.exe',
     'strict-package-manifest.json',
     'SHA256SUMS.txt'
 )
@@ -138,7 +138,7 @@ foreach ($name in $expectedFiles | Where-Object { $_ -ne 'SHA256SUMS.txt' }) {
 }
 
 $signatureResults = [ordered]@{}
-foreach ($name in @('FlClashStrictCallout.sys', 'FlClashStrictBroker.exe', 'FlClashAgent.exe', 'FlClashCore.exe')) {
+foreach ($name in @('FlClashStrictCallout.sys', 'FlClashStrictBroker.exe', 'FreedomNetAgent.exe', 'FreedomNetCore.exe')) {
     $signature = Get-AuthenticodeSignature -LiteralPath (Join-Path $package $name)
     if ($signature.Status -ne [System.Management.Automation.SignatureStatus]::Valid) {
         throw "package signature is not trusted: $name"
@@ -164,11 +164,11 @@ $identityResults = [ordered]@{}
 $identityResults['FlClashStrictCallout.sys'] = Assert-ManifestIdentity `
     (Join-Path $package 'FlClashStrictCallout.sys') 'driver' `
     $manifest.driverFileSha256 $manifest.driverPublisherCertificateSha256
-$identityResults['FlClashAgent.exe'] = Assert-ManifestIdentity `
-    (Join-Path $package 'FlClashAgent.exe') 'Agent' `
+$identityResults['FreedomNetAgent.exe'] = Assert-ManifestIdentity `
+    (Join-Path $package 'FreedomNetAgent.exe') 'Agent' `
     $manifest.agentFileSha256 $manifest.agentPublisherCertificateSha256
-$identityResults['FlClashCore.exe'] = Assert-ManifestIdentity `
-    (Join-Path $package 'FlClashCore.exe') 'Core' `
+$identityResults['FreedomNetCore.exe'] = Assert-ManifestIdentity `
+    (Join-Path $package 'FreedomNetCore.exe') 'Core' `
     $manifest.coreFileSha256 $manifest.corePublisherCertificateSha256
 $report = [ordered]@{
     schema = 1

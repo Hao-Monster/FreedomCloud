@@ -53,7 +53,7 @@ function New-Fixture {
     $package = Join-Path $caseRoot 'package'
     New-Item -ItemType Directory -Path $package | Out-Null
     $manifest = [ordered]@{ protocol = 2; packageVersion = '0.2.0+fixture'; driverBuildId = '12' * 16 }
-    foreach ($entry in @(@('FlClashStrictCallout.sys','driver'), @('FlClashAgent.exe','agent'), @('FlClashCore.exe','core'))) {
+    foreach ($entry in @(@('FlClashStrictCallout.sys','driver'), @('FreedomNetAgent.exe','agent'), @('FreedomNetCore.exe','core'))) {
         $path = Join-Path $package $entry[0]
         Write-FixtureImage $path ('fixture-' + $entry[0])
         $manifest[$entry[1] + 'FileSha256'] = (Get-FileHash -LiteralPath $path).Hash
@@ -174,7 +174,7 @@ try {
         Assert-Rejected { Get-StrictTestInstallationPlan @params } '*absolute local paths*'
         $params.Destination = $original
     }
-    foreach ($name in @('FlClashStrictCallout.sys','FlClashStrictBroker.exe','FlClashAgent.exe','FlClashCore.exe')) {
+    foreach ($name in @('FlClashStrictCallout.sys','FlClashStrictBroker.exe','FreedomNetAgent.exe','FreedomNetCore.exe')) {
         Test-Case "invalid signature for $name" {
             param($f)
             $params = $f.Parameters
@@ -271,7 +271,7 @@ try {
         $params = $f.Parameters
         Assert-Rejected { Get-StrictTestInstallationPlan @params } '*strict JSON*'
     }
-    foreach ($name in @('FlClashStrictCallout.sys','FlClashStrictBroker.exe','FlClashAgent.exe','FlClashCore.exe')) {
+    foreach ($name in @('FlClashStrictCallout.sys','FlClashStrictBroker.exe','FreedomNetAgent.exe','FreedomNetCore.exe')) {
         Test-Case "non-AMD64 image $name rejected even with trusted signature" {
             param($f)
             $path = Join-Path $f.PackageDirectory $name

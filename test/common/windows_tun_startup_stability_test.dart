@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flclashx/common/tun_runtime.dart';
 import 'package:flclashx/common/windows_tun_prepare.dart';
 import 'package:flclashx/common/windows_tun_startup.dart';
@@ -404,6 +406,73 @@ void main() {
       expect(runtime.requestFailure, isNull);
     });
   });
+
+  test(
+      'reflectWindowsTunRunning marks runtime connected and releases TUN queue before slow group/provider hydration finishes',
+      () async {
+    final runtime = TunRuntimeController();
+    addTearDown(runtime.dispose);
+    final groupsGate = Completer<void>();
+    final providersGate = Completer<void>();
+    final order = <String>[];
+
+    final effects = _AsyncHydrationEffects(
+      runtime,
+      onReflect: (isCurrent) => reflectWindowsTunRunning(
+        isCurrent: isCurrent,
+        syncUiActive: () async => order.add('syncUiActive'),
+        syncLogStream: () => order.add('syncLogStream'),
+        initForegroundCache: () => order.add('initForegroundCache'),
+        showConnectedIcon: () async => order.add('showConnectedIcon'),
+        markRunningNow: () => order.add('markRunningNow'),
+        updateGroups: () async {
+          order.add('updateGroups:start');
+          await groupsGate.future;
+          order.add('updateGroups:done');
+        },
+        updateProviders: () async {
+          order.add('updateProviders:start');
+          await providersGate.future;
+          order.add('updateProviders:done');
+        },
+      ),
+    );
+
+    // Must resolve without waiting on groupsGate/providersGate (eliminates the
+    // 3.19s post-settle stall while proxies/providers hydrate).
+    await launch(runtime, effects, settleAttempts: 1);
+
+    expect(runtime.busy, isFalse);
+    expect(runtime.operation, TunOperation.idle);
+    expect(runtime.observed, TunObservedState.on);
+    expect(
+      order,
+      [
+        'syncUiActive',
+        'syncLogStream',
+        'initForegroundCache',
+        'showConnectedIcon',
+        'markRunningNow',
+        'updateGroups:start',
+        'updateProviders:start',
+      ],
+    );
+
+    groupsGate.complete();
+    providersGate.completeError(StateError('provider IPC closed'));
+    await Future<void>.delayed(Duration.zero);
+    await Future<void>.delayed(Duration.zero);
+    expect(order, contains('updateGroups:done'));
+  });
+}
+
+class _AsyncHydrationEffects extends StabilityEffects {
+  _AsyncHydrationEffects(super.runtime, {required this.onReflect});
+  final Future<void> Function(bool Function() isCurrent) onReflect;
+
+  @override
+  Future<void> reflectRunning(bool Function() isCurrent) =>
+      onReflect(isCurrent);
 }
 
 class _SlowCreation extends StabilityEffects {

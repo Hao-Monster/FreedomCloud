@@ -42,7 +42,7 @@ void main() {
     ).readAsStringSync();
 
     expect(setupSource, contains('Build.buildAgent(target, arch: arch)'));
-    expect(windowsCmake, contains('FlClashAgent.exe'));
+    expect(windowsCmake, contains('FreedomNetAgent.exe'));
     expect(linuxCmake, contains('FlClashAgent'));
     expect(macProject, contains('FlClashAgent in CopyFiles'));
   });

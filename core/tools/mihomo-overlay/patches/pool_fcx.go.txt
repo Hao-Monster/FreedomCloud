@@ -1,0 +1,17 @@
+package pool
+
+func (p *Pool[T]) ResetConnectionsFCX() {
+	if p == nil || p.pool == nil {
+		return
+	}
+	for {
+		select {
+		case item := <-p.ch:
+			if item != nil && p.evict != nil {
+				p.evict(item.elm)
+			}
+		default:
+			return
+		}
+	}
+}

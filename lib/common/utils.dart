@@ -12,10 +12,10 @@ import 'package:lpinyin/lpinyin.dart';
 
 class Utils {
   Color? getDelayColor(int? delay) {
-    if (delay == null) return null;
-    if (delay < 0) return Colors.red;
-    if (delay < 600) return Colors.green;
-    return const Color(0xFFC57F0A);
+    if (delay == null || delay == 0) return null;
+    if (delay < 0) return kLatencyErrorColor;
+    if (delay <= kLatencyFastMaxMs) return kLatencyFastColor;
+    return kLatencyMediumColor;
   }
 
   /// Total-order delay comparator:
@@ -358,27 +358,12 @@ class Utils {
   Future<String?> getLocalIpAddress() async {
     final interfaces = await NetworkInterface.list(
       includeLoopback: false,
-    )
-      ..sort((a, b) {
-        if (a.isWifi && !b.isWifi) return -1;
-        if (!a.isWifi && b.isWifi) return 1;
-        if (a.includesIPv4 && !b.includesIPv4) return -1;
-        if (!a.includesIPv4 && b.includesIPv4) return 1;
-        return 0;
-      });
-    for (final interface in interfaces) {
-      final addresses = interface.addresses;
-      if (addresses.isEmpty) {
-        continue;
-      }
-      addresses.sort((a, b) {
-        if (a.isIPv4 && !b.isIPv4) return -1;
-        if (!a.isIPv4 && b.isIPv4) return 1;
-        return 0;
-      });
-      return addresses.first.address;
-    }
-    return "";
+    );
+    return selectPreferredPhysicalLocalIp(
+      interfaces.map(
+        (iface) => (name: iface.name, addresses: iface.addresses),
+      ),
+    );
   }
 
   SingleActivator controlSingleActivator(LogicalKeyboardKey trigger) {

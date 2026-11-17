@@ -1,9 +1,11 @@
 import 'dart:convert';
 
 import 'package:crypto/crypto.dart';
+import 'package:flclashx/common/constant.dart';
 import 'package:flclashx/models/profile.dart';
 import 'package:flclashx/models/xboard.dart';
 import 'package:flclashx/services/purchase_storage.dart';
+import 'package:flclashx/services/xboard_bootstrap.dart';
 
 /// Matches managed profiles by account ownership, even after subscription-token
 /// rotation. Exact URL matching also adopts a subscription previously imported
@@ -23,6 +25,17 @@ class PurchaseProfileSynchronizer {
   final Future<Profile> Function(Profile) download;
   final Future<void> Function(Profile) save;
 
+  /// Computes the canonical `xboardAccountMarker` hash for [origin] and
+  /// [accountId] using the Canonical Tenant Namespace so `:443` and `:8443`
+  /// mirrors match the same locally synchronized profile.
+  static String accountMarkerFor({
+    required Uri origin,
+    required int accountId,
+  }) {
+    final canonical = canonicalizeTenantOrigin(origin);
+    return sha256.convert(utf8.encode('${canonical.origin}/$accountId')).toString();
+  }
+
   Future<void> synchronize(
       XboardAccount account, XboardSubscription subscription) async {
     if (!subscription.valid ||
@@ -32,9 +45,10 @@ class PurchaseProfileSynchronizer {
       throw const FormatException(
           'Subscription is not available for synchronization');
     }
-    final ownership = sha256
-        .convert(utf8.encode('${origin.origin}/${account.id}'))
-        .toString();
+    final ownership = accountMarkerFor(
+      origin: origin,
+      accountId: account.id,
+    );
     final profileId = await storage.readProfileId(account.id);
     final profiles = readProfiles();
     Profile? existing;
@@ -54,7 +68,7 @@ class PurchaseProfileSynchronizer {
             (profile.providerHeaders[xboardAccountMarker] == null ||
                 profile.providerHeaders[xboardAccountMarker] == ownership));
     final base = existing ??
-        Profile.normal(label: 'FreedomCloud · ${account.email}')
+        Profile.normal(label: '$brandDisplayName · ${account.email}')
             .copyWith(id: 'xboard-$ownership');
     final target = base.copyWith(
       url: subscription.url.toString(),
@@ -80,6 +94,8 @@ class PurchaseProfileSynchronizer {
     }
     // Only replace downloaded metadata; local choices may have changed while
     // the network request or secure storage write was pending.
+    final localSelectionMode =
+        (latest ?? existing)?.providerHeaders[smartSelectionModeMarker];
     final updated = (latest ?? fetched).copyWith(
       url: fetched.url,
       lastUpdateDate: fetched.lastUpdateDate,
@@ -91,6 +107,8 @@ class PurchaseProfileSynchronizer {
       isUpdating: false,
       providerHeaders: {
         ...fetched.providerHeaders,
+        if (localSelectionMode != null)
+          smartSelectionModeMarker: localSelectionMode,
         xboardAccountMarker: ownership,
         xboardTlsMarker: 'required'
       },

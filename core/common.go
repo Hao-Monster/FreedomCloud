@@ -8,6 +8,9 @@ import (
 	"io"
 	"os"
 	"runtime"
+	"regexp"
+	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -17,7 +20,9 @@ import (
 	"github.com/metacubex/mihomo/adapter/outboundgroup"
 	"github.com/metacubex/mihomo/adapter/provider"
 	"github.com/metacubex/mihomo/component/dialer"
+	P "github.com/metacubex/mihomo/component/process"
 	"github.com/metacubex/mihomo/component/resolver"
+	"github.com/metacubex/mihomo/component/resource"
 	"github.com/metacubex/mihomo/config"
 	"github.com/metacubex/mihomo/constant"
 	cp "github.com/metacubex/mihomo/constant/provider"
@@ -26,21 +31,129 @@ import (
 	"github.com/metacubex/mihomo/log"
 	rp "github.com/metacubex/mihomo/rules/provider"
 	"github.com/metacubex/mihomo/tunnel"
+	"github.com/sirupsen/logrus"
 	"golang.org/x/sync/semaphore"
 )
 
 var (
-	currentConfig          *config.Config
-	version                atomic.Int32
-	isRunning              = false
-	runLock                contextMutex
-	testDelaySem           = semaphore.NewWeighted(50)
-	proxyDescMu            sync.RWMutex
-	proxyDescriptions      = map[string]string{}
-	pendingTunEnable       = false
-	currentTestURL         = "https://www.gstatic.com/generate_204"
-	minHealthCheckInterval = 5 * time.Second
+	currentConfig               *config.Config
+	version                     atomic.Int32
+	isRunning                   = false
+	runLock                     contextMutex
+	// Lock hierarchy: runLock -> proxyStateMu. Never acquire runLock while holding proxyStateMu.
+	proxyStateMu                sync.RWMutex
+	// Leaf lock guarding mmdb.IPInstance() reload/close independently of proxyStateMu.
+	mmdbMu                      sync.RWMutex
+	configuredFindProcessMode   atomic.Int32
+	externalControllerListening atomic.Bool
+	testDelaySem                = semaphore.NewWeighted(50)
+	proxyDescMu                 sync.RWMutex
+	proxyDescriptions           = map[string]string{}
+	pendingTunEnable            = false
+	skipListenerTunRecreate     = false
+	currentRawListeners         []map[string]any
+	currentListenersClosed      = false
+	currentTestURL              = defaultCoreTestURL
+	minHealthCheckInterval      = 5 * time.Second
+	emitLoadedProviderMessage   = func(name string) {
+		sendMessage(Message{
+			Type: LoadedMessage,
+			Data: name,
+		})
+	}
 )
+
+func init() {
+	configureCoreStdoutLogLevel()
+	resource.SetFCXProviderUpdatedCallback(func(name string) {
+		if !isInit.Load() {
+			return
+		}
+		emitLoadedProviderMessage(name)
+	})
+}
+
+// configureCoreStdoutLogLevel keeps mihomo's stdout logrus sink at InfoLevel by
+// default even when the profile or UI sets `log-level: debug`. UI log
+// subscribers (`log.Subscribe()`) continue to receive every debug event via
+// `mihomo/log`, while Helper/Agent disk log files are protected from
+// per-packet debug log floods (`XTLS Vision padding`, `[DNS] cache hit`, etc.).
+func configureCoreStdoutLogLevel() {
+	if os.Getenv("FCX_CORE_STDOUT_DEBUG") == "1" {
+		logrus.SetLevel(logrus.DebugLevel)
+		return
+	}
+	logrus.SetLevel(logrus.InfoLevel)
+}
+
+func refreshRuntimeListenersWithoutTun() {
+	previousSkip := skipListenerTunRecreate
+	skipListenerTunRecreate = true
+	defer func() {
+		skipListenerTunRecreate = previousSkip
+	}()
+	refreshRuntimeListeners()
+}
+
+func applyRuntimeConfigLocked(cfg *config.Config, force bool) {
+	proxyStateMu.Lock()
+	defer proxyStateMu.Unlock()
+	applyRuntimeConfig(cfg, force)
+	configureCoreStdoutLogLevel()
+}
+
+func applyConfigForRuntimeStateLocked(cfg *config.Config) {
+	if cfg == nil || cfg.General == nil {
+		applyRuntimeConfigLocked(cfg, true)
+		return
+	}
+	effective := *cfg
+	general := *cfg.General
+	if runtime.GOOS == "android" || !isRunning {
+		general.Tun.Enable = false
+	}
+	if general.FindProcessMode == P.FindProcessAlways &&
+		!uiActive.Load() &&
+		!externalControllerListening.Load() {
+		general.FindProcessMode = P.FindProcessStrict
+	}
+	if runtime.GOOS != "android" && !isRunning {
+		general.Port = 0
+		general.SocksPort = 0
+		general.RedirPort = 0
+		general.TProxyPort = 0
+		general.MixedPort = 0
+		general.ShadowSocksConfig = ""
+		general.VmessConfig = ""
+		general.TuicServer = LC.TuicServer{}
+		effective.Listeners = map[string]constant.InboundListener{}
+		effective.Tunnels = nil
+	}
+	effective.General = &general
+	applyRuntimeConfigLocked(&effective, true)
+}
+
+func controllerHasActiveEndpoint(cfg *config.Config, enabled bool) bool {
+	if !enabled || cfg == nil || cfg.Controller == nil {
+		return false
+	}
+	c := cfg.Controller
+	return c.ExternalController != "" ||
+		c.ExternalControllerTLS != "" ||
+		c.ExternalControllerUnix != "" ||
+		c.ExternalControllerPipe != ""
+}
+
+func syncEffectiveFindProcessMode() {
+	configured := P.FindProcessMode(configuredFindProcessMode.Load())
+	effective := configured
+	if configured == P.FindProcessAlways &&
+		!uiActive.Load() &&
+		!externalControllerListening.Load() {
+		effective = P.FindProcessStrict
+	}
+	tunnel.SetFindProcessMode(effective)
+}
 
 type ExternalProviders []ExternalProvider
 
@@ -94,8 +207,11 @@ func computeMinHealthCheckInterval(rawConfig *config.RawConfig) {
 	minHealthCheckInterval = d
 }
 
-// extractProxyDescriptionsFromRaw caches custom server descriptions by proxy name.
-func extractProxyDescriptionsFromRaw(rawConfig *config.RawConfig) {
+// buildProxyDescriptionsFromRaw constructs an immutable map of custom server descriptions by proxy name.
+func buildProxyDescriptionsFromRaw(rawConfig *config.RawConfig) map[string]string {
+	if rawConfig == nil || len(rawConfig.Proxy) == 0 {
+		return map[string]string{}
+	}
 	descriptions := make(map[string]string, len(rawConfig.Proxy))
 	for _, proxy := range rawConfig.Proxy {
 		nameValue, ok := proxy["name"]
@@ -124,29 +240,87 @@ func extractProxyDescriptionsFromRaw(rawConfig *config.RawConfig) {
 		}
 		descriptions[name] = description
 	}
+	return descriptions
+}
+
+func currentProxyDescriptions() map[string]string {
+	proxyDescMu.RLock()
+	descriptions := proxyDescriptions
+	proxyDescMu.RUnlock()
+	return descriptions
+}
+
+func setProxyDescriptions(descriptions map[string]string) {
+	if descriptions == nil {
+		descriptions = map[string]string{}
+	}
 	proxyDescMu.Lock()
 	proxyDescriptions = descriptions
 	proxyDescMu.Unlock()
 }
 
+// extractProxyDescriptionsFromRaw caches custom server descriptions by proxy name.
+func extractProxyDescriptionsFromRaw(rawConfig *config.RawConfig) {
+	setProxyDescriptions(buildProxyDescriptionsFromRaw(rawConfig))
+}
+
+// injectJSONStringField splices `"<key>":"<escapedValue>"` into a serialized JSON
+// object without unmarshaling it into a dynamic map[string]any.
+func injectJSONStringField(rawObject []byte, key string, value string) ([]byte, bool) {
+	trimmed := b.TrimSpace(rawObject)
+	if len(trimmed) < 2 || trimmed[0] != '{' || trimmed[len(trimmed)-1] != '}' {
+		return nil, false
+	}
+	encodedKey, err := json.Marshal(key)
+	if err != nil {
+		return nil, false
+	}
+	encodedValue, err := json.Marshal(value)
+	if err != nil {
+		return nil, false
+	}
+	body := b.TrimSpace(trimmed[1 : len(trimmed)-1])
+	extra := len(encodedKey) + 1 + len(encodedValue) + 2
+	out := make([]byte, 0, len(trimmed)+extra)
+	out = append(out, trimmed[:len(trimmed)-1]...)
+	if len(body) > 0 {
+		out = append(out, ',')
+	}
+	out = append(out, encodedKey...)
+	out = append(out, ':')
+	out = append(out, encodedValue...)
+	out = append(out, '}')
+	return out, true
+}
+
 // proxiesWithDescriptions injects serverDescription for each proxy in API response.
 func proxiesWithDescriptions() map[string]interface{} {
-	result := make(map[string]interface{})
-	for name, proxy := range proxiesWithProviders() {
+	all := proxiesWithProviders()
+	descMap := currentProxyDescriptions()
+	result := make(map[string]interface{}, len(all))
+	for name, proxy := range all {
 		data, err := json.Marshal(proxy)
 		if err != nil {
+			continue
+		}
+		if len(descMap) == 0 {
+			result[name] = json.RawMessage(data)
+			continue
+		}
+		desc, hasDesc := descMap[name]
+		if !hasDesc || desc == "" {
+			result[name] = json.RawMessage(data)
+			continue
+		}
+		if injected, ok := injectJSONStringField(data, "serverDescription", desc); ok {
+			result[name] = json.RawMessage(injected)
 			continue
 		}
 		item := make(map[string]interface{})
 		if err := json.Unmarshal(data, &item); err != nil {
 			continue
 		}
-		proxyDescMu.RLock()
-		desc, hasDesc := proxyDescriptions[name]
-		proxyDescMu.RUnlock()
-		if hasDesc && desc != "" {
-			item["serverDescription"] = desc
-		}
+		item["serverDescription"] = desc
 		result[name] = item
 	}
 	return result
@@ -170,16 +344,6 @@ func getExternalProvidersRaw() map[string]cp.Provider {
 func toExternalProvider(p cp.Provider) (*ExternalProvider, error) {
 	switch pp := p.(type) {
 	case *provider.ProxySetProvider:
-		// Get SubscriptionInfo via JSON marshal (field is unexported in original mihomo)
-		var subInfo *provider.SubscriptionInfo
-		data, err := json.Marshal(pp)
-		if err == nil {
-			var apiData struct {
-				SubscriptionInfo *provider.SubscriptionInfo `json:"subscriptionInfo"`
-			}
-			_ = json.Unmarshal(data, &apiData)
-			subInfo = apiData.SubscriptionInfo
-		}
 		return &ExternalProvider{
 			Name:             pp.Name(),
 			Type:             pp.Type().String(),
@@ -187,7 +351,7 @@ func toExternalProvider(p cp.Provider) (*ExternalProvider, error) {
 			Count:            pp.Count(),
 			UpdateAt:         pp.UpdatedAt(),
 			Path:             pp.Vehicle().Path(),
-			SubscriptionInfo: subInfo,
+			SubscriptionInfo: pp.SubscriptionInfoFCX(),
 		}, nil
 	case *rp.RuleSetProvider:
 		return &ExternalProvider{
@@ -222,6 +386,22 @@ func sideUpdateExternalProvider(p cp.Provider, bytes []byte) error {
 	}
 }
 
+func rebuildCurrentListenersFromRawLocked() {
+	if currentConfig == nil || len(currentRawListeners) == 0 {
+		return
+	}
+	rebuilt := make(map[string]constant.InboundListener, len(currentRawListeners))
+	for _, mapping := range currentRawListeners {
+		inboundListener, err := listener.ParseListener(mapping)
+		if err != nil {
+			return
+		}
+		rebuilt[inboundListener.Name()] = inboundListener
+	}
+	currentConfig.Listeners = rebuilt
+	currentListenersClosed = false
+}
+
 // updateListeners recreates all listeners from current config
 func updateListeners() {
 	if !isRunning {
@@ -230,9 +410,13 @@ func updateListeners() {
 	if currentConfig == nil {
 		return
 	}
+	if currentListenersClosed && len(currentRawListeners) > 0 {
+		rebuildCurrentListenersFromRawLocked()
+	}
 	listeners := inboundListenersWithStrictLocked()
 	general := currentConfig.General
 	listener.PatchInboundListeners(listeners, tunnel.Tunnel, true)
+	listener.PatchTunnel(currentConfig.Tunnels, tunnel.Tunnel)
 	listener.SetAllowLan(general.AllowLan)
 	inbound.SetSkipAuthPrefixes(general.SkipAuthPrefixes)
 	inbound.SetAllowedIPs(general.LanAllowedIPs)
@@ -247,14 +431,26 @@ func updateListeners() {
 	listener.ReCreateVmess(general.VmessConfig, tunnel.Tunnel)
 	listener.ReCreateTuic(general.TuicServer, tunnel.Tunnel)
 	// Desktop builds may include the `cmfa` tag, so gate TUN only on Android.
-	if runtime.GOOS != "android" {
-		listener.ReCreateTun(general.Tun, tunnel.Tunnel)
+	if runtime.GOOS != "android" && !skipListenerTunRecreate {
+		recreateRuntimeTun(general.Tun, tunnel.Tunnel)
+		if general.Tun.Enable {
+			seedNetworkRecoveryBaseline()
+		} else {
+			cancelPendingNetworkRecoveryHealthChecks()
+		}
 	}
 }
 
-// stopListeners stops all active listeners
+// stopListeners stops all active listeners, drains tracked active connections
+// while the TUN stack is still alive so local sockets receive clean FIN/RST
+// instead of hanging, and tears down TUN in a single deterministic pass.
 func stopListeners() {
 	clearStrictIngressForConfigChangeLocked()
+	listener.PatchInboundListeners(map[string]constant.InboundListener{}, tunnel.Tunnel, true)
+	if currentConfig != nil && len(currentConfig.Listeners) > 0 {
+		currentListenersClosed = true
+	}
+	listener.PatchTunnel(nil, tunnel.Tunnel)
 	listener.ReCreateHTTP(0, tunnel.Tunnel)
 	listener.ReCreateSocks(0, tunnel.Tunnel)
 	listener.ReCreateRedir(0, tunnel.Tunnel)
@@ -263,14 +459,111 @@ func stopListeners() {
 	listener.ReCreateShadowSocks("", tunnel.Tunnel)
 	listener.ReCreateVmess("", tunnel.Tunnel)
 	listener.ReCreateTuic(LC.TuicServer{}, tunnel.Tunnel)
-	if runtime.GOOS != "android" {
-		listener.ReCreateTun(LC.Tun{}, tunnel.Tunnel)
-	}
+	// Drain tracked TCP/UDP connections and upstream DNS pools BEFORE closing
+	// Wintun/gVisor so active packet pumps release cleanly without closeFailed.
+	closeConnectionsWithReason("listener:stop")
+	resolver.ResetConnection()
 	listener.Cleanup()
+	closeConnectionsWithReason("listener:stop")
+	cancelPendingNetworkRecoveryHealthChecks()
+	resolver.StoreFakePoolState()
 }
 
-func patchSelectGroup(mapping map[string]string) {
-	for name, proxy := range proxiesWithProviders() {
+var (
+	dynamicTrafficPrefixPattern    = `(?:(?:📊|📈|📉|🔋|💾|剩余流量|可用流量|已用流量|流量剩余|剩余|可用|流量|余量|remaining(?:\s+traffic)?|left)\s*[:：=]?\s*)*`
+	dynamicTrafficUnitPattern      = `(?:KiB|MiB|GiB|TiB|PiB|KB|MB|GB|TB|PB|B)`
+	dynamicTrafficAmountPattern    = dynamicTrafficPrefixPattern + `\d+(?:\.\d+)?(?:\s*` + dynamicTrafficUnitPattern + `?\s*/\s*` + dynamicTrafficPrefixPattern + `\d+(?:\.\d+)?)?\s*` + dynamicTrafficUnitPattern
+	dynamicTrafficDelimiterPattern = `(?:\s*[|｜/、]\s*|\s+[-–—:：·]\s*)`
+	dynamicTrafficDelimiterRE      = regexp.MustCompile(`(?i)^(.*?)` + dynamicTrafficDelimiterPattern + dynamicTrafficAmountPattern + `\s*$`)
+	dynamicTrafficBracketRE        = regexp.MustCompile(`(?i)^(.*?)(?:\s*[|｜/、]\s*|\s+[-–—:：·]\s*|\s*)([(\[（【])\s*` + dynamicTrafficAmountPattern + `\s*([)\]）】])\s*$`)
+)
+
+func stripDynamicTrafficBadge(name string) (string, bool) {
+	if name == "" {
+		return name, false
+	}
+	if matches := dynamicTrafficBracketRE.FindStringSubmatch(name); len(matches) == 4 {
+		switch matches[2] + matches[3] {
+		case "()", "[]", "（）", "【】":
+			if stem := strings.TrimSpace(matches[1]); stem != "" {
+				return stem, true
+			}
+		}
+	}
+	if matches := dynamicTrafficDelimiterRE.FindStringSubmatch(name); len(matches) == 2 {
+		if stem := strings.TrimSpace(matches[1]); stem != "" {
+			return stem, true
+		}
+	}
+	return name, false
+}
+
+func resolveUpdatedProxySelection(selected string, candidates []string) string {
+	if selected == "" || len(candidates) == 0 {
+		return selected
+	}
+	if slices.Contains(candidates, selected) {
+		return selected
+	}
+	selectedStem, selectedStripped := stripDynamicTrafficBadge(selected)
+	if !selectedStripped {
+		selectedStem = strings.TrimSpace(selected)
+	}
+	if selectedStem == "" {
+		return selected
+	}
+
+	matchedCandidate := ""
+	for _, candidate := range candidates {
+		if candidate == "" {
+			continue
+		}
+		candidateStem, candidateStripped := stripDynamicTrafficBadge(candidate)
+		if !selectedStripped && !candidateStripped {
+			continue
+		}
+		if !candidateStripped {
+			candidateStem = strings.TrimSpace(candidate)
+		}
+		if candidateStem != selectedStem {
+			continue
+		}
+		if matchedCandidate == "" {
+			matchedCandidate = candidate
+			continue
+		}
+		if candidate != matchedCandidate {
+			return selected
+		}
+	}
+	if matchedCandidate != "" {
+		return matchedCandidate
+	}
+	return selected
+}
+
+func selectGroupCandidateNames(adapter constant.ProxyAdapter) []string {
+	if group, ok := adapter.(interface{ All() []string }); ok {
+		return group.All()
+	}
+	if group, ok := adapter.(interface{ Proxies() []constant.Proxy }); ok {
+		proxies := group.Proxies()
+		names := make([]string, 0, len(proxies))
+		for _, item := range proxies {
+			if item != nil {
+				names = append(names, item.Name())
+			}
+		}
+		return names
+	}
+	return nil
+}
+
+func patchSelectGroupOnProxies(proxies map[string]constant.Proxy, mapping map[string]string) {
+	if len(proxies) == 0 || len(mapping) == 0 {
+		return
+	}
+	for name, proxy := range proxies {
 		outbound, ok := proxy.(*adapter.Proxy)
 		if !ok {
 			continue
@@ -286,8 +579,17 @@ func patchSelectGroup(mapping map[string]string) {
 			continue
 		}
 
+		if candidates := selectGroupCandidateNames(outbound.ProxyAdapter); len(candidates) > 0 {
+			selected = resolveUpdatedProxySelection(selected, candidates)
+		}
 		selector.ForceSet(selected)
 	}
+}
+
+func patchSelectGroup(mapping map[string]string) {
+	proxyStateMu.Lock()
+	defer proxyStateMu.Unlock()
+	patchSelectGroupOnProxies(proxiesWithProviders(), mapping)
 }
 
 // Dependency upgrades must not silently change the stack for an absent option
@@ -298,10 +600,12 @@ func defaultCoreRawConfig() *config.RawConfig {
 	return defaults
 }
 
+const defaultCoreTestURL = "https://www.google.com/generate_204"
+
 func defaultSetupParams() *SetupParams {
 	return &SetupParams{
 		Config:      defaultCoreRawConfig(),
-		TestURL:     "https://www.gstatic.com/generate_204",
+		TestURL:     defaultCoreTestURL,
 		SelectedMap: map[string]string{},
 	}
 }
@@ -344,10 +648,18 @@ func updateConfig(params *UpdateParams) error {
 		}
 		currentConfig.Controller = &controller
 		runtimeControllerEnabled = enabled
+		externalControllerListening.Store(controllerHasActiveEndpoint(currentConfig, enabled))
+		syncEffectiveFindProcessMode()
 	}
 	general := currentConfig.General
-	if params.MixedPort != nil {
+	listenersChanged := activeStrictIngress != nil || macStrictIngressIntent != nil
+	if params.AllowLan != nil && general.AllowLan != *params.AllowLan {
+		general.AllowLan = *params.AllowLan
+		listenersChanged = true
+	}
+	if params.MixedPort != nil && general.MixedPort != *params.MixedPort {
 		general.MixedPort = *params.MixedPort
+		listenersChanged = true
 	}
 	if params.Sniffing != nil {
 		general.Sniffing = *params.Sniffing
@@ -355,7 +667,8 @@ func updateConfig(params *UpdateParams) error {
 	}
 	if params.FindProcessMode != nil {
 		general.FindProcessMode = *params.FindProcessMode
-		tunnel.SetFindProcessMode(general.FindProcessMode)
+		configuredFindProcessMode.Store(int32(general.FindProcessMode))
+		syncEffectiveFindProcessMode()
 	}
 	if params.TCPConcurrent != nil {
 		general.TCPConcurrent = *params.TCPConcurrent
@@ -369,41 +682,70 @@ func updateConfig(params *UpdateParams) error {
 		general.UnifiedDelay = *params.UnifiedDelay
 		adapter.UnifiedDelay.Store(general.UnifiedDelay)
 	}
+	modeChanged := false
 	if params.Mode != nil {
+		if general.Mode != *params.Mode {
+			modeChanged = true
+		}
 		general.Mode = *params.Mode
 		tunnel.SetMode(general.Mode)
 	}
 	if params.LogLevel != nil {
 		general.LogLevel = *params.LogLevel
 		log.SetLevel(general.LogLevel)
+		configureCoreStdoutLogLevel()
 	}
 	if params.IPv6 != nil {
 		general.IPv6 = *params.IPv6
 		resolver.DisableIPv6 = !general.IPv6
 	}
+	tunChanged := false
 	if params.Tun != nil {
+		if general.Tun.Enable != params.Tun.Enable || pendingTunEnable != params.Tun.Enable {
+			listenersChanged = true
+			tunChanged = true
+		}
 		general.Tun.Enable = params.Tun.Enable
 		pendingTunEnable = params.Tun.Enable
-		if params.Tun.AutoRoute != nil {
+		if params.Tun.AutoRoute != nil && general.Tun.AutoRoute != *params.Tun.AutoRoute {
 			general.Tun.AutoRoute = *params.Tun.AutoRoute
+			listenersChanged = true
+			tunChanged = true
 		}
-		if params.Tun.Device != nil {
+		if params.Tun.Device != nil && general.Tun.Device != *params.Tun.Device {
 			general.Tun.Device = *params.Tun.Device
+			listenersChanged = true
+			tunChanged = true
 		}
-		if params.Tun.RouteAddress != nil {
+		if params.Tun.RouteAddress != nil && !slices.Equal(general.Tun.RouteAddress, *params.Tun.RouteAddress) {
 			general.Tun.RouteAddress = *params.Tun.RouteAddress
+			listenersChanged = true
+			tunChanged = true
 		}
-		if params.Tun.DNSHijack != nil {
+		if params.Tun.DNSHijack != nil && !slices.Equal(general.Tun.DNSHijack, *params.Tun.DNSHijack) {
 			general.Tun.DNSHijack = *params.Tun.DNSHijack
+			listenersChanged = true
+			tunChanged = true
 		}
-		if params.Tun.Stack != nil {
+		if params.Tun.Stack != nil && general.Tun.Stack != *params.Tun.Stack {
 			general.Tun.Stack = *params.Tun.Stack
+			listenersChanged = true
+			tunChanged = true
 		}
 	}
 
-	refreshRuntimeListeners()
+	if listenersChanged {
+		if tunChanged {
+			refreshRuntimeListeners()
+		} else {
+			refreshRuntimeListenersWithoutTun()
+		}
+	}
 	if err := restoreRuntimeStrictIngress(); err != nil {
 		return errors.New("macOS strict ingress could not be restored after configuration update")
+	}
+	if modeChanged {
+		reconcileActiveConnectionsLocked(nil, currentConfig)
 	}
 	return nil
 }
@@ -439,47 +781,67 @@ func setupConfig(params *SetupParams) error {
 		return err
 	}
 	previous, previousPending, previousControllerEnabled := currentConfig, pendingTunEnable, runtimeControllerEnabled
+	previousRawListeners, previousListenersClosed := currentRawListeners, currentListenersClosed
+	previousDescriptions := currentProxyDescriptions()
+	candidateDescriptions := buildProxyDescriptionsFromRaw(params.Config)
 	clearRuntimeStrictIngress()
 	currentConfig = candidate
+	currentRawListeners = slices.Clone(params.Config.Listeners)
+	currentListenersClosed = false
 	candidatePending := candidate.General.Tun.Enable
-	if runtime.GOOS == "android" || !isRunning {
-		candidate.General.Tun.Enable = false
-	}
+	setProxyDescriptions(candidateDescriptions)
+	configuredFindProcessMode.Store(int32(candidate.General.FindProcessMode))
+	externalControllerListening.Store(controllerHasActiveEndpoint(candidate, controllerEnabled))
+	syncEffectiveFindProcessMode()
+	patchSelectGroupOnProxies(candidate.Proxies, params.SelectedMap)
 	applyStart := time.Now()
-	applyRuntimeConfig(candidate, true)
+	applyConfigForRuntimeStateLocked(candidate)
+	externalProviders = getExternalProvidersRaw()
 	log.Infoln("[Setup] executor.ApplyConfig took %s", time.Since(applyStart))
-	candidate.General.Tun.Enable = candidatePending
 	pendingTunEnable = candidatePending
+	syncEffectiveFindProcessMode()
 	selectRuntimeGroups(params.SelectedMap)
-	refreshRuntimeListeners()
+	refreshRuntimeListenersWithoutTun()
 	if restoreErr := restoreRuntimeStrictIngress(); restoreErr != nil {
 		clearRuntimeStrictIngress()
 		currentConfig, pendingTunEnable = previous, previousPending
+		currentRawListeners, currentListenersClosed = previousRawListeners, previousListenersClosed
 		if previous == nil {
 			// This is rollback after an apply failure, never an invalid-input
 			// fallback. A dormant config releases candidate DNS/NTP/providers and
 			// proxy listeners even though there is no previous generation.
 			dormant, cleanupErr := config.ParseRawConfig(defaultCoreRawConfig())
 			if cleanupErr == nil {
-				applyRuntimeConfig(dormant, true)
+				applyRuntimeConfigLocked(dormant, true)
 				cleanupErr = recreateRuntimeController(effectiveControllerConfig(dormant, false))
 			}
+			externalProviders = getExternalProvidersRaw()
+			setProxyDescriptions(map[string]string{})
+			configuredFindProcessMode.Store(int32(P.FindProcessStrict))
+			externalControllerListening.Store(false)
+			syncEffectiveFindProcessMode()
 			return errors.Join(fmt.Errorf("initial configuration strict ingress failed: %w", restoreErr), cleanupErr)
 		}
-		previousTun := previous.General.Tun.Enable
-		if runtime.GOOS == "android" || !isRunning {
-			previous.General.Tun.Enable = false
+		setProxyDescriptions(previousDescriptions)
+		configuredFindProcessMode.Store(int32(previous.General.FindProcessMode))
+		externalControllerListening.Store(controllerHasActiveEndpoint(previous, previousControllerEnabled))
+		syncEffectiveFindProcessMode()
+		if (isRunning || currentListenersClosed) && len(currentRawListeners) > 0 {
+			rebuildCurrentListenersFromRawLocked()
 		}
-		applyRuntimeConfig(previous, true)
-		previous.General.Tun.Enable = previousTun
+		applyConfigForRuntimeStateLocked(previous)
+		externalProviders = getExternalProvidersRaw()
 		controllerErr := recreateRuntimeController(effectiveControllerConfig(previous, previousControllerEnabled))
-		refreshRuntimeListeners()
+		syncEffectiveFindProcessMode()
+		refreshRuntimeListenersWithoutTun()
 		strictErr := restoreRuntimeStrictIngress()
 		return errors.Join(fmt.Errorf("configuration strict ingress failed: %w", restoreErr), controllerErr, strictErr)
 	}
 	appliedRawConfig = raw
 	runtimeControllerEnabled = controllerEnabled
-	extractProxyDescriptionsFromRaw(params.Config)
+	if previous != nil {
+		reconcileActiveConnectionsLocked(previous, candidate)
+	}
 	computeMinHealthCheckInterval(params.Config)
 	resetHealthCheckForwarderState()
 	if params.TestURL != "" {
@@ -493,11 +855,9 @@ func setupConfig(params *SetupParams) error {
 	// here (not only on Start) and keeps running until shutdown.
 	startRuntimeHealthChecks()
 
-	// Notify Flutter that all providers are loaded
-	sendMessage(Message{
-		Type: LoadedMessage,
-		Data: "all",
-	})
+	// Notify Flutter that synchronous providers are loaded; uncached remote
+	// providers continue emitting LoadedMessage(name) as background pulls finish.
+	emitLoadedProviderMessage("all")
 
 	return nil
 }

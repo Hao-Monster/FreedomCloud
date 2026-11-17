@@ -504,10 +504,10 @@ class AppLocalizations {
     return Intl.message('Theme', name: 'theme', desc: '', args: []);
   }
 
-  /// `Set dark mode,adjust the color`
+  /// `Day/Night sky sync, glass translucency & accent color`
   String get themeDesc {
     return Intl.message(
-      'Set dark mode,adjust the color',
+      'Day/Night sky sync, glass translucency & accent color',
       name: 'themeDesc',
       desc: '',
       args: [],
@@ -1019,10 +1019,10 @@ class AppLocalizations {
     return Intl.message('Dark', name: 'dark', desc: '', args: []);
   }
 
-  /// `Import from URL`
+  /// `Paste subscription link and tap Confirm`
   String get importFromURL {
     return Intl.message(
-      'Import from URL',
+      'Paste subscription link and tap Confirm',
       name: 'importFromURL',
       desc: '',
       args: [],
@@ -4109,9 +4109,14 @@ class AppLocalizations {
     return Intl.message('Expires on', name: 'expiresOn', desc: '', args: []);
   }
 
-  /// `New look`
+  /// `Concise mode`
   String get newDashboard {
-    return Intl.message('New look', name: 'newDashboard', desc: '', args: []);
+    return Intl.message(
+      'Concise mode',
+      name: 'newDashboard',
+      desc: '',
+      args: [],
+    );
   }
 
   /// `until`
@@ -5074,10 +5079,10 @@ class AppLocalizations {
     );
   }
 
-  /// `Contact either WeChat account below to buy a gift card or get help.`
+  /// `Buy a gift card or get assistance through the self-service store or 24/7 live support.`
   String get purchaseGetCardDescription {
     return Intl.message(
-      'Contact either WeChat account below to buy a gift card or get help.',
+      'Buy a gift card or get assistance through the self-service store or 24/7 live support.',
       name: 'purchaseGetCardDescription',
       desc: '',
       args: [],
@@ -5249,10 +5254,10 @@ class AppLocalizations {
     );
   }
 
-  /// `Gift card store information could not be loaded. You can still contact support below.`
+  /// `Gift card store information could not be loaded. You can still contact live support below.`
   String get purchaseChannelError {
     return Intl.message(
-      'Gift card store information could not be loaded. You can still contact support below.',
+      'Gift card store information could not be loaded. You can still contact live support below.',
       name: 'purchaseChannelError',
       desc: '',
       args: [],
@@ -5269,10 +5274,10 @@ class AppLocalizations {
     );
   }
 
-  /// `Prices are shown as listed on the website. Confirm the currency and buy a gift card through the WeChat contacts below, then redeem it here.`
+  /// `Prices are shown as listed on the website. Confirm the currency on the store page when buying a gift card, then return here to redeem.`
   String get purchasePlansDescription {
     return Intl.message(
-      'Prices are shown as listed on the website. Confirm the currency and buy a gift card through the WeChat contacts below, then redeem it here.',
+      'Prices are shown as listed on the website. Confirm the currency on the store page when buying a gift card, then return here to redeem.',
       name: 'purchasePlansDescription',
       desc: '',
       args: [],
@@ -5619,6 +5624,16 @@ class AppLocalizations {
     return Intl.message(
       'Select a readable, non-empty profile before connecting',
       name: 'tunErrorProfileRequired',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Windows could not add the virtual adapter; try again later`
+  String get tunErrorAdapterCreate {
+    return Intl.message(
+      'Windows could not add the virtual adapter; try again later',
+      name: 'tunErrorAdapterCreate',
       desc: '',
       args: [],
     );
@@ -6199,11 +6214,111 @@ class AppLocalizations {
     );
   }
 
-  /// `Get redemption code`
+  /// `Get code`
   String get purchaseAcquirePlanCode {
     return Intl.message(
-      'Get redemption code',
+      'Get code',
       name: 'purchaseAcquirePlanCode',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Free trial`
+  String get purchasePlanFreeBadge {
+    return Intl.message(
+      'Free trial',
+      name: 'purchasePlanFreeBadge',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Free`
+  String get purchasePlanFreeHint {
+    return Intl.message(
+      'Free',
+      name: 'purchasePlanFreeHint',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `~{price} / GB`
+  String purchasePlanUnitPriceHint(String price) {
+    return Intl.message(
+      '~$price / GB',
+      name: 'purchasePlanUnitPriceHint',
+      desc: '',
+      args: [price],
+    );
+  }
+
+  /// `Devices: Unlimited`
+  String get purchaseSpecDevicesUnlimited {
+    return Intl.message(
+      'Devices: Unlimited',
+      name: 'purchaseSpecDevicesUnlimited',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Device limit: {count}`
+  String purchaseSpecDevicesCount(int count) {
+    return Intl.message(
+      'Device limit: $count',
+      name: 'purchaseSpecDevicesCount',
+      desc: '',
+      args: [count],
+    );
+  }
+
+  /// `Validity: Never expires`
+  String get purchaseSpecDurationUnlimited {
+    return Intl.message(
+      'Validity: Never expires',
+      name: 'purchaseSpecDurationUnlimited',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Billing cycle: {periods}`
+  String purchaseSpecBillingCycle(String periods) {
+    return Intl.message(
+      'Billing cycle: $periods',
+      name: 'purchaseSpecBillingCycle',
+      desc: '',
+      args: [periods],
+    );
+  }
+
+  /// `Traffic valid until used up`
+  String get purchaseSpecTrafficUntilUsed {
+    return Intl.message(
+      'Traffic valid until used up',
+      name: 'purchaseSpecTrafficUntilUsed',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Speed limit: {speed} Mbps`
+  String purchaseSpecSpeedLimit(int speed) {
+    return Intl.message(
+      'Speed limit: $speed Mbps',
+      name: 'purchaseSpecSpeedLimit',
+      desc: '',
+      args: [speed],
+    );
+  }
+
+  /// `Supports all device types`
+  String get purchaseSpecAllDevicesSupported {
+    return Intl.message(
+      'Supports all device types',
+      name: 'purchaseSpecAllDevicesSupported',
       desc: '',
       args: [],
     );
@@ -6549,10 +6664,10 @@ class AppLocalizations {
     );
   }
 
-  /// `Quick use`
+  /// `Connect fastest`
   String get nodeOverviewQuickUse {
     return Intl.message(
-      'Quick use',
+      'Connect fastest',
       name: 'nodeOverviewQuickUse',
       desc: '',
       args: [],
@@ -6606,6 +6721,3335 @@ class AppLocalizations {
       name: 'nodeOverviewPickerExpireDate',
       desc: '',
       args: [date],
+    );
+  }
+
+  /// `Click to update subscription`
+  String get dashboardClickUpdateSubscription {
+    return Intl.message(
+      'Click to update subscription',
+      name: 'dashboardClickUpdateSubscription',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Notice`
+  String get dashboardAnnouncementBadge {
+    return Intl.message(
+      'Notice',
+      name: 'dashboardAnnouncementBadge',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Synced: Not yet`
+  String get dashboardNotSyncedYet {
+    return Intl.message(
+      'Synced: Not yet',
+      name: 'dashboardNotSyncedYet',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Current node: {node}`
+  String dashboardCurrentNodeLabel(String node) {
+    return Intl.message(
+      'Current node: $node',
+      name: 'dashboardCurrentNodeLabel',
+      desc: '',
+      args: [node],
+    );
+  }
+
+  /// `{count} nodes`
+  String dashboardTotalNodesCount(int count) {
+    return Intl.message(
+      '$count nodes',
+      name: 'dashboardTotalNodesCount',
+      desc: '',
+      args: [count],
+    );
+  }
+
+  /// `Overrides {count}`
+  String dashboardRuleOverrideCount(int count) {
+    return Intl.message(
+      'Overrides $count',
+      name: 'dashboardRuleOverrideCount',
+      desc: '',
+      args: [count],
+    );
+  }
+
+  /// `HWID binding is not enabled on this server`
+  String get dashboardHwidNotSupported {
+    return Intl.message(
+      'HWID binding is not enabled on this server',
+      name: 'dashboardHwidNotSupported',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Support`
+  String get dashboardContactSupport {
+    return Intl.message(
+      'Support',
+      name: 'dashboardContactSupport',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Health Check`
+  String get healthCheckTitle {
+    return Intl.message(
+      'Health Check',
+      name: 'healthCheckTitle',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Inspect profile, core, traffic capture, and live connectivity`
+  String get healthCheckSubtitle {
+    return Intl.message(
+      'Inspect profile, core, traffic capture, and live connectivity',
+      name: 'healthCheckSubtitle',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Diagnose`
+  String get healthCheckDiagnoseAction {
+    return Intl.message(
+      'Diagnose',
+      name: 'healthCheckDiagnoseAction',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Re-check`
+  String get healthCheckRecheck {
+    return Intl.message(
+      'Re-check',
+      name: 'healthCheckRecheck',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Cancel`
+  String get healthCheckCancel {
+    return Intl.message(
+      'Cancel',
+      name: 'healthCheckCancel',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Checking…`
+  String get healthCheckChecking {
+    return Intl.message(
+      'Checking…',
+      name: 'healthCheckChecking',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Copy Summary`
+  String get healthCheckCopySummary {
+    return Intl.message(
+      'Copy Summary',
+      name: 'healthCheckCopySummary',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Diagnostic summary copied`
+  String get healthCheckCopied {
+    return Intl.message(
+      'Diagnostic summary copied',
+      name: 'healthCheckCopied',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Export Report`
+  String get healthCheckExport {
+    return Intl.message(
+      'Export Report',
+      name: 'healthCheckExport',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Export Redacted Health Report`
+  String get healthCheckExportDialogTitle {
+    return Intl.message(
+      'Export Redacted Health Report',
+      name: 'healthCheckExportDialogTitle',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Diagnostic report exported`
+  String get healthCheckExportSuccess {
+    return Intl.message(
+      'Diagnostic report exported',
+      name: 'healthCheckExportSuccess',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Failed to export report`
+  String get healthCheckExportFailed {
+    return Intl.message(
+      'Failed to export report',
+      name: 'healthCheckExportFailed',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Exports contain only status codes and timings — never node names, IPs, URLs, or logs.`
+  String get healthCheckPrivacyNote {
+    return Intl.message(
+      'Exports contain only status codes and timings — never node names, IPs, URLs, or logs.',
+      name: 'healthCheckPrivacyNote',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Last checked {time} · {elapsed}`
+  String healthCheckLastChecked(String time, String elapsed) {
+    return Intl.message(
+      'Last checked $time · $elapsed',
+      name: 'healthCheckLastChecked',
+      desc: '',
+      args: [time, elapsed],
+    );
+  }
+
+  /// `Profile & Subscription`
+  String get healthLayerConfig {
+    return Intl.message(
+      'Profile & Subscription',
+      name: 'healthLayerConfig',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Proxy Core`
+  String get healthLayerCore {
+    return Intl.message(
+      'Proxy Core',
+      name: 'healthLayerCore',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Traffic Capture`
+  String get healthLayerTakeover {
+    return Intl.message(
+      'Traffic Capture',
+      name: 'healthLayerTakeover',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Network Path`
+  String get healthLayerNetwork {
+    return Intl.message(
+      'Network Path',
+      name: 'healthLayerNetwork',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Active Profile`
+  String get healthItemProfileSelected {
+    return Intl.message(
+      'Active Profile',
+      name: 'healthItemProfileSelected',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Subscription Status`
+  String get healthItemSubscription {
+    return Intl.message(
+      'Subscription Status',
+      name: 'healthItemSubscription',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Runtime Config`
+  String get healthItemRuntimeConfig {
+    return Intl.message(
+      'Runtime Config',
+      name: 'healthItemRuntimeConfig',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Core Responsiveness`
+  String get healthItemCoreResponsive {
+    return Intl.message(
+      'Core Responsiveness',
+      name: 'healthItemCoreResponsive',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Proxy State`
+  String get healthItemProxyStarted {
+    return Intl.message(
+      'Proxy State',
+      name: 'healthItemProxyStarted',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `TUN Virtual Adapter`
+  String get healthItemTunTakeover {
+    return Intl.message(
+      'TUN Virtual Adapter',
+      name: 'healthItemTunTakeover',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `System Proxy`
+  String get healthItemSystemProxy {
+    return Intl.message(
+      'System Proxy',
+      name: 'healthItemSystemProxy',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Capture Summary`
+  String get healthItemTrafficTakeover {
+    return Intl.message(
+      'Capture Summary',
+      name: 'healthItemTrafficTakeover',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Local Direct Uplink`
+  String get healthItemDirect {
+    return Intl.message(
+      'Local Direct Uplink',
+      name: 'healthItemDirect',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `DNS Resolution`
+  String get healthItemDns {
+    return Intl.message(
+      'DNS Resolution',
+      name: 'healthItemDns',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Active Outbound Node`
+  String get healthItemOutbound {
+    return Intl.message(
+      'Active Outbound Node',
+      name: 'healthItemOutbound',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `End-to-End Verification`
+  String get healthItemEndToEnd {
+    return Intl.message(
+      'End-to-End Verification',
+      name: 'healthItemEndToEnd',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Checking`
+  String get healthStatusRunning {
+    return Intl.message(
+      'Checking',
+      name: 'healthStatusRunning',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Passed`
+  String get healthStatusPassed {
+    return Intl.message(
+      'Passed',
+      name: 'healthStatusPassed',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Warning`
+  String get healthStatusWarning {
+    return Intl.message(
+      'Warning',
+      name: 'healthStatusWarning',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Failed`
+  String get healthStatusFailed {
+    return Intl.message(
+      'Failed',
+      name: 'healthStatusFailed',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Timeout`
+  String get healthStatusTimeout {
+    return Intl.message(
+      'Timeout',
+      name: 'healthStatusTimeout',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Skipped`
+  String get healthStatusSkipped {
+    return Intl.message(
+      'Skipped',
+      name: 'healthStatusSkipped',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Checking connection layers…`
+  String get healthVerdictCheckingTitle {
+    return Intl.message(
+      'Checking connection layers…',
+      name: 'healthVerdictCheckingTitle',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Connection Healthy`
+  String get healthVerdictHealthyTitle {
+    return Intl.message(
+      'Connection Healthy',
+      name: 'healthVerdictHealthyTitle',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Node {node} · {delay} ms{exitPart}`
+  String healthVerdictHealthySubtitle(String node, int delay, String exitPart) {
+    return Intl.message(
+      'Node $node · $delay ms$exitPart',
+      name: 'healthVerdictHealthySubtitle',
+      desc: '',
+      args: [node, delay, exitPart],
+    );
+  }
+
+  /// `Direct mode · Uplink {delay} ms`
+  String healthVerdictHealthyDirectSubtitle(int delay) {
+    return Intl.message(
+      'Direct mode · Uplink $delay ms',
+      name: 'healthVerdictHealthyDirectSubtitle',
+      desc: '',
+      args: [delay],
+    );
+  }
+
+  /// `Proxy core is unresponsive`
+  String get healthVerdictCoreUnresponsive {
+    return Intl.message(
+      'Proxy core is unresponsive',
+      name: 'healthVerdictCoreUnresponsive',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `No valid profile selected or file is missing`
+  String get healthVerdictProfileMissing {
+    return Intl.message(
+      'No valid profile selected or file is missing',
+      name: 'healthVerdictProfileMissing',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Subscription has expired`
+  String get healthVerdictSubscriptionExpired {
+    return Intl.message(
+      'Subscription has expired',
+      name: 'healthVerdictSubscriptionExpired',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Subscription traffic is exhausted`
+  String get healthVerdictSubscriptionExhausted {
+    return Intl.message(
+      'Subscription traffic is exhausted',
+      name: 'healthVerdictSubscriptionExhausted',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Proxy is stopped; traffic goes direct`
+  String get healthVerdictProxyNotStarted {
+    return Intl.message(
+      'Proxy is stopped; traffic goes direct',
+      name: 'healthVerdictProxyNotStarted',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Traffic capture inactive; check TUN or system proxy`
+  String get healthVerdictTakeoverFailed {
+    return Intl.message(
+      'Traffic capture inactive; check TUN or system proxy',
+      name: 'healthVerdictTakeoverFailed',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Local network is unreachable (unrelated to proxy node)`
+  String get healthVerdictLocalNetworkDown {
+    return Intl.message(
+      'Local network is unreachable (unrelated to proxy node)',
+      name: 'healthVerdictLocalNetworkDown',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Local network is OK, but active proxy node failed`
+  String get healthVerdictOutboundFailed {
+    return Intl.message(
+      'Local network is OK, but active proxy node failed',
+      name: 'healthVerdictOutboundFailed',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Probe reached internet without traversing proxy core`
+  String get healthVerdictTrafficBypassed {
+    return Intl.message(
+      'Probe reached internet without traversing proxy core',
+      name: 'healthVerdictTrafficBypassed',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `TUN capture failed; only System Proxy is working`
+  String get healthVerdictTunBypassedTitle {
+    return Intl.message(
+      'TUN capture failed; only System Proxy is working',
+      name: 'healthVerdictTunBypassedTitle',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `End-to-end exit check failed; try switching nodes`
+  String get healthVerdictEndToEndFailed {
+    return Intl.message(
+      'End-to-end exit check failed; try switching nodes',
+      name: 'healthVerdictEndToEndFailed',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `DNS resolution failed or returned sinkhole address`
+  String get healthVerdictDnsFailed {
+    return Intl.message(
+      'DNS resolution failed or returned sinkhole address',
+      name: 'healthVerdictDnsFailed',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Connected with warnings`
+  String get healthVerdictWarningsTitle {
+    return Intl.message(
+      'Connected with warnings',
+      name: 'healthVerdictWarningsTitle',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Open Profiles`
+  String get healthActionOpenProfiles {
+    return Intl.message(
+      'Open Profiles',
+      name: 'healthActionOpenProfiles',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Renew / Redeem`
+  String get healthActionOpenPurchase {
+    return Intl.message(
+      'Renew / Redeem',
+      name: 'healthActionOpenPurchase',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Switch Node`
+  String get healthActionOpenProxies {
+    return Intl.message(
+      'Switch Node',
+      name: 'healthActionOpenProxies',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `TUN Settings`
+  String get healthActionOpenTun {
+    return Intl.message(
+      'TUN Settings',
+      name: 'healthActionOpenTun',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Network Settings`
+  String get healthActionOpenNetwork {
+    return Intl.message(
+      'Network Settings',
+      name: 'healthActionOpenNetwork',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `DNS Settings`
+  String get healthActionOpenDns {
+    return Intl.message(
+      'DNS Settings',
+      name: 'healthActionOpenDns',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Start Proxy`
+  String get healthActionStartProxy {
+    return Intl.message(
+      'Start Proxy',
+      name: 'healthActionStartProxy',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Restart Core`
+  String get healthActionRestartCore {
+    return Intl.message(
+      'Restart Core',
+      name: 'healthActionRestartCore',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `No profile selected`
+  String get healthDetailNoProfile {
+    return Intl.message(
+      'No profile selected',
+      name: 'healthDetailNoProfile',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Profile YAML file is missing or empty`
+  String get healthDetailProfileFileMissing {
+    return Intl.message(
+      'Profile YAML file is missing or empty',
+      name: 'healthDetailProfileFileMissing',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Local file profile`
+  String get healthDetailLocalProfile {
+    return Intl.message(
+      'Local file profile',
+      name: 'healthDetailLocalProfile',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Not synced yet; update subscription first`
+  String get healthDetailSubNeverSynced {
+    return Intl.message(
+      'Not synced yet; update subscription first',
+      name: 'healthDetailSubNeverSynced',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `No quota metadata from server`
+  String get healthDetailSubNoMeta {
+    return Intl.message(
+      'No quota metadata from server',
+      name: 'healthDetailSubNoMeta',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Lifetime · Unlimited`
+  String get healthDetailSubHealthyEternal {
+    return Intl.message(
+      'Lifetime · Unlimited',
+      name: 'healthDetailSubHealthyEternal',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Subscription active`
+  String get healthDetailSubHealthy {
+    return Intl.message(
+      'Subscription active',
+      name: 'healthDetailSubHealthy',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `{days}d remaining`
+  String healthDetailSubExpiringSoon(int days) {
+    return Intl.message(
+      '${days}d remaining',
+      name: 'healthDetailSubExpiringSoon',
+      desc: '',
+      args: [days],
+    );
+  }
+
+  /// `{percent}% quota used`
+  String healthDetailSubTrafficLow(int percent) {
+    return Intl.message(
+      '$percent% quota used',
+      name: 'healthDetailSubTrafficLow',
+      desc: '',
+      args: [percent],
+    );
+  }
+
+  /// `Device limit reached`
+  String get healthDetailSubDeviceLimit {
+    return Intl.message(
+      'Device limit reached',
+      name: 'healthDetailSubDeviceLimit',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Subscription expired`
+  String get healthDetailSubExpired {
+    return Intl.message(
+      'Subscription expired',
+      name: 'healthDetailSubExpired',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Traffic quota exhausted`
+  String get healthDetailSubExhausted {
+    return Intl.message(
+      'Traffic quota exhausted',
+      name: 'healthDetailSubExhausted',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Loaded ({count} groups)`
+  String healthDetailRuntimeSynced(int count) {
+    return Intl.message(
+      'Loaded ($count groups)',
+      name: 'healthDetailRuntimeSynced',
+      desc: '',
+      args: [count],
+    );
+  }
+
+  /// `Current profile not yet applied to Core`
+  String get healthDetailRuntimeMismatch {
+    return Intl.message(
+      'Current profile not yet applied to Core',
+      name: 'healthDetailRuntimeMismatch',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `IPC OK · {mb} MB`
+  String healthDetailCoreHealthy(String mb) {
+    return Intl.message(
+      'IPC OK · $mb MB',
+      name: 'healthDetailCoreHealthy',
+      desc: '',
+      args: [mb],
+    );
+  }
+
+  /// `Core IPC response is slow (> 500 ms)`
+  String get healthDetailCoreSlow {
+    return Intl.message(
+      'Core IPC response is slow (> 500 ms)',
+      name: 'healthDetailCoreSlow',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Core control interface failed or timed out`
+  String get healthDetailCoreFailed {
+    return Intl.message(
+      'Core control interface failed or timed out',
+      name: 'healthDetailCoreFailed',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Running`
+  String get healthDetailProxyRunning {
+    return Intl.message(
+      'Running',
+      name: 'healthDetailProxyRunning',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Stopped`
+  String get healthDetailProxyStopped {
+    return Intl.message(
+      'Stopped',
+      name: 'healthDetailProxyStopped',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Skipped due to earlier check`
+  String get healthDetailSkipPrerequisite {
+    return Intl.message(
+      'Skipped due to earlier check',
+      name: 'healthDetailSkipPrerequisite',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Skipped while proxy is stopped`
+  String get healthDetailSkipProxyStopped {
+    return Intl.message(
+      'Skipped while proxy is stopped',
+      name: 'healthDetailSkipProxyStopped',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Active · Elevated`
+  String get healthDetailTunReadyElevated {
+    return Intl.message(
+      'Active · Elevated',
+      name: 'healthDetailTunReadyElevated',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Virtual adapter active`
+  String get healthDetailTunReady {
+    return Intl.message(
+      'Virtual adapter active',
+      name: 'healthDetailTunReady',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Disabled in settings`
+  String get healthDetailTunDisabled {
+    return Intl.message(
+      'Disabled in settings',
+      name: 'healthDetailTunDisabled',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Disabled in settings`
+  String get healthDetailSysProxyDisabled {
+    return Intl.message(
+      'Disabled in settings',
+      name: 'healthDetailSysProxyDisabled',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Not applicable on this platform`
+  String get healthDetailSysProxyUnsupported {
+    return Intl.message(
+      'Not applicable on this platform',
+      name: 'healthDetailSysProxyUnsupported',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `System proxy disabled or overwritten externally`
+  String get healthDetailSysProxyHijacked {
+    return Intl.message(
+      'System proxy disabled or overwritten externally',
+      name: 'healthDetailSysProxyHijacked',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Residual PAC URL detected in system settings`
+  String get healthDetailSysProxyUnexpectedPac {
+    return Intl.message(
+      'Residual PAC URL detected in system settings',
+      name: 'healthDetailSysProxyUnexpectedPac',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `TUN + System Proxy active`
+  String get healthDetailTakeoverBoth {
+    return Intl.message(
+      'TUN + System Proxy active',
+      name: 'healthDetailTakeoverBoth',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Captured via TUN adapter`
+  String get healthDetailTakeoverTun {
+    return Intl.message(
+      'Captured via TUN adapter',
+      name: 'healthDetailTakeoverTun',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Captured via System Proxy`
+  String get healthDetailTakeoverSysProxy {
+    return Intl.message(
+      'Captured via System Proxy',
+      name: 'healthDetailTakeoverSysProxy',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Only one enabled capture mode is active`
+  String get healthDetailTakeoverPartial {
+    return Intl.message(
+      'Only one enabled capture mode is active',
+      name: 'healthDetailTakeoverPartial',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Neither TUN nor System Proxy is active`
+  String get healthDetailTakeoverNone {
+    return Intl.message(
+      'Neither TUN nor System Proxy is active',
+      name: 'healthDetailTakeoverNone',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Direct uplink reachable`
+  String get healthDetailDirectOk {
+    return Intl.message(
+      'Direct uplink reachable',
+      name: 'healthDetailDirectOk',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Direct uplink latency is high`
+  String get healthDetailDirectSlow {
+    return Intl.message(
+      'Direct uplink latency is high',
+      name: 'healthDetailDirectSlow',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Direct uplink failed; check Wi-Fi, router, or firewall`
+  String get healthDetailDirectFailed {
+    return Intl.message(
+      'Direct uplink failed; check Wi-Fi, router, or firewall',
+      name: 'healthDetailDirectFailed',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Delay test slots busy; retry shortly`
+  String get healthDetailCoreDelayBusy {
+    return Intl.message(
+      'Delay test slots busy; retry shortly',
+      name: 'healthDetailCoreDelayBusy',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Resolved`
+  String get healthDetailDnsOk {
+    return Intl.message(
+      'Resolved',
+      name: 'healthDetailDnsOk',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Core DNS (fake-ip)`
+  String get healthDetailDnsFakeIp {
+    return Intl.message(
+      'Core DNS (fake-ip)',
+      name: 'healthDetailDnsFakeIp',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `DNS returned loopback/sinkhole IP`
+  String get healthDetailDnsPoisoned {
+    return Intl.message(
+      'DNS returned loopback/sinkhole IP',
+      name: 'healthDetailDnsPoisoned',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `DNS lookup failed or timed out`
+  String get healthDetailDnsFailed {
+    return Intl.message(
+      'DNS lookup failed or timed out',
+      name: 'healthDetailDnsFailed',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Direct mode is selected`
+  String get healthDetailDirectMode {
+    return Intl.message(
+      'Direct mode is selected',
+      name: 'healthDetailDirectMode',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Selected target is DIRECT`
+  String get healthDetailOutboundDirectSelected {
+    return Intl.message(
+      'Selected target is DIRECT',
+      name: 'healthDetailOutboundDirectSelected',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Selected target is REJECT`
+  String get healthDetailOutboundRejectSelected {
+    return Intl.message(
+      'Selected target is REJECT',
+      name: 'healthDetailOutboundRejectSelected',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Node {node} latency is elevated`
+  String healthDetailOutboundSlow(String node) {
+    return Intl.message(
+      'Node $node latency is elevated',
+      name: 'healthDetailOutboundSlow',
+      desc: '',
+      args: [node],
+    );
+  }
+
+  /// `Node {node} failed connectivity check`
+  String healthDetailOutboundFailed(String node) {
+    return Intl.message(
+      'Node $node failed connectivity check',
+      name: 'healthDetailOutboundFailed',
+      desc: '',
+      args: [node],
+    );
+  }
+
+  /// `Verified through proxy{exitPart}`
+  String healthDetailE2eVerified(String exitPart) {
+    return Intl.message(
+      'Verified through proxy$exitPart',
+      name: 'healthDetailE2eVerified',
+      desc: '',
+      args: [exitPart],
+    );
+  }
+
+  /// `Entered Core (matched DIRECT rule)`
+  String get healthDetailE2eDirectRule {
+    return Intl.message(
+      'Entered Core (matched DIRECT rule)',
+      name: 'healthDetailE2eDirectRule',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Reached internet, but connection bypassed Core`
+  String get healthDetailE2eBypassed {
+    return Intl.message(
+      'Reached internet, but connection bypassed Core',
+      name: 'healthDetailE2eBypassed',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `All end-to-end exit probes failed`
+  String get healthDetailE2eFailed {
+    return Intl.message(
+      'All end-to-end exit probes failed',
+      name: 'healthDetailE2eFailed',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// ` · Exit {flag}`
+  String healthExitCountryPart(String flag) {
+    return Intl.message(
+      ' · Exit $flag',
+      name: 'healthExitCountryPart',
+      desc: '',
+      args: [flag],
+    );
+  }
+
+  /// `Health check cancelled`
+  String get healthVerdictCancelledTitle {
+    return Intl.message(
+      'Health check cancelled',
+      name: 'healthVerdictCancelledTitle',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Cancelled`
+  String get healthDetailCancelled {
+    return Intl.message(
+      'Cancelled',
+      name: 'healthDetailCancelled',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Global Rule Override`
+  String get globalOverride {
+    return Intl.message(
+      'Global Rule Override',
+      name: 'globalOverride',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Persists across all profiles without re-editing on switch or update`
+  String get globalOverrideDesc {
+    return Intl.message(
+      'Persists across all profiles without re-editing on switch or update',
+      name: 'globalOverrideDesc',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Enable Global Override`
+  String get enableGlobalOverride {
+    return Intl.message(
+      'Enable Global Override',
+      name: 'enableGlobalOverride',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Default Proxy (Auto-adapt)`
+  String get defaultProxyAutoTarget {
+    return Intl.message(
+      'Default Proxy (Auto-adapt)',
+      name: 'defaultProxyAutoTarget',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Domestic & LAN Local Split`
+  String get localSplitMode {
+    return Intl.message(
+      'Domestic & LAN Local Split',
+      name: 'localSplitMode',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Automatically bypass domestic & LAN traffic when subscription lacks routing rules`
+  String get localSplitModeDesc {
+    return Intl.message(
+      'Automatically bypass domestic & LAN traffic when subscription lacks routing rules',
+      name: 'localSplitModeDesc',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Smart Bare-Profile Detection (Auto)`
+  String get localSplitMode_auto {
+    return Intl.message(
+      'Smart Bare-Profile Detection (Auto)',
+      name: 'localSplitMode_auto',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Always Add Domestic Direct`
+  String get localSplitMode_always {
+    return Intl.message(
+      'Always Add Domestic Direct',
+      name: 'localSplitMode_always',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Off`
+  String get localSplitMode_off {
+    return Intl.message('Off', name: 'localSplitMode_off', desc: '', args: []);
+  }
+
+  /// `Rule changes auto-save and hot-reload immediately`
+  String get overrideAutoSavedHint {
+    return Intl.message(
+      'Rule changes auto-save and hot-reload immediately',
+      name: 'overrideAutoSavedHint',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Restore System Proxy`
+  String get healthActionReapplySystemProxy {
+    return Intl.message(
+      'Restore System Proxy',
+      name: 'healthActionReapplySystemProxy',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Could not read system proxy settings`
+  String get healthDetailSysProxyReadFailed {
+    return Intl.message(
+      'Could not read system proxy settings',
+      name: 'healthDetailSysProxyReadFailed',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Local mixed-port is disabled (0)`
+  String get healthDetailSysProxyInvalidPort {
+    return Intl.message(
+      'Local mixed-port is disabled (0)',
+      name: 'healthDetailSysProxyInvalidPort',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `System proxy has not been applied to OS yet`
+  String get healthDetailSysProxyNotApplied {
+    return Intl.message(
+      'System proxy has not been applied to OS yet',
+      name: 'healthDetailSysProxyNotApplied',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `System proxy switch is turned off in OS`
+  String get healthDetailSysProxyDisabledExternally {
+    return Intl.message(
+      'System proxy switch is turned off in OS',
+      name: 'healthDetailSysProxyDisabledExternally',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Stale Fake-IP cache detected while TUN is inactive`
+  String get healthDetailDnsStaleFakeIp {
+    return Intl.message(
+      'Stale Fake-IP cache detected while TUN is inactive',
+      name: 'healthDetailDnsStaleFakeIp',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `TUN path failed; verified via System Proxy`
+  String get healthDetailTunBypassedSystemProxyOk {
+    return Intl.message(
+      'TUN path failed; verified via System Proxy',
+      name: 'healthDetailTunBypassedSystemProxyOk',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Update all`
+  String get nodeOverviewUpdateAllSubscriptions {
+    return Intl.message(
+      'Update all',
+      name: 'nodeOverviewUpdateAllSubscriptions',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `{count} profiles`
+  String nodeOverviewAllProfilesCount(int count) {
+    return Intl.message(
+      '$count profiles',
+      name: 'nodeOverviewAllProfilesCount',
+      desc: '',
+      args: [count],
+    );
+  }
+
+  /// `{count} expired`
+  String nodeOverviewExpiredCountBadge(int count) {
+    return Intl.message(
+      '$count expired',
+      name: 'nodeOverviewExpiredCountBadge',
+      desc: '',
+      args: [count],
+    );
+  }
+
+  /// `{count} expiring soon`
+  String nodeOverviewExpiringSoonCountBadge(int count) {
+    return Intl.message(
+      '$count expiring soon',
+      name: 'nodeOverviewExpiringSoonCountBadge',
+      desc: '',
+      args: [count],
+    );
+  }
+
+  /// `Active: {name}`
+  String nodeOverviewCurrentActiveProfile(String name) {
+    return Intl.message(
+      'Active: $name',
+      name: 'nodeOverviewCurrentActiveProfile',
+      desc: '',
+      args: [name],
+    );
+  }
+
+  /// `Active: None`
+  String get nodeOverviewNoActiveProfile {
+    return Intl.message(
+      'Active: None',
+      name: 'nodeOverviewNoActiveProfile',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Nodes: {available} available / {tested} tested / {total} total`
+  String nodeOverviewAllHealthCounts(int available, int tested, int total) {
+    return Intl.message(
+      'Nodes: $available available / $tested tested / $total total',
+      name: 'nodeOverviewAllHealthCounts',
+      desc: '',
+      args: [available, tested, total],
+    );
+  }
+
+  /// `Global median: {median}`
+  String nodeOverviewGlobalMedian(String median) {
+    return Intl.message(
+      'Global median: $median',
+      name: 'nodeOverviewGlobalMedian',
+      desc: '',
+      args: [median],
+    );
+  }
+
+  /// `Median: {median} · Best: {best}`
+  String nodeOverviewGlobalMedianAndBest(String median, String best) {
+    return Intl.message(
+      'Median: $median · Best: $best',
+      name: 'nodeOverviewGlobalMedianAndBest',
+      desc: '',
+      args: [median, best],
+    );
+  }
+
+  /// `Fast {count}`
+  String nodeOverviewBandFast(int count) {
+    return Intl.message(
+      'Fast $count',
+      name: 'nodeOverviewBandFast',
+      desc: '',
+      args: [count],
+    );
+  }
+
+  /// `Slow {count}`
+  String nodeOverviewBandSlow(int count) {
+    return Intl.message(
+      'Slow $count',
+      name: 'nodeOverviewBandSlow',
+      desc: '',
+      args: [count],
+    );
+  }
+
+  /// `Failed {count}`
+  String nodeOverviewBandFailed(int count) {
+    return Intl.message(
+      'Failed $count',
+      name: 'nodeOverviewBandFailed',
+      desc: '',
+      args: [count],
+    );
+  }
+
+  /// `Untested {count}`
+  String nodeOverviewBandUntested(int count) {
+    return Intl.message(
+      'Untested $count',
+      name: 'nodeOverviewBandUntested',
+      desc: '',
+      args: [count],
+    );
+  }
+
+  /// `Please paste a subscription link first`
+  String get subscriptionUrlEmptyError {
+    return Intl.message(
+      'Please paste a subscription link first',
+      name: 'subscriptionUrlEmptyError',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `No valid http(s):// subscription link found`
+  String get subscriptionUrlInvalidError {
+    return Intl.message(
+      'No valid http(s):// subscription link found',
+      name: 'subscriptionUrlInvalidError',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Clipboard is empty. Copy a subscription link first`
+  String get subscriptionClipboardEmptyError {
+    return Intl.message(
+      'Clipboard is empty. Copy a subscription link first',
+      name: 'subscriptionClipboardEmptyError',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Timed out fetching subscription. Check your network and retry`
+  String get subscriptionImportTimeoutError {
+    return Intl.message(
+      'Timed out fetching subscription. Check your network and retry',
+      name: 'subscriptionImportTimeoutError',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Subscription link is invalid or expired. Verify the URL or contact support`
+  String get subscriptionImportAuthOrNotFoundError {
+    return Intl.message(
+      'Subscription link is invalid or expired. Verify the URL or contact support',
+      name: 'subscriptionImportAuthOrNotFoundError',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `This URL did not return a valid subscription config (it may be a webpage)`
+  String get subscriptionImportInvalidConfigError {
+    return Intl.message(
+      'This URL did not return a valid subscription config (it may be a webpage)',
+      name: 'subscriptionImportInvalidConfigError',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Failed to import subscription. Check the link and try again`
+  String get subscriptionImportGenericError {
+    return Intl.message(
+      'Failed to import subscription. Check the link and try again',
+      name: 'subscriptionImportGenericError',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Proxy on · Using {profile} · {node}`
+  String nodeOverviewProxyConnectedWithNode(String profile, String node) {
+    return Intl.message(
+      'Proxy on · Using $profile · $node',
+      name: 'nodeOverviewProxyConnectedWithNode',
+      desc: '',
+      args: [profile, node],
+    );
+  }
+
+  /// `Proxy on · Traffic connected`
+  String get nodeOverviewProxyConnected {
+    return Intl.message(
+      'Proxy on · Traffic connected',
+      name: 'nodeOverviewProxyConnected',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Proxy off · Tap Turn on or Use on any node to connect`
+  String get nodeOverviewProxyDisconnected {
+    return Intl.message(
+      'Proxy off · Tap Turn on or Use on any node to connect',
+      name: 'nodeOverviewProxyDisconnected',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Starting proxy…`
+  String get nodeOverviewProxyStarting {
+    return Intl.message(
+      'Starting proxy…',
+      name: 'nodeOverviewProxyStarting',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Stopping proxy…`
+  String get nodeOverviewProxyStopping {
+    return Intl.message(
+      'Stopping proxy…',
+      name: 'nodeOverviewProxyStopping',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Turn on`
+  String get nodeOverviewTurnOnProxy {
+    return Intl.message(
+      'Turn on',
+      name: 'nodeOverviewTurnOnProxy',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Turn off`
+  String get nodeOverviewTurnOffProxy {
+    return Intl.message(
+      'Turn off',
+      name: 'nodeOverviewTurnOffProxy',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `No subscription profile yet`
+  String get nodeOverviewEmptyTitle {
+    return Intl.message(
+      'No subscription profile yet',
+      name: 'nodeOverviewEmptyTitle',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Paste your subscription link and confirm to auto-test and connect to the fastest node`
+  String get nodeOverviewEmptySubtitle {
+    return Intl.message(
+      'Paste your subscription link and confirm to auto-test and connect to the fastest node',
+      name: 'nodeOverviewEmptySubtitle',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `① Add subscription  ·  ② Auto speedtest  ·  ③ Connect fastest`
+  String get nodeOverviewEmptyStepsHint {
+    return Intl.message(
+      '① Add subscription  ·  ② Auto speedtest  ·  ③ Connect fastest',
+      name: 'nodeOverviewEmptyStepsHint',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `No tested available nodes right now (untested or all timed out)`
+  String get nodeOverviewAvailableFilterEmpty {
+    return Intl.message(
+      'No tested available nodes right now (untested or all timed out)',
+      name: 'nodeOverviewAvailableFilterEmpty',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Show all nodes`
+  String get nodeOverviewShowAllNodes {
+    return Intl.message(
+      'Show all nodes',
+      name: 'nodeOverviewShowAllNodes',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Auto-connected to fastest node: {profile} · {node} ({delay} ms)`
+  String nodeOverviewAutoConnectedBest(String profile, String node, int delay) {
+    return Intl.message(
+      'Auto-connected to fastest node: $profile · $node ($delay ms)',
+      name: 'nodeOverviewAutoConnectedBest',
+      desc: '',
+      args: [profile, node, delay],
+    );
+  }
+
+  /// `Selected {node}, but this subscription has expired. Renew or replace it`
+  String nodeOverviewAutoSelectedExpiredWarning(String node) {
+    return Intl.message(
+      'Selected $node, but this subscription has expired. Renew or replace it',
+      name: 'nodeOverviewAutoSelectedExpiredWarning',
+      desc: '',
+      args: [node],
+    );
+  }
+
+  /// `Selected {node}, but subscription traffic is exhausted. Renew or replace it`
+  String nodeOverviewAutoSelectedTrafficExhaustedWarning(String node) {
+    return Intl.message(
+      'Selected $node, but subscription traffic is exhausted. Renew or replace it',
+      name: 'nodeOverviewAutoSelectedTrafficExhaustedWarning',
+      desc: '',
+      args: [node],
+    );
+  }
+
+  /// `Auto-selected {node} (all nodes failed latency check; update subscription or try another node if offline)`
+  String nodeOverviewAutoSelectedAllFailedWarning(String node) {
+    return Intl.message(
+      'Auto-selected $node (all nodes failed latency check; update subscription or try another node if offline)',
+      name: 'nodeOverviewAutoSelectedAllFailedWarning',
+      desc: '',
+      args: [node],
+    );
+  }
+
+  /// `Smart Select`
+  String get nodeOverviewSmartSelectTitle {
+    return Intl.message(
+      'Smart Select',
+      name: 'nodeOverviewSmartSelectTitle',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Better experience`
+  String get nodeOverviewSmartSelectSubtitle {
+    return Intl.message(
+      'Better experience',
+      name: 'nodeOverviewSmartSelectSubtitle',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Smart`
+  String get nodeOverviewSmartSelectCompact {
+    return Intl.message(
+      'Smart',
+      name: 'nodeOverviewSmartSelectCompact',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Manual Select`
+  String get nodeOverviewManualSelectTitle {
+    return Intl.message(
+      'Manual Select',
+      name: 'nodeOverviewManualSelectTitle',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Fixed IP`
+  String get nodeOverviewManualSelectSubtitle {
+    return Intl.message(
+      'Fixed IP',
+      name: 'nodeOverviewManualSelectSubtitle',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Fixed IP`
+  String get nodeOverviewManualSelectCompact {
+    return Intl.message(
+      'Fixed IP',
+      name: 'nodeOverviewManualSelectCompact',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Smart active`
+  String get nodeOverviewSmartInUse {
+    return Intl.message(
+      'Smart active',
+      name: 'nodeOverviewSmartInUse',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Proxy on · Smart: {profile} · {node}`
+  String nodeOverviewProxyConnectedSmartWithNode(String profile, String node) {
+    return Intl.message(
+      'Proxy on · Smart: $profile · $node',
+      name: 'nodeOverviewProxyConnectedSmartWithNode',
+      desc: '',
+      args: [profile, node],
+    );
+  }
+
+  /// `Proxy on · Smart: {profile} (auto-selecting)`
+  String nodeOverviewProxyConnectedSmart(String profile) {
+    return Intl.message(
+      'Proxy on · Smart: $profile (auto-selecting)',
+      name: 'nodeOverviewProxyConnectedSmart',
+      desc: '',
+      args: [profile],
+    );
+  }
+
+  /// `Enabled Smart Select: {profile}`
+  String nodeOverviewSwitchedToSmart(String profile) {
+    return Intl.message(
+      'Enabled Smart Select: $profile',
+      name: 'nodeOverviewSwitchedToSmart',
+      desc: '',
+      args: [profile],
+    );
+  }
+
+  /// `Enabled Smart Select: {profile} (current: {node})`
+  String nodeOverviewSwitchedToSmartWithNode(String profile, String node) {
+    return Intl.message(
+      'Enabled Smart Select: $profile (current: $node)',
+      name: 'nodeOverviewSwitchedToSmartWithNode',
+      desc: '',
+      args: [profile, node],
+    );
+  }
+
+  /// `Smart Select active: {profile} (fastest: {node} · {delay} ms)`
+  String nodeOverviewAutoConnectedSmartBest(
+    String profile,
+    String node,
+    int delay,
+  ) {
+    return Intl.message(
+      'Smart Select active: $profile (fastest: $node · $delay ms)',
+      name: 'nodeOverviewAutoConnectedSmartBest',
+      desc: '',
+      args: [profile, node, delay],
+    );
+  }
+
+  /// `Locked fixed node: {profile} · {node}`
+  String nodeOverviewLockedManualNode(String profile, String node) {
+    return Intl.message(
+      'Locked fixed node: $profile · $node',
+      name: 'nodeOverviewLockedManualNode',
+      desc: '',
+      args: [profile, node],
+    );
+  }
+
+  /// `Expert Mode`
+  String get expertMode {
+    return Intl.message('Expert Mode', name: 'expertMode', desc: '', args: []);
+  }
+
+  /// `Simple Mode`
+  String get noviceMode {
+    return Intl.message('Simple Mode', name: 'noviceMode', desc: '', args: []);
+  }
+
+  /// `No subscription yet? Buy or Redeem`
+  String get goToPurchasePrompt {
+    return Intl.message(
+      'No subscription yet? Buy or Redeem',
+      name: 'goToPurchasePrompt',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Reload plans`
+  String get purchasePlansRetry {
+    return Intl.message(
+      'Reload plans',
+      name: 'purchasePlansRetry',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Account sign-in, free sign-up, and gift card redemption on the right remain available.`
+  String get purchasePlansErrorHint {
+    return Intl.message(
+      'Account sign-in, free sign-up, and gift card redemption on the right remain available.',
+      name: 'purchasePlansErrorHint',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Popular tier`
+  String get purchasePlanFeaturedBadge {
+    return Intl.message(
+      'Popular tier',
+      name: 'purchasePlanFeaturedBadge',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Buy card`
+  String get purchasePlanBuyNow {
+    return Intl.message(
+      'Buy card',
+      name: 'purchasePlanBuyNow',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Free 2 GiB trial on sign-up · Lifetime traffic packs`
+  String get purchaseHeaderTrialBadge {
+    return Intl.message(
+      'Free 2 GiB trial on sign-up · Lifetime traffic packs',
+      name: 'purchaseHeaderTrialBadge',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `High-speed nodes ready`
+  String get purchaseHeaderSyncedBadge {
+    return Intl.message(
+      'High-speed nodes ready',
+      name: 'purchaseHeaderSyncedBadge',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Sign in`
+  String get purchaseAuthTabLogin {
+    return Intl.message(
+      'Sign in',
+      name: 'purchaseAuthTabLogin',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Free 2G sign-up`
+  String get purchaseAuthTabRegister {
+    return Intl.message(
+      'Free 2G sign-up',
+      name: 'purchaseAuthTabRegister',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Get 2 GiB of lifetime trial traffic instantly, with automatic node import and Smart Connect.`
+  String get purchaseRegisterTrialBanner {
+    return Intl.message(
+      'Get 2 GiB of lifetime trial traffic instantly, with automatic node import and Smart Connect.',
+      name: 'purchaseRegisterTrialBanner',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Create account & sync nodes`
+  String get purchaseRegisterSubmit {
+    return Intl.message(
+      'Create account & sync nodes',
+      name: 'purchaseRegisterSubmit',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Creating account…`
+  String get purchaseRegistering {
+    return Intl.message(
+      'Creating account…',
+      name: 'purchaseRegistering',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Enter at least 8 characters.`
+  String get purchasePasswordMinLength {
+    return Intl.message(
+      'Enter at least 8 characters.',
+      name: 'purchasePasswordMinLength',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Already bought a code? Paste it here to auto-preview right after sign-in`
+  String get purchasePreloginCodeHint {
+    return Intl.message(
+      'Already bought a code? Paste it here to auto-preview right after sign-in',
+      name: 'purchasePreloginCodeHint',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Opened store for {plan}`
+  String purchaseHandoffTitle(String plan) {
+    return Intl.message(
+      'Opened store for $plan',
+      name: 'purchaseHandoffTitle',
+      desc: '',
+      args: [plan],
+    );
+  }
+
+  /// `Copy your code after purchase and return to this window to auto-preview benefits (never redeemed without confirmation).`
+  String get purchaseHandoffDescription {
+    return Intl.message(
+      'Copy your code after purchase and return to this window to auto-preview benefits (never redeemed without confirmation).',
+      name: 'purchaseHandoffDescription',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Paste & check`
+  String get purchaseHandoffPasteAction {
+    return Intl.message(
+      'Paste & check',
+      name: 'purchaseHandoffPasteAction',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Live support`
+  String get purchaseOnlineSupport {
+    return Intl.message(
+      'Live support',
+      name: 'purchaseOnlineSupport',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Backup support (WeChat)`
+  String get purchaseBackupContactsLabel {
+    return Intl.message(
+      'Backup support (WeChat)',
+      name: 'purchaseBackupContactsLabel',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `This email is already registered. Switch to Sign in.`
+  String get purchaseEmailExistsError {
+    return Intl.message(
+      'This email is already registered. Switch to Sign in.',
+      name: 'purchaseEmailExistsError',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `New account registration is currently closed.`
+  String get purchaseRegistrationClosedError {
+    return Intl.message(
+      'New account registration is currently closed.',
+      name: 'purchaseRegistrationClosedError',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Email verification or CAPTCHA is enabled. Use 'Create account on website' below.`
+  String get purchaseRegisterWebRequiredError {
+    return Intl.message(
+      'Email verification or CAPTCHA is enabled. Use \'Create account on website\' below.',
+      name: 'purchaseRegisterWebRequiredError',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `No valid gift card code found in clipboard.`
+  String get purchaseClipboardEmpty {
+    return Intl.message(
+      'No valid gift card code found in clipboard.',
+      name: 'purchaseClipboardEmpty',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `This email domain is not allowed. Try another email address or register on the website.`
+  String get purchaseEmailDomainError {
+    return Intl.message(
+      'This email domain is not allowed. Try another email address or register on the website.',
+      name: 'purchaseEmailDomainError',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Gmail alias addresses (with '+') are not allowed. Use your base Gmail address.`
+  String get purchaseGmailAliasError {
+    return Intl.message(
+      'Gmail alias addresses (with \'+\') are not allowed. Use your base Gmail address.',
+      name: 'purchaseGmailAliasError',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `FreedomNet`
+  String get appBrandName {
+    return Intl.message('FreedomNet', name: 'appBrandName', desc: '', args: []);
+  }
+
+  /// `Next-Generation Intelligent Network Client`
+  String get appBrandTagline {
+    return Intl.message(
+      'Next-Generation Intelligent Network Client',
+      name: 'appBrandTagline',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Open-Source Tribute & Special Credits`
+  String get tributeDialogTitle {
+    return Intl.message(
+      'Open-Source Tribute & Special Credits',
+      name: 'tributeDialogTitle',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `OPEN-SOURCE HERITAGE`
+  String get tributeFlclashxBadge {
+    return Intl.message(
+      'OPEN-SOURCE HERITAGE',
+      name: 'tributeFlclashxBadge',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Built Upon Open-Source Project FlClashX`
+  String get tributeFlclashxTitle {
+    return Intl.message(
+      'Built Upon Open-Source Project FlClashX',
+      name: 'tributeFlclashxTitle',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `FreedomNet solemnly declares that this software is built upon the open-source project FlClashX (pluralplay/FlClashX), inheriting the FlClash and Mihomo (Clash.Meta) ecosystem. With our deepest respect and gratitude to the original authors and all upstream open-source contributors.`
+  String get tributeFlclashxBody {
+    return Intl.message(
+      'FreedomNet solemnly declares that this software is built upon the open-source project FlClashX (pluralplay/FlClashX), inheriting the FlClash and Mihomo (Clash.Meta) ecosystem. With our deepest respect and gratitude to the original authors and all upstream open-source contributors.',
+      name: 'tributeFlclashxBody',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `ENGINEERING & DESIGN SUPPORT`
+  String get tributeGeminiBadge {
+    return Intl.message(
+      'ENGINEERING & DESIGN SUPPORT',
+      name: 'tributeGeminiBadge',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Special Thanks to Gemini 4`
+  String get tributeGeminiTitle {
+    return Intl.message(
+      'Special Thanks to Gemini 4',
+      name: 'tributeGeminiTitle',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Special thanks to Gemini 4 for supporting FreedomNet's architecture evolution, commercial UI/UX design, engineering refactoring, and automated verification.`
+  String get tributeGeminiBody {
+    return Intl.message(
+      'Special thanks to Gemini 4 for supporting FreedomNet\'s architecture evolution, commercial UI/UX design, engineering refactoring, and automated verification.',
+      name: 'tributeGeminiBody',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Brand Overview & Core Experience`
+  String get brandDialogSubtitle {
+    return Intl.message(
+      'Brand Overview & Core Experience',
+      name: 'brandDialogSubtitle',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `FREEDOMNET · FLAGSHIP CLIENT`
+  String get brandShowcaseBadge {
+    return Intl.message(
+      'FREEDOMNET · FLAGSHIP CLIENT',
+      name: 'brandShowcaseBadge',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Borderless Access, Effortless Speed`
+  String get brandShowcaseHeroTitle {
+    return Intl.message(
+      'Borderless Access, Effortless Speed',
+      name: 'brandShowcaseHeroTitle',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `FreedomNet delivers a clean, reliable, low-latency global network acceleration experience—built for cross-border work, AI productivity, and high-definition streaming in one click.`
+  String get brandShowcaseHeroBody {
+    return Intl.message(
+      'FreedomNet delivers a clean, reliable, low-latency global network acceleration experience—built for cross-border work, AI productivity, and high-definition streaming in one click.',
+      name: 'brandShowcaseHeroBody',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Smart Routing · Millisecond Insight`
+  String get brandPillarSmartTitle {
+    return Intl.message(
+      'Smart Routing · Millisecond Insight',
+      name: 'brandPillarSmartTitle',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Concurrent latency health checks with clear visual tiers, one-click fastest connect, region filters, and pinned node control.`
+  String get brandPillarSmartBody {
+    return Intl.message(
+      'Concurrent latency health checks with clear visual tiers, one-click fastest connect, region filters, and pinned node control.',
+      name: 'brandPillarSmartBody',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Dual-Mode Cockpit · Zero Friction`
+  String get brandPillarModesTitle {
+    return Intl.message(
+      'Dual-Mode Cockpit · Zero Friction',
+      name: 'brandPillarModesTitle',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Novice Mode keeps everyday connection effortless with seamless TUN & system proxy, while Expert Mode unlocks full routing, connection, and diagnostic control.`
+  String get brandPillarModesBody {
+    return Intl.message(
+      'Novice Mode keeps everyday connection effortless with seamless TUN & system proxy, while Expert Mode unlocks full routing, connection, and diagnostic control.',
+      name: 'brandPillarModesBody',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Transparent Quota · Instant Activation`
+  String get brandPillarServiceTitle {
+    return Intl.message(
+      'Transparent Quota · Instant Activation',
+      name: 'brandPillarServiceTitle',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Track data quota, remaining balance, and expiry at a glance, with instant gift-card verification, multi-profile sync, and dedicated support.`
+  String get brandPillarServiceBody {
+    return Intl.message(
+      'Track data quota, remaining balance, and expiry at a glance, with instant gift-card verification, multi-profile sync, and dedicated support.',
+      name: 'brandPillarServiceBody',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Node {node} failed delay probe, but live E2E traffic succeeded`
+  String healthDetailOutboundProbeFallbackOk(String node) {
+    return Intl.message(
+      'Node $node failed delay probe, but live E2E traffic succeeded',
+      name: 'healthDetailOutboundProbeFallbackOk',
+      desc: '',
+      args: [node],
+    );
+  }
+
+  /// `Forgot password?`
+  String get purchaseForgotPassword {
+    return Intl.message(
+      'Forgot password?',
+      name: 'purchaseForgotPassword',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Reset password`
+  String get purchaseResetPasswordTitle {
+    return Intl.message(
+      'Reset password',
+      name: 'purchaseResetPasswordTitle',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Enter your registered email and a 6-digit verification code to set a new password.`
+  String get purchaseResetPasswordDescription {
+    return Intl.message(
+      'Enter your registered email and a 6-digit verification code to set a new password.',
+      name: 'purchaseResetPasswordDescription',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Email verification code`
+  String get purchaseEmailCode {
+    return Intl.message(
+      'Email verification code',
+      name: 'purchaseEmailCode',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Enter the 6-digit verification code`
+  String get purchaseEmailCodeRequired {
+    return Intl.message(
+      'Enter the 6-digit verification code',
+      name: 'purchaseEmailCodeRequired',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Send code`
+  String get purchaseSendCode {
+    return Intl.message(
+      'Send code',
+      name: 'purchaseSendCode',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Sending...`
+  String get purchaseSendingCode {
+    return Intl.message(
+      'Sending...',
+      name: 'purchaseSendingCode',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Resend in {seconds}s`
+  String purchaseSendCodeCooldown(int seconds) {
+    return Intl.message(
+      'Resend in ${seconds}s',
+      name: 'purchaseSendCodeCooldown',
+      desc: '',
+      args: [seconds],
+    );
+  }
+
+  /// `Verification code sent. Check your inbox and spam folder.`
+  String get purchaseCodeSentNotice {
+    return Intl.message(
+      'Verification code sent. Check your inbox and spam folder.',
+      name: 'purchaseCodeSentNotice',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Invite code`
+  String get purchaseInviteCode {
+    return Intl.message(
+      'Invite code',
+      name: 'purchaseInviteCode',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Have an invite code? (Optional)`
+  String get purchaseInviteCodeOptionalToggle {
+    return Intl.message(
+      'Have an invite code? (Optional)',
+      name: 'purchaseInviteCodeOptionalToggle',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Enter your invite code`
+  String get purchaseInviteCodeRequired {
+    return Intl.message(
+      'Enter your invite code',
+      name: 'purchaseInviteCodeRequired',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `New password`
+  String get purchaseNewPassword {
+    return Intl.message(
+      'New password',
+      name: 'purchaseNewPassword',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Confirm password reset`
+  String get purchaseResetPasswordSubmit {
+    return Intl.message(
+      'Confirm password reset',
+      name: 'purchaseResetPasswordSubmit',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Resetting...`
+  String get purchaseResettingPassword {
+    return Intl.message(
+      'Resetting...',
+      name: 'purchaseResettingPassword',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Back to sign in`
+  String get purchaseBackToLogin {
+    return Intl.message(
+      'Back to sign in',
+      name: 'purchaseBackToLogin',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Password reset. Sign in with your new password.`
+  String get purchaseResetPasswordSuccess {
+    return Intl.message(
+      'Password reset. Sign in with your new password.',
+      name: 'purchaseResetPasswordSuccess',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `This site requires CAPTCHA verification. Continue on the website.`
+  String get purchaseCaptchaRequiredNotice {
+    return Intl.message(
+      'This site requires CAPTCHA verification. Continue on the website.',
+      name: 'purchaseCaptchaRequiredNotice',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Continue on website`
+  String get purchaseOpenWebAuth {
+    return Intl.message(
+      'Continue on website',
+      name: 'purchaseOpenWebAuth',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `By registering, you agree to the`
+  String get purchaseTosAgreementPrefix {
+    return Intl.message(
+      'By registering, you agree to the',
+      name: 'purchaseTosAgreementPrefix',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Terms of Service`
+  String get purchaseTosLinkLabel {
+    return Intl.message(
+      'Terms of Service',
+      name: 'purchaseTosLinkLabel',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `An invite code is required to register on this site.`
+  String get purchaseInviteCodeRequiredError {
+    return Intl.message(
+      'An invite code is required to register on this site.',
+      name: 'purchaseInviteCodeRequiredError',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Invalid or expired invite code.`
+  String get purchaseInviteCodeInvalidError {
+    return Intl.message(
+      'Invalid or expired invite code.',
+      name: 'purchaseInviteCodeInvalidError',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Invitations are currently unavailable.`
+  String get purchaseInvitationUnavailableError {
+    return Intl.message(
+      'Invitations are currently unavailable.',
+      name: 'purchaseInvitationUnavailableError',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Invalid or expired email verification code.`
+  String get purchaseEmailCodeInvalidError {
+    return Intl.message(
+      'Invalid or expired email verification code.',
+      name: 'purchaseEmailCodeInvalidError',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Too many verification attempts. Request a new code later.`
+  String get purchaseEmailCodeLockedError {
+    return Intl.message(
+      'Too many verification attempts. Request a new code later.',
+      name: 'purchaseEmailCodeLockedError',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Please wait before requesting another code.`
+  String get purchaseEmailCooldownError {
+    return Intl.message(
+      'Please wait before requesting another code.',
+      name: 'purchaseEmailCooldownError',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Too many verification emails requested. Try again later.`
+  String get purchaseEmailRateLimitedError {
+    return Intl.message(
+      'Too many verification emails requested. Try again later.',
+      name: 'purchaseEmailRateLimitedError',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Email verification is currently disabled.`
+  String get purchaseEmailVerifyDisabledError {
+    return Intl.message(
+      'Email verification is currently disabled.',
+      name: 'purchaseEmailVerifyDisabledError',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Email delivery is unavailable right now. Contact support or try again later.`
+  String get purchaseMailUnavailableError {
+    return Intl.message(
+      'Email delivery is unavailable right now. Contact support or try again later.',
+      name: 'purchaseMailUnavailableError',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Too many requests. Please try again in {seconds}s.`
+  String purchaseCooldownWithSecondsError(int seconds) {
+    return Intl.message(
+      'Too many requests. Please try again in ${seconds}s.',
+      name: 'purchaseCooldownWithSecondsError',
+      desc: '',
+      args: [seconds],
+    );
+  }
+
+  /// `Live Support`
+  String get supportSheetTitle {
+    return Intl.message(
+      'Live Support',
+      name: 'supportSheetTitle',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Connected`
+  String get supportStatusConnected {
+    return Intl.message(
+      'Connected',
+      name: 'supportStatusConnected',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Connecting`
+  String get supportStatusConnecting {
+    return Intl.message(
+      'Connecting',
+      name: 'supportStatusConnecting',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Offline`
+  String get supportStatusOffline {
+    return Intl.message(
+      'Offline',
+      name: 'supportStatusOffline',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `New conversation`
+  String get supportNewConversation {
+    return Intl.message(
+      'New conversation',
+      name: 'supportNewConversation',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Open in browser`
+  String get supportOpenExternalFallback {
+    return Intl.message(
+      'Open in browser',
+      name: 'supportOpenExternalFallback',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Refresh messages`
+  String get supportRefreshTooltip {
+    return Intl.message(
+      'Refresh messages',
+      name: 'supportRefreshTooltip',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Welcome to FreedomNet Support`
+  String get supportWelcomeFallbackTitle {
+    return Intl.message(
+      'Welcome to FreedomNet Support',
+      name: 'supportWelcomeFallbackTitle',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Ask us anything about plans, nodes, or gift card redemption.`
+  String get supportWelcomeFallbackSubtitle {
+    return Intl.message(
+      'Ask us anything about plans, nodes, or gift card redemption.',
+      name: 'supportWelcomeFallbackSubtitle',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `{name} is typing...`
+  String supportTypingIndicator(String name) {
+    return Intl.message(
+      '$name is typing...',
+      name: 'supportTypingIndicator',
+      desc: '',
+      args: [name],
+    );
+  }
+
+  /// `Agent`
+  String get supportTypingAnonymous {
+    return Intl.message(
+      'Agent',
+      name: 'supportTypingAnonymous',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Sending`
+  String get supportMessageSending {
+    return Intl.message(
+      'Sending',
+      name: 'supportMessageSending',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Failed`
+  String get supportMessageFailed {
+    return Intl.message(
+      'Failed',
+      name: 'supportMessageFailed',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Retry`
+  String get supportRetryAction {
+    return Intl.message(
+      'Retry',
+      name: 'supportRetryAction',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Type a message, press Enter to send...`
+  String get supportComposerHint {
+    return Intl.message(
+      'Type a message, press Enter to send...',
+      name: 'supportComposerHint',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Send`
+  String get supportSendTooltip {
+    return Intl.message('Send', name: 'supportSendTooltip', desc: '', args: []);
+  }
+
+  /// `This conversation is resolved. Start a new conversation to continue.`
+  String get supportConversationLockedNotice {
+    return Intl.message(
+      'This conversation is resolved. Start a new conversation to continue.',
+      name: 'supportConversationLockedNotice',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Live chat is not configured yet. Use the backup WeChat contacts below.`
+  String get supportNotConfiguredNotice {
+    return Intl.message(
+      'Live chat is not configured yet. Use the backup WeChat contacts below.',
+      name: 'supportNotConfiguredNotice',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Backup WeChat`
+  String get supportBackupWechatToggle {
+    return Intl.message(
+      'Backup WeChat',
+      name: 'supportBackupWechatToggle',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Chat with support`
+  String get purchaseAcquireOpenSupport {
+    return Intl.message(
+      'Chat with support',
+      name: 'purchaseAcquireOpenSupport',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Renew subscription`
+  String get renewSubscription {
+    return Intl.message(
+      'Renew subscription',
+      name: 'renewSubscription',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Buy extra traffic`
+  String get buyExtraTraffic {
+    return Intl.message(
+      'Buy extra traffic',
+      name: 'buyExtraTraffic',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Day & Night Sky Sync`
+  String get themeSkyConsoleSection {
+    return Intl.message(
+      'Day & Night Sky Sync',
+      name: 'themeSkyConsoleSection',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Follow connection`
+  String get themeSkyModeFollow {
+    return Intl.message(
+      'Follow connection',
+      name: 'themeSkyModeFollow',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Sunny sky when connected, starry night when off`
+  String get themeSkyModeFollowDesc {
+    return Intl.message(
+      'Sunny sky when connected, starry night when off',
+      name: 'themeSkyModeFollowDesc',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Always Starry Night`
+  String get themeSkyModeNight {
+    return Intl.message(
+      'Always Starry Night',
+      name: 'themeSkyModeNight',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Keep the dark starry sky even while connected`
+  String get themeSkyModeNightDesc {
+    return Intl.message(
+      'Keep the dark starry sky even while connected',
+      name: 'themeSkyModeNightDesc',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Always Sunny Day`
+  String get themeSkyModeDay {
+    return Intl.message(
+      'Always Sunny Day',
+      name: 'themeSkyModeDay',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Keep the bright sunny sky even when disconnected`
+  String get themeSkyModeDayDesc {
+    return Intl.message(
+      'Keep the bright sunny sky even when disconnected',
+      name: 'themeSkyModeDayDesc',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Sunny Day · Connected`
+  String get themeSkyStatusDayConnected {
+    return Intl.message(
+      'Sunny Day · Connected',
+      name: 'themeSkyStatusDayConnected',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Pre-dawn · Connecting`
+  String get themeSkyStatusConnecting {
+    return Intl.message(
+      'Pre-dawn · Connecting',
+      name: 'themeSkyStatusConnecting',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Starry Night · Disconnected`
+  String get themeSkyStatusNightDisconnected {
+    return Intl.message(
+      'Starry Night · Disconnected',
+      name: 'themeSkyStatusNightDisconnected',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Starry Night · Locked`
+  String get themeSkyStatusLockedNight {
+    return Intl.message(
+      'Starry Night · Locked',
+      name: 'themeSkyStatusLockedNight',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Sunny Day · Locked`
+  String get themeSkyStatusLockedDay {
+    return Intl.message(
+      'Sunny Day · Locked',
+      name: 'themeSkyStatusLockedDay',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Subscription custom wallpaper detected`
+  String get themeCustomBgNotice {
+    return Intl.message(
+      'Subscription custom wallpaper detected',
+      name: 'themeCustomBgNotice',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Prefer Day/Night sky background`
+  String get themeIgnoreCustomBgLabel {
+    return Intl.message(
+      'Prefer Day/Night sky background',
+      name: 'themeIgnoreCustomBgLabel',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Atmosphere & Motion`
+  String get themeAtmosphereSection {
+    return Intl.message(
+      'Atmosphere & Motion',
+      name: 'themeAtmosphereSection',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Card glass translucency`
+  String get themeGlassPresetLabel {
+    return Intl.message(
+      'Card glass translucency',
+      name: 'themeGlassPresetLabel',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Airy`
+  String get themeGlassPresetAiry {
+    return Intl.message(
+      'Airy',
+      name: 'themeGlassPresetAiry',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Balanced`
+  String get themeGlassPresetBalanced {
+    return Intl.message(
+      'Balanced',
+      name: 'themeGlassPresetBalanced',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Solid`
+  String get themeGlassPresetSolid {
+    return Intl.message(
+      'Solid',
+      name: 'themeGlassPresetSolid',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Drifting clouds & starlight`
+  String get themeSkyAmbientAnimation {
+    return Intl.message(
+      'Drifting clouds & starlight',
+      name: 'themeSkyAmbientAnimation',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Pauses steady drift to save power while keeping sunrise/sunset transitions`
+  String get themeSkyAmbientAnimationDesc {
+    return Intl.message(
+      'Pauses steady drift to save power while keeping sunrise/sunset transitions',
+      name: 'themeSkyAmbientAnimationDesc',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Follow system default (100%)`
+  String get themeTextScaleDefaultDesc {
+    return Intl.message(
+      'Follow system default (100%)',
+      name: 'themeTextScaleDefaultDesc',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Custom wallpaper active · Syncing UI brightness`
+  String get themeSkyStatusCustomBgActive {
+    return Intl.message(
+      'Custom wallpaper active · Syncing UI brightness',
+      name: 'themeSkyStatusCustomBgActive',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Custom wallpaper is active. Enable "Prefer Day/Night sky background" above to tune sky glass and motion.`
+  String get themeAtmosphereCustomBgHint {
+    return Intl.message(
+      'Custom wallpaper is active. Enable "Prefer Day/Night sky background" above to tune sky glass and motion.',
+      name: 'themeAtmosphereCustomBgHint',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Could not obtain LAN IP address`
+  String get tvSyncCouldNotGetIp {
+    return Intl.message(
+      'Could not obtain LAN IP address',
+      name: 'tvSyncCouldNotGetIp',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Receiving profile from phone…`
+  String get tvSyncApplying {
+    return Intl.message(
+      'Receiving profile from phone…',
+      name: 'tvSyncApplying',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Profile added`
+  String get tvSyncSuccess {
+    return Intl.message(
+      'Profile added',
+      name: 'tvSyncSuccess',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Failed to add profile`
+  String get tvSyncFailed {
+    return Intl.message(
+      'Failed to add profile',
+      name: 'tvSyncFailed',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Scan the QR code with your phone camera`
+  String get tvSyncScanQrHint {
+    return Intl.message(
+      'Scan the QR code with your phone camera',
+      name: 'tvSyncScanQrHint',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `FreedomNet — Import Subscription`
+  String get tvSyncWebPageTitle {
+    return Intl.message(
+      'FreedomNet — Import Subscription',
+      name: 'tvSyncWebPageTitle',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Import Subscription`
+  String get tvSyncWebHeading {
+    return Intl.message(
+      'Import Subscription',
+      name: 'tvSyncWebHeading',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Paste your subscription link and tap "Send" — it will sync to this device automatically.`
+  String get tvSyncWebSubtitle {
+    return Intl.message(
+      'Paste your subscription link and tap "Send" — it will sync to this device automatically.',
+      name: 'tvSyncWebSubtitle',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Paste`
+  String get tvSyncWebPaste {
+    return Intl.message('Paste', name: 'tvSyncWebPaste', desc: '', args: []);
+  }
+
+  /// `Send`
+  String get tvSyncWebSend {
+    return Intl.message('Send', name: 'tvSyncWebSend', desc: '', args: []);
+  }
+
+  /// `Please paste a subscription URL`
+  String get tvSyncWebEmptyUrl {
+    return Intl.message(
+      'Please paste a subscription URL',
+      name: 'tvSyncWebEmptyUrl',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Sending…`
+  String get tvSyncWebSending {
+    return Intl.message(
+      'Sending…',
+      name: 'tvSyncWebSending',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `The device rejected the subscription URL`
+  String get tvSyncWebRejected {
+    return Intl.message(
+      'The device rejected the subscription URL',
+      name: 'tvSyncWebRejected',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Could not reach the receiving device`
+  String get tvSyncWebUnreachable {
+    return Intl.message(
+      'Could not reach the receiving device',
+      name: 'tvSyncWebUnreachable',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Importing subscription on device…`
+  String get tvSyncWebApplying {
+    return Intl.message(
+      'Importing subscription on device…',
+      name: 'tvSyncWebApplying',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `✅ Done! Subscription added to device`
+  String get tvSyncWebSuccess {
+    return Intl.message(
+      '✅ Done! Subscription added to device',
+      name: 'tvSyncWebSuccess',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `❌ Error: `
+  String get tvSyncWebErrorPrefix {
+    return Intl.message(
+      '❌ Error: ',
+      name: 'tvSyncWebErrorPrefix',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Link received by device…`
+  String get tvSyncWebReceived {
+    return Intl.message(
+      'Link received by device…',
+      name: 'tvSyncWebReceived',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Connection to device lost`
+  String get tvSyncWebConnectionLost {
+    return Intl.message(
+      'Connection to device lost',
+      name: 'tvSyncWebConnectionLost',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Official Secure Purchase · 24/7 Live Support`
+  String get purchaseSafetyTitle {
+    return Intl.message(
+      'Official Secure Purchase · 24/7 Live Support',
+      name: 'purchaseSafetyTitle',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `For your network privacy and security, please contact live support directly to purchase.`
+  String get purchaseSafetyBody {
+    return Intl.message(
+      'For your network privacy and security, please contact live support directly to purchase.',
+      name: 'purchaseSafetyBody',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Official Direct`
+  String get purchaseSafetyTagOfficial {
+    return Intl.message(
+      'Official Direct',
+      name: 'purchaseSafetyTagOfficial',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Payment Safety`
+  String get purchaseSafetyTagFunds {
+    return Intl.message(
+      'Payment Safety',
+      name: 'purchaseSafetyTagFunds',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `24/7 Fast Reply`
+  String get purchaseSafetyTag24h {
+    return Intl.message(
+      '24/7 Fast Reply',
+      name: 'purchaseSafetyTag24h',
+      desc: '',
+      args: [],
     );
   }
 }

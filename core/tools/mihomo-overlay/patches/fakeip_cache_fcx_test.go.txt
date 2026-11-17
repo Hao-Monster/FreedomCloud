@@ -1,0 +1,87 @@
+package cachefile
+
+import (
+	"fmt"
+	"net/netip"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/metacubex/bbolt"
+)
+
+func TestFCXFakeIPStoreAvoidsBoltBatchDelayAndPersistsAcrossReopen(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "cache.db")
+	db, err := bbolt.Open(dbPath, 0o600, &bbolt.Options{Timeout: time.Second, NoStatistics: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cf := &CacheFile{DB: db}
+	store := cf.FakeIpStore()
+
+	start := time.Now()
+	for i := 1; i <= 40; i++ {
+		ip := netip.AddrFrom4([4]byte{198, 18, 0, byte(i)})
+		host := fmt.Sprintf("sub-%d.example.com", i)
+		store.DelByIP(ip)
+		store.PutByIP(ip, host)
+		store.PutByHost(host, ip)
+	}
+	elapsed := time.Since(start)
+	// Without the in-memory write-behind cache, 40 sequential Del+PutByIP+PutByHost
+	// sequences through bbolt.DB.Batch (10ms DefaultMaxBatchDelay each) take >800ms.
+	if elapsed > 80*time.Millisecond {
+		t.Fatalf("40 FakeIP allocations took %s (expected < 80ms without DB.Batch sleep)", elapsed)
+	}
+
+	// Pool.StoreState writes key-offset-fake-ip via PutByHost ONLY; verify it never
+	// clobbers the reverse IP->host mapping of the offset IP!
+	offsetIP := netip.AddrFrom4([4]byte{198, 18, 0, 40})
+	store.PutByHost("key-offset-fake-ip", offsetIP)
+	if host, ok := store.GetByIP(offsetIP); !ok || host != "sub-40.example.com" {
+		t.Fatalf("StoreState key-offset-fake-ip corrupted reverse mapping: got (%q, %v)", host, ok)
+	}
+
+	// Evicting an IP removes both IP->host and host->IP.
+	evictedIP := netip.AddrFrom4([4]byte{198, 18, 0, 1})
+	store.DelByIP(evictedIP)
+	if _, ok := store.GetByIP(evictedIP); ok {
+		t.Fatal("expected evicted IP to be deleted")
+	}
+	if _, ok := store.GetByHost("sub-1.example.com"); ok {
+		t.Fatal("expected evicted host to be deleted")
+	}
+
+	// Close flushes any remaining dirty mutations synchronously before closing BoltDB.
+	if err := cf.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	db2, err := bbolt.Open(dbPath, 0o600, &bbolt.Options{Timeout: time.Second, NoStatistics: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cf2 := &CacheFile{DB: db2}
+	defer cf2.Close()
+	store2 := cf2.FakeIpStore()
+
+	if ip, ok := store2.GetByHost("sub-25.example.com"); !ok || ip != netip.AddrFrom4([4]byte{198, 18, 0, 25}) {
+		t.Fatalf("persisted host lookup failed after reopen: got (%v, %v)", ip, ok)
+	}
+	if host, ok := store2.GetByIP(offsetIP); !ok || host != "sub-40.example.com" {
+		t.Fatalf("persisted IP lookup failed after reopen: got (%q, %v)", host, ok)
+	}
+	if savedOffset, ok := store2.GetByHost("key-offset-fake-ip"); !ok || savedOffset != offsetIP {
+		t.Fatalf("persisted key-offset-fake-ip failed after reopen: got (%v, %v)", savedOffset, ok)
+	}
+	if _, ok := store2.GetByHost("sub-1.example.com"); ok {
+		t.Fatal("evicted host reappeared after reopen")
+	}
+
+	if err := store2.FlushFakeIP(); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := store2.GetByHost("sub-25.example.com"); ok {
+		t.Fatal("FlushFakeIP did not clear cached entries")
+	}
+}

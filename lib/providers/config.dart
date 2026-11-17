@@ -289,3 +289,21 @@ class PatchClashConfig extends _$PatchClashConfig
     );
   }
 }
+
+
+@riverpod
+class GlobalOverride extends _$GlobalOverride with AutoDisposeNotifierMixin {
+  @override
+  OverrideData build() => globalState.config.globalOverrideData;
+
+  @override
+  void onUpdate(OverrideData value) {
+    globalState.config = globalState.config.copyWith(
+      globalOverrideData: value,
+    );
+  }
+
+  void updateState(OverrideData Function(OverrideData state) builder) {
+    state = builder(state);
+  }
+}

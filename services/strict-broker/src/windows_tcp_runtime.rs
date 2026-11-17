@@ -111,6 +111,10 @@ impl WindowsTcpForwardingHealth {
         }
     }
 
+    pub(crate) fn is_active(&self) -> bool {
+        self.active.is_some()
+    }
+
     fn activate(
         &mut self,
         revision: u64,

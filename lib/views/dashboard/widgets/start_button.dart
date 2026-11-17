@@ -1,220 +1,102 @@
+import 'dart:async';
 import 'dart:io';
 
-import 'package:flclashx/common/common.dart';
-import 'package:flclashx/enum/enum.dart';
 import 'package:flclashx/providers/providers.dart';
 import 'package:flclashx/state.dart';
+import 'package:flclashx/widgets/tactile_proxy_switch.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 class StartButton extends ConsumerStatefulWidget {
-  const StartButton({super.key});
+  const StartButton({
+    super.key,
+    this.floating = false,
+  });
+
+  final bool floating;
 
   @override
   ConsumerState<StartButton> createState() => _StartButtonState();
 }
 
-class _StartButtonState extends ConsumerState<StartButton>
-    with TickerProviderStateMixin {
-  late AnimationController _controller;
-  late AnimationController _pressController;
-  late Animation<double> _animation;
-  late Animation<double> _scaleAnimation;
-  bool isStart = false;
+class _StartButtonState extends ConsumerState<StartButton> {
+  bool _localPending = false;
+  bool? _localTargetStart;
 
-  @override
-  void initState() {
-    super.initState();
-    isStart = globalState.appState.runTime != null;
-    _controller = AnimationController(
-      vsync: this,
-      value: isStart ? 1 : 0,
-      duration: const Duration(milliseconds: 300),
-    );
-    _animation = CurvedAnimation(
-      parent: _controller,
-      curve: Curves.easeOutBack,
-    );
-
-    _pressController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 150),
-    );
-    _scaleAnimation = Tween<double>(begin: 1.0, end: 0.95).animate(
-      CurvedAnimation(
-        parent: _pressController,
-        curve: Curves.easeOut,
-      ),
-    );
-
-    ref.listenManual(
-      runTimeProvider.select((state) => state != null),
-      (prev, next) {
-        if (next != isStart) {
-          isStart = next;
-          updateController();
+  Future<void> handleSwitchStart() async {
+    final providerPending = ref.read(statusSwitchPendingProvider);
+    final startCancelable = ref.read(statusStartCancelableProvider);
+    if (providerPending != null) {
+      if (providerPending && startCancelable) {
+        if (Platform.isAndroid) {
+          unawaited(HapticFeedback.mediumImpact());
         }
-      },
-      fireImmediately: true,
-    );
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    _pressController.dispose();
-    super.dispose();
-  }
-
-  void handleSwitchStart() {
-    if (Platform.isAndroid) {
-      HapticFeedback.mediumImpact();
-    }
-    isStart = !isStart;
-    updateController();
-    debouncer.call(
-      FunctionTag.updateStatus,
-      () {
-        globalState.appController.updateStatus(isStart);
-      },
-      duration: commonDuration,
-    );
-  }
-
-  void updateController() {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (isStart) {
-        _controller.forward();
-      } else {
-        _controller.reverse();
+        if (globalState.isAppControllerReady) {
+          await globalState.appController.updateStatus(false);
+        }
       }
+      return;
+    }
+    if (_localPending || !globalState.isAppControllerReady) {
+      return;
+    }
+    if (Platform.isAndroid) {
+      unawaited(HapticFeedback.mediumImpact());
+    }
+    final isRunning = ref.read(runTimeProvider) != null;
+    final targetStart = !isRunning;
+    setState(() {
+      _localPending = true;
+      _localTargetStart = targetStart;
     });
-  }
-
-  void _onTapDown(TapDownDetails details) {
-    _pressController.forward();
-  }
-
-  void _onTapUp(TapUpDetails details) {
-    _pressController.reverse();
-  }
-
-  void _onTapCancel() {
-    _pressController.reverse();
+    try {
+      await globalState.appController.updateStatus(targetStart);
+    } finally {
+      if (mounted) {
+        setState(() {
+          _localPending = false;
+          _localTargetStart = null;
+        });
+      }
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(startButtonSelectorStateProvider);
     if (!state.isInit || !state.hasProfile) {
-      return Container();
+      return const SizedBox.shrink();
     }
+    final providerPending = ref.watch(statusSwitchPendingProvider);
+    final startCancelable = ref.watch(statusStartCancelableProvider);
+    final effectiveStart = ref.watch(
+      runTimeProvider.select((value) => value != null),
+    );
+    final pendingTarget =
+        providerPending ?? (_localPending ? _localTargetStart : null);
 
-    final colorScheme = Theme.of(context).colorScheme;
-    final activeColor = Colors.green.shade600.withValues(alpha: 0.9);
-    final inactiveColor = colorScheme.secondaryContainer.withValues(alpha: 0.85);
+    final dock = FloatingProxyDock(
+      key: const ValueKey('dashboard-floating-proxy-dock'),
+      surfaceKey: const ValueKey('dashboard-floating-proxy-dock-surface'),
+      switchKey: const ValueKey('dashboard-proxy-toggle'),
+      railKey: const ValueKey('dashboard-proxy-toggle-rail'),
+      thumbKey: const ValueKey('dashboard-proxy-toggle-thumb'),
+      isRunning: effectiveStart,
+      pendingTarget: pendingTarget,
+      startCancelable: startCancelable,
+      onToggle: () => unawaited(handleSwitchStart()),
+    );
 
+    if (widget.floating) {
+      return dock;
+    }
     return Padding(
-      padding: const EdgeInsets.all(16.0),
-      child: AnimatedBuilder(
-        animation: Listenable.merge([_controller, _pressController]),
-        builder: (_, child) => Transform.scale(
-            scale: _scaleAnimation.value,
-            child: SizedBox(
-              width: double.infinity,
-              height: 56,
-              child: GestureDetector(
-                onTapDown: _onTapDown,
-                onTapUp: _onTapUp,
-                onTapCancel: _onTapCancel,
-                child: FilledButton(
-                  onPressed: handleSwitchStart,
-                  style: FilledButton.styleFrom(
-                    backgroundColor: isStart ? activeColor : inactiveColor,
-                    foregroundColor: isStart
-                        ? Colors.white
-                        : colorScheme.onSecondaryContainer,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    elevation: isStart ? 4 : 0,
-                  ),
-                  child: Center(
-                    child: AnimatedSize(
-                      duration: const Duration(milliseconds: 300),
-                      curve: Curves.easeOutCubic,
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          AnimatedIcon(
-                            icon: AnimatedIcons.play_pause,
-                            progress: _animation,
-                            size: 36,
-                            color: isStart
-                                ? Colors.white
-                                : colorScheme.onSecondaryContainer,
-                          ),
-                          if (child != null) ...[
-                            const SizedBox(width: 12),
-                            AnimatedSwitcher(
-                              duration: const Duration(milliseconds: 300),
-                              switchInCurve: Curves.easeOutCubic,
-                              switchOutCurve: Curves.easeInCubic,
-                              transitionBuilder: (childWidget, animation) {
-                                final offsetAnimation = Tween<Offset>(
-                                  begin: const Offset(0, 0.3),
-                                  end: Offset.zero,
-                                ).animate(CurvedAnimation(
-                                  parent: animation,
-                                  curve: Curves.easeOutCubic,
-                                ));
-
-                                return SlideTransition(
-                                  position: offsetAnimation,
-                                  child: FadeTransition(
-                                    opacity: animation,
-                                    child: childWidget,
-                                  ),
-                                );
-                              },
-                              layoutBuilder: (currentChild, previousChildren) => Stack(
-                                  alignment: Alignment.center,
-                                  children: [
-                                    ...previousChildren,
-                                    if (currentChild != null) currentChild,
-                                  ],
-                                ),
-                              child: child,
-                            ),
-                          ],
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ),
-        child: Consumer(
-          builder: (_, ref, __) {
-            final runTime = ref.watch(runTimeProvider);
-            if (runTime != null) {
-              final text = utils.getTimeText(runTime);
-              return Text(
-                text,
-                key: ValueKey('time_$text'),
-                style: context.textTheme.titleMedium?.toSoftBold.copyWith(
-                  color: Colors.white,
-                ),
-              );
-            } else {
-              return const SizedBox.shrink(
-                key: ValueKey('empty'),
-              );
-            }
-          },
-        ),
+      padding: const EdgeInsets.all(16),
+      child: Center(
+        widthFactor: 1.0,
+        heightFactor: 1.0,
+        child: dock,
       ),
     );
   }

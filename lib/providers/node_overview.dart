@@ -5,7 +5,7 @@ import 'dart:io';
 import 'package:crypto/crypto.dart';
 import 'package:flclashx/clash/core.dart';
 import 'package:flclashx/clash/interface.dart';
-import 'package:flclashx/common/constant.dart';
+import 'package:flclashx/common/common.dart';
 import 'package:flclashx/common/delay_test_coordinator.dart';
 import 'package:flclashx/common/delay_tests.dart';
 import 'package:flclashx/common/fixed.dart';
@@ -29,17 +29,86 @@ import 'package:path/path.dart' as p;
 import 'app.dart';
 import 'config.dart';
 import 'state.dart';
+export 'state.dart' show expertNavigationExpandedProvider;
 
 enum ProxiesScope { current, all }
 
 final nodeOverviewEnabledProvider =
     Provider<bool>((ref) => nodeOverviewEnabled);
 final proxiesScopeProvider =
-    StateProvider<ProxiesScope>((ref) => ProxiesScope.current);
+    StateProvider<ProxiesScope>((ref) => ProxiesScope.all);
+final coldStartZeroProfilePromptedProvider =
+    StateProvider<bool>((ref) => false);
+final pendingNoviceFirstProfileAutoTestProvider =
+    StateProvider<String?>((ref) => null);
+
+void toggleExpertNavigationMode(WidgetRef ref) {
+  final nextExpanded = !ref.read(expertNavigationExpandedProvider);
+  if (!nextExpanded) {
+    ref.read(proxiesScopeProvider.notifier).state = ProxiesScope.all;
+    final currentPage = ref.read(currentPageLabelProvider);
+    if (!noviceVisiblePageLabels.contains(currentPage)) {
+      if (globalState.isAppControllerReady) {
+        globalState.appController.toPage(PageLabel.proxies);
+      } else {
+        ref.read(currentPageLabelProvider.notifier).value = PageLabel.proxies;
+      }
+    }
+  }
+  ref.read(expertNavigationExpandedProvider.notifier).state = nextExpanded;
+}
 final cachedProfileCatalogsProvider =
     StateProvider<Map<String, ProfileCatalog>>((ref) => const {});
 final nodeOverviewTestUrlProvider =
     Provider<String>((ref) => ref.watch(getRealTestUrlProvider(null)));
+
+final RegExp _informationalProxyPattern = RegExp(
+  r'(剩余流量|可用流量|已用流量|总流量|流量剩余|流量已用|流量重置|距离下次重置|下次重置|重置剩余'
+  r'|套餐到期|到期时间|过期时间|有效期限|有效期至|订阅到期'
+  r'|官网|官方网址|最新网址|备用网址|发布页|防失联|机场地址'
+  r'|公告\s*[:：]|通知\s*[:：]|群组|客服|售后|请更新订阅'
+  r'|^(DIRECT|REJECT|REJECT-DROP|PASS)$'
+  r'|\b(remaining\s+traffic|traffic\s+reset|expire\s*date|official\s+website)\b)',
+  caseSensitive: false,
+);
+
+/// Identifies provider billing/announcement placeholder entries commonly placed
+/// at the top of subscription node lists so auto-selection prefers real proxies.
+bool isInformationalProxyName(String name) {
+  final trimmed = name.trim();
+  if (trimmed.isEmpty) return true;
+  return _informationalProxyPattern.hasMatch(trimmed);
+}
+
+String formatSubscriptionImportError(Object error) {
+  final text = error.toString().toLowerCase();
+  if (text.contains('timeout') ||
+      text.contains('timed out') ||
+      text.contains('socketexception') ||
+      text.contains('connection error') ||
+      text.contains('failed host lookup') ||
+      text.contains('handshakeexception') ||
+      text.contains('network is unreachable')) {
+    return appLocalizations.subscriptionImportTimeoutError;
+  }
+  if (text.contains('401') ||
+      text.contains('403') ||
+      text.contains('404') ||
+      text.contains('unauthorized') ||
+      text.contains('forbidden') ||
+      text.contains('not found')) {
+    return appLocalizations.subscriptionImportAuthOrNotFoundError;
+  }
+  if (text.contains('formatexception') ||
+      text.contains('yaml') ||
+      text.contains('<!doctype') ||
+      text.contains('<html') ||
+      text.contains('invalid') ||
+      text.contains('validate')) {
+    return appLocalizations.subscriptionImportInvalidConfigError;
+  }
+  return appLocalizations.subscriptionImportGenericError;
+}
 
 bool _isRuntimeSnapshotLiveForProfile({
   required String? verifiedRuntimeProfileId,
@@ -573,7 +642,12 @@ final ChangeNotifierProvider<NodeCountryResolver> nodeCountryResolverProvider =
       },
     )
     ..listen(
-        cachedProfileCatalogsProvider, (_, __) => syncCentralTarget(notify: true));
+        cachedProfileCatalogsProvider, (_, __) => syncCentralTarget(notify: true))
+    ..listen<int>(coreCatalogEpochProvider, (previous, next) {
+      if (previous != next) {
+        resolver.retryUnresolvedServers();
+      }
+    });
   if (globalState.isAppStateInitialized) {
     ref
       ..listen<bool>(
@@ -582,6 +656,9 @@ final ChangeNotifierProvider<NodeCountryResolver> nodeCountryResolverProvider =
           if (previous == isRunning) return;
           detectionState.notifyRoutingChanged();
           resolver.onProxyRunningChanged(isRunning: isRunning);
+          if (isRunning) {
+            resolver.retryUnresolvedServers();
+          }
           syncCentralTarget(notify: true);
         },
       )
@@ -610,6 +687,14 @@ final nodeRuntimeReaderProvider =
           return Map<String, dynamic>.from(result.data as Map);
         });
 
+final runtimeConfigEpochProvider = Provider<int>((ref) {
+  final notifier = globalState.runtimeConfigEpochNotifier;
+  void handleEpochChanged() => ref.invalidateSelf();
+  notifier.addListener(handleEpochChanged);
+  ref.onDispose(() => notifier.removeListener(handleEpochChanged));
+  return notifier.value;
+});
+
 // Keep the exact read future separate from AsyncValue: a request must complete
 // with its original read even when Riverpod replaces the displayed future.
 final Provider<NodeRuntimeRead> nodeRuntimeReadProvider =
@@ -622,7 +707,7 @@ final Provider<NodeRuntimeRead> nodeRuntimeReadProvider =
       ref.watch(profilesProvider.select((profiles) => profiles.getProfile(id)));
   ref
     ..watch(scriptStateProvider.select((state) => state.currentScript))
-    ..watch(versionProvider);
+    ..watch(runtimeConfigEpochProvider);
   if (profile == null || profile.isUpdating) {
     return NodeRuntimeRead((_) => Future.value());
   }
@@ -649,8 +734,13 @@ final Provider<NodeRuntimeRead> nodeRuntimeReadProvider =
   });
   // Revoke immediately, even before Riverpod schedules a rebuild/frame. This
   // also catches A -> B -> A and deletion/recreation with the same profile id.
+  final epochNotifier = globalState.runtimeConfigEpochNotifier;
+  epochNotifier.addListener(read.invalidate);
   ref
-    ..onDispose(read.invalidate)
+    ..onDispose(() {
+      epochNotifier.removeListener(read.invalidate);
+      read.invalidate();
+    })
     ..listen(currentProfileIdProvider, (_, __) => read.invalidate())
     ..listen(profilesProvider, (previous, next) {
       if (previous?.getProfile(id) != next.getProfile(id)) read.invalidate();
@@ -658,7 +748,7 @@ final Provider<NodeRuntimeRead> nodeRuntimeReadProvider =
     ..listen(scriptStateProvider, (previous, next) {
       if (previous?.currentScript != next.currentScript) read.invalidate();
     })
-    ..listen(versionProvider, (_, __) => read.invalidate());
+    ..listen(runtimeConfigEpochProvider, (_, __) => read.invalidate());
   return read;
 });
 
@@ -707,19 +797,36 @@ final nodeHealthEntriesProvider = Provider.autoDispose
     .family<Map<String, NodeHealthRecord>, String>((ref, profileId) {
   if (!ref.watch(nodeOverviewEnabledProvider)) return const {};
   final url = ref.watch(nodeOverviewTestUrlProvider);
+  ref.watch(nodeHealthStoreProvider.select((s) => s.profileRevision(profileId)));
   return ref
-      .watch(nodeHealthStoreProvider)
+      .read(nodeHealthStoreProvider)
       .readProfile(profileId, testUrl: url);
 });
+
+/// Incremented whenever ClashCore finishes initialization / re-attach so any
+/// profile catalog read that previously hit `runtimeUnavailable` (cold-start
+/// preload, deferred Windows Agent UAC, or manual Core restart) re-evaluates.
+final coreCatalogEpochProvider = StateProvider<int>((ref) => 0);
 
 // Inject only the IO boundary in tests; provider invalidation stays real.
 final nodeCatalogServiceFactoryProvider =
     Provider<NodeCatalogService Function()>((ref) => () => NodeCatalogService(
-          readProfileConfig: (id) {
+          readProfileConfig: (id) async {
             if (ClashCore.existingInterface == null) {
               throw const CatalogBuildException('runtimeUnavailable');
             }
-            return globalState.getProfileConfig(id);
+            try {
+              return await globalState.getProfileConfig(id);
+            } catch (error) {
+              if (error is String && error.startsWith('not_ready:')) {
+                throw const CatalogBuildException('runtimeUnavailable');
+              }
+              if (error is CatalogCoreException &&
+                  error.reason == 'transportFailure') {
+                throw const CatalogBuildException('runtimeUnavailable');
+              }
+              rethrow;
+            }
           },
           evaluate: globalState.handleEvaluate,
           fileMetadata: (id) async {
@@ -875,11 +982,15 @@ final profileCatalogProvider = FutureProvider.autoDispose
         status: ProfileCatalogStatus.ready);
   }
   ref
+    ..watch(coreCatalogEpochProvider)
     ..watch(profilesProvider.select((profiles) {
       final profile = profiles.getProfile(profileId);
       return (profile?.url, profile?.lastUpdateDate, profile?.isUpdating);
     }))
     ..watch(scriptStateProvider.select((state) => state.currentScript));
+  if (globalState.isAppStateInitialized) {
+    ref.watch(initProvider);
+  }
   final profile = ref.read(profilesProvider).getProfile(profileId);
   if (profile == null) {
     return ProfileCatalog(
@@ -890,7 +1001,7 @@ final profileCatalogProvider = FutureProvider.autoDispose
   var disposed = false;
   ref.onDispose(() => disposed = true);
   final result = await ref.watch(nodeCatalogServiceProvider).load(profile);
-  if (!disposed) {
+  if (!disposed && result.status != ProfileCatalogStatus.loading) {
     final cached =
         Map<String, ProfileCatalog>.of(ref.read(cachedProfileCatalogsProvider))
           ..remove(profileId)

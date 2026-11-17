@@ -1,8 +1,9 @@
 use std::fs::{self, File, OpenOptions};
-use std::io::Write;
+use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::{self, SyncSender, TrySendError};
+use std::sync::mpsc::{self, SyncSender, TryRecvError, TrySendError};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -11,35 +12,42 @@ const MAX_LINE_CHARS: usize = 16 * 1024;
 const MAX_FILE_BYTES: u64 = 8 * 1024 * 1024;
 const MAX_ROTATED_FILES: usize = 3;
 const MAX_BOOTSTRAP_FILE_BYTES: u64 = 64 * 1024;
+const LOG_BUFFER_BYTES: usize = 32 * 1024;
 
 #[derive(Clone)]
 pub struct AgentLogger {
     sender: SyncSender<String>,
+    dropped: Arc<AtomicU64>,
 }
 
 impl AgentLogger {
     pub fn new(home: &Path) -> Arc<Self> {
-        let path = home.join("logs").join("FlClashAgent.log");
+        let log_file_name = if cfg!(windows) {
+            "FreedomNetAgent.log"
+        } else {
+            "FlClashAgent.log"
+        };
+        let path = home.join("logs").join(log_file_name);
         let (sender, receiver) = mpsc::sync_channel(CHANNEL_CAPACITY);
+        let dropped = Arc::new(AtomicU64::new(0));
+        let writer_dropped = Arc::clone(&dropped);
         let writer_path = path.clone();
         let spawned = thread::Builder::new()
             .name("flclash-agent-log".to_owned())
-            .spawn(move || run_writer(writer_path, receiver))
+            .spawn(move || run_writer(writer_path, receiver, writer_dropped))
             .is_ok();
         if !spawned {
             eprintln!("FlClashAgent: unable to start persistent log writer");
         }
-        Arc::new(Self { sender })
+        Arc::new(Self { sender, dropped })
     }
 
     pub fn log(&self, message: impl AsRef<str>) {
         let line = sanitize(message.as_ref());
         match self.sender.try_send(line) {
-            Ok(()) | Err(TrySendError::Disconnected(_)) => {}
-            Err(TrySendError::Full(_)) => {
-                // The queue is intentionally bounded. Dropping the newest
-                // diagnostic is preferable to retaining unbounded memory on a
-                // noisy Core or a stalled filesystem.
+            Ok(()) => {}
+            Err(TrySendError::Disconnected(_) | TrySendError::Full(_)) => {
+                self.dropped.fetch_add(1, Ordering::Relaxed);
             }
         }
     }
@@ -52,28 +60,33 @@ impl AgentLogger {
 /// the same per-user application data root without spawning a background
 /// writer that could be terminated before it flushes.
 pub fn log_bootstrap_failure(message: impl AsRef<str>) {
+    let bootstrap_file_name = if cfg!(windows) {
+        "FreedomNetAgent.bootstrap.log"
+    } else {
+        "FlClashAgent.bootstrap.log"
+    };
     let path = std::env::var_os("APPDATA")
         .map(PathBuf::from)
         .map(|root| {
-            root.join("com.follow")
-                .join("clashx")
+            root.join("FreedomNet")
+                .join("FreedomNet")
                 .join("logs")
-                .join("FlClashAgent.bootstrap.log")
+                .join(bootstrap_file_name)
         })
         .or_else(|| {
             std::env::var_os("LOCALAPPDATA")
                 .map(PathBuf::from)
                 .map(|root| {
-                    root.join("FlClashX")
+                    root.join("FreedomNet")
                         .join("logs")
-                        .join("FlClashAgent.bootstrap.log")
+                        .join(bootstrap_file_name)
                 })
         })
         .or_else(|| {
             std::env::current_exe()
                 .ok()
                 .and_then(|path| path.parent().map(Path::to_path_buf))
-                .map(|root| root.join("logs").join("FlClashAgent.bootstrap.log"))
+                .map(|root| root.join("logs").join(bootstrap_file_name))
         });
     let Some(path) = path else {
         return;
@@ -110,37 +123,86 @@ fn sanitize(message: &str) -> String {
     output
 }
 
-fn run_writer(path: PathBuf, receiver: mpsc::Receiver<String>) {
+struct BufferedLogFile {
+    writer: BufWriter<File>,
+    written_bytes: u64,
+    pending_messages: u64,
+}
+
+fn run_writer(path: PathBuf, receiver: mpsc::Receiver<String>, dropped: Arc<AtomicU64>) {
     if let Some(parent) = path.parent() {
         let _ = fs::create_dir_all(parent);
     }
     let mut file = open_file(&path);
-    while let Ok(message) = receiver.recv() {
-        let line = format!("[unix_ms={}] {message}\n", unix_millis());
-        let should_rotate = file
-            .as_ref()
-            .and_then(|current| current.metadata().ok())
-            .is_none_or(|metadata| {
-                metadata.len().saturating_add(line.len() as u64) > MAX_FILE_BYTES
-            });
-        if should_rotate {
-            let _ = file.take();
-            rotate(&path);
-            file = open_file(&path);
+    while let Ok(first_message) = receiver.recv() {
+        let count = dropped.swap(0, Ordering::Relaxed);
+        if count > 0 {
+            let written = write_log_line(&path, &mut file, &format!("event=logger_dropped count={count}"), &dropped, false);
+            let flushed = written && file.as_mut().is_some_and(|current| current.writer.flush().is_ok());
+            if !flushed {
+                dropped.fetch_add(count, Ordering::Relaxed);
+                file = open_file(&path);
+            }
         }
-        let Some(current) = file.as_mut() else {
-            continue;
-        };
-        if current.write_all(line.as_bytes()).is_ok() {
-            let _ = current.flush();
-        } else {
-            file = open_file(&path);
+        if write_log_line(&path, &mut file, &first_message, &dropped, true) { }
+        else { dropped.fetch_add(1, Ordering::Relaxed); }
+        loop {
+            match receiver.try_recv() {
+                Ok(next_message) => {
+                    if write_log_line(&path, &mut file, &next_message, &dropped, true) { }
+                    else { dropped.fetch_add(1, Ordering::Relaxed); }
+                }
+                Err(TryRecvError::Empty | TryRecvError::Disconnected) => break,
+            }
+        }
+        if let Some(current) = file.as_mut() {
+            if current.writer.flush().is_err() {
+                dropped.fetch_add(current.pending_messages, Ordering::Relaxed);
+                file = open_file(&path);
+            } else {
+                current.pending_messages = 0;
+            }
         }
     }
 }
 
-fn open_file(path: &Path) -> Option<File> {
-    OpenOptions::new().create(true).append(true).open(path).ok()
+fn write_log_line(path: &Path, file: &mut Option<BufferedLogFile>, message: &str, dropped: &AtomicU64, count_message: bool) -> bool {
+    let line = format!("[unix_ms={}] {message}\n", unix_millis());
+    let line_bytes = line.len() as u64;
+    let should_rotate = file
+        .as_ref()
+        .is_none_or(|current| current.written_bytes.saturating_add(line_bytes) > MAX_FILE_BYTES);
+    if should_rotate {
+        if let Some(mut previous) = file.take() {
+            if previous.writer.flush().is_err() {
+                dropped.fetch_add(previous.pending_messages, Ordering::Relaxed);
+            }
+        }
+        rotate(path);
+        *file = open_file(path);
+    }
+    let Some(current) = file.as_mut() else {
+        return false;
+    };
+    if current.writer.write_all(line.as_bytes()).is_ok() {
+        current.written_bytes = current.written_bytes.saturating_add(line_bytes);
+        if count_message { current.pending_messages += 1; }
+        true
+    } else {
+        dropped.fetch_add(current.pending_messages, Ordering::Relaxed);
+        *file = open_file(path);
+        false
+    }
+}
+
+fn open_file(path: &Path) -> Option<BufferedLogFile> {
+    let file = OpenOptions::new().create(true).append(true).open(path).ok()?;
+    let written_bytes = file.metadata().map(|metadata| metadata.len()).unwrap_or(0);
+    Some(BufferedLogFile {
+        writer: BufWriter::with_capacity(LOG_BUFFER_BYTES, file),
+        written_bytes,
+        pending_messages: 0,
+    })
 }
 
 fn rotate(path: &Path) {
@@ -165,4 +227,44 @@ fn unix_millis() -> u128 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |duration| duration.as_millis())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn counts_full_and_disconnected_queue_drops() {
+        let (sender, receiver) = mpsc::sync_channel(1);
+        let logger = AgentLogger { sender, dropped: Arc::new(AtomicU64::new(0)) };
+        logger.log("accepted");
+        logger.log("queue full");
+        assert_eq!(logger.dropped.load(Ordering::Relaxed), 1);
+        drop(receiver);
+        logger.log("disconnected");
+        assert_eq!(logger.dropped.load(Ordering::Relaxed), 2);
+    }
+
+    #[test]
+    fn retains_drop_count_when_report_cannot_be_written() {
+        let (sender, receiver) = mpsc::sync_channel(1);
+        sender.send("message".to_owned()).unwrap();
+        drop(sender);
+        let dropped = Arc::new(AtomicU64::new(4));
+        let path = std::env::current_exe().unwrap().join("unwritable.log");
+        run_writer(path, receiver, Arc::clone(&dropped));
+        assert_eq!(dropped.load(Ordering::Relaxed), 5);
+    }
+
+    #[test]
+    fn counts_unflushed_messages_when_rotation_flush_fails() {
+        let executable = std::env::current_exe().unwrap();
+        let mut writer = BufWriter::new(File::open(&executable).unwrap());
+        writer.write_all(b"buffered").unwrap();
+        let mut file = Some(BufferedLogFile { writer, written_bytes: MAX_FILE_BYTES, pending_messages: 2 });
+        let dropped = AtomicU64::new(0);
+        let path = executable.join("unwritable.log");
+        assert!(!write_log_line(&path, &mut file, "next", &dropped, true));
+        assert_eq!(dropped.load(Ordering::Relaxed), 2);
+    }
 }

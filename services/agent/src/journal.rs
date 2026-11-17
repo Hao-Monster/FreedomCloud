@@ -1,8 +1,42 @@
+use std::borrow::Cow;
 use std::collections::{HashMap, VecDeque};
 
+use serde::de::IgnoredAny;
+use serde::Deserialize;
 use serde_json::Value;
 
 pub const MAX_REPLAY_ENTRIES: usize = 128;
+
+#[derive(Deserialize)]
+struct ActionHeaderProbe<'a> {
+    #[serde(borrow)]
+    id: Cow<'a, str>,
+    #[serde(borrow)]
+    method: Cow<'a, str>,
+    #[allow(dead_code)]
+    data: IgnoredAny,
+}
+
+#[derive(Deserialize)]
+struct ResponseIdProbe<'a> {
+    #[serde(borrow, default)]
+    id: Option<Cow<'a, str>>,
+}
+
+fn is_replayable_method(method: &str) -> bool {
+    matches!(
+        method,
+        "initClash"
+            | "setState"
+            | "setupConfig"
+            | "updateConfig"
+            | "startListener"
+            | "stopListener"
+            | "startLog"
+            | "stopLog"
+            | "changeProxy"
+    )
+}
 
 #[derive(Debug, Default)]
 pub struct ReplayJournal {
@@ -14,20 +48,26 @@ pub struct ReplayJournal {
 
 impl ReplayJournal {
     pub fn stage(&mut self, line: &str) {
-        let Ok(value) = serde_json::from_str::<Value>(line) else {
+        let Ok(header) = serde_json::from_str::<ActionHeaderProbe<'_>>(line) else {
             return;
         };
-        if replay_key(&value).is_none() {
+        if !is_replayable_method(&header.method) {
             return;
         }
-        let Some(id) = value.get("id").and_then(Value::as_str) else {
-            return;
-        };
-        if let Some(position) = self.pending_order.iter().position(|item| item == id) {
+        if header.method == "changeProxy" {
+            let Ok(value) = serde_json::from_str::<Value>(line) else {
+                return;
+            };
+            if replay_key(&value).is_none() {
+                return;
+            }
+        }
+        let id = header.id.into_owned();
+        if let Some(position) = self.pending_order.iter().position(|item| item == &id) {
             self.pending_order.remove(position);
         }
-        self.pending_order.push_back(id.to_owned());
-        self.pending.insert(id.to_owned(), line.to_owned());
+        self.pending_order.push_back(id.clone());
+        self.pending.insert(id, line.to_owned());
         while self.pending.len() > MAX_REPLAY_ENTRIES {
             if let Some(oldest) = self.pending_order.pop_front() {
                 self.pending.remove(&oldest);
@@ -35,25 +75,33 @@ impl ReplayJournal {
         }
     }
 
-    pub fn commit_response(&mut self, line: &str) {
-        let Ok(value) = serde_json::from_str::<Value>(line) else {
-            return;
+    pub fn commit_response(&mut self, line: &str) -> Option<String> {
+        if self.pending.is_empty() {
+            return None;
+        }
+        let Ok(probe) = serde_json::from_str::<ResponseIdProbe<'_>>(line) else {
+            return None;
         };
-        let Some(id) = value.get("id").and_then(Value::as_str) else {
-            return;
+        let Some(id) = probe.id.as_deref() else {
+            return None;
         };
         let Some(staged) = self.pending.remove(id) else {
-            return;
+            return None;
         };
         if let Some(position) = self.pending_order.iter().position(|item| item == id) {
             self.pending_order.remove(position);
         }
+        let Ok(value) = serde_json::from_str::<Value>(line) else {
+            return None;
+        };
         let Ok(action) = serde_json::from_str::<Value>(&staged) else {
-            return;
+            return None;
         };
         if mutation_was_accepted(&action, &value) {
             self.record(&staged);
+            return Some(staged);
         }
+        None
     }
 
     pub fn discard_pending(&mut self) {
@@ -382,5 +430,29 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn fast_path_skips_read_only_stages_and_unmatched_responses_including_raw_json_proxy_data() {
+        let mut journal = ReplayJournal::default();
+        journal.stage(r#"{"id":"q-1","method":"getConnections","data":null}"#);
+        assert!(journal.pending.is_empty());
+
+        // Fast-path empty pending check ignores non-JSON or massive stream payloads cleanly.
+        journal.commit_response(r#"{"method":"message","data":{"type":"Log","data":"hello"}}"#);
+        assert!(journal.is_empty());
+
+        // Raw JSON object `data` (post-double-encode removal) works identically to legacy string `data`.
+        journal.stage(
+            r#"{"id":"p-1","method":"changeProxy","data":{"group-name":"Proxy","proxy-name":"HK-01"}}"#,
+        );
+        assert_eq!(journal.pending.len(), 1);
+        // Unrelated response while pending is non-empty leaves pending intact.
+        journal.commit_response(r#"{"id":"other","method":"getTraffic","code":0,"data":{"up":1,"down":2}}"#);
+        assert_eq!(journal.pending.len(), 1);
+
+        journal.commit_response(r#"{"id":"p-1","method":"changeProxy","code":0,"data":""}"#);
+        assert!(journal.pending.is_empty());
+        assert_eq!(journal.len(), 1);
     }
 }

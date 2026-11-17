@@ -22,6 +22,6 @@ fn main() {
         Err(error) => logger.log(format!("service runtime creation failed: {error}")),
     }
     if let Err(error) = logger.flush(std::time::Duration::from_millis(500)) {
-        eprintln!("FlClashHelperService: {error}");
+        eprintln!("FreedomNetHelperService: {error}");
     }
 }

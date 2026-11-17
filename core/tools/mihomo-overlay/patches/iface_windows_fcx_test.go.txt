@@ -1,0 +1,101 @@
+//go:build windows
+
+package iface
+
+import (
+	"net/netip"
+	"runtime"
+	"syscall"
+	"testing"
+	"unsafe"
+
+	"golang.org/x/sys/windows"
+)
+
+func TestFCXIfaceWindowsUsesSingleAdapterAddressesSyscall(t *testing.T) {
+	previous := fcxAdapterAddresses
+	t.Cleanup(func() {
+		fcxAdapterAddresses = previous
+		FlushCache()
+	})
+
+	syscalls := 0
+	fcxAdapterAddresses = func() ([]*windows.IpAdapterAddresses, []byte, error) {
+		syscalls++
+		return previous()
+	}
+	FlushCache()
+
+	ifaces, err := Interfaces()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ifaces) == 0 {
+		t.Fatal("expected at least loopback interface on Windows")
+	}
+	if syscalls != 1 {
+		t.Fatalf("expected 1 GetAdaptersAddresses call for %d interfaces, got %d", len(ifaces), syscalls)
+	}
+}
+
+func makeTestUnicastAddr(t *testing.T, cidr string, dadState int32) (*windows.IpAdapterUnicastAddress, any) {
+	t.Helper()
+	prefix, err := netip.ParsePrefix(cidr)
+	if err != nil {
+		t.Fatalf("parse cidr %q: %v", cidr, err)
+	}
+	addr := prefix.Addr()
+	if addr.Is4() {
+		raw := &windows.RawSockaddrInet4{Family: windows.AF_INET}
+		raw.Addr = addr.As4()
+		return &windows.IpAdapterUnicastAddress{
+			Address: windows.SocketAddress{
+				Sockaddr:       (*syscall.RawSockaddrAny)(unsafe.Pointer(raw)),
+				SockaddrLength: int32(unsafe.Sizeof(*raw)),
+			},
+			DadState:           dadState,
+			OnLinkPrefixLength: uint8(prefix.Bits()),
+		}, raw
+	}
+	raw := &windows.RawSockaddrInet6{Family: windows.AF_INET6}
+	raw.Addr = addr.As16()
+	return &windows.IpAdapterUnicastAddress{
+		Address: windows.SocketAddress{
+			Sockaddr:       (*syscall.RawSockaddrAny)(unsafe.Pointer(raw)),
+			SockaddrLength: int32(unsafe.Sizeof(*raw)),
+		},
+		DadState:           dadState,
+		OnLinkPrefixLength: uint8(prefix.Bits()),
+	}, raw
+}
+
+func TestFCXAdapterAddrsFiltersNonPreferredUnicastStates(t *testing.T) {
+	uPreferredV4, keep1 := makeTestUnicastAddr(t, "172.23.104.177/24", windows.IpDadStatePreferred)
+	uDeprecatedV6, keep2 := makeTestUnicastAddr(t, "240a:4283:1::10/64", windows.IpDadStateDeprecated)
+	uTentativeV6, keep3 := makeTestUnicastAddr(t, "240a:4283:2::20/64", windows.IpDadStateTentative)
+	uDuplicateV4, keep4 := makeTestUnicastAddr(t, "172.23.104.178/24", windows.IpDadStateDuplicate)
+	uInvalidV4, keep5 := makeTestUnicastAddr(t, "172.23.104.179/24", windows.IpDadStateInvalid)
+	uPreferredV6, keep6 := makeTestUnicastAddr(t, "240a:4283:fe00::88/64", windows.IpDadStatePreferred)
+
+	uPreferredV4.Next = uDeprecatedV6
+	uDeprecatedV6.Next = uTentativeV6
+	uTentativeV6.Next = uDuplicateV4
+	uDuplicateV4.Next = uInvalidV4
+	uInvalidV4.Next = uPreferredV6
+
+	adapter := &windows.IpAdapterAddresses{
+		IfIndex:             30,
+		FirstUnicastAddress: uPreferredV4,
+	}
+	addrs, err := fcxAdapterAddrs([]*windows.IpAdapterAddresses{adapter}, 30)
+	runtime.KeepAlive([]any{keep1, keep2, keep3, keep4, keep5, keep6})
+	if err != nil {
+		t.Fatalf("fcxAdapterAddrs failed: %v", err)
+	}
+	if len(addrs) != 2 {
+		t.Fatalf("expected only 2 IpDadStatePreferred addresses, got %d: %v", len(addrs), addrs)
+	}
+	if addrs[0].String() != "172.23.104.177/24" || addrs[1].String() != "240a:4283:fe00::88/64" {
+		t.Fatalf("unexpected filtered addresses: %v", addrs)
+	}
+}

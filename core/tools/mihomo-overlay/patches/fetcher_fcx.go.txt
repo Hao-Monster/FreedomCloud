@@ -1,0 +1,122 @@
+package resource
+
+import (
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"github.com/metacubex/mihomo/common/utils"
+	"github.com/metacubex/mihomo/log"
+)
+
+var (
+	fcxProviderUpdatedCallback atomic.Pointer[func(string)]
+	fcxRetryDelaysMu           sync.RWMutex
+	fcxInitialRetryDelays      = []time.Duration{
+		1 * time.Second,
+		2 * time.Second,
+		5 * time.Second,
+		10 * time.Second,
+	}
+)
+
+// SetFCXProviderUpdatedCallback registers a process-wide observer notified
+// after any asynchronous or manual provider Update/SideUpdate commits new
+// content. Passing nil clears the observer.
+func SetFCXProviderUpdatedCallback(cb func(string)) {
+	if cb == nil {
+		fcxProviderUpdatedCallback.Store(nil)
+		return
+	}
+	fn := cb
+	fcxProviderUpdatedCallback.Store(&fn)
+}
+
+func fcxNotifyProviderUpdated(name string) {
+	fn := fcxProviderUpdatedCallback.Load()
+	if fn != nil && *fn != nil {
+		(*fn)(name)
+	}
+}
+
+// SetFCXInitialRetryDelaysForTest overrides bounded startup retry delays for
+// uncached remote providers and returns a restore function.
+func SetFCXInitialRetryDelaysForTest(delays []time.Duration) func() {
+	fcxRetryDelaysMu.Lock()
+	prev := append([]time.Duration(nil), fcxInitialRetryDelays...)
+	fcxInitialRetryDelays = append([]time.Duration(nil), delays...)
+	fcxRetryDelaysMu.Unlock()
+	return func() {
+		fcxRetryDelaysMu.Lock()
+		fcxInitialRetryDelays = prev
+		fcxRetryDelaysMu.Unlock()
+	}
+}
+
+func fcxSnapshotInitialRetryDelays() []time.Duration {
+	fcxRetryDelaysMu.RLock()
+	defer fcxRetryDelaysMu.RUnlock()
+	return append([]time.Duration(nil), fcxInitialRetryDelays...)
+}
+
+func (f *Fetcher[V]) currentHash() utils.HashType {
+	f.loadBufMutex.Lock()
+	defer f.loadBufMutex.Unlock()
+	return f.hash
+}
+
+func (f *Fetcher[V]) setUpdatedAt(t time.Time) {
+	f.loadBufMutex.Lock()
+	f.updatedAt = t
+	f.loadBufMutex.Unlock()
+}
+
+func (f *Fetcher[V]) fcxUpdateWithLogErr() error {
+	_, same, err := f.Update()
+	if err != nil {
+		log.Errorln("[Provider] %s pull error: %s", f.Name(), err.Error())
+		return err
+	}
+	if same {
+		log.Debugln("[Provider] %s's content doesn't change", f.Name())
+		return nil
+	}
+	log.Infoln("[Provider] %s's content update", f.Name())
+	return nil
+}
+
+func (f *Fetcher[V]) fcxStartInitialRemotePull() {
+	go f.fcxInitialRemotePullLoop()
+}
+
+func (f *Fetcher[V]) fcxInitialRemotePullLoop() {
+	if f.ctx.Err() != nil {
+		return
+	}
+	if err := f.fcxUpdateWithLogErr(); err != nil {
+		for _, delay := range fcxSnapshotInitialRetryDelays() {
+			if delay <= 0 {
+				continue
+			}
+			timer := time.NewTimer(delay)
+			select {
+			case <-f.ctx.Done():
+				timer.Stop()
+				return
+			case <-timer.C:
+			}
+			if f.ctx.Err() != nil {
+				return
+			}
+			if f.fcxUpdateWithLogErr() == nil {
+				break
+			}
+		}
+	}
+	if f.ctx.Err() != nil {
+		return
+	}
+	if f.interval > 0 {
+		f.pullLoop(false)
+	}
+}

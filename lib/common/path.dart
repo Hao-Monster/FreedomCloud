@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:flclashx/clash/agent_protocol.dart';
 import 'package:flclashx/common/common.dart';
 import 'package:path/path.dart';
 import 'package:path_provider/path_provider.dart';
@@ -12,6 +13,9 @@ class AppPath {
   }
 
   AppPath._internal() {
+    dataDir.future.ignore();
+    downloadDir.future.ignore();
+    tempDir.future.ignore();
     appDirPath = join(dirname(Platform.resolvedExecutable));
     getApplicationSupportDirectory().then((value) {
       dataDir.complete(value);
@@ -48,6 +52,9 @@ class AppPath {
       // privileged executable into a root-owned directory. User data stays put.
       return '/Library/Application Support/FlClashX/Core/FlClashCore';
     }
+    if (Platform.isWindows) {
+      return join(executableDirPath, "FreedomNetCore.exe");
+    }
     return join(executableDirPath, "FlClashCore$executableExtension");
   }
 
@@ -58,19 +65,25 @@ class AppPath {
 
   String get agentPath => join(
         executableDirPath,
-        "FlClashAgent$executableExtension",
+        Platform.isWindows
+            ? "FreedomNetAgent.exe"
+            : "FlClashAgent$executableExtension",
       );
 
   Future<String> get agentEndpointPath async =>
-      join(await homeDirPath, 'flclashx-agent-v1.json');
+      join(await homeDirPath, agentEndpointFileName);
 
-  Future<String> get helperTokenPath async =>
-      join(await homeDirPath, 'flclashx-helper-v1.token');
+  Future<String> get helperTokenPath async => join(
+        await homeDirPath,
+        Platform.isWindows
+            ? 'freedomnet-helper-v1.token'
+            : 'flclashx-helper-v1.token',
+      );
 
   String get windowsServiceDirectory {
     final programFiles =
         Platform.environment['ProgramFiles'] ?? r'C:\Program Files';
-    return join(programFiles, 'FlClashX Service');
+    return join(programFiles, 'FreedomNet Service');
   }
 
   String get windowsServiceHelperPath => join(
@@ -80,7 +93,7 @@ class AppPath {
 
   String get windowsServiceCorePath => join(
         windowsServiceDirectory,
-        'FlClashCore$executableExtension',
+        'FreedomNetCore$executableExtension',
       );
 
   Future<String> get downloadDirPath async {
@@ -95,7 +108,10 @@ class AppPath {
 
   Future<String> get lockFilePath async {
     final directory = await dataDir.future;
-    return join(directory.path, "FlClashX.lock");
+    return join(
+      directory.path,
+      Platform.isWindows ? "FreedomNet.lock" : "FlClashX.lock",
+    );
   }
 
   Future<String> get sharedPreferencesPath async {

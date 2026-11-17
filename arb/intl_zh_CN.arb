@@ -37,7 +37,7 @@
   "ru": "俄语",
   "zh_CN": "中文简体",
   "theme": "主题",
-  "themeDesc": "设置深色模式，调整色彩",
+  "themeDesc": "昼夜天象联动、玻璃通透度与点缀色",
   "override": "覆写",
   "overrideDesc": "覆写代理相关配置",
   "allowLan": "局域网代理",
@@ -102,7 +102,8 @@
   "auto": "自动",
   "light": "浅色",
   "dark": "深色",
-  "importFromURL": "从URL导入",
+  "importFromURL": "粘贴订阅链接，点击确定即可",
+  "pasteFromClipboard": "粘贴",
   "submit": "提交",
   "doYouWantToPass": "添加配置文件从",
   "create": "创建",
@@ -569,7 +570,7 @@
   "purchaseHistoryPage": "页码",
   "purchaseHistoryTotal": "总计",
   "purchaseGetCard": "获取礼品卡",
-  "purchaseGetCardDescription": "可联系以下任一微信号购买礼品卡或获取帮助。",
+  "purchaseGetCardDescription": "可通过自助发卡商店或在线人工客服购买礼品卡与获取协助。",
   "purchaseCardStore": "打开礼品卡商店",
   "purchaseOpenLinkFailed": "无法打开页面，请重试。",
   "purchaseRestoring": "正在恢复账户…",
@@ -587,9 +588,9 @@
   "purchaseUnsupportedAccount": "请使用普通用户账户兑换礼品卡。",
   "purchaseLogoutRemoteError": "已在此设备退出登录，但尚未确认服务器端注销结果。",
   "purchaseCodeFormatError": "请输入由 8–32 位字母和数字组成的兑换码。",
-  "purchaseChannelError": "礼品卡商店信息加载失败，仍可通过下方微信联系客服。",
+  "purchaseChannelError": "礼品卡商店信息加载失败，仍可通过下方在线客服获取协助。",
   "purchaseAvailablePlans": "可购买套餐",
-  "purchasePlansDescription": "价格按网站标价显示；币种及购买请联系下方微信确认，获取礼品卡后在此兑换。",
+  "purchasePlansDescription": "价格按网站标价显示；点击「去购买」前往自助发卡商店购卡，复制兑换码后返回本页核销。",
   "purchasePlansLoading": "正在加载套餐…",
   "purchasePlansEmpty": "暂无可购买的套餐。",
   "purchasePlansError": "套餐加载失败，请重试。",
@@ -625,6 +626,7 @@
   "tunDisableAction": "请求关闭",
   "tunErrorLegacyAgent": "请先退出旧版后台，再重新打开本版本",
   "tunErrorProfileRequired": "请先选择可读取且非空的配置，再重试连接",
+  "tunErrorAdapterCreate": "Windows 未能添加虚拟网卡，请稍后重新开启重试",
   "nodeOverviewCurrentProfile": "当前配置",
   "nodeOverviewAllProfiles": "全部配置",
   "nodeOverviewActive": "活动配置",
@@ -693,7 +695,11 @@
   "nodeOverviewIndependentTest": "独立延迟测试",
   "nodeOverviewFileSource": "配置文件 · {provider}",
   "@nodeOverviewFileSource": {
-    "placeholders": { "provider": { "type": "String" } }
+    "placeholders": {
+      "provider": {
+        "type": "String"
+      }
+    }
   },
   "nodeOverviewTestCurrent": "测试当前配置",
   "nodeOverviewTestAll": "测试全部节点延迟",
@@ -760,7 +766,45 @@
   "purchaseFilterAll": "全部套餐",
   "purchaseFilterPeriod": "周期订阅",
   "purchaseFilterOnetime": "按量流量包",
-  "purchaseAcquirePlanCode": "获取此套餐兑换码",
+  "purchaseAcquirePlanCode": "获取兑换码",
+  "purchasePlanFreeBadge": "免费试用",
+  "purchasePlanFreeHint": "免费体验",
+  "purchasePlanUnitPriceHint": "约 {price} / G",
+  "@purchasePlanUnitPriceHint": {
+    "placeholders": {
+      "price": {
+        "type": "String"
+      }
+    }
+  },
+  "purchaseSpecDevicesUnlimited": "设备数量：无限",
+  "purchaseSpecDevicesCount": "设备数量：{count} 台",
+  "@purchaseSpecDevicesCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "purchaseSpecDurationUnlimited": "使用时间：无限",
+  "purchaseSpecBillingCycle": "计费周期：{periods}",
+  "@purchaseSpecBillingCycle": {
+    "placeholders": {
+      "periods": {
+        "type": "String"
+      }
+    }
+  },
+  "purchaseSpecTrafficUntilUsed": "流量用完为止",
+  "purchaseSpecSpeedLimit": "速率上限：{speed} Mbps",
+  "@purchaseSpecSpeedLimit": {
+    "placeholders": {
+      "speed": {
+        "type": "int"
+      }
+    }
+  },
+  "purchaseSpecAllDevicesSupported": "支持所有类型设备",
   "purchasePlanSoldOut": "已售罄",
   "purchasePlanLowStock": "仅剩 {count} 席",
   "@purchasePlanLowStock": {
@@ -898,7 +942,7 @@
   "nodeOverviewUpdateSubscription": "更新订阅",
   "nodeOverviewUpdatingShort": "更新中",
   "nodeOverviewAddSubscription": "添加订阅",
-  "nodeOverviewQuickUse": "点击使用",
+  "nodeOverviewQuickUse": "一键连最快",
   "nodeOverviewSelectProfileTitle": "切换配置",
   "nodeOverviewProfileCountBadge": "共 {count} 个",
   "@nodeOverviewProfileCountBadge": {
@@ -927,5 +971,721 @@
         "type": "String"
       }
     }
-  }
+  },
+  "trafficUnlimited": "不限流量",
+  "subscriptionEternal": "长期有效",
+  "expiresOn": "到期于",
+  "dashboardClickUpdateSubscription": "点击更新订阅",
+  "dashboardAnnouncementBadge": "公告",
+  "dashboardNotSyncedYet": "同步时间：尚未同步",
+  "dashboardCurrentNodeLabel": "当前节点：{node}",
+  "@dashboardCurrentNodeLabel": {
+    "placeholders": {
+      "node": {
+        "type": "String"
+      }
+    }
+  },
+  "dashboardTotalNodesCount": "共 {count} 个节点",
+  "@dashboardTotalNodesCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "dashboardRuleOverrideCount": "规则覆写 {count}",
+  "@dashboardRuleOverrideCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "dashboardHwidNotSupported": "当前服务端未启用硬件标识 (HWID) 绑定",
+  "dashboardContactSupport": "联系支持",
+  "healthCheckTitle": "健康检查",
+  "healthCheckSubtitle": "检测配置、代理核心、流量接管与真实网络连通性",
+  "healthCheckDiagnoseAction": "诊断",
+  "healthCheckRecheck": "重新检查",
+  "healthCheckCancel": "取消检查",
+  "healthCheckChecking": "正在检查…",
+  "healthCheckCopySummary": "复制摘要",
+  "healthCheckCopied": "诊断摘要已复制到剪贴板",
+  "healthCheckExport": "导出脱敏报告",
+  "healthCheckExportDialogTitle": "导出脱敏诊断报告",
+  "healthCheckExportSuccess": "脱敏诊断报告已导出",
+  "healthCheckExportFailed": "诊断报告导出失败",
+  "healthCheckPrivacyNote": "导出文件仅含状态枚举与耗时，不含节点名、IP、订阅地址或日志。",
+  "healthCheckLastChecked": "上次检查 {time} · 用时 {elapsed}",
+  "@healthCheckLastChecked": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      },
+      "elapsed": {
+        "type": "String"
+      }
+    }
+  },
+  "healthLayerConfig": "配置与订阅",
+  "healthLayerCore": "代理核心",
+  "healthLayerTakeover": "流量接管",
+  "healthLayerNetwork": "网络链路",
+  "healthItemProfileSelected": "当前配置",
+  "healthItemSubscription": "订阅状态",
+  "healthItemRuntimeConfig": "运行配置生效",
+  "healthItemCoreResponsive": "Core 响应",
+  "healthItemProxyStarted": "代理开关状态",
+  "healthItemTunTakeover": "TUN 虚拟网卡",
+  "healthItemSystemProxy": "系统代理",
+  "healthItemTrafficTakeover": "接管结论",
+  "healthItemDirect": "本机直连外网",
+  "healthItemDns": "DNS 解析",
+  "healthItemOutbound": "当前节点出站",
+  "healthItemEndToEnd": "端到端实测",
+  "healthStatusRunning": "检查中",
+  "healthStatusPassed": "通过",
+  "healthStatusWarning": "警告",
+  "healthStatusFailed": "失败",
+  "healthStatusTimeout": "超时",
+  "healthStatusSkipped": "跳过",
+  "healthVerdictCheckingTitle": "正在逐层检测连接链路…",
+  "healthVerdictHealthyTitle": "连接正常",
+  "healthVerdictHealthySubtitle": "节点 {node} · 出站 {delay} ms{exitPart}",
+  "@healthVerdictHealthySubtitle": {
+    "placeholders": {
+      "node": {
+        "type": "String"
+      },
+      "delay": {
+        "type": "int"
+      },
+      "exitPart": {
+        "type": "String"
+      }
+    }
+  },
+  "healthVerdictHealthyDirectSubtitle": "当前为直连模式 · 本机外网 {delay} ms",
+  "@healthVerdictHealthyDirectSubtitle": {
+    "placeholders": {
+      "delay": {
+        "type": "int"
+      }
+    }
+  },
+  "healthVerdictCoreUnresponsive": "代理核心无响应，控制通道异常",
+  "healthVerdictProfileMissing": "未选择可用配置或本地配置文件缺失",
+  "healthVerdictSubscriptionExpired": "订阅已过期，节点将无法连接",
+  "healthVerdictSubscriptionExhausted": "订阅流量已用尽，请续费或更换配置",
+  "healthVerdictProxyNotStarted": "代理尚未启动，应用流量当前直连",
+  "healthVerdictTakeoverFailed": "应用流量未被接管，请开启 TUN 或修复系统代理",
+  "healthVerdictLocalNetworkDown": "本机物理网络不可用，与代理节点无关",
+  "healthVerdictOutboundFailed": "本机网络正常，但当前节点无法连通外网",
+  "healthVerdictTrafficBypassed": "外网可达，但探测连接未经过代理核心（流量绕过）",
+  "healthVerdictTunBypassedTitle": "TUN 虚拟网卡未接管流量，当前仅系统代理可用",
+  "healthVerdictEndToEndFailed": "端到端出口探测失败，请切换节点或检查规则",
+  "healthVerdictDnsFailed": "DNS 域名解析异常或遭到污染",
+  "healthVerdictWarningsTitle": "连接可用，但存在需关注的告警项",
+  "healthActionOpenProfiles": "前往配置页",
+  "healthActionOpenPurchase": "前往兑换续费",
+  "healthActionOpenProxies": "切换代理节点",
+  "healthActionOpenTun": "打开 TUN 设置",
+  "healthActionOpenNetwork": "打开网络设置",
+  "healthActionOpenDns": "打开 DNS 设置",
+  "healthActionStartProxy": "启动代理",
+  "healthActionRestartCore": "重启核心",
+  "healthDetailNoProfile": "尚未选择任何订阅配置",
+  "healthDetailProfileFileMissing": "本地配置文件缺失或为空，请重新更新订阅",
+  "healthDetailLocalProfile": "本地配置（无远程套餐额度信息）",
+  "healthDetailSubNeverSynced": "订阅尚未同步，建议先更新订阅",
+  "healthDetailSubNoMeta": "服务端未返回到期与流量信息",
+  "healthDetailSubHealthyEternal": "长期有效 · 不限流量",
+  "healthDetailSubHealthy": "订阅有效",
+  "healthDetailSubExpiringSoon": "剩余 {days} 天到期",
+  "@healthDetailSubExpiringSoon": {
+    "placeholders": {
+      "days": {
+        "type": "int"
+      }
+    }
+  },
+  "healthDetailSubTrafficLow": "流量已使用 {percent}%",
+  "@healthDetailSubTrafficLow": {
+    "placeholders": {
+      "percent": {
+        "type": "int"
+      }
+    }
+  },
+  "healthDetailSubDeviceLimit": "设备数量已达订阅上限",
+  "healthDetailSubExpired": "订阅已到期",
+  "healthDetailSubExhausted": "套餐流量已耗尽",
+  "healthDetailRuntimeSynced": "已加载（{count} 个策略组）",
+  "@healthDetailRuntimeSynced": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "healthDetailRuntimeMismatch": "当前配置尚未应用到运行核心",
+  "healthDetailCoreHealthy": "IPC 正常 · {mb} MB",
+  "@healthDetailCoreHealthy": {
+    "placeholders": {
+      "mb": {
+        "type": "String"
+      }
+    }
+  },
+  "healthDetailCoreSlow": "核心响应偏慢（> 500 ms）",
+  "healthDetailCoreFailed": "无法读取核心状态或控制接口超时",
+  "healthDetailProxyRunning": "运行中",
+  "healthDetailProxyStopped": "未启动",
+  "healthDetailSkipPrerequisite": "因前置检查未通过而跳过",
+  "healthDetailSkipProxyStopped": "代理未启动，跳过此项",
+  "healthDetailTunReadyElevated": "已就绪 · 管理员权限",
+  "healthDetailTunReady": "虚拟网卡已就绪",
+  "healthDetailTunDisabled": "未开启（按设置跳过）",
+  "healthDetailSysProxyDisabled": "未开启（按设置跳过）",
+  "healthDetailSysProxyUnsupported": "当前平台不适用注册表校验",
+  "healthDetailSysProxyHijacked": "系统代理已被其他软件关闭或改写",
+  "healthDetailSysProxyUnexpectedPac": "检测到残留 PAC 地址，可能抢占系统代理",
+  "healthDetailTakeoverBoth": "TUN 虚拟网卡 + 系统代理双接管",
+  "healthDetailTakeoverTun": "TUN 全局虚拟网卡接管",
+  "healthDetailTakeoverSysProxy": "系统代理接管",
+  "healthDetailTakeoverPartial": "仅单一通道生效，另一已开启接管项异常",
+  "healthDetailTakeoverNone": "TUN 与系统代理均未生效，应用流量未受接管",
+  "healthDetailDirectOk": "物理外网可达",
+  "healthDetailDirectSlow": "本机直连外网延迟偏高",
+  "healthDetailDirectFailed": "本机直连探测失败，请检查网卡、路由器或防火墙",
+  "healthDetailCoreDelayBusy": "批量测速繁忙，请稍后重新检查",
+  "healthDetailDnsOk": "域名解析正常",
+  "healthDetailDnsFakeIp": "Core DNS 接管 (fake-ip)",
+  "healthDetailDnsPoisoned": "解析返回黑洞/回环地址，疑似 DNS 污染",
+  "healthDetailDnsFailed": "域名解析失败或超时",
+  "healthDetailDirectMode": "当前处于直连模式 (Direct)",
+  "healthDetailOutboundDirectSelected": "策略组当前选中的是 DIRECT，不会经过代理节点",
+  "healthDetailOutboundRejectSelected": "策略组当前选中的是 REJECT，连接被阻断",
+  "healthDetailOutboundSlow": "节点 {node} 延迟偏慢",
+  "@healthDetailOutboundSlow": {
+    "placeholders": {
+      "node": {
+        "type": "String"
+      }
+    }
+  },
+  "healthDetailOutboundFailed": "节点 {node} 无法连通探测地址",
+  "@healthDetailOutboundFailed": {
+    "placeholders": {
+      "node": {
+        "type": "String"
+      }
+    }
+  },
+  "healthDetailOutboundProbeFallbackOk": "节点 {node} 测速地址受限，但端到端实测已连通",
+  "@healthDetailOutboundProbeFallbackOk": {
+    "placeholders": {
+      "node": {
+        "type": "String"
+      }
+    }
+  },
+  "healthDetailE2eVerified": "已验证经过代理{exitPart}",
+  "@healthDetailE2eVerified": {
+    "placeholders": {
+      "exitPart": {
+        "type": "String"
+      }
+    }
+  },
+  "healthDetailE2eDirectRule": "已进入核心（探测域名命中直连规则）",
+  "healthDetailE2eBypassed": "出口探测成功，但核心连接表中未见该请求",
+  "healthDetailE2eFailed": "真实路径出口请求全部超时或失败",
+  "healthExitCountryPart": " · 出口 {flag}",
+  "@healthExitCountryPart": {
+    "placeholders": {
+      "flag": {
+        "type": "String"
+      }
+    }
+  },
+  "healthVerdictCancelledTitle": "健康检查已取消",
+  "healthDetailCancelled": "已取消",
+  "globalOverride": "全局规则覆写",
+  "globalOverrideDesc": "跨订阅配置持久生效，切换或更新订阅无需重复编辑",
+  "enableGlobalOverride": "启用全局规则覆写",
+  "defaultProxyAutoTarget": "默认代理 (自动适配各配置)",
+  "localSplitMode": "国内与局域网智能分流",
+  "localSplitModeDesc": "当订阅未下发分流规则（裸配置）时自动补充国内直连与局域网绕过",
+  "localSplitMode_auto": "智能识别裸配置 (自动)",
+  "localSplitMode_always": "始终补充国内直连",
+  "localSplitMode_off": "关闭",
+  "overrideAutoSavedHint": "规则变更自动保存并即时热重载生效",
+  "healthActionReapplySystemProxy": "一键恢复系统代理",
+  "healthDetailSysProxyReadFailed": "无法读取系统代理设置",
+  "healthDetailSysProxyInvalidPort": "本地混合端口未启用 (mixed-port = 0)",
+  "healthDetailSysProxyNotApplied": "系统代理尚未写入本机设置",
+  "healthDetailSysProxyDisabledExternally": "系统代理开关处于关闭状态",
+  "healthDetailDnsStaleFakeIp": "检测到残留 Fake-IP 缓存，可能导致直连断网",
+  "healthDetailTunBypassedSystemProxyOk": "TUN 通道未接管流量，系统代理通道正常",
+  "nodeOverviewUpdateAllSubscriptions": "全部更新",
+  "nodeOverviewAllProfilesCount": "共 {count} 个配置",
+  "@nodeOverviewAllProfilesCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewExpiredCountBadge": "{count} 个已过期",
+  "@nodeOverviewExpiredCountBadge": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewExpiringSoonCountBadge": "{count} 个即将到期",
+  "@nodeOverviewExpiringSoonCountBadge": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewCurrentActiveProfile": "当前活动：{name}",
+  "@nodeOverviewCurrentActiveProfile": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewNoActiveProfile": "当前活动：未选择",
+  "nodeOverviewAllHealthCounts": "节点：可用 {available} / 已测 {tested} / 共 {total}",
+  "@nodeOverviewAllHealthCounts": {
+    "placeholders": {
+      "available": {
+        "type": "int"
+      },
+      "tested": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewGlobalMedian": "全局中位：{median}",
+  "@nodeOverviewGlobalMedian": {
+    "placeholders": {
+      "median": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewGlobalMedianAndBest": "中位延迟：{median} · 最快 {best}",
+  "@nodeOverviewGlobalMedianAndBest": {
+    "placeholders": {
+      "median": {
+        "type": "String"
+      },
+      "best": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewBandFast": "流畅 {count}",
+  "@nodeOverviewBandFast": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewBandSlow": "偏慢 {count}",
+  "@nodeOverviewBandSlow": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewBandFailed": "失败 {count}",
+  "@nodeOverviewBandFailed": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewBandUntested": "未测 {count}",
+  "@nodeOverviewBandUntested": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "subscriptionUrlEmptyError": "请先粘贴订阅链接",
+  "subscriptionUrlInvalidError": "未识别到有效的 http(s):// 订阅链接，请检查复制内容",
+  "subscriptionClipboardEmptyError": "剪贴板为空，请先复制订阅链接",
+  "subscriptionImportTimeoutError": "拉取订阅超时或网络不通，请检查网络连接后重试",
+  "subscriptionImportAuthOrNotFoundError": "订阅链接无效或已失效，请确认复制完整或联系服务商",
+  "subscriptionImportInvalidConfigError": "该链接不是有效的订阅配置（可能误粘了网页地址），请复制正确的订阅链接",
+  "subscriptionImportGenericError": "导入订阅失败，请检查订阅链接是否正确后重试",
+  "nodeOverviewProxyConnectedWithNode": "代理已开启 · 正在使用 {profile} · {node}",
+  "@nodeOverviewProxyConnectedWithNode": {
+    "placeholders": {
+      "profile": {
+        "type": "String"
+      },
+      "node": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewProxyConnected": "代理已开启 · 网络流量已接管",
+  "nodeOverviewProxyDisconnected": "代理未开启 · 点击右侧按钮或任一节点「使用」即可上网",
+  "nodeOverviewProxyStarting": "正在开启代理…",
+  "nodeOverviewProxyStopping": "正在关闭代理…",
+  "nodeOverviewTurnOnProxy": "开启代理",
+  "nodeOverviewTurnOffProxy": "关闭代理",
+  "nodeOverviewEmptyTitle": "还没有添加订阅配置",
+  "nodeOverviewEmptySubtitle": "粘贴订阅链接并点击确定，软件将自动测速并连接最快节点",
+  "nodeOverviewEmptyStepsHint": "① 添加订阅  ·  ② 自动测速  ·  ③ 一键连最快",
+  "nodeOverviewAvailableFilterEmpty": "当前没有测速可用的节点（可能尚未测速或节点全部超时）",
+  "nodeOverviewShowAllNodes": "显示全部节点",
+  "nodeOverviewAutoConnectedBest": "已自动连接最快节点：{profile} · {node}（{delay} ms）",
+  "@nodeOverviewAutoConnectedBest": {
+    "placeholders": {
+      "profile": {
+        "type": "String"
+      },
+      "node": {
+        "type": "String"
+      },
+      "delay": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewAutoSelectedExpiredWarning": "已选中节点 {node}，但该订阅已过期，请更换订阅或续费后点击更新订阅",
+  "@nodeOverviewAutoSelectedExpiredWarning": {
+    "placeholders": {
+      "node": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewAutoSelectedTrafficExhaustedWarning": "已选中节点 {node}，但该订阅剩余流量已用尽，请续费或更换订阅",
+  "@nodeOverviewAutoSelectedTrafficExhaustedWarning": {
+    "placeholders": {
+      "node": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewAutoSelectedAllFailedWarning": "已自动选中 {node}（当前节点测速均未连通，若无法上网请更新订阅或切换其他节点）",
+  "@nodeOverviewAutoSelectedAllFailedWarning": {
+    "placeholders": {
+      "node": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewSmartSelectTitle": "智能选择节点",
+  "nodeOverviewSmartSelectSubtitle": "体验更好",
+  "nodeOverviewSmartSelectCompact": "智能选路",
+  "nodeOverviewManualSelectTitle": "手动选择节点",
+  "nodeOverviewManualSelectSubtitle": "固定IP",
+  "nodeOverviewManualSelectCompact": "固定IP",
+  "nodeOverviewSmartInUse": "智能使用中",
+  "nodeOverviewProxyConnectedSmartWithNode": "代理已开启 · 智能选择：{profile} · {node}",
+  "@nodeOverviewProxyConnectedSmartWithNode": {
+    "placeholders": {
+      "profile": {
+        "type": "String"
+      },
+      "node": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewProxyConnectedSmart": "代理已开启 · 智能选择：{profile}（自动优选中）",
+  "@nodeOverviewProxyConnectedSmart": {
+    "placeholders": {
+      "profile": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewSwitchedToSmart": "已开启智能选择节点：{profile}",
+  "@nodeOverviewSwitchedToSmart": {
+    "placeholders": {
+      "profile": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewSwitchedToSmartWithNode": "已开启智能选择节点：{profile}（当前：{node}）",
+  "@nodeOverviewSwitchedToSmartWithNode": {
+    "placeholders": {
+      "profile": {
+        "type": "String"
+      },
+      "node": {
+        "type": "String"
+      }
+    }
+  },
+  "nodeOverviewAutoConnectedSmartBest": "已开启智能选择节点：{profile}（当前最快：{node} · {delay} ms）",
+  "@nodeOverviewAutoConnectedSmartBest": {
+    "placeholders": {
+      "profile": {
+        "type": "String"
+      },
+      "node": {
+        "type": "String"
+      },
+      "delay": {
+        "type": "int"
+      }
+    }
+  },
+  "nodeOverviewLockedManualNode": "已锁定固定节点：{profile} · {node}",
+  "@nodeOverviewLockedManualNode": {
+    "placeholders": {
+      "profile": {
+        "type": "String"
+      },
+      "node": {
+        "type": "String"
+      }
+    }
+  },
+  "expertMode": "大佬模式",
+  "noviceMode": "小白模式",
+  "goToPurchasePrompt": "还没有订阅？去购买 / 兑换",
+  "purchasePlansRetry": "重新加载套餐",
+  "purchasePlansErrorHint": "右侧账号登录、免费注册与礼品卡核销不受影响，可直接继续操作。",
+  "purchasePlanFeaturedBadge": "热销档位",
+  "purchasePlanBuyNow": "去购买",
+  "purchaseHeaderTrialBadge": "新客注册立享 2 GiB 体验 · 流量包永不过期",
+  "purchaseHeaderSyncedBadge": "高速节点已就绪",
+  "purchaseAuthTabLogin": "登录账户",
+  "purchaseAuthTabRegister": "免费注册领 2G",
+  "purchaseRegisterTrialBanner": "注册即赠 2 GiB 永久体验流量，自动导入高速节点并开启智能连接。",
+  "purchaseRegisterSubmit": "免费注册并同步节点",
+  "purchaseRegistering": "正在注册并开通…",
+  "purchasePasswordMinLength": "密码至少需要 8 位字符。",
+  "purchasePreloginCodeHint": "已买好卡密？可先粘贴于此，登录或注册后自动查验权益",
+  "purchaseHandoffTitle": "已打开「{plan}」购卡页",
+  "@purchaseHandoffTitle": {
+    "placeholders": {
+      "plan": {
+        "type": "String"
+      }
+    }
+  },
+  "purchaseHandoffDescription": "完成购卡并复制兑换码后，切回本窗口将自动识别并查验权益（不会自动核销）。",
+  "purchaseHandoffPasteAction": "粘贴并查询",
+  "purchaseOnlineSupport": "在线客服",
+  "purchaseBackupContactsLabel": "备用人工协助（微信号）",
+  "purchaseEmailExistsError": "该邮箱已注册，请直接切换到「登录账户」。",
+  "purchaseRegistrationClosedError": "当前站点暂未开放新用户注册。",
+  "purchaseRegisterWebRequiredError": "当前站点启用了邮箱验证或人机校验，请点击下方「前往网页注册」完成注册。",
+  "purchaseClipboardEmpty": "剪贴板中未检测到可用的兑换码",
+  "purchaseEmailDomainError": "当前站点暂不支持该邮箱域名，请更换常用邮箱或前往网页注册。",
+  "purchaseGmailAliasError": "当前站点不支持 Gmail 别名邮箱（含 + 号），请使用主邮箱地址。",
+  "appBrandName": "自由云",
+  "appBrandTagline": "旗舰级智能网络加速客户端",
+  "tributeDialogTitle": "开源致敬与特别鸣谢",
+  "tributeFlclashxBadge": "OPEN-SOURCE HERITAGE",
+  "tributeFlclashxTitle": "郑重声明：本项目基于开源项目 FlClashX 构建",
+  "tributeFlclashxBody": "自由云（FreedomNet）郑重声明：本软件基于开源项目 FlClashX（pluralplay/FlClashX）构建，承袭 FlClash 与 Mihomo（Clash.Meta）内核生态。谨向 FlClashX 原作者及全体上游开源贡献者致以最崇高的敬意与诚挚感谢。",
+  "tributeGeminiBadge": "ENGINEERING & DESIGN SUPPORT",
+  "tributeGeminiTitle": "特别鸣谢：Gemini 4 研发与设计支持",
+  "tributeGeminiBody": "郑重感谢 Gemini 4 为自由云（FreedomNet）的系统架构演进、商业级交互设计、代码工程重构与全链路自动化验证提供的核心技术支持。",
+  "brandDialogSubtitle": "品牌介绍与核心体验",
+  "brandShowcaseBadge": "FREEDOMNET · 官方旗舰客户端",
+  "brandShowcaseHeroTitle": "连接无界 · 疾速随行",
+  "brandShowcaseHeroBody": "自由云（FreedomNet）专注打造纯粹、稳定、低延迟的全球智能网络加速体验。无论跨境办公、AI 生产力协作还是高清流媒体娱乐，一键即达理想连接。",
+  "brandPillarSmartTitle": "智能选点 · 毫秒级感知",
+  "brandPillarSmartBody": "并发健康测速与直观色阶呈现，支持一键连最快、地区筛选与固定节点自由切换。",
+  "brandPillarModesTitle": "双模驾驭 · 即开即连",
+  "brandPillarModesBody": "「小白模式」清爽直观、系统级 TUN 与代理无缝协同；展开「大佬模式」即可掌控分流、连接与诊断细节。",
+  "brandPillarServiceTitle": "透明权益 · 安心续享",
+  "brandPillarServiceBody": "订阅流量、剩余比例与到期状态清晰可查，支持礼品卡核验兑换、多配置同步与专属客服协助。",
+  "purchaseForgotPassword": "忘记密码？",
+  "purchaseResetPasswordTitle": "重置密码",
+  "purchaseResetPasswordDescription": "输入注册邮箱并获取 6 位验证码，即可设置新密码。",
+  "purchaseEmailCode": "邮箱验证码",
+  "purchaseEmailCodeRequired": "请输入 6 位数字验证码",
+  "purchaseSendCode": "获取验证码",
+  "purchaseSendingCode": "发送中...",
+  "purchaseSendCodeCooldown": "{seconds}s 后重发",
+  "@purchaseSendCodeCooldown": {
+    "placeholders": {
+      "seconds": {
+        "type": "int"
+      }
+    }
+  },
+  "purchaseCodeSentNotice": "验证码已发送，请查收邮箱（含垃圾箱）。",
+  "purchaseInviteCode": "邀请码",
+  "purchaseInviteCodeOptionalToggle": "填写邀请码（选填）",
+  "purchaseInviteCodeRequired": "请输入邀请码",
+  "purchaseNewPassword": "新密码",
+  "purchaseResetPasswordSubmit": "确认重置密码",
+  "purchaseResettingPassword": "重置中...",
+  "purchaseBackToLogin": "返回登录",
+  "purchaseResetPasswordSuccess": "密码已重置，请使用新密码登录。",
+  "purchaseCaptchaRequiredNotice": "当前站点启用了人机校验，请前往网页完成验证。",
+  "purchaseOpenWebAuth": "前往网页完成",
+  "purchaseTosAgreementPrefix": "注册即表示同意",
+  "purchaseTosLinkLabel": "《服务条款》",
+  "purchaseInviteCodeRequiredError": "当前站点需要填写有效邀请码才能注册。",
+  "purchaseInviteCodeInvalidError": "邀请码无效或已过期，请核对后重试。",
+  "purchaseInvitationUnavailableError": "邀请功能暂不可用，请稍后重试。",
+  "purchaseEmailCodeInvalidError": "邮箱验证码无效或已过期，请重新获取。",
+  "purchaseEmailCodeLockedError": "验证码尝试次数过多，请稍后重新获取。",
+  "purchaseEmailCooldownError": "验证码发送过于频繁，请稍后再试。",
+  "purchaseEmailRateLimitedError": "发送次数已达上限，请稍后再试。",
+  "purchaseEmailVerifyDisabledError": "当前站点已关闭邮箱验证码功能。",
+  "purchaseMailUnavailableError": "邮件服务暂不可用，请联系客服或稍后重试。",
+  "purchaseCooldownWithSecondsError": "操作过于频繁，请在 {seconds} 秒后重试。",
+  "@purchaseCooldownWithSecondsError": {
+    "placeholders": {
+      "seconds": {
+        "type": "int"
+      }
+    }
+  },
+  "supportSheetTitle": "在线客服",
+  "supportStatusConnected": "已连接",
+  "supportStatusConnecting": "连接中",
+  "supportStatusOffline": "离线",
+  "supportNewConversation": "开启新对话",
+  "supportOpenExternalFallback": "浏览器打开",
+  "supportRefreshTooltip": "刷新消息",
+  "supportWelcomeFallbackTitle": "欢迎咨询自由云客服",
+  "supportWelcomeFallbackSubtitle": "有任何订阅、节点或礼品卡问题，欢迎随时留言。",
+  "supportTypingIndicator": "{name} 正在输入...",
+  "@supportTypingIndicator": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "supportTypingAnonymous": "客服",
+  "supportMessageSending": "发送中",
+  "supportMessageFailed": "发送失败",
+  "supportRetryAction": "重试",
+  "supportComposerHint": "输入问题，按 Enter 发送...",
+  "supportSendTooltip": "发送",
+  "supportConversationLockedNotice": "当前会话已结束，您可以开启新对话继续咨询。",
+  "supportNotConfiguredNotice": "在线客服通道暂未配置，您可以使用下方备用微信联系人工客服。",
+  "supportBackupWechatToggle": "备用微信",
+  "purchaseAcquireOpenSupport": "联系在线客服",
+  "includeInVpn": "纳入代理",
+  "excludeFromVpn": "绕过代理",
+  "whitelistModeDesc": "仅选中的应用走代理通道，其余应用全部直连。",
+  "blacklistModeDesc": "选中的应用直接联网，其余应用全部走代理通道。",
+  "goToSelected": "定位到已选",
+  "testAllDelay": "一键测速",
+  "collapseAll": "全部收起",
+  "expandAll": "全部展开",
+  "hwidNotSupported": "当前平台不支持设备硬件标识（HWID）绑定。",
+  "runtimeConfig": "运行配置",
+  "runtimeConfigNotAvailable": "暂无运行配置",
+  "coreUpdate": "内核更新",
+  "coreUpdateChecking": "正在检查更新...",
+  "coreUpdateDownloading": "正在下载更新...",
+  "coreUpdateAvailable": "发现新版本内核",
+  "coreUpdateSuccess": "内核更新成功",
+  "coreUpdateFailed": "内核更新失败",
+  "coreStatusRunning": "运行中",
+  "coreStatusRestarting": "正在重启",
+  "coreStatusStopped": "已停止",
+  "restartCore": "重启核心",
+  "day": "天",
+  "daysGenitive": "天",
+  "hour": "小时",
+  "hoursPlural": "小时",
+  "hoursGenitive": "小时",
+  "addProfile": "添加配置",
+  "traffic": "流量",
+  "newDashboard": "简洁模式",
+  "untilDate": "有效期至",
+  "remaining": "剩余",
+  "remainingSingular": "剩余",
+  "remainingPlural": "剩余",
+  "qrNotFound": "未识别到二维码",
+  "successTitle": "操作成功",
+  "sentSuccessfullyMessage": "发送成功",
+  "errorTitle": "错误",
+  "invalidQrMessage": "无效的二维码",
+  "sendToTvTitle": "发送到电视",
+  "addFromPhoneTitle": "从手机导入",
+  "addFromPhoneSubtitle": "使用手机扫码导入订阅",
+  "subscriptionUnlimited": "永久有效",
+  "updated": "已更新",
+  "selectProfile": "选择配置",
+  "sendToTv": "发送到电视",
+  "receiveSubscriptionTitle": "接收订阅配置",
+  "settingsSendDeviceDataTitle": "发送设备标识（HWID）",
+  "settingsSendDeviceDataSubtitle": "向订阅服务商发送设备标识、客户端版本与设备名称",
+  "renewSubscription": "续费订阅",
+  "buyExtraTraffic": "增购流量",
+  "themeSkyConsoleSection": "昼夜天象联动",
+  "themeSkyModeFollow": "随连接切换",
+  "themeSkyModeFollowDesc": "连接成功展现晴朗白天，断开回归深邃星夜",
+  "themeSkyModeNight": "常驻星夜",
+  "themeSkyModeNightDesc": "连接后依然保持深邃护眼的暗夜星空",
+  "themeSkyModeDay": "常驻晴空",
+  "themeSkyModeDayDesc": "未连接时也保持清亮通透的晴朗蓝天",
+  "themeSkyStatusDayConnected": "晴朗白天 · 代理已连接",
+  "themeSkyStatusConnecting": "晨曦微光 · 正在连接",
+  "themeSkyStatusNightDisconnected": "深邃黑夜 · 代理未连接",
+  "themeSkyStatusLockedNight": "常驻星夜 · 已锁定暗夜天象",
+  "themeSkyStatusLockedDay": "常驻晴空 · 已锁定晴朗天象",
+  "themeCustomBgNotice": "当前订阅附带自定义壁纸",
+  "themeIgnoreCustomBgLabel": "优先使用昼夜天象背景",
+  "themeAtmosphereSection": "天空质感与动效",
+  "themeGlassPresetLabel": "卡片毛玻璃通透度",
+  "themeGlassPresetAiry": "通透",
+  "themeGlassPresetBalanced": "均衡",
+  "themeGlassPresetSolid": "沉稳",
+  "themeSkyAmbientAnimation": "流云与星芒动态",
+  "themeSkyAmbientAnimationDesc": "关闭后仍保留连接日出日落过渡，平时静止省电",
+  "themeTextScaleDefaultDesc": "跟随系统默认 (100%)",
+  "themeSkyStatusCustomBgActive": "订阅壁纸生效中 · 同步界面明暗",
+  "themeAtmosphereCustomBgHint": "当前正在使用订阅自定义壁纸，开启上方「优先使用昼夜天象背景」后可调节毛玻璃与流云动效",
+  "tvSyncCouldNotGetIp": "无法获取局域网 IP 地址",
+  "tvSyncApplying": "正在接收手机发来的配置…",
+  "tvSyncSuccess": "配置添加成功",
+  "tvSyncFailed": "添加配置失败",
+  "tvSyncScanQrHint": "请使用手机相机扫描二维码",
+  "tvSyncWebPageTitle": "自由云 — 扫码导入订阅",
+  "tvSyncWebHeading": "导入订阅配置",
+  "tvSyncWebSubtitle": "粘贴订阅链接并点击「发送」，配置将自动同步到当前设备。",
+  "tvSyncWebPaste": "粘贴",
+  "tvSyncWebSend": "发送",
+  "tvSyncWebEmptyUrl": "请先粘贴订阅链接",
+  "tvSyncWebSending": "正在发送…",
+  "tvSyncWebRejected": "设备拒绝了该订阅链接",
+  "tvSyncWebUnreachable": "无法连接到接收端设备",
+  "tvSyncWebApplying": "设备正在导入订阅配置…",
+  "tvSyncWebSuccess": "✅ 导入完成！订阅已添加到设备",
+  "tvSyncWebErrorPrefix": "❌ 导入失败：",
+  "tvSyncWebReceived": "设备已收到链接，正在处理…",
+  "tvSyncWebConnectionLost": "与接收端设备的连接已断开",
+  "purchaseSafetyTitle": "官方安全购卡保障 · 7×24 小时人工在线",
+  "purchaseSafetyBody": "为了你的网络隐私与安全，购买请直接联系客服即可",
+  "purchaseSafetyTagOfficial": "官方直营防伪",
+  "purchaseSafetyTagFunds": "资金安全护航",
+  "purchaseSafetyTag24h": "全天候秒级响应"
 }

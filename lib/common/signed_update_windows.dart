@@ -26,7 +26,7 @@ function Manifest([string]$file) {
   if ($pin -cne $job.pin) { throw 'Release signer does not match compiled publisher identity' }
   $cms.CheckSignature($true)
   $m = [Text.Encoding]::UTF8.GetString($cms.ContentInfo.Content) | ConvertFrom-Json
-  if ($m.schema -ne 1 -or $m.format -notin @('portable-zip','inno-exe') -or $m.entry -cne 'FlClashX.exe') { throw 'Unsupported release manifest' }
+  if ($m.schema -ne 1 -or $m.format -notin @('portable-zip','inno-exe') -or $m.entry -cne 'FreedomNet.exe') { throw 'Unsupported release manifest' }
   if ($m.sha256 -notmatch '^[a-fA-F0-9]{64}$') { throw 'Invalid package identity' }
   return $m
 }
@@ -50,7 +50,7 @@ function Preflight {
 }
 function PortablePreflight {
   Preflight
-  foreach ($name in @('FlClashHelperService','FlClashStrictBroker','FlClashStrictCallout')) {
+  foreach ($name in @('FreedomNetHelperService','FlClashStrictBroker','FlClashStrictCallout')) {
     if (Get-Service -Name $name -ErrorAction SilentlyContinue) { throw 'Installed privileged services detected. Use a signed complete installer; portable update cannot replace the service trust chain.' }
   }
 }
@@ -85,7 +85,7 @@ function VerifyPointer($pointer) {
     NoLinks $path
     if ((Hash $path) -ine $record.sha256) { throw 'Previous installation changed; automatic rollback refused' }
   }
-  return Join-Path $pointer.directory 'FlClashX.exe'
+  return Join-Path $pointer.directory 'FreedomNet.exe'
 }
 function VerifyInstaller([string]$path, $record) {
   NoLinks $path
@@ -208,6 +208,64 @@ try {
     InstallerPointer @{directory=$directory;role='rollback'} | Out-Null
     exit 0
   }
+  if ($job.action -eq 'stageEd25519Installer') {
+    Preflight
+    if ($job.targetSha256 -notmatch '^[a-fA-F0-9]{64}$' -or $job.targetSize -le 0 -or $job.targetSize -gt 2147483648) { throw 'Invalid Ed25519 target metadata' }
+    NoLinks $job.archive
+    if ((Get-Item -LiteralPath $job.archive).Length -ne $job.targetSize -or (Hash $job.archive) -ine $job.targetSha256) { throw 'Installer integrity mismatch' }
+    if ($job.pin -match '^[a-fA-F0-9]{64}$') {
+      $signature = Get-AuthenticodeSignature -LiteralPath $job.archive
+      if ($signature.Status -ne 'Valid') { throw 'Installer Authenticode signature is not trusted' }
+      $sha = [Security.Cryptography.SHA256]::Create()
+      try { $pin = [BitConverter]::ToString($sha.ComputeHash($signature.SignerCertificate.RawData)).Replace('-','') } finally { $sha.Dispose() }
+      if ($pin -cne $job.pin) { throw 'Installer publisher differs from the compiled release identity' }
+    }
+    $cache = Join-Path $root 'ed25519-installers'
+    [IO.Directory]::CreateDirectory($cache) | Out-Null
+    NoLinks $cache
+    $directory = Join-Path $cache $job.targetSha256.ToLowerInvariant()
+    if (!(Test-Path -LiteralPath $directory)) {
+      $stage = Join-Path $cache ('.staging-' + [guid]::NewGuid().ToString('N'))
+      [IO.Directory]::CreateDirectory($stage) | Out-Null
+      Copy-Item -LiteralPath $job.archive -Destination (Join-Path $stage 'setup.exe')
+      if ((Hash (Join-Path $stage 'setup.exe')) -ine $job.targetSha256) { throw 'Staged installer hash mismatch' }
+      [IO.Directory]::Move($stage, $directory)
+    }
+    exit 0
+  }
+  if ($job.action -eq 'applyEd25519Installer') {
+    Preflight
+    if ($job.targetSha256 -notmatch '^[a-fA-F0-9]{64}$') { throw 'Invalid Ed25519 target hash' }
+    $lock = [IO.File]::Open((Join-Path $root 'transaction.lock'),'OpenOrCreate','ReadWrite','None')
+    try {
+      $setupPath = Join-Path (Join-Path (Join-Path $root 'ed25519-installers') $job.targetSha256.ToLowerInvariant()) 'setup.exe'
+      NoLinks $setupPath
+      if ((Get-Item -LiteralPath $setupPath).Length -ne $job.targetSize -or (Hash $setupPath) -ine $job.targetSha256) { throw 'Staged installer integrity mismatch' }
+      if ($job.pin -match '^[a-fA-F0-9]{64}$') {
+        $signature = Get-AuthenticodeSignature -LiteralPath $setupPath
+        if ($signature.Status -ne 'Valid') { throw 'Installer Authenticode signature is not trusted' }
+        $sha = [Security.Cryptography.SHA256]::Create()
+        try { $pin = [BitConverter]::ToString($sha.ComputeHash($signature.SignerCertificate.RawData)).Replace('-','') } finally { $sha.Dispose() }
+        if ($pin -cne $job.pin) { throw 'Installer publisher differs from the compiled release identity' }
+      }
+      $installDirectory = [IO.Path]::GetDirectoryName($job.currentExe)
+      NoLinks $installDirectory
+      $parent = Get-Process -Id $job.parentPid -ErrorAction SilentlyContinue
+      if ($parent -and !$parent.WaitForExit(60000)) { throw 'Application did not stop; installer not launched' }
+      AtomicJson (Join-Path $root 'last-result.json') @{state='installing';time=[DateTime]::UtcNow.ToString('o');mode='ed25519'}
+      $hold = [IO.File]::Open($setupPath,'Open','Read','Read')
+      try {
+        if ((Hash $setupPath) -ine $job.targetSha256) { throw 'Staged installer changed before launch' }
+        $arguments = '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP- /NOCLOSEAPPLICATIONS /NORESTARTAPPLICATIONS /FCXUPDATE /DIR="' + $installDirectory + '"'
+        $process = Start-Process -FilePath $setupPath -ArgumentList $arguments -Verb RunAs -WindowStyle Hidden -PassThru
+        $process.WaitForExit()
+        if ($process.ExitCode -ne 0) { throw ('Inno installer failed with exit code ' + $process.ExitCode) }
+      } finally { $hold.Dispose() }
+      Start-Process -FilePath $job.currentExe -WorkingDirectory $installDirectory | Out-Null
+      AtomicJson (Join-Path $root 'last-result.json') @{state='installer-completed-awaiting-user-acceptance';time=[DateTime]::UtcNow.ToString('o');mode='ed25519'}
+    } finally { $lock.Dispose() }
+    exit 0
+  }
   if ($job.action -in @('applyInstaller','rollbackInstaller')) { RunInstallerUpdate; exit 0 }
   if ($job.action -eq 'stage') {
     PortablePreflight
@@ -221,7 +279,7 @@ try {
       $expected[$name] = $record; $total += $record.size
       if ($total -gt 8589934592) { throw 'Expanded package exceeds limit' }
     }
-    foreach ($required in @('FlClashX.exe','FlClashCore.exe','FlClashAgent.exe','FlClashHelperService.exe')) {
+    foreach ($required in @('FreedomNet.exe','FreedomNetCore.exe','FreedomNetAgent.exe','FreedomNetHelperService.exe')) {
       if (!$expected.ContainsKey($required)) { throw 'Not a complete application package' }
     }
     $versions = Join-Path $root 'versions'
@@ -310,7 +368,7 @@ try {
     Copy-Item -LiteralPath $PSCommandPath -Destination (Join-Path $root 'launch.ps1') -Force
     AtomicJson (Join-Path $root 'launch.json') @{action='launch';root=$root;pin=$job.pin}
     $shell = New-Object -ComObject WScript.Shell
-    $shortcut = $shell.CreateShortcut((Join-Path ([Environment]::GetFolderPath('Desktop')) 'FreedomCloud Updated.lnk'))
+    $shortcut = $shell.CreateShortcut((Join-Path ([Environment]::GetFolderPath('Desktop')) 'FreedomNet Updated.lnk'))
     $shortcut.TargetPath = (Join-Path $PSHOME 'powershell.exe')
     $shortcut.Arguments = '-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "' + (Join-Path $root 'launch.ps1') + '" "' + (Join-Path $root 'launch.json') + '"'
     $shortcut.WorkingDirectory = $root

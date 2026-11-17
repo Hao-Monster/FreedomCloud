@@ -49,8 +49,9 @@ type tunSchema struct {
 }
 
 type ChangeProxyParams struct {
-	GroupName *string `json:"group-name"`
-	ProxyName *string `json:"proxy-name"`
+	GroupName        *string `json:"group-name"`
+	ProxyName        *string `json:"proxy-name"`
+	CloseConnections *bool   `json:"close-connections,omitempty"`
 }
 
 type TestDelayParams struct {
@@ -119,6 +120,7 @@ const (
 	configureStrictIngressMethod   Method = "configureStrictIngress"
 	setUiActiveMethod              Method = "setUiActive"
 	setScreenActiveMethod          Method = "setScreenActive"
+	setRequestsActiveMethod        Method = "setRequestsActive"
 )
 
 type Method string

@@ -5,6 +5,7 @@ import 'package:flclashx/enum/enum.dart';
 import 'package:flclashx/models/models.dart';
 import 'package:flclashx/providers/config.dart';
 import 'package:flclashx/providers/tun.dart';
+import 'package:flclashx/views/tools/health_check_view.dart';
 import 'package:flclashx/widgets/tun_status.dart';
 import 'package:flclashx/state.dart';
 import 'package:flclashx/widgets/widgets.dart';
@@ -107,8 +108,11 @@ class TUNItem extends ConsumerWidget {
         title: Text(appLocalizations.tun),
         subtitle: Text(tunStatusLabel(runtime,
           waiting: enable && globalState.appState.runTime == null)),
-        trailing: TunStatusSwitch(runtime: runtime,
-          onChanged: globalState.appController.setTunEnabled),
+        trailing: TunStatusSwitch(
+          runtime: runtime,
+          onChanged: globalState.appController.setTunEnabled,
+          onDiagnose: () => openHealthCheck(context),
+        ),
       );
     }
 
@@ -296,7 +300,18 @@ class BypassDomainItem extends StatelessWidget {
 
   void _initActions(BuildContext context, WidgetRef ref) {
     WidgetsBinding.instance.addPostFrameCallback((timeStamp) {
-      context.commonScaffoldState?.actions = [
+      if (!context.mounted ||
+          context.findAncestorWidgetOfExactType<AdaptiveSheetScaffold>() !=
+              null) {
+        return;
+      }
+      final scaffoldState = context.commonScaffoldState;
+      if (scaffoldState == null ||
+          !scaffoldState.mounted ||
+          ModalRoute.of(scaffoldState.context) != ModalRoute.of(context)) {
+        return;
+      }
+      scaffoldState.actions = [
         IconButton(
           onPressed: () async {
             final res = await globalState.showMessage(
@@ -351,6 +366,45 @@ class BypassDomainItem extends StatelessWidget {
         ),
       ),
     );
+}
+
+String _localSplitModeText(LocalSplitMode mode) => switch (mode) {
+      LocalSplitMode.auto => appLocalizations.localSplitMode_auto,
+      LocalSplitMode.always => appLocalizations.localSplitMode_always,
+      LocalSplitMode.off => appLocalizations.localSplitMode_off,
+    };
+
+class LocalSplitModeItem extends ConsumerWidget {
+  const LocalSplitModeItem({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final localSplitMode = ref.watch(
+      networkSettingProvider.select((state) => state.localSplitMode),
+    );
+    return ListItem<LocalSplitMode>.options(
+      title: Text(appLocalizations.localSplitMode),
+      subtitle: Text(_localSplitModeText(localSplitMode)),
+      delegate: OptionsDelegate<LocalSplitMode>(
+        title: appLocalizations.localSplitMode,
+        options: LocalSplitMode.values,
+        onChanged: (value) {
+          if (value == null || value == localSplitMode) {
+            return;
+          }
+          ref.read(networkSettingProvider.notifier).updateState(
+                (state) => state.copyWith(
+                  localSplitMode: value,
+                ),
+              );
+          globalState.appController.setupClashConfigDebounce();
+          globalState.appController.savePreferencesDebounce();
+        },
+        textBuilder: _localSplitModeText,
+        value: localSplitMode,
+      ),
+    );
+  }
 }
 
 class RouteModeItem extends ConsumerWidget {
@@ -457,10 +511,9 @@ final networkItems = [
       if (system.isDesktop) const TUNItem(),
       if (Platform.isMacOS) const AutoSetSystemDnsItem(),
       const TunStackItem(),
-      if (!system.isDesktop) ...[
-        const RouteModeItem(),
-        const RouteAddressItem(),
-      ]
+      const LocalSplitModeItem(),
+      const RouteModeItem(),
+      const RouteAddressItem(),
     ],
   ),
 ];
@@ -470,7 +523,18 @@ class NetworkListView extends ConsumerWidget {
 
   void _initActions(BuildContext context, WidgetRef ref) {
     WidgetsBinding.instance.addPostFrameCallback((timeStamp) {
-      context.commonScaffoldState?.actions = [
+      if (!context.mounted ||
+          context.findAncestorWidgetOfExactType<AdaptiveSheetScaffold>() !=
+              null) {
+        return;
+      }
+      final scaffoldState = context.commonScaffoldState;
+      if (scaffoldState == null ||
+          !scaffoldState.mounted ||
+          ModalRoute.of(scaffoldState.context) != ModalRoute.of(context)) {
+        return;
+      }
+      scaffoldState.actions = [
         IconButton(
           onPressed: () async {
             final res = await globalState.showMessage(
@@ -489,7 +553,9 @@ class NetworkListView extends ConsumerWidget {
                 );
             ref.read(patchClashConfigProvider.notifier).updateState(
                   (state) => state.copyWith(
-                    tun: defaultTun,
+                    tun: system.isDesktop
+                        ? desktopDefaultClashConfig().tun
+                        : defaultTun,
                   ),
                 );
           },

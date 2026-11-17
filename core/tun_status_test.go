@@ -88,6 +88,11 @@ func TestTunStatusWireIsBoundedAndIndependentFromPendingPreference(t *testing.T)
 	if err := json.Unmarshal(encoded, &wire); err != nil {
 		t.Fatal(err)
 	}
+	if wire["corePid"] != float64(status.CorePID) || status.CorePID <= 0 || wire["tunAttempt"] != float64(status.TunAttempt) {
+		t.Fatalf("missing diagnostic identity: %s", encoded)
+	}
+	delete(wire, "corePid")
+	delete(wire, "tunAttempt")
 	if len(wire) > 11 || wire["schemaVersion"] != float64(1) || len(status.CoreInstanceID) != 32 {
 		t.Fatalf("invalid wire: %s", encoded)
 	}
