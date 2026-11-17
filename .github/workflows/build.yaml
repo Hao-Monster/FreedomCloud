@@ -10,7 +10,7 @@ env:
   WINDOWS_FLUTTER_VERSION: "3.41.7"
   WINDOWS_FLUTTER_ARM_COMMIT: "e4cb8ffd9882e8db5edb7ab356205630f863c1e0"
   WINDOWS_RUST_TOOLCHAIN: "1.98.1"
-  WINDOWS_INNO_SETUP_VERSION: "6.7.3"
+  WINDOWS_INNO_SETUP_VERSION: "6.7.1"
 
 jobs:
   preflight:
@@ -99,6 +99,7 @@ jobs:
       - name: Setup Rust for Windows ARM64
         if: startsWith(matrix.os, 'windows-11-arm')
         run: |
+          git config --global core.longpaths true
           Invoke-WebRequest -Uri "https://win.rustup.rs/aarch64" -OutFile rustup-init.exe
           .\rustup-init.exe -y --default-toolchain $env:WINDOWS_RUST_TOOLCHAIN
           $cargoPath = "$env:USERPROFILE\.cargo\bin"
@@ -240,6 +241,12 @@ jobs:
         if: matrix.platform == 'windows'
         run: |
           choco install innosetup --version $env:WINDOWS_INNO_SETUP_VERSION -y --no-progress
+          if ($LASTEXITCODE -ne 0) {
+            choco install innosetup -y --no-progress
+          }
+          if (-not (Test-Path "C:\Program Files (x86)\Inno Setup 6\ISCC.exe")) {
+            throw "Inno Setup ISCC.exe not found after installation"
+          }
           echo "C:\Program Files (x86)\Inno Setup 6" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
       - name: Setup
