@@ -1159,14 +1159,74 @@ func handleSetState(params string) {
 	}
 }
 
+func canonicalizePathForContainment(target string) (string, bool) {
+	if target == "" || strings.ContainsRune(target, 0) {
+		return "", false
+	}
+	abs, err := filepath.Abs(target)
+	if err != nil {
+		return "", false
+	}
+	abs = filepath.Clean(abs)
+	var missing []string
+	curr := abs
+	for {
+		if _, lstatErr := os.Lstat(curr); lstatErr == nil {
+			resolved, evalErr := filepath.EvalSymlinks(curr)
+			if evalErr != nil {
+				return "", false
+			}
+			for i := len(missing) - 1; i >= 0; i-- {
+				resolved = filepath.Join(resolved, missing[i])
+			}
+			return normalizeComparablePath(resolved), true
+		} else if !os.IsNotExist(lstatErr) {
+			return "", false
+		}
+		parent := filepath.Dir(curr)
+		if parent == curr {
+			return "", false
+		}
+		missing = append(missing, filepath.Base(curr))
+		curr = parent
+	}
+}
+
+// resolveSafeConfigPath enforces canonical containment under constant.Path.HomeDir()
+// regardless of build tags such as `cmfa` where constant.Path.IsSafePath returns true.
+func resolveSafeConfigPath(path string) (string, bool) {
+	if path == "" || strings.ContainsRune(path, 0) {
+		return "", false
+	}
+	home := strings.TrimSpace(constant.Path.HomeDir())
+	if home == "" {
+		return "", false
+	}
+	canonHome, ok := canonicalizePathForContainment(home)
+	if !ok {
+		return "", false
+	}
+	resolved := constant.Path.Resolve(path)
+	canonTarget, ok := canonicalizePathForContainment(resolved)
+	if !ok {
+		return "", false
+	}
+	rel, err := filepath.Rel(canonHome, canonTarget)
+	if err != nil || rel == "." || !filepath.IsLocal(rel) {
+		return "", false
+	}
+	return canonTarget, true
+}
+
 func handleGetConfig(path string) (*config.RawConfig, error) {
 	if path == "fcx://runtime" {
 		return runtimeConfigSnapshot()
 	}
-	if !constant.Path.IsSafePath(path) {
+	safePath, ok := resolveSafeConfigPath(path)
+	if !constant.Path.IsSafePath(path) || !ok {
 		return nil, constant.Path.ErrNotSafePath(path)
 	}
-	bytes, err := readFile(path)
+	bytes, err := readFile(safePath)
 	if err != nil {
 		return nil, err
 	}

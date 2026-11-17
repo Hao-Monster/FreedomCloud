@@ -9,6 +9,7 @@ import 'package:flclashx/common/ed25519_verify.dart';
 import 'package:flclashx/common/path.dart';
 import 'package:flclashx/common/signed_update_unix.dart';
 import 'package:flclashx/common/signed_update_windows.dart';
+import 'package:flclashx/services/xboard_bootstrap.dart';
 import 'package:path/path.dart' as p;
 
 /// Summary returned when a newer signed update manifest is verified.
@@ -68,6 +69,17 @@ class SignedUpdate {
     if (feed.isNotEmpty) {
       final parsed = Uri.tryParse(feed);
       return parsed == null ? const [] : <Uri>[parsed];
+    }
+    final dynamicOrigins =
+        TransportMirrorPool.shared.orderedOrigins(capability: 'update');
+    if (dynamicOrigins.isNotEmpty) {
+      return dynamicOrigins
+          .map(
+            (origin) => origin.replace(
+              path: '/api/v1/client/releases/stable/latest.json',
+            ),
+          )
+          .toList(growable: false);
     }
     return defaultManifestFeedUrls.map(Uri.parse).toList(growable: false);
   }

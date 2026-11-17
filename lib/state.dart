@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:ffi' show Pointer;
-import 'dart:io' show File, Platform;
+import 'dart:io' show File, HttpOverrides, Platform;
 import 'dart:typed_data' show BytesBuilder;
 
 import 'package:animations/animations.dart';
@@ -13,6 +13,8 @@ import 'package:flclashx/common/theme.dart';
 import 'package:flclashx/enum/enum.dart';
 import 'package:flclashx/l10n/l10n.dart';
 import 'package:flclashx/plugins/service.dart';
+import 'package:flclashx/services/xboard_api.dart';
+import 'package:flclashx/services/xboard_bootstrap.dart';
 import 'package:flclashx/widgets/dialog.dart';
 import 'package:flclashx/widgets/scaffold.dart';
 import 'package:flclashx/widgets/tactile_proxy_switch.dart';
@@ -624,6 +626,46 @@ class GlobalState {
     );
     await _initDynamicColor();
     await init();
+    unawaited(refreshBootstrapInBackground());
+  }
+
+  Future<VerifiedBootstrapConfig?>? _bootstrapRefreshInFlight;
+
+  /// Non-blocking startup bootstrap refresh with a bounded timeout and silent
+  /// fallback to embedded Stage-1 origins when offline or unverified.
+  Future<VerifiedBootstrapConfig?> refreshBootstrapInBackground({
+    @visibleForTesting DioXboardApi Function()? apiFactory,
+    Duration timeout = const Duration(seconds: 5),
+  }) {
+    final existing = _bootstrapRefreshInFlight;
+    if (existing != null) {
+      return existing;
+    }
+    final api = (apiFactory ??
+        () => DioXboardApi(
+              mirrorPool: TransportMirrorPool.shared,
+              shouldFallbackToDirect: () =>
+                  HttpOverrides.current is FlClashHttpOverrides &&
+                  isAppStateInitialized &&
+                  isConfigInitialized &&
+                  FlClashHttpOverrides.handleFindProxy(
+                    TransportMirrorPool.shared.selectOriginForMutation(
+                      capability: 'api',
+                    ),
+                  ).startsWith('PROXY '),
+            ))();
+    final future = () async {
+      try {
+        return await api.refreshBootstrap().timeout(timeout);
+      } catch (_) {
+        return null;
+      } finally {
+        api.close();
+        _bootstrapRefreshInFlight = null;
+      }
+    }();
+    _bootstrapRefreshInFlight = future;
+    return future;
   }
 
   Future<void> _initDynamicColor() async {

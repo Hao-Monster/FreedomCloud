@@ -153,3 +153,49 @@ func TestGetConfigActionReturnsStringErrorAndRequiresInit(t *testing.T) {
 		t.Fatalf("expected non-empty string error in ActionResult.data, got %T %#v (payload=%s)", errWire["data"], errWire["data"], string(errPayload))
 	}
 }
+
+func TestGetConfigAcceptsProfileInsideHomeAndRejectsTraversalOrSymlinkEscape(t *testing.T) {
+	previousHome := constant.Path.HomeDir()
+	t.Cleanup(func() { constant.SetHomeDir(previousHome) })
+
+	root := t.TempDir()
+	home := filepath.Join(root, "home")
+	validProfile := filepath.Join(home, "profiles", "valid.yaml")
+	outside := filepath.Join(root, "outside.yaml")
+	if err := os.MkdirAll(filepath.Dir(validProfile), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(validProfile, []byte("port: 7890\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(outside, []byte("port: 7891\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	constant.SetHomeDir(home)
+
+	cfg, err := handleGetConfig(validProfile)
+	if err != nil || cfg == nil || cfg.Port != 7890 {
+		t.Fatalf("expected valid profile inside HomeDir to load, got cfg=%v err=%v", cfg, err)
+	}
+	relCfg, err := handleGetConfig(filepath.Join("profiles", "valid.yaml"))
+	if err != nil || relCfg == nil || relCfg.Port != 7890 {
+		t.Fatalf("expected relative profile inside HomeDir to load, got cfg=%v err=%v", relCfg, err)
+	}
+	if _, err := handleGetConfig(filepath.Join(home, "..", "outside.yaml")); err == nil {
+		t.Fatal("expected traversal path outside HomeDir to be rejected")
+	}
+	if _, err := handleGetConfig("../outside.yaml"); err == nil {
+		t.Fatal("expected relative traversal path outside HomeDir to be rejected")
+	}
+	if _, err := handleGetConfig(home); err == nil {
+		t.Fatal("expected HomeDir directory itself to be rejected")
+	}
+
+	escapeLink := filepath.Join(home, "profiles", "escape.yaml")
+	if err := os.Symlink(outside, escapeLink); err != nil {
+		t.Skipf("symlink creation unavailable in this environment: %v", err)
+	}
+	if _, err := handleGetConfig(escapeLink); err == nil {
+		t.Fatal("expected symlink inside HomeDir pointing outside to be rejected")
+	}
+}

@@ -9,6 +9,7 @@ import 'package:flclashx/providers/providers.dart';
 import 'package:flclashx/providers/purchase_support_provider.dart';
 import 'package:flclashx/services/purchase_storage.dart';
 import 'package:flclashx/services/xboard_api.dart';
+import 'package:flclashx/services/xboard_bootstrap.dart';
 import 'package:flclashx/state.dart';
 import 'package:flclashx/views/purchase/center.dart';
 import 'package:flutter/material.dart';
@@ -94,6 +95,7 @@ class _PurchaseViewState extends ConsumerState<PurchaseView> {
     late final DioXboardApi defaultApi;
     final api = widget.apiOverride ??
         (defaultApi = DioXboardApi(
+          mirrorPool: TransportMirrorPool.shared,
           shouldFallbackToDirect: () =>
               shouldFallbackToDirectForUri(defaultApi.baseUri),
         ));

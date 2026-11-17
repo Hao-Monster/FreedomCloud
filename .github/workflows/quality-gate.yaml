@@ -47,6 +47,7 @@ jobs:
           go run ./tools/mihomo-overlay
           go test -modfile=.generated/go.mod -overlay=.generated/mihomo-overlay.json ./...
           go test -modfile=.generated/go.mod -overlay=.generated/mihomo-overlay.json -tags=with_gvisor ./...
+          go test -modfile=.generated/go.mod -overlay=.generated/mihomo-overlay.json -tags="with_gvisor,cmfa" -run '^Test(ConfiguredHome|GetConfig)' .
           go test -modfile=.generated/go.mod -overlay=.generated/mihomo-overlay.json -race -run '^TestFCXTun' github.com/metacubex/mihomo/listener
           go test -modfile=.generated/go.mod -overlay=.generated/mihomo-overlay.json -race -run '^TestFCXController' github.com/metacubex/mihomo/hub/route
           go test -modfile=.generated/go.mod -overlay=.generated/mihomo-overlay.json -race -run '^TestFCXURLTest' github.com/metacubex/mihomo/adapter
@@ -71,6 +72,8 @@ jobs:
           go run ./tools/mihomo-overlay
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           go test '-modfile=.generated/go.mod' '-overlay=.generated/mihomo-overlay.json' '-tags=with_gvisor' ./...
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          go test '-modfile=.generated/go.mod' '-overlay=.generated/mihomo-overlay.json' '-tags=with_gvisor,cmfa' '-run=^Test(ConfiguredHome|GetConfig)' .
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           go test '-modfile=.generated/go.mod' '-overlay=.generated/mihomo-overlay.json' -run '^TestFCXTun' github.com/metacubex/mihomo/listener
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

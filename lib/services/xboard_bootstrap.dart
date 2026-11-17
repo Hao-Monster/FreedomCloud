@@ -15,6 +15,9 @@ const String fnCanonicalTenantOrigin = 'https://fast.hjy.ca:8443';
 /// Seed primary origin fronted by CDN for Mainland China access.
 const String fnPrimaryBootstrapOrigin = 'https://api.westernmoviefans.com';
 
+/// Dedicated subscription origin fronted by CDN for Mainland China access.
+const String fnSubscriptionOrigin = 'https://sub.westernmoviefans.com';
+
 /// Default Stage-1 seed origins in priority order.
 const List<String> fnBootstrapSeedOrigins = <String>[
   fnPrimaryBootstrapOrigin,
@@ -24,7 +27,27 @@ const List<String> fnBootstrapSeedOrigins = <String>[
 final Set<String> _globalFreedomNetOriginRegistry = <String>{
   fnPrimaryBootstrapOrigin,
   fnCanonicalTenantOrigin,
+  fnSubscriptionOrigin,
 };
+
+/// Returns true when [candidate] is a strict HTTPS FreedomNet official origin
+/// authorized for [capability]. Dedicated subscription mirrors such as
+/// [fnSubscriptionOrigin] are restricted to `sub` traffic.
+bool isOfficialFreedomNetOrigin(
+  Uri candidate, {
+  String? capability,
+}) {
+  if (candidate.scheme != 'https' ||
+      candidate.host.isEmpty ||
+      candidate.userInfo.isNotEmpty) {
+    return false;
+  }
+  final origin = candidate.origin;
+  if (origin == fnSubscriptionOrigin) {
+    return capability == 'sub';
+  }
+  return _globalFreedomNetOriginRegistry.contains(origin);
+}
 
 /// Normalizes [origin] to its canonical HTTPS namespace. All known/verified
 /// FreedomNet tenant origins collapse onto [fnCanonicalTenantOrigin] so
@@ -371,7 +394,7 @@ class TransportMirrorPool {
   }
 
   /// Returns true when [candidate] is a valid HTTPS URL belonging to the
-  /// canonical namespace or currently active bootstrap origins.
+  /// canonical namespace, official subscription edge, or active bootstrap origins.
   bool isKnownTenantOrigin(Uri candidate, {String? capability}) {
     if (candidate.scheme != 'https' ||
         candidate.host.isEmpty ||
@@ -380,6 +403,11 @@ class TransportMirrorPool {
     }
     final origin = candidate.origin;
     if (origin == canonicalOrigin.origin) return true;
+    if (expectedTenantId == fnTenantId &&
+        origin == fnSubscriptionOrigin &&
+        capability == 'sub') {
+      return true;
+    }
     for (final entry in _entries) {
       if (entry.origin.origin == origin && entry.supportsCapability(capability)) {
         return true;

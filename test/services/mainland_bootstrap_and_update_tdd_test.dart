@@ -273,6 +273,29 @@ class _MemorySecureStorage extends FlutterSecureStorage {
   }
 }
 
+class _FakeBootstrapDioApi extends DioXboardApi {
+  _FakeBootstrapDioApi({required this.onRefresh})
+      : super(mirrorPool: TransportMirrorPool.shared);
+
+  final Future<VerifiedBootstrapConfig?> Function() onRefresh;
+  int refreshCalls = 0;
+  bool closed = false;
+
+  @override
+  Future<VerifiedBootstrapConfig?> refreshBootstrap({
+    String path = '/api/v1/client/bootstrap',
+  }) {
+    refreshCalls += 1;
+    return onRefresh();
+  }
+
+  @override
+  void close() {
+    closed = true;
+    super.close();
+  }
+}
+
 void main() {
   group('1. Pure-Dart RFC 8032 Ed25519 Verifier', () {
     test('verifies RFC 8032 vectors 1, 2, 3 and rejects tampered inputs', () {
@@ -710,6 +733,251 @@ void main() {
           throw StateError('Unexpected $url');
         }),
       );
+    });
+
+    test(
+        'allows https://sub.westernmoviefans.com only for subscription fetches and rejects HTTP downgrade or arbitrary domains',
+        () async {
+      final subOrigin = Uri.parse('https://sub.westernmoviefans.com');
+      expect(
+        isOfficialFreedomNetOrigin(subOrigin, capability: 'sub'),
+        isTrue,
+      );
+      expect(
+        isOfficialFreedomNetOrigin(subOrigin, capability: 'api'),
+        isFalse,
+      );
+      expect(
+        isOfficialFreedomNetOrigin(subOrigin, capability: 'update'),
+        isFalse,
+      );
+      expect(isOfficialFreedomNetOrigin(subOrigin), isFalse);
+      expect(
+        isOfficialFreedomNetOrigin(
+          Uri.parse('http://sub.westernmoviefans.com'),
+          capability: 'sub',
+        ),
+        isFalse,
+      );
+      expect(
+        isOfficialFreedomNetOrigin(
+          Uri.parse('https://sub.westernmoviefans.com:8443'),
+          capability: 'sub',
+        ),
+        isFalse,
+      );
+      expect(
+        isOfficialFreedomNetOrigin(
+          Uri.parse('https://user@sub.westernmoviefans.com'),
+          capability: 'sub',
+        ),
+        isFalse,
+      );
+
+      final pool = TransportMirrorPool.shared;
+      expect(
+        pool.isKnownTenantOrigin(subOrigin, capability: 'sub'),
+        isTrue,
+      );
+      expect(
+        pool.isKnownTenantOrigin(subOrigin, capability: 'api'),
+        isFalse,
+      );
+      expect(
+        pool.orderedOrigins().map((u) => u.toString()),
+        isNot(contains('https://sub.westernmoviefans.com')),
+      );
+
+      // 1) Direct fetch from sub.westernmoviefans.com succeeds with strict TLS & no auto-redirects.
+      final directClient = _FakeNetworkHttpClient(
+        (method, url, client, request) async {
+          if (client.capturedBadCertCallback?.call(
+                _DummyCert(),
+                url.host,
+                443,
+              ) ??
+              true) {
+            throw StateError('badCertificateCallback must return false');
+          }
+          if (request.followRedirects) {
+            throw StateError('followRedirects must be false');
+          }
+          if (url.toString() != 'https://sub.westernmoviefans.com/s/token1') {
+            throw StateError('Unexpected $url');
+          }
+          return _RecordedHttpResponse(
+            statusCode: 200,
+            bodyBytes: utf8.encode('proxies:\n  - name: direct-sub'),
+          );
+        },
+      );
+      await HttpOverrides.runZoned(
+        () async {
+          final directDownloader = SecureSubscriptionDownloader(mirrorPool: pool);
+          addTearDown(directDownloader.close);
+          final response = await directDownloader.download(
+            Uri.parse('https://sub.westernmoviefans.com/s/token1'),
+            const {'User-Agent': 'FreedomNet/0.4.2'},
+          );
+          expect(utf8.decode(response.data!), contains('direct-sub'));
+          expect(
+            directClient.capturedBadCertCallback?.call(
+              _DummyCert(),
+              'sub.westernmoviefans.com',
+              443,
+            ),
+            isFalse,
+          );
+          expect(directClient.lastFollowRedirects, isFalse);
+        },
+        createHttpClient: (_) => directClient,
+      );
+
+      // 2) Pre-request failure on sub.westernmoviefans.com fails over across verified API origins.
+      final failoverClient = _FakeNetworkHttpClient(
+        (method, url, client, request) async {
+          if (url.toString() ==
+              'https://api.westernmoviefans.com/s/failover') {
+            return _RecordedHttpResponse(
+              statusCode: 200,
+              bodyBytes: utf8.encode('proxies:\n  - name: failover-ok'),
+            );
+          }
+          throw StateError('Unexpected $url');
+        },
+        onOpenUrl: (method, url) {
+          if (url.toString() == 'https://sub.westernmoviefans.com/s/failover') {
+            throw const SocketException('edge unreachable');
+          }
+        },
+      );
+      await HttpOverrides.runZoned(
+        () async {
+          final failoverDownloader =
+              SecureSubscriptionDownloader(mirrorPool: pool);
+          addTearDown(failoverDownloader.close);
+          final response = await failoverDownloader.download(
+            Uri.parse('https://sub.westernmoviefans.com/s/failover'),
+            const {},
+          );
+          expect(utf8.decode(response.data!), contains('failover-ok'));
+        },
+        createHttpClient: (_) => failoverClient,
+      );
+
+      // 3) Redirect from sub.westernmoviefans.com -> api.westernmoviefans.com succeeds;
+      //    downgrade redirect to http:// or third-party host fails closed.
+      final redirectClient = _FakeNetworkHttpClient(
+        (method, url, client, request) async {
+          if (url.toString() ==
+              'https://sub.westernmoviefans.com/s/redirect-ok') {
+            return _RecordedHttpResponse(
+              statusCode: 302,
+              bodyBytes: const [],
+              headersMap: {
+                HttpHeaders.locationHeader:
+                    'https://api.westernmoviefans.com/s/final',
+              },
+            );
+          }
+          if (url.toString() == 'https://api.westernmoviefans.com/s/final') {
+            return _RecordedHttpResponse(
+              statusCode: 200,
+              bodyBytes: utf8.encode('proxies:\n  - name: redirected-ok'),
+            );
+          }
+          if (url.toString() ==
+              'https://sub.westernmoviefans.com/s/downgrade') {
+            return _RecordedHttpResponse(
+              statusCode: 302,
+              bodyBytes: const [],
+              headersMap: {
+                HttpHeaders.locationHeader:
+                    'http://sub.westernmoviefans.com/s/insecure',
+              },
+            );
+          }
+          if (url.toString() ==
+              'https://sub.westernmoviefans.com/s/evil-redirect') {
+            return _RecordedHttpResponse(
+              statusCode: 302,
+              bodyBytes: const [],
+              headersMap: {
+                HttpHeaders.locationHeader: 'https://evil.example.com/payload',
+              },
+            );
+          }
+          throw StateError('Unexpected $url');
+        },
+      );
+      await HttpOverrides.runZoned(
+        () async {
+          final redirectDownloader =
+              SecureSubscriptionDownloader(mirrorPool: pool);
+          addTearDown(redirectDownloader.close);
+          final okResponse = await redirectDownloader.download(
+            Uri.parse('https://sub.westernmoviefans.com/s/redirect-ok'),
+            const {},
+          );
+          expect(utf8.decode(okResponse.data!), contains('redirected-ok'));
+
+          await expectLater(
+            redirectDownloader.download(
+              Uri.parse('https://sub.westernmoviefans.com/s/downgrade'),
+              const {},
+            ),
+            throwsA(isA<FormatException>()),
+          );
+
+          await expectLater(
+            redirectDownloader.download(
+              Uri.parse('https://sub.westernmoviefans.com/s/evil-redirect'),
+              const {},
+            ),
+            throwsA(isA<FormatException>()),
+          );
+        },
+        createHttpClient: (_) => redirectClient,
+      );
+    });
+
+    test(
+        'GlobalState.refreshBootstrapInBackground returns silently on failure or timeout and closes temporary API',
+        () async {
+      addTearDown(() {
+        TransportMirrorPool.shared.applyBootstrapResponse(
+          jsonDecode(fnDefaultSignedBootstrapJson) as Map<String, dynamic>,
+        );
+      });
+
+      final state = GlobalState.forTesting();
+
+      final errorApi = _FakeBootstrapDioApi(
+        onRefresh: () async => throw StateError('offline'),
+      );
+      final onErrorResult = await state.refreshBootstrapInBackground(
+        apiFactory: () => errorApi,
+      );
+      expect(onErrorResult, isNull);
+      expect(errorApi.refreshCalls, 1);
+      expect(errorApi.closed, isTrue);
+
+      final slowApi = _FakeBootstrapDioApi(
+        onRefresh: () async {
+          await Future<void>.delayed(const Duration(seconds: 2));
+          throw StateError('should time out first');
+        },
+      );
+      final sw = Stopwatch()..start();
+      final onTimeoutResult = await state.refreshBootstrapInBackground(
+        apiFactory: () => slowApi,
+        timeout: const Duration(milliseconds: 30),
+      );
+      sw.stop();
+      expect(onTimeoutResult, isNull);
+      expect(slowApi.refreshCalls, 1);
+      expect(slowApi.closed, isTrue);
+      expect(sw.elapsedMilliseconds, lessThan(1000));
     });
   });
 

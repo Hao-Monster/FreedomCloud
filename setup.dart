@@ -383,8 +383,6 @@ class Build {
     throw "Unable to resolve an immutable source commit for the test package";
   }
 
-  static Future<String> _resolveSourceCommit() => resolveSourceCommit();
-
   static Future<String> resolveSourceBranch() async {
     final headRef = Platform.environment["GITHUB_HEAD_REF"]?.trim() ?? "";
     if (headRef.isNotEmpty) {
@@ -451,8 +449,6 @@ class Build {
     throw "Unable to resolve source branch or detached state for the test package";
   }
 
-  static Future<String> _resolveSourceBranch() => resolveSourceBranch();
-
   static Future<String> resolveSourceTreeState() async {
     final rawEnvState = Platform.environment["SOURCE_TREE_STATE"] ??
         Platform.environment["GIT_TREE_STATE"];
@@ -477,8 +473,6 @@ class Build {
       return "unknown";
     }
   }
-
-  static Future<String> _resolveSourceTreeState() => resolveSourceTreeState();
 
   static Future<int> resolveSourceDateEpoch(String commit) async {
     final override = Platform.environment["SOURCE_DATE_EPOCH"];
@@ -2047,7 +2041,7 @@ class BuildCommand extends Command {
         await Build.buildAgent(target, arch: arch);
         await _getLinuxDependencies(arch!);
         await _buildLinuxApp(
-          arch: arch!,
+          arch: arch,
           env: env,
           coreVersion: coreVersion,
         );

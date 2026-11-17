@@ -61,6 +61,15 @@ class SecureSubscriptionDownloader {
       ));
   }
 
+  bool _isAllowedOfficialSubOrigin(Uri uri) {
+    if (uri.scheme != 'https' || uri.host.isEmpty || uri.userInfo.isNotEmpty) {
+      return false;
+    }
+    return _mirrorPool.isKnownTenantOrigin(uri, capability: 'sub') ||
+        (_mirrorPool.expectedTenantId == fnTenantId &&
+            isOfficialFreedomNetOrigin(uri, capability: 'sub'));
+  }
+
   bool _isAllowedRedirectTarget(Uri source, Uri next) {
     if (next.scheme != 'https' ||
         next.host.isEmpty ||
@@ -70,8 +79,8 @@ class SecureSubscriptionDownloader {
     if (next.origin == source.origin) {
       return true;
     }
-    return _mirrorPool.isKnownTenantOrigin(source, capability: 'sub') &&
-        _mirrorPool.isKnownTenantOrigin(next, capability: 'sub');
+    return _isAllowedOfficialSubOrigin(source) &&
+        _isAllowedOfficialSubOrigin(next);
   }
 
   Future<Response<Uint8List>> _fetchWithDirectFallback(
@@ -117,8 +126,7 @@ class SecureSubscriptionDownloader {
           status != null && status >= 200 && status < 400,
     );
 
-    final candidateOrigins = (_ownsTransport &&
-            _mirrorPool.isKnownTenantOrigin(url, capability: 'sub'))
+    final candidateOrigins = (_ownsTransport && _isAllowedOfficialSubOrigin(url))
         ? _mirrorPool.orderedOrigins(capability: 'sub')
         : <Uri>[Uri.parse(url.origin)];
     // Ensure the requested URL's own origin is tried first unless another known

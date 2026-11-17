@@ -35,8 +35,6 @@ class StatsGrid extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final profile = ref.watch(currentProfileProvider);
     final sub = profile?.subscriptionInfo;
-    final hasTraffic = sub != null && sub.total > 0;
-    final hasExpire = sub != null && sub.expire > 0;
 
     return ValueListenableBuilder(
       valueListenable: detectionState.state,
@@ -49,16 +47,16 @@ class StatsGrid extends ConsumerWidget {
 
         return Column(
           children: [
-            if (hasTraffic || hasExpire) ...[
+            if (sub != null && (sub.total > 0 || sub.expire > 0)) ...[
               Row(
                 children: [
-                  if (hasExpire)
-                    Expanded(child: _ExpiryPill(timestamp: sub!.expire))
+                  if (sub.expire > 0)
+                    Expanded(child: _ExpiryPill(timestamp: sub.expire))
                   else
                     const Expanded(child: SizedBox.shrink()),
                   const SizedBox(width: 8),
-                  if (hasTraffic)
-                    Expanded(child: _TrafficPill(sub: sub!))
+                  if (sub.total > 0)
+                    Expanded(child: _TrafficPill(sub: sub))
                   else
                     const Expanded(child: SizedBox.shrink()),
                 ],

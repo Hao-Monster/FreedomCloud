@@ -14,6 +14,7 @@ import 'package:flclashx/services/chatwoot_service.dart';
 import 'package:flclashx/services/purchase_profile_sync.dart';
 import 'package:flclashx/services/purchase_storage.dart';
 import 'package:flclashx/services/xboard_api.dart';
+import 'package:flclashx/services/xboard_bootstrap.dart';
 import 'package:flclashx/state.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -207,6 +208,7 @@ class PurchaseSupportCoordinator {
   PurchaseSupportCoordinator(this._ref) {
     late final DioXboardApi defaultApi;
     defaultApi = DioXboardApi(
+      mirrorPool: TransportMirrorPool.shared,
       shouldFallbackToDirect: () =>
           shouldFallbackToDirectForUri(defaultApi.activeOrigin),
     );

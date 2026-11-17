@@ -921,7 +921,7 @@ void main() {
   testWidgets(
       'Task 2: autoCheckUpdate uses SignedUpdate and opens SignedUpdateDialog without github.com links or unconfigured-cert copy',
       (tester) async {
-    expect(repository, 'pluralplay/FlClashX');
+    expect(repository, 'Hao-Monster/FreedomCloud');
     final controllerSrc = File('lib/controller.dart').readAsStringSync();
     expect(controllerSrc, isNot(contains('github.com')));
     expect(controllerSrc, isNot(contains('request.checkForUpdate')));
