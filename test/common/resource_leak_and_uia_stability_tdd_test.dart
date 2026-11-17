@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
+import 'dart:ui' show Tristate;
 
 import 'package:flclashx/clash/core.dart';
 import 'package:flclashx/clash/interface.dart';
@@ -23,6 +24,7 @@ import 'package:flclashx/views/dashboard/widgets/network_speed.dart';
 import 'package:flclashx/views/dashboard/widgets/start_button.dart';
 import 'package:flclashx/views/proxies/overview/overview.dart';
 import 'package:flclashx/views/purchase/plan_image.dart';
+import 'package:flclashx/widgets/tactile_proxy_switch.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
@@ -906,9 +908,27 @@ void main() {
           await tester.pump();
           await tester.pump(const Duration(milliseconds: 300));
 
-          // Initial visual uptime 00:00:01 renders on HeroConnect; StartButton shows tactile Running state.
+          final dashboardDockFinder = find.byKey(
+            const ValueKey('dashboard-floating-proxy-dock'),
+          );
+          final dashboardSwitchFinder = find.byKey(
+            const ValueKey('dashboard-proxy-toggle'),
+          );
+
+          // Initial visual uptime 00:00:01 renders on HeroConnect; StartButton renders FloatingProxyDock in running state.
           expect(find.text('00:00:01'), findsOneWidget);
-          expect(find.text(appLocalizations.running), findsOneWidget);
+          expect(dashboardDockFinder, findsOneWidget);
+          expect(
+            tester.widget<EarthProxySwitch>(dashboardSwitchFinder).isRunning,
+            isTrue,
+          );
+          expect(
+            tester
+                .getSemantics(dashboardSwitchFinder)
+                .flagsCollection
+                .isToggled,
+            Tristate.isTrue,
+          );
           expect(
             find.bySemanticsLabel(appLocalizations.nodeOverviewTurnOffProxy),
             findsWidgets,
@@ -935,7 +955,10 @@ void main() {
 
             // Visual 1Hz telemetry MUST still update accurately!
             expect(find.text('00:00:05'), findsOneWidget);
-            expect(find.text(appLocalizations.running), findsOneWidget);
+            expect(
+              tester.widget<EarthProxySwitch>(dashboardSwitchFinder).isRunning,
+              isTrue,
+            );
 
             // Semantics tree MUST emit ZERO mutations across steady-state 1Hz ticks,
             // eliminating the 1Hz UiaRaiseAutomationEvent / get_accValue storm!
@@ -954,6 +977,17 @@ void main() {
               greaterThan(0),
               reason:
                   'Genuine proxy state transitions must still update accessibility semantics',
+            );
+            expect(
+              tester.widget<EarthProxySwitch>(dashboardSwitchFinder).isRunning,
+              isFalse,
+            );
+            expect(
+              tester
+                  .getSemantics(dashboardSwitchFinder)
+                  .flagsCollection
+                  .isToggled,
+              Tristate.isFalse,
             );
             expect(
               find.bySemanticsLabel(appLocalizations.nodeOverviewTurnOnProxy),

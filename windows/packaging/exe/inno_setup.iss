@@ -24,6 +24,10 @@ ShowLanguageDialog=yes
 UsePreviousAppDir=yes
 UsePreviousGroup=yes
 UsePreviousTasks=yes
+; Defer stopping running services/processes to CurStepChanged(ssInstall) after
+; installation is confirmed instead of letting Restart Manager act on wpPreparing.
+CloseApplications=no
+RestartApplications=no
 
 [CustomMessages]
 chineseSimplified.UpgradeWindowCaption={{DISPLAY_NAME}} - 更新
@@ -184,7 +188,7 @@ begin
   // First try graceful shutdown
   for i := 0 to GetArrayLength(Processes)-1 do
   begin
-    Exec('taskkill', '/im ' + Processes[i], '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+    Exec(ExpandConstant('{sys}\taskkill.exe'), '/im ' + Processes[i], '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   end;
   
   // Wait for processes to terminate gracefully
@@ -193,7 +197,7 @@ begin
   // Force kill any remaining processes
   for i := 0 to GetArrayLength(Processes)-1 do
   begin
-    Exec('taskkill', '/f /im ' + Processes[i], '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+    Exec(ExpandConstant('{sys}\taskkill.exe'), '/f /im ' + Processes[i], '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   end;
   
   // Give time for cleanup
@@ -272,8 +276,6 @@ begin
 end;
 
 function InitializeSetup(): Boolean;
-var
-  ResultCode: Integer;
 begin
   if (not WizardSilent) and (not IsManagedUpdate()) then
     ShowTermsOfServiceDialog;
@@ -282,17 +284,7 @@ begin
   IsUpgrade := IsAppInstalled();
   if IsUpgrade then
     PreviousVersion := GetInstalledVersion();
-  
-  // Stop service if running
-  Exec('sc.exe', 'stop "FreedomNetHelperService"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-{{STRICT_UPGRADE_STOP}}
-  Sleep(1000);
-  
-  // The signed updater already requested a full graceful exit. Never turn a
-  // failed graceful shutdown into a force-kill of this or another installation.
-  // /NOCLOSEAPPLICATIONS leaves locked files to the installer's error handling.
-  if not IsManagedUpdate() then KillProcesses;
-  
+
   Result := True;
 end;
 
@@ -336,6 +328,22 @@ var
   ResultCode: Integer;
   ServiceExe: String;
 begin
+  if CurStep = ssInstall then
+  begin
+    // Stop services and running processes only after installation is confirmed
+    // (after user clicks Install, or automatically in silent/managed runs)
+    // right before [Files] extraction so cancelling the wizard never kills the
+    // active proxy core or strands HKCU system proxy settings.
+    Exec(ExpandConstant('{sys}\sc.exe'), 'stop "FreedomNetHelperService"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+{{STRICT_UPGRADE_STOP}}
+    Sleep(1000);
+
+    // The signed updater already requested a full graceful exit. Never turn a
+    // failed graceful shutdown into a force-kill of this or another installation.
+    // /NOCLOSEAPPLICATIONS leaves locked files to the installer's error handling.
+    if not IsManagedUpdate() then KillProcesses;
+  end;
+
   if CurStep = ssPostInstall then
   begin
     // Refresh icon cache/associations
@@ -349,16 +357,16 @@ begin
     // Program Files directory. Never point SCM at a portable/user-writable
     // application directory.
     ServiceExe := ExpandConstant('{commonpf}\FreedomNet Service\FreedomNetHelperService.exe');
-    Exec('sc.exe', 'config "FreedomNetHelperService" binPath= "\"' + ServiceExe + '\"" start= auto',
+    Exec(ExpandConstant('{sys}\sc.exe'), 'config "FreedomNetHelperService" binPath= "\"' + ServiceExe + '\"" start= auto',
       '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
     if ResultCode <> 0 then
-      Exec('sc.exe', 'create "FreedomNetHelperService" binPath= "\"' + ServiceExe + '\"" start= auto',
+      Exec(ExpandConstant('{sys}\sc.exe'), 'create "FreedomNetHelperService" binPath= "\"' + ServiceExe + '\"" start= auto',
         '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
     if ResultCode = 0 then
-      Exec('sc.exe', 'sdset "FreedomNetHelperService" "D:(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;SY)(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;BA)(A;;CCLCSWRPWPLOCRRC;;;IU)(A;;CCLCSWLOCRRC;;;SU)"',
+      Exec(ExpandConstant('{sys}\sc.exe'), 'sdset "FreedomNetHelperService" "D:(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;SY)(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;BA)(A;;CCLCSWRPWPLOCRRC;;;IU)(A;;CCLCSWLOCRRC;;;SU)"',
         '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
     if ResultCode = 0 then
-      Exec('sc.exe', 'start "FreedomNetHelperService"', '', SW_HIDE, ewNoWait, ResultCode);
+      Exec(ExpandConstant('{sys}\sc.exe'), 'start "FreedomNetHelperService"', '', SW_HIDE, ewNoWait, ResultCode);
 {{STRICT_SERVICE_BLOCK}}
   end;
 end;
@@ -371,14 +379,14 @@ begin
     usUninstall:
     begin
       // Stop service first
-      Exec('sc.exe', 'stop "FreedomNetHelperService"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+      Exec(ExpandConstant('{sys}\sc.exe'), 'stop "FreedomNetHelperService"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
       Sleep(1000);
       
       // Kill all processes
       KillProcesses;
       
       // Delete service
-      Exec('sc.exe', 'delete "FreedomNetHelperService"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+      Exec(ExpandConstant('{sys}\sc.exe'), 'delete "FreedomNetHelperService"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
 {{STRICT_UNINSTALL_BLOCK}}
       Sleep(500);
       DelTree(ExpandConstant('{commonpf}\FreedomNet Service'), True, True, True);

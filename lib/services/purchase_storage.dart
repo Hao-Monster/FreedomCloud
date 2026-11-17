@@ -40,6 +40,23 @@ abstract class PurchaseStorage {
   Future<void> saveProfileId(int accountId, String profileId);
 }
 
+/// Persists Xboard account sessions, pending gift-card redemptions, and
+/// managed-profile associations in platform secure storage.
+///
+/// Storage isolation across co-installed FreedomNet and FlClashX:
+/// - On Windows, `flutter_secure_storage_windows` derives its encrypted file
+///   directory from Win32 `CompanyName`/`ProductName` (`Runner.rc`), isolating
+///   FreedomNet (`%APPDATA%\FreedomNet\FreedomNet`) from FlClashX
+///   (`%APPDATA%\com.follow\clashx`) at the filesystem boundary.
+/// - On shared OS credential stores (such as macOS login Keychain, Windows
+///   Credential Manager entries, or in-place migrated profiles), [_legacyPrefix]
+///   (`flclashx.xboard.*`) is strictly **read-only** so FreedomNet never writes
+///   or deletes FlClashX's own credentials.
+/// - When a user explicitly logs out or clears state in FreedomNet while a
+///   legacy `flclashx.xboard.*` entry exists, [_delete] records a
+///   FreedomNet-scoped tombstone (`$_prefix.<suffix>.legacy_cleared = '1'`)
+///   instead of deleting the legacy key, preventing zombie re-login on restart
+///   without disturbing FlClashX.
 class SecurePurchaseStorage implements PurchaseStorage {
   SecurePurchaseStorage(Uri origin, {FlutterSecureStorage? storage})
       : _canonicalOrigin = canonicalizeTenantOrigin(origin).origin,
@@ -61,9 +78,14 @@ class SecurePurchaseStorage implements PurchaseStorage {
 
   String get canonicalOrigin => _canonicalOrigin;
 
+  String _legacyClearedKey(String suffix) => '$_prefix.$suffix.legacy_cleared';
+
   Future<String?> _readWithLegacyFallback(String suffix) async {
     final primary = await _storage.read(key: '$_prefix.$suffix');
     if (primary != null) return primary;
+    if (await _storage.read(key: _legacyClearedKey(suffix)) == '1') {
+      return null;
+    }
     return _storage.read(key: '$_legacyPrefix.$suffix');
   }
 
@@ -73,6 +95,13 @@ class SecurePurchaseStorage implements PurchaseStorage {
     if (await _storage.read(key: key) != value) {
       throw const FormatException('Secure storage did not retain the value');
     }
+    final clearedKey = _legacyClearedKey(suffix);
+    if (await _storage.read(key: clearedKey) != null) {
+      await _storage.delete(key: clearedKey);
+      if (await _storage.read(key: clearedKey) != null) {
+        throw const FormatException('Secure storage did not remove the value');
+      }
+    }
   }
 
   Future<void> _delete(String suffix) async {
@@ -81,10 +110,17 @@ class SecurePurchaseStorage implements PurchaseStorage {
     if (await _storage.read(key: key) != null) {
       throw const FormatException('Secure storage did not remove the value');
     }
-    final legacyKey = '$_legacyPrefix.$suffix';
-    await _storage.delete(key: legacyKey);
-    if (await _storage.read(key: legacyKey) != null) {
-      throw const FormatException('Secure storage did not remove the value');
+    final clearedKey = _legacyClearedKey(suffix);
+    if (await _storage.read(key: '$_legacyPrefix.$suffix') != null) {
+      await _storage.write(key: clearedKey, value: '1');
+      if (await _storage.read(key: clearedKey) != '1') {
+        throw const FormatException('Secure storage did not retain the value');
+      }
+    } else if (await _storage.read(key: clearedKey) != null) {
+      await _storage.delete(key: clearedKey);
+      if (await _storage.read(key: clearedKey) != null) {
+        throw const FormatException('Secure storage did not remove the value');
+      }
     }
   }
 

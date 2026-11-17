@@ -227,6 +227,165 @@ void main() {
         expect(tosAndInitBlock, isNot(contains('Abort')));
       },
     );
+
+    test(
+      'HIGH-2: InitializeSetup never stops services or kills processes before confirmation; CurStepChanged(ssInstall) performs teardown',
+      () {
+        final template =
+            File('windows/packaging/exe/inno_setup.iss').readAsStringSync();
+        for (final strict in [false, true]) {
+          final rendered = setup.Build.renderWindowsInnoSetupScript(
+            template: template,
+            version: '0.4.2',
+            archName: 'amd64',
+            buildDir: r'E:\build\windows\x64\runner\Release',
+            setupIconFile: r'E:\repo\windows\runner\resources\app_icon.ico',
+            chineseIslPath:
+                r'E:\repo\windows\packaging\exe\ChineseSimplified.isl',
+            strict: strict,
+          );
+
+          expect(rendered, contains('CloseApplications=no'));
+          expect(rendered, contains('RestartApplications=no'));
+
+          final initStart =
+              rendered.indexOf('function InitializeSetup(): Boolean;');
+          final initEnd = rendered.indexOf('procedure InitializeWizard();');
+          expect(initStart, greaterThan(0));
+          expect(initEnd, greaterThan(initStart));
+
+          final initBlock = rendered.substring(initStart, initEnd);
+          expect(
+            initBlock,
+            contains('if (not WizardSilent) and (not IsManagedUpdate()) then'),
+          );
+          expect(initBlock, contains('ShowTermsOfServiceDialog;'));
+          expect(initBlock, contains('IsUpgrade := IsAppInstalled();'));
+          expect(initBlock, contains('PreviousVersion := GetInstalledVersion();'));
+          expect(initBlock, contains('Result := True;'));
+          expect(initBlock, isNot(contains('KillProcesses')));
+          expect(initBlock, isNot(contains('FreedomNetHelperService')));
+          expect(initBlock, isNot(contains('StopStrictService')));
+          expect(initBlock, isNot(contains('FlClashStrictBroker')));
+          expect(initBlock, isNot(contains('FlClashStrictCallout')));
+          expect(initBlock.toLowerCase(), isNot(contains('sc.exe')));
+          expect(initBlock.toLowerCase(), isNot(contains('taskkill')));
+
+          final curStepStart = rendered
+              .indexOf('procedure CurStepChanged(CurStep: TSetupStep);');
+          final curUninstallStart = rendered.indexOf(
+            'procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);',
+          );
+          expect(curStepStart, greaterThan(initEnd));
+          expect(curUninstallStart, greaterThan(curStepStart));
+
+          final curStepBlock =
+              rendered.substring(curStepStart, curUninstallStart);
+          final ssInstallIdx =
+              curStepBlock.indexOf('if CurStep = ssInstall then');
+          final ssPostInstallIdx =
+              curStepBlock.indexOf('if CurStep = ssPostInstall then');
+          expect(ssInstallIdx, greaterThan(0));
+          expect(ssPostInstallIdx, greaterThan(ssInstallIdx));
+
+          final ssInstallBlock =
+              curStepBlock.substring(ssInstallIdx, ssPostInstallIdx);
+          final stopHelperIdx = ssInstallBlock.indexOf(
+            'stop "FreedomNetHelperService"',
+          );
+          final sleepIdx = ssInstallBlock.indexOf('Sleep(1000);');
+          final killIdx = ssInstallBlock.indexOf(
+            'if not IsManagedUpdate() then KillProcesses;',
+          );
+          expect(stopHelperIdx, greaterThan(0));
+          expect(sleepIdx, greaterThan(stopHelperIdx));
+          expect(killIdx, greaterThan(sleepIdx));
+
+          if (strict) {
+            final stopBrokerIdx = ssInstallBlock.indexOf(
+              "StopStrictService('FlClashStrictBroker');",
+            );
+            final stopCalloutIdx = ssInstallBlock.indexOf(
+              "StopStrictService('FlClashStrictCallout');",
+            );
+            expect(stopBrokerIdx, greaterThan(stopHelperIdx));
+            expect(stopCalloutIdx, greaterThan(stopBrokerIdx));
+            expect(sleepIdx, greaterThan(stopCalloutIdx));
+          } else {
+            expect(
+              ssInstallBlock,
+              isNot(contains("StopStrictService('FlClashStrictBroker')")),
+            );
+          }
+        }
+      },
+    );
+
+    test(
+      r'MED-1: elevated Inno Setup script uses {sys}\sc.exe and {sys}\taskkill.exe for every Exec call (CWE-426)',
+      () {
+        final template =
+            File('windows/packaging/exe/inno_setup.iss').readAsStringSync();
+        final strictRendered = setup.Build.renderWindowsInnoSetupScript(
+          template: template,
+          version: '0.4.2',
+          archName: 'amd64',
+          buildDir: r'E:\build\windows\x64\runner\Release',
+          setupIconFile: r'E:\repo\windows\runner\resources\app_icon.ico',
+          chineseIslPath:
+              r'E:\repo\windows\packaging\exe\ChineseSimplified.isl',
+          strict: true,
+        );
+
+        expect(
+          RegExp(r"Exec\s*\(\s*'taskkill", caseSensitive: false)
+              .hasMatch(strictRendered),
+          isFalse,
+        );
+        expect(
+          RegExp(r"Exec\s*\(\s*'sc\.exe", caseSensitive: false)
+              .hasMatch(strictRendered),
+          isFalse,
+        );
+        expect(
+          RegExp(r'ShellExec\s*\(', caseSensitive: false)
+              .hasMatch(strictRendered),
+          isFalse,
+        );
+
+        final execMatches =
+            RegExp(r'Exec\s*\(([^,]+),').allMatches(strictRendered).toList();
+        expect(execMatches.length, greaterThanOrEqualTo(10));
+        for (final match in execMatches) {
+          final firstArg = match.group(1)!.trim();
+          expect(
+            firstArg,
+            anyOf(
+              equals(r"ExpandConstant('{sys}\sc.exe')"),
+              equals(r"ExpandConstant('{sys}\taskkill.exe')"),
+            ),
+            reason: 'Untrusted Exec path in Inno Setup script: $firstArg',
+          );
+        }
+
+        final killStart = strictRendered.indexOf('procedure KillProcesses;');
+        final killEnd =
+            strictRendered.indexOf('function IsAppInstalled(): Boolean;');
+        final killBlock = strictRendered.substring(killStart, killEnd);
+        expect(
+          killBlock,
+          contains(
+            r"Exec(ExpandConstant('{sys}\taskkill.exe'), '/im ' + Processes[i]",
+          ),
+        );
+        expect(
+          killBlock,
+          contains(
+            r"Exec(ExpandConstant('{sys}\taskkill.exe'), '/f /im ' + Processes[i]",
+          ),
+        );
+      },
+    );
   });
 
   group('Windows runtime coexistence & non-Windows preservation', () {
