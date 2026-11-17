@@ -1,6 +1,35 @@
 # 开发、集成与预览台账
 
-更新日期：2026-11-16。当前阶段是快速开发、快速迭代和部分功能预览。本文记录来源与验收边界；每次继续开发仍需核实实际 Git/PR/CI 状态，不能把历史报告视为当前通过证明。
+更新日期：2026-11-17。当前阶段是快速开发、快速迭代和部分功能预览。本文记录来源与验收边界；每次继续开发仍需核实实际 Git/PR/CI 状态，不能把历史报告视为当前通过证明。
+
+## QA 发布门禁缺陷清零（`HIGH-1`、`HIGH-2`、`MED-1`、`TDD-5`）与全仓回归验证（[`b0a4bc706e86`](file:///e:/CodeWorkstation/FlClashX/windows/packaging/exe/inno_setup.iss)，2026-11-17）
+
+- 来源基线与本地代码提交：
+  - 基于本地 `development` 基线 [`9df507a8401a`](file:///e:/CodeWorkstation/FlClashX/engineering/development-status.md)（对应前一代码提交 [`bc67578eeed8`](file:///e:/CodeWorkstation/FlClashX/lib/services/xboard_bootstrap.dart)）完成 TDD 修复与独立 QA 门禁审查（`RELEASE GATE: APPROVED`），本地代码提交 [`b0a4bc706e86`](file:///e:/CodeWorkstation/FlClashX/windows/packaging/exe/inno_setup.iss)（`b0a4bc706e863da2cb4cf9920db957eaf19581ec`，tree `076779e5b2258021c59443735e9e25282484a437`）。
+  - 严格纳入 `5` 个任务文件：
+    1. [`windows/packaging/exe/inno_setup.iss`](file:///e:/CodeWorkstation/FlClashX/windows/packaging/exe/inno_setup.iss)
+    2. [`lib/services/purchase_storage.dart`](file:///e:/CodeWorkstation/FlClashX/lib/services/purchase_storage.dart)
+    3. [`test/common/windows_freedomnet_rebrand_tdd_test.dart`](file:///e:/CodeWorkstation/FlClashX/test/common/windows_freedomnet_rebrand_tdd_test.dart)
+    4. [`test/purchase/purchase_storage_test.dart`](file:///e:/CodeWorkstation/FlClashX/test/purchase/purchase_storage_test.dart)
+    5. [`test/common/resource_leak_and_uia_stability_tdd_test.dart`](file:///e:/CodeWorkstation/FlClashX/test/common/resource_leak_and_uia_stability_tdd_test.dart)
+  - 工作区既有未提交测试草稿 [`dashboard_render_test.dart`](file:///e:/CodeWorkstation/FlClashX/test/views/dashboard_render_test.dart)（SHA256 `3C54F67C5951399F4DB3E80F87E1EA41203B582E5A7639AA296165AB4242EE1F`）、既有未跟踪目录（`coverage/`、`engineering/previews/`、`engineering/testing/`）、`E:\CodeWorkstation\Xboard-Go` 及宿主 Windows 系统代理（`127.0.0.1:7890`）零改动、未纳入提交。
+- QA 门禁清零修复项：
+  1. **`HIGH-2`（安装器过早停服与杀进程后置至 `ssInstall`，[`inno_setup.iss`](file:///e:/CodeWorkstation/FlClashX/windows/packaging/exe/inno_setup.iss) & [`windows_freedomnet_rebrand_tdd_test.dart`](file:///e:/CodeWorkstation/FlClashX/test/common/windows_freedomnet_rebrand_tdd_test.dart)）**：
+     - 从 `InitializeSetup()` 移除 `FreedomNetHelperService` 停止、`{{STRICT_UPGRADE_STOP}}`、`Sleep(1000)` 与 `KillProcesses`，避免用户在向导中途取消安装却已中断运行中代理服务与客户端进程；保留非阻塞 `ShowTermsOfServiceDialog`（`if (not WizardSilent) and (not IsManagedUpdate()) then`、`接受` / `不接受`）及 `chineseSimplified.TermsDialogBody` 精确文案。
+     - 在 `[Setup]` 显式配置 `CloseApplications=no` 与 `RestartApplications=no`，防止 Windows Restart Manager 在 `wpPreparing` 阶段提前终止或报错于 `SYSTEM`/后台进程；将服务停止、`{{STRICT_UPGRADE_STOP}}`、`Sleep(1000)` 与 `if not IsManagedUpdate() then KillProcesses;` 移入 `CurStepChanged(ssInstall)`（紧邻 `[Files]` 解压写入前执行）。
+  2. **`MED-1`（安装器外部命令绝对系统路径加固 CWE-426，[`inno_setup.iss`](file:///e:/CodeWorkstation/FlClashX/windows/packaging/exe/inno_setup.iss) & [`setup.dart`](file:///e:/CodeWorkstation/FlClashX/setup.dart)）**：
+     - 消除全部裸 `'taskkill'` / `'sc.exe'` 调用，`KillProcesses`、`StrictSc`、`CurStepChanged(ssInstall)`、`CurStepChanged(ssPostInstall)` 与 `CurUninstallStepChanged(usUninstall)` 共 `10` 处 `Exec(...)` 统一使用 `ExpandConstant('{sys}\taskkill.exe')` 与 `ExpandConstant('{sys}\sc.exe')`（零 `ShellExec`）。
+  3. **`HIGH-1`（旧版 `flclashx.xboard.*` 凭据严格只读回退与 FreedomNet 作用域墓碑隔离，[`purchase_storage.dart`](file:///e:/CodeWorkstation/FlClashX/lib/services/purchase_storage.dart) & [`purchase_storage_test.dart`](file:///e:/CodeWorkstation/FlClashX/test/purchase/purchase_storage_test.dart)）**：
+     - `_legacyPrefix`（`flclashx.xboard.<sha256>`）在全仓 `lib/`（含 [`purchase_profile_sync.dart`](file:///e:/CodeWorkstation/FlClashX/lib/services/purchase_profile_sync.dart) 与 [`chatwoot_storage.dart`](file:///e:/CodeWorkstation/FlClashX/lib/services/chatwoot_storage.dart)）保持严格只读，零写入、零删除，确保同机共存的 `FlClashX` 登录态与待恢复兑换记录不被 `FreedomNet` 退出登录误删。
+     - 引入 FreedomNet 作用域墓碑键 `$_prefix.<suffix>.legacy_cleared = '1'`：当 `_delete(suffix)` 检测到旧键非空时写入墓碑抑制回退读取（防止退出登录后因只读回退产生僵尸重登），旧键不存在时保持干净单次删除（标准登出仅 `1` 次删除、零冗余键）；`_write(suffix, value)` 写入新会话或 `pending` 记录时自动清除墓碑恢复正常读写。
+  4. **`TDD-5`（首页 `FloatingProxyDock` / `EarthProxySwitch` 1Hz UIA 语义稳定性测试对齐，[`resource_leak_and_uia_stability_tdd_test.dart`](file:///e:/CodeWorkstation/FlClashX/test/common/resource_leak_and_uia_stability_tdd_test.dart)）**：
+     - 更新历史遗留的 `find.text(appLocalizations.running)` 断言，对齐当前 `StartButton` -> `FloatingProxyDock`（`dashboard-floating-proxy-dock`）与 `EarthProxySwitch`（`dashboard-proxy-toggle`）组件契约，验证初始连接态、连续 4 次 1Hz 计时刷新（视觉推进至 `00:00:05` 且 `semanticsMutationsDuringSteadyTicks == 0`）及断开过渡（`semanticsMutationsDuringSteadyTicks > 0`）的 `isRunning` 与 `Tristate` 语义稳定性。
+- 独立 QA 门禁验证矩阵（`PASS` / `NOT RUN`，本机 `Flutter 3.47.4 / Dart 3.13.3`）：
+  - 全仓 Flutter 测试套件（`DASHBOARD_RENDER_DIR=$env:TEMP\fcx_qa_gate_render`，`E:\flutter\bin\flutter.bat test --no-pub`）：**PASS**（`02:29 +1503: All tests passed!`，`1503 passed, 0 failed, 0 skipped`，exit `0`；注：首次冷启动并行编译轮在未改动文件 `test/common/node_country_test.dart` R5 出现 1 次瞬态 300ms 回环超时，单跑 `25/25 PASS` exit `0` 且全仓二次完整重跑 `1503/1503 PASS` exit `0`）；
+  - 静态分析（`E:\flutter\bin\dart.bat analyze --fatal-warnings lib/services/purchase_storage.dart lib/services/purchase_profile_sync.dart test/common/windows_freedomnet_rebrand_tdd_test.dart test/purchase/purchase_storage_test.dart test/common/resource_leak_and_uia_stability_tdd_test.dart test/setup_test.dart`）：**PASS**（exit `0`，`0 errors / 0 warnings / 0 new lints`）；
+  - PowerShell Strict 与 M3 校验（`Test-StrictTestValidation.ps1` `68 cases`、`Test-M3PackageTools.ps1`、`Test-M3ManifestAssemblyOrder.ps1`、`Test-M3EvidenceValidator.ps1`）：**PASS**（全部 exit `0`）；
+  - `git diff --cached --check` 与护栏校验（[`dashboard_render_test.dart`](file:///e:/CodeWorkstation/FlClashX/test/views/dashboard_render_test.dart) SHA256 `3C54F67C5951399F4DB3E80F87E1EA41203B582E5A7639AA296165AB4242EE1F`）：**PASS**（exit `0`）；
+  - **NOT RUN**（待用户确认授权）：本机 `ISCC.exe` 安装包实际编译 **NOT RUN**；隔离 Windows VM 真机安装器中途取消/升级/同机共存实测 **NOT RUN**；远端 `git push` 与 `development → main` PR **NOT RUN**。
 
 ## 全栈商业化：Cloudflare `:443` 边缘引导、`Xboard-Go` 托管发布/GeoX、大陆网络强化、Agent 防断网与 AI 稳定性选路（[`bc67578eeed8`](file:///e:/CodeWorkstation/FlClashX/lib/services/xboard_bootstrap.dart) / `Xboard-Go` [`d4ea52052c31`](file:///e:/CodeWorkstation/Xboard-Go/internal/httpapi/server.go)，2026-11-16）
 
